@@ -15780,8 +15780,9 @@ impl Scope {
     // name's values over the part's points, and a point of the conjunction is one of the
     // part's), so every step, and any limit of the steps, holds the conjunction's box. The
     // whole-block projection gives that box when `project_part` is exact, so its result is
-    // no wider than the fixed point and may be narrower (a parity the parts drop); when it
-    // is not exact, see the assumption at `again` below (precision only).
+    // no wider than the fixed point and may be narrower (a parity the parts drop). It is exact
+    // where it records no refusal (Lemma E at [`Scope::record`]); where it refuses, the box
+    // stage's bounds are kept, which is precision only and reported as a refusal.
     // The worklist ends, for the pushes made by a move: a name's move trips `again` once the
     // name is already in `moved`, except a move by the initial star base, whose names are
     // credited once in `moved_by_base` (the next other move removes the credit, the one after
@@ -15819,9 +15820,9 @@ impl Scope {
     // M + P (M + 1) flips, each pushing at most P parts.
     // (c) Each pop takes a part pushed or due at the start, so the pops are at most
     // |due| + 3 Σ_n W(n) + P (F0 + 3 Σ_n C(n)) + P (M + P (M + 1)).
-    // Assumptions: (b) reads `project_part` as exact at the leaf; a projection that gives a
-    // hull without a refusal (the assumption at `again` below, ASSUME-documented) may move the
-    // leaf again and is not covered here. That `cover` reads only those fields is read from
+    // (b) reads `project_part` as exact at the leaf, which it is where it records no refusal
+    // (Lemma E at [`Scope::record`]); a refused projection keeps the box stage's bounds, may
+    // move the leaf again, and is not covered here. That `cover` reads only those fields is read from
     // `cover_staircase`, `cover_rays` and `ray_high`, not tested. No test counts pops, so a
     // bound broken by a later edit would show only as time.
     // Tests:
@@ -15915,35 +15916,59 @@ impl Scope {
         let all_stairs = covered.is_some() && b.roles.keys().all(|r| *r == Role::Stair);
         if b.unshaped.is_empty() && !all_stairs {
             let core: Vec<Arc<Formula>> = b.core.keys().cloned().collect();
-            if let Some(shape) = &threshold::shape(&core)
-                && self.project_threshold(shape)
-            {
-                self.cover(&mut b, covered.is_some());
-                // No part is recorded here (rows PROOF-product-seen-record-precision and
-                // PROOF-product-part-fixed-point-precision). The solve is exact on the hub
-                // and gives each other name its least and greatest values, a hull
-                // ([`Scope::project_threshold`]), so a part, projected again, can still narrow
-                // it: `x + 1 <= 3y <= x + 2` on `0..=4` leaves x in `1..=4`, where the part
-                // keyed by `3y >= x + 1`, projected again, gives x in {1, 2, 4} (x = 3 needs 3y
-                // in `4..=5`). Recording the due parts here, as this
-                // exit once did, made such an entry claim a fixed point it is not at, and a
-                // later hit of it skipped that projection. Proof that keeping the block
-                // without a record is sound and loses nothing: an entry only lets
-                // [`Scope::block`] skip its part, so a part without an entry at the names as
-                // they now are is due when the block is next projected, which is the
-                // projection the entry would have skipped; and the entries of the parts not
-                // due are as `Scope::record` (2) leaves them. Cost: a part not recorded is
-                // due again at the block's next projection, which this shape solves whole
-                // anyway (O(k log k) for k parts, above); measured unchanged or lower on the
-                // benches of l01_39_scope_relations (the walk through a shared name 9.2 to
-                // 9.0 times at 8n). Running the due parts here instead, to the loop's fixed
-                // point, gave the exact sets but 19.1 and 22.5 times at 8n on
-                // `xst::s4::bench` (holes cut one at a time, class cases moved), past the
-                // limit. Test: `product::tests::projected_entries_after_a_threshold_solve_
-                // hold_at_its_snapshot` (red with the record: the entry of `3y - x - 1 >= 0`
-                // recorded at x `1..=4`, y `1..=2`).
-                self.keep(b);
-                return;
+            if let Some(shape) = &threshold::shape(&core) {
+                let shaped: Vec<Arc<str>> = shape.names.iter().chain(&shape.hub).cloned().collect();
+                let plain = |s: &Self| shaped.iter().all(|n| !classed(&s.get(n)));
+                let unclassed = plain(self);
+                if self.project_threshold(shape) {
+                    let solved = self.snapshot(&shaped);
+                    self.cover(&mut b, covered.is_some());
+                    // The due parts are recorded only where the test of
+                    // [`Scope::record_threshold`] shows each is at its fixed point: no name of
+                    // the component had a class before the solve or has one now (C1), `cover`
+                    // moved no name of it (C3), and no name is empty. The part test (C2) is
+                    // there. Elsewhere no part is recorded (rows
+                    // PROOF-product-seen-record-precision and
+                    // PROOF-product-part-fixed-point-precision): the solve gives each name
+                    // other than the hub its least and greatest values, a hull
+                    // ([`Scope::project_threshold`]), which a part, projected again, can still
+                    // narrow: `x + 1 <= 3y <= x + 2` on `0..=4` leaves x in `1..=4`, where the
+                    // part keyed by `3y >= x + 1`, projected again, gives x in {1, 2, 4} (x = 3
+                    // needs 3y in `4..=5`); and the solve reads each name's integers and not
+                    // its class, so `x <= y + 2` with x in `-2..` of class 1 mod 4 leaves y in
+                    // `-4..`, where the part gives `-1..`. Recording the due parts here
+                    // without the test, as this exit once did, made such an entry claim a
+                    // fixed point it is not at, and a later hit of it skipped that projection.
+                    // Proof that a part left without a record is sound and loses nothing: an
+                    // entry only lets [`Scope::block`] skip its part, so a part without an
+                    // entry at the names as they now are is due when the block is next
+                    // projected, which is the projection the entry would have skipped; and the
+                    // entries of the parts not due are as `Scope::record` (2) leaves them.
+                    // Cost: a part not recorded is due again at the block's next projection,
+                    // which this shape solves whole anyway (O(k log k) for k parts, above);
+                    // measured unchanged or lower on the benches of l01_39_scope_relations
+                    // (the walk through a shared name 9.2 to 9.0 times at 8n). Running the due
+                    // parts here instead, to the loop's fixed point, gave the exact sets but
+                    // 19.1 and 22.5 times at 8n on `xst::s4::bench` (holes cut one at a time,
+                    // class cases moved), past the limit. The hull this exit leaves where the
+                    // test fails is coarser than exact without a refusal (P197); that is a
+                    // fault of the answer, filed apart from the record. Tests:
+                    // `product::tests::projected_entries_after_a_threshold_solve_hold_at_its_
+                    // snapshot` (red with the record and no test: the entry of
+                    // `3y - x - 1 >= 0` recorded at x `1..=4`, y `1..=2`) and
+                    // `product::tests::a_threshold_solve_records_the_parts_its_test_shows_at_
+                    // their_fixed_point`.
+                    if unclassed
+                        && plain(self)
+                        && !self.bottom
+                        && solved.iter().all(|(_, s, _)| !s.is_empty())
+                        && self.snapshot(&shaped) == solved
+                    {
+                        self.record_threshold(&mut b, &due);
+                    }
+                    self.keep(b);
+                    return;
+                }
             }
         }
         // A star's leaf is unbounded on the side away from its hubs, so each part bounds it by
@@ -16377,16 +16402,15 @@ impl Scope {
                 // persistent-map clone (O(1)) per part projected, and the comparison.
                 // Measured (persist, k = 2 / 16): 65.5M / 551.3M instructions before,
                 // 62.4M / 494.5M after (perf stat, the whole test).
-                // Assumption, not proved (ASSUME-documented): the skip treats `project_part` as
-                // exact whenever it records no refusal, so that projecting `all` again with the
-                // names it left moves nothing. That holds for an exact projection (the argument
-                // above), but a projection can give a hull without a refusal: the whole part of
-                // seed 12035647242373093243 part 52 gives z3 [1, 5], not {1, 3, 5}
-                // (FAIL-projection-not-exact.rs, PRES-switchover-not-race), and the pendants
-                // route may leave a name at its box. Evidence: in the correctness tests the skip
-                // was taken in 1 of 89 again-projections; the persist benchmark takes it often.
-                // If false, a name keeps a wider box than the second projection would give:
-                // precision only, never unsound, since each projection only narrows soundly.
+                // The skip reads `project_part` as exact whenever it records no refusal, so that
+                // projecting `all` again with the names it left moves nothing: Lemma E at
+                // [`Scope::record`] (PROOF-product-threshold-hull-parts, 2026-11-21), which
+                // replaces the assumption written here before. The hull of seed
+                // 12035647242373093243 part 52 it cited (z3 [1, 5], not {1, 3, 5}) is exact now
+                // (`l01_39_reduced_product::pendants::seed_12035647242373093243_part_52_is_exact_both_ways`).
+                // A refused projection is not skipped (the `refusals` test of `repeat`). In
+                // the correctness tests the skip was taken in
+                // 1 of 89 again-projections; the persist benchmark takes it often.
                 let repeat = aggregated.is_empty()
                     && self.refusals.ptr_eq(&refusals_before)
                     && distinct_conjuncts(&all) == distinct_conjuncts(&projected_now);
@@ -16709,25 +16733,64 @@ impl Scope {
             // last projection: the loop puts back `due_users(n)` of every moved `n`
             // ([`Scope::project_block`]), and it then ran or was found idle by a certificate
             // at those products. A move of the leaf wakes no part; `project_block`'s proof
-            // that skipping it loses nothing covers that. Not proved: (a) that a part's own
-            // projection, run again at its output, narrows nothing more (the loop does not
-            // put back the part that moved a name, unless an aggregate moved it,
-            // `aggregated`); (b) the ends by `break`: `again` projects the whole block once,
-            // or not at all when `repeat`, and a refused or inexact projection there leaves
-            // the written parts recorded at products they may narrow further; `empty` and
-            // `bottom` end with a name empty. Each is a loss of precision only, by (1). Rows
-            // PROOF-product-seen-record-precision and PROOF-product-part-fixed-point-precision
-            // (2026-11-21): a check, since removed, that projected each written part again at
-            // the end of this function and compared its names' sets, classes reduced
-            // ([`reduce_congruence`]), found 114 untrue entries in the modules families (4),
-            // linked (15), holes (3), nests (74) and lazy (18) of l01_39_scope_relations, and
-            // none in case_wake, all due parts written unprojected by the threshold-solve exit
-            // of [`Scope::project_block`], whose hull leaves holes a part still cuts. That exit
-            // now writes no record (its proof is there). With an earlier form of the fix, which
-            // ran the due parts to the loop's fixed point there and then recorded, the same
-            // check found none in those six modules and in xst; the form kept, which records
-            // nothing there, was not run under the check, only under the tests below and those
-            // modules. So (a) and (b) are not proved. Tests:
+            // that skipping it loses nothing covers that. (a) and (b) below close the two
+            // gaps left by (3) (PROOF-product-threshold-hull-parts, 2026-11-21).
+            //
+            // Lemma E: a [`Scope::project_part`] that records no refusal meets each name `n`
+            // of the part `P` with exactly `proj_n(P ∧ B)`, `B` the box of the names (their
+            // integers and classes, framed). Proof, by its two routes. The whole route asks
+            // `presburger::project_each_boxed`; with no cause (`Boxed::cause` none: the whole
+            // question, no symbol and no disjunction refused) each set is the exact projection,
+            // since module `exact` of zedc-presburger answers each set exactly or refuses the
+            // symbol (doc of `presburger::project`), and the frame holds `B`, classes as
+            // congruences ([`Scope::framed`]). The pendants route
+            // ([`Scope::project_by_pendants`]) gives `None`, and so the whole route, wherever
+            // the projection of the rest refuses; otherwise the rest's sets are exact by the
+            // same module, and each pendant's `x`, one interval with no class and mentioned by
+            // no other conjunct, takes `Pendant::takes` of its form's exact set: for `==` the
+            // exact affine image (`affine`, a coefficient of one or minus one), for `>=` the
+            // exact half-line, and its meet with `x`'s one interval is exactly the `x` values
+            // some point gives. Test:
+            // `l01_39_reduced_product::pendants::seed_12035647242373093243_part_52_is_exact_both_ways`
+            // and the pendants-against-whole tests of that module.
+            //
+            // (a) Claim: a part `P` projected with no refusal, run again at its output,
+            // narrows nothing. Proof. By Lemma E the output is `B' = B ∩ Π_n proj_n(P ∧ B)`.
+            // Each point `s` of `P ∧ B` has `s_n` in `proj_n(P ∧ B)` for each `n`, so `s` is in
+            // `B'`: `P ∧ B' = P ∧ B`. A second projection by either route meets each `n` with a
+            // set holding `proj_n(P ∧ B') = proj_n(P ∧ B) = B'_n` (exact, or wider where it
+            // refuses), so `B'_n` stays as it is. A `cover` after it reads only the names and
+            // the block and meets names only with bounds every point of the block keeps, and
+            // a move by it puts the part back (`aggregated`, `due_users`). So with (3) every
+            // part written on the loop's normal end, outside a block that refused, is at its
+            // fixed point. A part whose last projection refused may be narrowed again: its
+            // block's answer carries the refusal (`refusals`), and a skip there is precision
+            // only, by (1).
+            // (b) The ends by `break`. Again-all and entry-hole project `all`, the conjunction
+            // of every part: with no refusal, by Lemma E, `B' = B ∩ Π_n proj_n(all ∧ B)`, and
+            // for a part `P` and `v` in `B'_n` a point `s` of `all ∧ B` with `s_n = v` lies in
+            // `B'` (as in (a)) and satisfies `P`, a conjunct of `all`; so re-projecting `P`
+            // moves nothing, and the `cover` after it, by (a)'s step, keeps `s`. Again-repeat
+            // skips that projection only when no aggregate moved a name, the part just
+            // projected refused nothing, and `all` has the same conjuncts as it: the same
+            // formula projected exactly, the again-all case. Empty and bottom: an entry
+            // written with a name empty matches ([`Scope::is_projected`], the snapshot equal)
+            // only in a scope where that name is still empty, which [`Scope::reduce_with`]
+            // makes bottom at its first round (`empty`); [`Scope::settle_blocks`] ends with
+            // `reduce_with(false)`, so a later block of the same call that skips a part by such
+            // an entry is in a scope made bottom before the call returns, and a bottom scope
+            // answers the empty set whatever the entries say.
+            // The threshold exit records only the parts [`Scope::record_threshold`]'s test
+            // shows at their fixed point, with its own proof.
+            // Evidence (2026-11-21, a check since removed that projected each written part
+            // again here and in `record_threshold`, as `untrue_entries` does): over the groups
+            // zedc_preimage and l01_39 (322 pieces), 64,723 entries written here, 68 untrue: 66
+            // at the empty exit within a case with a name empty, 2 on the normal end in blocks
+            // that refused, where the second projection refused too; 0 of 45,627 written by
+            // the threshold exit; 0 of 1,482 in the unit tests. The earlier check (rows
+            // PROOF-product-seen-record-precision, PROOF-product-part-fixed-point-precision)
+            // found 114 untrue entries, all written unprojected by the threshold exit before
+            // its test. Tests:
             // `product::tests::projected_entries_after_a_threshold_solve_hold_at_its_snapshot`,
             // `l01_39_reduced_product::scaling::tightenings_beside_disjunctions_leave_the_
             // scope_made_again` (compared with `forget_projections`) and the random ladders of
@@ -16767,6 +16830,84 @@ impl Scope {
                 .insert(p.key.clone(), (p.with.clone(), snapshot));
         }
         self.keep(b);
+    }
+
+    /// Records each part of `due` that the threshold exit of [`Scope::project_block`] has left
+    /// at its fixed point, by the exact test below; the caller has checked C1 and C3 there.
+    ///
+    /// The test. Let `S` be the points of the box the names had before the solve (their
+    /// integers) that satisfy every conjunct of the block's core, and `X'` each name's set
+    /// after the solve and `cover`. C1: no name of the component has a class before or after
+    /// (`classed` false), so a name's set is its integers and `S` is the component's points.
+    /// C2 (here): the part is not managed by an aggregate, and the formula it projects
+    /// ([`Block::formula`]) is itself a conjunct of the core that is not an equality, so by
+    /// [`threshold::shape`] and `threshold::read` it is one inequality, `x + k*w <= a`,
+    /// `y - m*w >= b` (`w` the hub) or one on the hub alone, or a disjunction of an upper arm
+    /// `x + k*w <= a` and a lower arm `y - m*w >= b` on two different names, neither the hub
+    /// (`read` refuses `up.0 == low.0` and an arm on the hub alone). A part projected with
+    /// the block's constraints (`Split::formula` gives `g ∧ base` when `base` is not `true`)
+    /// is a conjunction, no conjunct of the core, and is not recorded. C3: `cover` moved no
+    /// name of the component, and none is empty.
+    ///
+    /// Claim: under C1 to C3, projecting such a part again moves none of its names, so its
+    /// entry is true. Proof. (1) [`threshold::solve`] gives each name `x` other than the hub
+    /// the least and greatest value of `x` over `S`, each attained by a point of `S` when
+    /// finite and approached when infinite, and the hub `H`, the values of `w` over `S`
+    /// exactly (threshold.rs, module doc and `members`); [`Scope::project_threshold`] meets
+    /// `x` with `[lo, hi]` and `w` with `H`. So `X' = X ∩ [lo, hi]`, `W' = H`, and every
+    /// point of `S` lies in the new box, by C3 unchanged by `cover`. (2) Take `v` in `X'`
+    /// and an arm `x + k*w <= a` of the part. As `v <= hi`, some `s` in `S` has `s_x >= v`.
+    /// The part holds at `s`, a point of every conjunct. If its other arm holds at `s`, it
+    /// does not read `x` (the arms' names differ), so `(v, s_y, s_w)` satisfies the part;
+    /// otherwise `s_x + k*s_w <= a`, so
+    /// `v + k*s_w <= a`, and `(v, s_y, s_w)` satisfies it. Either way `v` is in the
+    /// projection of the part onto `x` over the new box. An arm `y - m*w >= b` is the
+    /// mirror, with `s_y <= v` from `v >= lo`. A part of one inequality is the case with no
+    /// other arm. (3) Take `h` in `W'`: some `s` in `S` has `s_w = h`, and satisfies the
+    /// part, so `h` is in the projection onto `w`. (4) So the exact projection of the part
+    /// over the new box is the box on each of its names, and [`Scope::project_part`] meets
+    /// each name with a set holding that projection (exact where it records no refusal,
+    /// Lemma E at [`Scope::record`], wider where it refuses), so with a set holding the
+    /// name's own, which moves nothing. The entry
+    /// written, the names' snapshot now under the part's `with`, is then one at which the
+    /// part's projection moves nothing: the claim [`Scope::is_projected`] reads.
+    ///
+    /// Why each condition is needed (each failure was seen on the tests of step L1.39, a
+    /// check since removed that projected each part again after this exit: 2015 parts
+    /// moved, every one with a class on a name or a formula of two atoms or an equality):
+    /// without C1 the solve reads the integers alone and its bounds are not attained
+    /// (`a <= n - 1` with a of class 1 mod 3 in `0..=10` moves n from `1..` to `2..`);
+    /// without C2 a conjunction keeps holes the hull fills (G1's band
+    /// `x <= 3y - 1 && x >= 3y - 2`, and `x1 == x5`), since step (2) moves one name and
+    /// keeps the others; without C3 a point of `S` may lie outside the box. A due part
+    /// written within a case is skipped when it holds an entry already, as
+    /// [`Scope::record`] does there, to keep the outer entries shared. Cost: O(d log k) for
+    /// `d` due parts of `k`, the same order as the solve. Test:
+    /// `product::tests::a_threshold_solve_records_the_parts_its_test_shows_at_their_fixed_point`
+    /// (red without this function: no entry), which checks the untrue entries after each
+    /// step (`untrue_entries`); and a check since removed (2026-11-21) that projected each
+    /// part recorded here again: 0 of 45,627 entries untrue over the groups zedc_preimage
+    /// and l01_39 (322 pieces). They cannot catch a fault on a component wider than the
+    /// tests'.
+    fn record_threshold(&mut self, b: &mut Block, due: &[PartAt]) {
+        let target_ver = b.outer.ver;
+        for at in due {
+            let p = &b.parts[at];
+            if b.managed(p) || (self.in_case && self.projected.contains_key(&p.key)) {
+                continue;
+            }
+            let f = b.formula(p);
+            if !b.core.contains_key(&f) || matches!(&f, Formula::Con(c) if c.rel == Rel::Eq) {
+                continue;
+            }
+            if p.with_ver != target_ver {
+                b.ensure_part_with(at);
+            }
+            let p = &b.parts[at];
+            let snapshot = self.snapshot(&p.names);
+            self.projected
+                .insert(p.key.clone(), (p.with.clone(), snapshot));
+        }
     }
 
     /// Meets each name of the threshold-implication component `shape` with its exact bounds,
@@ -24424,15 +24565,31 @@ impl Block {
     /// and every other name with its least and greatest values that pass
     /// ([`threshold::solve`], proof in `threshold.rs`): exact on the hub, and the hull of
     /// `proj(A)` on the others, where `A` is the whole component, which holds `P`.
-    /// Not proved: (a) in (1), a joint projection that gives a hull or refuses, which can
-    /// be wider than `P`'s own projection (seed 12035647242373093243 part 52 gives a hull
-    /// without a refusal, at [`Scope::project_block`]); (b) in (3), a released part whose own
-    /// projection leaves a hole inside the hull a name other than the hub was given, e.g.
-    /// `x <= 0 || y >= 5` and `y <= 4 || x >= 2` give `x` in `{0, 2}` together, where the
-    /// threshold answer is `[0..=2]`, but each part alone leaves `x` whole, so this example
-    /// is no fault; whether some part alone leaves a hole is open. Each is a loss of
-    /// precision only. Test: `families::upper_release_against_the_oracle` (y [..=-1] where
-    /// main gave [..=5]); it checks one release in the loop, not an exit.
+    /// (a) In (1), the joint projection is `proj(A)` exactly wherever it records no refusal
+    /// (Lemma E at [`Scope::record`]: `project_part` is exact per name on either of its
+    /// routes unless it refuses; the hull of seed 12035647242373093243 part 52, once read
+    /// as a hull without a refusal, is exact both ways, test
+    /// `l01_39_reduced_product::pendants::seed_12035647242373093243_part_52_is_exact_both_ways`).
+    /// So where it records none, it is at least as narrow as `P`'s own projection, and not
+    /// releasing loses nothing. Where it records a refusal, the refused names keep the box
+    /// stage's bounds and can be wider than `P`'s own projection; that is a loss of
+    /// precision only, and the answer carries the refusal, so it is not reported as exact.
+    /// (b) In (3), where [`Scope::record_threshold`]'s test holds (proof there), each due
+    /// part it records is at its own fixed point: its own projection would move no name, so
+    /// not releasing it loses nothing. Where the test fails, a part alone can leave a hole
+    /// inside the hull a name other than the hub was given: `x + 1 <= 3 * y <= x + 2` with
+    /// `x` and `y` in `[0..=4]` gives `x` in `{1, 2, 4}`, where the hull is `[1..=4]`. That
+    /// part is not recorded, so it is due again at the block's next projection, but the
+    /// block takes the threshold exit again there, and the hole is lost with no refusal:
+    /// precision only, and filed as its own fault (the threshold exit gives a hull without a
+    /// refusal; running the due parts to their fixed point there cost T(8n)/T(n) of 19.1
+    /// and 22.5 on `xst::s4::bench`, past the limit of 10.5, so it was not done). The pair
+    /// `x <= 0 || y >= 5` and `y <= 4 || x >= 2` gives `x` in `{0, 2}` together, where the
+    /// threshold answer is `[0..=2]`, but each part alone leaves `x` whole, so it is no case
+    /// of this. Tests: `families::upper_release_against_the_oracle` (y [..=-1] where main
+    /// gave [..=5]), which checks one release in the loop, not an exit, and
+    /// `tests::a_threshold_solve_records_the_parts_its_test_shows_at_their_fixed_point` for
+    /// (b). Neither catches a refused joint projection that a part alone would narrow.
     fn released(&self, stair: bool, ray: bool) -> impl Iterator<Item = &PartAt> {
         let (stair, ray) = (stair && !self.stair_managed, ray && !self.ray_managed);
         (self.roles.iter())
@@ -27705,6 +27862,48 @@ mod tests {
         ];
         let (asked, _) = ask_checked(&steps, "threshold history");
         assert_eq!(asked, steps.len(), "every step keeps a point");
+    }
+
+    /// Two disjunctions on `x` and `y` with the hub `a`, no classes and no other conjunct: the
+    /// threshold exit of [`Scope::project_block`] passes the test of
+    /// [`Scope::record_threshold`], so the parts it solved hold entries at the names as they
+    /// now are, and each is true (red without `record_threshold`: no entry at the names as
+    /// they are).
+    #[test]
+    fn a_threshold_solve_records_the_parts_its_test_shows_at_their_fixed_point() {
+        use zed_kernel::term::build::{lit, prim, var};
+        let add = |n: &str| prim(Prim::Add, vec![var(n), var("a")]);
+        let sub = |n: &str| prim(Prim::Sub, vec![var(n), var("a")]);
+        let or = |l, r| prim(Prim::Or, vec![l, r]);
+        let steps = [
+            or(
+                prim(Prim::Le, vec![add("x"), lit(3)]),
+                prim(Prim::Ge, vec![sub("y"), lit(1)]),
+            ),
+            or(
+                prim(Prim::Le, vec![add("y"), lit(5)]),
+                prim(Prim::Ge, vec![sub("x"), lit(0)]),
+            ),
+        ];
+        let p = Premises::new();
+        let mut s = Scope::new(
+            ["a", "x", "y"].map(|n| (Arc::<str>::from(n), Product::of_type(Type::int()))),
+        );
+        for t in &steps {
+            s = s.assume(t, true, &p);
+            assert!(!s.bottom, "{t:?}");
+            let bad = untrue_entries(&s);
+            assert!(bad.is_empty(), "{t:?}:\n{}", bad.join("\n"));
+        }
+        let live = s
+            .projected
+            .iter()
+            .filter(|(_, (_, at))| {
+                let names: Vec<Arc<str>> = at.iter().map(|(n, _, _)| n.clone()).collect();
+                s.snapshot(&names) == *at
+            })
+            .count();
+        assert_eq!(live, steps.len(), "{:?}", s.projected);
     }
 
     /// The same check on random histories of rows on `a`, `x` and `y`, disjunctions of two rows

@@ -4154,21 +4154,18 @@ type Entry<V> = (V, usize, usize);
 /// another entry under its key by then.
 type Unheld = Box<dyn FnOnce(&mut Memo)>;
 
-/// A call to translate: the lambda, by its body and scope, its arguments' linear terms, and,
-/// when an argument may fail ([`Tr::definedness`]), the condition that each argument is not an
-/// atom, by the number of its divisor set and of its other part ([`Walk::shared_call_key`]);
-/// empty when none may.
-type CallKey = (At, Vec<Lin>, Vec<(Set, u32)>);
+/// A call to translate: the lambda, by its body and scope, its arguments' linear terms,
+/// when an argument may fail ([`Tr::definedness`]) the condition that each argument is not an
+/// atom, by the number of its divisor set and of its other part (empty when none may), and
+/// the term and scope [`Tx::call_env`] binds each parameter to ([`Walk::shared_call_key`];
+/// empty for a canonical key, which [`Walk::canonical_env`] binds by its linear terms).
+type CallKey = (At, Vec<Lin>, Vec<(Set, u32)>, Vec<At>);
 
-/// The linear terms [`Tx::call_env`] may bind as literals for the call key `k`: all of them
-/// when no argument may fail (`k.2` empty), none otherwise. A literal never fails, so bound
-/// for an argument that may, `(x mod n) * 0` with term `0`, it would drop the argument's
-/// `#divByZero` at `n = 0` from the body, and `f(positional a) = a == 0` would give `true`
-/// there. Red before, proved where it must be refuted:
-/// `l01_38_presburger::ladder::a_call_with_an_argument_that_may_fail_is_read_at_its_place`.
-/// O(1).
-fn literal_terms(k: &CallKey) -> &[Lin] {
-    if k.2.is_empty() { &k.1 } else { &[] }
+/// The term and scope [`Tx::call_env`] binds each parameter to for the call key `k`, in the
+/// key, so that two calls with one key read the callee's body in one scope
+/// (PROOF-call-key-function-of-lins, at [`Tx::call_env`]). O(1).
+fn bound_terms(k: &CallKey) -> &[At] {
+    &k.3
 }
 
 /// The literal [`Tx::call_env`] binds a parameter to for its entry `l` of a call key: `l`'s
@@ -4188,7 +4185,11 @@ fn key_literal(l: &Lin) -> Option<i64> {
 /// their divisor sets ([`DivisorSets::aux_end`]) and other parts ([`FormulaNumbers::aux_end`]).
 /// [`Tx::forget`] drops a failure whose key names a variable an undo took away. O(the key's
 /// terms): each condition's end was found once, when its number was made.
-fn call_key_end((_, lins, conds): &CallKey, sets: &DivisorSets, numbers: &FormulaNumbers) -> u32 {
+fn call_key_end(
+    (_, lins, conds, _): &CallKey,
+    sets: &DivisorSets,
+    numbers: &FormulaNumbers,
+) -> u32 {
     let lins = lins.iter().map(Lin::aux_end);
     let conds = (conds.iter()).map(|&(s, f)| sets.aux_end(s).max(numbers.aux_end(f)));
     lins.chain(conds).max().unwrap_or(0)
@@ -5152,8 +5153,11 @@ impl<D: Hash + Eq + Clone + 'static> Key for (At, D) {
 }
 
 impl Key for CallKey {
+    /// The largest term and the largest scope the key names, the lambda's and the bindings':
+    /// [`Fresh::of_body`], the one reader, holds of it exactly when it holds of one of them,
+    /// since it compares each with a lower bound.
     fn at(&self) -> At {
-        self.0
+        (self.3.iter()).fold(self.0, |(t, e), &(u, f)| (t.max(u), e.max(f)))
     }
 }
 
@@ -5725,10 +5729,11 @@ impl<'t> Tx<'t> {
         self.bind(env, n, (e, env))
     }
 
-    /// The scope of a call's body: the lambda's scope with each parameter bound to its
-    /// argument, read in the caller's scope, except that a parameter whose entry in `key`, the
-    /// call's key of linear terms ([`Walk::call_key`]; empty for a call read under no such
-    /// key), is a constant `n` in `i64` is bound to the literal `n`.
+    /// The scope of a call's body: the lambda's scope with each parameter bound to its entry
+    /// in `bound`, the terms and scopes the call's key holds ([`bound_terms`], made by
+    /// [`Tx::bound_term`]), or, for a call read under no key (`bound` empty), to its argument
+    /// read in the caller's scope. A key binds a parameter whose linear term is a constant `n`
+    /// in `i64` to the literal `n` where no argument may fail.
     ///
     /// Why the literal (PROOF-call-key-function-of-lins): a translation kept under a key must
     /// be the one every call of that key would make. Two arguments with one constant linear
@@ -5741,8 +5746,8 @@ impl<'t> Tx<'t> {
     /// (`Terms::int`, made once per value by `Made::Int`), bound in [`ROOT`], so each read of
     /// the parameter in the body is a read of that one term, which depends on `n` alone. That
     /// the body may read the literal where it read the argument: where the argument is
-    /// defined its value is its linear term's ([`Walk::lin`]), `n`. The callers pass `key`
-    /// through [`literal_terms`], empty when the relation tracks failure
+    /// defined its value is its linear term's ([`Walk::lin`]), `n`. [`Walk::shared_call_key`]
+    /// binds no literal when the relation tracks failure
     /// ([`Tr::definedness`]) and an argument may fail, since a literal never fails and the
     /// body would lose the argument's failure. Otherwise either no argument may fail, or the
     /// relation need not hold exactly at a point where an operation fails. Tests:
@@ -5770,37 +5775,96 @@ impl<'t> Tx<'t> {
     /// closes. Cost of (i): calls with an argument constant outside `i64` are no longer
     /// shared, one translation for each place.
     ///
-    /// Sub-case (c), reduced to (b) (proofdoc5f): under [`Tr::definedness`] with an argument
-    /// that may fail no parameter is bound to a literal, but the case before the fix needs a
-    /// body that reads the parameter by evaluating it ([`Walk::constant`]), and that reads
-    /// `None` for both arguments. Steps: an argument that may fail has a condition that is not
-    /// top, so it holds an operation that can fail; the only one [`Walk::lin_at`] translates is
-    /// a quotient or remainder by a term ([`Tr::div_mod_by_term`], proof (1) at
-    /// [`Walk::exactly_equal`]), which refuses a divisor whose linear term has no atoms; an
-    /// atom is an input or an auxiliary variable defined over inputs, so the argument reads
-    /// an input, [`Walk::mentions`] holds of it, and `constant` of the parameter, read through
-    /// its binding, is `None`, for either argument term. The step "a divisor with an atom
-    /// mentions an input" was not checked arm by arm. What is left is (b).
+    /// Sub-cases (b) and (c), closed (PROOF-call-key-lins-by-class-fwd). (b): a parameter
+    /// whose linear term is not a constant was bound to the caller's argument term, so where
+    /// the body read that term other than by its linear term, two calls of one key could
+    /// differ. The forward box does ([`Walk::fwd`], read by [`Walk::compare_untranslated`]):
+    /// with `g = (p) -> (if y >= 0 { y * y } else { -1 }) > p - 7` and `x`, `y` in `[-6, 6]`,
+    /// the arm `y * y > p - 7` is `true` over the box at `p = x` (`[0, 36] > [-13, -1]`) and
+    /// undecided at `p = x + y - y` (`[-25, 11]`), where `y * y` has no translation without
+    /// products; `g(x) && g(x + y - y)` and `g(x + y - y) && g(x)` share the key `[x]`, and
+    /// only the first had a translation. (c): under [`Tr::definedness`] with an argument that
+    /// may fail every parameter was bound to its argument; proofdoc5f reduced it to (b) by the
+    /// step "every divisor with an atom mentions an input". Checked arm by arm in
+    /// [`Walk::lin_at`]: the `Var` arm makes the atom `Sym(x)` only where `cx.has(x)`, the
+    /// test [`Walk::mentions`] makes of an unbound name; the bound `Var`, `Let`, `Neg`,
+    /// `Mul`, `Pow` and `Add`/`Sub` ([`Walk::lin_sum`]) arms pass on their parts' atoms; but
+    /// the `If` arm (an `Aux` of [`Tr::aux`]), the `Min`/`Max`/`Abs` arm (`tr.extrema`), the
+    /// `BitAnd` arm, the quotient or remainder by a constant ([`Tr::pair_by_constant`]) and
+    /// by a term ([`Tr::div_mod_by_term`]), and a call ([`Walk::lin_called`], the binding of
+    /// [`Walk::binding`]) make an atom from their parts' linear terms even where those are
+    /// constants. All [`Walk::lin_at`] guarantees is that [`Walk::constant`] of the term
+    /// itself is `None` (it returns the constant first), not that it mentions an input: a
+    /// closed term that `constant` does not evaluate (its `run_closed` fails) but whose parts
+    /// translate would make an atom over no input. No such term was built, and the step is no
+    /// longer needed.
     ///
-    /// Not proved (PROOF-call-key-function-of-lins), one sub-case: (b) a parameter whose key
-    /// is not a constant, still read through the caller's argument term, where the body reads that
-    /// term other than by its linear term: [`Walk::lin_by_class`] reads the classes of a
-    /// remainder test of it, and the box walks ([`Walk::fwd`]) read its bounds, which may
-    /// differ between `x` and `x + y - y`. No test was found that reaches it. A fix in the
-    /// manner of (a), not made: give no key where an argument is not its own linear term
-    /// written out; it would end the sharing that `shared_call_key`'s test measures, so it
-    /// waits for a call that shows the difference.
-    fn call_env(&mut self, ps: Span, args: Span, lam: Eid, caller: Eid, key: &[Lin]) -> Eid {
+    /// The fix, in the manner of (a): the key holds what each parameter is bound to
+    /// ([`Walk::shared_call_key`], [`Tx::bound_term`]), and this binds to it. Proof that two
+    /// calls with one key read the body alike: their `bound` entries are equal, `lam` is the
+    /// key's own scope, and [`Tx::bind`] makes one scope for each scope and binding, so both
+    /// read the body in one scope, and every read of the body, by linear term, formula,
+    /// condition, box or class, is a read of the same term in the same scope. That the body
+    /// may read the bound term where it read the argument: [`Tx::bound_term`] gives a term that
+    /// computes what the argument computes, at every point, failure included (its proof).
+    /// So a translation kept under a key is the one every call of that key would make,
+    /// whatever the body reads, without listing the reads. Test, red before (a translation
+    /// for the order `x` first only), green after:
+    /// `tests::a_call_keyed_by_a_term_whose_box_differs_is_read_alike_in_either_order`. The
+    /// fix gives up that one order's translation, which came from reading `g(x + y - y)` as
+    /// `g(x)`: true there, since the two are equal at every point, but not what the call read
+    /// alone gives. What
+    /// it cannot catch: a read that differs between two terms of one form in one scope, which
+    /// [`Terms::form`] rules out by construction. Cost: two calls share a translation only
+    /// where their arguments bind alike, the literal `n` for a constant `n` (as before), and
+    /// otherwise one form in one scope, or one input; `f(x + 1)` called from two bodies in
+    /// two scopes is read once in each.
+    fn call_env(&mut self, ps: Span, args: Span, lam: Eid, caller: Eid, bound: &[At]) -> Eid {
         let mut e = lam;
         for i in 0..ps.len() {
             let p = self.param(ps, i);
-            let to = match key.get(i).and_then(key_literal) {
-                Some(n) => (self.terms.int(n), ROOT),
-                None => (self.arg(args, i), caller),
-            };
+            let to = bound.get(i).copied().unwrap_or((self.arg(args, i), caller));
             e = self.bind(e, p, to);
         }
         e
+    }
+
+    /// The term and scope a call key binds a parameter to ([`Tx::call_env`]), for the
+    /// argument `a` read in `caller`: the literal `n` where `literal` is `Some(n)` (the
+    /// argument's linear term is the constant `n` and no argument may fail); otherwise the
+    /// argument, one step through its name where it is a bound name, as the first term of its
+    /// form ([`Terms::form`]), read in its scope, or in [`ROOT`] where it is an unbound name.
+    ///
+    /// Proof that the result computes what `a` computes in `caller`, at every point, failure
+    /// included. The literal: the proof at [`Tx::call_env`], (a) and before. A bound name
+    /// `x` reads its binding `(t, e)` in every read (each read's `Node::Var` arm with a
+    /// binding reads the binding, [`Walk::lookup`]). The first term of `t`'s form has the
+    /// same kind, the same constant or name, primitive (by its discriminant, which names it,
+    /// every [`Prim`] variant holding no data) and parts of the same forms, part by part; a
+    /// literal of another kind, a lambda, a primitive as a value, a `Node::Follow` and a
+    /// `Node::Other` are their own form. So by induction on the form the two compute the same in the scope
+    /// `e`. An unbound name reads no binding, and [`ROOT`] binds no name (it is
+    /// `Scope::new()`, and [`Tx::bind`] makes a new scope), so it is unbound there too and is
+    /// read as the same input, every read of an unbound name reading only the name.
+    /// Complexity tradeoff: one step through a name, not to the end of a chain of names as
+    /// [`Tx::followed`] goes: O(1) beside [`Terms::form`], O(the argument's parts) the first
+    /// time and O(1) after. A parameter bound by a key is already bound to such a term, so a
+    /// name passed down a chain of calls binds alike at every link; a name bound by a `let`
+    /// to another name binds to that name, read in the `let`'s scope, and two calls through
+    /// two such chains do not share.
+    fn bound_term(&mut self, a: Tid, caller: Eid, literal: Option<i64>) -> At {
+        if let Some(n) = literal {
+            return (self.terms.int(n), ROOT);
+        }
+        let (t, e) = match self.node(a) {
+            Node::Var(x) => self.lookup(caller, x).unwrap_or((a, caller)),
+            _ => (a, caller),
+        };
+        let form = self.terms.form(t);
+        match self.node(t) {
+            Node::Var(x) if self.lookup(e, x).is_none() => (form, ROOT),
+            _ => (form, e),
+        }
     }
 
     /// Whether the box holds no point.
@@ -6901,8 +6965,12 @@ impl<'m, 't> Walk<'m, 't> {
         self.with(|tx| tx.let_env(n, e, env))
     }
 
-    fn call_env(&self, ps: Span, args: Span, lam: Eid, caller: Eid, key: &[Lin]) -> Eid {
-        self.with(|tx| tx.call_env(ps, args, lam, caller, key))
+    fn call_env(&self, ps: Span, args: Span, lam: Eid, caller: Eid, bound: &[At]) -> Eid {
+        self.with(|tx| tx.call_env(ps, args, lam, caller, bound))
+    }
+
+    fn bound_term(&self, a: Tid, caller: Eid, literal: Option<i64>) -> At {
+        self.with(|tx| tx.bound_term(a, caller, literal))
     }
 
     fn callee(&self, f: Tid, env: Eid) -> Result<Callee, Option<Arc<str>>> {
@@ -9361,7 +9429,8 @@ impl<'m, 't> Walk<'m, 't> {
     /// The key a call of the lambda `body` in scope `lam` is translated under: `None`, with
     /// what the attempt made undone, when an argument has no linear term, or its linear term
     /// is a constant outside `i64`, which [`Tx::call_env`] could not bind to a literal (sub-case
-    /// (a) of PROOF-call-key-function-of-lins, proved at `call_env`).
+    /// (a) of PROOF-call-key-function-of-lins, proved at `call_env`). The conditions and the
+    /// bound terms are left empty, for [`Walk::shared_call_key`] to fill.
     async fn call_key(&'m self, body: Tid, lam: Eid, args: Span, env: Eid) -> Option<CallKey> {
         let mark = self.tr(|tr| tr.defs.len());
         let logged = self.with(|tx| tx.run.memo.log.len());
@@ -9375,7 +9444,7 @@ impl<'m, 't> Walk<'m, 't> {
                 }
             }
         }
-        Some(((body, lam), lins, Vec::new()))
+        Some(((body, lam), lins, Vec::new(), Vec::new()))
     }
 
     /// The linear term an integer term states over the inputs.
@@ -9397,10 +9466,10 @@ impl<'m, 't> Walk<'m, 't> {
         (body, lam): At,
         args: Span,
         env: Eid,
-        key: &[Lin],
+        bound: &[At],
     ) -> Option<Lin> {
         let place = self.with(|tx| tx.enter(t, body))?;
-        let inner = self.call_env(ps, args, lam, env, key);
+        let inner = self.call_env(ps, args, lam, env, bound);
         let l = self.lin(body, inner).await;
         self.with(|tx| tx.leave(body, place));
         l
@@ -10120,7 +10189,7 @@ impl<'m, 't> Walk<'m, 't> {
                 }
             }
         }
-        self.defined_call(t, ps, (body, lam), args, env, literal_terms(&k))
+        self.defined_call(t, ps, (body, lam), args, env, bound_terms(&k))
             .await
     }
 
@@ -10132,10 +10201,10 @@ impl<'m, 't> Walk<'m, 't> {
         (body, lam): At,
         args: Span,
         env: Eid,
-        key: &[Lin],
+        bound: &[At],
     ) -> Option<Defined> {
         let place = self.with(|tx| tx.enter(t, body))?;
-        let inner = self.call_env(ps, args, lam, env, key);
+        let inner = self.call_env(ps, args, lam, env, bound);
         let d = self.defined(body, inner).await;
         self.with(|tx| tx.leave(body, place));
         d
@@ -10152,7 +10221,7 @@ impl<'m, 't> Walk<'m, 't> {
         args: Option<(Span, Eid)>,
         key: Vec<Lin>,
     ) -> Deep<'m, Option<Defined>> {
-        let k = ((body, lam), key.clone(), Vec::new());
+        let k = ((body, lam), key.clone(), Vec::new(), Vec::new());
         self.translated(
             |m| &mut m.defined_calls,
             k,
@@ -10186,12 +10255,19 @@ impl<'m, 't> Walk<'m, 't> {
     /// so two calls share a translation only when their arguments have the same terms and the
     /// same conditions. Two calls whose arguments were made apart but alike,
     /// `f(x mod n, n) && f(x mod n, n)`, so share one, and k functions, each calling the one
-    /// before twice so, are read once each. O(the arguments) beside their translations.
+    /// before twice so, are read once each. The key also holds the term and scope each
+    /// parameter is bound to ([`Tx::bound_term`]): the literal of a constant linear term where
+    /// no argument may fail, otherwise the argument by its form. O(the arguments) beside their
+    /// translations and forms.
     ///
-    /// Proof that two calls with one key may share a translation, given that a callee's
-    /// translation reads an argument that cannot fail only through its linear term (the
-    /// premise of [`Walk::call_key`]'s keys, stated in [`Scoped`]'s comment, "each a function of
-    /// its key alone": Not proved here, it is that earlier claim). An argument that may fail
+    /// Proof that two calls with one key may share a translation: their bound terms are
+    /// equal, so [`Tx::call_env`] reads the body of both in one scope (the proof there,
+    /// PROOF-call-key-lins-by-class-fwd), whatever the body reads of a parameter. The proof
+    /// that follows, kept for the canonical keys ([`Walk::claimable`]), which bind by linear
+    /// terms alone, shows the linear terms and conditions name the arguments' values, given
+    /// that a callee's translation reads an argument that cannot fail only through its
+    /// linear term (the premise of [`Scoped`]'s comment, "each a function of its key
+    /// alone", not proved here). An argument that may fail
     /// is read by the callee through its linear term where it is defined, and through its
     /// condition ([`Walk::defined`] of the argument, which [`Walk::defined_at`] at a `Var`
     /// and [`Walk::exactly_equal`] read); where it fails its value is `#divByZero`, the one
@@ -10213,20 +10289,25 @@ impl<'m, 't> Walk<'m, 't> {
         env: Eid,
     ) -> Option<CallKey> {
         let mut k = self.call_key(body, lam, args, env).await?;
-        if !self.tr(|tr| tr.definedness) {
-            return Some(k);
+        if self.tr(|tr| tr.definedness) {
+            let mut conds = Vec::with_capacity(args.len());
+            for i in 0..args.len() {
+                conds.push(self.defined(self.arg(args, i), env).await?);
+            }
+            if conds.iter().any(|d| !d.is_top()) {
+                k.2 = self.tr(|tr| {
+                    (conds.iter())
+                        .map(|d| (d.divisors, tr.numbers.number(&d.rest)))
+                        .collect()
+                });
+            }
         }
-        let mut conds = Vec::with_capacity(args.len());
-        for i in 0..args.len() {
-            conds.push(self.defined(self.arg(args, i), env).await?);
-        }
-        if conds.iter().any(|d| !d.is_top()) {
-            k.2 = self.tr(|tr| {
-                (conds.iter())
-                    .map(|d| (d.divisors, tr.numbers.number(&d.rest)))
-                    .collect()
-            });
-        }
+        k.3 = (0..args.len())
+            .map(|i| {
+                let literal = k.2.is_empty().then(|| key_literal(&k.1[i])).flatten();
+                self.bound_term(self.arg(args, i), env, literal)
+            })
+            .collect();
         Some(k)
     }
 
@@ -10276,10 +10357,10 @@ impl<'m, 't> Walk<'m, 't> {
         (body, lam): At,
         args: Span,
         env: Eid,
-        key: &[Lin],
+        bound: &[At],
     ) -> Option<Formula> {
         let place = self.with(|tx| tx.enter(t, body))?;
-        let inner = self.call_env(ps, args, lam, env, key);
+        let inner = self.call_env(ps, args, lam, env, bound);
         let f = self.formula(body, inner).await;
         self.with(|tx| tx.leave(body, place));
         f
@@ -10415,7 +10496,7 @@ impl<'m, 't> Walk<'m, 't> {
                 return None;
             }
         }
-        Some(((body, lam), key, Vec::new()))
+        Some(((body, lam), key, Vec::new(), Vec::new()))
     }
 
     /// How the body `body` reads the parameter `p`: [`Reads::Not`] where no part of it is the
@@ -10580,7 +10661,7 @@ impl<'m, 't> Walk<'m, 't> {
     /// that path gives `None` (or a part of it, [`Tr::instance`] or the projection, does)
     /// it falls through to its last line, the body read at the call's own place with each
     /// parameter bound to its argument ([`Walk::formula_call`], [`Walk::lin_call`],
-    /// [`Walk::defined_call`] with `literal_terms(&k)`). A key that kept the constant, as
+    /// [`Walk::defined_call`] with `bound_terms(&k)`). A key that kept the constant, as
     /// this did before FAIL-linear-question-const-args-per-caller, has the same fall-through.
     /// So under either key a call's answer is the canonical one where that key's canonical
     /// path gives one, and otherwise the read at the call's place: each exact by its own
@@ -10618,7 +10699,7 @@ impl<'m, 't> Walk<'m, 't> {
     // folded. Test
     // `l01_38_presburger::bench::checker::the_linear_questions_of_n_callers_passing_constants_scale`,
     // COMPLEXITY.md row FAIL-linear-question-const-args-per-caller.
-    fn claimable(&self, ps: Span, (lam, args, conds): &CallKey) -> Option<Vec<Lin>> {
+    fn claimable(&self, ps: Span, (lam, args, conds, _): &CallKey) -> Option<Vec<Lin>> {
         use presburger::Atom;
         let unread: Vec<bool> = (0..args.len())
             .map(|i| self.reads(lam.0, self.param(ps, i)) == Reads::Not)
@@ -10734,7 +10815,7 @@ impl<'m, 't> Walk<'m, 't> {
         args: Option<(Span, Eid)>,
         key: Vec<Lin>,
     ) -> Deep<'m, Option<Formula>> {
-        let k = ((body, lam), key.clone(), Vec::new());
+        let k = ((body, lam), key.clone(), Vec::new(), Vec::new());
         self.translated(
             |m| &mut m.formula_calls,
             k,
@@ -10755,7 +10836,7 @@ impl<'m, 't> Walk<'m, 't> {
         args: Option<(Span, Eid)>,
         key: Vec<Lin>,
     ) -> Deep<'m, Option<Projection>> {
-        let k = ((body, lam), key.clone(), Vec::new());
+        let k = ((body, lam), key.clone(), Vec::new(), Vec::new());
         self.translated(
             |m| &mut m.projections,
             k,
@@ -10784,7 +10865,7 @@ impl<'m, 't> Walk<'m, 't> {
         env: Eid,
         key: Vec<Lin>,
     ) -> Deep<'m, Option<Projection>> {
-        let k = ((body, lam), key.clone(), Vec::new());
+        let k = ((body, lam), key.clone(), Vec::new(), Vec::new());
         self.translated(
             |m| &mut m.projections,
             k,
@@ -10823,7 +10904,7 @@ impl<'m, 't> Walk<'m, 't> {
         env: Eid,
         key: Vec<Lin>,
     ) -> Deep<'m, Option<Lin>> {
-        let k = ((body, lam), key.clone(), Vec::new());
+        let k = ((body, lam), key.clone(), Vec::new(), Vec::new());
         self.translated(
             |m| &mut m.lin_calls,
             k,
@@ -10949,7 +11030,7 @@ impl<'m, 't> Walk<'m, 't> {
             }
         }
         let f = self
-            .formula_call(t, ps, (body, lam), args, env, literal_terms(&k))
+            .formula_call(t, ps, (body, lam), args, env, bound_terms(&k))
             .await;
         if let Some(f) = &f {
             self.tr(|tr| tr.bound(f, &k.1));
@@ -11040,7 +11121,7 @@ impl<'m, 't> Walk<'m, 't> {
                 // The tests' reference reads the body again ([`Scoped::reading_bodies`]).
                 if self.tr(|tr| tr.bodies) {
                     return self
-                        .lin_call(t, ps, (body, lam), args, env, literal_terms(&k))
+                        .lin_call(t, ps, (body, lam), args, env, bound_terms(&k))
                         .await;
                 }
                 let p = self.value_projection(t, ps, (body, lam), args, env, key.clone());
@@ -11055,7 +11136,7 @@ impl<'m, 't> Walk<'m, 't> {
                 }
             }
         }
-        self.lin_call(t, ps, (body, lam), args, env, literal_terms(&k))
+        self.lin_call(t, ps, (body, lam), args, env, bound_terms(&k))
             .await
     }
 
@@ -16708,6 +16789,53 @@ mod tests {
             );
             let seen = translate(&t, false);
             assert!(seen.formula.is_some(), "{t:?}: no translation");
+        }
+    }
+
+    /// PROOF-call-key-lins-by-class-fwd, sub-case (b) at [`Tx::call_env`]: `g(x) && g(x + y -
+    /// y)` with `g = (p) -> (if y >= 0 { y * y } else { -1 }) > p - 7`, `x` and `y` in
+    /// `[-6, 6]`. Both calls have the key `[x]`. The `if` has no linear term without products,
+    /// so [`Walk::compare_untranslated`] decides its arm `y * y > p - 7` by the box: at `p = x`
+    /// it is `[0, 36] > [-13, -1]`, `true`; at `p = x + y - y` the box is `[-25, 11]`, so it is
+    /// read as a formula, and `y * y` has none. So the translation kept under `[x]` was
+    /// whichever call came first's: before the fix the order with `x` first had a
+    /// translation and the order with `x + y - y` first had none. Now each call is read with
+    /// its own binding, so the conjunction has the translation its two calls have alone,
+    /// `g(x)` one and `g(x + y - y)` none, in either order.
+    #[test]
+    fn a_call_keyed_by_a_term_whose_box_differs_is_read_alike_in_either_order() {
+        let v = |s: &str| Term::Var(s.into());
+        let int = |n: i64| Term::Lit(Value::Int(n));
+        let sh = Shared::new;
+        let prim = |p: Prim, a: Term, b: Term| Term::Prim(p, vec![a, b]);
+        let side = Term::If(
+            sh(prim(Prim::Ge, v("y"), int(0))),
+            sh(prim(Prim::Mul, v("y"), v("y"))),
+            sh(int(-1)),
+        );
+        let g = Term::Lam(
+            vec!["p".into()],
+            sh(prim(Prim::Gt, side, prim(Prim::Sub, v("p"), int(7)))),
+        );
+        let call = |a: Term| Term::App(sh(v("g")), vec![a]);
+        let indirect = || prim(Prim::Sub, prim(Prim::Add, v("x"), v("y")), v("y"));
+        let alone = |a: Term| {
+            let t = Term::Let("g".into(), sh(g.clone()), sh(call(a)));
+            translate(&t, false).formula.is_some()
+        };
+        assert!(alone(v("x")), "g(x) alone: no translation");
+        assert!(!alone(indirect()), "g(x + y - y) alone: a translation");
+        for (first, second) in [(v("x"), indirect()), (indirect(), v("x"))] {
+            let t = Term::Let(
+                "g".into(),
+                sh(g.clone()),
+                sh(prim(Prim::And, call(first), call(second))),
+            );
+            let seen = translate(&t, false);
+            assert!(
+                seen.formula.is_none(),
+                "{t:?}: a translation in this order only"
+            );
         }
     }
 
