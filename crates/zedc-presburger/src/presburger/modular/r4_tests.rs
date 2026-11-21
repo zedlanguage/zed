@@ -949,3 +949,103 @@ fn the_kernel_trees_agree_on_wide_values() {
         }
     }
 }
+
+#[test]
+fn private_quotients_agree_with_enumeration_and_skip_shared_variables() {
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let row = |q: u32, m: i64, r: i64| {
+        Con::eq(
+            &x.minus(&Lin::atom(Atom::Aux(q)).times(m)),
+            &Lin::constant(r),
+        )
+    };
+    for (m, n) in [(4, 8), (8, 4), (12, 18), (9, 10), (4, 4)] {
+        for a in -2..m {
+            for b in -2..n {
+                let left = row(0, m, a);
+                let right = row(1, -n, b);
+                let expected = (0..m * n).any(|x| (x - a) % m == 0 && (x - b) % n == 0);
+                assert_eq!(
+                    private_quotient_consistency(&[&left, &right]),
+                    Some(expected)
+                );
+                let f = Formula::and(vec![Formula::Con(left), Formula::Con(right)]);
+                assert_eq!(
+                    solve_modular(&f, false).map(|m| m.is_some()),
+                    Some(expected)
+                );
+            }
+        }
+    }
+    let left = row(0, 2, 0);
+    let right = row(0, 6, 2);
+    assert_eq!(private_quotient_consistency(&[&left, &right]), None);
+    let bounded = Con::ge(&Lin::constant(1), &x);
+    assert_eq!(private_quotient_consistency(&[&left, &bounded]), None);
+    let fixed = Con::eq(&Lin::constant(1), &x);
+    let input = Formula::and(vec![Formula::Con(left), Formula::Con(fixed)]);
+    assert_eq!(
+        solve_modular(&input, false).map(|m| m.is_some()),
+        Some(false)
+    );
+}
+
+#[test]
+fn private_quotients_match_concrete_models_on_small_systems() {
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let row = |q, m, r| {
+        Con::eq(
+            &x.minus(&Lin::atom(Atom::Aux(q)).times(m)),
+            &Lin::constant(r),
+        )
+    };
+    let check = |rows: Vec<Con>, expected: bool| {
+        let f = Formula::and(rows.into_iter().map(Formula::Con).collect());
+        let decided = solve_modular(&f, false)
+            .map(|m| m.is_some())
+            .unwrap_or_else(|| crate::presburger::decide(&f).unwrap());
+        let found =
+            solve_modular(&f, true).unwrap_or_else(|| crate::presburger::satisfiable(&f).unwrap());
+        assert_eq!(decided, expected, "{f}");
+        assert_eq!(found.is_some(), expected, "{f}");
+        if let Some(model) = found {
+            assert!(f.holds(&model), "{f}");
+        }
+    };
+    let options: Vec<_> = (1..=12i64)
+        .flat_map(|m| (0..m).map(move |r| (m, r)))
+        .collect();
+    let mut count = 1;
+    check(vec![], true);
+    for (i, &(a, r)) in options.iter().enumerate() {
+        check(vec![row(0, a, r)], true);
+        count += 1;
+        for (j, &(b, s)) in options.iter().enumerate().skip(i) {
+            let agrees = |x| (x - r) % a == 0 && (x - s) % b == 0;
+            check(vec![row(0, a, r), row(1, -b, s)], (0..a * b).any(agrees));
+            count += 1;
+            for &(c, t) in &options[j..] {
+                // Generalized CRT says that all pairwise gcd conditions suffice. Compute each
+                // condition independently by enumerating a period of the two relevant rows.
+                let expected = (0..a * b).any(agrees)
+                    && (0..a * c).any(|x| (x - r) % a == 0 && (x - t) % c == 0)
+                    && (0..b * c).any(|x| (x - s) % b == 0 && (x - t) % c == 0);
+                check(vec![row(0, a, r), row(1, -b, s), row(2, c, t)], expected);
+                count += 1;
+            }
+        }
+    }
+    assert_eq!(count, 85_320);
+    check(vec![row(0, 4, 2), Con::ge(&x, &Lin::constant(0))], true);
+    check(vec![row(0, 4, 2), Con::ge(&Lin::constant(1), &x)], true);
+    check(
+        vec![
+            row(0, 4, 2),
+            Con::ge(&x, &Lin::constant(0)),
+            Con::ge(&Lin::constant(1), &x),
+        ],
+        false,
+    );
+    check(vec![row(0, 2, 0), row(0, 6, 2)], false);
+    check(vec![row(0, 2, 0), row(0, 6, 4)], true);
+}

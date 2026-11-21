@@ -184,18 +184,8 @@ fn pncx_common_factor_tree_side_scale() {
 /// point exists, and the moduli's coprime base is 2 and the `p_i` (from the probe
 /// `pncx_shared_formula_axis` of PERF-negated-chain-unsolved).
 ///
-/// Measured (pres11, 2026-11-20, load 41.0): ratio 9.536 in instructions at n = 1024 and
-/// 8192, under the limit 10.5 and above the goal 9; again 9.535 (negchain1, load 42). An
-/// O(n log n) method would predict 8 log(8192) / log(1024) = 8 * 13 / 10 = 10.4 here, but the
-/// path is not n log n, so that is not a proof (rule P300): its CRT step (`combine_crt_tree`)
-/// is O(M(B) log k) for `k` moduli of `B` bits, and `B` itself grows as `k log k`, so even
-/// with `M(B) = B log B` it predicts about 9.6 (ln 9.6 B / ln B)^2 = 14 at 8 times the
-/// moduli; measured, its phases grow 23 to 31 times (deferred bench `pncx_crt_tree_scale`,
-/// plan row PERF-negated-chain-unsolved). It is a small part here (perf, negchain1,
-/// 2026-11-20: num-bigint's multiplication and division about 8% of the cycles at both sizes
-/// together; the rest is formula work, `rewrite_lin_full`, `Atom` hashing and comparison and
-/// ordered maps), so the ratio is under 10.5 at these sizes, but at larger `n` that step would
-/// dominate. Open in PERF-negated-chain-unsolved.
+/// The decision-only solver checks compatibility on the coprime bases via
+/// `private_quotient_consistency`. Reconstruction is needed when a model is requested.
 #[test]
 fn pncx_shared_formula_scale() {
     let inputs = scaling::inputs(1024, shared_formula);

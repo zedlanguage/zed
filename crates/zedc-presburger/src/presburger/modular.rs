@@ -845,6 +845,98 @@ pub(super) fn point_by_structure(f: &Formula) -> Option<Model> {
     solve_modular(f, true).flatten()
 }
 
+/// Decide a conjunction of equalities with private integer quotients and one free integer.
+/// The caller enters only for a Boolean query on a flattened conjunction of rows with at
+/// least one nonzero constant. The empty conjunction and the homogeneous zero witness stay
+/// with the general solver. Each accepted row has exactly two non-product atoms in
+/// `s*x + a*q + c = 0`, where the same `x` occurs with `s = ±1` in every row and
+/// `|a| > 1`. A bound, an equality of a different shape, a unit-modulus row, or a shared
+/// quotient declines this shortcut. A unit modulus by itself places no restriction on x.
+///
+/// Solving the row for q is possible exactly when a divides `s*x+c`. Thus the row requires
+/// `x = -s*c (mod |a|)`, and any such x gives the integer quotient `-(s*x+c)/a`. The
+/// quotients occur nowhere else in this conjunction, so the choices of quotient are independent.
+///
+/// Each modulus is the product of its supplied pairwise coprime powers. Divisibility by that
+/// product is equivalent to divisibility by each power. For powers of the same base, the
+/// smaller divides the larger. Their residue classes are disjoint if the larger residue
+/// differs from the smaller modulo the smaller power. Otherwise every integer in the larger
+/// class is in the smaller one. After processing any prefix, the map therefore preserves
+/// precisely the joint requirement of all processed rows on each base. A conflict cannot be
+/// solved. If no conflict occurs, CRT gives an x satisfying the retained powers because
+/// powers from distinct bases are coprime. This x gives all the independent quotients above.
+///
+/// Complexity tradeoff: naive, build the CRT integer of all rows (`combine_crt_tree`), which
+/// costs O(M(B) log k) for `k` rows of `B` modulus bits in all and measured 23.3 times work
+/// for 8 times the rows (bench `pncx_crt_tree_scale`, deferred, plan row
+/// PERF-negated-chain-unsolved). A Boolean answer needs only whether the integer exists. Used:
+/// one residue per coprime base, kept in a hash map, never multiplied out. Its cost is that of
+/// `coprime_factorization`, plus one reduction of each residue by each of its powers and one
+/// comparison per factor. On the table branch of the factorization (bounded word-size moduli,
+/// as in `pncx_shared_formula_scale`) that is O(B log B) expected; on the tree branch the
+/// factorization's own O(M(N) log k) bound applies, and this routine adds no more than that.
+/// Measured on the bench (2026-11-20, R2 Sol seat, load 54.65): 8.826 times the instructions
+/// and 8.02 times the bytes for 8 times the rows. Before: 9.536 and 8.85.
+///
+/// Tests: `private_quotients_match_concrete_models_on_small_systems` and
+/// `private_quotients_agree_with_enumeration_and_skip_shared_variables`.
+fn private_quotient_consistency(cons: &[&Con]) -> Option<bool> {
+    let (root, _) = cons.first()?.lin.terms.iter().find(|(_, k)| k.is_unit())?;
+    if matches!(root, Atom::Product(..)) {
+        return None;
+    }
+    let mut quotients = HashSet::with_capacity(cons.len());
+    let mut moduli = BTreeSet::new();
+    let mut rows = Vec::with_capacity(cons.len());
+    for c in cons {
+        if c.rel != Rel::Eq || c.lin.terms.len() != 2 {
+            return None;
+        }
+        let k_root = c.lin.terms.get(root).filter(|k| k.is_unit())?;
+        let (q, k_q) = c.lin.terms.iter().find(|(a, _)| *a != root)?;
+        if matches!(q, Atom::Product(..)) || k_q.is_unit() || k_q.is_zero() || !quotients.insert(q)
+        {
+            return None;
+        }
+        let m = k_q.abs();
+        let r = if k_root.is_negative() {
+            c.lin.constant.clone()
+        } else {
+            -&c.lin.constant
+        };
+        moduli.insert(m.clone());
+        rows.push((m, r));
+    }
+
+    let factors = coprime_factorization(&moduli);
+    let mut strongest: HashMap<&Int, (&Int, Int)> = HashMap::with_capacity(moduli.len());
+    for (m, r) in rows {
+        for (base, power) in &factors[&m] {
+            let residue = r.mod_floor(power);
+            match strongest.entry(base) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert((power, residue));
+                }
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    let (old_power, old_residue) = entry.get();
+                    let compatible = match power.cmp(old_power) {
+                        std::cmp::Ordering::Less => old_residue.mod_floor(power) == residue,
+                        std::cmp::Ordering::Equal => *old_residue == residue,
+                        std::cmp::Ordering::Greater => residue.mod_floor(old_power) == *old_residue,
+                    };
+                    if !compatible {
+                        return Some(false);
+                    }
+                    if power > *old_power {
+                        entry.insert((power, residue));
+                    }
+                }
+            }
+        }
+    }
+    Some(true)
+}
+
 fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     // Collect top-level conjunction and verify no Product atoms exist anywhere in `f`.
     let mut top_cons: Vec<&Con> = Vec::new();
@@ -866,6 +958,16 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                 }
             }
         }
+    }
+
+    // A conjunction with all constants zero can use the existing zero witness before
+    // any factorization. A nonzero constant rules out that witness for these equalities.
+    if !want_model
+        && top_clauses.is_empty()
+        && top_cons.iter().any(|c| !c.lin.constant.is_zero())
+        && let Some(consistent) = private_quotient_consistency(&top_cons)
+    {
+        return Some(consistent.then(Model::new));
     }
 
     // Check all constraints in the DAG for products, at least one non-unit coefficient, and collect
@@ -3799,8 +3901,8 @@ type ModBase = BTreeMap<Int, Vec<(Int, Int)>>;
 /// moduli, as every one shares `g`. No modulus or answer is given up. Tests:
 /// pncx_common_factors_reconstruct_inputs, pncx_coprime_factorization_has_its_answers;
 /// benches pncx_common_factor_scale and pncx_coprime_dense_scale (table side), and
-/// pncx_shared_formula_scale through `solve_modular` (9.536 on 2026-11-20: under the limit,
-/// above the goal 9, no n log n proof). The tree side (pncx_common_factor_tree_side_scale and
+/// pncx_shared_formula_scale through `solve_modular`'s private quotient consistency check.
+/// The tree side (pncx_common_factor_tree_side_scale and
 /// the kernel's the_coprime_base_of_distinct_primes_scales) is deferred to plan row
 /// PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
 fn coprime_factorization(moduli: &BTreeSet<Int>) -> ModBase {
