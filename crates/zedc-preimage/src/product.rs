@@ -4292,6 +4292,7 @@ impl Repair {
         let Some(entry) = self.moves.pop_entry() else {
             return Ok(Step::Ended);
         };
+        REPAIR_STEPS.with(|c| c.set(c.get() + 1));
         let Some((gs, s)) = entry else {
             return Ok(Step::Going);
         };
@@ -4372,6 +4373,242 @@ impl Repair {
                 ))
             },
         )
+    }
+}
+
+thread_local! {
+    /// The entries the searches of [`Repair`] have taken on this thread, stale ones included:
+    /// the work of the raises [`Scope::raise_all`] makes one at a time, which it hands to the
+    /// raises made at once ([`BatchRaise`]) as they run in step.
+    static REPAIR_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The conjuncts of the relation that [`Scope::no_point_at`] asks about, and the names they
+/// mention, from [`Scope::question_parts`].
+type Question = (BTreeSet<Arc<Formula>>, BTreeSet<Arc<str>>);
+
+/// What a turn of a [`BatchRaise`] ended with.
+enum Batched {
+    /// The work it was given is spent.
+    Paused,
+    /// Every raise holds at this potential.
+    Held(Potential),
+    /// It found a cycle negative with the gaps, or an edge the potential did not hold at
+    /// before: the raises made one at a time decide.
+    Failed,
+}
+
+/// The raises of [`Scope::raise_all`] made at once, on a copy of the potential: every name's
+/// gap raised and its value lowered by the growth `Δ_x`, as [`Scope::raise`] does for one,
+/// and then one search that lowers every name the raised ones reach, from all of them at once.
+///
+/// What changes. As at [`Scope::raise`], lowering `q_x` by `Δ_x` and raising `g_x` by `Δ_x`
+/// leaves each edge into `x` as it was (for an edge between two raised names the two shifts
+/// of the head cancel) and lowers each edge out of `x` by `Δ_x`. So only edges out of raised
+/// names can fall below `(0, 0)`, and a raised name is where the search starts.
+///
+/// The search. Each name `y` has a move `m_y`, `(0, 0)` or less, its labels, `(0, 0)` for a
+/// raised name to start with and none (read as `(0, 0)`) for any other. A name taken at its
+/// move `m_s` reads each edge `s → y` of its component, of pair weight `w`, and lowers `m_y` to
+/// `p_s + m_s + w - p_y` when that is below both `(0, 0)` and `m_y` (`p` the values of the
+/// copy). A name whose move falls is queued again, even one taken before: the edges out of the
+/// raised names may be negative, so this is the label-correcting search with a heap, least
+/// move first (Johnson, "Efficient algorithms for shortest paths in sparse networks", J. ACM
+/// 24(1), 1977, doi:10.1145/321992.321993, his "Dijkstra's algorithm with re-insertion";
+/// cited from memory, not checked against the paper). When the heap is empty, every edge out
+/// of a name with a move was read at its last move, so `p_s + m_s + w - p_y - m_y >= (0, 0)`
+/// there; an edge out of a name with no move held before (invariant (I) of [`put_in`], checked
+/// as each edge is read) and its head can only have fallen. So the potential `p + m` holds at
+/// every edge of the components read, and the raised gaps are in it. An edge to another
+/// component is not followed: the values hold within each component alone ([`Potential`]),
+/// and it is only checked to go up the order, as at [`Repair::step`].
+///
+/// Cycles. Each name with a move keeps the name and edge its move came from, `via`. The pair
+/// values are an ordered abelian group (lexicographic order, added part by part), so the
+/// lemma that the predecessor graph of any sequence of relaxations has a cycle only when the
+/// graph has a cycle of negative weight holds for them as for numbers (Cormen, Leiserson,
+/// Rivest and Stein, *Introduction to Algorithms*, 3rd ed., Lemma 24.16, from memory). Lowering
+/// `y` from `s` would close a cycle in `via` exactly when `s` is `y` or below `y`. Each
+/// lowering takes the subtree below `y` apart (the subtree disassembly of Tarjan, *Data
+/// Structures and Network Algorithms*, SIAM 1983, as described by Cherkassky and Goldberg,
+/// "Negative-cycle detection algorithms", Math. Programming 85, 1999,
+/// doi:10.1007/s101070050058; both from memory, not checked against the texts): the names
+/// below `y` lose their `via`, since their moves came through the old move of `y`, and `s`
+/// among them is the cycle. So `via` stays a forest, and a cycle it would close is negative.
+/// Cost: each name taken off the forest was put on it by an earlier lowering, so the
+/// disassembly costs at most one step per lowering in all; a walk up `via` that ignored this
+/// cost O(n) a lowering, and Θ(n²) on the ring of item O7, where the second lap lowers names
+/// taken in the first (measured with prints, n = 40, 2026-11-21: the batch then ended only
+/// after the raises one at a time had done 814 of their units). Whether the search goes on
+/// forever with a negative cycle is not what bounds it: the raises made one at a time, run
+/// in step, end it ([`Scope::raise_all`]). A cycle found whose first part is 0 is
+/// one of weight `(0, -j)` for its `j` edges not tied, with `j >= 1`, as at [`put_in`]: its
+/// edges are tied and the search starts again from the copy with the ties kept, each restart
+/// tying at least one edge more, so there are at most as many restarts as edges. A cycle whose
+/// first part is below 0 is negative with the gaps: [`Batched::Failed`].
+///
+/// Departures from Johnson: the weights are pairs, and the cycles of first part 0 are tied
+/// and the search restarted, as [`put_in`] ties them and repeats its round.
+struct BatchRaise {
+    /// The copy with the gaps raised and the raised names lowered, before the search.
+    start: Potential,
+    /// `start` with the ties found so far, whose values the search reads.
+    pot: Potential,
+    /// The raised names with a value, each with its growth `Δ`.
+    raised: BTreeMap<Arc<str>, Int>,
+    /// Each name's move, the least found so far.
+    moves: Dijkstra<Arc<str>, Pair, BTreeMap<Arc<str>, Pair>>,
+    /// The name and edge each name's move came from, and the edge's pair weight: the
+    /// predecessor forest.
+    via: BTreeMap<Arc<str>, (Arc<str>, (Arc<Formula>, bool), Pair)>,
+    /// The children of each name in `via`.
+    children: BTreeMap<Arc<str>, BTreeSet<Arc<str>>>,
+}
+
+impl BatchRaise {
+    fn new(start: Potential, raised: BTreeMap<Arc<str>, Int>) -> BatchRaise {
+        BatchRaise {
+            pot: start.clone(),
+            start,
+            moves: Self::search(&raised),
+            raised,
+            via: BTreeMap::new(),
+            children: BTreeMap::new(),
+        }
+    }
+
+    /// The search from every raised name at move `(0, 0)`.
+    fn search(
+        raised: &BTreeMap<Arc<str>, Int>,
+    ) -> Dijkstra<Arc<str>, Pair, BTreeMap<Arc<str>, Pair>> {
+        let zero = (Int::ZERO, 0i64);
+        let labels = raised.keys().map(|x| (x.clone(), zero.clone())).collect();
+        Dijkstra::starting(labels, raised.keys().cloned())
+    }
+
+    /// Runs the search for at most `work` units, each an entry taken from the heap or a step
+    /// of a walk up `via`, taking them from `work`.
+    fn run(&mut self, relation: &Conjuncts, t: BlockId, work: &mut u64) -> Batched {
+        while *work > 0 {
+            *work -= 1;
+            match self.step(relation, t, work) {
+                Ok(None) => {}
+                Ok(Some(pot)) => return Batched::Held(pot),
+                Err(_) => return Batched::Failed,
+            }
+        }
+        Batched::Paused
+    }
+
+    /// Takes one entry from the heap and reads its name's edges out; the potential once the
+    /// heap is empty.
+    fn step(
+        &mut self,
+        relation: &Conjuncts,
+        t: BlockId,
+        work: &mut u64,
+    ) -> Result<Option<Potential>, Fall> {
+        let zero = (Int::ZERO, 0i64);
+        let Some(entry) = self.moves.pop_entry() else {
+            let mut pot = std::mem::take(&mut self.pot);
+            for (y, m) in self.moves.labels() {
+                if *m < zero {
+                    let py = pot.at.get(y).ok_or(Fall::Potential)?.clone();
+                    pot.at.insert(y.clone(), pair_plus(&py, m));
+                }
+            }
+            return Ok(Some(pot));
+        };
+        let Some((ms, s)) = entry else {
+            return Ok(None);
+        };
+        let cs = self.pot.comp_of(&s)?;
+        let ps = self.pot.at.get(&s).ok_or(Fall::Potential)?.clone();
+        let to_s = pair_plus(&ps, &ms);
+        // The value of `s` before the raises: its edges out held there.
+        let was = match self.raised.get(&s) {
+            Some(d) => (&ps.0 + d, ps.1),
+            None => ps,
+        };
+        for (h, hb, f) in tree_edges(relation, t, &s) {
+            let (Some(from), Some(to)) = (&f.from, &f.to) else {
+                continue;
+            };
+            if *from != s {
+                continue;
+            }
+            let cx = self.pot.comp_of(to)?;
+            if cx != cs {
+                if self.pot.rank(cx) < self.pot.rank(cs) {
+                    return Err(Fall::Potential);
+                }
+                continue;
+            }
+            let px = self.pot.at.get(to).ok_or(Fall::Potential)?;
+            let fw = pair_weight(&self.pot.tied, &self.pot.gap, &h, hb, &f);
+            reduced(pair_minus(&pair_plus(&was, &fw), px), &zero).map_err(|_| Fall::Potential)?;
+            let c = pair_minus(&pair_plus(&to_s, &fw), px);
+            if c >= zero || self.moves.labels().get(to).is_some_and(|m| *m <= c) {
+                continue;
+            }
+            // The subtree of `to` in `via`, taken apart: its names' moves came through the
+            // move of `to`, which now falls. `s` within it, or `to` itself, closes a cycle.
+            let mut closed = *to == s;
+            let mut below: Vec<Arc<str>> = Vec::new();
+            let mut stack = vec![to.clone()];
+            while let Some(a) = stack.pop() {
+                for b in self.children.remove(&a).unwrap_or_default() {
+                    *work = work.saturating_sub(1);
+                    closed |= b == s;
+                    stack.push(b.clone());
+                    below.push(b);
+                }
+            }
+            if closed {
+                // The cycle: this edge, and those of `via` from `s` up to `to`.
+                let mut cycle = vec![(h.clone(), hb)];
+                let mut weight = fw.clone();
+                let mut at = s.clone();
+                while at != *to {
+                    let (p, k, kw) = self.via.get(&at).ok_or(Fall::Potential)?;
+                    *work = work.saturating_sub(1);
+                    cycle.push(k.clone());
+                    weight = pair_plus(&weight, kw);
+                    at = p.clone();
+                }
+                if weight.0 != Int::ZERO || weight.1 >= 0 {
+                    return Err(Fall::Potential);
+                }
+                for k in cycle {
+                    self.pot.tied.insert(k);
+                }
+                #[cfg(feature = "counts")]
+                super::preimage::counts::ZERO_CYCLES_TIED
+                    .set(super::preimage::counts::ZERO_CYCLES_TIED.get() + 1);
+                let tied = std::mem::take(&mut self.pot.tied);
+                self.pot = self.start.clone();
+                self.pot.tied = tied;
+                self.moves = Self::search(&self.raised);
+                self.via.clear();
+                self.children.clear();
+                return Ok(None);
+            }
+            for b in &below {
+                self.via.remove(b);
+            }
+            if let Some((p, _, _)) = self.via.get(to) {
+                if let Some(kids) = self.children.get_mut(p) {
+                    kids.remove(to);
+                }
+            }
+            self.moves.lower(to.clone(), c);
+            self.via.insert(to.clone(), (s.clone(), (h, hb), fw));
+            self.children
+                .entry(s.clone())
+                .or_default()
+                .insert(to.clone());
+        }
+        Ok(None)
     }
 }
 
@@ -10523,8 +10760,12 @@ impl Scope {
             let open: Vec<&Arc<str>> = free.iter().filter(|n| !statics.contains_key(*n)).collect();
             let tests: BTreeSet<&Address> =
                 (open.iter()).flat_map(|n| self.kept.fixed.of(n)).collect();
-            // The answers of the relation at the points already asked of this constraint.
-            let mut asked: BTreeMap<Vec<(Arc<str>, Value)>, bool> = BTreeMap::new();
+            // The answers of the relation at the points already asked of this constraint, keyed
+            // by the names left open and the point's values on the names the question reads
+            // (`Scope::question_parts`), so cases that differ only on other names ask once.
+            let mut asked: BTreeMap<(Vec<&Arc<str>>, Vec<(Arc<str>, Value)>), bool> =
+                BTreeMap::new();
+            let mut read: BTreeMap<Vec<&Arc<str>>, Option<Question>> = BTreeMap::new();
             for k in tests {
                 let Some(t) = self.kept.tests.get(k).filter(|_| !out.contains(k)) else {
                     continue;
@@ -10546,8 +10787,18 @@ impl Scope {
                     if left.len() == open.len() {
                         return false;
                     }
-                    let key: Vec<(Arc<str>, Value)> = ps.clone();
-                    *(asked.entry(key)).or_insert_with(|| self.no_point_at(&left, ps))
+                    let q = read
+                        .entry(left.clone())
+                        .or_insert_with(|| self.question_parts(&left));
+                    let Some((parts, names)) = &*q else {
+                        return false;
+                    };
+                    let on: Vec<(Arc<str>, Value)> = (ps.iter())
+                        .filter(|(n, v)| matches!(v, Value::Int(_)) && names.contains(n))
+                        .cloned()
+                        .collect();
+                    *(asked.entry((left, on)))
+                        .or_insert_with_key(|(_, on)| Self::no_point_at(parts, on))
                 });
                 if dead {
                     out.insert(k.clone());
@@ -10556,9 +10807,10 @@ impl Scope {
         }
     }
 
-    /// Whether the relation's conjuncts that mention a name of `left` have no integer point
-    /// where each name of `ps` has its value: a case that fixes those names ([`KeptTest::
-    /// points`]) then holds no state, since each of its states meets every conjunct of the
+    /// Whether the relation's conjuncts that mention a name of `left` (the first part of the
+    /// [`Question`], from [`Scope::question_parts`]) have no integer point where each name of
+    /// `on`, the names of a case's point those conjuncts mention, has its value: a case that
+    /// fixes those names ([`KeptTest::points`]) then holds no state, since each of its states meets every conjunct of the
     /// relation. A question the solver refuses gives `false`: the case is kept, sound and
     /// wider.
     // Proof that `true` means the case holds no state. (1) Every conjunct of `self.relation`
@@ -10587,26 +10839,40 @@ impl Scope {
     // `l01_39_scope_relations::lazy::a_group_on_one_name_of_a_disjunction_assumed_after_it_bounds_its_points`
     // (red before this question, `x` in {0, 10}; green after), and the bench
     // `…::lazy::points_asked_after_a_disjunction_scale`.
-    fn no_point_at(&self, left: &[&Arc<str>], ps: &[(Arc<str>, Value)]) -> bool {
-        let mut parts: BTreeSet<Arc<Formula>> = BTreeSet::new();
-        for n in left {
-            parts.extend(self.relation.mentioning(n).cloned());
-        }
-        if parts.is_empty() {
-            return false;
-        }
-        let mentioned: BTreeSet<Arc<str>> =
-            parts.iter().flat_map(|f| conjuncts::names(f)).collect();
+    // Complexity tradeoff (PERF-points-asked-key, 2026-11-21): `asked` was keyed by the whole
+    // point, so k tests whose cases fix `y` to one value and each its own `x_j` asked one
+    // question each for every constraint on `y` and an `x_i`: k² solver calls, and
+    // `xst::s4::bench::points_written_after_scale` read 16.9 times the instructions at 8n
+    // (limit 10.5; 9.03 on 2026-11-18, before the question). The question reads the point only
+    // on the names its conjuncts mention (`Question`), so it is keyed by those values and the
+    // names left open: equal keys give equal formulas and so equal answers, and the bench asks
+    // one question per constraint. Each constraint still passes over each test on its names,
+    // O(c) for c cases with no solver call, as the comment of `Scope::written_dead` says.
+    fn no_point_at(parts: &BTreeSet<Arc<Formula>>, on: &[(Arc<str>, Value)]) -> bool {
         let mut f: Vec<Formula> = parts.iter().map(|g| Formula::clone(g)).collect();
-        for (n, v) in ps {
-            if let Value::Int(v) = v
-                && mentioned.contains(n)
-            {
+        for (n, v) in on {
+            if let Value::Int(v) = v {
                 let x = Lin::atom(Atom::Sym(n.clone()));
                 f.push(Formula::Con(Con::eq(&x, &Lin::constant(*v))));
             }
         }
         matches!(presburger::satisfiable(&Formula::and(f)), Ok(None))
+    }
+
+    /// The conjuncts of the relation that mention a name of `left`, and the names they
+    /// mention: the formula [`Scope::no_point_at`] asks, before the equalities of a point.
+    /// `None` when no conjunct mentions them, where the question would give `false`.
+    fn question_parts(&self, left: &[&Arc<str>]) -> Option<Question> {
+        let mut parts: BTreeSet<Arc<Formula>> = BTreeSet::new();
+        for n in left {
+            parts.extend(self.relation.mentioning(n).cloned());
+        }
+        if parts.is_empty() {
+            return None;
+        }
+        let mentioned: BTreeSet<Arc<str>> =
+            parts.iter().flat_map(|f| conjuncts::names(f)).collect();
+        Some((parts, mentioned))
     }
 
     /// Forgets every projection made, so that the next reduction projects the whole relation
@@ -14594,11 +14860,16 @@ impl Scope {
             // raise that fails changes nothing; on a cycle with no slack the first seed whose
             // gap grew fails, at the cost of its one search, and the loop breaks, so the tree
             // costs one failed raise and one call of [`Scope::by_holes`] on one cycle,
-            // O((k + h) log N) there ([`holes`]). Still open (item O7, COMPLEXITY.md S25):
-            // raises that all hold, as on a chain with slack, each moving O(k) names, O(k² log k)
-            // (`linked::bench::holes_piled_in_the_names_of_a_chain_take_quadratic_time`, and
-            // the ring of `holes::bench::a_ring_with_slack_whose_raises_all_hold_is_quadratic`:
-            // 472 M and 13,024 M instructions at n = 128 and 1,024, ratio 27.6, 2026-11-21).
+            // O((k + h) log N) there ([`holes`]). Raises that all hold, as on a ring with slack
+            // (item O7, COMPLEXITY.md S25), each moved O(k) names when made one at a time,
+            // O(k² log k): 472 M and 13,024 M instructions at n = 128 and 1,024, ratio 27.6
+            // (2026-11-21). They are now also made at once, in step with the raises one at a
+            // time, the first to end deciding ([`Scope::raise_all`], row
+            // PERF-project-raises-o7-batch), which bounds the ring by O(k log k)
+            // (`holes::bench::a_ring_with_slack_whose_raises_all_hold_is_near_linear`). Holes
+            // added one test at a time, one raise a projection, are not batched and stay
+            // quadratic (`linked::bench::holes_piled_in_the_names_of_a_chain_take_quadratic_time`,
+            // item ST-holes-moves).
             // Tried and refused (row PERF-project-raises-o7, 2026-11-21): stopping the raises
             // once the potential's entries they changed passed the sizes of their components,
             // and projecting the tree by its ends, as COMPLEXITY.md S25 item (2) proposed. The
@@ -14608,12 +14879,12 @@ impl Scope {
             // so each due block runs its own Presburger projection (a perf profile put 32% of
             // the cycles in `row_sums::Plan::meet`). A repair of the potential for many lowered
             // names at once has negative edges out of each of them, which a one-source Dijkstra
-            // repair does not handle; two literature searches (allpapers keyword and semantic,
-            // 2026-11-21) found no method in O(k log k) for that batch among their titles and
-            // abstracts; the nearest titles, not yet read in full, are Schutt and Stuckey,
-            // "Incremental Satisfiability and Implication for UTVPI Constraints" (arXiv
-            // 0709.2961), and van den Brand and Saranurak, "Sensitive Distance and Reachability
-            // Oracles for Large Batch Updates" (arXiv 1907.07982). Not proved near linear.
+            // repair does not handle; four literature searches (allpapers keyword and semantic,
+            // 2026-11-21, `-n 250`, the last two on Dijkstra with re-insertion and on shortest
+            // paths with few sources of negative edges) found no method in O(k log k) for that
+            // batch in general, which is single-source shortest paths with negative weights
+            // ([`Scope::raise_all`]); hence the batch runs in step with the raises one at a
+            // time rather than alone.
             for (&t, at) in &fresh {
                 if !at.added.is_empty() {
                     match self.repair(&relation, t, &at.added) {
@@ -14629,11 +14900,8 @@ impl Scope {
                         }
                     }
                 }
-                for n in &at.names {
-                    if !self.raise(&relation, t, n) {
-                        break;
-                    }
-                }
+                let names: Vec<Arc<str>> = at.names.iter().cloned().collect();
+                self.raise_all(&relation, t, &names);
             }
         }
         // Whether each seed keeps its tree from shortest paths, now that the gaps are raised.
@@ -15031,7 +15299,7 @@ impl Scope {
             holes::Outcome::Refused { names: part, holed } => {
                 // A raise that fails leaves its name past its gap, and the tree off shortest
                 // paths whatever the others do, so the raises stop there.
-                if paths && names.iter().all(|n| self.raise(relation, t, n)) {
+                if paths && self.raise_all(relation, t, &names) {
                     return Ends::Paths(names);
                 }
                 // The constraints between the names of the part, as written.
@@ -15335,6 +15603,99 @@ impl Scope {
             return true;
         }
         false
+    }
+
+    /// Raises the gaps of `names`, of tree `t`, as [`Scope::raise`] does for each in turn,
+    /// stopping at the first that fails; whether none failed. The raises one at a time and the
+    /// raises made at once ([`BatchRaise`]) run in step, and the first to end decides.
+    ///
+    /// Proof that the raises made at once, when they hold, give the answers of the raises one
+    /// at a time. Both raise every gap to the same value, [`hole_gap`] of the name's interval,
+    /// which no raise changes. A cycle's weight with the gaps is its weight less the gaps of its
+    /// names ([`Potential`]), so it only falls as gaps grow: when no cycle is negative in its
+    /// first part with every gap raised, as the batch held shows (a potential holding at every
+    /// edge bounds every cycle's first part below by 0), none is with the gaps of any first
+    /// `i` raises, and under invariant (I) of [`put_in`] a raise fails only on such a cycle;
+    /// so each raise one at a time holds too, and both end with every gap raised. The two
+    /// potentials differ in their values and their ties, which no answer reads (cases (a) and
+    /// (b) at [`put_in`]). When the batch fails, it is dropped and the raises one at a time
+    /// decide, as before.
+    ///
+    /// Complexity tradeoff: naive version, the raises one at a time, each lowering every name
+    /// its search reaches, so on a cycle with slack enough that every raise holds the `i`th
+    /// raise moved min(i, n - i) names, Θ(n² log n) for `n` raises (item O7, COMPLEXITY.md
+    /// S25; 472 M and 13,024 M instructions at n = 128 and 1,024, ratio 27.6). The batch
+    /// alone moves each name of that ring O(1) times, but its re-insertions have no bound
+    /// better than exponential in general (Johnson 1977, as at [`BatchRaise`]): a batch raise
+    /// is single-source shortest paths with negative weights, since any graph's weights are
+    /// those of a batch with `Δ_s` the most negative weight out of `s`, and the fastest known
+    /// methods for that are randomized and near `m log⁸ n` (Bernstein, Nanongkai and
+    /// Wulff-Nilsen, arXiv 2203.03456, and Bringmann, Cassis and Fischer, arXiv 2304.05279,
+    /// from their abstracts). Used: the two in step. After each raise one at a time, the batch
+    /// may do as many units as that raise did, counted as entries its searches took
+    /// ([`REPAIR_STEPS`]) plus one for the raise itself, so that a raise that reads nothing
+    /// still gives the batch a turn. Bound: let `S` be the units of all the raises one at a
+    /// time, `B` those of the batch to its end, and `c` those of the costliest one raise. The
+    /// batch never does more than the raises before it, so the whole is at most `2S`; and it
+    /// ends once the raises have given it `B`, so the raises do at most `B + c`, and the whole
+    /// at most `2B + c`. A unit reads one name's edges, O(d log n) for its `d` edges, as a unit
+    /// of [`Repair`] does. On the ring of O7, `c` is O(n), a raise moving at most n names, and
+    /// `B` was measured O(n), not proved: with prints at n = 40 (2026-11-21) the batch took 88
+    /// entries for 39 raised names, found no cycle, and ended once the raises one at a time
+    /// had done 142 units; so O(n log n) there, and the bench
+    /// `holes::bench::a_ring_with_slack_whose_raises_all_hold_is_near_linear` reads 8.5 times
+    /// the instructions from n = 128 to 1,024 (it read 26.6 with the raises one at a time).
+    /// Tradeoff: up to twice the work of the raises one at a time where the batch does not
+    /// end first, and a copy of the potential, O(1) for its persistent maps.
+    ///
+    /// Tests: the correctness tests of `l01_39_scope_relations` reach each way the batch ends
+    /// (counted with prints, 2026-11-21: 316 held, 26 restarts after a cycle of first part 0,
+    /// 56 failed on a cycle negative with the gaps), and those of `holes`, `linked` and `xst`
+    /// pass. Negative control, run once and not committed: a batch that took a cycle negative
+    /// with the gaps as held failed
+    /// `xst::holes::ce_b_with_each_bound_a_test_is_exact_in_every_rotation` and
+    /// `xst::holes::the_collective_example_with_each_bound_a_test_is_exact_in_every_rotation`.
+    /// `holes::a_ring_with_slack_keeps_each_hole_and_reaches_its_ends` checks the ring's holes
+    /// and ends at n up to 40.
+    fn raise_all(&mut self, relation: &Conjuncts, t: BlockId, names: &[Arc<str>]) -> bool {
+        let mut start = self.potential.clone();
+        let mut raised = BTreeMap::new();
+        for x in names {
+            let Some(p) = self.names.get(x).filter(|p| !classed(p)) else {
+                continue;
+            };
+            let g = hole_gap(p.ints());
+            let was = start.gap_of(x);
+            if g <= was {
+                continue;
+            }
+            if let Some(px) = start.at.get(x).cloned() {
+                let d = &g - &was;
+                start.at.insert(x.clone(), (&px.0 - &d, px.1));
+                raised.insert(x.clone(), d);
+            }
+            start.gap.insert(x.clone(), g);
+        }
+        let mut batch = (!raised.is_empty()).then(|| BatchRaise::new(start, raised));
+        let mut work = 0u64;
+        for n in names {
+            if let Some(b) = &mut batch {
+                match b.run(relation, t, &mut work) {
+                    Batched::Paused => {}
+                    Batched::Held(pot) => {
+                        self.potential = pot;
+                        return true;
+                    }
+                    Batched::Failed => batch = None,
+                }
+            }
+            let before = REPAIR_STEPS.with(std::cell::Cell::get);
+            if !self.raise(relation, t, n) {
+                return false;
+            }
+            work += REPAIR_STEPS.with(std::cell::Cell::get) - before + 1;
+        }
+        true
     }
 
     /// Empties the interval of `n`, or the scope when it has no product of `n`.

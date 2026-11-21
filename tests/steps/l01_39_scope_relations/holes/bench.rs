@@ -22,17 +22,18 @@ fn scaling_of_one_cycle_of_holes_is_near_linear() {
 /// The ring of item O7 (COMPLEXITY.md S25, row PERF-project-raises-o7): `n` names within
 /// `0..=4n`, `x{i}` without `4n - 2i`, and `x0 >= x1 >= … >= x{n - 1} >= x0 - 2n`, a cycle with
 /// slack enough that every raise of a gap holds ([`slack_ring`]). Built before the timing.
-/// Each raise moves O(n) names, so the order checked is 2: 472 M and 13,024 M instructions at
-/// n = 128 and 1,024, ratio 27.6 (2026-11-21). Item O7 is open and not approved; when it is
-/// fixed this check goes to order 1. The way tried and refused is at `Scope::project`.
+/// One raise at a time, each moved O(n) names: 472 M and 13,024 M instructions at n = 128 and
+/// 1,024, ratio 27.6 (2026-11-21), so this checked order 2. The raises made at once
+/// (`Scope::raise_all`, row PERF-project-raises-o7-batch) move each name O(1) times, so the
+/// order checked is 1.
 #[test]
-fn a_ring_with_slack_whose_raises_all_hold_is_quadratic() {
+fn a_ring_with_slack_whose_raises_all_hold_is_near_linear() {
     let p = Premises::new();
     let built = scaling::inputs(SLACK_N, slack_ring);
     scaling::check_order(
         "the ring of item O7, every raise holding",
         SLACK_N,
-        2,
+        1,
         |n| {
             let (s, d) = &built[&n];
             assert!(!s.assume(d, true, &p).bottom);
