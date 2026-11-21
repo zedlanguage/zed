@@ -27,8 +27,15 @@
 //! `proceedingsofint0030unse` and `proceedingsofint0000inte_f9v3`, are lending only, their PDF
 //! and text private, and search inside is refused), LibGen title search (no match), Google
 //! Scholar (sent to a block page twice), Anna's Archive (no result page, or a browser check;
-//! no md5 to fetch by), welib (browser check), Sci-Hub and Sci-Net (no DOI to ask by); the
-//! queue form below is credited to him from secondary accounts only. With the queue first in
+//! no md5 to fetch by), welib (browser check), Sci-Hub and Sci-Net (no DOI to ask by).
+//! Searched again 2026-11-21 (CITE-unfound-four), no copy found: Google Books API (429, rate
+//! limit, three tries), HathiTrust full-text search (Cloudflare 403),
+//! archive.org advanced search (the same lending-only items; no hit for the title or for
+//! "monograph 3523"), LibGen by the proceedings title (only two reviews of the volume,
+//! doi:10.1137/1003018 and doi:10.2307/3611677), bitsavers' file index (no match), a web
+//! search (catalog records and secondary accounts only), a grounded agy search (timed out at
+//! 300 s). Not read, so the queue form below is credited to him from secondary accounts
+//! only. With the queue first in
 //! first out, the items are taken in passes: pass 0 is the source, pass `k + 1` the items
 //! queued while pass `k` is worked. By induction, at the end of pass `k` every item whose
 //! least distance is reached by a path of at most `k` edges holds it, as in Bellman's

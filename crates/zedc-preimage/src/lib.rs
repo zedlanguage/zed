@@ -235,7 +235,8 @@
 //!   notes, Carnegie-Mellon Univ., 1977, which van Leeuwen and Wood (Utrecht report
 //!   RUU-CS-79-06, 1979, p. 20, reference 1, read 2026-11-20) cite as "Solutions to Klee's
 //!   rectangle problems": not read, and nothing here rests on it. Searched under both titles
-//!   on 2026-11-21 through every allpapers rung without finding a copy; the rungs and their
+//!   on 2026-11-21 through every allpapers rung, and again that day with more repositories
+//!   (CITE-unfound-four), without finding a copy; the rungs and their
 //!   results are listed at the module comment of `zed_collections::min_add`. G. M.
 //!   Adelson-Velsky and E. M. Landis (1962), the AVL tree (Dokl. Akad. Nauk SSSR 146(2),
 //!   pp. 263-266, read 2026-11-21 at Math-Net.Ru; full comment at `Staircase` in

@@ -233,35 +233,44 @@ impl Env {
     // nested parts took O(k^2) time and memory (printing `print::tests::part_cycle` took 42.4
     // times the instructions and 46.4 times the bytes at 800 parts against 100). Used: the
     // names are shared as a DAG of ropes, the way hash-consing shares equal subterms (E. Goto,
-    // "Monocopy and associative algorithms in extended Lisp", Technical Report TR 74-03,
-    // University of Tokyo, May 1974; not read: the report is not online. Retried 2026-11-20,
-    // 16:41-16:56 UTC: allpapers-locate found no record of it (its best guess, Namba's
-    // "Some improvements on Utah standard lisp", doi:10.1145/12917.12922, is another paper);
-    // archive.org and LibGen had no copy over five rounds; Google Scholar served its
-    // "Verifying" page every round; a grounded web search (agy) timed out twice. Retried
-    // again 2026-11-20, 18:05-18:40 UTC (logs in wt/cd-xr/DOC-cite/cite3): allpapers-locate
-    // three times, 5 minutes apart (OpenAlex did not answer twice, then the same wrong guess;
-    // Namba's paper, read in a Sci-Hub copy, is on Utah Standard Lisp and never names Goto);
-    // CiNii, archive.org's full-text search and OpenAlex's full-text search found only later
-    // papers that cite the report; Google Scholar and Bing served bot checks; agy timed out
-    // again. Retried 2026-11-21 (CITE-allpapers-recheck): LibGen's title search for
-    // "Monocopy" and J-STAGE's search found nothing related; the shadow-library mirrors were
-    // rate-limited by shared use for most of the day. Found and read instead, in a scan from
-    // LibGen: E. Goto and Y. Kanada, "Hashing LEMMAs on time complexities with applications
-    // to formula manipulation", SYMSAC '76, pp. 154-158, doi:10.1145/800205.806334 (Crossref
-    // checked 2026-11-21). Its sec. 2.5, p. 155, describes HLISP: "For tup[x;y], a hash search
-    // (insert iff absent) is made for a <TUP CELL> ... thereby ensuring uniqueness of the
-    // resultant <TUP>", and its LEMMA 4 states that "The time complexity of "eq" is O(1)"
-    // for such unique tuples, where Lisp's `equal` on conses is not; it credits McCarthy
-    // (Bobrow (ed.), *Symbol Manipulation Languages and Techniques*, North-Holland, 1971,
-    // p. 151, not read) with "a scheme essentially the same as the present uniquely
-    // represented n-<TUPles>". It does not cite TR 74-03, so the 1974 attribution still
-    // rests on Filliâtre and Conchon. So the source read in its place, for both the
-    // attribution and the idea used here, is the paper that follows. The attribution and
-    // the report number are as J.-C. Filliâtre and S. Conchon give them, "Type-safe modular
-    // hash-consing", ACM Workshop on ML 2006, 12-19, doi:10.1145/1159876.1159880, reference
-    // [9], whose section 1 says "Hash-consing is a technique to share purely functional data
-    // that are structurally equal"), and a rope holds its substrings by reference (H.-J. Boehm,
+    // "Monocopy and associative algorithms in an extended Lisp", Technical Report TR 74-03,
+    // Information Science Laboratory, Faculty of Science, University of Tokyo, first
+    // manuscript 16 May 1974, revised 31 May 1974; read 2026-11-21 (CITE-unfound-four) in a
+    // 33-page scan of a paper copy from H. Baker, kept by W. Hunt at
+    // <https://www.cs.utexas.edu/~hunt/research/hash-cons/hash-cons-papers/monocopy-goto.pdf>,
+    // md5 660b1094365ce8656e3f1001993f6803, verification only; p. 1 carries the title, the
+    // author, the dates and "TR 74-03 U. of Tokyo Apr. 1974" by hand). Sec. 1, p. 2: "In
+    // monocopy lisp, the entire free storage area was also to be used as a hashing area so as
+    // to eliminate the creation of duplicating copies of S-expressions", and "The objectives
+    // of monocopy lisp were the saving of storage space and acceleration of checking for
+    // equalities". Its Fig. 1 builds equal S-expressions two ways, `bt[n;A;B]` of 2^n - 1
+    // cells and `ct[n;A;B]` of n cells, "there is no duplication in ct[3;A;B]": the same
+    // blowup, written-out copies of shared parts, that the sharing here removes. The report
+    // credits the scheme to "the 1973 Programming Symposium, Sato, Nozaki, Noshita and the
+    // author": H. Sato, E. Goto, A. Nozaki and K. Noshita, "LISPのデータ構造についての2, 3の
+    // 考察" (Some remarks on data structures of Lisp, in Japanese), Proc. 14th Programming
+    // Symposium, IPS Japan, Jan. 1973, pp. 68-77, <https://ipsj.ixsq.nii.ac.jp/records/223389>,
+    // read 2026-11-21 (scan with a text layer): sec. IV, p. 73, "同じデータ構造のものは，1か所
+    // でしか作らない" (a data structure is built in one place only), and in that reduced form
+    // "函数equalと函数eqが全く一致する" (equal and eq coincide); p. 74 defines `packcons`, a
+    // `cons` that returns the cell already holding `(x・y)` when there is one, found by hash
+    // coding. Earlier searches found no copy of the report (2026-11-20 and 2026-11-21:
+    // allpapers-locate, archive.org, LibGen, CiNii, J-STAGE, Google Scholar, Bing, agy; logs in
+    // wt/cd-xr/DOC-cite/cite3); a web search found the scan on 2026-11-21. The title, number
+    // and the 1973 paper agree with M. Terashima and Y. Kanada, "HLisp: its concept,
+    // implementation and applications", J. Inf. Process. 13(3):265-275, 1990,
+    // <https://ipsj.ixsq.nii.ac.jp/records/59734>, read 2026-11-21, references [1] and [3]
+    // (sec. 1, p. 265: "Professor E. Goto and his colleagues proposed a new idea of monocopy
+    // Lisp in which CONS data objects are made uniquely by virtue of hash coding [1]"), and
+    // with J.-C. Filliâtre and S. Conchon, "Type-safe modular hash-consing", ACM Workshop on
+    // ML 2006, 12-19, doi:10.1145/1159876.1159880, reference [9], whose section 1 says
+    // "Hash-consing is a technique to share purely functional data that are structurally
+    // equal". E. Goto and Y. Kanada, "Hashing LEMMAs on time complexities with applications to
+    // formula manipulation", SYMSAC '76, pp. 154-158, doi:10.1145/800205.806334, read
+    // 2026-11-21, gives the cost: sec. 2.5, p. 155, "For tup[x;y], a hash search (insert iff
+    // absent) is made for a <TUP CELL> ... thereby ensuring uniqueness of the resultant
+    // <TUP>", and LEMMA 4, "The time complexity of "eq" is O(1)" for such tuples), and a rope
+    // holds its substrings by reference (H.-J. Boehm,
     // R. Atkinson and M. Plass, "Ropes: an alternative to strings", Software: Practice and
     // Experience 25(12), 1315-1330, 1995, doi:10.1002/spe.4380251203, section 1: "an ordered
     // tree, with each internal node representing the concatenation of its children", which

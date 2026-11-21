@@ -39,8 +39,14 @@
 //! archive.org full-text search (68 books and reports quote the reference line, none is the
 //! notes; its DTIC scans hold other 1977-1983 Bentley reports), the Wayback Machine (no
 //! snapshot), HathiTrust (Cloudflare block), LibGen by title (0 hits), Anna's Archive
-//! (DDoS-Guard block), welib (captcha); Sci-Hub and Sci-Net need a DOI. Nothing here rests
-//! on the notes: the canonical covering and its bound are Bentley and Wood's, read above.
+//! (DDoS-Guard block), welib (captcha); Sci-Hub and Sci-Net need a DOI. Searched again
+//! 2026-11-21 (CITE-unfound-four), no copy found: KiltHub and all of figshare through its
+//! search API (no match under either title; "rectangle problems" gives later work only),
+//! LibGen "Klee rectangle" (0 hits), bitsavers' file index (no match; its Xerox PARC
+//! CSL-80-9 is a later report), DTIC's PDF of the 1981 CMU report ADA106552 (403), a web
+//! search (citing works only), a grounded agy search (timed out at 300 s). Nothing here
+//! rests on the notes: the canonical covering and its bound are Bentley and Wood's, read
+//! above.
 //! Test:
 //! `tests::additions_and_searches_match_an_array`; it compares with an array on random
 //! operations for n from 0 to 40, so it cannot catch a cost above O(log n) that still gives
