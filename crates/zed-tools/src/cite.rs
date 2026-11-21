@@ -168,11 +168,17 @@ fn cited_steps(line: &str) -> impl Iterator<Item = &str> {
     })
 }
 
-/// The step id at the start of `s`, unless a letter or digit follows it.
+/// The step id at the start of `s`, unless a letter or digit follows it, or a dot and then a
+/// digit or `{`: those begin a longer dotted name, such as a version `L1.2.3` or a bit pattern
+/// written sign.exponent.mantissa, `S.1111.111` or `S.11111.{01,10,11}` (the OCP FP8 notation
+/// docs/dl-lowering-study.md quotes). A dot and a letter, as in a file named after a step
+/// (`L8.2.rs`), and a dot that ends a sentence, still leave a citation.
 fn step_at(s: &str) -> Option<&str> {
     let end = step_name(s)?;
-    let after = s[end..].chars().next();
-    (!after.is_some_and(|a| a.is_ascii_alphanumeric())).then_some(&s[..end])
+    let mut after = s[end..].chars();
+    let next = after.next();
+    let dotted = next == Some('.') && after.next().is_some_and(|c| c.is_ascii_digit() || c == '{');
+    (!next.is_some_and(|a| a.is_ascii_alphanumeric()) && !dotted).then_some(&s[..end])
 }
 
 /// The steps a row of the plan DAG says it adds to DESIGN.md: each step id written right after

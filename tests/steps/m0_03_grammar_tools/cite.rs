@@ -86,6 +86,26 @@ fn a_step_inside_a_longer_word_number_or_path_is_no_citation() {
     );
 }
 
+/// A step id followed by a dot and a digit or `{` is the start of a longer dotted name, not a
+/// citation: a version `L9.9.1`, or a bit pattern written sign.exponent.mantissa, `S.1111.111`
+/// and `S.11111.{01,10,11}` (docs/dl-lowering-study.md, from the OCP FP8 standard), which cite
+/// once failed on. A step that ends a sentence, or names a file after a step (`L9.9.rs`), is
+/// still a citation.
+#[test]
+fn a_step_followed_by_a_dot_and_a_digit_or_brace_is_no_citation() {
+    let src = "S.1111.111 only; S.11111.00 and S.11111.{01,10,11}; \"S.000.11\"; v L9.9.1";
+    assert_eq!(
+        checked(&design(""), &[("src/a.rs", src)]),
+        (true, String::new())
+    );
+    let (ok, out) = checked(&design(""), &[("src/a.rs", "at step L1.3. In L1.4.rs")]);
+    assert!(!ok);
+    assert_eq!(
+        out,
+        "src/a.rs:1: L1.3 is not a step in DESIGN.md\nsrc/a.rs:1: L1.4 is not a step in DESIGN.md\n"
+    );
+}
+
 #[test]
 fn design_md_is_checked_too() {
     let text = design(" See sec:keys and step L1.7.");
