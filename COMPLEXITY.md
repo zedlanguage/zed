@@ -1475,6 +1475,29 @@ windows: `pncx_affine_alias_chain_scale`, `pncx_alias_chain_axis`, `tied_remaind
 `l01_38_presburger`. So `private_quotient_consistency` is not extended. Nothing measured needs
 it, and a second set of verdicts would need its own proof.
 
+### FIX-omega-front-cost-after-eliminate, `zedc-presburger/src/presburger/forced.rs` `Graph::eliminate`, measured 2026-11-21
+
+`eliminate` (PRES-dark-chain-forced-bits) builds, for each open forced row `t >= 0`, a key of
+its variables and coefficients divided by their gcd, and files each key in a hashed class. On
+`utvpi(n)` of `l01_38_omega_test::bench::front_cost` (2n rows `±x[a] ± x[b] + k >= 0`, all
+forced) every variable reads rows with two partners, so nothing is eliminated and the pass is
+spent: decide against integer_empty, in instructions, was 1.43, 1.51 and 1.50 at 256, 2,048
+and 16,384 variables (limit 1.5, load 44), and 1.32, 1.40 and 1.40 with `eliminate` turned off.
+
+A first pass now reads only the variables' numbers: for each variable, whether any open
+constraint other than a forced row reads it (`bad`), and whether its forced rows all have one
+variable set (a `Digest` fingerprint of the row's unknown variables in term order). When no
+variable has `bad` 0 and one set, the queue of `eliminate` would start empty, so nothing would
+be removed, and it returns `true` at once. The proof is at the code; a fingerprint collision only
+sends the formula on to the full pass. Cost: O(t) word operations for `t` terms, no `Int`
+arithmetic or copy, against the full pass's gcd, quotients, key vectors and hash of `Int`s per
+row. The full pass still runs, after the first, whenever some variable can start the queue.
+
+After, load 33: 1.34, 1.42 and 1.42 (growth 1.06, check 1.15), passing. `dark_chain`, which
+does eliminate (its end variables have one set), is unchanged at load 53: decide 8.01, answers
+8.94. Test of the path: the front_cost bench, which failed before the change and passes after;
+correctness by the 19 `forced` tests of `zedc-presburger`, among them `forced_against_solver`.
+
 ## Kept
 
 | ID | Where | Why it is kept, or its cost | Cost, test or status | Test or status |

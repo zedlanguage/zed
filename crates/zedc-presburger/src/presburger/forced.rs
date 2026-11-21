@@ -46,8 +46,10 @@
 //!   a round sets is never passed, not even as a hint, since it holds at one point at most
 //!   and would remove the others.
 
+use std::hash::Hasher;
+
 use zed_collections::index::to_u32;
-use zed_kernel::digest::{DigestMap, TextMap};
+use zed_kernel::digest::{Digest, DigestMap, TextMap};
 use zedc_int::int::{Int, row_bound, row_range};
 
 use super::formula::{Atom, Con, Conjuncts, Formula, Id, Model, Rel, one_bound};
@@ -733,15 +735,85 @@ impl<'f> Graph<'f> {
             hi: Option<Int>,
             removed: bool,
         }
+        /// Of a variable, the variable sets of the candidate rows that read it, each set by its
+        /// fingerprint (the [`Digest`] of its variables in term order).
+        #[derive(Clone, Copy)]
+        enum Sets {
+            None,
+            One(u64),
+            Several,
+        }
+        // An open forced row `t >= 0`, the only kind of constraint that can be dropped.
+        let candidate = |part: &Part<'_>| {
+            matches!(part.kind, Kind::Con(con) if con.rel == Rel::Ge)
+                && part.forced.is_raised()
+                && part.value.get().is_none()
+        };
+        // The variables of a constraint not known, with nonzero coefficients, in term order:
+        // the variables of its key below.
+        let open_vars = |part: &Part<'_>| {
+            (self.terms[part.span.0 as usize..part.span.1 as usize].iter())
+                .filter(|&&(v, k)| !k.is_zero() && self.vars[v as usize].known.get().is_none())
+                .map(|&(v, _)| v)
+        };
         let n_vars = self.vars.len();
         // The open constraints that read each variable other than as a forced row `t >= 0`.
         let mut bad = vec![0u32; n_vars];
+        let mut sets = vec![Sets::None; n_vars];
+        for part in &self.parts {
+            if !matches!(part.kind, Kind::Con(_)) || part.value.get().is_some() {
+                continue;
+            }
+            if !candidate(part) {
+                for v in open_vars(part) {
+                    bad[v as usize] += 1;
+                }
+                continue;
+            }
+            let mut h = Digest::default();
+            for v in open_vars(part) {
+                h.write_u32(v);
+            }
+            let f = h.finish();
+            for v in open_vars(part) {
+                let s = &mut sets[v as usize];
+                *s = match *s {
+                    Sets::None => Sets::One(f),
+                    Sets::One(g) if g == f => Sets::One(g),
+                    Sets::One(_) | Sets::Several => Sets::Several,
+                };
+            }
+        }
+        // Fast path (FIX-omega-front-cost-after-eliminate): return `true` when no variable can
+        // start the queue below. Claim: then the steps below eliminate nothing, value no part
+        // and return `true`, so returning `true` now gives the same answer and the same state.
+        // Proof. The queue starts with the variables of `bad` 0 whose classes left number one,
+        // and grows only inside its loop, after a variable popped from it passed and its class
+        // was removed; so an empty start leaves the loop, the removals and the `set` calls
+        // undone, and the `run` at the end starts on an empty event queue (the `run` in
+        // [`forced`] ran it to the end, and [`Graph::facts`] only reads), which returns `true`
+        // with no change. A variable with one class has all its candidate rows in that class;
+        // rows of one class have one key, so they read the same variables in the same (term)
+        // order, and equal sequences have equal fingerprints: the variable's `sets` is
+        // `Sets::One`. So no variable of `bad` 0 with `Sets::One` means no variable starts the
+        // queue. A collision of two fingerprints only keeps a variable as a possible start, which
+        // sends the formula on to the steps below, as before: slower, never another answer.
+        // Why: on `utvpi(n)` of `l01_38_omega_test::bench::front_cost` (2n rows `±x[a] ± x[b] + k
+        // >= 0`, all forced, every variable in rows with two partners) the steps below, a key with
+        // its gcd and quotients per row and a hashed class per key, made `decide` 1.50 times
+        // `integer_empty` at 16,384 variables (limit 1.5; 1.40 with `eliminate` off, measured
+        // 2026-11-21) and eliminated nothing. Cost of this pass: O(t) for `t` the terms of the
+        // open constraints, word operations on the variables' numbers, no copy of an `Int` and no
+        // allocation but the two vectors of `n_vars`.
+        if !(0..n_vars).any(|v| bad[v] == 0 && matches!(sets[v], Sets::One(_))) {
+            return true;
+        }
         let mut rows: Vec<Open> = Vec::new();
         for (n, part) in self.parts.iter().enumerate() {
             let Kind::Con(con) = part.kind else {
                 continue;
             };
-            if part.value.get().is_some() {
+            if !candidate(part) {
                 continue;
             }
             let mut c = con.lin.constant.clone();
@@ -752,12 +824,6 @@ impl<'f> Graph<'f> {
                     None if !k.is_zero() => key.push((v, k.clone())),
                     None => {}
                 }
-            }
-            if !(part.forced.is_raised() && con.rel == Rel::Ge) {
-                for &(v, _) in &key {
-                    bad[v as usize] += 1;
-                }
-                continue;
             }
             let Some(first) = key.first() else {
                 continue;
