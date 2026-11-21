@@ -21,7 +21,15 @@
 //! (the same dynamic program, in the order of attachment); and the paper answers level
 //! ancestors only, while `lca` lifts the deeper node to the other's depth by `up_to` and then
 //! both nodes together by the largest jumps that keep them apart, the textbook use of the same
-//! table, not taken from this paper (from memory, not checked against a source). This module
+//! table, not taken from this paper. No source for that use was found (paperclip keyword
+//! search, 2026-11-21: 239 results, none stating it as its own method), so it rests on this
+//! proof instead. Once `a` and `b` are distinct nodes at one depth, their ancestors at each
+//! height above them are equal from some height on and distinct below it (two nodes with one
+//! ancestor at height `h` share every ancestor above `h`), and the lowest common ancestor is
+//! the first equal one. Taking the jumps `2^j` from the largest down, and moving both nodes
+//! only when the two ancestors `2^j` up differ, keeps `a != b` and climbs by the binary digits
+//! of the greatest height at which they still differ, so at the end `a` and `b` are the
+//! distinct children of the lowest common ancestor, which is `a`'s parent. This module
 //! cited before the same authors' "The LCA Problem Revisited", LATIN 2000, LNCS 1776,
 //! pp. 88-94, doi:10.1007/10719839_9, section 2; that text was read on 2026-11-20 and holds no
 //! binary lifting: its section 2 gives definitions and its section 3 a sparse table over intervals

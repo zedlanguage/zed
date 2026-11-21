@@ -1,10 +1,23 @@
 //! Kahn's topological order (A. B. Kahn, "Topological sorting of large networks", CACM 5(11),
 //! 558-562, 1962, doi:10.1145/368996.369025: place a node that waits on nothing, take its
 //! edges away, repeat) with the choice among ready nodes given by the caller, and the search
-//! for what a set of roots reaches, with a visited set. Checked 2026-11-20: the DOI on
-//! Crossref; the paper not read, the method from memory.
+//! for what a set of roots reaches, with a visited set. Read 2026-11-21 (PDF, OpenAlex's
+//! cached copy, verification only; title and author checked on the copy). P. 559: "The basic
+//! procedure is to establish a list of all unique events with a count of the number of
+//! immediate predecessors of each event"; p. 560 (Figure 3): events whose count is zero get
+//! the next serial numbers, "their successors now have one less predecessor outstanding;
+//! therefore, the count for these successors can be decremented by one", and when a pass
+//! ends with no new zero, either every event is numbered or "there is an illegal loop in the
+//! network", told apart "by comparing the number of events" numbered with the total. The
+//! order is topological because a node is numbered only once its count, the number of its
+//! predecessors not yet numbered, is zero. Departure: the paper finds the ready events by
+//! scanning the whole count list again on each pass, at most M + 1 passes for M "the maximum
+//! number of reversals on any one path" (p. 559), so O(M · E) for E events (p. 561); here a
+//! node is put in the caller's [`Ready`] set when its count reaches zero, so each node and
+//! edge is handled once, O(V + E) plus the set's own cost.
 //! `each_ready_set_gives_its_own_topological_order` checks each order is topological and
-//! `a_parallel_edge_is_waited_on_twice` the count of edges waited on.
+//! `a_parallel_edge_is_waited_on_twice` the count of edges waited on; neither measures the
+//! time.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};

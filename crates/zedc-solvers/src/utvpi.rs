@@ -17,33 +17,68 @@
 //! When the graph has no cycle the distances are taken in one pass over its nodes in topological
 //! order, in time linear in the nodes and edges. Otherwise three searches run one unit of work
 //! each in turn and the first to finish decides; every potential gives the same decision. The
-//! first is Goldberg and Radzik's \[GR\] (the algorithm GOR of \[BFCT\]): each pass orders the
-//! nodes reached from those whose distance fell in the last pass, along edges of negative reduced
-//! cost, topologically, and relaxes their edges in that order; a cycle of such edges is a
-//! negative cycle. It takes two or three passes on the tests' graphs at every size, and up to
-//! one per node. The second is Dijkstra's search with Bellman–Ford rounds (BF-Dijkstra,
-//! [`negsssp::Rounds`]), cheap when shortest paths hold few negative edges. The third is
-//! Duong's deterministic near-linear search ([`negsssp`]), which bounds the worst case
-//! (COMPLEXITY.md, C24). The first two share their labels, and a second such pair searches the
-//! graph with every edge turned around, whose potential negated is one of the graph. The pairs
-//! take no step while the units they have done exceed those Duong's search expects still to
-//! need ([`negsssp::Progress`]).
+//! first is Goldberg and Radzik's \[GR\] (GOR in \[CGGTW\], GORC as \[BFCT\] implements it):
+//! each pass orders the nodes reached from those whose distance fell in the last pass, along
+//! edges of negative reduced cost, topologically, and relaxes their edges in that order; a
+//! cycle of such edges is a negative cycle. It takes two or three passes on the tests' graphs
+//! at every size, and up to one per node. The second is Dijkstra's search with Bellman–Ford
+//! rounds (BF-Dijkstra, [`negsssp::Rounds`]), cheap when shortest paths hold few negative
+//! edges. The third is Duong's deterministic near-linear search ([`negsssp`]), which bounds
+//! the worst case (COMPLEXITY.md, C24). The first two share their labels, and a second such
+//! pair searches the graph with every edge turned around, whose potential negated is one of
+//! the graph. The pairs take no step while the units they have done exceed those Duong's
+//! search expects still to need ([`negsssp::Progress`]).
 //!
 //! \[UTVPI\]: S. K. Lahiri and M. Musuvathi, "An Efficient Decision Procedure for UTVPI
-//! Constraints", FroCoS 2005, LNCS, pp. 168–183, doi:10.1007/11559306_9.
+//! Constraints", FroCoS 2005, LNCS, pp. 168–183, doi:10.1007/11559306_9. Read 2026-11-21 in
+//! the authors' technical report of the same title, MSR-TR-2005-67 (June 2005, Microsoft
+//! Research's own PDF; the LNCS text was not obtained, so its numbering may differ). Table 1
+//! (sec. 3.2): `x + y <= k` is the edges `y- → x+` and `x- → y+` of weight `k`, `x <= k` the
+//! edge `x- → x+` of weight `2k`, as here. Lemma 1: the rows have no rational point exactly
+//! when the graph has a negative cycle. Sec. 4.2, Algorithm 1 (NCD-UTVPI): find a feasible
+//! `δ` by any negative-cycle search, keep the edges with `δ(v) - δ(u) = w(u, v)`, take their
+//! strongly connected components, and "if −u is in the same SCC as u and if δ(u) − δ(−u) is
+//! odd, then return UNSAT". Proposition 6 (a cycle's weight is the sum of its slacks) and
+//! Proposition 7 (along slack-zero edges the shortest path weighs `δ(v) - δ(u)`) are the two
+//! facts used in the second paragraph above; Theorem 1 (sound) and Theorem 2 (complete,
+//! through Lemma 4: a negative cycle using tightening edges gives a zero-weight cycle through
+//! `u` and `-u` with `SP(u, -u)` odd) prove the test. Departure: none in the test; the
+//! search for `δ` is this module's own choice, which the paper leaves open ("Run a negative
+//! cycle detection algorithm").
 //! \[GR\]: A. V. Goldberg and T. Radzik, "A heuristic improvement of the Bellman-Ford
 //! algorithm", Applied Mathematics Letters 6(3) (1993), 3–6, doi:10.1016/0893-9659(93)90022-f.
+//! Read 2026-11-21 (PDF from LibGen, verification only). Sec. 4, p. 5: each pass computes `A`
+//! from the labeled set `B`: "1. For every v ∈ B that has no outgoing arc with negative
+//! reduced cost, delete v from B ... 2. Let A be the set of nodes reachable from B in G_d ...
+//! 3. Apply topological sort to order A", with `G_d` the arcs of reduced cost `<= 0`;
+//! Theorem 4.2, O(nm). Departure: `G_d` here holds only the arcs of reduced cost below zero.
+//! The paper assumes no cycle of weight zero or less and contracts zero-weight cycles
+//! otherwise; with strictly negative arcs every cycle of `G_d` is negative (its weight is the
+//! sum of its reduced costs), so a back arc of the depth-first search is a negative cycle and
+//! nothing is contracted. A node reached only by a zero-cost arc waits for the next pass,
+//! which the bound of `n` passes (see `GoldbergRadzik::step`) still covers.
+//! \[CGGTW\]: B. V. Cherkassky, L. Georgiadis, A. V. Goldberg, R. E. Tarjan and R. F. Werneck,
+//! "Shortest-path feasibility algorithms: an experimental evaluation", ACM J. Exp.
+//! Algorithmics 14, 2009, Article 2.7, doi:10.1145/1498698.1537602. Read 2026-11-21 (PDF from
+//! LibGen, verification only). Sec. 5.4 (GOR): the depth-first search of \[BFCT\] that ignores
+//! back arcs "may fail to find an existing negative cycle in G_d"; the search here does not
+//! ignore them, since each is a negative cycle by the departure above. Sec. 6.3 defines
+//! BAD-GOR(k), on which the passes of GOR grow linearly in `k` and its scans quadratically.
 //! \[BFCT\]: B. V. Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms",
-//! Mathematical Programming 85(2) (1999), 277–311, doi:10.1007/s101070050058.
+//! Mathematical Programming 85(2) (1999), 277–311, doi:10.1007/s101070050058. Read 2026-11-21
+//! (PDF from LibGen, verification only). Sec. 5.3 restates \[GR\] and Theorem 4 (O(nm)); its
+//! code GORC "uses depth-first search to compute topological ordering of the admissible graph.
+//! Instead of contracting zero length cycles, we simply ignore the back arcs". It does not
+//! define BAD-GOR; an earlier note here said it did.
 //! \[CKNR\]: A. Cassis, A. Karrenbauer, A. Nusser and P. L. Rinaldi, "Algorithm engineering of
-//! SSSP with negative edge weights", arXiv 2502.11999 (2025): its appendix gives the BAD-GOR
-//! family and its augmentation that the tests below build.
+//! SSSP with negative edge weights", arXiv 2502.11999 (2025). Read 2026-11-21 (arXiv LaTeX
+//! source): appendix "BAD Instances" restates BAD-GOR from \[CGGTW\] ("we closely follow the
+//! description of" it), and appendix "Augmented BAD instances" adds five times as many random
+//! edges of one large weight and permutes the labels; the tests below build that.
 //!
-//! The three journal and conference entries were checked on Crossref (authors, title, venue,
-//! volume, pages) and the arXiv entry on its listing, on 2026-11-20; the papers were not read
-//! for this note, so the sketches above are from memory of them, and the tests
-//! (`bad_gor_augmented_has_a_potential_that_holds_on_every_edge` and the others below) check the
-//! behavior the code relies on.
+//! The tests (`bad_gor_augmented_has_a_potential_that_holds_on_every_edge` and the others
+//! below) check decisions and potentials against `bellman_ford_moore`; they do not check the
+//! pass counts the papers state.
 
 use super::linear::Term;
 use super::negsssp;
@@ -152,13 +187,18 @@ fn potential_by(out: &[Vec<(usize, Int)>], search: Search) -> Option<Vec<Int>> {
 /// `¬v → ¬u`, are a 2-SAT problem whose implication graph is the graph of the tight edges, solved
 /// by its strongly connected components (Aspvall, Plass and Tarjan, "A linear-time algorithm for
 /// testing the truth of certain quantified boolean formulas", IPL 8(3), 121-123, 1979,
-/// doi:10.1016/0020-0190(79)90002-4, Crossref checked 2026-11-20, not read; the components are
-/// Tarjan's, `zed_graph::components`, whose full comment is in zed-graph `lib.rs`, fn
-/// `tarjan`; the test `halves_on_tight_edges_are_rounded_together` checks the result against
-/// `odd_zero_cycle`): it has no solution
+/// doi:10.1016/0020-0190(79)90002-4, read 2026-11-21, PDF from LibGen, verification only:
+/// p. 121, each clause `(u ∨ v)` gives the edges `ū → v` and `v̄ → u`; Theorem 1, p. 122, the
+/// clauses are satisfiable "if and only if in G(F) no vertex u_i is in the same strong
+/// component as its complement"; the proof's algorithm takes the components "in reverse
+/// topological order" and, for one not yet marked, will "mark S true and S̄ false". The
+/// components are Tarjan's, `zed_graph::components`, whose full comment is in zed-graph
+/// `lib.rs`, fn `tarjan`; the test `halves_on_tight_edges_are_rounded_together` checks the
+/// result against `odd_zero_cycle`): it has no solution
 /// exactly when some `u` and `¬u` share a component. Then the tight cycle through both is a
 /// zero-weight cycle of the graph whose part from `u` to `¬u` weighs `s(¬u) - s(u) = -2 s(u)`,
-/// odd, so the rows have no integer point (Lahiri and Musuvathi); otherwise the rounding is one.
+/// odd, so the rows have no integer point (Lahiri and Musuvathi, Theorem 1; see the module
+/// doc, \[UTVPI\]); otherwise the rounding is one.
 /// The components test therefore decides the rows as `odd_zero_cycle` does.
 fn rounded(n: usize, out: &[Vec<(usize, Int)>], p: &[Int]) -> Option<Vec<Int>> {
     // `twice[u]` is `2 s(u)`, odd exactly at a half.
@@ -179,7 +219,10 @@ fn rounded(n: usize, out: &[Vec<(usize, Int)>], p: &[Int]) -> Option<Vec<Int>> {
     let comp = components(&tight, |v| *v);
     // Tarjan's search numbers each component after every component it reaches, so the literal
     // `u` with `comp[u] < comp[¬u]` lies after `¬u` in a topological order of the implications,
-    // and rounding it down, its twin up, breaks none of them.
+    // and rounding it down, its twin up, breaks none of them: this is Aspvall, Plass and
+    // Tarjan's marking (see above), "rounded down" their "true", since a tight edge `u → v`
+    // says `v` is rounded down whenever `u` is, and of `u` and `¬u` the component that comes
+    // first in reverse topological order is marked true.
     let two = Int::from(2);
     (0..n)
         .map(|j| {
@@ -301,8 +344,8 @@ fn race(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // Complexity tradeoff: Goldberg and Radzik's search settles most graphs in a few passes (two
     // or three on the tests' hubs and paths at every size, XT3) but takes up to one pass per
     // node, O(V·E), when the topological order of the edges of negative reduced cost moves one
-    // step per pass, as on BAD-GOR of Cherkassky and Goldberg augmented with heavy random edges
-    // and permuted labels (Cassis et al. 2025, arXiv 2502.11999, appendix). BF-Dijkstra
+    // step per pass, as on BAD-GOR ([CGGTW] sec. 6.3, in the module doc) augmented with heavy
+    // random edges and permuted labels ([CKNR], appendix). BF-Dijkstra
     // (Dijkstra's search with Bellman–Ford rounds, `negsssp::Rounds`) takes O((E + V log V)·r)
     // for r the most negative edges on a shortest path, few on BAD-GOR. Duong's search
     // (`negsssp`) is O(E·log³V·log log V·log(V·W)) for the largest weight W, but its constant is
@@ -1027,11 +1070,16 @@ mod tests {
 
     #[test]
     fn bad_gor_augmented_has_a_potential_that_holds_on_every_edge() {
-        // BAD-GOR of Cherkassky and Goldberg as Cassis et al. 2025 (arXiv 2502.11999, appendix)
-        // give it, k = 64, with its nodes 1 to 2k + 1 at 0 to 2k: the graph on which the passes
-        // of Goldberg and Radzik grow with the nodes (COMPLEXITY.md C24). Augmented as there,
-        // with 5m random edges of one large weight and the labels permuted, from seed 1 as
-        // `l01_38_omega_test::stages::bad_gor` builds it.
+        // BAD-GOR of Cherkassky, Georgiadis, Goldberg, Tarjan and Werneck ([CGGTW] in the
+        // module doc, sec. 6.3, checked against its definition 2026-11-21) as Cassis et al.
+        // 2025 (arXiv 2502.11999, appendix) give it, k = 64, with its nodes 1 to 2k + 1 at 0 to
+        // 2k: the graph on which the passes of Goldberg and Radzik grow with the nodes
+        // (COMPLEXITY.md C24). Augmented as there, with 5m random edges of one large weight and
+        // the labels permuted, from seed 1 as `l01_38_omega_test::stages::bad_gor` builds it.
+        // Departure: their extra edges are distinct, drawn by rejection sampling; here a draw
+        // with `a == b` is dropped and repeats are kept, so a few fewer than 5m distinct edges.
+        // The heavy weight `n + 1 + Σ|w|` exceeds `|P| + 1 - w(P)` for every path `P`, the
+        // bound their appendix asks for, so the shortest paths are BAD-GOR's either way.
         let k = 64usize;
         let n = 2 * k + 1;
         let mut edges: Vec<(usize, usize, i64)> = vec![(0, 1, -3 * k as i64), (0, k, -1)];

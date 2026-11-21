@@ -761,10 +761,17 @@ impl<'a> Elab<'a> {
     // of `[x] ++ acc` is O(n²). Used: `ListConcat`, which shares both lists in a finger tree of
     // lists (R. Hinze and R. Paterson, "Finger trees: a simple general-purpose data
     // structure", J. Functional Programming 16(2), 2006, pp. 197-217,
-    // doi:10.1017/s0956796805005769, Crossref 2026-11-20, not read: concatenation in
-    // O(log min(p, q)) amortized; `Family::concat`, plan row PERF-list-concat-shared),
-    // O(log min(p, q)) for operands joined from p and q lists, O(1) amortized in a chain; a
-    // walk over the result builds its map once, O(n + m).
+    // doi:10.1017/s0956796805005769, read 2026-11-21 in the publisher's PDF. Sec. 3.3,
+    // pp. 204-205: `app3` keeps the first tree's prefix and the second's suffix and recurses
+    // on the middle trees with a list of at most 4 elements, Θ(1) a level, so "the total time
+    // taken is Θ(log(min{n1, n2}))", n1 and n2 the elements of the two trees; a Single side
+    // reduces to an insertion at an end, Θ(1) amortized (sec. 3.2). For two Deep trees the
+    // paper's bound is a plain time bound; an earlier note here called it amortized. The join
+    // pays off at most Θ(log(min{n1, n2})) debits, so the sec. 3.2 amortized bounds still
+    // hold. Departure: the leaves are whole lists, so p and q count lists, not
+    // entries. The tree is zed-kernel `value.rs` `chain`, joined by `Family::concat`, plan row
+    // PERF-list-concat-shared), O(log min(p, q)) for operands joined from p and q lists,
+    // O(1) amortized in a chain; a walk over the result builds its map once, O(n + m).
     pub(super) fn list_concat_term(&mut self, a: Term, b: Term) -> Term {
         self.over_two(a, b, |xs, ys| {
             Term::Prim(Prim::ListConcat, vec![var(xs), var(ys)])

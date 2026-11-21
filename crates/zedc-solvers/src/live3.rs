@@ -13,8 +13,8 @@
 //! program below bounded.
 //!
 //! 1. The real points: a linear program in three variables decides whether the rows have
-//!    one, by Megiddo's prune-and-search [Megiddo 1984, sec. 4] in O(m), deterministic, with
-//!    exact rationals (see `least`).
+//!    one, by Megiddo's prune-and-search [Megiddo 1984, secs. 3.2 and 4] in O(m),
+//!    deterministic, with exact rationals (see `least`).
 //! 2. A rounding with a fixed ratio: six linear programs give a simplex `S` of points of the
 //!    rows, each vertex the farthest along a direction normal to the edges before it, and the
 //!    rows lie within `g + 25·(S - g)` for `g` the center of `S`.
@@ -516,7 +516,12 @@ fn median(mut xs: Vec<Q>) -> Q {
 /// line of the median slope through the median of the meeting points beyond it (and of the
 /// cuts of the median slope). The least value then lies in a known quadrant, and a cut of a
 /// pair that meets in the opposite quadrant misses it. `Err` holds the point and value when
-/// the least value lies on a line tried.
+/// the least value lies on a line tried. Megiddo 1984 (doi:10.1145/2422.322418, read
+/// 2026-11-21; citation in the crate's `lib.rs`), sec. 3.2, pp. 119-121: pair hyperplanes of
+/// nonnegative with nonpositive slope after taking the median slope to zero, settle `B(d - 1)`
+/// of the first family of combinations with `A(d - 1)` queries, then the same for the second
+/// family among those pairs, so "A(d) = 2A(d - 1) and B(d) = 1/2 (B(d - 1))^2"; with `A(1) = 1`
+/// and `B(1) = 1/2` (p. 118), dimension two takes two queries and settles an eighth.
 fn search(p: &[Vec<Lin2>; 3], cuts: &[Cut]) -> Result<Vec<Option<Ordering>>, Found> {
     // A cut `g·y + h = 0` is the vertical `y0 = -h/g0`, or `y1 = s·y0 + t`.
     let slope = |c: &Cut| -> Option<(Q, Q)> {
@@ -679,7 +684,10 @@ fn least2(p: &[Vec<Lin2>; 3]) -> ([Q; 2], Val) {
 /// coordinates `y`; the least `z` over the rows is the least over `y` of the greatest lower
 /// bound, where no lower bound exceeds an upper one and no other row is violated. That is the
 /// least value of [`solve2`], whose first part, the greatest violation, is zero exactly when
-/// the rows have a real point. Megiddo's method [Megiddo 1984] in three variables; a linear
+/// the rows have a real point. Megiddo's method [Megiddo 1984, sec. 2, pp. 116-117: the
+/// problem as `min x_d` between the greatest lower and least upper bound, and "A single test
+/// amounts to solving up to three (d - 1)-dimensional linear programs", the oracle of sec. 4,
+/// here [`side`]] in three variables; a linear
 /// program in a fixed dimension is used only here, for a part with three live variables.
 fn least(rows: &[Row3], bx: &[Row3], f: &[Int; 3]) -> Option<([Q; 3], Q)> {
     let r = f.iter().position(|c| !c.is_zero()).expect("a direction");
@@ -864,7 +872,18 @@ fn dot3q(a: &[Q; 3], b: &[Q; 3]) -> Q {
 /// radius `r` about the center lies in the rows, and they lie in the ball of `75·r`; the point
 /// misses a row only when `r` is below `√7/2` times the length of the last Gram–Schmidt
 /// vector `b3*`, and the width of the rows along the dual vector is at most `150·r / |b3*|`,
-/// below `75·√7`.
+/// below `75·√7`. LLL 1982 (doi:10.1007/bf01457454, read 2026-11-21; citation in the crate's
+/// `lib.rs`), pp. 516-517: the basis is reduced when every `|mu_ij| <= 1/2` (1.4) and
+/// `|b_i* + mu_i,i-1 b_i-1*|^2 >= 3/4 |b_i-1*|^2` (1.5), which is the test below written as
+/// `|b_k*|^2 >= (3/4 - mu^2) |b_k-1*|^2`; the proof of (1.6) gives `|b_j*|^2 <= 2^(i-j)
+/// |b_i*|^2`, so for three vectors `|b1*|^2 + |b2*|^2 + |b3*|^2 <= 7 |b3*|^2`. Babai 1986
+/// (doi:10.1007/BF02579403, read 2026-11-21), sec. 4, p. 5, (4.3): the nearest-plane point
+/// `w` has `|x - w|^2 <= (|b1*|^2 + ... + |bd*|^2) / 4`, the bound in the `b_i*` directly;
+/// with the bound above that is `√7/2 · |b3*|`, the constant used here. Lenstra 1983
+/// (doi:10.1287/moor.8.4.538), sec. 1, p. 540, (8), gives the same walk (its lemma states it
+/// with `|b_i|`, but its proof uses the distance `h` of `b_n` to the plane of the others,
+/// which is `|b_n*|`). Departure: Lenstra uses the length of the longest basis vector and the
+/// planes `H + k·b_n` (p. 541); here the dual vector gives the same planes as values of `u·x`.
 // Proof of the three bounds (proofs audit, proofdoc4g). Lengths are in the form `Mᵀ·G·M`.
 // 1. Radii. `M` maps the edge `v_j - v0` to the unit vector `e_j`, and `G` is twice the Gram
 //    matrix of a regular simplex of unit edges, so in the form `S` is a regular simplex of edge

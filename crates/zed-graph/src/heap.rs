@@ -17,8 +17,21 @@
 //! of an edge `x → y` of weight `w` equal to `p(x) + w - p(y)`; [`reduced`] checks that it is
 //! 0 or more, which is what makes the search exact on graphs with negative weights
 //! (D. B. Johnson, "Efficient algorithms for shortest paths in sparse networks", JACM 24(1),
-//! 1-13, 1977, doi:10.1145/321992.321993). Checked 2026-11-20: both DOIs on Crossref; the
-//! papers not read, from memory. `dijkstra_on_reduced_weights_gives_least_distances` checks the
+//! 1-13, 1977, doi:10.1145/321992.321993). Both read 2026-11-21 (PDFs from LibGen, verification
+//! only; titles and authors checked on the copies). Dijkstra, Problem 2, p. 270: nodes "will be
+//! added to [set A] in order of increasing minimum path length from node P"; step 1 replaces a
+//! node's branch in set II when the new branch "results in a shorter connexion", and step 2
+//! moves "the node with minimum distance from P" from set B to A. That minimum is found by
+//! looking through set B, with no heap, so the paper's cost is O(n²); the heap with lazy
+//! deletion here is the later form (Johnson, sec. 2, p. 4, runs the same search "in time
+//! O((n + e) log n) on nonnegatively weighted networks"). The step from the paper the code
+//! relies on: with weights 0 or more, a node's least tentative label cannot fall later, since
+//! any other path to it passes through a node whose label is at least as large. Johnson,
+//! Lemma 2, p. 11 (credited there to Edmonds and Karp): with "w'(u, v) = w(u, v) + h(u) - h(v)
+//! >= 0", a path "is shortest if and only if" it is shortest under `w'`, because the sum of
+//! `w'` along a path from `s` to `t` is its sum of `w` plus `h(s) - h(t)`, the same for every
+//! path; "such a function h is defined if and only if N has no negative cycles".
+//! `dijkstra_on_reduced_weights_gives_least_distances` checks the
 //! distances against Bellman–Ford on the raw weights, `a_negative_reduced_weight_is_refused`
 //! the check of [`reduced`], and `stale_entries_come_up_as_stale` the lazy deletion.
 

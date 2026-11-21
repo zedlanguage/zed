@@ -655,8 +655,10 @@ fn first_last_and_concat_of_a_joined_list_build_no_map() {
     // `a ++ a` builds O(log n) nodes at step i, with allocation, where the reads above build
     // none: proved O(log min(p, q)) for operands of p and q leaves (R. Hinze and R. Paterson,
     // "Finger trees: a simple general-purpose data structure", JFP 16(2):197-217, 2006,
-    // doi:10.1017/s0956796805005769, their concatenation; Crossref 2026-11-20, text not read,
-    // the bound from memory; this test measures the ratio, it does not prove the bound), so the
+    // doi:10.1017/s0956796805005769, read 2026-11-21: sec. 3.3, p. 205, "the total time taken
+    // is Θ(log(min{n1, n2}))"; the leaves here are lists, so p and q count lists; more at
+    // zedc-elab `fp_ops.rs` `list_concat_term`; this test measures the ratio, it does not
+    // prove the bound), so the
     // chain is O(n log n), held to 8 ln(8n) / ln(n), 10.41 at
     // n = 1000, the ratio of n log n at 8n (measured 9.92, 2026-11-16, load 40; 10.21 with
     // short leaves merged at a join, `chain::LEAF` 16, 2026-11-17, load 61 to 74, COMPLEXITY.md

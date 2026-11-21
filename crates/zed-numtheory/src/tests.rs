@@ -216,10 +216,17 @@ fn bezout_cofactors_give_the_gcd_and_are_the_least() {
 /// `m61::P = 2^61 - 1` is prime, which `m61::inv` (Fermat) and the callers listed at `m61`
 /// rely on: by `is_prime`, exact on every 64-bit word, and by the Lucas-Lehmer test (D. H.
 /// Lehmer, "An extended theory of Lucas' functions", Annals of Math. 31(3):419-448, 1930,
-/// doi:10.2307/1968235: for an odd prime `p`, `2^p - 1` is prime if and only if `s_(p-2) = 0`
-/// modulo it, where `s_0 = 4` and `s_(i+1) = s_i^2 - 2`), which uses no code of `is_prime`.
-/// The DOI checked on Crossref 2026-11-20; the statement is the standard one, from memory, and
-/// the composite `2^11 - 1` below fails it as it must.
+/// doi:10.2307/1968235), which uses no code of `is_prime`. Read 2026-11-21 in the JSTOR scan
+/// (from LibGen). Section 5.3, p. 443, takes `2^n - 1` "with n an odd prime", and Theorem 5.4
+/// reads: "The number N = 2^n - 1 is a prime if and only if it divides the (n-1)-st term of
+/// the series 4, 14, 194, 37634, ..., S_k, ... where S_k = S_(k-1)^2 - 2." The proof sets
+/// `S_k = V_(2^k)` for the Lucas sequence with `R = 2`, `Q = -1`; necessity is Theorem 4.9,
+/// sufficiency is that the rank of apparition of `N` is then `2^n = N + 1`, so `N` is prime by
+/// Theorem 5.1. The loop below counts from `s = 4` as the first term, so after `n - 2` squarings
+/// `s` is the paper's `(n-1)`-st term; it reduces modulo `N` at each step, which changes no
+/// residue. `61` and `11` are odd primes, as the theorem needs. The composite `2^11 - 1 =
+/// 23 * 89` fails the test, which shows the loop can fail; neither case checks the test on
+/// any other exponent.
 #[test]
 fn the_mersenne_modulus_is_prime() {
     use m61::P;

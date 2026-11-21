@@ -10,8 +10,15 @@
 //! once: O(n + e) time and O(n) space beside the graph. [`tarjan`] is the search over a graph
 //! whose nodes are `0..n` and whose edges are lists, and [`components`] and [`on_cycle`] are
 //! its two common uses. The paper keeps the nodes of the path on a stack with a low link each
-//! and completes a component when a node's low link is its own number. Checked 2026-11-20: the
-//! DOI on Crossref; the paper not read, from memory. In `tests.rs`,
+//! and completes a component when a node's low link is its own number. Read 2026-11-21 (PDF,
+//! LibGen, verification only; title and author checked on the copy). Sec. 4, p. 156: LOWLINK
+//! (v) "is the smallest vertex which is in the same component as v and is reachable by
+//! traversing zero or more tree arcs followed by at most one frond or cross-link"; Lemma 12:
+//! "v is the root of some strongly connected component of G if and only if LOWLINK (v) = v";
+//! the component is then the nodes on the stack from `v` up, since by Corollary 11 a
+//! component's nodes form a subtree of the search forest rooted at its root. Theorem 13
+//! (p. 157): O(V + E) time and space; Theorem 14 (p. 158): the LOWLINK values computed are
+//! correct, by induction over the search. In `tests.rs`,
 //! `components_are_the_classes_of_mutual_reach_numbered_in_reverse_topological_order` checks
 //! the components against mutual reach on random graphs, and `a_long_chain_needs_no_deep_stack`
 //! the explicit stack.

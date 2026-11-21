@@ -105,9 +105,12 @@ pub(super) struct Entry<'s> {
 
 /// The sites of one class inserted so far: a Fenwick tree (P. M. Fenwick, "A new data structure
 /// for cumulative frequency tables", Software: Practice and Experience 24(3), 1994,
-/// pp. 327-336, doi:10.1002/spe.4380240306, Crossref 2026-11-20, not read: node `i` covers the
-/// `i & -i` entries ending at `i`, so a prefix query or an update visits O(log n) nodes; here
-/// with the maximum in place of the sum) over their first keys, in order,
+/// pp. 327-336, doi:10.1002/spe.4380240306, read 2026-11-21, PDF from LibGen, verification
+/// only; quotes and the argument are at `zed_collections::fenwick`, the module's source note:
+/// node `i` covers the `i & -i` entries ending at `i` (p. 328), so a prefix query or an update
+/// visits O(log n) nodes (pp. 330-331); here with the maximum in place of the sum, sound
+/// because sites are only inserted, so a node's maximum only rises) over their first keys, in
+/// order,
 /// whose node holds the site with the latest end among the starts it covers. A run `lo` to
 /// `end` meets a site of the class exactly when the latest end among the sites starting at or
 /// below `end` reaches `lo`.

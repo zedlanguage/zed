@@ -14,11 +14,22 @@
 //! Widening to reach a post-fixpoint and narrowing to come back down are from P. Cousot and
 //! R. Cousot, "Abstract interpretation: a unified lattice model for static analysis of
 //! programs by construction or approximation of fixpoints", POPL 1977, pp. 238-252,
-//! doi:10.1145/512950.512973 (checked 2026-11-20: the DOI and pages on Crossref; the paper not
-//! read, the operators from memory). The departure is that here they move a bound only to a
-//! landmark or to a value already present, not to infinity at once, so that no delay and no
-//! bound on rounds is needed; `m0_05_widening_and_iteration::invariant` checks that results
-//! are inductive (post-fixpoints), which does not show that narrowing went as low as it could.
+//! doi:10.1145/512950.512973 (read 2026-11-21: PDF, LibGen, verification only; title and
+//! authors checked on the copy). Sec. 9.1.3 (p. 246) defines widening `∇` by "9.1.3.2
+//! ∀(C, C') ∈ A-Cont², C ∘ C' ≤ C ∇ C'" (an upper bound of both) and "9.1.3.3 Every infinite
+//! sequence s0 = C0, ..., sn = s(n-1) ∇ Cn, ... is not strictly increasing", applied only on a
+//! set of widening arcs that every cycle of the equations meets (9.1.3.4); 9.1.3.6 proves the
+//! sequence increasing and the bound on termination then makes its limit a post-fixpoint.
+//! Sec. 9.3.4 (p. 248) defines narrowing `Δ` "by analogy": "9.3.4.2 ∀(C, C') ∈ A-Cont², {C ≥
+//! C'} ⟹ {C ≥ C Δ C' ≥ C'}" and "9.3.4.3 Every infinite sequence s0 = C0, ..., sn = s(n-1) Δ
+//! Cn, ... is not strictly decreasing", and sec. 9.3.2 proves the decreasing sequence stays
+//! above the least fixpoint. The paper's interval widening (sec. 9.2, p. 247) sends an
+//! unstable bound to infinity at once, and its interval narrowing (p. 248) replaces only an
+//! infinite bound. The departure is that here they move a bound only to a landmark or to a
+//! value already present, not to infinity at once; the landmarks of a loop are finite, so
+//! 9.1.3.3 and 9.3.4.3 still hold and no delay and no bound on rounds is needed.
+//! `m0_05_widening_and_iteration::invariant` checks that results are inductive
+//! (post-fixpoints), which does not show that narrowing went as low as it could.
 //!
 //! The specification of these rules is prelude source, `zed/prelude/iteration.zed`; this
 //! module is the Rust-hosted checker's copy.

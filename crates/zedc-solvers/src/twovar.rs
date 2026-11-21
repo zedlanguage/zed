@@ -232,11 +232,19 @@ pub fn point(
 /// first piece of the line where the envelopes leave an integer point holds the least `x`, and
 /// inside it the least `x` with a point is found by bisection on the floor-sum counts of its
 /// prefixes. O(m log m) for `m` rows, plus O(log w) floor sums for the width `w` of that
-/// piece, each logarithmic in the coefficients; no feasibility question is asked. Integer
-/// programs in two variables can be solved in O(log) arithmetic steps (Eisenbrand and Rote,
-/// "Fast 2-variable integer programming", IPCO 2001, LNCS, pp. 78-89,
-/// doi:10.1007/3-540-45535-3_7, Crossref 2026-11-20, not read); the scan is simpler, exact at any
-/// magnitude, and reuses the envelopes and counts of [`point`].
+/// piece, each logarithmic in the coefficients; no feasibility question is asked. Each end is
+/// a two-variable integer program (least `x` over the rows), for which a faster bound is known:
+/// F. Eisenbrand and G. Rote, "Fast 2-variable integer programming", IPCO 2001, LNCS 2081,
+/// pp. 78-89, doi:10.1007/3-540-45535-3_7, read 2026-11-21 in the authors' preprint (12-page
+/// dvips PDF from Rote's page at FU Berlin; its page numbers are not the LNCS ones). Theorem 4,
+/// preprint p. 11: "The two-variable integer programming problem with m constraints of size at
+/// most s can be solved in O(m + log m s) arithmetic operations". The method: prune and search
+/// over the median of pairwise intersection points, O(log m) rounds that each drop a quarter of
+/// the constraints at O(m) cost, then a gcd-like method (their Theorem 3, O(s) operations) on
+/// the remaining four. An earlier note here gave the bound as "O(log) arithmetic steps"; the
+/// O(log m) counts rounds, not operations. Not used here: the scan above is simpler, exact at
+/// any magnitude, and reuses the envelopes and counts of [`point`]; its O(m log m) sort costs a
+/// log m factor over their O(m) term.
 pub fn ends(rows: &[(&[Term], &Int)], x: usize, y: usize) -> Option<IntRange> {
     let lo = least_x(rows, x, y, false)?;
     let hi = least_x(rows, x, y, true)?;

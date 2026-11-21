@@ -14,13 +14,26 @@
 
 // Source: P. M. Fenwick, "A new data structure for cumulative frequency tables", Software:
 // Practice and Experience 24(3):327-336, 1994, doi:10.1002/spe.4380240306 (checked on Crossref
-// 2026-11-20). Not read: no free copy was found. The scheme above (node `r` covers `lowbit(r)`
-// items ending at `r`; an update adds `lowbit` to climb, a prefix clears it to descend; a
-// search for a cumulative value halves a power-of-two step) is the paper's as it is commonly
-// described, recalled from memory, not checked against the text. Departure: nodes hold any
-// combination with an identity, not only frequencies, which is sound for any associative
-// combination in `prefix` and `descend`, and for `update` only when the change distributes
-// over the combination (an addition over sums, a raise over maxima). Test:
+// 2026-11-20). Read 2026-11-21 (PDF, LibGen, verification only; title, author and the page
+// range 327-336 checked on the copy's first page). The scheme above is the paper's. P. 328:
+// "if the index contains a '2 bit' we include two frequencies, if it has an '8 bit' we
+// include 8 frequencies"; element 4 holds frequencies 1 to 4 and element 6 frequencies 5 and
+// 6, so element `r` holds the `lowbit(r)` items ending at `r`; a prefix is read by "stripping
+// the least-significant 1 from the old index, and repeating this operation until the index is
+// zero" (11, 10, 8, 0), which sums disjoint ranges that tile 1..11. P. 330: the AND of a
+// number and its two's complement "isolates the least significant one bit". P. 331
+// (Figure 5): an update, "instead of stripping off the least-significant 1 bit ..., we now
+// add it on at each stage to get the next entry to adjust" (5, 6, 8), which visits exactly
+// the elements whose ranges cover the item. P. 333 (Figure 8): the search for a cumulative
+// value starts with a mask at the table's midpoint, moves the base up by the mask when the
+// target is at least the node there, subtracting that node, and halves the mask; it is
+// correct because the node at `base + mask` holds exactly the items between `base` and
+// `base + mask` while `mask` is below `lowbit(base)`. Departures: the paper's element 0 is a
+// separate frequency and its indices count from 1; here items count from 0 and node `r` is
+// stored at `r - 1`. Nodes hold any combination with an identity, not only frequencies,
+// which is sound for any associative combination in `prefix` and `descend`, and for
+// `update` only when the change distributes over the combination (an addition over sums, a
+// raise over maxima). Test:
 // `tests::prefixes_and_descents_match_an_array`, sums and maxima of every prefix and every
 // descent against a plain array after each of 3n random changes, for every n up to 33; it
 // raises maxima only, and it does not measure the O(log n) cost.

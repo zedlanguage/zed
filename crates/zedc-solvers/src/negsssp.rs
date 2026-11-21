@@ -1272,8 +1272,15 @@ impl Aux {
 /// the weight of every walk with `k` negative edges besides the source's, so a label that falls
 /// in round `eta` shows a walk shorter than all with `eta` negative edges, and the
 /// caller's negative cycle (\[D\] Theorem 3.1). A cycle of parent pointers is a negative cycle
-/// (the walk to the root of Cherkassky and Goldberg); it is looked for after each round, from
-/// the nodes whose label changed, each node visited once.
+/// (B. V. Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms", Math.
+/// Programming 85(2), 1999, doi:10.1007/s101070050058, read 2026-11-21, PDF from LibGen;
+/// Lemma 3, p. 282: "Any cycle in G_p is negative"); it is looked for after each round, from
+/// the nodes whose label changed, each node visited once. That is their amortized search
+/// (sec. 6.4, p. 289), one O(n) search per round, not their walk to the root (sec. 6.3), which
+/// follows the parent pointers before every relaxation; an earlier note here named the walk
+/// to the root. Their sec. 6.4 warns that a cycle "can disappear", so a search may miss one;
+/// Theorem 1, p. 282 ("after a finite number of labeling operations G_p always has a cycle")
+/// is why a later search finds it, and the round bound `eta` ends the search in any case.
 fn bf_dijkstra<H>(
     graph: Rows,
     negative: Rows,

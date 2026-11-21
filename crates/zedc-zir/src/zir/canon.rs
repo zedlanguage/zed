@@ -273,14 +273,21 @@ struct Contents {
 /// tests in polylogarithmic time", Algorithmica 17(2), 183-198, 1997,
 /// doi:10.1007/BF02522825). Were that to fail, two equal constants would be two nodes, a
 /// missed merge, never a wrong one.
-// The paper gives each sequence a signature by repeated rounds of two steps: runs of one
-// symbol become one symbol, then the sequence is cut into short blocks by deterministic coin
-// tossing, each cut decided by a few neighbors only, and each distinct run or block gets the
-// next number from one shared table. Because every choice is local and the table maps equal
-// contents to one number, equal sequences get one signature however they were built, and
-// different ones different signatures. `Names` (in zed-kernel `text::names`) implements it;
-// this module uses only that property. Checked 2026-11-20: the DOI, volume, issue and pages
-// on Crossref; the paper not read (no free copy found), the method from memory. In the step
+// Read 2026-11-21 (PDF from LibGen, verification only). Sec. 3, pp. 189-190: "Each element
+// in S encodes either an element of U or a pair in S x S or a power", the three kept as
+// injective dictionaries over one counter maxsig; sig(s) of a sequence with n > 1 runs is
+// sig(shrink(s)), where elpow(s) replaces each run a^l by its signature and shrink(s) is the
+// signatures of the blocks of elpow(s), each block's signature "computed by repeated
+// application of a pairing function". The blocks come from sec. 2: Lemma 1, p. 185, and
+// Lemma 4, p. 188, decide whether a_i starts a block from a_{i-log* N-6} ... a_{i+4} only, by
+// the deterministic coin tossing of Cole and Vishkin, with blocks of 2 to 4 except at the
+// ends. Since the dictionaries are injective and every block start is local, equal sequences
+// get one signature however they were built (sec. 4, Lemma 6, for concatenation), and
+// different ones different signatures. `Names` (in zed-kernel `text::names`) implements a
+// variant: blocks start at the local maxima of the coin-tossing labels (the rule of Alstrup,
+// Brodal and Rauhe, cited there), up to 6 symbols, and a block is named whole by one table,
+// not by repeated pairing; the property above holds for it by the same argument. This module
+// uses only that property. In the step
 // tests `l01_32_canonical_zir::string_trees`,
 // `equal_strings_in_different_trees_share_the_zir_address` checks that one 900-byte text held
 // in three trees gets one address, which catches a name that depends on the tree, and

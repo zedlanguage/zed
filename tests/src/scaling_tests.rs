@@ -294,11 +294,20 @@ fn churn_on_threads() {
 /// a process counts about 1,760 instructions more, the one-time work of the first thread `alone`
 /// starts, which the harness's warm-up run takes too (see `Meter::repeats`), so a warm-up run is
 /// left out here; and the counter now and then counts an instruction twice, 1 more in some runs,
-/// as the hardware counters of x86 overcount on an interrupt or a page fault and never undercount
-/// (Weaver, Terpstra and Moore, "Non-determinism and overcount on modern hardware performance
-/// counter implementations", ISPASS 2013, pp. 215-224, doi:10.1109/ispass.2013.6557172;
-/// Crossref 2026-11-20, text not read, the finding from memory), so each round takes the least
-/// of three runs.
+/// as the hardware counters of x86 overcount on an interrupt or a page fault (V. M. Weaver,
+/// D. Terpstra and S. Moore, "Non-determinism and overcount on modern hardware performance
+/// counter implementations", ISPASS 2013, pp. 215-224, doi:10.1109/ispass.2013.6557172; read
+/// 2026-11-21 in the publisher's PDF, from LibGen). Sec. "Sources of Overcount and
+/// Non-Determinism on x86 64", p. 218: "Most x86 64 events are incremented an extra time for
+/// every hardware interrupt", and a page fault "counts as an extra instruction". Table IV,
+/// p. 219, marks the total retired instructions event on every machine tested (Atom to
+/// IvyBridge, Pentium D, Phenom, Istanbul, Bobcat) with interrupts, page faults, x87/SSE
+/// exceptions and the lazy FP save, and on Pentium D and the AMD machines with instructions
+/// counted twice; it marks no machine as undercounting that event, though the text names an
+/// instruction "not counted at all" as one possible error. Every marked cause adds counts,
+/// so the least of three runs is the one nearest the true count. The paper tested no
+/// machine newer than IvyBridge; that the counter here does not undercount rests on the
+/// 2026-11-15 runs above, whose counts were the base count or 1 more.
 fn counts_of(run: fn(), metered: bool) -> Vec<u64> {
     let mut meter = Meter::new();
     let mut once = || {

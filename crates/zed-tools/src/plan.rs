@@ -386,8 +386,12 @@ pub struct Fixed {
 /// needs is, at one more than the highest level among them. Each row and each edge is visited
 /// once, and the text is rebuilt in one pass over its lines: O(rows + edges + length). Kahn:
 /// A. B. Kahn, "Topological sorting of large networks", CACM 5(11), 558-562, 1962,
-/// doi:10.1145/368996.369025, cited with the method at `zed_graph::kahn`; the longest path is
-/// the usual addition, not in the paper as far as known (from memory, not checked).
+/// doi:10.1145/368996.369025, read 2026-11-21 (PDF from OpenAlex's cache, verification only),
+/// quoted with the method at `zed_graph::order`. The longest path is not in the paper: its
+/// serial numbers are an order only (p. 559, "the sequence numbers represent the sorting key"),
+/// and its one bound on path length is the estimate of M, the "longest possible chain" of a
+/// PERT network (p. 561). The level here is correct because a row is placed only after every
+/// row it needs, whose levels are then final, so `1 + max` of them is the longest path to it.
 /// `fix_sets_each_level_to_the_longest_path_from_a_root` checks the levels on a plan where the
 /// last need placed is not the highest (red with `max` dropped), and
 /// `fix_refuses_a_cycle_and_names_its_rows` the refusal.

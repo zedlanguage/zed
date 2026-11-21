@@ -8,9 +8,13 @@ use std::collections::{BTreeMap, BinaryHeap};
 /// counting the dependencies it still waits on, so the order takes `O((n + e) log n)`.
 ///
 /// Kahn's method (A. B. Kahn, "Topological sorting of large networks", Communications of the
-/// ACM 5(11), 558-562, 1962, doi:10.1145/368996.369025, Crossref 2026-11-20, not read: take a
-/// node no remaining edge enters, output it, remove its edges, repeat) with a heap in place of
-/// its queue. Tarjan's search (`cycles` below)
+/// ACM 5(11), 558-562, 1962, doi:10.1145/368996.369025; read 2026-11-21, PDF from OpenAlex's
+/// cache, verification only, quoted with the argument at `zed_graph::order`: keep for each
+/// node the count of its predecessors not yet placed, place a node whose count is zero and
+/// decrement its successors' counts (p. 560), and report a cycle when nodes remain with none
+/// at zero) with a heap of the ready nodes. The paper keeps no set of ready nodes: it scans
+/// the whole count list again on each pass (p. 560), O(passes · n); the heap places each node
+/// once and gives the least ready node first. Tarjan's search (`cycles` below)
 /// alone also gives an order, the components in the order it closes them, in `O(n + e)`; it is
 /// not used for the order because that order follows the depth-first search, not the text,
 /// and the order here fixes the order of the checks and so of the messages (DESIGN

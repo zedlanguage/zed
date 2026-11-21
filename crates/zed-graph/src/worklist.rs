@@ -9,10 +9,33 @@
 //! Bellman–Ford–Moore: R. Bellman, "On a routing problem", Quart. Appl. Math. 16(1):87-90,
 //! 1958, doi:10.1090/qam/102435; L. R. Ford, "Network flow theory", RAND paper P-923, 1956 (no
 //! DOI); E. F. Moore, "The shortest path through a maze", Proc. Int. Symp. on the Theory of
-//! Switching, 1959 (no DOI). With the queue first in first out, the items are taken in passes,
-//! and with no negative cycle `n - 1` passes settle every distance. Checked 2026-11-20:
-//! Bellman's DOI on Crossref; none of the three read, from memory.
-//! `fifo_takes_items_in_the_order_queued_each_once` checks the order the bound needs.
+//! Switching, Part II, 1959, pp. 285-292 (no DOI). Bellman read 2026-11-21 (PDF, OpenAlex's
+//! cached copy, verification only): sec. 5 iterates `f_i^(k+1) = min_j (t_ij + f_j^(k))` over
+//! all cities at once, and "it is clear from the physical interpretation of this iterative
+//! scheme that at most (N - 1) iterations are required", since `f_i^(k)` is the least time
+//! over paths of at most `k + 1` roads (sec. 5, "a path with at most one stop" for `k = 1`),
+//! and a shortest path has at most `N - 1` roads; the paper assumes every `t_ij > 0` (sec. 4).
+//! Ford read 2026-11-21 (scan of P-923 dated 14 August 1956, DTIC AD0422842, through the
+//! Wayback Machine since DTIC was down; verification only), sec. 7, p. 9: "Scan the network
+//! for a pair P_i and P_j with the property that x_i - x_j > l_ji. For this pair replace x_i
+//! by x_j + l_ji. Continue this process. Eventually no such pairs can be found", with a proof
+//! that the result is the least distance but no bound on the number of steps. Moore not found
+//! 2026-11-21: paperclip (no result), allpapers-locate on the title (Unpaywall, OpenAlex,
+//! CORE, Europe PMC: no match; dblp answered with a bot check), web search and a grounded
+//! Gemini search (catalog records only; the paper was also Bell System Monograph 3523, no scan
+//! found), archive.org (the proceedings, items `proceedingsofint0030vari`,
+//! `proceedingsofint0030unse` and `proceedingsofint0000inte_f9v3`, are lending only, their PDF
+//! and text private, and search inside is refused), LibGen title search (no match), Google
+//! Scholar (sent to a block page twice), Anna's Archive (no result page, or a browser check;
+//! no md5 to fetch by), welib (browser check), Sci-Hub and Sci-Net (no DOI to ask by); the
+//! queue form below is credited to him from secondary accounts only. With the queue first in
+//! first out, the items are taken in passes: pass 0 is the source, pass `k + 1` the items
+//! queued while pass `k` is worked. By induction, at the end of pass `k` every item whose
+//! least distance is reached by a path of at most `k` edges holds it, as in Bellman's
+//! argument, so with no negative cycle `n - 1` passes settle every distance and an item is
+//! queued at most `n - 1` times, O(n · m) in all.
+//! `fifo_takes_items_in_the_order_queued_each_once` checks the order the bound needs; it does
+//! not run a distance computation.
 
 use std::collections::VecDeque;
 

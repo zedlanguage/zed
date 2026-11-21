@@ -6,9 +6,19 @@
 //! choose which root stays (because the root is a class's printed or ordered name) links with
 //! [`UnionFind::union_into`] or [`UnionFind::union_least`]; with the root so chosen, path
 //! halving alone bounds m ≥ n operations by O(m log_{1 + m/n} n), the same paper's bound for
-//! halving with arbitrary linking. The paper is doi:10.1145/62.2160; checked 2026-11-20: the
-//! DOI, title, volume and pages on Crossref; the paper not read, so both bounds are from
-//! memory. `union_find_classes_match_a_plain_labeling` and
+//! halving with arbitrary linking. The paper is doi:10.1145/62.2160; read 2026-11-21 (PDF,
+//! LibGen, verification only; title and authors checked on the copy). Both bounds are the
+//! paper's, with `m` the number of finds and `n` of elements. Theorem 3 (p. 258): "The set
+//! union algorithm with either linking by rank or linking by size and either compression,
+//! splitting, or halving runs in O(n + mα(m + n, n)) time"; the proof for halving counts only
+//! every other node of a find path ("essential" nodes, exactly those whose parent changes),
+//! bounds those by the multiple-partition charge of Lemma 6 used for compression, and
+//! doubles it, since at least half of each path is essential. Theorem 6 (p. 268): "The set
+//! union algorithm with halving and naive union runs in ... Θ(n + m log_(2+m/n) n) time"
+//! (O(m log_(1+m/n) n) for m >= n in Table I, p. 280), where naive linking gives up the
+//! freedom sec. 2 (p. 249) names, "we are free either to make f point to e or to make e point
+//! to f", so the caller picks which root stays: the case of `union_into` and `union_least`.
+//! `union_find_classes_match_a_plain_labeling` and
 //! `offset_union_find_matches_plain_values` check the classes and offsets;
 //! `union_find_takes_near_linear_time` and
 //! `union_into_a_chain_takes_n_log_n_time` check the growth of the time, which catches a lost

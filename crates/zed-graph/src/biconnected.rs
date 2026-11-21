@@ -3,11 +3,25 @@
 //! J. Hopcroft and R. Tarjan, "Algorithm 447: efficient algorithms for graph manipulation",
 //! CACM 16(6), 372-378, 1973, doi:10.1145/362248.362272), as a partition of the edges: one
 //! depth-first pass keeps a stack of edges and the low point of each node, and pops a block
-//! when a child's low point does not reach above its parent. Checked 2026-11-20: both DOIs and
-//! titles on Crossref (the second title was given without "Algorithm 447"); the papers not
-//! read, the method from memory.
+//! when a child's low point does not reach above its parent. Both read 2026-11-21 (PDFs from
+//! LibGen, verification only; titles and authors checked on the copies; Crossref gives the
+//! second title without "Algorithm 447", which the copy prints). Tarjan, p. 153, procedure
+//! BICONNECT: after the call on a tree edge `(v, w)`, "IF LOWPT (w) >= NUMBER (v) THEN start
+//! new biconnected component", taking every edge on the stack above `(v, w)` and then `(v, w)`;
+//! a frond `(v, w)` with `NUMBER (w) < NUMBER (v)` that is not the edge back to the parent is
+//! stacked and lowers `LOWPT (v)` to `NUMBER (w)`. Lemma 5, p. 151, is why: with `(a, v)` a
+//! tree edge, `LOWPT (v) >= a` means "any path from v not passing through a remains in the
+//! subtree T_v", so `a` cuts `T_v` off. Theorem 7, p. 153: O(V + E), each edge pushed and
+//! popped once; Theorem 8, p. 154, proves the output correct by induction on the edges.
+//! Hopcroft and Tarjan, p. 373, describe the same search: "If the top point does not connect
+//! to a point lower than the second point on the stack, then this second point is an
+//! articulation point of the graph", the block's edges taken from a second stack. Departure:
+//! the papers skip the edge back to the parent by its far node (`w != u`), which would also
+//! skip a parallel edge; here edges carry numbers and only the tree edge itself is skipped, so
+//! a parallel pair is a cycle and a block.
 //! `blocks_are_the_classes_no_cut_node_separates_on_random_multigraphs` checks the blocks
-//! against their definition on random multigraphs.
+//! against their definition on random multigraphs, which covers that departure; it does not
+//! measure time, so the linear bound is not tested.
 
 /// Calls `found` with the edges of each biconnected component (block) of the undirected graph
 /// `adj`, each block once: a set of edges in which any two lie on a common simple cycle, or a

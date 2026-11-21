@@ -8,13 +8,23 @@
 /// division. `gcd(0, b) = b`.
 ///
 /// Source: J. Stein, "Computational problems associated with Racah algebra", J. Comput. Phys.
-/// 1(3):397-405, 1967, doi:10.1016/0021-9991(67)90047-2: `gcd(2a, 2b) = 2 gcd(a, b)`, `gcd(2a,
-/// b) = gcd(a, b)` for odd `b`, and `gcd(a, b) = gcd(|a - b|, min(a, b))` for odd `a`, `b`.
-/// Departure: the common power of two is taken out at once by `trailing_zeros` and put back
-/// at the end, and each odd part loses all its twos in one shift, not one bit per step.
-/// Checked 2026-11-20: the DOI on Crossref; the paper not read, the rules from memory (they
-/// are elementary). `the_word_gcds_agree_with_euclid` checks both widths against Euclid's
-/// algorithm on random words with a common factor and on powers of two at the top bit.
+/// 1(3):397-405, 1967, doi:10.1016/0021-9991(67)90047-2. Read 2026-11-21 in the publisher's
+/// PDF. Section "Greatest Common Divisor", p. 400: "if a and b are odd integers and a > b,
+/// then GCD(a, b) = GCD(b, (a - b)/2)"; the method sets `a_1 = max(a, b)`, `b_1 = min(a, b)`,
+/// shifts `a_i - b_i` "to the right as far as possible without losing nonzero digits"
+/// (SHIFT), keeps the larger and the smaller of the result and `b_i`, and stops when
+/// `a_n = b_n`, which is the GCD; the steps are at most the bit length of `a_1` less one. The
+/// loop below is that method: each difference loses all its twos in one shift, and a zero
+/// difference is the stop `a_n = b_n`. The paper treats odd operands only; an earlier note
+/// here gave it the rules for even operands, which it does not state. Those are added here,
+/// with this proof: for `a = 2^i a'` and `b = 2^j b'` with `a'`, `b'` odd, every common odd
+/// divisor divides `a'` and `b'`, and the common power of two is `2^min(i, j)`, so `gcd(a, b)
+/// = 2^min(i, j) gcd(a', b')`. The code takes `s = min(i, j)` as the trailing zeros of `a | b`,
+/// works on the odd parts, and shifts the result back by `s`. The paper's other method (p. 401,
+/// left shifts by the count of a normalize instruction) is not used.
+/// `the_word_gcds_agree_with_euclid` checks both widths against Euclid's algorithm on all
+/// pairs below 200, on edge words, on random words with a common factor and on powers of two
+/// at the top bit; it samples the large words, so it cannot show that no pair fails.
 // Tried and not kept: counting the trailing zeros of `b - a` so the count, the `min` and the
 // difference of a step do not wait on one another (the "binary GCD" chapter of S. Slotin,
 // "Algorithms for Modern Hardware", https://en.algorithmica.org/hpc/algorithms/gcd/). With both

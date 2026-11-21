@@ -10,9 +10,28 @@
 //! bases are cited there); J. M. Pollard, "A Monte Carlo method for factorization", BIT
 //! 15(3):331-334, 1975, doi:10.1007/BF01933667, and R. P. Brent, BIT 20, 1980 (cited at
 //! `rho`), for the rho walk; R. S. Lehman, Math. Comp. 28, 1974 (cited at `lehman`), for the
-//! fallback; P. L. Montgomery, 1985 (cited at `Montgomery`), for the products. Checked
-//! 2026-11-20: the four DOIs on Crossref; Miller, Rabin and Pollard not read, from memory;
-//! Brent read.
+//! fallback; P. L. Montgomery, 1985 (cited at `Montgomery`), for the products. Read
+//! 2026-11-21: Miller and Rabin in the publisher's PDFs as OpenAlex caches them, Pollard in a
+//! scanned PDF from LibGen (verification only); Brent read earlier.
+//!
+//! Miller, sec. 2, pp. 302-303, defines the test A_f: for each `a ≤ f(n)`, "composite" if
+//! `a | n`, if `a^(n-1) ≢ 1 mod n`, or if `1 < gcd((a^((n-1)/2^k) mod n) - 1, n) < n` for some
+//! `1 ≤ k ≤ ν_2(n-1)`, after a check that `n` is no perfect power; with `f(n) = c |n|^2`,
+//! `|n|` the bit length, it decides primality under the extended Riemann hypothesis (proof
+//! of Theorem 2, p. 305). Rabin, sec. 1, p. 130, takes the same condition as his
+//! "witness to the compositeness of n" and proves without ERH (Theorem 1) that if `4 < n` is
+//! composite then at least `3(n-1)/4` of the `1 ≤ b < n` are witnesses; his note of
+//! 1978, p. 137, credits Knuth with the form without the gcd that [`is_prime`] runs: with
+//! `n - 1 = 2^l m`, `x_0 = x^m`, `x_i = x_{i-1}^2`, a composite odd `n` has, for at least
+//! `3(n-1)/4` of the `x`, either `x_l ≠ 1` or some `x_i = 1` with `x_{i-1} ≠ n - 1`. Neither
+//! paper gives the fixed bases that decide every 64-bit number; those are cited at
+//! [`is_prime`]. Pollard, sec. 1, p. 331: `x_0 = 2`, `x_{i+1} = x_i^2 - 1 (mod n)`, the pairs
+//! `(x_i, x_{2i})`, the products `Q_i = Π (x_{2j} - x_j) mod n`, and `gcd(Q_i, n)` every
+//! `m` steps ("say, m = 100"), a prime factor `p` in "O(p^(1/2))" operations, a claim the
+//! paper calls apparent and does not prove. Departures: `rho` walks `x^2 + 1` from 2, where
+//! Pollard's example is `x^2 - 1` (he allows other polynomials and starts), and follows
+//! Brent's form (one walk, rounds of sizes 1, 2, 4, ... in place of the pairs `(x_i, x_{2i})`),
+//! cited there; it takes a gcd every 128 products, Pollard's `m`.
 
 /// The prime factors of `n` with their multiplicities, in increasing order of prime; empty for
 /// `n <= 1`.
@@ -85,14 +104,19 @@ use crate::{gcd_u64, inverse_mod_2_64};
 /// without trial division", Math. Comp. 44(170):519-521, 1985,
 /// doi:10.1090/S0025-5718-1985-0777282-X): a residue `x` is held as `x R mod n`, for
 /// `R = 2^64`, and the product of two held residues `a R` and `b R` is `a b R mod n`, found
-/// with three multiplications and no division. The paper's reduction, as usually stated, is
-/// `m = (T mod R) N' mod R` with `N' = -N^-1 mod R`, then `t = (T + m N) / R`, less `N` once if
-/// `t >= N`. Departure: [`Montgomery::reduce`] uses `+N^-1` and subtracts, `(T - m N) / R`,
+/// with three multiplications and no division. Read 2026-11-21 in the publisher's PDF as
+/// OpenAlex caches it (AMS's own link gave no PDF). Sec. 1, p. 519, with `R R^-1 - N N' = 1`
+/// (so `N' = -N^-1 mod R`), "function REDC(T): m ← (T mod R)N' mod R [so 0 ≤ m < R];
+/// t ← (T + mN)/R; if t ≥ N then return t − N else return t", valid for `0 ≤ T < RN`, since
+/// `mN ≡ −T mod R` makes `t` an integer, `t ≡ T R^-1 mod N`, and `0 ≤ t < 2N`; `REDC(x y)` of
+/// two held residues is their held product, and a number enters as `REDC((x mod N)(R^2 mod N))`
+/// (p. 520). Departure: [`Montgomery::reduce`] uses `+N^-1` and subtracts, `(T - m N) / R`,
 /// adding `N` back on a borrow, so no sum can pass `2^128` and `n` may be any odd 64-bit
-/// number. Checked 2026-11-20: the DOI on Crossref; the paper not read (the publisher's site
-/// refused the download), so the statement above is from memory. Nothing here rests on it:
-/// `montgomery_arithmetic_agrees_with_division` checks every operation against plain division,
-/// on moduli up to `2^64 - 1`.
+/// number. The paper foresees this on p. 519: "If R and N are large, then T + mN may exceed
+/// the largest double-precision value. One can circumvent this by adjusting m so −R < m ≤ 0."
+/// `montgomery_arithmetic_agrees_with_division` checks every operation against plain
+/// division, on moduli up to `2^64 - 1`; it samples the moduli, so it cannot show that no odd
+/// modulus fails.
 // Complexity tradeoff: `mul_mod` divides a 128-bit product by `n`, a call of the 128-bit
 // division routine; the form here costs one division per modulus (for `R^2 mod n`) and then
 // three word multiplications per product. Measured by `examples/timing.rs` (COMPLEXITY.md row
@@ -192,9 +216,16 @@ pub fn is_prime(n: u64) -> bool {
     // Fewer bases below the least strong pseudoprimes to the first one, two and three primes:
     // `psi_1 = 2047`, `psi_2 = 1373653` and `psi_3 = 25326001` (Pomerance, Selfridge and
     // Wagstaff, "The pseudoprimes to 25 * 10^9", Math. Comp. 35, 1980, 1003-1026,
-    // doi:10.1090/s0025-5718-1980-0572872-7). Citation checked 2026-11-20: Crossref gives that
-    // title, authors, volume and pages for the DOI. The paper's text was not read: it is
-    // paywalled, and the values were first written from memory. They do not rest on the paper:
+    // doi:10.1090/s0025-5718-1980-0572872-7). Read 2026-11-21 (PDF, LibGen, verification only;
+    // title and authors checked on the copy). Sec. 9, p. 1023: "The first spsp(2) is 2047 =
+    // 23 • 89. The first number which is both an spsp(2) and an spsp(3) is 1373653 = 829 •
+    // 1657." Table 7, p. 1022, lists the strong pseudoprimes to all of the bases 2, 3 and 5
+    // below 25 * 10^9 in increasing order; its first entry is 25326001 = 2251 * 11251. So the
+    // three values here are the paper's, and the rule "n below psi_k needs only the first k
+    // bases" is the definition of psi_k as the least composite that passes those k bases. The
+    // paper's evidence is computation, not proof: "We have computed all psp(2)'s below
+    // 25 • 10^9" (sec. 1), and every spsp(2) is a psp(2), so sec. 9 and Table 7 are a search of
+    // that list, which this code does not repeat. They do not rest on the paper alone:
     // the test `primality_agrees_with_the_sieve_below_psi_3` checks every `n` below `psi_3`
     // against the sieve and checks that these three composites are rejected. A value too large
     // fails it (a composite below it would be tested with too few bases); a value too small

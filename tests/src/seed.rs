@@ -42,19 +42,26 @@ pub fn seed(test: &str) -> u64 {
 /// spreads the clock's low bits, which change fastest, over all 64.
 ///
 /// The constants are those of G. L. Steele, D. Lea and C. H. Flood, "Fast splittable
-/// pseudorandom number generators", OOPSLA 2014, pp. 453-472, doi:10.1145/2660193.2660195
-/// (`mix64variant13` of Stafford's list): `0x9e37_79b9_7f4a_7c15` is 2^64 divided by the
-/// golden ratio, made odd, so the states `x + k·γ` visit all 2^64 values before one repeats;
-/// the two multipliers and the shifts 30, 27 and 31 are the finalizer that passes BigCrush on
-/// that sequence. [`Rng::next_u64`] and the clock seed of [`seed`] rely on them.
+/// pseudorandom number generators", OOPSLA 2014, pp. 453-472, doi:10.1145/2660193.2660195.
+/// Read 2026-11-21 in the publisher's PDF. Sec. 3, p. 464: `0x9e3779b97f4a7c15`
+/// (`GOLDEN_GAMMA`, Figure 16, p. 465) is "the odd integer closest to 2^64/φ"; "To ensure
+/// that every instance has period 2^64, it is necessary to require that the gamma value always
+/// be odd": an odd step generates the group of residues modulo 2^64, so the states `x + k·γ`
+/// visit all 2^64 values before one repeats. The finalizer here, shifts 30, 27 and 31 with
+/// multipliers `0xbf58476d1ce4e5b9` and `0x94d049bb133111eb`, is the paper's
+/// `mix64variant13`, "David Stafford's Mix13 variant of the MurmurHash3 finalizer" (p. 464).
+/// Departure: in the paper's Figure 16, `nextLong` applies `mix64`, the MurmurHash3
+/// finalizer (three shifts of 33, multipliers `0xff51afd7ed558ccd` and `0xc4ceb9fe1a85ec53`),
+/// and uses `mix64variant13` only to make new gammas; the JDK's `SplittableRandom`, and this
+/// code, apply Mix13 to the output. An earlier note here said the paper's BigCrush runs tested
+/// this finalizer; its Table 1, p. 468, tests the Figure 16 generator, whose output is
+/// `mix64`. [`Rng::next_u64`] and the clock seed of [`seed`] rely on these constants.
 ///
-/// Checked 2026-11-20: Crossref gave the citation above; the paper's text was not read (no free
-/// copy found), so the sketch is from memory. The paper describes the JDK's `SplittableRandom`,
-/// and on JDK 26 `new SplittableRandom(0).nextLong()` printed `e220a8397b1dcdaf` and
+/// On JDK 26 `new SplittableRandom(0).nextLong()` printed `e220a8397b1dcdaf` and
 /// `new SplittableRandom(1).nextLong()` printed `910a2dec89025cc1`, which are `mix(0)` and
 /// `mix(1)` here. `the_mix_is_splitmix64` checks both values, so it catches a changed constant,
-/// shift or order of steps; it cannot tell whether the generator is a good one, which rests on
-/// the paper's BigCrush runs.
+/// shift or order of steps; it cannot tell whether the generator is a good one, and the paper
+/// gives no BigCrush run of this exact output function.
 ///
 /// A copy of zed-kernel's `digest::step(0, x)`, kept on purpose: this file is compiled by
 /// `#[path]` into the unit tests of zed-graph and zedc-solvers, which do not depend on
@@ -70,10 +77,12 @@ pub(crate) fn mix(x: u64) -> u64 {
 /// ([`Rng::fresh`]) or a fixed one ([`Rng::new`]).
 ///
 /// Why SplitMix64. Its state is one `u64` that steps by an odd constant, so every seed,
-/// 0 included, starts a sequence of period 2^64, and its output passes BigCrush (Steele, Lea and
-/// Flood 2014). The xorshift64 generators it replaced had 0 as a fixed point: seeded with
-/// `ZED_TEST_SEED=0` without `| 1`, every draw was 0 and a test ran one degenerate case 4,000
-/// times (`seed_zero_gives_varied_draws`). xorshift64's bits also fail BigCrush's
+/// 0 included, starts a sequence of period 2^64, and Steele, Lea and Flood (2014, Table 1, at
+/// `mix`) report no BigCrush failure for it with the MurmurHash3 finalizer; this code uses
+/// Stafford's Mix13 finalizer, as the JDK does, which the paper did not test. The xorshift64
+/// generators it replaced had 0 as a fixed point: seeded with `ZED_TEST_SEED=0` without
+/// `| 1`, every draw was 0 and a test ran one degenerate case 4,000 times
+/// (`seed_zero_gives_varied_draws`). xorshift64's bits also fail BigCrush's
 /// linear-complexity tests, and the 64-bit LCGs' low bits have short periods (bit k repeats
 /// every 2^(k+1) steps), which their `>> 33` hid at the cost of half the bits. A generator with
 /// more state (xoshiro256**, PCG64) passes the same tests and buys nothing a test needs at

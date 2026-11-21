@@ -7,12 +7,41 @@
 //! when some literal of the clause is true, and otherwise ends at `y`. So the trivial models of
 //! the theory are the satisfying assignments of the formula. A second family needs no equation:
 //! fields of no arguments with the laws `a != b || b != c`, one per triple, are the 2-colorings
-//! of a 3-uniform hypergraph, which is NP-complete to decide (L. Lovász, "Coverings and
-//! colorings of hypergraphs", Proc. 4th Southeastern Conf. on Combinatorics, Graph Theory and
-//! Computing, 1973, pp. 3-12; no DOI; from memory, not checked). A third needs no
-//! field: one law that is an `||` of `&&`s holds exactly when a 3-CNF is unsatisfiable
-//! (`unsat_law`), so deciding one law is coNP-complete, and the report refuses such a law once
-//! its conjunctive normal form is past the compile-time budget.
+//! of a 3-uniform hypergraph, which is NP-complete to decide (sources and proof below). A third
+//! needs no field: one law that is an `||` of `&&`s holds exactly when a 3-CNF is
+//! unsatisfiable (`unsat_law`), so deciding one law is coNP-complete, and the report refuses
+//! such a law once its conjunctive normal form is past the compile-time budget.
+//!
+//! Hypergraph 2-coloring. Sources, both checked 2026-11-21:
+//! - L. Lovász, "Coverings and colorings of hypergraphs", Proc. 4th Southeastern Conf. on
+//!   Combinatorics, Graph Theory and Computing (Congressus Numerantium 8), Utilitas Math.,
+//!   1973, pp. 3-12; no DOI. Read in the author's scan (`scans/covercolor.pdf` of his ELTE
+//!   old-papers page, through the Internet Archive). Theorem 1, p. 4: an algorithm of length
+//!   `<= max{|H|^c, |V(H)|^c}` deciding "whether or not H is 2-colorable" gives one computing
+//!   the chromatic number of a graph, and conversely 3-colorability of graphs decides
+//!   2-colorability of hypergraphs. The proof, pp. 4-6, maps a graph to a hypergraph with
+//!   edges of size 2 and `k + 1`, so with Karp's NP-completeness of chromatic number (the
+//!   paper's reference [1]) it makes 2-coloring hypergraphs of any edge size NP-complete. It
+//!   does not treat 3-uniform hypergraphs, and it never uses the word NP-complete; an earlier
+//!   note here, written from memory, cited it for the 3-uniform case.
+//! - T. J. Schaefer, "The complexity of satisfiability problems", Proc. 10th ACM STOC, 1978,
+//!   pp. 216-226, doi:10.1145/800133.804350. Read in the publisher's scan (OpenAlex cached
+//!   PDF). Theorem 2.1, p. 217, the dichotomy theorem, and p. 225: for `R` the relation "not
+//!   all of x, y, z equal", "SAT({R}) is the NOT-ALL-EQUAL SATISFIABILITY problem, which ...
+//!   is NP-complete". A clause of `SAT({R})` names three variables that need not be distinct
+//!   (definition, p. 216), so `R(x, x, y)` says `x != y`; `R` is symmetric, so the other
+//!   orders of a repeated variable are the same clause.
+//!
+//! From Schaefer's problem to triples of three distinct points, in polynomial time: the Fano
+//! plane (`fano` below) has no 2-coloring, while its six lines other than a line `L` do, for
+//! example `L` all one color and the four points off `L` the other. So in every 2-coloring
+//! of those six lines `L` has one color, else the whole plane would be colored. For a clause
+//! `R(x, x, y)`, add fresh points `u, v` and four fresh points that with `L = {x, u, v}` form
+//! the six lines; they force `u` to the color of `x` and allow either color of `x` (swap the
+//! two colors), and then the triple `{x, u, y}` says `x != y`. A clause `R(x, x, x)` cannot be
+//! satisfied, and maps to the Fano plane itself. The map adds 6 points and 7 triples per
+//! clause. Membership in NP: a coloring is checked triple by triple. `nae_fano_has_no_model`
+//! checks the Fano plane has no model; no test checks the reduction.
 
 use zed_tests::instances::Rng;
 
@@ -169,8 +198,17 @@ fn nae_fano_has_no_model() {
 /// The pigeonhole formula: `h + 1` pigeons each in one of `h` holes, no two in one hole. It is
 /// unsatisfiable, and every resolution refutation of it has 2^Ω(h) clauses (A. Haken, "The
 /// intractability of resolution", Theoret. Comput. Sci. 39:297-308, 1985,
-/// doi:10.1016/0304-3975(85)90144-6; Crossref 2026-11-20, text not read). The bound is the
-/// reason the test expects growth; the test measures the search, it does not check the bound.
+/// doi:10.1016/0304-3975(85)90144-6; read 2026-11-21 in the publisher's PDF). Sec. 2.1,
+/// p. 301, Theorem: "There exists a constant c, c > 1, so that, for sufficiently large n,
+/// every resolution proof of PF_n contains at least c^n different clauses". Sec. 1.5,
+/// pp. 300-301, writes PF_n as a DNF tautology over an n by n + 1 array: one term per column
+/// with that column all negated, and one term per pair of positions in a row, both positive.
+/// Its negation is the CNF built here with `h = n`: the n + 1 columns are the pigeons (each
+/// in some hole) and the n rows the holes (no two pigeons in one); a resolution proof of the
+/// DNF is a resolution refutation of that CNF. The clause count matches the paper's, n + 1 +
+/// (n^3 + n^2)/2. The bound is the reason the test expects growth; the test measures the
+/// search, it does not check the bound, and the theorem holds only for large n, past the
+/// `h ≤ 6` the test runs.
 fn pigeonhole(h: usize) -> (usize, Vec<Clause>) {
     let var = |p: usize, j: usize| p * h + j;
     let mut clauses: Vec<Clause> = (0..=h)
@@ -208,9 +246,19 @@ fn dead_ends_grow_exponentially_on_pigeonholes() {
 /// The dead ends of the exhaustive search on random 3-CNF with 5 clauses per variable, most of
 /// them unsatisfiable: a measurement for the report, since random 3-CNF of fixed density needs
 /// resolution refutations of size 2^Ω(n) (V. Chvátal and E. Szemerédi, "Many hard examples for
-/// resolution", JACM 35(4):759-768, 1988, doi:10.1145/48014.48016; Crossref 2026-11-20, text
-/// not read) but the constant is small
-/// enough that the growth looks polynomial below about 100 variables.
+/// resolution", JACM 35(4):759-768, 1988, doi:10.1145/48014.48016; read 2026-11-21 in the
+/// publisher's PDF). Sec. 2, p. 760, Theorem: "For every choice of positive integers c and k
+/// such that k ≥ 3 and c2^-k ≥ 0.7 there is a positive number ε such that, with probability
+/// tending to one as n tends to infinity, the random family of cn clauses of size k over n
+/// variables is unsatisfiable and its resolution complexity is at least (1 + ε)^n." Their
+/// random family draws each clause uniformly from the clauses of k distinct variables with
+/// any signs, as `random_cnf` does. Departure: 5 clauses per variable gives c2^-k = 5/8,
+/// below 0.7. The paper says (p. 761) that 0.7 is used only to prove unsatisfiability, by
+/// the count `2^n (1 - 2^-k)^cn → 0`, and that the lower bound needs only k ≥ 3; at c = 5 that
+/// count is about `(2 · (7/8)^5)^n ≈ 1.03^n`, so the paper does not show these formulas are
+/// unsatisfiable, and the bound covers only the unsatisfiable ones. The paper gives no value
+/// of ε; that it is small enough for the growth to look polynomial below about 100
+/// variables is this test's measurement, not the paper's.
 #[test]
 fn dead_ends_on_random_3_cnf() {
     let mut means = Vec::new();

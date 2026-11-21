@@ -483,8 +483,16 @@ pub fn first_primes(n: usize) -> Vec<u64> {
 ///   R. Zippel, "Probabilistic algorithms for sparse polynomials", EUROSAM 1979, LNCS 72,
 ///   pp. 216-226, doi:10.1007/3-540-09519-5_73: a nonzero polynomial of total degree `d` is 0
 ///   at a point drawn uniformly from `S^n` with probability at most `d / |S|`; one variable
-///   needs only that it has at most `d` roots in a field. Checked 2026-11-20: both DOIs on
-///   Crossref, the papers not read, the statement from memory);
+///   needs only that it has at most `d` roots in a field. Both read 2026-11-21: Schwartz in
+///   the publisher's PDF as OpenAlex caches it, Zippel in a scan of the LNCS chapter on a
+///   course page at Simon Fraser University. The `d / |S|` form is Schwartz's: Lemma 1, p. 702,
+///   bounds the zeros in `I_1 × ... × I_n` by `|I_1 × ... × I_n| (d_1/|I_1| + ... +
+///   d_n/|I_n|)`, the `d_j` the degrees along the chain of leading coefficients, whose sum is at
+///   most `deg(Q)`, and Corollary 1, p. 702, gives at most `c^-1 |I|^n` zeros when
+///   `|I| ≥ c deg(Q)`. Zippel's Theorem 1, p. 221, bounds the degree in each variable by `D`
+///   instead and counts at most `B^v - (B - D)^v` zeros among `B^v` points; an earlier note
+///   here gave both papers the total-degree form. `poly.rs` evaluates polynomials in several
+///   variables, one value per binder, so the bound it uses is Schwartz's Corollary 1);
 /// - that the value never changes: hashes made with it (`text.rs` `poly_hash`, `btree.rs` map
 ///   sums, `value.rs` family hashes, zedc-lattice `interval.rs` content hashes, zedc
 ///   `suppress/addresses.rs` text hashes) must be the same on every run;

@@ -88,14 +88,26 @@ impl Depths {
     /// final rule reopens only the alternatives that refer to it.
     ///
     /// D. E. Knuth, "A generalization of Dijkstra's algorithm", Information Processing Letters
-    /// 6(1), 1-5, 1977, doi:10.1016/0020-0190(77)90002-3: for a grammar whose productions
-    /// combine their parts' values by "superior functions" (monotone, and no less than each
-    /// argument; here `max` over a sequence plus one per rule), the least value of each
-    /// nonterminal is found by taking the least open one as final, as Dijkstra's search does
-    /// (E. W. Dijkstra, Numer. Math. 1, 269-271, 1959, doi:10.1007/BF01386390). Departure: a
+    /// 6(1), 1-5, 1977, doi:10.1016/0020-0190(77)90002-3, read 2026-11-21 (scanned PDF from
+    /// LibGen, verification only). Sec. 1, p. 1: g is a "superior function if it is monotone
+    /// nondecreasing in each variable" and g(x_1, ..., x_k) ≥ max(x_1, ..., x_k). Sec. 2 (B),
+    /// p. 2: with g(x_1, ..., x_k) = max(x_1, ..., x_k) + 1, "m(Y) is the minimum height of a
+    /// parse tree" of Y, which is the depth here. Sec. 3, p. 3, the algorithm: compute
+    /// v[Y] = min g(μ[X_1], ..., μ[X_k]) over the productions whose parts are all in D, "Choose
+    /// Y ∉ D such that v[Y] is minimum", set μ[Y] = v[Y], add Y to D; with a priority queue it
+    /// runs in O(m log n + t) for m productions, n nonterminals and total length t. Sec. 4,
+    /// p. 3, proves μ[Y] = m(Y) at each choice from monotonicity and superiority alone. It
+    /// reduces to Dijkstra's search on paths (sec. 2 (A); E. W. Dijkstra, Numer. Math. 1,
+    /// 269-271, 1959, doi:10.1007/BF01386390, read 2026-11-21, PDF from LibGen). Departures: a
     /// choice inside an alternative takes the least of its branches, which the paper writes as
-    /// separate productions. Checked 2026-11-20: both DOIs on Crossref; the papers not read,
-    /// from memory. `depths_match_the_naive_fixed_point_at_every_layer` checks the depths on the
+    /// separate productions, one per branch (the least of superior functions is not itself
+    /// superior, so the proof applies to the expanded grammar, whose least values are the
+    /// same); and step 3) is not recomputed in full: a rule's tentative depth is lowered when a
+    /// rule it uses becomes final, and the heap holds the tentative depths, as the paper's
+    /// priority-queue remark describes. `of` also reads the tentative depths of rules not yet
+    /// final, where step 3) reads only D; each is the depth of a real derivation, so no value
+    /// falls below m(Y) and the least one popped is still final by the sec. 4 argument.
+    /// `depths_match_the_naive_fixed_point_at_every_layer` checks the depths on the
     /// syntactic grammar against repeated passes to a fixed point (red with the reopening loop
     /// removed); it shares `Depths::of`, so it does not check that.
     fn new(g: &Grammar, ring: u32) -> Depths {

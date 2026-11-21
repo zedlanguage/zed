@@ -10,15 +10,26 @@
 //! holds `u`; the heads are where widening is applied, and every cycle passes through one.
 //! The recursive algorithm finds the strongly connected parts by a depth-first traversal in
 //! the manner of Tarjan's, makes the root of each its head, and orders the rest of the part
-//! again by the same method with the head's edges in removed. Checked 2026-11-20: the DOI,
-//! title, pages and the volume's title on Crossref (which gives no year); the paper not read
-//! (no free copy found), so the definition, the algorithm and the figure number are from
-//! memory. The tests here check three small orders by hand. In the step tests
+//! again by the same method with the head's edges in removed. Read 2026-11-21 (PDF, LibGen,
+//! verification only; title and author checked on the copy; the volume is FMPA 1993).
+//! Definition 2 (sec. 3.1, p. 131): a w.t.o. is "a hierarchical ordering of its vertices such
+//! that for every edge u -> v: (u ≺ v ∧ v ∉ ω(u)) ∨ (v ⪯ u ∧ v ∈ ω(u))", with ω(u) the heads
+//! of the components holding `u`; the first part's `v ∉ ω(u)` follows from `u ≺ v`, since a
+//! head comes first in its component, so the shorter form above is the same condition.
+//! Theorem 3 (p. 132): the heads are an admissible set of widening points (every cycle meets
+//! one). Sec. 4.3 (p. 136): "the basic idea of the algorithm, given figure 4, is to
+//! recursively apply Tarjan's algorithm to each non-trivial component after having removed its
+//! head b and all the back-edges of the form a -> b"; figure 4 (p. 137) is the procedures
+//! `Partition`, `Visit` and `Component`, and Theorem 7 states that it computes a w.t.o. (the
+//! proof is not in this paper; it points to Bourdoncle's thesis). Its cost, p. 136, is "δ · e"
+//! for `δ` the greatest nesting depth and `e` the number of edges. The tests here check three
+//! small orders by hand. In the step tests
 //! (`m0_05_widening_and_iteration::wto`), `bourdoncle_agrees_with_the_declarative_definition`
 //! compares the printed order on random graphs with a separate implementation of the recursive
-//! algorithm written there, and `every_backward_edge_goes_to_an_enclosing_head` checks the
-//! definition above. Both rest on the recursive algorithm as recalled here, so an error in
-//! that recollection would pass them.
+//! algorithm written there, and `every_backward_edge_goes_to_an_enclosing_head` checks
+//! Definition 2. The first is only as good as that second implementation's reading of
+//! figure 4; the second checks the definition directly but not that the order is the one
+//! figure 4 gives.
 //!
 //! A graph has many weak topological orders, and the order of the depth-first traversal picks
 //! one, with it the head of each component and so the widening points. The traversal visits
@@ -258,9 +269,17 @@ pub fn show(order: &[Element]) -> String {
 /// loop of the loop-nesting forest (the method of Havlak, "Nesting of reducible and irreducible
 /// loops", TOPLAS 19(4), 557-567, 1997, doi:10.1145/262004.262005, with each edge read once as
 /// in Ramalingam, "Identifying loops in almost linear time", TOPLAS 21(2), 175-188, 1999,
-/// doi:10.1145/316686.316687; both DOIs checked on Crossref 2026-11-20, the papers not read,
-/// the methods from memory, and the result checked against the recursive algorithm by the
-/// step tests named in the module doc): an edge that is not a back edge is filed at the common
+/// doi:10.1145/316686.316687; both read 2026-11-21, PDFs from LibGen, verification only,
+/// titles and authors checked on the copies. Ramalingam sec. 4: Havlak's method finds the
+/// children of a potential header "by performing a backward traversal of the collapsed graph
+/// ... restricted to the set of descendants of potentialHeader in the DFS tree", and that
+/// method "may take θ(n²) time, even for graphs in which the number of edges is O(n)" (Fig.
+/// 2). Sec. 5, the repair used here: "we remove every cross edge and forward edge y -> x in
+/// the graph and attach it to a list associated with the least common ancestor of y and x",
+/// and process that list when the bottom-up pass reaches the ancestor, so each edge is read
+/// once. The result is checked against the recursive algorithm by the step tests named in the
+/// module doc, which cannot tell a quadratic run from a fast one; the scaling test below
+/// does): an edge that is not a back edge is filed at the common
 /// ancestor of its ends, the first vertex whose component can hold both. Each level lists its
 /// elements in decreasing order of the time the traversal finished them. The step tests check the
 /// result against the declarative definition (`m0_05_widening_and_iteration::wto`).
