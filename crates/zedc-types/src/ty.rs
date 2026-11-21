@@ -19190,18 +19190,63 @@ async fn met<'m>(
         }
     }
     // At a parameter no arrow outside takes a part of, `H` is the arrows that take all of `qa`.
+    //
+    // Proof that the exactness flag of [`Comparing::diff`] may be dropped from `left` without
+    // a wrong yes, and why it is still read (PROOF-met-ignores-diff-exactness). Write `P` for
+    // `qa.params[j]`, `U` for the union of the parameter types at `j` of the arrows within,
+    // and `D` for what `diff` gives, with values `[[.]]`.
+    // 1. `[[P]] \ [[U]] ⊆ [[D]]`, exact or not. [`Comparing::diff`] takes a value of `P` out
+    //    only where it is in `U`: the set less `U`'s kernel type ([`Ty::kernel`], none unless
+    //    `U` holds no function, variable or unknown, and the atoms whose payloads `U` lists
+    //    taken out of it, `paid`) or less `U`'s own set; a row or payload shape dropped only on
+    //    a decided yes that bound nothing; a row's or shape's rest, its kernel type less a cut
+    //    made of parts of `U` (`cut` there, and [`Comparing::shape_rest`]). Every other row and
+    //    shape is kept whole. That is the contract `is not` reads (a narrowed type need only
+    //    hold the values that pass); "inexact" says only that a row or shape was kept whole
+    //    where `U` may hold part of it, so that `[[D]]` may be larger than `[[P]] \ [[U]]`.
+    // 2. Each `p` here, and each type of `U`, binds nothing: [`part_of_alone`] gives
+    //    `Part::At(j, _)` only where [`binds_nothing`] holds for the arrow's parameter at `j`
+    //    (its `missed`).
+    // 3. A yes of `sub_in(D, p)` gives `[[D]] ⊆ [[p]]`, so by 1 `[[P]] \ [[U]] ⊆ [[p]]`: every
+    //    key of `P` outside `U` is taken by the arrow at `p`, which is all `H` needs ([`met`]'s
+    //    doc). A larger `D` passes for fewer arrows, so `H` is smaller and the meet of its
+    //    results larger: the answer can only turn from yes to no.
+    // So dropping the flag is sound. It was not complete: a tuple row with a function component
+    // is kept whole, and `((int -> int, #a | #b)) -> int` was not covered by the meet of
+    // `((int -> int, #a)) -> int`, `((int -> int, #a | #b)) -> int | bool` and
+    // `((int -> int, #b)) -> int | f64`, where the same with `int` for the function type was.
+    // So where `diff` is inexact, an arrow outside that fails `D` within `p` is tried again by
+    // `P` within `p | U`, which holds exactly when `[[P]] \ [[U]] ⊆ [[p]]` and needs no
+    // difference. Its yes counts only where it bound nothing (2 says it binds nothing; the
+    // check makes the step not rest on 2). It runs as an attempt of its own
+    // ([`Comparing::begin_alone`]): a refusal inside it makes it a no for that arrow, the safe
+    // way, and is not kept, so it cannot refuse a comparison that another arrow answers yes.
+    // Where `diff` is exact, `[[D]] = [[P]] \ [[U]]` and the second test asks the same
+    // question, so it is not run. Cost: at most one more comparison per arrow outside, only
+    // where the difference was inexact. Test: this file's
+    // `met_covers_where_the_difference_of_function_rows_is_inexact` (red before the second
+    // test, with two controls that answer no); one signature of three arrows of one parameter,
+    // it cannot catch a case where `p | U` is refused and the true difference would pass (a
+    // wrong no only).
     for (&j, parts) in &outside {
-        let left = match within.get(&j) {
+        let (left, exact, u) = match within.get(&j) {
             Some(ps) => {
-                c.diff(&qa.params[j], &Ty::union_all(ps.iter().copied()), None)
-                    .await
-                    .0
+                let u = Ty::union_all(ps.iter().copied());
+                let (left, exact) = c.diff(&qa.params[j], &u, None).await;
+                (left, exact, Some(u))
             }
-            None => qa.params[j].clone(),
+            None => (qa.params[j].clone(), true, None),
         };
         let mut h = whole.clone();
         for (p, r) in parts {
-            if c.sub_in(&left, p, &mut Binds::new()).await {
+            let mut takes = c.sub_in(&left, p, &mut Binds::new()).await;
+            if let (false, false, Some(u)) = (takes, exact, &u) {
+                let before = c.begin_alone();
+                let mut b = Binds::new();
+                let ok = c.sub_in(&qa.params[j], &p.union(u), &mut b).await;
+                takes = c.end_alone(before).is_none() && ok && b.is_empty();
+            }
+            if takes {
                 h.push(r.clone());
             }
         }
@@ -27177,6 +27222,47 @@ mod tests {
                 .insert("B".into(), Carrier::Bool.bit() | Carrier::F64.bit());
             s.note_held();
             assert!(!fits_sig(&s, &q), "{s} in {q}");
+        }
+    }
+
+    /// PROOF-met-ignores-diff-exactness: [`met`] covers `((g, #a | #b)) -> int` by the meet of
+    /// `((g, #a)) -> int` (within), `((g, #a | #b)) -> int | bool` (takes all) and
+    /// `((g, #b)) -> int | f64` (outside, takes what the first leaves). With `g` a function,
+    /// [`Comparing::diff`] keeps the row `(g, #a | #b)` whole and marks it inexact, and before
+    /// the second test at [`met`] the answer was no (red, 2026-11-21: `false`), while with
+    /// `g = int` it was yes. Both are yes now. Controls, each a no: the third arrow's result
+    /// widened to `int | bool | f64`, whose meet with the second is not within `int`; and the
+    /// third arrow dropped, so nothing takes `(g, #b)` within `int`.
+    #[test]
+    fn met_covers_where_the_difference_of_function_rows_is_inexact() {
+        let int = Ty::carrier(Carrier::Int);
+        let a = Ty::set(KType::atom("a"));
+        let b = Ty::set(KType::atom("b"));
+        let f = Ty::func(Arc::new(sig(
+            vec![Arrow::exact(vec![int.clone()], int.clone())],
+            1,
+            false,
+        )));
+        for g in [f, int.clone()] {
+            let x = |t: &Ty| Ty::tuple(vec![g.clone(), t.clone()]);
+            let ab = a.union(&b);
+            let bool_ = int.union(&Ty::carrier(Carrier::Bool));
+            let f64_ = int.union(&Ty::carrier(Carrier::F64));
+            let q = sig(vec![Arrow::exact(vec![x(&ab)], int.clone())], 1, false);
+            let of = |rest: Vec<Arrow>| {
+                let mut arrows = vec![
+                    Arrow::exact(vec![x(&a)], int.clone()),
+                    Arrow::exact(vec![x(&ab)], bool_.clone()),
+                ];
+                arrows.extend(rest);
+                sig(arrows, 1, false)
+            };
+            let s = of(vec![Arrow::exact(vec![x(&b)], f64_.clone())]);
+            assert!(fits_sig(&s, &q), "{s} in {q}");
+            let wide = of(vec![Arrow::exact(vec![x(&b)], bool_.union(&f64_))]);
+            assert!(!fits_sig(&wide, &q), "{wide} in {q}");
+            let two = of(vec![]);
+            assert!(!fits_sig(&two, &q), "{two} in {q}");
         }
     }
 
