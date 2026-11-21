@@ -884,6 +884,15 @@ impl StmtKind {
     }
 }
 
+/// Whether `name` has a type variable's form, `[A-Z][0-9]*`: a capital letter alone or followed
+/// only by digits (DESIGN.md sec:type_resolution, rule 4). The analysis of the tree decides it,
+/// not the lexer, which reads every capitalized name as one `TypeName` token. One copy, read by
+/// name resolution, the checker and the reading of a type for an `is` test.
+pub fn type_var_form(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes.next().is_some_and(|c| c.is_ascii_uppercase()) && bytes.all(|c| c.is_ascii_digit())
+}
+
 /// A type expression and its span.
 pub struct Type {
     /// What it is.

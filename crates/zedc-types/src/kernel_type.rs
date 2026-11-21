@@ -111,6 +111,21 @@ fn kernel_form(
             "bool" => KType::bool(),
             "String" => KType::string(),
             "Never" => KType::empty(),
+            // A name of a type variable's form is a type variable (DESIGN sec:type_resolution,
+            // rule 4), never a port's type, which this arm's last case named it before (row
+            // PROOF-push-vars-other-route). A test `v is T` narrows `v` to `old & T` (DESIGN
+            // sec:type_language, flow narrowing), but the kernel test runs with no call to say
+            // which type `T` stands for, so this version refuses it, as it does a list type.
+            n if zedc_syntax::ast::type_var_form(n) => {
+                ports.push((
+                    t.span,
+                    format!(
+                        "a test against a type variable `{n}` is part of the Zed language but \
+                         is not supported by this version of zedc. Write the program without it"
+                    ),
+                ));
+                return None;
+            }
             _ => {
                 ports.push((
                     t.span,

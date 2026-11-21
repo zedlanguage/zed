@@ -7,7 +7,8 @@ use zed_tests::scaling;
 use super::super::bubble::{
     body_of_bindings, body_of_uncalled_inner_pushes, body_pushing_a_family,
     body_pushing_a_nested_family, body_pushing_parameters, chain_of_helpers,
-    helpers_giving_their_atom, helpers_pushing_their_parameter, uncalled_inner_push_of_parameters,
+    helpers_giving_their_atom, helpers_pushing_their_parameter, pushes_narrowed_by_type_variables,
+    uncalled_inner_push_of_parameters,
 };
 use super::super::scaling::resolved;
 
@@ -99,6 +100,22 @@ fn an_uncalled_inner_push_of_many_parameters_scales() {
         let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
+}
+
+/// Row PROOF-push-vars-other-route: n tests `xi is Ti`, each against its own type variable,
+/// make n classes, one lookup in the open scopes each, and n pushes each waiting on one open
+/// class: linear in n. The checker alone runs; elaboration refuses the tests.
+#[test]
+fn pushes_narrowed_by_tests_against_type_variables_scale() {
+    let units = resolved(100, pushes_narrowed_by_type_variables);
+    scaling::check(
+        "n pushes narrowed by tests against type variables",
+        100,
+        |n| {
+            let info = units[&n].check();
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
+    );
 }
 
 #[test]

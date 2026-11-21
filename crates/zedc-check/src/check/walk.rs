@@ -1638,7 +1638,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let ExprKind::Is { of, ty, negated } = &e.kind else {
                     unreachable!("an `is`")
                 };
-                let t = self.written(ty, false);
+                // A type variable the test names is a class of the function, as a parameter's
+                // written `T` is (DESIGN sec:type_resolution, rule 4: a name of the form
+                // `[A-Z][0-9]*` is a type variable): the one the signature or an earlier use
+                // made, else a new one (`fresh`), which a second walk of this test finds again.
+                // Read with no class made (`fresh: false`), as before, a `T` written nowhere
+                // else stayed a variable of no class; `x` narrowed to it was then a value
+                // `push_vars` could not follow, and `out <- x` was refused a second time beside
+                // elaboration's refusal of the test (row PROOF-push-vars-other-route; test
+                // l01_26 `bubble::a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it`).
+                let t = self.written(ty, true);
                 let bool_ = Ty::carrier(Carrier::Bool);
                 let here = self.arms.here();
                 let b = match (&of.kind, self.t.res.uses.get(&of.span)) {
@@ -17304,13 +17313,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         // record holding `_` fails `push_plain` and gets the `Lines` message below. Proof that
         // the tests below never see `_` where the old ones excluded it: this branch returns
         // whenever `t.dynamic`, the only place the old `!t.dynamic` tests read it, and on every
-        // entry `push_takes_in` reads. No program known reaches this branch, and that it is
-        // unreachable is NOT proved: the probes of the row (a written `_`, a payload pattern,
+        // entry `push_takes_in` reads. The probes of the row (a written `_`, a payload pattern,
         // recursion) are refused before the check, and a run of l01_19, l01_26, l01_27, l01_29,
-        // cases and catalog with a log here logged no push (chk3, 2026-11-20). The unknown can
-        // still come from the checker's fallbacks (`close` binding a callee's variable that no
+        // cases and catalog with a log here logged no push (chk3, 2026-11-20). The unknown
+        // comes from the checker's fallbacks (`close` binding a callee's variable that no
         // argument binds, and a class no signature holds at a level's end), so the refusal
-        // stays. Test
+        // stays. One program reaches it by the first (chk5, 2026-11-20): in
+        // `f = (positional v) -> if v is T { v } else { "b" }; out <- f(x);` only `f`'s result
+        // holds its variable `T`, so `f(x)` gives `"b" | _`, a value not known to be text;
+        // elaboration refuses the test against `T` as well (test
+        // `bubble::a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it`). Test
         // `tests::a_push_of_the_unknown_is_refused`.
         // Complexity tradeoff: the entries are found once, O(size of the DAG of families) with
         // a visited set ([`push_entries`]), and shared by the test here and both calls of
@@ -17457,7 +17469,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   is the type of an expression of the body being checked. Not proved: that such a type
     ///   holds only classes, the level rule of `generalize` (a class of an ended inner level
     ///   is named only if no class of a level around was joined to it, and an inner function
-    ///   is seen around it only through its signature, instantiated with new classes). 60
+    ///   is seen around it only through its signature, instantiated with new classes). One
+    ///   route was found and closed (chk5, 2026-11-20): a test `x is T` against a type
+    ///   variable written nowhere else read `T` with no class made (`written(ty, false)` at
+    ///   `Frame::CondIs`), so `x` narrowed to `old & T` held a variable of no class, and
+    ///   `h(x, out: Lines) { if x is T { out <- x; }; }` reached this arm; `T` is now a class
+    ///   of the function (`fresh: true`), and the push waits on it (test
+    ///   `bubble::a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it`, benchmark
+    ///   `bench::bubble::pushes_narrowed_by_tests_against_type_variables_scale`). Other
     ///   probe programs of row PROOF-push-vars-other-route found none that reaches this arm:
     ///   locals bound to lambdas and to functions defined after, calls of functions defined
     ///   later, functions passed to and returned by calls (`two(later)(x)`), `map` with a

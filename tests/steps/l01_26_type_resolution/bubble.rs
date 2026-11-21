@@ -985,6 +985,86 @@ pub(super) fn uncalled_inner_push_of_parameters(n: usize) -> String {
     )
 }
 
+/// `h` of `n` parameters, each pushed where a test against its own type variable `Ti`,
+/// written nowhere else, holds (the benchmark
+/// `bench::bubble::pushes_narrowed_by_tests_against_type_variables_scale`).
+pub(super) fn pushes_narrowed_by_type_variables(n: usize) -> String {
+    let params: String = (0..n).map(|i| format!("x{i}, ")).collect();
+    let tests: String = (0..n)
+        .map(|i| format!("  if x{i} is T{i} {{ out <- x{i}; }};\n"))
+        .collect();
+    format!("h({params}out: Lines) {{\n{tests}}}\n")
+}
+
+/// `text`'s errors from elaboration, which checks it first; none if it elaborates.
+fn elab_errors(text: &str) -> Vec<String> {
+    zed_tests::step_helpers::l01_16_elaboration::elab(text)
+        .err()
+        .unwrap_or_default()
+}
+
+/// Row PROOF-push-vars-other-route: a test `x is T` against a type variable reads `T` as a
+/// class of the function, as a parameter's written `T` is (DESIGN sec:type_resolution, rule
+/// 4: a name of the form `[A-Z][0-9]*` is a type variable), so a push of the narrowed `x`
+/// waits on it as on any open class. Before, a `T` written nowhere else stayed a variable of
+/// no class, and the push was refused a second time as "a push of a value whose type the
+/// checker cannot follow here", beside the refusal of the test itself, which named `T` "the
+/// type of a port". A run-time test against a type variable is refused by elaboration, as
+/// one this version does not build; a test against a type that is not a variable is taken.
+///
+/// In a lambda, `T` is the lambda's own variable, and only its result holds it (`f` gives
+/// `"b" | T`); no argument of `f(x)` binds it, so the call gives the unknown `_` for it, and
+/// the push of a value holding `_` is refused, as a value not known to be text (row
+/// CHECK-dynamic-push-unchecked). This is the one program known to reach that refusal.
+#[test]
+fn a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it() {
+    let call = "main(m: MainArgs) { h(x: \"a\", out: m.stdout); }\n";
+    let variable = "a test against a type variable `T` is part of the Zed language but is not \
+                    supported by this version of zedc. Write the program without it. [T]";
+    let list = "a test against a list type `[T]` is part of the Zed language but is not \
+                supported by this version of zedc. Write the program without it. [[T]]";
+    let unknown = "a push of a value whose type the checker cannot follow here is part of the \
+                   Zed language but is not supported by this version of zedc. Write the \
+                   program without it. [f(x)]";
+    for (body, checked, want) in [
+        ("if x is T { out <- x; };", vec![], vec![variable]),
+        (
+            "out <- if x is T { x } else { \"b\" };",
+            vec![],
+            vec![variable],
+        ),
+        ("if x is [T] { out <- x; };", vec![], vec![list]),
+        (
+            "f = (positional v) -> if v is T { v } else { \"b\" }; out <- f(x);",
+            vec![unknown],
+            vec![variable, unknown],
+        ),
+    ] {
+        let text = format!("h(x, out: Lines) {{ {body} }}\n{call}");
+        assert_eq!(type_errors(&text), checked, "{text}");
+        assert_eq!(elab_errors(&text), want, "{text}");
+    }
+    let bound = format!(
+        "h(positional y: T, x, out: Lines) {{ if x is T {{ out <- x; }}; }}\n\
+         main(m: MainArgs) {{ h(\"c\", x: \"a\", out: m.stdout); }}\n"
+    );
+    assert_eq!(type_errors(&bound), Vec::<String>::new());
+    assert_eq!(elab_errors(&bound), vec![variable]);
+    // Controls: a test against a type that is no variable is taken; a push whose rest fails
+    // whatever `x` is is refused at once.
+    let string = format!("h(x, out: Lines) {{ if x is String {{ out <- x; }}; }}\n{call}");
+    assert_eq!(elab_errors(&string), Vec::<String>::new());
+    prints("narrowed_by_string", &string, "a\n");
+    let rest = format!("h(x, out: Lines) {{ if x is T {{ out <- [x, 5]; }}; }}\n{call}");
+    assert_eq!(
+        type_errors(&rest),
+        vec![
+            "A `Lines` port takes a `String` or a family of strings: \
+             `out <- [x, 5] : (0 | 1) -> 5 | T`. [[x, 5]]"
+        ]
+    );
+}
+
 #[test]
 fn an_uncalled_inner_function_s_push_does_not_refuse_the_call_around() {
     // No call reaches `g`, so nothing gives `y` a value: the push of `[x, y]` holds `x`'s

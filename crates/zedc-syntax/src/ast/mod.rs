@@ -48,6 +48,7 @@ pub use node::{
     Function, Import, ImportKind, IndexKey, IndexedDef, Initial, MainHeader, Method, Note, Param,
     Pattern, Port, PortName, PortValue, RangeEnd, RemapLevel, Stmt, StmtKind, StrPart, Struct,
     Target, TestPorts, Type, TypeBound, TypeDecl, TypeKind, TypeParam, UnaryOp, Update,
+    type_var_form,
 };
 
 use crate::lex::{Part, Span, Tok, Token};

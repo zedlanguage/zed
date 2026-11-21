@@ -5093,13 +5093,9 @@ pub fn undefined_type(name: &str) -> String {
     format!("The type `{name}` is not defined.")
 }
 
-/// Whether `name` has a type variable's form, `[A-Z][0-9]*`: a capital letter alone or followed
-/// only by digits (DESIGN.md sec:type_language, rule 4). The analysis of the tree decides it,
-/// not the lexer, which reads every capitalized name as one `TypeName` token.
-pub fn type_var_form(name: &str) -> bool {
-    let mut bytes = name.bytes();
-    bytes.next().is_some_and(|c| c.is_ascii_uppercase()) && bytes.all(|c| c.is_ascii_digit())
-}
+/// Whether a name has a type variable's form; in zedc-syntax, so that the reading of a type by
+/// `zedc-types`, which does not depend on this crate, tells the same names apart.
+pub use zedc_syntax::ast::type_var_form;
 
 /// Adds `by` to the count of binders in the open scopes that name the type `name`, removing it
 /// at zero, and counts the change.
