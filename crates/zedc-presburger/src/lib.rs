@@ -713,9 +713,9 @@
 //! - R. Bellman, *Dynamic Programming*, Princeton University Press, 1957 (the 1957 printing
 //!   has no DOI; the 2010 reprint is doi:10.1515/9781400835386, checked on Crossref
 //!   2026-11-21). Read 2026-11-21 (a scan from LibGen, copy kept outside the repository):
-//!   ch. I, exercise 21, pp. 45-46, the ship-loading recurrence `f_{N+1}(w) = Max_x [x v_{N+1}
-//!   + f_N(w - x w_{N+1})]` over integral `x`, whose reachable-set form builds the tables of
-//!   `presburger/row_sums.rs` (quoted there).
+//!   ch. I, exercise 21, pp. 45-46, the ship-loading recurrence
+//!   `f_{N+1}(w) = Max_x [x v_{N+1} + f_N(w - x w_{N+1})]` over integral `x`, whose
+//!   reachable-set form builds the tables of `presburger/row_sums.rs` (quoted there).
 //!   E. Horowitz and S. Sahni, "Computing partitions with applications to the knapsack
 //!   problem", J. ACM 21(2), 1974, pp. 277-292, doi:10.1145/321812.321823 (meet in the middle).
 //!   D. Pisinger, "Linear time algorithms for knapsack problems with bounded weights",
