@@ -88,7 +88,57 @@ pub const fn pow_mod(a: u64, mut e: u64, m: u64) -> u64 {
     r
 }
 
-/// `x^-1 mod 2^64` for an odd `x`: `3x XOR 2` is right in its low 5 bits (`x (3x XOR 2) = 1
+/// `floor(n^(1/3))`, the integer cube root.
+///
+/// Exact for every `n`: the float estimate only starts the search, and the two loops end at the
+/// one `r` with `r^3 <= n < (r + 1)^3`, the cubes taken in `u128` (`r < 2^22`, so `(r + 1)^3 <
+/// 2^67`). The estimate is within 1 of the root, so each loop runs at most once or twice: `n`
+/// rounds to a float within a relative `2^-53`, the cube root (`libm` `cbrt`) adds about one
+/// unit in the last place, and the root is below `2^22`, so the absolute error is below
+/// `2^22 * 2^-51 < 1` and the truncation adds less than 1. No step of the result rests on that:
+/// a worse estimate only costs more turns of the loops. `the_cube_roots_are_exact` checks it at
+/// every cube `k^3` and its neighbors up to `2^64 - 1`.
+// Complexity tradeoff: binary search on the root is about 22 steps of a cube each; Newton's
+// method in integers needs a division per step; the float estimate costs one `cbrt` and one or
+// two cubes.
+pub fn cbrt_floor(n: u64) -> u64 {
+    // `as` from a float saturates and truncates: an estimate, corrected below.
+    let mut r = (n as f64).cbrt() as u64;
+    let cube = |r: u64| u128::from(r).pow(3);
+    while cube(r) > u128::from(n) {
+        r -= 1;
+    }
+    while cube(r + 1) <= u128::from(n) {
+        r += 1;
+    }
+    r
+}
+
+/// Whether `v` is the square of an integer, and that integer.
+///
+/// A square is a square modulo 64, so the filter `SQUARES_MOD_64` (the residues `i^2 mod 64`,
+/// computed below, 12 of the 64) never turns a square away; the rest are decided by `isqrt`,
+/// exactly. `the_square_test_is_exact` checks it against squaring.
+// Complexity tradeoff: `isqrt` of a `u128` is a few dozen word operations; the filter rejects
+// 52 of 64 residues with one shift and mask, so most non-squares cost no root.
+pub fn sqrt_exact_u128(v: u128) -> Option<u128> {
+    const SQUARES_MOD_64: u64 = {
+        let mut mask = 0u64;
+        let mut i = 0;
+        while i < 64 {
+            mask |= 1 << (i * i % 64);
+            i += 1;
+        }
+        mask
+    };
+    if SQUARES_MOD_64 >> (v % 64) & 1 == 0 {
+        return None;
+    }
+    let s = v.isqrt();
+    (s * s == v).then_some(s)
+}
+
+/// `x^-1 mod 2^64` for an odd `x`:`3x XOR 2` is right in its low 5 bits (`x (3x XOR 2) = 1
 /// mod 32` for each of the 16 odd residues modulo 32, checked by
 /// `the_inverse_seed_is_right_in_five_bits`), and each of four Newton steps `y (2 - x y)`
 /// doubles the right bits (`x y = 1 + 2^h t` gives `x y (2 - x y) = 1 - 2^2h t^2`): 5, 10, 20,

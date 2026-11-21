@@ -351,6 +351,56 @@ fn the_eight_byte_hash_is_horners_rule() {
     }
 }
 
+/// `cbrt_floor` at every cube `k^3` up to `2^64 - 1` and at its two neighbors, where a float
+/// estimate is most often one off, at `2^64 - 1`, and on random words by its definition
+/// `r^3 <= n < (r + 1)^3`.
+#[test]
+fn the_cube_roots_are_exact() {
+    // `cbrt(2^64 - 1) = 2642245`, as `2642245^3 = 18446724184312856125 < 2^64 - 1` and
+    // `2642246^3 > 2^64`, both checked here.
+    let top = 2_642_245u64;
+    assert!(u128::from(top).pow(3) <= u128::from(u64::MAX));
+    assert!(u128::from(top + 1).pow(3) > u128::from(u64::MAX));
+    assert_eq!(cbrt_floor(u64::MAX), top);
+    assert_eq!(cbrt_floor(0), 0);
+    for k in 1..=top {
+        let c = k * k * k;
+        assert_eq!(cbrt_floor(c - 1), k - 1, "{k}^3 - 1");
+        assert_eq!(cbrt_floor(c), k, "{k}^3");
+        if c < u64::MAX {
+            assert_eq!(cbrt_floor(c + 1), k, "{k}^3 + 1");
+        }
+    }
+    let mut next = words("the_cube_roots_are_exact");
+    for n in (0..100_000).map(|_| next()).chain(EDGES) {
+        let r = u128::from(cbrt_floor(n));
+        assert!(r.pow(3) <= u128::from(n) && u128::from(n) < (r + 1).pow(3), "{n}");
+    }
+}
+
+/// `sqrt_exact_u128` against squaring: every `v` below `2^20`, and `k^2` and its neighbors for
+/// random `k` up to `2^64 - 1`, so up to `v` near `2^128`.
+#[test]
+fn the_square_test_is_exact() {
+    for v in 0..1u128 << 20 {
+        let s = v.isqrt();
+        assert_eq!(sqrt_exact_u128(v), (s * s == v).then_some(s), "{v}");
+    }
+    let mut next = words("the_square_test_is_exact");
+    for k in (0..100_000).map(|_| next()).chain(EDGES) {
+        let k = u128::from(k);
+        let v = k * k;
+        assert_eq!(sqrt_exact_u128(v), Some(k), "{k}^2");
+        // `k^2 - 1` is a square only at `k = 1` (0), and `k^2 + 1` only at `k = 0` (1).
+        if k > 1 {
+            assert_eq!(sqrt_exact_u128(v - 1), None, "{k}^2 - 1");
+        }
+        if k > 0 {
+            assert_eq!(sqrt_exact_u128(v + 1), None, "{k}^2 + 1");
+        }
+    }
+}
+
 #[test]
 fn the_inverse_seed_is_right_in_five_bits() {
     for x in (1..32u64).step_by(2) {
@@ -882,6 +932,35 @@ mod controls {
             .count();
         assert!(caught > 0);
         assert_eq!(wrong(4, 6), 1);
+    }
+
+    /// The float estimate of the cube root without the two exact loops: `the_cube_roots_are_exact`
+    /// sees it go wrong at some cube or neighbor.
+    #[test]
+    fn a_cube_root_without_its_correction_is_caught() {
+        let wrong = |n: u64| (n as f64).cbrt() as u64;
+        let caught = (1..=2_642_245u64)
+            .filter(|&k| {
+                let c = k * k * k;
+                wrong(c - 1) != k - 1 || wrong(c) != k
+            })
+            .count();
+        assert!(caught > 0);
+    }
+
+    /// The square filter taken modulo 63 with the residues modulo 64: it turns squares away,
+    /// which `the_square_test_is_exact` sees below `2^20`.
+    #[test]
+    fn a_square_filter_of_the_wrong_modulus_is_caught() {
+        let mask = (0..64u64).fold(0u64, |m, i| m | 1 << (i * i % 64));
+        let wrong = |v: u128| {
+            if mask >> (v % 63) & 1 == 0 {
+                return None;
+            }
+            let s = v.isqrt();
+            (s * s == v).then_some(s)
+        };
+        assert!((0..1u128 << 20).any(|v| wrong(v) != sqrt_exact_u128(v)));
     }
 
     /// The words of a big integer folded from the least significant, not the most:
