@@ -862,10 +862,11 @@ pub(super) fn project(
         // and `rows.domains[a]` holds every value atom `a` takes at any point, since `Rows::of`
         // reads it from top-level conjuncts of `f` alone: one disjunction of ranges of `a`, met
         // with the top-level bounds of `a`, or those bounds alone; a point of `f` meets every
-        // top-level conjunct. A symbol not among the rows' atoms starts from every integer. Complexity tradeoff: the cover's work
-        // after such a refusal, up to `meter::EXACT_LIMIT` for each symbol, against the refusal's
-        // constant cost; the bound of the comment above is unchanged, since the solver's
-        // projection was already counted to `meter::EXACT_LIMIT`. Test:
+        // top-level conjunct. A symbol not among the rows' atoms starts from every integer.
+        // Complexity tradeoff: the cover's work after such a refusal, up to `meter::EXACT_LIMIT`
+        // for each symbol, against the refusal's constant cost; the bound of the comment above
+        // is unchanged, since the solver's projection was already counted to
+        // `meter::EXACT_LIMIT`. Test:
         // `l01_38_omega_test::disj_groups::row_sums::case_187_of_seed_16408613613253816205_is_
         // answered_alike_on_both_sides_of_the_join_limit`.
         Err(Stop::Limit) if old_exact => {

@@ -520,10 +520,14 @@ fn each_use_that_needs_data_rejects_a_family_of_functions() {
         assert_eq!(got.len(), 1, "{text}\n{got:#?}");
         assert!(got[0].starts_with(&want), "{text}\n{got:#?}");
     }
-    // Both operands holding a function are an error each, for a family as for a tuple.
-    let t = "f(positional y) = y + int(1);\nt = (f, 1);\na = t == t;\n";
+    // Two operands holding a function are an error each, for a family as for a tuple, where
+    // the two refusals differ. One operand written twice, `t == t`, is one refusal: the second
+    // would repeat the first, the same text at the same span (TEST-harness-duplicate-eq-error).
+    let t = "f(positional y) = y + int(1);\nt = (f, 1);\nu = (f, 2);\na = t == u;\n";
     assert_eq!(type_errors(t).len(), 2, "{t}");
-    assert_eq!(type_errors(&format!("{b}a = b == b;\n")).len(), 2);
+    let t = "f(positional y) = y + int(1);\nt = (f, 1);\na = t == t;\n";
+    assert_eq!(type_errors(t).len(), 1, "{t}");
+    assert_eq!(type_errors(&format!("{b}a = b == b;\n")).len(), 1);
     // A family made by `map` from a family of data holds the functions `map` puts in it.
     let text = "b = { \"a\" -> 1 }.map(r -> (y -> y + r));\na = \"${b}\";\n";
     let got = type_errors(text);
