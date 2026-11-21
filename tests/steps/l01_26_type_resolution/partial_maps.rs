@@ -523,6 +523,72 @@ fn a_function_where_a_family_is_needed_is_refused_at_the_use_and_not_by_its_type
     );
 }
 
+/// A component of a parameter declared a tuple, `p: (int ->? int, int)`, declared a partial
+/// map is read as a family where a word reads its entries, as a whole parameter declared one
+/// is: taken out by destructuring, `m, k = p`, or by `p[0]`, and each call must then pass a
+/// family there. Before FAIL-family-from-tuple-param `m.sum` was refused in the body, "`sum`
+/// does not take (int ->? int)", whatever the calls passed.
+#[test]
+fn a_family_taken_out_of_a_tuple_parameter_is_read_as_one() {
+    let split = "total(p: (int ->? int, int)) {\n    m, k = p;\n    return m.sum + k;\n}\n";
+    let index = "total(p: (int ->? int, int)) = p[0].sum + p[1];\n";
+    for total in [split, index] {
+        assert_eq!(
+            type_errors(&format!("{total}t = total(p: ({{0 -> 1, 1 -> 2}}, 1));\n")),
+            Vec::<String>::new(),
+            "{total}"
+        );
+        let errs = type_errors(&format!("{total}t = total(p: (((x: int) -> x * x), 1));\n"));
+        assert_eq!(errs.len(), 1, "{total}{errs:?}");
+        assert!(
+            errs[0].starts_with("`total` takes `p[0]` as a family, which `sum` reads"),
+            "{total}{errs:?}"
+        );
+    }
+    // Passed on whole by a parameter declared the same tuple: its component is marked in
+    // turn, and its own calls are checked.
+    let on = "outer(q: (int ->? int, int)) = total(p: q);\n";
+    assert_eq!(
+        type_errors(&format!("{split}{on}t = outer(q: ({{0 -> 1}}, 1));\n")),
+        Vec::<String>::new()
+    );
+    let errs = type_errors(&format!("{split}{on}t = outer(q: (((x: int) -> x), 1));\n"));
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert!(
+        errs[0].starts_with("`outer` takes `q[0]` as a family, which `sum` reads"),
+        "{errs:?}"
+    );
+    // A remap of the part marks it as a word does. (A range on a key inside a tuple parameter
+    // is refused as not yet supported, so no range reaches the part.)
+    let remap = "g(p: (int ->? int, int)) {\n    m, k = p;\n    \
+                 return m as (j -> v) into (j -> v + k);\n}\n";
+    assert_eq!(
+        type_errors(&format!("{remap}t = g(p: ({{5 -> 1, 6 -> 2}}, 0));\n")),
+        Vec::<String>::new()
+    );
+    let errs = type_errors(&format!("{remap}t = g(p: (((x: int) -> x), 0));\n"));
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert!(
+        errs[0].starts_with("`g` takes `p[0]` as a family, which a remap reads"),
+        "{errs:?}"
+    );
+    // Passed on by a parameter of no declared type, which takes the need on that part: the
+    // need is then `outer`'s, on `q[0]`.
+    let open = "outer(q) = total(p: q);\n";
+    assert_eq!(
+        type_errors(&format!("{split}{open}t = outer(q: ({{0 -> 1}}, 1));\n")),
+        Vec::<String>::new()
+    );
+    let errs = type_errors(&format!(
+        "{split}{open}t = outer(q: (((x: int) -> x), 1));\n"
+    ));
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert!(
+        errs[0].starts_with("`outer` takes `q[0]` as a family, which `sum` reads"),
+        "{errs:?}"
+    );
+}
+
 /// A read at a key outside a display's keys is refused (DESIGN.md sec:type_language, the
 /// `m[k]` row: a static error where the key's domain is disjoint from the keys), whatever the
 /// display stores; the repair that widens the keys writes the map's type with the values it

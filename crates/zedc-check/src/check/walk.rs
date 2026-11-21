@@ -18231,43 +18231,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     // `component_exponents_give_one_error_per_call_below_zero`: destructured and bracketed
     // parts, accepted at a part of 3 and refused at -3. Chosen shapes only; the proof rests on
     // the resolver refusing a second binding of a name, which these tests do not try.
-    fn open_place(&self, mut e: &'a Expr) -> Option<(usize, Vec<PathStep>)> {
-        let mut seen = HashSet::new();
-        // Innermost step first; reversed at the end.
-        let mut steps = Vec::new();
-        loop {
-            match &e.kind {
-                ExprKind::Name(_) => {}
-                ExprKind::Index(of, k) => {
-                    let Some(Value::Int(k)) = literal(k, None).map(|l| l.value) else {
-                        return None;
-                    };
-                    steps.push(PathStep::Index(usize::try_from(k).ok()?));
-                    e = of;
-                    continue;
-                }
-                _ => return None,
-            }
-            let id = match self.t.res.uses.get(&e.span) {
-                Some(Ref::Bound(ids)) if ids.len() == 1 => ids[0],
-                _ => return None,
-            };
-            if self.open_params.contains(&id) {
-                steps.reverse();
-                return Some((id, steps));
-            }
-            if !seen.insert(id) {
-                return None;
-            }
-            match (self.facts.get(&id), self.taken_from.get(&id)) {
-                (Some(v), _) => e = v,
-                (None, Some(&(v, step))) => {
-                    steps.push(step);
-                    e = v;
-                }
-                (None, None) => return None,
-            }
-        }
+    fn open_place(&self, e: &'a Expr) -> Option<(usize, Vec<PathStep>)> {
+        // The walk is shared with the parameters declared a partial map
+        // (FAIL-family-from-tuple-param), in remap.rs, which this file may name.
+        self.place_of(e, |ck, id| ck.open_params.contains(&id))
     }
 
     /// The binder a scope reads as an int for the exponent or operand `e` that is the place
@@ -18390,6 +18357,69 @@ impl<'t, 'a> Ck<'t, 'a> {
             via: CallPath::default(),
         };
         self.floor_on(id, need);
+    }
+
+    /// The part at `path` of the argument `a` passed as `p` of the call of `what`, for the need
+    /// of `domain` on that part, used at `use_at` and passed on by `via` ([`Self::floors_at`]):
+    /// followed through the tuple displays and names bound to values it is written with as far
+    /// as they go, and through its type throughout. A part of a parameter of no declared type
+    /// of the function the call is in takes the need on, with the rest of the path, and gives
+    /// [`PartOf::PassedOn`]; for a need on keys, a part that is a map declared on a parameter
+    /// of that function, at the rest of the path, gives [`PartOf::Keyed`]
+    /// (FAIL-family-from-tuple-param); a type the part cannot be read from gives
+    /// [`PartOf::Unknown`], and the caller refuses the call.
+    ///
+    /// Complexity tradeoff: O(d) steps for a path of d, each a lookup or a pass over the
+    /// pieces of the type it reads, the size of a type already built, and for a need on keys
+    /// an O(d) walk of [`Self::keyed_place`] per step, O(d²) in all for the handful of steps
+    /// a declared type writes; the need on the class of the part, the naive way, costs O(1)
+    /// but fixes the part to its whole carrier. COMPLEXITY.md CHK-pow-component-bound.
+    #[allow(clippy::too_many_arguments)]
+    fn part_of(
+        &mut self,
+        a: &Arg<'a>,
+        path: &[PathStep],
+        p: &str,
+        what: &str,
+        domain: &IntDomain,
+        via: &Option<Arc<Via>>,
+        use_at: Span,
+    ) -> PartOf<'a> {
+        let mut e = a.expr;
+        let mut ty = a.ty.clone();
+        for (s, &step) in path.iter().enumerate() {
+            if let Some(x) = e
+                && let Some((id, pre)) = self.open_place(x)
+            {
+                if !self.trying {
+                    let rest = pre.into_iter().chain(path[s..].iter().copied()).collect();
+                    let at = a.at.unwrap_or(x.span);
+                    self.part_passed_on(id, rest, x, at, p, what, domain, via, use_at);
+                }
+                return PartOf::PassedOn;
+            }
+            if let Some(x) = e
+                && domain.key.is_some()
+                && let Some(place) = self.keyed_place(x, &path[s..])
+            {
+                return PartOf::Keyed(place, x);
+            }
+            e = e.and_then(|x| self.part_expr(x, step));
+            match self.part_type(&ty, step) {
+                Some(t) => ty = t,
+                None => return PartOf::Unknown,
+            }
+        }
+        PartOf::Arg(Arg {
+            ty,
+            lit: None,
+            at: e.map(|x| x.span).or(a.at),
+            expr: e,
+            parts: None,
+            branches: None,
+            via: None,
+            below: None,
+        })
     }
 
     /// Checks that a value of `t` holds no int, or only ints listed in the domain `d`, as its
@@ -18847,14 +18877,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             // whose body could reach this one's again, is not checked at all (recursion is
             // rejected until step L6, `order_around_cycles`), and a check run again runs the
             // whole `infer` again, entry and all. Tests: `l08_02_remaps::recursion`.
-            let keys = self.param_keys.remove(id);
-            // The ranges on the key print in its place: the whole key's, `(int[5..=9] ->? int)`
-            // (RANGE-result-hull), or each tuple component's in the component's,
-            // `(((int[0..=1], int)) ->? int)` (RANGE-key-component-print).
-            if let Some(k) = keys.as_ref().filter(|k| !k.ranges.is_empty()) {
-                keyed.push((j, k.ranges.clone()));
-            }
-            if let Some(k) = keys.and_then(|k| k.need()) {
+            //
+            // A parameter declared a tuple has an entry for each component declared a partial
+            // map, with the steps to it (FAIL-family-from-tuple-param); its need carries the
+            // steps, and each call checks the part of its argument they name (`floors_at`).
+            for k in self.param_keys.remove(id).unwrap_or_default() {
+                // The ranges on the key print in its place: the whole key's,
+                // `(int[5..=9] ->? int)` (RANGE-result-hull), or each tuple component's in the
+                // component's, `(((int[0..=1], int)) ->? int)` (RANGE-key-component-print). A
+                // map inside a tuple parameter has no ranges: a range type there is refused as
+                // not yet supported before the check (FAIL-family-from-tuple-param test), so
+                // the path test only keeps a later change from printing one in the wrong place.
+                if k.path.is_empty() && !k.ranges.is_empty() {
+                    keyed.push((j, k.ranges.clone()));
+                }
+                let Some(use_) = k.need() else { continue };
                 let name = sig
                     .params
                     .get(j)
@@ -18869,12 +18906,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                             name,
                             below_two_pow: None,
                             written: None,
-                            key: Some(Arc::new(k)),
+                            key: Some(Arc::new(use_)),
                         },
                         param: j,
                         via: None,
                         bits: None,
-                        path: Arc::from([]),
+                        path: k.path.clone(),
                     },
                     result: None,
                     span: at,
@@ -19018,7 +19055,37 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let a = args.get(*param).and_then(Option::as_ref);
                 let defaulted = sig.params.get(*param).is_some_and(|p| p.default.is_some());
                 let use_at = (n.span, via.clone());
-                self.keys_at(what, &p, domain, k, a, defaulted, use_at, span);
+                // A need on a map inside a tuple parameter (FAIL-family-from-tuple-param) is
+                // checked on that part of the argument, as an int need on a part is below; a
+                // part whose type the checker cannot read is checked as a value of any type,
+                // whose keys the checker cannot show, and refused.
+                let part;
+                let mut keyed = None;
+                let a = match a {
+                    Some(whole) if !path.is_empty() => {
+                        match self.part_of(whole, path, &p, what, domain, via, n.span) {
+                            PartOf::Arg(arg) => part = arg,
+                            PartOf::PassedOn => continue,
+                            // `keys_at` reads only the place and its expression then.
+                            PartOf::Keyed(place, x) => {
+                                keyed = Some((place, x));
+                                part = Arg {
+                                    at: whole.at,
+                                    ..Arg::of(Ty::empty())
+                                };
+                            }
+                            PartOf::Unknown => {
+                                part = Arg {
+                                    at: whole.at,
+                                    ..Arg::of(Ty::dynamic())
+                                }
+                            }
+                        }
+                        Some(&part)
+                    }
+                    a => a,
+                };
+                self.keys_at(what, &p, domain, k, a, keyed, defaulted, use_at, span);
                 continue;
             }
             let takes = format!("{what} takes `{p}` in {}", domain_text(domain));
@@ -19099,52 +19166,21 @@ impl<'t, 'a> Ck<'t, 'a> {
             let a = if path.is_empty() {
                 a
             } else {
-                let mut e = a.expr;
-                let mut ty = a.ty.clone();
-                let mut known = true;
-                let mut passed_on = false;
-                for (s, &step) in path.iter().enumerate() {
-                    if let Some(x) = e
-                        && let Some((id, pre)) = self.open_place(x)
-                    {
-                        if !self.trying {
-                            let rest = pre.into_iter().chain(path[s..].iter().copied()).collect();
-                            let at = a.at.unwrap_or(x.span);
-                            self.part_passed_on(id, rest, x, at, &p, what, domain, via, n.span);
-                        }
-                        passed_on = true;
-                        break;
+                match self.part_of(a, path, &p, what, domain, via, n.span) {
+                    PartOf::Arg(arg) => {
+                        part = arg;
+                        &part
                     }
-                    e = e.and_then(|x| self.part_expr(x, step));
-                    match self.part_type(&ty, step) {
-                        Some(t) => ty = t,
-                        None => {
-                            known = false;
-                            break;
-                        }
+                    PartOf::PassedOn | PartOf::Keyed(..) => continue,
+                    PartOf::Unknown => {
+                        let at = a.at.unwrap_or(span);
+                        let shown = self.show(&a.ty);
+                        let why =
+                            format!("the checker cannot tell the type of `{p}` in this argument");
+                        self.domain_error(&passed, &shown, why, at);
+                        continue;
                     }
                 }
-                if passed_on {
-                    continue;
-                }
-                if !known {
-                    let at = a.at.unwrap_or(span);
-                    let shown = self.show(&a.ty);
-                    let why = format!("the checker cannot tell the type of `{p}` in this argument");
-                    self.domain_error(&passed, &shown, why, at);
-                    continue;
-                }
-                part = Arg {
-                    ty,
-                    lit: None,
-                    at: e.map(|x| x.span).or(a.at),
-                    expr: e,
-                    parts: None,
-                    branches: None,
-                    via: None,
-                    below: None,
-                };
-                &part
             };
             let generic = !a.ty.vars.is_empty();
             let ns = &a.ty.set & &int;
@@ -19303,6 +19339,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         domain: &IntDomain,
         k: &Arc<KeyUse>,
         a: Option<&Arg<'a>>,
+        keyed: Option<((usize, usize), &'a Expr)>,
         defaulted: bool,
         use_at: (Span, Option<Arc<Via>>),
         span: Span,
@@ -19356,10 +19393,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             return;
         };
-        if let Some(e) = a.expr
-            && let Some(id) = self.keyed_param(e)
-        {
-            let own = self.param_keys.get_mut(&id).expect("a keyed parameter");
+        // A map declared on a parameter of the function the call is in, the whole parameter or
+        // a part of it (`keyed`, from [`Self::part_of`]): it takes on the reader, and its
+        // ranges must lie inside these.
+        let keyed = keyed.or_else(|| {
+            let e = a.expr?;
+            Some((self.keyed_param(e)?, e))
+        });
+        if let Some(((id, i), e)) = keyed {
+            let own = &mut self.param_keys.get_mut(&id).expect("a keyed parameter")[i];
             if own.family.is_none() {
                 own.family.clone_from(&k.family);
             }
@@ -31985,6 +32027,19 @@ mod tests {
             "{errors:?}"
         );
     }
+}
+
+/// What [`Ck::part_of`] finds at a path of a call's argument.
+enum PartOf<'a> {
+    /// The part, its type and, where shown, its expression.
+    Arg(Arg<'a>),
+    /// A part of a parameter of no declared type, which took the need on.
+    PassedOn,
+    /// The map declared on a parameter at the binder and entry of [`Ck::param_keys`], and the
+    /// expression of the argument that reaches it (FAIL-family-from-tuple-param).
+    Keyed((usize, usize), &'a Expr),
+    /// A part whose type the checker cannot read.
+    Unknown,
 }
 
 /// The steps of a path written after a name, as a program reads them: `[0]` each

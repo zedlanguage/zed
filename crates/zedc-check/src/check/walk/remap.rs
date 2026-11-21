@@ -243,9 +243,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.error(of.span, msg);
                 return None;
             }
-            if let Some(id) = keyed
+            if let Some(place) = keyed
                 && fams.iter().any(|g| !g.data)
-                && let Some(k) = self.param_keys.get_mut(&id)
+                && let Some(k) = self.keyed_entry(place)
             {
                 k.family.get_or_insert_with(|| "a remap".into());
             }
@@ -418,19 +418,109 @@ impl<'t, 'a> Ck<'t, 'a> {
             .to_string()
     }
 
-    /// The binder of the parameter declared a partial map ([`Ck::param_keys`]) of a function
-    /// being checked that the name `e` reads. Kept here, beside the remap that marks such a
-    /// parameter, and not in walk.rs, which this module must not name (row
+    /// The partial map declared on a parameter of a function being checked ([`Ck::param_keys`])
+    /// that `e` reads, as its binder and the index of its entry there: the parameter itself,
+    /// or a component of a tuple it is declared, which `e` reaches by the steps `then` after
+    /// those [`Self::place_of`] follows, as `m` of `m, k = p` or `p[0]` for
+    /// `p: (int ->? int, int)` (FAIL-family-from-tuple-param). Kept here, beside the remap that
+    /// marks such a parameter, and not in walk.rs, which this module must not name (row
     /// S1F-remap-keyed-param-cycle: walk.rs and fp_ops.rs import this module).
-    pub(in crate::check) fn keyed_param(&self, e: &Expr) -> Option<usize> {
-        let ExprKind::Name(_) = &e.kind else {
-            return None;
-        };
-        match self.t.res.uses.get(&e.span) {
-            Some(Ref::Bound(ids)) if ids.len() == 1 && self.param_keys.contains_key(&ids[0]) => {
-                Some(ids[0])
+    ///
+    /// Proof that the map found is the value of `e`: by [`Self::place_of`], the value of `e`
+    /// is the part of the parameter's value its steps name; a declared tuple of `n` takes only
+    /// tuples of `n` (a call's argument fits the declared type), so `[k]` on it is component
+    /// `k`, the component `Part { i: k, n }` names ([`same_steps`]). The entry's need carries
+    /// the same steps, and each call checks the part of its argument they name
+    /// (`Ck::part_of`), so a part read as a family here is one at every call.
+    /// O(d) for `d` steps followed, and a pass over the parameter's entries (one per map its
+    /// declared type writes).
+    ///
+    /// Test: l01_26 partial_maps `a_family_taken_out_of_a_tuple_parameter_is_read_as_one`:
+    /// `m, k = p` and `p[0]`, `.sum` and a remap, a family accepted and a function refused at
+    /// the call, and the part passed on whole by a declared and an undeclared parameter. It
+    /// cannot catch a part reached in another way, as through `match` or a nested function's
+    /// capture, which this walk does not follow: such a read is refused, as before, not let
+    /// through.
+    pub(in crate::check) fn keyed_place(
+        &self,
+        e: &Expr,
+        then: &[PathStep],
+    ) -> Option<(usize, usize)> {
+        let (id, mut steps) = self.place_of(e, |ck, id| ck.param_keys.contains_key(&id))?;
+        steps.extend_from_slice(then);
+        let i = (self.param_keys[&id].iter()).position(|k| same_steps(&k.path, &steps))?;
+        Some((id, i))
+    }
+
+    /// [`Self::keyed_place`] of `e` itself.
+    pub(in crate::check) fn keyed_param(&self, e: &Expr) -> Option<(usize, usize)> {
+        self.keyed_place(e, &[])
+    }
+
+    /// The entry of [`Ck::param_keys`] at `(binder, index)`, as [`Self::keyed_param`] gives it.
+    pub(in crate::check) fn keyed_entry(
+        &mut self,
+        (id, i): (usize, usize),
+    ) -> Option<&mut ParamKeys> {
+        self.param_keys.get_mut(&id)?.get_mut(i)
+    }
+
+    /// The binder whose part `e` is, the first for which `stop` holds, and the steps from its
+    /// value to that part, outermost first (CHK-pow-component-bound,
+    /// FAIL-family-from-tuple-param): through names bound to names, names bound by
+    /// destructuring, `a` of `a, b = p` being component 0 of 2 of `p`, and `[k]` with the
+    /// literal `k`. Empty steps where `e` is the whole value.
+    ///
+    /// Proof that the value of `e` is the part the steps name of the binder's value: a name
+    /// has one value, bound once (DESIGN.md sec:diagnostics), so a name bound to `v` is `v`,
+    /// and one bound by destructuring a tuple of `n` into `n` names is its component `i`; a
+    /// value that is no tuple of `n` is refused there ([`Ck::component`]), and the call's own
+    /// check of the destructuring refuses an argument that is none. `x[k]` is the entry `k`
+    /// of `x`, its component `k` where `x` is a tuple.
+    ///
+    /// Complexity tradeoff: one step per name or bracket followed, each a hash lookup, so
+    /// O(d) for a part `d` steps below the binder; a name met twice ends the walk, so a cycle
+    /// of names costs O(names). COMPLEXITY.md CHK-pow-component-bound.
+    pub(in crate::check) fn place_of<'e>(
+        &'e self,
+        mut e: &'e Expr,
+        stop: impl Fn(&Self, usize) -> bool,
+    ) -> Option<(usize, Vec<PathStep>)> {
+        let mut seen = HashSet::new();
+        // Innermost step first; reversed at the end.
+        let mut steps = Vec::new();
+        loop {
+            match &e.kind {
+                ExprKind::Name(_) => {}
+                ExprKind::Index(of, k) => {
+                    let Some(Value::Int(k)) = literal(k, None).map(|l| l.value) else {
+                        return None;
+                    };
+                    steps.push(PathStep::Index(usize::try_from(k).ok()?));
+                    e = of;
+                    continue;
+                }
+                _ => return None,
             }
-            _ => None,
+            let id = match self.t.res.uses.get(&e.span) {
+                Some(Ref::Bound(ids)) if ids.len() == 1 => ids[0],
+                _ => return None,
+            };
+            if stop(self, id) {
+                steps.reverse();
+                return Some((id, steps));
+            }
+            if !seen.insert(id) {
+                return None;
+            }
+            match (self.facts.get(&id), self.taken_from.get(&id)) {
+                (Some(v), _) => e = v,
+                (None, Some(&(v, step))) => {
+                    steps.push(step);
+                    e = v;
+                }
+                (None, None) => return None,
+            }
         }
     }
 
@@ -460,11 +550,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         t: &Ty,
         word: &str,
     ) -> Option<Ty> {
-        let id = self.keyed_param(e?)?;
+        let place = self.keyed_param(e?)?;
         if !(t.fns.iter()).any(|s| !s.data && declared_map_sig(s)) {
             return None;
         }
-        if let Some(k) = self.param_keys.get_mut(&id) {
+        if let Some(k) = self.keyed_entry(place) {
             k.family.get_or_insert_with(|| word.into());
         }
         let mut out = t.clone();
@@ -943,9 +1033,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let ExprKind::Remap { of, .. } = &s.e.kind else {
             return None;
         };
-        let k = self
-            .param_keys
-            .get(&self.keyed_param(of).filter(|_| a.0 == 0)?)?;
+        let (id, i) = self.keyed_param(of).filter(|_| a.0 == 0)?;
+        let k = self.param_keys.get(&id)?.get(i)?;
         (k.ranges.iter()).find(|(p, _)| *p == a.1).map(|(_, r)| r)
     }
 
@@ -959,7 +1048,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return span_of(t);
         };
         let ranged = (self.keyed_param(of).filter(|_| a.0 == 0))
-            .and_then(|id| self.param_keys.get(&id)?.span(a.1));
+            .and_then(|(id, i)| self.param_keys.get(&id)?.get(i)?.span(a.1));
         ranged.or_else(|| span_of(t))
     }
 
@@ -1280,6 +1369,20 @@ impl<'t, 'a> Ck<'t, 'a> {
 fn declared_map_sig(sig: &Sig) -> bool {
     sig.arrows.iter().all(|a| a.partial && a.params.len() == 1)
         && matches!(&sig.params[..], [p] if p.positional)
+}
+
+/// Whether the steps `read` name the same part of a parameter's value as `declared`, the steps
+/// to a map in its declared type ([`ParamKeys::path`], tuple components only): a component
+/// `Part { i, n }` is met by the same component, or by `[i]` (FAIL-family-from-tuple-param).
+/// The value is a tuple of `n` wherever `declared` reads one, the call's argument fitting the
+/// declared type, so `[i]` on it is its component `i`. O(d) for `d` steps.
+fn same_steps(declared: &[PathStep], read: &[PathStep]) -> bool {
+    declared.len() == read.len()
+        && declared.iter().zip(read).all(|(d, r)| match (*d, *r) {
+            (PathStep::Part { i, n }, PathStep::Part { i: j, n: m }) => i == j && n == m,
+            (PathStep::Part { i, .. }, PathStep::Index(k)) => i == k,
+            _ => false,
+        })
 }
 
 /// A family `keys ->? values` that guarantees no key: its one arrow's result holds

@@ -2592,10 +2592,11 @@ struct Ck<'t, 'a> {
     /// The ints of each parameter declared with a range, `x: int[1..]`, by binder: its cell
     /// starts from them (DESIGN.md L1.39). With the span of the range as written.
     param_ints: HashMap<usize, (IntervalSet, Span)>,
-    /// Each parameter declared a partial map `K ->? V`, by binder: the ranges written on its
-    /// key, each with its span, and whether a remap reads it (RANGE-keys). The signature
-    /// takes a [`KeyUse`] need on it where it has a range or a remap reads it.
-    param_keys: HashMap<usize, ParamKeys>,
+    /// Each parameter declared a partial map `K ->? V`, or a tuple with such components, by
+    /// binder: for the whole or each such component, the ranges written on its key, each with
+    /// its span, and whether a remap reads it (RANGE-keys, FAIL-family-from-tuple-param). The
+    /// signature takes a [`KeyUse`] need on each where it has a range or a remap reads it.
+    param_keys: HashMap<usize, Vec<ParamKeys>>,
     /// The needs of the parameters of no declared type passed on as a parameter declared a
     /// partial map, kept in [`Self::ranged_floors`]: each binder and [`KeyUse`] once.
     keyed_seen: HashSet<(usize, Arc<KeyUse>)>,
@@ -9702,7 +9703,12 @@ pub(super) enum AlikeSite {
     Level(Ty, LevelWord, Ty, String),
     Reduce(Ty, Reducer, FoldForm, String),
     Sum(Ty, Ty, String),
-    Remap(usize, Vec<(RemapKeyAlike, Option<BinaryOp>)>, Option<usize>),
+    /// The last field is the binder and entry of [`Ck::param_keys`] the source names.
+    Remap(
+        usize,
+        Vec<(RemapKeyAlike, Option<BinaryOp>)>,
+        Option<(usize, usize)>,
+    ),
 }
 
 /// The key of one level of a remap's `into` pattern in [`AlikeSite::Remap`].
@@ -14597,10 +14603,13 @@ pub(super) fn exact_keys(ints: &IntervalSet) -> Option<WrittenRange> {
     }
 }
 
-/// A parameter declared a partial map of one key `K ->? V` (RANGE-keys), as
-/// [`Ck::param_keys`] reads it.
+/// A parameter declared a partial map of one key `K ->? V` (RANGE-keys), or a component so
+/// declared of a tuple the parameter is declared, as [`Ck::param_keys`] reads it.
 #[derive(Clone, Debug)]
 pub(super) struct ParamKeys {
+    /// The steps from the parameter's value to the map: none for the whole parameter, and
+    /// `[Part { i: 0, n: 2 }]` for `m` of `p: (int ->? int, int)` (FAIL-family-from-tuple-param).
+    pub path: Arc<[PathStep]>,
     /// The ranges written on its key: on the whole key (`None`) or on its tuple component at
     /// the index.
     pub ranges: Vec<(Option<usize>, WrittenRange)>,
@@ -14921,18 +14930,64 @@ impl<'a> Ck<'_, 'a> {
     /// (RANGE-keys): the whole key's, or each component's of a tuple key, read as
     /// [`Ck::param_range`] reads a parameter's. The parameter goes to `param_keys`, ranged or
     /// not, so that a remap may read it. Unlike a parameter's, a key's range that holds no int
-    /// is no error: it admits the empty map alone. O(the key's components) beyond reading the
-    /// bounds.
+    /// is no error: it admits the empty map alone. A parameter declared a tuple gives an entry
+    /// for each component, at any depth, declared such a map, with the steps to it, as `m` of
+    /// `p: (int ->? int, int)` (FAIL-family-from-tuple-param).
+    ///
+    /// Complexity tradeoff: the tuples are walked with a stack of their own, not by recursion,
+    /// so a parameter declared a tuple nested thousands deep, as the benchmarks of
+    /// `bench::ordered_tuples` declare, runs on a shallow stack (a recursive walk overflowed
+    /// it at 6400 levels); O(the size of the declared type), beyond reading the bounds, plus
+    /// the length of each map's steps, which its entry keeps. The steps are copied per map,
+    /// so a type with a map at each of `d` levels costs O(d²); sharing their prefixes would
+    /// make each need's path a list, which every reader of [`NeedKind::InDomain`]'s path
+    /// would have to change for, and no program has been seen with more than a few such maps.
     pub(super) fn param_keys(&mut self, p: &'a Param, id: usize) {
-        let Some(TypeKind::Arrow {
-            params,
-            partial: true,
-            ..
-        }) = p.ty.as_ref().map(|t| &t.kind)
-        else {
-            return;
-        };
-        let [key] = &params[..] else { return };
+        let Some(t) = p.ty.as_ref() else { return };
+        let mut found = Vec::new();
+        let mut path = Vec::new();
+        // A part to visit, with the step to it, or `None` to leave the part last entered.
+        let mut todo: Vec<Option<(&'a Type, Option<PathStep>)>> = vec![Some((t, None))];
+        while let Some(item) = todo.pop() {
+            let Some((t, step)) = item else {
+                path.pop();
+                continue;
+            };
+            if let Some(s) = step {
+                path.push(s);
+                todo.push(None);
+            }
+            match &t.kind {
+                TypeKind::Tuple(ts) => {
+                    let n = ts.len();
+                    let parts = ts.iter().enumerate().rev();
+                    todo.extend(parts.map(|(i, c)| Some((c, Some(PathStep::Part { i, n })))));
+                }
+                TypeKind::Arrow {
+                    params,
+                    partial: true,
+                    ..
+                } => {
+                    if let [key] = &params[..] {
+                        found.push(self.keyed_map(p, key, &path));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !found.is_empty() {
+            self.param_keys.insert(id, found);
+        }
+    }
+
+    /// The entry of [`Self::param_keys`] for the partial map of the one key `key` at the steps
+    /// `path` of the declared type of `p`: the ranges written on the key.
+    fn keyed_map(
+        &mut self,
+        p: &'a Param,
+        key: &'a zedc_syntax::ast::TypeParam,
+        path: &[PathStep],
+    ) -> ParamKeys {
         let parts: Vec<(Option<usize>, &Type)> = match &key.ty.kind {
             TypeKind::Tuple(ts) => ts.iter().enumerate().map(|(i, t)| (Some(i), t)).collect(),
             _ => vec![(None, &key.ty)],
@@ -14947,13 +15002,11 @@ impl<'a> Ck<'_, 'a> {
                 ranges.push((part, r));
             }
         }
-        self.param_keys.insert(
-            id,
-            ParamKeys {
-                ranges,
-                family: None,
-            },
-        );
+        ParamKeys {
+            path: path.into(),
+            ranges,
+            family: None,
+        }
     }
 
     /// The range a fixed-width alias names, `t` being the type name `u8` that name resolution
