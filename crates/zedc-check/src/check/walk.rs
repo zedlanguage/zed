@@ -3856,7 +3856,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         // A declared function, its parameters in another order, where several function types
-        // are wanted: fitted to the one [`Self::fn_member`] picks (FAIL-reorder-direct-two-fn-slot).
+        // are wanted: fitted to the one [`Self::fn_member`] picks
+        // (FAIL-reorder-direct-two-fn-slot).
         if let (Some(funs), Some(id)) = (&want.funs, self.declared(e))
             && let Some(s) = self.env.get(&id).and_then(only_fn)
             && let Some(sig) = self.fn_member(id, &s, funs, e.span, call)
@@ -8063,7 +8064,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // (a function's own value, a tuple holding one) is refused there as before.
                 // Not done here: `with finite()` written on the parameter (step L7.1), and a
                 // function compared pointwise over a key type the type enumerates.
-                // Test: `l01_26_type_resolution::partial_maps::a_function_where_a_family_is_needed_is_refused_at_the_use_and_not_by_its_type`
+                // Test:
+                // `l01_26_type_resolution::partial_maps::a_function_where_a_family_is_needed_is_refused_at_the_use_and_not_by_its_type`
                 // (`==` and `!=`; red before this change). It cannot catch an operand that
                 // reaches the parameter through a binding, which `read_as_family` does not
                 // follow (`keyed_param`), and is refused as before.

@@ -18046,7 +18046,8 @@ impl Scope {
             // A constraint is evaluated at a member at most once (`enumerated`), so keeping
             // the member adds no evaluation beyond one of each later constraint at each
             // failing root, at most (constraints) * (roots), the bound `zero_reached` states.
-            // Test: `l01_39_reduced_product::roots::a_failure_at_a_root_another_constraint_rules_out_is_not_reported_in_either_order`
+            // Test:
+            // `l01_39_reduced_product::roots::a_failure_at_a_root_another_constraint_rules_out_is_not_reported_in_either_order`
             // (both orders, two constants whose terms sort apart; red before this change) and
             // `…::roots::a_constraint_that_fails_at_a_root_is_rejected`. They cannot catch a
             // failure dropped because a domain other than the written constraints removed the

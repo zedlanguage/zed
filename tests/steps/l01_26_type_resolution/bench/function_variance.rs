@@ -787,3 +787,39 @@ fn a_hot_agreeing_call_costs_the_same_beside_a_placed_call() {
         },
     );
 }
+
+/// Row FAIL-reorder-direct-two-fn-slot (PROOFDOC6-author-questions): a declared function with
+/// its named parameters in another order, passed into a union of function types, is fitted to
+/// the first member it fits (`Ck::fn_member`): O(k p) to match the names of `k` members of `p`
+/// parameters, then one trial fit per member until one fits. Two programs: one call into a slot
+/// of n members whose last alone takes `re2`, so all n are tried, and n calls into a slot of two
+/// members. Both are linear. Besides its ratio: the program elaborates at each size. Small
+/// instances:
+/// `function_variance::a_reordered_function_the_generic_body_passes_only_into_a_union_slot_runs`.
+#[test]
+fn reordered_functions_passed_into_unions_of_function_types_scale() {
+    let what = "a reordered function into a slot of n function types, and n into a slot of two";
+    let make = |n: usize| {
+        let wide: Vec<String> = (0..n)
+            .map(|i| format!("((y: int, x: int) -> #r{i})"))
+            .chain(std::iter::once("((y: int, x: int) -> int)".to_string()))
+            .collect();
+        let mut src = format!(
+            "re2(x: int, y: int) = x * 10 + y;\nwide(k: {}) = 0;\nw = wide(k: re2);\n\
+             app4(k: ((y: int, x: int) -> int) | ((y: int, x: int) -> f64)) = \
+             {{ r = k(y: 2, x: 1); if r is int {{ r }} else {{ 0 }} }};\n",
+            wide.join(" | ")
+        );
+        for i in 0..n {
+            src.push_str(&format!("a{i} = app4(k: re2);\n"));
+        }
+        src
+    };
+    let n = 200;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        assert!(u.get("w").is_some(), "{what} at {m}");
+        assert!(u.get(&format!("a{}", m - 1)).is_some(), "{what} at {m}");
+    });
+}
