@@ -412,7 +412,7 @@ check "a change to tools/run_tests.sh runs both parts of tools/test_merge_check.
 merge check: a file tools/test_merge_check.sh tests changed: both its parts run
 merge check: a file tools/test_run_tests.sh tests changed: all its parts run
 merge check: tools/test_merge_check.sh select and record passed
-merge check: tools/test_run_tests.sh list, select, table, fresh, short, copy, concurrent and trace passed
+merge check: tools/test_run_tests.sh list, select, table, except, fresh, short, copy, concurrent and trace passed
 merge check: passed
 0" "$(change_on_base tools/run_tests.sh '# changed'
     "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
@@ -424,15 +424,18 @@ FAILED: tools/test_merge_check.sh select, rc=1
     command grep -a -o -E '^self select|FAILED: tools/test_merge_check.sh [a-z]+, rc=[0-9]+'
     echo "${PIPESTATUS[0]}")"
 # Step 0b (TOOL-merge-check-run-tests-self): each failing part of tools/test_run_tests.sh refuses
-# the branch; a failing list also stops select and table, which read its table, and short, which
-# starts after it, and those show as failed with empty logs, not with the passing logs of the run
-# before.
-for p in list table trace; do
+# the branch; a failing list also stops select, table and except, which read its table, and short,
+# which starts after it, and a failing table stops except, which runs after it; those show as
+# failed with empty logs, not with the passing logs of the run before.
+for p in list table except trace; do
   want="merge check: FAILED: tools/test_run_tests.sh $p"
   [ $p = list ] && want="$want
 merge check: FAILED: tools/test_run_tests.sh select
 merge check: FAILED: tools/test_run_tests.sh table
+merge check: FAILED: tools/test_run_tests.sh except
 merge check: FAILED: tools/test_run_tests.sh short"
+  [ $p = table ] && want="$want
+merge check: FAILED: tools/test_run_tests.sh except"
   check "a failing part $p of tools/test_run_tests.sh refuses the branch with exit 1" "$want
 1" "$(STUB_RT_FAIL=$p "$check_script" --base base 2>&1 |
     command grep -a -o -E '^merge check: FAILED: tools/test_run_tests.sh [a-z]+'
@@ -445,7 +448,7 @@ check "a failing build before the parts of tools/test_run_tests.sh refuses the b
     echo "${PIPESTATUS[0]}")"
 check "a change to tools/test_run_tests.sh alone runs its parts, not tools/test_merge_check.sh" \
   "merge check: a file tools/test_run_tests.sh tests changed: all its parts run
-merge check: tools/test_run_tests.sh list, select, table, fresh, short, copy, concurrent and trace passed
+merge check: tools/test_run_tests.sh list, select, table, except, fresh, short, copy, concurrent and trace passed
 merge check: passed
 0" "$(change_on_base tools/test_run_tests.sh '# changed'
     "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
@@ -453,7 +456,7 @@ merge check: passed
 # Step 0's parts are timed, so they start only once step 0b's build (which has no limit) has ended.
 check "the build for tools/test_run_tests.sh ends before the timed parts of tools/test_merge_check.sh start" \
   "merge check: tools/test_merge_check.sh select and record passed
-merge check: tools/test_run_tests.sh list, select, table, fresh, short, copy, concurrent and trace passed
+merge check: tools/test_run_tests.sh list, select, table, except, fresh, short, copy, concurrent and trace passed
 merge check: passed
 0" "$(change_on_base tools/test_lib.sh '# changed'
     STUB_BUILD_MARK=$ws/target/built-$$-$SECONDS "$check_script" --base base 2>&1 |
