@@ -174,8 +174,12 @@ pub(super) fn empty(f: &Formula, conjuncts: &Conjuncts) -> bool {
 /// atom ([`Graph::solve`]): an equation fixes it, or shows it has no integer value; rows `t >= 0`
 /// of one atom bound it, and fix it or cross only where its least value is at or above its
 /// greatest. A constraint of no atom, or a disjunction of one operand or none, gives a step
-/// too. Where none of these is among the conjuncts, no atom is ever known and no part ever has
-/// its value, so the propagation ends with nothing shown.
+/// too. Where none of these is among the conjuncts, no top-level conjunct gives a step. A part
+/// below them can still have its value at once ([`Graph::of`] queues a constraint of no atom
+/// and an empty conjunction or disjunction wherever it lies), and so can decide a disjunction
+/// and give a step: that case is not seen (the tradeoff below). The answer `false` is still
+/// sound, since [`empty`] answers `false` for any formula it does not show empty, and its
+/// callers then project the formula, which is exact.
 // Complexity tradeoff: the answer reads the top-level conjuncts alone, O(c) for c conjuncts and
 // O(b) expected for the b rows of one atom, so a constraint of no atom below a top-level
 // disjunction or negation, which the propagation would value at once and which could decide that

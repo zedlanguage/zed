@@ -262,10 +262,17 @@ fn disjuncts(f: &Formula) -> Option<Vec<Vec<&Con>>> {
 }
 
 /// The atom `a`, the modulus `|m|` and the intervals left to `a - m * q` by each disjunct of a
-/// clause that bounds `a - m * q` alone in each, `q` one atom in each disjunct and `|m|` one in
-/// the clause: `None` where the clause is not of that form, or a disjunct leaves an interval
-/// unbounded or as long as the modulus, so that every residue is left, or a quotient is not
-/// one `free` allows. The intervals of the disjuncts that hold nowhere are left out.
+/// clause that bounds `a - m * q` alone in each, `q` one atom and `m` one signed factor in each
+/// disjunct and `|m|` one in the clause: `None` where the clause is not of that form, or a
+/// disjunct leaves an interval unbounded or longer than the modulus, so that every residue is
+/// left, or a quotient is not one `free` allows. The intervals of the disjuncts that hold
+/// nowhere are left out. Proof that a disjunct read is exactly `a mod |m|` in the residues of
+/// its interval `lo..=hi`: each of its rows is `ka * (a - m * q) + c0` compared with zero, the
+/// same `a - m * q` in each since `m = -kb / ka` is one in the disjunct, so the disjunct is
+/// `lo <= a - m * q <= hi`; with `q` free this holds for some `q` exactly when `a mod |m|` is
+/// the residue of some value of `lo..=hi`. Rows of one disjunct with `m` of either sign
+/// (`a - 4 * q >= 0 && a + 4 * q <= 1`) bound two terms, hold at every `a` (`q` low enough),
+/// and are not read (test `bounds_of_a_plus_and_a_minus_one_quotient_are_no_window`).
 fn residues<'c>(ds: &[Vec<&'c Con>], free: &dyn Fn(&Atom) -> bool) -> Option<Kept<&'c Atom>> {
     let first = ds.first()?.first()?;
     // Either atom of the first constraint may be `a`; the other is its quotient.
@@ -286,6 +293,10 @@ fn over(
     let mut ys: Vec<(Int, Int)> = Vec::new();
     for d in ds {
         let mut q: Option<&Atom> = None;
+        // `kb / ka`, one in the disjunct: its bounds are then bounds of one term `a + (kb /
+        // ka) * q`. Only its absolute value need be one across the clause, each disjunct's
+        // quotient its own.
+        let mut ratio: Option<Int> = None;
         let (mut lo, mut hi): Span = (None, None);
         let mut nowhere = false;
         for c in d {
@@ -302,7 +313,12 @@ fn over(
                 return None;
             }
             q = Some(b);
-            let m = kb.div_floor(ka).abs();
+            let r = kb.div_floor(ka);
+            if ratio.as_ref().is_some_and(|o| *o != r) {
+                return None;
+            }
+            let m = r.abs();
+            ratio = Some(r);
             if modulus.as_ref().is_some_and(|o| *o != m) {
                 return None;
             }
@@ -748,8 +764,8 @@ mod tests {
 
     #[test]
     fn a_clause_keeping_every_residue_leaves_the_face_full() {
-        // The full face: `x mod 4` in 0..=1 or in 2..=3 keeps every residue, and a window as
-        // long as the modulus reads as no clause of residues.
+        // The full face: `x mod 4` in 0..=1 or in 2..=3 keeps every residue, and so does a
+        // window as long as the modulus.
         let mut fs = between(0, 100);
         fs.push(or(vec![window(1, 4, 0, 1), window(2, 4, 2, 3)]));
         fs.push(or(vec![window(3, 4, 0, 3)]));
@@ -903,5 +919,33 @@ mod tests {
         let mut gs = fs.clone();
         gs[2] = con(&[(0, -1), (1, 6)], 1, Rel::Ge);
         assert!(within(&and(gs), &[]).is_empty());
+    }
+
+    #[test]
+    fn bounds_of_a_plus_and_a_minus_one_quotient_are_no_window() {
+        // `x - 4 * q >= 0 && x + 4 * q <= 1` bounds `x - 4 * q` below and `x + 4 * q` above:
+        // no window of `x mod 4`, and it holds at every `x` (q = -|x| - 1). With the
+        // disjunct `x mod 4 == 3` beside it, the clause holds at x = 2; read as the window
+        // `0..=1` it kept residues 0, 1 and 3 and emptied `x == 2`.
+        let clause = or(vec![
+            and(vec![
+                con(&[(0, 1), (1, -4)], 0, Rel::Ge),
+                con(&[(0, -1), (1, -4)], 1, Rel::Ge),
+            ]),
+            con(&[(0, 1), (2, -4)], -3, Rel::Eq),
+        ]);
+        let mut fs = between(2, 2);
+        fs.push(clause.clone());
+        let f = and(fs);
+        let point: super::super::Model = [
+            (a(0), Int::from(2)),
+            (a(1), Int::from(-1)),
+            (a(2), Int::ZERO),
+        ]
+        .into_iter()
+        .collect();
+        assert!(f.holds(&point));
+        within(&f, &[]);
+        assert_eq!(super::key(&clause, &|_| true), None);
     }
 }

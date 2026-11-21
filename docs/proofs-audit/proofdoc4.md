@@ -1116,7 +1116,89 @@ Not read:
 
 ## proofdoc4e: zedc-presburger, last 90 entries
 
-Not started.
+The list is `proofdoc4-lists/e.txt`, 90 entries numbered 1 to 90 in its order. Part 1, entries
+1 to 20 and the six review ids R4-CLAUDE-2, R4-CLAUDE-3, R4-CLAUDE-8, I4.3, I4.15 and I4.11,
+base commit 8c9dd3cbd. For each entry the whole message and the whole diff under
+`crates/zedc-presburger` were read, and each claim was checked at the code that relies on it
+on main today.
+
+| Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
+|---|---|---|---|---|---|---|
+| zedc-presburger | 20 | 44 | 31 | 6 | 0 | 5 |
+
+Of the 44, two are counted in no column, since the code they described is gone: the sieve
+proof of fe770de11 (moved to `zed-numtheory` `least_prime_factors`, complete there, and no
+longer used by this crate) and R4-CLAUDE-8 (a comment on the top-level split that round 5
+removed). The review ids are counted with the entries, I4.15 and I4.11 under 2df2801ba.
+
+Two claims were false, each in a comment that the code relied on:
+- `extend/residues.rs` `over` merged the bounds of `a - m q` and `a + m q` within one
+  disjunct, since it took `m = |kb / ka|` and dropped the sign: `x - 4q >= 0 && x + 4q <= 1`
+  was read as the window `0..=1`, though it holds at every `x`, so `read` emptied a face that
+  has a point. The fix keeps one signed ratio per disjunct, and the module's proof now says
+  why that is exact. Red, then green: `extend::residues::tests::
+  bounds_of_a_plus_and_a_minus_one_quotient_are_no_window` (empty at `x = 2` before the fix).
+- `MapHull::compose` said composition is associative. It is for `lo`, `hi` and `step`, not
+  for the `exact` flag: `({0, 10} + {0, 1}) + {0..9}` is inexact and `{0, 10} + ({0, 1} +
+  {0..9})` exact, both `{0..20}`. Each `true` is sound, so the bracketing of `HullProduct`
+  changes only which method answers, not the answer. The doc is corrected, and the test
+  `r5_hull_tests::map_hull_values_compose_associatively_and_the_exact_flag_does_not` pins
+  both halves.
+
+| Source | Claim | Code site | Status |
+|---|---|---|---|
+| fe770de11 | the sieve of least prime factors is exact | `zed-numtheory` `least_prime_factors` | no longer relied on here |
+| fe770de11 | `plane::bezout` gives the old signed Euclid's cofactors | `zed-numtheory` tests `bezout_cofactors_give_the_gcd_and_are_the_least` | already there |
+| fe770de11 | `combine_crt_pair` gcd costs what `wide_gcd` did | `modular.rs` `combine_crt_pair`, `Int::gcd` | already there |
+| 04ebcda96 | `fails_past_lid` is exact | `two_pins.rs` 741-748 | already there |
+| 04ebcda96 | the split of the rays is exact (`rb >= 0` implied) | `two_pins.rs` 750-797 | already there |
+| 04ebcda96 | `TANGENT_SIZES` predict a ratio of 10.0 | `two_pins` tests 4489-4498 | already there |
+| 134e107ca | `search_by_halves` marks failed only disjuncts with no point | `search_by_halves`, the marking loop | completed: proof at the site |
+| 134e107ca | `learn`'s `rest` is the disjunction without `d` | `learn` doc | completed: with `d` from `search_by_halves` |
+| 16490c8d2 | the shadow charge equals the solver's | `projection.rs` 937-958 | already there |
+| 26e45260d | `met_atoms` over a shared base is exact | `met_atoms` | completed: `⋂ (B ∪ E_i) = B ∪ ⋂ E_i`, DOI 10.48550/arXiv.1301.3388 |
+| 26e45260d | `by_cells` answers alike whatever atoms `cells_of` takes | `by_cells` doc | already there |
+| 2df2801ba | I4.15: `solve_regime` reads the residue in a canonical coordinate | `modular.rs` 2355-2440 | already there |
+| 2df2801ba | I4.11: `Refusal::said` names the moduli | `refusal.rs` `Refusal::said` | already there |
+| 2df2801ba | I4.11: the moduli print in increasing order | `zedc/src/front.rs` `linear_questions` | completed: holds for numerals, said so |
+| 2df2801ba | the PNCX cost comments (`forced_pair_bounds` at most two clauses) | `modular.rs` | already there |
+| R4-CLAUDE-2 | a clause is moved into the last product | `modular.rs` 2718 | already there |
+| R4-CLAUDE-3 | the scope test exercises the top-level split | `one_scope.rs` `the_fails_questions_of_pairs_scale` | corrected: the split is gone |
+| R4-CLAUDE-8 | the split keeps the model order | removed in round 5 | no longer relied on |
+| I4.3 | 64 of the 5,000 formulas are refused | `one_scope.rs` the 5,000 test | corrected: 6 now; 64 is a ceiling |
+| 30732fe05 | each rule of `residues` reads a superset, so empty means empty | `extend/residues.rs` module doc | already there |
+| 30732fe05 | `over` reads the bounds of one quotient as a window | `extend/residues.rs` `over` | corrected: false, fixed, red then green |
+| 364dd4a15 | `Summaries::make` may eliminate a product outside the key | `extend.rs` `Summaries::make` | completed: exact as `decide` reads a product; test `decide_reads_a_product_as_an_atom_of_its_own` |
+| 364dd4a15 | the key keeps a product when it keeps both factors | `extend.rs` | already there |
+| 374a5823a | `tighten_each` moves a bound only on proof | `tighten_each`, `linked_conjuncts` | already there |
+| 3bd1b249d | the sweep agrees with the pick | `cell_sweep_empty_tests`, `sweep_against_pick_tests` | already there |
+| 3fb4bb8e4 | `forest_row_hulls` and `deep.rs`'s early return are exact | `forest_row_hulls`, `deep.rs` 470 | already there |
+| 47dbe05b9 | the bounds of a `bitAnd` variable hold | `zedc-preimage` `bit_and_bounds` | already there (outside this crate) |
+| 47dbe05b9 | `linear_reading` sets `bitAnd` variables operands first | `linear_reading` | completed: why the numbers give that order |
+| 47dbe05b9 | `eval` reads products as products, an absent atom as 0 | `Lin::eval` | already there |
+| 4e52a49fc | `MapHull` composition is associative | `MapHull::compose` | corrected: not for `exact`; test added |
+| 4e52a49fc | `compose`, `add`, `exact_union`, `exact_sum` keep `exact` sound | `OffsetHull` | already there |
+| 4e52a49fc | `progression_meets` solves the congruence | `progression_meets` | already there |
+| 4e52a49fc | `catalog_live` meets over disjoint bases | `catalog_live` | already there |
+| 4e52a49fc | `chain_witness` assumes its chain | `chain_witness` | already there (marked not proved) |
+| 4e52a49fc | `Faces::free` answers `Ok(false)` only on proof | `extend.rs` `Faces::free` | already there |
+| 4e52a49fc | `met_outside` fixes atoms the equations force | `extend.rs` `met_outside` | already there |
+| 4e52a49fc | `point` answers `Ok(None)` exactly | `extend.rs` `point`, `Bound::of` | already there |
+| 5a5c167cf | `drop_outside_values` removes no point | `values::drop_outside_values` | already there |
+| 5eba9712b | `Con::reduced` keeps the points | `formula.rs` 651-687 | already there |
+| 68416f089 | `edges` reads difference constraints and bounds | `conjuncts.rs` 657-705 | already there |
+| 68416f089 | `differences_only` is read from two counts | `conjuncts.rs` `Blocks::differences_only` | already there |
+| 6d5a815dd | without a top-level first step no part has its value | `forced.rs` `may_start` | corrected: a part below may; `false` still sound |
+| 6d5a815dd | the subset reductions' counts are necessary conditions | `reduce_subset_row_eqs`, `slack.rs` 63 | already there |
+| 6d5a815dd | `settle`'s count check loses no answer but an early empty | `row_domains.rs` `settle` | already there |
+
+The potential that `Scope::shortest` keeps (68416f089) is in `zedc-preimage` `product.rs`,
+outside this crate, and was not checked here.
+
+No code claim: 0f5f38d66 (tests pinning refusals), 295d02151 (comments dated), 6b87a1c3a
+(tests moved to `r4_tests.rs` and `r6_tests.rs`).
+
+Not read: entries 21 to 90.
 
 ## proofdoc4f: zed-kernel, zedc-elab, zedc-base
 

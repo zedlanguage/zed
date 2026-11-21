@@ -1362,7 +1362,11 @@ pub fn linear_questions(
                         let relation = scoped.written(&r);
                         let constraints = relation.to_string();
                         // The moduli of the remainders and quotients the conditions take, each
-                        // once, in increasing order, for the reason (I4.11).
+                        // once, in increasing order, for the reason (I4.11). The key (length,
+                        // text) is numeric order for numerals with no sign and no leading zero
+                        // (a longer such numeral is the greater); a modulus written otherwise
+                        // still gets one fixed place, so the message does not depend on the
+                        // order of the definitions.
                         // Complexity tradeoff: O(d log d) for the d definitions reached, on a
                         // refusal only, against the O(the function's text) of the message.
                         let mut moduli: Vec<&str> = (relation.defs.iter())

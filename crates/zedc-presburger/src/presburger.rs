@@ -3861,7 +3861,15 @@ impl MapHull {
     }
     /// Union takes the gcd of both difference gcds and the difference of representatives.
     /// A sum takes the gcd of the two difference gcds. Both preserve exact extrema and
-    /// exact difference gcds, even if the hull fills holes, so composition is associative.
+    /// exact difference gcds, even if the hull fills holes: `lo`, `hi` and `step` are the
+    /// least, the greatest and the difference gcd of the offsets the maps make, functions of
+    /// that set, so composition is associative on them. The `exact` flag is not: `({0, 10} +
+    /// {0, 1}) + {0..9}` is marked inexact, as `{0, 1, 10, 11}` is, and `{0, 10} + ({0, 1} +
+    /// {0..9})` exact, both `{0..20}`. Each `true` is still sound ([`OffsetHull::exact_sum`],
+    /// [`OffsetHull::exact_union`]), so the bracketing of [`HullProduct`] changes only whether
+    /// a member is answered at once or left to `chain_witness` and the methods after
+    /// [`by_chain_hulls`], not which sets are said to have a point. Test
+    /// `map_hull_values_compose_associatively_and_the_exact_flag_does_not`.
     fn compose(outer: &Self, inner: &Self) -> Self {
         let mut out = Self::empty();
         for (a, x) in outer.0.iter().enumerate() {
@@ -7755,9 +7763,13 @@ impl Bounded {
 // 2.68 times from k = 64 to 128). Sets with the same `base` meet in `base` and the atoms of
 // the smallest `extra` found in every other, O(e log m) for the e atoms of the extras, and the
 // meet keeps `base` uncopied when they add none. Liljenzin, "Confluently persistent sets and
-// maps" (arXiv 1301.3388, 2013) gets the same from hash-consed treaps, whose equal sets are one
-// node, for any two sets; here the two pieces suffice because a set shared by many parts is
-// always shared as a `base`. Sets with different bases are met as before.
+// maps" (arXiv 1301.3388, 2013, doi:10.48550/arXiv.1301.3388; compared, not used) gets the
+// same from hash-consed treaps, whose equal sets are one node, for any two sets; here the two
+// pieces suffice because a set shared by many parts is always shared as a `base`. Sets with
+// different bases are met as before.
+// Exact: a set is `B ∪ E_i` ([`Bounded::contains`]); with one base `B`, `⋂ (B ∪ E_i)` is
+// `B ∪ ⋂ E_i` (union distributes over intersection), and `⋂ E_i` is the atoms of the smallest
+// `E_i` found in every other. Test: `cells_scaling::bounded_atoms_meet_by_their_shared_base`.
 fn met_atoms(all: &[Bounded]) -> OrdSet<Atom> {
     let Some(first) = all.first() else {
         return OrdSet::new();
@@ -12762,8 +12774,10 @@ fn probe_kept_status(
 /// the formula has no point is found by an exponential and then a binary search, so that `r`
 /// disjuncts removed this way cost `O(log r)` propagations, not `r`; lower bounds likewise.
 /// The formula with a weaker bound has more points, so the bounds without a point are those
-/// up to one. `rest` is `d`'s disjunction without `d`, whose place in `p` is empty while it
-/// is tested. Each bound is first tested by [`bounds_refute`], which costs `O(n log n)`, and
+/// up to one. `rest` is `d`'s disjunction without `d` (from [`probe`], which has shown `d` has
+/// no point, so the formula is unchanged) or with it (from [`search_by_halves`], whose failed
+/// search of `d` proves nothing), and its place in `p` is empty while it is tested. Each bound
+/// is first tested by [`bounds_refute`], which costs `O(n log n)`, and
 /// then by [`settle`]; a bound is recorded in `implied` only when one of them has shown that
 /// the formula has no point with its negation, so each removal it makes is proved.
 fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
@@ -13645,7 +13659,12 @@ fn search_by_halves(
         );
     }
     // A disjunct the bounds learned exclude has no point; it is marked failed, so that it is not
-    // searched forward again.
+    // searched forward again. Proof: `found` starts as `implied`, bounds the formula implies,
+    // and gains only what [`learn`] records, a bound whose negation it has shown leaves its
+    // formula no point; that formula is all of `p` (`learn_at` hands it `p` with the whole
+    // disjunction `i` as `rest`), so each bound in `found` holds at every point of `p`.
+    // `excluded` holds when some row of one atom in the disjunct leaves that atom no value
+    // within those bounds ([`Near::refutes`]), so no point of `p` satisfies the disjunct.
     for (i, o) in p.ors.iter().enumerate() {
         for at in 0..o.len() {
             failed[i][at] |= !held[i][at] && excluded(i, at);
@@ -27353,7 +27372,11 @@ fn linear_reading(
         .collect();
     // A `bitAnd` variable is only bounded by its definition, so the solver may give it any
     // value within the bounds: each is set to the and of its operands at the point, operands
-    // before the variables made from them (increasing numbers), and the point is a
+    // before the variables made from them (increasing numbers: an operand is a term written
+    // before its variable is made, so each variable it reads has a smaller number, an order
+    // zedc-preimage keeps when it renumbers a relation, sorting the definitions reached). The
+    // order matters: `real` holds the definitions of these variables only as bounds, so a value
+    // left stale by a later operand would not be caught. The point is then a
     // countermodel only if the premises still hold and the goal still fails there. Where the
     // new value breaks the definition of a variable made from it (`min(bitAnd(a, b), 3)`), the
     // point is no countermodel and the verdict is `NotProved`.
@@ -32969,6 +32992,33 @@ mod forced_against_solver {
         }
     }
 
+    /// [`decide`] reads a product as an atom of its own, free of its factors' values: each of
+    /// these holds for it, though none has an integer point with `x * y` read as a product.
+    /// The summaries of `extend.rs` (`Summaries::make`) rest on this when they eliminate a
+    /// product outside the key as they eliminate a variable: exact for this reading only.
+    #[test]
+    fn decide_reads_a_product_as_an_atom_of_its_own() {
+        let p = Lin::atom(Atom::product(&Arc::from("x"), &Arc::from("y")));
+        let fs = [
+            Formula::and(vec![eq(&p, &k(3)), eq(&sym("x"), &k(0))]),
+            Formula::and(vec![eq(&p, &k(3)), eq(&sym("x"), &k(2))]),
+            Formula::and(vec![ge(&p, &k(1)), eq(&sym("x"), &k(0))]),
+            Formula::and(vec![
+                eq(&p, &k(0)),
+                ge(&sym("x"), &k(1)),
+                ge(&sym("y"), &k(1)),
+            ]),
+            Formula::and(vec![
+                eq(&p, &k(7)),
+                eq(&sym("x"), &k(2)),
+                eq(&sym("y"), &k(3)),
+            ]),
+        ];
+        for f in fs {
+            assert_eq!(decide(&f), Ok(true), "{f}");
+        }
+    }
+
     #[test]
     fn corner_cases_agree_with_the_solver() {
         let p = Lin::atom(Atom::product(&Arc::from("x"), &Arc::from("y")));
@@ -35573,6 +35623,35 @@ mod r5_hull_tests {
             exact: true,
         };
         assert!(!OffsetHull::exact_sum(&a, &b));
+    }
+
+    #[test]
+    fn map_hull_values_compose_associatively_and_the_exact_flag_does_not() {
+        let hull = |lo: i64, hi: i64, step: i64| {
+            MapHull([
+                Some(OffsetHull {
+                    lo: Int::from(lo),
+                    hi: Int::from(hi),
+                    step: Int::from(step),
+                    exact: true,
+                }),
+                None,
+            ])
+        };
+        let (a, b, c) = (hull(0, 10, 10), hull(0, 1, 1), hull(0, 9, 1));
+        let left = MapHull::compose(&c, &MapHull::compose(&b, &a));
+        let right = MapHull::compose(&MapHull::compose(&c, &b), &a);
+        let (l, r) = (
+            left.0[0].as_ref().expect("one sign"),
+            right.0[0].as_ref().expect("one sign"),
+        );
+        assert_eq!((&l.lo, &l.hi, &l.step), (&r.lo, &r.hi, &r.step));
+        assert_eq!(
+            (l.lo.clone(), l.hi.clone(), l.step.clone()),
+            (Int::ZERO, Int::from(20), Int::ONE)
+        );
+        assert!(!l.exact, "{{0, 1, 10, 11}} is marked inexact first");
+        assert!(r.exact, "{{0, 10}} + {{0..10}} is {{0..20}}");
     }
 
     #[test]

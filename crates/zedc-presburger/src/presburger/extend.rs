@@ -3104,6 +3104,14 @@ impl Summaries {
                         let keep = |a: &Atom| {
                             key.contains(a) || more.contains(a) || (wide && syms.contains(a))
                         };
+                        // A product outside the key (`x * q` of `q = h div x`, the next link
+                        // reading `x` and `q` alone) is eliminated as a variable is, losing its
+                        // tie to its factors. That is exact for [`decide`], which reads a product
+                        // as an atom of its own, free of its factors (`x * y == 7 && x == 2 &&
+                        // y == 3` holds), so the whole question has the same answer
+                        // ([`decide_defined`]). Test: presburger::tests
+                        // `decide_reads_a_product_as_an_atom_of_its_own`; a solver that read
+                        // products more tightly would need the product kept here.
                         let elim = |a: &Atom| !keep(a);
                         let Some(mut out) = shadow_whole(&by_pairs(rows.clone(), &elim), &keep)
                         else {

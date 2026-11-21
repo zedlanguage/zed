@@ -1016,8 +1016,10 @@ fn a_disjunction_of_many_moduli_scales() {
 #[test]
 fn the_fails_questions_of_pairs_scale() {
     // PNCX-modular, R4 (R4-CLAUDE-3): the negation of a conjunction of clauses beside the
-    // remainders' definitions is decided one negated clause at a time by the one-variable path,
-    // order `n` per clause; it went to the general path, near `n^1.5` per doubling.
+    // remainders' definitions went to the general path, near `n^1.5` per doubling. Round 4
+    // decided it one negated clause at a time; round 5 removed that split (it cost O(k |C|)
+    // elsewhere, R5-CLAUDE-5), and the zero witness and the batched remainder check of
+    // `solve_modular_whole` answer it now, near-linearly.
     let formulas: std::collections::BTreeMap<usize, _> = [8000, 8000 * zed_tests::scaling::FACTOR]
         .into_iter()
         .map(|n| (n, the_fails_question_of_pairs(n)))
@@ -1163,9 +1165,11 @@ fn the_5000_one_variable_modular_formulas_of_seed_0x70dec1de_match_enumeration()
         c.sat, c.unsat, c.refused
     );
     // A formula the one-variable path does not decide goes to the general path, which may refuse
-    // it. 64 cases are refused, each refused by the general path alone too (704 refusals there,
-    // measured on d5714627 with the one-variable path off). Case 4609 is one: `decide` refuses
-    // it on main since 9bbeb1ff, where `satisfiable` answers it (I4.3).
+    // it. When this bound was set, 64 cases were refused, each refused by the general path alone
+    // too (704 refusals there, measured on d5714627 with the one-variable path off); case 4609
+    // was one: `decide` refused it on main since 9bbeb1ff, where `satisfiable` answered it
+    // (I4.3; `modular::r4_tests::pncx_case4609_keeps_its_answer` pins its answer now). 6 are
+    // refused since 2026-11-20 (below); the bound is a ceiling on refusals, not a count.
     assert!(c.refused <= 64, "refused={}", c.refused);
     // Measured on main 9bbeb1ff: 788 empty answers agreed, 10 refused by the general path, 0 of
     // them with `x` unbounded above (on 4777a33e: 616, 182 and 2). Since
