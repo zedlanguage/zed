@@ -894,8 +894,9 @@ pub(super) fn point_by_structure(f: &Formula) -> Option<Model> {
 ///
 /// So this routine's own work is O(B log k + Σ (len r_i + W) bits(m_i)). As `len r_i` is at
 /// most `bits(r_i)` and `bits(m_i)` at most `64 W`, the sum is at most `64 W Σ bits(r_i) + W B`,
-/// so the whole is O(B (log k + W)): O(B log B) expected when every modulus fits in a bounded number of words,
-/// as in `pncx_shared_formula_scale`, and not O(B log B) for wide moduli. To that add
+/// so the whole is O(B (log k + W)): O(B log B) expected when every modulus fits in a bounded
+/// number of words, as in `pncx_shared_formula_scale`, and not O(B log B) for wide moduli. To
+/// that add
 /// `coprime_factorization`, whose bound is stated and argued at that function, not here; on
 /// distinct primes of more than 44 bits it measured 14.4 times the work for 8 times `B` (R2
 /// Gemini seat, `ADV_WIDE48_UNIT`, 2026-11-21), open in PERF-negated-chain-unsolved.
