@@ -40,22 +40,32 @@ fn a_function_held_twice_at_each_level_is_one_error_per_compared_operand() {
     let value = |leaf: &str, levels: usize| {
         (0..levels).fold(leaf.to_string(), |v, _| format!("({v}, {v})"))
     };
-    let at = |t: &str, value: &str| {
+    // `name` is the operand refused, `l == r` the comparison.
+    let at = |name: &str, value: &str, l: &str, r: &str| {
         format!(
-            "Cannot compare a value that may hold a function: `{t} : {value}` in `{t} == {t}`. \
-             [{t} == {t}]"
+            "Cannot compare a value that may hold a function: `{name} : {value}` in `{l} == \
+             {r}`. [{l} == {r}]"
         )
     };
     let f = "T -> T for T in int | f32 | f64 | rat";
+    // One operand written twice, `t == t`, is one refusal: the second would be the same text
+    // at the same span (TEST-harness-duplicate-eq-error).
     let by_calls_value = value(f, 3);
+    let text = by_calls(3, "scale");
+    assert_eq!(type_errors(&text), [at("t", &by_calls_value, "t", "t")]);
+    // Two operands, `t == u` with `u = t`, are a refusal each.
+    let two = text.replace("same = t == t;", "u = t;\nsame = t == u;");
     assert_eq!(
-        type_errors(&by_calls(3, "scale")),
-        [at("t", &by_calls_value), at("t", &by_calls_value)]
+        type_errors(&two),
+        [
+            at("t", &by_calls_value, "t", "u"),
+            at("u", &by_calls_value, "t", "u")
+        ]
     );
     // The bindings start from `(scale, 1)`, then pair it twice.
     let by_bindings_value = value(&format!("({f}, 1)"), 2);
     assert_eq!(
         type_errors(&by_bindings(3, "scale")),
-        [at("t2", &by_bindings_value), at("t2", &by_bindings_value)]
+        [at("t2", &by_bindings_value, "t2", "t2")]
     );
 }
