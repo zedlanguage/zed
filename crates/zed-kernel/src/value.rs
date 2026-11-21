@@ -68,8 +68,9 @@ use chain::Chain;
 /// operation, +0 compares greater than −0". On equal values of the same sign the two
 /// operands are the same float, so taking `a` there is the standard's "either x or y". The
 /// 2008 edition has no such operation (its 5.3.1 `minNum` returns the number when the other
-/// operand is a quiet NaN, p. 19, as quoted by an earlier pass on 2026-11-20; this pass did
-/// not have the 2008 text). The C23 working draft N3096 (ISO/IEC 9899:2023, April 1,
+/// operand is a quiet NaN, p. 19, read 2026-11-20 in study STUDY-ieee754-2019, the text of
+/// IEEE Std 754-2008, doi:10.1109/IEEESTD.2008.4610935). The C23 working draft N3096
+/// (ISO/IEC 9899:2023, April 1,
 /// 2023, open-std.org/jtc1/sc22/wg14/www/docs/n3096.pdf), read the same day, pairs the IEC
 /// 60559 `minimum` with `fminimum` (F.3, p. 508) and says the same in 7.12.12.5, p. 270: "For
 /// these functions, −0 is considered less than +0". Test:
@@ -117,8 +118,8 @@ impl F64 {
     /// regardless of S"; its other cases, E = 2^w − 1 with T = 0 (an infinity), 1 ≤ E ≤ 2^w − 2
     /// (normal) and E = 0 (zero or subnormal), are not NaNs, which gives the "only if"; w = 11
     /// exponent bits and T the 52 trailing significand bits for binary64, Table 3.5, p. 23; the
-    /// 2008 edition, 3.4, p. 9, as quoted by an earlier pass on 2026-11-20, has the same
-    /// words; this pass compared with that quote only, not with the 2008 text). With the sign
+    /// 2008 edition, doi:10.1109/IEEESTD.2008.4610935, 3.4, p. 9, has the same words, read
+    /// 2026-11-20 in study STUDY-ieee754-2019). With the sign
     /// bit cleared, the bits read as an unsigned integer are `e * 2^52 + m` with `e < 2^11`
     /// and `m < 2^52`; they exceed `0x7FF0_0000_0000_0000 = (2^11 - 1) * 2^52` exactly when
     /// `e = 2^11 - 1` and
@@ -812,10 +813,10 @@ impl Value {
     // exclusive relations are possible: less than, equal, greater than, and unordered;
     // unordered arises when at least one operand is a NaN. Every NaN shall compare unordered
     // with everything, including itself. Comparisons shall ignore the sign of zero (so +0 =
-    // −0)". The 2008 edition, 5.11, p. 29, as quoted by an earlier pass on 2026-11-20, has
-    // the same sentences (this pass compared with that quote only, not with the 2008 text);
-    // the working group's list of changes, as quoted by that pass, says 5.11 was "reorganized
-    // and rewritten for clarity".
+    // −0)". The 2008 edition (doi:10.1109/IEEESTD.2008.4610935), 5.11, p. 29, has the same
+    // three rules in nearly the same words, read 2026-11-20 in study STUDY-ieee754-2019; the
+    // working group's list of changes for the 2019 edition says 5.11 was "reorganized and
+    // rewritten for clarity".
     // Tests in `l01_17_value_representation::edges`:
     // `the_two_zeros_compare_equal_under_ieee` and
     // `nan_is_unordered_and_its_negation_is_the_canonical_nan`, which catch a NaN read as

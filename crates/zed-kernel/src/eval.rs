@@ -4293,9 +4293,10 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         // only these results are used. Departure: none in the results; every NaN is then
         // stored as the canonical one (`value.rs`, at the canonical NaN's bits; test
         // `a_nan_from_sqrt_is_the_canonical_nan`). The 2008 edition
-        // (doi:10.1109/IEEESTD.2008.4610935): an earlier pass on 2026-11-20 quoted the same
-        // words from its 5.4.1 (p. 21); this pass compared the 2019 text with that quote only,
-        // not with the 2008 text, which was not at hand. Cost:
+        // (doi:10.1109/IEEESTD.2008.4610935), read 2026-11-20 in study STUDY-ieee754-2019:
+        // 5.4.1, p. 21, has the same squareRoot and fusedMultiplyAdd words, and 7.2 the same
+        // invalid operations; its 6.2 asks only that the NaN "should be one of the input NaNs",
+        // so the canonical NaN rule is the 2019 edition's (6.2). Cost:
         // O(1), one hardware instruction each (or the C library's `fma` on a host without
         // FMA). Measured at commit 59a32b29b: n = 2048 and 8n calls of each word,
         // 14225721 and 113703294 instructions, 8.0 times the work. The bench is now
@@ -4317,9 +4318,9 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         // for every `x`, a quiet NaN included, and `pow(+1, y)` is 1 for every `y`, a quiet NaN
         // included. Read 2026-11-20 in the 2019 text (the copy named at the `sqrt` rule),
         // 9.2.1, "Special values", p. 63: "pow (x, ±0) is 1 if x is not a signaling NaN" and
-        // "pow (+1, y) is 1 for any y (even a quiet NaN)". The 2008 edition, 9.2.1, p. 44, as
-        // quoted by an earlier pass on 2026-11-20 (this pass did not have the 2008 text), words
-        // the first "pow (x, ±0) is 1 for any x (even a zero, quiet NaN, or infinity)"; Zed
+        // "pow (+1, y) is 1 for any y (even a quiet NaN)". The 2008 edition, 9.2.1, p. 44 (read
+        // 2026-11-20 in study STUDY-ieee754-2019), words the first "pow (x, ±0) is 1 for any
+        // x (even a zero, quiet NaN, or infinity)"; Zed
         // has no signaling NaN, so the two agree here. Rust's `powf` gives both. C99 Annex
         // F.9.4.4, "The pow functions", states them too; read 2026-11-20 in the WG14
         // committee draft N1256 (ISO/IEC 9899:TC3, September 7, 2007,
