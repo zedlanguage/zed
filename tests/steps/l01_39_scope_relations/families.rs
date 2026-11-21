@@ -233,6 +233,18 @@ fn family(name: &str, k: usize) -> Family {
             }));
             vec![("x".into(), -60, 60), ("y".into(), -6100, 60)]
         }
+        // The `k` steps of `coordkk`, then one test whose first arm is the `k` constraints
+        // `x + j * y <= -j` at once and whose second is `x + 2 * y <= -5000`: each constraint
+        // of the arm bounds `y` above in both arms of every step, from a different direction
+        // (PROOF-product-reframe-cost).
+        "coordkk_many" => {
+            tests.extend((1..=ki).map(|i| step(i, -1000 + i)));
+            let arm = (2..=ki).fold(le(add(var("x"), var("y")), int(-1)), |a, j| {
+                and(a, le(add(var("x"), times(j, "y")), int(-j)))
+            });
+            tests.push(or(arm, le(add(var("x"), times(2, "y")), int(-5000))));
+            vec![("x".into(), -60, 60), ("y".into(), -6100, 60)]
+        }
         // One step `x >= 0 || y <= -10k`, then `k` splits (shifted by 10k in
         // `coordmix_shift`), then `k` tests `x + y <= -j || x + 2 * y <= -50k - j`;
         // `coordmix_floor` puts `y >= -100k` before the tests.
@@ -1614,6 +1626,18 @@ fn coordkk_against_the_oracle() {
     for k in 1..=3 {
         let y = -2 * k as i64;
         exact("coordkk", k, &format!("a=[..] x=[..] y=[..={y}]"));
+    }
+}
+
+#[test]
+fn coordkk_many_against_the_oracle() {
+    // `y <= -1 - k`: in the second arm the steps give `y <= -999` unless `x >= 1`, and
+    // `x >= 1` gives `y <= -2500`; in the first, `x >= k` and `x + y <= -1` give
+    // `y <= -1 - k`, and a smaller `x` leaves a step that needs `y <= -1000 + x + 1`.
+    // (k, -1 - k) meets every test: `k - j - j * k <= -j` as `k <= j * k`.
+    for k in 1..=4 {
+        let y = -1 - k as i64;
+        exact("coordkk_many", k, &format!("a=[..] x=[..] y=[..={y}]"));
     }
 }
 

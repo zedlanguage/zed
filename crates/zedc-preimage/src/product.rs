@@ -8143,11 +8143,30 @@ impl Block {
         // are projected again; a part not fired keeps the products it already gave, which hold.
         // An entry is spent only when the block is kept ([`Scope::keep`] moves `spends` into
         // `Scope::spent`), and the join keeps the union ([`Scope::join`]).
-        // Not proved: "once on a path". Within one update `spent` is not yet updated, so when
-        // several changed constraints of that update reach the same entry (`key`) with
-        // overlapping ranges, its f parts are read once per such constraint, O(c * f) for c of
-        // them rather than O(f). Open sub-case: a bound on c for one entry in one update; a set
-        // of the keys fired in this call, checked beside `spent`, would close it.
+        // "Once on a path", the steps (PROOF-product-reframe-cost). (1) Across updates: an
+        // entry read with at least one part is pushed to `spends`, which `Scope::keep` moves
+        // into `Scope::spent`, so a later update on the path skips the entry (`spent`
+        // checked first). (2) Within one update `spent` is not yet updated, and several changed
+        // constraints may reach the same entry: `read` holds, per entry, the turn of the
+        // widest range read so far in this call. A range turned to the left is every turn
+        // above `q`, to the right every turn below it, so two ranges of one entry are nested,
+        // and the wider one is the one whose `q` is lower (left) or higher (right). A
+        // constraint whose range is inside the one read is skipped; one whose range is wider
+        // reads only the turns between the two, (q, prev] to the left and [prev, q) to the
+        // right, `Turn` being totally ordered (`impl Ord for Turn`) so that these are
+        // well-formed ranges of the map. So within one call each turn of an entry, and each
+        // part under it, is read at most once: O(log k + f) per entry for its f parts, and
+        // O(log k) for each further constraint that reaches it, against O(c * f) before for c
+        // constraints. Reading in pieces reads the same turns as reading the widest range
+        // once, so the set of parts fired is unchanged. Test: bench
+        // `l01_39_scope_relations::families::bench::coordkk_many_scales`, one arm of k
+        // constraints `x + j * y <= -j` on k steps, ratio 17.75 at 64 and 512 before and
+        // 8.53 after (instructions, 2026-11-21, loads 37 and 43); the results are checked
+        // against the oracle by `families::coordkk_many_against_the_oracle`. Not
+        // caught: a range that should be read but is skipped as nested, for an order of
+        // `Turn` that disagreed with the ranges `bounds_at` keys the parts by; the oracle
+        // test would show a coarser product there only if the skipped part narrows.
+        let mut read: BTreeMap<BoundsKey, Turn> = BTreeMap::new();
         if !groups {
             for t in changed {
                 for c in self.split.on.get(t).into_iter().flatten() {
@@ -8176,12 +8195,20 @@ impl Block {
                             let Some(by) = self.bounds.get(&key) else {
                                 continue;
                             };
+                            use std::ops::Bound::{Excluded, Included, Unbounded};
                             let q = Turn(q);
-                            let range = if left {
-                                (std::ops::Bound::Excluded(q), std::ops::Bound::Unbounded)
-                            } else {
-                                (std::ops::Bound::Unbounded, std::ops::Bound::Excluded(q))
+                            let range = match read.get(&key) {
+                                None if left => (Excluded(q.clone()), Unbounded),
+                                None => (Unbounded, Excluded(q.clone())),
+                                Some(prev) if left && q < *prev => {
+                                    (Excluded(q.clone()), Included(prev.clone()))
+                                }
+                                Some(prev) if !left && q > *prev => {
+                                    (Included(prev.clone()), Excluded(q.clone()))
+                                }
+                                Some(_) => continue,
                             };
+                            read.insert(key.clone(), q);
                             for (_, ps) in by.range(range) {
                                 self.spends.push(key.clone());
                                 self.fired.extend(ps.iter().cloned());
@@ -19913,16 +19940,50 @@ fn pst_hi_gt<X: Ord>(a: &PstEntry<X>, b: &PstEntry<X>) -> bool {
     (&a.1, &a.0, &a.2) > (&b.1, &b.0, &b.2)
 }
 
-/// Persistent leaf-oriented AVL priority search tree over intervals `(lo, hi, at)` supporting
-/// 2D dominance / stabbing queries `lo <= q1 && hi >= q2` in deterministic `O(log k + output)`
-/// worst-case time, with `O(log k)` insertion and removal. Every tree walk follows children of
-/// strictly decreasing `height`, a topological order. The query bound is proved at
-/// [`Pst::report`]. Not proved: `O(log k)` removal. `remove_empty_leaf` calls `balanced` at
-/// each level of the path, an AVL deletion can rotate at O(log k) levels, and each rotation
-/// pushes up to two slots down a subtree (`push_down`, O(height)), so the bound the code
-/// shows is O(log^2 k); insertion rotates at one level, O(log k). Open: a proof that the
-/// slots pushed down by a cascade of rotations stop within O(1) levels each, or the bound
-/// stated as O(log^2 k).
+/// Persistent leaf-oriented priority search tree, balanced by the ranks of weak AVL trees, over
+/// intervals `(lo, hi, at)` supporting 2D dominance / stabbing queries `lo <= q1 && hi >= q2`
+/// in deterministic `O(log k + output)` worst-case time, with `O(log k)` worst-case insertion
+/// and removal for `k` entries. Every tree walk follows children of strictly decreasing
+/// `rank`, a topological order. The query bound is proved at [`Pst::report`].
+///
+/// Balance (PROOF-pst-remove-cost). Each node has a rank: (R0) a leaf has rank 0; (R1) each
+/// child's rank is 1 or 2 below its parent's; (R2) a branch whose two children are leaves has
+/// rank 1. These are the rules of the weak AVL (wavl) trees of B. Haeupler, S. Sen and R. E.
+/// Tarjan, "Rank-balanced trees", ACM Trans. Algorithms 11(4), 2015, article 30,
+/// doi:10.1145/2689412, with each leaf here in the place of a missing node there and every rank
+/// one higher: "Weak AVL Rule: All rank differences are 1 or 2 and every leaf has rank 0" (sec.
+/// 3; a missing node has rank -1 there, and their leaves, nodes with two missing children, are
+/// the branches of (R2) here), and "Our results extend to external binary search trees" (sec.
+/// 2). Read 2026-11-21 in the 2013 preprint of the same title (PDF, text by pdftotext, quotes
+/// checked against that text; the journal text was not read).
+/// Height: each step down lowers the rank by 1 at least (R1) and no rank is below 0, so a
+/// path is at most the root's rank `r` long. Size: a node of rank `r` has `2^ceil(r/2)` leaves
+/// below it at least. By induction on `r`: rank 0 is a leaf; a node of rank 1 is a branch
+/// (R0) whose children have rank 0 (R1, no rank below 0), two leaves; a node of rank `r >= 2`
+/// is a branch whose children each have rank `r - 2` at least, `2 · 2^ceil((r-2)/2)` leaves.
+/// So `r <= 2 log2 k`, as their Theorem 3.1 ("k ≤ 2 lg n"), and every path is O(log k).
+/// Cost of an update. `insert_leaf` and `remove_empty_leaf` rebuild the path to one leaf and
+/// restore the rules at each node on the way up by the bottom-up steps of the paper (sec. 4),
+/// written out with their proofs at [`Pst::grown`] and [`Pst::shrunk`]. A step either changes
+/// ranks only, O(1), or rotates once or twice and gives the subtree the rank it had before,
+/// after which no node above changes rank and no other rotation follows: "Rebalancing after
+/// an insertion or deletion takes at most two rotations and O(log n) rank changes in the
+/// worst case" (sec. 4). A rotation pushes the slots of its two old nodes down (`push_down`)
+/// and fills its two new nodes by `pulled_branch` (`pop_slot`), each O(height). A node of the
+/// path that only changes rank keeps its slot, or has none and, by (E) at [`Pst::report`],
+/// no slot below it, so `pulled_branch` there takes nothing up, O(1). Removal first clears
+/// the entry's slot (`erase_slot`, one `pop_slot`, O(height)), and `insert` pushes the new
+/// entry down once. So insertion and removal are O(log k) worst case, persistent copies
+/// included. Tests: `priority_search_tree_and_recession_arcs_match_the_oracle` asserts (R0),
+/// (R1), (R2), the size bound and the heap and key invariants after every step of random,
+/// ascending and descending runs of insertions and removals;
+/// `bench::removing_from_a_priority_search_tree_takes_log_time` measures removal from
+/// Fibonacci trees, where AVL rebalancing rotates at every second level (instructions, heights
+/// 23 and 28: ratio 1.52 under AVL, 1.14 with these rules, limit 1.31; 2026-11-21, load 73).
+/// The oracle test reaches every case of `grown` and `shrunk`, the single rotation that ends
+/// at rank 1 included (counted 2026-11-21 with temporary prints: 13 runs of it). Not caught
+/// by the tests: more than two rotations in an update whose total stays O(log k) at the
+/// bench's sizes; the tests check the shape and the measured work, not the count of rotations.
 /// References: N. Sarnak and R. E. Tarjan, "Planar point location using persistent search
 /// trees", CACM 29(7), 1986, pp. 669-679, doi:10.1145/6138.6151 (path copying, used for the
 /// `Arc` nodes); E. M. McCreight, "Priority search trees", SIAM J. Comput. 14(2), 1985,
@@ -19954,13 +20015,27 @@ enum PstKind<X> {
 struct PstNode<X> {
     slot: Option<PstEntry<X>>,
     min_key: PstEntry<X>,
-    height: usize,
+    rank: usize,
     kind: PstKind<X>,
 }
 
 impl<X: Ord + Clone> Pst<X> {
-    fn height(&self) -> usize {
-        self.0.as_ref().map_or(0, |n| n.height)
+    fn rank(&self) -> usize {
+        self.0.as_ref().map_or(0, |n| n.rank)
+    }
+
+    fn is_leaf(&self) -> bool {
+        self.0
+            .as_ref()
+            .is_some_and(|n| matches!(n.kind, PstKind::Leaf(_)))
+    }
+
+    /// The two children of a branch; every node of rank 1 or more is one (R0).
+    fn children(&self) -> (&Self, &Self) {
+        match &self.0.as_ref().expect("a branch").kind {
+            PstKind::Branch { left, right } => (left, right),
+            PstKind::Leaf(_) => unreachable!("rank >= 1 is a branch"),
+        }
     }
 
     fn slot(&self) -> Option<&PstEntry<X>> {
@@ -19975,18 +20050,27 @@ impl<X: Ord + Clone> Pst<X> {
         Self(Some(Arc::new(PstNode {
             slot,
             min_key: key.clone(),
-            height: 1,
+            rank: 0,
             kind: PstKind::Leaf(key),
         })))
     }
 
-    fn raw_branch(slot: Option<PstEntry<X>>, left: Self, right: Self) -> Self {
+    fn raw_branch(slot: Option<PstEntry<X>>, left: Self, right: Self, rank: usize) -> Self {
         Self(Some(Arc::new(PstNode {
             slot,
             min_key: left.min_key().clone(),
-            height: 1 + left.height().max(right.height()),
+            rank,
             kind: PstKind::Branch { left, right },
         })))
+    }
+
+    /// A branch of rank `rank` with the slot `slot`, or with one taken up from its children
+    /// when `slot` is `None`.
+    fn node(slot: Option<PstEntry<X>>, left: Self, right: Self, rank: usize) -> Self {
+        match slot {
+            None => Self::pulled_branch(left, right, rank),
+            Some(_) => Self::raw_branch(slot, left, right, rank),
+        }
     }
 
     fn pop_slot(&self) -> (Option<PstEntry<X>>, Self) {
@@ -20001,47 +20085,59 @@ impl<X: Ord + Clone> Pst<X> {
             PstKind::Branch { left, right } => match (left.slot(), right.slot()) {
                 (None, None) => (
                     n.slot.clone(),
-                    Self::raw_branch(None, left.clone(), right.clone()),
+                    Self::raw_branch(None, left.clone(), right.clone(), n.rank),
                 ),
                 (Some(_), None) => {
                     let (s, nl) = left.pop_slot();
-                    (n.slot.clone(), Self::raw_branch(s, nl, right.clone()))
+                    (
+                        n.slot.clone(),
+                        Self::raw_branch(s, nl, right.clone(), n.rank),
+                    )
                 }
                 (None, Some(_)) => {
                     let (s, nr) = right.pop_slot();
-                    (n.slot.clone(), Self::raw_branch(s, left.clone(), nr))
+                    (
+                        n.slot.clone(),
+                        Self::raw_branch(s, left.clone(), nr, n.rank),
+                    )
                 }
                 (Some(ls), Some(rs)) => {
                     if pst_hi_gt(ls, rs) {
                         let (s, nl) = left.pop_slot();
-                        (n.slot.clone(), Self::raw_branch(s, nl, right.clone()))
+                        (
+                            n.slot.clone(),
+                            Self::raw_branch(s, nl, right.clone(), n.rank),
+                        )
                     } else {
                         let (s, nr) = right.pop_slot();
-                        (n.slot.clone(), Self::raw_branch(s, left.clone(), nr))
+                        (
+                            n.slot.clone(),
+                            Self::raw_branch(s, left.clone(), nr, n.rank),
+                        )
                     }
                 }
             },
         }
     }
 
-    fn pulled_branch(left: Self, right: Self) -> Self {
+    fn pulled_branch(left: Self, right: Self, rank: usize) -> Self {
         match (left.slot(), right.slot()) {
-            (None, None) => Self::raw_branch(None, left, right),
+            (None, None) => Self::raw_branch(None, left, right, rank),
             (Some(_), None) => {
                 let (s, nl) = left.pop_slot();
-                Self::raw_branch(s, nl, right)
+                Self::raw_branch(s, nl, right, rank)
             }
             (None, Some(_)) => {
                 let (s, nr) = right.pop_slot();
-                Self::raw_branch(s, left, nr)
+                Self::raw_branch(s, left, nr, rank)
             }
             (Some(ls), Some(rs)) => {
                 if pst_hi_gt(ls, rs) {
                     let (s, nl) = left.pop_slot();
-                    Self::raw_branch(s, nl, right)
+                    Self::raw_branch(s, nl, right, rank)
                 } else {
                     let (s, nr) = right.pop_slot();
-                    Self::raw_branch(s, left, nr)
+                    Self::raw_branch(s, left, nr, rank)
                 }
             }
         }
@@ -20055,7 +20151,7 @@ impl<X: Ord + Clone> Pst<X> {
                 Self::leaf(k.clone(), Some(x))
             }
             PstKind::Branch { left, right } => match &n.slot {
-                None => Self::raw_branch(Some(x), left.clone(), right.clone()),
+                None => Self::raw_branch(Some(x), left.clone(), right.clone(), n.rank),
                 Some(cur) => {
                     let (win, lose) = if pst_hi_gt(&x, cur) {
                         (x, cur.clone())
@@ -20063,78 +20159,186 @@ impl<X: Ord + Clone> Pst<X> {
                         (cur.clone(), x)
                     };
                     if &lose < right.min_key() {
-                        Self::raw_branch(Some(win), left.push_down(lose), right.clone())
+                        let nl = left.push_down(lose);
+                        Self::raw_branch(Some(win), nl, right.clone(), n.rank)
                     } else {
-                        Self::raw_branch(Some(win), left.clone(), right.push_down(lose))
+                        let nr = right.push_down(lose);
+                        Self::raw_branch(Some(win), left.clone(), nr, n.rank)
                     }
                 }
             },
         }
     }
 
-    fn rotate_right(slot: Option<PstEntry<X>>, left: Self, right: Self) -> Self {
-        let l = left.0.as_ref().expect("a taller left branch");
-        let PstKind::Branch {
-            left: ll,
-            right: lr,
-        } = &l.kind
-        else {
-            unreachable!("height >= 2 is a branch")
-        };
-        let nr = Self::pulled_branch(lr.clone(), right);
-        let mut root = Self::pulled_branch(ll.clone(), nr);
+    /// The branch with slot `slot` over `left` and `right`, rotated right: `left`'s right child
+    /// moves under a new node of rank `low` beside `right`, and the root, of rank `top`, is
+    /// over `left`'s left child and that node. The two old slots are pushed down again.
+    fn rotate_right(
+        slot: Option<PstEntry<X>>,
+        left: Self,
+        right: Self,
+        low: usize,
+        top: usize,
+    ) -> Self {
+        let l = left.0.as_ref().expect("a left branch");
+        let (ll, lr) = left.children();
+        let nr = Self::pulled_branch(lr.clone(), right, low);
+        let mut root = Self::pulled_branch(ll.clone(), nr, top);
         for s in [l.slot.clone(), slot].into_iter().flatten() {
             root = root.push_down(s);
         }
         root
     }
 
-    fn rotate_left(slot: Option<PstEntry<X>>, left: Self, right: Self) -> Self {
-        let r = right.0.as_ref().expect("a taller right branch");
-        let PstKind::Branch {
-            left: rl,
-            right: rr,
-        } = &r.kind
-        else {
-            unreachable!("height >= 2 is a branch")
-        };
-        let nl = Self::pulled_branch(left, rl.clone());
-        let mut root = Self::pulled_branch(nl, rr.clone());
+    /// The mirror image of [`Pst::rotate_right`].
+    fn rotate_left(
+        slot: Option<PstEntry<X>>,
+        left: Self,
+        right: Self,
+        low: usize,
+        top: usize,
+    ) -> Self {
+        let r = right.0.as_ref().expect("a right branch");
+        let (rl, rr) = right.children();
+        let nl = Self::pulled_branch(left, rl.clone(), low);
+        let mut root = Self::pulled_branch(nl, rr.clone(), top);
         for s in [r.slot.clone(), slot].into_iter().flatten() {
             root = root.push_down(s);
         }
         root
     }
 
-    fn balanced(slot: Option<PstEntry<X>>, mut left: Self, mut right: Self) -> Self {
-        if left.height() > right.height() + 1 {
-            let l = left.0.as_ref().expect("a taller left child");
-            if let PstKind::Branch {
-                left: ll,
-                right: lr,
-            } = &l.kind
-                && lr.height() > ll.height()
-            {
-                left = Self::rotate_left(l.slot.clone(), ll.clone(), lr.clone());
+    /// The branch over `left` and `right` for a node of rank `r` one of whose children an
+    /// insertion below has rebuilt, with the rules (R0)-(R2) of the struct doc restored.
+    ///
+    /// Proof (PROOF-pst-remove-cost). The rebuilt child's rank is its old one or one more, by
+    /// induction on the path: `insert_leaf` at a leaf gives a branch of rank 1 over two leaves
+    /// for one of rank 0, and this function gives rank `r + 1` or `r`. So the rules can fail
+    /// only where the rebuilt child, a 1-child before, now has rank `r`, a 0-child, and that
+    /// is the bottom-up insertion of the paper (sec. 4), with `x` the grown child and `z` this
+    /// node. Other child a 1-child: "Promote: Promote p(x)", rank `r + 1`; both children are
+    /// then 1 and 2 below. Other child a 2-child, so `r >= 2`, and `x` came from the promote
+    /// step one level down (a branch of rank 1 grows only to `r = 1`, whose other child is a
+    /// leaf, a 1-child), so `x` has children 1 and 2 below it, the 1-child the one that grew;
+    /// let `y` be its inner child. `y` a 2-child (a leaf when `r = 2`): "Rotate at x and demote
+    /// z": `x` is the root at rank `r`, over its outer child (1 below) and `z` at `r - 1`
+    /// (1 below), whose children `y` and the old other child both have rank `r - 2`. `y` a
+    /// 1-child: "Promote y and demote x and z": `y` is the root at `r`, over `x` and `z` both
+    /// at `r - 1`; `x` keeps its outer child at `r - 2` and takes `y`'s left child, `z` takes
+    /// `y`'s right child and keeps the other child at `r - 2`, and `y`'s children were 1 or 2
+    /// below `r - 1`, so 1 or 2 below `r - 1` again. (R2) holds in each case: a node of rank 2
+    /// or more made here has a child of rank 1 or more, and one of rank 1 has leaf children.
+    /// The subtree's rank after a rotation is `r`, as before, so the levels above keep their
+    /// ranks and take the default branch: one rotation step per insertion, of one or two
+    /// rotations. Checked by `priority_search_tree_and_recession_arcs_match_the_oracle`.
+    fn grown(slot: Option<PstEntry<X>>, left: Self, right: Self, r: usize) -> Self {
+        if left.rank() == r {
+            if r - right.rank() == 1 {
+                return Self::node(slot, left, right, r + 1);
             }
-            return Self::rotate_right(slot, left, right);
-        }
-        if right.height() > left.height() + 1 {
-            let r = right.0.as_ref().expect("a taller right child");
-            if let PstKind::Branch {
-                left: rl,
-                right: rr,
-            } = &r.kind
-                && rl.height() > rr.height()
-            {
-                right = Self::rotate_right(r.slot.clone(), rl.clone(), rr.clone());
+            let x = left.0.as_ref().expect("a grown branch");
+            let (xl, xr) = left.children();
+            if r - xr.rank() == 2 {
+                return Self::rotate_right(slot, left, right, r - 1, r);
             }
-            return Self::rotate_left(slot, left, right);
+            let lifted = Self::rotate_left(x.slot.clone(), xl.clone(), xr.clone(), r - 1, r);
+            return Self::rotate_right(slot, lifted, right, r - 1, r);
         }
-        if slot.is_none() {
-            return Self::pulled_branch(left, right);
+        if right.rank() == r {
+            if r - left.rank() == 1 {
+                return Self::node(slot, left, right, r + 1);
+            }
+            let x = right.0.as_ref().expect("a grown branch");
+            let (xl, xr) = right.children();
+            if r - xl.rank() == 2 {
+                return Self::rotate_left(slot, left, right, r - 1, r);
+            }
+            let lifted = Self::rotate_right(x.slot.clone(), xl.clone(), xr.clone(), r - 1, r);
+            return Self::rotate_left(slot, left, lifted, r - 1, r);
         }
-        Self::raw_branch(slot, left, right)
+        Self::node(slot, left, right, r)
+    }
+
+    /// The branch over `left` and `right` for a node of rank `r` one of whose children a
+    /// removal below has rebuilt, with the rules (R0)-(R2) of the struct doc restored.
+    ///
+    /// Proof (PROOF-pst-remove-cost). The rebuilt child's rank is its old one or one less, by
+    /// induction on the path: where `remove_empty_leaf` removes a leaf, its parent `p` is
+    /// replaced by the sibling `s` and `rank(p) - rank(s) = 1` (`p` has a leaf child, so rank
+    /// 1 or 2 by (R1); at rank 2, `s` is no leaf by (R2), so has rank 1), and this function
+    /// gives rank `r`, `r - 1`, or `r` again after a rotation. This is the bottom-up deletion
+    /// of the paper (sec. 4), each leaf here being a missing node there. With `x` the rebuilt
+    /// child and `y` its sibling, the rules fail in two ways. (a) `x` is a 3-child, so `r >= 3`
+    /// and `y` has rank `r - 1` or `r - 2`, rank 1 or more, a branch. "Demote: If y is a
+    /// 2-child, demote p(x); otherwise, demote both y and p(x)", the second when `y` is 2, 2:
+    /// this node takes rank `r - 1`, `y` rank `r - 2` in the second case, and every difference
+    /// is 1 or 2 again. Otherwise `y` is a 1-child and not 2, 2; with `w` its outer child and
+    /// `v` its inner one: "Rotate: w is a 1-child. Rotate at y, promote y, and demote z": `y`
+    /// is the root at `r` over `w` (`r - 2`) and this node at `r - 1`, over `x` (`r - 3`) and `v`
+    /// (`r - 2` or `r - 3`). One case more than the 2013 preprint's text: when `x` and `v` are
+    /// both leaves (`r = 3`), that node would be a branch of rank 2 over two leaves against
+    /// (R2) (in the paper's terms a leaf of rank 1, against its leaf rule), so it takes rank 1
+    /// (both children 1 below, and 2 below the root); derived here, and the journal text was
+    /// not read. "Double Rotate: w is a 2-child (so v is a 1-child) ... Promote v twice, demote
+    /// y once, and demote z twice": `v` is the root at `r` over this node and `y`, both at
+    /// `r - 2`; this node is over `x` (`r - 3`) and `v`'s left child, `y` over `v`'s right child
+    /// and `w` (`r - 3`), and `v`'s children were 1 or 2 below `r - 2`. (b) Both children are
+    /// now leaves and `r = 2`, against (R2): rank 1 ("demoting x" for "a 2, 2 leaf" in the
+    /// paper). In every other case the rules hold at rank `r`. (R2) after (a): a node of rank
+    /// 1 made here has leaf children, and one of rank 2 or more a child of rank 1 or more, by
+    /// the ranks above. After a rotation the subtree's rank is `r`, as before, so the levels
+    /// above keep their ranks: one rotation step per removal, of one or two rotations.
+    /// Checked by `priority_search_tree_and_recession_arcs_match_the_oracle`, whose ascending
+    /// and descending runs reach every case.
+    fn shrunk(slot: Option<PstEntry<X>>, left: Self, right: Self, r: usize) -> Self {
+        if r - left.rank() == 3 {
+            let ry = right.rank();
+            if r - ry == 2 {
+                return Self::node(slot, left, right, r - 1);
+            }
+            let y = right.0.as_ref().expect("a sibling of rank r - 1 >= 2");
+            let (v, w) = right.children();
+            if ry - v.rank() == 2 && ry - w.rank() == 2 {
+                let y = Self::raw_branch(y.slot.clone(), v.clone(), w.clone(), r - 2);
+                return Self::node(slot, left, y, r - 1);
+            }
+            if ry - w.rank() == 1 {
+                let low = if left.is_leaf() && v.is_leaf() {
+                    1
+                } else {
+                    r - 1
+                };
+                return Self::rotate_left(slot, left, right, low, r);
+            }
+            let lifted = Self::rotate_right(y.slot.clone(), v.clone(), w.clone(), r - 2, r);
+            return Self::rotate_left(slot, left, lifted, r - 2, r);
+        }
+        if r - right.rank() == 3 {
+            let ry = left.rank();
+            if r - ry == 2 {
+                return Self::node(slot, left, right, r - 1);
+            }
+            let y = left.0.as_ref().expect("a sibling of rank r - 1 >= 2");
+            let (w, v) = left.children();
+            if ry - v.rank() == 2 && ry - w.rank() == 2 {
+                let y = Self::raw_branch(y.slot.clone(), w.clone(), v.clone(), r - 2);
+                return Self::node(slot, y, right, r - 1);
+            }
+            if ry - w.rank() == 1 {
+                let low = if right.is_leaf() && v.is_leaf() {
+                    1
+                } else {
+                    r - 1
+                };
+                return Self::rotate_right(slot, left, right, low, r);
+            }
+            let lifted = Self::rotate_left(y.slot.clone(), w.clone(), v.clone(), r - 2, r);
+            return Self::rotate_right(slot, lifted, right, r - 2, r);
+        }
+        if left.is_leaf() && right.is_leaf() {
+            return Self::node(slot, left, right, 1);
+        }
+        Self::node(slot, left, right, r)
     }
 
     fn insert_leaf(&self, x: &PstEntry<X>) -> Option<Self> {
@@ -20147,19 +20351,21 @@ impl<X: Ord + Clone> Pst<X> {
                 std::cmp::Ordering::Less => Some(Self::pulled_branch(
                     Self::leaf(x.clone(), None),
                     Self::leaf(k.clone(), n.slot.clone()),
+                    1,
                 )),
                 std::cmp::Ordering::Greater => Some(Self::pulled_branch(
                     Self::leaf(k.clone(), n.slot.clone()),
                     Self::leaf(x.clone(), None),
+                    1,
                 )),
             },
             PstKind::Branch { left, right } => {
                 if x < right.min_key() {
                     let nl = left.insert_leaf(x)?;
-                    Some(Self::balanced(n.slot.clone(), nl, right.clone()))
+                    Some(Self::grown(n.slot.clone(), nl, right.clone(), n.rank))
                 } else {
                     let nr = right.insert_leaf(x)?;
-                    Some(Self::balanced(n.slot.clone(), left.clone(), nr))
+                    Some(Self::grown(n.slot.clone(), left.clone(), nr, n.rank))
                 }
             }
         }
@@ -20188,7 +20394,7 @@ impl<X: Ord + Clone> Pst<X> {
                 if x < right.min_key() {
                     let (ok, nl) = left.erase_slot(x);
                     let out = if ok {
-                        Self::raw_branch(Some(s.clone()), nl, right.clone())
+                        Self::raw_branch(Some(s.clone()), nl, right.clone(), n.rank)
                     } else {
                         self.clone()
                     };
@@ -20196,7 +20402,7 @@ impl<X: Ord + Clone> Pst<X> {
                 } else {
                     let (ok, nr) = right.erase_slot(x);
                     let out = if ok {
-                        Self::raw_branch(Some(s.clone()), left.clone(), nr)
+                        Self::raw_branch(Some(s.clone()), left.clone(), nr, n.rank)
                     } else {
                         self.clone()
                     };
@@ -20223,7 +20429,7 @@ impl<X: Ord + Clone> Pst<X> {
                             Some(s) => right.push_down(s.clone()),
                             None => right.clone(),
                         },
-                        Some(_) => Self::balanced(n.slot.clone(), nl, right.clone()),
+                        Some(_) => Self::shrunk(n.slot.clone(), nl, right.clone(), n.rank),
                     }
                 } else {
                     let nr = right.remove_empty_leaf(x);
@@ -20232,7 +20438,7 @@ impl<X: Ord + Clone> Pst<X> {
                             Some(s) => left.push_down(s.clone()),
                             None => left.clone(),
                         },
-                        Some(_) => Self::balanced(n.slot.clone(), left.clone(), nr),
+                        Some(_) => Self::shrunk(n.slot.clone(), left.clone(), nr, n.rank),
                     }
                 }
             }
@@ -20269,9 +20475,9 @@ impl<X: Ord + Clone> Pst<X> {
     /// is skipped), so its parent has its least key too; up that chain of left children the
     /// root has none in the prefix, which is then empty, and only the leftmost node of each
     /// depth is visited. So the nodes with `slot.hi >= q2` and `slot.lo > q1` are at most one
-    /// per depth, O(log k) by the AVL heights (asserted by the same test); the nodes that stop
-    /// at once are children of the other two kinds; O(log k + output) in all. The test checks
-    /// the entries reported against a model, not the count of nodes visited.
+    /// per depth, O(log k) by the ranks (the struct doc; asserted by the same test); the nodes
+    /// that stop at once are children of the other two kinds; O(log k + output) in all. The
+    /// test checks the entries reported against a model, not the count of nodes visited.
     fn report(&self, q1: &X, q2: &X, out: &mut Vec<PartAt>) {
         let Some(n) = &self.0 else {
             return;
@@ -26085,7 +26291,7 @@ mod tests {
 
     /// Random insertions, removals, and 2D dominance queries on [`Pst`], and circular-sector
     /// stabbing queries on [`PairRecession`] / [`open_cone_sector`], match brute-force
-    /// evaluation while maintaining AVL balance and heap/multiset invariants.
+    /// evaluation while maintaining the rank rules and heap/multiset invariants.
     #[test]
     fn priority_search_tree_and_recession_arcs_match_the_oracle() {
         fn check_pst(
@@ -26106,7 +26312,7 @@ mod tests {
             }
             match &n.kind {
                 PstKind::Leaf(k) => {
-                    assert_eq!(n.height, 1);
+                    assert_eq!(n.rank, 0);
                     assert_eq!(&n.min_key, k);
                     if let Some(s) = &n.slot {
                         assert_eq!(s, k);
@@ -26114,9 +26320,19 @@ mod tests {
                     leaves.push(k.clone());
                 }
                 PstKind::Branch { left, right } => {
-                    let (lh, rh) = (left.height(), right.height());
-                    assert!(lh >= 1 && rh >= 1 && lh.abs_diff(rh) <= 1);
-                    assert_eq!(n.height, 1 + lh.max(rh));
+                    // (R1) and (R2) of the struct doc; (R0) is asserted at the leaves.
+                    for c in [left, right] {
+                        assert!(c.0.is_some());
+                        assert!(
+                            matches!(n.rank.checked_sub(c.rank()), Some(1 | 2)),
+                            "rank {} over a child of rank {}",
+                            n.rank,
+                            c.rank()
+                        );
+                    }
+                    if left.is_leaf() && right.is_leaf() {
+                        assert_eq!(n.rank, 1);
+                    }
                     assert_eq!(&n.min_key, left.min_key());
                     if n.slot.is_none() {
                         assert!(left.slot().is_none() && right.slot().is_none());
@@ -26145,6 +26361,45 @@ mod tests {
                 Arc::new(Formula::Con(Con::ge(&x, &Lin::constant(0)))),
             )
         };
+        // Every key inserted in ascending, then descending order, then removed in each order
+        // and from the middle out: these reach the rotations of both sides in insertion and
+        // every step of `Pst::shrunk`, the rank-1 case of its single rotation included.
+        let leaves_of = |t: &Pst<i64>| {
+            let (mut leaves, mut slots) = (Vec::new(), Vec::new());
+            check_pst(t, &mut Vec::new(), &mut leaves, &mut slots);
+            slots.sort();
+            assert_eq!(slots, leaves);
+            // The size bound of the struct doc: `2^ceil(r/2)` leaves at least below rank `r`.
+            if t.0.is_some() {
+                assert!(leaves.len() >= 1usize << t.rank().div_ceil(2));
+            }
+            leaves
+        };
+        for n in [1i64, 2, 3, 7, 40, 129] {
+            let ascending: Vec<i64> = (0..n).collect();
+            let descending: Vec<i64> = (0..n).rev().collect();
+            let middle_out: Vec<i64> = (0..n).map(|i| (n / 2 + i) % n).collect();
+            for (ins, rem) in [
+                (&ascending, &ascending),
+                (&ascending, &descending),
+                (&descending, &middle_out),
+                (&middle_out, &descending),
+            ] {
+                let entry = |k: i64| (k, -k, dummy(k));
+                let mut tree: Pst<i64> = Pst::default();
+                for (i, &k) in ins.iter().enumerate() {
+                    tree = tree.insert(entry(k));
+                    assert_eq!(leaves_of(&tree).len(), i + 1);
+                }
+                for (i, &k) in rem.iter().enumerate() {
+                    tree = tree.remove(&entry(k));
+                    let left = leaves_of(&tree);
+                    assert_eq!(left.len(), rem.len() - i - 1);
+                    assert!(left.iter().all(|e| e.0 != k));
+                }
+                assert!(tree.0.is_none());
+            }
+        }
         let mut tree: Pst<i64> = Pst::default();
         let mut model: BTreeSet<PstEntry<i64>> = BTreeSet::new();
         for step in 0..400 {
@@ -26160,12 +26415,9 @@ mod tests {
                 model.insert(item.clone());
                 tree = tree.insert(item);
             }
-            let (mut leaves, mut slots) = (Vec::new(), Vec::new());
-            check_pst(&tree, &mut Vec::new(), &mut leaves, &mut slots);
+            let leaves = leaves_of(&tree);
             assert!(leaves.windows(2).all(|w| w[0] < w[1]));
-            slots.sort();
             assert_eq!(leaves, model.iter().cloned().collect::<Vec<_>>());
-            assert_eq!(slots, leaves);
             for _ in 0..5 {
                 let q1 = rng(30) - 15;
                 let q2 = rng(30) - 15;

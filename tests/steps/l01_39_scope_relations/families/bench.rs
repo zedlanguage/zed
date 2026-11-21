@@ -136,6 +136,15 @@ fn coordkk_scales() {
     scales("coordkk", 160, 1);
 }
 
+/// The `k` constraints of one arm reach the same entry of `Block::bounds` in one update
+/// (PROOF-product-reframe-cost): 17.75 times the instructions at 8n (236M and 4,190M) while
+/// each constraint read the entry's whole range, 8.53 (211M and 1,798M) since each reads only
+/// the turns past the widest range read in that update (2026-11-21, loads 37 and 43).
+#[test]
+fn coordkk_many_scales() {
+    scales("coordkk_many", 64, 1);
+}
+
 /// About `k^1.75` to `k^1.96`, 14.8 times the instructions at 8n, while each part of a test
 /// was certified idle again at each of its cases; 10.1 since the least part of each chain of
 /// disjunctions stands for the parts above it (XR-l139-family, `Scope::idle_by_chain`). On

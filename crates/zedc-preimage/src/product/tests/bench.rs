@@ -58,3 +58,53 @@ fn a_long_pending_list_is_dropped_without_overflow() {
         drop(r);
     });
 }
+
+/// Removing one entry from a [`Pst`] costs O(log k) (PROOF-pst-remove-cost). The trees are
+/// Fibonacci trees, the AVL trees of least size for their height, with every slot full:
+/// removing the greatest key shortens the right spine, which is the shorter side at every
+/// level, so an AVL rebalancing rotates at every second level of the path, each rotation
+/// pushing slots down a whole subtree, O(log^2 k) in all; the rank-balanced rebalancing
+/// rotates twice at most. Heights 23 and 28 hold 46,368 and 514,229 leaves, 11.1 times as
+/// many, more than 8. Order 1 in `log k`, so power 0: the limit is 1.3125 times.
+#[test]
+fn removing_from_a_priority_search_tree_takes_log_time() {
+    let at: PartAt = (
+        false,
+        Arc::new(Formula::Con(Con::ge(
+            &Lin::atom(Atom::Sym("x".into())),
+            &Lin::constant(0),
+        ))),
+    );
+    // The Fibonacci tree of height `h`, its leaves numbered from `next` up, each entry
+    // `(k, -k)` so that the least key has the greatest priority. Its rank is `h - 1`: each
+    // branch is 1 above its left child and 2 above its right one, (R1) of [`Pst`].
+    fn fib(h: usize, next: &mut i64, at: &PartAt) -> Pst<i64> {
+        if h == 1 {
+            let e = (*next, -*next, at.clone());
+            *next += 1;
+            return Pst::leaf(e.clone(), Some(e));
+        }
+        let left = fib(h - 1, next, at);
+        let right = fib((h - 2).max(1), next, at);
+        Pst::pulled_branch(left, right, h - 1)
+    }
+    let tree = |h: usize| {
+        let mut next = 0;
+        let t = fib(h, &mut next, &at);
+        let last = (next - 1, 1 - next, at.clone());
+        (t, last)
+    };
+    let (small, small_last) = tree(23);
+    let (large, large_last) = tree(28);
+    let removes = |t: &Pst<i64>, last: &PstEntry<i64>| {
+        for _ in 0..2000 {
+            std::hint::black_box(t.remove(last));
+        }
+    };
+    crate::scaling::compare(
+        "removing the greatest key of a Fibonacci priority search tree of heights 23 and 28",
+        0,
+        || removes(&small, &small_last),
+        || removes(&large, &large_last),
+    );
+}
