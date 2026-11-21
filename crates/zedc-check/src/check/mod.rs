@@ -2429,8 +2429,8 @@ struct Ck<'t, 'a> {
     /// rebuild spans in the body then (`an_arrow_lambda_refused_through_a_call_s_needs_is_named`).
     arrow_lambdas: HashMap<Span, Arc<Sig>>,
     /// How many lambdas are being checked at the arrows of an intersection outside a trial
-    /// (`FitF::joined` in walk.rs): while any is, a bare `else` is not refused at each arrow but joined
-    /// in [`Self::else_joined`], and refused once when the outermost ends
+    /// (`FitF::joined` in walk.rs): while any is, a bare `else` is not refused at each arrow
+    /// but joined in [`Self::else_joined`], and refused once when the outermost ends
     /// ([`Self::else_unnamed`]).
     arrow_fits: usize,
     /// Each bare `else` met while [`Self::arrow_fits`] is not 0, in the order first met.
