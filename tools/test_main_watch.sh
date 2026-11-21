@@ -43,6 +43,11 @@ mkdir -p "$logs"
 names=()
 for n in "$@"; do [ "$n" = BUILD ] || names+=("$n"); done
 echo "$(git rev-parse --short=9 HEAD) $kind ${*:-all}" >>"$MW_STATE/runs.log"
+# MW_LEAK: each run leaves a process behind, as a test binary or a fresh child can.
+if [ -n "${MW_LEAK:-}" ]; then
+  sleep 300 </dev/null >/dev/null 2>&1 &
+  echo $! >>"$MW_STATE/leaked"
+fi
 [ ! -e broken/BUILD ] || { echo "BUILD FAILED"; exit 1; }
 [ $# -eq 0 ] || [ ${#names[@]} -gt 0 ] || exit 0
 if [ ${#names[@]} -eq 0 ]; then
@@ -50,6 +55,7 @@ if [ ${#names[@]} -eq 0 ]; then
 fi
 rc=0
 for n in "${names[@]}"; do
+  echo "$kind $n" >>"$MW_STATE/ran"
   r=0
   [ ! -e "broken/$n" ] || r=1
   if [ "$n" = t_flaky ] && [ ! -e "$MW_STATE/flaky-ran" ]; then : >"$MW_STATE/flaky-ran"; r=1; fi
@@ -88,12 +94,13 @@ EOF
   cat >"$t/bin/zrun" <<'EOF'
 #!/bin/bash
 shift
-logs= kind=test only= list=
+logs= kind=test only= list= except=
 while [ $# -gt 1 ]; do
   case $1 in
     --logs) logs=$2 && shift ;;
     --bench) kind=bench ;;
     --only) only=$2 && shift ;;
+    --except) except=${except:+$except|}$2 && shift ;;
     --list) list=1 ;;
   esac
   shift
@@ -114,6 +121,16 @@ if [ -n "$only" ]; then
 elif [ -n "$list" ]; then
   names=(BUILD)
 fi
+# --except, as run_tests.sh's: the pieces it matches are not run.
+if [ -n "$except" ]; then
+  if [ ${#names[@]} -eq 0 ]; then
+    if [ "$kind" = test ]; then mapfile -t names <tests; else mapfile -t names <benches; fi
+  fi
+  kept=()
+  for n in "${names[@]}"; do [[ toy::$n =~ $except ]] || kept+=("$n"); done
+  names=("${kept[@]}")
+  [ ${#names[@]} -gt 0 ] || { echo "NO PIECE TO RUN"; exit 1; }
+fi
 "$MW_RUN" "$logs" "$kind" "${names[@]}" | sed -E 's/^(t_|b_)/toy::\1/'
 exit "${PIPESTATUS[0]}"
 EOF
@@ -133,7 +150,7 @@ EOF
     MAIN_WATCH_PUBLISH=$t/bin/publish \
     MAIN_WATCH_FIXER=$t/bin/fix MAIN_WATCH_TEMPLATE=$t/template MAIN_WATCH_POLL=0 MAIN_WATCH_POLLS=2 \
     MW_STATE=$t/state
-  unset MW_FIX MW_FIX_BREAK MAIN_WATCH_ZRUN
+  unset MW_FIX MW_FIX_BREAK MAIN_WATCH_ZRUN MW_LEAK MAIN_WATCH_QUEUE MAIN_WATCH_MIN
 }
 
 # land <n> [<commits>] [<i>:<piece>]: landing n, pushed from the dev clone, of <commits> commits
@@ -342,6 +359,70 @@ $(breaker b_beta)" "$(opened | sed -n 1,2p)"
     check "known: the running log names the failure and its row" 1 \
       "$(command grep -a -c 'known failures at .*test:t_delta (TEST-row-known)' "$t/home/running-log.md")"
     ;;
+  skip)
+    # A known line marked skip: the piece is not started at all (rung2 at n = 600 holds 67 to
+    # 71 GB a run), through run_tests.sh's --except; the head is checked without it.
+    setup b_eps
+    unset MAIN_WATCH_RUN
+    export MAIN_WATCH_ZRUN=$t/bin/zrun MW_RUN=$t/bin/run MW_ROOT=$root
+    echo "bench:toy::b_eps TEST-row-skip skip" >"$t/home/main-watch-known.txt"
+    for n in $(seq 1 15); do land "$n"; done
+    watch
+    check "skip: exit 0" 0 "$rc"
+    check "skip: b_eps never ran" 0 "$(command grep -a -c -x 'bench b_eps' "$t/state/ran")"
+    check "skip: the other benchmark ran" 1 "$(command grep -a -c -x 'bench b_beta' "$t/state/ran")"
+    check "skip: no culprit" "" "$(opened)"
+    check "skip: the head is checked" "$(head_of)" "$(checked)"
+    check "skip: the running log names the skipped piece and its row" 1 \
+      "$(command grep -a -c 'not run: bench:toy::b_eps (TEST-row-skip)' "$t/home/running-log.md")"
+    ;;
+  queue)
+    # MAIN_WATCH_QUEUE: each culprit goes to its row as a QUEUE line, no fixer runs, and its pieces
+    # join the known list with that row; the head is then checked with them as known failures,
+    # without a second full run, and a later check does not bisect them again.
+    setup
+    twenty
+    local a b q
+    a=$(breaker t_alpha)
+    b=$(breaker b_beta)
+    q=$t/home/spawn-queue.txt
+    echo "QUEUE OTHER-row (filed by someone)" >"$q"
+    export MAIN_WATCH_QUEUE=$q
+    watch
+    check "queue: exit 0" 0 "$rc"
+    check "queue: no fixer ran" 0 "$(cat "$t/state/fixer.log" 2>/dev/null | wc -l)"
+    check "queue: the earlier line is kept" "QUEUE OTHER-row (filed by someone)" "$(sed -n 1p "$q")"
+    check "queue: one QUEUE line per culprit, naming its row and the first bad commit" \
+      "QUEUE TEST-row-5 ${a:0:9} test:t_alpha
+QUEUE TEST-row-12 ${b:0:9} bench:b_beta" \
+      "$(sed -n '2,$p' "$q" | sed -E 's/^(QUEUE [^ ]+) .*first bad commit ([0-9a-f]{9}) .* fails ([^;]*);.*/\1 \2 \3/')"
+    check "queue: the pieces join the known list with their rows" "test:t_alpha TEST-row-5
+bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
+    check "queue: the head is checked" "$(head_of)" "$(checked)"
+    check "queue: one full run of each kind" "1 1" \
+      "$(command grep -a -c ' test all$' "$t/state/runs.log") $(command grep -a -c ' bench all$' "$t/state/runs.log")"
+    land 21
+    MAIN_WATCH_MIN=1 timeout 50 "$watch" >"$t/out2" 2>&1
+    check "queue: the next check exits 0" 0 "$?"
+    check "queue: the next check queues nothing again" 3 "$(wc -l <"$q")"
+    check "queue: the next check checks the new head" "$(head_of)" "$(checked)"
+    ;;
+  reap)
+    # Every run leaves a process; after each run the watcher kills what its run left, by pid, so
+    # nothing of its runs outlives them (author, 2026-11-20: release all RAM after each run).
+    setup
+    export MW_LEAK=1
+    for n in $(seq 1 15); do land "$n"; done
+    watch
+    local p alive=
+    check "reap: exit 0" 0 "$rc"
+    check "reap: runs left processes" yes "$([ -s "$t/state/leaked" ] && echo yes)"
+    for p in $(cat "$t/state/leaked" 2>/dev/null); do kill -0 "$p" 2>/dev/null && alive+="$p "; done
+    check "reap: none of them is alive" "" "$alive"
+    check "reap: each kill is logged" "$(wc -l <"$t/state/leaked")" \
+      "$(command grep -a -c 'killed by pid' "$t/out")"
+    for p in $alive; do kill -KILL "$p"; done
+    ;;
   build)
     # A build failure is a piece of its own: bisected and fixed like the others.
     setup
@@ -362,6 +443,9 @@ $(breaker b_beta)" "$(opened | sed -n 1,2p)"
       "no-flake-rerun|s/if \\[ -z \"\\\$(fails_twice \"\\\$p\"/if false \\&\\& [ -z \"\$(fails_twice \"\$p\"/|two"
       "no-git-bisect|s/rev-list --count \"\\\$prev..\\\$c\")\" -gt 1/rev-list --count \"\$prev..\$c\")\" -gt 999/|two"
       "fixer-not-awaited|s/^      \"\\\$MAIN_WATCH_FIXER\" \"\\\$brief\" \"\\\$dir\" >\\(.*\\) 2>&1\$/      ( sleep 3; \"\$MAIN_WATCH_FIXER\" \"\$brief\" \"\$dir\" ) >\\1 2>\\&1 \\&/|two"
+      "no-reap|s/^  reap \"\\\$(cat .*\$/  :/|reap"
+      "no-skip|s/(--except \"\\\$skip\")/()/|skip"
+      "no-queue|s/^  if \\[ -n \"\\\$queue\" \\]; then\$/  if false; then/|queue"
     )
     for m in "${mutants[@]}"; do
       IFS='|' read -r name expr cases <<<"$m"
@@ -379,7 +463,7 @@ $(breaker b_beta)" "$(opened | sed -n 1,2p)"
   esac
 }
 
-all_cases="two zrun fixbreak failfix nofix clean few old known build controls"
+all_cases="two zrun fixbreak failfix nofix clean few old known skip queue reap build controls"
 for c in ${@:-$all_cases}; do run_case "$c"; done
 echo "checks failed: $fails"
 [ "$fails" = 0 ]

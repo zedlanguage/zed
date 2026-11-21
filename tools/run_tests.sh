@@ -2,7 +2,7 @@
 # Runs the tests in pieces, one test binary, step folder, module or slow test each, each under a
 # limit of 20 s (more under load, below), and prints a line per piece as it ends. Usage, from a
 # checkout's root:
-#   tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [--trace <dir>] [jobs]
+#   tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--except <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [--trace <dir>] [jobs]
 #   tools/run_tests.sh --short-clone-remove
 # A run is of the correctness tests or, with --bench, of the benchmarks alone (TEST-bench-split,
 # author P169). A benchmark is a test whose path holds `bench::`: it lies in a module `bench`,
@@ -38,6 +38,10 @@
 # folder, gets the term that selects it, ^(<group>)$. --skip-other-kind, which
 # tools/merge_check.sh passes, notes and does not run a term that names a group whose pieces are
 # all of the other kind (a test target with benchmarks alone, in a run without --bench).
+# --except <ERE> does not run a selected piece whose name, or that name with its binary's hash
+# taken off, matches; each is noted on standard error, and a second --except adds to the first.
+# tools/main_watch.sh passes it for a piece its known list marks skip, one too costly to run while
+# it fails (TOOL-main-watch-start-green: rung2 at n = 600 held 67 to 71 GB a run).
 # --short-groups prints the groups that have a short- piece and runs nothing. The
 # short-addresses build is made only when a short- piece is selected, in a clone of build/cargo kept in build/short-clone from run to run;
 # such a run must go through /home/luke/Work/wt/zrun, and --short-clone-remove deletes the clone
@@ -101,7 +105,7 @@
 args=$*
 # The tests that read the spec's DESIGN.md and EXAMPLES.md in place (feature `spec` of the tests
 # crate, author P371) are always built: a local run never leaves them out.
-features=--features=zed-tests/spec full_suite= only= list= reuse= logs= doc= jobs=6 clone_remove= run_kind=test each_test= cov= trace=
+features=--features=zed-tests/spec full_suite= only= except= list= reuse= logs= doc= jobs=6 clone_remove= run_kind=test each_test= cov= trace=
 short_groups= skip_other_kind=
 while [ $# -gt 0 ]; do
   case $1 in
@@ -117,6 +121,14 @@ while [ $# -gt 0 ]; do
       # last, so --only m0_03_grammar_tools --only zed_meter_settings ran the meter piece alone
       # and passed (tools4, 2026-11-20). Each term is then checked by check_terms.
       only=${only:+$only|}$2
+      shift
+      ;;
+    --except)
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
+        echo "--except needs a non-empty extended regular expression"
+        exit 2
+      fi
+      except=${except:+$except|}$2
       shift
       ;;
     --doc) doc=1 ;;
@@ -152,7 +164,7 @@ while [ $# -gt 0 ]; do
       ;;
     [1-9]*) jobs=$1 ;;
     *)
-      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--skip-other-kind] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [--trace <dir>] [--short-clone-remove] [--short-groups] [jobs])"
+      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--except <ERE>] [--skip-other-kind] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [--trace <dir>] [--short-clone-remove] [--short-groups] [jobs])"
       exit 2
       ;;
   esac
@@ -172,6 +184,13 @@ short_libs="zed-kernel"
 if [ -n "$short_groups" ]; then
   printf '%s\n' $short_steps ${short_libs//-/_}
   exit 0
+fi
+if [ -n "$except" ]; then
+  { [[ x =~ $except ]]; } 2>/dev/null
+  if [ $? = 2 ]; then
+    echo "--except: not a valid extended regular expression: $except"
+    exit 2
+  fi
 fi
 if [ -n "$only" ]; then
   { [[ x =~ $only ]]; } 2>/dev/null
@@ -698,6 +717,23 @@ select_pieces() {
       echo "${name%%::*}::$t $dir $bin --exact $t"
     done
   done <"$1" >"$out/pieces" 3>"$out/chosen"
+  # --except: the selected pieces it matches are not run, each noted on standard error. A piece
+  # named with its binary's hash (zed_kernel-744b8b7231e6eb90::btree::bench::<test>) matches by
+  # that name or by the name without the hash, as for --only. $out/chosen keeps them, so a term of
+  # --only that selected only such pieces still counts as selecting (check_terms).
+  if [ -n "$except" ]; then
+    local line n
+    while IFS= read -r line; do
+      n=${line%% *}
+      if [[ $n =~ $except ]] || { [[ $n =~ ^([A-Za-z0-9_]+)-[0-9a-f]+(::.*)?$ ]] &&
+        [[ ${BASH_REMATCH[1]}${BASH_REMATCH[2]} =~ $except ]]; }; then
+        echo "--except: not run: $n" >&2
+      else
+        printf '%s\n' "$line"
+      fi
+    done <"$out/pieces" >"$out/pieces.kept"
+    mv -T "$out/pieces.kept" "$out/pieces"
+  fi
   local among=
   [ "$run_kind" = test ] || among=" among the benchmarks"
   if [ ! -s "$out/pieces" ]; then

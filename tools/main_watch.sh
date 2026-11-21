@@ -49,6 +49,26 @@
 #     failure the fix itself caused is traced to the fix). Only when everything passes does it
 #     record the head as checked (main-watch.checked, by write to a temporary file and rename).
 #  7. Then it polls again.
+# Known failures. main-watch-known.txt lists failures a plan row owns, one a line,
+# `<kind>:<piece> <row>`: such a piece still runs and is reported with its row, but is not
+# bisected or fixed here, and does not keep a head from being checked. A third field `skip` keeps
+# the piece from being started at all (tools/run_tests.sh --except), for a piece too costly to run
+# while it fails: bench rung2 at n = 600 held 67 to 71 GB a run (TOOL-main-watch-start-green).
+# Queue mode. With MAIN_WATCH_QUEUE=<file> (/home/luke/Work/wt/main-watch.sh sets it to
+# spawn-queue.txt) step 5 starts no fixing agent: each culprit C becomes one line
+# `QUEUE <row> (filed by main-watch <time>: first bad commit <C> ... fails <pieces>; ...)` in that
+# file, for the coordinator to send to the row's owner, and its pieces join the known list with
+# that row. The row is the plan row C's subject names in its closing parentheses (the project's
+# commit convention), else the first row its message names, else FAIL-main-<C>. Once every
+# failure is known or queued the head is checked without running everything again (an hour that
+# would find nothing new: no fix has landed).
+# Processes. Each run of pieces (and the build it starts) runs as a session of its own (setsid);
+# when it ends, every process still in that session (a test binary, a fresh child of a benchmark,
+# a build process) is logged and killed by pid, so no run holds memory after it ends (author,
+# 2026-11-20). A session id names only this run's processes, where the path of a test binary
+# (under the shared /home/luke/Work/wt/.build-root) would match other agents' runs too. zrun's
+# namespace holder starts a session of its own (setsid -f) and is not touched: it is the
+# worktree's, outlives every run, and is stopped when the worktree is removed.
 # Stuck: a fixing agent that ends without landing, pieces still failing after 3 attempts, a
 # failure that exists at the last checked commit, or no checked commit to bisect from. The watcher
 # then writes `stuck <commit> <time> main-watch <reason>` to main-red.log (red_open in
@@ -99,8 +119,10 @@ runlog=$home/running-log.md
 ledger=$home/ledger.jsonl
 stuck_file=$home/main-watch-stuck.md
 flakes=$home/main-watch-flakes.log
-# Failures a plan row owns, one a line: <kind>:<piece> <row>. Written by hand; see check.
+# Failures a plan row owns, one a line: <kind>:<piece> <row> [skip]. Written by hand and in queue
+# mode; see check.
 known_file=$home/main-watch-known.txt
+queue=${MAIN_WATCH_QUEUE:-}
 self=$(realpath -e "$0")
 export MAIN_WATCH_HOME=$home MAIN_WATCH_REPO=$repo MAIN_WATCH_FULL=$full MAIN_WATCH_JOBS=$jobs
 
@@ -129,19 +151,60 @@ run_pieces() {
     a+=(--only "$(printf '%s\n' "${names[@]}" | sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' | paste -sd'|')")
   elif [ $# -gt 0 ]; then
     a+=(--list)
+  else
+    # A run of every piece leaves out those of this kind the known list marks skip, each as its
+    # own anchored alternative, as for --only above.
+    local skip
+    skip=$([ -s "$known_file" ] && awk -v k="$kind:" '$3 == "skip" && index($1, k) == 1 { print substr($1, length(k) + 1) }' "$known_file" |
+      sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' | paste -sd'|')
+    [ -z "$skip" ] || a+=(--except "$skip")
   fi
   "$zrun" tools/run_tests.sh "${a[@]}" "$jobs"
 }
+# --pieces <sid file> <run_pieces arguments>: run_pieces in a process of its own, which run starts
+# as a new session; it writes its pid, the session's id, to <sid file> first.
+if [ "${1:-}" = --pieces ]; then
+  echo $$ >"$2"
+  shift 2
+  run_pieces "$@"
+  exit
+fi
+# reap <session id> <output file>: kills by pid each process left in the session after its run,
+# logging each (its pid, resident memory in KiB, seconds alive and command line) to the output
+# file and to the watcher's output. Killed processes leave the list once their parent (init, for
+# an orphan) has waited for them; a list not empty after 10 s is reported, not waited on.
+reap() {
+  local sid=$1 o=$2 left pid line i
+  local -A killed=()
+  [ -n "$sid" ] || return 0
+  for i in $(seq 100); do
+    left=$(pgrep -s "$sid")
+    [ -n "$left" ] || return 0
+    for pid in $left; do
+      [ -z "${killed[$pid]:-}" ] || continue
+      killed[$pid]=1
+      line=$(ps -o pid=,rss=,etimes=,args= -p "$pid")
+      [ -n "$line" ] || continue
+      kill -KILL "$pid" 2>/dev/null || continue
+      echo "left alive after the run, killed by pid: $line" >>"$o"
+      say "left alive after the run of $(basename "$o"), killed by pid: $(cut -c1-200 <<<"$line")"
+    done
+    sleep 0.1
+  done
+  say "processes of session $sid still listed 10 s after they were killed: $(paste -sd' ' <<<"$left")"
+}
 # run <kind> [piece...]: runs them in the watcher's worktree (in --predicate mode, where $copy is
-# empty, in the current directory, the worktree `git bisect run` was started in); prints the file
-# holding the output, a new file under $logroot.
+# empty, in the current directory, the worktree `git bisect run` was started in), as a session of
+# its own whose leftover processes are then killed (reap); prints the file holding the output, a
+# new file under $logroot.
 run() {
   local kind=$1 o
   shift
   o=$logroot/$(date -u +%H%M%S%N)-$$-$kind
   pushd "${copy:-.}" >/dev/null || exit 2
-  run_pieces "$o.logs" "$kind" "$@" >"$o.out" 2>&1
+  setsid -w "$self" --pieces "$o.sid" "$o.logs" "$kind" "$@" >"$o.out" 2>&1
   popd >/dev/null || exit 2
+  reap "$(cat "$o.sid" 2>/dev/null)" "$o.out" >&2
   echo "$o.out"
 }
 # The pieces of kind $2 that failed, or passed, in the output $1, as <kind>:<piece>, one a line;
@@ -331,7 +394,17 @@ fill() {
   t=${t//"$p"/"$r"}
 }
 
+# owner_row <commit>: the plan row the commit's subject names in its closing parentheses
+# ("... (TOOL-main-watch-start-green)"), else the first its message names, else FAIL-main-<commit>.
+owner_row() {
+  local ids='\b[A-Z][A-Z0-9]*(-[A-Za-z0-9.]+)+\b' r
+  r=$(git -C "$repo" log -1 --format=%s "$1" | sed -n 's/.*(\([^()]*\))[[:space:]]*$/\1/p' | command grep -a -o -E "$ids" | awk 'NR == 1')
+  [ -n "$r" ] || r=$(git -C "$repo" log -1 --format=%B "$1" | command grep -a -o -E "$ids" | awk 'NR == 1')
+  echo "${r:-FAIL-main-$(short "$1")}"
+}
+
 # fix <commit> <items>: records the culprit, runs fixing agents until its pieces pass, up to 3.
+# In queue mode it queues the culprit to its row instead (see Queue mode above).
 fix() {
   local c=$1 items=$2 row lnd sub ids attempt name dir base brief before landed fixed t earlier= out
   row=FAIL-main-$(short "$c")
@@ -346,6 +419,16 @@ fix() {
   command grep -a -q "| $row: first bad commit" "$runlog" 2>/dev/null ||
     runlog "$row: first bad commit $(short "$c") \"$sub\" ($who) fails $pieces; bisect log $bisect_log"
   ledger "$row" queued "$c" "first bad commit of $pieces by bisect ($bisect_log); $who; \"$sub\"" "main-watch: $(short "$c") breaks $pieces"
+  if [ -n "$queue" ]; then
+    local owner
+    owner=$(owner_row "$c")
+    command grep -a -q "^QUEUE .*first bad commit $(short "$c") " "$queue" 2>/dev/null ||
+      echo "QUEUE $owner (filed by main-watch $(ts): first bad commit $(short "$c") \"$sub\" ($who) fails $pieces; bisect log $bisect_log, outputs in $logroot; the row's owner fixes it and takes these pieces' lines out of $known_file)" >>"$queue"
+    for t in $items; do echo "$t $owner" >>"$known_file"; done
+    runlog "$row: queued to $owner in $queue: first bad commit $(short "$c") fails $pieces (no fixing agent in queue mode)"
+    say "$row: queued to $owner"
+    return 0
+  fi
   for attempt in 1 2 3; do
     base=$(head_now) || stuck "$c" "fetch failed before fix attempt $attempt" ""
     name=mwfix-$(short "$c")-$attempt-$(date -u +%H%M%S)-$$
@@ -408,6 +491,26 @@ fix() {
   stuck "$c" "$row: $pieces still fail after 3 fix attempts" "$earlier"
 }
 
+# checked_head <C0> <known failures>: records $head as checked, publishes the build of the
+# watcher's worktree and removes the worktree.
+checked_head() {
+  local c0=$1 known=$2
+  echo "$head $(ts)" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
+  runlog "checked $(short "$head"): every test and benchmark passes${known:+ but the known failures $known}($(landings_in "$c0" "$head" | wc -l) landings since $(short "$c0"))"
+  say "checked $(short "$head"): everything passes${known:+ but the known failures $known}"
+  # The worktree's build, of a head where everything passes, becomes the central build that
+  # seed-build.sh gives each new worktree (TOOLS-clippy-cold-per-worktree). Since the
+  # merge batches stopped on 2026-11-19 nothing else publishes it, and a central build 1062
+  # commits behind main seeded clippy no better than an empty one (zedc-check after a change
+  # to zed-graph: 75 and 106 s, against 87 and 107 s empty and 17 and 24 s seeded from a
+  # current build, 2026-11-20). A failed publish leaves the old central build and does not
+  # stop the watcher.
+  [ -z "$copy" ] || "$publish" "$copy" >>"$logroot/publish.log" 2>&1 ||
+    say "publishing the build of $copy failed ($logroot/publish.log); the central build is unchanged"
+  [ -z "$copy" ] || "$remove" "$copy" >>"$logroot/remove.log" 2>&1 || say "could not remove $copy ($logroot/remove.log)"
+  copy=
+}
+
 # check <C0> <head>: runs everything at the head, bisects and fixes each failure, and repeats at
 # the new head until everything passes; then records that head as checked.
 check() {
@@ -417,6 +520,9 @@ check() {
   while :; do
     say "running every test and benchmark at $(short "$head") ($(landings_in "$c0" "$head" | wc -l) landings since $(short "$c0"))"
     goto "$head"
+    while read -r p r; do
+      runlog "not run: $p ($r) at $(short "$head"), marked skip in $known_file"
+    done < <([ -s "$known_file" ] && awk '$3 == "skip" { print $1, $2 }' "$known_file")
     all=
     fails=
     for k in test bench; do
@@ -459,20 +565,7 @@ check() {
     done
     items=$(sed '/^$/d' <<<"$items")
     if [ -z "$items" ]; then
-      echo "$head $(ts)" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
-      runlog "checked $(short "$head"): every test and benchmark passes${known:+ but the known failures $known}($(landings_in "$c0" "$head" | wc -l) landings since $(short "$c0"))"
-      say "checked $(short "$head"): everything passes${known:+ but the known failures $known}"
-      # The worktree's build, of a head where everything passes, becomes the central build that
-      # seed-build.sh gives each new worktree (TOOLS-clippy-cold-per-worktree). Since the
-      # merge batches stopped on 2026-11-19 nothing else publishes it, and a central build 1062
-      # commits behind main seeded clippy no better than an empty one (zedc-check after a change
-      # to zed-graph: 75 and 106 s, against 87 and 107 s empty and 17 and 24 s seeded from a
-      # current build, 2026-11-20). A failed publish leaves the old central build and does not
-      # stop the watcher.
-      [ -z "$copy" ] || "$publish" "$copy" >>"$logroot/publish.log" 2>&1 ||
-        say "publishing the build of $copy failed ($logroot/publish.log); the central build is unchanged"
-      [ -z "$copy" ] || "$remove" "$copy" >>"$logroot/remove.log" 2>&1 || say "could not remove $copy ($logroot/remove.log)"
-      copy=
+      checked_head "$c0" "$known"
       return 0
     fi
     say "confirmed failures at $(short "$head"): $(paste -sd' ' <<<"$items")"
@@ -505,6 +598,14 @@ check() {
         set=$(minus "$set" "$f1")
       done
     done
+    # Queue mode: every failure is now queued to its row and on the known list, and no fix has
+    # landed, so a run at the head again would find the same; the head is checked with them as
+    # known failures.
+    if [ -n "$queue" ]; then
+      for p in $items; do known+="$p ($(awk -v p="$p" '$1 == p { r = $2 } END { print r }' "$known_file")) "; done
+      checked_head "$c0" "$known"
+      return 0
+    fi
     head=$(head_now) || stuck - "fetch failed after the fixes" ""
   done
 }

@@ -13,12 +13,13 @@
 # full listing, which publishes the table (13 s at load 94, 30 to 57 s at load 36 to 76); `select`,
 # the selections of steps, modules and tests on the table list published (about 20 of 0.9 to 1.5 s
 # each at load 64 to 94: with the full listing in the same part it ran past 60 s at load 47 to 94,
-# 2026-11-19); `table`, the selections of --bench and --each-test on that table; `fresh`, the
+# 2026-11-19); `table`, the selections of --bench and --each-test on that table; `except`, the
+# pieces --except leaves out of a selection on that table; `fresh`, the
 # listings with --only afresh; `short`, the short-addresses pieces and their clone; `copy`, a
 # piece that starts its binary again after the build is gone; `concurrent`, two runs at once on
 # one log directory; and `trace`.
-# select and table are run after list, with no build of the tests between them. With no part named
-# it runs list, select, table, fresh, short, copy and concurrent one after another.
+# select, table and except are run after list, with no build of the tests between them. With no part named
+# it runs list, select, table, except, fresh, short, copy and concurrent one after another.
 # Each part has a log directory of its own, under which every run of run_tests.sh writes a
 # directory of its own and points <dir>/latest at it; the parts are run one run at a time, so
 # right after a run, latest is that run's.
@@ -26,9 +27,9 @@ fails=0
 . tools/test_lib.sh || exit 2
 part=${1:-all}
 case $part in
-  all | list | select | table | fresh | short | copy | concurrent | trace) ;;
+  all | list | select | table | except | fresh | short | copy | concurrent | trace) ;;
   *)
-    echo "usage: tools/test_run_tests.sh [list | select | table | fresh | short | copy | concurrent | trace]"
+    echo "usage: tools/test_run_tests.sh [list | select | table | except | fresh | short | copy | concurrent | trace]"
     exit 2
     ;;
 esac
@@ -321,6 +322,31 @@ check "--short-groups names the groups with a short-addresses piece" \
 check "each group --short-groups names has its piece short-<group>" \
   "$(run --short-groups | sed 's/^/short-/' | sort)" \
   "$(selected "^($(run --short-groups | sed 's/^/short-/' | paste -sd'|'))\$")"
+fi
+# --except <ERE> leaves out each selected piece it matches, by the name a run prints or that name
+# with the binary's hash taken off (TOOL-main-watch-start-green: main-watch does not start a
+# benchmark its known list marks skip, such as rung2 at n = 600, which holds 67 to 71 GB). A part
+# of its own: in table these six listings took its run past 60 s (load 36 to 53, 2026-11-20).
+if want except; then
+[ -s "$logs/table" ] || { echo "FAILED: no $logs/table: run tools/test_run_tests.sh list first"; exit 1; }
+benches15=$(run --list --reuse-table --bench --only '^l01_15_' | sort)
+check "--except: the benchmark to leave out is among those --only selects" 1 \
+  "$(echo "$benches15" | grep -c -x 'l01_15_kernel_terms::bench::the_printer_scales_with_depth')"
+check "--except leaves out the benchmark it names, and only it" \
+  "$(echo "$benches15" | grep -v -x 'l01_15_kernel_terms::bench::the_printer_scales_with_depth')" \
+  "$(run --list --reuse-table --bench --only '^l01_15_' --except '^l01_15_kernel_terms::bench::the_printer_scales_with_depth$' | sort)"
+check "--except given twice leaves out both" \
+  "$(echo "$benches15" | grep -v -e '::bench::the_printer_scales_with_depth$' -e '::bench::dropping_deep_and_wide_terms_scales$')" \
+  "$(run --list --reuse-table --bench --only '^l01_15_' --except '::bench::the_printer_scales_with_depth$' --except '::bench::dropping_deep_and_wide_terms_scales$' | sort)"
+benchesk=$(run --list --reuse-table --bench --only 'zed_kernel' | sort)
+check "--except: the hashed benchmark to leave out is among those --only selects" 1 \
+  "$(echo "$benchesk" | grep -c '^zed_kernel-[0-9a-f]*::btree::bench::insertion_lookup_and_difference_scale_as_n_log_n$')"
+check "--except matches a piece named with its binary's hash by the name without it" \
+  "$(echo "$benchesk" | grep -v '::btree::bench::insertion_lookup_and_difference_scale_as_n_log_n$')" \
+  "$(run --list --reuse-table --bench --only 'zed_kernel' --except '^zed_kernel::btree::bench::insertion_lookup_and_difference_scale_as_n_log_n$' | sort)"
+out=$(run --list --reuse-table --bench --only '^l01_15_' --except '(')
+rc=$?
+check "an invalid --except exits 2" "2 --except: not a valid extended regular expression: (" "$rc $out"
 fi
 if want fresh; then
 logs=build/test-run-tests-fresh
