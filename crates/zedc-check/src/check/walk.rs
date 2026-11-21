@@ -27462,6 +27462,24 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                     None => match &piece {
                         Piece::Fn(s) if let Some(ok) = self.fn_into_classes(s, p, what, span) => ok,
+                        // A function type that is itself one of the parameter's, as each
+                        // member a declared function is fitted to (`Self::fit_members`), lies
+                        // in it: `s <: s`, and a union holds each of its members. With no
+                        // variable in `s` the comparison would bind nothing, and with no needs
+                        // there is nothing for `Self::needs_fit` to check, so skipping it
+                        // changes neither `binds` nor `held`.
+                        // Complexity tradeoff: each comparison with a parameter of `m`
+                        // function types files them afresh (`FnIndex::new` in `Ty::sub_with`,
+                        // O(m)), so an argument fitted to all `m`, `m` pieces, cost O(m²):
+                        // 62.8 times the bytes at 8n in
+                        // `fits_to_every_member_and_literals_through_several_functions_scale`
+                        // (row CHECK-fn-member-same-order-ambiguity). Here one lookup in the
+                        // members' set, O(log m) once that set is made (O(m) once, `Members`).
+                        Piece::Fn(s)
+                            if s.holds_no_var() && !s.holds_needs() && p.fns.contains(s) =>
+                        {
+                            true
+                        }
                         Piece::Fn(s) if s.holds_needs() && !p.fns.is_empty() => {
                             let ok = self.fits_bare(s, p, &mut binds);
                             if ok {
@@ -28921,6 +28939,7 @@ fn fit<'s>(
                 };
                 let misfit = Misfit::CurriedPositional {
                     name: &sig.params[j].name,
+                    at: j,
                     before,
                     after: j + 1 < n,
                 };
@@ -28934,7 +28953,7 @@ fn fit<'s>(
             .map(|&j| {
                 (
                     span,
-                    Misfit::Missing(&sig.params[j].name, sig.params[j].positional),
+                    Misfit::Missing(&sig.params[j].name, j, sig.params[j].positional),
                 )
             })
             .collect(),
@@ -28945,7 +28964,7 @@ fn fit<'s>(
                 // (`Info::placed`), a closed one by the caller.
                 match p.default {
                     Some(_) => None,
-                    None => Some((span, Misfit::Missing(&p.name, p.positional))),
+                    None => Some((span, Misfit::Missing(&p.name, j, p.positional))),
                 }
             })
             .into_iter()
@@ -29286,7 +29305,7 @@ fn test_repair(
 /// tests/steps/l01_29_repairs_and_printing/domain_repairs.rs, whose repairs bind such names;
 /// they would catch a name that reads itself or shadows one the call reads, not a cost above
 /// O(L + k).
-fn fresh(p: &str, texts: &[&str]) -> String {
+pub(super) fn fresh(p: &str, texts: &[&str]) -> String {
     let words: HashSet<&str> = (texts.iter())
         .flat_map(|t| ident::names(t).map(|(_, w)| w))
         .collect();

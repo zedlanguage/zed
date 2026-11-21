@@ -31,7 +31,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use imbl::Vector;
-use zed_kernel::text::prose::{and_list, plural};
+use zed_kernel::text::prose::{and_list, ordinal, plural};
 
 use zedc_base::address::ContentAddress;
 use zedc_base::rejection::{Row, not_yet};
@@ -4934,24 +4934,7 @@ enum Task<'a> {
 /// The ordinal words of the alternatives at the indices `at`, counted from 0, as a sentence
 /// lists them: "first", "first and third", "first, second and fourth".
 fn ordinals(at: &[usize]) -> String {
-    const WORDS: [&str; 10] = [
-        "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth",
-        "tenth",
-    ];
-    let words = at.iter().map(|&i| match WORDS.get(i) {
-        Some(w) => (*w).to_string(),
-        None => {
-            let n = i + 1;
-            let suffix = match (n % 10, n % 100) {
-                (1, r) if r != 11 => "st",
-                (2, r) if r != 12 => "nd",
-                (3, r) if r != 13 => "rd",
-                _ => "th",
-            };
-            format!("{n}{suffix}")
-        }
-    });
-    and_list(&words.collect::<Vec<_>>())
+    and_list(&at.iter().map(|&i| ordinal(i)).collect::<Vec<_>>())
 }
 
 /// The names written in `text`, as the lexer reads them ([`ident::names`]).

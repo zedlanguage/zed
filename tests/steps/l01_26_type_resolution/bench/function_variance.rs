@@ -790,12 +790,14 @@ fn a_hot_agreeing_call_costs_the_same_beside_a_placed_call() {
 
 /// Row FAIL-reorder-direct-two-fn-slot (PROOFDOC6-author-questions): a declared function with
 /// its named parameters in another order, passed into a union of function types, is fitted to
-/// the first member it fits (`Ck::fn_member`): O(k p) to match the names of `k` members of `p`
-/// parameters, then one trial fit per member until one fits. Two programs: one call into a slot
-/// of n members whose last alone takes `re2`, so all n are tried, and n calls into a slot of two
-/// members. Both are linear. Besides its ratio: the program elaborates at each size. Small
-/// instances:
+/// every member it fits (`Ck::fn_members`, since row CHECK-fn-member-same-order-ambiguity):
+/// O(k p) to match the names of `k` members of `p` parameters, then one trial fit per member.
+/// Two programs: one call into a slot of n members whose last alone takes `re2`, and n calls
+/// into a slot of two members. Both are linear. Besides its ratio: the program elaborates at
+/// each size. Small instances:
 /// `function_variance::a_reordered_function_the_generic_body_passes_only_into_a_union_slot_runs`.
+/// The slot whose members all fit, and calls through values of several function types, are
+/// measured in `fits_to_every_member_and_literals_through_several_functions_scale`.
 #[test]
 fn reordered_functions_passed_into_unions_of_function_types_scale() {
     let what = "a reordered function into a slot of n function types, and n into a slot of two";
@@ -821,5 +823,60 @@ fn reordered_functions_passed_into_unions_of_function_types_scale() {
         let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
         assert!(u.get("w").is_some(), "{what} at {m}");
         assert!(u.get(&format!("a{}", m - 1)).is_some(), "{what} at {m}");
+    });
+}
+
+/// Row CHECK-fn-member-same-order-ambiguity. First, a reordered `re2` passed into a slot of n
+/// members that it all fits, so every one is fitted outside a trial and the n fits are joined
+/// (`Ck::fit_members`, `join_fits`): one fit per member, and a join that visits each place of
+/// each fit once, so linear in n, unless the union of the members' types grew with each one.
+/// Second, calls through values of several function types with literal arguments
+/// (`Ck::lits_alike` and the parameter carriers it reads, `lit_reads`): one call `k(2 + 1)`
+/// through a value of n function types, whose literals are compared with each member's once,
+/// O(n · literals), and n functions each making such a call through a value of two. Both are
+/// linear. Besides its ratio: the program elaborates at each size, with no error. Small
+/// instances: `function_variance::a_reordered_function_in_a_union_slot_is_fitted_alike_in_either_order`
+/// and `function_variance::a_literal_through_functions_of_different_carriers_is_refused`.
+#[test]
+fn fits_to_every_member_and_literals_through_several_functions_scale() {
+    let n = 200;
+    let what = "a reordered function into a slot of n function types it fits every one of";
+    let make = |n: usize| {
+        let all: Vec<String> = (0..n)
+            .map(|i| format!("((y: int, x: int) -> int | #s{i})"))
+            .collect();
+        format!(
+            "re2(x: int, y: int) = x * 10 + y;\nall(k: {}) = 0;\nv = all(k: re2);\n",
+            all.join(" | ")
+        )
+    };
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        assert!(u.get("v").is_some(), "{what} at {m}");
+    });
+    let what = "a literal call through a value of n function types, and n through two";
+    let make = |n: usize| {
+        let wide: Vec<String> = (0..n).map(|i| format!("(int -> int | #t{i})")).collect();
+        let mut src = format!(
+            "re1(positional x: int) = x * 10;\n\
+             wide(k: {}) = {{ r = k(2 + 1); if r is int {{ r }} else {{ 0 }} }};\n\
+             w = wide(k: re1);\n",
+            wide.join(" | ")
+        );
+        for i in 0..n {
+            src.push_str(&format!(
+                "two{i}(k: (int -> int) | (int -> int | String)) = \
+                 {{ r = k({i} + 1); if r is int {{ r }} else {{ 0 }} }};\n\
+                 c{i} = two{i}(k: re1);\n"
+            ));
+        }
+        src
+    };
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        assert!(u.get("w").is_some(), "{what} at {m}");
+        assert!(u.get(&format!("c{}", m - 1)).is_some(), "{what} at {m}");
     });
 }

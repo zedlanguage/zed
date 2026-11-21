@@ -40,6 +40,30 @@ pub fn counted<N: Display + PartialEq + From<u8>>(n: N, thing: &str) -> String {
     format!("{n} {thing}{s}")
 }
 
+/// The ordinal of the place `i`, counted from 0: `first` to `tenth` in words, then `11th`,
+/// `12th`, `21st`, `22nd`, `23rd`, `111th`. The suffix follows the last digit, except for the
+/// teens 11, 12 and 13, which take `th` (so `n % 100` is tested beside `n % 10`). O(1) for
+/// the word, O(digits) for a number.
+pub fn ordinal(i: usize) -> String {
+    const WORDS: [&str; 10] = [
+        "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth",
+        "tenth",
+    ];
+    match WORDS.get(i) {
+        Some(w) => (*w).to_string(),
+        None => {
+            let n = i + 1;
+            let suffix = match (n % 10, n % 100) {
+                (1, r) if r != 11 => "st",
+                (2, r) if r != 12 => "nd",
+                (3, r) if r != 13 => "rd",
+                _ => "th",
+            };
+            format!("{n}{suffix}")
+        }
+    }
+}
+
 /// `s` for a count `n` other than one, the ending of a regular plural noun.
 pub fn plural<N: PartialEq + From<u8>>(n: &N) -> &'static str {
     if *n == N::from(1) { "" } else { "s" }
@@ -57,6 +81,19 @@ mod tests {
         assert_eq!(and_list(&["a", "b"]), "a and b");
         assert_eq!(or_list(&["a", "b", "c"]), "a, b or c");
         assert_eq!(joined(&["a", "b", "c", "d"], "and"), "a, b, c and d");
+    }
+
+    #[test]
+    fn an_ordinal_is_a_word_to_ten_then_a_number_with_its_suffix() {
+        let got: Vec<String> = [0, 1, 2, 9, 10, 11, 12, 20, 21, 22, 110, 111, 112, 120]
+            .into_iter()
+            .map(ordinal)
+            .collect();
+        let want = [
+            "first", "second", "third", "tenth", "11th", "12th", "13th", "21st", "22nd", "23rd",
+            "111th", "112th", "113th", "121st",
+        ];
+        assert_eq!(got, want);
     }
 
     #[test]

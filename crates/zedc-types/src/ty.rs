@@ -22106,7 +22106,7 @@ impl Sig {
     // read too, as `VarBits::is_empty` reads it (landing round 7, Gemini B2: without it a
     // function holding such a forward and nothing else read as holding no variable, and
     // `Ty::meet` gave `Never` in D where E gave `int -> Never`). O(1).
-    fn holds_no_var(&self) -> bool {
+    pub fn holds_no_var(&self) -> bool {
         let f = self.facts();
         f.classes.is_empty() && f.names.is_empty() && !f.internal
     }

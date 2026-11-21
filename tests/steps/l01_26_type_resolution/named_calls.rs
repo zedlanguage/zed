@@ -7,6 +7,7 @@
 use super::type_errors;
 use zed_tests::step_helpers::l01_16_elaboration::{errors, value};
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
+use zed_tests::step_helpers::l01_29_diagnostics::rejected_with_main;
 
 /// A greeting with a positional name and a named punctuation mark, and three arithmetic
 /// helpers: `dbl` and `sub` take their parameters by name, `add` by position.
@@ -140,6 +141,54 @@ fn the_checker_and_elaboration_reject_a_misplaced_argument_alike() {
         let text = format!("{DECLS}{call}\n");
         assert_eq!(type_errors(&text), want, "checker: {call}");
         assert_eq!(errors(&text), want, "elaboration: {call}");
+    }
+}
+
+/// A parameter of a function type has no name, as the second of `(int, int) -> int`, so a call
+/// that leaves it out names it by its place, and a repair's lambda binds a name the call does
+/// not read: the message wrote "its parameter ``, and `` has no default", its repair "pass a
+/// value for ``" and the lambda `() -> f(…, )`, and a `...` call "leaves out ``" (found by row
+/// CHECK-fn-member-same-order-ambiguity).
+#[test]
+fn a_call_that_leaves_out_a_parameter_with_no_name_names_its_place() {
+    let f = "(int, int) -> int";
+    let missing = |at: &str| {
+        format!(
+            "this call of `{f}` gives no value to its second parameter, which has no default, \
+             so the call cannot be made. [{at}]"
+        )
+    };
+    let curried = format!(
+        "this call of `{f}` ends in `...`, which makes a function of the named parameters the \
+         call leaves out, and the call also leaves out its second parameter, a positional \
+         parameter, which `...` cannot leave out. [k(x, ...)]"
+    );
+    let cases = [
+        (
+            "k(1)",
+            missing("k(1)"),
+            vec![
+                "repair: pass a value for its second parameter in this call",
+                "repair: make a function that takes its second parameter with a lambda, as `(x) -> f(…, x)`, where `f` is the function called here",
+            ],
+        ),
+        (
+            "k(x, ...)",
+            curried,
+            vec![
+                "repair: remove the `...`",
+                "repair: leave out its second parameter with a bracket section or a lambda, as `(x2) -> f(x, x2)`, where `f` is the function called here",
+            ],
+        ),
+    ];
+    for (call, want, repairs) in cases {
+        let text = format!("{DECLS}app(k: {f}, x: int) = {call};\ny = app(k: add, x: 1);\n");
+        assert_eq!(type_errors(&text), vec![want], "checker: {call}");
+        let out = rejected_with_main(&text);
+        for r in repairs {
+            assert!(out.contains(r), "{call}: no `{r}` in:\n{out}");
+        }
+        assert!(!out.contains("``"), "{call}:\n{out}");
     }
 }
 

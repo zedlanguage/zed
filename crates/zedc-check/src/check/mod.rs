@@ -69,7 +69,7 @@ use zed_kernel::num::{
     show_f64,
 };
 use zed_kernel::term::ScalarType;
-use zed_kernel::text::prose::{and_list, or_list, plural};
+use zed_kernel::text::prose::{and_list, or_list, ordinal, plural};
 use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{KernelError, Prim, Rat, Term, Universe, Value, eval};
 
@@ -207,8 +207,12 @@ pub enum Misfit<'s> {
     /// A `...` call that leaves out a positional parameter; the lambda of the repair puts it
     /// in its own place among the arguments.
     CurriedPositional {
-        /// The parameter left out.
+        /// The parameter left out; empty for a parameter of a function type, which has no
+        /// name.
         name: &'s str,
+        /// Its place among the parameters, counted from 0, by which a message names it when
+        /// it has no name.
+        at: usize,
         /// The code of the arguments in the places before it, `…` where it is not at hand,
         /// and `None` where it is the first.
         before: Option<&'s str>,
@@ -217,9 +221,31 @@ pub enum Misfit<'s> {
     },
     /// A `...` call that leaves out no parameter.
     NothingLeftOut,
-    /// A saturated call that leaves out this parameter, which has no default; `true` when the
-    /// parameter is positional, which `...` cannot leave out.
-    Missing(&'s str, bool),
+    /// A saturated call that leaves out this parameter, which has no default: its name, empty
+    /// for a parameter of a function type, which has no name; its place among the parameters,
+    /// counted from 0; and `true` when it is positional, which `...` cannot leave out.
+    Missing(&'s str, usize, bool),
+}
+
+/// A parameter as a message names it: `` `b` ``, or by its place, as "its second parameter",
+/// when it has none, as the parameters of a function type such as `(int, int) -> int`
+/// (before row CHECK-fn-member-same-order-ambiguity a message wrote "its parameter ``").
+fn param_named(name: &str, at: usize) -> String {
+    match name.is_empty() {
+        true => format!("its {} parameter", ordinal(at)),
+        false => format!("`{name}`"),
+    }
+}
+
+/// The name a repair's lambda binds for the parameter `name`: the name itself, or for a
+/// parameter with no name, `x`, or `x2`, `x3`, ..., whichever no name of `texts`, the code the
+/// repair writes around it, spells ([`walk::fresh`]), so the lambda neither reads itself nor
+/// shadows a name the call reads.
+fn lambda_param(name: &str, texts: &[&str]) -> String {
+    match name.is_empty() {
+        true => walk::fresh("x", texts),
+        false => name.to_string(),
+    }
 }
 
 impl Misfit<'_> {
@@ -271,17 +297,23 @@ impl Misfit<'_> {
                 "this argument gives `{name}` of `{who}` a value, and an argument before it \
                  already gave `{name}` one; a call gives each parameter one value"
             ),
-            Misfit::CurriedPositional { name, .. } => format!(
+            Misfit::CurriedPositional { name, at, .. } => format!(
                 "this call of `{who}` ends in `...`, which makes a function of the named \
-                 parameters the call leaves out, and the call also leaves out `{name}`, a \
-                 positional parameter, which `...` cannot leave out"
+                 parameters the call leaves out, and the call also leaves out {}, a \
+                 positional parameter, which `...` cannot leave out",
+                param_named(name, at)
             ),
             Misfit::NothingLeftOut => format!(
                 "this call of `{who}` ends in `...`, which makes a function of the named \
                  parameters the call leaves out, and the call gives every named parameter a \
                  value, so `...` has no parameter to leave out"
             ),
-            Misfit::Missing(name, _) => format!(
+            Misfit::Missing("", at, _) => format!(
+                "this call of `{who}` gives no value to its {} parameter, which has no default, \
+                 so the call cannot be made",
+                ordinal(at)
+            ),
+            Misfit::Missing(name, ..) => format!(
                 "this call of `{who}` gives no value to its parameter `{name}`, and `{name}` has \
                  no default, so the call cannot be made"
             ),
@@ -366,24 +398,31 @@ impl Misfit<'_> {
             (
                 Misfit::CurriedPositional {
                     name,
+                    at,
                     before,
                     after,
                 },
                 _,
             ) => {
+                let x = lambda_param(name, &[f, before.unwrap_or("")]);
+                let which = match name.is_empty() {
+                    true => param_named(name, at),
+                    false => format!("the positional `{name}`"),
+                };
                 let before = before.map(|b| format!("{b}, ")).unwrap_or_default();
                 let after = if after { ", …" } else { "" };
                 vec![
                     "repair: remove the `...`".into(),
                     format!(
-                        "repair: leave out the positional `{name}` with a bracket section or \
-                         a lambda, as `({name}) -> {f}({before}{name}{after})`{where_f}"
+                        "repair: leave out {which} with a bracket section or a lambda, as \
+                         `({x}) -> {f}({before}{x}{after})`{where_f}"
                     ),
                 ]
             }
             (Misfit::NothingLeftOut, _) => vec!["repair: remove the `...`".into()],
-            (Misfit::Missing(name, positional), declared) => {
-                let mut menu = vec![format!("repair: pass a value for `{name}` in this call")];
+            (Misfit::Missing(name, at, positional), declared) => {
+                let which = param_named(name, at);
+                let mut menu = vec![format!("repair: pass a value for {which} in this call")];
                 if declared {
                     menu.push(format!(
                         "repair: give `{name}` a default in the declaration of `{who}`, as \
@@ -397,13 +436,15 @@ impl Misfit<'_> {
                          gives a function that takes `{name}: …` later"
                     ));
                 }
+                // A parameter with no name is positional, so `pass` is the bound name alone.
+                let x = lambda_param(name, &[f]);
                 let pass = match positional {
-                    true => name.to_string(),
+                    true => x.clone(),
                     false => format!("{name}: {name}"),
                 };
                 menu.push(format!(
-                    "repair: make a function that takes `{name}` with a lambda, as \
-                     `({name}) -> {f}(…, {pass})`{where_f}"
+                    "repair: make a function that takes {which} with a lambda, as \
+                     `({x}) -> {f}(…, {pass})`{where_f}"
                 ));
                 menu
             }

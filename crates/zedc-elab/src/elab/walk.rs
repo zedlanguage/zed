@@ -1991,6 +1991,7 @@ impl<'a> Elab<'a> {
                 // checker's menu writes the arguments before it.
                 let misfit = Misfit::CurriedPositional {
                     name: ff.callee.param(j).0,
+                    at: j,
                     before: (j > 0).then_some("…"),
                     after: j + 1 < n,
                 };
@@ -2108,7 +2109,7 @@ impl<'a> Elab<'a> {
                 ),
                 None => self.misfit(
                     ff.call.span,
-                    Misfit::Missing(&p.name, p.positional),
+                    Misfit::Missing(&p.name, j, p.positional),
                     &sig.who(),
                 ),
             };
@@ -2145,7 +2146,7 @@ impl<'a> Elab<'a> {
                 ok = false;
                 self.misfit::<()>(
                     ff.call.span,
-                    Misfit::Missing(&f.params[j].name, f.params[j].positional),
+                    Misfit::Missing(&f.params[j].name, j, f.params[j].positional),
                     fname,
                 );
             }
