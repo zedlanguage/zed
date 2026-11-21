@@ -3216,3 +3216,147 @@ fn a_function_whose_results_are_variables_of_their_own_fits_int_results() {
     let bad = format!("{head}s(h: (x: (x: int) -> int) -> int, y: bool) = 0;\na = q(g: s);\n");
     assert_eq!(type_errors(&bad).len(), 1, "{bad}: {:?}", type_errors(&bad));
 }
+
+/// Row CHECK-fn-member-same-order-ambiguity: a declared function, its parameters in another
+/// order, passed into a union of two function types it fits both of, is fitted alike whichever
+/// member is written first, directly and through a generic `pass`. Before the fix the first
+/// member written that it fitted decided the fit (`Ck::fn_member`): with the members `A`, which
+/// needs the domain of `re2` tested, and `B`, which does not, `A | B` tested it and `B | A` did
+/// not. Now the fit is the join of the fits to both ([`join_fits`] in walk.rs), so it tests
+/// what either member needs, and runs to the same value. The third case has each member need
+/// a test at a different place, the arguments of `mk` and those of the function it returns,
+/// and gets both.
+#[test]
+fn a_reordered_function_in_a_union_slot_is_fitted_alike_in_either_order() {
+    let defs = "re2(x: int, y: int) = x * 10 + y;\n\
+                mk(x: int, y: int) = (z: int) -> z + x * 10 + y;\n";
+    // (member A, member B, the body of `app`, the function passed, its value, whether the fit
+    // tests the domain of the function passed, whether it rebuilds the function it returns)
+    let cases = [
+        (
+            "((y: int, x: int | f64) ->? int)",
+            "((y: int, x: int) -> int)",
+            "k(y: 2, x: 1) else #notFound -> 7",
+            "re2",
+            "12",
+            true,
+            false,
+        ),
+        (
+            "((y: int, x: int) -> ((int | f64) ->? int))",
+            "((y: int, x: int) -> (int -> int))",
+            "k(y: 2, x: 1)(3) else #notFound -> 7",
+            "mk",
+            "15",
+            false,
+            true,
+        ),
+        (
+            "((y: int, x: int | f64) ->? (int -> int))",
+            "((y: int, x: int) -> ((int | f64) ->? int))",
+            "(k(y: 2, x: 1) else #notFound -> mk(x: 0, y: 0))(3) else #notFound -> 7",
+            "mk",
+            "15",
+            true,
+            true,
+        ),
+    ];
+    for (a, b, body, f, want, domain, result) in cases {
+        for call in [
+            format!("a = app(k: {f});\n"),
+            format!("pass(g) = app(k: g);\na = pass(g: {f});\n"),
+        ] {
+            let fits: Vec<String> = [format!("{a} | {b}"), format!("{b} | {a}")]
+                .iter()
+                .map(|u| {
+                    let src = format!("{defs}app(k: {u}) = {body};\n{call}");
+                    accepted(&src);
+                    runs_to(&src, "a", want);
+                    let (info, _) = super::info(&src);
+                    let fits: Vec<String> = info.fits.values().map(|f| format!("{f:?}")).collect();
+                    let [fit] = fits.as_slice() else {
+                        panic!("{src}: one fit wanted, got {fits:?}");
+                    };
+                    let tests = fit.starts_with("Adapter { from: [1, 0], domain: Some");
+                    assert_eq!(tests, domain, "{src}: {fit}");
+                    assert_eq!(fit.contains("result: Some"), result, "{src}: {fit}");
+                    fit.clone()
+                })
+                .collect();
+            assert_eq!(fits[0], fits[1], "{a} | {b}, {call}");
+        }
+    }
+}
+
+/// A literal argument of a call through a union of function types whose members fix it at
+/// different carriers is refused: the value may be any of the functions, so the argument must
+/// lie in the domain of each (DESIGN.md sec:type_language, a plain function type's domain is
+/// exact), and a literal is read at one carrier (sec:domains, "at a declared type, that
+/// type's"). Before the fix the call was accepted, `2` was read at `f64` whichever member was
+/// written first, and both evaluators stopped on `*` applied to `f64` and `int` inside `re1`.
+/// A variable of type `int` there is refused already; members that fix one carrier, or a
+/// member beside an atom, take the literal and run.
+#[test]
+fn a_literal_through_functions_of_different_carriers_is_refused() {
+    let re1 = "re1(positional x: int) = x * 10;\n";
+    for u in ["(int -> int) | (f64 -> f64)", "(f64 -> f64) | (int -> int)"] {
+        for body in ["k(2)", "k(-2)", "k(2) + 0"] {
+            let src = format!("{re1}app(k: {u}) = {body};\na = app(k: re1);\n");
+            let errors = type_errors(&src);
+            assert!(!errors.is_empty(), "{src}: accepted");
+        }
+        let src = format!("{re1}app(k: {u}, n: int) = k(n);\na = app(k: re1, n: 2);\n");
+        assert!(!type_errors(&src).is_empty(), "{src}: accepted");
+        // Through a generic function the slot's value is passed to.
+        let src = format!("{re1}pass(g) = g(2);\napp(k: {u}) = pass(g: k);\na = app(k: re1);\n");
+        assert!(!type_errors(&src).is_empty(), "{src}: accepted");
+    }
+    let src = format!("{re1}app(k: (int -> int) | (f64 -> f64)) = k(2);\na = app(k: re1);\n");
+    assert_eq!(
+        type_errors(&src),
+        [
+            "`k` may be `int -> int` or `f64 -> f64`, which read the literal `2` as `int` and as \
+          `f64`: a literal has one carrier, so `2` cannot lie in the domain of both. [2]"
+        ],
+        "{src}"
+    );
+    // A literal in an operation on literals alone or in the branches of an `if` is read so
+    // too: before the fix both were accepted and stopped as `k(2)` did. Members of tuple
+    // parameters, `((int, int) -> int) | ((f64, f64) -> f64)` with `k((2, 3))`, are refused
+    // before this check, so no case of them is here.
+    for body in ["k(2 + 1)", "k(-(2 + 1))", "k(if true { 2 } else { 3 })"] {
+        for u in ["(int -> int) | (f64 -> f64)", "(f64 -> f64) | (int -> int)"] {
+            let src = format!("{re1}app(k: {u}) = {body};\na = app(k: re1);\n");
+            assert!(!type_errors(&src).is_empty(), "{src}: accepted");
+        }
+    }
+    // A literal beside a value of a carrier takes that carrier before any function reads it.
+    let src = format!(
+        "{re1}app(k: (int -> int) | (int -> int | String), n: int) = \
+         {{ r = k(n + 2); if r is int {{ r }} else {{ 0 }} }};\na = app(k: re1, n: 1);\n"
+    );
+    accepted(&src);
+    runs_to(&src, "a", "30");
+    for (u, body) in [
+        (
+            "(int -> int) | (int -> int | String)",
+            "{ r = k(2); if r is int { r } else { 0 } }",
+        ),
+        ("(int -> int) | (int -> int)", "k(2)"),
+        ("(int -> int) | #none", "k(2) else #none -> 0"),
+    ] {
+        let src = format!("{re1}app(k: {u}) = {body};\na = app(k: re1);\n");
+        accepted(&src);
+        runs_to(&src, "a", "20");
+    }
+    // A value chosen by an `if` inside a function has the union type too, so it is refused
+    // alike. (At the top level the checker knows which function `k` holds and accepts.)
+    for body in ["k(2)", "k(2 + 1)"] {
+        let src = format!(
+            "{re1}g(positional x: f64) = x * 2.0;\n\
+             app(b: bool) = {{ k = if b {{ re1 }} else {{ g }}; {body} }};\n\
+             a = app(b: false);\n"
+        );
+        assert!(!type_errors(&src).is_empty(), "{src}: accepted");
+    }
+}

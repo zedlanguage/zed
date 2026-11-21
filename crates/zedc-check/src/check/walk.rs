@@ -696,6 +696,26 @@ pub(super) struct CallValueF<'a> {
     /// For a class's call, the arguments found so far, and the next one's index.
     found: Option<(Args<'a>, usize)>,
     waiting: bool,
+    /// For a call through a value of two or more function types, the function applied last,
+    /// while it is applied, and then the literals whose carrier the call alone fixes with
+    /// the carrier the first function read each at ([`Ck::lits_alike`]); `None` for a
+    /// value of one function type.
+    several: Option<Several>,
+}
+
+/// What [`Ck::lits_alike`] keeps for a call through a value of two or more function types.
+#[derive(Default)]
+pub(super) struct Several {
+    applying: Option<Arc<Sig>>,
+    /// The length of [`Ck::lit_reads`] when the function applied now pushed its entry.
+    depth: usize,
+    /// The first function applied, once it is.
+    first: Option<Arc<Sig>>,
+    /// The literals read, each with the carrier the first function read it at.
+    lits: Vec<(Lit, Carrier)>,
+    /// The first function's entry of [`Ck::lit_reads`], by the span of each literal.
+    ops: HashMap<Span, (Lit, Carrier)>,
+    refused: bool,
 }
 
 /// The places a call through a value fills: how many parameters its arguments by position
@@ -3856,13 +3876,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         // A declared function, its parameters in another order, where several function types
-        // are wanted: fitted to the one [`Self::fn_member`] picks
-        // (FAIL-reorder-direct-two-fn-slot).
+        // are wanted: fitted to every one of them it fits ([`Self::fn_members`],
+        // FAIL-reorder-direct-two-fn-slot, CHECK-fn-member-same-order-ambiguity).
         if let (Some(funs), Some(id)) = (&want.funs, self.declared(e))
             && let Some(s) = self.env.get(&id).and_then(only_fn)
-            && let Some(sig) = self.fn_member(id, &s, funs, e.span, call)
+            && let Some(members) = self.fn_members(id, &s, funs, e.span, call)
+            && let Some((t, fit)) = self.fit_members(id, &members, e.span, call)
         {
-            let t = self.fit_declared(id, &sig, e.span, call);
+            if let Some(fit) = fit {
+                self.put(Undo::Fit(e.span, Some(fit)));
+            }
             return m.ty(t);
         }
         // Any other value where a type holding a partial function type is wanted: a name, a
@@ -9741,6 +9764,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             call,
             found: class.then(|| (Args::default(), 0)),
             waiting: false,
+            several: (f.fns.len() > 1).then(Several::default),
         };
         self.call_value_step(m, Box::new(s));
     }
@@ -9776,6 +9800,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             s.waiting = false;
             let r = m.take_ty();
             s.out = s.out.union(&r);
+            if let Some(several) = s.several.as_mut() {
+                self.lits_alike(several, s.receiver.as_ref(), &s.args, &s.what);
+            }
         }
         let (span, curry) = (s.span, s.curry);
         while let Some(p) = s.pieces.pop() {
@@ -9783,6 +9810,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Piece::Fn(sig) => {
                     s.checked = true;
                     s.waiting = true;
+                    if let Some(several) = s.several.as_mut() {
+                        // Each function reads the literals afresh: an adoption the function
+                        // before wrote would read as this one's where this one writes none.
+                        for (l, _) in &several.lits {
+                            self.put(Undo::Adopt(l.span, None));
+                        }
+                        several.applying = Some(sig.clone());
+                        several.depth = self.lit_reads.len();
+                        self.lit_reads.push(Vec::new());
+                    }
                     let (receiver, args, what) =
                         (s.receiver.clone(), s.args.clone(), s.what.clone());
                     m.k(Frame::CallValue(s));
@@ -9876,6 +9913,157 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let Some(site) = site {
             self.info.placed.insert(site);
         }
+    }
+
+    /// Refuses a call through a value of two or more function types where two of them read
+    /// one literal argument at different carriers, as `k(2)` with `k: (int -> int) | (f64 ->
+    /// f64)`. Run after each function of the value is applied, `several.applying`.
+    ///
+    /// Why: the value may be any of the functions, so the argument must lie in the domain of
+    /// each, and a plain function type's domain is exact (DESIGN.md sec:type_language); a
+    /// literal takes the carrier of the declared type it meets (sec:domains, "at a declared
+    /// type, that type's") and is read at one carrier when the program runs, recorded once at
+    /// its span ([`Info::adopt`]). Applied in turn, the `int` function left `2` an `int` and
+    /// the `f64` one adopted it as `2.0`, in either written order, so `2.0` reached the `int`
+    /// function and both evaluators stopped on `*` of `f64` and `int` (row
+    /// CHECK-fn-member-same-order-ambiguity, found there). A variable of type `int` is refused
+    /// there already, by the `f64` function's own check.
+    ///
+    /// Which literals: those whose carrier the call alone fixes, each read afresh by each
+    /// function, since `call_value_step` drops their adoptions before the next is applied: a
+    /// bare literal argument, perhaps under `-`, the literals of an argument that is an
+    /// operation on literals alone, read off its text ([`lit_op_recorded`], which agrees with
+    /// [`Ck::lit_ops`]; that set is not read, since a function's walk of the arguments may run
+    /// in a trial, which records nothing there), and those, at any depth, of a tuple, of an
+    /// `if`'s branches, or of the value of a block there ([`block_value`]). A literal beside
+    /// a value of a carrier, as `2` in `k(n + 2)`, takes that value's carrier as the argument
+    /// is walked, before any function is applied, so it is not read here, and its adoption is
+    /// not dropped. Not read, so not refused, and not tested: a literal reached through a
+    /// name bound in a block, as `2` in `k(if c { y = 2; y } else { 3 })`.
+    ///
+    /// An operation on literals alone is compared a second way too. Inside a function its
+    /// literals form one class, resolved once for all the functions when the function around
+    /// is generalized, so no function's application adopts them and the first way sees
+    /// `int` from each: `k(2 + 1)` was accepted so, its literals adopted as `2.0` and `1.0`,
+    /// and both evaluators stopped when `int -> int` was the one called. Each
+    /// function's application records instead the carrier its parameter fixes for the
+    /// operation ([`Ck::lit_reads`], [`lit_param_reads`]), and those are compared by the
+    /// span of the operation's first literal.
+    ///
+    /// Claim: where the call is accepted, every function of the value read each such literal
+    /// at one carrier, so the adoption left by the last one applied is the one each reads.
+    /// Proof: each function's carrier for literal `l` is the one in [`Info::adopt`] after it
+    /// is applied, or `l`'s own carrier where none is recorded there; the adoption is dropped
+    /// before each function after the first, so what is read is that function's write alone.
+    /// Every carrier is compared with the first function's, so all are equal or the call is
+    /// refused. For an operation on literals alone, where a parameter fixes a carrier the
+    /// function reads the operation at it (DESIGN.md sec:domains, "at a declared type, that
+    /// type's"), and two functions that fix different ones are refused. Unproved: a function
+    /// whose parameter fixes no one carrier there (a generic one, or `int | f64`) records
+    /// nothing, so it is compared with none; the class's resolution then gives the operation
+    /// the carrier it gives a call of one such function. Unproved here: that a run again of a generic body's call ([`Ck::put`] drops a
+    /// replay's writes) reads the adoption of the walk at the top level; the test below covers
+    /// a call through a declared parameter only.
+    ///
+    /// Complexity tradeoff: one walk of the argument expressions, O(size of the arguments),
+    /// after the first function, and one lookup per literal after each, O(f·l) for f functions
+    /// and l literals (the operations' carriers in a hash map by span, one lookup each); that is the order of applying the f functions, each of which walks the
+    /// arguments. The naive way, applying each function in a trial and comparing every record
+    /// it writes, costs a copy of the records per function.
+    ///
+    /// Test: `l01_26_type_resolution::function_variance::a_literal_through_functions_of_different_carriers_is_refused`.
+    fn lits_alike(
+        &mut self,
+        several: &mut Several,
+        receiver: Option<&Arg<'a>>,
+        args: &Args<'a>,
+        what: &str,
+    ) {
+        let Some(sig) = several.applying.take() else {
+            return;
+        };
+        // This function's entry of [`Ck::lit_reads`], pushed at depth `several.depth`; an
+        // entry above it was left by a call inside the arguments that never returned to its
+        // own `lits_alike`, and goes with it.
+        let ops = match self.lit_reads.len() > several.depth {
+            true => {
+                self.lit_reads.truncate(several.depth + 1);
+                self.lit_reads.pop().unwrap_or_default()
+            }
+            false => Vec::new(),
+        };
+        let carrier = |ck: &Self, l: &Lit| {
+            (ck.info.adopt.get(&l.span))
+                .map(lit_carrier)
+                .unwrap_or_else(|| lit_carrier(&l.value))
+        };
+        let Some(first) = &several.first else {
+            // Each entry is an expression and whether it is an operand of an operation on
+            // literals alone, so [`lit_op_recorded`], which walks the whole operation, is read
+            // once at its top: O(size of the arguments) in all.
+            let mut todo: Vec<(&Expr, bool)> = (receiver.and_then(|r| r.expr).into_iter())
+                .chain(args.all().filter_map(|a| match a {
+                    ArgSrc::Expr(e) => Some(*e),
+                    ArgSrc::Got(x) => x.expr,
+                }))
+                .map(|e| (e, false))
+                .collect();
+            let mut read = Vec::new();
+            while let Some((e, op)) = todo.pop() {
+                if let Some(l) = literal(e, self.t.text) {
+                    let c = carrier(self, &l);
+                    read.push((l, c));
+                    continue;
+                }
+                let op = op || lit_op_recorded(e, self.t.text);
+                match &e.kind {
+                    ExprKind::Binary(_, a, b) if op => todo.extend([(&**a, op), (&**b, op)]),
+                    ExprKind::Unary(_, a) if op => todo.push((a, op)),
+                    ExprKind::Tuple(xs) => todo.extend(xs.iter().map(|x| (x, false))),
+                    ExprKind::If {
+                        then, otherwise, ..
+                    } => todo.extend([(&**then, false), (&**otherwise, false)]),
+                    ExprKind::Block(_) => todo.extend(block_value(e).map(|x| (x, false))),
+                    _ => {}
+                }
+            }
+            several.ops = (ops.into_iter()).map(|(l, c)| (l.span, (l, c))).collect();
+            several.lits = read;
+            several.first = Some(sig);
+            return;
+        };
+        if several.refused {
+            return;
+        }
+        let found = (several.lits.iter())
+            .find_map(|(l, c)| {
+                let d = carrier(self, l);
+                (d != *c).then(|| (l.clone(), *c, d))
+            })
+            .or_else(|| {
+                ops.iter().find_map(|(l, d)| {
+                    let (_, c) = several.ops.get(&l.span)?;
+                    (c != d).then(|| (l.clone(), *c, *d))
+                })
+            });
+        let Some((l, c, d)) = found else {
+            return;
+        };
+        several.refused = true;
+        let (w, a, b) = (callee(what), self.sig_text(first), self.sig_text(&sig));
+        let lit = l.written();
+        let (c, d) = (c.name(), d.name());
+        self.error_offering(
+            l.site,
+            format!(
+                "{w} may be `{a}` or `{b}`, which read the literal `{lit}` as `{c}` and as \
+                 `{d}`: a literal has one carrier, so `{lit}` cannot lie in the domain of both"
+            ),
+            [format!(
+                "repair: declare {w} so that every function it may be takes this argument at \
+                 one carrier"
+            )],
+        );
     }
 
     /// Records `sig` as the signature by which elaboration builds the call written at `site`
@@ -22371,40 +22559,48 @@ impl<'t, 'a> Ck<'t, 'a> {
         t
     }
 
-    /// Of the function types `funs` of a slot, the one to fit the declared function `id`, of
-    /// type `s`, to, where its named parameters are in another order than theirs
+    /// Of the function types `funs` of a slot, those the declared function `id`, of type `s`,
+    /// fits, where its named parameters are in another order than theirs
     /// (FAIL-reorder-direct-two-fn-slot, decided in PROOFDOC6-author-questions). DESIGN
     /// sec:values_morphisms: "A function fits a function type when every call the type
-    /// permits is a valid call of it ... named parameters by name", and a value lies in a
-    /// union where it lies in one member, so `re2(x: int, y: int)` fits
+    /// permits is a valid call of it ... named parameters by name", and "A union of function
+    /// types takes a function that fits one of its members", so `re2(x: int, y: int)` fits
     /// `((y: int, x: int) -> int) | ((y: int, x: int) -> f64)` as its first member.
     ///
     /// The members whose parameters `s`'s match by name ([`order_by_names`]) must all place
     /// them in one order, which is not the written one (the written order needs no adapter,
-    /// and the slot's own subtype test reads it as before). Proof that the fit is sound: the
-    /// adapter ([`Fit::Adapter`]) takes its arguments in that order; a call through the slot
-    /// reads it as some member `q` and passes its arguments in `q`'s order. A member whose
-    /// names `s`'s do not match cannot hold the value; every other one has that same order,
-    /// so the adapter puts each argument at the parameter of its name. Where two members
-    /// match in two orders the run could not tell which order a call passes, so `None`, and
-    /// the call is refused as before. Of the members in that order, the first `s` fits with
-    /// no error ([`Self::tried`] of [`Self::fit_declared_as`]); the value is then of that
-    /// member's type, which the slot holds. `None` where none fits, and the subtype test
-    /// gives the refusal.
+    /// and the slot's own subtype test reads it as before). Proof that the order is right:
+    /// the adapter ([`Fit::Adapter`]) takes its arguments in that order; a call through the
+    /// slot reads it as some member `q` and passes its arguments in `q`'s order. A member
+    /// whose names `s`'s do not match cannot hold the value; every other one has that same
+    /// order, so the adapter puts each argument at the parameter of its name. Where two
+    /// members match in two orders the run could not tell which order a call passes, so
+    /// `None`, and the call is refused as before.
     ///
-    /// Cost: O(k p) for `k` members of `p` parameters, plus one trial fit per member in the
-    /// order until one fits, each [`Self::fit_declared_as`]'s cost. Choosing by the result
-    /// type alone would skip the trials but miss the domain and range tests the fit makes.
+    /// Of the members in that order, every one `s` fits with no error ([`Self::tried`] of
+    /// [`Self::fit_declared_as`]), in the slot's order; [`Self::fit_members`] fits the value
+    /// to all of them. Not the first alone (CHECK-fn-member-same-order-ambiguity): the
+    /// members of a union are kept in the order they were written (`ty::Members`), and the
+    /// first that fits decided the fit, so `((y: int, x: int | f64) ->? int) | ((y: int, x:
+    /// int) -> int)` tested the domain of `re2` and the same union written the other way did
+    /// not, against DESIGN sec:premise ("statement order is irrelevant") and the exact-answers
+    /// rule. `None` where none fits, and the subtype test gives the refusal.
+    ///
+    /// Cost: O(k p) for `k` members of `p` parameters, plus one trial fit per member, each
+    /// [`Self::fit_declared_as`]'s cost. Choosing by the result type alone would skip the
+    /// trials but miss the domain and range tests the fit makes.
     /// Tests: function_variance.rs,
-    /// `a_reordered_function_the_generic_body_passes_only_into_a_union_slot_runs`.
-    fn fn_member(
+    /// `a_reordered_function_the_generic_body_passes_only_into_a_union_slot_runs` and
+    /// `a_reordered_function_in_a_union_slot_is_fitted_alike_in_either_order`; bench
+    /// `reordered_functions_passed_into_unions_of_function_types_scale`.
+    fn fn_members(
         &mut self,
         id: usize,
         s: &Sig,
         funs: &ty::Members<Arc<Sig>>,
         at: Span,
         call: Option<Span>,
-    ) -> Option<Arc<Sig>> {
+    ) -> Option<Vec<Arc<Sig>>> {
         let named: Vec<(&Arc<Sig>, Vec<usize>)> = (funs.iter())
             .filter_map(|e| Some((e, order_by_names(s, e)?)))
             .collect();
@@ -22412,9 +22608,56 @@ impl<'t, 'a> Ck<'t, 'a> {
         if in_order(order) || rest.iter().any(|(_, o)| o != order) {
             return None;
         }
-        (named.iter())
-            .find(|(e, _)| self.tried(|c| c.fit_declared_as(id, e, at, call)).is_some())
+        let fit: Vec<Arc<Sig>> = (named.iter())
+            .filter(|(e, _)| self.tried(|c| c.fit_declared_as(id, e, at, call)).is_some())
             .map(|(e, _)| (*e).clone())
+            .collect();
+        (!fit.is_empty()).then_some(fit)
+    }
+
+    /// The declared function `id` fitted at `at` to each of the function types `members`,
+    /// which it fits with its parameters in one order ([`Self::fn_members`], or the one type
+    /// of a slot): the union of their types, and one fit right for every one of them, the
+    /// join of each one's fit. `None` where two fits cannot be joined.
+    ///
+    /// Proof that the joined fit is right for each member `q`. Each fit is
+    /// [`Fit::Adapter`] with the same `from`, the one order all members share
+    /// ([`Self::fn_members`]). Where it tests the domain, the test is [`domain_test`] of `s`'s
+    /// parameters in that order and their ranges ([`Self::domain_guard`]), which does not read
+    /// `q`, so two members that test it test the same domain; its result rebuilding is a
+    /// [`Self::coercion`] of `s`'s result, joined by [`join_coercions`], whose argument covers
+    /// two coercions of one type. So the join differs from `q`'s own fit only by tests `q`'s
+    /// fit does not make, at places where `q` has no partial arrow or each partial arrow of
+    /// `q` is covered by an exact arrow of `s` with no range ([`Self::domain_guard`]): every
+    /// key a call through `q` passes there lies in the domain tested, and the test lets it
+    /// through, so a call through `q` gets what `q`'s own fit gives. The value lies in each
+    /// member, so in their union, which the slot holds. The union is of the fitting members in
+    /// the slot's order, and a union is one type whatever the order of its members, so the
+    /// result does not depend on the order written.
+    ///
+    /// Each member's fit is also made outside a trial, which, for a generic `s`, narrows its
+    /// classes as [`Self::fits_slot`] does for one function type. Two narrowings meet, which
+    /// gives the same classes in either order. Before, only the first member that fitted was
+    /// made.
+    ///
+    /// Cost: one [`Self::fit_declared_as`] per member, and the join, which visits each place of
+    /// each fit once ([`join_coercions`]).
+    fn fit_members(
+        &mut self,
+        id: usize,
+        members: &[Arc<Sig>],
+        at: Span,
+        call: Option<Span>,
+    ) -> Option<(Ty, Option<Fit>)> {
+        let mut out: Option<(Ty, Option<Fit>)> = None;
+        for e in members {
+            let (t, fit) = self.fit_declared_as(id, e, at, call);
+            out = Some(match out {
+                None => (t, fit),
+                Some((u, joined)) => (u.union(&t), join_fits(joined, fit)?),
+            });
+        }
+        out
     }
 
     /// [`Self::fit_declared`] without the write of the fit it finds, which it gives back.
@@ -22633,16 +22876,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         // gave up on such a slot and the call was refused as one `app3` does not take). Sound:
         // the value is a function, which no other member of `w` holds, so it lies in `w` where
         // it lies in `e`, which [`Self::fit_declared_as`] checks below with `e`'s domain test.
-        // A slot of several function types takes it as the direct call does, fitted to the
-        // member [`Self::fn_member`] picks (FAIL-reorder-direct-two-fn-slot; before, `one_fn`
-        // gave `None` and both were refused).
-        // Test: function_variance.rs,
-        // `a_reordered_function_the_generic_body_passes_only_into_a_union_slot_runs`.
+        // A slot of several function types takes it as the direct call does, fitted to every
+        // member it fits ([`Self::fn_members`]; FAIL-reorder-direct-two-fn-slot, before which
+        // `one_fn` gave `None` and both were refused; CHECK-fn-member-same-order-ambiguity,
+        // before which the first member written decided the fit).
+        // Tests: function_variance.rs,
+        // `a_reordered_function_the_generic_body_passes_only_into_a_union_slot_runs` and
+        // `a_reordered_function_in_a_union_slot_is_fitted_alike_in_either_order`.
         let Some(s) = only_fn(on) else {
             return false;
         };
-        let e = match one_fn(w) {
-            Some(e) => e,
+        let members = match one_fn(w) {
+            Some(e) => vec![e],
             None if w.vars.is_empty() && !w.dynamic => {
                 let found = self.call_frames.last().and_then(|f| {
                     let (i, None) = f.place(&n.on)? else {
@@ -22657,15 +22902,31 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let Some(id) = self.declared(x) else {
                     return false;
                 };
-                match self.fn_member(id, &s, &w.fns, at, call) {
-                    Some(e) => e,
+                match self.fn_members(id, &s, &w.fns, at, call) {
+                    Some(members) => members,
                     None => return false,
                 }
             }
             None => return false,
         };
-        let Some(order) = order_by_names(&s, &e).filter(|o| !in_order(o)) else {
+        // Every member places the parameters in one order ([`Self::fn_members`]), so the
+        // first gives it.
+        let Some(order) = (members.first())
+            .and_then(|e| order_by_names(&s, e))
+            .filter(|o| !in_order(o))
+        else {
             return false;
+        };
+        // The type the value is passed on as, for a message: the one member, or the union of
+        // those it fits, printed as a type ([`Self::shown`]).
+        let et = match members.as_slice() {
+            [] => return false,
+            [e] => self.sig_text(e),
+            [e, rest @ ..] => {
+                let t =
+                    (rest.iter()).fold(Ty::func(e.clone()), |t, u| t.union(&Ty::func(u.clone())));
+                self.text(&self.shown(&t))
+            }
         };
         let Some(frame) = self.call_frames.last() else {
             return false;
@@ -22711,7 +22972,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         if let Some((why, declare)) = why {
             let code = self.code(Some(at)).unwrap_or("the value").to_string();
-            let (st, et) = (self.sig_text(&s), self.sig_text(&e));
+            let st = self.sig_text(&s);
             let g = name.as_deref().unwrap_or("the parameter");
             let repair = name
                 .as_ref()
@@ -22734,7 +22995,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.error_offering(at, headline, menu);
             return true;
         }
-        let (_, fit) = self.fit_declared_as(id, &e, at, call);
+        // `None` where two members' fits cannot be joined, which no program reaches (proof at
+        // `Self::fit_members`): the need is then checked as any other, and refused.
+        let Some((_, fit)) = self.fit_members(id, &members, at, call) else {
+            return false;
+        };
         let Some(fit) = fit else {
             return true;
         };
@@ -22742,7 +23007,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(old) if *old == fit => {}
             Some(_) => {
                 let code = self.code(Some(at)).unwrap_or("the value").to_string();
-                let et = self.sig_text(&e);
                 self.error_offering(
                     at,
                     format!("`{code}` is passed on as `{et}` and is rebuilt here already"),
@@ -26048,6 +26312,33 @@ impl<'t, 'a> Ck<'t, 'a> {
         // the call `Never` only where the call cannot give a value: an operator, a prelude word
         // and a family lookup read every argument before giving one, and `&&` and `||` read
         // the first. Test above; it cannot catch a word wrongly given `Demand::Body`.
+        // A function of a value of two or more function types records the carrier it reads
+        // each operation on literals alone at, before any is adopted ([`Ck::lits_alike`]):
+        // inside a function the operation's literals take their carrier only when its class is
+        // resolved, once for all the functions, so no adoption tells them apart. One walk of
+        // each such argument, O(size of the arguments).
+        if !self.lit_reads.is_empty() {
+            let text = self.t.text;
+            let reads: Vec<(Lit, Carrier)> = (args.iter().enumerate())
+                .filter_map(|(i, a)| {
+                    let mut e = a.as_ref()?.expr.filter(|e| lit_op_recorded(e, text))?;
+                    let c = lit_param_reads(sig, i)?;
+                    // The first literal names it; `lit_op_recorded` puts a literal at each leaf.
+                    loop {
+                        if let Some(l) = literal(e, text) {
+                            return Some((l, c));
+                        }
+                        e = match &e.kind {
+                            ExprKind::Binary(_, x, _) | ExprKind::Unary(_, x) => x,
+                            _ => return None,
+                        };
+                    }
+                })
+                .collect();
+            if let Some(top) = self.lit_reads.last_mut() {
+                top.extend(reads);
+            }
+        }
         if self.level == 0 {
             self.lit_args_take(sig, &mut args);
         }
@@ -31248,6 +31539,60 @@ fn join_coercions(a: &mut Coercion, b: Coercion) -> bool {
         }
     }
     true
+}
+
+/// Joins two fits of one declared function, each to a member of one union of function types
+/// ([`Ck::fit_members`]): the domain tested where either tests it, the result rebuilt where
+/// either rebuilds it ([`join_coercions`]). `None` fits nothing to rebuild, so the join is the
+/// other. `None` where the two are not [`Fit::Adapter`]s of one order, test two different
+/// domains, or rebuild the result in two shapes: by the proof at [`Ck::fit_members`] no
+/// program reaches that, and the call is then refused as one the slot does not take, never
+/// run with a test dropped.
+///
+/// O(the size of the two fits): the domains are compared once and the join visits each place
+/// of the result's rebuilding once.
+// Tests: function_variance.rs
+// `a_reordered_function_in_a_union_slot_is_fitted_alike_in_either_order` (each member tests a
+// different place, and the join tests both).
+fn join_fits(a: Option<Fit>, b: Option<Fit>) -> Option<Option<Fit>> {
+    let (a, b) = match (a, b) {
+        (None, x) | (x, None) => return Some(x),
+        (Some(a), Some(b)) => (a, b),
+    };
+    let (
+        Fit::Adapter {
+            from,
+            domain,
+            result,
+        },
+        Fit::Adapter {
+            from: from2,
+            domain: domain2,
+            result: result2,
+        },
+    ) = (a, b)
+    else {
+        return None;
+    };
+    if from != from2 {
+        return None;
+    }
+    let domain = match (domain, domain2) {
+        (Some(x), Some(y)) if x != y => return None,
+        (x, y) => x.or(y),
+    };
+    let result = match (result, result2) {
+        (Some(mut x), Some(y)) => match join_coercions(&mut x, *y) {
+            true => Some(x),
+            false => return None,
+        },
+        (x, y) => x.or(y),
+    };
+    Some(Some(Fit::Adapter {
+        from,
+        domain,
+        result,
+    }))
 }
 
 /// The length of the one tuple that every value of `t` is, where `t` is one tuple shape and

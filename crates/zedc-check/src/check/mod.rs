@@ -2092,6 +2092,12 @@ struct Ck<'t, 'a> {
     /// reaches each of its literals ([`Ck::lit_op_meets`]). Which operations are such is read
     /// off the text alone, so an entry a repair's trial wrote is harmless.
     lit_ops: HashSet<Span>,
+    /// One entry for each call through a value of two or more function types while one of
+    /// its functions is applied, innermost last: each argument of that function that is an
+    /// operation on literals alone, named by its first literal, with the carrier the
+    /// function's parameter reads it at ([`lit_param_reads`]). `call_value_step` pushes it,
+    /// [`Ck::apply_demanding`] writes it, and [`Ck::lits_alike`] pops and compares it.
+    lit_reads: Vec<Vec<(Lit, Carrier)>>,
     /// The operations of [`Ck::lit_ops`] whose value has no type in the program until it
     /// meets a carrier: those holding a `/`, which has no arrow at `int`, or a decimal literal
     /// with no suffix, which is never an `int`, as `1 / 2`, `(1 + 2) / (3 + 4)` and
@@ -3043,6 +3049,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             seen: HashMap::new(),
             eq_sides: HashMap::new(),
             lit_ops: HashSet::new(),
+            lit_reads: Vec::new(),
             lit_open: HashSet::new(),
             kept_ops: HashMap::new(),
             lit_written: HashMap::new(),
@@ -12898,6 +12905,16 @@ fn lit_param_carrier(sig: &Sig, i: usize) -> Option<Carrier> {
         _ if floats_take_f64(&at) => Some(Carrier::F64),
         _ => None,
     }
+}
+
+/// The carrier an operation on literals alone takes at the parameter `i` of `sig`: the one
+/// [`lit_param_carrier`] gives, or `int` where each arrow's parameter there is an `int`, as
+/// an operation on `int` literals is one; none where the parameter fixes no one carrier, as
+/// a generic one.
+fn lit_param_reads(sig: &Sig, i: usize) -> Option<Carrier> {
+    let int = |a: &Arrow| a.params.get(i).and_then(|p| p.numeric_carrier()) == Some(Carrier::Int);
+    lit_param_carrier(sig, i)
+        .or_else(|| (!sig.arrows.is_empty() && sig.arrows.iter().all(int)).then_some(Carrier::Int))
 }
 
 /// Whether the walk at the top level records `e` as an operation on bare literals alone
