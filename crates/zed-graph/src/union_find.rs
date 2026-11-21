@@ -130,15 +130,51 @@ pub trait Offset: Clone {
     /// which keeps a long walk over such edges free of arithmetic on big numbers (the zero
     /// shortcut the unit union-find of zedc-presburger `modular.rs` had; bench
     /// `pncx_wide_affine_alias_scale`).
+    #[inline]
     fn then(&mut self, inner: &Self) {
         *self = self.compose(inner);
     }
 }
 
+// The small methods here and of `UnionFind` are `#[inline]`: the workspace builds with
+// `lto = "off"` (Cargo.toml), so without it a copy made for a caller's types can land in
+// another codegen unit than the caller and is then never inlined. Measured 2026-11-21 before
+// this was added: `UnionFind::parent`, `Signed::then`, `union_roots` and
+// `find_offset_shared` stood as calls of their own in `pncx_affine_alias_chain_scale`
+// (13.49G instructions at n = 320,000 with the hand-written union-find, 14.01G here), and
+// `halve` in `union_find_takes_near_linear_time` (141M against 542M at n = 1,600,000).
+// `find` and `find_offset` are `#[inline(always)]`: with `#[inline]` alone, `find_offset`
+// still stood as a call of its own in `join`, and inlining it took that bench from 210.0M to
+// 172.0M.
+
+/// Whether a value is zero, for [`Diff`] and [`Signed`] to skip adding a zero in
+/// [`Offset::then`]. A trait of its own because the test `x == T::default()` built a zero,
+/// compared and dropped it on every step of a walk: `pncx_affine_alias_chain_scale` took
+/// 13.66G instructions at n = 320,000 with it (13.49G with the hand-written union-find).
+pub trait IsZero {
+    /// Whether `self` is zero.
+    fn is_zero(&self) -> bool;
+}
+
+macro_rules! is_zero_by_eq {
+    ($($t:ty),*) => {$(
+        impl IsZero for $t {
+            #[inline]
+            fn is_zero(&self) -> bool {
+                *self == 0
+            }
+        }
+    )*};
+}
+is_zero_by_eq!(i8, i16, i32, i64, i128, isize);
+
 /// No offset: the plain union-find. Every operation is empty and compiles to nothing.
 impl Offset for () {
+    #[inline]
     fn identity() -> Self {}
+    #[inline]
     fn compose(&self, _: &Self) -> Self {}
+    #[inline]
     fn inverse(&self) -> Self {}
 }
 
@@ -149,20 +185,24 @@ pub struct Diff<T>(pub T);
 
 impl<T> Offset for Diff<T>
 where
-    T: Clone + Default + PartialEq,
+    T: Clone + Default + IsZero,
     for<'a> &'a T: Add<&'a T, Output = T> + Sub<&'a T, Output = T>,
 {
+    #[inline]
     fn identity() -> Self {
         Diff(T::default())
     }
+    #[inline]
     fn compose(&self, inner: &Self) -> Self {
         Diff(&self.0 + &inner.0)
     }
+    #[inline]
     fn inverse(&self) -> Self {
         Diff(&T::default() - &self.0)
     }
+    #[inline(always)]
     fn then(&mut self, inner: &Self) {
-        if inner.0 != T::default() {
+        if !inner.0.is_zero() {
             self.0 = &self.0 + &inner.0;
         }
     }
@@ -181,15 +221,17 @@ pub struct Signed<T> {
 
 impl<T> Offset for Signed<T>
 where
-    T: Clone + Default + PartialEq,
+    T: Clone + Default + IsZero,
     for<'a> &'a T: Add<&'a T, Output = T> + Sub<&'a T, Output = T>,
 {
+    #[inline]
     fn identity() -> Self {
         Signed {
             neg: false,
             d: T::default(),
         }
     }
+    #[inline]
     fn compose(&self, inner: &Self) -> Self {
         let d = if self.neg {
             &self.d - &inner.d
@@ -201,6 +243,7 @@ where
             d,
         }
     }
+    #[inline]
     fn inverse(&self) -> Self {
         let d = if self.neg {
             self.d.clone()
@@ -209,9 +252,10 @@ where
         };
         Signed { neg: self.neg, d }
     }
+    #[inline(always)]
     fn then(&mut self, inner: &Self) {
         // (s1, d1) ∘ (s2, d2) = (s1·s2, s1·d2 + d1): with d2 = 0 only the sign changes.
-        if inner.d != T::default() {
+        if !inner.d.is_zero() {
             self.d = if self.neg {
                 &self.d - &inner.d
             } else {
@@ -227,12 +271,15 @@ where
 pub struct Parity(pub bool);
 
 impl Offset for Parity {
+    #[inline]
     fn identity() -> Self {
         Parity(false)
     }
+    #[inline]
     fn compose(&self, inner: &Self) -> Self {
         Parity(self.0 != inner.0)
     }
+    #[inline]
     fn inverse(&self) -> Self {
         *self
     }
@@ -248,6 +295,7 @@ pub trait Parents {
 /// The root of `x` in `forest`, changing nothing: O(height). The bound on the height is the
 /// caller's linking, stated at its call (log2 n when it links by rank or size, Corollary 2
 /// of Tarjan and van Leeuwen 1984, quoted at the head of this file).
+#[inline]
 pub fn root_of<P: Parents + ?Sized>(forest: &P, mut x: usize) -> usize {
     loop {
         let p = forest.parent(x);
@@ -256,6 +304,16 @@ pub fn root_of<P: Parents + ?Sized>(forest: &P, mut x: usize) -> usize {
         }
         x = p;
     }
+}
+
+/// Whether an offset of type `O` carries anything. A value of a zero-sized type holds no
+/// data, so every value of it is the same value: `identity()`, and `f.then(g)` leaves `f`
+/// equal to `identity()` whatever it computes. A walk may then skip the offsets, and with them
+/// the bounds checks and the `split_at_mut` that reading them costs on the empty table. A
+/// constant for each `O`, so the branch on it is removed at compile time.
+#[inline]
+const fn has_offset<O>() -> bool {
+    std::mem::size_of::<O>() != 0
 }
 
 /// Disjoint sets over `0..len()`, with a value of type `V` per class and an offset of type
@@ -279,23 +337,25 @@ pub struct UnionFind<V = (), O = ()> {
 impl<V: Default, O: Offset> UnionFind<V, O> {
     /// The `n` classes `{0}, …, {n - 1}`, each with the value `V::default()`.
     pub fn new(n: usize, compression: Compression, linking: Linking) -> Self {
-        let mut uf = UnionFind {
-            parent: Vec::with_capacity(n),
-            rank: Vec::new(),
-            size: Vec::new(),
-            off: Vec::with_capacity(n),
-            value: Vec::with_capacity(n),
+        // Each table made whole, at its final length, rather than by `n` pushes.
+        let (rank, size) = match linking {
+            Linking::Rank => (vec![0; n], Vec::new()),
+            Linking::Size => (Vec::new(), vec![1; n]),
+        };
+        UnionFind {
+            parent: (0..n).collect(),
+            rank,
+            size,
+            off: std::iter::repeat_with(O::identity).take(n).collect(),
+            value: std::iter::repeat_with(V::default).take(n).collect(),
             compression,
             linking,
-        };
-        for _ in 0..n {
-            uf.push();
         }
-        uf
     }
 
     /// Adds the element `len()` in a class of its own, with the value `V::default()`, and
     /// returns it.
+    #[inline]
     pub fn push(&mut self) -> usize {
         self.push_value(V::default())
     }
@@ -303,6 +363,7 @@ impl<V: Default, O: Offset> UnionFind<V, O> {
 
 impl<V, O: Offset> UnionFind<V, O> {
     /// Adds the element `len()` in a class of its own with the value `value`, and returns it.
+    #[inline]
     pub fn push_value(&mut self, value: V) -> usize {
         let x = self.parent.len();
         self.parent.push(x);
@@ -326,40 +387,50 @@ impl<V, O: Offset> UnionFind<V, O> {
     }
 
     /// The parent of `x` (`x` itself at a root), for a caller that walks the tree itself.
+    #[inline]
     pub fn parent(&self, x: usize) -> usize {
         self.parent[x]
     }
 
     /// The value of `x` as a function of its parent's, for a caller that walks the tree
     /// itself.
+    #[inline]
     pub fn edge(&self, x: usize) -> &O {
         &self.off[x]
     }
 
     /// The size of the class whose root is `root`. Panics unless the linking is
     /// [`Linking::Size`].
+    #[inline]
     pub fn size(&self, root: usize) -> usize {
         self.size[root]
     }
 
     /// The rank of `x`, a bound on the height of its subtree. Panics unless the linking is
     /// [`Linking::Rank`].
+    #[inline]
     pub fn rank(&self, x: usize) -> u8 {
         self.rank[x]
     }
 
     /// The value of the class whose root is `root`.
+    #[inline]
     pub fn value(&self, root: usize) -> &V {
         &self.value[root]
     }
 
     /// The value of the class whose root is `root`, to change.
+    #[inline]
     pub fn value_mut(&mut self, root: usize) -> &mut V {
         &mut self.value[root]
     }
 
     /// The root of `x`'s class, doing to the path what the compression says.
+    #[inline(always)]
     pub fn find(&mut self, x: usize) -> usize {
+        if let Some(p) = self.root_within_one(x) {
+            return p;
+        }
         match self.compression {
             Compression::None => self.find_shared(x),
             Compression::Halving => self.halve(x).0,
@@ -367,9 +438,29 @@ impl<V, O: Offset> UnionFind<V, O> {
         }
     }
 
+    /// `x`'s parent when it is a root, so that `x` is the root or one step under it: there
+    /// every compression leaves the path as it is, so the find needs no branch on
+    /// `self.compression`, and is right whatever the forest. Linking by rank or size keeps
+    /// trees low (a root of rank r has at least 2^r elements, Lemmas 1 and 2 of Tarjan and van
+    /// Leeuwen 1984, and compression only lowers a tree), so many finds end here; how many is
+    /// measured, not proved: with it, `union_find_takes_near_linear_time` took 79.1
+    /// instructions an element at n = 1,600,000 against 97.5 without it and 88.3 with the
+    /// hand-written union-find it replaced (2026-11-21).
+    #[inline(always)]
+    fn root_within_one(&self, x: usize) -> Option<usize> {
+        let p = self.parent[x];
+        (self.parent[p] == p).then_some(p)
+    }
+
     /// The root of `x`'s class and the value of `x` as a function of the root's, doing to
     /// the path what the compression says.
+    #[inline(always)]
     pub fn find_offset(&mut self, x: usize) -> (usize, O) {
+        if !has_offset::<O>()
+            && let Some(p) = self.root_within_one(x)
+        {
+            return (p, O::identity());
+        }
         match self.compression {
             Compression::None => self.find_offset_shared(x),
             Compression::Halving => self.halve(x),
@@ -379,13 +470,19 @@ impl<V, O: Offset> UnionFind<V, O> {
 
     /// The root of `x`'s class, changing nothing: O(height), for a caller holding the sets
     /// shared.
+    #[inline]
     pub fn find_shared(&self, x: usize) -> usize {
         root_of(self, x)
     }
 
     /// The root of `x`'s class and the value of `x` as a function of the root's, changing
     /// nothing: O(height).
-    pub fn find_offset_shared(&self, mut x: usize) -> (usize, O) {
+    #[inline]
+    pub fn find_offset_shared(&self, x: usize) -> (usize, O) {
+        if !has_offset::<O>() {
+            return (self.find_shared(x), O::identity());
+        }
+        let mut x = x;
         let mut acc = O::identity();
         while self.parent[x] != x {
             acc.then(&self.off[x]);
@@ -412,6 +509,7 @@ impl<V, O: Offset> UnionFind<V, O> {
     }
 
     /// Whether `a` and `b` are in one class.
+    #[inline]
     pub fn same(&mut self, a: usize, b: usize) -> bool {
         self.find(a) == self.find(b)
     }
@@ -419,7 +517,19 @@ impl<V, O: Offset> UnionFind<V, O> {
     /// Halving: each element passed is pointed at its grandparent, its offset composed with
     /// its parent's (`f_x ∘ f_p`, the value of `x` from the grandparent's), in one pass with
     /// no stack.
+    #[inline]
     fn halve(&mut self, mut x: usize) -> (usize, O) {
+        if !has_offset::<O>() {
+            loop {
+                let p = self.parent[x];
+                if p == x {
+                    return (x, O::identity());
+                }
+                let g = self.parent[p];
+                self.parent[x] = g;
+                x = g;
+            }
+        }
         let mut acc = O::identity();
         loop {
             let p = self.parent[x];
@@ -447,8 +557,18 @@ impl<V, O: Offset> UnionFind<V, O> {
     /// value of `x` from the root's; the second points each element `y` of the path at the
     /// root with `f_y` as its offset, and gets its parent's as `f_p = f_y_old⁻¹ ∘ f_y`
     /// (since `f_y = f_y_old ∘ f_p`).
+    #[inline]
     fn compress(&mut self, x: usize) -> (usize, O) {
         let (root, f) = self.find_offset_shared(x);
+        if !has_offset::<O>() {
+            let mut y = x;
+            while y != root {
+                let p = self.parent[y];
+                self.parent[y] = root;
+                y = p;
+            }
+            return (root, f);
+        }
         let mut y = x;
         let mut fy = f.clone();
         while y != root && self.parent[y] != root {
@@ -468,6 +588,7 @@ impl<V, O: Offset> UnionFind<V, O> {
     /// `Ok(root)` when it joined two classes; `Err(c)` when they were one class already, with
     /// `c` the function that gives `x_a` from `x_b` in the class (equal to `r` exactly when
     /// the record agrees with it), and `merge` not called.
+    #[inline]
     pub fn join(
         &mut self,
         a: usize,
@@ -487,13 +608,14 @@ impl<V, O: Offset> UnionFind<V, O> {
         }
         // x_ra = fa⁻¹(x_a) = fa⁻¹(r(x_b)) = fa⁻¹(r(fb(x_rb))).
         let ra_under_rb = fa.inverse().compose(r).compose(&fb);
-        Ok(self.union_roots(ra, rb, ra_under_rb, keep, merge))
+        Ok(self.link_roots(ra, rb, ra_under_rb, keep, merge))
     }
 
     /// Joins the classes of the distinct roots `ra` and `rb`, given `x_ra = ra_under_rb(x_rb)`,
     /// the root `keep` names staying, the values merged as by [`UnionFind::join`]; gives the
     /// root that stays. For a caller that found both roots itself and handled the case of one
     /// class in its own way.
+    #[inline]
     pub fn union_roots(
         &mut self,
         ra: usize,
@@ -506,6 +628,26 @@ impl<V, O: Offset> UnionFind<V, O> {
         V: Default,
     {
         debug_assert!(ra != rb && self.parent[ra] == ra && self.parent[rb] == rb);
+        self.link_roots(ra, rb, ra_under_rb, keep, merge)
+    }
+
+    /// [`UnionFind::union_roots`] without its check that `ra` and `rb` are distinct roots, for
+    /// [`UnionFind::join`], which has just found them so. Debug assertions are on in the dev
+    /// profile the benches run in; this and storing no zero-sized edge in `link`, measured
+    /// together, took `union_find_takes_near_linear_time` from 172.0M to 156.0M instructions
+    /// at n = 1,600,000 (2026-11-21).
+    #[inline]
+    fn link_roots(
+        &mut self,
+        ra: usize,
+        rb: usize,
+        ra_under_rb: O,
+        keep: Keep,
+        merge: impl FnOnce(&mut V, V, &O),
+    ) -> usize
+    where
+        V: Default,
+    {
         let a_stays = match keep {
             Keep::First => true,
             Keep::Second => false,
@@ -529,12 +671,12 @@ impl<V, O: Offset> UnionFind<V, O> {
     /// follows the height: the new tree's height is at most `max(height(root),
     /// height(child) + 1)` (saturating at 255, reached only when roots are chosen, since
     /// rank-linked ranks stay under 64, Lemma 2 of Tarjan and van Leeuwen 1984).
+    #[inline]
     fn link(&mut self, root: usize, child: usize, edge: O, merge: impl FnOnce(&mut V, V, &O))
     where
         V: Default,
     {
         self.parent[child] = root;
-        self.off[child] = edge;
         match self.linking {
             Linking::Rank => {
                 let up = self.rank[child].saturating_add(1);
@@ -547,7 +689,11 @@ impl<V, O: Offset> UnionFind<V, O> {
         // The child is no longer a root, so its slot is no longer read: `V::default()` is left
         // there.
         let other = std::mem::take(&mut self.value[child]);
-        merge(&mut self.value[root], other, &self.off[child]);
+        merge(&mut self.value[root], other, &edge);
+        // An offset of zero size holds nothing to store (see `has_offset`).
+        if has_offset::<O>() {
+            self.off[child] = edge;
+        }
     }
 }
 
@@ -555,12 +701,14 @@ impl<V, O: Offset> UnionFind<V, O> {
 impl UnionFind {
     /// Joins the classes of `a` and `b`, the root [`Linking`] picks staying; false when they
     /// were one class already.
+    #[inline]
     pub fn union(&mut self, a: usize, b: usize) -> bool {
         self.join(a, b, &(), Keep::Rule, |_, _, _| {}).is_ok()
     }
 
     /// Joins the classes of `keep` and `other` with `keep`'s root as the root of the whole;
     /// false when they were one class already. For a caller whose class names are its roots.
+    #[inline]
     pub fn union_into(&mut self, keep: usize, other: usize) -> bool {
         self.join(keep, other, &(), Keep::First, |_, _, _| {})
             .is_ok()
@@ -568,12 +716,14 @@ impl UnionFind {
 
     /// Joins the classes of `a` and `b` with the lesser of their roots as the root
     /// ([`Keep::Least`]); false when they were one class already.
+    #[inline]
     pub fn union_least(&mut self, a: usize, b: usize) -> bool {
         self.join(a, b, &(), Keep::Least, |_, _, _| {}).is_ok()
     }
 }
 
 impl<V, O: Offset> Parents for UnionFind<V, O> {
+    #[inline]
     fn parent(&self, x: usize) -> usize {
         self.parent[x]
     }

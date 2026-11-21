@@ -941,6 +941,7 @@ impl Ty {
 /// node alive for the whole comparison (the table never outlives it); the `Arc::strong_count`
 /// test that skips unshared nodes is a constant-factor saving, not needed for the answer.
 /// COMPLEXITY.md row F118.
+#[derive(Default)]
 struct Same<'a> {
     /// The lowest stack address the recursion descends from ([`Same::room`]), set when it first
     /// descends; 0 before.
@@ -956,8 +957,7 @@ struct Same<'a> {
     /// the keys are addresses the allocator chose, never a program's text, so it needs no seed
     /// (DRY-sorted-structures-2, job 3, which removed the folded multiply this table had alone).
     // Proof that no key names a freed node (checked again for DOC-proofs-in-comments-audit,
-    // as dryC1 asked in c4937d86c): (1) keys are put in only by `Same::id`, called only from
-    // `Same::assumed`; (2) its callers `alike_rows`, `alike_shapes` and `func` (impl `Nodes`
+    // as dryC1 asked in c4937d86c): (1) keys are put in only by `Same::assumed`; (2) its callers `alike_rows`, `alike_shapes` and `func` (impl `Nodes`
     // for `Same`) pass `Arc::as_ptr` of operands typed `&'a`; (3) a `Same<'a>` cannot outlive
     // `'a`, which the borrow checker enforces, and one is made for each comparison
     // (`Lazy::same`, `Sig::eq`). So each key names a node alive for the table's whole life.
@@ -965,31 +965,14 @@ struct Same<'a> {
     // made at a dropped one's address compares as itself, from a new table; a node freed
     // while the table lives cannot be written in a test, since that program does not compile.
     ids: zed_kernel::digest::DigestMap<*const (), usize>,
-    /// The classes of the nodes met, by their numbers in [`Same::ids`].
-    uf: zed_graph::UnionFind,
+    /// The classes of the nodes met, by their numbers in [`Same::ids`]; made when the first
+    /// node is recorded ([`Same::assumed`]), so a comparison that records none, nearly every
+    /// one the checker makes, does nothing for it (bench
+    /// `shallow_types_compare_as_cheaply_as_a_plain_recursion`).
+    uf: Option<zed_graph::UnionFind>,
     /// The functions the rows and shapes on the path to the pair now compared keep as held or
     /// unchecked, on the left and on the right ([`Same::shared_sigs`]).
     above: [Above; 2],
-}
-
-impl Default for Same<'_> {
-    fn default() -> Self {
-        Same {
-            floor: 0,
-            left: Vec::new(),
-            ids: Default::default(),
-            // Halving with size (the root that stays is size's, the first's on a tie):
-            // O(α(n)) amortized a step, Tarjan and van Leeuwen 1984 (doi:10.1145/62.2160),
-            // Theorem 3. Empty, it allocates nothing, so a comparison that records no node
-            // allocates nothing.
-            uf: zed_graph::UnionFind::new(
-                0,
-                zed_graph::Compression::Halving,
-                zed_graph::Linking::Size,
-            ),
-            above: Default::default(),
-        }
-    }
 }
 
 /// The stack [`Same`]'s recursion may take, from where it first descends: a small part of the
@@ -1175,15 +1158,17 @@ impl<'a> Same<'a> {
     /// one class; if not, their classes are joined, so the caller compares them now and no
     /// later pair does again.
     fn assumed(&mut self, x: *const (), y: *const ()) -> bool {
-        let (i, j) = (self.id(x), self.id(y));
+        // Halving with size (the root that stays is size's, the first's on a tie): O(α(n))
+        // amortized a step, Tarjan and van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3.
+        let uf = self.uf.get_or_insert_with(|| {
+            zed_graph::UnionFind::new(0, zed_graph::Compression::Halving, zed_graph::Linking::Size)
+        });
+        // Each node's number, given when it is first met.
+        let ids = &mut self.ids;
+        let mut id = |p: *const ()| *ids.entry(p).or_insert_with(|| uf.push());
+        let (i, j) = (id(x), id(y));
         // Union by size, the smaller class under the larger.
-        !self.uf.union(i, j)
-    }
-
-    /// The number of the node at `x`, which is met here first if it is new.
-    fn id(&mut self, x: *const ()) -> usize {
-        let uf = &mut self.uf;
-        *self.ids.entry(x).or_insert_with(|| uf.push())
+        !uf.union(i, j)
     }
 }
 

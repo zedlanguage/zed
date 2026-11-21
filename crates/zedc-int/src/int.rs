@@ -41,6 +41,15 @@ impl Default for Int {
     }
 }
 
+/// For the offsets of `zed_graph::UnionFind` (`Diff<Int>`, `Signed<Int>`), which skip adding
+/// a zero.
+impl zed_graph::IsZero for Int {
+    #[inline]
+    fn is_zero(&self) -> bool {
+        Int::is_zero(self)
+    }
+}
+
 impl From<i32> for Int {
     fn from(v: i32) -> Int {
         Int(Repr::Small(v.into()))

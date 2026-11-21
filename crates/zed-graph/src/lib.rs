@@ -288,7 +288,7 @@ pub mod worklist;
 
 pub mod union_find;
 pub use union_find::{
-    Compression, Diff, Keep, Linking, Offset, Parents, Parity, Signed, UnionFind, root_of,
+    Compression, Diff, IsZero, Keep, Linking, Offset, Parents, Parity, Signed, UnionFind, root_of,
 };
 
 pub use bitset::BitSet;

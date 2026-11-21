@@ -1305,6 +1305,7 @@ dependencies = [
  "num-integer",
  "num-traits",
  "zed-collections",
+ "zed-graph",
  "zed-kernel",
  "zed-numtheory",
 ]
