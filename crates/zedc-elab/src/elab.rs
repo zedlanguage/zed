@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn copies_of_an_error_with_another_row_between_them_are_kept_once() {
         let a = Some(rejection::Row::Collision);
-        let b = Some(rejection::Row::UnliftedCarrier);
+        let b = Some(rejection::Row::LiteralCarrier);
         let errors = vec![error("x.", a), error("x.", b), error("x.", a)];
         let Err(kept) = finish(Unit::default(), None, errors) else {
             panic!("errors were given")
