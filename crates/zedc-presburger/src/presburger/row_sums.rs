@@ -65,7 +65,11 @@
 //! is NP-complete (Karp), so no method is polynomial in the bits of the weights unless P = NP,
 //! and none is O(n log n) in general. The overlap gives the faster path where the sums of a
 //! group are dense: once a group has enough atoms, every sum in the middle of its range is
-//! reached (Galil and Margalit), those keys are a few intervals, and only the words near the
+//! reached where no small number divides almost all weights (Galil and Margalit, Theorem 5.1
+//! and sec. 3, read 2026-11-21: `m > 100 ℓ^0.5 log₂ ℓ` distinct weights in `(0, ℓ]`, middle
+//! `(L, S − L)` with `L = S/6 + 2ℓ^1.5`; otherwise progressions of one step; the measured
+//! families are far below that `m`, so their density is measured, not proved; see
+//! `row_sums/classes.rs`), those keys are a few intervals, and only the words near the
 //! ends of the range are not full. A table then costs O(1) per operation, about the same at
 //! every k, and a family of k atoms costs O(k · log n) operations. Measured (instructions,
 //! decide): `overlap_rows` costs 1.83M at k = 64, 13.0M at k = 512 and 25.3M at k = 1,024
@@ -115,8 +119,10 @@
 //! predictor that would send `sparse` to the solver first). Its cost past the limit is the
 //! limit itself, wasted, about 200 ms here, before the solver starts.
 //!
-//! The race this replaces (Levin's universal search, 2026-11-13: the method and the solver run
-//! in alternation with doubling allowances, the first to finish answering) let the answer
+//! The race this replaces (Levin's universal search, after Levin 1973's Theorem 2, which states
+//! only that such an optimal search exists; see "Papers" below; 2026-11-13: the method and the
+//! solver run in alternation with doubling allowances, the first to finish answering) let the
+//! answer
 //! depend on which finished first, and its projection was the solver's coarser one where the
 //! method lost; its bound on the method's work was not proved.
 //!
@@ -161,7 +167,24 @@
 //! SIAM Journal on Computing 20(6), 1991, doi:10.1137/0220072. K. Koiliaris and C. Xu, SODA
 //! 2017, doi:10.1137/1.9781611974782.68, and K. Bringmann, SODA 2017,
 //! doi:10.1137/1.9781611974782.69, as above. The DOIs are those of the crate's `lib.rs`,
-//! "References" (Crossref; the papers not read there). None of these results is a step of an
+//! "References". Read 2026-11-21 (publisher's PDFs from the Sci-Hub mirror or arXiv, copies
+//! kept outside the repository; the details are in `lib.rs`): Horowitz and Sahni, Algorithm
+//! 1(b), steps 1 and 2, abort a partial sum that the numbers left cannot bring up to `M` or
+//! the next number takes past it (the bound pruning of [`Group::window`]; they call the
+//! method "well known"), and Algorithm 2(b), two halves' sorted sums paired by one merge-like
+//! walk, O(2^(r/2)) (the meet in the middle; here a lookup in a set of keys replaces the
+//! walk); Karp, problem 18, KNAPSACK, "Σ a_j x_j = b has a 0-1 solution", NP-complete by
+//! reduction from EXACT COVER; Pisinger, Proposition 3, subset sum in O(nW) for weights at
+//! most W; Galil and Margalit, Theorem 5.1, as corrected in `row_sums/classes.rs`; Koiliaris
+//! and Xu (arXiv 1507.02318), Theorem 2.7, all subset sums of `n` numbers of sum σ in
+//! O(σ log σ log n) by halving and one FFT sumset per level, which their Remark 2.8 calls
+//! already known; Bringmann (arXiv 1610.04712), Theorem 1.1, O~(n + t) by a randomized,
+//! one-sided-error algorithm, not usable here since the join's answer must be exact; Levin,
+//! read in Trakhtenbrot's 1984 translation (IEEE Annals of the History of Computing 6(4),
+//! doi:10.1109/MAHC.1984.10036), Theorem 2, an algorithm optimal up to a constant factor for
+//! any search problem, whose method the paper does not describe (Trakhtenbrot says so); the
+//! alternation with doubling allowances is the later standard reading of it; Dechter, see
+//! `lib.rs`. Bellman's book was not read. None of these results is a step of an
 //! answer: Karp's and Galil and Margalit's explain costs, Levin's and Pisinger's name methods
 //! not used, and the join's exactness rests on the definitions alone, not on any of them
 //! (it is not proved as a whole: see "Not proved as a whole" above).
@@ -376,7 +399,10 @@ impl Rows {
 }
 
 /// The rows renumbered in the order of a breadth-first search over the atoms they share
-/// (Cuthill and McKee, 1969): each search starts at the row, not yet reached, with the fewest
+/// (Cuthill and McKee, 1969, doi:10.1145/800195.805928, read 2026-11-21: p. 158 numbers each
+/// node's neighbors by increasing degree, p. 159 starts at a node of least degree; here the
+/// neighbors come atom by atom, and by count within each atom; see the crate's `lib.rs`):
+/// each search starts at the row, not yet reached, with the fewest
 /// shared terms, and from each row reached takes, atom by atom in the order of the atoms, the
 /// rows of that atom not yet reached, those with fewest shared terms first. The join numbers its
 /// groups by these rows ([`Plan::build`] sorts the signatures), and the rows open between them
@@ -398,8 +424,11 @@ impl Rows {
 // Complexity tradeoff: the rows of each atom listed and sorted once by their count of shared
 // terms, O(t log t) for t terms, and each atom's list walked once in the search, O(t). Naive
 // version: the graph of rows joined by a shared atom, O(t^2) edges where one atom lies in every
-// row. A smaller frontier is NP-hard to find in general (bandwidth, Papadimitriou 1976); this
-// search is the usual heuristic, and gives a path its order.
+// row. The number of rows open at once is the vertex separation of the order, at most its
+// bandwidth; Papadimitriou 1976 (doi:10.1007/bf02280884, read 2026-11-21, Theorem 2) proves
+// that the least bandwidth is NP-complete to find, which is not the same problem, so it says
+// nothing direct on the least frontier (see the crate's `lib.rs`). This search is the usual
+// heuristic for a narrow band, and gives a path its order.
 fn along_shared_atoms(rows: Vec<Row>, atoms: usize) -> Vec<Row> {
     let mut uses = vec![0usize; atoms];
     for row in &rows {
@@ -795,10 +824,13 @@ const LIMIT: i128 = 1 << 62;
 // Complexity tradeoff: a sorted list of keys costs one step per key, a bitset over the whole
 // range one step per 64 keys of the range even where the set is sparse; the runs cost one step
 // per word that holds a key, the smaller of the two, and a dense run is shifted and merged 64
-// keys at a time. Roaring bitmaps (D. Lemire, G. Ssi-Yan-Kai and O. Kaser, "Consistently faster
-// and smaller compressed bitmaps with Roaring", Software: Practice and Experience 46(11), 2016)
-// switch each 2^16 keys between a sorted list and a bitset at 4,096 keys, a switch at a size;
-// the runs need none.
+// keys at a time. Roaring bitmaps (Chambi, Lemire, Kaser and Godin 2016, doi:10.1002/spe.2325,
+// and Lemire, Ssi-Yan-Kai and Kaser 2016, doi:10.1002/spe.2402, both read 2026-11-21 in their
+// arXiv versions; see the crate's `lib.rs`, "References") switch each 2^16 keys between a
+// sorted list and a bitset at 4,096 keys (the first paper, sec. 2), a switch at a size, and the
+// second adds a container of runs of consecutive keys, used where it is smaller than the other
+// two (sec. 4); the runs here are of 64-bit words, need no switch, and cost no more than the
+// smaller of a list and a bitset by the count above.
 #[derive(Clone, Default)]
 struct Lits {
     /// Each run's first block and the start of its words in `words`.
@@ -1236,8 +1268,10 @@ fn span_mask((lo, hi): (i64, i64), blk: i64) -> u64 {
 /// intervals `[lo, hi]` that do not touch, and `lit` keys of the set, which may lie in an
 /// interval too. Each table of the forward pass is settled: no key of `lit` lies in an interval.
 // Complexity tradeoff: the table of a group of g atoms with values up to W holds sums from 0 to
-// about g·W, and in its middle every sum is reached (Galil and Margalit, "An almost linear-time
-// algorithm for the dense subset-sum problem", SIAM J. Comput. 20(6), 1991); in `overlap_rows`
+// about g·W, and in its middle every sum is often reached (Galil and Margalit, "An almost
+// linear-time algorithm for the dense subset-sum problem", SIAM J. Comput. 20(6), 1991, proves
+// it only for many more atoms and no common almost-divisor; see the module note and
+// `row_sums/classes.rs`); in `overlap_rows`
 // the words not full fall from 159 at k = 64 to 39 at k = 1,024 while the full ones grow with k.
 // Stored as words, each operation reads the whole table, O(g·W/64), and the g additions cost
 // O(g²·W/64); with the full words kept as intervals, an operation reads the words not full and
@@ -2061,15 +2095,21 @@ const DIFF: usize = 3;
 // n_s·(r_q + r_p)·(log + r_d + w_d) + n_d·(r_q + r_p + r_s) + r_q·r_p·(log + r_s·r_d)) plus the
 // words of each answer's range. The words of a group's table lie
 // near the ends of its range, where its sums are sparse; in the middle every sum is reached
-// (Z. Galil and O. Margalit, "An almost linear-time algorithm for the dense subset-sum
-// problem", SIAM J. Comput. 20(6), 1991), so n and w stay about the same as k grows, r is 1
+// in the measured families (proved by Z. Galil and O. Margalit, "An almost linear-time
+// algorithm for the dense subset-sum problem", SIAM J. Comput. 20(6), 1991, Theorem 5.1, only
+// past `100 ℓ^0.5 log₂ ℓ` atoms; see `row_sums/classes.rs`), so n and w stay about the same
+// as k grows, r is 1
 // or 2, and the cost is about the same at every k but for the words of the answer's range,
 // O(k·W/64) for weights of W. This is the meet in the middle of Horowitz and Sahni
 // ("Computing partitions with applications to the knapsack problem", J. ACM 21(2), 1974) on
-// the words, and interval arithmetic on the dense middle. The plan row named sumsets by FFT
-// (K. Bringmann, "A near-linear pseudopolynomial time algorithm for subset sum", SODA 2017):
-// the points of two groups are a sumset in two dimensions, O(R² log R) for sums of range R by
-// a transform, past the product above at these sizes, so it is not used.
+// the words (their Algorithm 2(b) walks two sorted lists; here each word is looked up), and
+// interval arithmetic on the dense middle. The plan row named sumsets by FFT (K. Bringmann,
+// "A near-linear pseudopolynomial time algorithm for subset sum", SODA 2017, which uses them
+// as its main step): the points of two groups are a sumset in two dimensions, O(R² log R) for
+// sums of range R by a transform (Koiliaris and Xu, SODA 2017, arXiv 1507.02318, Lemma 2.10,
+// O(uv log uv) for points in a u by v box, by one two-dimensional FFT of the two sets'
+// characteristic polynomials; read 2026-11-21), past the product above at these sizes, so it
+// is not used.
 fn lattice(
     p: &Set,
     q: &Set,
@@ -2644,7 +2684,11 @@ impl Group<'_> {
     // Complexity tradeoff: O(1) per table. Bellman's tables (Bellman, "Dynamic Programming",
     // Princeton University Press, 1957) hold every sum of the first t atoms; this keeps only
     // those that can still meet the row, the bound pruning of Horowitz and Sahni ("Computing
-    // partitions with applications to the knapsack problem", J. ACM 21(2), 1974). Exact: a key
+    // partitions with applications to the knapsack problem", J. ACM 21(2), 1974, Algorithm 1(b),
+    // steps 1 and 2, read 2026-11-21: a partial sum is dropped when it plus all the numbers left
+    // is below the target, or it plus the next number is above; they call the method "well
+    // known"; see the module's "Papers"). Here both ends are applied to a whole table at once,
+    // as one window of keys, where the paper prunes one branch of its search. Exact: a key
     // outside it is the prefix of no point. Measured on subset sum with no point at k = 64:
     // the tables of the second half of the atoms hold only the sums within the rest of the
     // target, about half the words.
@@ -3406,7 +3450,9 @@ impl Plan {
     // Complexity tradeoff: the layer's digits of the equations closing here are its most
     // significant, so each g finds the keys it needs as one interval of the layer, read word by
     // word: O(|t| · (log + words of the interval)) plus the pairs that match. Naive version:
-    // every pair, |f|·|t|; used: the lookup (Horowitz and Sahni's meet in the middle), so two
+    // every pair, |f|·|t|; used: the lookup (Horowitz and Sahni's meet in the middle, 1974,
+    // Algorithm 2(b), read 2026-11-21, pairs two sorted lists by one walk from opposite ends;
+    // here each g reads its interval of the layer instead; see the module's "Papers"), so two
     // tables joined on an equation cost the sum of their sizes, not the product.
     fn pairs(
         &self,

@@ -458,9 +458,10 @@ fn points(cons: &[Cmp], boxes: &BTreeMap<String, Piece>, far: i64, exact: bool) 
         // Floyd and Warshall's closure, a row `i` with no path to `k` skipped whole (R. W. Floyd,
         // "Algorithm 97: Shortest path", CACM 5(6):345, 1962, doi:10.1145/367766.368168;
         // S. Warshall, "A theorem on Boolean matrices", JACM 9(1):11-12, 1962,
-        // doi:10.1145/321105.321107; Crossref 2026-11-20, texts not read: the triple loop with
-        // `k` outermost is the standard one, from memory). Checked only through the tests below,
-        // which compare this brute force with the solver.
+        // doi:10.1145/321105.321107; both read 2026-11-21: `k` outermost, and the row skip is
+        // Floyd's own "if m[j, i] < inf then"; full comment and proofs at
+        // `tests/steps/l01_39_scope_relations/xst/holes_model.rs` `distances`). Checked only
+        // through the tests below, which compare this brute force with the solver.
         for k in 0..size {
             for i in 0..size {
                 let ik = d[i * size + k];
@@ -605,8 +606,38 @@ enum Lp {
 /// search vertex enumeration algorithm" (the paper of lrs), in Polytopes — Combinatorics and
 /// Computation, Birkhäuser, 2000, pp. 177-198, doi:10.1007/978-3-0348-8438-9_9; R. G. Bland,
 /// "New finite pivoting rules for the simplex method", Math. Oper. Res. 2(2):103-107, 1977,
-/// doi:10.1287/moor.2.2.103. Checked 2026-11-20: the DOIs on Crossref; no text was read, so the
-/// sketches above are from memory. No test checks this function alone: it is checked through
+/// doi:10.1287/moor.2.2.103. Checked 2026-11-20: the DOIs on Crossref. Bland read 2026-11-21
+/// in the publisher's scanned PDF (Sci-Hub mirror; copy kept outside the repository): Rule I,
+/// (1.2a) "k = min{j : a_0j < 0}" enters, (1.2b) the least `B_i` among the rows tying for the
+/// least ratio leaves, as above; Theorem 1.1, "The simplex method under Rule I cannot cycle":
+/// if it did, take `q`, the largest index entering during the cycle, compare the tableau where
+/// `x_q` enters with the one where it leaves, and the row and the reduced-cost vectors, which
+/// are orthogonal, give a smaller index that Rule I would have picked instead; with no cycle,
+/// no basis comes twice, hence the C(cols, rows) bound above. The tie rule for `x0` is this
+/// file's, not Bland's. Edmonds read 2026-11-21 in OpenAlex's cached copy of the NBS PDF:
+/// sec. 7 eliminates once down a matrix over an integral domain, each new entry a 2 × 2
+/// cross product with the pivot divided by the previous pivot, and Theorem 2 states that
+/// each such entry "is equal to the determinent of the minor of A0" on the pivot rows and
+/// columns so far plus its own; the proof tracks how each row operation scales a minor's
+/// determinant. So the quotient is exact, and the entries stay as small as minors. Bareiss
+/// read 2026-11-21 in a PDF from LibGen: sec. I derives the same one-step formula, his
+/// (8), from Sylvester's identity, and sec. II.B applies it to the rows above the pivot as
+/// well, to reach diagonal form. Avis read 2026-11-21 in the author's preprint of 1999-01-26
+/// (cgm.cs.mcgill.ca), not the book's print: sec. 7 stores numerators over `|det(B)|` for the
+/// current basis `B`, gives the update `(a_ij a_rs - a_is a_rj) / det(B)` for `i != r` and
+/// `j != s`, and says only "It can be shown that the integer division has no remainder". The
+/// proof for repeated pivots, which Edmonds's and Bareiss's single pass does not cover: with
+/// `M` the starting tableau and `B` the current basis columns, the current tableau is
+/// `±det(B) · B⁻¹ M`, and by Cramer's rule each entry of `det(B) · B⁻¹ M` is the determinant
+/// of `B` with one column replaced by a column of `M`, an integer. It holds at the start (the
+/// slack columns are the basis, `I`, with `den = 1`) and is kept by `pivot`: with `pv` the
+/// pivot entry, `det(B') = det(B) · (B⁻¹ M)_pq = pv`, so the pivot row, `det(B') · (B'⁻¹ M)_p`,
+/// is the old row unchanged and `den` becomes `pv`; the sign flip keeps `den = |det(B)|`. The
+/// two objective rows are covered by taking the basis with the columns of `z` and `w` added,
+/// whose determinant is still `det(B)`. Traced against the code by cite4, 2026-11-21.
+/// Chvátal's book was not read; the auxiliary problem above is as the code builds it, not
+/// quoted from ch. 3.
+/// No test checks this function alone: it is checked through
 /// the tests below, which compare the brute force it bounds with the solver, so an error that
 /// widens a bound only slows them and one that narrows it shows as a mismatch there.
 fn lp_max(rows: &[(Vec<i64>, i64)], objective: &[i64]) -> Lp {
@@ -737,7 +768,11 @@ fn has_point(rows: &[(Vec<i64>, i64)]) -> bool {
 /// combined with bz = β + i for each i such that (ab − a − b)/a ≥ i ≥ 0". Below, `l` is its
 /// `b`, `m` its `a`, and the constant less `(l - 1)(u - 1)` is its dark shadow. Checked
 /// 2026-11-20: the DOIs on Crossref; the CACM paper read (a scan, through OpenAlex's cached
-/// copy) for these two rules; the SC'91 paper not read. Departure: the paper picks the
+/// copy) for these two rules; the SC'91 paper read 2026-11-21 (PDF, LibGen, verification
+/// only), sec. 2.3.1, which gives the same two rules (the dark-shadow constant
+/// `|a_k a'_k| - |a'_k| - a_k + 1`, and splinters for
+/// `0 <= j <= floor((|m a_k| - |m| - a_k)/|m|)`); details in
+/// `zedc-presburger`'s `lib.rs`, "References". Departure: the paper picks the
 /// variable to eliminate by its heuristics, this oracle by its own rule (`best` in the code),
 /// which changes only the work, not the answer. `the_omega_oracle_agrees_with_enumeration` checks
 /// it against enumeration on small boxed systems.

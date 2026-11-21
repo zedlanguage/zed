@@ -153,13 +153,19 @@ impl<'a> Prep<'a> {
     // reading stopped at its choice), so O(C·(r·t + h log h)) a part and O(C·log h) a name:
     // with c shared choices fixed, linear in the names as before. Where c grows, C can be 2^c
     // (nested guards: the composed choices of Montúfar, Pascanu, Cho and Bengio, "On the number
-    // of linear regions of deep neural networks", NIPS 2014, have exponentially many pieces);
+    // of linear regions of deep neural networks", NIPS 2014, have exponentially many pieces;
+    // read 2026-11-21, arXiv 1402.1869v2, Theorem 4: a rectifier network of `n0` inputs and
+    // `L` layers of widths `n_i ≥ n0` has at least `Π_{i<L} floor(n_i/n0)^n0 · Σ_{j≤n0}
+    // C(n_L, j)` linear regions, each layer folding the space so that the next layer's pieces
+    // repeat in every fold; an analogy for composed guards, not a bound on them; see `lib.rs`);
     // no exact method here avoids reading each. Flat guards cut at most `1 + c + c(c-1)/2`
     // real cells (the line arrangement of Zaslavsky, "Facing up to arrangements", Mem. AMS
-    // 154, 1975). An arm whose guards cut out no integer `p` is pruned where the choice is
-    // met, before any reading of it (PRES-two-pin-prune, part b; [`Prep::cell`]), so C counts
-    // the cells that test keeps: those of the arrangement with a point, and some with none
-    // (it reads the guards alone, by their real shadow on `p`); before, every one of the 2^c
+    // 154, 1975, not read: no copy found on 2026-11-21, see `lib.rs`; the count is the
+    // elementary one there, the `k`-th line adding at most `k` regions). An arm whose guards
+    // cut out no integer `p` is pruned where the choice is met, before any reading of it
+    // (PRES-two-pin-prune, part b; [`Prep::cell`]), so C counts the cells that test keeps:
+    // those of the arrangement with a point, and some with none (it reads the guards alone,
+    // by their real shadow on `p`); before, every one of the 2^c
     // cells was read (`tests::empty_cells_are_pruned_before_they_are_read`: 7 readings for
     // 4 cells, 15 before). The per-name path the part declines to costs one reading a name, so
     // the cells pay only while C ≤ n, the n `names` asked: the part declines where they would
@@ -666,8 +672,9 @@ fn log_pieces(n: usize) -> u64 {
 // work at 8 times k before). Here the cut region is read in place, O(log V) ([`clip`]): the
 // line `c == 0` meets a convex polygon in at most two edges, each found by binary search
 // from the corner where `c` is greatest (Chazelle and Dobkin, "Intersection of convex
-// objects in two and three dimensions", JACM 34(1), 1987, Theorem 3: the intersection of a
-// line and a convex p-gon in O(log p)). An open region is cut in place where `c` holds on
+// objects in two and three dimensions", JACM 34(1), 1987, doi:10.1145/7531.24036, sec. 2.3,
+// Theorem 3: the intersection of a line and a convex p-gon in O(log p); read 2026-11-21, the
+// proof sketched at [`clip`]). An open region is cut in place where `c` holds on
 // both its rays past the lid, so the cut region is again open with the same rays; or fails
 // past the lid, so the cut region lies within it ([`open`], [`fails_past_lid`]); or holds on
 // one ray and fails on the other (parallel to either allowed), so the cut region's rays are
@@ -976,7 +983,10 @@ fn u_runs(
 /// interior, or a number passes `i128` ([`shape_of`] then tries an open region).
 // Complexity tradeoff: the half-plane intersection by sorting on the angle of the normal and
 // a double-ended queue, O(h log h) once a part (the O(h log h) bound for half-plane
-// intersection is Shamos and Hoey, "Geometric intersection problems", FOCS 1976), then a check
+// intersection is Shamos and Hoey, "Geometric intersection problems", FOCS 1976,
+// doi:10.1109/sfcs.1976.16, read 2026-11-21, Theorem 9, proved there by divide and conquer
+// with a linear merge of two convex polygons, not by this sort and queue; see the crate's
+// `lib.rs`), then a check
 // of every half-plane at its least corner, O(h log V). Naive: every name's shadows over all h
 // half-planes, O(h²) a name and O(k·h²) a part (`tests::names_over_a_polygon_of_many_sides_
 // read_its_edges_once`, 190.77 times at 8 times k; `names_over_a_polygon_of_many_true_edges_
@@ -1534,9 +1544,23 @@ enum Cut<'b, P> {
 // the last corner with `g > 0` by binary search; the cut polygon is the edges between them
 // and `g`, read through [`Clip`]. The method is Chazelle and Dobkin's for the intersection of
 // a line and a convex polygon ("Intersection of convex objects in two and three dimensions",
-// JACM 34(1), 1987, Theorem 3, O(log p) for a p-gon, by the vertices extreme along the line's
-// normal and a binary search on each chain between them); reading the cut polygon in place,
-// O(1) more a step, is ours.
+// JACM 34(1), 1987, pp. 1-27, doi:10.1145/7531.24036, sec. 2.3, Theorem 3: "The intersection
+// of an infinite line with a convex polygon with p vertices can be computed in O(log p)
+// time"). Their proof, read 2026-11-21 in the publisher's PDF (OpenAlex's cached copy): the
+// signed distance `f(i)` of corner `i` from the line is bimodal around the polygon (Lemma 1:
+// from its least corner on, the steps `f(i + 1) - f(i) = |p_i p_{i+1}|·sin a_i` change sign
+// once, since the turning angles of a convex polygon are each below 180 degrees); its least
+// corner `w` is found in O(log p) by Fibonacci search (Lemma 2); the line meets the polygon
+// exactly when `f(w) <= 0`, and then a binary search on each of the two monotone chains from
+// `w` finds the edges where `f` changes sign. Departure: `Convex::ends` finds both the
+// greatest and the least corner (the two ends of the chains) by binary search over the
+// polygon's edges, which are kept sorted by the angle of their normals (`Convex::chains`),
+// rather than Fibonacci search on `f`; the chains between them
+// are monotone in `g` for the same reason as in Lemma 1. Reading the cut polygon in place,
+// O(1) more a step, is ours. Tests: `tests::leaf_choices_over_a_polygon_of_many_true_edges_
+// cost_log_of_them` (the O(log V) cost) and the projection tests against enumeration (a wrong
+// edge gives wrong values); neither can tell a search that is correct but linear on some
+// polygon shape the tests do not draw.
 fn clip<P: Convex>(base: &P, g: Form) -> Option<Cut<'_, P>> {
     let n = base.n();
     let v = (g.0, g.1);

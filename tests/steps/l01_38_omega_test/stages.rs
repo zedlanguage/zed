@@ -401,12 +401,16 @@ type Rows = Vec<(Vec<(usize, Int)>, Int)>;
 /// of negative reduced cost moves one step per pass of Goldberg and Radzik's search
 /// (COMPLEXITY.md C24).
 ///
-/// Checked 2026-11-20: Crossref for the journal paper (not read); the arXiv paper's LaTeX
-/// source read for the definition and the augmentation, and [`bad_gor_edges`] compared with it
-/// edge by edge. This comment once named the instance as Cherkassky and Goldberg's; the arXiv
-/// paper takes it from the five-author paper above. `bad_gor_edges_are_the_papers` checks the
-/// edges against the definition as quoted; it cannot check that the quote is the journal
-/// paper's, which was not read.
+/// Checked 2026-11-20: the arXiv paper's LaTeX source read for the definition and the
+/// augmentation, and [`bad_gor_edges`] compared with it edge by edge. The journal paper read
+/// 2026-11-21 in the publisher's PDF (Sci-Hub mirror; copy kept outside the repository): its
+/// sec. 6.3 defines BAD-GOR(k) in the words quoted above, with n = 2k + 1 and m = 3k - 1, and
+/// argues that GOR needs Ω(k) passes over the path, since each pass makes only two more arcs
+/// of it admissible while the arcs out of k + 1 stay admissible every pass, so Θ(k²) scans in
+/// all. This comment once named the instance as Cherkassky and Goldberg's; the arXiv paper
+/// takes it from the five-author paper above. `bad_gor_edges_are_the_papers` checks the edges
+/// against the definition; it cannot check the pass count, which only the scaling benchmark in
+/// `bench/stages.rs` (k = 3,300 and 8 times that) would show as time.
 pub(super) fn bad_gor(k: usize, seed: u64) -> (usize, Rows) {
     augmented(2 * k + 1, bad_gor_edges(k), seed)
 }

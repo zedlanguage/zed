@@ -352,7 +352,9 @@ impl FoldNode {
 // `O(n * B)` time and bytes (`r6_tests::pncx_wide_affine_alias_scale`: 50.6x bytes and 13.4x
 // instructions for 8x size, 391.9 MB at n = 1024). Linking by subtree size without compressing
 // offsets keeps tree height at most `floor(log2 n)` (Tarjan and van Leeuwen 1984,
-// doi:10.1145/62.2160; the full comment is in zed-graph `union_find.rs`) while leaving
+// doi:10.1145/62.2160, read 2026-11-21: sec. 2, Lemma 1, size >= 2^height, and Corollary 2;
+// the proof is sketched in the crate's `lib.rs`, "References", and the full comment is in
+// zed-graph `union_find.rs`) while leaving
 // every edge offset stored on a single tree edge (O(S) total stored bits for total input
 // bit-length S). Dense `usize` indices keep tree walks and LCA queries allocation-free without
 // `HashMap` lookups or `Atom` clones; LCA cancellation in `rewrite_lin_full` and `union` avoids

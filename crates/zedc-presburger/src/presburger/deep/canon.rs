@@ -4,11 +4,16 @@
 //! conjunction or disjunction (by the root of its sequence), a run of one symbol repeated,
 //! or a chunk of two or more symbols. The parse is that of Mehlhorn, Sundar and Uhrig
 //! ("Maintaining dynamic sequences under equality tests in polylogarithmic time",
-//! Algorithmica 17, 1997, doi:10.1007/bf02522825, cited in the crate's `lib.rs`, "References"):
-//! at even levels each run of one symbol becomes a run symbol, and at
-//! odd levels, where no two neighbors are equal, deterministic coin tossing (Cole and
+//! Algorithmica 17, 1997, doi:10.1007/bf02522825, read 2026-11-21; the paper's rule and its
+//! proof are sketched in the crate's `lib.rs`, "References"):
+//! at even levels each run of one symbol becomes a run symbol (the paper's `elpow`, sec. 3),
+//! and at odd levels, where no two neighbors are equal, deterministic coin tossing (Cole and
 //! Vishkin) colors each symbol from its number and those of the four before it, and a chunk
-//! starts at each symbol whose color is above both its neighbors'. Each choice depends only on
+//! starts at each symbol whose color is above both its neighbors' (the paper's marking rule,
+//! sec. 2.2). The paper reduces the six colors to three before marking, so that a block has
+//! at most 4 symbols; here the six colors are marked directly, so a chunk has at most 10
+//! (between two maxima the colors fall then rise, at most 5 steps each), and still at least 2
+//! but at the ends, which keeps the depth O(log N). Each choice depends only on
 //! a few neighbors, so a sequence has one parse however it was grouped, two equal sequences
 //! have one root, and joining two parsed sequences reparses only a few symbols at each level
 //! near the join. A symbol equal to another is the same entry of the arena, so equal symbols
@@ -24,8 +29,14 @@
 // measured only together with it). The counts of runs are integers of O(log N) bits. When
 // the sharing makes N exponential in the n distinct parts, as in
 // `l01_38_presburger::shared::shifted_chains`, this is O(n^2). The exact methods known for
-// comparing two such compressed sequences (this parse; recompression, Jeż, J. ACM 2016; its longest
-// common extension, I 2017) cost n log N too; a hash of each sequence would be linear but
+// comparing two such compressed sequences cost n log N too: recompression (Jeż, ACM Trans.
+// Algorithms 11(3), 2015, doi:10.1145/2631920, Theorem 1, O((n+m) log M)) and its
+// longest-common-extension structure (T. I, CPM 2017, doi:10.4230/LIPIcs.CPM.2017.18,
+// Theorem 2, built in O(n lg(N/n))), both read 2026-11-21 (see `lib.rs`, "References").
+// Jeż's sec. 1 reports that this parse applied directly to straight-line programs is "nearly
+// cubic"; the O(n log N) above rests on this file's own argument (four coloring rounds
+// rather than log* N, symbols interned by hash), not on the paper. A hash of each sequence
+// would be linear but
 // cannot decide equality alone. The author accepted this cost on 2026-11-04: O(n log N) is
 // always acceptable where no O(n) algorithm is possible. No answer is given up; the cost is.
 // A complete solution keeps each part's parse with the part, so that it is built once and not

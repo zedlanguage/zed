@@ -265,8 +265,19 @@ fn greatest(sys: &System) -> Result<Option<Vec<i64>>, Unsupported> {
     // Kosaraju with explicit stacks: each name and edge visited once per pass. Kosaraju did not
     // publish it; the first paper is M. Sharir, "A strong-connectivity algorithm and its
     // applications in data flow analysis", Comput. Math. Appl. 7(1):67-72, 1981,
-    // doi:10.1016/0898-1221(81)90008-0 (Crossref 2026-11-20; text not read: one depth-first
-    // pass for the finishing order, a second on the reversed edges in reverse of that order).
+    // doi:10.1016/0898-1221(81)90008-0, read 2026-11-21 in the publisher's PDF (LibGen; copy
+    // kept outside the repository). Sec. 2, Algorithm SCOMPS: a depth-first spanning tree `T`
+    // gives postorder numbers; the nodes are then taken in reverse postorder, and each node `h`
+    // with no component yet roots one, which is grown by a search backward along edges
+    // `(u, w)` into `w` over nodes `u` with no component and `post(u) < post(h)` (the T-
+    // descendants of `h`, by the absence of left-to-right cross edges). The proof shows each
+    // such set is `h`'s component. Departures: the graph here has no single root, so the first
+    // pass builds a depth-first forest (the cross-edge argument holds for a forest too); and
+    // the second pass, as in Kosaraju's form, drops the `post(u) < post(h)` test, which in
+    // reverse postorder only repeats what "no component yet" already ensures, since every node
+    // of larger postorder already has one. No test checks the components alone: an error here
+    // shows as a greatest solution that differs from enumeration's in
+    // `scc_composition_matches_enumeration`, which only reaches systems small enough to list.
     let mut visited = vec![false; n];
     let mut order = vec![];
     for root in 0..n {
@@ -773,10 +784,29 @@ fn scc_composition_answers_the_families() {
     }
 }
 
-/// All-pairs shortest distances by Floyd–Warshall, `None` on a negative cycle (Floyd, CACM
-/// 5(6):345, 1962, doi:10.1145/367766.368168; Warshall, JACM 9(1):11-12, 1962,
-/// doi:10.1145/321105.321107; Crossref 2026-11-20, texts not read). A negative cycle shows as
-/// a negative `d[i][i]` after the loop, the usual test, from memory.
+/// All-pairs shortest distances by Floyd–Warshall, `None` on a negative cycle (R. W. Floyd,
+/// "Algorithm 97: Shortest path", CACM 5(6):345, 1962, doi:10.1145/367766.368168;
+/// S. Warshall, "A theorem on Boolean matrices", JACM 9(1):11-12, 1962,
+/// doi:10.1145/321105.321107). Both read 2026-11-21 in the publishers' scans (LibGen; copies
+/// kept outside the repository). Warshall proves the Boolean closure: for each `i` in turn,
+/// every row `j` with `m[j][i] = 1` takes the OR of row `i`. Floyd's Algorithm 97 is the same
+/// loop over lengths, with no proof and no word on negative cycles: "for i ... for j ... if
+/// m[j, i] < inf then for k ... s := m[j, i] + m[i, k]; if s < m[j, k] then m[j, k] := s".
+/// Here `k` is Floyd's `i`; Floyd does not set `m[i, i] = 0`, which this code does.
+///
+/// The negative-cycle test is not in either paper; proof. (a) Every finite `d[i][j]` is the
+/// weight of some walk from `i` to `j` (induction on the updates). (b) After phase `k`,
+/// `d[i][j]` is at most the weight of every simple path `i -> j` with inner nodes `<= k`, and
+/// `d[i][i]` at most the weight of every simple cycle through `i` with other nodes `<= k`:
+/// such a path or cycle whose largest other node is `k` splits at `k` into two simple paths
+/// with inner nodes `< k`, bounded after phase `k - 1`, and entries only decrease, also inside
+/// phase `k`. So a negative cycle through `i` leaves `d[i][i] < 0`, by (b); with none, every
+/// closed walk splits into simple cycles of weight `>= 0`, so by (a) `d[i][i]` stays at its
+/// start, 0. Hence "all `d[i][i] == 0`" holds exactly when there is no negative cycle.
+/// With a negative cycle the entries can fall by a factor up to 2 a phase; at the sizes used
+/// here (at most 17 nodes, small weights) that stays far inside `i64`.
+/// Test: `distances` is checked by `assert!(distances(2, &[(0, 1, -1), (1, 0, 0)]).is_none())`
+/// below and through the tests that compare it with [`brute`]; it is itself the oracle.
 fn distances(n: usize, edges: &[(usize, usize, i64)]) -> Option<Vec<Vec<Option<i64>>>> {
     let mut d = vec![vec![None; n]; n];
     for (i, row) in d.iter_mut().enumerate() {

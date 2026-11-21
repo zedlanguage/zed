@@ -643,8 +643,9 @@ pub fn unit_sum(g: &Formula) -> bool {
 }
 
 /// An edge of a difference constraint: `to <= from + weight`, `None` standing for the value 0
-/// (Shostak's node `z`; Shostak 1981, doi:10.1145/322276.322288), so that a bound is an edge
-/// to or from it.
+/// (Shostak's zero variable `v0`, sec. 2; Shostak 1981, doi:10.1145/322276.322288, read
+/// 2026-11-21; for these rows the graph is its own closure, sec. 4; see the crate's `lib.rs`,
+/// "References"), so that a bound is an edge to or from it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Edge {
     /// The name the edge leaves, or `None` for 0.
@@ -3180,7 +3181,9 @@ impl Blocks {
         // `vendor/imbl` (Blelloch, Ferizovic and Sun, "Just Join for Parallel Ordered Sets",
         // SPAA 2016, doi:10.1145/2935764.2935768, arXiv:1602.02120), O(m log(n/m + 1)) for m
         // keys into n, which sums to O(n log n) over any merge tree (Brown and Tarjan, "A fast
-        // merging algorithm", JACM 26(2), 1979, doi:10.1145/322123.322127); (2) the indexes
+        // merging algorithm", JACM 26(2), 1979, doi:10.1145/322123.322127, sec. 4, p. 225,
+        // stated without proof; both papers read 2026-11-21, the proof by the product of
+        // binomials is in the crate's `lib.rs`, "References"); (2) the indexes
         // keyed by conjunct or name (`of`, `up`, `moving_at`) are not rewritten:
         // `uf_merge(b, keep)` records `b -> keep` in the persistent union-find `uf` (union by
         // rank, path compression on `&mut self`; Tarjan, JACM 22(2), 1975,
@@ -3565,9 +3568,12 @@ impl Blocks {
     // side. Still near the block each time: taking a chord out of a long cycle, which leaves
     // one block, when `P` or the meeting search is long, and a name of many conjuncts in other
     // blocks, whose entries the searches pass over. Holm, de Lichtenberg and Thorup's dynamic
-    // biconnectivity (J. ACM 48(4), 2001, doi:10.1145/502090.502095) bounds every case by
-    // O(log⁵ n) amortized, at the cost of a far larger
-    // structure.
+    // biconnectivity (J. ACM 48(4), 2001, doi:10.1145/502090.502095, read 2026-11-21;
+    // Theorem 23, O(log⁵ n) amortized per insertion, deletion or query) bounds every case, at
+    // the cost of a far larger structure: a spanning forest kept in levels with top trees, and
+    // for each nontree edge the triples `xyz` of its cycle that it covers (sec. 7). It answers
+    // whether two vertices are biconnected; it does not list a block's conjuncts, which `peel`
+    // must produce, so taking it would need that listing added. See `lib.rs`, "References".
     fn peel(&mut self, b: BlockId, r: BlockId, u: (&Arc<str>, BlockId), v: (&Arc<str>, BlockId)) {
         let path = self.route(
             b,

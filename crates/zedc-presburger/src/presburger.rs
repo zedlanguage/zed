@@ -89,7 +89,9 @@
 //! Meyer 1974, doi:10.1007/bf01585518; Monniaux 2010, doi:10.1007/978-3-642-14295-6_51; Freuder
 //! 1982, doi:10.1145/322290.322292; Dechter 1999, doi:10.1016/s0004-3702(99)00059-4; Kahn 1962,
 //! doi:10.1145/368996.369025; Tarjan 1972, doi:10.1137/0201010; Sleator and Tarjan 1983,
-//! doi:10.1016/0022-0000(83)90006-5; Cuthill and McKee 1969, doi:10.1145/800195.805928;
+//! doi:10.1016/0022-0000(83)90006-5, with Sleator and Tarjan 1985, doi:10.1145/3828.3835 (the
+//! splay form of the link-cut forest); Cuthill and McKee 1969, doi:10.1145/800195.805928;
+//! Gibbs, Poole and Stockmeyer 1976, doi:10.1137/0713023;
 //! Berkholz, Bonsma and Grohe, doi:10.1007/s00224-016-9686-0; Cardon and Crochemore 1982,
 //! doi:10.1016/0304-3975(82)90016-0, with Paige and Tarjan 1987, doi:10.1137/0216062; Andrew
 //! 1979, doi:10.1016/0020-0190(79)90072-3; Fenwick 1994, doi:10.1002/spe.4380240306 (the type
@@ -1299,8 +1301,11 @@ fn join_lone_disjuncts(p: &mut Parts) {
 /// The places in `ors` of the disjunctions with a disjunct that has constraints of its own, in
 /// breadth-first order over the parts, two parts (a row of `rows` or a disjunction) being
 /// neighbors when they share an atom, from a part that a first breadth-first search from the
-/// first disjunction of its group reaches last (the start that Cuthill and McKee's order takes,
-/// "Reducing the bandwidth of sparse symmetric matrices", ACM '69, 157-172). Each group of
+/// first disjunction of its group reaches last (one step of the pseudo-peripheral start of
+/// Gibbs, Poole and Stockmeyer, SIAM J. Numer. Anal. 13(2), 1976, doi:10.1137/0713023, sec.
+/// 4.1, Algorithm I, read 2026-11-21, without its restart loop; Cuthill and McKee, ACM '69,
+/// doi:10.1145/800195.805928, start at a node of least degree instead; both in the crate's
+/// `lib.rs`, "References"). Each group of
 /// parts linked by shared atoms comes whole. On a chain, where each part shares atoms with the
 /// one before and the one after only, the order runs from one end to the other, whatever the
 /// names of the atoms or the order of `ors`. O(t) hash operations for `t` terms.
@@ -5790,8 +5795,13 @@ mod cell_sweep {
         }
     }
 
-    /// Rooted link-cut splay forest (Sleator & Tarjan 1983) without `evert`. Each auxiliary splay
-    /// tree stores a preferred path ordered by tree depth (`left` shallower, `right` deeper), so
+    /// Rooted link-cut splay forest without `evert`: the dynamic trees of Sleator and Tarjan
+    /// 1983 (doi:10.1016/0022-0000(83)90006-5), which keep each solid path in a biased tree, in
+    /// the splay form of Sleator and Tarjan 1985 (doi:10.1145/3828.3835, sec. 6, "virtual
+    /// trees", O(log n) amortized per operation by the potential of sec. 2, twice the sum of
+    /// the ranks); both read 2026-11-21, see the crate's `lib.rs`. Each auxiliary splay tree
+    /// stores a preferred path ordered by tree depth (`left` shallower, `right` deeper; the 1985
+    /// paper has the mirror image, a node's parent being its symmetric-order successor), so
     /// `sum[x]` after `access(x)` equals `f_x ∘ ... ∘ f_root`.
     // Complexity tradeoff: naive re-evaluation or solve of the n-level chain in each of k cells
     // costs O(k n) or O(k n log n), quadratic when k = Theta(n). Used: link-cut tree edge updates
@@ -7772,8 +7782,10 @@ impl Bounded {
 // 2.68 times from k = 64 to 128). Sets with the same `base` meet in `base` and the atoms of
 // the smallest `extra` found in every other, O(e log m) for the e atoms of the extras, and the
 // meet keeps `base` uncopied when they add none. Liljenzin, "Confluently persistent sets and
-// maps" (arXiv 1301.3388, 2013, doi:10.48550/arXiv.1301.3388; compared, not used) gets the
-// same from hash-consed treaps, whose equal sets are one node, for any two sets; here the two
+// maps" (arXiv 1301.3388, 2013, doi:10.48550/arXiv.1301.3388; read 2026-11-21, compared, not
+// used; summary in the crate's `lib.rs`, "References") gets the same from hash-consed treaps,
+// whose equal sets are one node, for any two sets (its p. 6 claims expected O(k log(n/k)) for
+// k = min(|t1 ∆ t2|, m), argued only in outline); here the two
 // pieces suffice because a set shared by many parts is always shared as a `base`. Sets with
 // different bases are met as before.
 // Exact: a set is `B ∪ E_i` ([`Bounded::contains`]); with one base `B`, `⋂ (B ∪ E_i)` is
@@ -7912,8 +7924,10 @@ use zed_collections::sorted::sorted_get;
 // order. `cells_minus` keeps the merge for its other callers, whose lists are short: there its
 // cost per call is lower (by 0.3 % of the instructions of direct_cross_payload, measured).
 // This is adaptive merging (F. K. Hwang and S. Lin, "A simple algorithm for merging two
-// disjoint linearly ordered sets", SIAM J. Comput., 1972; E. D. Demaine, A. López-Ortiz and
-// J. I. Munro, "Adaptive set intersections, unions, and differences", SODA 2000).
+// disjoint linearly ordered sets", SIAM J. Comput. 1(1), 1972, doi:10.1137/0201004, sec. 4,
+// Theorems 1 and 2; E. D. Demaine, A. López-Ortiz and J. I. Munro, "Adaptive set
+// intersections, unions, and differences", SODA 2000, sec. 5, galloping). Both read
+// 2026-11-21; the statements and proofs are sketched in the crate's `lib.rs`, "References".
 fn cells_without(a: &[(usize, usize)], b: &[(usize, usize)]) -> CellSet {
     let (Some(&(first, _)), Some(&(_, last))) = (a.first(), a.last()) else {
         return Vec::new();
@@ -8567,7 +8581,8 @@ impl CellWalk<'_> {
     // base: a base must occur in every clause, outside the union of its window gaps. Each
     // base run and window is read once, with O((R + W) log(R + W)) sorting and ordered-map
     // indexing. This is the disjoint-catalog lead of R4_CODEX.md, not the general
-    // persistent merge of Liljenzin, "Confluently Persistent Sets and Maps", 2013.
+    // persistent merge of Liljenzin, "Confluently Persistent Sets and Maps", arXiv 1301.3388,
+    // 2013 (read 2026-11-21; see `met_atoms` and the crate's `lib.rs`, "References").
     fn catalog_live(&mut self, p: &Parts) -> Option<CellSet> {
         let all = [(0, self.cells.len() - 1)];
         let mut ids: BTreeMap<(*const CellSet, usize, usize), usize> = BTreeMap::new();
@@ -9708,7 +9723,8 @@ fn envelope(mut lines: Vec<(Int, Int)>) -> Vec<(Option<Q>, Int, Int)> {
 ///
 /// Complexity tradeoff: naive version, each line tested against every pair of the others,
 /// O(n³) products. Used: the monotone chain (Andrew, "Another efficient algorithm for convex
-/// hulls in two dimensions", IPL 9(5), 1979, doi:10.1016/0020-0190(79)90072-3) on the sorted
+/// hulls in two dimensions", IPL 9(5), 1979, doi:10.1016/0020-0190(79)90072-3, read
+/// 2026-11-21; sec. 3 builds a point hull, this is its dual on lines; see `lib.rs`) on the sorted
 /// lines, each index pushed and popped
 /// at most once, O(n) products after the caller's O(n log n) sort. Tradeoffs: none.
 ///
@@ -16430,11 +16446,15 @@ fn colors_inner(cons: &[Con], counted: bool) -> Result<(Vec<Atom>, BTreeMap<Atom
 /// new vertices) and two edges (u, v_e) and (v_e, v). Assign colour alpha(v_e) = c(e) to the
 /// new vertices"; the term vertex here is that `v_e`. A popped color class R refines every
 /// class by the number of neighbors in R each of its vertices has. After a split, the largest
-/// new class is not pushed unless the old one was waiting (Hopcroft's rule, "process the smaller
-/// half"), so a vertex is in O(log N) refining classes in all. The coarsest stable coloring is
+/// new class is not pushed unless the old one was waiting (Hopcroft's rule, "we can always
+/// select the half with fewer transitions", 1971, doi:10.1016/b978-0-12-417750-5.50022-1,
+/// p. 190 and Step 7c), so a vertex is in O(log N) refining classes in all. Hopcroft,
+/// Cardon and Crochemore, and Paige and Tarjan were read 2026-11-21; their statements and
+/// proofs are sketched in the crate's `lib.rs`, "References". The coarsest stable coloring is
 /// Cardon and Crochemore's "coarsest regular congruence", an equivalence in which any two equal
 /// vertices have the same number of successors by each type of arc in each class ("Partitioning
-/// a graph in O(|A| log2 |V|)", Theoret. Comput. Sci. 19, 1982, 85-98), and Paige and Tarjan's
+/// a graph in O(|A| log2 |V|)", Theoret. Comput. Sci. 19, 1982, 85-98, abstract and
+/// Theorem 1), and Paige and Tarjan's
 /// coarsest size-stable refinement, which they compute by queueing every new block but the
 /// largest, in O(m log n) time because a vertex lies in at most log2 n + 1 of the blocks taken
 /// from the queue ("Three partition refinement algorithms", SIAM J. Comput. 16(6), 1987,
@@ -20646,7 +20666,8 @@ fn cover_input(f: &Formula) -> Formula {
 /// Pugh (1992), exact projection: eliminating a variable whose bounds have unit
 /// coefficients is exact, and difference rows remain difference rows. Thus the
 /// base's shortest-path hulls have no holes. Freuder (1982), section 4: on a tree,
-/// arc consistency extends any surviving value to a whole assignment. The two
+/// arc consistency extends any surviving value to a whole assignment (Theorem 3 with
+/// Theorem 1, read 2026-11-21; see `forest_domains` and the crate's References). The two
 /// exact revision passes of `forest_domains` give those values, including holes;
 /// its handled components share no atom with any unhandled component. When all
 /// disjunctions are handled, the remaining components are satisfiable base rows.
@@ -20712,7 +20733,9 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
 ///    `A_1 = true`).
 /// 2. Substituting `x = -a*(t + k)` from a unit equality `a*x + t + k == 0` (`a = ±1`, `x != s`)
 ///    is a unimodular elimination (W. Pugh, "The Omega test", Supercomputing 1991, sec. 2.2,
-///    doi:10.1145/125826.125848),
+///    doi:10.1145/125826.125848, read 2026-11-21: "we first check if there exists a j != 0
+///    such that |a_j| = 1. If so, we eliminate the constraint by solving for x_j and
+///    substitute the result into all other constraint[s]"; see the crate's References),
 ///    preserving the set of integer projections onto all remaining atoms (and onto `s`).
 ///    Substituting a single-atom equality `a*x + k == 0` (`x != s`) is exact because `a | k`
 ///    fixes `x = -k/a` uniquely, else no integer solution exists.
@@ -21655,7 +21678,8 @@ fn twins_merged(
     let mut number: HashMap<Atom, Atom> = HashMap::new();
     let mut seen: HashMap<Formula, Atom> = HashMap::new();
     let mut merged = false;
-    // Each atom after the atoms it waits for (Kahn's order, first ready first).
+    // Each atom after the atoms it waits for (Kahn's order, first ready first; Kahn 1962,
+    // doi:10.1145/368996.369025, read 2026-11-21; see the crate's `lib.rs`).
     zed_graph::kahn(
         &mut waits,
         &mut ready,
@@ -24379,13 +24403,14 @@ fn projected_hulls(
 /// The symbols `syms`, each once, in breadth-first order over the atoms of the sorted `rows`
 /// (two atoms neighbors when a row holds both), each group of linked atoms from an atom that a
 /// first breadth-first search from its least symbol reaches last, as [`by_structure`] orders
-/// parts (Cuthill and McKee, "Reducing the bandwidth of sparse symmetric matrices", ACM '69,
-/// 157-172); the groups by their least symbols, and a symbol no row holds where its place
-/// among the least symbols puts it. The order is a function of `rows` and `syms` as sets
-/// (`rows` sorted, rows and atoms visited in their sorted order), so the projections of
-/// [`projected_each`] made in it are too. On a chain the order runs from one end to the other,
-/// whatever the names, so its ranges cut few rows, as the caller's order did on the chains of
-/// `by_halves_against_old`.
+/// parts (the start is one step of Gibbs, Poole and Stockmeyer 1976, doi:10.1137/0713023,
+/// sec. 4.1; the order of the search is Cuthill and McKee's, ACM '69, 157-172; see
+/// [`by_structure`] and the crate's `lib.rs`); the groups by their least symbols, and a symbol
+/// no row holds where its place among the least symbols puts it. The order is a function of
+/// `rows` and `syms` as sets (`rows` sorted, rows and atoms visited in their sorted order), so
+/// the projections of [`projected_each`] made in it are too. On a chain the order runs from
+/// one end to the other, whatever the names, so its ranges cut few rows, as the caller's order
+/// did on the chains of `by_halves_against_old`.
 // Complexity tradeoff: the naive version, the symbols sorted by name, is also a function of
 // the sets, in O(k log k) for k symbols, but puts `v10` between `v1` and `v2`, so on a chain
 // the ranges of [`projected_each`] cut many rows and the rows passed between its nodes grow
@@ -24456,10 +24481,13 @@ fn symbols_by_structure<'a>(rows: &'a [Con], syms: &[&'a Atom]) -> Vec<&'a Atom>
 /// that of its own rows with its outside rows. Each step removes only atoms that the rows it
 /// is not given do not hold, so (as elimination over the integers is exact) each leaf gets the
 /// integer points of `rows` read on its symbol, as with [`by_halves`] (bucket elimination on a
-/// tree decomposition: Dechter, "Bucket elimination", 1999; the two passes of a junction tree,
-/// Lauritzen and Spiegelhalter, 1988). The rows of a class of atoms not asked each reach the
-/// places of the whole class, so they are all put at one node and such an atom is never passed
-/// between nodes.
+/// tree decomposition: Dechter, "Bucket elimination", 1999, sec. 2; the two passes of a junction
+/// tree, Lauritzen and Spiegelhalter, 1988, secs. 9.2 and 9.3; both read 2026-11-21, see the
+/// crate's `lib.rs`, "References". Departures: a balanced tree of halves, not a chain of
+/// cliques; existential projection over the integers, not sums of probabilities; and, as
+/// Dechter says of Fourier elimination, no bound of the rows passed by the width). The rows of
+/// a class of atoms not asked each reach the places of the whole class, so they are all put at
+/// one node and such an atom is never passed between nodes.
 ///
 /// An atom [`shadow`] keeps (where its elimination would add rows, or is not exact) stays in
 /// the rows passed on, as in [`by_halves`], and the leaves still get the points of
@@ -24991,7 +25019,10 @@ fn two_atom_side(c: &Formula, sym: &Atom, dir: i64) -> Option<Option<Int>> {
 /// (Fourier, 1827; Motzkin, "Beiträge zur Theorie der linearen Ungleichungen", 1936); the
 /// rows are divided by the gcd of their coefficients with the constant rounded down, which
 /// holds every integer point (Pugh, "The Omega test", Supercomputing '91, 1991,
-/// doi:10.1145/125826.125848; Fourier's and Motzkin's texts have no DOI).
+/// doi:10.1145/125826.125848, sec. 2.1, read 2026-11-21: "we take the floor when dividing a_0
+/// by g"; Fourier's and Motzkin's texts have no DOI and were not read; the step and its
+/// two-line proof were read in Dantzig and Eaves 1973, doi:10.1016/0097-3165(73)90004-6,
+/// p. 289, on 2026-11-21; see the crate's `lib.rs`).
 ///
 /// Proof that no point lies past the answer: each row left is a consequence of `c`, by
 /// induction on the eliminations: a row Fourier-Motzkin makes from a lower row `l` and an upper
@@ -25237,11 +25268,23 @@ fn exact_at(c: &Formula, sym: &Atom, v: &Int) -> Option<bool> {
 /// `y <= x + k` is an edge `x → y` of weight `k`, a bound is an edge to or from `z`, and an
 /// atom's greatest value is its distance from `z`, its least the negated distance to `z`
 /// (Shostak, "Deciding linear inequalities by computing loop residues", J. ACM 28, 1981,
-/// doi:10.1145/322276.322288).
+/// doi:10.1145/322276.322288, read 2026-11-21: sec. 2 gives the graph with a zero variable,
+/// sec. 4 the difference-row case; the crate's `lib.rs`, "References", has the summary).
+/// Proof of the distance reading, which is not in Shostak's paper: write `δ(v)` for the
+/// distance from `z` to `v`. Summing the rows along a path `z → ... → x` gives
+/// `x <= 0 + weight`, so every point has `x <= δ(x)`. Conversely, difference rows are closed
+/// under the pointwise minimum of two points, and under adding one constant to every atom
+/// and `z`. With `D = δ(x) - m(x) >= 0`, take the minimum of the point `v ↦ δ(v)` (`+∞`
+/// where `z` does not reach `v`; it meets each row `y <= x + k` by the triangle inequality,
+/// `z` taking 0) and `m + D` (with `z` at `D`): `z` gets `min(0, D) = 0`, every row holds,
+/// and `x` gets `min(δ(x), m(x) + D) = δ(x)`, an integer for integer weights. Where `δ(x)` is
+/// infinite, `m + t` for every `t >= 0` gives the same argument with no upper limit. The least
+/// value is symmetric, with distances to `z`.
 /// The point gives a potential under which no edge has a negative reduced weight, so each
-/// side is one Dijkstra search: O(m log n) for m constraints over n atoms, against
-/// [`hull_from`]'s O(log d) questions of the whole group for each atom. The bounds are those
-/// [`hull_from`] finds, exact at any magnitude.
+/// side is one Dijkstra search (Dijkstra 1959, Problem 2, read 2026-11-21; his scan for the
+/// least node is replaced by a heap; see `lib.rs`): O(m log n) for m constraints over n
+/// atoms, against [`hull_from`]'s O(log d) questions of the whole group for each atom. The
+/// bounds are those [`hull_from`] finds, exact at any magnitude.
 fn difference_hulls(cons: &[&Con], m: &Model) -> Option<HashMap<Atom, IntervalSet>> {
     let end = |e: Option<Int>, inf: End| e.map_or(inf, |v| End::Fin(Num::from(&v)));
     Some(
@@ -25840,8 +25883,10 @@ fn is_difference(c: &Con) -> bool {
 /// differences the base fixes), with difference rows and bounds in every disjunct, when the
 /// component, with its tie classes contracted, is a forest. Two passes of arc revision over a
 /// forest give each atom the values it takes at some point (Freuder 1982,
-/// doi:10.1145/322290.322292; the proof below is written out here and does not rest on the
-/// paper, which was not read). Also, for each disjunction, whether its component was handled so.
+/// doi:10.1145/322290.322292, read 2026-11-21: sec. 4, Theorem 3 with Theorem 1, strong
+/// 2-consistency makes a forest backtrack-free in preorder; sketched in the crate's
+/// References; the proof below is written out here and does not rest on the paper). Also,
+/// for each disjunction, whether its component was handled so.
 ///
 /// Proof that the domains are exact, where an answer is given:
 /// 1. Tie classes. `p` is a point of the base rows, so each edge `u → v` of weight `w`
@@ -27227,7 +27272,11 @@ fn part_bounds(part: &Formula, m: &Model, factors: &[&Atom]) -> PartBounds {
 /// -1) over the integer points of `c`, which has one. In negation normal form `c` is an
 /// and-or tree of constraints, so its integer points are the union, over its terms in
 /// disjunctive form, of the integer points of each term's polyhedron `P`. When `P` has an
-/// integer point, the hull of its integer points has the recession cone of `P` (Meyer 1974),
+/// integer point, the hull of its integer points has the recession cone of `P` (Meyer 1974,
+/// doi:10.1007/bf01585518, Theorems 3.6 and 3.9, read 2026-11-21; the two directions used are
+/// proved in the crate's `lib.rs`, "References": an integer point plus integer multiples of a
+/// scaled rational ray stays in `P`, and a function unbounded over the integer points is
+/// unbounded over `P`, so it grows along a ray of `P`'s cone),
 /// so `sym` is unbounded over them exactly when some ray `r` with `A·r >= 0` and `E·r == 0`
 /// for `P`'s rows `A·z + a >= 0` and `E·z + e == 0` has `dir · r_sym > 0`, and then one with
 /// `dir · r_sym >= 1` in integers, the cone being rational. The question is one formula: each
@@ -31279,6 +31328,17 @@ mod difference_rows {
     /// `k`; the bounds are edges from and to a node for zero) have no point: a cycle of
     /// negative weight, by Bellman-Ford. Over the integers as over the reals, since the
     /// weights are integers.
+    ///
+    /// Bellman 1958 (doi:10.1090/qam/102435, read 2026-11-21; see the crate's `lib.rs`) gives
+    /// the rounds `f_i ← min_j (t_ij + f_j)` for positive times only, and says nothing of
+    /// negative cycles, so the test's reasoning is here. With `N = n + 1` nodes and every `d`
+    /// starting at 0 (a source joined to each node by a 0 edge): (a) a round with no change
+    /// leaves `d[b] <= d[a] + w` on every edge; summed round a cycle this says its weight is at
+    /// least 0, so no change means no negative cycle. (b) After round `r`, each `d[v]` is at most
+    /// the least weight of a walk of at most `r` edges ending at `v`, and every `d[v]` is the
+    /// weight of some walk; with no negative cycle the least walk weight is reached by a simple
+    /// path, of at most `N - 1` edges, so round `N` changes nothing. The loop runs `N + 1`
+    /// rounds, so it returns `false` exactly when there is no negative cycle.
     fn negative_cycle(n: usize, edges: &[(usize, usize, i128)]) -> bool {
         let mut d = vec![0i128; n + 1];
         for _ in 0..=n + 1 {

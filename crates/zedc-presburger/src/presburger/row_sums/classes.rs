@@ -48,9 +48,18 @@
 //! means `|X|² ≥ C_δ · μ(X) · mx(X)`. For a set of n distinct weights (μ = 1) of at most w, it
 //! needs n² ≥ 1699200 · log(2n) · w, about n ≥ 4,700 at w = 13 and more for larger w: a row
 //! of thousands of atoms, which the join answers in `O(1)` operations per atom since its sums
-//! are then a few intervals. Galil and Margalit (SIAM J. Comput. 20(6), 1991) is stated with
-//! `≫`, which hides its constants (Bringmann and Wellnitz, their Theorem 1.1), so it gives no
-//! bound to check at the code. No result found answers subset sum exactly in polynomial time
+//! are then a few intervals. Z. Galil and O. Margalit, "An almost linear-time algorithm for the
+//! dense subset-sum problem", SIAM J. Comput. 20(6), 1991, pp. 1157-1189, doi:10.1137/0220072,
+//! read 2026-11-21 in the publisher's PDF (Sci-Hub mirror; copy kept outside the repository):
+//! its introduction states the conditions with `≪`, but its Theorem 5.1 has explicit
+//! constants: for a set `A` of `m` distinct numbers in `(0, ℓ]` with `m > 100 ℓ^0.5 log₂ ℓ`,
+//! every target in `(L, S_A − L)`, `L = S_A/6 + 2ℓ^1.5`, is solved after O(ℓ log ℓ + m log² ℓ)
+//! preprocessing. Its sec. 3 says what the sums there are: with `d0` the least common multiple
+//! of the small almost-divisors (Theorem 3.4), an interval where `d0 = 1`, else progressions of
+//! step `d0`, one per residue in `A* mod d0`. For `overlap_rows`' weights, `ℓ = 1990`, the
+//! condition needs `m > 48,900` atoms, far past the measured `k`, so neither theorem explains
+//! the measured density there; it is measured, not proved. No result found answers subset sum
+//! exactly in polynomial time
 //! on a class wider than these.
 
 use std::cell::Cell;

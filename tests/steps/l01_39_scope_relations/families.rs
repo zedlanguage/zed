@@ -2076,7 +2076,8 @@ fn scales(name: &str, n: usize, power: u32) {
 // Since PERF-l139-wake (2026-11-13) a part already projected is skipped when a test shows
 // that every value of each of its names has an integer point of the part (`Scope::idle`,
 // Fourier-Motzkin elimination with the dark shadow of Pugh 1991 (Supercomputing '91,
-// pp. 4-13, doi:10.1145/125826.125848; Crossref 2026-11-20), on rows whose count never
+// pp. 4-13, doi:10.1145/125826.125848; Crossref 2026-11-20; sec. 2.3.1, the dark shadow,
+// read 2026-11-21, see `zedc-presburger`'s `lib.rs`, "References"), on rows whose count never
 // grows), and other tests skip a punctured line with support at every value
 // (`Scope::puncture_idle`) and the parts of lower threshold clauses under one upper sum
 // (`LowerGaps`); `extreme_base` and `compact_abs` drop rows that other rows imply. The

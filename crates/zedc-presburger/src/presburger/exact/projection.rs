@@ -219,7 +219,9 @@ fn lcm(a: &Int, b: &Int) -> Int {
 /// of the projection of `rows` onto `s`: the model-based projection for linear integer
 /// arithmetic, `LIAProj`, of Komuravelli, Gurfinkel and Chaki ("SMT-based model checking for
 /// recursive programs", CAV 2014, section "Model Based Projection for Linear Integer
-/// Arithmetic"; arXiv 1405.4028), which keeps of Cooper's quantifier elimination for each atom
+/// Arithmetic", in the appendix of arXiv 1405.4028, read 2026-11-21 in its LaTeX source; the
+/// definition, the paper's choice of disjunct and the departures below are in the crate's
+/// References), which keeps of Cooper's quantifier elimination for each atom
 /// the one disjunct that `m` satisfies. `m` satisfies `rows`; `rows` hold no product atom.
 /// Every value of the answer has a point of `rows`, and `m`'s value of `s` is one of them.
 ///

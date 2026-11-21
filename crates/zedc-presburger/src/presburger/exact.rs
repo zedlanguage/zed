@@ -1948,11 +1948,15 @@ fn implied(c: &Con, d: &Dirs) -> bool {
 // the loop is identical to running with no fast path. Stopping at `*fast == 0` keeps a shared
 // zeroed allowance (`has_points`) from walking remaining parts. The loop is the lazy model
 // enumeration of Monniaux, "Quantifier Elimination by Lazy Model Enumeration", CAV 2010,
-// sec. 2.2 and 3, doi:10.1007/978-3-642-14295-6_51, with model-based cells after Bjørner and
-// Janota, "Playing with Quantified Satisfaction", LPAR-20, 2015, sec. 2.2, doi:10.29007/vv21;
-// `direct` is Pugh's structural exact shadow, "A practical algorithm for exact array
-// dependence analysis", CACM 35(8), 1992, doi:10.1145/135226.135233, the section on integer
-// solutions by Fourier-Motzkin elimination (sec. 2.3.2 of the expanded text). Full
+// sec. 2.2 (block `¬π(C_i)`, the projection of each implicant, not `¬C_i`) and sec. 3
+// (Algorithm 2, the same loop done lazily; with one existential block it is the loop of sec.
+// 2.2), doi:10.1007/978-3-642-14295-6_51, with model-based cells after Bjørner and Janota,
+// "Playing with Quantified Satisfaction", LPAR-20, 2015, sec. 2.2 (Requirement 1: a cell
+// holds at the model and implies the projection), doi:10.29007/vv21; both read 2026-11-21,
+// the departures listed in the crate root's References; `direct` is Pugh's structural exact
+// shadow, "A practical algorithm for exact array dependence analysis", CACM 35(8), 1992,
+// doi:10.1145/135226.135233, the section on integer solutions by Fourier-Motzkin elimination
+// (sec. 2.3.2 of the expanded text). Full
 // citations, and how each was checked, are in the crate root's References.
 fn tried<T>(
     fast: &mut u64,
@@ -2314,16 +2318,20 @@ type ReadOnce = (bool, HashMap<Atom, IntervalSet>);
 /// to `B`, a conjunction holds at `s = v` exactly where its child on the path does and its other
 /// parts have points, a disjunction where its child does or another part has a point, as those
 /// parts do not read `s`; unrolled, that is `esc(B)`, or `ctx(B)` and `v` in `B`'s projection
-/// (Opus and Sol, round 1 of XR-cover-hybrid; the two passes of Darwiche and Marquis, "A
-/// knowledge compilation map", JAIR 17, 2002, sec. 4, for decomposable forms).
+/// (Opus and Sol, round 1 of XR-cover-hybrid; after Darwiche and Marquis, "A knowledge
+/// compilation map", JAIR 17, 2002, doi:10.1613/jair.989, read 2026-11-21: sec. 4, Table 5,
+/// consistency of a decomposable form in one bottom-up pass, and sec. 5, Proposition 5.1,
+/// forgetting in a decomposable form; the paper gives neither pass in detail, so the top-down
+/// pass and this proof are ours; see the crate's References).
 ///
 /// An atom may also be read by several blocks, provided no conjunction has two parts that read
-/// it (the tree is decomposable, Darwiche and Marquis sec. 2). The values of `s` are then every
-/// value where some disjunction that reads `s`, with `ctx` there, has a part with a point that
-/// does not read `s`, else the union of the projections onto `s` of the blocks `B` that read it
-/// with `ctx(B)`. Proof: by the rule above, node by node, a conjunction's values of `s` are those
-/// of its one part that reads `s` where its other parts have points; a disjunction's are the
-/// union of those of its parts, every value for a part with a point that does not read `s`.
+/// it (the tree is decomposable, Darwiche and Marquis sec. 2, Definition 2.5). The values of
+/// `s` are then every value where some disjunction that reads `s`, with `ctx` there, has a part
+/// with a point that does not read `s`, else the union of the projections onto `s` of the
+/// blocks `B` that read it with `ctx(B)`. Proof: by the rule above, node by node, a
+/// conjunction's values of `s` are those of its one part that reads `s` where its other parts
+/// have points; a disjunction's are the union of those of its parts, every value for a part
+/// with a point that does not read `s`.
 /// Unrolled from the root, that is the rule stated. Such a disjunction is found among the nodes
 /// where the paths to the blocks of `s` part (their lowest common ancestors), checked one by one,
 /// and on the paths between them, where one part alone reads `s` and `esc` is counted as before
@@ -3425,7 +3433,8 @@ fn ends_sent(d: &Ends, a: &Int, b: &Int, k: &Int) -> Ends {
 /// their row. Exact over the integers, as a forest of constraints made arc consistent has a
 /// point with each atom at each of its values: each neighbor's subtree takes a value that meets
 /// the row, and so on outward, with no cycle to close (Freuder, "A sufficient condition for
-/// backtrack-free search", JACM 29, 1982, for trees; each message an interval, by the rounding
+/// backtrack-free search", JACM 29, 1982, sec. 4, Theorem 3 with Theorem 1, read 2026-11-21:
+/// strong 2-consistency makes a forest backtrack-free; each message an interval, by the rounding
 /// above). Where some atom has no value, the conjunction has no point and every atom gets none.
 // Complexity tradeoff: [`projected`] for each atom eliminates the others, O(r) each and O(r²)
 // for the r rows of a path of `wide_pairs`. Used: two passes over each tree, a message each way

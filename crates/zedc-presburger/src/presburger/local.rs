@@ -5,9 +5,11 @@
 //! The cluster is read as a graph with a node for each atom and one for each row or
 //! disjunction (an item), and an edge from each item to each of its atoms; a disjunction's
 //! atoms are also joined in a cycle, so that all of them lie in one block with it. A block is a
-//! biconnected component of that graph (Tarjan 1972, doi:10.1137/0201010; the full comment is
-//! in zed-graph `biconnected.rs`, and the crate's `lib.rs` cites it), and a cut node lies in
-//! two or more blocks; the blocks and cut nodes form a tree. Each block is asked about only
+//! biconnected component of that graph (Tarjan 1972, doi:10.1137/0201010, read 2026-11-21:
+//! sec. 3, Lemmas 3 and 5, Theorems 7 and 8; the full comment on the algorithm is in zed-graph
+//! `biconnected.rs`), and a cut node lies in two or more blocks; the blocks and cut nodes form
+//! a tree, which Tarjan does not state; the crate's `lib.rs`, "References", proves it from the
+//! maximality of blocks. Each block is asked about only
 //! through its own items, the bounds of its atoms, and one constraint for each cut node it
 //! holds, which sums up what the blocks on the cut node's other side allow:
 //! - for a cut atom, an interval of its values, the meet of the intervals the other sides give;

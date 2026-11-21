@@ -15,7 +15,9 @@ use zedc_int::int::Int;
 /// point, O(R) each (O(R log R) unsorted). Used: [`UpperHull::of`] builds it once by the
 /// monotone chain (A. M. Andrew, "Another efficient algorithm for convex hulls in two
 /// dimensions", Information Processing Letters 9(5), 1979, pp. 216-219,
-/// doi:10.1016/0020-0190(79)90072-3), O(R) on sorted points, and
+/// doi:10.1016/0020-0190(79)90072-3; read 2026-11-21, sec. 3, which sorts by `y` and keeps
+/// both chains, where this keeps the upper chain sorted by `x`; see the crate's `lib.rs`,
+/// "References"), O(R) on sorted points, and
 /// [`UpperHull::insert`] takes a point in O(log^2 R): two binary searches for the vertices it
 /// hides and a split of the persistent vector (`imbl::Vector`, O(log R) per index and per
 /// split). Tradeoffs: a point cannot be taken out; a caller whose points leave builds the hull
