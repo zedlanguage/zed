@@ -5069,6 +5069,8 @@ pub enum LevelWord {
     Scan(Reducer),
     /// `x.chunkBy(f)`.
     ChunkBy,
+    /// `k in x`, whose need gives nothing: the test is a `bool` whatever the family.
+    In,
 }
 
 impl LevelWord {
@@ -5084,6 +5086,7 @@ impl LevelWord {
             LevelWord::Find => "`find`",
             LevelWord::Scan(_) => "`.scan`",
             LevelWord::ChunkBy => "`chunkBy`",
+            LevelWord::In => "`in`",
         }
     }
 }
@@ -10821,9 +10824,15 @@ fn unchosen_text(
         // `a_shape_of_its_own_comes_before_the_second_shape_of_the_bucket`, red before (the
         // repair before `H` was still refused), which also covers `E`; it and
         // `two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason` check
-        // the bindings of the repair where `B` has two shapes. They do not check payloads with
-        // a shape between, nor the pins of [`Comparing::search`], which may drop shapes from a
-        // list: a dropped shape is one the member cannot fit, so (4) holds with it left out.
+        // the bindings of the repair where `B` has two shapes.
+        // `a_shape_of_its_own_repairs_with_a_shape_between_the_second_of_the_bucket_and_the_holder`
+        // (TEST-own-shape-repair-bindings) checks a shape between the second of `B` and `H`:
+        // the repair decides the type with the bindings of the two-shape case, and a third
+        // member that meets the shape between makes another pair refused, at the same bucket,
+        // with its own repair, after which the type is decided; so "no other refusal" does not
+        // hold for every set of members, only, by these tests, for the pair repaired. The pins
+        // of [`Comparing::search`] may drop shapes from a list: a dropped shape is one the
+        // member cannot fit, so (4) holds with it left out; no test makes a pin drop a shape.
         Some((Some(place), shape)) => format!(
             "give {first} a shape of its own, written after the first of those shapes and \
              before the second, the same as the shape that should hold it except at {place}: \
@@ -13261,6 +13270,21 @@ impl<'m, 's> Comparing<'m, 's> {
         *self.cx.borrow_mut() = open;
         out.tuples = kept.into();
         out.set = KType::union_all(std::iter::once(out.set).chain(rest));
+        // A variable or the unknown in `u` takes away values no part of `u` lists: a variable
+        // stands for a carrier its call picks, and `Ty` has no form for what of a type is not
+        // a variable, so only the rows above were marked. The scalar part was not: `int \ V`
+        // for `V in int | f64` was read as `int`, exact, which is more than the difference
+        // where `V` is `int`, and a parameter `(int \ V, V) -> int` refused a function taking
+        // `(int, f64)`, which fits it at each carrier (FAIL-diff-type-var-right-inexact). So
+        // the answer is exact only where nothing is left that such a `u` might take away:
+        // proof, a value left in `out` is not in the parts of `u` that list values (the
+        // subtractions above), and is in `t`; whether it is in the variable's carrier or the
+        // unknown is not known here, so the answer may hold it wrongly unless `out` lists
+        // nothing. Test: l01_22 kinds
+        // `a_difference_that_takes_away_a_type_variable_is_refused`.
+        if (u.dynamic || !u.vars.is_empty()) && !out.lists_nothing() {
+            exact = false;
+        }
         (out, exact)
     }
 }
@@ -15549,7 +15573,9 @@ impl Ty {
     /// False where a row or payload shape of `self` with no kernel type, or beside one of `t`
     /// with none, or beside a `t` holding a variable or the unknown, was kept whole though
     /// `t` may hold part of it: the answer then holds that whole row, more than the
-    /// difference, which only `is not` may read (FAIL-ty-diff-function-rows).
+    /// difference, which only `is not` may read (FAIL-ty-diff-function-rows). False also where
+    /// `t` holds a variable or the unknown and the answer lists a value, which that part of
+    /// `t` may take away (FAIL-diff-type-var-right-inexact).
     pub fn diff_exact(&self, t: &Ty) -> (Ty, bool) {
         self.diff_in(t, None)
     }
@@ -16727,9 +16753,15 @@ pub fn fits_sig_with(s: &Sig, q: &Sig, solve: Solve) -> bool {
 // function passed for a family parameter read by `.sum`, `==` on a parameter that may hold a
 // function, `.sum` on a union of a family and a function, and a function needing a family
 // passed where any `int ->? int` may be given: each refused; a family where the parameter
-// is a family: accepted. Not proved (FAIL-types-subtype-ignores-family): that every use in
-// zedc-check that needs a family reads the flag; the test covers the four uses above, not each
-// reader of `Sig::data`.
+// is a family: accepted. Test: l01_26 partial_maps
+// `every_reader_of_a_family_refuses_a_function` (TEST-every-sig-data-reader): each word of
+// zedc-check `entry_word` (`map`, `where`, `foldl`, `foldr`, `flatMap`, `group`, `count`,
+// `first`, `last`, `reduce`, `scan`, `chunkBy`, `any`, `all`, `find`, `zip`, `sum`), and `><`
+// and `==`, on a parameter declared `int ->? int`, each refusing a function at the call; `in`
+// on a parameter with no type written (its need was missing); and a function passed to a
+// list parameter, which the check below now refuses by its type. Not proved: that zedc-check
+// has no other reader of `Sig::data`; these were found by reading, not by enumerating every
+// reader.
 async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, '_>) -> bool {
     let explain = c.cx.borrow_mut().why.take().is_some();
     if !s.needs.is_empty() {
@@ -16789,6 +16821,17 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     // value must make too, so only a family of the same keys fits; not wanted, any fits, as
     // the keys only add to what the arrows say. O(1), two comparisons of the ends.
     if q.keys.as_ref().is_some_and(|k| s.keys.as_ref() != Some(k)) {
+        return false;
+    }
+    // A signature that may be a function does not fit one that is only families
+    // (TEST-every-sig-data-reader): `total(xs: [int]) = xs.count` was given a lambda, which
+    // the run then met at `.count`. Proof: types denote sets of values (DESIGN.md
+    // sec:type_language, "Subtyping is semantic"). A signature with `data` set denotes
+    // families only (`[V]`, a display, a range: [`Sig::data`]); one without it denotes the
+    // functions of its arrows as well, and a function is no family. So the second set is not
+    // within the first. The other way, a family where a function type is wanted, still fits:
+    // see the proof at the head of this function. O(1).
+    if q.data && !s.data {
         return false;
     }
     let same_params = s.params.len() == q.params.len()
@@ -31733,6 +31776,7 @@ pub mod r10_hash {
                     self.emit_reducer(r);
                 }
                 LevelWord::ChunkBy => self.emit(8),
+                LevelWord::In => self.emit(9),
             }
         }
 

@@ -553,6 +553,88 @@ fn a_function_where_a_family_is_needed_is_refused_at_the_use_and_not_by_its_type
     );
 }
 
+/// Each reader of a family's entries refuses a function (TEST-every-sig-data-reader): `fits_in`
+/// in zedc-types does not compare `Sig::data` where a family meets a function type, so each
+/// use that needs a family must refuse a function itself. On a parameter declared
+/// `int ->? int`, each word below takes a family and refuses a function at the call. A list
+/// parameter `[int]` holds only families, so a function passed to it is refused by its type;
+/// it was accepted, and the run met the function at `.count`. `in` on a parameter with no type
+/// written records its need as `.count` does; it recorded none, and a function or an int
+/// passed reached the run.
+#[test]
+fn every_reader_of_a_family_refuses_a_function() {
+    let bodies = [
+        "m.count",
+        "m.first",
+        "m.last",
+        "m.sum",
+        "m.reduce((+))",
+        "m >< (+)",
+        "m.scan((+))",
+        "m.any((v) -> v > 0)",
+        "m.all((v) -> v > 0)",
+        "m.find((v) -> v > 0)",
+        "m.chunkBy((v) -> v)",
+        "m.map((v) -> v + 1)",
+        "m.where((v) -> v > 0)",
+        "m.flatMap((v) -> [v])",
+        "m.group((v) -> v)",
+        "m == m",
+        "m.foldl(0, (a, v) -> a + v)",
+        "m.foldr((v, a) -> a + v, 0)",
+        "m.zip(m)",
+    ];
+    let mut wrong = Vec::new();
+    for body in bodies {
+        let f = format!("f(m: int ->? int) = {body};\n");
+        let control = type_errors(&format!("{f}t = f(m: {{0 -> 1}});\n"));
+        if !control.is_empty() {
+            wrong.push(format!("{body}: a family passed: {control:?}"));
+        }
+        let errs = type_errors(&format!("{f}t = f(m: ((x: int) -> x));\n"));
+        if errs.len() != 1 || !errs[0].starts_with("`f` takes `m` as a family, which ") {
+            wrong.push(format!("{body}: a function passed: {errs:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    // A list parameter: a family passed is taken; a lambda or a declared function is not.
+    let total = "total(xs: [int]) = xs.count;\n";
+    assert_eq!(
+        type_errors(&format!("{total}t = total(xs: [1, 2]);\n")),
+        Vec::<String>::new()
+    );
+    for arg in ["((x: int) -> x)", "id"] {
+        let text = format!("{total}id(x: int) = x;\nt = total(xs: {arg});\n");
+        let errs = type_errors(&text);
+        assert_eq!(errs.len(), 1, "{text}\n{errs:?}");
+        assert!(errs[0].starts_with("`total` does not take ("), "{errs:?}");
+    }
+    // `in` on a parameter with no type written: a family passed is taken; a function or an
+    // int is refused at the call; and `in` on a function itself is refused where it stands.
+    let has = "has(m, k) = k in m;\n";
+    assert_eq!(
+        type_errors(&format!("{has}t = has(m: {{1 -> 2}}, k: 1);\n")),
+        Vec::<String>::new()
+    );
+    for (arg, shown) in [("((x: int) -> x)", "int -> int"), ("5", "5")] {
+        let errs = type_errors(&format!("{has}t = has(m: {arg}, k: 1);\n"));
+        assert_eq!(
+            errs,
+            [format!(
+                "`in` tests whether a family has a key, and this value is {shown}, which has no \
+                 keys. [has(m: {arg}, k: 1)]"
+            )],
+            "{arg}"
+        );
+    }
+    let errs = type_errors("t = 1 in ((x: int) -> x);\n");
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert!(
+        errs[0].starts_with("`in` tests whether a family has a key"),
+        "{errs:?}"
+    );
+}
+
 /// A component of a parameter declared a tuple, `p: (int ->? int, int)`, declared a partial
 /// map is read as a family where a word reads its entries, as a whole parameter declared one
 /// is: taken out by destructuring, `m, k = p`, or by `p[0]`, and each call must then pass a

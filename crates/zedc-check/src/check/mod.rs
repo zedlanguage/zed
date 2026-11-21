@@ -5212,22 +5212,46 @@ impl<'t, 'a> Ck<'t, 'a> {
     // its span: read as it is, a parameter of that type took `(inc, #a)` for
     // `((int) -> int, #a | #b) \ ((int) -> int, #a)` (FAIL-ty-diff-function-rows). Test:
     // `l01_22_type_representation::kinds::a_difference_that_takes_part_of_a_tuple_holding_a_function_is_refused`.
+    //
+    // A difference that takes away a type variable is refused too, and the whole written type
+    // is then read as the unknown: its value holds what the variable may take away, and read as
+    // it is, `(int \ V, V) -> int for V in int | f64` refused a function taking `(int, f64)`,
+    // which fits it at each carrier, a second time after the refusal of the difference
+    // (FAIL-diff-type-var-right-inexact). Reading only the difference as the unknown still
+    // gave a second message, on the arrows. Test:
+    // `l01_22_type_representation::kinds::a_difference_that_takes_away_a_type_variable_is_refused`.
     pub(super) fn written(&mut self, t: &Type, fresh: bool) -> Ty {
         let (ty, inexact) = denoted_inexact(t, &Binds::new(), &HashSet::new());
-        for (span, printed) in inexact {
+        let any_var = inexact.iter().any(|i| i.by_var.is_some());
+        for Inexact {
+            span,
+            printed,
+            by_var,
+        } in inexact
+        {
             if self.inexact_diffs.insert(span) {
                 let text = match self.t.text {
                     Some(src) => &src[span.start..span.end],
                     None => &printed,
                 };
-                let message = format!(
-                    "`{text}` takes away part of a tuple or payload that holds a function type, \
-                     which is part of the Zed language but is not supported by this version of \
-                     zedc. Write the type without `\\`, as the union of the tuples or payloads \
-                     that are left."
-                );
+                let message = match by_var {
+                    Some(right) => format!(
+                        "`{text}` takes away `{right}`, which holds a type variable whose \
+                         carrier only a call picks; that is part of the Zed language but is not \
+                         supported by this version of zedc. Write the type without `\\ {right}`."
+                    ),
+                    None => format!(
+                        "`{text}` takes away part of a tuple or payload that holds a function \
+                         type, which is part of the Zed language but is not supported by this \
+                         version of zedc. Write the type without `\\`, as the union of the \
+                         tuples or payloads that are left."
+                    ),
+                };
                 self.error_with(span, message, Vec::new());
             }
+        }
+        if any_var {
+            return Ty::dynamic();
         }
         if self.type_vars.is_empty() {
             return ty;
@@ -16454,11 +16478,7 @@ pub fn denoted_free(t: &Type, leaves: &Binds, free: &HashSet<Arc<str>>) -> Ty {
 
 /// [`denoted_free`], with the span and printed text of each difference in `t` whose value holds
 /// more than the difference ([`Ty::diff_exact`]).
-fn denoted_inexact(
-    t: &Type,
-    leaves: &Binds,
-    free: &HashSet<Arc<str>>,
-) -> (Ty, Vec<(Span, String)>) {
+fn denoted_inexact(t: &Type, leaves: &Binds, free: &HashSet<Arc<str>>) -> (Ty, Vec<Inexact>) {
     let mut d = Denote {
         leaves,
         free,
@@ -16704,7 +16724,19 @@ struct Denote<'a> {
     /// The span and the printed text of each difference `a \ b` read whose value holds more
     /// than `a & !b` ([`Ty::diff_exact`]), which [`Ck::written`] refuses
     /// (FAIL-ty-diff-function-rows).
-    inexact: Vec<(Span, String)>,
+    inexact: Vec<Inexact>,
+}
+
+/// A difference `a \ b` whose value holds more than `a & !b` ([`Denote::inexact`]).
+struct Inexact {
+    /// The span of the difference.
+    span: Span,
+    /// The difference printed, for a message with no source text.
+    printed: String,
+    /// `b` printed, where its value holds a type variable: then what `b` takes away is not
+    /// known where the type is read (FAIL-diff-type-var-right-inexact). None where the cause
+    /// is a tuple or payload holding a function type (FAIL-ty-diff-function-rows).
+    by_var: Option<String>,
 }
 
 /// A function type [`Denote`] is reading.
@@ -16959,16 +16991,21 @@ impl<'a> Denote<'a> {
                 vals.truncate(from);
                 t
             }
-            TypeKind::Diff(..) => {
+            TypeKind::Diff(_, right) => {
                 let b = vals.pop().expect("a difference's operands are denoted");
                 let a = vals.pop().expect("a difference's operands are denoted");
                 if let Some(left) = self.left_of(&a, &b, t.span) {
                     return left;
                 }
                 let (d, exact) = a.diff_exact(&b);
-                if !exact {
-                    self.inexact.push((t.span, format_type(t)));
+                if exact {
+                    return d;
                 }
+                self.inexact.push(Inexact {
+                    span: t.span,
+                    printed: format_type(t),
+                    by_var: (!b.vars.is_empty()).then(|| format_type(right)),
+                });
                 d
             }
             // A partial map `K ->? V` promises no key, so a lookup is `V | #notFound`

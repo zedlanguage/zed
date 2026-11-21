@@ -497,3 +497,30 @@ fn an_exponent_folded_past_f64_lists_the_nearest_whatever_its_text() {
         ["No `f64` equals the literal `3^1048576`. [(3^(2^20))]"]
     );
 }
+
+#[test]
+fn an_exponent_with_a_coefficient_is_quoted_in_parentheses() {
+    // TEST-exponent-literal-coefficient-parens: an exponent literal folded to a power form with
+    // a coefficient, `3*2^1100`, is quoted in parentheses (walk.rs, at `contains('*')`), so
+    // that the text pasted back after `^` parses as one exponent: `x ^ 3*2^1100` would read as
+    // `(x ^ 3) * 2^1100`. 3^30 = 205891132094649 by `bc`; 2^20 = 1048576.
+    for (src, lit) in [
+        ("(3 * 2^1100)", "(3*2^1100)"),
+        ("(3^30 * 2^1100)", "(205891132094649*2^1100)"),
+        ("(3 * 2^(2^20))", "(3*2^1048576)"),
+    ] {
+        let text = format!("f() = 0.5f64 ^ {src};\n");
+        assert_eq!(
+            type_errors(&text),
+            [format!("No `f64` equals the literal `{lit}`. [{src}]")],
+            "{text}"
+        );
+        // The quoted text pasted back is the same literal.
+        let text = format!("f() = 0.5f64 ^ {lit};\n");
+        assert_eq!(
+            type_errors(&text),
+            [format!("No `f64` equals the literal `{lit}`. [{lit}]")],
+            "{text}"
+        );
+    }
+}

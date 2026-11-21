@@ -273,9 +273,12 @@ impl Want {
 /// `p(h: (x: int) -> x)`, whose lambda, fitted to nothing, took positional parameters).
 /// `None` where `t` holds a type variable or the unknown, either of which a function may
 /// stand for, or two function types, where which one the value is fitted to is not fixed.
+/// `None` too where the one is a family, as `[int]` is (TEST-every-sig-data-reader): a lambda
+/// or a declared function is no family, so it is compared as any value is, and refused
+/// (`fits_in` in zedc-types), not fitted to the family's arrow and accepted.
 fn one_fn(t: &Ty) -> Option<Arc<Sig>> {
     match (t.fns.only(), t.vars.is_empty() && !t.dynamic) {
-        (Some(s), true) => Some(s.clone()),
+        (Some(s), true) if !s.data => Some(s.clone()),
         _ => None,
     }
 }
@@ -6087,6 +6090,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
         site: Span,
     ) -> Ty {
+        // `in` keeps its own walk of the variables ([`Self::in_end`]), whose need gives nothing.
+        if word == LevelWord::In {
+            return self.in_end(&Ty::empty(), x, span);
+        }
         if !x.vars.is_empty() {
             // Where the walk meets the word itself, it is paired with the first word alike
             // ([`Self::alike_seen`]). Only a scan reads its site, whose fold records nothing
@@ -6136,6 +6143,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             LevelWord::All => self.quantifier_end(x, f, Quantifier::All, span, Self::apply),
             LevelWord::Find => self.quantifier_end(x, f, Quantifier::Find, span, Self::apply),
             LevelWord::Scan(op) => self.scan_end(x, op, span, site, Self::fold_level),
+            LevelWord::In => self.in_end(&Ty::empty(), x, span),
             LevelWord::ChunkBy => {
                 let at = f.at.unwrap_or(span);
                 match self.chunk_by_end(x, f, span, Self::apply) {
@@ -6478,13 +6486,37 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// `k in x`, `k` of type `k`, `x` of type `x` (step L3.2): `x` must be a family, and the
-    /// test is a `bool`, or a loose atom `k` or `x` may be, passed through.
+    /// test is a `bool`, or a loose atom `k` or `x` may be, passed through. A variable of `x`
+    /// takes `in` as it takes `.count` ([`Self::level_word`]): a class resolved to a type is
+    /// checked on it; one not yet resolved records the need [`LevelWord::In`], checked at each
+    /// call on the type the call gives it (TEST-every-sig-data-reader: `has(m, k) = k in m`
+    /// took a function and an int, which the run then met). The need gives nothing, since the
+    /// test is a `bool` whatever the family. One need or one check per variable, as there.
     fn in_end(&mut self, k: &Ty, x: &Ty, span: Span) -> Ty {
+        let mut out = Ty::empty();
+        for v in x.vars.iter() {
+            self.tried_at(span, None);
+            match self
+                .class_root(v)
+                .map(|r| (r, self.classes[r].resolved.clone()))
+            {
+                Some((_, Some(t))) => out = out.union(&self.in_end(k, &t, span)),
+                Some((r, None)) => {
+                    let kind = NeedKind::Level {
+                        word: LevelWord::In,
+                        f: Ty::empty(),
+                        site: span,
+                    };
+                    self.need(r, kind, false, span);
+                }
+                None => {}
+            }
+        }
         for p in x.pieces() {
             match p {
                 Piece::Fn(sig) if sig.data => {}
                 Piece::Dyn => self.any("`in`", span),
-                Piece::Var(_) => self.tried_at(span, None),
+                Piece::Var(_) => {}
                 p if p.is_atoms() => {}
                 p => {
                     let t = self.text(&p.ty());
@@ -6502,6 +6534,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         Ty::carrier(Carrier::Bool)
             .union(&k.loose_ty())
             .union(&x.loose_ty())
+            .union(&out)
     }
 
     /// The type of the range `a ..< b` or `a ..= b` whose ends have the types `a` and `b`

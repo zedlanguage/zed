@@ -63,7 +63,7 @@
 //! that meets the demand, and the same search stops at the first.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 use std::rc::Rc;
@@ -2662,6 +2662,11 @@ struct Tr {
     claims: HashMap<At, (Vec<Lin>, u32)>,
     /// The keys of `claims`, in the order made, as `made` is for `pairs`.
     claimed: Vec<At>,
+    /// The number of each claim that refused a call ([`Walk::binding`]), so that an undo can
+    /// tell whether a claim of the undone attempt refused one ([`Walk::undo`],
+    /// FAIL-preimage-undo-refused-claims). A max-heap: the numbers an undo takes are the
+    /// greatest, popped in O(log n) each, and each number pushed is popped at most once.
+    refused: BinaryHeap<u32>,
     /// The atoms a caller reads of each relation a call of a function gave, by the relation:
     /// the canonical atoms a claimed call binds, and the atoms of the arguments of a callee's
     /// body read again ([`Scoped::interface`], LOAD-call-summary). Kept when definitions are
@@ -2707,6 +2712,7 @@ impl Tr {
             cased: Vec::new(),
             claims: HashMap::new(),
             claimed: Vec::new(),
+            refused: BinaryHeap::new(),
             interfaces: HashMap::new(),
             bodies: false,
             definedness: false,
@@ -2831,6 +2837,19 @@ impl Tr {
     fn claim(&mut self, lam: At, args: Vec<Lin>, n: u32) {
         self.claims.insert(lam, (args, n));
         self.claimed.push(lam);
+    }
+
+    /// Whether a claim numbered `defs` or above refused a call, taking those numbers out of
+    /// `refused`: a claim so numbered was made after an attempt begun at `defs` definitions
+    /// ([`Tr::aux`] numbers by `defs.len()`), so its refusals were made in that attempt.
+    /// O(k log n) for the k numbers taken.
+    fn refused_since(&mut self, defs: usize) -> bool {
+        let mut any = false;
+        while self.refused.peek().is_some_and(|&n| n as usize >= defs) {
+            self.refused.pop();
+            any = true;
+        }
+        any
     }
 
     /// The number of the quotient of `a div c` and `a mod c` for a constant `c` other than 0,
@@ -5607,7 +5626,8 @@ impl<'t> Tx<'t> {
 
     /// Removes the translation's entries logged after the first `mark`, but for those that
     /// found no translation wherever they are reached (`None`, with no stop below them) and
-    /// whose key names no auxiliary variable numbered `defs` or above. `defs` is the length
+    /// whose key names no auxiliary variable numbered `defs` or above; with `refused` (a claim
+    /// of the undone attempt refused a call, step 4), the failures go too. `defs` is the length
     /// `Tr::defs` is truncated to; [`Walk::undo`] takes both marks together and does both.
     ///
     /// Why every entry left names only variables the undo keeps, with their definitions.
@@ -5634,45 +5654,48 @@ impl<'t> Tx<'t> {
     ///    argument's definition. Removing it makes the question moot.) The canonical keys of
     ///    [`Walk::canonical_formula`], [`Walk::projection`] and their kin hold only constants
     ///    and canonical symbols ([`Walk::canonical_env`]), so they are never removed for this.
-    /// 4. Not proved (PROOF-preimage-undo-kept-failure): that a failure kept by 3 is still a
-    ///    failure once the undo has also taken away the attempt's pairs, extrema, choices,
-    ///    cases and claims (`Tr::truncate`). What was checked: `Walk::defined_called` falls
-    ///    back to the plain read (`Walk::defined_call`) whenever its claimed paths give
-    ///    nothing. `Walk::formula_called` and `Walk::lin_called` do too, except where the
-    ///    call's key is its own canonical key (`key == k.1`): then the canonical read's
-    ///    `None` is returned with no plain read. So a kept failure can come from a path that
-    ///    was not the plain read. The open sub-cases: (a) under `key == k.1`, a canonical read
-    ///    that failed only because of state the undo removes (a claim of an inner call held
-    ///    by a call of the attempt); (b) under `key != k.1`, [`Walk::binding`] was `None`
-    ///    because a call of the undone attempt held the claim, so the projection was tried
-    ///    and failed and so did the plain read. After the undo the claim is free, and a fresh
-    ///    read would bind and succeed. No test reaches either. A wrong kept failure gives
-    ///    `None`, which a caller reads as a term with no translation (`Walk::formula_at` then
-    ///    takes `compare_untranslated`): coarser, not unsound.
-    ///    What else was checked (proofdoc5f). Of the other state `Tr::truncate` removes, a
-    ///    pair (`Tr::pair_by_constant`, `Tr::div_mod_by_term` past its first check), an
-    ///    extremum and a choice (`Walk::lin_at`) are each found or made, and making one never
-    ///    fails, so a read that found one made in the attempt and a read that makes it again
-    ///    take the same branch, with other variable numbers. A case (`Walk::lin_by_class`) is
-    ///    made only where the same read at the same `(form, scope)` key succeeded, and making
-    ///    it again repeats that read. So, of what the undo removes, only a claim changes a
-    ///    branch: `Walk::binding` refuses a call while another call holds the claim. Both
-    ///    open sub-cases also need the plain read of the call at its own place to fail where
-    ///    its canonical read succeeds. The plain read binds each parameter to the argument's
-    ///    own term and the canonical read binds it to an atom; that the first succeeds
-    ///    wherever the second does was not proved, and no call where it does not was found.
-    ///    A way to close both,
-    ///    not done since no input reaches them: `Walk::binding` records the number of each
-    ///    claim that refused a call in a set kept in `Tr`, and `Walk::undo`, before
-    ///    `Tr::truncate`, splits off the numbers at or above `defs`; when that part is not
-    ///    empty, a claim of the attempt refused a call, and `forget` removes every failure
-    ///    logged since `mark`. A claim numbered at or above `defs` was made after the mark,
-    ///    so its refusals were too.
+    /// 4. A failure kept by 3 is still a failure once the undo has also taken away the
+    ///    attempt's pairs, extrema, choices, cases and claims (`Tr::truncate`)
+    ///    (PROOF-preimage-undo-kept-failure, FAIL-preimage-undo-refused-claims). Proof.
+    ///    (i) Of that state only a claim changes a branch (proofdoc5f): a pair
+    ///    (`Tr::pair_by_constant`, `Tr::div_mod_by_term` past its first check), an extremum
+    ///    and a choice (`Walk::lin_at`) are each found or made, and making one never fails,
+    ///    so a read that found one made in the attempt and a read that makes it again take
+    ///    the same branch, with other variable numbers. A case (`Walk::lin_by_class`) is made
+    ///    only where the same read at the same `(form, scope)` key succeeded, and making it
+    ///    again repeats that read. (ii) A claim changes a branch only where [`Walk::binding`]
+    ///    refuses a call because another call holds it with other arguments; a call that
+    ///    binds to a claim of the attempt would, after the undo, make the claim again with
+    ///    the same arguments and bind the same way, with another number. (The defined path's
+    ///    read of `tr.claims` in `Walk::defined_called` falls through to `instance` when the
+    ///    claim is held by another call; the claimed read before it went through `binding`.)
+    ///    (iii) A claim's number is the definition count when it was made ([`Tr::claim`],
+    ///    the same numbers `Tr::truncate` compares with `mark`), and definitions only grow
+    ///    until an undo, so the claims made since the attempt began are exactly those
+    ///    numbered `defs` or above. (iv) `binding` pushes the number of each refusing claim
+    ///    on `Tr::refused`, and [`Walk::undo`] takes every number `defs` or above off it
+    ///    before `Tr::truncate` ([`Tr::refused_since`]). When one was there, `forget` is
+    ///    called with `refused` and removes every failure logged since `mark`, so none is
+    ///    kept. When none was, every refusal since `mark` was by a claim numbered below
+    ///    `defs`, which the undo keeps: by (i) and (ii), each failure logged since `mark`
+    ///    took the branches a read after the undo takes, so it is still a failure. A number
+    ///    taken off by an inner undo was `defs` or above for the inner attempt, so the
+    ///    failures that refusal could reach were removed by that inner `forget`; failures
+    ///    logged before the inner attempt began were read before the refusal. Numbers not
+    ///    taken off stay on the heap, and an outer undo whose `defs` is at or below them
+    ///    takes them then. QED.
+    ///    Before this, the case where a claim of the attempt refused a call was open: under
+    ///    `key == k.1` the canonical read's `None` is returned with no plain read, and under
+    ///    `key != k.1` the projection and the plain read could both fail, so a failure kept
+    ///    there might succeed once the claim was free. No input reaching it was found; the
+    ///    test of the mechanism is `an_undo_after_a_refused_claim_keeps_no_failure`.
+    ///    Cost: one O(log r) push per refusal and one O(log r) pop per number taken off,
+    ///    r the numbers on the heap; each number pushed is popped at most once.
     ///
     /// Test: `a_call_that_fails_at_an_atom_an_undo_takes_away_is_not_kept` (red before 3's
     /// `CallKey` removal: a key named `q0` with no definitions left), which also compares a
     /// call made afterward under the same key with a fresh translation (`tests::RECHECK`). It
-    /// cannot catch a wrong failure of the kind 4 leaves open. Cost of 3's check: O(the key's
+    /// cannot reach the case 4 closes. Cost of 3's check: O(the key's
     /// terms) per entry removed or kept, which the entry's key already cost to make; the ends of
     /// the conditions are found once per interned number ([`DivisorSets::aux_end`],
     /// [`FormulaNumbers::aux_end`]). Row PROOF-preimage-forget-callkey.
@@ -5699,9 +5722,9 @@ impl<'t> Tx<'t> {
     /// to 2.2x the bytes on the two tests named. So the log stays. Test of the undo itself:
     /// `a_test_after_a_failed_test_reading_the_same_call_keeps_its_answer` (with a `forget`
     /// that removes nothing it panics on the stale auxiliary pair).
-    fn forget(&mut self, mark: usize, defs: usize, tr: &Tr) {
+    fn forget(&mut self, mark: usize, defs: usize, tr: &Tr, refused: bool) {
         /// Removes the entry under `k` unless it is a failure that holds on every stack and
-        /// `stale` (its key names an undone variable) is false.
+        /// `stale` (its key names an undone variable, or `refused`) is false.
         fn undo<K: Hash + Eq, V>(t: &mut HashMap<K, Entry<Option<V>>>, k: &K, stale: bool) {
             if t.get(k)
                 .is_some_and(|(v, cut, _)| stale || v.is_some() || *cut != usize::MAX)
@@ -5709,16 +5732,16 @@ impl<'t> Tx<'t> {
                 t.remove(k);
             }
         }
-        let stale = |k: &CallKey| call_key_end(k, &tr.sets, &tr.numbers) as usize > defs;
+        let stale = |k: &CallKey| refused || call_key_end(k, &tr.sets, &tr.numbers) as usize > defs;
         let m = &mut self.run.memo;
         for e in m.log.drain(mark..) {
             match e {
-                Logged::Lin(k) => undo(&mut m.lin, &k, false),
-                Logged::Formula(k) => undo(&mut m.formula, &k, false),
+                Logged::Lin(k) => undo(&mut m.lin, &k, refused),
+                Logged::Formula(k) => undo(&mut m.formula, &k, refused),
                 Logged::LinCall(k) => undo(&mut m.lin_calls, &k, stale(&k)),
                 Logged::FormulaCall(k) => undo(&mut m.formula_calls, &k, stale(&k)),
                 Logged::Projection(k) => undo(&mut m.projections, &k, stale(&k)),
-                Logged::Defined(k) => undo(&mut m.defined, &k, false),
+                Logged::Defined(k) => undo(&mut m.defined, &k, refused),
                 Logged::DefinedCall(k) => undo(&mut m.defined_calls, &k, stale(&k)),
             }
         }
@@ -9391,10 +9414,13 @@ impl<'m, 't> Walk<'m, 't> {
     /// Undoes an attempt begun when the translation had `defs` definitions and the memo's log
     /// `logged` entries: the definitions made since ([`Tr::truncate`]) and the entries that
     /// name them or no longer hold ([`Tx::forget`], where the proof is).
+    /// A claim of the attempt that refused a call makes every failure logged since `logged`
+    /// go too (step 4 at [`Tx::forget`]).
     fn undo(&self, defs: usize, logged: usize) {
         self.tr(|tr| {
+            let refused = tr.refused_since(defs);
             tr.truncate(defs);
-            self.with(|tx| tx.forget(logged, defs, tr));
+            self.with(|tx| tx.forget(logged, defs, tr, refused));
         });
     }
 
@@ -10739,6 +10765,9 @@ impl<'m, 't> Walk<'m, 't> {
         use presburger::Atom;
         self.tr(|tr| {
             if let Some((a, n)) = tr.claims.get(&lam) {
+                if a.as_slice() != args {
+                    tr.refused.push(*n);
+                }
                 return (a.as_slice() == args).then_some(*n);
             }
             let pairs: Vec<(Arc<str>, Lin)> = (key.iter().zip(args))
@@ -16778,6 +16807,49 @@ mod tests {
         check(&with_g(prim(Prim::Or, call(2), call(5))), 0);
         // The entries that hold everywhere, read again and compared ([`CHECKED`]).
         assert!(CHECKED.get()[4] > 0, "{:?}", CHECKED.get());
+    }
+
+    /// FAIL-preimage-undo-refused-claims, step 4 at [`Tx::forget`]: a failure logged in an
+    /// attempt where a claim made in that attempt refused a call is removed by the undo; one
+    /// logged where only a claim made before the attempt refused a call is kept. No input that
+    /// reaches the first case was found (the proof says why it is hard to reach), so this
+    /// drives the two steps [`Walk::undo`] takes, [`Tr::refused_since`] and [`Tx::forget`],
+    /// directly. Before the fix `forget` kept every failure whose key named no undone variable.
+    #[test]
+    fn an_undo_after_a_refused_claim_keeps_no_failure() {
+        let defs = 3;
+        let failure: Entry<Option<Lin>> = (None, usize::MAX, usize::MAX);
+        let at: At = (7, 0);
+        for (claim, removed) in [(defs as u32, true), (defs as u32 + 4, true), (1, false)] {
+            let mut tx = Tx::new();
+            let mut tr = Tr::new(false);
+            // Logged before the attempt's mark: never touched by the undo.
+            tx.run.memo.lin.insert((1, 0), failure.clone());
+            tx.run.memo.log.push(Logged::Lin((1, 0)));
+            let mark = tx.run.memo.log.len();
+            tx.run.memo.lin.insert(at, failure.clone());
+            tx.run.memo.log.push(Logged::Lin(at));
+            tr.refused.push(claim);
+            let refused = tr.refused_since(defs);
+            assert_eq!(refused, removed, "claim {claim}");
+            tx.forget(mark, defs, &tr, refused);
+            let m = &tx.run.memo;
+            assert_eq!(m.lin.contains_key(&at), !removed, "claim {claim}");
+            assert!(m.lin.contains_key(&(1, 0)), "claim {claim}");
+            assert_eq!(m.log.len(), mark, "claim {claim}");
+            // A number below `defs` stays for an outer undo; one at or above it is taken.
+            assert_eq!(tr.refused.len(), usize::from(!removed), "claim {claim}");
+        }
+        // Several numbers on the heap: an undo at 5 takes 5 and 9, leaves 2 and 4.
+        let mut tr = Tr::new(false);
+        for n in [4, 9, 2, 5] {
+            tr.refused.push(n);
+        }
+        assert!(tr.refused_since(5));
+        assert_eq!(tr.refused.clone().into_sorted_vec(), vec![2, 4]);
+        assert!(!tr.refused_since(5));
+        assert!(tr.refused_since(0));
+        assert!(tr.refused.is_empty());
     }
 
     /// PROOF-call-key-function-of-lins, sub-case (a) at [`Tx::call_env`]: `g(x, c) && g(x, y -

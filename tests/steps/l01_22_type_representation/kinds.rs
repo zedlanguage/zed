@@ -1108,6 +1108,65 @@ fn a_shape_of_its_own_comes_before_the_second_shape_of_the_bucket() {
 }
 
 #[test]
+fn a_shape_of_its_own_repairs_with_a_shape_between_the_second_of_the_bucket_and_the_holder() {
+    // TEST-own-shape-repair-bindings: `(7 | 8, W)` stands between `(5 | 6, V)`, the second
+    // shape of the bucket `int` at component 1, and `(int, U)`, the shape that holds (3, 5).
+    // The message is the one of the two-shape case, and the repair it names, `(3, U)` after
+    // the first shape, decides the type with the same bindings: (3, 5) is held by `(3, U)`,
+    // (4, 6) passes `(5 | 6, V)` and `(7 | 8, W)` at component 0 and is held by `(int, U)`,
+    // so `U` is `5 | 6`, and no other shape raises a refusal.
+    let rows = |own: bool| {
+        let mut shapes = vec![Ty::tuple(vec![ty("1 | 2"), var("T")])];
+        if own {
+            shapes.push(Ty::tuple(vec![int(3), var("U")]));
+        }
+        shapes.extend([
+            Ty::tuple(vec![ty("5 | 6"), var("V")]),
+            Ty::tuple(vec![ty("7 | 8"), var("W")]),
+            Ty::tuple(vec![ty("int"), var("U")]),
+        ]);
+        Ty::union_all(&shapes)
+    };
+    let l = ty("(3, 5) | (4, 6)");
+    assert_eq!(bound(&l, &rows(false)), None);
+    let why = l.refused(&rows(false));
+    assert!(
+        why.contains(
+            "give (3, 5) a shape of its own, written after the first of those shapes and \
+             before the second"
+        ),
+        "{why}"
+    );
+    assert_eq!(l.refused(&rows(true)), "");
+    assert_eq!(
+        bound(&l, &rows(true)),
+        Some(vec![("U".into(), "5 | 6".into())])
+    );
+    // A value that also meets the shape between, (7, 1): now (4, 6) and (7, 1) both search the
+    // bucket past its first shape, and the message names the next repair, `(4, …)`. With it
+    // written after `(3, U)`, (7, 1) is held by `(7 | 8, W)` and the type is decided.
+    let l = ty("(3, 5) | (4, 6) | (7, 1)");
+    let why = l.refused(&rows(true));
+    assert!(
+        why.contains("give (4, 6) a shape of its own, written after the first of those shapes"),
+        "{why}"
+    );
+    let both = Ty::union_all(&[
+        Ty::tuple(vec![ty("1 | 2"), var("T")]),
+        Ty::tuple(vec![int(3), var("U")]),
+        Ty::tuple(vec![int(4), var("U")]),
+        Ty::tuple(vec![ty("5 | 6"), var("V")]),
+        Ty::tuple(vec![ty("7 | 8"), var("W")]),
+        Ty::tuple(vec![ty("int"), var("U")]),
+    ]);
+    assert_eq!(l.refused(&both), "");
+    assert_eq!(
+        bound(&l, &both),
+        Some(vec![("U".into(), "5 | 6".into()), ("W".into(), "1".into())])
+    );
+}
+
+#[test]
 fn a_shape_of_its_own_of_one_component_is_written_whole_with_its_comma() {
     // Tuples of one component: the shape of its own is `((3, 5),)`, as `((3, 5))` reads as
     // `(3, 5)`, and it has no other components to fill in.
@@ -2062,6 +2121,55 @@ fn a_difference_that_takes_part_of_a_tuple_holding_a_function_is_refused() {
         let (d, got) = ty(a).diff_exact(&ty(b));
         assert_eq!(got, exact, "{a} \\ {b}, read as {d}");
     }
+}
+
+#[test]
+fn a_difference_that_takes_away_a_type_variable_is_refused() {
+    // FAIL-diff-type-var-right-inexact: `int \ V` was read as `int`, exact, though where a
+    // call picks `int` for `V` it is `Never`. So `h`, which takes `(int, f64)`, was refused for
+    // `(int \ V, V) -> int for V in int | f64`, which it fits at each carrier: at `int` the
+    // first parameter has no value, at `f64` `h` takes both. Without `\ V` the refusal is
+    // right, and the same: the difference changed nothing. Now the difference is refused, at
+    // itself, and names `V`.
+    let errors = zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    let h = "h(x: int, y: f64) = x;\n";
+    let text =
+        format!("p(f: (x: int \\ V, y: V) -> int for V in int | f64) = 0;\n{h}z = p(f: h);\n");
+    assert_eq!(
+        errors(&text),
+        [
+            "`int \\ V` takes away `V`, which holds a type variable whose carrier only a call \
+             picks; that is part of the Zed language but is not supported by this version of \
+             zedc. Write the type without `\\ V`. [int \\ V]"
+        ],
+        "{text}"
+    );
+    // A variable inside a union on the right is named with the union.
+    let text = "p(f: (x: int \\ (V | String), y: V) -> int for V in int | f64) = 0;\n";
+    let errs = errors(text);
+    assert_eq!(errs.len(), 1, "{text}\n{errs:#?}");
+    assert!(
+        errs[0].starts_with("`int \\ (V | String)` takes away `V | String`,"),
+        "{errs:#?}"
+    );
+    // A difference with no variable on the right is read as before, exactly.
+    let text =
+        format!("p(f: (x: int \\ String, y: V) -> int for V in int | f64) = 0;\n{h}z = p(f: h);\n");
+    let errs = errors(&text);
+    assert_eq!(errs.len(), 1, "{text}\n{errs:#?}");
+    assert!(
+        errs[0].starts_with("`h` is `(x: int, y: f64) -> int`, not "),
+        "{errs:#?}"
+    );
+    // On the types: a variable on the right leaves the answer inexact where anything is left,
+    // and exact where nothing is.
+    assert!(!ty("int").diff_exact(&var("V")).1);
+    assert!(
+        !ty("int | String")
+            .diff_exact(&ty("String").union(&var("V")))
+            .1
+    );
+    assert!(ty("String").diff_exact(&ty("String").union(&var("V"))).1);
 }
 
 #[test]
