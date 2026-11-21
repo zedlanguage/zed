@@ -637,12 +637,48 @@ impl Product {
     ///
     /// The callers loop `while p.reduce_domains() {}`. `true` means a strict descent:
     /// `Entry::meet` (zedc-lattice cell.rs) returns `true` only when the met element differs
-    /// from the old one. Not proved: that the loop ends, that is, that no infinite chain of
-    /// rounds each changes a domain. The interval and congruence domains have infinite
-    /// descending chains, so this needs each round's arguments to come from finitely many
-    /// values. Open sub-case: a product whose finite set is `Top` and whose type lists no
-    /// integers, where only `reduce_congruence` narrows the interval and the congruence, and
-    /// `reduce_congruence` is not shown idempotent; the other sub-cases are not checked either.
+    /// from the old one.
+    ///
+    /// Proof that the loop ends (PROOF-product-reduce-domains-ends). A round that returns
+    /// `true` changes the interval `I`, the congruence `C`, the finite set `F` or the type `T`
+    /// by a meet (the one other write, `Err(own)`, puts in an equal set and returns nothing).
+    /// Each of the four changes only finitely often:
+    /// 1. `C` is met only with the class `reduce_congruence` returns: `C` itself (no change),
+    ///    `Bottom` when the interval is empty, or `C` met with the class of the one member `a`
+    ///    when the interval is `{a}`, which is that class (modulus 0) or `Bottom`. So `C` goes
+    ///    at most from a class to the class of one value to `Bottom`: two changes.
+    /// 2. `F` is met only with a `FiniteSet::Set`; a meet of sets is their intersection and
+    ///    never `Top`, so `F` leaves `Top` at most once and then only loses members.
+    /// 3. `IntervalSet` equality is equality of sets (`PartialEq for IntervalSet`, zedc-lattice
+    ///    interval.rs: one list of pieces per set), so each change of `I` drops an integer. A
+    ///    bounded `I` has finitely many integers. Every meet of `I` here gives a bounded set
+    ///    (with `point(residue)`, `points(kept)` or `points(vs)`, each of finitely many points)
+    ///    but the one with `in_class(m, r)`. Its result has every finite end in the class and
+    ///    no piece without a member (its doc at zedc-lattice interval.rs), so `in_class` with
+    ///    the same class leaves it as it is. So while `I` is unbounded it changes at most once
+    ///    for each value of `C`, three times in all by 1, and then finitely often.
+    /// 4. `T` is met with `!int`, with `!int | ints_of(vs)` for `vs` a cut of `T`'s own
+    ///    integers by `I` or the one member of `I`, and with the union of `Type::lit` of `F`'s
+    ///    members, made only when every member has one, that is, is a scalar or a bare atom
+    ///    (zed-kernel types.rs `Type::lit` returns `None` for any other value). By 1 to 3,
+    ///    and since the integers of `T` once listed only lose members, these arguments take
+    ///    finitely many values. Each argument `A` changes `T` at most once: after `T` is met
+    ///    with `A`, every later `T'` (met with more such arguments) gives `T' & A == T'`.
+    ///    Part by part (`Type::zip`): the literal sets (`Lits::zip`, a flag and one set) and
+    ///    the bools and structs flags are met by intersection, and `T'`'s lie within `A`'s;
+    ///    the tuple and morphism parts of every `A` here are leaves (`!int` holds every tuple
+    ///    and morphism, a union of scalar literals none), and `Part::zip_at_once` gives the
+    ///    other operand or the leaf; the atoms of `!int` are every atom, and `Atoms::zip` with
+    ///    a cofinite map that lists no name gives the other map unchanged, and the atoms of a
+    ///    union of literals are bare names with empty payloads, which `T'`'s atoms then lie
+    ///    within, so the meet gives them again.
+    ///
+    /// So only finitely many rounds return `true`. Test:
+    /// `tests::reductions_end_on_types_with_atoms_tuples_and_no_integers` runs the loop on
+    /// types whose tuple and atom parts are not leaves, with an empty interval, and checks
+    /// that it stops after one changing round; a type part that grew at each round would
+    /// make it run until the test's time limit. It cannot show the bound for every product;
+    /// the argument above does.
     ///
     /// Complexity tradeoff (CHECK-literal-union-cost): naive version, every call reduces,
     /// which relists the type's literals and the finite set, O(k) or more for k listed values,
@@ -13414,9 +13450,22 @@ impl Scope {
     /// `!self.bottom`, and otherwise returns the saved copy before it writes; `unbind` of a
     /// fresh name only takes one out; the other writes (`meet_name`, `meet_own`, the
     /// reduction's `reduce_domains`) meet a name's product, and a meet of the bottom stays
-    /// the bottom (inferred from `Product::meet_ints` meeting the integers, not read in
-    /// full). So the names emptied here stay the bottom while the flag `emptied.0` is set; a
-    /// copy (`Clone`) carries the flag with the emptied names.
+    /// the bottom. Proof (PROOF-preimage-meet-bottom): `meet_name` and `meet_own` change only
+    /// the interval, by `Product::meet_ints`, which is `Entry::meet` with `Bounds::ints(x)`.
+    /// The bottom's interval is `Bounds::ints(empty)`, that is `Bounds::from_bounds(empty,
+    /// [], [])` (zedc-lattice affine.rs `Bounds::new`), and `Bounds::meet` gives
+    /// `from_bounds` of the meet of the integers, empty again, and the union of the symbolic
+    /// bounds, none on either side: the same call, so an equal value. `Entry::meet` (cell.rs)
+    /// then returns `false` and writes nothing, and both functions put nothing back. In a scope
+    /// with `bottom` set, `Scope::reduce_with` leaves its loop at the first check, before any
+    /// `reduce_domains`; were one run on the bottom, its writes are meets of the interval (as
+    /// above), the class (`Congruence::meet` gives `Bottom` when either side is, lattice.rs),
+    /// the finite set (an intersection with the empty set) and the type (`Type::empty()` met
+    /// with any type is empty, `Type::zip_at_once`), each giving an equal element, so
+    /// `Entry::meet` again writes nothing. So the names emptied here stay the bottom while the
+    /// flag `emptied.0` is set; a copy (`Clone`) carries the flag with the emptied names.
+    /// Test: `tests::meets_leave_the_bottom_as_it_is`; it cannot catch a new write to `names`
+    /// that is not a meet.
     ///
     /// The names are found from those a copy of the scope last emptied, by the bindings that
     /// differ: the names of a scope are those it was made with and those it binds
@@ -17310,8 +17359,22 @@ impl Scope {
                 // here a name not in the base map gives no static (`NameProducts::read` returns
                 // `self.base.get(name)` for a name off every path and pendant, and every path
                 // member is in the base map, `NameProducts::len`), so `statics.len() !=
-                // free.len()` drops it the same way; not proved for a pendant name outside the
-                // base map. (3) `extend_path` returns at its first line when `self.bottom` or
+                // free.len()` drops it the same way. A pendant name outside the base map cannot
+                // occur (PROOF-preimage-early-pass-filter): every key of `paths` and of
+                // `pendants` is a key of `base`, since each write keeps it so. `member` adds a
+                // name to `paths` only after `self.base.get(n)?`; `extend_pendant` adds a leaf
+                // only when `names.base.get(&leaf)` is `Some` and its hub passes `member`;
+                // `set_fresh` and `DerefMut` call `materialize` first when the name is on a path
+                // or pendant, and `materialize` empties `paths` and `pendants`; `rest_on` writes
+                // through `get_mut`, which adds no key, and the copy of a base map entry-equal to
+                // the scope's own keeps the key set; `view` relies on the same fact in its
+                // `expect`. So `read(n).is_some()` gives `contains_key(n)` for every `n`, and a
+                // constraint this pass evaluates passes the main pass's filter. (A name written
+                // twice in `free` makes `statics.len() < free.len()` here and the constraint
+                // waits for the main pass, which costs work only.) Test: every test of
+                // `l01_39_reduced_product` that reads a pendant leaf reaches the `expect` in
+                // `view`, which panics if the fact fails; no test builds a pendant whose leaf is
+                // missing from the base map, since no write can. (3) `extend_path` returns at its first line when `self.bottom` or
                 // `!self.written.is_empty()`, so its `self.bottom = bottom` never clears an
                 // empty scope here; `unbind`, `narrow_linear`, `join_kept` and `narrow_node`
                 // replace the whole scope (`*self = ...`), as stated. (4) Not proved: "reports a
@@ -17326,7 +17389,15 @@ impl Scope {
                 // which QUESTIONS A81 calls errors: a flaw of the main pass as well. Proposed
                 // fix: on a `false` here, go on evaluating the closed constraints that can fail
                 // at a root (`key.1` names a `rooted` name) before returning. The test above
-                // counts work and has no root; no test covers this order.
+                // counts work and has no root; no test covers this order. Still open
+                // (PROOF-preimage-early-pass-filter): the fix needs a choice of meaning, which
+                // DESIGN.md sec:constraints does not make: report a failure at every root
+                // whatever else is false there (then `rooted` must keep the roots and both passes
+                // evaluate on after a `false`), or report it only at a root no other constraint
+                // rules out (then a failing member of a rooted name is kept in the `[n]` arm of
+                // `enumerate_on`, and `zero_reached` returns failures only for a non-empty scope,
+                // as `Scope::join` already drops an empty case's). Either makes the report
+                // independent of the order; until it is chosen the report depends on it.
                 changed.sort_by_key(|n| self.written_by.count(n));
                 for n in &changed {
                     if !self.names.read(n).is_some_and(|p| p.value().is_some()) {
@@ -25353,6 +25424,53 @@ mod tests {
             kept_fired > 100 && all_fired > 100 && among_fired > 100,
             "{kept_fired} {all_fired} {among_fired}"
         );
+    }
+
+    /// The loop `while p.reduce_domains_now() {}` ends (the proof at
+    /// [`Product::reduce_domains`]) on types whose atom and tuple parts are not leaves, met
+    /// with `!int` because the interval is empty: each changes in the first round alone.
+    #[test]
+    fn reductions_end_on_types_with_atoms_tuples_and_no_integers() {
+        let ints2 = Type::tuple(vec![Type::int(), Type::int()]);
+        let lit = |n: i64| Type::lit(&Value::Int(n)).unwrap();
+        let pay = &ints2 - &Type::tuple(vec![lit(0), lit(1)]);
+        let tys = [
+            &Type::int() | &Type::atom_with("a", &ints2),
+            &Type::int() | &Type::atom_with("a", &pay),
+            &(&Type::int() | &Type::atom_with("a", &pay)) | &ints2,
+            &(&lit(3) | &Type::atom_with("a", &pay)) | &pay,
+        ];
+        for (i, ty) in tys.iter().enumerate() {
+            let mut p = Product::top();
+            p.cell.ints.element = Bounds::ints(IntervalSet::empty());
+            p.ty.element = ty.clone();
+            let mut rounds = 0;
+            while p.reduce_domains_now() {
+                rounds += 1;
+            }
+            assert_eq!(rounds, 1, "type {i}");
+            assert!(!p.ty.element.contains(&Value::Int(3)), "type {i}");
+        }
+    }
+
+    /// A meet of the integers and a reduction leave the bottom as it is, with no write
+    /// (PROOF-preimage-meet-bottom, the proof at `Scope::empty_if_bottom`): each meet reports
+    /// no change, and every domain equals the bottom's after.
+    #[test]
+    fn meets_leave_the_bottom_as_it_is() {
+        let b = Product::bottom();
+        for x in [
+            IntervalSet::top(),
+            IntervalSet::of(0, 5),
+            IntervalSet::empty(),
+        ] {
+            let mut p = Product::bottom();
+            let prem = p.premises();
+            assert!(!p.meet_ints(x, &prem));
+            assert!(!p.reduce_domains_now());
+            assert!(p.cell == b.cell && p.ty.element == b.ty.element && p.time == b.time);
+            assert!(p.is_empty());
+        }
     }
 
     /// The writer of [`IntsListed`] keeps what its readers rest on (PROOF-ints-listed-writers):
