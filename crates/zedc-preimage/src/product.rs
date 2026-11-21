@@ -2111,6 +2111,9 @@ struct KeptTest {
     /// values: a written constraint on those names may give `false` there
     /// ([`Scope::written_dead`]), as it would in the case had it come first.
     points: Vec<Vec<(Arc<str>, Value)>>,
+    /// The number of its cases that were not bottom when it was kept, two or more
+    /// ([`Scope::join_kept`]); [`Scope::narrow_kept_again`] reads it to end.
+    cases: usize,
 }
 
 /// What a kept test is watched by ([`Scope::join_kept`]).
@@ -10315,20 +10318,51 @@ impl Scope {
     //    leaves the join's product, which holds every case's, so it loses precision only.
     // The premises passed are those the test was kept under: they record why a product
     // narrowed (zedc-lattice cell.rs `Premises`), and do not change what is narrowed.
-    // Termination: each round with `due` not empty forgets at least one test (each of `due` is
-    // in `kept` when `dead` and `written_dead` return it), and narrowing by it keeps it again
-    // only through `join_kept` with its cases that are not bottom. The case that fired is
-    // bottom there when narrowing is monotone (a case made from a narrower scope has a
-    // narrower product, and the trigger says that product meets the name's in no value), so
-    // each test is kept again with fewer cases, and a test with fewer than two is not kept.
-    // Not proved here: that monotonicity of `case_list` in its scope, for every kind of case;
-    // the tests that drop a case in each order (tests/steps/l01_39_scope_relations/xst/s4.rs,
-    // `a_case_a_class_empties_is_dropped_when_the_class_comes_last`,
+    // Termination (row PROOF-preimage-narrow-kept-again-ends, 2026-11-21). The earlier
+    // argument needed `case_list` to be monotone in its scope (a narrower scope gives each
+    // case a narrower product, so the case that fired is bottom when the test is narrowed
+    // again and the test comes back with fewer cases). That is not proved for every kind of
+    // case, and the code records inputs where a more exact scope gave a less exact case (P197,
+    // `Scope::exclude`). So the loop no longer relies on it: `narrowed` holds, for each address
+    // narrowed again in this call, the number of cases ([`KeptTest::cases`]) of the version
+    // that was narrowed, and a due test is narrowed again only when it is new to `narrowed` or
+    // its kept version now has fewer cases than that number; a due test that is not is left
+    // kept and not narrowed, which loses precision only (above: a trigger that does not fire
+    // has the same effect). Where `case_list` is monotone the test always comes back with
+    // fewer cases, so this changes no answer the earlier loop gave.
+    // Proof that the loop ends:
+    // 1. A round that narrows no test returns: nothing in it wrote the names or the written
+    //    constraints (`narrow` and `reduce` are the only writers here, and both are skipped).
+    // 2. Each address is narrowed finitely often in one call: the values `narrowed` records
+    //    for it strictly fall, and each is the case count of a kept test, at least 2
+    //    (`join_kept` keeps a test only with two cases or more).
+    // 3. Finitely many addresses are narrowed in one call. Tests enter `kept` only through
+    //    `join_kept`, called only from `narrow_linear` and `narrow_kept`, which `narrow`
+    //    reaches (`reduce`, `settle_test` and `written_dead` call neither, and the cases of
+    //    `case_list` are made by `narrow_node` and `exclude`, which keep nothing, so a join of
+    //    them keeps only tests the scope kept before). Narrowing by `u` keeps
+    //    `signed(term_at(k), v)` for a node `k` of `Tree::of(u)`, or of the tree of a group of
+    //    its root's sides (`narrow_linear`), whose nodes are rebuilt from those of `u`'s tree.
+    //    `Tree::term_at` clones each atom's term, and builds a nest as a balanced nest of its
+    //    sides, which `Tree::of` flattens back into one nest (a side is never the nest's own
+    //    connective at its polarity, the flattening loop of `Tree::of`), with no new side
+    //    (`dedup_by` can only drop one). So every test kept in one call has its atoms among
+    //    those of the tests kept when the call began and no more nodes than the largest of
+    //    them; the trees of at most that many nodes over those atoms are finite in number, and
+    //    `term_at` gives one term per tree, so the addresses are too.
+    // By 1 to 3, the rounds that narrow are finitely many, and the round after the last one
+    // that narrows returns. This gives an end, not a bound on the number of rounds; the cost
+    // measured is the one above.
+    // Test: the three tests that drop a case in each order (tests/steps/l01_39_scope_relations/
+    // xst/s4.rs, `a_case_a_class_empties_is_dropped_when_the_class_comes_last`,
     // `a_case_a_bound_empties_is_dropped_from_a_test_with_no_relation`,
-    // `split_class_last_drops_each_kept_case`) end, but cannot show it for every case.
+    // `split_class_last_drops_each_kept_case`) still drop each case, so the rule kept their
+    // repeated narrowings; no test has a case that comes back as wide, so the skip itself is
+    // not exercised.
     fn narrow_kept_again(&mut self, before: &Scope, reduce: fn(&mut Scope)) {
         let mut since = before.names.clone();
         let mut since_written = before.written.clone();
+        let mut narrowed: BTreeMap<Address, usize> = BTreeMap::new();
         while !self.bottom
             && !(self.kept.triggers.is_empty() && self.kept.fixed.names().next().is_none())
         {
@@ -10370,16 +10404,26 @@ impl Scope {
             }
             since = self.names.clone();
             since_written = self.written.clone();
+            let mut any = false;
             for k in due {
-                let Some(t) = self.kept.forget(&k) else {
+                let Some(cases) = self.kept.tests.get(&k).map(|t| t.cases) else {
                     continue;
                 };
+                if narrowed.get(&k).is_some_and(|&was| cases >= was) {
+                    continue;
+                }
+                let t = (self.kept.forget(&k)).expect("a test just found in kept");
+                narrowed.insert(k, cases);
+                any = true;
                 self.names.materialize();
                 self.settle_test(&t.test);
                 self.narrow(&t.test, true, &t.premises);
                 if self.bottom {
                     break;
                 }
+            }
+            if !any {
+                return;
             }
             reduce(self);
         }
@@ -10891,6 +10935,7 @@ impl Scope {
         // persistent maps' difference, which skips what they share.
         let mut names = self.names.view().clone();
         let mut seeds: BTreeSet<Arc<str>> = BTreeSet::new();
+        let mut same_keys = true;
         for d in self.names.diff(&other.names) {
             match d {
                 DiffItem::Update {
@@ -10905,6 +10950,7 @@ impl Scope {
                 DiffItem::Add(n, _) | DiffItem::Remove(n, _) => {
                     names.insert(n.clone(), Product::top());
                     seeds.insert(n.clone());
+                    same_keys = false;
                 }
             }
         }
@@ -11112,7 +11158,14 @@ impl Scope {
             written_by,
             kept,
             bottom: false,
-            emptied: Emptied(false, self.emptied.1.clone()),
+            // `self`'s emptied names when the sides have the same names, and a cache of its
+            // own otherwise: the join then has names `self`'s orders do not account for, which
+            // [`Scope::empty_if_bottom`] reads from the orders (its proof).
+            emptied: if same_keys {
+                Emptied(false, self.emptied.1.clone())
+            } else {
+                Emptied::default()
+            },
             enumerated,
             projected,
             exact: self.exact,
@@ -12682,6 +12735,7 @@ impl Scope {
             return;
         }
         let free: Vec<Arc<str>> = stage::free(&test).into_iter().collect();
+        let count = cases.len();
         let joined = self.join_preserving_outer(cases.clone());
         let triggers = match watch {
             Watch::Cases => case_triggers(&cases, &free, &joined),
@@ -12699,6 +12753,7 @@ impl Scope {
                 premises: prem.clone(),
                 triggers,
                 points,
+                cases: count,
             });
         }
     }
@@ -13656,27 +13711,48 @@ impl Scope {
     /// ([`Scope::bind`]), each binding in `orders`, so two scopes made from one differ in their
     /// names only where their orders differ.
     ///
-    /// Proof of the last sentence, for two scopes sharing `emptied.1` (copies, and the joins
-    /// of `Scope::join_settled`, which keep `self`'s `emptied.1`): the scopes that do not come from
-    /// one another have their own (`Scope::of`, `Emptied::default()`). The sites that add or take
-    /// away a key of `names` are: `Scope::bind_with`, which on its fresh path sets `x` in
-    /// `names`, `bindings` and `orders` together, on its saved path inserts `x` in `names` and
-    /// `orders` together (or, in a bottom scope, neither), and `Scope::unbind`, which undoes
-    /// one of these (removing both, or restoring the saved copy). Every other write to `names`
-    /// (`meet_type`, `meet_name`, the reductions, `narrow`) reads the product of a key it finds
-    /// there first and puts it back at that key, and the join's names start from `self`'s
-    /// (`Scope::join_settled`, `self.names.view().clone()`) with `self`'s orders. A rebinding of a
-    /// key both scopes have changes its order (an `Update` in the difference) and not its
-    /// membership, which the loop rightly leaves. So, key by key, the two scopes' names
-    /// differ only at an `Add` or `Remove` of `orders`, where the loop reads `self.names`. The
-    /// filter on the count is a second check only: a result with the right count and wrong
-    /// keys would pass it. Not proved: that no write to `names` outside the sites listed here
-    /// adds or removes a key (checked by reading each write a search of this file for
-    /// `self.names.insert`, `self.names = ` and `set_fresh` finds, in November 2026), and
-    /// that the join's later inserts touch only keys `self` has.
-    /// Test: `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_agree_on_random_blocks`
+    /// Proof of the last sentence (row PROOF-preimage-names-orders-keys, 2026-11-21). Claim:
+    /// the scopes sharing one `emptied.1` have one set `K` with `keys(names) = K ∪
+    /// keys(orders)` for each of them. A new `emptied.1` is made only by `Scope::of` (orders
+    /// empty, `K` = the names) and by `Scope::join_settled` when the sides' names differ
+    /// (`Emptied::default()`, `K` = the names not in the orders); a copy (`Clone`) shares it
+    /// with the same names and orders. Every write to `names` that adds or takes away a key,
+    /// found by searching this file for `names.insert(`, `names = `, `set_fresh`, `*self = `
+    /// and `names: ` (November 2026), keeps the claim:
+    /// - `Scope::bind_with`, fresh path: `x` is not a name, so not in `K` or the orders, and
+    ///   `set_fresh` and `orders.insert` add it to both;
+    /// - `Scope::bind_with`, saved path: `names.insert(x)` and `orders.insert(x)` together;
+    /// - `Scope::unbind`, fresh: `set_fresh(x, None)` and `orders.remove(x)` together, and
+    ///   `x` is not in `K` (it was in no side of the claim when bound, it stays in the orders
+    ///   until this unbind, and the scopes that replace the whole scope meanwhile are made
+    ///   from it under that binding and keep it in their orders, so a new `K` made in
+    ///   between leaves it out); `unbind`, saved, and the other `*self = s` sites (narrowing,
+    ///   `join_kept`) put back or put in a whole scope, for which the claim holds.
+    /// - `Scope::join_settled` starts from `self`'s names and orders, and a key only one
+    ///   side has (`Add` or `Remove`) gives the join a new `emptied.1`, so the claim holds
+    ///   for its own `K`; with no such key it keeps `self`'s names, orders and `emptied.1`.
+    /// - `Scope::join_preserving_outer` makes the joined scope's base map equal, entry for
+    ///   entry, to that of the join it was given (`DiffItem::Remove` removes, the others
+    ///   insert), so the keys and the orders are the join's.
+    /// - The rest (`meet_type`, `meet_name`, `meet_own`, the reductions, `project_part`,
+    ///   `extend_path` and `extend_pendant`, `get_mut`, `materialize`) write a product at a
+    ///   key read from `names` first, or change only paths and pendants over the base keys.
+    ///
+    /// Then for `was` (the last emptied, made from a scope with the same `emptied.1`) and
+    /// `self`, take a key `n`. In both orders or in neither (an `Update`, or no item), it is
+    /// a name of both or of neither (in `keys(orders)`, or in `K` for both), and the loop
+    /// leaves it. Only in `self`'s orders (`Add`): it is a name of `self`, and the loop
+    /// inserts it. Only in `was`'s (`Remove`): it is a name of `was`, and of `self` exactly
+    /// when it is in `K`, which the loop reads from `self.names`. So the result has exactly
+    /// `self`'s names, and the filter on the count is a second check only.
+    /// The fault this fixed: `join_settled` kept `self`'s `emptied.1` when one side bound a
+    /// name the other did not, so two such joins of one scope emptied from each other's
+    /// names. Tests: `tests::joins_with_other_names_empty_their_own_names` (failed before
+    /// the fix: `left: ["a", "b", "c"]`, `right: ["a", "b", "e"]`);
+    /// `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_agree_on_random_blocks`
     /// compares the names of each arm with the reference walk, which empties by the same
-    /// code, so it cannot catch a wrong key set common to both.
+    /// code, so it cannot catch a wrong key set common to both, and neither test catches a
+    /// new write to `names` added after this list was made.
     ///
     /// Complexity tradeoff: the naive emptying makes the bottom of each name, `O(n)` for `n`
     /// names, so that a walk showing an arm no state reaches below each of `d` nested
@@ -25912,6 +25988,33 @@ mod tests {
             assert!(p.cell == b.cell && p.ty.element == b.ty.element && p.time == b.time);
             assert!(p.is_empty());
         }
+    }
+
+    /// Two joins of one scope with copies that bind different names, emptied one after the
+    /// other, each keep their own names (PROOF-preimage-names-orders-keys, the proof at
+    /// `Scope::empty_if_bottom`). Each join has three names and the outer scope's orders,
+    /// which bind none of them; when both shared the outer scope's emptied names, the second
+    /// was emptied from the first's names `a`, `b`, `c`, which the orders do not tell apart
+    /// from its own and whose count is right, so it lost `e` and gained `c`.
+    #[test]
+    fn joins_with_other_names_empty_their_own_names() {
+        let [a, b, c, e]: [Arc<str>; 4] = ["a", "b", "c", "e"].map(Arc::from);
+        let s = Scope::new([&a, &b].map(|v| (v.clone(), Product::of_type(Type::int()))));
+        let lit = Shared::new(Term::Lit(Value::Int(0)));
+        let side = |x: &Arc<str>| {
+            let mut t = s.clone();
+            _ = t.bind(x, Product::of_type(Type::int()), &lit);
+            t
+        };
+        let mut j1 = s.join(&side(&c));
+        let mut j2 = s.join(&side(&e));
+        for j in [&mut j1, &mut j2] {
+            j.bottom = true;
+            j.empty_if_bottom();
+        }
+        let keys = |j: &Scope| j.names.keys().cloned().collect::<Vec<_>>();
+        assert_eq!(keys(&j1), vec![a.clone(), b.clone(), c]);
+        assert_eq!(keys(&j2), vec![a, b, e]);
     }
 
     /// The writer of [`IntsListed`] keeps what its readers rest on (PROOF-ints-listed-writers):
