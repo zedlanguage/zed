@@ -12040,6 +12040,8 @@ impl<'a> Ck<'_, 'a> {
             _ => {
                 let mut wanted = vec![Item::Scope(here)];
                 wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
+                // Settled, so its held questions are placed ([`Ck::settle`]): only
+                // [`Ck::ints_here`] holds, and its read reaches no condition.
                 self.settle(wanted);
                 let s = self.arms.scopes[here].clone().expect("settled");
                 self.with_bound(s, &t.binders, &t.calls)
@@ -12282,6 +12284,10 @@ impl<'a> Ck<'_, 'a> {
             }
         };
         if let Some(at) = at {
+            // Only the baseline the read's own questions are told from, not settled: the scope
+            // of the class head `key.0` is the one `here` took ([`Ck::compute`]), which
+            // [`Ck::read_here`] settled. The head's held questions belong to its own test, in
+            // another function, and are placed only if a read there needs them.
             let before = (self.arms.scopes[key.0].as_ref())
                 .expect("settled")
                 .refusals
@@ -12338,6 +12344,8 @@ impl<'a> Ck<'_, 'a> {
         let here = self.arms.here();
         let mut wanted = vec![Item::Scope(here)];
         wanted.extend(t.binders.iter().map(|&b| Item::Bound(b)));
+        // Settled before the scope is read below, so its held questions are placed unless
+        // [`Ck::ints_here`] holds them for a read no refused question can make wrong.
         self.settle(wanted);
         let key = (
             self.arms.class[here],
@@ -12944,7 +12952,9 @@ impl<'a> Ck<'_, 'a> {
                         // The questions refused here and not in the parent's scope are this
                         // test's: those the binders it reads asked as they were told of, and
                         // its own narrowing's. A join asks none of its own; it keeps both
-                        // sides' ([`Scope::join`]).
+                        // sides' ([`Scope::join`]). The parent is read as a baseline only,
+                        // not settled: it is among the items `n` waits on, so it is computed,
+                        // and [`Ck::settle`] places its held questions as it places `n`'s.
                         let before = (self.arms.scopes[parent].as_ref())
                             .map(|q| q.refusals.clone())
                             .unwrap_or_default();
@@ -13009,6 +13019,8 @@ impl<'a> Ck<'_, 'a> {
                             })
                             .map(|&(_, _, c)| c);
                         if let Some(c) = head {
+                            // The head's scope is read, not settled: its held questions are
+                            // its own test's, and `n`'s, equal to them, are placed at `n`'s.
                             let s = self.arms.scopes[c].clone().expect("a head is computed");
                             self.place_or_hold(item, test.span, &before, &s.refusals);
                             self.arms.class[n] = c;

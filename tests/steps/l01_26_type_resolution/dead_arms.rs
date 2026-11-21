@@ -125,6 +125,35 @@ fn a_constant_read_under_a_refused_test_adds_no_warning_and_hides_none() {
     }
 }
 
+#[test]
+fn a_constant_read_in_one_function_hides_no_warning_of_another_sharing_its_test() {
+    // Two functions whose tests are equal by place share one class of nodes and one scope
+    // (`Ck::compute`, PERF-guarded-function-constant). The scope's refusal is held when the
+    // first node of the class is computed for a constant read (`Ck::ints_here`); the division
+    // of the other function, of a node of that class, places it at its own test, and the one
+    // that reads only `m` warns at none, in either order, as each does checked alone. The
+    // messages are compared without their places, which the other function moves.
+    let f = |name: &str, arm: &str| {
+        format!(
+            "{name}(positional x: int) = if (x - 4) mod 30 <= 9 {{ {arm} }} else {{ x mod 8 }};\n"
+        )
+    };
+    let (constant, division) = (f("c", "x mod m"), f("d", "100 / (x * x + 1)"));
+    let messages = |fns: &[&str]| {
+        let (checked, _) = info(&format!("m = 8;\n{}", fns.concat()));
+        let mut v: Vec<String> = (checked.warnings.iter())
+            .map(|w| w.message.clone())
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(messages(&[&constant]), Vec::<String>::new());
+    let alone = messages(&[&division]);
+    assert!(!alone.is_empty());
+    assert_eq!(messages(&[&constant, &division]), alone);
+    assert_eq!(messages(&[&division, &constant]), alone);
+}
+
 /// `m = 8;` and a function of `n` nested tests `(x - i) mod 30 <= 9`, each refused (its values
 /// have gaps that repeat without end), with `arm` innermost.
 pub(super) fn refused_nest(n: usize, arm: &str) -> String {
