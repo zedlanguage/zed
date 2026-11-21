@@ -115,11 +115,12 @@ enum Kind {
 /// (`KType::scalar_literal_width`); at most 2 texts (the atoms, the kind-wide part), each a
 /// UTF-8 string of byte length at most `W`, since that length is the leaf's `text_len` and so
 /// at most its width (finitely many strings of bounded length); atom names from a finite set
-/// fixed by the program and compiler (every `KType::atom` outside tests takes either a name written in the program —
-/// an `ExprKind::Atom`, `TypeKind::Atom`, declared atom family, or handle — or one of the
-/// thirteen compiler-fixed names `notFound`, `outOfBounds`, `empty`, `divByZero`, `badUtf8`,
-/// `none`, `emptySeparator`, `ioError`, `errs`, plus `NaN`, `overflow`, `invalid`, `notScalar`
-/// from `zed_kernel::Prim::arrows`; checked by reading all sites, 2026-11-20), so
+/// fixed by the program and compiler (every `KType::atom` outside tests takes either a name
+/// written in the program — an `ExprKind::Atom`, `TypeKind::Atom`, declared atom family, or
+/// handle — or one of the thirteen compiler-fixed names `notFound`, `outOfBounds`, `empty`,
+/// `divByZero`, `badUtf8`, `none`, `emptySeparator`, `ioError`, `errs`, plus `NaN`,
+/// `overflow`, `invalid`, `notScalar` from `zed_kernel::Prim::arrows`; checked by reading all
+/// sites, 2026-11-20), so
 /// finitely many lists of them; one bit; a subset of the finite set `K`; and `k <= W`
 /// fresh-variable places (the leaf's fresh count is at most its width), each less than `V`
 /// (at most `V^k` choices).
