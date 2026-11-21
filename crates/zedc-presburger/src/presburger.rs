@@ -20735,7 +20735,7 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
 ///    is a unimodular elimination (W. Pugh, "The Omega test", Supercomputing 1991, sec. 2.2,
 ///    doi:10.1145/125826.125848, read 2026-11-21: "we first check if there exists a j != 0
 ///    such that |a_j| = 1. If so, we eliminate the constraint by solving for x_j and
-///    substitute the result into all other constraint[s]"; see the crate's References),
+///    substitute the result into all other constraint\[s\]"; see the crate's References),
 ///    preserving the set of integer projections onto all remaining atoms (and onto `s`).
 ///    Substituting a single-atom equality `a*x + k == 0` (`x != s`) is exact because `a | k`
 ///    fixes `x = -k/a` uniquely, else no integer solution exists.

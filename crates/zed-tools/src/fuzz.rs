@@ -93,10 +93,11 @@ impl Depths {
     /// nondecreasing in each variable" and g(x_1, ..., x_k) ≥ max(x_1, ..., x_k). Sec. 2 (B),
     /// p. 2: with g(x_1, ..., x_k) = max(x_1, ..., x_k) + 1, "m(Y) is the minimum height of a
     /// parse tree" of Y, which is the depth here. Sec. 3, p. 3, the algorithm: compute
-    /// v[Y] = min g(μ[X_1], ..., μ[X_k]) over the productions whose parts are all in D, "Choose
-    /// Y ∉ D such that v[Y] is minimum", set μ[Y] = v[Y], add Y to D; with a priority queue it
-    /// runs in O(m log n + t) for m productions, n nonterminals and total length t. Sec. 4,
-    /// p. 3, proves μ[Y] = m(Y) at each choice from monotonicity and superiority alone. It
+    /// v\[Y\] = min g(μ\[X_1\], ..., μ\[X_k\]) over the productions whose parts are all in D,
+    /// "Choose Y ∉ D such that v\[Y\] is minimum", set μ\[Y\] = v\[Y\], add Y to D; with a
+    /// priority queue it runs in O(m log n + t) for m productions, n nonterminals and total
+    /// length t. Sec. 4, p. 3, proves μ\[Y\] = m(Y) at each choice from monotonicity and
+    /// superiority alone. It
     /// reduces to Dijkstra's search on paths (sec. 2 (A); E. W. Dijkstra, Numer. Math. 1,
     /// 269-271, 1959, doi:10.1007/BF01386390, read 2026-11-21, PDF from LibGen). Departures: a
     /// choice inside an alternative takes the least of its branches, which the paper writes as

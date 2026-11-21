@@ -144,7 +144,7 @@
 //! - F. Cucker, P. Koiran and S. Smale, "A polynomial time algorithm for Diophantine equations
 //!   in one variable", J. Symbolic Computation 27(1), 1999, pp. 21-29,
 //!   doi:10.1006/jsco.1998.0242 (read 2026-11-21, PDF, LibGen, verification only): Theorem 1,
-//!   "There is a polynomial time algorithm which given input f ∈ Z[t] decides whether f has
+//!   "There is a polynomial time algorithm which given input f ∈ Z\[t\] decides whether f has
 //!   an integer root and, moreover, the algorithm outputs the set of integer roots of f", in
 //!   the size of the sparse encoding, the list of pairs `(i, a_i)` with `a_i != 0`: so
 //!   polynomial in the number of terms and their bit sizes, as the earlier entry said.

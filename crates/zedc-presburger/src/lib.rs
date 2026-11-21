@@ -403,7 +403,7 @@
 //!   pp. 973-989, doi:10.1137/0216062. Both read 2026-11-21 in the publishers' PDFs (LibGen
 //!   copies, kept outside the repository). Cardon and Crochemore, abstract: the aim is "the
 //!   unique coarsest regular congruence ... (an equivalence ... is a regular congruence if for
-//!   any vertices u and v equivalent modulo [it], then u and v have the same number of
+//!   any vertices u and v equivalent modulo \[it\], then u and v have the same number of
 //!   successors by each type of arc in each equivalence class)"; Theorem 1, the algorithm of
 //!   their Fig. 2 computes it; Theorem 2, it runs in time `|A| (log2(|V| - #classes + 1) + 1)`,
 //!   since a vertex is in a "significant" class at most `log2(|V| - #classes + 1)` times (a
