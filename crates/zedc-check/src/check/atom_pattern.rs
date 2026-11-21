@@ -8,7 +8,7 @@ use zedc_syntax::ast::Pattern;
 
 /// The atom `#name` with any payload or none: what a bare pattern `#name` matches. It lives in
 /// zedc-types, whose printer writes what an `else #name ->` removes (else1x1).
-pub use zedc_types::kernel_type::any_payload;
+pub use zedc_types::ty::any_payload;
 
 /// The atom `#name()`, whose payload is the empty tuple: what the pattern `#name()` matches.
 pub fn empty_payload(name: &str) -> KType {

@@ -7379,6 +7379,16 @@ pub fn carriers_text(cs: impl IntoIterator<Item = Carrier>) -> String {
     order::union_of_names(cs.into_iter().map(Carrier::name))
 }
 
+/// The atom `#name` with any payload or none: what a bare pattern `#name` matches, so what
+/// `e else #name -> d` takes of `e` (DESIGN.md sec:type_resolution: "`p else #a -> d` adds `#a`
+/// with any payload"). Shared by the checker's handlers (zedc-check's `atom_pattern`, which
+/// re-exports it) and the printer of what an `else` leaves (`Scope::open`), so the two read
+/// one set. It lives here, not in `kernel_type`, which imports this module (step S.1f, no new
+/// import cycle).
+pub fn any_payload(name: &str) -> KType {
+    KType::union_all([KType::atom(name), KType::atom_with(name, &KType::top())])
+}
+
 /// Every atom.
 pub fn atoms() -> KType {
     thread_local! {
@@ -23085,7 +23095,7 @@ impl Scope {
             }
             let removed = match narrow {
                 Narrow::Loose => None,
-                Narrow::Atom(name) => Some(crate::kernel_type::any_payload(name)),
+                Narrow::Atom(name) => Some(any_payload(name)),
                 // With its payloads read: `r else #a() -> 0` removes `#a()` alone (DESIGN.md
                 // L1.40d), which [`Ty::kernel`] would print `#a(..)`.
                 Narrow::Not(t) => t.exact_kernel(),

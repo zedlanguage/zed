@@ -7,15 +7,6 @@ use zed_kernel::types::Type as KType;
 use zedc_syntax::ast::{Every, Type, TypeKind};
 use zedc_syntax::lex::Span;
 
-/// The atom `#name` with any payload or none: what a bare pattern `#name` matches, so what
-/// `e else #name -> d` takes of `e` (DESIGN.md sec:type_resolution: "`p else #a -> d` adds `#a`
-/// with any payload"). Shared by the checker's handlers (zedc-check's `atom_pattern`, which
-/// re-exports it) and the printer of what an `else` leaves (`Scope::open` in `ty.rs`), so the
-/// two read one set.
-pub fn any_payload(name: &str) -> KType {
-    KType::union_all([KType::atom(name), KType::atom_with(name, &KType::top())])
-}
-
 /// The kernel type a written type denotes. A function type is curried, one level per
 /// parameter, and `->?` makes each level partial; `() -> V` has the empty tuple as its one key.
 /// A name of a port denotes no type: it is an error in `ports`, and the type is `None`. With
