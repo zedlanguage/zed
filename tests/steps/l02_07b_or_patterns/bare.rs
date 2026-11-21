@@ -134,9 +134,9 @@ fn a_bare_pattern_in_an_else_payload_is_refused_at_the_pattern() {
     );
 }
 
-/// An `else` tail takes one atom pattern (`ElseTail` in DESIGN.md sec:grammar; zed/grammar/cases.txt
-/// refuses `x else (#a | #b) -> d`), so an or-pattern there, bare or in parentheses, is refused at
-/// the pattern with the `match` the tail stands for: `e else P -> d` is
+/// An `else` tail takes one atom pattern (`ElseTail` in DESIGN.md sec:grammar;
+/// zed/grammar/cases.txt refuses `x else (#a | #b) -> d`), so an or-pattern there, bare or in
+/// parentheses, is refused at the pattern with the `match` the tail stands for: `e else P -> d` is
 /// `match e { P -> d, x -> x }` (sec:grammar, the desugaring of `ElseTail`). Before this clause the
 /// bare form was refused as a union written bare as a key, with a repair that does not parse
 /// either, and the form in parentheses with the plain syntax error.

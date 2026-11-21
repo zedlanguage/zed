@@ -115,11 +115,11 @@ fn signatures_of_deep_tuples_that_differ_run_on_a_shallow_stack() {
 /// before any run is timed and kept until the check ends, so neither their building nor their
 /// release is timed. One input per size, read by every run, let the first run fill the facts a
 /// type keeps once found (such as a row's keys), so the meter, which held the second run at n
-/// against the first at 8n until author A160 (2026-11-20), compared a warm run with a cold one: the meet of two tuples read
-/// 8.93 times the instructions and 9.33 times the bytes, while its first runs on inputs of their
-/// own take 8.000 times both (FAIL-ratio-meet-deep). The inputs are built at once, each on a
-/// thread of its own: built one after another, the two at 8n put `meets` of 320,000 levels
-/// over the time a piece may take (22.6 s against 22 s at load 34).
+/// against the first at 8n until author A160 (2026-11-20), compared a warm run with a cold one: the
+/// meet of two tuples read 8.93 times the instructions and 9.33 times the bytes, while its first
+/// runs on inputs of their own take 8.000 times both (FAIL-ratio-meet-deep). The inputs are built
+/// at once, each on a thread of its own: built one after another, the two at 8n put `meets` of
+/// 320,000 levels over the time a piece may take (22.6 s against 22 s at load 34).
 ///
 /// Complexity tradeoff: one input per size costs one build at n and one at 8n but measures a
 /// warm run against a cold one; an input per run costs `Meter::runs` builds per size (two

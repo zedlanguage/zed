@@ -5,9 +5,9 @@
 //! `step(0) = x[0] == 0`, with the top value restricted to a residue, `x[k] == m * h + r`, as
 //! a running total of optional charges checked for parity at the end. There are 2^k ways
 //! through the nest, one for each subset of the weights, and k shared parts. The projection
-//! reads each part once per base it is read with (COMPLEXITY.md S31b, PRES-below-key); the base the level
-//! above gives a part keeps the residue as a row over the witness `h` whose constant depends on
-//! the way taken (`2 h == x[i] + 15` on one, `2 h == x[i] - 1` on another), and those rows are
+//! reads each part once per base it is read with (COMPLEXITY.md S31b, PRES-below-key); the base the
+//! level above gives a part keeps the residue as a row over the witness `h` whose constant depends
+//! on the way taken (`2 h == x[i] + 15` on one, `2 h == x[i] - 1` on another), and those rows are
 //! moved to one form before the memo reads them, so the nest costs time linear in k, not 2^k.
 
 use std::collections::BTreeSet;

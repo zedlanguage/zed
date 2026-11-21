@@ -219,31 +219,36 @@ fn deciding_indirect_alt_ladder_scales() {
     scales("indirect_alt_ladder", 84000);
 }
 
-/// `exring:6:1` of `WIDENED`. TEST-bench-move-l0123, author P169: n was 4096, now 750000; 1x 0.43 s at load 28.
+/// `exring:6:1` of `WIDENED`. TEST-bench-move-l0123, author P169: n was 4096, now 750000; 1x 0.43 s
+/// at load 28.
 #[test]
 fn deciding_widened_exring_scales() {
     scales(WIDENED[0], 750000);
 }
 
-/// `defeatgsr:6:42:and` of `WIDENED`. TEST-bench-move-l0123, author P169: n was 4096, now 650000; 1x 0.57 s at load 28.
+/// `defeatgsr:6:42:and` of `WIDENED`. TEST-bench-move-l0123, author P169: n was 4096, now 650000;
+/// 1x 0.57 s at load 28.
 #[test]
 fn deciding_widened_defeatgsr_scales() {
     scales(WIDENED[1], 650000);
 }
 
-/// `indirect_alt_ladder:6:7` of `WIDENED`. TEST-bench-move-l0123, author P169: n was 4096, now 560000; 1x 0.46 s at load 28.
+/// `indirect_alt_ladder:6:7` of `WIDENED`. TEST-bench-move-l0123, author P169: n was 4096, now
+/// 560000; 1x 0.46 s at load 28.
 #[test]
 fn deciding_widened_indirect_alt_ladder_scales() {
     scales(WIDENED[2], 560000);
 }
 
-/// `g_codex_adversary:6:24:mor` of `WIDENED`. TEST-bench-move-l0123, author P169: n was 4096, now 610000; 1x 0.37 s at load 27.
+/// `g_codex_adversary:6:24:mor` of `WIDENED`. TEST-bench-move-l0123, author P169: n was 4096, now
+/// 610000; 1x 0.37 s at load 27.
 #[test]
 fn deciding_widened_g_codex_adversary_scales() {
     scales(WIDENED[3], 610000);
 }
 
-/// `tiles:6:0:mor` of `WIDENED`. TEST-bench-move-l0123, author P169: n was 4096, now 580000; 1x 0.51 s at load 26.
+/// `tiles:6:0:mor` of `WIDENED`. TEST-bench-move-l0123, author P169: n was 4096, now 580000; 1x
+/// 0.51 s at load 26.
 #[test]
 fn deciding_widened_tiles_scales() {
     scales(WIDENED[4], 580000);

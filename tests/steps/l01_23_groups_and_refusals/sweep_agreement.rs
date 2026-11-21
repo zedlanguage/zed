@@ -646,8 +646,8 @@ fn the_sweep_agrees_on_redundant_rows_with_cofinite_heads() {
 
 /// The `chain` kind: `L`, `G1 = cons(1, L)`, `Gk = sides | cons(int, G{k-1})` with `sides` a
 /// list of rows into `L` or `G1`, and `Mk` as in [`family`]. The terms are `L` less `Gg | Mm`,
-/// and `Gg` less `Mm`, for every `g <= n <= 5` and `m <= n + 1`; in both orders. Each run asks one in
-/// five of these, drawn afresh (author P169); every one was asked, in 2.5 s, until
+/// and `Gg` less `Mm`, for every `g <= n <= 5` and `m <= n + 1`; in both orders. Each run asks one
+/// in five of these, drawn afresh (author P169); every one was asked, in 2.5 s, until
 /// TEST-bench-move-l0123.
 #[test]
 fn the_sweep_agrees_on_union_links() {
@@ -1608,8 +1608,8 @@ fn random_clauses(seed: u64, k: usize, m: usize) -> Vec<Vec<(usize, bool)>> {
 /// `_u6a167`, and t03 is `refusals::the_forked_difference_benches_at_16_and_their_controls`.
 /// Each case is checked by [`fork_case`] in both orders against the oracle (or, for t11, the
 /// formula), and pinned at its verdict now; t11 is the test after this one
-/// ([`the_prototype_random_3sat_case_is_refused_soundly`]). The prototype answers t04 and t05 by its Stage 3
-/// (the prefix-chain CSP), which is not ported: t04 stays refused, as do the cases the
+/// ([`the_prototype_random_3sat_case_is_refused_soundly`]). The prototype answers t04 and t05 by
+/// its Stage 3 (the prefix-chain CSP), which is not ported: t04 stays refused, as do the cases the
 /// prototype refuses (t06 to t09, t11), since the first element read already leaves two
 /// negative chains (a fork, for Stage 1) and the answer needs two negative states at once (no
 /// simulation, for Stage 2). t05, unsatisfiable, is Empty and t10 Inhabited, both by the
@@ -1625,7 +1625,8 @@ fn the_prototype_fork_stage_cases_are_answered_or_refused_soundly() {
     };
     let mut cases: Vec<(String, Spec, Term, bool, Verdict)> = Vec::new();
     // t04 and t05: 2-SAT as the selector reduction of 3-clauses, an implication chain
-    // x0 -> x1 -> x2 -> x3 with a tautology beside each link; with x0 and !x3 forced, unsatisfiable.
+    // x0 -> x1 -> x2 -> x3 with a tautology beside each link; with x0 and !x3 forced,
+    // unsatisfiable.
     for unsat in [true, false] {
         let k = 4;
         let mut clauses = Vec::new();
@@ -2091,7 +2092,8 @@ fn r7_optional_spine_arrival_with_no_active_negative() {
 fn r7_can_prove_empty_admits_empty_active_neg_where_codex_flag_declines() {
     {
         // Case A separation: `(P1 & Q1) \ F2` where `F2 = cons(int \ {3}, cons(1, L))` has an
-        // optional spine arrival at step 2 with `active_neg` empty, and step 3 has `R_3 = {1} & {2} = empty`.
+        // optional spine arrival at step 2 with `active_neg` empty, and step 3 has
+        // `R_3 = {1} & {2} = empty`.
         let spec_a = Spec {
             groups: vec![vec![
                 D {
@@ -2150,7 +2152,8 @@ fn r7_can_prove_empty_admits_empty_active_neg_where_codex_flag_declines() {
         );
 
         // Case B separation: `P1 \ (F2 | F3 | F4)` where step 2 is an optional spine arrival with
-        // `active_neg` empty, step 3 commits step 1 to `{4}`, and step 4 proves `Empty` by Pigeonhole.
+        // `active_neg` empty, step 3 commits step 1 to `{4}`, and step 4 proves `Empty` by
+        // Pigeonhole.
         let spec_b = Spec {
             groups: vec![vec![
                 D {
@@ -2592,7 +2595,8 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
         None
     }
     fn build_case(c: &ChainCase, tag: &str, rev: bool) -> Type {
-        // Definitions: 0 is carrier L, 1..=nodes.len() are pool nodes, then pos rows, then neg rows.
+        // Definitions: 0 is carrier L, 1..=nodes.len() are pool nodes, then pos rows, then neg
+        // rows.
         let n_nodes = c.nodes.len();
         let n_pos = c.pos.len();
         let total = 1 + n_nodes + n_pos + c.neg.len();
@@ -2890,10 +2894,10 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
             let mut neg: Vec<(Pred, TailRef)> = Vec::new();
 
             if x31_mode {
-                // Spine F1..Fd with 1-value or many-value holes disjoint from F1's finite leaf head,
-                // roots of different lengths along the spine (including optional arrivals where F1 is
-                // not itself refused), auxiliary negative chains with holes/stops, and mixed positive
-                // chains (exercising X31 as well as Case A and Case B).
+                // Spine F1..Fd with 1-value or many-value holes disjoint from F1's finite leaf
+                // head, roots of different lengths along the spine (including optional arrivals
+                // where F1 is not itself refused), auxiliary negative chains with holes/stops, and
+                // mixed positive chains (exercising X31 as well as Case A and Case B).
                 let leaf_bit = rng.below(2);
                 let leaf_mask = 1u8 << leaf_bit;
                 let leaf_h = Pred {
@@ -2914,14 +2918,15 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
                 for d in 1..=sp_len {
                     nodes.push((false, draw_spine_hole(&mut rng), TailRef::Node(d - 1)));
                 }
-                // Spine roots of different lengths (when d > 0 is the lowest chosen root, arriving at
-                // F1 is an optional spine choice as in X31).
+                // Spine roots of different lengths (when d > 0 is the lowest chosen root, arriving
+                // at F1 is an optional spine choice as in X31).
                 for (d, &(_, h, nx)) in nodes.iter().enumerate().take(sp_len + 1) {
                     if (d > 0 && rng.below(2) == 0) || d == sp_len || rng.below(5) == 0 {
                         neg.push((h, nx));
                     }
                 }
-                // Auxiliary negative chain(s) with stops, `int`, `int \ leaf_h`, or general predicates.
+                // Auxiliary negative chain(s) with stops, `int`, `int \ leaf_h`, or general
+                // predicates.
                 let n_aux = 1 + rng.below(2);
                 for _ in 0..n_aux {
                     let alen = 2 + rng.below(3); // 2..=4
@@ -2949,7 +2954,8 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
                     }
                     neg.push((chain_links[alen - 1].1, cur));
                 }
-                // Positive chain(s) of length 2..=5 with mixed heads (`int`, `leaf_h`, finite/cofinite).
+                // Positive chain(s) of length 2..=5 with mixed heads (`int`, `leaf_h`,
+                // finite/cofinite).
                 let n_pos_chains = if rng.below(3) == 0 { 2 } else { 1 };
                 for _ in 0..n_pos_chains {
                     let plen = 2 + rng.below(4);

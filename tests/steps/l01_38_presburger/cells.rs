@@ -290,8 +290,9 @@ pub(super) fn shared_guard(n: usize) -> Formula {
     Formula::and(parts)
 }
 
-/// The small instances of `bench::cells::one_guard_copied_into_every_level_scales_with_the_formula`:
-/// the chain with one guard copied into every level has no point.
+/// The small instances of
+/// `bench::cells::one_guard_copied_into_every_level_scales_with_the_formula`: the chain with one
+/// guard copied into every level has no point.
 #[test]
 fn one_guard_copied_into_every_level_has_no_point() {
     for n in 1..=12 {

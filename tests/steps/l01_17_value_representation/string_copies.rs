@@ -21,7 +21,8 @@ const SHORT: u64 = 2 << 20;
 
 /// The sizes of the refusals, 4 MiB and 32 MiB: each at least twice [`SHORT`], so a copy
 /// not asked for first would abort the child. They were 16 MiB and 128 MiB above a limit of
-/// 8 MiB, and the copies of the larger took 7 s in `the_copies_of_a_joined_string_are_exact_when_memory_is_given`.
+/// 8 MiB, and the copies of the larger took 7 s in
+/// `the_copies_of_a_joined_string_are_exact_when_memory_is_given`.
 const SIZES: [usize; 2] = [1 << 22, 1 << 25];
 
 fn text(s: &str) -> Text {

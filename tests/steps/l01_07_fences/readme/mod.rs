@@ -136,8 +136,8 @@ fn every_readme_fence_has_its_entry_listing_the_results_the_page_states() {
 
 /// The unit a fence runs as: its text, with an elision `…` read as the name `elided` as the spec
 /// tools read it, then the entry's inputs, then, with `checks`, one binding per check of the entry,
-/// named `readmeCheck1`, `readmeCheck2` and so on, and their number. The lines of the fence keep their numbers, so its
-/// ✗ marks are where they were.
+/// named `readmeCheck1`, `readmeCheck2` and so on, and their number. The lines of the fence keep
+/// their numbers, so its ✗ marks are where they were.
 fn unit(text: &str, entry: &Entry, checks: bool) -> (String, usize) {
     let mut out = text.replace('…', "elided");
     for i in &entry.inputs {

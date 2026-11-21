@@ -272,8 +272,8 @@ fn chain_cross_above_its_width_scales() {
 /// in all (0.26, 1.40, 7.2 and 39.4 G instructions at `k` = 10, 18, 34, 66); since LIN-probe
 /// it keeps without a propagation each disjunct that a point found so far meets (2.88 G at
 /// `k = 66`). On `cross` from `k = 51` to `99` the `k - 50` guards `j > 50` that no input meets
-/// were each still refuted by one full propagation (2.0 G at 52, was 22.9 G; 1.05 G at 48), and since
-/// LIN-probe-refute by one search over their bounds (`chain_cross_above_its_width_scales`).
+/// were each still refuted by one full propagation (2.0 G at 52, was 22.9 G; 1.05 G at 48), and
+/// since LIN-probe-refute by one search over their bounds (`chain_cross_above_its_width_scales`).
 /// Since 16b3c83e7 the exact cover projects `m`, and its question `m` in [-6, -3] (in
 /// [-62, -3] at 64) costs 173M instructions at 8 and 23.1G at 64 in `found`, so the cover
 /// refuses it at its work limit at both sizes: about 170M of the 232M at 8 and 240M of the
@@ -558,9 +558,9 @@ fn guarded_holes_scale() {
 /// before is exact but for one doubted value of `i`, the point where `t_n` may be 0, and the
 /// linear stage decides that one slice of the relation: the preimage is exact, the box less
 /// that point. Measured with the whole preimage before, `c = 2`: 32.8 M and 263.8 M
-/// instructions at 64 and 512 (8.0 times), 5.3 MB and 42.6 MB (8.0 times), limit 13.2 of 2026-11-10, load
-/// 31 (item PERF-s22-const-chain). Negative control, not kept: the linear stage by the
-/// projection of the relation onto `i` and the decision of its complement leaves the box
+/// instructions at 64 and 512 (8.0 times), 5.3 MB and 42.6 MB (8.0 times), limit 13.2 of
+/// 2026-11-10, load 31 (item PERF-s22-const-chain). Negative control, not kept: the linear stage by
+/// the projection of the relation onto `i` and the decision of its complement leaves the box
 /// `[-20, 20]` inexact, and, with that check skipped, allocates 247 MB and 3.53 GB (14.3
 /// times) and takes 178 ms and 3.3 s, the decision alone up to 418 G instructions at 192
 /// levels. With `c = j mod 5` the preimage is exact too; its transfer is not linear in the

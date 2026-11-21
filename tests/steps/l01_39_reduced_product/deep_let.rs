@@ -62,7 +62,8 @@ fn fees(d: usize, every: usize) -> Term {
 
 /// The arms of [`fees`] with 12 days and a fee every third: two for each fee and two for the
 /// final test, in the order written, the last fee's `2` taken only by `n > 12`. The same block
-/// 1,500 days deep, on a 2 MiB stack, is `bench::a_block_of_1500_bindings_has_its_arms_on_a_2_mib_stack`.
+/// 1,500 days deep, on a 2 MiB stack, is
+/// `bench::a_block_of_1500_bindings_has_its_arms_on_a_2_mib_stack`.
 #[test]
 fn a_block_of_bindings_has_its_arms() {
     let (d, every) = (12, 3);
@@ -103,7 +104,8 @@ fn bound_to(value: Term, d: usize) -> Term {
 
 /// A binding whose value is a block of 1, 2 or 5 `let`s, or a sum as deep: the forward transfer
 /// finds its value, the depth plus 1, and the test after it is taken only by its true arm. The
-/// same 1,500 deep, on a 2 MiB stack, is `bench::a_value_nested_1500_deep_is_found_on_a_2_mib_stack`.
+/// same 1,500 deep, on a 2 MiB stack, is
+/// `bench::a_value_nested_1500_deep_is_found_on_a_2_mib_stack`.
 #[test]
 fn a_nested_value_is_found() {
     let scope = ints(&["n".into()]);

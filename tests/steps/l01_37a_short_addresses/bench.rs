@@ -59,10 +59,10 @@ fn rows_and_morphism_types_that_tie_in_digest_are_found_and_dropped_in_log_time(
     // so a lookup costs about 2 ln(bn) steps of about 2,000 instructions each (815 since
     // BUCKET-cmp-cost): n log n, but with log(bn) in place of log n the ratio between n and 8n
     // exceeds the limit at every size that runs in 60 s. That input took 13.1 times the work
-    // from 2,000 to 16,000 against the limit 11.2 of 2026-11-09, with 5.5, 9.8 and 13.8 comparisons per lookup
-    // at 2,000, 16,000 and 128,000 (SCALE-fix-37a-digest). With one bucket it took 10.3 times,
-    // and 10.1 times with half the work since BUCKET-cmp-cost cut the cost of a step; a lookup
-    // that compares one node in 64 of its bucket besides its path takes 43 times.
+    // from 2,000 to 16,000 against the limit 11.2 of 2026-11-09, with 5.5, 9.8 and 13.8 comparisons
+    // per lookup at 2,000, 16,000 and 128,000 (SCALE-fix-37a-digest). With one bucket it took 10.3
+    // times, and 10.1 times with half the work since BUCKET-cmp-cost cut the cost of a step; a
+    // lookup that compares one node in 64 of its bucket besides its path takes 43 times.
     let n = 5_000;
     let atoms = inputs(n, scaling::tied_atoms);
     check_order(

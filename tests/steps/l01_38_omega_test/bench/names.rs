@@ -342,7 +342,8 @@ fn decide_on_a_cycle_turned_one_way_scales() {
 
 /// [`disjuncts_a_solve_refuses`] with `k` rows more in the disjunction's group,
 /// `v0 - 20 <= w_i <= v0 + 20`: with them `solve` answers the first disjunct `Alone::point`
-/// tries, so the group of `O(k)` rows is solved once, not `k` times (FAIL-omega-alone-retry-scaling).
+/// tries, so the group of `O(k)` rows is solved once, not `k` times
+/// (FAIL-omega-alone-retry-scaling).
 fn disjuncts_with_loose_rows(k: usize) -> Formula {
     let c = Lin::constant;
     let v0 = Lin::atom(Atom::Sym("v0".into()));

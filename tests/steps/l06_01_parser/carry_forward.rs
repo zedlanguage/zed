@@ -455,7 +455,8 @@ fn an_update_of_an_entry_counts() {
 /// `p.items[i]*.m()` or `grid[i].pos*.m()`, updates the variable the path starts at
 /// (sec:generations). As the whole value of an indexed definition, a path with an entry on it
 /// updates its variable key by key, on every path through the statement; a path of fields only
-/// writes the same place once for each key, two writers in one step (`several_writers_of_one_fact`).
+/// writes the same place once for each key, two writers in one step
+/// (`several_writers_of_one_fact`).
 #[test]
 fn an_update_of_a_field_counts() {
     for body in [

@@ -28,8 +28,9 @@ fn addressing_the_problems_of_a_package_scales() {
 /// in instructions and bytes at n and 8n. The directories are made before the timing. Work in
 /// the kernel, which resolves each probe's path, is not counted (`zed_tests::scaling`). At 40 and
 /// 320 directories the bytes grew 12.9 times (169 and 2183 bytes), over the limit of 10.5; at 200
-/// and 1600, 7.0 times the instructions and 6.7 times the bytes (2026-11-13). 8n must keep the path under the
-/// system's limit of 4096 bytes: at 320 and 2560 the file could not be made ("File name too long").
+/// and 1600, 7.0 times the instructions and 6.7 times the bytes (2026-11-13). 8n must keep the path
+/// under the system's limit of 4096 bytes: at 320 and 2560 the file could not be made ("File name
+/// too long").
 #[test]
 fn the_file_part_of_an_address_scales_with_the_depth_of_the_file() {
     let n = 200;

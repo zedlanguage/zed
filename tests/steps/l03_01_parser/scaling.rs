@@ -76,7 +76,8 @@ pub(super) fn nested(n: usize) -> String {
     format!("f(x) = {}x{};\n", "[".repeat(n), "]".repeat(n))
 }
 
-/// Every input of the benchmarks in `bench.rs` is built, formatted and name-resolved at small sizes.
+/// Every input of the benchmarks in `bench.rs` is built, formatted and name-resolved at small
+/// sizes.
 #[test]
 fn each_form_is_built_formatted_and_resolved_at_small_sizes() {
     for make in [display, arms, deep, array, nested] {

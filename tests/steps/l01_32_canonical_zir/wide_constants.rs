@@ -1,8 +1,8 @@
 //! An exact number past `i64` is addressed by its sign and the 64-bit limbs of its numerator
 //! and denominator in lowest terms, not by its decimal digits, which cost more than linear time
 //! to convert: the ZIR address and the kernel address of a constant of n bits take time linear
-//! in n. A negative number and its absolute value have different addresses, and the binary form reads
-//! back to the graph it was written from. A number kept with prime powers, as `2^2^100`, is
+//! in n. A negative number and its absolute value have different addresses, and the binary form
+//! reads back to the graph it was written from. A number kept with prime powers, as `2^2^100`, is
 //! written as its powers, in time linear in their size (item ENGINE-one), so its address differs
 //! from that of the same number written out.
 

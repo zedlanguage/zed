@@ -220,8 +220,8 @@ fn check(table: &Table, ns: &[usize]) -> Option<HashMap<usize, String>> {
                 let binder = res.binders.iter().position(|b| b.name == name);
                 match binder.and_then(|b| info.sigs.get(&b)) {
                     Some(sig) => match sig.arrows.as_slice() {
-                        // A type with an alias prints its `type` declarations on lines before it; one line
-                        // per case, so the lines are joined by spaces.
+                        // A type with an alias prints its `type` declarations on lines before it;
+                        // one line per case, so the lines are joined by spaces.
                         [arrow] => arrow.result.to_string().replace('\n', " "),
                         _ => format!("arrows {sig}"),
                     },

@@ -345,7 +345,8 @@ fn a_batch_of_rejected_and_repaired_units() {
     }
 }
 
-/// A unit whose `main` has a parameter other than `m: MainArgs` is rejected: `zedc test` reports the rejection alone, as `zedc run` does, and no notice.
+/// A unit whose `main` has a parameter other than `m: MainArgs` is rejected: `zedc test` reports
+/// the rejection alone, as `zedc run` does, and no notice.
 #[test]
 fn a_unit_whose_main_ports_are_rejected_prints_no_warning() {
     let src = "half(positional x) = x div 2 test { 10 -> 5, 7 -> 3 }\n\

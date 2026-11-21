@@ -292,8 +292,8 @@ fn the_text_of_a_list_type_nested_deep_is_made() {
 }
 
 /// How deep the types whose `Debug` text is made go: each level of a list type writes about
-/// 1,000 bytes. The recursion of the derived `Debug`s overflowed the 2 MiB stack at 2,000 levels of a list or a
-/// curried function and at 1,000 of a numeral. TEST-bench-move-l0123 (author P169): was
+/// 1,000 bytes. The recursion of the derived `Debug`s overflowed the 2 MiB stack at 2,000 levels of
+/// a list or a curried function and at 1,000 of a numeral. TEST-bench-move-l0123 (author P169): was
 /// 20,000; now 2,000, the smallest depth this record shows overflowing for each of the three.
 /// The text of each nests as deep as when the derived `Debug`s overflowed: measured on the
 /// code of 2026-11-14, the text nests 16,005 brackets deep for a list 2,000 deep, 28,005 for a

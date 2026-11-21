@@ -1,4 +1,5 @@
-//! A tuple has one or more components; one trailing comma is allowed, and `(e,)` is the one-tuple (QUESTIONS A21).
+//! A tuple has one or more components; one trailing comma is allowed, and `(e,)` is the one-tuple
+//! (QUESTIONS A21).
 
 use super::check;
 

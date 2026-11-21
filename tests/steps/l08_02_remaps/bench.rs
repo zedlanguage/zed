@@ -1,7 +1,7 @@
 //! Benchmarks of step L8.2 (plan row REMAP-run), run apart from the correctness tests
 //! (`tools/run_tests.sh --bench`), each at n and 8n: the whole path (parse, check,
-//! elaboration and the reference evaluator's run) of `group`, `flatMap`, a transpose, a truncation and
-//! folds over n entries, and the checker's collision rule on a pattern of n levels, with
+//! elaboration and the reference evaluator's run) of `group`, `flatMap`, a transpose, a truncation
+//! and folds over n entries, and the checker's collision rule on a pattern of n levels, with
 //! literal keys and with an affine tuple key. Their small instances are the cases of `rules`.
 
 use zed_tests::scaling;
@@ -897,9 +897,9 @@ fn n_generic_functions_with_a_fold_in_a_tuple_member_run_in_linear_time() {
 #[test]
 fn n_partial_map_parameters_with_a_ranged_key_passed_on_take_linear_time() {
     // `pass0` remaps its `m: int[0..<n] ->? int` by `k mod n`, which the modulo witness accepts
-    // from the range; `pass1` … `pass{n-1}` each pass their own `m` on, and one call passes a family
-    // of n keys (row RANGE-keys): n containments of a written range in another and one check of
-    // n listed keys, and the run of the remap over n entries.
+    // from the range; `pass1` … `pass{n-1}` each pass their own `m` on, and one call passes a
+    // family of n keys (row RANGE-keys): n containments of a written range in another and one check
+    // of n listed keys, and the run of the remap over n entries.
     let srcs = scaling::inputs(N_LEVELS, |n| {
         let mut src = format!(
             "pass0(positional m: int[0..<{n}] ->? int) = m as (k -> v) into (k mod {n} -> v);\n"

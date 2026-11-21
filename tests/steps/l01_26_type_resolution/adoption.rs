@@ -2,8 +2,8 @@
 //! carrier of its use, exactly or not at all. An integer literal that nothing fixes is an
 //! `int`; a decimal literal is never an `int`, and one that nothing fixes is the `f64` it
 //! writes (step L1.26b, author decision 2026-11-12). A `/` of integer literals alone that
-//! nothing fixes is rejected with a menu, the exact `rat` fixes first. A literal with a suffix, such
-//! as `1r` or `0.5f64`, keeps its own carrier, and a bare one beside it takes that carrier.
+//! nothing fixes is rejected with a menu, the exact `rat` fixes first. A literal with a suffix,
+//! such as `1r` or `0.5f64`, keeps its own carrier, and a bare one beside it takes that carrier.
 
 use super::{info, menu, tried, type_errors};
 use zed_kernel::{F64, Value};

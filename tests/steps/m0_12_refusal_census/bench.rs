@@ -4,7 +4,8 @@
 //! scaling tests of its own steps, and on the form of the census's slowest units by
 //! `refused_guarded_divisions_scale_linearly`. The benchmarks of this step, run by
 //! `tools/run_tests.sh --bench`. The census check asserts nothing besides its ratio: finding
-//! kinds is checked by `kinds_are_found_by_their_phrases`, and the lines and totals by the snapshots.
+//! kinds is checked by `kinds_are_found_by_their_phrases`, and the lines and totals by the
+//! snapshots.
 
 use super::{kinds, line, refusals, totals};
 

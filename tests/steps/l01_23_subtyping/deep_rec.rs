@@ -105,8 +105,9 @@ fn a_nested_recursive_occurrence_is_checked() {
 }
 
 /// A nested type kept only by the thread's emptiness tables is freed when the test's thread
-/// ends: a small instance of `bench::a_deep_type_kept_by_the_verdicts_is_freed_when_its_thread_ends`
-/// (round 8, X39), on the default test thread.
+/// ends: a small instance of
+/// `bench::a_deep_type_kept_by_the_verdicts_is_freed_when_its_thread_ends` (round 8, X39), on the
+/// default test thread.
 #[test]
 fn a_nested_type_kept_by_the_verdicts_is_freed_when_its_thread_ends() {
     Type::forget_emptiness();

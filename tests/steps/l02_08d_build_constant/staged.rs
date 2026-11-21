@@ -31,8 +31,8 @@ fn host() -> String {
 /// A target no test machine is: `build.target == OTHER` is false on every one.
 const OTHER: &str = "x86_64-windows";
 
-/// A program that writes one line of two parts: the first from a branch on the host's target, which is
-/// taken, and the second from a branch on [`OTHER`], which is not. The strings are long and
+/// A program that writes one line of two parts: the first from a branch on the host's target, which
+/// is taken, and the second from a branch on [`OTHER`], which is not. The strings are long and
 /// distinct, so each is found in an executable only if its branch was compiled.
 fn by_target() -> String {
     format!(

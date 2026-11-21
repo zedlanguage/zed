@@ -23,9 +23,10 @@ use super::scaling::nested_ifs;
 /// interval, a congruence, a finite set, a facet and a hint, besides the type; the evidence of
 /// a `fold` and of a `fix`; and the witness of a `reindex`. The `fix` captures the set constant
 /// `{1, 2}`, whose region argument has the constant's type, `_` for a set (a constant of a
-/// scalar type keeps it: [`a_shared_region_is_stripped_once_for_each_set_of_constants_its_users_capture`]). Its value is `(60, {1, 2})`: the family
-/// `{1 -> 5, 2 -> 10, 3 -> 15}` reindexed to the same keys with its values doubled sums to 60,
-/// and the ascent from `{}` by union with `{1, 2}` settles at `{1, 2}`.
+/// scalar type keeps it:
+/// [`a_shared_region_is_stripped_once_for_each_set_of_constants_its_users_capture`]). Its value is
+/// `(60, {1, 2})`: the family `{1 -> 5, 2 -> 10, 3 -> 15}` reindexed to the same keys with its
+/// values doubled sums to 60, and the ascent from `{}` by union with `{1, 2}` settles at `{1, 2}`.
 fn facts_program() -> String {
     let five = "int in [0..=10] class 1 mod 4 set {5} hint name \"five\" facet units \"cents\"";
     let pair = text::edge(&constant(&pair_value()));

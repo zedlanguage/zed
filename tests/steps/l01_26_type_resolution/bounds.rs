@@ -312,13 +312,14 @@ pub(super) fn many_bounds(n: usize) -> String {
 }
 
 /// A signature of `n` parameters, parameter `i` taking `(Bi,) | (T,)` with `Bi` bounded to
-/// `int | f64` and `T` free, one variable for all (written at least twice, so `n` is 2 or more), returning `(B{n-1},)`; and the signature that passes `(int,) | (String,)`
-/// to each parameter and returns `result`. A `(String,)` is held by `(T,)` alone, since `Bi`'s
-/// bound does not hold `String` (FAIL-types-overload-bounded-tuple), and `(int,)` by `(Bi,)`,
-/// so the instance of the first at `T = String`, each `Bi = int`, takes exactly the
-/// parameters of the second, and fits it exactly when `result` holds `(int,)`. A domain is
-/// exact (FAIL-types-fn-param-exact-domain): with `(String,)` alone passed to a parameter,
-/// the instance would also take `(int,)` or `(f64,)` there, which the second does not.
+/// `int | f64` and `T` free, one variable for all (written at least twice, so `n` is 2 or more),
+/// returning `(B{n-1},)`; and the signature that passes `(int,) | (String,)` to each parameter and
+/// returns `result`. A `(String,)` is held by `(T,)` alone, since `Bi`'s bound does not hold
+/// `String` (FAIL-types-overload-bounded-tuple), and `(int,)` by `(Bi,)`, so the instance of the
+/// first at `T = String`, each `Bi = int`, takes exactly the parameters of the second, and fits it
+/// exactly when `result` holds `(int,)`. A domain is exact (FAIL-types-fn-param-exact-domain): with
+/// `(String,)` alone passed to a parameter, the instance would also take `(int,)` or `(f64,)`
+/// there, which the second does not.
 pub(super) fn bounded_or_free(n: usize, result: &str) -> (String, String) {
     let ps: Vec<String> = (0..n).map(|i| format!("x{i}: (B{i},) | (T,)")).collect();
     let bs: Vec<String> = (0..n).map(|i| format!("B{i} in int | f64")).collect();
@@ -381,13 +382,14 @@ fn a_bounded_variable_beside_a_variable_of_one_carrier_takes_each_carrier_of_its
 }
 
 /// The two types `bounded_or_free(n, "(int,)")` reads to, built from their parts with no text:
-/// the benchmark `a_signature_of_many_bounded_variables_beside_a_free_one_fits_in_time_near_its_size`
-/// builds its inputs so (FAIL-bench-bounded-beside-free-near-limit). Reading the two texts at
-/// n and 8n took about a third of that benchmark's time (72,000 parameters read by the parser
-/// and the reader before timing, at about 170,000 instructions each), which pushed it past its
-/// time limit under load; built from parts, each parameter costs a few small allocations.
-/// `building_bounded_or_free_gives_what_reading_its_text_gives` holds the two to the read
-/// types, field by field.
+/// the benchmark
+/// `a_signature_of_many_bounded_variables_beside_a_free_one_fits_in_time_near_its_size` builds its
+/// inputs so (FAIL-bench-bounded-beside-free-near-limit). Reading the two texts at n and 8n took
+/// about a third of that benchmark's time (72,000 parameters read by the parser and the reader
+/// before timing, at about 170,000 instructions each), which pushed it past its time limit under
+/// load; built from parts, each parameter costs a few small allocations.
+/// `building_bounded_or_free_gives_what_reading_its_text_gives` holds the two to the read types,
+/// field by field.
 pub(super) fn bounded_or_free_built(n: usize) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
     use std::sync::Arc;
     use zedc::check::ty::{Carrier, SParam, Sig, Ty};

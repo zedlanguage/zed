@@ -1,4 +1,5 @@
-//! The benchmarks of `exclusive_cases.rs` (TEST-bench-move-l0138), run by `tools/run_tests.sh --bench`.
+//! The benchmarks of `exclusive_cases.rs` (TEST-bench-move-l0138), run by
+//! `tools/run_tests.sh --bench`.
 
 use crate::exclusive_cases::*;
 

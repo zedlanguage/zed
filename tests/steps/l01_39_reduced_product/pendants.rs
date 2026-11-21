@@ -739,8 +739,8 @@ fn has_point(rows: &[(Vec<i64>, i64)]) -> bool {
 /// 2026-11-20: the DOIs on Crossref; the CACM paper read (a scan, through OpenAlex's cached
 /// copy) for these two rules; the SC'91 paper not read. Departure: the paper picks the
 /// variable to eliminate by its heuristics, this oracle by its own rule (`best` in the code),
-/// which changes only the work, not the answer. `the_omega_oracle_agrees_with_enumeration` checks it against
-/// enumeration on small boxed systems.
+/// which changes only the work, not the answer. `the_omega_oracle_agrees_with_enumeration` checks
+/// it against enumeration on small boxed systems.
 ///
 /// An equation is divided by the gcd of its coefficients (no integer point where that does not
 /// divide its constant), then its coefficients are brought to one of `±1` by Euclid's algorithm
@@ -4077,7 +4077,8 @@ fn rewritten_parts_of_seeds_found_later_are_decided_alike() {
 }
 
 /// Seed 8090022510343574640 of the test of pendants against the whole part: the whole part
-/// keeps the parity of `z0` that `2 * b + 2 * c + z0 == 3` forces (FAIL-whole-projection-parity-seed).
+/// keeps the parity of `z0` that `2 * b + 2 * c + z0 == 3` forces
+/// (FAIL-whole-projection-parity-seed).
 #[test]
 fn the_whole_part_keeps_the_parity_an_equality_forces_at_seed_8090022510343574640() {
     let seed = 8_090_022_510_343_574_640;

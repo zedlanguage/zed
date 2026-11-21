@@ -104,8 +104,8 @@ fn pncx_pairs_scale() {
 /// words, of opposite signs: the kernel's division (`zed_kernel::num::div_floor_int`), O(M(n))
 /// past its measured crossover, both sizes past it (3192 words for `2w` by `w`). With
 /// num-bigint's own `div_floor`, O(n^1.52), it grew 22.0 times in instructions and 22.8 in
-/// bytes (DRY-numeric-shared, 2026-11-19; COMPLEXITY.md row S48). The answers are checked at small sizes by
-/// `pncx_probe::floor_division_of_wide_solver_integers_is_exact`.
+/// bytes (DRY-numeric-shared, 2026-11-19; COMPLEXITY.md row S48). The answers are checked at small
+/// sizes by `pncx_probe::floor_division_of_wide_solver_integers_is_exact`.
 #[test]
 fn pncx_wide_floor_division_scales() {
     let n = 1 << 13;

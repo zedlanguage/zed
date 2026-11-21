@@ -19,8 +19,8 @@ fn put(path: &Path, text: &str) {
     std::fs::write(path, text).unwrap();
 }
 
-/// The till's workspace, written in `d` over what an earlier run left, with `n` modules in `prices`; returns the
-/// directory of the crate `till`.
+/// The till's workspace, written in `d` over what an earlier run left, with `n` modules in
+/// `prices`; returns the directory of the crate `till`.
 pub(super) fn till(d: &Path, n: usize) -> PathBuf {
     put(
         &d.join("Cargo.toml"),

@@ -9,8 +9,8 @@
 //! The points checked on each input are the ends of each piece of the box and of the input's
 //! domain, the integers next to each end, the middle of each piece, and the integers from -15 to
 //! 15 (the window of `random.rs`, where a term over small constants fails or turns), those of
-//! them in the domain (and, under `@exact`, in the input's class). An unbounded end is checked at the end of
-//! `i64`. Each point of one input is checked with a few points of the other inputs (see
+//! them in the domain (and, under `@exact`, in the input's class). An unbounded end is checked at
+//! the end of `i64`. Each point of one input is checked with a few points of the other inputs (see
 //! [`points`]). The tests split the runs of `s22.rs` by seed, each part one piece.
 
 use std::collections::BTreeSet;

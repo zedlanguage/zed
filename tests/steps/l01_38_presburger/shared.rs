@@ -1157,8 +1157,8 @@ fn nodes_of_constraints_alone_compare_as_written_out() {
 /// ST-chain-raise-reverse-log), and when one has a single pair or both two, the last pairs
 /// (PERF-l139-lin-prefix): terms with no pairs, one a prefix of another, the same first pair
 /// and another second, first atoms or coefficients that differ, symbols against auxiliary
-/// variables, and equal pairs with other constants, of one pair and of two. Each pair of terms is also
-/// compared as constraints, which the conjuncts of a relation are kept in the order of.
+/// variables, and equal pairs with other constants, of one pair and of two. Each pair of terms is
+/// also compared as constraints, which the conjuncts of a relation are kept in the order of.
 #[test]
 fn terms_compare_as_their_derived_order() {
     fn lin(pairs: &[(Atom, i64)], c: i64) -> Lin {

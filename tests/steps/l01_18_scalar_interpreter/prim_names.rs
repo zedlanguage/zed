@@ -9,10 +9,10 @@ use zedc::zir::text::PRIMS;
 use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 
 /// The primitives no program names by a word of its own: elaboration builds them from other
-/// forms (a tuple, a component `p[0]`, an atom, a display, a read of a family whose keys are one integer
-/// interval, a method `.count`, `.first`, `.last`, a step of a walk in key order), or they belong
-/// to later layers, as the string functions `split`, `lines` and `concat` of layer 3 do, or a
-/// program writes them only inside another form (`a ..`, read by a key, `in` or `.first` until
+/// forms (a tuple, a component `p[0]`, an atom, a display, a read of a family whose keys are one
+/// integer interval, a method `.count`, `.first`, `.last`, a step of a walk in key order), or they
+/// belong to later layers, as the string functions `split`, `lines` and `concat` of layer 3 do, or
+/// a program writes them only inside another form (`a ..`, read by a key, `in` or `.first` until
 /// plan row RANGE-open-walk), or as `++` on two lists, which elaboration tells from `++` on two
 /// strings by the operands' types (plan row PERF-list-concat-shared), or as a function value
 /// or a call through one that the function called places (DESIGN.md sec:values_morphisms,

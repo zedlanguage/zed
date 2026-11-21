@@ -1254,7 +1254,8 @@ fn a_read_the_port_cannot_answer_stops_the_run() {
 }
 
 /// A power does not depend on how it is written: `x ^ e` gives what `x ^ a * x ^ b` gives
-/// for `a + b = e`, at sizes far past any machine word, and each square of a power is below the next.
+/// for `a + b = e`, at sizes far past any machine word, and each square of a power is below the
+/// next.
 #[test]
 fn a_power_is_the_product_of_its_halves() {
     let pow = |x: &Term, e: i64| bin(Prim::Pow, x.clone(), lit(e));

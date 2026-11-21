@@ -5,8 +5,8 @@
 //!
 //! The definition, written here without Bourdoncle's stack: run a depth-first search from
 //! the roots in order, visiting successors in the order of their lists, and number the
-//! vertices in preorder and in finish order. Group the vertices into strongly connected components by
-//! mutual reachability; a component's head is its member with the least preorder number,
+//! vertices in preorder and in finish order. Group the vertices into strongly connected components
+//! by mutual reachability; a component's head is its member with the least preorder number,
 //! and the components are listed by decreasing finish time of their heads. A component with
 //! one vertex and no self-loop is that vertex; any other is the head followed by the order
 //! of the rest of the component, computed the same way with the edges into the head removed

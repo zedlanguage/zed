@@ -78,7 +78,8 @@ fn many_and_deep_functions_inside_values_at_partial_slots_scale() {
 /// checking and elaborating the whole is linear. Besides its ratio: the program elaborates at
 /// each size. Small instances:
 /// `function_variance::a_function_passed_through_a_generic_parameter_misses_outside_its_domain`
-/// and `function_variance::a_function_in_a_component_of_a_generic_argument_misses_outside_its_domain`.
+/// and
+/// `function_variance::a_function_in_a_component_of_a_generic_argument_misses_outside_its_domain`.
 #[test]
 fn functions_passed_through_generic_parameters_to_partial_slots_scale() {
     let what = "n functions passed through generic parameters, a chain of n, and one n deep";
@@ -653,9 +654,10 @@ fn a_repeated_placed_call_of_p_named_arguments_in_native_code_scales() {
 /// FAIL-l0126-bench-regressions, which also holds `a_power_returned_n_deep`). And n functions
 /// passed at a partial parameter, where no call is made and each parameter of the function is
 /// compared once with the arrow's (`Ck::result_into`). Besides its ratio: no errors at each
-/// size. Small instances: `function_variance::a_class_inside_a_function_argument_nested_is_narrowed`,
-/// `function_variance::a_class_inside_a_function_argument_is_narrowed_at_a_partial_parameter`
-/// and `function_variance::a_function_whose_results_are_variables_of_their_own_fits_int_results`.
+/// size. Small instances:
+/// `function_variance::a_class_inside_a_function_argument_nested_is_narrowed`,
+/// `function_variance::a_class_inside_a_function_argument_is_narrowed_at_a_partial_parameter` and
+/// `function_variance::a_function_whose_results_are_variables_of_their_own_fits_int_results`.
 #[test]
 fn classes_inside_function_arguments_narrowed_by_calls_scale() {
     use super::super::type_errors;

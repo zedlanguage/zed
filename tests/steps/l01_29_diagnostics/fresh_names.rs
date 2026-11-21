@@ -64,8 +64,9 @@ fn bound_names(text: &str) -> Vec<Arc<str>> {
 
 #[test]
 fn a_program_that_binds_t_and_u_sees_its_variable_named_v() {
-    // The finding: with `T` and `U` bound (to numbers, before Q23), the message printed `(T) -> T for
-    // T in …`, and a reader of `T` here could not tell the variable from the program's `T`.
+    // The finding: with `T` and `U` bound (to numbers, before Q23), the message printed
+    // `(T) -> T for T in …`, and a reader of `T` here could not tell the variable from the
+    // program's `T`.
     let defs = &holding(&["T", "U"]);
     let shown = compared(&format!("{defs}inc = x -> x + 1;\nsame = inc == inc;\n"));
     assert_eq!(shown, "V -> V for V in int | f32 | f64 | rat");

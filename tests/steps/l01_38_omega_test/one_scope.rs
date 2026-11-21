@@ -571,10 +571,11 @@ fn answers_are_those_of_the_whole(src: &str) {
 /// parts were given in an earlier question, so it depends on the order of the questions: in
 /// `p4(x) = q(x: x) && p3(x: x + 1) && x < 279` of the chain below `x < 29 || x > 43`, it is
 /// refused in the unit's order and answered in the reverse; with faces it is refused in both,
-/// since the points the faces give the links below extend to no point of `p4`. Each answer is the one the body closed over the definitions it
-/// reaches has, decided whole, wherever that is decided: no question decided whole is refused
-/// from parts (LOAD-extend-refuses); in the unit's order and in the reverse. A question the
-/// solver refuses whole may be answered from parts. Returns how many answers the whole gave.
+/// since the points the faces give the links below extend to no point of `p4`. Each answer is the
+/// one the body closed over the definitions it reaches has, decided whole, wherever that is
+/// decided: no question decided whole is refused from parts (LOAD-extend-refuses); in the unit's
+/// order and in the reverse. A question the solver refuses whole may be answered from parts.
+/// Returns how many answers the whole gave.
 fn answers_with_faces_are_those_without(src: &str) -> usize {
     use zedc::store::presburger::extend::Extending;
     use zedc::store::presburger::{Formula, decide};
@@ -2128,10 +2129,11 @@ fn the_11th_unit_of_congruences_of_seed_0x1c4e_is_answered_as_its_bodies_read() 
     answers_are_those_reading_bodies(&src);
 }
 
-/// The first unit of seed 4236942624890658512 that `each_answer_through_a_projection_kept_over_pairs_is_the_answer_of_the_relation_whole`
-/// drew (FAIL-one-scope-pairs-seed-refusal): the `fails` question of `c2` was refused for
-/// Shadows when each call writes its callee's projection, and decided when each call reads
-/// its callee's body again.
+/// The first unit of seed 4236942624890658512 that
+/// `each_answer_through_a_projection_kept_over_pairs_is_the_answer_of_the_relation_whole` drew
+/// (FAIL-one-scope-pairs-seed-refusal): the `fails` question of `c2` was refused for Shadows when
+/// each call writes its callee's projection, and decided when each call reads its callee's body
+/// again.
 #[test]
 fn the_unit_of_seed_4236942624890658512_is_answered_as_its_bodies_read() {
     answers_are_those_reading_bodies(
@@ -4151,8 +4153,8 @@ pub(super) struct ModularCounts {
 
 /// Formulas `from..to` of the random one-variable modular formulas of [`modular_case`] (those
 /// before `from` are drawn and not checked, so that one case is checked alone), with unit
-/// equalities (`x@k = ±x@{k-1} + c`), Euclidean divisions (`x + c == m * q + r && 0 <= r < m`), primes,
-/// prime powers and composite moduli, negative, zero-crossing and large positive intervals,
+/// equalities (`x@k = ±x@{k-1} + c`), Euclidean divisions (`x + c == m * q + r && 0 <= r < m`),
+/// primes, prime powers and composite moduli, negative, zero-crossing and large positive intervals,
 /// short, long and semi-bounded intervals, negated conjunctions and disjunctive clauses:
 /// `decide` and `satisfiable` agree with point-by-point enumeration, and every witness
 /// satisfies `f`, wherever they answer.
@@ -4976,13 +4978,13 @@ fn one_variable_boundary_modes_do_not_depend_on_names() {
 
 #[test]
 fn boundary_modes_of_the_seeds_that_failed_do_not_depend_on_names() {
-    // FAIL-omega-boundary-modes-flake: the cases of `one_variable_boundary_modes_do_not_depend_on_names`
-    // that failed, each under the seed that drew it. Seeds 89 (case 86) and 2644 (case 39):
-    // the modular solver skipped a unit `x mod m in s` whose factors were already fixed
-    // outside `s`, returned a point that failed the check, and the path after it refused
-    // under two namings. Seed 2125 (case 28): `settle_tied` solved the base with the first
-    // disjunct in name order, which `solve` refused under two namings and answered under the
-    // others. Each answers under all four namings.
+    // FAIL-omega-boundary-modes-flake: the cases of
+    // `one_variable_boundary_modes_do_not_depend_on_names` that failed, each under the seed that
+    // drew it. Seeds 89 (case 86) and 2644 (case 39): the modular solver skipped a unit
+    // `x mod m in s` whose factors were already fixed outside `s`, returned a point that failed the
+    // check, and the path after it refused under two namings. Seed 2125 (case 28): `settle_tied`
+    // solved the base with the first disjunct in name order, which `solve` refused under two
+    // namings and answered under the others. Each answers under all four namings.
     for (seed, case) in [(89, 86), (2125, 28), (2644, 39)] {
         let mut rng = zed_tests::instances::Rng::new(seed);
         let (answered, differ) = boundary_modes_renamed(&mut rng, case, case + 1);

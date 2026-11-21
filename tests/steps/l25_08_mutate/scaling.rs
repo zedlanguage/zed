@@ -138,9 +138,10 @@ pub(super) fn remixes_to_a_lambda(unit: &Arc<Unit>, remix: &Mutex<Remix>) {
 }
 
 /// Each benchmark of `bench.rs` at small sizes, through the same assertions: the mutants found
-/// in [`unit`], [`chain`], [`generic_chain_with_row`] and [`every`], the verdicts of the mutants run on [`unit`], [`chain_with_row`] and
-/// [`generic_chain_with_row`], a remix of the generic chain, and that `Remix::mix` gives the
-/// term `mix` gives, which `remixing_a_definition_costs_less_than_mixing_it` times at 400.
+/// in [`unit`], [`chain`], [`generic_chain_with_row`] and [`every`], the verdicts of the mutants
+/// run on [`unit`], [`chain_with_row`] and [`generic_chain_with_row`], a remix of the generic
+/// chain, and that `Remix::mix` gives the term `mix` gives, which
+/// `remixing_a_definition_costs_less_than_mixing_it` times at 400.
 #[test]
 fn the_mutants_of_each_benchmark_unit_at_small_sizes() {
     for n in [1, 2, 9] {

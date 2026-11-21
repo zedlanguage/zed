@@ -416,9 +416,9 @@ fn the_join_of_arms_sharing_refused_tests_keeps_each_once() {
 }
 
 // The tests of `k` refused tests on disjoint names below were one test until
-// SPLIT-reduced-refused (2026-11-10). That test took 15 to 16 s alone with malloc's cache per thread
-// and 26 to 27 s without it, as tools/run_tests.sh runs it (load 28 to 36), and once ran past its
-// piece's limit of 83 s at load 44 to 64. About 88% of it is building the arms of the join
+// SPLIT-reduced-refused (2026-11-10). That test took 15 to 16 s alone with malloc's cache per
+// thread and 26 to 27 s without it, as tools/run_tests.sh runs it (load 28 to 36), and once ran
+// past its piece's limit of 83 s at load 44 to 64. About 88% of it is building the arms of the join
 // check: 2,304 `Scope::assume` calls, each about 42M instructions. Each test is a piece of its
 // own (tools/run_tests.sh).
 

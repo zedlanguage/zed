@@ -226,7 +226,8 @@ fn printed_types_read_back_and_hold_no_parentheses_the_grammar_does_not_need() {
 /// The round trip and minimality test above on seeds that drew types whose subtype tests
 /// put the leaf part of one tuple length, then a tuple of another length, in one search; the
 /// search's index of the first was read for the second, and `candidates` in zed-kernel's
-/// `types::empty` indexed a column the index did not have (FAIL-kernel-candidates-key-past-columns).
+/// `types::empty` indexed a column the index did not have
+/// (FAIL-kernel-candidates-key-past-columns).
 #[test]
 fn printed_types_read_back_on_seeds_that_met_one_index_for_two_tuple_lengths() {
     for seed in [
@@ -1567,11 +1568,12 @@ fn a_group_message_opening_with_a_partial_arrow_is_written() {
     );
 }
 
-/// A tuple key written by a name needs no parentheses: `Part1 -> (Part1,)`, not `(Part1) -> (Part1,)`.
-/// The printer used to put the pair a tuple key needs, `((A, B)) -> V`, around the reference
-/// to the tuple before the naming pass decided whether to name it, so a named key kept the
-/// pair. Found by `printed_types_read_back_and_hold_no_parentheses_the_grammar_does_not_need`,
-/// whose case depends on what other tests have printed in the process.
+/// A tuple key written by a name needs no parentheses: `Part1 -> (Part1,)`, not
+/// `(Part1) -> (Part1,)`. The printer used to put the pair a tuple key needs, `((A, B)) -> V`,
+/// around the reference to the tuple before the naming pass decided whether to name it, so a named
+/// key kept the pair. Found by
+/// `printed_types_read_back_and_hold_no_parentheses_the_grammar_does_not_need`, whose case depends
+/// on what other tests have printed in the process.
 #[test]
 fn a_tuple_key_written_by_a_name_has_no_parentheses() {
     for (text, want) in [

@@ -677,8 +677,8 @@ fn shapes_of_variables(
 
 /// A signature whose parameter is a union of `n` one-place shapes of its own variables, with
 /// the result `(P0, …, P(n-1))`, fits itself renamed, its members in reverse order: each shape
-/// is pinned by the ceiling of its variable (`Pins` in zedc-types), so each member fails a shape at most
-/// once and is then found by a lookup on its variable (COMPLEXITY.md F124,
+/// is pinned by the ceiling of its variable (`Pins` in zedc-types), so each member fails a shape at
+/// most once and is then found by a lookup on its variable (COMPLEXITY.md F124,
 /// FAIL-types-three-variable-shapes; that search refused from three shapes on). `scalars`
 /// adds the shapes `(int,)` and `(String,)` to both, whose members skip the shapes pinned by
 /// ceilings of variables only. Small instances: `zedc-types`

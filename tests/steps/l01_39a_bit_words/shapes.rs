@@ -756,7 +756,8 @@ fn the_rejected_shapes_are_rejected_at_small_sizes() {
 
 #[test]
 fn the_longer_paths_to_a_name_name_the_tests_that_bound_it() {
-    // The correctness half of `bench::scaling::the_longer_paths_to_a_name_are_searched_in_linear_time`.
+    // The correctness half of
+    // `bench::scaling::the_longer_paths_to_a_name_are_searched_in_linear_time`.
     let e = rejection(&longer_paths(3)).expect("x may be negative");
     assert!(e.contains(" : int[-1..])`"), "{e}");
     let tests = [

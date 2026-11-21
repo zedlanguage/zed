@@ -1,7 +1,7 @@
-//! The two self-tests of [`crate::scaling`] that time work at two sizes on purpose and expect a ratio
-//! far past the limit, so they take seconds (TEST-bench-move-crates, author P169): benchmarks,
-//! run with `tools/run_tests.sh --bench`. The checks of the meters and the limit in small
-//! steps are in [`super`]: `a_reading_grows_by_the_work_between` and
+//! The two self-tests of [`crate::scaling`] that time work at two sizes on purpose and expect a
+//! ratio far past the limit, so they take seconds (TEST-bench-move-crates, author P169):
+//! benchmarks, run with `tools/run_tests.sh --bench`. The checks of the meters and the limit in
+//! small steps are in [`super`]: `a_reading_grows_by_the_work_between` and
 //! `work_a_power_of_n_above_the_order_given_fails` (instructions),
 //! `the_processor_time_of_a_thread_leaves_out_its_sleep` (processor time),
 //! `a_meter_counts_the_work_of_a_run_and_not_the_time_it_sleeps` and
@@ -44,9 +44,9 @@ fn on_a_bare_thread(f: impl FnOnce() + Send) {
 /// Cubic work on a thread a run starts, at 50 and 400: 512 times the work, against the limit
 /// of 10.5 (21 by time). A meter that missed the thread's work would find only the cost of
 /// starting it, the same at both sizes. The quadratic work this test ran before, at 1000 and
-/// 8000 (64 times, limit 11.4 of 2026-11-12, 22.9 by time), took as long and measured 49 to 61 times by
-/// time, but only 26 to 31 times with the small run made twice as slow, near the limit. The
-/// cubic work measured 179 to 239 times by time, and 138 to 154 times with the small run
+/// 8000 (64 times, limit 11.4 of 2026-11-12, 22.9 by time), took as long and measured 49 to 61
+/// times by time, but only 26 to 31 times with the small run made twice as slow, near the limit.
+/// The cubic work measured 179 to 239 times by time, and 138 to 154 times with the small run
 /// twice as slow (by instructions 502 and 253 times), at load 62 to 66 (2026-11-12).
 #[test]
 fn the_work_of_a_thread_a_run_starts_counts() {

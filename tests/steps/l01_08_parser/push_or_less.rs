@@ -31,8 +31,8 @@ pub(super) fn program(body: &str) -> String {
 const PUSH: &str = "`<-` pushes a value into a port, an accumulator or the next generation, and can only be \
                     used as a statement; `x < -1`, with a space, compares `x` with a negative number";
 
-/// Checks that `src` is refused at the `<-` of `written`, with the condition `written` in the headline
-/// and, when the declaration then parses, `repaired` offered.
+/// Checks that `src` is refused at the `<-` of `written`, with the condition `written` in the
+/// headline and, when the declaration then parses, `repaired` offered.
 fn refused(src: &str, written: &str, repaired: Option<&str>) {
     let e = refusal(src);
     assert_eq!(e.row, Some(Row::PushWhereLessMeant), "{src}");

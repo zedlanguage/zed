@@ -372,7 +372,8 @@ fn group_by_a_derived_key_with_the_residue_written() {
 
 #[test]
 fn word_count_groups_then_folds() {
-    // sec:tour_collections: `counts = text.split(" ") as (i -> w) into (w.lower -> i -> 1) >< (+);`.
+    // sec:tour_collections:
+    // `counts = text.split(" ") as (i -> w) into (w.lower -> i -> 1) >< (+);`.
     let words = lit(Value::Family(Family::of(
         ["the", "Cat", "the", "cat", "sat"]
             .iter()

@@ -236,8 +236,8 @@ fn a_product_of_three_factors_is_proved_by_naming_the_inner_level() {
 #[test]
 fn the_flat_product_of_three_factors_is_not_taken_by_rung_2() {
     // `(z * h + y) * w` multiplies a sum by a symbol and `d * h * w` three symbols: a product
-    // factor must be a symbol or an auxiliary variable (`Lin::product`), so the goal is outside the linear-relation
-    // domain and rung 2 proves nothing; naming the inner level is what proves it.
+    // factor must be a symbol or an auxiliary variable (`Lin::product`), so the goal is outside the
+    // linear-relation domain and rung 2 proves nothing; naming the inner level is what proves it.
     let (ps, g) = function(&int_defs(FLAT));
     assert!(super::relations(&[&g], &ps, true).is_none());
 }

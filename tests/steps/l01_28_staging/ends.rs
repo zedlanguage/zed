@@ -1,6 +1,6 @@
 //! The form rule `stage::ends` on terms whose parts are shared: a part reached from two places
-//! (one `Shared` node twice) is read once, and its answer still depends on the names bound around each
-//! place.
+//! (one `Shared` node twice) is read once, and its answer still depends on the names bound around
+//! each place.
 
 use zed_kernel::Shared;
 

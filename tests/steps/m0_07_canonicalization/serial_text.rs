@@ -8,8 +8,8 @@
 //! BLAKE3-256 over `zed-canon` and a NUL byte, then the serialization." The tables after that
 //! step give every node's tag, its fields in order and the kind each is written as, and every
 //! primitive's code; [`m07`] reads them from DESIGN.md in place
-//! (`zed_tools::spec_checks::serial_tables`, feature `spec`). The tag, the order of the fields, how each is written and the code of a
-//! primitive all come from the tables, so a change to
+//! (`zed_tools::spec_checks::serial_tables`, feature `spec`). The tag, the order of the fields, how
+//! each is written and the code of a primitive all come from the tables, so a change to
 //! crates/zedc-zir/src/canon/serial.rs that the tables do not make, or the reverse, fails
 //! [`the_serialization_is_m07s_byte_for_byte`], and a changed code fails
 //! [`every_primitive_has_the_code_m07_gives`]. Only which row a node or a primitive is (a

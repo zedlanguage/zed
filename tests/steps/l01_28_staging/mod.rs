@@ -1,8 +1,8 @@
 //! Step L1.28: staging. A term is build-stage when it reads only build-stage definitions and
 //! prelude words and no port; the build evaluates the demanded ones to literals, leaves the
 //! rest to run, never evaluates a definition nothing reads, and leaves a build-stage term
-//! whose form does not show that it ends, or whose evaluation fails, to run whole. The Trick specializes a function
-//! on a parameter only when the parameter's domain is finite and small.
+//! whose form does not show that it ends, or whose evaluation fails, to run whole. The Trick
+//! specializes a function on a parameter only when the parameter's domain is finite and small.
 
 mod arms;
 mod bench;

@@ -306,9 +306,9 @@ fn wide_domains_part(part: usize, want: (usize, usize, usize)) {
         refuted_before.join("\n")
     );
     // The summary reads values past `i128` (its numbers are unbounded), where the transfer
-    // before read the `if` arm by arm: its box is the same or narrower and exact more often. Neither
-    // runs each input of a range (LIST-size), so the one box the transfer before found exact by
-    // running its inputs is now inexact there and counts as exact now.
+    // before read the `if` arm by arm: its box is the same or narrower and exact more often.
+    // Neither runs each input of a range (LIST-size), so the one box the transfer before found
+    // exact by running its inputs is now inexact there and counts as exact now.
     // Each is sound by the interpreter, inside the box before and exact wherever it was.
     assert_eq!(
         (narrower.len(), now_exact.len(), not_enumerated.len()),

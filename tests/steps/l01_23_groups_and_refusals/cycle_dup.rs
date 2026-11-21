@@ -785,7 +785,8 @@ fn a_group_checked_alone_or_in_a_batch_gives_the_same_answers() {
 /// of `n` more, `(int) -> (Node | #b0) | … | (int) -> (Node | #bn)`, in the group of [`base`].
 /// It has a value: a function that returns its own kind. The search finds it, where it was
 /// refused for want of a witness before item GROUP-search-canon-key, in work of order
-/// `n log n`: from 64 to 512 arms the work grew 25.6 times before, against the limit of 13.2 of 2026-11-11.
+/// `n log n`: from 64 to 512 arms the work grew 25.6 times before, against the limit of 13.2 of
+/// 2026-11-11.
 fn morphisms_met_with_a_union(n: usize) -> Vec<Type> {
     let arm = |name: String| f(or(vec![r(NODE), atom(&name)]));
     let mut parts = vec![f(r(NODE))];

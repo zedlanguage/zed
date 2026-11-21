@@ -749,7 +749,8 @@ pub fn t8_enum_suite(only: usize, part: std::ops::Range<usize>, most_refused: us
         total_checked += 1;
     }
 
-    // Family 2 (1,200 formulas): `R2_CLAUDE` regimes3 + prime-power p-adic hierarchies (`2,4,8,16`, `3,9,27`, `5,25`):
+    // Family 2 (1,200 formulas): `R2_CLAUDE` regimes3 + prime-power p-adic hierarchies (`2,4,8,16`,
+    // `3,9,27`, `5,25`):
     let pp_pool = [2i64, 4, 8, 16, 3, 9, 27, 5, 25, 6, 12, 18];
     for idx in 0..1200usize {
         let lo = rng.int(-80, 120);

@@ -4,8 +4,8 @@
 //! nodes than its operands keeps its operands instead, so building the union and its
 //! complement stay linear in `C`, and the queries on them are decided exactly: `b <: b | a` by
 //! expanding on `b`, which both sides share, and `!b & a` by passing over paths whose taken
-//! types are disjoint. A product of tuple types covered by many negated ones is split into disjoint pieces, and
-//! a negated type disjoint from a piece is passed over.
+//! types are disjoint. A product of tuple types covered by many negated ones is split into disjoint
+//! pieces, and a negated type disjoint from a piece is passed over.
 
 use std::sync::Mutex;
 use std::sync::atomic::Ordering::Relaxed;
@@ -1079,8 +1079,9 @@ fn small_lists_of_two_cycles_are_decided() {
     }
 }
 
-/// The program of `bench::a_tuple_that_shapes_hold_only_together_is_checked_in_the_size_of_the_union`
-/// and `bench::a_tuple_that_no_shapes_hold_is_rejected_in_the_size_of_the_union`: `g` takes
+/// The program of
+/// `bench::a_tuple_that_shapes_hold_only_together_is_checked_in_the_size_of_the_union` and
+/// `bench::a_tuple_that_no_shapes_hold_is_rejected_in_the_size_of_the_union`: `g` takes
 /// `(#a_i, #c)` for each of `n` atoms, and `h` passes it `(#a_0 | … | #a_n-1, second)`.
 fn shapes_program(n: usize, second: &str) -> String {
     let atoms: Vec<String> = (0..n).map(|i| format!("#a{i}")).collect();

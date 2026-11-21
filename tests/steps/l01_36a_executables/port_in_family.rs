@@ -9,7 +9,8 @@ use rustix::fs::inotify;
 
 use super::{Ran, built, dir, executable, interpreter};
 
-/// The program of `l01_19_whole_file_ports::outside::a_function_reading_main_files_runs_under_every_higher_order_form`,
+/// The program of
+/// `l01_19_whole_file_ports::outside::a_function_reading_main_files_runs_under_every_higher_order_form`,
 /// each form and standard input read inside a `map`, built and run: the executable gives what
 /// `zedc run` gives, status, output and errors.
 #[test]

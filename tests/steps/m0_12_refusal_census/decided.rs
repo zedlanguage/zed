@@ -231,7 +231,8 @@ fn each_bucket_program_whose_domains_differ_is_rejected() {
 }
 
 /// The program gone from piece 0 (plan row FAIL-census-programs-0-stale-2ec6b9418), the form
-/// the test `l01_22_type_representation::kinds::a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered`
+/// the test
+/// `l01_22_type_representation::kinds::a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered`
 /// had before 2ec6b9418:
 ///
 /// ```text

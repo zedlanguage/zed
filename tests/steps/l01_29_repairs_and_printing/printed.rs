@@ -350,10 +350,10 @@ fn a_merged_failure_reads_back() {
 }
 
 /// A partial map `K ->? V` is the function type whose lookup is `V | #notFound`
-/// (sec:type_language), printed `K ->? V` as `#morphism` of sec:introspection writes it, which reads back to it; an `#errs`
-/// family reads back through the same rule, its lookup `E | #notFound`. It is not the exact
-/// `K -> V | #notFound`, whose guarantee is all of `K` ("plain `K -> V` is exact", `K ->? V`
-/// has `L = ∅`).
+/// (sec:type_language), printed `K ->? V` as `#morphism` of sec:introspection writes it, which
+/// reads back to it; an `#errs` family reads back through the same rule, its lookup
+/// `E | #notFound`. It is not the exact `K -> V | #notFound`, whose guarantee is all of `K` ("plain
+/// `K -> V` is exact", `K ->? V` has `L = ∅`).
 #[test]
 fn a_partial_map_reads_back_with_its_miss() {
     let partial = back("String ->? int");

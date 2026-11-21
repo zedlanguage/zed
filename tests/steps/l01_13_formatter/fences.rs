@@ -35,9 +35,9 @@ fn every_corpus_program_that_builds_formats_to_a_fixed_point() {
     // One at step L1.13; later steps build more.
     assert!(!formatted.is_empty(), "no corpus program builds");
     // The corpus is written in the formatter's layout, except where it is laid out by hand in a
-    // way the formatter does not reproduce: 10-regex-matcher/main.zed wraps its `hhmm` record display
-    // (it builds from step L2.2, its `import`); from step L3.1, which builds `for`, `><`, `::`
-    // and displays, the others align the `=` of consecutive bindings and their trailing
+    // way the formatter does not reproduce: 10-regex-matcher/main.zed wraps its `hhmm` record
+    // display (it builds from step L2.2, its `import`); from step L3.1, which builds `for`, `><`,
+    // `::` and displays, the others align the `=` of consecutive bindings and their trailing
     // comments, 11-csv-split.zed and 23-join-zoo.zed also wrap long lines, and 23-join-zoo.zed
     // writes a `match` on one line. From step L6.1, which builds `loop`, indexed definitions and
     // their `with`, the programs that use them also break long `if` chains and definitions by

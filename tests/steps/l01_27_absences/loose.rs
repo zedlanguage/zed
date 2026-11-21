@@ -301,12 +301,12 @@ fn no_is_repair_is_offered_for_a_function_type() {
 }
 
 /// Item REPAIR-is-shared-type: the `is` repair on a type with a part written twice. Before, the
-/// repair wrote the definition inside the code, `if v is type Part1 = int | #x; (Part1, Part1) { … }`,
-/// which no parser reads. Now the message writes the definition once, on a line of its own,
-/// and the repair says to write it at the top level; its name is no name of the program.
-/// Applied, the repaired program parses and resolves, and the declaration is the one thing
-/// this zedc does not support (DESIGN.md step L2.1); the same test with the part written
-/// out is accepted.
+/// repair wrote the definition inside the code,
+/// `if v is type Part1 = int | #x; (Part1, Part1) { … }`, which no parser reads. Now the message
+/// writes the definition once, on a line of its own, and the repair says to write it at the top
+/// level; its name is no name of the program. Applied, the repaired program parses and resolves,
+/// and the declaration is the one thing this zedc does not support (DESIGN.md step L2.1); the same
+/// test with the part written out is accepted.
 #[test]
 fn the_is_repair_on_a_shared_part_declares_it_at_the_top_level() {
     let t = "ap(positional g: (int | #x, int | #x)) = 0;\n";

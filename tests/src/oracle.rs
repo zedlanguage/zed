@@ -300,7 +300,8 @@ enum End {
 // for the bindings before them, and these runs are O(log n) doubling prefixes of that stretch,
 // O(stretch) lets in all, and halvings of it that each run only the half window left, with
 // the definitions before it as literals (see `first_stop`, which was O(n log² n) before
-// BENCH-over-nlogn-prediction, rerunning each prefix whole). Tests: `l01_37_oracle::alone::stops_that_reach_functions_scale` and
+// BENCH-over-nlogn-prediction, rerunning each prefix whole). Tests:
+// `l01_37_oracle::alone::stops_that_reach_functions_scale` and
 // `a_second_stop_through_functions_is_not_compared`; COMPLEXITY.md F107. A complete solution
 // builds the unit's function definitions once, in an environment each run starts from: both
 // engines would have to take one, the interpreter keeping closures beyond a run and the native
@@ -471,10 +472,11 @@ impl<'a> Runs<'a> {
     // the prefix's `values` binds `ran` once; each probe also binds the literals and the
     // function definitions its window reaches (the `F` of `Runs`), at most the reads of the
     // window's definitions plus `F`. Total O((len + reads + F log m) log n): O(n log n) for a
-    // chain. Measured 2026-11-20: 4.9 and 4.6 lets a definition at 4,096 and 16,384
-    // definitions, against 14.8 at 4,096 for the naive search (test `the_search_for_the_stop_binds_each_definition_a_bounded_
-    // number_of_times`). The outcomes are the same: a probe's run stops at its first let that
-    // stops, every definition before `lo` running, and that let's error is its own.
+    // chain. Measured 2026-11-20: 4.9 and 4.6 lets a definition at 4,096 and 16,384 definitions,
+    // against 14.8 at 4,096 for the naive search (test
+    // `the_search_for_the_stop_binds_each_definition_a_bounded_number_of_times`). The outcomes are
+    // the same: a probe's run stops at its first let that stops, every definition before `lo`
+    // running, and that let's error is its own.
     fn first_stop(&mut self, ready: &[usize], ran: usize, mut error: String) -> (usize, String) {
         let (mut lo, mut hi) = (ran, ready.len());
         self.values_of(&ready[..lo]);
@@ -645,8 +647,9 @@ impl Lookup for Same {
 }
 
 /// Runs the program `text` with every `Lines` input given `input` and every path of every
-/// `Files` input holding `input` as a `String`, and compares its writes under each of `engines`. The interpreter's writes are
-/// returned beside the report; a program that does not load compares nothing.
+/// `Files` input holding `input` as a `String`, and compares its writes under each of `engines`.
+/// The interpreter's writes are returned beside the report; a program that does not load compares
+/// nothing.
 pub fn program(text: &str, input: &[u8], engines: &[Engine<'_>]) -> (Report, Option<String>) {
     let mut r = Report::default();
     let Ok(p) = run::load(text.as_bytes()) else {

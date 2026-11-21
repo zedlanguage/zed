@@ -1,7 +1,7 @@
 //! Helpers of step L1.39 (tests/steps/l01_39_reduced_product and l01_39_scope_relations), some
-//! shared with the hand-run probes of PERF-negated-chain-unsolved (`benches/src/bin/pncx_probe.rs`):
-//! the scope of integer parameters, the arms of a function and the approval of `named_test.rs`
-//! whose tiers stand side by side.
+//! shared with the hand-run probes of PERF-negated-chain-unsolved
+//! (`benches/src/bin/pncx_probe.rs`): the scope of integer parameters, the arms of a function and
+//! the approval of `named_test.rs` whose tiers stand side by side.
 
 use std::sync::Arc;
 

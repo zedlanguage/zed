@@ -1,9 +1,9 @@
 //! A test on what a use of an undeclared parameter gives narrows it at each call (rule 3):
 //! `args[k] else ""` in the body of `r(fs, args, k)` holds no `#outOfBounds`, the atom it
-//! misses with, where a call binds `args` to a `CommandLine`, so `fs` is never given one. Before, the `else` kept the whole
-//! type variable of `args[k]`, the call bound it to `String | #notFound`, and the program was
-//! rejected with "this function, which `r` applies, does not take #notFound" (repair
-//! CHK-index-else, found writing the L1.36a test programs).
+//! misses with, where a call binds `args` to a `CommandLine`, so `fs` is never given one. Before,
+//! the `else` kept the whole type variable of `args[k]`, the call bound it to `String | #notFound`,
+//! and the program was rejected with "this function, which `r` applies, does not take #notFound"
+//! (repair CHK-index-else, found writing the L1.36a test programs).
 
 use super::{info, type_errors};
 use zed_tests::step_helpers::l01_19a_command_line::{dir, run};

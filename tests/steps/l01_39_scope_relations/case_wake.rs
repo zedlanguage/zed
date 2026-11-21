@@ -791,7 +791,8 @@ fn bounded_box_face_certificate_matches_from_scratch() {
     steps_dt.push(ge(var("y"), 10));
     check_steps(&xy, &steps_dt);
 
-    // 4. Bounded box beside a hole (`x != 0`) and a class (`x == 2*z`) and a third name (`a >= x+y`).
+    // 4. Bounded box beside a hole (`x != 0`) and a class (`x == 2*z`) and a third name
+    //    (`a >= x+y`).
     let axyz: Vec<Arc<str>> = ["a", "x", "y", "z"].iter().map(|&n| n.into()).collect();
     let mut steps_hc = vec![
         ge(var("x"), 0),

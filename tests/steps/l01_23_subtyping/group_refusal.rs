@@ -380,10 +380,10 @@ fn a_reader_of_a_refused_member_points_at_it() {
     );
 }
 
-/// A function type permitting its own group's keys and returning into it is a leaf of the decider, decided
-/// empty and inhabited in turn, so the members whose answer does not rest on it stay decided;
-/// before this item every member of such a group went to the search, and none was decided by
-/// the group.
+/// A function type permitting its own group's keys and returning into it is a leaf of the decider,
+/// decided empty and inhabited in turn, so the members whose answer does not rest on it stay
+/// decided; before this item every member of such a group went to the search, and none was decided
+/// by the group.
 #[test]
 fn a_part_the_decider_does_not_take_leaves_the_rest_of_the_group_decided() {
     Type::forget_emptiness();

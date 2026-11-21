@@ -835,7 +835,8 @@ case_benches! {
 #[test]
 fn r8_varywidth_scales_within_input_size() {
     // Watch item `r5varywidth`: input has Theta(w^2) nodes (`w` boolean columns x `w` clauses),
-    // so `w` to `4w` increases input size `N = w^2` by `16x` (`O(N log N)` bound <= `16 * 3 = 48x`).
+    // so `w` to `4w` increases input size `N = w^2` by `16x` (`O(N log N)` bound <=
+    // `16 * 3 = 48x`).
     big(|| {
         Type::forget_emptiness();
         let small = r5_varying_width(16);

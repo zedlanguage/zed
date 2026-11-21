@@ -1,5 +1,5 @@
-//! Benchmarks of `xst::holes_model`: each times the work at a size and at 8 times it, run apart from
-//! the correctness tests (`tools/run_tests.sh --bench`).
+//! Benchmarks of `xst::holes_model`: each times the work at a size and at 8 times it, run apart
+//! from the correctness tests (`tools/run_tests.sh --bench`).
 
 use super::*;
 

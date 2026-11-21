@@ -65,7 +65,8 @@ fn a_failing_operand_keeps_its_atom_where_it_is_read() {
             "f(y: int) = (5 div y) > 0 || true;",
             "(y: int) -> bool | #divByZero",
         ),
-        // Under `!` and nested: De Morgan's laws, or `(d || true) && true` to `true`, would drop it.
+        // Under `!` and nested: De Morgan's laws, or `(d || true) && true` to `true`, would drop
+        // it.
         (
             "f(y: int) = !((5 div y) > 0 && false);",
             "(y: int) -> bool | #divByZero",

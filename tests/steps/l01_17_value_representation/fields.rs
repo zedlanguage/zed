@@ -5,7 +5,8 @@
 use zed_tests::deep::resolved;
 use zed_tests::step_helpers::l01_16_elaboration::value;
 
-/// An atom with `n` named fields `p0`, `p1`, … (`f64` would name a type), and an `else` that matches it naming them all.
+/// An atom with `n` named fields `p0`, `p1`, … (`f64` would name a type), and an `else` that
+/// matches it naming them all.
 pub(crate) fn fields(n: usize) -> String {
     let names: Vec<String> = (0..n).map(|i| format!("p{i}")).collect();
     let given: Vec<String> = names.iter().map(|f| format!("{f}: 1")).collect();

@@ -915,9 +915,9 @@ fn deciding_an_ordering_with_a_long_number_text_offers_no_text_comparison() {
 }
 
 /// `n` functions, each comparing a `rat` by `==` or `!=` with a fraction text no literal
-/// writes, `1/(3i + 3)`, whose denominator has the factor 3, the text on either side, so each rejection offers the cast kept around the
-/// literal (row REPAIR-eq-kept-cast): besides the trials of the literals, one application
-/// of the cast to the literal.
+/// writes, `1/(3i + 3)`, whose denominator has the factor 3, the text on either side, so each
+/// rejection offers the cast kept around the literal (row REPAIR-eq-kept-cast): besides the trials
+/// of the literals, one application of the cast to the literal.
 pub(super) fn fractions_compared(n: usize) -> String {
     (0..n)
         .map(|i| match i % 4 {

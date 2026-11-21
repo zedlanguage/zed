@@ -3,7 +3,8 @@
 //! rejection shows both operands with their carriers and where each carrier comes from, and
 //! its menu is the widening casts the checker accepts, written at the operand: `rat(n)` beside
 //! a `rat` with `n: int`. A cast that narrows is never offered (DESIGN.md sec:diagnostics), so
-//! `r + x` has none: `f64(r)` is inexact and `rat(x)` is `#NaN` at the NaN and `#overflow` at an infinity.
+//! `r + x` has none: `f64(r)` is inexact and `rat(x)` is `#NaN` at the NaN and `#overflow` at an
+//! infinity.
 
 use zed_tests::step_helpers::l01_19a_command_line::run;
 

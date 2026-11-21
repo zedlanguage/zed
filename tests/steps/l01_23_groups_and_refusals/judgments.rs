@@ -1700,8 +1700,8 @@ fn a_set_of_every_atom_nested_in_a_result_type_is_compared_as_a_set() {
 /// are compared by their own subtyping, and the parameters as one set, as above. The function
 /// beside `D` is generic in a variable of its own, `(T -> T for T in int)`, which reads alike
 /// in every environment. Before, five of the six judgments true here were a definite no (all
-/// but `own_d_again <: own_d`). One that holds the variable of the function type around it, `T -> T` in
-/// `(T -> … for T in int)`, is read by the environment and is not put back
+/// but `own_d_again <: own_d`). One that holds the variable of the function type around it,
+/// `T -> T` in `(T -> … for T in int)`, is read by the environment and is not put back
 /// (FAIL-closed-form-outer-variable).
 #[test]
 fn a_set_of_every_atom_beside_a_function_holding_a_variable_is_compared_as_a_set() {
@@ -2064,10 +2064,11 @@ fn nested_rows_against_cut_rows(
     )
 }
 
-/// The small instances of `bench::a_large_first_component_beside_a_small_class_is_decided_in_linear_time`
-/// and of its mirror. A left row whose first component meets one of the `m` rows is held only
-/// when its second component is within `_` there: `((#b, 3), 2)` is held by `((#b, 3), _)`,
-/// `((#b, 7), 2)` by nothing, since 7 is not among `0..4` and the shape holds only `1`.
+/// The small instances of
+/// `bench::a_large_first_component_beside_a_small_class_is_decided_in_linear_time` and of its
+/// mirror. A left row whose first component meets one of the `m` rows is held only when its second
+/// component is within `_` there: `((#b, 3), 2)` is held by `((#b, 3), _)`, `((#b, 7), 2)` by
+/// nothing, since 7 is not among `0..4` and the shape holds only `1`.
 #[test]
 fn nested_sets_against_a_first_component_cut_by_rows_are_decided() {
     use zedc::check::read::parse_type;
@@ -2118,10 +2119,11 @@ fn crossing_rows_wider_second(n: usize) -> (zedc::check::ty::Ty, zedc::check::ty
     )
 }
 
-/// The small instance of `bench::crossing_sets_against_a_wider_second_component_are_decided_in_linear_time`.
-/// The rows are within the two shapes; the shapes are not within the rows (`((#a, 0), 1)` and
-/// `((#b, 0), 3)` are in them and in no row); a row with `4` beside it, or with a string in its
-/// nested set, is not within them; `((#b, 2), 3)` is.
+/// The small instance of
+/// `bench::crossing_sets_against_a_wider_second_component_are_decided_in_linear_time`. The rows are
+/// within the two shapes; the shapes are not within the rows (`((#a, 0), 1)` and `((#b, 0), 3)` are
+/// in them and in no row); a row with `4` beside it, or with a string in its nested set, is not
+/// within them; `((#b, 2), 3)` is.
 #[test]
 fn crossing_sets_against_a_wider_second_component_are_decided() {
     use zedc::check::read::parse_type;
@@ -2140,10 +2142,11 @@ fn crossing_sets_against_a_wider_second_component_are_decided() {
     }
 }
 
-/// The small instance of `bench::nested_sets_against_a_wider_second_component_are_decided_in_linear_time`.
-/// The rows are within the shape; the shape is not within the rows (`((#a, 0), 1)` and
-/// `((#b, 0), 2)` are in it and in no row); a row with `3` beside it, or with a string in its
-/// nested set, is not within the shape; `((#b, 2), 2)` is.
+/// The small instance of
+/// `bench::nested_sets_against_a_wider_second_component_are_decided_in_linear_time`. The rows are
+/// within the shape; the shape is not within the rows (`((#a, 0), 1)` and `((#b, 0), 2)` are in it
+/// and in no row); a row with `3` beside it, or with a string in its nested set, is not within the
+/// shape; `((#b, 2), 2)` is.
 #[test]
 fn nested_sets_against_a_wider_second_component_are_decided() {
     use zedc::check::read::parse_type;

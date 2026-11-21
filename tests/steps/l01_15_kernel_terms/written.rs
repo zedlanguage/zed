@@ -422,8 +422,8 @@ fn a_type_test_inside_other_patterns_reads_back() {
 }
 
 /// The kernel's pattern for any atom, which `else` and `?.` elaborate to, and its pattern for the
-/// empty tuple are written as the type tests `(is #_)` and `(is ())`, sec:grammar's `IsPat` with the
-/// `AtomType` `#_` and the `TupleType` `()`, at the top of an arm and inside a tuple, a payload
+/// empty tuple are written as the type tests `(is #_)` and `(is ())`, sec:grammar's `IsPat` with
+/// the `AtomType` `#_` and the `TupleType` `()`, at the top of an arm and inside a tuple, a payload
 /// and a field, and each reads back as a type holding exactly the values the pattern matches.
 /// Before (item PRINT-anyatom-pattern), they were written `#_` and `()`, which no pattern of
 /// sec:grammar reads: `#_` is a type, not an `AtomPattern`, and a `TuplePat` has a comma.

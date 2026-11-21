@@ -38,9 +38,9 @@ fn a_kept_power_is_written_in_time_linear_in_its_parts() {
     );
 }
 
-/// The decimal digits cost about `n^1.5` here, 22.3 times the work at 8n: over the limit of 13 of 2026-11-13,
-/// though under the 24 allowed until SCALE-ratio, when a second test held it at 64 times the
-/// bits (removed by TESTS-scaling-limit-13).
+/// The decimal digits cost about `n^1.5` here, 22.3 times the work at 8n: over the limit of 13 of
+/// 2026-11-13, though under the 24 allowed until SCALE-ratio, when a second test held it at 64
+/// times the bits (removed by TESTS-scaling-limit-13).
 #[test]
 fn addressing_a_wide_constant_is_linear_in_its_bits() {
     const N: usize = 1 << 17;

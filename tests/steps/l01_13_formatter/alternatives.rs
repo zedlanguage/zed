@@ -62,8 +62,8 @@ const PLACES: &[&str] = &[
 const PIECES: &[&str] = &["AnnotEnd", "KeyOp", "ReducePolicy", "DocFence", "DocItem"];
 
 /// Cases the grammar reads that every place rejects by a rule, with the rule: a display that
-/// mixes a map entry and a set element is neither a map nor a set; a binary operator at the edge of an
-/// operand of an infix call reads two ways (DESIGN.md tier 6). Each must stay unplaced.
+/// mixes a map entry and a set element is neither a map nor a set; a binary operator at the edge of
+/// an operand of an infix call reads two ways (DESIGN.md tier 6). Each must stay unplaced.
 const REJECTED: &[(&str, &str)] = &[
     ("{ 1 -> 2, 3, }", "a display is a set or a map, not both"),
     (

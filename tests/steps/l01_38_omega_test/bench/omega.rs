@@ -226,8 +226,8 @@ fn independent_stages_scale() {
 /// elimination reads at most 4 rows and makes at most 4, at every n. Tested by the probe of
 /// `presburger::by_halves_against_old::dead2_eliminations_read_as_many_rows_at_every_length`
 /// (in the crate, which counts the most rows taken and pairs made by one elimination): (4, 4) at
-/// 16 and at 128 stages, every symbol asked or the first credit alone. Measured, the rows projected go
-/// from 16,761 to 179,120 (10.69 times) and the instructions 9.6 times (857 M → 8.26 G).
+/// 16 and at 128 stages, every symbol asked or the first credit alone. Measured, the rows projected
+/// go from 16,761 to 179,120 (10.69 times) and the instructions 9.6 times (857 M → 8.26 G).
 #[test]
 fn project_each_on_a_chained_pipeline_scales() {
     let (small, large) = (

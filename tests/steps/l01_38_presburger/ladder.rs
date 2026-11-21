@@ -225,8 +225,8 @@ fn contradictory_premises_close_a_part() {
 fn a_refutation_at_a_zero_divisor_is_a_point_where_the_operation_fails() {
     // "at `n == 0`, where the operation fails, they are left free ... from `n >= 0` neither
     // is." Rung 2 refutes `x mod n < n` with the witness `n = 0`, where the goal is no
-    // boolean: `x mod 0` gives the atom `#divByZero`. DESIGN does not say whether such a point is a refutation
-    // (docs/studies/ladder.md, defect D4); this test fixes what rung 2 does today.
+    // boolean: `x mod 0` gives the atom `#divByZero`. DESIGN does not say whether such a point is a
+    // refutation (docs/studies/ladder.md, defect D4); this test fixes what rung 2 does today.
     let (premise, goal) = ("ok(x, n) = n == 0;", "ok(x, n) = x mod n < 1;");
     let e = rung2(premise, goal);
     let Entailment::Refuted(m) = &e else {

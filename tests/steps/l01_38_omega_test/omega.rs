@@ -1038,14 +1038,15 @@ fn joint_stage_hulls_are_exact() {
 }
 
 /// Families of `n` holes, each a disjunction, on a chain of difference rows (item
-/// PROJECT-each-chain-xr). `chain`: [`dead2`] chained; `both`: [`dead2`] chained both ways (`|y[k+1] - y[k]| <= 2`);
-/// `slope`: `1 <= y[k+1] - y[k] <= 5`, `y[k]` in `{3k, 3k + 2}`; `acc`: `x[k+1] == x[k] + y[k]`,
-/// `x0 == 0`, `y[k]` in `{0, 2}`; `mono`/`mono1`: `y[k+1] >= y[k]`, `0 <= y[k] <= 20`, `y[k]` in
-/// `{9, 11}` / `{10, 11}`; `eqchain`: `y[k+1] == y[k]`; `band`: `0 <= y[k+1] - y[k] <= 1`, both with
-/// `y[k]` in `{0, 10}`; `wide`: `band` with `y[k]` in `{0, 4n}`; `twoway`: `|y[k+1] - y[k]| <= 2`,
-/// `y[k]` in `{0, 2}`, `y[k] == 1 || z[k] >= 0`, `z[k] <= 5`; `pair`: `y[k+1] >= y[k] - 2`,
-/// `(y[k], y[k+1])` in `{(0, 0), (2, 2)}` for even `k`; `steps`: `x[k+1] - x[k]` in `{0, 10}`,
-/// `x0 == 0`; `pinned`: also `x[n] == 0`; `pinlast`: also `x[n] <= 10`.
+/// PROJECT-each-chain-xr). `chain`: [`dead2`] chained; `both`: [`dead2`] chained both ways
+/// (`|y[k+1] - y[k]| <= 2`); `slope`: `1 <= y[k+1] - y[k] <= 5`, `y[k]` in `{3k, 3k + 2}`; `acc`:
+/// `x[k+1] == x[k] + y[k]`, `x0 == 0`, `y[k]` in `{0, 2}`; `mono`/`mono1`: `y[k+1] >= y[k]`,
+/// `0 <= y[k] <= 20`, `y[k]` in `{9, 11}` / `{10, 11}`; `eqchain`: `y[k+1] == y[k]`; `band`:
+/// `0 <= y[k+1] - y[k] <= 1`, both with `y[k]` in `{0, 10}`; `wide`: `band` with `y[k]` in
+/// `{0, 4n}`; `twoway`: `|y[k+1] - y[k]| <= 2`, `y[k]` in `{0, 2}`, `y[k] == 1 || z[k] >= 0`,
+/// `z[k] <= 5`; `pair`: `y[k+1] >= y[k] - 2`, `(y[k], y[k+1])` in `{(0, 0), (2, 2)}` for even `k`;
+/// `steps`: `x[k+1] - x[k]` in `{0, 10}`, `x0 == 0`; `pinned`: also `x[n] == 0`; `pinlast`: also
+/// `x[n] <= 10`.
 fn holes_family(fam: &str, n: usize) -> (Formula, Vec<Atom>) {
     let y = |k: usize| format!("y{k}");
     let x = |k: usize| format!("x{k}");

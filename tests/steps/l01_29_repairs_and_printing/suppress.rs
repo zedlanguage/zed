@@ -1,8 +1,8 @@
 //! Items DIAG-suppress, DIAG-suppress-rest and DIAG-addr-root (DESIGN.md sec:diagnostics): each
-//! diagnostic prints its address under `--addresses`, and only then, the same on every run of the same file from any directory and
-//! different in each file; `--suppress <address>` leaves that warning unprinted and the program
-//! unchanged; naming a rejection is an error and the run still fails; an address that names
-//! nothing is reported.
+//! diagnostic prints its address under `--addresses`, and only then, the same on every run of the
+//! same file from any directory and different in each file; `--suppress <address>` leaves that
+//! warning unprinted and the program unchanged; naming a rejection is an error and the run still
+//! fails; an address that names nothing is reported.
 
 use std::path::{Component, Path, PathBuf};
 

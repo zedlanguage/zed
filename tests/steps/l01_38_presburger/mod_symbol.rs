@@ -184,7 +184,8 @@ fn the_translation_agrees_with_the_interpreter() {
 }
 
 /// `x div (n + i) * (n + i) + x mod (n + i) == x` for `i < k`, joined by `&&`: `2k`
-/// auxiliary variables, `x div (n + i)` and `x mod (n + i)` sharing a pair, and `k` product atoms `n * q`.
+/// auxiliary variables, `x div (n + i)` and `x mod (n + i)` sharing a pair, and `k` product atoms
+/// `n * q`.
 pub(super) fn splits(k: usize) -> Term {
     let var = |s: &str| Term::Var(s.into());
     let prim = |p: Prim, args: Vec<Term>| Term::Prim(p, args);

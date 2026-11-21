@@ -96,7 +96,8 @@ fn each_kind_of_reported_rejection_builds_its_derivation() {
 
 #[test]
 fn one_rejection_of_a_fixed_size_builds_the_same_derivation_among_3_functions_and_24() {
-    // The small instance of `bench::one_rejection_builds_the_same_derivation_among_n_functions_as_among_8n`.
+    // The small instance of
+    // `bench::one_rejection_builds_the_same_derivation_among_n_functions_as_among_8n`.
     scaling::on_a_thread(STACK, || {
         let (r, small) = counted(&one_rejection(3));
         assert!(r.is_err());

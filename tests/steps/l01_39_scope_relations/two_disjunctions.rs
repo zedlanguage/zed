@@ -5,8 +5,8 @@
 //! that are bottom drop out; the lazy scope settles it later, from the core, where the
 //! projection takes one disjunction at a time (S16) and does not see that a side of one is
 //! empty where the other holds. So a narrowing by a disjunction keeps the relation of its
-//! live sides alone (`Scope::narrow_linear` in zedc-preimage), and both scopes settle `a` to the exact
-//! least value. The tests compare the lazy and the eager answers with an enumeration of
+//! live sides alone (`Scope::narrow_linear` in zedc-preimage), and both scopes settle `a` to the
+//! exact least value. The tests compare the lazy and the eager answers with an enumeration of
 //! the hubs.
 
 use std::sync::Arc;

@@ -272,11 +272,11 @@ fn each_pair_built_for_an_answer_gives_it() {
     }
 }
 
-/// Plan item SOUND-div-exact: `c^0` fails where `c` does (DESIGN.md sec:failure), so `(1 div x)^0 == 1`
-/// is `false` at `x == 0`. Rung 1, which does not track failure, translated `c^0` as 1 without
-/// reading `c` and gave the relation `1 == 1`, true at `x == 0`; it now gives none, since a
-/// quotient by a term does not translate there. Rung 2 meets the relation with the condition
-/// that the divisor is not 0.
+/// Plan item SOUND-div-exact: `c^0` fails where `c` does (DESIGN.md sec:failure), so
+/// `(1 div x)^0 == 1` is `false` at `x == 0`. Rung 1, which does not track failure, translated
+/// `c^0` as 1 without reading `c` and gave the relation `1 == 1`, true at `x == 0`; it now gives
+/// none, since a quotient by a term does not translate there. Rung 2 meets the relation with the
+/// condition that the divisor is not 0.
 #[test]
 fn a_power_zero_of_a_quotient_by_a_term_fails_where_the_divisor_is_zero() {
     let ns = names();

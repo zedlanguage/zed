@@ -1065,9 +1065,10 @@ fn summaries_of_two_chains_sharing_an_input_at_5_links_give_their_answers() {
     summaries_of_definitions_give_their_answers([two_chains_sharing_x_and_x_div_7(5).as_str()]);
 }
 
-/// The chains of `one_scope::each_answer_of_a_chain_read_through_faces_is_the_answer_of_the_relation_whole`
-/// at 30 links and the 60 random chains of seed 0x1c5a, as first written: 2.2 s (2026-11-14,
-/// load 25), so a benchmark (author P178).
+/// The chains of
+/// `one_scope::each_answer_of_a_chain_read_through_faces_is_the_answer_of_the_relation_whole` at 30
+/// links and the 60 random chains of seed 0x1c5a, as first written: 2.2 s (2026-11-14, load 25), so
+/// a benchmark (author P178).
 #[test]
 fn each_answer_of_60_random_chains_and_three_of_30_links_read_through_faces_is_the_whole() {
     chains_read_through_faces(30);

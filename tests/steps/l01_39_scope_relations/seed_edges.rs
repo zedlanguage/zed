@@ -31,8 +31,8 @@ fn le(a: &str, c: i64) -> Term {
     prim(Prim::Le, var(a), int(c))
 }
 
-/// The ends of `n`'s integers in `s`, settled (`Scope::settled`), `None` for an end that is infinite; `None` for a scope
-/// no state reaches.
+/// The ends of `n`'s integers in `s`, settled (`Scope::settled`), `None` for an end that is
+/// infinite; `None` for a scope no state reaches.
 fn ends(s: &Scope, n: &str) -> Option<(Option<i64>, Option<i64>)> {
     if s.bottom {
         return None;

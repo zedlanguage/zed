@@ -5,10 +5,10 @@
 //! `y * w + x < h * w` follows from `0 <= y < h` and `0 <= x < w`, and not from `y <= h`.
 //! `preimage` checks the z3 fixtures and the relation a non-box preimage keeps. `random`
 //! checks the translation, the Omega test, the projection and entailment against the
-//! interpreter at every point of a window, and `controls` checks that a relation of any size is decided, that a question outside
-//! the polynomial fragment is refused, and that each check of `random` rejects a wrong
-//! answer. `omega` holds the solver's corner cases, and `repair` the greedy
-//! search over disjunctions and its repair of one disjunct.
+//! interpreter at every point of a window, and `controls` checks that a relation of any size is
+//! decided, that a question outside the polynomial fragment is refused, and that each check of
+//! `random` rejects a wrong answer. `omega` holds the solver's corner cases, and `repair` the
+//! greedy search over disjunctions and its repair of one disjunct.
 //!
 //! The step has two test binaries (TESTS-split, author A30): `omega`, `repair`, `preimage`,
 //! `scaling`, `stages`, `one_scope`, `extend` and the modules that use them are in

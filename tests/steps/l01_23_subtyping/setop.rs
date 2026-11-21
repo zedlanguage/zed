@@ -397,11 +397,12 @@ fn bounded_parity_singletons_obey_further_integer_constraints() {
 ///
 /// Until TEST-bench-move-l0123 (author P169) this ran 400 meets from one fixed seed of its own
 /// generator, 1.1 to 1.4 s alone under load; it now runs 100 from a fresh seed each run,
-/// 0.23 to 0.70 s alone under the same load, the time varying with the meets drawn. Every kind of meet is still drawn: each draw picks among
-/// 1 to 4 integers, 1 to 8 lists, bounded or not, swaps by pairs or by any subset, and stop
-/// sets of none, one or both states. At 400 meets 309 were answered `Empty` with no short
-/// list (77 percent), so at 100 about 77 are, with a standard deviation of about 4.2. A meet
-/// built to be answered `Empty` is checked on every run, so no draw need hold one.
+/// 0.23 to 0.70 s alone under the same load, the time varying with the meets drawn. Every kind of
+/// meet is still drawn: each draw picks among 1 to 4 integers, 1 to 8 lists, bounded or not, swaps
+/// by pairs or by any subset, and stop sets of none, one or both states. At 400 meets 309 were
+/// answered `Empty` with no short list (77 percent), so at 100 about 77 are, with a standard
+/// deviation of about 4.2. A meet built to be answered `Empty` is checked on every run, so no draw
+/// need hold one.
 #[test]
 fn random_parity_meets_answered_empty_hold_no_short_list() {
     let (mut g, seed) = Rng::fresh("random parity meets");

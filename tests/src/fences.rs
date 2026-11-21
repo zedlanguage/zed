@@ -105,9 +105,9 @@ pub fn all() -> Vec<DocFence> {
 
 /// The fences that this repository's `zed/grammar/syntax.peg` does not parse at any ring, each
 /// with the plan row that builds its form: a fence whose form the spec describes and no row has
-/// built into the grammar yet is held here until its row builds it. None is held now: OR-PAT built the last, the parenthesized range
-/// pattern `(0..=9)`. The rings test (step L1.8) checks that each still fails to parse, so an
-/// entry fails that test once its form parses, and none outlives it.
+/// built into the grammar yet is held here until its row builds it. None is held now: OR-PAT built
+/// the last, the parenthesized range pattern `(0..=9)`. The rings test (step L1.8) checks that each
+/// still fails to parse, so an entry fails that test once its form parses, and none outlives it.
 pub const HELD_GRAMMAR_UNPARSED: &[(&str, &str)] = &[];
 
 /// Every fence of [`all`] that this repository's grammar parses: all but those of

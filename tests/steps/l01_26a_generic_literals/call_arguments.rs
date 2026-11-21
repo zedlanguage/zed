@@ -115,9 +115,9 @@ fn a_division_of_literals_at_an_int_or_untyped_parameter_is_still_rejected() {
 /// The checker does not build the rejection of an operation on literals alone whose call
 /// gives it a carrier (`Ck::lit_spares`), since the call drops it. These programs come close
 /// to that case, and each gives the same errors as before that change: an argument that
-/// takes a carrier, one at a generic parameter of float formats, which takes none, a curried call, a `-` of a
-/// division, nested divisions, a `^` at `rat`, a division by zero, a call in a function body,
-/// an argument that is itself a call, and arguments the call refuses.
+/// takes a carrier, one at a generic parameter of float formats, which takes none, a curried call,
+/// a `-` of a division, nested divisions, a `^` at `rat`, a division by zero, a call in a function
+/// body, an argument that is itself a call, and arguments the call refuses.
 #[test]
 fn a_rejection_a_call_drops_is_not_built_and_one_that_stands_is_unchanged() {
     let cases: &[(&str, &[&str])] = &[

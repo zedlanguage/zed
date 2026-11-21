@@ -1665,8 +1665,9 @@ pub(super) mod row_sums {
         }
 
         /// `overlap_rows(k)` with every value times `step`: at `10^15` and k >= 9, a row's sums
-        /// span more than `2^62`, so the join has no plan (at k = 6 they do not, and it plans); each atom is scaled by its one value besides 0, each row is divided by
-        /// `10^15`, and the join answers the rows of `overlap_rows(k)`.
+        /// span more than `2^62`, so the join has no plan (at k = 6 they do not, and it plans);
+        /// each atom is scaled by its one value besides 0, each row is divided by `10^15`, and the
+        /// join answers the rows of `overlap_rows(k)`.
         pub(crate) fn overlap_scaled(k: usize, step: i128) -> Big {
             overlap_scaled_by(&super::overlap_rows(k), step)
         }

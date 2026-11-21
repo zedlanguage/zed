@@ -1,9 +1,9 @@
 //! `=` written in a condition where `==` was meant (DESIGN.md sec:lexical, the `x = e` row of
 //! the operator table; row "`=` written in a condition where `==` was meant" of
-//! sec:diagnostics; item PITFALL-assign-in-condition): `=` binds a name and can only be used as a statement, so
-//! `if x = 3 {` stops the parse. The error is reported at the `=`, shows the condition as
-//! written, and offers it with `==`, its parentheses kept, when the declaration then parses.
-//! An `=` outside a condition stays a syntax error.
+//! sec:diagnostics; item PITFALL-assign-in-condition): `=` binds a name and can only be used as a
+//! statement, so `if x = 3 {` stops the parse. The error is reported at the `=`, shows the
+//! condition as written, and offers it with `==`, its parentheses kept, when the declaration then
+//! parses. An `=` outside a condition stays a syntax error.
 
 use zedc::rejection::Row;
 

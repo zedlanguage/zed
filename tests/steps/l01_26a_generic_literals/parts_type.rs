@@ -124,13 +124,13 @@ fn a_call_through_a_bounded_variable_has_the_carrier_and_not_the_arguments_value
 /// The static type of each generated call holds the value the evaluator gives: 432 programs,
 /// every combination of a carrier (`int`, `rat` by the `r` suffix, `f64` by its suffix), an
 /// operator (`+`, `-`, `*`), where the part stands (the first or second component of a pair,
-/// the last of a 3-tuple, inside a nested tuple, or both components), whether the part carries the suffix or is a bare
-/// literal that takes `x`'s carrier (the same `2` for `int`, which has no suffix), and how the
-/// call is made (directly, through a second function, with the tuple bound to a name, or with
-/// `x` bound to a name, whose type is then its value, `w = 3`). A bare integer literal in a
-/// tuple bound to a name is read as `int` (DESIGN.md step L1.26a: "bound to a name alone"), so
-/// `q = (2, 1); y = f(x: 3r, p: q)` is rejected, and the test says so; a bare decimal there is
-/// an `f64` (author decision 2026-11-12), so `q = (2.5, 1); y = f(x: 3.5f64, p: q)` is
+/// the last of a 3-tuple, inside a nested tuple, or both components), whether the part carries the
+/// suffix or is a bare literal that takes `x`'s carrier (the same `2` for `int`, which has no
+/// suffix), and how the call is made (directly, through a second function, with the tuple bound to
+/// a name, or with `x` bound to a name, whose type is then its value, `w = 3`). A bare integer
+/// literal in a tuple bound to a name is read as `int` (DESIGN.md step L1.26a: "bound to a name
+/// alone"), so `q = (2, 1); y = f(x: 3r, p: q)` is rejected, and the test says so; a bare decimal
+/// there is an `f64` (author decision 2026-11-12), so `q = (2.5, 1); y = f(x: 3.5f64, p: q)` is
 /// accepted.
 #[test]
 fn the_static_type_of_each_generated_call_holds_its_value() {

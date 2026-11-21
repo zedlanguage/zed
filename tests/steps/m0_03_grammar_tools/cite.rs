@@ -1,6 +1,7 @@
 //! The `cite` tool on small specs and trees: a label or step id that DESIGN.md does not define
 //! is reported with its file and line, a fixture listed as exempt and a graph dagview saved are
-//! not read, and the plan DAG's steps to come are accepted. This file is itself one of the exempt fixtures.
+//! not read, and the plan DAG's steps to come are accepted. This file is itself one of the exempt
+//! fixtures.
 
 use zed_tools::cite::{FIXTURES, PLAN, check_citations};
 

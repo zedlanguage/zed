@@ -588,8 +588,9 @@ fn chains_and_their_cycles_have_their_answers() {
 }
 
 /// Asserts the answers of [`chain`] closed by `close` in each of [`HOWS`] at 8 and 64 names,
-/// then near linear time in each from 512 names (8 before): in the reverse order the closing test comes first and each
-/// link then moves the ends of a closed path (ST-walk-orders: on main 36 to 61 at 8n).
+/// then near linear time in each from 512 names (8 before): in the reverse order the closing test
+/// comes first and each link then moves the ends of a closed path (ST-walk-orders: on main 36 to 61
+/// at 8n).
 fn chain_answers(what: &str, close: impl Fn(usize) -> Option<i64> + Sync, empty: bool) {
     chain_answers_at(what, &close, empty, &[8, 64]);
     for how in HOWS {
@@ -1516,8 +1517,9 @@ fn low(x: &str) -> Term {
     prim(Prim::Le, var(x), int(-5))
 }
 
-/// The disjunctions of [`class_cases_moved`] with the difference `x - y >= 1` in place of the class, so
-/// that the relation holds them: k tests on `y_i` that read `x`, then k tests that lower `x`.
+/// The disjunctions of [`class_cases_moved`] with the difference `x - y >= 1` in place of the
+/// class, so that the relation holds them: k tests on `y_i` that read `x`, then k tests that lower
+/// `x`.
 fn linear_moved(k: usize) -> Sys {
     let ys: Vec<String> = (0..k).map(|i| format!("y{i}")).collect();
     let mut ns: Vec<&str> = ys.iter().map(String::as_str).collect();

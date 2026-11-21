@@ -414,8 +414,8 @@ fn the_omega_test_decides_three_variables() {
 }
 
 /// Reeve's tetrahedron of height 7, shrunk so it holds no integer point, and `m` rows more of
-/// coefficients drawn by `coefficient`, each holding the whole unshrunk tetrahedron with slack 0 to 5.
-/// No elimination, box point or rounding center decides it, so every stage runs: the linear
+/// coefficients drawn by `coefficient`, each holding the whole unshrunk tetrahedron with slack 0
+/// to 5. No elimination, box point or rounding center decides it, so every stage runs: the linear
 /// programs, the rounding, LLL, and `twovar` on each of the planes of the flat direction, all
 /// over every row.
 pub(super) fn thin(m: usize, seed: u64, coefficient: impl Fn(&mut Rng) -> Int) -> Vec<Row3> {

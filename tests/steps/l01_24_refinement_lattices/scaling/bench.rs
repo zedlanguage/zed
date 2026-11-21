@@ -158,8 +158,8 @@ fn membership_tests_in_a_set_scale() {
 /// One-piece updates and queries on a set of p pieces, and a set built by p one-point joins:
 /// each `O(log p)` on the persistent tree, which shares all but one path with its operand, so p
 /// of them cost `O(p log p)`. With the pieces in a Vec each copied or scanned all p pieces, and
-/// the test allocated 63.8 times the bytes for 8 times the size, against the limit of 11.4 of 2026-11-10; it
-/// now takes about 10.4 times the work and 10.4 times the bytes (COMPLEXITY.md
+/// the test allocated 63.8 times the bytes for 8 times the size, against the limit of 11.4 of
+/// 2026-11-10; it now takes about 10.4 times the work and 10.4 times the bytes (COMPLEXITY.md
 /// INTERVAL-persistent). Those ratios were measured at p = 1000.
 /// TEST-bench-move-l0123, author P169: p was 1000, now 40_000; 1x 0.58 s at load 34.
 #[test]

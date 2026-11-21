@@ -103,8 +103,8 @@ pub fn map_value<T: Clone + Into<Value>>(m: &[(i64, T)]) -> Value {
 /// `count` distinct seeds of `seeds`, drawn from `rng` (made by [`Rng::fresh`]) and printed with
 /// `what` in increasing order: a sweep over a family of seeded random instances runs these few
 /// each run instead of every seed (author P169: random tests run fewer cases, with a new seed
-/// each run, printed; `ZED_TEST_SEED` repeats the run). Every seed of `seeds` is returned, and `rng`
-/// left as it was, when there are no more than `count`.
+/// each run, printed; `ZED_TEST_SEED` repeats the run). Every seed of `seeds` is returned, and
+/// `rng` left as it was, when there are no more than `count`.
 pub fn pick_seeds(rng: &mut Rng, what: &str, seeds: Range<u64>, count: usize) -> Vec<u64> {
     let len = seeds.end.saturating_sub(seeds.start);
     if len <= count as u64 {

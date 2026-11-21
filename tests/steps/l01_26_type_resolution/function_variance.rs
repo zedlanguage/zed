@@ -1865,11 +1865,12 @@ fn a_generic_body_passes_on_only_its_arguments_by_every_route() {
 /// Row PROOF-generic-body-values-from-args, the cases of the proof where a value of a type
 /// variable does not come from a place in one argument that the call shows: a default that is
 /// a function written in the program, an entry of a family (alone, or with an `else` of the
-/// bare name met before or after it), and the result of calling a parameter. Each is refused rather than run without a test of the domain; before the fix of
-/// FAIL-partial-slot-generic-pass these ran `small` on 2.5. Row
-/// MSG-partial-slot-no-place-repair-code: the headline is code, and ends with the repair as
-/// code where a declaration this zedc compiles repairs it ([`the_repairs_the_no_place_refusal_offers_run`]);
-/// `y: _ -> (x: int) -> int`, for `y(x)`, writes `_`, so none is offered there.
+/// bare name met before or after it), and the result of calling a parameter. Each is refused rather
+/// than run without a test of the domain; before the fix of FAIL-partial-slot-generic-pass these
+/// ran `small` on 2.5. Row MSG-partial-slot-no-place-repair-code: the headline is code, and ends
+/// with the repair as code where a declaration this zedc compiles repairs it
+/// ([`the_repairs_the_no_place_refusal_offers_run`]); `y: _ -> (x: int) -> int`, for `y(x)`, writes
+/// `_`, so none is offered there.
 #[test]
 fn a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot() {
     let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\n";
@@ -1939,7 +1940,8 @@ fn the_repairs_the_no_place_refusal_offers_run() {
 /// `x` holds no atom, the generic function passed as a value and called there with an
 /// argument of the outer call or one written in its body (once or twice, and through two
 /// calls of one function value). The fifth case of the row, the generic function called from a
-/// lambda inside `map`, is [`a_generic_function_called_from_a_map_lambda_misses_outside_the_domain`].
+/// lambda inside `map`, is
+/// [`a_generic_function_called_from_a_map_lambda_misses_outside_the_domain`].
 #[test]
 fn values_a_generic_body_passes_on_from_its_arguments_miss_outside_the_domain() {
     let head = |k: &str| {
@@ -2188,7 +2190,8 @@ fn a_function_taken_from_a_family_argument_misses_outside_its_domain() {
 /// Row FAIL-partial-slot-generic-family-entry, a neighbor that stays refused: a family whose
 /// entries are functions of two types, so an entry read is one of two functions, and no one
 /// rebuilding fits both. (A family built in the body lies in no argument and stays refused
-/// too: `{ 1 -> x }[1]` in [`a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot`].)
+/// too: `{ 1 -> x }[1]` in
+/// [`a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot`].)
 #[test]
 fn a_function_taken_from_a_family_of_two_function_types_is_refused_for_a_partial_slot() {
     let src = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(m) = apply(f: m[1]);\nwide(x: int | f64) = 1;\na = pass(m: { 1 -> small, 2 -> wide });\n";
@@ -2717,8 +2720,8 @@ fn the_arrow_lambda_refusals_offer_a_repair_that_is_accepted() {
 /// generic body passes on, which misses outside its domain and is called inside it, whichever
 /// line the port gives; a function chosen by a value read from a port is rebuilt the same way.
 /// The `Lines` port itself, passed through a generic body, is of its declared type
-/// `[String | #ioError(…)]`, the list `int ->? String | #ioError(…)`, so the slot `(int | f64) ->? String` refuses it by its
-/// values, as the proof says, before any rebuilding.
+/// `[String | #ioError(…)]`, the list `int ->? String | #ioError(…)`, so the slot
+/// `(int | f64) ->? String` refuses it by its values, as the proof says, before any rebuilding.
 #[test]
 fn a_function_a_generic_body_passes_on_misses_on_keys_a_port_reads() {
     use zed_tests::step_helpers::l01_19_whole_file_ports::run;

@@ -329,8 +329,8 @@ fn a_meet_of_cycles_is_shown_by_its_length() {
 #[test]
 fn the_residue_rule_agrees_with_listing_the_lengths() {
     // Lists in one class and in none of up to six others, with periods whose lcm is at most
-    // 360, against the lengths below the lcm. A refusal is made only of an empty type, and `is_empty` claims
-    // empty only of an empty type.
+    // 360, against the lengths below the lcm. A refusal is made only of an empty type, and
+    // `is_empty` claims empty only of an empty type.
     let gcd = |mut a: usize, mut b: usize| {
         while b != 0 {
             (a, b) = (b, a % b);

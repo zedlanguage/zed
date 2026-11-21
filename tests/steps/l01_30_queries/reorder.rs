@@ -39,7 +39,8 @@ fn swapped(first: &str, second: &str) -> (String, String) {
 
 /// DESIGN.md L1.30: the queries are keyed by content hashes. Moving whole definitions with
 /// their tables changes no definition's text and no case's text, so every row is reused, as a
-/// comment above them already reuses every row (reuse.rs, `a_comment_reruns_the_front_end_and_no_row`).
+/// comment above them already reuses every row (reuse.rs,
+/// `a_comment_reruns_the_front_end_and_no_row`).
 #[test]
 fn reordered_definitions_reuse_every_row() {
     let mut db = Db::new();

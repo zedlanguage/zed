@@ -408,8 +408,8 @@ fn sat_half_project_each_scales_past_512() {
 /// Negative control for the scaling checks above: `build_many_linked`, whose `project_each` by
 /// the solver alone is not near linear (175M and 4,963M instructions at 64 and 512 in round 6,
 /// over 60 s at 4,096), fails the same limit on instructions (its bytes grow 13.9 times, too
-/// near the limit of 13.2 of 2026-11-13 to test). If this test stops panicking, the solver has become near
-/// linear on this family, or the check has stopped measuring. (Claude round 6.)
+/// near the limit of 13.2 of 2026-11-13 to test). If this test stops panicking, the solver has
+/// become near linear on this family, or the check has stopped measuring. (Claude round 6.)
 #[test]
 #[should_panic(expected = "times the work")]
 fn many_linked_rows_project_each_fails_the_order_check() {

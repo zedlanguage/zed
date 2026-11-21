@@ -1128,9 +1128,9 @@ fn chains_of_growing_constants_keep_their_preimages_altj_live() {
 
 /// Families whose transfer is slow or whose values leave `i64` at larger sizes: each at its
 /// sizes 0 and 1, and at one more of its sizes up to 13 drawn from a new seed each run (the
-/// families `cross`, `mod7`, `pow2`, `mul` and `t3_gaps` are timed at larger sizes by `bench::s22`).
-/// Until TEST-bench-move-l0125 (author P169) each ran at every size, 83 cases in 10 s; `mod7`
-/// now stops at k = 4 (k = 5 to 8 took 0.5 to 1.5 s each, test build at load 30) and
+/// families `cross`, `mod7`, `pow2`, `mul` and `t3_gaps` are timed at larger sizes by
+/// `bench::s22`). Until TEST-bench-move-l0125 (author P169) each ran at every size, 83 cases in
+/// 10 s; `mod7` now stops at k = 4 (k = 5 to 8 took 0.5 to 1.5 s each, test build at load 30) and
 /// `indep_1` at k = 8 (k = 12 took 1.3 s).
 #[test]
 fn chains_of_slow_families_keep_their_preimages() {
@@ -1191,10 +1191,10 @@ fn chains_of_slow_families_keep_their_preimages() {
 }
 
 /// `indep_2j` at sizes 2 and 8 keeps the preimages of the transfer before. Its first level,
-/// `if b1 >= 1 { z } else { z + 2 }`, is summarized as `pa(b1) + z` (PERF-preimage-back-two-input-chain),
-/// and the levels above ask it for `z` in a set of even values: shifting that set by every
-/// value from 0 to 2, and not by the values 0 and 2 that `pa(b1)` takes, filled its holes,
-/// a box wider than the box before (seed 10941256705569691110 of
+/// `if b1 >= 1 { z } else { z + 2 }`, is summarized as `pa(b1) + z`
+/// (PERF-preimage-back-two-input-chain), and the levels above ask it for `z` in a set of even
+/// values: shifting that set by every value from 0 to 2, and not by the values 0 and 2 that
+/// `pa(b1)` takes, filled its holes, a box wider than the box before (seed 10941256705569691110 of
 /// [`chains_of_slow_families_keep_their_preimages`]).
 #[test]
 fn a_summary_of_two_inputs_keeps_the_holes_of_its_demand() {
@@ -3381,13 +3381,14 @@ fn refused_where_the_solver_answered(
     refused
 }
 
-/// The three shapes of [`the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`]
-/// at moduli 5 and 7, seeds 1 to 3 and k = 1, 2, 5, 13, against the interpreter at every point
-/// of the box `[-60, 60]²` ([`check`]): every point that meets the demand lies in the preimage,
-/// and an exact preimage holds no other. That test checks only that the cover's box of `x`
-/// lies inside the solver's, which a point dropped by both, or a cover that answers a narrower
-/// box, would pass; this one fails there (FAIL-s22-cover-moduli-5-7: where the cases the cover
-/// answers changed with d85e3b436, each answer was checked so).
+/// The three shapes of
+/// [`the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`] at
+/// moduli 5 and 7, seeds 1 to 3 and k = 1, 2, 5, 13, against the interpreter at every point of the
+/// box `[-60, 60]²` ([`check`]): every point that meets the demand lies in the preimage, and an
+/// exact preimage holds no other. That test checks only that the cover's box of `x` lies inside the
+/// solver's, which a point dropped by both, or a cover that answers a narrower box, would pass;
+/// this one fails there (FAIL-s22-cover-moduli-5-7: where the cases the cover answers changed with
+/// d85e3b436, each answer was checked so).
 #[test]
 fn the_cover_on_three_shapes_at_moduli_5_and_7_matches_the_interpreter() {
     let (ds, d) = (xy_in(60), Demand::Bool(true));
@@ -3455,33 +3456,33 @@ fn a_cover_with_one_value_of_x_dropped_fails_the_interpreter_check() {
     }
 }
 
-/// The cases of [`the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`]
-/// refused (373e5d22a, 2026-11-19): each has a group in `direct` with two disjunctions that
-/// both read the projected symbol and share a remainder atom, which neither the rule for one
-/// disjunction nor `cut_at_shared` answers (PRES-cover-moduli-two-disjunctions). Modulus,
-/// seed, shape, k. Since the reduced product asks its questions renamed by the colors of their
-/// atoms (FAIL-pendants-refused-boxes-2537877658227229631, `presburger::project_each_boxed`),
-/// `(5, 1, "arms over x", 13)` is answered and `(7, 2, "a test of the chain", 2)`, whose term
-/// has the two disjunctions on `x mod 7` and the same box of `x`, -60..=60, is refused
-/// (`Refusal::Questions`): which of these the cover answers depends on the order of the rows.
-/// It depends on the points found too: since `shared_cells` finds the point of a gap by
-/// `quick_search` before it asks the solver (d85e3b436, BENCH-deep-small-choice), it starts
-/// from other points, and `(5, 2, "arms of x and y", 5)`, `(5, 3, "a test of the chain", 5)`
-/// and `(7, 2, "a test of the chain", 5)` are answered, each matching the interpreter
+/// The cases of
+/// [`the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`] refused
+/// (373e5d22a, 2026-11-19): each has a group in `direct` with two disjunctions that both read the
+/// projected symbol and share a remainder atom, which neither the rule for one disjunction nor
+/// `cut_at_shared` answers (PRES-cover-moduli-two-disjunctions). Modulus, seed, shape, k. Since the
+/// reduced product asks its questions renamed by the colors of their atoms
+/// (FAIL-pendants-refused-boxes-2537877658227229631, `presburger::project_each_boxed`),
+/// `(5, 1, "arms over x", 13)` is answered and `(7, 2, "a test of the chain", 2)`, whose term has
+/// the two disjunctions on `x mod 7` and the same box of `x`, -60..=60, is refused
+/// (`Refusal::Questions`): which of these the cover answers depends on the order of the rows. It
+/// depends on the points found too: since `shared_cells` finds the point of a gap by `quick_search`
+/// before it asks the solver (d85e3b436, BENCH-deep-small-choice), it starts from other points, and
+/// `(5, 2, "arms of x and y", 5)`, `(5, 3, "a test of the chain", 5)` and
+/// `(7, 2, "a test of the chain", 5)` are answered, each matching the interpreter
 /// ([`the_cover_on_three_shapes_at_moduli_5_and_7_matches_the_interpreter`]), while
-/// `(7, 3, "a test of the chain", 5)` was refused: the cell of the point `quick_search` found
-/// for its second symbol made a stride whose residue question, with `j` in {1..3} ∪ {5..6},
-/// cost 1,421,700 units and passed the limit. Since the cover asks a residue question for one
-/// piece of residues at a time (`exact::cells_cover`, FAIL-s22-cover-moduli-5-7), that case
-/// and `(5, 2, "arms over x", 5)`, `(7, 1, "arms of x and y", 5)`,
-/// `(7, 2, "a test of the chain", 2)`, `(7, 3, "a test of the chain", 13)` and
-/// `(7, 3, "arms over x", 5)` are answered, each matching the interpreter, and no case answered
-/// before is refused. Since `project_each` names every question by its structure, and the
-/// coloring reads a constraint the formula writes twice once (PRES-project-each-naming),
-/// `(5, 2, "a test of the chain", 13)` and `(7, 2, "arms over x", 2)` are answered too, each
-/// matching the interpreter, and no case answered before is refused. No search gave
-/// `Quick::Empty` on these cases: of the 130 gaps of all five shapes, 89 got a point, 41 went
-/// to the solver, and the solver found a point in each, so no backjump passed over a point.
+/// `(7, 3, "a test of the chain", 5)` was refused: the cell of the point `quick_search` found for
+/// its second symbol made a stride whose residue question, with `j` in {1..3} ∪ {5..6}, cost
+/// 1,421,700 units and passed the limit. Since the cover asks a residue question for one piece of
+/// residues at a time (`exact::cells_cover`, FAIL-s22-cover-moduli-5-7), that case and
+/// `(5, 2, "arms over x", 5)`, `(7, 1, "arms of x and y", 5)`, `(7, 2, "a test of the chain", 2)`,
+/// `(7, 3, "a test of the chain", 13)` and `(7, 3, "arms over x", 5)` are answered, each matching
+/// the interpreter, and no case answered before is refused. Since `project_each` names every
+/// question by its structure, and the coloring reads a constraint the formula writes twice once
+/// (PRES-project-each-naming), `(5, 2, "a test of the chain", 13)` and `(7, 2, "arms over x", 2)`
+/// are answered too, each matching the interpreter, and no case answered before is refused. No
+/// search gave `Quick::Empty` on these cases: of the 130 gaps of all five shapes, 89 got a point,
+/// 41 went to the solver, and the solver found a point in each, so no backjump passed over a point.
 /// Since `exact::two_distributed` (PRES-cover-moduli-two-disjunctions, 2026-11-20), a group of
 /// rows and two disjunctions is projected by distributing the one with fewer blocks (here the
 /// outer `if` of the shape, 2 blocks, over the chain, 8 to 27), and all 14 are answered, each

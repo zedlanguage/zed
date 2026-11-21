@@ -180,7 +180,8 @@ pub fn hold(what: &str, measure: &str, small: u64, large: u64, power: u32) -> f6
 /// load (calls of a function, nodes made or entered, bytes of a text), held also to
 /// [`PREFERRED`]: such a count measures near 8 times on every run, so a bound of 9 still finds an
 /// extra factor of `log n` (`8 ln(8n) / ln(n)`, 10.4 at n = 1000) that [`LIMIT`] lets through.
-/// The tests that use it held their count under 9, or under 5 at 4n, before the limit became 13 on 2026-11-13.
+/// The tests that use it held their count under 9, or under 5 at 4n, before the limit became 13 on
+/// 2026-11-13.
 pub fn hold_linear(what: &str, measure: &str, small: u64, large: u64) -> f64 {
     let ratio = hold(what, measure, small, large, 1);
     assert!(
@@ -302,11 +303,12 @@ pub fn least_cpu_ns<T>(runs: usize, mut f: impl FnMut() -> T) -> (u128, T) {
 /// factor as [`TIME_ALLOWANCE`] and for the same reason: a thread's CPU time for the same work
 /// changes with the load (shared caches, memory bus and, on a core running two threads, the
 /// core): the least CPU time of a linear loop at 8 times the work was 5.6 to 8.8 times that at
-/// the base size, at load 20 to 25 (2026-11-07). It is a margin, measured and not proved. What relies on it: only the benchmarks that call
-/// [`per_unit_bound`] (`exact::tests::bench`, `l01_38_omega_test::bench::exact_cover` and
-/// `disj_groups`); no checker result depends on it. A benchmark failing it means a cost per unit
-/// the limit's fit did not predict: the limit is fitted again (A96), never this margin widened.
-/// Before DRY-test-helpers each of the three wrote `500.0` itself.
+/// the base size, at load 20 to 25 (2026-11-07). It is a margin, measured and not proved. What
+/// relies on it: only the benchmarks that call [`per_unit_bound`] (`exact::tests::bench`,
+/// `l01_38_omega_test::bench::exact_cover` and `disj_groups`); no checker result depends on it. A
+/// benchmark failing it means a cost per unit the limit's fit did not predict: the limit is fitted
+/// again (A96), never this margin widened. Before DRY-test-helpers each of the three wrote `500.0`
+/// itself.
 pub const AT_THE_LIMIT_MS: f64 = 500.0;
 
 /// Holds a step's time per unit of its counted work to [`AT_THE_LIMIT_MS`] at `limit` units:
@@ -500,10 +502,10 @@ impl Meter {
     /// (FAIL-scaling-cold-8n-bytes, PERF-permission-reverse-first-run), since the run at 8n was
     /// cold and the run at n measured was not: so a check ran n twice and 8n once or twice, 10
     /// or 18 times the time at n. With each size run once both runs are cold, and neither is
-    /// needed. Until TEST-scaling-runs it took the least of two runs of each size, 3 runs at n and 2 at 8n,
-    /// about 19 times the time at n, so a benchmark whose time at n was the 1 s the author asks
-    /// for (P169, P175) did not fit in the 20 s a piece may take. The least of two was meant to
-    /// remove the spread of single runs, but measured it barely changes the ratio: 58 checks in
+    /// needed. Until TEST-scaling-runs it took the least of two runs of each size, 3 runs at n and
+    /// 2 at 8n, about 19 times the time at n, so a benchmark whose time at n was the 1 s the author
+    /// asks for (P169, P175) did not fit in the 20 s a piece may take. The least of two was meant
+    /// to remove the spread of single runs, but measured it barely changes the ratio: 58 checks in
     /// 57 benchmarks sampled from 19 groups (checker, runtime, Presburger, e-graph, parser,
     /// lowering, the kernel), each run in 5 processes, 295 comparisons (2026-11-14, under
     /// tools/run_tests.sh's malloc and memcpy settings, load 23 to 32). The ratio of the first
@@ -1252,7 +1254,8 @@ fn compare_measured(
         Bound::Order(power) => (limit(power), why(power)),
         Bound::Given(limit, why) => (limit, why.to_owned()),
     };
-    // A comparison of its own holds its limit itself, as it did before the limit became 13 on 2026-11-13.
+    // A comparison of its own holds its limit itself, as it did before the limit became 13 on
+    // 2026-11-13.
     let over = |ratio: f64, limit: f64| match bound {
         Bound::Order(_) => ratio >= limit,
         Bound::Given(..) => ratio > limit,
@@ -1485,11 +1488,11 @@ pub(crate) fn write_bench_phase(path: &std::path::Path, start: std::time::System
 
 /// The variable naming the file every check ([`check_order`], [`compare`] and the rest) appends a
 /// line to for each measurement, when it is set: the test, `what`, n (`-` for [`compare`] and
-/// [`hold`]), the power (`-` for [`compare_costs`]), the limit, the work of the two sizes and its ratio, the unit, the
-/// bytes of the two sizes and their ratio (`-` for [`hold`]), and the elapsed nanoseconds of the
-/// two sizes (`-` for [`hold`]; see `counted_on_a_thread`), separated by tabs. It lists the
-/// ratios the tests measure (SCALE-ratio, TESTS-scaling-limit-13, TESTS-scaling-limit-10_5) and,
-/// since TEST-bench-split, their times.
+/// [`hold`]), the power (`-` for [`compare_costs`]), the limit, the work of the two sizes and its
+/// ratio, the unit, the bytes of the two sizes and their ratio (`-` for [`hold`]), and the elapsed
+/// nanoseconds of the two sizes (`-` for [`hold`]; see `counted_on_a_thread`), separated by tabs.
+/// It lists the ratios the tests measure (SCALE-ratio, TESTS-scaling-limit-13,
+/// TESTS-scaling-limit-10_5) and, since TEST-bench-split, their times.
 pub const RATIOS_FILE: &str = "ZED_SCALING_RATIOS";
 
 /// Appends one measurement to the file [`RATIOS_FILE`] names, if it is set. One `write` call per

@@ -36,7 +36,8 @@ fn finding() {
             EVERY,
         ),
         // Each `1` is one match on the carrier of `x`, whose arms carry the literal's mark: a
-        // constant's mutant gathers one change per arm as the marks meet (MUTATE-generic-constants).
+        // constant's mutant gathers one change per arm as the marks meet
+        // (MUTATE-generic-constants).
         (
             "finding the mutants of a generic chain of n additions",
             generic_chain_with_row,

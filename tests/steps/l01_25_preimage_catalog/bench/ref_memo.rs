@@ -126,8 +126,8 @@ scaling_tests! {
 
 /// PROOF-round-down-piece-bound at the sizes the benchmark above times, which need a large
 /// stack: the forward image of a node has at most 3 pieces and every label one, as the proof at
-/// `Tx::inverse_states` derives for every n; `ref_memo::the_round_down_chain_keeps_three_pieces_and_one_piece_labels`
-/// reads every n to 128.
+/// `Tx::inverse_states` derives for every n;
+/// `ref_memo::the_round_down_chain_keeps_three_pieces_and_one_piece_labels` reads every n to 128.
 #[test]
 fn normal_round_down_keeps_its_pieces_at_large_sizes() {
     on_big_stack(|| {

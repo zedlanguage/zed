@@ -821,9 +821,10 @@ fn a_refused_projection_keeps_the_box_of_its_rows() {
     let xs: Vec<Atom> = (0..4).map(|i| sym(&format!("x{i}"))).collect();
     let boxed = project_each_boxed(&crossing, &xs);
     let rb = row_box(&crossing, &xs);
-    // Each wider row tightens each atom once from the others' box: `2·x0 - 3·x1 - 4·x2 - x3 - 12 >= 0`
-    // gives `4·x2 <= 12`, and `2·x0 - 2·x1 + 4·x2 + x3 - 9 >= 0` gives `4·x2 >= -11`, so `x2` is in
-    // -2..=3; no row moves the other bounds.
+    // Each wider row tightens each atom once from the others' box:
+    // `2·x0 - 3·x1 - 4·x2 - x3 - 12 >= 0` gives `4·x2 <= 12`, and
+    // `2·x0 - 2·x1 + 4·x2 + x3 - 9 >= 0` gives `4·x2 >= -11`, so `x2` is in -2..=3; no row moves
+    // the other bounds.
     assert_eq!(
         rb,
         vec![range(-4, 4), range(-4, 4), range(-2, 3), range(-4, 4)]

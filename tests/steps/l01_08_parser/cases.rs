@@ -1,6 +1,6 @@
-//! The bracketing cases of `zed/grammar/cases.txt`: each line is `Rule[@ring] ::: text ::: tree`, and a tree of
-//! `ERROR` means the text must not parse. A case is one line, so a line break in its text or tree
-//! is written `⏎`.
+//! The bracketing cases of `zed/grammar/cases.txt`: each line is `Rule[@ring] ::: text ::: tree`,
+//! and a tree of `ERROR` means the text must not parse. A case is one line, so a line break in its
+//! text or tree is written `⏎`.
 
 use std::path::Path;
 

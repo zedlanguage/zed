@@ -577,7 +577,8 @@ fn a_block_of_tested_lets_is_checked_in_time_linear_in_the_bindings() {
     // `d` tests cost `O(d log d)`. Every read of `n` is accepted only through the summaries.
     // Measured 2026-11-07 (load 35 to 40): 0.16, 0.32, 0.63, 1.27 and 2.54 billion
     // instructions at `d` = 64 to 1024; with the summaries made again for each test, 0.23,
-    // 0.58, 1.69, 5.50 and 19.4 billion, which this test rejects (26.7 times the bytes for 8 times).
+    // 0.58, 1.69, 5.50 and 19.4 billion, which this test rejects (26.7 times the bytes for 8
+    // times).
     let what = "checking a block of d tested lets, each one more than the last";
     let n = 640;
     let srcs = scaling::inputs(n, |d| program(&tested_let_chain(d)));
@@ -654,13 +655,13 @@ fn a_block_of_tested_lets_over_two_inputs_is_checked_in_time_linear_in_the_bindi
 fn the_summaries_of_a_tested_block_are_formed_from_each_node_a_bounded_number_of_times() {
     // The work of the two tests above is mostly linear in the bindings for other causes, so it
     // hides a summary formed from the whole chain below it, `Θ(d²)`: measured 16.8 times the
-    // instructions at 8x, under the limit of 24 of that day; it would fail the limit of 13 of 2026-11-13 and every limit since.
-    // The nodes `LetPa::sum` enters are linear in the bindings only when each summary is formed
-    // from the formed sums of those it reads (item PA-let-narrow), and a count does not change
-    // with the load, so it is held to 9 (`scaling::hold_linear`). Measured 2026-11-07: 129 nodes
-    // at d = 64 and 1,025 at d = 512 (7.95 times) for each block. A negative control in which
-    // `sum` ignores the formed sums entered 2,145 and 131,841 nodes for the first block (61.5
-    // times) and failed this test.
+    // instructions at 8x, under the limit of 24 of that day; it would fail the limit of 13 of
+    // 2026-11-13 and every limit since. The nodes `LetPa::sum` enters are linear in the bindings
+    // only when each summary is formed from the formed sums of those it reads (item PA-let-narrow),
+    // and a count does not change with the load, so it is held to 9 (`scaling::hold_linear`).
+    // Measured 2026-11-07: 129 nodes at d = 64 and 1,025 at d = 512 (7.95 times) for each block. A
+    // negative control in which `sum` ignores the formed sums entered 2,145 and 131,841 nodes for
+    // the first block (61.5 times) and failed this test.
     let n = 64;
     let large = n * scaling::FACTOR;
     for (what, make) in [

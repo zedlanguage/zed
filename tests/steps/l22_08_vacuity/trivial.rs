@@ -800,10 +800,10 @@ impl Theory {
     ///   engine's lists of the fields above do not start with the group's pairs.
     ///
     /// Measured (instructions of the default report, m = 128 and 1024): brief, wide, same, ne and
-    /// their mirrors grow 7.5 to 7.8 times for the limit of 12.6 of 2026-11-12, at most 1.3 times the naive walk
-    /// (wide mirrored, 29.4 against 22.9 million at 1024); d = 50 and 400: 5 d^2 + 10 d steps
-    /// and 3 d^2 + d runs, 5.2 and 252 million instructions (naive 6.9 and 510), 49 times for a
-    /// limit of 108 (d^2 log d). Cost: O(S log S) for the trees, S the paths' choices,
+    /// their mirrors grow 7.5 to 7.8 times for the limit of 12.6 of 2026-11-12, at most 1.3 times
+    /// the naive walk (wide mirrored, 29.4 against 22.9 million at 1024); d = 50 and 400: 5 d^2 +
+    /// 10 d steps and 3 d^2 + d runs, 5.2 and 252 million instructions (naive 6.9 and 510), 49
+    /// times for a limit of 108 (d^2 log d). Cost: O(S log S) for the trees, S the paths' choices,
     /// O(E log^2 E) for an index, built only when a lookup first needs it, O(N log N) for the
     /// classes, groups and depth tables of the N nodes, the steps, then O(R + D) for the engine's
     /// lists of the R runs. On the families of plan row TRIVIAL-walk-picks (`scaling::picks`),
@@ -815,7 +815,8 @@ impl Theory {
     /// 521234, m^3. Not proved: a bound of the steps by pairs plus tree size on every tree; a
     /// way through a field both trees test is split, not batched. Structural trigger: an atom
     /// whose sides share a field. Tests:
-    /// `scaling::a_shared_field_atom_scales`, `scaling::a_shared_field_atom_with_cut_subtrees_scales`,
+    /// `scaling::a_shared_field_atom_scales`,
+    /// `scaling::a_shared_field_atom_with_cut_subtrees_scales`,
     /// `scaling::the_shared_field_families_scale`, `scaling::the_joint_splits_scale`,
     /// `scaling::the_picks_scale`, with `brute`, `scaling::the_picks_agree_with_brute_force`,
     /// `scaling::the_frontier_agrees_with_brute_force` and the corpus for the verdicts;
@@ -1313,7 +1314,8 @@ impl Theory {
                             i = class[side].end[at.start + i - 1] - at.start;
                         }
                     }
-                    // The groups' leaves are walked after the other children; a group is a whole class.
+                    // The groups' leaves are walked after the other children; a group is a whole
+                    // class.
                     while i < class[side].live[n]
                         && groups[side].grouped[at.start + class[side].order[at.start + i] as usize]
                     {

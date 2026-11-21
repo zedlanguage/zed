@@ -61,7 +61,8 @@ fn outcome(r: &Result<Value, KernelError>) -> String {
     }
 }
 
-/// The error of `t`, which must be [`KernelError::NumberTooLarge`] of `op`, and the memory it asked.
+/// The error of `t`, which must be [`KernelError::NumberTooLarge`] of `op`, and the memory it
+/// asked.
 fn too_large(t: &Term, op: &str) -> BigUint {
     match eval(t) {
         Err(KernelError::NumberTooLarge { op: o, need }) if o == op => need.ask,
@@ -181,7 +182,8 @@ fn a_wide_number_modulo_a_small_one_answers_when_memory_is_short() {
         Rat::int(above(NARROW)).mul(&two_to(5)).unwrap(),
     ));
     let mersenne = MERSENNE;
-    // `2^3 = 1 (mod 7)`, `2^61 = 1 (mod 2^61 - 1)` and `2^64 = -1 (mod 2^64 + 1)`, and `n` is a multiple of 128.
+    // `2^3 = 1 (mod 7)`, `2^61 = 1 (mod 2^61 - 1)` and `2^64 = -1 (mod 2^64 + 1)`, and `n` is a
+    // multiple of 128.
     let cases = [
         (bin(Prim::Mod, wide(), num(3)), BigInt::from(2)),
         (bin(Prim::Mod, wide(), num(-3)), BigInt::from(2)),
@@ -307,8 +309,8 @@ fn a_wide_number_modulo_a_wide_one_answers_when_its_peak_is_given() {
 /// `a mod d` and `a div d` for a dense `a = (2^(64 (3 w + 5)) - 1) / 7` ask 16 words a point,
 /// 8 MiB, and the quotient twice the dividend's width more, a measured bound above their
 /// peaks of 12.5 and 12.75 words a point (`num::POINT_WORDS`). Each answers with what it asks
-/// for given and the [`margin`] of the dividend's width more, checked by `q d + r = a` and `r < d` modulo 2^61 - 1, and each
-/// is refused, naming its ask, with half the remainder's ask given.
+/// for given and the [`margin`] of the dividend's width more, checked by `q d + r = a` and `r < d`
+/// modulo 2^61 - 1, and each is refused, naming its ask, with half the remainder's ask given.
 #[test]
 fn a_dense_divisor_asks_for_its_transforms() {
     if !in_child("a_dense_divisor_asks_for_its_transforms") {

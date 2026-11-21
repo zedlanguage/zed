@@ -361,8 +361,8 @@ fn a_call_whose_check_was_refused_says_why() {
     // Item TESTS-L1.23-refusal-text: a refused check is no proof that `g` does not take the
     // argument, so the headline says that the checker could not decide it, and the reason, with
     // its repair, stands on the line after it. Before, the one sentence read `` `g` does not
-    // take ((Part1, Part1, Part1)); this is not proved wrong: the checker could not decide whether it
-    // fits, because one part of the tuple types involved is decided only by ... ``.
+    // take ((Part1, Part1, Part1)); this is not proved wrong: the checker could not decide whether
+    // it fits, because one part of the tuple types involved is decided only by ... ``.
     let shown = "(Part1, Part1, Part1)";
     let Err(all) = zedc::run::load(box_program(7).as_bytes()) else {
         panic!("accepted")
@@ -1559,7 +1559,8 @@ fn rfx_groups_holes(n: usize, far: bool, tag: &str) -> Type {
         .fold(Type::empty(), |u, t| r3_union(&u, t))
 }
 
-/// Stress X13: as `rfx_groups_holes` with singleton heads `{k + 2}`, so no union of them covers `int`.
+/// Stress X13: as `rfx_groups_holes` with singleton heads `{k + 2}`, so no union of them covers
+/// `int`.
 fn rfx_groups_singles(n: usize, far: bool, tag: &str) -> Type {
     // 0: L; 1..=n: F; n+1..=2n: M; 2n+1..=3n: A; 3n+1..=4n: B
     let mut defs = vec![def(
@@ -3123,7 +3124,8 @@ fn codex_r3_variants((mut pick, seed): (Rng, u64), only: Option<usize>) {
         }
     }
 
-    // Random small chain families over `int` with predicates from `{1, 2, 1|2, int\1, int\2, int\(1|2), int}`.
+    // Random small chain families over `int` with predicates from
+    // `{1, 2, 1|2, int\1, int\2, int\(1|2), int}`.
     let preds = [
         lit(1),
         lit(2),
@@ -3540,8 +3542,8 @@ fn rfx_manyheads_v0(n: usize, far: bool, tag: &str) -> Type {
 // ---- Gemini R4 tests and helpers ----
 
 /// Q2 boundary families for the Disjoint-Hole Spine class:
-/// - `overlap = false` (`clstaggerholesin`): just inside the class (link `2n` excludes `{2n+2, 2n+3}`,
-///   disjoint from all earlier links' holes `{3}..{2n+1}`; decided in O(n log n)).
+/// - `overlap = false` (`clstaggerholesin`): just inside the class (link `2n` excludes
+///   `{2n+2, 2n+3}`, disjoint from all earlier links' holes `{3}..{2n+1}`; decided in O(n log n)).
 /// - `overlap = true` (`clstaggerholesout`): just outside the class (link `2n` excludes `{3}`,
 ///   overlapping link `1`'s hole `{3}`; rejected by the disjoint-hole check in O(n log n) and left
 ///   to the base search).
@@ -4758,7 +4760,8 @@ fn rfxx_r5_carrier_only_constrains_the_suffix() {
 /// - When `in_remainder == false` (`r5remin`), `h_i = int \ {i + 2}` (all holes `E_i = {i + 2}`
 ///   pairwise disjoint): short-escape fails (positive side `P_1` is not `L` and forces `1` at
 ///   steps 2 and 3) and uniform-hole dominance fails (`E_2 = {4} != E_3 = {5}`), so it is decided
-///   in `O(n log n)` specifically by disjoint-hole prefix matching (`Inhabited`, witness `[5, 1, 1]`).
+///   in `O(n log n)` specifically by disjoint-hole prefix matching (`Inhabited`, witness
+///   `[5, 1, 1]`).
 /// - When `in_remainder == true` (`r5remout`), `F_2` has `h_2 = int \ {4, 5}` (`E_2 = {4, 5}`)
 ///   while `F_i` (`i >= 3`) has `h_i = int \ {i + 2}` (`E_3 = {5}`): at step 3, `E_2` and `E_3`
 ///   both contain `5` (`!spine_disjoint`) and `E_2 != E_3` (`!spine_same_hole`), placing it just
@@ -5971,13 +5974,13 @@ fn r7_cycle_meet_does_not_drop_another_link_name() {
 }
 
 /// R7 Q3 boundary (just inside `K <= 2`): Thue-Morse aperiodic comb over two bi-repeated channels
-/// `{0, 1}`. `F_e = cons(int \ {tm(e)}, F_{e-1})` for `e = 1..=q` (`q = n / 3`) and `cons(int, F_{e-1})`
-/// above `q`; `P` of length `n` has `{tm(j), 7}` on `j = 1..=q`, `{0, 7}` on `j = 2q + 1..=2q + 3`,
-/// and `{7}` elsewhere; roots are `F_d` for `d = 2q + 3..=n`. Because no three consecutive integers
-/// share `popcount` parity, every root has 1 or 2 separating cells (never 4, so never retired as
-/// `wide`), `x_{2q+1..=2q+3} = 0` escapes all roots (`Inhabited`), a naive or fixed-period scan
-/// visits `Theta(n^2)` empty `(root, place)` pairs, and the `K <= 2` NTT + Cauchy-Schwarz escape
-/// solver reads 0 empty cells in `O(n log n)`.
+/// `{0, 1}`. `F_e = cons(int \ {tm(e)}, F_{e-1})` for `e = 1..=q` (`q = n / 3`) and
+/// `cons(int, F_{e-1})` above `q`; `P` of length `n` has `{tm(j), 7}` on `j = 1..=q`, `{0, 7}` on
+/// `j = 2q + 1..=2q + 3`, and `{7}` elsewhere; roots are `F_d` for `d = 2q + 3..=n`. Because no
+/// three consecutive integers share `popcount` parity, every root has 1 or 2 separating cells
+/// (never 4, so never retired as `wide`), `x_{2q+1..=2q+3} = 0` escapes all roots (`Inhabited`), a
+/// naive or fixed-period scan visits `Theta(n^2)` empty `(root, place)` pairs, and the `K <= 2`
+/// NTT + Cauchy-Schwarz escape solver reads 0 empty cells in `O(n log n)`.
 fn r7_aperiodic(n: usize, tag: &str) -> Type {
     let n = n.max(12);
     let q = n / 3;
@@ -6079,7 +6082,8 @@ fn r7_aperiodic_matches_its_closed_form() {
 
 /// X39 in its smallest form: initialize the emptiness tables before the first type, and leave a
 /// nested type in them until the test thread exits. The depth that overflowed a 2 MiB stack at
-/// thread exit is checked in `refusals::bench::r8_deep_type_cached_before_queue_initialization_drops_on_small_stack`
+/// thread exit is checked in
+/// `refusals::bench::r8_deep_type_cached_before_queue_initialization_drops_on_small_stack`
 /// (TEST-bench-move-l0123, author P178).
 #[test]
 fn r8_type_cached_before_queue_initialization_drops_at_thread_exit() {
@@ -6616,7 +6620,8 @@ fn r8_light_edges_and_wide_rows_agree_with_the_witness() {
             defs.push(def(&format!("F{e}{tag}"), cons(Expr::Type(h), r(e - 1))));
         }
         // Light branches:
-        // - `B_9`: 3 links (`ht = 10, 11, 12`) onto `F_9`, all heads `int` -> separates ONLY at `F_6`!
+        // - `B_9`: 3 links (`ht = 10, 11, 12`) onto `F_9`, all heads `int` -> separates ONLY at
+        //   `F_6`!
         let mut prev = 9usize;
         for k in 1..=3usize {
             let idx = defs.len();
@@ -6624,8 +6629,9 @@ fn r8_light_edges_and_wide_rows_agree_with_the_witness() {
             prev = idx;
         }
         let b9_tip = prev; // ht = 12
-        // - Three more light branches onto `F_12`, `F_15`, `F_18` of lengths 2, 3, 4 (distinct heights
-        //   `14, 18, 22`, plus spine roots at `25..=34` giving 14 distinct residue classes!).
+        // - Three more light branches onto `F_12`, `F_15`, `F_18` of lengths 2, 3, 4 (distinct
+        //   heights `14, 18, 22`, plus spine roots at `25..=34` giving 14 distinct residue
+        //   classes!).
         let mut tips = vec![b9_tip];
         for (attach, len, bname) in [(12usize, 2usize, "B12"), (15, 3, "B15"), (18, 4, "B18")] {
             let mut cur = attach;
@@ -6644,7 +6650,8 @@ fn r8_light_edges_and_wide_rows_agree_with_the_witness() {
             }
             tips.push(cur);
         }
-        // Optional wide branch onto `F_20` with 6 consecutive `int \ {5}` heads (`d >= 6` -> `Wide`).
+        // Optional wide branch onto `F_20` with 6 consecutive `int \ {5}` heads (`d >= 6` ->
+        // `Wide`).
         if include_wide {
             let mut cur = 20usize;
             for k in 1..=6usize {
@@ -6785,11 +6792,12 @@ fn r9_matrices(m: usize, num: u64, seed: u64) -> (Vec<Vec<bool>>, Vec<Vec<bool>>
     (a, b)
 }
 
-/// The sparse adversary of `r9_bmm`: side `m = s²` (s = isqrt of the requested side), index `q = (x, y)
-/// = x·s + y`, `a[i][(x, y)] = [x = i mod s]` and `b[(x, y)][k] = [y = f(x, k)]` with `f` pseudo-random.
-/// Every entry of the product is 1 through exactly one `q` among the `s` places `a[i]` holds, so
-/// the type is inhabited and a method that reads row `(i, k)` place by place reads about `s / 2`
-/// empty cells per row: about `m^2.5 / 2` in all, `I^1.25` in the input size `I ≈ 4m²`.
+/// The sparse adversary of `r9_bmm`: side `m = s²` (s = isqrt of the requested side), index
+/// `q = (x, y) = x·s + y`, `a[i][(x, y)] = [x = i mod s]` and `b[(x, y)][k] = [y = f(x, k)]` with
+/// `f` pseudo-random. Every entry of the product is 1 through exactly one `q` among the `s` places
+/// `a[i]` holds, so the type is inhabited and a method that reads row `(i, k)` place by place reads
+/// about `s / 2` empty cells per row: about `m^2.5 / 2` in all, `I^1.25` in the input size
+/// `I ≈ 4m²`.
 fn r9_one_matrices(side: usize) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
     let s = side.isqrt();
     let m = s * s;
@@ -6806,11 +6814,12 @@ fn r9_one_matrices(side: usize) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
     (a, b)
 }
 
-/// An adversary of the committed cell finder for `r9_bmm`: `b` all ones, `a` all ones except row 0, which
-/// holds only `q = m − 1`. Rows `(i ≥ 1, k)` reach three cells at the first three values of `q` and
-/// retire, but row `(0, k)` keeps the class of column `k` live until its last value, so each of the
-/// other `m − 4` values of column `k` still lists about `m` places (or reads the live rows): about
-/// `m³` reads, `I^1.5` in the input size `I ≈ 4m²`. The product is all ones (inhabited).
+/// An adversary of the committed cell finder for `r9_bmm`: `b` all ones, `a` all ones except row 0,
+/// which holds only `q = m − 1`. Rows `(i ≥ 1, k)` reach three cells at the first three values of
+/// `q` and retire, but row `(0, k)` keeps the class of column `k` live until its last value, so
+/// each of the other `m − 4` values of column `k` still lists about `m` places (or reads the live
+/// rows): about `m³` reads, `I^1.5` in the input size `I ≈ 4m²`. The product is all ones
+/// (inhabited).
 fn r9_late_matrices(m: usize) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
     let a = (0..m)
         .map(|i| (0..m).map(|q| i > 0 || q == m - 1).collect())
@@ -9433,8 +9442,9 @@ fn xr_r2_build_single_bucket_escape(n: usize, tag: &str) -> Type {
     &p - &layer[0]
 }
 
-/// Q2(f) Bench 1 (Gemini R2): `n = 512` vs `8n = 4096` distinct cofinite partners in one `U1` bucket.
-/// Negative controls: fails at `4091b22e5` (`Refused(Fork)`) and fails `T(8n)/T(n)` on `q2n+` (`36.1x`).
+/// Q2(f) Bench 1 (Gemini R2): `n = 512` vs `8n = 4096` distinct cofinite partners in one `U1`
+/// bucket. Negative controls: fails at `4091b22e5` (`Refused(Fork)`) and fails `T(8n)/T(n)` on
+/// `q2n+` (`36.1x`).
 #[test]
 fn xr_r2_bench_escape_single_bucket_scales_n_log_n() {
     let n = 512usize;
@@ -9501,11 +9511,12 @@ fn xr_bucket(n: usize, tag: &str) -> Type {
     &p - &row_list[0]
 }
 
-/// Q2(f) Bench 2 (Claude R2): `n` rows sharing a size-`n` anchor `A = {0, .., n-1}` (`n = 64` vs `8n = 512`).
-/// Negative controls: fails at `4091b22e5` (`>24x`), fails on `q2n+` (`36x`), and fails on `g2` (`>24x`)
-/// because `ns.ints(&r[0])`, `pl[1].minus(&h0)`, `orig_live`, `U1`, and `ids` cloned and hashed
-/// `BTreeSet<Value>` of size `n` once per row (`Theta(n^2)`). Passes in `O(n log n)` once `Ints`
-/// wraps `Rc<BTreeSet<Value>>` with precomputed hash and memoized place-1 `minus`.
+/// Q2(f) Bench 2 (Claude R2): `n` rows sharing a size-`n` anchor `A = {0, .., n-1}` (`n = 64` vs
+/// `8n = 512`). Negative controls: fails at `4091b22e5` (`>24x`), fails on `q2n+` (`36x`), and
+/// fails on `g2` (`>24x`) because `ns.ints(&r[0])`, `pl[1].minus(&h0)`, `orig_live`, `U1`, and
+/// `ids` cloned and hashed `BTreeSet<Value>` of size `n` once per row (`Theta(n^2)`). Passes in
+/// `O(n log n)` once `Ints` wraps `Rc<BTreeSet<Value>>` with precomputed hash and memoized place-1
+/// `minus`.
 #[test]
 fn xr_r2_bench_escape_bucket_scales() {
     let inputs = scaling::inputs(64, |m| xr_bucket(m, &format!("b{m}")));

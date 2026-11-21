@@ -1,6 +1,7 @@
-//! The benchmarks of `exp_families.rs` (TEST-bench-move-l0138), run by `tools/run_tests.sh --bench`.
-//! Each runs at the sizes `k`, `2k`, `4k` and `8k`, its `k` chosen so that the four take about
-//! 10 s (author P169); the work at `8k` is held to that at `k` by [`doubling`].
+//! The benchmarks of `exp_families.rs` (TEST-bench-move-l0138), run by
+//! `tools/run_tests.sh --bench`. Each runs at the sizes `k`, `2k`, `4k` and `8k`, its `k` chosen so
+//! that the four take about 10 s (author P169); the work at `8k` is held to that at `k` by
+//! [`doubling`].
 
 use crate::exp_families::*;
 

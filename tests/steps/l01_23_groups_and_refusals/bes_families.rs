@@ -124,7 +124,8 @@ mod claude {
         g
     }
 
-    /// L_i = A_i | Z_i, A_i = (L_i, ...), Z_i = (int)->L_{i+1}; `big` joins all into one tuple component.
+    /// L_i = A_i | Z_i, A_i = (L_i, ...), Z_i = (int)->L_{i+1}; `big` joins all into one tuple
+    /// component.
     fn ladder_into(g: &mut G, n: usize, big: bool) -> Vec<u32> {
         let top = g.add(K::Top, vec![]);
         let l: Vec<u32> = (0..n).map(|_| g.add(K::Or, vec![])).collect();
@@ -283,8 +284,9 @@ mod claude {
         )
     }
 
-    /// Ring of the smallest system that splitD refuses (two players, two Mor nodes, from `xs2 cmp`):
-    /// `0:And[1,2] 1:Mor[3] 2:Or[3,0,3] 3:Mor[0]`. Built to make splitD refuse everything.
+    /// Ring of the smallest system that splitD refuses (two players, two Mor nodes, from
+    /// `xs2 cmp`): `0:And[1,2] 1:Mor[3] 2:Or[3,0,3] 3:Mor[0]`. Built to make splitD refuse
+    /// everything.
     pub(super) fn defeat_d(n: usize) -> G {
         ring(
             n,
@@ -300,9 +302,9 @@ mod claude {
     }
 
     /// Built to defeat splitD+gsr: a defeatD ring (refused by splitD) and an unring ring (quadratic
-    /// for Gemini at lib.rs:1958) joined into one SCC through J = Or[defeatD 0, unring 0], a child of
-    /// defeatD node 2 and of unring node 2 in copy 0. J is true, so no value changes; gsr must solve
-    /// the whole SCC, unring part included.
+    /// for Gemini at lib.rs:1958) joined into one SCC through J = Or[defeatD 0, unring 0], a child
+    /// of defeatD node 2 and of unring node 2 in copy 0. J is true, so no value changes; gsr must
+    /// solve the whole SCC, unring part included.
     pub(super) fn defeat_gsr(n: usize) -> G {
         let mut g = defeat_d(n);
         let base = g.n() as u32;
@@ -391,7 +393,8 @@ mod gemini {
     }
 
     /// `ladder(n, big)` from `Q2Q3/bes`: `big = false` has n 2-node tuple SCCs;
-    /// `big = true` (`bigladder`) links all n rungs into one 4n-node static tuple SCC via `Or(..., Top)`.
+    /// `big = true` (`bigladder`) links all n rungs into one 4n-node static tuple SCC via
+    /// `Or(..., Top)`.
     pub fn ladder(n: usize, big: bool) -> G {
         let mut g = G::new();
         let top = g.add(K::Top, Vec::new());
@@ -421,9 +424,10 @@ mod gemini {
         g
     }
 
-    /// Adversarial family `adv_bigladder_mor(n)`: replaces `top` in `bigladder(n)` with a coinductive
-    /// `Mor` cycle `m_coind = Mor(m_coind)`, so `ors[i]` is NOT in `G_top = \mu L. F(\emptyset, L)`.
-    /// Tests that `dw_delcheck` and `bdw_delcheck` still solve it in O(n) via witness-edge filtering!
+    /// Adversarial family `adv_bigladder_mor(n)`: replaces `top` in `bigladder(n)` with a
+    /// coinductive `Mor` cycle `m_coind = Mor(m_coind)`, so `ors[i]` is NOT in
+    /// `G_top = \mu L. F(\emptyset, L)`. Tests that `dw_delcheck` and `bdw_delcheck` still solve it
+    /// in O(n) via witness-edge filtering!
     pub fn adv_bigladder_mor(n: usize) -> G {
         let mut g = G::new();
         let m_coind = g.add(K::Mor, Vec::new());
@@ -451,8 +455,9 @@ mod gemini {
         g
     }
 
-    /// Builds a sequential `n`-round `Mor` timer chain: `m_chain[r]` dies in round `r + 1` (`r = 0..n`).
-    /// Each step is gated by a 2-node ungrounded tuple cycle `tl[r] <-> ta[r]`, matching `ladder(n, false)`.
+    /// Builds a sequential `n`-round `Mor` timer chain: `m_chain[r]` dies in round `r + 1`
+    /// (`r = 0..n`). Each step is gated by a 2-node ungrounded tuple cycle `tl[r] <-> ta[r]`,
+    /// matching `ladder(n, false)`.
     fn build_mor_timer_chain(g: &mut G, n: usize) -> Vec<u32> {
         let tl: Vec<u32> = (0..n).map(|_| g.add(K::Or, Vec::new())).collect();
         let mut m_chain = Vec::with_capacity(n);
@@ -490,9 +495,10 @@ mod gemini {
 
     /// Adversarial family `reanchor_cut_ring(n)`:
     /// Same ring as `reanchor_ring(n)`, except `A_{n-1} = And(R_0, m_chain[0])` dies in Round 1,
-    /// cutting the ring into an acyclic path of `2n - 1` nodes while `m_chain[1..n]` die in rounds `2..=n`.
-    /// Defeats `delcheck` and `ch12_hl` (`\Theta(n^2)` static-SCC work), while `bdw_delcheck` and
-    /// `sr_bdw_delcheck` promote the cut ring to `in_dag` (Rule A) in Round 1 and solve it in O(n) time!
+    /// cutting the ring into an acyclic path of `2n - 1` nodes while `m_chain[1..n]` die in rounds
+    /// `2..=n`. Defeats `delcheck` and `ch12_hl` (`\Theta(n^2)` static-SCC work), while
+    /// `bdw_delcheck` and `sr_bdw_delcheck` promote the cut ring to `in_dag` (Rule A) in Round 1
+    /// and solve it in O(n) time!
     pub fn reanchor_cut_ring(n: usize) -> G {
         let mut g = G::new();
         let top = g.add(K::Top, Vec::new());
@@ -517,8 +523,9 @@ mod gemini {
     /// - `P_i = Or([R_i, P_{(i+1)%n}])`
     /// - `A_i = And([R_{(i+1)%n}, P_{(i+n-1)%n}, m_chain[i]])`
     ///
-    /// Forces `\Theta(n^2)` work in all non-refusing solvers (`delcheck`, `dw_delcheck`, `bdw_delcheck`),
-    /// and is caught statically in O(n) time by `sr_bdw_delcheck` (`SR-AMC`) and `split_bdw`!
+    /// Forces `\Theta(n^2)` work in all non-refusing solvers (`delcheck`, `dw_delcheck`,
+    /// `bdw_delcheck`), and is caught statically in O(n) time by `sr_bdw_delcheck` (`SR-AMC`) and
+    /// `split_bdw`!
     pub fn bidir_trap(n: usize) -> G {
         let mut g = G::new();
         let m_chain = build_mor_timer_chain(&mut g, n);
@@ -691,10 +698,11 @@ mod gemini {
         g
     }
 
-    /// Round 2 adversarial family `indirect_alt_ladder(n)` built to test `split_bdw`'s refusal path:
-    /// Uses length-3 indirect cycles `L_i -> a_i -> Q_i -> L_i` (`Q_i = L_i | L_{i+1}`, `P_i = L_{i-1} | L_{i+1}`,
-    /// `a_i = And(Q_i, P_i)`) so `L_i` is not a direct child of `a_i`.
-    /// Forces `\Theta(n^2)` work in `delcheck` and `bdw_delcheck`, and is refused in `O(n)` time by `split_bdw`.
+    /// Round 2 adversarial family `indirect_alt_ladder(n)` built to test `split_bdw`'s refusal
+    /// path: Uses length-3 indirect cycles `L_i -> a_i -> Q_i -> L_i` (`Q_i = L_i | L_{i+1}`,
+    /// `P_i = L_{i-1} | L_{i+1}`, `a_i = And(Q_i, P_i)`) so `L_i` is not a direct child of `a_i`.
+    /// Forces `\Theta(n^2)` work in `delcheck` and `bdw_delcheck`, and is refused in `O(n)` time by
+    /// `split_bdw`.
     pub fn indirect_alt_ladder(n: usize) -> G {
         let mut g = G::new();
         let top = g.add(K::Top, Vec::new());

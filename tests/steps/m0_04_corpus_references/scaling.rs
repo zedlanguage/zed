@@ -259,12 +259,12 @@ fn hash(i: usize) -> u64 {
     (z ^ (z >> 31)) >> 34
 }
 
-/// The size of the random clustering inputs (their O(n²) check stays at 1000 points). Their cost is mostly the sorts and the
-/// triangulation, n log n with little linear work beside it, and a sort's comparisons,
-/// n log₂ n - 1.44 n, grow 10.8 times from 1000 to 8000 points but 10.3 times from 4000 to 32000:
-/// at 1000 the ratio sat at 10.49 of the 10.5 allowed, and a cheaper reading of the numbers
-/// (FAIL-ref-text-reading) pushed it over, though every size got faster. The bound's prediction
-/// at 4000 (author decision P300, the proof in the module doc of reference 14,
+/// The size of the random clustering inputs (their O(n²) check stays at 1000 points). Their cost is
+/// mostly the sorts and the triangulation, n log n with little linear work beside it, and a sort's
+/// comparisons, n log₂ n - 1.44 n, grow 10.8 times from 1000 to 8000 points but 10.3 times from
+/// 4000 to 32000: at 1000 the ratio sat at 10.49 of the 10.5 allowed, and a cheaper reading of the
+/// numbers (FAIL-ref-text-reading) pushed it over, though every size got faster. The bound's
+/// prediction at 4000 (author decision P300, the proof in the module doc of reference 14,
 /// `zed/corpus/ref/src/p14.rs`): each phase is `a n log2(n / h)` with a leaf `h` of 2 to 3, at
 /// most 10.31 times; measured 10.08 times the instructions on 2026-11-20.
 const RANDOM_N: usize = 4000;

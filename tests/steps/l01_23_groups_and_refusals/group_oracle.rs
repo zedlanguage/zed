@@ -4264,8 +4264,9 @@ fn xr_r2_seed_1865_agrees_after_reversal() {
     );
 }
 
-/// Q2(a): Zero-tuple exactness in `flat_part` and `nonflat_part` (`p.tuples.get(0)`, `rest`, cofinite).
-/// Negative controls: `g2` fails on `4091b22e5` (`Refused(Fork)`), and `g1` fails on `q2n+` (unsound `Empty`).
+/// Q2(a): Zero-tuple exactness in `flat_part` and `nonflat_part` (`p.tuples.get(0)`, `rest`,
+/// cofinite). Negative controls: `g2` fails on `4091b22e5` (`Refused(Fork)`), and `g1` fails on
+/// `q2n+` (unsound `Empty`).
 #[test]
 fn xr_r2_q2a_flat_part_and_nonflat_part_zero_tuple_exactness() {
     let unit_ty = Type::tuple(vec![]);
@@ -4782,8 +4783,10 @@ fn xr_r3_build_forked_witness_chain(m: usize, tag: &str) -> Vec<Type> {
 /// witness goes through `horn_witness_group`!).
 /// Negative controls:
 /// - Fails at `4091b22e5` (`Refused(Fork)` on members `0..m`);
-/// - Fails on `q2n+` (the 2-stage queue bug leaves `vals[0..m-1]` `None`, falling back to `Refused(Fork)`);
-/// - Fails `T(8n)/T(n) < 10.5` on `g2` (`d.member_known` materializes height-`m` plain `Value`s in `Theta(n^3)`).
+/// - Fails on `q2n+` (the 2-stage queue bug leaves `vals[0..m-1]` `None`, falling back to
+///   `Refused(Fork)`);
+/// - Fails `T(8n)/T(n) < 10.5` on `g2` (`d.member_known` materializes height-`m` plain `Value`s in
+///   `Theta(n^3)`).
 #[test]
 fn xr_r3_q2b_witness_builder_forked_long_chain_scales() {
     let inputs = scaling::inputs(128, |m| {
@@ -4813,7 +4816,8 @@ fn xr_r3_q2b_witness_builder_forked_long_chain_scales() {
 ///    controls: `4091b22e5` and `q2n+` fail with `Refused(NoWitness)` when reversed!).
 #[test]
 fn xr_r3_q2c_refine_decides_six_box_cover_and_adversarial_1908_in_every_order() {
-    // Part 1: Six-box cover of `(#a | #b | #c)^3` across all S_3 component permutations x box orders.
+    // Part 1: Six-box cover of `(#a | #b | #c)^3` across all S_3 component permutations x box
+    // orders.
     let (a, b, c) = (Type::atom("a"), Type::atom("b"), Type::atom("c"));
     let abc = &(&a | &b) | &c;
     let ab = &a | &b;
@@ -4863,7 +4867,8 @@ fn xr_r3_q2c_refine_decides_six_box_cover_and_adversarial_1908_in_every_order() 
         }
     }
 
-    // Part 2: Seed 1908 with overlapping non-flat subtrahend `((int, #a), (int, #a))` (outside `C_group`).
+    // Part 2: Seed 1908 with overlapping non-flat subtrahend `((int, #a), (int, #a))` (outside
+    // `C_group`).
     let nf_pair = tup(vec![E::Int, E::Atom("a")]);
     let sub = E::Union(vec![
         tup(vec![E::Atom("a"), E::Atom("a")]),
@@ -4991,9 +4996,10 @@ fn a_cpoly_group_split_at_two_components_with_forked_recursion_is_inhabited_in_b
 /// body, whose value `int` is inhabited, so `R0` has a closure (`fn _ = 0`) and is set to
 /// `Top` in both layers; and the operand of `R1`, whose value `R0` is recursive, where the
 /// function gives the group up (`None`) and the search decides. Both members hold a closure, so
-/// both are inhabited. The random systems of `partial_morphisms_are_never_called_empty_with_a_value`
-/// reached the second arm under some seeds and the first under none of 48 (measured
-/// 2026-11-20): their `-` form puts `\ #none` around every body, so no morphism is a whole body.
+/// both are inhabited. The random systems of
+/// `partial_morphisms_are_never_called_empty_with_a_value` reached the second arm under some seeds
+/// and the first under none of 48 (measured 2026-11-20): their `-` form puts `\ #none` around every
+/// body, so no morphism is a whole body.
 #[test]
 fn a_morphism_with_a_recursive_key_is_read_by_the_flat_difference_decider() {
     let mor = |l: E, u: E, v: E| E::Mor(Box::new(l), Box::new(u), Box::new(v));

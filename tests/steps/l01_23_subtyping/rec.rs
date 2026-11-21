@@ -715,8 +715,9 @@ fn a_group_writes_its_trees_for_debugging() {
 
 /// Author rule P191: a group's message writes parentheses exactly where the type grammar's
 /// precedence needs them. An arrow's key is a `TypeNot` (`TypeNot '->' Arrow`, author P222), so
-/// `U -> U` holds no pair and a union key keeps one, `(U | int) -> U`; a tuple key keeps one, `((U, int)) -> U`, since
-/// `Arrow` tries `ArrowParams` first and `(U, int) -> U` reads as two parameters.
+/// `U -> U` holds no pair and a union key keeps one, `(U | int) -> U`; a tuple key keeps one,
+/// `((U, int)) -> U`, since `Arrow` tries `ArrowParams` first and `(U, int) -> U` reads as two
+/// parameters.
 #[test]
 fn a_group_message_parenthesizes_an_arrow_key_only_where_needed() {
     let n = || r(0, vec![]);

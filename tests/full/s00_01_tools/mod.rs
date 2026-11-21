@@ -246,8 +246,8 @@ exit $status
 
 /// The delayed ping took at least the delay, which load can only lengthen, and its packet went
 /// through the delay's queue. The undelayed ping is not timed: it took 1009 ms once at load 60
-/// (2026-11-17; 1 s is the ARP retry time), where the test asked for under 100 ms; a time's upper bound
-/// fails under enough load. The queue's counters show instead, with no time in them, that the
+/// (2026-11-17; 1 s is the ARP retry time), where the test asked for under 100 ms; a time's upper
+/// bound fails under enough load. The queue's counters show instead, with no time in them, that the
 /// delay is netem's.
 #[test]
 fn network_namespace_link_delays_packets() {

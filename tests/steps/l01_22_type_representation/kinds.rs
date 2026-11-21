@@ -276,8 +276,8 @@ fn each_form_prints_as_written_and_reads_back_as_the_same_type() {
 ///
 /// - `type Part1 = int | #x;`, then `((int) -> int, (Part1, Part1))` on the next line, was
 ///   `((int) -> int, type Part1 = int | #x; (Part1, Part1))`, which no parser reads
-/// - `type Part1 = int | #x;`, then `((int) -> int, Part1, Part1)`, was `((int) -> int, int | #x, int | #x)`:
-///   a part used in two sets is now a part used twice
+/// - `type Part1 = int | #x;`, then `((int) -> int, Part1, Part1)`, was
+///   `((int) -> int, int | #x, int | #x)`: a part used in two sets is now a part used twice
 ///
 /// Item PRINT-group-site-defs put each definition on a line of its own, as a user declares it;
 /// before, they shared the line of the type.
@@ -2378,11 +2378,12 @@ fn a_function_whose_parameter_holds_a_bound_variable_fits_a_domain_its_instance_
 /// partial domains: `g`'s `h` answers `int` at every instance, within `f`'s `h`'s result, so `g`
 /// fits (FAIL-fn-domain-bindable-variable), as it does with `int` for `V`
 /// (`a_function_whose_parameter_holds_a_bound_variable_fits_a_domain_its_instance_fits`).
-/// This was the form of `an_own_variable_of_an_outer_comparison_and_one_of_the_same_name_inside_print_apart`,
-/// which printed the bucket refused here before; with exact arrows that test now reaches the
-/// bucket and prints the two variables both as `V`, which is FAIL-print-two-variables-one-name.
-/// The types fit; the one error is that a call through `f` of an `h` outside `g`'s domain must
-/// give `#notFound`, which no test at run time can tell (FAIL-partial-slot-untestable-domain).
+/// This was the form of
+/// `an_own_variable_of_an_outer_comparison_and_one_of_the_same_name_inside_print_apart`, which
+/// printed the bucket refused here before; with exact arrows that test now reaches the bucket and
+/// prints the two variables both as `V`, which is FAIL-print-two-variables-one-name. The types fit;
+/// the one error is that a call through `f` of an `h` outside `g`'s domain must give `#notFound`,
+/// which no test at run time can tell (FAIL-partial-slot-untestable-domain).
 #[test]
 fn an_own_variable_of_an_outer_comparison_bound_in_a_partial_domain_fits() {
     use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
@@ -2613,7 +2614,8 @@ fn payloads_that_hold_functions_are_compared_payload_by_payload() {
     }
 }
 
-/// Small instance of `bench::payloads_with_fields_and_tuples_that_hold_functions_are_compared_in_the_size_of_the_union`
+/// Small instance of
+/// `bench::payloads_with_fields_and_tuples_that_hold_functions_are_compared_in_the_size_of_the_union`
 /// (TEST-bench-move-l0123, author P169): 1 to 6 payloads with fields, one of them a function,
 /// in the payload with the wider field and not in the one whose function returns `String`.
 #[test]
@@ -2667,9 +2669,10 @@ fn tuples_with_a_variable_are_found_by_their_keys_in_any_order() {
     }
 }
 
-/// Small instance of `bench::a_refused_bucket_of_long_shapes_that_repeat_a_variable_prints_in_linear_time`
-/// (TEST-bench-move-l0123, author P169): shapes of 2 to 5 components, `T` at each place after
-/// the first, print `T` at each place in the refusal.
+/// Small instance of
+/// `bench::a_refused_bucket_of_long_shapes_that_repeat_a_variable_prints_in_linear_time`
+/// (TEST-bench-move-l0123, author P169): shapes of 2 to 5 components, `T` at each place after the
+/// first, print `T` at each place in the refusal.
 #[test]
 fn a_refused_bucket_of_long_shapes_prints_the_variable_at_each_place() {
     let row = |head: Ty, rest: &dyn Fn() -> Ty, n: usize| {
@@ -2823,7 +2826,8 @@ fn a_refused_bucket_of_tuples_of_several_functions_prints_each_function() {
     }
 }
 
-/// Small instance of `bench::function_types_nested_deep_whose_variables_share_names_across_the_two_fit_in_linear_time`
+/// Small instance of
+/// `bench::function_types_nested_deep_whose_variables_share_names_across_the_two_fit_in_linear_time`
 /// (TEST-bench-move-l0123, author P169): function types 1 to 4 levels deep, whose levels share
 /// variable names across the two, fit; 1 level has no clash and is the control.
 #[test]

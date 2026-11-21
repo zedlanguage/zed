@@ -95,9 +95,10 @@ fn wide(k: usize, m: usize) -> Term {
     )
 }
 
-/// `c -> if c { x = 1; P } else { x = 2; P }` and `P = { x = 3; (x, …, x) }` with `w` items: the one name bound in more than one place is `x`, so the env is `x` itself, and `P`
-/// sets its slot before any read of it, so the env passed to `P` is not read; it is named all the
-/// same, since `_ ->` is not a lambda.
+/// `c -> if c { x = 1; P } else { x = 2; P }` and `P = { x = 3; (x, …, x) }` with `w` items: the
+/// one name bound in more than one place is `x`, so the env is `x` itself, and `P` sets its slot
+/// before any read of it, so the env passed to `P` is not read; it is named all the same, since
+/// `_ ->` is not a lambda.
 fn one_slot(w: usize) -> Term {
     let items = Shared::new(prim(Prim::Tuple, (0..w).map(|_| var("x")).collect()));
     let p = Shared::new(Term::Let("x".into(), Shared::new(lit(3i64)), items));
