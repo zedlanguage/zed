@@ -228,3 +228,54 @@ fn a_point_inside_a_huge_range_is_excluded_without_listing_the_range() {
     assert!(s.assume(&is("n", 4), true, &none()).bottom);
     assert!(!s.assume(&is("n", 999_999_999_997), true, &none()).bottom);
 }
+
+/// `@exact` keeps a point and the ends, checked against an enumeration of every point of the
+/// box (TEST-exact-keeps-point-and-ends; the proof at `Scope::enumerate_exactly`). For
+/// `a * b mod 10 == r` over each `r` and a few boxes: the scope is bottom exactly when no
+/// point of the box meets the constraint; otherwise the point it keeps (`Scope::exactly`)
+/// gives both names, lies in the box and meets the constraint, the values each name allows
+/// are those some point of the box gives it, and each name's interval, ends included, is the
+/// one the scope without `@exact` gives (the bounds stay algebraic). It cannot catch a point
+/// lost only after many reductions; see the proof's own note.
+#[test]
+fn an_exact_scope_keeps_a_point_and_the_ends_an_enumeration_gives() {
+    let boxes = [((0, 9), (0, 9)), ((3, 7), (11, 14)), ((5, 5), (0, 12))];
+    for ((la, ha), (lb, hb)) in boxes {
+        for r in 0..10 {
+            let ns = [("a", la, ha), ("b", lb, hb)];
+            let t = product_mod_10("a", "b", r);
+            let s = written(within(&ns, true), std::slice::from_ref(&t));
+            let plain = written(within(&ns, false), &[t]);
+            let points: Vec<(i64, i64)> = (la..=ha)
+                .flat_map(|a| (lb..=hb).map(move |b| (a, b)))
+                .filter(|&(a, b)| (a * b) % 10 == r)
+                .collect();
+            let case = format!("a in {la}..={ha}, b in {lb}..={hb}, r = {r}");
+            assert_eq!(s.bottom, points.is_empty(), "{case}");
+            if points.is_empty() {
+                continue;
+            }
+            // A name of one value is static, substituted in the constraint, and not given
+            // by the point; every other name is.
+            let at = |n: &str| match s.exactly.get(n) {
+                Some(v) => v.to_i64().expect("a small point"),
+                None => {
+                    let &(_, lo, hi) = ns.iter().find(|x| x.0 == n).expect("a name of the box");
+                    assert_eq!(lo, hi, "{case}: no {n}");
+                    lo
+                }
+            };
+            let (a, b) = (at("a"), at("b"));
+            assert!(points.contains(&(a, b)), "{case}: kept ({a}, {b})");
+            for (n, lo, hi) in ns {
+                let mut want: Vec<i64> = (points.iter())
+                    .map(|&(a, b)| if n == "a" { a } else { b })
+                    .collect();
+                want.sort_unstable();
+                want.dedup();
+                assert_eq!(allowed(&s, n, lo, hi), want, "{case}: {n}");
+                assert_eq!(s.get(n).ints(), plain.get(n).ints(), "{case}: {n}");
+            }
+        }
+    }
+}
