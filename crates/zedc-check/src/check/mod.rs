@@ -8985,9 +8985,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// is merged with a class of the function around it, so not generalized: in
     /// `f(positional y) = { r(positional x) = if (x else 0) == 0 { x } else { x + y }; r(#nf) }`
     /// `r` has two arrows ([`Self::handled_sig`]), the first taking `$k` alone, `$k` the class
-    /// of `x` and `y`, whose carriers hold no atom. The class was answered yes without its mask, so `r(#nf)` took the
-    /// first arrow and `f` was given `T -> T` while `f(2)` is `#nf` (row PROOF-takes-all-atoms;
-    /// test `a_local_function_merged_with_an_outer_parameter_takes_the_arrow_of_its_atoms`
+    /// of `x` and `y`, whose carriers hold no atom. The class was answered yes without its
+    /// mask, so `r(#nf)` took the first arrow and `f` was given `T -> T` while `f(2)` is
+    /// `#nf` (row PROOF-takes-all-atoms; test
+    /// `a_local_function_merged_with_an_outer_parameter_takes_the_arrow_of_its_atoms`
     /// in tests/steps/l01_27_absences/loose.rs, red before). Read by its mask, the class takes
     /// the atoms exactly when its carriers may hold values other than carriers, as a bound
     /// variable does.

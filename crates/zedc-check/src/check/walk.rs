@@ -19262,11 +19262,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     // O(size of its failures' payload types), the walk the memo of checked rows already bounds,
     // and one hash lookup and one binary search over the removals of errors
     // ([`Self::kept_since`], O(log removals)) per operand. Where errors up to a record's id
-    // were removed, its operand is checked again, the cost of the check the record saved. The naive form, no check, accepts a program the kernel
-    // stops in, which soundness forbids. Checking an operand that is itself a checked merge,
-    // as before, reported the inner merge again with its whole code in the headline and its
-    // derivation through all its operands in the notes: in a chain of `n` merges the `k`th
-    // error was `O(k)` long, `O(n^2)` in all (162,800 notes, 10.4 MB, at `n = 400`;
+    // were removed, its operand is checked again, the cost of the check the record saved. The
+    // naive form, no check, accepts a program the kernel stops in, which soundness forbids.
+    // Checking an operand that is itself a checked merge, as before, reported the inner merge
+    // again with its whole code in the headline and its derivation through all its operands
+    // in the notes: in a chain of `n` merges the `k`th error was `O(k)` long, `O(n^2)` in all
+    // (162,800 notes, 10.4 MB, at `n = 400`;
     // FAIL-merge-chain-held-quadratic). The skip compares the operand's failures with the
     // record, O(size of the failures' types), no more than the walk it saves; keyed by span
     // alone it skipped an application of a body walked again, whose failures there were
