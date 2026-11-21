@@ -6003,7 +6003,8 @@ struct Block {
     /// The keys of the parts added since the block was last kept ([`Seen::owners`]).
     added: Vec<PartKey>,
     /// A name of the block was given a set of more than one piece by a step outside the
-    /// block's projection, and the block has not been projected whole since
+    /// block's projection, or a conjunct came into the block that reads a name holding more
+    /// than one piece ([`Block::update`]), and the block has not been projected whole since
     /// ([`Block::gained_hole`], [`Scope::project_block`]).
     hole_pending: bool,
 }
@@ -8365,6 +8366,43 @@ impl Block {
                 next.leave(&g);
             }
             if added > 0 {
+                // A conjunct new to the block that reads a name, not the star's leaf, already
+                // holding more than one piece asks for the whole block ([`Block::hole_pending`]),
+                // as [`Block::of`] asks when it makes the block new with that name so. The hole
+                // came before the conjunct, so no comparison of the names finds it changed
+                // ([`Block::gained_hole`]), and the block's last whole projection, if any, did
+                // not have the conjunct. FAIL-case-wake-pair-8644546066124090035
+                // (`case_wake::a_new_part_on_a_name_with_a_hole_projects_the_whole_block`): x
+                // held [-2, -1] ∪ [1, inf) from earlier tests; the test `x + 2y - 3a >= -5 &&
+                // x != 1`, asked false, was split into cases and joined, which gave the star's
+                // leaf `a` the set (-inf, -3] ∪ [0, inf) (a leaf's change asks for nothing), and
+                // its part `!(x != 1 && x + 2y - 3a >= -5)` came into the kept block. Each part
+                // alone then moved no name, while the whole block, which the block made from
+                // scratch projects because of x's hole, gives a (-inf, -3] ∪ {0} ∪ [2, inf).
+                // Why only the names of the conjunct, not every name of the block as `Block::of`
+                // reads them: with every name, each of k disjunctions added one at a time beside
+                // one wide disjunction asked for a projection of the whole block of about k
+                // parts, O(k) parts a test and O(k^2) in all:
+                // `scaling::bench::a_disjunction_beside_a_wide_one_in_its_block_costs_its_own_part`
+                // went from 5.37G to 6.97G instructions at k = 1024, 8.73 to 11.0 times the work
+                // at 8k, past the limit of 10.5; with the conjunct's names, 5.38G, 8.73 times.
+                // Assumption, not proved (ASSUME-documented): a hole on a name the new conjunct
+                // does not read reaches its part only through other parts, whose projections the
+                // loop's trigger in [`Scope::project_block`] watches, as before this rule. This
+                // is a question of precision only: the whole-block projection only narrows, and
+                // exactly, so the rule never widens a set. If false, a block kept and updated may
+                // keep a set the block made from scratch narrows, as the seed above did. 24 seeds
+                // of the random case_wake tests (`ZED_TEST_SEED`) passed with this rule and with
+                // the rule on every name alike, so no seed found tells the two apart. Cost: the
+                // names of the conjunct looked up, O(m log N) for m names and N in scope, per
+                // conjunct added, and one whole-block projection per such conjunct while no other
+                // asks for one.
+                if !next.hole_pending {
+                    next.hole_pending = conjuncts::names(&g).iter().any(|n| {
+                        next.leaf.as_ref() != Some(n)
+                            && names.get(n).is_some_and(|p| p.ints().len() > 1)
+                    });
+                }
                 due.extend(next.enter(&g, added));
             }
         }

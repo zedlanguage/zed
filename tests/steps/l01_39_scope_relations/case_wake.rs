@@ -1012,3 +1012,73 @@ fn tests_after_a_join_of_cases_that_recorded_one_part_differently_give_the_proje
     }
     assert!(kept >= 2, "only {kept} tests kept a point");
 }
+
+/// The random test on two names with distinct slopes at seed 8644546066124090035, which failed
+/// at case 4, step 2 (FAIL-case-wake-pair-8644546066124090035): `a` was kept as
+/// `(-inf, -3] ∪ [0, inf)`, where the projection from scratch gives `(-inf, -3] ∪ {0} ∪ [2, inf)`.
+#[test]
+fn tests_on_two_names_with_distinct_slopes_at_seed_8644546066124090035() {
+    run_at(Aim::Pair, 8_644_546_066_124_090_035);
+}
+
+/// The history of pair seed 8644546066124090035, case 4, step 2, cut to the eight assumptions it
+/// fails with (FAIL-case-wake-pair-8644546066124090035). `x` holds `[-2, -1] ∪ [1, inf)` before
+/// the test `x + 2y - 3a >= -5 && x != 1`, asked false. The test is split into its cases and
+/// joined, which gives the star's leaf `a` the set `(-inf, -3] ∪ [0, inf)`, and its part comes
+/// into the kept block. Each part alone then moved no name, and no name but the leaf had changed,
+/// so the whole block was not projected; the block made from scratch is, because of `x`'s hole,
+/// and gives `a` the set `(-inf, -3] ∪ {0} ∪ [2, inf)`. A new part reading a name with a hole
+/// now asks for the whole block (`Block::update`).
+#[test]
+fn a_new_part_on_a_name_with_a_hole_projects_the_whole_block() {
+    let p = Premises::new();
+    let ge = |t: Term, c: i64| prim(Prim::Ge, t, int(c));
+    let or = |a, b| prim(Prim::Or, a, b);
+    let history = [
+        ge(var("x"), -2),
+        prim(Prim::Le, var("y"), int(2)),
+        prim(Prim::Ge, var("a"), lin(&[(1, "x"), (1, "y")])),
+        or(
+            ge(lin(&[(1, "x"), (-3, "y")]), 2),
+            ge(lin(&[(3, "x"), (-2, "y")]), -1),
+        ),
+        or(
+            ge(lin(&[(1, "x"), (2, "y")]), 5),
+            ge(lin(&[(2, "x"), (-3, "y")]), 4),
+        ),
+        or(
+            or(ge(lin(&[(3, "x")]), -2), ge(lin(&[(2, "y")]), 3)),
+            ge(lin(&[(-1, "x"), (-1, "y")]), 0),
+        ),
+        or(
+            ge(lin(&[(3, "x"), (-2, "a")]), 2),
+            ge(lin(&[(1, "a"), (3, "y")]), 4),
+        ),
+        or(
+            or(ge(lin(&[(3, "y")]), -1), ge(lin(&[(3, "y")]), -4)),
+            ge(lin(&[(-3, "x")]), 1),
+        ),
+    ];
+    let ns: Vec<Arc<str>> = ["a", "x", "y"].iter().map(|&n| n.into()).collect();
+    let mut s = ints(&ns);
+    for t in &history {
+        s = s.assume(t, true, &p);
+    }
+    let t = prim(
+        Prim::And,
+        ge(lin(&[(1, "x"), (2, "y"), (-3, "a")]), -5),
+        prim(Prim::Ne, var("x"), int(1)),
+    );
+    let got = s.assume(&t, false, &p);
+    let mut fresh = s.clone();
+    fresh.forget_projections();
+    let mut want = fresh.assume(&t, false, &p);
+    want.forget_projections();
+    want.reduce();
+    assert_eq!(intervals(&got, &ns), intervals(&want, &ns));
+    assert!(
+        !got.get("a").ints().contains(1),
+        "a keeps 1: {:?}",
+        got.get("a").ints()
+    );
+}
