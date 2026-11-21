@@ -1203,9 +1203,9 @@ fn the_merge_of_large_pieces_gives_the_ends_of_the_joined_pieces() {
 }
 
 /// [`cheapest_split`]'s choice is the `k` of least bound `U_k`, the least `k` at a tie, and the
-/// bound it gives is that `U_k`, with each bound computed here from its definition (each sum formed again at each `k`), over 300
-/// drawn sets of 1 to 8 moduli from 2 to 400 with weights 1 to 4, spans 0 to 100,000, and
-/// up to 12 lists.
+/// bound it gives is that `U_k`, with each bound computed here from its definition (each sum
+/// formed again at each `k`), over 300 drawn sets of 1 to 8 moduli from 2 to 400 with weights 1
+/// to 4, spans 0 to 100,000, and up to 12 lists.
 #[test]
 fn the_split_is_the_one_of_least_bound() {
     let mut state = 0x5917_u64;
