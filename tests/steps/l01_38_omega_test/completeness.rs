@@ -1078,8 +1078,9 @@ fn tests_at_the_edges_of_the_operators_agree_with_the_interpreter() {
 }
 
 /// PROOF-call-key-function-of-lins. `g(x: x, a: 3)` and `g(x: x, a: y - y + 3)` have one call
-/// key, `[x, 3]`, since the second argument's linear term is the constant 3. The translation kept under
-/// that key must so be the same whichever call is read first. Before the fix the body was read
+/// key, `[x, 3]`, since the second argument's linear term is the constant 3. The translation
+/// kept under that key must so be the same whichever call is read first. Before the fix the
+/// body was read
 /// at the first caller's argument term: `x mod (y - y + 3)` reads an input in its divisor,
 /// which without products has no translation, so the key held a failure and the second order
 /// was outside the domain while the first was translated.

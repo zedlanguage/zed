@@ -591,12 +591,20 @@ fn preimage_in(
         // carry nothing, and the operands' ids, which no other set takes, ever
         // (`shared_ints::Ints::id`, `fresh_id`), and a set's content is fixed once made
         // (`Ints::list` lists `made` once, the same functions each time); `pows`, see
-        // [`Tx::forward_ints`], up to the one sub-case it names. So each lookup that hits
-        // gives the set a fresh run would make, and the run's answer is the same. Not
-        // proved: that `SummaryRead::scope_ints`, `ints` and `total`, read by `begin`, give the
-        // same answer each time (read from their uses as queries, not from a stated
-        // invariant). The test above measures bytes only; no test compares this run with a
-        // fresh one.
+        // [`Tx::forward_ints`] (a kept exponent is read outside it, FAIL-preimage-pows-key).
+        // So each lookup that hits gives the set a fresh run would make, and the run's answer
+        // is the same. (4) The reads `begin` makes of `self.lets` give the same answer each
+        // time (TEST-preimage-incremental-vs-fresh): `SummaryRead` has one implementation,
+        // `images::TermRead`, held as `Arc<dyn SummaryRead>` and read only through `&self`.
+        // Its `ints(v)` and `scope_ints(v)` are `names.get(v).map(ints)`, a lookup in an
+        // `imbl::OrdMap` and the fn pointer `Product::ints` (product.rs), which returns the
+        // field `cell.ints.element.concrete()`; `total` is `images::total`, the `sum` field of
+        // the tree's root, made when the tree was built. None of the three writes, and the
+        // values they read are not changed between the two calls of `begin` (no `&mut` to a
+        // read is taken), so each gives the same answer. Tests: the bench above measures
+        // bytes; `tests::a_forward_run_begun_from_the_backward_run_answers_as_a_fresh_one`
+        // compares this run with a fresh one on random terms, which bind no name, so it
+        // cannot catch a difference that (4) would bring.
         if r.dom == *inputs {
             let ints = std::mem::take(&mut tx.run.ints);
             tx.start_from(&begun, marks.clone());
@@ -4152,6 +4160,16 @@ type Unheld = Box<dyn FnOnce(&mut Memo)>;
 /// empty when none may.
 type CallKey = (At, Vec<Lin>, Vec<(Set, u32)>);
 
+/// The linear terms [`Tx::call_env`] may bind as literals for the call key `k`: all of them
+/// when no argument may fail (`k.2` empty), none otherwise. A literal never fails, so bound
+/// for an argument that may, `(x mod n) * 0` with term `0`, it would drop the argument's
+/// `#divByZero` at `n = 0` from the body, and `f(positional a) = a == 0` would give `true`
+/// there (red before: `l01_38_presburger::ladder::a_call_with_an_argument_that_may_fail_is_read_at_its_place`
+/// was proved). O(1).
+fn literal_terms(k: &CallKey) -> &[Lin] {
+    if k.2.is_empty() { &k.1 } else { &[] }
+}
+
 /// One more than the largest auxiliary variable the call key `k` names, 0 for none: in its
 /// arguments' linear terms ([`Lin::aux_end`]) and in their conditions, by the numbers of
 /// their divisor sets ([`DivisorSets::aux_end`]) and other parts ([`FormulaNumbers::aux_end`]).
@@ -5599,14 +5617,21 @@ impl<'t> Tx<'t> {
     ///    argument's definition. Removing it makes the question moot.) The canonical keys of
     ///    [`Walk::canonical_formula`], [`Walk::projection`] and their kin hold only constants
     ///    and canonical symbols ([`Walk::canonical_env`]), so they are never removed for this.
-    /// 4. Not proved, inferred: that a failure kept by 3 is still a failure once the undo has
-    ///    also taken away the attempt's pairs, extrema, choices, cases and claims
-    ///    (`Tr::truncate`). Each path that reads them falls back to the plain read when it gives
-    ///    nothing (`Walk::claimable`, `Walk::formula_called`, `Walk::lin_called`,
-    ///    `Walk::defined_called`), so a failure needs the plain read to fail too; that a claimed
-    ///    read never succeeds where the plain read of the same body fails is not shown. A wrong
-    ///    kept failure gives `None`, which a caller reads as a term with no translation
-    ///    (`Walk::formula_at` then takes `compare_untranslated`): coarser, not unsound.
+    /// 4. Not proved (PROOF-preimage-undo-kept-failure): that a failure kept by 3 is still a
+    ///    failure once the undo has also taken away the attempt's pairs, extrema, choices,
+    ///    cases and claims (`Tr::truncate`). What was checked: `Walk::defined_called` falls
+    ///    back to the plain read (`Walk::defined_call`) whenever its claimed paths give
+    ///    nothing. `Walk::formula_called` and `Walk::lin_called` do too, except where the
+    ///    call's key is its own canonical key (`key == k.1`): then the canonical read's
+    ///    `None` is returned with no plain read. So a kept failure can come from a path that
+    ///    was not the plain read. The open sub-cases: (a) under `key == k.1`, a canonical read
+    ///    that failed only because of state the undo removes (a claim of an inner call held
+    ///    by a call of the attempt); (b) under `key != k.1`, [`Walk::binding`] was `None`
+    ///    because a call of the undone attempt held the claim, so the projection was tried
+    ///    and failed and so did the plain read. After the undo the claim is free, and a fresh
+    ///    read would bind and succeed. No test reaches either. A wrong kept failure gives
+    ///    `None`, which a caller reads as a term with no translation (`Walk::formula_at` then
+    ///    takes `compare_untranslated`): coarser, not unsound.
     ///
     /// Test: `a_call_that_fails_at_an_atom_an_undo_takes_away_is_not_kept` (red before 3's
     /// `CallKey` removal: a key named `q0` with no definitions left), which also compares a
@@ -5684,14 +5709,18 @@ impl<'t> Tx<'t> {
     /// (`Terms::int`, made once per value by `Made::Int`), bound in [`ROOT`], so each read of
     /// the parameter in the body is a read of that one term, which depends on `n` alone. That
     /// the body may read the literal where it read the argument: where the argument is
-    /// defined its value is its linear term's ([`Walk::lin`]), `n`; where it may fail, the
-    /// key also holds its condition ([`Walk::shared_call_key`], `k.2`) when the relation
-    /// tracks failure, and when it does not ([`Tr::definedness`]) the relation need not hold
-    /// exactly at a point where an operation fails, and the key, a linear term, holds no
-    /// failure for any of the calls that share it. Test:
+    /// defined its value is its linear term's ([`Walk::lin`]), `n`. The callers pass `key`
+    /// through [`literal_terms`], empty when the relation tracks failure
+    /// ([`Tr::definedness`]) and an argument may fail, since a literal never fails and the
+    /// body would lose the argument's failure. Otherwise either no argument may fail, or the
+    /// relation need not hold exactly at a point where an operation fails. Tests:
     /// `l01_38_omega_test::completeness::a_call_keyed_by_a_constant_argument_is_translated_in_either_order`
-    /// (red before: the second order was outside the domain). Not proved
-    /// (PROOF-call-key-function-of-lins), two sub-cases: (a) a constant outside `i64`,
+    /// (red before: the second order was outside the domain), and
+    /// `l01_38_presburger::ladder::a_call_with_an_argument_that_may_fail_is_read_at_its_place`
+    /// (`f((x mod n) * 0)`, refuted at `n = 0`). Not proved
+    /// (PROOF-call-key-function-of-lins), three sub-cases: (c) under [`Tr::definedness`] with
+    /// an argument that may fail, no parameter is bound to a literal, so a constant key read
+    /// through two argument terms is the case before the fix; (a) a constant outside `i64`,
     /// whose argument is still bound, since `Terms` makes a literal only of an `i64`
     /// (`Node::Lit` borrows a value of the source); (b) a parameter whose key is not a
     /// constant, still read through the caller's argument term, where the body reads that
@@ -7020,13 +7049,36 @@ impl<'m, 't> Walk<'m, 't> {
     /// reads the class only at a remainder ([`Walk::back_arith`], [`Walk::residue_test`]), so the
     /// transfer of a term for which this is `false` is the same in every class.
     ///
-    /// Not proved as written: the run's class index is also read by [`Walk::back_in`] (a test
-    /// `t` in a class, through `by_class(t).get(index)`) and by the `pa` lookup of an `if`
-    /// (`by_class(t).get(index)`), not only at a remainder. Those agree across classes when
-    /// `by_class` of a term this calls `false` gives one summary in every class: shown for
-    /// the branch of `by_class_at` after its `reads_mod` check (one `Pa` for all classes);
-    /// open for a `Some` that `by_class_node` returns before that check on a term that reads
-    /// no remainder. (`pa_line` returns `None` in every split run, the same in each class.)
+    /// Proof that the class index finds one summary in every class for such a term
+    /// (PROOF-preimage-reads-mod-by-class). The run's class index is also read by
+    /// [`Walk::back_in`] (a test `t` in a class, through `by_class(t).get(index)`) and by the
+    /// `pa` lookup of an `if` (`by_class(t).get(index)`), not only at a remainder. Claim: when
+    /// this is `false` of `(t, env)`, `by_class(t, env)` is `None` or a [`ByClass`] whose root
+    /// is `Cls::Same`; then [`ByClass::get`] finds the same leaf with no map above it for every
+    /// index, and the same `Pa`. By induction on the calls of [`Walk::by_class_at`]:
+    /// (1) Below a term this calls `false`, every term `by_class` is asked of is one it calls
+    /// `false` too: a bound `Node::Var` reads its binding, a `Node::Let` its body, a
+    /// `Node::Prim` that is not `Mod` its arguments, an `if` its guard and arms
+    /// (`reads_mod_at`, arm by arm); a primitive called by name is `Node::Prim(p, args)`
+    /// (`Terms::call`), with `p != Mod` since an `App` of `Mod` is `true`. `by_class` keys
+    /// its memo by `Terms::form`, which keeps the node kinds and names, so the same answer.
+    /// (2) [`Walk::residue_test`] is `None` on such a term: it is `Some` only through
+    /// [`Walk::remainder_test`], which needs an operand that is `Node::Prim(Mod, ..)`, and then
+    /// this is `true`. So [`ByClass::choose`], the one step that splits the classes, is never
+    /// reached: not by the `if` of `by_class_node`, nor by the comparisons of
+    /// [`Walk::by_class_prim`].
+    /// (3) Each other result has root `Cls::Same`: [`ByClass::constant`] and
+    /// [`ByClass::same`] make one, and [`ByClass::based`] (the branch of `by_class_at` past
+    /// its check, and a free `Node::Var`); [`ByClass::affine`] keeps the root for a multiplier
+    /// of 1 and maps a `Same` leaf to a `Same` leaf otherwise ([`cls_affine`]); `clamp`
+    /// rebuilds through [`cls_clamp`], which maps a `Same` node to a `Same` node (no `on` from
+    /// `by_class_prim`); [`Walk::by_class_if`] takes the root of an arm (Same by induction),
+    /// or `based`, or [`cls_zip`] of two `Same` roots, which gives the one range `(0, n)`,
+    /// built by [`cls_build`] as one `Same` leaf. (`pa_line` returns `None` in every split
+    /// run, the same in each class.)
+    /// Test: `l01_25_preimage_catalog::s22::remainder_chains_outside_the_shared_summary_keep_their_preimages`
+    /// reads such terms below remainder guards in split runs; it cannot catch a new arm of
+    /// `by_class_node` that splits the classes on a term that reads no remainder.
     fn reads_mod(&'m self, t: Tid, env: Eid) -> Deep<'m, bool> {
         self.cached(
             |m| &mut m.reads_mod,
@@ -9978,7 +10030,8 @@ impl<'m, 't> Walk<'m, 't> {
                 }
             }
         }
-        self.defined_call(t, ps, (body, lam), args, env, &k.1).await
+        self.defined_call(t, ps, (body, lam), args, env, literal_terms(&k))
+            .await
     }
 
     /// [`Walk::lin_call`] for [`Walk::defined`].
@@ -10178,8 +10231,9 @@ impl<'m, 't> Walk<'m, 't> {
     /// `Node::Var` that `lookup` does not bind. And [`Walk::defined`] is `true`: `defined_at`
     /// first asks [`Walk::constant`], whose `constant_at` returns `None` once `mentions` is
     /// `true`, and then gives `None => Some(Defined::top())` for the unbound `Node::Var`. Not
-    /// checked arm by arm (proofs-in-comments audit): that each arm listed above as giving a
-    /// fixed answer reads no operand. Answers checked by the units of
+    /// proved (PROOF-preimage-get-key-arms), not checked arm by arm: that each arm listed
+    /// above as giving a fixed answer reads no operand, and that a tuple callee read only as
+    /// `p[k]` is so read once for all callers. Answers checked by the units of
     /// `tests/steps/l01_38_omega_test/one_scope.rs` (`tg`, `tw`, `ts` and their callers),
     /// against the relation of the body closed over the definitions it reaches; they cannot
     /// catch an arm, added later, that matches
@@ -10383,7 +10437,9 @@ impl<'m, 't> Walk<'m, 't> {
     /// atoms ([`projected`]), and `c` is not in the relation. (5) A constant argument that
     /// may fail (`(x mod n) * 0`, whose linear term may be `0`) is never swapped: its condition is
     /// not `true`, so `conds` is not empty and this returns `None`
-    /// ([`Walk::shared_call_key`]). Not proved: that the two keys are refused alike. The
+    /// ([`Walk::shared_call_key`]). Not proved (PROOF-preimage-claimable-refusal): that the
+    /// two keys are refused alike; a refusal gives `None`, read as no translation, so a
+    /// difference makes one key's answer coarser, not unsound. The
     /// scope numbers differ, and with them which memo entries are met, the names
     /// [`Tx::canonical`] gives a lambda made in the body, and which calls in it
     /// [`Scoped`]'s `fresh` lets claim; each of those paths is exact by its own proof, so
@@ -10738,7 +10794,9 @@ impl<'m, 't> Walk<'m, 't> {
                 }
             }
         }
-        let f = self.formula_call(t, ps, (body, lam), args, env, &k.1).await;
+        let f = self
+            .formula_call(t, ps, (body, lam), args, env, literal_terms(&k))
+            .await;
         if let Some(f) = &f {
             self.tr(|tr| tr.bound(f, &k.1));
         }
@@ -10827,7 +10885,9 @@ impl<'m, 't> Walk<'m, 't> {
                 // ([`Tr::instance`]), O(the term and its pairs).
                 // The tests' reference reads the body again ([`Scoped::reading_bodies`]).
                 if self.tr(|tr| tr.bodies) {
-                    return self.lin_call(t, ps, (body, lam), args, env, &k.1).await;
+                    return self
+                        .lin_call(t, ps, (body, lam), args, env, literal_terms(&k))
+                        .await;
                 }
                 let p = self.value_projection(t, ps, (body, lam), args, env, key.clone());
                 if let Some(p) = p.await
@@ -10841,7 +10901,8 @@ impl<'m, 't> Walk<'m, 't> {
                 }
             }
         }
-        self.lin_call(t, ps, (body, lam), args, env, &k.1).await
+        self.lin_call(t, ps, (body, lam), args, env, literal_terms(&k))
+            .await
     }
 
     async fn formula_at(&'m self, t: Tid, env: Eid) -> Option<Formula> {
@@ -13981,7 +14042,8 @@ fn split_around(root: Tree, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
 /// through [`prio_of`]); a child that returns at once costs `O(1)`, two for each visited
 /// node. Each visited node makes at most four joins of `O(log n)` expected, so the time is
 /// `O((m + s + 1) log^2 n)`. With widened bounds (a tag of slope not 0) a subtree may be
-/// visited whose values lie on one side, and the bound is not proved; see [`invert_treap`]'s
+/// visited whose values lie on one side, and the bound is not proved
+/// (PROOF-preimage-treap-cost-widened); see [`invert_treap`]'s
 /// tradeoff. Test: `tests::a_clamped_summary_is_the_summary_clamped_at_every_point` checks
 /// the values, not the count.
 ///
@@ -14156,7 +14218,8 @@ fn add_into(big: Tree, walk: &Tree, f: &Tag) -> Tree {
 /// (`n + (if n > 0 { -n } else { 0 })` is 0 for every `n > 0`), a subtree's bounds may be
 /// wider than its values, so inverting may visit every piece of a subtree whose values miss
 /// `z`: up to `O(p)` for `p` pieces, where it was `O((m + 1) log p)` for `m` pieces met. What
-/// is given up: that bound after such a sum; the preimage stays exact. Why: the least and the
+/// is given up: that bound after such a sum (PROOF-preimage-treap-cost-widened, open); the
+/// preimage stays exact. Why: the least and the
 /// greatest value of `v + slope * x` over a subtree for any `slope` is a query on the convex
 /// hull of its pieces' ends, which a tag cannot keep in `O(1)`. Trigger: a sum of a line and
 /// a summary sloping the other way, inverted. Test:
@@ -17976,6 +18039,77 @@ mod tests {
             Pa::Piecewise { root, .. } => treap_pieces(root).len(),
             _ => 0,
         }
+    }
+
+    /// The forward run [`preimage_in`] begins from the backward run's `begun`, keeping its sets
+    /// of integers ([`SharedInts`]), answers as a run begun afresh on the same box, on random
+    /// tests of sums, differences, products, powers and remainders of two inputs
+    /// (TEST-preimage-incremental-vs-fresh): the integers, the bools, the failures and the
+    /// other kinds of the root agree. It cannot catch a difference on a term outside these
+    /// operators, or one that a let summary's read (`SummaryRead`) would bring, since these
+    /// terms bind no name.
+    #[test]
+    fn a_forward_run_begun_from_the_backward_run_answers_as_a_fresh_one() {
+        fn term(rng: &mut Rng, d: u32) -> Term {
+            let lit = |v: i64| Term::Lit(Value::Int(v));
+            if d == 0 || rng.below(4) == 0 {
+                return match rng.below(3) {
+                    0 => lit(rng.below(9) as i64 - 4),
+                    1 => Term::Var("x".into()),
+                    _ => Term::Var("y".into()),
+                };
+            }
+            let p = |p: Prim, args: Vec<Term>| Term::Prim(p, args);
+            match rng.below(5) {
+                0 => p(Prim::Add, vec![term(rng, d - 1), term(rng, d - 1)]),
+                1 => p(Prim::Sub, vec![term(rng, d - 1), term(rng, d - 1)]),
+                2 => p(Prim::Mul, vec![term(rng, d - 1), term(rng, d - 1)]),
+                3 => p(Prim::Pow, vec![term(rng, d - 1), lit(rng.below(4) as i64)]),
+                _ => p(
+                    Prim::Mod,
+                    vec![term(rng, d - 1), lit(rng.below(5) as i64 + 2)],
+                ),
+            }
+        }
+        let (mut rng, _) =
+            Rng::fresh("a_forward_run_begun_from_the_backward_run_answers_as_a_fresh_one");
+        let seen = |f: &Fwd| (f.ints.set().clone(), f.bools, f.fails, f.other);
+        let mut inexact = 0;
+        for round in 0..400 {
+            let t = term(&mut rng, 4);
+            let c = rng.below(41) as i64 - 20;
+            let g = Term::Prim(Prim::Le, vec![t, Term::Lit(Value::Int(c))]);
+            let lo = rng.below(21) as i64 - 10;
+            let inputs = Domains::from([
+                (
+                    Arc::<str>::from("x"),
+                    IntervalSet::of(lo, lo + rng.below(12) as i64),
+                ),
+                (Arc::<str>::from("y"), IntervalSet::of(-3, 4)),
+            ]);
+            let demand = Demand::Bool(true);
+            let mut tx = Tx::new();
+            let root = tx.terms.add(&g);
+            let marks = tx.landmarks(&inputs, &demand);
+            let begun = tx.begin(&inputs);
+            tx.start_from(&begun, marks.clone());
+            let r = tx.back(root, ROOT, &demand);
+            inexact += usize::from(!r.exact);
+            let ints = std::mem::take(&mut tx.run.ints);
+            tx.start_from(&begun, marks.clone());
+            tx.run.ints = ints;
+            let kept = seen(&tx.fwd(root, ROOT));
+            let mut fresh = Tx::new();
+            let root = fresh.terms.add(&g);
+            fresh.start(&inputs, marks);
+            let want = seen(&fresh.fwd(root, ROOT));
+            assert_eq!(kept, want, "round {round}: {g} over {inputs:?}");
+        }
+        assert!(
+            inexact > 0,
+            "some backward run is inexact, as where the forward run is read"
+        );
+        println!("{inexact} of 400 backward runs inexact");
     }
 
     /// `abs` of a line and `min` and `max` of two lines keep exact bounds at the root
