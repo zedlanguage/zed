@@ -1889,6 +1889,47 @@ fn a_tie_that_every_swap_maps_onto_itself_is_renamed() {
     assert_eq!(seen.into_iter().collect::<Vec<_>>(), ["Ok(true)"]);
 }
 
+/// The point of a tied formula made of groups that share no atom is joined from the points of
+/// the groups (`atom_disjoint_parts` in zedc-presburger presburger.rs, PROOF-atom-disjoint-
+/// group-models): it must hold only atoms of the formula, each with its own group's value, so
+/// that no group's model overwrites another's. Copies of the question of [`either_at`] over
+/// auxiliary variables and symbols, each copy tied within itself: the point must be a point,
+/// over the formula's atoms alone. This cannot catch an overwrite on a formula whose groups'
+/// models happen to name only their own atoms, which is every formula found so far; the
+/// filter at the join is what makes it hold in general.
+#[test]
+fn the_point_of_atom_disjoint_groups_names_only_their_atoms() {
+    let k = Lin::constant;
+    let copy = |x: Atom, y: Atom, at: i64| {
+        let mut fs = Vec::new();
+        for a in [&x, &y] {
+            let v = Lin::atom(a.clone());
+            let within = |lo: i64, hi: i64| {
+                Formula::and(vec![
+                    Formula::Con(Con::ge(&v, &k(lo))),
+                    Formula::Con(Con::ge(&k(hi), &v)),
+                ])
+            };
+            fs.push(Formula::or(vec![within(-6, -1), within(1, 6)]));
+        }
+        fs.push(Formula::or(vec![
+            Formula::Con(Con::eq(&Lin::atom(x), &k(at))),
+            Formula::Con(Con::eq(&Lin::atom(y), &k(at))),
+        ]));
+        Formula::and(fs)
+    };
+    let sym = |s: &str| Atom::Sym(s.into());
+    let f = Formula::and(vec![
+        copy(Atom::Aux(0), Atom::Aux(1), -6),
+        copy(Atom::Aux(2), Atom::Aux(3), 5),
+        copy(sym("x"), sym("y"), 2),
+    ]);
+    let m = satisfiable(&f).unwrap().expect("a point");
+    assert!(f.holds(&m), "{m:?}");
+    let atoms = f.atoms();
+    assert!(m.keys().all(|a| atoms.contains(a)), "{m:?} over {atoms:?}");
+}
+
 #[test]
 fn a_refusal_of_a_renamed_formula_names_the_variables_as_written() {
     // The doubled cycle ([`doubled_cycle`]) ties under every naming, and a disjunction tells

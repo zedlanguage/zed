@@ -411,11 +411,20 @@ fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
             let Some(parts) = atom_disjoint_parts(f) else {
                 return whole();
             };
+            // Each group's model is cut to the group's own atoms before the join, so that no
+            // group's value of an atom can replace another's: proof at [`atom_disjoint_parts`],
+            // step 3 (PROOF-atom-disjoint-group-models). O(size of `g`) per group.
             let (mut point, mut refused) = (Model::new(), false);
             for g in &parts {
                 match satisfiable_named(g) {
                     Ok(None) => return Ok(None),
-                    Ok(Some(m)) => point.extend(m),
+                    Ok(Some(m)) => {
+                        let own: HashSet<Atom> = (g.cons().iter())
+                            .flat_map(|c| c.lin.terms.keys())
+                            .flat_map(|a| tied_atoms(a).into_iter().chain([a.clone()]))
+                            .collect();
+                        point.extend(m.into_iter().filter(|(a, _)| own.contains(a)));
+                    }
                     Err(_) => refused = true,
                 }
             }
@@ -638,8 +647,8 @@ fn decide_named(f: &Formula) -> Result<bool, Refusal> {
 /// from 0 were refused where one copy was decided). Only where a group is refused and none is
 /// empty is the whole asked as before ([`settle_tied`], then [`twins_merged`]). The groups
 /// are made from the conjuncts' atoms and are the same under every naming.
-// Proved for the groups' atoms, and so for [`decide_named`]; not proved for the models of
-// [`satisfiable_named`] (ASSUME-documented).
+// Proved for the groups' atoms, and so for [`decide_named`]; for the models of
+// [`satisfiable_named`], by the filter of step 3.
 // 1. The groups share no atom. `g.cons()` lists every constraint of `g` ([`Formula::walk`]
 //    descends into every part that is not a constraint and skips only a part met before in the
 //    same walk, whose constraints it listed then). Each atom of each constraint joins its
@@ -650,13 +659,21 @@ fn decide_named(f: &Formula) -> Result<bool, Refusal> {
 // 2. So the conjunction has an integer point exactly when each group has one: a point of the
 //    whole, read on a group's atoms, is a point of it, and points of groups over disjoint atoms
 //    join into one. [`decide_named`] answers exactly.
-// Not proved: that the model [`satisfiable_named`] gets for a group names only atoms of that
-// group, so `Model::extend` never overwrites another group's value (an auxiliary variable a
-// solver adds for one group could share its number with one of another). Evidence: the tests
-// of FAIL-or-if-tie-refusal and a census of 1,000 random four-variable systems (716 decided
-// against 682 before, no answer depending on names). If false, a formula could be called
-// non-empty, or given a model that is no point of it, where the whole-formula path refused:
-// unsound.
+// 3. The model [`satisfiable_named`] joins is a point of `f` (PROOF-atom-disjoint-group-models).
+//    A group's own model need not name only its own atoms: no proof covers every path that
+//    makes one (`modular_answer`, `Renamed::back`, `settle_tied`, `twins_merged`, the search),
+//    and an auxiliary variable a solver adds for one group is numbered past that group's own
+//    ([`unbounded`]), so it can share its number with an atom of another group. So the join
+//    keeps, of each group's model, only the group's own atoms: each term atom of its
+//    constraints (`g.cons()`, every constraint, as in step 1) and each factor of a product atom
+//    ([`tied_atoms`], the same atoms step 1 joins at). By step 1 the own atoms of two groups
+//    are disjoint, so `Model::extend` never replaces one group's value with another's, and
+//    each own atom keeps its group's value. Using the contract of `satisfiable` (its model,
+//    read on the atoms of the formula asked, is a point of it), each group holds at the join;
+//    the conjunction of the groups is `f`, so `f` holds. Cost: one set of the group's atoms,
+//    O(size of `g`) per group, O(n) summed, since the groups hold `f`'s parts once. Test:
+//    `l01_38_omega_test::names::the_point_of_atom_disjoint_groups_names_only_their_atoms`; it
+//    draws one formula and cannot catch a path it does not reach, which the filter covers.
 // Complexity tradeoff: union and find over the conjuncts, joined at each atom to the first
 // conjunct that holds it, with path halving: O(n log n) for the n terms of `f`, where joining
 // every pair of conjuncts that share an atom would be O(c^2) for c conjuncts. The groups are
@@ -685,11 +702,7 @@ fn atom_disjoint_parts(f: &Formula) -> Option<Vec<Formula>> {
     for (i, g) in parts.iter().enumerate() {
         for c in g.cons() {
             for a in c.lin.terms.keys() {
-                let factors = match a {
-                    Atom::Product(x, y) => vec![x.atom(), y.atom()],
-                    Atom::Sym(_) | Atom::Aux(_) => vec![a.clone()],
-                };
-                for x in factors {
+                for x in tied_atoms(a) {
                     let j = *first.entry(x).or_insert(i);
                     up.union_least(i, j);
                 }
@@ -702,6 +715,15 @@ fn atom_disjoint_parts(f: &Formula) -> Option<Vec<Formula>> {
         groups.entry(r).or_default().push((*g).clone());
     }
     (groups.len() > 1).then(|| groups.into_values().map(Formula::and).collect())
+}
+
+/// The atoms that a term over `a` ties its conjunct to in [`atom_disjoint_parts`]: the two
+/// factors of a product, or `a` itself.
+fn tied_atoms(a: &Atom) -> Vec<Atom> {
+    match a {
+        Atom::Product(x, y) => vec![x.atom(), y.atom()],
+        Atom::Sym(_) | Atom::Aux(_) => vec![a.clone()],
+    }
 }
 
 /// Whether `f`, a conjunction with no disjunction or negation, has an integer point, when each
@@ -12303,6 +12325,35 @@ fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
 /// of 4000 change (17 with the probe run only where the greedy search failed); they cannot
 /// catch an order the tests do not draw.
 ///
+/// What is proved, and the open sub-case narrowed (PROOF-probe-order-independent). Write a
+/// state as the set `S` of disjuncts left (the constraints `p.cons` only grow, by `settle`
+/// joining a disjunction left with one disjunct) and the implied bounds `I`. [`probe_kept`]
+/// returns only when a round removes nothing, so its answer `P` is a state in which every
+/// disjunct not held by a point (nor kept, nor `Immune` with every probe checked) passed, in
+/// the last round, every test at `P` itself: `implied.refutes` with the final `I`,
+/// [`refuted_by_links`], the slack test, and `settle(P ∧ d) != None`. Take two orders with
+/// answers `P1`, `P2`, and let `e_1, e_2, ..` be the removals of the first order, `e_k`
+/// removed at state `S_k ⊇ P1`. Suppose (M1): `settle(q, false)` is monotone, that is, when
+/// it answers `None` on `q` it answers `None` on every `q'` with the same constraints or more
+/// and, in each disjunction, a subset of `q`'s disjuncts, and it never refuses; and (M2):
+/// each removal of the first order is proved by `settle` of some `q` that `S_k ∧ e_k` implies
+/// in that sense (the propagation, a linked test of a part of `S_k ∧ e_k`, or a bound of
+/// [`learn`] that `settle` proved, since `e_k` writes that bound or a stronger one). Then by
+/// induction on `k`, no `e_k` is in `P2`: by the induction `e_1..e_(k-1)` are not in `P2`, so
+/// `P2 ⊆ S_k` disjunct by disjunct; were `e_k` in `P2`, the last round of the second order
+/// would ask `settle(P2 ∧ e_k)`, which `P2 ∧ e_k` implies `q` and (M1) makes `None`, so
+/// `e_k` would be removed, against `P2` being an answer (an `e_k` held by a point of the
+/// second order has a point, which no sound test of the first order removes). So
+/// `P2 ⊆ P1`, and by symmetry `P1 = P2`: the two orders leave the same disjuncts (the usual
+/// argument that a monotone propagation reaches one fixpoint in every order). The open
+/// sub-case is then exactly where (M1) or (M2) fails: a bound of `learn` proved by
+/// [`bounds_refute`] alone (bounds propagated through the hulls of disjunctions, which
+/// `settle`'s test of one disjunct against the base does not do), a `Refuted` of the slack
+/// index read with the order's own `I`, a `settle` that refuses (an `Err` counts as not
+/// refuted) or answers differently on a stronger `q`, and the disjuncts kept untested as
+/// `Immune`. Neither (M1) nor (M2) is proved here; no test of two orders has shown a
+/// difference.
+///
 /// Complexity tradeoff: testing each piece of a set of values of one atom costs one search of
 /// the whole formula per piece that the rounds by halves cannot refute together, O(h·n) for a
 /// domain of `h` pieces over a formula of size `n` (holes of `x` on difference chains, 128 to
@@ -20843,10 +20894,54 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
 ///    `O(d·|syms|·(m log m + log M))`, charged one count for the whole sweep (found by
 ///    proofdoc4g, DOC-proofs-in-comments-audit-rest-3) and left out the substitutions.
 ///
-/// Not proved: that one operation on `Int` is `O(1)`. A substitution adds `f·v` with
-/// `f = -m·a`, `|a| = 1`, so a coefficient can grow by the length of another at each of the
-/// `e` eliminations; the bound above counts operations, not bit operations (plan row
-/// PROOF-two-var-domains-int-growth).
+/// The bound above counts operations on `Int`; an operation is not `O(1)`, since a substitution
+/// adds `f·v` with `f = -m·a` and so can lengthen a coefficient. The size of the numbers is
+/// bounded as follows (PROOF-two-var-domains-int-growth), with `H >= 2` the largest absolute
+/// coefficient or constant of the rows `project_arm` is given (`base` and `arm`; the rows of
+/// `neg_ge` and `neg_eq_arms` add at most 1 to a constant of the formula) and `B = log2 H`.
+///
+/// Claim: every coefficient and constant of every row during and after the eliminations of one
+/// `project_arm` call has absolute value at most `(k+1)^((k+1)/2) · H^(k+1)`, where `k <= e` is
+/// the number of eliminations made so far; so at most `L = (e+1)·(B + log2(e+1)/2)` bits.
+/// Proof, every step:
+/// 1. Write the rows as the integer matrix `R` with one row per constraint and one column per
+///    atom, plus a last column for the constant. An elimination takes a row `t` (an equation,
+///    as reduced so far) with entry `a != 0` in a column `x` (`|a| = 1` in the general case; any
+///    `a` dividing the constant in the single-atom case, where `t` has no other column), and
+///    replaces each other row `w` with entry `m` in column `x` by `w - (m/a)·t`: in the code,
+///    `f = -m·a` and `w + f·t` (the same, as `1/a = a` for `|a| = 1`), and in the single-atom
+///    case the constant `+ m·val`, `val = -k/a` exact. Then `t` is emptied and never read
+///    again. This is one step of Gaussian elimination with pivot `a` in row `t`, column `x`.
+/// 2. After `k` eliminations with pivots in original rows `p_1..p_k` and columns `c_1..c_k`
+///    (distinct: each pivot row is emptied, and each pivot column leaves every row, step 3 of
+///    the cost proof above), every remaining row `i` is `R_i - Σ λ_l R_(p_l)` for some
+///    rationals `λ_l`, with zero in each column `c_l`. By induction: each step subtracts a
+///    multiple of the current `t`, which by the induction is itself `R_t` less a combination of
+///    earlier pivot rows; and a column `c_l` once zero stays zero, since `t` is zero there too.
+/// 3. Let `A` be the `k × k` submatrix of `R` on rows `p` and columns `c`. Doing the same row
+///    steps on `A` alone brings it, up to the order of its rows and columns, to a triangular
+///    matrix whose diagonal is the pivots (each step adds multiples of one row to others, which
+///    keeps the determinant), so `det A = ± Π a_l`, an integer of absolute value at least 1
+///    (each pivot is a nonzero integer), and `A` is invertible.
+/// 4. So the `λ` of step 2 is unique: the zero columns say `λ^T A = r_i`, `r_i` the part of
+///    `R_i` in the columns `c`, so `λ^T = r_i A^(-1)`. The entry of row `i` in any other column
+///    `j` is then `d - r_i A^(-1) b`, with `d = R_(i,j)` and `b` the part of column `j` in rows
+///    `p`; by the determinant of the bordered matrix (Schur's formula, `det [[A, b], [r_i, d]] =
+///    det A · (d - r_i A^(-1) b)`) it equals `det [[A, b], [r_i, d]] / det A`.
+/// 5. By step 3, `|det A| >= 1`, so the entry is at most the absolute value of a
+///    `(k+1) × (k+1)` minor of `R`, which by Hadamard's inequality (the determinant is at most
+///    the product of the Euclidean lengths of the rows, each at most `sqrt(k+1)·H`) is at most
+///    `(k+1)^((k+1)/2) · H^(k+1)`. With `k <= e` (step 3 of the cost proof), the claim follows.
+///    The pivot rows themselves, while still remaining rows, are among the rows bounded.
+///
+/// So each number has at most `L + 1` bits, `L = O(e·(B + log e))`, polynomial, not the
+/// `2^e · B` that squaring the largest entry at each step would give. An addition costs `O(L)`
+/// bit operations and a multiplication at most `O(L²)` (num-bigint, behind `Int` past `i128`:
+/// schoolbook or Karatsuba, inferred from its documentation, not read in its source), so the
+/// eliminations cost `O(d·|syms|·e·r·a·log a·L²)` bit operations. The rows given to
+/// `project_convex` carry numbers of at most `L + 1` bits, so its `log M` is at most `L + 1`;
+/// the size of the numbers inside its floor sums is that function's own bound (twovar.rs).
+/// No test reads the numbers inside `project_arm`; the proof rests on steps 1 to 5 alone.
 fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
     if syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         return None;

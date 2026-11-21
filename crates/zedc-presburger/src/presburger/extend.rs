@@ -1669,12 +1669,16 @@ fn same_divisions(rows: &[Con], keep: &HashSet<Atom>) -> HashMap<Atom, Lin> {
             }
             Some(_) if targets.contains(&q) => {}
             Some((_, r1, _)) if r1 != &r && targets.contains(&r) => {}
-            Some((q1, r1, c1)) if q1 != &q => {
+            // Here `q1 != q`, so no arm is needed for `q1 == q`: `q1` is in `targets`, since
+            // every entry of `first` is made in the arm `None` above together with
+            // `targets.insert` of its `q`, and `targets` only grows; the first arm took every
+            // `q` in `targets`; so `q` is not in `targets`, and `q != q1`.
+            Some((q1, r1, c1)) => {
+                debug_assert_ne!(q1, &q, "q1 is in targets and q is not");
                 to.insert(r, lin(vec![(r1.clone(), Int::ONE)], Int::ZERO));
                 let d = (&constant - c1).div_floor(&m);
                 to.insert(q, lin(vec![(q1.clone(), Int::ONE)], d));
             }
-            Some(_) => {}
         }
     }
     to
