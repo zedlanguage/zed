@@ -114,11 +114,51 @@ fn foldl_and_foldr_take_a_start_value_and_a_function_of_two_parameters() {
         (
             "foldl_grows",
             "${[1, 2].foldl((0, 0), (a, x) -> (a, x))}",
-            "no one type holds every step",
+            "zedc finds no one type that holds every step",
         ),
     ] {
         let e = refused(name, body);
         assert!(e.contains(what), "{name}: {e}");
+    }
+}
+
+/// An accumulator that `f` nests deeper each round is refused, and the repair is written in
+/// the start value's own form: for a tuple, a function that gives back each of its parts
+/// (row FAIL-fold-rotating-tuple-rounds); for a scalar, `+`.
+#[test]
+fn a_growing_accumulator_is_refused_with_a_repair_in_its_own_form() {
+    for (name, body, repair) in [
+        (
+            "grows_foldl_pair",
+            "${[1, 2].foldl((0, 0), (a, x) -> (a, x))}",
+            "repair: give the function a result of the start value's type, as \
+             `(a, x) -> (a[0], a[1])`",
+        ),
+        (
+            "grows_foldr_triple",
+            "${[1, 2].foldr((x, a) -> (x, a, 0), (0, 0, 0))}",
+            "repair: give the function a result of the start value's type, as \
+             `(x, a) -> (a[0], a[1], a[2])`",
+        ),
+        (
+            "grows_foldl_one",
+            "${[1, 2].foldl((0,), (a, x) -> (a,))}",
+            "repair: give the function a result of the start value's type, as \
+             `(a, x) -> (a[0],)`",
+        ),
+        (
+            "grows_foldl_scalar",
+            "${[1, 2].foldl(0, (a, x) -> (a, x))}",
+            "repair: give the function a result of the start value's type, as \
+             `(a, x) -> a + x`",
+        ),
+    ] {
+        let e = refused(name, body);
+        assert!(
+            e.contains("zedc finds no one type that holds every step"),
+            "{name}: {e}"
+        );
+        assert!(e.contains(repair), "{name}: {e}");
     }
 }
 

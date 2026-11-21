@@ -4925,10 +4925,27 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of a generic function, or of a lambda checked before its argument) takes the fold as a
     /// need, checked on each type that flows into the class, as `><` does; a function whose type
     /// is a class, on a receiver of known type, takes it as a need on the function's class.
-    // Complexity tradeoff: each round applies `f` once to the accumulator type, and the rounds
-    // stop when the type settles; a naive check would apply `f` once per entry. At most
-    // `Carrier::ALL.len() + 1` rounds run, which refuses some folds whose type settles later
-    // (below, row FAIL-fold-rotating-tuple-rounds).
+    // Complexity tradeoff (COMPLEXITY.md FAIL-fold-rotating-tuple-rounds): each round applies
+    // `f` once to the accumulator type, and the rounds stop when the type settles; a naive
+    // check would apply `f` once per entry. The rounds are not capped: they end by the
+    // argument below. Each round also builds two forms of what `f` gives (linear in its
+    // distinct nodes, `zedc_types::forms::Forms::of`) and, on a round whose skeleton is new,
+    // compares it with each earlier new skeleton (`Forms::embeds`, O(|s| |t|) pairs each).
+    // The accumulator keeps only its pieces that this round's result does not hold: a piece
+    // dropped is a subset of the result's carriers, which the new accumulator holds, so the
+    // accumulator is the same set of values and the answer is unchanged. Naive, as first
+    // written, the union of every round's result: a tuple of n parts that `f` rotates grew
+    // to n rows of n parts, and each application read them all, 1569 ms at n = 32 and over
+    // 23 s at n = 48. Pruned, it holds the start value and the latest result where `f`'s
+    // results grow round by round (measured: one or two rows at every round, n = 16 and 32),
+    // 191 ms at n = 32. A fold that settles in a few rounds is then linear in the width
+    // (bench `l03_02_map_run::bench::a_tuple_accumulator_settling_in_three_rounds_checks_in_
+    // linear_time`: 14, 20, 37, 79 ms at n = 32 to 256). Kept: a rotation of n parts takes
+    // n + 1 rounds, as each round moves the change one part along, so this method is Θ(n²)
+    // at best for it (measured 191, 820, 4176 ms at n = 32, 64, 128, load 51 to 62: each
+    // application also grows faster than n on an accumulator with joined parts, which
+    // `Comparing::row_in` splits). Its fix, a fast path for a result made of parts of the
+    // accumulator, is row PERF-fold-projection-fast-path.
     fn fold_dir_end(&mut self, x: &Ty, init: &Ty, f: Arg<'a>, span: Span, right: bool) -> Ty {
         let (word, shape) = match right {
             false => ("`foldl`", "`(a, x) -> a + x`"),
@@ -5044,23 +5061,84 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             return out.union(&self.need(k, kind, true, span));
         };
-        // The accumulator's type: `init`'s carriers, joined with the carriers of what `f`
-        // gives, until `f` gives nothing outside it. A scalar's carriers settle within one
-        // round per carrier, and a type that grows deeper each round never settles; the walk
-        // stops after `Carrier::ALL.len() + 1` rounds with a refusal.
-        // Not proved, and false: that no accumulator whose type settles needs more rounds.
-        // A tuple of n parts that `f` rotates, `(a, x) -> (a[1], ..., a[n - 1], a[0])` from
-        // `(1.5, 0, ..., 0)`, gains `f64` at one more part each round and settles at
-        // `(int | f64, ...)` only after n rounds: n = 6 is accepted, and n = 7 is refused
-        // though its type settles (both run by `zedc run`, 2026-11-20). A round that does not
-        // settle and keeps the accumulator's tuples and payloads as they were adds a carrier
-        // or an atom at one of its leaves; a bound on such rounds would follow from a bound
-        // on what a leaf can take, and counting only the rounds that change that structure
-        // needs a comparison of types by structure, which zedc-types does not have. Open in
-        // row FAIL-fold-rotating-tuple-rounds; no test covers the refusal past six parts.
+        // The accumulator's type `A`: `init`'s carriers, joined round by round with the
+        // carriers of what `f` gives, until `f` gives nothing outside it. Write `A_1` for
+        // `init.carriers()`, `g_k` for what `f` gives on `A_k` and the entries' type `V` in
+        // round k, and `A_{k+1}` for `A_k | g_k.carriers()`. The code writes `A_{k+1}` without
+        // the pieces of `A_k` that `g_k.carriers()` holds (`self.subtype`, sound: a yes means
+        // the piece's values are among the carriers'), so it is the same set of values, and
+        // every step below reads only that set: `A_k <: A_{k+1}` and `g_k <: A_{k+1}` hold.
+        //
+        // Accepted, it is sound. The loop returns `A_k` only where `g_k <: A_k` (or where `x`
+        // lists no entry, so the result is `init`, and `init <: A_1 <: A_k`). Every
+        // accumulator value of the run is in `A_k`, by induction on the entries folded: the
+        // start value is in `init`, and `init <: init.carriers() = A_1 <: A_k`; and if the
+        // accumulator is in `A_k` and the next entry is in `V`, `f` gives a value of the type
+        // `apply` reports for arguments of types `A_k` and `V`, which is `g_k`, so the next
+        // accumulator is in `g_k <: A_k`.
+        //
+        // The rounds end, with no cap. Each round's `g_k` has a skeleton and a canonical form
+        // (`zedc_types::forms`: the tree of its unions, tuples, payloads, functions and arrows,
+        // with the leaves' labels erased or kept). Two tests refuse the fold:
+        //   (a) a canonical form that some earlier `g_j` had: refused; and
+        //   (b) a skeleton `s` new to the fold, where an earlier new skeleton `t` embeds in `s`
+        //       (`Forms::embeds`) and `s` is deeper or wider than `t`: refused.
+        // Suppose no round settles and neither test refuses, so the rounds go on forever.
+        //  1. The new skeletons, in the order they come, are distinct by construction.
+        //     Suppose there are infinitely many. Kruskal's tree theorem for ordered trees with
+        //     well-quasi-ordered labels (cited and stated at `Forms::embeds`) makes embedding a
+        //     well-quasi-order on them, and every infinite sequence in a well-quasi-order has an
+        //     infinite subsequence `s_1, s_2, ...` with each `s_i` embedding in `s_{i+1}`
+        //     (the standard consequence: color each pair i < j by whether `s_i` embeds in
+        //     `s_j`; Ramsey's theorem gives an infinite set of one color, and the color "does
+        //     not embed" would be an infinite bad sequence).
+        //  2. Along that subsequence, (b) did not refuse `s_{i+1}`, though `s_i` embeds in it:
+        //     so `s_{i+1}` is neither deeper nor wider than `s_i`; and embedding never makes
+        //     a form shallower or narrower (proved at `Forms::embeds`), so depth and width
+        //     are equal along it, `D` and `W` say.
+        //  3. Finitely many skeletons have depth at most `D` and width at most `W`, by
+        //     induction on `D`. A node that is not a union has at most `W` children, each of
+        //     depth less than its own, of which finitely many exist by induction; and its label
+        //     comes from a finite set: a payload's atom name, a shape's field names and a
+        //     function's word are names the program or the prelude writes (every atom from a
+        //     written name, as `zedc_types::forms::Leaf` records; a word from a prelude name,
+        //     the only sites that set one being mod.rs `word_sig` and `bit_sig`), a function's flags and parameters number at most `W`, its
+        //     ends at most `W` characters, and a skeleton leaf's variables at most `W`. A
+        //     union's children are distinct non-union forms of depth at most `D` (no child of
+        //     a union is a union), finitely many, so finitely many sets of them.
+        //  4. So the subsequence of step 1, infinite and of distinct skeletons, lies in a
+        //     finite set: a contradiction. Only finitely many rounds have a new skeleton.
+        //  5. Every other round's `g_k` has a skeleton from that finite set, and its canonical
+        //     form is one of finitely many on each: each leaf of the skeleton takes one of
+        //     finitely many labels (`zedc_types::forms::Leaf`), and the skeleton is a function
+        //     of the canonical form, so a canonical form fixes which skeleton it has. Test (a)
+        //     refuses the second round with one canonical form, so finitely many rounds run.
+        // So the rounds end, at a settled `A_k`, an empty `x`, or a refusal.
+        //
+        // What the refusals prove, and what they do not. Neither test proves that the fold
+        // never settles, so the refusal says that zedc finds no type, not that none exists.
+        // (a) says more where `carriers()` of a type depends only on its canonical form, as
+        // it does for a type of scalars, atoms and tuples of them with no variable or
+        // kind-wide part: then `g_k.carriers() = g_j.carriers() <: A_{j+1} <: A_k`, and with
+        // `g_k <: g_k.carriers()`, `g_k <: A_k` would have settled the round; so (a) refuses
+        // only types whose variables, kind-wide part or functions' bounds and needs (which the
+        // forms do not record) change between rounds. (b) is Leuschel's whistle (SAS 1998,
+        // DOI 10.1007/3-540-49727-7_14), sharpened by depth and width: a result that holds an
+        // earlier one nested deeper, as `(a, x) -> (a, x)` makes `(int, int)` then
+        // `((int, int) | int, int)`, is refused at the second such round; a fold whose
+        // results grow so twice and then settle would be refused, and no test has one.
+        // Tested: tests/steps/l03_02_map_run/folds.rs (rotations of 2 to 20 parts settle, and a
+        // rotation of nested 1-tuples), types.rs
+        // `a_growing_accumulator_is_refused_with_a_repair_in_its_own_form` (results that nest
+        // are refused, with the repair), bench.rs
+        // `a_tuple_accumulator_settling_in_three_rounds_checks_in_linear_time`, and the unit
+        // tests of zedc_types::forms. No test has a result that widens without nesting.
         let mut acc = init.carriers();
-        let mut grew = Vec::new();
-        for _ in 0..=Carrier::ALL.len() {
+        let mut forms = zedc_types::forms::Forms::new();
+        let mut canon: HashMap<zedc_types::forms::FormId, Ty> = HashMap::new();
+        let mut skeletons = HashSet::new();
+        let mut grown: Vec<(zedc_types::forms::FormId, Ty)> = Vec::new();
+        let (earlier, later) = loop {
             if values.lists_nothing() {
                 return out.union(&acc);
             }
@@ -5077,21 +5155,59 @@ impl<'t, 'a> Ck<'t, 'a> {
             if self.subtype(&gives, &acc) {
                 return out.union(&acc);
             }
-            acc = acc.union(&gives.carriers());
-            grew.push(gives);
-        }
-        // The first two results outside the accumulator's type show how it grows; the
-        // union of every round is too long to read.
+            let c = forms.of(&gives, true);
+            if let Some(before) = canon.get(&c) {
+                break (before.clone(), gives);
+            }
+            canon.insert(c, gives.clone());
+            let s = forms.of(&gives, false);
+            if skeletons.insert(s) {
+                let blown = grown.iter().find(|&&(t, _)| {
+                    forms.embeds(t, s)
+                        && (forms.depth(s) > forms.depth(t) || forms.width(s) > forms.width(t))
+                });
+                if let Some((_, before)) = blown {
+                    break (before.clone(), gives);
+                }
+                grown.push((s, gives.clone()));
+            }
+            let g = gives.carriers();
+            let kept = acc
+                .pieces()
+                .into_iter()
+                .map(|p| p.ty())
+                .filter(|p| !self.subtype(p, &g))
+                .fold(Ty::empty(), |t, p| t.union(&p));
+            acc = kept.union(&g);
+        };
+        // Two results of `f` that show the accumulator growing: the earlier one the test
+        // compared, and this round's. The union of every round is too long to read.
         let i = self.text(init);
-        let (a, b) = (self.text(&grew[0]), self.text(&grew[1]));
+        let (a, b) = (self.text(&earlier), self.text(&later));
+        // The repair takes the accumulator's own form: a function that gives back each part
+        // of a tuple start value keeps its type; another start value takes `+`.
+        let repair = match &init.pieces()[..] {
+            [Piece::Tuple(r)] if !r.open() => {
+                let parts: Vec<String> = (0..r.len()).map(|k| format!("a[{k}]")).collect();
+                let tuple = match parts.len() {
+                    1 => format!("({},)", parts[0]),
+                    _ => format!("({})", parts.join(", ")),
+                };
+                match right {
+                    false => format!("`(a, x) -> {tuple}`"),
+                    true => format!("`(x, a) -> {tuple}`"),
+                }
+            }
+            _ => shape.to_string(),
+        };
         self.error_offering(
             span,
             format!(
                 "the accumulator of {word} starts as {i}, and its function makes it {a}, then \
-                 {b}: no one type holds every step"
+                 {b}: zedc finds no one type that holds every step"
             ),
             [format!(
-                "repair: give the function a result of the start value's type, as {shape}"
+                "repair: give the function a result of the start value's type, as {repair}"
             )],
         );
         Ty::empty()

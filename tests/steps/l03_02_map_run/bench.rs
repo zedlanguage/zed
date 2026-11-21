@@ -614,6 +614,49 @@ fn through_display_of_functions(name: &str, op: &str) {
     );
 }
 
+/// Parts of the tuple of [`a_tuple_accumulator_settling_in_three_rounds_checks_in_linear_time`].
+const N_SWAP: usize = 64;
+
+/// `zedc run` of `[1, 2, 3].foldl((1.5, 0, ..., 0), (a, x) -> (a[1], a[0], a[2], ...))` with
+/// n parts (row FAIL-fold-rotating-tuple-rounds): the checker's fold takes 3 rounds at every
+/// width, each one application of the function to an accumulator of at most two rows of n
+/// parts, and the run 3 steps of n parts. Measured before it was written (load 38 to 59):
+/// 14, 20, 37 and 79 ms at n = 32, 64, 128 and 256. A rotation of n parts takes n + 1
+/// rounds, so its check is Θ(n²) at best by this method (row PERF-fold-projection-fast-path,
+/// COMPLEXITY.md); its small instances are
+/// `folds::a_rotated_tuple_accumulator_settles_and_runs_at_any_width`.
+#[test]
+fn a_tuple_accumulator_settling_in_three_rounds_checks_in_linear_time() {
+    let srcs: HashMap<usize, _> = scaling::inputs(N_SWAP, |k| {
+        let start: Vec<&str> = (0..k).map(|i| if i == 0 { "1.5" } else { "0" }).collect();
+        let parts: Vec<String> = (0..k)
+            .map(|i| format!("a[{}]", if i < 2 { 1 - i } else { i }))
+            .collect();
+        program(
+            &format!("swap_{k}"),
+            &format!(
+                "${{[1, 2, 3].foldl(({}), (a, x) -> ({}))}}",
+                start.join(", "),
+                parts.join(", ")
+            ),
+        )
+    });
+    // Three swaps of the first two parts leave the 1.5 at index 1.
+    let want = |k: usize| {
+        let parts: Vec<&str> = (0..k).map(|i| if i == 1 { "1.5" } else { "0" }).collect();
+        format!("({})\n", parts.join(", "))
+    };
+    let run = |k: usize| {
+        let ran = interpreter(&srcs[&k], &[], &[]);
+        assert_eq!((ran.stderr.as_str(), ran.stdout), ("", want(k)));
+    };
+    scaling::check(
+        "`zedc run` of a fold that swaps two parts of a tuple of n parts",
+        N_SWAP,
+        run,
+    );
+}
+
 /// `where(f -> f(0) >= 0)`, which calls each function.
 #[test]
 fn where_over_a_display_of_functions_runs_in_linear_time() {

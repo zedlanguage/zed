@@ -12,6 +12,7 @@
 #![cfg(target_os = "linux")]
 
 mod bench;
+mod folds;
 mod functions;
 mod pushes;
 mod runs;
