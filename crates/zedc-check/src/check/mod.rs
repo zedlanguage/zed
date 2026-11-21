@@ -12627,9 +12627,20 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
     let sign = if l.neg() { "-" } else { "" };
     let mut fixes = Vec::new();
     if lit_carrier(&l.value) == Carrier::Int {
-        let nearest = Some(lit_digits(l))
-            .filter(|d| has(Carrier::F64) && d.bytes().all(|b| b.is_ascii_digit()))
-            .and_then(|d| literal_f64(d).ok());
+        // An exponent folded from integer literals ([`Lit::exponent`], walk.rs `binary`) has
+        // the type's text of its value, which may be a power form, `3^100`, or carry its `-`,
+        // so its nearest `f64` is read from the value, correctly rounded by ties to even
+        // ([`Rat::to_f64`]) without its digits; for an `i64` by Rust's `as`, which rounds to
+        // nearest, ties to even (The Rust Reference, "Numeric cast"), in O(1). Read from the
+        // text, a power form had no fix.
+        let digits = Some(lit_digits(l)).filter(|d| d.bytes().all(|b| b.is_ascii_digit()));
+        let nearest = match (digits, &l.value) {
+            _ if !has(Carrier::F64) => None,
+            (Some(d), _) => literal_f64(d).ok(),
+            (None, Value::Int(i)) if l.exponent => Some(*i as f64),
+            (None, Value::Big(r)) if l.exponent => r.to_f64().ok(),
+            (None, _) => None,
+        };
         if let Some(x) = nearest {
             let v = neg_value(&Value::float(x), l.neg());
             fixes.push(Rewrite::lit(

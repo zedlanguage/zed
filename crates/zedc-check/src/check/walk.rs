@@ -7907,7 +7907,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // write the text in the exponent's place: `^` is right-associative and binds
                 // tighter than every other operator (DESIGN.md sec:grammar), so a lone power
                 // `b^e`, or `-b^e`, reads there as one operand; a form with a coefficient,
-                // `3*2^k`, would not, and is parenthesized.
+                // `3*2^k`, would not, and is parenthesized. Every form of `integer_text` with a
+                // coefficient or two powers holds a `*`, so the test on `*` covers each. The
+                // readers of the text, each right on a power form: the message names it as
+                // code (`literal_message`); `String`'s text of it goes through the kernel's
+                // `Show`, since it is not all digits (`Lit::as_text`); a cast writes it whole,
+                // `f64((3*2^k))` (`with_carrier`); a decimal's readers (`whole_part`,
+                // `Rat::decimal`) never see it, its value being an integer; and the nearest
+                // `f64` is read from the value, not the text (`menu`, test
+                // `l01_26a fixes::an_exponent_folded_past_f64_lists_the_nearest_whatever_its_text`).
                 let text = Ty::lit(&v).to_string();
                 let text = match text.contains('*') {
                     true => format!("({text})"),

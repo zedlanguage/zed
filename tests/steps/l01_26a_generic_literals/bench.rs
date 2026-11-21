@@ -8,6 +8,7 @@ mod call_union_at_f64;
 mod cast_int_f64;
 mod cast_of_union;
 mod cast_rat_int;
+mod fixes;
 mod lit_branch_ops;
 mod lit_branches;
 mod name_fixed;

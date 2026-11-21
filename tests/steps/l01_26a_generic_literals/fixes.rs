@@ -463,3 +463,37 @@ fn a_value_at_rat_reached_through_a_power_is_named_by_the_operation() {
         ])
     );
 }
+
+#[test]
+fn an_exponent_folded_past_f64_lists_the_nearest_whatever_its_text() {
+    // An exponent folded from integer literals is a literal whose text may be a power form,
+    // `3^100`, shorter than its digits (`Rat::integer_text`); the nearest `f64` is read from
+    // its value, so the fix is offered as for digits. The values are 3^40, 3^100 and 5*3^100
+    // by `bc`, and their nearest `f64` by glibc's `strtod`.
+    assert_eq!(
+        checked("f() = 0.5f64 ^ (3^40);\n"),
+        pairs(&[(
+            "f() = 0.5f64 ^ 12157665459056928768;",
+            "the literal is then 12157665459056929000.0, the nearer f64 by ties to even"
+        )])
+    );
+    let near = |src: &str| (checked(src).into_iter().map(|(line, _)| line)).collect::<Vec<_>>();
+    assert_eq!(
+        near("f() = 0.5f64 ^ (3^100);\n"),
+        ["f() = 0.5f64 ^ 515377520732011324194596268868618440852459487232;"]
+    );
+    assert_eq!(
+        near("f() = 0.5f64 ^ (5 * 3^100);\n"),
+        ["f() = 0.5f64 ^ 2576887603660056783232258173556455595840307724288;"]
+    );
+    assert_eq!(
+        near("f() = 0.5f64 ^ (0 - 3^100);\n"),
+        ["f() = 0.5f64 ^ -515377520732011324194596268868618440852459487232;"]
+    );
+    // Past the range of `f64` there is no nearest, and no fix.
+    let errors = type_errors("f() = 0.5f64 ^ (3^(2^20));\n");
+    assert_eq!(
+        errors,
+        ["No `f64` equals the literal `3^1048576`. [(3^(2^20))]"]
+    );
+}
