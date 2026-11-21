@@ -163,7 +163,11 @@ fn a_link_that_fails_is_named_with_what_the_linker_printed() {
     // toolchain first makes it, so the test does not depend on which tests ran before it.
     assert_eq!(
         build(
-            &[src.to_str().unwrap(), "-o", d.join("warm").to_str().unwrap()],
+            &[
+                src.to_str().unwrap(),
+                "-o",
+                d.join("warm").to_str().unwrap()
+            ],
             &toolchain()
         )
         .0,
