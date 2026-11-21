@@ -73,6 +73,13 @@ if [ -n "${MW_LEAK:-}" ]; then
   sleep 300 </dev/null >/dev/null 2>&1 &
   echo $! >>"$MW_STATE/leaked"
 fi
+# MW_LIST=<line>: the first run of named pieces (a flake check or a bisect step, both after the
+# watcher read the known list) appends the line to the known list, as a person, an agent or a
+# second watcher lists a failing piece while the watcher bisects it.
+if [ -n "${MW_LIST:-}" ] && [ $# -gt 0 ] && [ ! -e "$MW_STATE/listed" ]; then
+  : >"$MW_STATE/listed"
+  echo "$MW_LIST" >>"$MAIN_WATCH_HOME/main-watch-known.txt"
+fi
 [ ! -e broken/BUILD ] || { echo "BUILD FAILED"; exit 1; }
 # MW_RUNKILL: the runner itself dies of SIGSEGV on its first run of every test, reporting nothing.
 if [ -n "${MW_RUNKILL:-}" ] && [ $# -eq 0 ] && [ "$kind" = test ] && [ ! -e "$MW_STATE/runkilled" ]; then
@@ -203,7 +210,7 @@ EOF
     MAIN_WATCH_PUBLISH=$t/bin/publish \
     MAIN_WATCH_FIXER=$t/bin/fix MAIN_WATCH_TEMPLATE=$t/template MAIN_WATCH_POLL=0 MAIN_WATCH_POLLS=2 \
     MW_STATE=$t/state
-  unset MW_FIX MW_FIX_BREAK MAIN_WATCH_ZRUN MW_LEAK MAIN_WATCH_QUEUE MAIN_WATCH_MIN MW_SEGV MW_FIRST3 MW_DIRTY MW_RUNKILL
+  unset MW_FIX MW_FIX_BREAK MAIN_WATCH_ZRUN MW_LEAK MAIN_WATCH_QUEUE MAIN_WATCH_MIN MW_SEGV MW_FIRST3 MW_DIRTY MW_RUNKILL MW_LIST
 }
 
 # land <n> [<commits>] [<i>:<piece>]: landing n, pushed from the dev clone, of <commits> commits
@@ -566,17 +573,21 @@ bench:b_beta FAIL-main-${b:0:9}" "$(cat "$t/home/main-watch-known.txt")"
     check "known: the running log names the failure and its row" 1 \
       "$(command grep -a -c 'known failures at .*test:t_delta (TEST-row-known)' "$t/home/running-log.md")"
     ;;
-  fixedby | fixedbyfail)
+  fixedby | fixedbyfail | fixedbyrace)
     # A known line with `fixed-by F` (MAINWATCH-known-fixed-by). Phase 1, the case of 46c1d2b71
     # (2026-11-21): F is on a side branch only, so the line is in force at the head and the
     # failure is known there: no row is filed and the line is kept. Phase 2: F lands on main.
     # fixedby: F fixes the piece, which passes, and the watcher takes the line out. fixedbyfail: F
     # does not; the piece goes back to the line's row and the line loses its fixed-by.
+    # fixedbyrace: as fixedby, but phase 2 runs a copy of the watcher in which a line is appended
+    # to the list just before known_edit's rename, as another writer's append may land there
+    # (TOOLS-push-tests-cleanup); the line must be on the list afterwards.
     setup t_delta
-    local q=$t/home/spawn-queue.txt k=$t/home/main-watch-known.txt fx fb
+    local q=$t/home/spawn-queue.txt k=$t/home/main-watch-known.txt fx fb w2=$watch
+    local race="test:t_gamma TEST-row-race"
     export MAIN_WATCH_QUEUE=$q
     git clone -q "$t/remote.git" "$t/fx"
-    if [ "$1" = fixedby ]; then git -C "$t/fx" rm -q broken/t_delta; else echo x >"$t/fx/other"; fi
+    if [ "$1" != fixedbyfail ]; then git -C "$t/fx" rm -q broken/t_delta; else echo x >"$t/fx/other"; fi
     git -C "$t/fx" add -A
     gitc -C "$t/fx" commit -q -m "TEST-row-known: the fix"
     git -C "$t/fx" push -q origin HEAD:side
@@ -596,13 +607,21 @@ $fb" "$(cat "$k")"
     git -C "$t/dev" fetch -q origin side
     gitc -C "$t/dev" merge -q --no-edit origin/side
     land 16
-    MAIN_WATCH_MIN=1 timeout 50 "$watch" >"$t/out2" 2>&1
+    if [ "$1" = fixedbyrace ]; then
+      w2=$t/race.sh
+      sed "/^ *mv -T \"\\\$known_file\\.\\\$\\\$\" \"\\\$known_file\"/i\\        echo \"$race\" >>\"\$known_file\"" "$watch" >"$w2"
+      chmod +x "$w2"
+      check "fixedbyrace: the copy adds one line" 1 "$(diff "$watch" "$w2" | command grep -a -c '^>')"
+    fi
+    MAIN_WATCH_MIN=1 timeout 50 "$w2" >"$t/out2" 2>&1
     check "$1: phase 2 exits 0" 0 "$?"
-    if [ "$1" = fixedby ]; then
-      check "fixedby: phase 2 takes the line out" "# header" "$(cat "$k")"
-      check "fixedby: phase 2 queues nothing" 0 "$(cat "$q" 2>/dev/null | wc -l)"
-      check "fixedby: phase 2 logs it" 1 "$(command grep -a -c 'fixed at .*: test:t_delta pass there' "$t/home/running-log.md")"
-      check "fixedby: phase 2 checks the head, with no known failure" "$(head_of) -" "$(cut -d' ' -f1,4 "$t/home/main-watch.checked")"
+    if [ "$1" != fixedbyfail ]; then
+      local want="# header"
+      [ "$1" = fixedby ] || want+=$'\n'$race
+      check "$1: phase 2 takes the line out$([ "$1" = fixedby ] || echo ' and keeps the line appended meanwhile')" "$want" "$(cat "$k")"
+      check "$1: phase 2 queues nothing" 0 "$(cat "$q" 2>/dev/null | wc -l)"
+      check "$1: phase 2 logs it" 1 "$(command grep -a -c 'fixed at .*: test:t_delta pass there' "$t/home/running-log.md")"
+      check "$1: phase 2 checks the head, with no known failure" "$(head_of) -" "$(cut -d' ' -f1,4 "$t/home/main-watch.checked")"
     else
       check "fixedbyfail: phase 2 queues one line, to the line's row" 1 \
         "$(command grep -a -c "^QUEUE TEST-row-known (filed by main-watch .*: test:t_delta still fails at $(git -C "$t/repo" rev-parse --short=9 "$(head_of)"), which holds ${fx:0:9}" "$q")"
@@ -614,6 +633,23 @@ test:t_delta TEST-row-known" "$(cat "$k")"
     fi
     check "$1: nothing filed as FAIL-main" 0 "$(cat "$q" "$k" "$t/home/main-red.log" 2>/dev/null | command grep -a -c FAIL-main)"
     check "$1: no culprit" "" "$(opened)"
+    ;;
+  queuedup)
+    # A piece listed by hand while the watcher bisects it (TOOLS-push-tests-cleanup): in queue
+    # mode fix puts the culprit's pieces on the known list with known_add, so the list holds the
+    # piece once; the bare append it used before wrote a second, identical line.
+    setup
+    local q=$t/home/spawn-queue.txt n
+    for n in $(seq 1 15); do
+      if [ "$n" = 5 ]; then land 5 1 1:t_alpha; else land "$n"; fi
+    done
+    export MAIN_WATCH_QUEUE=$q MW_LIST="test:t_alpha TEST-row-5"
+    watch
+    check "queuedup: exit 0" 0 "$rc"
+    check "queuedup: the line was listed during the runs of named pieces" yes "$([ -e "$t/state/listed" ] && echo yes)"
+    check "queuedup: one QUEUE line, to TEST-row-5" 1 "$(command grep -a -c '^QUEUE TEST-row-5 ' "$q")"
+    check "queuedup: the known list holds the piece once" "test:t_alpha TEST-row-5" "$(cat "$t/home/main-watch-known.txt")"
+    check "queuedup: the head is checked" "$(head_of)" "$(checked)"
     ;;
   oldknown | oldknownlog)
     # FAIL-main-af9161e5a (2026-11-21): C0 was checked with t_delta a known failure of
@@ -748,6 +784,8 @@ bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
       "fixed-by-ignored|s/&& set=fixed\$/\\&\\& set=in/|fixedby"
       "fixed-by-always|s#git -C \"\\\$repo\" merge-base --is-ancestor \"\\\$f\" \"\\\$c\" 2>/dev/null && set=fixed\$#set=fixed#|fixedby"
       "no-unfix|s/^      known_edit \"\\\$head\" \"\\\$back\" unfix\$/      :/|fixedbyfail"
+      "known-dup|s/^    known_add \"\\\$owner\" \"\\\$items\"\$/    for t in \$items; do echo \"\$t \$owner\" >>\"\$known_file\"; done/|queuedup"
+      "no-reread|s/^        whole=\\\$(cat \\/dev\\/fd\\/9)\$/        whole=\$old/|fixedbyrace"
       "no-known-checked|s#^  f=\\\$(cut -d' ' -f4 \"\\\$checked_file\")\$#  echo '?'; return 0#|oldknown"
       "no-log-fallback|s#^  \\[ -n \"\\\$l\" \\] .*\$#  echo '?'; return 0#|oldknownlog"
     )
@@ -769,7 +807,7 @@ bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
   esac
 }
 
-all_cases="two zrun fixbreak failfix nofix segv runkill nottwice nobisect setuperr clean few old oldqueue spec specold known fixedby fixedbyfail oldknown oldknownlog skip queue reap build controls"
+all_cases="two zrun fixbreak failfix nofix segv runkill nottwice nobisect setuperr clean few old oldqueue spec specold known fixedby fixedbyfail fixedbyrace queuedup oldknown oldknownlog skip queue reap build controls"
 for c in ${@:-$all_cases}; do run_case "$c"; done
 echo "checks failed: $fails"
 [ "$fails" = 0 ]

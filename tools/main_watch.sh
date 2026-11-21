@@ -398,28 +398,70 @@ known_add() {
 # here that is not only appended to (No locks below): the new text is written to a file of this
 # process, the list is read again, and the rename happens only if the list is still the text the
 # edit was made from; otherwise the edit is made again from the new text, until the list stands
-# still between the read and the check. An append that lands after that check and before the
-# rename is lost: the window is one rename(2) call, and is not closed (no lock, by the author's
-# rule of 2026-11-19). The loop ends: each pass that does not rename saw an append, and appends
-# come from people and agents, a few a day.
+# still between the read and the check. The loop ends: each pass that does not rename saw a
+# change, and changes come from people and agents, a few a day.
+#
+# The window between that check and the rename (TOOLS-push-tests-cleanup, 2026-11-21). An append
+# (`>>`: known_add, fix, a person's echo) made there goes to the file the rename then replaces, and
+# was lost. Now the list is read through fd 9, held open on the file it was read from (inode I)
+# for the whole pass, with no lock and no extra file. After the rename, I is read again through
+# /dev/fd/9 (Linux reopens the inode itself, though it no longer has a name): its text is the
+# text read, `old`, followed by whatever was appended to I since. Claim: every line appended to I
+# before that second read is in the list after this function. Proof: O_APPEND writes go to the end
+# of I, so I's text is old + "\n" + the appended lines (old was read whole, and command
+# substitution only strips its final newlines); the second read sees each write completed before
+# it; the lines after old are appended (O_APPEND) to the new list, which holds new = the edit of
+# old; an append made directly to the new list after the rename is there already. Not covered,
+# and why: (a) a writer that opened I before the rename and writes after the second read (the
+# gap between its open and its write, inside one `echo >>`): that line is lost; (b) another
+# writer's rename between the check (text and inode against fd 9) and ours (the Edit tool replaces a file by rename: its inode
+# changed when tried on 2026-11-21) is replaced by ours unseen, since the file it renamed has no
+# name and no fd here afterwards; (c) I changed other than by appends (rewritten in place): its
+# text cannot be merged line by line safely, so it is written to the running log and the output,
+# not lost silently. Closing (a) and (b) needs a lock, which the author's rule of 2026-11-19
+# rules out; each window is a few system calls, against a few edits a day. The case
+# fixedbyrace of tools/test_main_watch.sh appends a line just before the rename, which the
+# version before this one lost.
 known_edit() {
-  local c=$1 items=$2 how=$3 old new line f
+  local c=$1 items=$2 how=$3 old new line f whole
   while :; do
-    old=$(cat "$known_file") || return 0
-    new=$(while IFS= read -r line; do
-      f=$(fixed_of "$line")
-      if [ -n "$f" ] && [ -n "$(inter "${line%% *}" "$items")" ] && git -C "$repo" merge-base --is-ancestor "$f" "$c" 2>/dev/null; then
-        [ "$how" = drop ] || sed -E 's/ +fixed-by +[^ ]+//g' <<<"$line"
-      else
-        printf '%s\n' "$line"
+    {
+      old=$(cat /dev/fd/9) || return 0
+      new=$(while IFS= read -r line; do
+        f=$(fixed_of "$line")
+        if [ -n "$f" ] && [ -n "$(inter "${line%% *}" "$items")" ] && git -C "$repo" merge-base --is-ancestor "$f" "$c" 2>/dev/null; then
+          [ "$how" = drop ] || sed -E 's/ +fixed-by +[^ ]+//g' <<<"$line"
+        else
+          printf '%s\n' "$line"
+        fi
+      done <<<"$old")
+      [ "$new" != "$old" ] || return 0
+      printf '%s\n' "$new" >"$known_file.$$"
+      # Same inode as fd 9 too: a file renamed over the list with the same text would pass the
+      # text test while fd 9 holds the replaced inode, and the re-read would then miss appends.
+      if [ "$(stat -c %i "$known_file")" = "$(stat -L -c %i /dev/fd/9)" ] && [ "$(cat "$known_file")" = "$old" ]; then
+        mv -T "$known_file.$$" "$known_file" || {
+          say "could not replace $known_file ($how of $(paste -sd' ' <<<"$items"))"
+          return 0
+        }
+        whole=$(cat /dev/fd/9)
+        if [ "$whole" != "$old" ]; then
+          if [ -z "$old" ]; then
+            printf '%s\n' "$whole" >>"$known_file"
+          # The prefix test by length and slice, under LC_ALL=C (bytes): linear. The glob form,
+          # [[ $whole == "$old"$'\n'* ]] with ${whole#...}, took 1.1 s at 1000 lines and 16.4 s at
+          # 4000 (bash 5, 2026-11-21), quadratic or worse; this form took 5.1 ms at 1000 lines,
+          # 29 ms at 16000 and 150 ms at 100000 (TOOLS-push-tests-cleanup).
+          elif local LC_ALL=C && [ "${whole:0:${#old}+1}" = "$old"$'\n' ]; then
+            printf '%s\n' "${whole:${#old}+1}" >>"$known_file"
+          else
+            runlog "$known_file was changed in place while main-watch replaced it ($how of $(paste -sd' ' <<<"$items")); its text then, which the list may now lack: $(paste -sd'|' <<<"$whole")"
+            say "$known_file was changed in place while it was replaced; its text then is in the running log"
+          fi
+        fi
+        return 0
       fi
-    done <<<"$old")
-    [ "$new" != "$old" ] || return 0
-    printf '%s\n' "$new" >"$known_file.$$"
-    if [ "$(cat "$known_file")" = "$old" ]; then
-      mv -T "$known_file.$$" "$known_file" || say "could not replace $known_file ($how of $(paste -sd' ' <<<"$items"))"
-      return 0
-    fi
+    } 9<"$known_file" || return 0
   done
 }
 # known_checked <C0>: the known failures the last checked commit C0 was checked with, one
@@ -643,7 +685,12 @@ fix() {
     owner=$(owner_row "$c")
     command grep -a -q "^QUEUE .*first bad commit $(short "$c") " "$queue" 2>/dev/null ||
       echo "QUEUE $owner (filed by main-watch $(ts): first bad commit $(short "$c") \"$sub\" ($who) fails $pieces; bisect log $bisect_log, outputs in $logroot; the row's owner fixes it and, once the fix has landed, appends \`fixed-by <the landed commit>\` to these pieces' lines in $known_file, never taking them out)" >>"$queue"
-    for t in $items; do echo "$t $owner" >>"$known_file"; done
+    # known_add, not a bare append: the list is read once, after the full runs (check), and the
+    # bisect that leads here can take hours, so a person, an agent or a second watcher may have
+    # listed the piece meanwhile; a bare append then wrote it twice (TOOLS-push-tests-cleanup;
+    # the case queuedup of tools/test_main_watch.sh). A piece already listed keeps its line, as
+    # for every other caller of known_add, even when that line names another row.
+    known_add "$owner" "$items"
     runlog "$row: queued to $owner in $queue: first bad commit $(short "$c") fails $pieces (no fixing agent in queue mode)"
     say "$row: queued to $owner"
     return 0
