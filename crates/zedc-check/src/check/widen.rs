@@ -14,10 +14,34 @@
 //! taking a residue modulo 2^64 further modulo 2^k, since 2^k divides 2^64 for k at most 64.
 //! So the operand computed modulo 2^64 and then taken modulo 2^k is the integer value taken
 //! modulo 2^k, and the result in `0..<2^k` is the low k bits of the 64-bit word. A literal
-//! past 64 bits is taken modulo 2^64 by the same map. Not proved here: that the build
-//! computes this operand in wrapping arithmetic. This module relies on it only to report
-//! nothing there; the site that does it is in the elaborator or later, was not traced, and
-//! no test here names it.
+//! past 64 bits is taken modulo 2^64 by the same map.
+//!
+//! Why reporting nothing there is right, whether or not the build wraps (row
+//! PROOF-widen-build-wraps). Claim: no value a program computes is hidden or changed by the
+//! silence; only a notice about the cost of a big integer is left out, and DESIGN.md
+//! sec:domains (line 1561, "An operation inside an expression reduced by `mod 2^k` ... that
+//! may wrap ... and its modulus `2^k`, are not reported") says to leave it out. Proof:
+//! 1. This module reports and never rejects ("It does not stop the build", below), so it
+//!    changes no value; the claim is about which notices are given.
+//! 2. Today the build does not wrap. The kernel's integers are exact big integers
+//!    (zed-kernel `Value` ints, arbitrary size), the only evaluator of a checked program; the
+//!    native back end, zed-native, lowers no integer arithmetic to machine words (its `iadd`
+//!    is for addresses only), and wrapping intermediates are plan step L3.13 (DESIGN.md
+//!    L3.13: "intermediates in wrapping machine words under the ring-homomorphism rule of
+//!    (sec:domains)"), not built. So the operand is computed exactly, and `x mod 2^k` gives
+//!    the integer value of `x` taken modulo 2^k.
+//! 3. When step L3.13 makes the build wrap, the ring-map argument above gives the same
+//!    result: the low k bits of the 64-bit word are the integer value taken modulo 2^k.
+//! 4. By 2 and 3 the value of `x mod 2^k` is the exact one in both builds. What the silence
+//!    leaves out today is a notice that an operand inside it is held as a big integer, which
+//!    is true now and will be false after L3.13; DESIGN exempts these operations from the
+//!    notice for the build that wraps, the build the language describes.
+//!
+//! What the tests cannot catch: no test runs a wrapping build, since none exists; step
+//! L3.13's own tests must show the wrapped result equal to the exact one. The bound here, k
+//! at most 64 with i64 operands, is narrower than DESIGN's (k at most 128, widths up to
+//! `i128`/`u128`): for 64 < k <= 128 this module reports operations DESIGN says not to report
+//! (more notices, never a hidden value).
 //!
 //! The warning names the value, the widths of the operands (the narrowest of `i8`, `i16`,
 //! `i32` and `i64` that holds each) and the interval the operation gives, and shows the

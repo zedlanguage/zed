@@ -119,6 +119,33 @@ fn components_and_several_parameters_follow_each_their_own() {
 }
 
 #[test]
+fn an_operation_reached_through_a_name_is_fixed_where_bound_and_follows_no_parameter() {
+    // Row PROOF-follow-param-two-params: a class of literals alone reaches a second
+    // comparison only through a name or a function's result, and each fixes its carrier,
+    // `int` here, before either comparison (QUESTIONS A63), so neither parameter decides it
+    // for the other: each call compares with the `int` 2. Written inline, each `1 + 1`
+    // follows its own parameter.
+    let calls = ["g(2, 2)", "g(2.0f64, 2)", "g(2, 2.0f64)", "g(2r, 2.0f32)"];
+    for (i, def) in [
+        "g(positional x, positional y) = { z = 1 + 1; x == z && y == z };",
+        "g(positional x, positional y) = { z = 1 + 1; w = z; x == z && y == w };",
+        "g(positional x, positional y) = { z = if x == 0 { 1 + 1 } else { 2 * 1 }; \
+         x == z && y == z };",
+        "g(positional x, positional y) = { t = (1 + 1,); x == t[0] && y == t[0] };",
+        "g(positional x, positional y) = { k() = 1 + 1; x == k() && y == k() };",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let out = prints(&format!("l01_26a_param_follows_named_{i}"), def, &calls);
+        assert_eq!(out, "true false false false\n", "{def}");
+    }
+    let def = "g(positional x, positional y) = x == 1 + 1 && y == 1 + 1;";
+    let out = prints("l01_26a_param_follows_inline", def, &calls);
+    assert_eq!(out, "true true true true\n");
+}
+
+#[test]
 fn an_integer_sum_past_two_to_the_53_compares_as_with_the_type_written() {
     // At `f64`, `9007199254740992 + 1` rounds to `9007199254740992.0`, as it does where the
     // parameter is declared `f64`; at `int` and `rat` it is exact.

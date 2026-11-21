@@ -2149,12 +2149,34 @@ struct Ck<'t, 'a> {
     /// (`c.data |= data` in the unions of classes, walk.rs), and a trial that undoes a need
     /// also undoes the entry here (`Undo::DataChecked`). The one place that clears the flag is
     /// the end of the class's level ([`Ck::generalize`], `take`), where the class is
-    /// generalized and its uses are taken. Not proved: that no row entered here and holding a
-    /// class generalized so is met by a data check after its level ends. A signature is
-    /// instantiated with fresh classes, so its rows are new nodes, which is the expected
-    /// route; a row that outlived its level would skip the check. Test: the unit test
-    /// `a_trial_undone_after_the_memo_entered_a_row_leaves_no_memo` (walk.rs tests); it does
-    /// not cover a row met after its level ended.
+    /// generalized and its uses are taken.
+    ///
+    /// Why a row entered here is still right to skip after that (row PROOF-data-checked-kept).
+    /// Claim: when a data check skips a row of this set that holds a class `r` whose level has
+    /// ended, `r`'s data need has been, or will be, checked as the check the skip saves would
+    /// check it. Proof:
+    /// 1. The row was entered by [`Ck::data`], which gave each class it holds the need
+    ///    `NeedKind::Data` (`need`, which records it among the class's `uses`) before the
+    ///    row joined this set. A trial that undid the need undid the entry too (above), so
+    ///    while the row is here, the need is among the uses of `r`'s root, or was taken with
+    ///    them.
+    /// 2. At the end of `r`'s level, `generalize` takes the uses of each class of the level
+    ///    (`take`). A class whose root has a type `t` has each use checked on `t` there
+    ///    (`check_on` over `now`): the data need is checked once on the type the class took,
+    ///    which is what a later check reaching `r` would check, since `r` takes no other type
+    ///    after its level. A class that stays its own variable `$r` gives its uses to the
+    ///    signature (`sig.needs`), and each call checks them again on the fresh class that
+    ///    stands for `$r` there ([`Ck::check_on`]).
+    /// 3. A class whose root is at an outer level is not taken (it waits for that level), so
+    ///    it keeps its uses and its `data` flag, and step 1 holds for it as before.
+    /// 4. So by 2 and 3, nothing the skipped check would add is lost: the need sits with the
+    ///    class, or with the signature that stands for it, or has already been checked on the
+    ///    class's type.
+    ///
+    /// Test: the unit test `a_trial_undone_after_the_memo_entered_a_row_leaves_no_memo`
+    /// (walk.rs tests) covers step 1 for a trial. Step 2 rests on the code of `generalize`,
+    /// read and not tested here: a need [`Ck::share_alike`] merges into another, alike one is
+    /// checked as that one.
     data_checked: HashSet<NodeId>,
     /// The applications, by span, whose operands' failures merge and were each checked as
     /// data outside a trial ([`Self::merged_data`]), each with the failures the merge passes
@@ -2163,8 +2185,10 @@ struct Ck<'t, 'a> {
     /// in two contexts (a lambda at each arrow of an intersection) may give the application
     /// other failures in the second, which are then checked (PROOF-merge-checked-context).
     /// Filled and read outside a trial only, so a trial, whose errors are undone, checks every
-    /// operand as before.
-    merge_checked: HashMap<Span, Ty>,
+    /// operand as before. Each record also holds [`Self::cut_seq`] and the largest
+    /// [`Found::id`] given when it was made, so that it is read only while no error up to that
+    /// id has been removed since ([`Self::kept_since`]; PROOF-merged-data-skip).
+    merge_checked: HashMap<Span, (Ty, u64, Option<usize>)>,
     /// The rows and payload shapes [`Self::bound`] found to hold only classes at any depth,
     /// each with the level it was at and that level's count of ends (`gens`): a class stays a
     /// class until the function of its level ends and names it, and a class's level only goes
@@ -8952,19 +8976,29 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Whether the parameter `p` of an arrow of `sig` takes every one of the atoms `loose`:
-    /// by its set, or, for a variable bound in `sig`, by whether its bound may take values
-    /// other than carriers ([`OTHER`]). A parameter that is the unknown, any other variable or
-    /// a class is answered yes without reading a mask. Not proved: that a class parameter
-    /// whose carriers hold no atom (a class of number literals) never stands in an arrow
-    /// before one that takes the atoms, where this choice would pick the earlier arrow.
+    /// by its set, or, for a variable bound in `sig` or a class of the function being checked,
+    /// by whether its bound or its class's carriers may take values other than carriers
+    /// ([`OTHER`]). A parameter that is the unknown or any other variable is answered yes
+    /// without reading a mask.
+    ///
+    /// A class parameter stands in an arrow where `sig` is a local function whose parameter
+    /// is merged with a class of the function around it, so not generalized: in
+    /// `f(positional y) = { r(positional x) = if (x else 0) == 0 { x } else { x + y }; r(#nf) }`
+    /// `r` has two arrows ([`Self::handled_sig`]), the first taking `$k` alone, `$k` the class
+    /// of `x` and `y`, whose carriers hold no atom. The class was answered yes without its mask, so `r(#nf)` took the
+    /// first arrow and `f` was given `T -> T` while `f(2)` is `#nf` (row PROOF-takes-all-atoms;
+    /// test `a_local_function_merged_with_an_outer_parameter_takes_the_arrow_of_its_atoms`
+    /// in tests/steps/l01_27_absences/loose.rs, red before). Read by its mask, the class takes
+    /// the atoms exactly when its carriers may hold values other than carriers, as a bound
+    /// variable does.
     fn takes_all(&self, sig: &Sig, p: &Ty, loose: &KType) -> bool {
         if let Some(&m) = p.as_var().and_then(|v| sig.bounds.get(v)) {
             return m & OTHER != 0;
         }
-        p.dynamic
-            || !p.vars.is_empty()
-            || self.class_of_ty(p).is_some()
-            || (loose - &p.set).is_empty()
+        if let Some(k) = self.class_of_ty(p) {
+            return self.classes[self.find(k)].mask & OTHER != 0;
+        }
+        p.dynamic || !p.vars.is_empty() || (loose - &p.set).is_empty()
     }
 
     /// The first arrow of `sig` whose parameter `i` takes every atom of `loose[i]`, for each

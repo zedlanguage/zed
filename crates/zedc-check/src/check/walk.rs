@@ -2873,9 +2873,34 @@ impl<'t, 'a> Ck<'t, 'a> {
     // `k`'s `binder`, so a later call on `k` returns at `c.binder.is_some()` in O(1) (a trial
     // that undoes the binder walks the body again, and pays this again with it). A class of
     // literals alone is also a side of one comparison only: it reaches a name only through a
-    // binding, where [`Self::fix_bound`] gives it its carrier. Not proved: that a class
-    // `fix_bound` leaves as it is (one with no literal that fixes a carrier) never meets two
-    // parameters, where the first to follow would decide its carrier for both.
+    // binding, where [`Self::fix_bound`] gives it its carrier.
+    //
+    // Why a class follows at most one parameter (row PROOF-follow-param-two-params). Were it
+    // to meet two, the first would decide its carrier for both, since a later call returns at
+    // `c.binder.is_some()`. Claim: a class with a literal that fixes a carrier never meets
+    // two. Proof:
+    // 1. The only caller is [`Self::equal_classes`], once per comparison, on the classes of
+    //    its two sides; it tries `(kx, ky)`, then `(ky, kx)` only if the first fails, so one
+    //    comparison makes `k` follow at most one parameter.
+    // 2. The guard admits only a class of literals alone (`generic`, no `binder`, no `uses`).
+    //    Such a class is made by the literals of one expression, and an expression's type
+    //    goes to its one parent; so the class reaches a second comparison only through a
+    //    name or a function's result.
+    // 3. A name in a body is a parameter, whose class has a `binder` or is merged with one
+    //    (not `generic`), so the guard refuses it; or it is bound by `=` (also an item of a
+    //    tuple, an `if` that joins branches), where `fix_bound` gives the class one carrier
+    //    and then [`Self::class_takes`], read by `equal_classes`, makes it no class at the
+    //    comparison (the name reads as the carrier). A local function's result is resolved
+    //    when that function ends ([`Ck::resolve`]), before its calls are checked.
+    // 4. By 1 to 3, two comparisons never share a class that `fix_bound` fixes.
+    // Test: `an_operation_reached_through_a_name_is_fixed_where_bound_and_follows_no_parameter`
+    // (tests/steps/l01_26a_generic_literals/param_follows.rs) runs each form of step 3 with
+    // calls whose parameters have different carriers, and each compares with the `int`.
+    // `match` is not supported by zedc yet, so a name a `match` arm binds is not covered.
+    // Not proved (PROOF-follow-param-two-params): a class `fix_bound` leaves as it is, one
+    // with no literal that fixes a carrier (each literal follows or is generic with another
+    // operand to take its carrier from); no program reaching one at two comparisons was
+    // found.
     fn follow_param(&mut self, k: usize, p: usize) -> bool {
         let (c, q) = (&self.classes[k], &self.classes[p]);
         if k == p || !c.generic || c.binder.is_some() || q.generic || !c.uses.is_empty() {
@@ -19201,15 +19226,43 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// r: int) -> int` and then at `(p: int -> int, q: int, r: int | #c) -> int`; skipped by
     /// span, the second context's merge with `r` was not checked, and the program was accepted
     /// or refused by the order of the arrows. The failures, which hold the types of the
-    /// payloads, differ in the two, and only equal failures are skipped. Not proved here: a
-    /// record may also be left from an earlier walk of the body where the application merged,
-    /// and found in a later walk where its failures are equal. The skip is sound there if the
-    /// errors the earlier check gave are not undone outside a trial and equal types name the
-    /// same classes, which keep the data needs the earlier check gave them; neither was traced.
+    /// payloads, differ in the two, and only equal failures are skipped.
+    ///
+    /// A record may also be left from an earlier walk of the body, or an earlier run of a
+    /// replayed need, and found later where the failures are equal (PROOF-merged-data-skip).
+    /// Claim: whenever an operand is skipped, every function its failures may hold is reported
+    /// by an error still among the errors, and every class in them has a data need. Proof:
+    /// 1. A record is made only outside a trial, after the operands were checked or skipped,
+    ///    with `cut_seq` and `max`, the largest id given so far (`next_found - 1`; ids rise
+    ///    outside a trial and a trial's errors are undone, [`Self::unfixed_only`] fact 2).
+    /// 2. By induction on the records in the order made: when a record is made, each function
+    ///    the merged failures may hold came from an operand, and is reported by an error of
+    ///    that operand's [`Self::data`] check, given just now, or, for a skipped operand, by
+    ///    the earlier record's error, still among the errors by the induction hypothesis at
+    ///    that skip. Either error has an id up to `max`.
+    /// 3. Every removal of errors outside the end of the walk calls [`Self::errors_cut`] first
+    ///    ([`Self::unfixed_only`] fact 3), so [`Self::kept_since`]`(cut_seq, max)` holds only if
+    ///    no error of id up to `max` was removed since the record. So a skip, which needs it,
+    ///    finds those errors still there. Before this check, the truncation in
+    ///    [`Self::replay_one`] (a recursive use, checked again) removed such an error and the
+    ///    second run skipped the operand: the unit test
+    ///    `merged_data_checks_again_after_the_errors_of_the_record_are_removed` was red.
+    /// 4. A class in the failures had `need(k, Data)` from the operand's check; a class keeps
+    ///    its uses until its level ends ([`Ck::generalize`]), and a merge only adds the other
+    ///    side's uses (`c.uses.push` and `c.data |= data` in the unions); a trial's need is
+    ///    undone with the trial, but no record is made or read in a trial (1). A record found
+    ///    after the level of a class in it ended is covered as for [`Ck::data_checked`]
+    ///    (PROOF-data-checked-kept, steps 2 to 4): at that end the class's data need was
+    ///    checked on its type or moved into the signature.
+    ///
+    /// What the test cannot catch: a removal site added without `errors_cut`; such a site must
+    /// call it first, as fact 3 of [`Self::unfixed_only`] says.
     // Complexity tradeoff: one [`ty::merges`] over the operands' atom sets, O(operands)
     // comparisons of shared types, then where they merge one [`Self::data`] walk per operand,
     // O(size of its failures' payload types), the walk the memo of checked rows already bounds,
-    // and one hash lookup per operand. The naive form, no check, accepts a program the kernel
+    // and one hash lookup and one binary search over the removals of errors
+    // ([`Self::kept_since`], O(log removals)) per operand. Where errors up to a record's id
+    // were removed, its operand is checked again, the cost of the check the record saved. The naive form, no check, accepts a program the kernel
     // stops in, which soundness forbids. Checking an operand that is itself a checked merge,
     // as before, reported the inner merge again with its whole code in the headline and its
     // derivation through all its operands in the notes: in a chain of `n` merges the `k`th
@@ -19234,7 +19287,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         }
         for (t, &at) in atoms.iter().zip(froms) {
-            if !self.trying && self.merge_checked.get(&at) == Some(t) {
+            let checked = |ck: &Self| match ck.merge_checked.get(&at) {
+                Some((r, seq, max)) => r == t && max.is_none_or(|m| ck.kept_since(*seq, m)),
+                None => false,
+            };
+            if !self.trying && checked(self) {
                 continue;
             }
             self.data(t, "`#errs`", DataUse::Merge, at, at, None);
@@ -19243,7 +19300,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         passed(&mut merged, atoms.iter());
         *out = out.union(&merged);
         if !self.trying {
-            self.merge_checked.insert(whole, merged);
+            let max = self.next_found.checked_sub(1);
+            self.merge_checked
+                .insert(whole, (merged, self.cut_seq, max));
         }
     }
 
@@ -30721,6 +30780,66 @@ mod tests {
             );
         }
         assert!(ck.errors.is_empty());
+    }
+
+    /// Row PROOF-merged-data-skip: the merge `(#box(f) + #bag(f)) + #cup(f)`, its inner
+    /// application at `inner`, checked by [`Ck::merged_data`] as a walk checks it; the outer
+    /// merge is checked with `cut` true after the errors so far are removed outside a trial, as
+    /// [`Ck::replay_one`] removes them before it runs a recursive use again. Gives the number
+    /// of errors the outer merge gave at `inner`.
+    fn outer_errors_at_inner(cut: bool) -> usize {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let int = Ty::carrier(Carrier::Int);
+        let f = Ty::func(Arc::new(Sig::one(
+            crate::check::positional(1),
+            vec![int.clone()],
+            int,
+        )));
+        let held = |name: &str| Ty::atom_of(name, vec![f.clone()], BTreeMap::new());
+        let span = |start, end| Span { start, end };
+        let (inner, whole) = (span(0, 20), span(0, 30));
+        let mut got = Ty::empty();
+        ck.merged_data(
+            &mut got,
+            &[held("box"), held("bag")],
+            &[span(0, 8), span(11, 20)],
+            inner,
+        );
+        assert_eq!(
+            ck.errors.len(),
+            2,
+            "each operand of the inner merge is reported"
+        );
+        if cut {
+            ck.errors_cut(0);
+            ck.errors.clear();
+        }
+        let before = ck.errors.len();
+        let mut out = Ty::empty();
+        ck.merged_data(&mut out, &[got, held("cup")], &[inner, span(23, 30)], whole);
+        (ck.errors[before..].iter())
+            .filter(|e| e.span == inner)
+            .count()
+    }
+
+    /// A record of [`Ck::merge_checked`] skips the operand while the errors of its check
+    /// stand, and not after they are removed: then nothing else reports the function the
+    /// operand's failures hold (PROOF-merged-data-skip). Read with no check of the removals,
+    /// the record skipped the operand after the cut, and the merge gave no error at all for it.
+    #[test]
+    fn merged_data_checks_again_after_the_errors_of_the_record_are_removed() {
+        assert_eq!(
+            outer_errors_at_inner(false),
+            0,
+            "the chain reports each operand once"
+        );
+        assert_eq!(
+            outer_errors_at_inner(true),
+            1,
+            "the operand's report was removed"
+        );
     }
 
     /// The remap `s as (a -> k -> v) into (k -> a -> v)`, two key levels, as an expression.

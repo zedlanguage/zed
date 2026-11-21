@@ -260,6 +260,30 @@ fn a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values
     assert_eq!(value(&ok, "b"), "3");
 }
 
+#[test]
+fn a_local_function_merged_with_an_outer_parameter_takes_the_arrow_of_its_atoms() {
+    // Row PROOF-takes-all-atoms: `r`'s parameter is merged with `y`, a class of `f` that holds
+    // no atom, so `r` has two arrows over that class (the first takes no atom) and `r(#nf)`
+    // takes the second, which lets `#nf` reach the result. It took the first, and `f` was
+    // given `T -> T` while `f(2)` is `#nf`.
+    let t = "f(positional y) = { r(positional x) = if (x else 0) == 0 { x } else { x + y }; \
+             r(#nf) };\na = f(2);\n";
+    assert_eq!(type_errors(t), Vec::<String>::new());
+    assert_eq!(sig(t, "f"), "T -> T | #_ for T in int | f32 | f64 | rat");
+    assert_eq!(value(t, "a"), "#nf");
+    // A call passing an atom takes the second arrow and its result, which may hold the atom
+    // (here the body returns `y` for it, so the value holds none); a call passing a number
+    // takes the first arrow, whose result holds no atom.
+    let t = "f(positional y) = { r(positional x) = if (x else y) == y { y } else { x + y }; \
+             (r(#nf), r(3)) };\na = f(2);\n";
+    assert_eq!(type_errors(t), Vec::<String>::new());
+    assert_eq!(
+        sig(t, "f"),
+        "T -> (T | #_, T) for T in int | f32 | f64 | rat"
+    );
+    assert_eq!(value(t, "a"), "(2, 5)");
+}
+
 /// Item PRINT-fmt-audit, then MSG-is-repair-v: a value passed where a function is taken gets
 /// no `is` repair. `is` cannot test a function type, since a function value shows no type when
 /// the program runs, and the elaborator refuses the test; the repair once offered,
