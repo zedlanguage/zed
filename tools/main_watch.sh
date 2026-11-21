@@ -4,7 +4,8 @@
 #   tools/main_watch.sh --start <commit>  first record <commit> as checked (a commit where every
 #                                       test and benchmark passes), then watch
 # Started by hand, not by a timer; /home/luke/Work/wt/main-watch.sh runs this file from
-# /home/luke/Work/zed-impl. Exits 3 when it is stuck (below), 2 on a usage or setup error.
+# /home/luke/Work/zed-impl. Exits only on a usage or setup error (2), which main-watch.sh restarts
+# after a delay; a stuck case (below) is recorded and polling goes on.
 #
 # The author's flow (NO-LOCKS-optimistic, 2026-11-19): merge-push.sh pushes without running tests
 # after the rebase, and this watcher finds and fixes what such pushes break:
@@ -22,7 +23,8 @@
 #  3. Each failure is confirmed: the piece is run again alone. One that passes alone is a flake,
 #     recorded in main-watch-flakes.log with both summary lines, and not bisected. A confirmed
 #     failure that was never seen to pass during this check is run at the last checked commit; if
-#     it fails there too it existed before the range, and the watcher is stuck (below): the last
+#     it fails there too it existed before the range, and is filed as FAIL-main-<last checked
+#     commit> (below, Stuck) and not bisected: the last
 #     checked commit passed everything, so a piece that now fails there means the machine changed
 #     or the piece is flaky, which a person must judge.
 #  4. Bisect. For a set F of confirmed failures that all passed at commit G (the last checked
@@ -69,13 +71,20 @@
 # (under the shared /home/luke/Work/wt/.build-root) would match other agents' runs too. zrun's
 # namespace holder starts a session of its own (setsid -f) and is not touched: it is the
 # worktree's, outlives every run, and is stopped when the worktree is removed.
-# Stuck: a fixing agent that ends without landing, pieces still failing after 3 attempts, a
-# failure that exists at the last checked commit, or no checked commit to bisect from. The watcher
-# then writes `stuck <commit> <time> main-watch <reason>` to main-red.log (red_open in
-# merge-push.sh reads only open and fixed lines) and an entry to main-watch-stuck.md for the
-# author, and exits 3 without polling again: the author's rule is that it never polls on while a
-# failure is unfixed, since breakages compound. Run it again once the case is resolved; it starts
-# again from the last checked commit.
+# Stuck: a fixing agent that ends without landing or a fix worktree that cannot be made, pieces
+# still failing after 3 attempts, a bisect that names no commit, a named commit at which none of
+# the pieces fails twice, or a run of every piece ended by a signal (the runner itself crashed, so
+# the pieces it did not report would read as passing). The watcher then writes `stuck <commit>
+# <time> main-watch <reason>` to main-red.log (red_open in merge-push.sh reads only open and fixed
+# lines) and an entry to main-watch-stuck.md for the author, puts the case's pieces on the known
+# list with its row (FAIL-main-<commit>), and polls on (author, 2026-11-21: "main_watch should not
+# crash if a test fails or crashes"; it used to exit 3 and stop, which left main unchecked for as
+# long as the case stood). A failure that exists at the last checked commit C0 is filed as
+# FAIL-main-<C0> the same way; in queue mode it gets a QUEUE line instead of a stuck entry. A
+# crashing piece (a signal, an abort, its time limit) is a failing piece, never a watcher error:
+# tools/run_tests.sh prints its `rc=` (128 + the signal, 124 for its limit). A failed fetch is
+# tried again at the next poll. Only a usage or setup error (no checked commit, a worktree that
+# cannot be made or checked out) exits, with 2.
 #
 # No locks (author, 2026-11-19). Every file it shares is appended to in single lines (O_APPEND,
 # each well under PIPE_BUF, so lines of two writers never mix) or replaced by rename. One watcher
@@ -203,6 +212,7 @@ run() {
   o=$logroot/$(date -u +%H%M%S%N)-$$-$kind
   pushd "${copy:-.}" >/dev/null || exit 2
   setsid -w "$self" --pieces "$o.sid" "$o.logs" "$kind" "$@" >"$o.out" 2>&1
+  echo $? >"$o.rc"
   popd >/dev/null || exit 2
   reap "$(cat "$o.sid" 2>/dev/null)" "$o.out" >&2
   echo "$o.out"
@@ -313,17 +323,30 @@ landing_of() {
   done
 }
 
-# stuck <commit or -> <reason> <details>: records the case for the author and exits 3.
+# known_add <row> <items>: puts each item (<kind>:<piece>) on the known list with the row, unless
+# the list has it already.
+known_add() {
+  local p
+  for p in $2; do
+    [ -s "$known_file" ] && awk -v p="$p" '$1 == p { f = 1 } END { exit !f }' "$known_file" && continue
+    echo "$p $1" >>"$known_file"
+  done
+}
+# stuck <commit or -> <reason> <details> [<row> <items>]: records the case for the author, puts
+# the items on the known list with the row, and returns, so polling goes on. A case already
+# recorded (the same commit and reason) is not written again.
 stuck() {
-  local c=$1 why=$2
+  local c=$1 why=$2 row=${4:-} items=${5:-}
+  known_add "$row" "$items"
+  command grep -a "^stuck $c " "$red" 2>/dev/null | command grep -a -q -F -- " main-watch $why" && return 0
   echo "stuck ${c} $(ts) main-watch $why" >>"$red"
   [ "$c" != - ] || c=
-  runlog "STUCK: $why${c:+ (commit $c)}; polling stopped until the author resolves it (main-watch-stuck.md)"
+  runlog "STUCK: $why${c:+ (commit $c)}${row:+; $(paste -sd' ' <<<"$items") on $known_file with $row}; polling goes on (main-watch-stuck.md)"
   {
     echo
     echo "## $(ts) main-watch stuck: $why"
     echo
-    echo "Holds up: main-watch has stopped and does not poll origin/main again; landings since the last checked commit $(cut -d' ' -f1 "$checked_file" 2>/dev/null | cut -c1-9) are not checked. Run /home/luke/Work/wt/main-watch.sh again once this is resolved; it starts again from that commit."
+    echo "Holds up: ${row:-nothing in main-watch}${row:+, whose pieces $(paste -sd' ' <<<"$items") main-watch now reports as known failures (in $known_file) and does not bisect or fix; take their lines out once the row fixes them}. main-watch goes on polling."
     echo
     echo "Commit: ${c:--}. Head checked: $head. The watcher's worktree, left as it was: $copy. Its logs: $logroot."
     echo
@@ -333,8 +356,7 @@ stuck() {
     echo "|---|---|---|---|"
     echo "| main-watch $(ts) | main-watch polling | ${c:--} | $why |"
   } >>"$stuck_file"
-  say "STUCK (exit 3): $why. Written to $stuck_file and $red; not polling again."
-  exit 3
+  say "STUCK: $why. Written to $stuck_file and $red; polling goes on."
 }
 
 # The watcher's worktree, at $1, made on first use.
@@ -430,11 +452,11 @@ fix() {
     return 0
   fi
   for attempt in 1 2 3; do
-    base=$(head_now) || stuck "$c" "fetch failed before fix attempt $attempt" ""
+    base=$(head_now) || { stuck "$c" "$row: fetch failed before fix attempt $attempt" "" "$row" "$items"; return 0; }
     name=mwfix-$(short "$c")-$attempt-$(date -u +%H%M%S)-$$
     dir=$trees/$name
     git -C "$repo" worktree add -q -b "wt/$name" "$dir" "$base" && "$prepare" "$dir" >"$logroot/prepare-$name.log" 2>&1 ||
-      stuck "$c" "making the fix worktree $dir failed" "See $logroot/prepare-$name.log."
+      { stuck "$c" "$row: making the fix worktree $dir failed" "See $logroot/prepare-$name.log." "$row" "$items"; return 0; }
     git -C "$repo" show "$c" >"$logroot/$row.diff"
     out=$(for f in $(sort -u "$evidence"); do cat "$f"; done)
     brief=$logroot/brief-$row-$attempt.md
@@ -467,7 +489,8 @@ fix() {
     landed=$(tail -n +$((before + 1)) "$landings" | awk -v d="$dir" '$3 == d { s = $1 } END { print s }')
     if [ -z "$landed" ]; then
       ledger "$row" blocked "$c" "fix attempt $attempt ended without landing ($logroot/fixer-$name.out); worktree $dir left as it was"
-      stuck "$c" "$row: the fixing agent of attempt $attempt ended without landing" "Pieces: $pieces. Brief: $brief. Agent output: $logroot/fixer-$name.out. Its worktree, left as it was: $dir."
+      stuck "$c" "$row: the fixing agent of attempt $attempt ended without landing" "Pieces: $pieces. Brief: $brief. Agent output: $logroot/fixer-$name.out. Its worktree, left as it was: $dir." "$row" "$items"
+      return 0
     fi
     head_now >/dev/null
     git -C "$dir" merge-base --is-ancestor HEAD origin/main && "$remove" "$dir" >>"$logroot/remove.log" 2>&1 &&
@@ -488,7 +511,7 @@ fix() {
     earlier+="Attempt $attempt landed $landed, and these pieces still fail at it: $pieces. Its brief: $brief; its agent's output: $logroot/fixer-$name.out."$'\n'
     runlog "$row: fix attempt $attempt landed $(short "$landed"), but $pieces still fail"
   done
-  stuck "$c" "$row: $pieces still fail after 3 fix attempts" "$earlier"
+  stuck "$c" "$row: $pieces still fail after 3 fix attempts" "$earlier" "$row" "$items"
 }
 
 # checked_head <C0> <known failures>: records $head as checked, publishes the build of the
@@ -525,12 +548,24 @@ check() {
     done < <([ -s "$known_file" ] && awk '$3 == "skip" { print $1, $2 }' "$known_file")
     all=
     fails=
+    local crashed=
     for k in test bench; do
       f=$(run "$k")
       fails+=$(failed_in "$f" "$k")$'\n'
       for p in $(passed_in "$f" "$k"); do good[$p]=$head; done
       all+="$f "
+      r=$(cat "${f%.out}.rc")
+      [ "$r" -lt 128 ] || crashed+="$k (exit $r) "
     done
+    # The runner itself ended by a signal (tools/run_tests.sh killed, by the kernel's OOM killer
+    # or by hand): the pieces it did not report would read as passing, so the head is not checked;
+    # the next poll runs everything again. (A crashing piece is not this: run_tests.sh reports it
+    # with its rc.) The runs of fails_twice are not checked this way: a runner killed there reads
+    # as the pieces passing, which at worst calls a failure a flake or moves a bisect step.
+    if [ -n "$crashed" ]; then
+      stuck - "the run of every ${crashed% } at $(short "$head") ended by a signal" "The pieces it did not report would read as passing, so $(short "$head") is not checked; the next poll runs everything again. Outputs: $all"
+      return 0
+    fi
     fails=$(sed '/^$/d' <<<"$fails")
     # A failure that $known_file gives a plan row ran like every piece and is reported with its
     # row, but is not run again, bisected or fixed here, and does not keep the head from being
@@ -577,7 +612,28 @@ check() {
       goto "$c0"
       : >"$evidence"
       f=$(inter "$(fails_twice "$fresh")" "$fresh")
-      [ -z "$f" ] || stuck - "$(paste -sd' ' <<<"$f") fail at the last checked commit $(short "$c0") too" "These pieces fail at $(short "$c0"), which passed every test and benchmark when it was checked. Outputs: $(sort -u "$evidence" | paste -sd' ')."
+      if [ -n "$f" ]; then
+        # They existed before the range, so a bisect over it cannot find their cause: filed as
+        # FAIL-main-<C0>, on the known list, and checking goes on without them.
+        local old pieces
+        old=FAIL-main-$(short "$c0")
+        pieces=$(paste -sd' ' <<<"$f")
+        if [ -n "$queue" ]; then
+          known_add "$old" "$f"
+          command grep -a -q "^QUEUE $old " "$queue" 2>/dev/null ||
+            echo "QUEUE $old (filed by main-watch $(ts): $pieces fail at the last checked commit $(short "$c0") too, which passed every test and benchmark when it was checked, so no bisect over $(short "$c0")..$(short "$head") can find their cause; outputs: $(sort -u "$evidence" | paste -sd' '); the row's owner fixes it and takes these pieces' lines out of $known_file)" >>"$queue"
+          runlog "$old: $pieces fail at the last checked commit $(short "$c0") too; queued in $queue and put on $known_file"
+          say "$old: $pieces fail at $(short "$c0") too; queued"
+        else
+          stuck - "$pieces fail at the last checked commit $(short "$c0") too" "These pieces fail at $(short "$c0"), which passed every test and benchmark when it was checked. Outputs: $(sort -u "$evidence" | paste -sd' ')." "$old" "$f"
+        fi
+        for p in $f; do known+="$p ($old) "; done
+        items=$(minus "$items" "$f")
+        if [ -z "$items" ]; then
+          checked_head "$c0" "$known"
+          return 0
+        fi
+      fi
     fi
     # Bisect each group of failures that last passed at the same commit, culprit by culprit.
     for g in $(for p in $items; do echo "${good[$p]:-$c0}"; done | sort -u); do
@@ -588,11 +644,17 @@ check() {
         : >"$evidence"
         c=$(bisect "$g" "$head" "$set")
         # bisect runs in a subshell, so its own failures end only that subshell.
-        [ -n "$c" ] || stuck - "the bisect of $(paste -sd' ' <<<"$set") over $(short "$g")..$(short "$head") named no commit" "Bisect log: $bisect_log."
+        if [ -z "$c" ]; then
+          stuck - "the bisect of $(paste -sd' ' <<<"$set") over $(short "$g")..$(short "$head") named no commit" "Bisect log: $bisect_log." "FAIL-main-$(short "$head")" "$set"
+          break
+        fi
         goto "$c"
         : >"$evidence"
         f1=$(inter "$(fails_twice "$set")" "$set")
-        [ -n "$f1" ] || stuck "$c" "the bisect named $(short "$c") but none of $(paste -sd' ' <<<"$set") fails there twice" "Bisect log: $bisect_log."
+        if [ -z "$f1" ]; then
+          stuck "$c" "the bisect named $(short "$c") but none of $(paste -sd' ' <<<"$set") fails there twice" "Bisect log: $bisect_log." "FAIL-main-$(short "$c")" "$set"
+          break
+        fi
         say "culprit $(short "$c"): $(paste -sd' ' <<<"$f1")"
         fix "$c" "$f1"
         set=$(minus "$set" "$f1")
@@ -606,7 +668,7 @@ check() {
       checked_head "$c0" "$known"
       return 0
     fi
-    head=$(head_now) || stuck - "fetch failed after the fixes" ""
+    head=$(head_now) || { say "fetch failed after the fixes; checking again at the next poll"; return 0; }
   done
 }
 
@@ -625,13 +687,19 @@ fi
 n=0
 while :; do
   n=$((n + 1))
-  head=$(head_now) || exit 2
-  [ -s "$checked_file" ] || stuck - "no checked commit" "main-watch has no last checked commit to count and bisect from. Start it with --start <commit>, a commit at which every test and benchmark passes."
-  c0=$(cut -d' ' -f1 "$checked_file")
-  k=$(landings_in "$c0" "$head" | wc -l)
-  say "poll $n: $k landings since the last checked commit $(short "$c0"), head $(short "$head")"
-  if [ "$k" -ge "$min" ]; then
-    check "$c0" "$head"
+  [ -s "$checked_file" ] || {
+    echo "main-watch: no last checked commit ($checked_file) to count and bisect from; start it with --start <commit>, a commit at which every test and benchmark passes" >&2
+    exit 2
+  }
+  if head=$(head_now); then
+    c0=$(cut -d' ' -f1 "$checked_file")
+    k=$(landings_in "$c0" "$head" | wc -l)
+    say "poll $n: $k landings since the last checked commit $(short "$c0"), head $(short "$head")"
+    if [ "$k" -ge "$min" ]; then
+      check "$c0" "$head"
+    fi
+  else
+    say "poll $n: fetch failed; trying again at the next poll"
   fi
   [ -n "$polls" ] && [ "$n" -ge "$polls" ] && exit 0
   sleep "$poll"

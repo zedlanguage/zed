@@ -49,6 +49,16 @@ if [ -n "${MW_LEAK:-}" ]; then
   echo $! >>"$MW_STATE/leaked"
 fi
 [ ! -e broken/BUILD ] || { echo "BUILD FAILED"; exit 1; }
+# MW_RUNKILL: the runner itself dies of SIGSEGV on its first run of every test, reporting nothing.
+if [ -n "${MW_RUNKILL:-}" ] && [ $# -eq 0 ] && [ "$kind" = test ] && [ ! -e "$MW_STATE/runkilled" ]; then
+  : >"$MW_STATE/runkilled"
+  kill -SEGV $$
+fi
+# MW_DIRTY: a run of named pieces at a commit other than the head changes the tracked file work,
+# which every landing changes, so the watcher's next checkout of another landing fails.
+if [ -n "${MW_DIRTY:-}" ] && [ $# -gt 0 ] && [ -e work ] && [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+  echo dirt >>work
+fi
 [ $# -eq 0 ] || [ ${#names[@]} -gt 0 ] || exit 0
 if [ ${#names[@]} -eq 0 ]; then
   if [ "$kind" = test ]; then mapfile -t names <tests; else mapfile -t names <benches; fi
@@ -58,6 +68,18 @@ for n in "${names[@]}"; do
   echo "$kind $n" >>"$MW_STATE/ran"
   r=0
   [ ! -e "broken/$n" ] || r=1
+  # MW_SEGV=<piece>: that piece, while broken, is killed by SIGSEGV; its rc is 139, as
+  # run_tests.sh reports a piece ended by a signal (128 + the signal).
+  if [ "$r" = 1 ] && [ "$n" = "${MW_SEGV:-}" ]; then
+    bash -c 'kill -SEGV $$' 2>/dev/null
+    r=$?
+  fi
+  # MW_FIRST3=<piece>: that piece fails on its first three runs only (the full run and the two
+  # runs of the check for a flake).
+  if [ "$n" = "${MW_FIRST3:-}" ]; then
+    echo x >>"$MW_STATE/first3"
+    [ "$(wc -l <"$MW_STATE/first3")" -gt 3 ] || r=1
+  fi
   if [ "$n" = t_flaky ] && [ ! -e "$MW_STATE/flaky-ran" ]; then : >"$MW_STATE/flaky-ran"; r=1; fi
   echo "$n rc=$r 1ms load=0 limit=20s wait=0ms"
   [ "$r" = 0 ] || rc=1
@@ -150,7 +172,7 @@ EOF
     MAIN_WATCH_PUBLISH=$t/bin/publish \
     MAIN_WATCH_FIXER=$t/bin/fix MAIN_WATCH_TEMPLATE=$t/template MAIN_WATCH_POLL=0 MAIN_WATCH_POLLS=2 \
     MW_STATE=$t/state
-  unset MW_FIX MW_FIX_BREAK MAIN_WATCH_ZRUN MW_LEAK MAIN_WATCH_QUEUE MAIN_WATCH_MIN
+  unset MW_FIX MW_FIX_BREAK MAIN_WATCH_ZRUN MW_LEAK MAIN_WATCH_QUEUE MAIN_WATCH_MIN MW_SEGV MW_FIRST3 MW_DIRTY MW_RUNKILL
 }
 
 # land <n> [<commits>] [<i>:<piece>]: landing n, pushed from the dev clone, of <commits> commits
@@ -279,35 +301,113 @@ $(breaker b_beta)" "$(opened | sed -n 1,2p)"
       "$([ "$(command grep -a -n ': fixed by' "$t/out" | sed -n 3p | cut -d: -f1)" -lt "$(order '^main-watch: poll 2:')" ] && echo yes)"
     ;;
   failfix)
-    # A fixer that ends without landing leaves the watcher stopped, with the stuck entry.
+    # A fixer that ends without landing: the case is recorded, its pieces join the known list
+    # with its row, and the watcher goes on (author, 2026-11-21: "main_watch should not crash if
+    # a test fails or crashes"); the head is checked with them as known failures.
     setup
     twenty
     export MW_FIX=fail
     watch
-    local a
+    local a b
     a=$(breaker t_alpha)
-    check "failfix: exit 3" 3 "$rc"
+    b=$(breaker b_beta)
+    check "failfix: exit 0" 0 "$rc"
     check "failfix: a stuck line for t_alpha's culprit" 1 "$(command grep -a -c "^stuck $a .* main-watch " "$t/home/main-red.log")"
     check "failfix: the stuck entry" 1 "$(command grep -a -c "^## .* main-watch stuck: FAIL-main-${a:0:9}: the fixing agent of attempt 1 ended without landing" "$t/home/main-watch-stuck.md")"
-    check "failfix: the entry says what it holds up" 1 "$(command grep -a -c '^Holds up: main-watch has stopped' "$t/home/main-watch-stuck.md")"
-    check "failfix: no second poll" - "$(order '^main-watch: poll 2:')"
-    check "failfix: the checked commit is unchanged" "$c0" "$(checked)"
-    check "failfix: one fix attempt" 1 "$(wc -l <"$t/state/fixer.log")"
-    check "failfix: no build is published" "" "$(cat "$t/state/published" 2>/dev/null)"
+    check "failfix: the entry says what it holds up" 1 "$(command grep -a -c "^Holds up: FAIL-main-${a:0:9}, whose pieces test:t_alpha main-watch now reports as known failures" "$t/home/main-watch-stuck.md")"
+    check "failfix: both culprits' pieces on the known list with their rows" "test:t_alpha FAIL-main-${a:0:9}
+bench:b_beta FAIL-main-${b:0:9}" "$(cat "$t/home/main-watch-known.txt")"
+    check "failfix: one fix attempt for each culprit" 2 "$(wc -l <"$t/state/fixer.log")"
+    check "failfix: a second poll" yes "$([ "$(order '^main-watch: poll 2:')" != - ] && echo yes)"
+    check "failfix: the head is checked" "$(head_of)" "$(checked)"
+    check "failfix: the checked head's build is published" "$(head_of)" "$(cat "$t/state/published" 2>/dev/null)"
     ;;
   nofix)
-    # Fixers that land but fix nothing: three attempts, then stuck.
+    # Fixers that land but fix nothing: three attempts for each culprit, recorded, then the
+    # watcher goes on with the pieces as known failures.
     setup
     twenty
     export MW_FIX=none
     watch
     local a
     a=$(breaker t_alpha)
-    check "nofix: exit 3" 3 "$rc"
-    check "nofix: three attempts" 3 "$(wc -l <"$t/state/fixer.log")"
+    check "nofix: exit 0" 0 "$rc"
+    check "nofix: three attempts for each of the two culprits" 6 "$(wc -l <"$t/state/fixer.log")"
     check "nofix: stuck after 3 attempts" 1 "$(command grep -a -c "main-watch stuck: FAIL-main-${a:0:9}: test:t_alpha still fail after 3 fix attempts" "$t/home/main-watch-stuck.md")"
-    check "nofix: no second poll" - "$(order '^main-watch: poll 2:')"
-    check "nofix: the checked commit is unchanged" "$c0" "$(checked)"
+    check "nofix: t_alpha on the known list with its row" 1 "$(command grep -a -c -x "test:t_alpha FAIL-main-${a:0:9}" "$t/home/main-watch-known.txt")"
+    check "nofix: a second poll" yes "$([ "$(order '^main-watch: poll 2:')" != - ] && echo yes)"
+    check "nofix: the head is checked" "$(head_of)" "$(checked)"
+    ;;
+  segv)
+    # A piece killed by SIGSEGV is a failing piece (rc=139), bisected and fixed like any other.
+    setup
+    export MW_SEGV=t_gamma
+    for n in $(seq 1 15); do
+      if [ "$n" = 7 ]; then land 7 1 1:t_gamma; else land "$n"; fi
+    done
+    watch
+    check "segv: exit 0" 0 "$rc"
+    check "segv: the piece was killed by SIGSEGV" yes "$(cat "$t/home/main-watch-runs"/*/*-test.out | command grep -a -q '^t_gamma rc=139 ' && echo yes)"
+    check "segv: the culprit is the commit that broke it" "$(breaker t_gamma)" "$(opened)"
+    check "segv: fixed" 1 "$(fixedby | wc -l)"
+    check "segv: the head is checked" "$(head_of)" "$(checked)"
+    ;;
+  runkill)
+    # The runner itself dies of SIGSEGV in the run of every test, reporting nothing: the head is
+    # not checked from that run (its unreported pieces would read as passing); the case is
+    # recorded and the next poll runs everything again and checks the head.
+    setup
+    export MW_RUNKILL=1
+    for n in $(seq 1 15); do land "$n"; done
+    watch
+    check "runkill: exit 0" 0 "$rc"
+    check "runkill: the stuck entry" 1 "$(command grep -a -c "main-watch stuck: the run of every test (exit 139) at $(git -C "$t/repo" rev-parse --short=9 "$(head_of)") ended by a signal" "$t/home/main-watch-stuck.md")"
+    check "runkill: every test ran twice, once per poll" 2 "$(command grep -a -c ' test all$' "$t/state/runs.log")"
+    check "runkill: the head is checked" "$(head_of)" "$(checked)"
+    ;;
+  nottwice)
+    # A piece that fails its first three runs at the head, then passes everywhere: the bisect
+    # names the head, at which it no longer fails twice; recorded, put on the known list, and the
+    # watcher goes on.
+    setup
+    export MW_FIRST3=t_gamma
+    for n in $(seq 1 15); do land "$n"; done
+    watch
+    local h
+    h=$(git -C "$t/repo" rev-parse --short=9 "$(head_of)")
+    check "nottwice: exit 0" 0 "$rc"
+    check "nottwice: the stuck entry" 1 "$(command grep -a -c "main-watch stuck: the bisect named $h but none of test:t_gamma fails there twice" "$t/home/main-watch-stuck.md")"
+    check "nottwice: on the known list with the row of the named commit" "test:t_gamma FAIL-main-$h" "$(cat "$t/home/main-watch-known.txt")"
+    check "nottwice: no culprit" "" "$(opened)"
+    check "nottwice: the head is checked" "$(head_of)" "$(checked)"
+    ;;
+  nobisect)
+    # The bisect's checkout fails (the run left the worktree changed), so the bisect names no
+    # commit: recorded, put on the known list, and the head is checked (queue mode).
+    setup
+    export MW_DIRTY=1 MAIN_WATCH_QUEUE=$t/home/spawn-queue.txt
+    for n in $(seq 1 15); do
+      if [ "$n" = 8 ]; then land 8 1 1:t_gamma; else land "$n"; fi
+    done
+    watch
+    local h
+    h=$(git -C "$t/repo" rev-parse --short=9 "$(head_of)")
+    check "nobisect: exit 0" 0 "$rc"
+    check "nobisect: the stuck entry" 1 "$(command grep -a -c "main-watch stuck: the bisect of test:t_gamma over ${c0:0:9}..$h named no commit" "$t/home/main-watch-stuck.md")"
+    check "nobisect: on the known list with the head's row" "test:t_gamma FAIL-main-$h" "$(cat "$t/home/main-watch-known.txt")"
+    check "nobisect: the head is checked" "$(head_of)" "$(checked)"
+    ;;
+  setuperr)
+    # Setup errors are the only exits, with 2: no checked commit, and a worktree that cannot be
+    # made. Neither is a stuck case.
+    setup
+    for n in $(seq 1 15); do land "$n"; done
+    timeout 50 "$watch" >"$t/out" 2>&1
+    check "setuperr: no checked commit: exit 2" 2 "$?"
+    export MAIN_WATCH_PREPARE=false
+    watch
+    check "setuperr: a worktree that cannot be made: exit 2" 2 "$rc"
+    check "setuperr: no stuck entry" no "$([ -e "$t/home/main-watch-stuck.md" ] && echo yes || echo no)"
     ;;
   clean)
     # Negative control: nothing broken, so no culprit, and the head is checked.
@@ -332,14 +432,30 @@ $(breaker b_beta)" "$(opened | sed -n 1,2p)"
     check "few: the checked commit is unchanged" "$c0" "$(checked)"
     ;;
   old)
-    # A failure that exists at the last checked commit is not bisected; the watcher stops.
+    # A failure that exists at the last checked commit is not bisected: it is recorded as
+    # FAIL-main-<C0>, put on the known list, and the head is checked with it as known.
     setup t_delta
     for n in $(seq 1 15); do land "$n"; done
     watch
-    check "old: exit 3" 3 "$rc"
+    check "old: exit 0" 0 "$rc"
     check "old: no culprit" "" "$(opened)"
     check "old: the stuck entry names the old failure" 1 "$(command grep -a -c "main-watch stuck: test:t_delta fail at the last checked commit" "$t/home/main-watch-stuck.md")"
-    check "old: the checked commit is unchanged" "$c0" "$(checked)"
+    check "old: on the known list as FAIL-main-<C0>" "test:t_delta FAIL-main-${c0:0:9}" "$(cat "$t/home/main-watch-known.txt")"
+    check "old: no fixer ran" 0 "$(cat "$t/state/fixer.log" 2>/dev/null | wc -l)"
+    check "old: the head is checked" "$(head_of)" "$(checked)"
+    ;;
+  oldqueue)
+    # As old, in queue mode: a QUEUE line for FAIL-main-<C0> and a known line, no stuck entry.
+    setup t_delta
+    export MAIN_WATCH_QUEUE=$t/home/spawn-queue.txt
+    for n in $(seq 1 15); do land "$n"; done
+    watch
+    check "oldqueue: exit 0" 0 "$rc"
+    check "oldqueue: the QUEUE line" 1 "$(command grep -a -c "^QUEUE FAIL-main-${c0:0:9} (filed by main-watch .*: test:t_delta fail at the last checked commit" "$t/home/spawn-queue.txt")"
+    check "oldqueue: on the known list as FAIL-main-<C0>" "test:t_delta FAIL-main-${c0:0:9}" "$(cat "$t/home/main-watch-known.txt")"
+    check "oldqueue: the running log names it" 1 "$(command grep -a -c "FAIL-main-${c0:0:9}: test:t_delta fail at the last checked commit" "$t/home/running-log.md")"
+    check "oldqueue: no stuck entry" no "$([ -e "$t/home/main-watch-stuck.md" ] && echo yes || echo no)"
+    check "oldqueue: the head is checked" "$(head_of)" "$(checked)"
     ;;
   known)
     # As old, but main-watch-known.txt gives the failure's owning row: it still runs and is
@@ -439,7 +555,9 @@ bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
     # that test it.
     local m mutants
     mutants=(
-      "stuck-continues|s/^  exit 3\$/  return 0/|failfix"
+      "stuck-exits|s/^\\(  say \"STUCK: .*\\)\$/\\1; exit 3/|failfix"
+      "no-park|s/^  known_add \"\\\$row\" \"\\\$items\"\$/  :/|failfix"
+      "no-crash-check|s/^      \\[ \"\\\$r\" -lt 128 \\] .*crashed+=.*\$/      :/|runkill"
       "no-flake-rerun|s/if \\[ -z \"\\\$(fails_twice \"\\\$p\"/if false \\&\\& [ -z \"\$(fails_twice \"\$p\"/|two"
       "no-git-bisect|s/rev-list --count \"\\\$prev..\\\$c\")\" -gt 1/rev-list --count \"\$prev..\$c\")\" -gt 999/|two"
       "fixer-not-awaited|s/^      \"\\\$MAIN_WATCH_FIXER\" \"\\\$brief\" \"\\\$dir\" >\\(.*\\) 2>&1\$/      ( sleep 3; \"\$MAIN_WATCH_FIXER\" \"\$brief\" \"\$dir\" ) >\\1 2>\\&1 \\&/|two"
@@ -463,7 +581,7 @@ bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
   esac
 }
 
-all_cases="two zrun fixbreak failfix nofix clean few old known skip queue reap build controls"
+all_cases="two zrun fixbreak failfix nofix segv runkill nottwice nobisect setuperr clean few old oldqueue known skip queue reap build controls"
 for c in ${@:-$all_cases}; do run_case "$c"; done
 echo "checks failed: $fails"
 [ "$fails" = 0 ]
