@@ -5206,8 +5206,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // second such round, while folds whose depth is proved bounded, transitions across
         // distinct constructors and rotations of arrays, ranges, maps, functions, or
         // pre-fold type variables settle.
-        // Tested: tests/steps/l03_02_map_run/folds.rs, tests/steps/l03_02_map_run/types.rs,
-        // and the unit tests of zedc_types::forms.
+        // Tested: tests/steps/l03_02_map_run/folds.rs, tests/steps/l03_02_map_run/types.rs
+        // (`a_growing_accumulator_is_refused_with_a_repair_in_its_own_form`), bench.rs
+        // (`a_tuple_accumulator_settling_in_three_rounds_checks_in_linear_time`), and the unit
+        // tests of zedc_types::forms.
         use zedc_types::forms::{FormId, Forms, RootTag};
         let mut acc = init.carriers();
         let mut known_vars: HashSet<Arc<str>> = HashSet::new();
