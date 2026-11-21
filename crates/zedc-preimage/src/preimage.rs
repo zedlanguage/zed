@@ -5842,8 +5842,8 @@ impl<'t> Tx<'t> {
     /// same kind, the same constant or name, primitive (by its discriminant, which names it,
     /// every [`Prim`] variant holding no data) and parts of the same forms, part by part; a
     /// literal of another kind, a lambda, a primitive as a value, a `Node::Follow` and a
-    /// `Node::Other` are their own form. So by induction on the form the two compute the same in the scope
-    /// `e`. An unbound name reads no binding, and [`ROOT`] binds no name (it is
+    /// `Node::Other` are their own form. So by induction on the form the two compute the same
+    /// in the scope `e`. An unbound name reads no binding, and [`ROOT`] binds no name (it is
     /// `Scope::new()`, and [`Tx::bind`] makes a new scope), so it is unbound there too and is
     /// read as the same input, every read of an unbound name reading only the name.
     /// Complexity tradeoff: one step through a name, not to the end of a chain of names as

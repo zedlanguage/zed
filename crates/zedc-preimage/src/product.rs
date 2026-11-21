@@ -15822,8 +15822,8 @@ impl Scope {
     // |due| + 3 Σ_n W(n) + P (F0 + 3 Σ_n C(n)) + P (M + P (M + 1)).
     // (b) reads `project_part` as exact at the leaf, which it is where it records no refusal
     // (Lemma E at [`Scope::record`]); a refused projection keeps the box stage's bounds, may
-    // move the leaf again, and is not covered here. That `cover` reads only those fields is read from
-    // `cover_staircase`, `cover_rays` and `ray_high`, not tested. No test counts pops, so a
+    // move the leaf again, and is not covered here. That `cover` reads only those fields is read
+    // from `cover_staircase`, `cover_rays` and `ray_high`, not tested. No test counts pops, so a
     // bound broken by a later edit would show only as time.
     // Tests:
     // `l01_39_scope_relations::nests::two_parts_that_pass_a_bound_back_and_forth_reach_the_empty_scope`
