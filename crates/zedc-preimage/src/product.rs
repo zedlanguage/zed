@@ -9438,7 +9438,7 @@ impl Scope {
     ///
     /// Never coarser at a leaf that is not stale (row PROOF-product-lazy-not-coarser,
     /// 2026-11-21). At such a leaf [`Scope::settled`] returns [`Scope::get`] (it settles only
-    /// when [`Scope::stale`] names a block), so the claim is `lazy.get(a) ⊆ eager.get(a)`.
+    /// when `Scope::stale` names a block), so the claim is `lazy.get(a) ⊆ eager.get(a)`.
     /// The argument, over a sequence of tests, joins and bindings applied to both scopes:
     /// 1. Tests. Both scopes write the same conjuncts (A1), and every name that is not a
     ///    leaf holds the same product in both, by the paragraph above (a leaf's projection
