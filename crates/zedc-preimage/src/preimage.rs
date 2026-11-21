@@ -4164,8 +4164,9 @@ type CallKey = (At, Vec<Lin>, Vec<(Set, u32)>);
 /// when no argument may fail (`k.2` empty), none otherwise. A literal never fails, so bound
 /// for an argument that may, `(x mod n) * 0` with term `0`, it would drop the argument's
 /// `#divByZero` at `n = 0` from the body, and `f(positional a) = a == 0` would give `true`
-/// there (red before: `l01_38_presburger::ladder::a_call_with_an_argument_that_may_fail_is_read_at_its_place`
-/// was proved). O(1).
+/// there. Red before, proved where it must be refuted:
+/// `l01_38_presburger::ladder::a_call_with_an_argument_that_may_fail_is_read_at_its_place`.
+/// O(1).
 fn literal_terms(k: &CallKey) -> &[Lin] {
     if k.2.is_empty() { &k.1 } else { &[] }
 }
@@ -7076,7 +7077,8 @@ impl<'m, 't> Walk<'m, 't> {
     /// or `based`, or [`cls_zip`] of two `Same` roots, which gives the one range `(0, n)`,
     /// built by [`cls_build`] as one `Same` leaf. (`pa_line` returns `None` in every split
     /// run, the same in each class.)
-    /// Test: `l01_25_preimage_catalog::s22::remainder_chains_outside_the_shared_summary_keep_their_preimages`
+    /// Test:
+    /// `l01_25_preimage_catalog::s22::remainder_chains_outside_the_shared_summary_keep_their_preimages`
     /// reads such terms below remainder guards in split runs; it cannot catch a new arm of
     /// `by_class_node` that splits the classes on a term that reads no remainder.
     fn reads_mod(&'m self, t: Tid, env: Eid) -> Deep<'m, bool> {
