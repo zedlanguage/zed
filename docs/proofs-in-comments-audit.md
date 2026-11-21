@@ -61,3 +61,32 @@ The third pass, row DOC-proofs-in-comments-audit-rest-2, reads those:
 The rows filed for what this pass left open are listed in docs/plan_dag.md under row
 DOC-proofs-in-comments-audit-rest-2. The entries not read, and the 361 read only through
 filters, are row DOC-proofs-in-comments-audit-rest-3.
+
+The fourth pass, row DOC-proofs-in-comments-audit-rest-3, reads those 808 entries and the four
+claims proofdoc3b met and did not check (84ed8e51d `Walk::get_key`, 3cdd34f55 `Tx::invert_sep`,
+305ad0293 `Sig::standing_twice`, 4e6c5bfaa `type_var_form`). Every entry is read in full but
+the crate splits, whose moved comment lines were read for claims only:
+
+- [proofdoc4](proofs-audit/proofdoc4.md): one table, a section per helper (proofdoc4a and
+  proofdoc4e: zedc-presburger; proofdoc4b: zedc-preimage, `get_key`, `invert_sep`; proofdoc4c:
+  zedc-types, `standing_twice`; proofdoc4d: zedc-check; proofdoc4f: zed-kernel, zedc-elab,
+  zedc-base; proofdoc4g: the moved commits, zedc-solvers, zedc-int, the small crates,
+  `type_var_form`).
+
+| Section | Entries read | Claims found | Already there | Added or completed | Marked unproved | Corrected |
+|---|---|---|---|---|---|---|
+| proofdoc4a | 108 of 108 | 116 | 64 | 42 | 3 | 0 |
+| proofdoc4b | 85 of 85 | 471 | 188 | 198 | 32 | 38 |
+| proofdoc4c | 129 of 129 | 107 | 94 | 9 | 3 | 1 |
+| proofdoc4d | 153 of 153 | 243 | 179 | 42 | 9 | 13 |
+| proofdoc4e | 90 of 90 | 152 | 100 | 38 | 0 | 11 |
+| proofdoc4f | 145 of 145 | 238 | 150 | 78 | 2 | 8 |
+| proofdoc4g | 99 of 99 | 108 | 83 | 18 | 1 | 6 |
+| Total | 809 | 1435 | 858 | 425 | 50 | 77 |
+
+25 of the claims found are counted in no column (code gone, left to another crate's section,
+or at a site another agent was editing); each is named in its section. Code faults found by a
+test that failed first and fixed in this pass include FAIL-reorder-union-slot (zedc-check),
+FAIL-carriers-empty-tuple-flat (zed-kernel) and the five zedc-preimage faults of proofdoc4b's
+section. The rows filed for what this pass left open are in docs/plan_dag.md, each beginning
+"Filed by proofdoc4 (DOC-proofs-in-comments-audit-rest-3", and FAIL-msg-named-reads-program-text.

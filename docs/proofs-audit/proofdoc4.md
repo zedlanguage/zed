@@ -19,18 +19,33 @@ line it added in that crate, in context. Then the code that relies on each claim
 is today, at its current site, which may have moved since the commit. Each claim a verdict rests
 on ends in one of three states. It is proved at its site, every step in a comment. Or it is
 broken by a program, and fixed with a test that fails first. Or it is marked Not proved at the
-site, with the open sub-case. The 808 entries are split over seven helpers, each with its own
-section below, its own worktree and its own merges. Lists: /home/luke/Work/wt/proofdoc4-lists/.
+site, with the open sub-case. The 808 entries are split over seven sections below, one for each
+helper, each with its own worktree and its own merges (proofdoc4e's part 4 was merged from
+the tree proofdoc4e2, proofdoc4f's part 5 from the tree proofdoc4f5). Lists:
+/home/luke/Work/wt/proofdoc4-lists/.
 
-| Section | Entries | Entries read | Claims found | Already there | Added or completed | Marked unproved | False |
+Every entry is read. The counts below are copied from the table at the top of each section.
+"Corrected" counts false claims: comments fixed, and code faults fixed with a test that fails
+first. A claim is counted once. In three sections some claims are counted in no column, each
+named in its section: proofdoc4a 7 and proofdoc4e 3 whose code is gone, proofdoc4b 15 (7 left
+to other crates' sections, 2 whose code is gone, 5 at sites another agent was editing, 1 that
+states no claim). The entries total 809: the 808 lines of the lists and the `type_var_form`
+claim of 4e6c5bfaa, which proofdoc4g counts as an entry; the other three claims are counted
+with the crate entries of proofdoc4b and proofdoc4c.
+
+| Section | Entries | Entries read | Claims found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|---|
-| proofdoc4a | zedc-presburger, first 108 | | | | | | |
-| proofdoc4b | zedc-preimage 85, `get_key`, `invert_sep` | | | | | | |
-| proofdoc4c | zedc-types 129, `standing_twice` | | | | | | |
-| proofdoc4d | zedc-check 153 | | | | | | |
-| proofdoc4e | zedc-presburger, last 90 | | | | | | |
-| proofdoc4f | zed-kernel 62, zedc-elab 44, zedc-base 39 | | | | | | |
-| proofdoc4g | moved 39, zedc-solvers 18, zedc-int 16, the 25 in small crates, `type_var_form` | | | | | | |
+| proofdoc4a | zedc-presburger, first 108 | 108 | 116 | 64 | 42 | 3 | 0 |
+| proofdoc4b | zedc-preimage 85, `get_key`, `invert_sep` | 85 | 471 | 188 | 198 | 32 | 38 |
+| proofdoc4c | zedc-types 129, `standing_twice` | 129 | 107 | 94 | 9 | 3 | 1 |
+| proofdoc4d | zedc-check 153 | 153 | 243 | 179 | 42 | 9 | 13 |
+| proofdoc4e | zedc-presburger, last 90 | 90 | 152 | 100 | 38 | 0 | 11 |
+| proofdoc4f | zed-kernel 62, zedc-elab 44, zedc-base 39 | 145 | 238 | 150 | 78 | 2 | 8 |
+| proofdoc4g | moved 39, zedc-solvers 18, zedc-int 16, the 25 in small crates, `type_var_form` | 99 | 108 | 83 | 18 | 1 | 6 |
+| Total | 808 lines and `type_var_form` | 809 | 1435 | 858 | 425 | 50 | 77 |
+
+The rows filed for what this pass left open are in docs/plan_dag.md, each beginning "Filed
+by proofdoc4 (DOC-proofs-in-comments-audit-rest-3", and FAIL-msg-named-reads-program-text.
 
 ## proofdoc4a: zedc-presburger, first 108 entries
 
@@ -672,7 +687,7 @@ chain cost) and were not edited here; one,
 
 No code claim: 0e8df04e7, 23c5a37c0, 9e3cc1480.
 
-Not read:
+Not read: none.
 
 ## proofdoc4c: zedc-types, and `Sig::standing_twice`
 
@@ -816,7 +831,7 @@ wording), 8412a61b4 and b5317f47c (tests only), 29bf6b297, 3e597380e, 4abfd2ae1 
 checks are zedc-check's), bd7d5aa55 (the crate split: comments moved unchanged, read under the
 entries that wrote them), c1dfb00f7 (coverage tests), d6a84bc7c (the naming is zedc-check's).
 
-Not read:
+Not read: none.
 
 ## proofdoc4d: zedc-check
 
@@ -1112,7 +1127,7 @@ only a test helper calls `zed_numtheory::is_prime`), 275d434e7 (its one claim is
 aea083d67, c8fa18353 (message wording), dd8b42f68 (repair wording), eb156f28d (`Info::ints`
 is a definition).
 
-Not read:
+Not read: none.
 
 ## proofdoc4e: zedc-presburger, last 90 entries
 
@@ -1531,7 +1546,7 @@ lines read.
 | f48ec1bf4 | Only `Atoms::set` and the `Drop` of `take_names` write `names` | `types.rs`, `mod atoms` | already there; the accessor changes of the rest make no claim |
 | f48ec1bf4 | `zip`'s clone arm keeps `cofinite` | `types.rs`, `Atoms::zip` | added: `cofinite == large.cofinite` there |
 | f48ec1bf4 | `take_names` leaves the map empty only where no read follows | `types.rs`, `Atoms::take_names` | added: its one caller is `Drop for Node` |
-| ddc1ec274 | The flat meet of the carriers is empty unless each holds a cofinite atom set, a scalar, a bare atom or a struct | `types/empty.rs`, `disjoint_top_carriers_depth0` | corrected: `()` is a flat value too and the length test below starts at 1, so `top & ()` was called disjoint; test `the_empty_tuple_is_shared_by_the_carrier_test` red (ts=[top, ()]), a type whose length-0 tuple part is not empty now counts as holding a flat value, green; proof of the rest at the site |
+| ddc1ec274 | The flat meet of the carriers is empty unless each holds a cofinite atom set, a scalar, a bare atom or a struct | `types/empty.rs`, `disjoint_top_carriers_depth0` | corrected: `()` is a flat value too and the length test below starts at 1, so `top & ()` was called disjoint (FAIL-carriers-empty-tuple-flat); test `the_empty_tuple_is_shared_by_the_carrier_test` red (ts=[top, ()]), a type whose length-0 tuple part is not empty now counts as holding a flat value, green; proof of the rest at the site |
 | ddc1ec274 | `flat_tuple_subtrahend` gives the part of a flat tuple type a difference takes away | `types/empty.rs`, `flat_tuple_subtrahend` | added |
 | ddc1ec274 | The flat difference decided by Boolean equations is exact | `types/empty.rs`, `exact_flat_diff_decide` | added |
 | ddc1ec274 | The Horn solution gives a witness | `types/empty.rs`, the Horn witness | added |
