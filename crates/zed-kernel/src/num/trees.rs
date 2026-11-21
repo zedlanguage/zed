@@ -27,13 +27,15 @@
 //! the identity of P. Bürgisser, M. Clausen, and M. A. Shokrollahi, *Algebraic Complexity Theory*,
 //! Springer, 1997, doi:10.1007/978-3-662-03338-8, pp. 77-78, as stated in D. J. Bernstein, "Fast
 //! multiplication and its applications", in *Algorithmic Number Theory*, MSRI Publications 44,
-//! Cambridge University Press, 2008, pp. 325-384, <https://cr.yp.to/lineartime/multapps-20080515.pdf>
-//! (checked 2026-11-20 against Bernstein's PDF, §23.7, p. 372, and Crossref for BCS 1997):
+//! Cambridge University Press, 2008, pp. 325-384,
+//! <https://cr.yp.to/lineartime/multapps-20080515.pdf> (checked 2026-11-20 against Bernstein's
+//! PDF, §23.7, p. 372, and Crossref for BCS 1997):
 //! let `S = sum_{i=0}^{k-1} (P / m_i)`, built bottom-up by [`linear_combination_up`] with weight 1
 //! at each leaf. For any fixed `j` and every `i != j`, `m_j` divides `P / m_i` (no coprimality
 //! needed, even when leaves are equal or share factors), so `S == P / m_j (mod m_j)`. One scaled
 //! remainder tree [`remainders`]`(&S, leaves, levels)` then gives `(P / m_j) mod m_j` for every
-//! leaf while keeping every intermediate integer at width `bits(v)` rather than `bits(v^2) = 2 bits(v)`.
+//! leaf while keeping every intermediate integer at width `bits(v)` rather than
+//! `bits(v^2) = 2 bits(v)`.
 //! Tests: `the_cofactors_agree_with_division` and
 //! `the_scaled_remainders_and_cofactors_agree_past_ntt_width`.
 //!
@@ -607,9 +609,9 @@ mod tests {
     }
 
     /// Moduli 2, 4, .., 2^k (the shape of `pncx_power_propagation_scale`) and odd moduli, with
-    /// `x mod P` just under, at and just over 7/8 of the width of `P` (the switch), so both the exact descent
-    /// and the scaled tree run; each against one division a leaf. The cost of the short case is
-    /// measured by that bench (it times out without the exact descent).
+    /// `x mod P` just under, at and just over 7/8 of the width of `P` (the switch), so both the
+    /// exact descent and the scaled tree run; each against one division a leaf. The cost of the
+    /// short case is measured by that bench (it times out without the exact descent).
     #[test]
     fn the_remainders_of_a_short_x_take_the_exact_descent() {
         let powers: Vec<BigUint> = (1..=60u32).map(|i| BigUint::one() << i).collect();

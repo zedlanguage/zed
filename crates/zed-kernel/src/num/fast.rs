@@ -1627,8 +1627,9 @@ pub fn mul_int(a: &BigInt, b: &BigInt) -> BigInt {
 /// than two separate products, the sum is formed in the transform domain (five transforms in place
 /// of six, one Garner pass, and no separate big-integer addition; D. J. Bernstein, "Fast
 /// multiplication and its applications", in *Algorithmic Number Theory*, MSRI Publications 44,
-/// Cambridge University Press, 2008, pp. 325-384, <https://cr.yp.to/lineartime/multapps-20080515.pdf>,
-/// §11.7 p. 347 "FFT addition", checked 2026-11-20 against the author's PDF; no DOI); otherwise
+/// Cambridge University Press, 2008, pp. 325-384,
+/// <https://cr.yp.to/lineartime/multapps-20080515.pdf>, §11.7 p. 347 "FFT addition", checked
+/// 2026-11-20 against the author's PDF; no DOI); otherwise
 /// [`mul`] is called twice. Both give the same sum. Test:
 /// `num::fast::tests::mul_add_pair_agrees_with_separate_products`.
 pub(super) fn mul_add_pair(v0: &BigUint, p1: &BigUint, v1: &BigUint, p0: &BigUint) -> BigUint {
@@ -1692,7 +1693,8 @@ pub(super) fn hold_roots() -> HoldRoots {
 /// remainder trees", 2004, Section 2), satisfying `|S / 2^f - u / p| < 1.5 / 2^f` for `0 <= u < p`
 /// and `p >= 2`, `f >= bits(p) + 4`.
 ///
-/// Below or at [`RECIP_LEAF`] bits, exact floor division `floor(u * 2^f / p)` has error `< 1 / 2^f`.
+/// Below or at [`RECIP_LEAF`] bits, exact floor division `floor(u * 2^f / p)` has error
+/// `< 1 / 2^f`.
 /// Above [`RECIP_LEAF`], [`approx_reciprocal`] on `p' = p * 2^(k - n)` (`n = bits(p)`, `k = f + 2`)
 /// gives `X` with `p' X < 2^(2k) <= p' (X + 2)`, so `0 < 2^(f + n + 2) / p - X <= 2`; then
 /// `S = floor(u X / 2^(n + 2))` satisfies `0 <= S < 2^f` (as `u < p` implies `u X < 2^(f + n + 2)`)
@@ -1852,14 +1854,16 @@ fn rounded_window_words(y: &[u64], f: u64, e: u64) -> BigUint {
 /// be within `1/2` of `Y / 2^(f - e)`, and `R = Z mod 2^e`. Modulo `Z`:
 ///
 /// - `|R / 2^e - Y / 2^f| <= 1 / 2^(e + 1) <= 1 / (16 l P)`;
-/// - `|Y / 2^f - Y / (2^f - 1)| = Y / (2^f (2^f - 1)) <= 1 / 2^f <= 1 / (8 l P Q) <= 1 / (16 l P)` (as `Q >= 2`);
+/// - `|Y / 2^f - Y / (2^f - 1)| = Y / (2^f (2^f - 1)) <= 1 / 2^f <= 1 / (8 l P Q) <= 1 / (16 l P)`
+///   (as `Q >= 2`);
 /// - `Y / (2^f - 1) == Q * sv / (2^f - 1) (mod Z)`;
 /// - `|Q * sv / (2^f - 1) - Q * sv / 2^f| = Q * sv / (2^f (2^f - 1)) <= Q / 2^f <= 1 / (8 l P)`.
 ///
 /// Summing gives `dist(R / 2^e - Q * sv / 2^f, Z) <= (1/16 + 1/16 + 1/8) / (l P) = 1 / (4 l P)`.
 /// For Theorem 2.1 (`!use_ntt`, `Y = (Q * sv) mod 2^f`), only the rounding term `1 / 2^(e + 1)
 /// <= 1 / (16 l P) < 1 / (4 l P)` appears. Thus if parent error `< (l + i) / (4 l P Q)`, then
-/// multiplying by `Q` gives `< (l + i) / (4 l P)` and adding `1 / (4 l P)` gives `< (l + i + 1) / (4 l P)`.
+/// multiplying by `Q` gives `< (l + i) / (4 l P)` and adding `1 / (4 l P)` gives
+/// `< (l + i + 1) / (4 l P)`.
 ///
 /// Tests: `num::fast::tests::scaled_root_and_children_preserve_precision`,
 /// `num::trees::tests::the_remainders_agree_with_one_division_a_leaf`,
