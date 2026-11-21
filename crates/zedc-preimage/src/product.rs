@@ -9428,16 +9428,25 @@ impl Scope {
     /// before a constraint on another term of its names is not due again, and keeps the
     /// coarser product (`Scope::refresh`, seed 22671 of `l01_39_scope_relations::lazy`).
     /// So "gives the eager product" above is to be read as "gives the eager product or one
-    /// below it": at a settled leaf the two are equal or the settled one is finer, never
-    /// coarser. Both are sound, since settling only meets the leaf with the projection of a
+    /// below it": at a settled leaf the two are equal or the settled one is finer, and
+    /// coarser only after a refused projection of the leaf's block (next paragraph but one).
+    /// Both are sound, since settling only meets the leaf with the projection of a
     /// star of conjuncts the scope holds and with [`Scope::reduce`]'s reductions, each a meet
     /// with what the relation implies. The star's projection onto its hubs is
     /// [`Conjuncts::star`] in zedc-presburger `conjuncts.rs`, argued there. Test:
     /// `l01_39_scope_relations::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction::the_eager_join_is_as_tight_as_the_lazy_one_at_these_seeds`
     /// (seeds 116, 237, 272, 2220, 22490, 22671).
     ///
-    /// Never coarser at a leaf that is not stale (row PROOF-product-lazy-not-coarser,
-    /// 2026-11-21). At such a leaf [`Scope::settled`] returns [`Scope::get`] (it settles only
+    /// Never coarser at a leaf that is not stale, while no projection of the leaf's block has
+    /// been refused (rows PROOF-product-lazy-not-coarser and PROOF-product-lazy-a1-a4,
+    /// 2026-11-21). A refusal breaks it: the eager scope keeps what it met in from a
+    /// projection made before the refusal, which the lazy scope, its leaf stale then, never
+    /// made, and after the refusal both hold only what single constraints give (test
+    /// `l01_39_scope_relations::lazy::a_refused_projection_can_leave_the_lazy_leaf_coarser`:
+    /// `a` eagerly `[-5, ∞)`, lazily `[-15, ∞)` and not stale). Both are sound and both
+    /// warn, so the coarser answer is reported. Keeping it from happening would mean
+    /// projecting the leaf at each move of a hub, the `k²` cost the lazy scope exists to
+    /// avoid. At such a leaf [`Scope::settled`] returns [`Scope::get`] (it settles only
     /// when `Scope::stale` names a block), so the claim is `lazy.get(a) ⊆ eager.get(a)`.
     /// The argument, over a sequence of tests, joins and bindings applied to both scopes:
     /// 1. Tests. Both scopes write the same conjuncts (A1), and every name that is not a
@@ -9466,11 +9475,24 @@ impl Scope {
     ///    needs, for a part recorded projected in the joined scope, that it was projected at
     ///    products no wider than the joined ones (A3).
     ///
+    /// A2 for an exact projection, proved: a projection reads a part's conjuncts `C` and the
+    /// products `P` of its names, and gives the set `π_a(C ∧ P)` of values of `a` at the
+    /// integer points that meet both. Narrower products and more conjuncts (`C' ⊇ C`, each
+    /// product of `P'` within that of `P`) give a subset of those points, so `π_a(C' ∧ P') ⊆
+    /// π_a(C ∧ P)`: the image of a subset is a subset. A meet of such projections is monotone
+    /// too, since a meet is monotone in each argument. The test above checks the claim right
+    /// up to the refusal (the settled lazy `a` equals the eager one there).
+    ///
     /// Not proved (row PROOF-product-lazy-not-coarser): A1, that the two scopes hold the same
     /// conjuncts (true of the written tests; not checked for the conjuncts that reduction
-    /// adds); A2, that the projection is monotone, which holds of an exact projection, and
-    /// of a meet of monotone ones, but is not proved for the projection one disjunction at
-    /// a time (S16) or for the hulls; A3, the record of projected parts across a join; A4,
+    /// adds); A2 for a projection that is not exact but not refused: the projection one
+    /// disjunction at a time (S16) and the hulls. Such a projection can depend on the order
+    /// of the tests: `x - n >= 0`, `x + m >= 0`, `n - m >= -6 || n <= -8` and `n - m >= -8
+    /// || n - m >= -6` give `x` in `[-3, ∞)`, the exact answer, in that order, and `[-4, ∞)`
+    /// with the two disjunctions first, eagerly and lazily alike. Across all 720 orders of
+    /// those four tests, `x - n - m >= -20` and `n >= -50`, the lazy and eager scopes
+    /// agreed at `x` in every one (probe of 2026-11-21, not kept as a test). A3, the record
+    /// of projected parts across a join; A4,
     /// that an eager projection due only by the leaf's own product reads no constraint on
     /// another term added after the lazy scope's last projection. Tests:
     /// `Case::eager_join` in `l01_39_scope_relations::lazy` checks the eager and lazy joins

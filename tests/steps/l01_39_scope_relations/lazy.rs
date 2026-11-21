@@ -1276,3 +1276,72 @@ fn points_asked_after_a_disjunction_scale() {
         });
     }
 }
+
+/// `Σ c·s + k >= 0`.
+fn linear(terms: &[(&str, i64)], k: i64) -> Term {
+    let sum = terms.iter().fold(int(k), |t, (s, c)| {
+        prim(Prim::Add, t, prim(Prim::Mul, int(*c), var(s)))
+    });
+    prim(Prim::Ge, sum, int(0))
+}
+
+/// The lazy scope can be coarser than the eager one at a leaf that is not stale, once a
+/// projection of the leaf's block is refused (row PROOF-product-lazy-a1-a4; the narrowed
+/// claim is at [`Scope::lazy`]). `a - n - m >= 0` and `n + 2m >= 0` make `a` a leaf of the
+/// two hubs `n` and `m`. At `n >= -10` the eager scope projects the star exactly: the least
+/// `a` is the least `n + m` with `m >= -n/2`, which is at least `n/2 >= -5`, so `a >= -5`;
+/// the lazy scope leaves `a` stale. At `n <= 10` the eager scope projects again, and `m >=
+/// -5` comes from `n + 2m >= 0` alone. Then a system of four constraints among `n`, `m`,
+/// `y`, `z` joins the block; the solver refuses its projection, since removing any of the
+/// four names would leave more constraints than there are (the warning says "the work could
+/// grow without end"). Both scopes now project `a`'s block,
+/// both are refused and warn, and both keep what single constraints give: `a >= n + m >=
+/// -10 + -5 = -15`. The eager scope keeps `-5`, met in at `n >= -10`; the lazy scope never
+/// made that projection, so it holds `[-15, ∞)`, and `a` is not stale (`get` equals
+/// `settled`). Both are sound. The ordering is a construction, not a draw.
+#[test]
+fn a_refused_projection_can_leave_the_lazy_leaf_coarser() {
+    let p = Premises::new();
+    let ge = |x: &str, v: i64| prim(Prim::Ge, var(x), int(v));
+    let refused = |x: &str, w: &str, y: &str, z: &str| {
+        and(
+            and(
+                linear(&[(x, 4), (w, -12), (y, -10), (z, -12)], 11),
+                linear(&[(w, 4), (x, 10), (y, -10), (z, -11)], -28),
+            ),
+            and(
+                linear(&[(w, 11), (x, 4), (y, -1), (z, 12)], -28),
+                linear(&[(w, -8), (x, -5), (y, 12), (z, -1)], 31),
+            ),
+        )
+    };
+    let before = [
+        sum3("a", "n", "m", 0, false),
+        linear(&[("n", 1), ("m", 2)], 0),
+        ge("n", -10),
+        prim(Prim::Le, var("n"), int(10)),
+        ge("y", -100),
+        ge("z", -100),
+    ];
+    let a = Arc::<str>::from("a");
+    let s = ints(&names(&["a", "n", "m", "y", "z"]));
+    let run = |s: Scope, ts: &[Term]| ts.iter().fold(s, |s, t| s.assume(t, true, &p));
+    let (e, l) = (run(s.clone(), &before), run(s.clone().lazy(), &before));
+    // Before the refusal the two agree once settled, as the narrowed claim says.
+    assert_eq!(e.get("a").ints().to_string(), "[-5..]");
+    assert_eq!(l.settled(&a), e.get("a"));
+    assert!(e.warnings().is_empty() && l.warnings().is_empty());
+    let last = [refused("n", "m", "y", "z")];
+    let (e, l) = (run(e, &last), run(l, &last));
+    for s in [&e, &l] {
+        let ws: Vec<String> = s.warnings().iter().map(|w| w.to_string()).collect();
+        assert!(
+            ws.iter()
+                .any(|w| w.contains("the work could grow without end")),
+            "{ws:?}"
+        );
+    }
+    assert_eq!(e.get("a").ints().to_string(), "[-5..]");
+    assert_eq!(l.get("a"), l.settled(&a), "the lazy leaf is not stale");
+    assert_eq!(l.get("a").ints().to_string(), "[-15..]");
+}
