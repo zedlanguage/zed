@@ -185,13 +185,14 @@ fn float_comparisons_are_not_read_as_integer_comparisons() {
 
 #[test]
 fn div_and_mod_do_not_take_floats() {
-    for op in ["div", "mod"] {
+    // `mod` on a float is its own row, repaired by `floatMod` (QUESTIONS A174).
+    for (op, head) in [
+        ("div", "`div` does not take (f64, f64)"),
+        ("mod", "`mod` takes ints: `a : f64 mod b : f64`"),
+    ] {
         let src = ok("a, b", "f64", &format!("a {op} b == a {op} b"));
         let errors = elab(&src).expect_err(&src);
-        assert!(
-            errors[0].starts_with(&format!("`{op}` does not take (f64, f64)")),
-            "{errors:?}"
-        );
+        assert!(errors[0].starts_with(head), "{errors:?}");
     }
 }
 
