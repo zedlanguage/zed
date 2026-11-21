@@ -16080,14 +16080,75 @@ impl Placing {
 /// read, so a ring of k types costs each type that reaches it the nodes it shares with other
 /// types. The work is the size of the tries read times the log of the keys, and each child of
 /// a merged node moves O(log n) times.
-/// Not proved (PROOF-kernel-overlaps-cover): that every value of a type lies under a key, a
-/// cofinite list or a whole the walk places for that type, in every case of `Parts` (atoms
-/// with payloads, each tuple length, morphisms, the literal universes) and with the lazy
-/// reads of [`Placing`]; the sketches below and the random tests check it, a proof is open.
-/// Not proved (PROOF-kernel-overlaps-order): that the classes do not depend on the order of
-/// `ts`. The proof at the Π_sym runs below covers reversing the components of every tuple, not
-/// reordering `ts`. What is proved and what is open, against `joined` with its two shortcuts
-/// off (the reference run, `NO_SHORTCUTS` in tests):
+/// Proof that two types that share a value are joined (PROOF-kernel-overlaps-cover), for the
+/// run without shortcuts; the shortcuts give that run's classes (the order proof below). A
+/// run follows one path per value: an atom by its name, then its payload; a tuple by its
+/// length, then its component `0` (`dir = 0`) or its last (`dir = 1`). Facts, each read off
+/// the code:
+/// - (F1) One trie holds every cell. A child is found by edge among the children of the class
+///   root (`Trie::child`; `trie.kids[x].get(e)` in [`Placing::read`]), and `Trie::merge_with`
+///   moves the merged node's children to the root, merging two children of one edge. So a
+///   path of edges from node 0 names at most one class at each step, the same for every cell.
+/// - (F2) [`Placing::read`] of group node `q` of placement `p` at node `x` adds `q`'s points,
+///   lists and whole at `x` for cell `cells[p]`; makes each child edge of `q` a child of `x`
+///   that is, or is merged with (`Work::Merge`), the placement's node for that child; and
+///   queues each type of a lower group at `q` as a `Place` at `x` for the same cell. A `Place`
+///   binds its group node to its node (`Work::Bind`, which reads it) or merges its node with
+///   the one the group node has already. `joined` ends with no work queued.
+/// - (F3) A node waits only when `read` made it, with no children, for the placement whose
+///   child it is; a `Bind`, a `Merge` and a top edge each call `reach` on the node first,
+///   which reads it. So a node that waits at the end has no children and no other placement
+///   or top edge at it.
+/// - (F4) The node of a member `t` in its group holds `local_dir` of `t` (`Walked::make`): per
+///   child edge, `Key::Bare` for a bare atom `t` holds, a whole where `t` holds every value
+///   (the empty tuple, `n == 0`, and a tuple part outside its tuple types, proof at
+///   `local_dir`), and each type inside (a payload, or the component of each tuple type,
+///   proof at `local_dir`) is a member's node, holding its own `local_dir`, or a lower type
+///   queued at the child (`below`). Members merged at one node hold the union: the cofinite
+///   lists' meet, or the finite lists' held keys; a held literal is also a point and a held
+///   name or length also a child edge (`local_dir`), so the finite lists dropped beside a
+///   cofinite one hold only keys found again as points or edges. `quotient` merges nodes of
+///   equal contents and children, which keeps what each holds.
+///
+/// Step 1, the cover, by induction on the depth of the value along its path: a value `v` of a
+/// type placed for cell `i` at a node `x` that is read (F2) lies under one of these of `i`:
+/// a point at `x` of `v`'s key (`Bool`, a held `Lit`, `All(7)` for a struct, `All(8)` for a
+/// morphism); a cofinite list at `x` of `v`'s universe that does not list `v`'s key, so the
+/// final pass gives `i` `All(u)` there (atoms of names and tuples of lengths it does not list
+/// included); or, for an atom of a held name or a tuple of a held length, the child `y` by
+/// that edge with `Key::Bare` or a whole there, or the payload or component in a type placed
+/// at `y` for `i` (F2, F4), by induction under a thing of `i` at or below `y`, or else `y`
+/// waits for `i`'s placement. Then the group node there is `deep` ([`Group::set_deep`]): the
+/// same step over group nodes ends `v` at a key, a cofinite list or a whole of that node, of
+/// one below it, or of a lower group placed there, each of which marks the nodes above deep.
+///
+/// Step 2, the meet. Let `v` lie in the types of cells `i` and `j`, and follow its path from
+/// node 0 (F1). Step 1 gives each an anchor on it:
+/// - Both points of one key at one node: the `first` map joins them.
+/// - A whole at a node `x`: it passes to each child of each node it reaches that does not
+///   wait (`down`), joins the whole there and each point there (the `first` loop). A node on
+///   the path above the other anchor has a child, so it does not wait (F3), and the whole
+///   reaches that anchor: a point or a whole, joined; or a waiting node, deep by step 1, whose
+///   placement is of the other cell (F3), joined (`n.deep`).
+/// - `All(u)` of `i` at `x` from a cofinite list without `v`'s key, and of `j` there a held
+///   key of `u` (a literal, or the name or length edge `v` takes): `j`'s list in `u` at `x`
+///   holds that key (F4), and the key lies outside `i`'s list, so outside the meet `shut`, so
+///   `j` gets `All(u)` at `x` too (cofinite, `j` gets it anyway); joined by `first`.
+/// - A waiting node of `i` on the path: no anchor of `j` lies below it (no children, F3), nor
+///   at it (a `Bind` or top edge there reads it, F3), so `j`'s anchor lies above: a whole, or
+///   `All(u)` with `i`'s edge key held, the two cases above.
+///
+/// Two anchors of different keys at one node are both `All(u)` or one is the key of `v`,
+/// the third case. Tests: `types_that_meet_share_a_class_in_each_case_of_the_parts` (a pair
+/// that meets in each case of `Parts`, in seven places; the seventh fails with the join at a
+/// waiting node taken out, checked 2026-11-21), and the random `types_that_meet_are_joined_*`
+/// tests. They cannot catch a case of `Parts` the code reads and the list leaves out; the
+/// proof does not rest on them.
+///
+/// The classes do not depend on the order of `ts` (PROOF-kernel-overlaps-order). The proof
+/// at the Π_sym runs below covers reversing the components of every tuple; this one covers
+/// reordering `ts`, against `joined` with its two shortcuts off (the reference run,
+/// `NO_SHORTCUTS` in tests):
 /// - Proved: `min_gid[i] > g.id` means no group that `g` reaches, `g` included, is placed for
 ///   cell `i`. `min_gid[i]` is at most the least id of the groups placed for `i` (lowered at
 ///   each placement, and at a cut stem to the stem's own id). A group reached from `g` and
@@ -16107,24 +16168,66 @@ impl Placing {
 ///   group is placed once for `i`, so nothing merges; the stem adds only its lists, the same
 ///   `(node, list, i)` each period, and places `tail` at `y_root` on top of the same stack.
 ///   The shortcut adds each list once and places `tail` there. A list added twice changes
-///   nothing below (`shut` is a meet of key sets; a point added twice is joined twice). The
+///   nothing below: `shut` is a meet of key sets, `All(u)` is added when the list is cofinite
+///   or holds a key outside `shut`, both the same for the copy, and a point added twice is
+///   joined twice (test `a_list_added_twice_changes_no_class`, every pair of lists over three
+///   keys and every triple over two, against adding each once). The
 ///   stem's placements wait nowhere, so the final pass never enters them. Later work for `i`
 ///   places groups below `tail`, never a stem group (the groups form a DAG), and their ids are
 ///   below every stem id and `g.id`, so neither the stem's `placed` entries nor its higher
 ///   `min_gid[i]` change a later test. The one difference left is that the reference run
 ///   records `shared_chain` entries for the stem's groups at `y_root`, which later cells may
-///   use; that is exact if `shared_chain` is, the open case below.
-/// - Open, `shared_chain`: that `join(i, j)` gives the classes and trie the reference run's
-///   walk of `g` for `i` from `y_root` gives. The argument at `joined` holds when every node of
-///   that walk was bound by `j`'s own placements and all were read. Two gaps: (a) `j`'s walk
-///   below the chain may itself have been cut by a shortcut, so the nodes there belong to a
-///   third cell `k` whose waiting nodes the test does not count (`pending_cnt[k]`); (b) `j` may
-///   still have `Place`s queued below the chain (`active[j] > 0`, taken 6,357 times on seeds
-///   1 to 6 of the probe, 2026-11-21), so the reference walk for `i` would run ahead of `j`'s
-///   and make the nodes below wait for `i`, not `j`.
-/// - Open, the lazy reads of [`Placing`] in the reference run: a node is read where the type
-///   placed for it first meets it, so which types of lower groups it places then, and which
-///   placement a node waits for, depends on the types placed before.
+///   use; that is exact if `shared_chain` is, proved below.
+/// - Proved, the lazy reads of [`Placing`]: the reference run ends in the same state in every
+///   order. Take the facts a run adds: the placements `(i, g)`, the node of each placement's
+///   group node, the nodes merged, the nodes read, the children by edge, and the points, lists
+///   and wholes. No step takes a fact away: a `Place` adds a placement or merges two nodes; a
+///   `Bind` or `reach` reads a node; `read` adds what (F2) says; `merge_with` merges classes
+///   and their children by edge. Each rule fires once its premises hold, and they then hold
+///   for good: a placement's own node is read (`Bind`); a node that also holds another
+///   placement's node, a top edge or a child of a read node is read, since each way a class
+///   gains one calls `reach` on its root first (F3: a `Bind` finds then reaches, `merge_with`
+///   reaches both roots, the top edge reaches its child, `read` binds or merges a child that
+///   is there); reading a node fires (F2). So the end state, with no work queued, is closed
+///   under the rules, and each of its facts was added by a rule whose premises held, so it is
+///   the least closed set, which no order changes (nodes named by the placement nodes and top
+///   edges in them, group numbers by their types). The final pass (`shut`, the wholes passed
+///   down and entered, the points) is a function of that set, and its joins commute.
+/// - Proved, `shared_chain`, now that it requires `j` frozen: `active[j] == 0 &&
+///   pending_cnt[j] == 0` (from 2026-11-21; before, it took `j` with `Place`s queued,
+///   `active[j] > 0`, 6,357 times on seeds 1 to 6 of the probe, and that case is refused as
+///   not proved). (1) `j != i`: `j` recorded the entry at a `Bind` of its placement of `g`, so
+///   `min_gid[j] <= g.id < min_gid[i]`. (2) Frozen stays frozen: an item of `j` is queued
+///   only by reading a node of `j`'s placements, through a `Bind` of `j` (none queued) or a
+///   `reach` of a node waiting for `j` (none), and `read` makes waiting nodes only for the
+///   placement it reads. So every node of `j`'s placements is read and every type of a lower
+///   group at them is placed or cut by an earlier shortcut. (3) In the reference run, placing
+///   `g` for `i` at `y_root`, where `j`'s placement of `g` sits (`find(orig_y) == y_root`):
+///   `single_chain` makes `g` and each lower group a chain of nodes with no merge, at most one
+///   child or lower type a node; `min_gid[i] > g.id` means no group the walk reaches is
+///   placed for `i` (proved above). By induction along the chain, each node `i` binds is the
+///   node of `j`'s placement of the same group node, already read: its one child edge is a
+///   child there (`read` binds it, `(Some(kid), None)`), and its lower type was placed by `j`
+///   at the same node. So the walk makes no node, merges nothing, reads no waiting node and
+///   queues no item of another cell; it adds for `i` a copy of `j`'s points, lists and wholes
+///   at the same nodes, and placements with no node waiting. (4) That set with the copies is
+///   closed under the rules: later merges move the copies with `j`'s, reaching only nodes
+///   read; no item of `i` follows, since `active[i] == 0 && pending_cnt[i] == 0` and this
+///   `Place` is its last. By the lazy-reads proof it is the reference run's end state. (5)
+///   The final pass on it: each copied point shares `first` with `j`'s, a copied list leaves
+///   `shut` and each `All(u)` as they were (test `a_list_added_twice_changes_no_class`), a
+///   copied whole lands where `j`'s is, and no copy waits, so `enter` and the `deep` join
+///   never meet one. So it joins `i` to what `j` is joined to and nothing else; and
+///   `g.nodes[0].deep` means the chain holds a key, a cofinite list or a whole, which joins
+///   `i` with `j` there (step 2 of the cover proof). That is `join(i, j)`. (6) Gap (a), `j`'s
+///   walk cut below by a shortcut: by induction over the shortcuts in the order taken, each
+///   earlier one left the state of the reference run less its copies, so (3) runs on the
+///   reference state, where the copies are there and read. The one more difference, entries
+///   the copies would record in `shared_chain` under a later root, decides only which later
+///   shortcut is found, each exact by this proof. Tests:
+///   `overlaps_are_the_same_in_both_orders_when_a_chain_waits` (FAIL-overlaps-order-ddc1ec274)
+///   and the every-order tests below; they cannot show a `j` with items queued, which the
+///   shortcut now refuses.
 /// - Tests: one order bug was found here and fixed (FAIL-overlaps-order-ddc1ec274,
 ///   8de5fdf5b). `check_classes` compares the reversed order and three random orders per
 ///   case, with the group cache kept; `overlaps_are_the_same_in_every_order_on_random_cells`
@@ -16132,7 +16235,8 @@ impl Placing {
 ///   from an empty cache, and the reference run, on cases that take both shortcuts. On
 ///   2026-11-21 every order of the 2,416 cases of up to six types of `random_cells` seeds 3 to
 ///   19 (`seed | 1`, so nine streams) agreed, with and without the shortcuts (`shared_chain`
-///   taken 389,090 times). They cannot show orders of larger cases, nor shapes the generator
+///   taken 389,090 times, before it required `active[j] == 0`). They cannot show orders of
+///   larger cases, nor shapes the generator
 ///   does not make (it never reaches `repeat_stem`; the stem test is built to).
 // Complexity tradeoff: the keys are coarser than the meet of two types in three cases, each of
 // which joins disjoint types: tuples that share a key on every component, each in a different
@@ -16485,10 +16589,13 @@ fn joined(tops: Vec<Top>, dir: usize) -> zed_graph::UnionFind {
     // `(0,)`, and the shortcut without this test skipped the read in one order and not the other
     // (test `overlaps_are_the_same_in_both_orders_when_a_chain_waits`). When `j` has a waiting
     // node, `i` is placed as before, which reads `j`'s waiting nodes on the walk, so a later cell
-    // takes the shortcut: one extra walk per chain, the bound unchanged. Not proved
-    // (PROOF-kernel-overlaps-order): that this argument covers a walk below the chain cut by
-    // another shortcut, or `j` with `Place`s still queued; [`overlaps`] names both gaps, and
-    // proves the `repeat_stem` shortcut below exact against the run without shortcuts.
+    // takes the shortcut: one extra walk per chain, the bound unchanged. The same holds when
+    // `j` has items queued (`active[j] > 0`): the shortcut is refused and `i` walks the chain,
+    // which on the K35 benchmarks changed no instruction count (`a chain of n shared tuple
+    // parts`, 449,707,299 against 449,707,019 instructions at n = 4,096, 2026-11-21). The proof
+    // that the shortcut gives the run without shortcuts, a walk below cut by another shortcut
+    // included, is at [`overlaps`] (PROOF-kernel-overlaps-order), with the one for
+    // `repeat_stem` below.
     let mut shared_chain: HashMap<(usize, usize), (usize, usize)> = HashMap::new();
     let mut work: Vec<Work> = Vec::new();
     for (i, l) in tops.into_iter().enumerate() {
@@ -16524,6 +16631,7 @@ fn joined(tops: Vec<Top>, dir: usize) -> zed_graph::UnionFind {
                             && let Some(&(j, orig_y)) = shared_chain.get(&(y_root, g.id))
                             && trie.find(orig_y) == y_root
                             && s.pending_cnt[j] == 0
+                            && s.active[j] == 0
                         {
                             shortcut_taken(0);
                             parent.union_least(i, j);

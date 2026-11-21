@@ -3913,3 +3913,248 @@ fn overlaps_in_every_order_from(seed: u64, max: usize) -> (usize, [usize; 2]) {
     eprintln!("seed {seed}: {checked} cases, shortcuts taken {taken:?}");
     (checked, taken)
 }
+
+/// Per case of `Parts` that the proof of PROOF-kernel-overlaps-cover at [`overlaps`] goes
+/// through, a pair of types whose meet is inhabited, built from the case and not drawn, and a
+/// third type apart from at least one of them; each triple in seven places: alone, under a
+/// name, in a one-tuple, as the second component of a pair, in a union with a type apart from
+/// all, inside the recursive group `R = (t,) | #w((R,))`, and each alone under a name below a
+/// type whole there. In the fourth to sixth places a fourth type `(0, any)` or `#w(any)` meets
+/// them all through its cofinite lists; in the seventh, the whole passes to a node that waits,
+/// and the test fails with the join at such a node taken out of `joined` (checked 2026-11-21:
+/// "case 0: 2 and 3 meet"). Each set of types has the same classes in every order, from an
+/// empty group cache, and without the shortcuts; the pair shares a class ([`check_classes`]).
+/// The test cannot show a case of `Parts` the list leaves out, nor nesting deeper than three
+/// levels.
+#[test]
+fn types_that_meet_share_a_class_in_each_case_of_the_parts() {
+    use super::super::rec::{Def, Expr, Group};
+    use crate::types::Universe;
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("a literal");
+    let yes = Type::lit(&Value::Bool(true)).expect("a literal");
+    let one = |t: &Type| Type::tuple(vec![t.clone()]);
+    let pair = |a: &Type, b: &Type| Type::tuple(vec![a.clone(), b.clone()]);
+    let all_atoms = Type::with(|p| p.atoms = crate::types::Atoms::all());
+    let int = Type::int();
+    let cases: Vec<(&str, Type, Type, Type)> = vec![
+        (
+            "an integer in the integers",
+            lit(1),
+            int.clone(),
+            yes.clone(),
+        ),
+        (
+            "two cofinite integer sets",
+            &int - &lit(0),
+            &int - &lit(1),
+            yes.clone(),
+        ),
+        (
+            "a literal outside a cofinite list",
+            lit(1),
+            &int - &lit(0),
+            lit(0),
+        ),
+        (
+            "a bare atom in every atom",
+            Type::atom("a"),
+            all_atoms.clone(),
+            lit(0),
+        ),
+        (
+            "a payload under a name",
+            Type::atom_with("a", &one(&lit(1))),
+            Type::atom_with("a", &one(&int)),
+            Type::atom_with("b", &one(&lit(1))),
+        ),
+        (
+            "every atom but one name, and another name",
+            &all_atoms - &Type::atom_with("a", &Type::top()),
+            Type::atom_with("b", &one(&lit(1))),
+            Type::atom_with("a", &one(&lit(1))),
+        ),
+        (
+            "the empty tuple in every tuple",
+            Type::tuple(vec![]),
+            Type::universe(Universe::Tuple),
+            lit(0),
+        ),
+        (
+            "a one-tuple in a difference of one-tuples",
+            one(&lit(1)),
+            &one(&int) - &one(&lit(2)),
+            one(&lit(2)),
+        ),
+        (
+            "two pairs that cross",
+            pair(&lit(1), &int),
+            pair(&int, &lit(1)),
+            pair(&lit(2), &lit(2)),
+        ),
+        (
+            "a pair in a difference of pairs",
+            pair(&lit(1), &lit(2)),
+            &pair(&int, &int) - &pair(&lit(1), &lit(1)),
+            pair(&lit(1), &lit(1)),
+        ),
+        (
+            "two triples that cross",
+            Type::tuple(vec![lit(1), int.clone(), int.clone()]),
+            Type::tuple(vec![int.clone(), int.clone(), lit(3)]),
+            Type::tuple(vec![lit(2), int.clone(), lit(4)]),
+        ),
+        (
+            "a morphism in every morphism",
+            Type::morphism(int.clone(), int.clone(), int.clone()),
+            Type::universe(Universe::Morphism),
+            lit(0),
+        ),
+        (
+            "every struct in every value",
+            Type::universe(Universe::Struct),
+            Type::top(),
+            lit(0),
+        ),
+    ];
+    let rec = |t: &Type| {
+        let ms = Group::new(vec![Def {
+            name: "R".into(),
+            params: vec![],
+            body: Expr::Union(vec![
+                Expr::Tuple(vec![Expr::Type(t.clone())]),
+                Expr::Atom("w".into(), vec![Expr::Ref(0, vec![])]),
+            ]),
+        }])
+        .expect("a group")
+        .instance(vec![]);
+        ms[0].clone()
+    };
+    let apart = Type::atom("z");
+    let under_w = Type::atom_with("w", &Type::top());
+    let after_0 = pair(&lit(0), &Type::top());
+    // A place: its name, the type at it, and a type whole above it.
+    type Place<'a> = (&'a str, &'a dyn Fn(&Type) -> Type, Option<&'a Type>);
+    let places: [Place; 6] = [
+        ("alone", &|t| t.clone(), None),
+        ("under a name", &|t| Type::atom_with("c", &one(t)), None),
+        ("in a one-tuple", &|t| one(t), None),
+        ("second in a pair", &|t| pair(&lit(0), t), Some(&after_0)),
+        ("in a union", &|t| t | &apart, Some(&under_w)),
+        ("in a recursive group", &|t| rec(t), Some(&under_w)),
+    ];
+    for (case, a, b, d) in &cases {
+        assert_eq!(
+            (a & b).verdict(),
+            Verdict::Inhabited,
+            "{case}: the pair meets"
+        );
+        for (place, f, whole) in &places {
+            let mut ts = vec![f(a), f(b), f(d)];
+            ts.extend(whole.cloned());
+            same_classes_in_every_order(&format!("{case}, {place}"), &ts);
+        }
+        // Each type alone under a name, in a pair whose first component is a one-tuple, and a
+        // type that holds every pair under each of the names but `(9, 9)`: its pairs are whole
+        // there (a negated tuple type, `local_dir`), and the node of each one-tuple below waits,
+        // since one type reaches it, so the type shares a value with each through a node that
+        // waits ([`Group::set_deep`]).
+        let first = |t: &Type| pair(&one(t), &lit(0));
+        let most = &Type::top() - &pair(&lit(9), &lit(9));
+        let alone = vec![
+            Type::atom_with("w", &first(a)),
+            Type::atom_with("v", &first(b)),
+            Type::atom_with("u", &first(d)),
+            &(&Type::atom_with("w", &most) | &Type::atom_with("v", &most))
+                | &Type::atom_with("u", &most),
+        ];
+        same_classes_in_every_order(&format!("{case}, alone below a whole"), &alone);
+    }
+}
+
+/// The classes of one run of [`joined`] over `tops`, as sorted sets of cells.
+fn joined_classes(tops: Vec<Top>) -> Vec<Vec<usize>> {
+    let n = tops.len();
+    let mut uf = joined(tops, 0);
+    let mut by_root: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for i in 0..n {
+        by_root.entry(uf.find(i)).or_default().push(i);
+    }
+    let mut out: Vec<Vec<usize>> = by_root.into_values().collect();
+    out.sort();
+    out
+}
+
+/// The claim the proof of the `repeat_stem` shortcut at [`overlaps`] uses: a list added twice
+/// at a node for a cell changes no class of [`joined`]. Every pair of cells, each with one list
+/// at the root over the three integers 1, 2 and 3 (each key absent, listed and held, or listed
+/// and not held; the list finite or cofinite: 54 lists), and every triple over two keys (18
+/// lists), with each list once, with every list twice, and with the first cell's list twice.
+/// The classes depend on the lists only through `shut` (a meet of key sets) and the points
+/// `All(u)` they give (joined in pairs), so they are the same; this checks it on the 2,916
+/// pairs and 5,832 triples. It cannot show a node other than the root, which the final pass of
+/// `joined` treats the same way (lists are grouped by merged node and universe).
+#[test]
+fn a_list_added_twice_changes_no_class() {
+    let list = |code: usize, keys: usize| -> Listed {
+        let mut ks = Vec::new();
+        let mut rest = code / 2;
+        for k in 0..keys {
+            match rest % 3 {
+                1 => ks.push((Key::Lit(0, Value::Int(k as i64 + 1)), true)),
+                2 => ks.push((Key::Lit(0, Value::Int(k as i64 + 1)), false)),
+                _ => {}
+            }
+            rest /= 3;
+        }
+        (0, code % 2 == 1, ks)
+    };
+    let top = |lists: Vec<Listed>| Top {
+        points: Vec::new(),
+        lists,
+        kids: Vec::new(),
+    };
+    let check = |codes: &[usize], keys: usize| {
+        let once: Vec<Top> = codes.iter().map(|&c| top(vec![list(c, keys)])).collect();
+        let twice: Vec<Top> = codes
+            .iter()
+            .map(|&c| top(vec![list(c, keys), list(c, keys)]))
+            .collect();
+        let first_twice: Vec<Top> = codes
+            .iter()
+            .enumerate()
+            .map(|(i, &c)| match i {
+                0 => top(vec![list(c, keys), list(c, keys)]),
+                _ => top(vec![list(c, keys)]),
+            })
+            .collect();
+        let classes = joined_classes(once);
+        assert_eq!(
+            joined_classes(twice),
+            classes,
+            "lists {codes:?}, each twice"
+        );
+        assert_eq!(
+            joined_classes(first_twice),
+            classes,
+            "lists {codes:?}, the first twice"
+        );
+        classes.len()
+    };
+    let (mut joined_some, mut apart_some) = (false, false);
+    for a in 0..54 {
+        for b in 0..54 {
+            match check(&[a, b], 3) {
+                1 => joined_some = true,
+                _ => apart_some = true,
+            }
+        }
+    }
+    for a in 0..18 {
+        for b in 0..18 {
+            for c in 0..18 {
+                check(&[a, b, c], 2);
+            }
+        }
+    }
+    assert!(joined_some && apart_some, "pairs joined and apart");
+}
