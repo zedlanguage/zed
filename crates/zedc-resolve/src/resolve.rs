@@ -2092,6 +2092,21 @@ impl Resolver<'_> {
                         todo.push(Task::Ty(result));
                         todo.push(Task::KeyTy(&params[0].ty, true));
                     }
+                    TypeKind::Tuple(ts) => todo.extend(ts.iter().rev().map(Task::ParamPart)),
+                    _ => self.ty(t, &mut todo),
+                },
+                Task::ParamPart(t) => match &t.kind {
+                    TypeKind::Arrow {
+                        params,
+                        partial: true,
+                        result,
+                    } if params.len() == 1 => {
+                        self.arrows.push(t.span);
+                        todo.push(Task::ArrowEnd);
+                        todo.push(Task::Ty(result));
+                        todo.push(Task::KeyTy(&params[0].ty, true));
+                    }
+                    TypeKind::Tuple(ts) => todo.extend(ts.iter().rev().map(Task::ParamPart)),
                     _ => self.ty(t, &mut todo),
                 },
                 Task::KeyTy(t, whole) => match &t.kind {
@@ -4929,6 +4944,12 @@ enum Task<'a> {
     /// where a range over `int` is read as the key's domain (RANGE-keys); whether it is the
     /// whole key, whose tuple components may be ranged too.
     KeyTy(&'a Type, bool),
+    /// A component, at any depth, of the tuple a parameter is declared, where a partial map of
+    /// one key is read as a whole parameter's is (its key ranged, [`Task::KeyTy`]) and the
+    /// checker reads that key's range with the steps to it (`Ck::param_keys`,
+    /// FAIL-range-on-key-in-tuple-param). A range as the component itself is refused, as
+    /// anywhere but a parameter's whole type.
+    ParamPart(&'a Type),
 }
 
 /// The ordinal words of the alternatives at the indices `at`, counted from 0, as a sentence

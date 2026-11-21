@@ -523,11 +523,16 @@ fn a_function_where_a_family_is_needed_is_refused_at_the_use_and_not_by_its_type
         "{errs:?}"
     );
     // A function's own value, not a parameter declared `->?`, is still refused at `==`.
+    // Once: the refusal is not repeated for each operand (TEST-harness-duplicate-eq-error).
     let errs = type_errors("f(x: int) = x;\nt = f == f;\n");
+    assert_eq!(errs.len(), 1, "{errs:?}");
     assert!(
-        (errs.iter()).any(|e| e.starts_with("Cannot compare a value that may hold a function")),
+        errs[0].starts_with("Cannot compare a value that may hold a function"),
         "{errs:?}"
     );
+    // Control: two different functions each give their own refusal.
+    let errs = type_errors("f(x: int) = x;\ng(x: int) = x + 1;\nt = f == g;\n");
+    assert_eq!(errs.len(), 2, "{errs:?}");
     let errs = type_errors(
         "pick(b: bool) = if b { {0 -> 0, 1 -> 1} } else { ((x: int) -> x * x) };\n\
          t(b: bool) = pick(b: b).sum;\n",
@@ -583,13 +588,28 @@ fn a_family_taken_out_of_a_tuple_parameter_is_read_as_one() {
         errs[0].starts_with("`outer` takes `q[0]` as a family, which `sum` reads"),
         "{errs:?}"
     );
-    // A remap of the part marks it as a word does. (A range on a key inside a tuple parameter
-    // is refused as not yet supported, so no range reaches the part.)
-    let remap = "g(p: (int ->? int, int)) {\n    m, k = p;\n    \
-                 return m as (j -> v) into (j -> v + k);\n}\n";
+    // A remap of the part marks it as a word does, and the range on its key is read as on a
+    // whole parameter's: `j mod 5` keeps the keys apart on `int[5..<10]`, each call's keys are
+    // checked against it, and the signature prints it in the key's place
+    // (FAIL-range-on-key-in-tuple-param; before, the range was refused as not yet supported).
+    let remap = "g(p: (int[5..<10] ->? int, int)) {\n    m, k = p;\n    \
+                 return m as (j -> v) into (j mod 5 -> v + k);\n}\n";
     assert_eq!(
         type_errors(&format!("{remap}t = g(p: ({{5 -> 1, 6 -> 2}}, 0));\n")),
         Vec::<String>::new()
+    );
+    assert_eq!(
+        sig(remap, "g"),
+        "(p: (int[5..=9] ->? int, int)) -> int ->? int"
+    );
+    let errs = type_errors(&format!("{remap}t = g(p: ({{3 -> 1, 8 -> 2}}, 0));\n"));
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert!(
+        errs[0].starts_with(
+            "`g` takes `p[0]` as a family, which a remap reads, with keys in int[5..=9]: \
+             `{3 -> 1, 8 -> 2}` may not be one"
+        ),
+        "{errs:?}"
     );
     let errs = type_errors(&format!("{remap}t = g(p: (((x: int) -> x), 0));\n"));
     assert_eq!(errs.len(), 1, "{errs:?}");

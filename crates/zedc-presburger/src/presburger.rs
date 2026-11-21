@@ -20712,7 +20712,10 @@ fn project_each_as_named(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each
         };
         work.metered(solver_found).and_then(|r| r)
     };
-    let solver = |counted: bool| {
+    // `start`, given by `row_sums::project` past the join's limit, asks for the counted solver,
+    // and holds a superset of each symbol's projection, where the cover starts when the solver
+    // refuses by shape (its proof there).
+    let solver = |start: Option<Vec<IntervalSet>>| {
         if !cover {
             return solver_found().map(EachClassed::plain);
         }
@@ -20731,10 +20734,14 @@ fn project_each_as_named(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each
         // written `!(a + z1 == b + 2c - 4)` refused `z0` past the limit with one sign and
         // answered it with the other (row PRES-cover-order-rewrites; test
         // `l01_39_reduced_product::pendants::the_rewrites_of_seed_5401893596085442912_give_one_answer`).
-        let found = if counted {
-            solver_found_counted()
-        } else {
-            solver_found()
+        let found = match start {
+            Some(start) => match solver_found_counted() {
+                Err(r) if !matches!(r, Refusal::Work | Refusal::Questions) => {
+                    Ok((start.into_iter().map(Ok).collect(), Vec::new()))
+                }
+                found => found,
+            },
+            None => solver_found(),
         };
         found.and_then(|e| exact::exact_each_checked(f, syms, e, SOLVER))
     };
@@ -20767,7 +20774,7 @@ fn project_each_as_named(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each
             Err(None) => {}
         }
     }
-    solver(false)
+    solver(None)
 }
 
 /// A writing independent of the order of every conjunction and disjunction. Unlike

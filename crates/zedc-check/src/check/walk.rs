@@ -8113,14 +8113,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                     x.at.unwrap_or(span),
                     Some(span),
                 );
-                self.data(
-                    &y.ty,
-                    &what,
-                    DataUse::Compare,
-                    span,
-                    y.at.unwrap_or(span),
-                    Some(span),
-                );
+                // The second operand is not checked where it is the first again, as in `f == f`:
+                // the same type and the same code give the same refusal, at the same span, so
+                // the second was the first repeated (TEST-harness-duplicate-eq-error). The
+                // headline reads only the type, the code at the operand and the whole
+                // ([`Self::data_headline`]), so a second refusal that differs differs in one of
+                // the first two, and is still given, as for `f == g`.
+                let code = |a: &Arg<'a>| self.code(Some(a.at.unwrap_or(span)));
+                if !(y.ty == x.ty && code(&y) == code(&x)) {
+                    self.data(
+                        &y.ty,
+                        &what,
+                        DataUse::Compare,
+                        span,
+                        y.at.unwrap_or(span),
+                        Some(span),
+                    );
+                }
                 // Whether each operand's cast to `f64` is exact, for the repairs of a rejected
                 // comparison ([`Comparison::exact`]). Cost: one read of what the text shows of an
                 // operand ([`Self::exact_in_f64`]), only where it has an int part and the other
@@ -15882,7 +15891,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         ));
         let got = match self.open.iter_mut().find(|o| o.span == n.span) {
             _ if on.dynamic => {
-                self.any(&format!("{what}, which needs this of its argument,"), span);
+                self.any(what, span);
                 Ty::empty()
             }
             Some(o) if o.shape == shape => {
@@ -19377,12 +19386,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             for k in self.param_keys.remove(id).unwrap_or_default() {
                 // The ranges on the key print in its place: the whole key's,
                 // `(int[5..=9] ->? int)` (RANGE-result-hull), or each tuple component's in the
-                // component's, `(((int[0..=1], int)) ->? int)` (RANGE-key-component-print). A
-                // map inside a tuple parameter has no ranges: a range type there is refused as
-                // not yet supported before the check (FAIL-family-from-tuple-param test), so
-                // the path test only keeps a later change from printing one in the wrong place.
-                if k.path.is_empty() && !k.ranges.is_empty() {
-                    keyed.push((j, k.ranges.clone()));
+                // component's, `(((int[0..=1], int)) ->? int)` (RANGE-key-component-print), and
+                // a map inside a tuple parameter's at its steps, `(int[5..=9] ->? int, int)`
+                // (FAIL-range-on-key-in-tuple-param).
+                if !k.ranges.is_empty() {
+                    keyed.push((j, k.path.clone(), k.ranges.clone()));
                 }
                 let Some(use_) = k.need() else { continue };
                 let name = sig
@@ -19449,10 +19457,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (j, r) in inferred {
             s.params[j].range = Some(ParamRange::Int(r));
         }
-        for (j, rs) in keyed {
+        for (j, path, rs) in keyed {
             for a in &mut s.arrows {
                 if let Some(t) = a.params.get_mut(j) {
-                    *t = with_key_range(t, &rs);
+                    *t = with_key_range_at(t, &path, &rs);
                 }
             }
         }
@@ -19578,7 +19586,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                     a => a,
                 };
-                self.keys_at(what, &p, domain, k, a, keyed, defaulted, use_at, span);
+                let given = from.and_then(|f| f.get(*param).copied().flatten());
+                self.keys_at(
+                    what, &p, domain, k, a, keyed, defaulted, use_at, given, span,
+                );
                 continue;
             }
             let takes = format!("{what} takes `{p}` in {}", domain_text(domain));
@@ -19835,6 +19846,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         keyed: Option<((usize, usize), &'a Expr)>,
         defaulted: bool,
         use_at: (Span, Option<Arc<Via>>),
+        given: Option<Forwarded<'a>>,
         span: Span,
     ) {
         let ranges = || {
@@ -19952,7 +19964,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             return;
         }
-        let at = a.at.or(a.expr.map(|e| e.span)).unwrap_or(span);
+        // The check of a need, as of `p(m)` in `app(positional m, p) = p(m)` at
+        // `app({ 3 -> 1, 8 -> 2 }, p: g)`, has no expression of its own: the argument of the
+        // call around that gave the value (`given`, the call's frame) is the code the message
+        // quotes, as the int path names `-1` of `ap(h, -1)` (MSG-keys-through-param-quotes-call:
+        // the whole call `app(…)` was quoted as the value that "may not be one").
+        let at = match (a.expr, given) {
+            (None, Some(f)) => f.at,
+            _ => a.at.or(a.expr.map(|e| e.span)).unwrap_or(span),
+        };
         let t = &a.ty;
         let mut why = None;
         if t.dynamic || !t.vars.is_empty() {
@@ -27516,6 +27536,41 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
+        // An argument whose type holds no variable and no unknown at any depth, each of whose
+        // values the other parts of its parameter took, as `#nf` at `x: $0 | #nf | #nf(..)`,
+        // gives each variable at the outer level of that parameter no value: the variable is
+        // bound to `Never` unless an argument bound it, as [`Self::bind_never`] does for an
+        // argument of type `Never` (MSG-takes-all-value-underscore: `r(#nf)` of
+        // `r(positional x) = if (x else #nf -> 0) == 0 { x } else { x + 1 }` left `$0` unbound,
+        // and its need `Narrow(#nf)` on `$0` was then checked on the unknown and refused, "this
+        // value is `_`", where `r(#nf)` gives `#nf`).
+        // Proof that `Never` is the exact binding: the comparison above took the argument's
+        // type `a` into the parameter `p`, so every value of `a` is in `p`; at the call each
+        // value of `a` is a value of the parameter's variable `v` only if no other part of `p`
+        // holds it, and `sub` binds `v` to at least the values no other part holds (it unites
+        // the binding with each such piece, [`Ty::sub_with`]), so `v` left unbound got no value.
+        // The argument must hold no variable: a piece `Var(w)` is taken by `p` without a binding
+        // where `p` holds `w` itself ([`Ty::var_outside`]'s note), and binding `w` to `Never`
+        // there would check its needs on no value. A variable inside a tuple, payload or function
+        // of `p` is left as it was: its values come from inside the argument's values, which
+        // this argument does not read. After the loop, so the binding is the same in every
+        // order of the arguments, and `or_insert_with` keeps any binding another argument gave.
+        // Complexity tradeoff: O(1) a given argument for [`Ty::closed`] and [`Ty::holds_vars`],
+        // read at the outer level, and O(v log b) for the parameter's v outer variables.
+        // Tests: l01_26_type_resolution `an_atom_alone_at_a_generic_parameter_meets_its_needs`.
+        if refused.is_none() {
+            for (p, a) in arrow.params.iter().zip(args) {
+                if !a
+                    .as_ref()
+                    .is_some_and(|a| a.ty.closed() && !a.ty.holds_vars())
+                {
+                    continue;
+                }
+                for v in p.vars.iter().filter(|v| !self.is_class(v)) {
+                    binds.or_insert_with(v.clone(), Ty::empty);
+                }
+            }
+        }
         // The needs of the function arguments, in their order, on the binding the loop ends
         // with, when it refused no argument. A refused call stops the loop where the binding
         // holds only the arguments before the refused one, and a need checked on it reported
@@ -32018,6 +32073,34 @@ fn param_alone(sig: &Sig, j: usize) -> Sig {
         hull: sig.hull.clone(),
         facts: Default::default(),
     }
+}
+
+/// `t`, the type of a parameter, with the ranges `rs` on the key of the partial map at the
+/// steps `path` into it ([`with_key_range`] there), as `(int[5..=9] ->? int, int)` for `m` of
+/// `p: (int[5..<10] ->? int, int)` (FAIL-range-on-key-in-tuple-param); `t` as it is where a
+/// step does not name a component of its one tuple shape. The walk keeps its own list of the
+/// tuples entered, not the call stack, since a declared tuple may nest thousands deep (see
+/// `Ck::param_keys`). O(the widths of the tuples on the path), one copy of each.
+fn with_key_range_at(t: &Ty, path: &[PathStep], rs: &[(Option<usize>, WrittenRange)]) -> Ty {
+    let mut entered: Vec<(Vec<Ty>, usize)> = Vec::new();
+    let mut at = t.clone();
+    for step in path {
+        let PathStep::Part { i, n } = *step else {
+            return t.clone();
+        };
+        let Some(row) = at.lone_row().filter(|r| r.len() == n) else {
+            return t.clone();
+        };
+        let cs = row.to_vec();
+        at = cs[i].clone();
+        entered.push((cs, i));
+    }
+    let mut out = with_key_range(&at, rs);
+    while let Some((mut cs, i)) = entered.pop() {
+        cs[i] = out;
+        out = Ty::tuple(cs);
+    }
+    out
 }
 
 /// `t`, the type of a parameter declared a partial map of one key, with the ranges `rs`

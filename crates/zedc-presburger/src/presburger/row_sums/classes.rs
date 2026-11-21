@@ -176,7 +176,7 @@ pub(super) fn project(
 }
 
 /// The integers of `ranges`.
-fn domain(ranges: &[(i128, i128)]) -> IntervalSet {
+pub(super) fn domain(ranges: &[(i128, i128)]) -> IntervalSet {
     let fin = |v: i128| End::Fin(Num::from(v));
     IntervalSet::from_pieces(ranges.iter().map(|&(l, h)| (fin(l), fin(h))).collect())
 }

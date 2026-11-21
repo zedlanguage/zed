@@ -747,14 +747,16 @@ pub(super) fn point(
 }
 
 /// [`super::project_each`] of a formula of the class onto `syms`: the join's exact sets where
-/// it finishes within [`JOIN_LIMIT`], and the solver's `old(false)` where the formula has no
-/// plan. Where the join stops at its limit, `old(true)` when `old_exact` holds (the solver's
-/// answer, its projection counted against `meter::EXACT_LIMIT`, made exact by the cover of
-/// module `exact`, which refuses only past its own limit), and [`Refusal::Work`] otherwise.
+/// it finishes within [`JOIN_LIMIT`], and the solver's `old(None)` where the formula has no
+/// plan. Where the join stops at its limit, `old(Some(domains))` when `old_exact` holds (the
+/// solver's answer, its projection counted against `meter::EXACT_LIMIT`, made exact by the
+/// cover of module `exact`, which refuses only past its own limit; `domains` holds each
+/// symbol's values in the rows' domains, where the cover starts if the solver refuses by
+/// shape), and [`Refusal::Work`] otherwise.
 pub(super) fn project(
     rows: Rows,
     syms: &[Atom],
-    old: impl FnOnce(bool) -> Result<EachClassed, Refusal>,
+    old: impl FnOnce(Option<Vec<IntervalSet>>) -> Result<EachClassed, Refusal>,
     old_exact: bool,
 ) -> Result<EachClassed, Refusal> {
     if rows.empty {
@@ -825,14 +827,14 @@ pub(super) fn project(
             Some(sets) => Ok(each_of(sets)),
             None => match classes(Stop::NoPlan) {
                 Some(sets) => Ok(each_of(sets)),
-                None => old(false),
+                None => old(None),
             },
         },
         Err(Stop::Limit) if let Some(sets) = classes(Stop::Limit) => Ok(each_of(sets)),
         // Past the join's limit the solver answers, made exact by the cover (PRES-cover-wire),
         // which refuses with `Refusal::Questions` only past `meter::EXACT_LIMIT`, the 250 ms of
         // QUESTIONS A99 (PRES-project-exact-solver). The solver's projection the cover starts
-        // from is counted here too (`old(true)`): it asks a whole decision question per end of
+        // from is counted here too (`old(Some(..))`): it asks a whole decision question per end of
         // each symbol's hull (`Hull::tighten`), and on overlapping sums each question is a
         // subset-sum problem, NP-complete, so with no count it ran 14 to 60 s on
         // `overlap_rows(16)` (PRES-solver-projection-uncounted); counted, it is refused with
@@ -851,7 +853,30 @@ pub(super) fn project(
         // benchmark
         // `l01_38_omega_test::bench::disj_groups::switchover::each_side_of_the_switch_gives_the_same_answer_and_the_faster_side_is_measured`;
         // COMPLEXITY.md row PRES-project-exact-solver.
-        Err(Stop::Limit) if old_exact => after_stop(|| old(true)),
+        // Where the solver's projection refuses by shape (a `Tie` of two rows that eliminate
+        // alike, say), the cover starts from each symbol's domain in the rows instead
+        // (FAIL-omega-row-sums-seed-187: case 187 of seed 16408613613253816205 was refused with
+        // `Refusal::Tie` below the join's limit, where the join answers it in 426 units).
+        // Proof that the cover's answer is still exact: `exact::exact_each_checked` needs of each
+        // starting set only that it hold every value of its symbol at a point of `f` (its doc),
+        // and `rows.domains[a]` holds every value atom `a` takes at any point, since `Rows::of`
+        // reads it from top-level conjuncts of `f` alone: one disjunction of ranges of `a`, met
+        // with the top-level bounds of `a`, or those bounds alone; a point of `f` meets every
+        // top-level conjunct. A symbol not among the rows' atoms starts from every integer. Complexity tradeoff: the cover's work
+        // after such a refusal, up to `meter::EXACT_LIMIT` for each symbol, against the refusal's
+        // constant cost; the bound of the comment above is unchanged, since the solver's
+        // projection was already counted to `meter::EXACT_LIMIT`. Test:
+        // `l01_38_omega_test::disj_groups::row_sums::case_187_of_seed_16408613613253816205_is_
+        // answered_alike_on_both_sides_of_the_join_limit`.
+        Err(Stop::Limit) if old_exact => {
+            let start = (syms.iter())
+                .map(|a| match rows.atoms.binary_search(a) {
+                    Ok(i) => classes::domain(&rows.domains[i]),
+                    Err(_) => IntervalSet::range(End::NegInf, End::PosInf),
+                })
+                .collect();
+            after_stop(|| old(Some(start)))
+        }
         Err(Stop::Limit) => Err(Refusal::Work),
     }
 }

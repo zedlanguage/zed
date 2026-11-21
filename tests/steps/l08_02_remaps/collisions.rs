@@ -364,16 +364,13 @@ fn the_need_on_keys_reaches_every_outer_call() {
     ] {
         rejected(&call, &[&refused]);
     }
-    // Through a parameter that holds `g` the call is rejected for the same range, but the
-    // message quotes the whole outer call where the argument belongs (`app(…, p: g)` "may not
-    // be one"); only the range is asserted here, the quoting is a row of its own.
+    // Through a parameter that holds `g` the call is rejected for the same range, and the
+    // message quotes the argument the call gives, not the whole call `app(…, p: g)`
+    // (MSG-keys-through-param-quotes-call).
     let through = format!(
         "{MOD5}g(positional m) = f(m);\napp(positional m, p) = p(m);\nx = app({bad}, p: g);\n"
     );
-    rejected(
-        &through,
-        &["`p` takes `m` as a family", "with keys in int[5..=9]"],
-    );
+    rejected(&through, &["`p` takes `m` as a family", &refused]);
 }
 
 #[test]

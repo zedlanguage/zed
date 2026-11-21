@@ -904,3 +904,27 @@ fn a_field_read_refused_in_nested_lambdas_gives_never_and_is_reported() {
         ]
     );
 }
+
+/// A call whose argument holds only values another part of its parameter takes, as `#nf` at
+/// `x` of `r`, whose type is `$0 | #nf | #nf(..)` once `x else #nf -> 0` reads it: the
+/// variable gets no value, `Never`, and its needs are met on `Never`. Before
+/// MSG-takes-all-value-underscore it was left unbound, its need `Narrow(#nf)` was checked on
+/// the unknown, and `r(#nf)` was refused ("this value is `_`").
+#[test]
+fn an_atom_alone_at_a_generic_parameter_meets_its_needs() {
+    let r = "r(positional x) = if (x else #nf -> 0) == 0 { x } else { x + 1 };\n";
+    for call in [
+        "c = r(#nf);\n",
+        "f(positional y: #nf) = r(y);\n",
+        "a = r(3);\nc = r(#nf);\n",
+        "c = r(#nf);\na = r(3);\n",
+    ] {
+        let text = format!("{r}{call}");
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+    }
+    let text = format!("{r}f(positional y: #nf) = r(y);\n");
+    assert_eq!(sig(&text, "f"), "#nf -> #nf | #nf(..)", "{text}");
+    // Negative control: a value no part of `x` takes is still refused.
+    let text = format!("{r}c = r(\"s\");\n");
+    assert_ne!(type_errors(&text), Vec::<String>::new(), "{text}");
+}

@@ -1400,6 +1400,29 @@ pub(super) mod row_sums {
         assert_eq!(random_cases_alike_on_both_sides(777, 20), 17);
     }
 
+    /// Case 187 of seed 16408613613253816205 (FAIL-omega-row-sums-seed-187): the solver's own
+    /// projection refuses it with `Refusal::Tie` (its two rows eliminate alike), so below the
+    /// join's limit the whole call was refused by shape; the cover now starts from the atoms'
+    /// domains there and answers each atom with the join's set.
+    #[test]
+    fn case_187_of_seed_16408613613253816205_is_answered_alike_on_both_sides_of_the_join_limit() {
+        let case = Case {
+            ranges: [(2, 32), (0, 3), (0, 8), (0, 5), (0, 11), (0, 23), (0, 22)]
+                .iter()
+                .map(|&(a, b)| vec![(a, a), (b, b)])
+                .collect(),
+            rows: vec![
+                (vec![1, 1, -1, 1, 2, 1, 2], 54, true),
+                (vec![2, -1, 1, 1, 1, 2, 1], 54, true),
+            ],
+        };
+        let f = case.formula();
+        let atoms: Vec<Atom> = (0..7).map(v).collect();
+        assert!(has_plan(&f));
+        both_sides_of_the_limit("case 187", &f, &atoms);
+        case.is_answered_exactly();
+    }
+
     /// Cases `0..n` of the generator of `decide_sat.rs` at `seed`, each that the join plans
     /// checked on both sides of the switch, with the projection at the limit checked against
     /// brute force; prints how often the solver answered below the limit. The count with a plan.
