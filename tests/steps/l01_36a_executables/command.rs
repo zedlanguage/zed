@@ -156,6 +156,19 @@ fn a_linker_that_cannot_be_run_is_named() {
 #[test]
 fn a_link_that_fails_is_named_with_what_the_linker_printed() {
     let (d, src) = program("link-fails");
+    // The driver below gives the system compiler's versions, so it shares the working
+    // toolchain's prelinked runtime (zed-native link.rs, `path.is_file()`). With no prelinked
+    // runtime for this build of the library yet, the refusing driver would be asked to prelink
+    // and fail there instead of at the link this test is about. One build with the working
+    // toolchain first makes it, so the test does not depend on which tests ran before it.
+    assert_eq!(
+        build(
+            &[src.to_str().unwrap(), "-o", d.join("warm").to_str().unwrap()],
+            &toolchain()
+        )
+        .0,
+        0
+    );
     // The driver gives the system compiler's versions, and refuses every link.
     let linker = d.join("cc-refuses");
     install(
