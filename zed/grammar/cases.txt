@@ -615,3 +615,15 @@ Expr ::: a + b without units("m") ::: ((a + b) (without (units ( "m" ))))
 Expr ::: x without units("m") with units("s") ::: ((x (without (units ( "m" )))) (with (units ( "s" ))))
 Expr@11 ::: n without units("m") ::: ERROR
 Expr ::: n without units ::: ERROR
+# a decimal number's whole-number part is `0` or starts with a digit other than `0` (QUESTIONS A110, rule `Whole`): a leading `0` is a lexical error; the digits after a point and of an exponent may start with `0`
+Expr ::: 0755 ::: ERROR
+Expr ::: 09 ::: ERROR
+Expr ::: 00 ::: ERROR
+Expr ::: 0_7 ::: ERROR
+Expr ::: 00.5 ::: ERROR
+Expr ::: 01e3 ::: ERROR
+Expr ::: 03r ::: ERROR
+Expr ::: 00.5r ::: ERROR
+Expr ::: 0 + 0o755 + 0b1011 + 0xFF ::: (((0 + 0o755) + 0b1011) + 0xFF)
+Expr ::: 0.05 + 1.05 + 1e-05 + 10_0 ::: (((0.05 + 1.05) + 1e-05) + 10_0)
+Expr ::: 0r + 0.5r ::: (0r + 0.5r)
