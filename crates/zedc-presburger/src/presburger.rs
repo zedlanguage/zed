@@ -23543,7 +23543,8 @@ type Presettled = (Result<Option<Parts>, Refusal>, bool);
 /// (23.05M to 253.55M instructions, k = 16 to 128), where the renaming of the larger formula
 /// orders the chain against its links. The sign is not the one [`flips`] chooses, which reads
 /// the constant where the coefficients tie and so differs on paths whose constants differ.
-/// Tests: `l01_38_presburger::bench::linked_nest::a_nest_named_against_its_links_projects_as_one_named_along_them`
+/// Tests:
+/// `l01_38_presburger::bench::linked_nest::a_nest_named_against_its_links_projects_as_one_named_along_them`
 /// (without the sign, 1.81 times the work of the nest named along its links, over its limit
 /// of 1.25),
 /// `l01_38_presburger::linked_nest::a_nest_named_against_its_links_projects_to_the_values_of_the_ways_through_it`;
