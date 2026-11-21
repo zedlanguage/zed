@@ -194,6 +194,37 @@ fn tests_on_the_hubs_of_many_stars_in_an_eager_scope_scale() {
     );
 }
 
+/// The stars of [`stars_above_the_hubs`] of one hub, `n`, with `n` also in a tree of the
+/// forest one of whose names is in a class: `n - m >= 0` and `m % 2 == 0`, so that each test
+/// `n <= c` moves `m` to the even values up to `c`.
+fn stars_above_a_hub_with_holes(k: usize) -> Scope {
+    let p = Premises::new();
+    let tree = prim(
+        Prim::And,
+        prim(Prim::Ge, prim(Prim::Sub, var("n"), var("m")), int(0)),
+        prim(Prim::Eq, prim(Prim::Mod, var("m"), int(2)), int(0)),
+    );
+    stars_above_the_hubs(k, true).assume(&tree, true, &p)
+}
+
+#[test]
+fn holes_on_the_hub_of_many_stars_scale() {
+    // `k` tests on the hub `n` of `k` stars, `n` also in a tree with a name in a class, so
+    // that each test projects the tree by the ends of its names (`Scope::by_holes`). The
+    // search for the tree's conjuncts read every conjunct at `n`, the `k` stars apart from
+    // the forest among them: O(k) per test and O(k²) in all. It now reads the forest's
+    // conjuncts at `n` alone (`Blocks::in_forest`), as `tree_edges` does.
+    // PERF-product-by-holes-cost; COMPLEXITY.md row C49.
+    let inputs = scaling::inputs(128, stars_above_a_hub_with_holes);
+    scaling::check(
+        "k tests on a hub of k stars, the hub in a tree with holes, eager",
+        128,
+        |k| {
+            tests_on_a_hub(&inputs[&k], k);
+        },
+    );
+}
+
 #[test]
 fn a_lazy_scope_settles_the_hubs_of_a_class_of_stars_in_linear_time() {
     // `k` stars on the hubs `n` and `m`, a disjunction on both, then `k` tests among the hubs.

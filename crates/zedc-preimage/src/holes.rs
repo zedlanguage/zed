@@ -1,6 +1,8 @@
 //! The ends of names under difference constraints whose names have holes (item ST-holes-moves,
 //! cross-review xst round 4, result 1): each name's least and greatest value over the integer
-//! points of the constraints, exactly, in O(N log N) in the names, edges and pieces `N`.
+//! points of the constraints, exactly, in O(N log N) in the names, edges and pieces `N` where
+//! the potential given holds at each component of more than one cycle, and O(n m) at worst
+//! on such a component where it does not ([`solve`]).
 //!
 //! The constraints are edges `x_v <= x_u + w` between names, each name in a union of intervals.
 //! The greatest point is found by the strongly connected components of the edges, in
@@ -80,6 +82,12 @@ pub(crate) enum Outcome {
 
 /// Each name's integers between its least and greatest values over the points of `g`, or why
 /// there are none or the method refuses.
+///
+/// Cost: O(N log N) for the names, edges and pieces `N` where `g.potential` holds at every
+/// edge of each component of more than one cycle, which [`Run::hull`] then searches by
+/// Dijkstra on the reduced weights; at a component where it does not (a name with no
+/// potential, or one an edge breaks), `hull` uses label correcting, O(n m) at worst for the
+/// component's `n` names and `m` edges (its complexity tradeoff). PERF-product-by-holes-cost.
 pub(crate) fn solve(g: &Graph) -> Outcome {
     // A value as large as any the search can reach from a finite one, so that the infinite
     // ends are integers that stay apart from every finite value: `big` is past each finite end

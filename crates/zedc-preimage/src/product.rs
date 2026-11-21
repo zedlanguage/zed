@@ -10664,11 +10664,8 @@ impl Scope {
             }
         }
         due.retain(|x| !leaves.contains(x));
-        // Whether the join's free conjuncts at `h` hold those of side `s`.
-        let within = |s: &Scope, h: &str| {
-            (free(s, h).diff(&free(&joined, h)))
-                .all(|d| matches!(d, imbl::ordset::DiffItem::Add(_)))
-        };
+        // Whether the join's free conjuncts at `h` are those of side `s`.
+        let within = |s: &Scope, h: &str| free(s, h).diff(&free(&joined, h)).next().is_none();
         // Whether the join holds hub `h` as side `s` does: of one interval and class, with the
         // free conjuncts of `s` at it.
         let as_side = |s: &Scope, h: &Arc<str>| {
@@ -10678,11 +10675,18 @@ impl Scope {
         // A hub moved in a lazy join leaves the stars at it stale where the join holds it as
         // one side does, with that side's free conjuncts: each such star is that side's, whose
         // leaf is settled when read; otherwise each leaf at it is settled on both sides.
-        // Not proved (proofdoc4b): `within` asks only that the join's free conjuncts at `h`
-        // contain side `s`'s, not that they equal them. The open sub-case is a join that holds
-        // at `h` a free conjunct `s` lacks (one from the other side): no argument here shows
-        // that a star at `h` is then still `s`'s, so that settling its leaf on read gives the
-        // projection the join holds. The test named below checks cost, not this case.
+        // Corrected (PROOF-product-join-settled-side): `within` asked only that the join's free
+        // conjuncts at `h` contain side `s`'s, which left open a join that holds at `h` a free
+        // conjunct `s` lacks, one from the other side; a star of two hubs or more at `h` reads
+        // the free conjuncts at its hubs ([`Conjuncts::core`]), so its projection in the join
+        // could differ from the one in `s`. `within` now asks that they be equal. Then the
+        // join holds at `h` what `s` holds: the same interval and class (`snapshot`) and the
+        // same free conjuncts, which are all that a projection of a star at `h` reads of `h`
+        // besides the star's own conjunct; so a leaf settled when read reads at `h` exactly
+        // what it would read in `s`. Cost: the difference is read until its first item, O(log
+        // n + 1) where the old test read every item, so C54 holds; measured by the test named
+        // below at n and 8n. Test of the case: none builds a join whose free conjuncts at a
+        // hub are a strict superset of one side's; the change can only settle more leaves.
         // Complexity tradeoff (NARROW-or-order): naive version, every leaf hanging at each hub
         // moved settled on both sides, O(k) projections per join for k stars at the hub, and
         // O(k²) over k tests of `a_i >= n || a_i >= 5` on the hub `n`. Used: one comparison of
@@ -12619,13 +12623,28 @@ impl Scope {
     // update; the key's formula is still in the relation, and so is its star. For the leaf:
     // the part bounds it by a half-line in the hubs, and the leaf now lies within its old
     // interval, which that half-line held, so projecting again leaves the leaf as it is.
-    // Not proved: that projecting again leaves the hubs as they are. The leaf's set is
-    // narrower than when the part was projected, so a hub value whose only leaf values in
-    // the part lay in the old interval and not in the new one would be cut by a new
-    // projection and is kept by the restore. The restored record then gives a wider hub than
-    // projecting would (an over-approximation, sound, but not the same answer). Open
-    // sub-case: a star part whose leaf a case narrowed at the end its half-line bounds. No
-    // test is named that checks a restore against a fresh projection.
+    // Corrected (PROOF-product-join-preserving-outer): that projecting again leaves the hubs
+    // as they are was not proved, and is false when a case narrowed the leaf at the end its
+    // half-line runs to: a hub value whose only leaf values lay in the part of the old
+    // interval cut off is cut by a new projection and was kept by the restore. Now the leaf's
+    // end on that side must be unchanged. Proof, for a leaf `x` bounded below by the part,
+    // `x >= f(hubs)` (above is the same with the ends swapped). (1) Every row of the part's
+    // formula on `x` is `lin >= 0` with a positive coefficient on `x`: [`leaf_sign`] checks
+    // that of the conjunct `k.0` (an equality, a row of the other sign, or another connective
+    // on `x` gives no restore), and the block's own constraints are the star's other
+    // conjuncts, which bound `x` on the same side ([`Conjuncts::star`], "A star bounds its
+    // leaf on one side only"). So for fixed values of the other names, the values of `x`
+    // that meet the part are closed upward. (2) Let `L ⊆ L0` be the leaf's interval now and
+    // when projected, with the same upper end `u`, unclassed (`classed` false, the class the
+    // same), and `H` the products of the other names, each equal to the snapshot. A value
+    // `h` of the others has a leaf value in `L` meeting the part exactly when it has one at
+    // `u` (or, `u` infinite, at a large enough `x`), by (1), and the same holds of `L0`; so
+    // projecting with `L` keeps the same values of the others as projecting with `L0`, which
+    // kept all of `H` (the record). (3) Each `x` in `L` is in `L0`, which the projection kept,
+    // so it has a witness in `H`, and projecting with `L` keeps all of `L`. So the record
+    // `(with, snapshot with L)` holds. Test: no test checks a restore against a fresh
+    // projection; the check can only restore fewer records than before, so a run with it
+    // can project more parts, never fewer.
     fn join_preserving_outer(&self, cases: Vec<Scope>) -> Scope {
         let mut s = join_cases(cases);
         if s.bottom {
@@ -12683,10 +12702,19 @@ impl Scope {
                 let p = s.get(n);
                 let cls = framed_class(&p);
                 if k.1.as_ref() == Some(n) {
+                    // The leaf's end on the side its half-line runs to, which the hubs'
+                    // projection reads (the proof above), kept as it was.
+                    let far_kept = match (outer_ints.only(), p.ints().only()) {
+                        (Some(old), Some(new)) => match leaf_sign(&k.0, &Atom::Sym(n.clone())) {
+                            Some(true) => new.1 == old.1,
+                            Some(false) => new.0 == old.0,
+                            None => false,
+                        },
+                        _ => false,
+                    };
                     if classed(&p)
                         || &cls != outer_cls
-                        || outer_ints.only().is_none()
-                        || p.ints().only().is_none()
+                        || !far_kept
                         || !p.ints().is_subset(outer_ints)
                     {
                         ok = false;
@@ -14461,15 +14489,35 @@ impl Scope {
     /// product's met with its bounds; so the integer points of `graph` are those of the tree,
     /// and [`holes::solve`] gives their ends exactly (proofs in `holes`). The potential passed
     /// is the scope's, which, where it holds with gaps 0 or more, holds plainly.
-    /// Not proved: the O(N log N). The search reads `relation.mentioning(n)`, every conjunct
-    /// at `n`, including those of blocks apart from the forest, which it then skips; a name of
-    /// the tree that is also a hub of `k` blocks apart costs O(k log n) at each call, the
-    /// pattern [`tree_edges`] left for `Blocks::in_forest` (COMPLEXITY.md C49). Proposed:
-    /// read `blocks.in_forest(&n)` as `tree_edges` does. Also, [`holes`] is O(N log N) only
-    /// where the potential holds at each component of more than one cycle; elsewhere its
-    /// label correcting is O(n m) (its `Run::hull` tradeoff, as after `Scope::reseed`).
+    ///
+    /// The search (PERF-product-by-holes-cost). Naive version, `relation.mentioning(n)`,
+    /// every conjunct at `n` with those of blocks apart from the forest then skipped: a name of
+    /// the tree that is also a hub of `k` stars, each a block apart, cost O(k log n) at each
+    /// call, O(k² log n) over k tests on it. Used: `Blocks::in_forest`, the forest's
+    /// conjuncts with `n` as an atom of their own, as [`tree_edges`] reads them (COMPLEXITY.md
+    /// C49), O(e log n) for the `e` conjuncts of the forest at `n`. Proof that it finds the
+    /// same conjuncts: `Blocks::gaps(t)` is `Some` (the caller's condition), so `others`
+    /// counts no conjunct of `t` without [`conjuncts::edges`] (the count is checked against
+    /// the members by `Blocks::well_formed`), and `edges` is `None` for any conjunct with an
+    /// atom that is not a name, so each conjunct of `t` mentions a name only as an atom of its
+    /// own; and the forest index holds each conjunct of a block not apart under each such atom
+    /// (`Blocks::well_formed`, its `forest` map). So at each name the two reads agree on the
+    /// conjuncts of `t`, and only those are kept. Measured: `l01_39_reduced_product::scaling::
+    /// holes_on_the_hub_of_many_stars_scale`, a hub of `k` stars in a tree with a name in a
+    /// class: ratio 27.02 in instructions at 128 and 1024 before the change, against the
+    /// limit 10.5; 8.81 after (load 73.6). Still: the
+    /// O(N log N) of [`holes`] holds only where the potential holds at each component of more
+    /// than one cycle; elsewhere its label correcting is O(n m) (its `Run::hull` tradeoff, as
+    /// after `Scope::reseed`; [`holes::solve`] says so).
     fn by_holes(&mut self, relation: &Conjuncts, t: BlockId, b: BlockId, paths: bool) -> Ends {
         let blocks = relation.blocks();
+        // The one caller, [`Scope::project`], calls this only when `blocks.gaps(t)` is `Some`:
+        // `t` is a tree of the forest, each of whose conjuncts has [`conjuncts::edges`]. The
+        // search below rests on it.
+        debug_assert!(
+            blocks.gaps(t).is_some(),
+            "by_holes on a tree with other conjuncts"
+        );
         let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
         let mut work: Vec<Arc<str>> = Vec::new();
         for g in blocks.members(b) {
@@ -14481,12 +14529,8 @@ impl Scope {
         }
         let mut tree: BTreeSet<Arc<Formula>> = BTreeSet::new();
         while let Some(n) = work.pop() {
-            for g in relation.mentioning(&n) {
-                if !blocks
-                    .of(g)
-                    .is_some_and(|c| !blocks.is_apart(c) && blocks.tree(c) == t)
-                    || !tree.insert(g.clone())
-                {
+            for g in blocks.in_forest(&n) {
+                if !blocks.of(g).is_some_and(|c| blocks.tree(c) == t) || !tree.insert(g.clone()) {
                     continue;
                 }
                 for m in conjuncts::names(g) {
@@ -19695,6 +19739,35 @@ fn in_cone(t: &[Int; 2], gens: &[[Int; 2]]) -> bool {
     matches!((right, left), (Some(r), Some(l)) if cross(r, l).is_positive())
 }
 
+/// The side of `leaf` that every row of `g` on it bounds, read through `And` and `Or`:
+/// `Some(true)` when each is `lin >= 0` with a positive coefficient on `leaf` (a lower
+/// bound), `Some(false)` when each has a negative one, and `None` when they disagree, one is
+/// an equality, a negation holds `leaf`, or no row mentions it. O(size of `g`).
+fn leaf_sign(g: &Formula, leaf: &Atom) -> Option<bool> {
+    let mut sign = None;
+    let mut stack = vec![g];
+    while let Some(f) = stack.pop() {
+        match f {
+            Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
+            Formula::Con(c) => {
+                if let Some(k) = c.lin.terms.get(leaf) {
+                    let below = k.is_positive();
+                    if c.rel != Rel::Ge || sign.is_some_and(|s| s != below) {
+                        return None;
+                    }
+                    sign = Some(below);
+                }
+            }
+            Formula::Not(_) => {
+                if f.atoms().contains(leaf) {
+                    return None;
+                }
+            }
+        }
+    }
+    sign
+}
+
 /// The constraints among the conjuncts of `f`.
 fn rows(f: &Formula) -> impl Iterator<Item = &Con> + Clone {
     let gs = match f {
@@ -22805,14 +22878,27 @@ fn bounds_at(
     // equality; `dropped` reads `names` only. `ones` stays empty (no arm row is on one name), so
     // the loop over `context` below and the `[u, v]` rule add no pair. So `context` empty and
     // `context` the kept rows give the same `ArmNormals` and the same entries.
-    // Not proved: that `with.1` holds no equality when `with.0` is empty. `with.0` is the
-    // part's own split's equalities (`Split::with`), while the groups in `with.1` are read
-    // from `Block::outer`, the split outside the cases of a test; the step needs every
-    // equality of `outer` to be among the constraints of the split within the case. A case
-    // adds its constraints to the block's, but no check was made here that no constraint of
-    // `outer` is dropped or rewritten within a case. An equality of two names, one of them
-    // in `own`, in `with.1` and skipped here, would lose the rows `cancelled` gives on the
-    // other name.
+    // Proof that `with.1` holds no equality when `with.0` is empty (PROOF-product-bounds-at-
+    // closed-rule). `with.0` is `s.eqs` for `s` the block's split, and `with.1` is the rows
+    // of `outer.groups` (the groups that hold two names of `g`) and of `s.on` (the rows on
+    // the terms `g` compares), [`Split::with`], called as `self.split.with(g, &self.outer)`
+    // at each caller (`Block::enter` through `Split::part`, `Block::reframe`,
+    // `Block::ensure_part_with`). (1) In a split, every row of `on` or of a group is a
+    // constraint of that split, and each such row that is an equality is in `eqs_set`:
+    // `Split::new` puts each `Formula::Con` in `on`, in `eqs_set` when `Rel::Eq`, and the
+    // groups come from `linked` over the same constraints; `add_one` and `remove_one` add
+    // and take back a row in `eqs_set`, `on` and its group together. `eqs` is `eqs_set` in
+    // order (`new`, and `update` when `eqs_changed`). (2) `outer.eqs == split.eqs` at all
+    // times: a block is made with `outer: split.clone()` (`Block::of`, the one struct
+    // literal); `self.split` is set only at the end of `reframe` (`self.split = split`),
+    // after its first check returned `false` with nothing changed unless `split.eqs ==
+    // self.split.eqs`; and `self.outer` is set only there too, to that same `split`. So
+    // each assignment keeps the two `eqs` equal. A block whose equalities change is not
+    // reframed but made anew (the `false` return). From (1) and (2), `with.0` empty means
+    // `s.eqs_set` and `outer.eqs_set` are empty, so no row of `s.on` or `outer.groups` is an
+    // equality. Test: no test checks the invariant alone; the proof rests on reading the
+    // code. What a change could break: a new write of `outer` or `split` that skips the
+    // `eqs` check, or a row put in `on` or a group but not in `eqs_set`.
     // Complexity tradeoff: naive version, every row of `with` read and kept, then read again
     // for each row of each arm, O(w) per call for w rows of `with`: `persist`'s k disjunctions
     // on `x` and `y`, made due by each of its k constraints `x + j*y >= -1000` in their group,
