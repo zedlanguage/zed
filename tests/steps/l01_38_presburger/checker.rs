@@ -1168,27 +1168,67 @@ fn named_moduli_in_a_decided_question_add_no_warning() {
 }
 
 #[test]
-fn a_refused_question_over_one_scaled_variable_names_its_moduli() {
+fn a_question_over_one_scaled_variable_is_decided() {
     // The question of `a_question_over_one_variable_with_no_bound_and_its_remainders_is_decided`
     // with `x` scaled inside the remainders: periodic in `x` with period 120, and it holds exactly
     // at x = 4 mod 10 (at 4: (3*4 - 4) mod 30 = 8, (5*4 + 5) mod 8 = 1, (7*4 + 4) mod 10 = 2,
-    // (4 - 3) mod 2 = 1, 20 mod 6 = 2 and 28 mod 12 = 4). The checker still refuses it, a
-    // defect: the sweep of one period reads only remainders of `x + c`
-    // (`modular::solve_regime`); row PRES-one-variable-scaled-and-nested-residues is to decide it.
-    // Until then this test checks, end to end, how `front.rs` fills the program's variable and
-    // its moduli into the shadows reason (I4.11): the variables the reason counts are the
-    // checker's, one for each remainder and quotient.
-    // `a_question_whose_point_lies_past_one_splinter_is_rejected` keeps the reason over four
-    // variables of the program.
+    // (4 - 3) mod 2 = 1, 20 mod 6 = 2 and 28 mod 12 = 4); not at 5 ((5 - 3) mod 2 = 0). Refused
+    // (shadows) until PRES-one-variable-scaled-and-nested-residues: the sweep of one period read
+    // only remainders of `x + c`; `modular::scaled` now rewrites each remainder of a multiple
+    // of `x` as one of `x`.
     let src = program(
         "ok(x) = (3 * x - 4) mod 30 <= 9 && (5 * x + 5) mod 8 <= 7 && (7 * x + 4) mod 10 <= 5 && (x - 3) mod 2 == 1 && (5 * x) mod 6 != 1 && (7 * x) mod 12 != 11;",
         "x: a",
     );
-    let printed = rejection("shadows-one-scaled-variable", &src);
+    for (input, out) in [("4\n", "in\n"), ("5\n", "out\n")] {
+        let o = run("one-scaled-variable-decided", &src, input, &[]);
+        assert_eq!(
+            (o.status, o.stdout.as_str(), o.stderr.as_str()),
+            (0, out, ""),
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn a_question_over_a_remainder_of_a_quotient_is_decided() {
+    // Row PRES-one-variable-scaled-and-nested-residues, its second shape: `(x div 3) mod 10`
+    // reads the quotient of `x`, which `modular::scaled` unfolds as `x = 3 q + r`, `q = 10 s + t`,
+    // a remainder of `x` by 30. It holds at 4 (4 div 3 = 1, 1 mod 10 = 1 and (4 - 4) mod 30 =
+    // 0) and not at 5 ((5 - 4) mod 30 = 1). Refused (shadows) before this row.
+    let src = program(
+        "ok(x) = (x div 3) mod 10 <= 5 && (x - 4) mod 30 == 0;",
+        "x: a",
+    );
+    for (input, out) in [("4\n", "in\n"), ("5\n", "out\n")] {
+        let o = run("remainder-of-quotient-decided", &src, input, &[]);
+        assert_eq!(
+            (o.status, o.stdout.as_str(), o.stderr.as_str()),
+            (0, out, ""),
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn a_refused_question_over_a_sum_of_quotients_names_its_moduli() {
+    // A remainder of a sum of two quotients of `x`, `(x div 3 + x div 5) mod 7`, is periodic in
+    // `x` (period 105) but is not a chain of remainders that `modular::scaled` unfolds (a row
+    // with two quotients is not one of its definition rows), and the checker still refuses it,
+    // a defect filed as row PRES-one-variable-sum-of-quotients. Until then this test checks,
+    // end to end, how `front.rs` fills the program's variable and its moduli into the shadows
+    // reason (I4.11): the variables the reason counts are the checker's, one for each remainder
+    // and quotient. `a_question_whose_point_lies_past_one_splinter_is_rejected` keeps the reason
+    // over four variables of the program.
+    let src = program(
+        "ok(x) = (x div 3 + x div 5) mod 7 <= 2 && (x - 4) mod 30 <= 9 && x mod 6 != 1;",
+        "x: a",
+    );
+    let printed = rejection("shadows-sum-of-quotients", &src);
     assert!(
         printed.contains(
             "The program has one variable, `x`, and the conditions read it through its \
-             remainders and quotients by 2, 6, 8, 10, 12 and 30; the checker gives each \
+             remainders and quotients by 3, 5, 6, 7 and 30; the checker gives each \
              remainder and quotient a variable of its own. Where the values a variable can take \
              have gaps, it splits the conditions into cases, one for each gap. Here the only \
              values could lie in a case that would have to be split again with as many of the \

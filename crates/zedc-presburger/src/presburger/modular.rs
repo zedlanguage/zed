@@ -8,6 +8,7 @@
 //! `x mod m in S`.
 
 mod brooks;
+mod scaled;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
@@ -822,7 +823,10 @@ pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     // `one_scope::one_variable_modular_formulas_match_enumeration`,
     // `solve_names_tests::two_tied_remainder_rows_are_answered_alike_under_every_naming`,
     // `solve_names_tests::solve_modular_never_gives_two_verdicts_on_tied_remainder_rows`.
-    solve_modular_whole(f, want_model)
+    // A formula with a remainder of a multiple of `x` or of a quotient of `x` is rewritten to
+    // one on remainders of `x` alone ([`scaled::solve`]); it runs only when the reading above
+    // declines, so every formula that reading accepts is answered as before.
+    solve_modular_whole(f, want_model).or_else(|| scaled::solve(f, want_model))
 }
 
 /// A point of `f` found by [`solve_modular`], or `None` when `f` has no point or lies outside
@@ -2750,10 +2754,13 @@ fn solve_regime_step(
     // `free` tie, `solve_regime` returns both mirror points as before. Before this, such a
     // regime was refused (test
     // `checker::a_question_over_one_variable_with_no_bound_and_its_remainders_is_decided`, refused
-    // before; row PRES-one-variable-no-bound-witness). Still refused: a formula whose remainders
-    // are taken of a multiple or a quotient of `x`, which does not reach this regime (row
-    // PRES-one-variable-scaled-and-nested-residues; test
-    // `checker::a_refused_question_over_one_scaled_variable_names_its_moduli`).
+    // before; row PRES-one-variable-no-bound-witness). A formula whose remainders are taken of
+    // a multiple or a quotient of `x` does not reach this regime as written; [`scaled`] rewrites
+    // it into one that does (row PRES-one-variable-scaled-and-nested-residues; tests
+    // `checker::a_question_over_one_scaled_variable_is_decided` and
+    // `checker::a_question_over_a_remainder_of_a_quotient_is_decided`). Still refused: a
+    // remainder of a sum of quotients of `x` (row PRES-one-variable-sum-of-quotients; test
+    // `checker::a_refused_question_over_a_sum_of_quotients_names_its_moduli`).
     //
     // Complexity tradeoff: naive version (before), as for the bounded regime above, the general
     // path, which refused these. Used: the lcm `p`, M - 1 steps of `Int::lcm` over the M moduli

@@ -1,0 +1,534 @@
+//! Tests of [`solve`] (PRES-one-variable-scaled-and-nested-residues): the row's two examples,
+//! a random family of scaled and nested remainders against enumeration, [`affine_preimage`]
+//! against enumeration, and the shapes that are still declined.
+
+use super::*;
+use crate::scaling;
+use crate::seed::Rng;
+mod bench;
+
+fn sym(s: &str) -> Lin {
+    Lin::atom(Atom::Sym(s.into()))
+}
+
+fn x() -> Lin {
+    sym("x")
+}
+
+/// One division as the checker writes it: `a * t + k == m * q + r` with `0 <= r <= m - 1`,
+/// where `t` is `x` (`t == 0`) or the quotient of division `t - 1`. With `fixed`, the
+/// remainder is that constant and the row is `a * t + k - fixed == m * q`, as the checker
+/// writes it once step 1 has fixed the remainder.
+#[derive(Clone, Debug)]
+struct Div {
+    t: usize,
+    a: i64,
+    k: i64,
+    m: i64,
+    fixed: Option<i64>,
+}
+
+/// The quotient and the remainder of division `i`, as `Aux` atoms, as the checker writes them
+/// (zedc-preimage `Normal::parts`: the remainder `Aux(n)` has its quotient at `Aux(n - 1)`).
+fn q_atom(i: usize) -> Atom {
+    Atom::Aux(2 * i as u32)
+}
+
+fn r_atom(i: usize) -> Atom {
+    Atom::Aux(2 * i as u32 + 1)
+}
+
+fn q(i: usize) -> Lin {
+    Lin::atom(q_atom(i))
+}
+
+fn r(i: usize) -> Lin {
+    Lin::atom(r_atom(i))
+}
+
+fn term(t: usize) -> Lin {
+    if t == 0 { x() } else { q(t - 1) }
+}
+
+/// The rows of `divs`, then `lits`, then `extra`, as one conjunction.
+fn formula(divs: &[Div], lits: Formula, extra: Vec<Formula>) -> Formula {
+    let mut parts = Vec::new();
+    for (i, d) in divs.iter().enumerate() {
+        let left = term(d.t).times(d.a).plus(&Lin::constant(d.k));
+        match d.fixed {
+            None => {
+                parts.push(Formula::Con(Con::eq(&left, &q(i).times(d.m).plus(&r(i)))));
+                parts.push(Formula::Con(Con::ge(&r(i), &Lin::constant(0))));
+                parts.push(Formula::Con(Con::ge(&Lin::constant(d.m - 1), &r(i))));
+            }
+            Some(c) => parts.push(Formula::Con(Con::eq(
+                &left.plus(&Lin::constant(-c)),
+                &q(i).times(d.m),
+            ))),
+        }
+    }
+    parts.push(lits);
+    parts.extend(extra);
+    Formula::and(parts)
+}
+
+/// The point of `divs` at `x = v`, each quotient and remainder the floor division defines; `None`
+/// when a fixed remainder is not the remainder there.
+fn point(divs: &[Div], v: i64) -> Option<Model> {
+    let mut model = Model::new();
+    model.insert(Atom::Sym("x".into()), Int::from(v));
+    let mut qs: Vec<i64> = Vec::new();
+    for (i, d) in divs.iter().enumerate() {
+        let t = if d.t == 0 { v } else { qs[d.t - 1] };
+        let e = d.a * t + d.k;
+        let (fl, rem) = (e.div_euclid(d.m), e.rem_euclid(d.m));
+        match d.fixed {
+            None => {
+                model.insert(r_atom(i), Int::from(rem));
+            }
+            Some(c) if c != rem => return None,
+            Some(_) => {}
+        }
+        model.insert(q_atom(i), Int::from(fl));
+        qs.push(fl);
+    }
+    Some(model)
+}
+
+/// Whether `f`, over the rows `divs`, has a point with `x` in `xs`.
+fn has_point(f: &Formula, divs: &[Div], xs: impl Iterator<Item = i64>) -> bool {
+    xs.into_iter()
+        .any(|v| point(divs, v).is_some_and(|m| f.holds(&m)))
+}
+
+/// Checks `f` against `want`: [`decide`](crate::presburger::decide), the checker's entry, must
+/// give `want`, and so must [`solve_modular`] with and without a model when it answers; a model
+/// must be a point of `f`. Returns whether [`solve_modular`] answered. It may decline a formula
+/// whose remainders, once rewritten, are of `x` alone: [`solve_modular_whole`] declines some of
+/// those, written so from the start, before and after this row (seed 7293238915329919861 case
+/// 40, `x mod 2`, `x mod 4` and `x mod 9` under a negation), and the general path decides them.
+fn check(f: &Formula, want: bool, what: &str) -> bool {
+    assert_eq!(
+        crate::presburger::decide(f),
+        Ok(want),
+        "{what}: decide\n{f}"
+    );
+    match solve_modular(f, true) {
+        Some(Some(m)) => assert!(want && f.holds(&m), "{what}: point {m:?} of\n{f}"),
+        Some(None) => assert!(!want, "{what}: no point found, but one exists, in\n{f}"),
+        None => return false,
+    }
+    assert_eq!(
+        solve_modular(f, false).map(|m| m.is_some()),
+        Some(want),
+        "{what} without a model\n{f}"
+    );
+    true
+}
+
+/// [`check`], and [`solve_modular`] must answer.
+fn check_answered(f: &Formula, want: bool, what: &str) {
+    assert!(check(f, want, what), "{what}: declined\n{f}");
+}
+
+/// The rows of the scaled example: `(3 * x - 4) mod 30`, `(5 * x + 5) mod 8`,
+/// `(7 * x + 4) mod 10`, `(x - 3) mod 2`, `(5 * x) mod 6`, `(7 * x) mod 12`.
+fn scaled_example() -> (Vec<Div>, Formula) {
+    let d = |a, k, m| Div {
+        t: 0,
+        a,
+        k,
+        m,
+        fixed: None,
+    };
+    let divs = vec![
+        d(3, -4, 30),
+        d(5, 5, 8),
+        d(7, 4, 10),
+        d(1, -3, 2),
+        d(5, 0, 6),
+        d(7, 0, 12),
+    ];
+    let lits = example_literals(&[0, 1, 2, 3, 4, 5]);
+    (divs, lits)
+}
+
+/// `r_a <= 9 && r_b <= 7 && r_c <= 5 && r_d == 1 && !(r_e == 1) && !(r_f == 11)`, the literals
+/// of both examples.
+fn example_literals(at: &[usize; 6]) -> Formula {
+    let le = |i: usize, c: i64| Formula::Con(Con::ge(&Lin::constant(c), &r(i)));
+    let is = |i: usize, c: i64| Formula::Con(Con::eq(&r(i), &Lin::constant(c)));
+    Formula::and(vec![
+        le(at[0], 9),
+        le(at[1], 7),
+        le(at[2], 5),
+        is(at[3], 1),
+        Formula::negate(is(at[4], 1)),
+        Formula::negate(is(at[5], 11)),
+    ])
+}
+
+/// The rows of the nested example: `x div 3` (row 0), `(x div 3) mod 10` (row 1),
+/// `(x - 4) mod 30`, `(x + 5) mod 8`, `(x - 3) mod 2`, `x mod 6`, `x div 7` (row 6) and
+/// `(x div 7) mod 12` (row 7).
+fn nested_example() -> (Vec<Div>, Formula) {
+    let d = |t, k, m| Div {
+        t,
+        a: 1,
+        k,
+        m,
+        fixed: None,
+    };
+    let divs = vec![
+        d(0, 0, 3),
+        d(1, 0, 10),
+        d(0, -4, 30),
+        d(0, 5, 8),
+        d(0, -3, 2),
+        d(0, 0, 6),
+        d(0, 0, 7),
+        d(7, 0, 12),
+    ];
+    // `(x div 3) mod 10 <= 5`, then the literals of the scaled example on rows 2 to 5 and 7.
+    let lits = Formula::and(vec![
+        Formula::Con(Con::ge(&Lin::constant(5), &r(1))),
+        example_literals(&[2, 3, 3, 4, 5, 7]),
+    ]);
+    (divs, lits)
+}
+
+#[test]
+fn the_rows_two_examples_are_decided() {
+    // Both were declined, and refused by the general path with the shadows reason. The scaled
+    // example holds exactly at x = 4 mod 10; the nested one at 4 (and not at 5).
+    let fix = |v: i64| vec![Formula::Con(Con::eq(&x(), &Lin::constant(v)))];
+    for (what, (divs, lits), ins) in [
+        ("scaled", scaled_example(), vec![4, 14, -6, 64, 124]),
+        ("nested", nested_example(), vec![4, 64, 124]),
+    ] {
+        check_answered(&formula(&divs, lits.clone(), vec![]), true, what);
+        for v in [4, 5, 14, -6, 64, 124] {
+            let f = formula(&divs, lits.clone(), fix(v));
+            let want = has_point(&f, &divs, [v].into_iter());
+            assert_eq!(want, ins.contains(&v), "{what} at {v}: the enumeration");
+            check_answered(&f, want, &format!("{what} at {v}"));
+        }
+    }
+}
+
+/// A random chain of divisions, each of `x` or of an earlier quotient, with coefficients that
+/// may be negative, larger than the modulus, or share a factor with it.
+fn random_divs(rng: &mut Rng) -> Vec<Div> {
+    let n = 1 + rng.below(3);
+    let mut divs = Vec::new();
+    for i in 0..n {
+        let t = if i > 0 && rng.coin() {
+            1 + rng.below(i)
+        } else {
+            0
+        };
+        let a = if rng.below(3) == 0 {
+            rng.pick(&[1, -1])
+        } else {
+            let a = rng.int(2, 14);
+            if rng.coin() { a } else { -a }
+        };
+        let m = rng.int(2, 9);
+        let k = rng.int(-12, 12);
+        let fixed = (rng.below(6) == 0).then(|| rng.int(0, m - 1));
+        divs.push(Div { t, a, k, m, fixed });
+    }
+    divs
+}
+
+/// A random Boolean combination of one-term literals on the remainders of `divs` and on `x`.
+fn random_literals(rng: &mut Rng, divs: &[Div], depth: u32) -> Formula {
+    let free: Vec<usize> = (0..divs.len())
+        .filter(|&i| divs[i].fixed.is_none())
+        .collect();
+    if depth == 0 || rng.below(3) == 0 {
+        if free.is_empty() || rng.below(6) == 0 {
+            let c = Lin::constant(rng.int(-20, 20));
+            return Formula::Con(if rng.coin() {
+                Con::ge(&x(), &c)
+            } else {
+                Con::ge(&c, &x())
+            });
+        }
+        let i = rng.pick(&free);
+        let c = Lin::constant(rng.int(-1, divs[i].m));
+        return Formula::Con(match rng.below(3) {
+            0 => Con::ge(&r(i), &c),
+            1 => Con::ge(&c, &r(i)),
+            _ => Con::eq(&r(i), &c),
+        });
+    }
+    let kids = (0..2 + rng.below(2))
+        .map(|_| random_literals(rng, divs, depth - 1))
+        .collect();
+    match rng.below(3) {
+        0 => Formula::and(kids),
+        1 => Formula::or(kids),
+        _ => Formula::negate(Formula::and(kids)),
+    }
+}
+
+#[test]
+fn scaled_and_nested_remainders_match_enumeration() {
+    // Every remainder is periodic in `x` with a period dividing the product `P` of the moduli
+    // (at `x + P` each row's dividend moves by a multiple of the product of its own and the
+    // later moduli, by induction along the chain), and each literal on `x` has a constant in
+    // [-20, 20], so it has one truth value on all of `x < -20` and one on all of `x > 20`. A
+    // point at `x < -20 - P` thus has one at `x + j P` in `[-20 - P, -21]` for some `j`, and
+    // likewise above, so `[-20 - P, 20 + P]` holds a point exactly when the line does; an outer
+    // bound on `x` is read on its own window.
+    let (mut rng, seed) = Rng::fresh("scaled_and_nested_remainders_match_enumeration");
+    let mut answered = [0usize; 2];
+    let mut by_solve = [0usize; 2];
+    for case in 0..400 {
+        let divs = random_divs(&mut rng);
+        let lits = random_literals(&mut rng, &divs, 2);
+        let period: i64 = divs.iter().map(|d| d.m).product();
+        let (extra, xs): (Vec<Formula>, Vec<i64>) = if rng.coin() {
+            (vec![], (-20 - period..=20 + period).collect())
+        } else {
+            let lo = rng.int(-30, 30);
+            let hi = lo + rng.int(0, 40);
+            (
+                vec![
+                    Formula::Con(Con::ge(&x(), &Lin::constant(lo))),
+                    Formula::Con(Con::ge(&Lin::constant(hi), &x())),
+                ],
+                (lo..=hi).collect(),
+            )
+        };
+        let f = formula(&divs, lits, extra);
+        let want = has_point(&f, &divs, xs.into_iter());
+        let by_module = check(&f, want, &format!("seed {seed} case {case} {divs:?}"));
+        answered[usize::from(want)] += 1;
+        by_solve[usize::from(want)] += usize::from(by_module);
+    }
+    // Both answers are met, so neither side is checked vacuously, and this module answers most
+    // cases itself (388 to 396 of 400 over nine seeds when written), so a module that declined
+    // everything would not pass on `decide` alone.
+    assert!(answered[0] > 40 && answered[1] > 40, "{answered:?}");
+    assert!(
+        by_solve[0] > 40 && by_solve[1] > 40 && by_solve[0] + by_solve[1] > 300,
+        "{by_solve:?}"
+    );
+}
+
+#[test]
+fn an_affine_preimage_matches_enumeration() {
+    // Every `a` in [-20, 20], `k` in [-9, 9] and `m` in [1, 24], with a random set of residues:
+    // the residues `t mod n` [`affine_preimage`] gives are those at which `(a t + k) mod m` lies
+    // in the set. Both ways of writing an interval (points, windows) and both sides (the set,
+    // its complement) are met.
+    let (mut rng, seed) = Rng::fresh("an_affine_preimage_matches_enumeration");
+    for m in 1..=24i64 {
+        for a in -20..=20i64 {
+            for k in -9..=9i64 {
+                let mut v = Vec::new();
+                for _ in 0..1 + rng.below(3) {
+                    let l = rng.int(0, m - 1);
+                    v.push((Int::from(l), Int::from(rng.int(l, m - 1))));
+                }
+                let v = res_normalize(v, &Int::from(m));
+                let inside = |w: i64| {
+                    v.iter()
+                        .any(|(l, h)| *l <= Int::from(w) && Int::from(w) <= *h)
+                };
+                let (n, t) = affine_preimage(&Int::from(a), &Int::from(k), &Int::from(m), &v)
+                    .expect("small sets are written");
+                let g = if a == 0 { m } else { num_gcd(a, m) };
+                assert_eq!(n, Int::from(m / g), "seed {seed}: n of {a} t + {k} mod {m}");
+                let nn = m / g;
+                for s in 0..nn {
+                    let got = t
+                        .iter()
+                        .any(|(l, h)| *l <= Int::from(s) && Int::from(s) <= *h);
+                    let want = inside((a * s + k).rem_euclid(m));
+                    assert_eq!(
+                        got, want,
+                        "seed {seed}: t = {s}, {a} t + {k} mod {m} in {v:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn num_gcd(a: i64, b: i64) -> i64 {
+    let (mut a, mut b) = (a.abs(), b.abs());
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
+}
+
+#[test]
+fn reflected_residues_match_enumeration() {
+    for n in 1..=12i64 {
+        let nn = Int::from(n);
+        for l in 0..n {
+            for h in l..n {
+                let s = vec![(Int::from(l), Int::from(h))];
+                let t = reflect_residues(&s, &nn);
+                for v in 0..n {
+                    let got = t
+                        .iter()
+                        .any(|(a, b)| *a <= Int::from(v) && Int::from(v) <= *b);
+                    let want = (l..=h).contains(&(n - v).rem_euclid(n));
+                    assert_eq!(got, want, "n {n}, [{l}, {h}], {v}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_scaled_remainder_outside_its_values_has_no_point() {
+    // Negative controls: `(3 x) mod 6` is 0 or 3, so `== 1` has no point; `(4 x + 2) mod 8` is
+    // 2 or 6, so `<= 1 || == 4` has none; and the nested `((2 x) div 3) mod 4 == 1` with
+    // `x mod 3 == 0`: there `2 x div 3 = 2 (x / 3)` is even. Each was declined before.
+    let one = |a, k, m| Div {
+        t: 0,
+        a,
+        k,
+        m,
+        fixed: None,
+    };
+    let is = |i: usize, c: i64| Formula::Con(Con::eq(&r(i), &Lin::constant(c)));
+    let le = |i: usize, c: i64| Formula::Con(Con::ge(&Lin::constant(c), &r(i)));
+    let cases = [
+        (vec![one(3, 0, 6)], is(0, 1)),
+        (vec![one(4, 2, 8)], Formula::or(vec![le(0, 1), is(0, 4)])),
+        (
+            vec![
+                one(2, 0, 3),
+                Div {
+                    t: 1,
+                    a: 1,
+                    k: 0,
+                    m: 4,
+                    fixed: None,
+                },
+                one(1, 0, 3),
+            ],
+            Formula::and(vec![is(1, 1), is(0, 0), is(2, 0)]),
+        ),
+    ];
+    for (i, (divs, lits)) in cases.into_iter().enumerate() {
+        let f = formula(&divs, lits, vec![]);
+        let period: i64 = divs.iter().map(|d| d.m).product();
+        assert!(
+            !has_point(&f, &divs, 0..period),
+            "case {i}: the enumeration"
+        );
+        check_answered(&f, false, &format!("case {i}"));
+    }
+}
+
+#[test]
+fn other_shapes_are_still_declined() {
+    // Negative controls of the shape: a second variable in a remainder, a quotient read by a
+    // bound, and a remainder of a sum of two quotients (a row of four atoms). Each needs more
+    // than residues of one variable, and `solve` leaves it to the general path.
+    let ge = |a: &Lin, c: i64| Formula::Con(Con::ge(a, &Lin::constant(c)));
+    let row = |left: Lin, m: i64, i: usize| {
+        vec![
+            Formula::Con(Con::eq(&left, &q(i).times(m).plus(&r(i)))),
+            ge(&r(i), 0),
+            Formula::Con(Con::ge(&Lin::constant(m - 1), &r(i))),
+        ]
+    };
+    let two_vars = Formula::and(
+        [
+            row(x().times(3).plus(&sym("y")), 30, 0),
+            vec![Formula::Con(Con::ge(&Lin::constant(9), &r(0)))],
+        ]
+        .concat(),
+    );
+    let quotient_bound = Formula::and(
+        [
+            row(x().times(3), 30, 0),
+            vec![
+                ge(&q(0), 5),
+                Formula::Con(Con::ge(&Lin::constant(9), &r(0))),
+            ],
+        ]
+        .concat(),
+    );
+    let sum_of_quotients = Formula::and(
+        [
+            row(x(), 3, 0),
+            row(x(), 5, 1),
+            row(q(0).plus(&q(1)), 7, 2),
+            vec![Formula::Con(Con::ge(&Lin::constant(2), &r(2)))],
+        ]
+        .concat(),
+    );
+    for (what, f) in [
+        ("two variables", two_vars),
+        ("a quotient read by a bound", quotient_bound),
+        ("a sum of quotients", sum_of_quotients),
+    ] {
+        assert!(solve(&f, true).is_none(), "{what}: answered\n{f}");
+    }
+}
+
+/// The small instances of the benchmarks in `bench.rs`, against enumeration.
+#[test]
+fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
+    for m in [7, 30, 101] {
+        let (divs, f) = bench_modulus(m);
+        let want = has_point(&f, &divs, 0..m);
+        check_answered(&f, want, &format!("modulus {m}"));
+    }
+    for depth in 1..=6 {
+        let (divs, f) = bench_depth(depth);
+        let period: i64 = divs.iter().map(|d| d.m).product();
+        let want = has_point(&f, &divs, 0..period);
+        assert!(want, "depth {depth}: the enumeration");
+        check_answered(&f, want, &format!("depth {depth}"));
+    }
+}
+
+/// `(a x + 3) mod m` with `a` the nearest integer to `m / 3` coprime to `m`, in the lower half
+/// `[0, m / 2]` and not `1`: each literal pulls back to about `m / 3` runs of residues of `x`
+/// on both sides, the most the windows allow, so this is the costly case of a modulus `m`.
+fn bench_modulus(m: i64) -> (Vec<Div>, Formula) {
+    let a = (m / 3..).find(|a| num_gcd(*a, m) == 1).expect("a coprime");
+    let divs = vec![Div {
+        t: 0,
+        a,
+        k: 3,
+        m,
+        fixed: None,
+    }];
+    let lits = Formula::and(vec![
+        Formula::Con(Con::ge(&Lin::constant(m / 2), &r(0))),
+        Formula::negate(Formula::Con(Con::eq(&r(0), &Lin::constant(1)))),
+    ]);
+    (divs.clone(), formula(&divs, lits, vec![]))
+}
+
+/// `x div 3`, its quotient by 3, and so on, `depth` times, with the literal
+/// `(x div 3^i) mod 3 == i mod 3` on the remainder of each level, as the checker writes nested
+/// quotients: one point modulo `3^depth`.
+fn bench_depth(depth: usize) -> (Vec<Div>, Formula) {
+    let mut divs = Vec::new();
+    let mut lits = Vec::new();
+    for i in 0..depth {
+        divs.push(Div {
+            t: if i == 0 { 0 } else { i },
+            a: 1,
+            k: 0,
+            m: 3,
+            fixed: None,
+        });
+        lits.push(Formula::Con(Con::eq(&r(i), &Lin::constant((i % 3) as i64))));
+    }
+    let f = formula(&divs, Formula::and(lits), vec![]);
+    (divs, f)
+}
