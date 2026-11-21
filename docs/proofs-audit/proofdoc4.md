@@ -1360,13 +1360,17 @@ code), read in part. A claim made in one entry and completed in two later ones (
 witness, the instancing of bodies) is counted once for each entry. Also in part 4, at base
 1533df33a, the zedc-base entries 107 to 145: all in full but 50a4b3789 (the crate split),
 read in part. The one false claim found there came from db7d549fa, outside the list, and is
-counted under zedc-base beside the 17 entries that make the same kind of claim.
+counted under zedc-base beside the 17 entries that make the same kind of claim. In part 5, at
+base cddd9d7bf, proofdoc4f read the rest: ddc1ec274 in full, and the parts of 37148785d,
+6ff237028, d694e2a26 and f48ec1bf4 left above; and the two crate splits (cf099fcf2,
+50a4b3789) for claims, where the moved files were compared blob by blob and the changed
+lines read.
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
-| zed-kernel | 57 of 62, 4 in part | 151 | 89 | 58 | 2 | 2 |
-| zedc-elab | 44 of 44, 1 in part | 34 | 29 | 3 | 0 | 2 |
-| zedc-base | 39 of 39, 1 in part | 26 | 25 | 0 | 0 | 1 |
+| zed-kernel | 62 of 62 | 176 | 95 | 75 | 2 | 4 |
+| zedc-elab | 44 of 44 | 35 | 30 | 3 | 0 | 2 |
+| zedc-base | 39 of 39 | 27 | 25 | 0 | 0 | 2 |
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -1404,7 +1408,9 @@ counted under zedc-base beside the 17 entries that make the same kind of claim.
 | 3204ef377 | `bad` is always an `Expr::Ref` | `types/rec/group.rs`, `Group::new` | already there |
 | 3204ef377 | The `sweep` walk, `local` never `Of`, `pair_picks` leaves, `put` with class `Of` | `types/empty/sweep.rs`, `types/empty.rs`, `types/print.rs` | already there (comments read, not traced line by line) |
 | 34a583731 | A value found in a region's piece is a value of the part | `types/empty.rs`, `class_rep`, `key_pieces` | already there |
-| 37148785d | Each new phase adds a type to `dead`, which bounds the phases | `types/empty.rs`, `Search::settle` | completed: `end_phase`, `settled`, `pop_open_forks`; that the types made are finitely many is stated as not shown (row PROOF-kernel-search-types-finite); the `no_key`/`no_keys` claims not read |
+| 37148785d | Each new phase adds a type to `dead`, which bounds the phases | `types/empty.rs`, `Search::settle` | completed: `end_phase`, `settled`, `pop_open_forks`; that the types made are finitely many is stated as not shown (row PROOF-kernel-search-types-finite); the `settle` doc now names the test `group_oracle::a_key_type_proved_empty_again_ends_the_search` |
+| 37148785d | `no_key` answers `true` only for a key proved empty for good in this search | `types/empty.rs`, `no_key` | added: `no_value` answers from `dead` (settled for the rest of the search) or, for a type with no id, from a fact of the type alone, its group's decider, its own search, or `met`'s `HIT` cut, after which nothing the search gives is kept |
+| 37148785d | A closure is built on `no_keys` only when shown, and a missed late proof leaves it unbuilt | `types/empty.rs`, `find_rep` | already there |
 | 3ffbadf75 | Splitting a component by its nested cells costs at most `2m + 1` pieces and keeps every value | `types/empty.rs`, `nested_cover`, `nested_pieces` | already there |
 | 40733faeb | A family made from one holding a failure holds that failure | `provenance.rs`, `Holds::plan` | already there (checked: a from-id is set only by `Family::extend` and by `union` through `made_from`, union keeps every leaf of its big side, and `extend`'s one caller, `merge_failures`, adds only failures) |
 | 40733faeb | `Family::extend`: a key already held keeps its value | `value.rs`, `Family::extend` | corrected: false for a written `#errs` family that is not a set (payload type `E ->? E`, DESIGN sec:failure): `#errs({#a -> #b})` merged with `#a` put `#a -> #a` over `#a -> #b` (a panic of the debug check, a silent replacement in release); test `merging_a_written_errs_family_keeps_its_entries` red (the panic), `extend` now skips a key held, green. Which value a one-entry merge should give: row SPEC-errs-written-family-not-a-set |
@@ -1440,7 +1446,10 @@ counted under zedc-base beside the 17 entries that make the same kind of claim.
 | 6ebe63b42 | rustc inlines an unmarked function into other crates only when it calls nothing | `digest.rs`, `Digest::write_u64` | completed: rust-lang/rust PR 116505 (Rust 1.75) cited |
 | 6ff237028 | The settled form holds every value of the part | `types/bdd.rs`, `Part::settle` | completed: Shannon expansion step by step |
 | 6ff237028 | A tuple part `false` outside its tuple types has every value in one of them | `types/empty.rs`, `Group` kids walk | completed |
-| 6ff237028 | Two types in different classes are disjoint | `types/empty.rs`, `overlaps` | Not proved: that the walk places keys, lists or wholes covering every value of a type in every `Parts` case and with lazy `Placing` reads (row PROOF-kernel-overlaps-cover); `split_classes`, `class_rep` not read |
+| 6ff237028 | Two types in different classes are disjoint | `types/empty.rs`, `overlaps` | Not proved: that the walk places keys, lists or wholes covering every value of a type in every `Parts` case and with lazy `Placing` reads (row PROOF-kernel-overlaps-cover) |
+| 6ff237028 | Π_sym's classes are strictly finer than the classes before it | `types/empty.rs`, `overlaps` | corrected: finer or equal (a split can leave every class whole); the proof that the classes do not depend on the order the types are read added |
+| 6ff237028 | `split_classes` takes O(log k) rounds for k classes | `types/empty.rs`, `split_classes` | completed: a tuple type of one class stays in the parts of the halves that hold its class and ends in one piece |
+| 6ff237028 | The value `class_rep` gives is a value of the class | `types/empty.rs`, `class_rep` | added: `Each::Seek` with the box inside b's, and the part agreeing with g by the `split_classes` proof |
 | 7d0cc8d9f | A power proved larger than the target's address space is refused at compile time | `num.rs`, the power bound | already there |
 | 8183b743b | A second carrier of the one cycle need not be kept: `is_carrier` accepts it by its step | `types/empty.rs`, `find_prefix_chains`, before `is_carrier` | completed: a period-1 `Some` from `cycle` is `find_cycle` on that type alone, whose one step is `(Some(c.stop), c.link, c.item, x)`, and each test of `is_carrier` then holds |
 | 81a60d522 | `list_rows` refuses a root of more than two atoms before reading any | `types/empty.rs`, `list_rows` | already there |
@@ -1509,13 +1518,31 @@ counted under zedc-base beside the 17 entries that make the same kind of claim.
 | d694e2a26 | The ladder encoding allows at most one true atom, three clauses an atom | `types/empty/escape.rs`, the 2-SAT build | added: both directions |
 | d694e2a26 | No 2-SAT model means no list escapes | `types/empty/escape.rs`, before `sat.solve()` | added |
 | d694e2a26 | Building the list stays within the cost bound | `types/empty/escape.rs`, `depth` | added: `k^2` for `k` distinct atoms at a place, within their written size |
-| d694e2a26 | The truncation lemma | `types/empty/escape.rs`, module comment | already there in substance; "not killed" means not killed at a place up to `l0` (the code reads cells only to `target_len`); wording not edited; the rest of the entry not read |
+| d694e2a26 | The truncation lemma | `types/empty/escape.rs`, module comment | already there in substance; "not killed" means not killed at a place up to `l0` (the code reads cells only to `target_len`); wording not edited |
+| d694e2a26 | The `ChainHint` fallback, `Live`, the repairs X34 and X35 | `types/empty/escape.rs` | already there (X34 and X35 at the two repair sites) |
+| d694e2a26 | A window of `cells_windows` costs O(its cheapest price) | `types/empty/escape.rs`, `cells_windows` | completed: the way made exact has the least lower bound, so it is at most the least exact price, and at most four ways are made exact |
+| d694e2a26 | `forest` gives each atom its parent when the atoms are laminar, and `None` when two cross | `types/empty/escape.rs`, `forest` | added: cofinite atoms nest by their excluded sets; finite atoms placed largest first, by induction |
+| d694e2a26 | U1/U2: the literal kept for a cofinite `pl[j]` agrees with `pl[j] ∩ a` | `types/empty/escape.rs`, the U1/U2 branch | added: Z\(A\P) and Z\(P∪A) agree on P; for a finite A the literal is A\P |
 | e3ee7d064 | Papers named at the last sites without an identifier | sites in the diff | already there (DOIs checked) |
 | e60e73504 | 126 exclusive ors, `2 · 64 - 2`, for the test-count thresholds | `types/bdd/tests.rs` | already there |
 | e62be00e0 | 23 guards closed by proof | `types/empty.rs` and others, sites in the diff | already there; the guards still open are listed in `crates/zed-kernel/COMPLETENESS.md` (`system`'s `Not` arm, `put` with class `Of`, `Rep::key` and others) |
 | e7b12dd2e | `Printer::remember` keeps a text only when it is fixed, forced none, no `Group`, its kids clean | `types/print.rs`, `Printer::remember` | already there (doc matches the code's conditions) |
 | f075a1c0b | Different symbols have different numbers, and neighbors are different symbols | `text/names.rs`, `Names::decide` | completed: bytes below `FIRST_RULE`, one number per distinct rule, each level run-length coded, a symbol is a byte or a `Block`, never a `Run`; the three cases of `id` |
-| f48ec1bf4 | Only `Atoms::set` and the `Drop` of `take_names` write `names` | `types.rs`, `mod atoms` | already there; the rest of the entry not read |
+| f48ec1bf4 | Only `Atoms::set` and the `Drop` of `take_names` write `names` | `types.rs`, `mod atoms` | already there; the accessor changes of the rest make no claim |
+| f48ec1bf4 | `zip`'s clone arm keeps `cofinite` | `types.rs`, `Atoms::zip` | added: `cofinite == large.cofinite` there |
+| f48ec1bf4 | `take_names` leaves the map empty only where no read follows | `types.rs`, `Atoms::take_names` | added: its one caller is `Drop for Node` |
+| ddc1ec274 | The flat meet of the carriers is empty unless each holds a cofinite atom set, a scalar, a bare atom or a struct | `types/empty.rs`, `disjoint_top_carriers_depth0` | corrected: `()` is a flat value too and the length test below starts at 1, so `top & ()` was called disjoint; test `the_empty_tuple_is_shared_by_the_carrier_test` red (ts=[top, ()]), a type whose length-0 tuple part is not empty now counts as holding a flat value, green; proof of the rest at the site |
+| ddc1ec274 | `flat_tuple_subtrahend` gives the part of a flat tuple type a difference takes away | `types/empty.rs`, `flat_tuple_subtrahend` | added |
+| ddc1ec274 | The flat difference decided by Boolean equations is exact | `types/empty.rs`, `exact_flat_diff_decide` | added |
+| ddc1ec274 | The Horn solution gives a witness | `types/empty.rs`, the Horn witness | added |
+| ddc1ec274 | One key reads one formula | `types/empty.rs`, `At::key` | added: the shared `NEXT` counter, a cell's `c.id + 1`, leaves 0 and 1; two keys for one formula are sound, `TwoSat::meet` forcing only g→x |
+| ddc1ec274 | A fork's cuts are taken together | `types/empty.rs`, `GROUP-order-fork-cuts-together` | completed: `[[rest]] ⊆ [[rest \| u]] = [[u]]`; the canonical form is needed only for the converse |
+| ddc1ec274 | The union of Seed 1908 need not be forked | `types/empty.rs`, the Seed 1908 union | added: the components lie within `b.r[j]` and `row_rep` checks `holds` against `f`; cost by `union_all` halves |
+| ddc1ec274 | `Placing` keeps `active`, `pending_cnt` and `min_gid` per cell | `types/empty.rs`, `Placing` | added: `merge_with` reaches both roots before joining |
+| ddc1ec274 | A group kept in `GROUPS` equals the one a new walk gives | `types/empty.rs`, `GROUPS` | added: fresh `Held`, `local_dir` pure, lower groups by induction, ids in the order made; the ratios are measurements |
+| ddc1ec274 | `group_has_diff_or_and` meets every body node | `types/empty.rs`, `group_has_diff_or_and` | added: `seen` keyed by class, and an equal class is an equal shape within a group |
+| ddc1ec274 | The `shared_chain` shortcut | `types/empty/escape.rs` | already there (proof, row and test at the site) |
+| ddc1ec274 | `single_chain`, `universe_mask`, `component_carrier`, `within_outside`, `first_components`, the p0-singletons skip, the `listed_by_all` removal | `types/empty/escape.rs` | already there (counted once) |
 | f91eac49c | Unreached lines of `find_prefix_chains` closed by proof or test | `types/empty.rs`, the `debug_assert!`s there | already there |
 | fa271b3f2 | The reads memo of a subterm is its own type, named in `clippy.toml` | `eval/made.rs`, `clippy.toml` | already there |
 | fe770de11 | M61 addition, the Fermat inverse, `p.pow(k)` divides `n`, `usize` is 64 bits | `poly.rs`, `num` sites in the diff | already there |
@@ -1559,7 +1586,9 @@ counted under zedc-base beside the 17 entries that make the same kind of claim.
 | 981ec6c8a | -1, the identity of `bitAnd` and the zero of `bitOr`, is outside `int[0..]` until INT-twos | zedc-base `axioms.rs` | already there |
 | 995a598b2 | `Tonicity::flip` gives the grade of `-f` | zedc-base `axioms.rs`, `Tonicity` | already there |
 | a1740c637 | An NFC rejection names the whole run that composes | zedc-base `source.rs`, `first_not_nfc` | already there |
-| 50a4b3789 | The crate split moves code unchanged | zedc-base (the whole crate) | already there (read in part: the moved code not line by line) |
+| 50a4b3789 | The crate split moves code unchanged | zedc-base (the whole crate) | already there: the 8 moved files have the same blobs before and after (`git rev-parse`) |
+| 50a4b3789 (comment older than the split) | The import graphs are not empty: "every file is reached, with its imports" | `tests/steps/s_01f_import_graph/mod.rs` | corrected: the asserts check only more than 60 files and more imports than files; the comment now says that |
+| cf099fcf2 | The split moves `elab.rs` and `walk.rs` unchanged; `zedc` re-exports `elab` | zedc-elab `elab.rs`, `elab/walk.rs`; `zedc/src/lib.rs` | already there: only the `use` lines changed; `pub use zedc_elab::elab;` at lib.rs:14 |
 
 No code claim: 9e3cc1480 (zed-kernel part: an alias, an equivalent `?`, moved tests);
 zedc-elab: 7931d6ed6, 8164a8ea9, 2b3e706f1, 995200322, 18ea94666, 86322e10b, c50a8965b,
@@ -1567,14 +1596,10 @@ zedc-elab: 7931d6ed6, 8164a8ea9, 2b3e706f1, 995200322, 18ea94666, 86322e10b, c50
 with no claim about code): 13237878e, eb9d470b5, 4e6c5bfaa, c5ed79580, 726008ee7, 8a14a296f,
 bea44d4a5, bfc106d61, d11373afd, e6dfb6877, 168d440d9, 3ef2d671a, 4ce8104bb, 6a1038700.
 
-Not read:
+No code claim, part 5: ddc1ec274's `empty/tests.rs` (its header still names the file to
+append to and a cross-review round; left as written).
 
-- zed-kernel (5, 4 of them in part above): 37148785d (the `no_key`/`no_keys` claims),
-  6ff237028 (`split_classes`, `class_rep`), d694e2a26 (the `ChainHint` fallback,
-  `cells_windows`, `Live`, X34, X35, `forest`), f48ec1bf4 (all but the `Atoms` privacy
-  claim), and ddc1ec274 (3509 lines) not at all
-- zedc-elab (1, in part above): cf099fcf2 (the moved code not read line by line)
-- zedc-base (1, in part above): 50a4b3789 (the moved code not read line by line)
+Not read: none.
 
 ## proofdoc4g: the moved commits, zedc-solvers, zedc-int, the small crates, `type_var_form`
 

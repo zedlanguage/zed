@@ -4024,8 +4024,8 @@ impl Search {
     /// drops from the table, and puts `settled` back when it drops every one added. So the
     /// phases are at most one more than the types the search makes; that this count is finite
     /// is not shown here. Commit 37148785d added a test of the layered group of seed 1335,
-    /// which ran without end before the first line here; that test was not found by name in
-    /// this tree.
+    /// which ran without end before the first line here:
+    /// `l01_23_groups_and_refusals::group_oracle::a_key_type_proved_empty_again_ends_the_search`.
     fn settle(&mut self, v: usize) {
         if self.dead.contains(&v) || self.rests_on_fork([v]) {
             return;
@@ -6920,7 +6920,12 @@ impl<'m> Searching<'m> {
                     // two sorted member lists, so `r` cuts cost O(r log^2 r) against O(r^2 log r)
                     // for a left fold), and the rest counts as held when adding it leaves the
                     // union unchanged: every member of the rest is a member of the union, by the
-                    // union's canonical form, so no type is decided. What this misses needs
+                    // union's canonical form, so no type is decided. Proof: `|` is `zip(Or)` on
+                    // each part, so `[[rest | u]] = [[rest]] ∪ [[u]]`, and `==` holds only of
+                    // equal contents (pointers, then digests, then contents), which denote one
+                    // set; so `[[rest]] ⊆ [[rest | u]] = [[u]]`. The canonical form is needed
+                    // only for the converse, that a rest within `u` leaves it equal, which
+                    // this test does not rely on (a miss is a refusal kept). What this misses needs
                     // the subset construction: `(#a, list(int))` less the same two pairs is
                     // Empty, but `list(int)` within `E | O` is the universality of the union of
                     // two automata (NFA universality, PSPACE-complete; see the fork comment
@@ -7437,8 +7442,9 @@ impl<'m> Searching<'m> {
     /// class's cells meet. On the piece of a class, a tuple type with a cell of another class
     /// misses the box, and on the rest every tuple type of a class does, so they are taken out
     /// of `f` before the piece is decided on a box of its own. The classes are halved at each
-    /// step and each half takes the other's tuple types out, so each tuple type stays in the
-    /// part of O(log k) of the k pieces, and the part is restricted O(log k) times over. Each
+    /// step and each half takes the other's tuple types out, so a tuple type of one class stays
+    /// in the parts of the O(log k) halves that hold its class, ending in one of the k pieces,
+    /// and the part is restricted O(log k) times over. Each
     /// piece's box holds in component `j` only the values of its own class, so a test of a cell
     /// against it costs the size of the class, not of the component; but when `f` holds no tuple
     /// outside the classes' tuple types, the box keeps the component as it is, which then adds
@@ -11179,6 +11185,15 @@ impl<'m> Searching<'m> {
     /// decided in the one walk of the search, each key type once. A key type whose decision
     /// reads a type still being decided is proved empty, if it is, at the end of the phase.
     /// While a seed is sought nothing is decided, since that search keeps no answer.
+    ///
+    /// Proof of "for good": `no_value` answers `true` in two ways. With `k` in `ids`, it
+    /// answers whether `k` is in `dead`, which holds only types settled empty for the rest of
+    /// the search (`settle`). With `k` not in `ids`, `empty` answered before `met` numbered it:
+    /// by a fact of the type alone (`diagonal_empty`, a scalar, `height_bounds`), by its
+    /// group's decider (`judged`, `group_verdict`), by its own search (`own_emptiness`), all
+    /// final; or by `met`'s cut at a member of a group this search does not walk (`HIT`),
+    /// after which nothing this search gives is kept (`own_search`), so no closure it builds
+    /// is used. So a closure built on `true` is never called by a value of its keys.
     async fn no_key(&'m self, k: &Type) -> bool {
         // Complexity tradeoff (COMPLEXITY.md K60): the naive version decides each key type by a
         // search of its own, which reads the nest below it again: a nest of d morphisms, each
@@ -11990,6 +12005,11 @@ impl<'m> Searching<'m> {
                     // positive rows and subtract the union of negated rows once across `g` in
                     // `O(m * K log K)` time (`K` rows), testing at most `m + 1` sub-boxes instead
                     // of `O(K²)` per-candidate subtractions or `O(K^m)` box complementation.
+                    // Sound: every row tried has component `j` within `b.r[j]` (`pj` is met
+                    // with it, `safe[j]` is `pj` less a type), and `row_rep` gives a tuple only
+                    // when `holds` finds it in `f`; so a value given is one of `f` on the box.
+                    // Cost: `Type::union_all` builds each union in balanced halves, so `m`
+                    // components of `K` rows cost `O(m K log K)` merges; then `m + 1` rows tried.
                     let mut seen_pos = DigestSet::default();
                     let mut pos_set = BTreeSet::new();
                     g.taken_toward(true, &mut seen_pos, &mut |r| {
@@ -12082,6 +12102,9 @@ impl<'m> Searching<'m> {
         // against every cell: order n² (57.2 times the instructions per 8 times `n` on
         // `diagonal_rows_less_rows_failing_on_the_last_region_scale`, load 37).
         let (j, classes, _) = classes(b, &open, true)?;
+        // Sound: `Each::Seek` seeks a value of the piece's box met with the piece's part; the box
+        // lies within `b`'s, and the part agrees with `g` on it (the proof at `split_classes`),
+        // so a value found is a value of `g` on the box of `b`.
         let mut found = None;
         let mut each = Each::Seek {
             len,
@@ -13972,6 +13995,14 @@ enum At<'p> {
 
 impl At<'_> {
     /// The key of the node read as itself (`pos`) or as its complement: its id and `pos`.
+    ///
+    /// Proof that two readings with one key read one formula: cells, sets and expressions take
+    /// their ids from one counter (`set::NEXT`, from 2), a cell two of them, `c.id + 1` naming
+    /// `Bdd::List(c, true)`, and the leaves 0 and 1; so an id names one node, and `At::Part`
+    /// of `Part::Bdd(b)` has `b`'s id, the same node. With `pos`, the key fixes the formula.
+    /// One formula may have two keys (a cell read as itself and its complement list read as
+    /// a complement); that costs a node read twice, or a meet given two variables each forcing
+    /// its operands, which is sound, never a wrong clause.
     fn key(self, pos: bool) -> (u64, bool) {
         match self {
             At::Part(p) => (p.id(), pos),
@@ -14868,7 +14899,14 @@ thread_local! {
     // its directional group (`dir = 0` first spine, `dir = 1` last spine) until the unit ends,
     // `O(their total size)` of memory; clearing per call instead of caching both slots blows up
     // the K35 list bench from `8.1x` to `11.27x` by rebuilding the `n`-node list group `n` times
-    // (`O(n^2)`, COMPLEXITY.md K36). Trigger: any split into classes.
+    // (`O(n^2)`, COMPLEXITY.md K36). Trigger: any split into classes. Proof that a kept group
+    // is the one a new walk would make: `group_of` walks from `t` with a fresh `Held`, the
+    // empty type and `dir`, and reads each type only through `local_dir` (of `p_held` with that
+    // fresh `Held`), a function of the type's parts and `dir` (no verdict is read), and through
+    // the groups kept here for types it reaches, which by induction on the order made are the
+    // ones a new walk would make. So a group depends on `t` and `dir` alone, up to its `id`,
+    // which numbers the groups in the order made and so stays below the ids of groups that
+    // reach it. The ratios above are measurements, not proved bounds.
     static GROUPS: [GroupsMet; 2] =
         const { [RefCell::new(ByType::new()), RefCell::new(ByType::new())] };
     /// The number of the next [`Group`] made on this thread.
@@ -15807,6 +15845,13 @@ struct Placing {
     wholes: Vec<(usize, usize)>,
     /// Per cell: remaining `Work::Place` + `Work::Bind` items, waiting `pending` nodes, and
     /// lowest `Group::id` placed so far (Tarjan bottom-up topological order).
+    /// Proof that the counts are kept: every push of `Work::Place(.., i)` or of a `Work::Bind`
+    /// for a placement of cell `i` adds 1 to `active[i]` (`read`, and `joined` where it pushes),
+    /// and `joined` takes 1 off when it pops one; `Work::Merge` is not counted. `pending` is
+    /// set only for a node `read` makes, adding 1 to `pending_cnt` of the placement's cell, and
+    /// cleared only by `reach`, taking 1 off; `Trie::merge_with` reaches both roots before it
+    /// joins them, so no waiting node is merged away uncounted. `min_gid[i]` is lowered to
+    /// `g.id` at each group placed for `i`, and at a repeated stem placed by its tail.
     active: Vec<usize>,
     pending_cnt: Vec<usize>,
     min_gid: Vec<usize>,
@@ -16008,10 +16053,23 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
     }
     // Complexity tradeoff (`Π_sym`): partitioning `ts` by the join across universes of the meet
     // across components `0..m` and spine directions `dir in {0, 1}` makes `overlaps` reversal
-    // invariant (`Z_2`) and strictly finer than base `overlaps` in `O(S log S)` time (with
-    // two-slot `GROUPS` caching), whereas testing pairwise box meets exactly costs `O(n^2)`
-    // emptiness searches (COMPLEXITY.md K36), and full `S_m` nested-spine invariance on arity
-    // `m >= 3` would branch across all `m` components at each nested tuple depth (`O(m^d)`).
+    // invariant (`Z_2`) and finer than base `overlaps` or equal to it in `O(S log S)` time
+    // (with two-slot `GROUPS` caching), whereas testing pairwise box meets exactly costs
+    // `O(n^2)` emptiness searches (COMPLEXITY.md K36), and full `S_m` nested-spine invariance on
+    // arity `m >= 3` would branch across all `m` components at each nested tuple depth
+    // (`O(m^d)`).
+    // Proof. Sound: two types that meet share a value, which every run (`joined`, sound by the
+    // doc above) puts in one class, so they share the key `(p0, p1)`; two `m`-tuple types that
+    // meet share a tuple, in a row each takes toward `true` or under a whole part, so its
+    // component `c` joins them in every run `(c, dir)`, and they share a label. Finer or equal:
+    // the classes are a meet of runs that includes the base run `p0`; equal when `p0` is all
+    // singletons (then `p1` is skipped, below), so "strictly" does not hold in general. The
+    // early break when every label is distinct leaves the meet unchanged, since a meet of
+    // singletons is singletons. Reversal invariant: `dir` enters a run only through the
+    // component `local_dir` reads (`row[0]` or `row[len - 1]`) and the `GROUPS` slot, so for
+    // inputs with every tuple reversed at every depth, run `d` is run `1 - d` of the inputs and
+    // run `(c, d)` is run `(m - 1 - c, 1 - d)`; the meet over both `d` (and every `c`) is the
+    // same partition. Its cells are in input order either way.
     // Each child at a tuple length: its index, whether it is whole, and its rows.
     type Kid<'r> = (usize, bool, Vec<&'r Row>);
     let mut by_m: BTreeMap<usize, Vec<Kid<'_>>> = BTreeMap::new();
@@ -16686,6 +16744,27 @@ fn nonflat_part(t: &Type) -> Type {
 }
 
 /// Depth-0 check whether the top-level universes of `ts` have empty intersection.
+// Proof that `true` means the meet of `ts` is empty. A value lies in one universe: flat
+// (booleans, the five literal carriers, structs, bare atoms, `()`), a payload atom `#a(v)`, a
+// tuple of length at least 1, or a morphism. `true` is returned only when each of these four
+// is shown to hold no shared value:
+// 1. Flat. When `ts[0]` has a flat part (`flat_part`, exact), the meet of the flat parts is
+//    built and found empty, and a later type without one (cofinite atoms) shows nothing. When
+//    `ts[0]` has none, the meet is shown empty only when some type holds no flat value at all,
+//    which is the `all` test negated: that type then has no flat value to share.
+// 2. Morphisms. Not shown when every type may hold one, so some type holds none.
+// 3. Payload atoms. A shared `#a(v)` has `a` held with a payload by `ts[0]`: when `ts[0]` has
+//    cofinite atoms, every other type then holds some payload atom (cofinite, or a listed name
+//    whose payload lists something, `Atoms::payloads`); else `a` is in `ts[0]`'s payload
+//    names, and each other type holds `a` with a non-empty payload, unlisted under cofinite
+//    atoms meaning every payload. Each failed test leaves a type with no payload at `a`.
+// 4. Tuples of length `len >= 1`. A shared tuple lies in each type's part at `len`, read with
+//    `Tuples::get` (an unlisted length under `rest` is every tuple). When every type has
+//    `rest`, nothing is shown. Else the anchor, without `rest`, lists `len` with a part not the
+//    empty leaf, and so does every type without `rest`, while a type with `rest` leaves it
+//    unlisted or lists it with a part not the empty leaf; `share_len` false means some type's
+//    part at every such `len` is the empty leaf.
+// The universes are those of `Parts`, so no shared value is left. `false` is always sound.
 fn disjoint_top_carriers_depth0(ts: &[Type]) -> bool {
     if ts.len() < 2 {
         return false;
@@ -16708,9 +16787,18 @@ fn disjoint_top_carriers_depth0(ts: &[Type]) -> bool {
                 None => true,
             }
         } else {
+            // The flat values are booleans, literals, structs, bare atoms and `()` (the parts
+            // `flat_part` keeps); a type with none of them has no flat value, so the flat meet
+            // is empty. `()` was missing here, and the test of shared lengths below starts at
+            // length 1, so `top & ()` was called disjoint (FAIL-carriers-empty-tuple-flat, test
+            // `the_empty_tuple_is_shared_by_the_carrier_test`).
             ts.iter().all(|t| {
                 let p = t.p();
-                p.atoms.cofinite() || p.has_scalars() || p.has_bare_atoms() || p.structs
+                p.atoms.cofinite()
+                    || p.has_scalars()
+                    || p.has_bare_atoms()
+                    || p.structs
+                    || p.tuples.get(0).is_leaf() != Some(false)
             })
         }
     };
@@ -16926,6 +17014,9 @@ fn disjoint_top_carriers(ts: &[Type]) -> bool {
 /// If `r_ty`'s `m`-tuple part (restricted to rows whose components can overlap `xs_tys`) is false
 /// outside its rows and every cell of those surviving rows is flat, returns that isolated `m`-tuple
 /// `Type`.
+// Proof that it agrees with `r_ty` on the box `xs_tys`: a row set false is disjoint from
+// `xs_tys` at some component (`disjoint_top_carriers`, proved there), so no tuple of the box is
+// in it, and the part's value at such a tuple, read with that row false, is unchanged.
 fn flat_tuple_subtrahend(r_ty: &Type, xs_tys: &[Type]) -> Option<Type> {
     let m = xs_tys.len();
     let p = r_ty.p();
@@ -16982,6 +17073,20 @@ fn flat_tuple_subtrahend(r_ty: &Type, xs_tys: &[Type]) -> Option<Type> {
 // problem only. It runs where the systems `judge` reads first left a member open,
 // decides in linear time the groups of `C_group`, which the paper does not single out, and
 // returns `None` on any other group, leaving its open members open.
+// Proof of exactness, node by node, as `Make` builds the pair `(Inh, NonFlat)`: a union is the
+// `Or` of its arms in each layer; a tuple or a payload atom of `k >= 1` parts is the `And` of
+// the parts' `Inh`, and every value of it is nonflat; `()` and a bare atom are `(top, bot)`. A
+// meet holds one recursive key (`rec_keys`): with the closed conjuncts `top` it is that
+// operand, with them empty it is empty, and with them flat it is flat, its `Inh` the flat meet
+// read off `flat_part` (exact) and its `NonFlat` `bot`. `a \ r` with `r` empty is `a`; with `r`
+// flat, a nonflat value of `a` is outside `r`, and a flat one is in `flat(a) \ r`, built and
+// read; with `r` an `m`-tuple type whose rows on the box are flat (`flat_tuple_subtrahend`,
+// proved there), a tuple of the box outside `r` has all its components flat, the case read
+// off `flat_diff`, or has a nonflat one, the `Or` of the parts' `NonFlat` with every part
+// inhabited. A morphism follows `bes::Kind::Mor`. Inhabitation is the least solution, since
+// every value is a finite tree built bottom up, and `bes::decide` computes the least one.
+// Any other shape returns `None`. A meet whose carriers are disjoint is `bot` by
+// `disjoint_top_carriers` (proved there).
 fn exact_flat_diff_decide(
     env: &Arc<Env>,
     answers: &mut [Option<bool>],
@@ -17959,6 +18064,17 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
     // component taking the tuple outside it), so a member's value is in the least fixed point.
     // It is kept with no test: a test by `member_known` walks the value against every member,
     // Θ(n²) for a chain of n members whose values nest.
+    // The steps, checked at each rule: a meet's other conjuncts are `top` or share the one
+    // recursive key, so the meet is that conjunct; a nonflat value of `a` is outside a flat
+    // subtrahend; the flat-tuple seed is outside `r` since `flat_tuple_subtrahend` agrees with
+    // `r` on the box (proved there); a `DiffNf` tuple has a nonflat component `j`, every row of
+    // `r` on the box has flat cells and `r` is false with every row false, so it is in no row.
+    // The closure step: `Action::Closure` is added only for a node `Morphism(l, u, val)` with
+    // `l` and `u` closed, `l` within `u` (`subtype_verdict` Empty) and `l` inhabited, with the
+    // value of `val` as its premise. The node's type is that one morphism, so the type taken
+    // toward `true` is it; its promised keys `l` lie within the permitted `u`, the case in which
+    // `Searching` builds `Rep::Closure` and needs only a value of the value type, which the
+    // premise gives. The other morphism nodes are seeded by `s.rep`, a search of their own.
     for (i, m) in members.iter().enumerate() {
         if s.reps.get(m).is_some_and(Option::is_some) {
             continue;
@@ -17972,6 +18088,11 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
 }
 
 /// Whether any body of `env`'s group mentions `&` or `\`.
+/// Proof: the walk starts from every body and pushes every child of each shape that has
+/// children (`Union`, `Tuple`, `Atom`, `Morphism`, `Not`), so it meets every node of every
+/// body, and it answers `true` exactly when one is an `And` or a `Diff`; `seen` skips a node of
+/// a class met before, whose children were pushed then. A `Ref` names a member, whose body is
+/// walked from the start; a `Type` is a closed type, not part of a body's shape.
 fn group_has_diff_or_and(env: &Arc<Env>) -> bool {
     let mut stack: Vec<&rec::Node> = env.group().0.bodies.iter().map(|b| &**b).collect();
     let mut seen: HashSet<u32> = HashSet::new();

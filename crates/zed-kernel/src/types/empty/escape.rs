@@ -1038,6 +1038,16 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                                 break;
                             }
                             if pl[j].cof {
+                                // The literal kept agrees with `pl[j] ∩ a` on `pl[j]`, the only
+                                // values place `j` takes. Proof: let `pl[j]` be `Z \ P`. When
+                                // `a` is `Z \ A`, the literal is `Z \ (A \ P)`, and for `x` not
+                                // in `P`, `x` is in it exactly when `x` is not in `A`, as for
+                                // `Z \ (P ∪ A)`; it is never empty, nor is the meet (an
+                                // infinite set). When `a` is the finite `A`, it is `A \ P`, the
+                                // meet itself, dropped when empty as the meet is below. So a
+                                // later test against `pl[j]` (`subset`, a value of the place)
+                                // reads the same answer; the excluded set kept is `A`'s part
+                                // outside `P`, not `P ∪ A`, so it does not grow with `P`.
                                 let vals: BTreeSet<Value> = a
                                     .vals
                                     .iter()
@@ -1442,6 +1452,20 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
 /// when two of them cross. Cofinite atoms must be a chain (their excluded sets nested); a
 /// finite atom, taken largest first, lies in the deepest atom holding one of its values, which
 /// must be the same for all its values.
+// Proof. Cofinite atoms are infinite, so any two meet and must nest: `A` within `B` exactly when
+// `excl(B)` is within `excl(A)`. Sorted by `|excl|`, consecutive subsets give a chain by
+// transitivity, outermost first, and a failed test is two that cross. A value `x` is in the
+// cofinite atoms before the first one excluding it (excluded sets grow along the chain), so
+// `deepest_cof(x)` is the deepest cofinite atom holding `x`. Finite atoms, largest first: by
+// induction the atoms placed so far are laminar, and `owner[x]`, the last placed finite atom
+// holding `x`, is the deepest of them holding `x`. If `i` is laminar with them, its parent is the
+// least atom strictly containing it (larger or equal, so placed before), which holds every value
+// of `i`, and is the deepest atom holding any one of them: the same `o` for all values. If two
+// values `x`, `y` of `i` give different `o`, some atom `F` placed before holds one of them and
+// not the other: `o(x)` if it lacks `y`, else `o(y)`, which then lies strictly within `o(x)`
+// and so lacks `x`. `F` is not within `i` (`|F| >= |i|`, cofinite or placed before, and
+// `F != i`) and `i` is not within `F`, so they cross, and `None` is right. A cofinite atom
+// cannot lie within a finite one.
 fn forest(list: &[usize], atom: &[(usize, Ints)], parent: &mut [Option<usize>]) -> Option<()> {
     let mut cof: Vec<usize> = list.iter().copied().filter(|&i| atom[i].1.cof).collect();
     cof.sort_unstable_by_key(|&i| (atom[i].1.vals.len(), i));
@@ -1815,7 +1839,11 @@ fn level_of(jmax: usize) -> usize {
 /// classes of its highest built level, as classes only split as levels grow; P without its
 /// pairs) and the cheapest is made exact (A builds its levels; P builds and sorts its lists and
 /// counts its pairs) until the cheapest is exact. A step costs at most its lower bound, which is
-/// at most the cheapest exact price, so the window costs O(its cheapest price). Total: the sum
+/// at most the cheapest exact price, so the window costs O(its cheapest price). Steps: the way
+/// made exact has the least lower bound `LB(w) <= LB(u) <= exact(u)` for every way `u`, so
+/// `LB(w)` is at most the least exact price; there are at most four ways (A and P with up to
+/// three moduli), each made exact once, so the pricing costs at most four times the least exact
+/// price, and the way run costs that price. Total: the sum
 /// over windows of the cheapest price plus O((n + l0 + I) log n + rows log l0). Rows read their
 /// windows in order and each window in place order, so each stops at its first kill or third
 /// atom, as in the sweep.

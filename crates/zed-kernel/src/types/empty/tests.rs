@@ -3711,3 +3711,19 @@ fn a_tail_that_unfolds_to_nothing_holds_no_list() {
         Value::atom_with("cons", vec![Value::Int(0), Value::atom("nil")])
     );
 }
+
+/// The empty tuple `()` is a flat value: a type that holds every atom and `()` shares `()`
+/// with the type `()`, so the carrier test must not call the two disjoint, in either order
+/// (FAIL-carriers-empty-tuple-flat: with no flat part read, the 0-tuple was missed, since the
+/// test of shared tuple lengths starts at length 1).
+#[test]
+fn the_empty_tuple_is_shared_by_the_carrier_test() {
+    let unit = Type::tuple(vec![]);
+    for t in [Type::top(), &Type::top() - &Type::int()] {
+        assert!(!(&t & &unit).is_empty(), "the meet holds `()`");
+        for ts in [[t.clone(), unit.clone()], [unit.clone(), t.clone()]] {
+            assert!(!disjoint_top_carriers_depth0(&ts), "depth 0, {ts:?}");
+            assert!(!disjoint_top_carriers(&ts), "{ts:?}");
+        }
+    }
+}

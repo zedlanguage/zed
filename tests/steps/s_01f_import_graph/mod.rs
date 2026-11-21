@@ -108,7 +108,8 @@ fn no_crate_has_an_import_cycle_but_the_known_ones() {
         stale.is_empty(),
         "KNOWN_CYCLES lists files in no import cycle; remove them: {stale:?}"
     );
-    // The graphs are the compiler's, not empty ones: every file is reached, with its imports.
+    // The graphs are the compiler's, not empty ones: more than 60 files and more imports than
+    // files (the asserts below check those two counts, not that every file is reached).
     // The compiler is the crate `zedc` and the crates `zedc-*` it is split into, and none of
     // them has a cycle (CYCLE-zedc-moves).
     let (mut file_count, mut import_count) = (0, 0);

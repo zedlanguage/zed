@@ -1943,6 +1943,9 @@ mod atoms {
         /// The map of names, taken out to be freed in a loop when the node holding it is
         /// dropped (`Drop for Node`). The empty map left behind lists no part, so it keeps the
         /// invariant; the sums are left stale, which nothing reads of a node being dropped.
+        /// Proof: the one caller is `Drop for Node`, which takes the names, then the payloads
+        /// and the payload DAG, and reads no sum or name of `p.atoms` after; the fields are
+        /// then dropped without being read.
         pub(super) fn take_names(&mut self) -> OrdMap<Arc<str>, AtomPart> {
             std::mem::take(&mut self.names)
         }
@@ -2067,7 +2070,10 @@ mod atoms {
                 }
             };
             // `cofinite` is `large.cofinite` here (`Or` with `small` finite, `And` with it
-            // cofinite), so the clone's names stay valid for it.
+            // cofinite), so the clone's names stay valid for it. Proof: this arm is reached
+            // only for `(Or, false)`, where `cofinite` is `large.cofinite || false`, and for
+            // `(And, true)`, where it is `large.cofinite && true`; so the default part of the
+            // clone's kind is unchanged and no name it lists becomes the default.
             out.cofinite = cofinite;
             let mut walk = small.names.iter();
             let mut diff = large.names.diff(&small.names);
