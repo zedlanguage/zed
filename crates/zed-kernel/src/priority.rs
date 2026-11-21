@@ -124,7 +124,12 @@
 //! logarithmic expected search and update times (also their Theorem 3.3). They credit the lemma
 //! as "essentially due to Mulmuley", with a proof in K. Mulmuley, "Computational Geometry: An
 //! Introduction through Randomized Algorithms", Prentice-Hall, 1994, section 10.1; the book was
-//! not read, and the lemma is used as Seidel and Aragon state it.
+//! not read, and the lemma is used as Seidel and Aragon state it. Tried 2026-11-21: LibGen by
+//! title found a PDF and two DjVu copies; the PDF download broke off twice part way (curl exit
+//! 18) and then the server answered 503; both DjVu copies, on the libgen.li, libgen.bz and
+//! libgen.vg mirrors, answered 503 or gave no download key on every retry at 15 s, 45 s, 90 s,
+//! 3 min and 5 min, and once more after; Anna's Archive by md5 met a browser check (.gd, .gl)
+//! or DDoS-Guard (.pk); the book has no DOI, so Sci-Hub and Sci-Net do not apply.
 //!
 //! Equal priorities. Let a node be tied when another node of the treap has its priority, and let
 //! `T` be the number of tied nodes. A node `y` that is not tied is an ancestor of `x` exactly when

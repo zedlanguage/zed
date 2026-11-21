@@ -12,10 +12,14 @@
 //! for sets of `m <= n` keys. Sources:
 //!
 //! - G. E. Blelloch and M. Reid-Miller, "Fast set operations using treaps", SPAA '98, ACM,
-//!   pp. 16-26, 1998, doi:10.1145/277651.277660. Crossref checked 2026-11-20; the text was not
-//!   obtained, so what it says is taken from the paper below, which credits it: "Blelloch and
-//!   Reid-Miller later show that similar algorithms for treaps \[7\], are optimal for work (i.e.
-//!   Θ(m log(n/m + 1)))".
+//!   pp. 16-26, 1998, doi:10.1145/277651.277660. Crossref checked 2026-11-20; the paper below
+//!   credits it: "Blelloch and Reid-Miller later show that similar algorithms for treaps \[7\],
+//!   are optimal for work (i.e. Θ(m log(n/m + 1)))". Read 2026-11-21 (PDF, LibGen,
+//!   verification only): the abstract, "For two sets of size n and m (m <= n) the algorithms
+//!   run in expected O(m lg(n/m)) work", and Theorem 2.4 (sec. 2, p. 21) for union: the work
+//!   is a sum of split costs, each logarithmic in the part of the larger treap between two
+//!   keys of the smaller, and that sum is greatest when those parts are equal (Lemma 2.2).
+//!   The `+ 1` here keeps the bound positive at `m = n`.
 //! - G. E. Blelloch, D. Ferizovic and Y. Sun, "Just join for parallel ordered sets", SPAA 2016,
 //!   ACM, pp. 253-264, doi:10.1145/2935764.2935768 (Crossref and the text checked 2026-11-20).
 //!   Section 4: UNION, INTERSECT and DIFFERENCE split one tree at the other's root key and

@@ -9,12 +9,40 @@
 //! matching in dynamic texts", SODA 2000, pp. 819-828; not in Crossref). The blocks use the
 //! deterministic coin tossing of R. Cole and U. Vishkin ("Deterministic coin tossing with
 //! applications to optimal parallel list ranking", Information and Control 70(1):32-53, 1986,
-//! doi:10.1016/S0019-9958(86)80023-7): a position whose label differs from its left
-//! neighbor's in lowest bit `p` takes the new label `2p + (its bit p)`, so neighbors stay
-//! different and a label of `b` bits becomes one of about `log b` bits. Crossref checked
-//! 2026-11-20 for the two DOIs; none of the three texts was obtained, so the methods are from
-//! memory, as are the SODA pages. Departure: the papers keep the encoding under updates of a
-//! dynamic sequence; here texts are only named and joined, and the constants are this file's.
+//! doi:10.1016/S0019-9958(86)80023-7) in the form of A. V. Goldberg, S. A. Plotkin and
+//! G. E. Shannon ("Parallel symmetry-breaking in sparse graphs", STOC 1987, pp. 315-324,
+//! doi:10.1145/28395.28429; Crossref checked 2026-11-21, text not read): a position whose
+//! label differs from its left neighbor's in lowest bit `p` takes the new label
+//! `2p + (its bit p)`, so neighbors stay different and a label of `b` bits becomes one of about
+//! `log b` bits.
+//!
+//! Read 2026-11-21 (Mehlhorn et al. and Cole-Vishkin in scanned journal copies, Alstrup et al.
+//! in the authors' PDF). Mehlhorn, Sundar and Uhrig, sec. 2.1, procedure Six-Colors: "every
+//! element ai is assigned a new color by concatenating the number of the bit, where the old
+//! color of ai differs from the old color of ai-1 and the value of this bit", `C'_i = 2j_i +
+//! b_i`; they credit it to Goldberg et al., "a generalization of the deterministic
+//! coin-tossing technique of Cole and Vishkin". Proof (their Lemma 2): if two neighbors choose
+//! different bit numbers their new labels differ; if both choose `j`, the right one chose `j`
+//! because its bit `j` differs from the left one's, so the `b` parts differ. Lemma 2 also
+//! bounds the bits after `k` rounds by `ceil(log^k L) + 2`, so about `log* N` rounds give six
+//! colors; Three-Colors then recolors 3, 4 and 5 in three passes, each to the least of 0..=2
+//! no neighbor holds; sec. 2.2 marks `d_i = 1` iff the color is a local maximum and starts a
+//! block there and at position 1, and Lemma 4 shows no two neighbors are marked, any four
+//! consecutive positions hold a mark, and `d_i` "only depends on the subsequence
+//! a_(i-log* N-6) ... a_(i+4)" (`k` rounds reach `k` left, three passes 3 each side, the
+//! maximum 1 each side). Cole and Vishkin's own basic step (sec. 2.1, pp. 36-37) keeps only the
+//! bit number `j` ("SERIAL1") and breaks ties among local extrema by the value of bit `j`,
+//! which alternates along a chain ("FACT 4"); the `2j + b` label is not in their paper.
+//! Alstrup, Brodal and Rauhe, sec. 2: "encblock decomposes a string into a sequence of small
+//! substrings of sizes between two and four, except for the first block which has size between
+//! one and four", and from Mehlhorn et al. "it follows that ΔL = log* N + 6 and ΔR = 4".
+//! Departures: the papers keep the encoding under updates of a dynamic sequence; here texts
+//! are only named and joined. The constants are this file's: four rounds suffice for 64-bit
+//! names, so the reach is 8 left and 4 right (Lemma 4's form with `log* N + 2 = 4` rounds), and
+//! a block at a true end may hold 5 entries (section 6 of the study), where Mehlhorn et al.
+//! bound every block by 4. The SODA page numbers were not checked (the authors' copy has none).
+//! Tests: those named in section 6 of docs/joined-strings-study.md check the constants and
+//! compare every name with byte comparison; they cannot show that fewer rounds would do.
 //! Related, and named beside these in COMPLEXITY.md: T. Nishimoto, T. I, S. Inenaga, H. Bannai
 //! and M. Takeda, "Fully dynamic data structure for LCE queries in compressed space", MFCS
 //! 2016, LIPIcs 58, doi:10.4230/LIPIcs.MFCS.2016.72 (DataCite checked 2026-11-20, text not
@@ -24,7 +52,8 @@
 //!
 //! 1. Runs: each maximal run of one symbol `a`, `k ≥ 2` times, becomes one symbol, the name of
 //!    the rule (run, `a`, `k`). After this no two neighbors are equal.
-//! 2. Blocks: four rounds of deterministic coin tossing (Cole and Vishkin) give each position a
+//! 2. Blocks: four rounds of deterministic coin tossing (Mehlhorn et al.'s Six-Colors, above)
+//!    give each position a
 //!    label in 0..=5, neighbors different; three passes bring the labels to 0..=2; a block
 //!    starts at each strict local maximum of the labels. Each block of symbols becomes one
 //!    symbol, the name of the rule (block, its symbols).

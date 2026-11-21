@@ -159,6 +159,18 @@ These are cited from memory and were not reread for this study; the constants in
 inferred from them and are question 2 for the cross-review. Nishimoto et al. and Alstrup et al.
 were then read for STAGE-joined-eq-build (section 6); Mehlhorn et al. was not retrieved.
 
+Rechecked 2026-11-21 (CITE-allpapers-recheck): Mehlhorn et al. and Cole and Vishkin were read in
+scanned journal copies, and Alstrup et al. in the authors' PDF. The round of step 2 above,
+2p + (bit p), is not Cole and Vishkin's: their basic step (section 2.1, pp. 36-37) keeps only
+the bit number p and breaks ties by the value of that bit. The 2p + b form is the procedure
+Six-Colors of Mehlhorn et al. (section 2.1), who credit it to Goldberg, Plotkin and Shannon,
+"Parallel symmetry-breaking in sparse graphs", STOC 1987, doi:10.1145/28395.28429 (not read).
+Their Lemma 4 gives the reach: a block start at i depends on the symbols i - log* N - 6 to
+i + 4, so the right reach is 4, not the "two to its right" of section 3; section 6 already uses 4.
+The full summary, with the proof, is in the module comment of
+`crates/zed-kernel/src/text/names.rs`. Jeż, Kempa and Kociumaka, and Lifshits were not
+reread; nothing built rests on them.
+
 ## 6. Outcome of the build (STAGE-joined-eq-build, 2026-11-12)
 
 Cross-review round 1: Opus 5.5 medium, gpt-6.1-sol medium, and a CD experiment in the third seat.

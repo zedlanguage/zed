@@ -36,8 +36,14 @@
 //! doi:10.1145/2935764.2935768, section 4 and Theorem 4: split one tree at the other's root
 //! and join the two recursive unions, `O(m log(n/m + 1))` expected work for sizes `m <= n`).
 //! The full citation, how it was checked and the quote are at `zed_kernel::treap_set`'s module
-//! comment (the 1998 text was not obtained; the bound is read from the 2016 paper's
-//! Theorem 4, whose text was checked). The bound needs the priorities random (`PRIORITIES`, below).
+//! comment. The 1998 text was read 2026-11-21 (PDF, LibGen, verification only): its abstract
+//! gives union, intersection and difference of sets of sizes `m <= n` "in expected
+//! O(m lg(n/m)) work", and its Theorem 2.4 (sec. 2, p. 21) proves it for union: the work is
+//! a sum of split costs, each logarithmic in the part of the larger treap that falls between
+//! two keys of the smaller, and the sum of those logarithms is greatest when the `n` keys are
+//! spread evenly over the `m + 1` gaps (Lemma 2.2), which gives `O(m lg(n/m))`. The `+ 1`
+//! written here keeps the bound positive at `m = n`, where the paper's form reads 0. The
+//! bound needs the priorities random (`PRIORITIES`, below).
 //! The departures: the recursion stops at `a == b` and at a pair met before (`unions`), and both
 //! give the union itself, so the calls made are a subset of the cited recursion's, plus a hash
 //! lookup for each; and `make` looks each node up before making it, O(1) expected for each.

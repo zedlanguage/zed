@@ -1186,10 +1186,17 @@ impl NameProducts {
     // keep one interval in the coordinates of the path's root, and each name keeps its offset
     // to its parent, so a name's bounds are the root's interval shifted by the sum of offsets
     // to the root. This is the weighted union-find (a union-find whose links carry an offset, the
-    // "potential" of the name) with union by size: Galler and Fischer, "An improved
-    // equivalence algorithm", Communications of the ACM 7(5), 1964, doi:10.1145/364099.364331;
-    // Tarjan, "Efficiency of a good but not linear set union algorithm", Journal of the ACM
-    // 22(2), 1975, doi:10.1145/321879.321884 (both in the crate's list, lib.rs). There is no
+    // "potential" of the name) with union by size. The offsets are Galler and Fischer's, "An
+    // improved equivalence algorithm", Communications of the ACM 7(5), 1964,
+    // doi:10.1145/364099.364331 (read 2026-11-21, PDF, LibGen, verification only): each class
+    // is a tree, each link carries "the (signed) distance" between its two nodes, and the
+    // distance between two nodes is the sum along a path (p. 302). The paper does not link
+    // by size: it links "the higher-numbered root ... to the lower-numbered root" (p. 303),
+    // though Tarjan and van Leeuwen (J. ACM 31(2), 1984, sec. 2) credit linking by size to
+    // it. The depth bound of linking by size is their Lemma 1 and Corollary 2, "no path has
+    // length exceeding log n", the argument sketched below. Full entry in lib.rs,
+    // "References". Also Tarjan, "Efficiency of a good but not linear set union algorithm",
+    // Journal of the ACM 22(2), 1975, doi:10.1145/321879.321884. There is no
     // path compression, since it writes on a read and these maps are persistent and shared
     // between scope versions; union by size alone keeps every parent path O(log n) long
     // (`link` hangs the root of the smaller path under the larger's, so a name's depth grows
@@ -1521,8 +1528,13 @@ impl NameProducts {
     // pair of paths with it forms a tree of difference constraints, in which a bound
     // propagates only along the test, and a test that moves no end of a or b moves nothing
     // (on difference constraints as shortest paths: Bellman, "On a routing problem",
-    // Quarterly of Applied Mathematics 16(1), 1958; Shostak, "Deciding linear inequalities
-    // by computing loop residues", JACM 28(4), 1981). When a later test puts a and b on one
+    // Quarterly of Applied Mathematics 16(1), 1958, the least times `f_i = min_j (t_ij +
+    // f_j)` found in at most N - 1 rounds, sec. 5; Shostak, "Deciding linear inequalities
+    // by computing loop residues", JACM 28(4), 1981, sec. 3 (proved in sec. 7): constraints
+    // are unsatisfiable iff a graph built from them has an infeasible simple loop, for
+    // `x <= y + c` a loop of negative weight (Pratt's case, recalled in the abstract); both
+    // read 2026-11-21,
+    // full entries in lib.rs, "References"). When a later test puts a and b on one
     // path, the test is admitted only as the back edge of `close`. Any other case
     // materializes and runs the solver as before. Tradeoff: one test aside at a time; with
     // two, a cycle can pass through both, which the one-hop check does not see.
@@ -1687,7 +1699,8 @@ impl<'a> IntoIterator for &'a NameProducts {
 // read sees the same conjunction (O(k log n) once for k pending conjuncts). The built
 // conjunction is cached in a cell that clones share, so one version is built once however many
 // copies read it. The list is the persistent stack of Okasaki, "Purely Functional Data
-// Structures", Cambridge University Press, 1998, doi:10.1017/cbo9780511530104, ch. 2.
+// Structures", Cambridge University Press, 1998, doi:10.1017/cbo9780511530104, sec. 2.1,
+// Figure 2.3 (read 2026-11-21; the full entry is in the crate's `lib.rs` list).
 // Tradeoffs: the cost moves to the first
 // reader (the solver on a refused test, `join`, `PartialEq`, the dump); a scope that is read
 // after every test pays O(k log n) per read, as main did per test. Measured, instructions at
@@ -3382,7 +3395,14 @@ impl fmt::Debug for Seen {
 /// and O(k²) for `k` tests on a chain or a ladder, used for nothing when no bound moves. Used:
 /// the value holds within each component alone, and the components keep a topological order
 /// (Pearce and Kelly, "A dynamic topological sort algorithm for directed acyclic graphs", ACM
-/// JEA 11, 2006, doi:10.1145/1187436.1210590): an edge to a later component costs O(1), an
+/// JEA 11, 2006, doi:10.1145/1187436.1210590; read 2026-11-21, PDF, LibGen, verification
+/// only: Definition 2.5, the affected region of an edge `x → y` against the order is the
+/// nodes ranked from `y` to `x`; sec. 3.1.1, a forward search from `y` and a backward one
+/// from `x` explore only that region; sec. 3.1.2, the nodes found take the pooled old ranks,
+/// the backward set first; Lemma 3.1, the result is a topological order. Departures: the
+/// searches here run in step and stop when one ends, and the nodes found take new ranks
+/// from an order-maintenance list, as the comment at [`reorder`] says; full entry in lib.rs,
+/// "References"): an edge to a later component costs O(1), an
 /// edge within one or a gap raised searches that component alone, and an edge against the
 /// order searches the components ranked between its ends from both ends in step, the one
 /// that ends first moving what it found, and merging those on a cycle ([`reorder`]), so that
@@ -5470,8 +5490,11 @@ fn finiteness_mask(u: &str, v: &str, names: &imbl::OrdMap<Arc<str>, Product>) ->
 // integers (Gemini seat, round 3), doubling wake and idle checks across `3k` case arms.
 // Used: canonicalize unclassed products via `framed_class` in O(1), matching propagator-event
 // subsumption / idempotence in C. Schulte and P. J. Stuckey, "Efficient constraint propagation
-// engines", ACM TOPLAS 31(1), Article 2, 2008 (`KeptTests::dead` still reads raw `congruence`
-// directly).
+// engines", ACM TOPLAS 31(1), Article 2, 2008 (read 2026-11-21 from the LaTeX source of the
+// preprint, arXiv cs/0611009: sec. "Event Reasoning" queues a propagator again only on an
+// event of its variables, a fixed value or a changed bound or domain; a change of form that
+// leaves the set of integers alone is no event, so it wakes nothing; full entry in lib.rs,
+// "References"). `KeptTests::dead` still reads raw `congruence` directly.
 fn framed_class(p: &Product) -> Congruence {
     if !classed(p) {
         Congruence::Class {
@@ -7974,7 +7997,12 @@ impl Block {
         // stabbing queries on weighted interval data", arXiv:2405.05601, 2024; G. Averkov and
         // M. Schymura, "Complexity of linear relaxations in integer programming", Math. Program.
         // 194, 2022, pp. 191-227, doi:10.1007/s10107-021-01623-4; C. Schulte and P. J. Stuckey,
-        // "Efficient constraint propagation engines", arXiv:cs/0611009, 2006.
+        // "Efficient constraint propagation engines", arXiv:cs/0611009, 2006. All but Sarnak
+        // and Tarjan read 2026-11-21; what is used of each: Amagata et al., only the stabbing
+        // query of their Definition 2.1 (full comment at [`Pst`]); Averkov and Schymura, only
+        // the recession vector and recession cone of their sec. 3, "P + r ⊆ P"; Schulte and
+        // Stuckey, waking a propagator only on an event of its variables (sec. "Event
+        // Reasoning"). Full entries in lib.rs, "References".
         if groups {
             for v in vars.iter().filter(|v| v.len() >= 2) {
                 for at in holding_two(&self.vars, v) {
@@ -8775,9 +8803,11 @@ pub enum Unbind {
 /// order of the fields is the order of the reports: by constraint, then by how it was asked,
 /// then by cause, so that it does not depend on the order the questions were met in.
 // Proof: a derived `Ord` on a struct is lexicographic in the fields' declaration order (the
-// `std::cmp::Ord` documentation, "Derivable", quoted from memory: "a lexicographic ordering
-// based on the top-to-bottom declaration order of the struct's members"; on an enum, by
-// variant order, then by the fields). `Asked`, `Cause`, `presburger::Refusal` and
+// `std::cmp::Ord` documentation, "Derivable", read 2026-11-21 at doc.rust-lang.org, std
+// 1.100.0: "When derived on structs, it will produce a lexicographic ordering based on the
+// top-to-bottom declaration order of the struct's members. When derived on enums, variants
+// are ordered primarily by their discriminants. Secondarily, they are ordered by their
+// fields"). `Asked`, `Cause`, `presburger::Refusal` and
 // `loops::Looped` derive `Ord` too, over their content alone (no counter, address or time;
 // `Arc<T>` compares its `T`), so a `Refused` is ordered by what it says. `Scope::refusals`
 // and `Scope::refused_by` are ordered maps and sets keyed by it, so `Scope::warnings` reads
@@ -11344,8 +11374,10 @@ impl Scope {
     // (`NameProducts::bound`); reading a leaf O(log² n), the exact map O(n log² n) once per
     // version. The argument is the support argument of Freuder, "A sufficient condition for
     // backtrack-free search", JACM 29(1), 1982, doi:10.1145/322290.322292 (lib.rs
-    // References; a tree of binary constraints, each arc
-    // consistent, leaves every value reachable), here with the explicit witness `y <= low`
+    // References; read 2026-11-21: by Theorem 3 a tree has width 1, and by Theorem 1 strong
+    // 2-consistency then makes search in any order of width 1, a root first, backtrack-free;
+    // with any name as the root, each value of each name of an arc-consistent tree extends
+    // to a solution), here with the explicit witness `y <= low`
     // that holds with every hub value (the full step at [`PendantRow`]; the code relies on the
     // witness alone, not on Freuder's theorem). The leaf's own product has two values at most `low`
     // and the hub two values at least, so the box of the second case gives the join no
@@ -11763,7 +11795,15 @@ impl Scope {
     /// most t"; `x^3 - x` has t = 2 terms and the 3 roots -1, 0, 1. The bound 2t - 1 is
     /// Descartes' rule of signs (cited from memory): a real polynomial of t nonzero terms has
     /// at most t - 1 positive roots (as many as the sign changes of its coefficients, at most
-    /// t - 1), at most t - 1 negative ones (the same for `t(-x)`), and the root 0. The cost
+    /// t - 1), at most t - 1 negative ones (the same for `t(-x)`), and the root 0. Only the
+    /// weaker count "at most t - 1 positive roots" is used, and it is proved here, so nothing
+    /// rests on the citation: by induction on t, counting roots with multiplicity. For t = 1,
+    /// `a x^e` has no positive root. For t > 1, write the polynomial as `x^e r(x)` with
+    /// `r(0) != 0`; it has the positive roots of `r`, which has t terms, and `r'` has t - 1
+    /// nonzero terms (the constant term goes, no other exponent becomes 0), so at most t - 2
+    /// positive roots. By Rolle's theorem a root of `r` of multiplicity `m` is a root of `r'`
+    /// of multiplicity `m - 1`, and between two consecutive distinct positive roots of `r`
+    /// lies one of `r'`, so `r` has at most (t - 2) + 1 = t - 1 positive roots. The cost
     /// stays O(t) evaluations per constraint. A product `term_roots` reads factor by factor
     /// has the union of its factors' roots, at most the sum of each factor's 2t_i - 1, which
     /// can be fewer terms than the product multiplied out. What the code relies on is that
@@ -12526,7 +12566,11 @@ impl Scope {
     // half-line bound depends only on the hubs) narrowed monotonically within a single contiguous
     // unclassed interval; `Scope::is_projected` still checks `outer_with == p.with` at the next
     // block update. Reference: P. Cousot and R. Cousot, "Systematic design of program analysis
-    // frameworks", POPL '79, 1979, pp. 269-282 (monotone fixed-point preservation across joins).
+    // frameworks", POPL '79, 1979, pp. 269-282, read 2026-11-21 (PDF, LibGen, verification
+    // only): sec. 10.1 defines the reduced product of two analyses (Definition 10.1.0.2), the
+    // domain these scopes form. The paper has no theorem that keeps a fixed point across a
+    // join; the earlier note "monotone fixed-point preservation across joins" was written
+    // from memory and named none. The restore rests only on the argument that follows.
     // What a restore relies on: a record `(with, snapshot)` in `projected` says the part was
     // projected with `with` and left its names as in the snapshot, so projecting it again with
     // the same `with` and the same names gives the same names, and the block skips it
@@ -13899,11 +13943,17 @@ impl Scope {
     // at most one vertex (a cut vertex), and the graph of components and cut vertices, the
     // block-cut tree, has no cycle: a cycle through two components would lie in one
     // biconnected piece, so they would be one component. Harary, "Graph Theory",
-    // Addison-Wesley 1969, ch. 3 (block-cut tree), and Hopcroft and Tarjan, "Algorithm 447:
+    // Addison-Wesley 1969 (read 2026-11-21, PDF, LibGen, verification only; correction: this
+    // said ch. 3, which defines blocks, "a maximal nonseparable subgraph", p. 26; the tree is
+    // in ch. 4, "Block-cutpoint trees", pp. 36-37: bc(G) has a point for each block and each
+    // cutpoint, a block adjacent to the cutpoints it contains, and Theorem 4.4, "A graph G is
+    // the block-cutpoint graph of some graph H if and only if it is a tree in which the
+    // distance between any two endpoints is even"; the book gives no proof there and credits
+    // Harary and Prins and Gallai), and Hopcroft and Tarjan, "Algorithm 447:
     // efficient algorithms for graph manipulation", CACM 16(6), 1973, pp. 372-378,
     // doi:10.1145/362248.362272 (title, authors, volume, issue and pages checked against
-    // Crossref 2026-11-20; the text not read). Harary is cited from memory (a book, no DOI)
-    // and not checked; the argument above does not depend on either text.
+    // Crossref 2026-11-20; the text not read). The argument above does not depend on either
+    // text.
     // `Blocks::well_formed` checks the forest (parent links and one root a tree) in tests; it
     // does not check that the blocks are the biconnected components.
     // A bound comes back only through the name it left by: a block `c` is put on the worklist
@@ -14537,7 +14587,10 @@ impl Scope {
     /// each name taken to its own integers, the search's fixed point, is at or above every
     /// point, and is a point when no bound crosses the least (Jeavons and Cooper, "Tractable
     /// constraints on ordered domains", Artificial Intelligence 79, 1995,
-    /// doi:10.1016/0004-3702(95)00107-7; Shostak's is doi:10.1145/322276.322288; both are
+    /// doi:10.1016/0004-3702(95)00107-7, read 2026-11-21: Theorem 4.2, a pairwise-consistent
+    /// problem of max-closed constraints has a solution unless a constraint is empty, the
+    /// greatest value left at each variable; each `y <= x + k` is max-closed;
+    /// Shostak's is doi:10.1145/322276.322288; both are
     /// described in this module's header and lib.rs "References"); the same holds of
     /// the least bounds. Why no name takes other holes than its own: write `g_y` for the gap of
     /// `y` the potential holds with, at least the longest run of integers it leaves out between
@@ -15366,7 +15419,11 @@ impl Scope {
         // credit each hub it narrows once in `moved_by_base` so a single subsequent disjunctive
         // tightening does not trip `again` as ping-pong (two disjunctive tightenings still trip
         // `again`). Reference: C. Schulte and P. J. Stuckey, "Efficient constraint propagation
-        // engines", ACM TOPLAS 31(1), Article 2, 2008.
+        // engines", ACM TOPLAS 31(1), Article 2, 2008 (read 2026-11-21 from the LaTeX source
+        // of arXiv cs/0611009): sec. "Which Propagator to Execute Next", subsec. "Static
+        // Priorities", runs the propagators of a lower priority to their fixpoint before any
+        // of a higher one, so that cheap or strong propagators run first; running the base
+        // part first is that idea with one priority level. Full entry in lib.rs.
         let mut initial_star_base: Option<PartAt> = None;
         let mut moved_by_base: BTreeSet<Arc<str>> = BTreeSet::new();
         if leaf.is_some()
@@ -15579,7 +15636,9 @@ impl Scope {
                 // conjunction of the parts, and a second move of one name is taken as the sign
                 // that the parts constrain each other (Schulte and Stuckey, "Efficient
                 // Constraint Propagation Engines", TOPLAS 31(1), 2008, run a propagator to its
-                // fixpoint in the same way and wake it again on its variables' events). The
+                // fixpoint in the same way and wake it again on its variables' events: their
+                // sec. "Event Reasoning" and figure "isolv", read 2026-11-21 from the LaTeX
+                // source of arXiv cs/0611009; full entry in lib.rs, "References"). The
                 // exact cover (`presburger::exact`) can give a name its exact set in one
                 // step where the box stage takes two, so that second move, and the whole-block
                 // projection with it, never came: a more exact input gave a less exact
@@ -17002,8 +17061,10 @@ impl Scope {
     // This uses plan row PERF-l139-family's interval-constraint-propagation idea, with exact
     // integer fibers rather than the residual supports of AC-2001 (Bessiere, Regin,
     // Yap and Zhang, "An optimal coarse-grained arc consistency algorithm", Artificial
-    // Intelligence 165(2), 2005, pp. 165-185, doi:10.1016/j.artint.2005.02.004, checked
-    // against Crossref 2026-11-20, the text not read; named as not used) or watched literals.
+    // Intelligence 165(2), 2005, pp. 165-185, doi:10.1016/j.artint.2005.02.004, read
+    // 2026-11-21, PDF, LibGen, verification only: AC2001/3.1 keeps `Last((x_i, a), x_j)`, the
+    // last support found for `a` on `x_j`, and resumes the search after it, `O(ed^2)` in all;
+    // named as not used, lib.rs "References") or watched literals.
     // Review round 3 of PERF-l139-wake, with a finite optimizer not kept: omitting this gives hop
     // R=21.38, hopon=22.08, hopb=35.29, hoponb=35.36; retaining it gives
     // 8.62, 8.89, 12.62, 12.66. Without that finite optimizer, the kept
@@ -19511,9 +19572,16 @@ fn cross(a: &[Int; 2], b: &[Int; 2]) -> Int {
 /// on each side span it if any pair does: O(m) for m vectors.
 ///
 /// Proof (`t` is never zero: callers pass an axis). Carathéodory's theorem for cones
-/// (C. Carathéodory, Math. Ann. 64 (1907) 95-115, doi:10.1007/BF01449883; DOI checked on
-/// Crossref 2026-11-20, the paper not read; the statement is the standard one)
-/// puts `t` in the cone of at most 2 of the vectors when it is in the cone at all. One vector
+/// puts `t` in the cone of at most 2 of the vectors when it is in the cone at all. The name
+/// is the usual one, but the paper (C. Carathéodory, Math. Ann. 64 (1907) 95-115,
+/// doi:10.1007/BF01449883, read 2026-11-21, PDF, LibGen, verification only) proves only a
+/// special case, points on the boundary of the convex hull of one curve in `2n` dimensions
+/// as combinations of at most `n` points of it (p. 109, eq. 33); see lib.rs, "References".
+/// So the statement is proved here instead. Let `t = Σ λ_i g_i` with every `λ_i > 0` over
+/// more than 2 of the vectors; three or more vectors of the plane are linearly dependent, so
+/// `Σ μ_i g_i = 0` for some `μ` not all zero, and some `μ_i > 0` (negate `μ` if not). With
+/// `θ` the least `λ_i / μ_i` over the `μ_i > 0`, `t = Σ (λ_i - θ μ_i) g_i` has every
+/// coefficient at least 0 and one of them 0; repeating leaves at most 2 vectors. One vector
 /// spans `t` exactly when it points the same way (`cross` zero, dot positive). Two that are
 /// not parallel span it exactly when they lie strictly on opposite sides of `t` (a pair on one
 /// side, or with `-t`, gives only vectors on that side) and the angle from the one on the
@@ -19697,10 +19765,15 @@ fn pst_hi_gt<X: Ord>(a: &PstEntry<X>, b: &PstEntry<X>) -> bool {
 /// References: N. Sarnak and R. E. Tarjan, "Planar point location using persistent search
 /// trees", CACM 29(7), 1986, pp. 669-679, doi:10.1145/6138.6151 (path copying, used for the
 /// `Arc` nodes); E. M. McCreight, "Priority search trees", SIAM J. Comput. 14(2), 1985,
-/// pp. 257-276, doi:10.1137/0214021 (a heap on `hi` over a search tree on `lo`; here leaf
-/// oriented, with slots, as in the proof at [`Pst::report`]); D. Amagata, J. Yamada, Y. Ji,
+/// pp. 257-276, doi:10.1137/0214021 (read 2026-11-21, PDF, LibGen, verification only; the
+/// abstract: insert and delete in `O(log n)`, the pairs with `x0 <= x <= x1`, `y <= y1`
+/// enumerated in `O(log n + s)`, and the root holds the pair of least `y`, p. 258. Departure:
+/// here a heap on greatest `hi` over a search tree on `lo`, the mirror image, leaf oriented,
+/// with slots, as in the proof at [`Pst::report`]); D. Amagata, J. Yamada, Y. Ji,
 /// and T. Hara, "Efficient algorithms for top-k stabbing queries on weighted interval data",
-/// arXiv:2405.05601, 2024.
+/// arXiv:2405.05601, 2024 (read 2026-11-21 from the LaTeX source: only Definition 2.1 is
+/// used, a stabbing query at `s` reports the intervals with `l <= s <= r`; their structures
+/// are static and for weighted top-k, sec. 4). Full entries in lib.rs, "References".
 #[derive(Clone)]
 struct Pst<X>(Option<Arc<PstNode<X>>>);
 
@@ -21008,11 +21081,17 @@ fn hull_line_le_at(l1: &HullPt, l2: &HullPt, r1: &HullPt, r2: &HullPt, x_sep: &S
 /// Persistent leaf-oriented AVL tree storing 2D dual points ordered by slope, with each internal
 /// node carrying the lower-hull bridge `(p_l, p_r)` between its subtrees (Overmars & van Leeuwen,
 /// "Maintenance of configurations in the plane", JCSS 23(2), 1981, pp. 166-204,
-/// doi:10.1016/0022-0000(81)90012-x). Used from it: the bridge of two hulls separated by a
-/// slope is found by descending both subtrees, one level per step (`find_bridge`), so a path of
-/// O(log k) AVL nodes costs O(log^2 k). Test: `lower_hull_tree_and_box_face_index_match_the_oracle`
-/// checks AVL balance, the bridge at every node, and every query against brute force on random
-/// inputs; it does not measure the cost bounds.
+/// doi:10.1016/0022-0000(81)90012-x; read 2026-11-21, PDF, LibGen, verification only). Used
+/// from it: Theorem 3.2, the hull of two sets separated by a line is found in `O(log n)`
+/// steps by a search for their bridge that drops part of one hull at each step; and sec. 4,
+/// a balanced tree whose nodes keep the bridge of their children's hulls, updated in
+/// `O(log^2 n + R)` (Lemma 4.3). Here the bridge of two hulls separated by a slope is found
+/// by descending both subtrees, one level per step (`find_bridge`), so a path of O(log k)
+/// AVL nodes costs O(log^2 k). Departure: the nodes keep only the bridge, not the paper's
+/// concatenable queues of the hull parts, and the tree is persistent by path copying. Test:
+/// `lower_hull_tree_and_box_face_index_match_the_oracle` checks AVL balance, the bridge at
+/// every node, and every query against brute force on random inputs; it does not measure the
+/// cost bounds.
 ///
 /// Worst-case persistent insert/remove: O(log^2 k) (O(log k) path nodes, each computing a bridge
 /// in O(log k)). Minimum evaluation `min_eval(v_q)`: O(log k). Reporting all `m` violating parts
@@ -22581,8 +22660,9 @@ impl ArmNormals {
 ///
 /// In the frame of the end ([`turned`]), an arm whose normals `N` do not hold `(1, 0)` in their
 /// cone holds it in the cone of `N` and `q` exactly when `(1, 0)` lies in the cone of `q` and
-/// one normal `n` of `N` (Carathéodory's theorem for cones of the plane, doi:10.1007/BF01449883,
-/// cited with its proof at [`in_cone`]), that is when `q`
+/// one normal `n` of `N` (Carathéodory's theorem for cones of the plane, doi:10.1007/BF01449883;
+/// the paper proves only a special case, so the plane case is proved at [`in_cone`]), that
+/// is when `q`
 /// lies strictly within π of `n` on the other side of the axis. The directions so allowed are
 /// an open arc about the axis, from `-l` to `-r` for `l` the normal above the axis nearest it
 /// and `r` the one below, closed at the axis on a side with no normal. Every arm's arc holds
@@ -22776,8 +22856,18 @@ fn bounds_at(
 /// Every tree walk follows children of strictly decreasing height, a topological order.
 ///
 /// The balance rule is the AVL tree's (G. M. Adelson-Velsky and E. M. Landis, "An algorithm
-/// for the organization of information", Soviet Math. Doklady 3 (1962) 1259-1263; no DOI;
-/// cited from memory): [`Staircase::balanced`] joins two subtrees whose heights differ by at
+/// for the organization of information", Soviet Math. Doklady 3 (1962) 1259-1263, the
+/// translation, not read; the Russian original, Dokl. Akad. Nauk SSSR 146(2), 1962,
+/// pp. 263-266, no DOI, read 2026-11-21 in the publisher's free PDF at Math-Net.Ru, item
+/// dan26964). What it says: p. 264, an admissible tree is one where at each node the
+/// longest paths down the left and the right differ by at most one; Lemma 1, p. 264, such a
+/// tree of `N` nodes has height at most `(3/2) log2(N + 1)`, since the fewest nodes `N_n` of
+/// one of height `n` satisfy `N_n = N_(n-1) + N_(n-2) + 1`, a Fibonacci recurrence; pp.
+/// 265-266, an insertion walks back up the search path fixing the balance marks, and where a
+/// branch has become 2 longer than its sibling it rebuilds a constant number of nodes (figs.
+/// 3, 4: the single and double rotations), `C log2(N + 1)` steps in all. Departures: the
+/// paper treats only search and insertion; removal and the join below are this file's, and
+/// keep the same invariant): [`Staircase::balanced`] joins two subtrees whose heights differ by at
 /// most 2 with one single or double rotation, so every node's children differ in height by at
 /// most 1 and the height is O(log k) for k distinct keys. Each node is built by
 /// [`Staircase::node`], which recomputes `max_a`, `height` and `size` from its children, so
@@ -24541,8 +24631,13 @@ impl Scope {
 // A middle row is a convex combination of its extremes, so removing it preserves all
 // real and integer points. This is the common-intercept case of the envelope method
 // named in plan row PERF-l139-family (F. P. Preparata and M. I. Shamos, Computational
-// Geometry: An Introduction, Springer-Verlag, 1985, doi:10.1007/978-1-4612-1098-6, checked
-// against Crossref 2026-11-20, the book not read),
+// Geometry: An Introduction, Springer-Verlag, 1985, doi:10.1007/978-1-4612-1098-6, read
+// 2026-11-21, PDF, LibGen, verification only: sec. 7.2.4, the common intersection of `N`
+// half-planes `a_i x + b_i y + c_i <= 0` by divide and conquer, two halves intersected
+// recursively and their convex results intersected in linear time (Theorem 7.3), so
+// `T(N) = 2T(N/2) + O(N)`; Theorem 7.10 (p. 289), `Θ(N log N)` and optimal. Departure: only
+// rows of one intercept are grouped here, and the middle rows dropped by the argument at
+// `extreme_base`, which does not use the book),
 // using ordered grouping rather than a dynamic general half-plane hull. Projection
 // syntax may still affect refusals; this is tested by families::projection_shortcut_cases.
 // Measured in review round 3 (allocator calls, 8n ratio), persist: without this rule R=26.29, with
@@ -24555,8 +24650,8 @@ impl Scope {
 // point where the two kept rows hold. So the dropped rows are implied, and every other
 // conjunct is kept as it is. No sign or size of a, b, c is used. The book is cited only
 // for the method; this argument does not depend on it (Preparata and Shamos,
-// doi:10.1007/978-1-4612-1098-6, DOI checked against Crossref 2026-11-20, the book not
-// read). Test:
+// doi:10.1007/978-1-4612-1098-6, read 2026-11-21; what it says is in the comment above
+// this function). Test:
 // `tests::extreme_base_and_compact_abs_keep_every_integer_point` (this file); it cannot
 // catch an error at a point outside [-6, 6]^3 or with names other than x, y, z.
 fn extreme_base(cons: &[&Arc<Formula>]) -> Formula {
@@ -24714,8 +24809,9 @@ impl Scope {
     // certificate; work at 8n falls from 666544 to 447009 allocations. This
     // elementary recession-cone certificate replaces general half-plane hull construction
     // (Preparata and Shamos, Computational Geometry: An Introduction,
-    // Springer-Verlag, 1985, doi:10.1007/978-1-4612-1098-6, checked against Crossref
-    // 2026-11-20, the book not read) on this fragment, without enumerating integer points.
+    // Springer-Verlag, 1985, doi:10.1007/978-1-4612-1098-6, read 2026-11-21: sec. 7.2.4 and
+    // Theorem 7.10, half-plane intersection in `Θ(N log N)`, full comment above
+    // `extreme_base`) on this fragment, without enumerating integer points.
     // Proof, per conjunction of `rest` (pendant `x - w + k >= 0`, so `x >= w - k`, as
     // `s = 1`, `sigma = -1`; `x` unbounded above, checked): the unary rows meet the
     // interval domains, which stay intervals; with at most one other row `r`, `range` gives

@@ -30,7 +30,10 @@
 //! `x`, `y`, `max(x, y)` is a point, since `max(x_v, y_v) <= max(x_u, y_u) + w` at each edge and
 //! the larger of two integers of a name is one of its integers (each constraint is max-closed:
 //! P. Jeavons and M. C. Cooper, "Tractable constraints on ordered domains", Artificial
-//! Intelligence 79(2), 1995, pp. 327-339, doi:10.1016/0004-3702(95)00107-7). So when each
+//! Intelligence 79(2), 1995, pp. 327-339, doi:10.1016/0004-3702(95)00107-7, read
+//! 2026-11-21, PDF, LibGen, verification only: Definition 2.5 defines max-closed this way,
+//! and Theorem 4.2 takes the greatest value left at each variable as the solution, the
+//! argument used here; full entry in lib.rs, "References"). So when each
 //! name's values are bounded above, the max of the points that each reach one name's greatest
 //! value is a point at every name's greatest value; `min` likewise gives the least point. The
 //! infinite ends are made finite integers first, which changes no end ([`solve`]). That
@@ -684,7 +687,12 @@ impl Run<'_> {
     /// by Dijkstra on the reduced weights when the potential holds at every edge of the
     /// component, otherwise by label correcting. The values found are then the potential.
     /// Dijkstra 1959, doi:10.1007/BF01386390, and Bellman 1958, doi:10.1090/qam/102435; the
-    /// full comments are at the heads of zed-graph `heap.rs` and `worklist.rs`.
+    /// full comments are at the heads of zed-graph `heap.rs` and `worklist.rs`, and both
+    /// papers were read 2026-11-21 (lib.rs, "References"). Bellman's successive
+    /// approximations converge in at most N - 1 rounds (sec. 5), but he assumes every time
+    /// `t_ij > 0` (sec. 4): the negative weights here, and the test for a negative cycle, go
+    /// beyond his paper to the later Bellman-Ford method, whose N - 1 bound holds for any
+    /// weights when no cycle is negative, since a least path then has at most N - 1 edges.
     ///
     /// Complexity tradeoff: without a potential at every name of the component, label
     /// correcting (Bellman–Ford with a queue) costs O(n m) at worst on the component's `n`

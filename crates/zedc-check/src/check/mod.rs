@@ -999,8 +999,12 @@ impl Fixes {
     /// `other` added to these. The fixes of the smaller one move, and only their marks, so
     /// that a fix moves O(log fixes) times however the groups join (union by size; Hopcroft
     /// and Ullman, "Set merging algorithms", SIAM J. Comput. 2(4), 1973, pp. 294-303,
-    /// doi:10.1137/0202024, Crossref 2026-11-20, not read: moving the smaller set's members
-    /// into the larger moves each member O(log n) times). What was read of
+    /// doi:10.1137/0202024; read 2026-11-21, PDF, LibGen, verification only. Sec. 1, p. 295,
+    /// as a known method, not the paper's own result: "By renaming the smaller of the two sets
+    /// in the merging process, the total cost of merging can be bounded by n log n." Why: a
+    /// member moves only from the smaller set, so the set holding it at least doubles each
+    /// time, and a set holds at most n members, so it moves at most log2 n times). What was
+    /// read of
     /// each is kept: the moved fixes' places shift, and the bound on the ids read is the
     /// earlier removal and the larger id of the two.
     fn join(&mut self, mut other: Fixes) {
@@ -1600,10 +1604,15 @@ struct Class {
     size: usize,
     /// Its edge in the proof forest of the merges [Nieuwenhuis and Oliveras, "Fast
     /// congruence closure and extensions", Information and Computation 205(4), 2007,
-    /// pp. 557-580, doi:10.1016/j.ic.2006.08.009, Crossref 2026-11-20, not read; from memory:
-    /// each merge adds an edge between the two nodes merged, after reversing the path from one
-    /// of them to its root, so the path between two nodes lists the merges that explain their
-    /// equality]: the class it was merged with and the merge,
+    /// pp. 557-580, doi:10.1016/j.ic.2006.08.009; read 2026-11-21, PDF, LibGen, verification
+    /// only. Sec. 4, "Producing explanations from UF": at each Union(e, e'), with the tree of
+    /// `e` no larger than that of `e'`, "(1) Reverse all edges on the path between e and the
+    /// root of its tree. (2) Add an edge e → e'." The path between two nodes then lists the
+    /// unions that explain their equality, found through their nearest common ancestor.
+    /// Lemma 13: each edge is reoriented O(log n) times over n - 1 unions, since each
+    /// reversal at least doubles the size of its tree. The earlier from-memory note agreed;
+    /// the proof for this code is at [`Ck::link_proof`]]: the class it was merged with and
+    /// the merge,
     /// or none at the root of its proof tree. Each merge adds one edge between the two
     /// classes it names, so the path between two classes of one tree lists the merges that
     /// made them one ([`Ck::merges_between`]). Each class has one, not only a root.

@@ -14,13 +14,21 @@
 //! priority drawn at random once per run ([`priority`]), each node holding the least `h` below
 //! it, as McCreight's priority search tree answers a three-sided query ("Priority search
 //! trees", SIAM J. Comput. 14, 1985, doi:10.1137/0214021, cited in this crate's `lib.rs`,
-//! References): the spans with `l` in a range and `h` below a bound in
+//! References; read 2026-11-21, PDF, LibGen, verification only: the abstract, operation (4),
+//! "enumerate those pairs [x, y] in D such that x0 <= x <= x1 and y <= y1", "in at most
+//! O(log n + s) time", and insert and delete in `O(log n)`; the full comment is at
+//! `Pst` in `product.rs`): the spans with `l` in a range and `h` below a bound in
 //! `O((f + 1) log k)` expected for `f` found, where the tree's depth is `O(log k)` in
 //! expectation over the draw for every set of spans. In a run the shape depends on the set
 //! alone, so two trees of one set are equal as values; the shape is never shown (the tree's
 //! `Debug` lists the spans in order). Tradeoff: the bound holds in expectation, not for every
-//! draw; a McCreight tree would bound the depth for every input, at the cost of rebuilding on
-//! deletion. Test `l01_39_scope_relations::xst::s4::scaling::holes_cut_one_at_a_time_scale`.
+//! draw, and the bound is `O((f + 1) log k)`, not McCreight's `O(log k + f)`, since each span
+//! found is reached by its own descent. Correction (2026-11-21): this said a McCreight tree
+//! bounds the depth "at the cost of rebuilding on deletion"; his sec. 3 gives balanced
+//! insertion and deletion in logarithmic time on a balanced tree with a constant number of
+//! rotations per update, and no rebuilding. The cost of a McCreight tree here is the extra
+//! code for those rotations, not a rebuild. Test
+//! `l01_39_scope_relations::xst::s4::scaling::holes_cut_one_at_a_time_scale`.
 
 use std::sync::Arc;
 

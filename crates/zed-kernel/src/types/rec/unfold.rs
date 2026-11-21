@@ -244,8 +244,20 @@ impl Env {
     // Namba's paper, read in a Sci-Hub copy, is on Utah Standard Lisp and never names Goto);
     // CiNii, archive.org's full-text search and OpenAlex's full-text search found only later
     // papers that cite the report; Google Scholar and Bing served bot checks; agy timed out
-    // again. So the source read in its place, for both the attribution and the idea used
-    // here, is the paper that follows. The attribution and
+    // again. Retried 2026-11-21 (CITE-allpapers-recheck): LibGen's title search for
+    // "Monocopy" and J-STAGE's search found nothing related; the shadow-library mirrors were
+    // rate-limited by shared use for most of the day. Found and read instead, in a scan from
+    // LibGen: E. Goto and Y. Kanada, "Hashing LEMMAs on time complexities with applications
+    // to formula manipulation", SYMSAC '76, pp. 154-158, doi:10.1145/800205.806334 (Crossref
+    // checked 2026-11-21). Its sec. 2.5, p. 155, describes HLISP: "For tup[x;y], a hash search
+    // (insert iff absent) is made for a <TUP CELL> ... thereby ensuring uniqueness of the
+    // resultant <TUP>", and its LEMMA 4 states that "The time complexity of "eq" is O(1)"
+    // for such unique tuples, where Lisp's `equal` on conses is not; it credits McCarthy
+    // (Bobrow (ed.), *Symbol Manipulation Languages and Techniques*, North-Holland, 1971,
+    // p. 151, not read) with "a scheme essentially the same as the present uniquely
+    // represented n-<TUPles>". It does not cite TR 74-03, so the 1974 attribution still
+    // rests on Filliâtre and Conchon. So the source read in its place, for both the
+    // attribution and the idea used here, is the paper that follows. The attribution and
     // the report number are as J.-C. Filliâtre and S. Conchon give them, "Type-safe modular
     // hash-consing", ACM Workshop on ML 2006, 12-19, doi:10.1145/1159876.1159880, reference
     // [9], whose section 1 says "Hash-consing is a technique to share purely functional data

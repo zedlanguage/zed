@@ -81,7 +81,9 @@
 //! Used: a term that reads one input is solved once over its reachable DAG (visited set, one
 //! pass in topological order), in a 1D state (`State1d`): the input's values partitioned into
 //! intervals by the value each takes at the current node, kept in a persistent value-ordered AVL
-//! tree with path copying (Adelson-Velsky and Landis 1962; persistence by path copying as in
+//! tree with path copying (Adelson-Velsky and Landis, Dokl. Akad. Nauk SSSR 146(2), 1962,
+//! pp. 263-266, read 2026-11-21: Lemma 1, height at most `(3/2) log2(N + 1)`; insertion
+//! only; the full comment is at `Staircase` in `product.rs`; persistence by path copying as in
 //! Driscoll, Sarnak, Sleator and Tarjan, "Making data structures persistent", JCSS 38, 1989,
 //! doi:10.1016/0022-0000(89)90034-2, cited in this crate's `lib.rs`, References), so
 //! that a branch shares the unchanged subtrees of both arms. A shift or a negation relabels the

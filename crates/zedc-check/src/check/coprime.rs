@@ -439,7 +439,9 @@ fn disjoint(
 /// Complexity tradeoff: the naive method refines the base one root at a time, splitting each
 /// against every element that shares a factor with it (factor refinement, Bach, Driscoll and
 /// Shallit, "Factor refinement", J. Algorithms 15(2), 1993, pp. 199-222,
-/// doi:10.1006/jagm.1993.1038, Crossref 2026-11-20, not read), O(n) gcds a root and O(n^2) in
+/// doi:10.1006/jagm.1993.1038; sections 1 and 2 read 2026-11-20 from page images, PDF,
+/// LibGen, verification only: its method and bound are quoted at zed-kernel's
+/// `num::coprime`), O(n) gcds a root and O(n^2) in
 /// all, as for `n` wide even numbers, all of which share 2. Used: the kernel first finds which
 /// roots share a prime with any other (`num::coprime::shares_a_factor`: a table of least prime
 /// factors when the largest root is at most the bits of all of them, O(N) word operations for

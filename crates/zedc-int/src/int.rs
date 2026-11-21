@@ -360,7 +360,13 @@ impl Int {
     /// `x_k`. Checked 2026-11-20 against Crossref and the paper's text. The Omega test was first
     /// published as W. Pugh, "The Omega test: a fast and practical integer programming
     /// algorithm for dependence analysis", Supercomputing '91, pp. 4-13, 1991,
-    /// doi:10.1145/125826.125848 (Crossref checked; its text was not obtained). Tested in
+    /// doi:10.1145/125826.125848 (Crossref checked; read 2026-11-21 in a scanned copy). Its
+    /// sec. 2.2, "Equality constraints" (p. 5), gives the same step with the definition
+    /// "a mod^ b = if a mod b < b/2 then a mod b else (a mod b) - b", the same function as the
+    /// CACM floor form (a tie goes to `-b/2`), and bounds the work: each step "changes the
+    /// absolute value of each coefficient by a multiplicative factor of at most 1/m + 1/2.
+    /// Since m >= 3", the step is needed only O(log max |a_i|) times before a unit coefficient
+    /// appears. Tested in
     /// `int::completeness`: `floor_and_ceiling_division_agree_with_num_integer_for_every_sign`
     /// checks the congruence, `|r| <= |m|/2` and oddness on machine and wide values of every
     /// sign, and `the_symmetric_remainder_at_half_the_modulus_is_odd` checks the tie. Neither

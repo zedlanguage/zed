@@ -13,8 +13,11 @@
 //! Source: D. J. Bernstein, "Factoring into coprimes in essentially linear time", J.
 //! Algorithms 54(1), 2005, pp. 1-30, doi:10.1016/j.jalgor.2004.04.009. Checked 2026-11-19 in
 //! the author's preprint (cr.yp.to/lineartime/dcba-20040404.pdf, its text read in full for
-//! sections 7, 11, 12, 13, 15 and 18; the journal version not read, its numbering said by the
-//! earlier citations in this tree to agree). What is used:
+//! sections 7, 11, 12, 13, 15 and 18). The journal version read 2026-11-21 (PDF, LibGen,
+//! verification only): its sections 7, 11, 13, 15, 16, 17 and 18 have the same numbers and
+//! titles, and Theorem 7.3, Theorem 11.1, Algorithms 11.3, 11.4, 13.2, 15.3, 16.2, 17.3,
+//! 18.1 and Theorem 17.4 are at those numbers there; Theorem 11.1 (1) reads "If n ⩾ 0 and
+//! 2^n ⩾ lg a then gcd{x_n, y_n} = 1", the round bound used below. What is used:
 //! - Section 7: the closure `T` of a set `S` is the least set holding `S` and 1 and closed
 //!   under products, exact quotients and gcds; the natural coprime base `cb S` is the set of
 //!   minimal elements of `T - {1}`, and Theorem 7.3: "Let P be a coprime base for S ... If

@@ -8075,7 +8075,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // evaluation per member (10^9 for `0..=1000000000`); at the roots, after Cucker,
                 // Koiran and Smale ("A polynomial time algorithm for Diophantine equations in
                 // one variable", J. Symbolic Comput. 27(1), 1999, pp. 21-29,
-                // doi:10.1006/jsco.1998.0242, Crossref 2026-11-20, not read), it costs one per
+                // doi:10.1006/jsco.1998.0242; read 2026-11-20, its method, bound and the
+                // departure quoted at `zed_kernel::poly::roots`), it costs one per
                 // root, and the roots of `t` terms of `B` bits cost a number of evaluations of
                 // the divisor polynomial in `t` and `B`, whatever its degree. (This comment
                 // said O(t^3), the cost of the paper's chain of `t` derivatives;
@@ -12711,7 +12712,17 @@ impl<'a> Ck<'_, 'a> {
     /// once for all its call sites (Sharir and Pnueli, "Two approaches to interprocedural
     /// data flow analysis", in S. S. Muchnick and N. D. Jones (eds.), *Program Flow Analysis:
     /// Theory and Applications*, Prentice-Hall, 1981, the functional approach; a book chapter
-    /// with no DOI, not found on Crossref, from memory, not checked); equal calls are found by
+    /// with no DOI, not found on Crossref. The chapter was not found; read 2026-11-21 instead
+    /// is the technical report it grew from, same title, NYU Courant Institute, Computer
+    /// Science Department, Report No. 002, September 1978, a scan: the introduction says the
+    /// functional approach "aims to establish input-output relations for each such block. One
+    /// then interprets procedure calls as "super operations" whose effect on the program status
+    /// can be computed using those relations", and sec. 3 (p. 3.19) gives an iterative,
+    /// "workpile-driven" form that keeps a partial map `PHI` and "computes the φ's only for
+    /// values which reach some relevant procedure entry", that is, one summary per input that
+    /// reaches the callee. Departure: here the summary is the body read once as a function
+    /// of its arguments (affine on pieces), not a lattice transfer function); equal calls are
+    /// found by
     /// hashing the callee and the
     /// printed arguments, as hash-consing finds equal terms. Cost: a call is read through
     /// its callee only where the body has a summary; with a body that calls another, or one
@@ -16303,8 +16314,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// other. A check between roots made by products is decided once the walk is over, with
     /// every root met ([`Self::judge_proved`]), and the operation is judged then. GMP's `mpq_mul`
     /// and `mpq_div` (after Knuth, *The Art of Computer Programming*, vol. 2, *Seminumerical
-    /// Algorithms*, sec. 4.5.1, a book, from memory, not checked: for `(u/u')·(v/v')` in lowest
-    /// terms, divide by `gcd(u, v')` and `gcd(u', v)` first) cancel the cross gcds before
+    /// Algorithms*, 3rd ed., 1997, sec. 4.5.1 "Fractions", pp. 330-331, read 2026-11-21 in a
+    /// scanned-and-converted PDF: "Another way to perform the multiplication is to find
+    /// d1 = gcd(u, v') and d2 = gcd(u', v); then the answer is w = (u/d1)(v/d2),
+    /// w' = (u'/d2)(v'/d1)", with "Division may be done in a similar manner; see exercise 4";
+    /// the proof is left to exercise 3 (its answer not read); sketch: `u/d1` and `v'/d1` share
+    /// no factor, nor `u'/d2` and `v/d2`,
+    /// and `u ⊥ u'`, `v ⊥ v'` leave no other common factor. GMP's `mpq/mul.c`, read 2026-11-21
+    /// in a mirror of GMP's source (copyright 1991-2002), takes `mpz_gcd(gcd1, NUM(op1),
+    /// DEN(op2))` and `mpz_gcd(gcd2, NUM(op2), DEN(op1))` and divides by them exactly before it
+    /// multiplies; `mpq_div` was not read)
+    /// cancel the cross gcds before
     /// multiplying,
     /// so `x / x` builds nothing there, and a bound on the factors alone would reject it. The
     /// kernel's `Rat::mul` and `Rat::div` build the unreduced products first, so a quotient of
@@ -16644,8 +16664,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// multiplies and reduces the product by the gcd (`Rat::div`: Burnikel-Ziegler
     /// remainder, then Stein's binary gcd: J. Stein, "Computational problems associated with
     /// Racah algebra", J. Computational Physics 1(3), 1967, pp. 397-405,
-    /// doi:10.1016/0021-9991(67)90047-2, Crossref 2026-11-20, not read; both are in
-    /// `zed_kernel`, which documents them), so a chain whose values stay of one size costs
+    /// doi:10.1016/0021-9991(67)90047-2; its text read, its rules quoted at
+    /// `zed_kernel::num::fast` and `zed_numtheory::word`; both are in `zed_kernel`, which
+    /// documents them), so a chain whose values stay of one size costs
     /// O(n) operations of that size, and one whose values grow at each step costs the
     /// operations on all of their sizes, as the run's would: `y_i = y_{i-1} / rat(b + i)` with
     /// `b` of 103 bits took 145 ms at 400 names and 980 ms at 3200 (2026-11-13, load 41), and

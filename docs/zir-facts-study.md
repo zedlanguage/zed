@@ -131,7 +131,14 @@ carried in ZIR, and the stripped form".
   every pass down to machine code so "untrusted and potentially malicious code" can be "checked
   for safety before execution". This is the full form's purpose in P202. Their account of
   Necula's proof-carrying code, the same idea with proofs in a general logic, is quoted there;
-  Necula 1997 itself was located but not read.
+  Necula 1997 itself was located but not read. Read 2026-11-21 (CITE-allpapers-recheck; G. C.
+  Necula, "Proof-carrying code", POPL 1997, pp. 106-119, doi:10.1145/263699.263712; a scan of
+  the ACM copy): "the code producer is required to create a safety proof that attests to the
+  fact that the code respects a formally defined safety policy. Then, the code consumer is able
+  to use a simple and fast proof validator to check, with certainty, that the proof is valid"
+  (p. 107), and "There is an analogy between safety proofs and types. The analogy carries over
+  to proof validation and type checking" (p. 107). The point used here, that the consumer
+  checks what the producer carries instead of deriving it again, is stated there.
 - **RVSDG** (Reissmann, Meyer, Bahmann and Själander 2020), the IR family ZIR belongs to: an
   edge is "value typed" or "state typed", and "a richer type system permits further
   distinction". ZIR's value edges add a domain and facets to that type; the graph shape is

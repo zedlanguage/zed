@@ -417,8 +417,21 @@ impl<'a> Arms<'a> {
     /// two jumps below it are of one length, else to `p`. So a jump goes up `2^j - 1` nodes
     /// for some `j`, and a search up a chain of `d` tests takes O(log d) jumps and steps
     /// (E. W. Myers, "An applicative random-access stack", Information Processing Letters
-    /// 17(5), 1983, pp. 241-248, doi:10.1016/0020-0190(83)90106-0, Crossref 2026-11-20, not
-    /// read: the skew-binary jump pointers, the rule the sentences above state, from memory).
+    /// 17(5), 1983, pp. 241-248, doi:10.1016/0020-0190(83)90106-0; read 2026-11-21, PDF,
+    /// LibGen, verification only). P. 244, function PUSH, lines 1-5: `t ← s↑.JMP; if
+    /// s↑.LEN - t↑.LEN = t↑.LEN - t↑.JMP↑.LEN then t ← t↑.JMP else t ← s`, the rule above
+    /// with `s = p`, `t = jump[p]`. The cell of length `A` jumps to length `J(A)`, `A` in
+    /// canonical skew-binary (digits 0 and 1, the lowest nonzero digit possibly 2, digit `i`
+    /// worth `2^i - 1`, sec. 2) with its lowest nonzero digit lowered by one, so a jump spans
+    /// `2^k - 1` cells; Lemma 1: a canonical number of `n` digits lies in
+    /// `[2^n - 1, 2^(n+1) - 2]`, and Lemma 4 counts the steps of FIND(S, k) from the digits
+    /// of `LENGTH(S)` and `k`, which gives O(lg N) for reaching a given depth. The earlier
+    /// from-memory rule agreed with the paper. Departure: FIND seeks a given depth `k` and
+    /// jumps when the jump does not pass it; [`Self::step`] seeks the highest node where a
+    /// test holds, not knowing its depth. Because that test holds from the start up to some
+    /// depth and not above it, "the jump target passes the test" is the same as "the jump
+    /// does not pass that depth", so the walk takes exactly FIND's steps for that `k`, and
+    /// Lemma 4's count applies (our argument, not the paper's).
     fn add(&mut self, n: Node<'a>) -> usize {
         let k = self.nodes.len();
         let (depth, jump) = match &n {

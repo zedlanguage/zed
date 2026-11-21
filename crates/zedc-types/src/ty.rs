@@ -890,9 +890,17 @@ impl Ty {
 /// nodes found equal so are kept as classes in a union-find (Hopcroft and Karp's test of
 /// equivalence: J. E. Hopcroft and R. M. Karp, "A linear algorithm for testing equivalence of
 /// finite automata", Technical Report 71-114, Cornell University, 1971; no DOI, not found on
-/// Crossref, from memory, not checked: merge the start states, then merge the successors of
-/// each merged pair on each symbol, refusing when a class holds an accepting and a rejecting
-/// state): a pair whose nodes are already in one class is not compared again. Each pair
+/// Crossref; read 2026-11-21 in the scanned report at Cornell's eCommons repository, handle
+/// 1813/5958, the institution's own copy. Sec. III, steps 1-4: one set per state, MERGE the
+/// start states and push the pair; while the stack is not empty, pop a pair and for each
+/// symbol `a` FIND the sets of the two `a`-successors, and if they differ MERGE them and push
+/// the pair; at the end the automata are equivalent iff no set holds a final and a non-final
+/// state. Sec. IV, Theorem 1: time a constant times the alphabet size times the sum of the
+/// states, since each push merges two sets, so at most `n - 1` pairs are pushed; Lemma 1, the
+/// sets at the end are the coarsest right-invariant equivalence joining the start states.
+/// Departures: the classes here join nodes of two types, the "symbols" are a node's
+/// components, and a difference is reported when a pair is compared, not in a final scan):
+/// a pair whose nodes are already in one class is not compared again. Each pair
 /// of recorded nodes compared joins two classes, so at most one is compared for each node, and
 /// the comparison costs the size of the two types as graphs, not as trees: two types each
 /// holding `n` nodes and `2^n` paths, built apart, cost `O(n)`. The assumption holds: if every
@@ -9915,11 +9923,20 @@ fn left_out_by_vars(x: &Ty, d: &Ty, ws: &BTreeSet<Arc<str>>, cx: &Cx) -> bool {
 /// shape and lead to none the member allows, so a member with many such places can still
 /// visit up to the nodes; no member of the tests has one (it needs a component of only
 /// functions, rigid variables of no carrier, or a first variable bound alone). Prior work:
-/// partial-match retrieval (Rivest, "Partial-Match Retrieval Algorithms", SIAM J. Comput. 5(1),
-/// 1976, pp. 19-50, doi:10.1137/0205003, Crossref 2026-11-20, not read: queries that fix some
-/// fields and leave the rest free), whose stored records here hold
-/// wildcards (the places not pinned) as well as the queries; with both, no general method is
-/// known that beats one lookup per pattern of wildcards. Benchmarks
+/// partial-match retrieval (R. L. Rivest, "Partial-Match Retrieval Algorithms", SIAM J.
+/// Comput. 5(1), 1976, pp. 19-50, doi:10.1137/0205003; read 2026-11-21, PDF, LibGen,
+/// verification only). A query there is a word of `k` letters some of which are "*", a
+/// "don't care" (abstract); the stored records are whole words. Sec. 4.2, procedure
+/// `Triesearch`, is the walk used here: at a level the query fixes, follow the one branch
+/// of that letter; at a "*", follow every branch. Sec. 4.3 finds its average cost over
+/// random files of `n` records about `c·k/(k - s)·(2 - s/k)^(log2 n)` nodes, `c < 2.54`,
+/// for `s` letters fixed, and sec. 1.4 conjectures that no method averages below about
+/// `n^((k - s)/k)`, a conjecture, not a theorem. Departure: here the stored records hold
+/// wildcards too (the places not pinned), which Rivest's model does not have; the claim that
+/// with wildcards on both sides no general method is known to beat one lookup per pattern of
+/// wildcards is ours, not the paper's, and was not checked against later work. The trie walk
+/// is the same, so its cost at a place the member leaves free is the "*" branch above, every
+/// edge. Benchmarks
 /// `l01_26_type_resolution::bench::fits::shapes_of_variables_differing_on_m_components_are_found_by_their_pins_scales`
 /// and `shapes_pinned_at_n_different_sets_of_places_scale`.
 ///
@@ -11950,8 +11967,15 @@ impl<'m, 's> Comparing<'m, 's> {
     /// unions of variable shapes meet ceilings
     /// (`pinned_shapes_are_those_of_the_rule_of_one_shape`). Prior work: clause indexing on the
     /// first argument in Prolog (D. H. D. Warren, "An Abstract Prolog Instruction Set",
-    /// Technical Note 309, SRI International, 1983; no DOI, not found on Crossref, from
-    /// memory, not checked), which
+    /// Technical Note 309, SRI International, 1983; no DOI, not found on Crossref; read
+    /// 2026-11-21 in SRI's own scanned PDF: pp. 6-7, "The indexing instructions link together
+    /// the different clauses that make up a procedure and are responsible for filtering out a
+    /// subset of those clauses that could potentially match a given procedure call. This
+    /// filtering, or indexing, function is based on a key which is the principal functor of
+    /// the first argument of the procedure"; `switch_on_term` dispatches on whether that
+    /// argument is a variable, a constant, a list or a structure, and `switch_on_constant` and
+    /// `switch_on_structure` look the key up in a hash table. Departure: the key here is each
+    /// variable a ceiling holds, not a first argument's functor), which
     /// tries only the clauses whose head may match the call; here the key of a shape pinned by a
     /// ceiling is each variable the ceiling holds. Tests:
     /// `tests/steps/l01_22_type_representation/kinds.rs`,
@@ -12360,8 +12384,16 @@ impl<'m, 's> Comparing<'m, 's> {
     /// cost [`Self::shape_rest`] states, at most w^k shapes for k near shapes of w items, which
     /// some inputs need. Prior work: the decomposition of a product type into a union of
     /// products in semantic subtyping (Frisch, Castagna and Benzaken, "Semantic subtyping",
-    /// J. ACM 55(4), 2008, pp. 1-64, doi:10.1145/1391289.1391293, Crossref 2026-11-20, not read),
-    /// here item by item with the parts held by the same shapes joined.
+    /// J. ACM 55(4), 2008, article 19, pp. 1-64, doi:10.1145/1391289.1391293; read 2026-11-21,
+    /// PDF, LibGen, verification only). Sec. 6.2, Lemma 6.4: for families of subsets `X_i`,
+    /// `Y_i`, `(∩_{i∈P} X_i×Y_i) \ (∪_{i∈N} X_i×Y_i)` is the union over every `N' ⊆ N` of
+    /// `(∩_P X_i \ ∪_{N'} X_i) × (∩_P Y_i \ ∪_{N\N'} Y_i)`; the proof writes the difference
+    /// of products with De Morgan's laws. Lemma 6.5 turns it into the test: the product
+    /// difference is empty iff for every `N' ⊆ N` the first or the second factor is empty.
+    /// Departure: the paper splits over every subset of the negated products, 2^|N| pieces;
+    /// here item by item with the parts held by the same shapes joined, which is the same
+    /// split restricted to the items where the shapes differ. Tests: the `kinds` tests named
+    /// above; they cannot catch a split that is correct but larger than needed.
     async fn held_together(
         &'m self,
         l: &Shape,
@@ -12441,7 +12473,8 @@ impl<'m, 's> Comparing<'m, 's> {
     /// `k_joined_components_fit_shapes_that_differ_on_some_of_them` and the tests after
     /// `a_joined_one_element_tuple_fits_split_shapes_for_every_bound`. Prior work: the
     /// distribution of a union over a product in semantic subtyping (Frisch, Castagna and
-    /// Benzaken, "Semantic subtyping", J. ACM 55(4), 2008, doi:10.1145/1391289.1391293), which
+    /// Benzaken, "Semantic subtyping", J. ACM 55(4), 2008, doi:10.1145/1391289.1391293; read
+    /// 2026-11-21, sec. 6.2, Lemmas 6.4 and 6.5, sketched at [`Self::held_together`]), which
     /// decomposes a product type into the
     /// union of products and checks each; here only where one shape does not hold the row.
     async fn row_in(
@@ -18119,8 +18152,16 @@ async fn cover<'m>(
     // with parameter and result types unions of many distinct members it is the complement of
     // Hitting Set, for which no n^(2-e) algorithm is expected (Abboud, Vassilevska Williams and
     // Wang, "Approximation and fixed parameter subquadratic algorithms for radius and diameter
-    // in sparse graphs", SODA 2016, doi:10.1137/1.9781611974331.ch28, Crossref 2026-11-20,
-    // not read; the Hitting Set conjecture; a conjecture, not a theorem).
+    // in sparse graphs", SODA 2016, pp. 377-391, doi:10.1137/1.9781611974331.ch28; read
+    // 2026-11-21, PDF, LibGen, verification only). Sec. 1, p. 379, states the Hitting Set
+    // conjecture: no e > 0 such that for every c >= 1 an algorithm decides in O(n^(2-e)),
+    // given two lists A, B of n subsets of a universe of size c log n, whether some set of A
+    // meets every set of B; the paper says the conjecture implies the Orthogonal Vectors
+    // conjecture, and that the best known algorithm takes n^(2 - 1/O(log(d/log n))). A
+    // conjecture, not a theorem. The reduction to our question, ours: "every arrow of `q`
+    // has an arrow of `s` that holds it" is "for all a, some b with a ⊆ b", the complement
+    // of "some a meets every complement of b", which is Hitting Set with B complemented; so
+    // a bound below n^(2-e) for this check would refute the conjecture.
     let mut index: Option<ArrowIndex> = None;
     'qas: for qa in qas {
         let mut refused = None;
@@ -18484,17 +18525,36 @@ fn arrow_text(s: &Sig, a: &Arrow, names: &[(Arc<str>, Arc<str>)]) -> String {
 /// #c)` covers `(x: int | bool) -> String`, the intersection `String` at `int` from the first
 /// two and at `bool` from the first and third, and is refused. Deciding that is the
 /// all-subsets condition of semantic subtyping on arrows (Frisch, Castagna and Benzaken, J.
-/// ACM 55(4), 2008, doi:10.1145/1391289.1391293); it is as hard as Orthogonal Vectors even
+/// ACM 55(4), 2008, doi:10.1145/1391289.1391293; read 2026-11-21, PDF, LibGen,
+/// verification only: sec. 6.2, Lemma 6.8, `∩_P (t→s) ⊆ ∪_N (t→s)` iff some `t0→s0` in
+/// `N` has, for every `P' ⊆ P`, `t0 ⊆ ∪_{P'} t` or (`P' ≠ P` and `∩_{P\P'} s ⊆ s0`); the
+/// paper's example after the lemma spells out the four conditions for two arrows against
+/// one. Here `N` is the one arrow `qa`); it is as hard as Orthogonal Vectors even
 /// with one parameter of atoms (each
 /// arrow a coordinate, each atom of the parameter a vector of the arrows that take it, each
 /// atom outside the result a vector of the arrows whose results leave it out), so no
 /// n^(2-e) algorithm is expected under the Strong Exponential Time Hypothesis (R. Williams,
 /// "A new algorithm for optimal 2-constraint satisfaction and its implications", Theoretical
-/// Computer Science 348(2-3), 2005, pp. 357-365, doi:10.1016/j.tcs.2005.09.023, Crossref
-/// 2026-11-20, not read: SETH implies no n^(2-e) algorithm for Orthogonal Vectors; a
-/// conjecture). Tests: l01_26_type_resolution::fits (each case, its message and a
-/// near miss), and the differential tests below, against every subset of arrows and against
-/// the values of small types; COMPLEXITY.md F82. A complete solution would split `qa`'s
+/// Computer Science 348(2-3), 2005, pp. 357-365, doi:10.1016/j.tcs.2005.09.023; read
+/// 2026-11-21, PDF, LibGen, verification only). Sec. 5.1, Theorem 5: if the "cooperative
+/// subset query" problem (given families D1, D2 of subsets of a universe of size d, find
+/// s1 in D1, s2 in D2 with s1 ⊆ s2; Orthogonal Vectors with D2 complemented) is solvable in
+/// Õ(f(d)·k^(2-e)), then CNF-SAT with m clauses and n variables is in Õ(f(m)·2^((1-e/2)n)).
+/// Proof: split the variables in halves, list the 2^(n/2) assignments of each, map an
+/// assignment of the first half to the clauses it leaves unsatisfied and one of the second
+/// half to the clauses it satisfies; the formula is satisfiable iff some first set lies in
+/// some second set. Correction to the earlier note here: the paper does not name SETH; the
+/// form "SETH implies no n^(2-e) algorithm for Orthogonal Vectors with d = c log n" also
+/// needs m = O(n), from the sparsification lemma of Impagliazzo, Paturi and Zane (JCSS
+/// 63(4), 512-530, 2001, doi:10.1006/jcss.2001.1774; read 2026-11-21, PDF, LibGen,
+/// verification only: sec. 2, Corollary 1, p. 523, "any k-SAT formula F with n variables,
+/// can be expressed as F = ∨ Y_i, where t ≤ 2^(εn) and each Y_i is a k-SAT formula with at
+/// most Cn clauses", computable in poly(n) 2^(εn) time; it follows from Theorem 1, p. 520,
+/// the same statement for k-Set Cover, proved with "weak sunflowers"), and is how Abboud,
+/// Vassilevska Williams and Wang (SODA 2016, p. 379) cite it. A conjecture. Tests:
+/// l01_26_type_resolution::fits (each case, its message and a near miss), and the
+/// differential tests below, against every subset of arrows and against the values of small
+/// types; COMPLEXITY.md F82. A complete solution would split `qa`'s
 /// parameters into the regions the arrows' parameter types cut, and intersect the results per
 /// region.
 ///
@@ -20939,8 +20999,14 @@ fn piece_within(p: &Piece, m: u8, cx: &Cx) -> bool {
 /// still bound first-fit; [`Comparing::search`] refuses where two members of one union each
 /// fail a shape no pin leaves out. Prior work: the upper bounds that local type inference
 /// propagates from the expected type into the arguments (Pierce and Turner, "Local Type
-/// Inference", ACM TOPLAS 22(1), 2000, pp. 1-44, doi:10.1145/345099.345100, Crossref
-/// 2026-11-20, not read), here only one level deep.
+/// Inference", ACM TOPLAS 22(1), 2000, pp. 1-44, doi:10.1145/345099.345100; read
+/// 2026-11-21, PDF, LibGen, verification only). Sec. 4.2, rule C-App-InfSpec, p. 19: in
+/// checking mode against an expected type `V`, the type arguments `U` of `f(e)` need only
+/// `S <: [U/X]T` for the argument and `[U/X]R <: V` for the result, so the expected type is
+/// an upper bound on the result; the paper notes this is more permissive than the
+/// synthesis rule, which must pick the least result. Departure: here only one level deep,
+/// the expected result giving a ceiling to a variable that is the result or one of its
+/// places, and no constraint solving (sec. 3.3-3.5) beyond that.
 fn ceilings(sr: &Ty, qr: &Ty, free: &impl Fn(&str) -> bool) -> Option<Ceilings> {
     if qr.dynamic {
         return None;
@@ -29505,11 +29571,17 @@ mod tests {
 
 /// M47-M57 / M65 prefix-free preorder Rabin-Karp signature encoder over `Z_P` (`P = 2^61 - 1`;
 /// R. M. Karp and M. O. Rabin, "Efficient randomized pattern-matching algorithms", IBM J.
-/// Research and Development 31(2), 1987, pp. 249-260, doi:10.1147/rd.312.0249, Crossref
-/// 2026-11-20, not read; from memory: a string's fingerprint is its value as a number modulo a
-/// prime drawn at random, which bounds the chance that two different strings collide).
-/// Departure: here the prime `P` and the base [`r10_hash::R_BASE`] are both fixed, so that
-/// bound does not apply; with a base drawn at random, two different strings of length `n`
+/// Research and Development 31(2), 1987, pp. 249-260, doi:10.1147/rd.312.0249; read
+/// 2026-11-21, PDF, LibGen, verification only). Pp. 251-252: the fingerprint of a bit
+/// string `X` of length `n` is `H(X) mod p`, `H(X)` its value as a binary number and `p` a
+/// prime drawn at random below `M`. Theorem 3: for `t` comparisons of strings of length
+/// `n`, the chance of a false match is at most `π(nt)/π(M)` when `nt > 29`, because
+/// `∏ |H(X) - H(Y)| < 2^(nt)` has at most `π(nt)` prime divisors (Corollary 1), and
+/// `p` is one of `π(M)` primes; Corollary 4(a): with `M = nt^2` it is below `2.511/t`.
+/// Departure: here the prime `P` and the base [`r10_hash::R_BASE`] are both fixed, and the
+/// fingerprint is a polynomial in the base rather than a residue for a random prime, so
+/// the paper's bound does not apply. A different, standard argument (not from the paper):
+/// with a base drawn at random, two different strings of length `n`
 /// would collide with probability at most `(n - 1)/P` (two different polynomials of degree
 /// below `n` agree at most at `n - 1` points), but for a fixed base an input can be built to
 /// collide. `Hash for Sig` hashes [`Sig::digest`], where a collision costs only time if
