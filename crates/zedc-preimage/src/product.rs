@@ -6617,13 +6617,30 @@ impl Block {
     /// The projection of `P` onto `n` is `[m_P, +inf)` for some `m_P` (by (a) it is up-closed),
     /// and (b) gives `m_P <= olo <= nlo`, so meeting it with `new` gives `new` again. Hence no part
     /// narrows any name and the wake is skipped.
-    /// Not proved: fact (b) when the last projection stopped before every part of this block ran
-    /// (a part left unprojected by an idle certificate). If (b) fails there, the skip keeps a
-    /// wider domain than a full projection would give; the result is less narrow but still
-    /// holds every solution, since a skipped wake only omits a narrowing.
+    ///
+    /// Without (b) (row PROOF-product-leaf-only-tightened-b, 2026-11-21): the skip loses
+    /// nothing against waking the parts at the old domain, whatever the last projection left.
+    /// Let `D` be the other names' domains, unchanged. (c) For a name `m` other than `n`, the
+    /// projection of `P ∩ (D × new)` onto `m` equals that of `P ∩ (D × old)`: `new ⊆ old`
+    /// gives one inclusion, and the witness step above (`n = max(a0, nlo)`, by (a)) gives the
+    /// other; in particular one is empty exactly when the other is. (d) The projection of `P ∩
+    /// (D × old)` onto `n` is `[m_P, +inf) ∩ old` for the up-closed `[m_P, +inf)` of (a) (or
+    /// empty), so that of `P ∩ (D × new)` is the same half-line met with `new`. So by (c) and
+    /// (d) a wake after the move gives each name what a wake before it would have given, met
+    /// with `new` for `n`. Where (b) holds, as the proof above says, that is no narrowing.
+    /// Where it does not, the narrowing a wake would give was already owed before `n` moved:
+    /// the last projection ended with a part neither run nor certified idle at those domains.
+    /// (A part an idle certificate skipped is not such a part: the certificate says its
+    /// projection holds the domains it was checked at, which is (b) for that part.) That
+    /// happens only on the ends by `break` that [`Scope::project_block`]'s record proof lists
+    /// as not proved, (b) there, each a loss of precision, never of a solution; the skip adds
+    /// no further loss, since the parts it skips give, by (c) and (d), nothing that a wake
+    /// before the move would not.
     /// Tests: no unit test calls this function; it runs only inside block projections, so a
-    /// wrong skip shows only as a wider result in a family test. No test builds a block where
-    /// (b) fails.
+    /// wrong skip shows only as a wider result in a family test
+    /// (`l01_39_scope_relations::linked`, compared with a projection from scratch). Not
+    /// caught: a block left at a `break` end, where the skip and a wake differ only by what
+    /// was owed before.
     fn leaf_only_tightened(
         &self,
         n: &Arc<str>,

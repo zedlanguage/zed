@@ -313,8 +313,11 @@ fn a_test_whose_written_copy_is_dropped_allows_what_the_copy_allows() {
     );
     let other = product_mod_10("x", "y", 1);
     let box_ = [("x", 0, 12), ("y", 0, 12)];
-    let cases: [(&Term, fn(i64, i64) -> bool, bool); 2] = [
-        (&one, |a, _| 3 * a + 1 <= 20, false),
+    // Each test, whether it holds at a point, and whether it is the unit sum.
+    type Case<'t> = (&'t Term, fn(i64, i64) -> bool, bool);
+    let cases: [Case; 2] = [
+        // `3·a + 1 <= 20` is `3·a < 20`.
+        (&one, |a, _| 3 * a < 20, false),
         (&unit, |a, b| a - b + 2 >= 0, true),
     ];
     for exact in [false, true] {
