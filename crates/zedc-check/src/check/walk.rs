@@ -32030,6 +32030,10 @@ mod tests {
 }
 
 /// What [`Ck::part_of`] finds at a path of a call's argument.
+// A value returned on the stack and matched at once, nearly always `Arg`: boxing `Arg` would
+// add an allocation to every call of `part_of` to save the unused bytes of the other variants.
+// `Keyed` (FAIL-family-from-tuple-param) took the enum past clippy's limit.
+#[allow(clippy::large_enum_variant)]
 enum PartOf<'a> {
     /// The part, its type and, where shown, its expression.
     Arg(Arg<'a>),
