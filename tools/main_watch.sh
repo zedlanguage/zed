@@ -51,6 +51,25 @@
 #     failure the fix itself caused is traced to the fix). Only when everything passes does it
 #     record the head as checked (main-watch.checked, by write to a temporary file and rename).
 #  7. Then it polls again.
+# The spec. Many pieces read the spec (DESIGN.md, EXAMPLES.md; tests/src/spec.rs finds it through
+# $ZED_SPEC_DIR, else at /home/luke/Work/zed), and a spec change and its zed-impl half land as
+# separate pushes, often hours apart. So the watcher keeps its own clone of the spec ($logroot/spec,
+# seeded by hardlinks from $MAIN_WATCH_SPEC_SEED, fetched from $MAIN_WATCH_SPEC_URL), exports it as
+# ZED_SPEC_DIR, and pins it: each check fetches the spec's origin/main once, S, and every run of the
+# check reads S, never the author's working tree, which may be behind origin or hold edits. The
+# checked file records S beside the head (`<commit> <time> <spec commit>`); for an older line
+# without it, S0 is the spec's last commit on origin/main at or before the line's time. Step 3
+# then first asks whether the failure comes from the spec: each confirmed failure is run again at
+# the head with S0, the spec the last checked commit C0 was checked with (no build: the head is
+# built, and the pieces read the spec when they run). One that passes there was broken by a spec
+# commit in S0..S: a binary search over those commits, the head fixed, names the first at which it
+# fails twice, and it is filed under the row that commit's subject names (else FAIL-spec-<commit>):
+# a QUEUE line in queue mode, a stuck entry otherwise; its zed-impl half is missing, or the spec
+# commit is wrong. The rest go on through step 3's run at C0 and the bisect, both with S0, so that
+# neither mistakes a spec change for a zed-impl one. Before this (FAIL-main-54b8e6459,
+# 2026-11-21) the watcher read /home/luke/Work/zed: spec commits 872897b and 8578919 added
+# diagnostics rows hours before their zed-impl halves landed, l01_21_test_runner then failed at
+# C0 54b8e6459 too, and was filed as FAIL-main-54b8e6459, a cause no bisect of zed-impl can find.
 # Known failures. main-watch-known.txt lists failures a plan row owns, one a line,
 # `<kind>:<piece> <row>`: such a piece still runs and is reported with its row, but is not
 # bisected or fixed here, and does not keep a head from being checked. A third field `skip` keeps
@@ -107,7 +126,9 @@
 # `<piece> rc=<rc> ...` and BUILD FAILED; no piece named means all), MAIN_WATCH_FIXER the fixing
 # agent (`<cmd> <brief> <worktree>`), MAIN_WATCH_POLLS the number of polls before it exits
 # (unlimited), MAIN_WATCH_FULL the run_tests.sh option for the full battery (--full; empty for the
-# local suite alone).
+# local suite alone), MAIN_WATCH_SPEC_SEED the local spec repository its clone is made from
+# (/home/luke/Work/zed; only read), MAIN_WATCH_SPEC_URL the spec remote it fetches (that
+# repository's origin).
 home=${MAIN_WATCH_HOME:-/home/luke/Work/wt}
 repo=${MAIN_WATCH_REPO:-/home/luke/Work/zed-impl}
 trees=${MAIN_WATCH_TREES:-$home/trees}
@@ -121,6 +142,7 @@ prepare=${MAIN_WATCH_PREPARE:-/home/luke/Work/wt/seed-build.sh}
 remove=${MAIN_WATCH_REMOVE:-/home/luke/Work/wt/worktree-remove.sh}
 publish=${MAIN_WATCH_PUBLISH:-/home/luke/Work/wt/build-publish.sh}
 template=${MAIN_WATCH_TEMPLATE:-$home/main-watch-fix-brief.md}
+spec_seed=${MAIN_WATCH_SPEC_SEED:-/home/luke/Work/zed}
 landings=$home/landings.log
 checked_file=$home/main-watch.checked
 red=$home/main-red.log
@@ -370,10 +392,70 @@ goto() {
   git -C "$copy" checkout -q --detach "$1" || { echo "main-watch: checking out $1 in $copy failed" >&2; exit 2; }
 }
 
+# spec_at <spec commit>: checks the watcher's spec clone ($ZED_SPEC_DIR) out at it.
+spec_at() {
+  git -C "$spec_dir" checkout -q --detach "$1" || { echo "main-watch: checking out spec $1 in $spec_dir failed" >&2; exit 2; }
+}
+# spec_now: fetches the spec's origin; prints its origin/main.
+spec_now() {
+  git -C "$spec_dir" fetch -q origin || { echo "main-watch: spec fetch failed" >&2; return 1; }
+  git -C "$spec_dir" rev-parse origin/main
+}
+# spec_checked: the spec commit the last checked commit was checked with, S0: the third field of
+# the checked file, else (a line written before the field existed, or a commit the clone lacks)
+# the spec's last commit on origin/main at or before the line's time, else $spec_head (nothing to
+# compare with: every failure then goes on as from zed-impl, as before the field existed).
+spec_checked() {
+  local s t0
+  s=$(cut -d' ' -f3 "$checked_file")
+  if [ -n "$s" ] && git -C "$spec_dir" cat-file -e "$s^{commit}" 2>/dev/null; then
+    echo "$s"
+    return
+  fi
+  t0=$(cut -d' ' -f2 "$checked_file")
+  s=$(git -C "$spec_dir" rev-list -1 --first-parent --before="$t0" origin/main)
+  echo "${s:-$spec_head}"
+}
+
+# spec_bisect <good> <bad> <items>: with the watcher's worktree at the head, prints the first spec
+# commit in good..bad (along origin/main's first parents, oldest first) at which some item fails
+# twice. The caller knows every item passes at good and fails twice at bad. Invariant of the
+# search: the commit at lo (good when lo = -1) was seen to pass and the one at hi (bad at the
+# start) to fail twice; each step halves hi - lo, so it ends after about log2(n) steps with
+# hi = lo + 1: a spec commit at which some item fails twice whose parent on the list passes. Where
+# items fail and pass again along the list, that is a first bad commit, not necessarily the
+# earliest one; where good is not an ancestor of bad (the spec's history rewritten), the list is
+# bad's commits that good lacks, and the result is still a failing commit after a passing one.
+# Each step is only a run of the items: the pieces read the spec when they run, so nothing builds.
+spec_bisect() {
+  local good=$1 bad=$2 items=$3 ls n lo hi mid f
+  mapfile -t ls < <(git -C "$spec_dir" rev-list --reverse --first-parent "$good..$bad")
+  n=${#ls[@]}
+  lo=-1 hi=$((n - 1))
+  echo "spec commits in ${good:0:9}..${bad:0:9}: $n; zed-impl at $(short "$head"); pieces: $(paste -sd' ' <<<"$items")" >>"$bisect_log"
+  while [ $((hi - lo)) -gt 1 ]; do
+    mid=$(((lo + hi) / 2))
+    spec_at "${ls[$mid]}"
+    f=$(fails_twice "$items")
+    if [ -n "$(inter "$f" "$items")" ]; then
+      echo "spec $((mid + 1))/$n ${ls[$mid]:0:9}: bad ($(paste -sd' ' <<<"$f"))" >>"$bisect_log"
+      hi=$mid
+    else
+      echo "spec $((mid + 1))/$n ${ls[$mid]:0:9}: good" >>"$bisect_log"
+      lo=$mid
+    fi
+  done
+  echo "first bad spec commit: ${ls[$hi]:0:9}" >>"$bisect_log"
+  echo "${ls[$hi]}"
+}
+
 # bisect <good> <bad> <items>: prints the first commit in good..bad at which some item fails
 # twice. The steps go to $bisect_log.
 bisect() {
   local good=$1 bad=$2 items=$3 ls n lo hi mid prev c f
+  # S0 throughout, the spec the good end was checked with: a spec commit since then is not a
+  # zed-impl culprit (see The spec above).
+  spec_at "$s0"
   mapfile -t ls < <(landings_in "$good" "$bad")
   n=${#ls[@]}
   lo=-1 hi=$((n - 1))
@@ -416,13 +498,32 @@ fill() {
   t=${t//"$p"/"$r"}
 }
 
-# owner_row <commit>: the plan row the commit's subject names in its closing parentheses
-# ("... (TOOL-main-watch-start-green)"), else the first its message names, else FAIL-main-<commit>.
+# owner_row <commit> [<repository> <prefix>]: the plan row the commit's subject names in its
+# closing parentheses ("... (TOOL-main-watch-start-green)"), else the first its message names,
+# else <prefix>-<commit> (FAIL-main-<commit>). The repository is zed-impl's unless given.
 owner_row() {
-  local ids='\b[A-Z][A-Z0-9]*(-[A-Za-z0-9.]+)+\b' r
-  r=$(git -C "$repo" log -1 --format=%s "$1" | sed -n 's/.*(\([^()]*\))[[:space:]]*$/\1/p' | command grep -a -o -E "$ids" | awk 'NR == 1')
-  [ -n "$r" ] || r=$(git -C "$repo" log -1 --format=%B "$1" | command grep -a -o -E "$ids" | awk 'NR == 1')
-  echo "${r:-FAIL-main-$(short "$1")}"
+  local ids='\b[A-Z][A-Z0-9]*(-[A-Za-z0-9.]+)+\b' r g=${2:-$repo}
+  r=$(git -C "$g" log -1 --format=%s "$1" | sed -n 's/.*(\([^()]*\))[[:space:]]*$/\1/p' | command grep -a -o -E "$ids" | awk 'NR == 1')
+  [ -n "$r" ] || r=$(git -C "$g" log -1 --format=%B "$1" | command grep -a -o -E "$ids" | awk 'NR == 1')
+  echo "${r:-${3:-FAIL-main}-$(git -C "$g" rev-parse --short=9 "$1")}"
+}
+
+# spec_culprit <spec commit> <row> <items>: files the items, which the spec commit broke at the
+# head, under the row: a QUEUE line and known lines in queue mode, else a stuck entry (which puts
+# them on the known list too). No fixing agent: the fix may belong to zed-impl or to the spec.
+spec_culprit() {
+  local s=$1 row=$2 items=$3 pieces what
+  pieces=$(paste -sd' ' <<<"$items")
+  what="spec commit ${s:0:9} \"$(git -C "$spec_dir" log -1 --format=%s "$s")\" breaks $pieces at zed-impl $(short "$head"): they pass there with the spec ${s0:0:9} the last checked commit $(short "$c0") was checked with, so zed-impl lacks that spec change's half, or the spec commit is wrong; bisect log $bisect_log, outputs: $(sort -u "$evidence" | paste -sd' ')"
+  if [ -z "$queue" ]; then
+    stuck - "spec commit ${s:0:9} breaks $pieces" "$what." "$row" "$items"
+  else
+    known_add "$row" "$items"
+    command grep -a -q "^QUEUE .*: spec commit ${s:0:9} " "$queue" 2>/dev/null ||
+      echo "QUEUE $row (filed by main-watch $(ts): $what; the row's owner fixes it and takes these pieces' lines out of $known_file)" >>"$queue"
+    runlog "$row: spec commit ${s:0:9} breaks $pieces at $(short "$head"); queued in $queue and put on $known_file"
+    say "$row: spec commit ${s:0:9} breaks $pieces; queued"
+  fi
 }
 
 # fix <commit> <items>: records the culprit, runs fixing agents until its pieces pass, up to 3.
@@ -496,6 +597,8 @@ fix() {
     git -C "$dir" merge-base --is-ancestor HEAD origin/main && "$remove" "$dir" >>"$logroot/remove.log" 2>&1 &&
       git -C "$repo" branch -q -D "wt/$name" >>"$logroot/remove.log" 2>&1
     goto "$landed"
+    # The fix is judged with the spec of this check, the one its agent's world has.
+    spec_at "$spec_head"
     : >"$evidence"
     fixed=$(fails_twice "$items")
     if [ -z "$(inter "$fixed" "$items")" ]; then
@@ -518,7 +621,7 @@ fix() {
 # watcher's worktree at $head and removes the worktree.
 checked_head() {
   local c0=$1 known=$2
-  echo "$head $(ts)" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
+  echo "$head $(ts) $spec_head" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
   runlog "checked $(short "$head"): every test and benchmark passes${known:+ but the known failures $known}($(landings_in "$c0" "$head" | wc -l) landings since $(short "$c0"))"
   say "checked $(short "$head"): everything passes${known:+ but the known failures $known}"
   # The worktree's build, of a head where everything passes, becomes the central build that
@@ -548,8 +651,13 @@ check() {
   head=$2
   declare -gA good=()
   while :; do
-    say "running every test and benchmark at $(short "$head") ($(landings_in "$c0" "$head" | wc -l) landings since $(short "$c0"))"
+    # The spec of this pass, S, read by every run until the next pass (globals: fix and
+    # checked_head read them).
+    spec_head=$(spec_now) || { say "spec fetch failed; checking again at the next poll"; return 0; }
+    s0=$(spec_checked)
+    say "running every test and benchmark at $(short "$head") ($(landings_in "$c0" "$head" | wc -l) landings since $(short "$c0")), spec ${spec_head:0:9}"
     goto "$head"
+    spec_at "$spec_head"
     while read -r p r; do
       runlog "not run: $p ($r) at $(short "$head"), marked skip in $known_file"
     done < <([ -s "$known_file" ] && awk '$3 == "skip" { print $1, $2 }' "$known_file")
@@ -611,12 +719,47 @@ check() {
       return 0
     fi
     say "confirmed failures at $(short "$head"): $(paste -sd' ' <<<"$items")"
-    # Failures never seen passing in this check: do they fail at C0 too?
+    # Failures from the spec (see The spec above): those that pass at the head with S0 were
+    # broken by a spec commit in S0..S. The worktree is at the head still (the runs of
+    # fails_twice above check nothing out). Each set goes to its first bad spec commit, as the
+    # bisect below does for zed-impl; the rest go on with S0.
+    if [ "$spec_head" != "$s0" ]; then
+      spec_at "$s0"
+      : >"$evidence"
+      f=$(inter "$(fails_twice "$items")" "$items")
+      local sset sc sf row
+      sset=$(minus "$items" "$f")
+      while [ -n "$sset" ]; do
+        bisect_log=$logroot/bisect-spec-$(date -u +%H%M%S%N).log
+        : >"$evidence"
+        sc=$(spec_bisect "$s0" "$spec_head" "$sset")
+        spec_at "$sc"
+        sf=$(inter "$(fails_twice "$sset")" "$sset")
+        if [ -z "$sf" ]; then
+          stuck - "the search of the spec commits ${s0:0:9}..${spec_head:0:9} for $(paste -sd' ' <<<"$sset") named ${sc:0:9}, at which none fails twice" "Bisect log: $bisect_log." "FAIL-spec-${sc:0:9}" "$sset"
+          for p in $sset; do known+="$p (FAIL-spec-${sc:0:9}) "; done
+          break
+        fi
+        row=$(owner_row "$sc" "$spec_dir" FAIL-spec)
+        spec_culprit "$sc" "$row" "$sf"
+        for p in $sf; do known+="$p ($row) "; done
+        sset=$(minus "$sset" "$sf")
+      done
+      spec_at "$s0"
+      items=$f
+      if [ -z "$items" ]; then
+        checked_head "$c0" "$known"
+        return 0
+      fi
+    fi
+    # Failures never seen passing in this check: do they fail at C0 too? (With S0, the spec C0
+    # passed with: a failure there means the machine changed or the piece is flaky.)
     local fresh=
     for p in $items; do [ -n "${good[$p]:-}" ] || fresh+="$p"$'\n'; done
     fresh=$(sed '/^$/d' <<<"$fresh")
     if [ -n "$fresh" ]; then
       goto "$c0"
+      spec_at "$s0"
       : >"$evidence"
       f=$(inter "$(fails_twice "$fresh")" "$fresh")
       if [ -n "$f" ]; then
@@ -686,9 +829,18 @@ logroot=$home/main-watch-runs/$(date -u +%Y%m%d-%H%M%S)-$$
 mkdir -p "$logroot" || exit 2
 evidence=$logroot/evidence
 : >"$evidence"
-head=
+# The watcher's own spec clone (see The spec above): a local clone shares the seed's objects by
+# hardlinks (the seed is only read), then fetches the seed's own remote, so origin/main is the
+# spec's, whatever the seed's working tree holds.
+spec_url=${MAIN_WATCH_SPEC_URL:-$(git -C "$spec_seed" remote get-url origin)}
+spec_dir=$logroot/spec
+git clone -q --no-checkout "$spec_seed" "$spec_dir" && git -C "$spec_dir" remote set-url origin "$spec_url" &&
+  git -C "$spec_dir" fetch -q origin || { echo "main-watch: cloning the spec from $spec_seed and fetching $spec_url into $spec_dir failed" >&2; exit 2; }
+export ZED_SPEC_DIR=$spec_dir
+head= spec_head= s0=
 if [ -n "$start" ]; then
-  echo "$start $(ts)" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
+  spec_head=$(spec_now) || exit 2
+  echo "$start $(ts) $spec_head" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
   say "recorded $(short "$start") as checked"
 fi
 n=0

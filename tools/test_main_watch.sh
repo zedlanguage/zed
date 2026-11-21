@@ -35,6 +35,18 @@ setup() {
     git -C "$t/$c" config user.email "$c@localhost"
   done
   c0=$(git -C "$t/repo" rev-parse HEAD)
+  # The spec: a bare remote, and a clone standing in for the author's checkout
+  # (/home/luke/Work/zed), exported as ZED_SPEC_DIR as a caller's environment may have it; the
+  # watcher must read neither that variable nor that working tree, only its own pinned clone.
+  mkdir -p "$t/specsrc/breaks"
+  echo "# spec" >"$t/specsrc/DESIGN.md"
+  : >"$t/specsrc/breaks/.keep"
+  git -C "$t/specsrc" init -q -b main
+  git -C "$t/specsrc" add -A
+  gitc -C "$t/specsrc" commit -q -m "spec base"
+  git clone -q --bare "$t/specsrc" "$t/spec.git"
+  git clone -q "$t/spec.git" "$t/speclive"
+  export ZED_SPEC_DIR=$t/speclive MAIN_WATCH_SPEC_SEED=$t/spec.git MAIN_WATCH_SPEC_URL=$t/spec.git
   # The runner: run_tests.sh's summary lines; BUILD FAILED while broken/BUILD exists.
   cat >"$t/bin/run" <<'EOF'
 #!/bin/bash
@@ -69,6 +81,9 @@ for n in "${names[@]}"; do
   echo "$kind $n" >>"$MW_STATE/ran"
   r=0
   [ ! -e "broken/$n" ] || r=1
+  # A piece also fails while the spec it reads has breaks/<piece>, as a piece that reads DESIGN.md
+  # fails at a spec change whose zed-impl half has not landed.
+  [ ! -e "$ZED_SPEC_DIR/breaks/$n" ] || r=1
   # MW_SEGV=<piece>: that piece, while broken, is killed by SIGSEGV; its rc is 139, as
   # run_tests.sh reports a piece ended by a signal (128 + the signal).
   if [ "$r" = 1 ] && [ "$n" = "${MW_SEGV:-}" ]; then
@@ -192,6 +207,15 @@ land() {
   done
   git -C "$t/dev" push -q origin HEAD:main
   echo "$(git -C "$t/dev" rev-parse HEAD) 2026-11-19T00:00:00Z $t/trees/agent$n wt/agent$n" >>"$t/home/landings.log"
+}
+# spec_land <i> <message> [<piece>]: spec commit i, pushed from the author's checkout, dated
+# 2030-01-0<i> (after any time the watcher writes); it breaks the piece.
+spec_land() {
+  echo "$2" >>"$t/speclive/DESIGN.md"
+  [ -z "${3:-}" ] || echo x >"$t/speclive/breaks/$3"
+  git -C "$t/speclive" add -A
+  GIT_COMMITTER_DATE="2030-01-0${1}T00:00:00Z" gitc -C "$t/speclive" commit -q -m "$2"
+  git -C "$t/speclive" push -q origin HEAD:main
 }
 # The commit that added broken/$1.
 breaker() { git -C "$t/dev" log --diff-filter=A --format=%H -1 -- "broken/$1"; }
@@ -461,6 +485,54 @@ bench:b_beta FAIL-main-${b:0:9}" "$(cat "$t/home/main-watch-known.txt")"
     check "oldqueue: the head is checked" "$(head_of)" "$(checked)"
     check "oldqueue: the checked head's build is published, not C0's" "$(head_of)" "$(tail -1 "$t/state/published" 2>/dev/null)"
     ;;
+  spec | specold)
+    # A spec commit breaks t_gamma at every zed-impl commit (its zed-impl half has not landed):
+    # filed under the row the spec commit names, not as FAIL-main-<C0>, and not bisected over
+    # zed-impl (FAIL-main-54b8e6459, 2026-11-21: the watcher read the author's spec checkout, so
+    # l01_21_test_runner failed at C0 too and was filed as FAIL-main-54b8e6459). The author's
+    # checkout also holds an uncommitted edit that breaks t_alpha, which the watcher must not
+    # read. spec: queue mode, C0 recorded by --start, with its spec commit; specold: no queue (a
+    # stuck entry), and a checked line written before the spec field existed, `<commit> <time>`,
+    # so S0 is the spec at that time.
+    setup
+    local q=$t/home/spawn-queue.txt s0 s
+    [ "$1" != spec ] || export MAIN_WATCH_QUEUE=$q
+    s0=$(git -C "$t/spec.git" rev-parse main)
+    if [ "$1" = spec ]; then
+      for n in 1 2 3; do land "$n"; done
+      MAIN_WATCH_POLLS=1 timeout 50 "$watch" --start "$c0" >"$t/out0" 2>&1
+      check "spec: the start exits 0" 0 "$?"
+      check "spec: the start records C0 with its spec commit" "$c0 $s0" "$(cut -d' ' -f1,3 "$t/home/main-watch.checked")"
+    else
+      echo "$c0 $(date -u +%FT%TZ)" >"$t/home/main-watch.checked"
+      for n in 1 2 3; do land "$n"; done
+    fi
+    spec_land 1 "spec one (SPEC-row-one)"
+    spec_land 2 "DESIGN: a new row (SPEC-row-gamma)" t_gamma
+    s=$(git -C "$t/spec.git" rev-parse main)
+    spec_land 3 "spec three (SPEC-row-three)"
+    echo x >"$t/speclive/breaks/t_alpha"
+    for n in $(seq 4 18); do land "$n"; done
+    MAIN_WATCH_POLLS=1 timeout 50 "$watch" >"$t/out" 2>&1
+    check "$1: exit 0" 0 "$?"
+    if [ "$1" = spec ]; then
+      check "spec: one QUEUE line, for the row the breaking spec commit names" "QUEUE SPEC-row-gamma ${s:0:9}" \
+        "$(sed -E 's/^(QUEUE [^ ]+) .*: spec commit ([0-9a-f]{9}) .*/\1 \2/' "$q" 2>/dev/null)"
+    else
+      check "specold: one stuck entry, for the breaking spec commit" 1 \
+        "$(command grep -a -c "^## .* main-watch stuck: spec commit ${s:0:9} breaks test:t_gamma\$" "$t/home/main-watch-stuck.md")"
+      check "specold: it holds up the row the spec commit names" 1 \
+        "$(command grep -a -c '^Holds up: SPEC-row-gamma, whose pieces test:t_gamma ' "$t/home/main-watch-stuck.md")"
+    fi
+    check "$1: on the known list with that row" "test:t_gamma SPEC-row-gamma" "$(cat "$t/home/main-watch-known.txt" 2>/dev/null)"
+    check "$1: nothing filed as FAIL-main" 0 \
+      "$(cat "$q" "$t/home/main-watch-known.txt" "$t/home/main-red.log" "$t/home/main-watch-stuck.md" 2>/dev/null | command grep -a -c FAIL-main)"
+    check "$1: no zed-impl culprit" "" "$(opened)"
+    check "$1: t_alpha, broken only in the author's working tree, passed at the head" 1 \
+      "$(cat "$t/home/main-watch-runs"/*/*-test.out | command grep -a -c '^t_alpha rc=0 ')"
+    check "$1: the head is checked, with the spec's head" "$(head_of) $(git -C "$t/spec.git" rev-parse main)" \
+      "$(cut -d' ' -f1,3 "$t/home/main-watch.checked")"
+    ;;
   known)
     # As old, but main-watch-known.txt gives the failure's owning row: it still runs and is
     # reported with its row, but is not bisected, fixed or confirmed at C0, and the head is
@@ -571,6 +643,8 @@ bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
       "no-skip|s/(--except \"\\\$skip\")/()/|skip"
       "no-queue|s/^  if \\[ -n \"\\\$queue\" \\]; then\$/  if false; then/|queue"
       "publish-unchecked|s/^  if \\[ -n \"\\\$copy\" \\] .* checkout -q --detach .*; then\$/  if false; then/|queue"
+      "no-spec-split|s/^    if \\[ \"\\\$spec_head\" != \"\\\$s0\" \\]; then\$/    if false; then/|spec"
+      "unpinned-spec|s/^export ZED_SPEC_DIR=\\\$spec_dir\$/:/|spec"
     )
     for m in "${mutants[@]}"; do
       IFS='|' read -r name expr cases <<<"$m"
@@ -590,7 +664,7 @@ bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
   esac
 }
 
-all_cases="two zrun fixbreak failfix nofix segv runkill nottwice nobisect setuperr clean few old oldqueue known skip queue reap build controls"
+all_cases="two zrun fixbreak failfix nofix segv runkill nottwice nobisect setuperr clean few old oldqueue spec specold known skip queue reap build controls"
 for c in ${@:-$all_cases}; do run_case "$c"; done
 echo "checks failed: $fails"
 [ "$fails" = 0 ]
