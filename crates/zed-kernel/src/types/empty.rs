@@ -394,9 +394,19 @@ fn written_closure(t: &Type) -> bool {
 /// by the induction hypothesis `own_emptiness(u)` is a function of u. So the run's answers, and
 /// so its entries of `OWN`, are a function of what it was given.
 /// (3) Before a run, `decide_groups_read` runs those of the groups below it and `fill_own`
-/// those of the owned types below it, each after those it reads, from stacks on the heap; so the
-/// searches of (2) find most answers they read kept, and a chain of k groups or closure types is
-/// decided with a few levels of the thread's stack, not k.
+/// those of the closure types below it, each after those it reads, from stacks on the heap; so
+/// the searches of (2) find most answers they read kept, and a chain of k groups or closure types
+/// is decided with a few levels of the thread's stack, not k. A group is run when a search first
+/// reads one of its members (`Search::met`), not before the search (plan item
+/// FAIL-meet-cycles-verdict-cost): its groups below are then run first from the heap as above,
+/// so the reading search adds one level, and the bound stays a constant. Proof: the run of the
+/// group G read starts inside the reading search S. `decide_groups_read` finds every group a
+/// member of G reads through parts that are not members (closure types included), and runs each
+/// after those it reads; so in the search of G and of each group below it, a member of another
+/// group is kept, read in O(1), and a closure type met is searched with the groups it reads kept,
+/// as in the eager order. The depth is S, then the group's search, then at most the closure
+/// types' searches the eager order had, whatever the length of the chain. When the run happens
+/// changes no answer kept: by (2) each run is a function of what it is given.
 /// (4) "Below" has no cycle through a closure type that reads a group whose search reads it. A
 /// closure type written in a group's definitions (`cycle_dup`'s `arm_family`: `Thunk` holds
 /// closures returning `Node` and `Tree`) reads members of the group, and the group's search
@@ -519,13 +529,22 @@ fn own_search(t: &Type) -> Option<(bool, Option<Refusal>)> {
     Some((b, s.refused))
 }
 
-/// Decides each owned type ([`owned`]) below `t` whose answer is not kept, each after those its
+/// Decides each closure type ([`owned`]) below `t` whose answer is not kept, each after those its
 /// parts read, from a stack on the heap: a walk of the parts of `t` ([`PartWalk`]) that stops at
-/// members (their groups are decided by [`own_emptiness`], which walks the groups below them in
-/// the same way) and at types kept, and decides a closure type once every part of it is walked.
+/// members and at types kept, and decides a closure type once every part of it is walked.
 /// Each type is walked once, so the walk costs O(V + E) in the parts reached, no more than the
 /// search of `t` that reads the same parts; a part already kept ends the walk there, so a type
 /// asked after the types below it were asked costs O(1) a part kept.
+/// A member's group is not decided here: the search decides it when it first reads a member
+/// ([`Search::met`] calls [`own_emptiness`], which runs the groups below first from the heap;
+/// the stack bound is step (3) at [`own_emptiness`]).
+/// Complexity tradeoff: deciding here every group whose member the walk meets, as from
+/// dc96284ee until FAIL-meet-cycles-verdict-cost, searched both groups of a meet of two cycles
+/// in full though the meet's search reads neither (it is decided by the rule on residues):
+/// 23.87 G instructions for the emptiness of the lists of lengths -1 modulo 131072 and 131073,
+/// against 10.20 G with the groups decided when read
+/// (`l01_23_subtyping::scaling::bench::the_emptiness_of_a_meet_of_two_cycles_costs_what_its_verdict_does`).
+/// Given up: nothing; a group read is decided as before, from the search that reads it.
 fn fill_own(t: &Type) {
     enum Step {
         Enter(Type),
@@ -559,8 +578,12 @@ fn fill_own(t: &Type) {
                 if kept(&u) || UNDER_WAY.with(|w| w.borrow().contains(&u)) {
                     continue;
                 }
-                if u.is_member() || touching(&u).is_some() {
+                if touching(&u).is_some() {
                     own_emptiness(&u);
+                    continue;
+                }
+                // Its group is decided by the search that reads it (doc above).
+                if u.is_member() {
                     continue;
                 }
                 if u.is_recursive() {
@@ -1021,8 +1044,28 @@ impl Type {
     }
 
     /// The emptiness the group of a recursive member decides for it, if any ([`judge`]), decided
-    /// for every member of its instance when first asked.
+    /// for every member of its instance when first asked. When first asked, the deciders of the
+    /// groups it reads run first, each after the groups it reads, from a stack on the heap
+    /// ([`Type::decide_groups_read`]), so a decider started by a search's first read of a member
+    /// finds what it reads decided: `judge` reads the verdicts of its group's closed parts
+    /// (`system`), and every group those parts read is found by that walk, which passes through
+    /// parts that are not members. So the decider adds one level to the reading search's stack
+    /// whatever the length of a chain of groups, and runs only for a group some search reads
+    /// (plan item FAIL-meet-cycles-verdict-cost).
     pub(crate) fn judged(&self) -> Option<bool> {
+        let Node::Rec(r) = &*self.0 else {
+            return None;
+        };
+        let (env, i) = r.key.member_at()?;
+        if env.judged.get().is_none() {
+            self.decide_groups_read(Decide::Deciders);
+        }
+        env.judged.get_or_init(|| judge(env)).answers[i]
+    }
+
+    /// [`Type::judged`] with the deciders of the groups below already run, for the walk that
+    /// runs them ([`Type::decide_groups_read`]), which would otherwise walk them again.
+    fn judged_after_reads(&self) -> Option<bool> {
         let Node::Rec(r) = &*self.0 else {
             return None;
         };
@@ -1032,6 +1075,8 @@ impl Type {
 
     /// Whether `self` is a recursive member that its group's decider refuses ([`judge`]).
     pub(crate) fn refused_by_group(&self) -> bool {
+        // Runs the deciders of the groups below first, as `judged` does.
+        self.judged();
         let Node::Rec(r) = &*self.0 else {
             return false;
         };
@@ -1289,11 +1334,17 @@ impl Type {
     /// empty, and no value found. Kept results are not read, since those of `is_empty` carry no
     /// value and would make the outcome depend on the queries before it. A member of a recursive
     /// group gets its verdict with the other members (`group_verdicts`), after the groups it
-    /// reads. A type outside a group runs first only the deciders of the groups it reads; the
-    /// verdict of a group is decided when a search first reads one of its members, so a type
-    /// whose search reads no member's verdict or value decides no group: the meet of two cycles
-    /// is decided by the rule on residues and reads neither group's values (plan item
-    /// VERDICT-meet-cost).
+    /// reads. For a type outside a group, a group's decider and verdict are decided when a search
+    /// first reads one of its members (`Type::judged`, `Searching::group_verdict`), so a type
+    /// whose search reads no member decides no group: the meet of two cycles is decided by the
+    /// rule on residues and reads neither group (plan items VERDICT-meet-cost and
+    /// FAIL-meet-cycles-verdict-cost).
+    /// Complexity tradeoff: running first the deciders of every group read, as until
+    /// FAIL-meet-cycles-verdict-cost, cost the meet of the lists of lengths -1 modulo 131072 and
+    /// 131073 15.62 G instructions against 10.20 G for its emptiness, 1.53 times
+    /// (`l01_23_subtyping::scaling::bench::the_verdict_of_a_meet_of_two_cycles_costs_what_its_emptiness_does`);
+    /// with the deciders run when read, 10.20 G. Given up: nothing; the stack bound is kept by
+    /// the walk `Type::judged` runs first.
     pub fn verdict(&self) -> Verdict {
         if self.diagonal_empty() {
             return Verdict::Empty;
@@ -1303,20 +1354,17 @@ impl Type {
             return v;
         }
         let members = self.group_members();
-        self.decide_groups_read(if members.is_some() {
-            Decide::Verdicts
-        } else {
-            Decide::Deciders
-        });
         if let Some(members) = members {
+            self.decide_groups_read(Decide::Verdicts);
             group_verdicts(&members);
             if let Some(v) = kept() {
                 return v;
             }
         }
         // A type outside a group gets a search of its own, which reads each member of a group by
-        // the group's verdict and value, kept above (`Searching::group_verdict`,
-        // `Searching::shared`), so the verdicts of m types that read a group of n cost one
+        // the group's verdict and value, decided when first read and kept
+        // (`Searching::group_verdict`, `Searching::shared`), so the verdicts of m types that
+        // read a group of n cost one
         // search of the group and one of each type's own part, not m searches of the group.
         // COMPLEXITY.md K62.
         let v = self.verdict_alone();
@@ -1337,8 +1385,9 @@ impl Type {
     /// deep (a search of a type outside a group, and below it the searches of the groups whose
     /// verdicts it reads, which find what they read kept), and a chain of groups each reading
     /// the next is decided with no more of the thread's stack than two. A type outside a group
-    /// keeps no group's verdict here: a group whose members its search never reads costs only its
-    /// decider, not a search for each member's value (plan item VERDICT-meet-cost). A group is
+    /// does not call this: a group whose members its search never reads costs nothing, and one it
+    /// reads runs this when first read ([`Type::judged`]; plan items VERDICT-meet-cost and
+    /// FAIL-meet-cycles-verdict-cost). A group is
     /// found by a walk of the parts its members read, which stops at the members of other groups
     /// and notes each group once (`Type::group`); each type is walked once per walk, a group
     /// already kept, or with its decider run under [`Decide::Deciders`], is not walked, and the
@@ -1367,7 +1416,7 @@ impl Type {
                     Decide::Emptiness if !kept(&g[0]) => group_emptiness(&g),
                     Decide::Verdicts | Decide::Emptiness => {}
                     Decide::Deciders => {
-                        g[0].judged();
+                        g[0].judged_after_reads();
                     }
                 },
                 Step::Enter(m) => {

@@ -922,10 +922,14 @@ fn the_verdict_of_a_meet_of_two_cycles_costs_what_its_emptiness_does() {
     // or value, so its verdict decides neither group and does the work `is_empty` does; at n
     // 1024, 13.1M instructions and 0.90M bytes against 13.1M and 0.90M. Deciding every member
     // of both groups first (VERDICT-group-readers) cost 87.5M and 10.5M, 6.7 and 11.7 times
-    // the emptiness (plan item VERDICT-meet-cost). This is a comparison of two costs at one
-    // size, not a scaling test: it runs no second size and checks no ratio between sizes. It
-    // stays here as a measurement (TEST-bench-move-l0123, author P169); its answers have a small
-    // instance in `small_lists_of_two_cycles_are_decided`.
+    // the emptiness (plan item VERDICT-meet-cost). Running first the deciders of both groups,
+    // which the meet's search never reads, cost 15.62G instructions and 2.35G bytes at n 131072
+    // against 10.20G and 1.53G, 1.53 times (plan item FAIL-meet-cycles-verdict-cost); with the
+    // deciders run when a search reads a member (`Type::judged`), 10.20G and 1.53G on both
+    // sides. The emptiness is held to the verdict by the test after this one. This is a
+    // comparison of two costs at one size, not a scaling test: it runs no second size and checks
+    // no ratio between sizes. It stays here as a measurement (TEST-bench-move-l0123, author
+    // P169); its answers have a small instance in `small_lists_of_two_cycles_are_decided`.
     let n = 131072;
     let t = &period(n, n - 1) & &period(n + 1, n);
     scaling::compare_costs(
@@ -942,6 +946,36 @@ fn the_verdict_of_a_meet_of_two_cycles_costs_what_its_emptiness_does() {
         || {
             Type::forget_emptiness();
             assert_eq!(t.verdict(), Verdict::Inhabited);
+        },
+    );
+}
+
+/// The test before this one, the other way: about 1 s a side at n 131072.
+#[test]
+fn the_emptiness_of_a_meet_of_two_cycles_costs_what_its_verdict_does() {
+    // The meet's search reads no member of either group, so `is_empty` decides neither group:
+    // a group is decided when a search first reads one of its members (`fill_own`). Searching
+    // both groups first (`fill_own` from dc96284ee) cost 23.87G instructions and 3.83G bytes
+    // at n 131072 against 15.65G and 2.35G for the verdict, which the test before this one did
+    // not catch, as it holds only the verdict to the emptiness; with the groups decided when
+    // read, 10.20G and 1.53G on both sides (plan item FAIL-meet-cycles-verdict-cost). A
+    // comparison of two costs at one size, as the test before this one.
+    let n = 131072;
+    let t = &period(n, n - 1) & &period(n + 1, n);
+    scaling::compare_costs(
+        &format!(
+            "the emptiness against the verdict of the lists of lengths -1 modulo {n} and {}",
+            n + 1
+        ),
+        "the emptiness decides no group of a type whose search reads no member",
+        1.5,
+        || {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+        },
+        || {
+            Type::forget_emptiness();
+            assert!(!t.is_empty());
         },
     );
 }
