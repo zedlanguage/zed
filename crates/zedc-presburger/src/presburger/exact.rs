@@ -3326,6 +3326,23 @@ fn star(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, IntervalSe
     let mut dom: HashMap<&Atom, Ends> = HashMap::new();
     let mut form: Option<(&BTreeMap<Atom, Int>, &Int)> = None;
     for c in rows {
+        // A row with no atom has its constant's value at every point, so it holds everywhere
+        // or nowhere: where it fails the rows have no point, and where it holds it limits no
+        // atom. Before, it was taken as the one form `t` with no term, and its constant was
+        // never compared with 0, so `-3 >= 0 && y >= 0` gave `y` the values `0..` (case
+        // ZED_TEST_SEED=16869946785917123429 of `tests::columns::random_classes_answer_as_
+        // with_their_columns_apart`, pinned in `tests::columns::seed_16869946785917123429_
+        // projects_x_to_its_points`).
+        if c.lin.terms.is_empty() {
+            let holds = match c.rel {
+                Rel::Ge => !c.lin.constant.is_negative(),
+                Rel::Eq => c.lin.constant.is_zero(),
+            };
+            if !holds {
+                return Ok(Some(nothing(rows)));
+            }
+            continue;
+        }
         if c.lin.terms.len() == 1 {
             let (a, k) = c.lin.terms.iter().next().expect("one term");
             let c0 = &c.lin.constant;

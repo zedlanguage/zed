@@ -278,6 +278,7 @@ fn scaled_remainders_match_enumeration() {
     // likewise above, so `[-20 - P, 20 + P]` holds a point exactly when the line does; an outer
     // bound on `x` is read on its own window.
     let (mut rng, seed) = Rng::fresh("scaled_remainders_match_enumeration");
+    crate::presburger::CHECK_LOSSLESS.with(|c| c.set(true));
     let mut answered = [0usize; 2];
     let mut by_solve = [0usize; 2];
     for case in 0..400 {
@@ -311,6 +312,50 @@ fn scaled_remainders_match_enumeration() {
         by_solve[0] > 40 && by_solve[1] > 40 && by_solve[0] + by_solve[1] > 300,
         "{by_solve:?}"
     );
+}
+
+/// Case 272 of [`scaled_remainders_match_enumeration`] at seed 9563318029921447897
+/// (FAIL-presburger-fresh-seed-refusals): `(x + 5) mod 8`, `(-14 x - 2) mod 8` and
+/// `(11 x + 3) mod 5`, with no bound on `x`.
+fn seed_9563318029921447897_case_272() -> (Vec<Div>, Formula) {
+    let one = |a, k, m| Div {
+        t: 0,
+        a,
+        k,
+        m,
+        fixed: None,
+    };
+    let divs = vec![one(1, 5, 8), one(-14, -2, 8), one(11, 3, 5)];
+    let c = Lin::constant;
+    let lits = Formula::negate(Formula::and(vec![
+        Formula::Con(Con::ge(&r(2), &c(2))),
+        Formula::or(vec![
+            Formula::Con(Con::eq(&r(2), &c(1))),
+            Formula::Con(Con::ge(&r(2), &c(1))),
+            Formula::Con(Con::ge(&r(0), &c(4))),
+        ]),
+        Formula::negate(Formula::and(vec![
+            Formula::Con(Con::ge(&x(), &c(11))),
+            Formula::Con(Con::ge(&c(4), &r(0))),
+        ])),
+    ]));
+    let f = formula(&divs, lits, vec![]);
+    (divs, f)
+}
+
+#[test]
+fn seed_9563318029921447897_case_272_is_decided() {
+    // Refused (Shadows) before the lossless stage of `Omega::run`: of the band
+    // `31 <= 56 x3 + 7 x4 + 4 x6 <= 34`, the dark shadow of x3 was taken where eliminating x6
+    // loses nothing (4 * 3 >= (4 - 1) * (4 - 1)).
+    let (divs, f) = seed_9563318029921447897_case_272();
+    let period: i64 = divs.iter().map(|d| d.m).product();
+    assert!(has_point(&f, &divs, -20 - period..=20 + period), "{f}");
+    crate::presburger::CHECK_LOSSLESS.with(|c| c.set(true));
+    crate::presburger::LOSSLESS_STEPS.with(|c| c.set(0));
+    check(&f, true, "seed 9563318029921447897 case 272");
+    let steps = crate::presburger::LOSSLESS_STEPS.with(|c| c.get());
+    assert!(steps > 0, "the lossless stage was not taken");
 }
 
 #[test]

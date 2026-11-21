@@ -288,9 +288,9 @@ fn random_rows_of_two_unit_coefficients_with_a_point_are_decided() {
 }
 
 /// A chain `2·x[i] - 5 <= 3·x[i+1] <= 2·x[i] + 5` with Pugh's example on the link at the
-/// middle: empty, since that link is, and no shadow shows it. The first splinter of the chain's
-/// dark eliminations that is refused is the answer, [`Refusal::Shadows`]; searching on ran the
-/// test again once per bound.
+/// middle: empty, since that link is. `decide` answers `Ok(false)` since the lossless stage of
+/// `Omega::run` (COMPLEXITY.md LOSSLESS-pairs); before it, the first refused splinter of the
+/// chain's dark eliminations was the answer, [`Refusal::Shadows`].
 pub(super) fn pugh_in_a_chain(n: usize) -> Formula {
     let mut r = Vec::new();
     for i in 0..n {
@@ -706,11 +706,7 @@ const DECIDED: [Decided; 11] = [
         Err(Refusal::Growth),
     ),
     ("random rows", random_unit_rows_four_each, Ok(true)),
-    (
-        "Pugh's example in a chain",
-        pugh_in_a_chain,
-        Err(Refusal::Shadows),
-    ),
+    ("Pugh's example in a chain", pugh_in_a_chain, Ok(false)),
     ("a hub in one row per block", hub_rows, Err(Refusal::Growth)),
     (
         "a crossing after the hub's blocks",
@@ -729,7 +725,8 @@ const DECIDED: [Decided; 11] = [
 /// its benchmark asks, each point found or not, each copy kept.
 #[test]
 fn the_families_of_the_benchmarks_are_answered_at_small_sizes() {
-    // The shifted sparse family is refused from n = 4 on, and Pugh's example in a chain from 3.
+    // The shifted sparse family is refused from n = 4 on. Pugh's example in a chain was refused
+    // from 3 on until the lossless stage (COMPLEXITY.md LOSSLESS-pairs), and is answered now.
     for n in [4, 5, 16] {
         for (what, make, answer) in DECIDED {
             assert_eq!(decide(&make(n)), answer, "{what}, n = {n}");

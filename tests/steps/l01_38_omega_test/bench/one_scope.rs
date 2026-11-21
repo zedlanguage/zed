@@ -1178,9 +1178,9 @@ fn the_5000_one_variable_modular_formulas_of_seed_0x70dec1de_match_enumeration()
     // and 6 cases refused (2026-11-20). Since FAIL-omega-negations-slow-7837918895420161952
     // (`modular::solve_regime_step` sweeps one period of a regime with one bound, and a bounded
     // regime, that the coprime base cannot write; cases 2209, 3159, 4584 and 4949 were the last
-    // refused): 806, 6 and 0, and 0 cases refused (2026-11-20, load 65). An empty answer refused
-    // by the general path with `x`
-    // unbounded above is checked by nothing here.
+    // refused): 806, 6 and 0, and 0 cases refused (2026-11-20, load 65). Since the lossless stage
+    // of `Omega::run` (COMPLEXITY.md LOSSLESS-pairs): 808, 4 and 0 (2026-11-21). An empty
+    // answer refused by the general path with `x` unbounded above is checked by nothing here.
     println!(
         "empty answers: {} agreed, {} refused by the general path, {} of them with x unbounded",
         c.empty_agreed, c.empty_refused, c.empty_unchecked

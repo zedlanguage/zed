@@ -263,14 +263,26 @@ fn division_pairs(n: usize) -> Vec<Con> {
 }
 
 #[test]
-fn division_pairs_have_their_point_found_where_the_omega_test_refuses() {
+fn division_pairs_have_their_point_found() {
     // The small instances of `bench::division_pairs_scale`. From 7 pairs the Omega test alone
-    // refuses (Shadows; 2026-11-16), so the benchmark times the answer `solve` gives in its
-    // place; below that it answers.
+    // refused (Shadows; 2026-11-16) until FAIL-presburger-fresh-seed-refusals added the lossless
+    // stage of `Omega::run`, which the Omega test takes here from 7 pairs on. Since then it
+    // answers with a point at every size (measured from 1 to 4,000 pairs, 2026-11-21), and so
+    // does `solve`.
+    crate::presburger::CHECK_LOSSLESS.with(|c| c.set(true));
     for n in [1, 2, 3, 4, 7, 8, 16] {
         let cons = division_pairs(n);
-        let omega = crate::presburger::solve_omega(&cons, false);
-        assert_eq!(omega.is_err(), n >= 7, "{n}: {omega:?}");
+        crate::presburger::LOSSLESS_STEPS.with(|c| c.set(0));
+        let omega = crate::presburger::solve_omega(&cons, true);
+        let omega = omega.expect("answered").expect("a point");
+        assert!(
+            cons.iter().all(|c| c.holds_linear(&omega)),
+            "{n}: {omega:?}"
+        );
+        if n >= 7 {
+            let steps = crate::presburger::LOSSLESS_STEPS.with(|c| c.get());
+            assert!(steps > 0, "{n}: the lossless stage was not taken");
+        }
         let m = crate::presburger::solve(&cons, true);
         let m = m.expect("answered").expect("a point");
         assert!(cons.iter().all(|c| c.holds_linear(&m)), "{n}: {m:?}");

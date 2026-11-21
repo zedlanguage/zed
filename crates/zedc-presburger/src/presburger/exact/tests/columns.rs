@@ -316,3 +316,55 @@ fn a_part_held_twice_at_each_of_64_levels_names_its_atoms() {
     assert_eq!(p.written_names(|s| s), want);
     assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
 }
+
+/// The formula `random_classes_answer_as_with_their_columns_apart` printed at
+/// ZED_TEST_SEED=16869946785917123429. Its second arm holds `-3 >= 0`, false, so the first arm
+/// holds, and its `x + y <= -1` with `y >= -4` gives `x <= 3`; x = -4 has the point y = -4,
+/// u + v = -4 (check: -16 <= -9, -8 <= -12 + 4, -8 <= -1). So x's set is -4..=3.
+fn seed_16869946785917123429(second: Formula) -> Formula {
+    let first = Formula::and(vec![
+        ge(&[("x", 2), ("y", -2), ("u", -2), ("v", -2)], -1),
+        ge(&[("x", 2), ("y", 2), ("u", -2), ("v", -2)], 4),
+        ge(&[("x", -1), ("y", -1)], -1),
+    ]);
+    Formula::and(vec![
+        member(&a("x"), &IntervalSet::of(-4, 4)),
+        member(&a("y"), &IntervalSet::of(-4, 4)),
+        ge(&[("u", 1), ("v", 1)], 4),
+        ge(&[("u", -1), ("v", -1)], 4),
+        Formula::or(vec![first, second]),
+    ])
+}
+
+#[test]
+fn seed_16869946785917123429_projects_x_to_its_points() {
+    let false_arm = |b: Formula| Formula::and(vec![b, ge(&[], -3)]);
+    // The seed's formula, two variants whose false arm reads another atom, and the least
+    // formula found with the same fault: `x + y <= -1 || (w >= 0 && -3 >= 0)`, whose arm
+    // `w >= 0 && -3 >= 0` went to `star` as one block and was read as having points, so
+    // `read_once` gave the disjunction an arm with a point that does not read x, and x every
+    // value of its box. Each was -4..=4 before the fix in `star`, with `direct` on or off for
+    // some of them; the solver alone (`project_each_solver`) gave -4..=3 for each.
+    let cases = [
+        seed_16869946785917123429(false_arm(ge(&[("u", 1), ("v", 1)], 3))),
+        seed_16869946785917123429(false_arm(ge(&[("y", 1)], 3))),
+        seed_16869946785917123429(false_arm(ge(&[("u", 1)], 3))),
+        Formula::and(vec![
+            member(&a("x"), &IntervalSet::of(-4, 4)),
+            member(&a("y"), &IntervalSet::of(-4, 4)),
+            Formula::or(vec![
+                ge(&[("x", -1), ("y", -1)], -1),
+                false_arm(ge(&[("w", 1)], 0)),
+            ]),
+        ]),
+    ];
+    for f in cases {
+        let on = project_each_exact(&f, &[a("x")]).map(|p| p.0);
+        DIRECT_OFF.set(true);
+        let off = project_each_exact(&f, &[a("x")]).map(|p| p.0);
+        DIRECT_OFF.set(false);
+        let want = Ok(vec![Ok(IntervalSet::of(-4, 3))]);
+        assert_eq!(on, want, "x of {f}, `direct` on");
+        assert_eq!(off, want, "x of {f}, `direct` off");
+    }
+}

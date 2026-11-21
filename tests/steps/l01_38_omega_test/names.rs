@@ -521,8 +521,8 @@ fn every_order_and_naming_of_a_chain_of_equalities_gives_one_answer() {
 /// Pugh's example (Pugh 1992, doi:10.1145/135226.135233, sec. 2.3.3, quoted in zedc-presburger
 /// `lib.rs`, "References") between `x[n / 2]` and `x[n / 2 + 1]` of a chain of `n` steps
 /// `3·x[i + 1] - 2·x[i] + 5 >= 0` and `2·x[i] - 3·x[i + 1] + 5 >= 0` over `n + 1` variables, as
-/// `scaling::pugh_in_a_chain` builds it: each elimination is dark, and the splinters are
-/// searched.
+/// `scaling::pugh_in_a_chain` builds it: empty, and answered `Ok(false)` since the lossless
+/// stage (COMPLEXITY.md LOSSLESS-pairs); before it the splinters were searched and refused.
 fn pugh_chain(n: usize) -> Vec<Row> {
     let mut rows = Vec::new();
     let at = |pairs: &[(usize, i64)]| {
@@ -549,8 +549,9 @@ fn pugh_chain(n: usize) -> Vec<Row> {
 
 #[test]
 fn the_splinters_are_searched_a_batch_at_a_time() {
-    // The search ends after the first batch of dark eliminations with a refusal; the batches,
-    // and their order, are the same under every naming. 30 of the 720 namings of six variables
+    // The answer, `Ok(false)`, is the same under every naming (until the lossless stage of
+    // COMPLEXITY.md LOSSLESS-pairs it was a refusal after the first batch of dark
+    // eliminations, also the same under every naming). 30 of the 720 namings of six variables
     // and 10 namings of twelve, drawn with a new seed each run (author P169; all 720 and 200 of
     // twelve at one seed took 13.6 s; 60 and 20 took 0.68 s at load 14 and are in
     // `bench::names`).
@@ -558,8 +559,8 @@ fn the_splinters_are_searched_a_batch_at_a_time() {
     splinters_answer_alike(&mut rng, 30, 10, seed);
 }
 
-/// [`pugh_chain`]s of 6 and 12 variables give one answer under `six` and `twelve` random
-/// namings from `rng`; `seed` is named on failure.
+/// [`pugh_chain`]s of 6 and 12 variables give one answer, `Ok(false)`, under `six` and `twelve`
+/// random namings from `rng`; `seed` is named on failure.
 pub(super) fn splinters_answer_alike(rng: &mut Rng, six: usize, twelve: usize, seed: u64) {
     for (links, count) in [(5, six), (11, twelve)] {
         let rows = pugh_chain(links);
@@ -570,8 +571,8 @@ pub(super) fn splinters_answer_alike(rng: &mut Rng, six: usize, twelve: usize, s
                 .or_insert(0) += 1;
         }
         assert_eq!(
-            seen.len(),
-            1,
+            seen.keys().collect::<Vec<_>>(),
+            ["Ok(false)"],
             "seed {seed}, chain of {}: {seen:?}",
             links + 1
         );

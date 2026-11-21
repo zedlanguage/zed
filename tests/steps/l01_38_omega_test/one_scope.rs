@@ -4186,13 +4186,15 @@ fn one_variable_modular_formulas_match_enumeration() {
     // now found empty by `modular::sweep_bounded` and the general path agrees. One formula was
     // refused until FAIL-omega-negations-slow-7837918895420161952: a bounded regime the coprime
     // base cannot write is now swept (`modular::solve_regime_step`), which finds it a point that
-    // the checks below hold against the formula and against enumeration.
+    // the checks below hold against the formula and against enumeration. Empty answers agreed
+    // were 128, with 4 refused by the general path, until the lossless stage of `Omega::run`
+    // (COMPLEXITY.md LOSSLESS-pairs): the general path now agrees with two of those four.
     let (mut rng, _) = zed_tests::instances::Rng::fresh("one-variable modular formulas");
     modular_formulas_match(&mut rng, 0, 800);
     let c = modular_formulas_match(&mut zed_tests::instances::Rng::new(0x70de_c1de), 0, 800);
     assert_eq!(
         (c.sat, c.unsat, c.refused, c.empty_agreed, c.empty_refused),
-        (680, 120, 0, 128, 4),
+        (680, 120, 0, 130, 2),
         "the first 800 formulas of seed 0x70de_c1de: {c:?}"
     );
 }

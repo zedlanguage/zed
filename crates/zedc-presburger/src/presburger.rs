@@ -17204,6 +17204,44 @@ struct System {
     /// The variables whose elimination is exact and adds no terms as [`System::shrink`]
     /// counts them, by that count, as of the last [`System::refresh`].
     shrinking: BTreeSet<Rank>,
+    /// The ranks in [`System::inexact`] of fill at most 0 whose every pair of a lower and an
+    /// upper row has a dark row equal to its real row once both are normalized
+    /// ([`lossless_pair`]), as of the last [`System::renew_lossless`]: variables that
+    /// [`Sides::inexact`] counts as inexact, as a coefficient other than a unit stands on each
+    /// side, but whose elimination loses no integer point. [`Omega::run`] takes them before
+    /// any dark shadow (FAIL-presburger-fresh-seed-refusals).
+    ///
+    /// Source: W. Pugh, "The Omega test: a fast and practical integer programming algorithm
+    /// for dependence analysis", Supercomputing '91, doi:10.1145/125826.125848 (CACM 35(8),
+    /// 1992, doi:10.1145/135226.135233; expanded text www.cs.umd.edu/~pugh/papers/omega.pdf,
+    /// section 4): "If the dark and real shadow resulting from each combination of an upper
+    /// and lower bound are identical, the projection is called an exact projection", and "If
+    /// the real and dark shadows are identical, there are integer solutions to the original
+    /// set of constraints iff there are integer solutions to the shadow"; Pugh's examples of
+    /// that are a = 1 or b = 1, the only case [`Sides::inexact`] reads. The finer test, on the
+    /// rows as normalized, is the one Pugh reports of C. Ancourt and F. Irigoin, "Scanning
+    /// polyhedra with DO loops", PPoPP 1991, pp. 39-50, doi:10.1145/109625.109631 (expanded
+    /// text, section 8): "they check to see if the constraints in the dark shadow are
+    /// redundant with respect to the real shadow. If they are, then the dark shadow and real
+    /// shadow are identical, and the elimination is exact." Checked: both quotes read in the
+    /// expanded text (lines 318-330 and 936-942 of its pdftotext), the DOI of AI91 against
+    /// Crossref (title and pages 39-50).
+    ///
+    /// Proof that the real elimination of such a variable `x[j]` keeps every integer point and
+    /// adds none. [`System::eliminate`] adds, for each pair, the row [`combine`] gives, and
+    /// `dark` changes only its constant; [`System::add`] first normalizes each row
+    /// ([`Row::normal`]), so by the choice of `x[j]` it is handed the same normalized rows in
+    /// the same order either way, and leaves the same system: the real shadow R equals the
+    /// dark shadow D. Pugh (section 4) shows D ⊆ P ⊆ R for P the integer projection, so P = R:
+    /// an integer point of the rows left is the image of an integer point of the rows before,
+    /// and the back substitution of [`Step::Chosen`] finds an integer `x[j]` between its bounds
+    /// because that point is in D. Normalizing keeps every integer point of a row (the
+    /// coefficients' gcd divides `Σ a·x`, so `Σ a·x + k >= 0` iff `Σ (a/g)·x + ⌊k/g⌋ >= 0`).
+    /// No point is lost, so no splinter is needed and none is recorded.
+    lossless: BTreeSet<Rank>,
+    /// The variables whose rows or row constants changed since the last
+    /// [`System::renew_lossless`]; none of them has a rank in [`System::lossless`].
+    unchecked: BTreeSet<usize>,
     /// The variables whose rows changed since the last [`System::refresh`].
     dirty: BTreeSet<usize>,
     /// Variables whose rows' variables [`System::refresh`] marks first ([`System::touch`]).
@@ -17251,6 +17289,8 @@ impl System {
             exact: BTreeSet::new(),
             inexact: BTreeSet::new(),
             shrinking: BTreeSet::new(),
+            lossless: BTreeSet::new(),
+            unchecked: BTreeSet::new(),
             dirty: BTreeSet::new(),
             near: BTreeSet::new(),
             lengths: BTreeMap::new(),
@@ -17297,7 +17337,10 @@ impl System {
                 return;
             }
             old.k = r.k.clone();
-            old.id
+            let id = old.id;
+            // A tighter constant changes whether a pair is lossless, though no count changes.
+            self.recheck(&r.a);
+            id
         } else {
             let id = self.ids.len();
             self.ids.push(Some(r.a.clone()));
@@ -17349,6 +17392,8 @@ impl System {
             };
             let key = v.key;
             set.remove(&v.sides.rank(key, *i));
+            self.lossless.remove(&v.sides.rank(key, *i));
+            self.unchecked.insert(*i);
             self.one_sided.remove(i);
             self.fixable.remove(i);
             let s = &mut v.sides;
@@ -17574,7 +17619,8 @@ impl System {
 
     /// [`System::least`] when its fill is at most 0, and `None` when the fill is above 0 or
     /// `sets` hold no rank. For the steps that take variables only at a fill of at most 0 (the
-    /// exact and the inexact stage of [`Omega::run`], [`Omega::deferred`] and [`relaxed_empty`]):
+    /// exact, the lossless and the inexact stage of [`Omega::run`], [`Omega::deferred`] and
+    /// [`relaxed_empty`]):
     /// at a fill above 0 they read neither the variables nor the tie, so
     /// forming the tie there, which reads every row of the whole least class, was work no step
     /// used; on a long chain the class holds O(n) rows at each of O(n) steps, O(n²) in all
@@ -17694,7 +17740,12 @@ impl System {
         for (v, &k) in self.vars.iter_mut().zip(&key) {
             v.key = k;
         }
-        for set in [&mut self.exact, &mut self.inexact, &mut self.shrinking] {
+        for set in [
+            &mut self.exact,
+            &mut self.inexact,
+            &mut self.shrinking,
+            &mut self.lossless,
+        ] {
             *set = (mem::take(set).into_iter())
                 .map(|(f, _, j)| (f, key[j], j))
                 .collect();
@@ -18111,6 +18162,70 @@ impl System {
             .chain((entries.symmetric_difference(&self.shrinking)).map(|r| r.2))
             .collect()
     }
+
+    /// Marks the variables of the held row `a`, whose constant changed, for
+    /// [`System::renew_lossless`], and takes their ranks out of [`System::lossless`].
+    fn recheck(&mut self, a: &Coefs) {
+        for (i, _) in a.iter() {
+            let v = &self.vars[*i];
+            self.lossless.remove(&v.sides.rank(v.key, *i));
+            self.unchecked.insert(*i);
+        }
+    }
+
+    /// Renews [`System::lossless`] for the variables marked since it was last renewed. Each
+    /// marked variable has no rank there ([`System::count`] and [`System::recheck`] take it out
+    /// when they mark), and each unmarked one has its rank there iff [`System::lossless_at`]
+    /// holds of the rows held now, since no row of it changed. A rank is put in only when it is
+    /// in [`System::inexact`], so a variable [`Omega::read_pending`] took out of the ranks stays
+    /// out.
+    ///
+    /// Complexity tradeoff: each marked variable of fill at most 0 has all its pairs read,
+    /// O(T log T) for the T terms of its rows (at a fill of at most 0 the pairs write at most
+    /// those terms and twice the pairs, and the pairs are O(T), as a variable has at most one
+    /// row of one term on each side), stopping at the first lossy pair. A variable is marked by
+    /// each change to one of its rows, so a variable whose rows change at every step is read
+    /// at every step: O(T) a step, as [`System::refresh`] pays for [`System::shrink`]. Naive
+    /// alternative: read every variable of [`System::inexact`] at each step, O(V·T) a step for V
+    /// such variables (candidate D of FAIL-presburger-fresh-seed-refusals). A count of lossy
+    /// pairs kept per variable would be renewed at each row added by pairing it with every
+    /// opposite row of each of its variables, more work than this. Measured:
+    /// `l01_38_omega_test::bench::omega::lossless_bands_scale` and COMPLEXITY.md row
+    /// LOSSLESS-pairs.
+    fn renew_lossless(&mut self) {
+        for j in mem::take(&mut self.unchecked) {
+            let v = &self.vars[j];
+            let rank = v.sides.rank(v.key, j);
+            if rank.0 <= 0 && self.inexact.contains(&rank) && self.lossless_at(j) {
+                self.lossless.insert(rank);
+            }
+        }
+    }
+
+    /// Whether every pair of a lower and an upper row of `x[j]` is lossless ([`lossless_pair`]).
+    fn lossless_at(&self, j: usize) -> bool {
+        let row = |id: &usize| {
+            let a = self.ids[*id].as_ref().expect("a row held");
+            (&a[..], &self.rows[a].k)
+        };
+        let (lowers, uppers): (Vec<_>, Vec<_>) = (self.vars[j].rows.iter().map(row))
+            .partition(|(a, _)| sorted_get(a, &j).is_some_and(|c| c.is_positive()));
+        (lowers.iter()).all(|lo| uppers.iter().all(|hi| lossless_pair(*lo, *hi, j)))
+    }
+
+    /// The variables whose entry in [`System::lossless`] is not that of the rows held now. Empty
+    /// after each [`System::renew_lossless`]; checked each time the Omega test reads the set, in
+    /// the tests of this crate that turn on `CHECK_LOSSLESS`.
+    #[cfg(test)]
+    fn stale_lossless(&self) -> Vec<usize> {
+        let want: BTreeSet<Rank> = (self.inexact.iter())
+            .filter(|r| r.0 <= 0 && self.lossless_at(r.2))
+            .copied()
+            .collect();
+        (want.symmetric_difference(&self.lossless))
+            .map(|r| r.2)
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -18120,6 +18235,16 @@ thread_local! {
     /// The rows [`System::tie`] has read, on this thread: the measure of
     /// `r7_tests::ties_are_read_only_where_a_step_takes_them`.
     static TIE_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The variables the lossless stage of [`Omega::run`] has eliminated, on this thread
+    /// (FAIL-presburger-fresh-seed-refusals).
+    static LOSSLESS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Whether the lossless stage of [`Omega::run`] checks [`System::stale_lossless`] at each
+    /// step, on this thread. Off unless a test turns it on: the check reads every pair of every
+    /// variable of [`System::inexact`], O(V·T) a step, and run in every test it made the
+    /// benchmark `r7_tests::bench::a_coupled_chain_past_the_switchover_is_decided_in_scale`
+    /// take 29.4 times the instructions at 8n (2026-11-21), which measures the check and not
+    /// the code.
+    static CHECK_LOSSLESS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 impl System {
@@ -18488,6 +18613,42 @@ fn combine(lo: &Row, hi: &Row, j: usize, dark: bool) -> Row {
         },
     }
 }
+
+/// Whether the lower row `lo` and the upper row `hi` of `x[j]`, each as its coefficients and
+/// constant, give the same row by [`combine`] with and without `dark` once both are normalized
+/// by [`Row::normal`] (the test of [`System::lossless`]).
+///
+/// Let `a`, `b` be the coefficients of `x[j]` in `lo` and `-hi`, both at least 1, `k` the
+/// constant of the real row, `d = (a - 1)(b - 1) >= 0` and `g` the gcd of its coefficients.
+/// The dark row is the real one with constant `k - d`. When `d = 0` the rows are equal. When no
+/// term is left (`g = 0`) the real row holds iff `k >= 0` and the dark one iff `k >= d`, the
+/// same iff `k >= d` or `k < 0`. Otherwise both normalize to the same coefficients, with
+/// constants `⌊k/g⌋` and `⌊(k-d)/g⌋`; writing `k = q·g + r`, `0 <= r < g`, the second is
+/// `q + ⌊(r-d)/g⌋`, and `r - d < g`, so the two are equal iff `r >= d`. The gcd only shrinks as
+/// coefficients are read, and `r < g`, so once it is at most `d` the pair is lossy (the final
+/// `g'` divides it, `g' <= d`, `r < g' <= d`): the loop stops there.
+fn lossless_pair(lo: (&[Term], &Int), hi: (&[Term], &Int), j: usize) -> bool {
+    let a = sorted_get(lo.0, &j).expect("the row holds the variable");
+    let b = &-sorted_get(hi.0, &j).expect("the row holds the variable");
+    let d = &(a - &Int::ONE) * &(b - &Int::ONE);
+    if d.is_zero() {
+        return true;
+    }
+    let k = &(hi.1 * a) + &(lo.1 * b);
+    let mut g = Int::ZERO;
+    for (_, c) in merge(hi.0, a, lo.0, b, j).iter() {
+        g = g.gcd(c);
+        if g <= d {
+            return false;
+        }
+    }
+    if g.is_zero() {
+        k >= d || k.is_negative()
+    } else {
+        k.mod_floor(&g) >= d
+    }
+}
+
 /// An equality as its structure gives it: the colors of its variables with their
 /// coefficients, sorted, and its constant, taken for the row or its negation, whichever is
 /// less, so that neither the names of the variables nor the sign the row was written with
@@ -19231,6 +19392,38 @@ impl Omega {
                 break;
             }
             if tie.is_none() {
+                // A variable counted inexact whose every pair loses no integer point
+                // (`System::lossless`, with its source and proof) is eliminated by its real
+                // shadow, as an exact one is: no dark shadow, no splinters, so the splinter
+                // search, and its refusal `Shadows` when a splinter takes a dark shadow at as
+                // many live variables, is not entered for it. Until
+                // FAIL-presburger-fresh-seed-refusals the inexact stage below took the least
+                // rank among all inexact variables, and so took a lossy one where a lossless one
+                // tied with it in fill (seeds 12037625683208242449 and 9563318029921447897 case
+                // 272, both then refused). The set holds fill at most 0 only, and the arm takes a
+                // fill of at most 0 only (`System::least_unfilled`). A tie not settled here goes
+                // on to the inexact stage as before, `tie` unset. `Omega::untie` may have refined
+                // the colors on the way (`System::rekey`), which reads only the rows and so is the
+                // same under a renaming, as where the other stages call it; the rows themselves
+                // are those the inexact stage saw before this one was added.
+                self.sys.renew_lossless();
+                #[cfg(test)]
+                if CHECK_LOSSLESS.with(|c| c.get()) {
+                    let stale = self.sys.stale_lossless();
+                    assert!(stale.is_empty(), "lossless set not current for {stale:?}");
+                }
+                let least = self.sys.least_unfilled(&[&self.sys.lossless]);
+                if let Some((_, Ok(js))) = self.untie(least, |fill| fill <= 0) {
+                    for j in js {
+                        #[cfg(test)]
+                        LOSSLESS_STEPS.with(|c| c.set(c.get() + 1));
+                        let rows = self.sys.eliminate(j, false);
+                        self.steps.push(Step::Chosen(j, rows));
+                    }
+                    continue;
+                }
+            }
+            if tie.is_none() {
                 // Its arms take a fill of at most 0 only (`System::least_unfilled`).
                 let least = self.sys.least_unfilled(&[&self.sys.inexact]);
                 match self.untie(least, |fill| fill <= 0) {
@@ -19935,8 +20128,8 @@ impl Omega {
     /// so too. What else a run reads, the input rows and the steps before the tie, enters only
     /// the splinters; [`splinters`] checks that `τ` maps those onto themselves as well before
     /// it builds any, and gives the tie's refusal otherwise, which both runs then give alike.
-    /// The exact and the inexact stage pass the tie of [`System::least_unfilled`], which is
-    /// `None` at a fill above 0: there `taken` was false, so this function returned the tie
+    /// The exact, the lossless and the inexact stage pass the tie of
+    /// [`System::least_unfilled`], which is `None` at a fill above 0: there `taken` was false, so this function returned the tie
     /// unread and the stage then did what it does at `None`; and that the fill is above 0 is
     /// read from the ranks, the same under a renaming. So those steps, and the argument here,
     /// are as they were when the tie was formed at every fill.
@@ -20185,6 +20378,7 @@ impl Omega {
             let rank = v.sides.rank(v.key, *j);
             self.sys.exact.remove(&rank);
             self.sys.inexact.remove(&rank);
+            self.sys.lossless.remove(&rank);
             for id in &v.rows {
                 *self.pending_rows.entry(*id).or_insert(0) += 1;
                 counted.push(*id);
@@ -34396,6 +34590,90 @@ mod forced_against_solver {
         Formula::and(fs)
     }
 
+    /// The formula of seed 12037625683208242449 (FAIL-presburger-fresh-seed-refusals), which
+    /// holds at q0 = 2, q1 = 3, q2 = 3, q3 = -2, q4 = 4.
+    fn seed_12037625683208242449() -> Formula {
+        Formula::and(seed_12037625683208242449_rows(0))
+    }
+
+    /// The rows of [`seed_12037625683208242449`] over `q(o)` to `q(o + 4)`.
+    fn seed_12037625683208242449_rows(o: u32) -> Vec<Formula> {
+        let q = |i: u32| q(o + i);
+        vec![
+            ge(&q(0), &k(2)),
+            ge(&k(3), &q(0)),
+            ge(&q(1).times(2), &q(0).times(3)),
+            ge(&q(0).times(3), &q(1).times(2).plus(&k(-1))),
+            ge(&q(2).times(3), &k(1)),
+            ge(&q(2).times(2).plus(&q(3).times(2)), &k(1)),
+            ge(&k(3), &q(2).times(2).plus(&q(3).times(2))),
+            ge(&q(3).times(3).plus(&q(4).times(2)), &k(1)),
+            ge(&k(2), &q(3).times(3).plus(&q(4).times(2))),
+            ge(&q(4).plus(&k(-1)), &q(0)),
+        ]
+    }
+
+    /// `n` copies of [`seed_12037625683208242449`], copy `c` over `q(5c)` to `q(5c + 4)`, with
+    /// `q(5c + 5) <= q(5c + 4)`: one system, which holds with each copy at the point of the seed
+    /// (q4 = 4 >= q0 = 2 of the next copy). The family of the benchmark
+    /// `l01_38_omega_test::bench::omega::lossless_bands_scale`, which builds it the same way.
+    fn seed_12037625683208242449_chain(n: u32) -> Formula {
+        let mut rows = Vec::new();
+        for c in 0..n {
+            rows.extend(seed_12037625683208242449_rows(5 * c));
+            if c + 1 < n {
+                rows.push(ge(&q(5 * c + 4), &q(5 * c + 5)));
+            }
+        }
+        Formula::and(rows)
+    }
+
+    #[test]
+    fn chained_seeds_are_decided_by_the_lossless_stage() {
+        // Each copy has the pair q3, q4 of the seed, so each needs the lossless stage: at least
+        // one of its steps a copy. A point is checked to hold.
+        CHECK_LOSSLESS.with(|c| c.set(true));
+        for n in [2, 5] {
+            let f = seed_12037625683208242449_chain(n);
+            LOSSLESS_STEPS.with(|c| c.set(0));
+            assert_eq!(decide(&f), Ok(true), "{f}");
+            let steps = LOSSLESS_STEPS.with(|c| c.get());
+            assert!(steps >= n as usize, "{steps} lossless steps for {n} copies");
+            let mut p = satisfiable(&f).expect("answered").expect("a point");
+            for a in f.atoms() {
+                p.entry(a).or_insert(Int::ZERO);
+            }
+            assert!(
+                holds_at(&f, &p, &mut HashMap::new()),
+                "{p:?} is no point of {f}"
+            );
+        }
+    }
+
+    #[test]
+    fn seed_12037625683208242449_is_decided() {
+        // Refused (Shadows) before the lossless stage of `Omega::run`: q3 and q4 tied on fill,
+        // and the dark shadow of q3 (coefficients 3 and 3, gap 1) was taken, where every pair
+        // of q4 (coefficients 2 and 2) has a dark row equal to its real row.
+        let f = seed_12037625683208242449();
+        CHECK_LOSSLESS.with(|c| c.set(true));
+        LOSSLESS_STEPS.with(|c| c.set(0));
+        assert_eq!(decide(&f), Ok(true), "{f}");
+        assert!(
+            LOSSLESS_STEPS.with(|c| c.get()) > 0,
+            "the lossless stage was not taken"
+        );
+        let mut p = satisfiable(&f).expect("answered").expect("a point");
+        for a in f.atoms() {
+            p.entry(a).or_insert(Int::ZERO);
+        }
+        assert!(
+            holds_at(&f, &p, &mut HashMap::new()),
+            "{p:?} is no point of {f}"
+        );
+        agrees(&f);
+    }
+
     #[test]
     fn parallel_chains_agree_with_the_solver() {
         // 1000 chains from a new seed each run, each checked by [`agrees`] against the solver and
@@ -34405,6 +34683,7 @@ mod forced_against_solver {
         // when the draws did not give it: `q0 <= q1 <= q2`, no row of one variable, which the
         // rounds at the bounds do not start on.
         let (mut rng, _) = Rng::fresh("parallel_chains_agree_with_the_solver");
+        CHECK_LOSSLESS.with(|c| c.set(true));
         let mut seen = [0usize; 11];
         for _ in 0..1000 {
             let f = parallel_chain(&mut rng);

@@ -7,9 +7,10 @@
 use super::*;
 
 /// What `solve` adds where the Omega test refuses (FAIL-one-scope-pairs-seed-refusal), on
-/// [`division_pairs`]: one run of the modular solver and one check of each row at its point.
-/// The refused run of the Omega test before it is not timed here; it grows faster on these
-/// systems (FAIL-omega-pairs-shadows-cost).
+/// [`division_pairs`]: one run of the modular solver and one check of each row at its point,
+/// called directly. Since FAIL-presburger-fresh-seed-refusals the Omega test answers these
+/// systems itself, so `solve` no longer reaches this step on them; the step is timed here on
+/// them as before.
 #[test]
 fn division_pairs_scale() {
     let inputs = scaling::inputs(N_PAIRS, division_pairs);
@@ -21,9 +22,12 @@ fn division_pairs_scale() {
 /// The size of [`division_pairs_scale`].
 const N_PAIRS: usize = 10_000;
 
-/// The whole of `solve` on [`division_pairs`], which the Omega test refuses
-/// (FAIL-omega-pairs-shadows-cost): its run up to the splinters, which it defers, and the
-/// modular solver's point. The search of the splinters it skips was quadratic here.
+/// The whole of `solve` on [`division_pairs`]. Until FAIL-presburger-fresh-seed-refusals the
+/// Omega test refused them (FAIL-omega-pairs-shadows-cost), and this timed its run up to the
+/// splinters, which it defers, and the modular solver's point; the search of the splinters it
+/// skips was quadratic here. Since then the Omega test takes the lossless stage of
+/// `Omega::run` on them and answers with a point itself (checked from 7 to 16 pairs by
+/// `division_pairs_have_their_point_found`).
 #[test]
 fn division_pairs_refused_scale() {
     let inputs = scaling::inputs(N_REFUSED, division_pairs);

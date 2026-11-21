@@ -829,10 +829,11 @@ fn the_window_systems_of_seed_628126726154_are_answered() {
 /// The seed of FAIL-window-two-shadows-seed and the first windows of two that `decide` refused
 /// among seeds 0..4000 (the one at n = 12 among them). Since `decide` writes each row divided by
 /// the common factor of its coefficients (FAIL-rewrite-growth-both), three of them are answered,
-/// as the window program answers them; the other two are refused for a splinter that would have
-/// to be split again with as many live variables left, the cause DESIGN.md sec:diagnostics
-/// names, and by `satisfiable` and `answers` for no other cause. The refusal can stand where
-/// there is a point: seed 398 has points with `x0` in 0..=2, by the window program.
+/// as the window program answers them, and since the lossless stage of `Omega::run`
+/// (COMPLEXITY.md LOSSLESS-pairs) the one at n = 12 is too; seed 409 is refused for a splinter
+/// that would have to be split again with as many live variables left, the cause DESIGN.md
+/// sec:diagnostics names, and by `satisfiable` and `answers` for no other cause. A refusal can
+/// stand where there is a point: seed 398 has points with `x0` in 0..=2, by the window program.
 #[test]
 fn the_refused_windows_of_two_are_answered_or_refused_for_a_splinter() {
     /// `n`, the seed, the window program's `x0`, and the answer of `decide`.
@@ -842,7 +843,7 @@ fn the_refused_windows_of_two_are_answered_or_refused_for_a_splinter() {
         (6, 398, &[0, 1, 2], Ok(true)),
         (6, 409, &[], Err(Refusal::Shadows)),
         (6, 650, &[], Ok(false)),
-        (12, 2591, &[], Err(Refusal::Shadows)),
+        (12, 2591, &[], Ok(false)),
     ];
     for (n, seed, x0, answer) in cases {
         let what = format!("windows of 2, 3 rows each, n = {n}, seed {seed}");

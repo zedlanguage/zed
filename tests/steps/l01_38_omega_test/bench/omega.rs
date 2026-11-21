@@ -4,7 +4,9 @@ use crate::omega::*;
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::interval::{End, IntervalSet, Num};
-use zedc::store::presburger::{Atom, Formula, decide, project_each, row_box, satisfiable};
+use zedc::store::presburger::{
+    Atom, Con, Formula, Lin, decide, project_each, row_box, satisfiable,
+};
 
 #[test]
 fn chains_of_equalities_cost_the_digits_of_their_values() {
@@ -342,4 +344,62 @@ fn factors_defined_alike_merge_in_time_near_linear() {
             drop(decide(if m == n { &small } else { &large }));
         },
     );
+}
+
+/// `n` copies of the formula of seed 12037625683208242449 (FAIL-presburger-fresh-seed-refusals),
+/// copy `c` over `q{c}_0` to `q{c}_4`, with `q{c+1}_0 <= q{c}_4`: one system with a point (each
+/// copy at q0 = 2, q1 = 3, q2 = 3, q3 = -2, q4 = 4), as `seed_12037625683208242449_chain` in
+/// zedc-presburger builds it, whose test checks that each copy takes the lossless stage of the
+/// Omega test.
+fn chained_seeds(n: usize) -> Formula {
+    let mut rows = Vec::new();
+    for c in 0..n {
+        let q = |i: usize| format!("q{c:06}_{i}");
+        let ge2 = |a: &[(usize, i128)], k: i128| {
+            let names: Vec<(String, i128)> = a.iter().map(|(i, x)| (q(*i), *x)).collect();
+            let terms: Vec<(&str, i128)> = names.iter().map(|(s, x)| (s.as_str(), *x)).collect();
+            ge_rows(&terms, k)
+        };
+        rows.extend([
+            ge2(&[(0, 1)], -2),
+            ge2(&[(0, -1)], 3),
+            ge2(&[(1, 2), (0, -3)], 0),
+            ge2(&[(0, 3), (1, -2)], 1),
+            ge2(&[(2, 3)], -1),
+            ge2(&[(2, 2), (3, 2)], -1),
+            ge2(&[(2, -2), (3, -2)], 3),
+            ge2(&[(3, 3), (4, 2)], -1),
+            ge2(&[(3, -3), (4, -2)], 2),
+            ge2(&[(4, 1), (0, -1)], -1),
+        ]);
+        if c + 1 < n {
+            let next = format!("q{:06}_0", c + 1);
+            rows.push(ge_rows(&[(q(4).as_str(), 1), (next.as_str(), -1)], 0));
+        }
+    }
+    Formula::and(rows)
+}
+
+/// `Σ c·s + k >= 0`.
+fn ge_rows(terms: &[(&str, i128)], k: i128) -> Formula {
+    let lin = terms.iter().fold(Lin::constant(k), |l, (s, c)| {
+        l.plus(&Lin::atom(Atom::Sym(s.to_string().into())).times(*c))
+    });
+    Formula::Con(Con::ge(&lin, &Lin::constant(0)))
+}
+
+/// The lossless stage of the Omega test (FAIL-presburger-fresh-seed-refusals,
+/// `System::renew_lossless`): each step reads the pairs of the variables whose rows changed,
+/// O(T log T) for their T terms, so on [`chained_seeds`], whose copies each change a fixed
+/// number of rows a step, the whole run is near linear. COMPLEXITY.md row LOSSLESS-pairs.
+#[test]
+fn lossless_bands_scale() {
+    let n = 1000;
+    let (small, large) = (chained_seeds(n), chained_seeds(scaling::FACTOR * n));
+    for f in [&small, &large] {
+        assert_eq!(decide(f), Ok(true), "{f}");
+    }
+    scaling::check_order("chained bands with lossless pairs", n, 1, |m| {
+        drop(decide(if m == n { &small } else { &large }));
+    });
 }
