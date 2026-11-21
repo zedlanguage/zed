@@ -20,8 +20,9 @@
 //!    rows lie within `g + 25·(S - g)` for `g` the center of `S`.
 //! 3. LLL on the integer lattice under the quadratic form in which `S` is regular, then the
 //!    nearest plane point to `g`. That point is checked against every row; if it fails, the
-//!    last vector of the dual basis is a direction `u` along which the rows take fewer than
-//!    `75·√7 < 199` integer values.
+//!    last vector of the dual basis is a direction `u` along which the rows have a width below
+//!    `75·√7 ≈ 198.43`, so `u·x` takes at most 199 integer values over them (proofs at
+//!    `simplex` and `reduce`).
 //! 4. Each integer value `t` of `u·x` over the rows is a slice: `u` is completed to a
 //!    unimodular matrix by Euclid's algorithm, and the slice is a system over two variables,
 //!    which `twovar::point` decides exactly.
@@ -776,6 +777,25 @@ enum Shape {
 /// `v2` and `v3`, and the off-diagonal entries of `f_i·(v_j - v0)` are at most the diagonal
 /// ones in magnitude, so the barycentric coordinates of a point of the rows are at least `-6`
 /// and the rows lie within `g + 25·(S - g)`.
+// Proof of the -6 and the 25 (proofs audit, proofdoc4g). Here "the rows" are their real
+// points in the box `bx`, which hold every vertex `least` returns. Let `d_j = v_j - v0` and
+// `T[i][j] = f_i·d_j` for `i, j` in 1..=3. `f2` is normal to `d1` and `f3` to `d1` and `d2`, so
+// `T` is upper triangular; its diagonal is not zero, since a zero extent returns `Dir` above.
+// 1. Extents. A point `x` of the rows has `0 <= f1·(x - v0) <= T[1][1]` (`v0` least, `v1`
+//    greatest along `e0`), and `|f_i·(x - v0)| <= |T[i][i]|` for `i` = 2, 3 (`v_i` is the
+//    farther from `v0` of the least and greatest along `f_i`). The vertices are points of the
+//    rows, so `0 <= T[1][2], T[1][3] <= T[1][1]` and `|T[2][3]| <= |T[2][2]|`.
+// 2. Coordinates. Write `x - v0 = Σ λ_j·d_j`. With `z_i = f_i·(x - v0) / T[i][i]`, so `z1` in
+//    `[0, 1]` and `|z2|, |z3| <= 1`, and `U = diag(T)⁻¹·T` unit upper triangular with entries
+//    `a = U[1][2]`, `c = U[1][3]` in `[0, 1]` and `b = U[2][3]` in `[-1, 1]`, back substitution
+//    gives `λ3 = z3`, `λ2 = z2 - b·z3` and `λ1 = z1 - a·z2 + (a·b - c)·z3`, so `|λ3| <= 1`,
+//    `|λ2| <= 2`, `|λ1| <= 1 + 1 + 2 = 4`, and the fourth coordinate `λ0 = 1 - λ1 - λ2 - λ3 >=
+//    1 - 7 = -6`. Every barycentric coordinate is at least -6.
+// 3. Scaling. `g` has coordinates 1/4 each. `x = g + 25·(y - g)` for `y` of coordinates
+//    `1/4 + (λ_j - 1/4) / 25`, which sum to 1 and are at least 0 exactly when `λ_j >= -6`
+//    (at `λ_j = -6` it is `1/4 - (25/4) / 25 = 0`); so `y` is in `S` and `x` in
+//    `g + 25·(S - g)`. Tests: the `…_match_enumeration` tests of `l01_38_omega_test::live3`,
+//    which would catch, on the systems they draw, a point in a slice the bound left out.
 fn simplex(rows: &[Row3], bx: &[Row3]) -> Result<[[Q; 3]; 4], Box<Shape>> {
     // Each vertex found is rounded to the nearest integer point, which ends the search when
     // it holds the rows.
@@ -845,6 +865,26 @@ fn dot3q(a: &[Q; 3], b: &[Q; 3]) -> Q {
 /// misses a row only when `r` is below `√7/2` times the length of the last Gram–Schmidt
 /// vector `b3*`, and the width of the rows along the dual vector is at most `150·r / |b3*|`,
 /// below `75·√7`.
+// Proof of the three bounds (proofs audit, proofdoc4g). Lengths are in the form `Mᵀ·G·M`.
+// 1. Radii. `M` maps the edge `v_j - v0` to the unit vector `e_j`, and `G` is twice the Gram
+//    matrix of a regular simplex of unit edges, so in the form `S` is a regular simplex of edge
+//    `√2`: its inradius is `r = √2 / (2·√6) = 1 / (2·√3)` and its circumradius `3·r`, both
+//    about its center `g`. The ball of radius `r` about `g` lies in `S`, whose vertices are
+//    points of the rows, so in the rows; and `g + 25·(S - g)` ([`simplex`]) lies in the ball
+//    of radius `25·3·r = 75·r`.
+// 2. The point. The loop is LLL with `δ = 3/4`: each `|μ[k][k-1]| <= 1/2` after size
+//    reduction, so the Lovász condition gives `|b*_{k}|² >= (3/4 - 1/4)·|b*_{k-1}|²`, that is
+//    `|b1*|² <= 4·|b3*|²` and `|b2*|² <= 2·|b3*|²`. Babai's nearest plane step leaves
+//    `g - z = Σ c_i·b_i*` with each `|c_i| <= 1/2`, so `|g - z|² <= (4 + 2 + 1)·|b3*|² / 4`,
+//    `|g - z| <= (√7/2)·|b3*|`. When `r >= (√7/2)·|b3*|`, `z` is in the ball of step 1 and
+//    holds every row; so a `z` that misses a row has `r < (√7/2)·|b3*|`.
+// 3. The width. `u` is integer, since the basis is unimodular, with `u·b1 = u·b2 = 0` and
+//    `u·b3 = 1`, so `u·x = ⟨x, b3*⟩ / |b3*|²` in the form, a functional of norm `1 / |b3*|`.
+//    Over the ball of radius `75·r` it varies by at most `150·r / |b3*| < 150·√7/2 = 75·√7 ≈
+//    198.43`, so `hi - lo`, read at the vertices of `g + 25·(S - g)`, which lie in that ball,
+//    is below 198.43 too. Sources: Lenstra, Lenstra and Lovász 1982 (doi:10.1007/bf01457454),
+//    for the reduced basis inequality, and Babai 1986 (doi:10.1007/BF02579403), the nearest
+//    plane bound. Tests: as for [`simplex`].
 fn reduce(rows: &[Row3], s: &[[Q; 3]; 4]) -> Shape {
     let edges = [1, 2, 3].map(|i| sub3(&s[i], &s[0]));
     let m = inverse(&edges);
@@ -981,9 +1021,11 @@ fn complete(u: &[Int; 3]) -> [[Int; 3]; 3] {
 
 /// An integer point of the rows with `u·x = t` for an integer `t` in `[lo, hi]`, which holds
 /// every value of `u·x` over the real points of the rows, or `None` when no such slice has
-/// one. With `x = V·(t, w1, w2)` each slice
-/// is a system over `w1` and `w2`. There are fewer than 199 slices, `w(3)`, a constant of the
-/// dimension that bounds the work and is never a budget: every slice is tried.
+/// one. With `x = V·(t, w1, w2)` each slice is a system over `w1` and `w2`. There are at most
+/// 199 slices, `w(3)`, a constant of the dimension that bounds the work and is never a budget:
+/// every slice is tried. (`hi - lo` is below `75·√7 ≈ 198.43` ([`reduce`]), and a closed range
+/// of width below 199 holds at most 199 integers, and one of width in `[198, 198.43)` may hold
+/// 199.)
 fn slices(rows: &[Row3], u: &[Int; 3], lo: &Q, hi: &Q) -> Option<[Int; 3]> {
     let v = complete(u);
     let mut t = lo.ceil();

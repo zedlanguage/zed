@@ -8676,7 +8676,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The atoms of `loose` that no arrow of `sig` takes at parameter `i`, which pass through
     /// the call: all of them where the parameter is a variable bounded to carriers, those
     /// its type does not hold where it is a closed type, and none where it is a variable, a
-    /// class or `_`. One set difference and one meet per arrow.
+    /// class or `_`. At most one set difference per arrow, and no meet: an arrow whose
+    /// parameter is a variable, a class or `_` empties `out` or leaves it as it is.
     fn refused(&self, sig: &Sig, i: usize, loose: &KType) -> KType {
         let mut out = loose.clone();
         for arrow in &sig.arrows {

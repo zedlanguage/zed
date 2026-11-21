@@ -1424,12 +1424,15 @@ zedc-syntax, zed-numtheory, zed-rt, zed-tools, zedc-lattice) and the `type_var_f
 were checked on origin/main e1274cda9. Then zedc-int and zedc-solvers, each entry but the two
 crate splits, and 8 of the 39 moved commits, checked on origin/main 8c9dd3cbd. Then 21 more
 moved commits (6c2c05101 to a934e9cf8 below), each message and its whole diff, the claims
-found at their sites on origin/main 8f447824e. The rest are listed under "Not read:".
+found at their sites on origin/main 8f447824e; then the last 10 moved commits (e3b9b5c6b to
+fec575742) the same way, and the comment lines the two crate splits 87bab4327 (zedc-solvers,
+whose live3.rs no list entry reaches) and 6cc6d3efd (zedc-int) moved, read for claims only.
+Every line of list g is read.
 
 The entries read count the `type_var_form` claim of 4e6c5bfaa, which is not a line of list g:
 list g has 98 lines (39 moved, 18 zedc-solvers, 16 zedc-int, 25 in the small crates), and the
 first count of 66 entries read was 65 lines of list g and that claim, so 65 read and 33 not
-read made the 98.
+read made the 98, and the 99 entries of the table below are the 98 lines and that claim.
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
@@ -1443,10 +1446,10 @@ read made the 98.
 | zed-tools | 2 | 0 | 0 | 0 | 0 | 0 |
 | zedc-lattice | 1 | 1 | 1 | 0 | 0 | 0 |
 | `type_var_form` (zedc-resolve, zed-kernel) | 1 | 3 | 1 | 2 | 0 | 0 |
-| zedc-int | 15 | 14 | 12 | 2 | 0 | 0 |
-| zedc-solvers | 17 | 17 | 12 | 4 | 0 | 1 |
-| moved (zedc, zedc-syntax) | 29 | 36 | 31 | 3 | 1 | 1 |
-| Total | 87 | 90 | 69 | 16 | 1 | 4 |
+| zedc-int | 16 | 18 | 16 | 2 | 0 | 0 |
+| zedc-solvers | 18 | 21 | 13 | 6 | 0 | 2 |
+| moved (zedc, zedc-syntax) | 39 | 46 | 40 | 3 | 1 | 2 |
+| Total | 99 | 108 | 83 | 18 | 1 | 6 |
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -1537,6 +1540,24 @@ read made the 98.
 | a934e9cf8 | a signature's facts and digest are memoed once | zedc-types ty.rs `Sig::digest`, `Sig::facts`, `Sig::holds_needs` | already there, see proofdoc1b |
 | a934e9cf8 | a message settles its type in the time of printing it; a class bound to a class is replaced at each depth | zedc-check mod.rs `settled`; walk.rs (F77) | already there |
 | a934e9cf8 | `VarFacts::held` copies each variable O(log n) times over a nest | zedc-types ty.rs `VarFacts::held` | marked unproved: proved where the merged sets are disjoint; with shared variables a set can grow by one per insertion, so the open sub-case is a nest whose facts overlap at every level |
+| e3b9b5c6b | a bounded variable no parameter holds stands for the union of its bound's carriers | zedc-types ty.rs `Sig::unheld` | already there |
+| 01d71b2ea | disjuncts asked of the base by halves; the exact shadow with unit-equality substitution | zedc-presburger presburger.rs `disjunction_hulls` doc and the substitution doc | already there |
+| 53d0c3177 | a cover takes only closed parameter types and costs linear time in the width | zedc-types ty.rs `covered` | already there |
+| 63fa169e7 | an arrow that an argument fails by a decided check names no refused cause | zedc-check mod.rs `refused_among` | already there |
+| 8f23b02b7 | `function_in` reads each type's functions, rows' memo and payloads once each | zedc-types ty.rs `Ty::function_in` | already there |
+| 9147744bd | a leaf of several clean hubs, and a bound on a sum of names, settled where read | zedc-preimage product.rs (eager equivalence; `conjuncts::unit_sum`) | already there (each conjunct test O(log n)) |
+| 9b7406051 | `meet_within` intersects results holding a function or a rigid variable, one pass from each end | zedc-types ty.rs `meet_within` (F82) | already there |
+| c22a191c9 | a shared `Formula` node is read once per pass, a clone O(1) | zedc-presburger formula.rs, deep.rs module doc (S27, S31) | already there |
+| c3044ee83 | rule 6 pass-by per atom: the atoms every arrow omits pass by | zedc-check mod.rs `Ck::refused` | corrected: the doc said "one set difference and one meet per arrow"; the code does at most one set difference per arrow and no meet |
+| fec575742 | one bound check over every written type, each node read once | zedc-check mod.rs `Ck::bounds` | already there (the walk pushes each child once; a `Bounded` node is read whole by `kernel_type`) |
+| 87bab4327 | live3: the box `24·A²·max(A, K)` keeps every integer point that matters | zedc-solvers live3.rs module doc | already there (Cramer: vertex coordinates at most `6·A²·K`, cone generators at most `2·A²`, Carathéodory three generators; checked by hand) |
+| 87bab4327 | live3: the rows lie within `g + 25·(S - g)`, barycentric coordinates at least -6 | zedc-solvers live3.rs `simplex` | completed: the triangular `T`, the extents, the back substitution giving `\|λ1\| <= 4`, `\|λ2\| <= 2`, `\|λ3\| <= 1`, and why -6 gives exactly 25 |
+| 87bab4327 | live3: the LLL point misses only when `r < (√7/2)·\|b3*\|`; the width below `75·√7` | zedc-solvers live3.rs `reduce` | completed: the inradius and circumradius in the form, the LLL inequality at `δ = 3/4`, Babai's bound, the dual functional of norm `1 / \|b3*\|` (LLL 1982, Babai 1986, DOIs) |
+| 87bab4327 | live3: "fewer than 199" slices | zedc-solvers live3.rs module doc, `slices` | corrected: a width below 198.43 allows up to 199 integer values, so "at most 199"; nothing relied on the count |
+| 6cc6d3efd | `odd_root_mod_pow2` is a bijection on odd residues, by Hensel, O(M(k) log p) | zedc-int int.rs `odd_root_mod_pow2` | already there |
+| 6cc6d3efd | the bit bounds of `r^p` | zedc-int int.rs, the perfect power test | already there |
+| 6cc6d3efd | the group fold: lower terms at most `(b^e/2)·b/(b - 1)`, the quarter bound for `b >= 3` | zedc-int int.rs, the group fold | already there (for `b = 2` the group is in fact at least `2^-(n-1)` of its top term, more than the `2^-n` stated; the stated bound holds) |
+| 6cc6d3efd | `root_floor`: at least `2^127` exactly when `x >= 2^(127·k)`, and the bisection invariant | zedc-int int.rs `root_floor` | already there |
 
 No code claim:
 - zedc: 181885f72, 8c5ccccb9.
@@ -1553,9 +1574,3 @@ No code claim:
 - zedc-solvers: d80e81d08 (a type alias), 2b3e706f1 (searches moved to
   `zed_collections::search`, same contracts), 4c17c8e8f (dev-dependency features), 5168f5a37
   (a type alias), 6da69df6f (the shared interval append).
-
-Not read:
-- moved (zedc, zedc-syntax), 10: e3b9b5c6b, 01d71b2ea, 53d0c3177, 63fa169e7, 8f23b02b7,
-  9147744bd, 9b7406051, c22a191c9, c3044ee83, fec575742.
-- zedc-solvers, 1: 87bab4327 (the crate split, 587 comment lines).
-- zedc-int, 1: 6cc6d3efd (the crate split, 528 comment lines).
