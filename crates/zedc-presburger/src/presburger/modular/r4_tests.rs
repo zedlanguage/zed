@@ -1206,8 +1206,8 @@ fn verdict_and_model_paths_agree_exhaustively_and_on_edge_forms() {
         ]),
         "homogeneous, x >= 1"
     ));
-    // One quotient q in two rows: x = 2q and x = 3q + 1 at q = -1, x = -2; x = 2q and x = 2q + 1 never;
-    // x = 2q + 1 and x = 6q + 2 force 4q = -1.
+    // One quotient q in two rows: x = 2q and x = 3q + 1 at q = -1, x = -2; x = 2q and
+    // x = 2q + 1 never; x = 2q + 1 and x = 6q + 2 force 4q = -1.
     let q = Lin::atom(Atom::Aux(0));
     let shared = |m1: i64, c1: i64, m2: i64, c2: i64| {
         Formula::and(vec![
