@@ -1321,13 +1321,16 @@ in full and 059 in part. Four claims are "covered by" a row another agent owns; 
 counted under "Already there". In part 4, at base c1fe17212, proofdoc4f read the zedc-elab
 entries 063 to 106 in full but 084 (cf099fcf2, the crate split, 1 commit message and moved
 code), read in part. A claim made in one entry and completed in two later ones (the generic
-witness, the instancing of bodies) is counted once for each entry.
+witness, the instancing of bodies) is counted once for each entry. Also in part 4, at base
+1533df33a, the zedc-base entries 107 to 145: all in full but 50a4b3789 (the crate split),
+read in part. The one false claim found there came from db7d549fa, outside the list, and is
+counted under zedc-base beside the 17 entries that make the same kind of claim.
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
 | zed-kernel | 57 of 62, 4 in part | 151 | 89 | 58 | 2 | 2 |
 | zedc-elab | 44 of 44, 1 in part | 34 | 29 | 3 | 0 | 2 |
-| zedc-base | 0 of 39 | 0 | 0 | 0 | 0 | 0 |
+| zedc-base | 39 of 39, 1 in part | 26 | 25 | 0 | 0 | 1 |
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -1511,10 +1514,22 @@ witness, the instancing of bodies) is counted once for each entry.
 | eb156f28d | `wrapped` is never taken for an `and` that is not a mark | zedc-elab `elab/mark.rs`, `wrapped` | completed: only `wrap` builds `and` with a literal second argument; `&&` is `if_`, folds by `&&` are `Term::Fold` with `Term::PrimFn`, scans apply `and` to variables; any other `and` has `bool` operands |
 | f24b492bf | A walk over an open stream ends at the deciding entry; reads that never end are refused | zedc-elab `elab/walk.rs`, `elab/walk/fp_ops.rs` | already there |
 | fbb2b68aa | The keypath proof of the fold of a generic function | zedc-elab `elab/walk/fp_ops.rs` | already there |
+| 30ad62cc4, ba41f402c, 7d9e078c0, a02d270c5, 007a9ebb0, 24a43c819, 50b8eea24, 331f39ab5, ebd6faee5, 259a46243, 7634e8afc, 835596645, b6fab1610, c80981f4b, cac8265b5, f64572af8, fde51511a | "No diagnostic uses this row yet: plan row X emits it" | zedc-base `rejection.rs`, the comments above the rows | already there (counted once for each of the 17 entries): each of the 134 rows under such a comment is named as `Row::` nowhere outside rejection.rs (no file imports `Row::*`), and each of the 44 plan rows named is in plan_dag.md and open; ebd6faee5's "the row after it is emitted at a division" holds (`Row::RootConstraintFails`, zedc-check `check/walk.rs`) |
+| db7d549fa (outside the list) | "No diagnostic uses the next two rows yet: plan row MAIN-limits emits them" (`OutOfMemory`, `MainLimitPassed`) | zedc-base `rejection.rs`, above `OutOfMemory` | corrected: MAIN-limits is done (marked in 86322e10b) and the run prints both messages itself, never through the rows: zed-kernel `value.rs` `NUMBER_TOO_LARGE`, zed-rt `limits.rs` and `stack.rs`; the comment now says so with file:line |
+| 7fb0c6594 | The cost bounds of `cost.rs` | zedc-base `cost.rs` | already there |
+| d6fa0ddbd | Names, line bounds and fresh names shared, one routine each | zedc-base `source.rs` | already there |
+| 25ef78dd1 | The new `bit_len` call gives the bit count the old `32 - leading_zeros` gave | zedc-base `terminal.rs` | already there (`BitLen` of zed-kernel `bits`) |
+| 5767fe37a | `round(x, ties: #away)` elaborates to `RoundTiesAway`, which no word names | zedc-base `interp.rs`, the word table | already there |
+| 981ec6c8a | -1, the identity of `bitAnd` and the zero of `bitOr`, is outside `int[0..]` until INT-twos | zedc-base `axioms.rs` | already there |
+| 995a598b2 | `Tonicity::flip` gives the grade of `-f` | zedc-base `axioms.rs`, `Tonicity` | already there |
+| a1740c637 | An NFC rejection names the whole run that composes | zedc-base `source.rs`, `first_not_nfc` | already there |
+| 50a4b3789 | The crate split moves code unchanged | zedc-base (the whole crate) | already there (read in part: the moved code not line by line) |
 
 No code claim: 9e3cc1480 (zed-kernel part: an alias, an equivalent `?`, moved tests);
 zedc-elab: 7931d6ed6, 8164a8ea9, 2b3e706f1, 995200322, 18ea94666, 86322e10b, c50a8965b,
-0e8df04e7, d11373afd, 4ce8104bb.
+0e8df04e7, d11373afd, 4ce8104bb; zedc-base (14, rejection rows, word tables and grammar rows
+with no claim about code): 13237878e, eb9d470b5, 4e6c5bfaa, c5ed79580, 726008ee7, 8a14a296f,
+bea44d4a5, bfc106d61, d11373afd, e6dfb6877, 168d440d9, 3ef2d671a, 4ce8104bb, 6a1038700.
 
 Not read:
 
@@ -1523,11 +1538,7 @@ Not read:
   `cells_windows`, `Live`, X34, X35, `forest`), f48ec1bf4 (all but the `Atoms` privacy
   claim), and ddc1ec274 (3509 lines) not at all
 - zedc-elab (1, in part above): cf099fcf2 (the moved code not read line by line)
-- zedc-base (39): 30ad62cc4 7fb0c6594 13237878e ba41f402c d6fa0ddbd 25ef78dd1 7d9e078c0
-  a02d270c5 eb9d470b5 007a9ebb0 24a43c819 4e6c5bfaa 50b8eea24 5767fe37a c5ed79580 331f39ab5
-  726008ee7 8a14a296f 981ec6c8a 995a598b2 bea44d4a5 bfc106d61 d11373afd e6dfb6877 ebd6faee5
-  168d440d9 259a46243 3ef2d671a 4ce8104bb 50a4b3789 6a1038700 7634e8afc 835596645 a1740c637
-  b6fab1610 c80981f4b cac8265b5 f64572af8 fde51511a
+- zedc-base (1, in part above): 50a4b3789 (the moved code not read line by line)
 
 ## proofdoc4g: the moved commits, zedc-solvers, zedc-int, the small crates, `type_var_form`
 

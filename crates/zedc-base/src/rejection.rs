@@ -270,7 +270,12 @@ rows! {
     StackOverBound => "Stack depth over `@stack(bytes: b)`",
     StackOverflow => "Stack overflow in a run",
     NumberOverAddressSpace => "Number too large for any memory of the target",
-    // No diagnostic uses the next two rows yet: plan row MAIN-limits emits them.
+    // No code names the next two rows: the run prints their messages itself, never through
+    // these rows. "Out of memory in a run" is the run's "Number too large for memory"
+    // (zed-kernel value.rs:4871, `NUMBER_TOO_LARGE`); "Limit of `main` passed in a run" is the
+    // run's "Memory limit of `main` passed" (zed-rt limits.rs:372, stack.rs:568),
+    // "Processor-time limit of `main` passed" (limits.rs:190) and "Deadline of `main` passed"
+    // (limits.rs:253). Plan row MAIN-limits, which built them, is done.
     OutOfMemory => "Out of memory in a run",
     MainLimitPassed => "Limit of `main` passed in a run",
     // No diagnostic uses the next two rows yet: plan row STOP-releases-rt emits them.
