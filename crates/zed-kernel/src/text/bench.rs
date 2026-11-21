@@ -5,7 +5,9 @@
 //! `try_flat_reads_every_shape_of_a_text_whole`) and every compare of blocks and trees
 //! (`texts_compare_as_their_strs_whatever_their_blocks`).
 
-use super::tests::{PIECE, assert_balanced, bytes, chain, depth_bound, join, leaves, long, pieces};
+use super::tests::{
+    PIECE, assert_balanced, bytes, chain, chain_text, depth_bound, join, leaves, long, pieces,
+};
 use super::*;
 
 #[test]
@@ -13,12 +15,19 @@ fn reading_every_prefix_costs_the_text_read() {
     // A log printed in full after every line: line `i` reads `i` lines, so `n` lines
     // read `n²/2` lines in all, and each read must cost in proportion to its length
     // (COMPLEXITY.md C29). The work is of order `n²`, so 8n may do 24 × 8 times that of n.
+    // Each block's bytes are counted by a loop over the block, which the compiler can do
+    // many bytes at a time; counted through one iterator over the bytes of every block, the
+    // run at 8000 lines took 9.8 to 13.3 s of the test's 10.1 to 13.6 s at load 21 to 27
+    // (BENCH-l0139-follow-over-cap). Either reads every byte once.
     let line = long('l');
     crate::scaling::check_order("a log of n lines printed after every line", 1000, 2, |n| {
         let mut log = Text::from("");
         for i in 1..=n {
             log = join(&log, &line);
-            let printed = bytes(&log).filter(|&b| b == b'l').count();
+            let printed: usize = log
+                .chunks()
+                .map(|c| c.bytes().filter(|&b| b == b'l').count())
+                .sum();
             assert_eq!(printed, PIECE * i);
         }
     });
@@ -73,8 +82,9 @@ fn a_chain_either_way_is_built_in_order_n() {
 #[test]
 fn try_flat_of_a_join_costs_its_length() {
     // One walk over the blocks into memory asked for once: order `n` in the blocks, so 8n
-    // may do 24 times the work of n. The texts are built before the runs are timed.
-    let texts = crate::scaling::inputs(256_000, |n| chain(n, true).0);
+    // may do 24 times the work of n. The texts are built before the runs are timed, without
+    // the string `chain` writes beside them, 1.3 GB at 8n that no run reads.
+    let texts = crate::scaling::inputs(256_000, |n| chain_text(n, true));
     crate::scaling::check("try_flat of a join of n blocks", 256_000, |n| {
         let flat = texts[&n].try_flat().unwrap();
         assert_eq!(flat.chars().count(), PIECE * n);
@@ -102,22 +112,37 @@ fn a_compare_of_two_blocks_costs_their_length() {
     );
 }
 
+/// Two equal texts of n blocks, one a tree joined from the left and one from the right: the
+/// compare reads every block once, order `n`, and allocates one stack of `O(log n)` per tree,
+/// so 8n may do 24 times the work and the bytes of n.
+///
+/// This and [`a_compare_of_a_block_and_a_tree_costs_its_length`] were the two checks of one
+/// test, which built both trees and the block in each of its three processes (the run at 8n
+/// of a check is in a new process that builds the inputs again, `scaling::compare_by`): 16.1 s
+/// at load 27, where the runs took 0.2 s (BENCH-l0139-follow-over-cap). Each builds what its
+/// check reads.
 #[test]
 fn a_compare_against_a_tree_costs_its_length() {
-    // Two equal texts of n blocks, one a tree joined from the left and one from the right,
-    // and the same text as one block against the tree: each compare reads every block
-    // once, order `n`, and allocates one stack of `O(log n)` per tree, so 8n may do 24
-    // times the work and the bytes of n.
     let texts = crate::scaling::inputs(96_000, |n| {
         let (left, s) = chain(n, true);
-        (left, pieces(&s, PIECE, false), Text::from(s))
+        (left, pieces(&s, PIECE, false))
     });
     crate::scaling::check("a compare of two trees of n blocks", 96_000, |n| {
-        let (left, right, _) = &texts[&n];
+        let (left, right) = &texts[&n];
         assert_eq!(left.cmp(right), Ordering::Equal);
     });
+}
+
+/// The same text as one block against a tree of n blocks joined from the left: the compare
+/// reads every block once, order `n`, as [`a_compare_against_a_tree_costs_its_length`] says.
+#[test]
+fn a_compare_of_a_block_and_a_tree_costs_its_length() {
+    let texts = crate::scaling::inputs(96_000, |n| {
+        let (left, s) = chain(n, true);
+        (left, Text::from(s))
+    });
     crate::scaling::check("a compare of a block and a tree of n blocks", 96_000, |n| {
-        let (left, _, block) = &texts[&n];
+        let (left, block) = &texts[&n];
         assert_eq!(block.cmp(left), Ordering::Equal);
     });
 }

@@ -50,8 +50,12 @@ fn a_product_covered_by_its_cells_scales() {
     });
 }
 
-/// Size (TEST-bench-move-l0123, author P169): n 2 before, now 256 (order 2); 1x 117 ms at
-/// load 26.19.
+/// Size (TEST-bench-move-l0123, author P169): n 2 before, then 256 (order 2); 1x 117 ms at
+/// load 26.19. Now 128 (BENCH-l0123-decoys-near-cap): at 256 the run at 2048 took 17.3 s at
+/// load 40 and over the 20 s limit at load 63, with 60.6 times the instructions of the run at
+/// 256 (limit 84 for order 2). perf put the time in the emptiness search of `zed_kernel`
+/// (`Searching::retest`, `empty_fork`, `any_empty`), spread with no one site above 9%: the
+/// `k²` component meets this test is built to make, about 1.7 µs each, not an extra factor.
 #[test]
 fn passing_over_disjoint_negated_types_scales() {
     // As above with `k` decoys, the first component a tuple of `k` bits so that a meet costs
@@ -61,7 +65,7 @@ fn passing_over_disjoint_negated_types_scales() {
     // pieces. Each
     // run takes a new `b`, so no run reads another's results.
     on_thread(|| {
-        let n = 256;
+        let n = 128;
         let bit = &lit(0) | &lit(1);
         let bits = |k: usize, i: usize| {
             Type::tuple(

@@ -189,6 +189,31 @@ fn following_tests_of_names_and_differences_are_read_as_plain_tests() {
     );
 }
 
+/// Compiling [`excluded`] at 32 and 256 tests: the written constraints found due at the
+/// enumerations (`Scope::enumerate`) grow linearly in the tests (BENCH-l0139-follow-over-cap).
+/// Each `slot != i` is a written constraint on `slot` and narrows it, so every later
+/// enumeration sees `slot` changed; `slot` lists no members, so none of them can be
+/// enumerated. Before, each enumeration gathered every constraint on `slot` again and passed
+/// over each: 559 due at 32 tests and 33,151 at 256 (59 times), and compiling 2048 tests took
+/// 9.3 s against 132 ms at 256. Now a constraint blocked on `slot` is gathered again only when
+/// `slot` lists its members or takes one value. The limit, 8 times plus a quarter, is above the
+/// linear 8 and well under the 59 of the quadratic gathering.
+#[test]
+fn following_tests_of_a_name_gather_linearly_many_constraints() {
+    use zedc::store::preimage::counts::due;
+    let mut counted = Vec::new();
+    for k in [32, 256] {
+        let before = due();
+        _ = function(&excluded(k));
+        counted.push(due() - before);
+    }
+    let (small, large) = (counted[0], counted[1]);
+    assert!(
+        4 * large <= 33 * small.max(1),
+        "constraints due: {small} at 32 tests, {large} at 256"
+    );
+}
+
 /// `ok(positional n: int, …) = if (if (… n …) == 1 { n } else { e }) == 1 { n } else { e }`,
 /// `d` deep, with the parameters `ps`.
 fn nested(d: usize, e: &str, ps: &str) -> String {

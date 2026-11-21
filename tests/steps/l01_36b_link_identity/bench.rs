@@ -56,9 +56,14 @@ fn the_files_a_link_read_are_hashed_in_linear_time() {
 /// directory of the output: linear in the directory's entries.
 ///
 /// Small instance: `leftover::a_build_removes_what_stopped_builds_left_and_keeps_a_running_ones`.
+///
+/// Size (BENCH-l0123-decoys-near-cap): 2,000, was 6,000, at which the test took 21.0 s at load
+/// 39 though its run at 8 n took 1.38 s (ratio 8.05): the rest is making the 9 n files and 9 n
+/// locked directories of both sizes, which the new process of the run at 8 n makes again
+/// (`scaling::compare_by`).
 #[test]
 fn the_sweep_scales() {
-    let n = 6_000;
+    let n = 2_000;
     let made = |m: usize| -> (PathBuf, Vec<File>) {
         let d = dir(&format!("sweep{m}"));
         let out = d.join("sign");

@@ -34,6 +34,19 @@ fn a_chain_of_following_comparisons_costs_what_the_plain_chain_costs() {
     );
 }
 
+/// Compiling a conjunction of following tests of a name costs `O(k log k)` for `k` tests: an
+/// enumeration no longer gathers again the constraints blocked on `slot`, which lists no
+/// members, each time `slot` narrows (BENCH-l0139-follow-over-cap; 256 to 2048 tests took
+/// 132 ms to 9.3 s before).
+#[test]
+fn compiling_following_tests_of_a_name_scales() {
+    scaling::check(
+        "compiling a conjunction of following tests of a name",
+        256,
+        |k| _ = function(&excluded(k)),
+    );
+}
+
 #[test]
 fn following_tests_scale() {
     for (what, n, src) in [
@@ -68,31 +81,63 @@ fn nested_sums_keep_their_arms_at_depths_6_to_12() {
 /// split of the larger summary at two cuts, `O(d log d)` (16 to 128: 2.2 ms to 10.7 ms and
 /// 1.3 ms to 7.0 ms, where the projection and the linear stage took 24 ms to 195 ms and 11 ms
 /// to 126 ms and read every `n`).
+///
+/// The checks are in five tests: the run at `8 n` of a check is in a new process that builds
+/// the terms of every earlier check of its test again (`scaling::compare_by`), so six checks
+/// in one test built `c + 1` sets of terms for check `c`, 21 in all, and the test took 21.7 s
+/// at load 56 though its runs took about 2.7 s at `n` (BENCH-l0139-follow-over-cap). This one
+/// keeps `n + m` and the sum of ramps, which comments elsewhere cite by this name; the sums of
+/// one name are [`nested_sums_of_n_plus_n_scale`] and the three after it.
 #[test]
 fn nested_sums_of_one_input_scale() {
     for (what, n, src) in [
         (
-            "the arms of nested tests of n + n",
-            128,
-            twice as fn(usize) -> String,
-        ),
-        (
-            "the arms of nested tests of n + n, following",
-            128,
-            following,
-        ),
-        ("the arms of nested tests of n - 3 * n + 4", 128, line),
-        ("the arms of nested tests of n + m", 64, two),
-        (
-            "the arms of nested tests of n + (if n > 0 { n } else { 0 })",
-            128,
-            with_an_if,
+            "the arms of nested tests of n + m",
+            64,
+            two as fn(usize) -> String,
         ),
         ("the arms of a test of a sum of d ramps", 256, ramps),
     ] {
-        let (scope, terms) = sizes(n, src);
-        scaling::check(what, n, |k| _ = arms(at(&terms, k), &scope));
+        arms_scale(what, n, src);
     }
+}
+
+/// The arms of the term `src` gives, at sizes `n` and `8 n`.
+fn arms_scale(what: &str, n: usize, src: fn(usize) -> String) {
+    let (scope, terms) = sizes(n, src);
+    scaling::check(what, n, |k| _ = arms(at(&terms, k), &scope));
+}
+
+/// One of the checks of [`nested_sums_of_one_input_scale`].
+#[test]
+fn nested_sums_of_n_plus_n_scale() {
+    arms_scale("the arms of nested tests of n + n", 128, twice);
+}
+
+/// One of the checks of [`nested_sums_of_one_input_scale`].
+#[test]
+fn nested_following_sums_of_n_plus_n_scale() {
+    arms_scale(
+        "the arms of nested tests of n + n, following",
+        128,
+        following,
+    );
+}
+
+/// One of the checks of [`nested_sums_of_one_input_scale`].
+#[test]
+fn nested_sums_of_n_minus_3_n_plus_4_scale() {
+    arms_scale("the arms of nested tests of n - 3 * n + 4", 128, line);
+}
+
+/// One of the checks of [`nested_sums_of_one_input_scale`].
+#[test]
+fn nested_sums_with_an_if_scale() {
+    arms_scale(
+        "the arms of nested tests of n + (if n > 0 { n } else { 0 })",
+        128,
+        with_an_if,
+    );
 }
 
 /// A block of `d` bindings `y_k = y_(k-1) + ramp_k; x_k = x_(k-1) + y_k` and a test of `x_d`
@@ -102,10 +147,17 @@ fn nested_sums_of_one_input_scale() {
 /// times the instructions), and the final test read every `n` (repair of PA-let-block). A
 /// block of 512 overflowed the stack of a run, since the walk of the arms recursed on the bound
 /// terms; it keeps them on the heap now (item PA-let-stack, `deep_let`).
+///
+/// Size (BENCH-l0139-follow-over-cap): 128, was 256, at which the test took 15.0 s at load 27
+/// though its runs took 87 ms and 658 ms (ratio 8.83): the rest was compiling the block of
+/// 2048 twice, in this process and in the new one of the run at `8 n` (`scaling::compare_by`),
+/// 24.9 billion instructions each against 7.9 at 1024. The checker forms the summary of every
+/// `x_k`, `Θ(d²)` pieces in all, which no two share (`LetPa::sum`, COMPLEXITY.md row
+/// PA-let-block); this test times only the arms.
 #[test]
 fn a_block_of_sums_of_ramps_scales() {
-    let (scope, terms) = sizes(256, let_chain);
-    scaling::check("the arms of a block of d sums of ramps", 256, |k| {
+    let (scope, terms) = sizes(128, let_chain);
+    scaling::check("the arms of a block of d sums of ramps", 128, |k| {
         _ = arms(at(&terms, k), &scope)
     });
 }

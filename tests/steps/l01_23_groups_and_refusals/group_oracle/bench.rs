@@ -306,20 +306,20 @@ fn one_group_of_n_definitions_is_built_in_its_size() {
 /// unevaluated shares, takes time and bytes of order `n log n`: the parts are ordered by their
 /// contents, a sort. Small instance `a_short_chain_of_shared_tuple_parts_prints`.
 ///
-/// Size (TEST-bench-move-l0123, author P169): n 64 before, now 4096; 1x 75 ms at load
-/// 17.01.
+/// Size (TEST-bench-move-l0123, author P169): n 64 before, then 4096, now 2048
+/// (BENCH-l0139-follow-over-cap). At 4096 the test took 28.4 to 30.7 s at load 45 to 63, where
+/// the runs took 0.05 s and 0.56 s: the rest was the set-up, built at both sizes in this
+/// process and again in the new one of the run at `8 n` (`scaling::compare_by`). At 32,768 it
+/// took, a process, 3.2 s for the kernel, 3.0 s for the first print and 3.7 s for parsing the
+/// text back; the text is now parsed back only by the small instance.
 #[test]
 fn a_chain_of_shared_tuple_parts_prints_in_its_size() {
-    let n = 4096;
-    let chains = scaling::inputs(n, |n| {
-        let t = shared_chain(n, true, &format!("chain{n}"));
-        // The unfoldings are made once, before the runs.
-        prints_as_syntax(&t, &format!("a chain of {n}"));
-        t
-    });
+    let n = 2048;
+    let chains = scaling::inputs(n, |n| shared_chain(n, true, &format!("chain{n}")));
     for (&n, t) in &chains {
         // `#a | #b`, the first pair and the part that names it, and one definition for each
-        // other cycle, its pair written inside it: n + 2 in all.
+        // other cycle, its pair written inside it: n + 2 in all. This first print makes the
+        // unfoldings, once, before the runs.
         assert_eq!(t.surface().defs.len(), n + 2, "a chain of {n}");
     }
     scaling::check("the text of a chain of n shared tuple parts", n, |n| {

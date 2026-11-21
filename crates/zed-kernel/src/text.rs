@@ -1521,22 +1521,40 @@ mod tests {
         }
     }
 
-    /// (`left`) or at the front, and the same text built by `push_str`.
-    pub(super) fn chain(n: usize, left: bool) -> (Text, String) {
-        // One, two, three and four bytes a character, so a block boundary falls between
-        // characters of every width.
+    /// The `i`th piece of [`chain_text`]: one, two, three and four bytes a character, so a block
+    /// boundary falls between characters of every width.
+    fn piece(i: usize) -> String {
         let chars = ['a', 'é', '日', '😀', 'z'];
-        let (mut t, mut pieces) = (Text::from(""), Vec::with_capacity(n));
+        chars[i % chars.len()].to_string().repeat(PIECE)
+    }
+
+    /// A text of `n` pieces of [`PIECE`] characters, each joined at the end (`left`) or at the
+    /// front.
+    pub(super) fn chain_text(n: usize, left: bool) -> Text {
+        let mut t = Text::from("");
         for i in 0..n {
-            let piece = chars[i % chars.len()].to_string().repeat(PIECE);
-            let p = Text::from(piece.as_str());
+            let p = Text::from(piece(i));
             t = if left { join(&t, &p) } else { join(&p, &t) };
-            pieces.push(piece);
         }
-        if !left {
-            pieces.reverse();
+        t
+    }
+
+    /// [`chain_text`], and the same text built by `push_str`.
+    pub(super) fn chain(n: usize, left: bool) -> (Text, String) {
+        let t = chain_text(n, left);
+        // The pieces in the order they read, written into one string (BENCH-l0139-follow-
+        // over-cap): a list of the pieces concatenated held every byte twice, and at 768,000
+        // pieces of `a_compare_against_a_tree_costs_its_length` took 2.4 s.
+        let mut s = String::with_capacity(t.len());
+        let order: Box<dyn Iterator<Item = usize>> = if left {
+            Box::new(0..n)
+        } else {
+            Box::new((0..n).rev())
+        };
+        for i in order {
+            s.push_str(&piece(i));
         }
-        (t, pieces.concat())
+        (t, s)
     }
 
     #[test]
@@ -1595,10 +1613,15 @@ mod tests {
 
     /// `s` joined from pieces of `k` characters, from the left (`left`) or from the right.
     pub(super) fn pieces(s: &str, k: usize, left: bool) -> Text {
-        let chars: Vec<char> = s.chars().collect();
-        let parts: Vec<Text> = chars
-            .chunks(k)
-            .map(|c| Text::from(c.iter().collect::<String>()))
+        // Cut at every `k`th character boundary, each piece copied once from `s`
+        // (BENCH-l0139-follow-over-cap): the characters collected into a list and each piece
+        // collected again took 3.6 s for the 768,000 pieces of
+        // `a_compare_against_a_tree_costs_its_length`.
+        let mut cuts: Vec<usize> = s.char_indices().step_by(k).map(|(i, _)| i).collect();
+        cuts.push(s.len());
+        let parts: Vec<Text> = cuts
+            .windows(2)
+            .map(|w| Text::from(&s[w[0]..w[1]]))
             .collect();
         if left {
             parts.iter().fold(Text::from(""), |t, p| join(&t, p))

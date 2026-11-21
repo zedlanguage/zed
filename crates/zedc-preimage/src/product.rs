@@ -3401,12 +3401,65 @@ fn leaf_written(c: &Con, x: &str, leaf: &Atom) -> Formula {
 /// The names and conjuncts a projection found.
 type Projection = (imbl::OrdMap<Arc<str>, Product>, Conjuncts);
 
-/// The names, written constraints and enumerated ones an enumeration found.
+/// The names, written constraints and enumerated ones an enumeration found, and the written
+/// constraints it left waiting ([`Scope::enumerate`]): `None` until that enumeration has
+/// found them, and kept `None` when it returned early with the scope empty.
 type Enumeration = (
     imbl::OrdMap<Arc<str>, Product>,
     imbl::OrdMap<Address, Vec<Arc<str>>>,
     imbl::OrdSet<Enumerated>,
+    Option<Waiting>,
 );
+
+/// The written constraints an enumeration left waiting, not settled ([`Scope::enumerate`]):
+/// those blocked on one name, whose one open name `m` lists no integer members (so that
+/// [`Scope::enumerate_on`] skips them), indexed by `m`, and the others.
+#[derive(Clone, Default)]
+struct Waiting {
+    other: imbl::OrdSet<Address>,
+    blocked: imbl::OrdMap<Address, Arc<str>>,
+    blocked_by: imbl::OrdMap<Arc<str>, imbl::OrdSet<Address>>,
+}
+
+impl Waiting {
+    /// Takes `k` out, wherever it is.
+    fn remove(&mut self, k: &Address) {
+        self.other.remove(k);
+        if let Some(m) = self.blocked.remove(k)
+            && let Some(on) = self.blocked_by.get_mut(&m)
+        {
+            on.remove(k);
+            if on.is_empty() {
+                self.blocked_by.remove(&m);
+            }
+        }
+    }
+
+    /// Puts `k` in, blocked on `m` or among the others, after taking it out.
+    fn insert(&mut self, k: &Address, blocked_on: Option<&Arc<str>>) {
+        self.remove(k);
+        match blocked_on {
+            Some(m) => {
+                self.blocked.insert(k.clone(), m.clone());
+                match self.blocked_by.get_mut(m) {
+                    Some(on) => _ = on.insert(k.clone()),
+                    None => {
+                        _ = self
+                            .blocked_by
+                            .insert(m.clone(), imbl::OrdSet::unit(k.clone()))
+                    }
+                }
+            }
+            None => _ = self.other.insert(k.clone()),
+        }
+    }
+}
+
+/// Whether [`Scope::enumerate_on`] can enumerate a constraint whose one open name has product
+/// `p`: its element is an integer and its members are listed ([`listed`]).
+fn enumerable(p: &Product) -> bool {
+    p.ty.element.subtype(&Type::int()) && listed(p).is_some()
+}
 
 impl PartialEq for Seen {
     fn eq(&self, _: &Seen) -> bool {
@@ -10475,7 +10528,7 @@ impl Scope {
         if let Some((names, _)) = &mut self.seen.projection {
             rebase(names);
         }
-        if let Some((names, _, _)) = &mut self.seen.enumeration {
+        if let Some((names, _, _, _)) = &mut self.seen.enumeration {
             rebase(names);
         }
         // The order of an eager scope's leaves ([`Order::sync`]) is such a cache too; `x`, in
@@ -18341,31 +18394,135 @@ impl Scope {
     /// enumerated and the scope is not exact, so that [`Scope::reduce_with`] need not look
     /// for the names it changed.
     fn enumerate(&mut self) -> bool {
+        // Complexity tradeoff (BENCH-l0139-follow-over-cap): naive version, every written
+        // constraint on a changed name is due, and each is substituted, checked to end and
+        // passed to `enumerate_on`. A chain of k tests `slot != i` of a generic `slot` writes k
+        // constraints on `slot`, which lists no members (its finite set is not a set), so
+        // `enumerate_on` skips each one and records no key; and each test narrows `slot`, so
+        // the i-th enumeration did all of that for i constraints: Θ(k²) due, 33,151 at 256
+        // tests (559 at 32, 59 times), and compiling 2048 tests took 9.3 s against 132 ms at
+        // 256. Used: the snapshot of the last enumeration keeps W, the constraints it left
+        // waiting, in two classes (defined below): those blocked on their one open name m,
+        // indexed by m, and the others. A changed name n whose static value did not change
+        // gathers the others on n, walking the smaller of that class and n's constraints,
+        // O(min(|other|, c) log) for c constraints on n, and those blocked on n only when n is
+        // now enumerable; a name added, removed, or whose static value changed gathers all its
+        // constraints, as before. The chain then costs O(k log k). Tradeoffs: W is kept up to
+        // date for the constraints due, O(due · log) more per enumeration; a constraint of the
+        // other class (one closed or just enumerated, and so not yet in the snapshot) is
+        // gathered by each change of one of its names until an enumeration finds it settled.
+        // Tests
+        // `l01_39_reduced_product::follow::following_tests_of_a_name_gather_linearly_many_constraints`,
+        // `…::follow::bench::compiling_following_tests_of_a_name_scales`; COMPLEXITY.md row
+        // BENCH-l0139-follow-over-cap.
+        //
+        // Definitions. S_i is the scope as enumeration E_i found it (its snapshot `now`, taken
+        // before E_i changes anything; the early pass and `enumerate_exactly` change no
+        // product, so the pending filter reads S_i's products). For a written constraint k
+        // with free names F, in a scope: its statics are the static values of F
+        // (`statics_of`), its open names the rest, its key (k, statics). The pending filter
+        // sends k to `enumerate_on` exactly when: (a) every name of F is in scope, (b) at most
+        // one name is open, (c) the key is not in `enumerated`, and (d) k with its statics
+        // substituted ends (`stage::ends`). k is
+        //   settled at E_i when (a) holds and its key is in S_i's `enumerated` (`at_last`);
+        //   stuck when (a), (b) or (d) fails; each depends only on which names are in scope
+        //   and on their static values (`open` is F less the statics; the substituted term
+        //   depends on the statics alone);
+        //   blocked on m when it is neither, its one open name is m, (d) holds, and m is not
+        //   enumerable ([`enumerable`]), so that `enumerate_on` skips it (the `[n]` arm
+        //   continues when the element is not an integer or `listed` gives `None`) and
+        //   changes nothing.
+        // E_i stores W_i: each constraint due at E_i classed by the filter (settled and stuck
+        // ones left out, blocked ones under their name, the rest among the others), and every
+        // constraint of W_(i-1) not due at E_i as it was.
+        // Claim H_i, for every k written in S_i, with no name of F added, removed or changed
+        // in static value since S_i: if k is not in W_i, then k is settled or stuck at E_i;
+        // if k is blocked on m in W_i, then at E_i its statics were those of S_i, m its one
+        // open name, (d) held, and m was not enumerable in S_i, or its key was in `enumerated`.
+        // Proof that the constraints this gathers give the same enumeration as the naive due
+        // set, every constraint on every changed name. It is enough that each constraint of the
+        // naive set that is not gathered is one the pending filter and the early pass skip or
+        // that `enumerate_on` skips with no change, since the main pass treats each pending
+        // constraint in turn and a skipped one affects no other.
+        // (1) Take such a k at E_(i+1), with T the scope now. It is on a changed name n, and is
+        // not gathered, so: k is not new or rewritten since S_i (the `written` diff); no name
+        // of F was added, removed, or changed its static value since S_i (those names gather
+        // all their constraints); no key of address k left `enumerated` since S_i (the
+        // `enumerated` diff below); k is not among the others of W_i (else it was gathered
+        // through n); and if k is blocked on m, then m is not enumerable in T (if m = n, by the
+        // rule; if m != n and m changed since S_i, it was gathered through m unless m is not
+        // enumerable; if m did not change, its product is that of S_i, by H_i not enumerable).
+        // (2) Not in W_i: by H_i k is settled or stuck at E_i. Settled: by (1) the same names
+        // are in scope with the same static values, so its key now is the same, and it is
+        // still in `enumerated`, since no key of address k left it: the filter skips it.
+        // Stuck: the same facts give the same (a), (b), (d), so it is stuck now: skipped.
+        // (3) Blocked on m: its statics, open name and (d) are those of E_i by (1), and m is
+        // not enumerable in T by (1); so either its key is in `enumerated` (skipped), or the
+        // filter passes it and `enumerate_on` skips it at the `[n]` arm with no change. The
+        // early pass takes closed constraints only (every name static), so it skips k too.
+        // (4) H_(i+1) holds after E_(i+1): a constraint due is classed now, against S_(i+1)
+        // (settled against `at_last`, stuck by the same tests, blocked by `enumerable` of
+        // m's product in S_(i+1)). One not due kept its class, and by (1) to (3) its names'
+        // presence and statics are those of S_i, its key status the same, and if blocked on m,
+        // m not enumerable in S_(i+1); so its class still holds at E_(i+1).
+        // (5) H_1 for a first enumeration: every written constraint is due. A snapshot's W
+        // stays `None` when its enumeration returned early (the scope empty), and the next
+        // enumeration then gathers as the naive version did and stores `None` again, so H is
+        // only ever used for a W found by a whole pass.
+        // (6) The settled test reads S_i's `enumerated` (`at_last`), not the keys E_i itself
+        // adds: a key added during E_i and removed before E_(i+1) is in neither snapshot, so
+        // its removal is not in the next `enumerated` diff, and step (2) would fail for it.
+        // Such a constraint is among the others for one more enumeration, and is settled at
+        // the next one that gathers it. A constraint classed blocked whose open name an
+        // earlier constraint of the same pass makes enumerable is enumerated in that pass;
+        // its key is then in `enumerated`, the second case of H.
+        // A join keeps this side's `seen` (`Scope::join`) and so its snapshot and W together,
+        // and the diffs run from that snapshot; the scopes put in place of another (`unbind`,
+        // `join_kept`, `narrow_node`, `narrow_linear`) bring their own `seen`, made with their
+        // own `written` and `enumerated`. `Scope::seen_fresh` rebases the snapshot's names at a
+        // fresh name only, which no written constraint mentions.
+        let at_last = self.enumerated.clone();
         let now = (
             self.names.view().clone(),
             self.written.clone(),
             self.enumerated.clone(),
+            None,
         );
         let last = self.seen.enumeration.replace(now);
         if self.exact {
             self.enumerate_exactly(last.as_ref());
         }
+        let mut waiting: Option<Waiting>;
         let due: BTreeSet<Address> = match last {
-            None => self.written.keys().cloned().collect(),
-            Some((names, written, enumerated)) => {
+            None => {
+                waiting = Some(Waiting::default());
+                self.written.keys().cloned().collect()
+            }
+            Some((names, written, enumerated, last_waiting)) => {
+                waiting = last_waiting;
                 let mut out = BTreeSet::new();
                 for d in written.diff(&self.written) {
-                    if let DiffItem::Add(k, _) | DiffItem::Update { new: (k, _), .. } = d {
-                        out.insert(k.clone());
+                    match d {
+                        DiffItem::Add(k, _) | DiffItem::Update { new: (k, _), .. } => {
+                            out.insert(k.clone());
+                        }
+                        DiffItem::Remove(k, _) => {
+                            if let Some(w) = &mut waiting {
+                                w.remove(k);
+                            }
+                        }
                     }
                 }
-                let mut changed: Vec<Arc<str>> = names
+                // Each changed name, and whether all its constraints are gathered: when it was
+                // added or removed, or its static value changed (proof above).
+                let mut changed: Vec<(Arc<str>, bool)> = names
                     .diff(&self.names)
-                    .map(|d| {
-                        let (DiffItem::Add(n, _)
-                        | DiffItem::Remove(n, _)
-                        | DiffItem::Update { new: (n, _), .. }) = d;
-                        n.clone()
+                    .map(|d| match d {
+                        DiffItem::Add(n, _) | DiffItem::Remove(n, _) => (n.clone(), true),
+                        DiffItem::Update {
+                            old: (_, was),
+                            new: (n, p),
+                        } => (n.clone(), was.value() != p.value()),
                     })
                     .collect();
                 // Complexity tradeoff: naive version, every constraint on every changed name
@@ -18466,12 +18623,46 @@ impl Scope {
                 // `zero_reached` returns `root_failures` from an empty scope as well (`(!s.bottom,
                 // s.root_failures)`), so the proposed fix alone would not make the report
                 // independent of the order; the choice above goes to the author.
-                changed.sort_by_key(|n| self.written_by.count(n));
-                for n in &changed {
+                changed.sort_by_key(|(n, _)| self.written_by.count(n));
+                // The constraints gathered on each changed name: all of them, or those of W on
+                // it, the blocked ones only when it is now enumerable (proof above).
+                let gathered: Vec<(Arc<str>, Vec<Address>)> = changed
+                    .into_iter()
+                    .map(|(n, all)| {
+                        let on: Vec<Address> = match &waiting {
+                            Some(w) if !all => {
+                                let mut on: Vec<Address> = if w.other.len()
+                                    < self.written_by.count(&n)
+                                {
+                                    (w.other.iter())
+                                        .filter(|k| {
+                                            (self.written.get(*k)).is_some_and(|f| f.contains(&n))
+                                        })
+                                        .cloned()
+                                        .collect()
+                                } else {
+                                    (self.written_by.of(&n))
+                                        .filter(|k| w.other.contains(*k))
+                                        .cloned()
+                                        .collect()
+                                };
+                                if let Some(blocked) = w.blocked_by.get(&n)
+                                    && self.names.read(&n).is_some_and(|p| enumerable(&p))
+                                {
+                                    on.extend(blocked.iter().cloned());
+                                }
+                                on
+                            }
+                            _ => self.written_by.of(&n).cloned().collect(),
+                        };
+                        (n, on)
+                    })
+                    .collect();
+                for (n, on) in &gathered {
                     if !self.names.read(n).is_some_and(|p| p.value().is_some()) {
                         continue;
                     }
-                    let closed: Vec<(Term, Vec<Arc<str>>, Enumerated)> = (self.written_by.of(n))
+                    let closed: Vec<(Term, Vec<Arc<str>>, Enumerated)> = (on.iter())
                         .filter_map(|k| {
                             let free = self.written.get(k)?;
                             let statics = self.statics_of(free);
@@ -18490,8 +18681,8 @@ impl Scope {
                         return true;
                     }
                 }
-                for n in &changed {
-                    out.extend(self.written_by.of(n).cloned());
+                for (_, on) in gathered {
+                    out.extend(on);
                 }
                 for d in enumerated.diff(&self.enumerated) {
                     if let imbl::ordset::DiffItem::Remove((k, _)) = d
@@ -18508,8 +18699,28 @@ impl Scope {
         let pending: Vec<(Term, Vec<Arc<str>>, Enumerated)> = due
             .into_iter()
             .filter_map(|k| {
-                let free = self.written.get(&k)?;
+                // W keeps a due constraint by its class (proof above): `Leave` for one settled
+                // or stuck, `Block(m)` for one blocked on `m`, `Wait` for the others.
+                enum Class<'a> {
+                    Leave,
+                    Block(&'a Arc<str>),
+                    Wait,
+                }
+                let mut class = |k: &Address, c: Class| {
+                    if let Some(w) = &mut waiting {
+                        match c {
+                            Class::Leave => w.remove(k),
+                            Class::Block(m) => w.insert(k, Some(m)),
+                            Class::Wait => w.insert(k, None),
+                        }
+                    }
+                };
+                let Some(free) = self.written.get(&k) else {
+                    class(&k, Class::Leave);
+                    return None;
+                };
                 if !free.iter().all(|n| self.names.contains_key(n)) {
+                    class(&k, Class::Leave);
                     return None;
                 }
                 let statics = self.statics_of(free);
@@ -18519,12 +18730,30 @@ impl Scope {
                     .cloned()
                     .collect();
                 let key = (k.clone(), statics.clone().into_iter().collect());
-                (open.len() <= 1 && !self.enumerated.contains(&key))
-                    .then(|| substitute(k.term(), &statics))
-                    .filter(stage::ends)
-                    .map(|c| (c, open, key))
+                if at_last.contains(&key) || open.len() > 1 {
+                    class(&k, Class::Leave);
+                    return None;
+                }
+                if self.enumerated.contains(&key) {
+                    class(&k, Class::Wait);
+                    return None;
+                }
+                let Some(c) = Some(substitute(k.term(), &statics)).filter(stage::ends) else {
+                    class(&k, Class::Leave);
+                    return None;
+                };
+                match &open[..] {
+                    [m] if !self.names.read(m).is_some_and(|p| enumerable(&p)) => {
+                        class(&k, Class::Block(m));
+                    }
+                    _ => class(&k, Class::Wait),
+                }
+                Some((c, open, key))
             })
             .collect();
+        if let (Some(e), Some(w)) = (&mut self.seen.enumeration, waiting) {
+            e.3 = Some(w);
+        }
         if pending.is_empty() {
             return self.exact;
         }
@@ -18730,7 +18959,7 @@ impl Scope {
         let mut due: BTreeSet<Address> = BTreeSet::new();
         match last {
             None => due.extend(self.written.keys().cloned()),
-            Some((names, written, _)) => {
+            Some((names, written, _, _)) => {
                 for d in written.diff(&self.written) {
                     match d {
                         DiffItem::Add(k, _) | DiffItem::Update { new: (k, _), .. } => {
