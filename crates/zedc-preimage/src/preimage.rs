@@ -877,9 +877,9 @@ enum Split {
 /// `i [4..]` for `i [4..=4, 7..]`. Test: `l01_25_preimage_catalog::entries` (the `[0, 10^9]`
 /// case), `l01_25_preimage_catalog::s22::remainders_over_many_periods_scale` and
 /// `l01_25_preimage_catalog::s22::more_random_guarded_chains_keep_their_preimages_3000` and
-/// `_3750` (the three wider boxes); COMPLEXITY.md row S22e-wide. A complete solution for the wider boxes would
-/// project over each piece of the box rather than its hull, or keep the congruence facet
-/// below. The cost is the projection over the box's hull, linear in the pieces, and, for
+/// `_3750` (the three wider boxes); COMPLEXITY.md row S22e-wide. A complete solution for the wider
+/// boxes would project over each piece of the box rather than its hull, or keep the congruence
+/// facet below. The cost is the projection over the box's hull, linear in the pieces, and, for
 /// an answer kept before the first transfer, one more transfer and split over the
 /// transfer's box, `O(n log n)`. A complete solution would give the box a congruence facet
 /// (an input's interval together with the set of its remainders mod `m` that it admits), so
@@ -1495,7 +1495,8 @@ impl Defined {
     /// means the two sets are equal as sets (one node for one set, proof in module
     /// `divisors`), so `other`'s divisors are among `self`'s and `self.nonzero` alone is
     /// `d != 0` over `U`; the same for `other`; else both parts are kept. `rest` is the
-    /// conjunction, `true` dropped. Tests: `l01_38_omega_test::one_scope::a_relation_that_divides_by_a_term_holds_where_the_interpreter_gives_true`
+    /// conjunction, `true` dropped. Tests:
+    /// `l01_38_omega_test::one_scope::a_relation_that_divides_by_a_term_holds_where_the_interpreter_gives_true`
     /// and `l01_38_presburger::ladder::calls_whose_arguments_may_fail_alike_share_one_translation`
     /// check the conditions against the interpreter on small windows; a dropped divisor that no
     /// window point sets to 0 is not caught.
@@ -1591,7 +1592,8 @@ impl Defined {
     /// (`if n != 0 { x mod n < n || ... }`),
     /// `ladder::the_families_of_the_benchmarks_are_answered_at_small_sizes` (`guarded_divisors`,
     /// `n + i == 0 || x mod (n + i) >= 0`) and
-    /// `l01_38_omega_test::one_scope::a_relation_that_divides_by_a_term_holds_where_the_interpreter_gives_true` (`if x mod n >= 1 { x mod (n + 1) > 0 }`); none of
+    /// `l01_38_omega_test::one_scope::a_relation_that_divides_by_a_term_holds_where_the_interpreter_gives_true`
+    /// (`if x mod n >= 1 { x mod (n + 1) > 0 }`); none of
     /// these guards is `t <= -1` with a divisor `-t - k`, so a wrong `down` form is not caught.
     fn shown_nonzero(sets: &DivisorSets, divisors: Set, f: &Formula, out: &mut Vec<Lin>) {
         use presburger::Rel;
@@ -1929,7 +1931,8 @@ fn keep_all(fs: Vec<Formula>) -> Formula {
 /// to integers with the integer meaning; a power by any other exponent is `None`. The
 /// comparisons of `Walk::formula_at` compare such terms. So the one premise is the
 /// caller's filter, which is not checked here. Tests: `l01_38_presburger::carrier`
-/// (`float_associativity_is_not_proved`, `rational_and_generic_parameters_are_not_read_as_integers`,
+/// (`float_associativity_is_not_proved`,
+/// `rational_and_generic_parameters_are_not_read_as_integers`,
 /// `a_float_times_zero_and_a_float_power_are_not_read_as_integers`, and the others there,
 /// through the test driver and the checker); a caller that passes a non-`int` name is not
 /// caught here, only by those tests of the two callers.
@@ -2130,9 +2133,9 @@ impl<'t> Scoped<'t> {
     /// is the input. Products of two symbols are atoms when `products` holds, and then the
     /// relation holds the condition that the test's value is not an atom, as [`relations`]'s
     /// does (`Tr::definedness`, RUNG2-definedness). `None` when the
-    /// body is outside the domain. Every parameter is read as an integer, as in [`relations`], so the
-    /// caller asks only of a function whose parameters all hold `int`s alone (RUNG2-carrier). Time of the body, of the parameters and of the parts of the
-    /// scope no earlier body read.
+    /// body is outside the domain. Every parameter is read as an integer, as in [`relations`], so
+    /// the caller asks only of a function whose parameters all hold `int`s alone (RUNG2-carrier).
+    /// Time of the body, of the parameters and of the parts of the scope no earlier body read.
     ///
     /// The body of a function the scope binds is read over its parameters' canonical atoms
     /// (`Walk::canonical_formula`), the relation each claimed call of it shares, so a chain
@@ -2156,7 +2159,8 @@ impl<'t> Scoped<'t> {
             ps.len() == params.len()
                 && (0..ps.len()).all(|i| tx.name(tx.param(ps, i)) == &params[i])
         });
-        // The atom each parameter stands for: its class's atom ([`Tx::class`]), or a name of this body's own.
+        // The atom each parameter stands for: its class's atom ([`Tx::class`]), or a name of this
+        // body's own.
         self.read += 1;
         let atoms: Vec<Arc<str>> = match lam {
             Some((l, env)) => {
@@ -2720,8 +2724,8 @@ impl Tr {
             .collect()
     }
 
-    /// The definitions as [`presburger::placing::placed`] places them, a quotient and its remainder as
-    /// one, each marked total where some value of its variables satisfies it for every value
+    /// The definitions as [`presburger::placing::placed`] places them, a quotient and its remainder
+    /// as one, each marked total where some value of its variables satisfies it for every value
     /// of the other atoms. Proof for each that is so marked: a quotient and remainder by a
     /// constant `c` other than 0 (checked here) are those of Euclidean division, which exist
     /// for every dividend; an `if` holds `g && x == a` or `!g && x == b`, and one of `g` and
@@ -2829,7 +2833,8 @@ impl Tr {
     // Complexity tradeoff: the divisor is an `Int` of any size (R5-CLAUDE-4), so its written
     // digits are the cost of each operation on it; the pair is found by the same key. Why: as
     // an `i128`, a divisor from `2^127` up was read as no constant and the question was
-    // dropped with no message. Test: `l01_38_presburger::pncx_probe::pncx_divisor_past_i128_is_read`.
+    // dropped with no message. Test:
+    // `l01_38_presburger::pncx_probe::pncx_divisor_past_i128_is_read`.
     // Proof that the definition holds of exactly the kernel's values. The kernel's `div` and
     // `mod` are `div_euclid` and `rem_euclid` (`zed_kernel::eval::int_binary`). For `c != 0`
     // the division theorem gives exactly one pair with `a == c·q + r` and `0 <= r < |c|`,
@@ -3257,7 +3262,8 @@ type Power = Option<(Tid, Eid, Count)>;
 /// squaring name). Proof by induction over [`Tx::joined`]: a leaf counts `1 = 2^0`, and a
 /// product at depth `d` adds two counts of depth at most `d - 1`, each at most `2^(d-1)` by
 /// induction, so its count is at most `2^d`. One add costs `O(d)` and a chain of `d` names
-/// `O(d²)` bits in all. Tests: `l01_25_preimage_catalog::powers::products_and_nested_squares_at_small_sizes_and_past_64_bits`
+/// `O(d²)` bits in all. Tests:
+/// `l01_25_preimage_catalog::powers::products_and_nested_squares_at_small_sizes_and_past_64_bits`
 /// (depths to 100, squares and Fibonacci nesting) and the bench
 /// `l01_25_preimage_catalog::bench::powers::reading_nested_squares_as_a_power_is_linear_in_their_depth`.
 #[derive(Clone)]
@@ -3331,8 +3337,8 @@ enum Node<'t> {
 }
 
 /// The literal's own term in the match the elaborator writes for a literal compared with a
-/// value whose carrier is inferred: an arm `is f64`, `is rat` or `is f32` for each carrier it follows,
-/// each to a literal, and last the literal itself. The same for an operation on generic
+/// value whose carrier is inferred: an arm `is f64`, `is rat` or `is f32` for each carrier it
+/// follows, each to a literal, and last the literal itself. The same for an operation on generic
 /// literals alone built once per carrier (`elab::walk::per_carrier`, L1.26a), whose arms are
 /// that operation on the literals at each carrier and whose last arm is the operation on
 /// their own values, `match y { is f64 -> (4.0 * 2.0), …, _ -> (4 * 2) }`: each arm a
@@ -4179,8 +4185,8 @@ struct Projection {
 /// Tests of the answers: `l01_38_omega_test::projection_oracle::
 /// each_answer_through_a_projected_callee_is_the_interpreters_on_a_box` and its random twin,
 /// against the interpreter at every point of a box (the module doc of `projection_oracle`
-/// names this path, `Walk::projection`, as one it covers). They cannot catch an error at a point outside the box, or for a callee
-/// shape their units do not build.
+/// names this path, `Walk::projection`, as one it covers). They cannot catch an error at a point
+/// outside the box, or for a callee shape their units do not build.
 // Complexity tradeoff: naive version, a call that does not hold its callee's claim reads the
 // callee's body again, O(m) a call for a callee of m links, O(n·m) over a chain of n links.
 // Used: the callee's canonical relation with every variable but the canonical atoms and the
@@ -4987,8 +4993,8 @@ struct Tx<'t> {
     /// on the terms alone, and a term's number is never reused ([`Terms`]), so it outlives the
     /// body being read. Proof that a number keeps its node (proofdoc4b): [`Terms`] only
     /// pushes to `nodes`, `kids` and `params` (`Terms::number`, `Terms::made`,
-    /// `Terms::own_var`), with no truncation or removal; the one overwrite, `self.nodes[id] = node` in
-    /// `Terms::add`, fills the `Node::Other` that `Terms::number` pushed for `id` in the same
+    /// `Terms::own_var`), with no truncation or removal; the one overwrite, `self.nodes[id] = node`
+    /// in `Terms::add`, fills the `Node::Other` that `Terms::number` pushed for `id` in the same
     /// call, and `add` takes `&mut self` and drains its stack before it returns, so no
     /// reader sees that placeholder.
     reads: HashMap<(Tid, Name), Reads>,
@@ -5557,10 +5563,10 @@ impl<'t> Tx<'t> {
     ///
     /// Test: `a_call_that_fails_at_an_atom_an_undo_takes_away_is_not_kept` (red before 3's
     /// `CallKey` removal: a key named `q0` with no definitions left), which also compares a
-    /// call made afterward under the same key with a fresh translation (`tests::RECHECK`). It cannot
-    /// catch a wrong failure of the kind 4 leaves open. Cost of 3's check: O(the key's terms)
-    /// per entry removed or kept, which the entry's key already cost to make; the ends of the
-    /// conditions are found once per interned number ([`DivisorSets::aux_end`],
+    /// call made afterward under the same key with a fresh translation (`tests::RECHECK`). It
+    /// cannot catch a wrong failure of the kind 4 leaves open. Cost of 3's check: O(the key's
+    /// terms) per entry removed or kept, which the entry's key already cost to make; the ends of
+    /// the conditions are found once per interned number ([`DivisorSets::aux_end`],
     /// [`FormulaNumbers::aux_end`]). Row PROOF-preimage-forget-callkey.
     ///
     /// Complexity tradeoff: the naive version removed every entry the undone attempt made, the
@@ -6702,9 +6708,9 @@ impl<'m, 't> Walk<'m, 't> {
     }
 
     /// Whether `f` is the formula of a claimed call ([`Walk::formula_called`]): a conjunction
-    /// whose last part is `b == n` for a binding `b` numbered n. As an operand of `&&` its parts are added,
-    /// so its callee's relation is the kept part of the conjunction and the binding one of the
-    /// new parts, which [`presburger::extend`] decides beside it. O(1).
+    /// whose last part is `b == n` for a binding `b` numbered n. As an operand of `&&` its parts
+    /// are added, so its callee's relation is the kept part of the conjunction and the binding one
+    /// of the new parts, which [`presburger::extend`] decides beside it. O(1).
     fn claimed(&self, f: &Formula) -> bool {
         let Formula::And(gs) = f else {
             return false;
@@ -7694,12 +7700,13 @@ impl<'m, 't> Walk<'m, 't> {
     /// transfer is the same in every context, and an enclosing parameter is read through the
     /// lambda's scope, which the summary's key holds. Why: `cx.inputs` is set by
     /// `Tx::start_from` from what `Tx::begin` made, and changed only by `Tx::open`, which
-    /// adds the call's parameters, and `Tx::shut`, which restores it, so an input of the transfer has one interval in every
-    /// context. A parameter over an interval is the name `\u{1}{i}.{sid}`, made once for the
-    /// summary numbered `sid` (`Walk::summon`) and given that summary's snapped interval; a
-    /// body reaches it only through a scope its `open` bound, and that scope is in the key of
-    /// every summary taken under it, so the key fixes the enclosing summary and its interval.
-    /// Tests: `l01_25_preimage_catalog::scopes::one_function_called_twice_is_summarized_for_each_argument`,
+    /// adds the call's parameters, and `Tx::shut`, which restores it, so an input of the transfer
+    /// has one interval in every context. A parameter over an interval is the name
+    /// `\u{1}{i}.{sid}`, made once for the summary numbered `sid` (`Walk::summon`) and given that
+    /// summary's snapped interval; a body reaches it only through a scope its `open` bound, and
+    /// that scope is in the key of every summary taken under it, so the key fixes the enclosing
+    /// summary and its interval. Tests:
+    /// `l01_25_preimage_catalog::scopes::one_function_called_twice_is_summarized_for_each_argument`,
     /// `l01_25_preimage_catalog::scaling::nested_calls_are_summarized`.
     #[expect(
         clippy::too_many_arguments,
@@ -8104,7 +8111,8 @@ impl<'m, 't> Walk<'m, 't> {
             && k.is_zero()
         {
             // `c ^ 0` is 1 wherever `c` is an integer, `0 ^ 0` too: the kernel's
-            // `i64::checked_pow` and `Rat::pow` give 1 for exponent 0 (`zed_kernel::eval::int_binary`,
+            // `i64::checked_pow` and `Rat::pow` give 1 for exponent 0
+            // (`zed_kernel::eval::int_binary`,
             // `zed_kernel::num::Rat::pow`), and where `c` fails the term fails, which the
             // preimage of `c` under every integer leaves out. Tests:
             // `l01_25_preimage_catalog::s22::a_power_zero_of_a_quotient_by_a_term_is_not_exact_where_the_divisor_is_zero`,
@@ -8499,7 +8507,8 @@ impl<'m, 't> Walk<'m, 't> {
             }
             Prim::Abs => {
                 // `abs(u) = max(u, -u) = u + max(-2 * u, 0)`: a choice on `u >= 0`. Of a line,
-                // `-u` where `u` is negative and `u` elsewhere, with exact bounds ([`Pa::by_sign`]).
+                // `-u` where `u` is negative and `u` elsewhere, with exact bounds
+                // ([`Pa::by_sign`]).
                 let pa = self.pa(a, env).await?;
                 match &pa {
                     Pa::Const(c) => return Some(Pa::Const(c.abs())),
@@ -9319,7 +9328,8 @@ impl<'m, 't> Walk<'m, 't> {
     // in place has no kept term, so a later walk that meets it alone translates it again,
     // which costs what the whole chain cost here; a chain nested on the right,
     // `z0 + (z1 + …)`, is not read in place and still keeps a term at each `+`, Θ(k²).
-    // Test: `l01_39_reduced_product::scaling::a_sum_over_many_names_is_assumed_in_time_near_linear`,
+    // Test:
+    // `l01_39_reduced_product::scaling::a_sum_over_many_names_is_assumed_in_time_near_linear`,
     // COMPLEXITY.md row F154.
     // Proof that the result and the order of translation are those of the naive version. The
     // old arm read `lin(arg 0)` and then `lin(arg 1)`; unrolled down the left operands, it
@@ -9489,7 +9499,8 @@ impl<'m, 't> Walk<'m, 't> {
                         // is now an `Int` of any size ([`Walk::constant_coef`], a power built by
                         // [`Walk::built`] as for `lin_at` above), and [`Tr::pair_by_constant`]
                         // defines the pair for any `c != 0` (Euclidean, `0 <= r <= |c| - 1`).
-                        // Tests: `l01_38_presburger::checker::a_bound_past_the_64_bit_range_keeps_the_question`
+                        // Tests:
+                        // `l01_38_presburger::checker::a_bound_past_the_64_bit_range_keeps_the_question`
                         // (`mod 2^63 - 1`, `mod 2^63`) and
                         // `l01_38_presburger::pncx_probe::pncx_divisor_past_i128_is_read`
                         // (2^64 to 2^10000).
@@ -9560,7 +9571,8 @@ impl<'m, 't> Walk<'m, 't> {
                             // `tests::or_ifs_stay_exact_on_extrema_and_bodies_over_no_input`
                             // (narrow rows stay exact), and
                             // `l01_38_presburger::ladder::a_chain_with_abs_on_each_link_is_proved_past_eight_links`
-                            // with `l01_38_presburger::bench::ladder::products_along_a_chain_with_a_disjunction_on_each_link_scale`
+                            // with
+                            // `l01_38_presburger::bench::ladder::products_along_a_chain_with_a_disjunction_on_each_link_scale`
                             // (growth). None checks that the elimination keeps rows of two terms
                             // on its own; that is inferred from the steps above.
                             let hull = if p == Min {
@@ -9645,8 +9657,9 @@ impl<'m, 't> Walk<'m, 't> {
     /// writes as `if`s, needs no condition of its own.
     ///
     /// Memoized by term and scope, and a call by its key, which holds its arguments'
-    /// conditions when one may fail ([`Walk::shared_call_key`]), as the formula is, so it costs O(1) beside each entry of
-    /// the translation: each node of the condition is made once and shared.
+    /// conditions when one may fail ([`Walk::shared_call_key`]), as the formula is, so it costs
+    /// O(1) beside each entry of the translation: each node of the condition is made once and
+    /// shared.
     fn defined(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<Defined>> {
         self.translated(
             |m| &mut m.defined,
@@ -9890,8 +9903,8 @@ impl<'m, 't> Walk<'m, 't> {
     /// The key a call is translated under ([`Walk::call_key`]), with, when the relation must
     /// hold exactly where its test is `true` ([`Tr::definedness`]) and an argument may fail,
     /// the condition that each argument is not an atom, by the number of its set of divisors
-    /// ([`DivisorSets`]) and of its other part ([`FormulaNumbers`]). The arguments' linear terms are
-    /// their values only where they are defined, and an argument that fails where another with
+    /// ([`DivisorSets`]) and of its other part ([`FormulaNumbers`]). The arguments' linear terms
+    /// are their values only where they are defined, and an argument that fails where another with
     /// the same term does not (`(x mod n) * 0` and `0`) gives the callee's `==` another value,
     /// so two calls share a translation only when their arguments have the same terms and the
     /// same conditions. Two calls whose arguments were made apart but alike,
@@ -9912,7 +9925,8 @@ impl<'m, 't> Walk<'m, 't> {
     /// ([`FormulaNumbers`]). So at every point the two argument lists have the same values,
     /// and the callee's relation and condition are the same. An empty `k.2` (no argument may
     /// fail) is the key of a call that reads its arguments by linear terms alone, as before.
-    /// Test: `l01_38_presburger::ladder::calls_whose_arguments_may_fail_alike_share_one_translation`;
+    /// Test:
+    /// `l01_38_presburger::ladder::calls_whose_arguments_may_fail_alike_share_one_translation`;
     /// it cannot catch a callee that reads an argument by more than its term and condition.
     async fn shared_call_key(
         &'m self,
@@ -12432,7 +12446,8 @@ impl LetPa {
     /// its formed sum times its weight and its parts are not entered: its formed sum is its
     /// value, so the weight its parts would get through it is counted in that sum. A part also
     /// reached by another path gets the weight of that path only, which is what is missing.
-    /// Tests: `l01_39a_bit_words::narrowing::a_block_of_tested_lets_is_narrowed_soundly_against_the_interpreter`
+    /// Tests:
+    /// `l01_39a_bit_words::narrowing::a_block_of_tested_lets_is_narrowed_soundly_against_the_interpreter`
     /// (random blocks of sums, checked against the interpreter); it cannot catch an error in
     /// a graph deeper than its 4 bindings.
     fn sum(&self, dom: Option<Dom<'_, '_>>) -> Sep {
@@ -12899,7 +12914,8 @@ impl ByClass {
     /// leaf is the base under its own affine map, and a clamp does not commute with a map
     /// that is not the identity, so the leaves' clamps differ. Trigger: `min` or `max` with a
     /// constant of a term whose values lie on both sides of it, below an `if` on the split's
-    /// remainder. Test: `store::preimage::tests::a_chain_with_clamps_is_read_in_time_near_its_length`.
+    /// remainder. Test:
+    /// `store::preimage::tests::a_chain_with_clamps_is_read_in_time_near_its_length`.
     /// COMPLEXITY.md rows S22e-quad and S22-order-chain. A complete solution is the one named
     /// at [`Walk::by_class`]: the congruence facet in the transfer's sets.
     fn clamp(
@@ -14331,7 +14347,8 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
 /// piece, so the result holds the members with other remainders there and is not exact.
 /// Why: listing every period costs pieces in the width of `within` divided by `c`, which is
 /// exponential in the bits written. Trigger: `within` spanning more than two periods of `c`.
-/// Test: `l01_25_preimage_catalog::random::a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between`.
+/// Test:
+/// `l01_25_preimage_catalog::random::a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between`.
 /// COMPLEXITY.md row C17. A complete solution would pair the interval with the congruence
 /// facet (`x mod c` in `z` as a set of classes), which the reduced product can hold exactly.
 fn mod_pre(z: &IntervalSet, c: i64, within: &IntervalSet) -> (IntervalSet, bool) {
@@ -14798,8 +14815,8 @@ trait Search {
     fn all(&mut self, b: &Domains) -> bool;
 }
 
-/// Branch and prune over `root`: each box not skipped by `search` is narrowed by [`preimage_in`] and
-/// its inputs' classes, and dropped when empty, given to `search` when every point meets
+/// Branch and prune over `root`: each box not skipped by `search` is narrowed by [`preimage_in`]
+/// and its inputs' classes, and dropped when empty, given to `search` when every point meets
 /// `demand`, and otherwise halved on its widest input; a single point is evaluated. Every box
 /// is smaller than the one it was split from, so the search ends. `Some(true)` when `search`
 /// stopped it, `None` when a point cannot be run.

@@ -37,10 +37,10 @@
 //! and join the two recursive unions, `O(m log(n/m + 1))` expected work for sizes `m <= n`).
 //! The full citation, how it was checked and the quote are at `zed_kernel::treap_set`'s module
 //! comment (the 1998 text was not obtained; the bound is read from the 2016 paper's
-//! Theorem 4, whose text was checked). The bound needs the priorities random (`PRIORITIES`, below). The departures: the
-//! recursion stops at `a == b` and at a pair met before (`unions`), and both give the
-//! union itself, so the calls made are a subset of the cited recursion's, plus a hash lookup
-//! for each; and `make` looks each node up before making it, O(1) expected for each.
+//! Theorem 4, whose text was checked). The bound needs the priorities random (`PRIORITIES`, below).
+//! The departures: the recursion stops at `a == b` and at a pair met before (`unions`), and both
+//! give the union itself, so the calls made are a subset of the cited recursion's, plus a hash
+//! lookup for each; and `make` looks each node up before making it, O(1) expected for each.
 //! "O(1) for each subtree the two share", in the sense used here: the call on the keys of
 //! `a` and `b` in a range of keys returns at once when the two hold the same keys there, so
 //! the calls made are at the nodes of the union's treap above a key of one set and not the
@@ -379,8 +379,8 @@ mod tests {
         assert_eq!(sets.union(a, one), a);
     }
 
-    /// `Sets::aux_end` of every set made, from singles, unions and the splits they make,
-    /// against the largest auxiliary variable its divisors name, listed (PROOF-preimage-forget-callkey).
+    /// `Sets::aux_end` of every set made, from singles, unions and the splits they make, against
+    /// the largest auxiliary variable its divisors name, listed (PROOF-preimage-forget-callkey).
     #[test]
     fn a_set_knows_the_newest_auxiliary_variable_its_divisors_name() {
         use zedc_presburger::presburger::Factor;

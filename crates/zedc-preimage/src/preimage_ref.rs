@@ -1,5 +1,6 @@
 //! The backward transfer as it was before the piecewise-affine summary and the demand clip of
-//! S22a (main at fdf7918, which holds the 397f1c9 transfer and later changes), retained as an independent catalog, with the exact interval ends of TD-ends, the failure of a base raised to 0
+//! S22a (main at fdf7918, which holds the 397f1c9 transfer and later changes), retained as an
+//! independent catalog, with the exact interval ends of TD-ends, the failure of a base raised to 0
 //! (SOUND-div-exact), and a box of `c - x` no longer marked exact when the forward image of
 //! `{c} - z` merged pieces (S22-exact-mislabel) unless an enclosing guard removes every input
 //! that takes a value in the merged pieces (S22-guard-exact), so that tests can compare the
@@ -2567,8 +2568,8 @@ impl<'t> Tx<'t> {
     //   8.05 at 16 and `normal_div_neg2_chain` 11.8 at 16 and 8.3 at 128. Measured only: no
     //   bound on the pieces visited per link is proved.
     // The multi-input families are not timed (`ref_memo::UNTIMED_FAMILIES`); their answers are
-    // checked against the interpreter. Tests: `l01_25_preimage_catalog::ref_memo` (the scaling of each
-    // family, main's changed answers, calls 22, 45 and 86). COMPLEXITY.md C56.
+    // checked against the interpreter. Tests: `l01_25_preimage_catalog::ref_memo` (the scaling of
+    // each family, main's changed answers, calls 22, 45 and 86). COMPLEXITY.md C56.
     fn back_doubt(&mut self, t: Tid, env: Eid, d: &Demand, dd: &IntervalSet) -> Res {
         let dd = match d {
             Demand::Ints(z) if !dd.is_empty() => dd.meet(z).meet(&self.fwd(t, env).ints),
@@ -3461,8 +3462,8 @@ impl<'t> Tx<'t> {
     // Tests: `ref_memo::the_round_down_chain_keeps_three_pieces_and_one_piece_labels` and
     // `bench::ref_memo::normal_round_down_keeps_its_pieces_at_large_sizes` read both maxima
     // (`counts::inverse_most`) at every n to 128 and at 1024, 2048, 4096 and 8192: 3 and 1.
-    // Before this proof the bound rested on a probe at n = 16, 128, 1024 and 8192 (p = n, heights 5, 8, 11 and 14, nodes built per step at most 12, 32, 53 and 74,
-    // about 5.3 times the height).
+    // Before this proof the bound rested on a probe at n = 16, 128, 1024 and 8192 (p = n, heights
+    // 5, 8, 11 and 14, nodes built per step at most 12, 32, 53 and 74, about 5.3 times the height).
     //
     // Proof of O(log n) per link on `normal_min_gap` (COMPLEXITY.md K138,
     // PROOF-min-gap-log-per-link: `t_j = if i <= j { t } else { c_j - min(t, 20) }`,
@@ -3501,7 +3502,8 @@ impl<'t> Tx<'t> {
     //       `inverse` (the reflection) the label `xs` of a node that exists; `replace_slices`
     //       the range of a slice; `modulo_*` serve `Mod` only. Its values are the pieces of an
     //       `IntervalSet`, each nonempty, and an empty set gives no node. So every key has a
-    //       nonempty label; keys are disjoint nonempty integer ranges, so nodes <= |K(T)|. The operations act on K as on sets: `tree_union`
+    //       nonempty label; keys are disjoint nonempty integer ranges, so nodes <= |K(T)|. The
+    //       operations act on K as on sets: `tree_union`
     //       gives K(a) | K(b) (`ad.join(&data)` and `ad` are nonempty), `tree_restrict` K & [lo,
     //       hi], `tree_restrict_input` a subset of K, the reflection c - K, and `minmax` (Min, 20)
     //       gives (K & (-inf, 19]) | ([20, inf) if 20 in K). Let K_j = K(B_j) after its clip and
@@ -3516,7 +3518,8 @@ impl<'t> Tx<'t> {
     //       [c - 19, c + M] for every c in [4, 8]. And c_r - d_r = d_{(r-1) mod 5}: 4 - 1 = 3,
     //       5 - 4 = 1, 6 - 2 = 4, 7 - 5 = 2, 8 - 3 = 5; so c_r - I_r = I_{(r-1) mod 5}, as the
     //       reflection keeps the width. Claim K_j in I_{j mod 5}. Base: B_{m-1} starts from S_m,
-    //       which holds A_m's else part alone, so K_{m-1} = c_m - W, which lies in c_m - I_{m mod 5}
+    //       which holds A_m's else part alone, so K_{m-1} = c_m - W, which lies in
+    //       c_m - I_{m mod 5}
     //       = I_{(m-1) mod 5}. Step: if K_j lies in I_r, then K_j | W lies in I_r, (*) applies,
     //       and K_{j-1} lies in c_r - I_r = I_{(r-1) mod 5}. So B_j has at most |I_r| = 15 nodes;
     //       at S_j the tree before the reflection has K_j | W in I_r and after it c - (K_j | W),
@@ -3641,7 +3644,8 @@ impl<'t> Tx<'t> {
             // that `Tx::fwd` is sound (the forward transfer below "Forward transfer") is a
             // premise here, not shown at this site. An excluded pair (value v, input x) with v
             // outside it names a value no run reaches the node with, so no input's answer
-            // reads that pair; dropping it changes no label of a value the node takes. Without the clip, a product with no
+            // reads that pair; dropping it changes no label of a value the node takes.
+            // Without the clip, a product with no
             // exact inverse passed on every value but the excluded ones (calls 22, 45 and 86 of
             // main's dump came out coarser). Test:
             // `l01_25_preimage_catalog::ref_memo::calls_22_45_and_86_keep_main_s_answer_or_a_finer_one`
@@ -5728,7 +5732,8 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
 /// piece, so the result holds the members with other remainders there and is not exact.
 /// Why: listing every period costs pieces in the width of `within` divided by `c`, which is
 /// exponential in the bits written. Trigger: `within` spanning more than two periods of `c`.
-/// Test: `l01_25_preimage_catalog::random::a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between`.
+/// Test:
+/// `l01_25_preimage_catalog::random::a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between`.
 /// COMPLEXITY.md row C17. A complete solution would pair the interval with the congruence
 /// facet (`x mod c` in `z` as a set of classes), which the reduced product can hold exactly.
 fn mod_pre(z: &IntervalSet, c: i64, within: &IntervalSet) -> (IntervalSet, bool) {
@@ -6094,8 +6099,8 @@ trait Search {
     fn all(&mut self, b: &Domains) -> bool;
 }
 
-/// Branch and prune over `root`: each box not skipped by `search` is narrowed by [`preimage_in`] and
-/// its inputs' classes, and dropped when empty, given to `search` when every point meets
+/// Branch and prune over `root`: each box not skipped by `search` is narrowed by [`preimage_in`]
+/// and its inputs' classes, and dropped when empty, given to `search` when every point meets
 /// `demand`, and otherwise halved on its widest input; a single point is evaluated. Every box
 /// is smaller than the one it was split from, so the search ends. `Some(true)` when `search`
 /// stopped it, `None` when a point cannot be run.

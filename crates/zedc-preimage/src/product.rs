@@ -12,7 +12,8 @@
 //!   integer literals within the interval, the member of a one-member interval, or the members
 //!   of a finite set, and gives its literals back to the finite set and the interval; an
 //!   interval of more members is never listed, whatever its width;
-//! - enumeration: a name of type within `int` whose finite set lists its integers keeps only the members at which each written constraint on it holds, the
+//! - enumeration: a name of type within `int` whose finite set lists its integers keeps only the
+//!   members at which each written constraint on it holds, the
 //!   constraint's other names static and its form shown to end ([`stage::ends`]); a
 //!   constraint whose form does not show it ends removes nothing. A range is left to the
 //!   interval, congruence and relation reasoning (docs/thresholds.md, replacement 8). In a
@@ -223,8 +224,8 @@ impl fmt::Debug for IntsListed {
 
 /// Whether the shortcuts of [`IntsListed`] ([`Product::kept_by_listed`],
 /// [`Product::ints_all_listed`]) and the count in [`fills`] are taken: always, except on a
-/// thread inside `listed_shortcuts::off` (built with the feature `preimage-ref`), which the test that compares the two ways uses
-/// (TEST-ints-listed-shortcut-off).
+/// thread inside `listed_shortcuts::off` (built with the feature `preimage-ref`), which the test
+/// that compares the two ways uses (TEST-ints-listed-shortcut-off).
 // Test of the proofs at `fills`, `kept_by_listed`, `ints_all_listed` and `ints_among`:
 // `l01_39_reduced_product::listed_shortcuts::checks_agree_with_the_listed_shortcuts_on_and_off`
 // checks random callees of spaced and adjacent literal arms both ways at a fixed seed, and
@@ -234,7 +235,8 @@ impl fmt::Debug for IntsListed {
 // `the_listed_shortcuts_give_what_the_walks_give` (2000 rounds at a fixed seed: sets of runs
 // and gaps, `i0` all the set's points or a part of them, `x` inside `i0` or not; each shortcut
 // must answer in more than 100 rounds, so none passes by never answering; `ints_among` of the
-// set, a larger one and a smaller one), and `the_members_kept_by_an_interval_are_those_a_filter_keeps`
+// set, a larger one and a smaller one), and
+// `the_members_kept_by_an_interval_are_those_a_filter_keeps`
 // for `fills` and `kept_in`. They build the record `(i0, v0)` by hand with the condition its
 // readers rest on, so they cannot catch a writer that breaks it;
 // `reductions_record_only_intervals_and_sets_of_the_same_integers` checks the writer.
@@ -611,7 +613,8 @@ impl Product {
     // rebuilding that path. Open sub-case: that the pairs not shared number `O(d)` and their
     // splits `O(d log k)` in all, not `O(d log^2 k)`, for `v0` made from `vs` by the cuts of
     // `kept_in` or `kept_by_listed`. Measured only: 8.79 and 8.61 times the instructions from
-    // k = 64 to 512 in `l01_39_reduced_product::arm_test_through_call::bench::tests_on_a_callee_of_k_spaced_literal_arms_scale`
+    // k = 64 to 512 in
+    // `l01_39_reduced_product::arm_test_through_call::bench::tests_on_a_callee_of_k_spaced_literal_arms_scale`
     // (73ed87c26), under the limit of 10.5. The `IntervalSet::is_subset` bound is the one its
     // own comment states (zedc-lattice `interval.rs`).
     fn ints_among(&self, vs: &TreapSet<Value>) -> bool {
@@ -881,10 +884,10 @@ impl Product {
 // `k` literals cost `O(k^2 log k)`. Used: cuts of the persistent treap (module
 // `zed_kernel::treap_set`; Blelloch, Ferizovic and Sun, "Just join for parallel ordered sets",
 // SPAA 2016, doi:10.1145/2935764.2935768; the `O(log n)` expected cut and join bounds used are
-// stated, with the quoted text, at the head of zed-kernel `treap_set.rs`), `O(log k)` when `x` is one piece, as for a run of literals narrowed by a test,
-// and `O(min(k', p) log max(k', p))` otherwise. Cost: an interval of many pieces against a set
-// of many members, as the even numbers below `2k` narrowed at random, still walks
-// `min(k', p)`. Test:
+// stated, with the quoted text, at the head of zed-kernel `treap_set.rs`), `O(log k)` when `x` is
+// one piece, as for a run of literals narrowed by a test, and `O(min(k', p) log max(k', p))`
+// otherwise. Cost: an interval of many pieces against a set of many members, as the even numbers
+// below `2k` narrowed at random, still walks `min(k', p)`. Test:
 // `l01_39_reduced_product::arm_test_through_call::bench::tests_on_a_callee_of_k_literal_arms_scale`.
 fn kept_in(vs: &TreapSet<Value>, x: &IntervalSet) -> TreapSet<Value> {
     let out = |v: &Value| matches!(v, Value::Int(n) if !x.contains(*n));
@@ -2383,8 +2386,9 @@ struct Binding {
 /// keeps until its summary is made; the summaries made are the same, made in the same scopes.
 /// Trigger: the residual is a nest in which each bound name is read by a test, such as
 /// `let z = (let y = .. in if y > 0 ..) in if z > 0 ..`: each read summary still costs its
-/// whole bound term, `Θ(d²)` for `d` levels (measured in COMPLEXITY.md row PA-walk-nest-cost). Test of
-/// the fixed case: `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_scale_on_deep_nests`;
+/// whole bound term, `Θ(d²)` for `d` levels (measured in COMPLEXITY.md row PA-walk-nest-cost). Test
+/// of the fixed case:
+/// `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_scale_on_deep_nests`;
 /// a deep chain is made and dropped without recursion in
 /// `l01_39_reduced_product::if_shortcut::a_deep_chain_of_bindings_is_walked_and_dropped`.
 /// A complete solution would make a block's summary from those of its parts, bottom up.
@@ -3386,8 +3390,9 @@ impl fmt::Debug for Seen {
 /// between two neighbors ([`Potential::rank_after`]), and a merge reads the edge ends of the
 /// components it moves, never those of the largest ([`merge`]). A new name with an edge back
 /// to a component joins it rather than taking a component of its own ([`put_in`]).
-/// Tradeoffs: a component is never split when an edge goes, so a join that keeps the side whose edges closed cycles leaves the components
-/// larger than the strongly connected ones, and a later search of one reads all of it; an edge
+/// Tradeoffs: a component is never split when an edge goes, so a join that keeps the side whose
+/// edges closed cycles leaves the components larger than the strongly connected ones, and a
+/// later search of one reads all of it; an edge
 /// against the order costs the components the search that ends first finds, O(n) at worst for
 /// one edge. Since a component is never split, it may also hold names of several trees of the
 /// forest, as when a join drops the conjunct that joined a name to the others, so the order is
@@ -3396,7 +3401,8 @@ impl fmt::Debug for Seen {
 /// past another tree's edge, whose cycle closed later went unseen (item
 /// FLAKE-l01-39-scope-one-failure; test
 /// `l01_39_scope_relations::linked::a_join_that_moves_a_name_to_another_tree_keeps_its_cycles_found`).
-/// Tests: `l01_39_scope_relations::linked::if_statements_joined_one_after_another_on_a_linked_chain_take_time_near_their_number`,
+/// Tests:
+/// `l01_39_scope_relations::linked::if_statements_joined_one_after_another_on_a_linked_chain_take_time_near_their_number`,
 /// `…::if_statements_on_skip_links_of_a_chain_take_time_near_their_number`,
 /// `…::if_statements_that_put_a_hole_in_a_ladder_between_rungs_are_linear`,
 /// `…::a_ladder_grown_by_k_if_statements_is_linear`,
@@ -3983,9 +3989,11 @@ fn put_in(
             // the tree to the projection block by block. So the outcome is decided by whether
             // any cycle through the edge is negative without the gaps
             // ([`negative_without_gaps`], exact), the same for both sides.
-            // Tests: `l01_39_scope_relations::linked::either_side_of_the_repair_of_the_potential_gives_the_same_answers`
+            // Tests:
+            // `l01_39_scope_relations::linked::either_side_of_the_repair_of_the_potential_gives_the_same_answers`
             // (each side alone and both in step, each step checked against the projection from
-            // scratch) and `…::an_edge_on_two_negative_cycles_empties_the_scope_whichever_side_finds_one`
+            // scratch) and
+            // `…::an_edge_on_two_negative_cycles_empties_the_scope_whichever_side_finds_one`
             // (case (c), where until 2026-11-17 the forward side fell back and the backward
             // side emptied the scope). An `Err` that fires because (I) fails sends the tree to
             // the projection block by block, which is sound.
@@ -4721,9 +4729,9 @@ pub type PartKey = (Arc<Formula>, Option<Arc<str>>);
 // `Formula::eq` on `persist` at k = 16). Used: `WithCons` keeps a persistent `imbl::OrdSet<Con>`
 // per variable-connected group and unions only the groups and term buckets a part reads, sharing
 // unchanged B-tree nodes in O(1) and comparing via `ptr_eq` and `imbl::OrdSet::diff` in
-// O(1 + d log m) for d differing constraints (Gemini seat's prototype: `split_with` 9560 -> 752, `with_cmp`
-// 9032 -> 752 at k = 16). Reference: N. Sarnak and R. E. Tarjan, "Planar point location using
-// persistent search trees", Communications of the ACM 29(7), 1986, pp. 669-679.
+// O(1 + d log m) for d differing constraints (Gemini seat's prototype: `split_with` 9560 -> 752,
+// `with_cmp` 9032 -> 752 at k = 16). Reference: N. Sarnak and R. E. Tarjan, "Planar point location
+// using persistent search trees", Communications of the ACM 29(7), 1986, pp. 669-679.
 #[derive(Clone, Debug, Eq)]
 pub enum WithCons {
     /// No constraints of the block outside the part.
@@ -4872,8 +4880,8 @@ fn linked(cons: &[&Arc<Formula>]) -> (Vec<(BTreeSet<Factor>, Vec<Con>)>, BTreeMa
 // other constraints, O(b + o) for b buckets and o others (at most r), and its names read again
 // (row PERF-l139-persist-due). Component splits on edge removal walk `adj` with an explicit
 // `visited` set. Proposed by Gemini in round 3 of XR-l139-family; measured with the rest of
-// that round's merge (COMPLEXITY.md XR-l139-gemini). References: N. Sarnak and R. E. Tarjan, "Planar point
-// location using persistent search trees", Communications of the ACM 29(7), 1986,
+// that round's merge (COMPLEXITY.md XR-l139-gemini). References: N. Sarnak and R. E. Tarjan,
+// "Planar point location using persistent search trees", Communications of the ACM 29(7), 1986,
 // pp. 669-679 (persistent search trees).
 static NEXT_SPLIT_VER: zed_graph::IdSource = zed_graph::IdSource::starting_at(1);
 
@@ -5462,7 +5470,8 @@ fn finiteness_mask(u: &str, v: &str, names: &imbl::OrdMap<Arc<str>, Product>) ->
 // integers (Gemini seat, round 3), doubling wake and idle checks across `3k` case arms.
 // Used: canonicalize unclassed products via `framed_class` in O(1), matching propagator-event
 // subsumption / idempotence in C. Schulte and P. J. Stuckey, "Efficient constraint propagation
-// engines", ACM TOPLAS 31(1), Article 2, 2008 (`KeptTests::dead` still reads raw `congruence` directly).
+// engines", ACM TOPLAS 31(1), Article 2, 2008 (`KeptTests::dead` still reads raw `congruence`
+// directly).
 fn framed_class(p: &Product) -> Congruence {
     if !classed(p) {
         Congruence::Class {
@@ -5731,7 +5740,8 @@ fn cone_shape(g: &Formula) -> Option<ConeKey> {
 /// held under two of `v` exactly when also under `most`, which is what is checked. Count 0
 /// (not in `read`): it is held under `most` at most, one variable, so leaving it out is
 /// right. With `v` empty, `most` is `None` and nothing is read. The choice of `most` only
-/// changes the cost. Test: `lazy::a_bound_on_two_names_of_a_disjunction_assumed_after_it_bounds_its_points`
+/// changes the cost. Test:
+/// `lazy::a_bound_on_two_names_of_a_disjunction_assumed_after_it_bounds_its_points`
 /// through [`Block::reframe`]; none calls this function alone.
 fn holding_two<T: Ord + Clone>(
     index: &imbl::OrdMap<Factor, imbl::OrdSet<T>>,
@@ -7601,8 +7611,9 @@ impl Block {
             // is base's, PERF-refused-shape-disjunctions-quadratic). A part with an atom other
             // than a name, an equality among the constraints, or a box that bounds every
             // direction is woken as before. The certificate is the recession-cone argument of
-            // [`Block::recession_uncertified`] in m dimensions (R. T. Rockafellar, "Convex Analysis", Princeton, 1970, section 8; A. Schrijver,
-            // "Theory of Linear and Integer Programming", Wiley, 1986, section 8.2).
+            // [`Block::recession_uncertified`] in m dimensions (R. T. Rockafellar, "Convex
+            // Analysis", Princeton, 1970, section 8; A. Schrijver, "Theory of Linear and Integer
+            // Programming", Wiley, 1986, section 8.2).
             for ck in holding_two(&self.cone_vars, v) {
                 if self.cone_certified(&ck, names) {
                     continue;
@@ -7678,7 +7689,8 @@ impl Block {
     /// set: [`Block::reframe`] puts it in `due` through `add_constraints` as it sets them, and
     /// [`Scope::block`] projects it unless it is recorded with those constraints and the names
     /// as they are. Tests: `case_wake::tests_on_punctured_lines_at_seed_5` fails when this
-    /// returns `true` always; `case_wake::four_name_disjunctions_match_the_projection_from_scratch_when_their_directions_close`
+    /// returns `true` always;
+    /// `case_wake::four_name_disjunctions_match_the_projection_from_scratch_when_their_directions_close`
     /// passes either way, so a wrong `true` on four names is caught by no test.
     fn cone_certified(&self, ck: &ConeKey, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
         if !self.split.eqs.is_empty() {
@@ -7957,11 +7969,11 @@ impl Block {
         // and expand only if that least part remains non-idle after its projection; all other
         // shapes wake every matching part via [`holding_two`]. References: N. Sarnak and R. E.
         // Tarjan, "Planar point location using persistent search trees", CACM 29(7), 1986,
-        // pp. 669-679, doi:10.1145/6138.6151; D. Amagata et al., "Efficient algorithms for top-k stabbing queries on
-        // weighted interval data", arXiv:2405.05601, 2024; G. Averkov and M. Schymura,
-        // "Complexity of linear relaxations in integer programming", Math. Program. 194, 2022,
-        // pp. 191-227, doi:10.1007/s10107-021-01623-4; C. Schulte and P. J. Stuckey, "Efficient constraint propagation engines",
-        // arXiv:cs/0611009, 2006.
+        // pp. 669-679, doi:10.1145/6138.6151; D. Amagata et al., "Efficient algorithms for top-k
+        // stabbing queries on weighted interval data", arXiv:2405.05601, 2024; G. Averkov and
+        // M. Schymura, "Complexity of linear relaxations in integer programming", Math. Program.
+        // 194, 2022, pp. 191-227, doi:10.1007/s10107-021-01623-4; C. Schulte and P. J. Stuckey,
+        // "Efficient constraint propagation engines", arXiv:cs/0611009, 2006.
         if groups {
             for v in vars.iter().filter(|v| v.len() >= 2) {
                 for at in holding_two(&self.vars, v) {
@@ -8174,7 +8186,8 @@ impl Block {
     /// walking every one was O(c' log n), with `c'` growing with the tests on other blocks,
     /// O(k²) in all for `k` stars each checked after each test; a star's leaf is looked up,
     /// O(log n), where diffing all the stars was O(k) for `k` stars made since; a constraint
-    /// added or gone makes the constraints' context again, O(r log r) for `r` constraints, and re-keys the parts on its term through an
+    /// added or gone makes the constraints' context again, O(r log r) for `r` constraints, and
+    /// re-keys the parts on its term through an
     /// index of the parts by term, O(t log k) for `t` such parts. Tradeoffs: the block keeps
     /// its parts, indexes of the parts by name and by term and those sets, shared with the
     /// relation and the scope, until the next projection; each part's formula is made when it
@@ -9544,9 +9557,10 @@ impl Scope {
     // scope, O(s) per binding and O(n²) over a chain of n `let`s. Used: the binding changes the
     // scope in place and `Scope::unbind` restores it from the returned `Unbind`, O(log s) in the
     // persistent maps plus the reductions of `p`, near linear over the chain (42.6 ms → 3.4 ms
-    // at 200 `let`s). Tradeoffs: the scope is still copied when `x` shadows a name or `p` is empty; bindings must be
-    // undone in the reverse order they were made. Tests: `l01_39_reduced_product::scaling`
-    // and `a_binding_forgets_what_held_of_the_name_it_shadows`; COMPLEXITY.md row S8.
+    // at 200 `let`s). Tradeoffs: the scope is still copied when `x` shadows a name or `p` is empty;
+    // bindings must be undone in the reverse order they were made. Tests:
+    // `l01_39_reduced_product::scaling` and `a_binding_forgets_what_held_of_the_name_it_shadows`;
+    // COMPLEXITY.md row S8.
     //
     // The claim "nothing else in the scope then mentions `x`" (proofs audit, proofdoc4b), as
     // `bind_with`'s shadowing path makes it. What a reduction reads as a fact about `x`:
@@ -10214,7 +10228,8 @@ impl Scope {
     // reached, each closed over once, O(functions reached + their sizes) per test. Tradeoffs:
     // the closed test is kept as a written constraint, so its size counts once per arm; the
     // preimage still recurses on the depth of the term (T2-mid), so the scaling test stops at
-    // 256 levels. Test `l01_39_reduced_product::scaling::tests_read_through_the_functions_they_call_scale`;
+    // 256 levels. Test
+    // `l01_39_reduced_product::scaling::tests_read_through_the_functions_they_call_scale`;
     // COMPLEXITY.md row S24.
     //
     // Proof that the closed test reads each name as the function read it where it was bound.
@@ -10300,7 +10315,8 @@ impl Scope {
     /// again in this scope keeps the meet of the sets of each time, each of which holds every
     /// value the question allows here, so the sets do not depend on the order the questions
     /// were met in (the proof, for any number of meetings, at [`kept_meet`]; the meet of sets
-    /// that each hold the allowed values holds them too). `names` are the names of the scope its constraint mentions, under each of
+    /// that each hold the allowed values holds them too).
+    /// `names` are the names of the scope its constraint mentions, under each of
     /// which it is found (`Scope::refused_by`): a question its text shows alike may be asked of
     /// an outer `x` and again of an inner `x` that shadows it, and is then found under both.
     /// O(log k) in the k refusals kept, O(m log m) in the m variables of `kept`, and O(n log k)
@@ -11712,9 +11728,9 @@ impl Scope {
     /// t - 1), at most t - 1 negative ones (the same for `t(-x)`), and the root 0. The cost
     /// stays O(t) evaluations per constraint. A product `term_roots` reads factor by factor
     /// has the union of its factors' roots, at most the sum of each factor's 2t_i - 1, which
-    /// can be fewer terms than the product multiplied out. What the code relies on is that `term_roots`
-    /// lists every integer root in `[lo, hi]` (its doc): then a state where `t` is 0 has `x`
-    /// at a listed root, so meeting `x` with them removes no such state. Given up: a
+    /// can be fewer terms than the product multiplied out. What the code relies on is that
+    /// `term_roots` lists every integer root in `[lo, hi]` (its doc): then a state where `t` is 0
+    /// has `x` at a listed root, so meeting `x` with them removes no such state. Given up: a
     /// polynomial in two or more open names, whose integer roots are not a finite list in
     /// general (Hilbert's tenth problem for several variables); `Scope::reaches` answers it.
     pub fn zero_reached(&self, t: &Term, premises: &Premises) -> (bool, imbl::OrdSet<RootFailure>) {
@@ -11812,7 +11828,8 @@ impl Scope {
     /// L1.39), so a loop of S4's steps is expected to add nothing; measured, the arms of the eight
     /// in-class tests of `l01_39_reduced_product::loops` have exactly the least and greatest
     /// values that enumeration over `-6..=6` finds, both outcomes, every name (that test checks
-    /// it). Equality with S4 on every in-class test is not proved here. A test with no choice of two alternatives, the most
+    /// it). Equality with S4 on every in-class test is not proved here. A test with no choice of
+    /// two alternatives, the most
     /// common, is passed over after one look at the root and its sides; any other costs
     /// O(s + N log N) for `s` nodes and `N` atom terms.
     fn refuse_looped(&mut self, test: &Term, tree: &Tree, value: bool, outcome: bool) {
@@ -12928,8 +12945,8 @@ impl Scope {
         // the congruence test's arms already rest on.
         // The steps, checked against the code (proofdoc4b). (1) Exact: the test is `x mod c ==
         // r` (or `x mod 2 != r`, the class `1 - r`) with `free == {x}`, and `mod` is Euclidean
-        // (zed-kernel eval.rs, `Prim::Mod => x.rem_euclid(&y)`), so at an integer it holds exactly in
-        // the class `r mod |c|` for `r` in `0..|c|` and nowhere for any other `r`. The first
+        // (zed-kernel eval.rs, `Prim::Mod => x.rem_euclid(&y)`), so at an integer it holds exactly
+        // in the class `r mod |c|` for `r` in `0..|c|` and nowhere for any other `r`. The first
         // is met by `Congruence::meet`, exact by the Chinese remainder theorem (zedc-lattice
         // lattice.rs, `impl Lattice for Congruence`); the second meets the type with `!int`,
         // which empties the name, of `int` type here (`inputs[0] == x`). The integers of `x`
@@ -12956,7 +12973,8 @@ impl Scope {
         // `l01_39_reduced_product::let_terms::a_congruence_test_of_a_div_by_a_constant_
         // narrows_its_input`. Interval readers other than `through_terms` (`Product::ints`)
         // still see the interval without the class on a name with no term: sound, less
-        // precise, row PRES-interval-strided-piece. And the ends the reduction later moves in to the class are
+        // precise, row PRES-interval-strided-piece.
+        // And the ends the reduction later moves in to the class are
         // not recorded in [`Scope::direct`], which the preimage's meet did (`one` below), so
         // [`Scope::stated`] cannot state them at a join: open whether a join loses a case by
         // it. Tests: `l01_39_scope_relations::xst::s4::the_holes_cut_leave_each_x_one_range_
@@ -13323,16 +13341,16 @@ impl Scope {
     /// names only where their orders differ.
     ///
     /// Proof of the last sentence, for two scopes sharing `emptied.1` (copies, and the joins
-    /// of `Scope::join_settled`, which keep `self`'s `emptied.1`): the scopes that do not come from one
-    /// another have their own (`Scope::of`, `Emptied::default()`). The sites that add or take
+    /// of `Scope::join_settled`, which keep `self`'s `emptied.1`): the scopes that do not come from
+    /// one another have their own (`Scope::of`, `Emptied::default()`). The sites that add or take
     /// away a key of `names` are: `Scope::bind_with`, which on its fresh path sets `x` in
     /// `names`, `bindings` and `orders` together, on its saved path inserts `x` in `names` and
     /// `orders` together (or, in a bottom scope, neither), and `Scope::unbind`, which undoes
     /// one of these (removing both, or restoring the saved copy). Every other write to `names`
     /// (`meet_type`, `meet_name`, the reductions, `narrow`) reads the product of a key it finds
     /// there first and puts it back at that key, and the join's names start from `self`'s
-    /// (`Scope::join_settled`, `self.names.view().clone()`) with `self`'s orders. A rebinding of a key
-    /// both scopes have changes its order (an `Update` in the difference) and not its
+    /// (`Scope::join_settled`, `self.names.view().clone()`) with `self`'s orders. A rebinding of a
+    /// key both scopes have changes its order (an `Update` in the difference) and not its
     /// membership, which the loop rightly leaves. So, key by key, the two scopes' names
     /// differ only at an `Add` or `Remove` of `orders`, where the loop reads `self.names`. The
     /// filter on the count is a second check only: a result with the right count and wrong
@@ -13557,7 +13575,8 @@ impl Scope {
             // product (one `Arc`), put back only when it changed a domain, which every change
             // of `reduce_domains` reports (each is an `Entry::meet`): the same names, the same
             // `O(log n)` a name changed, nothing copied for one unchanged (COMPLEXITY.md row
-            // PA-bind-cost). Test: `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`.
+            // PA-bind-cost). Test:
+            // `l01_39_reduced_product::deep_let::the_arms_of_a_deep_block_scale`.
             for n in &dirty {
                 if let Some(p) = self.names.get(n) {
                     let mut p = p.clone();
@@ -13733,7 +13752,8 @@ impl Scope {
         // products, which every narrowing of a leaf would have to keep. Trigger: a test among
         // the hubs of `k` stars of one class that moves the class's bound, or one of the cases
         // `leaf_bound_stays` leaves out: `k` projections, as the `k` leaves that move cost.
-        // Test: `l01_39_reduced_product::scaling::tests_among_the_hubs_of_many_stars_narrow_an_eager_scope_in_linear_time`.
+        // Test:
+        // `l01_39_reduced_product::scaling::tests_among_the_hubs_of_many_stars_narrow_an_eager_scope_in_linear_time`.
         // COMPLEXITY.md row C26. A complete solution keeps the leaves of each class ordered by
         // their own bound on the side the class bounds, in each scope, and projects only those
         // the class's new bound cuts.
@@ -13868,8 +13888,10 @@ impl Scope {
     // Stars (blocks apart) are no echo: their projection onto the hubs bounds each hub alone,
     // read again it gives what was met already ([`Conjuncts::star`]). The by-holes and
     // shortest-path branches push blocks of other trees only (`blocks.tree(c) != t`).
-    // Tests: `l01_39_scope_relations::nests::two_parts_that_pass_a_bound_back_and_forth_reach_the_empty_scope`
-    // (the echo), `l01_39_scope_relations::linked::if_statements_that_leave_a_ladder_block_by_block_give_the_projection`;
+    // Tests:
+    // `l01_39_scope_relations::nests::two_parts_that_pass_a_bound_back_and_forth_reach_the_empty_scope`
+    // (the echo),
+    // `l01_39_scope_relations::linked::if_statements_that_leave_a_ladder_block_by_block_give_the_projection`;
     // neither counts projections per block, so they cannot catch a block projected more often
     // than the bound above.
     fn project(&mut self, due: Due, whole: bool) {
@@ -14554,7 +14576,8 @@ impl Scope {
     /// lowers the potential of each name `x` by the least reduced distance from `v` to `x`
     /// plus `γ`, where that is below zero, found by a Dijkstra search from `v` over those names
     /// alone (Cotton and Maler, "Fast and flexible difference constraint propagation for
-    /// DPLL(T)", SAT 2006, doi:10.1007/11814948_19; see lib.rs "References"). `Ok(Some(u))` when the edge closes a cycle of negative weight, so
+    /// DPLL(T)", SAT 2006, doi:10.1007/11814948_19; see lib.rs "References").
+    /// `Ok(Some(u))` when the edge closes a cycle of negative weight, so
     /// that no point meets the tree's difference constraints; `Err` when the search reads a
     /// name the potential lacks, or an edge with a negative reduced weight, and then nothing
     /// has changed. A conjunct other than a difference constraint or a bound has no edge, and
@@ -14727,7 +14750,8 @@ impl Scope {
     /// Each seed first takes the least bound the edges of the conjuncts added give it, and a
     /// changed seed the least its edges in give it ([`Seeds::changed`]), then a Dijkstra search
     /// from the changed seeds and those lowered lowers the names its paths reach, each bound
-    /// taken to the nearest integer of the name at or inside it ([`snap_down`], [`snap_up`]), or kept where the name has none
+    /// taken to the nearest integer of the name at or inside it ([`snap_down`], [`snap_up`]), or
+    /// kept where the name has none
     /// there, which is bottom. The names lowered, with their new bounds on this side.
     ///
     /// The bounds found do not depend on the potential: a name lowered is pushed again, and
@@ -14749,7 +14773,8 @@ impl Scope {
     // the changed seeds and those lowered, O((s + a + m) log n) per projection (8.6 times).
     // Tradeoffs: correctness rests on every other edge holding at the fixed point the last
     // projection left, so `Seeds::changed` must record every change of a seed's product.
-    // Test `l01_39a_bit_words::bench::scaling::tests_that_equate_each_reading_to_a_hub_read_the_hub_once_each`;
+    // Test
+    // `l01_39a_bit_words::bench::scaling::tests_that_equate_each_reading_to_a_hub_read_the_hub_once_each`;
     // COMPLEXITY.md row NARROW-hub-seed-edges.
     fn bound_pass(
         &self,
@@ -14821,7 +14846,8 @@ impl Scope {
         // Its tail in `changed`: the tail is a seed, and the search starts from it. Its tail
         // lowered by this pass: the search pushes the tail and reads it. So every edge that
         // can lower a bound is read, and the bounds found are the fixed point.
-        // Tests: `l01_39a_bit_words::bench::scaling::tests_that_equate_each_reading_to_a_hub_read_the_hub_once_each`
+        // Tests:
+        // `l01_39a_bit_words::bench::scaling::tests_that_equate_each_reading_to_a_hub_read_the_hub_once_each`
         // and `scaling::a_test_the_relation_carries_to_each_reading_names_the_path_to_it_only`
         // (and its three variants). They cannot catch a product changed without being in the
         // `moved` that [`Scope::due`] is given, which would leave an edge into it unread; that
@@ -15169,7 +15195,8 @@ impl Scope {
     // `b.released` pushes the parts it releases). The open sub-case is a part popped again
     // only through these pushes, its projection moving nothing; it needs a bound on how often
     // `certified` and `released` let one part through, which this audit did not read.
-    // Tests: `l01_39_scope_relations::nests::two_parts_that_pass_a_bound_back_and_forth_reach_the_empty_scope`
+    // Tests:
+    // `l01_39_scope_relations::nests::two_parts_that_pass_a_bound_back_and_forth_reach_the_empty_scope`
     // and its bench; neither counts pops a part.
     fn project_block(&mut self, mut b: Block, due: Vec<PartAt>) {
         let start = self.names.view().clone();
@@ -15339,8 +15366,8 @@ impl Scope {
             // this test, the number of rows is bounded by the input shape including box ends.
             // For V mixed names and R rows this is polynomial (repeated indexed row
             // passes), not a general O(n log n) projection algorithm. Measured in
-            // review round 3 of PERF-l139-wake (COMPLEXITY.md row PERF-l139-wake). A first projection
-            // is always retained. Classed or holed eliminands refuse this certificate.
+            // review round 3 of PERF-l139-wake (COMPLEXITY.md row PERF-l139-wake). A first
+            // projection is always retained. Classed or holed eliminands refuse this certificate.
             // A skipped solver refusal is not reconstructed: equality of warnings
             // remains a separate, explicitly tested limitation, not a consequence
             // of marginal support. The covered guard is unnecessary: cover was
@@ -15958,7 +15985,8 @@ impl Scope {
     /// matches and the part is not projected again, as it would not have been had the case
     /// never run (exact). A part a case's constraints can narrow is woken through `fired`,
     /// which [`Scope::block`] reads before `is_projected`, so the outer entry does not hide it
-    /// inside the case. Tests: `case_wake::tests_after_a_join_of_cases_that_recorded_one_part_differently_give_the_projection_from_scratch`
+    /// inside the case. Tests:
+    /// `case_wake::tests_after_a_join_of_cases_that_recorded_one_part_differently_give_the_projection_from_scratch`
     /// and the random tests of `case_wake.rs`; they compare final intervals with the
     /// projection from scratch and cannot catch an extra projection, only a skipped one.
     fn record(
@@ -16213,12 +16241,14 @@ impl Scope {
     /// are: a wider bound can stay where the projection would narrow, which loses precision,
     /// not soundness. A leaf left keeps its product, sound for a relation that only grew
     /// since its star's last projection; across a join the leaf holds the hull of the two
-    /// sides' products ([`Scope::join_refreshed`]), each sound for its side (read from the
-    /// join's code; tested by `l01_39_reduced_product::scaling::an_eager_join_settles_the_stars_as_the_lazy_one`).
-    /// [`Scope::project_block`] projects a star's block part by part too, so its own bound can
-    /// be the same meet: `l01_39_reduced_product::scaling::tests_among_the_hubs_of_two_stars_bound_their_leaves_as_in_a_lazy_scope`
-    /// gives the leaves `[5..]` in both scopes when the two disjunctions come before the stars,
-    /// and `[7..]` after (row PREC-product-disjunction-parts-order).
+    /// sides' products ([`Scope::join_refreshed`]), each sound for its side (read from the join's
+    /// code; tested by
+    /// `l01_39_reduced_product::scaling::an_eager_join_settles_the_stars_as_the_lazy_one`).
+    /// [`Scope::project_block`] projects a star's block part by part too, so its own bound can be
+    /// the same meet:
+    /// `l01_39_reduced_product::scaling::tests_among_the_hubs_of_two_stars_bound_their_leaves_as_in_a_lazy_scope`
+    /// gives the leaves `[5..]` in both scopes when the two disjunctions come before the stars, and
+    /// `[7..]` after (row PREC-product-disjunction-parts-order).
     ///
     /// Complexity tradeoff: the exact bound in case 3 was tried, and two ways to it rejected.
     /// No bound in case 3, so that the class's stars are projected again: `k` projections at
@@ -16844,7 +16874,8 @@ impl Scope {
         // convex unit coordinates in the form, using the same exact image-
         // of-hulls argument as the original route. Selection costs O(v),
         // followed by the original solver, not a new elimination algorithm.
-        // Measured in review round 3 of PERF-l139-wake (allocator calls, 8n ratio): hopb/hoponb R=14.66/14.53 without, 12.75/12.65 with;
+        // Measured in review round 3 of PERF-l139-wake (allocator calls, 8n ratio): hopb/hoponb
+        // R=14.66/14.53 without, 12.75/12.65 with;
         // both-size totals increase about 18-19k here, largely startup work.
         // This measured ratio gain is not an asymptotic complexity claim.
         // Proof that the chosen `x` is a pendant as the single route needs: `x` occurs in no
@@ -16928,8 +16959,8 @@ impl Scope {
     // Complexity tradeoff: the old method invokes integer elimination for every
     // stale punctured-line part. This boundary-support certificate instead reads
     // its two-name line and the base rows, O(arms + rows), independent of the
-    // number of other parts. It is not entailment (the punctured-line rule of review round 1, which changed answers):
-    // it proves every marginal value has support even with the base present.
+    // number of other parts. It is not entailment (the punctured-line rule of review round 1, which
+    // changed answers): it proves every marginal value has support even with the base present.
     // This uses plan row PERF-l139-family's interval-constraint-propagation idea, with exact
     // integer fibers rather than the residual supports of AC-2001 (Bessiere, Regin,
     // Yap and Zhang, "An optimal coarse-grained arc consistency algorithm", Artificial
@@ -17174,7 +17205,8 @@ impl Scope {
                 // Checked against the code (proofdoc4b). (1) Here `open` is empty, so only the
                 // `[]` arm of [`Scope::enumerate_on`] runs: it sets `bottom` or records a key and
                 // a root failure, and changes no product, so the main pass reads the same statics.
-                // (2) The main pass also requires `free.iter().all(|n| self.names.contains_key(n))`;
+                // (2) The main pass also requires
+                // `free.iter().all(|n| self.names.contains_key(n))`;
                 // here a name not in the base map gives no static (`NameProducts::read` returns
                 // `self.base.get(name)` for a name off every path and pendant, and every path
                 // member is in the base map, `NameProducts::len`), so `statics.len() !=
@@ -17418,7 +17450,8 @@ impl Scope {
     // due (else by (d) all of G held at P, a point), and no extension can meet all of G, so the
     // loop reaches a constraint of G that P cannot meet and searches G whole, the same term
     // and box a search of every group would give, so the same answer from `witness`.
-    // Tests: `l01_39_reduced_product::exact::an_exact_scope_with_no_point_meeting_its_constraints_is_bottom`,
+    // Tests:
+    // `l01_39_reduced_product::exact::an_exact_scope_with_no_point_meeting_its_constraints_is_bottom`,
     // `…::exact::constraints_that_share_no_name_are_searched_apart`,
     // `l01_39_reduced_product::scaling::reductions_under_exact_after_each_constraint_keep_a_point`.
     // They cannot catch a group whose point is kept over many reductions and only then lost
@@ -18009,7 +18042,8 @@ fn balanced(p: Prim, mut level: Vec<Term>) -> Term {
 /// level `j` holds the disjunction of `2^j` cases, and reducing it projects every side again,
 /// each projection asking `O(log k)` questions of the hull's bisection, so that the joins cost
 /// `Θ(k log² k)` projections of sides for `k` cases (bytes 14.3 times from 32 to 256 live
-/// sides `n + m >= -i`, above the limit of 14.1 of 2026-11-10). Here the joins are only joined, `O(k log k)`
+/// sides `n + m >= -i`, above the limit of 14.1 of 2026-11-10).
+/// Here the joins are only joined, `O(k log k)`
 /// for the copies of the cases' conjuncts, and the one reduction is the caller's. Given up:
 /// nothing; over the groups that narrow by disjunctions, every answer is the same with and
 /// without the reductions of the joins (NARROW-many-relational-sides).
@@ -18458,7 +18492,8 @@ impl<'m> Run<'m> {
             // on the walk's one thread. A premise of the transfer is never in `D`: the transfer
             // adds none, so each of its premises was made before `from`. So the
             // result is the transfer's value, premises included (`Premises` compare as sets).
-            // Test: `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_agree_on_random_blocks`
+            // Test:
+            // `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_agree_on_random_blocks`
             // and `..._on_deep_nests` compare the two values with `==` on `Product`, which
             // compares each entry's premises too; they cannot catch a term outside the
             // generator's forms, such as a call or a test on a non-integer.
@@ -19625,8 +19660,8 @@ fn pst_hi_gt<X: Ord>(a: &PstEntry<X>, b: &PstEntry<X>) -> bool {
 /// trees", CACM 29(7), 1986, pp. 669-679, doi:10.1145/6138.6151 (path copying, used for the
 /// `Arc` nodes); E. M. McCreight, "Priority search trees", SIAM J. Comput. 14(2), 1985,
 /// pp. 257-276, doi:10.1137/0214021 (a heap on `hi` over a search tree on `lo`; here leaf
-/// oriented, with slots, as in the proof at [`Pst::report`]); D. Amagata, J. Yamada, Y. Ji, and T. Hara,
-/// "Efficient algorithms for top-k stabbing queries on weighted interval data",
+/// oriented, with slots, as in the proof at [`Pst::report`]); D. Amagata, J. Yamada, Y. Ji,
+/// and T. Hara, "Efficient algorithms for top-k stabbing queries on weighted interval data",
 /// arXiv:2405.05601, 2024.
 #[derive(Clone)]
 struct Pst<X>(Option<Arc<PstNode<X>>>);
@@ -20209,9 +20244,9 @@ impl PunctureContext {
             .unwrap_or((Int::ZERO, Int::ZERO, Int::ZERO));
         // When `(true, least)` is already due in this block (`base_is_due`), it will tighten
         // `xd`, `yd`, and `leaf` to their exact `base` projections before any puncture part needs
-        // them. For a single linear inequality `a*x + d*y + e >= 0` over a finite box `[xd] x [yd]`,
-        // the exact integer projection onto `x` and `y` is given by plugging the extreme corner of
-        // the other variable (which is an integer).
+        // them. For a single linear inequality `a*x + d*y + e >= 0` over a finite box
+        // `[xd] x [yd]`, the exact integer projection onto `x` and `y` is given by plugging the
+        // extreme corner of the other variable (which is an integer).
         // Proof: an integer `x` is in the projection iff some integer `y` in `yd` has
         // `a*x + d*y + e >= 0`, iff `a*x + e + max_{y in yd} d*y >= 0`; that maximum is `d*yd.1`
         // for `d >= 0` and `d*yd.0` for `d < 0`, both integers in `yd`, so `row_range` of
@@ -20404,8 +20439,9 @@ impl PunctureContext {
 ///
 /// Proof of soundness:
 /// 1. If an arm has `a_free * free_sign > 0`, every value of the other variable in its box is
-///    supported by sending `free_axis -> free_sign * inf` (all `uv_rows` have `r_free * free_sign > 0`,
-///    and the optional star leaf `s*w + ... >= 0` with `s = ±1` is unbounded on the `s`-side).
+///    supported by sending `free_axis -> free_sign * inf` (all `uv_rows` have
+///    `r_free * free_sign > 0`, and the optional star leaf `s*w + ... >= 0` with `s = ±1` is
+///    unbounded on the `s`-side).
 /// 2. If for some witness `v0` in `witnesses` an arm has `a_free * free_sign >= 0` and holds at
 ///    `(end, v0)`, then `(end + t * free_sign, v0)` satisfies every `uv_row`, the box, and the
 ///    arm for every integer `t >= 0` (supporting every value of `free_axis`), while
@@ -20872,7 +20908,8 @@ type SlopeKey = Q;
 type HullVal = Q;
 
 /// Dual point `(b / d, c / d)` (`d > 0`) of an arm `a * u + b * v + c >= 0` (`d = |a|`).
-/// The arm holds at query `(u_q, v_q)` (with `u_q` negated when `a > 0`) iff `b * v_q + c >= d * u_q`.
+/// The arm holds at query `(u_q, v_q)` (with `u_q` negated when `a > 0`) iff
+/// `b * v_q + c >= d * u_q`.
 #[derive(Clone)]
 struct HullPt {
     b: Int,
@@ -21778,7 +21815,8 @@ impl BoxFaceIndex {
     }
 
     /// `(gt, bound)` for unary kind `uk` on sub-box `[eu_lo, eu_hi] x [ev_lo, ev_hi]`:
-    /// a part fails its unary arm iff `thresh > bound` (when `gt`) or `thresh < bound` (when `!gt`).
+    /// a part fails its unary arm iff `thresh > bound` (when `gt`) or `thresh < bound` (when
+    /// `!gt`).
     fn unary_query<'a>(
         uk: UnaryKind,
         eu: (&'a Int, &'a Int),
@@ -22092,7 +22130,8 @@ fn open_cone_sector(normals: &[[Int; 2]]) -> Option<(Turn, Turn)> {
     (rot_lo < rot_hi).then_some((Turn(orig_lo), Turn(orig_hi)))
 }
 
-/// A nonzero ray `d` in the closed 2D recession cone `{ d != 0 : n · d >= 0 for all n in normals }`,
+/// A nonzero ray `d` in the closed 2D recession cone
+/// `{ d != 0 : n · d >= 0 for all n in normals }`,
 /// or `None` when that closed cone is `{0}`. Used when `open_cone_sector` is empty (e.g., opposing
 /// normals `[-1, -1]` and `[1, 1]` in `persist`) together with an explicit integer feasibility
 /// witness of the base at the leaf's finite end.
@@ -23764,7 +23803,8 @@ fn eliminate(
     get: &impl Fn(&str) -> Product,
 ) -> Option<Vec<Row>> {
     // Complexity tradeoff: unrestricted Fourier-Motzkin may grow doubly
-    // exponentially (seen in review round 3 on pendants.rs's equalities to hubs). Add finite box ends once, normalize
+    // exponentially (seen in review round 3 on pendants.rs's equalities to hubs).
+    // Add finite box ends once, normalize
     // parallel integer rows, and eliminate only when p*q <= p+q. Thus each step
     // replaces at least as many rows as it makes; at most the initial number of
     // names disappear and the row count never exceeds its initial value.
@@ -24412,7 +24452,8 @@ impl Scope {
         // (`split_on_y(1)` in `persist` Arm 2), every subsequent member `split_on_y(2..j-1)` ran
         // `self.idle` individually (`48.6M` instructions at k = 16, Gemini seat, round 3).
         // Used: record the least ends certified idle so far in `certified_chains`, subsuming all
-        // higher members in O(e) comparisons (Gemini seat's prototype: `idle_calls` 269 -> 79 at k = 16).
+        // higher members in O(e) comparisons (Gemini seat's prototype: `idle_calls` 269 -> 79
+        // at k = 16).
         // Reference: W. Pugh, "A practical algorithm for exact array dependence analysis",
         // Communications of the ACM 35(8), 1992, pp. 102-114, doi:10.1145/135226.135233,
         // the journal version of "The Omega
@@ -24466,8 +24507,8 @@ impl Scope {
 // against Crossref 2026-11-20, the book not read),
 // using ordered grouping rather than a dynamic general half-plane hull. Projection
 // syntax may still affect refusals; this is tested by families::projection_shortcut_cases.
-// Measured in review round 3 (allocator calls, 8n ratio), persist: without this rule R=26.29, with it R=12.66;
-// compact_abs is also present in both measurements.
+// Measured in review round 3 (allocator calls, 8n ratio), persist: without this rule R=26.29, with
+// it R=12.66; compact_abs is also present in both measurements.
 // Proof that the output has the same points as the input. A group holds the rows
 // `a x + b y + c >= 0` with one key (x, y, a, c) (the BTreeMap key below), and `lo`, `hi`
 // are its rows of least and greatest `b`. For a row of the group with b_lo <= b <= b_hi,
@@ -24531,10 +24572,12 @@ type AbsGroups = BTreeMap<(BTreeMap<Atom, Int>, Atom), BTreeMap<Int, (Int, Formu
 // imply a clause with larger ones. Sort and keep the Pareto frontier in O(T log r)
 // for T input terms in r clauses, rather than O(r^2) pairwise implication checks.
 // No arm combinations or values are searched. This algebraic redundancy test is used
-// instead of plan row PERF-l139-family's general half-plane hull, which does not apply to disjunctions.
-// Equivalence preserves integer points; families::projection_shortcut_cases compares the approximate
-// projector's outputs, since equivalence alone does not establish equal refusals.
-// Measured in review round 3 (allocator calls, 8n ratio) without/with: coordmix_floor 26.64/11.97, persist 15.94/12.66.
+// instead of plan row PERF-l139-family's general half-plane hull, which does not apply to
+// disjunctions.
+// Equivalence preserves integer points; families::projection_shortcut_cases compares the
+// approximate projector's outputs, since equivalence alone does not establish equal refusals.
+// Measured in review round 3 (allocator calls, 8n ratio) without/with: coordmix_floor 26.64/11.97,
+// persist 15.94/12.66.
 // Proof that the output has the same points as the input. (1) A shaped clause is
 // `F + |k y| + c >= 0`: its pair of arms holds iff max(F + k y, F - k y) + c >= 0, and
 // max(k y, -k y) = |k y|; an extra arm `F + d >= 0` with d <= c implies the pair (see
@@ -24631,7 +24674,8 @@ impl Scope {
     // corner formula in O(r) arithmetic; refuse if none of these rays certifies
     // unboundedness. Measured in review round 3, star: R=7.19, against 7.60 without this
     // certificate; work at 8n falls from 666544 to 447009 allocations. This
-    // elementary recession-cone certificate replaces general half-plane hull construction (Preparata and Shamos, Computational Geometry: An Introduction,
+    // elementary recession-cone certificate replaces general half-plane hull construction
+    // (Preparata and Shamos, Computational Geometry: An Introduction,
     // Springer-Verlag, 1985, doi:10.1007/978-1-4612-1098-6, checked against Crossref
     // 2026-11-20, the book not read) on this fragment, without enumerating integer points.
     // Proof, per conjunction of `rest` (pendant `x - w + k >= 0`, so `x >= w - k`, as
@@ -25783,7 +25827,8 @@ mod tests {
             }
         }
 
-        // Check `recession_shape`, `PairRecession`, and `open_cone_sector` against exact ray evaluation.
+        // Check `recession_shape`, `PairRecession`, and `open_cone_sector` against exact ray
+        // evaluation.
         let mut pair_idx = PairRecession::default();
         let mut parts_arms: Vec<(PartAt, Vec<[i64; 2]>)> = Vec::new();
         for id in 0..80 {
@@ -25865,7 +25910,8 @@ mod tests {
         // `[1, 1]` whose closed recession cone contains `(-1, 1)`, but the leaf slice `Q(-10) =
         // { x + y >= 0, x + y <= -10 }` is empty: both `recession_uncertified` and
         // `HalfLineContext::of` must refuse (`None`), whereas at `a in [0..]` (`Q(0)` feasible)
-        // both succeed and certify `x + 2y >= 1 || x - 2y >= 1` while reporting `x + y >= 1 || x - y >= 1`.
+        // both succeed and certify `x + 2y >= 1 || x - 2y >= 1` while reporting
+        // `x + y >= 1 || x - y >= 1`.
         let mk_con = |terms: &[(&str, i64)], k: i64| -> Formula {
             let mut lin = Lin::constant(k);
             for &(n, c) in terms {
@@ -25935,9 +25981,10 @@ mod tests {
         // `x in [0..=1]`, `y in [0..=4]`, `z in [0..=4]`, `a in [0..]`, `a >= x + y + z`,
         // `y - z >= 0`, and `x <= 0 || y - z != 0` (`g`).
         // - When `x = [0..=0]`: `guard_entailed` holds (`true`).
-        // - When `x = [0..=1]`: `guard_entailed` is `false`; `PunctureContext::of(..., base_is_due = true)`
-        //   sees the singleton fiber at `(y=0, z=0)` on `y - z == 0`, so `is_idle` returns `false`,
-        //   while for `y - z != 2` (away from every singleton fiber and from `pendant_pt`), `is_idle` returns `true`.
+        // - When `x = [0..=1]`: `guard_entailed` is `false`;
+        //   `PunctureContext::of(..., base_is_due = true)` sees the singleton fiber at `(y=0, z=0)`
+        //   on `y - z == 0`, so `is_idle` returns `false`, while for `y - z != 2` (away from every
+        //   singleton fiber and from `pendant_pt`), `is_idle` returns `true`.
         let mk_con = |terms: &[(&str, i64)], k: i64| -> Formula {
             let mut lin = Lin::constant(k);
             for &(n, c) in terms {
