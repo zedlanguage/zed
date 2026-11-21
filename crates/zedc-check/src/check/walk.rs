@@ -14394,6 +14394,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.classes[root].rank += 1;
         }
         self.classes[child].parent = root;
+        self.log_class(child, root);
         self.classes[root].size += self.classes[child].size;
         linked.push(child);
         true
@@ -14428,18 +14429,40 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// class is one of carriers at any time before the search stops is tried: e's group g
     /// is one of carriers from then on by (1). If g was one at the start it is pushed at the
     /// start; if a successful join of a link at g made it one, the join pushes g; otherwise
-    /// some other merge made it one (a merge checks uses on what flowed in, and that may join
-    /// other classes), and the scan of the unseen groups when the stack empties pushes g.
-    /// Each group pushed is popped, and its visit reaches every link at g. (3) A link whose
-    /// two ends are in one class and neither of carriers is never tried: a merge of one class
-    /// with itself changes nothing ([`Self::merge`] returns at once), so leaving it is the
-    /// same. (4) The search tries a link under the same test as the fixpoint, with the
-    /// classes as they are then, so it joins no link the fixpoint would not. A failed merge
-    /// (no carrier in common) reports the error and changes nothing; masks only shrink, so it
-    /// fails at every later attempt too, and both methods try each link once. Not proved:
-    /// that the joins come in the fixpoint's order, so where a use check inside a merge
-    /// depends on which links are joined before it, the errors and the classes may differ in
-    /// order from the fixpoint's; each error is placed at its own link.
+    /// some other merge or restriction made it one (a merge checks uses on what flowed in,
+    /// and that may join or restrict other classes), and the log of class writes read after
+    /// each join pushes g ([`Self::push_carrier_groups`], with its proof). The scan of the
+    /// unseen groups when the stack empties pushes any group the log missed; by that proof it
+    /// finds none, and it stays so that no join rests on the log. Each group pushed is
+    /// popped, and its visit reaches every link at g. (3) A link whose two ends are in one
+    /// class and neither of carriers is never tried: a merge of one class with itself changes
+    /// nothing ([`Self::merge`] returns at once), so leaving it is the same. (4) The search
+    /// tries a link under the same test as the fixpoint, with the classes as they are then,
+    /// so it joins no link the fixpoint would not. A failed merge (no carrier in common)
+    /// reports the error and changes nothing; masks only shrink, so it fails at every later
+    /// attempt too, and both methods try each link once.
+    ///
+    /// The order of the joins (row PROOF-join-narrowed-rescan-rounds). The search does not
+    /// join in the fixpoint's order, and need not, for merges whose use checks change no
+    /// other class. Proof that then whether any link fails, and where none fails the classes
+    /// at the end, are the same for every order of trying: let X be a run with no failure and
+    /// Y any run. By induction on Y's steps, each class of Y is within one class of X's end
+    /// and each link Y joins X joined. A class's mask is the intersection of its members'
+    /// (`merge`), so a class of X's end, being larger, has a mask within that of the class of
+    /// Y within it. A link Y tries has an end in a class of carriers of Y (or both ends in
+    /// one class, which joins nothing); the class of X's end around it is then one of
+    /// carriers too, so the link is active at X's end, X tried it (each method tries every
+    /// link active at its end: (2) above, and the fixpoint's definition), and with no failure joined
+    /// it: both ends are in one class of X. Y's merge then gives a class within that one,
+    /// whose mask holds X's class's mask, which is not empty, so it does not fail. So Y has no
+    /// failure; by the same argument with X and Y swapped, both end with the same classes.
+    /// Where a link fails, which link of classes that share carriers two by two but not all
+    /// together reports it depends on the order (`k0 = int`, `k1 = int | f64 | OTHER`,
+    /// `k2 = f64`: the second of the links (k0, k1), (k1, k2) tried fails), and the program is
+    /// rejected either way. The order here is fixed by the program (groups by root number,
+    /// links in their order), so one program always gets the same errors. Not proved: the
+    /// same with use checks inside a merge, which may restrict or join other classes in a way
+    /// that depends on what was joined before; each error is placed at its own link.
     // Complexity tradeoff (COMPLEXITY.md row F119): the naive version passes over the links
     // until no join changes a class, O(n²) for a chain of n links where each pass moves a
     // carrier one link (inferred). The two passes it was replaced with were O(n log n) but
@@ -14447,11 +14470,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     // Used: the 2n ends' roots sorted and searched, O(n log n); each group pushed once (`seen`
     // is the visited set, P207), each link reached at most twice and merged at most once,
     // plus the merges, O(log n) amortized each (union by rank, lists moved from the shorter).
-    // The scan of the unseen groups costs O(g) each time the stack empties; it runs once,
-    // finding nothing, unless a merge's use checks made a class of carriers outside the
-    // search, and then once more per such round. Not proved: a bound on those rounds below
-    // the number of groups, so the worst case is O(n·g); no program is known that makes
-    // more than one (row FAIL-join-narrowed-root-order).
+    // A group that becomes one of carriers outside the search is found through the log of
+    // class writes (row PROOF-join-narrowed-rescan-rounds): O(1) per write logged, which the
+    // write itself already cost, one `find` (O(log c) for c classes, union by rank) per entry
+    // read, and each group's entry moved O(log g) times for g groups (the shorter list into
+    // the longer); O((g + w) log(c)) in all for w writes. The scan of the unseen groups when
+    // the stack empties costs O(g) and, by the proof at `push_carrier_groups`, finds nothing
+    // the search has not seen, so it runs at most twice: at the start where no group is one
+    // of carriers, and at the end. Before, that scan was the only way such a group was found, once per
+    // round of such finds, and with no bound on the rounds below g the worst case was O(n·g)
+    // (no program making more than one round was known, nor is one now).
     fn join_narrowed(&mut self, level: usize) {
         let mut from: Vec<usize> = Vec::new();
         for k in self.r10_peek_pending(level) {
@@ -14494,6 +14522,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         let mut stack: Vec<usize> = (0..roots.len()).filter(|&g| seen[g]).collect();
         let mut joined = vec![false; links.len()];
+        // The groups not yet seen, under the root of their class, kept current from the log
+        // of class writes ([`Ck::class_log`]); a log already kept by a caller is set aside and
+        // gets this one's entries back at the end.
+        let mut unseen: HashMap<usize, Vec<usize>> = HashMap::new();
+        for g in (0..roots.len()).filter(|&g| !seen[g]) {
+            unseen.entry(roots[g]).or_default().push(g);
+        }
+        let outer = self.class_log.replace((Vec::new(), Vec::new()));
+        let mut read = 0;
         loop {
             if stack.is_empty() {
                 // A merge checks the uses of each class on what flowed into the other
@@ -14524,6 +14561,74 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if self.join_link(k, j, span) && !seen[other] {
                     seen[other] = true;
                     stack.push(other);
+                }
+                self.push_carrier_groups(&mut unseen, &mut seen, &mut stack, &mut read);
+            }
+        }
+        let (log, _) = std::mem::replace(&mut self.class_log, outer).unwrap_or_default();
+        if let Some((kept, _)) = &mut self.class_log {
+            kept.extend(log);
+        }
+    }
+
+    /// For [`Self::join_narrowed`]: reads the class writes logged from `read` on
+    /// ([`Ck::class_log`]), and moves `read` past them; moves each list of `unseen` groups to the root its class now
+    /// hangs from, the shorter list into the longer, and pushes on `stack`, marked `seen`,
+    /// the groups whose class is now one of carriers (its mask has no `OTHER` bit).
+    ///
+    /// Proof that `unseen` stays keyed by each group's root. At the start each group is keyed
+    /// by its root then. A group's root changes only when a root gets a parent, which the
+    /// checker writes at two places, [`Self::join_results`] and [`Self::merge`], and each logs
+    /// `(child, root)` there; a class store write made in a layer that is later dropped is
+    /// undone, and so are its entries ([`Ck::drop_layer`]), so the log holds exactly the
+    /// links that stand, in order, once the call that made them returns (each layer opened
+    /// inside [`Self::join_link`] is closed when it returns). Moving the list of each `child`
+    /// into its `root`, in the log's order, keeps every key a root. A mask is written at two
+    /// places, [`Self::merge`] (which logs the link) and [`Ck::restrict_asking`] (which logs
+    /// `(r, r)`); so a class that becomes one of carriers is the class of some logged entry's
+    /// `root`, and the scan below of each entry's present root finds its groups. `read` stays
+    /// at most the log's length: it moves only here, called when no layer opened inside the
+    /// search is open, and a layer dropped later truncates the log to its own mark, taken
+    /// when it opened, so at or after `read`; the entries before `read` stay in the log.
+    fn push_carrier_groups(
+        &mut self,
+        unseen: &mut HashMap<usize, Vec<usize>>,
+        seen: &mut [bool],
+        stack: &mut Vec<usize>,
+        read: &mut usize,
+    ) {
+        let Some((log, _)) = &self.class_log else {
+            return;
+        };
+        let (from, to) = (*read, log.len());
+        if to <= from {
+            return;
+        }
+        *read = to;
+        for &(child, root) in &log[from..to] {
+            if child == root {
+                continue;
+            }
+            if let Some(mut moved) = unseen.remove(&child) {
+                let into = unseen.entry(root).or_default();
+                if into.len() < moved.len() {
+                    std::mem::swap(into, &mut moved);
+                }
+                into.extend(moved);
+            }
+        }
+        for e in from..to {
+            // Read by index: `find` below needs `self` whole, and the log is not copied.
+            let root = self.class_log.as_ref().map_or(e, |(log, _)| log[e].1);
+            let r = self.find(root);
+            if self.classes[r].mask & OTHER == 0
+                && let Some(groups) = unseen.remove(&r)
+            {
+                for g in groups {
+                    if !seen[g] {
+                        seen[g] = true;
+                        stack.push(g);
+                    }
                 }
             }
         }
@@ -14640,6 +14745,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let narrows = self.classes[child].narrows;
         let size = self.classes[child].size;
         self.classes[child].parent = root;
+        self.log_class(child, root);
         let c = &mut self.classes[root];
         c.size += size;
         c.generic &= generic;
@@ -20256,7 +20362,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // never undid them (row CHECK-uf-no-speculative-writes).
                     let layered = self.trying;
                     if layered {
-                        self.classes.begin_layer();
+                        self.begin_layer();
                     }
                     let args = vec![Some(Arg::of(x.clone())), Some(Arg::of(y.clone()))];
                     self.apply(
@@ -20269,8 +20375,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let refused = self.errors.len() > mark.errors;
                     if layered {
                         match refused {
-                            true => self.classes.drop_layer(),
-                            false => self.classes.commit_layer(),
+                            true => self.drop_layer(),
+                            false => self.commit_layer(),
                         }
                     }
                     if refused {
@@ -31733,6 +31839,51 @@ mod tests {
             );
         }
         assert!(ck.errors.is_empty());
+    }
+
+    /// Row PROOF-join-narrowed-rescan-rounds: [`Ck::push_carrier_groups`] finds a group whose
+    /// class becomes one of carriers outside the search, by a merge then a restriction, as a
+    /// merge's use checks may do; and a merge made in a layer that is dropped moves nothing.
+    /// Groups 0 and 1 stand on classes x and y, group 2 on z. In a layer, x is merged with z
+    /// and the layer dropped: the log keeps nothing, and restricting z then pushes group 2
+    /// only. Then x and y are merged in a layer that is kept, and the root restricted to
+    /// `int`: groups 0 and 1 are pushed, under whichever root the merge kept. What it cannot
+    /// catch: a write of a class's parent or mask at a place that does not log it, which the
+    /// proof at [`Ck::push_carrier_groups`] rules out by the places it lists.
+    #[test]
+    fn push_carrier_groups_follows_the_class_writes_that_stand() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let at = Span { start: 1, end: 2 };
+        let (x, y, z) = (ck.class(), ck.class(), ck.class());
+        let mut unseen: HashMap<usize, Vec<usize>> =
+            HashMap::from([(x, vec![0]), (y, vec![1]), (z, vec![2])]);
+        let (mut seen, mut stack, mut read) = (vec![false; 3], Vec::new(), 0);
+        ck.class_log = Some((Vec::new(), Vec::new()));
+        ck.begin_layer();
+        assert!(ck.merge(x, z, "a test", at));
+        ck.drop_layer();
+        assert_ne!(ck.find(x), ck.find(z));
+        ck.push_carrier_groups(&mut unseen, &mut seen, &mut stack, &mut read);
+        assert!(stack.is_empty());
+        assert!(ck.restrict(z, Carrier::Int.bit(), "a test", at));
+        ck.push_carrier_groups(&mut unseen, &mut seen, &mut stack, &mut read);
+        assert_eq!(stack, vec![2]);
+        ck.begin_layer();
+        assert!(ck.merge(x, y, "a test", at));
+        ck.commit_layer();
+        ck.push_carrier_groups(&mut unseen, &mut seen, &mut stack, &mut read);
+        assert_eq!(
+            stack,
+            vec![2],
+            "a class that may take other values pushes nothing"
+        );
+        assert!(ck.restrict(y, Carrier::Int.bit(), "a test", at));
+        ck.push_carrier_groups(&mut unseen, &mut seen, &mut stack, &mut read);
+        stack.sort_unstable();
+        assert_eq!(stack, vec![0, 1, 2]);
+        assert_eq!(seen, vec![true; 3]);
     }
 
     /// Row PROOF-merged-data-skip: the merge `(#box(f) + #bag(f)) + #cup(f)`, its inner

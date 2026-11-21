@@ -1275,6 +1275,9 @@ type Facts = VecDeque<(usize, Ty, Span)>;
 /// The questions a scope's solver refused, with the sets each kept ([`Ck::place_refusals`]).
 type Refusals = imbl::OrdMap<Refused, Kept>;
 
+/// The log of class writes [`Ck::join_narrowed`] reads, and its marks ([`Ck::class_log`]).
+type ClassLog = (Vec<(usize, usize)>, Vec<usize>);
+
 /// What [`Ck::narrow`] changed, for [`Ck::widen`] to restore.
 type Saved<'a> = VecDeque<(usize, Option<Ty>, Option<Rc<Origin<'a>>>)>;
 
@@ -2275,6 +2278,12 @@ struct Ck<'t, 'a> {
     opened: bool,
     /// Whether a repair is being tried, so its errors offer none.
     trying: bool,
+    /// While [`Ck::join_narrowed`] runs (row PROOF-join-narrowed-rescan-rounds): each write of
+    /// a class's parent or mask that stands, in order, `(child, root)` for a link of two
+    /// classes and `(r, r)` for a mask narrowed ([`Ck::log_class`]); and the log's length at
+    /// each layer of the class store opened since, so that a dropped layer drops its entries
+    /// with its writes ([`Ck::drop_layer`]). None at other times.
+    class_log: Option<ClassLog>,
     /// Whether a fit of classes ([`Ck::fit_classes`]) is being run for good after its trial
     /// held, so that a fit nested in it runs without a trial of its own: the outer trial
     /// already ran it.
@@ -3081,6 +3090,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             opened: false,
             failed: HashSet::new(),
             trying: false,
+            class_log: None,
             fitting: false,
             fits_waiting: None,
             marks: std::cell::Cell::new(0),
@@ -5369,6 +5379,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             what: what.into(),
             takes: Some(mask),
         });
+        self.log_class(r, r);
         true
     }
 
@@ -9930,7 +9941,7 @@ impl Ck<'_, '_> {
     /// "Trial layers"; row CHECK-uf-no-speculative-writes). Gives what `trying` was, for
     /// [`Self::end_trial`]. Every trial is undone, so each ends by dropping its layer.
     fn start_trial(&mut self) -> bool {
-        self.classes.begin_layer();
+        self.begin_layer();
         std::mem::replace(&mut self.trying, true)
     }
 
@@ -9938,10 +9949,48 @@ impl Ck<'_, '_> {
     /// class store, restores `trying`, and forgets the fits the trials wrote once the
     /// outermost ends, since their writes are undone by then.
     fn end_trial(&mut self, was: bool) {
-        self.classes.drop_layer();
+        self.drop_layer();
         self.trying = was;
         if !was {
             self.trial_fits.clear();
+        }
+    }
+
+    /// Opens a layer of the class store ([`probe::Classes::begin_layer`]), and marks where it
+    /// begins in [`Self::class_log`], if one is kept. These three are the only callers of the
+    /// store's layer operations in the checker, so the log's marks pair with its layers.
+    fn begin_layer(&mut self) {
+        self.classes.begin_layer();
+        if let Some((log, marks)) = &mut self.class_log {
+            marks.push(log.len());
+        }
+    }
+
+    /// Drops the innermost layer of the class store, and with it the entries of
+    /// [`Self::class_log`] written since it opened: their writes are undone.
+    fn drop_layer(&mut self) {
+        self.classes.drop_layer();
+        if let Some((log, marks)) = &mut self.class_log
+            && let Some(m) = marks.pop()
+        {
+            log.truncate(m);
+        }
+    }
+
+    /// Merges the innermost layer of the class store into the one below; its entries of
+    /// [`Self::class_log`] stand with its writes.
+    fn commit_layer(&mut self) {
+        self.classes.commit_layer();
+        if let Some((_, marks)) = &mut self.class_log {
+            marks.pop();
+        }
+    }
+
+    /// Records in [`Self::class_log`], if one is kept, that class `from` now hangs from `to`,
+    /// or for `from == to` that root `from`'s mask was narrowed.
+    fn log_class(&mut self, from: usize, to: usize) {
+        if let Some((log, _)) = &mut self.class_log {
+            log.push((from, to));
         }
     }
 
