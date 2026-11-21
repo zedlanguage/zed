@@ -342,6 +342,118 @@ fn the_carried_fixes_of_many_arguments_print_linear_output() {
     );
 }
 
+/// [`carried_fixes`] at parameters that are not checked apart (BENCH-fixes-checked-wide-not-apart):
+/// `f(positional p0, …) = [p0, …]` has the type `(T0, …) -> … -> T0 | …`, whose result holds
+/// every parameter's variable, so neither `params_apart` nor `params_own_apart`
+/// (crates/zedc-check/src/check/walk.rs) takes it; `params_met_apart` does, and its fixes are
+/// checked one class at a time (`alike_fixes`). Each of the `n` arguments `k * 0.5` is its own
+/// error with two fixes, `rat(k) * 0.5` and `f64(k) * 0.5`, each checked as written
+/// (`Ck::fixes_checked`). Its bench at 200 and 1600 arguments is 29.0 times the instructions
+/// (48.5 before `alike_fixes`), from the step of `f`'s declaration that each error gives in
+/// full, and waits for row MSG-declared-step-per-error-checker.
+pub(super) fn carried_fixes_not_apart(n: usize) -> String {
+    let ps: Vec<String> = (0..n).map(|i| format!("positional p{i}")).collect();
+    let body: Vec<String> = (0..n).map(|i| format!("p{i}")).collect();
+    let xs = vec!["  k * 0.5"; n];
+    format!(
+        "k = 1;\nf({}) = [{}];\ny = f(\n{});\n",
+        ps.join(", "),
+        body.join(", "),
+        xs.join(",\n")
+    )
+}
+
+/// Each argument of [`carried_fixes_not_apart`] is rejected, and each offers both of its fixes.
+pub(super) fn the_fixes_of_arguments_not_apart(src: &str, n: usize) {
+    let out = rejected(src);
+    let count = |s: &str| out.matches(s).count();
+    assert_eq!(
+        count("A decimal literal is never an `int`: `k : int * 0.5`."),
+        n,
+        "{out}"
+    );
+    assert_eq!(count("Try `rat(k) * 0.5` instead."), n, "{out}");
+    assert_eq!(count("\n    rat(k) * 0.5"), n, "{out}");
+    assert_eq!(count("\n    f64(k) * 0.5"), n, "{out}");
+}
+
+#[test]
+fn the_fixes_of_many_arguments_not_apart() {
+    for n in [1, 2, 6] {
+        the_fixes_of_arguments_not_apart(&carried_fixes_not_apart(n), n);
+    }
+}
+
+/// Fixes at parameters not checked apart whose call result holds the parameters' variables:
+/// each fix is checked for the type it gives the call alone, and fixes alike (one argument
+/// type, one fix type, at parameters whose variables the result holds symmetrically) share one
+/// check (`alike_fixes`, crates/zedc-check/src/check/walk.rs). `y = x < 1r` then takes only the
+/// `rat` fix of each argument, so the `f64` fix is dropped. In the third program the result
+/// `T | (0 -> U)` is not symmetric in `T` and `U`, so each fix is checked alone, and none is
+/// taken. The messages are the ones each fix checked by its own check of the call gave
+/// before `alike_fixes` (run 2026-11-21 with the classes checked member by member against
+/// their first fix: 1341 pieces of l01_26 and l01_29, none failed).
+#[test]
+fn fixes_of_alike_arguments_keep_their_types() {
+    let two = "f(positional b: bool, positional p0, positional p1)";
+    let three =
+        "f(positional b: bool, positional d: bool, positional p0, positional p1, positional p2)";
+    let nested = "if b { p0 } else { if d { p1 } else { p2 } }";
+    let cases: [(String, Vec<&str>); 4] = [
+        (
+            format!(
+                "k = 3;\n{two} = if b {{ p0 }} else {{ p1 }};\nx = f(true, k * 0.5, k * 0.25);\ny = x < 1r;\n"
+            ),
+            vec![
+                "Try `x = f(true, rat(k) * 0.5, k * 0.25)` instead.",
+                "Try `x = f(true, k * 0.5, rat(k) * 0.25)` instead.",
+            ],
+        ),
+        (
+            format!(
+                "k = 3;\n{three} = {nested};\nx = f(true, true, k * 0.5, 1r, k * 0.25);\ny = x < 1r;\n"
+            ),
+            vec![
+                "Try `x = f(true, true, rat(k) * 0.5, 1r, k * 0.25)` instead.",
+                "Try `x = f(true, true, k * 0.5, 1r, rat(k) * 0.25)` instead.",
+            ],
+        ),
+        (
+            format!(
+                "k = 3;\n{two} = if b {{ p0 }} else {{ [p1] }};\nx = f(true, k * 0.5, k * 0.25);\ny = x < 1r;\n"
+            ),
+            vec![],
+        ),
+        (
+            format!(
+                "k = 3;\n{three} = {nested};\nx = f(true, true, k * 0.5, k * 0.5, k * 0.25);\ny = x < 1r;\n"
+            ),
+            vec![
+                "Try `x = f(true, true, rat(k) * 0.5, k * 0.5, k * 0.25)` instead.",
+                "Try `x = f(true, true, k * 0.5, rat(k) * 0.5, k * 0.25)` instead.",
+                "Try `x = f(true, true, k * 0.5, k * 0.5, rat(k) * 0.25)` instead.",
+            ],
+        ),
+    ];
+    for (src, tries) in cases {
+        let out = rejected(&src);
+        let count = |s: &str| out.matches(s).count();
+        for t in &tries {
+            assert_eq!(count(t), 1, "{t}\n{out}");
+        }
+        assert_eq!(count("Try `"), tries.len(), "{out}");
+        assert_eq!(
+            count("k is cast to rat, and `*` takes two rat"),
+            tries.len(),
+            "{out}"
+        );
+        assert_eq!(count("f64(k)"), 0, "{out}");
+        if tries.is_empty() {
+            assert_eq!(count("No fix is offered"), 2, "{out}");
+        }
+    }
+}
+
 /// A call of `n` decimal literals at parameters with no type, `f(1.5, …)`
 /// (MSG-many-args-decimal): nothing gives the literals a carrier, so each is the `f64` it
 /// writes (DESIGN.md step L1.26b, author decision 2026-11-12) and the call checks. They were

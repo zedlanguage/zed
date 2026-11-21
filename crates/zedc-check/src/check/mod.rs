@@ -95,9 +95,9 @@ use kernel_type::kernel_type;
 use ty::{
     Around, Arrow, Binds, CallPath, Carrier, DataUse, Dense, EVERY, FoldForm, IntDomain, KeyUse,
     LevelWord, MapWord, NameItem, NameRun, Names, Narrow, Need, NeedKind, NodeId, OTHER,
-    ParamRange, Pat, PathStep, Piece, PowerUse, Reducer, Renamings, RunMark, RunRenames, SParam,
-    Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms, carriers_text,
-    class_id, errs, fresh_name, mask_text, rename_apart,
+    ParamRange, Pat, PathStep, PathSteps, Piece, PowerUse, Reducer, Renamings, RunMark, RunRenames,
+    SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms,
+    carriers_text, class_id, errs, fresh_name, mask_text, rename_apart,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -2129,6 +2129,21 @@ struct JoinedElse<'a> {
     seen: Vec<(String, Ty, Vec<Note>)>,
 }
 
+/// Where the chain of bindings from a binder ends, as [`Ck::place_of`] follows it and
+/// [`Ck::places`] keeps it: `End(b, steps)`, the binder `b` bound by neither fact and the
+/// steps from its value to the value of the binder the chain started at; `Fails` where the
+/// chain reaches a value that is no name, bracket or destructured name, a name bound to more
+/// than one binder or none, or a cycle. Kept here, beside [`Ck`], and not in remap.rs, which
+/// fills it, for the reason given at [`StepFn`]. The steps of the names bound one from another
+/// share their prefixes ([`PathSteps`]): a name bound by destructuring the one before adds one
+/// step to its path, so the places of `n` such names take O(n) space, not the O(n²) of a list
+/// each.
+#[derive(Clone)]
+enum ChainEnd {
+    End(usize, PathSteps),
+    Fails,
+}
+
 struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
     env: HashMap<usize, Ty>,
@@ -2682,15 +2697,22 @@ struct Ck<'t, 'a> {
     /// its span, and whether a remap reads it (RANGE-keys, FAIL-family-from-tuple-param). The
     /// signature takes a [`KeyUse`] need on each where it has a range or a remap reads it.
     param_keys: HashMap<usize, Vec<ParamKeys>>,
+    /// The paths of the entries of [`Self::param_keys`] and of the places of [`Self::places`]
+    /// made so far, each kept once ([`Self::interned_push`]).
+    declared_paths: std::cell::RefCell<HashSet<PathSteps>>,
     /// The needs of the parameters of no declared type passed on as a parameter declared a
     /// partial map, kept in [`Self::ranged_floors`]: each binder and [`KeyUse`] once.
     keyed_seen: HashSet<(usize, Arc<KeyUse>)>,
     /// The needs of those parameters on a part of their value (`InDomain`'s `path`), kept in
     /// [`Self::ranged_floors`]: each binder, path and domain once (CHK-pow-component-bound).
-    path_seen: HashSet<(usize, Arc<[PathStep]>, IntDomain)>,
+    path_seen: HashSet<(usize, PathSteps, IntDomain)>,
     /// The value and step of each name bound by destructuring, `a` of `a, b = v` to `v` and
     /// component 0 of 2, read with [`Self::facts`] to find the parameter part a name is.
     taken_from: HashMap<usize, (&'a Expr, PathStep)>,
+    /// Where the chain of [`Self::facts`] and [`Self::taken_from`] from each binder that
+    /// [`Ck::place_of`] has followed ends, so each binder is followed once
+    /// (PERF-keyed-part-path-d-squared).
+    places: std::cell::RefCell<HashMap<usize, ChainEnd>>,
     /// Each bit word curried with `...`, by the span of the call: the word, its primitive and
     /// the operands the call gave, at their parameters, the width left out. The function the
     /// call gives carries a need with that span ([`NeedKind::InDomain`]'s `bits`), and each of
@@ -3225,9 +3247,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             ranged_seen: HashSet::new(),
             param_ints: HashMap::new(),
             param_keys: HashMap::new(),
+            declared_paths: Default::default(),
             keyed_seen: HashSet::new(),
             path_seen: HashSet::new(),
             taken_from: HashMap::new(),
+            places: std::cell::RefCell::new(HashMap::new()),
             bit_curries: HashMap::new(),
             leaving: Vec::new(),
             open: Vec::new(),
@@ -8947,7 +8971,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     param: j,
                     via: None,
                     bits: None,
-                    path: Arc::from([]),
+                    path: PathSteps::default(),
                 },
                 result: None,
                 span,
@@ -14790,7 +14814,7 @@ pub(super) fn exact_keys(ints: &IntervalSet) -> Option<WrittenRange> {
 pub(super) struct ParamKeys {
     /// The steps from the parameter's value to the map: none for the whole parameter, and
     /// `[Part { i: 0, n: 2 }]` for `m` of `p: (int ->? int, int)` (FAIL-family-from-tuple-param).
-    pub path: Arc<[PathStep]>,
+    pub path: PathSteps,
     /// The ranges written on its key: on the whole key (`None`) or on its tuple component at
     /// the index.
     pub ranges: Vec<(Option<usize>, WrittenRange)>,
@@ -15118,31 +15142,25 @@ impl<'a> Ck<'_, 'a> {
     /// Complexity tradeoff: the tuples are walked with a stack of their own, not by recursion,
     /// so a parameter declared a tuple nested thousands deep, as the benchmarks of
     /// `bench::ordered_tuples` declare, runs on a shallow stack (a recursive walk overflowed
-    /// it at 6400 levels); O(the size of the declared type), beyond reading the bounds, plus
-    /// the length of each map's steps, which its entry keeps. The steps are copied per map,
-    /// so a type with a map at each of `d` levels costs O(d²); sharing their prefixes would
-    /// make each need's path a list, which every reader of [`NeedKind::InDomain`]'s path
-    /// would have to change for, and no program has been seen with more than a few such maps.
+    /// it at 6400 levels); O(the size of the declared type), beyond reading the bounds. Each
+    /// part's path is its tuple's path and one step more, sharing the tuple's steps
+    /// ([`PathSteps::push`], O(1)), so the maps at each of `d` levels take O(d) for their
+    /// paths. Complexity tradeoff: the naive way, a path of its own for each map, copied from
+    /// one flat list of steps, costs Θ(d²) there (PERF-keyed-part-path-d-squared,
+    /// COMPLEXITY.md; l01_26 bench partial_maps.rs
+    /// `checking_maps_at_every_level_of_a_tuple_parameter_scales`).
     pub(super) fn param_keys(&mut self, p: &'a Param, id: usize) {
         let Some(t) = p.ty.as_ref() else { return };
         let mut found = Vec::new();
-        let mut path = Vec::new();
-        // A part to visit, with the step to it, or `None` to leave the part last entered.
-        let mut todo: Vec<Option<(&'a Type, Option<PathStep>)>> = vec![Some((t, None))];
-        while let Some(item) = todo.pop() {
-            let Some((t, step)) = item else {
-                path.pop();
-                continue;
-            };
-            if let Some(s) = step {
-                path.push(s);
-                todo.push(None);
-            }
+        // A part to visit, with the steps to it.
+        let mut todo: Vec<(&'a Type, PathSteps)> = vec![(t, PathSteps::default())];
+        while let Some((t, path)) = todo.pop() {
             match &t.kind {
                 TypeKind::Tuple(ts) => {
                     let n = ts.len();
-                    let parts = ts.iter().enumerate().rev();
-                    todo.extend(parts.map(|(i, c)| Some((c, Some(PathStep::Part { i, n })))));
+                    for (i, c) in ts.iter().enumerate().rev() {
+                        todo.push((c, self.interned_push(&path, PathStep::Part { i, n })));
+                    }
                 }
                 TypeKind::Arrow {
                     params,
@@ -15150,7 +15168,7 @@ impl<'a> Ck<'_, 'a> {
                     ..
                 } => {
                     if let [key] = &params[..] {
-                        found.push(self.keyed_map(p, key, &path));
+                        found.push(self.keyed_map(p, key, path));
                     }
                 }
                 _ => {}
@@ -15161,13 +15179,38 @@ impl<'a> Ck<'_, 'a> {
         }
     }
 
+    /// `path` and then `step`, the one path of [`Self::declared_paths`] with those steps, kept
+    /// there if none is yet, so that equal paths are one list and two of them are compared in
+    /// O(1) ([`PathSteps`]' `Eq`, remap.rs `same_steps`): the paths of a declared parameter `q`
+    /// and of the parameter `p` it is passed to whole, `f(q: T) = g(p: q)`, compared at each
+    /// call, and the place of a name destructured from a parameter, `m` of `m, r = p`,
+    /// compared with the parameter's entries. O(1) expected.
+    ///
+    /// Proof that the lookup is O(1): every path kept is `path` of a call followed by a step,
+    /// and every `path` passed is the empty path or one kept, so, by induction on the length,
+    /// the path before the last step of each kept path is a kept path, and two kept paths with
+    /// the same steps are one list. The new path and a kept one of the same hash are then
+    /// compared at their last steps, and where those are equal their outer paths, both kept,
+    /// are one list (equal, found at once) or have different steps, told apart in O(1) unless
+    /// their 64-bit hashes are also equal, which costs one pass over the steps. The set holds
+    /// O(the declared paths made in the run) paths, one node each.
+    pub(super) fn interned_push(&self, path: &PathSteps, step: PathStep) -> PathSteps {
+        let next = path.push(step);
+        let mut kept = self.declared_paths.borrow_mut();
+        if let Some(k) = kept.get(&next) {
+            return k.clone();
+        }
+        kept.insert(next.clone());
+        next
+    }
+
     /// The entry of [`Self::param_keys`] for the partial map of the one key `key` at the steps
     /// `path` of the declared type of `p`: the ranges written on the key.
     fn keyed_map(
         &mut self,
         p: &'a Param,
         key: &'a zedc_syntax::ast::TypeParam,
-        path: &[PathStep],
+        path: PathSteps,
     ) -> ParamKeys {
         let parts: Vec<(Option<usize>, &Type)> = match &key.ty.kind {
             TypeKind::Tuple(ts) => ts.iter().enumerate().map(|(i, t)| (Some(i), t)).collect(),
@@ -15184,7 +15227,7 @@ impl<'a> Ck<'_, 'a> {
             }
         }
         ParamKeys {
-            path: path.into(),
+            path,
             ranges,
             family: None,
         }

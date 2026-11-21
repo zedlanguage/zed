@@ -118,6 +118,53 @@ pub(super) fn many(n: usize) -> String {
     )
 }
 
+/// A function `total` of a parameter `p` declared a map nested in tuples `d` deep,
+/// `(int ->? int, (int ->? int, … int))`, which takes the maps out by destructuring, one level a
+/// line, and sums the entries of the deepest map (`every` false) or of every map; a function of
+/// a declared and one of an undeclared parameter that pass theirs on whole; and a call of each
+/// with a display of maps (PERF-keyed-part-path-d-squared). The need on the map at level `i`
+/// has a path of `i + 1` steps, and each call checks the part of its argument at that path
+/// (`Ck::part_of`).
+pub(super) fn maps_in_tuples(d: usize, every: bool) -> String {
+    let ty = format!("{}int{}", "(int ->? int, ".repeat(d), ")".repeat(d));
+    let display = format!("{}1{}", "({0 -> 1}, ".repeat(d), ")".repeat(d));
+    let mut body = String::from("    m0, r0 = p;\n");
+    for i in 1..d {
+        body += &format!("    m{i}, r{i} = r{};\n", i - 1);
+    }
+    let read: Vec<String> = match every {
+        true => (0..d).map(|i| format!("m{i}.sum")).collect(),
+        false => vec![format!("m{}.sum", d - 1)],
+    };
+    format!(
+        "total(p: {ty}) {{\n{body}    return {} + r{};\n}}\n\
+         declared(q: {ty}) = total(p: q);\nopen(q) = total(p: q);\n\
+         t = total(p: {display});\nu = declared(q: {display});\nv = open(q: {display});\n",
+        read.join(" + "),
+        d - 1
+    )
+}
+
+#[test]
+fn maps_in_tuples_nested_deep_are_read_as_families() {
+    // A small instance of the benchmarks
+    // `bench::partial_maps::checking_a_map_nested_deep_in_a_tuple_parameter_scales` and
+    // `bench::partial_maps::checking_maps_at_every_level_of_a_tuple_parameter_scales`.
+    for every in [false, true] {
+        let src = maps_in_tuples(4, every);
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+        // A function in place of the deepest map is refused at each of the three calls.
+        let wrong = src.replace("({0 -> 1}, 1)", "(((x: int) -> x), 1)");
+        let errs = type_errors(&wrong);
+        assert_eq!(errs.len(), 3, "{wrong}{errs:?}");
+        assert!(
+            errs.iter()
+                .all(|e| e.contains("as a family, which `sum` reads")),
+            "{wrong}{errs:?}"
+        );
+    }
+}
+
 #[test]
 fn many_and_deep_partial_maps_are_looked_up() {
     // A small instance of the benchmark

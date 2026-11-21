@@ -697,6 +697,72 @@ fn function_types_nested_deep_whose_inner_levels_hold_the_outer_variable_fit_in_
     );
 }
 
+/// A printed type in which one signature `S` of `n` own variables is held by `n` signatures,
+/// each holding `S` as one `Arc` and an own variable of its own, and a function of the `n`
+/// holders: the text is about `4n` definitions and parameters long.
+fn holders_of_one_shared_signature(n: usize) -> String {
+    let own = |v: &str| {
+        (0..n)
+            .map(|i| format!("{v}{i} in int | f64"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let params = (0..n)
+        .map(|i| format!("x{i}: A{i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut text = format!("type S = ({params}) -> int for {};\n", own("A"));
+    for i in 0..n {
+        text += &format!("type H{i} = (s: S, y: B{i}) -> int for B{i} in int | f64;\n");
+    }
+    let holders = (0..n)
+        .map(|i| format!("h{i}: H{i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    text + &format!("({holders}) -> int")
+}
+
+#[test]
+fn the_variables_of_many_holders_of_one_shared_signature_are_found_in_linear_time() {
+    // PERF-varfacts-held-shared-dag: `S`'s facts, `n` variables, are made once and merged into
+    // each of the `n` holders, and the holders' facts, each `S`'s and one variable more, into
+    // the function around them. 24.74 times the instructions at 8n with `imbl`'s sets, whose
+    // merge walked every variable already merged; 8.29 with the treap union (`ty::merge`), 8.40
+    // with the treap's insertion in place.
+    let inputs = scaling::inputs(256, holders_of_one_shared_signature);
+    scaling::check(
+        "the variables of n holders of one signature of n variables",
+        256,
+        |n| {
+            let t = parse_type(&inputs[&n]).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(t.var_facts().names.len(), 2 * n);
+        },
+    );
+}
+
+/// A function type nested `n` deep, each level binding a variable of its own and holding the
+/// level below: the variable sets of two levels next to each other differ in one variable.
+fn nest_of_one_new_variable_a_level(n: usize) -> String {
+    (1..=n).fold("(y: V0) -> int for V0 in int | f64".to_string(), |t, k| {
+        format!("(h: {t}, y: V{k}) -> int for V{k} in int | f64")
+    })
+}
+
+#[test]
+fn the_variables_of_a_nest_of_one_new_variable_a_level_are_found_in_linear_time() {
+    // PERF-varfacts-held-shared-dag: each level merges the facts of the level below, which
+    // hold all but one of its variables, into its own.
+    let inputs = scaling::inputs(512, nest_of_one_new_variable_a_level);
+    scaling::check(
+        "the variables of a nest n deep of one new variable a level",
+        512,
+        |n| {
+            let t = parse_type(&inputs[&n]).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(t.var_facts().names.len(), n + 1);
+        },
+    );
+}
+
 /// The program of FAIL-print-two-variables-one-name with its shape free of variables grown to
 /// `n`: both parameters hold `((#ki | #li, bool) | (#ki | #li, bool, bool),)` for each `i`,
 /// which neither member `((V, V),)` nor `((V, V, V),)` fits at either carrier of `V`, and

@@ -197,6 +197,37 @@ fn a_result_equal_to_an_operand_is_that_operand() {
 }
 
 #[test]
+fn an_insertion_leaves_every_set_sharing_its_nodes_as_it_was() {
+    // `insert` changes in place the nodes a set alone holds and copies the shared ones: each
+    // copy taken before an insertion, sharing all or part of the set, keeps its keys and the
+    // counts of every node.
+    let mut g = Rng::new(11);
+    let mut t: TreapSet<i64> = TreapSet::new();
+    let mut want = BTreeSet::new();
+    let mut copies: Vec<(TreapSet<i64>, Vec<i64>)> = Vec::new();
+    for i in 0..3000 {
+        let k = g.int(0, 4_999);
+        assert_eq!(t.insert(k), want.insert(k), "insert {k}");
+        if i % 97 == 0 {
+            copies.push((t.clone(), want.iter().copied().collect()));
+        }
+    }
+    assert_eq!(checked(&t), want.into_iter().collect::<Vec<_>>());
+    for (c, keys) in &copies {
+        assert_eq!(&checked(c), keys);
+    }
+    // A key under the root of a set no other holds: the root is changed in place.
+    let mut u: TreapSet<i64> = (0..100).collect();
+    let root = Arc::as_ptr(u.root.as_ref().unwrap());
+    let low = (100..10_000)
+        .find(|k| k.priority() < u.root.as_ref().unwrap().prio)
+        .unwrap();
+    assert!(u.insert(low));
+    assert_eq!(Arc::as_ptr(u.root.as_ref().unwrap()), root);
+    assert_eq!(checked(&u), (0..100).chain([low]).collect::<Vec<_>>());
+}
+
+#[test]
 fn a_large_set_is_dropped_on_a_small_stack() {
     let run = || {
         let s: TreapSet<i64> = (0..200_000).collect();

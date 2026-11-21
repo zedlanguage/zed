@@ -14,6 +14,14 @@ use crate::check::*;
 use zedc_base::rejection::{Row, not_yet};
 use zedc_syntax::ast::{Blocks, RemapLevel, Target};
 
+/// The step `[k]` of a bracket holding the int literal `k`, or `None` for any other bracket.
+fn index_step(k: &Expr) -> Option<PathStep> {
+    let Some(Value::Int(k)) = literal(k, None).map(|l| l.value) else {
+        return None;
+    };
+    Some(PathStep::Index(usize::try_from(k).ok()?))
+}
+
 /// A remap whose source is checked or being checked: its levels' keys and leaf are checked one
 /// after another with the binders in scope.
 pub(in crate::check) struct RemapF<'a> {
@@ -441,20 +449,32 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// cannot catch a part reached in another way, as through `match` or a nested function's
     /// capture, which this walk does not follow: such a read is refused, as before, not let
     /// through.
+    ///
+    /// Complexity tradeoff (PERF-keyed-part-path-d-squared): the steps are a [`PathSteps`],
+    /// whose prefixes are shared, so `e`'s place followed by `then` is made in O(1) where
+    /// either is empty, as at a call that passes the parameter on whole, and in O(|then|)
+    /// otherwise; the naive way copied both into a list of their own, O(d) per call, Θ(d²) for
+    /// the d needs of a parameter `(K ->? V, (K ->? V, …))`. The entries are then passed over,
+    /// O(1) for each of another length and O(d) for the one of the same length, compared from
+    /// the last step back and stopping where the two lists meet ([`same_steps`]).
     pub(in crate::check) fn keyed_place(
         &self,
         e: &Expr,
-        then: &[PathStep],
+        then: &PathSteps,
     ) -> Option<(usize, usize)> {
-        let (id, mut steps) = self.place_of(e, |ck, id| ck.param_keys.contains_key(&id))?;
-        steps.extend_from_slice(then);
+        let (id, place) = self.place_of(e, |ck, id| ck.param_keys.contains_key(&id))?;
+        let steps = match (place.is_empty(), then.is_empty()) {
+            (true, _) => then.clone(),
+            (false, true) => place,
+            (false, false) => then.to_vec().into_iter().fold(place, |p, s| p.push(s)),
+        };
         let i = (self.param_keys[&id].iter()).position(|k| same_steps(&k.path, &steps))?;
         Some((id, i))
     }
 
     /// [`Self::keyed_place`] of `e` itself.
     pub(in crate::check) fn keyed_param(&self, e: &Expr) -> Option<(usize, usize)> {
-        self.keyed_place(e, &[])
+        self.keyed_place(e, &PathSteps::default())
     }
 
     /// The entry of [`Ck::param_keys`] at `(binder, index)`, as [`Self::keyed_param`] gives it.
@@ -478,50 +498,122 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// check of the destructuring refuses an argument that is none. `x[k]` is the entry `k`
     /// of `x`, its component `k` where `x` is a tuple.
     ///
-    /// Complexity tradeoff: one step per name or bracket followed, each a hash lookup, so
-    /// O(d) for a part `d` steps below the binder; a name met twice ends the walk, so a cycle
-    /// of names costs O(names). COMPLEXITY.md CHK-pow-component-bound.
+    /// The binder is the end of the chain of bindings from `e`'s name ([`ChainEnd`]), and `stop`
+    /// is asked of it alone. Proof that no binder before the end can stop the walk: each
+    /// caller's `stop` holds only of a parameter, one of [`Ck::open_params`] or a key of
+    /// [`Ck::param_keys`] (filled with parameter binders only, walk.rs `bind_param` and
+    /// mod.rs `param_keys.insert`), and a binder before the end is bound by a fact or by
+    /// destructuring ([`Ck::facts`], [`Ck::taken_from`]), written only where a statement binds
+    /// a name (walk.rs, `facts.insert` and `taken_from.insert`), never for a parameter. So the
+    /// walk that asked `stop` at each binder, as this did before, returns what this returns.
+    ///
+    /// Complexity tradeoff: the naive way follows the chain from `e` at each call, one step
+    /// per name, each a handful of hash lookups, so the uses of the names `m_i` of
+    /// `m_i, r_i = r_{i-1}` cost Θ(d²) lookups for a chain of d
+    /// (PERF-keyed-part-path-d-squared, l01_26 bench partial_maps.rs
+    /// `checking_maps_at_every_level_of_a_tuple_parameter_scales`). Here [`Self::chain_end`]
+    /// follows each binder once and keeps where its chain ends, with steps that share their
+    /// prefixes with the binder before it ([`PathSteps`]), so a call costs O(1) expected
+    /// lookups, and O(1) more for each bracket written on `e` itself, where the naive way did
+    /// O(d) lookups and copies; the memo takes O(binders followed) space. COMPLEXITY.md
+    /// CHK-pow-component-bound, PERF-keyed-part-path-d-squared.
     pub(in crate::check) fn place_of<'e>(
         &'e self,
         mut e: &'e Expr,
         stop: impl Fn(&Self, usize) -> bool,
-    ) -> Option<(usize, Vec<PathStep>)> {
-        let mut seen = HashSet::new();
-        // Innermost step first; reversed at the end.
-        let mut steps = Vec::new();
-        loop {
+    ) -> Option<(usize, PathSteps)> {
+        // The brackets written on the name itself, innermost first.
+        let mut own = Vec::new();
+        let id = loop {
             match &e.kind {
-                ExprKind::Name(_) => {}
+                ExprKind::Name(_) => break self.bound_once(e)?,
                 ExprKind::Index(of, k) => {
-                    let Some(Value::Int(k)) = literal(k, None).map(|l| l.value) else {
-                        return None;
-                    };
-                    steps.push(PathStep::Index(usize::try_from(k).ok()?));
+                    own.push(index_step(k)?);
                     e = of;
-                    continue;
                 }
                 _ => return None,
             }
-            let id = match self.t.res.uses.get(&e.span) {
-                Some(Ref::Bound(ids)) if ids.len() == 1 => ids[0],
-                _ => return None,
-            };
-            if stop(self, id) {
-                steps.reverse();
-                return Some((id, steps));
-            }
-            if !seen.insert(id) {
-                return None;
-            }
-            match (self.facts.get(&id), self.taken_from.get(&id)) {
-                (Some(v), _) => e = v,
-                (None, Some(&(v, step))) => {
-                    steps.push(step);
-                    e = v;
-                }
-                (None, None) => return None,
-            }
+        };
+        let ChainEnd::End(end, path) = self.chain_end(id) else {
+            return None;
+        };
+        if !stop(self, end) {
+            return None;
         }
+        Some((end, own.into_iter().rev().fold(path, |p, s| p.push(s))))
+    }
+
+    /// The one binder the name `e` reads, or `None` where it reads more than one or none.
+    fn bound_once(&self, e: &Expr) -> Option<usize> {
+        match self.t.res.uses.get(&e.span) {
+            Some(Ref::Bound(ids)) if ids.len() == 1 => Some(ids[0]),
+            _ => None,
+        }
+    }
+
+    /// Where the chain of bindings from the binder `id` ends ([`ChainEnd`]), followed once per
+    /// binder and kept in [`Ck::places`].
+    ///
+    /// Proof that a kept place is the place the chain has now: [`Ck::facts`] and
+    /// [`Ck::taken_from`] are only ever added to, one entry per binder, written where its
+    /// statement binds it, and a statement checked again binds it to the same value. So the
+    /// steps from a binder to a binder bound before it never change, and a `Fails`, which
+    /// rests on those steps alone (a value that is no name, a name of no one binder, a
+    /// cycle), never changes either. Only the end can: a binder bound by neither when the
+    /// place was kept may be bound later, so a kept `End` is used only while its end is still
+    /// bound by neither, and followed again from its start otherwise.
+    fn chain_end(&self, id: usize) -> ChainEnd {
+        let bound = |b: &usize| self.facts.contains_key(b) || self.taken_from.contains_key(b);
+        // The binders followed, each with the steps from the value of the next to its own,
+        // innermost first.
+        let mut way: Vec<(usize, Vec<PathStep>)> = Vec::new();
+        let mut seen = HashSet::new();
+        let mut b = id;
+        let found = loop {
+            match self.places.borrow().get(&b) {
+                Some(ChainEnd::End(end, _)) if bound(end) => {}
+                Some(p) => break p.clone(),
+                None => {}
+            }
+            if !seen.insert(b) {
+                break ChainEnd::Fails;
+            }
+            let (mut v, mut steps) = match (self.facts.get(&b), self.taken_from.get(&b)) {
+                (Some(&v), _) => (v, Vec::new()),
+                (None, Some(&(v, step))) => (v, vec![step]),
+                (None, None) => break ChainEnd::End(b, PathSteps::default()),
+            };
+            let next = loop {
+                match &v.kind {
+                    ExprKind::Name(_) => break self.bound_once(v),
+                    ExprKind::Index(of, k) => match index_step(k) {
+                        Some(s) => {
+                            steps.push(s);
+                            v = of;
+                        }
+                        None => break None,
+                    },
+                    _ => break None,
+                }
+            };
+            way.push((b, steps));
+            match next {
+                Some(n) => b = n,
+                None => break ChainEnd::Fails,
+            }
+        };
+        let mut places = self.places.borrow_mut();
+        let mut place = found;
+        // A binder that failed to step is on `way` with `Fails` found, which it is given.
+        while let Some((b, steps)) = way.pop() {
+            if let ChainEnd::End(_, path) = &mut place {
+                for &step in steps.iter().rev() {
+                    *path = self.interned_push(path, step);
+                }
+            }
+            places.insert(b, place.clone());
+        }
+        place
     }
 
     /// `t`, the type of `e`, as `word` reads it, a word that reads the entries of a family
@@ -1375,10 +1467,15 @@ fn declared_map_sig(sig: &Sig) -> bool {
 /// to a map in its declared type ([`ParamKeys::path`], tuple components only): a component
 /// `Part { i, n }` is met by the same component, or by `[i]` (FAIL-family-from-tuple-param).
 /// The value is a tuple of `n` wherever `declared` reads one, the call's argument fitting the
-/// declared type, so `[i]` on it is its component `i`. O(d) for `d` steps.
-fn same_steps(declared: &[PathStep], read: &[PathStep]) -> bool {
+/// declared type, so `[i]` on it is its component `i`. O(1) for steps of different lengths;
+/// else the steps are compared from the last back, O(d) for `d` steps, and the comparison stops
+/// where the two lists meet ([`PathSteps::zip_back`]): the steps before that are the same
+/// steps, so each is a component met by itself. The declared paths of one declared type, and
+/// of equal declared types, are one list where they are equal ([`Ck::interned_push`]), so a
+/// need's path read from a call that passes the parameter on whole meets its entry at once.
+fn same_steps(declared: &PathSteps, read: &PathSteps) -> bool {
     declared.len() == read.len()
-        && declared.iter().zip(read).all(|(d, r)| match (*d, *r) {
+        && declared.zip_back(read).all(|(d, r)| match (d, r) {
             (PathStep::Part { i, n }, PathStep::Part { i: j, n: m }) => i == j && n == m,
             (PathStep::Part { i, .. }, PathStep::Index(k)) => i == k,
             _ => false,

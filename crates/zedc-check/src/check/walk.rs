@@ -18075,7 +18075,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             param: 0,
                             via: None,
                             bits: None,
-                            path: path.into(),
+                            path,
                         },
                         result: None,
                         span,
@@ -18572,7 +18572,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         param: 0,
                         via: None,
                         bits: None,
-                        path: path.into(),
+                        path,
                     },
                     result: None,
                     span,
@@ -18590,7 +18590,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn floor_on(&mut self, id: usize, n: Need) {
         // A need on a part of the parameter (CHK-pow-component-bound) is on another value
         // than the whole one's: each distinct part and domain is kept once, the first need
-        // met for it, found by a hash set in O(path length).
+        // met for it, found by a hash set in O(1) expected: the path's hash is kept with it
+        // ([`PathSteps`]), and two paths of one hash are compared step by step only when
+        // equal, a need met again.
         if let NeedKind::InDomain { domain, path, .. } = &n.kind
             && !path.is_empty()
         {
@@ -18766,7 +18768,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     // `component_exponents_give_one_error_per_call_below_zero`: destructured and bracketed
     // parts, accepted at a part of 3 and refused at -3. Chosen shapes only; the proof rests on
     // the resolver refusing a second binding of a name, which these tests do not try.
-    fn open_place(&self, e: &'a Expr) -> Option<(usize, Vec<PathStep>)> {
+    fn open_place(&self, e: &'a Expr) -> Option<(usize, PathSteps)> {
         // The walk is shared with the parameters declared a partial map
         // (FAIL-family-from-tuple-param), in remap.rs, which this file may name.
         self.place_of(e, |ck, id| ck.open_params.contains(&id))
@@ -18782,7 +18784,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// is an int, and the need on the part is on its ints alone, so a value of another type
     /// that a test reading the name as an int would leave out is not one the need checks.
     /// O(1): one lookup.
-    fn int_read_binder(&self, e: &'a Expr, open: &Option<(usize, Vec<PathStep>)>) -> Option<usize> {
+    fn int_read_binder(&self, e: &'a Expr, open: &Option<(usize, PathSteps)>) -> Option<usize> {
         match open {
             Some((id, path)) if path.is_empty() => Some(*id),
             Some(_) => match (&e.kind, self.t.res.uses.get(&e.span)) {
@@ -18855,14 +18857,23 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// part `e` is, written at `at` as the argument `p` of the call of `what`, on to that
     /// parameter: the need of `domain` at the use `use_at`, with the link of this call before
     /// the calls `via` that passed it on (CHK-need-bound, CHK-pow-component-bound).
+    // Complexity tradeoff: the path is kept as it came, O(1) (`PathSteps` shares its steps),
+    // but the link's text names the part `p`, so it is O(length of `p`) long and made at once;
+    // for `d` needs on the parts at each level of a parameter nested `d` deep, the texts are
+    // Θ(d²) long in all, and this is the one term of that order left in the check of a
+    // parameter's parts (PERF-keyed-part-path-d-squared: of the d² term of a fit
+    // a + b·d + c·d² to callgrind counts of `maps_in_tuples(d, true)` at d = 128, 256 and 512,
+    // 94 M instructions at 512, 51 M are this text). A text made only when an error is
+    // printed would take `Via`'s text, digest (`r10_hash::hash_via_chain`) and equality from
+    // its parts instead of its words (row MSG-passed-on-part-text-eager).
     #[allow(clippy::too_many_arguments)]
     fn part_passed_on(
         &mut self,
         id: usize,
-        path: Vec<PathStep>,
+        path: PathSteps,
         e: &'a Expr,
         at: Span,
-        p: &str,
+        p: &dyn fmt::Display,
         what: &str,
         domain: &IntDomain,
         via: &Option<Arc<Via>>,
@@ -18884,7 +18895,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 param: 0,
                 via: Some(Arc::new(link)),
                 bits: None,
-                path: path.into(),
+                path,
             },
             result: None,
             span: use_at,
@@ -18904,49 +18915,125 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// (FAIL-family-from-tuple-param); a type the part cannot be read from gives
     /// [`PartOf::Unknown`], and the caller refuses the call.
     ///
-    /// Complexity tradeoff: O(d) steps for a path of d, each a lookup or a pass over the
-    /// pieces of the type it reads, the size of a type already built, and for a need on keys
-    /// an O(d) walk of [`Self::keyed_place`] per step, O(d²) in all for the handful of steps
-    /// a declared type writes; the need on the class of the part, the naive way, costs O(1)
-    /// but fixes the part to its whole carrier. COMPLEXITY.md CHK-pow-component-bound.
+    /// The parts are read through `walk`, which keeps the part at each path already followed
+    /// at this call, from the argument `a` at the parameter `param`.
+    ///
+    /// At each part before the last, in order, the walk stops where the expression there is
+    /// a part of a parameter of no declared type ([`Self::open_place`]) or, for a need on
+    /// keys, a part of a parameter declared a partial map whose entry is at the rest of the
+    /// path ([`Self::keyed_place`]). `walk` keeps the node of a path ([`PartWalk::at`]) only
+    /// where no part before it is a part of either kind of parameter, so starting at that
+    /// node skips only parts at which the walk would not have stopped. Proof that the kept
+    /// node is the part this walk would reach: the node is the one [`PartWalk::step`] gave
+    /// from the same root by the same steps, kept only where each step was kept in
+    /// [`PartWalk::below`] (a type with no variable, proof there); and whether an expression
+    /// is a part of a parameter of either kind ([`Self::place_of`]) reads `facts`,
+    /// `taken_from`, `open_params` and the keys of `param_keys`, none of which the checks of
+    /// one call's needs change (`floor_on` and `keys_at` add needs and families only).
+    ///
+    /// Complexity tradeoff: the naive way follows each need's path from the argument, step
+    /// by step, a lookup, a pass over the pieces of the type and the tests whether the part is
+    /// a parameter's at each step, so the d needs on the maps at each level of a parameter
+    /// `(K ->? V, (K ->? V, …))` (paths of 1 to d steps) cost Θ(d²) at a call
+    /// (PERF-keyed-part-path-d-squared: 34.7 times the instructions at 8 times the levels,
+    /// 256 to 2048, in `checking_maps_at_every_level_of_a_tuple_parameter_scales`, l01_26
+    /// bench partial_maps.rs). Here the paths share their prefixes ([`PathSteps`]), and the
+    /// walk starts at the longest prefix of the path whose node `walk` keeps, found by
+    /// following the path back from its last step, one expected O(1) lookup a step; each step
+    /// after it is followed once and kept, so the needs whose paths share prefixes take O(1)
+    /// expected for each distinct prefix, O(d) for those needs. A walk that stops at a
+    /// parameter's part after `s` steps writes the rest of the path, O(l − s) for a path of l
+    /// steps, O(1) where `s` is 0, as at a call that passes a parameter on whole.
+    /// COMPLEXITY.md CHK-pow-component-bound, PERF-keyed-part-path-d-squared.
     #[allow(clippy::too_many_arguments)]
     fn part_of(
         &mut self,
+        walk: &mut PartWalk<'a>,
+        param: usize,
         a: &Arg<'a>,
-        path: &[PathStep],
-        p: &str,
+        path: &PathSteps,
+        p: &dyn fmt::Display,
         what: &str,
         domain: &IntDomain,
         via: &Option<Arc<Via>>,
         use_at: Span,
     ) -> PartOf<'a> {
-        let mut e = a.expr;
-        let mut ty = a.ty.clone();
-        for (s, &step) in path.iter().enumerate() {
+        let root = walk.root(param, a);
+        // The prefixes of `path` after the longest one whose node is kept, innermost first.
+        let mut after = std::mem::take(&mut walk.scratch);
+        let mut at = path.clone();
+        let mut node = loop {
+            if at.is_empty() {
+                break root;
+            }
+            if let Some((_, n)) = walk.at.get(&(param, at.addr())) {
+                break *n;
+            }
+            let outer = at.outer();
+            after.push(std::mem::replace(&mut at, outer));
+        };
+        // Whether each part so far is no part of a parameter and was kept.
+        let mut clean = true;
+        let mut out = None;
+        while let Some(prefix) = after.pop() {
+            let s = prefix.len() - 1;
+            let step = prefix.last().expect("a prefix after another has a step");
+            let e = walk.nodes[node].0;
+            let either = |ck: &Self, id: usize| {
+                ck.open_params.contains(&id) || ck.param_keys.contains_key(&id)
+            };
             if let Some(x) = e
-                && let Some((id, pre)) = self.open_place(x)
+                && let Some((id, pre)) = self.place_of(x, either)
             {
-                if !self.trying {
-                    let rest = pre.into_iter().chain(path[s..].iter().copied()).collect();
-                    let at = a.at.unwrap_or(x.span);
-                    self.part_passed_on(id, rest, x, at, p, what, domain, via, use_at);
+                clean = false;
+                // The steps of the path from step `s` on.
+                let rest = || match s {
+                    0 => path.clone(),
+                    _ => PathSteps::from(&path.to_vec()[s..]),
+                };
+                if self.open_params.contains(&id) {
+                    if !self.trying {
+                        let whole = match pre.is_empty() {
+                            true => rest(),
+                            false => rest().to_vec().into_iter().fold(pre, |p, s| p.push(s)),
+                        };
+                        let at = a.at.unwrap_or(x.span);
+                        self.part_passed_on(id, whole, x, at, p, what, domain, via, use_at);
+                    }
+                    out = Some(PartOf::PassedOn);
+                    break;
                 }
-                return PartOf::PassedOn;
+                if domain.key.is_some()
+                    && let Some(place) = self.keyed_place(x, &rest())
+                {
+                    out = Some(PartOf::Keyed(place, x));
+                    break;
+                }
             }
-            if let Some(x) = e
-                && domain.key.is_some()
-                && let Some(place) = self.keyed_place(x, &path[s..])
-            {
-                return PartOf::Keyed(place, x);
+            let kept = walk.nodes[node]
+                .1
+                .as_ref()
+                .is_some_and(|t| t.vars.is_empty());
+            match walk.step(self, node, step) {
+                Some(next) => node = next,
+                None => {
+                    out = Some(PartOf::Unknown);
+                    break;
+                }
             }
-            e = e.and_then(|x| self.part_expr(x, step));
-            match self.part_type(&ty, step) {
-                Some(t) => ty = t,
-                None => return PartOf::Unknown,
+            clean &= kept;
+            if clean {
+                walk.at.insert((param, prefix.addr()), (prefix, node));
             }
         }
+        after.clear();
+        walk.scratch = after;
+        if let Some(out) = out {
+            return out;
+        }
+        let (e, ty) = walk.nodes[node].clone();
         PartOf::Arg(Arg {
-            ty,
+            ty: ty.expect("a node reached has a type"),
             lit: None,
             at: e.map(|x| x.span).or(a.at),
             expr: e,
@@ -19472,7 +19559,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         param: j,
                         via: None,
                         bits: None,
-                        path: Arc::from([]),
+                        path: PathSteps::default(),
                     },
                     result: None,
                     span,
@@ -19491,6 +19578,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             s.params[j].range = Some(ParamRange::Int(r));
         }
         for (j, path, rs) in keyed {
+            // O(the path's length), within the O(the widths on the path) of the walk below.
+            let path = path.to_vec();
             for a in &mut s.arrows {
                 if let Some(t) = a.params.get_mut(j) {
                     *t = with_key_range_at(t, &path, &rs);
@@ -19550,6 +19639,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         span: Span,
     ) {
         let int = KType::int();
+        let mut walk = PartWalk::default();
         for n in &sig.needs {
             let NeedKind::InDomain {
                 domain,
@@ -19574,18 +19664,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             // names none: `f(positional x: int[1..])` passed at `g: (int) -> int` arrives here
             // with a parameter of no name (seen in a run; where the name is dropped is not
             // traced), and the message named the parameter ``.
-            let p = sig
+            let name = sig
                 .params
                 .get(*param)
                 .map(|p| p.name.clone())
                 .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| domain.name.clone());
-            // A need on a part of the parameter names the part, `p[0]` (CHK-pow-component-bound).
-            let p: Arc<str> = match path.is_empty() {
-                true => p,
-                false => format!("{p}{}", steps_text(path)).into(),
-            };
+            // A need on a part of the parameter names the part, `p[0]` (CHK-pow-component-bound),
+            // written where it is used ([`PartName`]).
+            let named = PartName { name: &name, path };
             if let Some(k) = &domain.key {
+                let p = &named;
                 let a = args.get(*param).and_then(Option::as_ref);
                 let defaulted = sig.params.get(*param).is_some_and(|p| p.default.is_some());
                 let use_at = (n.span, via.clone());
@@ -19597,7 +19686,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let mut keyed = None;
                 let a = match a {
                     Some(whole) if !path.is_empty() => {
-                        match self.part_of(whole, path, &p, what, domain, via, n.span) {
+                        match self
+                            .part_of(&mut walk, *param, whole, path, p, what, domain, via, n.span)
+                        {
                             PartOf::Arg(arg) => part = arg,
                             PartOf::PassedOn => continue,
                             // `keys_at` reads only the place and its expression then.
@@ -19620,11 +19711,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                     a => a,
                 };
                 let given = from.and_then(|f| f.get(*param).copied().flatten());
-                self.keys_at(
-                    what, &p, domain, k, a, keyed, defaulted, use_at, given, span,
-                );
+                self.keys_at(what, p, domain, k, a, keyed, defaulted, use_at, given, span);
                 continue;
             }
+            let p: Arc<str> = match path.is_empty() {
+                true => name.clone(),
+                false => named.to_string().into(),
+            };
             let takes = format!("{what} takes `{p}` in {}", domain_text(domain));
             let passed = IntDomain {
                 what: takes.as_str().into(),
@@ -19703,7 +19796,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let a = if path.is_empty() {
                 a
             } else {
-                match self.part_of(a, path, &p, what, domain, via, n.span) {
+                match self.part_of(&mut walk, *param, a, path, &p, what, domain, via, n.span) {
                     PartOf::Arg(arg) => {
                         part = arg;
                         &part
@@ -19872,7 +19965,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn keys_at(
         &mut self,
         what: &str,
-        p: &str,
+        p: &dyn fmt::Display,
         domain: &IntDomain,
         k: &Arc<KeyUse>,
         a: Option<&Arg<'a>>,
@@ -19892,7 +19985,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             and_list(&shown)
         };
         // A need has a range or a reader ([`ParamKeys::need`]), so no range means a reader.
-        let takes = match (k.ranges.is_empty(), &k.family) {
+        // Written only for an error, as `p` is ([`PartName`]).
+        let takes = || match (k.ranges.is_empty(), &k.family) {
             (_, None) => format!("{what} takes `{p}` with {}", ranges()),
             (true, Some(by)) => format!("{what} takes `{p}` as a family, which {by} reads"),
             (false, Some(by)) => format!(
@@ -19924,8 +20018,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     text: format!("repair: pass `{p}` in this call"),
                 });
                 let m = format!(
-                    "{takes}: this call leaves out `{p}`, which takes its default, whose keys the \
-                     checker cannot show"
+                    "{}: this call leaves out `{p}`, which takes its default, whose keys the \
+                     checker cannot show",
+                    takes()
                 );
                 self.error_with(span, m, notes);
             }
@@ -19965,7 +20060,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 span: self.t.res.binders[id].span,
                 text: format!("`{code}` is declared here, and {}", wider.join(", and ")),
             });
-            let m = format!("{takes}, and `{code}` is declared with keys that may lie outside");
+            let m = format!(
+                "{}, and `{code}` is declared with keys that may lie outside",
+                takes()
+            );
             self.error_with(a.at.unwrap_or(e.span), m, notes);
             return;
         }
@@ -19986,7 +20084,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         param: 0,
                         via: Some(Arc::new(link)),
                         bits: None,
-                        path: Arc::from([]),
+                        path: PathSteps::default(),
                     },
                     result: None,
                     span: use_at.0,
@@ -20091,7 +20189,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 false => format!("repair: pass a map with {}", ranges()),
             },
         });
-        self.error_with(at, format!("{takes}: `{code}` may not be one"), notes);
+        self.error_with(at, format!("{}: `{code}` may not be one", takes()), notes);
     }
 
     /// The code at `span` with its part at `at` annotated with the type `shown`, as
@@ -21663,7 +21761,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 param: j,
                 via: None,
                 bits: Some(span),
-                path: Arc::from([]),
+                path: PathSteps::default(),
             },
             result: None,
             span,
@@ -24750,9 +24848,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// O(1) expected per span a fix needs; the arguments' places sorted once, O(a log a), so
     /// the argument an error lies in is a binary search. The types carried into the
     /// arguments are checked in rounds, each giving an argument at most one type: at a call
-    /// whose parameters are checked apart ([`params_own_apart`]) a round is one check of a call
+    /// whose parameters are met apart ([`params_met_apart`]) a round is one check of a call
     /// of one parameter per argument and one check of the whole call
-    /// ([`Self::carried_together`]), O(the call) for the round; elsewhere one check of the
+    /// ([`Self::carried_together`]), O(the call) for the round, and where the call's result
+    /// holds the parameters' variables one more check of the call per class of alike fixes
+    /// ([`alike_fixes`]); elsewhere one check of the
     /// construct per type carried ([`Self::carried_alone`]), and one more for each that fails
     /// alone beside an argument of literals that nothing gives a carrier
     /// ([`Self::carried_lent`]). Fixes that give an argument one
@@ -24768,10 +24868,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// each span needed is O(errors × spans), quadratic in the arguments of one call. A call
     /// whose parameters are each a type variable of its own, as parameters with no type
     /// written are, is checked in rounds too ([`params_own_apart`], MSG-many-args-generic:
-    /// 1.26 s at 400 arguments `1 / 2`, growing 3.4 times per doubling, before). Still
+    /// 1.26 s at 400 arguments `1 / 2`, growing 3.4 times per doubling, before), and so,
+    /// since BENCH-fixes-checked-wide-not-apart, is one whose result holds those variables,
+    /// as `f(p0, …) = [p0, …]` (`the_fixes_of_many_arguments_not_apart` in l01_29
+    /// scaling.rs: 48.5 times the instructions at 8 times the arguments before, 29.0 after,
+    /// and 8.0 with the step of `f`'s declaration, which each of the n errors gives in full,
+    /// cut to a constant; that step is row MSG-declared-step-per-error-checker). Still
     /// quadratic: a call whose parameters share a type variable or hold one inside another
     /// type, or has bounds, needs or several arrows, is checked once per argument carrying a
-    /// fix.
+    /// fix, and so is one whose alike classes are many ([`alike_fixes`]).
     fn pending_settled(
         &mut self,
         w: &Written<'a>,
@@ -24855,7 +24960,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The construct's own check rejected nothing outside its arguments, as a call no arrow
         // takes, so one argument's fix does not settle an error another argument gave.
         let apart = !rounds.is_empty()
-            && matches!(&w.form, Construct::Call(_, sig) if params_own_apart(sig))
+            && matches!(&w.form, Construct::Call(_, sig) if params_met_apart(sig))
             && found.iter().all(|&s| arg_holding(&ats, s).is_some());
         for round in rounds {
             let left = match apart {
@@ -25211,14 +25316,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Settles the fixes of `round`, each carried into its own argument of the call `w`
-    /// whose parameters are checked apart ([`params_own_apart`]) and whose own check gave the
+    /// whose parameters are met apart ([`params_met_apart`]) and whose own check gave the
     /// type `t` and rejected only `found`, all inside its arguments, as a check of the call
     /// with each alone settles them ([`Self::carried_alone`]): the call is rejected with an
     /// argument's fixes where its parameter does not take the type they give it, the rest of
     /// the call as written, so a check of a call of that parameter alone rejects them; the
-    /// others are kept, with the type one check of the call with all of them in place gives,
-    /// which is the type a check with each alone gives, since none of their arguments has a
-    /// loose atom to pass on to it. Gives the fixes it leaves to [`Self::carried_alone`]: all
+    /// others are kept. Where the call's result is closed ([`params_own_apart`]) each is kept
+    /// with the type one check of the call with all of them in place gives, which is the type
+    /// a check with each alone gives, since none of their arguments has a loose atom to pass
+    /// on to it; where the result holds the parameters' variables, with the type one check of
+    /// the call with the fix alone gives, one check per class of fixes that give it one type
+    /// ([`alike_fixes`]). Gives the fixes it leaves to [`Self::carried_alone`]: all
     /// of them where an argument of the round has a loose atom or a type with a variable or
     /// an unknown, or a check of a parameter alone is a trial with no verdict, and those kept
     /// where the check with all of them adds an error the call's own check did not, or one
@@ -25273,9 +25381,23 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !needs.is_some_and(|needs| needs.iter().all(apart)) {
             return kept;
         }
-        if ty != *t {
-            for (_, c) in kept {
-                carry_joined(up, ty.clone(), c.fixes);
+        if params_own_apart(sig) {
+            if ty != *t {
+                for (_, c) in kept {
+                    carry_joined(up, ty.clone(), c.fixes);
+                }
+            }
+            return Vec::new();
+        }
+        // The result holds the parameters' variables: the type each fix gives the call alone,
+        // one check for each class of fixes that give it one type ([`alike_fixes`]).
+        for class in alike_fixes(w, sig, kept) {
+            let (i, c) = &class[0];
+            let ty = self.carried_check(w, &[(*i, &c.ty)]).0;
+            if ty != *t {
+                for (_, c) in class {
+                    carry_joined(up, ty.clone(), c.fixes);
+                }
             }
         }
         Vec::new()
@@ -26079,8 +26201,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Not proved (row PROOF-fixes-checked-count): a wide call whose parameters are not
     /// checked apart (a shared class variable, a bound or a need) and whose arguments are
     /// each rejected and repairable has k = O(a) trials of an O(a) construct, O(a^2) for the
-    /// rejection; no bench builds one. The earlier claim, "at most 3 per argument", holds
-    /// for the literal menus but not for `repairs`, which offers up to W per argument.
+    /// rejection. The earlier claim, "at most 3 per argument", holds for the literal menus
+    /// but not for `repairs`, which offers up to W per argument. Measured
+    /// (BENCH-fixes-checked-wide-not-apart, `the_fixes_of_arguments_not_apart` in l01_29
+    /// scaling.rs, `f(p0, …) = [p0, …]` with each argument `k * 0.5`, 200 to 1600
+    /// arguments): the trials here stay within the limit, since the menus are the literal
+    /// ones and the fixes carried to the call are checked one class at a time
+    /// ([`alike_fixes`]); the run as a whole is 29.0 times the instructions, from the step of `f`'s
+    /// declaration given in full in each error (row MSG-declared-step-per-error-checker), and
+    /// 8.0 times with that step cut to a constant.
     pub(super) fn fixes_checked(&mut self, span: Span, m: &mut Msg) {
         let Some(w) = self.written.clone() else {
             return;
@@ -32076,9 +32205,17 @@ fn arg_holding(sorted: &[(Span, usize)], s: Span) -> Option<usize> {
 type ArgOps = Vec<(Span, Vec<usize>)>;
 
 /// The signature of a call of `sig` with its parameter `j` alone, for a signature whose
-/// parameters are checked apart ([`params_apart`], [`params_own_apart`]): its parameter `j`,
-/// its own variable where the parameter is one, and the result of its one arrow. O(the size
-/// of those).
+/// parameters are checked apart ([`params_apart`], [`params_met_apart`]): its parameter `j`,
+/// its own variable where the parameter is one, and an empty result in place of its one
+/// arrow's. O(the size of those).
+///
+/// The result takes no part in whether the call takes its argument, which is all a check of
+/// this signature is asked ([`Ck::carried_together`]): with no needs, [`Ck::apply_one`] makes
+/// the result from the bindings once every argument is taken, `close` of the arrow's result
+/// with the bindings put in, and adds no error there (read at 4af88445a). The arrow's own
+/// result was copied here before BENCH-fixes-checked-wide-not-apart, O(its size) per fix:
+/// quadratic where the result holds every parameter's variable, as `[p0, …]` does, and the
+/// variables of the other parameters were left unbound in it.
 fn param_alone(sig: &Sig, j: usize) -> Sig {
     let arrow = &sig.arrows[0];
     let own = (arrow.params[j].as_var())
@@ -32090,7 +32227,7 @@ fn param_alone(sig: &Sig, j: usize) -> Sig {
         params: vec![sig.params[j].clone()],
         arrows: vec![Arrow {
             params: vec![arrow.params[j].clone()],
-            result: arrow.result.clone(),
+            result: Ty::empty(),
             partial: arrow.partial,
             stores_not_found: arrow.stores_not_found,
         }],
@@ -32134,6 +32271,128 @@ fn with_key_range_at(t: &Ty, path: &[PathStep], rs: &[(Option<usize>, WrittenRan
         out = Ty::tuple(cs);
     }
     out
+}
+
+/// The fixes `kept`, each carried into its own argument of the call `w` of `sig`, whose
+/// parameters are met apart ([`params_met_apart`]) and whose arguments and carried types are
+/// closed with no loose atom ([`Ck::carried_together`]), in classes whose fixes each give the
+/// call one type when checked alone, in the order of their first fixes. A class is either
+/// the fixes at parameters of their own variables, of one type, whose arguments as written
+/// are of one type with no function and are read by their types alone (no literal, branches
+/// of literals or parts), where every swap of those variables leaves the arrow's result `R`
+/// as it is (`R.renamed(π) == R`, tested on two swaps, below); or one other fix alone. Fixes
+/// at parameters that hold no variable are each alone: the check of one keeps the others'
+/// arguments as written, which their parameters may refuse where the fixes' types are taken,
+/// so two such checks may make different results.
+///
+/// Proof that two fixes `i` and `j` of one class give one type. Let `a` be the type of
+/// their arguments as written and `c` the type the fixes give, `v_i` and `v_j` their
+/// parameters' variables, and `π` the swap of `v_i` and `v_j`. [`Ck::apply_one`] binds each
+/// own variable by `sub` on the type of its argument alone where the argument has no
+/// literal, branches or parts and no function (the argument loop: `generic_parts` gives
+/// `None` without parts, `adopted` gives `Ok(None)` without a literal, branches or parts,
+/// `read_arg` gives `None` at a parameter with variables, and `int_division_at` gives `None`
+/// in a trial; function pieces would take `fn_into_classes`, which reads more than the
+/// type; read at 4af88445a). The check of `i` binds `v_i` as `c`, `v_j` as `a`, and every
+/// other variable as its argument, which the check of `j` binds the same way while binding
+/// `v_j` as `c` and `v_i` as `a`: its bindings are `B_j = B_i ∘ π`. The result is
+/// `close(R.replace(B))` joined with the unknown where an argument is unknown (none is:
+/// they are closed, [`Ty::closed`]), and the call takes place by a test on each argument's
+/// literal (none), type, and whether the call needs it, which `apply` answers alike at
+/// every position (`Demand::Body`, since the call passes nothing and `sig` is no family or
+/// word), so the test sees the same types in both checks. Both `replace` and `renamed` put a
+/// variable's image at every place the variable's name stands, at every depth
+/// ([`Ty::replace`], [`Ty::renamed`]), so `R.replace(B ∘ π) = R.renamed(π).replace(B)`,
+/// which is `R.replace(B)` where `R.renamed(π) == R`. Unproved here, resting on the reading:
+/// that binding one own variable reads no other's binding, so that reading `a` at `v_j`
+/// before or after `c` at `v_i` binds alike (each parameter is a variable no other parameter
+/// holds, [`params_met_apart`]); and that the two walks of `replace_in` visit the same places
+/// in both modes. A compact forward that renaming decodes makes `R.renamed(π)` differ from
+/// `R` in form, which only splits a class (each fix is then checked alone, as before). Test:
+/// in the commit of BENCH-fixes-checked-wide-not-apart, l01_26, l01_26a and l01_29 (1341
+/// tests) ran with a temporary assertion that each member's own check gives its class's type,
+/// with no failure; that assertion is not kept.
+/// `l01_29_repairs_and_printing::scaling::fixes_of_alike_arguments_keep_their_types` checks
+/// the messages of results that tell the arguments apart and of one that does not.
+///
+/// Every swap of the class's variables `v_0, …, v_{m-1}` keeps `R` once the cycle
+/// `(v_0 v_1 … v_{m-1})` and the swap `(v_0 v_1)` do: a permutation that keeps `R` composes
+/// with another that does into one that does, and these two make every permutation. Proof:
+/// with `σ` the cycle, `σ^k (v_0 v_1) σ^-k = (v_k v_{k+1})`, so every swap of neighbors is
+/// made, and swaps of neighbors sort any order, as bubble sort does.
+///
+/// Complexity tradeoff: the naive way checks the call once with each fix alone, O(the call)
+/// per fix, quadratic in a call of n arguments `k * 0.5` at `f(p0, …) = [p0, …]` (48.5
+/// times the instructions at 8 times the arguments, 200 to 1600). Here one pass groups the fixes by
+/// the two types, O(the types' sizes) to hash each, and each class costs two renamings of
+/// `R`, so the call is checked once per class: 29.0 times at the same sizes, the rest being
+/// the step of `f`'s declaration that each of the n errors gives in full (8.0 times with
+/// that step cut to a constant; row MSG-declared-step-per-error-checker). Still quadratic:
+/// arguments of n distinct types, or a result that tells them apart, as the tuple `(p0, …)` does, are n classes; there the
+/// n types the call takes differ, each of size up to the call's, and no bound below that is
+/// proved.
+fn alike_fixes<'a>(
+    w: &Written<'a>,
+    sig: &Sig,
+    kept: Vec<(usize, Carry)>,
+) -> Vec<Vec<(usize, Carry)>> {
+    let arrow = &sig.arrows[0];
+    // For each fix, the key of its class, the two types, or `None` for a fix alone.
+    let key = |(i, c): &(usize, Carry)| -> Option<(Ty, Ty)> {
+        let a = w.args[*i].as_ref()?;
+        (arrow.params[*i].as_var().is_some()
+            && a.lit.is_none()
+            && a.branches.is_none()
+            && a.parts.is_none()
+            && a.ty.first_order()
+            && c.ty.first_order())
+        .then(|| (a.ty.clone(), c.ty.clone()))
+    };
+    let mut index: HashMap<(Ty, Ty), usize> = HashMap::new();
+    let mut classes: Vec<Vec<(usize, Carry)>> = Vec::new();
+    for f in kept {
+        match key(&f) {
+            Some(k) => match index.get(&k) {
+                Some(&n) => classes[n].push(f),
+                None => {
+                    index.insert(k, classes.len());
+                    classes.push(vec![f]);
+                }
+            },
+            None => classes.push(vec![f]),
+        }
+    }
+    let mut out = Vec::with_capacity(classes.len());
+    for class in classes {
+        let vars: Vec<&Arc<str>> = (class.iter())
+            .filter_map(|(i, _)| arrow.params[*i].as_var())
+            .collect();
+        match vars.len() < 2 || swaps_keep(&arrow.result, &vars) {
+            true => out.push(class),
+            false => out.extend(class.into_iter().map(|f| vec![f])),
+        }
+    }
+    out
+}
+
+/// Whether every swap of the distinct variables `vars`, at least two, leaves `r` as it is,
+/// tested on the cycle of them and the swap of the first two ([`alike_fixes`] has the proof).
+/// O(the size of `r`) for each of the two.
+fn swaps_keep(r: &Ty, vars: &[&Arc<str>]) -> bool {
+    let m = vars.len();
+    let kept = |to: &dyn Fn(usize) -> usize| {
+        let mut names = Binds::new();
+        for k in 0..m {
+            names.insert(vars[k].clone(), Ty::var(vars[to(k)].clone()));
+        }
+        r.renamed(&names) == *r
+    };
+    let swap = |k: usize| match k {
+        0 => 1,
+        1 => 0,
+        k => k,
+    };
+    kept(&|k| (k + 1) % m) && (m == 2 || kept(&swap))
 }
 
 /// `t`, the type of a parameter declared a partial map of one key, with the ranges `rs`
@@ -32243,14 +32502,20 @@ fn params_apart(sig: &Sig) -> bool {
 /// for `f64`. Test:
 /// `l01_29_repairs_and_printing::scaling::the_fix_of_an_argument_the_result_does_not_hold_is_kept`.
 fn params_own_apart(sig: &Sig) -> bool {
+    params_met_apart(sig) && sig.arrows[0].result.closed()
+}
+
+/// Whether each argument of a call of `sig` meets its parameter apart from the others, as
+/// [`params_own_apart`] says, with a result that may hold the parameters' variables: whether
+/// the call takes each argument is then decided by its parameter alone, but the call's type
+/// may depend on every argument, as that of `[p0, …]` does (BENCH-fixes-checked-wide-not-apart).
+/// The proof of [`params_own_apart`] that each parameter's variable is fresh and met by its
+/// own argument alone reads nothing of the result. O(the arrow's parameters).
+fn params_met_apart(sig: &Sig) -> bool {
     let [arrow] = sig.arrows.as_slice() else {
         return false;
     };
-    let base = sig.bounds.is_empty()
-        && sig.needs.is_empty()
-        && sig.word.is_none()
-        && !sig.data
-        && arrow.result.closed();
+    let base = sig.bounds.is_empty() && sig.needs.is_empty() && sig.word.is_none() && !sig.data;
     let mut seen = HashSet::new();
     base && (arrow.params.iter()).all(|p| match p.as_var() {
         Some(v) => sig.own.contains(v) && seen.insert(v),
@@ -32926,15 +33191,98 @@ enum PartOf<'a> {
     Unknown,
 }
 
-/// The steps of a path written after a name, as a program reads them: `[0]` each
-/// (CHK-pow-component-bound). O(steps).
-fn steps_text(path: &[PathStep]) -> String {
-    path.iter()
-        .map(|s| match s {
-            PathStep::Part { i, .. } => format!("[{i}]"),
-            PathStep::Index(k) => format!("[{k}]"),
+/// The parts of the arguments of one call that [`Ck::part_of`] has read, each by its path
+/// from the argument (PERF-keyed-part-path-d-squared): a tree of paths whose nodes are parts,
+/// each with its expression where the argument shows it and its type, `None` where the
+/// checker cannot tell it ([`PartOf::Unknown`]).
+///
+/// Proof that a part read here is the part [`Ck::part_of`] read step by step before: a node
+/// below `node` by `step` holds `part_expr` and `part_type` of `node`'s expression and type
+/// at `step`, the two reads of the old loop. They read the syntax tree, the names' bound
+/// values (`facts`, set where a name is bound, before any call in its scope is checked) and,
+/// for a piece that is a type variable, whether its class holds carriers alone
+/// (`carriers_only`), which may change as the needs of the call are checked; so a node is
+/// kept for later needs only where the type it is read from has no variable, and read again
+/// at each need otherwise. Test: l01_26 partial_maps
+/// `maps_in_tuples_nested_deep_are_read_as_families`, and the tests of
+/// FAIL-family-from-tuple-param and CHK-pow-component-bound in l01_26.
+///
+/// The node of a path from the root of a parameter is kept in `at`, by the parameter and the
+/// path's last step ([`PathSteps::addr`]), where [`Ck::part_of`] may start at it (the
+/// condition and its proof there); the path is kept with it, so the address is not reused
+/// while the entry is kept. A need whose path shares a kept prefix starts there, as the
+/// needs on the maps at each level of a parameter do, each path the one before with one step
+/// added.
+#[derive(Default)]
+struct PartWalk<'a> {
+    /// Each part: its expression, where shown, and its type.
+    nodes: Vec<(Option<&'a Expr>, Option<Ty>)>,
+    /// The node of the argument at each parameter.
+    roots: HashMap<usize, usize>,
+    /// The node one step below a node.
+    below: HashMap<(usize, PathStep), usize>,
+    /// The node of a path from a parameter's root, by the parameter and the path's address,
+    /// with the path.
+    at: HashMap<(usize, *const ()), (PathSteps, usize)>,
+    /// A list [`Ck::part_of`] reuses from need to need, empty between them.
+    scratch: Vec<PathSteps>,
+}
+
+impl<'a> PartWalk<'a> {
+    /// The node of the argument `a` at the parameter `param`.
+    fn root(&mut self, param: usize, a: &Arg<'a>) -> usize {
+        let nodes = &mut self.nodes;
+        *self.roots.entry(param).or_insert_with(|| {
+            nodes.push((a.expr, Some(a.ty.clone())));
+            nodes.len() - 1
         })
-        .collect()
+    }
+
+    /// The node `step` below `node`, whose type is known; `None` where the checker cannot
+    /// tell the type of that part. O(1) expected for a step read before at this call.
+    fn step(&mut self, ck: &Ck<'_, 'a>, node: usize, step: PathStep) -> Option<usize> {
+        let next = match self.below.get(&(node, step)) {
+            Some(&next) => next,
+            None => {
+                let (e, ty) = &self.nodes[node];
+                let ty = ty.as_ref().expect("a node stepped from has a type");
+                let keep = ty.vars.is_empty();
+                let part = (
+                    e.and_then(|x| ck.part_expr(x, step)),
+                    ck.part_type(ty, step),
+                );
+                self.nodes.push(part);
+                let next = self.nodes.len() - 1;
+                if !keep {
+                    return self.nodes[next].1.is_some().then_some(next);
+                }
+                self.below.insert((node, step), next);
+                next
+            }
+        };
+        self.nodes[next].1.is_some().then_some(next)
+    }
+}
+
+/// The name of a part of a parameter as a program writes it, the parameter's name and then
+/// `[k]` for each step, as `p[1][0]` (CHK-pow-component-bound). Written only where a message
+/// or a link uses it: a need on a part d steps down costs O(d) to write, and the d needs on
+/// the maps at each level of a parameter would cost Θ(d²) at each call that meets them all
+/// (PERF-keyed-part-path-d-squared).
+struct PartName<'s> {
+    name: &'s str,
+    path: &'s PathSteps,
+}
+
+impl fmt::Display for PartName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name)?;
+        for s in self.path.to_vec() {
+            let (PathStep::Part { i: k, .. } | PathStep::Index(k)) = s;
+            write!(f, "[{k}]")?;
+        }
+        Ok(())
+    }
 }
 
 /// What [`Ck::push_vars`] finds of the type variables of a pushed value.

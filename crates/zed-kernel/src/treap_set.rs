@@ -34,8 +34,9 @@
 //! `std::collections::BTreeSet`; no test measures the work bound, which rests on Theorem 4.
 //!
 //! A set is shared, never changed: an operation makes new nodes along the paths it changes and
-//! shares every subtree it leaves alone. A node's priority is a function of its key drawn at
-//! random once per run ([`Elem::priority`], module [`crate::priority`]), ties broken by the
+//! shares every subtree it leaves alone. The one exception is [`TreapSet::insert`], which
+//! changes in place the nodes no other set holds (`Arc::make_mut`), so no other set sees it.
+//! A node's priority is a function of its key drawn at random once per run ([`Elem::priority`], module [`crate::priority`]), ties broken by the
 //! order of the keys, so in a run the keys of a set fix its shape whatever order they came in.
 //! So two sets made from one set by cuts and set operations share the subtrees where they agree,
 //! and an operation on them stops at the first pair of shared subtrees (`Arc::ptr_eq`): the
@@ -99,6 +100,24 @@ impl Elem for i64 {
     }
 }
 
+/// Names, as the variable sets of a type keep them (`zedc_types::ty::VarFacts`,
+/// PERF-varfacts-held-shared-dag). The priority is the draw's hash of the text
+/// ([`Priorities::hash`]), so two names tie whatever the draw only when they are one text; the
+/// weight is the hash of another draw, so that it is independent of the priority.
+impl Elem for Arc<str> {
+    fn priority(&self) -> u64 {
+        static PRIORITIES: Priorities = Priorities::eight_wise(19);
+        PRIORITIES.hash(&**self)
+    }
+    fn weight(&self) -> u64 {
+        static WEIGHTS: Priorities = Priorities::new(20);
+        WEIGHTS.hash(&**self)
+    }
+    fn class(&self) -> u32 {
+        1
+    }
+}
+
 /// A node: its key, priority and weight, and over its subtree the number of keys, the sum of
 /// the weights and the union of the classes.
 struct Node<T> {
@@ -110,6 +129,19 @@ struct Node<T> {
     classes: u32,
     left: Tree<T>,
     right: Tree<T>,
+}
+
+/// The copy `Arc::make_mut` makes of a shared node ([`TreapSet::insert`]): the key and the
+/// handles of the two subtrees, which it shares.
+impl<T: Clone> Clone for Node<T> {
+    fn clone(&self) -> Self {
+        Node {
+            key: self.key.clone(),
+            left: self.left.clone(),
+            right: self.right.clone(),
+            ..*self
+        }
+    }
 }
 
 /// A tree: its root, or `None` when empty.
@@ -206,21 +238,6 @@ fn again<T: Elem>(n: &Node<T>, left: Tree<T>, right: Tree<T>) -> Arc<Node<T>> {
     })
 }
 
-/// A node of `key` over `left` and `right`, its priority and weight computed.
-fn fresh<T: Elem>(key: T, left: Tree<T>, right: Tree<T>) -> Arc<Node<T>> {
-    let (prio, weight) = (key.priority(), key.weight());
-    Arc::new(Node {
-        prio,
-        weight,
-        len: 1 + len(&left) + len(&right),
-        sum: weight.wrapping_add(sum(&left)).wrapping_add(sum(&right)),
-        classes: key.class() | classes(&left) | classes(&right),
-        key,
-        left,
-        right,
-    })
-}
-
 /// The path `path` from the root down, each node with the side taken from it, made again over
 /// `bottom`, the new subtree where the path ends.
 fn up<T: Elem>(path: Vec<(&Arc<Node<T>>, bool)>, mut bottom: Tree<T>) -> Tree<T> {
@@ -262,6 +279,41 @@ fn split<T: Elem>(t: &Tree<T>, key: &T) -> (Tree<T>, bool, Tree<T>) {
         r = Some(again(n, r, n.right.clone()));
     }
     (l, found, r)
+}
+
+/// The keys of `t` before `key` and after it, for a `key` that `t` lacks, as [`split`] gives
+/// them; a node of the walk that `t` alone holds is moved, not made again (`Arc::make_mut`), and
+/// its counts made again from its new children, bottom up.
+fn split_absent<T: Elem>(mut t: Tree<T>, key: &T) -> (Tree<T>, Tree<T>) {
+    // Each node of the walk with whether it goes to the left part. On a treap's insertion the
+    // walk is the two spines below the new node, fewer than 2 nodes in expectation (`insert`).
+    let mut walk = Vec::new();
+    while let Some(mut n) = t {
+        let m = Arc::make_mut(&mut n);
+        let before = m.key < *key;
+        t = match before {
+            true => m.right.take(),
+            false => m.left.take(),
+        };
+        walk.push((n, before));
+    }
+    let (mut l, mut r) = (None, None);
+    for (mut n, before) in walk.into_iter().rev() {
+        // Held only here, as made unique above: `make_mut` copies nothing.
+        let m = Arc::make_mut(&mut n);
+        match before {
+            true => m.right = l.take(),
+            false => m.left = r.take(),
+        }
+        m.len = 1 + len(&m.left) + len(&m.right);
+        m.sum = m
+            .weight
+            .wrapping_add(sum(&m.left))
+            .wrapping_add(sum(&m.right));
+        m.classes = m.key.class() | classes(&m.left) | classes(&m.right);
+        *(if before { &mut l } else { &mut r }) = Some(n);
+    }
+    (l, r)
 }
 
 /// The keys of `t` on one side of `bound`: at least it (`low`), else at most it, with `bound`
@@ -463,11 +515,15 @@ impl<T: Elem> TreapSet<T> {
         }
     }
 
-    /// Whether the set has `key`: one walk down, `O(log n)`.
-    pub fn contains(&self, key: &T) -> bool {
+    /// Whether the set has `key`, or a key that borrows as it (a name's text, `&str`, for an
+    /// `Arc<str>`): one walk down, `O(log n)`.
+    pub fn contains<Q: Ord + ?Sized>(&self, key: &Q) -> bool
+    where
+        T: std::borrow::Borrow<Q>,
+    {
         let mut cur = self.root.as_deref();
         while let Some(n) = cur {
-            cur = match key.cmp(&n.key) {
+            cur = match key.cmp(n.key.borrow()) {
                 Ordering::Less => n.left.as_deref(),
                 Ordering::Greater => n.right.as_deref(),
                 Ordering::Equal => return true,
@@ -495,29 +551,68 @@ impl<T: Elem> TreapSet<T> {
     }
 
     /// Adds `key`; whether it was new. One walk down while the nodes stand above the new one,
-    /// then the subtree there split at the key, the path made again, `O(log n)` expected (as
-    /// `types::bdd::list::treap::insert`). The set is left as it was when it has the key.
+    /// then the subtree there split at the key, `O(log n)` expected (as
+    /// `types::bdd::list::treap::insert`). A node on the path that another set shares is made
+    /// again, one this set alone holds is changed in place. The set is left as it was when it
+    /// has the key.
+    // Complexity tradeoff (PERF-varfacts-held-shared-dag): naive version, the path always made
+    // again (`up`), as a persistent insert does: `O(log n)` new nodes and as many freed per
+    // insertion even into a set no other holds, which is how a set is built one key at a time.
+    // The facts of a tuple of `n` variables (`Ty::var_facts`) took 7.4M instructions at 400 and
+    // 75M at 3200 (10.1 times, 10.85 under one seed), against 3.11M and 28.7M (9.23) for the
+    // `imbl::OrdSet` it replaced, whose insertion changes nodes it alone holds in place
+    // (`Arc::make_mut`). Used: the same, `Arc::make_mut` on each node of the path, which copies
+    // a shared node and so keeps every other set as it was. Proof that the counts stay right:
+    // the key is not in the set (checked first), so it lands below each node of the path, and
+    // each of those gains one key, its weight and its class. The subtree below is split by
+    // `split_absent`, which moves the nodes this set alone holds as well; its walk is the two
+    // spines of the new node's subtrees, whose length is the number of rotations a treap's
+    // insertion by rotations makes, below 2 in expectation over independent priorities (Seidel
+    // and Aragon, "Randomized search trees", Algorithmica 16, 1996, pp. 464-497,
+    // doi:10.1007/BF01940876, Crossref checked 2026-11-21; the abstract: "in the expected case
+    // a search or an update takes logarithmic time, with the update requiring fewer than two
+    // rotations"). Not proved here for the 8-wise independent draw ([`Priorities::eight_wise`]);
+    // the walk is at most the depth, `O(log n)` expected under it (module [`crate::priority`]).
+    // Measured after, over seeds 0 to 15: 3.74M to 3.87M and 32.0M to 34.8M, at most 9.25
+    // times (8.4 times the bytes); with the path changed in place and the subtree below still
+    // made again, 4.86M and 42.7M, up to 10.2 times the bytes. Given up: none of the sharing; a set's nodes are still never changed while another
+    // set holds them.
+    // Tests: `every_operation_agrees_with_a_btree_set`,
+    // `an_insertion_leaves_every_set_sharing_its_nodes_as_it_was`.
     pub fn insert(&mut self, key: T) -> bool {
         if self.contains(&key) {
             return false;
         }
-        let prio = key.priority();
-        let mut path = Vec::new();
-        let mut cur = self.root.as_ref();
-        while let Some(n) = cur
-            && (n.prio, &n.key) > (prio, &key)
+        let (prio, weight, class) = (key.priority(), key.weight(), key.class());
+        let mut cur = &mut self.root;
+        // The test is apart from the step down so that no borrow of `cur` outlives the loop.
+        while cur
+            .as_ref()
+            .is_some_and(|n| (n.prio, &n.key) > (prio, &key))
         {
-            let left = key < n.key;
-            path.push((n, left));
-            cur = if left {
-                n.left.as_ref()
-            } else {
-                n.right.as_ref()
-            };
+            if let Some(n) = cur {
+                let n = Arc::make_mut(n);
+                n.len += 1;
+                n.sum = n.sum.wrapping_add(weight);
+                n.classes |= class;
+                cur = if key < n.key {
+                    &mut n.left
+                } else {
+                    &mut n.right
+                };
+            }
         }
-        let (l, _, r) = split(&cur.cloned(), &key);
-        let bottom = fresh(key, l, r);
-        self.root = up(path, Some(bottom));
+        let (left, right) = split_absent(cur.take(), &key);
+        *cur = Some(Arc::new(Node {
+            len: 1 + len(&left) + len(&right),
+            sum: weight.wrapping_add(sum(&left)).wrapping_add(sum(&right)),
+            classes: class | classes(&left) | classes(&right),
+            key,
+            prio,
+            weight,
+            left,
+            right,
+        }));
         true
     }
 
@@ -860,6 +955,15 @@ impl<'a, T: Elem> IntoIterator for &'a TreapSet<T> {
     type IntoIter = Iter<'a, T>;
     fn into_iter(self) -> Iter<'a, T> {
         self.iter()
+    }
+}
+
+/// The keys in order, each cloned: one walk, `O(n)`, and a vector of the keys.
+impl<T: Elem> IntoIterator for TreapSet<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+    fn into_iter(self) -> std::vec::IntoIter<T> {
+        self.iter().cloned().collect::<Vec<T>>().into_iter()
     }
 }
 

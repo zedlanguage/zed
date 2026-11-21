@@ -652,6 +652,63 @@ fn signature_hashes_are_the_numbers_they_were_before_the_shared_arithmetic() {
     assert_eq!(got, expected);
 }
 
+/// A signature whose need takes an int at a path hashes alike whether the path's steps are
+/// emitted one at a time (the stream kept) or added by the tokens the path keeps
+/// ([`PathSteps::r10_part`], PERF-keyed-part-path-d-squared), for paths of 0 to 40 steps of
+/// both kinds; the paths are told apart, so the equality tests something. A path made one
+/// step at a time and one made from the slice are equal, though in different allocations, and
+/// give back their steps; a path of 200 000 steps is dropped without a stack overflow.
+#[test]
+fn a_path_hashes_alike_by_its_kept_tokens_and_one_step_at_a_time() {
+    use r10_hash::{R_BASE, encode_sig_stream};
+    let step = |j: usize| match j % 3 {
+        0 => PathStep::Index(j * 7),
+        1 => PathStep::Part { i: j % 2, n: 2 },
+        _ => PathStep::Part { i: j, n: j + 1 },
+    };
+    let mut hashes = Vec::new();
+    let mut path = PathSteps::default();
+    for l in 0..=40 {
+        let steps: Vec<PathStep> = (0..l).map(step).collect();
+        let flat = PathSteps::from(&steps[..]);
+        assert_eq!(path, flat, "{l} steps");
+        assert_eq!(path.len(), l);
+        assert_eq!(path.to_vec(), steps);
+        let mut s = bsig(vec![ex(vec![int()], int())], 1, &[]);
+        s.needs = vec![Need {
+            on: Ty::empty(),
+            kind: NeedKind::InDomain {
+                domain: IntDomain {
+                    what: "a use".into(),
+                    name: "x".into(),
+                    below_two_pow: None,
+                    written: None,
+                    key: None,
+                },
+                param: 0,
+                via: None,
+                bits: None,
+                path: path.clone(),
+            },
+            result: None,
+            span: Span { start: 3, end: 17 },
+            alike: Arc::from([]),
+            via: CallPath::default(),
+        }];
+        s.note_held();
+        let summed = encode_sig_stream(&s, R_BASE, false).0;
+        assert_eq!(summed, encode_sig_stream(&s, R_BASE, true).0, "{l} steps");
+        hashes.push(summed);
+        path = path.push(step(l));
+    }
+    let mut distinct = hashes.clone();
+    zed_collections::sorted::sort_dedup(&mut distinct);
+    assert_eq!(distinct.len(), hashes.len());
+    let long = (0..200_000).fold(PathSteps::default(), |p, j| p.push(step(j)));
+    assert_eq!(long.len(), 200_000);
+    drop(long);
+}
+
 /// The summary kept by the function `t` holds, after a signature holding it in an arrow is
 /// hashed.
 fn types_summary(t: &Ty) -> Option<r10_hash::NestedSummary> {

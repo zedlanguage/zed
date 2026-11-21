@@ -4357,15 +4357,20 @@ impl fmt::Debug for Facts {
     }
 }
 
-/// What [`Facts`] holds. Both sets are persistent and shared with the facts of the functions
-/// it holds, so a function around one does not copy them: the larger set is kept and the
-/// smaller one added to it.
+/// A set of variable names of [`VarFacts`]: a persistent treap whose shape the names fix, so
+/// that two sets made from one share the subtrees where they agree, and their union walks only
+/// where they differ (`merge`).
+pub type NameSet = zed_kernel::treap_set::TreapSet<Arc<str>>;
+
+/// What [`Facts`] holds. Its sets are persistent and shared with the facts of the functions it
+/// holds, so a function around one does not copy them: each is the union of theirs, which
+/// keeps the subtrees they share (`merge`).
 #[derive(Default)]
 pub struct VarFacts {
     /// The class variables.
-    pub classes: imbl::OrdSet<Arc<str>>,
+    pub classes: NameSet,
     /// The other variables, with its own, bounded and held ones.
-    pub names: imbl::OrdSet<Arc<str>>,
+    pub names: NameSet,
     /// The variables of `names` that no signature of the nest binds as its own: of a
     /// signature, those a comparison of it reads from the comparisons around it, which read
     /// each own variable of a signature they open by a reading they write first (`Cx::open`).
@@ -4376,12 +4381,12 @@ pub struct VarFacts {
     // holds, the larger kept and the smaller added ([`merge`]), less its own variables, so a
     // comparison reads only the variables it can read from around. Tradeoffs: a second set
     // per signature, empty where each variable is bound in the nest.
-    pub outer: imbl::OrdSet<Arc<str>>,
+    pub outer: NameSet,
     /// The variables of `classes` that no signature of the nest binds as its own, by the rule
     /// of `outer` (PROOF-held-own-outer-or-class): a class variable an inner signature owns is
     /// that signature's variable where it stands inside it, as an own name is, so it is not
     /// one a signature around may own. Same cost as `outer`.
-    pub outer_classes: imbl::OrdSet<Arc<str>>,
+    pub outer_classes: NameSet,
     /// The first `n` such that `names` lacks the `n`th variable name (`var_name`).
     pub free: usize,
     /// Whether a signature of the nest binds a variable as its own, bounded or held, or keeps
@@ -4402,7 +4407,7 @@ pub struct VarFacts {
     /// them. `Ck::finished_with` names them apart with the rest, as the eager checker meets
     /// them in the flat needs (FAIL-map-chain-own-vars-carry). Merged as `names` is: O(1) per
     /// function held where no forward holds a function, as nearly all.
-    pub fwd_names: imbl::OrdSet<Arc<str>>,
+    pub fwd_names: NameSet,
     /// Whether a signature of the nest keeps a compact forward that has a class among its
     /// held names and holds a function holding a variable not its own
     /// ([`FwdNeed::held_foreign_fn`]): `Ck::r10_finish_one_fwd_callee` finishes only the held
@@ -4515,22 +4520,19 @@ impl VarFacts {
             }
         }
     }
-    /// Adds the facts of a function it holds: of each set, the larger is kept and the smaller
-    /// one added to it, so over a nest whose walks insert `N` variables, no signature held in
-    /// two places, the merges cost `O(N log^2 N)` in all.
+    /// Adds the facts of a function it holds: each set becomes the union of the two, so over a
+    /// nest whose walks insert `N` variables, no signature held in two places, the merges cost
+    /// `O(N log^2 N)` expected in all.
     // Proof, for sets that share variables as well as disjoint ones (PERF-varfacts-held-overlap,
     // proofdoc5c; it replaces the proof for disjoint sets of proofdoc4g, which charged each
     // insertion to the growth of a set and so failed where `S = A ∪ {v}` meets `L = A ∪ {w}`).
-    // (1) One [`merge`] of sets of `s <= l` variables costs `O((s + 1) log l)`. The loop runs
-    // at most `s` times, each an [`add`] (`O(log l)`) and at most one `next()` of
-    // `imbl`'s `diff` (imbl 7.0.2, `ord/map.rs` `DiffIter::next`, `nodes/btree.rs`
-    // `Cursor::advance_skipping_shared` and `Cursor::next`). One `next()` yields at most one
-    // item; before it, each pass of its loop is an `Equal`, a key in both sets, so in the
-    // smaller, and each `Equal` is passed once, at most `s` in the whole walk; each pass of the
-    // loop in `advance_skipping_shared` skips one run of shared nodes, holding a key of both
-    // sets, again at most `s` in all. Each cursor step costs at most the depth, `O(log l)`. So
-    // the walk costs `O(s log l)` however many nodes the sets share, and the doubling
-    // [`merge`] describes is not needed for this bound.
+    // (1) One [`merge`] of sets of `s <= l` variables costs `O((s + 1) log l)` expected: it is
+    // the treap union of `zed_kernel::treap_set` (PERF-varfacts-held-shared-dag), whose work is
+    // `O(s log(l/s + 1))` expected (Blelloch, Ferizovic and Sun, SPAA 2016,
+    // doi:10.1145/2935764.2935768, Theorem 4, as cited and checked in that module's comment),
+    // at most `O(s log l)` for `s >= 1`, and `O(1)` for `s = 0`. Before that row the merge was
+    // `imbl`'s `OrdSet` and its `diff`, with the same bound, proved here from imbl 7.0.2's
+    // `DiffIter` (proofdoc5c); that proof no longer applies to the code and is not kept.
     // (2) Count, for the facts `F(σ)` of a signature `σ`, the occurrences `M(σ)` that put a
     // variable into them: each insertion [`VarFacts::of`] makes by itself (`add_to`, `add`, a
     // variable of `t.vars`), and the `M` of each function it holds. Each set of `F(σ)` has at
@@ -4551,16 +4553,30 @@ impl VarFacts {
     // the variables copied, `|S|` a merge, at most `N log2 N`.
     // Overlap is what the old step could not bound: `S = A ∪ {v}` into `L = A ∪ {w}` costs
     // `|A| + 1`, paid by the `|A| + 1` occurrences of the smaller part, whose part doubles.
-    // Not proved (PERF-varfacts-held-overlap, the rest): a bound in the text for a signature
-    // held in two or more places, as one `Arc` in a DAG. Its facts are made once but merged
-    // into each holder, and `M` counts it once per path, so `M(top)` may be exponential in the
-    // text; the bound left is `O(E · (V + 1) log V)` for `E` merges, one per function held at
-    // each place, and `V` variables in all, from (1) with `s <= V`. `m` holders of one
-    // signature whose facts and theirs share `a` variables cost `m · a` for text about `m + a`.
-    // Test: l01_22 bench
+    // A signature held in two or more places, as one `Arc` in a DAG
+    // (PERF-varfacts-held-shared-dag): its facts are made once but merged into each holder, and
+    // `M` counts it once per path, so `M(top)` may be exponential in the text, and the bound
+    // proved is only `O(E · (V + 1) log V)` for `E` merges, one per function held at each
+    // place, and `V` variables in all, from (1) with `s <= V`. What the treap adds: a set's
+    // shape is fixed by its names (the module comment of `zed_kernel::treap_set`), and a union
+    // stops at a pair of shared subtrees and gives back an operand where the result has its
+    // size, so `m` holders of `S` whose facts are `A ∪ {B_i}`, `|A| = a`, each share `A`'s
+    // subtrees off the path to `B_i`, and their union into the function around them walks
+    // those paths, not `A`. With `imbl`, whose `diff` yields every `B_j` already merged, the
+    // `i`th merge cost `min(a, i)`: `m · a` for text about `m + a`. Measured, l01_22 bench
+    // `the_variables_of_many_holders_of_one_shared_signature_are_found_in_linear_time` at 256
+    // and 2048: 24.74 times the instructions before, 8.29 after, 8.40 with the treap's
+    // insertion in place (`TreapSet::insert`), at 3% fewer instructions (the parse alone 7.66,
+    // so the facts alone 22.5M and 247M instructions, 10.96 times, against 8 ln(8n)/ln n = 10.99 for
+    // `n log n`). Not proved: that bound, which needs the work of a union of two treaps that
+    // share all but `d` paths to be `O(d log n)`; the cited theorems bound the work by the
+    // sizes, not by what the two share, and the early stops are this module's own.
+    // Tests: l01_22 benches
     // `function_types_nested_deep_whose_inner_levels_hold_the_outer_variable_fit_in_linear_time`,
-    // each level holding the outer `T`, so the sets overlap at every level (8.08 at 8n). No
-    // test builds the shared case, nor a nest whose sets differ in one variable at every level.
+    // each level holding the outer `T`, so the sets overlap at every level (7.98 at 8n), and
+    // `the_variables_of_a_nest_of_one_new_variable_a_level_are_found_in_linear_time`, whose
+    // sets differ in one variable at every level (7.62 with `imbl`, 7.92 with the treap, 7.88
+    // with its insertion in place).
     fn held(&mut self, f: &VarFacts) {
         merge(&mut self.classes, &f.classes);
         merge(&mut self.names, &f.names);
@@ -4790,45 +4806,35 @@ impl BindKeys {
     }
 }
 
-/// Adds `other` to `set`, keeping the larger of the two and adding to it what the smaller
-/// holds and it lacks.
-///
-/// Two ways find that, run a step each in turn until either ends: inserting each variable of
-/// the smaller set, `O(m log n)` for sets of `m` and `n`, and the difference of the two
-/// (`imbl`'s `diff`), which steps over the nodes they share, so that a set made from the other
-/// by adding a few variables costs about the depth of the tree. Either alone fails a family:
-/// the insertions merge a set into one it was made from at its full size, `O(n^2 log n)` over
-/// `n` rows `t(k) = (t(k-1), (t(k-1), Vk))`, and the difference walks the larger set when the
-/// two share no node.
-// Complexity tradeoff (COMPLEXITY.md row F93): naive version, the insertions alone,
-// O(n^2 log n) over that family. Used: the two ways interleaved, at most twice the cheaper of
-// the two, O(m log n) or about the depth of the tree when the sets share their nodes.
-// Tradeoff: a constant factor of two on sets where only one way is fast; the row is fixed
-// only in part (see it for the family that stays above n log n).
-fn merge(set: &mut imbl::OrdSet<Arc<str>>, other: &imbl::OrdSet<Arc<str>>) {
-    let (large, small) = match other.len() > set.len() {
-        true => (other, &*set),
-        false => (&*set, other),
-    };
-    let mut out = large.clone();
-    let mut lacks = large.diff(small);
-    for v in small {
-        add(&mut out, v);
-        match lacks.next() {
-            Some(imbl::ordset::DiffItem::Add(v)) => add(&mut out, v),
-            Some(imbl::ordset::DiffItem::Remove(_)) => {}
-            None => break,
-        }
-    }
-    *set = out;
+/// Makes `set` the union of it and `other`: the treap union of `zed_kernel::treap_set`,
+/// `O(m log(n/m + 1))` expected for sets of `m <= n` names, which stops at a pair of shared
+/// subtrees and gives back an operand where the union has its size, so a set made from the
+/// other by adding a few names costs about those names' paths, and a set merged into one that
+/// holds it gives that one back.
+// Complexity tradeoff (COMPLEXITY.md rows F93 and PERF-varfacts-held-shared-dag): naive version,
+// inserting each name of the smaller set into the larger, O(m log n), which merges a set into
+// one it was made from at its full size, O(n^2 log n) over `n` rows
+// `t(k) = (t(k-1), (t(k-1), Vk))`. Before that row: `imbl::OrdSet`, the insertions run a step
+// at a time beside `imbl`'s `diff`, which steps over shared nodes, stopping when either ends;
+// but `diff` yields every name of the larger set the smaller lacks, so `m` holders of one
+// shared signature of `a` names, each with one name of its own, merged into one set cost
+// `min(a, i)` at the `i`th, O(m a) in all (24.74 times the instructions at 8n). Used: the
+// treap union, whose shape the names fix, so the holders' sets share the signature's subtrees
+// and the union walks only the paths where they differ (8.29 times; 8.40 at 3% fewer
+// instructions once an insertion changes in place the nodes no other set holds, which a set
+// built one name at a time needs: made again, the facts of a tuple of `n` variables reached
+// 10.85 times at 8n, against 9.23 with `imbl`). Given up: a treap keeps
+// one name a node where `imbl`'s B-tree keeps up to 16 (imbl 7.0.2, `ORD_CHUNK_SIZE` in
+// `src/config.rs`), so a lookup walks a deeper tree; the
+// nest benches of l01_22 moved from 7.62 to 7.92 and from 8.08 to 7.98 at 8n.
+fn merge(set: &mut NameSet, other: &NameSet) {
+    *set = set.union(other);
 }
 
 /// Adds `v` to `set`. A set shared with the facts of another signature is copied along the
-/// path to `v` by an insertion, so a variable it already holds is not inserted again.
-fn add(set: &mut imbl::OrdSet<Arc<str>>, v: &Arc<str>) {
-    if !set.contains(v) {
-        set.insert(v.clone());
-    }
+/// path to `v` by an insertion, which leaves the set as it is when it holds `v`.
+fn add(set: &mut NameSet, v: &Arc<str>) {
+    set.insert(v.clone());
 }
 
 /// A use the body of a generic function makes of a value whose type is a variable: checked
@@ -5485,7 +5491,7 @@ pub enum NeedKind {
         /// whole value. `h(positional p) { a, b = p; return 2^a; }` takes component 0 of the
         /// two of `p` in `int[0..]`, and `h(positional p) = 2^p[0]` entry 0 of `p`
         /// (CHK-pow-component-bound).
-        path: Arc<[PathStep]>,
+        path: PathSteps,
     },
     /// Compact inherited forward block (`M66`, `M65`): holds the callee signature, parameter
     /// substitution `sigma`, exit results, variable ties, implicit internal-variable naming spans,
@@ -5978,6 +5984,208 @@ pub enum PathStep {
     },
     /// `[k]` with the literal `k`: component `k` of a tuple, or an entry of a family.
     Index(usize),
+}
+
+/// The steps of a [`NeedKind::InDomain`] need's path, outermost first, kept as a list that
+/// shares its prefixes: a path is its last step and the path before it, so a path one step
+/// longer than another is made in O(1) and shares the other's steps. Each path keeps its
+/// length, its hash and the `M54` tokens of its steps ([`Self::r10_part`]), each made from
+/// the path before it in O(1).
+///
+/// Complexity tradeoff (PERF-keyed-part-path-d-squared, COMPLEXITY.md): the naive way keeps
+/// each path as its own array of steps, `Arc<[PathStep]>`. Then the d maps at each level of a
+/// parameter `(K ->? V, (K ->? V, …))`, whose paths have 1 to d steps, cost Θ(d²) to store
+/// (their entries of `Ck::param_keys` and their needs), to hash each time a need is a key (the
+/// `#7'` keys of `Ck::r10_get_or_build_summary`, `Ck::path_seen`) and to encode in the
+/// signature's digest. At d = 512 these were 408M of the 660M quadratic instructions of the
+/// l01_26 bench `checking_maps_at_every_level_of_a_tuple_parameter_scales` (callgrind at
+/// d = 128, 256, 512); the quadratic term is (16/6)(T(512) − 3T(256) + 2T(128)). Here the d
+/// paths of a declared type share their prefixes, d nodes in all; a hash is O(1); a digest adds
+/// a path's tokens in O(1) ([`r10_hash::PartHash::concat`]). What costs O(l) for a path of l
+/// steps: [`Self::to_vec`], two equal paths in different allocations compared, and the
+/// iterative drop of a path that nothing else holds.
+///
+/// The hash is [`zed_kernel::digest::text_hash`], seeded once a run, since the steps hold the
+/// program's index literals (the kernel's rule for keys a program chooses); it decides only
+/// where a key is kept, as `Hash` does, never an order or an output. Proof that equal paths
+/// hash alike: by induction on the length, the empty path's hash is 0, and a path's hash is
+/// `text_hash` of its length, the hash of the path before it and its last step, all equal for
+/// equal paths. So `Eq` may refuse on unequal hashes or lengths. `Debug` writes the steps,
+/// outermost first, as the array did.
+#[derive(Clone, Default)]
+pub struct PathSteps(Option<Arc<PathNode>>);
+
+/// A path that is not empty: its last step and the path before it ([`PathSteps`]).
+struct PathNode {
+    /// The last step, the innermost.
+    step: PathStep,
+    /// The steps before it.
+    outer: PathSteps,
+    /// The number of steps, `step` included.
+    len: usize,
+    /// The hash, see [`PathSteps`].
+    hash: u64,
+    /// The `M54` tokens of the steps, outermost first, at [`r10_hash::R_BASE`].
+    r10: r10_hash::PartHash,
+}
+
+impl PathSteps {
+    /// The number of steps.
+    pub fn len(&self) -> usize {
+        self.0.as_ref().map_or(0, |n| n.len)
+    }
+
+    /// Whether the path is the whole value.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+
+    /// This path and then `step`, sharing this path's steps. O(1).
+    pub fn push(&self, step: PathStep) -> PathSteps {
+        let len = self.len() + 1;
+        let hash = zed_kernel::digest::text_hash(&(len, self.hash(), step));
+        let mut r10 = self.r10_part();
+        for t in r10_hash::path_step_tokens(step) {
+            r10.push(t, r10_hash::R_BASE);
+        }
+        PathSteps(Some(Arc::new(PathNode {
+            step,
+            outer: self.clone(),
+            len,
+            hash,
+            r10,
+        })))
+    }
+
+    /// The path without its last step; the empty path for the empty path.
+    pub fn outer(&self) -> PathSteps {
+        self.0.as_ref().map(|n| n.outer.clone()).unwrap_or_default()
+    }
+
+    /// The last step, the innermost.
+    pub fn last(&self) -> Option<PathStep> {
+        self.0.as_ref().map(|n| n.step)
+    }
+
+    /// The steps, innermost first, read in place.
+    pub fn rev_steps(&self) -> impl Iterator<Item = PathStep> + '_ {
+        let mut at = self.0.as_deref();
+        std::iter::from_fn(move || {
+            let n = at?;
+            at = n.outer.0.as_deref();
+            Some(n.step)
+        })
+    }
+
+    /// The steps of this path and `other` in pairs, from the last steps back, read in place;
+    /// it stops where either path ends or where the two lists meet, the steps before that being
+    /// the same steps.
+    pub fn zip_back<'s>(
+        &'s self,
+        other: &'s PathSteps,
+    ) -> impl Iterator<Item = (PathStep, PathStep)> + 's {
+        let (mut a, mut b) = (self.0.as_deref(), other.0.as_deref());
+        std::iter::from_fn(move || {
+            let (x, y) = (a?, b?);
+            if std::ptr::eq(x, y) {
+                return None;
+            }
+            (a, b) = (x.outer.0.as_deref(), y.outer.0.as_deref());
+            Some((x.step, y.step))
+        })
+    }
+
+    /// The steps, outermost first. O(l) for l steps.
+    pub fn to_vec(&self) -> Vec<PathStep> {
+        let mut v: Vec<PathStep> = self.rev_steps().collect();
+        v.reverse();
+        v
+    }
+
+    /// The address of the last step's node, null for the empty path: the same for two paths
+    /// only where they are one list, so it keys a memo of a path while the path is held.
+    pub fn addr(&self) -> *const () {
+        self.0
+            .as_ref()
+            .map_or(std::ptr::null(), |n| Arc::as_ptr(n).cast())
+    }
+
+    /// The `M54` tokens of the steps, outermost first, at [`r10_hash::R_BASE`], as
+    /// `Encoder::emit_path_step` gives them one step after another
+    /// ([`r10_hash::path_step_tokens`]).
+    pub fn r10_part(&self) -> r10_hash::PartHash {
+        self.0
+            .as_ref()
+            .map_or(r10_hash::PartHash::empty(), |n| n.r10)
+    }
+
+    fn hash(&self) -> u64 {
+        self.0.as_ref().map_or(0, |n| n.hash)
+    }
+}
+
+impl From<&[PathStep]> for PathSteps {
+    /// The path of `steps`, outermost first. O(l) for l steps.
+    fn from(steps: &[PathStep]) -> PathSteps {
+        steps.iter().fold(PathSteps::default(), |p, &s| p.push(s))
+    }
+}
+
+impl From<Vec<PathStep>> for PathSteps {
+    fn from(steps: Vec<PathStep>) -> PathSteps {
+        PathSteps::from(&steps[..])
+    }
+}
+
+impl PartialEq for PathSteps {
+    /// The same steps: O(1) where the hashes or lengths differ or the lists meet, else one
+    /// pass from the last step back to where the two lists meet.
+    fn eq(&self, other: &PathSteps) -> bool {
+        let (mut a, mut b) = (self.0.as_ref(), other.0.as_ref());
+        loop {
+            match (a, b) {
+                (None, None) => return true,
+                (Some(x), Some(y)) => {
+                    if Arc::ptr_eq(x, y) {
+                        return true;
+                    }
+                    if x.len != y.len || x.hash != y.hash || x.step != y.step {
+                        return false;
+                    }
+                    (a, b) = (x.outer.0.as_ref(), y.outer.0.as_ref());
+                }
+                _ => return false,
+            }
+        }
+    }
+}
+
+impl Eq for PathSteps {}
+
+impl std::hash::Hash for PathSteps {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        h.write_u64(PathSteps::hash(self));
+    }
+}
+
+impl fmt::Debug for PathSteps {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.to_vec()).finish()
+    }
+}
+
+impl Drop for PathSteps {
+    /// Drops the steps no other path holds one node at a time: the derived drop recursed once
+    /// a step and could overflow the stack for a path of many thousands of steps.
+    fn drop(&mut self) {
+        let mut next = self.0.take();
+        while let Some(n) = next {
+            next = match Arc::try_unwrap(n) {
+                Ok(mut node) => node.outer.0.take(),
+                Err(_) => None,
+            };
+        }
+    }
 }
 
 /// What the error of a [`NeedKind::Power`] need is made from: the code it quotes is kept as
@@ -30645,6 +30853,17 @@ pub mod r10_hash {
         }
     }
 
+    /// The `M54` tokens of one step of a path, as a signature's digest takes them: `1, i, n`
+    /// for component `i` of `n`, `2, k` for `[k]`. Both `Encoder::emit_path_step` and
+    /// [`PathSteps::push`] take them from here, so a path's kept tokens are the ones emitted.
+    pub fn path_step_tokens(ps: PathStep) -> impl Iterator<Item = u64> {
+        let (toks, m) = match ps {
+            PathStep::Part { i, n } => ([1, mod_p(i as u128), mod_p(n as u128)], 3),
+            PathStep::Index(k) => ([2, mod_p(k as u128), 0], 2),
+        };
+        toks.into_iter().take(m)
+    }
+
     /// `M54`: Whole-chain hash of `Via`, memoized per link in `Via::chain_hash` (`O(1)` per new
     /// link).
     pub fn hash_via_chain(via: &Via) -> u64 {
@@ -31869,16 +32088,8 @@ pub mod r10_hash {
         }
 
         fn emit_path_step(&mut self, ps: PathStep) {
-            match ps {
-                PathStep::Part { i, n } => {
-                    self.emit(1);
-                    self.emit_usize(i);
-                    self.emit_usize(n);
-                }
-                PathStep::Index(k) => {
-                    self.emit(2);
-                    self.emit_usize(k);
-                }
+            for t in path_step_tokens(ps) {
+                self.emit(t);
             }
         }
 
@@ -32081,8 +32292,22 @@ pub mod r10_hash {
                     self.emit_opt(via.as_deref(), |e, v| e.emit(hash_via_chain(v)));
                     self.emit_opt(bits.as_ref(), |e, &s| e.emit_span(s));
                     self.emit_usize(path.len());
-                    for &ps in path.iter() {
-                        self.emit_path_step(ps);
+                    // The path keeps the hash of its steps' tokens `t_1 … t_m` at `R_BASE`,
+                    // `(Σ t_j r^(j-1), r^m)`, pushed from `PartHash::empty()`. Proof that the
+                    // concatenation gives the `part` the tokens emitted one by one give: from
+                    // `(v, w)`, `PartHash::push` of each gives `(v + w Σ t_j r^(j-1), w r^m)`,
+                    // which is `concat` of `(v, w)` and that hash, all mod `P`. `emit` changes
+                    // nothing but `part` and `stream`, so with no stream kept the two are the
+                    // same; `self.r` is `R_BASE` (both reduced mod `P`). O(1) here, where the
+                    // steps one by one cost O(l) for a path of l steps
+                    // (PERF-keyed-part-path-d-squared, [`PathSteps`]). Test:
+                    // `a_path_hashes_alike_by_its_kept_tokens_and_one_step_at_a_time`.
+                    if self.stream.is_none() && self.r == R_BASE {
+                        self.part = self.part.concat(path.r10_part());
+                    } else {
+                        for ps in path.to_vec() {
+                            self.emit_path_step(ps);
+                        }
                     }
                 }
                 NeedKind::Fwd(_) => unreachable!("NeedKind::Fwd handled in emit_sig / summary"),
