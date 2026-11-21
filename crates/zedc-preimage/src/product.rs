@@ -2064,6 +2064,10 @@ pub struct Scope {
     /// The entries of [`Block::bounds`] the two-name rule of [`Block::reframe`] has projected
     /// for on this path of tests: each is projected for once.
     spent: imbl::OrdSet<BoundsKey>,
+    /// The entries of [`Scope::spent`] with their two names swapped, `(y, x, end, side)` for
+    /// `(x, y, end, side)`, so that those naming a name second are found by a range, as those
+    /// naming it first are in `spent` ([`Scope::spend`]; read by [`Scope::bind`]).
+    spent_by_second: imbl::OrdSet<BoundsKey>,
     /// The ends a test of one name gave each name, the upper one `true`, each the tightest
     /// such a test gave on this path: every state of the scope holds them, and the relation
     /// need not, since a test of one name narrows only the name's product. [`Scope::stated`]
@@ -9375,6 +9379,7 @@ impl Scope {
             lazy: false,
             in_case: false,
             spent: imbl::OrdSet::new(),
+            spent_by_second: imbl::OrdSet::new(),
             direct: imbl::OrdMap::new(),
             gaps: LowerGaps::default(),
             rooted: imbl::OrdSet::new(),
@@ -9529,7 +9534,7 @@ impl Scope {
             block.outer_names_at = block.names_at.clone();
         }
         for w in std::mem::take(&mut block.spends) {
-            self.spent.insert(w);
+            self.spend(w);
         }
         for key in std::mem::take(&mut block.added) {
             self.seen.owners.entry(key).or_default().insert(block.id);
@@ -9537,6 +9542,41 @@ impl Scope {
         // Complexity tradeoff: the block goes behind an `Arc` once, one allocation, so the path
         // copy this insert makes copies pointers, not blocks. COMPLEXITY.md C44.
         self.seen.blocks.insert(block.id, Arc::new(block));
+    }
+
+    /// Records `w` as spent ([`Scope::spent`]), and under its names swapped
+    /// ([`Scope::spent_by_second`]). O(log s) for s entries spent.
+    fn spend(&mut self, w: BoundsKey) {
+        let (x, y, end, side) = &w;
+        self.spent_by_second
+            .insert((y.clone(), x.clone(), *end, *side));
+        self.spent.insert(w);
+    }
+
+    /// Takes every entry naming `x` out of [`Scope::spent`] and [`Scope::spent_by_second`]:
+    /// those naming it first are the run of `spent` from `(x, "", 0, false)`, the least key
+    /// with first name `x` (`Arc<str>` ordered as its text, the empty text least), and those
+    /// naming it second the same run of `spent_by_second`. O((1 + e) log s) for the e entries
+    /// taken, of s.
+    fn unspend(&mut self, x: &Arc<str>) {
+        let from: BoundsKey = (x.clone(), Arc::from(""), 0, false);
+        let first: Vec<BoundsKey> = (self.spent.range(from.clone()..))
+            .take_while(|k| &k.0 == x)
+            .cloned()
+            .collect();
+        let second: Vec<BoundsKey> = (self.spent_by_second.range(from..))
+            .take_while(|k| &k.0 == x)
+            .cloned()
+            .collect();
+        for (a, b, end, side) in first {
+            self.spent_by_second
+                .remove(&(b.clone(), a.clone(), end, side));
+            self.spent.remove(&(a, b, end, side));
+        }
+        for (a, b, end, side) in second {
+            self.spent.remove(&(b.clone(), a.clone(), end, side));
+            self.spent_by_second.remove(&(a, b, end, side));
+        }
     }
 
     /// Settles the stale leaves among `names` ([`Scope::lazy`]): projects each one's star,
@@ -9752,14 +9792,20 @@ impl Scope {
     // - `enumerated`: false, see the enumerated fault at `Scope::enumerated` (a constraint
     //   written again of the new `x` is not enumerated again; sound, less precise).
     // - `spent` (keys `(x, y, end, side)`, `Block::reframe`): an entry spent for a part on the
-    //   old `x` stays spent, so a part of the new `x` found by the same entry is not
-    //   projected for it on this path of tests. Sound (projection only narrows), less
-    //   precise; the same kind of fault as `enumerated`, no test. Proposed fix: drop the
-    //   entries naming `x` here as well.
-    // - `refused_by` / `refusals`: questions on the old `x` stay under the name `x`, so
-    //   `refused_on` of the new `x` also returns them (a warning about the shadowed value).
-    //   Elaboration renames a shadowing binder (`x@k`, see `Scope::refused_by`), so this is
-    //   inferred to arise only through a direct caller of `bind`; not checked.
+    //   old `x` stayed spent, so a part of the new `x` found by the same entry was not
+    //   projected for it on this path of tests (sound, less precise). Fixed (row
+    //   PROOF-bind-shadow-spent-refused, 2026-11-21): the entries naming `x`, first or
+    //   second, are taken out (`Scope::unspend`); test
+    //   `product::tests::a_binding_that_shadows_a_name_drops_the_entries_spent_on_it`, red
+    //   before with every entry kept.
+    // - `refused_by`: questions on the old `x` stayed under the name `x`, so `refused_on` of
+    //   the new `x` returned them, against its doc. Fixed (same row): the entry of `x` is
+    //   removed; `refusals` keeps the questions, which are still warnings. Test
+    //   `product::tests::a_question_on_a_shadowed_name_is_not_found_by_the_name_that_shadows_
+    //   it`, red before. Elaboration renames a shadowing binder (`x@k`, see
+    //   `Scope::refused_by`), so this is inferred to arise only through a direct caller of
+    //   `bind`; not checked.
+    // `Scope::unbind` restores the whole scope saved before, both records with it.
     // - `exactly`, `potential`, `projected`, `seen`: caches and points, not facts. `exactly[x]`
     //   is used only when it lies in the new `x`'s interval and class (`Scope::admits`), and
     //   the verdict of `enumerate_exactly` does not depend on it (proof there); `potential`
@@ -9995,6 +10041,14 @@ impl Scope {
         for upper in [false, true] {
             self.direct.remove(&(x.clone(), upper));
         }
+        // The entries spent for parts on the old `x`, so that a part of the new `x` found by
+        // one of them is projected for it ([`Scope::spent`]), and the questions asked of the
+        // old `x`, which the new `x` does not find ([`Scope::refused_on`]); they stay kept,
+        // and warned of, under `refusals`. Tests:
+        // `product::tests::a_binding_that_shadows_a_name_drops_the_entries_spent_on_it` and
+        // `…::a_question_on_a_shadowed_name_is_not_found_by_the_name_that_shadows_it`.
+        self.unspend(x);
+        self.refused_by.remove(x);
         self.bindings.insert(x.clone(), binding);
         self.orders.insert(x.clone(), order);
         self.names.insert(x.clone(), p);
@@ -10519,8 +10573,10 @@ impl Scope {
     /// `refusals` cost O(q log k). In all O(m log k + t log t + q log k); the O(m log k + q log
     /// q) above holds when each question is found under O(1) of the names.
     /// Why every question is found: `refused_by` lists `r` under `n` exactly when `r` is a key
-    /// of `refusals` and `n` is among the names given with it. `Scope::refuse` inserts both
-    /// together (`index_refused`), nothing removes either, and `Scope::join` takes the union
+    /// of `refusals` and `n` is among the names given with it and still names that binding.
+    /// `Scope::refuse` inserts both together (`index_refused`), nothing removes a question
+    /// from `refusals`, `Scope::bind` removes the entry of a name it shadows from `refused_by`
+    /// alone (the questions are of the shadowed binding), and `Scope::join` takes the union
     /// of both maps, name by name for `refused_by`, so the pair stays in step. Tests
     /// `l01_39_reduced_product::refused` (look-ups, and scaling at 4,096 and 32,768
     /// questions, each on few names, so they do not exercise a large t).
@@ -11081,6 +11137,17 @@ impl Scope {
                 // would let each side of every later test spend the entry again.
                 let mut spent = self.spent.clone();
                 for d in self.spent.diff(&other.spent) {
+                    if let imbl::ordset::DiffItem::Add(e) = d {
+                        spent.insert(e.clone());
+                    }
+                }
+                spent
+            },
+            // The same union, swapped: the two sets hold the same entries on each side, so
+            // they do on the join.
+            spent_by_second: {
+                let mut spent = self.spent_by_second.clone();
+                for d in self.spent_by_second.diff(&other.spent_by_second) {
                     if let imbl::ordset::DiffItem::Add(e) = d {
                         spent.insert(e.clone());
                     }
@@ -27245,6 +27312,65 @@ mod tests {
             s.get("n").ints().to_string(),
             "[1..=1, 4..=4, 6..=6, 9..=9]"
         );
+    }
+
+    /// A question kept on `n`, then a `let` that binds `n` again (it shadows the first):
+    /// `refused_on(["n"])` finds the question before the binding and not after, since it was
+    /// asked of the shadowed `n`; it is still kept, so still a warning; and the unbinding finds
+    /// it again (row PROOF-bind-shadow-spent-refused, [`Scope::refused_on`]).
+    #[test]
+    fn a_question_on_a_shadowed_name_is_not_found_by_the_name_that_shadows_it() {
+        let n: Arc<str> = Arc::from("n");
+        let mut s = Scope::new([(n.clone(), Product::of_type(Type::int()))]);
+        let r = Refused {
+            constraint: Arc::from("n * n >= 1"),
+            asked: Asked::Projection,
+            cause: Cause::Holes {
+                holed: vec![n.clone()],
+                names: 1,
+            },
+        };
+        s.refuse(r.clone(), Kept::default(), std::slice::from_ref(&n));
+        assert_eq!(s.refused_on(["n"]).len(), 1);
+        let u = s.bind(
+            &n,
+            Product::of_type(Type::int()),
+            &Shared::new(Term::Lit(Value::Int(0))),
+        );
+        assert!(s.refused_on(["n"]).is_empty(), "{:?}", s.refused_on(["n"]));
+        assert!(s.refusals.contains_key(&r));
+        s.unbind(u);
+        assert_eq!(s.refused_on(["n"]).len(), 1);
+    }
+
+    /// Entries of [`Block::bounds`] spent on two names, one naming `n` first, one naming it
+    /// second and one not naming it: a `let` that binds `n` again drops the two that name it
+    /// and keeps the third, and the unbinding gives all three back (row
+    /// PROOF-bind-shadow-spent-refused, [`Scope::spent`]). It checks the records, not a part
+    /// of the new `n` projected for an entry the old `n` spent.
+    #[test]
+    fn a_binding_that_shadows_a_name_drops_the_entries_spent_on_it() {
+        let [a, n, z]: [Arc<str>; 3] = ["a", "n", "z"].map(Arc::from);
+        let mut s = Scope::new([&a, &n, &z].map(|v| (v.clone(), Product::of_type(Type::int()))));
+        let keys: [BoundsKey; 3] = [
+            (a.clone(), n.clone(), 0, true),
+            (n.clone(), z.clone(), 2, false),
+            (a.clone(), z.clone(), 1, true),
+        ];
+        for k in &keys {
+            s.spend(k.clone());
+        }
+        let u = s.bind(
+            &n,
+            Product::of_type(Type::int()),
+            &Shared::new(Term::Lit(Value::Int(0))),
+        );
+        let left: Vec<&BoundsKey> = s.spent.iter().collect();
+        assert_eq!(left, vec![&keys[2]]);
+        let swapped: Vec<&BoundsKey> = s.spent_by_second.iter().collect();
+        assert_eq!(swapped, vec![&(z.clone(), a.clone(), 1, true)]);
+        s.unbind(u);
+        assert_eq!((s.spent.len(), s.spent_by_second.len()), (3, 3));
     }
 
     /// Asks `steps` of a scope of the integers `a`, `x` and `y` in turn, until one leaves no
