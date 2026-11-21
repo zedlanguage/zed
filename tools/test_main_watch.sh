@@ -4,7 +4,8 @@
 # piece fails while broken/<piece> exists. t_flaky fails on its first run only (a flake). A stub
 # fixer (MAIN_WATCH_FIXER) deletes broken/<piece> for each piece its brief names, commits, pushes
 # and appends its landing to landings.log, as merge-push.sh does.
-# Usage: tools/test_main_watch.sh [case...]; with no case, all. The toy directories are left
+# Usage: tools/test_main_watch.sh [case...]; with no case, all. `controls:<name>` runs the one
+# mutant <name> of the case controls, so each can run apart under the 60 s limit of a piece.
 # under the directory it prints, for inspection.
 pushd "$(dirname "$0")/.." >/dev/null || exit 2
 root=$(pwd -P)
@@ -396,6 +397,7 @@ bench:b_beta FAIL-main-${b:0:9}" "$(cat "$t/home/main-watch-known.txt")"
     check "nobisect: the stuck entry" 1 "$(command grep -a -c "main-watch stuck: the bisect of test:t_gamma over ${c0:0:9}..$h named no commit" "$t/home/main-watch-stuck.md")"
     check "nobisect: on the known list with the head's row" "test:t_gamma FAIL-main-$h" "$(cat "$t/home/main-watch-known.txt")"
     check "nobisect: the head is checked" "$(head_of)" "$(checked)"
+    check "nobisect: nothing is published from the changed worktree" "" "$(tail -1 "$t/state/published" 2>/dev/null)"
     ;;
   setuperr)
     # Setup errors are the only exits, with 2: no checked commit, and a worktree that cannot be
@@ -443,6 +445,7 @@ bench:b_beta FAIL-main-${b:0:9}" "$(cat "$t/home/main-watch-known.txt")"
     check "old: on the known list as FAIL-main-<C0>" "test:t_delta FAIL-main-${c0:0:9}" "$(cat "$t/home/main-watch-known.txt")"
     check "old: no fixer ran" 0 "$(cat "$t/state/fixer.log" 2>/dev/null | wc -l)"
     check "old: the head is checked" "$(head_of)" "$(checked)"
+    check "old: the checked head's build is published, not C0's" "$(head_of)" "$(tail -1 "$t/state/published" 2>/dev/null)"
     ;;
   oldqueue)
     # As old, in queue mode: a QUEUE line for FAIL-main-<C0> and a known line, no stuck entry.
@@ -456,6 +459,7 @@ bench:b_beta FAIL-main-${b:0:9}" "$(cat "$t/home/main-watch-known.txt")"
     check "oldqueue: the running log names it" 1 "$(command grep -a -c "FAIL-main-${c0:0:9}: test:t_delta fail at the last checked commit" "$t/home/running-log.md")"
     check "oldqueue: no stuck entry" no "$([ -e "$t/home/main-watch-stuck.md" ] && echo yes || echo no)"
     check "oldqueue: the head is checked" "$(head_of)" "$(checked)"
+    check "oldqueue: the checked head's build is published, not C0's" "$(head_of)" "$(tail -1 "$t/state/published" 2>/dev/null)"
     ;;
   known)
     # As old, but main-watch-known.txt gives the failure's owning row: it still runs and is
@@ -515,6 +519,7 @@ QUEUE TEST-row-12 ${b:0:9} bench:b_beta" \
     check "queue: the pieces join the known list with their rows" "test:t_alpha TEST-row-5
 bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
     check "queue: the head is checked" "$(head_of)" "$(checked)"
+    check "queue: the checked head's build is published, not the culprit's" "$(head_of)" "$(tail -1 "$t/state/published" 2>/dev/null)"
     check "queue: one full run of each kind" "1 1" \
       "$(command grep -a -c ' test all$' "$t/state/runs.log") $(command grep -a -c ' bench all$' "$t/state/runs.log")"
     land 21
@@ -550,10 +555,11 @@ bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
     check "build: the culprit is the commit that broke the build" "$(breaker BUILD)" "$(opened)"
     check "build: the head is checked" "$(head_of)" "$(checked)"
     ;;
-  controls)
+  controls | controls:*)
     # Negative controls: each mutant of main_watch.sh drops one behavior and must fail the cases
     # that test it.
-    local m mutants
+    local m mutants only=${1#controls}
+    only=${only#:}
     mutants=(
       "stuck-exits|s/^\\(  say \"STUCK: .*\\)\$/\\1; exit 3/|failfix"
       "no-park|s/^  known_add \"\\\$row\" \"\\\$items\"\$/  :/|failfix"
@@ -564,15 +570,18 @@ bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
       "no-reap|s/^  reap \"\\\$(cat .*\$/  :/|reap"
       "no-skip|s/(--except \"\\\$skip\")/()/|skip"
       "no-queue|s/^  if \\[ -n \"\\\$queue\" \\]; then\$/  if false; then/|queue"
+      "publish-unchecked|s/^  if \\[ -n \"\\\$copy\" \\] .* checkout -q --detach .*; then\$/  if false; then/|queue"
     )
     for m in "${mutants[@]}"; do
       IFS='|' read -r name expr cases <<<"$m"
+      [ -z "$only" ] || [ "$only" = "$name" ] || continue
       sed "$expr" "$watch" >"$t/$name.sh"
       chmod +x "$t/$name.sh"
       check "controls: mutant $name changes one line" 1 "$(diff "$watch" "$t/$name.sh" | command grep -a -c '^>')"
       MW_WATCH=$t/$name.sh TMPDIR=$t "$root/tools/test_main_watch.sh" $cases >"$t/$name.out" 2>&1
       check "controls: mutant $name fails" 1 "$?"
     done
+    [ -z "$only" ] || check "controls: a mutant named $only exists" yes "$([ -e "$t/$only.sh" ] && echo yes || echo no)"
     ;;
   *)
     echo "unknown case $1"

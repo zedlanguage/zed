@@ -515,7 +515,7 @@ fix() {
 }
 
 # checked_head <C0> <known failures>: records $head as checked, publishes the build of the
-# watcher's worktree and removes the worktree.
+# watcher's worktree at $head and removes the worktree.
 checked_head() {
   local c0=$1 known=$2
   echo "$head $(ts)" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
@@ -527,9 +527,16 @@ checked_head() {
   # commits behind main seeded clippy no better than an empty one (zedc-check after a change
   # to zed-graph: 75 and 106 s, against 87 and 107 s empty and 17 and 24 s seeded from a
   # current build, 2026-11-20). A failed publish leaves the old central build and does not
-  # stop the watcher.
-  [ -z "$copy" ] || "$publish" "$copy" >>"$logroot/publish.log" 2>&1 ||
-    say "publishing the build of $copy failed ($logroot/publish.log); the central build is unchanged"
+  # stop the watcher. The worktree may stand at another commit: a bisect leaves it at the
+  # culprit, and a failure filed as old leaves it at C0 (in the watcher's first run on
+  # 2026-11-21 it published b7f782a7d, the culprit, after checking eaed40fc6). So the head is
+  # checked out first, and a worktree where that fails is not published.
+  if [ -n "$copy" ] && ! git -C "$copy" checkout -q --detach "$head" >>"$logroot/publish.log" 2>&1; then
+    say "checking out $(short "$head") in $copy failed ($logroot/publish.log); the central build is unchanged"
+  elif [ -n "$copy" ]; then
+    "$publish" "$copy" >>"$logroot/publish.log" 2>&1 ||
+      say "publishing the build of $copy failed ($logroot/publish.log); the central build is unchanged"
+  fi
   [ -z "$copy" ] || "$remove" "$copy" >>"$logroot/remove.log" 2>&1 || say "could not remove $copy ($logroot/remove.log)"
   copy=
 }
