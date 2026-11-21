@@ -64,7 +64,6 @@ const ROWS: &[(&str, &str, &str, &str)] = &[
     ("TypeOr", "Type", "A | B | C", "((A | B) | C)"),
     ("TypeAnd", "Type", "A & B & C", "((A & B) & C)"),
     ("TypeDiff", "Type", "int \\ 0 \\ 1", "((int \\ 0) \\ 1)"),
-    ("TypeElse", "Type", "T else U else 0", "((T else U) else 0)"),
     (
         "TypePostfix",
         "Type",

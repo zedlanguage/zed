@@ -85,8 +85,9 @@ pub(super) fn bare(n: usize) -> String {
 }
 
 /// `f(r) = r else #c0 -> 0 else #c1 -> 1 … else #a0 | #a1 | … -> 0;`, an or-pattern of `n`
-/// alternatives as an `else` tail's pattern, after `n` other tails, which the parser refuses
-/// with the `match` the tail stands for; its operand runs back over the `n` tails.
+/// alternatives written bare as an `else` tail's pattern, after `n` other tails, which the parser
+/// refuses with the tail written with the union in parentheses; its operand runs back over the
+/// `n` tails.
 pub(super) fn after_else(n: usize) -> String {
     let tails: String = (0..n).map(|i| format!(" else #c{i} -> {i}")).collect();
     let alts: Vec<String> = (0..n).map(|i| format!("#a{i}")).collect();
@@ -114,13 +115,10 @@ fn each_form_is_built_formatted_and_resolved_at_small_sizes() {
         }
         let e = refuse(&bare(n + 1));
         assert_eq!(e.row, Some(Row::BareOperatorPattern), "{e}");
+        // A bare union of atoms after `else`: refused with it in parentheses (QUESTIONS A113).
         let e = refuse(&after_else(n));
-        assert_eq!(e.row, None, "{e}");
-        assert!(
-            e.message
-                .starts_with("An `else` tail takes one atom pattern"),
-            "{e}"
-        );
+        assert_eq!(e.row, Some(Row::BareOperatorPattern), "{e}");
+        assert!(e.message.contains("write it in parentheses"), "{e}");
         let d = differ(n + 1);
         assert_eq!(pass(&parsed(d)), 1);
     }

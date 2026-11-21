@@ -244,18 +244,10 @@ Type ::: A | (B \ C) ::: (A | (( (B \ C) )))
 Type ::: (A | B) \ C ::: ((( (A | B) )) \ C)
 Type ::: A \ B \ C ::: ((A \ B) \ C)
 Type ::: A | B & C ::: (A | (B & C))
-# a type-level else binds looser than union, intersection and difference, tighter than the arrows
-Type ::: T else 0 ::: (T else 0)
-Type ::: T | U else 0 ::: ((T | U) else 0)
-Type ::: T else 0 | -1 ::: (T else (0 | - 1))
-Type ::: T \ #x else 0 ::: ((T \ #x) else 0)
-Type ::: T else U else 0 ::: ((T else U) else 0)
-Type ::: (r: T) -> T else 0 ::: ((( r : T )) -> (T else 0))
-Type ::: A -> T else 0 ::: (A -> (T else 0))
-Type ::: T else 0 -> int ::: ERROR
-Type ::: (T else 0) -> int ::: ((( (T else 0) )) -> int)
-Type ::: T else 0 ->? int ::: ERROR
-Type ::: T else 0 .. 9 -> int ::: ERROR
+# there is no type-level else (QUESTIONS A113): the type of `e else (#a | #b) -> d` is written
+# `(t \ (#a | #b)) | u`
+Type ::: T else 0 ::: ERROR
+Type ::: (r: T) -> T else 0 ::: ERROR
 # a value-less key supplies the variable of the same name; without the colon it is a set
 Expr ::: { x:, y:, z: someZ } ::: ({ x : , y : , z : someZ })
 Expr ::: Point(x:, y:) ::: (Point (( ((x :) , (y :)) )))
@@ -366,7 +358,10 @@ Expr ::: match v { Box(v: #a | #b) -> 2, _ -> 0 } ::: ERROR
 Expr ::: match v { ((n is int) | (n is f64)) -> n, _ -> 0 } ::: (match v { ((( (( n is int )) | (( n is f64 )) )) -> n) , (_ -> 0) })
 Expr ::: match v { (n is int | #none) -> 0, _ -> 1 } ::: (match v { ((( n is (int | #none) )) -> 0) , (_ -> 1) })
 Expr ::: match v { ((#a | (#b | #c)) | #d) -> 1, _ -> 0 } ::: (match v { ((( (( #a | (( #b | #c )) )) | #d )) -> 1) , (_ -> 0) })
-Expr ::: x else (#a | #b) -> d ::: ERROR
+Expr ::: x else (#a | #b) -> d ::: (x (else (( #a | #b )) -> d))
+Expr ::: x else (#a | #b) -> { d } ::: (x (else (( #a | #b )) -> ({ d })))
+Expr ::: x else (#a | y) -> d ::: ERROR
+Expr ::: x else #a | #b -> d ::: ERROR
 Expr ::: if v is {name: _} { 1 } else { 2 } ::: (if (v is ({ name : _ })) ({ 1 }) else ({ 2 }))
 Expr ::: if (v is {name: _}) { 1 } else { 2 } ::: (if (( (v is ({ name : _ })) )) ({ 1 }) else ({ 2 }))
 Type ::: int[0..<_] -> T ::: ((int ([ (0 ..< _) ])) -> T)

@@ -1701,21 +1701,30 @@ fn bare_pattern(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     })
 }
 
-/// The [`Clause`] for an or-pattern as the pattern of an `else` tail, bare, `r else #a | #b -> 0`,
-/// or in parentheses, `r else (#a | #b) -> 0`: the tail takes one atom pattern (`ElseTail` in
-/// DESIGN.md sec:grammar; zed/grammar/cases.txt refuses `x else (#a | #b) -> d`), so the parse
-/// stops at the `|`. The repair is the `match` the tail stands for, `e else P -> d` being
-/// `match e { P -> d, x -> x }` (the desugaring of `ElseTail`, sec:grammar): exact, where a
-/// chain of tails, `r else #a -> 0 else #b -> 0`, would also send a value `#b` of `d` to the
-/// second tail. The operand `e` runs back from the `else`, at its depth, over the operators that
-/// bind tighter than `else` and over the `else` tails before it, to a `=`, `,`, `;`, `<-`, an
-/// unmatched opening bracket, or an arrow that ends no `else` tail's pattern (a lambda's, an
+/// The [`Clause`] for an or-pattern as the pattern of an `else` tail where the tail does not take
+/// it: the tail takes one atom pattern or a union of atom patterns in parentheses, `r else (#a |
+/// #b) -> 0` (`ElseTail` and `AtomUnion` in DESIGN.md sec:grammar, QUESTIONS A113). A union of
+/// atom patterns written bare, `r else #a | #b -> 0`, is [`bare_pattern`]'s, which gives it in
+/// parentheses; here the union holds another pattern, `r else (#a | y) -> 0`, and the parse
+/// stops at its `|` or just after it. The repair is the `match` the tail stands for, `e else P
+/// -> d` being `match e { P -> d, x -> x }` (the desugaring of `ElseTail`, sec:grammar): exact,
+/// where a chain of tails, `r else #a -> 0 else #b -> 0`, would also send a value `#b` of `d` to
+/// the second tail. The operand `e` runs back from the `else`, at its depth, over the operators
+/// that bind tighter than `else` and over the `else` tails before it, to a `=`, `,`, `;`, `<-`,
+/// an unmatched opening bracket, or an arrow that ends no `else` tail's pattern (a lambda's, an
 /// arm's); a keyword that begins a form, as `match` or `if`, gives no clause, since the form's
 /// extent is not found by this scan. The head is parenthesized only where it does not parse
-/// bare. No row: the plain syntax error is made precise, as for the other clauses with none.
-/// Each scan runs over the statement, and the repair is one or two more parses: linear in the
-/// unit, on the error path only.
+/// bare. The `match` repair has no row: the plain syntax error is made precise, as for the other
+/// clauses with none. Each scan runs over the statement, and the repair is one to three more
+/// parses: linear in the unit, on the error path only.
 fn else_or_pattern(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
+    // In `r else (#a | 0) -> 0` the parse of the union stops one token past the `|`, at the
+    // alternative that is no atom pattern.
+    let far = if far > 0 && t.t(far) != "|" && t.t(far - 1) == "|" {
+        far - 1
+    } else {
+        far
+    };
     if t.t(far) != "|" {
         return None;
     }
@@ -1838,18 +1847,18 @@ fn else_or_pattern(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     let (ps, pe) = (t.span(first).start, t.span(last).end);
     let pattern = text(ps, pe);
     let value = text(t.span(arrow + 1).start, t.span(end).end);
+    let span = Span { start: ps, end: pe };
     let repair = [
         format!("match {operand} {{ ({pattern}) -> {value}, x -> x }}"),
         format!("match ({operand}) {{ ({pattern}) -> {value}, x -> x }}"),
     ]
     .into_iter()
     .find(|r| t.parses(start, end, r))?;
-    let span = Span { start: ps, end: pe };
     Some(Clause {
         row: None,
         message: format!(
-            "An `else` tail takes one atom pattern, and `{pattern}` is an or-pattern. Try \
-             `{repair}` instead."
+            "An `else` tail takes atom patterns only, and `{pattern}` is an or-pattern of \
+             other patterns. Try `{repair}` instead."
         ),
         span,
         notes: vec![(span, format!("repair: `{repair}`"))],

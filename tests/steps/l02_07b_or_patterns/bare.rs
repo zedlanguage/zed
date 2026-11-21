@@ -134,14 +134,60 @@ fn a_bare_pattern_in_an_else_payload_is_refused_at_the_pattern() {
     );
 }
 
-/// An `else` tail takes one atom pattern (`ElseTail` in DESIGN.md sec:grammar;
-/// zed/grammar/cases.txt refuses `x else (#a | #b) -> d`), so an or-pattern there, bare or in
-/// parentheses, is refused at the pattern with the `match` the tail stands for: `e else P -> d` is
-/// `match e { P -> d, x -> x }` (sec:grammar, the desugaring of `ElseTail`). Before this clause the
-/// bare form was refused as a union written bare as a key, with a repair that does not parse
-/// either, and the form in parentheses with the plain syntax error.
+/// An `else` tail takes one atom pattern or a union of atom patterns in parentheses (`ElseTail`
+/// and `AtomUnion` in DESIGN.md sec:grammar, QUESTIONS A113: "patterns that take more than just a
+/// single name or symbol should take parens"). A union of atom patterns written bare is refused
+/// at the pattern, with the pattern and its value written with it in parentheses, as a bare
+/// or-pattern in an arm is (row "Pattern built with an operator, written bare"); the union in
+/// parentheses builds.
 #[test]
-fn an_or_pattern_after_else_is_refused_with_the_match_it_stands_for() {
+fn a_bare_atom_union_after_else_is_refused_with_it_in_parentheses() {
+    for (src, pattern, repair) in [
+        ("f(r) = r else #a | #b -> 0;\n", "#a | #b", "(#a | #b) -> 0"),
+        (
+            "f(r) = r else #ok(x) | #err(x) -> x;\n",
+            "#ok(x) | #err(x)",
+            "(#ok(x) | #err(x)) -> x",
+        ),
+        // After the `else` tails before it; the repair writes the value to the end of the
+        // expression, so it carries the later tail with it.
+        (
+            "f(a, r) = a + r else #c -> 1 else #a | #b -> 0 else #d -> 2;\n",
+            "#a | #b",
+            "(#a | #b) -> 0 else #d -> 2",
+        ),
+        (
+            "g = (r) -> r else #a | #b -> 0;\n",
+            "#a | #b",
+            "(#a | #b) -> 0",
+        ),
+    ] {
+        let e = refusal(src);
+        assert_eq!(e.row, Some(Row::BareOperatorPattern), "{src}: {e}");
+        assert_eq!(&src[e.span.start..e.span.end], pattern, "{src}");
+        assert_eq!(
+            e.message,
+            format!(
+                "`{pattern}` is an or-pattern; write it in parentheses. Try `{repair}` instead."
+            ),
+            "{src}"
+        );
+    }
+    for fixed in [
+        "f(r) = r else (#a | #b) -> 0;\n",
+        "f(r) = r else (#ok(x) | #err(x)) -> x;\n",
+        "f(a, r) = a + r else #c -> 1 else (#a | #b) -> 0 else #d -> 2;\n",
+        "f(v, r) = match v { #a -> r else (#a | #b) -> 0, _ -> 1 };\n",
+    ] {
+        build(fixed);
+    }
+}
+
+/// A union after `else` with an alternative that is not an atom pattern does not parse, in
+/// parentheses or not, and is refused at the pattern with the `match` the tail stands for:
+/// `e else P -> d` is `match e { P -> d, x -> x }` (sec:grammar, the desugaring of `ElseTail`).
+#[test]
+fn an_or_pattern_of_other_patterns_after_else_is_refused_with_the_match_it_stands_for() {
     #[track_caller]
     fn refused(src: &str, pattern: &str, repair: &str) {
         let e = refusal(src);
@@ -150,8 +196,8 @@ fn an_or_pattern_after_else_is_refused_with_the_match_it_stands_for() {
         assert_eq!(
             e.message,
             format!(
-                "An `else` tail takes one atom pattern, and `{pattern}` is an or-pattern. Try \
-                 `{repair}` instead."
+                "An `else` tail takes atom patterns only, and `{pattern}` is an or-pattern of \
+                 other patterns. Try `{repair}` instead."
             ),
             "{src}"
         );
@@ -162,43 +208,33 @@ fn an_or_pattern_after_else_is_refused_with_the_match_it_stands_for() {
         );
     }
     refused(
-        "f(r) = r else #a | #b -> 0;\n",
-        "#a | #b",
-        "match r { (#a | #b) -> 0, x -> x }",
+        "f(r) = r else (#a | 0) -> 0;\n",
+        "#a | 0",
+        "match r { (#a | 0) -> 0, x -> x }",
     );
     refused(
-        "f(r) = r else (#a | #b) -> 0;\n",
-        "#a | #b",
-        "match r { (#a | #b) -> 0, x -> x }",
+        "f(r) = r else #a | 0 -> 0;\n",
+        "#a | 0",
+        "match r { (#a | 0) -> 0, x -> x }",
     );
+    // The operand runs back over the `else` tails before it; a later tail stays after the
+    // `match`.
     refused(
-        "f(r) = r else #ok(x) | #err(x) -> x;\n",
-        "#ok(x) | #err(x)",
-        "match r { (#ok(x) | #err(x)) -> x, x -> x }",
+        "f(a, r) = a + r else #c -> 1 else (#a | 0) -> 0 else #d -> 2;\n",
+        "#a | 0",
+        "match a + r else #c -> 1 { (#a | 0) -> 0, x -> x }",
     );
-    // The operand runs back over the operators that bind tighter than `else` and over the
-    // `else` tails before it; a later tail stays after the `match`.
+    // In a `match` arm, the operand stops at the arrow before it.
     refused(
-        "f(a, r) = a + r else #c -> 1 else #a | #b -> 0 else #d -> 2;\n",
-        "#a | #b",
-        "match a + r else #c -> 1 { (#a | #b) -> 0, x -> x }",
+        "f(v, r) = match v { #a -> r else (#a | 0) -> 0, _ -> 1 };\n",
+        "#a | 0",
+        "match r { (#a | 0) -> 0, x -> x }",
     );
-    // In a lambda and in a `match` arm, the operand stops at the arrow before it.
-    refused(
-        "g = (r) -> r else #a | #b -> 0;\n",
-        "#a | #b",
-        "match r { (#a | #b) -> 0, x -> x }",
-    );
-    refused(
-        "f(v, r) = match v { #a -> r else (#a | #b) -> 0, _ -> 1 };\n",
-        "#a | #b",
-        "match r { (#a | #b) -> 0, x -> x }",
-    );
-    // Three of the programs above with the repair in place: each parses.
+    // The programs above with the repair in place: each parses.
     for fixed in [
-        "f(r) = match r { (#a | #b) -> 0, x -> x };\n",
-        "f(a, r) = match a + r else #c -> 1 { (#a | #b) -> 0, x -> x } else #d -> 2;\n",
-        "f(v, r) = match v { #a -> match r { (#a | #b) -> 0, x -> x }, _ -> 1 };\n",
+        "f(r) = match r { (#a | 0) -> 0, x -> x };\n",
+        "f(a, r) = match a + r else #c -> 1 { (#a | 0) -> 0, x -> x } else #d -> 2;\n",
+        "f(v, r) = match v { #a -> match r { (#a | 0) -> 0, x -> x }, _ -> 1 };\n",
     ] {
         build(fixed);
     }

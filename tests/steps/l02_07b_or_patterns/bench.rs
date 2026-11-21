@@ -55,7 +55,7 @@ fn alternatives_binding_many_different_names_are_refused_in_linear_time() {
     );
 }
 
-/// The parse is timed too, and the repair's parse: the operand of the `match` runs back over the
+/// The parse is timed too, and the repair's parse: the operand of the repair runs back over the
 /// `n` tails before the or-pattern.
 #[test]
 fn an_or_pattern_after_many_else_tails_is_refused_in_linear_time() {

@@ -1140,7 +1140,6 @@ fn kind_of(rule: &str) -> &'static str {
         "MoreGen" => "the inner generator",
         "KeyedPush" => "the push at a key",
         "LitType" => "the literal type",
-        "TypeElse" => "the type of an `else`",
         "ArrayType" => "the array type",
         "Update" => "the field update",
         "AnnotExpr" => "the annotated expression",

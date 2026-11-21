@@ -195,7 +195,7 @@ expression: without_addresses(&out)
 31-typechecker/ast.zed:18:12: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 31-typechecker/ast.zed:20:20: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 31-typechecker/ast.zed:23:10: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
-31-typechecker/ast.zed:28:33: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:28:49: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 31-typechecker/check.zed:5:20: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 31-typechecker/check.zed:23:38: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 31-typechecker/check.zed:26:18: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.

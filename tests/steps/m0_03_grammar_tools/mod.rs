@@ -695,16 +695,18 @@ fn syntax_with_old_break() -> String {
 }
 
 /// The fuzz finds a sentence the old `break` derives with every lookahead satisfied but the
-/// parser rejects. Seed 11 at five sentences per ring was found by running seeds 1 to 500 (the
-/// first of them that finds it at this size; 141, 156, 265, 325, 338, 463 and 482 do too) after
-/// `()` became a tuple value (SPEC-empty-tuple-value; seed 85, found after the type-level `else`
-/// came in, seed 13 after the `if` statement, seed 294 before it and seed 45 before that no longer
-/// do); if a grammar change moves it, run the seeds again. The same seed on the real grammar finds
-/// nothing, so the failure comes from the change.
+/// parser rejects. Seed 27 at five sentences per ring was found by running seeds 1 to 500 (the
+/// first of them that finds it at this size; 37, 123, 198, 261, 273, 320, 325, 338, 423, 435,
+/// 440, 460, 489 and 500 do too) after the type-level `else` went out and the `else` tail took a
+/// union of atoms in parentheses (QUESTIONS A113; seed 11, found after `()` became a tuple value,
+/// seed 85 after the type-level `else` came in, seed 13 after the `if` statement, seed 294 before
+/// it and seed 45 before that no longer do); if a grammar change moves it, run the seeds again
+/// (zed-tools' `fuzz SPEC_DIR 5 SEED` under zrun, on the grammar with the old `break`). The same
+/// seed on the real grammar finds nothing, so the failure comes from the change.
 #[test]
 fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
     const N: usize = 5;
-    const SEED: i64 = 11;
+    const SEED: i64 = 27;
     let real = spec_dir("fuzz_real", &design(""), "");
     let real = Spec::open(&real.root()).expect("the spec reads");
     let (outcome, out) = fuzz_of(&real, N, SEED);

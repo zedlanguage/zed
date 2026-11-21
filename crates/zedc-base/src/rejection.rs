@@ -86,6 +86,8 @@ rows! {
     NonExhaustiveMatch => "Non-exhaustive `match`",
     UnreachableArm => "Unreachable `match` arm",
     BareOperatorPattern => "Pattern built with an operator, written bare",
+    // No diagnostic uses this row yet: plan row ELSE-explicit-atoms emits it (QUESTIONS A113).
+    ElseNamesNoAtoms => "An `else` that does not name its atoms",
     OrPatternNamesDiffer => "Or-pattern alternatives bind different names",
     // No diagnostic uses this row yet: plan row OR-PAT-check emits it.
     GuardedOrPatternOverlap => "Guarded or-pattern with overlapping alternatives",

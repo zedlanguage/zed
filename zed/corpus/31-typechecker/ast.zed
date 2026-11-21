@@ -9,14 +9,14 @@ struct Decl { line: int, name: Utf8String, expr: Expr }
 
 push(positional st, positional tok) =
   if tok == "+" || tok == "==" {
-    a = st[st::len - 2] else #bad;
-    b = st.last else #bad;
+    a = st[st::len - 2] else #outOfBounds -> #bad;
+    b = st.last else #none -> #bad;
     st.take(max(0, st::len - 2)) ++ [if tok == "+" { #add(l: a, r: b) } else { #eq(l: a, r: b) }]
   }
   else if tok == "?" {
-    c = st[st::len - 3] else #bad;
-    t = st[st::len - 2] else #bad;
-    e = st.last else #bad;
+    c = st[st::len - 3] else #outOfBounds -> #bad;
+    t = st[st::len - 2] else #outOfBounds -> #bad;
+    e = st.last else #none -> #bad;
     st.take(max(0, st::len - 3)) ++ [#cond(c:, t:, e:)]
   }
   else if tok == "true" || tok == "false" { st ++ [#bool(b: tok == "true")] }
@@ -25,6 +25,6 @@ push(positional st, positional tok) =
 parseDecl(positional line, positional l) = {
   w  = l.split(" ");
   st = w.drop(2).foldl([], (s, tok) -> push(s, tok));
-  ok = (w[1] else "") == "=" && st::len == 1;
-  Decl(line:, name: w[0] else "", expr: if ok { st.first else #bad } else { #bad })
+  ok = (w[1] else #outOfBounds -> "") == "=" && st::len == 1;
+  Decl(line:, name: w[0] else #outOfBounds -> "", expr: if ok { st.first else #none -> #bad } else { #bad })
 };

@@ -80,14 +80,14 @@ expression: "tokens_by_key(&fences::design())"
   4 | }
   7 | main ( m : MainArgs ) -> int {
   8 | m . stdout <- str["checked"] ;
-  9 | «if» ( m . args [ 0₍10₎ ] «else» str[] ) == str["fail"] { 1₍10₎ } «else» { 0₍10₎ }
+  9 | «if» ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) == str["fail"] { 1₍10₎ } «else» { 0₍10₎ }
  10 | }
 == DESIGN.md [sec:ports] 4 L12
   4 | @limits ( memory : 1₍10₎ «with» units ( str["GiB"] ) , cpu : 60₍10₎ «with» units ( str["s"] ) )
   5 | @timeout ( 5₍10₎ «with» units ( str["min"] ) )
   6 | main ( m : MainArgs ) {
-  7 | k = int ( m . args [ 0₍10₎ ] «else» str[] ) «else» 0₍10₎ ;
-  8 | m . stdout <- String ( «if» k >= 0₍10₎ { 2r ^ ( 2₍10₎ ^ k ) } «else» { 0r } ) «else» str[] ;
+  7 | k = int ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) «else» #invalid -> 0₍10₎ ;
+  8 | m . stdout <- String ( «if» k >= 0₍10₎ { 2r ^ ( 2₍10₎ ^ k ) } «else» { 0r } ) ;
   9 | }
  12 | @limits ( memory : 1₍10₎ «with» units ( str["MiB"] ) )
  13 | main ( m : MainArgs ) {
@@ -96,7 +96,7 @@ expression: "tokens_by_key(&fences::design())"
  16 | }
 == DESIGN.md [sec:ports] 5 L7
   3 | main ( m : MainArgs ) -> int «with» handles ( #sigint ) {
-  4 | stopped = m . signals [ 0₍10₎ ] == #sigint «else» «false» ;
+  4 | stopped = m . signals [ 0₍10₎ ] == #sigint ;
   5 | m . stdout <- «if» stopped { str["stopping"] } «else» { str[] } ;
   6 | }
 == DESIGN.md [sec:ports] 6 L7
@@ -113,8 +113,8 @@ expression: "tokens_by_key(&fences::design())"
  12 | }
  16 | main ( m : MainArgs ) {
  17 | p = spawn ( [ str["sort"] , str["-u"] ] ) ;
- 18 | p . stdin <- m . stdin . map ( l -> l «else» str[] ) ;
- 19 | m . stdout <- p . stdout . map ( l -> l «else» str[] ) ;
+ 18 | p . stdin <- m . stdin . map ( l -> l «else» ( #badEncoding | #ioError ) -> str[] ) ;
+ 19 | m . stdout <- p . stdout . map ( l -> l «else» ( #badEncoding | #ioError ) -> str[] ) ;
  20 | }
 == DESIGN.md [sec:ports] 7 L7
   2 | main ( m : MainArgs ) {
@@ -136,7 +136,7 @@ expression: "tokens_by_key(&fences::design())"
 == DESIGN.md [sec:ports] 10 L21
   1 | orders : Utf8String ->? { total : rat , note : Utf8String | #none }
   2 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
-  3 | owed ( «positional» id : Utf8String ) -> rat = orders [ id ] ?. total «else» 0r
+  3 | owed ( «positional» id : Utf8String ) -> rat = orders [ id ] ?. total «else» ( #ioError | #notFound ) -> 0r
   4 | «test» «with» orders = { str["7"] -> { total : 12r , note : #none } } { str["7"] -> 12r , str["8"] -> 0r }
   6 | late ( «positional» deadline : Instant ) -> bool = now ( ) . s > deadline . s
   7 | «test» «with» now = ( ) -> Instant ( s : 3600r ) { Instant ( s : 3599r ) -> «true» , Instant ( s : 3600r ) -> «false» }
@@ -180,7 +180,7 @@ expression: "tokens_by_key(&fences::design())"
   3 | «struct» Event { name : Utf8String , at : int }
   5 | main ( m : MainArgs ) {
   6 | events = m . stdin :: bytes . via ( utf8Text ( ) . then ( json ( Event ) ) ) ;
-  7 | m . stdout <- events . map ( e -> e . name «else» str["(a value that did not parse)"] ) ;
+  7 | m . stdout <- events . map ( e -> e . name «else» ( #badEncoding | #parseError | #ioError ) -> str["(a value that did not parse)"] ) ;
   8 | }
 == DESIGN.md [sec:codecs] 5 L10
   2 | «type» Line = ( s : Utf8String where ! s . contains ( str["\n"] ) && ! s . contains ( str["\r"] ) ) ;
@@ -199,7 +199,7 @@ expression: "tokens_by_key(&fences::design())"
  12 | encode : c . encode ,
  13 | } ;
  15 | main ( m : MainArgs ) {
- 17 | m . stdout <- m . stdin :: bytes . via ( shifted ( k : 13₍10₎ ) . then ( textLines ) ) . map ( l -> l «else» str[] ) ;
+ 17 | m . stdout <- m . stdin :: bytes . via ( shifted ( k : 13₍10₎ ) . then ( textLines ) ) . map ( l -> l «else» ( #badEncoding | #ioError ) -> str[] ) ;
  18 | }
 == DESIGN.md [sec:codecs] 7 L20
   2 | @foreign «struct» Sample { t : u64 , value : f64 }
@@ -207,13 +207,13 @@ expression: "tokens_by_key(&fences::design())"
   4 | @foreign ( str["sensor"] , str["sensor_read"] ) readSamples : ( count : i32 ) -> Ptr ( [ Sample ] «with» length ( 1024₍10₎ ) ) «with» release ( freeSamples ) ;
   6 | main ( m : MainArgs ) {
   7 | fs = main :: files ;
-  8 | samples = readSamples ( count : 1024₍10₎ ) «else» [ ] ;
+  8 | samples = readSamples ( count : 1024₍10₎ ) ;
   9 | fs :: bytes [ str["samples.bin"] ] <- records ( Sample ) . encode ( samples ) ;
  10 | m . stdout <- str[${samples :: len} " samples written"] ;
  11 | }
 == DESIGN.md [sec:codecs] 8 L20
   2 | main ( m : MainArgs ) {
-  3 | back = ( main :: files :: bytes [ str["samples.bin"] ] «else» [ ] ) . via ( records ( Sample ) ) ;
+  3 | back = ( main :: files :: bytes [ str["samples.bin"] ] «else» ( #ioError | #notFound ) -> [ ] ) . via ( records ( Sample ) ) ;
   4 | m . stdout <- str[${back :: len} " samples read"] ;
   5 | }
 == DESIGN.md [sec:type_language] 1 L7
@@ -221,7 +221,7 @@ expression: "tokens_by_key(&fences::design())"
   3 | «type» Order = types . Order ;
   4 | main ( m : MainArgs ) {
   5 | orders = m . stdin :: bytes . via ( types . delimited ( Order ) ) ;
-  6 | m . stdout <- orders . map ( o -> str[${o . id} ": " ${o . note}] «else» str["(a message that did not decode)"] ) ;
+  6 | m . stdout <- orders . map ( o -> str[${o . id} ": " ${o . note}] «else» ( #badEncoding | #ioError ) -> str["(a message that did not decode)"] ) ;
   7 | }
 == DESIGN.md [sec:level_names] 1 L3
   2 | «type» Sales0 = Utf8String ->? [ Utf8String ->? int ] ;
@@ -229,7 +229,7 @@ expression: "tokens_by_key(&fences::design())"
   1 | «type» Sales = Utf8String ->? [ Utf8String ->? int ] «with» names ( str["region"] , str["day"] , str["sku"] , str["quantitySold"] ) ;
   2 | sales : Sales = { str["east"] -> [ { str["B7"] -> 5₍10₎ } ] , str["west"] -> [ { str["A12"] -> 3₍10₎ , str["B7"] -> 1₍10₎ } , { str["A12"] -> 2₍10₎ } ] } ;
 == DESIGN.md [sec:level_names] 3 L7
-  1 | lookupOr ( «positional» m : K ->? V «with» names ( str["key"] , str["value"] ) , «positional» k : K , «positional» d : V ) -> V = m [ k ] «else» d ;
+  1 | lookupOr ( «positional» m : K ->? V «with» names ( str["key"] , str["value"] ) , «positional» k : K , «positional» d : V ) -> V = m [ k ] «else» #notFound -> d ;
   3 | stock : Utf8String ->? int «with» names ( str["sku"] , str["count"] ) = { str["A12"] -> 3₍10₎ } ;
   4 | n = lookupOr ( stock , str["B7"] , 0₍10₎ ) ;
   6 | daily : Utf8String ->? ( ( day : int ) ->? int ) «with» names ( str["store"] , str["_"] , str["sold"] ) = { str["s1"] -> { 1₍10₎ -> 4₍10₎ } } ;
@@ -450,11 +450,11 @@ expression: "tokens_by_key(&fences::design())"
   6 | halve ( «positional» n : int ) = «if» n == 0₍10₎ { 0₍10₎ } «else» { halve ( n - 2₍10₎ ) + 1₍10₎ } ;
  10 | @timeout ( 10₍10₎ «with» units ( str["s"] ) )
  11 | main ( m : MainArgs ) {
- 12 | k = int ( m . args [ 0₍10₎ ] «else» str[] ) «else» 0₍10₎ ;
+ 12 | k = int ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) «else» #invalid -> 0₍10₎ ;
  13 | m . stdout <- str[${countDown ( 5₍10₎ )} " " ${halve ( k )}] ;
  14 | }
  18 | @total
- 19 | config ( ) -> Utf8String = ( @timeout ( 2₍10₎ «with» units ( str["s"] ) ) main :: files [ str["config.txt"] ] ) «else» str[] ;
+ 19 | config ( ) -> Utf8String = ( @timeout ( 2₍10₎ «with» units ( str["s"] ) ) main :: files [ str["config.txt"] ] ) «else» ( #ioError | #notFound | #timeout ) -> str[] ;
 == DESIGN.md [sec:introspection] 1 L11
   1 | «type» Shape =
   2 | #scalar ( name : Utf8String , constraints : Constraints )
@@ -473,7 +473,7 @@ expression: "tokens_by_key(&fences::design())"
  15 | «struct» Param { name : Utf8String | #none , kind : #positional | #named , valueType : Type , default : Ast | #none }
 == DESIGN.md [sec:introspection] 2 L11
   1 | encode ( «positional» v : T ) -> Utf8String = «match» T :: shape {
-  2 | #struct ( fields : ) -> str["{"] ++ ( fields . map ( f -> quote ( f . name ) ++ str[": "] ++ encode ( v [ f . key ] ) ) >< ( ( a , b ) -> a ++ str[", "] ++ b ) «else» str[] ) ++ str["}"] ,
+  2 | #struct ( fields : ) -> str["{"] ++ ( fields . map ( f -> quote ( f . name ) ++ str[": "] ++ encode ( v [ f . key ] ) ) >< ( ( a , b ) -> a ++ str[", "] ++ b ) «else» #empty -> str[] ) ++ str["}"] ,
   3 | #string -> quote ( v ) ,
   4 | #atom ( name : , payload : #none ) -> quote ( name ) ,
   5 | _ -> Utf8String ( v ) ,
@@ -490,7 +490,7 @@ expression: "tokens_by_key(&fences::design())"
 == DESIGN.md [sec:verification] 1 L15
   1 | «law» addComm ( a : int , b : int ) = a + b == b + a ;
   2 | «law» sortIdempotent ( xs : [ int ] ) = xs . sort ( «asc» x -> x ) . sort ( «asc» x -> x ) == xs . sort ( «asc» x -> x ) ;
-  3 | «law» noOverdraft ( s : Account , t : Txn where t . amount > 0₍10₎ ) = ( apply ( s , t ) «else» s ) . balance >= 0₍10₎ ;
+  3 | «law» noOverdraft ( s : Account , t : Txn where t . amount > 0₍10₎ ) = ( apply ( s , t ) «else» #rejected -> s ) . balance >= 0₍10₎ ;
 == DESIGN.md [sec:verification] 2 L6
   1 | «type» Proof = #eval
   2 | | #domain
@@ -508,7 +508,7 @@ expression: "tokens_by_key(&fences::design())"
   4 | m . stdout <- String ( b ^ ( 2₍10₎ ^ 64₍10₎ ) ) ;
   5 | }
   8 | main ( m : MainArgs ) {
-  9 | k = int ( m . args [ 0₍10₎ ] «else» str[] ) «else» 0₍10₎ ;
+  9 | k = int ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) «else» #invalid -> 0₍10₎ ;
  10 | m . stdout <- «if» k > 5₍10₎ { String ( ( 2₍10₎ ^ 64₍10₎ + 13₍10₎ ) ^ ( 2₍10₎ ^ 64₍10₎ ) ) } «else» { str["few"] } ;
  11 | }
  14 | main ( m : MainArgs ) {
@@ -523,8 +523,8 @@ expression: "tokens_by_key(&fences::design())"
  30 | «return» «if» k >= 0₍10₎ { 2r ^ ( 2₍10₎ ^ k ) } «else» { 0r } ;
  31 | }
  32 | main ( m : MainArgs ) {
- 33 | k = int ( m . args [ 0₍10₎ ] «else» str[] ) «else» 0₍10₎ ;
- 34 | m . stdout <- String ( grow ( k : k ) ) «else» str[] ;
+ 33 | k = int ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) «else» #invalid -> 0₍10₎ ;
+ 34 | m . stdout <- String ( grow ( k : k ) ) ;
  35 | }
 == DESIGN.md [sec:checking_in_zed] 2 L12
   1 | «struct» Lattice ( «positional» E ) {
@@ -721,7 +721,7 @@ expression: "tokens_by_key(&fences::design())"
 == DESIGN.md [sec:arenas] 1 L18
   1 | @memoized paths ( r : int , c : int ) -> int = «if» r <= 0₍10₎ || c <= 0₍10₎ { 1₍10₎ } «else» { paths ( r - 1₍10₎ , c ) + paths ( r , c - 1₍10₎ ) } ;
   3 | main ( m : MainArgs ) {
-  4 | n = int ( m . args [ 0₍10₎ ] «else» str[] ) «else» 0₍10₎ ;
+  4 | n = int ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) «else» #invalid -> 0₍10₎ ;
   5 | m . stdout <- String ( paths ( n , n ) ) ;
   6 | }
 == DESIGN.md [sec:arenas] 2 L18
@@ -746,7 +746,7 @@ expression: "tokens_by_key(&fences::design())"
 == DESIGN.md [sec:robustness] 1 L21
   1 | prices : Utf8String ->? rat «with» peers ( [ str["a"] , str["b"] ] , assign : #roundRobin ) «with» commutes ( #distinctKeys ) ;
   3 | main ( m : MainArgs ) {
-  4 | m . stdout <- m . stdin . map ( sku -> str[${prices [ sku ] «else» 0r}] ) ;
+  4 | m . stdout <- m . stdin . map ( sku -> str[${prices [ sku ] «else» ( #notFound | #ioError | #badEncoding ) -> 0r}] ) ;
   5 | }
 == DESIGN.md [sec:ffi] 1 L7
   1 | @foreign «struct» SockAddr { family : int «with» bits ( 16₍10₎ ) , data : [ u8 ] «with» length ( 14₍10₎ ) }
@@ -762,7 +762,7 @@ expression: "tokens_by_key(&fences::design())"
 == DESIGN.md [sec:ffi] 2 L7
   1 | @foreign ( str["counter"] , str["counter_next"] ) next : ( ) -> i32 ;
   3 | f ( y : bool ) -> i32 | #none {
-  4 | x = next ( ) «else» 0₍10₎ ;
+  4 | x = next ( ) ;
   5 | «return» «if» y { x } «else» { #none } ;
   6 | }
 == DESIGN.md [sec:ffi] 3 L7
@@ -801,7 +801,7 @@ expression: "tokens_by_key(&fences::design())"
   2 | @foreign ( str["c"] , str["fclose"] ) fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 | #lost ;
   3 | @foreign ( str["c"] , str["fputs"] ) fputs : ( s : [ u8 ] «with» terminated ( 0₍10₎ ) , file : Ptr ( File ) ) -> i32 | #lost ;
   4 | @foreign ( str["c"] , str["fopen"] ) fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( fclose ) ;
-  5 | @foreign ( str["c"] , str["fopen"] ) openLog : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
+  5 | @foreign ( str["c"] , str["fopen"] ) openLog : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #lost -> #ok ; #ok } ) ;
 == DESIGN.md [sec:ffi] 8 L7
   1 | @foreign «struct» Lock { }
   2 | @foreign ( str["locks"] , str["lock_release"] ) @nonblocking unlock : ( lock : Ptr ( Lock ) ) -> #ok | #lost ;
@@ -811,8 +811,8 @@ expression: "tokens_by_key(&fences::design())"
   2 | @foreign «struct» Stmt { }
   3 | @foreign ( str["sqlite3"] , str["sqlite3_close_v2"] ) close : ( db : Ptr ( Db ) «with» consumes ( ) ) -> i32 | #lost ;
   4 | @foreign ( str["sqlite3"] , str["sqlite3_finalize"] ) finalize : ( stmt : Ptr ( Stmt ) «with» consumes ( ) ) -> i32 | #lost ;
-  7 | @foreign ( str["sqlite3"] , str["sqlite3_open"] ) open : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> ( i32 , Ptr ( Db ) | #none «with» release ( db -> { _ = close ( db ) «else» #ok ; #ok } ) ) ;
-  8 | @foreign ( str["sqlite3"] , str["sqlite3_prepare_v2"] ) prepare : ( db : Ptr ( Db ) , sql : [ u8 ] «with» terminated ( 0₍10₎ ) , bytes : i32 , tail : Ptr ( Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) ) | #none ) -> ( i32 , Ptr ( Stmt ) | #none «with» arg ( 3₍10₎ ) «with» release ( stmt -> { _ = finalize ( stmt ) «else» #ok ; #ok } ) «with» keeps ( db ) ) | #lost ;
+  7 | @foreign ( str["sqlite3"] , str["sqlite3_open"] ) open : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> ( i32 , Ptr ( Db ) | #none «with» release ( db -> { _ = close ( db ) «else» #lost -> #ok ; #ok } ) ) ;
+  8 | @foreign ( str["sqlite3"] , str["sqlite3_prepare_v2"] ) prepare : ( db : Ptr ( Db ) , sql : [ u8 ] «with» terminated ( 0₍10₎ ) , bytes : i32 , tail : Ptr ( Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) ) | #none ) -> ( i32 , Ptr ( Stmt ) | #none «with» arg ( 3₍10₎ ) «with» release ( stmt -> { _ = finalize ( stmt ) «else» #lost -> #ok ; #ok } ) «with» keeps ( db ) ) | #lost ;
  12 | openQuery ( path : Utf8String , sql : Utf8String ) -> ( Ptr ( Db ) , Ptr ( Stmt ) ) | i32 | #lost {
  13 | rc , opened = open ( path : ) ;
  14 | «match» opened {
@@ -846,13 +846,13 @@ expression: "tokens_by_key(&fences::design())"
  19 | }
  20 | }
  23 | leaveRaw ( fd : i32 , saved : Termios ) -> #ok {
- 24 | _ = tcsetattr ( fd : , when : 2₍10₎ , mode : saved ) «else» #ok ;
+ 24 | _ = tcsetattr ( fd : , when : 2₍10₎ , mode : saved ) «else» #lost -> #ok ;
  25 | #ok
  26 | }
  29 | enterRaw ( fd : i32 ) -> ( i32 , Termios | #none «with» release ( leaveRaw , fd ) ) {
  30 | rc , saved = tcgetattr ( fd : ) ;
  31 | «return» «if» rc != 0₍10₎ { ( rc , #none ) } «else» {
- 32 | rc2 = tcsetattr ( fd : , when : 2₍10₎ , mode : makeRaw ( saved ) ) «else» - 1₍10₎ ;
+ 32 | rc2 = tcsetattr ( fd : , when : 2₍10₎ , mode : makeRaw ( saved ) ) «else» #lost -> - 1₍10₎ ;
  33 | «if» rc2 != 0₍10₎ { ( rc2 , #none ) } «else» { ( 0₍10₎ , saved ) }
  34 | } ;
  35 | }
@@ -901,13 +901,13 @@ expression: "tokens_by_key(&fences::design())"
 == DESIGN.md [sec:ffi] 13 L7
   1 | @foreign «struct» File { }
   2 | @foreign ( str["c"] , str["fclose"] ) fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 | #lost ;
-  3 | @foreign ( str["c"] , str["fopen"] ) fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #ok ; #ok } ) ;
+  3 | @foreign ( str["c"] , str["fopen"] ) fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #lost -> #ok ; #ok } ) ;
   5 | @foreign ( str["c"] , str["setvbuf"] ) setvbuf : ( file : Ptr ( File ) , buf : [ u8 ] «with» length ( 65536₍10₎ ) «with» held ( by : file ) , mode : i32 , size : u64 ) -> i32 | #lost ;
   8 | @foreign «struct» Ring { }
   9 | @foreign «struct» Page { bytes : [ u8 ] «with» length ( 4096₍10₎ ) }
  10 | @foreign ( str["uringshim"] , str["ring_exit"] ) ringExit : ( ring : Ptr ( Ring ) «with» consumes ( ) ) -> #ok | #lost ;
  11 | @foreign ( str["uringshim"] , str["ring_cancel_all"] ) cancelAll : ( ring : Ptr ( Ring ) ) -> i32 | #lost ;
- 12 | @foreign ( str["uringshim"] , str["ring_init"] ) ringInit : ( entries : u32 ) -> Ptr ( Ring ) | #none «with» release ( ring -> { n = cancelAll ( ring ) «else» 0₍10₎ ; @after ( n ) _ = ringExit ( ring ) «else» #ok ; #ok } ) ;
+ 12 | @foreign ( str["uringshim"] , str["ring_init"] ) ringInit : ( entries : u32 ) -> Ptr ( Ring ) | #none «with» release ( ring -> { n = cancelAll ( ring ) «else» #lost -> 0₍10₎ ; @after ( n ) _ = ringExit ( ring ) «else» #lost -> #ok ; #ok } ) ;
  13 | @foreign ( str["uringshim"] , str["submit_read"] ) submitRead : ( ring : Ptr ( Ring ) , fd : i32 , offset : u64 , page : Ptr ( Page ) «with» held ( by : ring , aligned : 4096₍10₎ ) ) -> i32 | #lost ;
  14 | @foreign ( str["uringshim"] , str["wait_read"] ) waitRead : ( ring : Ptr ( Ring ) ) -> ( i32 , Ptr ( Page ) | #none «with» arg ( 1₍10₎ ) «with» handedBack ( ) ) | #lost ;
  16 | @foreign ( str["uringshim"] , str["unregister_pages"] ) unregisterPages : ( ring : Ptr ( Ring ) «with» dropsHeld ( ) ) -> i32 | #lost ;
@@ -921,11 +921,11 @@ expression: "tokens_by_key(&fences::design())"
   7 | @thread ( #render ) @foreign ( str["current"] , str["glfwMakeContextCurrent"] ) makeCurrent : ( glfw : Glfw «with» notPassed ( ) , window : Ptr ( Window ) | #none ) -> #ok | #lost «with» anyThread ( ) ;
   8 | @thread ( #render ) @foreign ( str["GL"] , str["glClear"] ) clear : ( current : Current «with» notPassed ( ) , mask : u32 ) -> #ok | #lost ;
   9 | @thread ( #render ) drawFrame ( current : Current ) -> #ok {
- 10 | r = clear ( current : , mask : 16384₍10₎ ) «else» #ok ;
+ 10 | r = clear ( current : , mask : 16384₍10₎ ) «else» #lost -> #ok ;
  11 | r
  12 | }
  15 | leaveContext ( current : Current , glfw : Glfw ) -> #ok {
- 16 | d = makeCurrent ( glfw : , window : #none ) «else» #ok ;
+ 16 | d = makeCurrent ( glfw : , window : #none ) «else» #lost -> #ok ;
  17 | d
  18 | }
  20 | enterContext ( glfw : Glfw , window : Ptr ( Window ) ) -> Current | #none «with» release ( leaveContext , glfw ) {
@@ -943,8 +943,8 @@ expression: "tokens_by_key(&fences::design())"
  10 | main ( m : MainArgs ) {
  11 | plugin = startPlugin ( ) ;
  13 | ys = «for» l «in» m . stdin {
- 14 | x = f64 ( l ) «else» 0.0f ;
- 15 | pluginStep ( plugin : , x : ) «with» timeout ( 2r ) «else» 0.0f
+ 14 | x = f64 ( l ) «else» ( #invalid | #badEncoding | #ioError ) -> 0.0f ;
+ 15 | pluginStep ( plugin : , x : ) «with» timeout ( 2r ) «else» ( #signal | #exit | #lost | #timeout ) -> 0.0f
  16 | } ;
  17 | m . stdout <- ys . map ( y -> str[${y}] ) ;
  18 | }
@@ -1068,7 +1068,7 @@ expression: "tokens_by_key(&fences::design())"
   4 | paid = orders . join ( payments , on : #orderId , kind : #left ) ;
 == DESIGN.md [sec:tour_joins] 2 L3
   2 | paid = «for» o «in» orders {
-  3 | payment = payments [ o . orderId ] «else» #none ;
+  3 | payment = payments [ o . orderId ] «else» #notFound -> #none ;
   4 | ( o , payment )
   5 | } ;
 == DESIGN.md [sec:tour_joins] 3 L5
@@ -1083,7 +1083,7 @@ expression: "tokens_by_key(&fences::design())"
 == DESIGN.md [sec:tour_loops] 1 L6
   2 | sq = «for» i «in» 0₍10₎ ..< n { i * i } ;
   5 | cdf [ i ] = cdf [ i - 1₍10₎ ] + hist [ i ] «with» cdf [ - 1₍10₎ ] = 0₍10₎ ;
-  6 | total = cdf . last «else» 0₍10₎ ;
+  6 | total = cdf . last «else» #none -> 0₍10₎ ;
   9 | sim = «loop» t {
  10 | «while» t < maxSteps ;
  11 | «initial» pos = p0 ;
@@ -1104,15 +1104,15 @@ expression: "tokens_by_key(&fences::design())"
  30 | report = sessions . map ( s -> summarize ( s ) ) ;
 == DESIGN.md [sec:tour_failure] 1 L3
   1 | parse : ( Utf8String ) -> Config | #syntaxError ( .. )
-  3 | conf = parse ( text ) «else» defaultConfig ;
-  4 | port = parse ( text ) ?. server ?. port «else» 8080₍10₎ ;
+  3 | conf = parse ( text ) «else» #syntaxError -> defaultConfig ;
+  4 | port = parse ( text ) ?. server ?. port «else» #syntaxError -> 8080₍10₎ ;
   6 | results = files . map ( f -> read ( f ) ) . map ( b -> parse ( b ) ) ;
   8 | good = results . where ( r -> r «is» Config ) ;
   9 | bad = results . where ( r -> r «is» «not» Config ) ;
  11 | amounts = files . map ( f -> int ( read ( f ) ) ) ;
  12 | sumAll = amounts >< ( + ) ;
  17 | sumKept = amounts . where ( a -> a «is» int ) >< ( + ) ;
- 18 | sumZeroed = amounts . map ( a -> a «else» 0₍10₎ ) >< ( + ) ;
+ 18 | sumZeroed = amounts . map ( a -> a «else» ( #invalid | #ioError | #notFound ) -> 0₍10₎ ) >< ( + ) ;
  19 | badAmounts = amounts . where ( a -> a «is» «not» int ) ;
 == DESIGN.md [sec:tour_grammar] 1 L21
   2 | «struct» KeyVal «grammar» { key : JsonStr str[":"] value : Json }
@@ -1133,7 +1133,7 @@ expression: "tokens_by_key(&fences::design())"
  27 | «test» { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , - 3₍10₎ -> - 6₍10₎ }
  28 | «law» doubleIsSum ( x : int ) = double ( x ) == x + x ;
  31 | main ( m : MainArgs ) {
- 32 | m . stdout <- m . stdin . map ( l -> l . upper «else» str[] ) ;
+ 32 | m . stdout <- m . stdin . map ( l -> l . upper «else» ( #badEncoding | #ioError ) -> str[] ) ;
  33 | }
  36 | orders : OrderId ->? { total : rat , note : Utf8String | #none }
  37 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
@@ -1157,12 +1157,12 @@ expression: "tokens_by_key(&fences::design())"
  24 | firstPrime = ( «for» i «in» n .. { i } ) . where ( isPrime ) . first ;
  30 | sessions = clicks . chunkBy ( c -> c . userId ) . map ( s -> Session ( start : s . first . time , count : s . count ) ) ;
  34 | run = «loop» t { «while» t < edits :: len && ! closed ; «initial» doc = empty ; doc' = doc . patch ( edits [ t ] ) ; } ;
- 36 | past = run :: frames [ run :: len - 2₍10₎ ] . doc «else» empty ;
+ 36 | past = run :: frames [ run :: len - 2₍10₎ ] . doc «else» #outOfBounds -> empty ;
  39 | @memoized report = sales . join ( costs , on : #sku ) . group ( ( ( s , c ) ) -> s . region ) . map ( rows -> rows . map ( ( ( s , c ) ) -> margin ( s , c ) ) . sum ) ;
  44 | rows = exec ( db , str["SELECT * WHERE name = "] ++ sanitize ( userName ) ) ;
  47 | energy = m * v * v / 2₍10₎ ;
  51 | «struct» Vec3 «grammar» { str["("] x : f64 str[","] y : f64 str[","] z : f64 str[")"] }
- 52 | v = Vec3 . parseText ( str["(1.0, 2.0, 3.0)"] ) «else» Vec3 ( x : 0₍10₎ , y : 0₍10₎ , z : 0₍10₎ ) ;
+ 52 | v = Vec3 . parseText ( str["(1.0, 2.0, 3.0)"] ) «else» #syntaxError -> Vec3 ( x : 0₍10₎ , y : 0₍10₎ , z : 0₍10₎ ) ;
  53 | s = v . serializeText ;
  56 | stats ( «positional» data : [ f64 ] ) {
  57 | n = f64 ( data :: len ) ;
@@ -1175,7 +1175,7 @@ expression: "tokens_by_key(&fences::design())"
  69 | req : Stream ( Query ) ;
  70 | resp : Stream ( Answer ) ;
  72 | main ( ) {
- 73 | resp <- req . map ( q -> lookup ( db , q ) «else» #unknown ) ;
+ 73 | resp <- req . map ( q -> lookup ( db , q ) «else» #notFound -> #unknown ) ;
  74 | }
  78 | @exhaustive romanDigit ( n : int [ 1₍10₎ ..= 9₍10₎ ] ) -> Utf8String { … }
  79 | «test» { 1₍10₎ -> str["I"] , 4₍10₎ -> str["IV"] , 9₍10₎ -> str["IX"] }
@@ -1183,10 +1183,10 @@ expression: "tokens_by_key(&fences::design())"
  89 | bad = out . where ( r -> r «is» «not» Row ) ;
  92 | pos [ i «in» 0₍10₎ ..< n ] = 2₍10₎ * pos [ i - 1₍10₎ ] - pos [ i - 2₍10₎ ] + accel ( pos [ i - 1₍10₎ ] ) * dt ^ 2₍10₎
  93 | «with» pos [ - 1₍10₎ ] = p0 , pos [ - 2₍10₎ ] = p0 - v0 * dt ;
- 94 | last = pos [ n - 1₍10₎ ] «else» p0 ;
+ 94 | last = pos [ n - 1₍10₎ ] «else» #outOfBounds -> p0 ;
  99 | report = logs . map ( rowCost ) . sum ;
 107 | cur [ i ] = max ( xs [ i ] , cur [ i - 1₍10₎ ] + xs [ i ] ) «with» cur [ - 1₍10₎ ] = 0₍10₎ ;
-108 | best = cur >< max «else» 0₍10₎ ;
+108 | best = cur >< max «else» #empty -> 0₍10₎ ;
 115 | «struct» User { id : int , name : Utf8String }
 116 | u : User | #parseError ( .. ) = Json . decode ( text ) ;
 124 | ok : User | #parseError ( .. ) = Json . decode ( str["{\"id\": 5, \"name\": \"John\"}"] ) ;

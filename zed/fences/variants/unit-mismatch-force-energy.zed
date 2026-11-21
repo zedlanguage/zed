@@ -34,7 +34,7 @@ sessions = clicks.chunkBy(c -> c.userId).map(s -> Session(start: s.first.time, c
 // 7 — Undo, redo, and time travel are field reads, not an architecture.
 run  = loop t { while t < edits::len && !closed; initial doc = empty; doc' = doc.patch(edits[t]); };
      // history bounded by edits::len; retained because ::frames is demanded below
-past = run::frames[run::len - 2].doc else empty;  // any past state, O(log n), shared
+past = run::frames[run::len - 2].doc else #outOfBounds -> empty;  // any past state, O(log n), shared
 
 // 8 — A spreadsheet cell is just a memoized value; editing one input reflows in milliseconds.
 @memoized report = sales.join(costs, on: #sku).group(((s, c)) -> s.region).map(rows -> rows.map(((s, c)) -> margin(s, c)).sum);
@@ -50,7 +50,7 @@ e = energy + force;            // ✗ Units that differ where an operation requi
 
 // 11 — One declaration = type + parser + printer, with round-trip guaranteed.
 struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }
-v = Vec3.parseText("(1.0, 2.0, 3.0)") else Vec3(x: 0, y: 0, z: 0);
+v = Vec3.parseText("(1.0, 2.0, 3.0)") else #syntaxError -> Vec3(x: 0, y: 0, z: 0);
 s = v.serializeText;               // "(1.0,2.0,3.0)" — phrase grammars skip input whitespace, serialize emits the canonical none; parse ∘ serialize == id
 
 // 12 — Compute only what's asked: one stats module, demand-pruned.
@@ -71,7 +71,7 @@ req: Stream(Query);
 resp: Stream(Answer);
 
 main() {
-  resp <- req.map(q -> lookup(db, q) else #unknown);
+  resp <- req.map(q -> lookup(db, q) else #notFound -> #unknown);
 }
 // Deploy with a keypath cut: the boundary serializes via struct grammars — RPC without stubs.
 
@@ -92,7 +92,7 @@ bad = out.where(r -> r is not Row);   // every failure carries file, offset, wav
 // 17 — Declared history, inferred storage: the compiler keeps exactly two frames.
 pos[i in 0..<n] = 2*pos[i-1] - pos[i-2] + accel(pos[i-1]) * dt^2
   with pos[-1] = p0, pos[-2] = p0 - v0*dt;
-last = pos[n-1] else p0;    // dependence window = 2 ⇒ a two-slot ring; no array exists
+last = pos[n-1] else #outOfBounds -> p0;    // dependence window = 2 ⇒ a two-slot ring; no array exists
 // traj = pos::frames;      // demanding the history would turn storage back on — a different plan
 // Elsewhere: you hand-rewrite the array into two variables and lose the history option.
 
@@ -106,7 +106,7 @@ report = logs.map(rowCost).sum;       // logs : Id ->? Row, but only ever scanne
 
 // 19 — Maximum subarray, a non-associative scan, parallelized because its step is affine over (max, +).
 cur[i] = max(xs[i], cur[i-1] + xs[i])  with cur[-1] = 0;
-best = cur >< max else 0;
+best = cur >< max else #empty -> 0;
 // xs : int[0..<n] -> int. The step c -> max(xs[i], c + xs[i]) is the (max, +) affine map
 // (a, b) = (xs[i], xs[i]), and two such maps compose to (max(a2, a1 + b2), b1 + b2),
 // so cur is a parallel prefix scan (sec:optimizer). Floats do not take this path.
