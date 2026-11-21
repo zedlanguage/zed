@@ -237,7 +237,7 @@ const NEAR_MISSES: &[NearMiss] = &[
         "f(positional x: f64) = int(x);\n",
         "1:24",
         Some(
-            "test at run time, `r: f64 = trunc(x); if x.isFinite() && x == r { int(x) } else { … }`",
+            "test at run time, `r: f64 = trunc(x); if x.isFinite && x == r { int(x) } else { … }`",
         ),
     ),
     (

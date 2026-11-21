@@ -8354,7 +8354,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// cast, each checked by applying its word to `x` in a trial, with what the binding then
     /// holds: the value the word gives where `x` is one constant, `k is 4`, else the type the
     /// trial gives, `k is int | #NaN | #overflow`. The test at run time, `r: f64 = trunc(x);
-    /// k = if x.isFinite() && x == r { int(x) } else { … };`, which DESIGN.md names as a sixth
+    /// k = if x.isFinite && x == r { int(x) } else { … };`, which DESIGN.md names as a sixth
     /// fix, is a repair note and not in the menu: its `…` is the program's to write, and its
     /// `int(x)` is proved whole only by the whole-number fact of step L1.39, so the checker
     /// cannot check it here.
@@ -8436,7 +8436,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             notes.push(Note {
                 span,
                 text: format!(
-                    "repair: test at run time, `r: f64 = trunc({arg}); if {arg}.isFinite() && \
+                    "repair: test at run time, `r: f64 = trunc({arg}); if {arg}.isFinite && \
                      {arg} == r {{ int({arg}) }} else {{ … }}`"
                 ),
             });
