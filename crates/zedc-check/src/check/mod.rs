@@ -2145,6 +2145,8 @@ struct Ck<'t, 'a> {
     alias: HashMap<usize, Span>,
     /// What the text of each expression shows of its `int` value, by its span.
     known: HashMap<Span, Known>,
+    /// Whether each expression reads a name, by its span ([`Ck::reads_a_name`]).
+    names_read: HashMap<Span, bool>,
     /// The `int` or `rat` value the text fixes for each expression read as the base of a power,
     /// and for each it reads to get it, by its span ([`Ck::fixed_value`]); `None` where the text
     /// fixes none.
@@ -3035,6 +3037,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             made: HashMap::new(),
             alias: HashMap::new(),
             known: HashMap::new(),
+            names_read: HashMap::new(),
             fixed: HashMap::new(),
             built: HashMap::new(),
             roots: coprime::Roots::default(),
@@ -15116,7 +15119,8 @@ impl<'a> Ck<'_, 'a> {
     ///    unique. Its value is then `value`'s, read by this same induction.
     ///
     /// Every other form gives `None`, which is sound by default: a parameter (a ranged one
-    /// gives only its ints), a lambda's parameter, a call of any other function, an `if`
+    /// gives only its ints), a lambda's parameter (one that takes a written range's entries
+    /// gives only their ints, [`Ck::range_elements`]), a call of any other function, an `if`
     /// (only the join of its arms' ints), `else`, `/`, an index, a field, a port or `main`
     /// argument read (`m.args.count`), and a captured name only through case 5, whose value
     /// is fixed where it was bound. The forms whose names change from step to step, `loop`
@@ -15180,10 +15184,39 @@ impl<'a> Ck<'_, 'a> {
         self.known.get(&e.span).cloned().unwrap_or_else(Known::top)
     }
 
+    /// Whether the text of `e` reads a name: `e` is one, or one of the expressions
+    /// [`Ck::reads`] gives for it reads one (a name's value is not entered). Children first on
+    /// an explicit stack, each node once, memoized by span: O(1) amortized per node, so the
+    /// reads of each exponent of a tower of powers cost O(d) in all, not O(d²).
+    pub(super) fn reads_a_name(&mut self, e: &'a Expr) -> bool {
+        let mut stack = vec![(e, false)];
+        while let Some((x, ready)) = stack.pop() {
+            if self.names_read.contains_key(&x.span) {
+                continue;
+            }
+            if let ExprKind::Name(_) = x.kind {
+                self.names_read.insert(x.span, true);
+                continue;
+            }
+            let parts = self.reads(x);
+            if ready {
+                let any = parts.iter().any(|p| self.names_read[&p.span]);
+                self.names_read.insert(x.span, any);
+            } else {
+                stack.push((x, true));
+                stack.extend(parts.into_iter().map(|p| (p, false)));
+            }
+        }
+        self.names_read[&e.span]
+    }
+
     /// The expressions [`Ck::known_uncached`] reads to read `e`.
     fn reads(&self, e: &'a Expr) -> Vec<&'a Expr> {
         match &e.kind {
-            ExprKind::Name(_) => self.bound_value(e).into_iter().collect(),
+            ExprKind::Name(_) => match self.entry_range(e) {
+                Some((lo, hi)) => [lo].into_iter().chain(hi.map(|(b, _)| b)).collect(),
+                None => self.bound_value(e).into_iter().collect(),
+            },
             ExprKind::Unary(UnaryOp::Neg, a) => vec![&**a],
             ExprKind::Binary(o, a, b) if *o == BinaryOp::Pow || int_op(*o).is_some() => {
                 vec![&**a, &**b]
@@ -15228,6 +15261,61 @@ impl<'a> Ck<'_, 'a> {
         match self.t.res.uses.get(&e.span) {
             Some(Ref::Bound(ids)) if ids.len() == 1 => self.facts.get(&ids[0]).copied(),
             _ => None,
+        }
+    }
+
+    /// The ends of the range written in the text whose entries the name `e` takes, where `e`
+    /// reads the parameter of a lambda mapped over that range by `map` or `where`, or the
+    /// entry parameter of one folded over it by `foldl` or `foldr` (`Ck::range_param`, plan row
+    /// RANGE-element-interval): the range itself, or a name bound once to it, `r = 1..=5;
+    /// r.map(i -> …)`, followed through each such name.
+    ///
+    /// Complexity tradeoff: O(1) per name, a lookup of the binder and of each name the receiver
+    /// is bound through; the text is read, as for every value here (C26 above), so a range that
+    /// reaches the word through a parameter, a function's result or an `if` gives its lambda any
+    /// int, and `g(positional r: int ->? int, x: int) = r.map(i -> x mod i)` is refused. Why: the
+    /// checker's types hold no integer interval for a family's entries (`range_end`, walk.rs),
+    /// and a range's type that printed one would change the text of every range's type. Test:
+    /// `l01_26_type_resolution::range_elements::a_range_through_a_parameter_is_read_as_any_int`.
+    /// A complete solution needs int-range types on a family's values (step L10, ledger
+    /// BIT-checker-ranges).
+    ///
+    /// Gives the low end, and the high end with whether the range runs through it (`..=`), or
+    /// none for `lo ..`.
+    pub(super) fn entry_range(&self, e: &Expr) -> Option<(&'a Expr, Option<(&'a Expr, bool)>)> {
+        let id = match self.t.res.uses.get(&e.span) {
+            Some(Ref::Bound(ids)) if ids.len() == 1 => ids[0],
+            _ => return None,
+        };
+        let mut of = *self.keyspaces.ranges.get(&id)?; // Each step reads the value of a `name = value` binder (`bound_value`), checked before
+        // its uses, so the chain is acyclic; the set keeps it finite if not.
+        let mut seen = HashSet::new();
+        while let ExprKind::Name(_) = of.kind {
+            if !seen.insert(of.span) {
+                return None;
+            }
+            of = self.bound_value(of)?;
+        }
+        let ExprKind::Range(lo, to) = &of.kind else {
+            return None;
+        };
+        let hi = match to {
+            RangeEnd::Below(b) => Some((&**b, false)),
+            RangeEnd::Through(b) => Some((&**b, true)),
+            RangeEnd::Open => None,
+        };
+        Some((&**lo, hi))
+    }
+
+    /// What a parameter that takes the entries of a range written in the text holds
+    /// ([`Ck::entry_range`]), from the ints its ends' text shows ([`range_ints`]). The walk
+    /// reads the ends under the tests it is in instead (`Ck::read_parts`, walk.rs), so that
+    /// `if n >= 1 { (n..=9).map(i -> x mod i) } else { {} }` is accepted.
+    fn range_elements(&self, lo: &Expr, hi: Option<(&Expr, bool)>) -> Known {
+        let hi = hi.map(|(b, through)| (self.memo(b).ints, through));
+        Known {
+            ints: range_ints(&self.memo(lo).ints, hi.as_ref().map(|(h, t)| (h, *t))),
+            value: None,
         }
     }
 
@@ -15376,6 +15464,7 @@ impl<'a> Ck<'_, 'a> {
                         value: None,
                     }
                 }
+                _ if let Some((lo, hi)) = self.entry_range(e) => self.range_elements(lo, hi),
                 _ => self
                     .bound_value(e)
                     .map_or_else(Known::top, |v| self.memo(v)),
@@ -16993,6 +17082,45 @@ pub(crate) fn does_not_take(what: &str, shown: &str, why: &str) -> String {
              wrong{because}"
         ),
         None => format!("{what} does not take ({shown}){why}"),
+    }
+}
+
+/// The ints the entries of a range hold, from the ints `lo` its low end may be and, for
+/// `a ..= b` (`through`) or `a ..< b`, the ints `hi` its high end may be, `None` for `a ..`:
+/// from the least `lo` holds through the greatest `hi` holds (one less for `..<`), unbounded
+/// where an end is; empty where an end holds no int (plan row RANGE-element-interval).
+///
+/// Proof that each entry lies in it, which makes it hold the value of a lambda parameter that
+/// takes the range's entries ([`Ck::entry_range`]) at each run of the lambda. The word (`map`,
+/// `where`, `foldl`, `foldr`) runs the lambda once for each entry of the range, with that
+/// entry's value (for a fold, the entry parameter beside the accumulator), and never
+/// otherwise: the lambda is written as the word's argument, so no other call reaches it. The
+/// range `a ..< b` holds exactly the ints `k` with `a <= k < b`, `a ..= b` those with
+/// `a <= k <= b`, and `a ..` those with `a <= k` (DESIGN.md sec:kernel, "Range": the domains
+/// {a, …, b−1}, {a, …, b} and {a, a+1, …}; `Prim::Range`, `rangeFrom`). The ends are read
+/// once, where the range is built; `a` lies in `lo` and `b` in `hi` (the caller's reading of
+/// them is sound: [`Ck::known`]'s proof, or the scope's at `Ck::ints_here`, since a name is
+/// bound once and never assigned again, so a test that holds where the lambda's body runs
+/// holds of the values the range was built from). So for each entry `k`,
+/// `k >= a >= min lo` and `k <= b <= max hi` (`k <= b - 1 <= max hi - 1` for `..<`): `k` lies
+/// in the result. An end that holds no int never builds the range (an end that may be other
+/// than an int is rejected, and a loose atom passes through it), so the lambda never runs, and
+/// the empty set is exact; so is it where `min lo` exceeds the high end, an empty range.
+///
+/// Test: `l01_26_type_resolution::range_elements`, which also runs the accepted programs and
+/// compares what they print.
+pub(crate) fn range_ints(lo: &IntervalSet, hi: Option<(&IntervalSet, bool)>) -> IntervalSet {
+    let least = lo.bounds().map(|(l, _)| l.clone());
+    let greatest = match hi {
+        None => Some(PosInf),
+        Some((h, through)) => h.bounds().map(|(_, h)| match through {
+            true => h.clone(),
+            false => h.pred(),
+        }),
+    };
+    match (least, greatest) {
+        (Some(l), Some(h)) => IntervalSet::range(l, h),
+        _ => IntervalSet::empty(),
     }
 }
 

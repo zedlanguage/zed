@@ -2150,11 +2150,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.keyspaces.lambdas.insert(body.span, record);
     }
 
-    /// Notes that the parameter of the lambda `f`, mapped over `of` with `map` or `where`,
-    /// takes `of`'s entries, for [`Self::within_count`].
-    pub(super) fn range_param(&mut self, of: &'a Expr, f: &'a Expr) {
+    /// Notes that the parameter `entry` of the lambda `f` of `arity` parameters, mapped over
+    /// `of` with `map` or `where` (`arity` 1, `entry` 0) or folded over it with `foldl` (2, 1)
+    /// or `foldr` (2, 0), takes `of`'s entries, for [`Self::within_count`] and for the ints a
+    /// range's entries hold (`Ck::entry_range`, plan row RANGE-element-interval). Called
+    /// before the lambda is checked, so each read of the parameter in its body sees it.
+    pub(super) fn range_param(&mut self, of: &'a Expr, f: &'a Expr, arity: usize, entry: usize) {
         if let ExprKind::Lambda { params, .. } = &f.kind
-            && let [p] = &params[..]
+            && params.len() == arity
+            && let Some(p) = params.get(entry)
         {
             let id = self.id(p.span, &p.name);
             self.keyspaces.ranges.insert(id, of);
@@ -2309,7 +2313,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Whether the read `of[key]` finds its key in `of` because `key` is the parameter of a
-    /// lambda mapped over `0 ..< e` (or filtered with `where`), with `e` the count `L.count`
+    /// lambda mapped over `0 ..< e` (or filtered with `where`, or the entry parameter of one
+    /// folded over it with `foldl` or `foldr`), with `e` the count `L.count`
     /// of a list `L`, or `min(…)` of operands one of which is `L.count`, and `of` has the keys
     /// of `L` (DESIGN.md sec:joins: "a read `x[i]` has no `#outOfBounds`").
     ///

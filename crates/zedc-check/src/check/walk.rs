@@ -10481,13 +10481,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // Zed needs what plan row MAP-pure-zed records.
                 Some(_) if name == "map" || name == "where" => match (positional, named, curry) {
                     ([f], [], false) => {
+                        self.range_param(of, f, 1, 0);
                         let first = self.lambda_entries(&x.ty, f, span);
                         let word = match name {
                             "map" => MapWord::Map,
                             _ => MapWord::Where,
                         };
                         self.entry_param(word.name(), &x.ty, of, f);
-                        self.range_param(of, f);
                         let kept = Self::flat_map_receiver(of);
                         m.k(Frame::MapFn(x.ty, span, word, kept, of.span));
                         self.word_fn(m, f, first);
@@ -10512,6 +10512,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                         ([a, b], [], false) => {
                             let right = name == "foldr";
                             let (init, f) = if right { (b, a) } else { (a, b) };
+                            // The entry is the function's first parameter for `foldr`, its
+                            // second for `foldl` (the order `fold_dir_end` applies it in).
+                            self.range_param(of, f, 2, usize::from(!right));
                             m.k(Frame::FoldInit(x.ty, f, span, right));
                             m.job(Job::Arg(init, Want::default()));
                         }
@@ -11774,11 +11777,39 @@ impl<'a> Ck<'_, 'a> {
     /// as any int; the relation below a power (`n - m` in `2^(n - m)`) is kept, since the
     /// scope reads each power operand whole. Test: `l01_29_repairs_and_printing::power_repairs`;
     /// COMPLEXITY.md C60.
+    ///
+    /// A value the text shows, as `k` with `k = 0;` or a literal, is met with the scope's
+    /// reading of it alone (plan row NARROW-dead-arm-constant): with `k = 0;`, the arm of
+    /// `if k > 0 { x mod k } else { 0 }` reads `k` as no int, and the `mod` there is accepted,
+    /// as DESIGN.md sec:constraints accepts an arm a narrowing test makes unreachable (with no
+    /// warning, since the derivation reads the static value definition `k = 0`). Proof that
+    /// the meet holds `e`'s value wherever the arm runs: `known` gives the value (its proof),
+    /// and the scope's reading holds every value `e` has in a state that reaches the node (the
+    /// read's proof at [`Ck::read_in_scope`]), so where a state reaches it, the value lies in
+    /// both. Where none does, the arm never runs and the empty set claims nothing false. The
+    /// scope is read only under a test (`here != 0`), once per node and term, memoized as every
+    /// other scope read is. A value whose text reads no name (a literal, `2 - 2`;
+    /// [`Ck::reads_a_name`]) is not read in the scope: no test narrows it but by making the arm
+    /// unreachable, and the read settles the node's scope, which reports each test there it
+    /// cannot decide (a flaw of that settle, which other paths of the checker decide past);
+    /// read for every literal, it warned at `30` under `(x - 4) mod 30 <= 9 && …`
+    /// (`l01_38_presburger::checker::a_question_over_one_variable_with_no_bound_and_its_remainders_is_decided`).
+    /// So an arm whose tests read only literals, `if 0 > 0 { x mod 0 }`, is still refused; it is
+    /// owed the unreachable-arm warning instead (DESIGN.md sec:constraints, step L2.12).
+    /// Test: `l01_26_type_resolution::dead_arms`.
     pub(super) fn ints_here(&mut self, e: &'a Expr) -> (IntervalSet, bool) {
         let k = self.known(e);
         let here = self.arms.here();
-        if k.value.is_some() || here == 0 {
+        if here == 0 {
             return (k.ints, false);
+        }
+        if k.value.is_some() {
+            if !self.reads_a_name(e) {
+                return (k.ints, false);
+            }
+            let ints = k.ints.meet(self.read_in_scope(e).0.ints());
+            let changed = ints != k.ints;
+            return (ints, changed);
         }
         if !self.arms.here_ints.contains_key(&(e.span, here)) {
             self.read_parts(e, here);
@@ -11830,6 +11861,13 @@ impl<'a> Ck<'_, 'a> {
                             vec![(Read::Parts(a), at), (Read::Parts(b), at)]
                         }
                         ExprKind::Unary(UnaryOp::Neg, a) => vec![(Read::Parts(a), at)],
+                        // A lambda parameter that takes a written range's entries reads the
+                        // range's ends here, under the tests the walk is in (`range_ints`).
+                        ExprKind::Name(_) if let Some((lo, hi)) = self.entry_range(x) => [lo]
+                            .into_iter()
+                            .chain(hi.map(|(b, _)| b))
+                            .map(|v| (Read::Whole(v), None))
+                            .collect(),
                         ExprKind::Name(_) => self
                             .bound_value(x)
                             .map(|v| (Read::Parts(v), None))
@@ -11883,9 +11921,14 @@ impl<'a> Ck<'_, 'a> {
                         }
                         ExprKind::Name(_) => {
                             let scope = self.read_in_scope_at(x, at).0.ints().clone();
-                            match self.bound_value(x) {
-                                Some(v) => scope.meet(&part(self, v)),
-                                None => scope,
+                            match (self.entry_range(x), self.bound_value(x)) {
+                                (Some((lo, hi)), _) => {
+                                    let hi = hi.map(|(b, through)| (whole(self, b), through));
+                                    let hi = hi.as_ref().map(|(h, t)| (h, *t));
+                                    scope.meet(&super::range_ints(&whole(self, lo), hi))
+                                }
+                                (None, Some(v)) => scope.meet(&part(self, v)),
+                                (None, None) => scope,
                             }
                         }
                         _ => IntervalSet::top(),
