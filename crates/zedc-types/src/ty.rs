@@ -16450,6 +16450,27 @@ pub fn fits_sig_with(s: &Sig, q: &Sig, solve: Solve) -> bool {
 /// depth cost the size of `q` at each, the square of the depth for a function type nested
 /// that deep. Each depth now costs its own parameters and bounds, and a lookup for each
 /// variable (COMPLEXITY.md F60).
+// Proof that leaving out `Sig::data`, whether a signature is a family, is right here
+// (FAIL-types-subtype-ignores-family, proofdoc5c). (1) The family is not part of the type:
+// DESIGN.md writes one morphism type `K -> V` for families and functions (sec:values_morphisms,
+// "Application is indexing"; the `->` row of the symbol table), and a function value is a
+// value of `K ->? V` ("subsumption into `->?` does not add" `finite()`, in "Equality and order
+// corner rules"). Types denote sets of values (sec:type_language, "Subtyping is semantic"), so
+// a function signature fits a family's where its arrows do, and comparing `data` here would
+// refuse what DESIGN takes. (2) What only a family allows is checked at the use, not by this
+// test: zedc-check `Ck::data` (a key, a show, `==`, a merge), `.sum` and the reads of entries
+// look at the flag of each signature of the value's type and refuse a type that may hold a
+// function; at a parameter, the use is a need of the signature, checked at each call against
+// the argument, and a signature with needs is compared as written below, so a function that
+// needs a family does not fit a parameter that may be given a function.
+// Test: l01_26 partial_maps
+// `a_function_where_a_family_is_needed_is_refused_at_the_use_and_not_by_its_type`, a
+// function passed for a family parameter read by `.sum`, `==` on a parameter that may hold a
+// function, `.sum` on a union of a family and a function, and a function needing a family
+// passed where any `int ->? int` may be given: each refused; a family where the parameter
+// is a family: accepted. Not proved (FAIL-types-subtype-ignores-family): that every use in
+// zedc-check that needs a family reads the flag; the test covers the four uses above, not each
+// reader of `Sig::data`.
 async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, '_>) -> bool {
     let explain = c.cx.borrow_mut().why.take().is_some();
     if !s.needs.is_empty() {

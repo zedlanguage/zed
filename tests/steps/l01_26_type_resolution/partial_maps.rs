@@ -476,6 +476,53 @@ fn a_function_passed_where_a_word_reads_the_entries_is_refused() {
     );
 }
 
+/// FAIL-types-subtype-ignores-family: whether a value is a family is not part of its type
+/// (DESIGN.md sec:values_morphisms; "subsumption into `->?` does not add" `finite()`), so the
+/// subtype test does not compare it; each use that needs a family checks it instead. A function
+/// for a family parameter read by `.sum`, `==` on a parameter that may hold a function, `.sum`
+/// on a union of a family and a function, and a function needing a family where any
+/// `int ->? int` may be given are each refused; a family for the family parameter is taken.
+#[test]
+fn a_function_where_a_family_is_needed_is_refused_at_the_use_and_not_by_its_type() {
+    let total = "total(m: int ->? int) = m.sum;\n";
+    assert_eq!(
+        type_errors(&format!("{total}t = total(m: {{0 -> 1, 1 -> 2}});\n")),
+        Vec::<String>::new()
+    );
+    let errs = type_errors(&format!("{total}t = total(m: ((x: int) -> x * x));\n"));
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert!(
+        errs[0].starts_with("`total` takes `m` as a family, which `sum` reads"),
+        "{errs:?}"
+    );
+    // One error for each operand that may hold a function, both `m` here; `zedc` prints
+    // the message once.
+    let errs = type_errors("same(m: int ->? int) = m == m;\n");
+    assert!(!errs.is_empty(), "{errs:?}");
+    assert!(
+        (errs.iter()).all(|e| e.starts_with("Cannot compare a value that may hold a function")),
+        "{errs:?}"
+    );
+    let errs = type_errors(
+        "pick(b: bool) = if b { {0 -> 0, 1 -> 1} } else { ((x: int) -> x * x) };\n\
+         t(b: bool) = pick(b: b).sum;\n",
+    );
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert!(
+        errs[0].starts_with("`.sum` folds the entries of a family"),
+        "{errs:?}"
+    );
+    let errs = type_errors(&format!(
+        "{total}apply(f: (m: int ->? int) -> int, g: int ->? int) = f(m: g);\n\
+         t = apply(f: total, g: {{0 -> 1}});\n"
+    ));
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert!(
+        errs[0].starts_with("`total` takes `m` as a family"),
+        "{errs:?}"
+    );
+}
+
 /// A read at a key outside a display's keys is refused (DESIGN.md sec:type_language, the
 /// `m[k]` row: a static error where the key's domain is disjoint from the keys), whatever the
 /// display stores; the repair that widens the keys writes the map's type with the values it
