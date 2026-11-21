@@ -115,6 +115,15 @@ struct Node<T> {
 /// A tree: its root, or `None` when empty.
 type Tree<T> = Option<Arc<Node<T>>>;
 
+/// A pair of [`TreapSet::is_subset`]'s walk: a subtree of each set and the bounds of the range,
+/// each `None` where the range has no bound on that side.
+type Pair<'a, T> = (
+    Option<&'a Arc<Node<T>>>,
+    Option<&'a Arc<Node<T>>>,
+    Option<&'a T>,
+    Option<&'a T>,
+);
+
 /// A set is freed in a loop, a node whose last handle goes handing its children on, so a set of
 /// any height is dropped on a small stack (as `types::bdd::list::treap` does).
 impl<T> Drop for Node<T> {
@@ -577,10 +586,135 @@ impl<T: Elem> TreapSet<T> {
         }
     }
 
-    /// Whether every key of `self` is in `other`: the difference empty (`combine`); `false` at
-    /// once when `self` is larger.
+    /// Whether every key of `self` is in `other`: `false` at once when `self` is larger, else one
+    /// walk of the two trees together that makes no node and stops at the first key of `self`
+    /// missing from `other` (PROOF-kernel-treap-is-subset-cost).
+    ///
+    /// The walk keeps pairs `(p, q, lo, hi)`: `q` is a subtree of `other` whose keys are exactly
+    /// the keys of `other` strictly between `lo` and `hi` (no bound where `None`), and `p` is a
+    /// subtree of `self` holding every key of `self` in that range, and maybe keys outside it. The
+    /// question at a pair is whether the keys of `p` in the range are all in `q`. A pair whose
+    /// range lies wholly below `self`'s least key or above its greatest (read once, `O(h)`) holds
+    /// at once. Otherwise `p` first moves down past its root while the root is outside the range,
+    /// to the side of the range. Proof that each step is right, and of the cost:
+    ///
+    /// 1. The pairs keep their invariant. At the start `p` and `q` are the two roots, with no
+    ///    bounds. Moving `p` from a root of key `<= lo` to its right child drops that root and its
+    ///    left subtree, all keys `<= lo`, outside the range; the same on the right. The pushes of
+    ///    steps 4 and 6 split the range at a key `z` and give each side the child of `q` on that
+    ///    side, which holds exactly `other`'s keys there since `q` held exactly those of the
+    ///    range; `p` keeps every key of `self` on each side, as its child on that side (step 4,
+    ///    `z` the key of `p`'s root) or as `p` itself (step 6).
+    /// 2. After the move, the root of `p` is the greatest key of `self` in the range by `above`
+    ///    (priority, ties by key), and the root of `q` the greatest of `other`'s keys there: each
+    ///    root stands above its whole subtree (heap order), the subtree holds every key of its
+    ///    set in the range (step 1), and the root lies in the range. A key has one priority in a
+    ///    run whichever set holds it ([`Elem::priority`]), so `above` orders the keys of both
+    ///    trees alike.
+    /// 3. Range wholly below the least key `m` of `self` (`hi <= m`) or above the greatest `M`
+    ///    (`lo >= M`), or `p` empty: no key of `self` in the range, so the pair holds. `q` empty
+    ///    and `p` not: the
+    ///    root of `p` is a key of `self` in the range that `other` lacks, `false`. `p` and `q` one
+    ///    node: the keys of `p` are those of `q`, so the pair holds.
+    /// 4. The two roots of one key: that key is in both, and the rest of the range splits at it
+    ///    into two pairs, the children on each side.
+    /// 5. The root of `p` above the root of `q`: the key of `p`'s root is not in `other`, since it
+    ///    lies in the range and would then be a key of `other` there above `q`'s root, against
+    ///    step 2. So `false` at once, with no search of `q`.
+    /// 6. The root of `q` above the root of `p`: by step 2 turned around, `q`'s key `z` is not in
+    ///    `self`, so the range splits at `z` into two pairs, `p` itself with each child of `q`.
+    ///
+    /// Cost. Let `U` be the number of nodes of `self` that are not nodes of `other` (as `Arc`s),
+    /// `D` the number of pairs that take step 6, and `h` the height of `self`.
+    ///
+    /// 7. A pair at step 4 that did not stop at step 3 has a root of `p` that is not a node of
+    ///    `other`: were it one, it would be `other`'s only node of that key, which is `q`'s root
+    ///    (in the range by step 2), and the pair would have stopped at step 3. No later range
+    ///    holds that key, so these pairs are at most `U`.
+    /// 8. A pair at step 6 has its `z`, a key of `other` not in `self`, which leaves every later
+    ///    range; these pairs are `D`, at most the keys of `other` not in `self`. Split `D` into
+    ///    `D_in`, the keys `z` between `m` and `M`, and `D_out`, those outside.
+    /// 9. Step 5 happens at most once. Each pair at steps 4 or 6 pushes two pairs, so the walk
+    ///    takes at most `2 (U + D) + 1` pairs, each of `O(1)` work besides the moves of `p`.
+    /// 10. The moves of `p`. A node of `self` is passed only when its key is outside the range,
+    ///     beyond a bound `z` that is a key of step 4 or 6. At step 4 the key is `p`'s root, so
+    ///     each child of `p` lies wholly on its side of it and no move passes a node at that
+    ///     bound. A key `z` of step 6 below `m` bounds a pair whose range lies below `m`, which
+    ///     holds at step 3 before any move, and pairs above `z`, where every key of `self` is, so
+    ///     no move passes a node at `z`; the same above `M`. A key `z` of `D_in` bounds two
+    ///     chains of pairs, one on each side of it, and the moves in each follow the search path
+    ///     of `z` in `self` down, passing each of its nodes at most once: at most `2h` moves.
+    /// 11. Where `self` lies in `other`, `D_out <= 2 h'` and `D_in <= 2 g h'`, with `h'` the
+    ///     height of `other` and `g` the number of runs of consecutive keys of `other` lying
+    ///     between two keys of `self` and not in `self` (the gaps). Proof: at step 6 the range
+    ///     holds a key of `self` (else `p` was empty at step 3); let `s` be the key of `self` in
+    ///     the range nearest to `z` (on either side). Every key between `z` and `s` is not in
+    ///     `self`, so `z` lies in the run of `other` next to `s`. `s` is in `other`, in the range,
+    ///     so in `q`, whose root is `z`, so `z` is an ancestor of `s` in `other`. A run outside
+    ///     `[m, M]` is next to `m` or `M` only, and a gap next to its two ends; each key `s` has
+    ///     at most `h'` ancestors.
+    ///
+    /// So the work is `O(U + D_out + D_in h + h + 1)`. Where `other` has no key outside `self` (a
+    /// set and a narrowing of it, either way round), `D = 0` and the work is `O(U + h)`. Where
+    /// `self` is a cut of `other` to a range (`at_least`, `at_most`, or both), `self` lies in
+    /// `other` with no gap, `D_in = 0`, `D_out <= 2 h'`, and the cut makes new nodes only along
+    /// its two paths, `U <= 2h`: `O(h + h')`, `O(log k)` expected for `k` keys (the expected
+    /// height, module comment). For `self` and `other` made from one set by `d` edits, each
+    /// making new nodes along one path and adding or removing at most one key, `U = O(d h)` and
+    /// `D <= d`, so `O(d log k)` expected. For `self` a set of `g + 1` cuts of `other` joined in
+    /// order, `U = O(g h)` and `D_in <= 2 g h'`, so `O(g h h')`, `O(g log^2 k)` expected. Not
+    /// proved (PROOF-kernel-treap-is-subset-gaps): that the moves at the `D_in` keys of one gap
+    /// total `O(h)`, not `O(h h')`. Every key of a gap has the same search path in `self`, and a
+    /// pair whose range lies in the gap walks it down to an empty subtree; nothing here remembers
+    /// that the gap is empty, so the next such pair walks it again.
+    /// Sets not made from one another share no node and `U` is up to `|self|`. Until 2026-11-21
+    /// this was
+    /// `self.difference(other).is_empty()`, which made the difference's nodes and went on past
+    /// the first key missing, a split of `O(h)` and a join at each pair. Tests:
+    /// `every_operation_agrees_with_a_btree_set` and `is_subset_agrees_on_sets_made_from_one_set`
+    /// (correctness), `bench::is_subset_scales_with_the_edits_not_the_size` (at n and 8n).
     pub fn is_subset(&self, other: &Self) -> bool {
-        self.len() <= other.len() && self.difference(other).is_empty()
+        if self.len() > other.len() {
+            return false;
+        }
+        let (Some(least), Some(greatest)) = (self.first(), self.last()) else {
+            return true;
+        };
+        let mut pairs: Vec<Pair<'_, T>> =
+            vec![(self.root.as_ref(), other.root.as_ref(), None, None)];
+        while let Some((mut p, q, lo, hi)) = pairs.pop() {
+            // Step 3, the range outside `[least, greatest]`.
+            if hi.is_some_and(|h| h <= least) || lo.is_some_and(|l| l >= greatest) {
+                continue;
+            }
+            // Step 1: `p` moved down to its first node in the range.
+            while let Some(n) = p {
+                p = match (lo, hi) {
+                    (Some(l), _) if n.key <= *l => n.right.as_ref(),
+                    (_, Some(h)) if n.key >= *h => n.left.as_ref(),
+                    _ => break,
+                };
+            }
+            // Step 3.
+            let Some(x) = p else { continue };
+            let Some(y) = q else { return false };
+            if Arc::ptr_eq(x, y) {
+                continue;
+            }
+            if x.key == y.key {
+                // Step 4.
+                pairs.push((x.left.as_ref(), y.left.as_ref(), lo, Some(&x.key)));
+                pairs.push((x.right.as_ref(), y.right.as_ref(), Some(&x.key), hi));
+            } else if above(x, y) {
+                // Step 5.
+                return false;
+            } else {
+                // Step 6.
+                pairs.push((p, y.left.as_ref(), lo, Some(&y.key)));
+                pairs.push((p, y.right.as_ref(), Some(&y.key), hi));
+            }
+        }
+        true
     }
 
     /// Whether no key is in both: the intersection empty (`combine`).
@@ -699,3 +833,6 @@ impl<T: Elem + fmt::Debug> fmt::Debug for TreapSet<T> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod bench;

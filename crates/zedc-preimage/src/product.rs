@@ -606,17 +606,21 @@ impl Product {
     // literals 3 apart. Used: two inclusion tests that pass by the subtrees the sets share,
     // `O(d log k)` for the `d` paths a test changed. Given up: nothing; otherwise the meet is
     // made as before.
-    // Not proved: the bound `O(d log k)` for `v0.is_subset(vs)` when the two trees are not one
-    // (`ptr_eq` is `O(1)`). `TreapSet::is_subset` is `combine(Minus, ..)` (zed-kernel
-    // `treap_set.rs`), which answers a pair of shared subtrees at once (`at_once`), but at
-    // each pair it does not share it splits one tree at the other's root key, `O(height)`,
-    // rebuilding that path. Open sub-case: that the pairs not shared number `O(d)` and their
-    // splits `O(d log k)` in all, not `O(d log^2 k)`, for `v0` made from `vs` by the cuts of
-    // `kept_in` or `kept_by_listed`. Measured only: 8.79 and 8.61 times the instructions from
-    // k = 64 to 512 in
+    // The cost of `v0.is_subset(vs)` when the two trees are not one (`ptr_eq` is `O(1)`):
+    // `TreapSet::is_subset` walks the two trees together, `O(U + D_out + D_in h + h)`, proved
+    // at the function (zed-kernel `treap_set.rs`, PROOF-kernel-treap-is-subset-cost). `v0` is
+    // `kept`, made from the finite set by `kept_by_listed` (two cuts) or `kept_in`; the finite
+    // set shares its nodes with the type's set `vs` once `Err(own)` above made them one tree.
+    // For `v0` a cut of `vs` to a range, the proof's cut case gives `O(log k)` expected. For
+    // `v0` the `g + 1` pieces of a many-piece interval cut out and joined, `O(g log^2 k)`
+    // expected. Not proved (PROOF-kernel-treap-is-subset-gaps, the open sub-case at
+    // `is_subset`): that it is `O(g log k)`. For `v0` filtered member by member, `v0` shares no node with `vs` and the
+    // walk is `O(k')`, the cost already paid to build it. Measured: 8.63 times the instructions
+    // from k = 64 to 512 in
     // `l01_39_reduced_product::arm_test_through_call::bench::tests_on_a_callee_of_k_spaced_literal_arms_scale`
-    // (73ed87c26), under the limit of 10.5. The `IntervalSet::is_subset` bound is the one its
-    // own comment states (zedc-lattice `interval.rs`).
+    // with the walk (2026-11-21), and 8.79 and 8.61 with the old `combine` (73ed87c26), under
+    // the limit of 10.5. The `IntervalSet::is_subset`
+    // bound is the one its own comment states (zedc-lattice `interval.rs`).
     fn ints_among(&self, vs: &TreapSet<Value>) -> bool {
         if !listed_shortcuts_on() {
             return false;

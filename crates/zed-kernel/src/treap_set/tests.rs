@@ -207,3 +207,36 @@ fn a_large_set_is_dropped_on_a_small_stack() {
     };
     crate::scaling::on_a_stack(64 * 1024, run);
 }
+
+#[test]
+fn is_subset_agrees_on_sets_made_from_one_set() {
+    // Two sets edited apart from one set by removals, insertions and cuts, so the walk of
+    // `is_subset` meets shared subtrees, roots of one key and both orders of the two roots
+    // (steps 3 to 6 of its proof), each way round.
+    let mut g = Rng::new(13);
+    for round in 0..400 {
+        let base = random(&mut g, 300, 600);
+        let s = of(&base);
+        let mut two = [(s.clone(), base.clone()), (s, base)];
+        for _ in 0..g.below(8) {
+            let (t, bt) = &mut two[g.below(2)];
+            let c = g.int(0, 599);
+            match g.below(4) {
+                0 => assert_eq!(t.insert(c), bt.insert(c)),
+                1 => assert_eq!(t.remove(&c), bt.remove(&c)),
+                2 => {
+                    *t = t.at_least(&c);
+                    *bt = bt.range(c..).copied().collect();
+                }
+                _ => {
+                    *t = t.at_most(&c);
+                    *bt = bt.range(..=c).copied().collect();
+                }
+            }
+        }
+        let [(a, ba), (b, bb)] = &two;
+        assert_eq!(a.is_subset(b), ba.is_subset(bb), "round {round}");
+        assert_eq!(b.is_subset(a), bb.is_subset(ba), "round {round}");
+        assert!(a.is_subset(a) && a.is_subset(&a.clone()));
+    }
+}
