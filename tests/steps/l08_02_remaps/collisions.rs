@@ -344,6 +344,38 @@ fn a_parameter_of_no_declared_type_takes_the_need_on_to_its_calls() {
     );
 }
 
+/// The step from a parameter's floor to the outer calls (row PROOF-keys-at-outer-calls, the
+/// proof at `keys_at` in walk.rs): a need passed on through two parameters of no declared type
+/// reaches the outermost call, and a call through a name bound to the function, or through a
+/// parameter that holds it, checks the need as a call by the function's own name does.
+#[test]
+fn the_need_on_keys_reaches_every_outer_call() {
+    let two = format!("{MOD5}g(positional m) = f(m);\nh(positional m) = g(m);\n");
+    same(
+        &format!("{two}x = h({{ 7 -> 1 }});\nwant = {{ 2 -> 1 }};\n"),
+        "x",
+        "want",
+    );
+    let bad = "{ 3 -> 1, 8 -> 2 }";
+    let refused = format!("with keys in int[5..=9]: `{bad}` may not be one");
+    for call in [
+        format!("{two}x = h({bad});\n"),
+        format!("{MOD5}g(positional m) = f(m);\nk = g;\nx = k({bad});\n"),
+    ] {
+        rejected(&call, &[&refused]);
+    }
+    // Through a parameter that holds `g` the call is rejected for the same range, but the
+    // message quotes the whole outer call where the argument belongs (`app(…, p: g)` "may not
+    // be one"); only the range is asserted here, the quoting is a row of its own.
+    let through = format!(
+        "{MOD5}g(positional m) = f(m);\napp(positional m, p) = p(m);\nx = app({bad}, p: g);\n"
+    );
+    rejected(
+        &through,
+        &["`p` takes `m` as a family", "with keys in int[5..=9]"],
+    );
+}
+
 #[test]
 fn a_tuple_key_component_outside_its_range_is_rejected() {
     // (0, 3) and (1, 0) would both give the key 3.

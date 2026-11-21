@@ -18924,14 +18924,35 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of the parameter has run (proof there). A type that lists no ints, `int`, a variable or
     /// the unknown, is refused, not assumed. A parameter of no declared type takes this whole
     /// need on its floor ([`Self::floor_on`], kept in `ranged_floors`), with this call as a
-    /// link. Not proved here: that each call of that parameter's function then checks its
-    /// argument against these ranges; the step from the floor to the outer calls was not
-    /// traced. Tests: `l08_02_remaps::collisions`,
-    /// `a_key_outside_the_range_is_rejected_at_the_call`,
-    /// `a_tuple_key_component_outside_its_range_is_rejected` and
-    /// `a_parameter_of_no_declared_type_takes_the_need_on_to_its_calls`, the last of which
-    /// covers the untraced step for one level of passing. They call each function by its
-    /// name; a call through a function value is not among them.
+    /// link.
+    ///
+    /// Proof of the step from the floor to the outer calls (row PROOF-keys-at-outer-calls):
+    /// 1. [`Self::floor_on`] keeps the need in `ranged_floors` under the parameter's binder,
+    ///    once for each distinct [`KeyUse`] (`keyed_seen`); a need not kept there has an equal
+    ///    `KeyUse`, the same ranges and family, so the one kept checks the same keys.
+    /// 2. When the function's inference ends (`Frame::InferEnd`), [`Self::floors_into`] moves
+    ///    each need of `ranged_floors` on each parameter's binder into the signature's
+    ///    `needs`, its `param` set to the parameter's place.
+    /// 3. A call applies that signature through [`Self::apply_demanding`], which runs
+    ///    [`Self::floors_at`] whenever the signature has an `InDomain` need, and `floors_at`
+    ///    calls this function on the argument at `param` for each need with a `key`.
+    /// 4. So the argument of each outer call meets one of the cases above: its listed ints are
+    ///    checked, a declared parameter's ranges must lie inside these, or a parameter of no
+    ///    declared type takes the need one function further out. Each function is checked
+    ///    before a caller applies its signature, so by induction on the number of functions the
+    ///    value passes through, each key that reaches the remap was checked against the ranges
+    ///    at the call where it is first a value of a type that lists its keys.
+    ///
+    /// A trial (`self.trying`) records no floor; the application that stays records it. A
+    /// function of a cycle is not checked at all until step L6 (the proof in `floors_into`).
+    ///
+    /// Tests: `l08_02_remaps::collisions`, `a_key_outside_the_range_is_rejected_at_the_call`,
+    /// `a_tuple_key_component_outside_its_range_is_rejected`,
+    /// `a_parameter_of_no_declared_type_takes_the_need_on_to_its_calls` (one level), and
+    /// `the_need_on_keys_reaches_every_outer_call`: two levels, a call through a name bound to
+    /// the function, and one through a parameter that holds it (both fail with the
+    /// `floor_on` call below removed). They cannot catch a kind of call that applies a
+    /// signature without [`Self::apply_demanding`], if one exists; none was found in reading.
     // Complexity tradeoff: one pass over the argument's arrows and the ints their key types
     // list, O(arrows · listed keys · ranges) per call, the size of the types already built; a
     // passed-on parameter costs O(ranges²) for the containment of written ranges (a handful).
