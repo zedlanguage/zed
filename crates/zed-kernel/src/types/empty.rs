@@ -1069,7 +1069,8 @@ impl Type {
     /// its closed parts read is judged, each such search finds its reads judged here in O(1) and
     /// starts no decider, and the walk's nesting is one `judge` and the searches of its closed
     /// parts, whatever the length of the chain. The reading search adds that one level to its own
-    /// stack. Test: `group_oracle::bench::a_tuple_holding_a_chain_of_groups_is_decided_on_a_small_stack`,
+    /// stack. Test:
+    /// `group_oracle::bench::a_tuple_holding_a_chain_of_groups_is_decided_on_a_small_stack`,
     /// which overflows its thread of 1 MiB when the search reads `judged` instead.
     ///
     /// Not in `judged` itself: [`Type::decided_by_group`], asked of each member of a chain of
