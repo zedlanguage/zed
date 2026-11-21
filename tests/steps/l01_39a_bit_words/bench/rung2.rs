@@ -12,6 +12,12 @@ use super::super::rung2::{chain, signs};
 fn a_chain_of_bit_ands_is_proved_in_linear_time() {
     // Complexity: each `bitAnd` is one auxiliary variable and one disjunction of four cases
     // (O(1) to translate); the premise fixes every sign, so one case of each is left.
+    // This also checks that the renaming tells the chain's atoms apart: where it does not
+    // (`Renamed::colored` listing each constraint once, eea76fee4 to the fix of
+    // FAIL-rung2-bit-ands-regress-eea76fee4), the formula is tied and settled by
+    // `settle_tied`, O(k^2): 65.8 times from 75 to 600 and 67 to 71 GB at 4800. With the
+    // second coloring, by each constraint's count of places, 8.36 times at 600 to 4800 (8.40G
+    // instructions, 1.70 GB at 4800).
     let n = 600;
     let built = scaling::inputs(n, |k| (signs(k), chain(k)));
     let inputs = scaling::inputs(n, |k| {

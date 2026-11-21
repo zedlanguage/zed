@@ -2317,23 +2317,91 @@ impl Renamed {
 
     /// The atoms of `f` with the rows that join each product to its factors, those rows, and
     /// the color of each atom ([`stable_colors`]) over the constraints of `f` and those rows.
-    // Each constraint is read once by its content: `Formula::cons` lists a part held in two
-    // places once and a part written out twice twice, so with its list the colors of the twin
-    // nests of `l01_38_presburger::linked_nest::twin_projects_as_written_out` differed between
-    // the two writings, and so did the names and, through `pick`'s order, a refusal (`x3`
-    // refused held once, answered written out, at k = 3, w = [1, 3, 5, 7], `x3 + y3 == 4 h +
-    // 2`). The pair coloring and [`Numbered`] already join equal parts ([`nesting()`]).
-    // Complexity tradeoff: one hash set of the constraints, O(C) for C constraints listed,
-    // against the coloring's O(L log L). The set is a `TextSet` (foldhash, seeded), not the
-    // standard SipHash set: a constraint holds a program's names, the set is only asked, never
-    // iterated, and SipHash was most of this set's cost (PERF-project-each-renaming-cost).
+    // Two colorings, the second refining the first. First: each distinct constraint of `f`
+    // listed once. Second, started from the first's colors (`first`, renumbered `0..k`): each
+    // distinct constraint listed once for each distinct part of `f` it is a part of
+    // ([`Numbered::parents`]), and once more when it is `f` itself.
+    //
+    // Why not `Formula::cons` as listed: it lists a part held in two places once and a part
+    // written out twice twice, so with its list the colors of the twin nests of
+    // `l01_38_presburger::linked_nest::twin_projects_as_written_out` differed between the two
+    // writings, and so did the names and, through `pick`'s order, a refusal (`x3` refused held
+    // once, answered written out, at k = 3, w = [1, 3, 5, 7], `x3 + y3 == 4 h + 2`; test
+    // `linked_nest::twin_nests_held_once_and_written_out_are_named_alike`).
+    //
+    // Why not the first coloring alone (FAIL-rung2-bit-ands-regress-eea76fee4, eea76fee4 to
+    // this fix): the number of places a constraint has is what tells apart atoms whose
+    // constraints are alike as rows. In the chain `x_i >= 0` for all i, not all
+    // `bitAnd(x_i, x_(i+1)) <= x_(i+1)`, `x_(i+1) >= q_i` lies in three disjuncts of the i-th
+    // bit and and in the negated goal, `x_i >= q_i` in three disjuncts alone. Listed once
+    // each, every `x_i` but the ends and every `q_i` took one color, `x0` with `x1` at k = 1;
+    // no swap of them maps the formula onto itself (the goal reads `x1`), so it was
+    // [`Naming::Tied`] and went to [`settle_tied`], whose [`settle_as_sets`] solves each
+    // disjunct against the base, O(k^2) on the chain:
+    // `l01_39a_bit_words::bench::rung2::a_chain_of_bit_ands_is_proved_in_linear_time` grew
+    // 65.8 times from k = 75 to 600 (63.1G instructions at 600), and with the refinement 8.36
+    // at 600 to 4800 (1.01G and 8.40G). Negative control: the first coloring alone does not
+    // finish that benchmark in 60 s.
+    //
+    // Why not the second list alone, from one color: it orders atoms the first coloring
+    // already told apart differently, and the solver's work depends on that order (`pick`,
+    // the elimination order).
+    // `l01_38_omega_test::bench::probe::twin_chains_of_absolute_values_scale` did not finish
+    // in 60 s with it (3 runs, load 26 to 36; gdb samples in `pick_reading`, `shadow`,
+    // `solve_omega`, not in the coloring); with the refinement 8.360, 1.78G and
+    // 14.91G instructions, against 1.74G and 14.56G with the first coloring alone. Refinement
+    // only splits classes, so an atom alone in its class keeps its number, and where the
+    // first coloring tells every atom apart the names are those it gives.
+    //
+    // Proof that both lists, and so the colors and the names [`Renamed::by_ranks`] gives,
+    // depend on the structure of `f` alone (the first list is the set of distinct constraints,
+    // whose order [`stable_colors`] does not read, step 4; the steps below are for the count):
+    // 1. [`Numbered::of`] gives two parts one number exactly when they are the same constraint
+    //    (by content, `cons`), or have the same connective and the same sorted list of part
+    //    numbers (`keys`); by induction on height, exactly when they are equal as written, up
+    //    to the order of the parts of a conjunction or disjunction. A part held in two places
+    //    (one `Arc`) and the same part written out twice are equal as written, so get one number.
+    // 2. `parents[n]` lists each distinct number whose part list holds `n`, once ([`Numbered::add`]
+    //    pushes `n` only where it differs from the part before it in the sorted list). By 1, it
+    //    is a function of the parts as written, not of how they are held.
+    // 3. A renaming of the atoms maps each part to one written alike with the new names, and
+    //    two parts are equal exactly when their images are, so it maps the numbered parts one
+    //    to one and keeps `parents`: the count of a constraint and of its image are equal.
+    //    Likewise an exchange `h` of atoms that maps `f` onto itself keeps each count, so the
+    //    graph of [`stable_colors`] with the rows so listed has an automorphism that extends
+    //    `h`, and the coloring never separates two atoms `h` exchanges (color refinement keeps
+    //    every automorphism; Berkholz, Bonsma and Grohe, cited at [`stable_colors`]).
+    // 4. [`stable_colors`] numbers its colors by structure, not by the order of the rows (its
+    //    doc), so listing the rows in the order of their numbers changes nothing.
+    // 5. The starting colors of the second coloring are the first's, renumbered by their
+    //    order, so they too depend on the structure alone and are kept by every exchange that
+    //    maps `f` onto itself (3); the second refinement, started from them over rows so kept,
+    //    keeps such an exchange too, and numbers its colors from the starting ones by
+    //    structure ([`stable_colors`], `first`).
+    // On a formula with no part held or written in two places, the count is the number of
+    // places of the constraint as written, which `Formula::cons` gave before eea76fee4.
+    // Tests: `linked_nest::twin_nests_held_once_and_written_out_are_named_alike` (sharing) and
+    // `l01_38_omega_test::names` (every system renamed, answers compared). Neither can catch a
+    // coloring that is canonical but coarser than needed, or one that orders atoms badly for
+    // the solver; the two benchmarks above catch those on their families.
+    // Complexity tradeoff: naive version, one coloring over the constraints of `Formula::cons`
+    // each once, O(C) hashes for C constraints listed, coarse as above. Used: [`Numbered::of`],
+    // one fold over the distinct parts with O(1) expected hash work per term and per part
+    // number listed, O(T) for T terms and part links; then two colorings, O(L log L) each for
+    // L links, the second's rows at most the part links; the renumbering is a sort of the n
+    // atoms' colors, O(n log n). About 2% more instructions than one coloring on twin_chains.
     fn colored(f: &Formula) -> (Vec<Atom>, Vec<Con>, Vec<usize>) {
-        let mut seen: TextSet<&Con> = TextSet::default();
-        let mut cons = f.cons();
-        cons.retain(|c| seen.insert(*c));
+        let numbered = Numbered::of(f);
+        let mut once: Vec<&Con> = Vec::new();
+        let mut counted: Vec<&Con> = Vec::new();
         let mut atoms: BTreeSet<Atom> = BTreeSet::new();
-        for c in &cons {
-            atoms.extend(c.lin.terms.keys().cloned());
+        for (n, c) in numbered.con.iter().enumerate() {
+            if let Some(c) = *c {
+                let places = numbered.parents[n].len() + usize::from(n == numbered.root);
+                once.push(c);
+                counted.extend(std::iter::repeat_n(c, places));
+                atoms.extend(c.lin.terms.keys().cloned());
+            }
         }
         let joins: Vec<Con> = (atoms.iter())
             .filter_map(|a| match a {
@@ -2350,9 +2418,17 @@ impl Renamed {
         for c in &joins {
             atoms.extend(c.lin.terms.keys().cloned());
         }
-        cons.extend(joins.iter());
+        once.extend(joins.iter());
+        counted.extend(joins.iter());
         let atoms: Vec<Atom> = atoms.into_iter().collect();
-        let mut color = stable_colors(&atoms, &cons, &[], &[]);
+        let mut first = stable_colors(&atoms, &once, &[], &[]);
+        first.truncate(atoms.len());
+        let mut used = first.clone();
+        zed_collections::sorted::sort_dedup(&mut used);
+        for c in &mut first {
+            *c = used.binary_search(c).expect("a color listed");
+        }
+        let mut color = stable_colors(&atoms, &counted, &[], &first);
         color.truncate(atoms.len());
         (atoms, joins, color)
     }
