@@ -263,6 +263,7 @@ pub(super) mod m07 {
             Ceil => "`ceil`",
             Trunc => "`trunc`",
             AwayFromZero => "`awayFromZero`",
+            FloatMod => "`floatMod`",
         }
     }
 

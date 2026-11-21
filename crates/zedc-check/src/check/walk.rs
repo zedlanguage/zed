@@ -25266,6 +25266,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             self.merged_data(&mut out, &atoms, &froms, span);
         }
+        if let [_, Some(m)] = args.as_slice()
+            && sig.word.as_deref() == Some("floatMod")
+        {
+            let m = m.clone();
+            self.float_modulus(&m, span);
+        }
         // `min` and `max` take two tuples, wherever they are called from; they are told apart by
         // the word the signature is, not by its arrows, which `+`, `-` and `*` share.
         if let [Some(x), Some(y)] = args.as_slice()
@@ -28328,6 +28334,83 @@ impl<'a> Ck<'_, 'a> {
             ),
             notes,
         );
+    }
+
+    /// `floatMod(x, m)` takes `m` finite and greater than `0.0` (DESIGN.md sec:domains,
+    /// "`floatMod`"; QUESTIONS A174, author, 2026-11-21: "make sure `m > 0` both `mod` and
+    /// `floatMod`"; row FLOAT-floatMod). The checker has no intervals of floats yet (row
+    /// FLOAT-interval) and no `.isFinite`, so a modulus is shown in range only where each of
+    /// its listed float values is, as the literal `360.0`. One whose listed floats are all out
+    /// of range, as `floatMod(x, 0.0)`, is refused with no test; any other, as a parameter
+    /// `m: f64`, is refused with a literal modulus as the repair and the run-time test as a
+    /// note (row FLOAT-floatMod-guarded-modulus). A modulus with no float value is left to the
+    /// word's arrows, which refuse it. O(V) for V listed values, at most 3.
+    fn float_modulus(&mut self, m: &Arg<'a>, span: Span) {
+        let takes = "`floatMod` takes `m` finite and greater than `0.0`";
+        let in_range = |v: &Value| match v {
+            Value::Float(f) => Some(f.get().is_finite() && f.get() > 0.0),
+            Value::Float32(f) => Some(f.get().is_finite() && f.get() > 0.0),
+            // A bare integer literal, as `floatMod(x, 3)`, adopts the float format.
+            Value::Int(_) | Value::Rat(_) => v.surface_cmp(&Value::Int(0)).map(|o| o.is_gt()),
+            _ => None,
+        };
+        // A literal is read as written: [`Self::operand_values`] leaves out a bare decimal
+        // literal, which is the usual modulus, `360.0`.
+        let values = match &m.lit {
+            Some(l) => Some(vec![neg_value(&l.value, l.neg())]),
+            None => (self.operand_values(m))
+                .and_then(WordOperand::listed)
+                .map(|(vs, _)| vs),
+        };
+        let listed: Option<Vec<bool>> = values.map(|vs| vs.iter().filter_map(in_range).collect());
+        let none_in_range = match &listed {
+            Some(l) if l.is_empty() || l.iter().all(|&b| b) => return,
+            Some(_) => true,
+            None => false,
+        };
+        let at = m.at.unwrap_or(span);
+        let code = self.code(Some(at));
+        let shown = self.show(&m.ty);
+        // A literal modulus shows as written, `floatMod(x, 0.0)`; any other with its type.
+        let piece = match (none_in_range, code, self.code(Some(span))) {
+            (true, Some(_), Some(whole)) => whole.to_string(),
+            (_, Some(c), _) => match self.call_parts(span, at) {
+                Some((_, before, after)) => format!("{before}{c} : {shown}{after}"),
+                None => format!("{c} : {shown}"),
+            },
+            _ => format!("… : {shown}"),
+        };
+        let mut notes = vec![Note {
+            span: at,
+            text: format!("`m` is this modulus, {shown}"),
+        }];
+        self.derive_into(&[at], &mut notes);
+        notes.push(Note {
+            span,
+            text: "`floatMod(x, m)` is the residue of `x` in `[0.0, m)`, and no float lies there \
+                   for a modulus that is NaN, infinite or at most `0.0`"
+                .into(),
+        });
+        if !none_in_range {
+            let repair = match self.call_parts(span, at) {
+                Some((_, before, after)) => format!("{before}360.0{after}"),
+                None => "floatMod(x, 360.0)".to_string(),
+            };
+            notes.push(Note {
+                span,
+                text: format!(
+                    "repair: write the modulus as a literal, such as `{repair}`: this version of \
+                     zedc shows a modulus in range only from its literal"
+                ),
+            });
+            notes.push(Note {
+                span,
+                text: "a test `if m > 0.0 && m.isFinite { … } else { … }` does not yet show it, \
+                       since zedc does not narrow a float by a test"
+                    .into(),
+            });
+        }
+        self.error_with(span, format!("{takes}: `{piece}`."), notes);
     }
 
     /// The operand `x` of a word as [`Self::word_atoms`] reads it, when the checker can list its

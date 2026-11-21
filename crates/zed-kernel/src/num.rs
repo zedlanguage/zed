@@ -20,6 +20,7 @@ mod bound;
 pub mod coprime;
 mod digit_text;
 mod fast;
+pub mod float_mod;
 mod float_text;
 mod room;
 pub mod trees;

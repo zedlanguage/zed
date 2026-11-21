@@ -46,6 +46,7 @@ const WORDS: &[(&str, Prim)] = &[
     ("funnelShr", Prim::FunnelShr),
     ("sqrt", Prim::Sqrt),
     ("fma", Prim::Fma),
+    ("floatMod", Prim::FloatMod),
     // `round(x, ties: #away)` elaborates to `RoundTiesAway`, which no word names.
     ("round", Prim::Round),
     ("floor", Prim::Floor),

@@ -177,6 +177,11 @@ pub enum Prim {
     /// `fma(a, b, c)` of three `f64` or three `f32`: the exact `a * b + c` rounded once to the
     /// operands' format, IEEE 754 `fusedMultiplyAdd` (DESIGN.md step L1.18a).
     Fma,
+    /// `floatMod(x, m)` of two `f64` or two `f32`, `m` finite and greater than `0.0`: the float
+    /// of `[0.0, m)` nearest the exact residue `x − m·⌊x/m⌋`, ties to even; NaN for an
+    /// infinite or NaN `x` (DESIGN.md sec:domains; QUESTIONS A174). The proof is at
+    /// `num::float_mod::float_mod`.
+    FloatMod,
     /// `{k0 -> v0, k1 -> v1, …}`: the family of the entries its arguments give in pairs, key
     /// then value, the map and array displays of step L3.2. A value that is a family is a level
     /// beneath its key; two entries with one key are a collision.
@@ -376,6 +381,7 @@ impl Prim {
             Ceil => 85,
             Trunc => 86,
             AwayFromZero => 87,
+            FloatMod => 88,
         }
     }
 
@@ -579,6 +585,9 @@ impl Prim {
             // so no call rounds where the text does not say so (row FLOAT-sqrt).
             Sqrt => list![a(&[F64], F64, &[]), a(&[F32], F32, &[])],
             Fma => list![a(&[F64, F64, F64], F64, &[]), a(&[F32, F32, F32], F32, &[])],
+            // The float formats alone, as for `sqrt`; no atom, since the checker proves the
+            // modulus finite and greater than `0.0` (DESIGN.md sec:domains, "`floatMod`").
+            FloatMod => list![a(&[F64, F64], F64, &[]), a(&[F32, F32], F32, &[])],
             Len => list![a(&[S], I, &[])],
             CodePoint => list![a(&[S], I, NOT_SCALAR)],
             Scalar => list![a(&[I], S, NOT_SCALAR)],

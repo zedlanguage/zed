@@ -12,6 +12,7 @@ mod casts;
 mod completeness;
 mod f32;
 mod failures;
+mod float_mod;
 mod floats;
 mod literals;
 mod prim_names;

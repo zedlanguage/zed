@@ -4332,6 +4332,15 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         (Prim::Fma, [Float32(a), Float32(b), Float32(c)]) => {
             Value::float32(a.get().mul_add(b.get(), c.get()))
         }
+        // `floatMod` (DESIGN.md sec:domains; QUESTIONS A174): the definition, its proof and its
+        // citations are at `num::float_mod::float_mod`. A modulus not finite and greater than
+        // 0, which a checked program never passes, gives NaN.
+        (Prim::FloatMod, [Float(x), Float(m)]) => Value::float(
+            crate::num::float_mod::float_mod_total(x.get(), m.get(), f64::NAN),
+        ),
+        (Prim::FloatMod, [Float32(x), Float32(m)]) => Value::float32(
+            crate::num::float_mod::float_mod_total(x.get(), m.get(), f32::NAN),
+        ),
         (Prim::Concat, [Str(a), Str(b)]) => Str(crate::text::Text::join(a, b)?),
         // NaN in, NaN out, as for every float operation (DESIGN.md sec:domains, NaN rule 5):
         // IEEE 754 `pow` gives `pow(NaN, 0) = 1` and `pow(1, NaN) = 1`, so a NaN operand is

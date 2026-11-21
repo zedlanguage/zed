@@ -694,6 +694,7 @@ const SIGS: &[Sig] = &[
     sig("fromUtf8", Count::Exactly(1)),
     sig("sqrt", Count::Exactly(1)),
     sig("fma", Count::Exactly(3)),
+    sig("floatMod", Count::Exactly(2)),
     Sig {
         optional: &["ties"],
         ..sig("round", Count::Exactly(1))

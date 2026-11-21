@@ -14093,10 +14093,10 @@ fn op_sig(op: Operator) -> Sig {
 }
 
 /// The number of operands of the prelude word `w` that [`word_sig`] types: two for `min` and
-/// `max`, three for `fma`, one for every other.
+/// `max` and `floatMod`, three for `fma`, one for every other.
 fn word_arity(w: &str) -> usize {
     match w {
-        "min" | "max" => 2,
+        "min" | "max" | "floatMod" => 2,
         "fma" => 3,
         _ => 1,
     }
@@ -14106,6 +14106,9 @@ fn word_arity(w: &str) -> usize {
 /// operands, as DESIGN.md writes the word: `sqrt(x)`, `fma(a, b, c)`. A message about the
 /// number of arguments of a call of `w` names them.
 fn word_params(w: &str) -> &'static [&'static str] {
+    if w == "floatMod" {
+        return &["x", "m"];
+    }
     match word_arity(w) {
         1 => &["x"],
         2 => &["a", "b"],

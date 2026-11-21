@@ -11,8 +11,8 @@ use crate::num::Rat;
 use crate::term::{Prim, ScalarArrow, ScalarType};
 use crate::value::{KernelError, Value};
 
-/// Every primitive, by [`Prim::code`]; the test checks the codes are `0 ..< 88`, each once.
-const ALL: [Prim; 88] = {
+/// Every primitive, by [`Prim::code`]; the test checks the codes are `0 ..< 89`, each once.
+const ALL: [Prim; 89] = {
     use Prim::*;
     [
         Add,
@@ -103,6 +103,7 @@ const ALL: [Prim; 88] = {
         Ceil,
         Trunc,
         AwayFromZero,
+        FloatMod,
     ]
 };
 
