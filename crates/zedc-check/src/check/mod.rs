@@ -3991,6 +3991,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// A declaration writes no result type at this layer (the syntax tree has none), so the
     /// result is always among the types not written, and the step never shows a type as
     /// written.
+    ///
+    /// A parameter type the declaration writes as a name prints by that name, as `out: Lines`
+    /// (plan row MSG-written-param-type-printed, DESIGN.md sec:diagnostics, "The type of a
+    /// declaration in a message"), where the printer alone writes the type the name denotes,
+    /// `[String | #ioError(op: String, path: String, why: String)]`, which the program never
+    /// wrote. See [`Self::written_param_names`] for which parameters, and why the name is right.
     fn declared_step(&self, id: usize, sig: &Sig) -> String {
         let f = self.t.funcs[&id];
         let mut unwritten: Vec<String> = (f.params.iter())
@@ -3998,13 +4004,65 @@ impl<'t, 'a> Ck<'t, 'a> {
             .map(|p| format!("`{}`", p.name))
             .collect();
         unwritten.push("its result".into());
-        let sig = self.sig_text(sig);
+        let (sig, names) = Self::written_param_names(f, sig);
+        let sig = self.sig_text_with(&sig, &names);
         let name = &f.name;
         format!(
             "`{name}` is declared here with no type written for {}; the type the checker found \
              for `{name}` is `{sig}`",
             or_list(&unwritten)
         )
+    }
+
+    /// `sig`, the signature found for the declaration `f`, with the type of each parameter
+    /// that `f` writes as a name replaced in every arrow by a variable bound outside the text,
+    /// and that variable with the written name, for [`Self::sig_text_with`] to print by it.
+    ///
+    /// Which parameters: one whose written type is a bare name that is not a type variable
+    /// (`type_var_form`; a written variable prints by its name already, by `Self::around`),
+    /// whose signature parameter has no range (a range, as `u8`'s, prints as written already,
+    /// by `ParamRange::parts`), and whose type in every arrow equals the type the name
+    /// denotes ([`denoted`]). In this version such a name is a port's, `Lines`, `Files` or
+    /// `CommandLine`; a carrier's, as `int`, prints the same either way.
+    ///
+    /// Why the name is right: the printed text stands for the type at the parameter's place,
+    /// and the equality checks that the name denotes exactly that type there; the step is
+    /// placed at the declaration, where the program wrote the name, and a type name in this
+    /// version is a prelude name no program binds again (name resolution reads every other
+    /// capitalized name as a type variable or refuses it), so it reads the same at the step.
+    /// Where the found type differs from the denotation, the found type prints, as before.
+    ///
+    /// Complexity tradeoff: one denotation of each written name, O(1) for a name, and one
+    /// comparison per arrow, O(a·|t|) for a arrows and a port type of size |t|; the step is
+    /// built only for a message that is printed. The naive alternative, carrying each written
+    /// type beside its class into `Ck::generalize` (as the plan row first said), would cost a
+    /// field on every class for the few messages that print a declaration.
+    fn written_param_names(f: &Function, sig: &Sig) -> (Sig, Vec<(Arc<str>, Arc<str>)>) {
+        let mut sig = sig.clone();
+        let mut names = Vec::new();
+        for p in &f.params {
+            let Some(TypeKind::Name(n)) = p.ty.as_ref().map(|w| &bare(w).kind) else {
+                continue;
+            };
+            if zedc_resolve::resolve::type_var_form(n) {
+                continue;
+            }
+            let Some(j) = sig.params.iter().position(|s| *s.name == *p.name) else {
+                continue;
+            };
+            let w = denoted(p.ty.as_ref().expect("matched above"));
+            if sig.params[j].range.is_some() || sig.arrows.iter().any(|a| a.params[j] != w) {
+                continue;
+            }
+            // A name no program can write as a variable, so it is bound by no signature in
+            // the text and printed by `Around::named` alone.
+            let v: Arc<str> = format!("written {}", p.name).into();
+            for a in &mut sig.arrows {
+                a.params[j] = Ty::var(v.clone());
+            }
+            names.push((v, n.as_str().into()));
+        }
+        (sig, names)
     }
 
     /// [`emptied`] of each parameter type written on the function `id`, in order.
@@ -5832,6 +5890,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     // keeps `T`). They cannot catch a wrong meet of types outside those cases (records, partial
     // arrows of several parameters), which rest on `Ty::meet` and its own tests.
     fn sig_text(&self, s: &Sig) -> String {
+        self.sig_text_with(s, &[])
+    }
+
+    /// [`Self::sig_text`], each variable of `written` printed by the name given with it
+    /// ([`Self::written_param_names`]).
+    fn sig_text_with(&self, s: &Sig, written: &[(Arc<str>, Arc<str>)]) -> String {
         let s = s.solved_with(&|v| self.stale(v));
         let mut passed: HashMap<Arc<str>, Option<Ty>> = HashMap::new();
         for n in &s.needs {
@@ -5871,7 +5935,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         passed.retain(|_, b| b.is_some());
         // A variable the declaration wrote keeps its written name ([`Self::around`]): the
         // declaration says what it takes by that name, as `k(positional z: T, …)` does.
-        let around = self.around(s.facts());
+        let mut around = self.around(s.facts());
+        around.named.extend(written.iter().cloned());
         let kept: HashSet<&Arc<str>> = around.kept.iter().map(|(v, _)| v).collect();
         passed.retain(|v, _| !kept.contains(v));
         let twice = match passed.is_empty() {

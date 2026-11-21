@@ -274,13 +274,48 @@ fn the_declared_step_and_the_note_print_the_written_name() {
     // MSG-type-vars-printed-renamed), and the note on the pushed value, read after `k` ended,
     // printed its `T` as `_` (row MSG-headline-note-disagree).
     let out = rejected(PUSHES_T);
-    let declared = "the type the checker found for `k` is `(T, T, out: [String | #ioError(op: \
-                    String, path: String, why: String)]) -> ()`";
+    let declared = "the type the checker found for `k` is `(T, T, out: Lines) -> ()`";
     assert!(out.contains(declared), "{out}");
     assert!(
         out.contains("this expression is (0 | 1) -> T"),
         "{:?}\n{out}",
         lines_with(&out, "this expression is")
+    );
+}
+
+/// The step on the declaration of `k` in `out`, from "the type the checker found" to the end
+/// of its line.
+fn declared_k(out: &str) -> String {
+    let at = (out.find("the type the checker found for `k` is"))
+        .unwrap_or_else(|| panic!("no declared step for `k`:\n{out}"));
+    out[at..].lines().next().expect("a line").into()
+}
+
+#[test]
+fn a_written_parameter_type_prints_as_written() {
+    // Plan row MSG-written-param-type-printed: the declared step printed `out: Lines` as the
+    // list type it denotes, `[String | #ioError(op: String, path: String, why: String)]`.
+    // Probe k2 of row MSG-type-vars-printed-renamed:
+    let k2 = "h0(positional f, positional m) = m.map(f);\n\
+              h1(positional f, positional m) = h0(f, m).map(f);\n\
+              h2(positional f, positional m) = h1(f, m).map(f);\n\
+              g(positional f) = m -> h2(f, m);\n\
+              k(positional y: U, positional z: T, positional w: T, positional f: U -> U, \
+              out: Lines) { r = g(f)([y]); out <- r; out <- [z, w]; }\n\
+              main(m: MainArgs) { a = \"a\" ++ \"\"; k(a, 5, 6, s -> s ++ \"!\", out: m.stdout); }\n";
+    assert_eq!(
+        declared_k(&rejected(k2)),
+        "the type the checker found for `k` is `(U, T, T, U -> U, out: Lines) -> ()`"
+    );
+    // A written alias of a range prints as written, as it did by its range; the control, `v`
+    // with no type written, prints the type the checker found for it.
+    let some = "k(positional z: T, positional w: T, positional u: u8, positional v, \
+                out: Lines) { out <- [z, w]; x = v + 1; }\n\
+                main(m: MainArgs) { k(5, 6, 7, 8, out: m.stdout); }\n";
+    assert_eq!(
+        declared_k(&rejected(some)),
+        "the type the checker found for `k` is `(T, T, u8, U, out: Lines) -> () for U in int | \
+         f32 | f64 | rat`"
     );
 }
 

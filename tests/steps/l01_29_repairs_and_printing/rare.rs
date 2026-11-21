@@ -301,7 +301,7 @@ fn a_value_no_use_has_typed_is_said_to_have_no_type_yet() {
   [3] 1:27: the port `out` writes each value pushed to it as one line of text
   [4] 1:27: `g` needs this of its argument here
   [5] 1:27: `h` needs this of its argument here
-  [6] 2:1: `g` is declared here with no type written for `y` or its result; the type the checker found for `g` is `(y: _, out: [String | #ioError(op: String, path: String, why: String)]) -> ()`
+  [6] 2:1: `g` is declared here with no type written for `y` or its result; the type the checker found for `g` is `(y: _, out: Lines) -> ()`
       2 | g(y, out: Lines) { h(x: y, out: out); }
         | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   [7] 1:27: repair: write the value into a string, as `out <- "${x}";`"#
