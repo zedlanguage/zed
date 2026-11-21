@@ -14491,8 +14491,6 @@ fn at_least_zero() -> IntervalSet {
     IntervalSet::range(End::of(0), PosInf)
 }
 
-/// The code `c` as the operand of an `else`: as written where it is a name, a call or an
-/// access, else in parentheses, so that the `else` applies to all of it.
 /// The `else` tails that take each atom of `atoms`, written as patterns `#a`, with the default
 /// `d`, in order: ` else #a -> d else #b -> d`, the chain that names several atoms before L2
 /// (DESIGN.md sec:failure). Empty for no atom. It costs the length of the text it writes.
@@ -14500,6 +14498,8 @@ fn else_chain(atoms: &[String], d: &str) -> String {
     atoms.iter().map(|a| format!(" else {a} -> {d}")).collect()
 }
 
+/// The code `c` as the operand of an `else`: as written where it is a name, a call or an
+/// access, else in parentheses, so that the `else` applies to all of it.
 fn else_operand(c: &str) -> String {
     match c
         .chars()
