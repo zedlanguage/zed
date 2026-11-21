@@ -1678,7 +1678,6 @@ thread_local! {
     static NEXT: Cell<(Id, Id)> = const { Cell::new((0, 0)) };
 }
 
-<<<<<<< HEAD
 /// A new id. Block 0 is never drawn, so nothing built non-empty has id 0.
 ///
 /// Why no id is drawn twice. `BLOCKS` hands out each block number `b >= 1` once
