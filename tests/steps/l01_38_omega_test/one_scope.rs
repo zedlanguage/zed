@@ -7,7 +7,10 @@
 use std::sync::Arc;
 
 use zed_kernel::{Shared, Term, Value};
-use zed_tests::step_helpers::l01_16_elaboration::elab;
+// The units here are read by the analyses, which model the kernel's total `mod`, so a remainder
+// by a symbol that may be 0 or negative is elaborated though the checker refuses it (row
+// MOD-positive-modulus).
+use zed_tests::step_helpers::l01_16_elaboration::elab_total_mod as elab;
 use zed_tests::step_helpers::l01_38_presburger::pncx::{
     modular_case, modular_case_mode, modular_case_with,
 };

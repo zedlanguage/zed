@@ -3,6 +3,7 @@
 
 use super::x;
 use zed_tests::step_helpers::l01_16_elaboration::errors;
+use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
 
 #[test]
 fn one_failure_flows_through_the_arithmetic() {
@@ -49,16 +50,68 @@ fn an_atom_compared_with_equals_is_data() {
 
 #[test]
 fn euclidean_division_keeps_the_remainder_non_negative() {
+    // DESIGN.md L1.18; `mod` takes only `m` in int[1..] (QUESTIONS A174), `div` any divisor.
     let cases = [
         ("7 div -2", "-3"),
-        ("7 mod -2", "1"),
         ("-7 div -2", "4"),
-        ("-7 mod -2", "1"),
         ("-7 div 2", "-4"),
         ("-7 mod 2", "1"),
+        ("(-1 div 4, -1 mod 4)", "(-1, 3)"),
     ];
     for (e, want) in cases {
         assert_eq!(x(e), want, "{e}");
+    }
+}
+
+/// `mod` takes only `m` in int[1..] (DESIGN.md sec:domains, L1.18; QUESTIONS A174, author,
+/// 2026-11-21: "make sure `m > 0` both `mod` and `floatMod`"; row MOD-positive-modulus).
+#[test]
+fn mod_takes_a_modulus_from_one() {
+    // Proved at most 0: no test is offered.
+    assert_eq!(
+        errors("f(x: int) = x mod 0;\n"),
+        ["`mod` takes `m` in int[1..]: `x mod 0`. [x mod 0]"]
+    );
+    assert_eq!(
+        errors("f(x: int) = x mod -3;\n"),
+        ["`mod` takes `m` in int[1..]: `x mod -3`. [x mod -3]"]
+    );
+    // May lie outside: the test, which checks.
+    let refused = errors("f(x: int, n: int) = x mod n;\n");
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert!(
+        refused[0].starts_with(
+            "`mod` takes `m` in int[1..]: `x mod n : int`. Try `if n > 0 { x mod n } else { … }` \
+             instead."
+        ),
+        "{}",
+        refused[0]
+    );
+    let repaired = "f(x: int, n: int) = if n > 0 { x mod n } else { 0 };\n";
+    assert_eq!(type_errors(repaired), Vec::<String>::new());
+    // In int[1..]: accepted, with no `#divByZero`.
+    let ranged = "f(x: int, n: int[1..]) = x mod n;\n";
+    assert_eq!(type_errors(ranged), Vec::<String>::new());
+    // The residue lies in `0..<m`, so at least 0.
+    assert_eq!(sig(ranged, "f"), "(x: int, n: int[1..]) -> int[0..]");
+}
+
+/// `x == m * (x div m) + x mod m` and `0 <= x mod m <= m - 1` for every `x` in `-50..=50` and
+/// `m` in `1..=12` (DESIGN.md L1.18): one program per `x`, each calling the law at every `m`.
+#[test]
+fn div_and_mod_keep_the_euclidean_law() {
+    let euclid = "euclid(x: int, m: int[1..]) = { q = x div m; r = x mod m; \
+                  x == m * q + r && 0 <= r && r <= m - 1 };\n";
+    for xv in -50..=50 {
+        let calls: Vec<String> = (1..=12)
+            .map(|m| format!("euclid(x: {xv}, m: {m})"))
+            .collect();
+        let src = format!("{euclid}ok = {};\n", calls.join(" && "));
+        assert_eq!(
+            zed_tests::step_helpers::l01_16_elaboration::value(&src, "ok"),
+            "true",
+            "x = {xv}"
+        );
     }
 }
 

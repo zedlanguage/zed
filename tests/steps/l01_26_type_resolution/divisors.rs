@@ -72,8 +72,13 @@ fn a_divisor_of_literals_that_are_not_zero_adds_no_div_by_zero() {
 fn a_divisor_that_may_be_zero_keeps_div_by_zero() {
     let div = format!("{ZERO}f(positional c: bool, x: int) = x div zero(c);\n");
     assert_eq!(sig(&div, "f"), "(bool, x: int) -> int | #divByZero");
+    // A modulus that may be 0 is refused instead (DESIGN.md sec:domains; QUESTIONS A174).
     let modulo = format!("{ZERO}f(positional c: bool, x: int) = x mod zero(c);\n");
-    assert_eq!(sig(&modulo, "f"), "(bool, x: int) -> int | #divByZero");
+    let errors = type_errors(&modulo);
+    assert!(
+        errors.len() == 1 && errors[0].starts_with("`mod` takes `m` in int[1..]: `x mod zero(c)"),
+        "{errors:?}"
+    );
     assert_eq!(
         sig(
             "f(positional c: bool, x: rat) = x / (if c { 2r } else { 0r });\n",
@@ -191,7 +196,7 @@ fn a_test_that_leaves_zero_keeps_div_by_zero() {
         "if d >= 0 || d < -1 { x div d } else { 0 }",
         "if d != 0 && x != 0 { 0 } else { x div d }",
         "(if d != 0 { 1 } else { 2 }) + x div d",
-        "{ y = if d != 0 { 1 } else { 0 }; y + x mod d }",
+        "{ y = if d != 0 { 1 } else { 0 }; y + x div d }",
     ] {
         let text = format!("f(x: int, d: int) = {body};\n");
         assert_eq!(

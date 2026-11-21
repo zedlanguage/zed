@@ -4028,6 +4028,12 @@ fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelErro
     }
     let x = a.as_integer().expect("an integer");
     let y = b.as_integer().expect("an integer");
+    // A Zed program reaches `mod` only with `m` in `int[1..]`, which the checker proves
+    // (DESIGN.md sec:domains and sec:kernel (b); QUESTIONS A174, row MOD-positive-modulus).
+    // The kernel keeps `mod` total on the ints as before, `#divByZero` at 0 and the Euclidean
+    // remainder by `|m|` below it, because the preimage, Presburger and lattice layers model
+    // that operation on the kernel terms they are tested with, and a checked program never
+    // observes the difference.
     if matches!(p, Prim::IntDiv | Prim::Mod) && y.is_zero() {
         return Ok(Some(Value::atom("divByZero")));
     }

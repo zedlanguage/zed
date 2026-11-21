@@ -909,8 +909,8 @@ fn the_first_prime_from_n_read_from_stdin() {
                 (n ..).where(isPrime).all(x -> x < n + 3)]}";
     let src = dir("l03_02_map_run/prime_stdin").join("prime_stdin.zed");
     let text = format!(
-        "isPrime(positional k) = k >= 2 && (2 ..< k).where(d -> d * d <= k && k mod d == 0)\
-         .count == 0;\n\
+        "isPrime(positional k) = k >= 2 && (2 ..< k).where(d -> d >= 2 && d * d <= k && \
+         k mod d == 0).count == 0;\n\
          main(m: MainArgs) {{\n    n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n    m.stdout <- \"{body}\";\n}}\n"
     );
     std::fs::write(&src, text).unwrap();

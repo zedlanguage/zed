@@ -160,15 +160,16 @@ fn a_test_is_narrowed_through_an_if_inside_it() {
     rejected(&[&at(12), &under(12), &nested(12)]);
 }
 
-/// A call in an operand position the test's spine does not cover, the divisor of `mod`, is
+/// A call in an operand position the test's spine does not cover, the divisor of `div`, is
 /// read through the callee (CHECK-arm-test-if-and-operand-calls): `t(x)` is `x` where `x > 0`,
 /// so the divisor is not 0 in the arm and `f` gives no `#divByZero`; where `x = 0` reaches the
-/// arm, `t(0)` is 0 and it does.
+/// arm, `t(0)` is 0 and it does. (`div`, not `mod`: a modulus that may be 0 is refused, not
+/// typed with `#divByZero`; QUESTIONS A174.)
 #[test]
 fn a_divisor_is_read_through_a_call() {
     let t = "t(positional y: int) = if y > 0 { y } else { 0 };\n";
     let at = |c: i32| {
-        let src = format!("{t}f(x: int, n: int) = if x > {c} {{ n mod t(x) }} else {{ 0 }};\n");
+        let src = format!("{t}f(x: int, n: int) = if x > {c} {{ n div t(x) }} else {{ 0 }};\n");
         sig(&src, "f")
     };
     assert_eq!(at(0), "(x: int, n: int) -> int");

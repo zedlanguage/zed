@@ -382,11 +382,12 @@ fn a_call_with_an_argument_that_may_fail_is_read_at_its_place() {
     }
     // With `a` declared `int`, an argument that fails bubbles out of the call, which rung 2
     // does not yet translate where the argument holds a quotient or remainder by a term, with
-    // or without the condition, so it takes nothing here.
+    // or without the condition, so it takes nothing here. A quotient: the checker refuses a
+    // remainder by `n`, which may be 0 or below (QUESTIONS A174), and so gives it no condition.
     let f = "f(positional a: int) = a == 0;\n";
     for goal in [
-        format!("{f}ok(x, n) = f((x mod n) * 0) == f(0);"),
-        format!("{f}ok(x, n) = f(x mod n);"),
+        format!("{f}ok(x, n) = f((x div n) * 0) == f(0);"),
+        format!("{f}ok(x, n) = f(x div n);"),
     ] {
         let (ps, p) = function("ok(x, n) = true;");
         let (_, g) = function(&goal);
@@ -403,8 +404,10 @@ fn a_call_with_an_argument_that_may_fail_is_read_at_its_place() {
         let e = checked("ok(x, n) = true;", &goal);
         assert!(matches!(e, Entailment::Proved(_)), "{goal}: {e}");
     }
-    // A function whose body fails where its argument is 0, called with one.
-    let h = "h(positional a, positional m) = a mod m;\n";
+    // A function whose body fails where its argument is 0, called with one. A quotient: a
+    // remainder by `m` makes `m` in int[1..] a need of `h`, which the call does not meet
+    // (QUESTIONS A174).
+    let h = "h(positional a, positional m) = a div m;\n";
     let goal = format!("{h}ok(x, n) = h(x, n) * 0 == 0;");
     assert!(!matches!(
         checked("ok(x, n) = true;", &goal),
@@ -1118,20 +1121,23 @@ pub(super) fn nested_double_calls(k: usize) -> String {
     src
 }
 
-/// `t(a, b) = a mod (a mod (... (a mod b)))`, k remainders deep, whose condition holds k
-/// divisors. Its parameters are not named as `ok`'s, which elaboration would rename.
+/// `t(a, b) = a div (a div (... (a div b)))`, k quotients deep, whose condition holds k
+/// divisors. Its parameters are not named as `ok`'s, which elaboration would rename. Quotients,
+/// not remainders: `mod` takes only a modulus shown in `int[1..]` (DESIGN.md sec:domains;
+/// QUESTIONS A174), so a remainder by a divisor that may be 0 is refused, while `div` fails
+/// with `#divByZero` there and keeps the k divisors in the condition.
 fn deep_divisor(k: usize) -> String {
     let mut t = String::from("b");
     for _ in 0..k {
-        t = format!("a mod ({t})");
+        t = format!("a div ({t})");
     }
     format!("t(positional a, positional b) = {t};\n")
 }
 
-/// Over [`deep_divisor`]'s `t` of k divisors, k remainders by `t(x, n) + j` summed, each
+/// Over [`deep_divisor`]'s `t` of k divisors, k quotients by `t(x, n) + j` summed, each
 /// operand's condition the k divisors and its own, met one by one.
 pub(super) fn met_divisors(k: usize) -> String {
-    let sum: Vec<String> = (0..k).map(|j| format!("y mod (t(x, n) + {j})")).collect();
+    let sum: Vec<String> = (0..k).map(|j| format!("y div (t(x, n) + {j})")).collect();
     format!("{}ok(x, y, n) = {} >= 0;", deep_divisor(k), sum.join(" + "))
 }
 
@@ -1139,7 +1145,7 @@ pub(super) fn met_divisors(k: usize) -> String {
 /// reads.
 pub(super) fn guarded_arms(k: usize) -> String {
     let arms: Vec<String> = (0..k)
-        .map(|j| format!("(if x mod t(x, n) >= {j} {{ y mod t(x, n) >= 0 }} else {{ true }})"))
+        .map(|j| format!("(if x div t(x, n) >= {j} {{ y div t(x, n) >= 0 }} else {{ true }})"))
         .collect();
     format!("{}ok(x, y, n) = {};", deep_divisor(k), arms.join(" && "))
 }

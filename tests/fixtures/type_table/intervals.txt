@@ -17,8 +17,8 @@ int, int[0..] => int | #divByZero -- sec:failure "Where some reaching inputs giv
 int, int[_..=0] => int | #divByZero -- sec:failure "Where some reaching inputs give it" (unbounded below to 0)
 
 template: $0 mod $1
-int, =(if c { -3 } else { -1 }) => int -- sec:failure "Where no reaching input gives the atom"
-int, =(if c { -1 } else { 0 }) => int | #divByZero -- sec:failure "Where some reaching inputs give it"
+int, =(if c { -3 } else { -1 }) => error * -- sec:domains "`mod` takes `m` in int[1..]"; QUESTIONS A174 "make sure `m > 0` both `mod` and `floatMod`"
+int, =(if c { -1 } else { 0 }) => error * -- sec:domains "`mod` takes `m` in int[1..]"; QUESTIONS A174 "make sure `m > 0` both `mod` and `floatMod`"
 int, int[1..] => int -- sec:failure "Where no reaching input gives the atom"
 
 template: $0 ^ $1

@@ -40,7 +40,7 @@ pub(super) fn every(n: usize) -> String {
         text += &format!(
             "lim{i} = 10;\n\
              c{i}(positional a: int, b: int, x: f64, y: f64) = a < b && x >= y || !(a == {i});\n\
-             d{i}(positional a: int, b: int, step = 1) = if a <= 3 {{ -(a div b) }} else {{ a mod b - step }};\n\
+             d{i}(positional a: int, b: int[1..], step = 1) = if a <= 3 {{ -(a div b) }} else {{ a mod b - step }};\n\
              e{i}(positional x: f64, s: String) = (x / 2.5 + x * 1.5e-3 > x ^ 2.0, s ++ \"t\");\n"
         );
     }

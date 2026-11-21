@@ -601,7 +601,11 @@ fn floor_div_mod(a: i64, b: i64) -> (i64, i64) {
 /// The catalog's Zed texts for the floor and ceiling quotients and the floor remainder, which
 /// the compiler's `Num` reaches with a negative divisor (`x * -3` in `times_pre`), give the
 /// Rust routine's value for every sign of the dividend and of the divisor, where Zed's `div`
-/// and `mod` are Euclidean.
+/// and `mod` are Euclidean. A text stands for the routine on Rust's operands, where a divisor 0
+/// panics, so it is checked in two functions, `p` with `b` in int[1..] and `q` with `b` in
+/// int[_..=-1] (one type `int[_..=-1, 1..]` is layer L10, not yet supported): `mod` takes `m`
+/// in int[1..] (DESIGN.md sec:domains; QUESTIONS A174), and in each the arm of the other sign
+/// is not reached, so each `mod` that is reached is proved to have one.
 #[test]
 fn the_catalog_floor_texts_hold_for_a_negative_divisor() {
     let root = zed_tools::impl_root();
@@ -631,7 +635,11 @@ fn the_catalog_floor_texts_hold_for_a_negative_divisor() {
         for a in [-7, -6, -1, 0, 1, 6, 7] {
             for b in [-3, -2, -1, 1, 2, 3] {
                 let got = zed_tests::step_helpers::l01_16_elaboration::value(
-                    &format!("a = {a};\nb = {b};\nx = {zed};\n"),
+                    &format!(
+                        "p(a: int, b: int[1..]) = {zed};\nq(a: int, b: int[_..=-1]) = {zed};\n\
+                         x = {}(a: {a}, b: {b});\n",
+                        if b > 0 { "p" } else { "q" }
+                    ),
                     "x",
                 );
                 let want = floor((a, b), which);

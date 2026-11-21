@@ -8092,14 +8092,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // with no suffix is read at the carrier it adopts beside `r` (`Ck::term`).
                 // The same one read per division, so the cost above holds; measured by
                 // `chained_rat_tests_and_divisions_check_in_linear_time`.
-                let divides = matches!(op, BinaryOp::Div | BinaryOp::IntDiv | BinaryOp::Mod);
+                // `mod` is no division here: it takes only `m` in int[1..], refused otherwise by
+                // `Ck::modulus` below, so in a program the checker accepts its modulus is never
+                // 0 and the kernel arrow's `#divByZero` is dropped (QUESTIONS A174).
+                let divides = matches!(op, BinaryOp::Div | BinaryOp::IntDiv);
                 let rat_zero = Value::rat(Rat::int(0.into()));
                 let carried_only = |c| y.ty.without_atoms().subtype(&Ty::carrier(c));
                 let int_divisor = carried_only(Carrier::Int);
-                let mut nonzero = divides
-                    && ((!y.ty.contains(&Value::Int(0)) && !y.ty.contains(&rat_zero))
-                        || (int_divisor && !self.ints_here(b).0.contains(0))
-                        || (carried_only(Carrier::Rat) && !self.may_be_here(b, &rat_zero)));
+                let mut nonzero = op == BinaryOp::Mod
+                    || divides
+                        && ((!y.ty.contains(&Value::Int(0)) && !y.ty.contains(&rat_zero))
+                            || (int_divisor && !self.ints_here(b).0.contains(0))
+                            || (carried_only(Carrier::Rat) && !self.may_be_here(b, &rat_zero)));
                 // An int divisor whose range holds 0 under the tests: whether a state reaches
                 // it at 0 at all, the written constraints evaluated at the integer roots of
                 // the divisor (QUESTIONS A81, `Scope::zero_reached`). Outside every test, or
@@ -8135,6 +8139,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     .iter()
                     .any(|t| t.atoms().contains(&Value::atom("divByZero")));
                 let mut over_space = false;
+                if op == BinaryOp::Mod {
+                    self.modulus(&y, b, span);
+                }
                 if op == BinaryOp::Pow {
                     self.exponent(&x, &y, b, span);
                     if let Some(a) = x.expr {
@@ -16942,8 +16949,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                  quotient is not an integer and the dividend is not smaller than the divisor"
             }
             Prim::Mod => {
-                "`mod` writes out the divisor where the quotient is not an integer and the \
-                 dividend is not in `0..<|divisor|`"
+                "`mod` writes out the modulus where the quotient is not an integer and the \
+                 dividend is not in `0..<m`"
             }
             Prim::Mul | Prim::Div => "the kernel writes out the parts it multiplies",
             Prim::CastF64 | Prim::CastF32 => {
@@ -20600,6 +20607,65 @@ impl<'t, 'a> Ck<'t, 'a> {
             self.classes[j].order_of = Some((r, (word, first, span)));
         }
         out
+    }
+
+    /// `x mod m` takes `m` in int[1..] (DESIGN.md sec:domains; QUESTIONS A174, author,
+    /// 2026-11-21: "make sure `m > 0` both `mod` and `floatMod`"; row MOD-positive-modulus),
+    /// decided as an operand of a bit word is ([`Self::bit_domains`]): from the listed values
+    /// of the modulus or the interval of its expression under the tests the walk is in, and
+    /// for a modulus of a type variable by a need on its parameter, checked at each call
+    /// ([`Self::floor`]). A modulus that may lie outside is refused with the test
+    /// `if n > 0 { x mod n } else { … }` in the headline; one proved at most 0, as `x mod 0`
+    /// or `x mod -3`, with no test, its literal shown as written (DESIGN.md sec:diagnostics,
+    /// "The repair of a value outside the ints its use takes").
+    fn modulus(&mut self, m: &Arg<'a>, e: &'a Expr, span: Span) {
+        let within = Within::Positive;
+        let takes = format!("`mod` takes `m` {}", within.takes());
+        if !m.ty.vars.is_empty() {
+            let d = IntDomain {
+                what: takes.as_str().into(),
+                below_two_pow: None,
+                written: Some(WrittenRange::new(Some(Value::Int(1)), None)),
+                key: None,
+                name: "m".into(),
+            };
+            self.floor(&m.ty, e, d, span);
+        }
+        let Some(r) = self.int_range(m, e) else {
+            return;
+        };
+        if r.ints.is_subset(&IntervalSet::range(End::of(1), PosInf)) {
+            return;
+        }
+        let at = m.at.unwrap_or(e.span);
+        let shown = &r.shown;
+        let mut notes = vec![Note {
+            span: at,
+            text: format!("`m` is this modulus, {shown}"),
+        }];
+        if r.narrowed {
+            notes.extend(self.deciding_notes(e));
+        }
+        notes.extend(self.refused_notes(e));
+        self.derive_into(&[at], &mut notes);
+        notes.push(Note {
+            span,
+            text: "`x mod m` is the residue of `x` in `0..<m`, and no int lies in `0..<m` for a \
+                   modulus below 1"
+                .into(),
+        });
+        let code = self.code(Some(at));
+        let arg = code.map(|c| (c, self.tested(e).is_some()));
+        let call = self.call_parts(span, at);
+        let outside_all = within.holds_none_of(&r);
+        let (first, repairs) = passed_repairs("m", &within, arg, call, outside_all, None, span);
+        notes.extend(repairs);
+        // A literal modulus shows as written, `x mod -3`; any other with its type.
+        let piece = match (code, self.code(Some(span))) {
+            (Some(c), Some(whole)) if c == shown.as_str() => whole.to_string(),
+            _ => self.annotated(span, at, shown),
+        };
+        self.error_with(span, domain_message(&takes, &piece, first.as_ref()), notes);
     }
 
     /// Checks each operand of the bit word or integer machine operation `w` against its domain
@@ -27984,6 +28050,9 @@ enum Within {
     /// The range a parameter is declared with, as `int[1..=9]`, tested as `n >= 1 && n <= 9`
     /// (DESIGN.md L1.39).
     Written(WrittenRange),
+    /// The ints from 1, which the modulus of `mod` takes (QUESTIONS A174), tested as `m > 0`,
+    /// the comparison DESIGN.md sec:diagnostics writes for it, as `floatMod`'s `m > 0.0`.
+    Positive,
 }
 
 /// The end of a [`Within::Range`] that no int it holds reaches, at the width `w`, or at the
@@ -28045,7 +28114,9 @@ impl Within {
         match self {
             Within::Range { low, .. } => *low,
             Within::Bytes(vs) => vs[0],
-            Within::Written(_) => unreachable!("a declared range is never the domain of a width"),
+            Within::Written(_) | Within::Positive => {
+                unreachable!("a declared range or a modulus is never the domain of a width")
+            }
         }
     }
 
@@ -28066,6 +28137,7 @@ impl Within {
                 .iter()
                 .any(|&b| v.surface_cmp(&Value::Int(b)).is_some_and(|o| o.is_eq())),
             Within::Written(r) => r.holds(v),
+            Within::Positive => v.surface_cmp(&Value::Int(1)).is_some_and(|o| o.is_ge()),
         }
     }
 
@@ -28090,6 +28162,8 @@ impl Within {
             Within::Bytes(vs) => !vs.iter().any(|&b| r.ints.contains(b)),
             // One meet of the two interval sets, O(p) for p pieces.
             Within::Written(w) => r.ints.meet(&written_ints(w)).is_empty(),
+            // One search of the pieces, O(log p), as for a range from 1.
+            Within::Positive => r.ints.piece_at_or_above(&End::of(1)).is_none(),
         }
     }
 
@@ -28109,6 +28183,7 @@ impl Within {
             } => format!("in int[{low}..<{b}]"),
             Within::Bytes(_) => "a multiple of 8 in int[0..]".into(),
             Within::Written(r) => format!("in {}", r.text),
+            Within::Positive => "in int[1..]".into(),
         }
     }
 
@@ -28116,7 +28191,9 @@ impl Within {
     /// multiple of 8 in int[0..], as 8, 16, 32 or 64".
     fn value(&self) -> String {
         match self {
-            Within::Range { .. } | Within::Written(_) => format!("a value {}", self.takes()),
+            Within::Range { .. } | Within::Written(_) | Within::Positive => {
+                format!("a value {}", self.takes())
+            }
             Within::Bytes(vs) => {
                 let vs: Vec<String> = vs.iter().map(i64::to_string).collect();
                 format!("{}, as {}", self.takes(), or_list(&vs))
@@ -28141,6 +28218,7 @@ impl Within {
                 (None, Some(h)) => format!("{a} <= {h}"),
                 (None, None) => unreachable!("a parameter declared `int[_..]` has no domain"),
             },
+            Within::Positive => format!("{a} > 0"),
         }
     }
 }
@@ -28501,7 +28579,9 @@ impl<'a> Ck<'_, 'a> {
     ) {
         let (result, kind) = match op {
             BinaryOp::Div => ("a rat", "rat"),
-            BinaryOp::IntDiv | BinaryOp::Mod => ("an int", "int"),
+            BinaryOp::IntDiv => ("an int", "int"),
+            // `mod` takes only `m` in int[1..], checked by `Ck::modulus` (QUESTIONS A174).
+            BinaryOp::Mod => unreachable!("`mod` has no `#divByZero`"),
             BinaryOp::Or
             | BinaryOp::And
             | BinaryOp::Eq

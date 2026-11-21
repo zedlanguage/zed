@@ -12,14 +12,16 @@ fn shown(src: &str) -> String {
     rejected(src).trim_end().to_string()
 }
 
+/// `div`, not `mod`: a modulus that may be 0 is a type error with its own repair, not an
+/// operation that always fails (DESIGN.md sec:domains; QUESTIONS A174).
 #[test]
 fn a_divisor_that_cancels_shows_the_divisor_and_the_menu() {
     assert_eq!(
-        shown("f(positional x: int) = x mod (x - x);\n"),
+        shown("f(positional x: int) = x div (x - x);\n"),
         "\
-1:24: `mod` here always fails with `#divByZero`: its divisor adds `x` as often as it subtracts it, which makes it 0 for every value of `x`, so no value that reaches it gives an int.
+1:24: `div` here always fails with `#divByZero`: its divisor adds `x` as often as it subtracts it, which makes it 0 for every value of `x`, so no value that reaches it gives an int.
   [1] 1:30: this divisor is always 0
-      1 | f(positional x: int) = x mod (x - x);
+      1 | f(positional x: int) = x div (x - x);
         |   ^^^^^^^^^^^^^^^^^ [4]      ^^^^^^^ [1, 2]
         |                        ^^^^^^^^^^^^^ [6, 7, 8]
         |                               ^ [3]
@@ -28,7 +30,7 @@ fn a_divisor_that_cancels_shows_the_divisor_and_the_menu() {
   [3] 1:31: `x` is int here
   [4] 1:3: `x` is declared `int`
   [5] 1:35: `x` is int here
-  [6] 1:24: repair: divide by a value that can be other than 0, such as a parameter `d: int`: `x mod d`
+  [6] 1:24: repair: divide by a value that can be other than 0, such as a parameter `d: int`: `x div d`
   [7] 1:24: repair: write `#divByZero` in place of this division, where the failure is meant
   [8] 1:24: repair: write `#bug(\"…\")` in place of this division, where it is never meant to be reached
 "
@@ -82,8 +84,8 @@ fn a_key_outside_the_keys_shows_both_types_and_the_menu() {
 #[test]
 fn each_offered_repair_applied_makes_the_program_check() {
     let cases = [
-        // `x mod d`, `d` a parameter declared `int`.
-        "f(positional x: int, d: int) = x mod d;\n",
+        // `x div d`, `d` a parameter declared `int`.
+        "f(positional x: int, d: int) = x div d;\n",
         "f(positional x: int) = #divByZero;\n",
         "f(positional x: int) = #bug(\"never reached\");\n",
         // `int(s)`, `s` a parameter declared `String`.

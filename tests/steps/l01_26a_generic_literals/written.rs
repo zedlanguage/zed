@@ -243,10 +243,7 @@ fn an_operand_of_a_comparison_is_quoted_as_written() {
 fn a_divisor_literal_is_quoted_as_written() {
     assert_eq!(
         type_errors("f(x: int) = x mod 0x0_0;\n"),
-        [
-            "`mod` here always fails with `#divByZero`: its divisor is the literal 0x0_0, so no \
-          value that reaches it gives an int. [x mod 0x0_0]"
-        ]
+        ["`mod` takes `m` in int[1..]: `x mod 0x0_0`. [x mod 0x0_0]"]
     );
     assert_eq!(
         type_errors("f(x: rat) = x / 0.0_0r;\n"),

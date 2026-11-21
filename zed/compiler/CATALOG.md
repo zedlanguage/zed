@@ -588,7 +588,7 @@ Counts: 1495 routines, 57704 uses.
 | `core::num::i128::checked_sub` | 5 | 2 | `crates/zedc-int/src/int.rs:217` | missing |
 | `core::num::i128::checked_sub_unsigned` | 1 | 1 | `crates/zedc-int/src/int.rs:2008` | missing |
 | `core::num::i128::div_euclid` | 4 | 3 | `crates/zedc-check/src/check/widen.rs:776` | `a div b` |
-| `core::num::i128::rem_euclid` | 4 | 3 | `crates/zed-kernel/src/types/empty.rs:1035` | `a mod b` |
+| `core::num::i128::rem_euclid` | 4 | 3 | `crates/zed-kernel/src/types/empty.rs:1035` | `a mod abs(b)` |
 | `core::num::i128::trailing_zeros` | 1 | 1 | `crates/zed-kernel/src/num/fast.rs:1034` | missing |
 | `core::num::i128::unsigned_abs` | 10 | 2 | `crates/zedc-int/src/int.rs:163` | `abs(a)` |
 | `core::num::i64::checked_abs` | 1 | 1 | `crates/zed-kernel/src/words.rs:101` | missing |
@@ -602,7 +602,7 @@ Counts: 1495 routines, 57704 uses.
 | `core::num::i64::count_ones` | 1 | 1 | `crates/zed-kernel/src/bits.rs:197` | `popCount(a)` |
 | `core::num::i64::div_euclid` | 1 | 1 | `crates/zedc-int/src/int.rs:180` | `a div b` |
 | `core::num::i64::leading_zeros` | 1 | 1 | `crates/zed-kernel/src/bits.rs:180` | `leadingZeros(a, width: 64)` |
-| `core::num::i64::rem_euclid` | 5 | 2 | `crates/zedc-check/src/check/widen.rs:793` | `a mod b` |
+| `core::num::i64::rem_euclid` | 5 | 2 | `crates/zedc-check/src/check/widen.rs:793` | `a mod abs(b)` |
 | `core::num::i64::saturating_add` | 1 | 1 | `crates/zedc-check/src/check/widen.rs:811` | `min(max(a + b, -(2^63)), 2^63 - 1)` |
 | `core::num::i64::signum` | 1 | 1 | `crates/zedc-int/src/int.rs:1872` | `if a > 0 { 1 } else if a < 0 { -1 } else { 0 }` |
 | `core::num::i64::trailing_zeros` | 2 | 2 | `crates/zed-kernel/src/bits.rs:200` | `trailingZeros(a, width: 64)` |
@@ -1149,7 +1149,7 @@ Counts: 1495 routines, 57704 uses.
 | `num_bigint::bigint::<BigInt as Integer>::div_floor` | 4 | 1 | `crates/zedc-int/src/int.rs:183` | `if b < 0 { (-a) div (-b) } else { a div b }` |
 | `num_bigint::bigint::<BigInt as Integer>::gcd` | 5 | 1 | `crates/zedc-int/src/int.rs:171` | row STD-num |
 | `num_bigint::bigint::<BigInt as Integer>::is_even` | 1 | 1 | `crates/zed-kernel/src/num.rs:244` | `a mod 2 == 0` |
-| `num_bigint::bigint::<BigInt as Integer>::is_multiple_of` | 1 | 1 | `crates/zedc-int/src/int.rs:543` | `a mod b == 0` |
+| `num_bigint::bigint::<BigInt as Integer>::is_multiple_of` | 1 | 1 | `crates/zedc-int/src/int.rs:543` | `a mod abs(b) == 0` |
 | `num_bigint::bigint::<BigInt as Integer>::is_odd` | 2 | 1 | `crates/zedc-int/src/int.rs:141` | `a mod 2 == 1` |
 | `num_bigint::bigint::<BigInt as Integer>::mod_floor` | 5 | 1 | `crates/zedc-int/src/int.rs:194` | `if b < 0 { -((-a) mod (-b)) } else { a mod b }` |
 | `num_bigint::bigint::<BigInt as Neg>::neg` | 10 | 6 | `crates/zed-kernel/src/eval.rs:2199` | `-a` |

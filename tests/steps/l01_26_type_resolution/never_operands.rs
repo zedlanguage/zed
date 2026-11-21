@@ -43,7 +43,9 @@ const FORMS: [(&str, &str, &str, &str); 19] = [
     ("<", "g", "int -> int", "n"),
     // The operators of one arrow.
     ("div", "true", "true", "n"),
-    ("mod", "true", "true", "n"),
+    // `mod` takes `m` in int[1..] (DESIGN.md sec:domains; QUESTIONS A174), so `n: int` is no
+    // modulus it takes; the literal 3 is.
+    ("mod", "true", "true", "3"),
     ("++", "1", "1", "s"),
     ("&&", "1", "1", "b"),
     ("||", "1", "1", "b"),

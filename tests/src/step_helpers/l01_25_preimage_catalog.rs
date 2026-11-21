@@ -6,12 +6,12 @@ use zed_kernel::{Shared, Term};
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::preimage::{Domains, Preimage};
 
-use super::l01_16_elaboration::{elab, with_prelude};
+use super::l01_16_elaboration::{elab_total_mod, with_prelude};
 
 /// The parameters and the body of the function `ok` that `src` defines, under the
 /// interpreter's prelude and the unit's other definitions.
 pub fn function(src: &str) -> (Vec<Arc<str>>, Term) {
-    let u = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+    let u = elab_total_mod(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
     let mut t = u.get("ok").expect("a definition `ok`");
     let mut lets = Vec::new();
     while let Term::Let(n, e, b) = &t {

@@ -34,10 +34,10 @@ main(m: MainArgs) {
   \"14 ${(if f { x div y } else { 1 }) else #divByZero -> 9}\" ++ \" \" ++
   \"15 ${(if d { 1 } else { 2 }) else #divByZero -> 9}\" ++ \" \" ++
   \"16 ${if y != 0 && (x div y) > 0 { 1 } else { 0 }}\" ++ \" \" ++
-  \"17 ${(if f && ((0 mod y) < -4) { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
-  \"18 ${(if ((0 mod y) < -4) && f { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
-  \"19 ${(if t && ((0 mod y) < -4) { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
-  \"20 ${(if f || ((0 mod y) < -4) { 1 } else { 0 }) else #divByZero -> 9}\";
+  \"17 ${(if f && ((0 div y) < -4) { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
+  \"18 ${(if ((0 div y) < -4) && f { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
+  \"19 ${(if t && ((0 div y) < -4) { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
+  \"20 ${(if f || ((0 div y) < -4) { 1 } else { 0 }) else #divByZero -> 9}\";
 }
 ";
 

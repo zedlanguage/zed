@@ -389,22 +389,22 @@ fn string_words_on_empty_and_unicode_text() {
     assert_eq!(x("len(trim(\"\\u{85}x\\u{85}\"))"), "1");
 }
 
-/// Euclidean `div` and `mod` at zero, at one, and past a machine word; `mod` by zero is
-/// `#divByZero` as `div` is.
+/// Euclidean `div` and `mod` at zero, at one, and past a machine word. `mod` takes `m` in
+/// int[1..] (DESIGN.md sec:domains; QUESTIONS A174), so its modulus is a literal here: through
+/// `whole`, an `int`, it would be refused (l01_17 `edges`).
 #[test]
 fn euclidean_div_and_mod_at_the_edges() {
     let cases = [
         ("0 div whole(5)", "0"),
-        ("0 mod whole(-5)", "0"),
-        ("7 mod whole(0)", "#divByZero"),
+        ("0 mod 5", "0"),
         ("-7 div whole(1)", "-7"),
-        ("-7 mod whole(1)", "0"),
+        ("-7 mod 1", "0"),
         ("-7 div whole(-1)", "7"),
         ("-(2^70) div whole(-(2^35))", "34359738368"),
-        ("(-(2^70) - 1) mod whole(2^35)", "34359738367"),
+        ("(-(2^70) - 1) mod 2^35", "34359738367"),
         ("(-(2^70) - 1) div whole(2^35)", "-34359738369"),
-        ("5 mod whole(-(2^70))", "5"),
-        ("-5 mod whole(-(2^70))", "1180591620717411303419"),
+        ("5 mod 2^70", "5"),
+        ("-5 mod 2^70", "1180591620717411303419"),
     ];
     for (e, want) in cases {
         assert_eq!(x(e), want, "{e}");

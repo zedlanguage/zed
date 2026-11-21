@@ -530,6 +530,9 @@ impl Prim {
                 a(&[F32, F32], F32, &[]),
                 a(&[R, R], R, DIV0),
             ],
+            // The kernel's `mod` is total on the ints, `#divByZero` at 0 (zed-kernel eval.rs,
+            // `int_binary`); a Zed program reaches it only with `m` in `int[1..]`, which the
+            // checker proves, and so drops the atom (DESIGN.md sec:domains; QUESTIONS A174).
             IntDiv | Mod => list![a(&[I, I], I, DIV0)],
             // A `rat` takes an integer exponent of either sign, exactly; `0r` to a negative
             // power is `#divByZero`. `f32 ^ int` is the one arrow between two carriers

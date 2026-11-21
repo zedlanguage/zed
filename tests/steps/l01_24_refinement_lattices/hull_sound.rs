@@ -243,7 +243,11 @@ fn expr(rng: &mut Rng, cx: &mut Ctx, depth: usize) -> String {
         5 | 6 => {
             let op = rng.pick(&["div", "mod"]);
             let x = expr(rng, cx, d);
-            format!("({x}) {op} ({})", divisor(rng, cx, d))
+            let y = match op {
+                "div" => divisor(rng, cx, d),
+                _ => modulus(rng, cx, d),
+            };
+            format!("({x}) {op} ({y})")
         }
         7 => format!("({}) ^ {}", expr(rng, cx, d), rng.int(0, 3)),
         8 => {
@@ -315,6 +319,21 @@ fn divisor(rng: &mut Rng, cx: &mut Ctx, depth: usize) -> String {
         1 if !nonzero.is_empty() => rng.pick(&nonzero),
         2 => format!("({}) mod {} + 1", expr(rng, cx, depth), rng.int(1, 4)),
         _ => format!("-(({}) mod {} + 1)", expr(rng, cx, depth), rng.int(1, 4)),
+    }
+}
+
+/// A random modulus the checker shows in `int[1..]`, which `mod` takes (DESIGN.md
+/// sec:domains; QUESTIONS A174): a positive literal, a parameter whose range lies in `1..`, or
+/// a random expression moved by `mod` into `1..=n`.
+fn modulus(rng: &mut Rng, cx: &mut Ctx, depth: usize) -> String {
+    let positive: Vec<String> = (cx.params.iter())
+        .filter(|(_, lo, _)| *lo > 0)
+        .map(|p| p.0.clone())
+        .collect();
+    match rng.below(3) {
+        0 => rng.pick(&[1, 2, 3]).to_string(),
+        1 if !positive.is_empty() => rng.pick(&positive),
+        _ => format!("({}) mod {} + 1", expr(rng, cx, depth), rng.int(1, 4)),
     }
 }
 
@@ -447,16 +466,19 @@ fn one(text: &str, params: &[(&str, i64, i64)]) -> Run {
 
 /// Division and remainder are Euclidean (the kernel's `div_euclid` and `rem_euclid`): the
 /// remainder is never below 0, and the quotient rounds toward -infinity for a positive divisor
-/// and toward +infinity for a negative one. Each sign of each operand.
+/// and toward +infinity for a negative one. Each sign of each operand of `div`, and each sign of
+/// the dividend of `mod`, whose modulus is in `int[1..]` (DESIGN.md sec:domains; QUESTIONS A174).
 #[test]
 fn div_and_mod_hulls_hold_every_sign_of_each_operand() {
     for (x, y) in [
         ((-7, 7), (1, 3)),
         ((-7, 7), (-3, -1)),
         ((-7, -1), (-3, -1)),
+        ((-7, -1), (1, 3)),
         ((0, 7), (2, 2)),
     ] {
-        for op in ["div", "mod"] {
+        let ops: &[&str] = if y.0 >= 1 { &["div", "mod"] } else { &["div"] };
+        for &op in ops {
             let text = format!(
                 "f(a: int[{}..={}], b: int[{}..={}]) = a {op} b;\n",
                 x.0, x.1, y.0, y.1
@@ -469,7 +491,7 @@ fn div_and_mod_hulls_hold_every_sign_of_each_operand() {
     // A constant divisor shifts a piece that does not wrap: `x mod 5` of `x: int[6..=8]`.
     one("f(a: int[6..=8]) = a mod 5;\n", &[("a", 6, 8)]).exact();
     one("f(a: int[-8..=-6]) = a mod 5;\n", &[("a", -8, -6)]).exact();
-    one("f(a: int[-2..=2]) = a mod -5;\n", &[("a", -2, 2)]).sound();
+    one("f(a: int[-2..=2]) = a mod 5;\n", &[("a", -2, 2)]).sound();
 }
 
 /// A range of one int, and the parameter alone, negated and squared.

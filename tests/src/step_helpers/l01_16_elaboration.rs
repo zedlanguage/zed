@@ -29,6 +29,39 @@ pub fn elab(text: &str) -> Result<Unit, Vec<String>> {
     })
 }
 
+/// The opening of the checker's refusal of a modulus not shown to be in `int[1..]` (row
+/// MOD-positive-modulus).
+const MODULUS_REFUSED: &str = "`mod` takes `m` in int[1..]";
+
+/// [`elab`] of `text`, with the checker's refusals of a modulus not shown to be in `int[1..]`
+/// dropped and every other error kept. For the tests of the preimage, rung-2 and omega
+/// analyses, which read the kernel's `mod`: the kernel keeps `mod` total, `#divByZero` at 0
+/// and the remainder by `|m|` below it, and the analyses model that operation at every
+/// divisor (DESIGN.md sec:kernel (b); QUESTIONS A174), so their tests still read `x mod n` at
+/// `n <= 0`, which a checked program never reaches.
+pub fn elab_total_mod(text: &str) -> Result<Unit, Vec<String>> {
+    let es = match elab(text) {
+        Err(es) => es,
+        ok => return ok,
+    };
+    if !es.iter().all(|e| e.starts_with(MODULUS_REFUSED)) {
+        return Err(es);
+    }
+    let mut c = checked_with_modulus_refusals(text);
+    c.info.errors.clear();
+    Ok(c.elab())
+}
+
+/// [`checked`] without its assertion: the unit `text` with the checker's findings, errors kept.
+fn checked_with_modulus_refusals(text: &str) -> Checked {
+    let tokens = lex_fence(text).unwrap();
+    let tree = parse(text, &tokens, "Unit", TOP).unwrap();
+    let stmts = unit(text, &tokens, &tree).unwrap();
+    let res = resolve(&stmts).unwrap_or_else(|e| panic!("{text}: {e:?}"));
+    let info = check(&stmts, &res);
+    Checked { stmts, res, info }
+}
+
 /// A unit parsed, resolved and checked without error, so that a scaling test can time its
 /// elaboration alone: parsing and checking cost far more per term than elaboration and hide a
 /// quadratic in it (COMPLEXITY.md F85).

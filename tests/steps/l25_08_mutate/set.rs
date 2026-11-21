@@ -315,17 +315,18 @@ fn h9_an_if_is_replaced_by_each_branch_and_its_condition_negated() {
 }
 
 /// H10 and H11: `div` and `mod` each way, `/` by `*`, `*` by `/` where `/` is defined; the
-/// operands swapped where the order matters; a `-` at the root (H6).
+/// operands swapped where the order matters; a `-` at the root (H6). `b` is declared in
+/// `int[1..]`, as `mod` takes its modulus (DESIGN.md sec:domains; QUESTIONS A174).
 #[test]
 fn h10_h11_the_arithmetic_operators_and_their_operand_order() {
     for (op, to) in [("div", "mod"), ("mod", "div")] {
         let body = format!("a {op} b");
         assert_eq!(
-            of(INTS, &body, "(7, 2) -> 1"),
+            of("positional a: int, b: int[1..]", &body, "(7, 2) -> 1"),
             [
-                at(34, op, to, ".0"),
-                at(34, &body, &format!("b {op} a"), ".0"),
-                at(34, &body, &format!("-({body})"), ".0"),
+                at(39, op, to, ".0"),
+                at(39, &body, &format!("b {op} a"), ".0"),
+                at(39, &body, &format!("-({body})"), ".0"),
             ]
         );
     }

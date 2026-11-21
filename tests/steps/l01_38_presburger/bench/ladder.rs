@@ -128,7 +128,8 @@ fn products_along_a_chain_with_a_disjunction_on_each_link_scale() {
 
 #[test]
 fn the_conditions_of_shared_divisors_scale() {
-    // k remainders whose divisors each read the k divisors of `t`, met one by one, and k
+    // k quotients (remainders until QUESTIONS A174 refused a modulus that may be 0) whose
+    // divisors each read the k divisors of `t`, met one by one, and k
     // `if`s whose arm reads its guard's divisors: each meet and each test of the arm's
     // divisors against the guard's is a union of the sets of divisors, which share their
     // parts ([`Sets::union`] in divisors.rs), where a copy of the sets made each O(k), O(k²)
@@ -144,7 +145,7 @@ fn the_conditions_of_shared_divisors_scale() {
         assert!(!matches!(e, Entailment::Proved(_)), "{src}: {e}");
     }
     let measure = move || {
-        scaling::check_order("k remainders by terms over k shared divisors", k, 1, |k| {
+        scaling::check_order("k quotients by terms over k shared divisors", k, 1, |k| {
             ok_relation(&met_divisors(k));
         });
         scaling::check_order("k guards over k shared divisors", k, 1, |k| {

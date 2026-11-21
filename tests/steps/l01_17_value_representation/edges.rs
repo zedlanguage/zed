@@ -26,11 +26,12 @@ const MIN: &str = "lo = -9223372036854775808;\n";
 
 // DESIGN.md L1.17: "an integer is one machine word while it fits and a big integer beyond,
 // so arithmetic widens instead of failing". DESIGN.md sec:domains: "`div`/`mod` on integers
-// are **Euclidean**: `a = b·(a div b) + (a mod b)` with `0 ≤ a mod b < |b|`".
+// are **Euclidean**", and "`x mod m` takes only a modulus `m` in `int[1..]`". The Euclidean
+// remainder by a divisor `b < 0` is the remainder by `|b|`, so `a = b·(a div b) + a mod |b|`.
 #[test]
 fn the_smallest_word_widens_under_negation_and_narrows_back() {
     let src = format!(
-        "{MIN}q = lo div -1;\nr = lo mod -1;\np = lo * -1;\nn = -lo;\na = abs(lo);\n\
+        "{MIN}q = lo div -1;\nr = lo mod 1;\np = lo * -1;\nn = -lo;\na = abs(lo);\n\
          qBack = q - 1;\npBack = p * -1;\nnBack = -n;\naBack = -a;\nwhole = q * -1 + r;\n"
     );
     let wide = "9223372036854775808";
@@ -70,8 +71,8 @@ fn the_smallest_word_widens_under_negation_and_narrows_back() {
 #[test]
 fn the_smallest_word_divides_euclidean_by_small_negative_divisors() {
     let src = format!(
-        "{MIN}q2 = lo div -2;\nr2 = lo mod -2;\no = lo + 1;\nq3 = o div -2;\nr3 = o mod -2;\n\
-         q4 = o div -1;\nr4 = o mod -1;\nq5 = lo div 1;\nr5 = lo mod 1;\n\
+        "{MIN}q2 = lo div -2;\nr2 = lo mod 2;\no = lo + 1;\nq3 = o div -2;\nr3 = o mod 2;\n\
+         q4 = o div -1;\nr4 = o mod 1;\nq5 = lo div 1;\nr5 = lo mod 1;\n\
          back2 = q2 * -2 + r2 == lo;\nback3 = q3 * -2 + r3 == o;\n"
     );
     let cases = [
@@ -94,16 +95,22 @@ fn the_smallest_word_divides_euclidean_by_small_negative_divisors() {
 }
 
 // DESIGN.md sec:failure: "`x div y : int | #divByZero`"; the
-// smallest word is no exception.
+// smallest word is no exception. `mod` takes `m` in int[1..] (sec:domains; QUESTIONS A174), so
+// the same remainder is refused, with the test that keeps the modulus there.
 #[test]
 fn the_smallest_word_divided_by_zero_is_div_by_zero() {
-    let src =
-        format!("{MIN}whole(positional v: int) = v;\nq = lo div whole(0);\nr = lo mod whole(0);\n");
-    for name in ["q", "r"] {
-        assert_eq!(value(&src, name), "#divByZero", "{name}");
-        let t = info(&src).0.tops[name].to_string();
-        assert!(t.contains("#divByZero"), "{name}: {t}");
-    }
+    let src = format!("{MIN}whole(positional v: int) = v;\nq = lo div whole(0);\n");
+    assert_eq!(value(&src, "q"), "#divByZero");
+    let t = info(&src).0.tops["q"].to_string();
+    assert!(t.contains("#divByZero"), "{t}");
+    let src = format!("{MIN}whole(positional v: int) = v;\nr = lo mod whole(0);\n");
+    assert_eq!(
+        zed_tests::step_helpers::l01_16_elaboration::errors(&src),
+        [
+            "`mod` takes `m` in int[1..]: `lo mod whole(0) : int`. Try `m = whole(0); if m > 0 { \
+          lo mod m } else { … }` instead. [lo mod whole(0)]"
+        ]
+    );
 }
 
 // DESIGN.md sec:type_resolution: "The orders follow IEEE as well: `-0.0 < 0.0` is false and

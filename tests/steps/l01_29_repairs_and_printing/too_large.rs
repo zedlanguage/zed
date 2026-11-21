@@ -889,7 +889,7 @@ fn each_operation_that_writes_a_kept_power_out_is_rejected() {
             "String((-5 mod x))",
             "3:22: Number too large for any memory of the target: `(-5 mod x)` needs at least \
              2^97 bytes",
-            "`mod` writes out the divisor",
+            "`mod` writes out the modulus",
         ),
         (
             "3^2^2^70",

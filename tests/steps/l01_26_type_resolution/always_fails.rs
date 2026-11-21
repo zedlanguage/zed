@@ -27,9 +27,11 @@ fn a_divisor_that_is_always_zero_is_rejected() {
             "f(x: int) = x div 0;",
             div_zero("div", literal, "an int", "x div 0"),
         ),
+        // `mod` takes `m` in `int[1..]` (DESIGN.md sec:domains; QUESTIONS A174), so a modulus
+        // of 0 is a type error with no repair, not an operation that always fails.
         (
             "f(x: int) = x mod 0;",
-            div_zero("mod", literal, "an int", "x mod 0"),
+            "`mod` takes `m` in int[1..]: `x mod 0`. [x mod 0]".to_string(),
         ),
         (
             "f(x: int) = x div -0;",
@@ -102,10 +104,6 @@ fn a_divisor_that_may_be_other_than_zero_keeps_its_atom() {
             "(x: int, y: int) -> int | #divByZero",
         ),
         (
-            "f(x: int, y: int) = x mod y;",
-            "(x: int, y: int) -> int | #divByZero",
-        ),
-        (
             "f(x: rat, y: rat) = x / y;",
             "(x: rat, y: rat) -> rat | #divByZero",
         ),
@@ -120,6 +118,15 @@ fn a_divisor_that_may_be_other_than_zero_keeps_its_atom() {
         assert!(type_errors(src).is_empty(), "{src}");
         assert_eq!(sig(src, "f"), want, "{src}");
     }
+    // A modulus that may be 0 or below is refused, with the test that makes it positive as
+    // the repair, rather than typed with `#divByZero` (DESIGN.md sec:domains; QUESTIONS A174).
+    assert_eq!(
+        type_errors("f(x: int, y: int) = x mod y;"),
+        [
+            "`mod` takes `m` in int[1..]: `x mod y : int`. Try `if y > 0 { x mod y } else { … }` \
+          instead. [x mod y]"
+        ]
+    );
     // A float division by 0 is IEEE (`inf` or `NaN`), not a failure, so it is not judged here.
     assert!(type_errors("f(x: f64) = x / 0.0f64;").is_empty());
 }
@@ -250,6 +257,36 @@ pub(super) fn cancelling(n: usize) -> String {
 pub(super) fn nested(n: usize) -> String {
     let open: String = (0..n).map(|_| "x div (x + 1 + ").collect();
     format!("f(x: int) = {open}x{};\n", ")".repeat(n))
+}
+
+/// A function of `n` remainders, each by a parameter `d{i}: int` under the test `d{i} > 0`
+/// that puts it in int[1..] (DESIGN.md sec:domains; QUESTIONS A174).
+pub(super) fn guarded_moduli(n: usize) -> String {
+    let params: String = (0..n).map(|i| format!(", d{i}: int")).collect();
+    let terms: String = (0..n)
+        .map(|i| format!(" + (if d{i} > 0 {{ x mod d{i} }} else {{ 0 }})"))
+        .collect();
+    format!("f(x: int{params}) = 0{terms};\n")
+}
+
+/// [`guarded_moduli`] without the tests: `n` refusals, each with its repair.
+pub(super) fn bare_moduli(n: usize) -> String {
+    let params: String = (0..n).map(|i| format!(", d{i}: int")).collect();
+    let terms: String = (0..n).map(|i| format!(" + x mod d{i}")).collect();
+    format!("f(x: int{params}) = 0{terms};\n")
+}
+
+#[test]
+fn each_modulus_is_checked_on_its_own() {
+    // Small instances of the benchmark `bench::always_fails::moduli_scale`.
+    assert!(type_errors(&guarded_moduli(3)).is_empty());
+    let errors = type_errors(&bare_moduli(3));
+    assert_eq!(errors.len(), 3, "{errors:?}");
+    assert_eq!(
+        errors[2],
+        "`mod` takes `m` in int[1..]: `x mod d2 : int`. Try `if d2 > 0 { x mod d2 } else { … }` \
+         instead. [x mod d2]"
+    );
 }
 
 #[test]
