@@ -15015,6 +15015,34 @@ thread_local! {
     static GROUP_IDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests only: whether `joined` skips its two shortcuts (`shared_chain`, `repeat_stem`), so
+    /// a test can compare the classes with and without them (PROOF-kernel-overlaps-order).
+    static NO_SHORTCUTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tests only: how many times `joined` took the `shared_chain` and the `repeat_stem`
+    /// shortcut on this thread, so a test can show its cases reach them.
+    static SHORTCUTS_TAKEN: std::cell::Cell<[usize; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+/// Whether `joined` may take its shortcuts: always, but in tests that turn them off.
+fn shortcuts_on() -> bool {
+    #[cfg(test)]
+    return !NO_SHORTCUTS.with(|c| c.get());
+    #[cfg(not(test))]
+    true
+}
+
+/// Tests only: counts a shortcut taken, 0 for `shared_chain` and 1 for `repeat_stem`.
+fn shortcut_taken(_k: usize) {
+    #[cfg(test)]
+    SHORTCUTS_TAKEN.with(|c| {
+        let mut n = c.get();
+        n[_k] += 1;
+        c.set(n);
+    });
+}
+
 /// The state of the walk of [`group_of`]: per type met, by its number in the order met, the
 /// type, its parts read, and its group's number once its walk ends (`usize::MAX` before); the
 /// number of groups made; and what reading a type's parts needs.
@@ -16058,15 +16086,54 @@ impl Placing {
 /// reads of [`Placing`]; the sketches below and the random tests check it, a proof is open.
 /// Not proved (PROOF-kernel-overlaps-order): that the classes do not depend on the order of
 /// `ts`. The proof at the Π_sym runs below covers reversing the components of every tuple, not
-/// reordering `ts`. The open sub-cases are the steps whose result depends on which types were
-/// placed first: the lazy reads of [`Placing`] (a node is read where the type placed for it
-/// first meets it, so which types of lower groups it places then depends on the types placed
-/// before), the `shared_chain` shortcut of `joined` (its conditions on the waiting count, the
-/// least group id and the active set), and the `repeat_stem` shortcut. One order bug was found
-/// here and fixed (FAIL-overlaps-order-ddc1ec274, 8de5fdf5b). The tests compare the classes
-/// under the reversed order and three random orders per case (`check_classes`); on 2026-11-21,
-/// 12 seeds of `types_that_meet_are_joined_in_random_groups_holding_lower_types` (14,400
-/// random orders) all agreed. They cannot show orders they do not draw.
+/// reordering `ts`. What is proved and what is open, against `joined` with its two shortcuts
+/// off (the reference run, `NO_SHORTCUTS` in tests):
+/// - Proved: `min_gid[i] > g.id` means no group that `g` reaches, `g` included, is placed for
+///   cell `i`. `min_gid[i]` is at most the least id of the groups placed for `i` (lowered at
+///   each placement, and at a cut stem to the stem's own id). A group reached from `g` and
+///   not `g` is made before `g`: `Walked::make` numbers a group when Tarjan's search completes
+///   it, after every group it reaches, or finds that group in `GROUPS` already; so its id is
+///   below `g.id`. `GROUPS` and `GROUP_IDS` are only cleared together by
+///   `Type::forget_emptiness`, which no step of `overlaps` calls (it runs at the start of a
+///   unit, zedc-check walk.rs, and in tests), so the ids of one call compare that way.
+///   Comparing with the id of a group `g` does not reach can only refuse a shortcut.
+/// - Proved: when both shortcuts test `active[i] == 0 && pending_cnt[i] == 0`, every
+///   placement of `i` is read through (no node waits, no `Place` or `Bind` of `i` is queued),
+///   so the groups placed for `i` are closed under reaching, and by the above none of them is
+///   reached from `g`. From then on, work for `i` comes only from this `Place`.
+/// - Proved, `repeat_stem` against the reference run: there, placing the stem binds each
+///   stem group's two nodes to `y_root` and `y1` (the trie's cycle; neither waits, as the
+///   shortcut tests, and no step of the stem makes a node, since each child exists); each stem
+///   group is placed once for `i`, so nothing merges; the stem adds only its lists, the same
+///   `(node, list, i)` each period, and places `tail` at `y_root` on top of the same stack.
+///   The shortcut adds each list once and places `tail` there. A list added twice changes
+///   nothing below (`shut` is a meet of key sets; a point added twice is joined twice). The
+///   stem's placements wait nowhere, so the final pass never enters them. Later work for `i`
+///   places groups below `tail`, never a stem group (the groups form a DAG), and their ids are
+///   below every stem id and `g.id`, so neither the stem's `placed` entries nor its higher
+///   `min_gid[i]` change a later test. The one difference left is that the reference run
+///   records `shared_chain` entries for the stem's groups at `y_root`, which later cells may
+///   use; that is exact if `shared_chain` is, the open case below.
+/// - Open, `shared_chain`: that `join(i, j)` gives the classes and trie the reference run's
+///   walk of `g` for `i` from `y_root` gives. The argument at `joined` holds when every node of
+///   that walk was bound by `j`'s own placements and all were read. Two gaps: (a) `j`'s walk
+///   below the chain may itself have been cut by a shortcut, so the nodes there belong to a
+///   third cell `k` whose waiting nodes the test does not count (`pending_cnt[k]`); (b) `j` may
+///   still have `Place`s queued below the chain (`active[j] > 0`, taken 6,357 times on seeds
+///   1 to 6 of the probe, 2026-11-21), so the reference walk for `i` would run ahead of `j`'s
+///   and make the nodes below wait for `i`, not `j`.
+/// - Open, the lazy reads of [`Placing`] in the reference run: a node is read where the type
+///   placed for it first meets it, so which types of lower groups it places then, and which
+///   placement a node waits for, depends on the types placed before.
+/// - Tests: one order bug was found here and fixed (FAIL-overlaps-order-ddc1ec274,
+///   8de5fdf5b). `check_classes` compares the reversed order and three random orders per
+///   case, with the group cache kept; `overlaps_are_the_same_in_every_order_on_random_cells`
+///   and `overlaps_are_the_same_in_every_order_on_repeated_stems` compare every order, each
+///   from an empty cache, and the reference run, on cases that take both shortcuts. On
+///   2026-11-21 every order of the 2,416 cases of up to six types of `random_cells` seeds 3 to
+///   19 (`seed | 1`, so nine streams) agreed, with and without the shortcuts (`shared_chain`
+///   taken 389,090 times). They cannot show orders of larger cases, nor shapes the generator
+///   does not make (it never reaches `repeat_stem`; the stem test is built to).
 // Complexity tradeoff: the keys are coarser than the meet of two types in three cases, each of
 // which joins disjoint types: tuples that share a key on every component, each in a different
 // tuple type, as `(1, 1) | (2, 2)` and `(1, 2)`; a tuple part of length two or more that is
@@ -16418,7 +16485,10 @@ fn joined(tops: Vec<Top>, dir: usize) -> zed_graph::UnionFind {
     // `(0,)`, and the shortcut without this test skipped the read in one order and not the other
     // (test `overlaps_are_the_same_in_both_orders_when_a_chain_waits`). When `j` has a waiting
     // node, `i` is placed as before, which reads `j`'s waiting nodes on the walk, so a later cell
-    // takes the shortcut: one extra walk per chain, the bound unchanged.
+    // takes the shortcut: one extra walk per chain, the bound unchanged. Not proved
+    // (PROOF-kernel-overlaps-order): that this argument covers a walk below the chain cut by
+    // another shortcut, or `j` with `Place`s still queued; [`overlaps`] names both gaps, and
+    // proves the `repeat_stem` shortcut below exact against the run without shortcuts.
     let mut shared_chain: HashMap<(usize, usize), (usize, usize)> = HashMap::new();
     let mut work: Vec<Work> = Vec::new();
     for (i, l) in tops.into_iter().enumerate() {
@@ -16443,13 +16513,19 @@ fn joined(tops: Vec<Top>, dir: usize) -> zed_graph::UnionFind {
                     s.active[i] -= 1;
                     let (g, c) = group_of(&t, dir);
                     let y_root = trie.find(y);
-                    if c == 0 && s.active[i] == 0 && s.pending_cnt[i] == 0 && s.min_gid[i] > g.id {
+                    if c == 0
+                        && s.active[i] == 0
+                        && s.pending_cnt[i] == 0
+                        && s.min_gid[i] > g.id
+                        && shortcuts_on()
+                    {
                         if g.single_chain
                             && g.nodes[0].deep
                             && let Some(&(j, orig_y)) = shared_chain.get(&(y_root, g.id))
                             && trie.find(orig_y) == y_root
                             && s.pending_cnt[j] == 0
                         {
+                            shortcut_taken(0);
                             parent.union_least(i, j);
                             continue;
                         }
@@ -16470,6 +16546,7 @@ fn joined(tops: Vec<Top>, dir: usize) -> zed_graph::UnionFind {
                                 }
                             };
                             if cycles {
+                                shortcut_taken(1);
                                 s.min_gid[i] = g.id;
                                 s.lists
                                     .extend(rs.l0.iter().cloned().map(|li| (y_root, li, i)));

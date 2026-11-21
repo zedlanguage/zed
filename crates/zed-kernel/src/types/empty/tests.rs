@@ -3745,3 +3745,171 @@ fn the_empty_tuple_is_shared_by_the_carrier_test() {
         }
     }
 }
+
+/// The classes of `overlaps` on the types `ts` given in `order` (`order[k]` the index in `ts`
+/// of the `k`th type given), as sorted sets of indices into `ts`, from an empty group cache,
+/// with the shortcuts of `joined` taken or not.
+fn classes_in_order(ts: &[Type], order: &[usize], shortcuts: bool) -> Vec<Vec<usize>> {
+    Type::forget_emptiness();
+    super::NO_SHORTCUTS.with(|c| c.set(!shortcuts));
+    let classes = overlaps(order.iter().map(|&i| &ts[i]));
+    super::NO_SHORTCUTS.with(|c| c.set(false));
+    let mut out: Vec<Vec<usize>> = classes
+        .into_iter()
+        .map(|is| {
+            let mut v: Vec<usize> = is.into_iter().map(|k| order[k]).collect();
+            v.sort();
+            v
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Every order of `0..n`, by Heap's algorithm: each next order swaps two places.
+fn every_order(n: usize) -> Vec<Vec<usize>> {
+    let mut a: Vec<usize> = (0..n).collect();
+    let mut out = vec![a.clone()];
+    let mut c = vec![0; n];
+    let mut i = 1;
+    while i < n {
+        if c[i] < i {
+            if i % 2 == 0 {
+                a.swap(0, i);
+            } else {
+                a.swap(c[i], i);
+            }
+            out.push(a.clone());
+            c[i] += 1;
+            i = 1;
+        } else {
+            c[i] = 0;
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Checks that `overlaps` gives `ts` the same classes in every order, each from an empty group
+/// cache, and the same with the shortcuts of `joined` off (PROOF-kernel-overlaps-order), and
+/// that types whose meet is inhabited share a class ([`check_classes`]). Returns the shortcuts
+/// taken, `shared_chain` then `repeat_stem`.
+fn same_classes_in_every_order(case: &str, ts: &[Type]) -> [usize; 2] {
+    let (mut met, mut apart) = (0, 0);
+    Type::forget_emptiness();
+    check_classes(0, ts, &mut met, &mut apart);
+    let before = super::SHORTCUTS_TAKEN.with(|c| c.get());
+    let given: Vec<usize> = (0..ts.len()).collect();
+    let classes = classes_in_order(ts, &given, true);
+    let without = classes_in_order(ts, &given, false);
+    assert_eq!(without, classes, "{case}: without the shortcuts");
+    for order in every_order(ts.len()) {
+        let got = classes_in_order(ts, &order, true);
+        assert_eq!(got, classes, "{case}: in the order {order:?}");
+    }
+    let after = super::SHORTCUTS_TAKEN.with(|c| c.get());
+    [after[0] - before[0], after[1] - before[1]]
+}
+
+/// A stem of `k` steps `#a((…,))` and `((…,),)`, each a group of its own, cut short by the
+/// `repeat_stem` shortcut of `joined` where a type of the recursive group `R = #a((R,)) | 0`
+/// (two edges a step) or `S = (S,) | 0` (one edge a step) has made the trie node a cycle; and a
+/// stem whose cell takes the `shared_chain` shortcut. The classes are the same in every order
+/// and without the shortcuts, and both shortcuts are taken (PROOF-kernel-overlaps-order: the
+/// random cases of [`random_cells`] never reach `repeat_stem`, measured 2026-11-21).
+#[test]
+fn overlaps_are_the_same_in_every_order_on_repeated_stems() {
+    use super::super::rec::{Def, Expr, Group};
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("a literal");
+    let one = |t: &Type| Type::tuple(vec![t.clone()]);
+    let a = |t: &Type| Type::atom_with("a", &one(t));
+    let rec = |step: Expr| {
+        let ms = Group::new(vec![Def {
+            name: "R".into(),
+            params: vec![],
+            body: Expr::Union(vec![step, Expr::Type(lit(0))]),
+        }])
+        .expect("a group")
+        .instance(vec![]);
+        ms[0].clone()
+    };
+    let r = rec(Expr::Atom("a".into(), vec![Expr::Ref(0, vec![])]));
+    let s = rec(Expr::Tuple(vec![Expr::Ref(0, vec![])]));
+    let steps = |f: &dyn Fn(&Type) -> Type, k: usize, t: Type| (0..k).fold(t, |t, _| f(&t));
+    let cases: [(&str, Vec<Type>); 3] = [
+        (
+            "two edges a step",
+            vec![
+                a(&r),
+                steps(&a, 4, lit(1)),
+                steps(&a, 3, lit(2)),
+                steps(&a, 5, lit(0)),
+                steps(&a, 2, lit(1)),
+            ],
+        ),
+        (
+            "one edge a step",
+            vec![
+                one(&s),
+                steps(&one, 4, lit(1)),
+                steps(&one, 5, lit(0)),
+                steps(&one, 2, lit(2)),
+                &steps(&one, 3, lit(1)) | &a(&lit(2)),
+            ],
+        ),
+        (
+            "both",
+            vec![
+                a(&r),
+                one(&s),
+                steps(&a, 4, lit(2)),
+                steps(&one, 4, lit(2)),
+                steps(&a, 3, one(&lit(0))),
+                steps(&one, 3, a(&lit(0))),
+            ],
+        ),
+    ];
+    let mut taken = [0; 2];
+    for (case, ts) in &cases {
+        let t = same_classes_in_every_order(case, ts);
+        taken = [taken[0] + t[0], taken[1] + t[1]];
+    }
+    eprintln!(
+        "shortcuts taken: {} shared_chain, {} repeat_stem",
+        taken[0], taken[1]
+    );
+    assert!(
+        taken[0] > 0 && taken[1] > 0,
+        "both shortcuts taken: {taken:?}"
+    );
+}
+
+/// Random cells of [`random_cells`] of at most five types, from one seed: the classes are the
+/// same in every order, each from an empty group cache, and without the shortcuts of `joined`
+/// (PROOF-kernel-overlaps-order). [`check_classes`] tries four orders of every case with the
+/// cache kept; this tries all of them, for fewer cases.
+#[test]
+fn overlaps_are_the_same_in_every_order_on_random_cells() {
+    let (checked, taken) = overlaps_in_every_order_from(1, 5);
+    assert!(
+        checked > 0 && taken[0] > 0,
+        "cases checked and `shared_chain` taken"
+    );
+}
+
+/// The cases of [`random_cells`] from `seed` of at most `max` types, each checked by
+/// [`same_classes_in_every_order`]. Returns how many were checked and the shortcuts taken.
+fn overlaps_in_every_order_from(seed: u64, max: usize) -> (usize, [usize; 2]) {
+    let mut s = Xorshift64::new(seed | 1);
+    let (mut checked, mut taken) = (0, [0; 2]);
+    for case in 0..400 {
+        let ts = random_cells(&mut s);
+        if ts.len() <= max {
+            let t = same_classes_in_every_order(&format!("seed {seed} case {case}"), &ts);
+            taken = [taken[0] + t[0], taken[1] + t[1]];
+            checked += 1;
+        }
+    }
+    eprintln!("seed {seed}: {checked} cases, shortcuts taken {taken:?}");
+    (checked, taken)
+}
