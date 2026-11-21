@@ -58,6 +58,9 @@ pub(super) fn number(text: &str, pos: usize) -> Option<Result<(usize, Tok), Erro
     if text[after..].chars().next().is_some_and(is_name_continue) {
         return Some(Err(run_on(text, pos, after, radix)));
     }
+    if radix == 10 && b[pos] == b'0' && int_end > pos + 1 {
+        return Some(Err(leading_zero(text, pos, int_end, after)));
+    }
     let digits = match without_separators(&text[start..end]) {
         Ok(d) => Arc::new(d),
         Err(r) => {
@@ -107,6 +110,44 @@ fn digits(b: &[u8], pos: usize, radix: u32) -> usize {
             Some(b'_') if b.get(end + 1).is_some_and(|&d| digit(d, radix)) => end += 2,
             _ => return end,
         }
+    }
+}
+
+/// The error for a decimal number from `pos` to `after` whose whole-number part, `pos` to
+/// `int_end`, starts with `0` and is not `0` alone (DESIGN.md sec:lexical, `Whole`;
+/// sec:diagnostics, the row "Decimal number with a leading `0`"; QUESTIONS A110, author,
+/// 2026-11-21). In C an integer constant that starts with `0` is octal (C11 6.4.4.1,
+/// `octal-constant`), as in C++, Java, Go and sloppy-mode JavaScript, and Python 3 rejects
+/// such a literal for that reason (PEP 3127), so `010` has two readings and Zed takes neither.
+/// The first repair is the number with the zeros and `_` before its first other digit dropped
+/// (`0` where no other digit is left); an integer whose digits are all below 8 is also offered
+/// as `0o` and those digits, except where it is zero, whose two readings agree. O(length).
+fn leading_zero(text: &str, pos: usize, int_end: usize, after: usize) -> Error {
+    let written = &text[pos..after];
+    let whole: String = text[pos..int_end].chars().filter(|&c| c != '_').collect();
+    let whole = match whole.trim_start_matches('0') {
+        "" => "0",
+        w => w,
+    };
+    let decimal = format!("{whole}{}", &text[int_end..after]);
+    let integer = int_end == after;
+    let octal =
+        (integer && whole != "0" && whole.bytes().all(|d| d < b'8')).then(|| format!("0o{whole}"));
+    let why = match octal {
+        Some(o) => format!(
+            "`{written}` is no number: a leading `0` is octal in C. Try `{decimal}`, or `{o}` for \
+             the octal number."
+        ),
+        None => format!(
+            "`{written}` is no number: a leading `0` is octal in C. Try `{decimal}` instead."
+        ),
+    };
+    Error {
+        kind: ErrorKind::BadNumber(why),
+        span: Span {
+            start: pos,
+            end: after,
+        },
     }
 }
 

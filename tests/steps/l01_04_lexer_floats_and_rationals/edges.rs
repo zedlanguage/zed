@@ -91,7 +91,10 @@ fn an_exponent_and_its_groups() {
     assert_eq!(toks("1e0"), [float("1e0")]);
     assert_eq!(toks("1e-0"), [float("1e-0")]);
     assert_eq!(toks("1E-5"), [float("1E-5")]);
-    assert_eq!(toks("00.5"), [float("00.5")]);
+    assert!(
+        lex("00.5").is_err(),
+        "a leading `0` (l01_03 leading_zero.rs)"
+    );
     assert_eq!(toks("0.000"), [float("0.000")]);
     // A `_` after the exponent mark or its sign stands between no two digits.
     for text in ["1e_1", "1e+_1", "1_.5"] {

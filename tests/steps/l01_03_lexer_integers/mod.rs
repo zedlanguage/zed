@@ -2,6 +2,7 @@
 
 mod bench;
 mod edges;
+mod leading_zero;
 mod scaling;
 
 use zedc::lex::{Tok, lex};
@@ -48,16 +49,9 @@ fn a_literal_keeps_every_digit_whatever_its_size() {
 }
 
 #[test]
-fn leading_zeros_are_decimal_digits_and_hex_digits_keep_their_case() {
-    assert_eq!(
-        ints("007 0 00 0xdeadBEEF"),
-        [
-            int(10, "007"),
-            int(10, "0"),
-            int(10, "00"),
-            int(16, "deadBEEF")
-        ]
-    );
+fn zero_is_decimal_and_hex_digits_keep_their_case() {
+    // `007` and `00` are rejected (leading_zero.rs).
+    assert_eq!(ints("0 0xdeadBEEF"), [int(10, "0"), int(16, "deadBEEF")]);
 }
 
 #[test]
