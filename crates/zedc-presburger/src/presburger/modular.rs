@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 use zed_collections::intervals;
-use zed_graph::MinHeap;
+use zed_graph::{MinHeap, UnionFind};
 use zed_kernel::num::{coprime, mul_uint, rem_uint, trees};
 use zedc_int::int::Int;
 
@@ -2709,26 +2709,30 @@ fn solve_regime_step(
     // window, `O(N_0 log N_0)` with `N_0 = sum |s| ((e - l) div m + 2)` (the bound at
     // `cheapest_split`), the bound the sweep already has where `solve_coprime_system` falls back to
     // it. What is given up: nothing is answered differently (both answers are exact); a regime the
-    // general path answered quickly but whose window is wide against its moduli now pays the
-    // sweep's pseudo-polynomial bound instead. The window is cut to one period of the moduli
+    // general path answered quickly but whose window is wide against its moduli would pay the
+    // sweep's pseudo-polynomial bound instead; since [`SWEEP_SWITCHOVER`] such a regime goes to
+    // the general path where that bound is past the switchover, chosen from the costs of both
+    // measured on the same regimes. The window is cut to one period of the moduli
     // (`sweep_window`), so that bound is at most `O(L p)` for `L` literals and the lcm `p`; the
-    // same holds at the fallback after `solve_coprime_system`, which no measurement has shown to
-    // be worse than the general path (unproved in general: marked here, ASSUME-sweep-not-worse).
+    // same holds at the fallback after `solve_coprime_system`, which has no switchover and which
+    // no measurement has shown to be worse than the general path (unproved in general: marked
+    // here, ASSUME-sweep-not-worse).
     // Tests: `r7_tests::a_bounded_regime_the_base_cannot_write_is_decided` (against testing each
     // point; undecided before), `l01_38_omega_test::one_scope::
     // no_question_of_a_random_chain_with_negations_is_refused_at_seed_7837918895420161952` (past
     // 60 s before).
     //
-    // A regime with one bound or none is swept on one period. With one bound it is the period past the bound, `[l, l + p - 1]` or
-    // `[h - p + 1, h]`, with `p` the lcm of its moduli. Proof that this is exact for `[l, inf)`
-    // (the case `(-inf, h]` is its mirror): every unit and every literal of a clause reads `x mod
-    // m` for a modulus `m` of the regime, and `m` divides `p`, so `x mod m = (x - k p) mod m` for
-    // every integer `k`, and `x` and `x - k p` meet the same units and clauses. If `x >= l` is a
-    // point of the regime, then `k = (x - l) div p >= 0` gives `y = x - k p` with `0 <= y - l < p`,
-    // so `y` is a point in `[l, l + p - 1]`; the window is a part of the regime (it has no upper
-    // bound), so it holds a point exactly when the regime does, and a point it gives is one of the
-    // regime. Before this, a one-bound regime the base left undecided sent its formula to the
-    // general path, which refused the 4 formulas of
+    // A regime with one bound or none is swept on one period. With one bound it is the period
+    // past the bound, `[l, l + p - 1]` or `[h - p + 1, h]`, with `p` the lcm of its moduli.
+    // Proof that this is exact for `[l, inf)` (the case `(-inf, h]` is its mirror): every unit
+    // and every literal of a clause reads `x mod m` for a modulus `m` of the regime, and `m`
+    // divides `p`, so `x mod m = (x - k p) mod m` for every integer `k`, and `x` and `x - k p`
+    // meet the same units and clauses. If `x >= l` is a point of the regime, then
+    // `k = (x - l) div p >= 0` gives `y = x - k p` with `0 <= y - l < p`, so `y` is a point in
+    // `[l, l + p - 1]`; the window is a part of the regime (it has no upper bound), so it holds a
+    // point exactly when the regime does, and a point it gives is one of the regime. Before this,
+    // a one-bound regime the base left undecided sent its formula to the general path, which
+    // refused the 4 formulas of
     // `bench::one_scope::the_5000_one_variable_modular_formulas_of_seed_0x70dec1de_match_enumeration`
     // still refused (each one variable, a lower bound, and residue conditions), and the program of
     // `checker::a_question_over_one_variable_and_its_remainders_is_decided` (once refused) before
@@ -2763,47 +2767,344 @@ fn solve_regime_step(
     // (O(M^2 b^2) bit operations for `b`-bit moduli that share no factor), and the sweep on a
     // window of `p` points, whose work is at most `O(L p)` for `L` literals (the bound at
     // `cheapest_split`), refused past the limit under a cover's meter. What is given up: nothing
-    // is answered differently; where `p` is huge the sweep is costly, the same tradeoff as the
-    // bounded fallback (ASSUME-sweep-not-worse). Tests:
+    // is answered differently; where `p` is huge the sweep would be costly, so past
+    // [`SWEEP_SWITCHOVER`] the regime goes to the general path (measured, not assumed). Tests:
     // `r7_tests::a_regime_with_one_bound_the_base_cannot_write_is_decided` (against testing each
     // point of the period; undecided before), the 5,000-formula test above (4 refusals before, 0
     // after), `r7_tests::bench::a_regime_with_one_bound_and_n_clauses_scales`.
-    let out = solve_on_bases(lo, hi, &unit_mods, &clauses);
+    //
+    // A regime with one bound or none is swept only where the base cannot write it, never where
+    // the base wrote it and `solve_coprime_system` left it undecided. Clauses over several
+    // coprime moduli encode CNF-SAT (the Complexity tradeoff at the end of `solve_modular`), and
+    // the window of one period then grows as the product of the moduli: the 3-coloring formulas
+    // of `r4_tests::pncx_color_formulas_are_never_refuted` reach a regime with no bound over the
+    // primes 3 to 29, `p = 3,234,846,615`, which ran past 60 s with no meter running (every
+    // question but a cover's), where the general path, as before this sweep, answers at once.
+    // So such a regime keeps going to the general path, as before. A bounded regime the base
+    // wrote is swept as on main before this run, its window at most `h - l + 1` points, a size
+    // of the input. A regime the base cannot write, with any bounds, goes to
+    // [`sweep_unwritten`]: swept where the sweep's bound is at most [`SWEEP_SWITCHOVER`], on
+    // each group of moduli that no clause couples where there are several, and otherwise left
+    // to the general path, as on main (the cost model, the measurements and the proofs are at
+    // [`SWEEP_SWITCHOVER`]).
+    let mut written = false;
+    let out = solve_on_bases(lo, hi, &unit_mods, &clauses, &mut written);
     match (out, lo, hi) {
-        (RegimeOut::Undecided, Some(l), Some(h)) => sweep_bounded(l, h, &unit_mods, &clauses),
-        (RegimeOut::Undecided, Some(l), None) => {
-            let e = &(l + &period_of(&unit_mods, &clauses)) - &Int::ONE;
-            sweep_bounded(l, &e, &unit_mods, &clauses)
+        (RegimeOut::Undecided, Some(l), Some(h)) if written => {
+            sweep_bounded(l, h, &unit_mods, &clauses)
         }
-        (RegimeOut::Undecided, None, Some(h)) => {
-            let s = &(h - &period_of(&unit_mods, &clauses)) + &Int::ONE;
-            sweep_bounded(&s, h, &unit_mods, &clauses)
-        }
-        (RegimeOut::Undecided, None, None) => {
-            let e = &period_of(&unit_mods, &clauses) - &Int::ONE;
-            sweep_bounded(&Int::ZERO, &e, &unit_mods, &clauses)
-        }
+        (RegimeOut::Undecided, _, _) if !written => sweep_unwritten(lo, hi, &unit_mods, &clauses),
         (out, _, _) => out,
     }
 }
 
+/// The largest bound `U` of [`cheapest_split`] (in its units of one piece or one tree step) at
+/// which [`sweep_unwritten`] sweeps a regime the coprime base cannot write; above it the regime
+/// is left `Undecided`, and its formula goes to the general path, as on main before
+/// FAIL-omega-negations-slow-7837918895420161952. This is a switchover between two exact
+/// methods, never a refusal: no regime is refused by it, and the general path answers or
+/// refuses as it did on main.
+///
+/// Exactness on both sides. Below: the sweep gives the least point of its window or `Empty`
+/// (the proof at [`sweep_split`]), the window holds a point exactly when the regime does (the
+/// proof in [`solve_regime_step`] for one period past a bound, or none), and the groups are
+/// combined exactly (the proof at [`sweep_unwritten`]). Above: `Undecided` claims nothing; the
+/// formula is then decided by the general path, which is exact or refuses (`decide_named`).
+///
+/// Cost model. The sweep costs `c U` with `c` a time per unit: on the empty regimes the
+/// `r7_tests` draws reach with `U >= 10,000` (42 of them), `c` was 75 to 364 ns, median 107
+/// ns; on the empty family of `r7_tests::a_regime_over_nine_primes_the_base_cannot_write_is_
+/// decided` (unit `x mod 3 == 0`, clauses `x mod 3 p_i == r_i || x mod 3 p_(i+1) == s_i` with
+/// every `r_i`, `s_i` 1 mod 3) about 110 ns, rising to 119 ns at `U = 2.3e8`. A regime with a
+/// point costs less, as the sweep stops at the first point: most draws with `U` in the
+/// millions took under 0.1 ms. The general path costs `G`, not bounded in these terms: on the
+/// same empty draws with `U >= 10,000`, 0.30 to 101 ms, median 1.2 ms; on the empty family
+/// 2.4 to 7.8 ms from 4 to 7 primes after the first call; and at small `U` it has a heavy
+/// tail: 5 of the draws with `U` below 3,600 were refused by it (`Shadows`) after 0.2 to 2.5
+/// s, which the sweep decided in 0.1 to 3.1 ms. So the costs cross where `c U = G`: for one
+/// empty regime about `U = 1.2 ms / 107 ns = 11,000`, but a regime with a point is swept in
+/// microseconds at nearly any `U`, where the general path takes milliseconds.
+///
+/// The value is the one of least total time over the measured regimes: the 473 regimes of
+/// the `r7_tests` draws with `U >= 1,000` that the base cannot write, and the empty family at
+/// 2 to 7 primes, each timed both ways (release build, one thread, load about 30 on 32
+/// cores, 2026-11-21), with each regime swept when its `U` is at most `T` and sent to the
+/// general path otherwise, a refusal counted as infinite cost. Total time by `T`: 4,000:
+/// 2.50 s; 16,384: 2.18 s; 65,536: 1.88 s; 131,072: 1.61 s; 262,144: 1.52 s; 350,000:
+/// 1.31 s; 393,216: 1.29 s; 450,000: 1.31 s; 524,288: 1.38 s; 786,432: 1.52 s; 1,048,576:
+/// 1.59 s. The minimum is flat from 350,000 to 450,000, and 400,000 lies in it. Below 4,000
+/// the refused draws would go to the general path (infinite cost). At the switchover the
+/// sweep of an empty regime costs about 400,000 * 107 ns = 43 ms (146 ms at the largest `c`
+/// seen); above it the empty family at 8 primes, `U` about 5.6e9, which the sweep took past
+/// 60 s, is decided by the general path in milliseconds (2.1 ms at 8 primes, 100 ms at 512),
+/// and the one-bound regime of `r7_tests::one_bound_clauses` with 2,000 and 16,000 clauses
+/// over a period of 4,680 (bounds 10,187,473 and 81,265,473), which the sweep took 1.0 s and
+/// 25.7 s on, in 1.9 ms and 17.6 ms. Every regime the formula-level
+/// tests sweep has a smaller `U`: at most 14,298 in
+/// `bench::one_scope::the_5000_one_variable_modular_formulas_of_seed_0x70dec1de_match_enumeration`
+/// (whose 4 formulas the general path refused), 645 on the chains of seed
+/// 7837918895420161952, 235 in the checker's programs.
+const SWEEP_SWITCHOVER: u128 = 400_000;
+
+/// A regime `[lo, hi]` (a missing bound is no bound) that the coprime base cannot write,
+/// decided by the sweep where its bound is at most [`SWEEP_SWITCHOVER`], else `Undecided`. The
+/// window is `[lo, hi]` when both bounds are given, else one period `p` of the moduli past the
+/// bound, or `[0, p - 1]` with none (the proofs in [`solve_regime_step`]).
+///
+/// Where the window holds a whole period (no bound, one bound, or `h - l + 1 >= p`) and the
+/// moduli fall into several groups that no clause couples ([`coprime_groups`]), each group is
+/// swept on one period `p_i` of its own moduli and the points are combined by the CRT. Proof:
+/// the groups' lcms `p_i` are pairwise coprime and their product is `p` (moduli of two groups
+/// share no factor of the coprime base, so their lcms share no prime, and the lcm of all the
+/// moduli is the product of the groups' lcms). Each unit and each clause has all its moduli in
+/// one group `i`, and each of its literals reads `x mod m` for an `m` dividing `p_i`, so it
+/// holds at `x` exactly when it holds at `x mod p_i`. So `x` is a point of the regime with no
+/// bound exactly when, for every `i`, `x mod p_i` is a point of group `i`'s units and clauses.
+/// If some group has no point in `[0, p_i - 1]`, it has none at all (every residue is in that
+/// window), and the regime is `Empty`. Otherwise the CRT gives the one `r` in `[0, p)` with `r
+/// mod p_i = r_i` for the point `r_i` of each group, a point of the regime; every `r + k p` is
+/// one too (each `p_i` divides `p`), so `l + ((r - l) mod p)` is the point of `[l, l + p - 1]`
+/// past a lower bound, inside `[l, h]` when `h - l + 1 >= p`, and `h - ((h - r) mod p)` the
+/// one of `[h - p + 1, h]` below an upper bound. That point is fixed by the regime in the
+/// coordinate `solve_regime` writes, so it does not depend on the names (the argument for the
+/// window `[0, p - 1]` in [`solve_regime_step`]); it need not be the least point of the window,
+/// which no caller requires.
+///
+/// Complexity tradeoff: naive version, the sweep of the whole window, `O(L p)` for `L`
+/// literals at its worst; used, the groups' sweeps, `O(sum over i of L_i p_i)` at their worst,
+/// with the bound `U = sum U_i` compared with [`SWEEP_SWITCHOVER`]; the empty family over 9
+/// primes split into 3 groups of 3 primes has `sum p_i` of 105 + 2,431 + 12,673 in place of
+/// `p` = 3,234,846,615. Finding the groups costs one coprime base of the moduli
+/// ([`coprime_factorization`]) and one union a literal; the CRT one product tree
+/// ([`combine_crt_tree`]). What is given up: nothing is answered differently; a regime whose
+/// groups are each small is swept where the whole was above the switchover. Tests:
+/// `r7_tests::a_regime_over_nine_primes_the_base_cannot_write_is_decided` (past 60 s before,
+/// coupled and in groups), `r7_tests::groups_of_moduli_are_decided_as_testing_each_point_does`
+/// (against testing each point), `r7_tests::bench::a_regime_past_the_switchover_scales` (the
+/// regime step on n and 8n coupled moduli, found past the switchover by
+/// [`period_past_switchover`] without forming the period, which alone was Theta(n^2)). The
+/// groups' sweeps are not benchmarked by the count of moduli: their
+/// cost is `sum U_i`, about the sum of the groups' periods, which for groups over distinct
+/// primes grows faster than the count, so the bound and not the count is the size here.
+fn sweep_unwritten(
+    lo: &Option<Int>,
+    hi: &Option<Int>,
+    unit_mods: &BTreeMap<Int, ResidueSet>,
+    clauses: &[BTreeMap<Int, ResidueSet>],
+) -> RegimeOut {
+    let whole_period = match (lo, hi) {
+        (Some(l), Some(h)) => {
+            let len = &(h - l) + &Int::ONE;
+            lcm_below(all_moduli(unit_mods, clauses), &(&len + &Int::ONE)).is_some()
+        }
+        _ => true,
+    };
+    if whole_period && let Some(groups) = coprime_groups(unit_mods, clauses) {
+        if groups.iter().any(|(u, c)| period_past_switchover(u, c)) {
+            return RegimeOut::Undecided;
+        }
+        let plans: Vec<(Int, SweepPlan)> = groups
+            .iter()
+            .map(|(u, c)| {
+                let top = &period_of(u, c) - &Int::ONE;
+                let plan = sweep_plan(&Int::ZERO, &top, u, c);
+                (top, plan)
+            })
+            .collect();
+        let bound = plans
+            .iter()
+            .fold(0u128, |s, (_, plan)| s.saturating_add(plan.bound));
+        if bound > SWEEP_SWITCHOVER {
+            return RegimeOut::Undecided;
+        }
+        let mut pairs = Vec::with_capacity(groups.len());
+        for ((u, c), (top, plan)) in groups.iter().zip(&plans) {
+            match plan.run(&Int::ZERO, u, c) {
+                RegimeOut::Found(r) => pairs.push((r, top + &Int::ONE)),
+                out => return out,
+            }
+        }
+        // The moduli `p_i` are pairwise coprime (proved above), so the congruences never
+        // conflict and `combine_crt_tree` gives `Some`; `Undecided` is not reached. Its second
+        // value is the product of the `p_i`, which is `p`.
+        let Some((r, p)) = combine_crt_tree(pairs) else {
+            return RegimeOut::Undecided;
+        };
+        return RegimeOut::Found(match (lo, hi) {
+            (Some(l), _) => l + &(&r - l).mod_floor(&p),
+            (None, Some(h)) => h - &(h - &r).mod_floor(&p),
+            (None, None) => r,
+        });
+    }
+    if !matches!((lo, hi), (Some(_), Some(_))) && period_past_switchover(unit_mods, clauses) {
+        return RegimeOut::Undecided;
+    }
+    let (l, h) = match (lo, hi) {
+        (Some(l), Some(h)) => (l.clone(), h.clone()),
+        (Some(l), None) => (l.clone(), &(l + &period_of(unit_mods, clauses)) - &Int::ONE),
+        (None, Some(h)) => (&(h - &period_of(unit_mods, clauses)) + &Int::ONE, h.clone()),
+        (None, None) => (Int::ZERO, &period_of(unit_mods, clauses) - &Int::ONE),
+    };
+    if l > h {
+        return RegimeOut::Empty;
+    }
+    let plan = sweep_plan(&l, &h, unit_mods, clauses);
+    if plan.bound > SWEEP_SWITCHOVER {
+        return RegimeOut::Undecided;
+    }
+    plan.run(&l, unit_mods, clauses)
+}
+
+/// The groups of `unit_mods` and `clauses` that share no modulus factor and no clause, each
+/// group's units and clauses, in order of the least modulus of each group; `None` where they
+/// make one group, or where a clause has no literal (false, which the sweep of the whole
+/// decides). Two moduli are in one group when they share a factor of the coprime base of all
+/// the moduli ([`coprime_factorization`]), or when one clause has literals over both, and the
+/// groups are the classes of the closure of those two relations ([`UnionFind`]). Moduli of two
+/// groups share no base factor, so they are coprime, and so are the groups' lcms (the base's
+/// factors are pairwise coprime, and each modulus is a product of powers of its factors).
+///
+/// Cost: the coprime base, then one union for each base factor of each modulus and each
+/// literal past the first of each clause, near-linear in their number, and one copy of each
+/// unit and clause.
+fn coprime_groups(
+    unit_mods: &BTreeMap<Int, ResidueSet>,
+    clauses: &[BTreeMap<Int, ResidueSet>],
+) -> Option<Vec<(BTreeMap<Int, ResidueSet>, Vec<BTreeMap<Int, ResidueSet>>)>> {
+    if clauses.iter().any(|cl| cl.is_empty()) {
+        return None;
+    }
+    let moduli: BTreeSet<Int> = unit_mods
+        .keys()
+        .chain(clauses.iter().flat_map(|cl| cl.keys()))
+        .cloned()
+        .collect();
+    let index: BTreeMap<&Int, usize> = moduli.iter().enumerate().map(|(i, m)| (m, i)).collect();
+    let mut sets = UnionFind::new(moduli.len());
+    let base = coprime_factorization(&moduli);
+    let mut first_with: BTreeMap<&Int, usize> = BTreeMap::new();
+    for (m, factors) in &base {
+        for (b, _) in factors {
+            let i = index[m];
+            let first = *first_with.entry(b).or_insert(i);
+            sets.union(first, i);
+        }
+    }
+    for cl in clauses {
+        let mut ms = cl.keys().map(|m| index[m]);
+        if let Some(first) = ms.next() {
+            for i in ms {
+                sets.union(first, i);
+            }
+        }
+    }
+    // Group numbers in order of each group's least modulus (`moduli` is sorted).
+    let mut number: BTreeMap<usize, usize> = BTreeMap::new();
+    for i in 0..moduli.len() {
+        let root = sets.find(i);
+        let next = number.len();
+        number.entry(root).or_insert(next);
+    }
+    if number.len() < 2 {
+        return None;
+    }
+    let mut groups = vec![(BTreeMap::new(), Vec::new()); number.len()];
+    for (m, s) in unit_mods {
+        let g = number[&sets.find(index[m])];
+        groups[g].0.insert(m.clone(), s.clone());
+    }
+    for cl in clauses {
+        // Not empty (checked at the start), and all its moduli are in one group.
+        let Some(m) = cl.keys().next() else {
+            return None;
+        };
+        let g = number[&sets.find(index[m])];
+        groups[g].1.push(cl.clone());
+    }
+    Some(groups)
+}
+
 /// The lcm of the moduli of `unit_mods` and `clauses`, 1 where there are none.
 fn period_of(unit_mods: &BTreeMap<Int, ResidueSet>, clauses: &[BTreeMap<Int, ResidueSet>]) -> Int {
+    all_moduli(unit_mods, clauses).fold(Int::ONE, |p, m| p.lcm(m))
+}
+
+/// The moduli of the literals of `unit_mods` and `clauses`, a modulus once for each literal.
+fn all_moduli<'a>(
+    unit_mods: &'a BTreeMap<Int, ResidueSet>,
+    clauses: &'a [BTreeMap<Int, ResidueSet>],
+) -> impl Iterator<Item = &'a Int> {
     unit_mods
         .keys()
         .chain(clauses.iter().flat_map(|cl| cl.keys()))
-        .fold(Int::ONE, |p, m| p.lcm(m))
+}
+
+/// The lcm of `moduli` where it is below `cap`, else `None`, found without forming an lcm past
+/// `cap`: the lcm of a prefix divides that of all the moduli, so once a prefix's reaches `cap`
+/// the whole does too and the rest is not read. Before that stop each prefix's lcm is below
+/// `cap * max m`, so a step costs O((bits(cap) + bits(max m))^2) at any number of moduli, where
+/// the whole lcm of `M` coprime moduli of `b` bits costs Theta(M^2 b^2) (the reasoning of
+/// [`sweep_window`]).
+fn lcm_below<'a>(moduli: impl Iterator<Item = &'a Int>, cap: &Int) -> Option<Int> {
+    let mut p = Int::ONE;
+    for m in moduli {
+        p = p.lcm(m);
+        if p >= *cap {
+            return None;
+        }
+    }
+    Some(p)
+}
+
+/// Whether the bound of [`sweep_plan`] on a window of one whole period `p` of the moduli of
+/// `unit_mods` and `clauses` (span `p - 1`, or more) is past [`SWEEP_SWITCHOVER`], found
+/// without forming `p` where it is large; a `false` says nothing, and the caller computes the
+/// bound itself.
+///
+/// Proof. Let the heavy moduli be those with a literal whose residue set holds at least one
+/// interval (weight `w_m >= 1` in [`sweep_window`]), `p'` their lcm and `m*` the largest. For
+/// every `k` that [`cheapest_split`] can choose, `U_k >= P + q`, and:
+/// - if `B` holds a heavy `m'`, `P >= w_m' (span div m') >= (p' - 1) div m*`, as `span >= p - 1
+///   >= p' - 1` (`p'` divides `p`) and `m' <= m*`;
+/// - else every heavy modulus is in `A`, so `q`, the lcm of `A`, is a multiple of `p'`, and `q
+///   >= p' > (p' - 1) div m*` (this case covers `k = M`, `q = p`).
+///
+/// So the least bound is at least `(p' - 1) div m*`. When the lcm of the heavy moduli reaches
+/// `cap = (S + 1) m* + 1`, `S` the switchover, then `p' - 1 >= (S + 1) m*` and that floor is at
+/// least `S + 1 > S`: the bound is past the switchover, which is what `sweep_plan` would have
+/// found, so the answer `Undecided` is the same. With no heavy modulus the result is `false`.
+/// Cost: O(M log M) to collect the heavy moduli, and [`lcm_below`] with that `cap`, so each
+/// step is on numbers of O(bits(S) + 2 bits(m*)) bits.
+fn period_past_switchover(
+    unit_mods: &BTreeMap<Int, ResidueSet>,
+    clauses: &[BTreeMap<Int, ResidueSet>],
+) -> bool {
+    let heavy: BTreeSet<&Int> = unit_mods
+        .iter()
+        .chain(clauses.iter().flat_map(|cl| cl.iter()))
+        .filter(|(_, s)| !s.is_empty())
+        .map(|(m, _)| m)
+        .collect();
+    let Some(&top) = heavy.last() else {
+        return false;
+    };
+    // `SWEEP_SWITCHOVER` is 400,000, so `S + 1` fits `i64`.
+    let cap = &(&Int::from(SWEEP_SWITCHOVER as i64 + 1) * top) + &Int::ONE;
+    lcm_below(heavy.into_iter(), &cap).is_none()
 }
 
 /// The regime `[lo, hi]` under `unit_mods` and `clauses`, solved on the pairwise coprime base of
 /// its moduli: each residue set written on the base's prime powers, then
 /// `solve_coprime_system`. `Undecided` where a set cannot be written so, or the system is not
-/// decided; [`solve_regime_step`] then sweeps a bounded regime.
+/// decided; [`solve_regime_step`] then sweeps a bounded regime. `written` is set when every set
+/// was written on the base and `solve_coprime_system` gave the answer, so that a regime with one
+/// bound or none is swept only where the base could not write it.
 fn solve_on_bases(
     lo: &Option<Int>,
     hi: &Option<Int>,
     unit_mods: &BTreeMap<Int, ResidueSet>,
     clauses: &[BTreeMap<Int, ResidueSet>],
+    written: &mut bool,
 ) -> RegimeOut {
     // Build the pairwise coprime base of all moduli appearing in `unit_mods` and `clauses`.
     let mut all_moduli: BTreeSet<Int> = unit_mods.keys().cloned().collect();
@@ -3020,6 +3321,7 @@ fn solve_on_bases(
         }
     }
 
+    *written = true;
     solve_coprime_system(lo, hi, &bases_info, allowed, norm_clauses, true)
 }
 
@@ -3456,11 +3758,44 @@ fn sweep_bounded(
     if l > h {
         return RegimeOut::Empty;
     }
+    sweep_plan(l, h, unit_mods, clauses).run(l, unit_mods, clauses)
+}
+
+/// The plan of [`sweep_bounded`] on `[l, h]` (`l <= h`): the end `e` of its window, the moduli
+/// read modulo `q` and `q`, and the bound `U` on its work, all from [`cheapest_split`], so
+/// that a caller can read the bound before the work ([`sweep_unwritten`]).
+struct SweepPlan {
+    e: Int,
+    small: BTreeSet<Int>,
+    q: usize,
+    bound: u128,
+}
+
+impl SweepPlan {
+    /// [`sweep_split`] on `[l, e]` by this plan (`l` the start it was made for).
+    fn run(
+        &self,
+        l: &Int,
+        unit_mods: &BTreeMap<Int, ResidueSet>,
+        clauses: &[BTreeMap<Int, ResidueSet>],
+    ) -> RegimeOut {
+        let small: BTreeSet<&Int> = self.small.iter().collect();
+        sweep_split(l, &self.e, unit_mods, clauses, &small, self.q)
+    }
+}
+
+/// The [`SweepPlan`] of `[l, h]` (`l <= h`) under `unit_mods` and `clauses`.
+fn sweep_plan(
+    l: &Int,
+    h: &Int,
+    unit_mods: &BTreeMap<Int, ResidueSet>,
+    clauses: &[BTreeMap<Int, ResidueSet>],
+) -> SweepPlan {
     let (e, weights) = sweep_window(l, h, unit_mods, clauses);
     let lists = (unit_mods.len() + clauses.len()) as u128;
-    let (k, q) = cheapest_split(&(&e - l), &weights, lists);
-    let small: BTreeSet<&Int> = weights.keys().take(k).collect();
-    sweep_split(l, &e, unit_mods, clauses, &small, q)
+    let (k, q, bound) = cheapest_split(&(&e - l), &weights, lists);
+    let small = weights.keys().take(k).cloned().collect();
+    SweepPlan { e, small, q, bound }
 }
 
 /// The end `e = min(h, l + p - 1)` of the one period [`sweep_bounded`] searches, `p` the lcm of
@@ -3547,7 +3882,7 @@ fn count_u128(v: &Int) -> u128 {
 /// next modulus, the sum `sum over A of w_m (q div m)` scaled by the factor `q` grew by, the
 /// sum over `B` from a suffix sum), O(M) in all. Test:
 /// `r7_tests::the_split_is_the_one_of_least_bound`.
-fn cheapest_split(span: &Int, weights: &BTreeMap<Int, u128>, lists: u128) -> (usize, usize) {
+fn cheapest_split(span: &Int, weights: &BTreeMap<Int, u128>, lists: u128) -> (usize, usize, u128) {
     let ms: Vec<(&Int, u128)> = weights.iter().map(|(m, w)| (m, *w)).collect();
     // `after[i]`: the pieces of the moduli from the `i`-th on, `P` at `k = i`.
     let mut after = vec![0u128; ms.len() + 1];
@@ -3585,7 +3920,7 @@ fn cheapest_split(span: &Int, weights: &BTreeMap<Int, u128>, lists: u128) -> (us
             best = (u, k, q_items);
         }
     }
-    (best.1, best.2)
+    (best.1, best.2, best.0)
 }
 
 /// The least point of `[l, e]` that every unit and every clause holds, or `Empty`, where `e -

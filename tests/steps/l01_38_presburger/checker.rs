@@ -1085,8 +1085,8 @@ fn a_question_over_one_variable_and_its_remainders_is_decided() {
     // Enumeration case 371, which this test kept as the refusal that names the moduli of one
     // variable (I4.11) until FAIL-omega-negations-slow-7837918895420161952: a question over one
     // variable whose conditions are bounds and remainders is decided on one period of its moduli
-    // past a bound (`modular::solve_regime_step`). It holds at 19 ((19 - 1) mod 9 = 0, (19 - 4) mod 14 = 1, (19 - 4) mod 27 = 15) and not at 5
-    // ((5 - 1) mod 9 = 4).
+    // past a bound (`modular::solve_regime_step`). It holds at 19 ((19 - 1) mod 9 = 0, (19 - 4)
+    // mod 14 = 1, (19 - 4) mod 27 = 15) and not at 5 ((5 - 1) mod 9 = 4).
     let src = program(
         "ok(x) = x >= 4 && x <= 31 && (x - 1) mod 9 <= 1 && (x - 4) mod 14 <= 4 && (x - 4) mod 27 != 23;",
         "x: a",
@@ -1105,9 +1105,10 @@ fn a_question_over_one_variable_with_no_bound_and_its_remainders_is_decided() {
     // One variable, no bound, and residue conditions only: periodic with period lcm(30, 8, 10,
     // 2, 6, 12) = 120, so it holds a point exactly when [0, 119] does. It holds at 6: (6 - 4) mod
     // 30 = 2, (6 + 5) mod 8 = 3, (6 + 4) mod 10 = 0, (6 - 3) mod 2 = 1, 6 mod 6 = 0 and 6 mod 12
-    // = 6; not at 5 ((5 - 3) mod 2 = 0). Refused (shadows) until PRES-one-variable-no-bound-witness:
-    // the coprime base cannot write it, and a regime with no bound was not swept; it now is, on
-    // one period in a coordinate the names do not choose (`modular::solve_regime_step`).
+    // = 6; not at 5 ((5 - 3) mod 2 = 0). Refused (shadows) until
+    // PRES-one-variable-no-bound-witness: the coprime base cannot write it, and a regime with no
+    // bound was not swept; it now is, on one period in a coordinate the names do not choose
+    // (`modular::solve_regime_step`).
     let src = program(
         "ok(x) = (x - 4) mod 30 <= 9 && (x + 5) mod 8 <= 7 && (x + 4) mod 10 <= 5 && (x - 3) mod 2 == 1 && x mod 6 != 1 && x mod 12 != 11;",
         "x: a",
@@ -1126,14 +1127,15 @@ fn a_question_over_one_variable_with_no_bound_and_its_remainders_is_decided() {
 fn a_refused_question_over_one_scaled_variable_names_its_moduli() {
     // The question of `a_question_over_one_variable_with_no_bound_and_its_remainders_is_decided`
     // with `x` scaled inside the remainders: periodic in `x` with period 120, and it holds exactly
-    // at x = 4 mod 10 (at 4: (3*4 - 4) mod 30 = 8, (5*4 + 5) mod 8 = 1, (7*4 + 4) mod 10 = 2, (4 - 3)
-    // mod 2 = 1, 20 mod 6 = 2 and 28 mod 12 = 4). The checker still refuses it, a defect: the sweep
-    // of one period reads only remainders of `x + c` (`modular::solve_regime`); row
-    // PRES-one-variable-scaled-and-nested-residues is to decide it. Until then this test checks,
-    // end to end, how `front.rs` fills the program's variable and its moduli into the shadows
-    // reason (I4.11): the variables the reason counts are the checker's, one for each remainder
-    // and quotient. `a_question_whose_point_lies_past_one_splinter_is_rejected` keeps the reason
-    // over four variables of the program.
+    // at x = 4 mod 10 (at 4: (3*4 - 4) mod 30 = 8, (5*4 + 5) mod 8 = 1, (7*4 + 4) mod 10 = 2,
+    // (4 - 3) mod 2 = 1, 20 mod 6 = 2 and 28 mod 12 = 4). The checker still refuses it, a
+    // defect: the sweep of one period reads only remainders of `x + c`
+    // (`modular::solve_regime`); row PRES-one-variable-scaled-and-nested-residues is to decide it.
+    // Until then this test checks, end to end, how `front.rs` fills the program's variable and
+    // its moduli into the shadows reason (I4.11): the variables the reason counts are the
+    // checker's, one for each remainder and quotient.
+    // `a_question_whose_point_lies_past_one_splinter_is_rejected` keeps the reason over four
+    // variables of the program.
     let src = program(
         "ok(x) = (3 * x - 4) mod 30 <= 9 && (5 * x + 5) mod 8 <= 7 && (7 * x + 4) mod 10 <= 5 && (x - 3) mod 2 == 1 && (5 * x) mod 6 != 1 && (7 * x) mod 12 != 11;",
         "x: a",

@@ -104,13 +104,24 @@ const N_PERIODS: usize = 5_000;
 /// as `8 log(32,000) / log(4,000)`, about 10.0 for the heap alone. Measured 2026-11-20 (load 53):
 /// 7.62e9 and 6.91e10 instructions, 9.06 times, 99% of it in `LargeMerge::next_change` and 62%
 /// in its heap's `pop` (perf, cycles), so the ratio is that `n log n` (P300); 8.0 times the bytes.
+///
+/// Since [`SWEEP_SWITCHOVER`] the regime itself goes to the general path at these sizes (its
+/// bound is 10,187,473 at n = 2,000), which decides its formula in 1.9 ms at n = 2,000 and
+/// 17.6 ms at 16,000, where this sweep takes 1.0 s and 25.7 s (2026-11-21, load 45). So this
+/// bench calls [`sweep_bounded`] on the window `[l, l + p - 1]` directly: the sweep still runs
+/// for a bounded regime the base writes and for one under the switchover, and its scaling is
+/// what is checked here.
 #[test]
 fn a_regime_with_one_bound_and_n_clauses_scales() {
-    let inputs = scaling::inputs(N_ONE_BOUND, one_bound_clauses);
+    let inputs = scaling::inputs(N_ONE_BOUND, |n| {
+        let (l, units, clauses) = one_bound_clauses(n);
+        let h = &(&l + &period_of(&units, &clauses)) - &Int::ONE;
+        (l, h, units, clauses)
+    });
     scaling::check_order("a regime with one bound", N_ONE_BOUND, 1, |n| {
-        let (l, units, clauses) = inputs[&n].clone();
+        let (l, h, units, clauses) = &inputs[&n];
         assert!(matches!(
-            solve_regime_in(&Some(l), &None, units, clauses),
+            sweep_bounded(l, h, units, clauses),
             RegimeOut::Empty
         ));
     });
@@ -118,6 +129,44 @@ fn a_regime_with_one_bound_and_n_clauses_scales() {
 
 /// The size of [`a_regime_with_one_bound_and_n_clauses_scales`].
 const N_ONE_BOUND: usize = 2_000;
+
+/// The regime step on [`coupled_empty_chain_over`] n and 8n moduli `3 a`, every `a` of 21 bits:
+/// a regime the coprime base cannot write whose sweep bound is past [`SWEEP_SWITCHOVER`], found
+/// `Undecided` by [`period_past_switchover`] without forming its period, so that the general
+/// path decides it (FAIL-omega-negations-slow-7837918895420161952). Before the switchover the
+/// sweep took the whole period; forming the period alone cost Theta(n^2) here, 55 times from
+/// 512 to 4,096 moduli (2026-11-21). The moduli keep one size so that the input grows 8 times
+/// in bits.
+///
+/// The whole decision is not what is timed: the general path that then decides the formula,
+/// there before this change, took 11.3 times the time from 64 to 512 moduli and 26 times from
+/// 512 to 4,096 (2026-11-21, load 45 to 61), past the limit, and is open on its own row
+/// (PRES-general-path-coupled-chain-scaling). Its answer here, no point, is checked by
+/// `r7_tests::a_regime_over_nine_primes_the_base_cannot_write_is_decided` and by `check_regime`.
+#[test]
+fn a_regime_past_the_switchover_scales() {
+    let inputs = scaling::inputs(N_COUPLED, |n| {
+        let a: Vec<i64> = (1i64 << 20..).filter(|a| a % 3 != 0).take(n).collect();
+        coupled_empty_chain_over(&a)
+    });
+    scaling::check_order(
+        "a regime over n moduli past the switchover",
+        N_COUPLED,
+        1,
+        |n| {
+            let (units, clauses) = inputs[&n].clone();
+            assert!(matches!(
+                solve_regime_in(&None, &None, units, clauses),
+                RegimeOut::Undecided
+            ));
+        },
+    );
+}
+
+/// The size of [`a_regime_past_the_switchover_scales`]: at 512 and 4,096 moduli the ratio was
+/// 1.7, a fixed cost of each run still the larger part; at 4,096 and 32,768 it was 8.68, about
+/// 32 ms and 270 ms a run (2026-11-21, load 56).
+const N_COUPLED: usize = 4096;
 
 /// The peak bytes `sweep_bounded` holds on [`a_window_of_n_periods_scale`]'s inputs at `n` and
 /// at `8n` periods are within twice each other (PERF-sweep-lazy-pieces): the pieces of the large

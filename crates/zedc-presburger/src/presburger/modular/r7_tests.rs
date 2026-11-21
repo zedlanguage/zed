@@ -684,7 +684,7 @@ fn one_bound_clauses_are_empty_and_left_by_the_base() {
         let (l, units, clauses) = one_bound_clauses(n);
         assert!(
             matches!(
-                solve_on_bases(&Some(l.clone()), &None, &units, &clauses),
+                solve_on_bases(&Some(l.clone()), &None, &units, &clauses, &mut false),
                 RegimeOut::Undecided
             ),
             "{n}"
@@ -741,10 +741,20 @@ fn check_regime(lo: Option<i64>, hi: Option<i64>, units: &Lits, clauses: &[Lits]
         (None, None) => (0, p - 1),
     };
     let want = (l..=h).any(|x| regime_holds(x, units, clauses));
-    let got = solve_regime_in(&lo.map(Int::from), &hi.map(Int::from), unit_mods, cls);
+    let (lo_int, hi_int) = (lo.map(Int::from), hi.map(Int::from));
+    let got = solve_regime_in(&lo_int, &hi_int, unit_mods.clone(), cls.clone());
     let what = format!("[{lo:?}, {hi:?}] units {units:?} clauses {clauses:?}");
     match got {
-        RegimeOut::Undecided => panic!("undecided: {what}"),
+        // Past `SWEEP_SWITCHOVER` the regime goes to the general path, which must decide its
+        // formula the same way.
+        RegimeOut::Undecided => {
+            let f = regime_formula(lo_int.as_ref(), hi_int.as_ref(), &unit_mods, &cls);
+            assert_eq!(
+                super::super::decide_named(&f),
+                Ok(want),
+                "general path: {what}"
+            );
+        }
         RegimeOut::Empty => assert!(!want, "empty, but a point lies: {what}"),
         RegimeOut::Found(x) => {
             let x = x.to_i128().expect("small") as i64;
@@ -1192,8 +1202,8 @@ fn the_merge_of_large_pieces_gives_the_ends_of_the_joined_pieces() {
     );
 }
 
-/// [`cheapest_split`]'s choice is the `k` of least bound `U_k`, the least `k` at a tie, with
-/// each bound computed here from its definition (each sum formed again at each `k`), over 300
+/// [`cheapest_split`]'s choice is the `k` of least bound `U_k`, the least `k` at a tie, and the
+/// bound it gives is that `U_k`, with each bound computed here from its definition (each sum formed again at each `k`), over 300
 /// drawn sets of 1 to 8 moduli from 2 to 400 with weights 1 to 4, spans 0 to 100,000, and
 /// up to 12 lists.
 #[test]
@@ -1235,10 +1245,10 @@ fn the_split_is_the_one_of_least_bound() {
                 best = Some((u, k, q as usize));
             }
         }
-        let (_, k, q) = best.expect("k = 0 is always a choice");
+        let (u, k, q) = best.expect("k = 0 is always a choice");
         assert_eq!(
             cheapest_split(&Int::from(span as i128), &weights, lists),
-            (k, q),
+            (k, q, u),
             "weights {weights:?} span {span} lists {lists}"
         );
         chose_some += usize::from(k > 0);
@@ -1248,4 +1258,300 @@ fn the_split_is_the_one_of_least_bound() {
         (30..=270).contains(&chose_some),
         "{chose_some} of 300 split"
     );
+}
+
+/// Units and clauses of one variable.
+type Regime = (BTreeMap<Int, ResidueSet>, Vec<BTreeMap<Int, ResidueSet>>);
+
+/// The residue sets `x mod m in {r}`.
+fn point_set(r: i64) -> ResidueSet {
+    vec![(Int::from(r), Int::from(r))]
+}
+
+/// A clause `x mod a == r || x mod b == s`.
+fn pair_clause(a: i64, r: i64, b: i64, s: i64) -> BTreeMap<Int, ResidueSet> {
+    [(Int::from(a), point_set(r)), (Int::from(b), point_set(s))]
+        .into_iter()
+        .collect()
+}
+
+/// The empty regime of [`SWEEP_SWITCHOVER`]'s cost model over the primes 3 and the first `k`
+/// primes from 5: the unit `x mod 3 == 0` and, for each two consecutive primes `a`, `b` of
+/// them, the clause `x mod 3 a == r || x mod 3 b == s` with `r` and `s` both 1 mod 3 (and `j`,
+/// `j + 1` modulo `a`, `b` for the `j`-th clause), so every clause contradicts the unit and
+/// the regime is empty. Each literal becomes two clauses over the primes, so the coprime base
+/// cannot write a clause (the two would multiply out). Its period is `3` times the product of
+/// the `k` primes: 3,234,846,615 at `k = 8`, the product of the 9 primes from 3 to 29.
+fn coupled_empty_chain(k: usize) -> Regime {
+    // The first `k` primes from 5, by trial division by the primes found before.
+    let mut primes: Vec<i64> = Vec::with_capacity(k);
+    let mut c = 5i64;
+    while primes.len() < k {
+        if c % 3 != 0
+            && primes
+                .iter()
+                .take_while(|&&p| p * p <= c)
+                .all(|&p| c % p != 0)
+        {
+            primes.push(c);
+        }
+        c += 2;
+    }
+    coupled_empty_chain_over(&primes)
+}
+
+/// [`coupled_empty_chain`] over the integers `a` (each above 1 and not a multiple of 3) in place
+/// of the primes: the unit `x mod 3 == 0` and, for consecutive `a`, `b` of them, the `j`-th
+/// clause `x mod 3 a == r || x mod 3 b == s` with `r = j mod a` and `s = (j + 1) mod b` lifted to
+/// the residue 1 mod 3 (by the CRT, as 3 and `a` are coprime), which the unit contradicts: so
+/// the regime is empty. Each literal's modulus `3 a` has the base factor 3 and those of `a`, so
+/// the coprime base cannot write a clause.
+fn coupled_empty_chain_over(a: &[i64]) -> Regime {
+    // `t mod p + k p` for the `k` in 0..3 that makes it 1 mod 3: as `p` is a unit modulo 3, the
+    // three values cover the three residues modulo 3, and each is `t` modulo `p` and below `3 p`.
+    let one_mod_3 = |p: i64, t: i64| (0..3).map(|k| t % p + k * p).find(|r| r % 3 == 1);
+    let units = [(Int::from(3), point_set(0))].into_iter().collect();
+    let clauses = (0..a.len() - 1)
+        .map(|j| {
+            let (x, y) = (a[j], a[j + 1]);
+            let r = one_mod_3(x, j as i64).expect("a residue 1 mod 3");
+            let s = one_mod_3(y, j as i64 + 1).expect("a residue 1 mod 3");
+            pair_clause(3 * x, r, 3 * y, s)
+        })
+        .collect();
+    (units, clauses)
+}
+
+/// A regime over the 9 primes from 3 to 29, period 3,234,846,615, in three groups of moduli
+/// that no clause couples: over 3, 5, 7 the clause `x mod 15 == 7 || x mod 21 == 4`, over 11,
+/// 13, 17 the clause `x mod 143 == 5 || x mod 221 == 9`, over 19, 23, 29 the clause `x mod
+/// 437 == 11 || x mod 667 == 12`, none of which the coprime base can write (each literal is
+/// two clauses over the primes). With `empty`, the unit `x mod 3 == 0` too, which both
+/// literals of the first clause contradict (7 and 4 are 1 mod 3), so the regime is empty.
+fn nine_primes_in_groups(empty: bool) -> Regime {
+    let mut units = BTreeMap::new();
+    if empty {
+        units.insert(Int::from(3), point_set(0));
+    }
+    let clauses = vec![
+        pair_clause(15, 7, 21, 4),
+        pair_clause(143, 5, 221, 9),
+        pair_clause(437, 11, 667, 12),
+    ];
+    (units, clauses)
+}
+
+/// The formula of the regime `lo <= x <= hi` (a missing bound is no bound) under `units` and
+/// `clauses`: for each modulus `m`, `x = q_m m + r_m` with `0 <= r_m <= m - 1`, and each
+/// literal `x mod m in s` as `r_m` in one of the intervals of `s`. Its points' `x` are the
+/// regime's points.
+fn regime_formula(
+    lo: Option<&Int>,
+    hi: Option<&Int>,
+    units: &BTreeMap<Int, ResidueSet>,
+    clauses: &[BTreeMap<Int, ResidueSet>],
+) -> Formula {
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let mut rem: BTreeMap<Int, Lin> = BTreeMap::new();
+    let mut parts = Vec::new();
+    if let Some(l) = lo {
+        parts.push(Formula::Con(Con::ge(&x, &Lin::constant(l.clone()))));
+    }
+    if let Some(h) = hi {
+        parts.push(Formula::Con(Con::ge(&Lin::constant(h.clone()), &x)));
+    }
+    let mut n = 0u32;
+    let mut r_of = |m: &Int, parts: &mut Vec<Formula>| -> Lin {
+        rem.entry(m.clone())
+            .or_insert_with(|| {
+                let q = Lin::atom(Atom::Aux(n));
+                let r = Lin::atom(Atom::Aux(n + 1));
+                n += 2;
+                parts.push(Formula::Con(Con::eq(&x, &q.times(m.clone()).plus(&r))));
+                parts.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
+                parts.push(Formula::Con(Con::ge(&Lin::constant(m - &Int::ONE), &r)));
+                r
+            })
+            .clone()
+    };
+    let lit = |r: &Lin, s: &ResidueSet| {
+        Formula::or(
+            s.iter()
+                .map(|(a, b)| {
+                    Formula::and(vec![
+                        Formula::Con(Con::ge(r, &Lin::constant(a.clone()))),
+                        Formula::Con(Con::ge(&Lin::constant(b.clone()), r)),
+                    ])
+                })
+                .collect(),
+        )
+    };
+    for (m, s) in units {
+        let r = r_of(m, &mut parts);
+        parts.push(lit(&r, s));
+    }
+    for cl in clauses {
+        let mut d = Vec::new();
+        for (m, s) in cl {
+            let r = r_of(m, &mut parts);
+            d.push(lit(&r, s));
+        }
+        parts.push(Formula::or(d));
+    }
+    Formula::and(parts)
+}
+
+/// A regime the coprime base cannot write, over the 9 primes from 3 to 29 (period
+/// 3,234,846,615), is decided in well under 1 s (FAIL-omega-negations-slow-7837918895420161952,
+/// the coordinator's order of 2026-11-21). Before [`SWEEP_SWITCHOVER`] the sweep took the whole
+/// period: past 60 s on [`coupled_empty_chain`]`(8)`, and 24 s already at 7 primes. Now the
+/// coupled regime, one group with a bound past the switchover, is `Undecided` and its formula
+/// is decided by the general path; the regimes of [`nine_primes_in_groups`] are swept group by
+/// group, `105 + 2,431 + 12,673` points in place of the period, with each bound and with none.
+#[test]
+fn a_regime_over_nine_primes_the_base_cannot_write_is_decided() {
+    let nine = Int::from(3_234_846_615i64);
+    let in_time = |t: std::time::Instant, what: &str| {
+        let secs = t.elapsed().as_secs_f64();
+        assert!(secs < 1.0, "{what}: {secs} s");
+    };
+    let (units, clauses) = coupled_empty_chain(8);
+    assert_eq!(period_of(&units, &clauses), nine);
+    let mut written = false;
+    let base = solve_on_bases(&None, &None, &units, &clauses, &mut written);
+    assert!(matches!(base, RegimeOut::Undecided) && !written);
+    assert!(coprime_groups(&units, &clauses).is_none());
+    let t = std::time::Instant::now();
+    let out = solve_regime_in(&None, &None, units.clone(), clauses.clone());
+    assert!(matches!(out, RegimeOut::Undecided));
+    let f = regime_formula(None, None, &units, &clauses);
+    assert_eq!(super::super::decide_named(&f), Ok(false));
+    in_time(t, "the coupled chain over 9 primes");
+    let huge = Int::from(1_000_000_000_000i64);
+    for empty in [true, false] {
+        let (units, clauses) = nine_primes_in_groups(empty);
+        assert_eq!(period_of(&units, &clauses), nine);
+        let mut written = false;
+        let base = solve_on_bases(&None, &None, &units, &clauses, &mut written);
+        assert!(matches!(base, RegimeOut::Undecided) && !written);
+        assert_eq!(coprime_groups(&units, &clauses).map(|g| g.len()), Some(3));
+        let bounds = [
+            (None, None),
+            (Some(&Int::ZERO - &huge), None),
+            (None, Some(huge.clone())),
+            (Some(Int::from(5)), Some(&nine + &Int::from(4))),
+            (Some(Int::from(-1000)), Some(Int::from(1000))),
+        ];
+        for (lo, hi) in bounds {
+            let what = format!("groups, empty {empty}, [{lo:?}, {hi:?}]");
+            let t = std::time::Instant::now();
+            let out = solve_regime_in(&lo, &hi, units.clone(), clauses.clone());
+            in_time(t, &what);
+            // A window shorter than the period is tested point by point; one of a whole period
+            // or more has a point exactly when the regime with no bound has one.
+            let want = match (&lo, &hi) {
+                (Some(l), Some(h)) if &(h - l) + &Int::ONE < nine => {
+                    let (l, h) = (l.to_i128().expect("small"), h.to_i128().expect("small"));
+                    (l..=h).any(|x| holds_modular_point(&Int::from(x), &units, &clauses))
+                }
+                _ => !empty,
+            };
+            match out {
+                RegimeOut::Empty => assert!(!want, "{what}: empty"),
+                RegimeOut::Found(x) => {
+                    assert!(want, "{what}: {x}");
+                    assert!(lo.as_ref().is_none_or(|l| l <= &x), "{what}: {x}");
+                    assert!(hi.as_ref().is_none_or(|h| &x <= h), "{what}: {x}");
+                    assert!(holds_modular_point(&x, &units, &clauses), "{what}: {x}");
+                }
+                RegimeOut::Undecided => panic!("{what}: undecided"),
+            }
+        }
+    }
+}
+
+/// [`sweep_unwritten`] decides regimes whose moduli fall into two groups that no clause couples
+/// as testing each point does: 400 drawn regimes, each literal over the moduli 2, 3, 4, 6, 8,
+/// 9, 12 (period 72) or 5, 7, 25, 35 (period 175), each clause over one group, with no bound,
+/// one bound, or both, a window of a whole period of 12,600 or more (so the groups are swept
+/// apart and combined by the CRT) or shorter (swept whole). A point found must lie in the bounds
+/// and meet every literal; `Empty` must be right by testing each point of the window.
+#[test]
+fn groups_of_moduli_are_decided_as_testing_each_point_does() {
+    let mut state = 0x6c0b_7e57_u64;
+    let mut below = |n: i64| lcg_below(&mut state, n);
+    let lit = |group: &[i64], below: &mut dyn FnMut(i64) -> i64| {
+        let m = group[below(group.len() as i64) as usize];
+        let a = below(m);
+        (m, vec![(a, a + below((m - a).min(3)))])
+    };
+    let lits = |k: i64, group: &[i64], below: &mut dyn FnMut(i64) -> i64| -> Lits {
+        let by_modulus: BTreeMap<i64, Vec<(i64, i64)>> =
+            (0..k).map(|_| lit(group, below)).collect();
+        by_modulus.into_iter().collect()
+    };
+    let set = |s: &[(i64, i64)]| -> ResidueSet {
+        s.iter()
+            .map(|&(a, b)| (Int::from(a), Int::from(b)))
+            .collect()
+    };
+    let groups: [&[i64]; 2] = [&[2, 3, 4, 6, 8, 9, 12], &[5, 7, 25, 35]];
+    let p = 12_600i64;
+    let (mut with_point, mut split) = (0, 0);
+    for _ in 0..400 {
+        let mut units: Lits = Vec::new();
+        let mut clauses: Vec<Lits> = Vec::new();
+        for g in groups {
+            units.extend(lits(below(2), g, &mut below));
+            for _ in 0..below(4) {
+                clauses.push(lits(1 + below(2), g, &mut below));
+            }
+        }
+        let units: Lits = units
+            .into_iter()
+            .collect::<BTreeMap<_, _>>()
+            .into_iter()
+            .collect();
+        let b = below(2 * p) - p;
+        let (lo, hi) = match below(5) {
+            0 => (None, None),
+            1 => (Some(b), None),
+            2 => (None, Some(b)),
+            3 => (Some(b), Some(b + p + below(p))),
+            _ => (Some(b), Some(b + below(p))),
+        };
+        let (l, h) = match (lo, hi) {
+            (Some(l), Some(h)) => (l, h),
+            (Some(l), None) => (l, l + p - 1),
+            (None, Some(h)) => (h - p + 1, h),
+            (None, None) => (0, p - 1),
+        };
+        let want = (l..=h).any(|x| regime_holds(x, &units, &clauses));
+        let unit_mods: BTreeMap<Int, ResidueSet> =
+            units.iter().map(|(m, s)| (Int::from(*m), set(s))).collect();
+        let cls: Vec<BTreeMap<Int, ResidueSet>> = clauses
+            .iter()
+            .map(|cl| cl.iter().map(|(m, s)| (Int::from(*m), set(s))).collect())
+            .collect();
+        split += usize::from(h - l + 1 >= p && coprime_groups(&unit_mods, &cls).is_some());
+        let what = format!("[{lo:?}, {hi:?}] units {units:?} clauses {clauses:?}");
+        let (lo, hi) = (lo.map(Int::from), hi.map(Int::from));
+        match sweep_unwritten(&lo, &hi, &unit_mods, &cls) {
+            RegimeOut::Empty => assert!(!want, "empty, but a point lies: {what}"),
+            RegimeOut::Found(x) => {
+                let x = x.to_i128().expect("small") as i64;
+                assert!(want, "{x}, but none lies: {what}");
+                assert!(l <= x && x <= h, "{x} out of the window: {what}");
+                assert!(regime_holds(x, &units, &clauses), "{x} is no point: {what}");
+                with_point += 1;
+            }
+            RegimeOut::Undecided => panic!("undecided: {what}"),
+        }
+    }
+    // The draws reach both answers, and the split on most of them.
+    assert!(
+        (100..=300).contains(&with_point),
+        "{with_point} with a point"
+    );
+    assert!(split >= 100, "{split} split");
 }
