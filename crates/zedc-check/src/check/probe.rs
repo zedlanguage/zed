@@ -499,6 +499,11 @@ mod store {
     /// `zedc_check`'s `a_failed_trial_leaves_the_class_forest_as_before`; they compare
     /// contents, so they cannot catch a cost bound being missed, which the benches in
     /// COMPLEXITY.md row F236 measure.
+    /// What a layer saved for a class at its first write there: the class and what `overlay`
+    /// held for it before (a value and the depth of the layer that wrote it), or `None` when
+    /// the class read through to the committed store.
+    type Saved<C> = (usize, Option<(C, usize)>);
+
     pub(in crate::check) struct Classes<C> {
         dense: Vec<C>,
         sparse: HashMap<usize, C>,
@@ -510,7 +515,7 @@ mod store {
         /// One record per open layer, the outermost first: for each class the layer wrote,
         /// in the order it first wrote it, what `overlay` held for it before (`None` when the
         /// class read through to the committed store).
-        layers: Vec<Vec<(usize, Option<(C, usize)>)>>,
+        layers: Vec<Vec<Saved<C>>>,
         /// How many [`Self::begin_through`] are open: while one is, reads and writes go to the
         /// committed store, past every layer.
         through: usize,
