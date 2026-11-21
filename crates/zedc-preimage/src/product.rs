@@ -2240,9 +2240,20 @@ impl KeptTests {
     // are each looked at only when the name's class moves, which along one line of tests is a
     // refinement, and each refinement at least doubles the modulus (the new modulus is a
     // multiple of the old, not equal to it): at most about log2 of the width of the name's
-    // range times while the range is finite and wider than the modulus. Not proved: a bound
-    // on the class moves of a name with an unbounded range other than the number of tests
-    // that move its class. O(c) for c classes then. A case left empty inside the name's ends
+    // range times while the range is finite and wider than the modulus. On any range, bounded
+    // or not (row PROOF-product-kept-tests-dead-cost): along one line every class move is a
+    // meet, so a strict step down the congruence lattice (zedc-lattice lattice.rs, `impl
+    // Lattice for Congruence`). A class `(m', r')` strictly inside `(m, r)`, both moduli above
+    // zero, has `m | m'` (if not, the class modulo `m'` holds members of two classes modulo
+    // `m`) and `m' != m`, so `m' >= 2m`. So `j` such moves from the top `(1, 0)` reach a
+    // modulus of at least `2^j`, `j <= log2 M` for `M` the last modulus above zero on the
+    // line, and at most two moves follow (to one value, modulus `0`, and to `Bottom`). The
+    // class moves along a line are at most `min(t, log2 M + 2)` for `t` the tests that move
+    // the class, and look at the `c` classes each, O(c (log2 M + 2)). `M` is held by the
+    // product, and a meet's modulus is `lcm(m, n) <= m n` (the same impl), so `log2 M` is at
+    // most the sum of the bits of the moduli met along the line. A join or a new binding moves
+    // the class up, so the bound is per line between them. No test times the classes of an
+    // unbounded name. A case left empty inside the name's ends
     // by a hole: naive, each case's span looked at after each move, Θ(k) a move; used, the
     // members `before` had and `p` lacks (`IntervalSet::lost_to`, O(d log p + r) for the d
     // paths of the shared tree that differ and r pieces taken out), and for each piece the
@@ -18109,6 +18120,18 @@ fn ids<'n>(nodes: &'n [Node], s: &'n [(usize, bool)]) -> impl Iterator<Item = (u
 // No hash is read. One gap, not checked: two different atoms with the same text get one id
 // and are not merged (`dedup_by` also compares terms), so `sort_by_key` keeps them in the
 // written order; this needs `Term`'s text to tell apart any two terms the scope reads apart.
+// Narrowed (row PROOF-tree-rank-equal-text-atoms, 2026-11-21): the printer's contract
+// (zed-kernel print.rs, module doc; tests/steps/l01_15_kernel_terms/read_back.rs, "the forms
+// elaboration builds come back as the same term, and the rest as a term with the same
+// value") makes the text one-to-one on the forms elaboration builds: two such terms of one
+// text read back to one term, equal to both. Outside those forms the text is not one-to-one:
+// an atom built with a name that is not a literal prints `#_(..)` whatever the name
+// (`read_back.rs`, `an_atom_with_no_literal_name_is_written_any_atom`; elaboration never
+// builds one), and a hand-built `Term::PrimFn` prints as a lambda, which reads back as the
+// lambda, a term of the same value. Not proved: that every atom this tree is given is of a
+// form elaboration builds (the scope substitutes static names into tests first), and that
+// the read-back contract, tested on samples, holds for every elaborated form. A loss here
+// is of precision only: the order never decides soundness (above).
 fn rank(n: &Node) -> u8 {
     match (&n.kind, n.term) {
         (Kind::Lit(_), _) => 0,
