@@ -600,6 +600,56 @@ fn distinct_disjunctions_among_the_hubs_of_a_star(k: usize) -> (Scope, Vec<Term>
     (ints(&names), tests)
 }
 
+/// `k` disjunctions among the hubs of a star, then `k` bounds on a hub, in a finite box:
+/// `x` and `y` within `-t..=t` for `t = 4*k*k`, the star `a >= x + y`, the disjunctions
+/// `x + j * y >= c_j || x - j * y >= c_j` with `c_j = j * (2*k - j)`, `j` = 1 to `k`, then
+/// `x >= 2*k - 1 + i - t` for `i` = 1 to `k`.
+///
+/// Why these numbers. Each disjunction is `x >= c_j - j * |y|`. Since `y` takes both signs,
+/// neither side implies the other, so the scope keeps each one as a disjunction (with `y >= 0`
+/// only, `x - j * y >= 1` implies `x + j * y >= 1` and the scope keeps a constraint instead).
+/// `c_j` is increasing and concave in `j`: `c_(j+1) - c_j = 2*k - 2*j - 1`, so at `|y| = m`
+/// the largest `c_j - j*m` is reached at `j` with `m = 2*k - 2*j` and at that `j` only, and no
+/// disjunction follows from the others. The bounds keep `x` below 0 at `y = 0`, where every
+/// disjunction needs `x >= c_j > 0`, so none follows from the box either. The leaf's bound is
+/// `x + y >= 2*k - 1 + i - 2*t` after the `i`-th bound, reached at the corner
+/// `(2*k - 1 + i - t, -t)`, which the next bound removes. Checked by brute force for k = 2, 3,
+/// 4, 6 and 8 (all three claims, at every prefix of the bounds; the PREC-mixed-bench
+/// cross-review, preimg2, 2026-11-21).
+///
+/// The box is finite, so no ray meets every disjunction and the ray shortcut of row
+/// PREC-product-disjunction-parts-order does not apply.
+fn hub_bounds_after_disjunctions_in_a_finite_box(k: usize) -> (Scope, Vec<Term>) {
+    let p = Premises::new();
+    let names: Vec<Arc<str>> = ["a", "x", "y"].into_iter().map(Arc::from).collect();
+    let k = k as i64;
+    let t = 4 * k * k;
+    let start = ["x", "y"].iter().fold(ints(&names), |s, h| {
+        let within = prim(
+            Prim::And,
+            prim(Prim::Ge, var(h), int(-t)),
+            prim(Prim::Le, var(h), int(t)),
+        );
+        s.assume(&within, true, &p)
+    });
+    let mut tests = vec![prim(
+        Prim::Ge,
+        var("a"),
+        prim(Prim::Add, var("x"), var("y")),
+    )];
+    tests.extend((1..=k).map(|j| {
+        let c = j * (2 * k - j);
+        let jy = || prim(Prim::Mul, int(j), var("y"));
+        prim(
+            Prim::Or,
+            prim(Prim::Ge, prim(Prim::Add, var("x"), jy()), int(c)),
+            prim(Prim::Ge, prim(Prim::Sub, var("x"), jy()), int(c)),
+        )
+    }));
+    tests.extend((1..=k).map(|i| prim(Prim::Ge, var("x"), int(2 * k - 1 + i - t))));
+    (start, tests)
+}
+
 /// The scope of `a` and `b` within `0..=100000`, with `a + b <= 150000` and the disjunction
 /// `a < 3 || b > 7`, and the `k` tests of [`changes_of_one_block_hold_bounded_memory`]: each
 /// tightens `a - b <= c`, and every fourth is followed by an `if a + 2 * b == c` whose arms

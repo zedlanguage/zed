@@ -291,6 +291,25 @@ fn an_eager_scope_settles_the_hubs_of_a_class_of_stars_in_linear_time() {
 }
 
 #[test]
+fn an_eager_scope_bounds_the_hubs_of_a_star_after_its_disjunctions_in_a_finite_box() {
+    // `k` disjunctions among the hubs `x`, `y` of the star `a >= x + y`, each kept as a
+    // disjunction, then `k` bounds on `x` that each move the leaf's bound
+    // ([`hub_bounds_after_disjunctions_in_a_finite_box`]). Row PREC-mixed-bench.
+    let inputs = scaling::inputs(80, hub_bounds_after_disjunctions_in_a_finite_box);
+    let p = Premises::new();
+    scaling::check(
+        "k bounds on a hub after k disjunctions among the hubs of a star in a finite box, eager",
+        80,
+        |k| {
+            let (start, tests) = &inputs[&k];
+            tests
+                .iter()
+                .fold(start.clone(), |s, t| s.assume(t, true, &p));
+        },
+    );
+}
+
+#[test]
 fn an_eager_scope_settles_a_class_of_stars_under_two_disjunctions() {
     // The tests of the case above with a second disjunction among the hubs: the class's
     // bound on its leaf is then not the meet of its parts' bounds (case 3 of the proof at
