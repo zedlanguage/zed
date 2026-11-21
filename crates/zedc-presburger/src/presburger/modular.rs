@@ -5643,7 +5643,10 @@ fn combine_crt_pair(r1: &Int, m1: &Int, r2: &Int, m2: &Int) -> Option<(Int, Int)
 /// the `L` levels above the leaves at least `L bits(M)`. On this bench, sized by the count of
 /// primes, `bits(M)` grows 10.12 times (26,537 to 268,427) and `L` from 11 to 14, so the held
 /// levels alone grow at least `10.12 * 14 / 11 = 12.9` times, over 10.5, whatever the code
-/// around them does. A method that does not keep the levels recomputes them, which costs time
+/// around them does. Sized by bits instead (2,048 to 13,266 primes, `bits(M)` 8 times, 14
+/// levels), the same bound is `8 * 14 / 11 = 10.18`, under 10.5 and over 9, so it does not rule
+/// out a pass there; that sizing is the author decision BENCH-crt-tree-size-by-bits.
+/// A method that does not keep the levels recomputes them, which costs time
 /// (the remainder forest of Harvey and Sutherland, cited above, trades in that way); none is
 /// known that keeps the order `M(N) log k` and holds `o(N log k)` bits. Not proved: that every
 /// method in `O(M(N) log k)` time must hold `Omega(N log k)` bits.

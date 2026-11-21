@@ -299,7 +299,16 @@ fn factor_words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
 /// The same count serves [`coprime_base`] and [`coprime_base_exponents`], where the method it
 /// replaces is `by_halves`, dearer than the trees of `shares_a_factor` (on distinct 48-bit
 /// primes through zedc-presburger `coprime_factorization`: 3.83 M instructions at 256 inputs
-/// and 10.2 M at 512 before, 2.21 M and 4.46 M for the tests and the sort).
+/// and 10.2 M at 512 before, 2.21 M and 4.46 M for the tests and the sort). Below
+/// `FACTOR_BITS` it comes before `factor_words`'s path: on the bench
+/// `bench::the_coprime_base_of_the_first_primes_scales` (the first 32,768 and 262,144 primes)
+/// it takes 54.9 M and 533.7 M instructions, 9.72 times, and 4.85 MB and 38.8 MB, against
+/// 162.4 M and 1,393.6 M, 8.58 times, and 19.1 MB and 153.1 MB by factoring (2026-11-21, load
+/// 45 and 37). The higher ratio is the width of these inputs: the `n`-th prime has about
+/// `log2(n ln n)` bits, 18.4 at 32,768 and 21.6 at 262,144, so the input grows 9.4 times in
+/// bits, and a Miller-Rabin round costs a word product a bit of the input; per bit the ratio
+/// is 1.03. Kept for 3.0 times fewer instructions and 3.9 times fewer bytes, under the limit
+/// 10.5 though over the preferred 9 on this bench.
 ///
 /// What relies on it: only the cost; [`shares_among_primes`] and [`base_of_primes`] give the
 /// answers of the other methods (proved there; `tests::the_prime_word_path_agrees` holds them

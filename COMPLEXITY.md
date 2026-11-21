@@ -1427,6 +1427,12 @@ seat's `ADV_WIDE48_UNIT` (`x - m_i q_i = 1` over distinct 48-bit primes) through
 | main 49539a5a6 | 922,650 | 13,015,618 | 257,432,509 | 14.11 then 19.78 (bytes 15.82, 20.96) |
 | this change, load 45 | 788,188 | 7,244,656 | 61,264,201 | 9.19 then 8.46 (bytes 4.48, 8.03) |
 
+Below `FACTOR_BITS` the path comes before factoring. On the kernel bench
+`the_coprime_base_of_the_first_primes_scales` (32,768 to 262,144 primes) it takes 9.72x
+instructions (54.9 M to 533.7 M), against 8.58x by factoring (162.4 M to 1,393.6 M). That is
+3.0 times fewer instructions and 3.9 times fewer bytes, under 10.5 but over the preferred 9.
+The cause is the inputs' width: 18.4 to 21.6 bits, so the input grows 9.4 times in bits.
+
 `coprime_factorization` alone, at 256, 2,048 and 16,384 such primes, went from 18.42x then 12.98x
 to 8.29x then 8.29x. New bench
 `r6_tests::bench::pncx_private_quotients_wide_primes_scale` (4,096 and 32,768 rows), load 40:
@@ -1448,8 +1454,9 @@ times the primes, and three more levels are added at the top.
 
 The bytes bound is proved at `combine_crt_tree` for every method that keeps the tree's levels.
 Each level holds at least `bits(M)` bits, so on the bench sized by prime count the held levels
-alone grow `10.12 * 14 / 11 = 12.9` times. The bench's sizing is the author decision
-BENCH-crt-tree-size-by-bits, left as it is.
+alone grow `10.12 * 14 / 11 = 12.9` times. Sized by bits (2,048 to 13,266 primes) the same
+bound is `8 * 14 / 11 = 10.18`, which does not rule out a pass. The bench's sizing is the author
+decision BENCH-crt-tree-size-by-bits, left as it is.
 
 No refusal class: proving that a class degrades needs a lower bound above `n log n` for CRT on
 it. The only bound known in any model is the output, Omega(N), so the exact class is empty and
