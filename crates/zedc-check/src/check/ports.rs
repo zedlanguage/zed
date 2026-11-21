@@ -54,7 +54,8 @@ struct Arg {
 // pushes mark their parameters, and one search backward over the edges "argument parameter →
 // parameter it fills" marks the rest, each parameter once (the set of marked parameters is the
 // visited set): O(P + A + U) with the checks over the U uses of names, the work of reading the
-// resolution once. Test: `l01_19_whole_file_ports::ports::a_chain_of_helpers_passing_a_port_scales`.
+// resolution once. Test:
+// `l01_19_whole_file_ports::ports::a_chain_of_helpers_passing_a_port_scales`.
 pub fn ports(t: &Tables<'_>) -> Ports {
     let res = t.res;
     let bound = |span: &Span| match res.uses.get(span) {

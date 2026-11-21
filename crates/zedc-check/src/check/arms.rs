@@ -335,7 +335,8 @@ pub(super) struct Arms<'a> {
     /// What [`Ck::ints_here`](super::Ck::ints_here) read of each expression from its parts, by
     /// span and node.
     pub(super) part_ints: HashMap<(Span, usize), IntervalSet>,
-    /// Each term read in the scope of a node ([`Ck::read_in_scope_at`](super::Ck::read_in_scope_at)),
+    /// Each term read in the scope of a node
+    /// ([`Ck::read_in_scope_at`](super::Ck::read_in_scope_at)),
     /// by the node, the term's binders and calls and its content address, each term of one
     /// address kept apart: two reads of one term in one node's scope, at two places, are one
     /// read.

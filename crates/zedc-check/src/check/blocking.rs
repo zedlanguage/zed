@@ -1,11 +1,11 @@
 //! Which functions can block (DESIGN.md sec:ports, "Every port operation says whether it can
 //! block"; QUESTIONS A68). An operation on a port that can wait is blocking: a read of standard
-//! input (`m.stdin`) or of a file (`main::files`, in any function), each of which waits for its data, and a push to
-//! an output port (`m.stdout`, `m.stderr`), which waits while the reader is not reading. A read
-//! of `m.args` or `m.env` takes a short, fixed time and is not. A function can block when its
-//! body performs a blocking operation or calls, or names as a value, a function that can, and
-//! when it calls a function value whose body the checker cannot see. The fact is computed for
-//! every declared function, for an editor to show, with the path of calls that makes a function
+//! input (`m.stdin`) or of a file (`main::files`, in any function), each of which waits for its
+//! data, and a push to an output port (`m.stdout`, `m.stderr`), which waits while the reader is not
+//! reading. A read of `m.args` or `m.env` takes a short, fixed time and is not. A function can
+//! block when its body performs a blocking operation or calls, or names as a value, a function that
+//! can, and when it calls a function value whose body the checker cannot see. The fact is computed
+//! for every declared function, for an editor to show, with the path of calls that makes a function
 //! blocking ([`explain`]).
 //!
 //! Ports reach other functions as values: `first(m.stdin)` passes standard input to `first`,

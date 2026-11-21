@@ -668,9 +668,9 @@ impl Operands {
 /// of the literal with its `-`, where every message about it points, and which is longer than
 /// the span exactly when a `-` is applied to it ([`Lit::neg`]); its value, its text, without
 /// the `-`, whether it is written without a suffix, whether it is generic (step L1.26a):
-/// written without a suffix where it joins a class other than under `==` and `!=`, and whether, generic,
-/// it has no other operand to take its carrier from at run time and takes it from a parameter
-/// of its class ([`Info::witness`]). Where it joins no class, it keeps its own carrier.
+/// written without a suffix where it joins a class other than under `==` and `!=`, and whether,
+/// generic, it has no other operand to take its carrier from at run time and takes it from a
+/// parameter of its class ([`Info::witness`]). Where it joins no class, it keeps its own carrier.
 #[derive(Clone)]
 struct Lit {
     span: Span,
@@ -1604,8 +1604,8 @@ struct Class {
     /// run time, if any, and the body the parameter is in scope in; of a merged class, the
     /// outer one where one body holds the other.
     binder: Option<(Witness, Span)>,
-    /// Whether its values are those of generic literals only, as of `1 + 1` inside a function: of a merged
-    /// class, whether both were. An `if` merges it with the class of its other branch.
+    /// Whether its values are those of generic literals only, as of `1 + 1` inside a function: of a
+    /// merged class, whether both were. An `if` merges it with the class of its other branch.
     generic: bool,
     /// Whether a use asked it for a carrier, as the bounded variable of an operator or of a
     /// function does: its values are then any of the carrier it takes, which the use may
@@ -2132,7 +2132,8 @@ struct Ck<'t, 'a> {
     /// (`c.level.min(level)`, walk.rs); no other write sets it. A trial's undo may put back a
     /// class with a higher level (`Undo::Class`), but it puts back the entries here made
     /// since as well (`Undo::Clean`), so no entry outlives the level it was made at. Tests:
-    /// the benches `l01_26_type_resolution::bench::scaling::rows_shared_on_many_paths_scale_in_a_function`
+    /// the benches
+    /// `l01_26_type_resolution::bench::scaling::rows_shared_on_many_paths_scale_in_a_function`
     /// and `..._in_its_call`, which fail on a memo that misses, and a run with
     /// `ZEDC_CHECK_CLEAN` set (`check_clean`), which recomputes each hit. Not traced: whether a
     /// row here can hold a forward's class before the forward is forced. A later replay that
@@ -2262,7 +2263,8 @@ struct Ck<'t, 'a> {
     // Bool, Int, Rat, F32, F64, Str, and no carrier; one entry per distinct carrier) per
     // check, and the same per distinct call in a tree, O(log f + log c) a check for f folds
     // and c calls; O(c) memory for the calls, which `Info::fold_calls` keeps where the fold
-    // splits. Tests: `l08_02_remaps::empty` (`a_fold_run_at_two_carriers_takes_the_identity_of_each`,
+    // splits. Tests: `l08_02_remaps::empty`
+    // (`a_fold_run_at_two_carriers_takes_the_identity_of_each`,
     // `sum_in_a_generic_function_at_two_carriers_takes_the_identity_of_each` and the tests
     // after them); they cannot catch the folds still refused (REDUCE-generic-identity-rest).
     folds: BTreeMap<Span, FoldChecks>,
@@ -2390,8 +2392,8 @@ struct Ck<'t, 'a> {
     bound_names: HashMap<Span, &'a str>,
     /// For the first parameter of each lambda given to `map`, `where`, `flatMap` or `group`
     /// that stays generic ([`Ck::entry_param`]), by the parameter's span: the word, the span
-    /// of the receiver, and the receiver's type, whose entries the word gives the lambda. A note on the
-    /// parameter says what it is given, not `_`, the type of every value (A92; plan row
+    /// of the receiver, and the receiver's type, whose entries the word gives the lambda. A note on
+    /// the parameter says what it is given, not `_`, the type of every value (A92; plan row
     /// MSG-generic-operand-wording).
     entry_params: HashMap<Span, (&'static str, Span, Ty)>,
     /// For each class made as the type of such a parameter with no type given it, the
@@ -3205,7 +3207,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// A class of its own, of generic literals only, that the literal `l`, written without a suffix, joins
+    /// A class of its own, of generic literals only, that the literal `l`, written without a
+    /// suffix, joins
     /// generic with no other operand (L1.26a); it takes int where it meets no carrier.
     fn generic_class(&mut self, l: &Lit) -> usize {
         let k = self.class();
@@ -3456,9 +3459,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// use that needs data (DESIGN.md step L1.17). Each tuple, atom and name on the path from
     /// `span` to the function, that holds the function and is not one, is a step that names
     /// its site and prints no type: "this tuple holds the function", "this family holds the
-    /// function in an entry", "`t` holds the function here", "`t` is defined here". The function itself is shown as [`Ck::derive`] shows it,
-    /// and a part of a tuple or an atom that holds no function is left out. Where the walk
-    /// meets no such step, this is [`Ck::derive`].
+    /// function in an entry", "`t` holds the function here", "`t` is defined here". The function
+    /// itself is shown as [`Ck::derive`] shows it, and a part of a tuple or an atom that holds no
+    /// function is left out. Where the walk meets no such step, this is [`Ck::derive`].
     ///
     /// Complexity tradeoff (CHK-held-cascade): [`Ck::derive`] shows each step with its type, so
     /// a function at the bottom of `n` nested tuples gives `n` steps each printing a type of
@@ -5275,9 +5278,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                             .filter(|&c| !(l.exponent && c == Carrier::Rat))
                             .filter_map(|c| match adopt(l, c) {
                                 Ok(Some(v)) => Some((c, neg_value(&v, l.neg()))),
-                                // A literal that is not exactly a value of `c`, as `9007199254740993`
-                                // at `f64`, equals no value of `c`: it keeps its own carrier, and
-                                // the comparison is false there, as it is in exact arithmetic.
+                                // A literal that is not exactly a value of `c`, as
+                                // `9007199254740993` at `f64`, equals no value of `c`: it keeps its
+                                // own carrier, and the comparison is false there, as it is in exact
+                                // arithmetic.
                                 _ => None,
                             })
                             .collect();
@@ -5313,9 +5317,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     // class a binding has already fixed; otherwise one pass over the class's literals for
     // whether one is decimal, and, only where the class is rejected, one more for the first
     // in the text, O(l) for l literals; a class that holds a branch of an `if` rejected alone
-    // ([`Class::alone`]) adds one pass over those spans and one over the literals, O(a + l). A flag kept on the class would make the first pass
-    // O(1), but must be merged at every union, and such a class is passed over once: the
-    // pass ends in `f64` or a rejection, which leaves one carrier.
+    // ([`Class::alone`]) adds one pass over those spans and one over the literals, O(a + l). A flag
+    // kept on the class would make the first pass O(1), but must be merged at every union, and such
+    // a class is passed over once: the pass ends in `f64` or a rejection, which leaves one carrier.
     // The test for `rat` alone is O(1): `left` holds at most the numeric carriers.
     fn lits_take(&self, r: usize) -> LitsTake {
         let c = &self.classes[r];
@@ -5832,7 +5836,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut passed: HashMap<Arc<str>, Option<Ty>> = HashMap::new();
         for n in &s.needs {
             if let NeedKind::Fwd(fwd) = &n.kind {
-                // `Fwd` holds only `Entries`/`Call`/`Map` (`#3`), never `Into`: every `.on` variable
+                // `Fwd` holds only `Entries`/`Call`/`Map` (`#3`), never `Into`: every `.on`
+                // variable
                 // in it has a non-`Into` use, so `sig_text` must keep it as a type variable.
                 for t in &fwd.on_vars {
                     if let Some(v) = t.as_var() {
@@ -7579,7 +7584,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Forces every open forward watching root `k` (`f3`, `f4`, `f5`, `f6`, `f7`).
-    /// `r10_force_forward` is a pure leaf copy, so `self.r10.forcing` is never true on entry (`M56(c)`).
+    /// `r10_force_forward` is a pure leaf copy, so `self.r10.forcing` is never true on entry
+    /// (`M56(c)`).
     pub(in crate::check) fn r10_force_root(&mut self, k: usize, barrier: &'static str) {
         if self.r10.barrier_skipped(barrier) {
             return;
@@ -8019,7 +8025,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// number literal is a string, a `bool` or a tuple, so the comparison always gives the
     /// same answer (author decision, 2026-11-09, A15). The fixes fit what `t` holds, and the
     /// checker accepts each: the text, `x == "1"`, where `t` holds strings, and no cast of the
-    /// string, which `#invalid` makes narrowing (DESIGN.md sec:diagnostics); `x == true` and `x == false` where it holds
+    /// string, which `#invalid` makes narrowing (DESIGN.md sec:diagnostics); `x == true` and
+    /// `x == false` where it holds
     /// `bool`; `x[i] == 1` for each component `i` of its tuples that may be the number; and,
     /// where none of these fits, the answer the comparison always gives in its place. Each is
     /// the corrected source line ([`Msg::written`]). A comparison with an atom stays legal and
@@ -8223,7 +8230,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.bit_word_value(&w, p, span)
             }
             Some(Ref::Prelude(w)) if w != "sum" => Ty::func(word_sig(w)),
-            // `main::files` read outside `main`: the type of `main`'s parameter of that name, `Files`.
+            // `main::files` read outside `main`: the type of `main`'s parameter of that name,
+            // `Files`.
             Some(Ref::Main(_)) => port(Carrier::Str, true),
             // Elaboration rejects a use of an overloaded name.
             Some(Ref::Bound(_)) => Ty::empty(),
@@ -8752,9 +8760,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// it. Every other argument is checked piece by piece, a class taking the carriers its
     /// parameter allows.
     /// The literal `l` as it joins a class with no other operand, as a call's argument does:
-    /// generic if written without a suffix ([`Lit::joining`]), except in a check of a generic function's
-    /// needs at a call, where the literal is of the function's body, which elaborates once for
-    /// every call, and keeps its own carrier.
+    /// generic if written without a suffix ([`Lit::joining`]), except in a check of a generic
+    /// function's needs at a call, where the literal is of the function's body, which elaborates
+    /// once for every call, and keeps its own carrier.
     fn joining(&self, l: &Lit) -> Lit {
         match self.replaying {
             0 => l.joining(),
@@ -8832,8 +8840,8 @@ fn converted(sig: &Sig, t: &Ty) -> Option<Ty> {
 /// The type of the cast `w` of a value of the type `t`, where the cast cannot fail or lose
 /// information on any value of `t`, as `rat(n)` of an `int`; none where it may give an atom `t`
 /// does not hold, as `rat(x)` of an `f64` (`#NaN` or `#overflow`), or may lose information, as
-/// `f64(r)` of a `rat` or `int(x)` of an `f64` (not proved whole), so that a repair never narrows a type
-/// (DESIGN.md sec:diagnostics, "A repair never narrows a type"). `f64` of an int the checker
+/// `f64(r)` of a `rat` or `int(x)` of an `f64` (not proved whole), so that a repair never narrows a
+/// type (DESIGN.md sec:diagnostics, "A repair never narrows a type"). `f64` of an int the checker
 /// proves lies within ±2^53 (`exact`, [`Comparison::exact`]) is exact, as [`Ck::word_end`]
 /// applies it: `f64(n)` of an `int` under `if n >= 0 && n <= 100`, which a repair menu then
 /// offers.
@@ -8949,9 +8957,9 @@ fn passed<'t>(out: &mut Ty, ts: impl Iterator<Item = &'t Ty>) {
 /// function no need joins is kept as it is: walking each function whole cost the depth of
 /// the functions `g(0)(1)…(n)` returns at each call (CHK-carrier).
 // Complexity tradeoff: O(r + V + Σ min(w, u)·log + h·log h) for r distinct rows, payload
-// shapes and families of `t` that hold a function (each made once, `Ty::with_held_fns`), V the variables of
-// all needs together, u the distinct ones, w the variables a function met holds (its kept
-// facts) and h the needs joined; the walk of the variables outside functions enters only rows
+// shapes and families of `t` that hold a function (each made once, `Ty::with_held_fns`), V the
+// variables of all needs together, u the distinct ones, w the variables a function met holds (its
+// kept facts) and h the needs joined; the walk of the variables outside functions enters only rows
 // and shapes that hold one. Each function looks up the smaller side in the other: its own
 // variables in the index of the needs' variables, or the needs' variables in its facts. With
 // no need, `t` is given back as it is, with no walk. Naive, each function tests each need,
@@ -9138,9 +9146,9 @@ struct Mark {
 /// `_`, a binder of its own `as` pattern, or arithmetic on those binders and literals
 /// ([`NeedKind::Remap`]), by its pattern: the number of binders, each level's key
 /// ([`RemapKeyAlike`]) and `><` operator, and the parameter declared a partial map its source
-/// names, whose written key ranges the check reads ([`Ck::remap_alike`]). Two uses whose keys are one once each class is written as its
-/// root ([`AlikeSite::map_tys`]) make one need on each class of the receiver but for the site
-/// ([`Ck::share_alike`]).
+/// names, whose written key ranges the check reads ([`Ck::remap_alike`]). Two uses whose keys are
+/// one once each class is written as its root ([`AlikeSite::map_tys`]) make one need on each class
+/// of the receiver but for the site ([`Ck::share_alike`]).
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) enum AlikeSite {
     Component(Ty, Option<usize>, Ty, bool),
@@ -9840,9 +9848,9 @@ fn with_adoptions(t: &Ty, parts: &[Part], adopt: &HashMap<Span, Value>) -> Ty {
 }
 
 /// An `==` or `!=` whose operands [`Ck::equal`] pairs: the operator, the span and the expression
-/// of each operand, left then right, the span of the comparison, and the number of errors before its operands
-/// were checked, so that two values with no common carrier are rejected there only where
-/// nothing else rejected the comparison first ([`Ck::apart`]).
+/// of each operand, left then right, the span of the comparison, and the number of errors before
+/// its operands were checked, so that two values with no common carrier are rejected there only
+/// where nothing else rejected the comparison first ([`Ck::apart`]).
 #[derive(Clone, Copy)]
 struct Comparison<'a> {
     op: BinaryOp,
@@ -9929,7 +9937,8 @@ type Adoptions = Vec<(Span, Value)>;
 /// of that length, at any depth (DESIGN.md L1.26, sec:domains): `(1, 2)` at
 /// `(f64, f64) | (String, f64)` is `(1.0, 2.0)`. A literal written with a suffix takes no
 /// other carrier, and where the expected type holds numbers but not its own carrier is
-/// rejected ([`expected`]): `(1.0f64, 2.0f64)` at `(rat, rat)`. This is the one place an expected type decides a literal's carrier. Gives
+/// rejected ([`expected`]): `(1.0f64, 2.0f64)` at `(rat, rat)`. This is the one place an expected
+/// type decides a literal's carrier. Gives
 /// `a`'s type with the adoptions and the adoptions, `None` when no literal adopts, and the
 /// first literal that is rejected or is not exactly a value of its carrier, with the message.
 ///
@@ -11958,8 +11967,8 @@ fn plain_carrier(l: &Lit, c: Carrier) -> impl fmt::Display + '_ {
 /// fixes its carrier; or an integer literal at a format that holds no value equal to it, as
 /// `9007199254740993` at `f64` (DESIGN.md sec:domains). Zed converts no value, so the literal
 /// is rejected, with the fixes that write a literal of the same number instead: the integer
-/// literal where `int` is expected and a decimal without a suffix has only zeros after its point, the `r`
-/// form where `rat` is, and at `f64`, for an integer, the nearest `f64` as an integer
+/// literal where `int` is expected and a decimal without a suffix has only zeros after its point,
+/// the `r` form where `rat` is, and at `f64`, for an integer, the nearest `f64` as an integer
 /// literal, by ties to even.
 fn menu(l: &Lit, held: &[Carrier]) -> Msg {
     // A decimal past the range of `f64` where only `f64` is expected: the range is the reason.
@@ -12157,7 +12166,8 @@ fn decimal_at_int(
 }
 
 /// The fix that casts the operand `n` to `f64` by the edits `[before, after]`, in place of the
-/// parentheses around it ([`Ck::cast_edits`]), beside the decimal literal `l` of the operator `op`, `f64(n) * 2.0` or `f64(n) + 1.5f64`, where `l` is the left operand when
+/// parentheses around it ([`Ck::cast_edits`]), beside the decimal literal `l` of the operator `op`,
+/// `f64(n) * 2.0` or `f64(n) + 1.5f64`, where `l` is the left operand when
 /// `left` holds. Offered only where the checker proves `n` lies within ±2^53, where the cast is
 /// exact (DESIGN.md "Casts are domain proofs"); `op` is an arithmetic operator or an ordering,
 /// each of which has an arrow at two `f64`.
@@ -12545,9 +12555,9 @@ fn op_lits(e: &Expr, src: Option<&str>) -> Vec<Lit> {
 /// (1.0f64, (2r, 3)); y is true`. Each pair takes the carrier of its literals with a suffix,
 /// the fixed decimal's among them, or `int` where it has none, and `==` is true where every
 /// pair is equal; where the pairs' literals take no one carrier, the fix names the literal
-/// instead ([`lit_holds`]). A pair at `int` or `rat` that holds a `^` is not folded, and the fix names
-/// the comparison as it writes it, as [`binder_holds`] does. `None` for any other value, which
-/// [`unfixed_binding`] then reads. A component in `taken` has taken `f64` ([`f64_operands`]),
+/// instead ([`lit_holds`]). A pair at `int` or `rat` that holds a `^` is not folded, and the fix
+/// names the comparison as it writes it, as [`binder_holds`] does. `None` for any other value,
+/// which [`unfixed_binding`] then reads. A component in `taken` has taken `f64` ([`f64_operands`]),
 /// and its literals are rejected nowhere. It costs the size of `e` ([`folded`]).
 fn unfixed_comparison(
     e: &Expr,
@@ -13381,9 +13391,9 @@ fn leaves_with(
 /// that writes it and the literal it writes, in the order of [`menu`]: the `f64` literal,
 /// `1.0` or `0.5`, where the number is an `f64` exactly, then the `int` literal, `1`, where it
 /// is written without a point; `None` when `e` is no `rat` literal. A repair writes the
-/// literal's digits as `src`, the program's text, writes them, `1_000.0` for `1_000r`, where it is known. A literal has
-/// no length limit, so a repair that quotes it is written in memory asked for first
-/// ([`quoting`]).
+/// literal's digits as `src`, the program's text, writes them, `1_000.0` for `1_000r`, where it is
+/// known. A literal has no length limit, so a repair that quotes it is written in memory asked for
+/// first ([`quoting`]).
 fn rat_forms(e: &Expr, src: Option<&str>) -> Option<Vec<(Ty, Option<String>, String)>> {
     let (neg, inner) = match &e.kind {
         ExprKind::Unary(UnaryOp::Neg, a) => (true, &**a),
@@ -14447,8 +14457,9 @@ impl<'a> Ck<'_, 'a> {
     /// rejected by name resolution as later forms (its `later`, and `primed` for a primed
     /// name) and are `unreachable!` in the checker's walk (`StmtKind::IndexedDef`, `Initial`,
     /// `While`, `Until`; `ExprKind::Read`, `For`, `Loop`, `Break`, `Spread`, `Match`, `With`),
-    /// so no binder of one reaches case 5. When frames land, a frame variable must not enter `facts`, or
-    /// [`Sig::keys`] would be the first step's (row RANGE-literal-reads keeps a test for that).
+    /// so no binder of one reaches case 5. When frames land, a frame variable must not enter
+    /// `facts`, or [`Sig::keys`] would be the first step's (row RANGE-literal-reads keeps a test
+    /// for that).
     ///
     /// The memo is by span, and is sound: an expression that gives a value (cases 1 to 5)
     /// has a token of its own outside its children (its digits, the operator, `-`, the
@@ -14559,7 +14570,8 @@ impl<'a> Ck<'_, 'a> {
     // checker runs before the store's iteration, and following each call into the body it
     // returns would check that body once per call site, where reading the text is O(1) per
     // node. A memo per function would make that linear, but it would cover only a result that
-    // is itself such a call, a special case of the result ranges of step L10. Trigger: a `codePoint` result returned by a user function, as in
+    // is itself such a call, a special case of the result ranges of step L10. Trigger: a
+    // `codePoint` result returned by a user function, as in
     // `f(s) = codePoint(s); x = bitAnd(f(s: "a"), 1);`. Test:
     // `l01_39c_code_points::checks::a_code_point_returned_by_a_function_is_read_as_any_int`.
     // COMPLEXITY.md row C28. A function with a ranged parameter carries the hull of its result
@@ -14568,8 +14580,8 @@ impl<'a> Ck<'_, 'a> {
     // int-range types on every result (step L10, ledger BIT-checker-ranges), so `codePoint`'s
     // signature states `int[0..=1114111]` and each function's result type carries it, or the
     // checker reading the reduced product's cell.
-    /// Whether `e` calls the prelude word `codePoint` (step L1.39c), `codePoint(s)`, `s.codePoint()`
-    /// or `s.codePoint`, whose int value lies in `0 ..= 1114111`.
+    /// Whether `e` calls the prelude word `codePoint` (step L1.39c), `codePoint(s)`,
+    /// `s.codePoint()` or `s.codePoint`, whose int value lies in `0 ..= 1114111`.
     fn code_point_call(&self, e: &Expr) -> bool {
         let uses = &self.t.res.uses;
         let member = |x: &Expr| {
@@ -15000,7 +15012,8 @@ fn io_error() -> Ty {
 /// with its text, `#notFound` or `#ioError(op:, path:, why:)`; a lookup outside the family's
 /// keys is `#notFound` in its arrows, and `#outOfBounds` at a read `v[k]` of an `int`-keyed
 /// port, whose keys are one interval, every key present ([`Sig::dense`]). A `CommandLine`
-/// input (L1.19a) is the family of the arguments keyed from 0, each a `String`. `key` is the key's carrier and `io` whether a read can be
+/// input (L1.19a) is the family of the arguments keyed from 0, each a `String`. `key` is the key's
+/// carrier and `io` whether a read can be
 /// `#ioError`; a port keyed by `int` is a family, data, and one keyed by path a lookup.
 fn port(key: Carrier, io: bool) -> Ty {
     let mut value = Ty::carrier(Carrier::Str);

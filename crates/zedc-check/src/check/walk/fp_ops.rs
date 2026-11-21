@@ -1212,9 +1212,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// that type; one not yet resolved records it as a need on its class, met at each call of
     /// the generic function, and at each application of a lambda such as a fold's, on the
     /// type the call gives it; a variable with no class, which a written type parameter is,
-    /// is not supported by this zedc. The rest of the operand takes it as it stands, and the results are
-    /// joined: `++` is checked piece by piece, so the join of the pieces' results holds the
-    /// whole's. A `++` with an operand that may be a family is a list join wherever it is
+    /// is not supported by this zedc. The rest of the operand takes it as it stands, and the
+    /// results are joined: `++` is checked piece by piece, so the join of the pieces' results holds
+    /// the whole's. A `++` with an operand that may be a family is a list join wherever it is
     /// met, since a string beside a list is rejected, so it is recorded at `site` with the
     /// need, before any call shows the variable's type.
     // Complexity tradeoff: one need or one recursion per variable of each operand, plus one
@@ -1464,8 +1464,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// resolved records it as a need on its class ([`NeedKind::Zip`]), met at each call of the
     /// generic function on the type the call gives it, where the arguments' own expressions
     /// show whether they share their keys ([`Self::zip_shares_keys`]); a variable with no
-    /// class, which a written type parameter is, is not supported by this zedc. `need` is `Ck::need`,
-    /// passed in as at `list_concat_end`, so this file imports nothing of walk.rs.
+    /// class, which a written type parameter is, is not supported by this zedc. `need` is
+    /// `Ck::need`, passed in as at `list_concat_end`, so this file imports nothing of walk.rs.
     // Complexity tradeoff: the bounds over all the families each operand may be, two
     // subtype tests and one diff for the message, linear in the arrows (`key_bounds`); plus
     // one need or one recursion per variable of each operand, as at `list_concat_end`, whose

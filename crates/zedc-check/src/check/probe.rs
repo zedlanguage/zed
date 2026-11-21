@@ -60,7 +60,8 @@ pub struct R10Config {
     pub force_skip_second_on_merge: bool,
     /// Barrier skip control (`"f1"`..`"f8"`, `"N4"`).
     pub skip_barrier: Option<&'static str>,
-    /// Admission conditions dropped for negative controls (`"#7'"`, `"#14"`, `"#19"`, `"#27"`, etc.).
+    /// Admission conditions dropped for negative controls (`"#7'"`, `"#14"`, `"#19"`, `"#27"`,
+    /// etc.).
     pub drop_conds: HashSet<String>,
     /// FAIL-map-chain-own-vars-carry control: `finish` leaves out the held names of compact
     /// forwards (`VarFacts::fwd_names`) and the finishing of the functions that hold such a
@@ -262,7 +263,8 @@ pub struct CalleeSummary {
     pub on_param_vars: Vec<Arc<str>>,
     /// Exit offsets `0..total_results` appearing as `.on` of at least one leaf need (exact `#19`).
     pub on_exit_offsets: Vec<usize>,
-    /// Connected groups of visible (`used_param_vars` + exit vars) variables tied by needs (`unfixed_args`).
+    /// Connected groups of visible (`used_param_vars` + exit vars) variables tied by needs
+    /// (`unfixed_args`).
     pub var_ties: Vec<Vec<Arc<str>>>,
     /// First result class ID `k0` when results are consecutive `[k0 .. k0 + total_results)`.
     pub first_result_id: Option<usize>,
@@ -276,7 +278,8 @@ pub struct CalleeSummary {
     pub held_names: BTreeSet<Arc<str>>,
     pub held_outer: BTreeSet<Arc<str>>,
     /// Whether a function held in the needs, outside functions, holds a variable not its own
-    /// (E: [`Sig::holds_only_own_variables`] false on it); see `FwdNeed::held_foreign_fn` in zedc-types.
+    /// (E: [`Sig::holds_only_own_variables`] false on it); see `FwdNeed::held_foreign_fn` in
+    /// zedc-types.
     /// Test: r10_tests.rs `r10_function_held_in_a_forward_block_counts_for_own_variables`.
     pub held_foreign_fn: bool,
     pub held_classes: BTreeSet<Arc<str>>,

@@ -857,7 +857,8 @@ fn r10_m63_slots_preserve_order_and_neg_append_fails() {
     // - Under `E` and `D (SlotsM63)`: `$r1` precedes `$r3`, so `s1 = split(hit1, z)` (line 9) is
     //   recorded first on outer `$z`, and `bad = outer(42)` puts note `[1]` on line 9.
     // - Under `PendingMode::BrokenAppendAtForce`: forcing F2 before F1 appends `$r3` BEFORE `$r1`,
-    //   moving note `[1]` from line 9 to line 10 AND changing `outer`'s exported signature (`D != E`).
+    //   moving note `[1]` from line 9 to line 10 AND changing `outer`'s exported signature
+    //   (`D != E`).
     let prog = "\
 c0(positional m, positional f, positional g) = g(m.map(f));\n\
 \n\
@@ -939,8 +940,9 @@ multi(positional c: bool, positional f, positional a, positional b) = {\n\
     // 2. Tuple argument `(a, b)` where `a` and `b` later merge via `same(a, b)`:
     // Under normal D: `#14` refuses `h0(f, (a, b))`, `m56c_bound_vars == 0`, `D = E`.
     // Under dropped `#14`: `h0(f, (a, b))` IS admitted (non-`Piece::Var` tuple does not register
-    // `a`/`b` in `watched_roots`), `same(a, b)` merges `b` into `a`, `h0` stays kept in `sig.needs`,
-    // `deep` binds `$b -> $a` inside the kept block (`m56c_bound_vars >= 1`), AND `D != E`!
+    // `a`/`b` in `watched_roots`), `same(a, b)` merges `b` into `a`, `h0` stays kept in
+    // `sig.needs`, `deep` binds `$b -> $a` inside the kept block (`m56c_bound_vars >= 1`), AND
+    // `D != E`!
     let src_tuple = "\
 same(positional x, positional y) = x + y;\n\
 h0(positional f, positional m) = m.map(f);\n\

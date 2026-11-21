@@ -1587,7 +1587,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // An unreachable branch is still checked, and adds nothing to the result
                 // (sec:constraints: an arm a narrowing test makes bottom adds nothing to the join).
                 // The reduced product is asked only of a branch whose type adds something to
-                // the other's: there alone its answer changes the result ([`Ck::no_state_reaches`]).
+                // the other's: there alone its answer changes the result
+                // ([`Ck::no_state_reaches`]).
                 let dead = (
                     dead.0 || (!a.subtype(&b) && self.no_state_reaches(at, holds)),
                     dead.1 || (!b.subtype(&a) && self.no_state_reaches(at, fails)),
@@ -2317,9 +2318,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The expression statement `s`, whose value is of `v` (DESIGN.md sec:tour_methods,
     /// "Statement position must write something, and drop nothing"): each path writes to a port
     /// or does nothing, at least one writes ([`super::ports::silent_tail`]), and the value is
-    /// nothing but the push's acknowledgment, which is not a declared result. Otherwise it is the row "Statement that
-    /// writes nothing, or drops a declared result". The value is dropped, so no name is
-    /// bound and nothing else is checked here: `say("hi", out: m.stdout);` means
+    /// nothing but the push's acknowledgment, which is not a declared result. Otherwise it is the
+    /// row "Statement that writes nothing, or drops a declared result". The value is dropped, so no
+    /// name is bound and nothing else is checked here: `say("hi", out: m.stdout);` means
     /// `_ = say("hi", out: m.stdout);`, whose value has no loose atom to drop.
     fn expr_stmt(&mut self, s: &'a Stmt, v: &Ty) {
         let StmtKind::Expr(value) = &s.kind else {
@@ -3576,7 +3577,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// arguments the checker accepts; an `if` as the join of both branches; anything else as
     /// top. So each read covers the value the default takes at any call, whichever names it
     /// reads, and a set that is not shown inside the range leaves the call refused. Tests:
-    /// `l01_24_refinement_lattices::default_ints` (`a_default_from_a_call_with_a_known_result_range`,
+    /// `l01_24_refinement_lattices::default_ints`
+    /// (`a_default_from_a_call_with_a_known_result_range`,
     /// `a_default_from_an_if`, `a_default_that_reads_names`). They cannot catch a wrong read
     /// of a `match` default, which is not compiled yet
     /// (`a_default_from_a_match_is_not_compiled_yet`, plan row TEST-default-ints-match).
@@ -3603,8 +3605,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Complexity tradeoff: O(1) expected per such default, one lookup in `s.index`, which
     /// [`Ck::infer`] builds once in O(p) for a function of p parameters with a default. The
     /// naive way, a search of `s.ids` per default, costs O(p) each and O(p^2) for a function
-    /// whose p defaults each read a parameter: l01_29's `the_merges_between_a_value_and_its_use_scale`
-    /// (2n such defaults) measured 11.2 times the instructions for 8 times n with it.
+    /// whose p defaults each read a parameter: l01_29's
+    /// `the_merges_between_a_value_and_its_use_scale` (2n such defaults) measured 11.2 times the
+    /// instructions for 8 times n with it.
     fn note_default_reads(&mut self, s: &InferF<'a>, d: &'a Expr) {
         let Some((binder, index, _)) = s.params[s.i].default else {
             return;
@@ -5210,7 +5213,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     // rejects it unless every other piece is atoms, so each accepted value is a family, which
     // is no tuple, and takes the fold branch; or it has tuples too, and then the families are
     // folded and the tuples summed by `sum`, each value checked by the arrow of its region
-    // (rule 6 of sec:type_resolution), and the run-time test sends each to that branch. (2) It has none: `sum`, the call `.sum` makes
+    // (rule 6 of sec:type_resolution), and the run-time test sends each to that branch. (2) It has
+    // none: `sum`, the call `.sum` makes
     // on a concrete receiver with no data function, and `sum` accepts only tuples, atoms and
     // classes (met again by `NeedKind::Sum`, which `sum` checks, so tuples) and rejects `_`
     // (`Ck::any`), so each accepted value is a tuple and takes the tuple branch. (3) It still
@@ -5337,13 +5341,13 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// `x.word` or `x.word(f)`, a word on one level of a family (`count_end`, `end_end`,
     /// `quantifier_end`, `scan_end` and `chunk_by_end` in fp_ops.rs), `f` the function the
-    /// word takes, or an argument of the empty type for a word that takes none. Each variable of `x` takes
-    /// the word as it takes `.sum` ([`Self::sum_beside`], plan row FP-ops-generic-receivers):
-    /// a class resolved to a type takes the word on that type; one not yet resolved records
-    /// it as a need ([`NeedKind::Level`]), checked at each call of the generic function on the
-    /// type the call gives it, with `site`, where the word is written, kept for the fold of a
-    /// scan; a variable with no class gives `_`. The rest of `x` takes the word as it stands,
-    /// and the results are joined. `span` is where the word is checked: `site` itself, or
+    /// word takes, or an argument of the empty type for a word that takes none. Each variable of
+    /// `x` takes the word as it takes `.sum` ([`Self::sum_beside`], plan row
+    /// FP-ops-generic-receivers): a class resolved to a type takes the word on that type; one not
+    /// yet resolved records it as a need ([`NeedKind::Level`]), checked at each call of the generic
+    /// function on the type the call gives it, with `site`, where the word is written, kept for the
+    /// fold of a scan; a variable with no class gives `_`. The rest of `x` takes the word as it
+    /// stands, and the results are joined. `span` is where the word is checked: `site` itself, or
     /// the call at which `meet` checks the need.
     // Complexity tradeoff: one need or one recursion per variable of `x`, plus one check of
     // the rest, as at `fold_level`; the word's own check is O(arrows) per family. Proof that
@@ -5518,8 +5522,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn fold_level(&mut self, op: Reducer, x: &Ty, span: Span, site: Span, form: FoldForm) -> Ty {
         // Every fold of one level reaches here: `x >< op` through `reduce_end`, `x.sum` and
         // `x.reduce(op)` through `family_fold`, with `site` the span elaboration reads the
-        // identity at. The fold is checked here once outside a generic function, and once at each call of
-        // one, a need met with `replaying` set; the body elaborates to one fold for every
+        // identity at. The fold is checked here once outside a generic function, and once at each
+        // call of one, a need met with `replaying` set; the body elaborates to one fold for every
         // call. `finish` gives the fold the identity where every check found one carrier, and
         // rejects it where two checks found two empty folds, as `xs >< max` at `int`
         // (`#empty`) and at `f64` (`-inf`), so the type given here holds at each call
@@ -5843,9 +5847,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         // that only bind names, folded by the kernel's evaluator exact at any size, the read
         // that already decides `Dense::Ranks` above; [`Ck::known`] proves case by case that
         // such a value is the end's value at every evaluation, in a lambda run once per key,
-        // a closure or a body checked once per call alike (PROOF-range-end-known-values), so the run's range
-        // holds exactly these keys. A computed end, as a parameter, an `if`, a call's result
-        // or a port's value, keeps `None`: only the arrows' `int`.
+        // a closure or a body checked once per call alike (PROOF-range-end-known-values), so the
+        // run's range holds exactly these keys. A computed end, as a parameter, an `if`, a call's
+        // result or a port's value, keeps `None`: only the arrows' `int`.
         // Complexity tradeoff: O(1) more per range, two cached reads and two ends; the naive
         // way, the keys listed in the arrow's key type as an array display's, costs O(b - a)
         // (see [`Sig::keys`]).
@@ -5897,9 +5901,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The type of an `if` whose branches `then` and `otherwise` have the types `a` and `b`:
-    /// their union; but where one branch is a literal without a suffix, or of a class of generic literals
-    /// only, as `1 + 1` is inside a function, and the other's type is one class, beside atoms
-    /// or alone ([`Ck::class_beside_atoms`]), the literal joins the class,
+    /// their union; but where one branch is a literal without a suffix, or of a class of generic
+    /// literals only, as `1 + 1` is inside a function, and the other's type is one class, beside
+    /// atoms or alone ([`Ck::class_beside_atoms`]), the literal joins the class,
     /// generic, or the classes merge, and the `if` has the class's type (L1.26a). An operation
     /// on integer literals alone whose other branch is of no class keeps its value instead.
     fn branches(&mut self, then: &Expr, a: &Ty, otherwise: &Expr, b: &Ty) -> Ty {
@@ -6289,8 +6293,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `f(x, p) = x + p[0]`. The carrier is chosen as for literals alone at a bounded
     /// variable: `int` for integer literals where the class holds it, the one carrier left
     /// (`rat` for `1.5` in `r = h((1.5, 2))` with `h(positional p) = p[0] + 1r`, whose value
-    /// is `5r/2r`), and with two or more the first literal is rejected, unless a decimal literal is in
-    /// the class, which is rejected where the arguments are read ([`Self::unfixed_args`]).
+    /// is `5r/2r`), and with two or more the first literal is rejected, unless a decimal literal is
+    /// in the class, which is rejected where the arguments are read ([`Self::unfixed_args`]).
     /// The literals adopt the carrier. A class no use asked, as `p` in `h(p) = p[0]`,
     /// keeps its literals' own types, `1` for `h((1, 2))`, since only a copy of a literal
     /// can come out of it. Each class is read once: the cost is the number of its literals.
@@ -7001,7 +7005,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///    [`Ck::lit_fits`]), and step 1 found it `true`, so `lit_takes` reaches the loop.
     ///    `live` is `!trying && replaying == 0`, as at the spare.
     ///
-    /// Tests: `l01_26a_generic_literals::call_arguments::a_rejection_a_call_drops_is_not_built_and_one_that_stands_is_unchanged`
+    /// Tests:
+    /// `l01_26a_generic_literals::call_arguments::a_rejection_a_call_drops_is_not_built_and_one_that_stands_is_unchanged`
     /// (each message compared with the run with the spare off), with the debug assertion
     /// read in every debug test run. They cannot catch a case only a release build meets,
     /// nor a new form inside `e` that the walk records and `lit_op_recorded` does not, until
@@ -7277,8 +7282,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.lit_pairs(&mut x, &mut y);
                 }
                 // A call or an `if` that lists values compared with a value of one carrier, `f64`,
-                // `f32` or `rat`, is read at that carrier, as at an arithmetic operator: `x == g(c)`
-                // with `x: f64` and `g` of type `(bool) -> 1 | 2` compares two `f64`s
+                // `f32` or `rat`, is read at that carrier, as at an arithmetic operator:
+                // `x == g(c)` with `x: f64` and `g` of type `(bool) -> 1 | 2` compares two `f64`s
                 // ([`read_ty`]; L1.26a). One read of the listed values. Where the parts the
                 // two operands hold whole are of one such carrier, both are read at it, as at
                 // an arithmetic operator ([`Self::fewest`]): `g(c, x) == g(d, x)` with `g` of
@@ -10338,17 +10343,17 @@ impl Ck<'_, '_> {
     /// `g(positional c: bool, positional x: f64) = if c { x } else { 1 }`, of type `(bool, f64)
     /// -> 1 | f64`, `g(c, x)` there is `f64` (sec:type_resolution, rule 3: "each value keeps its
     /// own carrier, the literal `1` taking its carrier where the result is used"). An integer
-    /// value is read at `f64`, `f32` or `rat` where it is exactly one, and a decimal one only at `f64`,
-    /// which its value at run time already is: read at `rat` it would be the `f64`'s value, not
-    /// the decimal's. `None` where `t` is not read so, which leaves it to the check every
+    /// value is read at `f64`, `f32` or `rat` where it is exactly one, and a decimal one only at
+    /// `f64`, which its value at run time already is: read at `rat` it would be the `f64`'s value,
+    /// not the decimal's. `None` where `t` is not read so, which leaves it to the check every
     /// argument has: a part outside the carrier that is not a list of values, as the `int` of
     /// `int | f64`, has no value to read. `Some(Err((v, c)))` where every value outside the
     /// carrier is a number but `v` is not read at `c`: an integer with no exact value at `c`, as
     /// a lone integer literal there has none (sec:diagnostics: "an integer literal takes a
     /// carrier only where that carrier holds it exactly"), or a decimal at `rat`. Only the
     /// argument [`Ck::readable`] finds is read so: a name, `y` after `y = g(c)`, is not, since
-    /// its value is fixed where it is bound ("bound to a name alone"). A decimal at `rat` that literals
-    /// written as branches of an `if` give is adopted there ([`Ck::read_adopting`]).
+    /// its value is fixed where it is bound ("bound to a name alone"). A decimal at `rat` that
+    /// literals written as branches of an `if` give is adopted there ([`Ck::read_adopting`]).
     // Complexity tradeoff: O(v log v) for the `v` values the type lists outside the carrier, each
     // cast once and the singletons joined in pairs (`Ty::union_all`); the listing itself costs
     // the size of the type ([`KType::values_listed`]). The naive form, the type `1 | 2` tested
@@ -10391,8 +10396,8 @@ impl Ck<'_, '_> {
 /// literals adopted at it, or the value no value of the carrier equals and the carrier.
 type ReadArg = Result<(Ty, Carrier, Adoptions), (Value, Carrier)>;
 
-/// The carrier [`Ck::read_ty`] reads at, where `p` holds numbers of one carrier, `f64`, `f32` or `rat`,
-/// and no type variable or `_`.
+/// The carrier [`Ck::read_ty`] reads at, where `p` holds numbers of one carrier, `f64`, `f32` or
+/// `rat`, and no type variable or `_`.
 fn read_carrier(p: &Ty) -> Option<Carrier> {
     if p.dynamic || !p.vars.is_empty() {
         return None;
@@ -10491,8 +10496,8 @@ fn call_values(a: &Arg) -> Option<Vec<Value>> {
     t.set.values_listed().filter(|vs| !vs.is_empty())
 }
 
-/// The type `t` read at the carrier `c`, `f64`, `f32` or `rat`, as [`Ck::read_ty`] says: `t` with each
-/// value it lists outside `c` read at `c`, `Err(v)` with the first value `v` not read at `c`,
+/// The type `t` read at the carrier `c`, `f64`, `f32` or `rat`, as [`Ck::read_ty`] says: `t` with
+/// each value it lists outside `c` read at `c`, `Err(v)` with the first value `v` not read at `c`,
 /// or `None` where `t` lists no value outside `c` ([`listed_outside`]) or one of them is no
 /// number.
 fn read_at(t: &Ty, c: Carrier) -> Option<Result<Ty, Value>> {
@@ -10700,8 +10705,8 @@ impl<'a> Ck<'_, 'a> {
     /// operands read from their parts, a name as the scope reads it met with its value read
     /// from its parts where one `name = value` binds it, anything else as its text shows. A
     /// value read here is sound, since its names are the same binders and none is ever
-    /// assigned again. So a test's narrowing of an exponent reaches the power: under `k > 0`, `2^k - 2`
-    /// is at least 0 (POW-scope-exponent), where the scope reads `^` as opaque.
+    /// assigned again. So a test's narrowing of an exponent reaches the power: under `k > 0`,
+    /// `2^k - 2` is at least 0 (POW-scope-exponent), where the scope reads `^` as opaque.
     /// The questions a read of a part refuses are placed at `e`, which asks them
     /// ([`Ck::read_in_scope_at`]): one warning for each, where `e` is read; those of a read
     /// inside a name's value stand where the value is bound.
@@ -11088,7 +11093,8 @@ impl<'a> Ck<'_, 'a> {
 
     /// A note for each step of the derivation of each question the integer solver refused in
     /// the scope `e` is read in ([`Ck::ints_here`]) whose constraint mentions a binding `e` reads
-    /// ([`Ck::read_names`]; an inner name that shadows an outer one is another binding), for a rejection of the value of `e`: such a question leaves the
+    /// ([`Ck::read_names`]; an inner name that shadows an outer one is another binding), for a
+    /// rejection of the value of `e`: such a question leaves the
     /// value wider than the tests may make it, so it may be behind the rejection, which names
     /// it as its warning would in a unit the checker accepts (DESIGN.md L1.39). Each note is
     /// at the place the program asks the question ([`Ck::asked_at`]). None where the read
@@ -11453,7 +11459,8 @@ impl<'a> Ck<'_, 'a> {
     /// `l01_39a_bit_words::bench::scaling::a_chain_of_sums_under_a_test_of_each_input_reads_each_summary_from_the_one_before`
     /// (counts only), and
     /// `l01_39a_bit_words::narrowing::a_block_of_tested_lets_is_narrowed_soundly_against_the_interpreter`
-    /// and `l01_39a_bit_words::narrowing::a_block_with_remainders_is_narrowed_soundly_and_keeps_what_it_accepted`
+    /// and
+    /// `l01_39a_bit_words::narrowing::a_block_with_remainders_is_narrowed_soundly_and_keeps_what_it_accepted`
     /// (soundness on samples against the interpreter). No test compares an updated tree with
     /// a fresh one, so a key left out of the reset is caught only where it changes a verdict
     /// on a sample.
@@ -11891,7 +11898,8 @@ impl<'a> Ck<'_, 'a> {
                         // a cut at a box's corner. Trigger: many tests among two hubs that many
                         // stars share, in a scope that is not lazy; or a hub related to a name
                         // that is not a hub of its leaves nor a satellite of them.
-                        // Test: `l01_39a_bit_words::bench::scaling::related_hubs_settle_in_time_linear_in_the_tests`.
+                        // Test:
+                        // `l01_39a_bit_words::bench::scaling::related_hubs_settle_in_time_linear_in_the_tests`.
                         // COMPLEXITY.md C26. A complete solution keeps a feasible point and
                         // settles the cone of a read on demand (the design note of
                         // NARROW-hub-settle, revision of 2026-11-04).
@@ -12834,8 +12842,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// takes the meaning the earlier calls gave F's, the one record a check reads back
     /// ([`Self::bracket_meaning_of`]). Every other read of a site reads the program's text
     /// there (the receiver as written, `sum(x)` or `x.sum`, a remap's expression) or keeps a
-    /// record the elaborator reads (`folds`, a remap's witness), which no verdict reads. Where F is met
-    /// in the body of a function around and makes a need there at its own site, that need
+    /// record the elaborator reads (`folds`, a remap's witness), which no verdict reads. Where F is
+    /// met in the body of a function around and makes a need there at its own site, that need
     /// carries the left-out sites at its own span ([`Self::need`], `meet_alike`), so they
     /// fail with it at a call of that function too.
     ///
@@ -12861,15 +12869,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             Var(u8),
             Fixed(Ty),
         }
-        // A key holding a `NeedKind`. Clippy flags its `OnceLock`s; these are its only interior-mutable
-        // parts: a `Via`'s chain hash, which its `Hash` and `Eq` never read (they read `at`, `text`
-        // and `next`), and the set-once caches of the signatures and types it holds, whose `Hash` and
-        // `Eq` read their fixed fields and a digest filled once from those. Nothing behind a shared
-        // `Arc` is changed in place, so no key's hash or equality can change while it is held.
-        // Established in zedc-types src/ty.rs: `impl PartialEq for Via` compares `at`, `text` and
-        // `next`, `impl Hash for Via` hashes `at` and `text`, and `impl Hash for Sig` hashes
-        // `Sig::digest`, filled once. That equal signatures hash alike is zedc-types' contract. No
-        // test can show a key changing in a map, which is why the argument is written here.
+        // A key holding a `NeedKind`. Clippy flags its `OnceLock`s; these are its only
+        // interior-mutable parts: a `Via`'s chain hash, which its `Hash` and `Eq` never read (they
+        // read `at`, `text` and `next`), and the set-once caches of the signatures and types it
+        // holds, whose `Hash` and `Eq` read their fixed fields and a digest filled once from those.
+        // Nothing behind a shared `Arc` is changed in place, so no key's hash or equality can
+        // change while it is held. Established in zedc-types src/ty.rs: `impl PartialEq for Via`
+        // compares `at`, `text` and `next`, `impl Hash for Via` hashes `at` and `text`, and
+        // `impl Hash for Sig` hashes `Sig::digest`, filled once. That equal signatures hash alike
+        // is zedc-types' contract. No test can show a key changing in a map, which is why the
+        // argument is written here.
         #[allow(clippy::mutable_key_type)]
         let mut heads: HashMap<(Ty, NeedKind, Gives), usize> = HashMap::new();
         // The first site met for each key written with roots, in the order of `needs`.
@@ -13181,15 +13190,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut ops = std::mem::take(&mut self.classes[child].ops);
         let mut reasons = std::mem::take(&mut self.classes[child].reasons);
         let mut uses = std::mem::take(&mut self.classes[child].uses);
-        // A key holding a `NeedKind`. Clippy flags its `OnceLock`s; these are its only interior-mutable
-        // parts: a `Via`'s chain hash, which its `Hash` and `Eq` never read (they read `at`, `text`
-        // and `next`), and the set-once caches of the signatures and types it holds, whose `Hash` and
-        // `Eq` read their fixed fields and a digest filled once from those. Nothing behind a shared
-        // `Arc` is changed in place, so no key's hash or equality can change while it is held.
-        // Established in zedc-types src/ty.rs: `impl PartialEq for Via` compares `at`, `text` and
-        // `next`, `impl Hash for Via` hashes `at` and `text`, and `impl Hash for Sig` hashes
-        // `Sig::digest`, filled once. That equal signatures hash alike is zedc-types' contract. No
-        // test can show a key changing in a map, which is why the argument is written here.
+        // A key holding a `NeedKind`. Clippy flags its `OnceLock`s; these are its only
+        // interior-mutable parts: a `Via`'s chain hash, which its `Hash` and `Eq` never read (they
+        // read `at`, `text` and `next`), and the set-once caches of the signatures and types it
+        // holds, whose `Hash` and `Eq` read their fixed fields and a digest filled once from those.
+        // Nothing behind a shared `Arc` is changed in place, so no key's hash or equality can
+        // change while it is held. Established in zedc-types src/ty.rs: `impl PartialEq for Via`
+        // compares `at`, `text` and `next`, `impl Hash for Via` hashes `at` and `text`, and
+        // `impl Hash for Sig` hashes `Sig::digest`, filled once. That equal signatures hash alike
+        // is zedc-types' contract. No test can show a key changing in a map, which is why the
+        // argument is written here.
         #[allow(clippy::mutable_key_type)]
         let mut known = std::mem::take(&mut self.classes[child].known);
         let mut orders = std::mem::take(&mut self.classes[child].orders);
@@ -15429,8 +15439,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// product of such powers, as `x * x` for `x = b ^ (2^59) * c ^ (2^59) / d` (plan row
     /// CONST-too-large-coprime-base): no root of one part shares a prime with a root of the
     /// other. A check between roots made by products is decided once the walk is over, with
-    /// every root met ([`Self::judge_proved`]), and the operation is judged then. GMP's `mpq_mul` and
-    /// `mpq_div` (after Knuth, *The Art of Computer Programming*, vol. 2, *Seminumerical
+    /// every root met ([`Self::judge_proved`]), and the operation is judged then. GMP's `mpq_mul`
+    /// and `mpq_div` (after Knuth, *The Art of Computer Programming*, vol. 2, *Seminumerical
     /// Algorithms*, sec. 4.5.1, a book, from memory, not checked: for `(u/u')·(v/v')` in lowest
     /// terms, divide by `gcd(u, v')` and `gcd(u', v)` first) cancel the cross gcds before
     /// multiplying,
@@ -17863,7 +17873,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// need on its floor ([`Self::floor_on`], kept in `ranged_floors`), with this call as a
     /// link. Not proved here: that each call of that parameter's function then checks its
     /// argument against these ranges; the step from the floor to the outer calls was not
-    /// traced. Tests: `l08_02_remaps::collisions`, `a_key_outside_the_range_is_rejected_at_the_call`,
+    /// traced. Tests: `l08_02_remaps::collisions`,
+    /// `a_key_outside_the_range_is_rejected_at_the_call`,
     /// `a_tuple_key_component_outside_its_range_is_rejected` and
     /// `a_parameter_of_no_declared_type_takes_the_need_on_to_its_calls`, the last of which
     /// covers the untraced step for one level of passing. They call each function by its
@@ -18366,7 +18377,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Whether `t` is one function of no parameters, no family, whose result is data: no
-    /// function at any depth, no class or type variable, no `_` at any depth, and no `(..)` or `{..}`.
+    /// function at any depth, no class or type variable, no `_` at any depth, and no `(..)` or
+    /// `{..}`.
     fn calls_to_data(&self, t: &Ty) -> bool {
         let Some(sig) = only_fn(t) else {
             return false;
@@ -21108,9 +21120,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   that is a function is left to run
     ///   (`a_function_a_generic_body_passes_on_keeps_its_test_through_staging`).
     /// - Not supported by this zedc, refused before the check reaches the call
-    ///   (zedc-base/src/rejection.rs, "not supported by this version of zedc"): `loop` with `initial`
-    ///   (DESIGN.md sec:generations; `initial` outside a loop is refused as such), `@memoized`
-    ///   and its memo arena (sec:arenas), `match`, recursion, a declared result type, a
+    ///   (zedc-base/src/rejection.rs, "not supported by this version of zedc"): `loop` with
+    ///   `initial` (DESIGN.md sec:generations; `initial` outside a loop is refused as such),
+    ///   `@memoized` and its memo arena (sec:arenas), `match`, recursion, a declared result type, a
     ///   struct's type parameters, a binding with a declared type. When one of these is
     ///   compiled, the test `constructs_the_proof_leaves_for_later_are_not_compiled_yet`
     ///   fails, and the proof must take it in.
@@ -22531,13 +22543,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         // [`Self::unfixed_only`] reads every fix of a carry, and in a nest of n operations
         // each fix rides up every level, as in `((1 + 1) / 1 + 1) / 1 …`, so making the table
         // at every construct cost O(n^2) in all (ratio 10.69 at 8n against 8.01 before the
-        // table, l01_26a an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time);
+        // table, l01_26a
+        // an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time);
         // the test of one argument is O(carries). Where another argument carries a fix at each
         // level beside the one the fixes ride up in, as `((1 + 1 / 1) / 1 + 1 / 1) / 1 …` at
         // an f64 parameter, the table is made at every level, and was quadratic there too:
         // 8.54 at 8n (sizes 500 and 4000). [`Self::unfixed_only`] now reads a fix once when it
         // joins or moves, not at each level ([`LitsRead`]): 8.00 (PERF-carried-lent-two-args,
-        // l01_26a an_argument_of_divisions_of_literals_on_both_sides_nested_deep_takes_its_carrier_in_linear_time).
+        // l01_26a
+        // an_argument_of_divisions_of_literals_on_both_sides_nested_deep_takes_its_carrier_in_linear_time).
         let one_arg = carried
             .iter()
             .all(|(i, _)| Some(*i) == carried.first().map(|c| c.0));
@@ -22619,8 +22633,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// A place whose error is not found yet (`p.id >= next_found`) is not kept as read, since
     /// a trial's error may hold that id now and the real one later.
     ///
-    /// Test: `l01_26a_generic_literals::scaling::carries_in_one_argument_beside_one_that_fails_keep_their_verdicts`
-    /// and the nest `scaling::an_argument_of_divisions_of_literals_on_both_sides_nested_deep_takes_its_carrier`
+    /// Test:
+    /// `l01_26a_generic_literals::scaling::carries_in_one_argument_beside_one_that_fails_keep_their_verdicts`
+    /// and the nest
+    /// `scaling::an_argument_of_divisions_of_literals_on_both_sides_nested_deep_takes_its_carrier`
     /// (its benchmark has the ratio). When 41739da61 landed, l01_26a, l01_26, l01_29, l03_15a,
     /// l08_02, l02_03 and zedc-check ran once with a temporary assertion that each cached
     /// answer equals the naive read, with no difference; that assertion is not kept, so the
@@ -23494,7 +23510,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // Complexity tradeoff: at most six casts and one component per index of the narrower
         // tuple, each one trial of the comparison with one operand replaced, which costs the
         // size of the other operand and of the replacement, never the replaced tuple again
-        // (test `l01_29_repairs_and_printing::scaling::checking_the_components_offered_for_a_wide_tuple_scales`).
+        // (test
+        // `l01_29_repairs_and_printing::scaling::checking_the_components_offered_for_a_wide_tuple_scales`).
         // The naive way, checking the program again with each fix written in, costs the
         // size of the program per fix. A literal fix adds at most three more trials, each
         // after one run of its cast on the literal's one value ([`Ck::literal_repair`]) (test
@@ -24620,8 +24637,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   it. Both now refuse it (step 5).
     ///
     /// Not proved: that the steps of the loop that change the classes of the function around
-    /// ([`Self::join`], [`Self::restrict`], [`Self::flow`], [`Self::need`]) leave the same classes in
-    /// every order, which [`Self::needs_fit`] then reads; and that two functions in `held`,
+    /// ([`Self::join`], [`Self::restrict`], [`Self::flow`], [`Self::need`]) leave the same classes
+    /// in every order, which [`Self::needs_fit`] then reads; and that two functions in `held`,
     /// checked in the order of the arguments, give the verdict they give in the other order.
     /// 1800 programs (75 bodies and literals, 24 orders of four arguments) gave one verdict and
     /// one count of errors in every order on 2026-11-20.
@@ -24749,8 +24766,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
             // A call or an `if` that lists values, `x * g(c)` with `x: f64` and `g` of type `(bool)
-            // -> 1 | 2`, is read at the one carrier, `f64`, `f32` or `rat`, of the other arguments and
-            // of the parts the calls hold whole, as at a parameter of that carrier ([`read_ty`]; L1.26a: "each keeps its own value
+            // -> 1 | 2`, is read at the one carrier, `f64`, `f32` or `rat`, of the other arguments
+            // and of the parts the calls hold whole, as at a parameter of that carrier
+            // ([`read_ty`]; L1.26a: "each keeps its own value
             // and is fixed where the result is used"). Elsewhere its values are their own
             // carriers, as before: `g(c) * g(c)` is an `int`. Each call is read once, O(v log v)
             // in the values its type lists ([`read_at`]).
@@ -24852,8 +24870,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // rejection where it meets none ([`Ck::resolve`]). Outside one nothing
                     // else gives them a carrier: integer literals alone are `int` where the
                     // bound holds it, one carrier left is taken, and with two or more the
-                    // first decimal literal, or else the first literal, is rejected, unless they are
-                    // float formats alone, `f64` among them, which take `f64` ([`floats_take_f64`]).
+                    // first decimal literal, or else the first literal, is rejected, unless they
+                    // are float formats alone, `f64` among them, which take `f64`
+                    // ([`floats_take_f64`]).
                     let takes: Vec<Carrier> = Carrier::of_mask(m)
                         .filter(|&c| lits.iter().all(|l| fits(l, c)))
                         .collect();
@@ -24935,8 +24954,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // and again after it costs a second check of each; binding the arguments of no value
         // before the loop (0fd9e0b77) fixed the order of `Never` beside a function alone, not
         // of another argument that binds the same variable, as the `1` above.
-        // Tests: `l01_26_type_resolution::never::a_function_with_needs_is_checked_on_the_binding_of_every_argument_in_every_order`
-        // (red before this), `an_argument_of_type_never_binds_before_a_function_with_needs_in_either_order`
+        // Tests:
+        // `l01_26_type_resolution::never::a_function_with_needs_is_checked_on_the_binding_of_every_argument_in_every_order`
+        // (red before this),
+        // `an_argument_of_type_never_binds_before_a_function_with_needs_in_either_order`
         // and `a_function_with_needs_is_checked_alike_beside_never_and_an_int_in_every_order`.
         let mut held: Vec<(usize, Arc<Sig>, &Ty)> = Vec::new();
         'args: for (i, a) in args.iter().enumerate() {
@@ -25136,7 +25157,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // only by `replay`, need by need, so with none it is not read. Walking anyway made a
         // chain of n lookups `p["k"]["k"]…` into a family n deep walk the rest of the depth at
         // each lookup, O(n²) (a lookup is a call of the family, which has no needs; measured
-        // 14.55 at 8n, `bench::a_lambda_that_calls_a_parameter_n_families_deep_runs_in_linear_time`).
+        // 14.55 at 8n,
+        // `bench::a_lambda_that_calls_a_parameter_n_families_deep_runs_in_linear_time`).
         let partial = !defer.is_empty();
         let mut defer = defer;
         if !sig.needs.is_empty() {
@@ -25600,7 +25622,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// an operator, a prelude word, or a section of one. The classes of the arguments merge,
     /// since every arrow but `f32 ^ int` takes one carrier for all its parameters, and its
     /// literals join them; a literal, or a class of literals alone, takes no `f32`
-    /// through `f32 ^ int`, an arrow of two carriers (DESIGN.md L1.17); without a class, each literal adopts the carrier of its parameter on the
+    /// through `f32 ^ int`, an arrow of two carriers (DESIGN.md L1.17); without a class, each
+    /// literal adopts the carrier of its parameter on the
     /// arrows that adopt fewest. Then the arguments' pieces are taken in turn, each state
     /// the arrows still alive and the carriers they allow where the class stands
     /// ([`ClassAt`]): a state per such pair, not per combination of pieces.
@@ -27013,10 +27036,10 @@ impl<'a> Ck<'_, 'a> {
             .map(|(names, constants)| Zero::Cancels(names, constants))
     }
 
-    /// The names of `e`, in order of first use, and whether it has constants, when `e` is a sum of names and constants under
-    /// `+`, `-` and unary `-` in which each name is added as often as it is subtracted and the
-    /// constants add to zero, as in `x - x` or `(a + 1) - (1 + a)`. One pass over `e` on an
-    /// explicit stack, each node once.
+    /// The names of `e`, in order of first use, and whether it has constants, when `e` is a sum of
+    /// names and constants under `+`, `-` and unary `-` in which each name is added as often as it
+    /// is subtracted and the constants add to zero, as in `x - x` or `(a + 1) - (1 + a)`. One pass
+    /// over `e` on an explicit stack, each node once.
     ///
     /// Complexity tradeoff: the naive test of "always zero" evaluates `e` at every value of
     /// its names, which is unbounded. Used: the linear form of `e` over `+` and `-`, one count
@@ -27769,10 +27792,10 @@ fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>, seen: &HashMap<Span, Seen<
 /// or `U ->? V` alone where `L` is empty. DESIGN.md sec:types, "How the bounds propagate",
 /// gives a display `L = U = D` ("Exact by construction"), true where `D` is the set of keys
 /// written; read as the key types, it breaks the condition stated above that table, that
-/// `L` under-approximates the run-time domain, and this follows that condition. Proof that `L` holds only keys the
-/// family holds: a display is built only where each key part gives a value, and a part whose
-/// type is one value `v` gives `v`, so `v` is a key; every key is the value of some part,
-/// so `U` holds every key. Before (found by the audit proofdoc2b, 2026-11-20), the one
+/// `L` under-approximates the run-time domain, and this follows that condition. Proof that `L`
+/// holds only keys the family holds: a display is built only where each key part gives a value, and
+/// a part whose type is one value `v` gives `v`, so `v` is a key; every key is the value of some
+/// part, so `U` holds every key. Before (found by the audit proofdoc2b, 2026-11-20), the one
 /// arrow `(U) -> V` said every value of `U` is a key: `f(n: int) = { n -> 10 }[n + 1]` was
 /// typed `10` and ran to `#notFound`. Test:
 /// `l03_02_map_run::types::a_key_of_many_values_is_permitted_not_guaranteed`; it reads the
@@ -27834,8 +27857,9 @@ fn display_ty(kind: Display, parts: &[Ty]) -> Ty {
     Ty::func(Arc::new(sig))
 }
 
-// Operands::adoptions, Ck::generic_parts, Ck::fewest and parts are here, not in mod.rs, since they call
-// branch_lits, read_ty and Ck::branch_joins: in mod.rs they would make an import cycle (step S.1f).
+// Operands::adoptions, Ck::generic_parts, Ck::fewest and parts are here, not in mod.rs, since they
+// call branch_lits, read_ty and Ck::branch_joins: in mod.rs they would make an import cycle (step
+// S.1f).
 impl Operands {
     /// Pairs the operands as `x == e` does, in a checker of the empty unit, and gives the
     /// number of literals that adopt a carrier.
@@ -28260,12 +28284,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         // Per literal argument without a suffix: the carriers of its parameter on the arrows
         // the other arguments fit, `None` once one of them is generic.
         let mut takes: BTreeMap<usize, Option<u8>> = BTreeMap::new();
-        // A call or an `if` that lists values, each value or part of one carrier of which an arrow the other arguments
-        // meet takes as it is, as `g(c)` of type `1 | 2.5` for `g(positional c: bool) = if
-        // c { 1 } else { 2.5f64 }` at `f64(…)`, whose `1` the `int` arrow takes and whose
-        // `2.5` the `f64` arrow does, is split among those arrows value by value, as
-        // `f64(if c { 1 } else { 2.5f64 })` is, and is read at no carrier: the `int` arrow,
-        // which reads nothing, would otherwise be the one arrow kept, and the `2.5` would
+        // A call or an `if` that lists values, each value or part of one carrier of which an arrow
+        // the other arguments meet takes as it is, as `g(c)` of type `1 | 2.5` for
+        // `g(positional c: bool) = if c { 1 } else { 2.5f64 }` at `f64(…)`, whose `1` the `int`
+        // arrow takes and whose `2.5` the `f64` arrow does, is split among those arrows value by
+        // value, as `f64(if c { 1 } else { 2.5f64 })` is, and is read at no carrier: the `int`
+        // arrow, which reads nothing, would otherwise be the one arrow kept, and the `2.5` would
         // find none. A call some value of which no such arrow takes is read: in `x * g(c)`
         // with `x: f64`, the `1` of `g(c)` is read at `f64`, and so in `1.0f64 + g(c)`. A
         // literal with no suffix among the other arguments, or a tuple or an `if` of them,
@@ -28354,10 +28378,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             // An arrow no other argument can fit is no candidate, and its literals are not
             // adopted: a decimal literal's adoption at `rat` reads its digits (COMPLEXITY.md
             // K41), as at the `rat` arrow of `n + 0.5` with `n` an int.
-            // A call or an `if` that lists values, `g(c)` of type `1 | 2` or `1 | f64`, is read at the
-            // parameter's carrier, `f64`, `f32` or `rat`, as at a declared parameter ([`read_ty`];
-            // L1.26a: "each keeps its own value and is fixed where the result is used"): in
-            // `x * g(c)` with `x: f64` it is an `f64` at the `f64` arrow. Complexity
+            // A call or an `if` that lists values, `g(c)` of type `1 | 2` or `1 | f64`, is read at
+            // the parameter's carrier, `f64`, `f32` or `rat`, as at a declared parameter
+            // ([`read_ty`]; L1.26a: "each keeps its own value and is fixed where the result is
+            // used"): in `x * g(c)` with `x: f64` it is an `f64` at the `f64` arrow. Complexity
             // tradeoff: each such argument is read once per arrow, O(A v log v) for A arrows
             // and v values its type lists; A is at most six for an operator: zed_kernel term.rs
             // `Prim::arrows` gives four for arithmetic (`ARITH`), five or fewer for `/`, `^`
@@ -28593,7 +28617,8 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Rejects the decimal literals with no suffix that a call among `args` may give through
     /// its body, where the arrows of `sig` that the other arguments meet hold both `f64` and
-    /// `rat` at its place, so that nothing gives them a carrier: `f64(g(c))` with `g(positional c: bool) = if c { 1 } else { 2.5 }` is
+    /// `rat` at its place, so that nothing gives them a carrier: `f64(g(c))` with
+    /// `g(positional c: bool) = if c { 1 } else { 2.5 }` is
     /// rejected at the `2.5`, as `f64(0.5)` is (L1.26b: "Where nothing fixes its carrier a
     /// decimal literal is rejected"), and as `y = g(c)` is (L1.26a). One arrow at one
     /// carrier fixes it: `x * g(c)` with `x: f64` reads the call at `f64`. A generic
@@ -29072,7 +29097,8 @@ type Recv = Option<(Rc<[Span]>, Option<Rc<Taken>>)>;
 /// keys into nested families (DESIGN.md sec:keypaths), and this proof covers the entries one
 /// level down only.
 ///
-/// Test: `l01_26_type_resolution::function_variance::a_function_taken_from_a_family_argument_misses_outside_its_domain`
+/// Test:
+/// `l01_26_type_resolution::function_variance::a_function_taken_from_a_family_argument_misses_outside_its_domain`
 /// (seven programs, read at `2.5` and at `3`). What it cannot catch: keys of tuples (refused,
 /// not rebuilt), families nested more than one level, and a family whose entries have more
 /// than one type (not taken here).
@@ -29562,7 +29588,8 @@ fn params_apart(sig: &Sig) -> bool {
 /// `(T, _, p2: T) -> T`, also with the default read through one call or two and with no
 /// default, loses one of `p1`'s two valid fixes: [`Ck::carried_together`] joins it with a fix
 /// of `p0` into the type of the call, which only `p0` decides, and `x < 1r` refuses that type
-/// for `f64`. Test: `l01_29_repairs_and_printing::scaling::the_fix_of_an_argument_the_result_does_not_hold_is_kept`.
+/// for `f64`. Test:
+/// `l01_29_repairs_and_printing::scaling::the_fix_of_an_argument_the_result_does_not_hold_is_kept`.
 fn params_own_apart(sig: &Sig) -> bool {
     let [arrow] = sig.arrows.as_slice() else {
         return false;

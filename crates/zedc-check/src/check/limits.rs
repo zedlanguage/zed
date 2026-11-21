@@ -56,7 +56,8 @@ pub(super) const ADDRESS_BYTES_LOG2: u32 = 64;
 /// ceiling, an integer of at most 64 bits, which `built_parts` builds at once. Before (FAIL
 /// found by proofdoc4d), `r` was built first, and a tiny or huge power the system refused the
 /// memory for was rejected as "not a time the run can have" although it is above 0, which the
-/// message itself says a time must be. Test: `main_limits::a_time_of_a_power_too_large_to_build_is_judged_by_its_size` in
+/// message itself says a time must be. Test:
+/// `main_limits::a_time_of_a_power_too_large_to_build_is_judged_by_its_size` in
 /// tests/steps/l01_29_diagnostics, red before (the tiny case was rejected).
 ///
 /// Not proved: case (3) for a value between the ends whose sides are both powers too large to

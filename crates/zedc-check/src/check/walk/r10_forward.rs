@@ -378,7 +378,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // type's facts list, and the renaming does not enter the callee, so
                         // `id`'s `$0` would stay (Neon's round 3, gap 1: `a = h1`); `shown`
                         // decodes such a type first, untagged, to the flat needs E shows
-                        // (test `chain_e1_a_top_value_holding_a_kept_forward_is_shown_as_e_shows_it`).
+                        // (test
+                        // `chain_e1_a_top_value_holding_a_kept_forward_is_shown_as_e_shows_it`).
                         // (6) A renaming (`Sig::renamed`, `Mode::Rename` in zedc-types) hides
                         // nothing, so on the flat needs it renames a held function's bound
                         // variable too; `Replacer::must_decode_fwd` decodes a forward whose
@@ -509,8 +510,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // and whose bound ones `held_names`, part (B)): neither `#4` nor `#6` sees it and no step
         // records it, so the flat needs would show it where the kept forward does not. No
         // checker input is known to reach it (a name read from around the callee is a class
-        // while it is checked); refused so that the proof of point b in the leaf-need loop holds for any
-        // input (PROOF-map-chain-d-skip-and-admit). Per variable, one lookup in `own` and
+        // while it is checked); refused so that the proof of point b in the leaf-need loop holds
+        // for any input (PROOF-map-chain-d-skip-and-admit). Per variable, one lookup in `own` and
         // O(log h) in the h held names, beside the walk that gathered them.
         if all_mentioned_vars
             .order
@@ -595,17 +596,19 @@ impl<'t, 'a> Ck<'t, 'a> {
             !arrow_var_set.contains(v) && seen_res_vars.contains(v)
         };
 
-        // Compose `exposed_needs`, `#7'` check, and compressed `var_steps` in `O(|sig.needs|)` = `O(1)`.
+        // Compose `exposed_needs`, `#7'` check, and compressed `var_steps` in
+        // `O(|sig.needs|)` = `O(1)`.
         let mut exposed_needs = Vec::new();
-        // A key holding a `NeedKind`. Clippy flags its `OnceLock`s; these are its only interior-mutable
-        // parts: a `Via`'s chain hash, which its `Hash` and `Eq` never read (they read `at`, `text`
-        // and `next`), and the set-once caches of the signatures and types it holds, whose `Hash` and
-        // `Eq` read their fixed fields and a digest filled once from those. Nothing behind a shared
-        // `Arc` is changed in place, so no key's hash or equality can change while it is held.
-        // Established in zedc-types src/ty.rs: `impl PartialEq for Via` compares `at`, `text` and
-        // `next`, `impl Hash for Via` hashes `at` and `text`, and `impl Hash for Sig` hashes
-        // `Sig::digest`, filled once. That equal signatures hash alike is zedc-types' contract. No
-        // test can show a key changing in a map, which is why the argument is written here.
+        // A key holding a `NeedKind`. Clippy flags its `OnceLock`s; these are its only
+        // interior-mutable parts: a `Via`'s chain hash, which its `Hash` and `Eq` never read (they
+        // read `at`, `text` and `next`), and the set-once caches of the signatures and types it
+        // holds, whose `Hash` and `Eq` read their fixed fields and a digest filled once from those.
+        // Nothing behind a shared `Arc` is changed in place, so no key's hash or equality can
+        // change while it is held. Established in zedc-types src/ty.rs: `impl PartialEq for Via`
+        // compares `at`, `text` and `next`, `impl Hash for Via` hashes `at` and `text`, and
+        // `impl Hash for Sig` hashes `Sig::digest`, filled once. That equal signatures hash alike
+        // is zedc-types' contract. No test can show a key changing in a map, which is why the
+        // argument is written here.
         #[allow(clippy::mutable_key_type)]
         let mut seen_7p_keys = HashSet::new();
         let mut var_steps = Vec::new();
@@ -806,7 +809,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         summary
     }
 
-    /// Evaluates `A'` (`#1..#24`, `#26`, `#27`, `#7'`; `#25` dropped since `#24-lists + #17` imply it).
+    /// Evaluates `A'` (`#1..#24`, `#26`, `#27`, `#7'`; `#25` dropped since `#24-lists + #17` imply
+    /// it).
     fn r10_eval_a_prime(
         &self,
         sig: &Sig,
@@ -897,9 +901,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             if c.mask & OTHER == 0 {
                 fails.insert("#18".into());
             }
-            // Exact `#19`: refuse if `c.known` is non-empty OR any open forward has >= 1 deferred need on `r`.
-            // O(1) by the count `deferred_open`; scanning `r`'s watchers was O(w) per call, O(w^2)
-            // for w calls on one operand.
+            // Exact `#19`: refuse if `c.known` is non-empty OR any open forward has >= 1 deferred
+            // need on `r`. O(1) by the count `deferred_open`; scanning `r`'s watchers was O(w) per
+            // call, O(w^2) for w calls on one operand.
             let has_deferred_known = self.r10.deferred_open.get(&r).is_some_and(|&n| n > 0);
             if !c.known.is_empty() || has_deferred_known {
                 fails.insert("#19".into());
@@ -942,16 +946,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                     subst.insert(v.clone(), mapped);
                 }
             }
-            // A key holding a `NeedKind`. Clippy flags its `OnceLock`s; these are its only interior-mutable
-            // parts: a `Via`'s chain hash, which its `Hash` and `Eq` never read (they read `at`, `text`
-            // and `next`), and the set-once caches of the signatures and types it holds, whose `Hash` and
-            // `Eq` read their fixed fields and a digest filled once from those. Nothing behind a shared
-            // `Arc` is changed in place, so no key's hash or equality can change while it is held.
-            // Established in zedc-types src/ty.rs: `impl PartialEq for Via` compares `at`,
-            // `text` and `next`, `impl Hash for Via` hashes `at` and `text`, and `impl Hash for
-            // Sig` hashes `Sig::digest`, filled once. That equal signatures hash alike is
-            // zedc-types' contract. No test can show a key changing in a map, which is why the
-            // argument is written here.
+            // A key holding a `NeedKind`. Clippy flags its `OnceLock`s; these are its only
+            // interior-mutable parts: a `Via`'s chain hash, which its `Hash` and `Eq` never read
+            // (they read `at`, `text` and `next`), and the set-once caches of the signatures and
+            // types it holds, whose `Hash` and `Eq` read their fixed fields and a digest filled
+            // once from those. Nothing behind a shared `Arc` is changed in place, so no key's hash
+            // or equality can change while it is held. Established in zedc-types src/ty.rs:
+            // `impl PartialEq for Via` compares `at`, `text` and `next`, `impl Hash for Via` hashes
+            // `at` and `text`, and `impl Hash for Sig` hashes `Sig::digest`, filled once. That
+            // equal signatures hash alike is zedc-types' contract. No test can show a key changing
+            // in a map, which is why the argument is written here.
             #[allow(clippy::mutable_key_type)]
             let mut seen_keys = HashSet::new();
             for tpl in &summary.exposed_needs {
@@ -1347,7 +1351,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         kept_fids
     }
 
-    /// Merges direct needs with `NeedKind::Fwd` items in exact sequence order before `share_alike` (`M66`).
+    /// Merges direct needs with `NeedKind::Fwd` items in exact sequence order before `share_alike`
+    /// (`M66`).
     pub(in crate::check) fn r10_merge_direct_and_kept_needs(
         &mut self,
         kept_fids: &[usize],
@@ -1511,7 +1516,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Names `sig`'s materialized `mine` variables in `O(1)` per compact link (`M62`), advancing
-    /// `n_idx` across unmaterialized `I(F)` runs in one step via `fresh_variable_span_stats_indexed` and
+    /// `n_idx` across unmaterialized `I(F)` runs in one step via
+    /// `fresh_variable_span_stats_indexed` and
     /// pre-computing each `FwdNeed`'s `M65` `digest_summary`.
     pub(in crate::check) fn r10_name_compact_sig_in_generalize(
         &mut self,
@@ -1608,7 +1614,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                                         held: held_now.clone(),
                                     });
                                     if broken_linear_names {
-                                        // M62 negative control: quadratic one-by-one draw (Codex R9).
+                                        // M62 negative control: quadratic one-by-one draw
+                                        // (Codex R9).
                                         for _ in 0..cnt {
                                             let _: Arc<str> =
                                                 fresh_name(Names::Variables, &mut n_idx, |nm| {
@@ -1617,7 +1624,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                                             self.r10.stats.names_drawn += 1;
                                         }
                                     } else {
-                                        // M62 fix: ONE bulk step handling n < 4 + ProgramNames + skip!
+                                        // M62 fix: ONE bulk step handling n < 4 + ProgramNames +
+                                        // skip!
                                         let stats = fresh_variable_span_stats_indexed(
                                             n_idx, cnt, &skip_arc, &held_now,
                                         );
@@ -1654,7 +1662,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         sig.facts = Default::default();
         sig.note_held();
 
-        // 3. Pre-compute `digest_summary` at `R_BASE` on each `NeedKind::Fwd` in `O(#sigma)` = `O(1)`.
+        // 3. Pre-compute `digest_summary` at `R_BASE` on each `NeedKind::Fwd` in
+        // `O(#sigma)` = `O(1)`.
         let mut mat_result_ranks: HashMap<Arc<str>, usize> = HashMap::new();
         let mut cur_rank = 0usize;
         for nd in &sig.needs {
