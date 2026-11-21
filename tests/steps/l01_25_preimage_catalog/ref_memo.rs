@@ -756,8 +756,8 @@ pub(super) fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
             let g = |j: i64| prim(Prim::Le, var(if j % 2 == 0 { "i" } else { "m" }), int(j));
             one(chain(n, var("i"), g, |j, t| sub_c(j % 5, t)), i_and_m())
         }
-        // `alternating_2var` on the base `m` (the Opus seat's `alt2var_m`, PERF-ref-memo-multi-input
-        // round 3): the base input is not the one the first guard reads.
+        // `alternating_2var` on the base `m` (the Opus seat's `alt2var_m`,
+        // PERF-ref-memo-multi-input round 3): the base input is not the one the first guard reads.
         "alt2var_m" => {
             let g = |j: i64| prim(Prim::Le, var(if j % 2 == 0 { "i" } else { "m" }), int(j));
             one(chain(n, var("m"), g, |j, t| sub_c(j % 5, t)), i_and_m())

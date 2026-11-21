@@ -3161,8 +3161,8 @@ impl<'t> Tx<'t> {
     //   8.05 at 16 and `normal_div_neg2_chain` 11.8 at 16 and 8.3 at 128. Measured only: no
     //   bound on the pieces visited per link is proved.
     // `indep_varying` and `alternating_moduli` are not timed yet (`ref_memo::UNTIMED_FAMILIES`);
-    // their answers are checked against the interpreter. Tests: `l01_25_preimage_catalog::ref_memo` (the scaling of
-    // each family, main's changed answers, calls 22, 45 and 86). COMPLEXITY.md C56.
+    // their answers are checked against the interpreter. Tests: `l01_25_preimage_catalog::ref_memo`
+    // (the scaling of each family, main's changed answers, calls 22, 45 and 86). COMPLEXITY.md C56.
     fn back_doubt(&mut self, t: Tid, env: Eid, d: &Demand, dd: &IntervalSet) -> Res {
         let dd = match d {
             Demand::Ints(z) if !dd.is_empty() => dd.meet(z).meet(&self.fwd(t, env).ints),
