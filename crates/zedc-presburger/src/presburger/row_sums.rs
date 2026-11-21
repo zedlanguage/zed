@@ -71,8 +71,9 @@
 //!    some assignment; at `t = n` the window is `top` itself. Where no value of the class sum
 //!    meets a row, `top` is empty and so is the window, `lo > hi`, and [`Set::keep`] keeps no
 //!    key (it once kept an interval across the window, cut to `(lo, hi)`: no key, but not
-//!    empty, with `min > max`; test `an_empty_window_across_an_interval_leaves_no_key`). So group j's table `T_j` is exactly
-//!    the keys of the assignments of its atoms with top digit in `top_j`.
+//!    empty, with `min > max`; test `an_empty_window_across_an_interval_leaves_no_key`). So
+//!    group j's table `T_j` is exactly the keys of the assignments of its atoms with top digit
+//!    in `top_j`.
 //! 3. The layers. Let `A_i` be the assignments of the atoms of groups `0..i` that give each
 //!    group a top digit in its `top_j` and meet every row that closes before i. Invariant:
 //!    layer i is exactly `{key_i(a) : a ∈ A_i}`, `key_i` the key of the open rows' partial
@@ -2781,8 +2782,8 @@ impl Group<'_> {
     // as one window of keys, where the paper prunes one branch of its search. Exact: a key
     // outside it is the prefix of no point (proof: the module note, step 2). Where `top` is
     // empty the window is too, `lo > hi`, which [`Set::keep`] makes the empty set. Measured
-    // on subset sum with no point at k = 64: the tables of the second half of the atoms hold only the sums within the rest of the
-    // target, about half the words.
+    // on subset sum with no point at k = 64: the tables of the second half of the atoms hold
+    // only the sums within the rest of the target, about half the words.
     fn window(&self, t: usize) -> (i64, i64) {
         let (last, top) = (self.fill[self.atoms.len()].2, self.fill[t].2);
         let (a, b) = (self.top.0 - (last - top), self.top.1.min(top));
