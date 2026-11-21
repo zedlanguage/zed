@@ -5782,8 +5782,8 @@ impl<'t> Tx<'t> {
     /// its binding, is `None`, for either argument term. The step "a divisor with an atom
     /// mentions an input" was not checked arm by arm. What is left is (b).
     ///
-    /// Not proved (PROOF-call-key-function-of-lins), one sub-case: (b) a parameter whose key is not a
-    /// constant, still read through the caller's argument term, where the body reads that
+    /// Not proved (PROOF-call-key-function-of-lins), one sub-case: (b) a parameter whose key
+    /// is not a constant, still read through the caller's argument term, where the body reads that
     /// term other than by its linear term: [`Walk::lin_by_class`] reads the classes of a
     /// remainder test of it, and the box walks ([`Walk::fwd`]) read its bounds, which may
     /// differ between `x` and `x + y - y`. No test was found that reaches it. A fix in the
@@ -14386,8 +14386,9 @@ fn split_around(root: Tree, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
 /// children, so each of the `p` nodes is visited at most once, and the time is `O(p log p)`
 /// expected, four joins at most per node. Open sub-case: the `O((m + s + 1) log^2 n)` bound
 /// when a tag above has slope not 0; closing it needs each subtree's hulls, as at
-/// `invert_treap`. No benchmark measures it. Test: `tests::a_clamped_summary_is_the_summary_clamped_at_every_point` checks
-/// the values, not the count.
+/// `invert_treap`. No benchmark measures it. Test:
+/// `tests::a_clamped_summary_is_the_summary_clamped_at_every_point` checks the values, not
+/// the count.
 ///
 /// `None` where a piece end it would make lies past what [`in_range`] admits, so the caller
 /// gives up as it does when [`Pa::to_treap`] refuses the domain. Why the check: a piece with
