@@ -950,3 +950,91 @@ fn a_push_in_an_inner_function_of_a_class_around_and_its_own_parameter_is_checke
         "a\nb\n",
     );
 }
+
+/// `h` holding an inner `g` whose push holds `x`, `h`'s parameter, and `y`, `g`'s own, with
+/// `rest` the statement after `g`, called with `x` given `x`.
+fn inner_push(rest: &str, x: &str) -> String {
+    format!(
+        "h(x, out: Lines) {{ g(positional y, o: Lines) {{ o <- [x, y]; }} {rest} }}\n\
+         main(m: MainArgs) {{ h(x: {x}, out: m.stdout); }}\n"
+    )
+}
+
+/// `h` holding `n` inner functions, none called, each pushing `x`, `h`'s parameter, beside its
+/// own `y`, called once: `h`'s signature holds `n` push needs, each with a variable no call
+/// binds (the benchmark `bench::bubble::many_uncalled_inner_pushes_scale`).
+pub(super) fn body_of_uncalled_inner_pushes(n: usize) -> String {
+    let inner: String = (0..n)
+        .map(|i| format!("  g{i}(positional y, o: Lines) {{ o <- [x, y]; }}\n"))
+        .collect();
+    format!(
+        "h(x, out: Lines) {{\n{inner}  out <- x.upper;\n}}\n\
+         main(m: MainArgs) {{ h(x: \"a\", out: m.stdout); }}\n"
+    )
+}
+
+/// `h` holding one inner function, not called, pushing `x` and a family of its own `n`
+/// parameters, called once: one push need with `n` variables no call binds (the benchmark
+/// `bench::bubble::an_uncalled_inner_push_of_many_parameters_scales`).
+pub(super) fn uncalled_inner_push_of_parameters(n: usize) -> String {
+    let params: String = (0..n).map(|i| format!("positional y{i}, ")).collect();
+    let entries: String = (0..n).map(|i| format!(", y{i}")).collect();
+    format!(
+        "h(x, out: Lines) {{\n  g({params}o: Lines) {{ o <- [x{entries}]; }}\n  out <- x.upper;\n}}\n\
+         main(m: MainArgs) {{ h(x: \"a\", out: m.stdout); }}\n"
+    )
+}
+
+#[test]
+fn an_uncalled_inner_function_s_push_does_not_refuse_the_call_around() {
+    // No call reaches `g`, so nothing gives `y` a value: the push of `[x, y]` holds `x`'s
+    // values alone, as its own check read `y` when it was written, and `h(x: "a", …)` is taken
+    // (row CHECK-uncalled-inner-push-refused, `Ck::unreached_in_pushes` in zedc-check). Before,
+    // each call of `h` read `y` as `_`, every value, and was refused: "`h`, which needs this of
+    // its argument, does not take every value, and this value is `_`".
+    prints(
+        "bubble_push_uncalled_inner",
+        &inner_push("out <- x.upper;", "\"a\""),
+        "A\n",
+    );
+    // The controls: a call of `g` gives `y` its value, which is checked.
+    assert_eq!(
+        type_errors(&inner_push("g(5, o: out);", "\"a\"")),
+        [
+            "A `Lines` port takes a `String` or a family of strings: `o <- [x, y] : (0 | 1) -> \
+          int | \"a\"`. [[x, y]]"
+        ],
+    );
+    prints(
+        "bubble_push_called_inner",
+        &inner_push("g(\"b\", o: out);", "\"a\""),
+        "a\nb\n",
+    );
+}
+
+#[test]
+fn an_uncalled_inner_lambda_s_push_does_not_refuse_the_call_around() {
+    // The lambda twin of the test above: `f` is never applied, so `y` holds no value.
+    let src = "h(x, out: Lines) { f = (positional y) -> { out <- [x, y]; 0 }; out <- x.upper; }\n\
+               main(m: MainArgs) { h(x: \"a\", out: m.stdout); }\n";
+    prints("bubble_push_uncalled_lambda", src, "A\n");
+}
+
+#[test]
+fn an_uncalled_inner_push_still_checks_the_outer_value() {
+    // The checker checks the body of an inner function whether or not it is called, so the
+    // push still constrains `x`, a parameter of `h`: a number for `x` is refused at the push,
+    // with `y`, which holds no value, adding nothing to the type of `[x, y]`.
+    assert_eq!(
+        type_errors(&inner_push("out <- \"z\";", "5")),
+        [
+            "A `Lines` port takes a `String` or a family of strings: `o <- [x, y] : (0 | 1) -> \
+          5`. [[x, y]]"
+        ],
+    );
+    prints(
+        "bubble_push_uncalled_inner_outer",
+        &inner_push("out <- \"z\";", "\"a\""),
+        "z\n",
+    );
+}

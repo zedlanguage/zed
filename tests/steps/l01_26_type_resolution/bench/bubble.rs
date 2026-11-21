@@ -5,8 +5,9 @@
 use zed_tests::scaling;
 
 use super::super::bubble::{
-    body_of_bindings, body_pushing_a_family, body_pushing_a_nested_family, body_pushing_parameters,
-    chain_of_helpers, helpers_giving_their_atom, helpers_pushing_their_parameter,
+    body_of_bindings, body_of_uncalled_inner_pushes, body_pushing_a_family,
+    body_pushing_a_nested_family, body_pushing_parameters, chain_of_helpers,
+    helpers_giving_their_atom, helpers_pushing_their_parameter, uncalled_inner_push_of_parameters,
 };
 use super::super::scaling::resolved;
 
@@ -72,6 +73,29 @@ fn a_body_pushing_a_family_of_many_untyped_parameters_scales() {
 fn a_push_of_a_family_nested_n_deep_scales() {
     let units = resolved(200, body_pushing_a_nested_family);
     scaling::check("a push of a family nested n deep", 200, |n| {
+        let info = units[&n].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}
+
+/// Row CHECK-uncalled-inner-push-refused: the end of `h` reads, once, which of its type
+/// variables stand only in its n push needs (`Ck::unreached_in_pushes` in zedc-check), one
+/// walk of the signature, then rewrites each such need once: linear in n.
+#[test]
+fn many_uncalled_inner_pushes_scale() {
+    let units = resolved(100, body_of_uncalled_inner_pushes);
+    scaling::check("a body holding n uncalled inner pushes", 100, |n| {
+        let info = units[&n].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}
+
+/// Row CHECK-uncalled-inner-push-refused: one push need holding n variables no call binds is
+/// rewritten with one replacement of its value, after one walk of the signature: linear in n.
+#[test]
+fn an_uncalled_inner_push_of_many_parameters_scales() {
+    let units = resolved(100, uncalled_inner_push_of_parameters);
+    scaling::check("an uncalled inner push of n parameters", 100, |n| {
         let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });

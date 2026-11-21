@@ -852,3 +852,55 @@ fn functions_with_needs_beside_never_are_taken() {
     assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
     assert_eq!(sig(&text, "f"), "Never -> 1", "{text}");
 }
+
+/// `g` maps a function reading `.x` over a list of lambdas nested two deep, with no function
+/// `x` in scope: `p(1)` is a list, `0 -> 0 -> (1, int)`.
+fn nested_lambdas(x: &str) -> String {
+    format!(
+        "{x}h0(positional f, positional m) = m.map(f);\n\
+         h1(positional f, positional m) = m.map(f);\n\
+         g(positional a, positional b, positional c, positional d) = \
+         (h0(p -> p(1).x, [(x -> h1(z -> [z], [(x, d)]))]), a, b, c, d + 1);\n"
+    )
+}
+
+/// Row FAIL-never-return-nested-lambda-unchecked. With no function `x` in scope, `p(1).x`
+/// reads a field of a list, which has none; elaboration refuses it, and the checker gives the
+/// read no value, `Never`, so that no use of it reports that error again (zedc-check
+/// `Ck::member_end`, at its last arm). The checker alone, as `type_errors` and `sig` run it, so
+/// reports nothing and gives `g` the result `(0 -> Never, …)`: that is the type of the
+/// refused read, and the program is refused all the same, by elaboration. The control with
+/// `x` in scope is taken, of type `0 -> 7`, and the one whose `x` needs an `int` is refused by
+/// the checker alone at the nested lambdas: their needs are checked.
+#[test]
+fn a_field_read_refused_in_nested_lambdas_gives_never_and_is_reported() {
+    let text = nested_lambdas("");
+    assert_eq!(type_errors(&text), Vec::<String>::new());
+    assert_eq!(
+        sig(&text, "g"),
+        "(T, U, V, W) -> (0 -> Never, T, U, V, W) for W in int | f32 | f64 | rat"
+    );
+    assert_eq!(
+        zed_tests::step_helpers::l01_16_elaboration::errors(&text),
+        vec![
+            "`x` is not a function in scope, and reading a field with `.x` is part of the Zed \
+             language but is not supported by this version of zedc. Call a function in scope, or \
+             correct the name if it is misspelled. [p(1).x]"
+        ]
+    );
+    let with_x = nested_lambdas("x(positional v) = 7;\n");
+    assert_eq!(type_errors(&with_x), Vec::<String>::new());
+    assert_eq!(
+        sig(&with_x, "g"),
+        "(T, U, V, W) -> (0 -> 7, T, U, V, W) for W in int | f32 | f64 | rat"
+    );
+    assert!(zed_tests::step_helpers::l01_16_elaboration::elab(&with_x).is_ok());
+    let int_x = nested_lambdas("x(positional v: int) = 7;\n");
+    assert_eq!(
+        type_errors(&int_x),
+        vec![
+            "the function given to `map` gives 0 -> 0 -> (1, _) here, which is not int: the use \
+             requires a value of int. [h0(p -> p(1).x, [(x -> h1(z -> [z], [(x, d)]))])]"
+        ]
+    );
+}

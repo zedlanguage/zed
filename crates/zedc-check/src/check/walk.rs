@@ -9711,6 +9711,24 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // Elaboration rejects the rest: a prelude word of a later layer, a field read,
                 // or a call of a function in no scope. Never, the type of no value, keeps the
                 // uses of the result from reporting that error again as their own.
+                // Why that is right, where it reaches a signature (row
+                // FAIL-never-return-nested-lambda-unchecked): `g(..) = (h0(p -> p(1).x, [(x ->
+                // h1(z -> [z], [(x, d)]))]), a, b, c, d + 1)`, with no function `x` in scope,
+                // checks with no error and the result `(0 -> Never, …)`.
+                // 1. Every program that reaches this arm is refused: elaboration walks every
+                //    written body, a function never called included, and reports each of these
+                //    forms (zedc-elab `walk.rs`, the arm of a member with no function in scope;
+                //    `.x` of `p(1)` is a field read). So no program runs with this `Never` in it.
+                // 2. The checker goes on past the refusal, as DESIGN "L1 — scalars and
+                //    functions" does for `spin(1) + true` ("reports both the recursion and the
+                //    `true`"), and a refused form has no value, which every printer writes
+                //    `Never` (DESIGN sec:daofp, the row of the initial object).
+                // 3. Its needs are still checked: with `x(positional v: int)` in scope the
+                //    checker alone refuses the list `p(1)` at the nested lambdas.
+                // So `0 -> Never` is right; a reader of the checker alone (the l01_26 helpers
+                // `type_errors` and `sig`, which run no elaboration) sees no error, as proof7
+                // did. Test: l01_26 `never::a_field_read_refused_in_nested_lambdas_gives_never_
+                // and_is_reported`, with the control of `x` in scope, `0 -> 7`.
                 _ => m.ty(Ty::empty()),
             },
         }
@@ -12692,6 +12710,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         deep.extend(merged.iter().map(|(v, t)| (v.clone(), t.clone())));
         self.r10_check_m56c_deep_outside(&sig, &deep, &outside);
         let mut sig = sig.replace(&deep).replace_outside(&outside);
+        // Before the type variables are named: a variable read as no value here is then in no
+        // part of `sig`, so it is named nowhere.
+        self.unreached_in_pushes(&mut sig, &vars);
         // A function that holds a class of a function around it expands its kept forwards
         // here, so its classes are named as `E` names them: `finish` decodes such forwards by
         // the names given here only below a function that is not closed, and two of them
@@ -12788,6 +12809,130 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.close_type_vars(level);
         self.level -= 1;
         Arc::new(sig)
+    }
+
+    /// Reads as no value, in each push need of `sig` ([`NeedKind::Push`]), each type variable
+    /// of the function that ends (`vars`, the roots that are their own type) that stands only
+    /// in push needs: in no arrow of `sig`, and in no other need, its result included (plan
+    /// row CHECK-uncalled-inner-push-refused). Such a variable comes from a push in an inner
+    /// function or lambda that no call reaches, as `y` in
+    /// `h(x, out: Lines) { g(positional y, o: Lines) { o <- [x, y]; } out <- x.upper; }`:
+    /// the push waits on `x`, a class of `h`, so `y`'s class was lowered to `h`'s level
+    /// ([`Ck::lower`]), and with no call of `g` nothing gave it a value. Before, each call of
+    /// `h` read `y` as `_`, every value, since no argument binds it ([`Ck::bound`]), and
+    /// refused `h(x: "a", out: m.stdout)` with "`h`, which needs this of its argument, does
+    /// not take every value".
+    ///
+    /// Why such a variable `v` takes no value at any call, step by step:
+    /// 1. A call binds exactly the variables of the arrow it takes (by the arguments, or by a
+    ///    default's type) and the result of each need it meets, as each is met (`replay`). `v`
+    ///    is in no arrow and is no need's result, so no call binds it.
+    /// 2. In the body, a value that reached `v`'s class would have given the class that type,
+    ///    or joined it to the class of the expression it came from: a class holds a value
+    ///    only through its type or through the classes joined to it (the union-find of
+    ///    [`Class`]). `v` is a root still its own type (`vars`), so no value of a type reached
+    ///    it, and every class joined to it is under it, so none brings a value either.
+    /// 3. A need of another kind could bind it at a call through its own work, as a `map`
+    ///    places its lambda's parameter at the receiver's entries
+    ///    ([`Self::lambda_entries_placed`]); `v` is in no such need.
+    /// 4. So at every call `v` holds no value, which is what the push's own check read it as
+    ///    when it was made ([`Self::push_vars`]: an open class is read as no value), and the
+    ///    value of the push is exact with `v` replaced by the empty type.
+    ///
+    /// A need whose `on` is such a variable is moved to another type variable of the function
+    /// that ends in its value, which a call binds; where none is left, the push is checked now
+    /// on the rest ([`Self::pushed`]), which waits on a class of a function around if one is
+    /// still open. So the push still constrains `x`: `h(x: 5, out: m.stdout)` for the `h`
+    /// above with `out <- "z"` in place of `out <- x.upper` is refused at the push, as a push
+    /// in code that runs is (the checker checks the body of an inner function whether or not
+    /// it is called, as `h(positional x) { f = () -> x + 1; 0 }` takes numbers only). The
+    /// variable a need is moved to is bound at a call before the need is met when it is in an
+    /// arrow, or is the result of a need recorded before this one: the value held it when the
+    /// push was written, so the need that gave it was met first, and `replay` meets needs in
+    /// order. Not proved: that no class joined to such a result after the push changes that
+    /// order. Where it would, the call reads the variable as `_` and refuses, as every call did
+    /// before this change, so the move is never worse.
+    ///
+    /// Tests: l01_26 bubble.rs `an_uncalled_inner_function_s_push_does_not_refuse_the_call_around`
+    /// and its lambda twin, with the controls `g(5, o: out)` refused and `g("b", o: out)` taken,
+    /// and `an_uncalled_inner_push_still_checks_the_outer_value`.
+    // Complexity tradeoff: none for a signature with no push need (one scan of its needs);
+    // else one walk of its arrows and needs for their variables, O(size of `sig`), and one
+    // replacement in each push need that holds such a variable. The alternative, reading the
+    // variables at each call, costs that walk at every call; here it is paid once per function.
+    fn unreached_in_pushes(&mut self, sig: &mut Sig, vars: &[usize]) {
+        if !(sig.needs.iter()).any(|n| matches!(n.kind, NeedKind::Push { .. })) {
+            return;
+        }
+        let mut elsewhere = Vars::default();
+        for a in &sig.arrows {
+            a.params.iter().for_each(|p| p.vars_in(&mut elsewhere));
+            a.result.vars_in(&mut elsewhere);
+        }
+        let mut in_pushes = Vars::default();
+        for n in &sig.needs {
+            match &n.kind {
+                NeedKind::Push { value, .. } => {
+                    n.on.vars_in(&mut in_pushes);
+                    value.vars_in(&mut in_pushes);
+                    // A push gives nothing (`Self::pushed` makes it with `gives` false), so its
+                    // result is `None`; read all the same, so step 1 holds by this code.
+                    if let Some(r) = &n.result {
+                        r.vars_in(&mut elsewhere);
+                    }
+                }
+                _ => n.vars_in(&mut elsewhere),
+            }
+        }
+        let own: Vec<Arc<str>> = vars.iter().map(|r| format!("${r}").into()).collect();
+        let none: Binds = (own.iter())
+            .filter(|v| in_pushes.contains(v) && !elsewhere.contains(v))
+            .map(|v| (v.clone(), Ty::empty()))
+            .collect();
+        if none.is_empty() {
+            return;
+        }
+        // The function's own variables, as a set: the search for another variable to wait on
+        // below walks the need's value and looks each one up here, O(value) a need. The naive
+        // search, over `own` for one in the value, is O(v) a need, O(p·v) for p needs over v
+        // variables.
+        let own_set: HashSet<&str> = own.iter().map(|v| &**v).collect();
+        let needs = std::mem::take(&mut sig.needs);
+        for mut n in needs {
+            let NeedKind::Push {
+                port,
+                site,
+                bubbles,
+                value,
+            } = &n.kind
+            else {
+                sig.needs.push(n);
+                continue;
+            };
+            let value = value.replace(&none);
+            let (port, site, bubbles) = (port.clone(), *site, *bubbles);
+            if n.on.as_var().is_some_and(|v| none.contains_key(v)) {
+                let mut left = Vars::default();
+                value.vars_in(&mut left);
+                let other =
+                    (left.order.iter()).find(|v| own_set.contains(&***v) && !none.contains_key(*v));
+                match other {
+                    Some(v) => n.on = Ty::var(v.clone()),
+                    None => {
+                        self.pushed(&value, &port, site, bubbles);
+                        continue;
+                    }
+                }
+            }
+            n.kind = NeedKind::Push {
+                port,
+                site,
+                bubbles,
+                value,
+            };
+            sig.needs.push(n);
+        }
+        sig.facts = Default::default();
     }
 
     /// The needs `needs` of a function that ends, in the order its body met them, less the
