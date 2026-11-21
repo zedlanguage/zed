@@ -2048,6 +2048,16 @@ mod obligation_test_modes {
 /// cycle the test `s_01f_import_graph` refuses (Zed forbids a cycle between files).
 type StepFn<'a> = ([Option<usize>; 2], &'a Expr);
 
+/// A bare `else` met while a lambda is checked at the arrows of an intersection
+/// ([`Ck::else_joined`]), refused once when the outermost such lambda ends.
+struct JoinedElse<'a> {
+    of: &'a Expr,
+    default: &'a Expr,
+    /// At each arrow that reached it: the operand's type printed, the type, settled, and its
+    /// derivation there.
+    seen: Vec<(String, Ty, Vec<Note>)>,
+}
+
 struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
     env: HashMap<usize, Ty>,
@@ -2418,6 +2428,15 @@ struct Ck<'t, 'a> {
     /// in the body are met later, at a call of the generic function the lambda lies in, and
     /// rebuild spans in the body then (`an_arrow_lambda_refused_through_a_call_s_needs_is_named`).
     arrow_lambdas: HashMap<Span, Arc<Sig>>,
+    /// How many lambdas are being checked at the arrows of an intersection outside a trial
+    /// (`FitF::joined` in walk.rs): while any is, a bare `else` is not refused at each arrow but joined
+    /// in [`Self::else_joined`], and refused once when the outermost ends
+    /// ([`Self::else_unnamed`]).
+    arrow_fits: usize,
+    /// Each bare `else` met while [`Self::arrow_fits`] is not 0, in the order first met.
+    else_joined: Vec<JoinedElse<'a>>,
+    /// The place in [`Self::else_joined`] of each `else` there, by that span.
+    else_joined_at: HashMap<Span, usize>,
     /// The spans at which the trials under way ([`Self::trying`]) wrote a fit, emptied when
     /// the outermost ends ([`Self::end_trial`]): a fit there is the trial's own, and another
     /// one is refused, where a [`Fit::Read`] the walk wrote before the trial is replaced
@@ -3075,6 +3094,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             remap_keys: Vec::new(),
             meet_alike: Vec::new(),
             arrow_lambdas: HashMap::new(),
+            arrow_fits: 0,
+            else_joined: Vec::new(),
+            else_joined_at: HashMap::new(),
             trial_fits: HashSet::new(),
             read_by: HashMap::new(),
             need_chain: Vec::new(),

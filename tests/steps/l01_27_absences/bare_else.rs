@@ -444,3 +444,193 @@ fn the_repair_lists_each_of_many_atoms_once() {
         lists_each_atom_once(&Resolved::new(&many_atoms(n)), n);
     }
 }
+
+/// The arrows of `held_functions::a_merge_in_a_lambda_checked_at_two_arrows_is_checked_at_each`
+/// (step L1.26): at `A1` the body's operand holds `#b`, `#bad` and `#errs`, at `A2` `#bad`, `#c`
+/// and `#errs`, and a merge into `#errs` holds a function, which is refused. At `A3` it holds
+/// `#bad` alone.
+const A1: &str = "(p: int, q: int | #b, r: int) -> int";
+const A2: &str = "(p: int -> int, q: int, r: int | #c) -> int";
+const A3: &str = "(p: int, q: int, r: int) -> int";
+
+/// `s`, a function `both` whose parameter `h` is of type `slot`, and a call of `both` with a
+/// lambda whose body is `(s(p, true) + q + r) else <tail>`.
+fn at_arrows(slot: &str, tail: &str) -> String {
+    format!(
+        "s(positional x, positional k: bool) = if k {{ 1 }} else {{ #bad(x) }};\nboth(h: {slot}) \
+         = 1;\na = both(h: (p, q, r) -> (s(p, true) + q + r) else {tail});\n"
+    )
+}
+
+/// The refusal of the bare `else` of [`at_arrows`]`(_, "0")` whose repair names `atoms`.
+fn refused_naming(atoms: &[&str]) -> String {
+    let chain: String = atoms.iter().map(|a| format!(" else {a} -> 0")).collect();
+    let fixed = format!("(s(p, true) + q + r){chain}");
+    format!(
+        "`(s(p, true) + q + r) else 0` does not name the atoms it takes. Try `{fixed}` \
+         instead.\n  fixes, each checked here:\n    a = both(h: (p, q, r) -> {fixed});    the \
+         `else` takes {} [(s(p, true) + q + r) else 0]",
+        atoms.join(", ")
+    )
+}
+
+/// The refusal of the merge at `A2`.
+const HELD: &str = "Cannot merge a failure that may hold a function into `#errs`: `s(p, true) + q \
+                    : #bad(int -> int)`. [s(p, true) + q]";
+
+#[test]
+fn a_bare_else_in_a_lambda_checked_at_two_arrows_is_refused_once_with_the_union_of_its_atoms() {
+    // One arrow: that arrow's atoms only.
+    let one = |slot: &str| type_errors(&at_arrows(slot, "0"));
+    assert_eq!(one(A1), [refused_naming(&["#b", "#bad", "#errs"])]);
+    assert_eq!(
+        one(A2),
+        [refused_naming(&["#bad", "#c", "#errs"]), HELD.into()]
+    );
+    assert_eq!(one(A3), [refused_naming(&["#bad"])]);
+    // An intersection: one refusal, whose repair names the union over the arrows in the order
+    // of the printed type, the same in both orders of the arrows, notes and all. Before the
+    // fix each arrow refused the `else` with its own atoms, two refusals.
+    let union = refused_naming(&["#b", "#bad", "#c", "#errs"]);
+    let a12 = at_arrows(&format!("({A1}) & ({A2})"), "0");
+    let a21 = at_arrows(&format!("({A2}) & ({A1})"), "0");
+    assert_eq!(type_errors(&a12), [union.clone(), HELD.into()]);
+    assert_eq!(type_errors(&a21), [union, HELD.into()]);
+    // Only the note that quotes `both`'s signature, as written, follows the order of the text.
+    let as_written = |text: &str| {
+        let mut e = Resolved::new(text).check().errors;
+        for e in &mut e {
+            e.notes
+                .retain(|n| !n.text.starts_with("`both` is declared here"));
+        }
+        e
+    };
+    let (e12, e21) = (as_written(&a12), as_written(&a21));
+    assert_eq!(e12, e21);
+    // The first note gives the operand's type at the intersection, the union; then each arrow's
+    // type with its derivation, sorted by the type, each note once.
+    let heads: Vec<&str> = (e12[0].notes.iter())
+        .map(|n| n.text.as_str())
+        .filter(|t| t.starts_with("`(s(p, true) + q + r) : ") || t.starts_with("at an arrow"))
+        .collect();
+    assert_eq!(
+        heads,
+        [
+            "`(s(p, true) + q + r) : int | #b | #bad(int) | #bad(int -> int) | #c | #errs((#b | \
+             #bad(int)) ->? #b | #bad(int)) | #errs((#bad(int -> int) | #c) ->? #bad(int -> int) \
+             | #c)`",
+            "at an arrow of the intersection, `(s(p, true) + q + r) : int | #b | #bad(int) | \
+             #errs((#b | #bad(int)) ->? #b | #bad(int))`",
+            "at an arrow of the intersection, `(s(p, true) + q + r) : int | #bad(int -> int) | #c \
+             | #errs((#bad(int -> int) | #c) ->? #bad(int -> int) | #c)`",
+        ],
+        "{:#?}",
+        e12[0].notes
+    );
+    let mut notes = e12[0].notes.clone();
+    notes.sort();
+    notes.dedup();
+    assert_eq!(notes.len(), e12[0].notes.len(), "each note once");
+    // An arrow at which the operand holds fewer atoms adds none.
+    let a31 = type_errors(&at_arrows(&format!("({A3}) & ({A1})"), "0"));
+    let a13 = type_errors(&at_arrows(&format!("({A1}) & ({A3})"), "0"));
+    assert_eq!(a31, [refused_naming(&["#b", "#bad", "#errs"])]);
+    assert_eq!(a13, a31);
+}
+
+#[test]
+fn the_union_repair_builds_at_every_arrow_of_the_intersection() {
+    // Applied, the repair gives exactly the refusal the named form gives, the merge at `A2`
+    // (held_functions.rs, the same chain), in both orders of the arrows; with no arrow whose
+    // merge holds a function it is accepted.
+    let chain = "#b -> 0 else #bad -> 0 else #c -> 0 else #errs -> 0";
+    for slot in [format!("({A1}) & ({A2})"), format!("({A2}) & ({A1})")] {
+        assert_eq!(type_errors(&at_arrows(&slot, chain)), [HELD]);
+    }
+    let chain = "#b -> 0 else #bad -> 0 else #errs -> 0";
+    for slot in [format!("({A1}) & ({A3})"), format!("({A3}) & ({A1})")] {
+        assert_eq!(type_errors(&at_arrows(&slot, chain)), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn an_arrow_at_which_the_operand_holds_no_loose_atom_takes_the_atoms_of_the_others() {
+    // QUESTIONS A67, DESIGN.md sec:failure (DESIGN.md:585): an `else` whose named atoms the
+    // operand cannot hold is warned "in a generic body, only when no instantiation of `e` can
+    // hold a named atom". At `(p: int, q: int) -> int` alone `q` holds no loose atom, and the
+    // menu is that of an `else` with nothing to take; at the intersection with an arrow where
+    // `q` holds `#b`, the repair names `#b`, and the repaired lambda is accepted, with no word
+    // of the arrow at which `#b` is not held.
+    let both = |slot: &str, tail: &str| {
+        format!("both(h: {slot}) = 1;\na = both(h: (p, q) -> q else {tail});\n")
+    };
+    let (none, some) = ("(p: int, q: int) -> int", "(p: int, q: int | #b) -> int");
+    assert_eq!(
+        type_errors(&both(none, "0")),
+        [
+            "`q else 0` does not name the atoms it takes. Try `q` instead.\n  fixes, each \
+             checked here:\n    a = both(h: (p, q) -> q);    the `else` is gone; the value is \
+             `q` [q else 0]"
+        ]
+    );
+    let named = "`q else 0` does not name the atoms it takes. Try `q else #b -> 0` instead.\n  \
+                 fixes, each checked here:\n    a = both(h: (p, q) -> q else #b -> 0);    the \
+                 `else` takes #b [q else 0]";
+    for slot in [
+        format!("({none}) & ({some})"),
+        format!("({some}) & ({none})"),
+    ] {
+        assert_eq!(type_errors(&both(&slot, "0")), [named]);
+        assert_eq!(type_errors(&both(&slot, "#b -> 0")), Vec::<String>::new());
+    }
+    // No arrow holds a loose atom: the menu of an `else` with nothing to take, once.
+    let other = "(p: bool, q: int) -> int";
+    let alone = type_errors(&both(none, "0"));
+    for slot in [
+        format!("({none}) & ({other})"),
+        format!("({other}) & ({none})"),
+    ] {
+        assert_eq!(type_errors(&both(&slot, "0")), alone);
+    }
+}
+
+/// `f`, whose parameter is an intersection of n arrows, the i-th taking `int | #a<i>`, and a
+/// lambda passed to it whose bare `else` is reached at each arrow.
+pub(super) fn many_arrows(n: usize) -> String {
+    let arrows: Vec<String> = (0..n)
+        .map(|i| format!("((x: int | #a{i}) -> int)"))
+        .collect();
+    format!(
+        "f(h: {}) = 1;\na = f(h: (x) -> x else 0);\n",
+        arrows.join(" & ")
+    )
+}
+
+/// The one error of `u`, [`many_arrows`]`(n)`, whose repair names each of the n atoms once.
+pub(super) fn refused_once_naming_each_arrow_s_atom(u: &Resolved, n: usize) {
+    let e = u.check().errors;
+    assert_eq!(e.len(), 1, "{e:#?}");
+    assert_eq!(e[0].menu.matches(" -> 0").count(), n);
+    assert!(e[0].menu.contains(&format!(" #a{} -> 0", n - 1)));
+}
+
+#[test]
+fn a_bare_else_at_many_arrows_is_refused_once_naming_each_atom() {
+    for n in [1, 2, 5] {
+        refused_once_naming_each_arrow_s_atom(&Resolved::new(&many_arrows(n)), n);
+    }
+}
+
+#[test]
+fn a_bare_else_in_lambdas_nested_at_intersections_is_refused_once() {
+    // The inner lambda is checked at each of its arrows once per arrow of the outer one; the
+    // `else` is refused once, when the outer lambda ends, with the union over all four.
+    let t = "in2(g: ((x: int) -> int) & ((x: int | #d) -> int)) = 1;\nboth(h: ((p: int) -> int) \
+             & ((p: int | #b) -> int)) = 1;\na = both(h: (p) -> in2(g: (x) -> (x + p) else 0));\n";
+    let e = type_errors(t);
+    assert_eq!(e.len(), 1, "{e:#?}");
+    assert!(
+        e[0].contains("Try `(x + p) else #b -> 0 else #d -> 0"),
+        "{e:#?}"
+    );
+}

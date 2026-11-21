@@ -978,6 +978,10 @@ pub(super) struct FitF<'a> {
     /// The next parameter of `extra` whose default is checked.
     x: usize,
     waiting: Option<FitWait>,
+    /// Whether this fit counts in [`Ck::arrow_fits`]: an intersection of more than one
+    /// arrow, checked outside a trial. Its bare `else`s are refused once, when the outermost
+    /// such fit ends ([`Ck::else_unnamed`]).
+    joined: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -9056,27 +9060,123 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///
     /// Complexity tradeoff: O(n + a log a) for an `else` of n bytes whose operand holds a loose
     /// atoms, the chain repeating the default once per atom, so O(a · n) bytes of repair text;
-    /// the union form of L2 writes the default once. Each `else` is refused once, so the check
-    /// is linear in the program (tests/steps/l01_27_absences/bare_else.rs, scaling test).
+    /// the union form of L2 writes the default once. Each `else` is refused once, also in a
+    /// lambda checked at each arrow of an intersection, so the check is linear in the program
+    /// (tests/steps/l01_27_absences/bench.rs, `refusing_many_bare_elses_scales` and
+    /// `a_bare_else_checked_at_many_arrows_scales`).
     fn else_unnamed(&mut self, of: &'a Expr, default: &'a Expr, v: &Ty) {
-        let row = Some(Row::ElseNamesNoAtoms);
-        // The `else` from its operand to its default: the span of `(e else d)` holds its
-        // parentheses, which a chain appended after the default must stay outside of, while the
-        // spans of the operand and the default hold their own.
-        let whole = Span {
-            start: of.span.start,
-            end: default.span.end,
-        };
-        let text = match self.operand_text(Some(whole)) {
-            Some(c) => format!("`{c}` does not name the atoms it takes"),
-            None => "The `else` does not name the atoms it takes".to_string(),
-        };
+        let whole = else_span(of, default);
         if self.trying {
-            self.reject(row, whole, Msg::from(text), Vec::new());
+            let text = self.else_headline(whole);
+            self.reject(
+                Some(Row::ElseNamesNoAtoms),
+                whole,
+                Msg::from(text),
+                Vec::new(),
+            );
             return;
         }
         let t = self.settled(v);
-        let shown = self.show(&t);
+        // A lambda passed where an intersection of function types is expected is checked once
+        // at each arrow ([`Self::fit_step`]), and the operand of an `else` in it may hold other
+        // loose atoms at each. DESIGN.md sec:failure: "A bare `e else d` ... is rejected in
+        // every position, with a message whose repair lists exactly the loose atoms of `e`'s
+        // type"; at an intersection the lambda is one expression, whose `e` has at each arrow
+        // that arrow's type, so `e`'s type is the union over the arrows, and the repair names
+        // the loose atoms of that union. Proof that it builds at every arrow: a chain naming a
+        // set S of atoms takes each loose atom of S the operand holds (step L1.27), and at an
+        // arrow the operand's loose atoms are a subset of the union; so at each arrow the chain
+        // takes every loose atom there, as the bare `else` did, and an atom of S the operand
+        // does not hold there is a named atom with nothing to take, which DESIGN.md:585 (A67)
+        // warns of "in a generic body, only when no instantiation of `e` can hold a named
+        // atom": another arrow holds it, so no warning is due. A refusal per arrow, each
+        // naming its arrow's atoms, gave repairs that each fail at another arrow (a named
+        // chain that misses an atom leaves it in the result), and as many refusals as arrows.
+        // So while such a lambda is checked the operand's type is joined here and the `else` is
+        // refused once, when the outermost such lambda ends ([`Self::elses_joined_refused`]);
+        // an intersection checked in a trial refuses at once, as the trial keeps only whether
+        // it found an error. Where no arrow's type holds a loose atom the union holds none
+        // either, and the menu of an `else` with nothing to take is given once.
+        // The derivation is taken at each arrow, as what the walk records at the operand is
+        // that of the arrow checked last.
+        if self.arrow_fits > 0 {
+            let seen = (self.show(&t), t, self.derive(&[of.span]));
+            match self.else_joined_at.entry(whole) {
+                Entry::Occupied(at) => self.else_joined[*at.get()].seen.push(seen),
+                Entry::Vacant(at) => {
+                    at.insert(self.else_joined.len());
+                    self.else_joined.push(JoinedElse {
+                        of,
+                        default,
+                        seen: vec![seen],
+                    });
+                }
+            }
+            return;
+        }
+        let derived = self.derive(&[of.span]);
+        self.else_refused(of, default, &t, derived);
+    }
+
+    /// Refuses each bare `else` joined while lambdas were checked at the arrows of an
+    /// intersection ([`Self::else_unnamed`]), once, in the order of the text. So that the
+    /// order of the arrows changes nothing, what each arrow saw is sorted by the operand's
+    /// type as printed and copies are dropped; the operand's type is the union of the types
+    /// in that order, and the notes give, where the arrows saw more than one, each type with
+    /// its derivation, each note once.
+    ///
+    /// Complexity: an `else` reached at k arrows is joined in O(1) at each (one hash lookup),
+    /// and refused once in O(k log k) for the sort, plus the k unions and the notes, each
+    /// note hashed once; j such `else`s are sorted in O(j log j). The naive form, a search of
+    /// the refusals already made for one at the same `else`, costs O(j) at each arrow, O(j² ·
+    /// k). Test: tests/steps/l01_27_absences/bench.rs, `a_bare_else_checked_at_many_arrows_scales`.
+    fn elses_joined_refused(&mut self) {
+        let mut joined = std::mem::take(&mut self.else_joined);
+        self.else_joined_at.clear();
+        joined.sort_by_key(|j| (j.of.span.start, j.default.span.end));
+        for JoinedElse {
+            of,
+            default,
+            mut seen,
+        } in joined
+        {
+            seen.sort_by(|a, b| (&a.0, &a.2).cmp(&(&b.0, &b.2)));
+            seen.dedup_by(|a, b| a.0 == b.0 && a.2 == b.2);
+            let mut t = seen[0].1.clone();
+            for s in &seen[1..] {
+                t = t.union(&s.1);
+            }
+            let operand = self.operand_text(Some(of.span));
+            let several = seen.len() > 1;
+            let (mut derived, mut had) = (Vec::new(), HashSet::new());
+            for (shown, _, notes) in seen {
+                let head = several.then(|| Note {
+                    span: of.span,
+                    text: match &operand {
+                        Some(c) => format!("at an arrow of the intersection, `{c} : {shown}`"),
+                        None => format!(
+                            "at an arrow of the intersection, the value before `else` has type \
+                             `{shown}`"
+                        ),
+                    },
+                });
+                for n in head.into_iter().chain(notes) {
+                    if had.insert(n.clone()) {
+                        derived.push(n);
+                    }
+                }
+            }
+            self.else_refused(of, default, &t, derived);
+        }
+    }
+
+    /// The refusal of [`Self::else_unnamed`] outside a trial, with `t` the operand's type,
+    /// settled, and `derived` the notes after the one that gives it.
+    fn else_refused(&mut self, of: &'a Expr, default: &'a Expr, t: &Ty, derived: Vec<Note>) {
+        let row = Some(Row::ElseNamesNoAtoms);
+        let whole = else_span(of, default);
+        let text = self.else_headline(whole);
+        let shown = self.show(t);
         let operand = self.operand_text(Some(of.span));
         let mut notes = vec![Note {
             span: of.span,
@@ -9085,7 +9185,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => format!("the value before `else` has type `{shown}`"),
             },
         }];
-        notes.extend(self.derive(&[of.span]));
+        notes.extend(derived);
         // Where the program's text is known, the repair inserts the pattern after the keyword
         // `else`, so the default stays as written, in parentheses or not.
         let src = self.t.text;
@@ -9128,7 +9228,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     });
                 } else {
                     let d = tail.map(|(_, d)| d);
-                    self.else_takes_nothing(whole, of, &t, d, &mut notes, &mut fixes);
+                    self.else_takes_nothing(whole, of, t, d, &mut notes, &mut fixes);
                 }
             }
             // Every atom but some, or every atom where the operand's type is not yet known here
@@ -9154,6 +9254,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut m = Msg::new(text, fixes);
         m.call = Some(whole);
         self.reject(row, whole, m, notes);
+    }
+
+    /// The headline of the refusal of the bare `else` at `whole` ([`else_span`]).
+    fn else_headline(&self, whole: Span) -> String {
+        match self.operand_text(Some(whole)) {
+            Some(c) => format!("`{c}` does not name the atoms it takes"),
+            None => "The `else` does not name the atoms it takes".to_string(),
+        }
     }
 
     /// The menu of a bare `else` whose operand `of`, of type `t`, holds no loose atom, so its
@@ -11011,6 +11119,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // A bounded variable of `e` no parameter holds is fixed by no argument: the lambda may
         // return any carrier of its bound.
         let unheld = e.unheld();
+        let joined = e.arrows.len() > 1 && !self.trying;
+        self.arrow_fits += usize::from(joined);
         let s = FitF {
             params,
             body,
@@ -11023,6 +11133,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             entered: false,
             x: 0,
             waiting: None,
+            joined,
         };
         self.fit_step(m, Box::new(s));
     }
@@ -11127,8 +11238,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             span,
             order,
             extra,
+            joined,
             ..
         } = *s;
+        if joined {
+            self.arrow_fits -= 1;
+            if self.arrow_fits == 0 {
+                self.elses_joined_refused();
+            }
+        }
         self.fitted(span, order, extra);
         m.ty(Ty::func(e));
     }
@@ -11140,6 +11258,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !identity {
             self.put(Undo::Fit(span, Some(Fit::Lambda { order, extra })));
         }
+    }
+}
+
+/// The bare `else` `of else default` from its operand to its default: the span of `(e else d)`
+/// holds its parentheses, which a chain appended after the default must stay outside of, while
+/// the spans of the operand and the default hold their own.
+fn else_span(of: &Expr, default: &Expr) -> Span {
+    Span {
+        start: of.span.start,
+        end: default.span.end,
     }
 }
 

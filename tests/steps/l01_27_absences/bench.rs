@@ -162,3 +162,18 @@ fn the_repair_of_an_else_over_many_atoms_scales() {
         super::bare_else::lists_each_atom_once(&units[&n], n)
     });
 }
+
+/// A lambda checked at each of n arrows, each adding one loose atom to its bare `else`'s
+/// operand: the `else` is joined at each arrow in O(1) and refused once, its repair naming the
+/// n atoms, so the check stays linear in the program. Coverage:
+/// `bare_else::a_bare_else_at_many_arrows_is_refused_once_naming_each_atom`.
+#[test]
+fn a_bare_else_checked_at_many_arrows_scales() {
+    let units: BTreeMap<usize, Resolved> = [400, FACTOR * 400]
+        .into_iter()
+        .map(|n| (n, Resolved::new(&super::bare_else::many_arrows(n))))
+        .collect();
+    scaling::check_order("one bare `else` at n arrows of n atoms", 400, 1, |n| {
+        super::bare_else::refused_once_naming_each_arrow_s_atom(&units[&n], n)
+    });
+}
