@@ -248,6 +248,8 @@ const PENDING: &[(&str, &str)] = &[
     ("listen", "DYN-port"),
     ("kill", "DYN-port"),
     ("limits", "DYN-port"),
+    ("wallTime", "DATE-lib"),
+    ("systemZone", "DATE-lib"),
     ("via", "CODEC-kind"),
     ("LossyCodec", "CODEC-kind"),
     ("DecodeFailure", "CODEC-kind"),
