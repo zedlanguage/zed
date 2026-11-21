@@ -2371,6 +2371,12 @@ impl Num {
         self.scalar().map(|v| Int::from(v.into_owned()))
     }
 
+    /// Whether the value is kept as a power rather than written out: then [`Num::to_int`] is
+    /// `None`, and a written-out `Num` of the same value may exist, equal and of one hash.
+    pub fn is_kept(&self) -> bool {
+        matches!(self.0, Word::Kept(_))
+    }
+
     /// The value, when it fits in `i128`.
     pub fn to_i128(&self) -> Option<i128> {
         match &self.0 {

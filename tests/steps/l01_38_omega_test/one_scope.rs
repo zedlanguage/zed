@@ -232,6 +232,60 @@ fn a_relation_that_divides_by_a_term_holds_where_the_interpreter_gives_true() {
 }
 
 #[test]
+fn bindings_of_claimed_calls_nest_along_the_call_graph_and_hold_no_cycle() {
+    // PROOF-preimage-projected-cyclic-binding: a binding `c := a` of a claimed call binds a
+    // canonical atom `c` of the callee to a term over the caller's atoms, so a cycle of
+    // bindings needs a cycle of calls. The elaborator refuses that cycle (first assertion),
+    // and the claims of a chain, read in either order of the questions so that one
+    // question's claims meet another's, give at every point of a window the interpreter's
+    // answer. This cannot catch a cycle made some other way than through calls; the proof at
+    // `projected` in preimage.rs argues there is none.
+    use zedc::store::presburger::{Atom, Con, Formula, Lin, decide};
+    let recursive = "f(x: int) = g(x: x + 1, k: 1) && x < 9;\ng(x: int, k: int) = if k == 0 { f(x: x + 3) } else { x > 5 };";
+    assert!(elab(recursive).is_err(), "mutual recursion is refused");
+    let units = [
+        // A chain whose claimed calls nest: `f` claims `g`, whose body claims `h`.
+        "h(x: int, k: int) = x + k > 5 && x < 9;\ng(x: int, k: int) = h(x: x + 3, k: k) && k >= 0;\n\
+         f(x: int) = g(x: x + 1, k: 1) && g(x: x, k: 2) && h(x: x - 1, k: 0);",
+        // A diamond: two callees of one caller share a callee, called at other arguments.
+        "d(x: int) = x mod 3 == 1;\nl(x: int) = d(x: x + 1) && x > 0;\nr(x: int) = d(x: x - 1) || x < 2;\n\
+         top(x: int) = l(x: x) && r(x: x + 2);",
+    ];
+    for src in units {
+        let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let cones = Cones::new(&unit);
+        let lets = lets(&unit);
+        let fs = functions(&unit);
+        for order in [
+            (0..fs.len()).collect::<Vec<_>>(),
+            (0..fs.len()).rev().collect(),
+        ] {
+            let mut scoped = Scoped::new(&lets);
+            for i in order.clone() {
+                let (name, ps, body) = fs[i];
+                let r = (scoped.relation(body, ps, ps, true))
+                    .unwrap_or_else(|| panic!("`{name}` has a relation"));
+                let w = scoped.written(&r);
+                let closed = prelude(cones.close(body.clone()));
+                for p in super::window(ps.len(), -4, 12) {
+                    let point: Vec<Formula> = (ps.iter().zip(&p))
+                        .map(|(x, &v)| {
+                            let x = Lin::atom(Atom::Sym(x.clone()));
+                            Formula::Con(Con::eq(&x, &Lin::constant(v)))
+                        })
+                        .collect();
+                    let mut parts = vec![w.defined(), w.body.clone()];
+                    parts.extend(point);
+                    let got = decide(&Formula::and(parts)).expect("decided");
+                    let want = super::holds(&closed, ps, &p);
+                    assert_eq!(got, want, "`{name}` at {p:?} in order {order:?}: {w}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn a_relation_read_under_the_unit_scope_is_the_relation_of_the_closed_body() {
     let (mut some, mut none) = (0, 0);
     for src in UNITS {

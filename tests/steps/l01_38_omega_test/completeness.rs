@@ -1077,6 +1077,23 @@ fn tests_at_the_edges_of_the_operators_agree_with_the_interpreter() {
     }
 }
 
+/// PROOF-call-key-function-of-lins. `g(x: x, a: 3)` and `g(x: x, a: y - y + 3)` have one call
+/// key, `[x, 3]`, since the second argument's linear term is the constant 3. The translation kept under
+/// that key must so be the same whichever call is read first. Before the fix the body was read
+/// at the first caller's argument term: `x mod (y - y + 3)` reads an input in its divisor,
+/// which without products has no translation, so the key held a failure and the second order
+/// was outside the domain while the first was translated.
+#[test]
+fn a_call_keyed_by_a_constant_argument_is_translated_in_either_order() {
+    for calls in [
+        "g(x: x, a: 3) && g(x: x, a: y - y + 3)",
+        "g(x: x, a: y - y + 3) && g(x: x, a: 3)",
+    ] {
+        let src = format!("g(x: int, a: int) = x mod a == 1;\nok(x, y) = {calls};");
+        assert!(agrees(&src).is_some(), "{src}: outside the domain");
+    }
+}
+
 #[test]
 fn the_box_of_rows_reads_one_term_rows_equations_and_disjunctions_that_bound_in_every_case() {
     let (x, y) = (sym("x"), sym("y"));

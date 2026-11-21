@@ -50,10 +50,38 @@
 //! "O(1) for each subtree the two share", in the sense used here: the call on the keys of
 //! `a` and `b` in a range of keys returns at once when the two hold the same keys there, so
 //! the calls made are at the nodes of the union's treap above a key of one set and not the
-//! other. That this count and the splits it makes stay within `O(m log(n/m + 1))` for `m`
-//! such keys is Not proved here: it is the cited analysis applied to those paths, which was
-//! not checked step by step; the test `ladder::the_conditions_of_shared_divisors_scale`
-//! (l01_38_presburger bench) measures the families of RUNG2-definedness at k and 8k.
+//! other.
+//!
+//! Proof of that count (PROOF-divisors-shared-subtree-cost). Write `T(S)` for the treap on
+//! the keys `S`, unique by the proof above, and `A`, `B` for the keys of `a`, `b`. (1) Every
+//! call of the recursion of `union(a, b)` is `union(T(A ∩ I), T(B ∩ I))` for `I` the range of
+//! keys of a subtree of `T(A ∪ B)` (all keys at the first call). By induction: the root kept
+//! is the `≻`-greatest key of `(A ∪ B) ∩ I`, the root of that subtree; the other set's
+//! pieces from [`Sets::split`] are treaps (the invariant above), so they are `T` of their
+//! keys and, `make` looking each node up, their numbers are those; and the root's own
+//! subtrees are `T` of its keys before and after it. So the two calls below are on the
+//! ranges of the two subtrees of that node. (2) A call goes past its first tests only when
+//! `T(A ∩ I) != T(B ∩ I)`, so `A ∩ I != B ∩ I` (one set, one number), so `I` holds a key
+//! of `A Δ B`; a range of a subtree holds `x` exactly when its root is `x` or above `x`. So
+//! the calls that recurse are at most the nodes on the paths from the root of `T(A ∪ B)` to
+//! the keys of `A Δ B`, `R <= Σ_{x ∈ A Δ B} (depth(x) + 1)`; each makes two calls, so
+//! `1 + 2R` calls in all, and each adds at most one entry to `unions`. With the priorities
+//! of `PRIORITIES`, each depth is `O(log |A ∪ B|)` in expectation (Seidel and Aragon, as
+//! cited there), so `E[R] = O(k log n)` for `k` keys in `A Δ B` and `n` in `A ∪ B`. (3) A
+//! call's split walks `T(other ∩ I)` along the search path of the root key, which is the
+//! part in `I` of its search path in `T(B)` or `T(A)`: a key `y` is on the search path of
+//! `k` exactly when it is `≻` every key of the set between `y` and `k`, and for `y` and `k`
+//! in `I` those keys are the same in the set and in its part in `I`. So a split costs at
+//! most `1 +` the height of `T(A)` or `T(B)`. Not proved (PROOF-divisors-shared-subtree-
+//! cost): that the expected sum of the splits over the `R` calls is `O(k log n)` or
+//! `O(k log(n/k + 1))`; `R` and the split lengths are not independent, and the cited
+//! theorems bound one depth's expectation under 5-wise priorities, not a product's.
+//! Deterministically the work is at most `(1 + 2R)(1 + h)` for `h` the greater height.
+//! Tests: `tests::a_union_of_sets_that_differ_in_two_divisors_recurses_only_above_them`
+//! checks the bound of (2) on the entries made, over 32 pairs at `n = 256` and `8n`, and
+//! their ratio, under 2 against the `log` ratio 1.375; it does not count split steps. The
+//! test `ladder::the_conditions_of_shared_divisors_scale` (l01_38_presburger bench) measures
+//! the families of RUNG2-definedness at k and 8k.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -435,6 +463,57 @@ mod tests {
             assert_eq!(sets.contains(u, &d(i)), i % 3 == 0 || i % 5 == 0, "{i}");
         }
         assert!(!sets.contains(EMPTY, &d(0)));
+    }
+
+    /// PROOF-divisors-shared-subtree-cost. Two sets that share `n` divisors and differ in one
+    /// each: the calls of `union` that recurse (each adds one pair to `unions`, or hits it)
+    /// are at most the nodes on the paths of the union's treap from its root to the two
+    /// divisors not shared, the bound the proof at the module comment gives; and over 32 such
+    /// pairs at `n` and `8n` their number grows as those paths, `O(log n)`, not as `n`. It
+    /// counts calls, not the splits they make, whose bound is the open part of that proof.
+    #[test]
+    fn a_union_of_sets_that_differ_in_two_divisors_recurses_only_above_them() {
+        /// The nodes from the root of `s` down to the divisor `x`, both counted.
+        fn path(sets: &Sets, mut s: Set, x: &Lin) -> u64 {
+            let mut nodes = 0;
+            while s != EMPTY {
+                nodes += 1;
+                let n = sets.node(s);
+                s = match x.cmp(sets.divisor(n.key)) {
+                    Ordering::Less => n.left,
+                    Ordering::Greater => n.right,
+                    Ordering::Equal => return nodes,
+                };
+            }
+            panic!("{x} is not in the set")
+        }
+        let mut calls = Vec::new();
+        for n in [256i64, 2048] {
+            let mut sets = Sets::default();
+            let shared = of(&mut sets, (0..n).map(|i| 2 * i));
+            let mut total = 0;
+            for j in 0..32 {
+                let (x, y) = (2 * ((j * 37) % n) + 1, 2 * ((j * 53 + 11) % n) + 1);
+                let one = sets.single(&d(x));
+                let a = sets.union(shared, one);
+                let one = sets.single(&d(y));
+                let b = sets.union(shared, one);
+                let before = sets.unions.len();
+                let u = sets.union(a, b);
+                let made = (sets.unions.len() - before) as u64;
+                let bound = path(&sets, u, &d(x)) + path(&sets, u, &d(y));
+                assert!(
+                    made <= bound,
+                    "n = {n}, {x} and {y}: {made} calls, paths {bound}"
+                );
+                assert_eq!(sets.len(u), n as u32 + 1 + u32::from(x != y));
+                total += made;
+            }
+            calls.push(total);
+        }
+        let ratio = calls[1] as f64 / calls[0] as f64;
+        eprintln!("unions made over 32 pairs at n and 8n: {calls:?}, ratio {ratio:.2}");
+        assert!(ratio < 2.0, "calls {calls:?}: ratio {ratio:.2} at 8n");
     }
 
     #[test]

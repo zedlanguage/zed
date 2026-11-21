@@ -4102,9 +4102,28 @@ struct Memo {
 /// ([`Tx::reached`]), so the result that reads it is itself held at that place; its stop was
 /// reported to the run when the entry was made, in the same run: [`Run::keep`] carries tables
 /// into the next class's run only after `tx.back` from the root returns, at height 0, and by
-/// (b) every entry of the first kind (`base > cut >= 0`) was removed by then. Whether a stop
-/// inside the read of a carried entry of the second kind is reported again in the next run,
-/// for `split_classes`' `tx.run.stops.is_empty()`, is not shown here. Tests:
+/// (b) every entry of the first kind (`base > cut >= 0`) was removed by then.
+///
+/// Proof that a carried entry needs no stop reported again in the next class's run, for
+/// `split_classes`' `tx.run.stops.is_empty()` (PROOF-preimage-kept-stops). (1) Every stop is
+/// reported through [`Tx::stop`] (the recursion stop of [`Tx::enter`] too), which pushes it to
+/// `run.stops` the first time in the run; `seen` is a field of `Run`, made afresh by
+/// [`Tx::start_from`]. So a run in which any read stopped ends with `stops` not empty. (2)
+/// `split_classes` takes `kept = tx.run.keep()` only after a run with `exact`, so with
+/// `stops` empty; any other run returns `None` first. By induction on the classes, each entry
+/// carried into a run (both kinds of [`Kept`]'s tables, made in that run or carried into it)
+/// was made by a read that stopped nowhere: there is no stop of its read to report. (3) What
+/// remains is a stop that reading the term again would make in the next run and the reuse
+/// does not: by (2) its read stopped nowhere, so `cut == usize::MAX` and it is of the second
+/// kind, and reading it again can stop only on a stack that holds a lambda the read entered,
+/// the case of the proof of the second kind above. Within one run the same reuse is made and
+/// the same stop is not reported, so the carried entry gives the next run what an entry made
+/// in that run at height 0 would give, and `stops.is_empty()` means the same in both: no
+/// value the run used came from a read that stopped. The step this leaves to [`Kept`]'s doc
+/// is that its tables do not read the class, which is that type's claim, not this one. Test:
+/// none reaches a carried entry whose read again would stop; `split_classes` is covered by
+/// `l01_25_preimage_catalog::s22`, which cannot catch a missing stop that changes no answer.
+/// Tests:
 /// `entries_made_below_a_stop_give_what_reading_the_term_again_gives` and its seeds, which
 /// compare each reuse with reading again (`tests::recheck`), and
 /// `an_entry_that_stops_at_a_lambda_being_read_is_held`; they check drawn and fixed terms,
@@ -4302,24 +4321,41 @@ fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
     // (answers and refusals equal to reading the bodies again, and to the body closed and
     // decided whole) and `the_unit_of_seed_4236942624890658512_is_answered_as_its_bodies_read`.
     // They cannot catch a unit whose shape the random units do not draw: two parameters, a
-    // binding that reaches itself (the open case at `renamed` below).
+    // binding that reaches itself (step 5 and the unit test below).
+    // 5. An atom with no written form ([`Normal::atom`] gives `None`) is kept as it is in
+    //    every row, and every other atom of the row is still written ([`Normal::written`]
+    //    writes each atom of a row, not stopping at the first without a form). Whether an atom
+    //    has a written form is a property of the atom alone (the memo), so each atom is either
+    //    replaced in every row by a term equal to it under R (step 1, a substitution by one of
+    //    R's equalities whose right side does not hold the atom, since a form that reached the
+    //    atom again would be `None`), which is the exact elimination of that atom, or left as
+    //    it is in every row, its tie rows among them, and then eliminated by step 3 with them.
+    //    So the projection is exact whatever atoms have no form: a `Bind` variable, alone in
+    //    its row `b == n`, or a symbol whose binding reaches itself (the `open` set of
+    //    [`Normal::atom`]). No unit makes the second: a binding `c := a` of a claimed call
+    //    ([`Walk::binding`]) binds a canonical atom of the callee to a term over atoms of the
+    //    body read at the call, which holds the call, so a cycle of bindings would need a
+    //    cycle of calls, and a unit's definitions are one chain of non-recursive lets
+    //    (`zed_kernel` `Term::Let` reads its term in the outer scope, eval.rs `Term::Let`)
+    //    after the elaborator refused every cycle of uses (zedc-resolve tables.rs, "which is
+    //    recursion"); `front::linear_questions`, the one caller of [`Scoped`], runs only on a
+    //    unit elaborated without errors (front.rs). That argument covers first-order calls
+    //    and is not needed for exactness, which step 5 gives without it.
+    // Red before, green after (PROOF-preimage-projected-cyclic-binding): before step 5, a row
+    // was written by [`Normal::lin`], which stops at the first atom without a form, and
+    // otherwise kept whole with only its pairs renamed; a bound symbol later in that row was
+    // kept as it is while its binding row, written, became `0 == 0` and was dropped, so the
+    // symbol was free and the projection held at more points than the relation. Unit test
+    // `projected_tests::a_binding_that_reaches_itself_keeps_the_ties_of_the_other_atoms_of_its_rows`
+    // (a hand-made cycle, since no unit makes one; it failed with `x == -4` held by the rows
+    // `[Aux(4) == 0]`), and the unit test `one_scope::
+    // bindings_of_claimed_calls_nest_along_the_call_graph_and_hold_no_cycle`, which asserts the
+    // elaborator refuses mutual recursion and checks nested claims against the interpreter.
     let mut normal = Normal::new(tr, &seen);
     let mut once: HashSet<Con> = HashSet::new();
     let mut written: Vec<Con> = Vec::with_capacity(rows.len());
     for c in &rows {
-        // Not proved: the row `renamed` keeps when [`Normal::lin`] cannot write one of its
-        // atoms. `lin` stops at the first atom with no written form, so a pair later in the
-        // same row may not be in the memo yet; `renamed` then keeps it as it is, and if it is
-        // not its key's representative it is eliminated as a free variable, its tie to the
-        // representative lost (and a bound symbol kept as it is loses its binding row, which
-        // `lin` wrote to `0 == 0` and dropped): the projection would hold at more points than
-        // the callee's relation. An atom with no written form in a row of a definition that
-        // does not choose is a `Bind` variable, alone in its row `b == n`, or a symbol whose
-        // binding reaches itself (the `open` set of [`Normal::atom`]); the open sub-case is
-        // the second: no proof here that claimed calls never bind in a cycle. Proposed fix:
-        // write every atom of the row before renaming, and rename each atom with a written
-        // form to that form.
-        let lin = normal.lin(&c.lin).unwrap_or_else(|| normal.renamed(&c.lin));
+        let lin = normal.written(&c.lin);
         if lin.terms.is_empty() {
             let holds = match c.rel {
                 presburger::Rel::Ge => !lin.constant.is_negative(),
@@ -4346,7 +4382,7 @@ fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
     let reps: Vec<u32> = normal.reps.keys().copied().collect();
     for q in reps {
         for c in normal.tr.defs[q as usize].2.cons() {
-            let lin = normal.lin(&c.lin).unwrap_or_else(|| normal.renamed(&c.lin));
+            let lin = normal.written(&c.lin);
             defined.insert(Con { lin, rel: c.rel });
         }
     }
@@ -4567,34 +4603,38 @@ impl<'a> Normal<'a> {
         self.over(l)
     }
 
-    /// `l` with each pair written replaced by its representative, other atoms as they are.
-    fn renamed(&self, l: &Lin) -> Lin {
+    /// `l` with each atom that has a written form replaced by it, and each other atom as it
+    /// is: every atom is written first, so none is left as it is only because an atom before
+    /// it in `l` has no form (step 5 of the proof in [`projected`]). Time of the terms and of
+    /// the atoms newly written, times the log of the terms.
+    fn written(&mut self, l: &Lin) -> Lin {
         use presburger::Atom;
+        for a in l.terms.keys() {
+            self.atom(a);
+        }
         let mut terms: BTreeMap<Atom, Int> = BTreeMap::new();
+        let mut constant = l.constant.clone();
         for (a, k) in &l.terms {
-            let a = match (a, self.memo.get(a)) {
-                (Atom::Aux(_), Some(Some(w))) if w.terms.len() == 1 && w.constant.is_zero() => {
-                    match w.terms.iter().next() {
-                        Some((b @ Atom::Aux(_), one)) if one.is_unit() && !one.is_negative() => {
-                            b.clone()
-                        }
-                        _ => a.clone(),
-                    }
+            let raw;
+            let at = match self.memo.get(a) {
+                Some(Some(w)) => w,
+                _ => {
+                    raw = Lin::atom(a.clone());
+                    &raw
                 }
-                _ => a.clone(),
             };
-            let v = match terms.remove(&a) {
-                Some(o) => &o + k,
-                None => k.clone(),
-            };
-            if !v.is_zero() {
-                terms.insert(a, v);
+            constant = &constant + &(k * &at.constant);
+            for (b, d) in &at.terms {
+                let v = match terms.remove(b) {
+                    Some(o) => &o + &(k * d),
+                    None => k * d,
+                };
+                if !v.is_zero() {
+                    terms.insert(b.clone(), v);
+                }
             }
         }
-        Lin {
-            terms,
-            constant: l.constant.clone(),
-        }
+        Lin { terms, constant }
     }
 
     /// Whether `n` is a representative pair's quotient or remainder.
@@ -5629,12 +5669,47 @@ impl<'t> Tx<'t> {
     }
 
     /// The scope of a call's body: the lambda's scope with each parameter bound to its
-    /// argument, read in the caller's scope.
-    fn call_env(&mut self, ps: Span, args: Span, lam: Eid, caller: Eid) -> Eid {
+    /// argument, read in the caller's scope, except that a parameter whose entry in `key`, the
+    /// call's key of linear terms ([`Walk::call_key`]; empty for a call read under no such
+    /// key), is a constant `n` in `i64` is bound to the literal `n`.
+    ///
+    /// Why the literal (PROOF-call-key-function-of-lins): a translation kept under a key must
+    /// be the one every call of that key would make. Two arguments with one constant linear
+    /// term, `3` and `y - y + 3`, are one key, but [`Walk::lin_at`] reads a divisor
+    /// ([`Walk::constant_coef`]), an exponent ([`Walk::constant_int`]) and a whole term
+    /// ([`Walk::constant`]) by evaluating the term, which reads no input only for the first;
+    /// so `x mod a`, read at `y - y + 3`, had no translation without products, and the kept
+    /// entry held the translation of whichever call was read first. Proof that the parameter
+    /// is then read as a function of the key: the literal is one term for each `n`
+    /// (`Terms::int`, made once per value by `Made::Int`), bound in [`ROOT`], so each read of
+    /// the parameter in the body is a read of that one term, which depends on `n` alone. That
+    /// the body may read the literal where it read the argument: where the argument is
+    /// defined its value is its linear term's ([`Walk::lin`]), `n`; where it may fail, the
+    /// key also holds its condition ([`Walk::shared_call_key`], `k.2`) when the relation
+    /// tracks failure, and when it does not ([`Tr::definedness`]) the relation need not hold
+    /// exactly at a point where an operation fails, and the key, a linear term, holds no
+    /// failure for any of the calls that share it. Test:
+    /// `l01_38_omega_test::completeness::a_call_keyed_by_a_constant_argument_is_translated_in_either_order`
+    /// (red before: the second order was outside the domain). Not proved
+    /// (PROOF-call-key-function-of-lins), two sub-cases: (a) a constant outside `i64`,
+    /// whose argument is still bound, since `Terms` makes a literal only of an `i64`
+    /// (`Node::Lit` borrows a value of the source); (b) a parameter whose key is not a
+    /// constant, still read through the caller's argument term, where the body reads that
+    /// term other than by its linear term: [`Walk::lin_by_class`] reads the classes of a
+    /// remainder test of it, and the box walks ([`Walk::fwd`]) read its bounds, which may
+    /// differ between `x` and `x + y - y`. No test was found that reaches either.
+    fn call_env(&mut self, ps: Span, args: Span, lam: Eid, caller: Eid, key: &[Lin]) -> Eid {
         let mut e = lam;
         for i in 0..ps.len() {
-            let (p, a) = (self.param(ps, i), self.arg(args, i));
-            e = self.bind(e, p, (a, caller));
+            let p = self.param(ps, i);
+            let literal = (key.get(i))
+                .filter(|l| l.terms.is_empty())
+                .and_then(|l| i64::try_from(l.constant.to_i128()?).ok());
+            let to = match literal {
+                Some(n) => (self.terms.int(n), ROOT),
+                None => (self.arg(args, i), caller),
+            };
+            e = self.bind(e, p, to);
         }
         e
     }
@@ -5649,10 +5724,35 @@ impl<'t> Tx<'t> {
     /// Why a void run with an `r` that narrows nothing is not counted here: [`Tx::whole`]
     /// then keeps every domain, and when the run is void because an input's domain is empty
     /// (`is_empty(inputs)` in [`begin`]) that empty domain is kept, so the box still holds no
-    /// point; [`Tx::empty`] says so. Not proved: that a run void by a read
-    /// (`r.total().void > given` in [`begin`]) always leaves some input of that read with an
-    /// empty domain in `whole`'s box; that needs `images::TermRead`'s `void` count tied to
-    /// `ints(v)` being empty for an input `v` not shadowed by `inputs`.
+    /// point; [`Tx::empty`] says so.
+    ///
+    /// Proof that a run void by a read (`r.total().void > given` in [`begin`]) with an `r`
+    /// that narrows nothing also leaves an input of that read with an empty domain in
+    /// `whole`'s box (PROOF-preimage-void-by-read).
+    /// 1. `SummaryRead` has one implementation, `images::TermRead`. Its `ints(v)` is
+    ///    `names.get(v).map(ints)` for `v` in `vars` and `None` otherwise, and its
+    ///    `scope_ints(v)` is `names.get(v).map(ints)`, so the two agree on `vars`.
+    /// 2. Its tree is made by `images::fresh` or by `updated`, which gives fresh's tree (the
+    ///    proof at `updated`). `fresh` makes one leaf for each `v` in `vars`, and
+    ///    `LetPa::term_bounds` sets that leaf's `void` to 1 exactly when its `ints` is empty;
+    ///    `TermBounds::plus` adds them. So `total().void` is the number of `v` in `vars`
+    ///    with `ints(v)` empty.
+    /// 3. `given` counts the shadowed names `k` (distinct keys of `own`) with `r.ints(k)`
+    ///    empty, each so in `vars` by 1 and counted by 2: `given <= void`. So `void > given`
+    ///    gives a `v` in `vars` with `ints(v)` empty that is not shadowed.
+    /// 4. `shadow` is found with `reads.first()`, and every read of a run is made in one scope
+    ///    (`let_narrowing`, the doc of `SummaryRead`), so `scope_ints` is the same for each
+    ///    read. Not shadowed means `v` is not in `own`, or `own[v] == scope_ints(v)`, which is
+    ///    empty by 1; in the second case `is_empty(inputs)` holds, the case above.
+    /// 5. In `whole`, with `r.dom` empty and so `none` false: an `own` input keeps its domain,
+    ///    so `own[v]` is kept empty; a `v` not in `own` is inserted by the first read of
+    ///    `cx.reads` that lists it, as `read.ints(v)`, which by 1 and 4 is the empty
+    ///    `names[v]` of the one scope. With `r.dom` not empty, `none` holds and every domain
+    ///    is emptied. Either way the box holds no point.
+    ///
+    /// Test: `l01_25_preimage_catalog::scopes::an_empty_input_leaves_no_point` covers the
+    /// `is_empty(inputs)` case of 4. No test was found that makes a run void by a read with
+    /// an `r` that narrows nothing, so step 5's second case rests on the argument only.
     fn none(&self, r: &Res) -> bool {
         r.none || (self.run.void && !r.dom.is_empty())
     }
@@ -5950,17 +6050,23 @@ impl<'t> Tx<'t> {
         // parts of `a` with the single piece `0..=0` and never reads `b`'s pieces; a set of
         // one id has one content (`Ints::id`). (2) The exponent: `Exponent` has the one variant
         // `Num`, so `k.num()` is all of it, and `Num`'s `eq` and `Hash` are those of the value
-        // (zedc-int int.rs, `impl Hash for Num`). Not proved, and false in one sub-case: two
-        // equal exponents in two forms. `Num::pow_by` gives the exact power for a `Small` or
-        // `Big` exponent and `None` for a kept one (`Num::scalar`), and then `pow_end` bounds
-        // the end outward; a value outside `i128` may be held as `Big` or kept (the doc of
-        // `impl Hash for Num`), so the entry holds the set of whichever form was read first.
-        // Both sets hold every power, so the answer stays sound; it may be less precise than
-        // reading the exponent as given, and depends on the order of reading. Among forms that
-        // are not kept a value has one form, so a key of such an exponent gives one set; the
-        // repair is to read a kept exponent afresh, outside `pows` (plan row needed). Whether a
-        // test reaches that case was not checked.
+        // (zedc-int int.rs, `impl Hash for Num`). (3) One value, one set: a value outside
+        // `i128` may be held as `Big` or kept (the doc of `Word`), equal and of one hash, but
+        // `Num::pow_by` gives the exact power for a `Big` exponent and `None` for a kept one
+        // (`Num::scalar`), after which `pow_end` bounds the end outward; so the two forms give
+        // different sets. Among forms that are not kept a value has one form (`Word`: `Small`
+        // inside `i64`, else `Big`), so a kept exponent is read afresh and never enters
+        // `pows`, and every key of `pows` gives the one set its form gives
+        // (FAIL-preimage-pows-key). Before, the entry held the set of whichever form was read
+        // first: sound, since both sets hold every power, but order-dependent. Test:
+        // `projected_tests::a_power_by_one_exponent_in_two_forms_is_read_alike_in_either_order`
+        // (red before the change: the kept form read after the `Big` form got the exact set).
+        // Cost: a kept exponent is read at each reading, as in the naive version; it is
+        // written only from a power whose value lies outside `i128`.
         if let Op::Pow(k) = o {
+            if k.num().is_kept() {
+                return Ints::forward(o, a, b);
+            }
             return (self.run.ints.pows.entry((k.num().clone(), a.id())))
                 .or_insert_with(|| Ints::forward(o, a, b))
                 .clone();
@@ -6706,8 +6812,8 @@ impl<'m, 't> Walk<'m, 't> {
         self.with(|tx| tx.let_env(n, e, env))
     }
 
-    fn call_env(&self, ps: Span, args: Span, lam: Eid, caller: Eid) -> Eid {
-        self.with(|tx| tx.call_env(ps, args, lam, caller))
+    fn call_env(&self, ps: Span, args: Span, lam: Eid, caller: Eid, key: &[Lin]) -> Eid {
+        self.with(|tx| tx.call_env(ps, args, lam, caller, key))
     }
 
     fn callee(&self, f: Tid, env: Eid) -> Result<Callee, Option<Arc<str>>> {
@@ -7343,7 +7449,7 @@ impl<'m, 't> Walk<'m, 't> {
                     let v = match self.summon(ps, body, lam, args, env).await {
                         Some(call) => self.call_fwd(call, body, lam, place).await,
                         None => {
-                            let inner = self.call_env(ps, args, lam, env);
+                            let inner = self.call_env(ps, args, lam, env, &[]);
                             self.fwd(body, inner).await
                         }
                     };
@@ -7672,7 +7778,7 @@ impl<'m, 't> Walk<'m, 't> {
                     let r = match self.summon(ps, body, lam, args, env).await {
                         Some(call) => (self.call_back(call, body, lam, args, env, &d, place)).await,
                         None => {
-                            let inner = self.call_env(ps, args, lam, env);
+                            let inner = self.call_env(ps, args, lam, env, &[]);
                             self.back(body, inner, d).await
                         }
                     };
@@ -7947,7 +8053,7 @@ impl<'m, 't> Walk<'m, 't> {
                             }
                         }
                         None => {
-                            let inner = self.call_env(ps, args, lam, env);
+                            let inner = self.call_env(ps, args, lam, env, &[]);
                             self.scan(body, inner).await
                         }
                     }
@@ -9167,9 +9273,10 @@ impl<'m, 't> Walk<'m, 't> {
         (body, lam): At,
         args: Span,
         env: Eid,
+        key: &[Lin],
     ) -> Option<Lin> {
         let place = self.with(|tx| tx.enter(t, body))?;
-        let inner = self.call_env(ps, args, lam, env);
+        let inner = self.call_env(ps, args, lam, env, key);
         let l = self.lin(body, inner).await;
         self.with(|tx| tx.leave(body, place));
         l
@@ -9428,7 +9535,7 @@ impl<'m, 't> Walk<'m, 't> {
                             );
                             call.await
                         }
-                        None => self.lin_call(t, ps, (body, lam), args, env).await,
+                        None => self.lin_call(t, ps, (body, lam), args, env, &[]).await,
                     }
                 }
                 Callee::Prim(p) => {
@@ -9705,7 +9812,7 @@ impl<'m, 't> Walk<'m, 't> {
                             );
                             call.await
                         }
-                        None => self.defined_call(t, ps, (body, lam), args, env).await,
+                        None => self.defined_call(t, ps, (body, lam), args, env, &[]).await,
                     }
                 }
                 Callee::Prim(p) => {
@@ -9786,9 +9893,28 @@ impl<'m, 't> Walk<'m, 't> {
     /// the call's own arguments (`key == k.1`) is read at the call's place, with no
     /// substitution. The `held` path keeps the condition over the canonical atoms and adds
     /// the binding's constraint `Aux(n) == at`, as [`Walk::formula_called`] does for the
-    /// relation. Not proved here: that this constraint ties the canonical atoms to the
-    /// call's arguments; it is the claim's own proof (the claim table `tr.claims`, not read
-    /// for this audit). Test:
+    /// relation.
+    ///
+    /// Proof that this constraint ties the canonical atoms to the call's arguments
+    /// (PROOF-preimage-defined-called-aux). (1) The claim was made by [`Walk::binding`] (the
+    /// only caller of `Tr::claim`), called by [`Walk::formula_called`] and
+    /// [`Walk::lin_called`] with `key = claimable(ps, k')` and the call's arguments `k'.1`.
+    /// Here the claim matches only when its stored arguments equal `k.1` and the lambda is
+    /// the same, so `k'` and `k` have the same lambda and arguments and both an empty third
+    /// part (`claimable` asks it); `claimable` reads only those, `ps` and the lambda's
+    /// atoms, so `key` here is the key the claim was made with. (2) `binding` defines
+    /// `Aux(n)` as `Aux(n) == at` and `c == a` for each pair of a canonical atom `c` of `key`
+    /// and its argument `a` with `c != a`; `at` is the value for `What::Value` and `n`
+    /// otherwise, and `held` builds the same `at` from `tr.defs[n]`. The entries of `key`
+    /// with no pair are a constant, which [`Walk::canonical_env`] binds to the argument's
+    /// own term, or an atom equal to its argument (a class atom), so each is the argument
+    /// already. (3) A relation that mentions `Aux(n)` holds its definition: `Scoped::written`
+    /// brings in every definition reached from the atoms of the body, and
+    /// `Relation::defined` is the conjunction of those (zedc-presburger presburger.rs,
+    /// `Relation`). `held` mentions `Aux(n)`, so where the condition holds each canonical
+    /// atom equals its argument, and the condition over the atoms is the call's.
+    ///
+    /// Test:
     /// `l01_38_omega_test::one_scope::a_relation_that_divides_by_a_term_holds_where_the_interpreter_gives_true`
     /// (`u3` holds the claim, `u5` is written at its arguments, `u8` reads at its place),
     /// checked against the interpreter on the window -4..4; it cannot catch a fault that shows
@@ -9852,7 +9978,7 @@ impl<'m, 't> Walk<'m, 't> {
                 }
             }
         }
-        self.defined_call(t, ps, (body, lam), args, env).await
+        self.defined_call(t, ps, (body, lam), args, env, &k.1).await
     }
 
     /// [`Walk::lin_call`] for [`Walk::defined`].
@@ -9863,9 +9989,10 @@ impl<'m, 't> Walk<'m, 't> {
         (body, lam): At,
         args: Span,
         env: Eid,
+        key: &[Lin],
     ) -> Option<Defined> {
         let place = self.with(|tx| tx.enter(t, body))?;
-        let inner = self.call_env(ps, args, lam, env);
+        let inner = self.call_env(ps, args, lam, env, key);
         let d = self.defined(body, inner).await;
         self.with(|tx| tx.leave(body, place));
         d
@@ -10006,9 +10133,10 @@ impl<'m, 't> Walk<'m, 't> {
         (body, lam): At,
         args: Span,
         env: Eid,
+        key: &[Lin],
     ) -> Option<Formula> {
         let place = self.with(|tx| tx.enter(t, body))?;
-        let inner = self.call_env(ps, args, lam, env);
+        let inner = self.call_env(ps, args, lam, env, key);
         let f = self.formula(body, inner).await;
         self.with(|tx| tx.leave(body, place));
         f
@@ -10353,18 +10481,25 @@ impl<'m, 't> Walk<'m, 't> {
     }
 
     /// The scope the body of the lambda `(body, lam)` of parameters `ps` is read in under the
-    /// canonical key `key`: each parameter whose key is a constant bound to its argument, read
-    /// in the caller's scope (`args` and that scope, as [`Tx::call_env`] binds it), and each
-    /// other to its atom in the key, an input of the run.
+    /// canonical key `key`: each parameter whose key is a constant in `i64` bound to its
+    /// literal, one outside `i64` to its argument, read in the caller's scope (`args` and that
+    /// scope, as [`Tx::call_env`] binds them), and each other to its atom in the key, an input
+    /// of the run.
     fn canonical_env(&self, ps: Span, lam: Eid, args: Option<(Span, Eid)>, key: &[Lin]) -> Eid {
         use presburger::Atom;
         self.with(|tx| {
             let mut e = lam;
             for (i, l) in key.iter().enumerate() {
                 let p = tx.param(ps, i);
-                let to = match (args, l.terms.keys().next()) {
-                    (Some((args, caller)), None) => (tx.arg(args, i), caller),
-                    (_, Some(Atom::Sym(c))) => {
+                // A constant in `i64` is bound to its literal, as in [`Tx::call_env`], whose doc
+                // gives why (PROOF-call-key-function-of-lins).
+                let literal = (l.terms.is_empty())
+                    .then(|| i64::try_from(l.constant.to_i128()?).ok())
+                    .flatten();
+                let to = match (args, l.terms.keys().next(), literal) {
+                    (_, None, Some(n)) => (tx.terms.int(n), ROOT),
+                    (Some((args, caller)), None, None) => (tx.arg(args, i), caller),
+                    (_, Some(Atom::Sym(c)), _) => {
                         tx.cx.inputs.insert(c.clone(), Rc::new(IntervalSet::top()));
                         let c = tx.terms.name(c);
                         (tx.terms.own_var(c), ROOT)
@@ -10603,7 +10738,7 @@ impl<'m, 't> Walk<'m, 't> {
                 }
             }
         }
-        let f = self.formula_call(t, ps, (body, lam), args, env).await;
+        let f = self.formula_call(t, ps, (body, lam), args, env, &k.1).await;
         if let Some(f) = &f {
             self.tr(|tr| tr.bound(f, &k.1));
         }
@@ -10692,7 +10827,7 @@ impl<'m, 't> Walk<'m, 't> {
                 // ([`Tr::instance`]), O(the term and its pairs).
                 // The tests' reference reads the body again ([`Scoped::reading_bodies`]).
                 if self.tr(|tr| tr.bodies) {
-                    return self.lin_call(t, ps, (body, lam), args, env).await;
+                    return self.lin_call(t, ps, (body, lam), args, env, &k.1).await;
                 }
                 let p = self.value_projection(t, ps, (body, lam), args, env, key.clone());
                 if let Some(p) = p.await
@@ -10706,7 +10841,7 @@ impl<'m, 't> Walk<'m, 't> {
                 }
             }
         }
-        self.lin_call(t, ps, (body, lam), args, env).await
+        self.lin_call(t, ps, (body, lam), args, env, &k.1).await
     }
 
     async fn formula_at(&'m self, t: Tid, env: Eid) -> Option<Formula> {
@@ -10767,7 +10902,7 @@ impl<'m, 't> Walk<'m, 't> {
                                 );
                                 call.await
                             }
-                            None => self.formula_call(t, ps, (body, lam), args, env).await,
+                            None => self.formula_call(t, ps, (body, lam), args, env, &[]).await,
                         },
                     }
                 }
@@ -18860,5 +18995,97 @@ mod r6_numeric_tests {
                 Ok(false)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod projected_tests {
+    use super::*;
+    use presburger::Atom;
+
+    /// PROOF-preimage-projected-cyclic-binding. Bindings `c1 := c2 + 1` and `c2 := c1 - 1`
+    /// that reach each other (no unit makes them: the proof at [`projected`] shows a cycle of
+    /// bindings needs a cycle of calls, which the elaborator refuses), and `c3 := x + 1`, under
+    /// the rows `c1 - c2 + c3 >= 7` and `x mod 2 == 0`. The callee's relation over `x` is
+    /// `x >= 5 && x mod 2 == 0` (`c1 - c2 == 1` and `c3 == x + 1`). The remainder leaves a
+    /// congruence, so [`projected`] takes the path over [`Normal`]. Before the fix, writing the
+    /// first row stopped at `c1`, which has no written form, before `c3` was written, kept `c3`
+    /// as it is, and dropped `c3`'s binding row, written to `0 == 0`: `c3` was then free and
+    /// the projection held at `x == 0`. Now every atom with a written form is written, so the
+    /// projection holds exactly at the even `x` from 5 up. It checks the points -4..=12 only.
+    #[test]
+    fn a_binding_that_reaches_itself_keeps_the_ties_of_the_other_atoms_of_its_rows() {
+        let s = |n: &str| Lin::atom(Atom::Sym(n.into()));
+        let bind = |tr: &mut Tr, n: u32, c: &str, to: Lin| {
+            let row = Formula::Con(Con::eq(
+                &Lin::atom(Atom::Aux(n)),
+                &Lin::constant(i64::from(n)),
+            ));
+            let tie = Formula::Con(Con::eq(&s(c), &to));
+            let a = tr.aux(
+                What::Bind(vec![(c.into(), to)]),
+                Formula::and(vec![row.clone(), tie]),
+            );
+            assert_eq!(a, Atom::Aux(n));
+            row
+        };
+        let mut tr = Tr::new(false);
+        let b1 = bind(&mut tr, 0, "c1", s("c2").plus(&Lin::constant(1)));
+        let b2 = bind(&mut tr, 1, "c2", s("c1").minus(&Lin::constant(1)));
+        let b3 = bind(&mut tr, 2, "c3", s("x").plus(&Lin::constant(1)));
+        let q = tr.pair_by_constant(&s("x"), &Int::from(2));
+        let r = Formula::and(vec![
+            b1,
+            b2,
+            b3,
+            Formula::Con(Con::ge(
+                &s("c1").minus(&s("c2")).plus(&s("c3")),
+                &Lin::constant(7),
+            )),
+            Formula::Con(Con::eq(&Lin::atom(Atom::Aux(q + 1)), &Lin::constant(0))),
+        ]);
+        let p = projected(&tr, &r, &[s("x")]).expect("a projection over the pair");
+        for v in -4i64..=12 {
+            let mut parts: Vec<Formula> = p.rows.iter().cloned().map(Formula::Con).collect();
+            for (&n, (d, c)) in p.pairs.iter() {
+                let rows = tr.defs[n as usize].2.clone();
+                assert_eq!((d, c), (&s("x"), &Int::from(2)), "{rows:?}");
+                parts.push(rows);
+            }
+            parts.push(Formula::Con(Con::eq(&s("x"), &Lin::constant(v))));
+            let got = presburger::decide(&Formula::and(parts)).expect("decided");
+            assert_eq!(got, v >= 5 && v % 2 == 0, "x == {v}: {:?}", p.rows);
+        }
+    }
+
+    /// FAIL-preimage-pows-key. `2 ^ 200` kept as a power and written out as a `Big` are one
+    /// value, so one key of `pows`, but `Num::pow_by` gives the exact power for the `Big` form
+    /// and `None` for the kept one, which `Ints::forward` then bounds outward. Before the fix
+    /// the entry held the set of whichever form was read first, so the second read's set
+    /// depended on the order; now each read gives the set its own form gives.
+    #[test]
+    fn a_power_by_one_exponent_in_two_forms_is_read_alike_in_either_order() {
+        let kept = Num::pow2(&Num::from(200));
+        let big = Num::from(num_bigint::BigInt::from(1u32) << 200u32);
+        assert_eq!(kept, big);
+        assert!(
+            kept.to_int().is_none() && big.to_int().is_some(),
+            "two forms"
+        );
+        let base = || Ints::of(IntervalSet::range(Fin(Num::from(2)), Fin(Num::from(3))));
+        let pow = |k: &Num| Op::Pow(Exponent::Num(k.clone()));
+        let read = |ks: &[&Num]| {
+            let mut tx = Tx::new();
+            let a = base();
+            let mut last = None;
+            for k in ks {
+                last = Some(tx.forward_ints(&pow(k), &a, &a).set().clone());
+            }
+            last.expect("one read")
+        };
+        let (alone_kept, alone_big) = (read(&[&kept]), read(&[&big]));
+        assert_ne!(alone_kept, alone_big, "the two forms give different sets");
+        assert_eq!(read(&[&big, &kept]), alone_kept, "kept read after big");
+        assert_eq!(read(&[&kept, &big]), alone_big, "big read after kept");
     }
 }

@@ -614,22 +614,22 @@ impl Run<'_> {
         // into a name without holes holds by the least distances, and every edge into a name
         // with holes by the same cut; a name without holes is one piece, at most its cap, so
         // only `lo` is checked, and when `all` is below it every point is too: no point.
-        // All `map_err` here are never taken: `hull` set the potential to `u`, which holds at
-        // every edge of the component ([`Run::paths`]). Test:
-        // `tests::small_systems_agree_with_enumeration`; the system tests of
-        // `l01_39_scope_relations::holes` (CE-A, the slot booking).
+        // No `paths` here returns `Err` (the proof at [`Run::paths`]: `hull` set the potential
+        // to `u`, which holds at every edge of the component, and nothing between changes
+        // `u`, the potential or the edges), so each is `unreachable!` (PROOF-holes-refusals-
+        // never-taken). Test: `tests::small_systems_agree_with_enumeration`; the system tests
+        // of `l01_39_scope_relations::holes` (CE-A, the slot booking).
         let unholed = |s: &Run, v: usize| !s.holed(v);
         let caps: Vec<(usize, Int)> = names.iter().map(|&v| (v, self.u[v].clone())).collect();
-        let reach =
-            (self.paths(c, caps.clone(), |s, v| unholed(s, v))).map_err(|_| self.refuse(names))?;
+        let reach = (self.paths(c, caps.clone(), |s, v| unholed(s, v))).unwrap_or_else(held);
         let cap = |h: usize| reach.get(&h).cloned().unwrap_or_else(|| self.wide.clone());
         let fixed: Vec<(usize, Int)> = match holed[..] {
             [h] => vec![(h, snap_down(&self.dom[h], &cap(h)).ok_or(Stop::Empty)?)],
             [a, b] => {
                 let ab = (self.paths(c, vec![(a, Int::ZERO)], |s, v| v == a || unholed(s, v)))
-                    .map_err(|_| self.refuse(names))?;
+                    .unwrap_or_else(held);
                 let ba = (self.paths(c, vec![(b, Int::ZERO)], |s, v| v == b || unholed(s, v)))
-                    .map_err(|_| self.refuse(names))?;
+                    .unwrap_or_else(held);
                 let w = |m: &BTreeMap<usize, Int>, z: usize| {
                     m.get(&z).cloned().unwrap_or_else(|| self.wide.clone())
                 };
@@ -645,7 +645,7 @@ impl Run<'_> {
         let mut sources: Vec<(usize, Int)> =
             caps.into_iter().filter(|(v, _)| !self.holed(*v)).collect();
         sources.extend(fixed.iter().cloned());
-        let all = (self.paths(c, sources, |_, _| true)).map_err(|_| self.refuse(names))?;
+        let all = (self.paths(c, sources, |_, _| true)).unwrap_or_else(held);
         for &v in names {
             let x = all.get(&v).cloned().unwrap_or_else(|| self.u[v].clone());
             if x < *self.lo(v) {
@@ -735,7 +735,7 @@ impl Run<'_> {
         });
         if holds {
             let caps: Vec<(usize, Int)> = names.iter().map(|&v| (v, self.u[v].clone())).collect();
-            let found = (self.paths(c, caps, |_, _| true)).map_err(|_| self.refuse(names))?;
+            let found = (self.paths(c, caps, |_, _| true)).unwrap_or_else(held);
             for &v in names {
                 if let Some(x) = found.get(&v) {
                     self.u[v] = x.clone();
@@ -800,14 +800,30 @@ impl Run<'_> {
     /// The search keeps each name's label less its potential, a distance over the reduced
     /// weights `w + p(v) - p(z)`, and adds the potential back at the end. An edge whose reduced
     /// weight is below zero is `Err`: the potential does not hold there, and the search would
-    /// no longer take each name once, so its O(m log n) would not hold either. The caller
-    /// refuses the component ([`Run::refuse`]).
+    /// no longer take each name once, so its O(m log n) would not hold either. No caller gets
+    /// one, and each takes the value through [`held`].
     ///
-    /// Proof that no caller gets `Err`: `hull` calls this only when the potential holds at
-    /// every edge of the component (`holds`), and on return sets the potential to `u`, the
-    /// least distances from the caps, which satisfy `u_z <= u_v + w` at every edge of the
-    /// component; every later call, in [`Run::component`], comes after `hull`. So each reduced
-    /// weight is 0 or more and every `map_err(|_| self.refuse(..))` is never taken.
+    /// Proof that no caller gets `Err` (PROOF-holes-refusals-never-taken). (1) The names the
+    /// search visits are the sources and the ends of edges with `comp_of[z] == c`, all names
+    /// of component `c`; the `names` of each caller are all of them, since [`greatest`] builds
+    /// `comp_of` from `components` and calls [`Run::component`] with that component's
+    /// members. `out` is built once in [`greatest`] and never changed. (2) The call in `hull`
+    /// is made only when `holds`: every name of `names` has a potential and every edge `v ->
+    /// z` within `c` has `w + p(v) - p(z) >= 0`, which is every reduced weight read. (3) On
+    /// returning `Ok`, `hull` has set the potential of every name of `c` to `u` (its last
+    /// loop), and `u` satisfies `u_z <= u_v + w` at every edge within `c`. With `holds`: every
+    /// name is a source, so has a label; each name is popped once, with its label final since
+    /// the reduced weights are 0 or more, and lowers each `z` it reaches to at most its label
+    /// plus the reduced weight; adding the potentials back gives `u_z <= u_v + w`. Without:
+    /// the queue ends empty, and every name is popped after its last decrease (it is queued
+    /// at the start, and a decrease queues it unless it is queued already), so each edge out
+    /// of it was relaxed at its final value, and `u_z` only falls after. (4) The other calls
+    /// are in [`Run::component`] after `hull(c, names)?`, which returned `Ok`; between that
+    /// and the last call (`all`) nothing writes `u`, the potential or `out` (the writes to
+    /// `u` come after `all`). So by (3) every reduced weight read is 0 or more, and `reduced`
+    /// never returns `Err`. Test: `tests::small_systems_agree_with_enumeration` reaches each
+    /// call; it cannot catch a later change that writes `u` between `hull` and `all`, which
+    /// would panic in [`held`] rather than refuse.
     fn paths(
         &self,
         c: usize,
@@ -838,12 +854,11 @@ impl Run<'_> {
             .map(|(v, k)| (v, &k + &p(v)))
             .collect())
     }
+}
 
-    /// The refusal of the component of `names`, its names and those of them with holes.
-    fn refuse(&self, names: &[usize]) -> Stop {
-        let holed = names.iter().copied().filter(|&v| self.holed(v)).collect();
-        Stop::Refused(names.to_vec(), holed)
-    }
+/// The value of a [`Run::paths`] call, which never returns `Err` (the proof there).
+fn held(e: NegativeReducedWeight) -> BTreeMap<usize, Int> {
+    unreachable!("a reduced weight below 0 after `hull` ({e:?}): the proof at `Run::paths`")
 }
 
 /// The output on a piece of inputs: a constant, or the input plus a shift.
