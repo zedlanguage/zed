@@ -1771,6 +1771,13 @@ impl<A: Literal> Part<A> {
     /// `false` in the converse case, until no more is replaced. Every value of the part is in,
     /// or outside, such an expression, so the result holds every value of the part, and may
     /// hold more: it is empty only if the part is.
+    /// Steps: write the part as `P(e(v), v)`, every use of the expression `e` the first
+    /// argument. `P(false, v)` read `false` with every atom unknown is `false` at every `v`. So
+    /// at a `v` in the part, `e(v)` is `true` (else the part is `P(false, v)`, `false`), and the
+    /// part is `P(true, v)` there: the result `P(true, ·)` holds `v`. The converse case is the
+    /// same with `true` and `false` swapped, and each round of the loop keeps every value of
+    /// the round before, so the end does too. Of a superset, what every value forces is forced
+    /// on the part as well (`Part::forced`'s use in `narrow_tuples`).
     pub(super) fn settle(&self) -> Part<A> {
         let mut p = self.clone();
         loop {
@@ -3101,6 +3108,16 @@ mod xor {
             // `halves`, passes the literal of the smallest atom of `s` (or its complement) and
             // the exclusive or of the other atoms (or its complement), which is a list only
             // when it has one atom (`Part::xor`), and then it is that atom's literal.
+            // Steps: `p` is `Part::literal`, and `Bdd::not` of a literal is a literal
+            // (`Bdd::literal_of`). `set::remove(s, first)` leaves one or more atoms, as `s` has
+            // two or more; `Part::xor` of one atom is its literal, and of more is `found` or
+            // `node`, each a `Part::Expr`. `Part::not` of such a node is a `Part::Expr` too: the
+            // kept complement (`Expr::known`) is set only from `Part::xor` (an expression) or
+            // `Expr::link` of what `Connect::negate` made, and `negate` of a node with `xor` set
+            // takes its `source` arm (`Part::not_expr` or `Part::of_form`, both `Part::expr`)
+            // or its `xor` arm (`mate`: `found` or `node`), never its choice arm. The test
+            // `meets_as_zip`, the other caller, passes literals and exclusive ors of disjoint
+            // atoms, as `halves` does.
             let (Some((u, s)), Some((v, t))) = (x.as_literal(), y.as_literal()) else {
                 unreachable!("two lists met here are literals")
             };
@@ -3136,7 +3153,10 @@ mod xor {
             Operands::Two(x, y) => Some([x.xor_tag()?, y.xor_tag()?]),
             Operands::Chain(d) => match d.chain(op)?[..] {
                 [(a, s), (b, t)] => Some([literal(a, s), literal(b, t)]),
-                // A list reaches here only past the first test above, as a chain of two.
+                // A list reaches here only past the first test above, as a chain of two:
+                // `chain_len(op) == Some(2)` holds of a list that is no literal (a literal gives
+                // 1) and `is_chain(op)`, with two keys in its one block; `Part::operands` gives
+                // `Operands::Chain` of that same list, and `Bdd::chain` lists that block's keys.
                 _ => unreachable!("a chain of two literals lists two"),
             },
         }

@@ -313,6 +313,19 @@ fn meet_operands(
         .meets
         .get(&v)
         .expect("a meet's node keeps its operands' nodes");
+    // One node per operand, in the same order. The walk below is `system`'s for a meet: both
+    // put `xs` reversed on a stack, pop the next operand in the order written, and replace a
+    // recursive `And` by its operands reversed, so both list the same operands in the same
+    // order. `system` pushes one `Step::Visit` for each, and a visit of a part other than the
+    // member's body puts exactly one node on `done`, by induction on the part: a `Ref`, a part
+    // `seen` before or a closed part pushes one; a part with children pushes its `Step::Make`
+    // under its children's visits, so the make runs after them, takes their nodes off `done`
+    // and pushes one (a union of one distinct arm pushes that arm's node). The visits run last
+    // pushed first, each finishing before the one under it starts, so `done` holds the
+    // operands' nodes reversed, and `written` reverses them back. Test:
+    // `a_meet_named_by_the_message_lists_its_open_operands_as_written` (l01_23_subtyping
+    // group_refusal.rs); its control keeps the nodes in visiting order and fails. The assert
+    // checks the count in release too.
     let mut operands: Vec<&Arc<rec::Node>> = Vec::with_capacity(nodes.len());
     let mut todo: Vec<&Arc<rec::Node>> = xs.iter().rev().collect();
     while let Some(x) = todo.pop() {
@@ -432,9 +445,17 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
         // A node in `tuples` is an `And` node with two distinct children in the refused
         // component (`bes::refusal`), and `decide` marks every node of that component refused
         // in this run, so at least two children are refused; `system` makes an `And` node only
-        // of a tuple, an atom with a payload or a meet.
+        // of a tuple, an atom with a payload or a meet. `refusal` reads the copy `simplify`
+        // makes of the run's graph, which keeps an `And` node's children as they are or makes
+        // it `Bot` with none, and the run's graph has the edges of `why.graph` (the `else`
+        // branch below), so these are children of `v` in `why.graph`. Each arm below then
+        // names two: a tuple's children are distinct positions; a meet's children are the
+        // distinct nodes of `meets[v]` (its key is `meets[v]` sorted and deduplicated, from
+        // the same part), so `meet_operands` meets both.
         let open: Vec<String> = match &e.e {
-            // The children are the components, one each, in order (`system`).
+            // The children are the components, one each, in order: `system` pushes their
+            // visits last first, so they are visited, and their nodes put on `done`, in the
+            // order written, and `Made::node` keeps that order.
             rec::Shape::Tuple(xs) | rec::Shape::Atom(_, xs) => {
                 (why.graph.children(*v).iter().zip(xs))
                     .filter(|(w, _)| refused(w))

@@ -1615,6 +1615,19 @@ thread_local! {
 }
 
 /// A new id. Block 0 is never drawn, so nothing built non-empty has id 0.
+///
+/// Why no id is drawn twice. `BLOCKS` hands out each block number `b >= 1` once
+/// (`zed_graph::IdSource::take`, proved there), and block `b` is the ids `b * BLOCK ..
+/// (b + 1) * BLOCK`; blocks with different numbers do not overlap. A thread takes ids of its
+/// own block in increasing order, one each call, and takes a new block only when it has used
+/// the last (`id == end`); the start `(0, 0)` makes its first call take one. So every id
+/// drawn lies in exactly one block, which one thread owns, and that thread draws it once.
+/// This needs `(b + 1) * BLOCK` to fit in `u64`, that is `b < 2^48`. A block is taken by a
+/// thread's first call or after `2^16` ids on that thread, so `2^48` blocks need `2^48`
+/// threads that each draw an id, or `2^64` ids in all (584 years at 10^9 a second): the
+/// product does not wrap in practice, the same bound as `IdSource`'s own count. Not checked
+/// at run time. Test: the ids are compared only for equality by provenance and walks; no test
+/// draws a large number of blocks.
 pub fn fresh_id() -> Id {
     crate::local::with(&NEXT, |next| {
         let (mut id, mut end) = next.get();
@@ -3662,14 +3675,20 @@ impl ReadSet {
     // pair allocated, zeroed and freed a table: a lookup of a shared tuple key in an ordered
     // map paid it at each of its `O(log n)` comparisons, 2.5 of the 6.0 billion instructions
     // of a definedness fix over 32,000 such keys. Used: the smallest table is kept, and a set
-    // that holds no pair is left as it is. Cost: 256 bytes a thread for each relation used.
+    // that holds no pair is not filled again. Cost: 256 bytes a thread for each relation used.
+    //
+    // Proof of the bound on what is kept: after `clear` the slots are none, or 16, or (the
+    // `fill` branch) `slots.len() <= 8 * len` with `len` the pairs held at the call. A set that
+    // holds no pair takes the first branch when it has more than 16 slots, since `0 < slots`:
+    // an earlier version returned at once when `len == 0`, so a comparison that took every
+    // pair out again, after a large one had grown the table, kept it whole (found by
+    // proofdoc4f; test `a_comparison_that_keeps_no_pair_does_not_keep_a_large_table`). Dropping
+    // a `Vec` of `Copy` pairs makes no pass over the slots (one call to the allocator), so the
+    // cost bound above still holds.
     fn clear(&mut self) {
-        if self.len == 0 {
-            return;
-        }
         if self.len * 8 < self.slots.len() && self.slots.len() > 16 {
             self.slots = Vec::new();
-        } else {
+        } else if self.len > 0 {
             self.slots.fill(EMPTY);
         }
         self.len = 0;
@@ -4161,7 +4180,10 @@ fn walk_in(c: &Comparisons, first: Enter<'_>) -> Option<Ordering> {
     let _scope = Scope::enter(c);
     // The two sequences an outermost comparison starts with are not kept: meeting them again
     // inside them would be a cycle, which no value has, so a comparison of two flat tuples,
-    // such as a key read in an ordered map, keeps no pair and does not touch the table.
+    // such as a key read in an ordered map, keeps no pair and does not touch the table. No
+    // answer rests on a pair being kept: a pair not in `read` is walked (`is_none_or` below),
+    // so leaving it out costs at most a second walk of it, if a comparison that `diff` starts
+    // meets it; and `scopes` is 1 only in the outermost `walk_in` (`Scope::enter`).
     let first = match first {
         Enter::Items(a, b, r, Some(_)) if c.scopes.get() == 1 => Enter::Items(a, b, r, None),
         first => first,
@@ -4843,6 +4865,22 @@ pub const MEMORY_LIMIT_PASSED: &str = "Memory limit of `main` passed";
 /// The first words of each message for memory the system refused a run: a fault of the
 /// machine, not an error of the program (DESIGN.md sec:checking_in_zed). A join longer than a
 /// string can be, [`STRING_TOO_LONG`], is not one: no machine holds it.
+///
+/// Why the list is whole, which [`is_fault`] (exit status 3) and [`under_memory_limit`] rely
+/// on: the arms of `impl fmt::Display for KernelError` that report memory the system refused
+/// are `NumberTooLarge` (`NUMBER_TOO_LARGE`, or `TEXT_TOO_LARGE` for `String`), `TextTooLarge`
+/// (`TEXT_TOO_LARGE`), `OrderTooLarge` (`ORDER_TOO_LARGE`), `EqualityTooLarge` and
+/// `FamilyEqualityTooLarge` (`EQUALITY_TOO_LARGE`), `RoundTooLarge` (`ROUND_TOO_LARGE`),
+/// `StringCopyTooLarge` (`STRING_TOO_LARGE`) and `KeyOrderTooLarge` (the last title here);
+/// every other arm is an error of the program. Each writes its title then `: `, which
+/// [`is_fault`] looks for after a place. The front end's literal refusals
+/// (`Number too large for memory: ...` in zedc-syntax and zedc-check) share the first title.
+/// "Executable too large for memory" (zed-native) and "Constant too large for memory" (zedc)
+/// are not here: they stop a build, not a run. Checked by reading those arms; a new arm must
+/// be added here by hand, and no test fails if it is not. Tests of the exit status 3:
+/// `run_stops_binary` in tests/steps/l01_29_diagnostics (text, order, compare, rounding
+/// boundary, under a limit and not) and `limits_binary` in tests/steps/l01_36a_executables;
+/// none reaches status 3 by `STRING_TOO_LARGE` or the key order.
 const MEMORY_TITLES: [&str; 7] = [
     NUMBER_TOO_LARGE,
     TEXT_TOO_LARGE,
@@ -6833,6 +6871,37 @@ mod tests {
         let first = slots();
         assert!(small(3) == small(3));
         assert_eq!((capacity(), slots()), (16, first));
+    }
+
+    #[test]
+    fn a_comparison_that_keeps_no_pair_does_not_keep_a_large_table() {
+        // `ReadSet::clear` keeps at most 8 times the pairs it is called with, or the 16 slots
+        // of the smallest table. A comparison that keeps no pair (its walk ended at a
+        // difference first and took every pair out again, or met only values read in O(1))
+        // calls it with none: a large table left from an earlier comparison is freed then too.
+        let mut set = ReadSet::new();
+        for pair in drawn_pairs(1000) {
+            assert!(set.insert(pair));
+        }
+        set.clear();
+        let kept = set.capacity();
+        assert!(kept > 16 && kept <= 8 * 1000);
+        set.clear();
+        assert_eq!(set.capacity(), 0);
+        for pair in drawn_pairs(1000) {
+            set.insert(pair);
+        }
+        for pair in drawn_pairs(1000) {
+            set.remove(pair);
+        }
+        set.clear();
+        assert_eq!(set.capacity(), 0);
+        // The smallest table is kept, emptied or not.
+        set.insert((1, 2));
+        set.clear();
+        assert_eq!(set.capacity(), 16);
+        set.clear();
+        assert_eq!(set.capacity(), 16);
     }
 
     /// The pairs `(k, k + 2^40)` for `k` from 1, as one comparison of two values built apart

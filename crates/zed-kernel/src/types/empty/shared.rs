@@ -353,6 +353,9 @@ pub(super) fn list_step(t: &Type) -> Option<Step> {
     // A part over one atom is that atom, its complement or a leaf: `Part::zip_at_once` gives `a`
     // for `a | a` and `a & a`, and `Connect::zipped` a leaf for `a | !a` and `a & !a`. One true
     // where its atom holds is the atom, false where it fails; the check stays for release builds.
+    // Tests: no test reaches this arm (crate COMPLETENESS.md, row TEST-types-unreached-paths-3),
+    // so the `debug_assert!` checks the claim only on the parts the suite builds; it cannot
+    // catch a part built without `zip_at_once` or `zipped`.
     if f.eval(&|_| false) {
         debug_assert!(false, "a part over one atom true at both of its values");
         return None;

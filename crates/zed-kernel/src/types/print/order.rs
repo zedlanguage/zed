@@ -127,6 +127,16 @@ fn carrier(v: &Value) -> NumberType {
 /// members it finds equal (two tuples, two functions) keep the order they are given in, by a
 /// stable sort. O(1) but for two numbers, compared exactly, and two names or strings, compared
 /// by their code points.
+///
+/// A total preorder, as `sort_by` needs: it is the order of the pair (group, key within the
+/// group), first by group, since each arm but the last takes two members of one group (only
+/// `Number` is in group 0, `NumberType` in 1, `Str` in 5, `Named` in 6, `Atom` in 11) and the
+/// last gives `Equal` to two of one group it has no key for. Each key is a total preorder:
+/// `Ord` on `NumberType`, `Text`, `str` and `(name, payload)`; for numbers, the triple
+/// (`Exact`, derived `Ord`; the carrier; `number_cmp`), where `number_cmp` is reached only
+/// for two of one carrier and one place on the line, so two `Int`s, two `Big`s, two of one
+/// float width (the float total order) or two `Rat`s, each a total order. Tests:
+/// `groups_follow_the_decision` and `numbers_ascend_and_ties_go_int_f64_rat`.
 pub fn cmp(a: &Member<'_>, b: &Member<'_>) -> Ordering {
     match (a, b) {
         (Member::Number(x), Member::Number(y)) => x

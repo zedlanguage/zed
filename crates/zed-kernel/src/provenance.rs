@@ -96,6 +96,15 @@ impl Drop for Position {
 
 impl PartialEq for Position {
     /// Compares index by index from the bottom; a link both positions share ends the walk.
+    ///
+    /// Why it is equality of the paths. A link's `depth` and `hash` are functions of the path
+    /// alone ([`Position::child`] computes them from the parent's and the index only, never
+    /// from an address), so equal paths have equal depths and hashes, and the first test
+    /// rejects only unequal paths. A link is never changed after it is made, so two positions
+    /// that reach one link (`Arc::ptr_eq`) have the same path from there up, and the walk may
+    /// stop there; below it every index was compared. With equal depths both reach the root
+    /// together. Test: `two_positions_built_apart_are_equal_when_their_paths_are` in
+    /// tests/steps/l01_20_provenance/completeness.rs.
     fn eq(&self, other: &Self) -> bool {
         if self.depth() != other.depth() || self.hash_value() != other.hash_value() {
             return false;
@@ -120,6 +129,17 @@ impl Ord for Position {
     /// The order of the paths, index by index from the root, a path before the paths below it.
     /// It walks up to the common ancestor, so it costs the distance to it: `O(depth)` for two
     /// positions far apart in a deep term. Many positions are kept by hash, not by this order.
+    ///
+    /// Why it is the term's preorder and agrees with `==`. Both are first cut to the smaller
+    /// depth. If the cut paths differ, the first index where they differ from the root decides,
+    /// which is the preorder of two nodes neither above the other; the walk sees the differences
+    /// from the bottom up and keeps the last, so it keeps that one, and a shared link (one path
+    /// above it, as in `eq`) has none above it. If the cut paths are equal, one position is the
+    /// other or above it, and the depth puts the one above first, as preorder does. So `Equal`
+    /// comes exactly when the cut paths and the depths are equal, that is when the paths are,
+    /// which is `eq`; and the order is the lexicographic order of the paths, so it is total.
+    /// Test: `positions_are_ordered_as_the_term_preorder` in
+    /// tests/steps/l01_20_provenance/completeness.rs.
     fn cmp(&self, other: &Self) -> Ordering {
         let (mut a, mut b) = (self, other);
         while a.depth() > b.depth() {
@@ -405,7 +425,9 @@ impl Provenance {
                 };
                 let common = Found::intersection(&at_j, &held.of(v).found);
                 if !common.is_empty() {
-                    // An input that holds every member of `j` leaves none to `j`.
+                    // An input that holds every member of `j` leaves none to `j`. Exact: `common`
+                    // is part of `at_j`, so `found` always is, and a part of the same size as
+                    // `at_j` is `at_j`; when either is, the union is `at_j`.
                     found = match found.len() == at_j.len() || common.len() == at_j.len() {
                         true => at_j.clone(),
                         false => Found::union(&found, &common),
@@ -466,6 +488,40 @@ struct Counted {
 /// each failure: it holds each of its failures once, read from its own set. So a family of
 /// one entry costs `O(1)` however large the entry's set, and only a later set none of whose
 /// bases is counted costs its size.
+///
+/// Why `found` is the union of the sets the entries hold. Write `S(c)` for the failures of
+/// the set `c`. Each operation keeps these, all true of the empty tally:
+/// (a) every counted `c` has a base 0 or counted, and `S(c)` is `S(base)` and `delta`,
+/// disjoint; the whole set has base 0 and delta `S(whole)`;
+/// (b) `above` of `c` is the number of counted sets whose base is `c`;
+/// (c) every key of `entries` is counted, and a counted set with `above` 0 is a key of
+/// `entries`, so the counted sets are the entries' sets and their bases, no more;
+/// (d) `sets[x]` is the number of counted sets but `whole` whose delta holds `x`;
+/// (e) `found` is `delta(whole)` and the keys of `sets`.
+/// By (a) the union of the counted deltas is the union of their `S(c)`, and by (c) and
+/// `S(base) ⊆ S(c)` that is the union of the entries' sets, so (d) and (e) give the claim.
+/// `enter` counts `s` whole only when nothing is counted (then by (c) no entry is either),
+/// and otherwise counts it and its bases down to a counted one ([`Tally::count`]), taking
+/// `(base, delta)` from [`Held::nodes`], which hold (a) for every set made (the makers, all
+/// through `Held::fresh` but one: `made_by_difference`, `union`, `family` and a member's own
+/// set in `read`; the one, `made_by_difference`'s removing branch, rewrites `was`'s node to
+/// the new set and the failures removed, which is `S(was)` again). `count` ends: every base
+/// there is a set strictly smaller than the one on it (`union`, `read` and the adding branch
+/// put a smaller set under a larger, and the removing branch puts the new, smaller set under
+/// `was`), so no chain of bases repeats. A tally keeps its own copy of each counted
+/// `(base, delta)`, so a node rewritten later does not reach a set counted already; both
+/// copies give the same `S`. `leave` and `uncount` drop a set once no entry holds it and
+/// nothing is counted on it, then its base in the same state, keeping (b) and (c); `less` and
+/// `drop_if_uncounted` keep (d) and (e), and dropping the whole set takes out of `found` each
+/// of its failures no count in `sets` holds. `swap` by difference moves `old`'s place to
+/// `new` only when `old` has `above` equal to 0 and one entry, `new` is not counted, and every
+/// failure the difference removes is in `old`'s delta: so `S(base)` is untouched, an added
+/// failure is outside `S(old)` and so outside `S(base)`, and (a) holds for `new` on `old`'s
+/// base, with (b) and (c) as before; the whole set is replaced by `new` counted whole.
+/// Otherwise `swap` is `enter` then `leave`. Tests:
+/// `a_tally_keeps_the_failures_of_its_entries_when_the_set_counted_whole_changes` and
+/// `holds_agrees_with_a_tree_read_over_values_and_families_made_from_others` (this file);
+/// neither checks (a) to (e) directly, only `found` at the end.
 #[derive(Clone, Default)]
 struct Tally {
     /// The id of each distinct non-empty set the entries hold, with the number of entries that
@@ -959,6 +1015,20 @@ struct Held<'a> {
     tallies: HashMap<Id, Tally>,
     /// The parts entered: a part is entered once, and its set is found before any part that
     /// holds it, since a value holds no part that holds it.
+    ///
+    /// Why each set is found before it is read ([`Held::read`] indexes `sets`). [`Held::of`]
+    /// pops a task from a stack; entering a part pushes its own task and then the parts it
+    /// needs above it, so those run first. A part whose task is still on the stack is one on
+    /// the path from the root to the part being entered: everything above its task came from
+    /// what it needs. So a part met again in `seen` is either done, with its set in `sets`, or
+    /// on that path, and then the part being entered holds it and is held by it, a cycle.
+    /// Values have none: every value is built from values made before it and never changed
+    /// after it is shared (a family changed by [`Family::extend`] takes a new id, so the old id
+    /// keeps naming the old map). A family read from a base reads only the entries the
+    /// difference lists, which it needs, and the base's tally and set, found already
+    /// (`done` and `made` hold only families whose task has run). Test:
+    /// `holds_agrees_with_a_tree_read_over_values_and_families_made_from_others` (this file),
+    /// which would panic at a missing set.
     seen: HashSet<Part>,
     /// The families whose sets are found, by id.
     done: HashMap<Id, &'a Family>,

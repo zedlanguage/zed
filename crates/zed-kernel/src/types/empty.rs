@@ -3519,6 +3519,14 @@ impl Search {
     /// answer read here is a decision of this phase, not the `true` a phase starts from. A
     /// type already dead changes nothing, so the phase that settles it again does not start
     /// another: each new phase takes at least one more type as dead, which bounds their number.
+    /// Steps: [`Search::end_phase`] starts a phase only when its `fresh` adds a type to
+    /// `dead` or `settled` is set; `settled` is set only at the end here, after `v`, not dead
+    /// before, joins `dead`; and `pop_open_forks` drops dead types only with the types it
+    /// drops from the table, and puts `settled` back when it drops every one added. So the
+    /// phases are at most one more than the types the search makes; that this count is finite
+    /// is not shown here. Commit 37148785d added a test of the layered group of seed 1335,
+    /// which ran without end before the first line here; that test was not found by name in
+    /// this tree.
     fn settle(&mut self, v: usize) {
         if self.dead.contains(&v) || self.rests_on_fork([v]) {
             return;
@@ -9833,6 +9841,8 @@ impl<'m> Searching<'m> {
                     None => return None,
                 }
             }
+            // A group is pushed with the head of the row that opens it, and heads are only
+            // added after, so no group's set is empty.
             let join = |heads: BTreeSet<Type>| -> Type {
                 let mut it = heads.into_iter();
                 let first = it.next().expect("a group has a row");
@@ -14107,7 +14117,10 @@ fn local_dir<'a>(p: &'a Parts, none: &Type, dir: usize) -> Local<'a> {
         if f.is_leaf() == Some(false) {
             continue;
         }
-        // Every value of a part `false` outside its tuple types is in one of them.
+        // Every value of a part `false` outside its tuple types is in one of them. Step: a tuple
+        // in none of them makes every atom `false`, and `eval3` with every atom `false` is the
+        // part's value there; so when that is `false`, each tuple of the part is in some row
+        // `row`, and its component is in `row[idx]`, one of `inside`.
         let whole = n == 0 || f.eval3(&|_| Some(false)) != Some(false);
         let mut inside = Vec::new();
         if !whole {
@@ -15267,6 +15280,10 @@ impl Placing {
 /// read, so a ring of k types costs each type that reaches it the nodes it shares with other
 /// types. The work is the size of the tries read times the log of the keys, and each child of
 /// a merged node moves O(log n) times.
+/// Not proved (PROOF-kernel-overlaps-cover): that every value of a type lies under a key, a
+/// cofinite list or a whole the walk places for that type, in every case of `Parts` (atoms
+/// with payloads, each tuple length, morphisms, the literal universes) and with the lazy
+/// reads of [`Placing`]; the sketches below and the random tests check it, a proof is open.
 // Complexity tradeoff: the keys are coarser than the meet of two types in three cases, each of
 // which joins disjoint types: tuples that share a key on every component, each in a different
 // tuple type, as `(1, 1) | (2, 2)` and `(1, 2)`; a tuple part of length two or more that is

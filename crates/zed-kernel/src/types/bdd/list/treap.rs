@@ -221,7 +221,16 @@ fn split<K: Keyed + Borrow<Q>, Q: Ord + ?Sized, V: Clone>(
             // new one. The key's own node, if the tree has it, has the key's priority, and every
             // node above it in the tree stands above it in the order `(prio, key)`; so the walk
             // of `insert` follows its ancestors down to it and stops there, and gives it the new
-            // value without a split. The subtree split never holds the key.
+            // value without a split. The subtree split never holds the key. Facts used: every
+            // node's `prio` is its key's `priority()` (`insert` sets it, `again` keeps it), a
+            // function of the key in a run (module [`crate::priority`]); the heap order by
+            // `above` holds in every tree (`insert` puts the new node below the nodes above
+            // it, `split` and `join` keep it); and the search path to a key in a search tree is
+            // its node's ancestors, then the node. Test: `a_treap_agrees_with_an_ordered_map`
+            // (`list::treap::tests`) inserts keys drawn from 300 at about half of 4000 steps, so
+            // most keys are inserted again, and checks the heap order (`sound`) after each step;
+            // a wrong proof would reach this arm there. It cannot catch a key type whose
+            // priority is not a function of the key.
             Ordering::Equal => unreachable!("insert splits only a subtree without the key"),
         }
     }

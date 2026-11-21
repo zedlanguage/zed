@@ -257,6 +257,14 @@ pub fn about(n: &BigUint) -> String {
 /// bounds a proof rests on, and must never state more than was shown. The runtime's
 /// `write_bytes` (zed-rt limits.rs) also rounds down, takes a `u64`, writes the exact count
 /// first, and allocates nothing, since it runs in a signal handler.
+///
+/// Why it rounds to the nearest: `BigUint::to_f64` (num-bigint 0.4.8) takes the top 64 bits
+/// with the rest folded into the last bit, and the `u64` to `f64` cast rounds that to the
+/// nearest; a division by 1024 is exact, as `v` stays at least 1 (far above the subnormals);
+/// and `{v:.1}` and `{v:.0}` round the exact value of `v` to the nearest decimal. A count past
+/// `f64::MAX` is infinite, fails both tests in the loop at every unit, and is written by
+/// [`about`]. Test:
+/// `bytes_are_shown_in_binary_units` in this file's tests.
 pub fn bytes_text(bytes: &BigUint) -> String {
     const UNITS: [&str; 8] = ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"];
     if *bytes < BigUint::from(1024u32) {

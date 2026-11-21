@@ -294,16 +294,26 @@ fn small(p: Prim, args: &[Value]) -> Result<Option<Value>, KernelError> {
         Prim::LeadingZeros => y - digits(x),
         Prim::TrailingZeros if x == 0 => y,
         Prim::TrailingZeros => i64::from(x.trailing_zeros()),
-        // `2^w - 1 - x` fits when `w <= 63`.
+        // `2^w - 1 - x` fits when `w <= 63`: `x` is checked above to be non-negative with at
+        // most `w` digits, so `0 <= x < 2^w` (a non-negative `x` has more than `w` digits
+        // exactly when `x >= 2^w`), and the result lies in `0 ..= 2^63 - 1`.
         Prim::BitNot if y <= 63 => ((1i128 << y) - 1 - i128::from(x)) as i64,
-        // `x * 2^k` with `k <= 62` fits in an `i128`; it is kept when it fits in an `i64`.
+        // `x * 2^k` with `k <= 62` fits in an `i128`: `|x| <= 2^63`, so `|x * 2^k| <= 2^125`,
+        // below `2^127`; it is kept when it fits in an `i64`.
         Prim::Shl if y <= 62 => match i64::try_from(i128::from(x) << y) {
             Ok(n) => n,
             Err(_) => return Ok(None),
         },
-        // An arithmetic shift is the Euclidean quotient by a positive power of two; past 63
-        // places every `i64` gives 0 or -1, as the shift by 63 does.
+        // An arithmetic shift is the Euclidean quotient by a positive power of two: it rounds
+        // toward minus infinity, and for a positive divisor that quotient leaves a remainder
+        // in `0 ..< 2^k`. Past 63 places every `i64` gives 0 or -1, as the shift by 63 does:
+        // `-2^63 <= x < 2^63 <= 2^k`, so the quotient is 0 for `x >= 0` and -1 for `x < 0`.
         Prim::Shr => x >> y.min(63),
+        // `k >= 0` and `w >= 0` are checked above. `w = 0` leaves only `x = 0`, whose
+        // rotation is 0. Else `r = k mod w` (`k`, `w` non-negative, so `%` is `mod`), and a
+        // turn of `r` toward the low digits is one of `(w - r) mod w` toward the high. The
+        // result is below `2^w <= 2^63`, so the cast to `i64` keeps it. Tests:
+        // `the_machine_and_the_exact_paths_agree` (here) and l01_39a_bit_words corners.rs.
         Prim::Rotl | Prim::Rotr if z <= 63 => {
             if z == 0 {
                 0

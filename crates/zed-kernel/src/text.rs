@@ -47,6 +47,18 @@
 //! part at level `k` holds `2^k` blocks or more), so at most 63, and every walk over it, reading
 //! or dropping, keeps that bound.
 //!
+//! Proof of the bound, for a text's tree `d` levels deep (`Text::depth`: `d` deep trees down
+//! the middles). The deep tree at level `k` (`0 <= k < d`) holds parts of height `k`, one to
+//! four in each digit (`digit` asserts it, and `push_back`, `push_front` and `concat` only
+//! build digits of one to four), so two or more. A part of height `k` is a block (`k = 0`) or a
+//! node of two or three parts of height `k - 1` (`node` asserts it), so by induction it holds
+//! `2^k` blocks or more. So `b >= 2 (1 + 2 + ... + 2^(d-1)) = 2 (2^d - 1)`, and
+//! `d <= log2(b/2 + 1)`. Every block holds a byte or more, so `b <= len <= usize::MAX`, counted
+//! with a shared block once per place it is reached, and `d <= log2(2^63) = 63`. Test:
+//! `a_long_chain_either_way_is_balanced_read_and_dropped`,
+//! `a_string_doubled_to_2_63_bytes_keeps_its_length` and
+//! `a_string_doubled_to_2_64_bytes_is_refused` check `depth` against `tests::depth_bound`.
+//!
 //! Nothing is written out and kept: readers walk the blocks in order ([`Text::chunks`]), so a
 //! comparison stops at the first byte that differs, in `O(log n)` plus the bytes it reads;
 //! hashing and printing cost the text's length. A reader that needs the text as one `&str`
@@ -287,6 +299,21 @@ impl Text {
     /// with no walk and allocates nothing; a tree's walk keeps its own stack, of at most
     /// `6d + 9` parts for a tree `d` levels deep, allocated once: `O(log n)` for the first
     /// block, and every block in `O(len)`.
+    ///
+    /// Proof of `6d + 9`, for a text's tree, whose root is a deep tree here (never a node: a
+    /// text's parts at the top are blocks). Opening a deep tree at level `k` pops it and pushes
+    /// its back (four at most), its middle and its front (four at most); the backs of the
+    /// levels above stay below, four each, so the stack holds `4k + 9`. Opening a node pops it
+    /// and pushes its two or three parts. The most is reached opening the first front part at
+    /// level `k >= 1`, a node of height `k`, down to its blocks: `4(k + 1)` backs, the middle,
+    /// three front parts left, two parts left at each height from `k` down to 2, and three
+    /// blocks, `4k + 8 + 2(k - 1) + 3 = 6k + 9`. With `k <= d - 1` that is `6d + 3`; the last
+    /// middle, a part of height `d` at most, gives `4d + 2d + 1`. A back part at level `k`
+    /// gives no more than a front part. `compare` opens nodes the same way and only pops
+    /// otherwise, so its stacks keep the bound too. A node of height `h` walked alone would
+    /// need `2h + 1` with `d = 0`; no caller walks one. Test:
+    /// `joins_in_any_order_keep_the_tree_balanced_and_the_text_whole` checks the stack never
+    /// grows past its first capacity.
     pub fn chunks(&self) -> Chunks<'_> {
         Chunks(match &*self.0 {
             Tree::Empty => Walk::One(None),
@@ -630,6 +657,13 @@ fn concat(a: &Text, between: &[Text], b: &Text) -> Text {
 }
 
 /// Two to twelve parts of one height as nodes of two or three, in order: at most four.
+///
+/// Proof. `concat` gives it the parts of one back digit, `between` and one front digit: one
+/// to four, at most four (the nodes of the level above, by this bound), one to four, so two
+/// to twelve. The loop takes two parts when two or four are left and three otherwise, so
+/// from five or more it leaves two or more, from three it leaves none, and one part is never
+/// left alone: every node has two or three parts. Twelve parts make four nodes of three, and
+/// fewer parts no more nodes, so `concat`'s `between` is at most four parts at every level.
 fn nodes(mut parts: &[Text]) -> Vec<Text> {
     let mut out = Vec::with_capacity(parts.len().div_ceil(3));
     while !parts.is_empty() {

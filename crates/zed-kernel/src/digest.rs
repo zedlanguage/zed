@@ -51,7 +51,12 @@ impl Hasher for Digest {
 
     // `#[inline]` here and on the methods above: rustc inlines an unmarked function into other
     // crates only when it calls nothing, and without it the meets of many tuples in `zedc_types`
-    // cost 7.95% more instructions (COMPLEXITY.md K100).
+    // cost 7.95% more instructions (COMPLEXITY.md K100). Source: rust-lang/rust PR 116505,
+    // "Automatically enable cross-crate inlining for small functions" (Rust 1.75), which infers
+    // it "only ... for functions whose optimized_mir does not contain any calls or asserts", and
+    // below a size threshold (the PR page read 2026-11-20). `write_u64` calls `step`, so it is
+    // such a function only if the MIR inliner removes that call first; the measurement above
+    // shows it was not inlined. No test checks the inlining.
     #[inline]
     fn write_u64(&mut self, x: u64) {
         self.0 = step(self.0, x);

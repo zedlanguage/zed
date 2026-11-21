@@ -4069,6 +4069,9 @@ impl Type {
             true => buckets[0] = p.atoms.clone(),
             false => {
                 for (name, part) in p.atoms.names().iter() {
+                    // `cuts` ascend, so `c < name` holds on a prefix of them and `i` is its
+                    // length: `cuts[i - 1] < name <= cuts[i]`, the bucket the doc gives. A binary
+                    // search, O(log c) for c cuts, beside the O(log a) of `set`.
                     let i = cuts.partition_point(|c| *c < &**name);
                     buckets[i].set(name, part.clone());
                 }

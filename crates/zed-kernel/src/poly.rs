@@ -655,7 +655,9 @@ impl<'t> Identity<'t> {
     }
 
     /// The first product or power among the nodes `reach` marks whose exponent or degree is past
-    /// `u64::MAX`, in the order the nodes were built, so the smallest.
+    /// `u64::MAX`, in the order the nodes were built, so the smallest. Step: a node's operands
+    /// are indices of nodes already pushed (`Identity::push`), so every node inside node `i`
+    /// has a smaller index, and none inside the first one found is wide.
     fn too_wide(&self, shapes: &[Shape], reach: &[bool]) -> Option<usize> {
         let folded = self.folded_bases(shapes, reach);
         for (i, n) in self.nodes.iter().enumerate() {
@@ -1070,7 +1072,10 @@ impl<'t> Identity<'t> {
             );
             // A constant below 1 is kept as its reciprocal on the other side (`c ^ l * A == c ^ r
             // * B` is `A * (1 / c) ^ r == B * (1 / c) ^ l`), so the 2 of `2 * x + 2` cancels the
-            // 1/2 of `/ 2` instead of both being raised to their exponents.
+            // 1/2 of `/ 2` instead of both being raised to their exponents. Step: `num` and `den`
+            // are at least 1 (`content` is the gcd of terms that are not 0, `form.den` is at
+            // least 1), so `c = num / den` is not 0, and both sides are multiplied by
+            // `(1 / c) ^ (l + r)`. The entry `(den, num)` so takes the exponents swapped.
             let (num, den, at) = if num < den {
                 (den, num, [e[1], e[0]])
             } else {
@@ -1123,6 +1128,17 @@ impl<'t> Identity<'t> {
 
     /// The verdict from the two sides' normal forms with keys `K`, and their numbers of terms.
     /// Their difference is not charged: one merge of two lists the expansion paid to form.
+    /// Argument: the merge reads each coefficient word of `l` and `r` once (`Poly::add`). Each
+    /// term of a side was made by a charged operation, or is a leaf or a constant (one term a
+    /// node). A sum or a negation was charged its operands' words, and its result has at most
+    /// those words and one carry word a term. A product's output coefficient sums `c` pairs of
+    /// products of `w1` by `w2` words, so it has at most `w1 + w2 + 1` words when `c < 2^64`,
+    /// and the output has at most as many terms as pairs: at most `3 w1 w2` words a pair, three
+    /// times the sparse cost's word products. The dense product's slots, and the support
+    /// product's slots (each coefficient is read from one slot of `slot` 32-bit digits of a
+    /// round at a prime `p`, charged `coefficient_round`, at least `p slot`), hold every
+    /// output coefficient. So the merge is within a constant factor of the work charged plus
+    /// the nodes. No test measures the merge against the charge.
     fn compare<K: Key>(
         &self,
         forms: Vec<Poly<K>>,
@@ -2266,6 +2282,16 @@ impl<K: Key> Poly<K> {
     /// coefficient is taken only from a slot that provably holds that index alone, so a bad draw
     /// costs time, never a wrong term, and the budget bounds the time (at most twice the cheaper
     /// method's cost when the estimate is wrong).
+    ///
+    /// Steps of that bound: `Poly::mul` passes `budget` at most `cheaper`, the smaller of the
+    /// dense and the sparse estimates in the units of [`LIMIT`]. Every round adds its cost to
+    /// `spent` and returns `None` past `budget` before its work (`sumset`, `coefficients`), as
+    /// do the two checks here before the sampling and the first round; so the counted work is
+    /// at most `budget`, besides one round's candidate counting (`CANDIDATES` times the open
+    /// indices), added just before a check. A unit counted here costs [`SUPPORT`] = 2 units of
+    /// the limit, so the support product's time is at most about twice `cheaper`; when it
+    /// gives up, the cheaper method then runs as well, so the whole product costs at most
+    /// about three times `cheaper`. No test measures a refused support product's time.
     fn support_mul(
         &self,
         o: &Poly<K>,
@@ -2362,6 +2388,13 @@ impl<K: Key> Poly<K> {
     /// product charged to `budget`; `None` when that would pass it. A monomial's power is
     /// charged the words its coefficient and denominator gain, `(bits - 1) n / 64` each and at
     /// least one: no more than the result's words, so a power of 1 costs 2 at any exponent.
+    /// Proof: for `x != 0` of `b` bits, `2^(b - 1) <= |x|`, so `x^n` has at least
+    /// `(b - 1) n + 1` bits and so at least `ceil((b - 1) n / 64)` words, and at least one;
+    /// the charge is the larger of those two lower bounds. For `x = 1`, `b = 1`: the charge is
+    /// `max(0, 1) = 1`, for the coefficient and the denominator each. (A coefficient is never
+    /// 0 here: `Poly::constant` makes no zero term, and the sums and products drop theirs by
+    /// their `is_zero` tests; a denominator is at least 1.) No test checks the charge against
+    /// the result's words.
     fn pow(&self, e: &BigUint, budget: &mut Budget) -> Option<Poly<K>> {
         if e.is_zero() {
             return Some(Poly::constant(BigInt::one(), BigInt::one()));

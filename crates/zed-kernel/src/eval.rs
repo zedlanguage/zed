@@ -137,6 +137,21 @@ impl Held<'_> {
     /// exactly when it holds every function (`Type::functions`, and `Type::member` on a
     /// family), so the stand-in is in a type exactly when `self` is. Built from an explicit
     /// stack, so a held value of any depth uses none of the thread's stack.
+    ///
+    /// Proof, by induction on the depth of `self`. A function `g` is in a type `t` exactly
+    /// when `t.functions()`: that is how [`matches_any`] tests a bare function (`Pattern::Is`
+    /// on anything not data and not held). `Type::member`'s `Value::Family(_)` arm answers
+    /// `self.functions()` for every family, the empty one too, so the empty family is in `t`
+    /// exactly when `g` is. A data part is kept as it is. A held part is its own stand-in, in
+    /// each type exactly when the part is, by the induction. The tuple or atom is rebuilt with
+    /// the same shape: a tuple, or the atom's name and fields with the parts in field order,
+    /// as [`Value::atom_named`] keeps them; and `Type::contains` reads a tuple and an
+    /// atom's payload part by part (`Member::Tuple`), and an atom with fields by its name and
+    /// its payload type's `structs` flag alone. So each test `contains` makes of a part gives
+    /// the answer it gives for that part of `self`. A held family is rebuilt with its keys
+    /// and each part beneath its own key ([`HeldFamily::with_parts`]), and a family is read
+    /// as a whole by `functions()`. Test: `l01_17_value_representation::equality` and
+    /// `function_in_payload_run` build held values; no test was found that runs `is` on one.
     fn stand_in(&self) -> Value {
         let mut stack: Vec<(&Held<'_>, Vec<Value>)> = vec![(self, Vec::new())];
         loop {
@@ -2408,6 +2423,12 @@ impl<'t> Machine<'_, 't> {
             // The atom is made from marks, its payload's positions, by the rules every atom
             // follows ([`prim_data`]: its name, its field names in order, none repeated), and
             // each part is put where its mark landed.
+            // Proof that each payload value is a mark, and each mark is met once: the marks
+            // given are `Int(0) .. Int(n - 1)` for the `n` parts. `prim_data`'s two `Atom` arms
+            // build the payload from those arguments alone: `Value::atom_with` keeps them in
+            // order, and `Value::atom_named` sorts the (field, value) pairs by field and
+            // unzips them, a permutation. Any other shape is an error, returned above. So
+            // `shape.args()` is a permutation of the marks, and `parts[i]` is taken once.
             Prim::Atom => {
                 let parts = args.split_off(2.min(args.len()));
                 let mut marks = Vec::with_capacity(2 + parts.len());
@@ -3714,7 +3735,23 @@ fn rounds_end<'t>(fix: &Definedness<'t>) -> R<Step<'t>> {
 // `Family::from_leaves` from one-key keypaths, an ordered-map insertion per entry, O(D log D)
 // comparisons of keys. Used: the domain is in key order and its keys are distinct, so the
 // entries are already the family's, in order, and are laid out at once, O(D). The result is the
-// one `from_leaves` gives: a one-key keypath never collides here and adds no level beneath.
+// one `from_leaves` gives: a one-key keypath never collides here and adds no level beneath
+// (`Levels::place` and `Levels::insert` write each at level 0, whose slot for a key not seen
+// is `Vacant`, as a `Slot::Leaf` of the value, a family or not).
+// Every entry is defined when `stalled` is empty, from each caller:
+// - `rounds_end` passes the keys not `Defined`.
+// - `pull` passes the keys `Stalled` once its loop has passed every position. No entry is
+//   `Open` then: the loop attempts each entry it finds `Open`, and an attempt ends `Defined`
+//   or `Stalled`, or `Open` with a stop that ends the fix (`out?` in `entry_ended`; an
+//   `Entry` frame is the only frame that turns a stop into a value, and only its own fix's
+//   undefined read). A `Defined` or `Stalled` entry is not attempted again: `pull` and a read
+//   (`Step::Demand`) attempt only `Open` ones. No entry is `Busy` then: `Busy` is set just
+//   before an attempt, whose end rewrites it, and the demands an attempt makes run nested
+//   inside its frames, so all have ended when `pull` runs again.
+// Tests: `a_circular_reference_stalls_and_names_its_cells` (m0_09_kernel_evaluator),
+// `a_cycle_through_a_nested_fix_stalls_the_outer_entries_only` and
+// `every_schedule_agrees_on_random_graphs_with_dependencies_out_of_key_order`
+// (m0_10_finite_model_harness recursion.rs); the `unreachable!` below checks it in release.
 fn finish_fix<'t>(fix: &Definedness<'t>, stalled: Vec<Value>) -> R<Step<'t>> {
     if !stalled.is_empty() {
         return Err(KernelError::Stalled { keys: stalled }.into());
@@ -3827,6 +3864,11 @@ fn matches_any<'t>(pat: &'t Pattern, v: &V<'t>, env: &mut Env<'t>, fact: Option<
             (Pattern::AnyAtom, V::Held(h)) => h.atom().is_some(),
             (Pattern::Atom(name, ps), V::Held(h)) => {
                 // A held atom has a payload, with a function in it, so it is never bare.
+                // Proof: the one maker of `Shape::Atom` is `Machine::held`'s `Prim::Atom` arm,
+                // reached only when some argument is no data (`prim`), and that arm refuses a
+                // name or field list that is no data, so some payload part is no data and
+                // `h.parts` is not empty. Then the test below is the `Some(xs)` case of
+                // [`matches()`]'s `Atom` arm, with `h.parts` for `xs`.
                 let hit = matches!(h.atom(), Some((n, f)) if n == name && f.is_empty())
                     && !ps.is_empty()
                     && ps.len() == h.parts.len();
@@ -4221,7 +4263,9 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         (Prim::Div, [Float32(a), Float32(b)]) => Value::float32(a.get() / b.get()),
         (Prim::Neg, [Float32(a)]) => Value::float32(-a.get()),
         // IEEE 754 `squareRoot` and `fusedMultiplyAdd`, each rounded once to the operands'
-        // format: Rust's `sqrt` and `mul_add` are both correctly rounded, `sqrt(-0.0)` is
+        // format: Rust's `sqrt` and `mul_add` are both correctly rounded (std docs, "Precision",
+        // read in rustc 1.102 library/std/src/num/f64.rs: "guaranteed to be the rounded
+        // infinite-precision result ... and guaranteed not to change"), `sqrt(-0.0)` is
         // `-0.0`, and a negative or NaN operand of `sqrt`, a NaN operand of `fma`, or
         // `fma(inf, 0, c)` gives NaN (DESIGN.md sec:linalg, machine operations). Method: IEEE
         // Std 754-2019, "IEEE Standard for Floating-Point Arithmetic", IEEE, 2019,
@@ -4253,9 +4297,9 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         // words from its 5.4.1 (p. 21); this pass compared the 2019 text with that quote only,
         // not with the 2008 text, which was not at hand. Cost:
         // O(1), one hardware instruction each (or the C library's `fma` on a host without
-        // FMA). Measured: test `l01_18_scalar_interpreter::sqrt_fma` runs
-        // n = 2048 and 8n calls of each word, 14225721 and 113703294 instructions, 8.0 times
-        // the work.
+        // FMA). Measured at commit 59a32b29b: n = 2048 and 8n calls of each word,
+        // 14225721 and 113703294 instructions, 8.0 times the work. The bench is now
+        // `l01_18_scalar_interpreter::bench::sqrt_fma::n_calls_cost_linear_time`, at n = 2^18.
         (Prim::Sqrt, [Float(a)]) => Value::float(a.get().sqrt()),
         (Prim::Sqrt, [Float32(a)]) => Value::float32(a.get().sqrt()),
         (Prim::Fma, [Float(a), Float(b), Float(c)]) => {

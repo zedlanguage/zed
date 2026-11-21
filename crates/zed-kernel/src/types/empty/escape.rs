@@ -1136,7 +1136,11 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         let mut groups: Vec<Vec<usize>> = kids.into_values().collect();
         groups.sort_unstable();
         for g in groups {
-            // At most one: the ladder `s_i` = "one of the first i is true".
+            // At most one: the ladder `s_i` = "one of the first i is true". The clauses are
+            // `z_a -> s_a`, `s_prev -> s_a` and `s_prev -> !z_a`. Two true, `z_a` before `z_b`:
+            // `z_a` gives `s_a`, the chain of `s_prev -> s` gives the `s` before `b`, and that
+            // gives `!z_b`, a contradiction. At most one true, at index `k` or none: `s_i` true
+            // exactly from `k` on meets every clause. Three clauses per atom, linear.
             let mut prev: Option<usize> = None;
             for &a in &g {
                 let s = sat.fresh();
@@ -1151,11 +1155,23 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         for c in &clause {
             sat.clauses.push((z[c[0]], z[c[1]]));
         }
+        // No model means no list of length `target_len` escapes every clause, the direction an
+        // `Empty` rests on: from such a list `x`, set `z_A` true exactly when `x_j` is in `A`
+        // (`A` at place `j`). A child atom lies in its parent (`forest`), so `z_A -> z_parent`
+        // holds; siblings, and the roots of one place, are disjoint, so `x_j` is in at most one
+        // of them and each ladder holds; and each clause holds, since `x` escapes its row at one
+        // of its two atoms. Each place's `p_j` is not empty (checked when `pl` is built). The
+        // other way (a model gives the list built below) is checked by `check_chain_witness`.
         let Some(model) = sat.solve() else {
             return (exact && !wide).then_some(ChainPlan::Empty);
         };
 
         // The list: at each place a value of the deepest true atom, else any value of `pl[j]`.
+        // Cost of `depth`: at most the number of atoms at the place for each atom, so k^2 for
+        // k atoms at one place, which is within their written size: the atoms are distinct
+        // (`ids`) and a chain of d nested distinct sets has finite sets of sizes at least
+        // 1, 2, .., d, or excluded sets of sizes at least 0, 1, .., d - 1, so d^2 / 2 values
+        // written in all, and the depth is at most such a chain's length.
         let depth = |mut a: usize| {
             let mut d = 0;
             while let Some(pa) = parent[a] {
@@ -1315,7 +1331,13 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                         // from place 2 on lies within `H` (checked above, the `return None`
                         // before `solve_at_len`). Places `1 ..= l0` read the same cells and
                         // nodes as at `l0`. So at every `L >= l0` the row holds with no atom:
-                        // it refuses every positive value, and no value is left.
+                        // it refuses every positive value, and no value is left. (A row with a
+                        // kill is not in `zero_rows`: `solve_at_len` passes it over before the
+                        // push.) Tests: `r3_cofinite_redundant_oracle_and_order` and
+                        // `r3_cofinite_survey` (l01_23 refusals.rs) check verdicts against
+                        // `r3_oracle`; it is not shown that a case of theirs reaches this
+                        // return, so a wrong `Empty` here on another input is not caught by
+                        // them.
                         return Some(ChainPlan::Empty);
                     }
                     clear = clear.max(fc);

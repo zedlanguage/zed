@@ -209,6 +209,15 @@ impl Refine {
     /// order of their number. Every new class waits to refine except the largest, unless `c`
     /// was waiting already, and then all do.
     fn split(&mut self, c: usize) {
+        // `tally` and `new` have `degree + 1` entries and are read at `count[v] <= top`, and
+        // `count[v]` is how many times `v` is listed in `adj` of the popped class's vertices,
+        // so `degree` must bound how many times any vertex is listed in `adj` in all (the
+        // callers take the most of a vertex's arcs and of the times it is listed, `into`).
+        // Cost: the passes over `0..=top` cost O(top), and `top = count[w]` for some `w` of
+        // color `c`, the number of arcs read into `w` while the class was popped; distinct
+        // colors have distinct such `w`, so the splits of one pop cost at most the arcs that
+        // pop read (the departure from Algorithm 2's sort, module comment). Tests:
+        // `refinement_is_the_coarsest_stable_partition` and `refinement_colors_are_canonical`.
         let top = self.most[c];
         let hit = mem::take(&mut self.hit[c]);
         self.tally[..=top].fill(0);

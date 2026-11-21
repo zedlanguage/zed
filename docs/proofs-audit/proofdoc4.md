@@ -1251,13 +1251,16 @@ changes to `extend.rs`.
 
 ## proofdoc4f: zed-kernel, zedc-elab, zedc-base
 
-The first 10 of the 145 entries of list f (all zed-kernel), in list order, each message and its
-whole diff in the crate, with every claim checked at its site at base ae22906d0. The other 135
-were not read (below): this helper stopped for lack of room, as the coordinator allowed.
+Entries of list f in list order, each message and its whole diff in the crate, with every
+claim checked at its site: 001 to 010 at base ae22906d0 (merge 1, 3d8817975); in part 2, at
+base 3d8817975, 011 to 015, 022, 025 to 029 and 034 to 051 in full and 016, 030 and 052 in
+part. Part 2's entries were read by four reader agents of proofdoc4f (stopped on the
+coordinator's order, see below), whose edits proofdoc4f read before the merge. Three claims
+are "covered by" a row another agent owns; they are counted under "Already there".
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
-| zed-kernel | 10 of 62 | 14 | 7 | 7 | 0 | 0 |
+| zed-kernel | 39 of 62, 3 in part | 128 | 70 | 55 | 2 | 1 |
 | zedc-elab | 0 of 44 | 0 | 0 | 0 | 0 | 0 |
 | zedc-base | 0 of 39 | 0 | 0 | 0 | 0 | 0 |
 
@@ -1277,17 +1280,130 @@ were not read (below): this helper stopped for lack of room, as the coordinator 
 | 1f50505a3 | Finding repeated addresses by hash finds the same repeats as the ordered set | `provenance.rs`, `Provenance::repeated` | added: `Hash for Position` writes `hash_value` and `eq` is false where they differ, so the `Hash`/`Eq` contract holds; the bench named |
 | 1fcf49287 | One backward pass is exact: every input `k` of fact `j` has `k < j` | `provenance.rs`, `origins` | completed: why `k < j` (the one writer of `Fact::inputs` in `eval.rs`, `fact`) |
 | 222adf91b | The parity bench's `T0` is 0, so its treap bound is the `n log n` one | `types/bdd/bench.rs`, `parity_built_a_literal_at_a_time_scales` | already there (asserted on every input) |
+| 26f8d7d35 | `stand_in` keeps exactly the matches of every type | `eval.rs`, `Held::stand_in` | completed: induction on depth (`matches_any` on a bare function, `Type::member` on a family, `contains` part by part, `with_parts`); no test runs `is` on a held value (row TEST-kernel-held-is) |
+| 26f8d7d35 | The marks of a held atom are each taken once | `eval.rs`, `Machine::held`, `Prim::Atom` arm | completed: `atom_with` keeps the order, `atom_named` sorts and unzips, a permutation |
+| 26f8d7d35 | A held atom is never bare | `eval.rs`, `matches_any`, `Pattern::Atom` arm | completed: the one maker of `Shape::Atom` runs only when a part is no data |
+| 26f8d7d35 | `Drops` frees without recursion | `eval.rs`, `Drops` | already there |
+| 26f8d7d35 | Held values cost O(parts) | `eval.rs`, held tradeoff comment | already there |
+| 2ab9f29af | `bytes_text` rounds to the nearest | `num/room.rs`, `bytes_text` | completed: `to_f64`, the exact division by 1024, `{:.1}` rounding, the infinite case; test named |
+| 2de401ae4 | The tree depth is at most 63 | `text.rs`, module doc | completed: a part of height `k` holds `2^k` blocks or more, so `b >= 2(2^d - 1)`; tests named |
+| 2de401ae4 | The `chunks` stack holds at most `6d + 9` parts | `text.rs`, `chunks` | added: the derivation; test named |
+| 2de401ae4 | `nodes` takes 2 to 12 parts and makes at most 4 nodes of 2 or 3 | `text.rs`, `nodes` | added |
+| 2de401ae4 | Amortized O(1) push (Hinze and Paterson) | `text.rs`, module doc, `push_back` | already there (DOIs, departure, tests) |
+| 2de401ae4 | `Size::add` does not overflow | `text/tree.rs`, `Size::add` | already there |
+| 3204ef377 | `part_boxes` `(None, None)` cannot happen | `types.rs`, `part_boxes` | already there |
+| 3204ef377 | `Rep::key` is never called on `Of` or `Closure` | `types/empty.rs`, `Rep::key` | already there |
+| 3204ef377 | The two-operand arm sees `y` none only for `Not` | `types/empty.rs`, `Choices` | already there |
+| 3204ef377 | An exclusive-or component has a cell | `types/empty.rs`, `Choices::index` | already there |
+| 3204ef377 | `system`'s `Not` arm cannot happen | `types/empty.rs`, `system` | already there (`Group::new` rejects through `flipped`) |
+| 3204ef377 | `folded` sees only meets and lists | `types/print.rs`, `folded` | already there |
+| 3204ef377 | `bad` is always an `Expr::Ref` | `types/rec/group.rs`, `Group::new` | already there |
+| 3204ef377 | The `sweep` walk, `local` never `Of`, `pair_picks` leaves, `put` with class `Of` | `types/empty/sweep.rs`, `types/empty.rs`, `types/print.rs` | already there (comments read, not traced line by line) |
+| 34a583731 | A value found in a region's piece is a value of the part | `types/empty.rs`, `class_rep`, `key_pieces` | already there |
+| 37148785d | Each new phase adds a type to `dead`, which bounds the phases | `types/empty.rs`, `Search::settle` | completed: `end_phase`, `settled`, `pop_open_forks`; that the types made are finitely many is stated as not shown (row PROOF-kernel-search-types-finite); the `no_key`/`no_keys` claims not read |
+| 59a32b29b | `sqrt` and `mul_add` are correctly rounded | `eval.rs`, `prim_on`, `Prim::Sqrt`/`Fma` | completed: the Rust std "Precision" docs quoted |
+| 59a32b29b | Measured cost, 8.0 times the work at 8n | `eval.rs`, same site | completed: the stale test name replaced by the bench `sqrt_fma::n_calls_cost_linear_time`; numbers dated to 59a32b29b |
+| 59a32b29b | IEEE 754 citation | `eval.rs`, same site | already there (DOI and quotes) |
+| 6017477df | `Form::holds`, the Not arm | `types/bdd.rs`, `Form::holds` | already there |
+| 6017477df | `choose`: two `false` branches cannot meet | `types/bdd.rs`, `Connect::choose` | already there (arm removed by 6bb9bb93f) |
+| 6017477df | `clause`: `Form::Or` cannot happen | `types/bdd.rs`, `clause` | already there |
+| 6017477df | `Part::xor`'s let-else always matches | `types/bdd.rs`, `Part::xor` | already there |
+| 6017477df | `node`'s unreachable arm | `types/bdd.rs`, `xor::node` | already there |
+| 6017477df | `meet` of two lists: the second is a literal | `types/bdd.rs`, `xor::meet` | completed |
+| 6017477df | `pair`: a list reaches the last arm only as a chain of two | `types/bdd.rs`, `xor::pair` | completed |
+| 60f594a97 | A zero-atom row with `fc == MAX` makes the type empty | `types/empty/escape.rs`, `decide_counted` | completed: the step on killed rows, and what the tests cover |
+| 6ae1d9048 | `limit(size)` covers every product of three sums | `poly.rs`, `LIMIT` | already there (replaced by the constant `LIMIT`; nothing relies on it) |
+| 6ae1d9048 | A refusal costs at most the limit, or twice it | `poly.rs`, `LIMIT`, `factored` | covered by FIX-poly-limit-comments |
+| 6ae1d9048 | `Poly::pow`'s wide branch: the shape check refuses wide exponents | `poly.rs`, `Poly::pow` | covered by FIX-poly-limit-comments |
+| 6ae1d9048 | A monomial's power is charged no more than the result's words | `poly.rs`, `Poly::pow` doc | completed: the bit count of `x^n`, coefficients never 0 |
+| 6ae1d9048 | A constant below 1 is kept as its reciprocal on the other side | `poly.rs`, `same_factors` | completed: `c != 0`, the exponents swapped |
+| 6ae1d9048 | The difference in `compare` is not charged | `poly.rs`, `compare` | completed: each side's words bounded by the work charged; no test measures it |
+| 6ae1d9048 | The support product costs at most twice the cheaper method | `poly.rs`, `support_mul` | completed: the steps; about three times when it gives up |
+| 6ae1d9048 | `too_wide` gives the smallest node | `poly.rs`, `too_wide` | completed: operands are pushed before the node |
+| 6bb9bb93f | Two leaves need no arm in `choose` | `types/bdd.rs`, `Connect::choose` | already there |
+| 6bb9bb93f | The `Some(first)` arm of `instance` is not reached | `types/rec/group.rs`, `Group::instance` | already there |
+| 6bb9bb93f | `ints` holds only integers | `types/empty/escape.rs`, `Ints` | already there |
+| 6bb9bb93f | Every clause has two atoms or more | `types/empty/escape.rs`, `decide_counted` | already there |
+| 6ebe63b42 | rustc inlines an unmarked function into other crates only when it calls nothing | `digest.rs`, `Digest::write_u64` | completed: rust-lang/rust PR 116505 (Rust 1.75) cited |
+| 6ff237028 | The settled form holds every value of the part | `types/bdd.rs`, `Part::settle` | completed: Shannon expansion step by step |
+| 6ff237028 | A tuple part `false` outside its tuple types has every value in one of them | `types/empty.rs`, `Group` kids walk | completed |
+| 6ff237028 | Two types in different classes are disjoint | `types/empty.rs`, `overlaps` | Not proved: that the walk places keys, lists or wholes covering every value of a type in every `Parts` case and with lazy `Placing` reads (row PROOF-kernel-overlaps-cover); `split_classes`, `class_rep` not read |
+| 86322e10b | `seconds` rounds up, none out of range | `zedc-check/src/check/limits.rs`, `seconds` | already there, see proofdoc4d (moved out of zed-kernel) |
+| 86322e10b | `MEMORY_TITLES` lists every title of a memory refusal | `value.rs`, `MEMORY_TITLES` | added: the eight `KernelError` arms named; a new arm must be added by hand and no test fails if it is not |
+| 877fc8603 | `fresh_id` never draws an id twice, nor block 0 | `value.rs`, `fresh_id` | completed: blocks from 1, each once; needs fewer than `2^48` blocks, not checked at run time |
+| 8878228af | `Field::mul` and `forward` residues stay within `2p` and `4p` | `num/fast.rs`, `Field` | already there |
+| 8878228af | Treap priorities are 5-wise independent | `types/bucket.rs`, `priority` | already there |
+| 8878228af | A datum's text is linear in its distinct parts | `walk.rs` | already there |
+| 8878228af | `canon` costs O(t log t) | `types/print.rs`, `canon` | already there |
+| 8878228af | Cole and Vishkin, with the DOI | `text/names.rs` | already there |
+| 8c5ccccb9 | Two positions are equal exactly when their paths are | `provenance.rs`, `PartialEq for Position` | added: depth and hash are functions of the path, links never change; test named |
+| 8c5ccccb9 | The order of positions is the term's preorder, total, agreeing with `==` | `provenance.rs`, `Ord for Position` | added; test named |
+| 8c5ccccb9 | `Held` enters each part once and finds its set before reading it | `provenance.rs`, `Held.seen` | completed: stack order, no cycles in values; test named |
+| 8c5ccccb9 | `Held::base` and `family` cost O(\|f\|) | `provenance.rs`, `Held::base`, `Held::family` | already there |
+| 8c5ccccb9 | Join and meet cost O(min log n) | `provenance.rs`, `IdSet` | already there |
+| 8c5ccccb9 | The meaning of a family's id and `from` | `value.rs`, `Family::extend` | already there |
+| 929e7e04a | `m61::inv(a)` is `1/a mod P` for `0 < a < P` | `zed-numtheory/src/lib.rs`, `m61::inv` | already there (doc and `debug_assert!`) |
+| 929e7e04a | Callers pass `0 < a < P` | `poly.rs`, `eval`; `value.rs`, `R`, `range_sum` | already there |
+| 94b14f925 | A tally's `found` is the union of its entries' sets | `provenance.rs`, `struct Tally` | completed: five invariants, each kept by every operation; tests check only `found` |
+| 94b14f925 | Each base is smaller than the set on it, so following bases ends | `provenance.rs`, `Tally::count` | completed |
+| 94b14f925 | A meet equal to either set is that set | `provenance.rs`, `Provenance::origins` | added |
+| 94b14f925 | A union chain costs O(n log n) | `provenance.rs`, `made_by_difference`, `union` | already there |
+| 967100aca | A morphism type is empty only when a key is shown to exist; a representative is in its type | `types/empty.rs`, `no_morphism`, `rep` | already there |
+| 967100aca | A type met again on its own path has no value there | `types/empty.rs`, `rep` | already there |
+| 967100aca | Two tuples per length, O(c) | `types/empty.rs`, `find_rep` | already there (replaced; COMPLEXITY.md K80, K126) |
+| 9778881e0 | A true verdict on the forms is true on the types | `zedc-types/src/ty.rs`, `Forms::level` | already there |
+| 9778881e0 | `rewrite_levels` and `rec_kept` keep membership, each node once | `types.rs` | already there |
+| 9778881e0 | `map_atoms` keeps the connectives, O(k log k) a block | `types/bdd.rs`, `Part::map_atoms` | already there |
+| 9bc1e50d4 | `split` never meets the key itself | `types/bdd/list/treap.rs`, `split` | completed: heap order and search path; test named and what it cannot catch |
+| 9bc1e50d4 | A finite atoms map lists no name with no atom (three arms) | `types/empty/shared.rs`, `types/empty/escape.rs` | already there (the `Atoms` invariant, merge 1) |
+| 9bc1e50d4 | A part over one atom true at both values is a leaf | `types/empty/shared.rs`, `list_step` | completed: no test reaches the arm; what the `debug_assert!` cannot catch |
+| a74161bb4 | `meet_operands` gives one node per operand, in written order | `types/empty/refused.rs`, `meet_operands` | completed: induction; test named |
+| a74161bb4 | `meets[v]` exists for every `And` node made from a meet | `types/empty/refused.rs` | already there |
+| a74161bb4 | A refused tuple or meet lists two open parts or more | `types/empty/refused.rs`, `refused_site` | completed |
+| a74161bb4 | `listed` never gets an empty list | `types/empty/refused.rs`, `refused_site` | already there (replaced by `text::prose::and_list`) |
+| a74161bb4 | No other shape reaches the last arm | `types/empty/refused.rs`, `refused_site` | already there |
+| b8b284a09 | Every entry is defined when `stalled` is empty | `eval.rs`, `finish_fix` | completed: each caller, why no entry is `Open` or `Busy`; three tests named |
+| b8b284a09 | `from_map` gives what `from_leaves` gives | `eval.rs`, `finish_fix` | completed |
+| b8b284a09 | The ready positions, sorted, are in key order | `eval.rs`, `next_entry` | already there |
+| b8b284a09 | A chain costs O(D) under Rounds and Pull | `eval.rs`, `round`, `pull` | already there |
+| b8b284a09 | One hash lookup per read | `eval.rs`, `Definedness::index` | already there |
+| b8b284a09 | The outermost pair need not be kept | `value.rs`, `walk_in` | completed |
+| b8b284a09 | A thread keeps at most 8 times the last comparison's pairs in slots, or 16 | `value.rs`, `ReadSet::clear` | corrected: false when a comparison keeps no pair after a large one (the early return kept 2048 slots); test `a_comparison_that_keeps_no_pair_does_not_keep_a_large_table` red (2048, not 0), code fixed, green |
+| b8b284a09 | 256 bytes a thread for each relation | `value.rs`, `ReadSet` | already there |
+| bc75c1615 | `2^w - 1 - x` fits when `w <= 63` | `bits.rs`, `small` | completed |
+| bc75c1615 | `x * 2^k` with `k <= 62` fits in an `i128` | `bits.rs`, `small` | completed |
+| bc75c1615 | An arithmetic shift is the Euclidean quotient; past 63 places 0 or -1 | `bits.rs`, `small` | completed |
+| bc75c1615 | Rotations are exact when `w <= 63` | `bits.rs`, `small` | completed; tests named |
+| c5168f1b3 | `loop_heads` is never empty | `types/empty.rs`, `verify_step` | already there (now `groups`) |
+| c5168f1b3 | Each group's set of heads is not empty | `types/empty.rs`, `verify_step`, `join` | added |
+| c5168f1b3 | A member refused by the group goes back to `Refused(Group)` | `types/empty.rs`, `group_verdicts` | already there |
+| c9205d30b | The citation and Algorithm 1 mapped to the code | `refine.rs`, module comment | already there (DOI) |
+| c9205d30b | The count over `0..=most[c]` is paid for by the arcs read; `tally` stays in bounds | `refine.rs`, `Refine::split` | added; two tests named |
+| c9205d30b | `k` is never waiting when pushed | `refine.rs`, `Refine::split` | already there |
+| cb68d7fec | `car_heads` is never empty | `types/empty.rs`, `step_of` | already there |
+| cb68d7fec | `chain_rep` gets only `Inhabited` plans | `types/empty.rs`, `chain_rep` | already there (the type enforces it) |
+| d18e52a0a | `order::cmp` is a total preorder | `types/print/order.rs`, `cmp` | added; tests named |
+| d18e52a0a | `cmp_values` is a total order | `types/print/order.rs`, `cmp_values` | covered by PROOF-value-cmp-total |
+| d18e52a0a | An atom at bucket `i` has `cuts[i-1] < name <= cuts[i]`; O(log a) a name | `types.rs`, `Type::print_groups` | completed: `partition_point`; the O(log c) search added to the cost |
+| d18e52a0a | `uses[i] -= 1` never goes below 0 | `types/print.rs`, `Printer::print` | added |
+| d18e52a0a | The loop in `write_out` ends | `types/print.rs`, `Printer::write_out` | Not proved: no chain of single-`Seg::Node` texts comes back to a node on it (row PROOF-print-write-out-ends) |
+| d18e52a0a | O(m log m) for one stable sort | `types/print.rs`, `items` | already there |
+| d2bc324d2 | `kids` gives exactly the names `eval.rs` binds | `term/walk.rs`, `kids` | already there |
+| d2bc324d2 | `R(body)` depends only on the body | `eval/made.rs`, `reads` | already there |
+| d694e2a26 | The ladder encoding allows at most one true atom, three clauses an atom | `types/empty/escape.rs`, the 2-SAT build | added: both directions |
+| d694e2a26 | No 2-SAT model means no list escapes | `types/empty/escape.rs`, before `sat.solve()` | added |
+| d694e2a26 | Building the list stays within the cost bound | `types/empty/escape.rs`, `depth` | added: `k^2` for `k` distinct atoms at a place, within their written size |
+| d694e2a26 | The truncation lemma | `types/empty/escape.rs`, module comment | already there in substance; "not killed" means not killed at a place up to `l0` (the code reads cells only to `target_len`); wording not edited; the rest of the entry not read |
 
-No code claim: none among the 10 read.
+No code claim: 9e3cc1480 (zed-kernel part: an alias, an equivalent `?`, moved tests).
 
-Not read (135 entries):
+Not read:
 
-- zed-kernel (52): 26f8d7d35 2ab9f29af 2de401ae4 3204ef377 34a583731 37148785d 3ffbadf75
-  40733faeb 465fc2167 570acb0a8 5970a932f 59a32b29b 5a5276a82 5dcfdad0a 6017477df 60f594a97
-  6ae1d9048 6bb9bb93f 6ebe63b42 6ff237028 7d0cc8d9f 8183b743b 81a60d522 86322e10b 877fc8603
-  8878228af 8c5ccccb9 929e7e04a 94b14f925 967100aca 9778881e0 9bc1e50d4 9e3cc1480 a74161bb4
-  b8b284a09 bc75c1615 c5168f1b3 c9205d30b cb68d7fec d18e52a0a d2bc324d2 d694e2a26 ddc1ec274
-  e3ee7d064 e60e73504 e62be00e0 e7b12dd2e f075a1c0b f48ec1bf4 f91eac49c fa271b3f2 fe770de11
+- zed-kernel (20, 3 of them in part above): 37148785d (the `no_key`/`no_keys` claims),
+  3ffbadf75 40733faeb 465fc2167 570acb0a8 5970a932f 5a5276a82 5dcfdad0a, 6ff237028
+  (`split_classes`, `class_rep`), 7d0cc8d9f 8183b743b 81a60d522, d694e2a26 (the `ChainHint`
+  fallback, `cells_windows`, `Live`, X34, X35, `forest`), ddc1ec274 e3ee7d064 e60e73504
+  e62be00e0 e7b12dd2e f075a1c0b f48ec1bf4 f91eac49c fa271b3f2 fe770de11
 - zedc-elab (44): 7fb0c6594 7931d6ed6 8164a8ea9 9b7a17570 e5ff7920a f24b492bf 555863e23
   f0bde0d35 0e329a46e 1286f4779 2b3e706f1 995200322 9d877b65c 068d62e2f 18ea94666 4c75d8f88
   5767fe37a 7d0cc8d9f 86322e10b 875e58597 c50a8965b cf099fcf2 03a4f95f2 0e8df04e7 64d244789

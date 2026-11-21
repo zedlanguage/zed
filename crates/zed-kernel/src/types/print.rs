@@ -142,6 +142,8 @@ impl Printer<'_> {
             )
             .collect();
         // A set printed apart is written out where it stands, so it is no use of its node.
+        // No count goes below 0: each root's `refer` above added 1 to `uses[i]`, and each root
+        // takes off at most that 1, so `uses[i]` stays at least the uses counted otherwise.
         for (&(i, _), _) in roots.iter().zip(&p.apart).filter(|(_, apart)| **apart) {
             p.uses[i] -= 1;
         }
@@ -2192,6 +2194,10 @@ impl Printer<'_> {
     /// ([`Type::surfaces_apart`]). The nodes inside are written by [`Printer::write`].
     fn write_out(&self, mut i: usize, at: At, named: &[Option<String>], out: &mut String) {
         let mut text = self.texts[i].as_ref().expect("visited");
+        // Not proved: that no chain of texts each one `Seg::Node` comes back to a node on it,
+        // so that this loop ends. Each step goes from a type to a part of it (a member of a
+        // union of one member, an atom's payload), and only a recursive type holds itself
+        // (`force_cycles`); no proof here that such a cycle has a text of more than one node.
         while let [Seg::Node(j, _)] = text.segs[..] {
             i = j;
             text = self.texts[i].as_ref().expect("visited");
