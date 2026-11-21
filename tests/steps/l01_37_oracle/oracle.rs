@@ -21,11 +21,9 @@ fn every_enabled_fence_agrees() {
     assert_eq!(r.not_compared, Vec::<String>::new());
     // The lambda fence's `five` and `seven` under each engine, and the table checks, under
     // each engine, of the fences whose front passes: the lambda fence and the `main` of DESIGN
-    // sec:ports 1 with `MainArgs`; a fence the front rejects compares nothing. EXAMPLES section
-    // 18 fence 8, `m.env["HOME"] else "no HOME"`, compared 2 more until zedc refused a bare
-    // `else` (plan row ELSE-explicit-atoms, QUESTIONS A113); EXAMPLES.md still writes it so,
-    // and when it names the atom, `else #notFound -> "no HOME"`, the count is 10 again.
-    assert_eq!(r.compared, 8);
+    // sec:ports 1 with `MainArgs`, and EXAMPLES section 18 fence 8,
+    // `m.env["HOME"] else #notFound -> "no HOME"`; a fence the front rejects compares nothing.
+    assert_eq!(r.compared, 10);
 }
 
 #[test]

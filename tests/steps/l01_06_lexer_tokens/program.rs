@@ -7,15 +7,15 @@ use zedc::lex::{Doc, lex, lex_with_docs};
 const TOUR_FAILURE: &str = "\
 // [d4] sec:tour_failure
 parse : (Utf8String) -> Config | #syntaxError(pos: int)     // an assumed input, shown as a type — no ';' (sec:lexical)
-conf = parse(text) else defaultConfig;
-port = parse(text)?.server?.port else 8080;
+conf = parse(text) else #syntaxError -> defaultConfig;
+port = parse(text)?.server?.port else #syntaxError -> 8080;
 msg  = match parse(text) { #syntaxError(pos:) -> \"bad at ${pos}\", c -> c.name };
 results = files.map(f -> read(f)).map(b -> parse(b));   // File -> Config | #syntaxError(pos: int) | #ioError | #notFound: the atoms ride through
 good = results.where(r -> r is Config);
 bad  = results.where(r -> r is not Config);
 amounts = files.map(f -> int(read(f)));                 // int | #invalid | #ioError | #notFound
 sumKept   = amounts.where(a -> a is int) >< (+);
-sumZeroed = amounts.map(a -> a else 0) >< (+);";
+sumZeroed = amounts.map(a -> a else (#invalid | #ioError | #notFound) -> 0) >< (+);";
 
 /// [`TOUR_FAILURE`] is the one fence of EXAMPLES.md whose first line is its first line, read in
 /// place (a later fence's first line goes on to name sec:ports too).
@@ -38,11 +38,11 @@ fn expected_example_program() {
     let out = render_lines(TOUR_FAILURE, &tokens);
     for piece in [
         "#syntaxError ( pos : int )",
-        "?. server ?. port «else» 8080₍10₎ ;",
+        "?. server ?. port «else» #syntaxError -> 8080₍10₎ ;",
         "= «match» parse",
         "-> str[\"bad at \" ${pos}] ,",
         "r «is» «not» Config",
-        "a «else» 0₍10₎ ) >< ( + ) ;",
+        "a «else» ( #invalid | #ioError | #notFound ) -> 0₍10₎ ) >< ( + ) ;",
     ] {
         assert!(out.contains(piece), "{piece}\n{out}");
     }

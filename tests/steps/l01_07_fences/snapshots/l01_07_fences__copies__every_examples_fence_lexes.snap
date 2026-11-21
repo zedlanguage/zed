@@ -13,7 +13,7 @@ expression: "tokens_by_key(&fences::examples())"
 == EXAMPLES.md [1. Programs and ports] 3 L8
   2 | main ( m : MainArgs ) {
   3 | fs = main :: files ;
-  4 | text = fs [ str["input.txt"] ] «else» str[] ;
+  4 | text = fs [ str["input.txt"] ] «else» ( #ioError | #notFound ) -> str[] ;
   5 | counts = text . split ( str[" "] ) . group ( w -> w . lower ) . count ;
   6 | lines = counts «as» ( w -> n ) «into» ( «desc» n -> w -> str[${w} ": " ${n}] ) ;
   7 | m . stdout <- lines . orderedValues ;
@@ -59,7 +59,7 @@ expression: "tokens_by_key(&fences::examples())"
   2 | ( «div» ) : ( ( int , int \ 0₍10₎ ) -> int ) & ( ( int , 0₍10₎ ) -> #divByZero )
   3 | half ( n ) = n «div» 2₍10₎ ;
   4 | ratio ( «positional» a , «positional» b ) = a «div» b ;
-  5 | r1 = ratio ( a , b ) «else» 0₍10₎ ;
+  5 | r1 = ratio ( a , b ) «else» #divByZero -> 0₍10₎ ;
   6 | r2 = «match» ratio ( a , b ) { #divByZero -> 0₍10₎ , v -> v } ;
 == EXAMPLES.md [4. Strings] 1 L3
   2 | s = str["Hello"] ++ str[", "] ++ str["world"] ;
@@ -158,7 +158,7 @@ expression: "tokens_by_key(&fences::examples())"
  10 | sq = «for» i «in» 0₍10₎ ..< 10₍10₎ { i * i } ;
  11 | ev = «for» i «in» 0₍10₎ ..< 10₍10₎ where ( i «mod» 2₍10₎ ) == 0₍10₎ { i } ;
  12 | cumul [ i ] = cumul [ i - 1₍10₎ ] + xs [ i ] «with» cumul [ - 1₍10₎ ] = 0₍10₎ ;
- 13 | last = cumul . last «else» 0₍10₎ ;
+ 13 | last = cumul . last «else» #none -> 0₍10₎ ;
  14 | pairs = xs . zip ( ys ) ;
 == EXAMPLES.md [7. Sequences] 2 L5
   3 | all = xs ++ ys ;
@@ -180,7 +180,7 @@ expression: "tokens_by_key(&fences::examples())"
   2 | ages = { str["ann"] -> 31₍10₎ , str["bob"] -> 27₍10₎ } ;
   3 | a = ages [ str["ann"] ] ;
   4 | b = ages [ who ] ;
-  5 | c = ages [ who ] «else» 0₍10₎ ;
+  5 | c = ages [ who ] «else» #notFound -> 0₍10₎ ;
   6 | in1 = who «in» ages :: domain ;
   7 | names = ages :: domain ;
   8 | size = ages :: card ;
@@ -217,7 +217,7 @@ expression: "tokens_by_key(&fences::examples())"
 == EXAMPLES.md [9. Grouping, reduction, joins] 1 L9
   2 | total = readings >< ( + ) ;
   3 | avg = ( data >< ( + ) ) / f64 ( data :: len ) ;
-  4 | mx = temps >< max «else» 0₍10₎ ;
+  4 | mx = temps >< max «else» #empty -> 0₍10₎ ;
   5 | cnt = words . count ;
   6 | digits = [ 1₍10₎ , 2₍10₎ , 3₍10₎ ] ;
   7 | num = digits . foldl ( 0₍10₎ , ( acc , d ) -> acc * 10₍10₎ + d ) ;
@@ -230,7 +230,7 @@ expression: "tokens_by_key(&fences::examples())"
   6 | ranked = totals . sort ( «desc» t -> t ) ;
 == EXAMPLES.md [9. Grouping, reduction, joins] 3 L14
   2 | paid = orders . join ( payments , on : #orderId , kind : #left ) ;
-  3 | paid2 = «for» o «in» orders { payment = payments [ o . orderId ] «else» #none ; ( o , payment ) } ;
+  3 | paid2 = «for» o «in» orders { payment = payments [ o . orderId ] «else» #notFound -> #none ; ( o , payment ) } ;
   4 | inner = «for» o «in» orders where o . orderId «in» payments :: domain { ( o , payments [ o . orderId ] ) } ;
   5 | shipped = «for» o «in» orders , s «in» shipments where o . orderId == s . orderId { ( o , s ) } ;
   6 | pairs = «for» i «in» 0₍10₎ ..< n , j «in» i + 1₍10₎ ..< n { ( i , j ) } ;
@@ -318,15 +318,15 @@ expression: "tokens_by_key(&fences::examples())"
   3 | digit ( n : int ) = «match» n { ( 0₍10₎ ..= 9₍10₎ ) -> #ok , _ -> #bad } ;
 == EXAMPLES.md [12. Absence and failure] 1 L3
   2 | parse : ( Utf8String ) -> Config | #syntaxError ( pos : int )
-  3 | conf = parse ( text ) «else» defaultConfig ;
-  4 | port = parse ( text ) ?. server ?. port «else» 8080₍10₎ ;
+  3 | conf = parse ( text ) «else» #syntaxError -> defaultConfig ;
+  4 | port = parse ( text ) ?. server ?. port «else» #syntaxError -> 8080₍10₎ ;
   5 | msg = «match» parse ( text ) { #syntaxError ( pos : ) -> str["bad at " ${pos}] , c -> c . name } ;
   6 | results = files . map ( f -> read ( f ) ) . map ( b -> parse ( b ) ) ;
   7 | good = results . where ( r -> r «is» Config ) ;
   8 | bad = results . where ( r -> r «is» «not» Config ) ;
   9 | amounts = files . map ( f -> int ( read ( f ) ) ) ;
  10 | sumKept = amounts . where ( a -> a «is» int ) >< ( + ) ;
- 11 | sumZeroed = amounts . map ( a -> a «else» 0₍10₎ ) >< ( + ) ;
+ 11 | sumZeroed = amounts . map ( a -> a «else» ( #invalid | #ioError | #notFound ) -> 0₍10₎ ) >< ( + ) ;
 == EXAMPLES.md [12. Absence and failure] 2 L2
   2 | loadPort ( path ) -> int | #ioError | #notFound | #syntaxError ( pos : int ) {
   3 | text = read ( path ) ;
@@ -335,12 +335,12 @@ expression: "tokens_by_key(&fences::examples())"
   6 | }
 == EXAMPLES.md [12. Absence and failure] 3 L10
   2 | age = int ( input ) ?. refine ( a -> a >= 0₍10₎ ) ;
-  3 | safe = age «else» 0₍10₎ ;
+  3 | safe = age «else» #invalid -> 0₍10₎ ;
 == EXAMPLES.md [12. Absence and failure] 4 L2
   2 | withdraw ( «positional» a : Account , «positional» amt : rat ) -> Account | #insufficient ( short : rat ) {
   3 | «if» amt > a . bal { #insufficient ( short : amt - a . bal ) } «else» { a «with» { bal = a . bal - amt } }
   4 | }
-  5 | a2 = withdraw ( a , 10r ) «else» a ;
+  5 | a2 = withdraw ( a , 10r ) «else» #insufficient -> a ;
   6 | a3 = withdraw ( a , 10r ) «else» #insufficient ( short : _ ) -> a «with» { frozen = «true» } ;
 == EXAMPLES.md [13. Loops and state] 1 L6
   2 | sim = «loop» t {
@@ -378,7 +378,7 @@ expression: "tokens_by_key(&fences::examples())"
   6 | } ;
 == EXAMPLES.md [13. Loops and state] 6 L6
   2 | run = «loop» t { «while» t < edits :: len && ! closed ; «initial» doc = empty ; doc' = doc . patch ( edits [ t ] ) ; } ;
-  3 | past = run :: frames [ run :: len - 2₍10₎ ] . doc «else» empty ;
+  3 | past = run :: frames [ run :: len - 2₍10₎ ] . doc «else» #outOfBounds -> empty ;
   5 | x [ i «in» 0₍10₎ ..< warm ] = warmup ( i ) ;
   6 | x [ i «in» warm ..< n ] = x [ i - 1₍10₎ ] + delta ( i ) ;
 == EXAMPLES.md [13. Loops and state] 7 L6
@@ -429,7 +429,7 @@ expression: "tokens_by_key(&fences::examples())"
   9 | checked ( «positional» t : PTree ( Utf8String ) ) = asInts ( t . map ( A : s -> int ( s ) ) ) ;
 == EXAMPLES.md [15. Trees and graphs] 3 L6
   2 | edges : Id ->? [ Id ] = { 1₍10₎ -> [ 2₍10₎ , 3₍10₎ ] , 2₍10₎ -> [ 4₍10₎ ] , 3₍10₎ -> [ 4₍10₎ ] , 4₍10₎ -> [ ] } ;
-  3 | succ ( «positional» s ) = s . flatMap ( n -> edges [ n ] «else» [ ] ) . image ;
+  3 | succ ( «positional» s ) = s . flatMap ( n -> edges [ n ] «else» #notFound -> [ ] ) . image ;
   4 | reach = «loop» {
   5 | «initial» r = { start } ;
   6 | r' = r . union ( succ ( r ) ) ;
@@ -442,7 +442,7 @@ expression: "tokens_by_key(&fences::examples())"
   9 | minD ( «positional» a : Dist , «positional» b : Dist ) -> Dist { «if» a «is» #inf { b } «else» «if» b «is» #inf { a } «else» { min ( a , b ) } }
  10 | dist = «loop» {
  11 | «initial» d = «for» v «in» nodes { «if» v == start { 0₍10₎ } «else» { #inf } } ;
- 12 | d' [ v «in» nodes ] = minD ( d [ v ] , ( «for» u «in» preds [ v ] { addD ( d [ u ] , w [ u ] [ v ] ) } ) >< minD «else» #inf ) ;
+ 12 | d' [ v «in» nodes ] = minD ( d [ v ] , ( «for» u «in» preds [ v ] { addD ( d [ u ] , w [ u ] [ v ] ) } ) >< minD «else» #empty -> #inf ) ;
  13 | «until» d' == d ;
  14 | } ;
 == EXAMPLES.md [16. Generics and interfaces] 1 L5
@@ -478,7 +478,7 @@ expression: "tokens_by_key(&fences::examples())"
   5 | far = dist ( Point ( x : 0₍10₎ , y : 0₍10₎ ) , Point ( x : 3₍10₎ , y : 4₍10₎ ) ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 1 L3
   2 | fs = main :: files ;
-  3 | text = fs [ str["notes.txt"] ] «else» str[] ;
+  3 | text = fs [ str["notes.txt"] ] «else» ( #ioError | #notFound ) -> str[] ;
   4 | texts = files . map ( f -> fs [ f ] ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 2 L21
   2 | orders : OrderId ->? { total : rat , note : Utf8String | #none }
@@ -497,7 +497,7 @@ expression: "tokens_by_key(&fences::examples())"
   3 | config : Utf8String ->? Utf8String «with» store ( file ( str["app.cfg"] , KeyVal ) ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 6 L21
   2 | @timeout ( 0.2r «with» units ( str["s"] ) ) cache : Utf8String ->? [ u8 ] «with» store ( kv ( endpoint ) ) ;
-  3 | hit = cache [ key ] «else» fetch ( key ) ;
+  3 | hit = cache [ key ] «else» ( #ioError | #notFound | #timeout ) -> fetch ( key ) ;
 == EXAMPLES.md [18. Files, stores, and the world] 7 L7
   3 | main ( m : MainArgs ) -> int {
   4 | ticks = clock ( period : 0.01r ) ;
@@ -506,13 +506,13 @@ expression: "tokens_by_key(&fences::examples())"
   7 | }
 == EXAMPLES.md [18. Files, stores, and the world] 8 L1
   2 | main ( m : MainArgs ) {
-  3 | m . stdout <- m . env [ str["HOME"] ] «else» str["no HOME"] ;
+  3 | m . stdout <- m . env [ str["HOME"] ] «else» #notFound -> str["no HOME"] ;
   4 | }
 == EXAMPLES.md [18. Files, stores, and the world] 9 L7
   3 | main ( m : MainArgs ) -> int {
   4 | p = spawn ( [ str["sort"] , str["-u"] ] ) ;
-  5 | p . stdin <- m . stdin . map ( l -> l «else» str[] ) ;
-  6 | m . stdout <- p . stdout . map ( l -> l «else» str[] ) ;
+  5 | p . stdin <- m . stdin . map ( l -> l «else» ( #badEncoding | #ioError ) -> str[] ) ;
+  6 | m . stdout <- p . stdout . map ( l -> l «else» ( #badEncoding | #ioError ) -> str[] ) ;
   7 | «match» p . status { #ok -> 0₍10₎ , _ -> 1₍10₎ }
   8 | }
 == EXAMPLES.md [18. Files, stores, and the world] 10 L7
@@ -538,7 +538,7 @@ expression: "tokens_by_key(&fences::examples())"
   2 | req : Stream ( Query ) ;
   3 | resp : Stream ( Answer ) ;
   4 | main ( ) {
-  5 | resp <- req . map ( q -> lookup ( db , q ) «else» #unknown ) ;
+  5 | resp <- req . map ( q -> lookup ( db , q ) «else» #notFound -> #unknown ) ;
   6 | }
 == EXAMPLES.md [19. Streams] 5 L7
   3 | sessions = events . window ( gap : 3₍10₎ ) . map ( w -> w . count ) ;
@@ -556,7 +556,7 @@ expression: "tokens_by_key(&fences::examples())"
   2 | «struct» Moments { n : int , sum : rat , sumSq : rat }
   3 | moment ( «positional» x : rat ) = Moments ( n : 1₍10₎ , sum : x , sumSq : x * x ) ;
   4 | @associative @commutative combine ( «positional» a : Moments , «positional» b : Moments ) = Moments ( n : a . n + b . n , sum : a . sum + b . sum , sumSq : a . sumSq + b . sumSq ) ;
-  5 | m = xs . map ( moment ) >< combine «else» Moments ( n : 0₍10₎ , sum : 0r , sumSq : 0r ) ;
+  5 | m = xs . map ( moment ) >< combine «else» #empty -> Moments ( n : 0₍10₎ , sum : 0r , sumSq : 0r ) ;
   6 | mean = m . sum / rat ( m . n ) ;
   7 | variance = m . sumSq / rat ( m . n ) - mean * mean ;
 == EXAMPLES.md [20. Testing, properties, and proofs] 3 L15
@@ -573,7 +573,7 @@ expression: "tokens_by_key(&fences::examples())"
   7 | «proof» { byInduction ( t ) }
   9 | «law» sortIdempotent ( xs : [ int ] ) = xs . sort ( «asc» x -> x ) . sort ( «asc» x -> x ) == xs . sort ( «asc» x -> x ) ;
 == EXAMPLES.md [20. Testing, properties, and proofs] 5 L15
-  2 | amt ( «positional» t : int ) = withdrawals [ t ] «else» 0₍10₎ ;
+  2 | amt ( «positional» t : int ) = withdrawals [ t ] «else» #outOfBounds -> 0₍10₎ ;
   3 | account = «loop» t {
   4 | «initial» balance = 0₍10₎ ;
   5 | @invariant ( balance >= 0₍10₎ ) balance' = «if» amt ( t ) <= balance { balance - amt ( t ) } «else» { balance } ;
@@ -630,7 +630,7 @@ expression: "tokens_by_key(&fences::examples())"
   7 | Sum . eval = terms . map ( t -> t . eval ) . sum ;
   8 | Prod . eval = factors . map ( f -> f . eval ) >< ( * ) ;
   9 | Paren . eval = inner . eval ;
- 10 | Number . eval = int ( «this» ) «else» 0₍10₎ ;
+ 10 | Number . eval = int ( «this» ) «else» #invalid -> 0₍10₎ ;
  11 | value = Sum . parseText ( str["2*(3+4)"] ) ?. eval ;
 == EXAMPLES.md [24. Small programs] 1 L7
   2 | «struct» Account { bal : rat }
@@ -656,10 +656,10 @@ expression: "tokens_by_key(&fences::examples())"
   3 | x , y = p ;
   4 | ns = «for» d «in» [ ( - 1₍10₎ , - 1₍10₎ ) , ( - 1₍10₎ , 0₍10₎ ) , ( - 1₍10₎ , 1₍10₎ ) , ( 0₍10₎ , - 1₍10₎ ) , ( 0₍10₎ , 1₍10₎ ) , ( 1₍10₎ , - 1₍10₎ ) , ( 1₍10₎ , 0₍10₎ ) , ( 1₍10₎ , 1₍10₎ ) ] {
   5 | dx , dy = d ;
-  6 | cells [ ( ( x + dx ) «mod» w , ( y + dy ) «mod» h ) ] «else» «false»
+  6 | cells [ ( ( x + dx ) «mod» w , ( y + dy ) «mod» h ) ] «else» #notFound -> «false»
   7 | } ;
   8 | n = ns . where ( b -> b ) . count ;
-  9 | «if» ( cells [ p ] «else» «false» ) { ( n == 2₍10₎ ) || ( n == 3₍10₎ ) } «else» { n == 3₍10₎ }
+  9 | «if» ( cells [ p ] «else» #notFound -> «false» ) { ( n == 2₍10₎ ) || ( n == 3₍10₎ ) } «else» { n == 3₍10₎ }
  10 | }
  11 | life = «loop» t {
  12 | «initial» cells = seed ;
@@ -686,7 +686,7 @@ expression: "tokens_by_key(&fences::examples())"
   2 | hist : int ->? int «with» reducer ( ( + ) ) ;
   3 | «for» s «in» words { hist [ s . len ] <- 1₍10₎ ; } ;
   4 | histB = words . group ( s -> s . len ) . count ;
-  5 | cdf [ i «in» 0₍10₎ ..= maxLen ] = cdf [ i - 1₍10₎ ] + ( hist [ i ] «else» 0₍10₎ ) «with» cdf [ - 1₍10₎ ] = 0₍10₎ ;
+  5 | cdf [ i «in» 0₍10₎ ..= maxLen ] = cdf [ i - 1₍10₎ ] + ( hist [ i ] «else» #notFound -> 0₍10₎ ) «with» cdf [ - 1₍10₎ ] = 0₍10₎ ;
   6 | d [ i ] [ j ] = «if» a [ i ] == b [ j ] { d [ i - 1₍10₎ ] [ j - 1₍10₎ ] } «else» { 1₍10₎ + min ( d [ i - 1₍10₎ ] [ j ] , d [ i ] [ j - 1₍10₎ ] , d [ i - 1₍10₎ ] [ j - 1₍10₎ ] ) }
   7 | «with» d [ - 1₍10₎ ] [ j «in» - 1₍10₎ ..< b :: len ] = j + 1₍10₎ , d [ i «in» 0₍10₎ .. ] [ - 1₍10₎ ] = i + 1₍10₎ ;
 == EXAMPLES.md [25. Algorithms] 2 L8
