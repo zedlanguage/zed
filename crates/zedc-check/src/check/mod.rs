@@ -1523,8 +1523,11 @@ struct Alone {
 /// and stopped by caps. Used: a union-find by rank, each class merged or narrowed at most
 /// (values + 6 × classes) times, O(log N) a step, O(N log N) in all; the lists of a merged
 /// pair move shorter into longer ([`Ck::merge`]). Tradeoffs: no path compression, so a find
-/// is O(log N), not nearly O(1); a tried repair undoes its changes from a log of the roots it
-/// touched ([`Ck::touch`]), which compression would extend to every node on a path.
+/// is O(log N), not nearly O(1): a find reads the forest and never writes it, which a read
+/// of the committed forest during a tried repair needs. A tried repair writes its changes to
+/// a layer of the class store that its end drops ([`probe::Classes`], "Trial layers"; row
+/// CHECK-uf-no-speculative-writes), so the committed forest only grows; compression would
+/// make each find of a trial copy every class on its path into the layer.
 /// COMPLEXITY.md row "undeclared parameters (check), `apply`".
 #[derive(Clone)]
 struct Class {
@@ -1548,8 +1551,9 @@ struct Class {
     // every function, which name no class; (3) `walk.rs`, at the end of a level, and its copy
     // for the forward path
     // in `walk/r10_forward.rs` (the `r10` generalize), write `Ty::dynamic()`, which holds no
-    // variable; (4) the undo of a tried repair (`Undo::Class`) puts back a copy of the same
-    // class taken earlier, which held the invariant by induction on the writes. `Ck::class`
+    // variable; (4) the end of a tried repair drops its layer of the class store
+    // (`probe::Classes::drop_layer`), after which the class reads as a value it held before,
+    // which held the invariant by induction on the writes. `Ck::class`
     // starts the field at `None`, and `merge` does not touch it. So `Ck::class_root`, which
     // gives no root whose type is its own variable, gives a root whose type, if any, holds
     // no variable; every use that reads a class's type in place of its variable (`sum`,
@@ -2133,8 +2137,9 @@ struct Ck<'t, 'a> {
     /// down: a class is made with a level once ([`Ck::class`], a class made in `need` at its
     /// root's level, a forced forward's class at the forward's), [`Ck::lower`] sets a level
     /// only when it is below the class's, and a union keeps the smaller of the two
-    /// (`c.level.min(level)`, walk.rs); no other write sets it. A trial's undo may put back a
-    /// class with a higher level (`Undo::Class`), but it puts back the entries here made
+    /// (`c.level.min(level)`, walk.rs); no other write sets it. The end of a trial may give a
+    /// class back a higher level (it drops the trial's layer of the class store,
+    /// `probe::Classes::drop_layer`), but the trial's undo puts back the entries here made
     /// since as well (`Undo::Clean`), so no entry outlives the level it was made at. Tests:
     /// the benches
     /// `l01_26_type_resolution::bench::scaling::rows_shared_on_many_paths_scale_in_a_function`
@@ -4743,12 +4748,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         k
     }
 
-    /// Logs class `r` before a change, while a repair is tried.
+    /// Readies class `r` for a change while a repair is tried: forces a forward rooted at it
+    /// (R10, reason f6). The change itself goes to the trial's layer of the class store
+    /// ([`probe::Classes`], "Trial layers"), which the end of the trial drops, so nothing is
+    /// logged here (row CHECK-uf-no-speculative-writes).
     fn touch(&mut self, r: usize) {
         if self.trying {
             self.r10_force_root(r, "f6");
-            self.log
-                .push(Undo::Class(r, Box::new(self.classes[r].clone())));
         }
     }
 
@@ -4771,7 +4777,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// holds at most N classes, so a class is on a turned path at most log2 N times, and the
     /// turns of all merges cost at most N log2 N (Nieuwenhuis and Oliveras 2007,
     /// doi:10.1016/j.ic.2006.08.009; the full citation is at [`Class::proof`]). Tradeoff: one
-    /// edge per class, logged while a repair is tried. COMPLEXITY.md row F195; test
+    /// edge per class, written to the trial's layer while a repair is tried. COMPLEXITY.md
+    /// row F195; test
     /// `l01_29_repairs_and_printing::bench::scaling::the_merges_between_a_value_and_its_use_scale`,
     /// which compares instructions at n and 8n and so cannot tell this cost from one a little
     /// above it.
@@ -4785,14 +4792,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.set_proof(a, Some((b, why)));
     }
 
-    /// Sets class `k`'s edge in the proof forest, logging the one it replaces while a repair
-    /// is tried; gives that one.
+    /// Sets class `k`'s edge in the proof forest; gives the one it replaces. While a repair is
+    /// tried the write goes to the trial's layer of the class store, as every class write does.
     fn set_proof(&mut self, k: usize, edge: Option<(usize, Reason)>) -> Option<(usize, Reason)> {
-        let old = std::mem::replace(&mut self.classes[k].proof, edge);
-        if self.trying {
-            self.log.push(Undo::Proof(k, old.clone()));
-        }
-        old
+        std::mem::replace(&mut self.classes[k].proof, edge)
     }
 
     /// The merges on the path of the proof forest from class `x` to class `y`, which are of
@@ -7580,6 +7583,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.r10.forwards[fid].status = probe::ForwardStatus::Forced;
         self.r10.stats.forced += 1;
         *self.r10.stats.force_reasons.entry(why.into()).or_default() += 1;
+        // The forward is forced for good, so its writes go past any trial's layer to the
+        // committed classes, read from there too ([`probe::Classes::begin_through`]; row
+        // CHECK-uf-no-speculative-writes). The body has no early exit, so the matching end is
+        // the last statement.
+        self.classes.begin_through();
 
         let f = self.r10.forwards[fid].clone();
         let pending_mode = self.r10.cfg.pending_mode;
@@ -7650,6 +7658,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         for r in touched_roots {
             self.classes[r].uses.sort_by_key(|(s, _)| *s);
         }
+        self.classes.end_through();
     }
 
     /// Forces every open forward watching root `k` (`f3`, `f4`, `f5`, `f6`, `f7`).
@@ -9185,10 +9194,6 @@ enum Undo {
     Passes(Span, Span, Option<KType>),
     Follows(Span, Option<Vec<(Carrier, Value)>>),
     Witness(Span, Option<Witness>),
-    /// A class, while a repair is tried.
-    Class(usize, Box<Class>),
-    /// A class's edge in the proof forest ([`Class::proof`]), while a repair is tried.
-    Proof(usize, Option<(usize, Reason)>),
     /// Whether a row or payload shape is among [`Ck::data_checked`], while a repair is tried.
     DataChecked(NodeId, bool),
     /// The entry of a row or payload shape in [`Ck::clean`], while a repair is tried.
@@ -9427,9 +9432,20 @@ impl Ck<'_, '_> {
         }
     }
 
-    /// Ends a trial begun when [`Self::trying`] was `was`: restores it, and forgets the fits
-    /// the trials wrote once the outermost ends, since their writes are undone by then.
+    /// Begins a trial: sets [`Self::trying`] and opens a layer of the class store, so that the
+    /// trial's class writes never reach the committed union-find forest ([`probe::Classes`],
+    /// "Trial layers"; row CHECK-uf-no-speculative-writes). Gives what `trying` was, for
+    /// [`Self::end_trial`]. Every trial is undone, so each ends by dropping its layer.
+    fn start_trial(&mut self) -> bool {
+        self.classes.begin_layer();
+        std::mem::replace(&mut self.trying, true)
+    }
+
+    /// Ends a trial begun by [`Self::start_trial`], which gave `was`: drops its layer of the
+    /// class store, restores `trying`, and forgets the fits the trials wrote once the
+    /// outermost ends, since their writes are undone by then.
     fn end_trial(&mut self, was: bool) {
+        self.classes.drop_layer();
         self.trying = was;
         if !was {
             self.trial_fits.clear();
@@ -9519,12 +9535,6 @@ impl Ck<'_, '_> {
 
     /// Makes the write `w` and gives the write that undoes it.
     fn set(&mut self, w: Undo) -> Undo {
-        if let Undo::Class(k, c) = w {
-            return Undo::Class(k, Box::new(std::mem::replace(&mut self.classes[k], *c)));
-        }
-        if let Undo::Proof(k, e) = w {
-            return Undo::Proof(k, std::mem::replace(&mut self.classes[k].proof, e));
-        }
         if let Undo::DataChecked(n, now) = w {
             let was = match now {
                 true => !self.data_checked.insert(n),
@@ -9557,7 +9567,7 @@ impl Ck<'_, '_> {
             }
             Undo::Follows(k, v) => Undo::Follows(k, set!(i.follows, k, v)),
             Undo::Witness(k, v) => Undo::Witness(k, set!(i.witness, k, v)),
-            Undo::Class(..) | Undo::Proof(..) | Undo::DataChecked(..) | Undo::Clean(..) => {
+            Undo::DataChecked(..) | Undo::Clean(..) => {
                 unreachable!("set above")
             }
         }
@@ -16714,7 +16724,7 @@ mod tests {
         let (arg, call) = (span(10), span(0));
         ck.put_read(arg, Carrier::F64, call);
         let saved = ck.mark();
-        let was = std::mem::replace(&mut ck.trying, true);
+        let was = ck.start_trial();
         ck.put_read(arg, Carrier::Rat, call);
         assert_eq!(ck.info.fits.get(&arg), Some(&Fit::Read(Carrier::Rat)));
         assert_eq!(ck.errors.len(), saved.errors);

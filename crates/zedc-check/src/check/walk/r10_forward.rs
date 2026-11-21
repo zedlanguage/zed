@@ -1432,6 +1432,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // forward never made them, so make and resolve them here as `generalize`
                     // does its own; otherwise they reach the signature unnamed (Neon B2).
                     if let Some(lo) = fwd.base_class {
+                        // Made and resolved for good, past any trial's layer, as a forced
+                        // forward's are ([`probe::Classes::begin_through`]).
+                        self.classes.begin_through();
                         for id in lo..lo + fwd.need_count {
                             if !self.classes.is_materialized(id) {
                                 self.classes
@@ -1441,6 +1444,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 done.push(id);
                             }
                         }
+                        self.classes.end_through();
                     }
                     expanded.extend(fwd.decode_uncounted(n.span, clear_lambda));
                 }
@@ -1485,10 +1489,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // fresh at its own level. Each class is resolved and named at once, so
                 // `lasting` skips it (landing round 5, Gemini L5-NB2 and Codex; D against E
                 // on partial calls: `landing5_partial_and_permuted_programs_agree_with_e`).
+                // Made, resolved and named for good, past any trial's layer
+                // ([`probe::Classes::begin_through`]): a later call finds it made and skips it.
                 let class = Self::make_fresh_class(id, self.level, true);
+                self.classes.begin_through();
                 self.classes.materialize_at(id, class);
                 self.resolve(id);
                 self.classes[id].name = name;
+                self.classes.end_through();
             }
         }
     }

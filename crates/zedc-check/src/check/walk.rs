@@ -4164,7 +4164,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let what = what.as_str();
         let applied = self.applied.take();
         let saved = self.mark();
-        let was = std::mem::replace(&mut self.trying, true);
+        let was = self.start_trial();
         self.apply(
             Label::Text(what),
             fsig,
@@ -12593,7 +12593,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn try_outside(&mut self, what: &str, sig: &Sig, with: Vec<Option<Arg<'a>>>, span: Span) {
         let applied = self.applied.take();
         let saved = self.mark();
-        let was = std::mem::replace(&mut self.trying, true);
+        let was = self.start_trial();
         let (t, _) = self.apply(Label::Text(what), sig, with, false, span);
         let ok = self.errors.len() == saved.errors;
         self.end_trial(was);
@@ -18738,6 +18738,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Step::Rest(k, rests) => {
                     let (x, y) = *rests;
                     let mark = self.mark();
+                    // Inside a trial the rest's class writes go to a layer of their own,
+                    // dropped with the rest's errors below and otherwise merged into the
+                    // trial's; outside one they are kept either way, as the errors' undo
+                    // never undid them (row CHECK-uf-no-speculative-writes).
+                    let layered = self.trying;
+                    if layered {
+                        self.classes.begin_layer();
+                    }
                     let args = vec![Some(Arg::of(x.clone())), Some(Arg::of(y.clone()))];
                     self.apply(
                         what,
@@ -18746,7 +18754,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                         true,
                         span,
                     );
-                    if self.errors.len() > mark.errors {
+                    let refused = self.errors.len() > mark.errors;
+                    if layered {
+                        match refused {
+                            true => self.classes.drop_layer(),
+                            false => self.classes.commit_layer(),
+                        }
+                    }
+                    if refused {
                         // The arrows of `<` alone say only that none takes the two; the
                         // message names the place and the repairs instead.
                         self.undo(&mark);
@@ -18830,8 +18845,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Whether each value of `a` compares with each of `b` under the ordering `what`
     /// ([`Ck::components`]), tried and undone.
     fn compares(&mut self, what: Label<'_>, a: &Ty, b: &Ty, span: Span) -> bool {
-        let (mark, was) = (self.mark(), self.trying);
-        self.trying = true;
+        let (mark, was) = (self.mark(), self.start_trial());
         let sides = OrderSides {
             names: [None; 2],
             ats: [None; 2],
@@ -22550,7 +22564,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn trial<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> (T, Option<Vec<Span>>) {
         let saved = self.mark();
         let refused = self.lit_refused.len();
-        let trying = std::mem::replace(&mut self.trying, true);
+        let trying = self.start_trial();
         let rough = std::mem::replace(&mut self.rough, true);
         let comparing = self.comparing;
         let opened = std::mem::replace(&mut self.opened, false);
@@ -29908,13 +29922,13 @@ mod tests {
         let node = row.tuples[0].node();
         let at = Span { start: 1, end: 2 };
         let saved = ck.mark();
-        ck.trying = true;
+        let was = ck.start_trial();
         ck.data(&row, "interpolation", DataUse::Show, at, at, Some(at));
         assert_eq!(ck.bound(&row, &mut Binds::new()), row);
         assert!(ck.classes[k].data);
         assert!(ck.data_checked.contains(&node));
         assert!(ck.is_clean(node));
-        ck.trying = false;
+        ck.end_trial(was);
         ck.undo(&saved);
         assert!(!ck.classes[k].data);
         assert!(!ck.data_checked.contains(&node));
@@ -29922,6 +29936,76 @@ mod tests {
         ck.data(&row, "interpolation", DataUse::Show, at, at, Some(at));
         assert!(ck.classes[k].data);
         assert!(ck.data_checked.contains(&node));
+    }
+
+    /// The parts of every class that the union-find forest and the uses read, for
+    /// [`a_failed_trial_leaves_the_class_forest_as_before`].
+    fn forest(ck: &Ck) -> Vec<String> {
+        (0..ck.classes.len())
+            .map(|k| {
+                let c = &ck.classes[k];
+                format!(
+                    "{k}: parent {} rank {} size {} mask {} level {} proof {:?} lits {} \
+                     reasons {} uses {} known {} flowed {} data {} generic {} asked {} \
+                     resolved {:?} name {:?}",
+                    c.parent,
+                    c.rank,
+                    c.size,
+                    c.mask,
+                    c.level,
+                    c.proof.as_ref().map(|p| p.0),
+                    c.lits.len(),
+                    c.reasons.len(),
+                    c.uses.len(),
+                    c.known.len(),
+                    c.flowed.len(),
+                    c.data,
+                    c.generic,
+                    c.asked,
+                    c.resolved.as_ref().map(|t| t.to_string()),
+                    c.name,
+                )
+            })
+            .collect()
+    }
+
+    /// Row CHECK-uf-no-speculative-writes (the author, 2026-11-21: "speculative results must
+    /// not be written there"): a trial that merges classes, narrows one and writes another
+    /// without [`Ck::touch`] leaves every class as it was, field for field, and the committed
+    /// store is not written while the trial runs. Before the trial layers, the undo log put
+    /// back only the classes `touch` logged, so the write that skips it stayed.
+    #[test]
+    fn a_failed_trial_leaves_the_class_forest_as_before() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let (a, b, c) = (ck.class(), ck.class(), ck.class());
+        assert!(ck.merge(a, b, "a test", Span { start: 1, end: 2 }));
+        let before = forest(&ck);
+        let saved = ck.mark();
+        let was = ck.start_trial();
+        assert!(ck.merge(a, c, "a trial", Span { start: 3, end: 4 }));
+        let r = ck.find(c);
+        ck.touch(r);
+        ck.classes[r].mask &= Carrier::Int.bit();
+        // A write that skips `touch`, as several class writes do.
+        ck.classes[c].generic = !ck.classes[c].generic;
+        let made = ck.class();
+        assert!(ck.merge(made, a, "a trial", Span { start: 5, end: 6 }));
+        assert_ne!(
+            forest(&ck)[..3],
+            before[..],
+            "the trial changed the classes it read"
+        );
+        ck.end_trial(was);
+        ck.undo(&saved);
+        assert_eq!(forest(&ck)[..3], before[..]);
+        let made_now = &forest(&ck)[made];
+        assert!(
+            made_now.contains(&format!("{made}: parent {made} ")),
+            "{made_now}"
+        );
+        assert_eq!(ck.classes.layer_depth(), 0);
     }
 
     /// A row the memo of clean rows found clean at a level is walked again once that level
