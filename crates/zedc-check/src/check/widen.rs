@@ -7,14 +7,16 @@
 //! the names bound by `=` to one name, and the joins of `if`, `else` and a block's `return`.
 //! Anything else, a parameter or a call among them, is any `int`, and so is a value past the
 //! word: an operand already past the word was widened upstream or given, and only the
-//! operation that crosses is reported. The left operand of `mod 2^k`, k at most 64, built
-//! from `+`, `-`, `*` and unary `-`, is computed in wrapping arithmetic (sec:domains), and
-//! nothing in it, or in the modulus, is reported. The wrapped value gives the exact result:
-//! taking an integer modulo 2^64 keeps `+`, `-`, `*` and unary `-` (a ring map), and so does
-//! taking a residue modulo 2^64 further modulo 2^k, since 2^k divides 2^64 for k at most 64.
-//! So the operand computed modulo 2^64 and then taken modulo 2^k is the integer value taken
-//! modulo 2^k, and the result in `0..<2^k` is the low k bits of the 64-bit word. A literal
-//! past 64 bits is taken modulo 2^64 by the same map.
+//! operation that crosses is reported. The left operand of `mod 2^k`, k at most 128 (DESIGN.md
+//! sec:domains, line 1561: "`mod 2^k`, `k` at most 128"), built from `+`, `-`, `*` and unary
+//! `-`, is computed in wrapping arithmetic in a word of w bits, w = 64 for k at most 64 and
+//! w = 128 for k at most 128 (DESIGN: "A domain chooses a machine word of up to 128 bits"),
+//! and nothing in it, or in the modulus, is reported. The wrapped value gives the exact
+//! result: taking an integer modulo 2^w keeps `+`, `-`, `*` and unary `-` (a ring map), and
+//! so does taking a residue modulo 2^w further modulo 2^k, since 2^k divides 2^w for k at
+//! most w. So the operand computed modulo 2^w and then taken modulo 2^k is the integer value
+//! taken modulo 2^k, and the result in `0..<2^k` is the low k bits of the w-bit word. A
+//! literal past w bits is taken modulo 2^w by the same map.
 //!
 //! Why reporting nothing there is right, whether or not the build wraps (row
 //! PROOF-widen-build-wraps). Claim: no value a program computes is hidden or changed by the
@@ -31,17 +33,23 @@
 //!    (sec:domains)"), not built. So the operand is computed exactly, and `x mod 2^k` gives
 //!    the integer value of `x` taken modulo 2^k.
 //! 3. When step L3.13 makes the build wrap, the ring-map argument above gives the same
-//!    result: the low k bits of the 64-bit word are the integer value taken modulo 2^k.
+//!    result: the low k bits of the w-bit word are the integer value taken modulo 2^k.
 //! 4. By 2 and 3 the value of `x mod 2^k` is the exact one in both builds. What the silence
 //!    leaves out today is a notice that an operand inside it is held as a big integer, which
 //!    is true now and will be false after L3.13; DESIGN exempts these operations from the
 //!    notice for the build that wraps, the build the language describes.
 //!
 //! What the tests cannot catch: no test runs a wrapping build, since none exists; step
-//! L3.13's own tests must show the wrapped result equal to the exact one. The bound here, k
-//! at most 64 with i64 operands, is narrower than DESIGN's (k at most 128, widths up to
-//! `i128`/`u128`): for 64 < k <= 128 this module reports operations DESIGN says not to report
-//! (more notices, never a hidden value).
+//! L3.13's own tests must show the wrapped result equal to the exact one, at k = 128 among
+//! others. The bound on k is DESIGN's, 128 (test
+//! `l01_29_diagnostics::widen::a_reduction_by_a_power_of_two_up_to_2_to_the_128_does_not_warn`,
+//! with 2^129 and 2^128 + 2 as controls that warn; row DOC-widen-model-narrower-than-design).
+//! Still narrower than DESIGN: the operand widths a warning names are the signed `i8` to
+//! `i64`, where DESIGN names the narrowest of `i8`…`i128` and `u8`…`u128`. An operand is
+//! always an interval inside `i64` here (a value past the word is any `int`), so `i128` never
+//! applies; the unsigned names wait on row SPEC-widen-unsigned-width-names, since DESIGN does
+//! not say which of `i8` and `u8` names a value both hold. This changes only the text of a
+//! notice, never which operations are reported.
 //!
 //! The warning names the value, the widths of the operands (the narrowest of `i8`, `i16`,
 //! `i32` and `i64` that holds each) and the interval the operation gives, and shows the
@@ -58,6 +66,7 @@
 
 use std::collections::HashMap;
 
+use num_bigint::BigUint;
 use zed_collections::index::to_u32;
 use zed_kernel::Value;
 use zed_kernel::text::prose::and_list;
@@ -85,9 +94,9 @@ enum Kind {
     Neg,
     /// `div`.
     Div,
-    /// `mod` by anything but a power of two up to `2 ^ 64`.
+    /// `mod` by anything but a power of two up to `2 ^ 128`.
     Mod,
-    /// `mod 2^k`, k at most 64: its left operand wraps.
+    /// `mod 2^k`, k at most 128: its left operand wraps.
     Wrap(u32),
     /// `^`.
     Pow,
@@ -608,10 +617,14 @@ impl<'t, 'a> Walk<'t, 'a> {
                 _ => Ok(None),
             },
             Kind::Wrap(k) => {
-                let m = 1i128 << k;
-                match v(a) {
-                    Some(x) if k <= 62 => Ok(rem(x, (m as i64, m as i64))),
-                    _ => Ok(i64::try_from(m - 1).ok().map(|hi| (0, hi))),
+                // The result is in `0..<2^k`, an interval in the word for k at most 63; for a
+                // larger k it is any `int`, as a value past the word is, and `1i128 << k` is
+                // not computed, since it overflows at k = 127 and 128.
+                let m = (k <= 63).then(|| 1i128 << k);
+                match (v(a), m) {
+                    (Some(x), Some(m)) if k <= 62 => Ok(rem(x, (m as i64, m as i64))),
+                    (_, Some(m)) => Ok(Some((0, (m - 1) as i64))),
+                    (_, None) => Ok(None),
                 }
             }
             Kind::Pow => match (v(a), v(b)) {
@@ -663,7 +676,7 @@ impl<'t, 'a> Walk<'t, 'a> {
         notes.push(Note {
             span: n.e.span,
             text: "repair: if wrapping arithmetic is meant, reduce the value with \
-                   `mod 2^k`, k at most 64"
+                   `mod 2^k`, k at most 128"
                 .to_string(),
         });
         Error {
@@ -748,17 +761,15 @@ fn magnitude(digits: &str, radix: u32) -> Option<u128> {
     u128::from_str_radix(digits, radix).ok()
 }
 
-/// `k` when `e` is a power of two `2 ^ k` with k at most 64, written as one literal or as
-/// `2 ^ k` of two literals.
+/// `k` when `e` is a power of two `2 ^ k` with k at most 128 (DESIGN.md sec:domains), written
+/// as one literal or as `2 ^ k` of two literals.
 fn power_of_two(e: &Expr) -> Option<u32> {
     let k = match &e.kind {
-        ExprKind::Int { radix, digits, .. } => {
-            let v = magnitude(digits, *radix)?;
-            if !v.is_power_of_two() {
-                return None;
-            }
-            v.trailing_zeros()
-        }
+        ExprKind::Int { radix, digits, .. } => match magnitude(digits, *radix) {
+            Some(v) if v.is_power_of_two() => v.trailing_zeros(),
+            Some(_) => return None,
+            None => return is_two_to_the_128(digits, *radix).then_some(128),
+        },
         ExprKind::Binary(BinaryOp::Pow, b, k) => match (&b.kind, &k.kind) {
             (
                 ExprKind::Int { radix, digits, .. },
@@ -772,7 +783,18 @@ fn power_of_two(e: &Expr) -> Option<u32> {
         },
         _ => return None,
     };
-    (k <= 64).then_some(k)
+    (k <= 128).then_some(k)
+}
+
+/// Whether the digits of a literal that does not fit in a u128 are 2^128, the one power of
+/// two that `power_of_two` takes past a u128. 2^128 has at most 129 digits in any radix (129
+/// in binary), so a longer literal is not read: the work is bounded by that length. A 2^128
+/// written with leading zeros past 129 digits is therefore not taken as one, and its operand
+/// is reported: one more notice, never a hidden value.
+fn is_two_to_the_128(digits: &str, radix: u32) -> bool {
+    digits.len() <= 129
+        && BigUint::parse_bytes(digits.as_bytes(), radix)
+            .is_some_and(|v| v == BigUint::from(1u8) << 128u32)
 }
 
 /// The operator of an operation node.

@@ -45,7 +45,7 @@ fn the_area_of_a_large_square_warns_with_its_derivation() {
         |          ^^^^^^^^^^
   [4] 2:10: this literal is 3037000500
   [5] 3:17: `side` is 3037000500 here
-  [6] 3:10: repair: if wrapping arithmetic is meant, reduce the value with `mod 2^k`, k at most 64"
+  [6] 3:10: repair: if wrapping arithmetic is meant, reduce the value with `mod 2^k`, k at most 128"
     );
 }
 
@@ -126,6 +126,40 @@ fn wrapping_arithmetic_reduced_by_a_power_of_two_does_not_warn() {
         "low",
     );
     assert_eq!(messages(&src), Vec::<String>::new());
+}
+
+#[test]
+fn a_reduction_by_a_power_of_two_up_to_2_to_the_128_does_not_warn() {
+    // DESIGN.md sec:domains: `mod 2^k`, `k` at most 128, with intermediates in wrapping words
+    // of up to 128 bits (DOC-widen-model-narrower-than-design). 2^128 written as one literal
+    // does not fit in a u128, so it is read on a path of its own.
+    let src = main_with(
+        "  a = (3037000500 * 3037000500 * 3037000500) mod 2^128;\n  \
+         b = (3037000500 * 3037000500 + 1) mod 340282366920938463463374607431768211456;\n  \
+         c = (3037000500 * 3037000500) mod 2^100;\n  \
+         d = (3037000500 * 3037000500) mod 2^127;\n  \
+         e = (3037000500 * 3037000500) mod 0x100000000000000000000000000000000;\n",
+        "0",
+    );
+    assert_eq!(messages(&src), Vec::<String>::new());
+    // Controls: 2^129 is past every word, and 2^128 + 2 is no power of two, so each product is
+    // reported, and so is the modulus `2^129`, a big integer itself.
+    let past = main_with(
+        "  f = (3037000500 * 3037000500) mod 2^129;\n  \
+         g = (3037000500 * 3037000500) mod 340282366920938463463374607431768211458;\n",
+        "0",
+    );
+    assert_eq!(
+        messages(&past),
+        [
+            "2:7: `f` widens past a machine word: this `*` of an i64 and an i64 gives a big \
+             integer.",
+            "2:37: `f` widens past a machine word: this `^` of an i8 and an i16 gives a big \
+             integer.",
+            "3:7: `g` widens past a machine word: this `*` of an i64 and an i64 gives a big \
+             integer.",
+        ]
+    );
 }
 
 #[test]
@@ -215,7 +249,7 @@ fn an_if_gives_the_interval_of_its_branches() {
   [7]  2:40: this block gives 3037000500
   [8]  2:42: this literal is 3037000500
   [9]  3:12: `n` is int[10..=3037000500] here
-  [10] 3:8: repair: if wrapping arithmetic is meant, reduce the value with `mod 2^k`, k at most 64"
+  [10] 3:8: repair: if wrapping arithmetic is meant, reduce the value with `mod 2^k`, k at most 128"
     );
 }
 
