@@ -285,6 +285,42 @@ fn each_blank_character_is_taken_in_a_comment_and_in_string_text() {
     }
 }
 
+/// Row Q-noncharacters-in-string-literals (PROOFDOC6-author-questions; DESIGN.md sec:lexical):
+/// each of the 66 noncharacters, U+FDD0 to U+FDEF and the last two code points of each of the 17
+/// planes, is taken in a comment and in the text of a string, as `TextChar` takes any character
+/// but a `Bidi_Control` one, and gives the string with it; in code it is an error named by its
+/// code point, as any character that may not show is. The checker's own marks and placeholders
+/// among them never meet program text (proof at zedc-check mod.rs, `ProgramTexts`; tests in
+/// l01_29_diagnostics/markers.rs).
+#[test]
+fn each_noncharacter_is_taken_in_a_comment_and_in_string_text_and_refused_in_code() {
+    let nonchars: Vec<char> = (0xFDD0..=0xFDEFu32)
+        .chain((0..=0x10u32).flat_map(|p| [p * 0x10000 + 0xFFFE, p * 0x10000 + 0xFFFF]))
+        .map(|code| char::from_u32(code).expect("a scalar value"))
+        .collect();
+    assert_eq!(nonchars.len(), 66);
+    for c in nonchars {
+        for text in [format!("a = 1; // {c} x\n"), format!("/* {c} */ a = 1;")] {
+            assert!(lex(&text).is_ok(), "{text:?}: {}", lex(&text).unwrap_err());
+        }
+        let text = format!("a = \"x{c}y\";");
+        let tokens = lex(&text).unwrap_or_else(|e| panic!("{text:?}: {e}"));
+        assert_eq!(
+            tokens[2].tok,
+            Tok::Str(vec![Part::Text(Arc::new(format!("x{c}y")))]),
+            "{text:?}"
+        );
+        let text = format!("{c}b = 1;");
+        let e = lex(&text).expect_err(&text);
+        let hex = format!("{:X}", c as u32);
+        assert_eq!(
+            (e.to_string(), e.kind),
+            (invisible(&hex), ErrorKind::Unexpected(c)),
+            "{text:?}"
+        );
+    }
+}
+
 #[test]
 fn the_grammar_engine_rejects_each_blank_character_in_code_and_takes_it_elsewhere() {
     let dir = spec_dir("default_ignorable", &design(""), "");

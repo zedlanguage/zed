@@ -2488,11 +2488,30 @@ fn a_reordered_function_the_generic_body_passes_only_into_a_union_slot_runs() {
     ] {
         runs_to(&format!("{REORDER_HEAD}{rest}"), "a", want);
     }
-    // A slot of two function types fixes no one type to fit the function to (`one_fn`), so
-    // the direct call is refused, and the call through `pass` with it.
+    // Row FAIL-reorder-direct-two-fn-slot (PROOFDOC6-author-questions): a slot of two function
+    // types whose parameters `re2`'s match by name in one order takes it, fitted to the member
+    // it fits, `(y: int, x: int) -> int` (DESIGN sec:values_morphisms, "named parameters by
+    // name"), directly and through `pass`. Before the fix both were refused ("`app4` does not
+    // take").
     for rest in [
         format!("{app4}a = app4(k: re2);\n"),
         format!("{app4}pass(g) = app4(k: g);\na = pass(g: re2);\n"),
+    ] {
+        runs_to(&format!("{REORDER_HEAD}{rest}"), "a", "12");
+    }
+    // Members that match `re2`'s names in two orders: a call through the slot names the
+    // parameters in the order of the member the value is read as, which the checker cannot
+    // tell, so the call is refused, directly and through `pass`; and so is a slot no member
+    // of which `re2` fits.
+    let app5 = "app5(k: ((y: int, x: int) -> int) | ((x: int, y: int) -> f64)) = 0;\n\
+                re2(x: int, y: int) = x * 10 + y;\n";
+    let app6 = "app6(k: ((y: int, x: int) -> String) | ((y: int, x: int) -> f64)) = 0;\n\
+                re2(x: int, y: int) = x * 10 + y;\n";
+    for rest in [
+        format!("{app5}a = app5(k: re2);\n"),
+        format!("{app5}pass(g) = app5(k: g);\na = pass(g: re2);\n"),
+        format!("{app6}a = app6(k: re2);\n"),
+        format!("{app6}pass(g) = app6(k: g);\na = pass(g: re2);\n"),
     ] {
         let src = format!("{REORDER_HEAD}{rest}");
         let errors = type_errors(&src);

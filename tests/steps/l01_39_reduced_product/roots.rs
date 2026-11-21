@@ -102,6 +102,79 @@ fn a_constraint_that_fails_at_a_root_is_rejected() {
     );
 }
 
+/// A root that another written constraint rules out (gives `false` there) is not reached,
+/// whatever a third constraint gives there, so a constraint failing at it is not reported
+/// (DESIGN.md sec:diagnostics, the row for a root of an obligation's equation; plan row
+/// Q-early-pass-root-failures, applied by PROOFDOC6-author-questions). `C` is false at 4. Each
+/// order and each of the constants 12 and 13 is checked: before the fix the constraints were
+/// evaluated in the sort order of their terms, so `C` written first with 12 was refused and
+/// with 13 accepted. The control: where no constraint rules the root out, the failure is still
+/// reported in both orders (`(p * p) mod 3 == 1` holds at 4).
+#[test]
+fn a_failure_at_a_root_another_constraint_rules_out_is_not_reported_in_either_order() {
+    for k in [12, 13] {
+        let f = format!("{k} div (p - 4) > 0");
+        for (a, b) in [(C, f.as_str()), (f.as_str(), C)] {
+            let text = format!(
+                "g(p: int) = if {SMALL} && {a} && {b} {{ 10 div (p - 4) }} else {{ 0 }};\n"
+            );
+            let errors = type_errors(&text);
+            assert!(errors.is_empty(), "{text}{errors:#?}");
+        }
+        let keep = "(p * p) mod 3 == 1";
+        for (a, b) in [(keep, f.as_str()), (f.as_str(), keep)] {
+            let text = format!(
+                "g(p: int) = if {SMALL} && {a} && {b} {{ 10 div (p - 4) }} else {{ 0 }};\n"
+            );
+            let errors = type_errors(&text);
+            assert_eq!(errors.len(), 1, "{text}{errors:#?}");
+            assert!(
+                errors[0].starts_with(&format!(
+                    "`10 div (p - 4)` may divide by 0: `{f}` gives `#divByZero` at `p = 4`"
+                )),
+                "{}",
+                errors[0]
+            );
+        }
+    }
+}
+
+/// A failing member of a rooted name stays a member until a constraint gives `false` there, so
+/// each constraint written after the failing one is evaluated at the root too: once each, so the
+/// evaluations grow linearly in the constraints. `n` constraints
+/// `(p * (p + 1) * (p + i)) mod 1013 != 1012` (at 4, `20 * (4 + i) mod 1013`, which is 1012 for
+/// no `i` below 64; a cubic like `C`, which no domain decides, where `(p * p + i) mod 97 != 96`
+/// was decided with no evaluation) follow `12 div (p - 4) > 0`, which fails at the root 4; the
+/// failure is still reported, and the evaluations at n = 8 and 8n = 64 are held to the
+/// preferred ratio of a linear count (Part G).
+#[test]
+fn constraints_after_a_failing_one_are_evaluated_once_each_at_the_root() {
+    let run = |n: usize| {
+        let mut test = "12 div (p - 4) > 0".to_string();
+        for i in 0..n {
+            test.push_str(&format!(" && (p * (p + 1) * (p + {i})) mod 1013 != 1012"));
+        }
+        let text = format!("g(p: int) = if {SMALL} && {test} {{ 10 div (p - 4) }} else {{ 0 }};\n");
+        let before = evaluations();
+        let errors = type_errors(&text);
+        let spent = evaluations() - before;
+        assert_eq!(errors.len(), 1, "{errors:#?}");
+        assert!(
+            errors[0].contains("gives `#divByZero` at `p = 4`"),
+            "{}",
+            errors[0]
+        );
+        spent
+    };
+    let (small, large) = (run(8), run(64));
+    scaling::hold_linear(
+        "constraints after one failing at a root, 8 and 64",
+        "evaluations",
+        small,
+        large,
+    );
+}
+
 /// `(x^n + 1)(x - 4)`, expanded: four terms of degree `n + 1`.
 fn of_degree(n: u64) -> Sparse {
     let c = |k: i64| BigInt::from(k);

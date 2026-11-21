@@ -12220,7 +12220,28 @@ impl Scope {
         let (tree, pol) = Tree::of(plain.as_ref().unwrap_or(&test));
         s.narrow_node(&tree, 0, pol, premises);
         s.reduce_case();
-        (!s.bottom, s.root_failures)
+        // A failure is reported only at a root some state may reach: none from an empty
+        // scope, and none at a root that a written constraint ruled out by giving `false`
+        // there, or that another narrowing removed (proof at `Scope::enumerate_on`; plan row
+        // Q-early-pass-root-failures). Every failure here is at a root of `x`, the one name
+        // `rooted` gains in this clone: `self.rooted` is empty outside it, since `rooted` is
+        // written only above, on the clone `s`, and `Scope::join` unions the two sides'.
+        if s.bottom {
+            return (false, imbl::OrdSet::new());
+        }
+        let failures = match open[..] {
+            [x] => match s.names.get(x) {
+                Some(p) => {
+                    let ints = p.ints().clone();
+                    (s.root_failures.into_iter())
+                        .filter(|f| ints.contains(f.root))
+                        .collect()
+                }
+                None => imbl::OrdSet::new(),
+            },
+            _ => s.root_failures,
+        };
+        (true, failures)
     }
 
     /// Narrows by `test`, read by [`plain_test`], giving `outcome`. The test is read as a
@@ -17881,8 +17902,16 @@ impl Scope {
                 // its first line when `self.bottom` or
                 // `!self.written.is_empty()`, so its `self.bottom = bottom` never clears an
                 // empty scope here; `unbind`, `narrow_linear`, `join_kept` and `narrow_node`
-                // replace the whole scope (`*self = ...`), as stated. (4) Not proved: "reports a
-                // root failure as it would in the main pass" holds for each constraint
+                // replace the whole scope (`*self = ...`), as stated. (4) Proved since
+                // PROOFDOC6-author-questions (2026-11-21), which applied the second meaning
+                // below (plan row Q-early-pass-root-failures; DESIGN.md sec:diagnostics, the
+                // row for a root of an obligation's equation): a failure is reported only at a
+                // root no written constraint rules out. A failing member of a rooted name now
+                // stays a member, a closed failure at a root sets no `bottom`, and
+                // `zero_reached` returns failures only from a scope that is not empty and only
+                // at roots still members, so the report is the same in either pass and in any
+                // order (proof at `Scope::enumerate_on`). The history, kept for review: "reports a
+                // root failure as it would in the main pass" held for each constraint
                 // evaluated, but not for the set evaluated before the `false`. The main pass
                 // goes in address order and this pass by name, fewest constraints first, and
                 // both stop at the first `false`; [`Scope::zero_reached`] returns
@@ -17991,19 +18020,47 @@ impl Scope {
                 Evaluator::new(World::new()).run(&t)
             };
             // A constraint that gives neither `true` nor `false` at a root of an obligation's
-            // equation is reported, since it then cannot say whether the root is reached
-            // ([`Scope::zero_reached`]); as at any other member, the member is not kept.
+            // equation cannot say whether the root is reached, and is reported unless another
+            // written constraint gives `false` there (DESIGN.md sec:diagnostics, the row for a
+            // root of an obligation's equation; plan row Q-early-pass-root-failures, applied by
+            // PROOFDOC6-author-questions, 2026-11-21). So the member stays, at a root alone:
+            // every constraint evaluated after this one is evaluated there too, and a `false`
+            // removes it as at any member. [`Scope::zero_reached`] then keeps only the failures
+            // at roots still members of a scope that is not empty.
+            // Proof that the report no longer depends on the order the constraints are
+            // evaluated in (the address order here, or by name in the early pass of
+            // `enumerate`): write F for the set of (constraint, root) pairs where the
+            // constraint fails and R for the roots where some constraint gives `false`. Claim:
+            // the failures returned are exactly the pairs of F whose root is not in R and
+            // survives every other narrowing, when the scope is not empty. (1) A root in R is
+            // removed whatever the order: a member is removed only by a `false` or a narrowing
+            // by another domain, never by a failure (the `[n]` arm keeps it, the `[]` arm sets
+            // no `bottom` for it), so it is still a member when the constraint false there is
+            // evaluated, and the `false` removes it (`[n]`) or empties the scope (`[]`, the
+            // root is the name's one member). (2) Its failures are dropped: `zero_reached`
+            // keeps a failure only at a root still a member, and none from an empty scope.
+            // (3) A pair (k, v) of F with v not in R: no `false` removes v, so v is a member
+            // when k is evaluated, at whatever place in the order, and the failure is
+            // recorded; it is kept unless a narrowing by another domain removes v, which
+            // depends on the domains and not on the order of the written constraints.
+            // A constraint is evaluated at a member at most once (`enumerated`), so keeping
+            // the member adds no evaluation beyond one of each later constraint at each
+            // failing root, at most (constraints) * (roots), the bound `zero_reached` states.
+            // Test: `l01_39_reduced_product::roots::a_failure_at_a_root_another_constraint_rules_out_is_not_reported_in_either_order`
+            // (both orders, two constants whose terms sort apart; red before this change) and
+            // `…::roots::a_constraint_that_fails_at_a_root_is_rejected`. They cannot catch a
+            // failure dropped because a domain other than the written constraints removed the
+            // root, which no test builds.
             match &open[..] {
                 [] => {
                     let gave = at(None);
+                    let rooted = key.1.iter().find(|(n, _)| self.rooted.contains(n));
                     if !matches!(gave, Ok(Value::Bool(_)))
-                        && let Some((n, Value::Int(v))) =
-                            key.1.iter().find(|(n, _)| self.rooted.contains(n))
+                        && let Some((n, Value::Int(v))) = rooted
                     {
                         self.root_failures
                             .insert(root_failure(&key, n, *v, gave.clone()));
-                    }
-                    if let Ok(v) = gave
+                    } else if let Ok(v) = gave
                         && v != Value::Bool(true)
                     {
                         self.bottom = true;
@@ -18028,6 +18085,7 @@ impl Scope {
                             Ok(Value::Bool(false)) => {}
                             gave if rooted => {
                                 self.root_failures.insert(root_failure(&key, n, v, gave));
+                                kept.push(v);
                             }
                             _ => {}
                         }
@@ -18041,8 +18099,9 @@ impl Scope {
                         p.meet_ints(x, &prem);
                     }
                     // One member kept makes `n` static, and the constraint then has another
-                    // key, with `n` among its static names: it gave `true` there just now, so
-                    // it is not evaluated at that member a second time.
+                    // key, with `n` among its static names: it gave `true` there just now, or
+                    // failed at a root and was recorded, so it is not evaluated at that member
+                    // a second time.
                     if let [v] = kept[..] {
                         let mut statics: BTreeMap<Arc<str>, Value> =
                             key.1.iter().cloned().collect();

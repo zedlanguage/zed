@@ -3840,20 +3840,29 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             return;
         }
+        // The call this is an argument of, when it is one: `call_sig_step` pushes its frame and
+        // then the argument's, so it lies just below. O(1).
+        let call = match m.stack.as_slice() {
+            [.., Job::K(Frame::CallSig(c)), Job::K(Frame::ArgOf(_))] => Some(c.span),
+            _ => None,
+        };
         if let Some(sig) = want.fun {
             if let ExprKind::Lambda { params, body } = &e.kind {
                 return self.fit_lambda(m, params, body, sig, e.span);
             }
             if let Some(id) = self.declared(e) {
-                // The call this is an argument of, when it is one: `call_sig_step` pushes its
-                // frame and then the argument's, so it lies just below. O(1).
-                let call = match m.stack.as_slice() {
-                    [.., Job::K(Frame::CallSig(c)), Job::K(Frame::ArgOf(_))] => Some(c.span),
-                    _ => None,
-                };
                 let t = self.fit_declared(id, &sig, e.span, call);
                 return m.ty(t);
             }
+        }
+        // A declared function, its parameters in another order, where several function types
+        // are wanted: fitted to the one [`Self::fn_member`] picks (FAIL-reorder-direct-two-fn-slot).
+        if let (Some(funs), Some(id)) = (&want.funs, self.declared(e))
+            && let Some(s) = self.env.get(&id).and_then(only_fn)
+            && let Some(sig) = self.fn_member(id, &s, funs, e.span, call)
+        {
+            let t = self.fit_declared(id, &sig, e.span, call);
+            return m.ty(t);
         }
         // Any other value where a type holding a partial function type is wanted: a name, a
         // tuple, a call, an `if` (FAIL-partial-slot-nested-guard). The frame waits below the
@@ -8039,6 +8048,30 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 let from = self.errors.len();
                 let what = format!("`{op}`");
+                // An operand that names a parameter declared `K ->? V` is read as a family, and
+                // the parameter is marked as needing one, which each call then checks
+                // ([`Self::read_as_family`], `keys_at`): DESIGN.md sec:type_resolution,
+                // "Equality and order corner rules", "a parameter that needs the facet
+                // [`finite()`] states it, `m: Utf8String ->? int with finite()`, or has it
+                // inferred from the `==` in its body" (plan row Q-family-vs-function-subtyping,
+                // applied by PROOFDOC6-author-questions, 2026-11-21). Why this is sound: a call
+                // whose argument may be a function is refused at the call, so every value that
+                // reaches the `==` is a family, whose present domain is finite and held as data
+                // (the `finite()` of that rule), and `==` on such values compares present
+                // domains, then values. The family read has no function at its declared map, so
+                // `data` below no longer refuses it; any other part that may hold a function
+                // (a function's own value, a tuple holding one) is refused there as before.
+                // Not done here: `with finite()` written on the parameter (step L7.1), and a
+                // function compared pointwise over a key type the type enumerates.
+                // Test: `l01_26_type_resolution::partial_maps::a_function_where_a_family_is_needed_is_refused_at_the_use_and_not_by_its_type`
+                // (`==` and `!=`; red before this change). It cannot catch an operand that
+                // reaches the parameter through a binding, which `read_as_family` does not
+                // follow (`keyed_param`), and is refused as before.
+                for a in [&mut x, &mut y] {
+                    if let Some(t) = self.read_as_family(a.expr, &a.ty, &what) {
+                        a.ty = t;
+                    }
+                }
                 self.data(
                     &x.ty,
                     &what,
@@ -22221,6 +22254,52 @@ impl<'t, 'a> Ck<'t, 'a> {
         t
     }
 
+    /// Of the function types `funs` of a slot, the one to fit the declared function `id`, of
+    /// type `s`, to, where its named parameters are in another order than theirs
+    /// (FAIL-reorder-direct-two-fn-slot, decided in PROOFDOC6-author-questions). DESIGN
+    /// sec:values_morphisms: "A function fits a function type when every call the type
+    /// permits is a valid call of it ... named parameters by name", and a value lies in a
+    /// union where it lies in one member, so `re2(x: int, y: int)` fits
+    /// `((y: int, x: int) -> int) | ((y: int, x: int) -> f64)` as its first member.
+    ///
+    /// The members whose parameters `s`'s match by name ([`order_by_names`]) must all place
+    /// them in one order, which is not the written one (the written order needs no adapter,
+    /// and the slot's own subtype test reads it as before). Proof that the fit is sound: the
+    /// adapter ([`Fit::Adapter`]) takes its arguments in that order; a call through the slot
+    /// reads it as some member `q` and passes its arguments in `q`'s order. A member whose
+    /// names `s`'s do not match cannot hold the value; every other one has that same order,
+    /// so the adapter puts each argument at the parameter of its name. Where two members
+    /// match in two orders the run could not tell which order a call passes, so `None`, and
+    /// the call is refused as before. Of the members in that order, the first `s` fits with
+    /// no error ([`Self::tried`] of [`Self::fit_declared_as`]); the value is then of that
+    /// member's type, which the slot holds. `None` where none fits, and the subtype test
+    /// gives the refusal.
+    ///
+    /// Cost: O(k p) for `k` members of `p` parameters, plus one trial fit per member in the
+    /// order until one fits, each [`Self::fit_declared_as`]'s cost. Choosing by the result
+    /// type alone would skip the trials but miss the domain and range tests the fit makes.
+    /// Tests: function_variance.rs,
+    /// `a_reordered_function_the_generic_body_passes_only_into_a_union_slot_runs`.
+    fn fn_member(
+        &mut self,
+        id: usize,
+        s: &Sig,
+        funs: &ty::Members<Arc<Sig>>,
+        at: Span,
+        call: Option<Span>,
+    ) -> Option<Arc<Sig>> {
+        let named: Vec<(&Arc<Sig>, Vec<usize>)> = (funs.iter())
+            .filter_map(|e| Some((e, order_by_names(s, e)?)))
+            .collect();
+        let ((_, order), rest) = named.split_first()?;
+        if in_order(order) || rest.iter().any(|(_, o)| o != order) {
+            return None;
+        }
+        (named.iter())
+            .find(|(e, _)| self.tried(|c| c.fit_declared_as(id, e, at, call)).is_some())
+            .map(|(e, _)| (*e).clone())
+    }
+
     /// [`Self::fit_declared`] without the write of the fit it finds, which it gives back.
     fn fit_declared_as(
         &mut self,
@@ -22437,11 +22516,36 @@ impl<'t, 'a> Ck<'t, 'a> {
         // gave up on such a slot and the call was refused as one `app3` does not take). Sound:
         // the value is a function, which no other member of `w` holds, so it lies in `w` where
         // it lies in `e`, which [`Self::fit_declared_as`] checks below with `e`'s domain test.
-        // A slot of two function types gives `None`, refused as the direct call refuses it.
+        // A slot of several function types takes it as the direct call does, fitted to the
+        // member [`Self::fn_member`] picks (FAIL-reorder-direct-two-fn-slot; before, `one_fn`
+        // gave `None` and both were refused).
         // Test: function_variance.rs,
         // `a_reordered_function_the_generic_body_passes_only_into_a_union_slot_runs`.
-        let (Some(s), Some(e)) = (only_fn(on), one_fn(w)) else {
+        let Some(s) = only_fn(on) else {
             return false;
+        };
+        let e = match one_fn(w) {
+            Some(e) => e,
+            None if w.vars.is_empty() && !w.dynamic => {
+                let found = self.call_frames.last().and_then(|f| {
+                    let (i, None) = f.place(&n.on)? else {
+                        return None;
+                    };
+                    let a = f.args.get(i).copied().flatten()?;
+                    Some((a.expr?, a.at, f.call))
+                });
+                let Some((x, at, call)) = found else {
+                    return false;
+                };
+                let Some(id) = self.declared(x) else {
+                    return false;
+                };
+                match self.fn_member(id, &s, &w.fns, at, call) {
+                    Some(e) => e,
+                    None => return false,
+                }
+            }
+            None => return false,
         };
         let Some(order) = order_by_names(&s, &e).filter(|o| !in_order(o)) else {
             return false;

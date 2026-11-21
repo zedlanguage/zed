@@ -495,12 +495,37 @@ fn a_function_where_a_family_is_needed_is_refused_at_the_use_and_not_by_its_type
         errs[0].starts_with("`total` takes `m` as a family, which `sum` reads"),
         "{errs:?}"
     );
-    // One error for each operand that may hold a function, both `m` here; `zedc` prints
-    // the message once.
-    let errs = type_errors("same(m: int ->? int) = m == m;\n");
-    assert!(!errs.is_empty(), "{errs:?}");
+    // `==` on a parameter declared `K ->? V` infers that it needs a family (the facet
+    // `finite()`: DESIGN.md sec:type_resolution, "Equality and order corner rules": "a
+    // parameter that needs the facet states it, ... or has it inferred from the `==` in its
+    // body"; plan row Q-family-vs-function-subtyping, applied by PROOFDOC6-author-questions):
+    // the body is accepted, a family passed is taken, and a function passed is refused at the
+    // call, as for `.sum`. Until then the body was refused, "Cannot compare a value that may
+    // hold a function".
+    let same = "same(m: int ->? int) = m == m;\n";
+    assert_eq!(type_errors(same), Vec::<String>::new());
+    assert_eq!(
+        type_errors(&format!("{same}t = same(m: {{0 -> 1}});\n")),
+        Vec::<String>::new()
+    );
+    let errs = type_errors(&format!("{same}t = same(m: ((x: int) -> x));\n"));
+    assert_eq!(errs.len(), 1, "{errs:?}");
     assert!(
-        (errs.iter()).all(|e| e.starts_with("Cannot compare a value that may hold a function")),
+        errs[0].starts_with("`same` takes `m` as a family, which `==` reads"),
+        "{errs:?}"
+    );
+    let errs = type_errors(
+        "differ(a: int ->? int, b: int ->? int) = a != b;\nt = differ(a: {0 -> 1}, b: ((x: int) -> x));\n",
+    );
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert!(
+        errs[0].starts_with("`differ` takes `b` as a family, which `!=` reads"),
+        "{errs:?}"
+    );
+    // A function's own value, not a parameter declared `->?`, is still refused at `==`.
+    let errs = type_errors("f(x: int) = x;\nt = f == f;\n");
+    assert!(
+        (errs.iter()).any(|e| e.starts_with("Cannot compare a value that may hold a function")),
         "{errs:?}"
     );
     let errs = type_errors(
