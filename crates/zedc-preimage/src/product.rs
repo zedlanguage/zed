@@ -9434,10 +9434,54 @@ impl Scope {
     /// with what the relation implies. The star's projection onto its hubs is
     /// [`Conjuncts::star`] in zedc-presburger `conjuncts.rs`, argued there. Test:
     /// `l01_39_scope_relations::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction::the_eager_join_is_as_tight_as_the_lazy_one_at_these_seeds`
-    /// (seeds 116, 237, 272, 2220, 22490, 22671), which compares the two at those seeds only
-    /// and cannot catch a leaf where the lazy scope is coarser at other seeds. Not proved:
-    /// that a lazy scope is never coarser than the eager one at a leaf that is not stale;
-    /// the paragraph above argues it for stale leaves only.
+    /// (seeds 116, 237, 272, 2220, 22490, 22671).
+    ///
+    /// Never coarser at a leaf that is not stale (row PROOF-product-lazy-not-coarser,
+    /// 2026-11-21). At such a leaf [`Scope::settled`] returns [`Scope::get`] (it settles only
+    /// when [`Scope::stale`] names a block), so the claim is `lazy.get(a) ⊆ eager.get(a)`.
+    /// The argument, over a sequence of tests, joins and bindings applied to both scopes:
+    /// 1. Tests. Both scopes write the same conjuncts (A1), and every name that is not a
+    ///    leaf holds the same product in both, by the paragraph above (a leaf's projection
+    ///    moves no hub).
+    /// 2. A leaf `a` that is not stale. Its block has no due part, so each part's last
+    ///    projection in the lazy scope read the present products of the part's names and its
+    ///    present `with` ([`PartWith`]; `Scope::is_projected` compares both). Between two
+    ///    joins, products only narrow and conjuncts are only added. An eager projection made
+    ///    before that lazy one read products no narrower and conjuncts no more. One made
+    ///    after it was due by a change of a `with` or of a product; at a name that is not the
+    ///    leaf that change is the same in the lazy scope and would have made `a` stale, so it
+    ///    was due by the eager leaf's own product, which another part's projection narrowed
+    ///    (A4: such a projection reads no conjunct the lazy one lacked). If a projection with
+    ///    narrower products and more conjuncts is no wider (A2), each eager projection holds
+    ///    the lazy one. Both scopes meet `a` with the same unary tests on `a`. So
+    ///    `lazy.get(a)`, at most the unary tests met with the last projection, is within
+    ///    `eager.get(a)`, the unary tests met with every projection the eager scope made.
+    /// 3. A join. The lazy join settles the leaves its two sides may differ at
+    ///    (`Scope::refresh`), and the eager join projects again the stars it refreshes, so by
+    ///    steps 1 and 2 each side's lazy product is within the eager one at every name the
+    ///    join reads. `Product::join` is monotone in each argument (a join per domain), and
+    ///    by A1 the two joins keep the same conjuncts, so the joined lazy product is within
+    ///    the eager one. A leaf stale on both sides stays stale and is covered by the
+    ///    paragraph above. After the join, products may be wider than before it, so step 2
+    ///    needs, for a part recorded projected in the joined scope, that it was projected at
+    ///    products no wider than the joined ones (A3).
+    ///
+    /// Not proved (row PROOF-product-lazy-not-coarser): A1, that the two scopes hold the same
+    /// conjuncts (true of the written tests; not checked for the conjuncts that reduction
+    /// adds); A2, that the projection is monotone, which holds of an exact projection, and
+    /// of a meet of monotone ones, but is not proved for the projection one disjunction at
+    /// a time (S16) or for the hulls; A3, the record of projected parts across a join; A4,
+    /// that an eager projection due only by the leaf's own product reads no constraint on
+    /// another term added after the lazy scope's last projection. Tests:
+    /// `Case::eager_join` in `l01_39_scope_relations::lazy` checks the eager and lazy joins
+    /// equal at every name, in every case it draws (before 2026-11-21 it checked only
+    /// eager within lazy, and `Case::run` checked equality only for a case that keeps the
+    /// hubs). A sweep of that check over seeds 0 to 1,499 (2026-11-21) found no name where
+    /// the lazy join is coarser. Made red by a lazy `refresh` that does not settle (seed
+    /// 2220: `a0` eagerly `[-1, ∞)`, lazily `[-11, ∞)`). It cannot catch a difference in
+    /// sequences of more than one join, or in names outside the six it reads; the random
+    /// sequences of `a_lazy_scope_settles_each_name_to_the_eager_product` check equality
+    /// after every step of up to 12, joins among them.
     pub fn lazy(mut self) -> Scope {
         self.lazy = true;
         self
@@ -13332,12 +13376,17 @@ impl Scope {
         // narrows_its_input`. Interval readers other than `through_terms` (`Product::ints`)
         // still see the interval without the class on a name with no term: sound, less
         // precise, row PRES-interval-strided-piece.
-        // And the ends the reduction later moves in to the class are
-        // not recorded in [`Scope::direct`], which the preimage's meet did (`one` below), so
-        // [`Scope::stated`] cannot state them at a join: open whether a join loses a case by
-        // it. Tests: `l01_39_scope_relations::xst::s4::the_holes_cut_leave_each_x_one_range_
-        // and_one_class` (one range and the class) and `holes_cut_one_at_a_time_drop_each_
-        // case` (the values); neither builds a name with a term or a join that reads `direct`.
+        // (4) The ends the reduction later moves in to the class were not recorded in
+        // [`Scope::direct`], which the preimage's meet did (`one` below), so
+        // [`Scope::stated`] could not state them at a join, and a join lost a case by it
+        // (row PROOF-product-atom-names-ends, 2026-11-21): in `0 <= a <= 10`, the case
+        // `a < n && a mod 3 == 1` joined with `a >= n`, then `a <= 0`, left `n` in
+        // `[-20..=20]`, where only the second case holds `a == 0` and gives `n <= 0`. Fixed:
+        // the branch below records those ends. Test, red before (`n is [-20..=20]`) and green
+        // after: `l01_39_scope_relations::nests::a_join_keeps_the_end_a_class_test_moved`,
+        // which also checks `a >= 1` in place of the class. Other tests:
+        // `l01_39_scope_relations::xst::s4::the_holes_cut_leave_each_x_one_range_and_one_class`
+        // (one range and the class) and `holes_cut_one_at_a_time_drop_each_case` (the values).
         // Complexity tradeoff: naive version, the preimage of the test taken as for any other
         // test, which lists each value of the class in the name's interval as a range of its
         // own ([`preimage_listed`]'s split by remainders), O(v) for v values, and the name then
@@ -13360,6 +13409,29 @@ impl Scope {
         {
             if *met {
                 changed.push(x.clone());
+                // The ends the class moves in, recorded as the preimage's meet records those
+                // it moves (`one` below), so that [`Scope::stated`] states them at a join (row
+                // PROOF-product-atom-names-ends). They are the ends [`reduce_congruence`] gives
+                // the interval in the name's class, which the reduction after this test gives
+                // the name. Sound as an entry of `direct` (its doc): every state of the scope
+                // has `x` in its interval and its class, so at or within those ends, and they
+                // come from tests of `x` alone. They are the preimage path's ends when the name
+                // had no class before; with one, as `x mod 2 == 0` before `x mod 3 == 1` in
+                // `0..=10`, they can be tighter (4, where the preimage of the test alone over
+                // the interval gives 1), and hold all the same.
+                if let Some(p) = self.names.get(x)
+                    && let Some((lo0, hi0)) = p.ints().bounds().map(|(l, h)| (l.clone(), h.clone()))
+                    && let Some((lo, hi)) =
+                        (reduce_congruence(p.ints(), &p.cell.congruence.element).0)
+                            .bounds()
+                            .map(|(l, h)| (l.clone(), h.clone()))
+                {
+                    for (upper, moved, end) in [(false, lo > lo0, lo), (true, hi < hi0, hi)] {
+                        if let (true, End::Fin(v)) = (moved, end) {
+                            self.direct.insert((x.clone(), upper), v);
+                        }
+                    }
+                }
             }
             self.through_terms(changed, convex, prem);
             return (true, inputs, free);
@@ -14418,7 +14490,24 @@ impl Scope {
             // costs one failed raise and one call of [`Scope::by_holes`] on one cycle,
             // O((k + h) log N) there ([`holes`]). Still open (item O7, COMPLEXITY.md S25):
             // raises that all hold, as on a chain with slack, each moving O(k) names, O(k² log k)
-            // (`linked::bench::holes_piled_in_the_names_of_a_chain_take_quadratic_time`).
+            // (`linked::bench::holes_piled_in_the_names_of_a_chain_take_quadratic_time`, and
+            // the ring of `holes::bench::a_ring_with_slack_whose_raises_all_hold_is_quadratic`:
+            // 472 M and 13,024 M instructions at n = 128 and 1,024, ratio 27.6, 2026-11-21).
+            // Tried and refused (row PERF-project-raises-o7, 2026-11-21): stopping the raises
+            // once the potential's entries they changed passed the sizes of their components,
+            // and projecting the tree by its ends, as COMPLEXITY.md S25 item (2) proposed. The
+            // results are the same (`holes::a_ring_with_slack_keeps_each_hole_and_reaches_its_ends`
+            // passes with it at n up to 40), and the ratio falls to 0.99, but both sizes then
+            // read about 18,000 M instructions: the ends return `Kept` on a cycle with a hole,
+            // so each due block runs its own Presburger projection (a perf profile put 32% of
+            // the cycles in `row_sums::Plan::meet`). A repair of the potential for many lowered
+            // names at once has negative edges out of each of them, which a one-source Dijkstra
+            // repair does not handle; two literature searches (allpapers keyword and semantic,
+            // 2026-11-21) found no method in O(k log k) for that batch among their titles and
+            // abstracts; the nearest titles, not yet read in full, are Schutt and Stuckey,
+            // "Incremental Satisfiability and Implication for UTVPI Constraints" (arXiv
+            // 0709.2961), and van den Brand and Saranurak, "Sensitive Distance and Reachability
+            // Oracles for Large Batch Updates" (arXiv 1907.07982). Not proved near linear.
             for (&t, at) in &fresh {
                 if !at.added.is_empty() {
                     match self.repair(&relation, t, &at.added) {
@@ -15613,12 +15702,44 @@ impl Scope {
     // name is already in `moved`, except a move by the initial star base, whose names are
     // credited once in `moved_by_base` (the next other move removes the credit, the one after
     // trips `again`), and a move of the leaf, which pushes nothing (proof at the leaf below).
-    // So each name pushes its users at most twice before the loop breaks, and the pushes are
-    // at most the parts due at the start plus 2 Σ_n (users of n). Not proved: the pushes made
-    // without a move (a chain part found not idle pushes the rest of its chain;
-    // `b.released` pushes the parts it releases). The open sub-case is a part popped again
-    // only through these pushes, its projection moving nothing; it needs a bound on how often
-    // `certified` and `released` let one part through, which this audit did not read.
+    // So each name pushes the parts its moves reach (`W(n)`: its users, and in a case the
+    // parts of its chains, punctures and recession keys) at most twice before the loop breaks,
+    // three times for a name the initial star base moved (the base's move, the move that
+    // removes the credit, and the move that trips `again` all push before the `break`), and
+    // the pushes made by moves are at most 3 Σ_n W(n).
+    // The pushes made without a move (row PROOF-project-block-nonmove-pushes, 2026-11-21) are
+    // bounded too, so the loop ends; the bound below is polynomial in the block's size, not
+    // linear. Let N be the block's names, P its parts, F0 the entries of `b.fired_chains` at
+    // the loop's start, and M = 3N + 1.
+    // (a) A chain push (a part of chain key `k` found not idle after its projection pushes the
+    // rest of its chain) removes the entry `fired_chains[k]` and puts none back; the idle
+    // branches remove it and put back at most one (`chain_left_by_idle`), pushing nothing.
+    // In the loop an entry is created only by `enqueue_chain_in_case`, at a move of a name
+    // other than the leaf (it is called only below the leaf's `continue`). So the chain pushes
+    // are at most F0 + 3 Σ_n C(n) batches, `C(n)` the chain keys a move of `n` reaches, each of
+    // at most P parts.
+    // (b) A release pushes the parts of a role whose flag (`stair_managed`, `ray_managed`)
+    // went from true to false at the step's `cover`. `cover` reads only the names and the
+    // block's conjuncts, rays and roles, which the loop does not change (it changes
+    // `fired_chains` and `hole_pending`), and a second call on unchanged names gives the same
+    // flags (the idempotence stated at the certificate above). Between two calls only the
+    // step's `project_part` changes names, so a flag changes only at a step whose projection
+    // changed a name. A step that changes a name other than the leaf adds it to `moved`,
+    // removes a credit, or trips `again` and ends the loop: at most M such steps. A step that
+    // changes only the leaf: every conjunct of a star's part at the leaf `x` is closed upward
+    // in `x` on the hubs' side (the star proof below, (1) and (2)), so while the other names
+    // are fixed, the values of `x` that part `i` allows over them are `[m_i, ∞)` with `m_i`
+    // fixed, and an exact projection of `i` meets `x` with that set; a second projection of
+    // any part then moves nothing, and the meets commute. So between two of the M steps each
+    // part changes the leaf at most once: at most P (M + 1) such steps. Hence at most
+    // M + P (M + 1) flips, each pushing at most P parts.
+    // (c) Each pop takes a part pushed or due at the start, so the pops are at most
+    // |due| + 3 Σ_n W(n) + P (F0 + 3 Σ_n C(n)) + P (M + P (M + 1)).
+    // Assumptions: (b) reads `project_part` as exact at the leaf; a projection that gives a
+    // hull without a refusal (the assumption at `again` below, ASSUME-documented) may move the
+    // leaf again and is not covered here. That `cover` reads only those fields is read from
+    // `cover_staircase`, `cover_rays` and `ray_high`, not tested. No test counts pops, so a
+    // bound broken by a later edit would show only as time.
     // Tests:
     // `l01_39_scope_relations::nests::two_parts_that_pass_a_bound_back_and_forth_reach_the_empty_scope`
     // and its bench; neither counts pops a part.
@@ -15714,7 +15835,30 @@ impl Scope {
                 && self.project_threshold(shape)
             {
                 self.cover(&mut b, covered.is_some());
-                self.record(b, &start, &due, &[], &[]);
+                // No part is recorded here (rows PROOF-product-seen-record-precision and
+                // PROOF-product-part-fixed-point-precision). The solve is exact on the hub
+                // and gives each other name its least and greatest values, a hull
+                // ([`Scope::project_threshold`]), so a part, projected again, can still narrow
+                // it: `x + 1 <= 3y <= x + 2` on `0..=4` leaves x in `1..=4`, where the part
+                // keyed by `3y >= x + 1`, projected again, gives x in {1, 2, 4} (x = 3 needs 3y
+                // in `4..=5`). Recording the due parts here, as this
+                // exit once did, made such an entry claim a fixed point it is not at, and a
+                // later hit of it skipped that projection. Proof that keeping the block
+                // without a record is sound and loses nothing: an entry only lets
+                // [`Scope::block`] skip its part, so a part without an entry at the names as
+                // they now are is due when the block is next projected, which is the
+                // projection the entry would have skipped; and the entries of the parts not
+                // due are as `Scope::record` (2) leaves them. Cost: a part not recorded is
+                // due again at the block's next projection, which this shape solves whole
+                // anyway (O(k log k) for k parts, above); measured unchanged or lower on the
+                // benches of l01_39_scope_relations (the walk through a shared name 9.2 to
+                // 9.0 times at 8n). Running the due parts here instead, to the loop's fixed
+                // point, gave the exact sets but 19.1 and 22.5 times at 8n on
+                // `xst::s4::bench` (holes cut one at a time, class cases moved), past the
+                // limit. Test: `product::tests::projected_entries_after_a_threshold_solve_
+                // hold_at_its_snapshot` (red with the record: the entry of `3y - x - 1 >= 0`
+                // recorded at x `1..=4`, y `1..=2`).
+                self.keep(b);
                 return;
             }
         }
@@ -16487,7 +16631,20 @@ impl Scope {
             // `aggregated`); (b) the ends by `break`: `again` projects the whole block once,
             // or not at all when `repeat`, and a refused or inexact projection there leaves
             // the written parts recorded at products they may narrow further; `empty` and
-            // `bottom` end with a name empty. Each is a loss of precision only, by (1). Tests:
+            // `bottom` end with a name empty. Each is a loss of precision only, by (1). Rows
+            // PROOF-product-seen-record-precision and PROOF-product-part-fixed-point-precision
+            // (2026-11-21): a check, since removed, that projected each written part again at
+            // the end of this function and compared its names' sets, classes reduced
+            // ([`reduce_congruence`]), found 114 untrue entries in the modules families (4),
+            // linked (15), holes (3), nests (74) and lazy (18) of l01_39_scope_relations, and
+            // none in case_wake, all due parts written unprojected by the threshold-solve exit
+            // of [`Scope::project_block`], whose hull leaves holes a part still cuts. That exit
+            // now writes no record (its proof is there). With an earlier form of the fix, which
+            // ran the due parts to the loop's fixed point there and then recorded, the same
+            // check found none in those six modules and in xst; the form kept, which records
+            // nothing there, was not run under the check, only under the tests below and those
+            // modules. So (a) and (b) are not proved. Tests:
+            // `product::tests::projected_entries_after_a_threshold_solve_hold_at_its_snapshot`,
             // `l01_39_reduced_product::scaling::tightenings_beside_disjunctions_leave_the_
             // scope_made_again` (compared with `forget_projections`) and the random ladders of
             // `l01_39_scope_relations::linked`; they compare final intervals and cannot catch
@@ -17681,7 +17838,12 @@ impl Scope {
                 // rules out (then a failing member of a rooted name is kept in the `[n]` arm of
                 // `enumerate_on`, and `zero_reached` returns failures only for a non-empty scope,
                 // as `Scope::join` already drops an empty case's). Either makes the report
-                // independent of the order; until it is chosen the report depends on it.
+                // independent of the order; until it is chosen the report depends on it. Checked
+                // again (proofdoc5g, 2026-11-21): the main pass alone depends on the order too,
+                // since `enumerate_on` returns at its first `false` in address order and
+                // `zero_reached` returns `root_failures` from an empty scope as well (`(!s.bottom,
+                // s.root_failures)`), so the proposed fix alone would not make the report
+                // independent of the order; the choice above goes to the author.
                 changed.sort_by_key(|n| self.written_by.count(n));
                 for n in &changed {
                     if !self.names.read(n).is_some_and(|p| p.value().is_some()) {
@@ -18192,22 +18354,35 @@ fn ids<'n>(nodes: &'n [Node], s: &'n [(usize, bool)]) -> impl Iterator<Item = (u
 // when their forms are equal; a nest's form is its connective and its sides' (rank, id,
 // polarity) list, sorted and with repeats dropped, so by the induction two nests share an id
 // exactly when they differ only in the order of their sides (or in a repeated side). Atoms
-// compare by their text, and `next` grows with height, so ids order by height, then form.
-// No hash is read. One gap, not checked: two different atoms with the same text get one id
-// and are not merged (`dedup_by` also compares terms), so `sort_by_key` keeps them in the
-// written order; this needs `Term`'s text to tell apart any two terms the scope reads apart.
-// Narrowed (row PROOF-tree-rank-equal-text-atoms, 2026-11-21): the printer's contract
-// (zed-kernel print.rs, module doc; tests/steps/l01_15_kernel_terms/read_back.rs, "the forms
-// elaboration builds come back as the same term, and the rest as a term with the same
-// value") makes the text one-to-one on the forms elaboration builds: two such terms of one
-// text read back to one term, equal to both. Outside those forms the text is not one-to-one:
-// an atom built with a name that is not a literal prints `#_(..)` whatever the name
-// (`read_back.rs`, `an_atom_with_no_literal_name_is_written_any_atom`; elaboration never
-// builds one), and a hand-built `Term::PrimFn` prints as a lambda, which reads back as the
-// lambda, a term of the same value. Not proved: that every atom this tree is given is of a
-// form elaboration builds (the scope substitutes static names into tests first), and that
-// the read-back contract, tested on samples, holds for every elaborated form. A loss here
-// is of precision only: the order never decides soundness (above).
+// compare by their text and then by their `Debug` text, and `next` grows with height, so ids
+// order by height, then form. No hash is read.
+// Atoms of one text (row PROOF-tree-rank-equal-text-atoms, 2026-11-21). The text alone is
+// not one-to-one: an atom built with a name that is not a literal prints `#_(..)` whatever
+// the name (zed-kernel read_back.rs, `an_atom_with_no_literal_name_is_written_any_atom`),
+// and a hand-built `Term::PrimFn` prints as a lambda. Before, two such atoms got one id and
+// `sort_by_key` kept them in the written order, so the order of the sides depended on it.
+// Now (`Tree::of`, `debugs`) each atom whose text another atom of the tree shares also has
+// its `Debug` text, and atoms compare by (text, `Debug` text), a total order, as it is the
+// order of pairs of strings (an atom of a text no other shares has an empty `Debug` text,
+// and is never compared with an atom of its own text). The steps: (1) The key is a function
+// of the atom's term alone, so the sorted order of a height, and the ids, do not depend on
+// the written order. (2) Equal keys mean equal terms, up to one exception: `Term`'s `Debug`
+// (zed-kernel term/walk.rs, `show_term`) writes every variant's tag and every part in order,
+// names quoted with escapes, a part held twice labeled as SRFI 38 does (`#1=` the first
+// time, `#1#` after), and `Value`'s `Debug` (value.rs `debug`) does the same with variant
+// tags and quoted strings, so the text can be read back to the term's structure, which is
+// what `Term`'s `PartialEq` compares (walk.rs `Comparing`, names compared as written). The
+// exception is a float leaf: `f64`'s `Debug` writes every NaN as `NaN`, so two atoms that
+// differ only in a NaN's payload share a key; and a term that holds a part twice and one
+// that holds two equal copies are equal under `PartialEq` but differ in `Debug` text, so
+// get two ids, which loses only the merge of two repeated sides (`dedup_by` needs equal
+// ids), never the order's independence of the writing, by (1). (3) So two different atoms
+// get one id only through NaN payloads, and a nest that holds both keeps them in the
+// written order; a loss of precision only, as the order never decides soundness (above).
+// Test, red before (one id, and `[m, n]` against `[n, m]`) and green after:
+// `product::tests::atoms_of_one_text_get_their_own_ids_in_either_written_order`. It checks
+// one pair of atoms in a nest of two; it cannot catch a `Debug` text that fails to tell two
+// terms apart in a form it does not build.
 fn rank(n: &Node) -> u8 {
     match (&n.kind, n.term) {
         (Kind::Lit(_), _) => 0,
@@ -18335,6 +18510,25 @@ impl<'a> Tree<'a> {
                 Kind::Lit(_) => 0,
             };
         }
+        // An atom's `Debug` text, written only for an atom whose text another atom shares,
+        // to order atoms of one text ([`rank`]'s proof, row PROOF-tree-rank-equal-text-atoms).
+        // Complexity tradeoff: naive version, every atom's `Debug` text, twice the writing
+        // above. Used: only atoms in a run of equal texts, found by one sort of the atoms by
+        // text, O(a log a) comparisons for `a` atoms, as the sort of each height below makes.
+        let mut debugs = vec![String::new(); nodes.len()];
+        if ordered {
+            let mut atoms: Vec<usize> = (0..nodes.len())
+                .filter(|&i| matches!(nodes[i].kind, Kind::Atom))
+                .collect();
+            atoms.sort_unstable_by(|&a, &b| texts[a].cmp(&texts[b]));
+            for run in atoms.chunk_by(|&a, &b| texts[a] == texts[b]) {
+                if run.len() > 1 {
+                    for &i in run {
+                        debugs[i] = format!("{:?}", nodes[i].term);
+                    }
+                }
+            }
+        }
         let mut levels: Vec<Vec<usize>> =
             vec![Vec::new(); height.iter().max().map_or(0, |h| h + 1)];
         for (i, &h) in height.iter().enumerate() {
@@ -18369,7 +18563,9 @@ impl<'a> Tree<'a> {
             }
             let form = |a: usize, b: usize| match (&nodes[a].kind, &nodes[b].kind) {
                 (Kind::Lit(x), Kind::Lit(y)) => x.cmp(y),
-                (Kind::Atom, Kind::Atom) => texts[a].cmp(&texts[b]),
+                (Kind::Atom, Kind::Atom) => texts[a]
+                    .cmp(&texts[b])
+                    .then_with(|| debugs[a].cmp(&debugs[b])),
                 (Kind::Nest(x, s), Kind::Nest(y, t)) => {
                     x.cmp(y).then_with(|| ids(&nodes, s).cmp(ids(&nodes, t)))
                 }
@@ -18517,13 +18713,31 @@ fn balanced(p: Prim, mut level: Vec<Term>) -> Term {
 // Soundness without the reductions: `Scope::join` holds every state either side holds, and a
 // reduction only removes states the scope's own facts exclude, so the unreduced join of the
 // pairs holds every state of every case, as the reduced one does; the caller's one reduction
-// then narrows it soundly. Not proved: that the answers are equal in general. A reduced
-// product reduced after a join of joins need not equal one reduced at each level, since a
-// reduction of an inner join may narrow a domain that the outer join then keeps narrower;
-// this is measured on the groups above only (COMPLEXITY.md F158, test
-// `l01_39_scope_relations::two_disjunctions::bench`), not shown for every formula. Open
-// sub-case: a join whose reduction narrows an interval by a congruence or a finite set that
-// neither case alone gives.
+// then narrows it soundly.
+// Equality of the answers, proved in one case (row PROOF-product-join-cases-equal,
+// 2026-11-21). Suppose (E1) each case is reduced exactly: every value of each name's product
+// extends to a state of the case's relation within its names; and (E2) `Product::join` of the
+// two sides' products holds only the values one side holds (each domain of the cell joined
+// apart: the interval sets by union, the classes and finite sets by their joins, with no
+// value of the meet of the joins outside both sides). Then an inner join `J` of `A` and `B`
+// narrows nothing on reduction: a value `v` of a name in `J` is, by (E2), a value of that
+// name in `A`, say; by (E1) it extends to a state `s` of `A`'s relation within `A`'s names;
+// `s` lies within `J`'s names, which hold `A`'s, and satisfies `J`'s relation, which keeps
+// the conjuncts both sides hold and the disjunction of the rest (`Formula::either`) with the
+// equalities both imply (Karr's hull), all implied by `A`'s relation. So `v` keeps a state in
+// `J` and the reduction removes it nowhere. `J` then also satisfies (E1), from `A`'s and
+// `B`'s states, so by induction over the levels every join, reduced or not, has the same
+// names, and the caller's one reduction gives the same answer. Not proved outside (E1) and
+// (E2), the open sub-cases: (a) (E2) fails for classes, since the join of the cell's domains
+// apart is wider than the union (`[0, 10]` with class 0 mod 3 joined with `[20, 30]` with
+// class 1 mod 3 holds 1, which neither side holds), and an inner reduction may then remove
+// such a value by a congruence or a finite set that neither case alone gives, which the
+// outer join keeps removed only in the reducing method; (b) (E1) fails where a case is
+// reduced by a projection that is not exact (the per-disjunction projection of S16, a hull
+// without a refusal), so an inner reduction may narrow what the outer one does not. Either is
+// a loss of precision against the reducing method, never of soundness. Measured on the
+// groups above only (COMPLEXITY.md F158, test
+// `l01_39_scope_relations::two_disjunctions::bench`).
 fn join_cases(mut cases: Vec<Scope>) -> Scope {
     while cases.len() > 1 {
         let mut it = std::mem::take(&mut cases).into_iter();
@@ -24059,9 +24273,32 @@ impl Block {
     /// final `project_part(&all)` and the entry-hole projection) end the call right after
     /// projecting the threshold shape or every part together, and do not release.
     /// Skipping a projection only leaves a box wider, so a release missed is never unsound.
-    /// Not proved: that the projection of every part together at those exits is at least as
-    /// narrow as each released part's own projection (true when that projection is exact).
-    /// Test: `families::upper_release_against_the_oracle` (y [..=-1] where main gave [..=5]).
+    ///
+    /// Why the exits lose nothing by not releasing, exit by exit (row
+    /// PROOF-product-block-released-joint, 2026-11-21). Write `N` for the names' products
+    /// before the exit's projection, `P` for a released part's formula and `A` for the
+    /// formula that exit projects, and `proj(F)` for the exact projection of `F ∧ N` onto
+    /// each name (the set of values some integer point of `F ∧ N` gives that name).
+    /// (1) The final `again` projection and the entry-hole one project
+    /// `A = compact_abs(and(b.formula(p) for every part p))`; `compact_abs` keeps the same
+    /// points (proof at [`compact_abs`]), and `P` is one of the conjuncts, so every point
+    /// of `A ∧ N` is a point of `P ∧ N` and `proj(A) ⊆ proj(P)`, name by name. Each
+    /// projection is sound (it keeps `proj` of what it projects), so `P`'s own projection
+    /// gives at least `proj(P)`: when the joint projection gives exactly `proj(A)`, it is at
+    /// least as narrow as `P`'s own. (2) The `repeat` skip runs no `cover`, so it releases
+    /// nothing. (3) The threshold exit meets the hub with its exact set of values that pass
+    /// and every other name with its least and greatest values that pass
+    /// ([`threshold::solve`], proof in `threshold.rs`): exact on the hub, and the hull of
+    /// `proj(A)` on the others, where `A` is the whole component, which holds `P`.
+    /// Not proved: (a) in (1), a joint projection that gives a hull or refuses, which can
+    /// be wider than `P`'s own projection (seed 12035647242373093243 part 52 gives a hull
+    /// without a refusal, at [`Scope::project_block`]); (b) in (3), a released part whose own
+    /// projection leaves a hole inside the hull a name other than the hub was given, e.g.
+    /// `x <= 0 || y >= 5` and `y <= 4 || x >= 2` give `x` in `{0, 2}` together, where the
+    /// threshold answer is `[0..=2]`, but each part alone leaves `x` whole, so this example
+    /// is no fault; whether some part alone leaves a hole is open. Each is a loss of
+    /// precision only. Test: `families::upper_release_against_the_oracle` (y [..=-1] where
+    /// main gave [..=5]); it checks one release in the loop, not an exit.
     fn released(&self, stair: bool, ray: bool) -> impl Iterator<Item = &PartAt> {
         let (stair, ray) = (stair && !self.stair_managed, ray && !self.ray_managed);
         (self.roles.iter())
@@ -26017,6 +26254,42 @@ mod tests {
         assert_eq!(keys(&j2), vec![a, b, e]);
     }
 
+    /// Two different atoms of one text get two ids, and the sides of their nest the same
+    /// order whichever is written first (PROOF-tree-rank-equal-text-atoms, the proof at
+    /// [`rank`]). An atom whose name is not a literal prints `#_(a)` whatever the name
+    /// (zed-kernel read_back.rs, `an_atom_with_no_literal_name_is_written_any_atom`), so the
+    /// text alone neither tells these two apart nor orders them.
+    #[test]
+    fn atoms_of_one_text_get_their_own_ids_in_either_written_order() {
+        let atom = |name: &str| {
+            Term::Prim(
+                Prim::Atom,
+                vec![
+                    Term::Var(name.into()),
+                    Term::Lit(Value::tuple(Vec::new())),
+                    Term::Var("a".into()),
+                ],
+            )
+        };
+        let (x, y) = (atom("n"), atom("m"));
+        assert_eq!(x.to_string(), y.to_string());
+        let and = |p: &Term, q: &Term| Term::Prim(Prim::And, vec![p.clone(), q.clone()]);
+        let sides = |t: &Term| {
+            let (tree, _) = Tree::of(t);
+            let Kind::Nest(_, s) = &tree.nodes[0].kind else {
+                panic!("a nest: {t}");
+            };
+            let ids: Vec<usize> = s.iter().map(|&(k, _)| tree.nodes[k].id).collect();
+            let terms: Vec<Term> = s.iter().map(|&(k, _)| tree.nodes[k].term.clone()).collect();
+            (ids, terms)
+        };
+        let (ids, xy) = sides(&and(&x, &y));
+        let (_, yx) = sides(&and(&y, &x));
+        assert!(xy == yx, "the written order decides: {xy:?} and {yx:?}");
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1], "two atoms, one id");
+    }
+
     /// The writer of [`IntsListed`] keeps what its readers rest on (PROOF-ints-listed-writers):
     /// after each reduction of a product whose finite set is a set of integers, narrowed step
     /// by step in its interval (one piece or many) and now and then in its set, a record
@@ -27265,6 +27538,39 @@ mod tests {
         let (asked, joins) = ask_checked(&steps, "fixed history");
         assert!(asked >= 9, "only {asked} steps kept a point");
         assert!(joins >= 4, "only {joins} joins of cases");
+    }
+
+    /// The entries a threshold component's solve writes hold too (rows PROOF-product-seen-
+    /// record-precision and PROOF-product-part-fixed-point-precision): `x + 1 <= 3y <= x + 2`
+    /// on `0..=4` is solved exactly on its hub and as a hull elsewhere, x in `1..=4`, where the
+    /// part keyed by `3y >= x + 1`, projected again, gives x in {1, 2, 4}. When the solve's exit
+    /// recorded every due part unprojected, the entry of that part was untrue; the exit now
+    /// records none. The case is `l01_39_scope_relations::families::projection_shortcut_cases`
+    /// G1.
+    #[test]
+    fn projected_entries_after_a_threshold_solve_hold_at_its_snapshot() {
+        use zed_kernel::term::build::{lit, prim, var};
+        let three_y = || prim(Prim::Mul, vec![lit(3), var("y")]);
+        let plus = |n: &str, c: i64| prim(Prim::Add, vec![var(n), lit(c)]);
+        let steps = [
+            (prim(Prim::Ge, vec![var("x"), lit(0)]), true),
+            (prim(Prim::Le, vec![var("x"), lit(4)]), true),
+            (prim(Prim::Ge, vec![var("y"), lit(0)]), true),
+            (prim(Prim::Le, vec![var("y"), lit(4)]), true),
+            (
+                prim(
+                    Prim::Or,
+                    vec![
+                        prim(Prim::Ge, vec![var("x"), lit(100)]),
+                        prim(Prim::Le, vec![three_y(), plus("x", 2)]),
+                    ],
+                ),
+                true,
+            ),
+            (prim(Prim::Ge, vec![three_y(), plus("x", 1)]), true),
+        ];
+        let (asked, _) = ask_checked(&steps, "threshold history");
+        assert_eq!(asked, steps.len(), "every step keeps a point");
     }
 
     /// The same check on random histories of rows on `a`, `x` and `y`, disjunctions of two rows

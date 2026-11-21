@@ -410,6 +410,13 @@ fn laps(n: usize, r: i64, more: impl Fn(usize) -> Vec<i64>) -> (Scope, Term) {
     })
 }
 
+/// The ring of item O7 (COMPLEXITY.md S25): `n` names within `0..=4n`, `x{i}` without
+/// `4n - 2i`, on a ring of lap `2n`, slack enough that every raise of a gap holds.
+fn slack_ring(n: usize) -> (Scope, Term) {
+    let r = 4 * n as i64;
+    ring(n, r, 2 * n as i64, |i| vec![r - 2 * i as i64])
+}
+
 /// The values each name of `s` keeps, as the scope prints them.
 fn printed(s: &Scope, n: usize) -> Vec<String> {
     (0..n).map(|i| s.get(&x(i)).ints().to_string()).collect()
@@ -464,6 +471,33 @@ fn one_cycle_of_holes_has_exact_ends() {
                 "{what}, n = {n}"
             );
         }
+    }
+}
+
+/// The ring of item O7 ([`slack_ring`]) keeps each name's hole and reaches its exact ends at
+/// 4 to 40 names, whether its gaps are all raised or the raises stop at their budget and the
+/// ends project it (`Scope::project`, row PERF-project-raises-o7). By hand: `x0` is in
+/// `0..=4n - 1`, its hole `4n` being its upper end; each other `x{i}` is in `0..=4n - 1`
+/// without `4n - 2i`. Every value is reached: for `x{i} = v`, set every name to `v`, but for
+/// the names `j` with `4n - 2j = v` and those after them, set to `v - 1`, of the other
+/// parity, so no hole; the lap `2n` allows it. Time:
+/// `bench::a_ring_with_slack_whose_raises_all_hold_is_near_linear`.
+#[test]
+fn a_ring_with_slack_keeps_each_hole_and_reaches_its_ends() {
+    let p = Premises::new();
+    for n in [4, 9, 16, 40] {
+        let (s, d) = slack_ring(n);
+        let top = 4 * n - 1;
+        let expected: Vec<String> = (0..n)
+            .map(|i| match i {
+                0 => format!("[0..={top}]"),
+                _ => {
+                    let h = 4 * n - 2 * i;
+                    format!("[0..={}, {}..={top}]", h - 1, h + 1)
+                }
+            })
+            .collect();
+        assert_eq!(printed(&s.assume(&d, true, &p), n), expected, "n = {n}");
     }
 }
 

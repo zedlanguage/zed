@@ -18,6 +18,7 @@ use zed_kernel::{Evaluator, Prim, Term, Value, World};
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::cell::Premises;
+use zedc::store::interval::End;
 use zedc::store::product::{Product, Scope};
 
 use super::ints;
@@ -801,6 +802,46 @@ fn sides_with_a_relation_beside_a_mod_are_narrowed_together() {
         );
     }
     assert_eq!((&got[2], &got[3]), (&exact[2], &exact[3]), "{t}");
+}
+
+/// A class test of one name moves its ends as a bound of that name does, and a join keeps
+/// them (`Scope::stated`, row PROOF-product-atom-names-ends). In `0 <= a <= 10`, the case
+/// `a < n && a mod 3 == 1` has `a >= 1`; joined with the case `a >= n`, a state with `a == 0`
+/// is of the second case alone, so `n <= 0` there, as with `a >= 1` written in place of the
+/// class. Before 2026-11-21 the class test recorded no end of `a` (`Scope::direct`), the
+/// relations alone joined to nothing, and `n` kept `20`.
+#[test]
+fn a_join_keeps_the_end_a_class_test_moved() {
+    let p = Premises::new();
+    let s = boxed(&["a", "n"], 20).assume(
+        &and(
+            prim(Prim::Ge, var("a"), int(0)),
+            prim(Prim::Le, var("a"), int(10)),
+        ),
+        true,
+        &p,
+    );
+    let below = prim(Prim::Lt, var("a"), var("n"));
+    for (how, own) in [
+        (
+            "a mod 3 == 1",
+            prim(Prim::Eq, prim(Prim::Mod, var("a"), int(3)), int(1)),
+        ),
+        ("a >= 1", prim(Prim::Ge, var("a"), int(1))),
+    ] {
+        let one = s.assume(&below, true, &p).assume(&own, true, &p);
+        let other = s.assume(&below, false, &p);
+        let at_zero = one
+            .join(&other)
+            .assume(&prim(Prim::Le, var("a"), int(0)), true, &p);
+        let n = at_zero.get("n");
+        assert_eq!(
+            n.ints().bounds().map(|b| b.1.clone()),
+            Some(End::of(0)),
+            "{how}: n is {}",
+            n.ints()
+        );
+    }
 }
 
 mod bench;

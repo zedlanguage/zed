@@ -856,8 +856,8 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
 
         /// The join of the eager arms, checked against the enumeration of the hubs and the
         /// lazy join: empty exactly when no point is left; each leaf's least value that of the
-        /// enumeration; each hub holding every value a point gives it; and each name no
-        /// coarser than in the lazy join, so a hub is exact wherever the lazy join's is. Each
+        /// enumeration; each hub holding every value a point gives it; and each name the
+        /// same as in the lazy join, so a hub is exact wherever the lazy join's is. Each
         /// hub, eager and lazy, has the enumeration's least and greatest values as its ends
         /// (item LAZY-hub-coarse); a hole between them may be lost.
         fn eager_join(&self, trace: &str) -> Scope {
@@ -871,14 +871,12 @@ mod a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction {
             };
             let (ly, ln) = self.arms(&self.scope(true, &p), &p);
             let lazy = ly.join(&ln);
+            // Equal both ways: the eager join no coarser (`Scope::refresh`), and the lazy one
+            // no coarser (row PROOF-product-lazy-not-coarser, `Scope::lazy`), which `Case::run`
+            // checks only for a case that keeps the hubs.
             for x in &names(&["n", "m", "z", "a0", "a1", "a2"]) {
                 let (e, l) = (joined.get(x), lazy.settled(x));
-                assert!(
-                    e.ints().is_subset(l.ints()),
-                    "{x} is {}, lazily {}, eagerly after {trace}",
-                    e.ints(),
-                    l.ints()
-                );
+                assert_eq!(e.ints(), l.ints(), "{x} eagerly, lazily, after {trace}");
             }
             let points: Vec<(i64, i64)> = (self.points(&self.yes).into_iter())
                 .chain(self.points(&self.no))
