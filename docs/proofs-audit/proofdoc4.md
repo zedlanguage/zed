@@ -1119,8 +1119,9 @@ Not read:
 The list is `proofdoc4-lists/e.txt`, 90 entries numbered 1 to 90 in its order. Part 1, entries
 1 to 20 and the six review ids R4-CLAUDE-2, R4-CLAUDE-3, R4-CLAUDE-8, I4.3, I4.15 and I4.11,
 base commit 8c9dd3cbd; part 2, entries 21 to 59, base commit 8f447824e; part 3, entries 60
-to 90, base commit 0a78446c2. merge_check: part 1, 2851 pieces and 6 of `tests/full`, none
-failed; part 2 the same. For each entry the
+to 90, base commit 0a78446c2; part 4, the rest of entry 34 (e8981310f), base commit
+ed9b96557. merge_check: part 1, 2851 pieces and 6 of `tests/full`, none failed; part 2 the
+same; part 3, 2859 pieces and 6 of `tests/full`, none failed. For each entry the
 whole message and the whole diff under `crates/zedc-presburger` were read, and each claim was
 checked at the code that relies on it on main today, except where "Not read" below says
 otherwise.
@@ -1130,6 +1131,7 @@ otherwise.
 | zedc-presburger, part 1 | 20 | 44 | 31 | 6 | 0 | 5 |
 | zedc-presburger, part 2 | 39 | 42 | 35 | 4 | 0 | 2 |
 | zedc-presburger, part 3 | 31 | 44 | 34 | 7 | 0 | 3 |
+| zedc-presburger, part 4 (rest of e8981310f) | 1 | 22 | 0 | 21 | 0 | 1 |
 
 Of the 44, two are counted in no column, since the code they described is gone: the sieve
 proof of fe770de11 (moved to `zed-numtheory` `least_prime_factors`, complete there, and no
@@ -1162,6 +1164,19 @@ In part 3, one claim was false and one proof had an open case, both in `extend.r
   not hold. The fix skips such a division (`targets`), and the proof of exactness is now at
   the site. Red, then green: `extend::tests::one_substitution_sets_no_atom_it_sends_to` (the
   map set `Aux(1)` and sent `Aux(7)` to it before the fix).
+
+In part 4, the rest of e8981310f (all of `extend/images.rs` and its changes to `extend.rs`)
+was read. No wrong answer was found. Its claims were stated without proofs, and each now has
+one at its site, every step written. One claim was false word for word: part 3's proof of
+`same_divisions` said no atom the map sends to is set, but a later division whose remainder
+is the first's remainder `r'` sets `r'` to itself. That identity is harmless (the caller only
+substitutes, and `r'` keeps its own value), and the doc now says so. The test
+`extend::tests::a_later_division_with_an_atom_of_a_first_division_is_not_set` covers that case
+and both arms of the check. With either arm taken out, it fails: without the quotient arm, the
+map set `r2` while sending `r3` to it; without the remainder arm, it set `Aux(4)` while sending
+`Aux(8)` to it. `ClampBasis::chain_cut` is right for a negative value only when `k = 1`;
+`contains` answers every negative value first when `k >= 2`, and the comment there now says
+so.
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -1293,6 +1308,28 @@ In part 3, one claim was false and one proof had an open case, both in `extend.r
 | efe9dcf29 | `envelope` drops only rows under the others | `extend.rs` `envelope` | already there |
 | efe9dcf29 | a piece meets only its neighbors in a group | `extend.rs` `merge_pieces` | corrected: the reason (the nearer piece may hold no point) |
 | f3778742d | `satisfiable` reads products as atoms | `presburger.rs` 276-281 | already there |
+| e8981310f | a prefix image is all of Z (the prefix maximum tends to both infinities, rising by at most 1) | `extend/images.rs` `Image::Prefix` | completed: proof at the site |
+| e8981310f | `nil_part` is the part of `b` made of the primes of the modulus | `extend/images.rs` `nil_part` | completed: proof at the site |
+| e8981310f | `Frame::step` gives the frame of the step's image, cases (a) to (f) | `extend/images.rs` `Frame::step` | completed: proof at the site |
+| e8981310f | `Frame::translate` moves the frame exactly | `extend/images.rs` `Frame::translate` | completed: proof at the site |
+| e8981310f | `chain_cut` is the least value whose clamp passes the cut | `extend/images.rs` `ClampBasis::chain_cut` | completed: proof, right for negative values only when `k = 1` |
+| e8981310f | for `k >= 2` every negative value is in the clamp's image | `extend/images.rs` `ClampBasis::contains` | completed: proof at the site |
+| e8981310f | a skipping orbit's residue set is as `contains` reads it | `extend/images.rs` `Image::contains`, `Skipping` arm | completed: induction, with the cases `m = 1` and `m = 2` |
+| e8981310f | `h + (h mod m)` over `2^e Z` has image `2^(e+1) Z` when `e < z`, `2^e Z` when `e = z` | `extend/images.rs` `linear`, the power rule | completed: proof at the site |
+| e8981310f | the axis, `f + C`, `floor(f / m)`, `max(f, g)` and `w(x mod M) + floor(x / D) + C` with `M <= D` are prefix images | `extend/images.rs` `linear`, the prefix rule | completed: proof at the site |
+| e8981310f | every image `answer` reads is infinite | `extend/images.rs` `answer` | completed: proof at the site |
+| e8981310f | an affine map on a residue class has the coset of `gcd(u d, M)` as image | `extend/images.rs` `affine_image` | completed: proof at the site |
+| e8981310f | `record_step` keeps its invariant `(h, m, u, c)`, translations `+-m` | `extend/images.rs` `record_step` | completed: proof; entries of `self.affine` have no exceptions |
+| e8981310f | `joint_general` reads the joint image (affine branch and exception branch) | `extend/images.rs` `joint_general` | completed: proof; the remainder is Euclidean, so `m.abs()` is right |
+| e8981310f | `joint` reads the joint image of the orbits | `extend/images.rs` `joint` | completed: proof at the site |
+| e8981310f | `ensure`'s quotient is the floor quotient | `extend/images.rs` `ensure` | completed: proof at the site |
+| e8981310f | a choice with guard `left - right >= 0` is the maximum | `extend/images.rs` `choice_image` | completed: proof from the order `choice` returns |
+| e8981310f | a clamp fact stands for the function `v_k` itself | `extend/images.rs` `clamp_image` | completed: proof at the site |
+| e8981310f | `same_sign_sum` finds both signs only when the row has witnesses of each | `extend.rs` `Rays::same_sign_sum` | completed: proof from `RayBound` and `ensure_total` |
+| e8981310f | `tighten_bounded_row` is sound and equals the slow in-place sweep | `extend.rs` `tighten_bounded_row` | completed: proof at the site |
+| e8981310f | `integer_ray_runs` keeps exactly the integer points of the rays | `extend.rs` `integer_ray_runs` | completed: proof at the site |
+| e8981310f | `owners(a)` lists every frontier whose cone holds `a` | `extend.rs` `Summaries`, `owners` | completed: proof at the site |
+| 96dae93e0 | `same_divisions` sets no atom it sends to | `extend.rs` `same_divisions` | corrected: but `r'` sent to itself; test covers both arms |
 
 The potential that `Scope::shortest` keeps (68416f089) is in `zedc-preimage` `product.rs`,
 outside this crate, and was not checked here; nor were `twovar::ends` (f9936c4fe, in
@@ -1305,9 +1342,8 @@ No code claim: 0f5f38d66 (tests pinning refusals), 295d02151 (comments dated), 6
 use `part()`), 8980815f3 (a doc link made plain text), da7810c72 (formatting), f02739989
 (lint fixes), f66d9b0b1 (the four ignored scaling tests, since moved to bench modules).
 
-Not read: of e8981310f, all of `extend/images.rs` but
-`Orbit::residue` (`answer`, `joint`, `shifts`, `Clamp`, the `Frame` operations) and its
-changes to `extend.rs`.
+Not read: none. `extend/images/shifts.rs` and `extend/images/intervals.rs` were checked in
+the proofdoc4a section.
 
 ## proofdoc4f: zed-kernel, zedc-elab, zedc-base
 

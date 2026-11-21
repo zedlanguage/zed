@@ -1594,8 +1594,11 @@ fn split(items: Vec<Formula>, keep: &mut HashSet<Atom>) -> Option<(Vec<Formula>,
 /// since each atom set equals its value there. Conversely, no atom the map sends to (the `q'`
 /// and `r'` of a first division) is itself set: a row whose `q` or `r` is set already is
 /// skipped, and a division whose `q`, or whose `r` other than `r'`, is the `q'` or `r'` of a
-/// first division is not set. So the substituted rows hold no atom set, and a point of them,
-/// with each atom set given the value of its image, is a point of the rows. Without that
+/// first division is not set. The one exception is a later division whose `r` is the first's
+/// `r'` itself: it sets `r` to `r`, an identity the substitution leaves in place, so `r` keeps
+/// its own value. So the substituted rows hold no atom set (but those set to themselves), and
+/// a point of them, with each atom set given the value of its image, is a point of the rows.
+/// Test: `a_later_division_with_an_atom_of_a_first_division_is_not_set`. Without that
 /// check `x + 2 == 2 * h + r` could set `h` to `f + 1` while `w + 7 == 7 * f + s` set `f` to
 /// `g + 1`, and the substitution, made once and at once, would leave `f` in the rows it set
 /// (`one_substitution_sets_no_atom_it_sends_to`).
@@ -2556,6 +2559,19 @@ impl Rays {
     // reached definition total, on demand and once. O(T) bound probes per query plus
     // cached DAG/local-proof work; no growing coefficient composition. Mixed-sign
     // sums and products decline before allocating, keeping the old relational path.
+    //
+    // Proof (added 2026-11-20). It rests on the meaning of `RayBound` (doc above) and of
+    // `ensure_total`, which predate this function: along ray `direction` (every free
+    // symbol `+t` or `-t`), for all large `t` and every assignment the definitions allow,
+    // a finite `lower` bounds the atom below and a divergent one tends to `+inf` (an
+    // `upper` mirrors it); `total` means an assignment exists for every value of the
+    // inputs. Let all coefficients be positive (the negative case swaps the two sides).
+    // `side(true)` finds a ray where every term is bounded below and one tends to `+inf`:
+    // as there are finitely many terms, for all large `t` every allowed assignment has
+    // `sum k_i a_i` above any given number. `side(false)` likewise finds a ray where it is
+    // below any given number. With totality an assignment exists at each such `t`, so both
+    // `sum + constant >= 0` and its negation have witnesses, and `f` (either of the two) is
+    // satisfiable. Each term is an Aux with a definition that is not free (else `false`).
     fn same_sign_sum(&mut self, row: &Con, def: &dyn Fn(u32) -> Formula) -> bool {
         let Some((_, first)) = row.lin.terms.first_key_value() else {
             return false;
@@ -3530,6 +3546,24 @@ impl Summaries {
             // confirming membership in the cone. Borrow symbol-owner lists instead of
             // cloning them for every product. Work is indexed/candidate incidences plus
             // set/map probes; arbitrary DAG metadata retains its unshared-content cost.
+            //
+            // Proof that `owners(a)` is exactly the frontiers whose cone holds `a`, as `key`
+            // reads it (added 2026-11-20). The filter keeps only frontiers `F` with `id` in
+            // `cone(F)`, so it is enough that every such `F` is a candidate. `roots`
+            // (below) sets, for a functional leaf (no inputs, `is_func_sym_leaf`), empty
+            // branch roots and functional leaves `{id}`; for any other definition, branch
+            // roots the union of its inputs' or `{id}` when that is empty, and functional
+            // leaves the union of its inputs'. So a non-leaf has nonempty branch roots, and
+            // along an input path `F -> .. -> id` each set of branch roots holds the next
+            // one once it is nonempty (a nonempty union is not replaced), and each set of
+            // functional leaves holds the next. Every frontier has its roots (`RootsMany`
+            // above), made by a postorder walk over all its inputs, so every `id` in a cone
+            // has an entry. Non-leaf `id`: its anchors are its branch roots, all in
+            // `F`'s, so `nodes` lists `F` under them. Functional leaf: its anchor is `id`,
+            // in `F`'s functional leaves. Symbols and free Aux go by `syms`, which `key`
+            // reads for them too. Test-only `KEY_AUDIT` compares every bucket key with
+            // the original key. The lists are sorted for the binary search in the product
+            // case: a BTreeSet's order, or indices pushed in increasing `i`.
             let owners = |a: &Atom| -> std::borrow::Cow<'_, [usize]> {
                 use std::borrow::Cow;
                 match a {
@@ -4896,6 +4930,19 @@ fn normalize_own_leaf(
 // (replacing the old cloned atom list).
 // This reproduces the old in-place atom order exactly, including bounds tightened
 // earlier in the same row; it is not a simultaneous/weaker propagation sweep.
+//
+// Proof (added 2026-11-20). Soundness: write the row `k a + rest (rel) 0`, `g = |k|`, with
+// `rest` in `[rest_lo, rest_hi]` under the current bounds (`contribution` gives the least
+// and greatest of `k b` over `b`'s interval). `>=`, `k > 0`: `g a >= -rest >= -rest_hi`, so
+// `a >= ceil(-rest_hi / g)`. `>=`, `k < 0`: `g a <= rest <= rest_hi`. `==`, `k > 0`:
+// `g a = -rest` lies in `[-rest_hi, -rest_lo]`. `==`, `k < 0`: `g a = rest` lies in
+// `[rest_lo, rest_hi]`. So no integer solution leaves the bounds, and an empty interval
+// proves the row has none. Equal to `tighten_bounded_row_slow`: the atoms are distinct map
+// keys, so when atom `a` is processed its bound is still the one its stored contribution
+// was made from (only `a`'s own step changes it), and the totals hold the constant plus
+// every atom's current contribution (each change is applied at once). So
+// `total - old = rest` exactly as the slow sweep sums it from the current bounds, in the
+// same order. Test: `bounded_row_totals_equal_the_old_in_place_sweep`.
 fn tighten_bounded_row(row: &Con, bounds: &mut BTreeMap<Atom, (Int, Int)>) -> bool {
     let contribution = |k: &Int, b: &(Int, Int)| {
         if k.is_positive() {
@@ -5358,6 +5405,22 @@ fn quotient_offsets(
 // consecutive convex runs. Emit each run's secants once, O(p log p) integer
 // operations and O(p) rows total. Gaps stay gaps, upper rays are reflected, and
 // concave turns begin another run. Other shapes retain the exact general merger.
+//
+// Proof (added 2026-11-20). The pieces are a disjunction over integers; each is
+// `x = xi` (`kx x + c = 0`, `kx = +-1`, so `xi = -c kx`) and `ky y + at_x >= 0`. For
+// `ky > 0` this is `y >= ceil(-at_x / ky) = height`; for `ky < 0` it is
+// `y <= floor(at_x / |ky|)`, that is `-y >= height`. So each orientation is a set of
+// vertical rays, and their union over both orientations is the union of the pieces.
+// Rays at one abscissa unite to the one with the least height. A run is a set of
+// consecutive abscissas `a, a + 1, ..` whose height differences never decrease (a gap or
+// a decrease starts a new run, so the union over runs is kept). On a run, the secant
+// `L_i(x) = h_i + (h_(i+1) - h_i)(x - a_i)` meets `h` at its two points and, by the
+// nondecreasing differences, `L_i(x) <= h(x)` at every integer `x` of the run; so
+// `max_i L_i(x) = h(x)` there, and the emitted rows `y >= L_i(x)` (`-y` for upper rays)
+// with `lo <= x <= hi` hold at integer `(x, y)` exactly on the run's rays. Equal
+// consecutive slopes give the same line (they share a point), so one row stands for
+// them. A one-point run is `x = lo`, `y >= h`. Test:
+// `integer_ray_runs_keep_concavities_gaps_and_both_orientations`.
 fn integer_ray_runs(pieces: &BTreeSet<Vec<Con>>) -> Option<Vec<Vec<Con>>> {
     let mut axes: Option<(Atom, Atom)> = None;
     let mut orientations: BTreeMap<bool, BTreeMap<Int, Int>> = BTreeMap::new();
@@ -5949,6 +6012,60 @@ mod tests {
         // The division of `x + 2` still reads the first division of `x`.
         assert_eq!(to[&a(7)], lin(&[(1, 1)], 1));
         assert_eq!(to[&a(8)], lin(&[(2, 1)], 0));
+    }
+
+    #[test]
+    fn a_later_division_with_an_atom_of_a_first_division_is_not_set() {
+        // Every atom the map sends to is unset, or set to itself (an identity, which the
+        // substitution leaves in place).
+        fn exact(to: &HashMap<Atom, Lin>) {
+            for (k, v) in to {
+                for b in v.terms.keys() {
+                    assert!(
+                        to.get(b).is_none_or(|w| *w == Lin::atom(b.clone())),
+                        "{k:?} is sent to {b:?}, which is set: {to:?}"
+                    );
+                }
+            }
+        }
+        let keep: HashSet<Atom> = [a(0), a(5)].into_iter().collect();
+        // `x == 6 q1 + r2` first; `x + 6 == 6 r2 + r3` has the same term, modulus and
+        // constant residue, and its quotient is `r2`. Setting `r3` to `r2` and `r2` to
+        // `q1 + 1` would leave `r2` in the rows it set.
+        let mut rows = division(0, 0, 6, 1, 2);
+        rows.extend(division(0, 6, 6, 2, 3));
+        let to = same_divisions(&rows, &keep);
+        exact(&to);
+        assert!(to.is_empty(), "{to:?}");
+        // The quotient is the remainder of the first division of another term, and a later
+        // division of that term sends its remainder `r8` to it: `r2` must stay unset.
+        let mut rows = division(0, 0, 6, 1, 2);
+        rows.extend(division(5, 0, 6, 3, 4));
+        rows.extend(division(5, 6, 6, 2, 6));
+        rows.extend(division(0, 6, 6, 7, 8));
+        let to = same_divisions(&rows, &keep);
+        exact(&to);
+        assert_eq!(to.len(), 2, "{to:?}");
+        assert_eq!(to[&a(8)], lin(&[(2, 1)], 0));
+        assert_eq!(to[&a(7)], lin(&[(1, 1)], 1));
+        // The remainder of a later division of `x` is `r4`, the first remainder of `y`, and a
+        // later division of `y` sends its remainder `r8` to `r4`: `r4` must stay unset.
+        let mut rows = division(0, 0, 6, 1, 2);
+        rows.extend(division(5, 0, 6, 3, 4));
+        rows.extend(division(0, 6, 6, 9, 4));
+        rows.extend(division(5, 6, 6, 7, 8));
+        let to = same_divisions(&rows, &keep);
+        exact(&to);
+        assert_eq!(to.len(), 2, "{to:?}");
+        assert_eq!(to[&a(8)], lin(&[(4, 1)], 0));
+        assert_eq!(to[&a(7)], lin(&[(3, 1)], 1));
+        // A later division sharing the first's remainder atom sets only its quotient; its
+        // remainder is sent to itself.
+        let mut rows = division(0, 0, 6, 1, 2);
+        rows.extend(division(0, 6, 6, 3, 2));
+        let to = same_divisions(&rows, &keep);
+        exact(&to);
+        assert_eq!(to[&a(3)], lin(&[(1, 1)], 1));
     }
 
     #[test]

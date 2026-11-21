@@ -16,6 +16,26 @@ use zedc_int::int::Num;
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Image {
     /// Prefix maxima on this input axis are cofinal and rise by at most one.
+    ///
+    /// Proof that this image is all integers, and that each producer keeps the invariant
+    /// (added 2026-11-20). Write `P(x) = max_{y <= x} f(y)` for the value `f` as a function of
+    /// the axis `x`. The invariant is: `P(x) -> -inf` as `x -> -inf`, `P(x) -> +inf` as
+    /// `x -> +inf`, and `f(x + 1) <= P(x) + 1` (so `P(x + 1) <= P(x) + 1`). Image: for any `c`,
+    /// let `x0` be the least `x` with `P(x) >= c` (it exists by the two limits). Then
+    /// `P(x0 - 1) <= c - 1`, so `P(x0) <= c`, so `P(x0) = c > P(x0 - 1)` and `f(x0) = c`.
+    /// Producers: (1) the axis itself (`fact`), `f(x) = x`. (2) `f + C` (`linear`, `k = 1`):
+    /// `P` moves by `C`. (3) `floor(f / m)`, `m > 0` (the quotient in `ensure`): its prefix
+    /// maximum is `floor(P / m)` since `floor` is nondecreasing, and
+    /// `floor((P + 1) / m) <= floor(P / m) + 1`. (4) `max(f, g)` of two such functions of one
+    /// axis (`choice_image`): its prefix maximum is `max(P_f, P_g)`, and
+    /// `max(f, g)(x + 1) <= max(P_f(x), P_g(x)) + 1`. (5) `w (x mod M) + floor(x / D) + C`
+    /// with `0 < M <= D` and any `w` (`linear`): write `x + 1 = D q + t`, `0 <= t < D`. Block
+    /// `q - 1`, the `D >= M` integers `D (q - 1) .. D q - 1`, lies at or before `x` and holds
+    /// every residue mod `M`, so it holds `y == x + 1 (mod M)`, with
+    /// `f(y) = w ((x + 1) mod M) + q - 1 + C = f(x + 1) - 1`; so `f(x + 1) <= P(x) + 1`. The
+    /// limits hold since `|f(x) - x / D|` is bounded. All limits in (2)-(4) carry over.
+    /// Tests: `prefix_record_certificates_have_concrete_witnesses_for_signed_remainders` and
+    /// `a_choice_is_read_through_the_rows_its_cases_imply` in `images::tests`.
     Prefix(Atom),
     /// All integers, without the stronger prefix-maximum invariant.
     All,
@@ -82,6 +102,14 @@ struct Frame {
 
 /// The largest divisor of b whose primes all divide u, by gcds only (no factoring):
 /// O(log b) gcds.
+// Proof (added 2026-11-20). Let `P` be the primes of `b` that divide `u`; `b_0 = b`,
+// `g_1 = gcd(b, u)`, `b_i = b_{i-1} / g_i`, `g_{i+1} = gcd(b_i, g_i)`. Every prime of each
+// `g_i` divides `g_1 | u`, and `b = g_1 .. g_i b_i`, so `q` divides `b` and has primes in
+// `P`. By induction the primes of `g_{i+1}` are the primes of `P` that divide `b_i`: true
+// for `g_1` (`i = 0`); the primes of `g_{i+1} = gcd(b_i, g_i)` are the primes of `b_i`
+// among those of `g_i`, the primes of `P` dividing `b_{i-1}`, and `b_i | b_{i-1}`. The loop stops
+// at `g = 1`, so then no prime of `P` divides the final `b`, which is coprime to `u`: `q`
+// is all of the `P`-part of `b`. Each pass divides `b` by `g >= 2`: at most `log2 b`.
 fn nil_part(b: &Int, u: &Int) -> Int {
     let (mut q, mut b, mut g) = (Int::ONE, b.clone(), b.gcd(u));
     while g > Int::ONE {
@@ -183,6 +211,39 @@ impl Frame {
     // block are mapped one by one, and each such map multiplies r - r0 by every prime of the
     // block, so a residue is mapped at most log2 m times: O(log m (blocks + log |A|)) per
     // residue over the chain, at most log2 m blocks, independent of the depth.
+    //
+    // Proof (added 2026-11-20). `f(r) = u r + C mod m` is the default map. The image is
+    // `f` of the image residues not in `E`, plus `b_s` for each `s` in `E` in the image.
+    // Exceptions: `s` in `K` and not missing goes to `gone`; `s` outside `K` and extra has
+    // its key removed; either way `b_s` goes to `hits`, added at the end. `gone` and the
+    // missing positions are disjoint, and both are sets of distinct positions (distinct
+    // keys of `E`; frame values are a bijection of positions, `u` a unit mod `n`).
+    // (d) `g = gcd(u, n) = 1`: `f(c + d t) = image_c + d u t = c' + d (u t + D)` with
+    // `c' = image_c mod d`, `D = image_c div d`; `f` is a bijection of `K` onto
+    // `K' = c' + d Z_m`, and position `t` goes to `t' = u t + D`. With `u' = u u_K`,
+    // `u'_inv = u_inv u_n_inv`, `t0' = u t0 + D`, the new frame value is
+    // `u_inv u_n_inv (u t + D - u t0 - D) = u_inv (t - t0)`, the old one, so `missing`
+    // keeps its keys and the `gone` points join it (no other point of `K` maps there).
+    // (e) `g > 1`: `t -> u t mod n` is exactly `g` to 1 onto `g Z_n` (its kernel has `g`
+    // elements), so `K' = image_c + d g Z_m` with `n / g` positions; a point of `K'` is
+    // not the default image of any point of `K` in the image and not in `E` iff all `g` of
+    // its preimages are missing or gone, which the count `== g` tests, each preimage
+    // counted once by the disjointness above.
+    // Extra residues `r`, outside `K`, key `p_inv (r - r0)`. Blocks after the split: each
+    // block `b` is coprime to `u` or has every prime dividing `u` (`nil_part`). Let `q` be
+    // the product of the second kind; `unit == u (mod m / q)` and `== 1 (mod q)`. A key not
+    // moved is 0 mod `q`, so `q | r - r0`. (a) It keeps its key: `(u - unit)(r - r0)` is 0
+    // mod `m / q` and mod `q`, so 0 mod `m`; the new key `p_inv unit_inv u (r - r0)` equals
+    // `p_inv (r - r0)`. (b) `f(r)` stays outside `K'`: `f(r) - r0' = u (r - r0)` with `r0'`
+    // in `K'` by (c), and `K'` has step `d' = d g` (`d g | m`). Write `d = d_q d_r`, `d_q | q`,
+    // `d_r | m / q`. `d` does not divide `r - r0` (`r0` is in `K`), but `d_q` does, so some
+    // prime `p | m / q` has `v_p(r - r0) < v_p(d_r) <= v_p(d')`; `p` does not divide `u`, so
+    // `v_p(u (r - r0)) = v_p(r - r0)` and `d'` does not divide `u (r - r0)`. (c) `r0` is in
+    // `K` (`coset` sets `r0 = c`; `translate` and this step map `r0` and `K` alike), so
+    // `r0' = f(r0)` is in `K'`. Moved keys are mapped one by one by `add`, which places
+    // each in `K'` or the extra set. (f) A moved key's `r - r0` is multiplied by `u`, so
+    // its gcd with `b` grows on each non-unit block where it is nonzero: at most `log2 m`
+    // moves per residue. Tests: `residue_map_images_*` in `images::tests`.
     /// The frame of the step's image.
     fn step(&self, map: &ResidueMap) -> Option<Frame> {
         let m = &self.m;
@@ -297,6 +358,14 @@ impl Frame {
     }
 
     /// The frame of k h + C over this image, k = +-1: O(1) arithmetic operations.
+    // Proof (added 2026-11-20). `y -> k y + C` is a bijection of `Z_m`, so the image is
+    // the frame's set moved. `K' = k K + C = image_c + d Z`; point `c + d t` goes to
+    // `c' + d (q + k t)`, `c' = image_c mod d`, `q = image_c div d`, so position `t` goes to
+    // `t' = k t + q`. With `u' = k u`, `u'_inv = k u_inv` (`k^2 = 1`), `t0' = k t0 + q`:
+    // `u'_inv (t' - t0') = k u_inv k (t - t0) = u_inv (t - t0)`, so `missing` keeps its
+    // keys. Outside `K'`: `r0' = k r0 + C`, `p' = k p`, so
+    // `p'_inv (k r + C - r0') = k p_inv k (r - r0) = p_inv (r - r0)`: `extra` and `loose`
+    // keep their keys, and `r0'` is in `K'`.
     fn translate(&self, k: &Int, constant: &Int) -> Frame {
         let m = &self.m;
         let image_c = &(k * &self.c) + constant;
@@ -480,6 +549,18 @@ impl ClampBasis {
     // min is already the fixed original cut. Saturate exact doubling at that cut:
     // O(min(k, log(1+abs(cut)))) arithmetic operations for positive c, O(1) for zero
     // and the k=1 negative case. No iterate or literal grows beyond the cut's width.
+    //
+    // Proof (added 2026-11-20). The chain is `v_0 = x`, `v_k = max(floor(v_{k-1} / 2), B(x))`
+    // (`clamp_image`, through `choice_image`'s guard `left - right >= 0`), `B` the basis
+    // value. Each `v_k` is nondecreasing in `x`. Let `T_k(c)` be the least `x` with
+    // `v_k(x) >= c`; `cut(c) = T` for `B`. `v_k(x) >= c` iff `v_{k-1}(x) >= 2 c` or
+    // `B(x) >= c`, so `T_k(c) = min(T_{k-1}(2 c), cut(c))` and
+    // `T_k(c) = min(cut(c), cut(2 c), .., cut(2^(k-1) c), 2^k c)`. For `c > 0`, `cut` is
+    // nondecreasing and `2^i c >= c`, so the middle terms are at least `cut(c)` and
+    // `T_k(c) = min(cut(c), 2^k c)`; the loop stops doubling once `x >= cut(c)`, where the
+    // minimum is `cut(c)` whatever the later doublings. For `c = 0` every term is `cut(0)`
+    // or 0. For `c < 0` the value returned, `min(cut(c), 2 c)`, is `T_1(c)` only: `contains`
+    // calls it with a negative `c` only for `k = 1` (for `k >= 2` it answers before).
     fn chain_cut(&self, c: &Int, k: usize) -> Int {
         let cut = self.cut(c);
         if c.is_negative() {
@@ -501,6 +582,18 @@ impl ClampBasis {
     fn contains(&self, c: &Int, k: usize) -> bool {
         // Below zero, B/2^(k-1) has jumps at most one for k>=2. Together with
         // floor(x/2^k) it reaches every negative integer before B becomes positive.
+        // Proof (added 2026-11-20). Unrolling the chain (see `chain_cut`) with
+        // `floor(max(a, b) / 2) = max(floor(a / 2), floor(b / 2))`:
+        // `v_k = max(floor(x / 2^k), B, floor(B / 2), .., floor(B / 2^(k-1)))`, which is
+        // `max(floor(x / 2^k), B)` where `B >= 0` and `max(floor(x / 2^k), floor(B / 2^(k-1)))`
+        // where `B < 0`. `B(x + 1) - B(x)` is 0, 1 or 2 (two floors by divisors >= 1), so for
+        // `k >= 2` both `floor(x / 2^k)` and `floor(B / 2^(k-1))` rise by at most one a step.
+        // If `v_k(x) <= c - 1` and `v_k(x + 1) >= c + 1` for some `c < 0`, the term giving
+        // `v_k(x + 1)` is the `B` term: if `B(x + 1) >= 0` then `B(x) >= -2`, so
+        // `v_k(x) >= floor(-2 / 2^(k-1)) >= -1`, against `c - 1 <= -2`; if `B(x + 1) < 0` it
+        // rose by at most one. So no negative value is skipped, and `v_k -> -inf` as
+        // `x -> -inf` (it is at most `max(x / 2^k, B) + 1`): every `c < 0` is a value. A
+        // nondecreasing `v_k` takes `c` iff `T_k(c) < T_k(c + 1)`, the last line.
         if k >= 2 && c.is_negative() {
             return true;
         }
@@ -524,6 +617,20 @@ impl Image {
             Self::Clamp(b, k) => b.contains(c, *k),
             Self::Residues(f) => f.contains(&c.mod_floor(&f.m)),
             Self::Intervals(m, set) => shifts::holds(set, &c.mod_floor(m)),
+            // Proof (added 2026-11-20). The step `s(h) = h + 1` if `h mod m == 0`, else `h + 2`,
+            // has `s(h + m) = s(h) + m`, so from all integers the image after `k` steps is the
+            // union of the residue classes in `S_k`, `S_0 = Z_m`, `S_{k+1} = s(S_k)`. Claim:
+            // `r` is in `S_k` iff `r` is odd, or `r == 0` and (`m` odd or `2 k < m`), or
+            // `r != 0` and `2 k < r` (`r` taken in `0..m`), the expression below. `k = 0`: all
+            // `r` pass. Step, `m >= 3`: residue `t` has preimages `{0, m - 1}` for `t = 1`,
+            // none for `t = 2` (its candidate `0` goes to 1), and `t - 2` otherwise. `t = 1`:
+            // `m - 1` (odd for even `m`) or `0` (in `S_k` for odd `m`) is in `S_k`. `t = 2`:
+            // out, and `2 (k + 1) >= 2`. `t = 0`: `m - 2` is odd for odd `m`; for even `m` it
+            // is in iff `m - 2 > 2 k`, i.e. `2 (k + 1) < m`. Odd `t >= 3`: `t - 2` is odd.
+            // Even `4 <= t < m`: `t - 2` is in iff `t - 2 > 2 k`. `m = 1`: one class, always
+            // in. `m = 2`: `s` sends both classes to 1, so `S_k = {1}` for `k >= 1`. Checked by
+            // simulation for `m <= 13`, `k <= 20` (2026-11-20); test
+            // `images::tests::descriptors_agree_with_explicit_residue_images`.
             Self::Skipping(m, k) => {
                 let r = c.mod_floor(m);
                 r.is_odd()
@@ -852,6 +959,12 @@ impl ScalarImages {
             None => self.shift_image(a, def)?,
         };
         // Every supported image is infinite, so it always has a value unequal to c.
+        // Proof (added 2026-11-20), image by image: Prefix and All are all of Z (proof at
+        // `Image::Prefix`); Clamp is unbounded above (`v_k >= floor(x / 2^k)`); Power(e) is
+        // `2^e Z`; Skipping(m, k) always holds residue 1 (proof at `contains`), a whole class;
+        // Residues and Intervals are unions of residue classes mod `m > 0`, and nonempty
+        // since each is built as the image of a nonempty set. So `a != c` has a solution
+        // for every `c`, and `k a + constant != 0` too.
         if negated {
             return Some(true);
         }
@@ -910,6 +1023,18 @@ impl ScalarImages {
                 continue;
             };
             // h + h mod m, with the same h, not merely two equal scalar ranges.
+            // Proof (added 2026-11-20). `g(h) = h + (h mod m)` depends on `h` alone, so its
+            // image is `g` of the image of `h`, which is `2^e Z` (`exponent`: Prefix and All
+            // are all of Z, proved at `Image::Prefix`). Let `z = v2(m)`, `e <= z`, so
+            // `2^e | m`. Write `h = r + j m`, `r = h mod m`; then `h` is in `2^e Z` iff `r` is,
+            // for every `j`, and `g(h) = 2 r + j m`. Case `e < z`: `2 r` and `m` are multiples
+            // of `2^(e+1)`, so the image is inside `2^(e+1) Z`; `r = 2^e i` for
+            // `0 <= i < m / 2^(e+1)` gives `2 r = 2^(e+1) i`, every multiple of `2^(e+1)` in
+            // `0..m`, and adding `j m` gives all of `2^(e+1) Z`. Case `e = z`: `m = 2^e m'`,
+            // `m'` odd; the image is inside `2^e Z`, and `2 r mod m = 2^e (2 i mod m')` with
+            // `0 <= i < m'` covers every multiple of `2^e` mod `m` since 2 is invertible mod
+            // `m'`; so the image is `2^e Z`.
+            // Test: `descriptors_agree_with_explicit_residue_images`.
             if *kr == Int::ONE
                 && *ko == Int::ONE
                 && e.constant.is_zero()
@@ -927,6 +1052,10 @@ impl ScalarImages {
                 }
             }
             // w*(x mod M) + floor(x/D) + C has consecutive prefix records for M<=D.
+            // Proof: producer (5) at `Image::Prefix`. It needs the remainder and the quotient
+            // of the same argument, that argument exactly the axis (`lone_atom`: coefficient
+            // 1, constant 0, a Sym or free Aux), `0 < M <= D`, and coefficient 1 on the
+            // quotient; `w = kr` may be any integer. The constant `C` is any.
             let Some((true, qarg, divisor)) = self.fact(other, def).and_then(|v| v.division) else {
                 continue;
             };
@@ -953,6 +1082,14 @@ impl ScalarImages {
     // image c + dZ with d | M (so invariant under +M), the image is therefore the union of
     // the residue classes (p + w)(c + dZ_M) + C: the coset ((p + w) c + C) + gcd((p + w) d, M) Z.
     // O(1) arithmetic operations on O(log M)-bit values per link, independent of M.
+    // Proof (added 2026-11-20). `affine_step` gives `M = |m| > 0`, and the remainder is
+    // Euclidean (`division`), so `h mod m = h mod M`. Write `h = r + j M`, `0 <= r < M`. As
+    // `d | M`, `h` is in `c + d Z` iff `r` is, for every `j`, and
+    // `g(h) = (p + w) r + C + p j M`; with `p = +-1`, `j` free gives every lift of
+    // `u r + C mod M`, `u = p + w`. So the image is the set of lifts of `u S + C`, `S` the
+    // coset `c + <d>` of the subgroup `<d>` of `Z_M`. `u S = u c + <u d>`, and the subgroup
+    // of `Z_M` made by `u d` is `<gcd(u d, M)>` (Bezout; `gcd(0, M) = M` covers `u = 0`).
+    // Its lifts are the coset `(u c + C) + gcd(u d, M) Z`, as `gcd(u d, M) | M`.
     fn affine_image(&self, e: &Lin, def: &dyn Fn(u32) -> Formula) -> Option<Fact> {
         let (h, p, w, constant, m) = affine_step(e, &|a| self.fact(a, def))?;
         let (d, c) = coset_of(&self.fact(&h, def)?.image?)?;
@@ -995,6 +1132,16 @@ impl ScalarImages {
 
     /// Records the residue map or exceptional-residue depth of a single-output definition
     /// for the joint questions (I49): O(1) arithmetic operations per definition.
+    // Proof of the recorded maps (added 2026-11-20). Invariant of an entry `(h, m, u, c)`
+    // for value `V` with axis `h`: `V(x) mod m = u (x mod m) + c mod m` and
+    // `V(x + m) = V(x) + P m` with `P = +-1`. The axis itself has `u = 1`, `c = 0`, `P = 1`.
+    // Affine step `V' = p V + w (V mod m) + C`, `p = +-1`, the same `m`: `V' mod m =
+    // (p + w)(u r + c) + C mod m`, so `u' = k u`, `c' = k c + C` with `k = p + w`; and
+    // `V(x + m) mod m = V(x) mod m`, so `V'(x + m) = V'(x) + p P m`. Unit step
+    // `V' = p V + C`: `u' = p u`, `c' = p c + C`, translation `p P m`. Entries start with no
+    // exceptions and both steps keep `..old`, so every `self.affine` entry has none. An
+    // exceptional-residue chain is recorded only when every step is the same `step`, so
+    // the depth `k` alone gives the map (`joint`, `joint_general` use it so).
     fn record_step(&mut self, output: &Atom, f: &Formula, def: &dyn Fn(u32) -> Formula) {
         let is_axis =
             |a: &Atom| matches!(a, Atom::Sym(_)) || matches!(a, Atom::Aux(n) if free(&def(*n)));
@@ -1054,6 +1201,20 @@ impl ScalarImages {
     // residue, so it holds iff the two congruences A_W r + B_W == s, A_V r + B_V == c
     // (mod M) have a common r: O(log M) arithmetic operations. For exceptional-residue
     // chains of one step the later residue is `Exception::residue` of the earlier one.
+    // Proof (added 2026-11-20). The remainder is Euclidean (`division`), so `W mod m` is
+    // `W mod |m|` in `0..|m|`, and an `s` outside it never holds. Affine branch: by the
+    // invariant at `record_step`, over the axis class `x == r (mod m)`, `V` takes exactly
+    // the lifts of `u_V r + c_V` (`V(x + m) = V(x) +- m`, all `j`), and `W mod m` is the
+    // constant `u_W r + c_W mod m` (`(1, 0)` when `W` is the axis). So some `x` gives
+    // `V == c` and `W mod m == s` iff some `r` solves both congruences; `congruence` gives
+    // all solutions `r0 + q Z` of the first, and the second becomes a congruence in `t`.
+    // Exception branch: `V` is `k` steps of `step` from the axis and `W` is `j` steps. The
+    // step satisfies `g(h + m) = g(h) + m`, so over a class the later value takes every
+    // lift of its residue, and the class of the earlier value fixes the later one
+    // (`Exception::residue`). With `k >= j`: `W mod m == s` needs `s` in `W`'s image
+    // (`seen`), and then `V`'s residue is `residue(k - j, s)`; every lift of it occurs,
+    // so `V == c` iff that residue is `c mod m`. With `k < j`: `V == c` needs `c mod m` in
+    // `V`'s image, all lifts of it occur, and `W`'s residue is `residue(j - k, c mod m)`.
     fn joint_general(&self, a: &Atom, c: &Int, b: &Atom, s: &Int) -> Option<bool> {
         for (output, c, remainder, s) in [(a, c, b, s), (b, s, a, c)] {
             let Some(Fact {
@@ -1141,6 +1302,8 @@ impl ScalarImages {
             }
             open.remove(&id);
             if let Some((q, r, arg, m)) = division(&d) {
+                // `floor(arg / m)` of a Prefix value with `m > 0` is Prefix on the same axis:
+                // producer (3) at `Image::Prefix` (added 2026-11-20).
                 let image = if m.is_positive() {
                     self.linear(&arg, def)
                         .and_then(|f| f.image)
@@ -1393,6 +1556,20 @@ impl ScalarImages {
             // If the fixed residue belongs to the earlier image, every integer lift
             // of it is realizable; exactly one lift gives the requested later value.
             // In the other direction, a realizable fixed value determines its future.
+            // Proof (added 2026-11-20). Each orbit step `g` is `h + (h mod m)` (residue
+            // `2 h`) or the skipping step, both with `g(h + m) = g(h) + m`. An orbit records
+            // the axis, `m`, the kind and the count, and every recorded step is that same `g`,
+            // so `V = g^k(x)` and `W = g^j(x)` on the one axis. The images of `W` and `V` are
+            // `m`-periodic: Prefix and All are Z, Skipping is a union of classes mod `m`, and
+            // Power(e) has `e <= v2(m)` (the Power rule in `linear`), so `2^e | m`. Case
+            // `k >= j`: `V = g^(k-j)(W)`. `W mod m == s` needs `0 <= s < m` and `s` in `W`'s
+            // image, and then `W` takes every lift `s + t m`, where
+            // `V = g^(k-j)(s) + t m`; exactly one `t` gives `V == c` iff
+            // `g^(k-j)(s) == c (mod m)`, which `relative.residue` computes (the doubling
+            // residue is `2^(k-j) s`; when `j = 0` the stored multiplier is already
+            // `2^k`). Case `k < j`: `V == c` needs `c` in `V`'s image, and then
+            // `W = g^(j-k)(c)`, whose residue is fixed. Negated: `V`'s image is infinite (see
+            // `answer`), so some `x` has `V != c` and the conjunction fails there.
             if negated {
                 return Some(true);
             }
@@ -1466,6 +1643,11 @@ impl ScalarImages {
                 b: ds[1].clone(),
                 constant: bound.constant.clone(),
             };
+            // The value is `max(floor(old / 2), B(x))` (see `choice_image`), `B` the basis.
+            // A Clamp fact is made only here, and `linear` passes it on only unchanged
+            // (`k = 1`, constant 0), so an atom with `Clamp(basis, k)` is the function `v_k`
+            // of `chain_cut`, not merely a value with that image; then this value is
+            // `v_(k+1)`. `old` the axis, or an atom whose value equation is the axis, is `v_0`.
             let k = match self.fact(old, def)?.image? {
                 Image::Clamp(b, k) if *b == basis => k + 1,
                 _ if *old == axis => 1,
@@ -1618,6 +1800,9 @@ impl ScalarImages {
         def: &dyn Fn(u32) -> Formula,
     ) -> Option<Fact> {
         let Formula::Con(c) = guard else { return None };
+        // The guard `left - right >= 0` picks `left`, so the value is `max(left, right)`;
+        // with both Prefix on one axis it is Prefix there: producer (4) at `Image::Prefix`
+        // (added 2026-11-20).
         if c.rel == Rel::Ge && c.lin == left.minus(right) {
             if let (Some(Image::Prefix(a)), Some(Image::Prefix(b))) = (
                 self.linear(left, def).and_then(|f| f.image),
