@@ -4513,7 +4513,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             // outside too. Before, every read gave all its
             // loose atoms, so a component read beside a handled one kept the handled atoms in
             // the first arrow's result (FAIL-fold-rotating-tuple-rounds, E2 of round 2).
-            // Test: `l01_26_type_resolution::handled::a_component_read_beside_a_handled_read_adds_no_atom_from_outside`,
+            // Test:
+            // `l01_26_type_resolution::handled::a_component_read_beside_a_handled_read_adds_no_atom_from_outside`,
             // and `a_display_read_beside_a_handled_read_keeps_its_miss` for (2).
             (ExprKind::Index(..), _) => match indexed {
                 Some(m) => &loose & &(&union(flows(e)) | &m),

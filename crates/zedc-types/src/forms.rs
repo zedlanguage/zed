@@ -114,8 +114,8 @@ enum Kind {
 /// `W` bytes long (that length counts toward `text_len`), so one of finitely many sets
 /// (`KType::scalar_literal_width`); at most 2 texts (the atoms, the kind-wide part), each a
 /// UTF-8 string of byte length at most `W`, since that length is the leaf's `text_len` and so
-/// at most its width (finitely many strings of bounded length); atom names from a finite set fixed by the program and
-/// compiler (every `KType::atom` outside tests takes either a name written in the program —
+/// at most its width (finitely many strings of bounded length); atom names from a finite set
+/// fixed by the program and compiler (every `KType::atom` outside tests takes either a name written in the program —
 /// an `ExprKind::Atom`, `TypeKind::Atom`, declared atom family, or handle — or one of the
 /// thirteen compiler-fixed names `notFound`, `outOfBounds`, `empty`, `divByZero`, `badUtf8`,
 /// `none`, `emptySeparator`, `ioError`, `errs`, plus `NaN`, `overflow`, `invalid`, `notScalar`

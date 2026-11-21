@@ -4948,8 +4948,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     // to n rows of n parts, and each application read them all, 1569 ms at n = 32 and over
     // 23 s at n = 48. Pruned, a rotation keeps the start value and the latest result
     // (measured: one or two rows at every round, n = 16 and 32), 191 ms at n = 32. Rounds
-    // whose results hold none of the earlier rows drop nothing. A fold that settles in a few rounds is then linear in the width
-    // (bench `l03_02_map_run::bench::a_tuple_accumulator_settling_in_three_rounds_checks_in_
+    // whose results hold none of the earlier rows drop nothing. A fold that settles in a few
+    // rounds is then linear in the width (bench `l03_02_map_run::bench::a_tuple_accumulator_settling_in_three_rounds_checks_in_
     // linear_time`: 14, 20, 37, 79 ms at n = 32 to 256). Kept: a rotation of n parts takes
     // n + 1 rounds, as each round moves the change one part along, so this method is Θ(n²)
     // at best for it (measured 191, 820, 4176 ms at n = 32, 64, 128, load 51 to 62: each
@@ -5116,8 +5116,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         //     every round from `m` on has `full_k` (case II). In case II only finitely many
         //     pairs come before round `m`, so steps 1 to 4 below take the pairs introduced
         //     from round `m` on; each of them was tested by (b) with `full_k` against every
-        //     pair kept in an earlier round, those of its own subsequence among them. In case I, every
-        //     skeleton piece has depth at most `D`, and steps 1 to 4 take all pairs, with the
+        //     pair kept in an earlier round, those of its own subsequence among them. In case
+        //     I, every skeleton piece has depth at most `D`, and steps 1 to 4 take all pairs, with the
         //     depth clause of (b) left out and `depth <= D` used in its place.
         //  1. Consider the stream of newly introduced pairs `(p, v)` across those rounds, where
         //     `p` is a non-union skeleton piece and `v` is that round's fresh-variable count.
@@ -5549,8 +5549,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Complexity: O(size of the body) for the walk, each node read once by the reading and
     /// at most once by the test of whether it reads the accumulator (a condition, a bound
     /// value or a leaf is tested once, and the reading does not enter it), each name looked
-    /// up in O(1) per binder it names; one skeleton per part of each row of `init` and `g`, O(their size);
-    /// Tarjan's O(n + edges). Naive alternative: run rounds until the depth stops growing,
+    /// up in O(1) per binder it names; one skeleton per part of each row of `init` and `g`,
+    /// O(their size); Tarjan's O(n + edges). Naive alternative: run rounds until the depth stops growing,
     /// which is the question asked.
     fn fold_depth_limit(
         &self,
@@ -14996,7 +14996,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             // Cost: one test of the result's shape and one map lookup, O(log b) for b bounds,
             // before the old path; `gives_made` itself is the same cost as on its error path.
             // Tests: l01_26_type_resolution bubble.rs
-            // `an_atom_a_numeric_use_makes_passes_the_call_by` (row FAIL-fold-rotating-tuple-rounds).
+            // `an_atom_a_numeric_use_makes_passes_the_call_by` (row
+            // FAIL-fold-rotating-tuple-rounds).
             let carriers_only = !bounds.is_empty() && {
                 let mut ps = r.pieces_lazily();
                 match (ps.next(), ps.next()) {
