@@ -433,6 +433,11 @@ mod store {
     use std::collections::HashMap;
     use std::ops::{Index, IndexMut};
 
+    /// What a layer saved for a class at its first write there: the class and what `overlay`
+    /// held for it before (a value and the depth of the layer that wrote it), or `None` when
+    /// the class read through to the committed store.
+    type Saved<C> = (usize, Option<(C, usize)>);
+
     /// Sparse class store: dense `Vec` before the first reserved range (and always under the
     /// negative control `StoreMode::BrokenNoCounterAdvance`), O(1) sparse `HashMap` for IDs
     /// above `dense.len()`.
@@ -499,11 +504,6 @@ mod store {
     /// `zedc_check`'s `a_failed_trial_leaves_the_class_forest_as_before`; they compare
     /// contents, so they cannot catch a cost bound being missed, which the benches in
     /// COMPLEXITY.md row F236 measure.
-    /// What a layer saved for a class at its first write there: the class and what `overlay`
-    /// held for it before (a value and the depth of the layer that wrote it), or `None` when
-    /// the class read through to the committed store.
-    type Saved<C> = (usize, Option<(C, usize)>);
-
     pub(in crate::check) struct Classes<C> {
         dense: Vec<C>,
         sparse: HashMap<usize, C>,
