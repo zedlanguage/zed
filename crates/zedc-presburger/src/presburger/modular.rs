@@ -26,6 +26,10 @@ type ResidueSet = Vec<(Int, Int)>;
 /// A closed interval `[lo, hi]` on the integers, where `None` is unbounded (`-inf` or `+inf`).
 type Span = (Option<Int>, Option<Int>);
 
+/// The units and clauses of one variable: the residue set of each unit's modulus, and each
+/// clause as a map from modulus to residue set (a disjunction of its literals).
+type Regime = (BTreeMap<Int, ResidueSet>, Vec<BTreeMap<Int, ResidueSet>>);
+
 /// A sorted list of disjoint, non-adjacent closed intervals on the integers.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 struct Domain {
@@ -2970,7 +2974,7 @@ fn sweep_unwritten(
 fn coprime_groups(
     unit_mods: &BTreeMap<Int, ResidueSet>,
     clauses: &[BTreeMap<Int, ResidueSet>],
-) -> Option<Vec<(BTreeMap<Int, ResidueSet>, Vec<BTreeMap<Int, ResidueSet>>)>> {
+) -> Option<Vec<Regime>> {
     if clauses.iter().any(|cl| cl.is_empty()) {
         return None;
     }
@@ -3015,9 +3019,7 @@ fn coprime_groups(
     }
     for cl in clauses {
         // Not empty (checked at the start), and all its moduli are in one group.
-        let Some(m) = cl.keys().next() else {
-            return None;
-        };
+        let m = cl.keys().next()?;
         let g = number[&sets.find(index[m])];
         groups[g].1.push(cl.clone());
     }

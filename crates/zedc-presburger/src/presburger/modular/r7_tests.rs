@@ -1260,9 +1260,6 @@ fn the_split_is_the_one_of_least_bound() {
     );
 }
 
-/// Units and clauses of one variable.
-type Regime = (BTreeMap<Int, ResidueSet>, Vec<BTreeMap<Int, ResidueSet>>);
-
 /// The residue sets `x mod m in {r}`.
 fn point_set(r: i64) -> ResidueSet {
     vec![(Int::from(r), Int::from(r))]
