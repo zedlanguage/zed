@@ -35,8 +35,9 @@
 //!
 //! Every answer is exact: no point, a point, or each atom's set of values over all points.
 //! Where it applies the solver's answer is never finer, so no answer becomes coarser.
-//! Proof of the join (PROOF-row-sums-join-exact), every step, for the joins without a fused
-//! pair; the fused pair ([`lattice`]) is not proved, see step 6. Notation: groups `0..p` in the
+//! Proof of the join (PROOF-row-sums-join-exact), every step: steps 1 to 5 for the joins
+//! without a fused pair, step 6 for the fused pair ([`lattice`]), and step 7 for the reading of
+//! a point and of the atoms' values from the marks. Notation: groups `0..p` in the
 //! plan's order; a row is open at layer i when a group before i and a group at i or after hold
 //! it, and closes at its last group; `top_j` is group j's range of its most significant digit
 //! ([`Plan::build`], the loop after the layouts).
@@ -113,12 +114,67 @@
 //!    `contains`), or, on a word join, by the same maps run back: `met ∩ gy` (`out` with
 //!    `λ = 1`), `met ∩ (span - gy)` (`λ = -1`), and the layer keys `c - gm`, `gm - c` or
 //!    `u >= -k - l·(s + lc) - lo` for the best `s` of `gm`.
-//! 6. Not proved: that [`lattice`] gives exactly the pairs of the fused groups that `meet`
-//!    would accept on the two joins in turn (PROOF-row-sums-join-exact, open sub-case), nor
-//!    the reading of a point and of the atoms' values from the marks ([`Plan::take_apart`]).
-//!    Note the invariant first written here, layer i over all assignments meeting the closed
-//!    rows, was stronger than true: the tables keep only top digits in `top_j` (step 2), which
-//!    every point meets, so the answers are the same.
+//! 6. The fused pair (PROOF-row-sums-lattice-take-apart). [`Plan::halves`] splits one group
+//!    of signature exactly `{r, s}` into groups i and i + 1, and [`Plan::fused`] keeps the pair
+//!    only where layer i holds r alone, layer i + 2 holds s alone, r closes at i + 1 as an
+//!    equation, each group has one digit, and the λ meet its test. So no row closes at join i,
+//!    every pair `(u, e)` of layer i and `T_i` is accepted there (step 3), and at join i + 1
+//!    the triples `(u, e, o)`, o in `T_(i+1)`, whose r meets its equation give layer i + 2 the
+//!    key of s's sum. The comment in [`Plan::fused`] derives, sign case by sign case, that r
+//!    holds exactly when `u + q(o) = s(e)` and that s's key is then `out(u - q(o) + h)`, with
+//!    `h` the radix of group i + 1 less 1, so `q(o)` in `[0, h]` (`T_(i+1)` is one digit, in
+//!    `0..=h` by step 1). The maps are one to one, and [`Map::set`] drops only keys below 0,
+//!    never `q(o)`, `u + q(o)` or `u - q(o) + h` of a triple. So layer i + 2 is exactly
+//!    `out` of the differences of the points of `lattice(layer i, q(T_(i+1)), s(T_i), None, h)`
+//!    with `e = s⁻¹(x + y)` and `o = q⁻¹(y)`, which [`lattice`] gives exactly where its two
+//!    conditions hold (its proof): `h >= max q` as above, and `max layer i + h` below
+//!    [`LIMIT`], which [`Plan::fused`] checks (`x.size + h <= LIMIT`), declining the pair
+//!    otherwise so that [`Plan::of`] makes the plan without pairs (steps 1 to 5); a layer whose
+//!    key passed [`LIMIT`] by `h` lost points before that check (`decide` said no point:
+//!    `a_fused_pair_past_the_limit_keeps_its_points`). Back ([`Plan::back`]), by step 5's
+//!    argument over the two joins at once: `x` of layer i is completed exactly when some
+//!    triple gives a key of `good[i + 2]`, that is a point with `x - y + h` in
+//!    `out⁻¹(good[i + 2])`, so `good[i]` is the X of [`lattice`] with that d, and `sums[i]`,
+//!    `sums[i + 1]` are the e and o of those points, `s⁻¹` and `q⁻¹` of its SUM and Y.
+//!    Test: `l01_38_omega_test::disj_groups::two_overlapping_sums_with_coefficients_one_and_
+//!    two_are_answered_exactly` (against enumeration) and
+//!    `a_fused_pair_past_the_limit_keeps_its_points` (both sides of [`LIMIT`]); they do not
+//!    count which of the eight sign cases they reach, and their least values are near 0.
+//! 7. A point and the atoms' values. [`Plan::take_apart`] of a key g of `T_i`: the table of
+//!    atoms `0..t + 1` is a subset of the union over the atom's values v of the table of atoms
+//!    `0..t` shifted by v's key ([`Plan::step`] keeps a window of [`Plan::add`]'s union), so for
+//!    a key of the first some value v leaves a key of the second, and the search over every
+//!    range and step (a walk or [`least_step`], each exact by its proof) finds one; from the
+//!    last atom to the first, the rest ends in the table of no atoms, `{0}`, so the values found
+//!    have keys summing to g, and so by step 1 the class sums g encodes. Its `found?` is then
+//!    never `None`; a `None` would only stop the join, whose stop the solver answers, never a
+//!    wrong answer. [`Plan::point`]: the forward pass gave a last layer not empty, so a point
+//!    exists (step 3) and x = 0 is in `good[0]`; at a join
+//!    with x in `good[i]`, step 5 gives some g of `T_i` with `meet(x, g)` in `good[i + 1]`, and
+//!    every such g is in `sums[i]`, which is read in full, so a pick exists; at a fused pair,
+//!    x in `good[i]` is the X of a point of the [`lattice`] of step 6, so the set of y with
+//!    `x + y` in `s(sums[i])`, y in `q(sums[i + 1])` and `x - y + h` in `out⁻¹(good[i + 2])` is
+//!    not empty, and any of its keys gives a triple, e and o in the tables, whose key
+//!    `out(x - y + h)` is in `good[i + 2]`. Each pick meets the rows closing at its join (by
+//!    step 3 the key decides acceptance), and every row closes at some join, so the values
+//!    taken apart meet every row. [`Plan::project`]: from the group's last atom back,
+//!    `good` holds the keys of atoms `0..t + 1` that the atoms after complete to a key of
+//!    `sums[i]`; a key b of the table of atoms `0..t` is the key of some assignment of them
+//!    (step 2), so b with v completes exactly when `b + key(v)` is in `good`, which the walk
+//!    tests for every value and [`Plan::by_intervals`] for every value at once (d in
+//!    `good - before`); and every point's assignment has its prefix keys in the tables (step 2)
+//!    and its group key in `sums[i]` (steps 5 and 6), and any assignment with key in
+//!    `sums[i]` joins the other groups' parts of a point, since the rest of the point depends
+//!    on that key alone (step 3). So each atom's set is its values over all points.
+//!    Note the invariant first written in step 3, layer i over all assignments meeting the
+//!    closed rows, was stronger than true: the tables keep only top digits in `top_j`
+//!    (step 2), which every point meets, so the answers are the same.
+//!
+//! The notes "not proved" left in this module and in `row_sums/classes.rs` are about cost,
+//! not answers: the density of the sums (Galil and Margalit, below), the race's bound on the
+//! method's work, and least span first as the order of least work ([`Plan::build`]); each
+//! changes only how much work an answer takes, and a run past [`JOIN_LIMIT`] goes to the
+//! solver (PROOF-row-sums-join-exact).
 //!
 //! Checked against enumeration by
 //! `l01_38_omega_test::disj_groups::row_sums::random_shared_sums_are_answered_and_never_coarser_than_the_solver_alone`
@@ -275,7 +331,7 @@
 //! subset-sum problem. None of these results is a step of an
 //! answer: Karp's and Galil and Margalit's explain costs, Levin's and Pisinger's name methods
 //! not used, and the join's exactness rests on the definitions alone, not on any of them
-//! (it is not proved as a whole: see "Not proved as a whole" above).
+//! (proved in steps 1 to 7 of "Every answer is exact" above).
 //!
 //! The formula is recognized as: top-level conjuncts each either a constraint (a row, of any
 //! number of atoms, `== 0` or `>= 0`) or a disjunction whose arms each confine one and the same
@@ -2170,7 +2226,74 @@ const DIFF: usize = 3;
 /// The points `(x, y)` with x in `p`, y in `q`, `x + y` in `s` and `x - y + h` in `d` (any where
 /// `d` is `None`), read as the sets of their x, y, `x + y` and `x - y + h`, each where `want`
 /// asks for it (else empty). `h` is at least the greatest key of `q`, so `x - y + h` is at least
-/// 0 (PRES-overlap-coeffs: the join of two groups that share two rows, [`Fused`]).
+/// 0, and the greatest key of `p` plus `h` is below [`LIMIT`] (PRES-overlap-coeffs: the join of
+/// two groups that share two rows, [`Fused`]).
+///
+/// Proof that each answer is exactly that coordinate over the points P
+/// (PROOF-row-sums-lattice-take-apart). Facts used: a [`Set`] is the union of its words (`lit`)
+/// and its intervals (`fill`, sorted and disjoint), its keys at least 0; `window(t, a, b)` is
+/// `t ∩ [max(a, 0), b]`; `and_shifted(a, b, c) = a ∩ (b + c)` and `and_reflected(a, b, c) =
+/// a ∩ (c - b)`; `shift` and `reflect` drop only keys below 0; `keys_in(a, b)` gives each key
+/// of the words in `[a, b)` once; `meet_into` of two sorted disjoint lists gives their overlaps,
+/// sorted and disjoint. Every coordinate of a point is at least 0 (`h >= y`), so no drop of a
+/// key below 0 loses one.
+/// 1. Ranges. A point has x in `[pmin, pmax]`, y in `[qmin, qmax]`, `x + y` in `[smin, smax]`
+///    and `x - y + h` in `[dmin, dmax]` (between d's ends, and from `pmin - qmax + h` to
+///    `pmax - qmin + h`). Each [`Acc`] keeps the keys within its coordinate's range cut to
+///    `[0, LIMIT]`; every coordinate of a point is at most `pmax + h`, below [`LIMIT`], so the
+///    cut drops none (it did when the caller let `pmax + h` pass [`LIMIT`]:
+///    `a_fused_pair_past_the_limit_keeps_its_points`). Every key, word and interval given to an
+///    `Acc` below holds only coordinates of points, so `Acc::lits`, which sets whole words,
+///    adds no other key.
+/// 2. Cover. A point has y in `q.lit` (part 1) or in `q.fill`; then x in `p.lit` (part 2) or in
+///    `p.fill`; then `x + y` in `s.lit` (part 3) or in `s.fill`; then, with d, `x - y + h` in
+///    `d.lit` (part 4); else in `d.fill`, or d is `None` (part 5). Each part's bounds (`xa..xb`,
+///    `lo..hi`, the windows, the intervals read by `partition_point` and `take_while`) follow
+///    from step 1 and the part's own case, so each point is reached by the part of its case. A
+///    point that two parts reach changes no answer.
+/// 3. Part 1, per y: `x = p ∩ (s - y) ∩ (d - h + y)` within the window, exactly the x of the
+///    points with that y; their sums are `x + y` and their differences `x + (h - y)`.
+/// 4. Part 2, per x: `ys = (s - x) ∩ q.fill ∩ (x + h - d)` within `[ya, yb]`, exactly the y in
+///    `q.fill` of the points with that x; sums `ys + x`, differences `x + h - ys`.
+/// 5. Part 3, per σ in `s.lit`: the y in `q.fill` with `σ - y` in `p.fill` are the overlaps of
+///    `q.fill` and `σ - p.fill` (sorted by reading `p.fill` backward). Without d, an overlap
+///    `[ya, yb]` gives the points `(σ - y, y)`: x over `[σ - yb, σ - ya]`, sum σ, and
+///    differences `σ + h - 2y`, the keys of the parity of `σ + h` from `σ + h - 2·yb` to
+///    `σ + h - 2·ya` (`Acc::ap`). With d, `δ = σ + h - 2y` must be in d. It lies in an interval
+///    `[d1, d2]` of `d.fill` exactly for `⌈(σ + h - d2)/2⌉ <= y <= ⌊(σ + h - d1)/2⌋`
+///    (`div_euclid` by 2 is the floor; adding 1 first gives the ceiling). It lies in `d.lit`
+///    exactly for `δ = 2t + π` with `π = (σ + h) mod 2` and t in `{t : 2t + π in d.lit}`
+///    ([`halves`]); then `y = c - t` with `c = (σ + h - π)/2`, y in `[ya, yb]` is t in
+///    `[c - yb, c - ya]`, `x = σ - c + t`, and the differences are the keys of `d.lit` of
+///    parity π in `[da, db]` ([`parity_clip`]).
+/// 6. Part 4, per δ in `d.lit`, with `e = δ - h` and so `x = y + e`: the y in `q.fill` with
+///    `y + e` in `p.fill` are the overlaps of `q.fill` and `p.fill - e`; `x + y = 2y + e` lies in
+///    an interval `[s1, s2]` of `s.fill` exactly for `⌈(s1 - e)/2⌉ <= y <= ⌊(s2 - e)/2⌋`, and
+///    these are sorted and disjoint (for `s2 < s1'`, `⌊(s2 - e)/2⌋ < ⌈(s1' - e)/2⌉`), so one
+///    merge gives the y: x over `[ya + e, yb + e]`, sums `2y + e` of the parity of e,
+///    difference δ.
+/// 7. Part 5, per intervals `[q1, q2]`, `[p1, p2]`, `[s1, s2]` and `[d1, d2]` (or the range of
+///    step 1, which holds every difference, where d is `None`), with `e_j = d_j - h`: the points
+///    are the integer (x, y) of the box with `s1 <= x + y <= s2` and `e1 <= x - y <= e2`. For a
+///    given y every bound on x is an integer (`p1`, `s1 - y`, `e1 + y` below; `p2`, `s2 - y`,
+///    `e2 + y` above), so some x exists exactly when each lower bound is at most each upper
+///    one. Of the nine pairs three hold always (`p1 <= p2` and the like); the other six give
+///    `y <= s2 - p1`, `y >= p1 - e2`, `y >= s1 - p2`, `2y >= s1 - e2`, `y <= p2 - e1` and
+///    `2y <= s2 - e1`, which with `[q1, q2]` is the interval given for Y. For X the same with
+///    the bounds on y `q1`, `s1 - x`, `x - e2` below and `q2`, `s2 - x`, `x - e1` above. For a
+///    sum σ of parity π, x and y are integers exactly when `δ' = x - y` has parity π too; with
+///    `up(e1)` and `down(e2)` the least and greatest of parity π in `[e1, e2]`, the bounds on δ'
+///    are `up(e1)`, `σ - 2·q2`, `2·p1 - σ` below and `down(e2)`, `σ - 2·q1`, `2·p2 - σ` above,
+///    all of parity π, so some δ' exists exactly when each lower is at most each upper:
+///    `up(e1) <= down(e2)` (tested) and σ of parity π in `[max(s1, up(e1) + 2·q1,
+///    2·p1 - down(e2), p1 + q1), min(s2, 2·p2 - up(e1), down(e2) + 2·q2, p2 + q2)]`. For δ' the
+///    same with σ and δ' exchanged (`up(s1)`, `down(s2)`), and the difference is `δ' + h`, of
+///    parity `(π + h) mod 2`.
+///
+/// So each answer is the union over the parts of coordinates of points (steps 3 to 7) and holds
+/// every point's coordinate (step 2). Test: `tests::lattice_by_pairs` (400 random cases against
+/// enumeration, each coordinate alone, keys below 1,400, h at most 2 past q's greatest key); it
+/// cannot catch a fault near [`LIMIT`] (step 1) nor on sets of a shape it does not draw.
 // Complexity tradeoff: the points are pairs, and taken pair by pair (the sums of the two groups
 // as one table of two digits, as before) they cost the product of the two tables: 1.29M keys
 // at k = 64 for `coefficients_one_and_two`, about 1.6·10^10 at k = 512. Here the sets are
@@ -3373,6 +3496,18 @@ impl Plan {
             1 => Map::Reflect(wide(c - lo_s)?),
             _ => Map::Shift(wide(-c - lo_s)?),
         };
+        // The pair's points have `x + y` and `x - y + h` at most `x.size - 1 + h`, which must
+        // stay below [`LIMIT`], the end of [`lattice`]'s ranges (`Acc::new`): past it a point
+        // was lost (`a_fused_pair_past_the_limit_keeps_its_points`, red before this test:
+        // `decide` gave `Ok(false)` on a formula with a point). A map's constant within
+        // `LIMIT` keeps each key it maps from `0..LIMIT` inside `i64`. Elsewhere the pair is
+        // declined and the plan made again without pairs (`Plan::of`), proved exact by steps 1
+        // to 5 of the module note.
+        let small =
+            |m: Map| matches!(m, Map::Shift(c) | Map::Reflect(c) if i128::from(c).abs() <= LIMIT);
+        if i128::from(x.size) + h > LIMIT || ![q, s_map, out].into_iter().all(small) {
+            return None;
+        }
         Some(Fused {
             q,
             s: s_map,
@@ -4506,6 +4641,40 @@ mod tests {
         let mut s = Set::settled(Lits::default(), vec![(0, 14_999)]);
         s.keep(5000, 4999);
         assert!(s.is_empty(), "{:?}", s.fill);
+    }
+
+    /// A pair of [`Fused`] groups on both sides of [`LIMIT`]: `a0 + a1 + a2 == top - 998` and
+    /// `a1 + 2·a2 + a3 == 4`, `a0` over `0..=top`, `a1` one value (the group of radix 1, so
+    /// the layer before the pair may hold a key of every value below 2^62), `a2` over
+    /// `0..=1000` (`h = 1000`, its table an interval) and `a3` over `0..=1`. The one point is
+    /// `a2 = 2`, `a3 = 0`, `a0 = top - 1000`, whose `x - y + h` (`u = a0`, `q = a2`) is
+    /// `top - 2`. With `top = 2^62 - 1001` the layer's size and `h` sum to `LIMIT` and the
+    /// pair is fused; with `top = 2^62 - 1`, `x - y + h = 2^62 + 995`, past `LIMIT` and past
+    /// the word that holds it, where `lattice`'s range ends: the point was lost and `decide`
+    /// gave `Ok(false)` (red before `Plan::fused` declined such a pair); now the pair is
+    /// declined and the join without pairs answers.
+    #[test]
+    fn a_fused_pair_past_the_limit_keeps_its_points() {
+        for (top, fused) in [((1 << 62) - 1001, true), ((1 << 62) - 1, false)] {
+            let rows = || {
+                rows_of(
+                    vec![vec![(0, top)], vec![(0, 0)], vec![(0, 1000)], vec![(0, 1)]],
+                    vec![
+                        (vec![(0, 1), (1, 1), (2, 1)], -(top - 998), true),
+                        (vec![(1, 1), (2, 2), (3, 1)], -4, true),
+                    ],
+                )
+            };
+            let plan = Plan::of(&rows(), &[false; 4]).expect("a plan");
+            let pair = (0..plan.len()).any(|i| matches!(plan.join(i).fuse, Some(Fuse::First(_))));
+            assert_eq!(pair, fused, "top {top}: a fused pair");
+            assert_eq!(decide(rows(), || Err(Refusal::Work)), Ok(true), "top {top}");
+            let (sets, _) = by_join(rows()).expect("a plan");
+            let one =
+                |v: i128| IntervalSet::from_pieces(vec![(End::Fin(v.into()), End::Fin(v.into()))]);
+            let want = [one(top - 1000), one(0), one(2), one(0)];
+            assert_eq!(sets, want, "top {top}");
+        }
     }
 
     /// A row as its terms, its constant and whether it is an equation.
