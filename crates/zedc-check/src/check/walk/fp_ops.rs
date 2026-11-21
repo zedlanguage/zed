@@ -13,6 +13,18 @@ use crate::check::*;
 pub(in crate::check) type FoldLevel<'t, 'a> =
     fn(&mut Ck<'t, 'a>, Reducer, &Ty, Span, Span, FoldForm) -> Ty;
 
+/// Whether the family `sig` is an operand `++` takes: a list, keyed by the ranks `0`, `1`, …
+/// ([`Dense::Ranks`]), or a family with no key, as `{}` (the ranks `0 ..< 0`) and an empty
+/// range such as `3 ..< 3`, whose exact keys are none ([`Sig::keys`]). The fold repair of
+/// `Ck::fold_dir_end` offers `a ++ [x]` exactly where this holds, so the repair checks
+/// (types.rs `fold_refusal_repairs_fit_every_start_value_and_check`). O(arrows).
+pub(in crate::check) fn joins_as_list(sig: &Sig) -> bool {
+    sig.data
+        && (sig.dense == Dense::Ranks
+            || sig.arrows.iter().all(|a| a.params[0].is_empty())
+            || (sig.keys.as_ref()).is_some_and(|k| written_ints(k).is_empty()))
+}
+
 /// The source text `c` of an operand, put in parentheses unless `.count` or `[i]` can follow
 /// it as written: every character outside brackets is part of a name or a `.`, as in `xs`,
 /// `m.lines`, `xs.where(f)`, `[1, 2]` or `(0 ..< 3)`, with no space or comment there. Brackets
@@ -1301,17 +1313,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let mut sigs = Vec::new();
             for p in a.ty.pieces() {
                 match p {
-                    // `{}` holds no key, the ranks `0 ..< 0`, as does an empty range such as
-                    // `3 ..< 3`, whose exact keys are none ([`Sig::keys`]).
-                    Piece::Fn(sig)
-                        if sig.data
-                            && (sig.dense == Dense::Ranks
-                                || sig.arrows.iter().all(|a| a.params[0].is_empty())
-                                || (sig.keys.as_ref())
-                                    .is_some_and(|k| written_ints(k).is_empty())) =>
-                    {
-                        sigs.push(sig)
-                    }
+                    Piece::Fn(sig) if joins_as_list(&sig) => sigs.push(sig),
                     Piece::Fn(sig) if sig.data => {
                         let t = self.text(&Ty::func(sig));
                         self.error_offering(

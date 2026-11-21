@@ -2690,6 +2690,12 @@ impl Type {
         crate::local::with(&SCALARS, |s| s[5].clone())
     }
 
+    /// The six whole scalar types `bool`, `int`, `rat`, `f64`, `String` and `f32`, in the order
+    /// of [`Split::bases`], so that `split.bases[i]` is whole where it equals `scalars()[i]`.
+    pub fn scalars() -> [Type; 6] {
+        crate::local::with(&SCALARS, |s| s.clone())
+    }
+
     /// The type of one scalar literal or bare atom; `None` for any other value.
     pub fn lit(v: &Value) -> Option<Type> {
         let one = |l: &mut Lits| l.insert(v);
@@ -3976,6 +3982,34 @@ impl Type {
     /// The number of `f32` values, as [`Type::F64_VALUES`] with `2^32` patterns and
     /// `2 (2^23 - 1)` NaNs.
     const F32_VALUES: u128 = (1 << 32) - (1 << 24) + 3;
+
+    /// The greatest byte length of the text (`lit_text`) of a literal its numbers and
+    /// strings list, whether as a set or as the complement of one; 0 where they list none.
+    /// The booleans are not counted: they make at most four sets, whatever the length.
+    ///
+    /// What relies on it: the fold rounds of `zedc-check` (`fold_dir_end`) bound the scalar
+    /// part of a leaf inside a function by this length (`zedc_types::forms`, `leaf_node`). The
+    /// argument: a number or string part is a `cofinite` flag and a finite set of literals
+    /// (`Lits`; `Parts` holds no interval), and each text names one value (a `rat` in
+    /// canonical form, a big integer as digits or powers that evaluate to it, an `f64` or
+    /// `f32` as its shortest round-trip text, a string quoted), so for a bound `W` on this
+    /// length finitely many values print in at most `W` bytes and finitely many such parts
+    /// exist. A union of literals such as `0 | 1000` is as wide as `1000`, so a part that
+    /// gathers the literals of a finite set does not look wider each round
+    /// (FAIL-fold-rotating-tuple-rounds, Codex seat, round 2, R2-3).
+    // Complexity tradeoff: linear in the number of literals listed, read once per leaf per
+    // round; the naive measure, the length of the printed union, is also linear but grows
+    // with the number of literals, so a set of k literals of bounded length looked k times
+    // wider.
+    pub fn scalar_literal_width(&self) -> u64 {
+        let p = self.p();
+        [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
+            .into_iter()
+            .flat_map(|lits| lits.values.iter())
+            .map(|v| lit_text(v).len() as u64)
+            .max()
+            .unwrap_or(0)
+    }
 
     /// Whether its values of the base type `base`, in the order of [`Split::bases`] (`bool`,
     /// `int`, `rat`, `f64`, `String`, `f32`), are one or more, each listed: what

@@ -457,6 +457,10 @@ pub(super) enum Frame<'a> {
         tys: Vec<Ty>,
         /// The lambda's body.
         body: &'a Expr,
+        /// The binders of its two parameters, where it has two slots, each a parameter that
+        /// takes no tuple apart and has no default: it may be a fold's step function
+        /// ([`Ck::lambda_fns`]).
+        step: Option<[Option<usize>; 2]>,
     },
     /// A parameter of a lambda bound to the type of its default.
     BindDefault(&'a Param),
@@ -1186,7 +1190,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.status_in_range(e, &t);
                 }
                 let tried = self.tried.remove(&e.span);
-                let outside = self.outside_of(e, &t, &src, tried);
+                let indexed = self.indexed.remove(&e.span);
+                let outside = self.outside_of(e, &t, &src, tried, indexed);
                 for (map, set) in [
                     (&mut self.unnamed, u),
                     (&mut self.made, made),
@@ -2026,6 +2031,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 level,
                 tys,
                 body,
+                step,
             } => {
                 let result = m.take_ty();
                 self.record_lambda(body, &ids);
@@ -2034,6 +2040,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let sig = self.handled_sig(names, &ids, tys, result, body);
                 let sig = self.generalize(level, sig, &strip);
                 let sig = self.floors_into(sig, &ids);
+                if let Some(binders) = step {
+                    let key = Arc::as_ptr(&sig) as usize;
+                    self.lambda_fns.insert(key, (sig.clone(), (binders, body)));
+                }
                 m.ty(Ty::func(sig));
             }
             Frame::BindDefault(p) => {
@@ -4952,6 +4962,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             true => ("`foldr`", "`(x, a) -> x + a`"),
         };
         let out = self.passing(x, word, span, None);
+        let step = self.fold_step(&f, span);
         // A function not yet known, as a parameter `f` of `h(f, m) = m.foldl(0, f)` whose type
         // is not written, is a class; on a receiver that is a class too, the need on the
         // receiver below holds it, and is met where both are known (FAIL-map-generic-
@@ -5117,8 +5128,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         //     skeletons drawn from this program and prelude, every non-count node label comes
         //     from a finite set fixed before the loop (`Payload` atom names from the
         //     program+compiler set, `Shape` field-name lists as sorted subsets of the finite
-        //     program+compiler field-name set, and `Fn.word` from the prelude names set only by
-        //     mod.rs `word_sig` and `bit_sig`), `Fn.positional` is ordered by Higman
+        //     program+compiler field-name set, and `Fn.word` from the prelude names set on
+        //     callable values by mod.rs `word_sig` and `bit_sig` — `ty.rs::fn_token` also sets
+        //     `word` on a local comparison token inside `Comparing::closed_form`, which returns
+        //     a bool and is never exported as a fold result), `Fn.positional` is ordered by Higman
         //     subsequence over `{false, true}` (WQO by Higman 1952, Theorem 4.3, p. 332, with
         //     no arity bound needed), and every count label (`Leaf`'s `(vars, text_len)` and
         //     `Fn`'s lengths) is ordered by `<=` componentwise (WQO by Dickson 1913, Lemma A,
@@ -5148,7 +5161,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         //     than its own (finitely many by induction), and its label comes from a finite
         //     set (fixed finite non-count labels above, plus counts each at most `W`). A union
         //     node's children are a subset of the finitely many non-union forms of depth at
-        //     most `D` and width at most `W`, so finitely many unions exist too.
+        //     most `D'` and width at most `W`, so finitely many unions exist too.
         //  4. Hence the infinite subsequence of distinct pairs `(p_i, V)` lies in a finite
         //     set: contradiction. Only finitely many pairs `(p, v)` are ever introduced. In
         //     particular, the set of top-level non-union skeleton pieces across all rounds is
@@ -5161,13 +5174,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         //     induction on `depth(s)` only finitely many canonical forms map to `s` with at
         //     most `V_max` distinct fresh variables: at depth 0, a canonical leaf has finitely
         //     many choices (`zedc_types::forms::Leaf`: six carrier bits; at most eight tagged
-        //     texts, the printed scalar bases inside a function, the atoms where one carries
-        //     a payload or the set holds every unlisted name, and the kind-wide part
+        //     texts, the printed narrowed scalar bases inside a function, the atoms where one
+        //     carries a payload or the set holds every unlisted name, and the kind-wide part
         //     (`forms::leaf_texts`), each of byte length at most `W_max` because the greatest
         //     length counts in the width, so finitely many strings; bare atom and family names
         //     from the finite program and prelude set; one bit; a subset of the finite set
-        //     `K`; and at most `W_max` fresh-variable places each strictly less than
-        //     `V_max`), and a union of distinct canonical leaves is a
+        //     `K` (`known_vars` plus canonical `$0..$(known_classes - 1)`); and at most `W_max`
+        //     fresh-variable places each strictly less than `V_max`), and a union of distinct
+        //     canonical leaves is a
         //     subset of that finite set; at depth `d > 0`, a non-union canonical node has the
         //     same non-leaf kind (and for `Fn`, `exact_ends` of printed length at most `W_max`,
         //     finitely many) and children mapping to the skeleton's children (finitely many by
@@ -5199,12 +5213,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         Forms::collect_vars(init, &mut known_vars);
         Forms::collect_vars(&values, &mut known_vars);
         Forms::collect_vars(&Ty::func(fsig.clone()), &mut known_vars);
-        for i in 0..self.classes.len() {
-            known_vars.insert(Arc::from(format!("${i}")));
-            if let Some(n) = &self.classes[i].name {
-                known_vars.insert(n.clone());
-            }
-        }
+        // Record the pre-fold class count in O(1) instead of scanning `0..self.classes.len()`:
+        // `Classes` is sparse under R10 (`probe.rs`: unmaterialized ids panic on index), and
+        // scanning all prior classes per fold is O(n^2) across a file with many folds.
+        let known_classes = self.classes.len();
         let mut forms = Forms::new();
         let mut canon: HashMap<FormId, Ty> = HashMap::new();
         let mut seen_pieces: HashSet<(FormId, u64)> = HashSet::new();
@@ -5232,21 +5244,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                 return out.union(&acc);
             }
             let g = gives.carriers();
-            let (c, _) = forms.of_in(&g, true, &known_vars);
+            let (c, _) = forms.of_in(&g, true, &known_vars, known_classes);
             if let Some(before) = canon.get(&c) {
                 break (before.clone(), gives);
             }
             canon.insert(c, gives.clone());
-            let (s, fresh_v) = forms.of_in(&g, false, &known_vars);
+            let (s, fresh_v) = forms.of_in(&g, false, &known_vars, known_classes);
             round += 1;
             if round == 1 {
-                limit = Self::fold_depth_limit(f.expr, right, init, &g, &mut forms);
+                limit = step.and_then(|st| self.fold_depth_limit(st, right, init, &g, &mut forms));
             }
             full |= limit.is_none_or(|d| forms.depth(s) > d);
             // A round's new pairs are compared with earlier rounds' only, and join `grown`
             // after all of them are tested: one result may hold a piece and a deeper one that
             // embeds it, as `(x,) | ((x,),)` from `if a is int { (x,) } else { ((x,),) }`,
-            // which is not growth from round to round (step 1 below takes one pair per round).
+            // which is not growth from round to round (step 1 above takes one pair per round).
             let pieces: Vec<FormId> = forms.pieces(&s).to_vec();
             let mut blown_before = None;
             let mut new_pairs: Vec<(RootTag, FormId)> = Vec::new();
@@ -5256,10 +5268,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let group = grown.get(&tag).map_or(&[][..], |g| &g[..]);
                     let found = group.iter().find(|&&(q, u, _)| {
                         u <= fresh_v
-                            && forms.embeds(q, p)
                             && ((full && forms.depth(p) > forms.depth(q))
                                 || forms.width(p) > forms.width(q)
                                 || fresh_v > u)
+                            && forms.embeds(q, p)
                     });
                     if let Some((_, _, before)) = found {
                         blown_before = Some(before.clone());
@@ -5283,16 +5295,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             // dropped: a payload, function, scalar or atom of `A_k` stays as it is, with its
             // payload shapes and its named-family marks (`Ty::family`), which a piece rebuilt
             // from `Ty::pieces` would lose (B2 of round 1: `#ok(int)` became `#ok(..)`).
-            // The test needs `&mut self`, so the rows are copied out first (O(rows)).
-            let rows = acc.tuples.to_vec();
-            let keep: Vec<bool> = rows
+            acc.tuples = acc
+                .tuples
                 .iter()
-                .map(|r| !self.subtype(&Ty::of_row(r.clone()), &g))
-                .collect();
-            acc.tuples = rows
-                .into_iter()
-                .zip(keep)
-                .filter_map(|(r, k)| k.then_some(r))
+                .filter(|r| !self.subtype(&Ty::of_row((*r).clone()), &g))
+                .cloned()
                 .collect();
             acc = acc.union(&g);
         };
@@ -5302,7 +5309,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let (a, b) = (self.text(&earlier), self.text(&later));
         // The repair takes the accumulator's own form and checks as valid Zed: a tuple gives
         // back its parts (whether or not a part holds a type variable); matching numeric
-        // carriers take `+`; matching strings take `++`; every other start value gives back `a`.
+        // carriers take `+`; matching strings take `++`; lists (rank-keyed or empty data
+        // families) take `a ++ [x]` / `[x] ++ a`; every other start value gives back `a`.
         let pair = |body: &str| match right {
             false => format!("`(a, x) -> {body}`"),
             true => format!("`(x, a) -> {body}`"),
@@ -5335,9 +5343,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     true => "`(x, a) -> x ++ a`".to_string(),
                 }
             }
-            // A list or other family (a function held as data, `Sig::data`) takes the entry
-            // at its end; `a ++ x` would join a family with an entry.
-            [Piece::Fn(s)] if s.data => match right {
+            // A list, or a family with no key, takes the entry at its end, by the test `++`
+            // itself applies ([`fp_ops::joins_as_list`]); a map, a set or a range that does not
+            // start at 0 gives back `a`, since `++` refuses it (Gemini seat, round 2 of
+            // FAIL-fold-rotating-tuple-rounds: `{"a" -> 0}` was offered `a ++ [x]`).
+            [Piece::Fn(s)] if fp_ops::joins_as_list(s) => match right {
                 false => "`(a, x) -> a ++ [x]`".to_string(),
                 true => "`(x, a) -> [x] ++ a`".to_string(),
             },
@@ -5347,12 +5357,52 @@ impl<'t, 'a> Ck<'t, 'a> {
         // say so, and name the needs where they are the part, as for `y -> a(y) + x`, whose
         // need "call `a`" holds the accumulator's type, one step deeper each round. Before,
         // the message read "makes it _ -> int, then _ -> int" with nothing to tell them apart.
-        // Complexity: O(the needs of the two results), on the error path only.
+        // Complexity: O(distinct nodes and needs of the two results), on the error path only.
         let alike = match a == b {
             false => "",
             true => {
                 let needs = |t: &Ty| -> Vec<Need> {
-                    t.fns.iter().flat_map(|s| s.needs.iter().cloned()).collect()
+                    let mut out = Vec::new();
+                    let mut sigs: HashSet<*const Sig> = HashSet::new();
+                    let mut rows: HashSet<*const ()> = HashSet::new();
+                    let mut shapes: HashSet<*const ()> = HashSet::new();
+                    enum V<'a> {
+                        Ty(&'a Ty),
+                        Row(&'a zedc_types::ty::Row),
+                        Shape(&'a zedc_types::ty::Shape),
+                    }
+                    let mut todo = vec![V::Ty(t)];
+                    while let Some(step) = todo.pop() {
+                        match step {
+                            V::Ty(t) => {
+                                for s in t.fns.iter() {
+                                    if sigs.insert(Arc::as_ptr(s)) {
+                                        out.extend(s.needs.iter().cloned());
+                                        for a in &s.arrows {
+                                            todo.push(V::Ty(&a.result));
+                                            todo.extend(a.params.iter().map(V::Ty));
+                                        }
+                                    }
+                                }
+                                todo.extend(t.tuples.iter().map(V::Row));
+                                for shapes in t.payloads.values().flatten() {
+                                    todo.extend(shapes.iter().map(V::Shape));
+                                }
+                            }
+                            V::Row(r) => {
+                                if rows.insert(r.addr()) {
+                                    todo.extend(r.iter().map(V::Ty));
+                                }
+                            }
+                            V::Shape(s) => {
+                                if shapes.insert(s.as_ptr().cast::<()>()) {
+                                    todo.extend(s.items.iter().map(V::Ty));
+                                    todo.extend(s.fields.values().map(V::Ty));
+                                }
+                            }
+                        }
+                    }
+                    out
                 };
                 match needs(&earlier) != needs(&later) {
                     true => {
@@ -5366,8 +5416,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.error_offering(
             span,
             format!(
-                "the accumulator of {word} starts as {i}, and its function makes it {a}, then \
-                 {b}{alike}: zedc finds no one type that holds every step"
+                "the accumulator of {word} starts as {i}, and its function makes it {a}, and \
+                 later {b}{alike}: zedc finds no one type that holds every step"
             ),
             [format!(
                 "repair: give the function a result of the start value's type, as {repair}"
@@ -5376,34 +5426,113 @@ impl<'t, 'a> Ck<'t, 'a> {
         Ty::empty()
     }
 
+    /// The step function `f` of the fold at `span`, as [`Self::fold_depth_limit`] reads it.
+    /// From its text where it is a lambda, or a name of a definition [`Self::definition`]
+    /// gives (a declared equation or a lambda bound to a name), recorded by `span` in
+    /// `fold_fns`: a need that replays the fold where its receiver is known passes `f`'s type
+    /// only, with the same `span`. Else, where only `f`'s type is known, the lambda of that
+    /// signature (`lambda_fns`: a function parameter of the function round the fold, met with
+    /// the lambda passed for it), or what an earlier visit of `span` recorded. `None` where
+    /// none is found, or where a parameter takes a tuple apart or has a default.
+    ///
+    /// What relies on it: only the size of the depth limit, so a function found wrongly could
+    /// cost a refusal, never a wrong type (`fold_dir_end`: any finite limit ends the rounds);
+    /// and none is found wrongly, since a span is one expression and a kept `Arc` one
+    /// signature. (Opus seat, round 2 of FAIL-fold-rotating-tuple-rounds, E1: a generic
+    /// receiver, a function parameter and a named function were refused where only a lambda
+    /// written at the fold was read.)
+    fn fold_step(&mut self, f: &Arg<'a>, span: Span) -> Option<StepFn<'a>> {
+        let text = match f.expr.map(|e| (e, &e.kind)) {
+            Some((_, ExprKind::Lambda { params, body })) => Some((&params[..], &**body)),
+            Some((e, ExprKind::Name(_))) => self.callee_id(e).and_then(|id| self.definition(id)),
+            _ => None,
+        };
+        if let Some((params, body)) = text {
+            let [p0, p1] = params else { return None };
+            let plain = |p: &Param| p.tuple.is_none() && p.default.is_none();
+            if !(plain(p0) && plain(p1)) {
+                return None;
+            }
+            let ids = [p0, p1].map(|p| Some(self.id(p.span, &p.name)));
+            self.fold_fns.insert(span, (ids, body));
+            return Some((ids, body));
+        }
+        let by_sig = only_fn(&f.ty)
+            .and_then(|s| self.lambda_fns.get(&(Arc::as_ptr(&s) as usize)))
+            .map(|(_, st)| *st);
+        by_sig.or_else(|| self.fold_fns.get(&span).copied())
+    }
+
     /// The depth limit `D` of the argument at [`Self::fold_dir_end`]: a depth that no result
-    /// of `f` passes when `f` is a lambda whose body is a tuple built from literal projections
-    /// of the accumulator `a` and from values that do not read `a`; `None` for any other `f`.
-    /// `g` is the result of round 1, `init` the start value.
+    /// of the step function passes, where its body reads as below; `None` where it does not.
+    /// `step` is the binders of the function's two parameters and its body
+    /// ([`Self::fold_step`]), `g` the result of round 1, `init` the start value.
     ///
     /// Any finite `D` ends the loop (the argument at `fold_dir_end`); this method only sizes it
     /// so that such a fold, as the delay chain `(a, x) -> (0, (a[0],), (a[1],))` from
     /// `(0, 0, 0)`, settles before (b) turns full (B1 of round 1 of
     /// FAIL-fold-rotating-tuple-rounds). A `D` too small costs a refusal, never a wrong type.
     ///
+    /// The reading. `Al` is a set of binders that each hold the accumulator itself: at first
+    /// the accumulator's parameter (the first of `foldl`'s function, the second of
+    /// `foldr`'s); a statement `b = c` of a block, `c` a name of `Al`, adds `b`. A name *of
+    /// `Al`* is a use whose binder (`res.uses`) is in `Al`; an expression *reads the
+    /// accumulator* when it holds a name of `Al` at any depth, lambdas and blocks within it
+    /// included. The body is read at the top, and each expression found inside a part at an
+    /// offset `o >= 1` in part `j` (a part itself is at offset 1):
+    /// - a block of statements `b = e` ending in one value `v`: `v` is read in its place, `b`
+    ///   joining `Al` where `e` is a name of `Al`; `None` where another `e` reads the
+    ///   accumulator, or where another kind of statement stands;
+    /// - `if c { t } else { u }` (an `else if` is an `if` in `u`), `c` not reading the
+    ///   accumulator: `t` and `u` are read in its place;
+    /// - at the top: a tuple, its part `j` read at offset 1 in part `j`, every such tuple of
+    ///   one length `n >= 1`; a name of `Al`; any other expression returns `None`;
+    /// - at offset `o` in part `j`: a tuple, its parts read at `o + 1`; an atom with a payload
+    ///   `#t(e_1, ..., f: e)`, its arguments read at `o + 2`; a chain `c[k_1]...[k_m]`
+    ///   (`m >= 1`, every `k_i` an integer literal, `k_1 < n`, `c` a name of `Al`), which
+    ///   gives the edge `k_1 -> j` of weight `o - m` and the floor `S_j >= o - 1`; an
+    ///   expression that does not read the accumulator; any other expression, a name of `Al`
+    ///   among them, returns `None`.
+    ///
     /// Proof that no result passes the `D` returned, where one is:
-    /// 1. Write the body `(e_0, ..., e_{n-1})`. Every `e_j` is a tuple of sub-expressions; at
-    ///    path `q` (`q[0] = j`, `|q|` the number of tuple levels down to it, 1 for `e_j`) it
-    ///    holds either a chain `a[k_1]...[k_m]` (`m >= 1`, every `k_i` an integer literal) or
-    ///    an expression that does not name `a` (else `None` is returned).
-    /// 2. An expression that does not name `a` has the same type at every round: `f` is applied
-    ///    to the same values `V` each round, and only `a`'s type changes. So its depth is at
-    ///    most that of part `j` of `g_1`, which is in `S_j`.
+    /// 0. A name of `Al` holds the accumulator: each binder of `Al` is the parameter or is
+    ///    bound to a name of `Al`, by induction on the statements read. A block of the
+    ///    statements read gives its last value. An `if` gives one of its branches; its
+    ///    condition does not read the accumulator, so, as in step 1, it has the same type in
+    ///    every round, and a branch the checker joins in any round it joins in round 1. So
+    ///    the result's type is the union of the types of the top-level tuples read and, where
+    ///    a name of `Al` is read at the top, of the accumulator `A_k`; and the type at each
+    ///    place inside a part is the union of the alternatives read there. (Codex seat, round
+    ///    2, R2-1: a delay chain under `if x > 0`; Opus seat, round 2, E1: a block naming the
+    ///    accumulator again, an `if` that may give it back, payload parts, an `if` inside a
+    ///    part.)
+    /// 1. An expression that does not read the accumulator has the same type in every round:
+    ///    the function is applied to the same values `V` each round, and only the
+    ///    accumulator's type changes (a binder of a block whose value does not read the
+    ///    accumulator is such an expression too). Placed in part `j`, it makes the part in
+    ///    round `k` exactly as deep as it makes it in round 1, at most the depth of part `j`
+    ///    of `g_1`, which is in `S_j`.
+    /// 2. Depths (`Forms::depth`): a union is as deep as its deepest child, a tuple is one
+    ///    level deeper than its deepest part, and an atom with a payload two levels deeper
+    ///    than its deepest argument (its payload node and its shape). So a value read at
+    ///    offset `o` in part `j` makes the part at most `o - 1 + depth(value)` deep, and the
+    ///    part is no deeper than the greatest of these over the values read in it and the
+    ///    expressions of step 1 (the alternatives of an `if` join as a union).
     /// 3. Let `B_k` bound the depth of part `k` of every accumulator row. A projection takes
-    ///    one tuple level off a value (a tuple is one deeper than its deepest part, `Forms::
-    ///    depth`), so `a[k_1]...[k_m]` has depth at most `B_{k_1} - (m - 1)`, and placed at
-    ///    path `q` it makes part `q[0]` at most `|q| - 1` levels deeper: depth
-    ///    `<= B_{k_1} + |q| - m`. That is the edge `k_1 -> q[0]` of weight `|q| - m`.
-    /// 4. So `B` is a bound when `B_j >= S_j` and `B_j >= B_k + w` for every edge `k -> j` of
+    ///    one tuple level off a value, so `c[k_1]...[k_m]` has depth at most
+    ///    `max(B_{k_1} - (m - 1), 0)` (a depth is never negative), and at offset `o` it makes
+    ///    part `j` at most `max(B_{k_1} + o - m, o - 1)` deep: the edge `k_1 -> j` of weight
+    ///    `o - m`, and the floor `S_j >= o - 1`, which the code adds to `S` with the edge.
+    ///    (Codex seat, round 2: without the floor the bound `B_{k_1} + o - m` could fall below
+    ///    `o - 1` where `B_{k_1} < m - 1`.)
+    /// 4. The accumulator read at the top adds `A_k`'s rows, whose parts the induction of
+    ///    step 5 bounds by `B` already; it adds no edge.
+    /// 5. So `B` is a bound when `B_j >= S_j` and `B_j >= B_k + w` for every edge `k -> j` of
     ///    weight `w`, by induction on the rounds: the start rows' parts are in `S` (base); a
-    ///    round's result parts are bounded by steps 2 and 3, and the next accumulator is
-    ///    the union of the old one and the result, whose depth is the greater of the two.
-    /// 5. Such a `B` exists exactly when no cycle has positive weight. A cycle lies inside one
+    ///    round's result parts are bounded by steps 1 to 4 (the second term of step 3's
+    ///    maximum by the floor in `S_j`), and the next accumulator is the union of the old one
+    ///    and the result, whose depth is the greater of the two.
+    /// 6. Such a `B` exists exactly when no cycle has positive weight. A cycle lies inside one
     ///    strongly connected component; if every edge inside every component has weight
     ///    `<= 0`, giving each component the greatest `B` of its members satisfies every edge
     ///    inside it, and the components taken from the source end of the condensation
@@ -5411,33 +5540,120 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///    numbers) satisfy the edges between them by one pass of `max(B_t, B_c + w)`. A
     ///    positive edge inside a component returns `None` (it may sit on a positive cycle;
     ///    the sufficient test is used, not the exact one, which only costs a refusal).
-    /// 6. A row of `n` parts each of depth `<= max B` has depth `<= 1 + max B = D`. ∎
+    /// 7. A row of `n` parts each of depth `<= max B` has depth `<= 1 + max B = D`. ∎
     ///
-    /// Complexity: O(size of the body) for the walk; one canonical form per part of each row of
-    /// `init` and `g`, O(their size); Tarjan's O(n + edges). Naive alternative: run rounds
-    /// until the depth stops growing, which is the question asked.
+    /// Why a name of `Al` inside a part returns `None`: at offset `o` it would make part `j`
+    /// at least `o - 1 + depth(A_k) = o + max B` deep, an edge from every part to `j` of
+    /// weight `o >= 1`, `j -> j` among them: a positive cycle, which step 6 refuses anyway.
+    ///
+    /// Complexity: O(size of the body) for the walk, each node read once by the reading and
+    /// at most once by the test of whether it reads the accumulator (a condition, a bound
+    /// value or a leaf is tested once, and the reading does not enter it), each name looked
+    /// up in O(1) per binder it names; one skeleton per part of each row of `init` and `g`, O(their size);
+    /// Tarjan's O(n + edges). Naive alternative: run rounds until the depth stops growing,
+    /// which is the question asked.
     fn fold_depth_limit(
-        f: Option<&Expr>,
+        &self,
+        step: StepFn<'a>,
         right: bool,
         init: &Ty,
         g: &Ty,
         forms: &mut zedc_types::forms::Forms,
     ) -> Option<u64> {
-        let ExprKind::Lambda { params, body } = &f?.kind else {
-            return None;
+        let ([p0, p1], body) = step;
+        let acc = if right { p1 } else { p0 }?;
+        // `Al` of the reading: one set serves every block, since a binder's uses stand only in
+        // its own scope, so a binder added for one block matches no name outside it.
+        let mut al: HashSet<usize> = HashSet::from([acc]);
+        let of_al = |e: &Expr, al: &HashSet<usize>| {
+            matches!(
+                (&e.kind, self.t.res.uses.get(&e.span)),
+                (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.iter().any(|i| al.contains(i))
+            )
         };
-        let [p0, p1] = &params[..] else { return None };
-        let a = if right { p1 } else { p0 };
-        let ExprKind::Tuple(parts) = &body.kind else {
-            return None;
+        let reads = |e: &Expr, al: &HashSet<usize>| {
+            let mut stack = vec![e];
+            let mut found = false;
+            while let Some(e) = stack.pop() {
+                found |= of_al(e, al);
+                zedc_syntax::ast::expr_kids(&e.kind, zedc_syntax::ast::Blocks::Enter, &mut |k| {
+                    stack.push(k)
+                });
+            }
+            found
         };
-        let n = parts.len();
-        if a.tuple.is_some() || n == 0 {
+        // The reading of the doc, by a stack of `(expression, place)`: `None` for the top,
+        // `Some((j, o))` for offset `o` in part `j`. `tops` gets the lengths of the top-level
+        // tuples, `leaves` the expressions read inside parts that are not a block, an `if`, a
+        // tuple or a payload; both are checked once `n` is known.
+        let mut tops: Vec<usize> = Vec::new();
+        let mut leaves: Vec<(&Expr, usize, i64)> = Vec::new();
+        let mut todo: Vec<(&Expr, Option<(usize, i64)>)> = vec![(body, None)];
+        while let Some((e, at)) = todo.pop() {
+            match (&e.kind, at) {
+                (ExprKind::Block(stmts), _) => {
+                    let [binds @ .., last] = &stmts[..] else {
+                        return None;
+                    };
+                    for st in binds {
+                        let StmtKind::Bind { targets, value } = &st.kind else {
+                            return None;
+                        };
+                        match &targets[..] {
+                            // The resolver keys a `Bind`'s binders by the statement's span
+                            // (zedc-resolve tables.rs `binders_of`), not the target's.
+                            [Target::Name(b, _)] if of_al(value, &al) => {
+                                al.insert(self.id(st.span, b));
+                            }
+                            _ if reads(value, &al) => return None,
+                            _ => {}
+                        }
+                    }
+                    let StmtKind::Return(es) = &last.kind else {
+                        return None;
+                    };
+                    let [v] = &es[..] else { return None };
+                    todo.push((v, at));
+                }
+                (
+                    ExprKind::If {
+                        cond,
+                        then,
+                        otherwise,
+                    },
+                    _,
+                ) if !reads(cond, &al) => todo.extend([(&**then, at), (&**otherwise, at)]),
+                (ExprKind::Tuple(es), None) => {
+                    tops.push(es.len());
+                    todo.extend(es.iter().enumerate().map(|(j, k)| (k, Some((j, 1)))));
+                }
+                (ExprKind::Tuple(es), Some((j, o))) => {
+                    todo.extend(es.iter().map(|k| (k, Some((j, o + 1)))));
+                }
+                (
+                    ExprKind::Call {
+                        callee,
+                        positional,
+                        named,
+                        ..
+                    },
+                    Some((j, o)),
+                ) if matches!(callee.kind, ExprKind::Atom(_)) => {
+                    let args = positional.iter().chain(named.iter().map(|(_, v)| v));
+                    todo.extend(args.map(|k| (k, Some((j, o + 2)))));
+                }
+                // The accumulator itself at the top (step 4).
+                (_, None) if of_al(e, &al) => {}
+                (_, None) => return None,
+                (_, Some((j, o))) => leaves.push((e, j, o)),
+            }
+        }
+        let n = *tops.first()?;
+        if n == 0 || tops.iter().any(|&t| t != n) {
             return None;
         }
-        // S_j (step 2 and the base of step 4), from rows of `n` closed parts only.
+        // S_j (step 1 and the base of step 5), from rows of `n` closed parts only.
         let mut s = vec![0i64; n];
-        let none = HashSet::new();
         for t in [&init.carriers(), g] {
             if !t.set.is_empty() || !t.fns.is_empty() || !t.vars.is_empty() || t.dynamic {
                 return None;
@@ -5447,33 +5663,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                     return None;
                 }
                 for (j, c) in r.iter().enumerate() {
-                    let (form, _) = forms.of_in(c, false, &none);
+                    let form = forms.of(c, false);
                     s[j] = s[j].max(forms.depth(form) as i64);
                 }
             }
         }
-        // The edges of step 3: `out[k]` holds `(j, |q| - m)`.
-        let names_a = |e: &Expr| {
-            let mut stack = vec![e];
-            let mut found = false;
-            while let Some(e) = stack.pop() {
-                found |= matches!(&e.kind, ExprKind::Name(x) if *x == a.name);
-                zedc_syntax::ast::expr_kids(&e.kind, zedc_syntax::ast::Blocks::Enter, &mut |k| {
-                    stack.push(k)
-                });
-            }
-            found
-        };
+        // The edges of step 3: `out[k]` holds `(j, o - m)`.
         let mut out: Vec<Vec<(usize, i64)>> = vec![Vec::new(); n];
-        let mut stack: Vec<(&Expr, usize, i64)> =
-            parts.iter().enumerate().map(|(j, e)| (e, j, 1)).collect();
-        while let Some((e, j, len)) = stack.pop() {
-            if let ExprKind::Tuple(es) = &e.kind {
-                stack.extend(es.iter().map(|k| (k, j, len + 1)));
-                continue;
-            }
-            // `a[k_1]...[k_m]` is `Index(... Index(a, k_1) ..., k_m)`: the outermost index is
-            // the last.
+        for (e, j, o) in leaves {
+            // `c[k_1]...[k_m]` is `Index(... Index(c, k_1) ..., k_m)`: peeling from the outside
+            // pushes `k_m, ..., k_1`, so the innermost index `k_1` is `ks.last()`.
             let (mut at, mut ks) = (e, Vec::new());
             while let ExprKind::Index(of, k) = &at.kind
                 && let ExprKind::Int { radix, digits } = &k.kind
@@ -5483,15 +5682,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ks.push(i);
                 at = of;
             }
-            match (&at.kind, ks.last()) {
-                (ExprKind::Name(x), Some(&k1)) if *x == a.name && k1 < n => {
-                    out[k1].push((j, len - ks.len() as i64));
+            match ks.last() {
+                Some(&k1) if k1 < n && of_al(at, &al) => {
+                    out[k1].push((j, o - ks.len() as i64));
+                    // The floor of step 3: the `o - 1` levels round the projection.
+                    s[j] = s[j].max(o - 1);
                 }
-                _ if names_a(e) => return None,
+                _ if reads(e, &al) => return None,
                 _ => {}
             }
         }
-        // Step 5.
+        // Step 6.
         let comp = zed_graph::components(&out, |&(t, _)| t);
         let count = comp.iter().max().map_or(0, |&c| c + 1);
         let mut bc = vec![i64::MIN; count];
@@ -5514,7 +5715,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
-        // Step 6.
+        // Step 7.
         Some(1 + bc.into_iter().max().unwrap_or(0).max(0) as u64)
     }
 
@@ -10340,7 +10541,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.r10_open_level(level);
         self.open_type_vars(level);
         let (mut tys, mut ids) = (Vec::new(), Vec::new());
+        let mut plain = extra.is_empty();
         for p in slots {
+            plain &= p.is_some_and(|p| p.tuple.is_none() && p.default.is_none());
             let declared = p.and_then(|p| p.ty.as_ref());
             let t = match (declared, first.take()) {
                 (Some(t), _) => self.written(t, true),
@@ -10368,12 +10571,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             ids.push(id);
             tys.push(t);
         }
+        let step = match &ids[..] {
+            &[p0, p1] if plain => Some([p0, p1]),
+            _ => None,
+        };
         m.k(Frame::LambdaEnd {
             names,
             ids,
             level,
             tys,
             body,
+            step,
         });
         m.job(Job::Body(body, Want::default()));
         // The defaults are checked first, in order, each bound before the next.
@@ -10711,6 +10919,10 @@ fn add_witness(b: &mut RemapPlan, a: &RemapPlan) {
     }
     b.witness = entries.join("+").into();
 }
+
+/// A fold's step function as [`Ck::fold_depth_limit`] reads it: the binder of each of its two
+/// parameters, in order (`None` for a slot no parameter takes), and its body.
+pub(super) type StepFn<'a> = ([Option<usize>; 2], &'a Expr);
 
 /// The expression a branch `e` gives: the one expression of a block of nothing else, else `e`.
 fn exported(e: &Expr) -> &Expr {
@@ -14548,11 +14760,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///
     /// A need on a variable of `defer`, or on what such a need gives, is left: the needs left
     /// are given back.
+    ///
+    /// `bounds` are the bounds of the signature's variables ([`Sig::bounds`]), which
+    /// [`Self::replay_one`] reads at a need's result.
+    #[allow(clippy::too_many_arguments)]
     fn replay(
         &mut self,
         what: &str,
         needs: &[Need],
         binds: &mut Binds,
+        bounds: &BTreeMap<Arc<str>, u8>,
         mut defer: BTreeSet<Arc<str>>,
         span: Span,
     ) -> Vec<Need> {
@@ -14590,7 +14807,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
             let from = self.errors.len();
-            self.replay_one(what, n, binds, span);
+            self.replay_one(what, n, binds, bounds, span);
             // A need that fails here replays each use alike that its signature left out for
             // it ([`Self::share_alike`]), so each use keeps its own error and notes: O(m) more
             // checks for a group of m, on the error path only.
@@ -14600,7 +14817,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if let (NeedKind::Component { .. }, Some(kept)) = (&n.kind, n.site()) {
                         self.bracket_meaning_of(site, kept);
                     }
-                    self.replay_one(what, &n.alike_at(at, site, via), binds, span);
+                    self.replay_one(what, &n.alike_at(at, site, via), binds, bounds, span);
                 }
             }
         }
@@ -14649,7 +14866,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// [`Self::replay`] of the one need `n`.
-    fn replay_one(&mut self, what: &str, n: &Need, binds: &mut Binds, span: Span) {
+    fn replay_one(
+        &mut self,
+        what: &str,
+        n: &Need,
+        binds: &mut Binds,
+        bounds: &BTreeMap<Arc<str>, u8>,
+        span: Span,
+    ) {
         let from = self.errors.len();
         let on = self.bound(&n.on, binds);
         let shape = self.bound(&on, &mut Binds::new());
@@ -14737,7 +14961,55 @@ impl<'t, 'a> Ck<'t, 'a> {
         // What the use gives is within its result: a variable there joins it, as for an
         // argument, and one it leaves unbound gives nothing.
         if let Some(r) = &n.result {
-            if !self.gives_within(&got, r, binds, what, span)
+            // A result that is a variable whose bound holds no other values, as the result of
+            // `args[0]` in `h(args) = args[0] + 1`, bound to the numeric carriers: its loose
+            // atoms go as [`Self::gives_made`] sends atoms a closed result does not hold, and
+            // the rest binds the variable. Why this is sound, step by step:
+            // 1. `gives_within` would bind the variable to the atoms with the number, and the
+            //    bound check after the replay ([`Self::apply_one`], the `(None, None)` arm)
+            //    refuses any piece of no carrier in a binding of a bound without `OTHER`. So
+            //    binding them always refused the call, handled or not: `h(m.args.map(y -> 0))
+            //    else #outOfBounds -> 7` was refused with "`h` does not take ([0])".
+            // 2. The body was checked with the variable standing for a value of its bound's
+            //    carriers. A loose atom at a use there passes each later use by (DESIGN.md
+            //    sec:type_resolution, rule 6), so where it goes is where the body sends it
+            //    from the use: stopped at an `else`, rejected where the body stops it, or out
+            //    to the result. That is what [`Self::fate_along`] computes for the use's
+            //    sites, and `gives_made` reads, as it already does for a closed result
+            //    (row CHK-index-else-bubble).
+            // 3. The rest of the met type, without its loose atoms, is what the variable
+            //    stands for in the body, and binds it, checked against the bound as before.
+            // 4. When `gives_made` cannot place them (no fate along the sites), nothing is
+            //    sent, and the old path below runs and refuses as before.
+            // 5. A met type of loose atoms alone is not sent so: the variable would stand for
+            //    no value, every use of it in the body would give only an atom, and an
+            //    operation that can only give an atom for every input is an error (author's
+            //    standing rule, 2026-11-09). The old path refuses it, as in
+            //    `{0 -> []}.map(r -> (r >< max) + 1)`, where every row is empty and folds to
+            //    `#empty` alone. With a number beside the atoms the rule's other half holds:
+            //    "if an input can produce non-atom values for some inputs and not for other
+            //    inputs, then that is not a compile-time error", so `{0 -> [1], 1 -> []}.map(r
+            //    -> (r >< max) + 1)` runs to `{0 -> 2, 1 -> #empty}`, as `.map(r -> r >< max)`
+            //    already ran to `{0 -> 1, 1 -> #empty}` (l03_02_map_run types.rs
+            //    `a_fold_of_rows_that_are_all_empty_needs_else` and
+            //    `a_fold_of_a_row_that_may_be_empty_passes_empty_by`).
+            // Cost: one test of the result's shape and one map lookup, O(log b) for b bounds,
+            // before the old path; `gives_made` itself is the same cost as on its error path.
+            // Tests: l01_26_type_resolution bubble.rs
+            // `an_atom_a_numeric_use_makes_passes_the_call_by` (row FAIL-fold-rotating-tuple-rounds).
+            let carriers_only = !bounds.is_empty() && {
+                let mut ps = r.pieces_lazily();
+                match (ps.next(), ps.next()) {
+                    (Some(Piece::Var(v)), None) => bounds.get(&v).is_some_and(|m| m & OTHER == 0),
+                    _ => false,
+                }
+            };
+            let placed = carriers_only
+                && !got.loose().is_empty()
+                && !got.without_loose().is_empty()
+                && self.gives_made(n, &got, r, binds, what, span);
+            if !placed
+                && !self.gives_within(&got, r, binds, what, span)
                 && !self.gives_made(n, &got, r, binds, what, span)
             {
                 let why = got.refused(r);
@@ -14845,9 +15117,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         // FAIL-fold-rotating-tuple-rounds), `[1, 2, 3].foldl([0], (a, x) -> [(a[0] else 0) + 1])`
         // replayed `a[0] else 0` as `0 | $3`, `$3` the solved class of the entries of `[0]`,
         // which `sub` does not read, and was refused with "gives int here, which is not int".
-        // Complexity: O(size of `got`), only where the first `sub` refused.
+        // The second `sub` tests into a copy of `binds`, kept only where it holds, so that a
+        // failed test leaves no binding behind for the tests below (Gemini seat, round 2, NB1;
+        // the first `sub` above writes into `binds` even where it fails, as it did before this
+        // row, and is left so).
+        // Complexity: O(size of `got`) and a copy of `binds`, only where the first `sub` refused.
         let got = &self.settled(got);
-        if self.sub(got, r, binds) {
+        let mut settled_binds = binds.clone();
+        if self.sub(got, r, &mut settled_binds) {
+            *binds = settled_binds;
             return true;
         }
         if r.dynamic || !r.vars.is_empty() {
@@ -20607,7 +20885,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         if of.is_some() && !self.bracket_count(v, span) {
             return Ty::empty();
         }
-        let mut out = self.passing(v, "a call", span, of);
+        // The atoms of `v` are kept apart from those the read makes, which a read written in
+        // the program records for [`Self::outside_of`] ([`Self::indexed_at`]).
+        let passed = self.passing(v, "a call", span, of);
+        let mut out = Ty::empty();
         for p in v.pieces() {
             match p {
                 Piece::Tuple(cs) => {
@@ -20720,7 +21001,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
-        out
+        if of.is_some() {
+            self.indexed_at(span, out.loose());
+        }
+        out.union(&passed)
     }
 
     /// The error of `v[x]` at `span`, `x` no literal, of a value of the type shown as `shown`,
@@ -20764,7 +21048,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             return Ty::empty();
         }
-        let mut out = self.passing(v, "an index", span, of);
+        // As in [`Self::at_key`], the atoms of `v` are kept apart from those the read makes.
+        let passed = self.passing(v, "an index", span, of);
+        let mut out = Ty::empty();
         let shown = x.ty.to_string();
         // Where the walk meets the bracket itself, it is paired with the first bracket alike
         // ([`Self::alike_seen`]), if each class among `v`'s pieces took it as a need.
@@ -20841,7 +21127,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             self.alike_seen(key, span);
         }
-        out
+        if of.is_some() {
+            self.indexed_at(span, out.loose());
+        }
+        out.union(&passed)
     }
 
     /// Records `key` for the use the walk meets at `span` ([`Ck::alike_sites`]), the first
@@ -25832,7 +26121,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut left =
             match self.r10_try_admit(what, sig, arrow, args, partial, &mut binds, &defer, span) {
                 Some(l) => l,
-                None => self.replay(what, &sig.needs, &mut binds, defer, span),
+                None => self.replay(what, &sig.needs, &mut binds, &sig.bounds, defer, span),
             };
         let frame = self.call_frames.pop();
         // Each bounded variable's binding is within its bound, and of one carrier, or of
@@ -25955,7 +26244,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.escapes.insert(span);
                     }
                     self.call_frames.extend(frame);
-                    self.replay(what, &now, &mut binds, BTreeSet::new(), span);
+                    self.replay(what, &now, &mut binds, &sig.bounds, BTreeSet::new(), span);
                     self.call_frames.pop();
                     left.clear();
                     held

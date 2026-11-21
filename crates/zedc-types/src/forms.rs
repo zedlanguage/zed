@@ -61,10 +61,11 @@ enum Kind {
     Union,
     /// The scalars, atoms, variables and unknown of a type, outside its tuples, payloads and
     /// functions: the count of its fresh variables (not in the pre-fold known set); the
-    /// greatest length of the texts its [`Leaf`] prints in full (`leaf_texts`: its scalars
-    /// inside a function or family, where [`Ty::carriers`] does not widen them, its atoms where
-    /// one carries a payload, and its kind-wide part); and in a canonical form its [`Leaf`]
-    /// (`None` in a skeleton).
+    /// greatest length of the texts its [`Leaf`] prints in full (`leaf_texts`: its atoms where
+    /// one carries a payload, and its kind-wide part) and of the literals of its narrowed
+    /// scalars inside a function or family, where [`Ty::carriers`] does not widen them
+    /// (`KType::scalar_literal_width`); and in a canonical form its [`Leaf`] (`None` in a
+    /// skeleton).
     Leaf {
         vars: u64,
         text_len: u64,
@@ -96,30 +97,36 @@ enum Kind {
 }
 
 /// The leaf of a canonical form: the carriers its scalars meet, as bits in the order of
-/// [`zed_kernel::types::Split::bases`]; the texts `leaf_texts` prints in full (inside a
-/// function or family, each of its scalar bases; its atoms where one carries a payload or the
-/// set lists the names it leaves out; its kind-wide part of tuples, structs and morphisms);
+/// [`zed_kernel::types::Split::bases`]; inside a function or family, each narrowed scalar base
+/// exactly, tagged by its place (whole carriers are already told by the carrier bits); the
+/// texts `leaf_texts` prints in full (its atoms where one carries a payload or the set lists
+/// the names it leaves out; its kind-wide part of tuples, structs and morphisms);
 /// the names of its atoms, each with whether it holds the bare atom, `None` where it holds
 /// every name it does not list; the same for its atoms that are members of a named atom
 /// family; whether it holds the unknown; its known (pre-fold) variables by name; and its fresh
 /// variables, each as the place of its first appearance in the walk that built the form.
 ///
-/// For one program, a fixed finite set of pre-fold known variables `K`, a bound `W` on width,
+/// For one program, a fixed finite set of pre-fold known variables `K` (variables in `known_vars`
+/// plus canonical class variables `$0..$(known_classes - 1)`), a bound `W` on width,
 /// and a bound `V` on the total count of distinct fresh variables across the whole type,
-/// finitely many canonical leaves can stand at a skeleton leaf: six carrier bits; at most 8
-/// texts (six bases, the atoms, the kind-wide part), each a UTF-8 string of byte length at
-/// most `W`, since that length is the leaf's `text_len` and so at most its width (finitely
-/// many strings of bounded length); atom names from a finite set fixed by the program and
+/// finitely many canonical leaves can stand at a skeleton leaf: six carrier bits; at most six
+/// narrowed scalar bases, each a finite or cofinite set of literals whose texts are at most
+/// `W` bytes long (that length counts toward `text_len`), so one of finitely many sets
+/// (`KType::scalar_literal_width`); at most 2 texts (the atoms, the kind-wide part), each a
+/// UTF-8 string of byte length at most `W`, since that length is the leaf's `text_len` and so
+/// at most its width (finitely many strings of bounded length); atom names from a finite set fixed by the program and
 /// compiler (every `KType::atom` outside tests takes either a name written in the program —
 /// an `ExprKind::Atom`, `TypeKind::Atom`, declared atom family, or handle — or one of the
-/// nine compiler-fixed names `notFound`, `outOfBounds`, `empty`, `divByZero`, `badUtf8`,
-/// `none`, `emptySeparator`, `ioError`, `errs`; checked by reading all sites, 2026-11-20), so
+/// thirteen compiler-fixed names `notFound`, `outOfBounds`, `empty`, `divByZero`, `badUtf8`,
+/// `none`, `emptySeparator`, `ioError`, `errs`, plus `NaN`, `overflow`, `invalid`, `notScalar`
+/// from `zed_kernel::Prim::arrows`; checked by reading all sites, 2026-11-20), so
 /// finitely many lists of them; one bit; a subset of the finite set `K`; and `k <= W`
 /// fresh-variable places (the leaf's fresh count is at most its width), each less than `V`
 /// (at most `V^k` choices).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Leaf {
     carriers: u8,
+    scalars: Vec<(u8, KType)>,
     texts: Vec<(u8, Arc<str>)>,
     atoms: Option<Vec<(Arc<str>, bool)>>,
     family: Option<Vec<(Arc<str>, bool)>>,
@@ -216,15 +223,15 @@ impl Forms {
     /// The form of `t` with no pre-fold known variables: its canonical form where `leaves`,
     /// else its skeleton. Convenience wrapper over [`Forms::of_in`].
     pub fn of(&mut self, t: &Ty, leaves: bool) -> FormId {
-        self.of_in(t, leaves, &HashSet::new()).0
+        self.of_in(t, leaves, &HashSet::new(), 0).0
     }
 
-    /// The form of `t` relative to the finite set `known_vars` of variables already existing
-    /// before the fold loop, paired with the count of distinct fresh variables (variables not
-    /// in `known_vars`) occurring anywhere in `t`. The skeleton of a type is a function of its
-    /// canonical form (each leaf's label and each function's exact ends erased, then equal
-    /// children of a union merged), so two types of one canonical form have one skeleton and
-    /// one fresh-variable count.
+    /// The form of `t` relative to the finite set of variables already existing before the fold
+    /// loop (`known_vars` together with canonical class variables `"$k"` for `k < known_classes`),
+    /// paired with the count of distinct fresh variables (variables outside that set) occurring
+    /// anywhere in `t`. The skeleton of a type is a function of its canonical form (each leaf's
+    /// label and each function's exact ends erased, then equal children of a union merged), so
+    /// two types of one canonical form have one skeleton and one fresh-variable count.
     // Complexity tradeoff: each row, shape and function is entered once per call (and once per
     // inside-function state for rows and shapes), by address (the walked type keeps them alive
     // during the call, so no address is reused within it), so the cost is linear in the type's
@@ -233,7 +240,13 @@ impl Forms {
     // up: three address maps per call. The walk keeps its own stack, as the checker's walks of
     // types do, since a type nests as deep as the program; it enters parts in the order a
     // recursive walk would, so the places of the fresh variables are those of that order.
-    pub fn of_in(&mut self, t: &Ty, leaves: bool, known_vars: &HashSet<Arc<str>>) -> (FormId, u64) {
+    pub fn of_in(
+        &mut self,
+        t: &Ty,
+        leaves: bool,
+        known_vars: &HashSet<Arc<str>>,
+        known_classes: usize,
+    ) -> (FormId, u64) {
         let mut vars: HashMap<Arc<str>, u32> = HashMap::new();
         let mut rows: HashMap<(*const (), bool), FormId> = HashMap::new();
         let mut shapes: HashMap<(*const (), bool), FormId> = HashMap::new();
@@ -247,7 +260,7 @@ impl Forms {
                     let has_leaf = !t.set.is_empty() || t.dynamic || !t.vars.is_empty();
                     if has_leaf {
                         let (fresh, text_len, label) =
-                            leaf_node(t, leaves, in_fn > 0, known_vars, &mut vars);
+                            leaf_node(t, leaves, in_fn > 0, known_vars, known_classes, &mut vars);
                         made.push(self.intern(Node {
                             kind: Kind::Leaf {
                                 vars: fresh,
@@ -479,6 +492,12 @@ impl Forms {
     // greedy one, which is no later). The naive search over subsequences is exponential in
     // the number of children.
     pub fn embeds(&mut self, a: FormId, b: FormId) -> bool {
+        if a == b {
+            return true;
+        }
+        if let Some(&r) = self.embeds.get(&(a, b)) {
+            return r;
+        }
         let below_a = self.below(a);
         let below_b = self.below(b);
         for &y in &below_b {
@@ -642,15 +661,16 @@ impl Forms {
     }
 }
 
-/// The parts of a leaf's kernel set that a canonical form records in full, each printed and
-/// tagged with its place (0 to 5 for the scalar bases in the order of [`Split::bases`], 6 for
-/// the atoms, 7 for the kind-wide part), so that two parts that print alike stay apart:
-/// - inside a function or family (`in_fn`), each scalar base, as `0`, `0 ..= 2` or `int`:
-///   [`Ty::carriers`] does not widen scalars there (its doc: "at every depth outside the
-///   functions it holds"), so a rotation of `(y: int) -> 0`, `(y: int) -> 1`, ... would
-///   otherwise give one canonical form for distinct types (Gemini seat, round 1 of
-///   FAIL-fold-rotating-tuple-rounds); outside functions each base is its carrier, which the
-///   carrier bits record;
+/// The parts of a leaf's kernel set that a canonical form records as printed text, each tagged
+/// with its place (6 for the atoms, 7 for the kind-wide part, the numbers kept from when 0 to
+/// 5 were the scalar bases), so that two parts that print alike stay apart. The narrowed
+/// scalar bases inside a function or family are kept as types in `Leaf.scalars` by
+/// `leaf_node`, not printed: [`Ty::carriers`] does not widen scalars there (its doc: "at every
+/// depth outside the functions it holds"), so a rotation of `(y: int) -> 0`, `(y: int) -> 1`,
+/// ... would otherwise give one canonical form for distinct types (Gemini seat, round 1 of
+/// FAIL-fold-rotating-tuple-rounds); and the length of a printed union `0 | 1000` grows with
+/// its number of literals, so a map whose values gather a finite set of literals looked wider
+/// each round (Codex seat, round 2, R2-3); its longest literal counts instead. The texts:
 /// - the atoms, where one carries a payload in the kernel set (`KType::atom_with`) or the set
 ///   holds every name it does not list: the names and bare flags alone erase the payload
 ///   (Codex seat, round 1); a set of bare atoms only is told by its names, and is not printed,
@@ -667,15 +687,8 @@ impl Forms {
 // the bare atoms by `KType::union_all`, which adds the smaller set of literals to the larger,
 // O(n log n) in the n names, and compares it with the atoms once; built one `|` at a time it
 // could be O(n^2).
-fn leaf_texts(split: &Split, in_fn: bool) -> Vec<(u8, Arc<str>)> {
+fn leaf_texts(split: &Split) -> Vec<(u8, Arc<str>)> {
     let mut texts: Vec<(u8, Arc<str>)> = Vec::new();
-    if in_fn {
-        for (i, base) in split.bases.iter().enumerate() {
-            if let Some(b) = base {
-                texts.push((i as u8, Arc::from(b.to_string())));
-            }
-        }
-    }
     if let Some(atoms) = &split.atoms {
         let bare_only = atoms.atom_names().is_some_and(|names| {
             let mut all_bare = true;
@@ -697,21 +710,40 @@ fn leaf_texts(split: &Split, in_fn: bool) -> Vec<(u8, Arc<str>)> {
     texts
 }
 
+/// Whether `v` is in the finite set of pre-fold known variables: listed in `known_vars`, or a
+/// canonical class variable `"$k"` with `k < known_classes` (strictly ASCII digits, no sign,
+/// no leading zeros except `"$0"`, so at most `known_classes` strings satisfy the check).
+fn is_known_var(v: &str, known_vars: &HashSet<Arc<str>>, known_classes: usize) -> bool {
+    if known_vars.contains(v) {
+        return true;
+    }
+    let Some(digits) = v.strip_prefix('$') else {
+        return false;
+    };
+    let canonical = digits == "0"
+        || (!digits.is_empty()
+            && !digits.starts_with('0')
+            && digits.bytes().all(|b| b.is_ascii_digit()));
+    canonical && digits.parse::<usize>().is_ok_and(|k| k < known_classes)
+}
+
 /// The skeleton counts `(fresh_vars, text_len)` and optional canonical [`Leaf`] of `t`,
-/// numbering fresh variables (those outside `known_vars`) in `vars` by first appearance.
-/// `text_len` is the greatest byte length of [`leaf_texts`], 0 where there are none.
+/// numbering fresh variables (those outside `known_vars` and `known_classes`) in `vars` by
+/// first appearance. `text_len` is the greatest byte length of [`leaf_texts`], 0 where there
+/// are none.
 fn leaf_node(
     t: &Ty,
     keep_label: bool,
     in_fn: bool,
     known_vars: &HashSet<Arc<str>>,
+    known_classes: usize,
     vars: &mut HashMap<Arc<str>, u32>,
 ) -> (u64, u64, Option<Leaf>) {
     let mut fresh_count = 0u64;
     let mut known = Vec::new();
     let mut places = Vec::new();
     for v in t.vars.iter() {
-        if known_vars.contains(v) {
+        if is_known_var(v, known_vars, known_classes) {
             if keep_label {
                 known.push(v.clone());
             }
@@ -725,8 +757,22 @@ fn leaf_node(
         }
     }
     let split = t.set.split();
-    let texts = leaf_texts(&split, in_fn);
-    let text_len = texts.iter().map(|(_, s)| s.len() as u64).max().unwrap_or(0);
+    let texts = leaf_texts(&split);
+    let mut text_len = texts.iter().map(|(_, s)| s.len() as u64).max().unwrap_or(0);
+    // Inside a function or family each narrowed scalar base is kept exactly (`Leaf.scalars`)
+    // and counts its longest literal toward the width, not the length of its printed union
+    // (`KType::scalar_literal_width`, whose doc gives the finiteness argument).
+    let mut scalars: Vec<(u8, KType)> = Vec::new();
+    if in_fn {
+        for (i, (base, whole)) in split.bases.iter().zip(&KType::scalars()).enumerate() {
+            if let Some(b) = base
+                && b != whole
+            {
+                text_len = text_len.max(b.scalar_literal_width());
+                scalars.push((i as u8, b.clone()));
+            }
+        }
+    }
     if !keep_label {
         return (fresh_count, text_len, None);
     }
@@ -739,6 +785,7 @@ fn leaf_node(
     };
     let label = Leaf {
         carriers,
+        scalars,
         texts,
         atoms: split.atoms.as_ref().map_or(Some(Vec::new()), names),
         family: names(&t.family),
@@ -850,8 +897,8 @@ mod tests {
         for i in 0..4 {
             let v = Ty::var(Arc::from(format!("v{i}")));
             t = t.union(&tuple(&[v]));
-            let (s, n) = forms.of_in(&t, false, &known);
-            let (c, cn) = forms.of_in(&t, true, &known);
+            let (s, n) = forms.of_in(&t, false, &known, 0);
+            let (c, cn) = forms.of_in(&t, true, &known, 0);
             assert_eq!(n, cn);
             skels.push(s);
             totals.push(n);
@@ -876,12 +923,12 @@ mod tests {
         );
         let r1 = tuple(&[z.clone(), y.union(&w)]);
         let r2 = tuple(&[y.union(&z).union(&w), y.union(&z).union(&w)]);
-        let (s1, f1) = forms.of_in(&r1, false, &known);
-        let (s2, f2) = forms.of_in(&r2, false, &known);
+        let (s1, f1) = forms.of_in(&r1, false, &known, 0);
+        let (s2, f2) = forms.of_in(&r2, false, &known, 0);
         assert_eq!((s1, f1), (s2, f2));
         assert_eq!((f1, forms.width(s1)), (0, 2));
-        let (c1, _) = forms.of_in(&r1, true, &known);
-        let (c2, _) = forms.of_in(&r2, true, &known);
+        let (c1, _) = forms.of_in(&r1, true, &known, 0);
+        let (c2, _) = forms.of_in(&r2, true, &known, 0);
         assert_ne!(c1, c2);
     }
 
@@ -972,9 +1019,94 @@ mod tests {
         let sf1 = forms.of(&fn1, false);
         let sf2 = forms.of(&fn2, false);
         assert!(forms.embeds(sf1, sf2) && !forms.embeds(sf2, sf1));
-        // Inside a function the base `int` is printed (`leaf_texts`), 3 bytes, so the
-        // one-parameter arrow (2 children) has width 3, as the two-parameter one (3 children).
-        assert_eq!((forms.width(sf1), forms.width(sf2)), (3, 3));
+        // Inside a function, whole carriers are told by `Leaf.carriers` with `text_len == 0`,
+        // so width is the arrow child count: 2 for 1-parameter, 3 for 2-parameter.
+        assert_eq!((forms.width(sf1), forms.width(sf2)), (2, 3));
+    }
+
+    /// Whole scalar carriers inside a function or family are recorded by `Leaf.carriers` with
+    /// `text_len == 0`, so widening `int` to `bool` or `String` inside a function keeps the
+    /// skeleton and width unchanged while still giving distinct canonical forms; a narrowed
+    /// literal (`0`) stays distinct from whole `int`.
+    #[test]
+    fn whole_carriers_inside_a_function_have_zero_text_length() {
+        use crate::ty::SParam;
+        let mut forms = Forms::new();
+        let fn_res = |res: Ty| {
+            let p = SParam {
+                name: Arc::from("y"),
+                positional: true,
+                default: None,
+                range: None,
+            };
+            Ty::func(Arc::new(Sig::one(
+                vec![p],
+                vec![Ty::carrier(Carrier::Int)],
+                res,
+            )))
+        };
+        let f_int = fn_res(Ty::carrier(Carrier::Int));
+        let f_bool = fn_res(Ty::carrier(Carrier::Bool));
+        let f_str = fn_res(Ty::carrier(Carrier::Str));
+        let f_zero = fn_res(Ty::set(KType::lit(&Value::Int(0)).unwrap()));
+        let (si, sb, ss, sz) = (
+            forms.of(&f_int, false),
+            forms.of(&f_bool, false),
+            forms.of(&f_str, false),
+            forms.of(&f_zero, false),
+        );
+        assert_eq!(si, sb);
+        assert_eq!(si, ss);
+        assert_eq!(forms.width(si), 2);
+        assert_ne!(si, sz);
+        assert_ne!(forms.of(&f_int, true), forms.of(&f_bool, true));
+        assert_ne!(forms.of(&f_int, true), forms.of(&f_str, true));
+        assert_ne!(forms.of(&f_int, true), forms.of(&f_zero, true));
+    }
+
+    /// Inside a function a narrowed scalar counts its longest literal toward the width, not
+    /// the length of its printed union: `0 | 1000` is as wide as `1000`, so a map whose values
+    /// gather the literals of a finite set does not look wider each fold round (R2-3); the two
+    /// keep distinct canonical forms (`Leaf.scalars`).
+    #[test]
+    fn a_union_of_literals_inside_a_function_is_as_wide_as_its_longest_literal() {
+        use crate::ty::SParam;
+        let mut forms = Forms::new();
+        let lit = |n: i64| Ty::set(KType::lit(&Value::Int(n)).unwrap());
+        let fn_res = |res: Ty| {
+            let p = SParam {
+                name: Arc::from("y"),
+                positional: true,
+                default: None,
+                range: None,
+            };
+            Ty::func(Arc::new(Sig::one(
+                vec![p],
+                vec![Ty::carrier(Carrier::Int)],
+                res,
+            )))
+        };
+        let one = fn_res(lit(1000));
+        let two = fn_res(lit(0).union(&lit(1000)));
+        let (s1, s2) = (forms.of(&one, false), forms.of(&two, false));
+        assert_eq!(s1, s2);
+        assert_eq!(forms.width(s1), 4);
+        assert_ne!(forms.of(&one, true), forms.of(&two, true));
+    }
+
+    /// `known_classes` treats only canonical `"$k"` with `k < known_classes` as known, so
+    /// non-canonical spellings (`"$00"`, `"$+0"`, `"$01"`) and ids `>= known_classes` stay
+    /// fresh and the known set remains strictly finite.
+    #[test]
+    fn known_classes_matches_only_canonical_class_ids_below_bound() {
+        let mut forms = Forms::new();
+        let known = HashSet::new();
+        let ok = tuple(&[Ty::var(Arc::from("$0")), Ty::var(Arc::from("$1"))]);
+        assert_eq!(forms.of_in(&ok, false, &known, 2).1, 0);
+        for bad in ["$2", "$00", "$01", "$+0", "$"] {
+            let t = Ty::var(Arc::from(bad));
+            assert_eq!(forms.of_in(&t, false, &known, 2).1, 1, "{bad}");
+        }
     }
 
     /// A function's positional flags couple by the subsequence order, a well-quasi-order over

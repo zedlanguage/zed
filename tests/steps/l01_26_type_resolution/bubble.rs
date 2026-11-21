@@ -1116,3 +1116,43 @@ fn an_uncalled_inner_push_still_checks_the_outer_value() {
         "z\n",
     );
 }
+
+/// Bodies whose use of the read takes numbers only: the result of the read is a variable bound
+/// to the numeric carriers, whose bound holds no atom, and the call reads it at `int |
+/// #outOfBounds` for `m.args.map(y -> 0)`.
+const NUMERIC: &[(&str, &str)] = &[
+    ("bubble_plus", "h(args) = args[0] + 1;\n"),
+    ("bubble_abs_call", "h(args) = abs(args[0]);\n"),
+    ("bubble_abs_method", "h(args) = args[0].abs;\n"),
+    ("bubble_abs_safe", "h(args) = args[0]?.abs;\n"),
+];
+
+#[test]
+fn an_atom_a_numeric_use_makes_passes_the_call_by() {
+    // Before (row FAIL-fold-rotating-tuple-rounds, the `?.` case), the miss of the read was
+    // bound into the variable with the number, against its bound, and every call was refused
+    // with "`h` does not take ([0])", handled or not.
+    let src = |helper: &str, tail: &str| {
+        format!(
+            "{helper}main(m: MainArgs) {{\n  m.stdout <- \"${{h(args: m.args.map(y -> 0)){tail}}}\";\n}}\n"
+        )
+    };
+    for (name, helper) in NUMERIC {
+        prints(name, &src(helper, " else #outOfBounds -> 7"), "7\n");
+        let errors = type_errors(&src(helper, ""));
+        assert_eq!(errors.len(), 1, "{helper}{errors:?}");
+        assert!(errors[0].contains("#outOfBounds"), "{helper}{errors:?}");
+        assert!(!errors[0].contains("does not take"), "{helper}{errors:?}");
+    }
+    // Handled inside the body, in a function and in an applied lambda.
+    prints(
+        "bubble_abs_safe_else",
+        "h(args) = args[0]?.abs else 7;\nmain(m: MainArgs) {\n  m.stdout <- \"${h(args: m.args.map(y -> 0))}\";\n}\n",
+        "7\n",
+    );
+    prints(
+        "bubble_abs_safe_lambda",
+        "main(m: MainArgs) {\n  m.stdout <- \"${(a -> (a[0]?.abs else 7))(m.args.map(y -> 0))}\";\n}\n",
+        "7\n",
+    );
+}

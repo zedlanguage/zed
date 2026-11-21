@@ -47,18 +47,59 @@ fn where_takes_a_function_giving_bool() {
 }
 
 #[test]
-fn a_fold_of_a_row_that_may_be_empty_needs_else() {
-    // `max` has no identity at `int` (DESIGN sec:reduction, "Identity as data"), so the empty
-    // row `[]` folds to `#empty` alone, and `+` on a value that can only be an atom is an error.
-    // `(+)` folds it to its identity `0` (case `sum_of_an_empty_row_is_zero`).
-    let e = refused(
-        "empty_row",
-        "${{0 -> [1], 1 -> []}.map(r -> (r >< max) + 1)}",
-    );
-    assert!(
-        e.contains("the function given to `map` does not take"),
-        "{e}"
-    );
+fn a_fold_of_rows_that_are_all_empty_needs_else() {
+    // `max` has no identity at `int` (DESIGN sec:reduction, "Identity as data"), so a row that
+    // is always empty folds to `#empty` alone, and `+` on a value that can only be an atom is
+    // an error (author's standing rule, 2026-11-09). `(+)` folds it to its identity `0` (case
+    // `sum_of_an_empty_row_is_zero`).
+    for (name, body) in [
+        ("empty_row", "${{0 -> []}.map(r -> (r >< max) + 1)}"),
+        ("empty_rows", "${[[], []].map(r -> (r >< max) + 1)}"),
+    ] {
+        let e = refused(name, body);
+        assert!(
+            e.contains("the function given to `map` does not take"),
+            "{e}"
+        );
+    }
+}
+
+#[test]
+fn a_fold_of_a_row_that_may_be_empty_passes_empty_by() {
+    // The function's input is either row, so `r >< max` is `int | #empty`: a number for some
+    // inputs and the atom for others, which is no error (the rule's other half) and gives the
+    // atom for the empty row, as `.map(r -> r >< max)` gives it. The checker refused this
+    // before (row FAIL-fold-rotating-tuple-rounds, E2b).
+    for (name, body, out) in [
+        (
+            "plus",
+            "${{0 -> [1], 1 -> []}.map(r -> (r >< max) + 1)}",
+            "{0 -> 2, 1 -> #empty}",
+        ),
+        (
+            "list",
+            "${[[1], []].map(r -> (r >< max) + 1)}",
+            "{0 -> 2, 1 -> #empty}",
+        ),
+        (
+            "abs",
+            "${{0 -> [-1], 1 -> []}.map(r -> abs(r >< max))}",
+            "{0 -> 1, 1 -> #empty}",
+        ),
+        (
+            "else",
+            "${{0 -> [1], 1 -> []}.map(r -> (r >< max) + 1 else 0)}",
+            "{0 -> 2, 1 -> 0}",
+        ),
+    ] {
+        let ran = run(name, body);
+        assert_eq!(
+            (ran.status, ran.stdout.trim_end()),
+            (0, out),
+            "{name}: {}",
+            ran.stderr
+        );
+    }
 }
 
 #[test]
@@ -270,6 +311,42 @@ fn fold_refusal_repairs_fit_every_start_value_and_check() {
             "`(x, a) -> x ++ a`",
             "f() = [\"a\", \"b\"].foldr((x, a) -> x ++ a, \"hi\");\n",
         ),
+        (
+            "map_string_keys",
+            "f() = [1, 2].foldl({\"a\" -> 0}, (a, x) -> (a, x));\n",
+            "`(a, x) -> a`",
+            "f() = [1, 2].foldl({\"a\" -> 0}, (a, x) -> a);\n",
+        ),
+        (
+            "map_non_rank_keys",
+            "f() = [1, 2].foldl({10 -> 0}, (a, x) -> (a, x));\n",
+            "`(a, x) -> a`",
+            "f() = [1, 2].foldl({10 -> 0}, (a, x) -> a);\n",
+        ),
+        (
+            "range_non_zero_start",
+            "f() = [1, 2].foldl(1 ..= 3, (a, x) -> (a, x));\n",
+            "`(a, x) -> a`",
+            "f() = [1, 2].foldl(1 ..= 3, (a, x) -> a);\n",
+        ),
+        (
+            "set_start",
+            "f() = [1, 2].foldl({1, 2}, (a, x) -> (a, x));\n",
+            "`(a, x) -> a`",
+            "f() = [1, 2].foldl({1, 2}, (a, x) -> a);\n",
+        ),
+        (
+            "empty_list_start",
+            "f() = [1, 2].foldl([], (a, x) -> (a, x));\n",
+            "`(a, x) -> a ++ [x]`",
+            "f() = [1, 2].foldl([], (a, x) -> a ++ [x]);\n",
+        ),
+        (
+            "zero_based_range_start",
+            "f() = [1, 2].foldl(0 ..= 2, (a, x) -> (a, x));\n",
+            "`(a, x) -> a ++ [x]`",
+            "f() = [1, 2].foldl(0 ..= 2, (a, x) -> a ++ [x]);\n",
+        ),
     ] {
         let inf = Resolved::new(failing).check();
         assert_eq!(inf.errors.len(), 1, "{name}: {:?}", inf.errors);
@@ -368,10 +445,18 @@ fn a_fold_whose_steps_print_alike_says_how_they_differ() {
     );
     assert!(
         e.contains(
-            "makes it _ -> int, then _ -> int, which print alike but differ in what the \
+            "makes it _ -> int, and later _ -> int, which print alike but differ in what the \
              function needs of its argument: zedc finds no one type that holds every step"
         ),
         "{e}"
+    );
+    let e_tuple = refused(
+        "fold_tuple_composes",
+        "${[1, 2, 3].foldl((0, y -> y), (a, x) -> (a[0] + x, y -> a[1](y) + x))[1](10)}",
+    );
+    assert!(
+        e_tuple.contains("which print alike but differ in what the function needs of its argument"),
+        "{e_tuple}"
     );
 }
 

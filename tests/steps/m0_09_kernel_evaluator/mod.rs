@@ -478,6 +478,31 @@ fn a_frame_may_hold_a_function() {
     assert_eq!(eval(&app(last, vec![lit(5)])).unwrap(), Value::Int(7));
 }
 
+/// A `gen` guard that returns an atom whose payload holds a function ends the loop and
+/// appends that held atom as the last frame, matching a bare or data-payload atom guard.
+#[test]
+fn a_gen_guard_may_return_a_held_atom() {
+    let held_end = prim(
+        Prim::Atom,
+        vec![
+            lit(s("done")),
+            prim(Prim::Tuple, vec![]),
+            lam(&["y"], add(var("y"), lit(1))),
+        ],
+    );
+    let frames = Term::Gen {
+        init: rc(lit(0)),
+        step: rc(lam(&["f"], add(var("f"), lit(1)))),
+        guard: rc(lam(&["f"], held_end)),
+        pos: GuardPos::Before,
+    };
+    assert_eq!(
+        eval(&prim(Prim::Count, vec![frames.clone()])).unwrap(),
+        Value::Int(2)
+    );
+    assert_eq!(eval(&get(frames, lit(0))).unwrap(), Value::Int(0));
+}
+
 #[test]
 fn a_guard_atom_ends_the_loop_with_that_value() {
     // Stop at an overdraft: the end-position guard reads the frame it just committed.

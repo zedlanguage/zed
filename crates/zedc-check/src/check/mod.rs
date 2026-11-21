@@ -1959,6 +1959,17 @@ struct Ck<'t, 'a> {
     /// The value of each binder `name = e`, read for what it shows of its `int` value only when
     /// a bit word or an exponent reads the name.
     facts: HashMap<usize, &'a Expr>,
+    /// The step function of each fold, by the fold's span, as `fold_dir_end` first meets it
+    /// with its text: a need that replays the fold where its receiver is known passes the
+    /// function's type only (`NeedKind::Fold`), and the depth limit reads the function's text
+    /// (`Ck::fold_depth_limit`; FAIL-fold-rotating-tuple-rounds, E1 of round 2).
+    fold_fns: HashMap<Span, walk::StepFn<'a>>,
+    /// The step function of each lambda of two parameters, neither taking a tuple apart, by
+    /// the address of its signature, whose `Arc` it keeps so that the address names no other
+    /// signature: a fold whose function is a parameter of the function around it meets the
+    /// lambda passed for it as a type only (`NeedKind::Fold` with `by`). One entry per such
+    /// lambda checked, O(1) each.
+    lambda_fns: HashMap<usize, (Arc<Sig>, walk::StepFn<'a>)>,
     /// What the checker knows of which values share their keys (plan row ZIP-count-facts,
     /// `walk/fp_ops.rs`).
     keyspaces: Keyspaces<'a>,
@@ -2451,6 +2462,11 @@ struct Ck<'t, 'a> {
     /// found them since the call was last seen; `None` for unknown. [`Self::outside_of`]
     /// takes the entry.
     tried: HashMap<Span, Option<KType>>,
+    /// The loose atoms each read `v[k]` written in the program makes itself, by its span, as
+    /// [`Self::indexed_at`] recorded them: those of a family's entry or miss, a component, a
+    /// function's result or a class's need, apart from the atoms of `v` that
+    /// [`Self::passing`] sends through. [`Self::outside_of`] takes the entry.
+    indexed: HashMap<Span, KType>,
     /// The number of repairs [`Self::repaired`] has tried so far, so that a rejection whose
     /// repairs were all rejected where they are written says that it offers none
     /// ([`Self::literals_refused`], [`Msg::dropped`]).
@@ -2782,6 +2798,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             built: HashMap::new(),
             roots: coprime::Roots::default(),
             facts: HashMap::new(),
+            fold_fns: HashMap::new(),
+            lambda_fns: HashMap::new(),
             keyspaces: Keyspaces::default(),
             main_tails: HashSet::new(),
             main_pushes: HashSet::new(),
@@ -2894,6 +2912,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             outside: HashMap::new(),
             widened_only: HashMap::new(),
             tried: HashMap::new(),
+            indexed: HashMap::new(),
             repairs_tried: 0,
             arms: arms::Arms::new(),
             refused_at: BTreeMap::new(),
@@ -3266,18 +3285,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !added && !other {
             return Sig::one(params, tys, result);
         }
-        let loose = result.loose();
-        let kept = &loose & &self.outside_body(body);
-        let plain = result
-            .without_loose()
-            .union(&result.of_piece(&Piece::Set(kept.clone())));
+        let (plain, cut) = self.plain_result(&result, body);
         // Each widened parameter may hold other values, so its type variable carries an
         // argument's atoms to the result, and the atoms its uses handle add none there.
         if !added {
             return Sig::one(params, tys, plain);
         }
         // One difference per function, at its end.
-        if other || (&loose - &kept).is_empty() {
+        if other || !cut {
             return Sig::one(params, wide, result);
         }
         let mut sig = Sig::one(params, Vec::new(), Ty::empty());
@@ -3296,6 +3311,108 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
         ];
         sig
+    }
+
+    /// `result`, the type of `body`, as it is when each parameter of [`Self::widened`] holds no
+    /// atom, and whether that cut any atom: its loose atoms cut to those [`Self::outside_body`]
+    /// keeps, and where the value of `body` is a tuple written out ([`exported`]), each
+    /// component of each row of the same length cut the same way by the component's
+    /// expression, at any depth. A loose atom in a component is data there (DESIGN.md "Where
+    /// a loose atom stops": a tuple entry is a data position), so it is not among the
+    /// tuple's loose atoms and the top-level cut never reached it: before,
+    /// `f(positional a, positional x) = ((a[0] else 0), a[1] + 1)` gave `(_, W | #_)`, the
+    /// `#_` of the widened `a` kept in the second part, and `f(f((0, 0), 1), 1)` was refused
+    /// (FAIL-fold-rotating-tuple-rounds, E2 of round 2).
+    ///
+    /// Proof that the cut is sound at each component: a component's value is the value of its
+    /// expression `c`, and the atoms that reach it from elsewhere than a widened parameter are
+    /// in outside(`c`) ([`Self::outside_of`], the same definition as at the top, recorded
+    /// when the walk saw `c`); with each widened parameter holding no atom, the others cannot
+    /// reach it, and the argument's own atoms come back through the parameter's type
+    /// variable, as at the top. A row of another length, or a value that is no tuple written
+    /// out (an `if`, a call), is kept whole, which only keeps atoms.
+    ///
+    /// Complexity tradeoff: each pair of a tuple written out and a row of its type is cut
+    /// once, kept in `memo` by the pair; a written tuple is inside the body, so it is never
+    /// inside itself, and a pair met again is in `memo` already, since the walk is in
+    /// post-order on its own stack: the first meeting's components were all cut before its
+    /// row was. So the cost is O(pairs × the cost of one cut), linear in the written tuples
+    /// for a body whose type gives each written tuple one row, as a tuple written out has.
+    /// The naive way, recursion over rows, is the same work without the memo but may repeat a
+    /// row shared by two parents, and would nest as deep as the written tuples on the native
+    /// stack. Test:
+    /// `l01_26_type_resolution::handled::a_component_read_beside_a_handled_read_adds_no_atom_from_outside`.
+    fn plain_result<'e>(&self, result: &Ty, body: &'e Expr) -> (Ty, bool) {
+        let mut memo: HashMap<(Span, ty::Row), ty::Row> = HashMap::new();
+        let mut cut = false;
+        // The rows of `t` that the tuple written as the value of `e` builds, with it.
+        let rows = |t: &Ty, e: &'e Expr| -> Vec<(&'e Expr, ty::Row)> {
+            let v = exported(e);
+            match &v.kind {
+                ExprKind::Tuple(items) => (t.tuples.iter())
+                    .filter(|r| r.len() == items.len())
+                    .map(|r| (v, r.clone()))
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        // (whether its components are cut, the tuple written out, the row)
+        let mut stack: Vec<(bool, &'e Expr, ty::Row)> = Vec::new();
+        stack.extend(rows(result, body).into_iter().map(|(v, r)| (false, v, r)));
+        while let Some((done, v, r)) = stack.pop() {
+            let ExprKind::Tuple(items) = &v.kind else {
+                continue;
+            };
+            if memo.contains_key(&(v.span, r.clone())) {
+                continue;
+            }
+            if !done {
+                stack.push((true, v, r.clone()));
+                for (c, item) in r.iter().zip(items) {
+                    stack.extend(rows(c, item).into_iter().map(|(v, r)| (false, v, r)));
+                }
+                continue;
+            }
+            let cs: Vec<Ty> = (r.iter().zip(items))
+                .map(|(c, item)| self.cut_once(c, item, &memo, &mut cut))
+                .collect();
+            memo.insert((v.span, r), ty::Row::new(cs));
+        }
+        let plain = self.cut_once(result, body, &memo, &mut cut);
+        (plain, cut)
+    }
+
+    /// One step of [`Self::plain_result`]: `t`, the type of `e`, with its loose atoms cut to
+    /// those [`Self::outside_body`] keeps, and each row the tuple written as the value of `e`
+    /// builds replaced by its cut in `memo`; sets `cut` when an atom was cut.
+    fn cut_once(
+        &self,
+        t: &Ty,
+        e: &Expr,
+        memo: &HashMap<(Span, ty::Row), ty::Row>,
+        cut: &mut bool,
+    ) -> Ty {
+        let loose = t.loose();
+        let kept = &loose & &self.outside_body(e);
+        if !(&loose - &kept).is_empty() {
+            *cut = true;
+        }
+        let out = t.without_loose().union(&t.of_piece(&Piece::Set(kept)));
+        let v = exported(e);
+        if !matches!(v.kind, ExprKind::Tuple(_)) || memo.is_empty() {
+            return out;
+        }
+        let rows: Vec<ty::Row> = (out.tuples.iter())
+            .map(|r| {
+                memo.get(&(v.span, r.clone()))
+                    .cloned()
+                    .unwrap_or_else(|| r.clone())
+            })
+            .collect();
+        Ty {
+            tuples: ty::Members::from(rows),
+            ..out
+        }
     }
 
     /// The loose atoms that may reach the value of `body`, a function's body, from elsewhere
@@ -4291,6 +4408,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         t: &Ty,
         src: &Src<'_>,
         tried: Option<Option<KType>>,
+        indexed: Option<KType>,
     ) -> Option<KType> {
         let loose = t.loose();
         if loose == KType::empty() {
@@ -4378,6 +4496,29 @@ impl<'t, 'a> Ck<'t, 'a> {
             (ExprKind::Member { .. }, _) if let Some((sig, _)) = self.called(e) => {
                 made(&sig.arrows, flows(e))
             }
+            // A read `v[k]`'s loose atoms are those of `v`, which [`Self::passing`] sends
+            // through, and those the read makes itself, `indexed`, which `at_index` and
+            // `at_key` recorded apart (a family's entry or miss, a component, a class's need;
+            // atoms of `k` an application passes by are among them, which only keeps atoms).
+            // Proof that no atom from outside is dropped: an atom of the value is (1) one of
+            // `v`'s, and it reaches `v` from outside only if it is in outside(`v`), by the
+            // definition of [`Self::outside`] for `v`, recorded before `e`; or (2) one the
+            // read makes, which is in `indexed`. So loose ∩ (outside(`v`) ∪ outside(`k`) ∪
+            // `indexed`) holds every atom from outside. With no record (a read checked while
+            // trying, or met first in a replay) it is all its loose atoms, as before. The
+            // cheaper rule "loose(`e`) less the atoms of `v` not from outside" drops atoms: in
+            // `(if c { a } else { m })[x]`, `a` a widened parameter and `m` a family,
+            // `#notFound` is an atom of `v` through `a` only, so not from outside, and the
+            // rule drops it, though the miss of `m`, which the read makes, gives it from
+            // outside too. Before, every read gave all its
+            // loose atoms, so a component read beside a handled one kept the handled atoms in
+            // the first arrow's result (FAIL-fold-rotating-tuple-rounds, E2 of round 2).
+            // Test: `l01_26_type_resolution::handled::a_component_read_beside_a_handled_read_adds_no_atom_from_outside`,
+            // and `a_display_read_beside_a_handled_read_keeps_its_miss` for (2).
+            (ExprKind::Index(..), _) => match indexed {
+                Some(m) => &loose & &(&union(flows(e)) | &m),
+                None => loose,
+            },
             (_, Src::Name(id)) => match self.alias.get(id) {
                 Some(&value) if self.seen.contains_key(&value) => o(value),
                 _ if self.widened.contains(id) => KType::empty(),
@@ -4431,6 +4572,26 @@ impl<'t, 'a> Ck<'t, 'a> {
             Entry::Occupied(mut o) => {
                 let v = o.get_mut();
                 *v = v.take().zip(k).map(|(a, b)| &a | &b);
+            }
+        }
+    }
+
+    /// Records `k`, the loose atoms the read written at `span` makes itself
+    /// ([`Self::indexed`]), joined with any recorded there since the read was last seen. Like
+    /// [`Self::tried_at`], it records nothing while trying or replaying, whose reads are not
+    /// the walk of the body as written; a read with no record gives all its loose atoms from
+    /// outside, which only keeps atoms, so a missing record never drops one.
+    fn indexed_at(&mut self, span: Span, k: KType) {
+        if self.trying || self.replaying > 0 {
+            return;
+        }
+        match self.indexed.entry(span) {
+            Entry::Vacant(v) => {
+                v.insert(k);
+            }
+            Entry::Occupied(mut o) => {
+                let v = o.get_mut();
+                *v = &*v | &k;
             }
         }
     }
@@ -9709,6 +9870,25 @@ fn flows(e: &Expr) -> Vec<Span> {
             .collect(),
         _ => Vec::new(),
     }
+}
+
+/// The expression whose value is the value of `e`: through each block whose one `return`
+/// statement, its export, writes one expression, that expression; else `e`. A block of other
+/// returns is kept, so a reader of the result treats it as a value it does not see into.
+/// O(statements of the blocks passed through), each read once.
+fn exported(e: &Expr) -> &Expr {
+    let mut e = e;
+    while let ExprKind::Block(stmts) = &e.kind {
+        let mut returns = stmts.iter().filter_map(|s| match &s.kind {
+            StmtKind::Return(es) => Some(es),
+            _ => None,
+        });
+        match (returns.next(), returns.next()) {
+            (Some(es), None) if es.len() == 1 => e = &es[0],
+            _ => break,
+        }
+    }
+    e
 }
 
 /// The number `src` writes in `span`, the span of a literal, which holds the literal's grouping

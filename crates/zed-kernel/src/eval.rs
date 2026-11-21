@@ -2033,8 +2033,8 @@ impl<'t> Machine<'_, 't> {
                 match v {
                     V::Data(Value::Bool(true)) => self.gen_step(st),
                     V::Data(Value::Bool(false)) => self.gen_end(*st),
-                    V::Data(end @ Value::Atom(_)) => {
-                        st.frames.push(V::Data(end));
+                    v if matches!(v, V::Data(Value::Atom(_))) || held_atom(&v) => {
+                        st.frames.push(v);
                         self.gen_end(*st)
                     }
                     V::Data(other) => type_err(format!(

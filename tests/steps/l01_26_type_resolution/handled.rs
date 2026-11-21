@@ -616,3 +616,43 @@ fn passing_the_parameter_to_a_function_that_handles_its_atoms_handles_none() {
         assert_eq!(value(&format!("{text}a = {call};\n"), "a"), want, "{call}");
     }
 }
+
+/// `a[0] else 0` makes `a` take every loose atom, and the atoms an argument holds come back
+/// through the parameter's own variable; a component read `a[1]` beside it adds none from
+/// outside, alone or inside a tuple of the result. Before, the result of `k` kept `#_` and the
+/// second part of `f`'s result did too, so `f(f((0, 0), 1), 1)` was refused: its inner call
+/// was `(int, int | #_)`, which `a[1] + 1` does not take (round 2 of
+/// FAIL-fold-rotating-tuple-rounds, E2 of the Opus seat).
+#[test]
+fn a_component_read_beside_a_handled_read_adds_no_atom_from_outside() {
+    let k = "k(positional a) = (a[0] else 0) + a[1];\n";
+    let f = "f(positional a, positional x) = ((a[0] else 0), a[1] + 1);\n";
+    assert_eq!(type_errors(k), Vec::<String>::new(), "{k}");
+    assert_eq!(sig(k, "k"), "_ -> int");
+    assert_eq!(type_errors(f), Vec::<String>::new(), "{f}");
+    let printed = sig(f, "f");
+    assert!(!printed.contains("#_"), "{printed}");
+    for (text, want) in [
+        (format!("{k}b = k((0, 1));\n"), "1"),
+        (format!("{f}b = f(f((0, 0), 1), 1);\n"), "(0, 2)"),
+    ] {
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+        assert_eq!(value(&text, "b"), want, "{text}");
+    }
+}
+
+/// A read of a display at a computed key, beside a handled read, keeps the atom the read
+/// makes: `[10, 20][a[1]]` misses with `#outOfBounds`, an atom of the body's own, not the
+/// parameter's, so the result gives it (the control of
+/// `a_component_read_beside_a_handled_read_adds_no_atom_from_outside`).
+#[test]
+fn a_display_read_beside_a_handled_read_keeps_its_miss() {
+    let text = "m(positional a) = (a[0] else 0) + [10, 20][a[1]];\n";
+    assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");
+    let printed = sig(text, "m");
+    assert!(printed.contains("#outOfBounds"), "{printed}");
+    assert_eq!(
+        value(&format!("{text}b = m((0, 5));\n"), "b"),
+        "#outOfBounds"
+    );
+}
