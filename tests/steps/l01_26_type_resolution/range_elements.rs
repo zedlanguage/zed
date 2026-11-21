@@ -1,5 +1,5 @@
 //! Row RANGE-element-interval: the parameter of a lambda mapped over a range written in the
-//! text, with `map`, `where`, `foldl` or `foldr`, holds the ints between the range's ends, so
+//! text, with `map`, `where`, `flatMap`, `foldl` or `foldr`, holds the ints between the range's ends, so
 //! `(1..=5).map(i -> x mod i)` is accepted (`mod` takes `m` in int[1..], QUESTIONS A174). The
 //! elements of `a ..= b` lie in `[lo a, hi b]` and those of `a ..< b` in `[lo a, hi b - 1]`,
 //! from the intervals the checker has for the ends under the tests the walk is in, unbounded
@@ -159,6 +159,22 @@ fn where_and_folds_read_the_interval_too() {
     // The accumulator of a fold is not an entry: it reads as any int.
     let acc = "f(positional x: int) = (1..=5).foldl(1, (a, i) -> x mod a);\n";
     assert_eq!(type_errors(acc).len(), 1, "{acc}");
+}
+
+#[test]
+fn flat_map_reads_the_interval_too() {
+    // Row NARROW-settle-spurious-warning, item 3: `flatMap` runs its function once for each
+    // entry, with the entry, as `map` does (`Ck::range_param`).
+    let f = "f(positional x: int) = (1..=5).flatMap(i -> [x mod i]);\n";
+    assert_eq!(type_errors(f), Vec::<String>::new());
+    // 7 mod 1, …, 7 mod 5, each emission under its entry's key (`{0}` is `{0 -> 0}`).
+    assert_eq!(
+        value(&format!("{f}y = f(7);\n"), "y"),
+        "{1 -> {0}, 2 -> {0 -> 1}, 3 -> {0 -> 1}, 4 -> {0 -> 3}, 5 -> {0 -> 2}}"
+    );
+    let zero = "(0..=5).flatMap(i -> [x mod i])";
+    let text = format!("f(positional x: int) = {zero};\n");
+    assert_eq!(type_errors(&text), refused("flatMap", zero), "{text}");
 }
 
 #[test]

@@ -1272,6 +1272,9 @@ enum At {
 /// Facts an `is` test makes: binders narrowed to a type, and the test.
 type Facts = VecDeque<(usize, Ty, Span)>;
 
+/// The questions a scope's solver refused, with the sets each kept ([`Ck::place_refusals`]).
+type Refusals = imbl::OrdMap<Refused, Kept>;
+
 /// What [`Ck::narrow`] changed, for [`Ck::widen`] to restore.
 type Saved<'a> = VecDeque<(usize, Option<Ty>, Option<Rc<Origin<'a>>>)>;
 
@@ -2724,6 +2727,13 @@ struct Ck<'t, 'a> {
     /// Each place [`Self::refused_at`] holds a question at, by the question: where a rejection
     /// the question may be behind names it ([`Ck::refused_notes`]).
     asked_where: BTreeMap<Refused, BTreeSet<Span>>,
+    /// For each scope or binder product computed while [`Self::holding`], the questions its
+    /// computation refused and has not placed: where they are asked, and the refusals before
+    /// and after it ([`Ck::settle`]). A later settle that needs the item places them.
+    held: HashMap<arms::Item, (Span, Refusals, Refusals)>,
+    /// Whether the settle in progress serves a read whose answer no refused question can make
+    /// wrong or wider than without the read, so it holds the refusals ([`Ck::ints_here`]).
+    holding: bool,
     /// For each binder read by a binder's value, what its summary read in the scope of its
     /// last such read ([`images::Read`]), from which the next is found.
     reads: HashMap<usize, images::Read<Rc<arms::Summarized>, zedc_preimage::product::NameProducts>>,
@@ -3165,6 +3175,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             arms: arms::Arms::new(),
             refused_at: BTreeMap::new(),
             asked_where: BTreeMap::new(),
+            held: HashMap::new(),
+            holding: false,
             reads: HashMap::new(),
             spelled: HashMap::new(),
             mixed: HashSet::new(),
@@ -15265,8 +15277,8 @@ impl<'a> Ck<'_, 'a> {
     }
 
     /// The ends of the range written in the text whose entries the name `e` takes, where `e`
-    /// reads the parameter of a lambda mapped over that range by `map` or `where`, or the
-    /// entry parameter of one folded over it by `foldl` or `foldr` (`Ck::range_param`, plan row
+    /// reads the parameter of a lambda mapped over that range by `map`, `where` or `flatMap`, or
+    /// the entry parameter of one folded over it by `foldl` or `foldr` (`Ck::range_param`, plan row
     /// RANGE-element-interval): the range itself, or a name bound once to it, `r = 1..=5;
     /// r.map(i -> …)`, followed through each such name.
     ///

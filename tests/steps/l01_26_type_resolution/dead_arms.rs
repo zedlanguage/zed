@@ -73,9 +73,9 @@ fn a_constant_through_names_or_operators_and_a_literal() {
 
 #[test]
 fn an_arm_under_a_test_of_literals_alone_is_still_refused() {
-    // A literal is not read in the arm's scope (`Ck::ints_here`): doing so settles the scope,
-    // which warns at tests the checker decides elsewhere. DESIGN.md sec:constraints owes this
-    // arm the unreachable-arm warning instead (step L2.12).
+    // A literal is not read in the arm's scope (`Ck::ints_here`): read, it would make the arm
+    // dead and accepted with no warning, where DESIGN.md sec:constraints owes this arm the
+    // unreachable-arm warning, since no static value definition is read (step L2.12).
     let f = "f(positional x: int) = if 0 > 0 { x mod 0 } else { 0 };\n";
     assert_eq!(type_errors(f).len(), 1, "{f}");
 }
@@ -93,6 +93,90 @@ fn a_value_of_an_interval_type_is_narrowed_the_same_way() {
     }
     let live = "f(positional x: int, k: int[-5..=0]) = if k >= 0 { x mod k } else { 0 };\n";
     assert_eq!(type_errors(live).len(), 1, "{live}");
+}
+
+/// The warnings the check of `src` gives, each by its place and message.
+fn warnings(src: &str) -> Vec<String> {
+    let (checked, _) = info(src);
+    (checked.warnings.iter())
+        .map(|w| format!("{:?} {}", w.span, w.message))
+        .collect()
+}
+
+#[test]
+fn a_constant_read_under_a_refused_test_adds_no_warning_and_hides_none() {
+    // Row NARROW-settle-spurious-warning: the narrowing by `(x - 4) mod 30 <= 9` is refused
+    // (its values have gaps that repeat without end). Reading the constant `m` in the arm
+    // computes the arm's scope, but no refusal there can make `m`'s reading wrong, so it warns
+    // at no test (`Ck::ints_here`, `Ck::settle`); `100 / (x * x + 1)` reads `x` there, which
+    // the refusal widens, so it warns at the test, and does so whichever is read first. The
+    // `else` arm has the type of `x mod m`, so no arm asks whether a state reaches it
+    // (`Ck::no_state_reaches`, which would warn at the test as with any arm).
+    let f = |arm: &str| {
+        format!(
+            "m = 8;\nf(positional x: int) = if (x - 4) mod 30 <= 9 {{ {arm} }} else {{ x mod 8 }};\n"
+        )
+    };
+    assert_eq!(warnings(&f("x mod m")), Vec::<String>::new());
+    let division = warnings(&f("100 / (x * x + 1)"));
+    assert!(!division.is_empty());
+    for arm in ["x mod m + 100 / (x * x + 1)", "100 / (x * x + 1) + x mod m"] {
+        assert_eq!(warnings(&f(arm)), division, "{arm}");
+    }
+}
+
+/// `m = 8;` and a function of `n` nested tests `(x - i) mod 30 <= 9`, each refused (its values
+/// have gaps that repeat without end), with `arm` innermost.
+pub(super) fn refused_nest(n: usize, arm: &str) -> String {
+    let mut s = String::from("m = 8;\nf(positional x: int) = ");
+    for i in 1..=n {
+        s += &format!("if (x - {i}) mod 30 <= 9 {{ ");
+    }
+    s += arm;
+    s += &" } else { 0 }".repeat(n);
+    s += ";\n";
+    s
+}
+
+/// The arms of [`refused_nest`]: the constant alone, the division alone, and both in each
+/// order.
+pub(super) const NEST_ARMS: [&str; 4] = [
+    "x mod m",
+    "100 / (x * x + 1)",
+    "x mod m + 100 / (x * x + 1)",
+    "100 / (x * x + 1) + x mod m",
+];
+
+#[test]
+fn a_constant_read_under_nested_refused_tests_hides_no_warning_above() {
+    // The read of `m` computes the scopes of all three tests and holds the refusals no other
+    // read needs; the read of the division after it places each (`Ck::settle`), as when it
+    // reads alone. An arm whose type the `else` arm's does not hold asks whether a state
+    // reaches it (`Ck::no_state_reaches`), which narrows by the tests above it and warns there
+    // as a literal modulus of the same type does, with no constant read.
+    let [constant, division, both, other] = NEST_ARMS.map(|arm| warnings(&refused_nest(3, arm)));
+    assert_eq!(constant, warnings(&refused_nest(3, "x mod 8")));
+    assert!(division.len() > constant.len(), "{division:?}");
+    assert_eq!(both, division);
+    assert_eq!(other, division);
+}
+
+/// `n` tests in a chain, as [`dead_arm_chain`], whose arms each take `x mod` a literal: the
+/// literal is not read in the scope (`Ck::ints_here`, by the memo of `Ck::reads_a_name`).
+pub(super) fn literal_chain(n: usize) -> String {
+    let mut s = String::from("f(positional x: int, d: int) = { a0 = x; ");
+    for i in 1..=n {
+        let p = i - 1;
+        s += &format!("a{i} = if d != {i} {{ a{p} + x mod {i} }} else {{ a{p} }}; ");
+    }
+    s += &format!("a{n} }};\n");
+    s
+}
+
+#[test]
+fn a_chain_of_literal_moduli_gives_no_error() {
+    // A small instance of `bench::dead_arms::a_chain_of_literal_moduli_scales`.
+    assert_eq!(type_errors(&literal_chain(3)), Vec::<String>::new());
 }
 
 /// `n` constants `k{i} = 0`, then one function whose chain of `n` tests on `d` holds in each

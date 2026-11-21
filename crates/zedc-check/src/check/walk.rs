@@ -10537,6 +10537,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // `map` is.
                 Some(_) if name == "flatMap" => match (positional, named, curry) {
                     ([f], [], false) => {
+                        self.range_param(of, f, 1, 0);
                         let first = self.lambda_entries(&x.ty, f, span);
                         self.entry_param("flatMap", &x.ty, of, f);
                         m.k(Frame::FlatMap(x.ty, span, Self::flat_map_receiver(of)));
@@ -11788,15 +11789,31 @@ impl<'a> Ck<'_, 'a> {
     /// read's proof at [`Ck::read_in_scope`]), so where a state reaches it, the value lies in
     /// both. Where none does, the arm never runs and the empty set claims nothing false. The
     /// scope is read only under a test (`here != 0`), once per node and term, memoized as every
-    /// other scope read is. A value whose text reads no name (a literal, `2 - 2`;
-    /// [`Ck::reads_a_name`]) is not read in the scope: no test narrows it but by making the arm
-    /// unreachable, and the read settles the node's scope, which reports each test there it
-    /// cannot decide (a flaw of that settle, which other paths of the checker decide past);
-    /// read for every literal, it warned at `30` under `(x - 4) mod 30 <= 9 && …`
-    /// (`l01_38_presburger::checker::a_question_over_one_variable_with_no_bound_and_its_remainders_is_decided`).
-    /// So an arm whose tests read only literals, `if 0 > 0 { x mod 0 }`, is still refused; it is
-    /// owed the unreachable-arm warning instead (DESIGN.md sec:constraints, step L2.12).
-    /// Test: `l01_26_type_resolution::dead_arms`.
+    /// other scope read is.
+    ///
+    /// The read holds the questions it refuses, and those of the scopes it computes, and
+    /// places none (plan row NARROW-settle-spurious-warning; [`Ck::settle`] places a held one
+    /// where a later read needs its scope). Proof that no held question bears on this answer:
+    /// a refused question leaves its sets wider than the exact ones, never narrower (DESIGN.md
+    /// L1.39: the checker "may then reject or warn about correct code here and does not accept
+    /// wrong code"), so the scope's reading holds the exact one, and the meet lies between the
+    /// exact meet and `k.ints`, which is what this gives without the read. So the read can only
+    /// remove values `e` never has here, and a refusal can only leave `k.ints`, as no read
+    /// would. A rejection it leaves names its questions from the scope itself
+    /// ([`Ck::refused_notes`]), not from where they were placed. Before this, the read warned
+    /// at each test above it that it could not decide, at tests the checker decides as a whole
+    /// elsewhere: with `m8 = 8;`, at `(x - 4) mod 30 <= 9` in `(x - 4) mod 30 <= 9 &&
+    /// (x + 5) mod m8 <= 7 && …`
+    /// (`l01_38_presburger::checker::named_moduli_in_a_decided_question_add_no_warning`).
+    ///
+    /// A value whose text reads no name (a literal, `2 - 2`; [`Ck::reads_a_name`]) is not read
+    /// in the scope: no test narrows it but by making the arm unreachable, and an arm whose
+    /// tests read only literals, `if 0 > 0 { x mod 0 }`, is owed the unreachable-arm warning
+    /// (DESIGN.md sec:constraints: no static value definition is read), which no `if` arm has
+    /// yet (step L2.12); read, its arm would be accepted with no warning. So it is still
+    /// refused. Complexity tradeoff: the literal skips the read and costs one lookup of its
+    /// memo ([`Ck::reads_a_name`]); measured at `l01_26_type_resolution::bench::dead_arms`.
+    /// Tests: `l01_26_type_resolution::dead_arms`.
     pub(super) fn ints_here(&mut self, e: &'a Expr) -> (IntervalSet, bool) {
         let k = self.known(e);
         let here = self.arms.here();
@@ -11807,7 +11824,10 @@ impl<'a> Ck<'_, 'a> {
             if !self.reads_a_name(e) {
                 return (k.ints, false);
             }
-            let ints = k.ints.meet(self.read_in_scope(e).0.ints());
+            let holding = std::mem::replace(&mut self.holding, true);
+            let read = self.read_in_scope_at(e, None).0;
+            self.holding = holding;
+            let ints = k.ints.meet(read.ints());
             let changed = ints != k.ints;
             return (ints, changed);
         }
@@ -12148,6 +12168,11 @@ impl<'a> Ck<'_, 'a> {
         while let Some(k) = work.pop() {
             if !seen.insert(k) {
                 continue;
+            }
+            if self.arms.scopes[k].is_some() {
+                // This answer reads the scope, so a scope computed by a read that held its
+                // questions places them now ([`Ck::settle`]); O(1) where none is held.
+                self.settle(vec![Item::Scope(k)]);
             }
             if let Some(s) = &self.arms.scopes[k] {
                 if !s.bottom {
@@ -12814,11 +12839,38 @@ impl<'a> Ck<'_, 'a> {
 
     /// Computes the scopes and binder products `wanted` needs, each once, on an explicit stack:
     /// an item is computed when every item it waits on is, and the memo is the visited set.
+    ///
+    /// The questions an item's computation refuses are placed where it asks them
+    /// ([`Ck::place_or_hold`]), except while [`Ck::holding`]: then they are held, and placed
+    /// by the first settle not holding that needs the item, here, as its computation would
+    /// have placed them (plan row NARROW-settle-spurious-warning). So a scope computed for a
+    /// read whose answer no refused question can make wrong ([`Ck::ints_here`]) warns at no
+    /// test, and one a later read needs warns as if that read had computed it, whatever the
+    /// order of the two reads.
+    ///
+    /// Proof that each held question needed is placed: an item computed while not holding
+    /// has no held item among those it waits on, by induction over the items in the order
+    /// computed. Its waits were pushed above it, each held one too, and each is popped before
+    /// it: a held one is placed and its own waits pushed above, so by the same argument they
+    /// are placed before it. An item computed while holding is held itself, and is placed, with
+    /// what it waits on, when a settle not holding pops it. So every item a settle not holding
+    /// reaches, and each it waits on, is placed when the settle ends. Placing is
+    /// order-free: [`Ck::place_refusals`] keeps a map by place and question and meets the
+    /// sets of a question placed twice. Each held item is placed once and removed, at the
+    /// cost of its waits, so the settles cost O(1) more an item in all.
     fn settle(&mut self, wanted: Vec<Item>) {
         let mut entered = HashSet::new();
         let mut stack: Vec<(Item, bool)> = wanted.into_iter().map(|i| (i, false)).collect();
         while let Some((item, ready)) = stack.pop() {
             if self.computed(item) {
+                if !self.holding
+                    && let Some((at, before, after)) = self.held.remove(&item)
+                {
+                    self.place_refusals(at, &before, &after);
+                    for d in self.waits(item) {
+                        stack.push((d, false));
+                    }
+                }
                 continue;
             }
             if ready {
@@ -12826,11 +12878,21 @@ impl<'a> Ck<'_, 'a> {
             } else if entered.insert(item) {
                 stack.push((item, true));
                 for d in self.waits(item) {
-                    if !self.computed(d) {
+                    if !self.computed(d) || (!self.holding && self.held.contains_key(&d)) {
                         stack.push((d, false));
                     }
                 }
             }
+        }
+    }
+
+    /// Places the questions `item`'s computation refused, `after` and not `before`, at `at`
+    /// ([`Ck::place_refusals`]), or holds them while [`Ck::holding`] ([`Ck::settle`]).
+    fn place_or_hold(&mut self, item: Item, at: Span, before: &Refusals, after: &Refusals) {
+        if self.holding {
+            self.held.insert(item, (at, before.clone(), after.clone()));
+        } else {
+            self.place_refusals(at, before, after);
         }
     }
 
@@ -12948,7 +13010,7 @@ impl<'a> Ck<'_, 'a> {
                             .map(|&(_, _, c)| c);
                         if let Some(c) = head {
                             let s = self.arms.scopes[c].clone().expect("a head is computed");
-                            self.place_refusals(test.span, &before, &s.refusals);
+                            self.place_or_hold(item, test.span, &before, &s.refusals);
                             self.arms.class[n] = c;
                             self.arms.before[n] = self.arms.before[c].clone();
                             self.arms.scopes[n] = Some(s);
@@ -12998,7 +13060,7 @@ impl<'a> Ck<'_, 'a> {
                         // settles the cone of a read on demand (the design note of
                         // NARROW-hub-settle, revision of 2026-11-04).
                         let s = p.assume_case(&t.term, outcome, &Premises::new());
-                        self.place_refusals(test.span, &before, &s.refusals);
+                        self.place_or_hold(item, test.span, &before, &s.refusals);
                         self.arms.before[n] = Some(p);
                         (self.arms.equal.entry(key).or_default()).push((fresh, t.term.clone(), n));
                         s
@@ -13046,7 +13108,7 @@ impl<'a> Ck<'_, 'a> {
                     Some(ty) => p.meet_type(ty),
                     None => p.meet_type(&KType::top()),
                 }
-                self.place_refusals(span, &before, &s.refusals);
+                self.place_or_hold(item, span, &before, &s.refusals);
                 self.arms.bound.insert(b, p);
             }
         }

@@ -1124,6 +1124,50 @@ fn a_question_over_one_variable_with_no_bound_and_its_remainders_is_decided() {
 }
 
 #[test]
+fn named_moduli_in_a_decided_question_add_no_warning() {
+    // Row NARROW-settle-spurious-warning, item 2: the question of
+    // `a_question_over_one_variable_with_no_bound_and_its_remainders_is_decided` with a modulus
+    // written as a named constant. A modulus read under the tests before it (`(x + 5) mod m`
+    // after `(x - 4) mod 30 <= 9 &&`) is met with the ints those tests allow
+    // (NARROW-dead-arm-constant, `Ck::ints_here`), which settles the scope of those tests; the
+    // narrowing of that scope by a remainder test is a question the solver refuses, though the
+    // checker decides the condition of `ok` whole. That refusal must not be a warning: the read
+    // learned nothing from the scope (`m` is 8 wherever it is read), and the run prints nothing
+    // on standard error, as the condition written with literals does.
+    const ROWS: [&str; 6] = [
+        "(x - 4) mod M30 <= 9",
+        "(x + 5) mod M8 <= 7",
+        "(x + 4) mod M10 <= 5",
+        "(x - 3) mod M2 == 1",
+        "x mod M6 != 1",
+        "x mod M12 != 11",
+    ];
+    for named in ["M30", "M8", "M12"] {
+        let rows = ROWS.map(|r| {
+            let r = r.replace(named, &named.to_lowercase());
+            r.replace('M', "")
+        });
+        let src = program(
+            &format!(
+                "{} = {};\nok(x) = {};",
+                named.to_lowercase(),
+                &named[1..],
+                rows.join(" && ")
+            ),
+            "x: a",
+        );
+        for (input, out) in [("6\n", "in\n"), ("5\n", "out\n")] {
+            let o = run("named-moduli-decided", &src, input, &[]);
+            assert_eq!(
+                (o.status, o.stdout.as_str(), o.stderr.as_str()),
+                (0, out, ""),
+                "{src}\n{input}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_refused_question_over_one_scaled_variable_names_its_moduli() {
     // The question of `a_question_over_one_variable_with_no_bound_and_its_remainders_is_decided`
     // with `x` scaled inside the remainders: periodic in `x` with period 120, and it holds exactly
