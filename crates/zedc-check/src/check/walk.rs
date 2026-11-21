@@ -32328,9 +32328,9 @@ fn with_key_range_at(t: &Ty, path: &[PathStep], rs: &[(Option<usize>, WrittenRan
 /// `R`, so the call is checked once per class: 29.0 times at the same sizes, the rest being
 /// the step of `f`'s declaration that each of the n errors gives in full (8.0 times with
 /// that step cut to a constant; row MSG-declared-step-per-error-checker). Still quadratic:
-/// arguments of n distinct types, or a result that tells them apart, as the tuple `(p0, …)` does, are n classes; there the
-/// n types the call takes differ, each of size up to the call's, and no bound below that is
-/// proved.
+/// arguments of n distinct types, or a result that tells them apart, as the tuple `(p0, …)`
+/// does, are n classes; there the n types the call takes differ, each of size up to the
+/// call's, and no bound below that is proved.
 fn alike_fixes<'a>(
     w: &Written<'a>,
     sig: &Sig,

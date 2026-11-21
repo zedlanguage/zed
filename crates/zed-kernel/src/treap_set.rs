@@ -36,8 +36,9 @@
 //! A set is shared, never changed: an operation makes new nodes along the paths it changes and
 //! shares every subtree it leaves alone. The one exception is [`TreapSet::insert`], which
 //! changes in place the nodes no other set holds (`Arc::make_mut`), so no other set sees it.
-//! A node's priority is a function of its key drawn at random once per run ([`Elem::priority`], module [`crate::priority`]), ties broken by the
-//! order of the keys, so in a run the keys of a set fix its shape whatever order they came in.
+//! A node's priority is a function of its key drawn at random once per run
+//! ([`Elem::priority`], module [`crate::priority`]), ties broken by the order of the keys,
+//! so in a run the keys of a set fix its shape whatever order they came in.
 //! So two sets made from one set by cuts and set operations share the subtrees where they agree,
 //! and an operation on them stops at the first pair of shared subtrees (`Arc::ptr_eq`): the
 //! intersection of a set with a range cut of it is the cut's path, `O(log n)`, not `O(n)`. An
@@ -575,8 +576,8 @@ impl<T: Elem> TreapSet<T> {
     // the walk is at most the depth, `O(log n)` expected under it (module [`crate::priority`]).
     // Measured after, over seeds 0 to 15: 3.74M to 3.87M and 32.0M to 34.8M, at most 9.25
     // times (8.4 times the bytes); with the path changed in place and the subtree below still
-    // made again, 4.86M and 42.7M, up to 10.2 times the bytes. Given up: none of the sharing; a set's nodes are still never changed while another
-    // set holds them.
+    // made again, 4.86M and 42.7M, up to 10.2 times the bytes. Given up: none of the sharing;
+    // a set's nodes are still never changed while another set holds them.
     // Tests: `every_operation_agrees_with_a_btree_set`,
     // `an_insertion_leaves_every_set_sharing_its_nodes_as_it_was`.
     pub fn insert(&mut self, key: T) -> bool {

@@ -4567,10 +4567,10 @@ impl VarFacts {
     // `the_variables_of_many_holders_of_one_shared_signature_are_found_in_linear_time` at 256
     // and 2048: 24.74 times the instructions before, 8.29 after, 8.40 with the treap's
     // insertion in place (`TreapSet::insert`), at 3% fewer instructions (the parse alone 7.66,
-    // so the facts alone 22.5M and 247M instructions, 10.96 times, against 8 ln(8n)/ln n = 10.99 for
-    // `n log n`). Not proved: that bound, which needs the work of a union of two treaps that
-    // share all but `d` paths to be `O(d log n)`; the cited theorems bound the work by the
-    // sizes, not by what the two share, and the early stops are this module's own.
+    // so the facts alone 22.5M and 247M instructions, 10.96 times, against 8 ln(8n)/ln n =
+    // 10.99 for `n log n`). Not proved: that bound, which needs the work of a union of two
+    // treaps that share all but `d` paths to be `O(d log n)`; the cited theorems bound the
+    // work by the sizes, not by what the two share, and the early stops are this module's own.
     // Tests: l01_22 benches
     // `function_types_nested_deep_whose_inner_levels_hold_the_outer_variable_fit_in_linear_time`,
     // each level holding the outer `T`, so the sets overlap at every level (7.98 at 8n), and
