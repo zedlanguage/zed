@@ -2718,11 +2718,81 @@ fn solve_regime_step(
     // point; undecided before), `l01_38_omega_test::one_scope::
     // no_question_of_a_random_chain_with_negations_is_refused_at_seed_7837918895420161952` (past
     // 60 s before).
+    //
+    // A regime with one bound or none is swept on one period. With one bound it is the period past the bound, `[l, l + p - 1]` or
+    // `[h - p + 1, h]`, with `p` the lcm of its moduli. Proof that this is exact for `[l, inf)`
+    // (the case `(-inf, h]` is its mirror): every unit and every literal of a clause reads `x mod
+    // m` for a modulus `m` of the regime, and `m` divides `p`, so `x mod m = (x - k p) mod m` for
+    // every integer `k`, and `x` and `x - k p` meet the same units and clauses. If `x >= l` is a
+    // point of the regime, then `k = (x - l) div p >= 0` gives `y = x - k p` with `0 <= y - l < p`,
+    // so `y` is a point in `[l, l + p - 1]`; the window is a part of the regime (it has no upper
+    // bound), so it holds a point exactly when the regime does, and a point it gives is one of the
+    // regime. Before this, a one-bound regime the base left undecided sent its formula to the
+    // general path, which refused the 4 formulas of
+    // `bench::one_scope::the_5000_one_variable_modular_formulas_of_seed_0x70dec1de_match_enumeration`
+    // still refused (each one variable, a lower bound, and residue conditions), and the program of
+    // `checker::a_question_over_one_variable_and_its_remainders_is_decided` (once refused) before
+    // it was decided as a bounded regime.
+    //
+    // A regime with no bound is swept on `[0, p - 1]`. Exact by the same argument with `l = 0`
+    // and `k = x div p` (any integer now, since `x` may be negative): `y = x - k p` lies in
+    // `[0, p - 1]` and meets the same units and clauses. Why the start 0 does not depend on the
+    // names, although the rule above forbids a fixed point of the line such as `x = 1` as a
+    // witness: a step with no bound runs only in the coordinate `solve_regime` writes, never in
+    // the coordinate of the root. (1) `solve_regime` writes a regime with no bound in the
+    // coordinate `t` of one of `free` (I5.3): `x = c + s * t` with `t` the alias of `x` of least
+    // offset of its sign, and the aliases of `x` are the same atoms under every name, so a
+    // renaming leaves `free`, the chosen writing and so `t = 0` the same point of the program
+    // (see `solve_regime`'s doc). (2) `free` is never empty when a regime has no bound:
+    // `UnionFind::min_offsets_of` starts each node's best positive offset at `Some(0)`, the node
+    // itself, so the root gives `plus = Some(..)`; the fallback in `solve_regime` that solves in
+    // the root's coordinate is not reached with no bound. (3) The steps put only bounded tasks
+    // on the stack (`solve_short_x_interval`, the one user of `stack`, takes `[l, h]`), so the
+    // only task with no bound is the first one, in the coordinate of (1). So the window, and the
+    // witness the sweep returns in it, are the same under every name; where the two writings of
+    // `free` tie, `solve_regime` returns both mirror points as before. Before this, such a
+    // regime was refused (test
+    // `checker::a_question_over_one_variable_with_no_bound_and_its_remainders_is_decided`, refused
+    // before; row PRES-one-variable-no-bound-witness). Still refused: a formula whose remainders
+    // are taken of a multiple or a quotient of `x`, which does not reach this regime (row
+    // PRES-one-variable-scaled-and-nested-residues; test
+    // `checker::a_refused_question_over_one_scaled_variable_names_its_moduli`).
+    //
+    // Complexity tradeoff: naive version (before), as for the bounded regime above, the general
+    // path, which refused these. Used: the lcm `p`, M - 1 steps of `Int::lcm` over the M moduli
+    // (O(M^2 b^2) bit operations for `b`-bit moduli that share no factor), and the sweep on a
+    // window of `p` points, whose work is at most `O(L p)` for `L` literals (the bound at
+    // `cheapest_split`), refused past the limit under a cover's meter. What is given up: nothing
+    // is answered differently; where `p` is huge the sweep is costly, the same tradeoff as the
+    // bounded fallback (ASSUME-sweep-not-worse). Tests:
+    // `r7_tests::a_regime_with_one_bound_the_base_cannot_write_is_decided` (against testing each
+    // point of the period; undecided before), the 5,000-formula test above (4 refusals before, 0
+    // after), `r7_tests::bench::a_regime_with_one_bound_and_n_clauses_scales`.
     let out = solve_on_bases(lo, hi, &unit_mods, &clauses);
     match (out, lo, hi) {
         (RegimeOut::Undecided, Some(l), Some(h)) => sweep_bounded(l, h, &unit_mods, &clauses),
+        (RegimeOut::Undecided, Some(l), None) => {
+            let e = &(l + &period_of(&unit_mods, &clauses)) - &Int::ONE;
+            sweep_bounded(l, &e, &unit_mods, &clauses)
+        }
+        (RegimeOut::Undecided, None, Some(h)) => {
+            let s = &(h - &period_of(&unit_mods, &clauses)) + &Int::ONE;
+            sweep_bounded(&s, h, &unit_mods, &clauses)
+        }
+        (RegimeOut::Undecided, None, None) => {
+            let e = &period_of(&unit_mods, &clauses) - &Int::ONE;
+            sweep_bounded(&Int::ZERO, &e, &unit_mods, &clauses)
+        }
         (out, _, _) => out,
     }
+}
+
+/// The lcm of the moduli of `unit_mods` and `clauses`, 1 where there are none.
+fn period_of(unit_mods: &BTreeMap<Int, ResidueSet>, clauses: &[BTreeMap<Int, ResidueSet>]) -> Int {
+    unit_mods
+        .keys()
+        .chain(clauses.iter().flat_map(|cl| cl.keys()))
+        .fold(Int::ONE, |p, m| p.lcm(m))
 }
 
 /// The regime `[lo, hi]` under `unit_mods` and `clauses`, solved on the pairwise coprime base of
@@ -3427,8 +3497,7 @@ fn sweep_window(
         if period >= len {
             break;
         }
-        let g = period.gcd(m);
-        period = &period.div_floor(&g) * m;
+        period = period.lcm(m);
     }
     let e = if period >= len {
         h.clone()

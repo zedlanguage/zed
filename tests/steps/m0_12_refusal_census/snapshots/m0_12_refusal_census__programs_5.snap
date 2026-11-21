@@ -3,7 +3,6 @@ source: tests/steps/m0_12_refusal_census/mod.rs
 expression: programs_piece(5)
 ---
 Growth: 5
-Shadows: 1
 Holes: 2
 
 l01_29_diagnostics::refused_warning::warnings_at_several_places_keep_their_order#5045197b	1:173	warning	Growth	Cannot find exactly which values meet the conditions here.
@@ -11,6 +10,5 @@ l01_29_diagnostics::refused_warning::warnings_at_several_places_keep_their_order
 l01_29_diagnostics::refused_warning::warnings_at_several_places_keep_their_order#5045197b	2:158	warning	Growth	Cannot find exactly which values `x` can take here.
 l01_29_diagnostics::refused_warning::warnings_at_several_places_keep_their_order#5045197b	2:158	warning	Growth	Cannot find exactly which values `y` can take here.
 l01_29_diagnostics::refused_warning::warnings_at_several_places_keep_their_order#5045197b	2:158	warning	Growth	Cannot find exactly which values `z` can take here.
-l01_38_presburger::checker::a_refused_question_over_one_variable_names_its_moduli#77709e52	1:1	rejected	Shadows	zedc could not decide whether the condition of `ok`, written `x >= 4 && x <= 31 && (x - 1) mod 9 <= 1 && (x - 4) mod 14 <= 4 && (x - 4) mod 27 != 23`, can be true for whole-number values of `x`, which it works out for every test function: to find whole numbers that meet these conditions, the checker removes one variable at a time, putting in place of the conditions on it conditions on the variables left. The program has one variable, `x`, and the conditions read it through its remainders and quotients by 9, 14 and 27; the checker gives each remainder and quotient a variable of its own. Where the values a variable can take have gaps, it splits the conditions into cases, one for each gap. Here the only values could lie in a case that would have to be split again with as many of the checker's variables left as before, so the splitting need not end. The checker stopped there, with no values found and none ruled out.
 l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#fc0a6066	1:226	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
 l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#fc0a6066	1:238	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.

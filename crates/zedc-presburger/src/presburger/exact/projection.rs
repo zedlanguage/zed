@@ -211,10 +211,6 @@ struct Div {
     lin: Lin,
 }
 
-fn lcm(a: &Int, b: &Int) -> Int {
-    &a.div_floor(&a.gcd(b)) * b
-}
-
 /// The values of `s` of the one disjunct, chosen by the point `m` of the conjunction `rows`,
 /// of the projection of `rows` onto `s`: the model-based projection for linear integer
 /// arithmetic, `LIAProj`, of Komuravelli, Gurfinkel and Chaki ("SMT-based model checking for
@@ -322,7 +318,7 @@ pub(super) fn liaproj(
         let big_l = (rows.iter().map(|k| &k.lin))
             .chain(divs.iter().map(|k| &k.lin))
             .filter_map(coef)
-            .fold(Int::ONE, |l, c| lcm(&l, &c.abs()));
+            .fold(Int::ONE, |l, c| l.lcm(&c.abs()));
         let y_at = &big_l * &value(&Lin::atom(x.clone()), m);
         // A literal `c·x + r` scaled by `L / |c|`: `sign(c)·y + rest`, the sign and the rest.
         let scaled = |l: &Lin, c: &Int| {
@@ -338,7 +334,7 @@ pub(super) fn liaproj(
         for v in divs {
             if let Some(c) = coef(&v.lin) {
                 let d = &v.d * &big_l.div_floor(&c.abs());
-                big_d = lcm(&big_d, &d);
+                big_d = big_d.lcm(&d);
                 over_y.push((d, scaled(&v.lin, &c)));
             } else {
                 others.push(v);
@@ -385,7 +381,7 @@ pub(super) fn liaproj(
     let v = value(&Lin::atom(s.clone()), m);
     let step = (divs.iter()).fold(Int::ONE, |step, k| {
         let c = k.lin.terms.get(s).expect("a literal over s alone");
-        lcm(&step, &k.d.div_floor(&k.d.gcd(c)))
+        step.lcm(&k.d.div_floor(&k.d.gcd(c)))
     });
     let set = bounded(&rows, s);
     debug_assert!(

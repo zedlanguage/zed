@@ -156,6 +156,14 @@ impl Int {
         }
     }
 
+    /// The least common multiple of two nonnegative integers, not both zero: `self / gcd(self,
+    /// other) * other`, dividing first so no product is larger than the answer. The lcm with 0 is
+    /// 0; both zero divides by `gcd(0, 0) = 0`. Cost: one gcd, one exact division and one
+    /// product. Test: `tests::lcm_of_positive_integers`.
+    pub fn lcm(&self, other: &Int) -> Int {
+        &self.div_floor(&self.gcd(other)) * other
+    }
+
     /// The greatest common divisor, never negative.
     pub fn gcd(&self, other: &Int) -> Int {
         match (&self.0, &other.0) {
@@ -3495,6 +3503,30 @@ mod tests {
         let min = Int::from(i128::MIN);
         assert_eq!(min.gcd(&min), -&min);
         assert_eq!(Int::ZERO.gcd(&Int::from(-5)), Int::from(5));
+    }
+
+    /// `Int::lcm` against num-bigint's lcm, on small operands, a common factor, one operand
+    /// dividing the other, and operands past i128 whose product is past i128 too.
+    #[test]
+    fn lcm_of_positive_integers() {
+        let big: BigInt = BigInt::from(3u8).pow(100) * 1_000_003;
+        let cases: Vec<(BigInt, BigInt)> = vec![
+            (BigInt::from(1), BigInt::from(1)),
+            (BigInt::from(4), BigInt::from(6)),
+            (BigInt::from(6), BigInt::from(12)),
+            (BigInt::from(7), BigInt::from(13)),
+            (BigInt::from(i128::MAX), BigInt::from(i128::MAX - 1)),
+            (big.clone(), BigInt::from(9)),
+            (
+                big.clone(),
+                BigInt::from(999_983) * BigInt::from(3u8).pow(120),
+            ),
+        ];
+        for (a, b) in cases {
+            let want = Int::from(Integer::lcm(&a, &b));
+            assert_eq!(Int::from(a.clone()).lcm(&Int::from(b.clone())), want);
+            assert_eq!(Int::from(b).lcm(&Int::from(a)), want);
+        }
     }
 
     /// `Int::gcd` past i128 agrees with num-bigint's for every sign, for operands of one word

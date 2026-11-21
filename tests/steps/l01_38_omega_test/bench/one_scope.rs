@@ -1168,13 +1168,18 @@ fn the_5000_one_variable_modular_formulas_of_seed_0x70dec1de_match_enumeration()
     // it. When this bound was set, 64 cases were refused, each refused by the general path alone
     // too (704 refusals there, measured on d5714627 with the one-variable path off); case 4609
     // was one: `decide` refused it on main since 9bbeb1ff, where `satisfiable` answered it
-    // (I4.3; `modular::r4_tests::pncx_case4609_keeps_its_answer` pins its answer now). 6 are
-    // refused since 2026-11-20 (below); the bound is a ceiling on refusals, not a count.
+    // (I4.3; `modular::r4_tests::pncx_case4609_keeps_its_answer` pins its answer now). None is
+    // refused since FAIL-omega-negations-slow-7837918895420161952 (below); the bound is a
+    // ceiling on refusals, not a count.
     assert!(c.refused <= 64, "refused={}", c.refused);
     // Measured on main 9bbeb1ff: 788 empty answers agreed, 10 refused by the general path, 0 of
     // them with `x` unbounded above (on 4777a33e: 616, 182 and 2). Since
     // FAIL-omega-negations-slow-13254895221319191796 (`modular::sweep_bounded`): 798, 6 and 0,
-    // and 6 cases refused (2026-11-20). An empty answer refused by the general path with `x`
+    // and 6 cases refused (2026-11-20). Since FAIL-omega-negations-slow-7837918895420161952
+    // (`modular::solve_regime_step` sweeps one period of a regime with one bound, and a bounded
+    // regime, that the coprime base cannot write; cases 2209, 3159, 4584 and 4949 were the last
+    // refused): 806, 6 and 0, and 0 cases refused (2026-11-20, load 65). An empty answer refused
+    // by the general path with `x`
     // unbounded above is checked by nothing here.
     println!(
         "empty answers: {} agreed, {} refused by the general path, {} of them with x unbounded",

@@ -95,6 +95,30 @@ fn a_window_of_n_periods_scale() {
 /// The size of [`a_window_of_n_periods_scale`].
 const N_PERIODS: usize = 5_000;
 
+/// A regime with one bound that the coprime base leaves undecided, swept on one period of its
+/// moduli past the bound (FAIL-omega-negations-slow-7837918895420161952), on
+/// [`one_bound_clauses`] with `n` clauses more: the period stays 4,680, so each clause adds a
+/// fixed number of events, about `4680 / 4 + 4680 / 9` pieces of its moduli, which the split
+/// chosen reads as large ones. Each event is one pop of [`LargeMerge`]'s heap, which holds one
+/// waiting event per run, so `Theta(n)` of them: the work is `Theta(n log n)`, predicted at 8n
+/// as `8 log(32,000) / log(4,000)`, about 10.0 for the heap alone. Measured 2026-11-20 (load 53):
+/// 7.62e9 and 6.91e10 instructions, 9.06 times, 99% of it in `LargeMerge::next_change` and 62%
+/// in its heap's `pop` (perf, cycles), so the ratio is that `n log n` (P300); 8.0 times the bytes.
+#[test]
+fn a_regime_with_one_bound_and_n_clauses_scales() {
+    let inputs = scaling::inputs(N_ONE_BOUND, one_bound_clauses);
+    scaling::check_order("a regime with one bound", N_ONE_BOUND, 1, |n| {
+        let (l, units, clauses) = inputs[&n].clone();
+        assert!(matches!(
+            solve_regime_in(&Some(l), &None, units, clauses),
+            RegimeOut::Empty
+        ));
+    });
+}
+
+/// The size of [`a_regime_with_one_bound_and_n_clauses_scales`].
+const N_ONE_BOUND: usize = 2_000;
+
 /// The peak bytes `sweep_bounded` holds on [`a_window_of_n_periods_scale`]'s inputs at `n` and
 /// at `8n` periods are within twice each other (PERF-sweep-lazy-pieces): the pieces of the large
 /// moduli are made one waiting event per run at a time ([`LargeMerge`]), so the memory is

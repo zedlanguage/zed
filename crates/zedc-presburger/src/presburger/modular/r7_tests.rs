@@ -541,69 +541,243 @@ fn a_short_interval_over_many_moduli_is_decided_by_the_sweep() {
 /// without it (the first undecided draw: `[-73, 193]` under clauses over 6, 7, 9, 10, 12, 13).
 #[test]
 fn a_bounded_regime_the_base_cannot_write_is_decided() {
-    type Lits = Vec<(i64, Vec<(i64, i64)>)>;
-    let holds = |x: i64, m: i64, s: &[(i64, i64)]| {
-        let r = x.rem_euclid(m);
-        s.iter().any(|&(a, b)| a <= r && r <= b)
-    };
-    let set = |s: &[(i64, i64)]| -> ResidueSet {
-        s.iter()
-            .map(|&(a, b)| (Int::from(a), Int::from(b)))
-            .collect()
-    };
-    let check = |l: i64, h: i64, units: &Lits, clauses: &[Lits]| {
-        let unit_mods: BTreeMap<Int, ResidueSet> =
-            units.iter().map(|(m, s)| (Int::from(*m), set(s))).collect();
-        let cls: Vec<BTreeMap<Int, ResidueSet>> = clauses
-            .iter()
-            .map(|cl| cl.iter().map(|(m, s)| (Int::from(*m), set(s))).collect())
-            .collect();
-        let want = (l..=h).any(|x| {
-            units.iter().all(|(m, s)| holds(x, *m, s))
-                && clauses
-                    .iter()
-                    .all(|cl| cl.iter().any(|(m, s)| holds(x, *m, s)))
-        });
-        let got = solve_regime_in(&Some(Int::from(l)), &Some(Int::from(h)), unit_mods, cls);
-        let what = format!("[{l}, {h}] units {units:?} clauses {clauses:?}");
-        match got {
-            RegimeOut::Undecided => panic!("undecided: {what}"),
-            RegimeOut::Empty => assert!(!want, "empty, but a point lies: {what}"),
-            RegimeOut::Found(x) => {
-                let x = x.to_i128().expect("small") as i64;
-                assert!(want, "{x}, but none lies: {what}");
-                assert!((l..=h).contains(&x), "{x} out of the window: {what}");
-                assert!(
-                    units.iter().all(|(m, s)| holds(x, *m, s))
-                        && clauses
-                            .iter()
-                            .all(|cl| cl.iter().any(|(m, s)| holds(x, *m, s))),
-                    "{x} is no point: {what}"
-                );
-            }
-        }
-        want
-    };
-    check(
-        0,
-        20,
+    check_regime(
+        Some(0),
+        Some(20),
         &vec![(11, vec![(0, 3), (5, 10)])],
         &[
             vec![(6, vec![(0, 0), (2, 5)]), (8, vec![(0, 5), (7, 7)])],
             vec![(6, vec![(0, 2), (4, 5)]), (11, vec![(4, 4)])],
         ],
     );
-    // A small linear congruential generator (Knuth's MMIX constants), so the draws are fixed.
     let mut state = 0x7837_u64;
-    let mut below = |n: i64| {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((state >> 33) % n as u64) as i64
+    let mut below = |n: i64| lcg_below(&mut state, n);
+    let mut with_point = 0;
+    for _ in 0..500 {
+        let units = draw_lits(1 + below(3), &mut below);
+        let clauses: Vec<Lits> = (0..below(8))
+            .map(|_| draw_lits(1 + below(3), &mut below))
+            .collect();
+        let l = below(200) - 100;
+        let h = l + below(400);
+        with_point += usize::from(check_regime(Some(l), Some(h), &units, &clauses));
+    }
+    assert!(
+        (60..=440).contains(&with_point),
+        "{with_point} of 500 with a point"
+    );
+}
+
+/// A regime with one bound is decided by `solve_regime_in` on one period of its moduli past the
+/// bound, never left undecided, and its answer is that of testing each point of that period
+/// (FAIL-omega-negations-slow-7837918895420161952, the 4 refusals left in
+/// `bench::one_scope::the_5000_one_variable_modular_formulas_of_seed_0x70dec1de_match_enumeration`:
+/// each a variable with one lower bound and residue conditions). The draws are those of
+/// [`a_bounded_regime_the_base_cannot_write_is_decided`] with one bound dropped, half of them the
+/// upper one; without the sweep of one period, some are left undecided.
+#[test]
+fn a_regime_with_one_bound_the_base_cannot_write_is_decided() {
+    let mut state = 0x0b0d_u64;
+    let mut below = |n: i64| lcg_below(&mut state, n);
+    let mut with_point = 0;
+    for i in 0..300 {
+        let units = draw_lits(1 + below(3), &mut below);
+        let clauses: Vec<Lits> = (0..below(8))
+            .map(|_| draw_lits(1 + below(3), &mut below))
+            .collect();
+        let b = below(200) - 100;
+        let (lo, hi) = if i % 2 == 0 {
+            (Some(b), None)
+        } else {
+            (None, Some(b))
+        };
+        with_point += usize::from(check_regime(lo, hi, &units, &clauses));
+    }
+    assert!(
+        (40..=290).contains(&with_point),
+        "{with_point} of 300 with a point"
+    );
+}
+
+/// A regime with no bound is decided by `solve_regime_in` on one period `[0, p - 1]` of its
+/// moduli, never left undecided, and its answer is that of testing each point of that period
+/// (PRES-one-variable-no-bound-witness). The draws are those of
+/// [`a_regime_with_one_bound_the_base_cannot_write_is_decided`] (seed 0x0b0e) with no bound;
+/// without the sweep, some are left undecided. That the window's start does not depend on the
+/// names is a property of the coordinate `solve_regime` writes, tested by
+/// `one_scope::one_variable_answers_do_not_depend_on_names` and the tests named with it.
+#[test]
+fn a_regime_with_no_bound_the_base_cannot_write_is_decided() {
+    let mut state = 0x0b0e_u64;
+    let mut below = |n: i64| lcg_below(&mut state, n);
+    let mut with_point = 0;
+    for _ in 0..300 {
+        let units = draw_lits(1 + below(3), &mut below);
+        let clauses: Vec<Lits> = (0..below(8))
+            .map(|_| draw_lits(1 + below(3), &mut below))
+            .collect();
+        with_point += usize::from(check_regime(None, None, &units, &clauses));
+    }
+    assert!(
+        (40..=290).contains(&with_point),
+        "{with_point} of 300 with a point"
+    );
+}
+
+/// The input of `bench::a_regime_with_one_bound_and_n_clauses_scales`: the first draw of
+/// [`a_regime_with_one_bound_the_base_cannot_write_is_decided`] that was undecided before the
+/// sweep of one period, `[81, inf)` under units `x mod 8 == 7`, `x mod 12 in {6, 7, 9..11}`, `x mod
+/// 13 in {2..7, 12}` and clauses whose second, `x mod 8 in 4..6`, the unit modulo 8 contradicts, so
+/// the regime is empty; and `n` clauses more, the `i`-th `x mod 4 == i mod 4 || x mod 9 == i mod
+/// 9`. Every modulus divides 4,680, so the period swept stays the same at every `n`.
+pub(super) fn one_bound_clauses(
+    n: usize,
+) -> (
+    Int,
+    BTreeMap<Int, ResidueSet>,
+    Vec<BTreeMap<Int, ResidueSet>>,
+) {
+    let i = |v: i64| Int::from(v);
+    let set = |s: &[(i64, i64)]| -> ResidueSet { s.iter().map(|&(a, b)| (i(a), i(b))).collect() };
+    let units: BTreeMap<Int, ResidueSet> = [
+        (i(8), set(&[(7, 7)])),
+        (i(12), set(&[(6, 7), (9, 11)])),
+        (i(13), set(&[(2, 7), (12, 12)])),
+    ]
+    .into_iter()
+    .collect();
+    let mut clauses: Vec<BTreeMap<Int, ResidueSet>> = vec![
+        [
+            (i(4), set(&[(0, 0), (2, 2)])),
+            (i(9), set(&[(1, 4), (6, 8)])),
+            (i(13), set(&[(5, 9), (11, 11)])),
+        ]
+        .into_iter()
+        .collect(),
+        [(i(8), set(&[(4, 6)]))].into_iter().collect(),
+        [
+            (i(3), set(&[(0, 0), (2, 2)])),
+            (i(10), set(&[(9, 9)])),
+            (i(12), set(&[(4, 8), (10, 11)])),
+        ]
+        .into_iter()
+        .collect(),
+    ];
+    for k in 0..n as i64 {
+        clauses.push(
+            [
+                (i(4), set(&[(k % 4, k % 4)])),
+                (i(9), set(&[(k % 9, k % 9)])),
+            ]
+            .into_iter()
+            .collect(),
+        );
+    }
+    (i(81), units, clauses)
+}
+
+/// [`one_bound_clauses`] at small sizes: the coprime base leaves it undecided, so the sweep of one
+/// period is what decides it, and it is empty.
+#[test]
+fn one_bound_clauses_are_empty_and_left_by_the_base() {
+    for n in 0..=8 {
+        let (l, units, clauses) = one_bound_clauses(n);
+        assert!(
+            matches!(
+                solve_on_bases(&Some(l.clone()), &None, &units, &clauses),
+                RegimeOut::Undecided
+            ),
+            "{n}"
+        );
+        let out = solve_regime_in(&Some(l), &None, units, clauses);
+        assert!(matches!(out, RegimeOut::Empty), "{n}: {:?}", found(&out));
+    }
+}
+
+/// The literals of a unit or a clause: `(m, s)` is `x mod m` in the intervals `s`.
+type Lits = Vec<(i64, Vec<(i64, i64)>)>;
+
+/// Whether `x mod m` lies in one of the intervals `s`.
+fn residue_holds(x: i64, m: i64, s: &[(i64, i64)]) -> bool {
+    let r = x.rem_euclid(m);
+    s.iter().any(|&(a, b)| a <= r && r <= b)
+}
+
+/// Whether `x` meets every unit and some literal of every clause.
+fn regime_holds(x: i64, units: &Lits, clauses: &[Lits]) -> bool {
+    units.iter().all(|(m, s)| residue_holds(x, *m, s))
+        && clauses
+            .iter()
+            .all(|cl| cl.iter().any(|(m, s)| residue_holds(x, *m, s)))
+}
+
+/// Solves the regime `lo <= x <= hi` (a missing bound is no bound) under `units` and `clauses`
+/// by `solve_regime_in`, checks its answer against testing each point, and returns whether a
+/// point lies. With both bounds every point is tested; with one, the period `p`, the lcm of the
+/// moduli, past it: `[l, l + p - 1]` or `[h - p + 1, h]`. That is exact: each literal reads `x mod
+/// m` for an `m` dividing `p`, so `x` and `x - k p` meet the same literals, and a point `x >= l`
+/// gives the point `x - ((x - l) div p) p` of `[l, l + p - 1]` (likewise below `h`). A point
+/// found is checked against the bounds given and every literal directly.
+fn check_regime(lo: Option<i64>, hi: Option<i64>, units: &Lits, clauses: &[Lits]) -> bool {
+    let set = |s: &[(i64, i64)]| -> ResidueSet {
+        s.iter()
+            .map(|&(a, b)| (Int::from(a), Int::from(b)))
+            .collect()
     };
-    // One or two intervals of residues modulo 2 to 13, as a normal list (sorted, disjoint, not
-    // adjacent).
-    let lit = |below: &mut dyn FnMut(i64) -> i64| {
+    let unit_mods: BTreeMap<Int, ResidueSet> =
+        units.iter().map(|(m, s)| (Int::from(*m), set(s))).collect();
+    let cls: Vec<BTreeMap<Int, ResidueSet>> = clauses
+        .iter()
+        .map(|cl| cl.iter().map(|(m, s)| (Int::from(*m), set(s))).collect())
+        .collect();
+    let p = units
+        .iter()
+        .chain(clauses.iter().flatten())
+        .fold(1i64, |p, (m, _)| p / gcd_i64(p, *m) * m);
+    let (l, h) = match (lo, hi) {
+        (Some(l), Some(h)) => (l, h),
+        (Some(l), None) => (l, l + p - 1),
+        (None, Some(h)) => (h - p + 1, h),
+        (None, None) => (0, p - 1),
+    };
+    let want = (l..=h).any(|x| regime_holds(x, units, clauses));
+    let got = solve_regime_in(&lo.map(Int::from), &hi.map(Int::from), unit_mods, cls);
+    let what = format!("[{lo:?}, {hi:?}] units {units:?} clauses {clauses:?}");
+    match got {
+        RegimeOut::Undecided => panic!("undecided: {what}"),
+        RegimeOut::Empty => assert!(!want, "empty, but a point lies: {what}"),
+        RegimeOut::Found(x) => {
+            let x = x.to_i128().expect("small") as i64;
+            assert!(want, "{x}, but none lies: {what}");
+            assert!(
+                lo.is_none_or(|l| l <= x) && hi.is_none_or(|h| x <= h),
+                "{x} out of the bounds: {what}"
+            );
+            assert!(regime_holds(x, units, clauses), "{x} is no point: {what}");
+        }
+    }
+    want
+}
+
+/// The gcd of two positive integers.
+fn gcd_i64(a: i64, b: i64) -> i64 {
+    if b == 0 { a } else { gcd_i64(b, a % b) }
+}
+
+/// The next draw below `n` of a small linear congruential generator (Knuth's MMIX constants),
+/// so the draws are fixed by the seed.
+fn lcg_below(state: &mut u64, n: i64) -> i64 {
+    *state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    ((*state >> 33) % n as u64) as i64
+}
+
+/// The literals of `k` draws, one per modulus (a later draw over the same modulus replaces an
+/// earlier one), each one or two intervals of residues modulo 2 to 13, as a normal list (sorted,
+/// disjoint, not adjacent).
+fn draw_lits(k: i64, below: &mut dyn FnMut(i64) -> i64) -> Lits {
+    let mut lit = || {
         let m = 2 + below(12);
         let a = below(m);
         let b = a + below(m - a);
@@ -614,24 +788,8 @@ fn a_bounded_regime_the_base_cannot_write_is_decided() {
         }
         (m, s)
     };
-    let lits = |k: i64, below: &mut dyn FnMut(i64) -> i64| -> Lits {
-        let by_modulus: BTreeMap<i64, Vec<(i64, i64)>> = (0..k).map(|_| lit(below)).collect();
-        by_modulus.into_iter().collect()
-    };
-    let mut with_point = 0;
-    for _ in 0..500 {
-        let units = lits(1 + below(3), &mut below);
-        let clauses: Vec<Lits> = (0..below(8))
-            .map(|_| lits(1 + below(3), &mut below))
-            .collect();
-        let l = below(200) - 100;
-        let h = l + below(400);
-        with_point += usize::from(check(l, h, &units, &clauses));
-    }
-    assert!(
-        (60..=440).contains(&with_point),
-        "{with_point} of 500 with a point"
-    );
+    let by_modulus: BTreeMap<i64, Vec<(i64, i64)>> = (0..k).map(|_| lit()).collect();
+    by_modulus.into_iter().collect()
 }
 
 /// A cover's work at the limit of its meter, or with no limit.
