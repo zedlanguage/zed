@@ -13952,16 +13952,200 @@ fn split_at(root: Tree, cut: i128) -> (Tree, Tree) {
         None => (l, r),
         Some((lo, hi, a, b)) => {
             let (below, above) = (End::from(cut - 1), End::from(cut));
-            let l = join_treap(
-                l,
-                Some(make_node(lo, below, a.clone(), b.clone(), None, None)),
-            );
-            (
-                l,
-                join_treap(Some(make_node(above, hi, a, b, None, None)), r),
-            )
+            let l = put_last(l, (lo, below, a.clone(), b.clone()));
+            (l, put_first((above, hi, a, b), r))
         }
     }
+}
+
+/// The first (`last` false) or the last piece of `root`, with its line mapped by the tags
+/// above it: `O(d)` steps for the depth `d` of that piece, and no node made.
+fn outer_piece(root: &Tree, last: bool) -> Option<CutPiece> {
+    let mut f = Tag::ID;
+    let mut node = root.as_ref()?;
+    loop {
+        let next = if last { &node.right } else { &node.left };
+        match next {
+            Some(c) => {
+                f = node.tag.then(&f);
+                node = c;
+            }
+            None => {
+                let (a, b) = f.line(&node.a, &node.b);
+                return Some((node.lo.clone(), node.hi.clone(), a, b));
+            }
+        }
+    }
+}
+
+/// The half `p` of a cut piece, given the line of slope 0 when it holds one input `x`: `0 * x +
+/// v` for its value `v` at `x`, the same summary, so that the next cut can widen it
+/// ([`put_last`]). `Some(x)` when it holds one input.
+fn one_input(p: CutPiece) -> (CutPiece, Option<i128>) {
+    match p {
+        (Fin(x), Fin(y), a, b) if x == y => {
+            let at = small(&x);
+            let v = &(&a * &Int::from(at)) + &b;
+            ((Fin(x), Fin(y), Int::ZERO, v), Some(at))
+        }
+        p => (p, None),
+    }
+}
+
+/// `root` with the half `p` of a cut piece, which lies above all its pieces, joined after them
+/// ([`split_at`]). When `p` holds one input `x` and the last piece of `root` ends at `x - 1`
+/// with a line whose value at `x` is `p`'s, that piece is widened to `x` instead, the same
+/// summary; a half of one input not so taken in is given its line of slope 0 ([`one_input`]).
+///
+/// Why (BENCH-chain-probe-half-bytes): a cut one past a piece's end leaves a piece of one
+/// input. The chain `t_j = if i >= j { t_(j-1) } else { t_(j-1) + 1 }` over `i` in `[-100,
+/// inf)` (`bench::s22::chain_probe_half_scales`) cuts its piece of line `i` at `j` at each
+/// level and keeps `[j - 1, j - 1]` with line `i + 1`, value `j`; its neighbor `[j - 2, j - 2]`
+/// has line `i + 2`, also value `j`, and the inputs `1..=j - 1`, which all have value `j`, were
+/// `j - 1` pieces of one input, each of slope 1. With `j` pieces at level `j` where 3 are
+/// needed, every split and join walked a path of `O(log j)` expected nodes, `O(k log k)` for
+/// `k` levels, with a factor set by the run's priorities ([`prio_of`]): the bytes ratio of the
+/// bench at sizes 256 and 2048 ran from 7.62 to 10.38 across `ZED_TREAP_SEED` 0 to 7 (mean 9.31).
+/// Given slope 0, the one-input pieces are one constant piece widened at each level: the
+/// summary keeps 3 pieces and a level costs `O(1)`.
+///
+/// Proof that the summary is unchanged: [`one_input`] changes the line only on its one input,
+/// where both lines take the value `v`. The widened piece `[lo, x]` with line `na * x + nb`
+/// takes on `[lo, x - 1]` the values of the piece it replaces, and at `x` the value of `p` by
+/// the check; it covers exactly the inputs of the two pieces, which are adjacent, so every
+/// input keeps its value and no input is added. Which pieces are kept depends only on the
+/// values, not on the priorities, so the shape still shows nowhere.
+///
+// Complexity tradeoff: the check walks to the last piece of `root`, `O(log n)` expected steps
+// with no node made, at each cut that leaves a piece of one input, and a merge makes
+// `O(log n)` expected nodes in one walk down the right spine ([`replace_last`]), in place of
+// the join of `p`; a split and a join there instead raised the mean ratio of
+// `bench::s22::chain_alt_live_scales`, whose merges leave pieces of two inputs, by 0.5. What is
+// given up: those steps where the check fails. Why: two pieces of one line that meet are kept
+// apart elsewhere, and only a piece of one input is checked, the case a cut one past an end
+// makes; checking every join would cost the walk at each. Trigger: a slice whose end is one
+// below a piece's upper end. Test: `bench::s22::chain_probe_half_scales`, and for exactness
+// the unit tests `tests::cuts_one_past_an_end_merge_into_the_treap_of_the_pieces` and
+// `tests::a_sum_of_summaries_is_the_sum_at_every_point` and the catalog's
+// interpreter checks. COMPLEXITY.md BENCH-chain-probe-half-bytes. A complete solution would
+// merge every two adjacent pieces of one line wherever they meet.
+fn put_last(root: Tree, p: CutPiece) -> Tree {
+    let ((lo, hi, a, b), point) = one_input(p);
+    if let Some(x) = point
+        && let Some(node) = &root
+        && let Some((nlo, Fin(nhi), na, nb)) = outer_piece(&root, true)
+        && small(&nhi) + 1 == x
+        && value_at(&lo, &na, &nb) == Val::Fin(b.clone())
+    {
+        return Some(replace_last(node, &make_node(nlo, hi, na, nb, None, None)));
+    }
+    join_treap(root, Some(make_node(lo, hi, a, b, None, None)))
+}
+
+/// The pieces of `node` but its last, in one walk down its right spine.
+fn drop_last(node: &Arc<PaNode>) -> Tree {
+    let (l, r) = push_down(node);
+    match r {
+        None => l,
+        Some(r) => {
+            let (lo, hi, a, b) = (
+                node.lo.clone(),
+                node.hi.clone(),
+                node.a.clone(),
+                node.b.clone(),
+            );
+            Some(node_of(lo, hi, a, b, node.prio, l, drop_last(&r)))
+        }
+    }
+}
+
+/// `node` with its last piece replaced by the leaf `new`, whose piece holds the inputs of that
+/// piece and more above them, and no input of another piece ([`put_last`]): one walk down the
+/// right spine, `O(d)` nodes made for its depth `d`, where a split before the last piece and
+/// a join after made two walks.
+///
+/// Proof that the result is the treap of the new set of pieces: walking down the right spine,
+/// every node passed has a priority at least `new`'s, so it stays above `new`, and its left
+/// subtree, all below `new`'s piece, is kept. At the first node `n` that `new` outranks (`>`,
+/// since on a tie [`join_treap`] keeps the left piece above), `new` takes `n`'s place: every
+/// piece of `n`'s subtree but the last lies below `new`'s and has a priority at most `n`'s, so
+/// below `new`'s, and becomes its left subtree ([`drop_last`]); nothing lies above `new`'s
+/// piece. When no node is outranked, the walk reaches the last piece, whose priority is at
+/// least `new`'s and whose ancestors' are too: `new` is joined after that piece's left subtree,
+/// the treap of those pieces and `new` ([`join_treap`]), in its place. The priorities are
+/// [`prio_of`] of each node's own ends throughout.
+fn replace_last(node: &Arc<PaNode>, new: &Arc<PaNode>) -> Arc<PaNode> {
+    let (lo, hi, a, b) = (
+        node.lo.clone(),
+        node.hi.clone(),
+        node.a.clone(),
+        node.b.clone(),
+    );
+    if new.prio > node.prio {
+        let (nlo, nhi, na, nb) = (new.lo.clone(), new.hi.clone(), new.a.clone(), new.b.clone());
+        return node_of(nlo, nhi, na, nb, new.prio, drop_last(node), None);
+    }
+    let (l, r) = push_down(node);
+    match r {
+        // `l` and `new` are not both empty, so the join is a node.
+        None => join_treap(l, Some(new.clone())).unwrap_or_else(|| new.clone()),
+        Some(r) => node_of(lo, hi, a, b, node.prio, l, Some(replace_last(&r, new))),
+    }
+}
+
+/// [`drop_last`] on the other side: the pieces of `node` but its first.
+fn drop_first(node: &Arc<PaNode>) -> Tree {
+    let (l, r) = push_down(node);
+    match l {
+        None => r,
+        Some(l) => {
+            let (lo, hi, a, b) = (
+                node.lo.clone(),
+                node.hi.clone(),
+                node.a.clone(),
+                node.b.clone(),
+            );
+            Some(node_of(lo, hi, a, b, node.prio, drop_first(&l), r))
+        }
+    }
+}
+
+/// [`replace_last`] on the other side: `node` with its first piece replaced by the leaf `new`,
+/// which holds that piece's inputs and more below them. `new` outranks a node on a tie (`>=`),
+/// since [`join_treap`] keeps the left piece above; the proof is [`replace_last`]'s mirrored.
+fn replace_first(new: &Arc<PaNode>, node: &Arc<PaNode>) -> Arc<PaNode> {
+    let (lo, hi, a, b) = (
+        node.lo.clone(),
+        node.hi.clone(),
+        node.a.clone(),
+        node.b.clone(),
+    );
+    if new.prio >= node.prio {
+        let (nlo, nhi, na, nb) = (new.lo.clone(), new.hi.clone(), new.a.clone(), new.b.clone());
+        return node_of(nlo, nhi, na, nb, new.prio, None, drop_first(node));
+    }
+    let (l, r) = push_down(node);
+    match l {
+        // `new` and `r` are not both empty, so the join is a node.
+        None => join_treap(Some(new.clone()), r).unwrap_or_else(|| new.clone()),
+        Some(l) => node_of(lo, hi, a, b, node.prio, Some(replace_first(new, &l)), r),
+    }
+}
+
+/// [`put_last`] on the other side: the half `p`, which lies below all of `root`'s pieces,
+/// joined before them, or the first piece of `root` widened down to `p`'s one input when it
+/// starts at the next input and its line has `p`'s value there.
+fn put_first(p: CutPiece, root: Tree) -> Tree {
+    let ((lo, hi, a, b), point) = one_input(p);
+    if let Some(x) = point
+        && let Some(node) = &root
+        && let Some((Fin(nlo), nhi, na, nb)) = outer_piece(&root, false)
+        && x + 1 == small(&nlo)
+        && value_at(&lo, &na, &nb) == Val::Fin(b.clone())
+    {
+        return Some(replace_first(&make_node(lo, nhi, na, nb, None, None), node));
+    }
+    join_treap(Some(make_node(lo, hi, a, b, None, None)), root)
 }
 
 /// A piece of a treap taken out whole: its ends and its line `a * x + b`.
@@ -18225,6 +18409,86 @@ mod tests {
             let (below, above) = split_at(root, rng.below(90) as i128 - 50);
             heap(&below);
             heap(&above);
+        }
+    }
+
+    /// Chains of cuts one past an end, which merge pieces of one input into their neighbors
+    /// ([`put_last`] and [`replace_last`] for `t_j = if x >= j { t } else { t + c_j }`,
+    /// [`put_first`] and [`replace_first`] for its mirror `if x <= -j`): after every cut and add
+    /// every input keeps its value, every node outranks its children and has the priority
+    /// [`prio_of`] of its own ends, so the treap is the one its pieces make, and the node sums
+    /// hold ([`check_nodes`]). With `c_j = 1` the merges keep at most 3 pieces
+    /// (BENCH-chain-probe-half-bytes). The steps `c_j` are all 1, alternate `-1, 1` (the merges
+    /// leave pieces of two inputs) and are drawn from `{-1, 0, 1}`.
+    #[test]
+    fn cuts_one_past_an_end_merge_into_the_treap_of_the_pieces() {
+        fn check(t: &Tree) {
+            let Some(n) = t else {
+                return;
+            };
+            assert_eq!(n.prio, prio_of(&n.lo, &n.hi), "{:?}..={:?}", n.lo, n.hi);
+            for c in [&n.left, &n.right].into_iter().flatten() {
+                assert!(c.prio <= n.prio, "{} above {}", c.prio, n.prio);
+            }
+            check(&n.left);
+            check(&n.right);
+        }
+        let add = |c: i64| Tag {
+            mul: Int::ONE,
+            slope: Int::ZERO,
+            add: (c as i128).into(),
+        };
+        let (mut rng, _) = Rng::fresh("cuts_one_past_an_end_merge_into_the_treap_of_the_pieces");
+        for kind in 0..3 {
+            let steps: Vec<i64> = (1..=50)
+                .map(|j: i64| match kind {
+                    0 => 1,
+                    1 => 2 * (j % 2) - 1,
+                    _ => rng.below(3) as i64 - 1,
+                })
+                .collect();
+            for mirror in [false, true] {
+                // The inputs -60..=60, value `x` at first, `-x` for the mirror, so that its
+                // cut-off inputs take the value of the piece above them.
+                let slope: i128 = if mirror { -1 } else { 1 };
+                let mut want: Vec<i128> = (-60..=60).map(|x| slope * x).collect();
+                let line = (Int::from(slope), Int::ZERO);
+                let mut root = Some(make_node(
+                    End::of(-60),
+                    End::of(60),
+                    line.0,
+                    line.1,
+                    None,
+                    None,
+                ));
+                for (j, &c) in (1i64..).zip(&steps) {
+                    root = if mirror {
+                        let (below, above) = split_at(root, (1 - j) as i128);
+                        join_treap(below, above.map(|n| apply_tag(&n, &add(c))))
+                    } else {
+                        let (below, above) = split_at(root, j as i128);
+                        join_treap(below.map(|n| apply_tag(&n, &add(c))), above)
+                    };
+                    for (x, w) in (-60i64..).zip(want.iter_mut()) {
+                        if (mirror && x > -j) || (!mirror && x < j) {
+                            *w += c as i128;
+                        }
+                    }
+                    for (x, w) in (-60i64..).zip(&want) {
+                        assert_eq!(
+                            point(&root, x),
+                            Some(*w),
+                            "kind {kind}, mirror {mirror}, j {j}, x {x}"
+                        );
+                    }
+                    check(&root);
+                    check_nodes(&root);
+                }
+                if kind == 0 {
+                    let pieces = treap_pieces(&root).len();
+                    assert!(pieces <= 3, "mirror {mirror}: {pieces} pieces");
+                }
+            }
         }
     }
 
