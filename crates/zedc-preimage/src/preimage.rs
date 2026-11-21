@@ -15980,6 +15980,10 @@ mod tests {
         /// The `&&` and `||` nodes whose formula entry was made and not undone, kept or not:
         /// an entry made below a stop is dropped when the stack falls below where it began.
         chain_log: BTreeSet<At>,
+        /// The formula entries that are a failure holding on every stack (no formula, no
+        /// cut): those [`Tx::forget`] keeps when it undoes an attempt, though it drains their
+        /// log line, so such an entry may be in `memo` and not in `chain_log`.
+        kept_failures: BTreeSet<At>,
         lin: usize,
         stops: usize,
     }
@@ -16034,6 +16038,10 @@ mod tests {
             cut: tx.cx.cut,
             log,
             chain_log,
+            kept_failures: (tx.run.memo.formula.iter())
+                .filter(|(_, (v, cut, _))| v.is_none() && *cut == usize::MAX)
+                .map(|(k, _)| *k)
+                .collect(),
             lin: tx.run.memo.lin.len(),
             stops: tx.run.stops.len(),
         }
@@ -16223,9 +16231,18 @@ mod tests {
             new.chain_log.is_subset(&old.chain_log),
             "round {round}: {t:?}"
         );
+        // An entry only the old translation holds is in its log, or is a failure holding on
+        // every stack, which `Tx::forget` keeps out of the log when it undoes an attempt
+        // (FAIL-or-chain-seed-4671112825838422175; test
+        // `a_kept_failure_of_an_inner_and_is_an_entry_only_two_at_a_time_makes`). Proof that
+        // these are all: in the walk `translate` runs (`Tx::formula` on a fresh `Tx`), an
+        // entry enters `memo.formula` only with its log line (`Walk::translated`), and a line
+        // leaves the log only at `forget`, which removes the entry too unless it is such a
+        // failure (`undo` there). The other clears of the log, in `Tx::relation` (which
+        // clears the tables with it) and `Scoped::relation`, are not on that path.
         for k in &extra {
             assert!(
-                old.chain_log.contains(k),
+                old.chain_log.contains(k) || old.kept_failures.contains(k),
                 "round {round}, entry {k:?}: {t:?}"
             );
         }
@@ -16370,6 +16387,35 @@ mod tests {
         g.and_ifs = true;
         g.or_ifs = true;
         joins_as_two_at_a_time_from(g);
+    }
+
+    /// FAIL-or-chain-seed-4671112825838422175: `(x < 0) == (false && (true && x * y < 0))`,
+    /// the seed's round 115 made smaller. With no products the comparison `x * y < 0` has no
+    /// translation, so the inner `&&` fails at every stack; the `==` reads it in an attempt
+    /// that is undone, and [`Tx::forget`] keeps a failure that holds on every stack while it
+    /// drains the log. The translation two at a time leaves that entry behind, out of its log,
+    /// and the chain translator never makes it. Red before: [`join_round`] asked each entry
+    /// only the old translation holds to be in its log of chain entries.
+    #[test]
+    fn a_kept_failure_of_an_inner_and_is_an_entry_only_two_at_a_time_makes() {
+        use Prim::{And, Eq, Lt, Mul};
+        let v = |s: &str| Term::Var(s.into());
+        let lit = |l: Value| Term::Lit(l);
+        let p = |q: Prim, a: Term, b: Term| Term::Prim(q, vec![a, b]);
+        let product = p(Lt, p(Mul, v("x"), v("y")), lit(Value::Int(0)));
+        let inner = p(And, lit(Value::Bool(true)), product);
+        let t = p(
+            Eq,
+            p(Lt, v("x"), lit(Value::Int(0))),
+            p(And, lit(Value::Bool(false)), inner),
+        );
+        let made = join_round(&t, 0);
+        assert!(made[4], "no entry only the old translation holds: {t:?}");
+        let old = translate(&t, true);
+        assert!(
+            (old.kept_failures.iter()).any(|k| !old.chain_log.contains(k)),
+            "no kept failure out of the log: {t:?}"
+        );
     }
 
     /// The formula of `t` and the definitions of its auxiliary variables, with each
