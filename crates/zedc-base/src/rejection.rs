@@ -320,7 +320,6 @@ rows! {
     NonblockingCanBlock => "Function marked `@nonblocking` that can block",
     BlockingWritten => "`@blocking` written",
     NoArrowAtCarrier => "Operator with no arrow at its operands' carrier",
-    // No diagnostic uses this row yet: plan row MSG-float-mod-type-error emits it.
     ModOnFloat => "`mod` on a float",
     UnitsDiffer => "Units that differ where an operation requires equal ones",
     // No diagnostic uses the next twelve rows yet: plan rows L12.2a-L12.2d,

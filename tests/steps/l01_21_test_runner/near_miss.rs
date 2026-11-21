@@ -101,6 +101,14 @@ const NEAR_MISSES: &[NearMiss] = &[
         Some("write `String(n)`; the checker accepts that"),
     ),
     (
+        Row::ModOnFloat,
+        "",
+        "deg(positional a: f64) = floatMod(a, 360.0);\n",
+        "deg(positional a: f64) = a mod 360.0;\n",
+        "1:26",
+        Some("write `floatMod(a, 360.0)`; the checker accepts that"),
+    ),
+    (
         Row::NoCommonCarrier,
         "",
         "total(n: int, r: rat) = rat(n) + r;\n",

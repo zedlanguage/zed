@@ -25633,6 +25633,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         // argument (MSG-many-args-one-error). A trial keeps them apart: its verdict is the
         // spans rejected, the same either way.
         let mut refused = self.lit_refused.split_off(refusals);
+        // `2.5f64 mod 2.5f64`: the typed literals are refused at `mod`'s int parameters, so
+        // the application takes them and the error would be theirs, in the row of an
+        // operator with no arrow at its operands' carrier; it is `mod` on a float instead.
+        if !refused.is_empty() && self.mod_on_float(what, &args, span) {
+            self.applied = None;
+            return (out, Vec::new());
+        }
         if r.is_ok() || self.trying {
             self.literals_refused(what, sig, &args, std::mem::take(&mut refused), pass, span);
         }
@@ -25660,6 +25667,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Err(message) => {
                 self.applied = None;
+                if self.mod_on_float(what, &args, span) {
+                    return (out, Vec::new());
+                }
                 refused.sort_by_key(|(s, _)| (s.start, s.end));
                 let also: Vec<Span> = refused.iter().map(|(s, _)| *s).collect();
                 let mut notes: Vec<Note> = (refused.into_iter())
@@ -25754,6 +25764,112 @@ impl<'t, 'a> Ck<'t, 'a> {
                 (out, Vec::new())
             }
         }
+    }
+
+    /// The rejection of `x mod m` where an operand is a float (DESIGN.md sec:diagnostics, row
+    /// "`mod` on a float"; QUESTIONS A174, author, 2026-11-21): `mod` takes ints alone, so the
+    /// headline is `` `mod` takes ints: `a : f64 mod 360.0`. Try `floatMod(a, 360.0)` instead. ``,
+    /// with each typed operand's derivation and, as a note, the exact residue on `rat`; it never
+    /// offers `int(a) mod 360`, which narrows. It is taken where one operand's carrier is `f64`
+    /// or `f32` and the other is of that carrier or a literal with no suffix, which the fix
+    /// gives that carrier; elsewhere it returns `false` and the rejection of an application
+    /// with no arrow stands. The repair is offered only where a trial of `floatMod` on the two
+    /// operands is accepted, so a modulus it refuses, one not shown finite and above `0.0`,
+    /// gets a note and no fix. Complexity tradeoff: the trial checks one more application of
+    /// two operands already checked, O(1) beside the derivation the rejection writes anyway;
+    /// offering the repair unchecked would save it and could offer a fix that is rejected.
+    fn mod_on_float(&mut self, what: Label<'_>, args: &[Option<Arg<'a>>], span: Span) -> bool {
+        let (Some(Operator::Binary(BinaryOp::Mod)), [Some(x), Some(m)]) = (what.operator(), args)
+        else {
+            return false;
+        };
+        let float = |a: &Arg<'a>| match a.ty.numeric_carrier() {
+            Some(Carrier::F64) => Some("f64"),
+            Some(Carrier::F32) => Some("f32"),
+            _ => None,
+        };
+        let bare = |a: &Arg<'a>| a.lit.as_ref().is_some_and(|l| l.bare);
+        let Some(carrier) = float(x).or_else(|| float(m)) else {
+            return false;
+        };
+        if !(float(x) == Some(carrier) || bare(x)) || !(float(m) == Some(carrier) || bare(m)) {
+            return false;
+        }
+        let (Some(xs), Some(ms)) = (self.code(x.at), self.code(m.at)) else {
+            return false;
+        };
+        // The span of `(a + b)` holds its parentheses; the fix's arguments need none.
+        let (xs, ms) = (unparen(xs), unparen(ms));
+        // Each operand as the headline shows it: a typed one with its carrier, in parentheses
+        // where it is not a single name or literal, so `(a + b) : f64 mod 360.0`; a literal,
+        // whose suffix names its carrier where it has one, as written, so `7.5f64 mod 2.5f64`.
+        let shown = |a: &Arg<'a>, s: &str| {
+            let one = s.chars().all(|c| c.is_alphanumeric() || "_.'".contains(c));
+            let s = if one { s.to_string() } else { format!("({s})") };
+            if a.lit.is_some() {
+                s
+            } else {
+                format!("{s} : {carrier}")
+            }
+        };
+        let text = format!("`mod` takes ints: `{} mod {}`", shown(x, xs), shown(m, ms));
+        let fixed = format!("floatMod({xs}, {ms})");
+        let rat_m = match m.lit.as_ref().filter(|l| !l.neg()).and_then(whole_part) {
+            Some(w) => format!("{w}r"),
+            None => format!("rat({ms})"),
+        };
+        let typed: Vec<Span> = [x, m]
+            .iter()
+            .filter(|a| !bare(a))
+            .filter_map(|a| a.at)
+            .collect();
+        let mut notes = self.derive(&typed);
+        if self.trying {
+            self.reject(Some(Row::ModOnFloat), span, Msg::from(text), notes);
+            return true;
+        }
+        // The repair is offered where `floatMod` takes the two operands as written, its
+        // modulus check included ([`Self::float_modulus`]); otherwise the note names it with
+        // the condition it needs and offers no fix.
+        let operands = vec![Some(x.clone()), Some(m.clone())];
+        let float_mod = word_sig("floatMod");
+        let takes = (self
+            .tried(|ck| ck.apply(Label::Text("`floatMod`"), &float_mod, operands, true, span)))
+        .is_some();
+        let mut noted = Vec::new();
+        if takes {
+            let note = Note {
+                span,
+                text: format!("repair: write `{fixed}`; the checker accepts that"),
+            };
+            let holds = format!("{fixed} is in [0.0, {ms})");
+            if let Some(fix) = Rewrite::new(&[(span, &fixed)], &holds, &fixed) {
+                noted.push(NotedRepair {
+                    note: note.clone(),
+                    at: span,
+                    fix,
+                    tail: String::new(),
+                });
+            }
+            notes.push(note);
+        } else {
+            notes.push(Note {
+                span,
+                text: format!(
+                    "the remainder of a float is `{fixed}`, for a modulus shown finite and \
+                     greater than `0.0`"
+                ),
+            });
+        }
+        notes.push(Note {
+            span,
+            text: format!(
+                "on `rat`, the exact residue is `rat({xs}) - {rat_m} * rat(floor(rat({xs}) / \
+                 {rat_m}))`, where `{xs}` is proved finite"
+            ),
+        });
+        self.reject(Some(Row::ModOnFloat), span, Msg::noted(text, noted), notes);
+        true
     }
 
     /// Reports the literals of `args` rejected at parameters of `sig`, each with its place and

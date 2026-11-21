@@ -406,6 +406,79 @@ fn a_modulus_not_shown_finite_and_above_zero_is_rejected() {
     );
 }
 
+/// `mod` on a float is a type error whose repair is `floatMod` (DESIGN.md sec:diagnostics, row
+/// "`mod` on a float"; QUESTIONS A174; row MSG-float-mod-type-error), at each float format
+/// zedc has (`f16` and `bf16` are not built yet), and `mod` on ints is unchanged.
+#[test]
+fn mod_on_a_float_is_a_type_error_whose_repair_is_float_mod() {
+    let f64_lit = rejected("deg(positional a: f64) = a mod 360.0;\n");
+    assert!(
+        f64_lit
+            .ends_with("`mod` takes ints: `a : f64 mod 360.0`. Try `floatMod(a, 360.0)` instead."),
+        "{f64_lit}"
+    );
+    let f32_lit = rejected("deg(positional a: f32) = a mod 360.0;\n");
+    assert!(
+        f32_lit
+            .ends_with("`mod` takes ints: `a : f32 mod 360.0`. Try `floatMod(a, 360.0)` instead."),
+        "{f32_lit}"
+    );
+    let sum = rejected("f(positional a: f64, positional b: f64) = (a + b) mod 2.0;\n");
+    assert!(
+        sum.ends_with(
+            "`mod` takes ints: `(a + b) : f64 mod 2.0`. Try `floatMod(a + b, 2.0)` instead."
+        ),
+        "{sum}"
+    );
+    // An int modulus with a float `x`.
+    let int_m = rejected("deg(positional a: f64) = a mod 360;\n");
+    assert!(
+        int_m.ends_with("`mod` takes ints: `a : f64 mod 360`. Try `floatMod(a, 360)` instead."),
+        "{int_m}"
+    );
+    // Two typed literals: they are refused at `mod`'s int parameters before the application
+    // fails, and the error is still `mod` on a float.
+    let lits = rejected("f(positional a: f64) = 7.5f64 mod 2.5f64;\n");
+    assert!(
+        lits.ends_with(
+            "`mod` takes ints: `7.5f64 mod 2.5f64`. Try `floatMod(7.5f64, 2.5f64)` instead."
+        ),
+        "{lits}"
+    );
+    // The whole message: the carrier's derivation, the repair, the residue on `rat`, and no
+    // narrowing cast.
+    let src =
+        "deg(positional a: f64) = a mod 360.0;\nmain(m: MainArgs) {\n  m.stdout <- \"\";\n}\n";
+    let e = load(src.as_bytes()).err().expect("rejected");
+    assert!(e.contains("`a` is declared `f64`"), "{e}");
+    assert!(
+        e.contains("repair: write `floatMod(a, 360.0)`; the checker accepts that"),
+        "{e}"
+    );
+    assert!(
+        e.contains("the exact residue is `rat(a) - 360r * rat(floor(rat(a) / 360r))`"),
+        "{e}"
+    );
+    assert!(!e.contains("int(a)"), "{e}");
+    // A modulus `floatMod` refuses, a parameter not shown finite and above `0.0`: no fix.
+    let src = "f(positional a: f64, positional m: f64) = a mod m;\n\
+               main(m: MainArgs) {\n  m.stdout <- \"\";\n}\n";
+    let e = load(src.as_bytes()).err().expect("rejected");
+    let head = e.lines().next().unwrap_or_default();
+    assert!(
+        head.ends_with("`mod` takes ints: `a : f64 mod m : f64`."),
+        "{e}"
+    );
+    assert!(
+        e.contains("the remainder of a float is `floatMod(a, m)`, for a modulus shown finite"),
+        "{e}"
+    );
+    assert!(!e.contains("repair: write `floatMod"), "{e}");
+    // `mod` on ints is accepted as before.
+    let ints = "f(positional n: int) = n mod 360;\nmain(m: MainArgs) {\n  m.stdout <- \"\";\n}\n";
+    assert!(load(ints.as_bytes()).is_ok(), "an int `mod` is rejected");
+}
+
 #[test]
 fn the_rejection_of_a_variable_modulus_says_why_and_offers_a_literal() {
     let src = "f(positional x: f64, positional m: f64) = floatMod(x, m);\n\
