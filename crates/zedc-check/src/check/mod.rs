@@ -1400,7 +1400,8 @@ fn show_with(t: &Ty, masks: &Masks, spell: Spell<'_>, around: Around<'_>) -> Str
 
 /// Where a repair note that writes types in code says to declare the definitions those
 /// types use ([`lay_out`]): a Unicode noncharacter, which no user text in a message holds
-/// (see `zed_kernel::types::defs`).
+/// while `lay_out` runs (see `zed_kernel::types::defs`): a string or comment of the program
+/// that holds one is swapped for a placeholder then ([`ProgramTexts`]).
 const DECLARE: &str = "\u{FDD8}";
 
 /// Writes the types of one message, its text, its notes and its menu, in one numbering, in
@@ -1431,6 +1432,175 @@ fn lay_out(message: &mut String, notes: &mut [Note], menu: &mut String) {
         }
     }
     defs::under(message, &lifted);
+}
+
+/// The texts of the program that [`Ck::named`] and [`lay_out`] would read as their own: each
+/// string literal (those in a string's holes too) and each comment between tokens that holds
+/// a `$` before a digit or a `$`, or a noncharacter of U+FDD0..=U+FDEF (the marks of module
+/// `defs` of the kernel, [`DECLARE`], and the placeholders written here). A message copies
+/// the program's text into its Try line, its menu and some notes, and a copy holds a string
+/// or a comment whole, so where these are swapped for placeholders while the two run, and
+/// swapped back after, what the program wrote is printed as written (row
+/// FAIL-msg-named-reads-program-text). Before, inside `g(a) = { y = ("$0", 1 / 2); a }`
+/// the Try line and each fix printed the string as `"T"`, the type of `a`'s class 0.
+///
+/// Proof that the swap changes nothing else:
+/// 1. A placeholder is U+FDE0, a decimal index and U+FDE1. It holds no `$`, so `named`
+///    copies it, and no mark of U+FDD0..=U+FDDF, so `lay_out` neither starts nor ends a part
+///    in it and moves it whole with the text around it.
+/// 2. The printer never writes U+FDE0 (its marks are U+FDD0..=U+FDDF), and the program
+///    writes one only inside a string or a comment, which then is a piece here: a name is
+///    ASCII (DESIGN.md sec:lexical), and no other token takes a noncharacter. So after the
+///    swap each U+FDE0 left in a text starts a placeholder, and [`Self::restore`] writes
+///    back exactly the piece it replaced.
+/// 3. A piece starts with `"` or `/`, so it is never a part of a placeholder, and the
+///    longest piece at each place is swapped first, so a string inside a comment that holds
+///    it goes with the comment.
+///
+/// Not covered: a copy that cuts a piece short, as a quote ended by `…`, keeps the part it
+/// holds as it was before (read by `named`); a comment inside a string's hole is swapped only
+/// with the whole string, not where a copy holds the hole's code alone.
+///
+/// Complexity tradeoff: with no `$` before a digit or `$` and no such noncharacter in the
+/// program, one pass over its bytes and nothing else, the fast path every program without
+/// such text takes. Else one lexing of the program, O(N), and for each text of a message, at
+/// each `"` or `/`, one lookup per distinct length of a piece: O(L * D) for a text of L
+/// bytes and D distinct lengths. Pieces that do not nest have lengths summing to at most N,
+/// so D <= sqrt(2N); in practice D is 1 or 2. The naive way, a search of each text for each
+/// piece, costs O(L * P) for P pieces; Aho–Corasick matching would be O(L) per text, but no
+/// crate in the tree provides it, and D is far below P where many strings share a length.
+struct ProgramTexts<'t> {
+    /// The pieces, each once, in the order of their first place in the program.
+    pieces: Vec<&'t str>,
+    /// Each piece's index in [`Self::pieces`].
+    index: HashMap<&'t str, usize>,
+    /// The distinct lengths of the pieces, longest first.
+    lens: Vec<usize>,
+}
+
+/// The start and end of a placeholder of [`ProgramTexts`].
+const HIDDEN: (char, char) = ('\u{FDE0}', '\u{FDE1}');
+
+impl<'t> ProgramTexts<'t> {
+    /// The pieces of the program's text `text` (see [`ProgramTexts`]).
+    fn new(text: &'t str) -> Self {
+        let mut out = ProgramTexts {
+            pieces: Vec::new(),
+            index: HashMap::new(),
+            lens: Vec::new(),
+        };
+        if !Self::read_as_marks(text) {
+            return out;
+        }
+        let Ok(tokens) = lex(text) else {
+            return out;
+        };
+        let mut found = zedc_syntax::lex::comments(text, &tokens);
+        Self::strings(&tokens, &mut found);
+        for s in found {
+            if let Some(p) = text.get(s.start..s.end)
+                && Self::read_as_marks(p)
+                && !out.index.contains_key(p)
+            {
+                out.index.insert(p, out.pieces.len());
+                out.pieces.push(p);
+                out.lens.push(p.len());
+            }
+        }
+        out.lens.sort_unstable_by(|a, b| b.cmp(a));
+        out.lens.dedup();
+        out
+    }
+
+    /// Whether `s` holds a `$` before a digit or a `$`, or a noncharacter of
+    /// U+FDD0..=U+FDEF.
+    fn read_as_marks(s: &str) -> bool {
+        (s.as_bytes().windows(2)).any(|w| w[0] == b'$' && (w[1] == b'$' || w[1].is_ascii_digit()))
+            || s.chars().any(|c| ('\u{FDD0}'..='\u{FDEF}').contains(&c))
+    }
+
+    /// The spans of the string literals of `tokens`, and of those in their holes.
+    fn strings(tokens: &[zedc_syntax::lex::Token], out: &mut Vec<Span>) {
+        for t in tokens {
+            if let Tok::Str(parts) = &t.tok {
+                out.push(t.span);
+                for p in parts {
+                    if let zedc_syntax::lex::Part::Hole { tokens, .. } = p {
+                        Self::strings(tokens, out);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Runs `f` on the message, each note and the menu of `e`.
+    fn each(&self, e: &mut Error, f: fn(&Self, &mut String)) {
+        f(self, &mut e.message);
+        for n in &mut e.notes {
+            f(self, &mut n.text);
+        }
+        f(self, &mut e.menu);
+    }
+
+    /// `s` with each piece in it swapped for its placeholder, the longest at each place.
+    fn hide(&self, s: &mut String) {
+        if self.pieces.is_empty() {
+            return;
+        }
+        let mut out = String::with_capacity(s.len());
+        let (mut i, mut last) = (0, 0);
+        // `"` and `/` are ASCII, so `i` is a char boundary wherever they stand.
+        while i < s.len() {
+            let hit = matches!(s.as_bytes()[i], b'"' | b'/')
+                .then(|| {
+                    (self.lens.iter()).find_map(|&l| {
+                        let k = s.get(i..i + l).and_then(|p| self.index.get(p))?;
+                        Some((*k, l))
+                    })
+                })
+                .flatten();
+            match hit {
+                Some((k, l)) => {
+                    out.push_str(&s[last..i]);
+                    out.push(HIDDEN.0);
+                    out.push_str(&k.to_string());
+                    out.push(HIDDEN.1);
+                    i += l;
+                    last = i;
+                }
+                None => i += 1,
+            }
+        }
+        out.push_str(&s[last..]);
+        *s = out;
+    }
+
+    /// `s` with each placeholder written back as the piece it stands for.
+    fn restore(&self, s: &mut String) {
+        if self.pieces.is_empty() || !s.contains(HIDDEN.0) {
+            return;
+        }
+        let mut out = String::with_capacity(s.len());
+        let mut rest = s.as_str();
+        while let Some(i) = rest.find(HIDDEN.0) {
+            out.push_str(&rest[..i]);
+            let tail = &rest[i + HIDDEN.0.len_utf8()..];
+            let piece = (tail.split_once(HIDDEN.1))
+                .and_then(|(k, after)| Some((self.pieces.get(k.parse::<usize>().ok()?)?, after)));
+            match piece {
+                Some((p, after)) => {
+                    out.push_str(p);
+                    rest = after;
+                }
+                None => {
+                    out.push(HIDDEN.0);
+                    rest = tail;
+                }
+            }
+        }
+        out.push_str(rest);
+        *s = out;
+    }
 }
 
 /// A use that removed carriers from a class, kept as data until a reported rejection lists
@@ -7539,13 +7709,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         let found = std::mem::take(&mut self.errors);
         let as_written: Vec<bool> = found.iter().map(|f| f.as_written).collect();
         let mut errors: Vec<Error> = found.into_iter().map(|f| f.written(text)).collect();
+        // The program's strings and comments a message copies are kept from `named` and
+        // `lay_out` ([`ProgramTexts`]); with no error, the program is not read.
+        let own = match (errors.is_empty(), text) {
+            (false, Some(text)) => ProgramTexts::new(text),
+            _ => ProgramTexts::new(""),
+        };
         for (e, _) in errors.iter_mut().zip(as_written).filter(|(_, w)| !w) {
+            own.each(e, ProgramTexts::hide);
             e.message = self.named(&e.message);
             for n in &mut e.notes {
                 n.text = self.named(&n.text);
             }
             e.menu = self.named(&e.menu);
             lay_out(&mut e.message, &mut e.notes, &mut e.menu);
+            own.each(e, ProgramTexts::restore);
         }
         self.info.errors = errors;
         self.info.warnings = (std::mem::take(&mut self.refused_at).into_iter())

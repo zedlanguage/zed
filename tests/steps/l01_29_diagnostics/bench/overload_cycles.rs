@@ -17,6 +17,19 @@ fn a_cycle_through_n_overloads_scales() {
     });
 }
 
+/// n rejections, each copying a string of the program that holds `$0` (row
+/// FAIL-msg-named-reads-program-text): one lexing of the program and, for each text of a
+/// message, one lookup per distinct length of a piece at each `"` or `/` (`ProgramTexts` in
+/// zedc-check mod.rs), `O(N)` in all here, where the pieces have one length.
+#[test]
+fn quoting_n_strings_that_hold_a_dollar_scales() {
+    let n = 200;
+    let units = scaling::inputs(n, dollar_strings);
+    scaling::check("quoting n strings that hold `$0`", n, |k| {
+        the_dollar_strings_quoted(&units[&k], k);
+    });
+}
+
 /// n overloads and n definitions each calling one of them: a chain with no cycle, and n calls
 /// that two or more overloads admit, which refer to none.
 #[test]

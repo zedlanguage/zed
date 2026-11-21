@@ -319,3 +319,75 @@ fn a_dollar_in_the_head_of_an_overload_in_a_cycle_is_quoted_as_written() {
         "{out}"
     );
 }
+
+/// Row FAIL-msg-named-reads-program-text (test from proofdoc4f): the program's text that a
+/// fix line or the Try line copies is quoted as written. Before, `Ck::named` replaced the
+/// string's `$0` by the type of class 0, `g`'s untyped `a`, and printed `"T"`.
+#[test]
+fn a_dollar_in_a_string_the_fix_line_copies_is_quoted_as_written() {
+    for (src, call) in [
+        (
+            "g(a) = { y = (\"$0\", 1 / 2); a };\nmain = g(a: 1);\n",
+            "1r / 2",
+        ),
+        (
+            "g(a) = { k = (\"$0\", int(7r/2r)); a };\nmain = g(a: 1);\n",
+            "round(7r/2r)",
+        ),
+    ] {
+        let out = rejected(src);
+        assert!(!out.contains("\"T\""), "{out}");
+        assert!(out.contains(&format!("(\"$0\", {call})")), "{out}");
+    }
+}
+
+/// The same for the other texts the end of the check reads as its own: a `$$0`, which a
+/// note writes for the type a class takes in the end, a mark noncharacter (U+FDD4, which
+/// `lay_out` reads as the start of a part), and a `$0` in a comment the copy holds.
+#[test]
+fn marks_and_class_names_in_the_program_text_a_message_copies_are_quoted_as_written() {
+    for piece in ["\"$$0\"", "\"a\u{FDD4}b\u{FDD5}c\"", "/* $0 */ \"x\""] {
+        let src = format!("g(a) = {{ y = ({piece}, 1 / 2); a }};\nmain = g(a: 1);\n");
+        let out = rejected(&src);
+        assert!(out.contains(&format!("({piece}, 1r / 2)")), "{out}");
+    }
+    // The proof at `ProgramTexts` (step 2): outside a string or a comment no token takes a
+    // noncharacter, so no placeholder start is left in a copy of the program's code.
+    for c in ['\u{FDD4}', '\u{FDE0}'] {
+        assert!(
+            zedc::lex::lex(&format!("x = 1{c};\n")).is_err(),
+            "{c:?} lexed"
+        );
+        assert!(
+            zedc::lex::lex(&format!("x{c} = 1;\n")).is_err(),
+            "{c:?} lexed"
+        );
+    }
+}
+
+/// `n` bindings in `g`, each a pair of a string holding `$0` and a refused `1 / 2`: `n`
+/// rejections, each copying its own string, `n` pieces of one length.
+pub(super) fn dollar_strings(n: usize) -> String {
+    let ys: Vec<String> = (0..n)
+        .map(|i| format!("  y{i} = (\"$0 {i:07}\", 1 / 2);\n"))
+        .collect();
+    format!("g(a) = {{\n{}  a\n}};\nmain = g(a: 1);\n", ys.concat())
+}
+
+/// Each of the `n` strings of [`dollar_strings`] is printed as written in its Try line.
+pub(super) fn the_dollar_strings_quoted(src: &str, n: usize) {
+    let out = rejected(src);
+    for i in [0, n / 2, n - 1] {
+        assert!(
+            out.contains(&format!("(\"$0 {i:07}\", 1r / 2)")),
+            "{i}: {out}"
+        );
+    }
+}
+
+#[test]
+fn many_dollar_strings() {
+    for n in [1, 3] {
+        the_dollar_strings_quoted(&dollar_strings(n), n);
+    }
+}
