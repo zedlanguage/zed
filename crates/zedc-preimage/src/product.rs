@@ -10816,9 +10816,9 @@ impl Scope {
     /// Whether the relation's conjuncts that mention a name of `left` (the first part of the
     /// [`Question`], from [`Scope::question_parts`]) have no integer point where each name of
     /// `on`, the names of a case's point those conjuncts mention, has its value: a case that
-    /// fixes those names ([`KeptTest::points`]) then holds no state, since each of its states meets every conjunct of the
-    /// relation. A question the solver refuses gives `false`: the case is kept, sound and
-    /// wider.
+    /// fixes those names ([`KeptTest::points`]) then holds no state, since each of its states
+    /// meets every conjunct of the relation. A question the solver refuses gives `false`: the
+    /// case is kept, sound and wider.
     // Proof that `true` means the case holds no state. (1) Every conjunct of `self.relation`
     // holds in every state of the scope: the relation is met with each test's linear part as
     // it is assumed (`Scope::narrow_atom`, `self.relation.and(body)`), and a join keeps the
