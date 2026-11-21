@@ -1044,39 +1044,51 @@ impl Type {
     }
 
     /// The emptiness the group of a recursive member decides for it, if any ([`judge`]), decided
-    /// for every member of its instance when first asked. When first asked, the deciders of the
-    /// groups it reads run first, each after the groups it reads, from a stack on the heap
-    /// ([`Type::decide_groups_read`]), so a decider started by a search's first read of a member
-    /// finds what it reads decided: `judge` reads the verdicts of its group's closed parts
-    /// (`system`), and every group those parts read is found by that walk, which passes through
-    /// parts that are not members. So the decider adds one level to the reading search's stack
-    /// whatever the length of a chain of groups, and runs only for a group some search reads
-    /// (plan item FAIL-meet-cycles-verdict-cost).
+    /// for every member of its instance when first asked.
     pub(crate) fn judged(&self) -> Option<bool> {
         let Node::Rec(r) = &*self.0 else {
             return None;
         };
         let (env, i) = r.key.member_at()?;
-        if env.judged.get().is_none() {
-            self.decide_groups_read(Decide::Deciders);
-        }
         env.judged.get_or_init(|| judge(env)).answers[i]
     }
 
-    /// [`Type::judged`] with the deciders of the groups below already run, for the walk that
-    /// runs them ([`Type::decide_groups_read`]), which would otherwise walk them again.
-    fn judged_after_reads(&self) -> Option<bool> {
+    /// [`Type::judged`] as a search reads it: when the group of `self` has no judgment yet, the
+    /// deciders of the groups it reads run first, each after the groups it reads, from a stack
+    /// on the heap ([`Type::decide_groups_read`]), then its own.
+    ///
+    /// Why here: [`Type::verdict`] of a type outside a group ran this walk before its search
+    /// until plan item FAIL-meet-cycles-verdict-cost, for every group the type reads, whether
+    /// or not its search reads a member; now it runs when a search first reads a member of a
+    /// group not judged. Stack bound, proof: `judge` reads the verdicts of its group's closed
+    /// parts (`system`), and a closed part holding a member of another group starts a search of
+    /// its own that reads that member here. Every group a closed part of G reads is reached by
+    /// the walk from a member of G, which passes through parts that are not members and stops at
+    /// members of other groups only to note their groups; the walk runs each group's decider after
+    /// those of the groups it reads. So when `judge` of a group H runs inside the walk, every group
+    /// its closed parts read is judged, each such search finds its reads judged here in O(1) and
+    /// starts no decider, and the walk's nesting is one `judge` and the searches of its closed
+    /// parts, whatever the length of the chain. The reading search adds that one level to its own
+    /// stack. Test: `group_oracle::bench::a_tuple_holding_a_chain_of_groups_is_decided_on_a_small_stack`,
+    /// which overflows its thread of 1 MiB when the search reads `judged` instead.
+    ///
+    /// Not in `judged` itself: [`Type::decided_by_group`], asked of each member of a chain of
+    /// 32768 names, would then walk the parts of the chain, and the walk unfolds members
+    /// (`Type::p`) as deep as the chain of names
+    /// (`cycle_dup::bench::a_chain_of_names_scales` overflowed its stack).
+    pub(crate) fn judged_read(&self) -> Option<bool> {
         let Node::Rec(r) = &*self.0 else {
             return None;
         };
-        let (env, i) = r.key.member_at()?;
-        env.judged.get_or_init(|| judge(env)).answers[i]
+        let (env, _) = r.key.member_at()?;
+        if env.judged.get().is_none() {
+            self.decide_groups_read(Decide::Deciders);
+        }
+        self.judged()
     }
 
     /// Whether `self` is a recursive member that its group's decider refuses ([`judge`]).
     pub(crate) fn refused_by_group(&self) -> bool {
-        // Runs the deciders of the groups below first, as `judged` does.
-        self.judged();
         let Node::Rec(r) = &*self.0 else {
             return false;
         };
@@ -1335,7 +1347,7 @@ impl Type {
     /// value and would make the outcome depend on the queries before it. A member of a recursive
     /// group gets its verdict with the other members (`group_verdicts`), after the groups it
     /// reads. For a type outside a group, a group's decider and verdict are decided when a search
-    /// first reads one of its members (`Type::judged`, `Searching::group_verdict`), so a type
+    /// first reads one of its members (`Type::judged_read`, `Searching::group_verdict`), so a type
     /// whose search reads no member decides no group: the meet of two cycles is decided by the
     /// rule on residues and reads neither group (plan items VERDICT-meet-cost and
     /// FAIL-meet-cycles-verdict-cost).
@@ -1344,7 +1356,7 @@ impl Type {
     /// 131073 15.62 G instructions against 10.20 G for its emptiness, 1.53 times
     /// (`l01_23_subtyping::scaling::bench::the_verdict_of_a_meet_of_two_cycles_costs_what_its_emptiness_does`);
     /// with the deciders run when read, 10.20 G. Given up: nothing; the stack bound is kept by
-    /// the walk `Type::judged` runs first.
+    /// the walk `Type::judged_read` runs first (proof there).
     pub fn verdict(&self) -> Verdict {
         if self.diagonal_empty() {
             return Verdict::Empty;
@@ -1353,8 +1365,7 @@ impl Type {
         if let Some(v) = kept() {
             return v;
         }
-        let members = self.group_members();
-        if let Some(members) = members {
+        if let Some(members) = self.group_members() {
             self.decide_groups_read(Decide::Verdicts);
             group_verdicts(&members);
             if let Some(v) = kept() {
@@ -1386,7 +1397,7 @@ impl Type {
     /// verdicts it reads, which find what they read kept), and a chain of groups each reading
     /// the next is decided with no more of the thread's stack than two. A type outside a group
     /// does not call this: a group whose members its search never reads costs nothing, and one it
-    /// reads runs this when first read ([`Type::judged`]; plan items VERDICT-meet-cost and
+    /// reads runs this when first read ([`Type::judged_read`]; plan items VERDICT-meet-cost and
     /// FAIL-meet-cycles-verdict-cost). A group is
     /// found by a walk of the parts its members read, which stops at the members of other groups
     /// and notes each group once (`Type::group`); each type is walked once per walk, a group
@@ -1416,7 +1427,7 @@ impl Type {
                     Decide::Emptiness if !kept(&g[0]) => group_emptiness(&g),
                     Decide::Verdicts | Decide::Emptiness => {}
                     Decide::Deciders => {
-                        g[0].judged_after_reads();
+                        g[0].judged();
                     }
                 },
                 Step::Enter(m) => {
@@ -1531,13 +1542,17 @@ impl Type {
 
     /// The verdict of self by a search of its own.
     fn verdict_alone(&self) -> Verdict {
-        if let Some(v) = sweep::front_sweep(self) {
+        // The components of a product the front sweep swept and left open go to the search,
+        // which reads them as roots (`Searching::swept`) and so does not sweep them again.
+        let mut front = ByType::default();
+        if let Some(v) = sweep::front_sweep_keeping(self, &mut front) {
             return v;
         }
         let mut s = Search {
             strict: true,
             refuse_forks: true,
             trials: Some(0),
+            front,
             ..Search::default()
         };
         // The front sweep left `self` to the search above.
@@ -2237,6 +2252,10 @@ struct Search {
     /// What is known of each root list type by the front sweep ([`Searching::swept`]): its
     /// verdict, with the checked value when it is inhabited; `None` outside the sweep's class.
     swept: ByType<Option<Option<Value>>>,
+    /// What the front sweep of the query's type gave for each component of its product before
+    /// this search ([`sweep::front_sweep_keeping`], [`Type::verdict_alone`]), unchecked; read
+    /// into `swept` when the search first asks of the component.
+    front: ByType<(Option<Verdict>, Option<Value>)>,
     /// Diagnostic uncompressed temporal run, used only by chain_verdict_expanded.
     expand_chain_runs: bool,
     /// The types the query asks about ([`Searching::solve`], [`Type::chain_verdict`]): the only
@@ -6079,7 +6098,7 @@ impl<'m> Searching<'m> {
             return Stack::ready(true);
         }
         // A member of a recursive group is answered by the group's decider (module `rec`).
-        if let Some(b) = t.judged() {
+        if let Some(b) = t.judged_read() {
             return Stack::ready(b);
         }
         if let Some(b) = self.group_verdict(t) {
@@ -6107,7 +6126,19 @@ impl<'m> Searching<'m> {
         // tuple or a part that holds one reaches it a level down, where it is asked. Given up: a
         // tuple type whose components' heights clash is refuted by the search at its components,
         // not here.
-        if !t.p().atoms.payloads().is_empty() && height_bounds(t).is_none() {
+        // Not asked of a root the front sweep decides (`Searching::sweep_decides`, read again in
+        // O(1) by `Searching::swept` when the search decides the type): skipping is sound, as
+        // above. Why: the bounds walk the type as the sweep does, and asking both cost a list
+        // in a tuple's field twice the instructions of its verdict alone (6,741,965 against
+        // 3,077,653 for `tup:clstaggerholesout` at 16, 2,287,301 of them the bounds,
+        // `refusals::bench::r9_a_front_sweep_list_in_a_field_is_decided_as_the_list_alone`;
+        // plan item FAIL-meet-cycles-verdict-cost). Given up: a root the sweep decides and the
+        // rule on pure cycles (`Searching::pure_cycles`, asked first by `Searching::decided`)
+        // decides too is swept though the rule answers.
+        if !t.p().atoms.payloads().is_empty()
+            && !self.sweep_decides(t)
+            && height_bounds(t).is_none()
+        {
             return Stack::ready(true);
         }
         let i = match self.s().met(t) {
@@ -8791,26 +8822,11 @@ impl<'m> Searching<'m> {
     // that meets it walks it, as each did on base. The rule depends on the search alone, so a
     // group's answers are still a function of the group (claim at `own_emptiness`).
     fn swept(&self, t: &Type) -> Option<Option<usize>> {
-        if self.in_fallback(t) || t.p().atoms.names().is_empty() || !self.s().roots.contains_key(t)
-        {
-            return None;
-        }
-        if let Some(walk) = &self.s().walk_groups
-            && let Some(g) = t.group().filter(|_| t.is_member())
-            && walk.contains(&g)
-        {
+        if !self.sweep_decides(t) {
             return None;
         }
         let known = self.s().swept.get(t).cloned();
-        let v = match known {
-            Some(v) => v,
-            None => {
-                let v = sweep::list_sweep_checked(t);
-                self.s().swept.insert(t.clone(), v.clone());
-                v
-            }
-        }?;
-        let Some(v) = v else {
+        let Some(Some(Some(v))) = known else {
             return Some(None);
         };
         let mut s = self.s();
@@ -8822,6 +8838,35 @@ impl<'m> Searching<'m> {
         s.members.insert((c, t.clone()), Some(true));
         s.reps.insert(t.clone(), Some(r));
         Some(Some(r))
+    }
+
+    /// Whether [`Searching::swept`] answers for `t`: `t` is a root it sweeps and the front sweep
+    /// decides it. The sweep's answer is kept in `Search::swept`, made from what the front
+    /// sweep of the query's product gave for `t` when it swept it (`Search::front`, checked
+    /// here by [`sweep::checked`], so the answer is the one [`sweep::list_sweep_checked`] gives),
+    /// else by [`sweep::list_sweep_checked`]; each type is swept once a search.
+    fn sweep_decides(&self, t: &Type) -> bool {
+        if self.in_fallback(t) || t.p().atoms.names().is_empty() || !self.s().roots.contains_key(t)
+        {
+            return false;
+        }
+        if let Some(walk) = &self.s().walk_groups
+            && let Some(g) = t.group().filter(|_| t.is_member())
+            && walk.contains(&g)
+        {
+            return false;
+        }
+        if let Some(v) = self.s().swept.get(t) {
+            return v.is_some();
+        }
+        let front = self.s().front.remove(t);
+        let v = match front {
+            Some((verdict, actual)) => sweep::checked(t, verdict, actual),
+            None => sweep::list_sweep_checked(t),
+        };
+        let decides = v.is_some();
+        self.s().swept.insert(t.clone(), v);
+        decides
     }
 
     /// Decides `t`, or builds a witness plan for it, when `t` is a list type made of a period-1
@@ -11266,7 +11311,7 @@ impl<'m> Searching<'m> {
     /// here, does not need built, or one the own search of `v` found, read as [`Search::met`]
     /// reads it ([`Search::reads_own`]).
     async fn returnable(&'m self, v: &Type) -> bool {
-        if v.judged() == Some(false) {
+        if v.judged_read() == Some(false) {
             return true;
         }
         // Complexity tradeoff: building a value of `v` here, as for any type, walks the values
@@ -16604,7 +16649,7 @@ fn joined(tops: Vec<Top>, dir: usize) -> zed_graph::UnionFind {
 /// its group decided empty. A type the search reads is not taken, since its answer may rest on
 /// an assumption the search later drops.
 fn known_empty(k: &Type) -> bool {
-    *k == Type::empty() || k.judged() == Some(true)
+    *k == Type::empty() || k.judged_read() == Some(true)
 }
 
 /// Each member's emptiness at `env`'s arguments, as the group's fixed points decide it (module

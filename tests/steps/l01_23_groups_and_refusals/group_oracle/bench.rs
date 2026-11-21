@@ -449,3 +449,35 @@ fn a_chain_of_groups_is_found_inhabited_on_a_small_stack() {
         }
     }
 }
+
+/// The two tests before this one ask the tuple outside the chain after its first member, whose
+/// verdict decides every group of the chain first; a group's judgment is kept past
+/// `Type::forget_emptiness`, so they never ask the tuple of a chain no search has read. This
+/// test does: a chain of 1003 groups asked only the verdict of the tuple, and one of 1005 asked
+/// only its emptiness (lengths no other test builds, so no judgment is kept from one), each on a
+/// thread of 1 MiB. The tuple's search reads the first member, whose group's decider reads the
+/// verdict of the tuple of the next member (`system`), and so on down the chain: the groups below
+/// are decided first from the heap (`Type::decide_groups_read`), not by one search a group nested
+/// on the thread's stack (plan item FAIL-meet-cycles-verdict-cost). Small instance
+/// `a_short_chain_of_groups_is_decided`.
+#[test]
+fn a_tuple_holding_a_chain_of_groups_is_decided_on_a_small_stack() {
+    for open in [false, true] {
+        for (n, verdict) in [(1003, true), (1005, false)] {
+            let sys = chain_of_groups(n, open);
+            let first = kernel(&sys, "chain")[0].clone().expect("admitted");
+            let outside = Type::tuple(vec![first, Type::int()]);
+            let inhabited = scaling::on_a_thread(1 << 20, move || {
+                Type::forget_emptiness();
+                match verdict {
+                    true => outside.verdict() == Verdict::Inhabited,
+                    false => !outside.is_empty(),
+                }
+            });
+            assert!(
+                inhabited,
+                "n {n}, verdict {verdict}, with every body \\ #none: {open}"
+            );
+        }
+    }
+}

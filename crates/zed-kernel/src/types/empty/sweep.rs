@@ -1634,6 +1634,16 @@ impl Threads {
 /// is empty when one component is and inhabited when every one is, each by the sweep: the
 /// tuple of the components' checked values is in the product.
 pub(super) fn front_sweep(t: &Type) -> Option<Verdict> {
+    front_sweep_keeping(t, &mut ByType::default())
+}
+
+/// [`front_sweep`], leaving in `built` what [`list_sweep_value`] gave for each component of a
+/// product it swept, so a search of `t` the sweep leaves open reads each from there
+/// ([`checked`]) and does not sweep the component again (`Searching::swept`).
+pub(super) fn front_sweep_keeping(
+    t: &Type,
+    built: &mut ByType<(Option<Verdict>, Option<Value>)>,
+) -> Option<Verdict> {
     match product(&t.p()) {
         None => list_sweep(t),
         Some(items) => {
@@ -1644,7 +1654,6 @@ pub(super) fn front_sweep(t: &Type) -> Option<Verdict> {
             // space. Memoize each distinct component's result within this product:
             // one sweep per distinct type plus O(fields) shared Value clones.
             // Independent checking below still verifies the actual tuple.
-            let mut built: ByType<(Option<Verdict>, Option<Value>)> = ByType::default();
             for item in &items {
                 let (verdict, value) = built.entry(item.clone()).or_insert_with(|| {
                     let mut value = None;
@@ -1833,7 +1842,18 @@ fn list_sweep(t: &Type) -> Option<Verdict> {
 /// sweep refuses (the search then decides `t`).
 pub(super) fn list_sweep_checked(t: &Type) -> Option<Option<Value>> {
     let mut actual = None;
-    match list_sweep_value(t, &mut actual)? {
+    let verdict = list_sweep_value(t, &mut actual);
+    checked(t, verdict, actual)
+}
+
+/// [`list_sweep_checked`] of `t` from what [`list_sweep_value`] gave for it: `verdict`, and
+/// `actual` the value it wrote.
+pub(super) fn checked(
+    t: &Type,
+    verdict: Option<Verdict>,
+    actual: Option<Value>,
+) -> Option<Option<Value>> {
+    match verdict? {
         Verdict::Empty => Some(None),
         Verdict::Inhabited => {
             let v = actual?;
