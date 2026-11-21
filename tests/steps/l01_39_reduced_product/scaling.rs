@@ -1500,8 +1500,11 @@ fn a_test_that_gives_an_input_another_domain_reads_it_through_the_tree() {
 #[test]
 fn a_test_beside_a_wide_part_keeps_one_part_for_each_test() {
     let p = Premises::new();
-    // From k = 2: at 1 the wide part is `z0 >= 0`, a bound of one name, kept as its domain.
-    for k in 2..=4 {
+    // From k = 3: at 1 the wide part is `z0 >= 0`, a bound of one name, kept as its domain;
+    // at 2 it is `z0 + z1 >= 0`, a threshold component, solved whole and kept without an
+    // entry (`Scope::project_block`, rows PROOF-product-seen-record-precision and
+    // PROOF-product-part-fixed-point-precision), so its part is due again when next projected.
+    for k in 3..=5 {
         let (s, tests) = parts_beside_a_wide_part(k);
         assert_eq!(
             s.projected.len(),
