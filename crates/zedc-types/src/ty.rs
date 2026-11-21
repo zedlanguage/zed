@@ -23099,6 +23099,9 @@ impl Scope {
                 // With its payloads read: `r else #a() -> 0` removes `#a()` alone (DESIGN.md
                 // L1.40d), which [`Ty::kernel`] would print `#a(..)`.
                 Narrow::Not(t) => t.exact_kernel(),
+                // What a field pattern takes depends on the type a call binds the variable to
+                // ([`Ty::taken_by`]), so no one set is written after `\`: the old print.
+                Narrow::Pattern(_) => None,
             };
             let on = on.clone();
             (self.left.entry(left.clone()).or_default()).push(Left { on, removed });

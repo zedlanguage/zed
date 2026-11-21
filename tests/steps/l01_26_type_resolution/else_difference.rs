@@ -123,6 +123,18 @@ fn a_pattern_with_an_empty_payload_removes_that_atom_alone() {
 }
 
 #[test]
+fn a_pattern_with_fields_on_a_variable_prints_the_variable() {
+    // What `#e(code:)` takes of `T` depends on the type a call binds `T` to (the need
+    // `Narrow::Pattern`, read by `Ty::taken_by` at each call), so no one set can be written
+    // after `\`. The print stays the variable, as before this row; the result is no narrower
+    // than `T`, so the printed type holds every value, though not exactly those.
+    assert_eq!(
+        sig("g(r) = r else #e(code:) -> 1;\n", "g"),
+        "(r: T) -> 1 | T"
+    );
+}
+
+#[test]
 fn a_difference_in_a_function_result_prints_there() {
     assert_eq!(
         sig("g(r) = { k = r else #a -> 0; (y: int) -> k };\n", "g"),
