@@ -1,5 +1,6 @@
 //! The scaling half of `ref_memo.rs` (plan item PERF-ref-memo-quadratic): each of the 48
-//! families of the item's benchmark, and the one-input shapes of PROOF-preimage-ref-chain-cost,
+//! families of the item's benchmark, the one-input shapes of PROOF-preimage-ref-chain-cost,
+//! and the two-input threshold chains of PERF-ref-memo-multi-input,
 //! at n and 8n, held to the plan's limit
 //! (`scaling::LIMIT`) in instructions and bytes, with no wider limit for any family; each
 //! answer grows at most 8 times (`output_grid` demands four values, 4n pieces). The answers
@@ -122,6 +123,13 @@ scaling_tests! {
     // bound on the pieces the product's inverse visits per link is proved (`Tx::back_doubt`);
     // the cost is measured only.
     normal_div_neg2_chain_scales: "normal_div_neg2_chain" at 128;
+    // PERF-ref-memo-multi-input: two-input threshold chains, answered by
+    // `Tx::affine_threshold_pair` in O(n log n) (Theorem 1 at `threshold_box`). On the memo
+    // `alternating_2var` read 13.2 at 16, 16.2 at 32 and 25.2 at 64. `alt2var_m` at 20 puts
+    // n ≡ 0 (mod 20) at both sizes; the round-3 cover that the stage replaced declined at
+    // n ≡ 18..21 (mod 20).
+    alternating_2var_scales: "alternating_2var" at 64;
+    alt2var_m_scales: "alt2var_m" at 20;
 }
 
 /// PROOF-round-down-piece-bound at the sizes the benchmark above times, which need a large

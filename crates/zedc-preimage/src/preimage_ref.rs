@@ -322,6 +322,24 @@ fn preimage_in(
     listed: &Listed,
     demand: &Demand,
 ) -> Preimage {
+    // A two-input threshold chain is answered exactly by [`Tx::affine_threshold_pair`] in
+    // O(n log n), before the landmarks, the forward images and the memo (`Tx::back_doubt`),
+    // which visit its cell pairs in O(n^2). Listed inputs need no other path: `enumerate` takes
+    // only a box with at most one input of several members, where the product of the
+    // projections is the set of passing points, so the stage, exact by Theorem 1 at
+    // `threshold_box`, answers it exactly with no relation (test
+    // `ref_memo::listed_threshold_chains_are_answered_exactly`).
+    tx.start(inputs, Landmarks::none());
+    if let Some((answer, relation)) = tx.affine_threshold_pair(root, demand) {
+        return Preimage {
+            domains: tx.whole(&answer),
+            exact: answer.exact,
+            enumerated: false,
+            stops: Vec::new(),
+            relation,
+            refusal: None,
+        };
+    }
     let marks = tx.landmarks(inputs, demand);
     tx.start(inputs, marks.clone());
     // Total forward containment already proves the whole box. This avoids building
@@ -418,6 +436,560 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
         });
     }
     Some(out)
+}
+
+/// One link of a two-input threshold chain: the guard `axis <= cut` on input `axis` (0 the
+/// base, 1 the other input) picks `low`, else `high`, each a map of the link's inner value.
+struct ThresholdLink {
+    axis: usize,
+    cut: i128,
+    low: ValTag,
+    high: ValTag,
+}
+
+/// The values `lo..=hi` of one input, all of which fire the same links of their axis: those
+/// before chain position `end` (see [`threshold_cells`]).
+#[derive(Clone)]
+struct ThresholdCell {
+    end: usize,
+    lo: End,
+    hi: End,
+}
+
+/// The cells of input `axis` within `domain`, in increasing `end`. By Lemma 1 of
+/// [`threshold_box`] a value fires a prefix of its axis's links; `end` is one past the chain
+/// position of the last link it fires, or 0 when it fires none. Equal cuts give an empty cell,
+/// and cells are clipped to the domain, so no cell holds a value the domain does not.
+fn threshold_cells(
+    links: &[ThresholdLink],
+    axis: usize,
+    domain: &(End, End),
+    increasing: bool,
+) -> Vec<ThresholdCell> {
+    let mut cells = Vec::new();
+    let mut edge = if increasing { NegInf } else { PosInf };
+    let mut end = 0;
+    let mut add = |end, lo: End, hi: End| {
+        let lo = lo.max(domain.0.clone());
+        let hi = hi.min(domain.1.clone());
+        if lo <= hi {
+            cells.push(ThresholdCell { end, lo, hi });
+        }
+    };
+    for (j, link) in links
+        .iter()
+        .enumerate()
+        .filter(|(_, link)| link.axis == axis)
+    {
+        let cut = End::from(link.cut);
+        edge = if increasing {
+            add(end, edge, cut.clone());
+            cut.succ()
+        } else {
+            add(end, cut.succ(), edge);
+            cut
+        };
+        end = j + 1;
+    }
+    if increasing {
+        add(end, edge, PosInf);
+    } else {
+        add(end, NegInf, edge);
+    }
+    cells
+}
+
+/// Widens `out` to hold `lo..=hi`.
+fn threshold_extrema(out: &mut Option<(End, End)>, lo: End, hi: End) {
+    *out = Some(match out.take() {
+        Some((a, b)) => (a.min(lo), b.max(hi)),
+        None => (lo, hi),
+    });
+}
+
+/// Whether every value `range` was widened by equals `v` (true when there was none).
+fn threshold_uniform(range: &Option<(End, End)>, v: &End) -> bool {
+    range.as_ref().is_none_or(|(lo, hi)| lo == v && hi == v)
+}
+
+/// The exact projections of `{(x, y) : value != target}` on the cells `x` (of the base input)
+/// and `y`, and whether their product holds no failing point.
+///
+/// The proof is Theorem 1 of the PERF-ref-memo-multi-input cross-review, round 3 (Opus seat,
+/// R3_OPUS.md sections 1.2-1.3, written for its `affine2_solve`), restated here for this code
+/// (the Sol seat's `threshold_box`). Here the failing set is the one value `target`.
+///
+/// Setting. Links are numbered 0..n-1 from the base outward. Link j reads input s_j with cut
+/// c_j, and its arms low_j (input <= c_j) and high_j are unit-slope bijections ([`ValTag`]).
+/// These form a group under `compose` (`a.compose(b)` applies b first), and
+/// [`ValTag::inverse`] is the inverse. The value at (x, y) is L_{n-1} ... L_0 (x), each L_j
+/// the arm the guard picks.
+///
+/// Lemma 1 (prefix). If the cuts of one input do not decrease with j, the links of that input
+/// where it exceeds the cut (it takes high, here called "fires") are a prefix of that input's
+/// links. Proof: if v > c_j and k < j reads the same input, then c_k <= c_j < v. If the cuts do
+/// not increase, the links where v <= c_j (low fires) are a prefix: v <= c_j <= c_k. The fired
+/// arm is `on`, the other `off`. ∎
+///
+/// So x fires exactly the links of its input before a position a, its end (one past the last
+/// link it fires, 0 when none), and y those of its input before its end b. Ends of the two
+/// inputs differ unless both are 0, since each is one past a link of its own input.
+///
+/// Running products. P_j, X_j, Y_j and U_j are the composites of links 0..j-1 taking `on`
+/// for both inputs, for x only, for y only and for neither (the loop below, all j <= n).
+///
+/// Lemma 2 (map of a cell pair). For x with end a and y with end b, the value is
+/// U_n U_a^-1 X_a X_b^-1 P_b (x) when b <= a, and U_n U_b^-1 Y_b Y_a^-1 P_a (x) when a < b.
+/// Proof for b <= a: a link j < b fires, whichever input it reads (an x-link has j < b <= a, a
+/// y-link j < b), so links 0..b-1 compose to P_b. On b <= j < a the x-links fire and the
+/// y-links do not, and X_a = (links b..a-1 in that state) X_b, so they compose to X_a X_b^-1.
+/// On j >= a no link fires: U_n U_a^-1. The case a < b exchanges the inputs. ∎
+///
+/// Lemma 3 (one failing point). On a cell pair the value is a unit-slope bijection of x alone,
+/// so exactly one integer x fails there, the root r(a, b). With T = U_n^-1(target),
+/// w_a = X_a^-1 U_a (T), G_b = P_b^-1 X_b, v_b = Y_b^-1 U_b (T) and H_a = P_a^-1 Y_a,
+/// inverting Lemma 2 gives r(a, b) = G_b(w_a) for b <= a and r(a, b) = H_a(v_b) for a < b. A
+/// point fails iff x = r(a, b). ∎
+///
+/// Theorem 1. The first result is {x in cells : some y in cells passes}, the second likewise
+/// for y, and the flag is true iff their product holds no failing point. Proof:
+/// - x. The value depends on y only through its cell, and every cell is nonempty. So x with
+///   end a fails for every y iff x = r(a, b) for every y cell b: iff all those roots are one
+///   value, equal to x, iff their least and greatest are x. With G_b = (sigma_b, k_b) the roots
+///   for b <= a are sigma_b w_a + k_b; for one sign they are least and greatest at the least
+///   and greatest k_b, so the extrema of k_b by sign over the y cells with b <= a suffice. The
+///   roots for b > a are H_a(v_b), H_a monotone, so the extrema of v_b over those cells map to
+///   theirs. The y cells come in increasing end, so the first set is a prefix and the second
+///   a suffix, and the x cells do too, so the prefix grows and the suffix shrinks as the
+///   sweeps go. A cell loses at most its one root.
+/// - y. A y cell b fails for every x iff each x equals r(a(x), b). Two points of one x cell
+///   share r, so if any x cell has two points every y cell passes. Otherwise the x cells are
+///   points x_i with ends a_i, and cell b fails iff k_b = x_i - sigma_b w_{a_i} for every
+///   a_i >= b and v_b = H_{a_i}^-1(x_i) for every a_i < b: two "all equal one value" tests,
+///   by suffix extrema (by sign) and prefix extrema.
+/// - Flag. A failing point lies in the product iff, for some kept piece [lo, hi] of an x cell a
+///   and kept y cell b, r(a, b) is in [lo, hi]: for b <= a, k_b in [lo - w_a, hi - w_a]
+///   (sigma = +1) or [lo + w_a, hi + w_a] (sigma = -1); for a < b, v_b in H_a^-1([lo, hi]).
+///   The two sweeps hold the kept y cells on one side of the split in ordered sets and ask
+///   one range query per piece, so they see every (piece, cell) pair once. ∎
+///
+/// Checks: the PERF-ref-memo-multi-input round-3 brute-force sweeps found 0 mismatches on
+/// 20000 random chains against an exact count, and caught the mutants that drop a sweep, keep
+/// only the least constant, or (`late = true`) skip the y test. Test:
+/// `l01_25_preimage_catalog::ref_memo::threshold_chains_match_the_interpreter_on_every_point`.
+///
+/// Prior work: the literature search of the PERF-ref-memo-multi-input cross-review (19
+/// searches, 2026-11-21) found no method for the projections of this grid in less than one
+/// visit per cell; the method here is from the cross-review's seats.
+///
+/// Complexity tradeoff: O(n log n) arithmetic operations and O(n) space for n links, the
+/// output included. The products are O(n), the extrema sweeps O(n), and the flag sweeps
+/// O(n log n), each of at most 2n + 2 pieces doing one `BTreeSet` insert and query. Each
+/// constant is a signed sum of at most n literals, so it has at most B + log2(n) + 1 bits
+/// for B-bit literals. Why: a method that visits each (x cell, y cell) pair is O(n^2), which
+/// is what the memo did (`alternating_2var` read 25.2 from 64 to 512 links). Trigger: two
+/// inputs, one interval each, guards `input <= c` with monotone cuts on each input, and
+/// unit-slope arms; anything else goes to the later stages. COMPLEXITY.md
+/// PERF-ref-memo-multi-input.
+fn threshold_box(
+    links: &[ThresholdLink],
+    x: &[ThresholdCell],
+    y: &[ThresholdCell],
+    increasing: [bool; 2],
+    target: &End,
+) -> (Vec<ThresholdCell>, Vec<ThresholdCell>, bool) {
+    let n = links.len();
+    let mut p = ValTag::id();
+    let mut mx = ValTag::id();
+    let mut my = ValTag::id();
+    let mut u = ValTag::id();
+    let mut gx = Vec::with_capacity(n + 1);
+    let mut hy = Vec::with_capacity(n + 1);
+    let mut wx = Vec::with_capacity(n + 1);
+    let mut uy = Vec::with_capacity(n + 1);
+    for j in 0..=n {
+        let pi = p.inverse();
+        gx.push(pi.compose(&mx));
+        hy.push(pi.compose(&my));
+        wx.push(mx.inverse().compose(&u));
+        uy.push(my.inverse().compose(&u));
+        let Some(link) = links.get(j) else {
+            break;
+        };
+        let (on, off) = if increasing[link.axis] {
+            (&link.high, &link.low)
+        } else {
+            (&link.low, &link.high)
+        };
+        p = on.compose(&p);
+        mx = (if link.axis == 0 { on } else { off }).compose(&mx);
+        my = (if link.axis == 1 { on } else { off }).compose(&my);
+        u = off.compose(&u);
+    }
+    let tail = u.inverse().map_end(target);
+    let w = |a: usize| wx[a].map_end(&tail);
+    let v = |b: usize| uy[b].map_end(&tail);
+    let split = |a, b| b <= a;
+
+    // x, by the first part of the proof: prefix extrema of k_b by sign, then suffix extrema of
+    // v_b mapped by H_a.
+    let mut roots = vec![None; x.len()];
+    let mut q = 0;
+    let mut offsets = [None, None];
+    for (cell, root) in x.iter().zip(&mut roots) {
+        while q < y.len() && split(cell.end, y[q].end) {
+            let g = &gx[y[q].end];
+            let k = Fin(g.1.clone());
+            threshold_extrema(&mut offsets[usize::from(g.0)], k.clone(), k);
+            q += 1;
+        }
+        let wa = w(cell.end);
+        for (flip, ends) in offsets.iter().enumerate() {
+            if let Some((lo, hi)) = ends {
+                let signed = ValTag(flip == 1, Num::ZERO).map_end(&wa);
+                if let Fin(k) = signed {
+                    let add = ValTag(false, k);
+                    threshold_extrema(root, add.map_end(lo), add.map_end(hi));
+                }
+            }
+        }
+    }
+    let mut q = y.len();
+    let mut suffix = None;
+    let mut kept_x = Vec::with_capacity(x.len());
+    for (cell, mut root) in x.iter().zip(roots).rev() {
+        while q > 0 && !split(cell.end, y[q - 1].end) {
+            q -= 1;
+            let uv = v(y[q].end);
+            threshold_extrema(&mut suffix, uv.clone(), uv);
+        }
+        if let Some((lo, hi)) = &suffix {
+            let (lo, hi) = hy[cell.end].map_range(lo, hi);
+            threshold_extrema(&mut root, lo, hi);
+        }
+        if let Some((lo, hi)) = root
+            && lo == hi
+            && cell.lo <= lo
+            && lo <= cell.hi
+        {
+            // The cells are visited backward. Push the right piece first.
+            if lo < cell.hi {
+                kept_x.push(ThresholdCell {
+                    end: cell.end,
+                    lo: lo.succ(),
+                    hi: cell.hi.clone(),
+                });
+            }
+            if cell.lo < lo {
+                kept_x.push(ThresholdCell {
+                    end: cell.end,
+                    lo: cell.lo.clone(),
+                    hi: lo.pred(),
+                });
+            }
+        } else {
+            kept_x.push(cell.clone());
+        }
+    }
+    kept_x.reverse();
+
+    // y, by the second part of the proof, over the x cells (not the kept pieces).
+    let kept_y: Vec<ThresholdCell> = if x.iter().any(|cell| cell.lo != cell.hi) {
+        y.to_vec()
+    } else {
+        let mut suffixes = vec![[None, None]; x.len() + 1];
+        for (i, cell) in x.iter().enumerate().rev() {
+            let Fin(wa) = w(cell.end) else {
+                unreachable!("w maps the finite target to a finite value")
+            };
+            let mut pair = suffixes[i + 1].clone();
+            for (flip, offset) in [ValTag(false, -&wa), ValTag(false, wa)].iter().enumerate() {
+                let k = offset.map_end(&cell.lo);
+                threshold_extrema(&mut pair[flip], k.clone(), k);
+            }
+            suffixes[i] = pair;
+        }
+        let mut i = 0;
+        let mut prefix = None;
+        y.iter()
+            .filter(|cell| {
+                while i < x.len() && !split(x[i].end, cell.end) {
+                    let z = hy[x[i].end].inverse().map_end(&x[i].lo);
+                    threshold_extrema(&mut prefix, z.clone(), z);
+                    i += 1;
+                }
+                let g = &gx[cell.end];
+                !(threshold_uniform(&prefix, &v(cell.end))
+                    && threshold_uniform(&suffixes[i][usize::from(g.0)], &Fin(g.1.clone())))
+            })
+            .cloned()
+            .collect()
+    };
+
+    // The flag, by the third part of the proof: range queries on k_b by sign, then on v_b.
+    let mut offsets = [BTreeSet::new(), BTreeSet::new()];
+    let mut q = 0;
+    for cell in &kept_x {
+        while q < kept_y.len() && split(cell.end, kept_y[q].end) {
+            let g = &gx[kept_y[q].end];
+            offsets[usize::from(g.0)].insert(Fin(g.1.clone()));
+            q += 1;
+        }
+        let Fin(wa) = w(cell.end) else {
+            unreachable!("w maps the finite target to a finite value")
+        };
+        for (set, shift) in offsets.iter().zip([ValTag(false, -&wa), ValTag(false, wa)]) {
+            let (lo, hi) = shift.map_range(&cell.lo, &cell.hi);
+            if set.range(lo..=hi).next().is_some() {
+                return (kept_x, kept_y, false);
+            }
+        }
+    }
+    let mut suffix = BTreeSet::new();
+    let mut q = kept_y.len();
+    for cell in kept_x.iter().rev() {
+        while q > 0 && !split(cell.end, kept_y[q - 1].end) {
+            q -= 1;
+            suffix.insert(v(kept_y[q].end));
+        }
+        let (lo, hi) = hy[cell.end].inverse().map_range(&cell.lo, &cell.hi);
+        if suffix.range(lo..=hi).next().is_some() {
+            return (kept_x, kept_y, false);
+        }
+    }
+    (kept_x, kept_y, true)
+}
+
+/// The relation `value != target` of a threshold chain over the inputs `names` (base first):
+/// one auxiliary variable per link, defined as the link's `if`, so it holds exactly where the
+/// term meets the demand. O(n) definitions of O(1) size.
+fn threshold_relation(links: &[ThresholdLink], names: &[Arc<str>; 2], target: i64) -> Relation {
+    let [x, y] = names
+        .each_ref()
+        .map(|name| Lin::atom(presburger::Atom::Sym(name.clone())));
+    let inputs = [x.clone(), y];
+    let mut value = x;
+    let mut tr = Tr {
+        defs: Vec::with_capacity(links.len()),
+        products: false,
+    };
+    for link in links {
+        let g = Formula::Con(Con::ge(&Lin::constant(link.cut), &inputs[link.axis]));
+        let arm = |tag: &ValTag| {
+            let shift = Lin::constant(tag.1.to_i128().expect("one literal offset"));
+            value.times(if tag.0 { -1 } else { 1 }).plus(&shift)
+        };
+        let (low, high) = (arm(&link.low), arm(&link.high));
+        let out = Lin::atom(presburger::Atom::Aux(to_u32(tr.defs.len(), "definitions")));
+        let what = format!("if {g} then {low} else {high}");
+        let def = Formula::or(vec![
+            Formula::and(vec![g.clone(), Formula::Con(Con::eq(&out, &low))]),
+            Formula::and(vec![Formula::negate(g), Formula::Con(Con::eq(&out, &high))]),
+        ]);
+        tr.aux(what, def);
+        value = out;
+    }
+    Relation {
+        body: Formula::negate(Formula::Con(Con::eq(&value, &Lin::constant(target)))),
+        defs: tr.defs,
+        bit_ands: Vec::new(),
+    }
+}
+
+impl Tx<'_> {
+    /// The exact answer for `chain != c` (or `chain == c` demanded false) where `chain` is a
+    /// threshold chain on two inputs (the Sol seat's stage, PERF-ref-memo-multi-input round
+    /// 3): each link is `if input <= c' { arm } else { arm }` (or `<`, `>`, `>=`), both arms
+    /// unit-slope maps (`t`, `-t`, `t + c`, `t - c`, `c + t`, `c - t`) of one inner value, the
+    /// innermost value the base input, the cuts of each input monotone in chain order, and each
+    /// input one interval. `None` otherwise. Not exact means a relation, [`threshold_relation`],
+    /// is attached. The proof is at [`threshold_box`].
+    ///
+    /// Complexity tradeoff: the walk is O(n): it reads each `If` once, by its id and literal
+    /// operands, and never calls `fwd` or `lin`. A shallow copy of an `If` (both arms of the
+    /// family builder read one `t`) has its own id but its children's ids, so
+    /// [`Tx::same_value_node`] compares the two arms' inner values in O(1). Then
+    /// [`threshold_box`] costs O(n log n).
+    fn affine_threshold_pair(&self, root: Tid, demand: &Demand) -> Option<(Res, Option<Relation>)> {
+        let Node::Prim(op, args) = self.node(root) else {
+            return None;
+        };
+        if !matches!(
+            (op, demand),
+            (Prim::Ne, Demand::Bool(true)) | (Prim::Eq, Demand::Bool(false))
+        ) || args.len() != 2
+        {
+            return None;
+        }
+        let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+        let (mut cur, target) = match (self.node(a), self.node(b)) {
+            (_, Node::Int(d)) => (a, d),
+            (Node::Int(d), _) => (b, d),
+            _ => return None,
+        };
+        let mut variables = Vec::new();
+        let mut links = Vec::new();
+        while let Node::If(g, a, b) = self.node(cur) {
+            let Node::Prim(cmp, args) = self.node(g) else {
+                return None;
+            };
+            if args.len() != 2 {
+                return None;
+            }
+            let (first, second) = (self.node(self.arg(args, 0)), self.node(self.arg(args, 1)));
+            let (var, mut cut, cmp) = match (first, second) {
+                (Node::Var(v), Node::Int(c)) => (v, i128::from(c), cmp),
+                (Node::Int(c), Node::Var(v)) => (v, i128::from(c), mirror(cmp)),
+                _ => return None,
+            };
+            // As `var <= cut`, with the arms exchanged for `>` and `>=`.
+            let swap = match cmp {
+                Prim::Le => false,
+                Prim::Lt => {
+                    cut -= 1;
+                    false
+                }
+                Prim::Gt => true,
+                Prim::Ge => {
+                    cut -= 1;
+                    true
+                }
+                _ => return None,
+            };
+            let axis = if let Some(axis) = variables.iter().position(|&v| v == var) {
+                axis
+            } else {
+                if variables.len() == 2 {
+                    return None;
+                }
+                variables.push(var);
+                variables.len() - 1
+            };
+            let (an, av) = self.threshold_arm(a);
+            let (bn, bv) = self.threshold_arm(b);
+            if !self.same_value_node(an, bn) {
+                return None;
+            }
+            let (low, high) = if swap { (bv, av) } else { (av, bv) };
+            links.push(ThresholdLink {
+                axis,
+                cut,
+                low,
+                high,
+            });
+            cur = an;
+        }
+        let Node::Var(base) = self.node(cur) else {
+            return None;
+        };
+        let base_name = self.name(base).clone();
+        let other_name = if let Some(&other) = variables.iter().find(|&&v| v != base) {
+            self.name(other).clone()
+        } else {
+            if self.cx.inputs.len() != 2 {
+                return None;
+            }
+            self.cx
+                .inputs
+                .iter()
+                .find(|(name, _)| *name != &base_name)?
+                .0
+                .clone()
+        };
+        if variables.len() == 2 && !variables.contains(&base) {
+            return None;
+        }
+        // Axis 0 is the base. The base may have no guard (for example one link on `m`).
+        if variables.first().is_some_and(|&v| v != base) {
+            for link in &mut links {
+                link.axis = 1 - link.axis;
+            }
+        }
+        // From the base outward.
+        links.reverse();
+        let mut increasing = [true; 2];
+        for axis in 0..2 {
+            let cuts = || {
+                links
+                    .iter()
+                    .filter(|link| link.axis == axis)
+                    .map(|link| link.cut)
+            };
+            if !cuts().is_sorted() {
+                if !cuts().map(|cut| -cut).is_sorted() {
+                    return None;
+                }
+                increasing[axis] = false;
+            }
+        }
+        let names = [base_name, other_name];
+        let x = self.cx.inputs.get(&names[0])?;
+        let y = self.cx.inputs.get(&names[1])?;
+        if x.len() > 1 || y.len() > 1 {
+            return None;
+        }
+        if self.run.void {
+            return Some((Res::none(), None));
+        }
+        let x_cells = threshold_cells(&links, 0, x.first()?, increasing[0]);
+        let y_cells = threshold_cells(&links, 1, y.first()?, increasing[1]);
+        let (proj_x, proj_y, exact) =
+            threshold_box(&links, &x_cells, &y_cells, increasing, &End::of(target));
+        if proj_x.is_empty() || proj_y.is_empty() {
+            return Some((Res::none(), None));
+        }
+        let mut out = Res::all();
+        out.exact = exact;
+        out.vars = VarSet::Many;
+        for ((name, domain), cells) in names.iter().zip([x, y]).zip([proj_x, proj_y]) {
+            let proj = IntervalSet::from_pieces(cells.into_iter().map(|c| (c.lo, c.hi)).collect());
+            if &proj != domain.as_ref() {
+                out.dom.insert(name.clone(), Rc::new(proj));
+            }
+        }
+        let relation = (!exact).then(|| threshold_relation(&links, &names, target));
+        Some((out, relation))
+    }
+
+    /// The inner value of a threshold arm and the unit-slope map applied to it: `-t`, `c + t`,
+    /// `c - t`, `t + c`, `t - c`, else `t` itself.
+    fn threshold_arm(&self, t: Tid) -> (Tid, ValTag) {
+        if let Node::Prim(op, args) = self.node(t) {
+            if op == Prim::Neg && args.len() == 1 {
+                return (self.arg(args, 0), ValTag::neg());
+            }
+            if matches!(op, Prim::Add | Prim::Sub) && args.len() == 2 {
+                let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+                if let Node::Int(c) = self.node(a) {
+                    return (
+                        b,
+                        if op == Prim::Sub {
+                            ValTag::reflect(i128::from(c))
+                        } else {
+                            ValTag::shift(i128::from(c))
+                        },
+                    );
+                }
+                if let Node::Int(c) = self.node(b) {
+                    let c = i128::from(c);
+                    return (a, ValTag::shift(if op == Prim::Sub { -c } else { c }));
+                }
+            }
+        }
+        (t, ValTag::id())
+    }
+
+    /// Whether `a` and `b` have one value in every environment: the same node, two `If`s with
+    /// the same children, or the same variable or literal. O(1).
+    fn same_value_node(&self, a: Tid, b: Tid) -> bool {
+        a == b
+            || match (self.node(a), self.node(b)) {
+                (Node::If(g, x, y), Node::If(h, u, v)) => (g, x, y) == (h, u, v),
+                (Node::Var(x), Node::Var(y)) => x == y,
+                (Node::Int(x), Node::Int(y)) => x == y,
+                _ => false,
+            }
+    }
 }
 
 /// The linear stage: the relation of the demand over the box `dom`, the box narrowed to its
@@ -1028,6 +1600,15 @@ impl ValTag {
             &self.1 + &inner.1
         };
         Self(self.0 ^ inner.0, add)
+    }
+    /// The inverse under [`ValTag::compose`]: `v -> -v + k` is its own inverse, and the
+    /// inverse of `v -> v + k` is `v -> v - k`.
+    fn inverse(&self) -> Self {
+        if self.0 {
+            self.clone()
+        } else {
+            Self(false, -&self.1)
+        }
     }
     fn map_end(&self, e: &End) -> End {
         match (self.0, e) {
@@ -2564,11 +3145,13 @@ impl<'t> Tx<'t> {
     //   Any other step with no kind (`i * i`, a sum of two different subterms of `i`) still
     //   falls to the memo, with no bound proved.
     // - Guards on two or more inputs: `alternating_2var` (guards on `i` and `m` in turn) read
-    //   13.2 at 16, 16.2 at 32 and 25.2 at 64; `indep_varying` (one bit input per guard) 20.9 at
-    //   6, 12.1 at 12 and 183 at 24. With the guards of `alternating_2var` a point (i, m) has p
-    //   failed links on `i` and q on `m`, and t = ±i + C(p, q) on each of the (n/2)^2 cells; a
-    //   method that visits each cell is quadratic. That the memo does so is inferred from the
-    //   ratios, not traced. Superlinear, row PERF-ref-memo-multi-input.
+    //   13.2 at 16, 16.2 at 32 and 25.2 at 64 here; `indep_varying` (one bit input per guard)
+    //   20.9 at 6, 12.1 at 12 and 183 at 24. With the guards of `alternating_2var` a point
+    //   (i, m) has p failed links on `i` and q on `m`, and t = ±i + C(p, q) on each of the
+    //   (n/2)^2 cells; a method that visits each cell is quadratic. A two-input threshold chain
+    //   no longer reaches this memo: `Tx::affine_threshold_pair` answers it in O(n log n)
+    //   (Theorem 1 at `threshold_box`), timed by `alternating_2var_scales` and
+    //   `alt2var_m_scales`. `indep_varying` still comes here, row PERF-ref-memo-multi-input.
     // - Nested remainders: in a term that reads one input they are settled by
     //   `State1d::modulo_bounded` (the `nested_moduli_*` families, cost in the header). Under
     //   guards on two inputs they stay on the memo: `alternating_moduli` read 12.1 at 4 and 101
@@ -2577,8 +3160,8 @@ impl<'t> Tx<'t> {
     //   |c| > 1, a quotient by c < -1) visit every piece of the state: `normal_mul3_chain` read
     //   8.05 at 16 and `normal_div_neg2_chain` 11.8 at 16 and 8.3 at 128. Measured only: no
     //   bound on the pieces visited per link is proved.
-    // The multi-input families are not timed (`ref_memo::UNTIMED_FAMILIES`); their answers are
-    // checked against the interpreter. Tests: `l01_25_preimage_catalog::ref_memo` (the scaling of
+    // `indep_varying` and `alternating_moduli` are not timed yet (`ref_memo::UNTIMED_FAMILIES`);
+    // their answers are checked against the interpreter. Tests: `l01_25_preimage_catalog::ref_memo` (the scaling of
     // each family, main's changed answers, calls 22, 45 and 86). COMPLEXITY.md C56.
     fn back_doubt(&mut self, t: Tid, env: Eid, d: &Demand, dd: &IntervalSet) -> Res {
         let dd = match d {
@@ -4611,11 +5194,7 @@ impl Tx<'_> {
             }
             let hi = events.peek().map_or(PosInf, |e| e.0.pred());
             let tag = tree[1].compose(&prefix);
-            let inv = if tag.0 {
-                tag.clone()
-            } else {
-                ValTag(false, -&tag.1)
-            };
+            let inv = tag.inverse();
             // Physical holes are clipped once after the sweep. Guard covers are
             // exact on that domain; work inside a hole cannot affect its answer.
             let cell = IntervalSet::range(lo, hi);

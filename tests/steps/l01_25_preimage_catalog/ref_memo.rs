@@ -756,6 +756,12 @@ pub(super) fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
             let g = |j: i64| prim(Prim::Le, var(if j % 2 == 0 { "i" } else { "m" }), int(j));
             one(chain(n, var("i"), g, |j, t| sub_c(j % 5, t)), i_and_m())
         }
+        // `alternating_2var` on the base `m` (the Opus seat's `alt2var_m`, PERF-ref-memo-multi-input
+        // round 3): the base input is not the one the first guard reads.
+        "alt2var_m" => {
+            let g = |j: i64| prim(Prim::Le, var(if j % 2 == 0 { "i" } else { "m" }), int(j));
+            one(chain(n, var("m"), g, |j, t| sub_c(j % 5, t)), i_and_m())
+        }
         // An independent bit per guard with centers that vary, so no common center.
         "indep_varying" => {
             let bit = |j: i64| prim(Prim::Ge, var(&format!("b{j}")), int(1));
@@ -829,7 +835,9 @@ fn output_grid_answers_have_k_n_pieces() {
 }
 
 /// The families that `bench::ref_memo` times, each named once.
-pub(super) const FAMILIES: [&str; 47] = [
+pub(super) const FAMILIES: [&str; 49] = [
+    "alt2var_m",
+    "alternating_2var",
     "coef2_guard",
     "const2_narrow",
     "const2_wide",
@@ -881,10 +889,11 @@ pub(super) const FAMILIES: [&str; 47] = [
 
 /// Families of terms that read two or more inputs, on the memo of `Tx::back_doubt`, that
 /// `bench::ref_memo` does not time: their work grows faster than n (row
-/// PERF-ref-memo-multi-input; T(8n)/T(n) 13.2 at 16 and 25.2 at 64 for `alternating_2var`, 12.1
-/// at 4 and 101 at 8 for `alternating_moduli`, 12.1 at 12 and 183 at 24 for `indep_varying`).
-/// Their answers are checked here with the timed families.
-const UNTIMED_FAMILIES: [&str; 3] = ["alternating_2var", "alternating_moduli", "indep_varying"];
+/// PERF-ref-memo-multi-input; T(8n)/T(n) 12.1 at 4 and 101 at 8 for `alternating_moduli`, 12.1 at
+/// 12 and 183 at 24 for `indep_varying`). Their answers are checked here with the timed families.
+/// `alternating_2var` (25.2 at 64 on the memo) and `alt2var_m` are timed since
+/// `Tx::affine_threshold_pair` answers them in O(n log n).
+const UNTIMED_FAMILIES: [&str; 2] = ["alternating_moduli", "indep_varying"];
 
 /// Every family `bench::ref_memo` times, at 1 to 4 links (`output_grid` at 8), and the
 /// [`UNTIMED_FAMILIES`]: the reference preimage holds every
@@ -950,7 +959,6 @@ fn every_family_the_benchmarks_time_is_answered_soundly_at_small_sizes() {
 /// checked: where the relation holds, the term meets the demand.
 #[test]
 fn a_relation_built_partway_through_a_run_holds_only_where_its_term_does() {
-    use zedc::store::presburger::{self, Atom, Formula};
     let t = ne0(Term::If(
         Shared::new(prim(Prim::Le, prim(Prim::Mod, var("i"), int(2)), int(0))),
         Shared::new(var("m")),
@@ -969,17 +977,7 @@ fn a_relation_built_partway_through_a_run_holds_only_where_its_term_does() {
         for m in 0..=1 {
             let value = |x: &str| if x == "i" { i } else { m };
             let pt: Vec<Num> = names.iter().map(|x| Num::from(value(x))).collect();
-            let mut parts = vec![rel.body.clone(), rel.defined()];
-            for x in &names {
-                let v = value(x);
-                parts.push(presburger::member(
-                    &Atom::Sym(x.clone()),
-                    &IntervalSet::of(v, v),
-                ));
-            }
-            let holds = presburger::satisfiable(&Formula::and(parts))
-                .expect("decided")
-                .is_some();
+            let holds = relation_holds(rel, &names, &pt);
             let in_box = names.iter().all(|x| {
                 p.domains
                     .get(x)
@@ -994,6 +992,227 @@ fn a_relation_built_partway_through_a_run_holds_only_where_its_term_does() {
                 meets || !in_box || !holds,
                 "({i}, {m}) fails, lies in the box and the relation holds: {rel:?}"
             );
+        }
+    }
+}
+
+/// Whether `rel` (its body and its definitions) holds at the point `pt` of the inputs `names`,
+/// by the Presburger solver.
+fn relation_holds(rel: &zedc::store::presburger::Relation, names: &[Arc<str>], pt: &[Num]) -> bool {
+    use zedc::store::presburger::{self, Atom, Formula};
+    let mut parts = vec![rel.body.clone(), rel.defined()];
+    for (x, v) in names.iter().zip(pt) {
+        parts.push(presburger::member(
+            &Atom::Sym(x.clone()),
+            &IntervalSet::from_pieces(vec![(End::Fin(v.clone()), End::Fin(v.clone()))]),
+        ));
+    }
+    presburger::satisfiable(&Formula::and(parts))
+        .expect("decided")
+        .is_some()
+}
+
+/// The set of the integers `vs`.
+fn set_of(vs: impl IntoIterator<Item = i64>) -> IntervalSet {
+    vs.into_iter()
+        .fold(IntervalSet::empty(), |s, v| s.join(&IntervalSet::of(v, v)))
+}
+
+/// `Tx::affine_threshold_pair` (PERF-ref-memo-multi-input, Theorem 1 at `threshold_box`):
+/// on random two-input threshold chains (guards `<=`, `<`, `>`, `>=` with the literal on either
+/// side, cuts monotone on each input, arms `t`, `-t`, `t + c`, `t - c`, `c + t`, `c - t` of one
+/// inner value, either input the base, `!=` or `==` demanded false) over boxes of 1 to 5 values
+/// on each side, the answer is the exact projections of the points that meet the demand, it is
+/// exact iff their product holds no failing point, and an attached relation holds exactly where
+/// the term meets the demand. Every point of the box is evaluated by the interpreter.
+/// Negative control: with the y projection's test removed (every y cell kept, the Opus seat's
+/// mutant `late = true`), this test failed at case 297 of seed 0x7e5e_0001, the `m`
+/// projection 0..=4 where the interpreter gives 0..=3 (run once, 2026-11-21).
+#[test]
+fn threshold_chains_match_the_interpreter_on_every_point() {
+    let mut rng = Rng::new(0x7e5e_0001_u64);
+    let names: Vec<Arc<str>> = vec!["i".into(), "m".into()];
+    for case in 0..400 {
+        let n = rng.int(0, 7) as usize;
+        let lo = [rng.int(-4, 4), rng.int(-4, 4)];
+        let hi = [lo[0] + rng.int(0, 4), lo[1] + rng.int(0, 4)];
+        let base = rng.below(2);
+        // The input of each link, then monotone cuts for each input.
+        let axes: Vec<usize> = (0..n).map(|_| rng.below(2)).collect();
+        let mut cuts: [Vec<i64>; 2] = [vec![], vec![]];
+        for (a, cs) in cuts.iter_mut().enumerate() {
+            let k = axes.iter().filter(|&&x| x == a).count();
+            *cs = (0..k).map(|_| rng.int(-6, 6)).collect();
+            cs.sort_unstable();
+            if rng.coin() {
+                cs.reverse();
+            }
+        }
+        let mut next = [0, 0];
+        let arm = |rng: &mut Rng, t: &Shared| -> Shared {
+            let c = rng.int(-3, 3);
+            let inner = || (**t).clone();
+            match rng.below(6) {
+                0 => t.clone(),
+                1 => Shared::new(Term::Prim(Prim::Neg, vec![inner()])),
+                2 => Shared::new(prim(Prim::Add, inner(), int(c))),
+                3 => Shared::new(prim(Prim::Sub, inner(), int(c))),
+                4 => Shared::new(prim(Prim::Add, int(c), inner())),
+                _ => Shared::new(prim(Prim::Sub, int(c), inner())),
+            }
+        };
+        let mut t = var(&names[base]);
+        for &a in &axes {
+            let cut = cuts[a][next[a]];
+            next[a] += 1;
+            let cmp = [Prim::Le, Prim::Lt, Prim::Gt, Prim::Ge][rng.below(4)];
+            let guard = if rng.coin() {
+                prim(cmp, var(&names[a]), int(cut))
+            } else {
+                let mirrored = match cmp {
+                    Prim::Le => Prim::Ge,
+                    Prim::Lt => Prim::Gt,
+                    Prim::Gt => Prim::Lt,
+                    _ => Prim::Le,
+                };
+                prim(mirrored, int(cut), var(&names[a]))
+            };
+            let inner = Shared::new(t);
+            let (yes, no) = (arm(&mut rng, &inner), arm(&mut rng, &inner));
+            t = Term::If(Shared::new(guard), yes, no);
+        }
+        let target = rng.int(-6, 6);
+        let (t, d) = if rng.coin() {
+            (prim(Prim::Ne, t, int(target)), Demand::Bool(true))
+        } else {
+            (prim(Prim::Eq, int(target), t), Demand::Bool(false))
+        };
+        let ds = over(&[
+            ("i", IntervalSet::of(lo[0], hi[0])),
+            ("m", IntervalSet::of(lo[1], hi[1])),
+        ]);
+        let p = preimage(&t, &ds, &d);
+        let box_points = || (lo[0]..=hi[0]).flat_map(move |i| (lo[1]..=hi[1]).map(move |m| [i, m]));
+        let pass = |pt: [i64; 2]| meets(&t, &names, &pt.map(Num::from), &d);
+        let px = set_of(box_points().filter(|&pt| pass(pt)).map(|pt| pt[0]));
+        let py = set_of(box_points().filter(|&pt| pass(pt)).map(|pt| pt[1]));
+        let want = |x: &str, proj: &IntervalSet| {
+            let got = p.domains.get(x).unwrap_or(&ds[x]);
+            if proj.is_empty() {
+                // An empty answer may name either input empty.
+                return;
+            }
+            assert_eq!(got, proj, "case {case}, {x}: {t:?} on {ds:?}, {p:?}");
+        };
+        if px.is_empty() {
+            assert!(
+                p.domains.values().any(IntervalSet::is_empty),
+                "case {case}: no point meets, {t:?} on {ds:?}, {p:?}"
+            );
+            continue;
+        }
+        want("i", &px);
+        want("m", &py);
+        let exact = box_points()
+            .filter(|pt| px.contains_end(&End::of(pt[0])) && py.contains_end(&End::of(pt[1])))
+            .all(pass);
+        assert_eq!(
+            p.exact, exact,
+            "case {case}, exactness: {t:?} on {ds:?}, {p:?}"
+        );
+        if let Some(rel) = &p.relation {
+            for pt in box_points() {
+                assert_eq!(
+                    relation_holds(rel, &names, &pt.map(Num::from)),
+                    pass(pt),
+                    "case {case}, relation at {pt:?}: {t:?}, {rel:?}"
+                );
+            }
+        } else {
+            assert!(p.exact, "case {case}: inexact with no relation, {p:?}");
+        }
+    }
+}
+
+/// `alternating_2var` with base `m` (the Opus seat's `alt2var_m`) at 18 to 21 links, where
+/// the 3-slice cover of the round-3 combination declined: the whole box, not exact, and the
+/// relation of `threshold_relation` (one definition a link), so `Tx::affine_threshold_pair`
+/// answered. The point (-1000, 0) fails by the interpreter.
+#[test]
+fn alt2var_m_at_18_to_21_links_is_answered_by_the_threshold_stage() {
+    let names: Vec<Arc<str>> = vec!["i".into(), "m".into()];
+    for n in 18..=21 {
+        for (t, ds, d) in family("alt2var_m", n) {
+            let p = preimage(&t, &ds, &d);
+            assert!(!p.exact, "alt2var_m at {n}: {p:?}");
+            assert_eq!(p.domains, ds, "alt2var_m at {n}");
+            let rel = p.relation.as_ref().expect("a relation");
+            assert_eq!(rel.defs.len(), n, "alt2var_m at {n}: {rel:?}");
+            let fail = [Num::from(-1000), Num::from(0)];
+            assert!(!meets(&t, &names, &fail, &d), "alt2var_m at {n}");
+            assert!(!relation_holds(rel, &names, &fail), "alt2var_m at {n}");
+        }
+    }
+}
+
+/// `alt2var_m` at one link, `if m <= 1 { m } else { 1 - m } != 0`: it fails only at m = 0
+/// (1 - m is 0 at m = 1, which takes the first arm), so the answer is the box with m = 0
+/// removed, and it is exact.
+#[test]
+fn alt2var_m_at_one_link_removes_m_zero_exactly() {
+    for (t, ds, d) in family("alt2var_m", 1) {
+        let p = preimage(&t, &ds, &d);
+        assert!(p.exact, "{p:?}");
+        assert!(p.relation.is_none(), "{p:?}");
+        assert_eq!(p.domains.get("i").unwrap_or(&ds["i"]), &ds["i"]);
+        let want = IntervalSet::from_pieces(vec![
+            (End::of(-1000), End::of(-1)),
+            (End::of(1), End::of(1000)),
+        ]);
+        assert_eq!(p.domains["m"], want, "{p:?}");
+    }
+}
+
+/// Listed inputs take the threshold stage too (`preimage_in`): `enumerate` takes only a box
+/// with at most one input of several members, where the product of the projections is the set
+/// of passing points, so the stage, exact by Theorem 1 at `threshold_box`, must answer it
+/// exactly and with no relation. On `alternating_2var` and `alt2var_m` at 1 to 4 links, over
+/// listed boxes with holes (`i` in {-3, -1, 0, 2, 5} and each `m` in -2..=2, then each `i` in
+/// -3..=3 and `m` in {-2, 0, 1, 3}), listed and unlisted calls both give the projections of
+/// the points that meet the demand, exact, with no relation.
+#[test]
+fn listed_threshold_chains_are_answered_exactly() {
+    let names: Vec<Arc<str>> = vec!["i".into(), "m".into()];
+    let mut boxes: Vec<(Vec<i64>, Vec<i64>)> = Vec::new();
+    for m in -2..=2 {
+        boxes.push((vec![-3, -1, 0, 2, 5], vec![m]));
+    }
+    for i in -3..=3 {
+        boxes.push((vec![i], vec![-2, 0, 1, 3]));
+    }
+    let listed: Listed = names.iter().cloned().collect();
+    for name in ["alternating_2var", "alt2var_m"] {
+        for n in 1..=4 {
+            for (t, _, d) in family(name, n) {
+                for (is, ms) in &boxes {
+                    let ds = over(&[
+                        ("i", set_of(is.iter().copied())),
+                        ("m", set_of(ms.iter().copied())),
+                    ]);
+                    let pass: Vec<[i64; 2]> = (is.iter())
+                        .flat_map(|&i| ms.iter().map(move |&m| [i, m]))
+                        .filter(|pt| meets(&t, &names, &pt.map(Num::from), &d))
+                        .collect();
+                    let px = set_of(pass.iter().map(|pt| pt[0]));
+                    let py = set_of(pass.iter().map(|pt| pt[1]));
+                    for p in [preimage_listed(&t, &ds, &listed, &d), preimage(&t, &ds, &d)] {
+                        let at = format!("{name} n={n} i={is:?} m={ms:?}: {p:?}");
+                        assert!(p.exact && p.relation.is_none(), "{at}");
+                        assert_eq!(p.domains.get("i").unwrap_or(&ds["i"]), &px, "{at}");
+                        assert_eq!(p.domains.get("m").unwrap_or(&ds["m"]), &py, "{at}");
+                    }
+                }
+            }
         }
     }
 }
