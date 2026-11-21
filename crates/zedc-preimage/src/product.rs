@@ -614,8 +614,9 @@ impl Product {
     // For `v0` a cut of `vs` to a range, the proof's cut case gives `O(log k)` expected. For
     // `v0` the `g + 1` pieces of a many-piece interval cut out and joined, `O(g log^2 k)`
     // expected. Not proved (PROOF-kernel-treap-is-subset-gaps, the open sub-case at
-    // `is_subset`): that it is `O(g log k)`. For `v0` filtered member by member, `v0` shares no node with `vs` and the
-    // walk is `O(k')`, the cost already paid to build it. Measured: 8.63 times the instructions
+    // `is_subset`): that it is `O(g log k)`. For `v0` filtered member by member, `v0` shares
+    // no node with `vs` and the walk is `O(k')`, the cost already paid to build it. Measured:
+    // 8.63 times the instructions
     // from k = 64 to 512 in
     // `l01_39_reduced_product::arm_test_through_call::bench::tests_on_a_callee_of_k_spaced_literal_arms_scale`
     // with the walk (2026-11-21), and 8.79 and 8.61 with the old `combine` (73ed87c26), under
