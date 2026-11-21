@@ -1062,6 +1062,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         m.job(Job::Scope(unit, true));
         self.drive(&mut m);
         self.ks_escapes();
+        // Every lambda fitted at an intersection ended, so each bare `else` held back in it
+        // was refused ([`Ck::arrow_fits`]): `drive` pops until the stack is empty and no job
+        // is dropped, so a count left above 0 would hold back every later bare `else`.
+        debug_assert!(
+            self.arrow_fits == 0 && self.else_joined.is_empty(),
+            "lambda fits at an intersection left open: {}, bare `else`s held back: {}",
+            self.arrow_fits,
+            self.else_joined.len()
+        );
         // Each rejection not built was one its call drops ([`Ck::lit_spares`]).
         debug_assert!(
             self.lit_spared.is_empty(),

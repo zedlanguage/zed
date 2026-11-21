@@ -489,14 +489,16 @@ fn rows_shared_on_many_paths_are_replaced_once() {
     );
 }
 
-/// `r(positional line, bump = 1) = { a1 = (line else 0) + bump; a2 = (line else a1) + bump;
-/// … an }`: each sum meets the parameter's class beside an int on one path and an int alone
-/// on another, so each keeps two states where it kept one (ISSUE1-tvar-else).
+/// `r(positional line, bump = 1) = { a1 = (line else #none -> 0) + bump; a2 = (line else
+/// #none -> a1) + bump; … an }`: each sum meets the parameter's class beside an int on one
+/// path and an int alone on another, so each keeps two states where it kept one
+/// (ISSUE1-tvar-else). The `else` names `#none`, as a bare `else` is refused (DESIGN.md
+/// sec:failure, row ELSE-explicit-atoms).
 pub(super) fn sums_of_a_line_or_a_count(n: usize) -> String {
     let steps: String = (1..=n)
         .map(|i| {
             format!(
-                "a{i} = (line else {}) + bump; ",
+                "a{i} = (line else #none -> {}) + bump; ",
                 if i == 1 {
                     "0".into()
                 } else {
@@ -771,9 +773,11 @@ fn sums_tests_and_never_arguments_give_their_signatures() {
     // `bench::scaling::sums_of_a_line_or_a_count_check_in_linear_time`,
     // `bench::scaling::a_chain_of_tests_is_linear_in_its_length` and
     // `bench::scaling::never_arguments_check_in_linear_time`.
+    // The `else` names `#none`, so the parameter takes `#none` and its family beside an int,
+    // where a bare `else` took any atom (`int | #_`).
     assert_eq!(
         sig(&sums_of_a_line_or_a_count(3), "r"),
-        "(int | #_, bump: int) -> int"
+        "(int | #none | #none(..), bump: int) -> int"
     );
     assert_eq!(sig(&a_chain_of_tests(4), "f"), "int -> 0 | 2 | 5");
     assert_eq!(sig(&never_arguments(3), "f"), "Never -> Never");
