@@ -41,21 +41,101 @@ fn copying_comparing_and_printing_scale_with_size() {
     });
 }
 
-#[test]
-fn displaying_and_breaking_scale_with_depth() {
-    let n = 20_000;
-    zed_tests::deep::on_small_stack(|| {
-        let built = |k: usize| nested(k).into_iter().chain(printed(k)).collect::<Vec<_>>();
-        let (small, large) = (built(n), built(scaling::FACTOR * n));
-        let at = |k: usize| if k == n { &small } else { &large };
-        for (i, (what, _)) in small.iter().enumerate() {
-            scaling::check(&format!("displaying {what}"), n, |k| {
-                std::hint::black_box(at(k)[i].1.to_string());
+/// One test for each term of `nested` and `printed` (TEST-split-chkbub1-long), each displaying
+/// and breaking it. Until then the ten terms were one test of 20 checks, which took 36 s at load
+/// 39 and 23 s at load 17 in main-watch's runs of 2026-11-21 and 58.6 s alone at load 61, while
+/// its 40 measured runs at n and 8n added up to 11.1 s: on a count of instructions the run at 8n
+/// of each check runs in a new process of the test binary, which runs the test from its start
+/// and replays each earlier check at both sizes (`scaling::compare_by`; `on_small_stack` keeps
+/// the test's thread name, so its checks are replayed too), so 20 checks in one test ran
+/// 20 · 21 / 2 = 210 checks' runs where 20 do. Now a test runs 3 (its break check replays its
+/// display check). The terms, sizes, widths and checks are as before.
+mod displaying_and_breaking_scale_with_depth {
+    use super::*;
+
+    /// The names of the terms of `nested` then `printed`, in their order: test `k` below times
+    /// term `k`, and each test checks the generators still make exactly these, so a term added
+    /// there fails until it is listed here and has a test.
+    const TERMS: [&str; 10] = [
+        "nested lambdas",
+        "a left-nested sum",
+        "nested `match` arms",
+        "a nested tuple pattern",
+        "nested `let` bodies",
+        "nested `else` branches",
+        "calls in head position",
+        "nested negations",
+        "nested indices",
+        "a nested atom pattern",
+    ];
+
+    /// Displays and breaks term `k` of [`TERMS`] at depth 20,000 and 8 times that.
+    fn case(k: usize) {
+        let n = 20_000;
+        zed_tests::deep::on_small_stack(|| {
+            let built = |m: usize| nested(m).into_iter().chain(printed(m)).collect::<Vec<_>>();
+            let (small, large) = (built(n), built(scaling::FACTOR * n));
+            let names = small.iter().map(|(what, _)| *what).collect::<Vec<_>>();
+            assert_eq!(names, TERMS, "the terms of nested and printed");
+            let at = |m: usize| if m == n { &small[k].1 } else { &large[k].1 };
+            let what = TERMS[k];
+            scaling::check(&format!("displaying {what}"), n, |m| {
+                std::hint::black_box(at(m).to_string());
             });
             let width = if indents(what) { usize::MAX } else { 80 };
-            scaling::check(&format!("breaking {what} to width {width}"), n, |k| {
-                std::hint::black_box(pretty(&at(k)[i].1, width));
+            scaling::check(&format!("breaking {what} to width {width}"), n, |m| {
+                std::hint::black_box(pretty(at(m), width));
             });
-        }
-    });
+        });
+    }
+
+    #[test]
+    fn nested_lambdas() {
+        case(0);
+    }
+
+    #[test]
+    fn a_left_nested_sum() {
+        case(1);
+    }
+
+    #[test]
+    fn nested_match_arms() {
+        case(2);
+    }
+
+    #[test]
+    fn a_nested_tuple_pattern() {
+        case(3);
+    }
+
+    #[test]
+    fn nested_let_bodies() {
+        case(4);
+    }
+
+    #[test]
+    fn nested_else_branches() {
+        case(5);
+    }
+
+    #[test]
+    fn calls_in_head_position() {
+        case(6);
+    }
+
+    #[test]
+    fn nested_negations() {
+        case(7);
+    }
+
+    #[test]
+    fn nested_indices() {
+        case(8);
+    }
+
+    #[test]
+    fn a_nested_atom_pattern() {
+        case(9);
+    }
 }

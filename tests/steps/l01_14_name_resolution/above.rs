@@ -178,24 +178,35 @@ fn parsed(text: &str) -> Vec<zedc::ast::Stmt> {
 /// A block of `n` bindings, each reading the one before it, in order or with each line using
 /// the next, which is below it; and a parameter list of `n` defaults, each naming the next.
 pub(super) fn chains(n: usize) -> [(String, Vec<zedc::ast::Stmt>); 3] {
-    let ordered = (1..n)
-        .map(|i| format!("  b{i} = b{} + 1;\n", i - 1))
-        .collect::<String>();
-    let reversed = (0..n - 1)
-        .map(|i| format!("  b{i} = b{} + 1;\n", i + 1))
-        .collect::<String>();
-    let params = (0..n - 1)
-        .map(|i| format!("p{i} = p{}, ", i + 1))
-        .collect::<String>();
-    [
-        format!("f(x) {{\n  b0 = x;\n{ordered}  b{}\n}}\n", n - 1),
-        format!("f(x) {{\n{reversed}  b{} = x;\n  b0\n}}\n", n - 1),
-        format!("f({params}p{} = 1) = p0;\n", n - 1),
-    ]
-    .map(|text| {
-        let stmts = parsed(&text);
-        (text, stmts)
-    })
+    [0, 1, 2].map(|k| chain(n, k))
+}
+
+/// The chain at place `k` of [`chains`] of `n`, alone, so that a benchmark of one chain builds
+/// only its own (`bench/above.rs`: building the three at 160,000 was most of its time).
+pub(super) fn chain(n: usize, k: usize) -> (String, Vec<zedc::ast::Stmt>) {
+    let text = match k {
+        0 => {
+            let ordered = (1..n)
+                .map(|i| format!("  b{i} = b{} + 1;\n", i - 1))
+                .collect::<String>();
+            format!("f(x) {{\n  b0 = x;\n{ordered}  b{}\n}}\n", n - 1)
+        }
+        1 => {
+            let reversed = (0..n - 1)
+                .map(|i| format!("  b{i} = b{} + 1;\n", i + 1))
+                .collect::<String>();
+            format!("f(x) {{\n{reversed}  b{} = x;\n  b0\n}}\n", n - 1)
+        }
+        2 => {
+            let params = (0..n - 1)
+                .map(|i| format!("p{i} = p{}, ", i + 1))
+                .collect::<String>();
+            format!("f({params}p{} = 1) = p0;\n", n - 1)
+        }
+        _ => panic!("chains has three chains, not one at place {k}"),
+    };
+    let stmts = parsed(&text);
+    (text, stmts)
 }
 
 /// What each of the [`chains`] of `n` is, and how many errors its resolution reports: none in

@@ -107,7 +107,13 @@ fn a_meet_of_unions_of_functions_scales() {
             .join(" | ");
         parse_type(&text).expect("a union of functions")
     };
-    let n = 16384;
+    // n 8192 since TEST-split-chkbub1-long, 16384 before: at 16384 the test took 72.5 s alone
+    // at load 66 (killed at its limit at load 39 in main-watch's run of 2026-11-21), while its
+    // runs took 2.2 s at n and 15.7 s at 8n; the rest was building the inputs, both sizes in
+    // each of its two processes (`scaling::inputs`, `scaling::compare_by`). At 8192 the run at n
+    // is near the 1 s per run at n the benchmarks are sized to (author P169), and the building
+    // halves with it. The case is the same.
+    let n = 8192;
     let sides = scaling::inputs(n, |m| (union(m, "int | #a"), union(m, "int | #b")));
     scaling::check("the meet of two unions of n functions", n, |m| {
         let (a, b): &(Ty, Ty) = &sides[&m];
@@ -265,123 +271,203 @@ fn a_meet_of_overloads_over_functions_of_results_sharing_no_value_scales() {
 /// `Never ->? Never` met with a function over a function curried `n` deep is empty, the curried
 /// function proved to exist on a work list (`Domains::inhabited_fn`). Small instances:
 /// `judgments::a_meet_of_functions_kept_before_is_within_each_side`.
-#[test]
-fn meets_of_many_arrows_narrow_values_in_linear_time() {
+///
+/// One test for each check (TEST-split-chkbub1-long). Until then the nine checks were one test,
+/// which took 110 s at load 42 and 55.5 s at load 13 in main-watch's runs of 2026-11-21, and
+/// 154.8 s alone at load 45, while its nine measured runs (at n and at 8n) added up to 18.5 s.
+/// The rest was the replays of `scaling::compare_by`: on a count of instructions the run at 8n
+/// of check `k` runs in a new process of the test binary, which runs the test from its start
+/// and replays each earlier check `j < k` at both sizes, unmeasured, before it measures; and
+/// each process built the inputs of all three families at both sizes. So a test of `c` checks
+/// runs check `j`'s two sizes `c - j` times, about `c²/2` runs where `c` would do. As tests of
+/// one check each, no check is replayed and each process builds only its own check's inputs;
+/// the checks, their inputs, sizes and limits are as before.
+mod meets_of_many_arrows_narrow_values_in_linear_time {
+    use super::*;
     use zedc::check::read::parse_type;
     use zedc::check::ty::Ty;
-    let overload = |m: usize, arrow: &dyn Fn(usize) -> String| {
+
+    /// The overload of the `m` arrows `arrow(0) & .. & arrow(m - 1)`.
+    fn overload(m: usize, arrow: &dyn Fn(usize) -> String) -> Ty {
         let text = (0..m).map(arrow).collect::<Vec<_>>().join(" & ");
         parse_type(&text).expect("an overload")
-    };
-    let curried = |m: usize| {
-        let nest = vec!["int"; m + 1].join(" -> ");
-        parse_type(&format!("({nest}) -> Never")).expect("a curried function")
-    };
-    // `((... ((key -> String) -> int) ...) -> int)`, `m` levels over the key.
-    let deep = |m: usize, key: &str| {
-        let mut text = format!("{key} -> String");
-        for _ in 0..m {
-            text = format!("({text}) -> int");
-        }
-        parse_type(&text).expect("a function over functions")
-    };
-    let n = 2048;
-    let sides = scaling::inputs(n, |m| {
-        [
-            overload(m, &|i| format!("(#k{i} -> #v{i} | #w)")),
-            overload(m, &|i| format!("(#k{i} ->? #v{i})")),
-            overload(m, &|i| {
-                format!("((#k{i} .. (#k{i} | #j{i}) -> int) -> int)")
-            }),
-            overload(m, &|i| format!("((#j{i} -> int) -> int)")),
-            overload(m, &|i| format!("(((#k{i} -> int, #k{i})) -> int)")),
-            overload(m, &|i| format!("(((#k{i} -> int, #k{i}, ())) -> int)")),
-        ]
-    });
-    scaling::check("meets of n arrows narrowing values", n, |m| {
-        let [exact, partial, ..]: &[Ty; 6] = &sides[&m];
-        let met = exact.meet(partial);
-        assert_eq!(met.fns.len(), 1);
-        assert_eq!(met.fns[0].arrows.len(), m);
-        assert!(met.fns[0].arrows.iter().all(|a| !a.partial));
-    });
-    scaling::check("meets of n arrows over two-bound domains", n, |m| {
-        let [_, _, bounded, apart, ..]: &[Ty; 6] = &sides[&m];
-        assert!(bounded.meet(apart).fns.is_empty());
-    });
-    scaling::check("meets of n arrows over tuples holding functions", n, |m| {
-        let [.., pairs, triples]: &[Ty; 6] = &sides[&m];
-        assert!(pairs.meet(triples).fns.is_empty());
-    });
-    // Unions of many function types on both sides of a meet, alone and as the parameter or
-    // value types `Domains::meet` meets: only the pairs whose domains are not proved apart are
-    // tried (`Pairs::fns_met`). Before (TYPES-meet-fns-indexed), each pair was tried: the meet
-    // of the two unions took 84 ms to 3.46 s from m = 32 to 256, and the meets of parameter
-    // and value types were skipped, which made them 0.33 s to 6.5 s and 0.19 s to 5.1 s.
-    let union = |m: usize, key: &str| {
+    }
+
+    /// `(#{key}0 -> int) | .. | (#{key}(m-1) -> int)`, in parentheses.
+    fn union(m: usize, key: &str) -> String {
         let u = (0..m)
             .map(|i| format!("(#{key}{i} -> int)"))
             .collect::<Vec<_>>()
             .join(" | ");
         format!("({u})")
-    };
-    let n = 1024;
-    let unions = scaling::inputs(n, |m| {
-        [
-            parse_type(&format!("{} ->? int", union(2 * m, "k"))).expect("an arrow"),
-            parse_type(&format!("{} -> int", union(m, "k"))).expect("an arrow"),
-            parse_type(&format!("{} ->? int", union(m, "j"))).expect("an arrow"),
-            overload(m, &|i| format!("(#k{i} -> (#k{i} -> int))")),
-            overload(m, &|i| format!("(#k{i} -> (#j{i} -> int))")),
-            parse_type(&union(m, "k")).expect("a union"),
-            parse_type(&union(m, "j")).expect("a union"),
-        ]
-    });
-    scaling::check("a meet of two unions of n functions apart", n, |m| {
-        let [.., ks, js]: &[Ty; 7] = &unions[&m];
-        assert!(ks.meet(js).fns.is_empty());
-    });
-    scaling::check("a meet of arrows over unions of n functions", n, |m| {
-        let [wide, narrow, ..]: &[Ty; 7] = &unions[&m];
-        assert_eq!(wide.meet(narrow).fns.len(), 1);
-    });
-    scaling::check(
-        "a meet of partial arrows over unions of n functions",
-        n,
-        |m| {
-            // The parameter types `#ki -> int` and `#ji -> int` share no function.
-            let [wide, _, other, ..]: &[Ty; 7] = &unions[&m];
-            assert!(wide.meet(other).fns.len() <= 1);
-        },
-    );
-    scaling::check("a meet of n arrows over functions as values", n, |m| {
-        // The values' domains differ, so no function is of both.
-        let [.., own, other, _, _]: &[Ty; 7] = &unions[&m];
-        assert!(own.meet(other).fns.is_empty());
-    });
+    }
+
+    /// `((... ((key -> String) -> int) ...) -> int)`, `m` levels over the key.
+    fn deep(m: usize, key: &str) -> Ty {
+        let mut text = format!("{key} -> String");
+        for _ in 0..m {
+            text = format!("({text}) -> int");
+        }
+        parse_type(&text).expect("a function over functions")
+    }
+
+    /// `(int -> .. -> int) -> Never`, a function over a function curried `m` deep.
+    fn curried(m: usize) -> Ty {
+        let nest = vec!["int"; m + 1].join(" -> ");
+        parse_type(&format!("({nest}) -> Never")).expect("a curried function")
+    }
+
+    #[test]
+    fn narrowing_values() {
+        let n = 2048;
+        let sides = scaling::inputs(n, |m| {
+            [
+                overload(m, &|i| format!("(#k{i} -> #v{i} | #w)")),
+                overload(m, &|i| format!("(#k{i} ->? #v{i})")),
+            ]
+        });
+        scaling::check("meets of n arrows narrowing values", n, |m| {
+            let [exact, partial]: &[Ty; 2] = &sides[&m];
+            let met = exact.meet(partial);
+            assert_eq!(met.fns.len(), 1);
+            assert_eq!(met.fns[0].arrows.len(), m);
+            assert!(met.fns[0].arrows.iter().all(|a| !a.partial));
+        });
+    }
+
+    #[test]
+    fn over_two_bound_domains() {
+        let n = 2048;
+        let sides = scaling::inputs(n, |m| {
+            [
+                overload(m, &|i| {
+                    format!("((#k{i} .. (#k{i} | #j{i}) -> int) -> int)")
+                }),
+                overload(m, &|i| format!("((#j{i} -> int) -> int)")),
+            ]
+        });
+        scaling::check("meets of n arrows over two-bound domains", n, |m| {
+            let [bounded, apart]: &[Ty; 2] = &sides[&m];
+            assert!(bounded.meet(apart).fns.is_empty());
+        });
+    }
+
+    #[test]
+    fn over_tuples_holding_functions() {
+        let n = 2048;
+        let sides = scaling::inputs(n, |m| {
+            [
+                overload(m, &|i| format!("(((#k{i} -> int, #k{i})) -> int)")),
+                overload(m, &|i| format!("(((#k{i} -> int, #k{i}, ())) -> int)")),
+            ]
+        });
+        scaling::check("meets of n arrows over tuples holding functions", n, |m| {
+            let [pairs, triples]: &[Ty; 2] = &sides[&m];
+            assert!(pairs.meet(triples).fns.is_empty());
+        });
+    }
+
+    // Unions of many function types on both sides of a meet, alone and as the parameter or
+    // value types `Domains::meet` meets (the next four tests): only the pairs whose domains are
+    // not proved apart are tried (`Pairs::fns_met`). Before (TYPES-meet-fns-indexed), each pair
+    // was tried: the meet of the two unions took 84 ms to 3.46 s from m = 32 to 256, and the
+    // meets of parameter and value types were skipped, which made them 0.33 s to 6.5 s and
+    // 0.19 s to 5.1 s.
+
+    #[test]
+    fn two_unions_of_functions_apart() {
+        let n = 1024;
+        let unions = scaling::inputs(n, |m| {
+            [
+                parse_type(&union(m, "k")).expect("a union"),
+                parse_type(&union(m, "j")).expect("a union"),
+            ]
+        });
+        scaling::check("a meet of two unions of n functions apart", n, |m| {
+            let [ks, js]: &[Ty; 2] = &unions[&m];
+            assert!(ks.meet(js).fns.is_empty());
+        });
+    }
+
+    #[test]
+    fn arrows_over_unions_of_functions() {
+        let n = 1024;
+        let unions = scaling::inputs(n, |m| {
+            [
+                parse_type(&format!("{} ->? int", union(2 * m, "k"))).expect("an arrow"),
+                parse_type(&format!("{} -> int", union(m, "k"))).expect("an arrow"),
+            ]
+        });
+        scaling::check("a meet of arrows over unions of n functions", n, |m| {
+            let [wide, narrow]: &[Ty; 2] = &unions[&m];
+            assert_eq!(wide.meet(narrow).fns.len(), 1);
+        });
+    }
+
+    #[test]
+    fn partial_arrows_over_unions_of_functions() {
+        let n = 1024;
+        let unions = scaling::inputs(n, |m| {
+            [
+                parse_type(&format!("{} ->? int", union(2 * m, "k"))).expect("an arrow"),
+                parse_type(&format!("{} ->? int", union(m, "j"))).expect("an arrow"),
+            ]
+        });
+        scaling::check(
+            "a meet of partial arrows over unions of n functions",
+            n,
+            |m| {
+                // The parameter types `#ki -> int` and `#ji -> int` share no function.
+                let [wide, other]: &[Ty; 2] = &unions[&m];
+                assert!(wide.meet(other).fns.len() <= 1);
+            },
+        );
+    }
+
+    #[test]
+    fn arrows_over_functions_as_values() {
+        let n = 1024;
+        let unions = scaling::inputs(n, |m| {
+            [
+                overload(m, &|i| format!("(#k{i} -> (#k{i} -> int))")),
+                overload(m, &|i| format!("(#k{i} -> (#j{i} -> int))")),
+            ]
+        });
+        scaling::check("a meet of n arrows over functions as values", n, |m| {
+            // The values' domains differ, so no function is of both.
+            let [own, other]: &[Ty; 2] = &unions[&m];
+            assert!(own.meet(other).fns.is_empty());
+        });
+    }
+
     // Nested types are read and met on frames of their own, but kept smaller, as the texts
-    // grow with the depth.
-    let depth = 128;
-    let nests = scaling::inputs(depth, |m| {
-        [
-            deep(m, "int"),
-            deep(m, "()"),
-            curried(m),
-            parse_type("Never ->? Never").expect("no key"),
-        ]
-    });
-    scaling::check(
-        "a meet of functions over functions nested n deep",
-        depth,
-        |m| {
-            let [ints, units, ..]: &[Ty; 4] = &nests[&m];
-            assert!(ints.meet(units).fns.is_empty());
-        },
-    );
-    scaling::check("a meet with a function curried n deep", depth, |m| {
-        let [.., nest, none]: &[Ty; 4] = &nests[&m];
-        assert!(nest.meet(none).fns.is_empty());
-    });
+    // grow with the depth (the next two tests).
+
+    #[test]
+    fn functions_over_functions_nested_deep() {
+        let depth = 128;
+        let nests = scaling::inputs(depth, |m| [deep(m, "int"), deep(m, "()")]);
+        scaling::check(
+            "a meet of functions over functions nested n deep",
+            depth,
+            |m| {
+                let [ints, units]: &[Ty; 2] = &nests[&m];
+                assert!(ints.meet(units).fns.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn a_function_curried_deep() {
+        let depth = 128;
+        let nests = scaling::inputs(depth, |m| {
+            [curried(m), parse_type("Never ->? Never").expect("no key")]
+        });
+        scaling::check("a meet with a function curried n deep", depth, |m| {
+            let [nest, none]: &[Ty; 2] = &nests[&m];
+            assert!(nest.meet(none).fns.is_empty());
+        });
+    }
 }
 
 /// A tuple nested `n` deep with a function at each depth is a subtype of the same tuple with
