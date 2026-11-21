@@ -116,13 +116,23 @@ struct Node<T> {
 type Tree<T> = Option<Arc<Node<T>>>;
 
 /// A pair of [`TreapSet::is_subset`]'s walk: a subtree of each set and the bounds of the range,
-/// each `None` where the range has no bound on that side.
+/// each `None` where the range has no bound on that side, and the greatest key of `self` below
+/// every key of its subtree (`None`: no key below), for step 13.
 type Pair<'a, T> = (
     Option<&'a Arc<Node<T>>>,
     Option<&'a Arc<Node<T>>>,
     Option<&'a T>,
     Option<&'a T>,
+    Option<&'a T>,
 );
+
+#[cfg(test)]
+thread_local! {
+    /// The units of work [`TreapSet::is_subset`] has done on this thread, counted in tests only:
+    /// pairs taken and moves of `p`. The test
+    /// `is_subset_work_within_its_bound` holds it to the bound of the proof.
+    static IS_SUBSET_WORK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 /// A set is freed in a loop, a node whose last handle goes handing its children on, so a set of
 /// any height is dropped on a small stack (as `types::bdd::list::treap` does).
@@ -654,26 +664,84 @@ impl<T: Elem> TreapSet<T> {
     ///     `[m, M]` is next to `m` or `M` only, and a gap next to its two ends; each key `s` has
     ///     at most `h'` ancestors.
     ///
-    /// So the work is `O(U + D_out + D_in h + h + 1)`. Where `other` has no key outside `self` (a
-    /// set and a narrowing of it, either way round), `D = 0` and the work is `O(U + h)`. Where
-    /// `self` is a cut of `other` to a range (`at_least`, `at_most`, or both), `self` lies in
-    /// `other` with no gap, `D_in = 0`, `D_out <= 2 h'`, and the cut makes new nodes only along
-    /// its two paths, `U <= 2h`: `O(h + h')`, `O(log k)` expected for `k` keys (the expected
-    /// height, module comment). For `self` and `other` made from one set by `d` edits, each
-    /// making new nodes along one path and adding or removing at most one key, `U = O(d h)` and
-    /// `D <= d`, so `O(d log k)` expected. For `self` a set of `g + 1` cuts of `other` joined in
-    /// order, `U = O(g h)` and `D_in <= 2 g h'`, so `O(g h h')`, `O(g log^2 k)` expected. Not
-    /// proved (PROOF-kernel-treap-is-subset-gaps): that the moves at the `D_in` keys of one gap
-    /// total `O(h)`, not `O(h h')`. Every key of a gap has the same search path in `self`, and a
-    /// pair whose range lies in the gap walks it down to an empty subtree; nothing here remembers
-    /// that the gap is empty, so the next such pair walks it again.
-    /// Sets not made from one another share no node and `U` is up to `|self|`. Until 2026-11-21
-    /// this was
-    /// `self.difference(other).is_empty()`, which made the difference's nodes and went on past
-    /// the first key missing, a split of `O(h)` and a join at each pair. Tests:
-    /// `every_operation_agrees_with_a_btree_set` and `is_subset_agrees_on_sets_made_from_one_set`
-    /// (correctness), `bench::is_subset_scales_with_the_edits_not_the_size` (at n and 8n).
+    /// Steps 10 and 11 give `O(D_in h)` moves, and without more that is reached: every key of a
+    /// gap has the same search path in `self`, and each pair whose range lies in the gap walked
+    /// it down to an empty subtree again (PROOF-kernel-treap-is-subset-gaps, 2026-11-21). So:
+    ///
+    /// 12. The walk keeps the last range it found to hold no key of `self`, `(a, b)`. A pair
+    ///     whose `p` has its root outside the range (so that step 1 would move it), and whose
+    ///     range lies inside `(a, b)`, holds, as at step 3, whatever the order of the pairs, since
+    ///     `(a, b)` holds no key of `self` (step 13). A pair whose root is in the range makes no
+    ///     move, so the check would save nothing there and is not made.
+    /// 13. Each pair carries `pred`, the greatest key of `self` below every key of `p`'s subtree
+    ///     (`None` at the root, none below). It stays exact: the left child of step 4 keeps its
+    ///     parent's and the right child takes `x`'s key, as no key of `self` lies between `x` and
+    ///     the least key of its right subtree (keys in order); step 6 keeps `p`, so `pred`; a move
+    ///     right past `n` takes `n`'s key, for the same reason, and a move left keeps it. Each of
+    ///     these keeps `pred <= lo`: at the root both are `None`, the right child of step 4 has
+    ///     `lo` the key of `x`, step 6 only raises `lo`, and a move right passes `n <= lo`. When
+    ///     `p` ends empty after its moves, no key of `self` lies between `pred` and the least key
+    ///     of `self` above `p`'s subtree, which is at least `hi` (the same argument from the other
+    ///     side), so `(pred, hi)` holds no key of `self` and is kept: its lower end is the key of
+    ///     `self` next below the range and its upper end is `hi`, with no search.
+    /// 14. Each gap costs at most `3h` moves. Let `s1 < s2` be keys of `self`
+    ///     next to each other with keys of `other` between them, the gap `G`. A move passes a
+    ///     node only at a bound `z` in `D_in` (step 10); let `z` be in `G`. A pair with bound `z`
+    ///     lies inside `G`, or holds `s1` with its upper bound in `G`, or `s2` with its lower
+    ///     bound in `G`. (a) The pairs that hold `s1` with upper bound in `G` form one chain: a
+    ///     split at a key below `s1` gives one such child (the upper one), at a key in `G` one
+    ///     (the lower one), at `s1` none. Along the chain each `p` starts where its parent's
+    ///     ended (step 6) or at a child of it (step 4), so the chain's moves go down one path of
+    ///     `self`: at most `h`. The same for `s2`. (b) A pair inside `G` pushes no pair, as its
+    ///     `p` ends empty. The pairs that push none have ranges apart from one another and the
+    ///     walk takes them in falling order of their ranges, as `pairs` is a stack and the upper
+    ///     pair of a split is pushed last, so those inside `G` come one after another with none
+    ///     of another gap between them, and no pair between them changes the kept range (step 13
+    ///     changes it only at a pair whose `p` ends empty, whose range holds no key of `self`, so
+    ///     lies between `s1` and `s2` when between them in order). The first that moves keeps
+    ///     `(s1, hi)` (step 13), after at most `h` moves; every later one lies below that `hi`
+    ///     and above `s1`, and either has `p` empty or its root outside its range (the range
+    ///     holds no key of `self`), so holds at step 12 at once, or makes no move.
+    ///
+    /// So the work is `O(U + D + g h + h)`, `g` the number of gaps (at most `D_in`), besides the
+    /// `O(h)` of `first` and `last`: at most `2 (U + D) + 1` pairs (step 9) and `3 g h` moves
+    /// (step 14), which the test `is_subset_work_within_its_bound` counts. The cost of steps 12
+    /// and 13 where they save nothing: `pred`, one word more on every pair, and the check of
+    /// step 12 on pairs that move; measured 2026-11-21 against the walk without them, in
+    /// instructions, 4% to 11% more (65 cuts of `l` keys with 64 gaps of `l`, `l = 16` and
+    /// `128`; `d = 64`
+    /// edits of 2^17 keys; the middle half of 2^17 keys). A search for the lower end at step 13
+    /// in place of `pred` cost 31% more on the edits. Where
+    /// `other` has no key outside `self` (a set and a narrowing of it, either way round), `D = 0`
+    /// and the work is `O(U + h)`. Where `self` is a cut of `other` to a range (`at_least`,
+    /// `at_most`, or both), `self` lies in `other` with no gap, `g = 0`, `D_out <= 2 h'`, and the
+    /// cut makes new nodes only along its two paths, `U <= 2h`: `O(h + h')`, `O(log k)` expected
+    /// for `k` keys (the expected height, module comment). For `self` and `other` made from one
+    /// set by `d` edits, each making new nodes along one path and adding or removing at most one
+    /// key, `U = O(d h)` and `D, g <= d`, so `O(d log k)` expected. For `self` a set of `g + 1`
+    /// cuts of `other` joined in order, `U = O(g h)` and `D_in <= 2 g h'`, so `O(g (h + h'))`,
+    /// `O(g log k)` expected. Sets not made from one another share no node and `U` is up to
+    /// `|self|`. Until 2026-11-21 this was `self.difference(other).is_empty()`, which made the
+    /// difference's nodes and went on past the first key missing, a split of `O(h)` and a join at
+    /// each pair. Tests: `every_operation_agrees_with_a_btree_set` and
+    /// `is_subset_agrees_on_sets_made_from_one_set` (correctness),
+    /// `is_subset_work_within_its_bound` (the units of work against the bound, on gaps that the
+    /// walk without steps 12 to 14 took past it),
+    /// `bench::is_subset_scales_with_the_edits_not_the_size` and
+    /// `bench::is_subset_of_joined_cuts_scales_with_the_gaps` (at n and 8n).
     pub fn is_subset(&self, other: &Self) -> bool {
+        let mut work = 0;
+        let held = self.subset_walk(other, &mut work);
+        #[cfg(test)]
+        IS_SUBSET_WORK.with(|c| c.set(c.get() + work));
+        held
+    }
+
+    /// The walk of [`TreapSet::is_subset`], adding its units of work to `work`: a local count,
+    /// which a build without tests drops, so that the count costs one add a unit in tests and
+    /// nothing outside them.
+    #[inline(always)]
+    fn subset_walk(&self, other: &Self, work: &mut u64) -> bool {
         if self.len() > other.len() {
             return false;
         }
@@ -681,19 +749,50 @@ impl<T: Elem> TreapSet<T> {
             return true;
         };
         let mut pairs: Vec<Pair<'_, T>> =
-            vec![(self.root.as_ref(), other.root.as_ref(), None, None)];
-        while let Some((mut p, q, lo, hi)) = pairs.pop() {
+            vec![(self.root.as_ref(), other.root.as_ref(), None, None, None)];
+        // Step 12: the last range found to hold no key of `self`, `(a, b)` with `a` `None` where
+        // it has no lower bound.
+        let mut free: Option<(Option<&T>, &T)> = None;
+        while let Some((mut p, q, lo, hi, mut pred)) = pairs.pop() {
+            *work += 1;
             // Step 3, the range outside `[least, greatest]`.
             if hi.is_some_and(|h| h <= least) || lo.is_some_and(|l| l >= greatest) {
                 continue;
             }
-            // Step 1: `p` moved down to its first node in the range.
-            while let Some(n) = p {
-                p = match (lo, hi) {
-                    (Some(l), _) if n.key <= *l => n.right.as_ref(),
-                    (_, Some(h)) if n.key >= *h => n.left.as_ref(),
-                    _ => break,
-                };
+            let outside =
+                |n: &Node<T>| lo.is_some_and(|l| n.key <= *l) || hi.is_some_and(|h| n.key >= *h);
+            if p.is_some_and(|n| outside(n)) {
+                // Step 12, the range inside the free range.
+                if let (Some((a, b)), Some(h)) = (free, hi) {
+                    let above_a = match (a, lo) {
+                        (None, _) => true,
+                        (Some(a), Some(l)) => l >= a,
+                        (Some(_), None) => false,
+                    };
+                    if h <= b && above_a {
+                        continue;
+                    }
+                }
+                // Step 1: `p` moved down to its first node in the range, `pred` kept (step 13).
+                while let Some(n) = p {
+                    p = match (lo, hi) {
+                        (Some(l), _) if n.key <= *l => {
+                            pred = Some(&n.key);
+                            n.right.as_ref()
+                        }
+                        (_, Some(h)) if n.key >= *h => n.left.as_ref(),
+                        _ => break,
+                    };
+                    *work += 1;
+                }
+                // Step 13: `p` ended empty, and the free range is from the key of `self` next
+                // below the range to `hi`.
+                if p.is_none() {
+                    if let Some(h) = hi {
+                        free = Some((pred, h));
+                    }
+                    continue;
+                }
             }
             // Step 3.
             let Some(x) = p else { continue };
@@ -703,15 +802,21 @@ impl<T: Elem> TreapSet<T> {
             }
             if x.key == y.key {
                 // Step 4.
-                pairs.push((x.left.as_ref(), y.left.as_ref(), lo, Some(&x.key)));
-                pairs.push((x.right.as_ref(), y.right.as_ref(), Some(&x.key), hi));
+                pairs.push((x.left.as_ref(), y.left.as_ref(), lo, Some(&x.key), pred));
+                pairs.push((
+                    x.right.as_ref(),
+                    y.right.as_ref(),
+                    Some(&x.key),
+                    hi,
+                    Some(&x.key),
+                ));
             } else if above(x, y) {
                 // Step 5.
                 return false;
             } else {
                 // Step 6.
-                pairs.push((p, y.left.as_ref(), lo, Some(&y.key)));
-                pairs.push((p, y.right.as_ref(), Some(&y.key), hi));
+                pairs.push((p, y.left.as_ref(), lo, Some(&y.key), pred));
+                pairs.push((p, y.right.as_ref(), Some(&y.key), hi, pred));
             }
         }
         true

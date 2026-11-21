@@ -240,3 +240,71 @@ fn is_subset_agrees_on_sets_made_from_one_set() {
         assert!(a.is_subset(a) && a.is_subset(&a.clone()));
     }
 }
+
+/// The height of a tree: the nodes on its longest path from the root.
+fn height(t: &Tree<i64>) -> u64 {
+    t.as_ref()
+        .map_or(0, |n| 1 + height(&n.left).max(height(&n.right)))
+}
+
+#[test]
+fn is_subset_work_within_its_bound() {
+    // The proof at `is_subset` (steps 9, 10 and 12 to 14) bounds its work, as `IS_SUBSET_WORK`
+    // counts it, by `2U + 2D + 3gh + 1`: at most `2 (U + D) + 1` pairs, and for each of the `g`
+    // gaps at most `2h` moves in the two chains of pairs that hold an end of the gap and `h`
+    // moves of the first pair inside the gap that moves. Here `D` is bounded by the keys of
+    // `other` not in `self`. The input makes the walk without steps 12 to 14 go past that bound:
+    // `self` is 1024 keys `2^30` apart and `other` is `self` with 200 keys put into each of 32
+    // gaps, chosen so that each is an ancestor of the gap's least end `s` in `other` (a key `z`
+    // above `s` is one when it stands above every key from `s` to `z`, so the keys are taken
+    // going up from `s` with priorities rising in steps of at most a band). Each of the 200
+    // keys then takes step 6 with a pair inside the gap, which without step 12 walks down the
+    // search path of the gap in `self` again: about 200 such walks a gap where the bound allows
+    // 2 · 200 + 3h units. Priorities are drawn once per run, so the keys are chosen at run time.
+    const W: i64 = 1 << 30;
+    const KEYS_IN_GAP: u64 = 200;
+    let ends: Vec<i64> = (0..1024).map(|j| j * W).collect();
+    let small: TreapSet<i64> = ends.iter().copied().collect();
+    let mut big_keys = ends.clone();
+    let mut gaps = 0;
+    for &s in &ends[..1023] {
+        if gaps == 32 {
+            break;
+        }
+        // Only an end in the lower half of the priorities, so the band below `u64::MAX` holds
+        // the 200 rises.
+        let mut last = s.priority();
+        if last > u64::MAX / 2 {
+            continue;
+        }
+        let band = (u64::MAX - last) / (2 * KEYS_IN_GAP);
+        let mut x = s;
+        for _ in 0..KEYS_IN_GAP {
+            loop {
+                x += 1;
+                assert!(x < s + W, "the gap after {s} ran out of keys");
+                let p = x.priority();
+                if p > last && p - last <= band {
+                    last = p;
+                    big_keys.push(x);
+                    break;
+                }
+            }
+        }
+        gaps += 1;
+    }
+    assert_eq!(gaps, 32);
+    let big: TreapSet<i64> = big_keys.iter().copied().collect();
+    let u = small.len() as u64; // built apart: no node shared
+    let d = (big.len() - small.len()) as u64;
+    let h = height(&small.root);
+    let bound = 2 * u + 2 * d + 3 * gaps * h + 1;
+    IS_SUBSET_WORK.with(|c| c.set(0));
+    assert!(small.is_subset(&big));
+    let work = IS_SUBSET_WORK.with(|c| c.get());
+    eprintln!("is_subset work {work}, bound {bound} (U = {u}, D <= {d}, g = {gaps}, h = {h})");
+    assert!(
+        work <= bound,
+        "is_subset did {work} units of work, over the bound 2U + 2D + 4gh + 1 = {bound}"
+    );
+}

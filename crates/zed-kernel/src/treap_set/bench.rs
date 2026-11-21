@@ -153,3 +153,75 @@ fn is_subset_scales_with_the_edits_not_the_size() {
         0,
     );
 }
+
+/// `g + 1` cuts of the keys `0..(2g + 1) l`, each of `l` keys with a gap of `l` keys between
+/// them, joined in order, and the keys.
+fn joined_cuts(g: i64, l: i64) -> (TreapSet<i64>, TreapSet<i64>) {
+    let all: TreapSet<i64> = (0..(2 * g + 1) * l).collect();
+    let mut joined = TreapSet::new();
+    for i in 0..=g {
+        joined = joined.concat(&all.at_least(&(2 * i * l)).at_most(&(2 * i * l + l - 1)));
+    }
+    (joined, all)
+}
+
+/// The nodes on the search path of `key` in a tree whose keys lie strictly between `lo` and
+/// `hi`: for `key` an end of a gap of `self` and `t` the tree of `other`, the keys of the gap that
+/// are ancestors of `key`, which bound the pairs of step 6 at that gap (step 11 at `is_subset`).
+fn inside_on_path(t: &Tree<i64>, key: i64, lo: i64, hi: i64) -> u64 {
+    let (mut d, mut n) = (0, t.as_ref());
+    while let Some(x) = n {
+        d += u64::from(lo < x.key && x.key < hi);
+        if x.key == key {
+            break;
+        }
+        n = if key < x.key {
+            x.left.as_ref()
+        } else {
+            x.right.as_ref()
+        };
+    }
+    d
+}
+
+#[test]
+fn is_subset_of_joined_cuts_scales_with_the_gaps() {
+    // 64 gaps of `l` and `8l` keys: the proof's case of `g + 1` cuts joined
+    // (PROOF-kernel-treap-is-subset-gaps). The work per unit of what the proof charges
+    // (`O(U + D + g h + h)`), held to the limit of power 0: `U`; for each gap the keys of the gap
+    // on the search paths of its two ends in `other` (they bound `D`, step 11) and the depths of
+    // the two ends in both trees (the search path of the gap in `self`, and the ancestors in
+    // `other`); and the two spines of `self` that `first` and `last` walk.
+    //
+    // What this ratio cannot see: the walk without steps 12 to 14 went down the search path of a
+    // gap in `self` once for each key of the gap on those paths, about `2 ln l` of them for
+    // random priorities, so its work per unit grew only as `log l`, and the work that does not
+    // depend on `l` hides most of that: it measured 1.21 times at `l` = 128 and 1024 and 1.38 at
+    // 16 and 128 (2026-11-21, units without the term for `D`), close to the limit of 1.31 either
+    // way. The test that fails on that walk is `is_subset_work_within_its_bound` in `tests.rs`,
+    // which counts the walk's units of work on gaps built with 200 such keys each.
+    let g = 64;
+    let mut meter = crate::scaling::Meter::new();
+    let [small, large] = [16i64, 128].map(|l| {
+        let (joined, all) = joined_cuts(g, l);
+        let mut bound =
+            not_shared(&joined, &all) + spine(&joined.root, true) + spine(&joined.root, false);
+        for i in 0..g {
+            let (s1, s2) = (2 * i * l + l - 1, 2 * i * l + 2 * l);
+            for end in [s1, s2] {
+                bound += depth(&joined.root, end)
+                    + depth(&all.root, end)
+                    + inside_on_path(&all.root, end, s1, s2);
+            }
+        }
+        per_unit(&mut meter, &joined, &all, bound)
+    });
+    crate::scaling::hold(
+        "is_subset of 65 cuts of the keys joined, gaps of l keys, against the keys, l = 16 and 128",
+        "instructions per node of U, per key of a gap on its ends' paths, per depth of a gap's \
+         ends and per spine",
+        small,
+        large,
+        0,
+    );
+}
