@@ -358,8 +358,8 @@ fn zed_files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 fn no_program_of_the_repository_has_a_bare_else() {
-    // The corpus, the fence fixtures, the prelude and every other `.zed` file under `zed/`, and
-    // the fences of README.md. libzed (/home/luke/Work/libzed, a repository of its own that no
+    // The corpus, the fence fixtures, the prelude and every other `.zed` file under `zed/` (the
+    // fences of README.md: the next test). libzed (/home/luke/Work/libzed, a repository of its own that no
     // test here reads) held no program on 2026-11-21. A file the lexer refuses is a failure.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut files = Vec::new();
@@ -373,12 +373,6 @@ fn no_program_of_the_repository_has_a_bare_else() {
             n => found.push(format!("{}: {n:?}", f.display())),
         }
     }
-    for f in zed_tests::fences::readme() {
-        match bare_elses(&f.text) {
-            Ok(0) => {}
-            n => found.push(format!("{}: {n:?}", f.at)),
-        }
-    }
     assert!(files.len() > 100, "{}", files.len());
     assert_eq!(found, Vec::<String>::new());
     // The scan finds each bare form, and none of the named ones.
@@ -387,6 +381,23 @@ fn no_program_of_the_repository_has_a_bare_else() {
                  d = if x { 1 } else if y { 2 } else { 3 }; // x else 0\ne = \"x else 0\";\n";
     assert_eq!(bare_elses(bare), Ok(4));
     assert_eq!(bare_elses(named), Ok(0));
+}
+
+/// The fences of README.md have no bare `else`. `readme` reads the table of words of the spec's
+/// DESIGN.md to lay the fences out, so the test is built with the feature `spec`, as `readme` is.
+#[cfg(feature = "spec")]
+#[test]
+fn no_fence_of_the_readme_has_a_bare_else() {
+    let fences = zed_tests::fences::readme();
+    let found: Vec<String> = fences
+        .iter()
+        .filter_map(|f| match bare_elses(&f.text) {
+            Ok(0) => None,
+            n => Some(format!("{}: {n:?}", f.at)),
+        })
+        .collect();
+    assert!(!fences.is_empty());
+    assert_eq!(found, Vec::<String>::new());
 }
 
 /// `lookup` and `n` bindings `a<i> = lookup(i) else 0;`, each a bare `else`.
