@@ -280,20 +280,27 @@ fn a_local_function_merged_with_an_outer_parameter_takes_the_arrow_of_its_atoms(
     // no atom, so `r` has two arrows over that class (the first takes no atom) and `r(#nf)`
     // takes the second, which lets `#nf` reach the result. It took the first, and `f` was
     // given `T -> T` while `f(2)` is `#nf`.
-    let t = "f(positional y) = { r(positional x) = if (x else 0) == 0 { x } else { x + y }; \
+    let t = "f(positional y) = { r(positional x) = if (x else #nf -> 0) == 0 { x } else { x + y }; \
              r(#nf) };\na = f(2);\n";
     assert_eq!(type_errors(t), Vec::<String>::new());
-    assert_eq!(sig(t, "f"), "T -> T | #_ for T in int | f32 | f64 | rat");
+    // The `else` names `#nf` (QUESTIONS A113), so the atom that reaches the result is the one
+    // `r(#nf)` passes and returns as `x`, `#nf` with its family, not every atom (`#_`), as the
+    // bare `else` that took every loose atom gave.
+    assert_eq!(
+        sig(t, "f"),
+        "T -> T | #nf | #nf(..) for T in int | f32 | f64 | rat"
+    );
     assert_eq!(value(t, "a"), "#nf");
     // A call passing an atom takes the second arrow and its result, which may hold the atom
     // (here the body returns `y` for it, so the value holds none); a call passing a number
     // takes the first arrow, whose result holds no atom.
-    let t = "f(positional y) = { r(positional x) = if (x else y) == y { y } else { x + y }; \
+    let t = "f(positional y) = { r(positional x) = if (x else #nf -> y) == y { y } else { x + y }; \
              (r(#nf), r(3)) };\na = f(2);\n";
     assert_eq!(type_errors(t), Vec::<String>::new());
+    // As above, the atom the first part may hold is the named `#nf`, not every atom.
     assert_eq!(
         sig(t, "f"),
-        "T -> (T | #_, T) for T in int | f32 | f64 | rat"
+        "T -> (T | #nf | #nf(..), T) for T in int | f32 | f64 | rat"
     );
     assert_eq!(value(t, "a"), "(2, 5)");
 }
