@@ -136,11 +136,13 @@ struct Graph<'f> {
 /// [`Forced::Holds`], its point not built. O(n) steps for `n` the size of `f` with each shared
 /// part counted once, plus hashing each atom; each step is arithmetic on the values fixed so
 /// far, which the propagation can make grow with the length of the formula, so the cost is
-/// O(n) only while those values keep a bounded size. Unproved as O(n) in general, and false on
+/// O(n) only while those values keep a bounded size. Unproved as O(n) in general. On
 /// `dark_chain(k)` (`0 <= 2 x[i+1] - 3 x[i] <= 1`, `1 <= x0 <= 9`, in
-/// `tests/steps/l01_38_presburger/exp_families.rs`): the rounds set `x0` and so fix every
-/// `x[i] >= (3/2)^i`, Θ(k²) bits in all; `decide` grew 13.93 times from k = 4800 to 38400
-/// (2026-11-21, PRES-dark-chain-forced-bits).
+/// `tests/steps/l01_38_presburger/exp_families.rs`) the rounds set `x0` and so fix every
+/// `x[i] >= (3/2)^i`, Θ(k²) bits in all: `decide` grew 13.93 times from k = 4800 to 38400
+/// (2026-11-21, PRES-dark-chain-forced-bits). Without `point`, [`Graph::eliminate`] now
+/// answers that chain before any round, fixing no value, in O(n); with `point` the Θ(k²) bits
+/// are the point itself, the size of the answer.
 pub(super) fn forced(f: &Formula, point: bool) -> Forced<'_> {
     let mut g = Graph::of(f);
     g.events.push(Event::Force(0));
@@ -152,6 +154,18 @@ pub(super) fn forced(f: &Formula, point: bool) -> Forced<'_> {
         Some(true) => Forced::Holds,
         _ => {
             let facts = g.facts(f);
+            // Without a point asked for, the variables that their rows leave a value whatever
+            // the others' values are eliminated first ([`Graph::eliminate`]); the formula that
+            // is left holds at some point exactly when `f` does, so its answer is `f`'s. The
+            // facts are read before, so they hold of `f` itself.
+            if !point {
+                if !g.eliminate() {
+                    return Forced::Empty;
+                }
+                if g.parts[0].value.get() == Some(&true) {
+                    return Forced::Holds;
+                }
+            }
             let mut trial = Trial::of(g);
             match (trial.holds().0 == Some(true), point) {
                 (false, _) => Forced::Undecided(facts),
@@ -613,6 +627,237 @@ impl<'f> Graph<'f> {
             .collect();
         Facts { formula: f, known }
     }
+
+    /// Eliminates each variable not known whose open constraints let it take a value whatever
+    /// values the other variables take, and values those constraints true; `false` when the
+    /// propagation that follows reaches a contradiction. For [`forced`] without a point
+    /// (PRES-dark-chain-forced-bits): the formula left holds at some point exactly when the
+    /// formula did, and the values the rounds at the bounds would fix (Θ(k²) bits on
+    /// `dark_chain(k)`) are never computed.
+    ///
+    /// The rows. Take the open constraints, those not yet valued, with every known variable's
+    /// value folded into the constant. A forced row `t >= 0` whose variables not known, with
+    /// nonzero coefficients, are `v1..vm` (m >= 1) is `λ·u + c >= 0` with
+    /// `u = p1·v1 + .. + pm·vm`, the `p` coprime and `p1 > 0` in the order of the row's terms,
+    /// which is the order of its atoms (`Lin::terms` is a `BTreeMap`): `λ` is the gcd of the
+    /// coefficients with the sign of the first. Rows with the same `(v, p)`, the key, are one
+    /// class: their rows bound the same integer `u`, `u >= ⌈-c/λ⌉` for `λ > 0` and
+    /// `u <= ⌊c/-λ⌋` for `λ < 0` ([`row_bound`]), so the class holds exactly when `u` lies in
+    /// `[L, U]`, the greatest lower bound and the least upper bound, either end open when no
+    /// row gives it. Two proportional rows have the same key, so every row of a class reads
+    /// the same variables, and every row that reads `x` with key `K` is in `K`'s class.
+    ///
+    /// The test. `x` is eliminated when no open constraint other than a forced row `t >= 0`
+    /// reads it, its open rows that remain are of one class `K`, and `U - L >= |p| - 1` for
+    /// `p` its coefficient in `K` (or an end of `[L, U]` is open). Lemma: then for every
+    /// integer value of the other variables of `K` there is an integer `x` with `u` in
+    /// `[L, U]`. Proof: write `u = p·x + r`, `r` an integer fixed by the others. `u` in
+    /// `[L, U]` is `p·x` in `[L - r, U - r]`, which holds `U - L + 1 >= |p|` consecutive
+    /// integers, so one of them is divisible by `|p|` (any `|p|` consecutive integers hold
+    /// each residue modulo `|p|` once), and `x` is that one divided by `p`. With an end open
+    /// the interval holds every integer past the other end, a multiple of `|p|` among them.
+    ///
+    /// Why the formula left has a point exactly when the formula does. Let `F` be the formula
+    /// and `F'` the formula with `K`'s rows replaced by `true`. `F'` reads no `x`: every
+    /// constraint reading `x` is one of those rows. A point of `F` is a point of `F'`, since
+    /// the rows are forced (they hold at every point of `F`, so replacing them by `true`
+    /// keeps the value of every part at that point). A point `q` of `F'` gives a point of
+    /// `F`: keep every value of `q` but `x`'s, and give `x` the value the lemma gives for the
+    /// other variables of `K` at `q`; `K`'s rows then hold, and every other part reads the
+    /// same values, so it has the same value, and `F` is true. Each elimination is a step
+    /// from `F` to such an `F'`, so after all of them the answer to "has a point" is
+    /// unchanged. The state of the propagation stays sound for `F'`: each value, bound and
+    /// mark it holds was proved for every point of `F`, and the points of `F` and `F'` agree
+    /// off the eliminated variables, which no part of `F'` reads; valuing the rows `true` is
+    /// what `F'` says. So a contradiction the propagation then reaches shows `F'`, hence
+    /// `F`, has no point, and the formula valued `true` shows it has one.
+    ///
+    /// The order does not matter. A class is removed whole (its rows all read `x`), so
+    /// `L`, `U` and the coefficients of the classes left never change, and removing a class
+    /// only lowers the number of classes a variable has left: a variable that passes the
+    /// test still passes after any other elimination. Each step adds a variable that passes,
+    /// so every order of steps ends with the same set, the closure of the monotone step from
+    /// the empty set; a renaming of the atoms renames the keys and keeps that set. A renaming
+    /// can change which term comes first and so the sign of a key; that negates `u` for every
+    /// row of the class at once, which turns `[L, U]` into `[-U, -L]` and leaves `U - L` and
+    /// the class itself as they are.
+    ///
+    /// Prior work: this is the exact case of an elimination of the Omega test, W. Pugh, "The
+    /// Omega test: a fast and practical integer programming algorithm for dependence
+    /// analysis", Supercomputing '91, pp. 4-13, DOI 10.1145/125826.125848 (record checked on
+    /// Crossref 2026-11-21; the paper itself was not read). Its dark shadow keeps, for a lower
+    /// bound `L <= a·x` and an upper bound `b·x <= U`, the points with `a·U - b·L > a·b - a -
+    /// b`, where an integer `x` is sure to exist; quoted from the statement in
+    /// A. Brănici-Faraon, Ş. Ciobâcă and C. Gratie, "Formalizing the Omega Test in Dafny",
+    /// arXiv 2609.34882, paper.tex line 93: "The \emph{Dark Shadow} strengthens this
+    /// condition to $aU-bL>ab-a-b$, guaranteeing the existence of an integer value for $x$"
+    /// (read from the arXiv source, 2026-11-21). Departures: the test here is applied only
+    /// where all of `x`'s rows are parallel, so the shadow of every pair is one row of the
+    /// others' `u` and the dark and real shadows are not needed at all: the rows are dropped
+    /// whole, with no new row written; and the test is on the integer ends `L`, `U` of `u`,
+    /// which the rounding of each bound makes exact, where the pairwise test is on the
+    /// unrounded rows. Nothing here splits into grey shadows: a variable that fails the test
+    /// is left as it is. Tests: `forced_against_solver::parallel_chains_agree_with_the_solver`
+    /// and `a_chain_whose_values_grow_is_decided_with_none_fixed`, and the benchmarks
+    /// `dark_chain_decide` and `dark_chain_answers` of `l01_38_presburger::bench::exp_families`.
+    // Complexity tradeoff: a variable is eliminated only when its rows are one class, so a
+    // system whose variables each have rows of two directions (`x - y >= 0` and `x + y >= 0`)
+    // is left to the rounds and the solver as before. Why: eliminating such a variable by the
+    // Omega test writes the shadow of each pair of a lower and an upper row, a product that
+    // can grow quadratically per step and exponentially in the number of steps, and its
+    // dark shadow can need grey shadows, a search; that is the solver's work, not O(n)
+    // propagation. Naive version: none before (the rounds fixed `x0` and then every `x[i]`,
+    // Θ(k²) bits on `dark_chain`). Used: one pass over the open constraints, a key per row
+    // (the row's own terms in atom order, divided by their gcd) hashed once, and a queue of
+    // the variables whose classes fall to one; each variable is queued at most once and each
+    // class removed at most once, so O(n) arithmetic on the coefficients and constants of the
+    // rows, which are the formula's own numbers and the known values folded in. COMPLEXITY.md
+    // row PRES-dark-chain-forced-bits.
+    fn eliminate(&mut self) -> bool {
+        /// An open forced row `λ·u + c >= 0`.
+        struct Open {
+            /// Its part.
+            part: u32,
+            /// The key of `u`: its variables in term order, each with its coefficient.
+            key: Vec<(u32, Int)>,
+            lambda: Int,
+            c: Int,
+        }
+        /// The rows of one key.
+        struct Class {
+            /// The first of its rows, whose key is the class's.
+            first: usize,
+            /// `L`, the greatest lower bound of `u` its rows give.
+            lo: Option<Int>,
+            /// `U`, the least upper bound.
+            hi: Option<Int>,
+            removed: bool,
+        }
+        let n_vars = self.vars.len();
+        // The open constraints that read each variable other than as a forced row `t >= 0`.
+        let mut bad = vec![0u32; n_vars];
+        let mut rows: Vec<Open> = Vec::new();
+        for (n, part) in self.parts.iter().enumerate() {
+            let Kind::Con(con) = part.kind else {
+                continue;
+            };
+            if part.value.get().is_some() {
+                continue;
+            }
+            let mut c = con.lin.constant.clone();
+            let mut key = Vec::new();
+            for &(v, k) in &self.terms[part.span.0 as usize..part.span.1 as usize] {
+                match self.vars[v as usize].known.get() {
+                    Some(value) => c = &c + &(k * value),
+                    None if !k.is_zero() => key.push((v, k.clone())),
+                    None => {}
+                }
+            }
+            if !(part.forced.is_raised() && con.rel == Rel::Ge) {
+                for &(v, _) in &key {
+                    bad[v as usize] += 1;
+                }
+                continue;
+            }
+            let Some(first) = key.first() else {
+                continue;
+            };
+            let g = (key.iter()).fold(Int::ZERO, |g, (_, k)| g.gcd(k));
+            let lambda = if first.1.is_negative() { -&g } else { g };
+            for (_, k) in &mut key {
+                *k = k.div_floor(&lambda);
+            }
+            rows.push(Open {
+                part: to_u32(n, "parts"),
+                key,
+                lambda,
+                c,
+            });
+        }
+        // The classes, the rows of each linked through `next`, from `head`.
+        let mut class_of: DigestMap<&[(u32, Int)], u32> = DigestMap::default();
+        let mut classes: Vec<Class> = Vec::new();
+        let (mut head, mut next) = (Vec::new(), vec![u32::MAX; rows.len()]);
+        for (i, row) in rows.iter().enumerate() {
+            let id = *class_of.entry(row.key.as_slice()).or_insert_with(|| {
+                classes.push(Class {
+                    first: i,
+                    lo: None,
+                    hi: None,
+                    removed: false,
+                });
+                head.push(u32::MAX);
+                to_u32(classes.len() - 1, "classes")
+            });
+            next[i] = head[id as usize];
+            head[id as usize] = to_u32(i, "rows");
+            let class = &mut classes[id as usize];
+            let end = row_bound(&row.lambda, &row.c);
+            if row.lambda.is_positive() {
+                if class.lo.as_ref().is_none_or(|l| end > *l) {
+                    class.lo = Some(end);
+                }
+            } else if class.hi.as_ref().is_none_or(|h| end < *h) {
+                class.hi = Some(end);
+            }
+        }
+        // Each variable's classes, with its coefficient in each (a counting sort, as `link`).
+        let mut at = vec![0u32; n_vars + 1];
+        for class in &classes {
+            for &(v, _) in &rows[class.first].key {
+                at[v as usize + 1] += 1;
+            }
+        }
+        for v in 0..n_vars {
+            at[v + 1] += at[v];
+        }
+        let mut fill = at.clone();
+        let mut of_var = vec![(0u32, &Int::ZERO); at[n_vars] as usize];
+        for (id, class) in classes.iter().enumerate() {
+            for (v, p) in &rows[class.first].key {
+                of_var[fill[*v as usize] as usize] = (to_u32(id, "classes"), p);
+                fill[*v as usize] += 1;
+            }
+        }
+        // The classes each variable has left.
+        let mut left: Vec<u32> = (0..n_vars).map(|v| at[v + 1] - at[v]).collect();
+        let mut queue: Vec<u32> = (0..n_vars)
+            .filter(|&v| bad[v] == 0 && left[v] == 1)
+            .map(|v| to_u32(v, "variables"))
+            .collect();
+        while let Some(x) = queue.pop() {
+            if left[x as usize] != 1 {
+                continue;
+            }
+            let span = at[x as usize] as usize..at[x as usize + 1] as usize;
+            let (id, p) = *(of_var[span].iter())
+                .find(|(id, _)| !classes[*id as usize].removed)
+                .expect("one class left");
+            let class = &classes[id as usize];
+            let passes = match (&class.lo, &class.hi) {
+                (Some(l), Some(h)) => &(h - l) + &Int::ONE >= p.abs(),
+                _ => true,
+            };
+            if !passes {
+                continue;
+            }
+            for &(v, _) in &rows[class.first].key {
+                left[v as usize] -= 1;
+                if v != x && left[v as usize] == 1 && bad[v as usize] == 0 {
+                    queue.push(v);
+                }
+            }
+            classes[id as usize].removed = true;
+        }
+        for (id, class) in classes.iter().enumerate() {
+            let mut r = head[id];
+            while class.removed && r != u32::MAX {
+                self.set(rows[r as usize].part, true);
+                r = next[r as usize];
+            }
+        }
+        self.run()
+    }
 }
 
 /// What the propagation proved of a formula it left undecided, before any round at the bounds:
@@ -974,12 +1219,19 @@ pub(super) mod trace {
         });
     }
 
-    /// The states after each event of [`super::forced`] on `f`, its rounds at the bounds
-    /// included.
-    pub(in super::super) fn states(f: &Formula) -> Vec<State> {
+    /// The states after each event of [`super::forced`] on `f`, with its point asked for or
+    /// not, its rounds at the bounds and its eliminations ([`Graph::eliminate`]) included.
+    pub(in super::super) fn states(f: &Formula, point: bool) -> Vec<State> {
         STATES.with(|s| *s.borrow_mut() = Some(Vec::new()));
-        super::forced(f, true);
+        super::forced(f, point);
         STATES.with(|s| s.borrow_mut().take()).expect("the trace")
+    }
+
+    impl State {
+        /// How many variables have their values.
+        pub(in super::super) fn fixed(&self) -> usize {
+            self.known.iter().filter(|k| k.is_some()).count()
+        }
     }
 
     /// Whether `b` knows at least what `a` knows: each value fixed in `a` is fixed alike in

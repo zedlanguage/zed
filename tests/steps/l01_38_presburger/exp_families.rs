@@ -755,6 +755,70 @@ pub(super) fn doubling(what: &str, sizes: &[usize], power: u32, cost: impl Fn(us
     scaling::hold(&what, "bytes", start.bytes, before.bytes, power);
 }
 
+/// The size in bits of `f` and of the point `satisfiable` gives it: 8 bits for each byte of `f`
+/// as printed, and for each value of the point its binary digits and one for its sign.
+fn input_and_output_bits(f: &Formula) -> u64 {
+    let point = satisfiable(f).expect("answered").expect("a point");
+    let output: u64 = point.values().map(|v| 1 + v.bits()).sum();
+    8 * format!("{f}").len() as u64 + output
+}
+
+/// Measures `satisfiable` on `family(k)` at each size, the least of `runs` runs, and holds its
+/// instructions and bytes per bit of input and output (`input_and_output_bits`) at the last
+/// size, 8 times the first, to those at the first, by [`scaling::hold`] with power 0 (a count
+/// per bit of order 1, under [`scaling::limit`]`(0)`, 1.3125 times): a cost O(m) in the m bits
+/// of the formula and its point, whatever the share of each. For a family
+/// whose point has Θ(k²) bits, such as [`dark_chain`], the answer is the bulk of that size, and
+/// no method that writes it out costs less (PRES-dark-chain-forced-bits); `decide` and
+/// `Extending::answers`, which do not write it, are held to the size of the formula alone.
+pub(super) fn output_sensitive(
+    what: &str,
+    sizes: &[usize],
+    family: fn(usize) -> Formula,
+    runs: usize,
+) {
+    let (first, last) = (sizes[0], sizes[sizes.len() - 1]);
+    assert_eq!(
+        last,
+        scaling::FACTOR * first,
+        "{what}: the sizes run from n to 8n"
+    );
+    // Each count per bit, times 2^16 so that it stays a whole number.
+    let per_bit = |k: usize| {
+        let m = input_and_output_bits(&family(k));
+        let w = least(runs, family, 's', "x0", k);
+        let per = |x: u64| (u128::from(x) << 16) / u128::from(m);
+        println!(
+            "{what}, k = {k}: {} instructions, {} bytes, {m} bits in and out, {:.2} instructions \
+             and {:.2} bytes a bit",
+            w.units,
+            w.bytes,
+            w.units as f64 / m as f64,
+            w.bytes as f64 / m as f64
+        );
+        (per(w.units), per(w.bytes))
+    };
+    let start = per_bit(first);
+    let mut end = start;
+    for &k in &sizes[1..] {
+        end = per_bit(k);
+    }
+    let what = format!(
+        "{what}: k = {first} and {last}, per bit of the formula and its point (COMPLEXITY.md \
+         PRES-dark-chain-forced-bits)"
+    );
+    let fit = |x: u128| u64::try_from(x).expect("a count per bit that fits in 64 bits");
+    let measure = "instructions per bit, times 2^16";
+    scaling::hold(&what, measure, fit(start.0), fit(end.0), 0);
+    scaling::hold(
+        &what,
+        "bytes per bit, times 2^16",
+        fit(start.1),
+        fit(end.1),
+        0,
+    );
+}
+
 /// Window seed 628126726154 is answered as the window program answers it, or refused for a
 /// splinter where DESIGN.md allows that (FAIL-window-two-shadows-seed).
 #[test]

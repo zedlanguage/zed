@@ -33132,7 +33132,9 @@ mod forced_against_solver {
     /// where the solver gives a point that is none, 6 a point at the bounds other than the
     /// solver's, 7 a point at the bounds where the solver refuses; 2, a formula that holds with
     /// some atom free, is answered with its point since PRES-small-point and counted as 1 or
-    /// 6; 8 refused by the solver as written, answered with the facts). A point at the bounds
+    /// 6; 8 refused by the solver as written, answered with the facts; 9 and 10 undecided with
+    /// the point, but shown to hold, or to have no point, without it, by the eliminations of
+    /// `forced::Graph::eliminate`, as the solver answers). A point at the bounds
     /// ([`forced`]'s trial when propagation leaves `f` undecided) is checked by evaluating `f`
     /// at it. An undecided formula goes to the solver with the atoms propagation fixed replaced
     /// by their values ([`forced::Facts`]): [`satisfiable`] and [`decide`] then give the answers
@@ -33233,6 +33235,10 @@ mod forced_against_solver {
         match (forced(f, false), class) {
             (Forced::Point(_), _) => panic!("a point built for {f}, though not asked"),
             (Forced::Empty, 0) | (Forced::Holds, 1 | 6) | (Forced::Undecided(_), 3) => class,
+            // Without the point, the eliminations (`Graph::eliminate`) may answer what the
+            // point leaves to the solver: the answer must be the solver's.
+            (Forced::Holds, 3) if d => 9,
+            (Forced::Empty, 3) if !d => 10,
             (got, _) => panic!(
                 "{f}: with the point {class}, without it {}",
                 match got {
@@ -33333,7 +33339,7 @@ mod forced_against_solver {
         // gives its point (class 1).
         let (mut rng, _) =
             Rng::fresh("propagation_agrees_with_the_solver_on_chains_of_definitions");
-        let mut seen = [0usize; 9];
+        let mut seen = [0usize; 11];
         for _ in 0..100 {
             seen[agrees(&chain(&mut rng, false))] += 1;
         }
@@ -33350,7 +33356,7 @@ mod forced_against_solver {
         // often. A point at the bounds other than the solver's (6) is common
         // (PRES-small-point).
         let (mut rng, _) = Rng::fresh("propagation_agrees_with_the_solver_on_bounded_inputs");
-        let mut seen = [0usize; 9];
+        let mut seen = [0usize; 11];
         for _ in 0..100 {
             seen[agrees(&chain(&mut rng, true))] += 1;
         }
@@ -33392,7 +33398,7 @@ mod forced_against_solver {
 
     /// For each answer in `want` that `seen` has not counted, checks that the formula of
     /// [`ANSWERS`] built for it gives it.
-    fn answers_built(seen: &[usize; 9], want: &[usize]) {
+    fn answers_built(seen: &[usize; 11], want: &[usize]) {
         for &c in want {
             if seen[c] == 0 {
                 let (_, f) = ANSWERS.into_iter().find(|(a, _)| *a == c).expect("built");
@@ -33467,14 +33473,16 @@ mod forced_against_solver {
                 ]),
                 1,
             ),
-            // A row with two unknowns, the product and `z`, bounds neither.
+            // A row with two unknowns, the product and `z`, bounds neither; without the point,
+            // `z` is in that row alone, open above, and is eliminated (`Graph::eliminate`), which
+            // leaves the formula true (answer 9).
             (
                 Formula::and(vec![
                     ge(&p.plus(&sym("z")), &k(6)),
                     eq(&sym("x"), &k(2)),
                     eq(&sym("y"), &k(3)),
                 ]),
-                3,
+                9,
             ),
             // A shared guard, read in both disjuncts.
             (
@@ -33926,16 +33934,21 @@ mod forced_against_solver {
     /// Checks that each event of `f` leaves the state knowing at least what it knew; the number
     /// of events that changed it.
     fn changes_never_loosen(f: &Formula) -> usize {
-        let states = forced::trace::states(f);
-        for w in states.windows(2) {
-            assert!(
-                forced::trace::below(&w[1], &w[0]),
-                "{f}: loosened from {:?} to {:?}",
-                w[0],
-                w[1]
-            );
+        let mut changed = 0;
+        // With the point, the rounds at the bounds; without it, the eliminations too.
+        for point in [true, false] {
+            let states = forced::trace::states(f, point);
+            for w in states.windows(2) {
+                assert!(
+                    forced::trace::below(&w[1], &w[0]),
+                    "{f}: loosened from {:?} to {:?}",
+                    w[0],
+                    w[1]
+                );
+            }
+            changed += states.windows(2).filter(|w| w[0] != w[1]).count();
         }
-        states.windows(2).filter(|w| w[0] != w[1]).count()
+        changed
     }
 
     /// The first of [`LADDERS`] is decided in round 2 or later
@@ -33950,6 +33963,120 @@ mod forced_against_solver {
     #[test]
     fn the_ladder_decided_late_changes_the_state() {
         ladder_decided_late_changes_the_state();
+    }
+
+    /// `0 <= 2·q[i+1] - 3·q[i] <= 1` for i in 0..n, with `1 <= q0 <= 9`: one point per `q0`,
+    /// each `q[i+1] = ⌈3·q[i] / 2⌉ >= (3/2)^(i+1)` (`dark_chain` of
+    /// `tests/steps/l01_38_presburger/exp_families.rs`).
+    fn dark_chain(n: u32) -> Formula {
+        let mut fs = vec![ge(&q(0), &k(1)), ge(&k(9), &q(0))];
+        for i in 0..n {
+            let d = q(i + 1).times(2).plus(&q(i).times(-3));
+            fs.push(ge(&d, &k(0)));
+            fs.push(ge(&k(1), &d));
+        }
+        Formula::and(fs)
+    }
+
+    #[test]
+    fn a_chain_whose_values_grow_is_decided_with_none_fixed() {
+        // Without the point, `forced` eliminates the chain from its top (`Graph::eliminate`)
+        // and fixes no variable, where the rounds at the bounds fixed every `q[i]`, Θ(n²) bits
+        // (PRES-dark-chain-forced-bits); with the point it fixes them all, the point being
+        // the answer.
+        for n in [1, 2, 16, 64] {
+            let f = dark_chain(n);
+            assert!(matches!(forced(&f, false), Forced::Holds), "{f}");
+            let states = forced::trace::states(&f, false);
+            assert!(
+                states.iter().all(|s| s.fixed() == 0),
+                "n = {n}: a value was fixed"
+            );
+            assert_eq!(decide(&f).ok(), Some(true), "{f}");
+            let p = satisfiable(&f).expect("answered").expect("a point");
+            assert!(
+                holds_at(&f, &p, &mut HashMap::new()),
+                "{p:?} is no point of {f}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_parity_chain_too_narrow_to_eliminate_stays_empty() {
+        // `2·q1 - 3·q0 == 1` and `q0 == 2·q2`, each as two rows: `2·q1 = 6·q2 + 1` is odd, so
+        // there is no point. Each class is too narrow for its variable (`U - L = 0` against
+        // `|p| - 1 = 1`), so nothing is eliminated; eliminating a variable for having its rows
+        // in one class alone, with no test of the width, would answer that the formula holds.
+        let d1 = q(1).times(2).plus(&q(0).times(-3));
+        let d2 = q(2).times(2).plus(&q(0).times(-1));
+        let f = Formula::and(vec![
+            ge(&d1, &k(1)),
+            ge(&k(1), &d1),
+            ge(&d2, &k(0)),
+            ge(&k(0), &d2),
+        ]);
+        assert!(matches!(forced(&f, false), Forced::Undecided(_)), "{f}");
+        assert_eq!(decide(&f).ok(), Some(false), "{f}");
+        assert_eq!(agrees(&f), 3, "{f}");
+    }
+
+    /// A chain of rows `lo <= a·q[i+1] + b·q[i] <= hi` over `q0..qm`, `m` from 1 to 4, each
+    /// side kept or not and `hi` from `lo - 1` (no point) to `lo + 2`, some of `q0`'s bounds,
+    /// and at times a row from `qm` back to `q0` or an equation, either of which leaves some
+    /// variable no single class: formulas that the eliminations (`Graph::eliminate`) answer,
+    /// and formulas that they leave.
+    fn parallel_chain(rng: &mut Rng) -> Formula {
+        let m = rng.int(1, 4) as u32;
+        let mut fs = Vec::new();
+        if rng.below(4) != 0 {
+            fs.push(ge(&q(0), &k(rng.int(-3, 3))));
+        }
+        if rng.below(4) != 0 {
+            fs.push(ge(&k(rng.int(-3, 3)), &q(0)));
+        }
+        for i in 0..m {
+            let d = (q(i + 1).times(rng.int(1, 3))).plus(&q(i).times(rng.int(-3, 3)));
+            let lo = rng.int(-2, 2);
+            let hi = lo + rng.int(-1, 2);
+            if rng.below(5) != 0 {
+                fs.push(ge(&d, &k(lo)));
+            }
+            if rng.below(5) != 0 {
+                fs.push(ge(&k(hi), &d));
+            }
+        }
+        match rng.below(4) {
+            0 => fs.push(ge(
+                &q(m).plus(&q(0).times(rng.int(-2, 2))),
+                &k(rng.int(-2, 2)),
+            )),
+            1 => fs.push(eq(&q(rng.int(0, i64::from(m)) as u32), &k(rng.int(-2, 2)))),
+            _ => {}
+        }
+        Formula::and(fs)
+    }
+
+    #[test]
+    fn parallel_chains_agree_with_the_solver() {
+        // 1000 chains from a new seed each run, each checked by [`agrees`] against the solver and
+        // by [`alike_rewritten`] for the same answer under a renaming and any order (the proof
+        // at `Graph::eliminate`, which does not rest on them). Answer 9, held without the point
+        // where the point leaves the formula to the solver, is given by a formula built for it
+        // when the draws did not give it: `q0 <= q1 <= q2`, no row of one variable, which the
+        // rounds at the bounds do not start on.
+        let (mut rng, _) = Rng::fresh("parallel_chains_agree_with_the_solver");
+        let mut seen = [0usize; 11];
+        for _ in 0..1000 {
+            let f = parallel_chain(&mut rng);
+            seen[agrees(&f)] += 1;
+            alike_rewritten(&f, &mut rng);
+        }
+        eprintln!("answers {seen:?}");
+        if seen[9] == 0 {
+            let f = Formula::and(vec![ge(&q(1), &q(0)), ge(&q(2), &q(1))]);
+            assert_eq!(agrees(&f), 9, "{f}");
+            eprintln!("answer 9 given only by the formula built for it");
+        }
     }
 }
 

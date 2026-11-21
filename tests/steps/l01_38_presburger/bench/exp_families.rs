@@ -33,10 +33,48 @@ costs!(shared_sums_decide, shared_sums, "x0", 'd', 110, 1, 2);
 costs!(shared_sums_satisfiable, shared_sums, "x0", 's', 140, 1, 2);
 costs!(shared_sums_project_each, shared_sums, "x0", 'p', 16, 1, 2);
 costs!(shared_sums_answers, shared_sums, "x0", 'a', 60, 1, 2);
-costs!(dark_chain_decide, dark_chain, "x0", 'd', 16, 1, 2);
-costs!(dark_chain_satisfiable, dark_chain, "x0", 's', 16, 1, 2);
+// dark_chain (PRES-dark-chain-forced-bits): its point has Θ(k²) bits, x[i] near (3/2)^i. Before,
+// `decide` and `answers` fixed every x[i] at the bounds of x0 (the rounds of `Trial::holds`), so
+// they paid the bits of a point they do not return: 13.93 and 11.05 times at 8n from k = 4800
+// and 4600 (2026-11-21, load 21). Without the point, `forced` now eliminates the chain from its
+// top (`Graph::eliminate`) and fixes nothing.
+costs!(dark_chain_decide, dark_chain, "x0", 'd', 4800, 1, 2);
 costs!(dark_chain_project_each, dark_chain, "x0", 'p', 260, 1, 2);
-costs!(dark_chain_answers, dark_chain, "x0", 'a', 16, 1, 2);
+costs!(dark_chain_answers, dark_chain, "x0", 'a', 4600, 1, 2);
+
+/// `satisfiable` on dark_chain returns its point, Θ(k²) bits, so its cost is held per bit of the
+/// formula and the point ([`output_sensitive`]): 13.90 times the instructions at 8n from
+/// k = 5100 (2026-11-21), where the bits grew 64 times. The bound it holds, with n the rows
+/// (2k + 2, each of at most two terms with coefficients 2 and 3), B the bits of the point and
+/// w = 64 the bits of a word, is O(n log² n + B / w) instructions, O(m) for the m >= B bits
+/// counted. The steps, from `satisfiable` to `forced::forced(f, true)` (presburger.rs, forced.rs):
+/// 1. `signed`, `factored` and `Graph::of` read the formula: O(n log n) comparisons of names of
+///    O(log n) characters, the passes `decide` pays too, held to order n by
+///    `dark_chain_decide`.
+/// 2. The first propagation forces each row. The two rows of x0 alone bound x0 to [1, 9]; each
+///    other row has two variables not known, so it gives no step. `facts` fixes nothing. O(n).
+/// 3. The point is asked for, so no elimination runs (`Graph::eliminate` only answers whether a
+///    point exists). `Trial::holds` sets x0 to 1, its lower bound, the one variable bounded.
+/// 4. By induction on i: when x[i] is known (b_i bits), the two rows on x[i] and x[i+1] have one
+///    variable left, and `solve` gives x[i+1] >= ⌈3 x[i] / 2⌉ and x[i+1] <= ⌊(3 x[i] + 1) / 2⌋,
+///    which meet at one value: x[i+1] is fixed and its `Known` event queued. Each row is solved
+///    once (when its count of open variables falls to 1) and evaluated once (when it falls to
+///    0), each time with O(1) products, sums and divisions by 2 or 3 of numbers of
+///    O(b_i + b_{i+1}) bits: O(1 + b_i / w) word operations and O(1 + b_i / 8) bytes. Summed over
+///    i: O(n + B / w). Then every row is true, the conjunction is true, and the trial ends.
+/// 5. `Graph::point` inserts k + 1 atoms into a `BTreeMap` (O(n log n) comparisons of names) and
+///    copies each value (O(B / w)), and the point is dropped after the run, O(n + B / w).
+///
+/// Sum: O(n log² n + B / w). Here B >= Σ_{i<=k} log2((3/2)^i) = 0.29 k(k + 1) bits and n log² n
+/// = o(k²), so the count per bit of m = 8 × (the printed formula's bytes) + Σ (1 + bits of each
+/// value) is O(1) on this family: the per-bit count at 8k is held to that at k with power 0,
+/// under 1.3125 times. The bytes allocated follow the same steps, O(n log n + B / 8). This is no
+/// bound of `satisfiable` on other families; each holds its own.
+#[test]
+fn dark_chain_satisfiable() {
+    output_sensitive("dark_chain, s", &doubles(5100), dark_chain, 2);
+}
+
 // skew_block's `decide`, `project_each` and `answers` took 17.7 s, 22.2 s and 21.5 s at k = 550,
 // 340 and 360 at load 38 (2026-11-20), and `answers` passed its limit of 23 s at load 36, so
 // their sizes are halved; the work grows 2.0 to 2.1 times a doubling, so the ratio is the same
