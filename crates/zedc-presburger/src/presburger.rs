@@ -25020,9 +25020,19 @@ fn two_atom_side(c: &Formula, sym: &Atom, dir: i64) -> Option<Option<Int>> {
 /// rows are divided by the gcd of their coefficients with the constant rounded down, which
 /// holds every integer point (Pugh, "The Omega test", Supercomputing '91, 1991,
 /// doi:10.1145/125826.125848, sec. 2.1, read 2026-11-21: "we take the floor when dividing a_0
-/// by g"; Fourier's and Motzkin's texts have no DOI and were not read; the step and its
-/// two-line proof were read in Dantzig and Eaves 1973, doi:10.1016/0097-3165(73)90004-6,
-/// p. 289, on 2026-11-21; see the crate's `lib.rs`).
+/// by g"; the step and its two-line proof were read in Dantzig and Eaves 1973,
+/// doi:10.1016/0097-3165(73)90004-6, p. 289, on 2026-11-21; see the crate's `lib.rs`).
+/// Fourier and Motzkin have no DOI; both read 2026-11-21 in archive.org's scans
+/// (public, OCR text checked against the page). Fourier, *Œuvres*, ed. G. Darboux, vol. 2,
+/// Gauthier-Villars, "Second extrait" (Histoire de l'Académie pour 1824, p. XLVII), pp.
+/// 326-327: each row gives `x > A + By + Cz + ...` or `x < α + βy + γz + ...`; "On compare
+/// chacune des conditions de la première forme à chacune des conditions de la seconde",
+/// which forms new rows without `x`, then `y` likewise, down to bounds on one unknown, and
+/// the system has no solution exactly when the greatest lower bound exceeds the least upper
+/// bound. Motzkin, dissertation, Basel, 1936, ch. III, end of § 6, p. 61: solving for one
+/// unknown at a time "erhalten wir eine einfache, schrittweise Elimination, die in der
+/// Literatur gewöhnlich Reduktion genannt wird", shown there as a matrix product. Departure:
+/// both eliminate every unknown; this eliminates an atom only where `l · u <= l + u`.
 ///
 /// Proof that no point lies past the answer: each row left is a consequence of `c`, by
 /// induction on the eliminations: a row Fourier-Motzkin makes from a lower row `l` and an upper

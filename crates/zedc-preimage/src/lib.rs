@@ -245,8 +245,21 @@
 //!   half-planes by divide and conquer, `T(N) = 2T(N/2) + O(N)`, and Theorem 7.10, p. 289,
 //!   `Θ(N log N)` and optimal; the use is at `product.rs`, fn `extreme_base`); R. T.
 //!   Rockafellar, *Convex Analysis*, Princeton, 1970, sec. 8, and A. Schrijver, *Theory of
-//!   Linear and Integer Programming*, Wiley, 1986, sec. 8.2 (recession cones): books, not
-//!   checked.
+//!   Linear and Integer Programming*, Wiley, 1986, sec. 8.2 (recession cones). Rockafellar read
+//!   2026-11-21 (scan, LibGen, verification only): p. 61, `C` "recedes in the direction of
+//!   y" when "x + λy ∈ C for every λ ≥ 0 and x ∈ C", the set of such `y` with 0 being "the
+//!   recession cone of C", written `0+C`, and Theorem 8.1, it "is then a convex cone
+//!   containing the origin"; p. 62, for `C = {x | ⟨x, b_i⟩ ≥ β_i, ∀i ∈ I} ≠ ∅` "the
+//!   recession cone of C is given by the corresponding system of homogeneous inequalities",
+//!   `0+C = {x | ⟨x, b_i⟩ ≥ 0, ∀i ∈ I}`. That is the fact `product.rs` uses
+//!   (fn `recession_cone_uncertified`, whose proof is given there in full): a part's rows
+//!   hold along a direction `r` from every point that meets them iff `a.r ≥ 0` for each row
+//!   `a`. Schrijver read the same day (LibGen PDF, verification only): sec. 8.2, p. 100,
+//!   `char.cone P := {y | x + y ∈ P for all x in P} = {y | Ay ≤ 0}` for `P = {x | Ax ≤ b}`
+//!   nonempty, "[Some authors call char.cone P the recession cone of P.]", the same statement
+//!   with the rows' signs reversed. Departure: the code moves integer points and needs a
+//!   rational direction, which neither book treats at this place; the proof there picks one
+//!   from an open set of directions.
 
 pub mod address;
 mod divisors;

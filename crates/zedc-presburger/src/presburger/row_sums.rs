@@ -16,8 +16,9 @@
 //!   group. A group's rows fall into classes of proportional coefficients, and a vector of
 //!   class sums is one integer key (one digit per class, mixed radix). The group's table is
 //!   the set of keys of its sums over all values of its atoms, a bitset ([`Set`]), built one
-//!   atom at a time as the union of the table so far shifted by each value's key (Bellman's
-//!   dynamic program for subset sum). A range of n values is added in log n shifts and unions
+//!   atom at a time as the union of the table so far shifted by each value's key (the
+//!   reachable-set form of Bellman's ship-loading recurrence, one atom per stage; see
+//!   "Papers"). A range of n values is added in log n shifts and unions
 //!   by doubling, and each table keeps only the keys that the atoms after it can still bring
 //!   to the rows' targets (the bound pruning of Horowitz and Sahni, [`Group::window`]);
 //! - the groups are joined in the order of their signatures (rows numbered as the formula
@@ -154,10 +155,11 @@
 //! level where a shift spends 1/64 of a word step per key, so they gain only on groups of tens
 //! of thousands of atoms (inferred from these counts, not measured).
 //!
-//! Papers. R. Bellman, *Dynamic Programming*, Princeton University Press, 1957 (a book, no
-//! DOI). E. Horowitz and S. Sahni, "Computing partitions with applications to the knapsack
-//! problem", Journal of the ACM 21(2), 1974, doi:10.1145/321812.321823. R. Dechter, "Bucket
-//! elimination: a unifying framework for reasoning", Artificial Intelligence 113(1-2), 1999,
+//! Papers. R. Bellman, *Dynamic Programming*, Princeton University Press, 1957 (a book; the
+//! 1957 printing has no DOI, the 2010 reprint is doi:10.1515/9781400835386). E. Horowitz and
+//! S. Sahni, "Computing partitions with applications to the knapsack problem", Journal of the
+//! ACM 21(2), 1974, doi:10.1145/321812.321823. R. Dechter, "Bucket elimination: a unifying
+//! framework for reasoning", Artificial Intelligence 113(1-2), 1999,
 //! doi:10.1016/s0004-3702(99)00059-4. L. A. Levin, "Universal sequential search problems",
 //! Problems of Information Transmission 9(3), 1973 (not on Crossref, no DOI). R. M. Karp,
 //! "Reducibility among combinatorial problems", Complexity of Computer Computations, 1972,
@@ -184,7 +186,16 @@
 //! doi:10.1109/MAHC.1984.10036), Theorem 2, an algorithm optimal up to a constant factor for
 //! any search problem, whose method the paper does not describe (Trakhtenbrot says so); the
 //! alternation with doubling allowances is the later standard reading of it; Dechter, see
-//! `lib.rs`. Bellman's book was not read. None of these results is a step of an
+//! `lib.rs`; Bellman, read 2026-11-21 (a scan from LibGen, copy kept outside the repository),
+//! ch. I, exercise 21, pp. 45-46: "N different types of items, with the i^th item having
+//! weight w_i and a value v_i", loaded into a ship of capacity `w`, lead to
+//! `f_1(w) = v_1 [w/w_1]`, `f_{N+1}(w) = Max_{0 <= x <= [w/w_{N+1}]} [x v_{N+1} +
+//! f_N(w - x w_{N+1})]`, "where x can assume only zero or integral values". The tables here
+//! are this recurrence with the maximum of values replaced by the set of reachable sums:
+//! table `t+1` is the union over the atom's values `x` of table `t` shifted by `x`'s key.
+//! Departures: Bellman's counts run from 0 under one capacity; here an atom's values are any
+//! finite range, keys are vectors of class sums, and nothing is maximized. The book names no
+//! subset-sum problem. None of these results is a step of an
 //! answer: Karp's and Galil and Margalit's explain costs, Levin's and Pisinger's name methods
 //! not used, and the join's exactness rests on the definitions alone, not on any of them
 //! (it is not proved as a whole: see "Not proved as a whole" above).
@@ -208,9 +219,9 @@
 //!
 //! Published work used in this file, besides the "Papers" paragraph above. Each site names
 //! the author; the full citation is in the crate's `lib.rs`, "References". Bellman 1957 (a
-//! book, no DOI); Horowitz and Sahni 1974, doi:10.1145/321812.321823; Bringmann 2017,
-//! doi:10.1137/1.9781611974782.69; Dechter 1999, doi:10.1016/s0004-3702(99)00059-4; Cuthill
-//! and McKee 1969, doi:10.1145/800195.805928.
+//! book; ch. I, exercise 21, pp. 45-46, quoted in "Papers"); Horowitz and Sahni 1974,
+//! doi:10.1145/321812.321823; Bringmann 2017, doi:10.1137/1.9781611974782.69; Dechter 1999,
+//! doi:10.1016/s0004-3702(99)00059-4; Cuthill and McKee 1969, doi:10.1145/800195.805928.
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -2682,7 +2693,8 @@ impl Group<'_> {
     /// completes to a sum whose most significant digit is in `top`: its digit from
     /// `top.0` less the most the atoms after t add, to `top.1`.
     // Complexity tradeoff: O(1) per table. Bellman's tables (Bellman, "Dynamic Programming",
-    // Princeton University Press, 1957) hold every sum of the first t atoms; this keeps only
+    // Princeton University Press, 1957, ch. I, exercise 21, pp. 45-46, in their reachable-set
+    // form; quoted in the module note) hold every sum of the first t atoms; this keeps only
     // those that can still meet the row, the bound pruning of Horowitz and Sahni ("Computing
     // partitions with applications to the knapsack problem", J. ACM 21(2), 1974, Algorithm 1(b),
     // steps 1 and 2, read 2026-11-21: a partial sum is dropped when it plus all the numbers left
@@ -3010,8 +3022,8 @@ impl Plan {
         // structure, which put the atoms of coefficient 2 before those of 1
         // (PRES-project-each-naming). By span: 9.62M under both, and 3.49M under both at
         // k = 1800, where the names gave 3.99M and 11.2M. Least first keeps the early tables
-        // small, as in the subset-sum tables of Bellman's method, whose widths are the sums of
-        // the spans taken so far.
+        // small, as in the reachable-sum tables of Bellman's recurrence, whose widths are the sums
+        // of the spans taken so far.
         // Complexity tradeoff: one more comparison of two numbers per comparison of the sort,
         // O(a log a) as before. Not proved: that least span first is the order of least work.
         // The order still goes by name among atoms of one signature, one span and both wanted

@@ -7636,8 +7636,9 @@ impl Block {
             // than a name, an equality among the constraints, or a box that bounds every
             // direction is woken as before. The certificate is the recession-cone argument of
             // [`Block::recession_uncertified`] in m dimensions (R. T. Rockafellar, "Convex
-            // Analysis", Princeton, 1970, section 8; A. Schrijver, "Theory of Linear and Integer
-            // Programming", Wiley, 1986, section 8.2).
+            // Analysis", Princeton, 1970, section 8, p. 62; A. Schrijver, "Theory of Linear and
+            // Integer Programming", Wiley, 1986, section 8.2, p. 100; both read 2026-11-21, the
+            // quotes are in the crate's `lib.rs`).
             for ck in holding_two(&self.cone_vars, v) {
                 if self.cone_certified(&ck, names) {
                     continue;

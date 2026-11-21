@@ -598,7 +598,8 @@ enum Lp {
 /// elimination of the other names would be shorter to write but can square the rows at each
 /// of up to 8 eliminations.
 ///
-/// Sources: V. Chvátal, Linear Programming, W. H. Freeman, 1983, ch. 3 (a book, no DOI);
+/// Sources: V. Chvátal, Linear Programming, W. H. Freeman, 1983, ch. 3, pp. 39-42 (a book, no
+/// DOI; read, see below);
 /// J. Edmonds, "Systems of distinct representatives and linear algebra", J. Res. NBS 71B(4):241,
 /// 1967, doi:10.6028/jres.071b.033; E. H. Bareiss, "Sylvester's identity and multistep
 /// integer-preserving Gaussian elimination", Math. Comp. 22(103):565-578, 1968,
@@ -635,8 +636,16 @@ enum Lp {
 /// is the old row unchanged and `den` becomes `pv`; the sign flip keeps `den = |det(B)|`. The
 /// two objective rows are covered by taking the basis with the columns of `z` and `w` added,
 /// whose determinant is still `det(B)`. Traced against the code by cite4, 2026-11-21.
-/// Chvátal's book was not read; the auxiliary problem above is as the code builds it, not
-/// quoted from ch. 3.
+/// Chvátal read 2026-11-21 (LibGen PDF, verification only), ch. 3, "Initialization", pp.
+/// 39-42: the auxiliary problem "minimize x_0 subject to Σ a_ij x_j - x_0 ≤ b_i ... x_j ≥ 0
+/// (j = 0, 1, ..., n)", and "the original problem has a feasible solution if and only if the
+/// optimum value of the auxiliary problem is zero" (p. 39); its first dictionary "can be
+/// transformed into a feasible one by a single pivot, with x_0 entering and the 'most
+/// infeasible' x_(n+i) leaving", the row whose negative `b_k` has the largest magnitude (p.
+/// 40); when `x_0` is a candidate to leave, "our policy" picks it, so an optimal dictionary
+/// with `x_0` basic at value 0 cannot occur (p. 42, case (3.17)), which is the tie rule
+/// above. Departure: the book has `x ≥ 0`; here each `x` is free, the difference of two
+/// columns.
 /// No test checks this function alone: it is checked through
 /// the tests below, which compare the brute force it bounds with the solver, so an error that
 /// widens a bound only slows them and one that narrows it shows as a mismatch there.
@@ -799,8 +808,13 @@ fn has_point(rows: &[(Vec<i64>, i64)]) -> bool {
 ///
 /// Complexity tradeoff: exponential in the variables in the worst case (each elimination can
 /// multiply the rows, each splinter adds a branch), against enumeration within the proven bound
-/// `(n + 1) · Δ` on some integer point (Schrijver, Theory of Linear and Integer Programming,
-/// cor. 17.1b; `Δ` the greatest subdeterminant), which for the 3 hubs and up to 6 `z` and 40
+/// `(n + 1) · Δ` on some integer point (A. Schrijver, Theory of Linear and Integer Programming,
+/// Wiley, 1986, Theorem 17.1, pp. 237-238, read 2026-11-21, LibGen PDF, verification only: for
+/// integral `A`, `b`, `P_I = conv.hull{x_1, ..., x_t} + cone{y_1, ..., y_s}` "where x_1, ...,
+/// y_s are integral vectors with all components at most (n + 1)Δ in absolute value, where Δ
+/// is the maximum absolute value of the subdeterminants of the matrix [A b]", so a nonempty
+/// `P_I` has such an `x_i`; this comment cited cor. 17.1b, which is the size bound `6n³φ` on
+/// p. 239, and took `Δ` over `A` alone), which for the 3 hubs and up to 6 `z` and 40
 /// rows of a random part is millions of values per hub. The rows are deduplicated after each
 /// step. A test oracle on at most 9 variables.
 fn omega(le: Vec<Row>, mut eq: Vec<Row>) -> bool {
