@@ -35,20 +35,96 @@
 //!
 //! Every answer is exact: no point, a point, or each atom's set of values over all points.
 //! Where it applies the solver's answer is never finer, so no answer becomes coarser.
-//! Not proved as a whole (PROOF-row-sums-join-exact): the claim rests on an invariant written
-//! nowhere in this file, that layer i of [`Plan::layers`] is exactly the set of keys of the
-//! sums on the rows open after group i over the assignments of groups 0..i that meet every
-//! row closed by then, and that [`Plan::back`] marks exactly the keys and sums some
-//! assignment of the later groups completes. Its open steps: (1) [`Group::window`] drops no
-//! prefix of a point, which needs every atom after t to add a most significant digit within
-//! `0..=last - top`; (2) [`Plan::pairs`], [`Plan::word_join`] and [`lattice`] (the fused
-//! pair) each give exactly the pairs [`Plan::meet`] accepts; (3) the key of a layer is one to
-//! one on the sums of its open rows (mixed radix within each digit's range). Each step is
-//! claimed at its site; none is proved here. Checked against enumeration by
+//! Proof of the join (PROOF-row-sums-join-exact), every step, for the joins without a fused
+//! pair; the fused pair ([`lattice`]) is not proved, see step 6. Notation: groups `0..p` in the
+//! plan's order; a row is open at layer i when a group before i and a group at i or after hold
+//! it, and closes at its last group; `top_j` is group j's range of its most significant digit
+//! ([`Plan::build`], the loop after the layouts).
+//! 1. Keys are one to one (mixed radix). A key `K = Σ_c e_c·M_c` with `0 <= e_c < r_c` and
+//!    `M_0 = 1`, `M_(c+1) = M_c·r_c` (both [`Groups::push`] and [`Layouts::push`] build their
+//!    digits so) has `Σ_(c'<c) e_c'·M_c' <= Σ_(c'<c) (r_c' - 1)·M_c' = M_c - 1` (each term is
+//!    `M_(c'+1) - M_c'`, which telescopes), and every `M_c'` with `c' > c` is a multiple of
+//!    `M_(c+1)`; so `K / M_c = e_c + r_c·(an integer)` and `K / M_c % r_c = e_c`, which is what
+//!    [`Group::sum`] and [`Plan::meet`] read. So distinct digit vectors give distinct keys, and
+//!    `K` is below `M_c` exactly when its digits from `c` up are 0. The digits are in range:
+//!    a group's class sum `p·y` lies in `[lo, lo + radix - 1]`, since each atom's value lies
+//!    between its domain's ends and `lo` and `lo + radix - 1` are the sums of the least and
+//!    greatest terms; the prefix sums of the first t atoms, less the least terms of those atoms,
+//!    lie in `0..=` the sum of their spans, below the radix (`fill`). A layer's digit of row r is
+//!    its partial sum less `lo[r]`, the sum over the groups before of the least of `λ·s` over
+//!    the class sum's range, and so lies in `0..=hi[r] - lo[r]`, its radix less 1.
+//! 2. A group's table (PROOF step (1) of the row). The atom keys of [`Group::ranges`] are
+//!    `base + (v - least)·delta`, which sum over the atoms to `Σ_c M_c·(s_c - lo_c)`, the key of
+//!    step 1 of the class sums `s_c`. [`Plan::add`] gives the union over the atom's values of
+//!    the table shifted by each value's key (its own proof). The top class's sum of a point
+//!    lies in `top_j`: for each row r of that class, `λ·s + others + k` is `>= 0` (or `== 0`),
+//!    with `others`, the other groups' part, between `lo[r] - x` and `hi[r] - y` (`x`, `y` the
+//!    least and greatest of `λ·s`), so `λ·s + k + (hi[r] - y) >= 0` (and, for an equation,
+//!    `-λ·s - k - (lo[r] - x) >= 0`), which [`meets`] solves exactly; the clamps to `-1` and to
+//!    the radix leave the digit values in range unchanged. Each atom after t adds to the top
+//!    digit a value in `0..=` its span, so the prefix top digit `e_t` of a point's assignment is
+//!    the whole digit `e` less a value in `0..=last - fill[t].2`, and `e` is in `top`:
+//!    `e_t >= top.0 - (last - fill[t].2)`, `e_t <= top.1` and `e_t <= fill[t].2`. By step 1 the
+//!    keys whose top digit lies in `a..=b` are exactly `a·M..=(b + 1)·M - 1`, the window of
+//!    [`Group::window`]. So by induction on t, [`Plan::step`] keeps the prefix key of every
+//!    assignment whose whole top digit is in `top`, and every key it keeps is the prefix key of
+//!    some assignment; at `t = n` the window is `top` itself. Where no value of the class sum
+//!    meets a row, `top` is empty and so is the window, `lo > hi`, and [`Set::keep`] keeps no
+//!    key (it once kept an interval across the window, cut to `(lo, hi)`: no key, but not
+//!    empty, with `min > max`; test `an_empty_window_across_an_interval_leaves_no_key`). So group j's table `T_j` is exactly
+//!    the keys of the assignments of its atoms with top digit in `top_j`.
+//! 3. The layers. Let `A_i` be the assignments of the atoms of groups `0..i` that give each
+//!    group a top digit in its `top_j` and meet every row that closes before i. Invariant:
+//!    layer i is exactly `{key_i(a) : a ∈ A_i}`, `key_i` the key of the open rows' partial
+//!    sums. It holds at `i = 0` (no open row, `{0}`). Given it at i, [`Plan::meet`] on `x` in
+//!    layer i and `g` in `T_i` reads, by step 1, each open row's partial sum from `x` and each
+//!    class sum from `g`, adds `λ·s` for the rows of group i, so `t` is the partial sum after
+//!    group i; a row closing at i has no later group, so `t + k` is its whole value, tested
+//!    against its relation; and every row open after i (open before and not closing, or of
+//!    group i and not closing) has an `out` digit, `t - lo` at the next layer's weight. So the
+//!    pairs `meet` accepts give exactly `{key_(i+1)(a ∪ b) : a ∈ A_i, b ∈ T_i's assignments,
+//!    a ∪ b meets the rows closing at i}` = layer i + 1, as `A_(i+1)` asks; the key of `a` alone
+//!    decides acceptance because it holds every partial sum a later test reads (step 1).
+//! 4. The joins give exactly what `meet` accepts (PROOF step (2) of the row). [`Plan::pairs`]:
+//!    the equations closing at i with a digit in the layer (`keyed`) are its most significant
+//!    digits ([`Layouts::push`] puts them last), so for each `g` the accepted `x` have those
+//!    digits fixed to `u = -k - λ·s - lo` (an `u` outside `0..r` admits no `x`), and by step 1
+//!    they lie in `[from, from + span)` with `span` the weight of the least keyed digit
+//!    (`x.size` with none); `keys_in` reads that half-open range and `meet` tests each, so the
+//!    pairs visited are exactly the accepted ones. [`Plan::word_join`] (one class, one digit of
+//!    weight 1 in each layer): with the layer's row closing as an equation with `λ = 1`, the
+//!    class digit is `c - u`, so the class digits met are `table ∩ (c - layer)`
+//!    (`and_reflected`); with `λ = -1`, `u + c`, `table ∩ (layer + c)` (`and_shifted`); as an
+//!    inequality with coefficient 1 on `u`, some `u` meets it exactly when the greatest does,
+//!    `meets(l, k + lo + max)`; the rows that open and close at i bound `s` by [`meets`] and the
+//!    clip keeps that range; the next layer's one row has `λ = ±1` and no part before i, so
+//!    its digit is `g` (`λ = 1`, its least value `lc`) or `span - g` (`λ = -1`, least value
+//!    `-(lc + span)`), and with no row it is `{0}` when a pair is met. A reached layer is never
+//!    empty ([`Plan::layers`] stops at an empty one), so with no side its one key `0` pairs
+//!    with every `g`. So the next layer is exactly that of step 3.
+//! 5. The pass back. Invariant: `good[i]` is the keys `x` of layer i that some assignment of
+//!    groups `i..p` (top digits in range) completes to meet every row closing at i or after,
+//!    and `sums[i]` the keys `g` of `T_i` that pair with such an `x` into a key of
+//!    `good[i + 1]`. At `p` no row is open and the empty assignment completes, so
+//!    `good[p] = layer p`. At i, by step 3 a completion of `y = meet(x, g)` depends only on `y`
+//!    (the open rows' partial sums), so `x` is completed exactly when some `g` is accepted
+//!    with `y` in `good[i + 1]`, which [`Plan::back`] tests on the pairs of step 4 (by
+//!    `contains`), or, on a word join, by the same maps run back: `met ∩ gy` (`out` with
+//!    `λ = 1`), `met ∩ (span - gy)` (`λ = -1`), and the layer keys `c - gm`, `gm - c` or
+//!    `u >= -k - l·(s + lc) - lo` for the best `s` of `gm`.
+//! 6. Not proved: that [`lattice`] gives exactly the pairs of the fused groups that `meet`
+//!    would accept on the two joins in turn (PROOF-row-sums-join-exact, open sub-case), nor
+//!    the reading of a point and of the atoms' values from the marks ([`Plan::take_apart`]).
+//!    Note the invariant first written here, layer i over all assignments meeting the closed
+//!    rows, was stronger than true: the tables keep only top digits in `top_j` (step 2), which
+//!    every point meets, so the answers are the same.
+//!
+//! Checked against enumeration by
 //! `l01_38_omega_test::disj_groups::row_sums::random_shared_sums_are_answered_and_never_coarser_than_the_solver_alone`
 //! and the tests beside it (3 to 7 atoms, one or two rows, ranges of at most 33 values, each
 //! answer against the sets found by enumeration), which cannot catch a fault on shapes the
-//! random cases do not make (three rows or more, wide ranges, many atoms).
+//! random cases do not make (three rows or more, wide ranges, many atoms); the proof above does
+//! not rest on them.
 //!
 //! The parity example of A87 (`a1 + a2 + c + d == 4`, `b1 + b2 + c + d == 3`, the `a`s and `b`s
 //! over {0, 2}, `c` and `d` over {0, 1}) shows why the sums cannot be decided one at a time:
@@ -1578,10 +1654,12 @@ impl Set {
         }
     }
 
-    /// Keeps the keys from `lo` to `hi`, both at least 0, in place.
+    /// Keeps the keys from `lo` to `hi`, both at least 0, in place; none where `lo > hi`.
     fn keep(&mut self, lo: i64, hi: i64) {
         self.lit.keep(lo, hi);
-        self.fill.retain(|f| f.1 >= lo && f.0 <= hi);
+        // With `lo > hi` an interval across both, `f.0 <= hi < lo <= f.1`, would pass the test
+        // below and be cut to `(lo, hi)`, a set not empty with no key in it.
+        self.fill.retain(|f| lo <= hi && f.1 >= lo && f.0 <= hi);
         for f in &mut self.fill {
             *f = (f.0.max(lo), f.1.min(hi));
         }
@@ -2701,8 +2779,9 @@ impl Group<'_> {
     // is below the target, or it plus the next number is above; they call the method "well
     // known"; see the module's "Papers"). Here both ends are applied to a whole table at once,
     // as one window of keys, where the paper prunes one branch of its search. Exact: a key
-    // outside it is the prefix of no point. Measured on subset sum with no point at k = 64:
-    // the tables of the second half of the atoms hold only the sums within the rest of the
+    // outside it is the prefix of no point (proof: the module note, step 2). Where `top` is
+    // empty the window is too, `lo > hi`, which [`Set::keep`] makes the empty set. Measured
+    // on subset sum with no point at k = 64: the tables of the second half of the atoms hold only the sums within the rest of the
     // target, about half the words.
     fn window(&self, t: usize) -> (i64, i64) {
         let (last, top) = (self.fill[self.atoms.len()].2, self.fill[t].2);
@@ -4405,6 +4484,27 @@ mod tests {
             let down: Vec<i128> = up.iter().rev().copied().collect();
             assert!(got == up || got == down, "written {written:?}: {got:?}");
         }
+    }
+
+    /// Two rows of one class that no sum meets, `a0 + a1 >= 5000` and `a0 + a1 <= 4999`: the
+    /// last table's window is empty, `5000..=4999`, and the table holds one interval across
+    /// it. [`Set::keep`] must empty the set; it once kept the interval cut to `(5000, 4999)`,
+    /// a set not empty with no key, whose `min` was above its `max` (red before the fix). The
+    /// answer of `decide` was right even then, since [`Plan::pairs`] reads only keys; it is
+    /// checked as a guard.
+    #[test]
+    fn an_empty_window_across_an_interval_leaves_no_key() {
+        let rows = rows_of(
+            vec![vec![(0, 10_000)], vec![(0, 10_000)]],
+            vec![
+                (vec![(0, 1), (1, 1)], -5000, false),
+                (vec![(0, -1), (1, -1)], 4999, false),
+            ],
+        );
+        assert_eq!(decide(rows, || Err(Refusal::Work)), Ok(false));
+        let mut s = Set::settled(Lits::default(), vec![(0, 14_999)]);
+        s.keep(5000, 4999);
+        assert!(s.is_empty(), "{:?}", s.fill);
     }
 
     /// A row as its terms, its constant and whether it is an equation.
