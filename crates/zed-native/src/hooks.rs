@@ -289,6 +289,9 @@ pub(crate) struct Named {
 )]
 extern "C" fn rt_named(id: i64) -> Named {
     with(|t, s| {
+        // `take` and the restore below move only the `Vec`'s header, not its heap buffer, and
+        // `place_named` is plain Rust that runs no native code and calls no hook, so the
+        // address `rt_args` gave stays valid: only `rt_args` moves the buffer.
         let ins = std::mem::take(&mut s.slots);
         let ins_n = &ins[..s.slots_len];
         let r = place_named(t, s, id as usize, ins_n);

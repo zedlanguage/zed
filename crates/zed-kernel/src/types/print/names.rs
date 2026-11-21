@@ -6,6 +6,12 @@
 //! such as a name the message already writes. The two sequences share no name: a name of the
 //! form `[A-Z][0-9]*` is a type variable and names nothing else (QUESTIONS Q23, plan row
 //! TYPEVAR-names), so a definition printed as `type T1 = …;`, as before, would not read back.
+//! Every variable [`Names::nth`] gives, `T` to `W` or `T{k}`, has that form (zedc-resolve
+//! `type_var_form` decides it), and no definition does: `Part{k}` has lower-case letters after
+//! its first. So no name is in both sequences, and a definition never reads as a variable.
+//! Test: `tests::the_program_names_are_skipped_in_each_sequence` (a bound `T2` does not move
+//! the definitions); l01_29 `fresh_names::a_definition_skips_the_program_names_by_the_same_rule`
+//! (a program that binds `T1` still gets `Part1`). Neither reads a printed definition back.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -63,7 +69,9 @@ fn place(name: &str) -> Option<Place> {
 }
 
 /// For each `n` of `numbered`, the first `m > n` not in it: a run of bound names is stepped over
-/// at once. Each run is walked once, from its first, so `O(k)` for `k` numbers.
+/// at once. Each run is walked once, from its first, so `O(k)` hash operations for `k` numbers
+/// (each number is the start of one run or skipped in O(1), and each is written to `ends` once,
+/// by the run that holds it): `O(k)` expected time over std's hash.
 fn run_ends(numbered: &HashSet<usize>) -> HashMap<usize, usize> {
     let mut ends = HashMap::with_capacity(numbered.len());
     for &n in numbered {

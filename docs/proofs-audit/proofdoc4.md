@@ -1171,4 +1171,70 @@ Not read (135 entries):
 
 ## proofdoc4g: the moved commits, zedc-solvers, zedc-int, the small crates, `type_var_form`
 
-Not started.
+Read so far: the 25 entries in the small crates (zedc, zed-native, zedc-resolve, zedc-zir,
+zedc-syntax, zed-numtheory, zed-rt, zed-tools, zedc-lattice) and the `type_var_form` claim of
+4e6c5bfaa with zed-kernel print/names.rs, each message and its diff in that crate; the sites
+were checked on origin/main e1274cda9. The moved commits, zedc-solvers and zedc-int are not
+read (see "Not read:").
+
+| Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
+|---|---|---|---|---|---|---|
+| zedc | 5 | 5 | 4 | 1 | 0 | 0 |
+| zed-native | 5 | 6 | 4 | 1 | 0 | 1 |
+| zedc-resolve | 3 | 0 | 0 | 0 | 0 | 0 |
+| zedc-zir | 3 | 1 | 1 | 0 | 0 | 0 |
+| zedc-syntax | 2 | 3 | 1 | 2 | 0 | 0 |
+| zed-numtheory | 2 | 3 | 1 | 1 | 0 | 1 |
+| zed-rt | 2 | 1 | 1 | 0 | 0 | 0 |
+| zed-tools | 2 | 0 | 0 | 0 | 0 | 0 |
+| zedc-lattice | 1 | 1 | 1 | 0 | 0 | 0 |
+| `type_var_form` (zedc-resolve, zed-kernel) | 1 | 3 | 1 | 2 | 0 | 0 |
+| Total | 26 | 23 | 14 | 7 | 0 | 2 |
+
+| Source | Claim | Code site | Status |
+|---|---|---|---|
+| 51ae6534c | the status `main` gives is in `0..=255` | zedc run.rs `exit_status`; zedc-check walk.rs `status_in_range` | already there, see proofdoc4 (`status_in_range`) |
+| bc75c1615 | the per-word bounds of `bitAnd`, `bitOr`, `bitXor`, `mulHi`, `pext` | zedc-lattice interval.rs `bit_word` (moved from zedc) | completed: why `\|` is at least each operand and `&` at most each, why `mulHi` is below `2^w`, why `pext` is at most its operand |
+| bc75c1615 | `pow2` at `2^100` and the `i128` shift | none: the code is gone, every end is exact | already there (no site left) |
+| bc75c1615 | a known or text value is read in O(n) | zedc-check mod.rs | already there |
+| be476c3a4 | both build modes run one pipeline | zedc build.rs `Mode` | already there |
+| 59a32b29b | `sqrt` inline gives the kernel's bits, on 900 random operands | zed-native codegen.rs `Prim::Sqrt` | corrected: the test runs 200 operands from a new seed each run; the count fixed |
+| 59a32b29b | `fma` rounds once | zed-native codegen.rs `Prim::Fma` | already there (IEEE 754-2019 DOI, test) |
+| 9379f755c | the argument buffer costs O(arguments) at `rt_args` | zed-native hooks.rs `rt_args` | already there |
+| 9379f755c | the buffer's address stays valid across `rt_named` | zed-native hooks.rs `rt_named` | completed: `take` and the restore move the `Vec` header only, and `place_named` calls no hook |
+| be476c3a4 | `through` runs the one pipeline | zed-native `through` | already there |
+| d9d8729bb | held terms are keyed by cell index and generation | zed-native | already there |
+| d9d8729bb | the cost of the held values | zedc-zir memory.rs | already there (HELD-cells) |
+| 51ae6534c | `Mains` is built in O(k) by one stack | zedc-syntax builder.rs | already there |
+| 51ae6534c | `Mains::at` finds the innermost body in O(log k + d) | zedc-syntax builder.rs `Mains::at` | completed: why the walk up `outer` from the last body that starts at or before the place finds the innermost body |
+| d18e52a0a | two bounds written in different orders compare equal | zedc-syntax node.rs `carrier_names` | completed: `cmp` on `Member::of_name` is total and equal only for one name |
+| 929e7e04a | `m61::inv` is `a^(P - 2)`, which needs `P` prime | zed-numtheory lib.rs `m61::inv`, `m61` | completed: new test `the_mersenne_modulus_is_prime` (`is_prime` and Lucas-Lehmer, Lehmer 1930, doi:10.2307/1968235, with a composite control); the count of squarings and products |
+| fad56b903 | the `first_primes(n)` bench ratio is about 8.9 | zed-numtheory bench.rs | corrected: the bound is a power of two, 2^21 at n and 2^24 at 8n, so about 8.4; the formula as written gave 9.2; the two bounds now asserted in `the_first_primes_are_the_primes_in_order` |
+| fad56b903 | the costs of the other benches, the controls, Montgomery's borrow, `split`'s `unreachable!`, the `psi_k` | zed-numtheory bench.rs, tests.rs, factor.rs | already there |
+| d9d8729bb | `stand_in` keeps a held value's place | zed-rt | already there (the argument at zed-kernel eval.rs `Held::stand_in`) |
+| bea44d4a5 | `bit_domains` and `whole_bytes` | zedc-lattice interval.rs | already there, see proofdoc2a |
+| 4e6c5bfaa | a type variable is a name `[A-Z][0-9]*` | zedc-resolve `type_var_form` | already there (the code is the rule) |
+| 4e6c5bfaa | the variables and the definitions share no name | zed-kernel print/names.rs module doc | completed: every variable has the form and no `Part{k}` does; tests named, and that neither reads a definition back |
+| 4e6c5bfaa | `run_ends` is O(k) | zed-kernel print/names.rs `run_ends` | completed: each number starts one run or is skipped in O(1), and is written once; expected time over std's hash |
+
+No code claim:
+- zedc: 181885f72, 8c5ccccb9.
+- zed-native: 181885f72.
+- zedc-resolve: 51ae6534c, bea44d4a5, d18e52a0a.
+- zedc-zir: 51ae6534c, bea44d4a5.
+- zed-rt: 181885f72.
+- zed-tools: 51ae6534c, bea44d4a5.
+
+Not read:
+- moved (zedc, zedc-syntax), 39: 6c2c05101, 1dd869737, fd98fb235, 15657d994, 174c0f20b,
+  585e7f18b, 63a6f9c4d, 78e5f708f, acc4f3aed, 0513b158e, 26b4df164, 2bf39d29e, 64781908f,
+  745bf800f, 7498c2e7e, b6d0a2eef, 16d8ce615, 1b531cd56, 52e4b51fc, 5354b56d7, 7433e3145,
+  79885f50d, 889d3e94d, 9111fb39d, 961b304c9, a934e9cf8, e3b9b5c6b, 01d71b2ea, 53d0c3177,
+  63fa169e7, 8f23b02b7, 9147744bd, 9b7406051, c22a191c9, c3044ee83, ce1450451, cf099fcf2,
+  d9495abf6, fec575742.
+- zedc-solvers, 18: e5b5ea82e, 475e582ff, d80e81d08, 1ffeb360d, 3e4f866b5, 25ef78dd1,
+  2b3e706f1, 10a4e923a, b991293a4, f9936c4fe, 4c17c8e8f, 5168f5a37, 6da69df6f, 87bab4327,
+  c6969ca91, d3608d87b, d5ae3f504, e275c5f0b.
+- zedc-int, 16: 76bb9d4cf, 29ab1ba6e, d80e81d08, 25ef78dd1, 2b3e706f1, 878a1bf1b, fe770de11,
+  22e348bb9, 47dbe05b9, b991293a4, d7e7d86d0, e843dda31, fffe13699, 6cc6d3efd, 6da69df6f,
+  cc5576aea.

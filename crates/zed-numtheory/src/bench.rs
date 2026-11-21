@@ -100,8 +100,11 @@ fn the_sieves_take_n_log_log_n() {
         let table = odd_primes_below(black_box(m as u64));
         assert_eq!(table.len(), m / 2);
     });
-    // The bound doubles until it holds n primes: O(p_n log log p_n), p_n about n ln n, so the
-    // ratio at n = 100,000 is about 8 ln(8 p) / ln(p) for p = p_n, 8.9.
+    // The bound doubles from 64 until it holds n primes, so the sieves cost O(t log log t) for
+    // the last bound t, the earlier ones less than as much again. The bound is a power of two:
+    // p_n = 1,299,709 puts it at 2^21 for n = 100,000, and p_8n lies between 2^23 and 2^24, so
+    // 2^24 at 8n (both in `tests::the_first_primes_are_the_primes_in_order`). The ratio is 8
+    // times ln ln 2^24 / ln ln 2^21 = 1.05, about 8.4, plus the O(n) collect.
     scaling::check("first_primes(n)", 100_000, |m| {
         assert_eq!(first_primes(black_box(m)).len(), m);
     });

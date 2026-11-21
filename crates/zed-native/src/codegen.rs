@@ -888,8 +888,10 @@ impl<M: Module> Gen<'_, M> {
                     // `Word::VAL` in the heap's table), so it takes the kernel call, as all
                     // `f32` arithmetic in native code does; a tag for it would make every
                     // `f32` operation inline, a change beyond this primitive. Measured: the
-                    // same bits as the kernel on 900 random operands (test
-                    // `l01_18_scalar_interpreter::sqrt_fma`).
+                    // same bits as the kernel, with no kernel call, at both Cranelift levels, on
+                    // 200 random operands of every class from a new seed each run (test
+                    // `l01_18_scalar_interpreter::sqrt_fma::
+                    // random_operands_give_the_same_bits_in_the_kernel_and_in_native_code`).
                     let c = fx.b.ins().icmp_imm_s(IntCC::Equal, a.0, Word::FLOAT);
                     self.when(fx, c, slow);
                     let x = self.float(fx, a.1);

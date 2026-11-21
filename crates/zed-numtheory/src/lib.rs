@@ -499,7 +499,8 @@ pub fn first_primes(n: usize) -> Vec<u64> {
 /// `u64`, and a product fits a `u128`.
 ///
 /// What the callers rely on:
-/// - that `P` is prime, so the residues form a field: zed-kernel `num::Rat::residues` reduces
+/// - that `P` is prime (test `tests::the_mersenne_modulus_is_prime`, by `is_prime` and by the
+///   Lucas-Lehmer test), so the residues form a field: zed-kernel `num::Rat::residues` reduces
 ///   exponents modulo `P - 1` (Fermat), `value.rs` inverts by `x^(P - 2)` and reduces key
 ///   exponents modulo `P - 1`, and `poly.rs` evaluates polynomials at random points, where a
 ///   nonzero polynomial of degree `d` vanishes at no more than `d` of the `P` points
@@ -716,7 +717,9 @@ pub mod m61 {
     }
 
     /// `1 / a mod P`, for `0 < a < P`: `a^(P - 2)`, since `a^(P - 1) = 1` (Fermat's little
-    /// theorem, `P` prime). 61 squarings and 60 products ([`pow_word`]).
+    /// theorem, `P` prime: test `tests::the_mersenne_modulus_is_prime`). 61 squarings and 60
+    /// products ([`pow_word`]): `P - 2 = 2^61 - 3` has 61 bits, all set but bit 1, so the loop
+    /// runs 61 times and multiplies at 60 of them.
     pub const fn inv(a: u64) -> u64 {
         // `0^(P - 2) = 0` is no inverse.
         debug_assert!(0 < a && a < P, "a residue in 1..P");

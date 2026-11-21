@@ -1077,8 +1077,16 @@ impl Type {
         matches!(t.kind, TypeKind::And(_))
     }
 
-    /// The carrier names of a bound, a union of them, in the order of a union and each once, so two
-    /// bounds written in different orders compare equal.
+    /// The carrier names of a bound, a union of them, in the order of a union and each once, so
+    /// two bounds written in different orders compare equal.
+    ///
+    /// Why. On the members of names (`Member::of_name`) the order `cmp` is total and two names
+    /// compare equal only when they are the same name: each number type and each of `bool`,
+    /// `false` and `true` is a member of its own, and every other name is `Named`, compared by
+    /// its text. So the sort puts equal names next to each other, `dedup` leaves each once, and
+    /// two lists of the same names, in any order and with any repeats, give the same list. Test:
+    /// l01_29 `printed::arrows_that_bound_one_variable_bound_it_alike` (`int | rat` against
+    /// `rat | int`); it does not try a repeated name or two `Named` carriers.
     fn carrier_names(&self) -> Vec<&str> {
         let mut out = Vec::new();
         let mut stack = vec![self];

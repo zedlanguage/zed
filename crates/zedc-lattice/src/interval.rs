@@ -1684,7 +1684,9 @@ fn fin(e: &End) -> &Num {
 /// is exact at any size.
 ///
 /// `bitAnd` lies in `0..=min(hi_a, hi_b)`, `bitOr` and `bitXor` below the least power of two
-/// above the larger upper bound (`bitOr` from the larger lower bound), `bitNot` in
+/// above the larger upper bound (`bitOr` from the larger lower bound: `a | b` has every one
+/// digit of `a` and of `b`, so it is at least each; `a & b` has only digits of each, so it is
+/// at most each; neither `|` nor `^` sets a digit above the higher operand's top), `bitNot` in
 /// `2^w - 1 - x` over the corners, `popCount` in `0..=digits(hi_x)` (from 1 when 0 is not a
 /// member), `leadingZeros` in `w - digits(x)` over the corners, `trailingZeros` in `w` when `x`
 /// is 0 and in `0..digits(hi_x)` otherwise, and `rotl` and `rotr` below `2^w`, 0 exactly when
@@ -1693,11 +1695,14 @@ fn fin(e: &End) -> &Num {
 /// shift right by at least the digits of `x` gives 0 or -1, so `k` is read up to those digits.
 /// `f64Bits` is in `int[0..<2 ^ 64]`. `mulHi` is monotone in each factor and falls as `w`
 /// grows, so it lies in `(lo_a * lo_b) div 2^hi_w ..= (hi_a * hi_b) div 2^lo_w`, below
-/// `2^hi_w`; `bitReverse` and `byteSwap` lie below `2^w`, 0 exactly when `x` is, as the
+/// `2^hi_w` (both factors are below `2^w`, so the product is below `2^(2 w)` and its high half
+/// below `2^w`); `bitReverse` and `byteSwap` lie below `2^w`, 0 exactly when `x` is, as the
 /// rotations do; `pdep` lies in `0..=hi_mask`, since its one digits are some of the mask's;
 /// `pext` lies in `0..=min(hi_x, 2^m - 1)`, `m` the most one digits of a mask in the mask's
 /// hull ([`Num::most_ones_from`]), since it moves the digits of `x` it keeps to places no
-/// higher and in the same order, and keeps at most `popCount(mask)` of them.
+/// higher and in the same order (the `j`-th kept digit, from 0, comes from a place `i_j >= j`,
+/// so the result `sum 2^j` over kept one digits is at most `sum 2^(i_j) <= x`), and keeps at
+/// most `popCount(mask)` of them.
 /// DESIGN gives no bound for `funnelShl` and `funnelShr`; they take the hull `0 ..< 2^hi_w`, 0
 /// exactly when both halves are.
 ///

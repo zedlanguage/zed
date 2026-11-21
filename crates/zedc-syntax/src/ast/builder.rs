@@ -242,6 +242,12 @@ impl Mains {
     // Complexity tradeoff: the last body that starts at or before `at`, O(log k), then the
     // bodies that hold it, O(d) for d bodies nested there; a walk back over every earlier
     // body was O(k) for a form that follows k bodies and lies in none of them.
+    //
+    // Why the walk up `outer` finds the innermost body. Let `j` be the last body that starts at
+    // or before `at`. A body `b` that holds `at` starts at or before `at`, so at or before `j`,
+    // and ends after `at`, so it meets `j`; bodies are nested or apart, so `b` is `j` or holds
+    // `j`, that is, `b` is on the chain `j`, `outer[j]`, ... And of two bodies on that chain the
+    // later one in the walk holds the earlier, so the first that holds `at` is the innermost.
     pub(super) fn at(&self, at: usize) -> Option<&MainBody> {
         let mut i = self
             .list

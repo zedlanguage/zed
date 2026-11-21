@@ -213,6 +213,31 @@ fn bezout_cofactors_give_the_gcd_and_are_the_least() {
     assert_eq!(bezout_i128(3, i128::MIN), None);
 }
 
+/// `m61::P = 2^61 - 1` is prime, which `m61::inv` (Fermat) and the callers listed at `m61`
+/// rely on: by `is_prime`, exact on every 64-bit word, and by the Lucas-Lehmer test (D. H.
+/// Lehmer, "An extended theory of Lucas' functions", Annals of Math. 31(3):419-448, 1930,
+/// doi:10.2307/1968235: for an odd prime `p`, `2^p - 1` is prime if and only if `s_(p-2) = 0`
+/// modulo it, where `s_0 = 4` and `s_(i+1) = s_i^2 - 2`), which uses no code of `is_prime`.
+/// The DOI checked on Crossref 2026-11-20; the statement is the standard one, from memory, and
+/// the composite `2^11 - 1` below fails it as it must.
+#[test]
+fn the_mersenne_modulus_is_prime() {
+    use m61::P;
+    assert!(is_prime(P));
+    let mut s = 4;
+    for _ in 0..61 - 2 {
+        s = m61::sub(m61::mul(s, s), 2);
+    }
+    assert_eq!(s, 0, "Lucas-Lehmer for 2^61 - 1");
+    // A negative control: 2^11 - 1 = 2047 = 23 * 89 fails the same test.
+    let m = (1u64 << 11) - 1;
+    let mut s = 4;
+    for _ in 0..11 - 2 {
+        s = (s * s + m - 2) % m;
+    }
+    assert_ne!(s, 0, "Lucas-Lehmer for 2^11 - 1");
+}
+
 #[test]
 fn the_mersenne_arithmetic_agrees_with_division() {
     use m61::P;
@@ -573,6 +598,10 @@ fn the_first_primes_are_the_primes_in_order() {
     }
     // Past several doublings of the bound: the 100000th prime is 1299709.
     assert_eq!(first_primes(100_000).last(), Some(&1_299_709));
+    // The bench `first_primes(n)` at n = 100,000 and 8n relies on these: the last bound is
+    // 2^21 at n (above) and 2^24 at 8n.
+    let last = first_primes(800_000).last().copied();
+    assert!(last.is_some_and(|p| 1 << 23 < p && p < 1 << 24), "{last:?}");
 }
 
 /// `shares_a_factor_by_table` by its definition, a gcd of every pair.
