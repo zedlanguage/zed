@@ -14460,8 +14460,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Y within it. A link Y tries has an end in a class of carriers of Y (or both ends in
     /// one class, which joins nothing); the class of X's end around it is then one of
     /// carriers too, so the link is active at X's end, X tried it (each method tries every
-    /// link active at its end: (2) above, and the fixpoint's definition), and with no failure joined
-    /// it: both ends are in one class of X. Y's merge then gives a class within that one,
+    /// link active at its end: (2) above, and the fixpoint's definition), and with no failure
+    /// joined it: both ends are in one class of X. Y's merge then gives a class within that one,
     /// whose mask holds X's class's mask, which is not empty, so it does not fail. So Y has no
     /// failure; by the same argument with X and Y swapped, both end with the same classes.
     /// Where a link fails, which link of classes that share carriers two by two but not all
@@ -14485,9 +14485,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     // the longer); O((g + w) log(c)) in all for w writes. The scan of the unseen groups when
     // the stack empties costs O(g) and, by the proof at `push_carrier_groups`, finds nothing
     // the search has not seen, so it runs at most twice: at the start where no group is one
-    // of carriers, and at the end. Before, that scan was the only way such a group was found, once per
-    // round of such finds, and with no bound on the rounds below g the worst case was O(n·g)
-    // (no program making more than one round was known, nor is one now).
+    // of carriers, and at the end. Before, that scan was the only way such a group was found,
+    // once per round of such finds, and with no bound on the rounds below g the worst case was
+    // O(n·g) (no program making more than one round was known, nor is one now).
     fn join_narrowed(&mut self, level: usize) {
         let mut from: Vec<usize> = Vec::new();
         for k in self.r10_peek_pending(level) {
@@ -14580,9 +14580,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// For [`Self::join_narrowed`]: reads the class writes logged from `read` on
-    /// ([`Ck::class_log`]), and moves `read` past them; moves each list of `unseen` groups to the root its class now
-    /// hangs from, the shorter list into the longer, and pushes on `stack`, marked `seen`,
-    /// the groups whose class is now one of carriers (its mask has no `OTHER` bit).
+    /// ([`Ck::class_log`]), and moves `read` past them; moves each list of `unseen` groups to
+    /// the root its class now hangs from, the shorter list into the longer, and pushes on
+    /// `stack`, marked `seen`, the groups whose class is now one of carriers (its mask has no
+    /// `OTHER` bit).
     ///
     /// Proof that `unseen` stays keyed by each group's root. At the start each group is keyed
     /// by its root then. A group's root changes only when a root gets a parent, which the
