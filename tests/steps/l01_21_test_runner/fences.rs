@@ -1,8 +1,5 @@
 use zedc::testing::test;
 
-const BARE: &str = "m.env[\"HOME\"] else \"no HOME\"";
-const NAMED: &str = "m.env[\"HOME\"] else #notFound -> \"no HOME\"";
-
 /// The enabled fences run: each fence of layer L1 passes its checks but for what a fragment
 /// leaves to the text around it, a name it does not bind. An elision `…` is such a name, `elided`,
 /// as the spec tools read it. A fence with such a name is not elaborated, so its ✗ marks are not
@@ -15,20 +12,7 @@ fn every_l1_fence_passes_but_for_its_free_names() {
         .iter()
         .filter(|f| f.layer <= 1 && !f.notation)
     {
-        let mut text = f.text.replace('…', "elided");
-        // EXAMPLES' environment fence still writes a bare `else`, which zedc refuses (QUESTIONS
-        // A113, plan row ELSE-explicit-atoms); it must be refused with the repair naming
-        // `#notFound`, and runs with that repair until EXAMPLES writes it (SPEC-fences-bare-else).
-        if text.contains(BARE) {
-            let refused: Vec<String> = test(&text).into_iter().filter_map(|o| o.failure).collect();
-            let repair = format!("Try `{NAMED}` instead.");
-            assert!(
-                refused.iter().any(|w| w.contains(&repair)),
-                "{}: {refused:?}",
-                f.at
-            );
-            text = text.replace(BARE, NAMED);
-        }
+        let text = f.text.replace('…', "elided");
         let outcomes = test(&text);
         let failures: Vec<&String> = outcomes.iter().filter_map(|o| o.failure.as_ref()).collect();
         let free = |w: &&String| w.contains(" is not defined.");

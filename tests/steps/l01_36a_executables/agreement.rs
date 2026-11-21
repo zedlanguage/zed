@@ -111,25 +111,11 @@ fn every_enabled_corpus_program_agrees() {
 fn every_enabled_fence_program_agrees() {
     // A fence with `main` is a program; of the enabled fences at L1, one is: the environment
     // fence, which writes `m.env["HOME"]` to `m.stdout`. Both runs see the same environment.
-    // EXAMPLES writes it `m.env["HOME"] else "no HOME"`, a bare `else`, which zedc refuses
-    // since every `else` names the atoms it takes (DESIGN.md sec:failure, QUESTIONS A113; plan
-    // row ELSE-explicit-atoms); the fence is run with the checker's repair, which names
-    // `#notFound`, until EXAMPLES writes it (plan row SPEC-fences-bare-else).
-    const BARE: &str = "m.env[\"HOME\"] else \"no HOME\"";
-    const NAMED: &str = "m.env[\"HOME\"] else #notFound -> \"no HOME\"";
     let programs: Vec<_> = zed_tests::fences::all()
         .into_iter()
         .filter(|f| f.layer <= ENABLED && !f.notation)
         .filter_map(|f| match zedc::run::load(f.text.as_bytes()) {
             Ok(_) => Some((f.text.clone(), f)),
-            Err(why) if f.text.contains(BARE) => {
-                assert!(
-                    why.contains(&format!("Try `{NAMED}` instead.")),
-                    "{}: {why}",
-                    f.at
-                );
-                Some((f.text.replace(BARE, NAMED), f))
-            }
             Err(_) => None,
         })
         .collect();
