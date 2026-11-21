@@ -27,10 +27,11 @@
 //! O((n + e) log n) on nonnegatively weighted networks"). The step from the paper the code
 //! relies on: with weights 0 or more, a node's least tentative label cannot fall later, since
 //! any other path to it passes through a node whose label is at least as large. Johnson,
-//! Lemma 2, p. 11 (credited there to Edmonds and Karp): with "w'(u, v) = w(u, v) + h(u) - h(v)
-//! >= 0", a path "is shortest if and only if" it is shortest under `w'`, because the sum of
-//! `w'` along a path from `s` to `t` is its sum of `w` plus `h(s) - h(t)`, the same for every
-//! path; "such a function h is defined if and only if N has no negative cycles".
+//! Lemma 2, p. 11 (credited there to Edmonds and Karp): with
+//! "w'(u, v) = w(u, v) + h(u) - h(v) >= 0", a path "is shortest if and only if" it is shortest
+//! under `w'`, because the sum of `w'` along a path from `s` to `t` is its sum of `w` plus
+//! `h(s) - h(t)`, the same for every path; "such a function h is defined if and only if N has
+//! no negative cycles".
 //! `dijkstra_on_reduced_weights_gives_least_distances` checks the
 //! distances against Bellman–Ford on the raw weights, `a_negative_reduced_weight_is_refused`
 //! the check of [`reduced`], and `stale_entries_come_up_as_stale` the lazy deletion.
