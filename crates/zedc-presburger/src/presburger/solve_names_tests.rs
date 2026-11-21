@@ -307,7 +307,7 @@ fn tied_remainders_drawn(rng: &mut Rng) -> (usize, Vec<Row>) {
 #[test]
 fn two_tied_remainder_rows_are_answered_alike_under_every_naming() {
     // PROOF-solve-renaming-invariant. With two tied rows the two runs of
-    // `modular::point_by_structure` read each row the way the names put first and then the
+    // `modular::scaled::point_by_structure` read each row the way the names put first and then the
     // other way, two of the four readings; only `u` and `w` as the remainders leave one
     // variable, `v`, so a point was found unless `v` was named between `u` and `w`, and there
     // `solve` kept the Omega test's refusal (Shadows). The rows each holds tell them apart

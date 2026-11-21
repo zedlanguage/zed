@@ -22,7 +22,8 @@
 //!
 //! Tests: `tests::scaled_remainders_match_enumeration` (random formulas against
 //! enumeration over a period or the bounds), `tests::an_affine_preimage_matches_enumeration`,
-//! `tests::the_rows_scaled_example_is_decided`, `tests::a_remainder_of_a_quotient_is_still_declined`,
+//! `tests::the_rows_scaled_example_is_decided`,
+//! `tests::a_remainder_of_a_quotient_is_still_declined`,
 //! and end to end
 //! `l01_38_presburger::checker::a_question_over_one_scaled_variable_is_decided`.
 
@@ -432,6 +433,26 @@ fn remainder_values(c: &Con, m: &Int) -> ResidueSet {
         Rel::Eq => return Vec::new(),
     };
     res_normalize(vec![(lo, hi)], m)
+}
+
+/// [`solve_modular`]'s answer to `f`, or, when it declines, [`solve`]'s. [`solve`] runs only
+/// when [`solve_modular`] declines, so every formula that one accepts is answered as before.
+/// The fallback is written here, not in [`solve_modular`], so that `modular.rs` names nothing
+/// of this file and the two files form no import cycle (test `s_01f_import_graph`).
+pub(crate) fn solve_modular_or_scaled(f: &Formula, want_model: bool) -> Option<Option<Model>> {
+    solve_modular(f, want_model).or_else(|| solve(f, want_model))
+}
+
+/// A point of `f` found by [`solve_modular_or_scaled`], or `None` when `f` has no point or lies
+/// outside its scope. Because [`solve_modular`] chooses `x_root` from the name- and
+/// order-independent candidate intersection (size at most 2) and tries every candidate, whether
+/// it finds a point does not depend on atom names or row order. Not proved for [`solve`], which
+/// runs only where [`solve_modular`] declines: where several atoms fit as its root it takes the
+/// first by kind and then by index, and [`solve_modular_whole`] may decline the rewrite on one
+/// root and accept it on another, so there whether a point is found may depend on the order of
+/// the atoms.
+pub(crate) fn point_by_structure(f: &Formula) -> Option<Model> {
+    solve_modular_or_scaled(f, true).flatten()
 }
 
 /// Decides `f` as [`solve_modular_whole`] does, after rewriting each literal on a remainder of

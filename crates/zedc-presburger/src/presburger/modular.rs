@@ -8,7 +8,7 @@
 //! `x mod m in S`.
 
 mod brooks;
-mod scaled;
+pub(super) mod scaled;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
@@ -823,18 +823,7 @@ pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     // `one_scope::one_variable_modular_formulas_match_enumeration`,
     // `solve_names_tests::two_tied_remainder_rows_are_answered_alike_under_every_naming`,
     // `solve_names_tests::solve_modular_never_gives_two_verdicts_on_tied_remainder_rows`.
-    // A formula with a remainder of a multiple of `x` or of a quotient of `x` is rewritten to
-    // one on remainders of `x` alone ([`scaled::solve`]); it runs only when the reading above
-    // declines, so every formula that reading accepts is answered as before.
-    solve_modular_whole(f, want_model).or_else(|| scaled::solve(f, want_model))
-}
-
-/// A point of `f` found by [`solve_modular`], or `None` when `f` has no point or lies outside
-/// its scope. Because [`solve_modular`] chooses `x_root` from the name- and order-independent
-/// candidate intersection (size at most 2) and tries every candidate, whether a point is found
-/// does not depend on atom names or row order.
-pub(super) fn point_by_structure(f: &Formula) -> Option<Model> {
-    solve_modular(f, true).flatten()
+    solve_modular_whole(f, want_model)
 }
 
 /// Decide a conjunction of equalities with private integer quotients and one free integer.

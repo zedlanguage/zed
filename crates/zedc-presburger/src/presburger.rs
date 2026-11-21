@@ -1433,7 +1433,8 @@ pub fn without_modular_empty_check<T>(run: impl FnOnce() -> T) -> T {
     out
 }
 
-/// [`modular::solve_modular`]'s answer to `f`, or `None` when it gives none or is switched off
+/// [`modular::scaled::solve_modular_or_scaled`]'s answer to `f` ([`modular::solve_modular`]'s,
+/// or on its decline the scaled rewrite's), or `None` when it gives none or is switched off
 /// ([`with_modular_empty_checked`]). In a run under [`with_modular_empty_checked`], each answer
 /// that `f` has no point is asked again of the path without the modular solver, and the two
 /// answers are recorded.
@@ -1441,7 +1442,7 @@ fn modular_answer(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     if MODULAR_CHECK.with(|c| c.borrow().as_ref().is_some_and(|c| c.off)) {
         return None;
     }
-    let found = modular::solve_modular(f, want_model)?;
+    let found = modular::scaled::solve_modular_or_scaled(f, want_model)?;
     if found.is_none() && MODULAR_CHECK.with(|c| c.borrow().is_some()) {
         // The check is off while the path without the modular solver is asked, and on again
         // when `On` is dropped, also when that path is left by an unwind.
@@ -15257,9 +15258,9 @@ pub fn systems_solved() -> u64 {
 /// the same under every naming of the variables and every order of the constraints.
 ///
 /// Where the Omega test refuses ([`Refusal::Growth`], [`Refusal::Shadows`], [`Refusal::Tie`]),
-/// the point the modular solver finds by structure alone ([`modular::point_by_structure`]) is
-/// the answer, once every constraint is checked to hold there; a refusal by work is not
-/// passed on to it.
+/// the point the modular solver finds by structure alone
+/// ([`modular::scaled::point_by_structure`]) is the answer, once every constraint is checked to
+/// hold there; a refusal by work is not passed on to it.
 // Complexity tradeoff (FAIL-one-scope-pairs-seed-refusal): division pairs over one variable
 // with a bound on one side only (`x == 5 q + r + 7`, `0 <= r <= 4`, ..., `x >= 82`) make the
 // Omega test eliminate a quotient whose coefficient is not a unit on either side, and its
@@ -15345,13 +15346,13 @@ thread_local! {
     static SPLINTERS_SKIPPED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// The point [`modular::point_by_structure`] finds for the conjunction of `cons`, over the
+/// The point [`modular::scaled::point_by_structure`] finds for the conjunction of `cons`, over the
 /// atoms of `cons` alone, if every row of `cons` holds there; otherwise `None`. What [`solve`]
 /// answers where the Omega test refuses.
 fn point_past_refusal<C: std::borrow::Borrow<Con>>(cons: &[C]) -> Option<Model> {
     let rows: Vec<&Con> = cons.iter().map(|c| c.borrow()).collect();
     let f = Formula::and(rows.iter().map(|&c| Formula::Con(c.clone())).collect());
-    let found = modular::point_by_structure(&f)?;
+    let found = modular::scaled::point_by_structure(&f)?;
     // An atom the modular solver left out of its point is 0, as `Con::holds_linear` reads it.
     let m: Model = (rows.iter())
         .flat_map(|c| c.lin.terms.keys())
