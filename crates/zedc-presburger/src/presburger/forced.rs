@@ -133,8 +133,14 @@ struct Graph<'f> {
 }
 
 /// What [`forced`] shows of `f`; without `point`, a formula that holds is answered
-/// [`Forced::Holds`], its point not built. O(n) for `n` the size of `f` with each shared part
-/// counted once, plus hashing each atom.
+/// [`Forced::Holds`], its point not built. O(n) steps for `n` the size of `f` with each shared
+/// part counted once, plus hashing each atom; each step is arithmetic on the values fixed so
+/// far, which the propagation can make grow with the length of the formula, so the cost is
+/// O(n) only while those values keep a bounded size. Unproved as O(n) in general, and false on
+/// `dark_chain(k)` (`0 <= 2 x[i+1] - 3 x[i] <= 1`, `1 <= x0 <= 9`, in
+/// `tests/steps/l01_38_presburger/exp_families.rs`): the rounds set `x0` and so fix every
+/// `x[i] >= (3/2)^i`, Θ(k²) bits in all; `decide` grew 13.93 times from k = 4800 to 38400
+/// (2026-11-21, PRES-dark-chain-forced-bits).
 pub(super) fn forced(f: &Formula, point: bool) -> Forced<'_> {
     let mut g = Graph::of(f);
     g.events.push(Event::Force(0));

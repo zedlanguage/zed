@@ -56,13 +56,29 @@ costs!(nest_empty_answers, nest_empty, "x0", 'a', 2000, 1, 2);
 // read the atoms of every level below it in `forest_domains`, Θ(k²) in all. At k = 16 to 128 that
 // cost was 10.24 times at 8n under tools/run_tests.sh and 11.38 times run directly; at 128 to
 // 1024 it was 17.89 times under tools/run_tests.sh, 8.13 after the fix (COMPLEXITY.md
-// PRES-exp-families).
+// PRES-exp-families). From k = 570 it was 35.2 times (2026-11-14); with each kernel equation in
+// one sign (PRES-below-key-sign) it is 8.15 times (2026-11-21, PRES-growth-exp-families).
 costs!(
     nest_empty_project_each_deep,
     nest_empty,
     "x0",
     'p',
-    128,
+    570,
+    1,
+    2
+);
+
+// `project_each` on a deeper shared_sums (PRES-growth-exp-families): 38.3 times at 8n from
+// k = 590 (2026-11-14), each doubling 3.1 to 3.6 times. With each kernel equation in one sign
+// (PRES-below-key-sign) it is 8.17 times from 590 to 4720 (762.98M and 6234.92M instructions,
+// 2026-11-21, load 55), each doubling 2.01 times, and 8.17 times from 460 to 3680 (596.42M and
+// 4870.28M, load 25), the four sizes in about 5 s.
+costs!(
+    shared_sums_project_each_deep,
+    shared_sums,
+    "x0",
+    'p',
+    460,
     1,
     2
 );
