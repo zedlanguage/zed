@@ -949,4 +949,38 @@ fn small_shared_morphism_constraints_are_decided() {
     }
 }
 
+/// The closure types written in [`arm_family`]'s `Thunk` read the group's members, and the
+/// group's search reads them, so a closure type's own search (types::empty `own_search`) can
+/// meet the group while the group's own search is under way; it then keeps nothing, and the
+/// group's search walks it (`HIT`, `TOUCHING`). Whatever the order: `is_empty` of each member and
+/// of a closure type over each member gives the same answer asked fresh, after the members, and
+/// before them, with and without the forked `Node`.
+#[test]
+fn is_empty_of_closures_over_a_group_does_not_depend_on_the_order_asked() {
+    for fork in [false, true] {
+        for m in [1, 2, 4] {
+            let members = arm_family(fork, m).instance(vec![]);
+            let closures: Vec<Type> = members
+                .iter()
+                .map(|t| Type::morphism(Type::int(), Type::int(), t.clone()))
+                .collect();
+            let all: Vec<Type> = members.iter().chain(&closures).cloned().collect();
+            let fresh: Vec<bool> = all
+                .iter()
+                .map(|t| {
+                    Type::forget_emptiness();
+                    t.is_empty()
+                })
+                .collect();
+            Type::forget_emptiness();
+            let members_first: Vec<bool> = all.iter().map(Type::is_empty).collect();
+            Type::forget_emptiness();
+            let mut closures_first: Vec<bool> = all.iter().rev().map(Type::is_empty).collect();
+            closures_first.reverse();
+            assert_eq!(members_first, fresh, "fork = {fork}, m = {m}");
+            assert_eq!(closures_first, fresh, "fork = {fork}, m = {m}");
+        }
+    }
+}
+
 mod bench;

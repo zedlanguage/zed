@@ -202,6 +202,11 @@ type ForkSave = (Vec<usize>, Vec<(usize, Refusal)>);
 
 thread_local! {
     static MEMO: RefCell<ByType<bool>> = const { RefCell::new(ByType::new()) };
+    /// For each member of a group decided by [`group_emptiness`]: `Some(b)`, whether the
+    /// group's own search proved it empty, when no fork or split refused that search; `None`
+    /// when one did. A function of the group alone, so of the member (proof at
+    /// [`own_emptiness`]).
+    static OWN: RefCell<ByType<Option<bool>>> = const { RefCell::new(ByType::new()) };
     /// The answer of [`Type::empty_past_forks`] for each type asked: a function of the type alone.
     static PAST_FORKS: RefCell<ByType<bool>> =
         const { RefCell::new(ByType::new()) };
@@ -235,6 +240,21 @@ thread_local! {
     /// The members of the groups whose verdicts are being decided ([`group_verdicts`]): a search
     /// decides such a member itself, where it reads the verdict of any other member.
     static DECIDING: RefCell<TypeSet> = const { RefCell::new(TypeSet::with_hasher(Digests::new())) };
+    /// The groups ([`Type::group`]) whose own searches for emptiness are under way
+    /// ([`group_emptiness`]).
+    static EMPTYING: RefCell<HashSet<u64>> = RefCell::new(HashSet::new());
+    /// The closure types ([`owned`]) whose own searches are under way ([`own_search`]).
+    static UNDER_WAY: RefCell<TypeSet> = const { RefCell::new(TypeSet::with_hasher(Digests::new())) };
+    /// The groups ([`EMPTYING`]) and closure types ([`UNDER_WAY`]) under way that the current
+    /// own search, or one inside it, met ([`own_emptiness`]). Set aside at the start of each own
+    /// search and put back, with what the search added, at its end ([`own_search`],
+    /// [`group_emptiness`]). A search that met one under way other than its own group or root
+    /// reads a type whose answer does not exist yet, so nothing it gives is kept.
+    static HIT: RefCell<Vec<Hit>> = const { RefCell::new(Vec::new()) };
+    /// For each closure type, by node number (never reused), whose own search met the group or
+    /// closure type under way given: it reads that one, which reads it, so it is walked by that
+    /// one's search, and is not searched alone again while that one is under way.
+    static TOUCHING: RefCell<HashMap<u64, Hit>> = RefCell::new(HashMap::new());
     /// The values the searches of [`group_verdicts`] built, one list per search, each value by
     /// its number there, as [`Search::shown`] holds them: read, never changed, by the searches
     /// that read a member's value ([`Rep::Of`]), until `Type::forget_emptiness`.
@@ -264,6 +284,334 @@ thread_local! {
     /// answers with them: set only by [`Type::with_pieces_compared`], for the test of the cut
     /// one cell at a time, which product code takes only after a test not decided.
     static PIECES_COMPARED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// What [`Type::decide_groups_read`] runs for each group it reaches.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Decide {
+    /// The group's decider (`Type::judged`).
+    Deciders,
+    /// The group's verdicts ([`group_verdicts`]).
+    Verdicts,
+    /// The group's own search for emptiness ([`group_emptiness`]).
+    Emptiness,
+}
+
+/// The parts of the types a walk reads, each node of the diagrams of their tuple rows,
+/// functions and atom payloads once in the whole walk.
+#[derive(Default)]
+struct PartWalk {
+    rows: DigestSet<u64>,
+    morphisms: DigestSet<u64>,
+    payloads: DigestSet<u64>,
+}
+
+impl PartWalk {
+    /// Calls `each` on every part of `t` not read before in this walk: each atom payload, each
+    /// component of a tuple row, and the guarantee, permission and value type of each function.
+    fn parts(&mut self, t: &Type, each: &mut impl FnMut(&Type)) {
+        let p = t.p();
+        // Complexity tradeoff (R11-C3): iterating all payload-bearing names of every prefix
+        // union sharing one persistent map costs `Theta(n^2 log n)`
+        // (`r11_payload_name_prefixes_must_scale`). Visiting each shared `PayloadNode` once via
+        // `payloads` reduces the walk to `O(V + E)` in the distinct tree nodes reached
+        // (`O(n log n)` across `n` prefix unions).
+        p.atoms
+            .payload_entries_unseen(&mut self.payloads, &mut |_name, _bare, payload| {
+                each(payload);
+            });
+        for part in p.tuples.lens.values() {
+            part.atoms_unseen(&mut self.rows, &mut |row| {
+                row.iter().for_each(&mut *each);
+                true
+            });
+        }
+        p.morphisms.atoms_unseen(&mut self.morphisms, &mut |m| {
+            for x in [&m.guarantee, &m.permission, &m.value] {
+                each(x);
+            }
+            true
+        });
+    }
+}
+
+/// Whether [`own_emptiness`] keeps an answer for `t`: `t` is a member of a recursive group, or
+/// a closure type, one function type as written (below). A closure holds no
+/// value of its key types, so whether a closure type is empty asks whether its key types are, a
+/// question apart from the value being built; a chain of n closure types each the key type of the
+/// next was searched to its end from each of its n types, O(n^2), when each type of it was asked
+/// (`group_oracle::bench::a_chain_decided_again_scales`).
+/// A closure type is owned only as written: one function type `{k: v}` and nothing else (its
+/// morphisms one positive atom, `Part::literal_atom`). A search builds meets and differences of
+/// the function atoms of its root, never a new atom, so every owned type a search meets is a part
+/// of its root, decided before it by [`fill_own`] from a stack on the heap. The types a search
+/// builds are walked in it, as every type was before `OWN`.
+/// Complexity tradeoff: owning every type with some functions and not others (any morphism
+/// part not a leaf) also owned the differences a search builds: comparing two types of
+/// functions nested k deep, the search of the difference at each level met the difference one
+/// level down and ran its own search, nested on the thread's stack, whose first value walked
+/// every level below again: O(k^2) and k levels of the thread's stack (instructions under
+/// callgrind 46.3e6, 534e6 and 2016e6 at k = 40, 160 and 320, the last stopped by a stack
+/// overflow, 2026-11-21;
+/// `deep_search::bench::a_deep_morphism_type_is_not_under_one_that_differs_at_the_bottom` went
+/// from 0.8 s to its limit of 20 s). Here the difference is walked in the one search, O(k).
+/// Given up: a closure type a search builds is decided again by each search that builds it.
+fn owned(t: &Type) -> bool {
+    t.is_member() || !t.is_recursive() && written_closure(t)
+}
+
+/// Whether `t` is one function type and nothing else: no scalar, atom, record or tuple, and
+/// its morphisms one positive atom.
+fn written_closure(t: &Type) -> bool {
+    let p = t.p();
+    !p.has_scalars()
+        && p.atoms.is_default()
+        && p.tuples.is_default()
+        && !p.structs
+        && p.morphisms.literal_atom().is_some()
+}
+
+/// Whether `t`, a type [`owned`] keeps an answer for, is empty by its own search: for a member,
+/// its group's search ([`group_emptiness`]), run first for the groups it reads; for a closure
+/// type, the search [`Type::is_empty`] runs ([`own_search`]), run first for the owned types
+/// below it. `None` when that search was refused, and for any other `t`.
+///
+/// Claim: the answer is a function of `t` alone, whatever was asked before on the thread.
+/// Proof, by induction over the owned types in the order "met by the own search of", u below t
+/// when the own search of t meets u (u not t): (1) `OWN` is written only by `group_emptiness`,
+/// for every member of the group it was given, and by `own_search` for its closure type, each
+/// time with what that run gave (a refused closure type may be run again by `Type::is_empty`,
+/// which keeps no refused answer in `MEMO`); cleared only by `Type::forget_emptiness`. So by
+/// (2) every entry of `OWN` is what a run on its type or group gives.
+/// (2) The run for a group G is one search of the members of G in the order
+/// `Type::group_members` lists them, and the run for a closure type t one search of t; each a
+/// function of what it is given. The search is that of `Type::is_empty` (not strict, so it reads
+/// no `MEMO`, `VERDICTS`, `SHARED` or `STORES`: step (3) at `Type::is_empty`). It walks the
+/// members of G, or t itself (`own_root`); every other owned type u it meets is answered by
+/// `own_emptiness(u)` when that is `Some`, and walked otherwise (`Search::met`); a closure value
+/// it builds returns a value of such a u when `own_emptiness(u)` is `Some(false)`, and builds
+/// one otherwise (`Searching::returnable`). u is below, so
+/// by the induction hypothesis `own_emptiness(u)` is a function of u. So the run's answers, and
+/// so its entries of `OWN`, are a function of what it was given.
+/// (3) Before a run, `decide_groups_read` runs those of the groups below it and `fill_own`
+/// those of the owned types below it, each after those it reads, from stacks on the heap; so the
+/// searches of (2) find most answers they read kept, and a chain of k groups or closure types is
+/// decided with a few levels of the thread's stack, not k.
+/// (4) "Below" has no cycle through a closure type that reads a group whose search reads it. A
+/// closure type written in a group's definitions (`cycle_dup`'s `arm_family`: `Thunk` holds
+/// closures returning `Node` and `Tree`) reads members of the group, and the group's search
+/// meets it: each reads the other. Such a closure type is not owned while its group is under
+/// way: its own search, tried then, meets a member of the group under way (`own_emptiness`
+/// notes the group in `HIT`), is cut short (`Search::met`, `fill_own`), keeps nothing
+/// (`own_search` returns `None`), and is noted in `TOUCHING`, so the group's search walks it,
+/// as a part of the group, and no other search tries it again while the group is under way.
+/// The same holds for a closure type c under way (`UNDER_WAY`): when a group c reads was
+/// refused, c's search walks the group's members, and a closure type d of that group, tried
+/// alone there, meets c again; d's try keeps nothing (`Hit::Closure`) and c's search walks d.
+/// Every answer kept comes from a search that met nothing under way other than its own group or
+/// root, so read only answers already kept, each a function of its type by the induction
+/// hypothesis.
+/// Whether a closure type's try meets the group depends only on the closure type and on what
+/// is kept below the group, so the group's search, and its answers, are a function of the group.
+/// What it rests on: that groups form no cycle (a group is a set of definitions that read each
+/// other, so the groups its members read are below it in the order of definitions), inferred
+/// and not proved for the types a search builds from parts (meets, differences): a group's
+/// search that met another group under way keeps nothing, and a debug build stops on it
+/// (`group_emptiness`); no test reaches it. And the `CLASSES` step at `Type::is_empty`, as for
+/// every search.
+/// Tests: `l01_23_groups_and_refusals::group_oracle::is_empty_of_a_key_chain_does_not_depend_on_the_order_asked`,
+/// `l01_23_groups_and_refusals::cycle_dup::is_empty_of_closures_over_a_group_does_not_depend_on_the_order_asked`
+/// (the closure types of (4), whose own searches stopped a debug build before `HIT`), and the
+/// tests listed at `Type::is_empty`.
+fn own_emptiness(t: &Type) -> Option<bool> {
+    if let Some(b) = OWN.with(|o| o.borrow().get(t).copied()) {
+        return b;
+    }
+    let hit = match t.group().filter(|_| t.is_member()) {
+        Some(g) => EMPTYING
+            .with(|e| e.borrow().contains(&g))
+            .then_some(Hit::Group(g)),
+        None if UNDER_WAY.with(|u| u.borrow().contains(t)) => Some(Hit::Closure(t.clone())),
+        None => touching(t),
+    };
+    if let Some(h) = hit {
+        HIT.with(|w| w.borrow_mut().push(h));
+        return None;
+    }
+    if t.is_member() {
+        t.decide_groups_read(Decide::Emptiness);
+        if !OWN.with(|o| o.borrow().contains_key(t)) {
+            group_emptiness(&t.group_members()?);
+        }
+    } else if owned(t) {
+        own_search(t);
+    }
+    OWN.with(|o| o.borrow().get(t).copied()).flatten()
+}
+
+/// A group or closure type under way, met by an own search ([`HIT`]).
+#[derive(Clone, PartialEq)]
+enum Hit {
+    Group(u64),
+    Closure(Type),
+}
+
+impl Hit {
+    /// Whether it is still under way.
+    fn under_way(&self) -> bool {
+        match self {
+            Hit::Group(g) => EMPTYING.with(|e| e.borrow().contains(g)),
+            Hit::Closure(c) => UNDER_WAY.with(|u| u.borrow().contains(c)),
+        }
+    }
+}
+
+/// What `t`'s own search met under way when it was tried ([`TOUCHING`]), if that is still
+/// under way.
+fn touching(t: &Type) -> Option<Hit> {
+    TOUCHING
+        .with(|w| w.borrow().get(&t.node_id()).cloned())
+        .filter(Hit::under_way)
+}
+
+/// The search [`Type::is_empty`] runs for `t`: whether it finds `t` empty, and why it was
+/// refused, if it was. The owned types below `t` are decided first ([`fill_own`]); for a closure
+/// type `t`, the answer is kept in `OWN`, `Some` when not refused ([`own_emptiness`]).
+/// `None`, and nothing kept, when the search met a member of a group under way that it does not
+/// walk ([`HIT`]): the search is cut short there, and a closure type `t` is noted in
+/// [`TOUCHING`] so that the group's search walks it.
+fn own_search(t: &Type) -> Option<(bool, Option<Refusal>)> {
+    let outer = HIT.with(|h| std::mem::take(&mut *h.borrow_mut()));
+    fill_own(t);
+    let own = t.group().filter(|_| t.is_member());
+    let closure = own.is_none() && owned(t);
+    if closure {
+        UNDER_WAY.with(|u| u.borrow_mut().insert(t.clone()));
+    }
+    let mut s = Search {
+        refuse_forks: true,
+        trials: Some(0),
+        walk_groups: Some(own.into_iter().collect()),
+        own_root: Some(t.clone()),
+        ..Search::default()
+    };
+    let b = s.solve(t);
+    let mut hit = HIT.with(|h| std::mem::replace(&mut *h.borrow_mut(), outer));
+    if closure {
+        UNDER_WAY.with(|u| u.borrow_mut().remove(t));
+        // The types that met `t` again are walked by this search, which holds `t` as its root.
+        hit.retain(|h| *h != Hit::Closure(t.clone()));
+    }
+    if let Some(h) = hit.first() {
+        if closure {
+            TOUCHING.with(|w| w.borrow_mut().insert(t.node_id(), h.clone()));
+        }
+        HIT.with(|h| h.borrow_mut().extend(hit));
+        return None;
+    }
+    if closure {
+        OWN.with(|o| {
+            o.borrow_mut()
+                .insert(t.clone(), s.refused.is_none().then_some(b))
+        });
+    }
+    Some((b, s.refused))
+}
+
+/// Decides each owned type ([`owned`]) below `t` whose answer is not kept, each after those its
+/// parts read, from a stack on the heap: a walk of the parts of `t` ([`PartWalk`]) that stops at
+/// members (their groups are decided by [`own_emptiness`], which walks the groups below them in
+/// the same way) and at types kept, and decides a closure type once every part of it is walked.
+/// Each type is walked once, so the walk costs O(V + E) in the parts reached, no more than the
+/// search of `t` that reads the same parts; a part already kept ends the walk there, so a type
+/// asked after the types below it were asked costs O(1) a part kept.
+fn fill_own(t: &Type) {
+    enum Step {
+        Enter(Type),
+        Leave(Type),
+    }
+    let kept = |u: &Type| OWN.with(|o| o.borrow().contains_key(u));
+    // Keyed by node numbers, which are never reused, so it holds no node.
+    let mut seen: HashSet<u64, Digests> = HashSet::from_iter([t.node_id()]);
+    let mut walk = PartWalk::default();
+    let mut stack: Vec<Step> = Vec::new();
+    let mut enter = |u: &Type, stack: &mut Vec<Step>| {
+        if seen.insert(u.node_id()) {
+            stack.push(Step::Enter(u.clone()));
+        }
+    };
+    if !t.is_recursive() {
+        walk.parts(t, &mut |u| enter(u, &mut stack));
+    }
+    while let Some(step) = stack.pop() {
+        // A group under way was met: the search this walk precedes keeps nothing (`own_search`).
+        if HIT.with(|h| !h.borrow().is_empty()) {
+            return;
+        }
+        match step {
+            Step::Leave(u) => {
+                if !kept(&u) {
+                    own_emptiness(&u);
+                }
+            }
+            Step::Enter(u) => {
+                if kept(&u) || UNDER_WAY.with(|w| w.borrow().contains(&u)) {
+                    continue;
+                }
+                if u.is_member() || touching(&u).is_some() {
+                    own_emptiness(&u);
+                    continue;
+                }
+                if u.is_recursive() {
+                    continue;
+                }
+                if owned(&u) {
+                    stack.push(Step::Leave(u.clone()));
+                }
+                walk.parts(&u, &mut |x| enter(x, &mut stack));
+            }
+        }
+    }
+}
+
+/// Decides `members`, the members of one group, by one search with all of them as roots
+/// ([`Search::solve_all`]), set as that of [`Type::is_empty`] (a fork of recursive rows ends it),
+/// which walks the members of the group and answers a member of any other group by
+/// [`own_emptiness`]; keeps in `OWN` for each member `Some` of its answer when no fork or split
+/// refused the search, and `None` when one did. One search for the group, where one per member
+/// would read the group once for each.
+fn group_emptiness(members: &[Type]) {
+    let Some(g) = members.first().and_then(Type::group) else {
+        return;
+    };
+    let outer = HIT.with(|h| std::mem::take(&mut *h.borrow_mut()));
+    EMPTYING.with(|e| e.borrow_mut().insert(g));
+    let mut s = Search {
+        refuse_forks: true,
+        trials: Some(0),
+        walk_groups: Some(HashSet::from([g])),
+        ..Search::default()
+    };
+    let bs = s.solve_all(members);
+    let exact = s.refused.is_none();
+    EMPTYING.with(|e| e.borrow_mut().remove(&g));
+    // The closure types that met `g` are walked by this search, so a hit on `g` is not one.
+    let mut hit = HIT.with(|h| std::mem::replace(&mut *h.borrow_mut(), outer));
+    hit.retain(|h| *h != Hit::Group(g));
+    if !hit.is_empty() {
+        debug_assert!(
+            !hit.iter().any(|h| matches!(h, Hit::Group(_))),
+            "a group's own search met another group under way"
+        );
+        HIT.with(|h| h.borrow_mut().extend(hit));
+        return;
+    }
+    OWN.with(|o| {
+        let mut o = o.borrow_mut();
+        for (m, b) in members.iter().zip(bs) {
+            o.insert(m.clone(), exact.then_some(b));
+        }
+    });
 }
 
 /// Keeps the verdicts of `members`, the recursive members of one group. A member the group's
@@ -623,6 +971,8 @@ impl Type {
     pub fn forget_emptiness() {
         super::clear_compound_types();
         MEMO.with(|m| m.borrow_mut().clear());
+        OWN.with(|m| m.borrow_mut().clear());
+        TOUCHING.with(|m| m.borrow_mut().clear());
         PAST_FORKS.with(|m| m.borrow_mut().clear());
         HEIGHTS.take();
         VERDICTS.with(|m| m.borrow_mut().clear());
@@ -762,13 +1112,37 @@ impl Type {
         // PSPACE-complete. The answers of a search a fork ended may rest on it, so none is kept.
         // Used: the search stopped at the fork, polynomial in the types written (module
         // comment).
-        let mut s = Search {
-            refuse_forks: true,
-            trials: Some(0),
-            ..Search::default()
+        // A member is answered by its group's own search when that is not refused
+        // ([`own_emptiness`]): the same answer a search of `self` alone would prove, since both
+        // are exact, and it decides the groups below first from a stack on the heap.
+        // A closure type another search kept an answer for is answered by it: the answer of the
+        // search below, by the claim at `own_emptiness`.
+        let kept = || OWN.with(|o| o.borrow().get(self).copied()).flatten();
+        if let Some(b) = if self.is_member() {
+            own_emptiness(self)
+        } else {
+            kept()
+        } {
+            MEMO.with(|m| m.borrow_mut().insert(self.clone(), b));
+            return b;
+        }
+        let (b, refused, keep) = match own_search(self) {
+            Some((b, refused)) => (b, refused, true),
+            // Cut short: `self` was asked inside the own search of a group it reads (`HIT`),
+            // whose members have no answer yet. A search that reads no kept answer answers it,
+            // soundly, and nothing is kept: it may be refused where the own search of `self`
+            // asked alone is not, or the reverse.
+            None => {
+                let mut s = Search {
+                    refuse_forks: true,
+                    trials: Some(0),
+                    ..Search::default()
+                };
+                let b = s.solve(self);
+                (b, s.refused, false)
+            }
         };
-        let b = s.solve(self);
-        if s.refused.is_some() {
+        if refused.is_some() {
             // A search that sets the fork aside may still prove `self` empty, by a part the fork
             // is not under ([`Type::empty_past_forks`]), wherever the fork was met: until
             // FAIL-judgments-query-order-seed it ran only for a fork met in a component of a box
@@ -787,9 +1161,12 @@ impl Type {
             // the front sweep, and after a search no fork or split refused (below). By the
             // induction hypothesis every earlier call answered F of its type, so every entry is
             // (t, F(t)), and the lookup at the top answers F(self) when it finds `self`.
-            // (3) When it does not, the sweep, the search, `empty_past_forks` and `fork::decide`
-            // run, and none of them reads `MEMO`. This search is not `strict`, so it reads no
-            // group's verdict or shared value (`Searching::group_verdict` and
+            // (3) When it does not, the sweep, `own_emptiness` for a member, the search,
+            // `empty_past_forks` and `fork::decide` run, and none of them reads `MEMO`. The
+            // search, and `own_emptiness`, read `OWN` (`Search::met`), each entry of which is a
+            // function of its member (proved at `own_emptiness`); an answer `own_emptiness` gives
+            // `self` is exact, so it is what the search of `self` gives when that is not refused.
+            // This search is not `strict`, so it reads no group's verdict or shared value (`Searching::group_verdict` and
             // `Searching::shared` return `None` first for such a search), hence no `VERDICTS`,
             // `SHARED`, `DECIDING` or value of `STORES` through them. The other kept tables are
             // each a function of the type asked, by the argument at its declaration: `HEIGHTS`
@@ -809,9 +1186,13 @@ impl Type {
             // numbered was kept with the answer it had inside that search, so a search could
             // skip a fork that a fresh search met (or meet one a kept answer would have skipped),
             // and an empty type could be proved empty after one query and refused, so counted
-            // inhabited, after another. Cost of the fix: a type an earlier query decided is
-            // searched again when a later search reaches it; measured on the benchmarks of
-            // `types::empty` and l01_23 (numbers in PROOF-kernel-open-subcases's ledger line).
+            // inhabited, after another. Cost of the fix: with no kept answer at all, a type an
+            // earlier query decided is searched again when a later search reaches it, and
+            // building the key chain of `a_chain_decided_again_scales` at m = 1024 took 15.6 s
+            // (51 ms with the old `MEMO` read; single runs, load about 60). `OWN` (at
+            // `own_emptiness`) keeps instead the answers that are a function of the type alone,
+            // and the same build takes 61 ms; the timed `is_empty` of that bench grows 7.99x for
+            // 8x n, at about 1.9x the instructions of the old `MEMO` read.
             // Tests: `order_free` over seeds 0 to 199 in
             // `l01_23_groups_and_refusals::judgments::bench`, the pinned seed
             // 10511391382961984112 in `judgments.rs`, and
@@ -820,7 +1201,7 @@ impl Type {
             // asks each type fresh and after the other. They passed before the fix too: no case
             // of the old sub-case was ever found. The fork stages (module `fork`) decide some of
             // the refused searches exactly: COMPLEXITY.md K137.
-            return s.refused == Some(Refusal::Fork)
+            return refused == Some(Refusal::Fork)
                 && (self.empty_past_forks()
                     || matches!(fork::decide(self), Some(fork::Decided::Empty)));
         }
@@ -829,7 +1210,9 @@ impl Type {
         // type asked alone (its own search may be refused where this one was not, or the
         // reverse), so keeping it would make a later `is_empty` of that type depend on the
         // queries before it.
-        MEMO.with(|m| m.borrow_mut().insert(self.clone(), b));
+        if keep {
+            MEMO.with(|m| m.borrow_mut().insert(self.clone(), b));
+        }
         b
     }
 
@@ -918,7 +1301,11 @@ impl Type {
             return v;
         }
         let members = self.group_members();
-        self.decide_groups_read(members.is_some());
+        self.decide_groups_read(if members.is_some() {
+            Decide::Verdicts
+        } else {
+            Decide::Deciders
+        });
         if let Some(members) = members {
             group_verdicts(&members);
             if let Some(v) = kept() {
@@ -937,7 +1324,10 @@ impl Type {
 
     /// Runs the decider (`Type::judged`) of every group of recursive members that `self` reads,
     /// and of those they read, each group after the groups it reads, from a stack on the heap;
-    /// with `verdicts`, which a member of a group asks, it keeps their verdicts too. A decider
+    /// with [`Decide::Verdicts`], which a member of a group asks, it keeps their verdicts too,
+    /// and with [`Decide::Emptiness`] it runs their own searches for emptiness instead
+    /// ([`group_emptiness`]), which [`own_emptiness`] asks; the bound on the stack below holds
+    /// for those searches by the same argument. A decider
     /// reads the verdicts of the parts its members read, and a search reads the decider of a
     /// member it meets and the verdict and value of a member of another group
     /// ([`Searching::group_verdict`], [`Searching::shared`]); run here first, what is read is
@@ -949,77 +1339,17 @@ impl Type {
     /// decider, not a search for each member's value (plan item VERDICT-meet-cost). A group is
     /// found by a walk of the parts its members read, which stops at the members of other groups
     /// and notes each group once (`Type::group`); each type is walked once per walk, a group
-    /// already kept, or with its decider run when `verdicts` is false, is not walked, and the
+    /// already kept, or with its decider run under [`Decide::Deciders`], is not walked, and the
     /// others are walked once, so a walk costs no more than the search that reads the same
     /// parts. Groups form no cycle (a group is a set of definitions that read each other), and
     /// the order is the walk's, which is a function of `self`.
-    fn decide_groups_read(&self, verdicts: bool) {
+    fn decide_groups_read(&self, mode: Decide) {
         let own = self.group_members().unwrap_or_else(|| vec![self.clone()]);
-        let kept = |m: &Type| VERDICTS.with(|k| k.borrow().contains_key(m));
-        // One member of each group read by the parts of `roots`, without passing through a
-        // member of another group, in the order met.
-        let read = |roots: &[Type]| -> Vec<Type> {
-            let mut groups: HashSet<u64> = roots.iter().filter_map(Type::group).collect();
-            // `inside` and `seen` are keyed by node numbers, which are never reused, so they
-            // hold no node; neither is iterated (the groups found are in the order met).
-            let inside: HashSet<u64> = roots.iter().map(Type::node_id).collect();
-            let mut seen: HashSet<u64, Digests> = roots.iter().map(Type::node_id).collect();
-            // Complexity tradeoff (COMPLEXITY.md K102): the naive read scans the diagram of
-            // each type it meets afresh, so a diagram shared by n types is read n times,
-            // O(n^2) on cycle_dup's family of n meets each written in two orders. Here the
-            // diagram nodes, set nodes and types already read are kept in sets for the whole
-            // read (`rows`, `morphisms`, `seen`), O(V + E) expected time in the nodes and
-            // edges reached and O(V) space. Given up: the sets live for one read, so two
-            // reads (two calls of `Type::verdict`) still read a shared diagram once each. No
-            // dependency is lost, since a node is skipped only when it was read before.
-            // Tests: cycle_dup::shared_parts_are_read_once_when_deciding_their_groups and the
-            // tests that a batch and a single query agree.
-            let (mut rows, mut morphisms, mut payload_seen) = (
-                DigestSet::default(),
-                DigestSet::default(),
-                DigestSet::default(),
-            );
-            let mut found = Vec::new();
-            let mut stack: Vec<Type> = roots.to_vec();
-            let visit = |t: &Type, seen: &mut HashSet<u64, Digests>, stack: &mut Vec<Type>| {
-                if seen.insert(t.node_id()) {
-                    stack.push(t.clone());
-                }
-            };
-            while let Some(t) = stack.pop() {
-                if let Some(g) = t.group().filter(|_| t.is_member())
-                    && !inside.contains(&t.node_id())
-                {
-                    if groups.insert(g) {
-                        found.push(t);
-                    }
-                    continue;
-                }
-                let p = t.p();
-                // Complexity tradeoff (R11-C3): iterating all payload-bearing names of every
-                // prefix union sharing one persistent map costs `Theta(n^2 log n)`
-                // (`r11_payload_name_prefixes_must_scale`). Visiting each shared `PayloadNode`
-                // once via `payload_seen` reduces the walk to `O(V + E)` in the distinct tree
-                // nodes reached (`O(n log n)` across `n` prefix unions).
-                p.atoms
-                    .payload_entries_unseen(&mut payload_seen, &mut |_name, _bare, payload| {
-                        visit(payload, &mut seen, &mut stack);
-                    });
-                for part in p.tuples.lens.values() {
-                    part.atoms_unseen(&mut rows, &mut |row| {
-                        row.iter().for_each(|x| visit(x, &mut seen, &mut stack));
-                        true
-                    });
-                }
-                p.morphisms.atoms_unseen(&mut morphisms, &mut |m| {
-                    for x in [&m.guarantee, &m.permission, &m.value] {
-                        visit(x, &mut seen, &mut stack);
-                    }
-                    true
-                });
-            }
-            found
+        let kept = |m: &Type| match mode {
+            Decide::Emptiness => OWN.with(|k| k.borrow().contains_key(m)),
+            Decide::Deciders | Decide::Verdicts => VERDICTS.with(|k| k.borrow().contains_key(m)),
         };
+        let read = Self::groups_read;
         enum Step {
             /// A member of a group to walk, unless it is kept, being decided or walked.
             Enter(Type),
@@ -1030,18 +1360,29 @@ impl Type {
         let mut stack: Vec<Step> = (read(&own).into_iter().rev()).map(Step::Enter).collect();
         while let Some(step) = stack.pop() {
             match step {
-                Step::Leave(g) if verdicts => {
-                    if !kept(&g[0]) {
-                        group_verdicts(&g);
+                Step::Leave(g) => match mode {
+                    Decide::Verdicts if !kept(&g[0]) => group_verdicts(&g),
+                    Decide::Emptiness if !kept(&g[0]) => group_emptiness(&g),
+                    Decide::Verdicts | Decide::Emptiness => {}
+                    Decide::Deciders => {
+                        g[0].judged();
                     }
-                }
-                Step::Leave(g) => {
-                    g[0].judged();
-                }
+                },
                 Step::Enter(m) => {
-                    let deciding = || DECIDING.with(|d| d.borrow().contains(&m));
+                    let deciding = || match mode {
+                        Decide::Emptiness => {
+                            EMPTYING.with(|e| m.group().is_some_and(|g| e.borrow().contains(&g)))
+                        }
+                        Decide::Deciders | Decide::Verdicts => {
+                            DECIDING.with(|d| d.borrow().contains(&m))
+                        }
+                    };
                     let fresh = m.group().is_some_and(|g| done.insert(g));
-                    if !fresh || kept(&m) || deciding() || !verdicts && m.judged_known() {
+                    if !fresh
+                        || kept(&m)
+                        || deciding()
+                        || mode == Decide::Deciders && m.judged_known()
+                    {
                         continue;
                     }
                     let g = m.group_members().unwrap_or_default();
@@ -1054,6 +1395,45 @@ impl Type {
                 }
             }
         }
+    }
+
+    /// One member of each group read by the parts of `roots`, without passing through a member
+    /// of another group, in the order met.
+    fn groups_read(roots: &[Type]) -> Vec<Type> {
+        let mut groups: HashSet<u64> = roots.iter().filter_map(Type::group).collect();
+        // `inside` and `seen` are keyed by node numbers, which are never reused, so they
+        // hold no node; neither is iterated (the groups found are in the order met).
+        let inside: HashSet<u64> = roots.iter().map(Type::node_id).collect();
+        let mut seen: HashSet<u64, Digests> = roots.iter().map(Type::node_id).collect();
+        // Complexity tradeoff (COMPLEXITY.md K102): the naive read scans the diagram of
+        // each type it meets afresh, so a diagram shared by n types is read n times,
+        // O(n^2) on cycle_dup's family of n meets each written in two orders. Here the
+        // diagram nodes, set nodes and types already read are kept in sets for the whole
+        // read (`rows`, `morphisms`, `seen`), O(V + E) expected time in the nodes and
+        // edges reached and O(V) space. Given up: the sets live for one read, so two
+        // reads (two calls of `Type::verdict`) still read a shared diagram once each. No
+        // dependency is lost, since a node is skipped only when it was read before.
+        // Tests: cycle_dup::shared_parts_are_read_once_when_deciding_their_groups and the
+        // tests that a batch and a single query agree.
+        let mut walk = PartWalk::default();
+        let mut found = Vec::new();
+        let mut stack: Vec<Type> = roots.to_vec();
+        while let Some(t) = stack.pop() {
+            if let Some(g) = t.group().filter(|_| t.is_member())
+                && !inside.contains(&t.node_id())
+            {
+                if groups.insert(g) {
+                    found.push(t);
+                }
+                continue;
+            }
+            walk.parts(&t, &mut |x| {
+                if seen.insert(x.node_id()) {
+                    stack.push(x.clone());
+                }
+            });
+        }
+        found
     }
 
     /// The verdict of `self` by the front sweep (`sweep::front_sweep`), else by the
@@ -1745,6 +2125,13 @@ struct Search {
     /// Whether kept results are left unread and each place a part counts as inhabited with
     /// nothing shown is noted, for a caller that takes `Refused`.
     strict: bool,
+    /// For the searches of [`Type::is_empty`] and [`group_emptiness`]: the groups whose members
+    /// [`Search::met`] walks; a member of any other group is answered by [`own_emptiness`].
+    /// `None`, for every other search, walks every member.
+    walk_groups: Option<HashSet<u64>>,
+    /// The type whose own search this is ([`own_search`]), walked by [`Search::met`] where any
+    /// other owned type is answered by [`own_emptiness`].
+    own_root: Option<Type>,
     /// Whether a fork of recursive rows ends the search; set for the decision of a verdict and
     /// for [`Type::is_empty`], not for the search of a value after a refused decision.
     refuse_forks: bool,
@@ -3444,6 +3831,18 @@ impl Search {
         cause
     }
 
+    /// Whether this search, an own search ([`own_emptiness`]), reads the answer of `t` from
+    /// `t`'s own search: `t` is a member of a group it does not walk, or a closure type
+    /// ([`owned`]) other than its root.
+    fn reads_own(&self, t: &Type) -> bool {
+        self.walk_groups
+            .as_ref()
+            .is_some_and(|walk| match t.group().filter(|_| t.is_member()) {
+                Some(g) => !walk.contains(&g),
+                None => self.own_root.as_ref() != Some(t) && owned(t),
+            })
+    }
+
     /// The answer for `t` when it is known: a type met before in this search, read by the type
     /// being decided. Otherwise `t` is numbered, read by the
     /// type being decided and marked as being decided itself, and its number is given.
@@ -3471,7 +3870,42 @@ impl Search {
         // No kept answer of `Type::is_empty` is read here: whether `t` is kept depends on the
         // queries asked before, so a search that read it could skip in one order the subtree it
         // walks in another, and be refused in one and not the other (sub-case (iii) at
-        // `Type::is_empty`, PROOF-kernel-open-subcases).
+        // `Type::is_empty`, PROOF-kernel-open-subcases). An owned type ([`owned`]: a member of
+        // a group outside `walk_groups`, or a closure type other than `own_root`) is answered
+        // instead by its own search ([`own_emptiness`]), which is run first when it has not
+        // run, so what is read here is the same whatever was asked before; one whose own search
+        // was refused is walked here as any type is.
+        // Complexity tradeoff: walking every type met, as a search did from
+        // PROOF-kernel-open-subcases until this read, costs a query on each of the k closure
+        // types of a key chain the walk of the whole chain below it, O(k^2) in all (1024 were
+        // built in 15.6 s, against 51 ms with kept answers read, at load 104 and 70;
+        // `group_oracle::bench::a_chain_decided_again_scales`). Here each owned type is
+        // searched once, by itself, and read from above in O(1) expected time, O(k) for the
+        // chain. Given up: an owned type whose own search is refused is walked in every search
+        // that meets it, as before; every member of a group is decided when one is met, where
+        // a walk would decide only those it reads; and a closure type met is searched alone,
+        // apart from the search that met it, which repeats the setup of a search for each.
+        if let Some(walk) = &self.walk_groups
+            && self.reads_own(t)
+        {
+            if let Some(b) = own_emptiness(t) {
+                return ControlFlow::Break(b);
+            }
+            // A member of a group under way that this search does not walk was met, here or
+            // below (`HIT`): nothing this search gives is kept (`own_search`), so it is cut
+            // short with any answer. A hit on a group it walks is a closure type of that group,
+            // walked here. Cost: each closure type of a group is tried alone once per run of the
+            // group (`TOUCHING` answers later meetings in O(1)), and the try ends at the first
+            // member of the group it meets, so the tries cost O(V + E) in the parts of the
+            // group's closure types, no more than the group's search walks itself.
+            let own = |h: &Hit| match h {
+                Hit::Group(g) => walk.contains(g),
+                Hit::Closure(c) => self.own_root.as_ref() == Some(c),
+            };
+            if HIT.with(|h| !h.borrow().iter().all(own)) {
+                return ControlFlow::Break(true);
+            }
+        }
         let i = self.types.len();
         self.ids.insert(t.clone(), i);
         self.types.push(t.clone());
@@ -4699,7 +5133,20 @@ impl Heights {
 ///
 /// Also the atom types among them that are not lists (`Search::wraps`): each payload of a
 /// literal union of tuple rows with no link of a list in it.
-fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
+///
+/// A type for which `answered` holds, one the search reads from its own search and never walks
+/// ([`Search::reads_own`]), is not walked, nor listed.
+// Complexity tradeoff: the walk of every node written in the roots, in an own search of each
+// part of a type ([`fill_own`]), walked the parts below each part again: of a chain of k
+// closure types, each the value type of the next, O(k^2) in all (callgrind 2026-11-21: `fields`
+// and its `seen` set the top of the profile, 83.4e6 instructions in the own searches at k = 160
+// against 9.65e6 at k = 40). Used: the walk stops at a type the search reads from its own
+// search, which it does not walk, so its written parts are not asked of it as roots; O(the
+// nodes above the owned types). Given up: nothing the search walks.
+fn fields(
+    roots: &[Type],
+    answered: &mut dyn FnMut(&Type) -> bool,
+) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
     let (mut seen, mut out, mut wraps, mut items) =
         (DigestSet::default(), Vec::new(), Vec::new(), Vec::new());
     // Named components in a payload diagram with one set of atom names (the same
@@ -4741,6 +5188,9 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
     let mut stack: Vec<(Type, bool)> = roots.iter().rev().map(|t| (t.clone(), false)).collect();
     while let Some((t, in_item)) = stack.pop() {
         if !seen.insert((t.node_id(), in_item)) {
+            continue;
+        }
+        if answered(&t) {
             continue;
         }
         if !seen.contains(&(t.node_id(), !in_item)) {
@@ -5200,7 +5650,11 @@ impl<'m> Searching<'m> {
         // list to walk, and a row tested against every row would cost their square.
         let mut answers: Vec<Option<bool>> = vec![None; roots.len()];
         let mut seeded = false;
-        let (written, wraps, items) = fields(roots);
+        // A type read from its own search with an answer kept is not walked here (`Search::met`).
+        let (written, wraps, items) = fields(roots, &mut |t| {
+            let own = self.s().reads_own(t);
+            own && own_emptiness(t).is_some()
+        });
         {
             let mut s = self.s();
             s.roots.extend(written.into_iter().map(|r| (r, ())));
@@ -8261,8 +8715,31 @@ impl<'m> Searching<'m> {
     // its value at up to 553 times the work of the list alone (`rec:clstaggerholesout` at 256,
     // R9, X41). Tradeoff: a list type in the sweep's class met only as a type the search builds
     // is left to the search.
+    // A member of a group this search walks (`Search::walk_groups`: a group's own search,
+    // `group_emptiness`, or the search of a member its group's search refused) is not swept
+    // either. Why: `Type::is_empty` sweeps the member it is asked first (`sweep::front_sweep`,
+    // which for a list type gives the answer this function gives: both are `list_sweep_value`
+    // checked by `check_actual`), so sweeping it again here adds nothing; and the other members
+    // of the group are swept here only because they share its search. The sweep of a list
+    // member walks every list type it reaches, the groups below included, so in a chain of n
+    // groups each reading the one below, the n own searches swept O(n^2) in all (instructions
+    // in `group_emptiness` under callgrind 14.6e6 and 48.2e6 at n = 32 and 64, 43.1e6 of it in
+    // this function, 2026-11-20;
+    // `refusals::bench::emptiness_counts_a_fork_as_inhabited_in_its_size` 11.39 times the
+    // instructions at 8n against 8.09 on base 43db46e1c). Now each own search reads the groups
+    // below from `OWN` in O(1), O(n) for the chain. The search stays exact without the sweep,
+    // as for every type it meets that is not a root: what is lost is a member the sweep
+    // decides and the search refuses, which `OWN` then keeps refused (`None`), and every search
+    // that meets it walks it, as each did on base. The rule depends on the search alone, so a
+    // group's answers are still a function of the group (claim at `own_emptiness`).
     fn swept(&self, t: &Type) -> Option<Option<usize>> {
         if self.in_fallback(t) || t.p().atoms.names().is_empty() || !self.s().roots.contains_key(t)
+        {
+            return None;
+        }
+        if let Some(walk) = &self.s().walk_groups
+            && let Some(g) = t.group().filter(|_| t.is_member())
+            && walk.contains(&g)
         {
             return None;
         }
@@ -10719,9 +11196,24 @@ impl<'m> Searching<'m> {
 
     /// Whether a closure can return a value of `v`: one built here, one being built (the closure
     /// may be part of it), or one its group decided `v` has, which the closure, never called
-    /// here, does not need built.
+    /// here, does not need built, or one the own search of `v` found, read as [`Search::met`]
+    /// reads it ([`Search::reads_own`]).
     async fn returnable(&'m self, v: &Type) -> bool {
         if v.judged() == Some(false) {
+            return true;
+        }
+        // Complexity tradeoff: building a value of `v` here, as for any type, walks the values
+        // below it: of the written types of a chain of k closure types, each the value type of
+        // the next, the own search of each ([`fill_own`] runs them from the bottom up) built a
+        // value of the whole chain below it, O(k^2) in all (callgrind: 44.2e6 and 525e6
+        // instructions at k = 40 and 160, 2026-11-21;
+        // `deep_search::bench::a_deep_morphism_type_is_not_under_one_that_differs_at_the_bottom`).
+        // Used: the answer the own search of `v` kept, O(1) expected time, so each type of the
+        // chain is searched once, O(k). It is a function of `v` alone (the claim at
+        // `own_emptiness`), as when `met` reads it. Given up: nothing; a `v` whose own search
+        // was refused or met a type under way gives `None` and is built here as before.
+        let own = self.s().reads_own(v);
+        if own && own_emptiness(v) == Some(false) {
             return true;
         }
         {

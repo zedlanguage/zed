@@ -3470,7 +3470,7 @@ fn a_payload_shared_by_three_atoms_gives_each_component_once() {
         | &Type::tuple(vec![tag("y", Type::int())]))
         | &Type::tuple(vec![tag("z", Type::int())]);
     let t = &(&Type::atom_with("x", &b) | &Type::atom_with("y", &b)) | &Type::atom_with("z", &b);
-    let (out, wraps, items) = fields(std::slice::from_ref(&t));
+    let (out, wraps, items) = fields(std::slice::from_ref(&t), &mut |_| false);
     let got: BTreeSet<String> = out.iter().map(|t| t.to_string()).collect();
     let want: BTreeSet<String> = [t.to_string(), Type::int().to_string()]
         .into_iter()

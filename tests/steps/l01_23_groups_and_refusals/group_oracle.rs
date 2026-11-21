@@ -3413,6 +3413,30 @@ fn every_second_member_of_a_key_chain_is_empty() {
     }
 }
 
+/// `is_empty` answers each member of a key chain alike whether it is asked first, after every
+/// member below it, or after every member above it: a member of another group is answered by
+/// that group's own search, kept once run (`own_emptiness` in the kernel), and the answer kept
+/// must not depend on which query ran it (PROOF-kernel-open-subcases).
+#[test]
+fn is_empty_of_a_key_chain_does_not_depend_on_the_order_asked() {
+    for m in [1, 2, 3, 8, 16] {
+        let ts = key_chain(m);
+        let fresh: Vec<bool> = (0..=m)
+            .map(|k| {
+                Type::forget_emptiness();
+                ts[k].is_empty()
+            })
+            .collect();
+        Type::forget_emptiness();
+        let up: Vec<bool> = (0..=m).map(|k| ts[k].is_empty()).collect();
+        Type::forget_emptiness();
+        let mut down: Vec<bool> = (0..=m).rev().map(|k| ts[k].is_empty()).collect();
+        down.reverse();
+        assert_eq!(up, fresh, "a key chain of {m}, asked from the bottom");
+        assert_eq!(down, fresh, "a key chain of {m}, asked from the top");
+    }
+}
+
 /// Small instance of `bench::the_groups_of_a_system_are_built_in_its_size`: every group of a
 /// chain of 1, 2 and 16 groups, and of one group of as many definitions, is admitted. At 1 both
 /// systems are one definition that reads itself.
