@@ -10489,23 +10489,58 @@ fn unchosen_text(
     given: &str,
 ) -> String {
     let own = match own {
-        // A shape that files `first` under a key of its own is the first shape of its bucket,
-        // so only `second` searches past a first shape, and the comparison is decided.
-        // Not proved (proofdoc4c): that it is the first of its bucket where a shape written
-        // before it has a class at the same places ([`Choices::new`] groups by them) and the
-        // same key at each; such a shape is then met first. Tests: l01_22 kinds
-        // `two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason` and
-        // `a_repair_by_a_shape_of_its_own_is_offered_only_where_a_component_tells_the_two_apart`
-        // apply the repair to types with no such earlier shape, so they cannot catch that case.
+        // Proof that the shape of its own `S`, written where the message says, ends this
+        // refusal: `first` is no longer one of two members that search the bucket `B` past a
+        // shape they fail (PROOF-types-own-shape-first-of-bucket, proofdoc5c). Let `H` be the
+        // shape that holds `first` by the rule of one shape, and `S` that shape with the
+        // component at the place `j` [`own_shape`] picks written as `first`'s there.
+        // (1) [`Comparing::search`] marks a member as searching `B` past a shape (`searched.by`)
+        // only when it takes a shape of `B` from its lists after failing one of `B`; it takes
+        // the shapes of all its lists in written order (the heap `heads`).
+        // (2) `S` holds `first`: `H` holds it, and `S` differs from `H` only at `j`, where it
+        // holds `first`'s component itself, so each other component of `first` is held as in
+        // `H`, under no more bindings than in `H`.
+        // (3) `S` is not in `B`, and `first` looks in the bucket of `S`. Where `B` files by a
+        // key, the members found in it have that key at each place filed, so at a filed place
+        // `first` and `second` have one key; `j` is a place where they do not
+        // ([`own_shape`]), so `j` is not filed in `B`'s group, and `S`, which has a class at
+        // `j` ([`class`]), is in another group ([`Choices::new`] groups by those places). Its
+        // keys are `H`'s at `H`'s places, where `first`, held by `H`, has those keys too, and
+        // `first`'s own at `j`, so the lookup of `first` ([`Choices::lookup`]) gives the
+        // bucket that holds `S`. Where `B` is a group whole (`None`, a member that may be at
+        // any key), `S`, with a class at `j`, is again of another group.
+        // (4) Written after the first shape of `B` and before the second, `S` is the next
+        // shape after the first of `B` that `first` takes; by (1) `first` has failed at most
+        // that one shape of `B` when it takes `S`, and has taken no later shape of `B`, so it
+        // is not marked in `B`; by (2) it fits `S` and the search ends. So `first` and `second`
+        // are not both marked in `B`.
+        // The step that does not hold for the place first offered, "just before the shape
+        // that should hold it": a second shape of `B` written before `H` comes before `S`, and
+        // `first` is marked there (test below). (3) also shows that a shape `E` written
+        // before `S` with `S`'s places and keys, which the old wording left open, does no
+        // harm: `first` may fail `E` and be marked in `S`'s bucket, but `second` has another
+        // key at `j` and is not looked up there.
+        // Tradeoff: where `H` is later than the second shape of `B`, `S` now comes before
+        // the shapes between, and a value they held that `S` holds is held by `S` instead,
+        // which may change what the variables are bound to; just before `H`, `S` changed
+        // nothing (each value of `S` is one of `H`'s), but did not repair. Not proved: that
+        // the repaired comparison raises no other refusal, at another bucket or for another
+        // pair of members; the proof is of this refusal only. Test: l01_22 kinds
+        // `a_shape_of_its_own_comes_before_the_second_shape_of_the_bucket`, red before (the
+        // repair before `H` was still refused), which also covers `E`; it and
+        // `two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason` check
+        // the bindings of the repair where `B` has two shapes. They do not check payloads with
+        // a shape between, nor the pins of [`Comparing::search`], which may drop shapes from a
+        // list: a dropped shape is one the member cannot fit, so (4) holds with it left out.
         Some((Some(place), shape)) => format!(
-            "give {first} a shape of its own, written just before the shape that should hold \
-             it and the same as that shape except at {place}: `{shape}`, with that shape's \
-             other components in place of each `…`; or "
+            "give {first} a shape of its own, written after the first of those shapes and \
+             before the second, the same as the shape that should hold it except at {place}: \
+             `{shape}`, with that shape's other components in place of each `…`; or "
         ),
         // A shape of one component has no other components, so it is written whole.
         Some((None, shape)) => format!(
-            "give {first} a shape of its own, written just before the shape that should hold \
-             it: `{shape}`; or "
+            "give {first} a shape of its own, written after the first of those shapes and \
+             before the second: `{shape}`; or "
         ),
         None => String::new(),
     };

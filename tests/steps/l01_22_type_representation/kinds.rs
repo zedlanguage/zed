@@ -948,12 +948,14 @@ fn two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason()
          with both, and neither is held by the first of those shapes; which shape holds each \
          decides what the type variables are bound to, and the checker looks through those \
          shapes for one of the two only; to repair it, give #a(3, 5) a shape of its own, \
-         written just before the shape that should hold it and the same as that shape except \
-         at component 1, where it is 3: `#a(3, …)`, with that shape's other components in place \
-         of each `…`; or test the value with `is` first, so that each test meets one of the two"
+         written after the first of those shapes and before the second, the same as the shape \
+         that should hold it except at component 1, where it is 3: `#a(3, …)`, with that \
+         shape's other components in place of each `…`; or test the value with `is` first, so \
+         that each test meets one of the two"
     );
-    // The repair applied: `#a(3, U)` written just before `#a(int, U)`, which holds #a(3, 5).
-    // The comparison is decided and binds `U` as the rule of one shape does.
+    // The repair applied: `#a(3, U)` written after `#a(1 | 2, T)` and before `#a(int, U)`,
+    // which holds #a(3, 5). The comparison is decided and binds `U` as the rule of one shape
+    // does.
     let repaired = with_payloads(
         "a",
         vec![
@@ -980,9 +982,9 @@ fn two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason()
     let why = l.refused(&rows);
     assert!(why.contains("not proved wrong\n  because the tuples (3, 5) and (4, 6) "));
     assert!(why.contains(
-        "give (3, 5) a shape of its own, written just before the shape that \
-                          should hold it and the same as that shape except at component 1, \
-                          where it is 3: `(3, …)`"
+        "give (3, 5) a shape of its own, written after the first of those shapes and before \
+         the second, the same as the shape that should hold it except at component 1, where it \
+         is 3: `(3, …)`"
     ));
     let repaired = Ty::union_all(&[
         Ty::tuple(vec![ty("1 | 2"), var("T")]),
@@ -1015,9 +1017,9 @@ fn a_repair_by_a_shape_of_its_own_is_offered_only_where_a_component_tells_the_tw
     ]);
     assert_eq!(bound(&l, &rows), None);
     assert!(l.refused(&rows).contains(
-        "to repair it, give (3, bool) a shape of its own, written just before the shape that \
-         should hold it and the same as that shape except at component 2, where it is bool: \
-         `(…, bool)`, with that shape's other components in place of each `…`; or test the \
+        "to repair it, give (3, bool) a shape of its own, written after the first of those \
+         shapes and before the second, the same as the shape that should hold it except at \
+         component 2, where it is bool: `(…, bool)`, with that shape's other components in place of each `…`; or test the \
          value with `is` first"
     ));
     let repaired = Ty::union_all(&[
@@ -1044,6 +1046,68 @@ fn a_repair_by_a_shape_of_its_own_is_offered_only_where_a_component_tells_the_tw
 }
 
 #[test]
+fn a_shape_of_its_own_comes_before_the_second_shape_of_the_bucket() {
+    // PROOF-types-own-shape-first-of-bucket: `(5 | 6, V)` is a second shape of the bucket
+    // `int` at component 1, between the first and the shape that holds (3, 5). The shape of
+    // its own written just before `(int, U)` came after it, so (3, 5) still failed `(1 | 2, T)`
+    // and searched the bucket past it at `(5 | 6, V)`, as (4, 6) does, and the repaired type
+    // was refused for the same reason. Written before the second shape of the bucket, it is
+    // met before any shape of the bucket after the first.
+    let rows = Ty::union_all(&[
+        Ty::tuple(vec![ty("1 | 2"), var("T")]),
+        Ty::tuple(vec![ty("5 | 6"), var("V")]),
+        Ty::tuple(vec![ty("int"), var("U")]),
+    ]);
+    let l = ty("(3, 5) | (4, 6)");
+    assert_eq!(bound(&l, &rows), None);
+    let why = l.refused(&rows);
+    assert!(
+        why.contains(
+            "give (3, 5) a shape of its own, written after the first of those shapes and \
+             before the second, the same as the shape that should hold it except at component \
+             1, where it is 3: `(3, …)`, with that shape's other components in place of each \
+             `…`; or test the value with `is` first"
+        ),
+        "{why}"
+    );
+    // Placed just before `(int, U)`, the shape that holds (3, 5), it does not repair it.
+    let late = Ty::union_all(&[
+        Ty::tuple(vec![ty("1 | 2"), var("T")]),
+        Ty::tuple(vec![ty("5 | 6"), var("V")]),
+        Ty::tuple(vec![int(3), var("U")]),
+        Ty::tuple(vec![ty("int"), var("U")]),
+    ]);
+    assert_ne!(l.refused(&late), "");
+    // Placed as the message says, it does, and (4, 6) is held by `(int, U)`.
+    let repaired = Ty::union_all(&[
+        Ty::tuple(vec![ty("1 | 2"), var("T")]),
+        Ty::tuple(vec![int(3), var("U")]),
+        Ty::tuple(vec![ty("5 | 6"), var("V")]),
+        Ty::tuple(vec![ty("int"), var("U")]),
+    ]);
+    assert_eq!(l.refused(&repaired), "");
+    assert_eq!(
+        bound(&l, &repaired),
+        Some(vec![("U".into(), "5 | 6".into())])
+    );
+    // A shape written before it with a class at the same places and the same key, `(3, bool)`,
+    // which (3, 5) fails: (3, 5) searches that bucket past it, but (4, 6), of key 4 there, is
+    // not in that bucket, so the repaired type is still decided.
+    let earlier = Ty::union_all(&[
+        Ty::tuple(vec![ty("1 | 2"), var("T")]),
+        Ty::tuple(vec![int(3), ty("bool | String")]),
+        Ty::tuple(vec![int(3), var("U")]),
+        Ty::tuple(vec![ty("5 | 6"), var("V")]),
+        Ty::tuple(vec![ty("int"), var("U")]),
+    ]);
+    assert_eq!(l.refused(&earlier), "");
+    assert_eq!(
+        bound(&l, &earlier),
+        Some(vec![("U".into(), "5 | 6".into())])
+    );
+}
+
+#[test]
 fn a_shape_of_its_own_of_one_component_is_written_whole_with_its_comma() {
     // Tuples of one component: the shape of its own is `((3, 5),)`, as `((3, 5))` reads as
     // `(3, 5)`, and it has no other components to fill in.
@@ -1054,8 +1118,8 @@ fn a_shape_of_its_own_of_one_component_is_written_whole_with_its_comma() {
     let why = l.refused(&rows);
     assert!(
         why.contains(
-            "to repair it, give ((3, 5),) a shape of its own, written just before the shape \
-             that should hold it: `((3, 5),)`; or test the value with `is` first"
+            "to repair it, give ((3, 5),) a shape of its own, written after the first of those \
+             shapes and before the second: `((3, 5),)`; or test the value with `is` first"
         ),
         "{why}"
     );
@@ -1080,8 +1144,8 @@ fn a_shape_of_its_own_of_one_component_is_written_whole_with_its_comma() {
     let why = l.refused(&r);
     assert!(
         why.contains(
-            "to repair it, give #a((3, 5)) a shape of its own, written just before the shape \
-             that should hold it: `#a((3, 5))`; or test the value with `is` first"
+            "to repair it, give #a((3, 5)) a shape of its own, written after the first of those \
+             shapes and before the second: `#a((3, 5))`; or test the value with `is` first"
         ),
         "{why}"
     );
@@ -1119,8 +1183,9 @@ fn a_program_is_offered_a_one_component_shape_as_a_type_it_can_write() {
     );
     assert!(
         errs[0].contains(
-            "to repair it, give ((int, int),) a shape of its own, written just before the shape \
-             that should hold it: `((int, int),)`; or test the value with `is` first"
+            "to repair it, give ((int, int),) a shape of its own, written after the first of \
+             those shapes and before the second: `((int, int),)`; or test the value with `is` \
+             first"
         ),
         "{errs:?}"
     );
@@ -1195,9 +1260,9 @@ fn a_bounded_type_variable_in_a_refused_bucket_prints_by_name_with_where_it_is_b
                  neither is held by the first of those shapes; which shape holds each decides \
                  what the type variables are bound to, and the checker looks through those \
                  shapes for one of the two only; here `U` is the type variable of `for U in \
-                 int | f64`; to repair it, give ((int, int),) a shape of its own, written just before \
-                 the shape that should hold it: `((int, int),)`; or test the value with `is` \
-                 first, so that each test meets one of the two [p(f: g)]"
+                 int | f64`; to repair it, give ((int, int),) a shape of its own, written after \
+                 the first of those shapes and before the second: `((int, int),)`; or test the \
+                 value with `is` first, so that each test meets one of the two [p(f: g)]"
             )],
             "{src}"
         );
@@ -1243,9 +1308,9 @@ fn a_rigid_type_variable_in_a_refused_bucket_prints_by_name_in_the_shape_offered
              by the first of those shapes; which shape holds each decides what the type \
              variables are bound to, and the checker looks through those shapes for one of the \
              two only; here `V` is the type variable of `for V in int | f64`; to repair it, give \
-             ((V, V),) a shape of its own, written just before the shape that should hold it: \
-             `((V, V),)`; or test the value with `is` first, so that each test meets one of the \
-             two [p(f: g)]"
+             ((V, V),) a shape of its own, written after the first of those shapes and before \
+             the second: `((V, V),)`; or test the value with `is` first, so that each test meets \
+             one of the two [p(f: g)]"
                 .to_string()
         ]
     );
@@ -1265,10 +1330,10 @@ fn pairs_refused_in(bucket: &str) -> String {
          apart only at component 1, where they agree with both, and neither is held by the \
          first of those shapes; which shape holds each decides what the type variables are \
          bound to, and the checker looks through those shapes for one of the two only; to \
-         repair it, give (3, 5) a shape of its own, written just before the shape that should \
-         hold it and the same as that shape except at component 1, where it is 3: `(3, …)`, \
-         with that shape's other components in place of each `…`; or test the value with `is` \
-         first, so that each test meets one of the two"
+         repair it, give (3, 5) a shape of its own, written after the first of those shapes and \
+         before the second, the same as the shape that should hold it except at component 1, \
+         where it is 3: `(3, …)`, with that shape's other components in place of each `…`; or \
+         test the value with `is` first, so that each test meets one of the two"
     )
 }
 
@@ -1323,9 +1388,9 @@ fn an_unbounded_type_variable_in_a_refused_bucket_prints_by_name_where_it_stands
                  carrier, of one atom name or of one tuple length, and neither is held by the \
                  first of those shapes; which shape holds each decides what the type variables \
                  are bound to, and the checker looks through those shapes for one of the two \
-                 only; to repair it, give ((int, int),) a shape of its own, written just before \
-                 the shape that should hold it: `((int, int),)`; or test the value with `is` \
-                 first, so that each test meets one of the two"
+                 only; to repair it, give ((int, int),) a shape of its own, written after the \
+                 first of those shapes and before the second: `((int, int),)`; or test the value \
+                 with `is` first, so that each test meets one of the two"
             )
         );
     }
@@ -1346,9 +1411,10 @@ fn an_unbounded_type_variable_in_two_payload_shapes_of_a_refused_bucket_prints_b
          with both, and neither is held by the first of those shapes; which shape holds each \
          decides what the type variables are bound to, and the checker looks through those \
          shapes for one of the two only; to repair it, give #a(3, 5) a shape of its own, \
-         written just before the shape that should hold it and the same as that shape except \
-         at component 1, where it is 3: `#a(3, …)`, with that shape's other components in place \
-         of each `…`; or test the value with `is` first, so that each test meets one of the two"
+         written after the first of those shapes and before the second, the same as the shape \
+         that should hold it except at component 1, where it is 3: `#a(3, …)`, with that \
+         shape's other components in place of each `…`; or test the value with `is` first, so \
+         that each test meets one of the two"
     );
 }
 
@@ -2074,8 +2140,8 @@ fn wide_pairs(n: usize) -> (Ty, Ty) {
 fn bucket_refused(first: &str, second: &str, shapes: &str, here: &str, own: bool) -> String {
     let repair = match own {
         true => format!(
-            "give {first} a shape of its own, written just before the shape that should hold \
-             it: `{first}`; or "
+            "give {first} a shape of its own, written after the first of those shapes and \
+             before the second: `{first}`; or "
         ),
         false => String::new(),
     };
