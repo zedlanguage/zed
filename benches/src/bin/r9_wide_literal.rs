@@ -1,7 +1,7 @@
 //! Hand-run probe of REFUSAL-front-rest (docs/handoff/REFUSAL-front-unsolved.md), moved out of
-//! `tests/steps/l01_23_groups_and_refusals/refusals.rs`, where it was built only under a cfg switch: prints
-//! how the integer literals at and past the 64-bit bounds read, as a type and as the parameter
-//! type of a program, and asserts nothing. `r9_wide_literal` takes no arguments.
+//! `tests/steps/l01_23_groups_and_refusals/refusals.rs`, where it was built only under a cfg
+//! switch: prints how the integer literals at and past the 64-bit bounds read, as a type and as the
+//! parameter type of a program, and asserts nothing. `r9_wide_literal` takes no arguments.
 
 use zed_kernel::Value;
 
