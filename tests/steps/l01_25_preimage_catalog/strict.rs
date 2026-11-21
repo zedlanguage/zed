@@ -576,10 +576,27 @@ fn random_dom(rng: &mut Rng) -> Dom {
 #[test]
 fn random_terms_against_running_them() {
     let mut rng = Rng::new(run_seed("strict::random_terms_against_running_them"));
+    // The grades each arithmetic must reach: every grade, but no strict one at a checked type.
+    let wanted = |arith: Arith| {
+        [StrictUp, Up, Const, Down, StrictDown]
+            .into_iter()
+            .filter(move |g| !(arith == Arith::Checked && g.is_strict()))
+    };
     for (arith, cases) in [(Arith::Int, 1500), (Arith::Rat, 800), (Arith::Checked, 300)] {
         let mut counts = std::collections::BTreeMap::new();
         let mut pairs = 0;
-        for _ in 0..cases {
+        // `cases` terms, then more until every wanted grade has been seen: a fixed count missed
+        // `Down` at `Rat` on seed 17670159693018421012 (0 of 800, 16 `Up`), so the coverage
+        // check failed on an unlucky seed with the grader right. Each draw reaches each wanted
+        // grade with a probability above zero (every other seed reaches it), so the loop ends
+        // with probability 1; a generator that could never reach a grade runs into the piece's
+        // time limit instead, still a failure.
+        let missing = |counts: &std::collections::BTreeMap<String, usize>| {
+            wanted(arith).any(|g| !counts.contains_key(&format!("{:?}", Some(g))))
+        };
+        let mut drawn = 0;
+        while drawn < cases || missing(&counts) {
+            drawn += 1;
             let t = random_term(&mut rng, arith, 4);
             let (x, y) = (random_dom(&mut rng), random_dom(&mut rng));
             let g = grade(&t, "x", &domains(x, y), arith);
@@ -597,17 +614,10 @@ fn random_terms_against_running_them() {
             pairs += oracle(&t, g, &xs(arith, x, w), &ys, arith)
                 .unwrap_or_else(|e| panic!("{t} with x in {x:?}, y in {y:?} at {arith:?}: {e}"));
         }
-        println!("{arith:?}: {counts:?}, {pairs} pairs compared");
-        // The test reaches every grade.
-        for g in [StrictUp, Up, Const, Down, StrictDown] {
-            let want = if arith == Arith::Checked && g.is_strict() {
-                0
-            } else {
-                1
-            };
-            let n = counts.get(&format!("{:?}", Some(g))).copied().unwrap_or(0);
-            assert!(n >= want, "{arith:?}: {g:?} {n} times: {counts:?}");
-        }
+        println!("{arith:?}: {counts:?}, {drawn} terms, {pairs} pairs compared");
+        // The test reaches every wanted grade (the loop above ran until it did), and no strict
+        // grade at a checked type (asserted at each term).
+        assert!(!missing(&counts), "{arith:?}: {counts:?}");
     }
 }
 

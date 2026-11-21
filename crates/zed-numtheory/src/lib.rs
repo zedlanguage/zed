@@ -19,7 +19,8 @@ use num_bigint::BigUint;
 pub use factor::{factor, is_prime};
 pub use factored::{coprime_base_by_factoring, shares_a_factor_by_factoring};
 pub use word::{
-    cbrt_floor, gcd_u64, gcd_u128, inverse_mod_2_64, mul_mod, pow_mod, sqrt_exact_u128,
+    cbrt_floor, gcd_u64, gcd_u128, inverse_mod_2_64, mul_mod, odd_primes_below, pow_mod,
+    sqrt_exact_u128,
 };
 
 /// `(g, s, t)` with `g = gcd(a, b) >= 0` and `s a + t b = g`, by the extended Euclidean
@@ -439,35 +440,6 @@ fn without(mut v: u64, g: u64) -> u64 {
         v /= g;
     }
     v
-}
-
-/// `prime[i]` holds when `2 i + 1` is prime, for `i < ceil(n / 2)`: every odd number below `n`,
-/// and `n` itself when it is odd. The sieve of Eratosthenes over the odd numbers, in
-/// O(n log log n) steps and `n / 2` bytes. Each odd prime `q` strikes its odd multiples from
-/// `q^2` (a smaller multiple `k q` has a factor `k < q`, struck by then), and the striking
-/// stops once `q^2` passes the table: a composite `c = q m` of the table, `q <= m`, has
-/// `q^2 <= c < 2 ceil(n / 2)`.
-// Complexity tradeoff: this is the second sieve of the module, beside [`least_prime_factors`],
-// for a measured reason given there: for primality alone it is 4 to 5 times faster and holds a
-// quarter of the memory. Trial division of each odd number would be O(n sqrt n / log n).
-pub fn odd_primes_below(n: u64) -> Vec<bool> {
-    let len = usize::try_from(n.div_ceil(2)).expect("a table held in memory");
-    let mut prime = vec![true; len];
-    if let Some(one) = prime.first_mut() {
-        *one = false;
-    }
-    let mut i = 1;
-    while (2 * i + 1) * (2 * i + 1) < 2 * len {
-        if prime[i] {
-            let q = 2 * i + 1;
-            // Odd multiples of q from q * q: index (q q - 1) / 2 = q q / 2, step 2 q / 2 = q.
-            for j in ((q * q) / 2..len).step_by(q) {
-                prime[j] = false;
-            }
-        }
-        i += 1;
-    }
-    prime
 }
 
 /// The first `n` primes, in rising order.

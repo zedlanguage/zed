@@ -1,5 +1,5 @@
 //! Arithmetic on words: the greatest common divisor, products and powers modulo a word, and the
-//! inverse modulo `2^64`. A file apart from `lib.rs`, which re-exports them, since `factor.rs`
+//! inverse modulo `2^64`; and the sieve of the odd primes. A file apart from `lib.rs`, which re-exports them, since `factor.rs`
 //! uses them and `lib.rs` uses `factor.rs` (`next_prime` calls `is_prime`): in one file with
 //! `lib.rs` they closed an import cycle, which the import-graph test (step S.1f) refuses.
 
@@ -138,7 +138,7 @@ pub fn sqrt_exact_u128(v: u128) -> Option<u128> {
     (s * s == v).then_some(s)
 }
 
-/// `x^-1 mod 2^64` for an odd `x`:`3x XOR 2` is right in its low 5 bits (`x (3x XOR 2) = 1
+/// `x^-1 mod 2^64` for an odd `x`: `3x XOR 2` is right in its low 5 bits (`x (3x XOR 2) = 1
 /// mod 32` for each of the 16 odd residues modulo 32, checked by
 /// `the_inverse_seed_is_right_in_five_bits`), and each of four Newton steps `y (2 - x y)`
 /// doubles the right bits (`x y = 1 + 2^h t` gives `x y (2 - x y) = 1 - 2^2h t^2`): 5, 10, 20,
@@ -155,4 +155,35 @@ pub const fn inverse_mod_2_64(x: u64) -> u64 {
         i += 1;
     }
     y
+}
+
+/// `prime[i]` holds when `2 i + 1` is prime, for `i < ceil(n / 2)`: every odd number below `n`,
+/// and `n` itself when it is odd. The sieve of Eratosthenes over the odd numbers, in
+/// O(n log log n) steps and `n / 2` bytes. Each odd prime `q` strikes its odd multiples from
+/// `q^2` (a smaller multiple `k q` has a factor `k < q`, struck by then), and the striking
+/// stops once `q^2` passes the table: a composite `c = q m` of the table, `q <= m`, has
+/// `q^2 <= c < 2 ceil(n / 2)`. In this file, not `lib.rs`, since the cost table test of
+/// `factor.rs` uses it and `lib.rs` uses `factor.rs`: from `lib.rs` it closed an import cycle.
+// Complexity tradeoff: this is the second sieve of the crate, beside `least_prime_factors` in
+// `lib.rs`, for a measured reason given there: for primality alone it is 4 to 5 times faster
+// and holds a quarter of the memory. Trial division of each odd number would be
+// O(n sqrt n / log n).
+pub fn odd_primes_below(n: u64) -> Vec<bool> {
+    let len = usize::try_from(n.div_ceil(2)).expect("a table held in memory");
+    let mut prime = vec![true; len];
+    if let Some(one) = prime.first_mut() {
+        *one = false;
+    }
+    let mut i = 1;
+    while (2 * i + 1) * (2 * i + 1) < 2 * len {
+        if prime[i] {
+            let q = 2 * i + 1;
+            // Odd multiples of q from q * q: index (q q - 1) / 2 = q q / 2, step 2 q / 2 = q.
+            for j in ((q * q) / 2..len).step_by(q) {
+                prime[j] = false;
+            }
+        }
+        i += 1;
+    }
+    prime
 }
