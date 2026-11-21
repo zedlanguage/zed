@@ -295,10 +295,10 @@ fn piece(ends: &[usize], e: usize) -> usize {
 struct Values {
     /// For each segment, a link toward the first segment left at or after it; the last entry,
     /// one past the segments, is never removed.
-    next: Vec<usize>,
+    next: zed_graph::UnionFind,
     /// The same toward the last segment left at or before it, over the segments counted from
     /// the end.
-    prev: Vec<usize>,
+    prev: zed_graph::UnionFind,
     /// The first and last segment of each range on the form, in the order of the form's list.
     spans: Vec<(usize, usize)>,
     /// The first segment of each range, in order of first segments.
@@ -322,9 +322,20 @@ impl Values {
                 (_, b) => b,
             })
             .collect();
+        // Halving, each root chosen by this code (the segment after a removed one, by
+        // `union_into`, so a root is a segment left): O(log_(2+m/n) n) amortized a step for m
+        // operations on n segments, Tarjan and van Leeuwen 1984 (doi:10.1145/62.2160),
+        // Theorem 6; rank linking would move the root off the segment left.
+        let links = || {
+            zed_graph::UnionFind::new(
+                segments + 1,
+                zed_graph::Compression::Halving,
+                zed_graph::Linking::Rank,
+            )
+        };
         Values {
-            next: (0..=segments).collect(),
-            prev: (0..=segments).collect(),
+            next: links(),
+            prev: links(),
             whose: order.iter().map(|&k| whose[k]).collect(),
             spans,
             firsts,
@@ -336,33 +347,24 @@ impl Values {
         self.next.len() - 1
     }
 
-    /// The root of `i` in `links`, halving the path to it.
-    fn find(links: &mut [usize], mut i: usize) -> usize {
-        while links[i] != i {
-            links[i] = links[links[i]];
-            i = links[i];
-        }
-        i
-    }
-
     /// The first segment left at or after `i`, or one past the last segment.
     fn next(&mut self, i: usize) -> usize {
-        Values::find(&mut self.next, i)
+        self.next.find(i)
     }
 
     /// The last segment left before `i`, `None` when there is none.
     fn before(&mut self, i: usize) -> Option<usize> {
         let n = self.segments();
         // Segment `s` is entry `n - 1 - s`, so the one before `i` is at or after `n - i`.
-        let r = Values::find(&mut self.prev, n - i);
+        let r = self.prev.find(n - i);
         (r < n).then(|| n - 1 - r)
     }
 
     /// Removes segment `s`, which is left.
     fn remove(&mut self, s: usize) {
         let n = self.segments();
-        self.next[s] = s + 1;
-        self.prev[n - 1 - s] = n - s;
+        self.next.union_into(s + 1, s);
+        self.prev.union_into(n - s, n - 1 - s);
     }
 
     /// Removes the segments `a..=b` still left, and takes out each disjunct whose range then

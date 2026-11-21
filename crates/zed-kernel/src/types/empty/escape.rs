@@ -1566,33 +1566,34 @@ fn read_on(
 /// The positions `0 .. n` still in a list: the next one at or after a position, by pointers that
 /// skip the removed ones (path compression; each removal is once).
 struct Live {
-    next: Vec<usize>,
+    /// The positions `0 ..= n`, each removed one joined to the one after it, so the root of a
+    /// class is its last position, the one left.
+    next: zed_graph::UnionFind,
 }
 
 impl Live {
     fn new(n: usize) -> Live {
         Live {
-            next: (0..=n).collect(),
+            // Full compression, each root chosen by this code (the position after, by
+            // `union_into`): O(log_(2+m/n) n) amortized a step for m operations on n positions,
+            // Tarjan and van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 4; rank linking
+            // would move the root off the position left.
+            next: zed_graph::UnionFind::new(
+                n + 1,
+                zed_graph::Compression::Full,
+                zed_graph::Linking::Rank,
+            ),
         }
     }
 
     /// The first position left at or after `i` (`n` if none).
-    fn find(&mut self, mut i: usize) -> usize {
-        let mut r = i;
-        while self.next[r] != r {
-            r = self.next[r];
-        }
-        while self.next[i] != r {
-            let n = self.next[i];
-            self.next[i] = r;
-            i = n;
-        }
-        r
+    fn find(&mut self, i: usize) -> usize {
+        self.next.find(i)
     }
 
     /// Removes `i`, once.
     fn remove(&mut self, i: usize) {
-        self.next[i] = i + 1;
+        self.next.union_into(i + 1, i);
     }
 }
 

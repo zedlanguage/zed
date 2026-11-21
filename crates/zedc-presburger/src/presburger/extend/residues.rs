@@ -38,6 +38,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::holes::{Holes, hole_of};
 use super::{Atom, Con, Formula, Lin, Rel};
+use zed_graph::{Compression, Keep, Linking, Signed, UnionFind};
 use zedc_int::int::{Int, row_range};
 
 /// What the intervals and residues left say of a formula read with holes.
@@ -552,18 +553,24 @@ pub(super) fn read(f: &Formula, holes: &[(&Atom, &Holes)]) -> Reading {
 /// that an equality `k * a + e * b + c == 0` with `k` 1 or -1 sets, equals `-k * (e * b + c)`,
 /// `b` written as its class's, by the first such row. So the clauses of a chain whose links
 /// bind `x@{i-1} == x@i + 12` read the caller's atom however deep the chain, and not that of
-/// the link below (LOAD-bound-holes). Exact, since the rows stay. Time of the rows, near
-/// linear: a union of the classes by their atoms, each path compressed on the way.
+/// the link below (LOAD-bound-holes). Exact, since the rows stay. Time: one union-find step
+/// per row and per atom, by zed-graph's `UnionFind` with a `Signed` offset on each edge.
+// Complexity tradeoff: the naive search of each pair of atoms for a path of equalities is
+// O(a·r) for r rows over a atoms; used, full compression with each root chosen by this code
+// (`prefer`: an atom of `keep`, then the least), O(log_(1+m/n) n) amortized a step for m
+// operations on n atoms, Tarjan and van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 4. That is
+// not near linear, as this comment said before: linking by rank or size, which gives O(α(n))
+// (Theorem 3), would move the root off the atom `prefer` picks.
 pub(super) fn unit_classes(
     rows: &[impl Borrow<Con>],
     read: &HashSet<Atom>,
     keep: &HashSet<Atom>,
 ) -> (HashMap<Atom, Lin>, HashMap<Atom, Lin>) {
-    // Each atom's index, and for each index the one it is set by: `(s, up, d)`, the atom
-    // equal to `s` times that at `up` plus `d`.
+    // Each atom's index, and the classes of the indices, each atom `s` times its parent plus
+    // `d` (`Signed`).
     let mut index: HashMap<&Atom, usize> = HashMap::new();
     let mut atoms: Vec<&Atom> = Vec::new();
-    let mut up: Vec<(Int, usize, Int)> = Vec::new();
+    let mut uf: UnionFind<(), Signed<Int>> = UnionFind::new(0, Compression::Full, Linking::Rank);
     type Term<'c> = (&'c Atom, &'c Int);
     fn unit(c: &Con) -> Option<(Term<'_>, Term<'_>)> {
         let mut terms = c.lin.terms.iter();
@@ -578,35 +585,16 @@ pub(super) fn unit_classes(
         };
         for x in [a, b] {
             if !index.contains_key(x) {
-                index.insert(x, atoms.len());
-                up.push((Int::ONE, atoms.len(), Int::ZERO));
+                index.insert(x, uf.push());
                 atoms.push(x);
             }
         }
     }
     // The root of `i`, as `(s, r, d)`: the atom at `i` equals `s` times that at `r` plus `d`.
-    fn find(up: &mut [(Int, usize, Int)], i: usize) -> (Int, usize, Int) {
-        let (mut s, mut r, mut d) = (Int::ONE, i, Int::ZERO);
-        let mut path: Vec<usize> = Vec::new();
-        while up[r].1 != r {
-            path.push(r);
-            let (t, n, e) = up[r].clone();
-            // x == s·r + d and r == t·n + e, so x == s·t·n + s·e + d.
-            d = &(&s * &e) + &d;
-            s = &s * &t;
-            r = n;
-        }
-        // Each atom on the path set by the root directly, its value as above.
-        let (mut t, mut e) = (Int::ONE, Int::ZERO);
-        for &p in path.iter().rev() {
-            let (u, _, f) = up[p].clone();
-            // p == u·next + f and next == t·root + e.
-            e = &(&u * &e) + &f;
-            t = &u * &t;
-            up[p] = (t.clone(), r, e.clone());
-        }
-        (s, r, d)
-    }
+    let find = |uf: &mut UnionFind<(), Signed<Int>>, i: usize| -> (Int, usize, Int) {
+        let (r, f) = uf.find_offset(i);
+        (if f.neg { -&Int::ONE } else { Int::ONE }, r, f.d)
+    };
     let prefer = |x: &Atom, y: &Atom| (!keep.contains(x), x) < (!keep.contains(y), y);
     for c in rows.iter().map(Borrow::<Con>::borrow) {
         let Some(((a, k), (b, e))) = unit(c) else {
@@ -617,25 +605,22 @@ pub(super) fn unit_classes(
         }
         // k·a + e·b + c0 == 0, so a == -k·e·b - k·c0.
         let (m, c0) = (-&(k * e), -&(k * &c.lin.constant));
-        let (sa, ra, da) = find(&mut up, index[a]);
-        let (sb, rb, db) = find(&mut up, index[b]);
+        let (ia, ib) = (index[a], index[b]);
+        let (ra, rb) = (uf.find(ia), uf.find(ib));
         if ra == rb {
             continue;
         }
-        // sa·ra + da == m·(sb·rb + db) + c0.
-        match prefer(atoms[ra], atoms[rb]) {
-            // rb == m·sb·(sa·ra + da - m·db - c0).
-            true => {
-                let f = &m * &sb;
-                let d = &f * &(&(&da - &(&m * &db)) - &c0);
-                up[rb] = (&f * &sa, ra, d);
-            }
-            // ra == sa·(m·sb·rb + m·db + c0 - da).
-            false => {
-                let d = &sa * &(&(&(&m * &db) + &c0) - &da);
-                up[ra] = (&(&sa * &m) * &sb, rb, d);
-            }
-        }
+        // The root `prefer` picks stays; `join` finds the two roots again, in O(1) each, since
+        // full compression has just pointed `ia` and `ib` at them.
+        let keep = match prefer(atoms[ra], atoms[rb]) {
+            true => Keep::First,
+            false => Keep::Second,
+        };
+        let a_of_b = Signed {
+            neg: m != Int::ONE,
+            d: c0,
+        };
+        let _ = uf.join(ia, ib, &a_of_b, keep, |_, _, _| {});
     }
     let lin = |s: Int, r: usize, d: Int| Lin {
         terms: std::iter::once((atoms[r].clone(), s)).collect(),
@@ -643,7 +628,7 @@ pub(super) fn unit_classes(
     };
     let mut to: HashMap<Atom, Lin> = HashMap::new();
     for (i, &a) in atoms.iter().enumerate() {
-        let (s, r, d) = find(&mut up, i);
+        let (s, r, d) = find(&mut uf, i);
         if r != i && !keep.contains(a) {
             to.insert(a.clone(), lin(s, r, d));
         }
@@ -661,7 +646,7 @@ pub(super) fn unit_classes(
             {
                 continue;
             }
-            let (s, r, d) = find(&mut up, index[b]);
+            let (s, r, d) = find(&mut uf, index[b]);
             if r == index[a] {
                 continue;
             }

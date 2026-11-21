@@ -673,7 +673,14 @@ fn atom_disjoint_parts(f: &Formula) -> Option<Vec<Formula>> {
         return None;
     }
     // The least index each group's root, so the groups come in the order of their first part.
-    let mut up = UnionFind::new(parts.len());
+    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
+    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    let mut up = UnionFind::new(
+        parts.len(),
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     let mut first: HashMap<Atom, usize> = HashMap::new();
     for (i, g) in parts.iter().enumerate() {
         for c in g.cons() {
@@ -3187,7 +3194,14 @@ fn stage_kernels(base: &Linked, stage: &[Vec<Rc<Parts>>]) -> Vec<Option<Linked>>
     color.truncate(atoms.len());
     // The components: the atoms of each row, join and disjunction are joined.
     // Each root that of the first atom read, as before the shared union-find.
-    let mut up = UnionFind::new(atoms.len());
+    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
+    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    let mut up = UnionFind::new(
+        atoms.len(),
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     let join = |up: &mut UnionFind, of: &mut dyn Iterator<Item = &Atom>| {
         if let Some(first) = of.next() {
             let first = place(first);
@@ -3514,7 +3528,9 @@ impl Alone<'_> {
 /// each disjunction's atoms.
 fn alone<'a>(p: &'a Parts, proven: &[Vec<bool>]) -> Option<Alone<'a>> {
     let mut ids: HashMap<&'a Atom, usize> = HashMap::new();
-    let mut parent = UnionFind::default();
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut parent = UnionFind::new(0, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
     // Links the atoms given into one group, and gives an atom of the group, or `None` when no
     // atom is given. Roots are only compared, so the root rule does not matter here.
     let mut link = |atoms: &mut dyn Iterator<Item = &'a Atom>| -> Option<usize> {
@@ -5554,7 +5570,10 @@ mod cell_sweep {
         ors_atoms: &HashSet<Atom>,
     ) -> Result<Vec<Con>, ()> {
         let n = cons.len();
-        let mut parent = zed_graph::UnionFind::new(n);
+        // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and
+        // van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+        let mut parent =
+            zed_graph::UnionFind::new(n, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
         let mut first_by_atom: HashMap<Atom, usize> = HashMap::new();
         for (i, c) in cons.iter().enumerate() {
             for a in c.lin.terms.keys() {
@@ -9084,7 +9103,7 @@ fn cells_contract(cons: &[&Con], shared: impl Fn(&Atom) -> bool) -> Option<Vec<C
         match first.get(&r) {
             None => {
                 // `a == ±r + o` over the root's bounds.
-                let (lo, hi) = cell_image(m, &o, &classes.bounds[r].0, &classes.bounds[r].1);
+                let (lo, hi) = cell_image(m, &o, &classes.bounds(r).0, &classes.bounds(r).1);
                 out.extend(lo.map(|l| con(vec![(a, Int::ONE)], -&l, Rel::Ge)));
                 out.extend(hi.map(|h| con(vec![(a, -&Int::ONE)], h, Rel::Ge)));
                 first.insert(r, (a, m, o));
@@ -9765,7 +9784,10 @@ impl<'c> CoreClasses<'c> {
         // Union-find over the atoms other than `x`. Roots are only keys of `index` below, whose
         // classes are numbered in the order of the rows, so the root rule does not matter.
         let mut ids: TextMap<&Atom, usize> = TextMap::default();
-        let mut parent = UnionFind::default();
+        // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and
+        // van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+        let mut parent =
+            UnionFind::new(0, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
         for c in core {
             let at: Vec<usize> = (c.lin.terms.keys().filter(|a| *a != x))
                 .map(|a| *ids.entry(a).or_insert_with(|| parent.push()))
@@ -9880,7 +9902,9 @@ fn cells_by_classes(placed: &[(Rc<Vec<Con>>, CellSet)], x: &Atom, live: &[bool])
     }
     // Union-find over the atoms; roots are only keys of `slot`, so any root rule serves.
     let mut ids: HashMap<&Atom, usize> = HashMap::new();
-    let mut parent = UnionFind::default();
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut parent = UnionFind::new(0, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
     let mut first: Vec<Option<usize>> = Vec::new();
     for (_, c) in cons() {
         let at: Vec<usize> = (c.lin.terms.keys())
@@ -10043,15 +10067,34 @@ fn cell_image(minus: bool, off: &Int, lo: &Option<Int>, hi: &Option<Int>) -> Spa
 
 /// Classes of atoms joined by equalities `u == ±v + c`, each atom's value `±(its root's) +
 /// off`, and each root's bounds; a union-find with path compression and union by size.
-#[derive(Default)]
 struct CellClasses {
     at: HashMap<u32, usize>,
     atom: Vec<u32>,
-    parent: Vec<usize>,
-    minus: Vec<bool>,
-    off: Vec<Int>,
-    size: Vec<u32>,
-    bounds: Vec<Span>,
+    /// The classes, each atom `±(its parent) + off` (`Signed`), the bounds kept at each root.
+    uf: UnionFind<Span, zed_graph::Signed<Int>>,
+}
+
+impl Default for CellClasses {
+    fn default() -> CellClasses {
+        CellClasses {
+            at: HashMap::new(),
+            atom: Vec::new(),
+            // Full compression, linking by size: O(α(n)) amortized a step, Tarjan and van
+            // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3.
+            uf: UnionFind::new(0, zed_graph::Compression::Full, zed_graph::Linking::Size),
+        }
+    }
+}
+
+/// Meets the bounds `b` with `lo..=hi`; `false` when none is left.
+fn cell_meet(b: &mut Span, lo: Option<Int>, hi: Option<Int>) -> bool {
+    if let Some(l) = lo {
+        b.0 = Some(b.0.take().map_or(l.clone(), |o| o.max(l)));
+    }
+    if let Some(h) = hi {
+        b.1 = Some(b.1.take().map_or(h.clone(), |o| o.min(h)));
+    }
+    b.0.as_ref().zip(b.1.as_ref()).is_none_or(|(l, h)| l <= h)
 }
 
 impl CellClasses {
@@ -10059,55 +10102,26 @@ impl CellClasses {
         if let Some(&i) = self.at.get(&u) {
             return i;
         }
-        let i = self.atom.len();
+        let i = self.uf.push_value((None, None));
         self.at.insert(u, i);
         self.atom.push(u);
-        self.parent.push(i);
-        self.minus.push(false);
-        self.off.push(Int::ZERO);
-        self.size.push(1);
-        self.bounds.push((None, None));
         i
     }
 
     /// The root of `i`, and `(minus, off)` with `i`'s value `±root + off`.
     fn find(&mut self, i: usize) -> (usize, bool, Int) {
-        let mut path = Vec::new();
-        let mut r = i;
-        while self.parent[r] != r {
-            path.push(r);
-            r = self.parent[r];
-        }
-        for &n in path.iter().rev() {
-            let p = self.parent[n];
-            if p != r {
-                let op = self.off[p].clone();
-                self.off[n] = if self.minus[n] {
-                    &self.off[n] - &op
-                } else {
-                    &self.off[n] + &op
-                };
-                self.minus[n] ^= self.minus[p];
-                self.parent[n] = r;
-            }
-        }
-        if i == r {
-            (r, false, Int::ZERO)
-        } else {
-            (r, self.minus[i], self.off[i].clone())
-        }
+        let (r, f) = self.uf.find_offset(i);
+        (r, f.neg, f.d)
+    }
+
+    /// The bounds of the root `r`.
+    fn bounds(&self, r: usize) -> &Span {
+        self.uf.value(r)
     }
 
     /// Meets root `r`'s bounds with `lo..=hi`; `false` when none is left.
     fn meet(&mut self, r: usize, lo: Option<Int>, hi: Option<Int>) -> bool {
-        let b = &mut self.bounds[r];
-        if let Some(l) = lo {
-            b.0 = Some(b.0.take().map_or(l.clone(), |o| o.max(l)));
-        }
-        if let Some(h) = hi {
-            b.1 = Some(b.1.take().map_or(h.clone(), |o| o.min(h)));
-        }
-        b.0.as_ref().zip(b.1.as_ref()).is_none_or(|(l, h)| l <= h)
+        cell_meet(self.uf.value_mut(r), lo, hi)
     }
 
     /// Adds `link` to the classes; `false` when no value is left.
@@ -10141,20 +10155,22 @@ impl CellClasses {
                         }
                     };
                 }
-                let (child, root, cm) = if self.size[ru] <= self.size[rv] {
-                    (ru, rv, m)
-                } else {
-                    // `rv == ±(ru - m) == ±ru ∓ m`.
-                    (rv, ru, if k { m } else { -&m })
+                // `ru == ±rv + m`, so `rv` from `ru` is its inverse. The smaller class goes under
+                // the larger, `rv`'s root staying on a tie (`Keep::Rule` under size keeps the
+                // first root when the sizes are equal), and the edge of the child is
+                // `child == ±root + cm` (`m`, or `±ru ∓ m` when `rv` went under).
+                let ru_of_rv = zed_graph::Signed { neg: k, d: m };
+                let mut left = true;
+                // The child's bounds in terms of `root`: `root == ±(child - cm)`.
+                let merge = |kept: &mut Span, (lo, hi): Span, e: &zed_graph::Signed<Int>| {
+                    let off = if e.neg { e.d.clone() } else { -&e.d };
+                    let (lo, hi) = cell_image(e.neg, &off, &lo, &hi);
+                    left = cell_meet(kept, lo, hi);
                 };
-                // `child == ±root + cm`; its bounds in terms of `root`: `root == ±(child - cm)`.
-                self.parent[child] = root;
-                self.minus[child] = k;
-                self.off[child] = cm.clone();
-                self.size[root] += self.size[child];
-                let (lo, hi) = self.bounds[child].clone();
-                let (lo, hi) = cell_image(k, &(if k { cm } else { -&cm }), &lo, &hi);
-                self.meet(root, lo, hi)
+                let rv_of_ru = zed_graph::Offset::inverse(&ru_of_rv);
+                self.uf
+                    .union_roots(rv, ru, rv_of_ru, zed_graph::Keep::Rule, merge);
+                left
             }
         }
     }
@@ -10249,7 +10265,7 @@ fn cells_point(l: usize, r: usize, items: Vec<CellItem>, live: &[bool]) -> bool 
             })
             .collect();
         for &t in &touched {
-            let (blo, bhi) = classes.bounds[t].clone();
+            let (blo, bhi) = classes.bounds(t).clone();
             if blo.is_some() || bhi.is_some() {
                 next.push(CellItem {
                     link: CellLink::Bound(classes.atom[t], blo, bhi),
@@ -11217,7 +11233,6 @@ impl Near {
 /// Constraints grouped by the variables they share, so that a question about a few variables
 /// solves only the constraints it can meet: variables that share no constraint do not interact,
 /// and the rest are known to have a point.
-#[derive(Default)]
 struct Linked {
     cons: Vec<Con>,
     // Complexity tradeoff: naive version, a `BTreeMap`, O(log a) comparisons of names per
@@ -11236,6 +11251,22 @@ struct Linked {
     /// For the constraints added by [`Linked::meet`], the index of each term's constraint,
     /// keyed by the term without its constant and by the comparison.
     by_terms: HashMap<(BTreeMap<Atom, Int>, Rel), usize>,
+}
+
+impl Default for Linked {
+    fn default() -> Linked {
+        Linked {
+            cons: Vec::new(),
+            ids: TextMap::default(),
+            // No compression (lookups take `&self`), each root chosen by this code (the group
+            // with more constraints, at `Linked::add`): a find walks O(log n) links, by the
+            // doubling argument for linking by size, Tarjan and van Leeuwen 1984
+            // (doi:10.1145/62.2160), Theorem 2.
+            parent: UnionFind::new(0, zed_graph::Compression::None, zed_graph::Linking::Size),
+            held: Vec::new(),
+            by_terms: HashMap::new(),
+        }
+    }
 }
 
 impl Linked {
@@ -15724,7 +15755,14 @@ fn parts(
     // The parts, by union-find over the variables each row mentions.
     // Each root that of the row's first variable, as before the shared union-find, since the
     // parts are searched in the order of their roots.
-    let mut parent = UnionFind::new(vars);
+    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
+    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    let mut parent = UnionFind::new(
+        vars,
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     for (r, _) in &base {
         if let Some(&(first, _)) = r.a.first() {
             for &(j, _) in &r.a[1..] {
@@ -16205,28 +16243,23 @@ fn broken_swap<'a>(top: &'a Omega, base: &[(Row, Rel)]) -> Option<&'a Tied> {
 /// The equalities `x - y == d` as a forest with union by rank, so that each root is found in
 /// a number of steps logarithmic in the variables: each variable is its parent plus its offset.
 struct Ties {
-    parent: Vec<usize>,
-    rank: Vec<usize>,
-    offset: Vec<Int>,
+    uf: UnionFind<(), zed_graph::Diff<Int>>,
 }
 
 impl Ties {
     fn new(n: usize) -> Ties {
         Ties {
-            parent: (0..n).collect(),
-            rank: vec![0; n],
-            offset: vec![Int::ZERO; n],
+            // No compression (`root` takes `&self`), linking by rank: a find walks at most
+            // log2 n links, Tarjan and van Leeuwen 1984 (doi:10.1145/62.2160), Corollary 2 and
+            // Theorem 2.
+            uf: UnionFind::new(n, zed_graph::Compression::None, zed_graph::Linking::Rank),
         }
     }
 
     /// The root of `x[i]` and `d` with `x[i] == root + d`.
-    fn root(&self, mut i: usize) -> (usize, Int) {
-        let mut d = Int::ZERO;
-        while self.parent[i] != i {
-            d = &d + &self.offset[i];
-            i = self.parent[i];
-        }
-        (i, d)
+    fn root(&self, i: usize) -> (usize, Int) {
+        let (r, zed_graph::Diff(d)) = self.uf.find_offset_shared(i);
+        (r, d)
     }
 
     /// Adds `x[x] - x[y] == d`; false when the ties already make it something else. Which of
@@ -16234,24 +16267,13 @@ impl Ties {
     /// is not used beyond this forest: [`Ties::representatives`] chooses the variable that
     /// stands for each class.
     fn equate(&mut self, x: usize, y: usize, d: Int) -> bool {
-        let (x, dx) = self.root(x);
-        let (y, dy) = self.root(y);
-        // `x - y == d - dx + dy` between the roots.
-        let delta = &(&d - &dx) + &dy;
-        if x == y {
-            return delta.is_zero();
+        // `x[x] == x[y] + d`; `x`'s root stays on equal ranks (`Keep::Rule`), and `Err` gives
+        // what the class already makes `x[x] - x[y]`.
+        let d = zed_graph::Diff(d);
+        match self.uf.join(x, y, &d, zed_graph::Keep::Rule, |_, _, _| {}) {
+            Ok(_) => true,
+            Err(held) => held == d,
         }
-        if self.rank[x] < self.rank[y] {
-            self.parent[x] = y;
-            self.offset[x] = delta;
-        } else {
-            self.parent[y] = x;
-            self.offset[y] = -&delta;
-            if self.rank[x] == self.rank[y] {
-                self.rank[x] += 1;
-            }
-        }
-        true
     }
 
     /// For each variable, the member of its class that stands for the class, and `d` with the
@@ -16267,7 +16289,7 @@ impl Ties {
     /// `tests::the_representatives_of_joined_equalities_do_not_depend_on_their_order`.
     /// O(n log n) for n variables.
     fn representatives(&self, keys: &[usize]) -> Vec<(usize, Int)> {
-        let roots: Vec<(usize, Int)> = (0..self.parent.len()).map(|i| self.root(i)).collect();
+        let roots: Vec<(usize, Int)> = (0..self.uf.len()).map(|i| self.root(i)).collect();
         let mut best: Vec<Option<(usize, &Int, usize)>> = vec![None; roots.len()];
         for (i, (r, d)) in roots.iter().enumerate() {
             let candidate = (keys[i], d, i);
@@ -21436,7 +21458,9 @@ impl AtomLinks {
     fn of(f: &Formula) -> Option<AtomLinks> {
         let mut l = AtomLinks {
             ids: HashMap::new(),
-            parent: UnionFind::default(),
+            // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan
+            // and van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+            parent: UnionFind::new(0, zed_graph::Compression::Halving, zed_graph::Linking::Rank),
         };
         let mut aux = false;
         f.walk(&mut |c| {
@@ -23720,7 +23744,14 @@ fn linked_conjuncts<'f>(
     }
     let cs = f.conjuncts();
     let mut sets = Sets {
-        parent: UnionFind::new(cs.len()),
+        // Halving, each root chosen by this code (it reads the root as the class's name):
+        // O(log_(2+m/n) n) amortized a step for m operations on n elements, Tarjan and van Leeuwen
+        // 1984 (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+        parent: UnionFind::new(
+            cs.len(),
+            zed_graph::Compression::Halving,
+            zed_graph::Linking::Rank,
+        ),
         ids: HashMap::new(),
     };
     // The conjunct that first reached each part shared by more than one holder.
@@ -24643,7 +24674,13 @@ fn projected_each(rows: &[Con], syms: &[&Atom]) -> Vec<Option<Vec<Con>>> {
         (s, None) => s,
         (None, t) => t,
     };
-    let mut up = UnionFind::new(id.len());
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut up = UnionFind::new(
+        id.len(),
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     let ids: Vec<Vec<usize>> = (rows.iter())
         .map(|c| c.lin.terms.keys().map(|a| id[a]).collect())
         .collect();
@@ -25552,7 +25589,13 @@ fn forest_row_hulls(cons: &[&Con]) -> Option<HashMap<Atom, IntervalSet>> {
     // A cycle shows as an inequality joined to an atom already in its tree (union-find over
     // the atoms and then the inequalities).
     let n = atoms.len();
-    let mut parent = UnionFind::new(n + rows.len());
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut parent = UnionFind::new(
+        n + rows.len(),
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     for (r, (ts, _)) in rows.iter().enumerate() {
         for &(i, _) in ts {
             if !parent.union(n + r, i) {
@@ -26037,7 +26080,14 @@ fn forest_domains(
     }
     let n_units = n_base + free.len();
     // The least unit each root: the components below are keyed and ordered by it.
-    let mut uf = UnionFind::new(n_units);
+    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
+    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    let mut uf = UnionFind::new(
+        n_units,
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     for us in &units_of {
         for u in us.iter().skip(1) {
             uf.union_least(us[0], *u);
@@ -26372,7 +26422,13 @@ fn forest_component_domains(
     let mut edges: Vec<ForestEdge> = Vec::new();
     let mut key: HashMap<(usize, usize), usize> = HashMap::new();
     // The classes joined by edges so far; only tested for a cycle, so any root will do.
-    let mut cuf = UnionFind::new(nc);
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut cuf = UnionFind::new(
+        nc,
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     // The edge between classes `x` and `y`, made when new; `None` when it closes a cycle.
     let mut edge = |x: usize,
                     y: usize,
@@ -27134,7 +27190,9 @@ fn propagate(other: &[&Con], b: &HashMap<Atom, Ends>, out: &mut Vec<Con>) {
 fn clusters(cons: &[Con], ors: &[&Formula], ends: &HashMap<Atom, Ends>) -> local::Clusters {
     let mut ids: BTreeMap<Atom, usize> = BTreeMap::new();
     // Roots are only keys; the clusters are numbered by the order of `ids` below.
-    let mut parent = UnionFind::default();
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut parent = UnionFind::new(0, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
     // Joins the atoms given, and gives one of them, or `None` when none is given.
     let mut join = |atoms: Vec<Atom>, parent: &mut UnionFind| -> Option<usize> {
         let mut first = None;
@@ -27676,7 +27734,10 @@ fn products(
     let mut ids: BTreeMap<Atom, usize> = BTreeMap::new();
     // Each root that of a row's first atom, as before the shared union-find: the parts are
     // solved in the order of their roots, which decides the refusal reported first.
-    let mut parent = UnionFind::default();
+    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
+    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    let mut parent = UnionFind::new(0, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
     let mut firsts: Vec<Option<usize>> = Vec::with_capacity(rows.len());
     // A row with no atom holds or fails alone; where one fails the premises have no point.
     let mut consistent = true;
@@ -31207,7 +31268,10 @@ pub(super) mod tests {
                 assert!(ties.equate(x, y, Int::from(self.value[x] - self.value[y])));
             }
             let roots = (0..self.value.len()).map(|i| ties.root(i).0).collect();
-            let rank = ties.rank.iter().copied().max().unwrap_or(0);
+            let rank = (0..ties.uf.len())
+                .map(|i| usize::from(ties.uf.rank(i)))
+                .max()
+                .unwrap_or(0);
             (ties.representatives(&self.keys), roots, rank)
         }
 

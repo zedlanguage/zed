@@ -932,7 +932,13 @@ impl Face {
             let n = index.len();
             index.entry(a).or_insert(n);
         }
-        let mut up = zed_graph::UnionFind::new(index.len());
+        // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and
+        // van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+        let mut up = zed_graph::UnionFind::new(
+            index.len(),
+            zed_graph::Compression::Halving,
+            zed_graph::Linking::Rank,
+        );
         for atoms in &reads {
             let mut atoms = atoms.iter().map(|a| index[a]);
             let Some(first) = atoms.next() else { continue };
@@ -1508,7 +1514,13 @@ fn split(items: Vec<Formula>, keep: &mut HashSet<Atom>) -> Option<(Vec<Formula>,
         let n = index.len();
         index.entry(a).or_insert(n);
     }
-    let mut up = zed_graph::UnionFind::new(index.len());
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut up = zed_graph::UnionFind::new(
+        index.len(),
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     for atoms in &reads {
         let mut atoms = atoms.iter().map(|a| index[a]);
         let Some(first) = atoms.next() else { continue };

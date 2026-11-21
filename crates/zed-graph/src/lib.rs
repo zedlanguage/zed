@@ -27,9 +27,9 @@
 //! that gives its least item first, and [`Dijkstra`], the search for least distances on it
 //! ([`heap`]); [`Worklist`], a queue or stack that holds each item at most once ([`worklist`]);
 //! [`IdSource`], a counter that draws numbers once each across threads ([`ids`]);
-//! [`BitSet`], a set of small numbers kept one bit each ([`bitset`]); and [`UnionFind`] and
-//! [`OffsetUnionFind`], the classes of elements joined in pairs, the second with each
-//! element's offset from its class's root.
+//! [`BitSet`], a set of small numbers kept one bit each ([`bitset`]); and [`UnionFind`], the classes
+//! of elements joined in pairs, with the compression and linking its caller chooses, a value per
+//! class and an offset per edge ([`union_find`]).
 
 use std::marker::PhantomData;
 
@@ -286,8 +286,10 @@ pub mod heap;
 pub mod ids;
 pub mod worklist;
 
-mod union_find;
-pub use union_find::{OffsetUnionFind, UnionFind};
+pub mod union_find;
+pub use union_find::{
+    Compression, Diff, Keep, Linking, Offset, Parents, Parity, Signed, UnionFind, root_of,
+};
 
 pub use bitset::BitSet;
 pub use heap::{Dijkstra, Labels, MinHeap, NegativeReducedWeight, reduced};

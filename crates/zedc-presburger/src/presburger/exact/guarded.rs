@@ -162,37 +162,16 @@ struct Scratch {
 /// `y` is that of `x` moved by it ([`Prep::carried`]). Each atom as `sign * r + shift` for its
 /// class's atom `r`. An equation that closes a cycle adds nothing to the classes; it is a
 /// conjunct of `f` like any other, and the ties used are all equations of `f`.
-// Complexity tradeoff: union by size with path compression (Tarjan, "Efficiency of a good but
-// not linear set union algorithm", JACM 22(2), 1975), each node holding its relation to its
-// parent (the weighted union-find of the relation `x = ±y + c`), O(r·α(a)) for r equations
-// over a atoms; the naive search of each pair of atoms for a path of equations is O(a·r).
+// Complexity tradeoff: the naive search of each pair of atoms for a path of equations is
+// O(a·r) for r equations over a atoms; used, zed-graph's `UnionFind` with a `Signed` offset on
+// each edge (the weighted union-find of the relation `x = ±y + c`), full compression and
+// linking by size: O(α(a)) amortized a step, O((a + r)·α(a)) in all, Tarjan and van Leeuwen
+// 1984 (doi:10.1145/62.2160), Theorem 3; the lower bound is Tarjan 1975
+// (doi:10.1145/321879.321884).
 fn ties(defs: &[Option<Def>], index: &HashMap<&Atom, usize>) -> Vec<(usize, Int, Int)> {
     let n = index.len();
-    let mut up: Vec<(usize, Int, Int)> = (0..n).map(|j| (j, Int::ONE, Int::ZERO)).collect();
-    let mut size = vec![1usize; n];
-    // `j` as `sign * root + shift`, every node on its path pointed at the root.
-    fn find(up: &mut [(usize, Int, Int)], j: usize) -> (usize, Int, Int) {
-        let mut path = Vec::new();
-        let mut r = j;
-        while up[r].0 != r {
-            path.push(r);
-            r = up[r].0;
-        }
-        // Nearest the root first: each node's parent already points at the root, so
-        // `x = s * p + c` and `p = ps * root + pc` give `x = s·ps * root + s·pc + c`.
-        for &x in path.iter().rev() {
-            let (p, s, c) = up[x].clone();
-            if p != r {
-                let (_, ps, pc) = up[p].clone();
-                up[x] = (r, &s * &ps, &(&s * &pc) + &c);
-            }
-        }
-        if j == r {
-            (r, Int::ONE, Int::ZERO)
-        } else {
-            up[j].clone()
-        }
-    }
+    let mut uf: zed_graph::UnionFind<(), zed_graph::Signed<Int>> =
+        zed_graph::UnionFind::new(n, zed_graph::Compression::Full, zed_graph::Linking::Size);
     for d in defs.iter().flatten() {
         let Def::Eq(e) = d else { continue };
         let mut terms = e.terms.iter();
@@ -202,30 +181,32 @@ fn ties(defs: &[Option<Def>], index: &HashMap<&Atom, usize>) -> Vec<(usize, Int,
         if a.abs() != Int::ONE || b.abs() != Int::ONE {
             continue;
         }
-        // `y = sigma * x + delta`, with `a` its own inverse.
+        // `y = sigma * x + delta`, with `a` its own inverse, so `x = sigma * y - sigma * delta`
+        // with `sigma` its own inverse; `sigma` is -1 exactly when `a == b`.
         let sigma = -&(a * b);
-        let mut delta = -&(a * &e.constant);
-        let (ry, sy, cy) = find(&mut up, index[y]);
-        let (rx, sx, cx) = find(&mut up, index[x]);
-        if ry == rx {
-            continue;
-        }
-        // The smaller class goes under the larger: `x = sigma * y - sigma * delta` as well.
-        let ((ry, sy, cy), (rx, sx, cx)) = if size[ry] > size[rx] {
-            delta = -&(&sigma * &delta);
-            ((rx, sx, cx), (ry, sy, cy))
-        } else {
-            ((ry, sy, cy), (rx, sx, cx))
+        let delta = -&(a * &e.constant);
+        let x_of_y = zed_graph::Signed {
+            neg: a == b,
+            d: -&(&sigma * &delta),
         };
-        // `sy * ry + cy = sigma * (sx * rx + cx) + delta`, `sy` its own inverse.
-        up[ry] = (
-            rx,
-            &sy * &(&sigma * &sx),
-            &sy * &(&(&(&sigma * &cx) + &delta) - &cy),
+        // The smaller class goes under the larger, `x`'s root staying on a tie (`Keep::Rule`
+        // under size keeps the first argument's root when the sizes are equal). An equation
+        // that closes a cycle (`Err`) adds nothing, as the doc above says.
+        let _ = uf.join(
+            index[x],
+            index[y],
+            &x_of_y,
+            zed_graph::Keep::Rule,
+            |_, _, _| {},
         );
-        size[rx] += size[ry];
     }
-    (0..n).map(|j| find(&mut up, j)).collect()
+    (0..n)
+        .map(|j| {
+            let (r, f) = uf.find_offset(j);
+            let sign = if f.neg { -&Int::ONE } else { Int::ONE };
+            (r, sign, f.d)
+        })
+        .collect()
 }
 
 /// `lin` divided by the gcd of its coefficients, the constant rounded down: the same integer

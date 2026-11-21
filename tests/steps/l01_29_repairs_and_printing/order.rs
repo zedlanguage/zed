@@ -131,7 +131,10 @@ impl<'t> Items<'t> {
     /// name.
     fn keep_names(&self, order: Vec<usize>) -> Vec<usize> {
         let n = self.len();
-        let mut parent = zed_graph::UnionFind::new(n);
+        // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and
+        // van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+        let mut parent =
+            zed_graph::UnionFind::new(n, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
         let mut first: HashMap<&str, usize> = HashMap::new();
         for (i, names) in self.names.iter().enumerate() {
             for &name in names {

@@ -4880,7 +4880,10 @@ fn factors(g: &Formula) -> BTreeSet<Factor> {
 #[allow(clippy::type_complexity)]
 fn linked(cons: &[&Arc<Formula>]) -> (Vec<(BTreeSet<Factor>, Vec<Con>)>, BTreeMap<Factor, usize>) {
     let mut at: BTreeMap<Factor, usize> = BTreeMap::new();
-    let mut parent = zed_graph::UnionFind::default();
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut parent =
+        zed_graph::UnionFind::new(0, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
     let mut seen: Vec<(&Con, usize)> = Vec::new();
     for g in cons {
         let Formula::Con(c) = &***g else {
@@ -14061,7 +14064,14 @@ impl Scope {
             let mut index: BTreeMap<Atom, usize> = BTreeMap::new();
             // Each root that of the atom read before, as before the shared union-find: the
             // trees below are split in the order of their roots.
-            let mut parent = zed_graph::UnionFind::default();
+            // Halving, each root chosen by this code (it reads the root as the class's name):
+            // O(log_(2+m/n) n) amortized a step for m operations on n elements, Tarjan and van
+            // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+            let mut parent = zed_graph::UnionFind::new(
+                0,
+                zed_graph::Compression::Halving,
+                zed_graph::Linking::Rank,
+            );
             let mut first: Vec<Option<usize>> = Vec::new();
             for g in self.relation.set() {
                 let mut atoms = g.atoms();

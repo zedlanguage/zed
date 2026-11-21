@@ -3867,7 +3867,13 @@ impl Blocks {
                 index.entry(n).or_insert(i);
             }
         }
-        let mut parent = zed_graph::UnionFind::new(index.len());
+        // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and
+        // van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+        let mut parent = zed_graph::UnionFind::new(
+            index.len(),
+            zed_graph::Compression::Halving,
+            zed_graph::Linking::Rank,
+        );
         let mut used = vec![false; index.len()];
         for (_, ns) in &rest {
             let first = index[&ns[0]];

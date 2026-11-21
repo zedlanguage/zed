@@ -933,7 +933,7 @@ impl Ty {
 /// Complexity tradeoff: naive version, the derived `==`, one recursion per level, O(paths):
 /// `2^n` for two types of `n` shared nodes built apart (n = 2,000 did not finish in 60 s), and
 /// a stack overflow at 100,000 levels on 2 MiB. Used: the union-find above, O((n + m) α) for
-/// types of `n` and `m` nodes as graphs (union by size with path halving, `Same::root`; the
+/// types of `n` and `m` nodes as graphs (union by size with path halving, `Same::assumed`; the
 /// bound is Tarjan and van Leeuwen's, JACM 31(2), 1984, doi:10.1145/62.2160, whose full
 /// comment is at the head of zed-graph `union_find.rs`), with recursion while the stack has
 /// room and `left` after. Tradeoffs: the table's memory, one entry per shared node met; nodes
@@ -941,7 +941,6 @@ impl Ty {
 /// node alive for the whole comparison (the table never outlives it); the `Arc::strong_count`
 /// test that skips unshared nodes is a constant-factor saving, not needed for the answer.
 /// COMPLEXITY.md row F118.
-#[derive(Default)]
 struct Same<'a> {
     /// The lowest stack address the recursion descends from ([`Same::room`]), set when it first
     /// descends; 0 before.
@@ -950,16 +949,14 @@ struct Same<'a> {
     /// `above` of its path, so a function below it is counted as shared as it would be had
     /// the recursion reached it.
     left: Vec<(&'a Ty, &'a Ty, [Above; 2])>,
-    /// The union-find forest, by address: for each node met, the node it was joined to, or
-    /// itself, and, for the root of a class, the number of nodes in it. One table, so the
-    /// first node recorded costs one allocation. Every key is the address of a row, shape or
-    /// function reachable from the two operands `==` borrows, so none is freed while the table
-    /// lives, and the table is only read by key, never iterated.
+    /// Each node met, by address, and its number in [`Same::uf`]. Every key is the address of
+    /// a row, shape or function reachable from the two operands `==` borrows, so none is freed
+    /// while the table lives, and the table is only read by key, never iterated.
     /// Hashed by the kernel's [`zed_kernel::digest::Digest`], the hasher of ids and addresses:
     /// the keys are addresses the allocator chose, never a program's text, so it needs no seed
     /// (DRY-sorted-structures-2, job 3, which removed the folded multiply this table had alone).
     // Proof that no key names a freed node (checked again for DOC-proofs-in-comments-audit,
-    // as dryC1 asked in c4937d86c): (1) keys are put in only by `Same::root`, called only from
+    // as dryC1 asked in c4937d86c): (1) keys are put in only by `Same::id`, called only from
     // `Same::assumed`; (2) its callers `alike_rows`, `alike_shapes` and `func` (impl `Nodes`
     // for `Same`) pass `Arc::as_ptr` of operands typed `&'a`; (3) a `Same<'a>` cannot outlive
     // `'a`, which the borrow checker enforces, and one is made for each comparison
@@ -967,10 +964,32 @@ struct Same<'a> {
     // Test: `equality_reads_a_new_type_at_the_address_of_one_dropped`, which checks a type
     // made at a dropped one's address compares as itself, from a new table; a node freed
     // while the table lives cannot be written in a test, since that program does not compile.
-    ids: zed_kernel::digest::DigestMap<*const (), (*const (), usize)>,
+    ids: zed_kernel::digest::DigestMap<*const (), usize>,
+    /// The classes of the nodes met, by their numbers in [`Same::ids`].
+    uf: zed_graph::UnionFind,
     /// The functions the rows and shapes on the path to the pair now compared keep as held or
     /// unchecked, on the left and on the right ([`Same::shared_sigs`]).
     above: [Above; 2],
+}
+
+impl Default for Same<'_> {
+    fn default() -> Self {
+        Same {
+            floor: 0,
+            left: Vec::new(),
+            ids: Default::default(),
+            // Halving with size (the root that stays is size's, the first's on a tie):
+            // O(α(n)) amortized a step, Tarjan and van Leeuwen 1984 (doi:10.1145/62.2160),
+            // Theorem 3. Empty, it allocates nothing, so a comparison that records no node
+            // allocates nothing.
+            uf: zed_graph::UnionFind::new(
+                0,
+                zed_graph::Compression::Halving,
+                zed_graph::Linking::Size,
+            ),
+            above: Default::default(),
+        }
+    }
 }
 
 /// The stack [`Same`]'s recursion may take, from where it first descends: a small part of the
@@ -1156,33 +1175,15 @@ impl<'a> Same<'a> {
     /// one class; if not, their classes are joined, so the caller compares them now and no
     /// later pair does again.
     fn assumed(&mut self, x: *const (), y: *const ()) -> bool {
-        let (i, j) = (self.root(x), self.root(y));
-        if i == j {
-            return true;
-        }
+        let (i, j) = (self.id(x), self.id(y));
         // Union by size, the smaller class under the larger.
-        let (si, sj) = (self.ids[&i].1, self.ids[&j].1);
-        let (small, large) = match si < sj {
-            true => (i, j),
-            false => (j, i),
-        };
-        self.ids.insert(small, (large, si.min(sj)));
-        self.ids.insert(large, (large, si + sj));
-        false
+        !self.uf.union(i, j)
     }
 
-    /// The root of the class of the node at `x`, which is met here first if it is new; the
-    /// path to it is halved.
-    fn root(&mut self, x: *const ()) -> *const () {
-        let mut up = self.ids.entry(x).or_insert((x, 1)).0;
-        let mut i = x;
-        while up != i {
-            let above = self.ids[&up].0;
-            self.ids.insert(i, (above, 0));
-            i = above;
-            up = self.ids[&i].0;
-        }
-        i
+    /// The number of the node at `x`, which is met here first if it is new.
+    fn id(&mut self, x: *const ()) -> usize {
+        let uf = &mut self.uf;
+        *self.ids.entry(x).or_insert_with(|| uf.push())
     }
 }
 
@@ -22350,7 +22351,6 @@ impl fmt::Display for Ty {
 // names, a set of the names in use and one counter that only grows, O(size of the type) plus
 // O(renames) fresh names. Memory: one entry per open variable; a fresh name skipped once is never
 // reused in the type.
-#[derive(Default)]
 struct Scope {
     /// Each variable's printed names, innermost signature last.
     names: HashMap<Arc<str>, Vec<VarSlot>>,
@@ -22366,8 +22366,9 @@ struct Scope {
     /// The unbounded variables opened so far, each by its number in order of opening: the
     /// parent of each in a union-find forest whose trees are the variables printed as one.
     /// Each tree's root is its smallest number, so the roots do not depend on the order of
-    /// the joins.
-    same: Vec<usize>,
+    /// the joins, and a parent is always less than its child, so the variables opened after
+    /// a point can be dropped ([`zed_graph::UnionFind::truncate`]).
+    same: zed_graph::UnionFind,
     /// The variables of a comparison bounded by carriers in a signature outside the texts a
     /// message prints ([`Scope::of_comparison`]), by their printed names: each with the name
     /// the program wrote, its bound, and whether a text has written it, so that the message can
@@ -22426,6 +22427,31 @@ enum VarSlot {
     Free(usize),
 }
 
+impl Default for Scope {
+    fn default() -> Scope {
+        Scope {
+            names: HashMap::new(),
+            printed: HashSet::new(),
+            fresh: 0,
+            bound: HashSet::new(),
+            // Halving, the least number kept as each root (`union_least`): O(log_(2+m/n) n)
+            // amortized a step for m operations on n variables, Tarjan and van Leeuwen 1984
+            // (doi:10.1145/62.2160), Theorem 6, as at `Walk::plan`; rank linking would make the
+            // roots depend on the order of the joins.
+            same: zed_graph::UnionFind::new(
+                0,
+                zed_graph::Compression::Halving,
+                zed_graph::Linking::Rank,
+            ),
+            given: BTreeMap::new(),
+            hoisted: Vec::new(),
+            unions: Vec::new(),
+            written: RefCell::new(HashSet::new()),
+            kept: HashMap::new(),
+        }
+    }
+}
+
 impl Scope {
     /// How the variable `v` is printed here, or `None` if no signature around binds it.
     fn slot(&self, v: &Arc<str>) -> Option<&VarSlot> {
@@ -22456,9 +22482,7 @@ impl Scope {
 
     /// A new unbounded variable, alone in its tree.
     fn free(&mut self) -> VarSlot {
-        let k = self.same.len();
-        self.same.push(k);
-        VarSlot::Free(k)
+        VarSlot::Free(self.same.push())
     }
 
     /// The slot of the unbounded own variable `v` of a signature being opened: its written
@@ -22481,12 +22505,8 @@ impl Scope {
     }
 
     /// The root of the tree of the unbounded variable `k`, halving the path to it.
-    fn root(&mut self, mut k: usize) -> usize {
-        while self.same[k] != k {
-            self.same[k] = self.same[self.same[k]];
-            k = self.same[k];
-        }
-        k
+    fn root(&mut self, k: usize) -> usize {
+        self.same.find(k)
     }
 
     /// Opens the variables `sig` binds, giving each bounded one a printed name, and returns
@@ -22565,8 +22585,7 @@ impl Scope {
             let slot = |t: &Ty| t.as_var().and_then(|v| self.slot(v));
             match (slot(&need.on), slot(left)) {
                 (Some(&VarSlot::Free(a)), Some(&VarSlot::Free(b))) => {
-                    let (a, b) = (self.root(a), self.root(b));
-                    self.same[a.max(b)] = a.min(b);
+                    self.same.union_least(a, b);
                 }
                 (Some(VarSlot::Name(name)), Some(&VarSlot::Free(b)))
                     if need
@@ -23208,8 +23227,9 @@ impl Walk {
             let node = &self.nodes[k];
             out.push('_');
             self.next = node.end;
-            let opened = scope.same.len();
-            scope.same.extend(opened..node.inst_end);
+            for _ in scope.same.len()..node.inst_end {
+                scope.same.push();
+            }
             return false;
         }
         self.next += 1;

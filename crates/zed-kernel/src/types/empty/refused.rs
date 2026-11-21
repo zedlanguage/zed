@@ -575,7 +575,13 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
 fn connected(nodes: &BTreeSet<usize>, refs: &BTreeSet<(usize, usize)>) -> usize {
     let index: Vec<usize> = nodes.iter().copied().collect();
     let at = |d: usize| index.binary_search(&d).expect("a node of the set");
-    let mut up = zed_graph::UnionFind::new(index.len());
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut up = zed_graph::UnionFind::new(
+        index.len(),
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     let mut parts = index.len();
     for &(a, b) in refs {
         if up.union(at(a), at(b)) {

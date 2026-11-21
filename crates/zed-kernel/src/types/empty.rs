@@ -14642,7 +14642,14 @@ impl Trie {
     fn new() -> Trie {
         Trie {
             kids: vec![HashMap::new()],
-            same: zed_graph::UnionFind::new(1),
+            // Halving, each root chosen by this code (it reads the root as the class's name):
+            // O(log_(2+m/n) n) amortized a step for m operations on n elements, Tarjan and van
+            // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+            same: zed_graph::UnionFind::new(
+                1,
+                zed_graph::Compression::Halving,
+                zed_graph::Linking::Rank,
+            ),
         }
     }
 
@@ -15751,7 +15758,14 @@ fn affine_lists_empty(t: &Type) -> Option<bool> {
         .collect();
     // Union-find over the constraining operands, the last node the ground.
     let n = operands.len();
-    let mut parent = zed_graph::UnionFind::new(n + 1);
+    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
+    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    let mut parent = zed_graph::UnionFind::new(
+        n + 1,
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     let mut usable = false;
     let edge = |parent: &mut zed_graph::UnionFind, swapped: &[usize]| -> Option<()> {
         match *swapped {
@@ -16142,7 +16156,11 @@ fn overlaps<'a>(ts: impl Iterator<Item = &'a Type>) -> Vec<Vec<usize>> {
         });
     }
     let mut p0 = joined(base_tops.clone(), 0);
-    let mut parent = zed_graph::UnionFind::new(n);
+    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
+    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    let mut parent =
+        zed_graph::UnionFind::new(n, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
     // When `p0` already separates all `n` inputs into singletons, `(r0_i, r1_i)` is distinct
     // for every `p1`, so `joined(base_tops, 1)` cannot refine further and is skipped.
     let p0_all_singletons = (0..n).all(|i| p0.find(i) == i);
@@ -16272,7 +16290,14 @@ fn joined(tops: Vec<Top>, dir: usize) -> zed_graph::UnionFind {
         ..Placing::default()
     };
     s.sync(&trie);
-    let mut parent = zed_graph::UnionFind::new(num_cells);
+    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
+    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    let mut parent = zed_graph::UnionFind::new(
+        num_cells,
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     // The groups placed for each cell, by cell and group number, with their placements. A
     // type of a group placed for the cell is placed: met again, its node and the new one are
     // merged.

@@ -559,7 +559,14 @@ fn split(f: &Formula) -> Vec<Piece> {
     if conjuncts.len() < 2 {
         return whole();
     }
-    let mut parent = UnionFind::new(conjuncts.len());
+    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
+    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    let mut parent = UnionFind::new(
+        conjuncts.len(),
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     let mut first: HashMap<Atom, usize> = HashMap::new();
     let mut reads: Vec<HashSet<Atom>> = Vec::with_capacity(conjuncts.len());
     for (i, g) in conjuncts.iter().enumerate() {
@@ -3461,7 +3468,9 @@ fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, Interval
     let mut edges: Vec<(usize, usize, &Int, &Int, &Int)> = Vec::new();
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
     // The trees joined so far.
-    let mut trees = UnionFind::new(n);
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut trees = UnionFind::new(n, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
     for c in rows {
         if let Some((a, lo, hi)) = super::formula::one_bound(c) {
             let i = index[a];
@@ -4020,7 +4029,10 @@ fn met(
     let r0 = rows.len();
     let a0 = r0 + sets.len();
     let n = a0 + alts.len();
-    let mut parent = UnionFind::new(n);
+    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
+    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    let mut parent = UnionFind::new(n, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
     let mut first: HashMap<&Atom, usize> = HashMap::new();
     let items = (rows.iter().enumerate())
         .flat_map(|(i, k)| k.lin.terms.keys().map(move |a| (i, a)))
@@ -5358,7 +5370,9 @@ fn by_columns(
 // pass adding each row that meets the atoms so far is O(r^2·t).
 fn joined(rows: &[Con], s: &Atom) -> Vec<Con> {
     let mut index: HashMap<&Atom, usize> = HashMap::new();
-    let mut parent = UnionFind::default();
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut parent = UnionFind::new(0, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
     for k in rows {
         let mut first = None;
         for a in k.lin.terms.keys() {
@@ -5398,7 +5412,12 @@ fn row_groups(rows: &[Con], work: &mut Work) -> Result<Vec<Vec<Con>>, Refusal> {
         return Ok(vec![rows.to_vec()]);
     }
     let mut index: HashMap<&Atom, usize> = HashMap::new();
-    let mut parent = UnionFind::default();
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3. The root is only a key of `of` below, and
+    // the groups come in the order of their first rows, so which root stays changes nothing;
+    // this was `union_least`, the least root kept, which has only the O(log_(2+m/n) n) bound
+    // of halving with chosen roots (Theorem 6), not the O(t α) claimed for this function.
+    let mut parent = UnionFind::new(0, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
     for k in rows {
         let mut first = None;
         for a in k.lin.terms.keys() {
@@ -5410,7 +5429,7 @@ fn row_groups(rows: &[Con], work: &mut Work) -> Result<Vec<Vec<Con>>, Refusal> {
             match first {
                 None => first = Some(i),
                 Some(f) => {
-                    parent.union_least(f, i);
+                    parent.union(f, i);
                 }
             }
         }

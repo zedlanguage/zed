@@ -23,7 +23,7 @@
 //! graph. Tarjan's algorithm (R. Tarjan, "Depth-first search and linear graph algorithms",
 //! SIAM J. Comput. 1(2), 1972, doi:10.1137/0201010; the full comment is in zed-graph `lib.rs`,
 //! fn `tarjan`) then costs O(N). The two union-finds (`zed_graph`'s
-//! `OffsetUnionFind` and `UnionFind`) keep the root this code chooses and halve paths, which is
+//! `UnionFind`, one with `Diff` offsets) keep the root this code chooses and halve paths, which is
 //! O(N log N) for N operations (R. Tarjan and J. van Leeuwen, "Worst-case analysis of set union
 //! algorithms", J. ACM 31(2), 1984, doi:10.1145/62.2160; the full comment is at the head of
 //! zed-graph `union_find.rs`), not the O(N α(N)) of union by rank: the root is chosen
@@ -39,7 +39,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
-use zed_graph::{OffsetUnionFind, UnionFind};
+use zed_graph::{Compression, Diff, Keep, Linking, UnionFind};
 use zed_kernel::text::prose::and_list;
 use zedc_int::int::{Int, i128_div_ceil, i128_div_floor};
 use zedc_presburger::presburger::{Atom, Con, Formula, Lin, Rel};
@@ -174,7 +174,10 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
     }
     let k = names.len();
     // The offset equalities of the base, written as one atom (two opposite `>=`) or two.
-    let mut uf: OffsetUnionFind<Int> = OffsetUnionFind::new(k);
+    // Halving, each root chosen by this code (`Keep::Second`, `n`'s): O(log_(2+m/n) n) amortized a
+    // step, Tarjan and van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 6, as the head of this
+    // file says.
+    let mut uf = UnionFind::<(), Diff<Int>>::new(k, Compression::Halving, Linking::Rank);
     let mut diffs: BTreeMap<(usize, usize), BTreeSet<Int>> = BTreeMap::new();
     for (_, l) in &test.base {
         let t: Vec<(usize, &Int)> = (l.terms.iter())
@@ -193,7 +196,7 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
             if (diffs.get(&(n, p))).is_some_and(|cs| cs.contains(&-&l.constant)) {
                 // `p = n - c`, `n`'s root kept; a record inside one class is dropped, the
                 // atoms below reading it as they are.
-                let _ = uf.union_into(n, p, &-&l.constant);
+                let _ = uf.join(p, n, &Diff(-&l.constant), Keep::Second, |_, _, _| {});
             }
             diffs.entry((p, n)).or_default().insert(l.constant.clone());
         }
@@ -201,12 +204,12 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
     // The atoms over the roots.
     let mut atoms: Vec<A> = Vec::new();
     let mut put =
-        |uf: &mut OffsetUnionFind<Int>, l: &Lin, part: usize, case: usize, text: usize| {
+        |uf: &mut UnionFind<(), Diff<Int>>, l: &Lin, part: usize, case: usize, text: usize| {
             let mut terms: BTreeMap<usize, Int> = BTreeMap::new();
             let mut c = l.constant.clone();
             for (a, x) in &l.terms {
                 let Atom::Sym(n) = a else { unreachable!() };
-                let (r, o) = uf.find(index[n]);
+                let (r, Diff(o)) = uf.find_offset(index[n]);
                 c = &c + &(x * &o);
                 let e = terms.entry(r).or_insert(Int::ZERO);
                 *e = &*e + x;
@@ -239,7 +242,7 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
     let mut lo: Vec<Option<i128>> = vec![None; k];
     let mut hi: Vec<Option<i128>> = vec![None; k];
     for (v, name) in names.iter().enumerate() {
-        let (r, o) = uf.find(v);
+        let (r, Diff(o)) = uf.find_offset(v);
         let Some(o) = o.to_i128() else { continue };
         let (l, h, _) = &test.boxes[name];
         if let Some(l) = l.and_then(|l| l.checked_sub(o)) {
@@ -509,7 +512,10 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
     // The components of names joined by a shared atom.
     // The first term's root stays each class's root, as `fails` and `by_comp` below are keyed
     // and read in root order, which picks the failure reported.
-    let mut cp = UnionFind::new(k);
+    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
+    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    let mut cp = UnionFind::new(k, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
     for a in &atoms {
         for (v, _) in &a.terms[1..] {
             cp.union_into(a.terms[0].0, *v);

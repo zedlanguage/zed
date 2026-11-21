@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
 
 use crate::seed::Rng;
 use crate::{
-    BitSet, Dijkstra, IdSource, Lift, MinHeap, OffsetUnionFind, Order, UnionFind, Worklist,
-    biconnected, block_of_edges, components, dag_idom, kahn, make_after_needs, on_cycle,
+    BitSet, Compression, Diff, Dijkstra, IdSource, Keep, Lift, Linking, MinHeap, Order, UnionFind,
+    Worklist, biconnected, block_of_edges, components, dag_idom, kahn, make_after_needs, on_cycle,
     post_order, reach, sources, tarjan,
 };
 
@@ -746,22 +746,23 @@ mod union_find {
     /// No element, then one pushed.
     #[test]
     fn the_ends_of_the_disjoint_sets() {
-        let mut uf = UnionFind::new(0);
+        let mut uf = UnionFind::<(), ()>::new(0, Compression::Halving, Linking::Rank);
         assert!(uf.is_empty());
         assert_eq!(uf.push(), 0);
         assert_eq!((uf.len(), uf.find(0), uf.find_shared(0)), (1, 0, 0));
         assert!(!uf.union(0, 0) && !uf.union_into(0, 0) && !uf.union_least(0, 0));
         assert!(uf.same(0, 0));
-        let mut off: OffsetUnionFind<i64> = OffsetUnionFind::new(1);
-        assert_eq!(off.find(0), (0, 0));
-        assert_eq!(off.union_into(0, 0, &0), Err(0));
-        assert_eq!(off.union_into(0, 0, &1), Err(0));
+        let mut off = UnionFind::<(), Diff<i64>>::new(1, Compression::Halving, Linking::Rank);
+        assert_eq!(off.find_offset(0), (0, Diff(0)));
+        let none = |_: &mut (), _: (), _: &Diff<i64>| {};
+        assert_eq!(off.join(0, 0, &Diff(0), Keep::Second, none), Err(Diff(0)));
+        assert_eq!(off.join(0, 0, &Diff(1), Keep::Second, none), Err(Diff(0)));
     }
 
     #[test]
     #[should_panic(expected = "index out of bounds: the len is 2 but the index is 2")]
     fn an_element_past_the_end_is_refused() {
-        UnionFind::new(2).find(2);
+        UnionFind::<(), ()>::new(2, Compression::Halving, Linking::Rank).find(2);
     }
 
     /// Negative control for `union_find_classes_match_a_plain_labeling`: a union that points
@@ -781,7 +782,7 @@ mod union_find {
             let ra = root(&parent, a);
             parent[b] = ra;
         }
-        let mut uf = UnionFind::new(3);
+        let mut uf = UnionFind::<(), ()>::new(3, Compression::Halving, Linking::Rank);
         uf.union(0, 1);
         uf.union(2, 1);
         assert!(uf.same(0, 2));
@@ -794,7 +795,7 @@ mod union_find {
     /// (a panic in a debug build). The classes stay right.
     #[test]
     fn a_chain_of_chosen_roots_saturates_the_rank() {
-        let mut uf = UnionFind::new(300);
+        let mut uf = UnionFind::<(), ()>::new(300, Compression::Halving, Linking::Rank);
         for v in 0..299 {
             assert!(uf.union_into(v + 1, v));
         }

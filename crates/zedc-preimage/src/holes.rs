@@ -42,7 +42,9 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use zed_graph::{Dijkstra, NegativeReducedWeight, OffsetUnionFind, reduced};
+use zed_graph::{
+    Compression, Diff, Dijkstra, Keep, Linking, NegativeReducedWeight, UnionFind, reduced,
+};
 use zedc_int::int::Int;
 
 /// A system of difference constraints: each name's integers and the edges between names.
@@ -246,7 +248,10 @@ fn merge(
     }
     // Each class's root is the root of its `u` side at the union, which fixes the order of
     // `roots` below and so the classes' numbers.
-    let mut uf: OffsetUnionFind<Int> = OffsetUnionFind::new(n);
+    // Halving, each root chosen by this code (`Keep::Second`, the `u` side): O(log_(2+m/n) n)
+    // amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root and so the numbers.
+    let mut uf = UnionFind::<(), Diff<Int>>::new(n, Compression::Halving, Linking::Rank);
     for ((u, v), w) in &best {
         if u > v {
             continue;
@@ -262,13 +267,18 @@ fn merge(
             continue;
         }
         // x_v = x_u + w; within one class, a difference other than `w` leaves no point.
-        if let Err(held) = uf.union_into(*u, *v, w)
+        if let Err(Diff(held)) = uf.join(*v, *u, &Diff(w.clone()), Keep::Second, |_, _, _| {})
             && held != *w
         {
             return None;
         }
     }
-    let of: Vec<(usize, Int)> = (0..n).map(|v| uf.find(v)).collect();
+    let of: Vec<(usize, Int)> = (0..n)
+        .map(|v| {
+            let (r, Diff(o)) = uf.find_offset(v);
+            (r, o)
+        })
+        .collect();
     let mut index = vec![usize::MAX; n];
     let mut roots = Vec::new();
     for (v, (r, _)) in of.iter().enumerate() {

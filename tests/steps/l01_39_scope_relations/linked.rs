@@ -312,7 +312,10 @@ pub(super) fn partition_by_definition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Fo
 /// separates them in the graph of groups and the names they mention as atoms of their own.
 fn blocks_by_definition(gs: &[Arc<Formula>]) -> Vec<BTreeSet<Arc<Formula>>> {
     let n = gs.len();
-    let mut group = zed_graph::UnionFind::new(n);
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut group =
+        zed_graph::UnionFind::new(n, zed_graph::Compression::Halving, zed_graph::Linking::Rank);
     let atoms: Vec<BTreeSet<Atom>> = gs.iter().map(|g| g.atoms()).collect();
     for i in 0..n {
         for j in 0..i {
@@ -945,7 +948,13 @@ fn pairs_checked(b: &Blocks, set: &BTreeSet<Arc<Formula>>, log: &[String], at: &
     let got: BTreeSet<_> = got.into_values().collect();
     assert_eq!(got, want, "{at} after {log:#?}");
     // The trees: the conjuncts linked by any atom they share.
-    let mut comp = zed_graph::UnionFind::new(gs.len());
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut comp = zed_graph::UnionFind::new(
+        gs.len(),
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     let mut first: BTreeMap<Atom, usize> = BTreeMap::new();
     for (i, g) in gs.iter().enumerate() {
         for a in g.atoms() {

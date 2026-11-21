@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use crate::scaling;
 use crate::seed::Rng;
 use crate::{
-    BitSet, Dijkstra, IdSource, Lift, MinHeap, OffsetUnionFind, Order, Worklist, block_of_edges,
-    dag_idom, kahn, make_after_needs, post_order, reach, sources,
+    BitSet, Compression, Diff, Dijkstra, IdSource, Keep, Lift, Linking, MinHeap, Order, UnionFind,
+    Worklist, block_of_edges, dag_idom, kahn, make_after_needs, post_order, reach, sources,
 };
 
 /// A number spread over `0..m` by a multiplicative hash (Knuth's constant
@@ -406,13 +406,14 @@ fn the_offset_union_find_takes_n_log_n_time() {
         "n offset unions of random pairs and a find of each",
         n,
         |m| {
-            let mut uf: OffsetUnionFind<i64> = OffsetUnionFind::new(m);
+            let mut uf = UnionFind::<(), Diff<i64>>::new(m, Compression::Halving, Linking::Rank);
             for i in 0..m {
                 let (a, b) = (spread(2 * i, m), spread(2 * i + 1, m));
-                let _ = uf.union_into(b, a, &(a as i64 - b as i64));
+                let d = Diff(a as i64 - b as i64);
+                let _ = uf.join(a, b, &d, Keep::Second, |_, _, _| {});
             }
             for v in 0..m {
-                let (r, o) = uf.find(v);
+                let (r, Diff(o)) = uf.find_offset(v);
                 assert_eq!(o, v as i64 - r as i64);
             }
         },

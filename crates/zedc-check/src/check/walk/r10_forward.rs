@@ -51,14 +51,30 @@ fn check_map_fn_27(f: &Ty) -> bool {
 }
 
 /// Small union-find over variable names for `CalleeSummary::var_ties` (`unfixed_args`).
-#[derive(Default)]
 struct TieUf {
     ids: HashMap<Arc<str>, usize>,
     names: Vec<Arc<str>>,
-    parent: Vec<usize>,
+    /// The sets, each root the first name of its group (`union_into`), since `project` lists
+    /// the groups in the order of their roots.
+    uf: zed_graph::UnionFind,
 }
 
 impl TieUf {
+    fn new() -> TieUf {
+        TieUf {
+            ids: HashMap::new(),
+            names: Vec::new(),
+            // Halving, each root chosen by this code: O(log_(2+m/n) n) amortized a step for m
+            // operations on n names, Tarjan and van Leeuwen 1984 (doi:10.1145/62.2160),
+            // Theorem 6; rank linking would move the root and so the order of the groups.
+            uf: zed_graph::UnionFind::new(
+                0,
+                zed_graph::Compression::Halving,
+                zed_graph::Linking::Rank,
+            ),
+        }
+    }
+
     fn id(&mut self, v: &Arc<str>) -> usize {
         if let Some(&i) = self.ids.get(v) {
             return i;
@@ -66,17 +82,8 @@ impl TieUf {
         let i = self.names.len();
         self.ids.insert(v.clone(), i);
         self.names.push(v.clone());
-        self.parent.push(i);
+        self.uf.push();
         i
-    }
-
-    fn find(&mut self, mut x: usize) -> usize {
-        while self.parent[x] != x {
-            let p = self.parent[x];
-            self.parent[x] = self.parent[p];
-            x = self.parent[x];
-        }
-        x
     }
 
     fn union_group<'a>(&mut self, mut it: impl Iterator<Item = &'a Arc<str>>) {
@@ -86,10 +93,7 @@ impl TieUf {
         let a = self.id(first);
         for v in it {
             let b = self.id(v);
-            let (ra, rb) = (self.find(a), self.find(b));
-            if ra != rb {
-                self.parent[rb] = ra;
-            }
+            self.uf.union_into(a, b);
         }
     }
 
@@ -98,7 +102,7 @@ impl TieUf {
         for i in 0..self.names.len() {
             let name = self.names[i].clone();
             if visible.contains(&name) {
-                let r = self.find(i);
+                let r = self.uf.find(i);
                 groups.entry(r).or_default().push(name);
             }
         }
@@ -172,7 +176,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut held_outer: BTreeSet<Arc<str>> = BTreeSet::new();
         let mut held_foreign_fn = false;
         let mut held_classes: BTreeSet<Arc<str>> = BTreeSet::new();
-        let mut tie_uf = TieUf::default();
+        let mut tie_uf = TieUf::new();
 
         let mut child_summaries: Vec<Option<Arc<CalleeSummary>>> =
             Vec::with_capacity(sig.needs.len());

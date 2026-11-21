@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 use zed_collections::intervals;
-use zed_graph::{MinHeap, UnionFind};
+use zed_graph::{Compression, Keep, Linking, MinHeap, Offset, Signed, UnionFind};
 use zed_kernel::num::{coprime, mul_uint, rem_uint, trees};
 use zedc_int::int::Int;
 
@@ -371,12 +371,14 @@ impl FoldNode {
 struct UnitUf {
     ids: HashMap<Atom, usize>,
     atoms: Vec<Atom>,
-    parent: Vec<usize>,
-    sign: Vec<i8>,
-    offset: Vec<Int>,
-    size: Vec<usize>,
-    /// Index of the smallest `Atom` (by `Ord`) in this component, stored at each tree root.
-    canon: Vec<usize>,
+    /// The trees, each atom `±(its parent) + offset` (`Signed`); the value at each tree root is
+    /// the index of the smallest `Atom` (by `Ord`) in its component.
+    uf: UnionFind<usize, Signed<Int>>,
+}
+
+/// The sign of `f` as `±1`.
+fn sign_of(f: &Signed<Int>) -> i8 {
+    if f.neg { -1 } else { 1 }
 }
 
 impl UnitUf {
@@ -384,11 +386,11 @@ impl UnitUf {
         UnitUf {
             ids: HashMap::new(),
             atoms: Vec::new(),
-            parent: Vec::new(),
-            sign: Vec::new(),
-            offset: Vec::new(),
-            size: Vec::new(),
-            canon: Vec::new(),
+            // No compression (see the head comment: it would copy a wide offset onto every
+            // atom of a path), linking by size with each root chosen by this code on a tie
+            // (`union`): at most floor(log2 n) links to a root, Tarjan and van Leeuwen 1984
+            // (doi:10.1145/62.2160), Corollary 2 and Theorem 2.
+            uf: UnionFind::new(0, Compression::None, Linking::Size),
         }
     }
 
@@ -396,14 +398,9 @@ impl UnitUf {
         if let Some(&id) = self.ids.get(a) {
             return id;
         }
-        let id = self.atoms.len();
+        let id = self.uf.push_value(self.atoms.len());
         self.ids.insert(a.clone(), id);
         self.atoms.push(a.clone());
-        self.parent.push(id);
-        self.sign.push(1);
-        self.offset.push(Int::ZERO);
-        self.size.push(1);
-        self.canon.push(id);
         id
     }
 
@@ -413,18 +410,15 @@ impl UnitUf {
 
     fn root_and_depth_id(&self, mut u: usize) -> (usize, usize) {
         let mut d = 0usize;
-        while self.parent[u] != u {
-            u = self.parent[u];
+        while self.uf.parent(u) != u {
+            u = self.uf.parent(u);
             d += 1;
         }
         (u, d)
     }
 
-    fn tree_root_id(&self, mut u: usize) -> usize {
-        while self.parent[u] != u {
-            u = self.parent[u];
-        }
-        u
+    fn tree_root_id(&self, u: usize) -> usize {
+        self.uf.find_shared(u)
     }
 
     /// The balanced tree root of `a` (pointer hops only, no integer arithmetic).
@@ -445,49 +439,37 @@ impl UnitUf {
         mut dv: usize,
     ) -> (usize, usize) {
         while du > dv {
-            u = self.parent[u];
+            u = self.uf.parent(u);
             du -= 1;
         }
         while dv > du {
-            v = self.parent[v];
+            v = self.uf.parent(v);
             dv -= 1;
         }
         while u != v {
-            u = self.parent[u];
-            v = self.parent[v];
+            u = self.uf.parent(u);
+            v = self.uf.parent(v);
             du -= 1;
         }
         (u, du)
     }
 
-    /// Expresses `u = s * target + d` where `target` is an ancestor of `u`.
+    /// Expresses `u = s * target + d` where `target` is an ancestor of `u`. `then` adds an
+    /// edge's offset only where it is not zero, so a walk over `+ 0` edges does no arithmetic
+    /// on big numbers.
     fn walk_to_id(&self, mut u: usize, target: usize) -> (i8, Int) {
-        let mut s: i8 = 1;
-        let mut d = Int::ZERO;
+        let mut f = Signed::identity();
         while u != target {
-            let pd = &self.offset[u];
-            if !pd.is_zero() {
-                d = if s > 0 { &d + pd } else { &d - pd };
-            }
-            s *= self.sign[u];
-            u = self.parent[u];
+            f.then(self.uf.edge(u));
+            u = self.uf.parent(u);
         }
-        (s, d)
+        (sign_of(&f), f.d)
     }
 
     /// Expresses `u = s * tree_root + d`.
-    fn tree_get_id(&self, mut u: usize) -> (usize, i8, Int) {
-        let mut s: i8 = 1;
-        let mut d = Int::ZERO;
-        while self.parent[u] != u {
-            let pd = &self.offset[u];
-            if !pd.is_zero() {
-                d = if s > 0 { &d + pd } else { &d - pd };
-            }
-            s *= self.sign[u];
-            u = self.parent[u];
-        }
-        (u, s, d)
+    fn tree_get_id(&self, u: usize) -> (usize, i8, Int) {
+        let (r, f) = self.uf.find_offset_shared(u);
+        (r, sign_of(&f), f.d)
     }
 
     /// Expresses `a = s * tree_root + d` in O(log n) hops.
@@ -509,7 +491,7 @@ impl UnitUf {
             return (a.clone(), 1, Int::ZERO);
         };
         let (r, sa, da) = self.tree_get_id(id);
-        let c = self.canon[r];
+        let c = *self.uf.value(r);
         if c == r {
             return (self.atoms[r].clone(), sa, da);
         }
@@ -531,10 +513,10 @@ impl UnitUf {
         let n = self.atoms.len();
         let mut head = vec![usize::MAX; n];
         let mut next = vec![usize::MAX; n];
-        for u in 0..n {
-            let p = self.parent[u];
+        for (u, after) in next.iter_mut().enumerate() {
+            let p = self.uf.parent(u);
             if p != u {
-                next[u] = head[p];
+                *after = head[p];
                 head[p] = u;
             }
         }
@@ -553,8 +535,9 @@ impl UnitUf {
             let mut cur: [Option<Int>; 2] = [Some(Int::ZERO), None];
             let mut c = head[u];
             while c != usize::MAX {
-                let se = self.sign[c];
-                let de = &self.offset[c];
+                let edge = self.uf.edge(c);
+                let se = sign_of(edge);
+                let de = &edge.d;
                 // For `v = sv * c + dv` and `c = se * u + de`,
                 // `v = (sv * se) * u + (sv * de + dv)`.
                 if let Some(d_pos) = best[c][0].take() {
@@ -619,28 +602,27 @@ impl UnitUf {
         let rhs_const = &(&s_db + d) - &da;
         let rel_s = sa * s * sb;
         let rel_d = if sa > 0 { rhs_const } else { -&rhs_const };
-        // Link smaller subtree under larger subtree; break ties by smaller Atom.
-        let attach_ra_under_rb = self.size[ra] < self.size[rb]
-            || (self.size[ra] == self.size[rb] && self.atoms[ra] > self.atoms[rb]);
-        if attach_ra_under_rb {
-            self.parent[ra] = rb;
-            self.sign[ra] = rel_s;
-            self.offset[ra] = rel_d;
-            self.size[rb] += self.size[ra];
-            if self.atoms[self.canon[ra]] < self.atoms[self.canon[rb]] {
-                self.canon[rb] = self.canon[ra];
-            }
+        // Link smaller subtree under larger subtree; break ties by smaller Atom. When `rb` goes
+        // under, its edge is the inverse, `rb = rel_s * ra - rel_s * rel_d`.
+        let (sa, sb) = (self.uf.size(ra), self.uf.size(rb));
+        let attach_ra_under_rb = sa < sb || (sa == sb && self.atoms[ra] > self.atoms[rb]);
+        let keep = if attach_ra_under_rb {
+            Keep::Second
         } else {
-            // rb = rel_s * (ra - rel_d) = rel_s * ra - rel_s * rel_d
-            let inv_d = if rel_s > 0 { -&rel_d } else { rel_d };
-            self.parent[rb] = ra;
-            self.sign[rb] = rel_s;
-            self.offset[rb] = inv_d;
-            self.size[ra] += self.size[rb];
-            if self.atoms[self.canon[rb]] < self.atoms[self.canon[ra]] {
-                self.canon[ra] = self.canon[rb];
+            Keep::First
+        };
+        let ra_of_rb = Signed {
+            neg: rel_s < 0,
+            d: rel_d,
+        };
+        let atoms = &self.atoms;
+        // The smaller of the two components' smallest atoms stays at the root.
+        let canon = |kept: &mut usize, other: usize, _: &Signed<Int>| {
+            if atoms[other] < atoms[*kept] {
+                *kept = other;
             }
-        }
+        };
+        self.uf.union_roots(ra, rb, ra_of_rb, keep, canon);
         Ok(None)
     }
 }
@@ -2984,7 +2966,10 @@ fn coprime_groups(
         .cloned()
         .collect();
     let index: BTreeMap<&Int, usize> = moduli.iter().enumerate().map(|(i, m)| (m, i)).collect();
-    let mut sets = UnionFind::new(moduli.len());
+    // Halving with rank (any root may stay; only the classes are read): O(α(n)) amortized a
+    // step, Tarjan and van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path
+    // once.
+    let mut sets = UnionFind::new(moduli.len(), Compression::Halving, Linking::Rank);
     let base = coprime_factorization(&moduli);
     let mut first_with: BTreeMap<&Int, usize> = BTreeMap::new();
     for (m, factors) in &base {

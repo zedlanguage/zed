@@ -1535,6 +1535,7 @@ struct Alone {
 /// COMPLEXITY.md row "undeclared parameters (check), `apply`".
 #[derive(Clone)]
 struct Class {
+    /// Its parent in the forest, itself at a root; walked by `zed_graph::root_of` ([`Ck::find`]).
     parent: usize,
     rank: u8,
     /// The carriers it may still take, and [`OTHER`] if it may take other values.
@@ -1686,6 +1687,13 @@ struct Class {
     /// where it is the infinity ([`Ck::word_unoffered`]): a fix that gives the literals such a
     /// carrier is not offered (row LIT-cast-inexact-rat-fix). Of a merged class, those of both.
     unoffered: u8,
+}
+
+/// The class forest's parent links, read through the trial layers of the store.
+impl zed_graph::Parents for probe::Classes<Class> {
+    fn parent(&self, x: usize) -> usize {
+        self[x].parent
+    }
 }
 
 /// A carrier a fold was checked at, or none (`[]`), with the identity of the fold's operator
@@ -4940,11 +4948,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The root of class `k`'s tree.
-    fn find(&self, mut k: usize) -> usize {
-        while self.classes[k].parent != k {
-            k = self.classes[k].parent;
-        }
-        k
+    // No compression (a find reads the committed forest and never writes it; see [`Class`]),
+    // linking by rank at the two links in walk.rs, which write to the layered class store and
+    // so cannot be zed-graph's `UnionFind` storage: at most log2 n links to a root, Tarjan and
+    // van Leeuwen 1984 (doi:10.1145/62.2160), Corollary 2 and Theorem 2.
+    fn find(&self, k: usize) -> usize {
+        zed_graph::root_of(&self.classes, k)
     }
 
     /// Readies class `r` for a change while a repair is tried: forces a forward rooted at it
@@ -13326,7 +13335,6 @@ fn unfixed_binding(
 /// The type variables of a signature in sets that its needs tie together, each set marked
 /// fixed where a value other than a literal with no suffix reaches it ([`Ck::unfixed_args`]):
 /// a [`zed_graph::UnionFind`] with the marks kept at each root.
-#[derive(Default)]
 struct VarSets {
     /// Each variable's number.
     ix: HashMap<Arc<str>, usize>,
@@ -13342,6 +13350,26 @@ struct VarSets {
     by: Vec<usize>,
     /// Whether two places fixed each root's set.
     many: Vec<bool>,
+}
+
+impl Default for VarSets {
+    fn default() -> VarSets {
+        VarSets {
+            ix: HashMap::new(),
+            names: Vec::new(),
+            // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step,
+            // Tarjan and van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the
+            // path once.
+            up: zed_graph::UnionFind::new(
+                0,
+                zed_graph::Compression::Halving,
+                zed_graph::Linking::Rank,
+            ),
+            fixed: Vec::new(),
+            by: Vec::new(),
+            many: Vec::new(),
+        }
+    }
 }
 
 impl VarSets {

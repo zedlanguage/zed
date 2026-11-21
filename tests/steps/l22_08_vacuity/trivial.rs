@@ -214,50 +214,46 @@ fn negated(rel: Rel) -> u8 {
 }
 
 /// A union-find with the parity of each node to its root, on two values: parity 0 is "equal",
-/// 1 "different". Union without ranks, with path compression: O(log) amortized per operation.
-#[derive(Default)]
+/// 1 "different": zed-graph's `UnionFind` with a `Parity` on each edge.
 struct Parities {
-    parent: Vec<usize>,
-    parity: Vec<u8>,
+    uf: zed_graph::UnionFind<(), zed_graph::Parity>,
+}
+
+impl Default for Parities {
+    fn default() -> Parities {
+        Parities {
+            // Full compression, each root chosen by this code (`x`'s root under `y`'s, in
+            // `relate`): O(log_(1+m/n) n) amortized a step for m operations on n nodes, Tarjan
+            // and van Leeuwen 1984 (doi:10.1145/62.2160), Theorem 4.
+            uf: zed_graph::UnionFind::new(
+                0,
+                zed_graph::Compression::Full,
+                zed_graph::Linking::Rank,
+            ),
+        }
+    }
 }
 
 impl Parities {
     /// A new node, its own root.
     fn add(&mut self) -> usize {
-        self.parent.push(self.parent.len());
-        self.parity.push(0);
-        self.parent.len() - 1
+        self.uf.push()
     }
 
     /// The root of `x` and the parity of `x` to it.
     fn find(&mut self, x: usize) -> (usize, u8) {
-        let (mut root, mut p) = (x, 0);
-        while self.parent[root] != root {
-            p ^= self.parity[root];
-            root = self.parent[root];
-        }
-        // Path compression: each node on the path then points at the root, with its parity.
-        let (mut y, mut py) = (x, p);
-        while y != root {
-            let (next, pn) = (self.parent[y], py ^ self.parity[y]);
-            self.parent[y] = root;
-            self.parity[y] = py;
-            y = next;
-            py = pn;
-        }
-        (root, p)
+        let (root, zed_graph::Parity(p)) = self.uf.find_offset(x);
+        (root, u8::from(p))
     }
 
     /// Records that `x` and `y` have parity `want`; false when that contradicts what is
     /// recorded.
     fn relate(&mut self, x: usize, y: usize, want: u8) -> bool {
-        let ((rx, px), (ry, py)) = (self.find(x), self.find(y));
-        if rx == ry {
-            return px ^ py == want;
+        let want = zed_graph::Parity(want == 1);
+        match (self.uf).join(x, y, &want, zed_graph::Keep::Second, |_, _, _| {}) {
+            Ok(_) => true,
+            Err(held) => held == want,
         }
-        self.parent[rx] = ry;
-        self.parity[rx] = px ^ py ^ want;
-        true
     }
 }
 
@@ -3795,7 +3791,13 @@ pub fn render(t: &Theory, r: &Report) -> String {
 /// Whether every group is in the proved fragment: each law is one equation or inequation, or a
 /// conjunction of them, and the fields and the conjuncts form a forest.
 pub fn in_forest_fragment(t: &Theory) -> bool {
-    let mut parent = zed_graph::UnionFind::new(t.fields.len());
+    // Halving with rank (the root that stays is rank's): O(α(n)) amortized a step, Tarjan and van
+    // Leeuwen 1984 (doi:10.1145/62.2160), Theorem 3; halving walks the path once.
+    let mut parent = zed_graph::UnionFind::new(
+        t.fields.len(),
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     for law in &t.laws {
         if law.refused() || law.clauses().iter().any(|clause| clause.len() != 1) {
             return false;

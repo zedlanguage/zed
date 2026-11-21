@@ -4755,7 +4755,14 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
     let nodes = first.last().copied().unwrap_or(0);
     let owner = |v: usize| first.partition_point(|&f| f <= v) - 1;
     // The root is chosen here, by the number of functions, since the functions move with it.
-    let mut parent = zed_graph::UnionFind::new(nodes);
+    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
+    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
+    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    let mut parent = zed_graph::UnionFind::new(
+        nodes,
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
     let mut funs: Vec<HashSet<usize>> = (0..nodes).map(|v| HashSet::from([owner(v)])).collect();
     let mut refused: Vec<HashSet<usize>> = vec![HashSet::new(); nodes];
     let mut joined = vec![false; nodes];
