@@ -425,3 +425,27 @@ fn a_chain_of_groups_is_decided_on_a_small_stack() {
         }
     }
 }
+
+/// The test before this one asked with `is_empty`: the same chain of 1000 groups, on the same
+/// thread of 1 MiB, of the first member and of the tuple outside the groups. Since plan item
+/// FAIL-meet-cycles-verdict-cost a group's own search for `is_empty` runs when a search first
+/// reads one of its members (`Search::met`), not before the search (`fill_own`); the groups
+/// below it run first from the heap (`Type::decide_groups_read`), so the reading search adds
+/// one level to the stack, not one a group (step (3) at `own_emptiness`). Small instance
+/// `a_short_chain_of_groups_is_decided`.
+#[test]
+fn a_chain_of_groups_is_found_inhabited_on_a_small_stack() {
+    let n = 1000;
+    for open in [false, true] {
+        let sys = chain_of_groups(n, open);
+        let first = kernel(&sys, "chain")[0].clone().expect("admitted");
+        let outside = Type::tuple(vec![first.clone(), Type::int()]);
+        for t in [first, outside] {
+            let empty = scaling::on_a_thread(1 << 20, move || {
+                Type::forget_emptiness();
+                t.is_empty()
+            });
+            assert!(!empty, "with every body \\ #none: {open}");
+        }
+    }
+}
