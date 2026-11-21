@@ -920,12 +920,18 @@ fn the_members_of_two_cycles_are_decided_in_the_size_of_their_types() {
 fn the_verdict_of_a_meet_of_two_cycles_costs_what_its_emptiness_does() {
     // The meet of two cycles is decided by the rule on residues and reads no member's verdict
     // or value, so its verdict decides neither group and does the work `is_empty` does; at n
-    // 1024, 13.1M instructions and 0.90M bytes against 13.1M and 0.90M. Deciding every member
+    // 1024, 13.1M instructions and 0.90M bytes against 13.1M and 0.90M. Those were the least of
+    // two runs, the second reusing the unfoldings of the first; this harness counts a first run
+    // in a new process, which at a68a99d46 was 45.35M and 7.71M for the emptiness (knownf1,
+    // 2026-11-21). On main 74.2M and 11.98M at n 1024, both sides: 1.12 times from REC-cycle
+    // 0bfb0cf12 (`forget_emptiness` frees the unfoldings, K68), 1.33 times from 377e39a95 (no
+    // ThinLTO in the profile the tests build with), about 1.1 times over later commits with
+    // no single step (not bisected). Deciding every member
     // of both groups first (VERDICT-group-readers) cost 87.5M and 10.5M, 6.7 and 11.7 times
     // the emptiness (plan item VERDICT-meet-cost). Running first the deciders of both groups,
     // which the meet's search never reads, cost 15.62G instructions and 2.35G bytes at n 131072
     // against 10.20G and 1.53G, 1.53 times (plan item FAIL-meet-cycles-verdict-cost); with the
-    // deciders run when a search reads a member (`Type::judged`), 10.20G and 1.53G on both
+    // deciders run when a search reads a member (`Type::judged_read`), 10.20G and 1.53G on both
     // sides. The emptiness is held to the verdict by the test after this one. This is a
     // comparison of two costs at one size, not a scaling test: it runs no second size and checks
     // no ratio between sizes. It stays here as a measurement (TEST-bench-move-l0123, author
