@@ -3004,6 +3004,29 @@ fn bezout_with(a: &BigUint, b: &BigUint, lift: u64) -> Option<(BigUint, BigInt, 
         y -= &x;
     }
     let (mut bx, mut by) = (BigInt::zero(), BigInt::one());
+    // Bound on `halvings`, every step. N = max(a.bits(), b.bits()).
+    // 1. The pair is the GB remainder sequence of Stehlé and Zimmermann (ANTS 2004, sec. 2.3,
+    //    doi:10.1007/978-3-540-24847-7_31), normalized: r_0 = x, r_1 = y (ν2(r_0) = 0 <
+    //    ν2(r_1)), r_{i+1} = r_{i-1} + q_i r_i / 2^{n_i}, n_i = ν2(r_i) - ν2(r_{i-1}) >= 1,
+    //    q_i the GB quotient of Lemma 1, |q_i| < 2^{n_i}. After i steps (x, y) = (r_i,
+    //    r_{i+1}) / 2^{ν2(r_i)}, by induction: from the pair after i - 1 steps, `y` has
+    //    valuation n_i, and `step` with j = n_i gives (r_i / 2^{ν2(r_i)}, (r_{i-1} + q_i r_i /
+    //    2^{n_i}) / 2^{ν2(r_i)}); `half` takes the same steps, its `j` their n_i summed.
+    // 2. So `halvings` = n_1 + ... + n_i = ν2(r_i), and when y = 0 it is ν2(r_t), r_t the
+    //    last nonzero term; every partial sum is at most that.
+    // 3. |r_{i+1}| <= |r_{i-1}| + |r_i|, so |r_i| <= F_{i+1} M <= φ^i M, M = max(|r_0|,
+    //    |r_1|) < 2^N (r_0 = u, |r_1| <= max(u, v), both at most max(a, b)), F Fibonacci
+    //    with F_1 = F_2 = 1, φ the golden ratio (F_{i+1} <= φ^i by induction).
+    // 4. t <= ν2(r_t) = ν since each n_i >= 1, and 2^ν <= |r_t| since 2^ν divides r_t != 0.
+    // 5. 2^ν <= φ^t M <= φ^ν M, so (2/φ)^ν <= M < 2^N; (2/φ)^4 = 16/φ^4 > 2 (φ^4 = 3φ + 2
+    //    < 7), so ν >= 4N would give (2/φ)^ν > 2^N: ν < 4N.
+    // (The paper's Theorem 3 gives about 1.555 N, for j >= 9, proved there in sketch only;
+    // 4N is enough here.)
+    // 6. Not proved: that 8N < 2^64, so `checked_add` and `checked_mul(2)` below never fail.
+    //    It holds when a and b fit in less than 2^58 bytes: true of every x86_64 and aarch64
+    //    address space (at most 2^57 bytes), not of any 64-bit target Rust allows (a `Vec`
+    //    of up to 2^63 bytes, N up to 2^66). The `?` returns None there, never a wrong answer
+    //    (plan row PROOF-bezout-halvings-address-width).
     let mut halvings = 0u64;
     while !y.is_zero() {
         let n = x.bits().max(y.bits());

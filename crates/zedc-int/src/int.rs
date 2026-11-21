@@ -224,10 +224,12 @@ impl Int {
     /// Total: where [`Int::extended_gcd`] is `None`, the factors come from [`Int::euclid_bezout`].
     /// `extended_gcd` is `None` only when the kernel's half gcd (`num/fast.rs` `bezout_with`)
     /// finds its count of halvings, or twice it, past `u64::MAX` (an `i128::MIN` operand makes
-    /// [`bezout_i128`] `None`, but that case falls through to the kernel). No bound on that
-    /// count is proved here, so the answer does not rest on one; the count is not expected to
-    /// pass `2^63` for any integer held in memory, so the fallback is not expected to run, and
-    /// its cost, O(n^2), is paid only if it does.
+    /// [`bezout_i128`] `None`, but that case falls through to the kernel). The count is below
+    /// `4 N` for operands of at most `N` bits (proof, every step, at `bezout_with`), so twice
+    /// it fits in `u64` when `N < 2^61`, that is when the operands take less than `2^58`
+    /// bytes: true on every x86_64 and aarch64 address space. Not proved for a 64-bit target
+    /// whose address space is wider; the answer does not rest on it, since the fallback then
+    /// runs at its cost, O(n^2).
     pub fn bezout(&self, b: &Int) -> (Int, Int, Int) {
         self.bezout_or_euclid(b, self.extended_gcd(b))
     }

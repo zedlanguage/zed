@@ -20725,9 +20725,39 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
 /// `shadow_logged` + `hull_side`) followed by `exact::exact_each` (`direct` + `cells_cover` ->
 /// `projection::pugh` with O(b) splinters per lower bound of coefficient `b`). On `persist` at
 /// `k = 16`, those two stages spent 465M of 688M instructions (262M solver + 203M cover, 185M in
-/// `pugh` splinters). Used: O(d * |syms| * (m log m + log M)) via [`twovar::project_convex`],
-/// independent of coefficient magnitude `b` (no splinters, no solver questions). Structural
-/// refusal (`None`) on products, multiple disjunctions, >2 remaining atoms, or any holed strip.
+/// `pugh` splinters). Used: one substitution pass and one [`twovar::project_convex`] per arm and
+/// symbol, O(d·|syms|·(e·r·a·log a + r log r + r·log w·log M)) operations on `Int` in all,
+/// logarithmic, not linear, in coefficient magnitude `b` (no splinters, no solver questions).
+/// Structural refusal (`None`) on products, multiple disjunctions, >2 remaining atoms, or any
+/// holed strip.
+///
+/// Cost, every step. Names: `d` arms, `r` rows of one arm with `base`, `e` of them equations,
+/// `a` atoms in them, `w` the widest narrow strip `project_convex` sweeps and `M` the largest
+/// absolute coefficient or constant of the rows it reads.
+/// 1. The two loops at the end call `project_arm` once per arm and symbol: `d·|syms|` calls.
+/// 2. In `project_arm`, more than `e + 2` atoms is refused, so `a <= e + 2` after that test.
+/// 3. Each elimination empties one equation row (`mem::take`, or the single-atom case sets it
+///    empty), and empty rows are skipped after, so there are at most `e` eliminations; the
+///    atom `x` it removes leaves every row, and the terms it puts back come from that row with
+///    `x` filtered out, so no eliminated atom returns.
+/// 4. Each pass of the `loop` eliminates at least once or ends it: at most `e + 1` passes of
+///    `e` rows each, `O(e²)`; one elimination rewrites at most `r` rows of at most `a` terms,
+///    each a map update of `O(log a)`: `O(e·r·a·log a)` for all of them.
+/// 5. The rows after are at most `2r` (an equation becomes two); building them and `rem` is
+///    `O(r·a)`. `project_convex` on `m <= 2r` rows costs `O(m log m + m·log w·log M)`: the
+///    envelopes, then per narrow strip two bisections of `O(log w)` floor sums of `O(log M)`
+///    steps each (its doc at twovar.rs, `project_convex`); `point` costs no more.
+/// 6. Summing 4 and 5 per call and multiplying by the `d·|syms|` calls of 1 gives the bound
+///    above (`r log r` is `m log m` with `m <= 2r`; `O(e²)` is inside `e·r` since `e <= r`;
+///    `O(r·a)` is inside `e·r·a·log a` when `e >= 1`, and `a <= 2` when `e = 0`; `log a`
+///    stands for `max(1, log a)`). The earlier bound here,
+///    `O(d·|syms|·(m log m + log M))`, charged one count for the whole sweep (found by
+///    proofdoc4g, DOC-proofs-in-comments-audit-rest-3) and left out the substitutions.
+///
+/// Not proved: that one operation on `Int` is `O(1)`. A substitution adds `f·v` with
+/// `f = -m·a`, `|a| = 1`, so a coefficient can grow by the length of another at each of the
+/// `e` eliminations; the bound above counts operations, not bit operations (plan row
+/// PROOF-two-var-domains-int-growth).
 fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
     if syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         return None;
