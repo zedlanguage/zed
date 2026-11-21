@@ -22,6 +22,35 @@ fn a_linked_nest_projects_in_time_linear_in_its_depth() {
     });
 }
 
+/// The nest named against its links ([`against`]), asked with the names as written, costs what
+/// the same nest named along them costs, and time linear in its depth: each level is projected
+/// once, though the equation linking it to the level above comes in either sign by the path
+/// read (PRES-below-key-sign). With one projection for each sign it cost 1.81 times the nest
+/// named along its links at k = 128 (280.65M against 155.29M instructions), at every depth
+/// alike, so the scaling check alone does not see it; the comparison does.
+#[test]
+fn a_nest_named_against_its_links_projects_as_one_named_along_them() {
+    let w = even_weights(128);
+    let k = 128;
+    let along = nest_named(k, &w, (2, 1), true, &along_name);
+    let reversed = against(k, &w, (2, 1), true);
+    scaling::compare_costs(
+        "project_each of a nest 128 deep named against its links, against the nest named along them",
+        "the two are one formula renamed, so each level is projected once in both; 1.25 is above \
+         the run-to-run spread of one count (6.5%, scaling::LIMIT) and below the 1.81 of one \
+         projection for each sign",
+        1.25,
+        || as_written(|| assert_no_way_has_an_odd_top_at(&along, &along_name(0))),
+        || as_written(|| assert_no_way_has_an_odd_top_at(&reversed, &against_name(k, 0))),
+    );
+    let inputs = scaling::inputs(16, |k| against(k, &w, (2, 1), true));
+    scaling::check(
+        "project_each of a nest k deep named against its links, the top odd",
+        16,
+        |k| as_written(|| assert_no_way_has_an_odd_top_at(&inputs[&k], &against_name(k, 0))),
+    );
+}
+
 #[test]
 fn twin_linked_nests_project_in_time_linear_in_their_depth() {
     let sizes = [4, 8, 16, 32];

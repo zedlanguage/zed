@@ -23527,7 +23527,34 @@ type Presettled = (Result<Option<Parts>, Refusal>, bool);
 /// `l01_38_presburger::shared::a_linked_nest_projects_in_time_linear_in_its_depth` (the nest at k
 /// and 8k, and its answers against the ways counted one by one),
 /// `twin_linked_nests_project_in_time_linear_in_their_depth`; COMPLEXITY.md row PRES-below-key.
+///
+/// Each equation is first written with its first coefficient, in the order of the atoms,
+/// positive: `-2 a + b - 1 == 0` becomes `2 a - b + 1 == 0`. Proof that the answer is
+/// unchanged: `t == 0` and `-t == 0` have the same integer points, so the rows have the same
+/// points. The sign reads only the terms, which the moves below leave as they are, so it does
+/// not depend on the constants and the moves read the rows with their signs settled. Two
+/// projected bases that differ by the sign of equations (and by moves of free atoms, as
+/// above) then get one key.
+///
+/// Complexity tradeoff: the sign costs O(r) for `r` terms. Why: a nest of shared disjunctions
+/// whose projections kept one equation in either sign, by the path read (`2 a - b == -1` on one
+/// path, `-2 a + b == 1` on the other), was projected once for each sign at each level, twice
+/// the work of one key: `shared_sums_project_each` cost 11.0 times the work at 8 times the size
+/// (23.05M to 253.55M instructions, k = 16 to 128), where the renaming of the larger formula
+/// orders the chain against its links. The sign is not the one [`flips`] chooses, which reads
+/// the constant where the coefficients tie and so differs on paths whose constants differ.
+/// Tests: `l01_38_presburger::bench::linked_nest::a_nest_named_against_its_links_projects_as_one_named_along_them`
+/// (without the sign, 1.81 times the work of the nest named along its links, over its limit
+/// of 1.25),
+/// `l01_38_presburger::linked_nest::a_nest_named_against_its_links_projects_to_the_values_of_the_ways_through_it`;
+/// bench `l01_38_presburger::bench::exp_families::shared_sums_project_each`; COMPLEXITY.md row
+/// PRES-below-key-sign.
 fn shift_free(mut rows: Vec<Con>, free: impl Fn(&Atom) -> bool) -> Vec<Con> {
+    for c in &mut rows {
+        if c.rel == Rel::Eq && c.lin.terms.values().next().is_some_and(Int::is_negative) {
+            c.lin = c.lin.times(-1);
+        }
+    }
     let mut factors: HashSet<Atom> = HashSet::new();
     let mut at: BTreeMap<Atom, Vec<usize>> = BTreeMap::new();
     for (i, c) in rows.iter().enumerate() {

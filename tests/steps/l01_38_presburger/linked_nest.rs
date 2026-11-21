@@ -16,7 +16,7 @@ use std::sync::Arc;
 use zed_tests::scaling::Meter;
 use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::interval::IntervalSet;
-use zedc::store::presburger::{Atom, Con, Formula, Lin, project_each};
+use zedc::store::presburger::{Atom, Con, Formula, Lin, NAMES_AS_WRITTEN, project_each};
 
 pub(super) fn v(s: &str) -> Atom {
     Atom::Sym(Arc::from(s))
@@ -35,15 +35,20 @@ fn eq(t: &[(&str, i64)], k: i64) -> Formula {
 /// `step(i)` over the symbols `{x}0`, `{x}1`, … with weights `w[1..=i]`, each level held once
 /// (`shared`) or written out with a copy of the level below in each arm.
 fn step(x: &str, i: usize, w: &[i64], shared: bool) -> Formula {
+    step_named(&|i| format!("{x}{i}"), i, w, shared)
+}
+
+/// `step(i)` over the symbols `name(0)`, `name(1)`, … ([`step`]).
+fn step_named(name: &impl Fn(usize) -> String, i: usize, w: &[i64], shared: bool) -> Formula {
     if i == 0 {
-        return eq(&[(&format!("{x}0"), 1)], 0);
+        return eq(&[(&name(0), 1)], 0);
     }
-    let (a, b) = (format!("{x}{i}"), format!("{x}{}", i - 1));
-    let below = step(x, i - 1, w, shared);
+    let (a, b) = (name(i), name(i - 1));
+    let below = step_named(name, i - 1, w, shared);
     let other = if shared {
         below.clone()
     } else {
-        step(x, i - 1, w, false)
+        step_named(name, i - 1, w, false)
     };
     Formula::or(vec![
         Formula::and(vec![eq(&[(&a, 1), (&b, -1)], 0), below]),
@@ -52,12 +57,53 @@ fn step(x: &str, i: usize, w: &[i64], shared: bool) -> Formula {
 }
 
 /// The nest of `k` levels on `x`, with `x[k] == m * h + r`.
-pub(super) fn nest(k: usize, w: &[i64], (m, r): (i64, i64), shared: bool) -> Formula {
-    let top = format!("x{k}");
+pub(super) fn nest(k: usize, w: &[i64], mr: (i64, i64), shared: bool) -> Formula {
+    nest_named(k, w, mr, shared, &|i| format!("x{i}"))
+}
+
+/// [`nest`] with level `i` named `name(i)`.
+pub(super) fn nest_named(
+    k: usize,
+    w: &[i64],
+    (m, r): (i64, i64),
+    shared: bool,
+    name: &impl Fn(usize) -> String,
+) -> Formula {
     Formula::and(vec![
-        step("x", k, w, shared),
-        eq(&[(&top, 1), ("h", -m)], -r),
+        step_named(name, k, w, shared),
+        eq(&[(&name(k), 1), ("h", -m)], -r),
     ])
+}
+
+/// The name of level `i` of a nest named along its links: `n{i}` with four digits, so that,
+/// for `k` below 10,000, the order of the names is the order of the levels.
+pub(super) fn along_name(i: usize) -> String {
+    format!("n{i:04}")
+}
+
+/// The name of level `i` of the nest of `k` levels named against its links ([`against`]):
+/// `n{k - i}` with four digits, so that, for `k` below 10,000, the order of the names is the
+/// reverse of the order of the levels.
+pub(super) fn against_name(k: usize, i: usize) -> String {
+    along_name(k - i)
+}
+
+/// [`nest`] with level `i` named [`against_name`]`(k, i)`. Asked with the names as written
+/// ([`as_written`]), the projection keeps the equation over two levels in one sign on one path
+/// and in the other sign on another (`2 a - b == -1` and `-2 a + b == 1`): the memo of
+/// `project_parts` knows the two as one only where it writes each equation in one sign
+/// (`shift_free`, COMPLEXITY.md row PRES-below-key-sign), and otherwise projects each level
+/// once for each sign.
+pub(super) fn against(k: usize, w: &[i64], mr: (i64, i64), shared: bool) -> Formula {
+    nest_named(k, w, mr, shared, &|i| against_name(k, i))
+}
+
+/// `run` with [`project_each`] asking under the names as written, not renamed by structure.
+pub(super) fn as_written<T>(run: impl FnOnce() -> T) -> T {
+    NAMES_AS_WRITTEN.set(true);
+    let r = run();
+    NAMES_AS_WRITTEN.set(false);
+    r
 }
 
 /// Two nests alike, on `x` and on `y`, with `x[k] + y[k] == m * h + r`: their symbols have one
@@ -142,6 +188,46 @@ fn a_linked_nest_projects_to_the_values_of_the_ways_through_it() {
     }
 }
 
+/// The nest named against its links ([`against`]), asked with the names as written, projects
+/// as it does written out, to the values of the ways through it counted one by one, as the
+/// nest named along its links does (`a_linked_nest_projects_to_the_values_of_the_ways_through_it`).
+#[test]
+fn a_nest_named_against_its_links_projects_to_the_values_of_the_ways_through_it() {
+    for k in 1..=5 {
+        for weight in WEIGHTS {
+            let w: Vec<i64> = (0..=k).map(weight).collect();
+            let ways = ways(k, &w);
+            for (m, r) in RESIDUES {
+                let kept: Vec<&Vec<i64>> = (ways.iter())
+                    .filter(|x| (x[k] - r).rem_euclid(m) == 0)
+                    .collect();
+                let syms = [0, 1, k].map(|i| v(&against_name(k, i)));
+                let want: Vec<IntervalSet> = [0, 1, k]
+                    .iter()
+                    .map(|&i| set_of(kept.iter().map(|x| x[i])))
+                    .collect();
+                let what = format!("k = {k}, w = {w:?}, level {k} == {m} h + {r}");
+                let alone = |shared| {
+                    as_written(|| {
+                        solver_alone(|| project_each(&against(k, &w, (m, r), shared), &syms))
+                    })
+                };
+                assert_eq!(
+                    format!("{:?}", alone(true)),
+                    format!("{:?}", alone(false)),
+                    "{what}"
+                );
+                let (each, skipped) = alone(true).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+                assert!(skipped.is_empty(), "{what}: skipped {skipped:?}");
+                let got: Vec<IntervalSet> = (each.into_iter())
+                    .map(|s| s.unwrap_or_else(|e| panic!("{what}: refused {e:?}")))
+                    .collect();
+                assert_eq!(got, want, "{what}");
+            }
+        }
+    }
+}
+
 /// Two nests whose symbols pair up, answered as sets: the pair held once projects as the pair
 /// written out, and each projection holds every value of the ways counted one by one. Depth 1
 /// with both weights and every residue; depth 2 with four residues of each weight, among them
@@ -217,10 +303,15 @@ pub(super) fn powers_of_two(k: usize) -> Vec<i64> {
 /// The check the benchmark of [`nest`] makes at each depth: over [`even_weights`] with `x[k]`
 /// odd, the projection of `x0` is answered and empty.
 pub(super) fn assert_no_way_has_an_odd_top(f: &Formula) {
-    let (each, _) = project_each(f, &[v("x0")]).expect("an answer");
+    assert_no_way_has_an_odd_top_at(f, "x0");
+}
+
+/// [`assert_no_way_has_an_odd_top`] with the lowest level named `bottom`.
+pub(super) fn assert_no_way_has_an_odd_top_at(f: &Formula, bottom: &str) {
+    let (each, _) = project_each(f, &[v(bottom)]).expect("an answer");
     assert!(
         matches!(&each[0], Ok(s) if s.is_empty()),
-        "no way has x[k] odd: {each:?}"
+        "no way has the top level odd: {each:?}"
     );
 }
 
