@@ -24917,18 +24917,39 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// offered ([`Msg::dropped`]).
     ///
     /// Complexity tradeoff: one check of the construct per fix, each the cost of checking it
-    /// once, so a rejection with k fixes costs k + 1 checks of its construct, k at most the
-    /// carriers a literal can take (DESIGN.md sec:diagnostics), at most 3 per argument: the
-    /// literal's fix menu (`menu` at the literal fixes in mod.rs) offers an integer literal one
-    /// fix (the nearest `f64`), a decimal with no suffix one (its whole part at `int`), and a
-    /// suffixed decimal two where `rat` is held (its digits and its `r` form) and else one;
-    /// `unfixed` offers at most two, at `rat` and at `f64`. Not proved: that one argument
-    /// never takes fixes from both, and that every other menu a rejection in a recorded
-    /// construct carries is as short; whatever its length k, the cost is k + 1 checks. The
+    /// once, so a rejection with k fixes costs at most k + 1 checks of its construct. The
     /// naive way, checking the whole program again with each fix in place, costs the size of
     /// the program per fix; a fix rewrites one construct's arguments, and the rest of the
     /// program reads only that construct's type, which the trial gives. A rejection outside
     /// a recorded construct keeps its fixes unchecked.
+    ///
+    /// Proof of the count (row PROOF-fixes-checked-count):
+    /// 1. `fixes` is `m.fixes` taken whole, k entries, and the loop visits each once.
+    /// 2. An entry runs [`Self::trial`], one check of the construct, only where
+    ///    [`Self::fix_args`] maps it to arguments (`Mapped::Args`); `Mapped::Fails` and
+    ///    `Mapped::Unread` run none. `fix_args` reads the text and checks each rewritten
+    ///    argument alone ([`Self::written_arg`]), at most the size of the arguments it edits,
+    ///    not a check of the construct.
+    /// 3. Nothing else here checks the construct; its own check is the one that found the
+    ///    rejection. So the construct is checked at most k + 1 times for this rejection.
+    ///
+    /// What bounds k is the menu the rejection carries, not this function:
+    /// - the literal menus (`menu`, `unfixed`, `unfixed_*` and the comparison and binding
+    ///   menus in mod.rs) offer one fix per form of a fixed list (`Form`, `Carrier::ALL`,
+    ///   the `Repair` groups), so k is a constant;
+    /// - [`Self::repairs`] offers at most one fix per argument and prelude word, k <= W * a
+    ///   for `a` arguments and the fixed list of W words. At a call whose parameters are
+    ///   checked apart ([`params_apart`]) an argument its parameter takes is offered none,
+    ///   so k counts only the rejected arguments, and the wide calls of the benches
+    ///   (`the_carried_fixes_of_many_arguments_scale`,
+    ///   `many_literal_arguments_refused_*` in l01_29 bench/scaling.rs) stay within the
+    ///   limit.
+    ///
+    /// Not proved (row PROOF-fixes-checked-count): a wide call whose parameters are not
+    /// checked apart (a shared class variable, a bound or a need) and whose arguments are
+    /// each rejected and repairable has k = O(a) trials of an O(a) construct, O(a^2) for the
+    /// rejection; no bench builds one. The earlier claim, "at most 3 per argument", holds
+    /// for the literal menus but not for `repairs`, which offers up to W per argument.
     pub(super) fn fixes_checked(&mut self, span: Span, m: &mut Msg) {
         let Some(w) = self.written.clone() else {
             return;
