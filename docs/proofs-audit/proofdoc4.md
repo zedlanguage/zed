@@ -1118,7 +1118,9 @@ Not read:
 
 The list is `proofdoc4-lists/e.txt`, 90 entries numbered 1 to 90 in its order. Part 1, entries
 1 to 20 and the six review ids R4-CLAUDE-2, R4-CLAUDE-3, R4-CLAUDE-8, I4.3, I4.15 and I4.11,
-base commit 8c9dd3cbd; part 2, entries 21 to 59, base commit 8f447824e. For each entry the
+base commit 8c9dd3cbd; part 2, entries 21 to 59, base commit 8f447824e; part 3, entries 60
+to 90, base commit 0a78446c2. merge_check: part 1, 2851 pieces and 6 of `tests/full`, none
+failed; part 2 the same. For each entry the
 whole message and the whole diff under `crates/zedc-presburger` were read, and each claim was
 checked at the code that relies on it on main today, except where "Not read" below says
 otherwise.
@@ -1127,6 +1129,7 @@ otherwise.
 |---|---|---|---|---|---|---|
 | zedc-presburger, part 1 | 20 | 44 | 31 | 6 | 0 | 5 |
 | zedc-presburger, part 2 | 39 | 42 | 35 | 4 | 0 | 2 |
+| zedc-presburger, part 3 | 31 | 44 | 34 | 7 | 0 | 3 |
 
 Of the 44, two are counted in no column, since the code they described is gone: the sieve
 proof of fe770de11 (moved to `zed-numtheory` `least_prime_factors`, complete there, and no
@@ -1146,6 +1149,19 @@ Two claims were false, each in a comment that the code relied on:
   changes only which method answers, not the answer. The doc is corrected, and the test
   `r5_hull_tests::map_hull_values_compose_associatively_and_the_exact_flag_does_not` pins
   both halves.
+
+In part 3, one claim was false and one proof had an open case, both in `extend.rs`
+`same_divisions`:
+- The doc said a second division `t + c == m q + r` sets `q` to `q' + (c' - c) / m`; the code,
+  its test and the arithmetic give `q' + (c - c') / m`. The sign is corrected and the proof
+  (the remainders of one value are one) written at the site.
+- The doc said "Exact, since the rows stay", but the caller substitutes the map into the rows.
+  That is exact when no atom the map sends to is itself set; nothing kept a quotient that a
+  first division sends to from being set by a later one (`w + 7 == 7 f + s` setting `f` while
+  `x + 2 == 2 h + r` set `h` to `f + 1`). No wrong answer was found from it, but the proof did
+  not hold. The fix skips such a division (`targets`), and the proof of exactness is now at
+  the site. Red, then green: `extend::tests::one_substitution_sets_no_atom_it_sends_to` (the
+  map set `Aux(1)` and sent `Aux(7)` to it before the fix).
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -1235,6 +1251,48 @@ Two claims were false, each in a comment that the code relied on:
 | 4a9b79d02 | `learn` searches by doubling | `learn` | already there (monotonicity marked not proved) |
 | 5202d9698 | `System::symmetries` maps a tie onto itself | its proof in the doc | already there |
 | 5a5084526 | `swaps_onto_itself` says yes only to a symmetry | `System::swaps_onto_itself` | already there |
+| 6da69df6f | the interval operations moved to `zed_collections::intervals` keep their proofs | `zed-collections` `intervals` | already there (outside this crate) |
+| 729325cd6 | `forest_domains` unions simple disjunctions alone, component by component | `presburger.rs` `forest_domains` | already there |
+| 8bf067d56 | the `Ord` fast path of nodes of constraints alone is the derived order | `deep.rs` `cmp_node` | already there |
+| 96dae93e0 | `rays_once` bounds and merges | `extend.rs` `rays_once` | already there |
+| 96dae93e0 | `unit_classes` substitutes exactly (keys never roots) | `extend/residues.rs` `unit_classes` | already there |
+| 96dae93e0 | a cut widened by the scale's absolute value less one reaches no other image | `extend/holes.rs` `Holes::cut` | completed: proof at the site |
+| 96dae93e0 | `same_divisions` sets `q` to `q' + (c' - c) / m` | `extend.rs` `same_divisions` | corrected: `(c - c') / m`, proof added |
+| 96dae93e0 | `same_divisions` is exact since the rows stay | `extend.rs` `same_divisions` | corrected: open case closed by a check, red then green |
+| 9b756f7ea | `read_once` pushes boxes down soundly, small to large | `read_once` | already there |
+| 9c56b1189 | `walk_segments` is its own mirror; free coordinates take least offsets | `modular.rs` | already there |
+| 9c56b1189 | CRT combination and `score_witness` | `combine_crt_pair`, `combine_crt_tree`, `score_witness` | already there |
+| 9c56b1189 | `graph_coloring_witness` gives a point that meets every clause | `modular.rs` `graph_coloring_witness` | completed: proof and Baetz and Wood DOI; each point is also checked by `solve_modular_whole` |
+| 9eaff655d | `forced::empty` before the renaming answers alike | `forced.rs` module doc | already there |
+| a7032e3f4 | `Bound` substitutes exactly through its union-find | `extend.rs` `Bound` | already there |
+| b3ff809f1 | keys behind `Arc` compare by content | `conjuncts.rs` | already there |
+| b87677be2 | each case built for a kind of draw gives it | the seventeen random tests | already there (eight spot-checked) |
+| bbe8ee73e | each message of `local.rs` is a relaxation | `local.rs` module doc | already there |
+| c2f253250 | `point_past_refusal` checks its point | `presburger.rs` `point_past_refusal` | already there |
+| c74ad4124 | the least-prime table is exact | `zed-numtheory` | already there (outside this crate) |
+| c80855b33 | each repair offered repairs | the repair tests | already there |
+| cb6445059 | a fast path charges at most `2L` | `exact.rs` `tried` | already there |
+| cb6445059 | Monniaux, Bjørner and Janota, Pugh cited | `exact.rs`, four sites | added: their DOIs |
+| cc5576aea | the union-find, the worklist order, the I6.3 tie | `modular.rs` | already there |
+| cc5576aea | `forced_pair_bounds`, `three_disjoint_pairs` | `modular.rs` | already there |
+| cc5576aea | Baetz and Wood cited | `brooks.rs`, `lib.rs`, `graph_coloring_witness` | added: doi:10.48550/arXiv.1401.8023 |
+| cdc669612 | laminar subtraction, the halving of `FastGreedy`, `Hull::shown_empty` | `slack.rs`, `presburger.rs` | already there |
+| cf2546144 | the hull of `v0` in seed 1446, case 7, is `[1, 4]` | its test's hand proof | already there |
+| cf65370dd | `bridge` relabels the smaller side | `conjuncts.rs` `bridge` | already there |
+| cf65370dd | without the conjunct the blocks are a path from `u` to `v` | `conjuncts.rs` `peel` | completed: proof at the site |
+| cf65370dd | Holm, de Lichtenberg and Thorup cited | `conjuncts.rs` `peel` | added: doi:10.1145/502090.502095 |
+| d5ae3f504 | the capped system is checked alone | `extend.rs` tests | already there |
+| d8026ecb5 | `Lin::cmp`'s fast path is the derived order | `formula.rs` `Lin::cmp` | already there |
+| d8026ecb5 | Bagwell's hash array mapped trie | `conjuncts.rs` `Blocks` | completed: full citation, no DOI found |
+| ecfbd2bd0 | the share bound gates the search; stage C's empties | `modular.rs` | already there |
+| ed3971714 | priorities fix the shape alone; the chain's cost bound | `extend/images/shifts.rs` | already there (bound marked not proved, cost only) |
+| eea76fee4 | a name `#n` given an absent atom meets no other | `Renamed::there_all` | already there |
+| eea76fee4 | the empty check before renaming answers alike | `project_each_with` | already there |
+| eea76fee4 | least span first is the order of least work | `extend.rs` groups | already there (marked not proved, cost only) |
+| efe9dcf29 | `pairs`, `by_pairs` and the remainder rewrite are exact | `extend.rs` | already there |
+| efe9dcf29 | `envelope` drops only rows under the others | `extend.rs` `envelope` | already there |
+| efe9dcf29 | a piece meets only its neighbors in a group | `extend.rs` `merge_pieces` | corrected: the reason (the nearer piece may hold no point) |
+| f3778742d | `satisfiable` reads products as atoms | `presburger.rs` 276-281 | already there |
 
 The potential that `Scope::shortest` keeps (68416f089) is in `zedc-preimage` `product.rs`,
 outside this crate, and was not checked here; nor were `twovar::ends` (f9936c4fe, in
@@ -1243,9 +1301,11 @@ outside this crate, and was not checked here; nor were `twovar::ends` (f9936c4fe
 No code claim: 0f5f38d66 (tests pinning refusals), 295d02151 (comments dated), 6b87a1c3a
 (tests moved to `r4_tests.rs` and `r6_tests.rs`), 12c58bd41 (no `#[ignore]` left), 141a411e3
 (import cycles), 23ce8727a (tests only), 4c17c8e8f (crate move), 5168f5a37 (clippy),
-5ccb21f3f (import cycles, clippy), 62e774ae6 (a doc link made plain text).
+5ccb21f3f (import cycles, clippy), 62e774ae6 (a doc link made plain text), 81878e7cb (tests
+use `part()`), 8980815f3 (a doc link made plain text), da7810c72 (formatting), f02739989
+(lint fixes), f66d9b0b1 (the four ignored scaling tests, since moved to bench modules).
 
-Not read: entries 60 to 90; and of e8981310f, all of `extend/images.rs` but
+Not read: of e8981310f, all of `extend/images.rs` but
 `Orbit::residue` (`answer`, `joint`, `shifts`, `Clamp`, the `Frame` operations) and its
 changes to `extend.rs`.
 

@@ -2135,11 +2135,13 @@ pub struct Blocks {
     // comparisons a lookup, each a walk of two constraints' terms (about 220 instructions):
     // near 2,400 instructions a lookup at 2,000 conjuncts, and growing with log n, which made
     // the chain raise in reverse 9.57 times at 8n (`xst::s4`). Used: a persistent hash map
-    // (Bagwell's hash array mapped trie, imbl `GenericHashMap`), one hash of the formula
-    // (`Formula`'s `Hash`, kept with a compound node, linear in a constraint's size) and one
-    // comparison, which a key held at the same address answers by its pointer, so O(1)
-    // expected a lookup; merged-away block ids are resolved lazily through `uf`, avoiding
-    // rewriting `of` for every moved conjunct during `Blocks::merge`. This map is only read
+    // (Bagwell's hash array mapped trie: P. Bagwell, "Ideal Hash Trees", EPFL technical
+    // report, 2001, no DOI found on Crossref, not read; imbl `GenericHashMap`), one hash of
+    // the formula (`Formula`'s `Hash`, kept with a compound node, linear in a constraint's
+    // size) and one comparison, which a key held at the same address answers by its
+    // pointer, so O(1) expected a lookup; merged-away block ids are resolved lazily through
+    // `uf`, avoiding rewriting `of` for every moved conjunct during `Blocks::merge`. This map
+    // is only read
     // by key, never in order, so no order is lost; its hasher is the seeded `TextState` over
     // the formula's own hash, since a formula holds a program's names (it was `FxBuildHasher`,
     // with no seed; DRY-sorted-structures-2 job 3). Test
@@ -3544,6 +3546,16 @@ impl Blocks {
     /// the end block, cut at the name of `P` it entered and could not leave, which is given a
     /// new number before the searches start again from that name. The block left last keeps
     /// `b`; then the parent links are set along the path, from `b`'s parent.
+    ///
+    /// Proof that the blocks left are such a path: `b` is biconnected and holds a conjunct
+    /// besides `g`, the one taken out, so any two of its conjuncts lie on one cycle (Menger's
+    /// theorem: two paths sharing no name join the ends of one to the ends of the other), and
+    /// each conjunct `e` of `b` lies on a cycle through `g`, so on a path from `u` to `v` in `b`
+    /// without `g`. A path from `u` to `v` passes, in the tree of blocks and cut names of `b`
+    /// without `g`, through exactly the blocks on the tree path from a block of `u` to one of
+    /// `v`, and through each name joining two consecutive ones. So every conjunct is in a block
+    /// of that tree path, no block is off it, and each name joining two of them is on every path
+    /// from `u` to `v`, which is the cut the flow of two finds.
     // Complexity tradeoff: placing the block's other conjuncts again (`Blocks::split`) costs
     // O(|b| log n) for each conjunct taken out, so O(d²) to take apart a block of d conjuncts
     // one at a time. The searches cost O((|P| + c + s) log n), where c is the size of the blocks
@@ -3553,7 +3565,8 @@ impl Blocks {
     // side. Still near the block each time: taking a chord out of a long cycle, which leaves
     // one block, when `P` or the meeting search is long, and a name of many conjuncts in other
     // blocks, whose entries the searches pass over. Holm, de Lichtenberg and Thorup's dynamic
-    // biconnectivity bounds every case by O(log⁵ n) amortized, at the cost of a far larger
+    // biconnectivity (J. ACM 48(4), 2001, doi:10.1145/502090.502095) bounds every case by
+    // O(log⁵ n) amortized, at the cost of a far larger
     // structure.
     fn peel(&mut self, b: BlockId, r: BlockId, u: (&Arc<str>, BlockId), v: (&Arc<str>, BlockId)) {
         let path = self.route(

@@ -4189,6 +4189,21 @@ fn score_witness(
 /// A sufficient coloring witness, invariant under independent relabeling of each
 /// three-element residue domain. Each edge must exclude a perfect matching of
 /// its endpoints' values; transporting those matchings must be consistent.
+///
+/// Proof that a point given meets every clause: each clause holds two atoms `i`, `j`, each
+/// allowed three values, and is false exactly at the one pair of the values each leaves out,
+/// so the clauses of an edge exclude pairs of values, here three forming a perfect matching
+/// (`perm`). The labels are permutations of the colors 0, 1, 2 carried across each edge so
+/// that the two values of every excluded pair get one color, checked on every edge. The
+/// colors are a proper 3-coloring: the core (every vertex of degree 3 or more among those
+/// left) is colored two ways if bipartite, else by [`brooks::color`] (Baetz and Wood,
+/// doi:10.48550/arXiv.1401.8023, Lemmata 1-3) or [`brooks::universal`], and `None` if
+/// neither colors it; the vertices taken out, each with at most 2 neighbors left when taken
+/// out, are colored in the reverse order, so at most 2 colors are used next to each. Each
+/// atom takes the value labeled by its color, so the two ends of an edge take values of
+/// different colors, which is no excluded pair. A `None` is no verdict; the caller checks
+/// every point found ([`solve_modular_whole`]), so this proof bears on whether a point is
+/// found, and not on whether one given is right.
 fn graph_coloring_witness(
     info: &[BaseInfo],
     allowed: &[ResidueSet],

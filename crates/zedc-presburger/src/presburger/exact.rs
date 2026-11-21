@@ -216,7 +216,8 @@ pub(super) fn exact_each_checked(
     // order_of_the_symbols`). With `f` canonical, as its caller gives it, the answers are then a
     // function of `f` up to the order of its parts and of the set of `syms`. Complexity
     // tradeoff: O(k log k) more for k symbols, and a symbol named twice is covered once. The
-    // points a cover keeps are those of the model enumeration (Monniaux, CAV 2010, sec. 3);
+    // points a cover keeps are those of the model enumeration (Monniaux, CAV 2010, sec. 3,
+    // doi:10.1007/978-3-642-14295-6_51);
     // fixing the order of the symbols is this module's own choice, from no paper.
     let mut sorted: BTreeMap<&Atom, Result<IntervalSet, Refusal>> = BTreeMap::new();
     for (s, got) in syms.iter().zip(each) {
@@ -1947,10 +1948,11 @@ fn implied(c: &Con, d: &Dirs) -> bool {
 // the loop is identical to running with no fast path. Stopping at `*fast == 0` keeps a shared
 // zeroed allowance (`has_points`) from walking remaining parts. The loop is the lazy model
 // enumeration of Monniaux, "Quantifier Elimination by Lazy Model Enumeration", CAV 2010,
-// sec. 2.2 and 3, with model-based cells after Bjørner and Janota, "Playing with Quantified
-// Satisfaction", LPAR-20, 2015, sec. 2.2; `direct` is Pugh's structural exact shadow, "A
-// practical algorithm for exact array dependence analysis", CACM 35(8), 1992, the section on
-// integer solutions by Fourier-Motzkin elimination (sec. 2.3.2 of the expanded text). Full
+// sec. 2.2 and 3, doi:10.1007/978-3-642-14295-6_51, with model-based cells after Bjørner and
+// Janota, "Playing with Quantified Satisfaction", LPAR-20, 2015, sec. 2.2, doi:10.29007/vv21;
+// `direct` is Pugh's structural exact shadow, "A practical algorithm for exact array
+// dependence analysis", CACM 35(8), 1992, doi:10.1145/135226.135233, the section on integer
+// solutions by Fourier-Motzkin elimination (sec. 2.3.2 of the expanded text). Full
 // citations, and how each was checked, are in the crate root's References.
 fn tried<T>(
     fast: &mut u64,
@@ -2052,8 +2054,9 @@ fn certificates<'s>(
 ///   of `A or B` exactly when it has one of `A` or one of `B`;
 /// - a conjunction splits its parts into groups that share no atom but `s` (union-find). A
 ///   group of rows alone projects by [`super::eliminated`], whose rows over `s` hold exactly
-///   where the group has a point (Pugh's exact projection, Pugh 1991/1992, sec. 2.3.2, in the
-///   crate root's References); a group of one
+///   where the group has a point (Pugh's exact projection, Pugh 1991/1992, sec. 2.3.2,
+///   doi:10.1145/125826.125848 and doi:10.1145/135226.135233, in the crate root's
+///   References); a group of one
 ///   projected part keeps its set; a group with a projected part and anything more is not
 ///   shown exact (`None`). The conjunction is the meet of its groups: given a point of each
 ///   group with `s` at `v`, the groups read disjoint atoms but `s`, so the points join into one
@@ -3572,7 +3575,8 @@ fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, Interval
 // on_tied_disjunctions_scales`, refused with Questions). The solver itself removes those
 // disjunctions first (`absorb`, COMPLEXITY.md row DECIDE-disj-chain) and projects each
 // disjunct with the base eliminated onto its atoms (`project_parts`, its kernels, Pugh's exact
-// projection, Pugh 1991/1992, sec. 2.3.2, in the crate root's References); the cover did
+// projection, Pugh 1991/1992, sec. 2.3.2, doi:10.1145/125826.125848 and
+// doi:10.1145/135226.135233, in the crate root's References); the cover did
 // neither. Used: the same two steps, once for
 // each part of a call, keeping every symbol of the call: the rule reads each row and each
 // disjunct once, O(t log t) for t terms, a conjunct that is not a disjunction of rows read once

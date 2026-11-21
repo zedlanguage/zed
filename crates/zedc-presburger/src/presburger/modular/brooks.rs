@@ -1,6 +1,7 @@
 //! A three-color witness for graphs of maximum degree three. This is the
 //! block decomposition and reverse tree coloring of Baetz and Wood,
-//! arXiv:1401.8023, Lemmata 1--3. A four-clique gives no witness.
+//! arXiv:1401.8023, doi:10.48550/arXiv.1401.8023, Lemmata 1--3 (the full
+//! reference is in the crate's "References"). A four-clique gives no witness.
 use std::collections::{HashMap, VecDeque};
 
 type Edge = (usize, usize);

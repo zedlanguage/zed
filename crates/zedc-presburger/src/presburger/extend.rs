@@ -1580,10 +1580,25 @@ fn split(items: Vec<Formula>, keep: &mut HashSet<Atom>) -> Option<(Vec<Formula>,
 /// The quotients and remainders of the divisions among `rows` that another division of the same
 /// term by the same modulus sets, for [`split`]: an equality `t + c == m * q + r` with
 /// `0 <= r <= m - 1` among the rows, `q` and `r` outside `keep`, after one `t + c' == m * q' +
-/// r'` with `c' == c` modulo `m` in the order of `rows`, sets `r` to `r'` and `q` to `q' + (c' -
-/// c) / m`, since the remainders of one value are one. So the residue tests of a chain's links,
+/// r'` with `c' == c` modulo `m` in the order of `rows`, sets `r` to `r'` and `q` to `q' + (c -
+/// c') / m`, since the remainders of one value are one. So the residue tests of a chain's links,
 /// each `x@i mod 6` read through the bindings at its own shift, read one remainder however deep
-/// the chain (LOAD-bound-holes). Exact, since the rows stay. Time of the rows.
+/// the chain (LOAD-bound-holes). Time of the rows.
+///
+/// Proof that the rows imply each equation set: subtracting the two divisions, `c - c' ==
+/// m * (q - q') + (r - r')`; `m` divides `c - c'`, so it divides `r - r'`, and `|r - r'| <=
+/// m - 1`, so `r == r'` and `q == q' + (c - c') / m`.
+///
+/// Proof that the caller's substitution of the map into the rows is exact (projected on the
+/// atoms other than the ones set): every point of the rows is one of the rows substituted,
+/// since each atom set equals its value there. Conversely, no atom the map sends to (the `q'`
+/// and `r'` of a first division) is itself set: a row whose `q` or `r` is set already is
+/// skipped, and a division whose `q`, or whose `r` other than `r'`, is the `q'` or `r'` of a
+/// first division is not set. So the substituted rows hold no atom set, and a point of them,
+/// with each atom set given the value of its image, is a point of the rows. Without that
+/// check `x + 2 == 2 * h + r` could set `h` to `f + 1` while `w + 7 == 7 * f + s` set `f` to
+/// `g + 1`, and the substitution, made once and at once, would leave `f` in the rows it set
+/// (`one_substitution_sets_no_atom_it_sends_to`).
 fn same_divisions(rows: &[Con], keep: &HashSet<Atom>) -> HashMap<Atom, Lin> {
     let lin = |terms: Vec<(Atom, Int)>, constant: Int| Lin {
         terms: terms.into_iter().collect(),
@@ -1602,6 +1617,8 @@ fn same_divisions(rows: &[Con], keep: &HashSet<Atom>) -> HashMap<Atom, Lin> {
     // constant.
     let mut first: HashMap<(Lin, Int, Int), (Atom, Atom, Int)> = HashMap::new();
     let mut to: HashMap<Atom, Lin> = HashMap::new();
+    // The `q` and `r` of every first division: the atoms `to` maps to, never set themselves.
+    let mut targets: HashSet<Atom> = HashSet::new();
     for c in rows {
         if c.rel != Rel::Eq {
             continue;
@@ -1631,8 +1648,12 @@ fn same_divisions(rows: &[Con], keep: &HashSet<Atom>) -> HashMap<Atom, Lin> {
         let key = (t, constant.mod_floor(&m), m.clone());
         match first.get(&key) {
             None => {
+                targets.insert(q.clone());
+                targets.insert(r.clone());
                 first.insert(key, (q, r, constant));
             }
+            Some(_) if targets.contains(&q) => {}
+            Some((_, r1, _)) if r1 != &r && targets.contains(&r) => {}
             Some((q1, r1, c1)) if q1 != &q => {
                 to.insert(r, lin(vec![(r1.clone(), Int::ONE)], Int::ZERO));
                 let d = (&constant - c1).div_floor(&m);
@@ -5469,8 +5490,10 @@ fn convex_integer_rays(pieces: &BTreeSet<Vec<Con>>) -> Option<Vec<Con>> {
 // passes repeat while one merges, O(p) passes over p pieces of r rows, O(p² r²). Used: a work
 // list, each piece put in the groups of its forms, where the intervals of the pieces in a
 // group never overlap, touch or hold an empty gap and so are ordered by their lower bounds: a
-// piece meets the one before and the one after its interval only, found in O(log p) (one
-// further off has a piece with a point in the gap), and two that merge are taken out and
+// piece meets the one before and the one after its interval only, found in O(log p) (the gap
+// to one further off holds the gap to the nearer one, which has a point, or its decision was
+// refused and it is taken to have one, since else the two would have merged; the nearer
+// piece itself may have no point), and two that merge are taken out and
 // their merge put back on the list; each merge leaves one piece fewer, so p pieces are put
 // in at most 2p times, O(p r² + p r log p) (the rest of a piece for each of its forms is
 // O(r) to make), and at most two decisions of the rest with a gap for each form tried, O(p r)
@@ -5901,6 +5924,31 @@ mod tests {
         let mut rows = division(0, 2, 6, 1, 2);
         rows.extend(division(0, 14, 6, 3, 4));
         assert!(same_divisions(&rows, &keep).is_empty());
+    }
+
+    #[test]
+    fn one_substitution_sets_no_atom_it_sends_to() {
+        // `x == 2 f + r2` first; `w == 7 g + r4` first; `w + 7 == 7 f + r6` would set `f`,
+        // the quotient of the first division of `x`, to `g + 1`; `x + 2 == 2 h + r8` sets `h`
+        // to `f + 1`. Set together, `f` would be both set and sent to, and one substitution
+        // would leave it in the rows (`same_divisions`'s proof of exactness needs it not).
+        let keep: HashSet<Atom> = [a(0), a(5)].into_iter().collect();
+        let mut rows = division(0, 0, 2, 1, 2);
+        rows.extend(division(5, 0, 7, 3, 4));
+        rows.extend(division(5, 7, 7, 1, 6));
+        rows.extend(division(0, 2, 2, 7, 8));
+        let to = same_divisions(&rows, &keep);
+        for (k, v) in &to {
+            for b in v.terms.keys() {
+                assert!(
+                    !to.contains_key(b),
+                    "{k:?} is sent to {b:?}, which is set: {to:?}"
+                );
+            }
+        }
+        // The division of `x + 2` still reads the first division of `x`.
+        assert_eq!(to[&a(7)], lin(&[(1, 1)], 1));
+        assert_eq!(to[&a(8)], lin(&[(2, 1)], 0));
     }
 
     #[test]

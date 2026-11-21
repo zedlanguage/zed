@@ -146,7 +146,8 @@
 //!   `G - {a, b}` connected give a Δ-coloring by coloring `a` and `b` alike and the rest in the
 //!   reverse of a search order from a common neighbor; Lemma 3, such `a`, `b` are found in
 //!   linear time in a biconnected graph that is neither complete nor a cycle. Not on Crossref
-//!   (no journal version found).
+//!   (no journal version found); the arXiv DOI doi:10.48550/arXiv.1401.8023 (DataCite)
+//!   resolves to the listing (checked 2026-11-20).
 //! - C. Berkholz, P. Bonsma and M. Grohe, "Tight lower and upper bounds for the complexity of
 //!   canonical colour refinement", Theory of Computing Systems 60(4), 2017, pp. 581-614,
 //!   doi:10.1007/s00224-016-9686-0, arXiv 1509.08251: sec. 3, "A fast canonical colour

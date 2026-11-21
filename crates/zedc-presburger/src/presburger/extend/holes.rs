@@ -147,6 +147,17 @@ impl Holes {
     }
 
     /// The hole `lo..=hi` added, merged with those it meets or touches. O(log n) expected.
+    ///
+    /// Proof that the widening adds no value: the values `y` are seen only through their
+    /// images `s * y + shift`, `s` the scale now, which are `|s|` apart, so the images next to
+    /// `[p, q]`, the images of `lo..=hi`, are `p - |s|` and `q + |s|`, outside `[p - |s| + 1,
+    /// q + |s| - 1]`. A later [`Holes::through`] reads `y == c * z + d`, whose images `s * (c *
+    /// z + d) + shift` are images of the `y == c * z + d`, so the widened interval holds no
+    /// image of any later coordinate that is not an image of `lo..=hi`. The merges join two
+    /// intervals of the base coordinate that overlap or touch (`n.hi >= p - 1`, and the lower
+    /// ends up to `q + 1`), whose union is one interval of integers, so they keep the set of
+    /// base integers held. Hence `holds` is true of a value exactly where some cut, read in
+    /// the coordinate it was made in, holds it.
     pub(super) fn cut(&mut self, lo: &Int, hi: &Int) {
         if lo > hi {
             return;
