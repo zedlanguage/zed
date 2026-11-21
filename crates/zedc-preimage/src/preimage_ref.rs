@@ -406,12 +406,7 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
     for t in terms {
         let root = tx.terms.add(t);
         // An auxiliary variable belongs to the relation of the term that made it.
-        let m = &mut tx.run.memo;
-        m.lin.clear();
-        m.formula.clear();
-        m.lin_calls.clear();
-        m.formula_calls.clear();
-        m.log.clear();
+        tx.clear_translations();
         let first = tr.defs.len();
         let body = tx.formula(&mut tr, root, ROOT)?;
         out.push(Relation {
@@ -436,6 +431,8 @@ fn linear(
     demand: &Demand,
     doubt: Option<&Sets>,
 ) -> Option<(Relation, Result<(Domains, bool, Option<Refusal>), Refusal>)> {
+    // `start` empties the memo, so every translation entry read below is made with this `tr`
+    // (FAIL-ref-memo-stale-entries; `Tx::relation_within`, steps 1 and 2).
     tx.start(dom, Landmarks::none());
     let mut tr = Tr {
         defs: Vec::new(),
@@ -1670,6 +1667,17 @@ impl<'t> Tx<'t> {
             self.run.memo.log.push(logged(k));
         }
         v
+    }
+
+    /// Removes every translation entry, for a translation with a new numbering of auxiliary
+    /// variables (see [`Tx::relation_within`]).
+    fn clear_translations(&mut self) {
+        let m = &mut self.run.memo;
+        m.lin.clear();
+        m.formula.clear();
+        m.lin_calls.clear();
+        m.formula_calls.clear();
+        m.log.clear();
     }
 
     /// Removes the translation's entries made after the first `mark`.
@@ -4742,18 +4750,56 @@ impl Tx<'_> {
         let rel = if out.exact {
             None
         } else {
-            let mut tr = Tr {
-                defs: Vec::new(),
-                products: false,
-            };
-            let value = self.lin(&mut tr, original, ROOT)?;
-            Some(Relation {
-                body: presburger::within(&value, &wanted),
-                defs: tr.defs,
-                bit_ands: Vec::new(),
-            })
+            Some(self.relation_within(original, &wanted)?)
         };
         Some((out, rel))
+    }
+
+    /// The relation `original` lies in `wanted`, translated with a new numbering of auxiliary
+    /// variables, partway through a run.
+    ///
+    /// Proof that the relation is the one `original` states (FAIL-ref-memo-stale-entries):
+    /// 1. A translation `Tr` numbers its auxiliary variables 0, 1, ... in the order it makes
+    ///    them, and `Aux(k)` means the k-th definition of that `Tr`. Each definition fixes its
+    ///    variable as a function of the inputs: `x = a` under `g` and `x = b` under `not g`
+    ///    ([`Tx::lin_at`], `If`), or the quotient and remainder of one division.
+    /// 2. A memo entry (`lin`, `formula`, `lin_calls`, `formula_calls`) holds the translation
+    ///    a `Tr` made, with that `Tr`'s numbers, and the memo does not record which `Tr` made
+    ///    it. So an entry that names `Aux(k)` is right only with the definitions of the `Tr`
+    ///    that made it.
+    /// 3. Earlier in this run, [`Tx::difference_guard`] translates with its own `Tr` and keeps
+    ///    entries that name no auxiliary variable (its own proof). An earlier call of this
+    ///    function may also have left entries with its own numbering. Without step 4, `lin`
+    ///    here would reuse such an entry and return `Aux(k)`, which our new `Tr` defines
+    ///    differently or not at all. On `if (i mod 2) <= 0 { m } else { 1 - m }`, with
+    ///    i, m in [0, 1], the relation then held at (0, 0) and (1, 1), where the term is 0
+    ///    (ref_memo.rs, `a_relation_built_partway_through_a_run_holds_only_where_its_term_does`).
+    /// 4. So we empty the four translation tables and their log first. Then every entry
+    ///    `lin` reads was made with our `tr`, and by steps 1 and 2 the returned linear term
+    ///    is the value of `original` under the definitions `tr.defs` that we return with it.
+    /// 5. Emptying the log cannot cut short an undo in progress: [`Tx::forget`] marks are
+    ///    held only by `lin`, `formula`, `call_key` and `difference_guard` while they run, and
+    ///    no translation reaches this function (`lin` and `formula` call only the
+    ///    translation's helpers; none of them calls a stage). Callers: only
+    ///    `independent_reflections`, a stage of `preimage_in`.
+    ///
+    /// Complexity tradeoff: the translation done before this call by `difference_guard` is
+    /// lost, so `original` is translated again from nothing, O(|term DAG|) once per call, as
+    /// [`relations`] does for each term. Keeping the old entries would need each entry to
+    /// carry its `Tr` and every read to check it, which costs more in the common run than
+    /// one translation per relation.
+    fn relation_within(&mut self, original: Tid, wanted: &IntervalSet) -> Option<Relation> {
+        self.clear_translations();
+        let mut tr = Tr {
+            defs: Vec::new(),
+            products: false,
+        };
+        let value = self.lin(&mut tr, original, ROOT)?;
+        Some(Relation {
+            body: presburger::within(&value, wanted),
+            defs: tr.defs,
+            bit_ands: Vec::new(),
+        })
     }
 
     fn integer_request(&mut self, root: Tid, d: &Demand) -> Option<(Tid, IntervalSet)> {
@@ -5324,12 +5370,34 @@ impl Tx<'_> {
             return None;
         }
         let diff = self.terms.diff(g, args);
+        // FAIL-ref-memo-stale-entries. This translation runs partway through a run, with a `Tr`
+        // of its own, and it keeps no definition. Proof that what it leaves in the memo names
+        // no auxiliary variable of its own, so a later translation with another `Tr` cannot
+        // read one (see `relation_within`, steps 1 and 2, for why that would be wrong):
+        // 1. When `tr` ends with a definition, or the translation fails, `forget(logged)`
+        //    removes every entry made since `logged`, which is every entry this call made.
+        // 2. Otherwise `tr.defs` is empty at the end. A definition made and then dropped
+        //    within the call was dropped by `call_key` or `formula_at` truncating `tr.defs`
+        //    to a mark, and they forget at once every entry made since that mark, so each
+        //    entry that names it is gone. So no kept entry names an `Aux` of `tr`.
+        // 3. An entry this call reused may name an `Aux` of the run's earlier `Tr` (only
+        //    `linear`, after its `start`, or `relation_within`; each run has at most one such
+        //    `Tr`, since both begin with an empty memo). An entry made here from it names that
+        //    same numbering, so it agrees with its definitions. The result is used only when
+        //    every atom is a `Sym` (the loop below), and an `Aux` that cancels in the
+        //    difference is one value of the inputs (step 1 of `relation_within`), so the
+        //    coordinate is exact.
+        let logged = self.run.memo.log.len();
         let mut tr = Tr {
             defs: Vec::new(),
             products: false,
         };
-        let lin = self.lin(&mut tr, diff, env)?;
-        if !tr.defs.is_empty() || !matches!(lin.terms.len(), 1 | 2) {
+        let lin = self.lin(&mut tr, diff, env);
+        let Some(lin) = lin.filter(|_| tr.defs.is_empty()) else {
+            self.forget(logged);
+            return None;
+        };
+        if !matches!(lin.terms.len(), 1 | 2) {
             return None;
         }
         let mut plus = None;

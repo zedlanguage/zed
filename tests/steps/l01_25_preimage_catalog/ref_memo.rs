@@ -942,6 +942,62 @@ fn every_family_the_benchmarks_time_is_answered_soundly_at_small_sizes() {
     }
 }
 
+/// FAIL-ref-memo-stale-entries: a relation translated partway through a run (here by
+/// `independent_reflections`, after `difference_guard` has translated the guard's difference
+/// and given up) must not reuse translation entries numbered by another translation. On main
+/// 22fd64d3a the relation held at (0, 0) and (1, 1), where the term is 0 (found by the Gemini
+/// seat of the PERF-ref-memo-multi-input cross-review, round 3). Every point of the box is
+/// checked: where the relation holds, the term meets the demand.
+#[test]
+fn a_relation_built_partway_through_a_run_holds_only_where_its_term_does() {
+    use zedc::store::presburger::{self, Atom, Formula};
+    let t = ne0(Term::If(
+        Shared::new(prim(Prim::Le, prim(Prim::Mod, var("i"), int(2)), int(0))),
+        Shared::new(var("m")),
+        Shared::new(sub_c(1, var("m"))),
+    ));
+    let ds = over(&[("i", IntervalSet::of(0, 1)), ("m", IntervalSet::of(0, 1))]);
+    let d = Demand::Bool(true);
+    let p = preimage(&t, &ds, &d);
+    let rel = p
+        .relation
+        .as_ref()
+        .expect("a relation, the box being inexact");
+    assert!(!p.exact, "{p:?}");
+    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+    for i in 0..=1 {
+        for m in 0..=1 {
+            let value = |x: &str| if x == "i" { i } else { m };
+            let pt: Vec<Num> = names.iter().map(|x| Num::from(value(x))).collect();
+            let mut parts = vec![rel.body.clone(), rel.defined()];
+            for x in &names {
+                let v = value(x);
+                parts.push(presburger::member(
+                    &Atom::Sym(x.clone()),
+                    &IntervalSet::of(v, v),
+                ));
+            }
+            let holds = presburger::satisfiable(&Formula::and(parts))
+                .expect("decided")
+                .is_some();
+            let in_box = names.iter().all(|x| {
+                p.domains
+                    .get(x)
+                    .is_none_or(|s| s.contains_end(&End::Fin(Num::from(value(x)))))
+            });
+            let meets = meets(&t, &names, &pt, &d);
+            assert!(
+                !meets || holds,
+                "({i}, {m}) meets but the relation fails: {rel:?}"
+            );
+            assert!(
+                meets || !in_box || !holds,
+                "({i}, {m}) fails, lies in the box and the relation holds: {rel:?}"
+            );
+        }
+    }
+}
+
 /// PROOF-round-down-piece-bound: on `normal_round_down` the forward image of a node has at most
 /// 3 pieces (3 only at the `Round`) and every label the walk builds has one piece, the two
 /// bounds the proof at `Tx::inverse_states` derives for every n. Every n to 128, on the default
