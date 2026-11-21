@@ -8,6 +8,15 @@ pub type Term = (usize, Int);
 
 /// A rational, in lowest terms with a positive denominator. Equality is structural, which is
 /// equality of value only because [`Q::new`] reduces; order is by value (cross products).
+/// Why every `Q` is reduced: the fields are private to this crate, and outside the tests only
+/// three places build one. [`Q::new`] divides by `g = gcd(n, d)`, which `Int::gcd` gives at
+/// least 0 and which is above 0 since `d` is not 0; the quotients are exact and coprime, and a
+/// negative `d` is then negated with `n`, so `d > 0` (and `0 / d` becomes `0 / 1`, since
+/// `gcd(0, d) = |d|`). `Q::of` gives `d = 1`. `neg` negates `n` only, and
+/// `gcd(-n, d) = gcd(n, d) = 1`. Two reduced forms of one value are equal: `n / d = n' / d'`
+/// gives `n·d' = n'·d`, so `d | d'` and `d' | d` by coprimality, so `d = d'` (both positive)
+/// and `n = n'`. Tests:
+/// `tests::rationals_stay_in_lowest_terms_with_a_positive_denominator`.
 /// Also the slope and intercept keys of the lower-hull tree in `zedc-preimage`'s `product`
 /// (DRY-numeric-shared; before, two types there of their own relied on reduced input that
 /// nothing enforced).

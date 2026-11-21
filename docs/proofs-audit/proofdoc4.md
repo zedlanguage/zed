@@ -1174,8 +1174,9 @@ Not read (135 entries):
 Read so far: the 25 entries in the small crates (zedc, zed-native, zedc-resolve, zedc-zir,
 zedc-syntax, zed-numtheory, zed-rt, zed-tools, zedc-lattice) and the `type_var_form` claim of
 4e6c5bfaa with zed-kernel print/names.rs, each message and its diff in that crate; the sites
-were checked on origin/main e1274cda9. The moved commits, zedc-solvers and zedc-int are not
-read (see "Not read:").
+were checked on origin/main e1274cda9. Then zedc-int and zedc-solvers, each entry but the two
+crate splits, and 8 of the 39 moved commits, checked on origin/main 8c9dd3cbd. The other 31
+moved commits and the two splits are not read (see "Not read:").
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
@@ -1189,7 +1190,10 @@ read (see "Not read:").
 | zed-tools | 2 | 0 | 0 | 0 | 0 | 0 |
 | zedc-lattice | 1 | 1 | 1 | 0 | 0 | 0 |
 | `type_var_form` (zedc-resolve, zed-kernel) | 1 | 3 | 1 | 2 | 0 | 0 |
-| Total | 26 | 23 | 14 | 7 | 0 | 2 |
+| zedc-int | 15 | 14 | 12 | 2 | 0 | 0 |
+| zedc-solvers | 17 | 17 | 12 | 4 | 0 | 1 |
+| moved (zedc, zedc-syntax) | 8 | 2 | 1 | 1 | 0 | 0 |
+| Total | 66 | 56 | 39 | 14 | 0 | 3 |
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -1216,6 +1220,38 @@ read (see "Not read:").
 | 4e6c5bfaa | a type variable is a name `[A-Z][0-9]*` | zedc-resolve `type_var_form` | already there (the code is the rule) |
 | 4e6c5bfaa | the variables and the definitions share no name | zed-kernel print/names.rs module doc | completed: every variable has the form and no `Part{k}` does; tests named, and that neither reads a definition back |
 | 4e6c5bfaa | `run_ends` is O(k) | zed-kernel print/names.rs `run_ends` | completed: each number starts one run or is skipped in O(1), and is written once; expected time over std's hash |
+| 76bb9d4cf | a kept power is not built | zedc-int int.rs | already there |
+| 29ab1ba6e | `write_decimal` is O(n log² n) | zedc-int int.rs, through zed-kernel fast.rs `to_decimal` | already there |
+| d80e81d08 | `row_bound` gives the ends of `a·x + k >= 0` | zedc-int int.rs `row_bound` | completed: the garbled last sentence replaced by why the ends are `⌈-k / a⌉` and `⌊k / -a⌋`, and why one floor division gives both |
+| 25ef78dd1 | `div_floor`, the `i128` divisions and their overflow, nearest zero, `mod_hat`, `ceil_log2`, `pow2`, `row_range` | zedc-int int.rs | already there |
+| 2b3e706f1 | `Int` is unbounded for the searches | zedc-int int.rs | already there |
+| 878a1bf1b | no prime below `FILTER_BOUND` = 1024 is 1 modulo an index above 511 | zedc-int `FILTER_BOUND` | already there (the indices are odd primes, so `q >= 2p + 1`) |
+| fe770de11 | `ROOT_CHECK_PRIMES`, `extended_gcd`, the `unreachable!` of `root` | zedc-int int.rs | already there |
+| 22e348bb9 | `mod_hat` cites Pugh 1992 and 1991 | zedc-int int.rs `mod_hat` | already there (DOIs) |
+| 47dbe05b9 | `bitAnd` on two's complement | zedc-int int.rs | already there |
+| b991293a4 | the citations of the crate | zedc-int int.rs | already there |
+| d7e7d86d0 | the remainder tree, depth `⌈lg t⌉` (Bernstein) | zedc-int int.rs | already there |
+| e843dda31 | the most one digits in `lo ..= self` | zedc-int int.rs popcount bound | completed: why no value of the range has more ones than the two candidates |
+| 6da69df6f | `Int` is unbounded for interval lists | zedc-int int.rs | already there |
+| cc5576aea | the gcd costs (Stein) | zedc-int int.rs `gcd` (code rewritten since) | already there |
+| e5b5ea82e | the estimate is a cost only | zedc-solvers | already there |
+| 475e582ff | the arithmetic of the built test graphs and covers | zedc-solvers negsssp.rs, utvpi.rs tests | already there (each checked by hand) |
+| 1ffeb360d | `convex_strip`: with slopes of opposite signs the points are one interval | zedc-solvers twovar.rs `convex_strip` | already there |
+| 1ffeb360d | `project_convex` is exact, `Holed` only on a real hole | zedc-solvers twovar.rs `project_convex` | completed: the tip and solid split at `⌈at0⌉`, `⌈at1⌉`, the count of 0 or 1 per `x`, the interval test, the period `d` of parallel lines and why `2d` values with `0 < c < d` hold a hole |
+| 1ffeb360d | `project_convex` costs O(m log m) plus O(log M) per count | zedc-solvers twovar.rs `project_convex` | completed: with slopes of one sign two bisections over the counts, O(log w · log M) per strip, O(m log m + m·log w·log M) in all |
+| 3e4f866b5 | 400 random graphs miss the odd zero-weight cycle in about 1 run of 400; 4,000 in about `e^-64` | zedc-solvers utvpi.rs tests | already there (since replaced by the built graphs, see d5ae3f504) |
+| 25ef78dd1 | `Q` equality is structural, equal to equality of value since `Q::new` reduces | zedc-solvers linear.rs `Q` | completed: the three places that build a `Q`, each in lowest terms with `d > 0`, and why two reduced forms of one value are equal |
+| 25ef78dd1 | the next power of two and the narrowing of a range | zedc-solvers | already there (2 claims) |
+| 10a4e923a | the arithmetic of the completeness tests of Duong's search (`24·L·1 = 24 <= 66`, `M₀ = 36,886`, `L = 16`, `c = 32`) | zedc-solvers negsssp completeness tests | already there (each checked by hand) |
+| b991293a4 | the citations point to lib.rs "References" | zedc-solvers lib.rs | already there |
+| f9936c4fe | `ends` costs O(m log m) plus O(log w) floor sums; Eisenbrand and Rote | zedc-solvers twovar.rs `ends` | already there (doi:10.1007/3-540-45535-3_7, checked on Crossref) |
+| f9936c4fe | the least `x` is open to the left when no bound closes it | zedc-solvers twovar.rs `least_x` | already there |
+| c6969ca91 | the references of the crate (Lenstra, LLL, Megiddo, Goldberg, Thorup, Dinitz and Itzhak, Dijkstra, Bellman) | zedc-solvers lib.rs | already there (DOIs; marked not read where not read) |
+| d3608d87b | Duong's paper and its lemmas | zedc-solvers negsssp.rs | already there |
+| d5ae3f504 | 400 graphs miss the odd zero-weight cycle in about 1 run of 400 | zedc-solvers utvpi.rs `ANSWERS` | corrected: `0.984^400` is about `e^-6.4`, so about 1 run of 600; not relied on, since the built graphs give each answer |
+| 745bf800f | a pass-by write costs one argument's entry, not the call's list | zedc-check check/mod.rs `set`, `Undo::Passes` | already there (a map by call span of maps by argument span) |
+| d9495abf6 | phase 2's narrowing keeps a post-fixpoint | zedc-lattice iterate.rs `solve` | completed: `F_v(X) ⊑ X'_v ⊑ X_v` from the contract of `Lattice::narrow`, then monotonicity |
+| e275c5f0b | the final Dijkstra on `r + 1` from `-phi` gives paths shortest in `w` | zedc-solvers negsssp.rs `run` | completed: `r = (n + 1)·w + phi(u) - phi(v)`, the label of a path, a tree path of at most `n - 1 < n + 1` edges, so the least label has the least `w`, and why `w` has no negative cycle there |
 
 No code claim:
 - zedc: 181885f72, 8c5ccccb9.
@@ -1224,17 +1260,20 @@ No code claim:
 - zedc-zir: 51ae6534c, bea44d4a5.
 - zed-rt: 181885f72.
 - zed-tools: 51ae6534c, bea44d4a5.
+- zedc-int: fffe13699.
+- moved: 26b4df164 (a doc of the ZIR number text), 2bf39d29e (one comment on a decorated
+  literal), 1b531cd56 (the rule that an L1 port is `Lines`; the comment is gone since),
+  7433e3145, ce1450451, cf099fcf2 (crate splits with no comment line).
+- zedc-solvers: d80e81d08 (a type alias), 2b3e706f1 (searches moved to
+  `zed_collections::search`, same contracts), 4c17c8e8f (dev-dependency features), 5168f5a37
+  (a type alias), 6da69df6f (the shared interval append).
 
 Not read:
-- moved (zedc, zedc-syntax), 39: 6c2c05101, 1dd869737, fd98fb235, 15657d994, 174c0f20b,
-  585e7f18b, 63a6f9c4d, 78e5f708f, acc4f3aed, 0513b158e, 26b4df164, 2bf39d29e, 64781908f,
-  745bf800f, 7498c2e7e, b6d0a2eef, 16d8ce615, 1b531cd56, 52e4b51fc, 5354b56d7, 7433e3145,
-  79885f50d, 889d3e94d, 9111fb39d, 961b304c9, a934e9cf8, e3b9b5c6b, 01d71b2ea, 53d0c3177,
-  63fa169e7, 8f23b02b7, 9147744bd, 9b7406051, c22a191c9, c3044ee83, ce1450451, cf099fcf2,
-  d9495abf6, fec575742.
-- zedc-solvers, 18: e5b5ea82e, 475e582ff, d80e81d08, 1ffeb360d, 3e4f866b5, 25ef78dd1,
-  2b3e706f1, 10a4e923a, b991293a4, f9936c4fe, 4c17c8e8f, 5168f5a37, 6da69df6f, 87bab4327,
-  c6969ca91, d3608d87b, d5ae3f504, e275c5f0b.
-- zedc-int, 16: 76bb9d4cf, 29ab1ba6e, d80e81d08, 25ef78dd1, 2b3e706f1, 878a1bf1b, fe770de11,
-  22e348bb9, 47dbe05b9, b991293a4, d7e7d86d0, e843dda31, fffe13699, 6cc6d3efd, 6da69df6f,
-  cc5576aea.
+- moved (zedc, zedc-syntax), 31: 6c2c05101, 1dd869737, fd98fb235, 15657d994, 174c0f20b,
+  585e7f18b, 63a6f9c4d, 78e5f708f, acc4f3aed, 0513b158e, 64781908f, 7498c2e7e, b6d0a2eef,
+  16d8ce615, 52e4b51fc, 5354b56d7, 79885f50d, 889d3e94d, 9111fb39d, 961b304c9, a934e9cf8,
+  e3b9b5c6b, 01d71b2ea, 53d0c3177, 63fa169e7, 8f23b02b7, 9147744bd, 9b7406051, c22a191c9,
+  c3044ee83, fec575742. Their sites are now in zedc-check, zedc-preimage, zedc-presburger,
+  zedc-elab and zedc-lattice, where proofdoc4a to proofdoc4f read those crates' own entries.
+- zedc-solvers, 1: 87bab4327 (the crate split, 587 comment lines).
+- zedc-int, 1: 6cc6d3efd (the crate split, 528 comment lines).

@@ -632,7 +632,16 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         }
         // Every reduced weight is at least -1. Dijkstra on `r + 1`, each vertex starting at
         // `-phi`, labels a path `P` to `v` with `(n + 1)·w(P) + |P| - phi(v)`, so its tree paths
-        // are shortest in `w`; their weights in `w` are the potential. No weight `r + 1` is
+        // are shortest in `w`; their weights in `w` are the potential. Why: each step adds
+        // `psi(u) - psi(v)` to the reduced weight of `u → v` as it adds `psi` to `phi`, so
+        // `r = (n + 1)·w + phi(u) - phi(v)`, and along `P` from `s` the label is
+        // `-phi(s) + (n + 1)·w(P) + phi(s) - phi(v) + |P|`. A tree path is simple, so
+        // `0 <= |P| <= n - 1 < n + 1`; for integer weights `w(P) < w(P')` then gives
+        // `(n + 1)·w(P) + |P| <= (n + 1)·w(P') - 2 < (n + 1)·w(P') + |P'|`, so the least label
+        // has the least `w(P)` over the paths ending at `v` from any vertex (the empty path is
+        // one). No cycle `C` of `w` is negative: its `r` sums to `(n + 1)·w(C)`, the `phi` terms
+        // cancelling, and is at least `-|C| >= -n`, so the integer `w(C)` is above -1; a walk
+        // with a cycle is then no better than the path without it. No weight `r + 1` is
         // negative, so each vertex comes up once at its label, and a vertex already settled is
         // never lowered again; an entry that comes up stale is one unit of work too.
         let label: Vec<Int> = phi.iter().map(|p| -p).collect();

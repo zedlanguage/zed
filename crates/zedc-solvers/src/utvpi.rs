@@ -717,9 +717,9 @@ mod tests {
     /// it (checked alone by [`each_graph_built_for_an_answer_gives_it`]): a negative cycle
     /// `+x → -x → +x` of weight -2; a zero-weight cycle whose part from `+x` to `-x` weighs 1;
     /// one edge, which has a potential and no cycle. An odd zero-weight cycle comes in about
-    /// 1.6% of the random graphs, so 400 miss it in about 1 run of 400 (seen in 1 of 100
-    /// seeds); an answer the graphs did not give is given by its built graph, and no number of
-    /// graphs is relied on (PROOF-test-coverage-constructive).
+    /// 1.6% of the random graphs, so 400 miss it in about 1 run of 600 (`0.984^400`, about
+    /// `e^-6.4`; seen in 1 of 100 seeds); an answer the graphs did not give is given by its
+    /// built graph, and no number of graphs is relied on (PROOF-test-coverage-constructive).
     const ANSWERS: [(&str, BuiltGraph); 3] = [
         ("a negative cycle", || {
             vec![vec![(1, Int::from(-1))], vec![(0, Int::from(-1))]]

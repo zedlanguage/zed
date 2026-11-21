@@ -510,8 +510,10 @@ pub fn row_range(a: &Int, k: &Int, eq: bool) -> (IntRange, bool) {
 
 /// The one finite end of [`row_range`]`(a, k, false)`, for `a` not zero: the least `x` with
 /// `a·x + k >= 0`, `⌈-k / a⌉`, for `a > 0`, and the greatest, `⌊k / -a⌋`, for `a < 0`. For a
-/// caller that branches on the sign of `a` itself (DRY-numeric-shared-rest). One division and
-/// one negation: `⌈-k / a⌉ = -⌊k / a⌋`, where `(-k).div_ceil(a)` negated three times.
+/// caller that branches on the sign of `a` itself (DRY-numeric-shared-rest). Why the ends: for
+/// `a > 0`, `a·x + k >= 0` is `x >= -k / a`, so the least int is `⌈-k / a⌉`; for `a < 0` it is
+/// `x <= k / -a`, so the greatest is `⌊k / -a⌋`. One floor division and at most one negation,
+/// since `⌈-y⌉ = -⌊y⌋` for every rational `y` gives `⌈-k / a⌉ = -⌊k / a⌋`.
 pub fn row_bound(a: &Int, k: &Int) -> Int {
     if a.is_positive() {
         -&k.div_floor(a)
@@ -2412,8 +2414,13 @@ impl Num {
     /// popCount of `self` when `lo == self`. Above the highest digit `p` where `lo` and `self`
     /// differ, every value in the range has the digits of `self`; at `p`, `self` has 1 and `lo`
     /// 0, so the range holds those high digits followed by `p` ones, and `self` itself, which
-    /// has one more one exactly when its low `p` digits are all ones. So the answer is the
-    /// ones of `self` above `p`, plus `p`, plus 1 when the low `p` digits of `self` are ones.
+    /// has one more one exactly when its low `p` digits are all ones. No value beats these two:
+    /// one with 0 at `p` has at most `p` ones below it; one with 1 at `p` is at most `self`, so
+    /// it has `p + 1` ones from `p` down only when its low `p` digits are all ones, and then so
+    /// are those of `self`, which it does not exceed. (The value with 0 at `p` and ones below is
+    /// at least `lo`, whose digits below `p` are at most all ones, and below `self`.) So the
+    /// answer is the ones of `self` above `p`, plus `p`, plus 1 when the low `p` digits of
+    /// `self` are ones.
     // Complexity tradeoff: naive, the popCount of each value in the range, O(range * digits);
     // here one pass over the words from the highest and a count of the trailing ones, O(digits),
     // with nothing allocated past a machine word. A kept end is not written out:

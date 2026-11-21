@@ -443,8 +443,23 @@ fn convex_strip(ua: &Line, lb: &Line, a: Int, b: Int) -> Option<Option<(Int, Int
 /// an integer `y` (solid range, O(1)); on `0 <= u(x) - l(x) < 1` each `x` has 0 or 1 integer
 /// `y`, so `floor_sum` counts points in O(log M) arithmetic steps (or O(log w) binary search
 /// when slopes have opposite signs, where `n(x)` is monotone and guaranteed hole-free).
+/// With slopes of one sign, `convex_strip` finds the first and the last point by two
+/// bisections on the counts of prefixes, so a strip of width `w` costs O(log w) floor sums,
+/// O(log w · log M) steps, not one count; the sweep is O(m log m + m·log w·log M) in all.
 /// Structural refusal (`Holed`) only when a narrow strip genuinely has an internal hole, with
 /// no size threshold or cap.
+///
+/// Why the answer is exact. The segments split the `x` axis, and at each `x` the integer `y`
+/// lie in `[l(x), u(x)]` of that segment's two lines, so a hole within one segment is a hole of
+/// the projection. On `u - l = g0 + dg·x`: for `dg > 0`, `g >= 0` from `⌈at0⌉` on and `g >= 1`
+/// from `⌈at1⌉` on, so `[⌈at0⌉, ⌈at1⌉ - 1]` is the narrow tip and the rest solid (mirrored for
+/// `dg < 0`); a solid `x` has an interval of length at least 1, so an integer `y`. On a narrow
+/// strip each `x` has `⌊u(x)⌋ - ⌈l(x)⌉ + 1` integer `y`, which is 0 or 1. With slopes of
+/// opposite signs (or 0) that count is monotone, so its points are one interval; with one sign,
+/// the points are an interval exactly when the last less the first plus 1 is their count.
+/// Parallel lines of slope `p/d`: `u(x + d) = u(x) + p` and `l(x + d) = l(x) + p`, so the
+/// count has period `d`; a period with `c` of `d` points, `0 < c < d`, holds a point `x`
+/// and a gap before `x + d`, so a range of `2d` values or more, or an unbounded one, has a hole.
 pub fn project_convex(rows: &[(&[Term], &Int)], x: usize, y: Option<usize>) -> TwoVarProj {
     let Some((xs, upper, lower)) = split(rows, x, y, false) else {
         return TwoVarProj::Ranges(Vec::new());

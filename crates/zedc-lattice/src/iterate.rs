@@ -86,7 +86,10 @@ pub fn order<L: Lattice>(eq: &impl Equations<L>) -> Result<Vec<Element>, SameKey
 /// invariant, holding the start and closed under one step, so it holds at every iteration and
 /// not only once the values settle. Phase 1 leaves a head only when joining its projection
 /// changes nothing; each narrowing of phase 2 lies between the meet with the projection and
-/// the old element, and for monotone projections that keeps a post-fixpoint one. Tests:
+/// the old element, and for monotone projections that keeps a post-fixpoint one. Why: let
+/// `F(X) ⊑ X` cell by cell and `X'_v = X_v Δ (X_v ⊓ F_v(X))`, which [`Lattice::narrow`] puts
+/// between `X_v ⊓ F_v(X)` and `X_v`; the former is `F_v(X)`, so `F_v(X) ⊑ X'_v ⊑ X_v`, and
+/// `X' ⊑ X` with `F` monotone gives `F_v(X') ⊑ F_v(X) ⊑ X'_v`. Tests:
 /// `m0_05_widening_and_iteration::invariant` (item RANGE-invariant-audit).
 pub fn solve<L: Lattice>(eq: &impl Equations<L>) -> Result<Vec<L>, SameKey> {
     let order = order(eq)?;
