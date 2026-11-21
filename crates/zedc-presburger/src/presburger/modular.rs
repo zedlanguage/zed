@@ -885,8 +885,15 @@ pub(super) fn point_by_structure(f: &Formula) -> Option<Model> {
 /// so the whole is O(B (log k + W)): O(B log B) expected when every modulus fits in a bounded
 /// number of words, as in `pncx_shared_formula_scale`, and not O(B log B) for wide moduli. To
 /// that add `coprime_factorization`, whose bound is stated and argued at that function, not
-/// here; on distinct primes of more than 44 bits it measured 14.4 times the work for 8 times
-/// `B` (R2 Gemini seat, `ADV_WIDE48_UNIT`, 2026-11-21), open in PERF-private-quotient-wide-moduli.
+/// here. On distinct primes of more than 44 bits (R2 Gemini seat, `ADV_WIDE48_UNIT`) the whole
+/// of `solve_modular` took 14.11 then 19.78 times the instructions at 8 times the rows from 64
+/// (main 49539a5a6), in zed-kernel's `coprime_base`: `common_factorization` stops at the
+/// first gcd of 1, and `by_halves` ran. Moduli that are all prime words now take zed-kernel's
+/// prime-word path from 256 of them (`num::coprime::prime_words`, proved and measured there;
+/// PERF-private-quotient-wide-moduli, 2026-11-21, load 45): 788,188, 7,244,656 and 61,264,201
+/// instructions at 64, 512 and 4096 rows, 9.19 then 8.46 times, and 4.48 then 8.03 times the
+/// bytes. Moduli that are not all prime and not covered by the table or the factoring path
+/// still take `by_halves`.
 /// Measured on the bench (2026-11-20, R2 Sol seat, load 54.65): 8.826 times the instructions
 /// and 8.02 times the bytes for 8 times the rows. Before: 9.536 and 8.85.
 ///
@@ -4361,7 +4368,13 @@ type ModBase = BTreeMap<Int, Vec<(Int, Int)>>;
 /// factor `log k` for the halves (a polylogarithmic factor, not a proved O(n log n) bound).
 /// Before it, `common_factorization` recognizes moduli `g q_i` with the `q_i` coprime to each
 /// other and to `g` in O(N) or O(M(N) log k), where the kernel's halves would merge all `k`
-/// moduli, as every one shares `g`. No modulus or answer is given up. Tests:
+/// moduli, as every one shares `g`. It gives up at once on moduli with no common factor (the
+/// running gcd reaches 1), so distinct primes go to `coprime_base`, where from 256 moduli that
+/// are all prime words the kernel's prime-word path answers in O(k) primality tests and one
+/// sort (`num::coprime::base_of_primes`, proved there): on distinct 48-bit primes 2.88 M,
+/// 23.9 M and 198.0 M instructions at 256, 2048 and 16,384 moduli, 8.29 times at each step,
+/// where `by_halves` took 18.42 then 12.98 times (PERF-private-quotient-wide-moduli,
+/// 2026-11-21, load 45 and 113). No modulus or answer is given up. Tests:
 /// pncx_common_factors_reconstruct_inputs, pncx_coprime_factorization_has_its_answers;
 /// benches pncx_common_factor_scale and pncx_coprime_dense_scale (table side), and
 /// pncx_shared_formula_scale through `solve_modular`'s private quotient consistency check.
@@ -5608,8 +5621,45 @@ fn combine_crt_pair(r1: &Int, m1: &Int, r2: &Int, m2: &Int) -> Option<(Int, Int)
 /// more) and 2.0x to 2.2x from 1,024 words on: the tree's top node is 400 words at 2,048
 /// primes and 4,059 at 16,384, so the two sizes sit on different parts of that curve. So the
 /// limit 10.5 at these sizes is out of reach of every known method; the bench stays in the
-/// deferred file (PROOF-crt-refusal-exact-class and the author decision
-/// BENCH-crt-tree-size-by-bits hold the rest).
+/// deferred file (the author decision BENCH-crt-tree-size-by-bits holds the sizing).
+///
+/// Above the crossover (PERF-crt-tree-bytes-growth, 2026-11-21, load 75 to 114): at 16,384 and
+/// 131,072 primes the top node is 4,059 words and more, past `MUL_LEAF`, and one product of two
+/// equal numbers measured n log n there (1.596 M instructions at 1,024 words, 13.66 M at
+/// 4,096, 119.3 M at 32,768 and 258.1 M at 65,536: 8.73x and 9.44x at 8 times the words). Still
+/// 335.3 M / 5,579 M instructions, 16.64x, and 25.1 MB / 362.5 MB, 14.43x; by phase the tree
+/// 18.16x (bytes 13.31x), the cofactors 17.97x (14.62x), the step up 18.87x (15.13x), the leaf
+/// inverses 9.12x (8.00x), the last remainder 22.6x (20.96x). So the excess is not a fixed
+/// crossover: it is the method's `M(N) log k` with `N` growing 9.5 times for 8 times the primes
+/// (the `n`-th prime has about `log2(n ln n)` bits) and three more levels, at the top where the
+/// cost of a level is highest. With `c(s) = M(s) / s` the cost of a level is `N c(s_l)`, and
+/// with `c(s) = log s` the ratio is `8 (N'/8N) ((L + 3) / L)^2`, 11.1 at `L` = 17 and under
+/// 10.5 only from `L` about 20.6, so the ratio of `N log^2 N` passes 10.5 at every size the
+/// tests can run.
+///
+/// The bytes, proved for every method that keeps the levels of the product tree (the remainder
+/// tree reads every level on its way down, so all are held at once): a level's nodes multiply
+/// to `M`, and `bits(a b) <= bits(a) + bits(b)`, so a level holds at least `bits(M)` bits, and
+/// the `L` levels above the leaves at least `L bits(M)`. On this bench, sized by the count of
+/// primes, `bits(M)` grows 10.12 times (26,537 to 268,427) and `L` from 11 to 14, so the held
+/// levels alone grow at least `10.12 * 14 / 11 = 12.9` times, over 10.5, whatever the code
+/// around them does. A method that does not keep the levels recomputes them, which costs time
+/// (the remainder forest of Harvey and Sutherland, cited above, trades in that way); none is
+/// known that keeps the order `M(N) log k` and holds `o(N log k)` bits. Not proved: that every
+/// method in `O(M(N) log k)` time must hold `Omega(N log k)` bits.
+///
+/// No refusal (PROOF-crt-refusal-exact-class, 2026-11-21). The author's order allows a refusal
+/// only for a class of inputs that provably degrades, defined by the moduli. To prove that a
+/// class needs more than O(n log n) work one needs a lower bound above `n log n` for CRT on that
+/// class. None is known in any model: the only proved lower bound is the output, Omega(N), and
+/// the conditional Omega(N log N) bounds cited above are for one multiplication, which every
+/// method also pays. So no nonempty class can be shown to degrade, the exact refusal class is
+/// empty, and every input is solved, at O(M(N) log k). This is a limit of what is known, not a
+/// proof that no faster method exists: the gap between Omega(N) and O(M(N) log k) is open in
+/// the literature searched above. A class defined by the moduli where a linear method is proved
+/// is taken instead where one exists: moduli that are all prime words, for the coprime base
+/// (zed-kernel `num::coprime::prime_words`, PERF-private-quotient-wide-moduli); for CRT itself
+/// the product `M` is the output, so no such class lowers its order.
 fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
     if pairs.is_empty() {
         return Some((Int::ZERO, Int::ONE));

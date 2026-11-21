@@ -152,3 +152,40 @@ fn pncx_affine_alias_chain_scale() {
         assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
     });
 }
+
+/// `x - m_i q_i = 1` over the first `n` primes above `2^47`, each `q_i` private: the private
+/// quotients over distinct primes past `FACTOR_BITS` (44), where `coprime_factorization` used
+/// to take zed-kernel's `by_halves` (R2 Gemini seat, `ADV_WIDE48_UNIT`: 14.11 then 19.78 times
+/// the instructions at 8 times the rows from 64). From 256 moduli that are all prime words the
+/// kernel's prime-word path answers (PERF-private-quotient-wide-moduli, 2026-11-21, load 40:
+/// 61,348,567 and 516,268,910 instructions at 4096 and 32,768 rows, 8.42 times, and 8.0 times
+/// the bytes; with the path turned off, 182,982,981 and 2,203,550,057, 12.04 times, a
+/// failure).
+#[test]
+fn pncx_private_quotients_wide_primes_scale() {
+    let inputs = scaling::inputs(4096, |n| {
+        let x = Lin::atom(Atom::Sym("x".into()));
+        let mut parts = Vec::with_capacity(n);
+        let mut p = (1u64 << 47) + 1;
+        while parts.len() < n {
+            if zed_numtheory::is_prime(p) {
+                let q = Lin::atom(Atom::Aux(parts.len() as u32));
+                let m = Int::from(i128::from(p));
+                parts.push(Formula::Con(Con::eq(
+                    &x.minus(&q.times(m)),
+                    &Lin::constant(1),
+                )));
+            }
+            p += 2;
+        }
+        Formula::and(parts)
+    });
+    scaling::check_order(
+        "private quotients over distinct wide primes",
+        4096,
+        1,
+        |n| {
+            assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
+        },
+    );
+}

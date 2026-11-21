@@ -205,9 +205,9 @@ fn scaled_descend<L: Borrow<BigUint>>(
     scaled_descend_switch(top, p, leaves, levels, SCALED_TO_EXACT_WORDS)
 }
 
-/// [`scaled_descend`] with its switch to the exact descent at levels whose nodes are all at most
+/// `scaled_descend` with its switch to the exact descent at levels whose nodes are all at most
 /// `switch_words` words (0: the scaled tree to the leaves), public for the benchmark of both
-/// sides of [`SCALED_TO_EXACT_WORDS`] in a crate that builds zed-kernel with its own constants.
+/// sides of `SCALED_TO_EXACT_WORDS` in a crate that builds zed-kernel with its own constants.
 #[doc(hidden)]
 pub fn scaled_descend_switch<L: Borrow<BigUint>>(
     top: &BigUint,

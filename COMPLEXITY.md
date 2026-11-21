@@ -1394,6 +1394,76 @@ methods' costs node by node is PERF-remainders-switch-by-cost.
 
 To be measured again on each other target (A96) by the same benchmark.
 
+### PERF-private-quotient-wide-moduli, `zed-kernel/src/num/coprime.rs` `PRIME_INPUTS`, `prime_words`, measured 2026-11-21
+
+When every input is a prime word, `cb S` is the set of distinct inputs, and an input shares a
+factor exactly when another input equals it (proofs at `base_of_primes` and
+`shares_among_primes`). `prime_words` tests each input with `zed_numtheory::is_prime`. That test
+is exact for every 64-bit number: twelve Miller-Rabin bases, and the least strong pseudoprime to
+all twelve is above 2^64 (Sorenson and Webster 2017, doi:10.1090/mcom/3134). One sort then
+finishes, so the work is O(k) word products plus an O(k log k) sort, with no rho and no
+expectation. The path is tried from `PRIME_INPUTS` = 256 inputs, in `shares_a_factor`,
+`coprime_base` and `coprime_base_exponents`, before the factoring path, which handles only
+inputs of at most 44 bits. Distinct primes over 44 bits went to `by_halves` before.
+
+Measured from zedc-presburger (real multiplication constants), load 166, instructions of the
+primality tests and the sort over `shares_a_factor` before, first `k` primes above `2^(b-1)`:
+
+| bits | k = 64 | 128 | 256 | 512 | 4096 |
+|---|---|---|---|---|---|
+| 24 | 0.33 | 0.30 | 0.25 | 0.20 | 0.43 (against factoring) |
+| 32 | 1.37 | 1.16 | 0.92 | 0.69 | 0.77 (against factoring) |
+| 40 | 1.05 | 0.88 | 0.70 | 0.52 | 0.81 (against factoring) |
+| 48 | 1.13 | 0.91 | 0.69 | 0.50 | 0.23 |
+| 56 | 1.18 | 0.92 | 0.67 | 0.45 | 0.24 |
+| 63 | 1.22 | 0.93 | 0.67 | 0.47 | 0.26 |
+
+256 is the least count measured where the path is the cheaper at every width. The R2 Gemini
+seat's `ADV_WIDE48_UNIT` (`x - m_i q_i = 1` over distinct 48-bit primes) through
+`solve_modular`:
+
+| Build | k = 64 | k = 512 | k = 4096 | Ratios |
+|---|---|---|---|---|
+| main 49539a5a6 | 922,650 | 13,015,618 | 257,432,509 | 14.11 then 19.78 (bytes 15.82, 20.96) |
+| this change, load 45 | 788,188 | 7,244,656 | 61,264,201 | 9.19 then 8.46 (bytes 4.48, 8.03) |
+
+`coprime_factorization` alone, at 256, 2,048 and 16,384 such primes, went from 18.42x then 12.98x
+to 8.29x then 8.29x. New bench
+`r6_tests::bench::pncx_private_quotients_wide_primes_scale` (4,096 and 32,768 rows), load 40:
+8.42x instructions and 8.0x bytes; with the path turned off it gave 12.04x, a failure. Test
+`num::coprime::tests::the_prime_word_path_agrees`: the paths agree with the trees and
+`by_halves`, at 24, 44, 45, 48 and 63 bits, on distinct primes, repeats, and lists with one
+composite. Two deliberate faults made it fail: a run of two equal primes not marked, and an
+exponent of 2. The worst case for the path is all prime words but the last input. Then the
+tests on all `k` inputs are lost, which is at most the cost of the method that follows from 256
+inputs on, so a factor of at most 2. To be measured again on each other target (A96).
+
+### PERF-crt-tree-bytes-growth and PROOF-crt-refusal-exact-class, `zedc-presburger` `combine_crt_tree`, 2026-11-21
+
+Not under 10.5. At 16,384 and 131,072 primes, where both sizes are past `MUL_LEAF` and one
+product measured n log n (8.73x and 9.44x at 8 times the words), the CRT tree still took 16.64x
+the instructions and 14.43x the bytes, load 75 to 114. So the excess is the method's
+`M(N) log k`, and no fixed crossover causes it. Its parts: `N` grows 9.5 to 10.1 times for 8
+times the primes, and three more levels are added at the top.
+
+The bytes bound is proved at `combine_crt_tree` for every method that keeps the tree's levels.
+Each level holds at least `bits(M)` bits, so on the bench sized by prime count the held levels
+alone grow `10.12 * 14 / 11 = 12.9` times. The bench's sizing is the author decision
+BENCH-crt-tree-size-by-bits, left as it is.
+
+No refusal class: proving that a class degrades needs a lower bound above `n log n` for CRT on
+it. The only bound known in any model is the output, Omega(N), so the exact class is empty and
+every input is solved. The argument is at the same site.
+
+### PERF-private-quotient-coverage, 2026-11-21: no bench over the limit
+
+These benches reach the general solver on aliases of the root, remainder definitions and
+windows: `pncx_affine_alias_chain_scale`, `pncx_alias_chain_axis`, `tied_remainders_scale`
+(8.806), `a_window_of_n_periods_scale`, `clauses_over_a_window_of_200_bits_scale` and
+`pncx_shared_formula_scale`. All pass in the `--bench` run of `zedc_presburger` and
+`l01_38_presburger`. So `private_quotient_consistency` is not extended. Nothing measured needs
+it, and a second set of verdicts would need its own proof.
+
 ## Kept
 
 | ID | Where | Why it is kept, or its cost | Cost, test or status | Test or status |

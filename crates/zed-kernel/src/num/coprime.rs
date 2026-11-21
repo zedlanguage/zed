@@ -113,9 +113,11 @@ pub struct CoprimeExponents {
 /// `with_one_wide`, O(M(n)) for `n` bits at a fixed width of the others; all other inputs take
 /// `by_halves`, Bernstein's algorithms.
 pub fn coprime_base<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
-    // At most `WORD_INPUTS` word inputs, the measured switchover documented there; then word
-    // inputs of at most `FACTOR_BITS` bits, the measured switchover documented there.
+    // At most `WORD_INPUTS` word inputs, the measured switchover documented there; then, from
+    // `PRIME_INPUTS` inputs, inputs that are all prime words; then word inputs of at most
+    // `FACTOR_BITS` bits, the measured switchovers documented there.
     let word_base = (words(xs).map(|ws| zed_numtheory::coprime_base_u64(&ws)))
+        .or_else(|| prime_words(xs).map(|ws| base_of_primes(&ws)))
         .or_else(|| factor_words(xs).map(|ws| zed_numtheory::coprime_base_by_factoring(&ws)));
     if let Some((elements, exponents)) = word_base {
         // `c ^ k` divides a word input, so it is a word and `k < 64`.
@@ -150,9 +152,11 @@ pub fn coprime_base<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
 /// they are counted by word divisions; on every other input each factor `q` of element `e` is
 /// divided by `e` ([`strip`]), O(M(bits q)).
 pub fn coprime_base_exponents<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeExponents {
-    // At most `WORD_INPUTS` word inputs, then word inputs of at most `FACTOR_BITS` bits, the
-    // measured switchovers documented there.
+    // At most `WORD_INPUTS` word inputs, then from `PRIME_INPUTS` inputs that are all prime
+    // words, then word inputs of at most `FACTOR_BITS` bits, the measured switchovers
+    // documented there.
     let word_base = (words(xs).map(|ws| zed_numtheory::coprime_base_u64(&ws)))
+        .or_else(|| prime_words(xs).map(|ws| base_of_primes(&ws)))
         .or_else(|| factor_words(xs).map(|ws| zed_numtheory::coprime_base_by_factoring(&ws)));
     if let Some((elements, exponents)) = word_base {
         let elements = elements.into_iter().map(BigUint::from).collect();
@@ -276,6 +280,120 @@ fn factor_words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
         .collect::<Option<_>>()?;
     let top = ws.iter().copied().max().unwrap_or(0);
     (top.checked_ilog2().map_or(0, |l| l + 1) <= FACTOR_BITS).then_some(ws)
+}
+
+/// The fewest inputs for which [`shares_a_factor`] tests whether every input is a prime word
+/// ([`prime_words`]) before the other methods.
+///
+/// A measured switchover, not a proved bound (author decision A96). Measured 2026-11-21 (load
+/// 166, instructions; `zed_numtheory::is_prime` on every input and the sort of
+/// [`shares_among_primes`], over what [`shares_a_factor`] took before, on the first `k` primes
+/// above `2^(b-1)`, from zedc-presburger so that multiplication has its real switchovers;
+/// PERF-private-quotient-wide-moduli): at `k = 128` 0.30 at 24 bits, 1.16 at 32, 0.88 at
+/// 40, 0.91 at 48, 0.92 at 56 and 0.93 at 63; at `k = 256` 0.25, 0.92, 0.70, 0.69, 0.67 and
+/// 0.67; at 512 0.20 to 0.69; at 4096 0.23 to 0.26 above `FACTOR_BITS` against the trees and
+/// 0.43 to 0.81 at and below it against `factor_words`'s path. At 64 and fewer inputs it is
+/// the dearer at every width but 24 bits (1.05 to 1.71). So 256, the least count measured
+/// where it is the cheaper at every width.
+///
+/// The same count serves [`coprime_base`] and [`coprime_base_exponents`], where the method it
+/// replaces is `by_halves`, dearer than the trees of `shares_a_factor` (on distinct 48-bit
+/// primes through zedc-presburger `coprime_factorization`: 3.83 M instructions at 256 inputs
+/// and 10.2 M at 512 before, 2.21 M and 4.46 M for the tests and the sort).
+///
+/// What relies on it: only the cost; [`shares_among_primes`] and [`base_of_primes`] give the
+/// answers of the other methods (proved there; `tests::the_prime_word_path_agrees` holds them
+/// equal). Run the measurement again for each target platform and after a change to
+/// `zed_numtheory::is_prime`.
+pub(super) const PRIME_INPUTS: usize = 256;
+
+/// The inputs as words when there are at least [`PRIME_INPUTS`] of them and every one is a
+/// prime below `2^64`; otherwise `None`. Stops at the first input that is not a prime word.
+///
+/// `zed_numtheory::is_prime` is exact for every 64-bit number: Miller-Rabin with the twelve
+/// primes 2 to 37 as bases, since the least strong pseudoprime to all twelve is above `2^64`
+/// (Sorenson and Webster 2017, doi:10.1090/mcom/3134, cited and checked at `is_prime`).
+// Complexity tradeoff: at most `k` primality tests, each at most twelve rounds of O(64) word
+// products in Montgomery form, so O(k) word operations with a proved constant and no
+// expectation. When an input is not a prime word the work done so far is lost and the other
+// methods run; that is at most the cost of the tests on all `k` inputs, which from
+// `PRIME_INPUTS` on is below the tree's on every width measured (at `PRIME_INPUTS`), so the
+// loss is at most the cost of the method that follows, a constant factor of at most 2. A
+// composite with a prime factor up to 37 is rejected by one division each base, before any
+// product (at `is_prime`).
+fn prime_words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
+    if xs.len() < PRIME_INPUTS {
+        return None;
+    }
+    xs.iter()
+        .map(|x| x.borrow().to_u64().filter(|&w| zed_numtheory::is_prime(w)))
+        .collect()
+}
+
+/// The distinct values of `ws` in increasing order and, for each input, the index of its value
+/// among them: after one sort of `(value, input)` pairs the inputs of one value are one run of
+/// consecutive entries, and each run gives one value and its index to every input in it.
+// Complexity tradeoff: a sort of `k` pairs, O(k log k) word comparisons, deterministic; a hash
+// would be O(k) in expectation over the hash. Measured with the primality tests that come
+// before it (at `PRIME_INPUTS`), the sort is a small part: about 9,000 instructions a test at
+// 48 bits, against about 15 log2 k for the sort's share an input.
+fn distinct_words(ws: &[u64]) -> (Vec<u64>, Vec<u32>) {
+    let mut order: Vec<(u64, u32)> = ws.iter().enumerate().map(|(i, &w)| (w, index(i))).collect();
+    order.sort_unstable();
+    let mut values = Vec::new();
+    let mut of = vec![0u32; ws.len()];
+    for run in order.chunk_by(|a, b| a.0 == b.0) {
+        let e = index(values.len());
+        values.push(run[0].0);
+        for &(_, i) in run {
+            of[i as usize] = e;
+        }
+    }
+    (values, of)
+}
+
+/// [`shares_a_factor`] on inputs that are all prime: input `i` shares a factor exactly when
+/// another input equals it.
+///
+/// Proof. The only prime factor of a prime `p` is `p`. So primes `p` and `q` share a prime
+/// factor exactly when `p = q`, and input `i` shares one with another input exactly when some
+/// `j != i` has `ws[j] = ws[i]`, that is when the value of input `i` ([`distinct_words`]) is the
+/// value of more than one input. A prime is at least 2, so the contract's case of an input 1
+/// does not arise.
+// Complexity tradeoff: `distinct_words`, then one count and one pass, O(k); the trees cost
+// O(M(B) log k) for `B` bits, 17.7 times the instructions from 512 to 4096 distinct 48-bit
+// primes, where this path with its primality tests is 8.2 times (2026-11-21).
+fn shares_among_primes(ws: &[u64]) -> Vec<bool> {
+    let (values, of) = distinct_words(ws);
+    let mut count = vec![0u32; values.len()];
+    for &e in &of {
+        count[e as usize] += 1;
+    }
+    of.iter().map(|&e| count[e as usize] > 1).collect()
+}
+
+/// The natural coprime base `cb S` of inputs that are all prime, and each input over it, in the
+/// form of `zed_numtheory::coprime_base_by_factoring`: the elements are the distinct inputs,
+/// and input `i` is `(e, 1)` for the element `e` equal to it.
+///
+/// Proof, by the definition of `cb S` that `coprime_base_by_factoring` proves its answer
+/// against (`zed_numtheory::factored`, steps 1 to 7; Bernstein 2005,
+/// doi:10.1016/j.jalgor.2004.04.009, Theorem 7.3 for uniqueness): for each prime `p` dividing
+/// some input, its vector `v_p` of multiplicities over the inputs; `l_p` the gcd of its
+/// entries and `w_p = v_p / l_p`; the primes with equal `w_p` form one class `C`, whose element
+/// is `E_C = prod_(p in C) p^(l_p)`. Here input `i` is the prime `ws[i]` to the first power, so
+/// `v_p` is 1 at the inputs equal to `p` and 0 elsewhere: `l_p = 1` and `w_p = v_p`. Distinct
+/// primes `p != q` are never the same input, so their vectors have disjoint nonzero entries, and
+/// both are nonzero, so `w_p != w_q`: every class is one prime, and `E_C = p`. So the elements
+/// are the distinct inputs, and input `i`, the prime `ws[i]`, has multiplicity 1 in its own
+/// element and 0 in every other.
+// Complexity tradeoff: `distinct_words`, then one list of one entry an input, O(k) beside the
+// sort; `by_halves` costs O(M(N) log^2 N) and, on distinct 48-bit primes through zedc-presburger
+// `coprime_factorization`, 18.42 then 12.98 times the instructions at 8 times the inputs from
+// 256 (2026-11-21).
+fn base_of_primes(ws: &[u64]) -> (Vec<u64>, Vec<Vec<(u32, u64)>>) {
+    let (values, of) = distinct_words(ws);
+    (values, of.into_iter().map(|e| vec![(e, 1)]).collect())
 }
 
 /// The `k` of `q = e ^ k`, for `e >= 2` and `q` a power of it.
@@ -663,16 +781,25 @@ pub fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
 // `zed_numtheory::factor`, PROOF-factored-coprime-cost), then a count of each prime in
 // O(k) expected hash operations, so linear in `k` at a fixed width; a measured switchover, at
 // `FACTOR_BITS`. Measured 2026-11-20 (load 42, `pncx_common_factor_tree_side_scale`, 512 and
-// 4096 values): 16.105 on the trees before, 6.683 after. What is left on the tree: wide
-// values, fewer than `FACTOR_INPUTS` sparse values, and values past `FACTOR_BITS`; no method of
+// 4096 values): 16.105 on the trees before, 6.683 after. From `PRIME_INPUTS` inputs, inputs
+// that are all prime words of any width are answered by equality ([`shares_among_primes`],
+// proved there), after one exact primality test each, O(k) word products and an O(k log k)
+// sort (PERF-private-quotient-wide-moduli, 2026-11-21: 3.4 times fewer instructions than
+// the trees at 4096 distinct 48-bit primes). What is left on the tree: wide values, fewer
+// than `FACTOR_INPUTS` sparse values that are not all prime from `PRIME_INPUTS` on, and
+// values past `FACTOR_BITS` that are not all prime; no method of
 // lower order than O(M(B) log k) is known for those (Bernstein 2005 gives B^(1 + o(1))), and
 // the tree side is 13 to 18 times the work at 8 times the values (plan row
 // PERF-negated-chain-unsolved); COMPLEXITY.md C31c.
 pub fn shares_a_factor<L: Borrow<BigUint>>(xs: &[L]) -> Vec<bool> {
-    // The table where its proved condition holds; then word values of at most `FACTOR_BITS`
-    // bits, the measured switchover documented there; then the trees.
+    // The table where its proved condition holds; then, from `PRIME_INPUTS` inputs, inputs
+    // that are all prime words; then word values of at most `FACTOR_BITS` bits, the measured
+    // switchover documented there; then the trees.
     if let Some((small, top)) = dense_values(xs) {
         return zed_numtheory::shares_a_factor_by_table(&small, top);
+    }
+    if let Some(ws) = prime_words(xs) {
+        return shares_among_primes(&ws);
     }
     match factor_words(xs) {
         Some(ws) => zed_numtheory::shares_a_factor_by_factoring(&ws),
@@ -1687,6 +1814,54 @@ mod tests {
         (0..xs.len())
             .map(|i| (0..xs.len()).any(|j| j != i && !gcd_uint(&xs[i], &xs[j]).is_one()))
             .collect()
+    }
+
+    /// PERF-private-quotient-wide-moduli: the prime-word path. At `PRIME_INPUTS - 1` inputs it
+    /// is never taken, and at `PRIME_INPUTS` it is taken exactly when every input is a prime
+    /// word; on distinct primes, on primes with repeats (some equal to the first or last
+    /// input), and on primes with one composite (which leaves the path, a product of two of
+    /// the primes or a prime times 2) at 24, 44, 45, 48 and 63 bits, `shares_a_factor` and
+    /// `shares_among_primes` (where the path is taken) give `shares_a_factor_by_tree`'s answer;
+    /// `coprime_base` and `base_of_primes` give `by_halves`'s base and factors, the base is
+    /// `cb S` by the definition (`by_primes`), and `coprime_base_exponents` gives the factors.
+    #[test]
+    fn the_prime_word_path_agrees() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("the_prime_word_path_agrees");
+        for b in [24, FACTOR_BITS, FACTOR_BITS + 1, 48, 63] {
+            let k = PRIME_INPUTS;
+            let ps = primes_in_a_row(&mut rng, b, k);
+            let mut repeats = ps.clone();
+            for _ in 0..8 {
+                let (i, j) = (rng.below(k), rng.below(k));
+                repeats[i] = ps[j];
+            }
+            repeats[k - 1] = ps[0];
+            let mut composite = ps.clone();
+            // A word: `ps[0] ps[1] < 2^64` for `b <= 32`, and `2 p < 2^64` for `p < 2^63`.
+            composite[rng.below(k)] = if b <= 32 { ps[0] * ps[1] } else { 2 * ps[1] };
+            for (ws, prime) in [(ps.clone(), true), (repeats, true), (composite, false)] {
+                let bx: Vec<BigUint> = ws.iter().map(|&w| big(w)).collect();
+                let at = format!(
+                    "b {b}, prime {prime}, {} .. {}, seed {seed}",
+                    ws[0],
+                    ws[k - 1]
+                );
+                assert_eq!(prime_words(&bx).is_some(), prime, "{at}");
+                assert_eq!(prime_words(&bx[1..]), None, "{at}");
+                let want = shares_a_factor_by_tree(&bx);
+                assert_eq!(shares_a_factor(&bx), want, "{at}");
+                let halves = by_value(&by_halves(&bx));
+                assert_eq!(by_value(&coprime_base(&bx)), halves, "{at}");
+                exponents_are_the_factors(&bx);
+                if prime {
+                    assert_eq!(shares_among_primes(&ws), want, "{at}");
+                    let (elements, exponents) = base_of_primes(&ws);
+                    let factored = by_value(&from_words(elements, exponents));
+                    assert_eq!(factored.0, by_primes(&ws), "{at}");
+                    assert_eq!(factored, halves, "{at}");
+                }
+            }
+        }
     }
 
     /// The table method and the tree method of `shares_a_factor` give the pairwise answer on
