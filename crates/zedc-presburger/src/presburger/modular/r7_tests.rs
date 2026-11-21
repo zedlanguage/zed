@@ -1202,6 +1202,120 @@ fn the_merge_of_large_pieces_gives_the_ends_of_the_joined_pieces() {
     );
 }
 
+/// [`LargeMerge`] makes one run per distinct interval of residues `(m, ra, rb)`, whatever the
+/// number of lists that hold it (its proof (4); FAIL-main-4af88445a): the `n` clauses of
+/// [`one_bound_clauses`], the `k`-th `x mod 4 == k mod 4 || x mod 9 == k mod 9`, hold 13
+/// intervals between them. With one run per literal, as before, the heap held `2 n` runs and
+/// the sweep of `bench::a_regime_with_one_bound_and_n_clauses_scales` took 25.7 s at `n =
+/// 16,000` (2026-11-21, load 45), past the time limit of its phase at 8n. Read with no small
+/// modulus, every literal of the regime is a run's: the 3 units hold 1 + 2 + 2 intervals and
+/// the 3 clauses before the `n` hold 6 + 1 + 5, 17 in all, 2 of which (`x mod 4 in {0}` and
+/// `{2}`, of the first clause) the `n` clauses hold too, so 17 + 13 - 2 = 28 runs at every
+/// `n >= 9`.
+#[test]
+fn literals_with_one_interval_share_one_run() {
+    for n in [9, 64, 512] {
+        let (l, units, clauses) = one_bound_clauses(n);
+        let e = &(&l + &period_of(&units, &clauses)) - &Int::ONE;
+        let lists: Vec<Vec<(&Int, &ResidueSet)>> = units
+            .iter()
+            .map(|lit| vec![lit])
+            .chain(clauses.iter().map(|cl| cl.iter().collect()))
+            .collect();
+        let merge = LargeMerge::new(&l, &e, &lists);
+        assert_eq!(merge.run_count(), 28, "n = {n}");
+    }
+}
+
+/// [`sweep_split`] with every modulus large finds the least point of `[l, h]`, or none, as
+/// testing each point does, on regimes whose units and clauses draw their literals from a pool
+/// of 6, so that most intervals of residues are held by several lists and share one run of
+/// [`LargeMerge`] (its proof (4)). 300 draws of up to 4 units and up to 40 clauses of 1 to 3
+/// literals over moduli 2 to 40, on windows of 1 to 600 points. The count of literals that found
+/// their interval's run already made checks that the draws share runs.
+#[test]
+fn shared_intervals_answer_as_each_point_does() {
+    /// One literal per modulus, its intervals the `k` pool entries drawn over that modulus,
+    /// joined into a normal list.
+    fn draw(state: &mut u64, pool: &[(i64, (i64, i64))], k: i64) -> Lits {
+        let mut by_modulus: BTreeMap<i64, Vec<(i64, i64)>> = BTreeMap::new();
+        for _ in 0..k {
+            let (m, iv) = pool[lcg_below(state, 6) as usize];
+            by_modulus.entry(m).or_default().push(iv);
+        }
+        by_modulus
+            .into_iter()
+            .map(|(m, ivs)| {
+                let ivs: Vec<(Int, Int)> = ivs
+                    .into_iter()
+                    .map(|(a, b)| (Int::from(a), Int::from(b)))
+                    .collect();
+                let joined = intervals::coalesce(ivs)
+                    .into_iter()
+                    .map(|(a, b)| {
+                        let a = a.to_i128().expect("small") as i64;
+                        (a, b.to_i128().expect("small") as i64)
+                    })
+                    .collect();
+                (m, joined)
+            })
+            .collect()
+    }
+    let mut state = 0x5a7e_d0c5_u64;
+    let mut shared = 0usize;
+    let mut with_point = 0usize;
+    for _ in 0..300 {
+        let pool: Vec<(i64, (i64, i64))> = (0..6)
+            .map(|_| {
+                let m = 2 + lcg_below(&mut state, 39);
+                let a = lcg_below(&mut state, m);
+                (m, (a, a + lcg_below(&mut state, m - a)))
+            })
+            .collect();
+        let k = lcg_below(&mut state, 5);
+        let units = draw(&mut state, &pool, k);
+        let mut clauses: Vec<Lits> = Vec::new();
+        for _ in 0..lcg_below(&mut state, 41) {
+            let k = 1 + lcg_below(&mut state, 3);
+            clauses.push(draw(&mut state, &pool, k));
+        }
+        let l = lcg_below(&mut state, 400) - 200;
+        let h = l + lcg_below(&mut state, 600);
+        let want = (l..=h).find(|&x| regime_holds(x, &units, &clauses));
+        let set = |s: &[(i64, i64)]| -> ResidueSet {
+            s.iter()
+                .map(|&(a, b)| (Int::from(a), Int::from(b)))
+                .collect()
+        };
+        let unit_mods: BTreeMap<Int, ResidueSet> =
+            units.iter().map(|(m, s)| (Int::from(*m), set(s))).collect();
+        let cls: Vec<BTreeMap<Int, ResidueSet>> = clauses
+            .iter()
+            .map(|cl| cl.iter().map(|(m, s)| (Int::from(*m), set(s))).collect())
+            .collect();
+        let (li, hi) = (Int::from(l), Int::from(h));
+        let got = sweep_split(&li, &hi, &unit_mods, &cls, &BTreeSet::new(), 1);
+        let what = format!("[{l}, {h}] units {units:?} clauses {clauses:?}");
+        assert_eq!(found(&got), want.map(Int::from), "{what}");
+        if want.is_none() {
+            assert!(matches!(got, RegimeOut::Empty), "{what}");
+        }
+        let lists: Vec<Vec<(&Int, &ResidueSet)>> = unit_mods
+            .iter()
+            .map(|lit| vec![lit])
+            .chain(cls.iter().map(|cl| cl.iter().collect()))
+            .collect();
+        let literals: usize = lists.iter().flatten().map(|(_, s)| s.len()).sum();
+        shared += literals - LargeMerge::new(&li, &hi, &lists).run_count();
+        with_point += usize::from(want.is_some());
+    }
+    assert!(shared >= 3000, "only {shared} literals shared a run");
+    assert!(
+        (30..=270).contains(&with_point),
+        "{with_point} of 300 with a point"
+    );
+}
+
 /// [`cheapest_split`]'s choice is the `k` of least bound `U_k`, the least `k` at a tie, and the
 /// bound it gives is that `U_k`, with each bound computed here from its definition (each sum
 /// formed again at each `k`), over 300 drawn sets of 1 to 8 moduli from 2 to 400 with weights 1

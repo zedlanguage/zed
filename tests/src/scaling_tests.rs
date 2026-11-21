@@ -920,6 +920,79 @@ fn a_check_after_another_test_built_its_set_up_passes() {
     );
 }
 
+/// The variable naming the file each build of [`a_check_of_built_inputs_logs_its_builds`]
+/// appends `<pid> <size>` to; set only by [`check_inputs_builds_only_the_sizes_each_process_runs`].
+const BUILDS_LOG: &str = "ZED_SCALING_TEST_BUILDS_LOG";
+
+/// Two checks of [`check_inputs`], sizes 100 and 200, each input built logged to the file
+/// [`BUILDS_LOG`] names, when it is set (the processes of the checks inherit it).
+#[test]
+fn a_check_of_built_inputs_logs_its_builds() {
+    let make = |n: usize| {
+        if let Ok(path) = std::env::var(BUILDS_LOG) {
+            use std::io::Write;
+            let mut log = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(path)
+                .expect("opening the log of builds");
+            writeln!(log, "{} {n}", std::process::id()).expect("logging a build");
+        }
+        n
+    };
+    for n in [100, 200] {
+        check_inputs("an input built at the sizes run", n, make, |&k: &usize| {
+            work(k, 1, 20);
+            linear_bytes(k);
+        });
+    }
+}
+
+/// [`check_inputs`] builds in each process only the inputs it runs (BENCH-follow-group-near-60s):
+/// [`a_check_of_built_inputs_logs_its_builds`] run alone builds 100 and 200 in its own process,
+/// 800 in the process of the run at 8n of its first check, and 100 (the replay of the first
+/// check's run at n) and 1600 in that of its second: 5 inputs, where [`inputs`] built both sizes
+/// of every check reached in every process, 10. Only a count of instructions runs the run at 8n
+/// in a new process.
+#[test]
+fn check_inputs_builds_only_the_sizes_each_process_runs() {
+    if !Meter::new().fresh {
+        return;
+    }
+    let log = crate::scratch::scratch("check-inputs-builds.log");
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    std::fs::write(&log, "").unwrap();
+    let me = "scaling_tests::a_check_of_built_inputs_logs_its_builds";
+    let run = fresh_command(&std::env::current_exe().expect("this test binary"))
+        .args([me, "--exact", "--test-threads=1"])
+        .env(BUILDS_LOG, &log)
+        .output()
+        .expect("running this test binary");
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        run.status.success() && out.contains("test result: ok. 1 passed"),
+        "{out}"
+    );
+    let builds = builds_by_process(&std::fs::read_to_string(&log).unwrap());
+    assert_eq!(builds, [vec![100, 200], vec![100, 1600], vec![800]]);
+}
+
+/// The sizes of each process's builds in a log of `<pid> <size>` lines, each process's in the
+/// order logged, the processes sorted by their sizes.
+fn builds_by_process(log: &str) -> Vec<Vec<usize>> {
+    let mut by_pid = std::collections::BTreeMap::<&str, Vec<usize>>::new();
+    for line in log.lines() {
+        let (pid, size) = line.split_once(' ').expect("a line `<pid> <size>`");
+        by_pid
+            .entry(pid)
+            .or_default()
+            .push(size.parse().expect("a size"));
+    }
+    let mut sizes: Vec<_> = by_pid.into_values().collect();
+    sizes.sort();
+    sizes
+}
+
 /// The passes of the loops of [`counted_spin`] on every thread of the process; only
 /// `a_meter_measures_by_any_counter_it_is_given` runs them.
 static SPUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

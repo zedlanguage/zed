@@ -98,16 +98,21 @@ const N_PERIODS: usize = 5_000;
 /// A regime with one bound that the coprime base leaves undecided, swept on one period of its
 /// moduli past the bound (FAIL-omega-negations-slow-7837918895420161952), on
 /// [`one_bound_clauses`] with `n` clauses more: the period stays 4,680, so each clause adds a
-/// fixed number of events, about `4680 / 4 + 4680 / 9` pieces of its moduli, which the split
-/// chosen reads as large ones. Each event is one pop of [`LargeMerge`]'s heap, which holds one
-/// waiting event per run, so `Theta(n)` of them: the work is `Theta(n log n)`, predicted at 8n
-/// as `8 log(32,000) / log(4,000)`, about 10.0 for the heap alone. Measured 2026-11-20 (load 53):
-/// 7.62e9 and 6.91e10 instructions, 9.06 times, 99% of it in `LargeMerge::next_change` and 62%
-/// in its heap's `pop` (perf, cycles), so the ratio is that `n log n` (P300); 8.0 times the bytes.
+/// fixed number of list changes, about `4680 / 4 + 4680 / 9` pieces of its moduli, which the
+/// split chosen reads as large ones. Until FAIL-main-4af88445a [`LargeMerge`]'s heap held a run
+/// per literal, `2 n` of them, each event a pop: `Theta(n log n)` work, measured 2026-11-20
+/// (load 53) at 7.62e9 and 6.91e10 instructions, 9.06 times, 62% in the heap's `pop`; and the
+/// sweep took 25.7 s at 16,000 (2026-11-21, load 45), past its phase's time limit. The `n`
+/// clauses hold 13 intervals of residues between them, and a run is now one per interval, held
+/// by every list that holds it (its proof (4)): 28 runs at every `n >= 9`
+/// (`r7_tests::literals_with_one_interval_share_one_run`), so the events are fixed in `n` and
+/// each changes the counts of the `Theta(n)` lists of its run, `Theta(n)` in all. Measured
+/// 2026-11-21 (load 46): 4.46e8 and 3.28e9 instructions, 7.366 times, 91 ms and 383 ms, 7.8
+/// times the bytes; the piece took 0.95 s, against 25.9 s to 36.7 s before.
 ///
 /// Since [`SWEEP_SWITCHOVER`] the regime itself goes to the general path at these sizes (its
 /// bound is 10,187,473 at n = 2,000), which decides its formula in 1.9 ms at n = 2,000 and
-/// 17.6 ms at 16,000, where this sweep takes 1.0 s and 25.7 s (2026-11-21, load 45). So this
+/// 17.6 ms at 16,000, where this sweep took 1.0 s and 25.7 s (2026-11-21, load 45). So this
 /// bench calls [`sweep_bounded`] on the window `[l, l + p - 1]` directly: the sweep still runs
 /// for a bounded regime the base writes and for one under the switchover, and its scaling is
 /// what is checked here.

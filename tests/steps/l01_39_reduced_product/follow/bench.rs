@@ -62,8 +62,7 @@ fn following_tests_scale() {
             differences,
         ),
     ] {
-        let (scope, terms) = sizes(n, src);
-        scaling::check(what, n, |k| _ = arms(at(&terms, k), &scope));
+        arms_scale(what, n, src);
     }
 }
 
@@ -102,10 +101,15 @@ fn nested_sums_of_one_input_scale() {
     }
 }
 
-/// The arms of the term `src` gives, at sizes `n` and `8 n`.
+/// The arms of the term `src` gives, at sizes `n` and `8 n`. Each process compiles the term
+/// only at the sizes it runs (`scaling::check_inputs`, BENCH-follow-group-near-60s), where both
+/// sizes were compiled in every process of the check and of each later check of its test.
 fn arms_scale(what: &str, n: usize, src: fn(usize) -> String) {
-    let (scope, terms) = sizes(n, src);
-    scaling::check(what, n, |k| _ = arms(at(&terms, k), &scope));
+    let built = |k: usize| {
+        let (ps, term) = function(&src(k));
+        (ints(&ps), term)
+    };
+    scaling::check_inputs(what, n, built, |(scope, term)| _ = arms(term, scope));
 }
 
 /// One of the checks of [`nested_sums_of_one_input_scale`].
@@ -156,10 +160,7 @@ fn nested_sums_with_an_if_scale() {
 /// PA-let-block); this test times only the arms.
 #[test]
 fn a_block_of_sums_of_ramps_scales() {
-    let (scope, terms) = sizes(128, let_chain);
-    scaling::check("the arms of a block of d sums of ramps", 128, |k| {
-        _ = arms(at(&terms, k), &scope)
-    });
+    arms_scale("the arms of a block of d sums of ramps", 128, let_chain);
 }
 
 /// Forming the summary of `x_d` in a chain of `d` bindings costs `O(d)`: one sum per binding,

@@ -95,20 +95,6 @@ fn chain(d: usize, plain: bool) -> String {
     format!("ok(positional n{ty}) = {inner};")
 }
 
-/// The terms of `ok` for sizes `n` and `8 n`, built before timing.
-fn sizes(n: usize, src: fn(usize) -> String) -> (Scope, [(usize, Arc<Term>); 2]) {
-    let (ps, small) = function(&src(n));
-    let (_, large) = function(&src(scaling::FACTOR * n));
-    (
-        ints(&ps),
-        [(n, Arc::new(small)), (scaling::FACTOR * n, Arc::new(large))],
-    )
-}
-
-fn at(terms: &[(usize, Arc<Term>); 2], k: usize) -> &Term {
-    &terms.iter().find(|(n, _)| *n == k).expect("a built size").1
-}
-
 /// `if slot != 0 && slot != 1 && … { 10 } else { 20 }`, `k` tests.
 fn excluded(k: usize) -> String {
     let tests: Vec<String> = (0..k).map(|i| format!("slot != {i}")).collect();

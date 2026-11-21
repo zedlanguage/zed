@@ -802,6 +802,94 @@ pub fn inputs<T>(n: usize, make: impl Fn(usize) -> T) -> std::collections::HashM
     [n, FACTOR * n].into_iter().map(|m| (m, make(m))).collect()
 }
 
+/// [`check`] of `run` on the input `make` gives at each size, built before any run is measured,
+/// and only at the sizes this process runs (`sizes_run_here`): a count of instructions runs
+/// the size 8n in a new process (see `compare_by`), which builds the input at 8n and, for each
+/// earlier check of the test, only the input at n it replays, where [`inputs`] builds both
+/// sizes in every process, each process building an input it never reads
+/// (BENCH-follow-group-near-60s). [`inputs`] stays for the checks that read their inputs
+/// otherwise (309 call sites name its map's type, and some check every input outside the runs).
+///
+/// Complexity tradeoff: COMPLEXITY.md row BENCH-follow-group-near-60s. Naive ([`inputs`]): the
+/// test's set-up for a check at place `k` costs `(k + 2) (B(n) + B(8n))` across its processes,
+/// `B` the cost of building one input. New: `B(n) + B(8n)` for the check itself and `B(n)` for
+/// each later check that replays it; no run measured changes, since each measured run reads the
+/// input it read before, built before its phase as before.
+pub fn check_inputs<T: Sync>(
+    what: &str,
+    n: usize,
+    make: impl Fn(usize) -> T,
+    run: impl Fn(&T) + Sync,
+) {
+    let mut meter = Meter::new();
+    let fresh = meter.fresh && meter.repeats() == (1, 1);
+    let (at_n, at_8n) = sizes_run_here(fresh);
+    let (small, large) = (at_n.then(|| make(n)), at_8n.then(|| make(FACTOR * n)));
+    fn input<'a, T>(built: &'a Option<T>, what: &str, size: usize) -> &'a T {
+        built.as_ref().unwrap_or_else(|| {
+            panic!(
+                "{what}: the input at {size} was not built, since this check was to run that size \
+                 in a new process of its test, which ran no test: this thread's name is not that \
+                 of a test of this binary; run the check on the test's thread, whose name \
+                 `scaling::on_a_stack` and `alone` keep"
+            )
+        })
+    }
+    check_by(&mut meter, Measures::Both, what, n, 1, |k| {
+        run(if k == n {
+            input(&small, what, n)
+        } else {
+            input(&large, what, k)
+        })
+    });
+}
+
+/// Which of the sizes n and 8n of the check this thread enters next, by a meter that runs each
+/// size in a new process when `fresh` is true, run in this process, as [`compare_by`] places
+/// them: in a process a check started for its test (`target`), each check before the target's
+/// place runs its size n only (and 8n when not `fresh`, as [`replay_or_measure`] replays it),
+/// and the target check its measured size only; with no target, a `fresh` check on a test's
+/// thread runs its size 8n in a new process, and its size n too unless this process runs the
+/// test alone ([`runs_alone`]); anything else runs both here.
+///
+/// Proof that a size run here is reported as run here, case by case of [`compare_by_dyn`], whose
+/// branches this follows: (1) no test name, or `main`: `enter_check` gives `None` and
+/// [`compare_measured`] runs both sizes with `at` `None`: (true, true). (2) A target for this
+/// test: `enter_check` gives the place `j`, the length of the test's list of checks before its
+/// push, which is the length read here, as nothing between this read and that push enters a
+/// check on this thread (the build of the inputs enters none: a check inside `make` would run
+/// here first and be counted first, and both places then match, as both read after it).
+/// `replay_or_measure` runs `small` and, unless `fresh`, `large` for `j < k`; for `j == k` only
+/// the measured run; `j > k` is not reached, since the process ends at `k` (both run, to be
+/// safe). (3) A target for another test: `at` `None`, both here. (4) No target and `fresh`:
+/// `at` is given, so the run at 8n is in a new process, and the run at n is too when
+/// `runs_alone` is false; each falls back to this process only when the new process ran no
+/// test, which [`run_in_a_new_process`] gives for a thread whose name is not a test's (the
+/// fallback reads an input not built and panics, naming the cause, never measuring a build).
+/// (5) No target and not `fresh`: `at` `None`, both here. `fresh` here is computed as in
+/// [`compare_by_dyn`], from the same meter.
+pub(crate) fn sizes_run_here(fresh: bool) -> (bool, bool) {
+    let thread = std::thread::current();
+    let Some(test) = thread.name().filter(|name| *name != "main") else {
+        return (true, true);
+    };
+    let j = OUTCOMES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(test)
+        .map_or(0, Vec::len);
+    match fresh_target() {
+        Some((k, large, target, _)) if target == test => match j.cmp(k) {
+            std::cmp::Ordering::Less => (true, !fresh),
+            std::cmp::Ordering::Equal => (!large, *large),
+            std::cmp::Ordering::Greater => (true, true),
+        },
+        Some(_) => (true, true),
+        None if fresh => (runs_alone(test), false),
+        None => (true, true),
+    }
+}
+
 /// `base + 37 i^2 mod p` for `i < k`, distinct for `k <= (p + 1) / 2` when `p` is a prime other
 /// than 37: `37 i^2 = 37 j^2 (mod p)` gives `p | (i - j)(i + j)`, and for `0 <= i < j < k` both
 /// factors lie in `1..p`. Weights for the inputs of a scaling check that must not repeat at

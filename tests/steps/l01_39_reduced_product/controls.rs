@@ -108,6 +108,49 @@ fn a_written_constraint_on_static_names_that_fails_makes_the_scope_bottom() {
     assert!(s.bottom);
 }
 
+/// A written constraint left waiting by one enumeration is found again by a later one when the
+/// name that kept it waiting changes, though no static value changes (`Scope::enumerate`'s
+/// `Waiting`, its proof step (1); BENCH-follow-group-near-60s). Blocked: `n * n mod 7 != 2`
+/// over the range `1..=6` waits on `n`, which lists no members; `n` then lists `1..=6` with
+/// no one value, the case where only the constraints of `Waiting` are gathered, and the
+/// blocked one must be among them. Stuck: `n mod m == 1` has two open names until `m` is 3.
+/// Without the step that gathers a blocked constraint when its name becomes enumerable, the
+/// first case keeps `[1..=6]`.
+#[test]
+fn a_constraint_left_waiting_is_enumerated_when_its_name_lists_members() {
+    let t = prim(
+        Prim::Ne,
+        vec![
+            prim(
+                Prim::Mod,
+                vec![prim(Prim::Mul, vec![var("n"), var("n")]), lit(7)],
+            ),
+            lit(2),
+        ],
+    );
+    let mut s = written(within(1, 6), t);
+    assert_eq!(s.get("n").ints().to_string(), "[1..=6]");
+    s.names
+        .insert("n".into(), among(&[1, 2, 3, 4, 5, 6]).get("n"));
+    s.reduce();
+    assert_eq!(s.get("n").ints().to_string(), "[1..=2, 5..=6]");
+
+    let t = prim(
+        Prim::Eq,
+        vec![prim(Prim::Mod, vec![var("n"), var("m")]), lit(1)],
+    );
+    let mut s = among(&(0..=10).collect::<Vec<_>>());
+    s.names.insert("m".into(), Product::of_type(Type::int()));
+    let mut s = written(s, t);
+    assert_eq!(s.get("n").ints().to_string(), "[0..=10]");
+    s.names.insert("m".into(), Product::literal(&Value::Int(3)));
+    s.reduce();
+    assert_eq!(
+        s.get("n").ints().to_string(),
+        "[1..=1, 4..=4, 7..=7, 10..=10]"
+    );
+}
+
 /// The scope of `n` of the type listing `vs`.
 fn among(vs: &[i64]) -> Scope {
     let t = Type::union_all(vs.iter().map(|&v| Type::lit(&Value::Int(v)).unwrap()));

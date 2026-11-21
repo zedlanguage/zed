@@ -4128,10 +4128,13 @@ fn sweep_split(
 
 /// One interval of residues `[ra, rb]` of a literal `x mod m in s` over a large modulus, read
 /// along `[l, e]` one block `[base, base + m)` at a time: its pieces are `[max(base + ra, l),
-/// min(base + rb, e)]` where not empty.
+/// min(base + rb, e)]` where not empty. One run serves every literal with the same `m`, `ra`
+/// and `rb`, in whatever lists they lie, since its pieces depend on `l`, `e`, `m`, `ra` and `rb`
+/// alone (FAIL-main-4af88445a).
 struct ResidueRun<'a> {
-    /// The list of [`LargeMerge`] the literal belongs to.
-    list: usize,
+    /// The lists of [`LargeMerge`] holding the interval, one entry per literal (a list that
+    /// held it twice would be named twice, and counted twice, as two runs counted it before).
+    lists: Vec<usize>,
     m: &'a Int,
     ra: &'a Int,
     rb: &'a Int,
@@ -4165,11 +4168,27 @@ struct ResidueRun<'a> {
 /// count changed), so it changes exactly where the union of the list's pieces is entered or left,
 /// the low ends of its joined pieces and their high ends plus one, at most `e`: the events of
 /// [`sweep_split`]'s proof (2). A place where counts change and no list's state does is passed
-/// over, so the walk's segments and tree steps are those of the joined pieces.
+/// over, so the walk's segments and tree steps are those of the joined pieces. (4) Shared runs:
+/// literals with the same `m`, `ra` and `rb` share one run, which names each of their lists.
+/// Their pieces are the same, since `base`, `a` and `b` are computed from `l`, `e`, `m`, `ra`
+/// and `rb` alone ([`LargeMerge::new`], [`LargeMerge::enter`]), so each of them would have
+/// pushed and popped the same events at the same places. Popping the shared run's event once and
+/// applying it to each list it names changes every `count[j]` exactly as popping each literal's
+/// own event did, so (2) and (3) hold as before, and the places and changes given are the same.
 ///
 /// Complexity tradeoff: making every piece on `[l, e]`, joining each list's and sorting the ends
-/// (as before) takes O(P log P) time and Theta(P) space for `P` pieces. Used: O(log S) a piece
-/// for the `S` runs, with space O(S + lists): the window's width changes the time only.
+/// (as before) takes O(P log P) time and Theta(P) space for `P` pieces. Then (PERF-sweep-lazy-
+/// pieces) one run per literal interval, O(log S) a piece for the `S` runs. Used: one run per
+/// distinct interval `(m, ra, rb)`, `S'` of them: grouping is O(S log S') at the start (a
+/// `BTreeMap` of the `S'` keys), each event is one heap step, O(log S'), plus one count step for
+/// each list it names, so O(S log S' + E log S' + P) for `E <= P` events of distinct runs, with
+/// space O(S + lists). The window's width changes the time only. Where many clauses share an
+/// interval, as `r7_tests::bench::a_regime_with_one_bound_and_n_clauses_scales`'s `n` clauses
+/// share 13, the heap had `2 n` runs and the sweep was Theta(P log n), 25.7 s at `n = 16,000`
+/// (2026-11-21, load 45); it now holds 13. Where no two literals share an interval, `S' = S` and
+/// the cost is that of one run per literal. Test:
+/// `r7_tests::literals_with_one_interval_share_one_run` (the run count), and the answers by
+/// `r7_tests::shared_intervals_answer_as_each_point_does`.
 struct LargeMerge<'a> {
     l: &'a Int,
     e: &'a Int,
@@ -4199,28 +4218,42 @@ impl<'a> LargeMerge<'a> {
             changed: Vec::new(),
             touched: Vec::new(),
         };
+        // The run of each distinct interval `(m, ra, rb)`, by its key (proof (4)).
+        let mut run_of: BTreeMap<(&Int, &Int, &Int), usize> = BTreeMap::new();
         for (list, lits) in lists.iter().enumerate() {
             for &(m, s) in lits {
                 for (ra, rb) in s {
-                    // The block of `l`, or the next one where the interval ends before `l`.
-                    let mut base = &l.div_floor(m) * m;
-                    if &(&base + rb) < l {
-                        base = &base + m;
-                    }
-                    merge.runs.push(ResidueRun {
-                        list,
-                        m,
-                        ra,
-                        rb,
-                        base,
-                        end: Int::ZERO,
-                        entering: true,
+                    let i = *run_of.entry((m, ra, rb)).or_insert_with(|| {
+                        // The block of `l`, or the next one where the interval ends before `l`.
+                        let mut base = &l.div_floor(m) * m;
+                        if &(&base + rb) < l {
+                            base = &base + m;
+                        }
+                        merge.runs.push(ResidueRun {
+                            lists: Vec::new(),
+                            m,
+                            ra,
+                            rb,
+                            base,
+                            end: Int::ZERO,
+                            entering: true,
+                        });
+                        merge.runs.len() - 1
                     });
-                    merge.enter(merge.runs.len() - 1);
+                    merge.runs[i].lists.push(list);
                 }
             }
         }
+        for i in 0..merge.runs.len() {
+            merge.enter(i);
+        }
         merge
+    }
+
+    /// The number of runs: one per distinct interval of residues `(m, ra, rb)` (proof (4)).
+    #[cfg(test)]
+    fn run_count(&self) -> usize {
+        self.runs.len()
     }
 
     /// Makes run `i`'s piece in its current block and pushes its low end, or ends the run where
@@ -4249,19 +4282,24 @@ impl<'a> LargeMerge<'a> {
             while self.heap.peek().is_some_and(|(place, _)| *place == at) {
                 let (_, i) = self.heap.pop().expect("an event was peeked");
                 let run = &mut self.runs[i];
-                let list = run.list;
-                if run.entering {
-                    self.count[list] += 1;
+                let entering = run.entering;
+                for &list in &run.lists {
+                    if entering {
+                        self.count[list] += 1;
+                    } else {
+                        self.count[list] -= 1;
+                    }
+                }
+                self.touched.extend_from_slice(&run.lists);
+                if entering {
                     if run.end < *self.e {
                         run.entering = false;
                         self.heap.push((&run.end + &Int::ONE, i));
                     }
                 } else {
-                    self.count[list] -= 1;
                     run.base = &run.base + run.m;
                     self.enter(i);
                 }
-                self.touched.push(list);
             }
             self.changed.clear();
             for &j in &self.touched {
