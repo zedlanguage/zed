@@ -3089,13 +3089,19 @@ impl Family {
     /// family it was cloned from, for m entries. A key already held keeps its value
     /// (`merge_failures` adds a member twice): a family made from another holds each of its
     /// entries, which `provenance::Holds` reads it by.
+    // The rule is kept by skipping a key held, not assumed: a set's members have `k == v`, but
+    // a written `#errs` family need not be a set (its payload type is `E ->? E`, DESIGN.md
+    // sec:failure), so `#errs({#a -> #b})` merged with `#a` offers `#a -> #a` at a key held.
+    // Inserting put it over `#a -> #b` (fault found by proofdoc4f; test
+    // `merging_a_written_errs_family_keeps_its_entries`). Cost: one lookup before each insert,
+    // O(log n), within the insert's own O(log n); a key held now also skips the insert's path
+    // copy. Which value of a written family a merge should keep is row
+    // SPEC-errs-written-family-not-a-set.
     pub(crate) fn extend(&mut self, entries: impl IntoIterator<Item = (Value, Value)>) {
         for (k, v) in entries {
-            debug_assert!(
-                self.0.built_map().get(&k).is_none_or(|old| *old == v),
-                "an entry of the family is replaced by another value"
-            );
-            self.0.built_map_mut().insert(k, v);
+            if self.0.built_map().get(&k).is_none() {
+                self.0.built_map_mut().insert(k, v);
+            }
         }
         if !self.is_empty() {
             self.2 = self.1;
@@ -5187,6 +5193,37 @@ mod tests {
         for e in es {
             assert_eq!(pow_r(e), zed_numtheory::m61::pow_word(R, e), "e = {e}");
         }
+    }
+
+    /// A merge keeps each entry of a written `#errs` family: DESIGN.md sec:failure gives
+    /// `#errs` the payload type `E ->? E`, so a program may write `#errs({#a -> #b})`, a family
+    /// that is not a set, and merging it with `#a` put `#a -> #a` over `#a -> #b`, against
+    /// `Family::extend`'s rule that a key held keeps its value (a panic of its debug check;
+    /// in a release build the entry was replaced).
+    #[test]
+    fn merging_a_written_errs_family_keeps_its_entries() {
+        // Which value a one-entry result unwraps to is row SPEC-errs-written-family-not-a-set;
+        // each merge here keeps two entries or more, so it stays an `#errs`.
+        let written = Family::of([(Value::atom("a"), Value::atom("b"))]);
+        let errs = Value::atom_with("errs", vec![Value::Family(written)]);
+        let (a, c) = (Value::atom("a"), Value::atom("c"));
+        for merged in [
+            Value::merge_failures([errs.clone(), a.clone(), c.clone()]),
+            Value::merge_failures([a.clone(), c.clone(), errs.clone()]),
+        ] {
+            let set = merged
+                .errs()
+                .expect("a merge of two failures or more is an `#errs`");
+            assert_eq!(set.len(), 2);
+            assert_eq!(set.get(&a), Some(&Value::atom("b")));
+            assert_eq!(set.get(&c), Some(&c));
+        }
+        // The larger set is kept and the written family's entries are added to it.
+        let other = Value::merge_failures([a.clone(), c.clone(), Value::atom("d")]);
+        let merged = Value::merge_failures([other, errs]);
+        let set = merged.errs().expect("a merge of two `#errs` is an `#errs`");
+        assert_eq!(set.len(), 3);
+        assert_eq!(set.get(&a), Some(&a));
     }
 
     /// Families of one size and different entries hash apart (plan row

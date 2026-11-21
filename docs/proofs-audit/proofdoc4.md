@@ -1315,12 +1315,14 @@ Entries of list f in list order, each message and its whole diff in the crate, w
 claim checked at its site: 001 to 010 at base ae22906d0 (merge 1, 3d8817975); in part 2, at
 base 3d8817975, 011 to 015, 022, 025 to 029 and 034 to 051 in full and 016, 030 and 052 in
 part. Part 2's entries were read by four reader agents of proofdoc4f (stopped on the
-coordinator's order, see below), whose edits proofdoc4f read before the merge. Three claims
-are "covered by" a row another agent owns; they are counted under "Already there".
+coordinator's order, see below), whose edits proofdoc4f read before the merge. In part 3, at
+base 805ebbd3a, proofdoc4f read 017 to 021, 023, 024, 031 to 033, 054 to 058 and 060 to 062
+in full and 059 in part. Four claims are "covered by" a row another agent owns; they are
+counted under "Already there".
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
-| zed-kernel | 39 of 62, 3 in part | 128 | 70 | 55 | 2 | 1 |
+| zed-kernel | 57 of 62, 4 in part | 151 | 89 | 58 | 2 | 2 |
 | zedc-elab | 0 of 44 | 0 | 0 | 0 | 0 | 0 |
 | zedc-base | 0 of 39 | 0 | 0 | 0 | 0 | 0 |
 
@@ -1361,9 +1363,18 @@ are "covered by" a row another agent owns; they are counted under "Already there
 | 3204ef377 | The `sweep` walk, `local` never `Of`, `pair_picks` leaves, `put` with class `Of` | `types/empty/sweep.rs`, `types/empty.rs`, `types/print.rs` | already there (comments read, not traced line by line) |
 | 34a583731 | A value found in a region's piece is a value of the part | `types/empty.rs`, `class_rep`, `key_pieces` | already there |
 | 37148785d | Each new phase adds a type to `dead`, which bounds the phases | `types/empty.rs`, `Search::settle` | completed: `end_phase`, `settled`, `pop_open_forks`; that the types made are finitely many is stated as not shown (row PROOF-kernel-search-types-finite); the `no_key`/`no_keys` claims not read |
+| 3ffbadf75 | Splitting a component by its nested cells costs at most `2m + 1` pieces and keeps every value | `types/empty.rs`, `nested_cover`, `nested_pieces` | already there |
+| 40733faeb | A family made from one holding a failure holds that failure | `provenance.rs`, `Holds::plan` | already there (checked: a from-id is set only by `Family::extend` and by `union` through `made_from`, union keeps every leaf of its big side, and `extend`'s one caller, `merge_failures`, adds only failures) |
+| 40733faeb | `Family::extend`: a key already held keeps its value | `value.rs`, `Family::extend` | corrected: false for a written `#errs` family that is not a set (payload type `E ->? E`, DESIGN sec:failure): `#errs({#a -> #b})` merged with `#a` put `#a -> #a` over `#a -> #b` (a panic of the debug check, a silent replacement in release); test `merging_a_written_errs_family_keeps_its_entries` red (the panic), `extend` now skips a key held, green. Which value a one-entry merge should give: row SPEC-errs-written-family-not-a-set |
+| 465fc2167 | The row index never reads a path or a function | `types/empty.rs`, row index | already there (proof and test at the site) |
+| 570acb0a8 | The sixteenth round of unreached arms, each closed by proof or test | `crates/zed-kernel/COMPLETENESS.md`, sites named there | already there; the `chain_rep` part makes no code claim |
+| 5970a932f | `shallow_diff` may list an equal entry as changed; its callers treat that safely | `value.rs`, `shallow_diff`, the shallow flag of `Enter::Maps`; `provenance.rs` callers | already there (both callers re-read a listed entry) |
 | 59a32b29b | `sqrt` and `mul_add` are correctly rounded | `eval.rs`, `prim_on`, `Prim::Sqrt`/`Fma` | completed: the Rust std "Precision" docs quoted |
 | 59a32b29b | Measured cost, 8.0 times the work at 8n | `eval.rs`, same site | completed: the stale test name replaced by the bench `sqrt_fma::n_calls_cost_linear_time`; numbers dated to 59a32b29b |
 | 59a32b29b | IEEE 754 citation | `eval.rs`, same site | already there (DOI and quotes) |
+| 5a5276a82 | A witness tuple with no scalar component is tested against every row its keys allow (`Columns::candidates`) | `types/empty.rs`, `Columns::candidates` | already there (the assumption was replaced by a proof by cases) |
+| 5a5276a82 | `Hash for Row` agrees with `Eq` | `types.rs`, `Row` | already there |
+| 5dcfdad0a | `IdMap`'s keys are small, so its shifts do not overflow | `idset.rs`, `IdMap` | completed: keys are failure numbers below 2^32 or set ids, at most the number of `Held::nodes` (never removed, 8 bytes or more each, below 2^54); so `height <= 11` and every shift is at most 60 |
 | 6017477df | `Form::holds`, the Not arm | `types/bdd.rs`, `Form::holds` | already there |
 | 6017477df | `choose`: two `false` branches cannot meet | `types/bdd.rs`, `Connect::choose` | already there (arm removed by 6bb9bb93f) |
 | 6017477df | `clause`: `Form::Or` cannot happen | `types/bdd.rs`, `clause` | already there |
@@ -1388,6 +1399,9 @@ are "covered by" a row another agent owns; they are counted under "Already there
 | 6ff237028 | The settled form holds every value of the part | `types/bdd.rs`, `Part::settle` | completed: Shannon expansion step by step |
 | 6ff237028 | A tuple part `false` outside its tuple types has every value in one of them | `types/empty.rs`, `Group` kids walk | completed |
 | 6ff237028 | Two types in different classes are disjoint | `types/empty.rs`, `overlaps` | Not proved: that the walk places keys, lists or wholes covering every value of a type in every `Parts` case and with lazy `Placing` reads (row PROOF-kernel-overlaps-cover); `split_classes`, `class_rep` not read |
+| 7d0cc8d9f | A power proved larger than the target's address space is refused at compile time | `num.rs`, the power bound | already there |
+| 8183b743b | A second carrier of the one cycle need not be kept: `is_carrier` accepts it by its step | `types/empty.rs`, `find_prefix_chains`, before `is_carrier` | completed: a period-1 `Some` from `cycle` is `find_cycle` on that type alone, whose one step is `(Some(c.stop), c.link, c.item, x)`, and each test of `is_carrier` then holds |
+| 81a60d522 | `list_rows` refuses a root of more than two atoms before reading any | `types/empty.rs`, `list_rows` | already there |
 | 86322e10b | `seconds` rounds up, none out of range | `zedc-check/src/check/limits.rs`, `seconds` | already there, see proofdoc4d (moved out of zed-kernel) |
 | 86322e10b | `MEMORY_TITLES` lists every title of a memory refusal | `value.rs`, `MEMORY_TITLES` | added: the eight `KernelError` arms named; a new arm must be added by hand and no test fails if it is not |
 | 877fc8603 | `fresh_id` never draws an id twice, nor block 0 | `value.rs`, `fresh_id` | completed: blocks from 1, each once; needs fewer than `2^48` blocks, not checked at run time |
@@ -1454,16 +1468,25 @@ are "covered by" a row another agent owns; they are counted under "Already there
 | d694e2a26 | No 2-SAT model means no list escapes | `types/empty/escape.rs`, before `sat.solve()` | added |
 | d694e2a26 | Building the list stays within the cost bound | `types/empty/escape.rs`, `depth` | added: `k^2` for `k` distinct atoms at a place, within their written size |
 | d694e2a26 | The truncation lemma | `types/empty/escape.rs`, module comment | already there in substance; "not killed" means not killed at a place up to `l0` (the code reads cells only to `target_len`); wording not edited; the rest of the entry not read |
+| e3ee7d064 | Papers named at the last sites without an identifier | sites in the diff | already there (DOIs checked) |
+| e60e73504 | 126 exclusive ors, `2 · 64 - 2`, for the test-count thresholds | `types/bdd/tests.rs` | already there |
+| e62be00e0 | 23 guards closed by proof | `types/empty.rs` and others, sites in the diff | already there; the guards still open are listed in `crates/zed-kernel/COMPLETENESS.md` (`system`'s `Not` arm, `put` with class `Of`, `Rep::key` and others) |
+| e7b12dd2e | `Printer::remember` keeps a text only when it is fixed, forced none, no `Group`, its kids clean | `types/print.rs`, `Printer::remember` | already there (doc matches the code's conditions) |
+| f075a1c0b | Different symbols have different numbers, and neighbors are different symbols | `text/names.rs`, `Names::decide` | completed: bytes below `FIRST_RULE`, one number per distinct rule, each level run-length coded, a symbol is a byte or a `Block`, never a `Run`; the three cases of `id` |
+| f48ec1bf4 | Only `Atoms::set` and the `Drop` of `take_names` write `names` | `types.rs`, `mod atoms` | already there; the rest of the entry not read |
+| f91eac49c | Unreached lines of `find_prefix_chains` closed by proof or test | `types/empty.rs`, the `debug_assert!`s there | already there |
+| fa271b3f2 | The reads memo of a subterm is its own type, named in `clippy.toml` | `eval/made.rs`, `clippy.toml` | already there |
+| fe770de11 | M61 addition, the Fermat inverse, `p.pow(k)` divides `n`, `usize` is 64 bits | `poly.rs`, `num` sites in the diff | already there |
+| fe770de11 | `draw_prime`: each round holds a dense fold of `p` words, so `lambda` and `p` stay below 2^62 | `poly.rs`, `draw_prime` | covered by FIX-poly-limit-comments: the order is wrong (the draw comes before the fold is made), so the bound comes from the budget (each round adds at least `p` to the work spent, and `lambda` is at most twice the last `p`), not from memory |
 
 No code claim: 9e3cc1480 (zed-kernel part: an alias, an equivalent `?`, moved tests).
 
 Not read:
 
-- zed-kernel (20, 3 of them in part above): 37148785d (the `no_key`/`no_keys` claims),
-  3ffbadf75 40733faeb 465fc2167 570acb0a8 5970a932f 5a5276a82 5dcfdad0a, 6ff237028
-  (`split_classes`, `class_rep`), 7d0cc8d9f 8183b743b 81a60d522, d694e2a26 (the `ChainHint`
-  fallback, `cells_windows`, `Live`, X34, X35, `forest`), ddc1ec274 e3ee7d064 e60e73504
-  e62be00e0 e7b12dd2e f075a1c0b f48ec1bf4 f91eac49c fa271b3f2 fe770de11
+- zed-kernel (5, 4 of them in part above): 37148785d (the `no_key`/`no_keys` claims),
+  6ff237028 (`split_classes`, `class_rep`), d694e2a26 (the `ChainHint` fallback,
+  `cells_windows`, `Live`, X34, X35, `forest`), f48ec1bf4 (all but the `Atoms` privacy
+  claim), and ddc1ec274 (3509 lines) not at all
 - zedc-elab (44): 7fb0c6594 7931d6ed6 8164a8ea9 9b7a17570 e5ff7920a f24b492bf 555863e23
   f0bde0d35 0e329a46e 1286f4779 2b3e706f1 995200322 9d877b65c 068d62e2f 18ea94666 4c75d8f88
   5767fe37a 7d0cc8d9f 86322e10b 875e58597 c50a8965b cf099fcf2 03a4f95f2 0e8df04e7 64d244789

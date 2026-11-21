@@ -8382,6 +8382,17 @@ impl<'m> Searching<'m> {
             }
         };
 
+        // Proof that `is_carrier` accepts, by its step alone, every type `x` with
+        // `s.cycle(x) == Some(c)`, so the carriers the loops above do not keep are still read as
+        // carriers. A `Some` that `cycle` holds for `x` was made by `find_cycle` on a walk
+        // through `x`; with period 1 that walk is `x` alone (the entries after the first are the
+        // other types of the cycle, none here), so it is `find_cycle(x)`. Its walk took one step,
+        // `list_step(x) = (s, l, e, next)`, and broke at `steps == 1` only when `next == x`. `at`
+        // is 0, so the stop was met at step 0: `s == Some(c.stop)`; and `link` and `item` were
+        // set from that step: `l == c.link`, `e == c.item`. Then each test below holds:
+        // `s == Some(stop_name)` (`stop_name` is `c.stop`), `l == link_name` (the loops keep a
+        // cycle only with `c.link == link_name`), `next == x`, and `norm_head(c.item)` is
+        // `c.item`, its first arm, which is `carrier_head`.
         let is_carrier = |cand: &Type| -> bool {
             if carrier_set.contains(cand) {
                 return true;

@@ -281,6 +281,24 @@ impl Names {
     /// [`decide`] for the symbols `ids`, reading as labels the numbers themselves. Different
     /// symbols have different numbers, and neighbors are different symbols, since a level is
     /// run-length coded.
+    // Proof of the two claims, which `decide`'s labels need (its debug check that neighbors'
+    // labels differ). (1) Different symbols have different numbers: a byte is its own number,
+    // below `FIRST_RULE`; a rule's number is `FIRST_RULE + place`, `place` its index in
+    // `rules`, and `rule` gives a rule met before its old place (the `find` table matches by
+    // `rules[i] == rule`) and a new rule a new place, so equal rules share a number and
+    // different rules have different ones. (2) Neighbors in `ids` differ. Every caller passes
+    // `self.ids(w)` (`step`, `step_whole`) or ids made from `byte_runs` (`leaf`), where `w` is
+    // run-length coded: made by `rle` or `byte_runs`, each of which joins equal neighbors, or
+    // by `cat` of such lists, which joins the two entries at each boundary when their symbols
+    // are equal, or held from such a list (`norm`, `long`). So neighbors `e`, `f` in `w` have
+    // `e.sym != f.sym`. A symbol at level 0 is a byte, and at a higher level the number of a
+    // `Rule::Block` (`blocks` names each block by `block`, which makes a `Block` even for one
+    // symbol), so no symbol is the number of a `Rule::Run`. `id` gives `e.sym` itself for a
+    // count of 1 and the number of `Run(e.sym, e.count)` otherwise. Both of count 1: the
+    // numbers are `e.sym != f.sym`. One of count 1: one number is a byte or a `Block`'s, the
+    // other a `Run`'s, a different rule, so by (1) they differ. Both above 1: `Run(e.sym, _)`
+    // and `Run(f.sym, _)` are different rules, so by (1) their numbers differ. The labels are
+    // the numbers widened to `u128`, which keeps them different.
     fn decide(&self, ids: &[u64], ts: bool, te: bool) -> Vec<bool> {
         decide(ids.len(), |i| u128::from(ids[i]), ts, te)
     }

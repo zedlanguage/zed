@@ -637,6 +637,16 @@ fn map_slot(height: u32, k: u64) -> usize {
 /// below 32,768, one more level for each further factor of 32. Tradeoff: a map of one key
 /// takes a whole leaf of 32 slots, and the keys must be small, which the numbers given out by
 /// one call of `origins` are.
+// Proof that the shifts `k >> (MAP_BITS * (height + 1))` in `get` and `insert` stay below 64,
+// so none overflows: (1) every key is below 2^60. The maps of `provenance::Tally` are keyed by
+// failure numbers, `u64::from` of a `u32`, below 2^32, and by set ids, 0 or a value of the
+// counter `Held::last`, which `Held::fresh` raises by one as it puts a new `Node` in
+// `Held::nodes`; no node is ever taken out, so `last` is at most the number of nodes held.
+// Each node is at least 8 bytes (its `base: u64`), and an x86-64 address space holds at most
+// 2^57 bytes, so `last < 2^54`. (2) `insert` raises `height` only while
+// `k >> (5 * (height + 1)) != 0`, which for `k < 2^60` stops by `height + 1 = 12`, so
+// `height <= 11` and every shift is at most `5 * 12 = 60`; `get` shifts by the same amount
+// at the height `insert` left. (3) `map_slot` shifts by `5 * h`, `h <= height`, at most 55.
 pub(crate) struct IdMap<V> {
     root: Option<Arc<MapNode<V>>>,
     /// The height of the root: 0 for a leaf.
