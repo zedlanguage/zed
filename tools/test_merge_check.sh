@@ -7,7 +7,7 @@
 # (`/home/luke/Work/wt/zrun tools/test_merge_check.sh [select | select2 | record | chunks]`). With an argument it runs
 # that part of the cases alone, in a workspace of its own (build/test-merge-check-<part>), so the
 # parts can run at once, and with no argument all four do: run so, select, select2, record and
-# chunks took 11, 9, 15 and 4 s at load 52 (2026-11-20).
+# chunks took 24, 17, 30 and 12 s side by side at load 76 (2026-11-20).
 # The workspace is the real one
 # in small: crates a, b (depends on a) and c; a package t in tests/ that depends on b, whose lib
 # file tests/src/seed.rs crate a also compiles by #[path] (as tests/src/seed.rs is compiled into
@@ -147,7 +147,9 @@ echo 'notes' >data/notes.txt
 # does: with --list the file chosen and the names alone; otherwise, for each piece --except leaves,
 # a line `<name> rc=<rc> <ms>ms ...` on standard output and in the file summary, then `pieces: <n>,
 # failed: <f>`. A piece fails when it is $STUB_FAIL, runs into a limit of 1 s when it is $STUB_HANG
-# (rc 124, as the real per-piece limit reports), and is skipped, as if lost, when it is $STUB_DROP.
+# (rc 124, as the real per-piece limit reports), sleeps 30 s when it is $STUB_SLOW, and is
+# skipped, as if lost, when it is $STUB_DROP. A run prints `logs: <its log directory>` first, as
+# the real one does.
 # Each call line is appended to $STUB_CALLS too, when it is set: the merge check writes its calls'
 # output to log files.
 cat >tools/run_tests.sh <<'EOF'
@@ -194,12 +196,14 @@ if [ -n "$l" ]; then
   awk '{ print $3 }' "$d/chosen"
   exit 0
 fi
+echo "logs: $d"
 np=0 nf=0 dump=
 while read -r g s n; do
   [ -z "$x" ] || ! [[ $n =~ $x ]] || continue
   [ "$n" != "$STUB_DROP" ] || continue
   rc=0
   [ "$n" != "$STUB_FAIL" ] || rc=1
+  [ "$n" != "$STUB_SLOW" ] || sleep 30
   if [ "$n" = "$STUB_HANG" ]; then
     timeout -k 1 1 sleep 30
     rc=$?
@@ -280,6 +284,14 @@ sorted() { tr ' ' '\n' <<<"$*" | command grep -a . | sort | paste -sd' '; }
 # each kind once to list the pieces, with its jobs, then once for each chunk, with jobs 1.
 export STUB_CALLS=$ws/target/stub-calls
 : >"$STUB_CALLS"
+# The runs of main_watch the check reads piece times from (MERGE_CHECK_TIMES_FROM): one toy run
+# that times every piece p-<group> of the toy's groups at 5 ms, so that no piece is of unknown
+# time (each of which would be a chunk alone) and each kind's pieces make one chunk.
+export MERGE_CHECK_TIMES_FROM=$ws/target/stub-main-watch
+mkdir -p "$MERGE_CHECK_TIMES_FROM/run/test.logs/1"
+for g in a b c feat feat_f lnk rootuse s_01f_import_graph step_x step_y sx t tool w z; do
+  for p in "$g" "short-$g" "full-$g" "full-short-$g"; do echo "p-$p rc=0 5ms load=0 limit=1s wait=0ms"; done
+done >"$MERGE_CHECK_TIMES_FROM/run/test.logs/1/summary"
 calls() { command grep -a -v '^run_tests --logs ' "$STUB_CALLS" | sed 's/ --trace [^ ]*//'; : >"$STUB_CALLS"; }
 # The two calls of one kind with one chunk: list, then run, the pieces --only '^($2)$' selects
 # ($2 a list of groups joined by |), with jobs $3 for the list (6 by default); $1 is --full or
@@ -793,11 +805,11 @@ fi
 if [ "$part" = chunks ]; then
 # Part chunks: the chunks of step 2b (MERGE-full-run-split), a part of their own since they took
 # the record part from 18 to 40 s at load 44, past the limit of 27.5 s that step 0 gives a part at
-# that load. Crate c has three pieces, c (named after its group, as a
-# step folder's rest is), c::x and c::y, each 20 s by the times of an earlier check, so with
-# chunks of up to 30 s each is a chunk, and c::y shares its chunk with the three pieces of
-# unknown time (1 s each). Each chunk's call names its terms in --only and the other pieces
-# those terms select in --except. The chunks run at once, so their calls are compared sorted.
+# that load. Crate c has three pieces, c (named after its group, as a step folder's rest is), c::x
+# and c::y, each 20 s by the times of an earlier check, so with chunks of up to 30 s each is a
+# chunk, and c::y shares its chunk with the three pieces p-<group>, 5 ms each by the toy's run of
+# main_watch. Each chunk's call names its terms in --only and the other pieces those terms select
+# in --except. The chunks run at once, so their calls are compared sorted.
 pieces=$ws/target/stub-pieces
 printf 'c c c\nc c c::x\nc c c::y\n' >"$pieces"
 times=$(git rev-parse --path-format=absolute --git-common-dir)/merge-check-times
@@ -805,18 +817,19 @@ slow_times() { printf 'c 20000\nc::x 20000\nc::y 20000\n' >"$times"; }
 git checkout -q --detach base
 echo "// changed" >>crates/c/src/lib.rs
 git commit -q -a -m "branch: change c, for the chunks"
-# Runs the check with the times of slow_times and prints its lines about the chunks and the
-# outcome, without their times in seconds, and its exit code.
+# Runs the check, after $1 (slow_times by default) wrote the times, and prints its lines about
+# the chunks and the outcome, without their times in seconds, and its exit code.
 chunk_run() {
-  slow_times
+  ${1:-slow_times}
   calls >/dev/null
   STUB_PIECES=$pieces "$check_script" --base base 2>&1 |
     command grep -a -E '^(merge check: (.*chunks?|pieces|passed|FAILED|run by|the chunks)|c(::[xy])?$)' |
-    sed -E 's/ in [0-9]+ s(, over 60 s)?$//; s/, in 3 chunks, [0-9]+ s$/, in 3 chunks/'
+    sed -E 's/ in [0-9]+ s(, stopped)/\1/; s/ in [0-9]+ s$//; s/, in ([0-9]+) chunks, [0-9]+ s$/, in \1 chunks/'
   echo "${PIPESTATUS[0]}"
 }
+plan="by the times of earlier checks and of main_watch"
 check "pieces timed by earlier checks are cut into chunks of up to 30 s, each its own call with jobs 1" \
-  "merge check: 6 pieces in 3 chunks of up to 30 s by the times of earlier checks, 6 at once
+  "merge check: 6 pieces in 3 chunks of up to 30 s $plan (0 timed by neither, each alone), 6 at once
 merge check: chunk 1 of 3: pieces: 1, failed: 0
 merge check: chunk 2 of 3: pieces: 1, failed: 0
 merge check: chunk 3 of 3: pieces: 4, failed: 0
@@ -834,8 +847,40 @@ c::y 5
 p-s_01f_import_graph 5
 p-short-c 5
 p-short-s_01f_import_graph 5" "$(cat "$times")"
+# The first check, with no times of its own (MERGE-full-run-split, the 60 s hold on the first run
+# too): the times of main_watch's runs size the chunks, and c, of 50 s there, is a chunk alone
+# while the fast pieces share one, so no chunk is planned past 30 s.
+seed50=$ws/target/stub-main-watch-50
+mkdir -p "$seed50/run/test.logs/1"
+{ cat "$MERGE_CHECK_TIMES_FROM/run/test.logs/1/summary"; printf 'c rc=0 50000ms\nc::x rc=0 100ms\nc::y rc=0 100ms\n'; } \
+  >"$seed50/run/test.logs/1/summary"
+no_times() { : >"$times"; }
+check "with no times of its own, a piece of 50 s by main_watch's runs is a chunk alone and the fast ones share one" \
+  "merge check: 6 pieces in 2 chunks of up to 30 s $plan (0 timed by neither, each alone), 6 at once
+merge check: chunk 1 of 2: pieces: 1, failed: 0
+merge check: chunk 2 of 2: pieces: 5, failed: 0
+merge check: pieces: 6, failed: 0, in 2 chunks
+merge check: passed
+0
+run_tests --skip-other-kind --list --only ^(c|s_01f_import_graph|short-c|short-s_01f_import_graph)\$ 6
+run_tests --skip-other-kind --only ^(c)\$ --except ^(c::x|c::y)\$ 1
+run_tests --skip-other-kind --only ^(c|s_01f_import_graph|short-c|short-s_01f_import_graph)\$ --except ^(c)\$ 1" \
+  "$(MERGE_CHECK_TIMES_FROM=$seed50 chunk_run no_times; calls | LC_ALL=C sort)"
+# A piece timed by neither is a chunk alone: no guess bounds a chunk of several.
+mkdir -p "$ws/target/stub-main-watch-none"
+check "with no times anywhere, each piece is a chunk alone" \
+  "merge check: 6 pieces in 6 chunks of up to 30 s $plan (6 timed by neither, each alone), 6 at once
+merge check: chunk 1 of 6: pieces: 1, failed: 0
+merge check: chunk 2 of 6: pieces: 1, failed: 0
+merge check: chunk 3 of 6: pieces: 1, failed: 0
+merge check: chunk 4 of 6: pieces: 1, failed: 0
+merge check: chunk 5 of 6: pieces: 1, failed: 0
+merge check: chunk 6 of 6: pieces: 1, failed: 0
+merge check: pieces: 6, failed: 0, in 6 chunks
+merge check: passed
+0" "$(MERGE_CHECK_TIMES_FROM=$ws/target/stub-main-watch-none chunk_run no_times)"
 check "a failing piece in one chunk prints as it ends, before the chunks' sums, and fails the check" \
-  "merge check: 6 pieces in 3 chunks of up to 30 s by the times of earlier checks, 6 at once
+  "merge check: 6 pieces in 3 chunks of up to 30 s $plan (0 timed by neither, each alone), 6 at once
 merge check: chunk 2 of 3: failed: c::x rc=1 5ms load=0 limit=1s wait=0ms
 merge check: chunk 1 of 3: pieces: 1, failed: 0
 merge check: chunk 2 of 3: pieces: 1, failed: 1
@@ -846,7 +891,7 @@ merge check: FAILED: tests (above)
 # The stub stops a hung piece at a limit of 1 s, as tools/run_tests.sh stops one at its limit.
 start=$SECONDS
 check "a hung piece is stopped at its limit, reported, and fails the check" \
-  "merge check: 6 pieces in 3 chunks of up to 30 s by the times of earlier checks, 6 at once
+  "merge check: 6 pieces in 3 chunks of up to 30 s $plan (0 timed by neither, each alone), 6 at once
 merge check: chunk 3 of 3: failed: c::y rc=124 5ms load=0 limit=1s wait=0ms
 merge check: chunk 1 of 3: pieces: 1, failed: 0
 merge check: chunk 2 of 3: pieces: 1, failed: 0
@@ -856,8 +901,26 @@ merge check: FAILED: tests (above)
 1" "$(STUB_HANG=c::y chunk_run)"
 check "and the check ends well before the hung piece would have (30 s)" yes \
   "$([ $((SECONDS - start)) -lt 20 ] && echo yes || echo "no: $((SECONDS - start)) s")"
+# A chunk still running at the chunk limit (60 s; 2 s here) is stopped, not waited out: a failure
+# printed at once that names its pieces, the pieces that did not end marked *. They are written
+# to the times at 30 s, so the next check runs each alone.
+start=$SECONDS
+check "a chunk past the chunk limit is stopped, named with its pieces, and fails the check" \
+  "merge check: 6 pieces in 3 chunks of up to 30 s $plan (0 timed by neither, each alone), 6 at once
+merge check: chunk 3 of 3: FAILED: over 2 s, stopped; its pieces (estimate in ms; * did not end): c::y* 20000, p-s_01f_import_graph* 5, p-short-c* 5, p-short-s_01f_import_graph* 5
+merge check: chunk 1 of 3: pieces: 1, failed: 0
+merge check: chunk 2 of 3: pieces: 1, failed: 0
+merge check: chunk 3 of 3: no result, stopped at 2 s (named above)
+merge check: pieces: 2, failed: 0, in 3 chunks
+merge check: FAILED: tests (above)
+1" "$(MERGE_CHECK_CHUNK_LIMIT=2 STUB_SLOW=c::y chunk_run)"
+check "and the check ends well before the slow piece would have (30 s)" yes \
+  "$([ $((SECONDS - start)) -lt 20 ] && echo yes || echo "no: $((SECONDS - start)) s")"
+check "and the next check runs each piece of the stopped chunk alone; c and c::x, which ended, share one" \
+  "merge check: 6 pieces in 5 chunks of up to 30 s $plan (0 timed by neither, each alone), 6 at once" \
+  "$(chunk_run : | command grep -a 'chunks of up to')"
 check "a listed piece that no chunk ran fails the check" \
-  "merge check: 6 pieces in 3 chunks of up to 30 s by the times of earlier checks, 6 at once
+  "merge check: 6 pieces in 3 chunks of up to 30 s $plan (0 timed by neither, each alone), 6 at once
 merge check: chunk 1 of 3: pieces: 1, failed: 0
 merge check: chunk 2 of 3: pieces: 0, failed: 0
 merge check: chunk 3 of 3: pieces: 4, failed: 0

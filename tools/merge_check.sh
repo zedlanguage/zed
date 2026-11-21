@@ -1015,10 +1015,22 @@ fi
 #  - Size: a chunk is closed before the estimate of its pieces' times passes chunk_ms (30 s,
 #    half the 60 s a run may take, for the load to vary under). A piece's estimate is its time
 #    in the last check that ran it, from <git common dir>/merge-check-times, shared by every
-#    worktree; unknown_ms (1 s) for a piece never timed, above the mean of 0.7 s and the median
-#    of 0.2 s of the 2,883 pieces of spec7's check (2026-11-20, load 51 to 99). A piece longer
-#    than chunk_ms is a chunk alone. A chunk that took over 60 s is named in the output; the
-#    times it records size the next check's chunks.
+#    worktree; for a piece no check timed yet, the longest time any run of main_watch recorded
+#    for it (the summary files under $times_from, /home/luke/Work/wt/main-watch-runs: full runs
+#    on main; on 2026-11-20 they timed 2,891 of the 2,896 pieces of a check that selected every
+#    local group). The longest, not the newest, since a larger estimate only makes chunks
+#    smaller. A piece neither timed is a chunk alone, as is a piece of chunk_ms or more: no
+#    guess of an unknown time can bound a chunk of several, and alone it is bounded by the
+#    per-piece limit of tools/run_tests.sh. Cost of the seed: one pass over those files, 25
+#    summaries of 21,206 lines in 104 ms at load 68 (MERGE-full-run-split, 2026-11-20). Cost of
+#    a piece alone: one call's own work, 1.7 s (Cost, below). A test binary's pieces of its
+#    library tests are named with the build's hash (63 of 2,896, zedc_check-<hash>), which a
+#    rebuild changes: they are then timed by neither and each is alone, up to 63 calls, about
+#    110 s of work, 27 s of wall time at 4 at once; the next check has their times again.
+#  - The 60 s hold for every chunk, the first check's too: a chunk still running at
+#    chunk_limit (60 s) is stopped with its pieces and fails the check, with a line naming its
+#    pieces and their estimates. Each of its pieces that did not end is written to the times at
+#    chunk_ms, so the next check runs each alone: a stopped chunk is split, not waited out.
 #  - Exactly the same pieces: a chunk's call names in --only the terms of the merge check's own
 #    selection (its groups) that select any of its pieces, and in --except, one per group, the
 #    other pieces those terms select. --except removes a piece by its exact name, and with it
@@ -1038,7 +1050,10 @@ fi
 # of such work, 20 s of wall time at 6 chunks at once, against the 15 to 29 minutes of the run.
 # A smaller chunk_ms costs more such work; a larger one leaves less of the 60 s for the load.
 # A chunk that ends early, by a failure or a kill, ends only that chunk.
-chunk_ms=30000 unknown_ms=1000
+chunk_ms=30000 chunk_limit=${MERGE_CHECK_CHUNK_LIMIT:-60}
+# MERGE_CHECK_TIMES_FROM and MERGE_CHECK_CHUNK_LIMIT exist for tools/test_merge_check.sh, which
+# gives its toy runs of main_watch and a limit of a few seconds.
+times_from=${MERGE_CHECK_TIMES_FROM:-/home/luke/Work/wt/main-watch-runs}
 times_file=$(git rev-parse --path-format=absolute --git-common-dir)/merge-check-times
 # The log directory of the run of tools/run_tests.sh whose process was $1: <base>/<UTC time>-<pid>,
 # the newest if an older run had the same process number.
@@ -1047,12 +1062,17 @@ run_dir() { ls -d build/test-logs/*-"$1" 2>/dev/null | tail -n 1; }
 # to $cdir/<k>.result (`<rc> <ms> <log directory>`), and prints each failed piece's line as it ends.
 run_chunk() {
   local k=$1 args g names pid rc start
+  : >"$cdir/$k.stopped"
   args=(--skip-other-kind --only "^($(paste -sd'|' "$cdir/$k.terms"))\$")
   while read -r g names; do args+=(--except "^($names)\$"); done <"$cdir/$k.except"
   [ -z "$tbase" ] || args+=(--trace "$tbase/$k")
   : >"$cdir/$k.log"
   start=$(date +%s%N)
-  tools/run_tests.sh $fullarg "${args[@]}" 1 >>"$cdir/$k.log" 2>&1 &
+  # The 60 s a test run may take holds for each chunk: at chunk_limit the chunk is stopped, not
+  # waited out. timeout puts the call in a process group of its own and signals the whole group,
+  # so the pieces stop with it (checked 2026-11-20: a background grandchild of the timed script
+  # was gone after timeout returned 124); rc 124 (or 137 after the KILL 5 s later) marks it.
+  timeout -k 5 "$chunk_limit" tools/run_tests.sh $fullarg "${args[@]}" 1 >>"$cdir/$k.log" 2>&1 &
   pid=$!
   # tail checks that $pid lives once per sleep interval, 1 s by default, so each chunk ended up
   # to 1 s late (the toy cases of tools/test_merge_check.sh, a check of several chunks each, took
@@ -1061,9 +1081,19 @@ run_chunk() {
     awk -v k="$k" -v n="$nchunks" '$2 ~ /^rc=/ && $2 != "rc=0" { print "merge check: chunk " k " of " n ": failed: " $0; fflush() }'
   wait "$pid"
   rc=$?
-  echo "$rc $((($(date +%s%N) - start) / 1000000)) $(run_dir "$pid")" >"$cdir/$k.result"
+  # $pid is timeout's, so the log directory is read from the line `logs: <dir>` that
+  # tools/run_tests.sh prints before its first piece.
+  echo "$rc $((($(date +%s%N) - start) / 1000000)) $(sed -n 's/^logs: //p' "$cdir/$k.log" | tail -n 1)" >"$cdir/$k.result"
+  # Stopped at chunk_limit (rc 124, or 137 after the KILL): a failure that names the chunk's
+  # pieces, printed at once. Its pieces that did not end are written to $cdir/<k>.stopped at
+  # chunk_ms, in the form of a summary line, for the times: the next check runs each alone.
+  if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
+    awk -v ms="$chunk_ms" 'NR == FNR { if ($2 ~ /^rc=/) done[$1] = 1; next }
+      !($1 in done) { print $1, "rc=124", ms "ms" }' "$cdir/$k.log" "$cdir/$k.pieces" >"$cdir/$k.stopped"
+    echo "merge check: chunk $k of $nchunks: FAILED: over ${chunk_limit} s, stopped; its pieces (estimate in ms; * did not end): $(awk 'NR == FNR { s[$1] = 1; next } { printf "%s%s%s %s", sep, $1, ($1 in s) ? "*" : "", $2; sep = ", " }' "$cdir/$k.stopped" "$cdir/$k.pieces")"
+  fi
 }
-export -f run_chunk run_dir
+export -f run_chunk
 # run_chunks <terms>: lists the pieces that --only '^(<terms>)$' selects (the terms one per line),
 # runs them in chunks and fails if a chunk failed or the chunks did not run exactly the listed
 # pieces, each once. Uses $fullarg (--full or nothing) and adds each chunk's trace directory to
@@ -1094,6 +1124,12 @@ run_chunks() {
     return 0
   fi
   cp "$ldir/chosen" "$cdir/chosen" || return 1
+  # The seed: for each piece, the longest time a summary under $times_from records (see Size in
+  # the comment above). find does not follow the symbolic links `latest` there, so each run's
+  # summary is read once (cost: Size, above).
+  find "$times_from" -name summary -type f -print0 2>/dev/null |
+    xargs -0 -r awk '$2 ~ /^rc=/ && $3 ~ /^[0-9]+ms$/ { t = $3 + 0; if (!($1 in m) || t > m[$1]) m[$1] = t }
+      END { for (p in m) print p, m[p] }' >"$cdir/seed"
   # The chunks, written as $cdir/<k>.terms (the terms for --only), <k>.except (`<group>
   # <name>|<name>...`, one --except a line) and <k>.pieces, and $cdir/order, the chunks by
   # estimate, longest first, so that the longest do not start last. One pass over the times and
@@ -1101,9 +1137,10 @@ run_chunks() {
   # chunks is read c times: O(pieces × the most chunks of one group), 543 pieces times 4 for
   # l01_26_type_resolution in spec7's check. Matching every chunk against every piece would be
   # O(pieces × chunks), 2,880 × 70.
-  nchunks=$(awk -v cdir="$cdir" -v chunk="$chunk_ms" -v unknown="$unknown_ms" '
+  n=$(awk -v cdir="$cdir" -v chunk="$chunk_ms" '
     FILENAME == ARGV[1] { if (NF == 2 && $2 ~ /^[0-9]+$/) ms[$1] = $2; next }
-    FILENAME == ARGV[2] { want[$1] = 1; next }
+    FILENAME == ARGV[2] { if (NF == 2 && $2 ~ /^[0-9]+$/) sd[$1] = $2; next }
+    FILENAME == ARGV[3] { want[$1] = 1; next }
     !($3 in seen) {
       seen[$3] = 1; p = ++np; name[p] = $3; grp[p] = $1
       # The terms that select the piece: run_tests.sh selects it by its group, step or name.
@@ -1112,15 +1149,17 @@ run_chunks() {
       if ($2 != $1 && ($2 in want)) ts = ts " " $2
       if ($3 != $1 && $3 != $2 && ($3 in want)) ts = ts " " $3
       if (ts == "") { print "merge check: the listed piece " $3 " is selected by no term" > "/dev/stderr"; exit 1 }
-      e = ($3 in ms) ? ms[$3] : unknown
-      if (k == 0 || est[k] + e > chunk) k++
-      chunk_of[p] = k; est[k] += e
+      # A piece timed by neither, or of chunk_ms or more, is a chunk alone (Size, above).
+      if ($3 in ms) e = ms[$3]; else if ($3 in sd) e = sd[$3]; else { e = "unknown"; nu++ }
+      alone = e == "unknown" || e + 0 >= chunk
+      if (k == 0 || full[k] || alone || est[k] + e > chunk) k++
+      chunk_of[p] = k; est[k] += (e == "unknown") ? chunk : e; full[k] = alone
       nt = split(ts, t, " ")
       for (i = 1; i <= nt; i++) {
         by[t[i]] = by[t[i]] " " p
         if (!((k, t[i]) in has)) { has[k, t[i]] = 1; terms[k] = terms[k] t[i] "\n" }
       }
-      pieces[k] = pieces[k] $3 "\n"
+      pieces[k] = pieces[k] $3 " " e "\n"
     }
     END {
       for (c = 1; c <= k; c++) {
@@ -1143,12 +1182,13 @@ run_chunks() {
         print est[c], c > (cdir "/order.unsorted")
       }
       close(cdir "/order.unsorted")
-      print k
-    }' <(cat "$times_file" 2>/dev/null) <(printf '%s\n' "$terms") "$cdir/chosen") || return 1
+      print k, nu + 0
+    }' <(cat "$times_file" 2>/dev/null) "$cdir/seed" <(printf '%s\n' "$terms") "$cdir/chosen") || return 1
+  read -r nchunks nunknown <<<"$n"
   sort -k 1,1nr -k 2,2n "$cdir/order.unsorted" | cut -d ' ' -f 2 >"$cdir/order"
-  echo "merge check: $(wc -l <"$cdir/chosen") pieces in $nchunks chunks of up to $((chunk_ms / 1000)) s by the times of earlier checks, $jobs at once"
+  echo "merge check: $(wc -l <"$cdir/chosen") pieces in $nchunks chunks of up to $((chunk_ms / 1000)) s by the times of earlier checks and of main_watch ($nunknown timed by neither, each alone), $jobs at once"
   for k in $(seq 1 "$nchunks"); do : >"$cdir/$k.result"; done
-  export cdir tbase fullarg nchunks
+  export cdir tbase fullarg nchunks chunk_limit chunk_ms
   xargs -P "$jobs" -I '{}' bash -c 'run_chunk "$1"' _ '{}' <"$cdir/order"
   # The sum of the chunks and the pieces they ran.
   : >"$cdir/ran"
@@ -1161,7 +1201,7 @@ run_chunks() {
       n=$(command grep -a -o -E '^pieces: [0-9]+, failed: [0-9]+' "$cdir/$k.log" | tail -n 1)
     fi
     over=
-    [ "${ms:-0}" -le 60000 ] || over=", over 60 s"
+    [ ! -s "$cdir/$k.stopped" ] || over=", stopped at ${chunk_limit} s (named above)"
     echo "merge check: chunk $k of $nchunks: ${n:-no result} in $((${ms:-0} / 1000)) s$over"
     if [ -n "$n" ]; then
       [ ! -f "$dir/summary" ] || awk '$2 ~ /^rc=/ { print $1 }' "$dir/summary" >>"$cdir/ran"
@@ -1178,14 +1218,16 @@ run_chunks() {
       tdirs+=("$tbase/$k")
     fi
   done
-  # The times for the next check: the old ones, with each piece just run at its new time. Written
+  # The times for the next check: the old ones, with each piece just run at its new time and each
+  # piece of a stopped chunk that did not end at chunk_ms ($cdir/<k>.stopped). Written
   # in place, not moved over the old file (no script here moves a file over another by a path
-  # built from variables): a check that reads it during the write sees part of it and takes
-  # unknown_ms for the rest, which only sizes its chunks worse; of two checks that write at once
+  # built from variables): a check that reads it during the write sees part of it and takes the
+  # times of main_watch for the rest, or runs a piece alone, which only sizes its chunks worse
+  # (smaller, or larger but still stopped at chunk_limit); of two checks that write at once
   # one's times are kept, and the next check of those pieces writes them again.
   n=$(awk 'FILENAME == ARGV[1] { if (NF == 2 && $2 ~ /^[0-9]+$/) t[$1] = $2; next }
     $2 ~ /^rc=/ && $3 ~ /^[0-9]+ms$/ { t[$1] = $3 + 0 }
-    END { for (p in t) print p, t[p] }' <(cat "$times_file" 2>/dev/null) $(cat "$cdir/summaries") | sort)
+    END { for (p in t) print p, t[p] }' <(cat "$times_file" 2>/dev/null) $(cat "$cdir/summaries") $(seq -f "$cdir/%g.stopped" 1 "$nchunks") | sort)
   [ -z "$n" ] || printf '%s\n' "$n" >"$times_file"
   for k in $bad; do
     echo "---- failed chunk $k of $nchunks (its log: $cdir/$k.log) ----"
