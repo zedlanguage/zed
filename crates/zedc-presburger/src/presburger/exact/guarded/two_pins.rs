@@ -160,8 +160,9 @@ impl<'a> Prep<'a> {
     // repeat in every fold; an analogy for composed guards, not a bound on them; see `lib.rs`);
     // no exact method here avoids reading each. Flat guards cut at most `1 + c + c(c-1)/2`
     // real cells (the line arrangement of Zaslavsky, "Facing up to arrangements", Mem. AMS
-    // 154, 1975, not read: no copy found on 2026-11-21, see `lib.rs`; the count is the
-    // elementary one there, the `k`-th line adding at most `k` regions). An arm whose guards
+    // 154, 1975, not read: no copy found on 2026-11-21, so its statement of the bound and of
+    // equality in general position is inferred, see `lib.rs`; the count is the elementary
+    // one there, the `k`-th line adding at most `k` regions). An arm whose guards
     // cut out no integer `p` is pruned where the choice is met, before any reading of it
     // (PRES-two-pin-prune, part b; [`Prep::cell`]), so C counts the cells that test keeps:
     // those of the arrangement with a point, and some with none (it reads the guards alone,

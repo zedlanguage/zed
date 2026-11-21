@@ -667,6 +667,10 @@
 //! - T. Zaslavsky, "Facing up to arrangements: face-count formulas for partitions of space by
 //!   hyperplanes", Memoirs of the AMS 1(154), 1975, doi:10.1090/memo/0154: `c` lines in the
 //!   plane cut it into at most `1 + c + c(c-1)/2` regions, with equality in general position.
+//!   Inferred, not read: that the memoir states this bound and its equality case is taken
+//!   from secondary statements (Montúfar et al. 2014, above, which cites it for the count of
+//!   regions of a hyperplane arrangement); the bound and the equality are proved below
+//!   without it.
 //!   Not read: on 2026-11-21 allpapers-locate (paperclip, arXiv, Unpaywall, OpenAlex, CORE,
 //!   dblp) found no free copy, the Sci-Hub mirrors and sci.bban.top had none, LibGen's DOI
 //!   index had none and its title search found two PDFs and a DjVu whose downloads failed with
