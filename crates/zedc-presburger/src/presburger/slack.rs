@@ -1419,7 +1419,7 @@ pub(super) fn sweep_row(
 // Complexity tradeoff: on an unbounded single-color unit equation (`decide_kept`'s second pass
 // without `disjunction_hulls`), naive `point_with` runs `pick_by` `2 k_r` times, costing
 // `Theta(k_r^2)`. Because `quotient` unpacks the residual sum onto the lexicographically greatest
-// active `Atom`, partitioning `0..k_r` by the right-to-left suffix maxima `main_m` produces
+// active `Atom`, partitioning `0..k_r` by the left-to-right maxima `main_m` produces
 // disjoint exposed sub-chains `exposed[q]` with `sum_q |exposed[q]| <= k_r`, simulating all `2 k_r`
 // fast and slow probes exactly in `O(k_r log k_r)` time at every `k_r >= 2` with zero size switch.
 // Test: `l01_38_presburger::slack_scale::sat_half_decide_scales`.
@@ -1450,8 +1450,11 @@ pub(super) fn sweep_row_unbounded(disjs: Vec<DisjInfo>, target: Int, use_fast: b
     let gmax1 = ord_by_atom[0];
     let gmax2 = ord_by_atom[1];
 
-    // Right-to-left suffix maxima `main_m[0] > main_m[1] > ... > main_m[r - 1] == 0` of
-    // `disjs[u].atom` (the exact sequence of `quotient` unpack targets along
+    // Left-to-right maxima of `disjs[u].atom` (each index `u` whose name is above the name of
+    // every index before it; index 0 is one), listed from the last, so that
+    // `main_m[0] > main_m[1] > ... > main_m[r - 1] == 0` (corrected 2026-11-20: they were
+    // called right-to-left suffix maxima, which are another set; `inc_m` below builds these),
+    // the exact sequence of `quotient` unpack targets along
     // `pick_by(..., false)`), plus the disjoint exposed sub-chains `exposed[q]` inside
     // `(main_m[q], main_m[q - 1])` (after `main_m[0]` where `q == 0`): the indices that join the
     // chain when `loc == main_m[q]` is removed, each above every name before it but `main_m[q]`

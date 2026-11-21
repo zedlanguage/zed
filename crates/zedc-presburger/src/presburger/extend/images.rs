@@ -579,6 +579,21 @@ struct Orbit {
 
 impl Orbit {
     /// The output residue after all steps from this exact input residue.
+    ///
+    /// Proof for a skipping orbit (added 2026-11-20). Each step is `x + 1` where `x mod m` is
+    /// 0 and `x + 2` elsewhere (the choice read where the orbit is built), so after `s` steps
+    /// from `r` the residue is `r + 2 s - v mod m`, `v` the number of steps taken from residue
+    /// 0. Between two such steps the residue moves by 2 a step, so the arrivals at 0 are:
+    /// for even `m`, none where `r` is odd (adding 2 keeps it odd); where `r` is even, one at
+    /// step `first = ((-r) mod m) / 2`, the least `k >= 0` with `r + 2 k ≡ 0`, after which the
+    /// residue is 1, odd, and never 0 again. For odd `m`, 2 is invertible with inverse
+    /// `period = (m + 1) / 2`, so the first arrival is at `first = (-r) · period mod m`, the
+    /// least `k >= 0` with `2 k ≡ -r`; from 0 the residue goes to 1 and reaches 0 again after
+    /// `(-1) · period mod m = (m - 1) / 2` more steps, so the arrivals are at
+    /// `first + j · period`, `j >= 0`. A step taken from 0 counts where the arrival is at a
+    /// step `t <= s - 1`: none where `s <= first`, else `1 + (s - 1 - first) div period` for
+    /// odd `m` and 1 for even `m`, as computed. Tests: `images::tests::orbit_questions_keep_*`
+    /// run the skipping chain (`chain(m, count, true)`) step by step and compare.
     fn residue(&self, r: &Int) -> Int {
         let m = &self.modulus;
         if !self.skipping {

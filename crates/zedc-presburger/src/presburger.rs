@@ -2192,14 +2192,23 @@ impl Renamed {
     // is given up: a formula whose tie stays after one level of individualization (two families
     // of tied atoms that do not determine each other) is still refused; that needs a search
     // tree of individualizations, exponential in the worst case.
-    // Not proved: that `stable_colors` numbers its colors by the structure and the starting
-    // colors alone, so that an exchange of atoms that maps the formula onto itself moves the
-    // coloring as it moves the starting colors (its doc and Berkholz, Bonsma and Grohe's
-    // section 3 say so; `l01_38_presburger/canonical.rs` tests it), and that
-    // [`Numbered::permutes_onto_itself`] says yes only to an exchange that maps the formula
-    // onto itself (its argument is that of [`Numbered::swaps_onto_itself`]). If the first
-    // failed, two namings could give two renamed formulas; the answers would still be right,
-    // since a renaming keeps the points, but could differ in a refusal or in the model found.
+    // Proved (added 2026-11-20): that an exchange `h` of atoms that maps the formula onto
+    // itself moves the coloring of `stable_colors` as it moves the starting colors, that is,
+    // `colors(first ∘ h⁻¹) = colors(first) ∘ h⁻¹` on the atoms. `h` maps each row to a row
+    // of the same relation and constant, each term to a term of the same coefficient, and
+    // each group to a group of the same kind with the images of its parts, so it extends to a
+    // bijection of the vertices of `stable_colors`' graph that keeps the arcs. The starting
+    // colors of rows, terms and groups are numbered by sorting the relations and constants,
+    // the coefficients and the kinds, values `h` keeps, so they correspond; those of the atoms
+    // are `first` and `first ∘ h⁻¹`, which correspond by definition. The two runs of
+    // [`Refine`] then correspond step by step: this is the induction in the doc of
+    // `RowGraph::refine` (the same `Refine::new` and `Refine::run`), whose steps use only the
+    // colors, the arcs and the order of the color numbers, never the order of the vertices.
+    // Not proved: that [`Numbered::permutes_onto_itself`] says yes only to an exchange that
+    // maps the formula onto itself (its argument is that of [`Numbered::swaps_onto_itself`]).
+    // Without the claim proved above, two namings could give two renamed formulas; the
+    // answers would still be right, since a renaming keeps the points, but could differ in a
+    // refusal or in the model found.
     // Evidence: `l01_38_omega_test::names` renames every system of its tests and compares the
     // answers, including the sums of conditionals of this case.
     fn individualized(
@@ -20702,7 +20711,8 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
 ///    projections of `B ∧ A_i` onto `s` (for `d = 0`, empty; with no disjunction, `d = 1` with
 ///    `A_1 = true`).
 /// 2. Substituting `x = -a*(t + k)` from a unit equality `a*x + t + k == 0` (`a = ±1`, `x != s`)
-///    is a unimodular elimination (W. Pugh, "The Omega test", Supercomputing 1991, sec. 2.2),
+///    is a unimodular elimination (W. Pugh, "The Omega test", Supercomputing 1991, sec. 2.2,
+///    doi:10.1145/125826.125848),
 ///    preserving the set of integer projections onto all remaining atoms (and onto `s`).
 ///    Substituting a single-atom equality `a*x + k == 0` (`x != s`) is exact because `a | k`
 ///    fixes `x = -k/a` uniquely, else no integer solution exists.
@@ -24849,7 +24859,8 @@ fn side_within(
 /// point. It comes down so: each equality, in turn, with a coefficient 1 or -1 at an atom other
 /// than `sym`, gives that atom's value in the others, which replaces it in every other
 /// constraint. The change of variables is unimodular, so the integer points of what is left
-/// are those of `c` with the atom dropped (Pugh, "The Omega test", 1991, sec. 2.2), and the
+/// are those of `c` with the atom dropped (Pugh, "The Omega test", 1991, sec. 2.2,
+/// doi:10.1145/125826.125848), and the
 /// side is then found exactly by [`twovar::ends`].
 ///
 /// Complexity tradeoff: an equality replaced costs one pass over the constraints that hold
@@ -25195,7 +25206,8 @@ fn exact_at(c: &Formula, sym: &Atom, v: &Int) -> Option<bool> {
 /// same constraints, and those two values are shortest paths: with a node `z` standing for 0,
 /// `y <= x + k` is an edge `x → y` of weight `k`, a bound is an edge to or from `z`, and an
 /// atom's greatest value is its distance from `z`, its least the negated distance to `z`
-/// (Shostak, "Deciding linear inequalities by computing loop residues", J. ACM 28, 1981).
+/// (Shostak, "Deciding linear inequalities by computing loop residues", J. ACM 28, 1981,
+/// doi:10.1145/322276.322288).
 /// The point gives a potential under which no edge has a negative reduced weight, so each
 /// side is one Dijkstra search: O(m log n) for m constraints over n atoms, against
 /// [`hull_from`]'s O(log d) questions of the whole group for each atom. The bounds are those

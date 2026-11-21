@@ -1118,13 +1118,15 @@ Not read:
 
 The list is `proofdoc4-lists/e.txt`, 90 entries numbered 1 to 90 in its order. Part 1, entries
 1 to 20 and the six review ids R4-CLAUDE-2, R4-CLAUDE-3, R4-CLAUDE-8, I4.3, I4.15 and I4.11,
-base commit 8c9dd3cbd. For each entry the whole message and the whole diff under
-`crates/zedc-presburger` were read, and each claim was checked at the code that relies on it
-on main today.
+base commit 8c9dd3cbd; part 2, entries 21 to 59, base commit 8f447824e. For each entry the
+whole message and the whole diff under `crates/zedc-presburger` were read, and each claim was
+checked at the code that relies on it on main today, except where "Not read" below says
+otherwise.
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
-| zedc-presburger | 20 | 44 | 31 | 6 | 0 | 5 |
+| zedc-presburger, part 1 | 20 | 44 | 31 | 6 | 0 | 5 |
+| zedc-presburger, part 2 | 39 | 42 | 35 | 4 | 0 | 2 |
 
 Of the 44, two are counted in no column, since the code they described is gone: the sieve
 proof of fe770de11 (moved to `zed-numtheory` `least_prime_factors`, complete there, and no
@@ -1191,14 +1193,61 @@ Two claims were false, each in a comment that the code relied on:
 | 6d5a815dd | without a top-level first step no part has its value | `forced.rs` `may_start` | corrected: a part below may; `false` still sound |
 | 6d5a815dd | the subset reductions' counts are necessary conditions | `reduce_subset_row_eqs`, `slack.rs` 63 | already there |
 | 6d5a815dd | `settle`'s count check loses no answer but an early empty | `row_domains.rs` `settle` | already there |
+| 7a7417966 | each use of the shared union-find keeps the root its caller needs | `conjuncts.rs`, `exact.rs` `split`, `extend.rs` | already there |
+| 8780d212c | `difference_hulls` reads the least and greatest values as shortest paths | `presburger.rs` `difference_hulls` | already there |
+| 8780d212c | Shostak 1981 cited at the sites | `difference_hulls` doc, `conjuncts.rs` `Edge` | added: doi:10.1145/322276.322288 at both |
+| 8ecea2e9f | `remove_covered` drops only covered rows | `conjuncts.rs` `remove_covered` | already there |
+| 9312fea5a | `substituted_difference_hulls` is exact | its proof at the site | already there |
+| 9e25afa99 | `merge_pieces` with different rests is the union | `extend.rs` `merge_pieces` | already there |
+| 9e25afa99 | `by_pairs` rewrites exactly, both signs | `extend.rs` `by_pairs` | already there |
+| b991293a4 | DOIs at the cited sites | file headers, Seidel and Aragon, Tarjan and van Leeuwen | already there |
+| b991293a4 | the union-find descriptions match their code | `guarded.rs` `ties`, `conjuncts.rs` `uf_merge` | already there |
+| bf0be61bc | `DeepHulls` is sound (meet of the base, join of live disjuncts) | `DeepHulls` | already there |
+| bf0be61bc | `settle_tied`: an empty base means an empty formula | `settle_tied` | already there |
+| c8cac82fa | the domain intersection by complements and the `x = 1` shortcut | removed since | no longer relied on |
+| c8cac82fa | `ScalarWitness` answers true only at a point | `modular.rs` `ScalarWitness` | already there |
+| cc9e97345 | `drop_jointly_empty` projects each disjunct exactly | `drop_jointly_empty` | already there |
+| cc9e97345 | `hold_waiting` keeps every point of the search | its proof at the site | already there |
+| cd403f3b0 | the two-pin reading is a unimodular change of variables, the dark term Pugh's | `two_pins.rs` module doc, `shadow` | already there |
+| d3f5e50c3 | the exposed range of `sweep_row_unbounded` | `slack.rs` `sweep_row_unbounded`, test `unbounded_row_tests` | already there |
+| d3f5e50c3 | `main_m` are the right-to-left suffix maxima | `slack.rs` two comments | corrected: they are the left-to-right maxima, listed from the last |
+| d77a6be8e | `stable_colors` moves its colors as an exchange moves the starting colors | `Renamed::individualized` | completed: proved by the induction of `RowGraph::refine` |
+| d77a6be8e | `permutes_onto_itself` says yes only to a symmetry | `Renamed::individualized` | already there (marked not proved) |
+| dc637c0d3 | `merge_pieces` gap side and `without_free_pairs` counts | `extend.rs` | already there |
+| e8981310f | `Orbit::residue` counts the skipping steps | `extend/images.rs` `Orbit::residue` | completed: derivation at the site |
+| f17dead5b | `Omega::flush` loses no elimination by its loose pairs | `presburger.rs` `flush` | already there (marked assumption) |
+| f9936c4fe | `two_atom_side` is a unimodular substitution | `two_atom_side` | already there |
+| f9936c4fe | Pugh 1991 cited at the sites | `two_atom_side`, the unit-equality step | added: doi:10.1145/125826.125848 at both |
+| fafbc69a5 | `exact_each` asks in one order | `exact.rs` `exact_each_checked` | already there |
+| fafbc69a5 | the fast paths have a quarter of the limit | `exact.rs` `tried` doc | corrected: the whole limit, as the code and the note below say |
+| fdb5fda2a | `kept` and `took` keyed by `Parts::id` | `probe`, `search_by_halves` | already there |
+| 0d4b0170a | full citations and checks | `lib.rs` References | already there |
+| 104c0e177 | `satisfiable` reads a missing atom as zero | `satisfiable` doc | already there |
+| 11e2c2786 | `by_cells` answers alike whatever cells `cells_of` takes | `by_cells`, `cells_of` | already there |
+| 1a19cae20 | `ProjectionMemo` keys by formula, symbols and path flags | `ProjectionMemo` | already there (marked assumption) |
+| 23ae5cdd3 | "splinter" is not Pugh's word | `lib.rs` References | already there |
+| 23c5a37c0 | a constraint with no atom decides its part | `Parts::of` | already there |
+| 2dfb9e87f | `solve` may defer the splinters | `solve`, its proof | already there |
+| 2f837d6da | the Atom-order fallback | `modular.rs`, superseded by the I6.3 fix | already there |
+| 34e5a4454 | `Blocks::gaps` and `is_gapped` | `conjuncts.rs` | already there |
+| 3aa6326c3 | `Extending::extend` settles on a part with no point | `extend.rs` `extend` | already there |
+| 3f2a92b63 | kept blocks brought up to date from diffs | `family`, `class_core` | already there |
+| 4a9b79d02 | `learn` searches by doubling | `learn` | already there (monotonicity marked not proved) |
+| 5202d9698 | `System::symmetries` maps a tie onto itself | its proof in the doc | already there |
+| 5a5084526 | `swaps_onto_itself` says yes only to a symmetry | `System::swaps_onto_itself` | already there |
 
 The potential that `Scope::shortest` keeps (68416f089) is in `zedc-preimage` `product.rs`,
-outside this crate, and was not checked here.
+outside this crate, and was not checked here; nor were `twovar::ends` (f9936c4fe, in
+`zedc-solvers`) and `lin_at` (c8cac82fa, in `zedc-preimage`).
 
 No code claim: 0f5f38d66 (tests pinning refusals), 295d02151 (comments dated), 6b87a1c3a
-(tests moved to `r4_tests.rs` and `r6_tests.rs`).
+(tests moved to `r4_tests.rs` and `r6_tests.rs`), 12c58bd41 (no `#[ignore]` left), 141a411e3
+(import cycles), 23ce8727a (tests only), 4c17c8e8f (crate move), 5168f5a37 (clippy),
+5ccb21f3f (import cycles, clippy), 62e774ae6 (a doc link made plain text).
 
-Not read: entries 21 to 90.
+Not read: entries 60 to 90; and of e8981310f, all of `extend/images.rs` but
+`Orbit::residue` (`answer`, `joint`, `shifts`, `Clamp`, the `Frame` operations) and its
+changes to `extend.rs`.
 
 ## proofdoc4f: zed-kernel, zedc-elab, zedc-base
 

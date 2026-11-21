@@ -1926,8 +1926,11 @@ fn implied(c: &Con, d: &Dirs) -> bool {
     above && below
 }
 
-/// `run`, a fast path, given what is left of `fast`, the fast paths' own allowance (a quarter
-/// of the limit, set by the caller once for its `Work`): its answer, or `None` where it fails
+/// `run`, a fast path, given what is left of `fast`, the fast paths' own allowance (the work
+/// limit `L`, set by the caller: [`exact_each_checked`] gives each symbol `L` less its even
+/// share of the part's reading, `limit - charge(..)`, and `has_points` starts at
+/// `work.limit`; corrected 2026-11-20 from "a quarter of the limit", which predates the change
+/// described below): its answer, or `None` where it fails
 /// or passes that allowance. Its work is counted in [`EXACT_WORK`] and [`FAST_WORK`] and taken
 /// from `fast`, never from `work`, so the complete method after it (the loop of [`cover`], or
 /// the questions of [`has_points`]) runs with the same limit and the same work as with no fast

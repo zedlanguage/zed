@@ -643,7 +643,8 @@ pub fn unit_sum(g: &Formula) -> bool {
 }
 
 /// An edge of a difference constraint: `to <= from + weight`, `None` standing for the value 0
-/// (Shostak's node `z`), so that a bound is an edge to or from it.
+/// (Shostak's node `z`; Shostak 1981, doi:10.1145/322276.322288), so that a bound is an edge
+/// to or from it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Edge {
     /// The name the edge leaves, or `None` for 0.
