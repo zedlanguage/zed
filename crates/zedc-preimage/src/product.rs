@@ -17374,7 +17374,8 @@ impl Scope {
                 // waits for the main pass, which costs work only.) Test: every test of
                 // `l01_39_reduced_product` that reads a pendant leaf reaches the `expect` in
                 // `view`, which panics if the fact fails; no test builds a pendant whose leaf is
-                // missing from the base map, since no write can. (3) `extend_path` returns at its first line when `self.bottom` or
+                // missing from the base map, since no write can. (3) `extend_path` returns at
+                // its first line when `self.bottom` or
                 // `!self.written.is_empty()`, so its `self.bottom = bottom` never clears an
                 // empty scope here; `unbind`, `narrow_linear`, `join_kept` and `narrow_node`
                 // replace the whole scope (`*self = ...`), as stated. (4) Not proved: "reports a
