@@ -359,8 +359,9 @@ fn zed_files(dir: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn no_program_of_the_repository_has_a_bare_else() {
     // The corpus, the fence fixtures, the prelude and every other `.zed` file under `zed/` (the
-    // fences of README.md: the next test). libzed (/home/luke/Work/libzed, a repository of its own that no
-    // test here reads) held no program on 2026-11-21. A file the lexer refuses is a failure.
+    // fences of README.md: the next test). libzed (/home/luke/Work/libzed, a repository of its
+    // own that no test here reads) held no program on 2026-11-21. A file the lexer refuses is a
+    // failure.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut files = Vec::new();
     zed_files(&root.join("zed"), &mut files);

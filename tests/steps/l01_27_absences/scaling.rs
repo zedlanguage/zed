@@ -151,9 +151,9 @@ fn each_defaulted_branch_is_checked_alone() {
 }
 
 /// `_ = if c { y else #notFound -> #ok } else if c { … } … else { y else #notFound -> #ok };`
-/// in a function of `c`, after `y = lookup(1);`: `n` branches, each naming the miss of the one name `y`. Each branch costs
-/// the checker little, so a walk over each `if`'s branches, even one that only counts them,
-/// costs more than the rest of the check at these sizes.
+/// in a function of `c`, after `y = lookup(1);`: `n` branches, each naming the miss of the one
+/// name `y`. Each branch costs the checker little, so a walk over each `if`'s branches, even one
+/// that only counts them, costs more than the rest of the check at these sizes.
 pub(super) fn defaulted_names(n: usize) -> String {
     let mut t = String::from("lookup(positional k: int) = if k > 0 { k } else { #notFound };\n");
     let arms = vec!["if c { y else #notFound -> #ok }"; n];

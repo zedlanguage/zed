@@ -53,11 +53,11 @@ fn a_chain_of_else_is_one_value() {
     check(&[
         (
             "v = { a: x else #notFound -> y };",
-            "(= (v) (record (a: (else x y))))",
+            "(= (v) (record (a: (else x #notFound y))))",
         ),
         (
-            "v = { a: x else #notFound -> y else z, b: w };",
-            "(= (v) (record (a: (else (else x y) z)) (b: w)))",
+            "v = { a: x else #notFound -> y else #none -> z, b: w };",
+            "(= (v) (record (a: (else (else x #notFound y) #none z)) (b: w)))",
         ),
     ]);
 }

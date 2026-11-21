@@ -12,7 +12,7 @@ fn a_test_with_clause_prints_its_rows_and_ports() {
          test with main::args = \"a\" { \"\" -> \"a\\n\" }\n\
          test with main::args = \"b\", main::env = n -> #notFound { \"x\" -> \"b\\n\", \"y\" -> \"b\\n\" }",
         "(def main ((m.args: CommandLine)) (-> (m.stdout: Lines)) \
-         (block (<- m.stdout (else (index m.args 0) (str)))) \
+         (block (<- m.stdout (else (index m.args 0) #outOfBounds (str)))) \
          (test ((str) (str \"a\\n\")) ((str \"x\") (str \"b\\n\")) ((str \"y\") (str \"b\\n\"))) \
          (with (rows 0 1) (main::args (str \"a\"))) \
          (with (rows 1 3) (main::args (str \"b\")) (main::env (fn (n) #notFound))))",

@@ -496,9 +496,9 @@ fn printed_fixes(got: &str) -> Vec<String> {
 
 /// Each fix printed under "fixes, each checked here" for a component that no use gives a
 /// carrier, put in place of the call, runs (item LIT-tuple-branch-carrier): `r = h((1.5f64,
-/// 2))` was printed for `if (p[0] else #outOfBounds -> 0) < 5 { p[0] } else { 0 }` and rejected. A decimal
-/// component now takes `f64` and prints no fix, so each component here is a `/` of integer
-/// literals, which is still rejected (author decision 2026-11-12).
+/// 2))` was printed for `if (p[0] else #outOfBounds -> 0) < 5 { p[0] } else { 0 }` and rejected.
+/// A decimal component now takes `f64` and prints no fix, so each component here is a `/` of
+/// integer literals, which is still rejected (author decision 2026-11-12).
 #[test]
 fn every_printed_fix_of_a_decimal_component_runs() {
     let name = "l01_26a_tuple_arg_pair_fixes_run";
