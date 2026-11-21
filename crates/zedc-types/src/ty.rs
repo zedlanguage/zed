@@ -4515,18 +4515,51 @@ impl VarFacts {
         }
     }
     /// Adds the facts of a function it holds: of each set, the larger is kept and the smaller
-    /// one added to it, so each variable is copied O(log n) times over a nest of n.
-    // Proof where the sets are disjoint (proofs audit, proofdoc4g): a variable `v` is inserted
-    // only from the smaller set `S` into a copy of the larger `L` ([`merge`]); with `S` and
-    // `L` disjoint the result holds `|S| + |L| >= 2·|S|` variables, and the sets only grow
-    // outward through a nest, so `v`'s set doubles at each insertion of `v` and `v` is
-    // inserted at most `log2 n` times for `n` variables in all. Not proved: sets that share
-    // variables. A shared variable is not inserted again ([`add`]), but it counts in `|L|`
-    // and not in the growth, so `S = A ∪ {v}` merged with `L = A ∪ {w}` inserts `v` into a
-    // set only one larger; a nest that repeats this at each level would insert `v` once per
-    // level, `O(n)` times, not `O(log n)`. Whether a nest of function types can give such
-    // sets at every level (each function's facts all but one variable of the facts around
-    // it) is the open sub-case; no scaling test builds it.
+    /// one added to it, so over a nest whose walks insert `N` variables, no signature held in
+    /// two places, the merges cost `O(N log^2 N)` in all.
+    // Proof, for sets that share variables as well as disjoint ones (PERF-varfacts-held-overlap,
+    // proofdoc5c; it replaces the proof for disjoint sets of proofdoc4g, which charged each
+    // insertion to the growth of a set and so failed where `S = A ∪ {v}` meets `L = A ∪ {w}`).
+    // (1) One [`merge`] of sets of `s <= l` variables costs `O((s + 1) log l)`. The loop runs
+    // at most `s` times, each an [`add`] (`O(log l)`) and at most one `next()` of
+    // `imbl`'s `diff` (imbl 7.0.2, `ord/map.rs` `DiffIter::next`, `nodes/btree.rs`
+    // `Cursor::advance_skipping_shared` and `Cursor::next`). One `next()` yields at most one
+    // item; before it, each pass of its loop is an `Equal`, a key in both sets, so in the
+    // smaller, and each `Equal` is passed once, at most `s` in the whole walk; each pass of the
+    // loop in `advance_skipping_shared` skips one run of shared nodes, holding a key of both
+    // sets, again at most `s` in all. Each cursor step costs at most the depth, `O(log l)`. So
+    // the walk costs `O(s log l)` however many nodes the sets share, and the doubling
+    // [`merge`] describes is not needed for this bound.
+    // (2) Count, for the facts `F(σ)` of a signature `σ`, the occurrences `M(σ)` that put a
+    // variable into them: each insertion [`VarFacts::of`] makes by itself (`add_to`, `add`, a
+    // variable of `t.vars`), and the `M` of each function it holds. Each set of `F(σ)` has at
+    // most `M(σ)` variables. Where no signature is held in two places ([`Sig::facts`] is kept
+    // once, so a shared one is merged into each holder), each insertion is counted in one `M`
+    // along one path; `N` is `M(top)`, the insertions of all the walks: the variable
+    // occurrences of the text, each own, bounded and held variable, and the names a forward
+    // need lists (`held_names`, `held_outer`, `held_classes`), which are not text.
+    // (3) The facts of `σ` start empty and take its own insertions and the facts of each
+    // function it holds by one merge each: a binary tree of merges whose leaves are the `N`
+    // occurrences. A merge of parts of `a` and `b` occurrences costs, by (1),
+    // `O((min(|S|, |L|) + 1) log N)`, and `min(|S|, |L|) <= min(a, b)` as each set has at most
+    // as many variables as occurrences; this is where a shared variable no longer matters.
+    // Charge `min(a, b)` to the occurrences of the smaller part, one each: an occurrence
+    // charged is then in a part at least twice as large, so it is charged at most `log2 N`
+    // times, and the charges sum to at most `N log2 N`. The `+ 1` of each merge is one per
+    // held function, at most `N` (each is written). So `O(N log^2 N)` for the five sets, and
+    // the variables copied, `|S|` a merge, at most `N log2 N`.
+    // Overlap is what the old step could not bound: `S = A ∪ {v}` into `L = A ∪ {w}` costs
+    // `|A| + 1`, paid by the `|A| + 1` occurrences of the smaller part, whose part doubles.
+    // Not proved (PERF-varfacts-held-overlap, the rest): a bound in the text for a signature
+    // held in two or more places, as one `Arc` in a DAG. Its facts are made once but merged
+    // into each holder, and `M` counts it once per path, so `M(top)` may be exponential in the
+    // text; the bound left is `O(E · (V + 1) log V)` for `E` merges, one per function held at
+    // each place, and `V` variables in all, from (1) with `s <= V`. `m` holders of one
+    // signature whose facts and theirs share `a` variables cost `m · a` for text about `m + a`.
+    // Test: l01_22 bench
+    // `function_types_nested_deep_whose_inner_levels_hold_the_outer_variable_fit_in_linear_time`,
+    // each level holding the outer `T`, so the sets overlap at every level (8.08 at 8n). No
+    // test builds the shared case, nor a nest whose sets differ in one variable at every level.
     fn held(&mut self, f: &VarFacts) {
         merge(&mut self.classes, &f.classes);
         merge(&mut self.names, &f.names);
