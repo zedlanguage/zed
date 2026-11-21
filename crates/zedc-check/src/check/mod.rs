@@ -1355,6 +1355,10 @@ enum Why<'a> {
 /// as it was then.
 type Masks = Vec<(Arc<str>, u8)>;
 
+/// Pairs (variable, name): a variable of a printed type that prints by the given name, as
+/// [`Around`]'s `named` takes them ([`Ck::written_param_names`]).
+type WrittenNames = Vec<(Arc<str>, Arc<str>)>;
+
 /// The lists of an [`Around`] that [`Ck::around`] makes, owned.
 struct WrittenAround {
     named: Vec<(Arc<str>, Arc<str>)>,
@@ -4037,7 +4041,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// built only for a message that is printed. The naive alternative, carrying each written
     /// type beside its class into `Ck::generalize` (as the plan row first said), would cost a
     /// field on every class for the few messages that print a declaration.
-    fn written_param_names(f: &Function, sig: &Sig) -> (Sig, Vec<(Arc<str>, Arc<str>)>) {
+    fn written_param_names(f: &Function, sig: &Sig) -> (Sig, WrittenNames) {
         let mut sig = sig.clone();
         let mut names = Vec::new();
         for p in &f.params {

@@ -1044,12 +1044,10 @@ fn a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it() {
         assert_eq!(type_errors(&text), checked, "{text}");
         assert_eq!(elab_errors(&text), want, "{text}");
     }
-    let bound = format!(
-        "h(positional y: T, x, out: Lines) {{ if x is T {{ out <- x; }}; }}\n\
-         main(m: MainArgs) {{ h(\"c\", x: \"a\", out: m.stdout); }}\n"
-    );
-    assert_eq!(type_errors(&bound), Vec::<String>::new());
-    assert_eq!(elab_errors(&bound), vec![variable]);
+    let bound = "h(positional y: T, x, out: Lines) { if x is T { out <- x; }; }\n\
+                 main(m: MainArgs) { h(\"c\", x: \"a\", out: m.stdout); }\n";
+    assert_eq!(type_errors(bound), Vec::<String>::new());
+    assert_eq!(elab_errors(bound), vec![variable]);
     // Controls: a test against a type that is no variable is taken; a push whose rest fails
     // whatever `x` is is refused at once.
     let string = format!("h(x, out: Lines) {{ if x is String {{ out <- x; }}; }}\n{call}");
