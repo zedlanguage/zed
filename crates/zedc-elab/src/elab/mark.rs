@@ -117,7 +117,13 @@ pub fn mark_of(t: &Term) -> Option<usize> {
 /// The node a marked elaboration wraps for a mark of kind [`Kind::Unary`], [`Kind::Bool`] or
 /// [`Kind::If`], and the mark's index: such a node `t` is written `and(t, k)` with `k` the
 /// index. The kernel's `and` takes two `bool`s, so no other term has an integer literal as its
-/// second argument, and the wrapper is never taken for one.
+/// second argument, and the wrapper is never taken for one. Proof, over the terms of this
+/// crate, which are what this reads: `Term::Prim(Prim::And, ..)` is built with a literal
+/// second argument only in [`wrap`]. `a && b` becomes `if_(a, b, false)` (`Elab::binary`,
+/// walk.rs), not `and`; a fold by `&&` is a `Term::Fold` whose operator is `Term::PrimFn`
+/// (`remap_term`, walk.rs; `reducer_prim`, walk/fp_ops.rs); a scan by `&&` applies `and` to
+/// variables and parts of them (`scan_push`, walk/fp_ops.rs). Any other `and` is of operands
+/// the checker typed `bool`, and the elaboration of a `bool` is never an integer literal.
 pub fn wrapped(t: &Term) -> Option<(&Term, usize)> {
     match t {
         Term::Prim(Prim::And, args) => match &args[..] {

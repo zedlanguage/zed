@@ -807,7 +807,22 @@ impl<'a> Elab<'a> {
             Ok(order) => order,
             Err(cycles) => {
                 // The checker reports each cycle too, in the same words, and checks the rest of
-                // the scope; a unit keeps one copy of each error.
+                // the scope; a unit keeps one copy of each error. Why the two copies are equal
+                // in the fields `finish` (elab.rs) compares, span, message, menu and row:
+                // the checker's `scope` (zedc-check check/walk.rs) builds `items` as here
+                // (each statement but `Return`, `Stmt::bare`), and its `order_around_cycles`
+                // and `order` here both run `place` then `cycles` (zedc-resolve topo.rs) on
+                // the same `deps`, so both get the same cycles and `cycle_reports` the same
+                // reports. The checker passes each through `reject_as_written`, a `Msg` with
+                // no fixes and no noted repair, which `Msg::written` gives back with a period
+                // added to the headline and an empty menu; `Error::sentence` adds the same
+                // period to this copy in `finish`. `reject_as_written` keeps the message and
+                // notes as written, with no `$k` replaced (`Ck::named`) and no part laid out
+                // (`lay_out`): a headline can quote the program's text (`Tables::header`, the
+                // head of an overload, with a default such as `s = "$0"`), and when the checker
+                // read that `$0` as a class the two copies differed and both were printed
+                // (test `l01_29_diagnostics::overload_cycles::
+                // a_dollar_in_the_head_of_an_overload_in_a_cycle_is_quoted_as_written`).
                 for report in self.t.cycle_reports(&items, &cycles) {
                     self.errors.push(Error {
                         menu: String::new(),
@@ -2358,6 +2373,10 @@ impl<'a> Elab<'a> {
             .collect();
         let (p, x) = (self.temp(), self.temp());
         let n = binders.len() - 1;
+        // One kernel name per binder, `_` too: a `_` gets a fresh name (`temp`), so the lets of
+        // `lam` bind every key of the keypath, `p[0]` to `p[n - 1]`, and `names[..n]`, which a
+        // truncation keys its leaves by, is the whole keypath; a written binder's name is its
+        // own (`self.names`, one per binder), so no two lets of `lam` share a name.
         let names: Vec<Arc<str>> = (binders.iter())
             .map(|b| match b {
                 Target::Name(name, span) => self.names[self.id(*span, name)].clone(),

@@ -284,7 +284,16 @@ impl<'a> Elab<'a> {
         };
         let Some((last, rest)) = self.outputs.split_last() else {
             // No `main` pushes to a port, so no call gives this parameter one: the checker
-            // rejects any other argument, and the push is never reached.
+            // rejects any other argument, and the push is never reached. Proof: `outputs` is
+            // the ports of `main`'s header, and the builder declares `m.stdout` or `m.stderr`
+            // there exactly when the body first pushes to it or passes it whole as an argument
+            // (zedc-syntax ast/builder.rs, the two `first_use` of `uses.1`; ast/stmts.rs, the
+            // loop over `MAIN_OUTPUTS`). So with `outputs` empty no output port exists but the
+            // output port parameters, and by induction on the call chain from `main` none of
+            // them is ever given one: zedc-check check/ports.rs rejects any argument for an
+            // output port parameter that is not an output port ("Each argument for an output
+            // port parameter is an output port") and any naming of such a function other than
+            // as a callee ("named only as a callee"). A unit with an error does not run.
             return Term::Push(port.into(), v);
         };
         let held = Term::Var(self.names[held].clone());

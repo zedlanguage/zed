@@ -278,7 +278,15 @@ fn finish(
         Ok((out, marks))
     } else {
         errors.iter_mut().for_each(Error::sentence);
-        errors.sort_by(|a, b| (a.span, &a.message, &a.menu).cmp(&(b.span, &b.message, &b.menu)));
+        // `dedup_by` drops only a copy next to the one kept, so the sort key holds every field
+        // the dedup compares: equal errors are then adjacent and each is kept once. With the
+        // row left out of the key, two copies with an error of another row at the same place
+        // and words between them were both kept (test
+        // `copies_of_an_error_with_another_row_between_them_are_kept_once`). The sort is
+        // stable, so of two equal errors the first given, the checker's, is kept.
+        errors.sort_by(|a, b| {
+            (a.span, &a.message, &a.menu, a.row).cmp(&(b.span, &b.message, &b.menu, b.row))
+        });
         errors.dedup_by(|a, b| {
             (a.span, &a.message, &a.menu, a.row) == (b.span, &b.message, &b.menu, b.row)
         });
@@ -296,4 +304,35 @@ pub fn top_order(unit: &[Stmt], res: &Resolution) -> Result<Vec<usize>, Vec<Vec<
         .map(Stmt::bare)
         .collect();
     Tables::new(unit, res).order(&items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zedc_syntax::lex::Span;
+
+    /// An error at `0..1` with the message `m` and the row `row`.
+    fn error(m: &str, row: Option<rejection::Row>) -> Error {
+        Error {
+            span: Span { start: 0, end: 1 },
+            message: m.into(),
+            notes: Vec::new(),
+            menu: String::new(),
+            row,
+        }
+    }
+
+    /// Two copies of one error, with one of another row between them, are kept once: the
+    /// sort puts the copies next to each other, which the dedup needs.
+    #[test]
+    fn copies_of_an_error_with_another_row_between_them_are_kept_once() {
+        let a = Some(rejection::Row::Collision);
+        let b = Some(rejection::Row::UnliftedCarrier);
+        let errors = vec![error("x.", a), error("x.", b), error("x.", a)];
+        let Err(kept) = finish(Unit::default(), None, errors) else {
+            panic!("errors were given")
+        };
+        let rows: Vec<_> = kept.iter().map(|e| e.row).collect();
+        assert_eq!(rows.len(), 2, "{rows:?}");
+    }
 }

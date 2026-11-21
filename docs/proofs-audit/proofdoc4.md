@@ -1318,12 +1318,15 @@ part. Part 2's entries were read by four reader agents of proofdoc4f (stopped on
 coordinator's order, see below), whose edits proofdoc4f read before the merge. In part 3, at
 base 805ebbd3a, proofdoc4f read 017 to 021, 023, 024, 031 to 033, 054 to 058 and 060 to 062
 in full and 059 in part. Four claims are "covered by" a row another agent owns; they are
-counted under "Already there".
+counted under "Already there". In part 4, at base c1fe17212, proofdoc4f read the zedc-elab
+entries 063 to 106 in full but 084 (cf099fcf2, the crate split, 1 commit message and moved
+code), read in part. A claim made in one entry and completed in two later ones (the generic
+witness, the instancing of bodies) is counted once for each entry.
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
 | zed-kernel | 57 of 62, 4 in part | 151 | 89 | 58 | 2 | 2 |
-| zedc-elab | 0 of 44 | 0 | 0 | 0 | 0 | 0 |
+| zedc-elab | 44 of 44, 1 in part | 34 | 29 | 3 | 0 | 2 |
 | zedc-base | 0 of 39 | 0 | 0 | 0 | 0 | 0 |
 
 | Source | Claim | Code site | Status |
@@ -1478,8 +1481,40 @@ counted under "Already there".
 | fa271b3f2 | The reads memo of a subterm is its own type, named in `clippy.toml` | `eval/made.rs`, `clippy.toml` | already there |
 | fe770de11 | M61 addition, the Fermat inverse, `p.pow(k)` divides `n`, `usize` is 64 bits | `poly.rs`, `num` sites in the diff | already there |
 | fe770de11 | `draw_prime`: each round holds a dense fold of `p` words, so `lambda` and `p` stay below 2^62 | `poly.rs`, `draw_prime` | covered by FIX-poly-limit-comments: the order is wrong (the draw comes before the fold is made), so the bound comes from the budget (each round adds at least `p` to the work spent, and `lambda` is at most twice the last `p`), not from memory |
+| 03a4f95f2 | `zip` and `++` of lists elaborate to the kernel terms of their shapes | zedc-elab `elab/walk.rs`, `elab/walk/fp_ops.rs` | already there |
+| 068d62e2f | The coercion search is a breadth-first search over the types it reaches, each once | zedc-elab `elab/state.rs`, `elab/walk.rs` | already there |
+| 0e329a46e | A curried call through a placed value costs one placing per call | zedc-elab `elab/walk.rs` | already there |
+| 1286f4779 | The function called places a call's arguments, in one pass over them | zedc-elab `elab/walk.rs` | already there |
+| 131d7f7fd | A bracket section elaborates to the function it writes | zedc-elab `elab/walk.rs` | already there |
+| 14b96090a | The tests that cover a dropped body named | zedc-elab `elab.rs`, `elab/bodies.rs`, `elab/dropped_tests.rs` | already there |
+| 29bf6b297 | An index outside the list gives `#outOfBounds` | zedc-elab `elab/walk.rs` | already there |
+| 47d87108b | A literal's fields are read from the literal | zedc-elab `elab/walk.rs`, `Member` | already there |
+| 480291d0e | A push to an output port parameter when `main` has no output is never reached | zedc-elab `elab/state.rs`, `push` | completed: `outputs` is empty iff `main` neither pushes to nor passes an output port (builder `first_use` of `uses.1`, stmts.rs over `MAIN_OUTPUTS`); ports.rs rejects any other argument and any use of such a function but as a callee; induction on the call chain |
+| 4c75d8f88 | The keypath of the hand-written ZIR fold is the whole key | zedc-elab `elab/walk/fp_ops.rs` | already there |
+| 51ae6534c | `MAIN_KEY` names no binder of a program | zedc-elab `elab.rs`, `elab/walk.rs`, `MAIN_KEY` | already there |
+| 555863e23 | Elaboration reports the message alone; the checker's menu writes the arguments before the parameter | zedc-elab `elab/walk.rs` | already there |
+| 5767fe37a | The rounding words round ties as their names say | zedc-elab `elab/walk.rs` | already there |
+| 64d244789 | A unit keeps one copy of each error | zedc-elab `elab.rs`, `finish` | corrected: the sort key left out the row, which the dedup compares, so two copies with an error of another row between them were both kept; test `copies_of_an_error_with_another_row_between_them_are_kept_once` red (3 kept, not 2), row added to the key, green |
+| 64d244789 | The checker reports each cycle in the same words as elaboration, so the unit keeps one | zedc-elab `elab/walk.rs`, `start_scope`; zedc-check `check/walk.rs`, `scope` | corrected: false where the head of an overload in the cycle holds `$k` in a string (`s = "$0"` inside `g(a)`): `Ck::named` read it as class 0 and printed `"T"`, and both copies were printed; test `l01_29_diagnostics::overload_cycles::a_dollar_in_the_head_of_an_overload_in_a_cycle_is_quoted_as_written` red (two headlines), fixed by `Ck::reject_as_written`, green; proof of the rest at the site. The same rewrite in every other message that quotes the program's text is row FAIL-msg-named-reads-program-text |
+| 650ec1e0a | A walk over `a ..` from `rangeFrom` stops at the deciding entry | zedc-elab `elab/walk.rs` | already there |
+| 7d0cc8d9f | A message that depends on the target names it | zedc-elab `elab.rs`, `elaborate_text` | already there |
+| 7fb0c6594 | Proofs and tests named for bodies and folds | zedc-elab `elab/bodies.rs`, `elab/walk/fp_ops.rs` | already there |
+| 875e58597 | Rung 2 reads arithmetic as integers only over int-only parameters | zedc-elab `elab.rs`, `lower`, `int_params` | already there |
+| 9b7a17570, f0bde0d35, cb0137143 | The witness of a generic carrier is split by the carriers of the operands | zedc-elab `elab/walk.rs`, `carried` | already there (each entry's part; counted 3 times) |
+| 9d877b65c | `.foldl` keeps the rank of its family | zedc-elab `elab/walk.rs` | already there |
+| a7dba5382 | `group` gives each key once, in key order | zedc-elab `elab/walk.rs` | already there |
+| ac7cafdd0 | `check_dropped` finds each dropped body once | zedc-elab `elab.rs`, `lower`; `elab/instances.rs` | already there |
+| ac9176a94, f240a5462, b6b810dec | A generic body is instanced once per fold identity its calls decide | zedc-elab `elab/instances.rs`, `Instancing` | already there (each entry's part; counted 3 times) |
+| af7540d08 | `names[..n]` is the whole keypath of a remap | zedc-elab `elab/walk.rs`, `remap_term` | completed: a `_` binder gets a fresh name (`temp`), a written one its own (`self.names`), so the lets bind `p[0]` to `p[n - 1]` and no two share a name |
+| e5ff7920a | `entries_alike` rebuilds a function read from a family entry by entry | zedc-elab `elab/walk.rs`, `entries_alike` | already there |
+| ea2effe91 | A call's parameters are read in the order of the declaration | zedc-elab `elab.rs`, `lower` | already there |
+| eb156f28d | `wrapped` is never taken for an `and` that is not a mark | zedc-elab `elab/mark.rs`, `wrapped` | completed: only `wrap` builds `and` with a literal second argument; `&&` is `if_`, folds by `&&` are `Term::Fold` with `Term::PrimFn`, scans apply `and` to variables; any other `and` has `bool` operands |
+| f24b492bf | A walk over an open stream ends at the deciding entry; reads that never end are refused | zedc-elab `elab/walk.rs`, `elab/walk/fp_ops.rs` | already there |
+| fbb2b68aa | The keypath proof of the fold of a generic function | zedc-elab `elab/walk/fp_ops.rs` | already there |
 
-No code claim: 9e3cc1480 (zed-kernel part: an alias, an equivalent `?`, moved tests).
+No code claim: 9e3cc1480 (zed-kernel part: an alias, an equivalent `?`, moved tests);
+zedc-elab: 7931d6ed6, 8164a8ea9, 2b3e706f1, 995200322, 18ea94666, 86322e10b, c50a8965b,
+0e8df04e7, d11373afd, 4ce8104bb.
 
 Not read:
 
@@ -1487,12 +1522,7 @@ Not read:
   6ff237028 (`split_classes`, `class_rep`), d694e2a26 (the `ChainHint` fallback,
   `cells_windows`, `Live`, X34, X35, `forest`), f48ec1bf4 (all but the `Atoms` privacy
   claim), and ddc1ec274 (3509 lines) not at all
-- zedc-elab (44): 7fb0c6594 7931d6ed6 8164a8ea9 9b7a17570 e5ff7920a f24b492bf 555863e23
-  f0bde0d35 0e329a46e 1286f4779 2b3e706f1 995200322 9d877b65c 068d62e2f 18ea94666 4c75d8f88
-  5767fe37a 7d0cc8d9f 86322e10b 875e58597 c50a8965b cf099fcf2 03a4f95f2 0e8df04e7 64d244789
-  ac7cafdd0 ac9176a94 cb0137143 d11373afd f240a5462 131d7f7fd 14b96090a 29bf6b297 47d87108b
-  480291d0e 4ce8104bb 51ae6534c 650ec1e0a a7dba5382 af7540d08 b6b810dec ea2effe91 eb156f28d
-  fbb2b68aa
+- zedc-elab (1, in part above): cf099fcf2 (the moved code not read line by line)
 - zedc-base (39): 30ad62cc4 7fb0c6594 13237878e ba41f402c d6fa0ddbd 25ef78dd1 7d9e078c0
   a02d270c5 eb9d470b5 007a9ebb0 24a43c819 4e6c5bfaa 50b8eea24 5767fe37a c5ed79580 331f39ab5
   726008ee7 8a14a296f 981ec6c8a 995a598b2 bea44d4a5 bfc106d61 d11373afd e6dfb6877 ebd6faee5

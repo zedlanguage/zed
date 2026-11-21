@@ -295,3 +295,27 @@ fn calls_of_many_overloads() {
         the_calls_of_overloads_ordered(&calls_of_overloads(n), n);
     }
 }
+
+/// The head of an overload in a cycle is the program's text, and is quoted as written: a `$0`
+/// in a string it holds is not a type the checker names. Inside `g`, whose untyped `a` is a
+/// class numbered 0, the checker wrote the head as `f(positional n: int, s = "T")`, and its
+/// report, then in other words than the elaboration's, was printed twice.
+#[test]
+fn a_dollar_in_the_head_of_an_overload_in_a_cycle_is_quoted_as_written() {
+    let out = rejected(
+        "g(a) = { f(positional n: int, s = \"$0\") = f(n); f(positional b: bool) = 0; a };\n\
+         main = g(a: 1);\n",
+    );
+    assert_eq!(
+        heads(&out),
+        [format!(
+            "1:10: `f(positional n: int, s = \"$0\")` is defined in terms of itself, which is \
+             recursion{NOT_YET}"
+        )],
+        "{out}"
+    );
+    assert!(
+        out.contains("[1] 1:43: `f(positional n: int, s = \"$0\")` uses itself here"),
+        "{out}"
+    );
+}

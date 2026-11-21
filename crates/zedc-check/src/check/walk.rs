@@ -2129,10 +2129,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .into_iter()
             .zip(&cycles)
         {
-            match report.row {
-                Some(row) => self.rejects_with(row, report.span, report.message, report.notes),
-                None => self.error_with(report.span, report.message, report.notes),
-            }
+            self.reject_as_written(report.row, report.span, report.message, report.notes);
             for &k in cycle {
                 let st = items[k];
                 match &st.kind {

@@ -3399,6 +3399,26 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.reject(None, span, Msg::from(message.into()), notes);
     }
 
+    /// [`Self::reject`] for an error whose message and notes hold no type the checker printed,
+    /// only words and the program's text, as a cycle's report (`Tables::cycle_reports`): they
+    /// are kept as written. A `$0` in a string of the program is then not read as the class
+    /// numbered 0 ([`Self::named`]), and the report is in the same words as the elaboration's
+    /// copy of it, which the unit keeps once. Test, in `l01_29_diagnostics::overload_cycles`:
+    /// `a_dollar_in_the_head_of_an_overload_in_a_cycle_is_quoted_as_written`.
+    fn reject_as_written(
+        &mut self,
+        row: Option<Row>,
+        span: Span,
+        message: String,
+        notes: Vec<Note>,
+    ) {
+        self.reject(row, span, Msg::from(message), notes);
+        // `reject` pushes the error last, kept or tried: it has no other path.
+        if let Some(f) = self.errors.last_mut() {
+            f.as_written = true;
+        }
+    }
+
     /// An error at `span`, in the row `row` of the rejection table if any, with the message
     /// and fixes of `m` and the notes `notes`. Every error of the checker is pushed here. The
     /// fixes are written as the menu ([`Msg::written`]) when the check ends, with each fix the
@@ -3433,6 +3453,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             notes,
             also: Vec::new(),
             lits: Vec::new(),
+            as_written: false,
         });
         // A trial's errors are undone after it, so they take no number of their own: the
         // number of the error a repair checked before it is found stays the one it gets.
@@ -7304,10 +7325,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.info.reported_literals = reported;
         let text = self.t.text;
         self.errors_cut(0);
-        let mut errors: Vec<Error> = (std::mem::take(&mut self.errors).into_iter())
-            .map(|f| f.written(text))
-            .collect();
-        for e in &mut errors {
+        let found = std::mem::take(&mut self.errors);
+        let as_written: Vec<bool> = found.iter().map(|f| f.as_written).collect();
+        let mut errors: Vec<Error> = found.into_iter().map(|f| f.written(text)).collect();
+        for (e, _) in errors.iter_mut().zip(as_written).filter(|(_, w)| !w) {
             e.message = self.named(&e.message);
             for n in &mut e.notes {
                 n.text = self.named(&n.text);
@@ -10917,6 +10938,10 @@ struct Found {
     /// part of a value ([`Ck::reject_lits`], [`Info::reported_literals`]); empty for an error
     /// that reports only what lies in its span.
     lits: Vec<Span>,
+    /// Whether the message and notes hold no type the checker printed, only words and the
+    /// program's text ([`Ck::reject_as_written`]): they are kept as written, with no `$k`
+    /// replaced ([`Ck::named`]) and no part laid out ([`lay_out`]).
+    as_written: bool,
 }
 
 impl Found {
