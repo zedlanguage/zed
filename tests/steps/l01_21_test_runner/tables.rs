@@ -43,7 +43,7 @@ fn a_row_that_stops_the_evaluator_fails() {
 
 #[test]
 fn a_main_row_compares_the_bytes_each_port_writes() {
-    let src = "main(m: MainArgs) {\n  m.stdout <- upper(m.stdin[0] else \"\");\n}\n\
+    let src = "main(m: MainArgs) {\n  m.stdout <- upper(m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\");\n}\n\
                test { \"abc\\n\" -> \"ABC\\n\", \"abc\" -> \"ABC\" }\n";
     assert_eq!(
         checks(src),
@@ -57,7 +57,7 @@ fn a_main_row_compares_the_bytes_each_port_writes() {
 #[test]
 fn a_port_not_pushed_writes_nothing() {
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- m.stdin[0] else \"\";\n}\n\
+               m.stdout <- m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n}\n\
                test { \"a\" -> (\"a\\n\", \"\"), \"a\" -> (\"a\\n\", \"warning\\n\") }\n";
     assert_eq!(
         checks(src),
@@ -71,7 +71,7 @@ fn a_port_not_pushed_writes_nothing() {
 #[test]
 fn a_files_port_is_given_as_a_function_of_the_path() {
     let src = "main(m: MainArgs) {\n  fs = main::files;\n  \
-               m.stdout <- (fs[\"a.txt\"] else \"\") ++ (fs[\"b.txt\"] else \"\");\n}\n\
+               m.stdout <- (fs[\"a.txt\"] else #ioError -> \"\" else #notFound -> \"\") ++ (fs[\"b.txt\"] else #ioError -> \"\" else #notFound -> \"\");\n}\n\
                test { (\"\", \"\", (n -> #notFound), (p -> if p == \"a.txt\" { \"1\" } else { \"2\" })) -> \"12\\n\" }\n";
     assert_eq!(checks(src), ["5:8: ok"]);
 }
@@ -131,7 +131,7 @@ fn a_main_with_a_wrong_header_reports_once_and_runs_no_row() {
 fn a_main_row_may_give_the_exit_status() {
     // The third item of the value is the status the run exits with, from 0 to 255.
     let src = "main(m: MainArgs) -> int {\n  m.stdout <- \"x\";\n  \
-               if (m.stdin[0] else \"\") == \"no\" { 3 } else { 0 }\n}\n\
+               if (m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") == \"no\" { 3 } else { 0 }\n}\n\
                test { \"no\" -> (\"x\\n\", \"\", 3), \"yes\" -> (\"x\\n\", \"\", 3), \
                \"no\" -> (\"x\\n\", \"\", 255) }\n";
     assert_eq!(

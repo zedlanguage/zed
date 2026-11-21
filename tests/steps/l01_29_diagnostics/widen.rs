@@ -122,7 +122,7 @@ fn wrapping_arithmetic_reduced_by_a_power_of_two_does_not_warn() {
     let src = main_with(
         "  h = (3037000500 * 3037000500 + 7) mod 18446744073709551616;\n  \
          low = (3037000500 * 3037000500) mod 4294967296;\n  \
-         k = ((3037000500 * 3037000500) mod 2^64) else 0;\n",
+         k = ((3037000500 * 3037000500) mod 2^64) else #divByZero -> 0;\n",
         "low",
     );
     assert_eq!(messages(&src), Vec::<String>::new());

@@ -76,7 +76,7 @@ fn a_call_that_pushes_to_a_port_is_a_statement() {
         (out.status, out.stdout.as_str(), out.stderr.as_str()),
         (0, "hi!\n", "e\n")
     );
-    let branches = "k = int(m.args[0] else \"\") else 0;\n  \
+    let branches = "k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n  \
                     if k > 1 { say(\"many\", out: m.stdout); } else { say(\"one\", out: m.stdout); };";
     let out = run("stmt_branches", &with_say(branches), "", &[]);
     assert_eq!(
@@ -107,7 +107,7 @@ fn a_statement_that_writes_nothing_or_drops_a_result_is_refused() {
     );
     // An arm of an `if` statement ends with a statement, so a value there is refused by the
     // parser, named (author, P348).
-    let branch = "k = int(m.args[0] else \"\") else 0;\n  \
+    let branch = "k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n  \
                   if k > 1 { say(\"many\", out: m.stdout); } else { 0 };";
     assert_eq!(
         rejected("stmt_one_branch", &with_say(branch)),
@@ -129,21 +129,24 @@ fn a_statement_that_writes_nothing_or_drops_a_result_is_refused() {
         "{}",
         out.stderr
     );
-    // A loose failure is dropped only where the text names it: `e else d;` drops only `d`, so
-    // it stands when every other member of `e` is a loose failure (DESIGN.md
+    // A loose failure is dropped only where the text names it: `e else #a -> d;` drops only
+    // `d`, so it stands when every other member of `e` is a loose failure (DESIGN.md
     // sec:tour_methods).
     let full = "full(positional s, out: Lines) { out <- s; #full }\n\n\
                 main(m: MainArgs) {\n  full(\"hi\", out: m.stdout);\n}\n";
     assert_eq!(
         rejected("stmt_loose", full),
         "4:3: Result of `full` is unused: `full(\"hi\", out: m.stdout) : #full`. Try \
-         `_ = full(\"hi\", out: m.stdout) else #ok;` instead."
+         `_ = full(\"hi\", out: m.stdout) else #full -> #ok;` instead."
     );
     for (name, repaired) in [
-        ("stmt_loose_else", "  full(\"hi\", out: m.stdout) else #ok;"),
+        (
+            "stmt_loose_else",
+            "  full(\"hi\", out: m.stdout) else #full -> #ok;",
+        ),
         (
             "stmt_loose_dropped",
-            "  _ = full(\"hi\", out: m.stdout) else #ok;",
+            "  _ = full(\"hi\", out: m.stdout) else #full -> #ok;",
         ),
     ] {
         let src = full.replace("  full(\"hi\", out: m.stdout);", repaired);
@@ -196,7 +199,7 @@ fn a_statement_that_writes_nothing_names_the_call_and_the_repairs() {
 fn statement_errors(body: &str) -> Vec<(String, String, Vec<String>)> {
     let text = format!(
         "say(positional s, out: Lines) {{ out <- s; }}\n\nmain(m: MainArgs) {{\n  \
-         k = int(m.args[0] else \"\") else 0;\n  {body}\n}}\n"
+         k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n  {body}\n}}\n"
     );
     let (stmts, res) = resolved(&text);
     let info = check_text(&stmts, &res, Some(&text));
@@ -259,7 +262,9 @@ fn a_block_with_a_write_on_one_branch_and_no_export_is_a_statement() {
         ),
     ] {
         assert_eq!(statement_errors(body), [], "{body}");
-        let src = with_say(&format!("k = int(m.args[0] else \"\") else 0;\n  {body}"));
+        let src = with_say(&format!(
+            "k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n  {body}"
+        ));
         for (args, want) in [(&[][..], none), (&["--", "5"][..], five)] {
             let out = run(name, &src, "", args);
             assert_eq!(
@@ -270,7 +275,9 @@ fn a_block_with_a_write_on_one_branch_and_no_export_is_a_statement() {
         }
         // The interpreter and the native code (step L1.37) write the same bytes, with `k`
         // read from the first line of standard input.
-        let src = with_say(&format!("k = int(m.stdin[0] else \"\") else 0;\n  {body}"));
+        let src = with_say(&format!(
+            "k = int(m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") else #invalid -> 0;\n  {body}"
+        ));
         for input in ["", "5\n"] {
             let ((report, want), _) =
                 oracle::native(|engines| oracle::program(&src, input.as_bytes(), engines));
@@ -304,7 +311,9 @@ fn a_statement_whose_paths_write_nothing_or_drop_a_value_is_refused() {
         statement_errors("{ j = k; if j > 1 { i = j; }; };"),
         none("if j > 1 { i = j; };")
     );
-    let src = with_say("k = int(m.args[0] else \"\") else 0;\n  if k > 1 { j = k; };");
+    let src = with_say(
+        "k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n  if k > 1 { j = k; };",
+    );
     assert_eq!(
         rejected("stmt_empty_paths", &src),
         "5:3: Statement has no effect: `if k > 1 { j = k; }` writes to no port on any path."
@@ -339,11 +348,13 @@ fn a_statement_whose_paths_write_nothing_or_drop_a_value_is_refused() {
              gives a value has both arms.",
         ),
     ] {
-        let src = with_say(&format!("k = int(m.args[0] else \"\") else 0;\n  {stmt}"));
+        let src = with_say(&format!(
+            "k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n  {stmt}"
+        ));
         assert_eq!(rejected(name, &src), want, "{stmt}");
     }
     let src = with_say(
-        "k = int(m.args[0] else \"\") else 0;\n  x = if k > 1 { } else { 1 };\n  \
+        "k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n  x = if k > 1 { } else { 1 };\n  \
          m.stdout <- \"a\";",
     );
     assert_eq!(
@@ -393,7 +404,7 @@ fn a_block_that_writes_on_one_branch_only_is_refused_at_the_silent_branch() {
     assert_eq!(statement_errors(body), silent(body, "0"));
     // The same through `zedc run`: refused, placed at the statement.
     let src = with_say(
-        "k = int(m.args[0] else \"\") else 0;\n  \
+        "k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n  \
          { j = k; if j > 1 { if j > 2 { say(\"x\", out: m.stdout) } else { 0 } } \
          else { say(\"y\", out: m.stdout) } };",
     );
@@ -415,7 +426,9 @@ fn a_block_that_writes_on_both_branches_is_a_statement() {
          { say(\"many\", out: m.stdout) } } else { say(\"one\", out: m.stdout) } };",
     ] {
         assert_eq!(statement_errors(body), [], "{body}");
-        let src = with_say(&format!("k = int(m.args[0] else \"\") else 0;\n  {body}"));
+        let src = with_say(&format!(
+            "k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n  {body}"
+        ));
         for (args, want) in [(&[][..], "one\n"), (&["--", "5"][..], "many\n")] {
             let out = run("stmt_block_both", &src, "", args);
             assert_eq!(
@@ -471,15 +484,21 @@ fn a_port_reaches_the_push_by_any_path() {
 fn a_read_of_an_output_port_is_still_rejected() {
     let read = "`m.stdout` is read here, and `m.stdout` is an output of the program";
     for (name, call) in [
-        ("index", "x = m.stdout[0] else \"\";\n  m.stderr <- x;"),
+        (
+            "index",
+            "x = m.stdout[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n  m.stderr <- x;",
+        ),
         ("bind", "x = m.stdout;\n  m.stderr <- \"z\";"),
-        ("inside", "_ = say(m.stdout[0] else \"\", out: m.stderr);"),
+        (
+            "inside",
+            "_ = say(m.stdout[0] else #ioError -> \"\" else #outOfBounds -> \"\", out: m.stderr);",
+        ),
     ] {
         let got = rejected(name, &with_say(call));
         assert!(got.contains(read), "{name}: {got}");
     }
     // Passed whole, but to a function that reads it, or to no declared function.
-    let src = "count(positional s, out: Lines) = out[0] else \"\";\n\
+    let src = "count(positional s, out: Lines) = out[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n\
                main(m: MainArgs) {\n  _ = count(\"x\", out: m.stdout);\n}\n";
     assert_eq!(
         rejected("reads", src),
@@ -495,7 +514,7 @@ fn a_read_of_an_output_port_is_still_rejected() {
     let src = "main(m: MainArgs) {\n  f = o -> 0;\n  n = f(m.stdout);\n  m.stderr <- \"x\";\n}\n";
     assert!(rejected("value", src).starts_with("3:9: `m.stdout` is an output port"));
     // A helper that pushes to its parameter and reads it.
-    let src = "say(positional s, out: Lines) { out <- s; return out[0] else \"\"; }\n\
+    let src = "say(positional s, out: Lines) { out <- s; return out[0] else #ioError -> \"\" else #outOfBounds -> \"\"; }\n\
                main(m: MainArgs) {\n  _ = say(\"x\", out: m.stdout);\n}\n";
     assert_eq!(
         rejected("push_read", src),

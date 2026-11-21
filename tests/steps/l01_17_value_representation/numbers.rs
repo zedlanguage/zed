@@ -76,7 +76,7 @@ fn rationals_are_exact() {
 #[test]
 fn rational_division_by_zero_is_an_atom() {
     let src = "share(positional total, positional n) = total / n;\n\
-               a = share(10r, 4r);\nb = share(10r, 0r);\nc = share(10r, 0r) else 0r;\n";
+               a = share(10r, 4r);\nb = share(10r, 0r);\nc = share(10r, 0r) else #divByZero -> 0r;\n";
     assert_eq!(value(src, "a"), "5r/2r");
     assert_eq!(value(src, "b"), "#divByZero");
     assert_eq!(value(src, "c"), "0r");

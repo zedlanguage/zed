@@ -9,7 +9,7 @@ use super::{ECHO, program, run, run_words, zedc};
 fn arguments_are_keyed_from_zero() {
     // `zedc run greet.zed -- Ada "Grace Hopper"`: each argument is one word, spaces kept.
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.args[0] else \"-\"}|${m.args[1] else \"-\"}\";\n}\n";
+               m.stdout <- \"${m.args[0] else #outOfBounds -> \"-\"}|${m.args[1] else #outOfBounds -> \"-\"}\";\n}\n";
     let out = run("position", src, &["--", "Ada", "Grace Hopper"]);
     assert_eq!((out.status, out.stdout.as_str()), (0, "Ada|Grace Hopper\n"));
     // The family itself is `{0: "a", 1: "b c"}`, written one entry per line in key order.
@@ -41,7 +41,7 @@ fn with_no_arguments_the_family_is_empty() {
         assert_eq!((out.status, out.stdout.as_str()), (0, ""), "{more:?}");
     }
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- m.args[0] else \"no arguments\";\n}\n";
+               m.stdout <- m.args[0] else #outOfBounds -> \"no arguments\";\n}\n";
     assert_eq!(run("none", src, &[]).stdout, "no arguments\n");
 }
 
@@ -60,7 +60,7 @@ fn every_word_after_the_first_dashes_is_an_argument() {
 #[test]
 fn standard_input_and_the_arguments_are_read_together() {
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.stdin[0] else \"\"} ${m.args[0] else \"\"}\";\n}\n";
+               m.stdout <- \"${m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\"} ${m.args[0] else #outOfBounds -> \"\"}\";\n}\n";
     let out = zed_tests::step_helpers::l01_19_whole_file_ports::run(
         "l01_19a_together",
         src,
@@ -132,7 +132,7 @@ fn a_read_may_be_out_of_bounds_so_the_checker_asks_for_its_disposal() {
     assert!(
         out.stderr.contains(
             "A `Lines` port takes a `String` or a family of strings: `m.stdout <- m.args[0] : String | #outOfBounds`. \
-             Try `m.stdout <- m.args[0] else \"\";` instead."
+             Try `m.stdout <- m.args[0] else #outOfBounds -> \"\";` instead."
         ),
         "{}",
         out.stderr
@@ -200,7 +200,7 @@ fn a_push_target_has_at_most_one_view_and_it_comes_last() {
 /// read missed (DESIGN step L1.19a: the keys are `0..<n`, and a read outside them is
 /// `#outOfBounds`).
 const ARG_AT: &str = "main(m: MainArgs) {\n  \
-     k = int(m.stdin[0] else \"\") else 0;\n  \
+     k = int(m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") else #invalid -> 0;\n  \
      m.stdout <- m.args[k] else #outOfBounds -> \"out of bounds\";\n}\n";
 
 /// What `ARG_AT` writes for the key `k` and the words `more` after the program's file. Each run

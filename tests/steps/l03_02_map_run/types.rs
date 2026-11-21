@@ -88,7 +88,7 @@ fn a_fold_of_a_row_that_may_be_empty_passes_empty_by() {
         ),
         (
             "else",
-            "${{0 -> [1], 1 -> []}.map(r -> (r >< max) + 1 else 0)}",
+            "${{0 -> [1], 1 -> []}.map(r -> (r >< max) + 1 else #empty -> 0)}",
             "{0 -> 2, 1 -> 0}",
         ),
     ] {

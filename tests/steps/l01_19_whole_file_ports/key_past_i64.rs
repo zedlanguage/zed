@@ -12,12 +12,19 @@
 use zed_tests::step_helpers::l01_16_elaboration::elab;
 use zed_tests::step_helpers::l01_19_whole_file_ports::run_bytes;
 
-/// Runs `m.stdout <- (m.<port>[<key>] else #outOfBounds -> "oob") else "other";`, with `pre`
-/// before it in `main`, on standard input `a`, and gives the exit status and output.
+/// Runs `m.stdout <- (m.<port>[<key>] else #outOfBounds -> "oob") else #ioError -> "other";`,
+/// with `pre` before it in `main`, on standard input `a`, and gives the exit status and output.
+/// A line of `m.stdin` may also be `#ioError`, so its `else` names that atom too; an argument
+/// is `String` once `#outOfBounds` is taken, so its read has no second `else` (every `else`
+/// names the atoms it takes, DESIGN.md sec:failure, QUESTIONS A113).
 fn read(name: &str, pre: &str, port: &str, key: &str) -> (u8, String, String) {
+    let rest = if port == "stdin" {
+        " else #ioError -> \"other\""
+    } else {
+        ""
+    };
     let src = format!(
-        "main(m: MainArgs) {{\n  {pre}m.stdout <- (m.{port}[{key}] else #outOfBounds -> \"oob\") \
-         else \"other\";\n}}\n"
+        "main(m: MainArgs) {{\n  {pre}m.stdout <- (m.{port}[{key}] else #outOfBounds -> \"oob\"){rest};\n}}\n"
     );
     let out = run_bytes(name, &src, b"a\n", &[]);
     (out.status, out.stdout, out.stderr)

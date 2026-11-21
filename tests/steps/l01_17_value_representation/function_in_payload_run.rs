@@ -19,7 +19,7 @@ use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 #[test]
 fn an_atom_whose_payload_holds_a_function_runs() {
     let src = "f(positional v: int) = v + 1;\ng(positional a) = a;\nmain(m: MainArgs) {\n  x = \
-               g(#box(f));\n  m.stdout <- (x else #nope -> \"no\") else \"box\";\n}\n";
+               g(#box(f));\n  m.stdout <- (x else #nope -> \"no\") else #box -> \"box\";\n}\n";
     let out = run("function_in_payload_run", src, "", &[]);
     assert_eq!(
         (out.status, out.stdout.as_str()),

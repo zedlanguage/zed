@@ -741,7 +741,8 @@ fn a_merge_in_a_lambda_checked_at_two_arrows_is_checked_at_each() {
     let head = "s(positional x, positional k: bool) = if k { 1 } else { #bad(x) };\n";
     let a1 = "(p: int, q: int | #b, r: int) -> int";
     let a2 = "(p: int -> int, q: int, r: int | #c) -> int";
-    let lam = "a = both(h: (p, q, r) -> (s(p, true) + q + r) else 0);\n";
+    let lam = "a = both(h: (p, q, r) -> (s(p, true) + q + r) else #b -> 0 else #bad -> 0 else #c -> 0 \
+               else #errs -> 0);\n";
     let held = "Cannot merge a failure that may hold a function into `#errs`: `s(p, true) + q : \
                 #bad(int -> int)`. [s(p, true) + q]";
     for slot in [

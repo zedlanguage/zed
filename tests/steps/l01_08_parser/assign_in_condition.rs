@@ -42,11 +42,11 @@ fn refused(src: &str, written: &str, repaired: Option<&str>) {
 fn a_binding_where_a_condition_stands_offers_equality() {
     for (src, want) in [
         (
-            "main(m: MainArgs) {\n  x = (m.stdin[0] else \"\").len;\n  m.stdout <- if x = 3 { \"y\" } else { \"n\" };\n}\n",
+            "main(m: MainArgs) {\n  x = (m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\").len;\n  m.stdout <- if x = 3 { \"y\" } else { \"n\" };\n}\n",
             "Try `if x == 3 {",
         ),
         (
-            "main(m: MainArgs) {\n  x = (m.stdin[0] else \"\").len;\n  m.stdout <- if (x = 3) { \"y\" } else { \"n\" };\n}\n",
+            "main(m: MainArgs) {\n  x = (m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\").len;\n  m.stdout <- if (x = 3) { \"y\" } else { \"n\" };\n}\n",
             "Try `if (x == 3) {",
         ),
     ] {

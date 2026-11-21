@@ -16,7 +16,7 @@ fn a_replay_reads_the_record_not_the_world() {
     std::fs::write(&prices, "4\n").unwrap();
     let src = format!(
         "main(m: MainArgs) {{\n  fs = main::files;\n  \
-         unit = int(trim(fs[\"{}\"])) else 0;\n  qty = int(m.stdin[0]) else 0;\n  \
+         unit = int(trim(fs[\"{}\"])) else #invalid -> 0 else #ioError -> 0 else #notFound -> 0;\n  qty = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  \
          m.stdout <- \"total ${{unit * qty}}\";\n}}\n",
         prices.display()
     );
@@ -35,7 +35,7 @@ fn a_replay_reads_the_record_not_the_world() {
 #[test]
 fn a_read_the_record_lacks_stops_the_replay() {
     let p = load(
-        b"main(m: MainArgs) {\n  fs = main::files;\n  m.stdout <- fs[\"a.txt\"] else \"-\";\n}\n",
+        b"main(m: MainArgs) {\n  fs = main::files;\n  m.stdout <- fs[\"a.txt\"] else #ioError -> \"-\" else #notFound -> \"-\";\n}\n",
     )
     .unwrap();
     let record = Record {
@@ -52,7 +52,7 @@ fn a_read_the_record_lacks_stops_the_replay() {
              read \"a.txt\", so its inputs differed from these, or the record has been changed. \
              Replay with the inputs of the recorded run, or make a new record with `zedc run \
              <file> --record <out>`.\n  [1] 3:15: the run stopped here\n      \
-             3 |   m.stdout <- fs[\"a.txt\"] else \"-\";\n        \
+             3 |   m.stdout <- fs[\"a.txt\"] else #ioError -> \"-\" else #notFound -> \"-\";\n        \
                |               ^^^^^^^^^^^"
         )
     );
@@ -204,7 +204,7 @@ fn a_damaged_record_is_rejected() {
 
 #[test]
 fn a_record_that_lacks_the_input_of_a_port_stops_the_replay() {
-    let p = load(b"main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n").unwrap();
+    let p = load(b"main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n}\n").unwrap();
     // Every run records the input of `m.stdin`, so only a changed record lacks it.
     let record = Record {
         program: Some(p.address().unwrap()),

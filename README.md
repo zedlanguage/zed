@@ -94,7 +94,7 @@ The price list has no entry for `pad`. That gap comes back in step 3.
 ### Step 2: looking up a keypath
 
 ```zed
-northOrZero = northPens else 0;
+northOrZero = northPens else #notFound -> 0;
 northPens = sales["North"][0]["pen"];
 eastPens = sales["East"][0]["pen"];
 ```
@@ -121,7 +121,7 @@ Zed uses atoms to report failure. A *failure* is an atom in a value's type that 
 `else` is one way to handle a failure.
 
 > [!NOTE]
-> **`x else d`** gives `x`, or `d` in place of a failure. `x else #a -> d` replaces only the atom `#a`.
+> **`x else #a -> d`** gives `x`, or `d` in place of the atom `#a`, and keeps every other failure. An `else` names each failure it replaces, so it never replaces a failure that a later version of a function adds without telling you: `x else (#a | #b) -> d` replaces two.
 
 **`eastPens`, `northPens` and `northOrZero`**
 
@@ -153,7 +153,7 @@ revenue = sales as (region -> day -> sku -> q) into (region -> day -> sku -> q *
 <tr><td><code>1</code></td><td><code>ink</code></td><td><code>42</code></td></tr>
 </table>
 
-`prices["pad"]` is `#notFound`, and so is `1 * #notFound`: a failure passes through arithmetic unchanged. When two different failures meet, the result keeps both: if `#invalid` stands for a number that failed to parse, `(1 + #notFound) + #invalid` is `#errs({#invalid, #notFound})`, the set of the two, and `((1 + #notFound) + #invalid) else 0` is `0`, as for a single failure. The failure stays in the map at its own keypath, next to the good values, so one bad record doesn't stop the rest of the computation. The type of `revenue`'s values, `int | #notFound`, says that some may be failures.
+`prices["pad"]` is `#notFound`, and so is `1 * #notFound`: a failure passes through arithmetic unchanged. When two different failures meet, the result keeps both: if `#invalid` stands for a number that failed to parse, `(1 + #notFound) + #invalid` is `#errs({#invalid, #notFound})`, the set of the two, and `((1 + #notFound) + #invalid) else #errs -> 0` is `0`: the pattern `#errs` takes the set whatever failures it holds. The failure stays in the map at its own keypath, next to the good values, so one bad record doesn't stop the rest of the computation. The type of `revenue`'s values, `int | #notFound`, says that some may be failures.
 
 > [!TIP]
 > Elsewhere this remap is three nested loops that fill a new nested dictionary. A remap can also move levels: `matrix as (r -> c -> v) into (c -> r -> v)` transposes a matrix, where other languages set `out[c][r] = matrix[r][c]` in two nested loops. [Remapping](#remapping) below compares remaps with spreadsheet pivot tables.
@@ -311,7 +311,7 @@ So the same program could give different totals on one core and on eight. Zed ke
 This version counts an unpriced sale as zero revenue:
 
 ```zed
-daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> (r else 0));
+daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> (r else #notFound -> 0));
 ```
 
 `unpriced` from step 4 still lists the pad sale, so the zero hides nothing.
@@ -319,7 +319,7 @@ daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+)
 **`daily` before summing over `sku`**
 
 <table>
-<tr><th><code>region</code></th><th><code>day</code></th><th><code>sku</code></th><th><code>r else 0</code></th></tr>
+<tr><th><code>region</code></th><th><code>day</code></th><th><code>sku</code></th><th><code>r else #notFound -> 0</code></th></tr>
 <tr><td rowspan="3"><code>East</code></td><td rowspan="2"><code>0</code></td><td><code>ink</code></td><td><code>14</code></td></tr>
 <tr><td><code>pen</code></td><td><code>10</code></td></tr>
 <tr><td><code>1</code></td><td><code>pen</code></td><td><code>6</code></td></tr>
@@ -420,14 +420,14 @@ A push and the matching read compile to the same thing: the same table could be 
 East's daily revenue as an array, and its running total:
 
 ```zed
-east = daily["East"] else [];
+east = daily["East"] else #notFound -> [];
 running[i] = running[i-1] + east[i] with running[-1] = 0;
 ```
 
 > [!NOTE]
 > **`x[i] = e with x[-1] = start;`** is a *recurrence*: it defines every entry of the array `x` by one equation, which may read earlier entries. The `with` part gives the *boundary* value, the one a read just below the first index finds. `running[-1]` is not an entry of the result.
 
-`daily["East"]` may be `#notFound`, so `else []` gives an empty array in its place, and `east` is an array of `int`.
+`daily["East"]` may be `#notFound`, so `else #notFound -> []` gives an empty array in its place, and `east` is an array of `int`.
 
 **`east`**
 
@@ -490,7 +490,7 @@ trend = loop t {
 The East store starts the period with 20 pens on its shelf. This step follows the count as the pens sell.
 
 ```zed
-eastPenDays = (sales["East"] else []).map(day -> day["pen"] else 0);
+eastPenDays = (sales["East"] else #notFound -> []).map(day -> day["pen"] else #notFound -> 0);
 
 struct Shelf { pens: int }
 
@@ -561,13 +561,13 @@ The pens sold go out in one crate. A unit on each number lets the compiler check
 ```zed
 penMass = 20 with units("g");          // one pen
 crateMass = 1 with units("kg");        // the crate they ship in
-shipped = (sold["pen"] else 0) * penMass;
+shipped = (sold["pen"] else #notFound -> 0) * penMass;
 // load = shipped + crateMass;         // ✗ Units that differ where an operation requires equal ones: g + kg
 load = shipped + crateMass * (1000 with units("g/kg"));
 ```
 
 > [!NOTE]
-> **`e with units("...")`** attaches a physical unit to a number. A unit is a *facet*: an extra fact about a value that the compiler tracks through every operation. Units multiply under `*`, so `shipped` is in grams, and must match under `+`. `sold["pen"] else 0` has parentheses because `else` binds more loosely than `*`: without them, `* penMass` would apply only to the `0`.
+> **`e with units("...")`** attaches a physical unit to a number. A unit is a *facet*: an extra fact about a value that the compiler tracks through every operation. Units multiply under `*`, so `shipped` is in grams, and must match under `+`. `sold["pen"] else #notFound -> 0` has parentheses because `else` binds more loosely than `*`: without them, `* penMass` would apply only to the `0`.
 
 The commented-out line adds grams to kilograms.
 
@@ -590,7 +590,7 @@ Here are the definitions behind `regionTotals`, written with the result first:
 
 ```zed
 regionTotals = daily >< (+);
-daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> (r else 0));
+daily = revenue as (region -> day -> sku -> r) into (region -> day -> sku >< (+) -> (r else #notFound -> 0));
 revenue = sales as (region -> day -> sku -> q) into (region -> day -> sku -> q * prices[sku]);
 
 sales: Utf8String ->? [Utf8String ->? int];
@@ -614,7 +614,7 @@ The example above reads values it was given. A complete program also needs input
 ```zed
 main(m: MainArgs) {
   fs = main::files;
-  text = fs["input.txt"] else "";
+  text = fs["input.txt"] else (#badEncoding | #ioError | #notFound) -> "";
   counts = text.split(" ").group(w -> w.lower).count;
   lines = counts as (w -> n) into (desc n -> w -> "${w}: ${n}");
   m.stdout <- lines.orderedValues;
@@ -950,7 +950,7 @@ Everything in a file is exported unless marked `local`, and there are no wildcar
 
 A function that can fail returns a union with a failure atom in it, and these two forms handle that atom.
 
-**Syntax:** `T | #someFailure`, `x else fallback`, `x?.field`
+**Syntax:** `T | #someFailure`, `x else #someFailure -> fallback`, `x?.field`
 
 > [!NOTE]
 > **`x?.field`** reads `field` when `x` is not a failure, and passes the failure along when it is. **`#syntaxError`** is the failure for text that doesn't parse. In the code, `parse: ...;` declares a function and its type, with the body elsewhere, and the `pos` in the atom's payload says where the parse failed.
@@ -958,8 +958,8 @@ A function that can fail returns a union with a failure atom in it, and these tw
 ```zed
 parse: (Utf8String) -> Config | #syntaxError(pos: int);
 
-conf = parse(text) else defaultConfig;
-port = parse(text)?.server?.port else 8080;
+conf = parse(text) else #syntaxError -> defaultConfig;
+port = parse(text)?.server?.port else #syntaxError -> 8080;
 ```
 
 ```text
@@ -1047,7 +1047,7 @@ Where you mean something else, you say so:
 
 ```zed
 sum1 = amounts.where(a -> a is int) >< (+);     // skip the failures
-sum2 = amounts.map(a -> a else 0) >< (+);       // count them as zero
+sum2 = amounts.map(a -> a else (#invalid | #ioError) -> 0) >< (+);  // count them as zero
 ```
 
 ```text
@@ -1081,7 +1081,7 @@ tags = { #red, #green };               // a set: a map from each member to itsel
 first = xs[0];                         // 3: the index is known to be in range
 ann = ages["Ann"];                     // 36: the key is known to be there
 // carol = ages["Carol"];              // ✗ Key outside the permission bound: this key can't be there
-age = ages[name] else 0;               // name is known only at run time
+age = ages[name] else #notFound -> 0;  // name is known only at run time
 
 tens = xs.map(x -> x * 10);            // the same keys, new values
 big = tens.where(x -> x > 20);         // the keys that pass keep their values: 0, 2, 4
@@ -1364,14 +1364,14 @@ A dictionary built in a loop keeps the last value written to a key without a wor
 
 A reduction merges the values of one level into one value, using an operator you name.
 
-**Syntax:** `m >< op`, `m >< op else fallback`, `(pattern >< op -> value)`, `m.foldl(init, op)`
+**Syntax:** `m >< op`, `m >< op else #empty -> fallback`, `(pattern >< op -> value)`, `m.foldl(init, op)`
 
 > [!NOTE]
-> **`m >< op else d`** gives `d` as the answer for an empty collection; without it, the result type includes **`#empty`**, the failure of a reduction with nothing to reduce, unless `op` has an identity or the collection is known not to be empty. **`min`** and **`max`** work as operators for `><`. **`.sum`** reduces the innermost level to its sum. **`m.foldl(init, op)`** and **`m.foldr(init, op)`** fold from the left or the right, for an operator that is not associative. **`@associative`** and **`@commutative`** claim that an operator has that property. **`unordered`** after `m >< op` trades bit-identical floating-point results across core counts for speed. In the code, `w.len` is the length of `w`.
+> **`m >< op else #empty -> d`** gives `d` as the answer for an empty collection; without it, the result type includes **`#empty`**, the failure of a reduction with nothing to reduce, unless `op` has an identity or the collection is known not to be empty. **`min`** and **`max`** work as operators for `><`. **`.sum`** reduces the innermost level to its sum. **`m.foldl(init, op)`** and **`m.foldr(init, op)`** fold from the left or the right, for an operator that is not associative. **`@associative`** and **`@commutative`** claim that an operator has that property. **`unordered`** after `m >< op` trades bit-identical floating-point results across core counts for speed. In the code, `w.len` is the length of `w`.
 
 ```zed
 total = readings >< (+);
-longest = words.map(w -> w.len) >< max else 0;
+longest = words.map(w -> w.len) >< max else #empty -> 0;
 pivot = sales as (i -> s) into (s.region -> s.product -> i >< (+) -> s.amount);
 ```
 
@@ -1459,7 +1459,7 @@ combine(positional a: Moments, positional b: Moments) =
   Moments(n: a.n + b.n, sum: a.sum + b.sum);
 
 // values : [rat]
-m = values.map(x -> Moments(n: 1, sum: x)) >< combine else Moments(n: 0, sum: 0r);
+m = values.map(x -> Moments(n: 1, sum: x)) >< combine else #empty -> Moments(n: 0, sum: 0r);
 ```
 
 With three values:
@@ -1795,7 +1795,7 @@ The compiler also recognizes some computations that look serial and runs them in
 
 ```zed
 cur[i] = max(xs[i], cur[i-1] + xs[i]) with cur[-1] = 0;
-best = cur >< max else 0;
+best = cur >< max else #empty -> 0;
 
 state[i] = csvStep(state[i-1], text::codepoints[i]) with state[-1] = #outsideQuotes;
 ```
@@ -1891,7 +1891,7 @@ run = loop t {
   doc' = doc.patch(edits[t]);
 };
 
-previous = run::frames[run::len - 2]?.doc else empty;
+previous = run::frames[run::len - 2]?.doc else #outOfBounds -> empty;
 ```
 
 With two edits `e1` and `e2`, and with `empty` the empty document:
@@ -2016,7 +2016,7 @@ cache: Utf8String ->? [u8]
   with timeout(0.2r with units("s"))
   with retry(2, backoff: #fixed(0.1r with units("s")));
 
-hit = cache[key] else fetch(key);
+hit = cache[key] else (#ioError | #notFound | #timeout) -> fetch(key);
 ```
 
 ```text
@@ -2276,7 +2276,7 @@ A grammar describes a text or binary format.
 ```zed
 struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }
 
-v = Vec3.parseText("(1.0, 2.0, 3.0)") else Vec3(x: 0, y: 0, z: 0);
+v = Vec3.parseText("(1.0, 2.0, 3.0)") else #syntaxError -> Vec3(x: 0, y: 0, z: 0);
 s = v.serializeText;   // "(1.0,2.0,3.0)"
 ```
 
@@ -2299,7 +2299,7 @@ type Factor = Number | Paren;
 Sum.eval = terms.map(t -> t.eval).sum;
 Prod.eval = factors.map(f -> f.eval) >< (*);
 Paren.eval = inner.eval;
-Number.eval = int(this) else 0;
+Number.eval = int(this) else #invalid -> 0;
 
 value = Sum.parseText("2*(3+4)")?.eval; // 14, or #syntaxError
 ```
@@ -2466,7 +2466,7 @@ Annotations declare C functions to call and Zed functions to expose to C.
 ```zed
 @foreign("m", "cbrt") @stateless cbrt: (positional x: f64) -> f64;
 
-root = cbrt(8) else f64(0);
+root = cbrt(8);
 
 @export("c", "zed_score")
 score(positional a: f64, positional b: f64) = (7 * a + 3 * b) / 10;
@@ -2478,7 +2478,7 @@ root = 2.0, or 0.0 if the foreign call fails
 score(1.0, 0.0) = 0.7, and C's zed_score(1.0, 0.0) returns the same
 ```
 
-A foreign call is an operation on a port, because C code can do anything, and this keeps the rest of the program pure. The declared `-> f64` is the C result, and the call also has a failure type, which is why `root` has an `else`. It takes the same `timeout` word as any other port, and `retry` if the function is marked `@stateless`, a promise about the library that the compiler can't check. Foreign structs declare their memory layout field by field, and C memory is read through that layout, either in place or as a copy. `@export` compiles a function into a shared library with a generated C header. On the LLVM back end (LLVM is a widely used compiler toolkit), C code compiled by Clang (a C compiler) can be inlined into Zed code and optimized along with it.
+A foreign call is an operation on a port, because C code can do anything, and this keeps the rest of the program pure. The declared `-> f64` is the C result. `cbrt` takes no pointer and no function, so its call can't fail and `root` needs no `else`; a call that takes a `Ptr` can fail as `#lost`, a handle that is no longer valid. A foreign call takes the same `timeout` word as any other port, and `retry` if the function is marked `@stateless`, a promise about the library that the compiler can't check. Foreign structs declare their memory layout field by field, and C memory is read through that layout, either in place or as a copy. `@export` compiles a function into a shared library with a generated C header. On the LLVM back end (LLVM is a widely used compiler toolkit), C code compiled by Clang (a C compiler) can be inlined into Zed code and optimized along with it.
 
 ### Memory
 

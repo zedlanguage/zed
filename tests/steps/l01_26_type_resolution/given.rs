@@ -1,9 +1,9 @@
 //! A test on what a use of an undeclared parameter gives narrows it at each call (rule 3):
-//! `args[k] else ""` in the body of `r(fs, args, k)` holds no `#outOfBounds`, the atom it
-//! misses with, where a call binds `args` to a `CommandLine`, so `fs` is never given one. Before,
-//! the `else` kept the whole type variable of `args[k]`, the call bound it to `String | #notFound`,
-//! and the program was rejected with "this function, which `r` applies, does not take #notFound"
-//! (repair CHK-index-else, found writing the L1.36a test programs).
+//! `args[k] else #outOfBounds -> ""` in the body of `r(fs, args, k)` holds no `#outOfBounds`,
+//! the atom it misses with, where a call binds `args` to a `CommandLine`, so `fs` is never given
+//! one. Before, the `else` kept the whole type variable of `args[k]`, the call bound it to
+//! `String | #notFound`, and the program was rejected with "this function, which `r` applies,
+//! does not take #notFound" (repair CHK-index-else, found writing the L1.36a test programs).
 
 use super::{info, type_errors};
 use zed_tests::step_helpers::l01_19a_command_line::{dir, run};
@@ -32,13 +32,13 @@ fn read_two(name: &str, helper: &str) -> String {
 #[test]
 fn a_helper_reading_the_file_an_argument_names_or_the_empty_path() {
     // The repair's repro: every read had to be written out by hand.
-    let helper = "r(fs, args, k) = fs[args[k] else \"\"];";
+    let helper = "r(fs, args, k) = fs[args[k] else #outOfBounds -> \"\"];";
     assert_eq!(read_two("given_else", helper), "hello|missing\n");
 }
 
 #[test]
 fn the_argument_named_first_is_the_same() {
-    let helper = "r(fs, args, k) { p = args[k] else \"\"; return fs[p]; }";
+    let helper = "r(fs, args, k) { p = args[k] else #outOfBounds -> \"\"; return fs[p]; }";
     assert_eq!(read_two("given_named", helper), "hello|missing\n");
 }
 
@@ -61,7 +61,7 @@ fn an_is_test_narrows_its_other_branch() {
 #[test]
 fn a_function_value_applied_to_the_narrowed_value_takes_no_atom() {
     let src = format!(
-        "r(g, args, k) = g(args[k] else \"\");\n{}",
+        "r(g, args, k) = g(args[k] else #outOfBounds -> \"\");\n{}",
         MAIN.replace("fs: fs", "g: (p) -> fs[p]")
     );
     assert_eq!(type_errors(&src), Vec::<String>::new());
@@ -74,7 +74,7 @@ fn a_test_that_leaves_the_atom_is_still_rejected() {
     // `main` does not handle: the write is rejected.
     let expected = "A `Lines` port takes a `String` or a family of strings: \
                     `m.stdout <- \"${a}|${b}\" : String | #outOfBounds`. \
-                    Try `m.stdout <- (\"${a}|${b}\") else \"\";` instead. [\"${a}|${b}\"]";
+                    Try `m.stdout <- (\"${a}|${b}\") else #outOfBounds -> \"\";` instead. [\"${a}|${b}\"]";
     for helper in [
         "r(fs, args, k) = fs[args[k] else #ioError -> \"\"];",
         "r(fs, args, k) { p = args[k]; return if p is #ioError { \"\" } else { fs[p] }; }",
@@ -92,7 +92,7 @@ fn a_test_that_leaves_the_atom_is_still_rejected() {
 /// each once.
 pub(super) fn helpers(n: usize) -> String {
     let mut src: String = (0..n)
-        .map(|i| format!("r{i}(fs, args, k) = fs[args[k] else \"\"];\n"))
+        .map(|i| format!("r{i}(fs, args, k) = fs[args[k] else #outOfBounds -> \"\"];\n"))
         .collect();
     src.push_str("main(m: MainArgs) {\nfs = main::files;\n");
     for i in 0..n {
@@ -116,10 +116,11 @@ fn helpers_narrowing_what_a_use_gives_are_accepted() {
 
 #[test]
 fn a_key_handled_beside_the_read_is_followed_too() {
-    // The key `k` of `args[k]` passes its atoms to the read (rule 6), so `d = k else 0`
-    // handles them for `k` as well. Before, the key was not followed, and the call was
-    // rejected: "`r` applies, does not take #_" (CLASS-atoms-index-key).
-    let helper = "r(fs, args, k) { d = k else 0; return fs[args[k] else \"\"]; }";
+    // The key `k` of `args[k]` passes its atoms to the read (rule 6), so
+    // `d = k else #outOfBounds -> 0` handles them for `k` as well. Before, the key was not
+    // followed, and the call was rejected: "`r` applies, does not take #_"
+    // (CLASS-atoms-index-key).
+    let helper = "r(fs, args, k) { d = k else #outOfBounds -> 0; return fs[args[k] else #outOfBounds -> \"\"]; }";
     assert_eq!(read_two("given_key", helper), "hello|missing\n");
 }
 
@@ -132,17 +133,17 @@ fn an_else_on_a_parameter_of_any_value_leaves_no_atom_at_a_call() {
     // A11's side observation).
     for (src, want) in [
         (
-            "g(positional r) = r else 0;\n\
+            "g(positional r) = r else #outOfBounds -> 0;\n\
              main(m: MainArgs) { m.stdout <- \"${g(m.args[0])}\"; }\n",
             "0\n",
         ),
         (
-            "g(positional r) = r else \"zero\";\n\
+            "g(positional r) = r else #outOfBounds -> \"zero\";\n\
              main(m: MainArgs) { m.stdout <- g(m.args[0]) ++ \"a\"; }\n",
             "zeroa\n",
         ),
         (
-            "g(positional r) { d = r else 0; return r; }\n\
+            "g(positional r) { d = r else #outOfBounds -> 0; return r; }\n\
              main(m: MainArgs) { m.stdout <- g(\"abc\"); }\n",
             "abc\n",
         ),
@@ -156,14 +157,14 @@ fn an_else_on_a_parameter_of_any_value_leaves_no_atom_at_a_call() {
 
 #[test]
 fn a_value_left_by_a_test_used_against_the_tested_value_is_rejected_at_the_test() {
-    // `trim(r)` makes `r` a `String`, which holds no atom, so `r else 0` is `r` itself and
-    // `d + 1` cannot take it; the error is at the `else`.
-    let src = "g(positional r) { d = r else 0; e = d + 1; return trim(r); }\n";
+    // `trim(r)` makes `r` a `String`, which holds no atom, so `r else #outOfBounds -> 0` is `r`
+    // itself and `d + 1` cannot take it; the error is at the `else`.
+    let src = "g(positional r) { d = r else #outOfBounds -> 0; e = d + 1; return trim(r); }\n";
     assert_eq!(
         type_errors(src),
         [
             "the value this test leaves is used as int, and the value it tests as String: the test \
-          narrows the value it tests, so both uses are of one value, and no value is both. [r else 0]"
+          narrows the value it tests, so both uses are of one value, and no value is both. [r else #outOfBounds -> 0]"
         ]
     );
 }

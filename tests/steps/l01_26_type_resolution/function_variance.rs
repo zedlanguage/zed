@@ -54,10 +54,10 @@ fn results_are_covariant() {
 #[test]
 fn a_partial_slot_takes_a_narrower_domain() {
     accepted(
-        "small(x: int) = 1;\napply(f: (x: int | f64) ->? int) = f(x: 3) else 0;\nr = apply(f: small);\n",
+        "small(x: int) = 1;\napply(f: (x: int | f64) ->? int) = f(x: 3) else #notFound -> 0;\nr = apply(f: small);\n",
     );
     accepted(
-        "none(x: Never) = 1;\napply(f: (x: int) ->? int) = f(x: 3) else 0;\nr = apply(f: none);\n",
+        "none(x: Never) = 1;\napply(f: (x: int) ->? int) = f(x: 3) else #notFound -> 0;\nr = apply(f: none);\n",
     );
 }
 
@@ -1366,13 +1366,13 @@ fn uses_alike_keep_the_bounds_of_the_signature() {
 fn a_call_through_a_partial_slot_outside_the_domain_misses() {
     let apply = |arg: &str| {
         format!(
-            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {arg}) else 0;\na = apply(f: small);\n"
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {arg}) else #notFound -> 0;\na = apply(f: small);\n"
         )
     };
     runs_to(&apply("2.5"), "a", "0");
     runs_to(&apply("3"), "a", "4");
     runs_to(
-        "none(x: Never) = 1;\napply(f: (x: int) ->? int) = f(x: 3) else 0;\na = apply(f: none);\n",
+        "none(x: Never) = 1;\napply(f: (x: int) ->? int) = f(x: 3) else #notFound -> 0;\na = apply(f: none);\n",
         "a",
         "0",
     );
@@ -1386,7 +1386,7 @@ fn a_call_through_a_partial_slot_outside_the_domain_misses() {
     // the one the function passed to it has.
     let passed = |arg: &str| {
         format!(
-            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {arg}) else 5;\npass(g: (x: int) -> int) = apply(f: g);\na = pass(g: small);\n"
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {arg}) else #notFound -> 5;\npass(g: (x: int) -> int) = apply(f: g);\na = pass(g: small);\n"
         )
     };
     runs_to(&passed("2.5"), "a", "5");
@@ -1394,7 +1394,7 @@ fn a_call_through_a_partial_slot_outside_the_domain_misses() {
     // Named parameters in another order: the test reads each argument at its own parameter.
     let reordered = |arg: &str| {
         format!(
-            "sub(b: int, a: int) = a - b;\napply(f: (a: int | f64, b: int) ->? int) = f(a: {arg}, b: 1) else 0;\na = apply(f: sub);\n"
+            "sub(b: int, a: int) = a - b;\napply(f: (a: int | f64, b: int) ->? int) = f(a: {arg}, b: 1) else #notFound -> 0;\na = apply(f: sub);\n"
         )
     };
     runs_to(&reordered("2.5"), "a", "0");
@@ -1408,7 +1408,7 @@ fn a_call_through_a_partial_slot_outside_the_domain_misses() {
 #[test]
 fn a_partial_slot_takes_a_function_on_a_narrower_range() {
     accepted(
-        "small(x: int[0..<10]) = x;\nopt(f: (x: int) ->? int) = f(x: 5) else 0;\nr = opt(f: small);\n",
+        "small(x: int[0..<10]) = x;\nopt(f: (x: int) ->? int) = f(x: 5) else #notFound -> 0;\nr = opt(f: small);\n",
     );
     // The exact slot stays refused: `apply` may call `small` with 100.
     rejected(
@@ -1416,11 +1416,11 @@ fn a_partial_slot_takes_a_function_on_a_narrower_range() {
     );
     // A lambda adopts the slot's domain `int`, and its call of `small` is then refused.
     rejected(
-        "small(x: int[0..<10]) = x;\nopt(f: (x: int) ->? int) = f(x: 5) else 0;\nr = opt(f: x -> small(x: x));\n",
+        "small(x: int[0..<10]) = x;\nopt(f: (x: int) ->? int) = f(x: 5) else #notFound -> 0;\nr = opt(f: x -> small(x: x));\n",
     );
     let opt = |arg: &str| {
         format!(
-            "small(x: int[0..<10]) = x;\nopt(f: (x: int) ->? int) = f(x: {arg}) else 0;\na = opt(f: small);\n"
+            "small(x: int[0..<10]) = x;\nopt(f: (x: int) ->? int) = f(x: {arg}) else #notFound -> 0;\na = opt(f: small);\n"
         )
     };
     runs_to(&opt("5"), "a", "5");
@@ -1430,7 +1430,7 @@ fn a_partial_slot_takes_a_function_on_a_narrower_range() {
     runs_to(&opt("10"), "a", "0");
     // An open end: only the low end is tested.
     runs_to(
-        "big(x: int[3..]) = x;\nopt(f: (x: int) ->? int) = f(x: 2) else 7;\na = opt(f: big);\n",
+        "big(x: int[3..]) = x;\nopt(f: (x: int) ->? int) = f(x: 2) else #notFound -> 7;\na = opt(f: big);\n",
         "a",
         "7",
     );
@@ -1445,7 +1445,7 @@ fn a_wider_domain_is_rejected_and_its_lambda_accepted() {
     rejected("inc(x: int | f64) = 1;\napply(f: (x: int) -> int) = f(x: 3);\nr = apply(f: inc);\n");
     rejected("tag(x: #a | #b) = 1;\napply(f: (x: #a) -> int) = f(x: #a);\nr = apply(f: tag);\n");
     rejected(
-        "inc(x: int | f64) = 1;\napply(f: (x: int) ->? int) = f(x: 3) else 0;\nr = apply(f: inc);\n",
+        "inc(x: int | f64) = 1;\napply(f: (x: int) ->? int) = f(x: 3) else #notFound -> 0;\nr = apply(f: inc);\n",
     );
     rejected(
         "inc(x: int | f64) = 1;\nuseNarrow(b: ((x: int) -> int,)) = 0;\nr = useNarrow(b: (inc,));\n",
@@ -1565,7 +1565,7 @@ fn a_narrower_range_domain_says_so_in_the_carrier_form() {
     assert!(!errors[0].contains("narrower"), "{errors:?}");
     // At a partial slot the range domain is accepted (FAIL-fn-range-domain-partial-slot).
     accepted(
-        "small(x: int[0..<10]) = x;\napply(f: (x: int) ->? int) = f(x: 100) else 0;\nr = apply(f: small);\n",
+        "small(x: int[0..<10]) = x;\napply(f: (x: int) ->? int) = f(x: 100) else #notFound -> 0;\nr = apply(f: small);\n",
     );
 }
 
@@ -1591,7 +1591,7 @@ fn a_reordered_function_keeps_its_ranges_on_its_own_parameters() {
     // Within the range at a partial slot: the call runs, outside it misses.
     let partial = |arg: &str| {
         format!(
-            "sub(a: bool, b: int[0..=9]) = if a {{ b }} else {{ 0 }};\napply(f: (b: int, a: bool) ->? int) = f(b: {arg}, a: true) else 7;\nr = apply(f: sub);\n"
+            "sub(a: bool, b: int[0..=9]) = if a {{ b }} else {{ 0 }};\napply(f: (b: int, a: bool) ->? int) = f(b: {arg}, a: true) else #notFound -> 7;\nr = apply(f: sub);\n"
         )
     };
     runs_to(&partial("4"), "r", "4");
@@ -1606,8 +1606,8 @@ fn a_reordered_function_keeps_its_ranges_on_its_own_parameters() {
 #[test]
 fn a_function_inside_a_value_misses_outside_its_domain() {
     let small = "small(x: int) = x + 1;\n";
-    let tuple = "useWide(b: ((x: int | f64) ->? int,)) = b[0](x: K) else 9;\n";
-    let apply = "apply(f: (x: int | f64) ->? int) = f(x: K) else 6;\n";
+    let tuple = "useWide(b: ((x: int | f64) ->? int,)) = b[0](x: K) else #notFound -> 9;\n";
+    let apply = "apply(f: (x: int | f64) ->? int) = f(x: K) else #notFound -> 6;\n";
     let cases = [
         (tuple, "a = useWide(b: (small,));\n", "9"),
         (tuple, "t = (small,);\na = useWide(b: t);\n", "9"),
@@ -1623,7 +1623,7 @@ fn a_function_inside_a_value_misses_outside_its_domain() {
             "6",
         ),
         (
-            "apply(f: () -> ((x: int | f64) ->? int)) = f()(x: K) else 6;\n",
+            "apply(f: () -> ((x: int | f64) ->? int)) = f()(x: K) else #notFound -> 6;\n",
             "get() = small;\na = apply(f: get);\n",
             "6",
         ),
@@ -1643,7 +1643,7 @@ fn a_function_inside_a_value_misses_outside_its_domain() {
 /// bug in zedc.
 #[test]
 fn a_function_passed_through_a_generic_parameter_misses_outside_its_domain() {
-    let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: K) else 6;\npass(x) = apply(f: x);\n";
+    let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: K) else #notFound -> 6;\npass(x) = apply(f: x);\n";
     let cases = [
         ("a = pass(x: small);\n", "6", "4"),
         ("pass2(y) = pass(x: y);\na = pass2(y: small);\n", "6", "4"),
@@ -1653,7 +1653,7 @@ fn a_function_passed_through_a_generic_parameter_misses_outside_its_domain() {
             "14",
         ),
         (
-            "apply2(f: (x: int | #b) ->? int) = f(x: 7) else 7;\npass2(x) = apply(f: x) + apply2(f: x);\na = pass2(x: small);\n",
+            "apply2(f: (x: int | #b) ->? int) = f(x: 7) else #notFound -> 7;\npass2(x) = apply(f: x) + apply2(f: x);\na = pass2(x: small);\n",
             "14",
             "12",
         ),
@@ -1695,7 +1695,8 @@ fn a_function_passed_through_a_generic_parameter_misses_outside_its_domain() {
 /// it misses outside its domain too; a component that is a literal leaves the other untouched.
 #[test]
 fn a_function_in_a_component_of_a_generic_argument_misses_outside_its_domain() {
-    let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: K) else 6;\n";
+    let head =
+        "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: K) else #notFound -> 6;\n";
     let cases = [
         (
             "pass(p) = apply(f: p[0]);\na = pass(p: (small, 1));\n",
@@ -1746,7 +1747,7 @@ fn a_function_in_a_component_of_a_generic_argument_misses_outside_its_domain() {
 /// values.
 #[test]
 fn a_generic_body_passes_on_only_its_arguments_by_every_route() {
-    let head = "small(x: int) = x + 1;\nbig(x: int | f64) = 1;\napply(f: (x: int | f64) ->? int) = f(x: K) else 6;\n";
+    let head = "small(x: int) = x + 1;\nbig(x: int | f64) = 1;\napply(f: (x: int | f64) ->? int) = f(x: K) else #notFound -> 6;\n";
     let cases = [
         // A closure that captures the argument, called in the body.
         (
@@ -1855,7 +1856,7 @@ fn a_generic_body_passes_on_only_its_arguments_by_every_route() {
             "8",
         ),
         (
-            "apply2(f: (x: int | bool) ->? int) = f(x: true) else 9;\npass(x) = apply(f: x) + apply2(f: x);\na = pass(x: small);\n",
+            "apply2(f: (x: int | bool) ->? int) = f(x: true) else #notFound -> 9;\npass(x) = apply(f: x) + apply2(f: x);\na = pass(x: small);\n",
             "15",
             "13",
         ),
@@ -1894,10 +1895,10 @@ fn a_generic_body_passes_on_only_its_arguments_by_every_route() {
 /// `_`, so none is offered there.
 #[test]
 fn a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot() {
-    let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\n";
+    let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\n";
     let passes = "passes `(x: int) -> int` as `(x: int | f64) ->? int`, from no argument of the call \
                   where its domain can be tested.";
-    let entry = "apply(f: { 1 -> x }[1] else x)";
+    let entry = "apply(f: { 1 -> x }[1] else #notFound -> x)";
     let try_x = " Try `x: (x: int) -> int` instead.";
     let cases = [
         (
@@ -1906,17 +1907,17 @@ fn a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot() {
             "",
         ),
         (
-            "pass(x) = apply(f: { 1 -> x }[1] else x);\na = pass(x: small);\n",
+            "pass(x) = apply(f: { 1 -> x }[1] else #notFound -> x);\na = pass(x: small);\n",
             entry,
             try_x,
         ),
         (
-            "pass(x) = apply(f: x else x) + apply(f: { 1 -> x }[1] else x);\na = pass(x: small);\n",
-            "apply(f: x else x)",
+            "pass(x) = apply(f: x else #notFound -> x) + apply(f: { 1 -> x }[1] else #notFound -> x);\na = pass(x: small);\n",
+            "apply(f: x else #notFound -> x)",
             try_x,
         ),
         (
-            "pass(x) = apply(f: { 1 -> x }[1] else x) + apply(f: x else x);\na = pass(x: small);\n",
+            "pass(x) = apply(f: { 1 -> x }[1] else #notFound -> x) + apply(f: x else #notFound -> x);\na = pass(x: small);\n",
             entry,
             try_x,
         ),
@@ -1941,10 +1942,12 @@ fn a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot() {
 #[test]
 fn the_repairs_the_no_place_refusal_offers_run() {
     let head = |k: &str| {
-        format!("small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\n")
+        format!(
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else #notFound -> 6;\n"
+        )
     };
     let cases = [
-        "pass(x: (x: int) -> int) = apply(f: { 1 -> x }[1] else x);\na = pass(x: small);\n",
+        "pass(x: (x: int) -> int) = apply(f: { 1 -> x }[1] else #notFound -> x);\na = pass(x: small);\n",
         "pass(x) = apply(f: x);\na = [small].map((g: (x: int) -> int) -> pass(x: g))[0];\n",
         "pass(x, y: (x: int) -> int = small) = apply(f: y);\na = pass(x: 1);\n",
     ];
@@ -1957,20 +1960,25 @@ fn the_repairs_the_no_place_refusal_offers_run() {
 /// Row FAIL-partial-slot-generic-needless-refusals: a value the generic body passes on from an
 /// argument by a route `CallFrame::place` did not follow at first is rebuilt at that argument
 /// too, so it misses outside the function's domain and calls it inside, where before it was
-/// refused, soundly but needlessly: a default that reads another parameter, `x else x` where
-/// `x` holds no atom, the generic function passed as a value and called there with an
-/// argument of the outer call or one written in its body (once or twice, and through two
-/// calls of one function value). The fifth case of the row, the generic function called from a
-/// lambda inside `map`, is
+/// refused, soundly but needlessly: a default that reads another parameter,
+/// `x else #notFound -> x` where `x` holds no atom, the generic function passed as a value and
+/// called there with an argument of the outer call or one written in its body (once or twice,
+/// and through two calls of one function value). The fifth case of the row, the generic
+/// function called from a lambda inside `map`, is
 /// [`a_generic_function_called_from_a_map_lambda_misses_outside_the_domain`].
 #[test]
 fn values_a_generic_body_passes_on_from_its_arguments_miss_outside_the_domain() {
     let head = |k: &str| {
-        format!("small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\n")
+        format!(
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else #notFound -> 6;\n"
+        )
     };
     let cases = [
         ("pass(x, y = x) = apply(f: y);\na = pass(x: small);\n", 1),
-        ("pass(x) = apply(f: x else x);\na = pass(x: small);\n", 1),
+        (
+            "pass(x) = apply(f: x else #notFound -> x);\na = pass(x: small);\n",
+            1,
+        ),
         (
             "pass(x) = apply(f: x);\nrun(g, v) = g(x: v);\na = run(g: pass, v: small);\n",
             1,
@@ -1999,7 +2007,9 @@ fn values_a_generic_body_passes_on_from_its_arguments_miss_outside_the_domain() 
 #[test]
 fn a_generic_function_called_from_a_map_lambda_misses_outside_the_domain() {
     let head = |k: &str| {
-        format!("small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\n")
+        format!(
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else #notFound -> 6;\n"
+        )
     };
     let cases = [
         (
@@ -2018,7 +2028,7 @@ fn a_generic_function_called_from_a_map_lambda_misses_outside_the_domain() {
             "4",
         ),
         (
-            "pass(x) = apply(f: x);\na = [small].where(g -> pass(x: g) > 5).map(g -> 1)[0] else 0;\n",
+            "pass(x) = apply(f: x);\na = [small].where(g -> pass(x: g) > 5).map(g -> 1)[0] else #notFound -> 0;\n",
             "1",
             "0",
         ),
@@ -2039,7 +2049,7 @@ fn a_generic_function_called_from_a_map_lambda_misses_outside_the_domain() {
 #[test]
 fn a_map_lambda_over_entries_of_two_function_types_is_refused_for_a_partial_slot() {
     let head = "small(x: int) = x + 1;\nbig(x: int | f64) = 1;\n\
-                apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\n";
+                apply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\npass(x) = apply(f: x);\n";
     let refused = [
         "a = [small, big].map(g -> pass(x: g))[0];\n",
         "h(m) = m.map(g -> pass(x: g))[0];\na = h(m: [small, big]);\n",
@@ -2079,7 +2089,7 @@ fn a_named_call_through_a_parameter_of_two_differing_functions_runs() {
 /// [`a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot`]).
 #[test]
 fn constructs_the_proof_leaves_for_later_are_not_compiled_yet() {
-    let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\n";
+    let head = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\n";
     let cases = [
         // `initial` in a loop: a value of a generation, carried from frame to frame.
         "pass(x) { r = loop t { while t < 1; initial g = x; g' = g; }; return apply(f: r.g); }\na = pass(x: small);\n",
@@ -2093,7 +2103,7 @@ fn constructs_the_proof_leaves_for_later_are_not_compiled_yet() {
         // type that fixes a variable from the result.
         "pass(x: T) -> (T, int) = (x, apply(f: x));\na = pass(x: small)[1];\n",
         "struct Box(X) { v: X }\npass(b) = apply(f: b.v);\na = pass(b: Box(v: small));\n",
-        "pass(x) = if apply(f: x) > 0 { x } else { x };\ng: (x: int | f64) ->? int = pass(x: small);\na = g(x: 2.5) else 7;\n",
+        "pass(x) = if apply(f: x) > 0 { x } else { x };\ng: (x: int | f64) ->? int = pass(x: small);\na = g(x: 2.5) else #notFound -> 7;\n",
     ];
     let compiled: Vec<_> = cases
         .iter()
@@ -2134,7 +2144,7 @@ fn front_errors(src: &str) -> Vec<String> {
 /// not: both test the domain `int | f64` of `mid`.
 #[test]
 fn a_function_rebuilt_in_two_ways_at_one_call_gets_both() {
-    let slots = "small(x: int) = x + 1;\nmid(x: int | f64) = small;\napply3(f: (x: int | f64 | bool) ->? ((x: int) -> int)) = 0;\napplyB(f: (x: int | f64 | bool) ->? ((x: int | f64) ->? int)) = f(x: 1)(x: K) else 6 else 7;\n";
+    let slots = "small(x: int) = x + 1;\nmid(x: int | f64) = small;\napply3(f: (x: int | f64 | bool) ->? ((x: int) -> int)) = 0;\napplyB(f: (x: int | f64 | bool) ->? ((x: int | f64) ->? int)) = f(x: 1)(x: K) else #notFound -> 6;\n";
     let cases = [
         "pass(x) = applyB(f: x) + apply3(f: x);\na = pass(x: mid);\n",
         "pass(x) = apply3(f: x) + applyB(f: x);\na = pass(x: mid);\n",
@@ -2162,7 +2172,7 @@ fn a_function_rebuilt_in_two_ways_at_one_call_gets_both() {
 fn a_function_taken_from_a_family_argument_misses_outside_its_domain() {
     let head = |k: &str| {
         format!(
-            "small(x: int) = x + 1;\nbig(x: int) = x + 10;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\n"
+            "small(x: int) = x + 1;\nbig(x: int) = x + 10;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else #notFound -> 6;\n"
         )
     };
     let cases = [
@@ -2215,7 +2225,7 @@ fn a_function_taken_from_a_family_argument_misses_outside_its_domain() {
 /// [`a_value_of_a_variable_from_no_argument_is_refused_for_a_partial_slot`].)
 #[test]
 fn a_function_taken_from_a_family_of_two_function_types_is_refused_for_a_partial_slot() {
-    let src = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(m) = apply(f: m[1]);\nwide(x: int | f64) = 1;\na = pass(m: { 1 -> small, 2 -> wide });\n";
+    let src = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\npass(m) = apply(f: m[1]);\nwide(x: int | f64) = 1;\na = pass(m: { 1 -> small, 2 -> wide });\n";
     let errors = type_errors(src);
     let want = "`apply(f: m[1])` is `((x: int) -> int) | ((x: int | f64) -> 1)`, passed as \
                 `(x: int | f64) ->? int`";
@@ -2230,8 +2240,8 @@ fn a_function_taken_from_a_family_of_two_function_types_is_refused_for_a_partial
 /// slot allows (the remaps of l08_02, which broke when a family was rebuilt as a lambda).
 #[test]
 fn a_family_passed_to_a_partial_slot_stays_a_family() {
-    let tuple = "useWide(b: ((int | f64) ->? int,)) = b[0](K) else 9;\n";
-    let apply = "apply(f: (int | f64) ->? int) = f(K) else 6;\n";
+    let tuple = "useWide(b: ((int | f64) ->? int,)) = b[0](K) else #notFound -> 9;\n";
+    let apply = "apply(f: (int | f64) ->? int) = f(K) else #notFound -> 6;\n";
     let cases = [
         (tuple, "a = useWide(b: ({ 3 -> 4 },));\n", "9"),
         (apply, "m = { 3 -> 4 };\na = apply(f: m);\n", "6"),
@@ -2254,18 +2264,18 @@ fn a_family_passed_to_a_partial_slot_stays_a_family() {
 fn a_domain_no_test_can_read_is_refused() {
     let one = |k: &str| {
         format!(
-            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\nq(g: (x: V) -> int for V in int) = apply(f: g);\na = q(g: small);\n"
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else #notFound -> 6;\nq(g: (x: V) -> int for V in int) = apply(f: g);\na = q(g: small);\n"
         )
     };
     runs_to(&one("2.5"), "a", "6");
     runs_to(&one("3"), "a", "4");
     let refused = [
         (
-            "useH(h: (x: int) -> int) = h(x: 1);\napply(f: (h: ((x: int) -> int) | int) ->? int) = f(h: 3) else 6;\na = apply(f: useH);\n",
+            "useH(h: (x: int) -> int) = h(x: 1);\napply(f: (h: ((x: int) -> int) | int) ->? int) = f(h: 3) else #notFound -> 6;\na = apply(f: useH);\n",
             "`h` is a function, whose domain its value does not show",
         ),
         (
-            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\nq(g: (x: V) -> int for V in int | f64) = apply(f: g);\n",
+            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\nq(g: (x: V) -> int for V in int | f64) = apply(f: g);\n",
             "`x` is `V`, which a call may fix to any of `int | f64`",
         ),
         (
@@ -2318,7 +2328,7 @@ fn a_reordered_function_passed_through_a_generic_parameter_runs() {
     );
     let partial = |k: &str| {
         format!(
-            "re(y: f64, x: int) = x + 1;\napp2(f: (x: int | f64, y: f64) ->? int) = f(x: {k}, y: 2.0) else 6;\npass(g) = app2(f: g);\na = pass(g: re);\n"
+            "re(y: f64, x: int) = x + 1;\napp2(f: (x: int | f64, y: f64) ->? int) = f(x: {k}, y: 2.0) else #notFound -> 6;\npass(g) = app2(f: g);\na = pass(g: re);\n"
         )
     };
     runs_to(&partial("2.5"), "a", "6");
@@ -2355,7 +2365,7 @@ fn a_reordered_function_the_generic_body_uses_in_another_order_is_refused() {
             "in another order, and also",
         ),
         (
-            "wide(f: (x: int | f64, y: f64) ->? int) = f(x: 2.5, y: 2.0) else 6;\npass(g) = app2(f: g) + wide(f: g);\na = pass(g: re);\n",
+            "wide(f: (x: int | f64, y: f64) ->? int) = f(x: 2.5, y: 2.0) else #notFound -> 6;\npass(g) = app2(f: g) + wide(f: g);\na = pass(g: re);\n",
             "is rebuilt here already",
         ),
     ];
@@ -2434,7 +2444,7 @@ fn a_reordered_function_the_generic_body_also_passes_on_in_another_order_is_refu
 /// arguments swapped: `a` ran to 33 where a call by name gives 24.
 #[test]
 fn a_reordered_function_the_generic_body_also_passes_into_a_union_slot_is_refused() {
-    let app3 = "app3(k: ((y: int, x: int) -> int) | #none) = k(y: 2, x: 1) else 0;\n";
+    let app3 = "app3(k: ((y: int, x: int) -> int) | #none) = k(y: 2, x: 1) else #none -> 0;\n";
     let app4 = "app4(k: ((y: int, x: int) -> int) | ((y: int, x: int) -> f64)) = \
                 { r = k(y: 2, x: 1); if r is int { r } else { 0 } };\n";
     reorder_refused(
@@ -2600,7 +2610,7 @@ fn a_reordered_function_in_a_struct_is_not_compiled_yet() {
 fn arguments_the_rebuilt_here_proof_names_run_to_their_values() {
     let head = |k: &str| {
         format!(
-            "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\npass(x) = apply(f: x);\npassT(t) = apply(f: t[0]);\n"
+            "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else #notFound -> 6;\npass(x) = apply(f: x);\npassT(t) = apply(f: t[0]);\n"
         )
     };
     let twice = "twice(f) = f(small) + f(small4);\n";
@@ -2620,12 +2630,12 @@ fn arguments_the_rebuilt_here_proof_names_run_to_their_values() {
             "4",
         ),
         (
-            "apply2(f: (x: int | f64, y: int) ->? int) = f(x: 1, y: 2) else 6;\nq(g: (x: V, y: int) -> int for V in int) = apply2(f: g) + g(x: 3, y: 4);\na = q(g: (y: int, x: int) -> x + 10 * y);\n".into(),
+            "apply2(f: (x: int | f64, y: int) ->? int) = f(x: 1, y: 2) else #notFound -> 6;\nq(g: (x: V, y: int) -> int for V in int) = apply2(f: g) + g(x: 3, y: 4);\na = q(g: (y: int, x: int) -> x + 10 * y);\n".into(),
             "64",
             "64",
         ),
         (
-            "sm(y: int, x: int) = x + 10 * y;\napply2(f: (x: int | f64, y: int) ->? int) = f(x: 1, y: 2) else 6;\nq(g: (x: V, y: int) -> int for V in int) = apply2(f: g) + g(x: 3, y: 4);\na = q(g: sm);\n".into(),
+            "sm(y: int, x: int) = x + 10 * y;\napply2(f: (x: int | f64, y: int) ->? int) = f(x: 1, y: 2) else #notFound -> 6;\nq(g: (x: V, y: int) -> int for V in int) = apply2(f: g) + g(x: 3, y: 4);\na = q(g: sm);\n".into(),
             "64",
             "64",
         ),
@@ -2649,7 +2659,7 @@ fn the_twice_lambda_rebuilds_each_function_at_its_own_argument() {
     use zedc::check::Fit;
     let head = |k: &str| {
         format!(
-            "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\npass(x) = apply(f: x);\n"
+            "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else #notFound -> 6;\npass(x) = apply(f: x);\n"
         )
     };
     // The rebuilding of each function passed alone to `pass`, as the call writes it.
@@ -2735,7 +2745,7 @@ fn the_twice_lambda_rebuilds_each_function_at_its_own_argument() {
 /// refused programs run is row FAIL-arrow-lambda-partial-slot).
 #[test]
 fn a_lambda_checked_at_each_arrow_is_rebuilt_once() {
-    let head = "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\n";
+    let head = "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\npass(x) = apply(f: x);\n";
     let both = "both(h: ((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> int)) = h(g: small) + h(g: small4);\n";
     for body in ["pass(x: g)", "apply(f: g)", "typed(x: g)"] {
         let typed = "typed(x: (x: int | f64) ->? int) = apply(f: x);\n";
@@ -2766,7 +2776,7 @@ fn a_lambda_checked_at_each_arrow_is_rebuilt_once() {
 /// repair as code. Each now offers a repair as code, and none that is refused.
 #[test]
 fn the_arrow_lambda_refusals_offer_a_repair_that_is_accepted() {
-    let head = "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\ntyped(x: (x: int | f64) ->? int) = apply(f: x);\n";
+    let head = "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\npass(x) = apply(f: x);\ntyped(x: (x: int | f64) ->? int) = apply(f: x);\n";
     let both = "both(h: ((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> int)) = h(g: small) + h(g: small4);\n";
     let errs = type_errors(&format!("{head}{both}a = both(h: g -> pass(x: g));\n"));
     assert_eq!(errs.len(), 1);
@@ -2792,7 +2802,7 @@ fn the_arrow_lambda_refusals_offer_a_repair_that_is_accepted() {
 #[test]
 fn a_function_a_generic_body_passes_on_misses_on_keys_a_port_reads() {
     use zed_tests::step_helpers::l01_19_whole_file_ports::run;
-    let key = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int, v: int | f64) = f(x: v) else 6;\npass(x, v: int | f64) = apply(f: x, v: v);\nmain(m: MainArgs) {\n  v = int(m.stdin[0] else \"\") else f64(0);\n  m.stdout <- \"${pass(x: small, v: v)}\";\n}\n";
+    let key = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int, v: int | f64) = f(x: v) else #notFound -> 6;\npass(x, v: int | f64) = apply(f: x, v: v);\nmain(m: MainArgs) {\n  v = int(m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") else #invalid -> f64(0);\n  m.stdout <- \"${pass(x: small, v: v)}\";\n}\n";
     // A line that is no `int` gives the key `f64(0)`, outside `small`'s domain.
     for (stdin, want) in [("a\nb\n", "6\n"), ("3\n", "4\n")] {
         let o = run(&format!("port_key_{}", stdin.len()), key, stdin, &[]);
@@ -2805,7 +2815,7 @@ fn a_function_a_generic_body_passes_on_misses_on_keys_a_port_reads() {
     }
     let chosen = |k: &str| {
         format!(
-            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\npass(x) = apply(f: x);\nmain(m: MainArgs) {{\n  n = int(m.stdin[0] else \"\") else 0;\n  m.stdout <- \"${{pass(x: if n > 0 {{ small }} else {{ small }})}}\";\n}}\n"
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else #notFound -> 6;\npass(x) = apply(f: x);\nmain(m: MainArgs) {{\n  n = int(m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") else #invalid -> 0;\n  m.stdout <- \"${{pass(x: if n > 0 {{ small }} else {{ small }})}}\";\n}}\n"
         )
     };
     for (k, want) in [("2.5", "6\n"), ("3", "4\n")] {
@@ -2824,7 +2834,7 @@ fn a_function_a_generic_body_passes_on_misses_on_keys_a_port_reads() {
             );
         }
     }
-    let lines = "apply(f: (int | f64) ->? String) = f(2.5) else \"none\";\napply1(f: (int | f64) ->? String) = f(1) else \"none\";\npass(x) = apply(f: x) ++ \"|\" ++ apply1(f: x);\nmain(m: MainArgs) {\n  m.stdout <- pass(x: m.stdin);\n}\n";
+    let lines = "apply(f: (int | f64) ->? String) = f(2.5) else #notFound -> \"none\";\napply1(f: (int | f64) ->? String) = f(1) else #notFound -> \"none\";\npass(x) = apply(f: x) ++ \"|\" ++ apply1(f: x);\nmain(m: MainArgs) {\n  m.stdout <- pass(x: m.stdin);\n}\n";
     let o = run("port_lines", lines, "a\n", &[]);
     assert_eq!(o.status, 1, "{}", o.stderr);
     assert!(
@@ -2847,7 +2857,9 @@ fn a_function_a_generic_body_passes_on_misses_on_keys_a_port_reads() {
 fn a_function_a_generic_body_passes_on_keeps_its_test_through_staging() {
     use zed_tests::step_helpers::l01_19_whole_file_ports::run;
     let head = |k: &str| {
-        format!("small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else 6;\n")
+        format!(
+            "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: {k}) else #notFound -> 6;\n"
+        )
     };
     let main = "main(m: MainArgs) {\n  m.stdout <- \"${a}\";\n}\n";
     let cases = [
@@ -2887,7 +2899,7 @@ fn a_function_a_generic_body_passes_on_keeps_its_test_through_staging() {
 /// for a generic function (plan row MSG-bounded-param-printed-underscore).
 #[test]
 fn a_parameter_with_a_bound_is_printed_with_its_bound() {
-    let head = "small(x: int) = x + 1;\nbig(x: int | f64) = 0;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\n";
+    let head = "small(x: int) = x + 1;\nbig(x: int | f64) = 0;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\npass(x) = apply(f: x);\n";
     // A curried call through two functions of different parameter lists was refused with a
     // message that printed both types; the function held now places it, and it runs (row
     // CALL-curried-placed): `small` called with 2.5 gives 6 through the partial slot, so
@@ -2915,7 +2927,7 @@ fn a_parameter_with_a_bound_is_printed_with_its_bound() {
 
     // Passed to two parameters, the value fits both types: their meet. A partial function
     // whose domain lies in `int` fits `(x: int | f64) ->? int` too.
-    let both = "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\napply2(f: (x: int) ->? int) = f(x: 2) else 6;\nboth(x) = apply(f: x) + apply2(f: x);\na = both(x: 3);\n";
+    let both = "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\napply2(f: (x: int) ->? int) = f(x: 2) else #notFound -> 6;\nboth(x) = apply(f: x) + apply2(f: x);\na = both(x: 3);\n";
     let report = match zedc::run::load(both.as_bytes()) {
         Ok(_) => panic!("{both}: accepted"),
         Err(e) => e.to_string(),
@@ -2943,7 +2955,7 @@ fn a_parameter_with_a_bound_is_printed_with_its_bound() {
 /// and the repair it offers runs. The program stays refused.
 #[test]
 fn an_arrow_lambda_refused_through_a_call_s_needs_is_named() {
-    let head = "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\npass(x) = apply(f: x);\n";
+    let head = "small(x: int) = x + 1;\nsmall4(x: f64) = 2;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\npass(x) = apply(f: x);\n";
     let both = "both(h: ((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> int)) = h(g: small) + h(g: small4);\n";
     let split = "split(h1: (g: (x: int) -> int) -> int, h2: (g: (x: f64) -> int) -> int) = h1(g: small) + h2(g: small4);\n";
     for (call, f) in [("f(g)", "x -> pass(x: x)"), ("f(x: g)", "pass")] {

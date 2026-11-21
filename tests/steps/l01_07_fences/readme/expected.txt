@@ -80,7 +80,7 @@ table `dailyAll`
 
 == README.md [Step 6: adding values that may be failures] 2
 table `daily` before summing over `sku`
-| region | day | sku | r else 0 |
+| region | day | sku | r else #notFound -> 0 |
 | East | 0 | ink | 14 |
 | East | 0 | pen | 10 |
 | East | 1 | pen | 6 |
@@ -324,7 +324,7 @@ comment sumAll = amounts >< (+); // the sum, or all the failures: + never sees o
 
 == README.md [Failures in a pipeline] 3
 comment sum1 = amounts.where(a -> a is int) >< (+); // skip the failures
-comment sum2 = amounts.map(a -> a else 0) >< (+); // count them as zero
+comment sum2 = amounts.map(a -> a else (#invalid | #ioError) -> 0) >< (+); // count them as zero
 text
 > input: amounts = 3, #ioError(...), 4
 > sumAll = #ioError(...)
@@ -340,7 +340,7 @@ comment ages = { "Ann" -> 36, "Bob" -> 41 }; // exact keys {"Ann", "Bob"}, int v
 comment tags = { #red, #green }; // a set: a map from each member to itself
 comment first = xs[0]; // 3: the index is known to be in range
 comment ann = ages["Ann"]; // 36: the key is known to be there
-comment age = ages[name] else 0; // name is known only at run time
+comment age = ages[name] else #notFound -> 0; // name is known only at run time
 comment tens = xs.map(x -> x * 10); // the same keys, new values
 comment big = tens.where(x -> x > 20); // the keys that pass keep their values: 0, 2, 4
 comment sorted = tens.sort(desc x -> x); // new keys 0 to 4; equal values stay in their old order

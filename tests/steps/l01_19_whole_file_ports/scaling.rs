@@ -40,7 +40,7 @@ fn a_lines_input_is_split_and_joined() {
 /// A wave writing the last of `n` lines on standard input, and the input.
 pub(super) fn last_line_wave(n: usize) -> (Program, BTreeMap<String, Arc<[u8]>>) {
     let src = format!(
-        "main(m: MainArgs) {{\n  m.stdout <- m.stdin[{}] else \"\";\n}}\n",
+        "main(m: MainArgs) {{\n  m.stdout <- m.stdin[{}] else #ioError -> \"\" else #outOfBounds -> \"\";\n}}\n",
         n - 1
     );
     let input = BTreeMap::from([("m.stdin".to_string(), Arc::from(lines(n)))]);
@@ -98,7 +98,7 @@ pub(super) fn distinct_paths(n: usize) -> Program {
         .map(|i| format!("  a{i} = fs[\"p{i}\"];\n"))
         .collect();
     let src = format!(
-        "main(m: MainArgs) {{\n  fs = main::files;\n{reads}  m.stdout <- a0 else \"\";\n}}\n"
+        "main(m: MainArgs) {{\n  fs = main::files;\n{reads}  m.stdout <- a0 else #ioError -> \"\" else #notFound -> \"\";\n}}\n"
     );
     load(src.as_bytes()).unwrap()
 }

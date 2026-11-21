@@ -87,7 +87,7 @@ fn coprime_chain(n: usize) -> String {
         .collect();
     format!(
         "main(m: MainArgs) {{\n    y0 = rat({}) ^ (2^60);\n{body}    \
-         m.stdout <- String(y{} * y{}) else \"\";\n}}\n",
+         m.stdout <- String(y{} * y{});\n}}\n",
         r[0],
         n - 1,
         n - 1
@@ -183,11 +183,7 @@ fn reused_chain(n: usize) -> String {
             n - 1
         );
     }
-    s + &format!(
-        "    m.stdout <- String(y{} * y{}) else \"\";\n}}\n",
-        n - 1,
-        n - 1
-    )
+    s + &format!("    m.stdout <- String(y{} * y{});\n}}\n", n - 1, n - 1)
 }
 
 #[test]

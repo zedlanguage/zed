@@ -134,7 +134,7 @@ fn a_renamed_parameter_runs_the_row_again() {
 #[test]
 fn a_wave_is_reused_when_moved_and_names_mains_parameter_as_written() {
     let shout = "shout(positional s: String) = upper(s) ++ \"!!\";\n";
-    let main = "main(m: MainArgs) {\n  m.stdout <- shout(m.stdin[0] else \"\");\n}\n\
+    let main = "main(m: MainArgs) {\n  m.stdout <- shout(m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\");\n}\n\
                 test { \"hi\" -> \"HI!\\n\" }\n";
     let first = format!("{shout}{main}");
     let wrong = "`\"hi\" -> \"HI!\\n\"` of `main`: `m.stdout` writes \"HI!!\\n\"";

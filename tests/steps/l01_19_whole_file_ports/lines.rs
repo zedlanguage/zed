@@ -32,7 +32,7 @@ fn a_family_of_lines_is_written_one_line_per_entry() {
 #[test]
 fn lines_are_keyed_from_zero_and_crlf_is_one_line_end() {
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.stdin[0] else \"\"}|${m.stdin[1] else \"\"}|${m.stdin[2] else \"none\"}\";\n}\n";
+               m.stdout <- \"${m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\"}|${m.stdin[1] else #ioError -> \"\" else #outOfBounds -> \"\"}|${m.stdin[2] else #ioError -> \"none\" else #outOfBounds -> \"none\"}\";\n}\n";
     let out = run("numbers", src, "name: Ada\r\nrole: admin\r\n", &[]);
     assert_eq!(out.stdout, "name: Ada|role: admin|none\n");
     assert_eq!(
@@ -107,7 +107,7 @@ fn a_line_that_is_not_utf8_is_an_io_error_at_its_key() {
 #[test]
 fn a_greeting_reads_one_line_and_writes_one() {
     let src = "main(m: MainArgs) {\n  \
-               name = trim(m.stdin[0]) else \"stranger\";\n  \
+               name = trim(m.stdin[0]) else #ioError -> \"stranger\" else #outOfBounds -> \"stranger\";\n  \
                m.stdout <- \"Hello, ${name}!\";\n}\n";
     assert_eq!(
         run("greet", src, "  Grace \n", &[]).stdout,
@@ -121,8 +121,8 @@ fn a_computed_line_number_reads_that_line() {
     // The first line, key 0, says which line to print; a key that is not a literal reads the
     // family by value, as a literal one does.
     let src = "main(m: MainArgs) {\n  \
-               pick = int(m.stdin[0]) else 0;\n  \
-               m.stdout <- m.stdin[pick] else \"no such line\";\n}\n";
+               pick = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  \
+               m.stdout <- m.stdin[pick] else #ioError -> \"no such line\" else #outOfBounds -> \"no such line\";\n}\n";
     assert_eq!(
         run("pick", src, "2\nred\ngreen\nblue\n", &[]).stdout,
         "green\n"
@@ -134,7 +134,7 @@ fn a_computed_line_number_reads_that_line() {
 /// says the read missed (DESIGN step L1.19: the keys are `0..<n`, and a read outside them is
 /// `#outOfBounds`).
 const LINE_AT: &str = "main(m: MainArgs) {\n  \
-     k = int(m.args[0] else \"\") else 0;\n  \
+     k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n  \
      m.stdout <- m.stdin[k] else #outOfBounds -> \"out of bounds\" else #ioError -> \"unreadable\";\n}\n";
 
 /// What `LINE_AT` writes for the key `k` over the input `input`. Each run has its own directory,

@@ -80,7 +80,7 @@ fn both(file: &str, exe: &str, word: &str) -> [(Option<i32>, String, String); 2]
 /// number of about `k` bits whose computation, from an argument, the checker cannot size.
 fn power_program(limit: &str, b: u128) -> String {
     format!(
-        "{limit}\nmain(m: MainArgs) {{\n    k = int(m.args[0] else \"\") else 0;\n    \
+        "{limit}\nmain(m: MainArgs) {{\n    k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n    \
          m.stdout <- String(if k >= 0 {{ {b} ^ k }} else {{ 0 }});\n}}\n"
     )
 }

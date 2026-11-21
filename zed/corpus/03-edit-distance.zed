@@ -25,8 +25,8 @@ bottomUp(positional a, positional b) = {
 main(m: MainArgs) {
   m.stdout <- for l in m.stdin {
     w = l.split(" ");
-    a = w[0] else (#badEncoding | #ioError | #outOfBounds) -> "";
-    b = w[1] else (#badEncoding | #ioError | #outOfBounds) -> "";
+    a = w[0] else (#ioError | #outOfBounds) -> "";
+    b = w[1] else (#ioError | #outOfBounds) -> "";
     "${a} ${b} ${topDown(a, b)} ${bottomUp(a, b)}"
   };
 }

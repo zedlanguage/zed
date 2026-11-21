@@ -467,11 +467,11 @@ fn a_branch_beside_a_component_takes_its_carrier() {
 #[test]
 fn a_branch_beside_a_component_read_by_else_stays_int() {
     let name = "l01_26a_tuple_arg_pair_branch_else";
-    let def = "h(positional p) = if (p[0] else 0) < 5 { p[0] } else { 0 };";
-    assert_eq!(outcome(name, def, "h((1, 2)) else 9"), "1\n");
+    let def = "h(positional p) = if (p[0] else #outOfBounds -> 0) < 5 { p[0] } else { 0 };";
+    assert_eq!(outcome(name, def, "h((1, 2))"), "1\n");
     for (call, lit) in [
-        ("h((1.5, 2)) else 9", "1.5"),
-        ("h((1.5f64, 2)) else 9", "1.5f64"),
+        ("h((1.5, 2))", "1.5"),
+        ("h((1.5f64, 2)) else #outOfBounds -> 9", "1.5f64"),
     ] {
         let got = outcome(name, def, call);
         let head = format!("2:5: `h` gives {lit} here, which is not int");
@@ -496,7 +496,7 @@ fn printed_fixes(got: &str) -> Vec<String> {
 
 /// Each fix printed under "fixes, each checked here" for a component that no use gives a
 /// carrier, put in place of the call, runs (item LIT-tuple-branch-carrier): `r = h((1.5f64,
-/// 2))` was printed for `if (p[0] else 0) < 5 { p[0] } else { 0 }` and rejected. A decimal
+/// 2))` was printed for `if (p[0] else #outOfBounds -> 0) < 5 { p[0] } else { 0 }` and rejected. A decimal
 /// component now takes `f64` and prints no fix, so each component here is a `/` of integer
 /// literals, which is still rejected (author decision 2026-11-12).
 #[test]
@@ -533,15 +533,15 @@ fn every_printed_fix_of_a_decimal_component_runs() {
     // since each fix of the literal keeps that rejection (DESIGN.md L1.26a); it printed the
     // fixes `3r / 2` and `3.0f64 / 2`, each rejected in turn, a menu marked "each checked
     // here" whose fixes did not check (row LIT-tuple-branch-carrier-division-fixes).
-    let def = "h(positional p) = if (p[0] else 0) < 5 { p[0] } else { 0 };";
+    let def = "h(positional p) = if (p[0] else #outOfBounds -> 0) < 5 { p[0] } else { 0 };";
     for (call, shown) in [
-        ("h((1.5, 2)) else 9", "1.5"),
-        ("h((1.5f64, 2)) else 9", "1.5f64"),
-        ("h((1.5r, 2)) else 9", "1.5r"),
-        ("h((3r / 2, 2)) else 9", "rat"),
-        ("h((3.0f64 / 2, 2)) else 9", "f64"),
-        ("h((3 / 2, 2)) else 9", "f32 | f64 | rat"),
-        ("h((2^-1, 2)) else 9", "f32 | f64 | rat"),
+        ("h((1.5, 2))", "1.5"),
+        ("h((1.5f64, 2)) else #outOfBounds -> 9", "1.5f64"),
+        ("h((1.5r, 2)) else #outOfBounds -> 9", "1.5r"),
+        ("h((3r / 2, 2)) else #outOfBounds -> 9", "rat"),
+        ("h((3.0f64 / 2, 2)) else #outOfBounds -> 9", "f64"),
+        ("h((3 / 2, 2)) else #outOfBounds -> 9", "f32 | f64 | rat"),
+        ("h((2^-1, 2)) else #outOfBounds -> 9", "f32 | f64 | rat"),
     ] {
         let got = outcome(name, def, call);
         assert!(
@@ -553,7 +553,10 @@ fn every_printed_fix_of_a_decimal_component_runs() {
         assert_eq!(got.matches("\n2:").count(), 0, "one message\n{call}\n{got}");
     }
     // An operation with a value at `int` is read there, as `h(3)` is.
-    assert_eq!(outcome(name, def, "h((1 + 2, 2)) else 9"), "3\n");
+    assert_eq!(
+        outcome(name, def, "h((1 + 2, 2)) else #outOfBounds -> 9"),
+        "3\n"
+    );
 }
 
 /// `n` decimal components and a call with `n` decimal literals: a tuple of the components each

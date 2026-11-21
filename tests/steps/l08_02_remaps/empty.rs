@@ -1449,7 +1449,9 @@ fn the_words_that_take_a_function_take_a_function_parameter() {
         "5",
     );
     prints(
-        &format!("w(positional f) = {m}.where(f);\na = w(x -> x > 2)[\"a\"] else 0;\n"),
+        &format!(
+            "w(positional f) = {m}.where(f);\na = w(x -> x > 2)[\"a\"] else #notFound -> 0;\n"
+        ),
         "a",
         "0",
     );
@@ -1487,7 +1489,7 @@ fn the_words_that_take_a_function_take_a_function_parameter() {
         "2",
     );
     prints(
-        "h(positional f) = [1, 2, 3].group(f);\na = h(v -> v mod 2)[1][2] else 0;\n",
+        "h(positional f) = [1, 2, 3].group(f);\na = h(v -> v mod 2)[1][2] else #notFound -> 0;\n",
         "a",
         "3",
     );
@@ -1573,7 +1575,7 @@ fn map_of_a_parameter_by_a_lambda_calling_a_parameter_runs() {
 fn the_other_words_by_a_lambda_calling_a_parameter_run() {
     prints(
         "h(positional f, positional m) = m.where(x -> f(x));\n\
-         a = h(x -> x > 0, {\"k\" -> 1, \"j\" -> -1})[\"k\"] else 0;\n",
+         a = h(x -> x > 0, {\"k\" -> 1, \"j\" -> -1})[\"k\"] else #notFound -> 0;\n",
         "a",
         "1",
     );
@@ -1584,7 +1586,7 @@ fn the_other_words_by_a_lambda_calling_a_parameter_run() {
     );
     prints(
         "h(positional f, positional m) = m.group(x -> f(x));\n\
-         a = h(x -> x > 1, {\"k\" -> 1, \"j\" -> 3})[true][\"j\"] else 0;\n",
+         a = h(x -> x > 1, {\"k\" -> 1, \"j\" -> 3})[true][\"j\"] else #notFound -> 0;\n",
         "a",
         "3",
     );
@@ -1620,7 +1622,7 @@ fn a_key_made_by_a_function_is_data_at_each_call() {
         "2",
     );
     prints(
-        "g(positional f) = [1, 2, 3].group(f);\na = g(v -> (v, 0))[(3, 0)][2] else 0;\n",
+        "g(positional f) = [1, 2, 3].group(f);\na = g(v -> (v, 0))[(3, 0)][2] else #notFound -> 0;\n",
         "a",
         "3",
     );

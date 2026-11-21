@@ -41,8 +41,8 @@ shipping(positional grams) = if grams > 20000 { 0 } else { if grams <= 1000 { 45
 test { 500 -> 450, 1000 -> 450, 1001 -> 570, 2500 -> 690, 20000 -> 2730, 20001 -> 0 }
 
 main(m: MainArgs) {
-  grams = int(trim(m.stdin[0] else \"\"));
-  m.stdout <- \"${shipping(grams)} cents\" else \"not a weight in grams\";
+  grams = int(trim(m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\"));
+  m.stdout <- \"${shipping(grams)} cents\" else #invalid -> \"not a weight in grams\";
 }
 test {
   \"2500\\n\" -> \"690 cents\\n\",

@@ -46,14 +46,14 @@ fn reading_standard_input_blocks_and_args_and_env_do_not() {
         blocking(text)["main"],
         "`main` can block: it pushes to `m.stdout`, which can wait while its reader does not read."
     );
-    let text = "main(m: MainArgs) {\n  x = m.stdin[0] else \"\";\n  m.stdout <- x;\n}\n";
+    let text = "main(m: MainArgs) {\n  x = m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n  m.stdout <- x;\n}\n";
     assert_eq!(
         blocking(text)["main"],
         "`main` can block: it reads `m.stdin`, which can wait for its data."
     );
     for read in [
-        "(m.args[0] else \"\") == \"a\"",
-        "(m.env[\"N\"] else \"\") == \"a\"",
+        "(m.args[0] else #outOfBounds -> \"\") == \"a\"",
+        "(m.env[\"N\"] else #notFound -> \"\") == \"a\"",
     ] {
         let text = format!("main(m: MainArgs) -> int {{\n  if {read} {{ 1 }} else {{ 0 }}\n}}\n");
         assert_eq!(names(&text), Vec::<String>::new(), "{text}");
@@ -62,7 +62,7 @@ fn reading_standard_input_blocks_and_args_and_env_do_not() {
 
 #[test]
 fn reading_files_blocks() {
-    let text = "main(m: MainArgs) {\n  fs = main::files;\n  x = fs[\"a.txt\"] else \"\";\n  \
+    let text = "main(m: MainArgs) {\n  fs = main::files;\n  x = fs[\"a.txt\"] else #ioError -> \"\" else #notFound -> \"\";\n  \
                 m.stdout <- x;\n}\n";
     assert_eq!(
         blocking(text)["main"],
@@ -75,12 +75,12 @@ fn reading_files_blocks() {
 /// functions that call it. A helper that only passes the port on reads nothing itself.
 #[test]
 fn reading_main_files_outside_main_blocks() {
-    let text = "size(positional p) = main::files[p] else \"\";\n\
-                held(positional p) = {\n  fs = main::files;\n  fs[p] else \"\"\n};\n\
+    let text = "size(positional p) = main::files[p] else #ioError -> \"\" else #notFound -> \"\";\n\
+                held(positional p) = {\n  fs = main::files;\n  fs[p] else #ioError -> \"\" else #notFound -> \"\"\n};\n\
                 port() = main::files;\n\
                 pure(positional x: int) = x + 1;\n\
                 main(m: MainArgs) -> int {\n  if size(\"a\") == later(\"b\") && pure(1) == 2 { 1 } else { 0 }\n}\n\
-                later(positional p) = main::files[p] else \"\";\n";
+                later(positional p) = main::files[p] else #ioError -> \"\" else #notFound -> \"\";\n";
     let got = blocking(text);
     assert_eq!(
         got.keys().collect::<Vec<_>>(),
@@ -108,7 +108,7 @@ fn reading_main_files_outside_main_blocks() {
 /// A port passed on whole is read where it is indexed: the helper reads; `main` calls it.
 #[test]
 fn a_port_passed_to_a_helper_is_read_there() {
-    let text = "first(positional xs) = xs[0] else \"\";\n\
+    let text = "first(positional xs) = xs[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n\
                 pass(positional xs) = first(xs);\n\
                 pure(positional xs) = xs;\n\
                 main(m: MainArgs) -> int {\n  if pass(m.stdin) == \"a\" { 1 } else { 0 }\n}\n";
@@ -175,7 +175,7 @@ fn lambdas_and_declared_functions_are_seen() {
     let text = "inc(positional x: int) = x + 1;\n\
                 twice(positional x: int) = {\n  g = inc;\n  h = (positional y: int) -> y * 2;\n  \
                 g(h(x))\n};\n\
-                main(m: MainArgs) {\n  k = (positional s) -> m.stdin[0] else s;\n  \
+                main(m: MainArgs) {\n  k = (positional s) -> m.stdin[0] else #ioError -> s else #outOfBounds -> s;\n  \
                 m.stdout <- k(\"${twice(1)}\");\n}\n";
     assert_eq!(names(text), ["main"]);
     assert_eq!(

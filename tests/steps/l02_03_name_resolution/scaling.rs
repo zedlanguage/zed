@@ -508,10 +508,12 @@ pub(super) fn own_main(k: usize) -> Vec<(String, String)> {
     let mut text = String::new();
     for i in 0..k {
         let of = if i % 2 == 0 { "main" } else { "(main)" };
-        text.push_str(&format!("h{i}(positional p) = {of}::files[p] else \"\";\n"));
+        text.push_str(&format!(
+            "h{i}(positional p) = {of}::files[p] else #ioError -> \"\" else #notFound -> \"\";\n"
+        ));
     }
     text.push_str(
-        "main(m: MainArgs) {\n  fs = main::files;\n  m.stdout <- fs[\"a\"] else \"\";\n}\n",
+        "main(m: MainArgs) {\n  fs = main::files;\n  m.stdout <- fs[\"a\"] else #ioError -> \"\" else #notFound -> \"\";\n}\n",
     );
     vec![
         ("tool.zed".into(), text),

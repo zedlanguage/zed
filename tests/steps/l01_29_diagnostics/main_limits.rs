@@ -134,7 +134,7 @@ fn a_product_through_a_part_with_several_roots_past_the_memory_limit_is_rejected
     let src = "@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
                c = 2^64 + 15;\n    d = 2^64 + 17;\n    \
                x = rat(b) ^ (2^15) * (rat(c) ^ (2^15)) / rat(d);\n    \
-               m.stdout <- String(x * x > 0) else \"\";\n}\n";
+               m.stdout <- String(x * x > 0);\n}\n";
     let out = rejected(src);
     assert!(
         out.starts_with(
@@ -163,10 +163,14 @@ fn a_product_through_a_part_with_several_roots_past_the_memory_limit_is_rejected
         "{out}"
     );
     // Without the limit it fits the address space. `x / (rat(c) ^ (2^15))` cancels the power
-    // of `c`, so a product through it proves nothing and is left to the run.
+    // of `c`, so a product through it proves nothing and is left to the run. That quotient may
+    // divide by zero, and the push names the atom (DESIGN.md sec:failure, QUESTIONS A113).
     assert_eq!(built(&src.replace("@limits(memory: 1048576)\n", "")), None);
     assert_eq!(
-        built(&src.replace("x * x", "x * (x / (rat(c) ^ (2^15)))")),
+        built(&src.replace(
+            "x * x > 0)",
+            "x * (x / (rat(c) ^ (2^15))) > 0) else #divByZero -> \"\""
+        )),
         None
     );
 }

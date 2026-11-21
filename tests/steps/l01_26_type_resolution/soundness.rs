@@ -109,13 +109,23 @@ fn a_comparison_of_two_kinds_is_rejected() {
 #[test]
 fn a_line_of_a_lines_port_is_a_string_or_an_error() {
     rejected("", r#""${m.stdin[0] + 1}""#);
-    assert_eq!(runs("", r#""${len(m.stdin[0]) else 0}""#, "abc"), "3\n");
+    assert_eq!(
+        runs(
+            "",
+            r#""${len(m.stdin[0]) else #ioError -> 0 else #outOfBounds -> 0}""#,
+            "abc"
+        ),
+        "3\n"
+    );
 }
 
 #[test]
 fn an_int_power_needs_an_exponent_of_at_least_zero() {
     rejected("", r#""${2^-1}""#);
-    rejected("", r#""${(2^(int(m.stdin[0]) else 0)) div 1}""#);
+    rejected(
+        "",
+        r#""${(2^(int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0)) div 1}""#,
+    );
     assert_eq!(runs("", r#""${2^3}""#, ""), "8\n");
 }
 
@@ -235,7 +245,8 @@ fn an_int_power_rejection_through_an_expression_shows_its_derivation() {
     assert_eq!(runs("", r#""${2r^(1 - 3)}""#, ""), "1r/4r\n");
     // An expression of an int that may be at least 0: a test of a name that holds it, and
     // no float, which only a cast that may fail would give.
-    let read = "  n = int(m.stdin[0]) else 0;\n";
+    let read =
+        "  n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n";
     let named = format!(
         "{read}  exponent = n - 5;\n  m.stdout <- \"${{if exponent >= 0 {{ 2^exponent }} else {{ 0 }}}}\";"
     );
@@ -255,7 +266,8 @@ fn an_int_power_rejection_through_an_expression_shows_its_derivation() {
 
 #[test]
 fn an_int_power_whose_exponent_may_be_below_zero_offers_a_test_of_it() {
-    let read = "  k = int(m.stdin[0]) else 0;\n";
+    let read =
+        "  k = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n";
     let tested = format!("{read}  m.stdout <- \"${{if k >= 0 {{ 2^k }} else {{ 0 }}}}\";");
     let out = power_case(
         "",
@@ -537,10 +549,10 @@ fn a_returned_function_carries_the_needs_of_its_parameters() {
 fn a_name_an_else_pattern_binds_has_the_type_of_its_payload() {
     let parse =
         r#"parse(positional text) = if text == "" { #parseError(line: 1, col: 0) } else { 42 };"#;
-    let both = r#"both = parse("") else #parseError(line:, col:) -> line * 100 + col; m.stdout <- "${both}" else "?";"#;
+    let both = r#"both = parse("") else #parseError(line:, col:) -> line * 100 + col; m.stdout <- "${both}";"#;
     assert_eq!(run(&program(parse, both), ""), "100\n");
     let wrap = "wrap(positional v) = #w(v: v);";
-    let five = r#"r = wrap(5) else #w(v:) -> v + 1; m.stdout <- "${r}" else "?";"#;
+    let five = r#"r = wrap(5) else #w(v:) -> v + 1; m.stdout <- "${r}";"#;
     assert_eq!(run(&program(wrap, five), ""), "6\n");
     refused(&program(
         wrap,
@@ -557,23 +569,21 @@ fn a_name_an_else_pattern_binds_has_the_type_of_its_payload() {
         r#"r = pick(true) else #e(x:) -> x + 1; m.stdout <- "${r}";"#,
     ));
     let pick = "pick(positional c: bool) = if c { #e(x: 1) } else { #e(x: 2, y: 3) };";
-    let y = r#"r = pick(false) else #e(y:) -> y + 1; m.stdout <- "${r}" else "?";"#;
+    let y = r#"r = pick(false) else #e(y:) -> y + 1; m.stdout <- "${r}" else #e -> "?";"#;
     assert_eq!(run(&program(pick, y), ""), "4\n");
-    let nested = r#"r = #o(i: #e(x: 2)) else #o(i: #e(x:)) -> x * 3; m.stdout <- "${r}" else "?";"#;
+    let nested =
+        r#"r = #o(i: #e(x: 2)) else #o(i: #e(x:)) -> x * 3; m.stdout <- "${r}" else #o -> "?";"#;
     assert_eq!(run(&program("", nested), ""), "6\n");
     let v = "v = #e(code: 5) else #e(code:) -> code;";
-    assert_eq!(
-        run(&program(v, r#"m.stdout <- String(v + 1) else "z";"#), ""),
-        "6\n"
-    );
+    assert_eq!(run(&program(v, r#"m.stdout <- String(v + 1);"#), ""), "6\n");
     refused(&program(
         &format!("{FIRST}\n{v}"),
-        r#"m.stdout <- String(first(v)) else "z";"#,
+        r#"m.stdout <- String(first(v));"#,
     ));
-    refused(&program(v, r#"m.stdout <- String(v ++ "a") else "z";"#));
+    refused(&program(v, r#"m.stdout <- String(v ++ "a");"#));
     refused(&program(
         &format!("{APP}\n{v}"),
-        r#"m.stdout <- String(app(v)) else "z";"#,
+        r#"m.stdout <- String(app(v));"#,
     ));
 }
 
@@ -582,34 +592,40 @@ fn a_generic_else_pattern_binds_the_payload_each_call_passes() {
     let g = "g(positional e) = e else #e(code:) -> code;";
     assert_eq!(
         run(
-            &program(g, r#"m.stdout <- String(g(#e(code: 5)) + 1) else "z";"#),
+            &program(
+                g,
+                r#"m.stdout <- String(g(#e(code: 5)) + 1) else #e -> "z";"#
+            ),
             ""
         ),
         "6\n"
     );
     assert_eq!(
-        run(&program(g, r#"m.stdout <- String(g(3) + 1) else "z";"#), ""),
+        run(&program(g, r#"m.stdout <- String(g(3) + 1);"#), ""),
         "4\n"
     );
     refused(&program(
         g,
-        r#"m.stdout <- String(g(#e(code: "a")) + 1) else "z";"#,
+        r#"m.stdout <- String(g(#e(code: "a")) + 1) else #e -> "z";"#,
     ));
     refused(&program(
         &format!("{g}\n{FIRST}"),
-        r#"m.stdout <- String(first(g(#e(code: 5)))) else "z";"#,
+        r#"m.stdout <- String(first(g(#e(code: 5)))) else #e -> "z";"#,
     ));
     let h = "h(positional e) = e else #o(i: #e(x:)) -> x;";
     assert_eq!(
         run(
-            &program(h, r#"m.stdout <- String(h(#o(i: #e(x: 2))) * 3) else "z";"#),
+            &program(
+                h,
+                r#"m.stdout <- String(h(#o(i: #e(x: 2))) * 3) else #o -> "z";"#
+            ),
             ""
         ),
         "6\n"
     );
     refused(&program(
         h,
-        r#"m.stdout <- String(h(#o(i: #e(x: "s"))) * 3) else "z";"#,
+        r#"m.stdout <- String(h(#o(i: #e(x: "s"))) * 3) else #o -> "z";"#,
     ));
 }
 
@@ -618,10 +634,7 @@ fn a_self_application_takes_the_least_settled_result() {
     // Inside `w(w)` the inner use first gives nothing; the outer then gives 1, which settles.
     let settles = "w(positional f) = if true { 1 } else { f(f) + 1 };\nspin = w(w);";
     assert_eq!(
-        run(
-            &program(settles, r#"m.stdout <- String(spin) else "z";"#),
-            ""
-        ),
+        run(&program(settles, r#"m.stdout <- String(spin);"#), ""),
         "1\n"
     );
     // Here the inner use must give a string, and the outer gives 1 | String: not settled.
@@ -1081,9 +1094,9 @@ fn a_tuple_default_used_as_a_number_is_rejected() {
         super::type_errors(f),
         ["`+` does not take (_, 1): no arrow of `+` takes these types. [y + 1]"]
     );
-    rejected(f, r#"String(f(1)) else "atom""#);
+    rejected(f, r#"String(f(1))"#);
     let ok = "f(positional x, y = x) = y + 1;";
-    assert_eq!(runs(ok, r#"String(f(1)) else "atom""#, ""), "2\n");
+    assert_eq!(runs(ok, r#"String(f(1))"#, ""), "2\n");
 }
 
 #[test]
@@ -1094,9 +1107,9 @@ fn a_tuple_default_of_a_nested_function_used_as_a_number_is_rejected() {
         super::type_errors(outer),
         ["`+` does not take (_, 1): no arrow of `+` takes these types. [w + 1]"]
     );
-    rejected(outer, r#"String(outer(1)) else "atom""#);
+    rejected(outer, r#"String(outer(1))"#);
     let ok = "outer(positional x) = {\n  inner(positional y, w = y) = w + 1;\n  inner(x)\n};";
-    assert_eq!(runs(ok, r#"String(outer(1)) else "atom""#, ""), "2\n");
+    assert_eq!(runs(ok, r#"String(outer(1))"#, ""), "2\n");
 }
 
 /// Through `zedc run` (POW-rat): `k = -1; 2^k` and `x = 2; x^-1` are refused with the exact
@@ -1134,7 +1147,7 @@ fn zedc_run_offers_and_runs_the_exact_rat_power() {
         );
     }
     let src = "inv(positional r: rat, positional k: int) = r ^ k;\n\
-               main(m: MainArgs) {\n  n = int(m.stdin[0]) else 0;\n  \
+               main(m: MainArgs) {\n  n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  \
                m.stdout <- \"${inv(2r/3r, -2) else #divByZero -> 0r} \
                ${inv(0r, -1) else #divByZero -> 7r} ${inv(-2r, n) else #divByZero -> 0r} \
                ${if n > 0 { rat(n)^-1 } else { 0r }}\";\n}\n";
@@ -1154,7 +1167,7 @@ fn zedc_run_offers_and_runs_the_exact_rat_power() {
     let out = zedc_run(
         "pow_rat_zero",
         &program(
-            "  n = int(m.stdin[0]) else 0;\n  m.stdout <- \"${if n >= 0 { rat(n)^-1 } else { 0r }}\";",
+            "  n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  m.stdout <- \"${if n >= 0 { rat(n)^-1 } else { 0r }}\";",
         ),
         "1",
         &[],

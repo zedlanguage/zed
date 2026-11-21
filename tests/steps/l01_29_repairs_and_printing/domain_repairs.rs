@@ -102,9 +102,9 @@ fn a_tested_repair_holds_the_programs_code_and_is_accepted() {
         ),
         // An int read from the input.
         (
-            "main(m: MainArgs) {\n  m.stdout <- String(popCount(int(m.stdin[0]) else 0));\n}\n",
-            "popCount(int(m.stdin[0]) else 0)",
-            "x = int(m.stdin[0]) else 0; if x >= 0 { popCount(x) } else { … }",
+            "main(m: MainArgs) {\n  m.stdout <- String(popCount(int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0));\n}\n",
+            "popCount(int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0)",
+            "x = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0; if x >= 0 { popCount(x) } else { … }",
         ),
         // The power's own repair names its value apart from the names the power writes.
         (
@@ -316,17 +316,29 @@ fn pushing(bind: &str) -> String {
 fn a_lines_port_repair_writes_the_programs_value() {
     for (bind, line) in [
         // An int: written into a string.
-        ("t = int(m.stdin[0]) else 0;", "m.stdout <- \"${t}\";"),
+        (
+            "t = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;",
+            "m.stdout <- \"${t}\";",
+        ),
         // A string that may be an atom: an empty line in place of each atom.
-        ("t = m.stdin[0];", "m.stdout <- t else \"\";"),
+        (
+            "t = m.stdin[0];",
+            "m.stdout <- t else #ioError -> \"\" else #outOfBounds -> \"\";",
+        ),
         // An int that may be an atom: both.
-        ("t = int(m.stdin[0]);", "m.stdout <- \"${t}\" else \"\";"),
+        (
+            "t = int(m.stdin[0]);",
+            "m.stdout <- \"${t}\" else #invalid -> \"\" else #ioError -> \"\" else #outOfBounds -> \"\";",
+        ),
         // A number computed from literals alone, whatever carrier it takes: written into a
         // string (PORT-lines-int-name), through an operator, a name and an `else`.
         ("t = 2^62;", "m.stdout <- \"${t}\";"),
         ("t = 1 + 1;", "m.stdout <- \"${t}\";"),
         ("b = 2^62; t = b - 1;", "m.stdout <- \"${t}\";"),
-        ("b = 2^62; t = b else 0;", "m.stdout <- \"${t}\";"),
+        (
+            "b = 2^62; t = (if b > 0 { b } else { #a }) else #a -> 0;",
+            "m.stdout <- \"${t}\";",
+        ),
     ] {
         let src = pushing(bind);
         let out = rejected(&src);

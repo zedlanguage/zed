@@ -29,7 +29,7 @@ fn a_lookup_in_a_total_function_type_is_its_value_alone() {
 fn else_disposes_of_the_miss() {
     assert_eq!(
         sig(
-            "price(m: String ->? int, k: String) = m[k] else 0;",
+            "price(m: String ->? int, k: String) = m[k] else #notFound -> 0;",
             "price"
         ),
         "(m: String ->? int, k: String) -> int"
@@ -81,7 +81,7 @@ fn a_miss_passes_by_a_call_that_takes_the_value_type() {
 
 #[test]
 fn a_function_that_answers_not_found_fits_a_partial_map_and_not_a_total_one() {
-    let partial = "look(m: String ->? int) = m[\"a\"] else 0;\n\
+    let partial = "look(m: String ->? int) = m[\"a\"] else #notFound -> 0;\n\
                    x = look(m: (k) -> if k == \"a\" { 1 } else { #notFound });\n";
     assert_eq!(type_errors(partial), Vec::<String>::new());
     let total = "look(m: String -> int) = m[\"a\"];\n\
@@ -106,10 +106,12 @@ fn a_partial_map_of_partial_maps_misses_at_either_step() {
 /// is linear in `n`.
 pub(super) fn many(n: usize) -> String {
     let params: Vec<String> = (0..n).map(|i| format!("m{i}: String ->? int")).collect();
-    let reads: Vec<String> = (0..n).map(|i| format!("(m{i}[\"k\"] else 0)")).collect();
+    let reads: Vec<String> = (0..n)
+        .map(|i| format!("(m{i}[\"k\"] else #notFound -> 0)"))
+        .collect();
     let deep = format!("{}int{}", "String ->? (".repeat(n), ")".repeat(n));
     format!(
-        "f({}) = {};\ng(m: {deep}) = m{} else 0;\n",
+        "f({}) = {};\ng(m: {deep}) = m{} else #notFound -> 0;\n",
         params.join(", "),
         reads.join(" + "),
         "[\"k\"]".repeat(n)
@@ -265,14 +267,16 @@ pub(super) fn bounded(n: usize) -> String {
     let params: Vec<String> = (0..n)
         .map(|i| format!("m{i}: int .. (int | String) -> int, k{i}: String"))
         .collect();
-    let reads: Vec<String> = (0..n).map(|i| format!("(m{i}[k{i}] else 0)")).collect();
+    let reads: Vec<String> = (0..n)
+        .map(|i| format!("(m{i}[k{i}] else #notFound -> 0)"))
+        .collect();
     let deep = format!(
         "{}bool{}",
         "int .. (int | String) -> (".repeat(n),
         ")".repeat(n)
     );
     format!(
-        "f({}) = {};\ng(m: {deep}, k: int) = m{} else false;\n",
+        "f({}) = {};\ng(m: {deep}, k: int) = m{};\n",
         params.join(", "),
         reads.join(" + "),
         "[k]".repeat(n)

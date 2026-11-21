@@ -205,7 +205,7 @@ g(positional c: bool, positional x: f64) = if c { x } else { 1 };
 h(positional z: f64) = z;
 
 main(m: MainArgs) {
-  x = f64(m.args[0] else \"\") else 0.0;
+  x = f64(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0.0;
   b = x < 0.0;
   m.stdout <- \"${h(g(b, x))} ${x + g(b, x)} ${h(if b { g(b, x) } else { if b { 3 } else { 2 } })}\";
 }

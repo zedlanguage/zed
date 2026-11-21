@@ -8,7 +8,7 @@ use super::check;
 #[test]
 fn a_test_with_clause_prints_its_rows_and_ports() {
     check(&[(
-        "main(m: MainArgs) { m.stdout <- m.args[0] else \"\"; }\n\
+        "main(m: MainArgs) { m.stdout <- m.args[0] else #outOfBounds -> \"\"; }\n\
          test with main::args = \"a\" { \"\" -> \"a\\n\" }\n\
          test with main::args = \"b\", main::env = n -> #notFound { \"x\" -> \"b\\n\", \"y\" -> \"b\\n\" }",
         "(def main ((m.args: CommandLine)) (-> (m.stdout: Lines)) \

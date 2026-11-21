@@ -68,14 +68,15 @@ fn an_argument_of_each_kind_is_written_as_given() {
 
 #[test]
 fn an_argument_is_read_in_each_position() {
-    let interpolated = writes("\"<${m.args[0] else \"-\"}>\"");
-    let condition = writes("if (m.args[0] else \"\") == \"on\" { \"yes\" } else { \"no\" }");
-    let computed = writes("m.args[0 + 1] else \"none\"");
-    let helper = "first(a: CommandLine) = a[0] else \"none\";\n\
+    let interpolated = writes("\"<${m.args[0] else #outOfBounds -> \"-\"}>\"");
+    let condition =
+        writes("if (m.args[0] else #outOfBounds -> \"\") == \"on\" { \"yes\" } else { \"no\" }");
+    let computed = writes("m.args[0 + 1] else #outOfBounds -> \"none\"");
+    let helper = "first(a: CommandLine) = a[0] else #outOfBounds -> \"none\";\n\
                   main(m: MainArgs) {\n  m.stdout <- first(a: m.args);\n}\n";
-    let as_int = writes("\"${(int(m.args[0] else \"\") else 0) + 1}\"");
+    let as_int = writes("\"${(int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0) + 1}\"");
     let as_path = "main(m: MainArgs) {\n  fs = main::files;\n  \
-                   m.stdout <- (fs[m.args[0] else \"\"] else #notFound -> \"nf\") else \"io\";\n}\n";
+                   m.stdout <- (fs[m.args[0] else #outOfBounds -> \"\"] else #notFound -> \"nf\") else #ioError -> \"io\";\n}\n";
     expect(
         "position",
         &[

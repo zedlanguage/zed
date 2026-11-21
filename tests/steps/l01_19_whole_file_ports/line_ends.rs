@@ -14,7 +14,7 @@ use super::{dir, run, zedc};
 
 /// Writes lines 0, 1 and 2 of standard input between `|`, with `none` for a missing key.
 const THREE_LINES: &str = "main(m: MainArgs) {\n  \
-     m.stdout <- \"${m.stdin[0] else \"none\"}|${m.stdin[1] else \"none\"}|${m.stdin[2] else \"none\"}\";\n}\n";
+     m.stdout <- \"${m.stdin[0] else #ioError -> \"none\" else #outOfBounds -> \"none\"}|${m.stdin[1] else #ioError -> \"none\" else #outOfBounds -> \"none\"}|${m.stdin[2] else #ioError -> \"none\" else #outOfBounds -> \"none\"}\";\n}\n";
 
 #[test]
 fn a_lone_cr_ends_a_line() {
@@ -49,7 +49,7 @@ fn a_byte_order_mark_is_the_first_character_of_the_first_line() {
     // `utf8Text()` reads each well-formed sequence as its character, and `EF BB BF` is U+FEFF;
     // only source text refuses it (sec:lexical).
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.stdin[0] == \"\\u{FEFF}name\"} ${m.stdin[0] == \"name\"} ${m.stdin[1] else \"none\"}\";\n}\n";
+               m.stdout <- \"${m.stdin[0] == \"\\u{FEFF}name\"} ${m.stdin[0] == \"name\"} ${m.stdin[1] else #ioError -> \"none\" else #outOfBounds -> \"none\"}\";\n}\n";
     let out = run("bom-lines", src, "\u{FEFF}name\r\nAda\r\n", &[]);
     assert_eq!(
         (out.status, out.stdout.as_str(), out.stderr.as_str()),
@@ -69,7 +69,7 @@ const WINDOWS_TEXT: &str = "\u{FEFF}name = Ada\r\nrole = admin\r\n";
 /// is `WINDOWS_TEXT` as written, then the text itself.
 fn echo_file(path: &std::path::Path) -> String {
     format!(
-        "main(m: MainArgs) {{\n  fs = main::files;\n  text = fs[\"{}\"] else \"(no text)\";\n  \
+        "main(m: MainArgs) {{\n  fs = main::files;\n  text = fs[\"{}\"] else #ioError -> \"(no text)\" else #notFound -> \"(no text)\";\n  \
          m.stdout <- \"${{text == \"\\u{{FEFF}}name = Ada\\r\\nrole = admin\\r\\n\"}} [${{text}}]\";\n}}\n",
         path.display()
     )
@@ -111,11 +111,11 @@ fn a_replay_gives_the_recorded_bytes_their_recorded_lines() {
     std::fs::write(&path, WINDOWS_TEXT).unwrap();
     let src = format!(
         "main(m: MainArgs) {{\n  fs = main::files;\n  \
-         a = m.stdin[0] else \"none\";\n  \
-         b = m.stdin[1] else \"none\";\n  \
-         c = m.stdin[2] else #ioError(op:, path:, why:) -> \"${{op}} ${{path}}: ${{why}}\" else \"none\";\n  \
-         d = m.stdin[3] else \"none\";\n  \
-         text = fs[\"{}\"] else \"(no text)\";\n  \
+         a = m.stdin[0] else #ioError -> \"none\" else #outOfBounds -> \"none\";\n  \
+         b = m.stdin[1] else #ioError -> \"none\" else #outOfBounds -> \"none\";\n  \
+         c = m.stdin[2] else #ioError(op:, path:, why:) -> \"${{op}} ${{path}}: ${{why}}\" else #outOfBounds -> \"none\";\n  \
+         d = m.stdin[3] else #ioError -> \"none\" else #outOfBounds -> \"none\";\n  \
+         text = fs[\"{}\"] else #ioError -> \"(no text)\" else #notFound -> \"(no text)\";\n  \
          m.stdout <- \"${{a}}|${{b}}|${{c}}|${{d}}|${{text}}\";\n}}\n",
         path.display()
     );

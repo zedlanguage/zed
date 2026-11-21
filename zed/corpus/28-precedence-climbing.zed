@@ -44,10 +44,10 @@ evalLine(positional l) = {
   toks = l.split(" ");
   run = loop t {
     initial s = Stacks(vals: [], ops: []);
-    s' = if t == toks::len { flush(s) } else { step(s, toks[t] else (#badEncoding | #ioError | #outOfBounds) -> "") };
+    s' = if t == toks::len { flush(s) } else { step(s, toks[t] else (#ioError | #outOfBounds) -> "") };
     while t <= toks::len;
   };
-  run.s.vals.first else (#badEncoding | #ioError | #none) -> 0
+  run.s.vals.first else (#ioError | #none) -> 0
 };
 
 main(m: MainArgs) {

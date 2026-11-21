@@ -676,7 +676,7 @@ fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() 
         format!(
             "{}:{}",
             f.display(),
-            r#"3:15: A `Lines` port takes a `String` or a family of strings: `m.stdout <- String(rat(f64(b) ^ (2^64))) : String | #NaN | #overflow`. Try `m.stdout <- (String(rat(f64(b) ^ (2^64)))) else "";` instead.
+            r#"3:15: A `Lines` port takes a `String` or a family of strings: `m.stdout <- String(rat(f64(b) ^ (2^64))) : String | #NaN | #overflow`. Try `m.stdout <- (String(rat(f64(b) ^ (2^64)))) else #NaN -> "" else #overflow -> "";` instead.
   [1]  3:15: this call of `String` gives String | #NaN | #overflow
        3 |   m.stdout <- String(rat(f64(b) ^ (2^64)));
          |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [1, 15, 16, 17]
@@ -704,7 +704,7 @@ fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() 
   [13] 3:36: this literal, 2, is 2
   [14] 3:38: this literal, 64, is 64
   [15] 3:15: the port `m.stdout` writes each value pushed to it as one line of text
-  [16] 3:15: repair: write an empty line in place of each atom, as `m.stdout <- (String(rat(f64(b) ^ (2^64)))) else "";`
+  [16] 3:15: repair: write an empty line in place of each atom, as `m.stdout <- (String(rat(f64(b) ^ (2^64)))) else #NaN -> "" else #overflow -> "";`
   [17] 3:15: repair: handle each atom of the value with `match`, giving the line to write for it
 "#
         )

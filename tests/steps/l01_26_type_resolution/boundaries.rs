@@ -45,7 +45,7 @@ const AT_WRITE: &str = "A `Lines` port takes a `String` or a family of strings";
 #[test]
 fn a_top_level_constant_holds_the_atom_in_its_type() {
     // The constant crosses into `main` as a name whose type holds the atom.
-    let src = "k = #outOfBounds;\nmain(m: MainArgs) {\n  m.stdout <- \"${k else 0}\";\n}\n";
+    let src = "k = #outOfBounds;\nmain(m: MainArgs) {\n  m.stdout <- \"${k else #outOfBounds -> 0}\";\n}\n";
     prints("const", src, "0\n");
     // Negative control: without the `else` the atom reaches the write.
     let bad = "k = #outOfBounds;\nmain(m: MainArgs) {\n  m.stdout <- \"${k}\";\n}\n";
@@ -99,12 +99,12 @@ fn safe_member_carries_a_loose_atom_as_member_does() {
 fn a_parameter_default_is_checked_against_the_written_parameter_type() {
     // The written type holds the atom: the call gives it, and the caller handles it.
     let src = "h(positional xs: [String], s: String | #outOfBounds = xs[0]) = s ++ \"!\";\n\
-        main(m: MainArgs) {\n  m.stdout <- h(m.args) else \"none\";\n}\n";
+        main(m: MainArgs) {\n  m.stdout <- h(m.args) else #outOfBounds -> \"none\";\n}\n";
     prints("default", src, "none\n");
     // Negative control: a written type that does not hold the atom is a type error at the
     // default, not a failure that appears at a call that omits the argument.
     let bad = "h(positional xs: [String], s: String = xs[0]) = s ++ \"!\";\n\
-        main(m: MainArgs) {\n  m.stdout <- h(m.args) else \"none\";\n}\n";
+        main(m: MainArgs) {\n  m.stdout <- h(m.args) else #outOfBounds -> \"none\";\n}\n";
     rejected(
         "default_bad",
         bad,
@@ -117,7 +117,7 @@ fn a_parameter_default_is_checked_against_the_written_parameter_type() {
 
 #[test]
 fn underscore_drops_only_a_failure_the_text_names() {
-    let src = "main(m: MainArgs) {\n  _ = m.args[0] else #ok;\n  m.stdout <- \"done\";\n}\n";
+    let src = "main(m: MainArgs) {\n  _ = m.args[0] else #outOfBounds -> #ok;\n  m.stdout <- \"done\";\n}\n";
     prints("underscore", src, "done\n");
     let bad = "main(m: MainArgs) {\n  _ = m.args[0];\n  m.stdout <- \"done\";\n}\n";
     rejected(
@@ -125,7 +125,7 @@ fn underscore_drops_only_a_failure_the_text_names() {
         bad,
         &[
             "`_` drops a loose failure this value may be, #outOfBounds",
-            "_ = … else #ok;",
+            "_ = … else #outOfBounds -> #ok;",
         ],
     );
 }
@@ -152,12 +152,12 @@ fn a_call_statement_that_only_writes_is_legal_and_one_with_a_value_is_not() {
         bad,
         &[
             "Result of `w` is unused: `w(m.args, o: m.stderr) : String | #outOfBounds`",
-            "_ = w(m.args, o: m.stderr) else #ok;",
+            "_ = w(m.args, o: m.stderr) else #outOfBounds -> #ok;",
         ],
     );
     // The repair the message shows is accepted.
     let fixed = "w(positional xs, o: Lines) {\n  o <- \"x\";\n  xs[0]\n}\nmain(m: MainArgs) {\n  \
-        _ = w(m.args, o: m.stderr) else #ok;\n  m.stdout <- \"done\";\n}\n";
+        _ = w(m.args, o: m.stderr) else #outOfBounds -> #ok;\n  m.stdout <- \"done\";\n}\n";
     let (status, stdout, stderr) = run0("stmt_fixed", fixed);
     assert_eq!(
         (status, stdout.as_str(), stderr.as_str()),
@@ -211,7 +211,11 @@ fn an_untyped_default_takes_the_atom_of_its_read() {
              main(m: MainArgs) {{\n  m.stdout <- h(m.args){tail};\n}}\n"
         )
     };
-    prints("default_untyped", &src(" else \"none\""), "none\n");
+    prints(
+        "default_untyped",
+        &src(" else #outOfBounds -> \"none\""),
+        "none\n",
+    );
     rejected(
         "default_untyped_bad",
         &src(""),
@@ -233,8 +237,12 @@ fn underscore_names_the_atom_a_call_gives() {
         &src("g(m.args)"),
         &[
             "`_` drops a loose failure this value may be, #outOfBounds",
-            "_ = … else #ok;",
+            "_ = … else #outOfBounds -> #ok;",
         ],
     );
-    prints("underscore_call", &src("g(m.args) else #ok"), "done\n");
+    prints(
+        "underscore_call",
+        &src("g(m.args) else #outOfBounds -> #ok"),
+        "done\n",
+    );
 }

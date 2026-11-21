@@ -583,9 +583,12 @@ fn split_lines_and_concat() {
             ("\"a  b\".split(\" \") == [\"a\", \"\", \"b\"]", "true"),
             ("\"a,b,\".split(\",\") == [\"a\", \"b\", \"\"]", "true"),
             ("\"hé€\".split(\"é\") == [\"h\", \"€\"]", "true"),
-            ("\"a,b\".split(\",\")[1] else \"none\"", "b"),
-            ("\"a,b\".split(\",\")[2] else \"none\"", "none"),
-            ("\"a\\nb\".lines[-1] else \"none\"", "none"),
+            ("\"a,b\".split(\",\")[1] else #outOfBounds -> \"none\"", "b"),
+            (
+                "\"a,b\".split(\",\")[2] else #outOfBounds -> \"none\"",
+                "none",
+            ),
+            ("\"a\\nb\".lines[-1] else #outOfBounds -> \"none\"", "none"),
             ("\"a\\rb\".lines == [\"a\", \"b\"]", "true"),
             ("\"a\\r\\nb\".lines == [\"a\", \"b\"]", "true"),
             ("\"a\\n\\rb\".lines == [\"a\", \"\", \"b\"]", "true"),
@@ -966,8 +969,7 @@ fn a_sum_written_as_a_call_is_named_as_a_call() {
 /// MSG-generic-operand-wording tested its note on `l` here.
 #[test]
 fn split_with_else_on_a_line_of_standard_input_runs() {
-    let src =
-        "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> l.split(\" | \")[0] else \"\");\n}\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.map(l -> l.split(\" | \")[0] else #outOfBounds -> \"\");\n}\n";
     let out = run("fp_ops/strings_generic_else", src, "a | b\nc\n", &[]);
     assert_eq!(
         (out.status, out.stdout.as_str()),
@@ -1327,7 +1329,7 @@ fn a_written_list_type_is_checked() {
         "{}",
         out.stderr
     );
-    let src = "firsts(rows: [[String]]) = rows.map(r -> r[0] else \"\");\n\
+    let src = "firsts(rows: [[String]]) = rows.map(r -> r[0] else #outOfBounds -> \"\");\n\
                total(xs: [int]) = xs.count;\n\
                pairs(p: ([int], String)) = p[0].count;\n\
                main(m: MainArgs) {\n  m.stdout <- \"${firsts(rows: [\"a,b\".split(\",\"), \
@@ -1780,7 +1782,7 @@ fn a_read_of_exact_keys_at_a_known_key_has_no_miss() {
 fn a_range_with_exactly_a_parameters_keys_is_passed() {
     let text = |r: &str| {
         format!(
-            "f(r: int[2..=4] ->? int) = r(3) else 0;\n\
+            "f(r: int[2..=4] ->? int) = r(3) else #notFound -> 0;\n\
              main(m: MainArgs) {{\n  m.stdout <- \"${{f(r: {r})}}\";\n}}\n"
         )
     };
@@ -1949,7 +1951,10 @@ fn a_range_end_is_known_only_where_every_run_gives_it() {
             main("", "f(n: 3)")
         ),
         main("  g = k -> (0 ..< k).zip(0 ..< 3).count;\n", "g(3)"),
-        main("  n = 3 else 4;\n", &zip("n", "3")),
+        main(
+            "  n = (if m.args.count > 0 { 3 } else { #a }) else #a -> 3;\n",
+            &zip("n", "3"),
+        ),
         // A function or lambda of the program named after a bit word is not the bit word.
         main(
             "  bitAnd = (a, b) -> 5;\n  n = bitAnd(7, 3);\n",

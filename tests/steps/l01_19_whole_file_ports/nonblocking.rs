@@ -45,7 +45,8 @@ fn refused(text: &str) -> Vec<String> {
     errs.into_iter().map(|e| e.message).collect()
 }
 
-const FIRST: &str = "first(positional xs) = xs[0] else \"\";\n";
+const FIRST: &str =
+    "first(positional xs) = xs[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n";
 
 /// The example of the row: a helper marked `@nonblocking` reaches a read of `m.stdin` through
 /// a call; the error is at the annotation and names each step, then the repairs.
@@ -79,7 +80,7 @@ fn a_marked_function_that_can_block_is_rejected_with_its_path() {
 #[test]
 fn a_marked_function_that_cannot_block_checks_and_runs() {
     let text = "@nonblocking\nscale(positional x: int) = x * 2;\n\
-                @nonblocking\nopt(positional a) = a[0] else \"\";\n\
+                @nonblocking\nopt(positional a) = a[0] else #outOfBounds -> \"\";\n\
                 main(m: MainArgs) -> int {\n  if opt(m.args) == \"x\" { if scale(1) == 2 { 5 } else { 3 } } else { 0 }\n}\n";
     assert_eq!(errors(text), Vec::<String>::new());
     assert_eq!(run("nonblocking_ok", text, "", &["--", "x"]).status, 5);
@@ -181,7 +182,7 @@ fn a_path_stops_where_another_error_shows_the_rest() {
 #[test]
 fn the_path_ends_on_a_cycle() {
     let text = "a(positional xs, positional k: int) = \
-                if k == 0 { xs[0] else \"\" } else { b(xs, k - 1) };\n\
+                if k == 0 { xs[0] else #ioError -> \"\" else #outOfBounds -> \"\" } else { b(xs, k - 1) };\n\
                 @nonblocking\nb(positional xs, positional k: int) = a(xs, k);\n\
                 main(m: MainArgs) -> int {\n  if b(m.stdin, 3) == \"a\" { 1 } else { 0 }\n}\n";
     let got = errors(text);
@@ -227,7 +228,9 @@ fn a_misplaced_or_called_annotation_is_refused() {
 /// A chain of `n` functions, each calling the next and each marked, the last reading its
 /// argument passed `m.stdin`.
 pub(super) fn marked_chain(n: usize) -> String {
-    let mut text = String::from("@nonblocking\nc0(positional xs) = xs[0] else \"\";\n");
+    let mut text = String::from(
+        "@nonblocking\nc0(positional xs) = xs[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n",
+    );
     for i in 1..n {
         text.push_str(&format!(
             "@nonblocking\nc{i}(positional xs) = c{}(xs);\n",

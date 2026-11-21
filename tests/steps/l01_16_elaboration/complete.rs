@@ -257,23 +257,24 @@ fn if_elaborates_each_branch_and_an_atom_condition_passes_through() {
 
 #[test]
 fn else_matches_any_atom_or_the_atom_its_pattern_names() {
-    // DESIGN.md L1.16: `e else d` matches any atom until L2's families enumerate them.
+    // DESIGN.md sec:failure (QUESTIONS A113): every `else` names the atoms it takes, and a
+    // value that is no atom passes every tail.
     values(&[
-        ("x = #a else 7;", "7"),
-        ("x = #a(1) else 7;", "7"),
-        ("x = 5 else 7;", "5"),
+        ("x = #a else #a -> 7;", "7"),
+        ("x = #a(1) else #a -> 7;", "7"),
+        ("x = (if true { 5 } else { #a }) else #a -> 7;", "5"),
         ("x = #a(p: 1) else #a(p:) -> p;", "1"),
         ("x = \"q\" else #a -> 1;", "\"q\""),
-        ("x = #b else #a -> 1 else 2;", "2"),
-        ("x = #a else #a -> 1 else 2;", "1"),
+        ("x = #b else #a -> 1 else #b -> 2;", "2"),
+        ("x = #a else #a -> 1 else #b -> 2;", "1"),
     ]);
     assert_eq!(
         term("x = #a(p: 1) else #a(p:) -> p;", "x"),
         "match #a(p: 1) { #a(p: p) -> p, $1 -> $1 }"
     );
     assert_eq!(
-        term("x = #b else #a -> 1 else 2;", "x"),
-        "match match #b { (is #a | #a(..)) -> 1, $1 -> $1 } { (is #_) -> 2, $2 -> $2 }"
+        term("x = #b else #a -> 1 else #b -> 2;", "x"),
+        "match match #b { (is #a | #a(..)) -> 1, $1 -> $1 } { (is #b | #b(..)) -> 2, $2 -> $2 }"
     );
 }
 

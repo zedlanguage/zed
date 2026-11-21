@@ -63,7 +63,7 @@ pub(super) fn chain_of_own_atoms(n: usize) -> String {
     let names: String = (1..=n)
         .map(|i| {
             format!(
-                "x{i} = if (line else \"\") == \"{i}\" {{ #a{i} }} else {{ x{} }}; ",
+                "x{i} = if (line else #notFound -> \"\") == \"{i}\" {{ #a{i} }} else {{ x{} }}; ",
                 i - 1
             )
         })
@@ -98,11 +98,11 @@ pub(super) fn chain_of_handlers(n: usize) -> String {
 /// [`chain_of_handlers`], each function calling the one before it as `call(i)` writes it.
 pub(super) fn chain_of_handlers_calling(n: usize, call: impl Fn(usize) -> String) -> String {
     let mut src = String::from(
-        "h0(positional x) = if (x else \"\") == \"\" { \"empty\" } else { trim(x) };\n",
+        "h0(positional x) = if (x else #notFound -> \"\") == \"\" { \"empty\" } else { trim(x) };\n",
     );
     for i in 1..n {
         src.push_str(&format!(
-            "h{i}(positional x) = if (x else \"\") == \"{i}\" {{ \"d\" }} else {{ {} }};\n",
+            "h{i}(positional x) = if (x else #notFound -> \"\") == \"{i}\" {{ \"d\" }} else {{ {} }};\n",
             call(i)
         ));
     }
@@ -169,10 +169,10 @@ fn a_chain_of_functions_passing_a_handled_parameter_on_as_a_receiver_gives_no_at
 /// which handles the atoms of its parameter `x` and calls `r` on it `n` times as `call`
 /// writes the call.
 pub(super) fn handled_calls(n: usize, call: &str) -> String {
-    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
+    let r = "r(positional line) = if (line else #notFound -> \"\") == \"\" { \"empty\" } else { trim(line) };\n\
              ap(positional f, positional v) = f(v);\n";
     let body: String = (0..n).map(|i| format!("a{i} = {call}; ")).collect();
-    format!("{r}g(positional x) = {{ d = x else \"\"; {body}a0 }};\n")
+    format!("{r}g(positional x) = {{ d = x else #notFound -> \"\"; {body}a0 }};\n")
 }
 
 #[test]
@@ -202,9 +202,9 @@ fn calls_passing_a_handled_parameter_on_give_no_atom_on_the_first_arrow() {
 /// `r`, which handles the atoms of its parameter, and `g`, which handles the atoms of its
 /// parameter `x` and gives `x.r.r` … `.r`, `n` deep.
 pub(super) fn method_chain(n: usize) -> String {
-    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n";
+    let r = "r(positional line) = if (line else #notFound -> \"\") == \"\" { \"empty\" } else { trim(line) };\n";
     format!(
-        "{r}g(positional x) = {{ d = x else \"\"; x{} }};\n",
+        "{r}g(positional x) = {{ d = x else #notFound -> \"\"; x{} }};\n",
         ".r".repeat(n)
     )
 }
@@ -312,7 +312,7 @@ pub(super) fn chain_of_computed_names(n: usize) -> String {
         .map(|i| format!("s{i} = trim(s{}); b{i} = s{i} is #a{i}; ", i - 1))
         .collect();
     format!(
-        "r(positional line) = {{ s0 = trim(line); b0 = s0 is #a0; {names}s{} else \"\" }};\n",
+        "r(positional line) = {{ s0 = trim(line); b0 = s0 is #a0; {names}s{} else #notFound -> \"\" }};\n",
         n - 1
     )
 }
@@ -351,14 +351,14 @@ fn a_parameter_inside_nested_handlers_takes_each_handler_s_atom() {
     }
 }
 
-/// A function whose parameter of any value is narrowed `n` times in a chain, each `else`
-/// narrowing the value the one before left, the last added to `1`.
+/// A function whose parameter of any value is narrowed `n` times in a chain, each `else` on an
+/// atom of its own narrowing the value the one before left, the last added to `1`.
 pub(super) fn chain_of_elses(n: usize) -> String {
     let elses: String = (1..n)
-        .map(|i| format!("d{i} = d{} else {i}; ", i - 1))
+        .map(|i| format!("d{i} = d{} else #a{i} -> {i}; ", i - 1))
         .collect();
     format!(
-        "r(positional x) = {{ d0 = x else 0; {elses}d{} + 1 }};\n",
+        "r(positional x) = {{ d0 = x else #a0 -> 0; {elses}d{} + 1 }};\n",
         n - 1
     )
 }
@@ -375,7 +375,7 @@ pub(super) fn chain_of_equalities(n: usize) -> String {
 /// each once.
 pub(super) fn keys_handled(n: usize) -> String {
     let mut src: String = (0..n)
-        .map(|i| format!("r{i}(args, k) {{ d = k else 0; return args[k] else \"\"; }}\n"))
+        .map(|i| format!("r{i}(args, k) {{ d = k else #outOfBounds -> 0; return args[k] else #outOfBounds -> \"\"; }}\n"))
         .collect();
     src.push_str("main(m: MainArgs) {\n");
     for i in 0..n {
@@ -396,7 +396,7 @@ fn chains_of_tests_that_leave_values_of_their_own_are_accepted() {
         (
             "a chain of n elses",
             chain_of_elses as fn(usize) -> String,
-            Some("(int | #_) -> int"),
+            Some("(int | #a0 | #a0(..) | #a1 | #a1(..) | #a2 | #a2(..)) -> int"),
         ),
         ("a chain of n equalities", chain_of_equalities, None),
         ("n functions handling their key", keys_handled, None),

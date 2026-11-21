@@ -323,9 +323,9 @@ impl Toks<'_, '_> {
 /// sentinel value, at or after a reserved word written where a name stands, at the removed
 /// declaration `mutable x = e;`, at a word other than `carryForward` after `with` at the end
 /// of an `initial` statement, at a pattern built with an operator written bare, at an or-pattern
-/// as an `else` tail's pattern, at a name alone after `else`, or at a union, intersection or difference written bare as a key,
-/// or at `<-` or `=` in a condition, or after the block of an `if` that gives a value and has
-/// no `else`.
+/// as an `else` tail's pattern, at a name alone after `else`, or at a union, intersection or
+/// difference written bare as a key, or at `<-` or `=` in a condition, or after the block of an
+/// `if` that gives a value and has no `else`.
 /// The scans run over the statement, its block, its line or the type, and each check of a word
 /// or a repair is one more parse: linear in the unit, on the error path only.
 pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {

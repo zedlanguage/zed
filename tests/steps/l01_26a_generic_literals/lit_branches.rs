@@ -222,7 +222,7 @@ fn a_division_beside_a_decimal_is_rejected_in_every_form() {
             "y = g(true);\n",
         ),
         (
-            "g(positional c: bool) = if c { 1 / 2 } else { 1.5 } else 0;",
+            "g(positional c: bool) = if c { 1 / 2 } else { 1.5 };",
             "y = g(true);\n",
         ),
     ];

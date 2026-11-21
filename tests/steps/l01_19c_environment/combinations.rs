@@ -40,7 +40,7 @@ fn writes(expr: &str) -> String {
 
 #[test]
 fn names_and_values_of_each_kind() {
-    let read = |name: &str| writes(&format!("m.env[\"{name}\"] else \"-\""));
+    let read = |name: &str| writes(&format!("m.env[\"{name}\"] else #notFound -> \"-\""));
     let (a, empty_name, with_equals, lower, unicode_name) = (
         read("ZED_A"),
         read(""),
@@ -130,12 +130,16 @@ fn names_and_values_of_each_kind() {
 
 #[test]
 fn a_variable_is_read_in_each_position() {
-    let twice = writes("\"${m.env[\"ZED_A\"] else \"-\"}${m.env[\"ZED_A\"] else \"-\"}\"");
-    let condition = writes("if (m.env[\"ZED_A\"] else \"\") == \"1\" { \"on\" } else { \"off\" }");
-    let by_argument = writes("m.env[m.args[0] else \"\"] else \"-\"");
-    let helper = "get(e: String ->? String, n: String) = e[n] else \"-\";\n\
+    let twice = writes(
+        "\"${m.env[\"ZED_A\"] else #notFound -> \"-\"}${m.env[\"ZED_A\"] else #notFound -> \"-\"}\"",
+    );
+    let condition =
+        writes("if (m.env[\"ZED_A\"] else #notFound -> \"\") == \"1\" { \"on\" } else { \"off\" }");
+    let by_argument = writes("m.env[m.args[0] else #outOfBounds -> \"\"] else #notFound -> \"-\"");
+    let helper = "get(e: String ->? String, n: String) = e[n] else #notFound -> \"-\";\n\
                   main(m: MainArgs) {\n  m.stdout <- get(e: m.env, n: \"ZED_A\");\n}\n";
-    let as_int = writes("\"${(int(m.env[\"ZED_A\"] else \"\") else 0) * 2}\"");
+    let as_int =
+        writes("\"${(int(m.env[\"ZED_A\"] else #notFound -> \"\") else #invalid -> 0) * 2}\"");
     let atom_else = writes("m.env[\"ZED_A\"] else #notFound -> \"unset\"");
     expect(
         "position",
@@ -220,7 +224,9 @@ fn a_variable_is_read_in_each_position() {
 
 #[test]
 fn a_record_keeps_each_kind_of_value() {
-    let src = writes("\"${m.env[\"ZED_A\"] else \"-\"}|${m.env[\"\"] else \"-\"}\"");
+    let src = writes(
+        "\"${m.env[\"ZED_A\"] else #notFound -> \"-\"}|${m.env[\"\"] else #notFound -> \"-\"}\"",
+    );
     let prog = dir_program("record_kinds", &src);
     let rec = zed_tests::step_helpers::l01_19a_command_line::dir("l01_19c_record_kinds")
         .join("wave.rec")

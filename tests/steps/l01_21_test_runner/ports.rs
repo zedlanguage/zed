@@ -11,7 +11,7 @@ fn a_clause_gives_main_its_files() {
     // The total of an order, read from the file the clause gives; a row the clause's files
     // leave out reads `#notFound`, and a wrong expected value fails its row.
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- main::files[m.stdin[0] else \"\"] else \"0\";\n}\n\
+               m.stdout <- main::files[m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\"] else #ioError -> \"0\" else #notFound -> \"0\";\n}\n\
                test with main::files = p -> if p == \"7\" { \"12\" } else { #notFound } \
                { \"7\" -> \"12\\n\", \"8\" -> \"0\\n\", \"7\" -> \"13\\n\" }\n";
     assert_eq!(
@@ -27,7 +27,7 @@ fn a_clause_gives_main_its_files() {
 #[test]
 fn each_clause_holds_for_its_own_rows() {
     // The rows of a table without a clause, and of one before or after it, read no file.
-    let src = "main(m: MainArgs) {\n  m.stdout <- main::files[\"a\"] else \"none\";\n}\n\
+    let src = "main(m: MainArgs) {\n  m.stdout <- main::files[\"a\"] else #ioError -> \"none\" else #notFound -> \"none\";\n}\n\
                test { \"\" -> \"none\\n\" }\n\
                test with main::files = (p -> \"1\") { \"\" -> \"1\\n\", \"x\" -> \"1\\n\" }\n\
                test with main::files = (p -> \"2\") { \"\" -> \"2\\n\" }\n\
@@ -42,8 +42,8 @@ fn each_clause_holds_for_its_own_rows() {
 fn a_clause_gives_the_arguments_and_the_environment() {
     // The key gives standard input, and the clause the rest.
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- (m.stdin[0] else \"\") ++ (m.args[0] else \"\");\n  \
-               m.stderr <- m.env(\"HOME\") else \"none\";\n}\n\
+               m.stdout <- (m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") ++ (m.args[0] else #outOfBounds -> \"\");\n  \
+               m.stderr <- m.env(\"HOME\") else #notFound -> \"none\";\n}\n\
                test with main::args = \"q\\n\", \
                main::env = n -> if n == \"HOME\" { \"/h\" } else { #notFound } \
                { \"a\" -> (\"aq\\n\", \"/h\\n\"), \"b\" -> (\"bq\\n\", \"none\\n\") }\n";
@@ -62,9 +62,9 @@ fn a_row_that_writes_a_port_compares_its_writes_and_status() {
     // status.
     let src = "main(m: MainArgs) -> int {\n  \
                fs = main::files;\n  \
-               m.stdout <- fs[\"a\"] else \"\";\n  \
-               m.stderr <- fs[\"b\"] else \"no b\";\n  \
-               if (fs[\"b\"] else \"\") == \"\" { 1 } else { 0 }\n}\n\
+               m.stdout <- fs[\"a\"] else #ioError -> \"\" else #notFound -> \"\";\n  \
+               m.stderr <- fs[\"b\"] else #ioError -> \"no b\" else #notFound -> \"no b\";\n  \
+               if (fs[\"b\"] else #ioError -> \"\" else #notFound -> \"\") == \"\" { 1 } else { 0 }\n}\n\
                test with main::files = (p -> if p == \"a\" { \"x\" } else { #notFound }) \
                { \"\" -> (\"x\\n\", \"no b\\n\", 1), \"\" -> (\"x\\n\", \"no b\\n\") }\n";
     assert_eq!(
@@ -78,7 +78,7 @@ fn a_row_that_writes_a_port_compares_its_writes_and_status() {
 
 #[test]
 fn an_input_given_by_the_key_and_the_clause_is_rejected() {
-    let src = "main(m: MainArgs) {\n  m.stdout <- main::files[\"a\"] else \"\";\n}\n\
+    let src = "main(m: MainArgs) {\n  m.stdout <- main::files[\"a\"] else #ioError -> \"\" else #notFound -> \"\";\n}\n\
                test with main::files = (p -> \"1\") \
                { (\"\", \"\", (n -> #notFound), (p -> \"2\")) -> \"2\\n\" }\n";
     let got = checks(src);
@@ -162,7 +162,7 @@ fn a_field_of_main_that_is_no_input_is_rejected() {
 #[test]
 fn a_port_given_twice_is_rejected() {
     let got = rejected(
-        "main(m: MainArgs) {\n  m.stdout <- m.args[0] else \"\";\n}\n\
+        "main(m: MainArgs) {\n  m.stdout <- m.args[0] else #outOfBounds -> \"\";\n}\n\
          test with main::args = \"a\", main::args = \"b\" { \"\" -> \"a\\n\" }\n",
     );
     assert!(
@@ -205,7 +205,7 @@ fn a_clause_gives_another_function_its_files() {
     // A function other than `main` reads the file port as `main::files` (QUESTIONS A68), and
     // its table's clause gives it; a wrong expected value fails its row, and a row of a table
     // without the clause fails at the read, naming the repair.
-    let src = "size(positional p) = main::files[p] else \"none\"\n  \
+    let src = "size(positional p) = main::files[p] else #ioError -> \"none\" else #notFound -> \"none\"\n  \
                test with main::files = q -> if q == \"a\" { \"x\" } else { #notFound } \
                { \"a\" -> \"x\", \"b\" -> \"none\", \"a\" -> \"y\" }\n  \
                test { \"a\" -> \"x\" }\n\

@@ -199,7 +199,7 @@ fn a_program_with_a_bit_and_in_a_test_is_checked_and_runs() {
     // deciding them rejects nothing (front.rs, `linear_questions`).
     let src = "ok(i, n) = bitAnd(i, n) <= n && bitAnd(i, n) != 2;\n\
                main(m: MainArgs) {\n  \
-               a = int(m.stdin[0] else \"0\") else 0;\n  \
+               a = int(m.stdin[0] else #ioError -> \"0\" else #outOfBounds -> \"0\") else #invalid -> 0;\n  \
                held = if a >= 0 { ok(i: a, n: 6) } else { false };\n  \
                r = if held { \"in\" } else { \"out\" };\n  m.stdout <- \"${r}\";\n}\n";
     for (input, out) in [("5\n", "in\n"), ("3\n", "out\n"), ("-3\n", "out\n")] {

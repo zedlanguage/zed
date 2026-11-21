@@ -34,25 +34,25 @@ fn else_strips_the_loose_atoms_in_each_place_an_expression_stands() {
     let cases: [(&str, String, &str, Calls); 7] = [
         (
             "argument",
-            format!("g(positional n: int) = n * 2;\nf({LOOKUP}) = g(x else 1);\n"),
+            format!("g(positional n: int) = n * 2;\nf({LOOKUP}) = g(x else #none -> 1 else #notFound -> 1);\n"),
             "(int | #none | #notFound) -> int",
             &[("f(#none)", "2"), ("f(#notFound)", "2"), ("f(4)", "8")],
         ),
         (
             "operand",
-            format!("f({LOOKUP}) = (x else 0) + 1;\n"),
+            format!("f({LOOKUP}) = (x else #none -> 0 else #notFound -> 0) + 1;\n"),
             "(int | #none | #notFound) -> int",
             &[("f(#none)", "1"), ("f(4)", "5")],
         ),
         (
             "tuple component",
-            format!("f({LOOKUP}) = (x else 0, 1);\n"),
+            format!("f({LOOKUP}) = (x else #none -> 0 else #notFound -> 0, 1);\n"),
             "",
             &[("f(#none)", "(0, 1)"), ("f(4)", "(4, 1)")],
         ),
         (
             "if branch",
-            format!("f({LOOKUP}, positional c: bool) = if c {{ x else 0 }} else {{ 5 }};\n"),
+            format!("f({LOOKUP}, positional c: bool) = if c {{ x else #none -> 0 else #notFound -> 0 }} else {{ 5 }};\n"),
             "",
             &[
                 ("f(#none, true)", "0"),
@@ -62,19 +62,19 @@ fn else_strips_the_loose_atoms_in_each_place_an_expression_stands() {
         ),
         (
             "if condition",
-            "f(positional b: bool | #notFound) = if (b else false) { 1 } else { 2 };\n".into(),
+            "f(positional b: bool | #notFound) = if (b else #notFound -> false) { 1 } else { 2 };\n".into(),
             "(bool | #notFound) -> 1 | 2",
             &[("f(#notFound)", "2"), ("f(true)", "1"), ("f(false)", "2")],
         ),
         (
             "block statement and export",
-            format!("f({LOOKUP}) = {{\n  y = x else 0;\n  y + 1\n}};\n"),
+            format!("f({LOOKUP}) = {{\n  y = x else #none -> 0 else #notFound -> 0;\n  y + 1\n}};\n"),
             "(int | #none | #notFound) -> int",
             &[("f(#notFound)", "1"), ("f(6)", "7")],
         ),
         (
             "nested in its own default",
-            format!("f({TWO}) = x else (y else 0);\n"),
+            format!("f({TWO}) = x else #notFound -> (y else #none -> 0);\n"),
             "(int | #notFound, int | #none) -> int",
             &[
                 ("f(#notFound, #none)", "0"),
@@ -101,7 +101,7 @@ fn else_strips_the_loose_atoms_in_each_place_an_expression_stands() {
 
 #[test]
 fn an_else_in_a_lambda_body_handles_what_the_lambda_is_passed() {
-    let t = format!("f({LOOKUP}) = ((y) -> y else 0)(x);\n");
+    let t = format!("f({LOOKUP}) = ((y) -> y else #none -> 0 else #notFound -> 0)(x);\n");
     assert!(type_errors(&t).is_empty(), "{:?}", type_errors(&t));
     values(
         &t,
@@ -112,7 +112,7 @@ fn an_else_in_a_lambda_body_handles_what_the_lambda_is_passed() {
 #[test]
 fn a_default_that_may_fail_or_is_an_atom_puts_its_own_atoms_in_the_type() {
     // `e else d` strips the loose atoms of `e`; those of `d` are the default's, and stay.
-    let t = format!("f({TWO}) = x else y;\n");
+    let t = format!("f({TWO}) = x else #notFound -> y;\n");
     assert_eq!(
         sig(&t, "f"),
         "type Part1 = int | #none;\n(int | #notFound, Part1) -> Part1"
@@ -126,7 +126,7 @@ fn a_default_that_may_fail_or_is_an_atom_puts_its_own_atoms_in_the_type() {
         ],
     );
     // An atom default is the value the text names.
-    let t = format!("f({LOOKUP}) = x else #missing;\n");
+    let t = format!("f({LOOKUP}) = x else #none -> #missing else #notFound -> #missing;\n");
     assert_eq!(sig(&t, "f"), "(int | #none | #notFound) -> int | #missing");
     values(&t, &[("f(#none)", "#missing"), ("f(5)", "5")]);
     // The pattern form with an atom default keeps the atoms it does not name.
@@ -141,8 +141,16 @@ fn a_default_that_may_fail_or_is_an_atom_puts_its_own_atoms_in_the_type() {
 #[test]
 fn else_on_a_value_with_no_loose_atom_leaves_the_value() {
     // The default can never be taken; DESIGN.md warns at such an `else` from step L2.12e, and
-    // it is no error.
-    let t = "f(positional x: int) = x else 0;\n";
+    // it is no error. The bare form names no atom, so it is refused, and its fix deletes the
+    // tail (QUESTIONS A113, A67).
+    assert_eq!(
+        type_errors("f(positional x: int) = x else 0;\n"),
+        [
+            "`x else 0` does not name the atoms it takes. Try `x` instead.\n  fixes, each checked \
+          here:\n    f(positional x: int) = x;    the `else` is gone; the value is `x` [x else 0]"
+        ]
+    );
+    let t = "f(positional x: int) = x else #notFound -> 0;\n";
     assert!(type_errors(t).is_empty(), "{:?}", type_errors(t));
     assert_eq!(sig(t, "f"), "int -> int");
     values(t, &[("f(-3)", "-3")]);
@@ -150,7 +158,7 @@ fn else_on_a_value_with_no_loose_atom_leaves_the_value() {
 
 #[test]
 fn else_after_safe_navigation_strips_what_it_carried() {
-    let t = "f(positional x: int | #notFound) = x?.abs else 0;\n";
+    let t = "f(positional x: int | #notFound) = x?.abs else #notFound -> 0;\n";
     assert_eq!(sig(t, "f"), "(int | #notFound) -> int");
     values(t, &[("f(#notFound)", "0"), ("f(-4)", "4")]);
 }
@@ -279,7 +287,10 @@ fn underscore_drops_no_failure_passed_on_by_each_form() {
         ("unary operator", "-lookup(k)"),
         ("comparison", "lookup(k) < 3"),
         ("argument of a call", "g(lookup(k))"),
-        ("a default that may fail", "lookup(k) else lookup(k + 1)"),
+        (
+            "a default that may fail",
+            "lookup(k) else #notFound -> lookup(k + 1)",
+        ),
         (
             "a pattern default that may fail",
             "lookup(k) else #notFound -> lookup(2)",
@@ -295,7 +306,7 @@ fn underscore_drops_no_failure_passed_on_by_each_form() {
             "{case}: {first}"
         );
         // The default of an `else` on the whole value names it, and the binding is accepted.
-        let t = in_f(format!("_ = ({e}) else #ok;"));
+        let t = in_f(format!("_ = ({e}) else #notFound -> #ok;"));
         assert!(
             type_errors(&t).is_empty(),
             "{case}: {t}: {:?}",
@@ -315,7 +326,7 @@ fn underscore_in_a_local_function_is_checked_as_in_any_body() {
         message.starts_with("`_` drops a loose failure this value may be, #notFound:"),
         "{message}"
     );
-    let t = t.replace("_ = lookup(k);", "_ = lookup(k) else #ok;");
+    let t = t.replace("_ = lookup(k);", "_ = lookup(k) else #notFound -> #ok;");
     assert!(type_errors(&t).is_empty(), "{t}: {:?}", type_errors(&t));
 }
 
@@ -346,7 +357,7 @@ fn underscore_drops_no_failure_of_a_lookup_or_a_member_read() {
             message.starts_with("`_` drops a loose failure this value may be, #notFound:"),
             "{case}: {message}"
         );
-        let t = format!("{lookup}f({params}) = {{\n  _ = ({e}) else #ok;\n  0\n}};\n");
+        let t = format!("{lookup}f({params}) = {{\n  _ = ({e}) else #notFound -> #ok;\n  0\n}};\n");
         assert!(
             type_errors(&t).is_empty(),
             "{case}: {t}: {:?}",

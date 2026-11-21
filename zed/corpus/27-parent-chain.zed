@@ -7,7 +7,7 @@
 struct Link { child: Utf8String, parent: Utf8String }
 
 main(m: MainArgs) {
-  links = m.stdin.map(l -> { w = l.split(" "); Link(child: w[0] else (#badEncoding | #ioError | #outOfBounds) -> "", parent: w[1] else (#badEncoding | #ioError | #outOfBounds) -> "-") });
+  links = m.stdin.map(l -> { w = l.split(" "); Link(child: w[0] else (#ioError | #outOfBounds) -> "", parent: w[1] else (#ioError | #outOfBounds) -> "-") });
   par   = links.group(e -> e.child).map(g -> g.first.parent);
   up(positional v) = if (par[v] else #notFound -> "-") == "-" { v } else { par[v] else #notFound -> v };
   n = par::card;

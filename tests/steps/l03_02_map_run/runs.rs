@@ -150,7 +150,7 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         (
             "where_then_a_missed_read",
-            "${([10, 20, 30, 40].where(x -> x > 15)[0]) else -1}",
+            "${([10, 20, 30, 40].where(x -> x > 15)[0]) else #notFound -> -1}",
             or(
                 get(
                     where_(list(&[10, 20, 30, 40]), |v| bin(Prim::Gt, v, lit(15))),
@@ -203,7 +203,7 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         (
             "fold_of_an_empty_display_is_empty",
-            "${([] >< (+)) else -1}",
+            "${([] >< (+)) else #empty -> -1}",
             or(reduce(list(&[]), Prim::Add, None), "empty", -1),
         ),
         // `k in m` tests the keys of `m` (DESIGN.md sec:grammar, `k in m::domain`; a set is a
@@ -268,7 +268,7 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         (
             "max_of_an_empty_display_is_empty",
-            "${([] >< max) else -1}",
+            "${([] >< max) else #empty -> -1}",
             or(reduce(list(&[]), Prim::Max, None), "empty", -1),
         ),
         // A float fold goes round the canonical tree of sec:reduction item 1:
@@ -386,17 +386,13 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         // RANGE-literal-reads, `l03_15a_fp_ops_run::cases`), so a miss here reads a key the
         // checker cannot know, `if m.args.count > 0 { a key } else { the key read }`, one arm
         // in the keys and one not; these runs pass no argument, so the run reads the second.
-        ("a_read_in_a_range", "${(0 ..< 3)[1] else -1}", lit(1)),
+        ("a_read_in_a_range", "${(0 ..< 3)[1]}", lit(1)),
         (
             "a_read_past_a_range_from_0",
             "${(0 ..< 3)[if m.args.count > 0 { 0 } else { 3 }] is #outOfBounds}",
             lit(true),
         ),
-        (
-            "a_read_in_a_range_from_2",
-            "${(2 ..< 5)[3] else -1}",
-            lit(3),
-        ),
+        ("a_read_in_a_range_from_2", "${(2 ..< 5)[3]}", lit(3)),
         (
             "a_read_past_a_range_from_2",
             "${(2 ..< 5)[if m.args.count > 0 { 2 } else { 5 }] is #outOfBounds}",
@@ -436,23 +432,23 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ("a_range_counted", "${(3 ..< 10).count}", lit(7)),
         (
             "the_first_of_a_negative_range",
-            "${(-5 ..= -2).first else 0}",
+            "${(-5 ..= -2).first else #none -> 0}",
             lit(-5),
         ),
         (
             "the_last_of_a_negative_range",
-            "${(-5 ..= -2).last else 0}",
+            "${(-5 ..= -2).last else #none -> 0}",
             lit(-2),
         ),
         (
             "reads_at_both_ends_of_a_negative_range",
-            "${[(-5 ..= -2)[-5] else 0, (-5 ..= -2)[-2] else 0, \
-             (-5 ..= -2)[if m.args.count > 0 { -2 } else { -1 }] else 0]}",
+            "${[(-5 ..= -2)[-5], (-5 ..= -2)[-2], \
+             (-5 ..= -2)[if m.args.count > 0 { -2 } else { -1 }] else #outOfBounds -> 0]}",
             list(&[-5, -2, 0]),
         ),
         (
             "a_range_of_a_trillion_entries_read_at_its_end",
-            "${(0 ..< 1000000000000)[999999999999] else -1}",
+            "${(0 ..< 1000000000000)[999999999999]}",
             lit(999_999_999_999),
         ),
         (
@@ -501,7 +497,7 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         (
             "a_read_far_into_a_range_with_no_upper_end",
-            "${(3 ..)[1000000000000] else -1}",
+            "${(3 ..)[1000000000000] else #outOfBounds -> -1}",
             or(at(from(3), lit(1_000_000_000_000_i64)), "outOfBounds", -1),
         ),
         (
@@ -511,13 +507,13 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         (
             "the_first_of_a_negative_range_with_no_upper_end",
-            "${(-7 ..).first else 0}",
+            "${(-7 ..).first else #none -> 0}",
             or(prim(Prim::First, vec![from(-7)]), "none", 0),
         ),
         (
             "a_range_with_no_upper_end_past_64_bits",
             "${[100000000000000000000000 in 99999999999999999999999 .., \
-             (99999999999999999999999 ..)[100000000000000000000000] else 0]}",
+             (99999999999999999999999 ..)[100000000000000000000000] else #outOfBounds -> 0]}",
             {
                 let big = |s: &str| lit(Value::int(s.parse::<num_bigint::BigInt>().unwrap()));
                 let lo = || prim(Prim::RangeFrom, vec![big("99999999999999999999999")]);
@@ -539,7 +535,7 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         // `where(p)` keeps one, `.all(p)` whether `where(!p)` keeps none.
         (
             "the_first_of_a_stream_with_no_upper_end",
-            "${(-10 ..).where(x -> x mod 7 == 3).first else 0}",
+            "${(-10 ..).where(x -> x mod 7 == 3).first else #none -> 0}",
             or(
                 prim(
                     Prim::First,
@@ -551,7 +547,7 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         (
             "a_stream_mapped_then_kept",
-            "${(5 ..).map(x -> x * x).where(x -> x > 50).first else 0}",
+            "${(5 ..).map(x -> x * x).where(x -> x > 50).first else #none -> 0}",
             or(
                 prim(
                     Prim::First,
@@ -565,7 +561,7 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         (
             "a_stream_kept_twice_then_mapped",
-            "${(-10 ..).where(x -> x mod 2 == 0).where(x -> x > 3).map(x -> x - 1).first else 0}",
+            "${(-10 ..).where(x -> x mod 2 == 0).where(x -> x > 3).map(x -> x - 1).first else #none -> 0}",
             or(
                 prim(
                     Prim::First,
@@ -609,8 +605,8 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         (
             "find_over_a_range_with_no_upper_end",
-            "${[(3 ..).map(x -> x * 3).find(x -> x mod 7 == 0) else -1, \
-             (3 ..).find(x -> x > 10) else -1]}",
+            "${[(3 ..).map(x -> x * 3).find(x -> x mod 7 == 0) else #none -> -1, \
+             (3 ..).find(x -> x > 10) else #none -> -1]}",
             family(
                 [
                     or(
@@ -637,7 +633,7 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         (
             "a_stream_past_64_bits",
-            "${(9223372036854775800 ..).where(x -> x mod 1000 == 7).first else 0}",
+            "${(9223372036854775800 ..).where(x -> x mod 1000 == 7).first else #none -> 0}",
             {
                 let lo = num_bigint::BigInt::from(9223372036854775800i64);
                 let keys = (0..2000).map(|d| &lo + d).collect::<Vec<_>>();
@@ -657,12 +653,12 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         // 64-bit edge, and a range of 10^30 entries, which no memory holds.
         (
             "reads_of_a_range_just_past_64_bits",
-            "${[(9223372036854775808 ..< 9223372036854775811)[9223372036854775808] else 0, \
-             (9223372036854775808 ..< 9223372036854775811)[9223372036854775810] else 0, \
+            "${[(9223372036854775808 ..< 9223372036854775811)[9223372036854775808], \
+             (9223372036854775808 ..< 9223372036854775811)[9223372036854775810], \
              (9223372036854775808 ..< 9223372036854775811)\
-             [if m.args.count > 0 { 9223372036854775808 } else { 9223372036854775811 }] else 0, \
+             [if m.args.count > 0 { 9223372036854775808 } else { 9223372036854775811 }] else #outOfBounds -> 0, \
              (9223372036854775808 ..< 9223372036854775811)\
-             [if m.args.count > 0 { 9223372036854775808 } else { 9223372036854775807 }] else 0]}",
+             [if m.args.count > 0 { 9223372036854775808 } else { 9223372036854775807 }] else #outOfBounds -> 0]}",
             ints(&[wide(0, 0), wide(0, 2), 0.into(), 0.into()]),
         ),
         (
@@ -671,8 +667,8 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
              9223372036854775807 in 9223372036854775806 ..= 9223372036854775809, \
              9223372036854775808 in 9223372036854775806 ..= 9223372036854775809, \
              9223372036854775810 in 9223372036854775806 ..= 9223372036854775809, \
-             (9223372036854775806 ..= 9223372036854775809).first else 0, \
-             (9223372036854775806 ..= 9223372036854775809).last else 0]}",
+             (9223372036854775806 ..= 9223372036854775809).first else #none -> 0, \
+             (9223372036854775806 ..= 9223372036854775809).last else #none -> 0]}",
             family(vec![
                 (i(0), Value::Int(4)),
                 (i(1), Value::Bool(true)),
@@ -688,8 +684,8 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
              -9223372036854775809 in -9223372036854775810 ..< -9223372036854775806, \
              -9223372036854775808 in -9223372036854775810 ..< -9223372036854775806, \
              -9223372036854775806 in -9223372036854775810 ..< -9223372036854775806, \
-             (-9223372036854775810 ..< -9223372036854775806).first else 0, \
-             (-9223372036854775810 ..< -9223372036854775806).last else 0]}",
+             (-9223372036854775810 ..< -9223372036854775806).first else #none -> 0, \
+             (-9223372036854775810 ..< -9223372036854775806).last else #none -> 0]}",
             family(vec![
                 (i(0), Value::Int(4)),
                 (i(1), Value::Bool(true)),
@@ -713,10 +709,10 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         // `bench::two_ranges_are_ordered_from_their_ends_in_constant_time`.
         (
             "a_range_of_10_to_the_30_entries_read_counted_and_tested",
-            "${[(0 ..< 1000000000000000000000000000000)[999999999999999999999999999999] else -1, \
+            "${[(0 ..< 1000000000000000000000000000000)[999999999999999999999999999999], \
              (0 ..< 1000000000000000000000000000000).count, \
              1000000000000000000000000000000 in 0 ..< 1000000000000000000000000000000, \
-             (0 ..< 1000000000000000000000000000000).last else -1]}",
+             (0 ..< 1000000000000000000000000000000).last else #none -> -1]}",
             {
                 let e30 = num_bigint::BigInt::from(10).pow(30u32);
                 family(vec![
@@ -812,8 +808,8 @@ fn reads_that_miss_give_the_miss_atoms() {
     // `V | #notFound`, and `#outOfBounds` for an array.
     let src = program(
         "misses",
-        "${a[ks[1]] else -1} ${a[ks[0]] else -1} ${b[ks[1]] else -2} ${c[ss[1]] else -3} \
-         ${c[ss[0]] else -3} ${a[ks[1]] is #notFound} ${b[ks[1]] is #outOfBounds}",
+        "${a[ks[1]] else #notFound -> -1} ${a[ks[0]] else #notFound -> -1} ${b[ks[1]] else #outOfBounds -> -2} ${c[ss[1]] else #notFound -> -3} \
+         ${c[ss[0]] else #notFound -> -3} ${a[ks[1]] is #notFound} ${b[ks[1]] is #outOfBounds}",
     );
     let text = std::fs::read_to_string(&src).unwrap().replace(
         "main(m: MainArgs) {\n",
@@ -851,11 +847,11 @@ fn a_range_with_no_upper_end_read_at_keys_from_stdin() {
     // M0 model. `3 ..` and `0 ..< 10^12` are build-stage: the build keeps each as the call that
     // makes it (`zedc_stage` `built_value`), since as a literal one has no last entry and the
     // other 10^12 entries to write.
-    let body = "${[n in 3 .., (3 ..)[n] else -1, (n ..).first else 0, (n ..)[n + 5] else 0, \
-                4 in n .., (0 ..< 1000000000000)[n] else -1]}";
+    let body = "${[n in 3 .., (3 ..)[n] else #outOfBounds -> -1, (n ..).first else #none -> 0, (n ..)[n + 5] else #outOfBounds -> 0, \
+                4 in n .., (0 ..< 1000000000000)[n] else #outOfBounds -> -1]}";
     let src = dir("l03_02_map_run/open_stdin").join("open_stdin.zed");
     let text = format!(
-        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else 0;\n    m.stdout <- \"{body}\";\n}}\n"
+        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n    m.stdout <- \"{body}\";\n}}\n"
     );
     std::fs::write(&src, text).unwrap();
     let exe = dir("l03_02_map_run/open_stdin").join("open_stdin");
@@ -908,14 +904,14 @@ fn the_first_prime_from_n_read_from_stdin() {
     // known only at run time, so the walk runs in the interpreter and in the executable, and
     // `.find`, `.any` and `.all` of the same stream. The model is trial division in Rust; the
     // walk stops at the first prime, `n` itself when `n` is prime.
-    let body = "${[(n ..).where(isPrime).first else 0, (n ..).find(isPrime) else 0, \
+    let body = "${[(n ..).where(isPrime).first else #none -> 0, (n ..).find(isPrime) else #none -> 0, \
                 (n ..).map(x -> x * x).where(x -> x mod 10 == 9).any(x -> x > 100), \
                 (n ..).where(isPrime).all(x -> x < n + 3)]}";
     let src = dir("l03_02_map_run/prime_stdin").join("prime_stdin.zed");
     let text = format!(
         "isPrime(positional k) = k >= 2 && (2 ..< k).where(d -> d * d <= k && k mod d == 0)\
          .count == 0;\n\
-         main(m: MainArgs) {{\n    n = int(m.stdin[0]) else 0;\n    m.stdout <- \"{body}\";\n}}\n"
+         main(m: MainArgs) {{\n    n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n    m.stdout <- \"{body}\";\n}}\n"
     );
     std::fs::write(&src, text).unwrap();
     let exe = dir("l03_02_map_run/prime_stdin").join("prime_stdin");
@@ -962,11 +958,11 @@ fn a_family_read_by_key_at_keys_from_stdin() {
     // The call spelling `sq(n)` misses with `#notFound` today, not the `#outOfBounds` of an
     // integer-interval level; that half of `sameRead` waits for plan row KERNEL-family-call.
     // The model is Rust arithmetic on `n`.
-    let body = "${[(n ..).where(x -> x mod 2 == 0).find(x -> x >= n) else -1, \
-                sq(n) else -1, sq[n] else -1, sq[n] is #outOfBounds, q.count]}";
+    let body = "${[(n ..).where(x -> x mod 2 == 0).find(x -> x >= n) else #none -> -1, \
+                sq(n) else #notFound -> -1, sq[n] else #outOfBounds -> -1, sq[n] is #outOfBounds, q.count]}";
     let src = dir("l03_02_map_run/family_by_key").join("family_by_key.zed");
     let text = format!(
-        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else 0;\n    \
+        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n    \
          sq = (0 ..< 10).map(j -> j * j);\n    q = (0 ..< n).map(k -> #none);\n    \
          m.stdout <- \"{body}\";\n}}\n"
     );
@@ -1010,7 +1006,7 @@ fn a_family_of_stdin_lines_with_no_proved_bound_still_builds() {
     let src = dir("l03_02_map_run/stdin_lines_unbounded").join("stdin_lines_unbounded.zed");
     std::fs::write(
         &src,
-        "main(m: MainArgs) {\n    m.stdout <- \"${m.stdin.map(l -> l else \"\").count}\";\n}\n",
+        "main(m: MainArgs) {\n    m.stdout <- \"${m.stdin.map(l -> l else #ioError -> \"\").count}\";\n}\n",
     )
     .unwrap();
     let exe = dir("l03_02_map_run/stdin_lines_unbounded").join("stdin_lines_unbounded");
@@ -1044,16 +1040,16 @@ fn a_wide_range_made_from_ends_read_from_stdin() {
     // entry reads `2^63 ..< 10^24`, which is build-stage: the build keeps it as the call that
     // makes it (`zedc_stage` `built_value`, from `term::build::made_by`), since as a literal it
     // has about 10^24 entries to write.
-    let body = "${[(n ..< n + 1000000000000000000000000)[n + 999999999999999999999999] else 0, \
+    let body = "${[(n ..< n + 1000000000000000000000000)[n + 999999999999999999999999] else #outOfBounds -> 0, \
                 (n ..< n + 1000000000000000000000000).count, \
                 n - 1 in n ..< n + 1000000000000000000000000, \
                 n + 5 in n ..< n + 1000000000000000000000000, \
-                (n ..< n + 1000000000000000000000000).first else 0, \
-                (n ..= n + 1000000000000000000000000).last else 0, \
-                (9223372036854775808 ..< 1000000000000000000000000)[n] else -1]}";
+                (n ..< n + 1000000000000000000000000).first else #none -> 0, \
+                (n ..= n + 1000000000000000000000000).last else #none -> 0, \
+                (9223372036854775808 ..< 1000000000000000000000000)[n] else #outOfBounds -> -1]}";
     let src = dir("l03_02_map_run/wide_stdin").join("wide_stdin.zed");
     let text = format!(
-        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else 0;\n    m.stdout <- \"{body}\";\n}}\n"
+        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n    m.stdout <- \"{body}\";\n}}\n"
     );
     std::fs::write(&src, text).unwrap();
     let exe = dir("l03_02_map_run/wide_stdin").join("wide_stdin");

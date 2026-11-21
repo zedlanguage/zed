@@ -111,17 +111,35 @@ fn every_enabled_corpus_program_agrees() {
 fn every_enabled_fence_program_agrees() {
     // A fence with `main` is a program; of the enabled fences at L1, one is: the environment
     // fence, which writes `m.env["HOME"]` to `m.stdout`. Both runs see the same environment.
+    // EXAMPLES writes it `m.env["HOME"] else "no HOME"`, a bare `else`, which zedc refuses
+    // since every `else` names the atoms it takes (DESIGN.md sec:failure, QUESTIONS A113; plan
+    // row ELSE-explicit-atoms); the fence is run with the checker's repair, which names
+    // `#notFound`, until EXAMPLES writes it (plan row SPEC-fences-bare-else).
+    const BARE: &str = "m.env[\"HOME\"] else \"no HOME\"";
+    const NAMED: &str = "m.env[\"HOME\"] else #notFound -> \"no HOME\"";
     let programs: Vec<_> = zed_tests::fences::all()
         .into_iter()
         .filter(|f| f.layer <= ENABLED && !f.notation)
-        .filter(|f| zedc::run::load(f.text.as_bytes()).is_ok())
+        .filter_map(|f| match zedc::run::load(f.text.as_bytes()) {
+            Ok(_) => Some((f.text.clone(), f)),
+            Err(why) if f.text.contains(BARE) => {
+                assert!(
+                    why.contains(&format!("Try `{NAMED}` instead.")),
+                    "{}: {why}",
+                    f.at
+                );
+                Some((f.text.replace(BARE, NAMED), f))
+            }
+            Err(_) => None,
+        })
         .collect();
-    let keys: Vec<&str> = programs.iter().map(|f| f.key.as_str()).collect();
+    let keys: Vec<&str> = programs.iter().map(|(_, f)| f.key.as_str()).collect();
     assert_eq!(keys, ["EXAMPLES.md [18. Files, stores, and the world] 8"]);
     let d = dir("fences");
-    for (k, f) in programs.iter().enumerate() {
+    for (k, (text, f)) in programs.iter().enumerate() {
+        assert!(zedc::run::load(text.as_bytes()).is_ok(), "{}", f.at);
         let src = d.join(format!("fence{k}.zed"));
-        std::fs::write(&src, &f.text).unwrap();
+        std::fs::write(&src, text).unwrap();
         let exe = built_twice(&format!("fence{k}"), &src);
         let native = executable(&exe, &[], b"");
         assert_eq!(native, interpreter(&src, &[], b""), "{}", f.at);
@@ -130,9 +148,9 @@ fn every_enabled_fence_program_agrees() {
 
 /// Reads the files its three arguments name, and says which are missing or unreadable.
 const READER: &str = "main(m: MainArgs) {\n  fs = main::files;\n  \
-    a = (fs[m.args[0] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
-    b = (fs[m.args[1] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
-    c = (fs[m.args[2] else \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
+    a = (fs[m.args[0] else #outOfBounds -> \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
+    b = (fs[m.args[1] else #outOfBounds -> \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
+    c = (fs[m.args[2] else #outOfBounds -> \"\"] else #notFound -> \"missing\") else #ioError -> \"unreadable\";\n  \
     m.stdout <- \"${a}|${b}|${c}\";\n}\n";
 
 #[test]
@@ -229,8 +247,8 @@ fn files_named_by_arguments_agree() {
 /// Compares its first two arguments by `>` and `>=`, which legalization rewrites for this back
 /// end, the comparison not known before the run.
 const ORDER: &str = "main(m: MainArgs) {\n  \
-    a = m.args[0] else \"\";\n  \
-    b = m.args[1] else \"\";\n  \
+    a = m.args[0] else #outOfBounds -> \"\";\n  \
+    b = m.args[1] else #outOfBounds -> \"\";\n  \
     x = if a > b { \"after\" } else { \"not after\" };\n  \
     y = if a >= b { \"at or after\" } else { \"before\" };\n  \
     m.stdout <- \"${x}|${y}\";\n}\n";
@@ -298,8 +316,8 @@ fn a_tuple_indexed_by_a_computed_key_agrees() {
         &src,
         "main(m: MainArgs) {\n  \
          person = (\"Ada\", 1815, \"London\");\n  \
-         column = int(m.stdin[0]) else 0;\n  \
-         m.stdout <- \"${person[column] else \"no such column\"}\";\n}\n",
+         column = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  \
+         m.stdout <- \"${person[column] else #outOfBounds -> \"no such column\"}\";\n}\n",
     )
     .unwrap();
     let exe = built_twice("column", &src);

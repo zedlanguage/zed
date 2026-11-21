@@ -108,7 +108,7 @@ fn only_rows_whose_failure_names_a_result_are_replayed() {
     // A row of `main`'s table, which is a wave; a row whose call stops, as a read of
     // `main::files` its table gives no files; and one wrong row written twice, each replayed.
     let text = "main(m: MainArgs) {\n  m.stdout <- \"hi\";\n}\ntest { \"\" -> \"bye\\n\" }\n\n\
-                read(positional p) = main::files[p] else \"none\"\ntest { \"a\" -> \"x\" }\n\n\
+                read(positional p) = main::files[p] else #ioError -> \"none\" else #notFound -> \"none\"\ntest { \"a\" -> \"x\" }\n\n\
                 double(positional x) = x * 2\ntest { 3 -> 7, 3 -> 7 }\n";
     let failures: Vec<String> = test(text).into_iter().filter_map(|o| o.failure).collect();
     assert_eq!(failures.len(), 4, "{failures:?}");

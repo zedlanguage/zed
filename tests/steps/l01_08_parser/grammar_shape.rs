@@ -358,7 +358,7 @@ fn every_node_s_children_match_its_alternative() {
         ("Unit", "initial s: int = 0 with carryForward;"),
         (
             "Unit",
-            "main(m: MainArgs) { m.stdout <- m.args[0] else \"\"; }\n\
+            "main(m: MainArgs) { m.stdout <- m.args[0] else #outOfBounds -> \"\"; }\n\
              test with main::args = \"a\", out = 1 { \"\" -> \"a\\n\" }",
         ),
         ("Expr", "a ~max~ b ~min~ c"),

@@ -92,7 +92,7 @@ fn a_built_executable_runs() {
     std::fs::write(
         &src,
         "main(m: MainArgs) {\n  \
-         m.stdout <- \"Hello, ${m.args[0] else \"world\"}!\";\n}\n",
+         m.stdout <- \"Hello, ${m.args[0] else #outOfBounds -> \"world\"}!\";\n}\n",
     )
     .unwrap();
     let exe = d.join("hello");
@@ -147,7 +147,7 @@ fn a_path_without_lld_links_with_the_drivers_linker() {
     let src = d.join("greet.zed");
     std::fs::write(
         &src,
-        "main(m: MainArgs) {\n  m.stdout <- \"Good ${m.args[0] else \"day\"}\";\n}\n",
+        "main(m: MainArgs) {\n  m.stdout <- \"Good ${m.args[0] else #outOfBounds -> \"day\"}\";\n}\n",
     )
     .unwrap();
     let (lld, gnu) = (d.join("greet-lld"), d.join("greet-gnu"));

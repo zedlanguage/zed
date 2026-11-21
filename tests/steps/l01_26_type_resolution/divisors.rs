@@ -346,7 +346,7 @@ fn zedc_run_drops_the_quotient_only_under_a_test_that_rules_zero_out() {
   [11] 1:45: `d` is int here
   [12] 1:54: this block gives 0
   [13] 1:56: this literal, 0, is 0
-  [14] 1:23: repair: write a default for the value, as `_ = … else #ok;`, so the text names what it drops
+  [14] 1:23: repair: write a default for the value, as `_ = … else #divByZero -> #ok;`, so the text names what it drops
   [15] 1:23: repair: handle each failure with a `match` on the value
   [16] 1:23: repair: bind the value to a name, and use the name
 "

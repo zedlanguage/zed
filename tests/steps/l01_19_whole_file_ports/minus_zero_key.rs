@@ -8,12 +8,12 @@
 use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 
 const SRC: &str = "main(m: MainArgs) {
-    s = m.stdin[0] else \"0\";
-    z = f64(s) else 1.0;
+    s = m.stdin[0] else #ioError -> \"0\" else #outOfBounds -> \"0\";
+    z = f64(s) else #invalid -> 1.0;
     t = {[0.0, 1.0] -> 7};
     u = {(0.0, 1.0) -> 7};
     v = {z -> 7};
-    m.stdout <- \"${[z, 1.0] == [0.0, 1.0]} ${t[[z, 1.0]] else -1} ${u[(z, 1.0)] else -1} ${v[0.0] else -1}\";
+    m.stdout <- \"${[z, 1.0] == [0.0, 1.0]} ${t[[z, 1.0]] else #notFound -> -1} ${u[(z, 1.0)] else #notFound -> -1} ${v[0.0] else #notFound -> -1}\";
 }
 ";
 

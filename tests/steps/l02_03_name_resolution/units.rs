@@ -179,9 +179,9 @@ fn a_unit_path_names_a_file_under_the_root_and_back() {
 }
 
 /// A unit with its own `main` and a helper that read `main::files` (QUESTIONS Q54).
-const OWN_MAIN: &str = "size(positional p) = main::files[p] else \"none\";\n\
+const OWN_MAIN: &str = "size(positional p) = main::files[p] else #ioError -> \"none\" else #notFound -> \"none\";\n\
                         main(m: MainArgs) {\n  fs = main::files;\n  \
-                        m.stdout <- size(\"a\") ++ (fs[\"b\"] else \"\");\n}\n";
+                        m.stdout <- size(\"a\") ++ (fs[\"b\"] else #ioError -> \"\" else #notFound -> \"\");\n}\n";
 
 #[test]
 fn main_files_in_a_unit_with_its_own_main_is_rejected_unless_the_unit_is_the_root() {
@@ -217,7 +217,7 @@ fn main_files_in_a_unit_with_its_own_main_is_rejected_unless_the_unit_is_the_roo
     let p = package(&[
         (
             "lib.zed",
-            "size(positional p) = main::files[p] else \"none\";\n",
+            "size(positional p) = main::files[p] else #ioError -> \"none\" else #notFound -> \"none\";\n",
         ),
         ("main.zed", "import lib.{size};\nmain() {\n}\n"),
     ]);

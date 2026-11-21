@@ -404,7 +404,7 @@ fn powers_nested_on_one_line_are_drawn_by_their_ends_on_one_rule() {
 /// whose partial sums is a step.
 pub(super) fn summed(n: usize) -> String {
     format!(
-        "main(m: MainArgs) {{\n  n = int(m.stdin[0]) else 0;\n  total = {};\n  \
+        "main(m: MainArgs) {{\n  n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  total = {};\n  \
          m.stdout <- \"total: \" ++ total;\n}}\n",
         vec!["n"; n].join(" + ")
     )

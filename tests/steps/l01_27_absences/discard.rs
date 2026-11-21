@@ -57,8 +57,8 @@ fn a_dropped_lookup_miss_is_rejected_with_its_derivation_and_repairs() {
             "`lookup` is declared here with no type written for its result; the type the checker \
              found for `lookup` is `int -> int | #notFound` \
              [lookup(positional k: int) = if k > 0 { k } else { #notFound };]",
-            "repair: write a default for the value, as `_ = … else #ok;`, so the text names what \
-             it drops [_ = lookup(3);]",
+            "repair: write a default for the value, as `_ = … else #notFound -> #ok;`, so the \
+             text names what it drops [_ = lookup(3);]",
             "repair: handle each failure with a `match` on the value [_ = lookup(3);]",
             "repair: bind the value to a name, and use the name [_ = lookup(3);]",
         ]
@@ -68,16 +68,21 @@ fn a_dropped_lookup_miss_is_rejected_with_its_derivation_and_repairs() {
 #[test]
 fn an_else_default_names_what_is_dropped() {
     // A number default replaces the failure; an atom default is the failure the text names.
-    for bound in ["_ = lookup(3) else 0;", "_ = lookup(3) else #ok;"] {
+    for bound in [
+        "_ = lookup(3) else #notFound -> 0;",
+        "_ = lookup(3) else #notFound -> #ok;",
+    ] {
         let t = format!("{LOOKUP}{bound}\n");
         assert!(type_errors(&t).is_empty(), "{t}: {:?}", type_errors(&t));
     }
     // The repair the menu offers is accepted, and the program still runs.
-    let t = format!("{LOOKUP}_ = lookup(-1) else #ok;\nr = lookup(-1) else #ok;\n");
+    let t = format!(
+        "{LOOKUP}_ = lookup(-1) else #notFound -> #ok;\nr = lookup(-1) else #notFound -> #ok;\n"
+    );
     assert!(type_errors(&t).is_empty());
     assert_eq!(value(&t, "r"), "#ok");
     // An atom default with a payload names its atom too.
-    let t = format!("{LOOKUP}_ = lookup(3) else #ok(1);\n");
+    let t = format!("{LOOKUP}_ = lookup(3) else #notFound -> #ok(1);\n");
     assert!(type_errors(&t).is_empty(), "{:?}", type_errors(&t));
 }
 
@@ -86,15 +91,15 @@ fn an_else_default_inside_an_if_branch_or_a_block_names_what_is_dropped() {
     // Each branch writes `#ok` as its default, and the `if` passes its branches through
     // unchanged, so the text names every failure the value may be.
     let t = format!(
-        "{LOOKUP}f(positional c: int) = {{\n  _ = if c > 0 {{ lookup(1) else #ok }} else {{ lookup(2) else #ok }};\n  0\n}};\n"
+        "{LOOKUP}f(positional c: int) = {{\n  _ = if c > 0 {{ lookup(1) else #notFound -> #ok }} else {{ lookup(2) else #notFound -> #ok }};\n  0\n}};\n"
     );
     assert!(type_errors(&t).is_empty(), "{t}: {:?}", type_errors(&t));
     // A block's export passes its value through unchanged too.
-    let t = format!("{LOOKUP}_ = {{\n  y = 1;\n  lookup(y) else #ok\n}};\n");
+    let t = format!("{LOOKUP}_ = {{\n  y = 1;\n  lookup(y) else #notFound -> #ok\n}};\n");
     assert!(type_errors(&t).is_empty(), "{t}: {:?}", type_errors(&t));
     // A default in one branch only: the other branch's `#notFound` is still dropped.
     let t = format!(
-        "{LOOKUP}f(positional c: int) = {{\n  _ = if c > 0 {{ lookup(1) else #ok }} else {{ lookup(2) }};\n  0\n}};\n"
+        "{LOOKUP}f(positional c: int) = {{\n  _ = if c > 0 {{ lookup(1) else #notFound -> #ok }} else {{ lookup(2) }};\n  0\n}};\n"
     );
     let (message, _, notes) = the_error(&t);
     assert_eq!(
@@ -135,7 +140,7 @@ fn the_pattern_form_drops_only_the_atom_it_handles() {
 fn every_dropped_atom_is_named_with_where_it_enters() {
     // Two failures from two operands: both are named, each where it enters.
     let t = format!(
-        "{LOOKUP}f({ROW}) = {{\n  a = lookup(x else 1);\n  b = a + 1;\n  _ = b;\n  0\n}};\n"
+        "{LOOKUP}f({ROW}) = {{\n  a = lookup(x else #none -> 1 else #notFound -> 1);\n  b = a + 1;\n  _ = b;\n  0\n}};\n"
     );
     let (message, span, notes) = the_error(&t);
     assert_eq!(
@@ -146,7 +151,7 @@ fn every_dropped_atom_is_named_with_where_it_enters() {
     // Followed through `b` and `a` to the call that gives it.
     assert_eq!(
         notes[0],
-        "the loose failure #notFound enters here [lookup(x else 1)]"
+        "the loose failure #notFound enters here [lookup(x else #none -> 1 else #notFound -> 1)]"
     );
     let t = format!("f({ROW}) = {{\n  _ = x;\n  0\n}};\n");
     let (message, _, notes) = the_error(&t);
@@ -208,7 +213,7 @@ fn a_discarded_component_is_checked_alone() {
     let t = format!("{LOOKUP}{pair}x, _ = pair(1);\n");
     assert!(type_errors(&t).is_empty(), "{:?}", type_errors(&t));
     // Written as a tuple, the component's own `else` names its default.
-    let t = format!("{LOOKUP}_, x = (lookup(1) else #ok, 2);\n");
+    let t = format!("{LOOKUP}_, x = (lookup(1) else #notFound -> #ok, 2);\n");
     assert!(type_errors(&t).is_empty(), "{:?}", type_errors(&t));
     let t = format!("{LOOKUP}_, x = (lookup(1), 2);\n");
     let (_, _, notes) = the_error(&t);
@@ -267,7 +272,7 @@ fn checking_units_together_and_alone_agree() {
     let units = [
         format!("{LOOKUP}_ = lookup(3);\n"),
         format!("g({ROW}) = {{\n  _ = x else #notFound -> 0;\n  0\n}};\n"),
-        "h(positional y: int | #e) = {\n  _ = y else 0;\n  _, z = (y, 1);\n  z\n};\n".into(),
+        "h(positional y: int | #e) = {\n  _ = y else #e -> 0;\n  _, z = (y, 1);\n  z\n};\n".into(),
         "maybe(positional k: int) = if k > 0 { (k, k) } else { #notFound };\n_, _ = maybe(1);\n"
             .into(),
     ];

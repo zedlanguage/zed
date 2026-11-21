@@ -85,7 +85,7 @@ fn the_arguments_of_a_record_round_trip() {
 #[test]
 fn a_main_row_gives_the_arguments_one_per_line() {
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.args[0] else \"-\"}+${m.args[1] else \"-\"}\";\n}\n\
+               m.stdout <- \"${m.args[0] else #outOfBounds -> \"-\"}+${m.args[1] else #outOfBounds -> \"-\"}\";\n}\n\
                test { (\"\", \"a\\nb c\\n\") -> \"a+b c\\n\", (\"\", \"only\") -> \"only+-\\n\", \
                \"\" -> \"-+-\\n\", (\"\", 3) -> \"\" }\n";
     assert_eq!(
@@ -105,7 +105,7 @@ fn a_main_rows_arguments_end_at_each_line_end() {
     // The String's lines are read as a `Lines` input's: `\n`, `\r\n` and a lone `\r` each end
     // one (author, 2026-11-13, QUESTIONS A90).
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.args[0] else \"-\"}+${m.args[1] else \"-\"}\";\n}\n\
+               m.stdout <- \"${m.args[0] else #outOfBounds -> \"-\"}+${m.args[1] else #outOfBounds -> \"-\"}\";\n}\n\
                test { (\"\", \"a\\rb\\r\\nc\") -> \"a+b\\n\", (\"\", \"a\\r\\r\\n\") -> \"a+\\n\", (\"\", \"a\\r\") -> \"a+-\\n\" }\n";
     assert_eq!(checks(src), ["4:8: ok", "4:38: ok", "4:65: ok"]);
 }

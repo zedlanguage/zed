@@ -68,7 +68,7 @@ fn stops(name: &str, src: &str, status: u8, stdout: &str, stderr: &str) {
 fn a_number_too_large_is_placed_at_its_operation() {
     stops(
         "plus",
-        "main(m: MainArgs) {\n    n = int(m.args[0] else \"\") else 1;\n    m.stdout <- String(2^2^100 + n);\n}\n",
+        "main(m: MainArgs) {\n    n = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 1;\n    m.stdout <- String(2^2^100 + n);\n}\n",
         3,
         "",
         &format!(
@@ -91,7 +91,7 @@ fn a_number_too_large_is_placed_at_its_operation() {
 fn input_power(base: &str) -> String {
     format!(
         "main(m: MainArgs) {{\n    b = 2^64 + 13;\n    \
-         k = 2^64 + (int(m.args[0] else \"\") else 0);\n    \
+         k = 2^64 + (int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0);\n    \
          m.stdout <- if k >= 0 {{ String({base} ^ k) }} else {{ \"\" }};\n}}\n"
     )
 }

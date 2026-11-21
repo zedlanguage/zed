@@ -14,9 +14,9 @@ type Tx = #open(id: Utf8String) | #deposit(id: Utf8String, amt: int) | #withdraw
 
 parse(positional l) = {
   w = l.split(" ");
-  kind = w[0] else (#badEncoding | #ioError | #outOfBounds) -> "";
-  id = w[1] else (#badEncoding | #ioError | #outOfBounds) -> "";
-  amt = int(w[2] else (#badEncoding | #ioError | #outOfBounds) -> "") else #invalid -> 0;
+  kind = w[0] else (#ioError | #outOfBounds) -> "";
+  id = w[1] else (#ioError | #outOfBounds) -> "";
+  amt = int(w[2] else (#ioError | #outOfBounds) -> "") else #invalid -> 0;
   if kind == "open" { #open(id:) }
   else if kind == "dep" { #deposit(id:, amt:) }
   else if kind == "wd" { #withdraw(id:, amt:) }

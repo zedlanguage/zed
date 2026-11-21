@@ -57,10 +57,10 @@ fn keys_of_reads_are_checked_as_data_in_linear_time() {
     // `n` plain reads `c[(leaf, 1)]`, then `n` reads through `get`; with an integer leaf, each
     // key is found.
     let text = |n: usize, leaf: &str| {
-        let reads = vec![format!("c[({leaf}, 1)] else 0"); n];
+        let reads = vec![format!("c[({leaf}, 1)] else #notFound -> 0"); n];
         let calls = vec![format!("get(c, ({leaf}, 1))"); n];
         format!(
-            "scale(positional x) = x * int(2);\nget(positional c, positional k) = c[k] else 0;\n\
+            "scale(positional x) = x * int(2);\nget(positional c, positional k) = c[k] else #notFound -> 0;\n\
              c = {{ (1, 1) -> 1 }};\nu = ({});\nv = ({});\n",
             reads.join(", "),
             calls.join(", ")

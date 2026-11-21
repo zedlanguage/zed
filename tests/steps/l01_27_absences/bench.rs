@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 
 use zed_tests::scaling::{self, FACTOR};
 
+use zed_tests::step_helpers::l01_26_type_resolution::Resolved;
+
 use super::scaling::*;
 
 /// Runs `f` on a thread with a large stack: the parser and checker recurse once per operator
@@ -130,5 +132,33 @@ fn the_repairs_for_a_family_of_many_atoms_scale() {
         .collect();
     scaling::check_order("the repairs for a family of n atoms", 15000, 1, |n| {
         repairs_name_each_atom(&u, n, families[&n].clone())
+    });
+}
+
+/// Each bare `else` is refused once, its repair built from its operand's loose atoms alone, so
+/// the check is linear in the program (plan row ELSE-explicit-atoms). Coverage:
+/// `bare_else::each_bare_else_is_refused_once`.
+#[test]
+fn refusing_many_bare_elses_scales() {
+    let units: BTreeMap<usize, Resolved> = [1600, FACTOR * 1600]
+        .into_iter()
+        .map(|n| (n, Resolved::new(&super::bare_else::bare_else_units(n))))
+        .collect();
+    scaling::check_order("n bare `else`s, each refused", 1600, 1, |n| {
+        super::bare_else::each_bare_else_refused_once(&units[&n], n)
+    });
+}
+
+/// The repair of one bare `else` whose operand holds n loose atoms lists each once, a chain of
+/// n tails: O(n log n) to sort the names and O(n) bytes of text for a one-byte default.
+/// Coverage: `bare_else::the_repair_lists_each_of_many_atoms_once`.
+#[test]
+fn the_repair_of_an_else_over_many_atoms_scales() {
+    let units: BTreeMap<usize, Resolved> = [3000, FACTOR * 3000]
+        .into_iter()
+        .map(|n| (n, Resolved::new(&super::bare_else::many_atoms(n))))
+        .collect();
+    scaling::check_order("one bare `else` over n loose atoms", 3000, 1, |n| {
+        super::bare_else::lists_each_atom_once(&units[&n], n)
     });
 }

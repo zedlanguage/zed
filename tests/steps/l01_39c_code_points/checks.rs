@@ -43,12 +43,12 @@ fn a_failure_must_be_handled_before_a_string_is_written() {
     let src = |push: &str| format!("{PASS}main(m: MainArgs) {{\n  m.stdout <- {push};\n}}\n");
     let out = rejected(&src("scalar(whole(65))"));
     assert!(out.contains("String | #notScalar"), "{out}");
-    assert!(accepted(&src("scalar(whole(65)) else \"?\"")));
+    assert!(accepted(&src("scalar(whole(65)) else #notScalar -> \"?\"")));
     // On a literal the checker lists only the atoms its value gives (DESIGN sec:failure): 65 is
     // a scalar value, so `scalar(65)` is a `String` and needs no handling, and 55296, a
     // surrogate, always fails, which is rejected.
     assert!(accepted(&src("scalar(65)")));
-    let out = rejected(&src("scalar(55296) else \"?\""));
+    let out = rejected(&src("scalar(55296) else #notScalar -> \"?\""));
     assert!(out.contains("always fails"), "{out}");
 }
 
@@ -56,10 +56,10 @@ fn a_failure_must_be_handled_before_a_string_is_written() {
 fn a_code_point_is_in_the_domain_of_the_bit_words() {
     // The UTF-8 encoding of a scalar, the way a lexer writes it.
     let src = "c = codePoint(\"€\");\n\
-               lead = bitOr(224, shr(c, 12)) else 0;\n\
-               mid = bitOr(128, bitAnd(shr(c, 6), 63)) else 0;\n\
-               low = bitOr(128, bitAnd(\"€\".codePoint, 63)) else 0;\n\
-               wide = rotl(\"€\".codePoint(), 1, width: 21) else 0;\n";
+               lead = bitOr(224, shr(c, 12));\n\
+               mid = bitOr(128, bitAnd(shr(c, 6), 63));\n\
+               low = bitOr(128, bitAnd(\"€\".codePoint, 63));\n\
+               wide = rotl(\"€\".codePoint(), 1, width: 21);\n";
     let v = |n| zed_tests::step_helpers::l01_16_elaboration::value(src, n);
     assert!(accepted(src));
     assert_eq!(
@@ -106,9 +106,7 @@ fn a_code_point_returned_by_a_function_is_read_as_any_int() {
         ),
         "{out}"
     );
-    assert!(accepted(
-        "c = codePoint(\"a\");\nx = bitAnd(c, 1) else 0;\n"
-    ));
+    assert!(accepted("c = codePoint(\"a\");\nx = bitAnd(c, 1);\n"));
 }
 
 /// A word whose literal operand is never a scalar always fails, which the checker rejects
@@ -117,7 +115,7 @@ fn a_code_point_returned_by_a_function_is_read_as_any_int() {
 fn a_literal_that_is_never_a_scalar_is_rejected() {
     for (src, written) in [
         ("x = codePoint(\"ab\");\n", "\"ab\""),
-        ("x = codePoint(\"\") else -1;\n", "\"\""),
+        ("x = codePoint(\"\") else #notScalar -> -1;\n", "\"\""),
         ("x = scalar(55296);\n", "55296"),
     ] {
         let out = rejected(src);

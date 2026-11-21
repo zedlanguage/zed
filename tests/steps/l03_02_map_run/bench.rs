@@ -340,7 +340,9 @@ fn a_program_reading_a_range_with_no_upper_end_runs_in_constant_time() {
     let srcs: HashMap<usize, _> = scaling::inputs(N_KERNEL, |k| {
         program(
             &format!("open_reads_{k}"),
-            &format!("${{[(0 ..)[{k}] else -1, {k} in 0 .., (0 ..).first else -1]}}"),
+            &format!(
+                "${{[(0 ..)[{k}] else #outOfBounds -> -1, {k} in 0 .., (0 ..).first else #none -> -1]}}"
+            ),
         )
     });
     let run = |k: usize| {
@@ -361,10 +363,10 @@ fn a_walk_over_a_range_with_no_upper_end_runs_in_n_log_n_time() {
     // reads nothing past the deciding entry.
     let d = dir("l03_02_map_run/open_walk");
     let src = d.join("open_walk.zed");
-    let body = "${[(0 ..).map(x -> x * 2).where(x -> x >= n).first else -1, \
-                (0 ..).any(x -> x == n), (0 ..).find(x -> x >= n) else -1]}";
+    let body = "${[(0 ..).map(x -> x * 2).where(x -> x >= n).first else #none -> -1, \
+                (0 ..).any(x -> x == n), (0 ..).find(x -> x >= n) else #none -> -1]}";
     let text = format!(
-        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else 0;\n    m.stdout <- \"{body}\";\n}}\n"
+        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n    m.stdout <- \"{body}\";\n}}\n"
     );
     std::fs::write(&src, text).unwrap();
     let exe = d.join("open_walk");

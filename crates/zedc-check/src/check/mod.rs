@@ -4894,10 +4894,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             Some(i) => format!("component {i} of this value"),
         };
         let mut notes = self.entries(e.span, &dropped);
+        let chain = else_chain_of(&dropped, "#ok");
         let atoms = self.with_payloads(e.span, dropped);
         self.derive_into(&[e.span], &mut notes);
         let menu = [
-            "repair: write a default for the value, as `_ = … else #ok;`, so the text names what it drops".to_string(),
+            format!(
+                "repair: write a default for the value, as `_ = …{chain};`, so the text names what it drops"
+            ),
             "repair: handle each failure with a `match` on the value".to_string(),
             "repair: bind the value to a name, and use the name".to_string(),
         ];
@@ -5487,6 +5490,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if k.is_empty() {
                 continue;
             }
+            let (chain, dots) = (else_chain_of(&k, "#ok"), else_chain_of(&k, "…"));
             let k = Ty::set(k);
             let when = format!("when {what} is called as `{call}`");
             // Each headline shows the code that loses the atom with what it is at this call,
@@ -5496,7 +5500,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let (message, repairs) = match s.how {
                 fate::Boundary::Underscore => {
                     let stmt = site.trim_end().trim_end_matches(';');
-                    let fix = format!("{stmt} else #ok;");
+                    let fix = format!("{stmt}{chain};");
                     (
                         format!(
                             "`_` drops a loose failure: `{made_code}` may be {k} {when}. Try \
@@ -5529,7 +5533,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         vec![
                             format!(
                                 "repair: give a value of `{ty}` in place of {k}, as \
-                                 `{name}: {ty} = {d} else …`"
+                                 `{name}: {ty} = {d}{dots}`"
                             ),
                             format!("repair: write the type that holds the failure, as `{wide}`"),
                         ],
@@ -5537,7 +5541,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 fate::Boundary::Statement => {
                     let stmt = site.trim_end().trim_end_matches(';');
-                    let fix = format!("_ = {stmt} else #ok;");
+                    let fix = format!("_ = {stmt}{chain};");
                     (
                         format!(
                             "A statement drops a loose failure: `{made_code}` may be {k} \
@@ -5568,7 +5572,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         ),
                         vec![format!(
                             "repair: give the value to write in place of {k}, as \
-                             `{port} <- {} else …;`",
+                             `{port} <- {}{dots};`",
                             else_operand(&v)
                         )],
                     )
@@ -5582,7 +5586,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                          `{site}`,"
                     )),
                     vec![format!(
-                        "repair: handle the failure where it is made, as `{made_code} else …`, \
+                        "repair: handle the failure where it is made, as `{made_code}{dots}`, \
                          with the value to use in its place"
                     )],
                 ),
@@ -14496,6 +14500,17 @@ fn at_least_zero() -> IntervalSet {
 /// (DESIGN.md sec:failure). Empty for no atom. It costs the length of the text it writes.
 fn else_chain(atoms: &[String], d: &str) -> String {
     atoms.iter().map(|a| format!(" else {a} -> {d}")).collect()
+}
+
+/// [`else_chain`] for the atoms of `k`: ` else #a -> d else #b -> d`, one tail for each atom in
+/// the order of the printed type, or ` else … -> d` where `k` is every atom but some and so
+/// cannot be listed. A repair that writes an `else` uses it, so that the `else` it offers names
+/// the atoms it takes (QUESTIONS A113). It costs the length of the text it writes.
+fn else_chain_of(k: &KType, d: &str) -> String {
+    match k.atom_names() {
+        Some(names) => else_chain(&names.map(|(n, _)| format!("#{n}")).collect::<Vec<_>>(), d),
+        None => format!(" else … -> {d}"),
+    }
 }
 
 /// The code `c` as the operand of an `else`: as written where it is a name, a call or an

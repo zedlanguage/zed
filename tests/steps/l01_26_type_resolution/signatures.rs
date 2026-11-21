@@ -73,7 +73,7 @@ fn a_parameter_any_value_fits_gets_a_type_variable() {
         s.arrows[0].result.tuples,
         zedc::check::ty::Members::from(vec![Row::new(vec![a.clone(), b.clone()])])
     );
-    let s = sig_of("g(r) = r else 0;\n", "g");
+    let s = sig_of("g(r) = r else #a -> 0;\n", "g");
     assert_eq!(s.to_string(), "(r: T) -> 0 | T");
     // The `T` of the result is what `else` leaves of `r`: its own variable, which a call
     // gives as the argument without its atoms (CHECK-else-notfound).

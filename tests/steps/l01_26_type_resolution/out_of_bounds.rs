@@ -13,7 +13,7 @@ use zed_tests::step_helpers::l01_19_whole_file_ports::run;
 /// first line, key 0, each read written with the handler of its atom.
 const READS: &str = "main(m: MainArgs) {\n  \
      t = (10, 20, 30);\n  \
-     i = int(m.stdin[0]) else 0;\n  \
+     i = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  \
      line = m.stdin[i] else #outOfBounds -> \"no line\" else #ioError -> \"unreadable\";\n  \
      arg = m.args[i] else #outOfBounds -> \"no argument\";\n  \
      next = t[i] + 1 else #outOfBounds -> -1;\n  \
@@ -94,7 +94,7 @@ fn a_map_parameter_keeps_not_found_and_a_generic_read_misses_as_its_argument() {
             "get(m: int ->? String, k: int) = m(k);\n\
              pick(a, k) = a[k];\n\
              main(m: MainArgs) {{\n  \
-             i = int(m.stdin[0]) else 0;\n  \
+             i = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  \
              viaMap = get(m: m.args, k: i) else #notFound -> \"map miss\";\n  \
              viaPick = pick(a: m.args, k: i) else {atom} -> \"generic miss\";\n  \
              m.stdout <- \"${{viaMap}} | ${{viaPick}}\";\n}}\n"
@@ -117,7 +117,7 @@ fn a_map_parameter_keeps_not_found_and_a_generic_read_misses_as_its_argument() {
         type_errors(&src("#notFound")),
         ["A `Lines` port takes a `String` or a family of strings: \
              `m.stdout <- \"${viaMap} | ${viaPick}\" : String | #outOfBounds`. \
-             Try `m.stdout <- (\"${viaMap} | ${viaPick}\") else \"\";` instead. \
+             Try `m.stdout <- (\"${viaMap} | ${viaPick}\") else #outOfBounds -> \"\";` instead. \
              [\"${viaMap} | ${viaPick}\"]"]
     );
 }
@@ -131,7 +131,7 @@ fn a_key_outside_every_key_is_rejected() {
         ]
     );
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- m.args[\"x\"] else \"none\";\n}\n";
+               m.stdout <- m.args[\"x\"] else #outOfBounds -> \"none\";\n}\n";
     let out = run("oob_disjoint", src, "", &["--", "a"]);
     assert_eq!(out.status, 1);
     assert!(

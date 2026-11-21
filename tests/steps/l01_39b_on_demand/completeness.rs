@@ -35,7 +35,7 @@ fn an_accepted_unit_of_each_construct_builds_no_derivation_and_no_preimage() {
             "f(1)",
         ),
         with_main(
-            "s(positional x: int) = scalar(x) else \"?\";\n",
+            "s(positional x: int) = scalar(x) else #notScalar -> \"?\";\n",
             "s(-1) ++ s(65)",
         ),
         with_main("", "codePoint(\"a\") + len(\"ab\")"),

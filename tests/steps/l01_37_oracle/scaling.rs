@@ -28,7 +28,7 @@ pub(super) fn unit_of(front: &Front) -> &Unit {
     u
 }
 
-pub(super) const ECHO: &str = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n";
+pub(super) const ECHO: &str = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n}\n";
 
 /// `n` lines of input.
 pub(super) fn lines(n: usize) -> Vec<u8> {

@@ -184,12 +184,12 @@ fn cases() -> Vec<(&'static str, &'static str, Term)> {
         ),
         (
             "find_the_first_key",
-            "${[3, 1, 4, 1, 5].find(x -> x > 3) else -1}",
+            "${[3, 1, 4, 1, 5].find(x -> x > 3) else #none -> -1}",
             find(xs(), big, -1),
         ),
         (
             "find_no_key",
-            "${[3, 1, 4, 1, 5].find(x -> x > 9) else -1}",
+            "${[3, 1, 4, 1, 5].find(x -> x > 9) else #none -> -1}",
             find(xs(), |v| lt(lit(9), v), -1),
         ),
         (
@@ -362,8 +362,8 @@ fn an_empty_separator_gives_the_failure_when_the_program_runs() {
     let src = dir("l03_15a_fp_ops_run/empty_separator").join("empty_separator.zed");
     let text = "parts(s: String, d: String) = s.split(d);\n\
                 main(m: MainArgs) {\n    m.stdout <- \"${parts(s: \"hé€\", d: \"\") == #emptySeparator} \
-                ${concat(parts(s: \"a,,b\", d: \",\") else [\"?\"], sep: \"|\")} \
-                ${concat(parts(s: \"a,,b\", d: \"\") else [\"?\"], sep: \"|\")}\";\n}\n";
+                ${concat(parts(s: \"a,,b\", d: \",\") else #emptySeparator -> [\"?\"], sep: \"|\")} \
+                ${concat(parts(s: \"a,,b\", d: \"\") else #emptySeparator -> [\"?\"], sep: \"|\")}\";\n}\n";
     std::fs::write(&src, text).unwrap();
     let want = "true a||b ?\n";
     let ran = interpreter(&src, &[], &[]);

@@ -54,8 +54,9 @@ pub(super) fn rejected_rows(n: usize) -> String {
 /// `main` with `n` tables, each with a clause giving `main::files` and `rows` rows, every row
 /// reading the file its clause gives.
 pub(super) fn clause_tables(n: usize, rows: usize) -> String {
-    let mut text =
-        String::from("main(m: MainArgs) {\n  m.stdout <- main::files[\"a\"] else \"\";\n}\n");
+    let mut text = String::from(
+        "main(m: MainArgs) {\n  m.stdout <- main::files[\"a\"] else #ioError -> \"\" else #notFound -> \"\";\n}\n",
+    );
     for i in 0..n {
         let row = format!("\"\" -> \"{i}\\n\"");
         let rows = vec![row; rows].join(", ");

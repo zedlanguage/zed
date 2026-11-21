@@ -21,7 +21,7 @@ fn signals_read_without_handles_is_rejected_with_the_header_that_declares_it() {
     for (name, src, headline) in [
         (
             "result",
-            "main(m: MainArgs) -> int {\n  s = m.signals[0] == #sigint else false;\n  \
+            "main(m: MainArgs) -> int {\n  s = m.signals[0] == #sigint;\n  \
              m.stdout <- if s { \"stopping\" } else { \"\" };\n}\n",
             "2:7: `m.signals` is read, and `main` takes over no signal: \
              `main(m: MainArgs) -> int with handles(#sigint)`.\n",
@@ -140,7 +140,7 @@ fn a_declaration_that_holds_is_not_compiled_yet() {
     ] {
         let src = format!(
             "main(m: MainArgs) -> int with {facet} {{\n  \
-             stopped = m.signals[0] == #sigint else false;\n  \
+             stopped = m.signals[0] == #sigint;\n  \
              m.stdout <- if stopped {{ \"stopping\" }} else {{ \"\" }};\n}}\n"
         );
         let out = run(name, &src, "", &[]);

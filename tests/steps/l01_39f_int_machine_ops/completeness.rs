@@ -247,7 +247,7 @@ fn a_failure_passes_through_each_word() {
     assert_eq!(x("pext(#oops, 3)"), "#oops");
     assert_eq!(x("funnelShr(1, 1, #late, width: 8)"), "#late");
     assert_eq!(x("funnelShl(#a, #b, 1, width: 8)"), x("#a + #b"));
-    assert_eq!(x("bitReverse(#oops, width: 8) else 3"), "3");
+    assert_eq!(x("bitReverse(#oops, width: 8) else #oops -> 3"), "3");
 }
 
 #[test]

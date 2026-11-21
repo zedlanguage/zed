@@ -25,7 +25,7 @@ fn scalar_refuses_every_int_that_is_not_a_scalar_value() {
         assert_eq!(x(&format!("scalar(whole({n}))")), "#notScalar", "{n}");
     }
     for n in ["0", "55295", "57344", "1114111"] {
-        assert_eq!(x(&format!("codePoint(scalar({n}) else \"\")")), n, "{n}");
+        assert_eq!(x(&format!("codePoint(scalar({n}))")), n, "{n}");
     }
 }
 
@@ -48,7 +48,7 @@ fn from_utf8_of_utf8_is_the_string() {
     }
     // The last scalar prints escaped; the round trip still compares equal.
     assert_eq!(
-        x("fromUtf8(utf8(scalar(1114111) else \"\")) == scalar(1114111)"),
+        x("fromUtf8(utf8(scalar(1114111))) == scalar(1114111)"),
         "true"
     );
 }
@@ -72,9 +72,9 @@ fn a_rope_is_read_as_its_text() {
 fn the_failures_pass_through_else() {
     let src = "text(positional v: String) = v;\n\
                whole(positional v: int) = v;\n\
-               digit = codePoint(\"7\") - codePoint(\"0\") else -1;\n\
-               none = codePoint(text(\"77\")) else -1;\n\
-               shown = scalar(whole(55296)) else \"?\";\n";
+               digit = codePoint(\"7\") - codePoint(\"0\");\n\
+               none = codePoint(text(\"77\")) else #notScalar -> -1;\n\
+               shown = scalar(whole(55296)) else #notScalar -> \"?\";\n";
     let v = |n| zed_tests::step_helpers::l01_16_elaboration::value(src, n);
     assert_eq!(v("digit"), "7");
     assert_eq!(v("none"), "-1");

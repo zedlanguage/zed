@@ -2398,8 +2398,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             );
             return;
         }
-        // `e else d;` drops only `d`, so it is accepted when every other member of `e` is a
-        // loose failure (DESIGN.md sec:tour_methods; L6.3, `c*.m() else #ok;`).
+        // `e else #a -> d;` drops only `d`, so it is accepted when every other member of `e` is
+        // a loose failure (DESIGN.md sec:tour_methods; L6.3, `c*.m() else #a -> #ok;`).
         let kept = match &value.kind {
             ExprKind::Else { of, .. } => match self.seen.get(&of.span) {
                 Some((Some(t), _)) => t.without_loose(),
@@ -2414,11 +2414,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The result is dropped in writing by `_ = …`, which takes a default for each loose
         // failure the result may be ([`Ck::discard`]).
         let shown = code(value);
-        let dropped = if v.loose().is_empty() {
-            format!("_ = {shown};")
-        } else {
-            format!("_ = {shown} else #ok;")
-        };
+        // The default names each loose atom it takes (QUESTIONS A113), none when there is none.
+        let dropped = format!("_ = {shown}{};", super::else_chain_of(&v.loose(), "#ok"));
         let mut notes = vec![
             Note {
                 span: value.span,
@@ -18436,24 +18433,27 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         if !ok && t.vars.is_empty() {
             // Each repair is written with the value's code, where the checker has it on one line:
-            // an `else` with no pattern writes an empty line for every atom, whichever atoms
-            // the value holds, and a string interpolation writes any data as text.
+            // an `else` that names each loose atom of the value writes an empty line in place of
+            // each (QUESTIONS A113: every `else` names the atoms it takes), and a string
+            // interpolation writes any data as text, a family's atoms among it.
             let code = (self.t.text)
                 .and_then(|s| s.get(span.start..span.end))
                 .map(str::trim)
                 .filter(|c| !c.is_empty() && !c.contains('\n'));
-            let atoms = !t.atoms().is_empty();
+            let loose = t.loose();
+            let atoms = !loose.is_empty();
+            let empty = super::else_chain_of(&loose, "\"\"");
             let rest = t.without_atoms();
             let text = push_strings(&rest.set) && push_plain(&rest) && rest.fns.is_empty();
             // The first repair as code, which the headline ends with, and its note.
             let first = match code {
                 Some(c) if atoms && text => Some((
                     "write an empty line in place of each atom",
-                    format!("{port} <- {} else \"\";", else_operand(c)),
+                    format!("{port} <- {}{empty};", else_operand(c)),
                 )),
                 Some(c) if atoms && t.fns.is_empty() => Some((
                     "write the value into a string, and an empty line in place of each atom",
-                    format!("{port} <- \"${{{c}}}\" else \"\";"),
+                    format!("{port} <- \"${{{c}}}\"{empty};"),
                 )),
                 Some(c) if t.fns.is_empty() => Some((
                     "write the value into a string",

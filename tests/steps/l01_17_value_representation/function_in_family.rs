@@ -73,10 +73,26 @@ fn a_missed_key_gives_not_found_and_else_its_default() {
     let ks = "ks = [\"a\", \"z\"];\n";
     assert_eq!(a(&format!("{ks}a = b[ks[1]];\n")), "#notFound");
     assert_eq!(a(&format!("{ks}a = b[ks[1]](2);\n")), "#notFound");
-    assert_eq!(a(&format!("{ks}a = b[ks[1]](2) else -1;\n")), "-1");
-    assert_eq!(a(&format!("{ks}a = b[ks[0]](2) else -1;\n")), "3");
-    assert_eq!(a(&format!("{ks}a = (b[ks[1]] else (y -> 0))(5);\n")), "0");
-    assert_eq!(a(&format!("{ks}a = (b[ks[0]] else (y -> 0))(5);\n")), "6");
+    assert_eq!(
+        a(&format!("{ks}a = b[ks[1]](2) else #notFound -> -1;\n")),
+        "-1"
+    );
+    assert_eq!(
+        a(&format!("{ks}a = b[ks[0]](2) else #notFound -> -1;\n")),
+        "3"
+    );
+    assert_eq!(
+        a(&format!(
+            "{ks}a = (b[ks[1]] else #notFound -> (y -> 0))(5);\n"
+        )),
+        "0"
+    );
+    assert_eq!(
+        a(&format!(
+            "{ks}a = (b[ks[0]] else #notFound -> (y -> 0))(5);\n"
+        )),
+        "6"
+    );
     assert_eq!(a(&format!("{ks}a = ks[1] in b;\n")), "false");
 }
 
@@ -292,40 +308,40 @@ fn a_key_that_holds_a_function_is_rejected_at_a_read() {
     for (body, want, at) in [
         // The family and the key both parameters: the call meets the read with both types.
         (
-            "get(positional c, positional k) = c[k] else 0;\na = get({ 1 -> 1 }, (f, 1));\n",
+            "get(positional c, positional k) = c[k] else #notFound -> 0;\na = get({ 1 -> 1 }, (f, 1));\n",
             "`(int -> int, 1)` in `get({ 1 -> 1 }, (f, 1))`.",
             "get({ 1 -> 1 }, (f, 1))",
         ),
         // The key a function itself.
         (
-            "get(positional c, positional k) = c[k] else 0;\na = get({ 1 -> 1 }, f);\n",
+            "get(positional c, positional k) = c[k] else #notFound -> 0;\na = get({ 1 -> 1 }, f);\n",
             "`int -> int` in `get({ 1 -> 1 }, f)`.",
             "get({ 1 -> 1 }, f)",
         ),
         // The key built on its own, under a name.
         (
-            "pair = (f, 1);\nget(positional c, positional k) = c[k] else 0;\n\
+            "pair = (f, 1);\nget(positional c, positional k) = c[k] else #notFound -> 0;\n\
              a = get({ 1 -> 1 }, pair);\n",
             "`(int -> int, 1)` in `get({ 1 -> 1 }, pair)`.",
             "get({ 1 -> 1 }, pair)",
         ),
         // The family known, the key a parameter.
         (
-            "c = { 1 -> 1 };\nget(positional k) = c[k] else 0;\na = get((f, 1));\n",
+            "c = { 1 -> 1 };\nget(positional k) = c[k] else #notFound -> 0;\na = get((f, 1));\n",
             "`(int -> int, 1)` in `get((f, 1))`.",
             "get((f, 1))",
         ),
         // The key on its own, read with no call between.
         (
-            "c = { 1 -> 1 };\na = c[(f, 1)] else 0;\n",
+            "c = { 1 -> 1 };\na = c[(f, 1)] else #notFound -> 0;\n",
             "`(f, 1) : (int -> int, 1)` in `c[(f, 1)]`.",
             "c[(f, 1)]",
         ),
         // A lambda applied at once.
         (
-            "c = { 1 -> 1 };\na = ((k) -> c[k] else 0)((f, 1));\n",
-            "`(int -> int, 1)` in `((k) -> c[k] else 0)((f, 1))`.",
-            "((k) -> c[k] else 0)((f, 1))",
+            "c = { 1 -> 1 };\na = ((k) -> c[k] else #notFound -> 0)((f, 1));\n",
+            "`(int -> int, 1)` in `((k) -> c[k] else #notFound -> 0)((f, 1))`.",
+            "((k) -> c[k] else #notFound -> 0)((f, 1))",
         ),
     ] {
         let src = format!("{f}{body}");
@@ -336,7 +352,7 @@ fn a_key_that_holds_a_function_is_rejected_at_a_read() {
     let src = format!("{f}ap(positional c, positional k) = c[k];\na = ap((x -> 1), f);\n");
     assert_eq!(value(&src, "a"), "1", "{src}");
     // A key of data in the same reads is found.
-    let src = "get(positional c, positional k) = c[k] else 0;\na = get({ (1, 1) -> 5 }, (1, 1));\n";
+    let src = "get(positional c, positional k) = c[k] else #notFound -> 0;\na = get({ (1, 1) -> 5 }, (1, 1));\n";
     assert_eq!(value(src, "a"), "5", "{src}");
 }
 

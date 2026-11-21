@@ -9,7 +9,7 @@ use super::{dir, run};
 #[test]
 fn a_port_bound_on_the_command_line_is_a_usage_error() {
     let src = "main(m: MainArgs) {\n  \
-               m.stdout <- \"${m.stdin[0] else \"\"}\\n${m.stdin[1] else \"\"}\";\n}\n";
+               m.stdout <- \"${m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\"}\\n${m.stdin[1] else #ioError -> \"\" else #outOfBounds -> \"\"}\";\n}\n";
     let out = run("report", src, "total: 42\nitems: 3\n", &[]);
     assert_eq!(
         (out.status, out.stdout.as_str()),
@@ -83,7 +83,7 @@ fn a_port_pushed_twice_in_one_wave_is_an_error() {
 /// (l01_29_repairs_and_printing::too_large).
 #[test]
 fn a_number_too_large_to_build_stops_the_run() {
-    let src = "main(m: MainArgs) {\n  n = int(m.args[0] else \"\") else 1;\n  \
+    let src = "main(m: MainArgs) {\n  n = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 1;\n  \
                m.stdout <- \"start\";\n  m.stdout <- String(2^2^100 + n);\n}\n";
     let out = run("too_large", src, "", &[]);
     // Running out of memory is a fault of the run, status 3 (MAIN-limits; DESIGN.md sec:ports).
@@ -104,7 +104,7 @@ fn a_number_too_large_to_build_stops_the_run() {
 /// the input, as above; `String(2^2^100)` is rejected at compile time.
 #[test]
 fn printing_a_number_too_large_to_build_stops_the_run() {
-    let src = "main(m: MainArgs) {\n  n = int(m.args[0] else \"\") else 1;\n  \
+    let src = "main(m: MainArgs) {\n  n = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 1;\n  \
                m.stdout <- String(2^2^100 * n);\n}\n";
     let out = run("print_too_large", src, "", &[]);
     assert_eq!(out.status, 3, "{}", out.stderr);
@@ -258,7 +258,7 @@ const USAGE: &str = "The forms are:\n  \
 
 #[test]
 fn usage_errors_exit_2() {
-    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n}\n";
     let out = run("usage", src, "", &["nosuch=x"]);
     assert_eq!(
         (out.status, out.stderr.as_str()),
@@ -326,7 +326,7 @@ fn an_empty_level_pushed_writes_no_line() {
 #[test]
 fn a_file_zedc_cannot_use_is_named_with_the_reason() {
     let missing = "/nonexistent-dir-l01-19/in.txt";
-    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n}\n";
     let out = super::zedc(&["run", missing], "");
     assert_eq!(
         (out.status, out.stderr.as_str()),

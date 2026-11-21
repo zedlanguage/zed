@@ -63,7 +63,11 @@ pub(super) fn discards(n: usize, tail: &str) -> String {
 /// The two kinds of `n` discards: accepted, each with its default, and rejected, each with its
 /// error and derivation; with the errors each binding gets.
 pub(super) const DISCARDS: [(&str, &str, usize); 2] = [
-    ("n bindings of `_` with an `else` default", " else 0", 0),
+    (
+        "n bindings of `_` with an `else` default",
+        " else #notFound -> 0",
+        0,
+    ),
     ("n bindings of `_` that drop a failure", "", 1),
 ];
 
@@ -108,7 +112,7 @@ fn a_dropped_failure_behind_names_is_found_where_it_enters() {
 pub(super) fn defaulted_branches(n: usize, last: &str) -> String {
     let mut t = String::from("lookup(positional k: int) = if k > 0 { k } else { #notFound };\n");
     let arms: Vec<String> = (0..n)
-        .map(|i| format!("if c > {i} {{ lookup({i}) else #ok }}"))
+        .map(|i| format!("if c > {i} {{ lookup({i}) else #notFound -> #ok }}"))
         .collect();
     t.push_str(&format!(
         "f(positional c: int) = {{\n  _ = {} else {{ lookup({n}){last} }};\n  0\n}};\n",
@@ -120,7 +124,11 @@ pub(super) fn defaulted_branches(n: usize, last: &str) -> String {
 /// The two last branches of [`defaulted_branches`], with a default and without, and the errors
 /// each gives.
 pub(super) const LAST_BRANCHES: [(&str, &str, usize); 2] = [
-    ("an `if` of n branches, each with a default", " else #ok", 0),
+    (
+        "an `if` of n branches, each with a default",
+        " else #notFound -> #ok",
+        0,
+    ),
     ("an `if` of n branches, the last without a default", "", 1),
 ];
 
@@ -142,15 +150,15 @@ fn each_defaulted_branch_is_checked_alone() {
     }
 }
 
-/// `_ = if c { y else #ok } else if c { … } … else { y else #ok };` in a function of `c`, after
-/// `y = lookup(1);`: `n` branches, each naming the miss of the one name `y`. Each branch costs
+/// `_ = if c { y else #notFound -> #ok } else if c { … } … else { y else #notFound -> #ok };`
+/// in a function of `c`, after `y = lookup(1);`: `n` branches, each naming the miss of the one name `y`. Each branch costs
 /// the checker little, so a walk over each `if`'s branches, even one that only counts them,
 /// costs more than the rest of the check at these sizes.
 pub(super) fn defaulted_names(n: usize) -> String {
     let mut t = String::from("lookup(positional k: int) = if k > 0 { k } else { #notFound };\n");
-    let arms = vec!["if c { y else #ok }"; n];
+    let arms = vec!["if c { y else #notFound -> #ok }"; n];
     t.push_str(&format!(
-        "f(positional c: bool) = {{\n  y = lookup(1);\n  _ = {} else {{ y else #ok }};\n  0\n}};\n",
+        "f(positional c: bool) = {{\n  y = lookup(1);\n  _ = {} else {{ y else #notFound -> #ok }};\n  0\n}};\n",
         arms.join(" else ")
     ));
     t
@@ -175,7 +183,7 @@ pub(super) fn generic_calls(n: usize) -> String {
     );
     for i in 0..n {
         t.push_str(&format!(
-            "_ = apply(lookup, {i}) else #ok;\n_ = id(lookup({i}) else #ok);\n"
+            "_ = apply(lookup, {i}) else #notFound -> #ok;\n_ = id(lookup({i}) else #notFound -> #ok);\n"
         ));
     }
     t

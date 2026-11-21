@@ -12,7 +12,7 @@ use zedc::testing::test;
 /// Writes the last of its `n` lines, so the wave reads the whole input.
 pub(super) fn last_line(n: usize) -> Program {
     let src = format!(
-        "main(m: MainArgs) {{\n  m.stdout <- m.stdin[{}] else \"\";\n}}\n",
+        "main(m: MainArgs) {{\n  m.stdout <- m.stdin[{}] else #ioError -> \"\" else #outOfBounds -> \"\";\n}}\n",
         n - 1
     );
     load(src.as_bytes()).unwrap()
@@ -90,7 +90,7 @@ fn rows_still_run_when_the_program_is_refused() {
     // that read different fields have different parameter types: the unit is accepted,
     // `run::program` refuses it as a program, and the table of `next` still runs.
     let text = "main(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n\
-                main(m: MainArgs) {\n  m.stdout <- m.args[0] else \"\";\n}\n\
+                main(m: MainArgs) {\n  m.stdout <- m.args[0] else #outOfBounds -> \"\";\n}\n\
                 next(positional x) = x + 1\ntest {\n  1 -> 2,\n  2 -> 4\n}\n";
     let outcomes: Vec<(usize, Option<String>)> = test(text)
         .into_iter()
@@ -146,7 +146,7 @@ fn a_second_main_is_a_duplicate_and_no_row_runs() {
 }
 
 /// The program `zedc run` runs on a file of lines: it writes the first.
-pub(super) const FIRST_LINE: &str = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else \"\";\n}\n";
+pub(super) const FIRST_LINE: &str = "main(m: MainArgs) {\n  m.stdout <- m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n}\n";
 
 /// `zedc run program` with the file `input` on standard input: it writes `line 0`.
 pub(super) fn runs_on_the_file(program: &std::path::Path, input: &std::path::Path) {

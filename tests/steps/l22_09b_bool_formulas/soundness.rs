@@ -261,9 +261,9 @@ sw2(y: int, k: int) = (5 div y) >= inv(k: k);
 sw3(y: int, k: int) = inv(k: k) > (5 div y);
 
 main(m: MainArgs) {
-  y = int(m.args[0] else \"\") else 1;
-  x = int(m.args[1] else \"\") else 1;
-  k = int(m.args[2] else \"\") else 0;
+  y = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 1;
+  x = int(m.args[1] else #outOfBounds -> \"\") else #invalid -> 1;
+  k = int(m.args[2] else #outOfBounds -> \"\") else #invalid -> 0;
   m.stdout <- \"1 ${hi(x: 7, y: y)}\" ++ \" \" ++
   \"2 ${any(x: x, y: y) else #divByZero -> 9}\" ++ \" \" ++
   \"3 ${(if lo(x: 2, y: y) { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
@@ -306,7 +306,7 @@ dz(k: int) = (5 div k) > 0;
 
 main(m: MainArgs) {
   d = dz(k: 0);
-  b = (m.args[0] else \"\") == \"t\";
+  b = (m.args[0] else #outOfBounds -> \"\") == \"t\";
   m.stdout <- \"1 ${(if d && b { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
   \"2 ${(if b && d { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++
   \"3 ${(if d || b { 1 } else { 0 }) else #divByZero -> 9}\" ++ \" \" ++

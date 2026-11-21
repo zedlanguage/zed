@@ -14,10 +14,10 @@ fn a_function_other_than_main_reads_main_files() {
     std::fs::write(&a, "hi").unwrap();
     // One helper before `main` and one after it, the second reading in a string hole.
     let src = format!(
-        "size(positional p) = main::files[p] else \"none\";\n\
+        "size(positional p) = main::files[p] else #ioError -> \"none\" else #notFound -> \"none\";\n\
          main(m: MainArgs) {{\n  m.stdout <- size(\"{a}\");\n  \
          m.stderr <- show(\"{b}\");\n}}\n\
-         show(positional p) = \"[${{main::files[p] else \"-\"}}]\";\n",
+         show(positional p) = \"[${{main::files[p] else #ioError -> \"-\" else #notFound -> \"-\"}}]\";\n",
         a = a.display(),
         b = d.join("absent.txt").display()
     );
@@ -29,7 +29,7 @@ fn a_function_other_than_main_reads_main_files() {
     // `main` opens the port once, whether its body reads it, a helper does, or both.
     let both = src.replace(
         "  m.stdout <- size(",
-        "  fs = main::files;\n  m.stderr <- fs[\"x\"] else \"\";\n  m.stdout <- size(",
+        "  fs = main::files;\n  m.stderr <- fs[\"x\"] else #ioError -> \"\" else #notFound -> \"\";\n  m.stdout <- size(",
     );
     let program = load(both.as_bytes()).unwrap();
     let files: Vec<_> = (program.inputs().iter())
@@ -89,12 +89,12 @@ fn the_old_call_files_is_rejected_with_main_files() {
     for (name, src, at) in [
         (
             "old_files",
-            "main(m: MainArgs) {\n  fs = files();\n  m.stdout <- fs[\"a\"] else \"\";\n}\n",
+            "main(m: MainArgs) {\n  fs = files();\n  m.stdout <- fs[\"a\"] else #ioError -> \"\" else #notFound -> \"\";\n}\n",
             "2:8",
         ),
         (
             "old_files_call",
-            "f(positional p) = files()(p) else \"\";\nmain(m: MainArgs) {\n  \
+            "f(positional p) = files()(p) else #ioError -> \"\" else #notFound -> \"\";\nmain(m: MainArgs) {\n  \
              m.stdout <- f(\"a\");\n}\n",
             "1:19",
         ),
@@ -127,11 +127,11 @@ fn main_files_in_a_unit_without_main_names_the_programs_port() {
     // A library reads the program's file port as every function does (QUESTIONS Q54); its
     // test table's clause gives the port to its rows, and a row of a table without the clause
     // fails at the read, naming the repair.
-    let src = "size(positional p) = main::files[p] else \"none\"\n  \
+    let src = "size(positional p) = main::files[p] else #ioError -> \"none\" else #notFound -> \"none\"\n  \
                test with main::files = q -> if q == \"a\" { \"x\" } else { #notFound } \
                { \"a\" -> \"x\", \"b\" -> \"none\", \"a\" -> \"y\" }\n  \
                test { \"a\" -> \"x\" }\n\
-               show(positional p) = \"[${(main)::files[p] else \"-\"}]\"\n  \
+               show(positional p) = \"[${(main)::files[p] else #ioError -> \"-\" else #notFound -> \"-\"}]\"\n  \
                test with main::files = (q -> \"1\") { \"a\" -> \"[1]\" }\n";
     assert_eq!(
         checks(src),
@@ -155,10 +155,10 @@ fn main_files_in_parentheses_is_main_files() {
     let a = d.join("a.txt");
     std::fs::write(&a, "hi").unwrap();
     let src = format!(
-        "size(positional p) = (main)::files[p] else \"none\";\n\
+        "size(positional p) = (main)::files[p] else #ioError -> \"none\" else #notFound -> \"none\";\n\
          main(m: MainArgs) {{\n  fs = ((main))::files;\n  \
-         m.stdout <- size(\"{a}\") ++ (fs[\"{a}\"] else \"-\") ++ show(\"{a}\");\n}}\n\
-         show(positional p) = \"[${{(main)::files[p] else \"-\"}}]\";\n",
+         m.stdout <- size(\"{a}\") ++ (fs[\"{a}\"] else #ioError -> \"-\" else #notFound -> \"-\") ++ show(\"{a}\");\n}}\n\
+         show(positional p) = \"[${{(main)::files[p] else #ioError -> \"-\" else #notFound -> \"-\"}}]\";\n",
         a = a.display(),
     );
     let out = run("outside_parens", &src, "", &[]);
@@ -274,7 +274,7 @@ fn a_record_of_a_helper_read_replays_and_names_main_files() {
     std::fs::write(&a, "hi").unwrap();
     let rec = d.join("run.record");
     let src = format!(
-        "size(positional p) = main::files[p] else \"none\";\n\
+        "size(positional p) = main::files[p] else #ioError -> \"none\" else #notFound -> \"none\";\n\
          main(m: MainArgs) {{\n  m.stdout <- size(\"{}\");\n}}\n",
         a.display()
     );
@@ -297,7 +297,9 @@ fn a_record_of_a_helper_read_replays_and_names_main_files() {
 pub(super) fn helpers(n: usize) -> String {
     let mut src = String::new();
     for i in 0..n {
-        src.push_str(&format!("b{i}(positional p) = main::files[p] else \"\";\n"));
+        src.push_str(&format!(
+            "b{i}(positional p) = main::files[p] else #ioError -> \"\" else #notFound -> \"\";\n"
+        ));
     }
     src.push_str("main(m: MainArgs) {\n  m.stdout <- \"\"");
     for i in 0..n {
@@ -305,7 +307,9 @@ pub(super) fn helpers(n: usize) -> String {
     }
     src.push_str(";\n}\n");
     for i in 0..n {
-        src.push_str(&format!("a{i}(positional p) = main::files[p] else \"\";\n"));
+        src.push_str(&format!(
+            "a{i}(positional p) = main::files[p] else #ioError -> \"\" else #notFound -> \"\";\n"
+        ));
     }
     src
 }
@@ -335,7 +339,7 @@ fn a_function_given_to_map_reads_main_files() {
     std::fs::write(&a, "A").unwrap();
     std::fs::write(&b, "B").unwrap();
     let src = format!(
-        "text(p: String) = main::files[p] else \"-\";\n\
+        "text(p: String) = main::files[p] else #ioError -> \"-\" else #notFound -> \"-\";\n\
          main(m: MainArgs) {{\n  names = [\"{a}\", \"{b}\", \"{c}\"];\n  \
          m.stdout <- \"${{names.map(text)}}\";\n}}\n",
         a = a.display(),
@@ -383,7 +387,7 @@ fn a_function_reading_main_files_runs_under_every_higher_order_form() {
         ),
         (
             "lambda",
-            "names.map(p -> main::files[p] else \"?\")",
+            "names.map(p -> main::files[p] else #ioError -> \"?\" else #notFound -> \"?\")",
             "{0 -> \"A\", 1 -> \"B\", 2 -> \"?\"}",
         ),
         (
@@ -393,7 +397,7 @@ fn a_function_reading_main_files_runs_under_every_higher_order_form() {
         ),
     ] {
         let src = format!(
-            "text(positional p: String) = main::files[p] else \"-\";\n\
+            "text(positional p: String) = main::files[p] else #ioError -> \"-\" else #notFound -> \"-\";\n\
              loud(positional p: String) = text(p) ++ \"!\";\n\
              main(m: MainArgs) {{\n  names = {names};\n  m.stdout <- \"${{{expr}}}\";\n}}\n"
         );
@@ -409,8 +413,7 @@ fn a_function_reading_main_files_runs_under_every_higher_order_form() {
 /// Standard input read by a lambda given to `map` is read inside the map as it is outside.
 #[test]
 fn standard_input_is_read_inside_a_map() {
-    let src =
-        "main(m: MainArgs) {\n  m.stdout <- \"${[0, 1, 2].map(i -> m.stdin[i] else \"-\")}\";\n}\n";
+    let src = "main(m: MainArgs) {\n  m.stdout <- \"${[0, 1, 2].map(i -> m.stdin[i] else #ioError -> \"-\" else #notFound -> \"-\" else #outOfBounds -> \"-\")}\";\n}\n";
     let out = run("mapped_stdin", src, "x\ny\n", &[]);
     assert_eq!(
         (out.status, out.stdout.as_str(), out.stderr.as_str()),

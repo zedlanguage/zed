@@ -7,7 +7,7 @@
 struct Entry { name: Utf8String, score: int }
 
 main(m: MainArgs) {
-  es  = m.stdin.map(l -> { w = l.split(" "); Entry(name: w[0] else (#badEncoding | #ioError | #outOfBounds) -> "", score: int(w[1] else (#badEncoding | #ioError | #outOfBounds) -> "") else #invalid -> 0) });
+  es  = m.stdin.map(l -> { w = l.split(" "); Entry(name: w[0] else (#ioError | #outOfBounds) -> "", score: int(w[1] else (#ioError | #outOfBounds) -> "") else #invalid -> 0) });
   top = es.sort(desc e -> e.score, asc e -> e.name).take(3);
   m.stdout <- for i -> e in top { "${i + 1} ${e.name} ${e.score}" };
 }

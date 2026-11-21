@@ -13,7 +13,7 @@ fn report(src: &str) -> String {
 
 /// A function whose parameter `f` is a partial function: a value passed at `f` takes the type
 /// `(x: int | f64) ->? int`.
-const APPLY: &str = "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 6;\n";
+const APPLY: &str = "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\n";
 
 /// The entry `e` of `xs` is passed at `f`, and stands in one place of the type of `k`: inside
 /// the type of `h`, the function `k` returns. It prints as the type it is passed at, not `_`.

@@ -247,7 +247,7 @@ hr(positional z: rat) = z;
 kr(positional b: bool, positional r: rat) = \"${hr(if b { r } else { 0.1 })} ${r + (if b { r } else { 2.5 })}\";
 
 main(m: MainArgs) {
-  x = f64(m.args[0] else \"\") else 0.0;
+  x = f64(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0.0;
   b = x < 0.0;
   m.stdout <- \"${g(b, x) + g(b, x)} ${g(b, x) + 2} ${kr(b, if b { 1r } else { 3r })}\";
 }

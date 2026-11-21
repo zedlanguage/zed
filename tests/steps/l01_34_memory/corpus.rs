@@ -47,10 +47,12 @@ fn every_row_passes_through_the_machine() {
         assert_eq!(rows, 96);
         // The seven units of L1 evaluate 64 closed terms, which allocate 108 cells, L25.8's unit
         // 7 terms and 9 cells, L1.40d's unit 19 terms and 29 cells, and L1.26's readings unit
-        // 18 terms and 35 cells, and L1.26a's unit 7 terms and 14 cells; fusion saves 26 count
-        // writes. Each of config.zed's three rows evaluates the `""` it gives standard input and
-        // the command line, which its `main` does not read (QUESTIONS Q51).
-        let want = if fuse { 199 } else { 225 };
+        // 18 terms and 35 cells, and L1.26a's unit 7 terms and 14 cells; fusion saves 42 count
+        // writes (26 before the three units of L1.21 named the atoms of each `else`, plan row
+        // ELSE-explicit-atoms: their chains `e else #a -> d else #b -> d` add 16 writes in all
+        // unfused and none fused). Each of config.zed's three rows evaluates the `""` it gives
+        // standard input and the command line, which its `main` does not read (QUESTIONS Q51).
+        let want = if fuse { 199 } else { 241 };
         assert_eq!((runs.get(), cells.get(), writes.get()), (115, 195, want));
     }
 }

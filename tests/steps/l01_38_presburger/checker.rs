@@ -13,7 +13,7 @@ use zed_tests::step_helpers::l01_25_preimage_catalog::int_defs;
 pub(super) fn program(def: &str, args: &str) -> String {
     let def = int_defs(def);
     format!(
-        "{def}\nmain(m: MainArgs) {{\n  a = int(m.stdin[0] else \"0\") else 0;\n  \
+        "{def}\nmain(m: MainArgs) {{\n  a = int(m.stdin[0] else #ioError -> \"0\" else #outOfBounds -> \"0\") else #invalid -> 0;\n  \
          r = if ok({args}) {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{r}}\";\n}}\n"
     )
 }
@@ -247,7 +247,7 @@ fn menu(
 fn program_testing(defs: &str, test: &str) -> String {
     let defs = int_defs(defs);
     format!(
-        "{defs}\nmain(m: MainArgs) {{\n  a = int(m.stdin[0] else \"0\") else 0;\n  \
+        "{defs}\nmain(m: MainArgs) {{\n  a = int(m.stdin[0] else #ioError -> \"0\" else #outOfBounds -> \"0\") else #invalid -> 0;\n  \
          r = if {test} {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{r}}\";\n}}\n"
     )
 }
@@ -472,7 +472,7 @@ fn the_split_repair_in_an_imported_unit_ignores_the_names_its_importers_define()
     let all = all.as_str();
     let app = |imports: &str, test: &str| {
         format!(
-            "{imports}{own}main(m: MainArgs) {{\n  a = int(m.stdin[0] else \"0\") else 0;\n  \
+            "{imports}{own}main(m: MainArgs) {{\n  a = int(m.stdin[0] else #ioError -> \"0\" else #outOfBounds -> \"0\") else #invalid -> 0;\n  \
              r = if {test} {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{r}}\";\n}}\n"
         )
     };

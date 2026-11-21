@@ -119,7 +119,7 @@ fn several_variables_each_print_by_name_where_they_stand_twice_and_the_bounded_o
     writes_back(&s.to_string());
     // A union with a variable prints it by name beside the rest: `0 | _` would be `_`, and
     // lose the `0`. The `T` of the result is `r` without the atoms `else` removes.
-    let s = sig("g(r) = r else 0;\n", "g");
+    let s = sig("g(r) = r else #a -> 0;\n", "g");
     assert_eq!(s.to_string(), "(r: T) -> 0 | T");
     writes_back(&s.to_string());
 }
@@ -341,7 +341,7 @@ fn a_printed_type_with_names_reads_back_as_itself() {
     for src in [
         "id(x) = x;\n",
         "swap(positional a, positional b) = (b, a);\n",
-        "g(r) = r else 0;\n",
+        "g(r) = r else #a -> 0;\n",
         "pick(positional c, positional a, positional b) = if c { a } else { b };\n",
         "f(positional x, positional y, positional z) = (x * y, z);\n",
         "g(positional a) = (b) -> (c) -> (a, b, c);\n",

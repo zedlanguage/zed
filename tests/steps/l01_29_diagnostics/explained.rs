@@ -6,7 +6,9 @@ use zedc::run::load;
 
 /// A program whose `main` reads `n` from the first line of input and then runs `body`.
 fn reading(body: &str) -> String {
-    format!("main(m: MainArgs) {{\n  n = int(m.stdin[0]) else 0;\n{body}\n}}\n")
+    format!(
+        "main(m: MainArgs) {{\n  n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n{body}\n}}\n"
+    )
 }
 
 #[test]

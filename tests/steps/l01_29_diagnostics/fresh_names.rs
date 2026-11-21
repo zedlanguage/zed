@@ -349,9 +349,9 @@ fn what_else_leaves_of_a_written_variable_prints_by_its_written_name() {
     // `Sig::standing_twice` against 9ff4e6673). A `T` written once is refused, so the
     // written form writes it for two parameters.
     for (src, shown) in [
-        ("g(positional r) = r else 0;\n", "0 -> T -> 0 | T"),
+        ("g(positional r) = r else #a -> 0;\n", "0 -> T -> 0 | T"),
         (
-            "g(positional r: T, positional s: T) = (r else 0, s);\n",
+            "g(positional r: T, positional s: T) = (r else #a -> 0, s);\n",
             "0 -> (T, T) -> (0 | T, T)",
         ),
     ] {

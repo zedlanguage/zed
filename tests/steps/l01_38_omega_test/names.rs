@@ -1197,7 +1197,7 @@ fn cycle_unit(names: [&str; 6]) -> Vec<u8> {
     let params: Vec<String> = names.iter().map(|n| format!("{n}: int")).collect();
     let args: Vec<String> = names.iter().map(|n| format!("{n}: x")).collect();
     format!(
-        "ok({}) = {};\nmain(m: MainArgs) {{\n  x = int(m.stdin[0] else \"0\") else 0;\n  \
+        "ok({}) = {};\nmain(m: MainArgs) {{\n  x = int(m.stdin[0] else #ioError -> \"0\" else #outOfBounds -> \"0\") else #invalid -> 0;\n  \
          held = if ok({}) {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{held}}\";\n}}\n",
         params.join(", "),
         conds.join(" && "),

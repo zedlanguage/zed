@@ -120,7 +120,7 @@ fn if_chains() {
 #[test]
 fn else_replaces_an_atom_and_passes_any_other_value() {
     let src = "per(positional total, positional n) = total div n;\n\
-               a = per(90, 3) else 0;\nb = per(90, 0) else 0;\n\
+               a = per(90, 3) else #divByZero -> 0;\nb = per(90, 0) else #divByZero -> 0;\n\
                c = per(90, 0) else #divByZero -> -1;\nd = per(90, 0) else #overflow -> -1;\n";
     assert_eq!(value(src, "a"), "30");
     assert_eq!(value(src, "b"), "0");
@@ -132,7 +132,7 @@ fn else_replaces_an_atom_and_passes_any_other_value() {
     );
     assert_eq!(
         term(src, "b"),
-        "match per(90, 0) { (is #_) -> 0, $2 -> $2 }"
+        "match per(90, 0) { (is #divByZero | #divByZero(..)) -> 0, $2 -> $2 }"
     );
 }
 

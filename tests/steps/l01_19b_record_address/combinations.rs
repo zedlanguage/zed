@@ -78,7 +78,7 @@ fn what_keeps_the_address_and_what_changes_it() {
             "reads_standard_input",
             prog(
                 "twice(x: int) = x * 2;\n",
-                "\"${twice(x: 3)}${m.stdin[0] else \"\"}\"",
+                "\"${twice(x: 3)}${m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\"}\"",
             ),
             false,
         ),
@@ -86,7 +86,7 @@ fn what_keeps_the_address_and_what_changes_it() {
             "reads_an_argument",
             prog(
                 "twice(x: int) = x * 2;\n",
-                "\"${twice(x: 3)}${m.args[0] else \"\"}\"",
+                "\"${twice(x: 3)}${m.args[0] else #outOfBounds -> \"\"}\"",
             ),
             false,
         ),
@@ -94,7 +94,7 @@ fn what_keeps_the_address_and_what_changes_it() {
             "reads_a_variable",
             prog(
                 "twice(x: int) = x * 2;\n",
-                "\"${twice(x: 3)}${m.env[\"A\"] else \"\"}\"",
+                "\"${twice(x: 3)}${m.env[\"A\"] else #notFound -> \"\"}\"",
             ),
             false,
         ),
@@ -118,12 +118,12 @@ fn what_keeps_the_address_and_what_changes_it() {
 fn reads_at_other_keys_or_names_have_other_addresses() {
     let address = |expr: &str| load(prog("", expr).as_bytes()).unwrap().address().unwrap();
     let distinct = [
-        address("m.stdin[0] else \"\""),
-        address("m.stdin[1] else \"\""),
-        address("m.args[0] else \"\""),
-        address("m.env[\"A\"] else \"\""),
-        address("m.env[\"B\"] else \"\""),
-        address("main::files[\"A\"] else \"\""),
+        address("m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\""),
+        address("m.stdin[1] else #ioError -> \"\" else #outOfBounds -> \"\""),
+        address("m.args[0] else #outOfBounds -> \"\""),
+        address("m.env[\"A\"] else #notFound -> \"\""),
+        address("m.env[\"B\"] else #notFound -> \"\""),
+        address("main::files[\"A\"] else #ioError -> \"\" else #notFound -> \"\""),
     ];
     for (i, a) in distinct.iter().enumerate() {
         for (j, b) in distinct.iter().enumerate().skip(i + 1) {

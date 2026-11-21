@@ -15,7 +15,7 @@ use super::*;
 /// holds and `0` when it fails.
 fn program(bound: i64, test: &str, body: &str) -> String {
     format!(
-        "main(m: MainArgs) {{\n  x = int(m.stdin[0]) else 0;\n  y = int(m.stdin[1]) else 0;\n  \
+        "main(m: MainArgs) {{\n  x = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  y = int(m.stdin[1]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  \
          r = if x >= -{bound} && x <= {bound} && y >= -{bound} && y <= {bound} {{\n    \
          if {test} {{ {body} }} else {{ 0 }}\n  }} else {{ 2 }};\n  m.stdout <- \"${{r}}\";\n}}\n"
     )
@@ -67,7 +67,7 @@ if (y - x >= 1 || y >= 0) {
 fn the_loop_is_rejected_whether_or_not_an_arm_is_read() {
     // The class is a property of the test as written: no arm here reads a range, and no
     // outer test bounds the names, so the message gives no values.
-    let src = "main(m: MainArgs) {\n  x = int(m.stdin[0]) else 0;\n  y = int(m.stdin[1]) else 0;\n  \
+    let src = "main(m: MainArgs) {\n  x = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  y = int(m.stdin[1]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  \
                r = if (x - y >= 1 || x >= 0) && (y - x >= 1 || y >= 0) { 1 } else { 0 };\n  \
                m.stdout <- \"${r}\";\n}\n";
     let (status, text) = rejected("loops_unread", src);

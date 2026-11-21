@@ -18,38 +18,43 @@ fn each_row_gives_what_its_body_says_for_a_missing_line() {
     for (body, want) in [
         ("if line is #notFound { #absent } else { \"s\" }", "#absent"),
         (
-            "if line is #notFound { #absent } else { line else \"\" }",
+            "if line is #notFound { #absent } else { line else #notFound -> \"\" }",
             "#absent",
         ),
         (
-            "if line is #notFound { #absent } else { trim(line else \"\") }",
+            "if line is #notFound { #absent } else { trim(line else #notFound -> \"\") }",
             "#absent",
         ),
-        ("trim(line else \"\")", "\"\""),
-        ("line else \"\"", "\"\""),
-        ("upper(line else \"\")", "\"\""),
-        ("(line else 0) + 1", "1"),
-        ("{ s = line else \"\"; trim(s) }", "\"\""),
-        ("{ s = line; trim(s else \"\") }", "\"\""),
-        ("{ s = line; t = s; trim(t else \"\") }", "\"\""),
+        ("trim(line else #notFound -> \"\")", "\"\""),
+        ("line else #notFound -> \"\"", "\"\""),
+        ("upper(line else #notFound -> \"\")", "\"\""),
+        ("(line else #notFound -> 0) + 1", "1"),
+        ("{ s = line else #notFound -> \"\"; trim(s) }", "\"\""),
+        ("{ s = line; trim(s else #notFound -> \"\") }", "\"\""),
+        (
+            "{ s = line; t = s; trim(t else #notFound -> \"\") }",
+            "\"\"",
+        ),
     ] {
         assert_eq!(r(body, "#notFound"), want, "{body}");
     }
-    let declared =
-        "r(positional line: String | #notFound) = trim(line else \"\");\ny = r(#notFound);\n";
+    let declared = "r(positional line: String | #notFound) = trim(line else #notFound -> \"\");\ny = r(#notFound);\n";
     assert_eq!(value(declared, "y"), "\"\"");
 }
 
 #[test]
 fn a_present_line_is_still_trimmed() {
-    assert_eq!(r("trim(line else \"\")", "\"  ok \""), "\"ok\"");
-    assert_eq!(r("upper(line else \"\")", "\"ok\""), "\"OK\"");
-    assert_eq!(r("(line else 0) + 1", "41"), "42");
+    assert_eq!(
+        r("trim(line else #notFound -> \"\")", "\"  ok \""),
+        "\"ok\""
+    );
+    assert_eq!(r("upper(line else #notFound -> \"\")", "\"ok\""), "\"OK\"");
+    assert_eq!(r("(line else #notFound -> 0) + 1", "41"), "42");
 }
 
 #[test]
 fn an_atom_the_else_replaces_need_not_be_the_one_the_is_test_names() {
-    let body = "if line is #notFound { #absent } else { trim(line else \"\") }";
+    let body = "if line is #notFound { #absent } else { trim(line else #closed -> \"\") }";
     assert_eq!(r(body, "#closed"), "\"\"");
 }
 
@@ -67,15 +72,14 @@ fn a_line_trimmed_without_else_passes_a_missing_line_by() {
 
 #[test]
 fn a_lambda_that_trims_a_line_or_the_empty_string_runs_for_a_missing_line() {
-    let text =
-        "clean = (line) -> trim(line else \"\");\ny = clean(#notFound);\nz = clean(\" b \");\n";
+    let text = "clean = (line) -> trim(line else #notFound -> \"\");\ny = clean(#notFound);\nz = clean(\" b \");\n";
     assert_eq!(value(text, "y"), "\"\"");
     assert_eq!(value(text, "z"), "\"b\"");
 }
 
 #[test]
 fn a_program_trimming_a_missing_line_runs_the_body() {
-    let src = "r(positional line) = trim(line else \"\");\n\
+    let src = "r(positional line) = trim(line else #ioError -> \"\" else #outOfBounds -> \"\");\n\
                main(m: MainArgs) {\n\
                \x20 m.stdout <- if r(m.stdin[8]) is #notFound { \"the body did not run\" } else { \"the body ran\" };\n\
                }\n";
@@ -101,19 +105,19 @@ fn a_function_whose_atoms_reach_its_result_gives_a_string_for_a_string() {
     for (name, def, call, want) in [
         (
             "trim_or_empty",
-            "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };",
+            "r(positional line) = if (line else #ioError -> \"\" else #outOfBounds -> \"\") == \"\" { \"empty\" } else { trim(line) };",
             "r(\" a \")",
             "a\n",
         ),
         (
             "bool_branch",
-            "r(positional c) = { d = c else false; if c { \"yes\" } else { \"no\" } };",
+            "r(positional c) = { d = c else #notFound -> false; if c { \"yes\" } else { \"no\" } };",
             "r(true)",
             "yes\n",
         ),
         (
             "int_branch",
-            "r(positional n) = { d = n else 0; if n > 3 { \"big\" } else { \"small\" } };",
+            "r(positional n) = { d = n else #notFound -> 0; if n > 3 { \"big\" } else { \"small\" } };",
             "r(5)",
             "big\n",
         ),
@@ -130,13 +134,13 @@ fn a_function_whose_atoms_reach_its_result_gives_a_string_for_a_string() {
 fn an_argument_that_may_be_an_atom_selects_the_arrow_that_takes_it() {
     // `stdin[1]` is `#outOfBounds` on one line, and the body maps it to "empty"; `stdin[0]` is
     // the line. The lambda is the same function written as a value.
-    let src = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
+    let src = "r(positional line) = if (line else #ioError -> \"\" else #outOfBounds -> \"\") == \"\" { \"empty\" } else { trim(line) };\n\
                main(m: MainArgs) {\n\
-               \x20 f = (positional x) -> if (x else \"\") == \"\" { \"e\" } else { trim(x) };\n\
-               \x20 m.stdout <- (r(m.stdin[1]) else \"gone\") ++ \",\" ++ (r(m.stdin[0]) else \"gone\") ++ \",\" ++ f(\" b \") ++ \",\" ++ (f(m.stdin[1]) else \"gone\");\n\
+               \x20 f = (positional x) -> if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"\" { \"e\" } else { trim(x) };\n\
+               \x20 m.stdout <- (r(m.stdin[1]) else #ioError -> \"gone\" else #outOfBounds -> \"gone\") ++ \",\" ++ (r(m.stdin[0]) else #ioError -> \"gone\" else #outOfBounds -> \"gone\") ++ \",\" ++ f(\" b \") ++ \",\" ++ (f(m.stdin[1]) else #ioError -> \"gone\" else #outOfBounds -> \"gone\");\n\
                }\n";
     assert_eq!(output("selects_arrow", src), "empty,x,b,e\n");
-    let body = "if (line else \"\") == \"\" { \"empty\" } else { trim(line) }";
+    let body = "if (line else #notFound -> \"\") == \"\" { \"empty\" } else { trim(line) }";
     assert_eq!(r(body, "#notFound"), "\"empty\"");
     assert_eq!(r(body, "\" a \""), "\"a\"");
 }
@@ -145,10 +149,10 @@ fn an_argument_that_may_be_an_atom_selects_the_arrow_that_takes_it() {
 fn a_function_that_calls_it_with_its_own_parameter_gives_a_string_for_a_string() {
     // `g`'s undeclared `x` takes the first arrow of `r`, so `g` is `(String) -> String`, and
     // an atom passed to `g` passes it by (rule 6), as before `r` took the atoms.
-    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
+    let r = "r(positional line) = if (line else #ioError -> \"\" else #outOfBounds -> \"\") == \"\" { \"empty\" } else { trim(line) };\n\
              g(positional x) = r(x);\n";
     let src = format!(
-        "{r}main(m: MainArgs) {{\n  m.stdout <- g(\" a \") ++ \",\" ++ (g(m.stdin[1]) else \"passed by\");\n}}\n"
+        "{r}main(m: MainArgs) {{\n  m.stdout <- g(\" a \") ++ \",\" ++ (g(m.stdin[1]) else #ioError -> \"passed by\" else #outOfBounds -> \"passed by\");\n}}\n"
     );
     assert_eq!(output("wrapper", &src), "a,passed by\n");
 }
@@ -159,17 +163,17 @@ fn a_function_that_handles_its_parameter_and_passes_it_to_one_that_does_too() {
     // in `x`, `r(x)` gives what `r`'s first arrow gives, a string, so `g` too has a first arrow
     // `(String) -> String`, and `g(" a ")` goes to a `Lines` port. A missing line takes both
     // functions' second arrows: `g`'s `else` and then `r`'s map it to a string.
-    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n";
-    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[1]) else \"gone\");\n}\n";
+    let r = "r(positional line) = if (line else #ioError -> \"\" else #outOfBounds -> \"\") == \"\" { \"empty\" } else { trim(line) };\n";
+    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[1]) else #ioError -> \"gone\" else #outOfBounds -> \"gone\");\n}\n";
     for (name, g, want) in [
         (
             "handles_then_passes_on",
-            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { r(x) };\n",
+            "g(positional x) = if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { r(x) };\n",
             "a,dash,empty\n",
         ),
         (
             "binds_then_passes_on",
-            "g(positional x) = { d = x else \"\"; r(x) };\n",
+            "g(positional x) = { d = x else #ioError -> \"\" else #outOfBounds -> \"\"; r(x) };\n",
             "a,-,empty\n",
         ),
     ] {
@@ -184,64 +188,64 @@ fn a_method_call_passes_its_receiver_as_the_first_argument() {
     // string for a string. `r2` has a second parameter after the receiver. The same holds for
     // `x?.r()`, which passes an atom of `x` by, a chain `x.r().r()`, and a call through a local
     // name of a function or of a lambda.
-    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
-             r2(positional line, positional d) = if (line else \"\") == \"\" { d } else { trim(line) };\n";
-    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[1]) else \"gone\");\n}\n";
+    let r = "r(positional line) = if (line else #ioError -> \"\" else #outOfBounds -> \"\") == \"\" { \"empty\" } else { trim(line) };\n\
+             r2(positional line, positional d) = if (line else #ioError -> \"\" else #outOfBounds -> \"\") == \"\" { d } else { trim(line) };\n";
+    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[1]) else #ioError -> \"gone\" else #outOfBounds -> \"gone\");\n}\n";
     for (name, g, want) in [
         ("method_wrapper", "g(positional x) = x.r();\n", "a,-,gone\n"),
         (
             "method_handles_then_passes_on",
-            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x.r() };\n",
+            "g(positional x) = if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { x.r() };\n",
             "a,dash,empty\n",
         ),
         (
             "method_binds_then_passes_on",
-            "g(positional x) = { d = x else \"\"; x.r() };\n",
+            "g(positional x) = { d = x else #ioError -> \"\" else #outOfBounds -> \"\"; x.r() };\n",
             "a,-,empty\n",
         ),
         (
             "method_second_argument",
-            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x.r2(\"none\") };\n",
+            "g(positional x) = if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { x.r2(\"none\") };\n",
             "a,dash,none\n",
         ),
         (
             "safe_method",
-            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x?.r() };\n",
+            "g(positional x) = if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { x?.r() };\n",
             "a,dash,gone\n",
         ),
         (
             "chained_methods",
-            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x.r().r() };\n",
+            "g(positional x) = if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { x.r().r() };\n",
             "a,dash,empty\n",
         ),
         (
             "local_name_of_a_function",
-            "g(positional x) = { f = r; if (x else \"\") == \"-\" { \"dash\" } else { f(x) } };\n",
+            "g(positional x) = { f = r; if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { f(x) } };\n",
             "a,dash,empty\n",
         ),
         (
             "local_lambda",
-            "g(positional x) = { f = (positional y) -> if (y else \"\") == \"\" { \"e\" } else { trim(y) }; if (x else \"\") == \"-\" { \"dash\" } else { f(x) } };\n",
+            "g(positional x) = { f = (positional y) -> if (y else #ioError -> \"\" else #outOfBounds -> \"\") == \"\" { \"e\" } else { trim(y) }; if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { f(x) } };\n",
             "a,dash,e\n",
         ),
         (
             "method_without_parentheses",
-            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x.r };\n",
+            "g(positional x) = if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { x.r };\n",
             "a,dash,empty\n",
         ),
         (
             "methods_without_parentheses_chained",
-            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x.r.r };\n",
+            "g(positional x) = if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { x.r.r };\n",
             "a,dash,empty\n",
         ),
         (
             "method_without_parentheses_after_a_binding",
-            "g(positional x) = { d = x else \"\"; x.r };\n",
+            "g(positional x) = { d = x else #ioError -> \"\" else #outOfBounds -> \"\"; x.r };\n",
             "a,-,empty\n",
         ),
         (
             "prelude_word_without_parentheses",
-            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { x.trim };\n",
+            "g(positional x) = if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { x.trim };\n",
             "a,dash,gone\n",
         ),
     ] {
@@ -256,18 +260,18 @@ fn a_function_value_called_with_a_handled_parameter_gives_a_string_for_a_string(
     // arrow there too, so each `g` gives a string for a string; a missing line reaches `r`'s
     // second arrow, which handles it. A `g` that handles nothing takes no atom, so a missing
     // line passes its call by.
-    let r = "r(positional line) = if (line else \"\") == \"\" { \"empty\" } else { trim(line) };\n\
+    let r = "r(positional line) = if (line else #ioError -> \"\" else #outOfBounds -> \"\") == \"\" { \"empty\" } else { trim(line) };\n\
              ap(positional f, positional v) = f(v);\n";
-    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[1]) else \"gone\");\n}\n";
+    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[1]) else #ioError -> \"gone\" else #outOfBounds -> \"gone\");\n}\n";
     for (name, g, want) in [
         (
             "higher_order",
-            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { ap(r, x) };\n",
+            "g(positional x) = if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { ap(r, x) };\n",
             "a,dash,empty\n",
         ),
         (
             "computed_callee",
-            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { (if true { r } else { r })(x) };\n",
+            "g(positional x) = if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { (if true { r } else { r })(x) };\n",
             "a,dash,empty\n",
         ),
         (
@@ -293,30 +297,38 @@ fn a_line_that_may_be_missing_or_unreadable_runs_the_body_that_tests_for_a_missi
     // `#outOfBounds`, by `is` or by a pattern `else`, takes that atom and omits `#ioError`:
     // rule 6 treats each region of the argument apart, so `#ioError` passes the call by and
     // `#outOfBounds` runs the body. The call was rejected, since the atoms passed by only when
-    // no arrow took any of them; a declared parameter was rejected the same way.
-    let main = "main(m: MainArgs) {\n  m.stdout <- g(m.stdin[1]) else \"gone\";\n}\n";
-    for (name, g, missing) in [
+    // no arrow took any of them; a declared parameter was rejected the same way. The `else` in
+    // `main` names the atoms the call may give: `g` in `pattern_else_in_a_test` takes
+    // `#outOfBounds` only in its test and passes it on through `trim`, so its call gives both.
+    let io = "#ioError -> \"gone\"";
+    let both = "#ioError -> \"gone\" else #outOfBounds -> \"gone\"";
+    for (name, g, tail, missing) in [
         (
             "is_only",
             "g(positional x) = if x is #outOfBounds { \"nf\" } else { trim(x) };\n",
+            io,
             "nf\n",
         ),
         (
             "pattern_else",
             "g(positional x) = trim(x else #outOfBounds -> \"\");\n",
+            io,
             "\n",
         ),
         (
             "pattern_else_in_a_test",
             "g(positional x) = if (x else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { trim(x) };\n",
+            both,
             "gone\n",
         ),
         (
             "declared",
             "g(positional x: String | #outOfBounds) = if x is #outOfBounds { \"nf\" } else { trim(x) };\n",
+            io,
             "nf\n",
         ),
     ] {
+        let main = format!("main(m: MainArgs) {{\n  m.stdout <- g(m.stdin[1]) else {tail};\n}}\n");
         let src = format!("{g}{main}");
         assert_eq!(output_on(name, &src, "x\n"), missing, "{g}");
         assert_eq!(output_on(name, &src, "x\n b \n"), "b\n", "{g}");
@@ -340,22 +352,22 @@ fn a_lambda_given_a_handled_parameter_through_a_function_passes_its_atoms_by_at_
     // call whose argument gave it, so `g` gives a string for a string. The call was rejected
     // at `g`'s definition, `f` taking no atom.
     let ap = "ap(positional f, positional v) = f(v);\n";
-    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[1]) else \"gone\");\n}\n";
+    let main = "main(m: MainArgs) {\n  m.stdout <- g(\" a \") ++ \",\" ++ g(\"-\") ++ \",\" ++ (g(m.stdin[1]) else #ioError -> \"gone\" else #outOfBounds -> \"gone\");\n}\n";
     for (name, g, want) in [
         (
             "lambda_in_a_test",
-            "g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { ap((positional y) -> trim(y), x) };\n",
+            "g(positional x) = if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { ap((positional y) -> trim(y), x) };\n",
             "a,dash,gone\n",
         ),
         (
             "lambda_after_a_default",
-            "g(positional x) = { d = x else \"\"; ap((positional y) -> trim(y), x) };\n",
+            "g(positional x) = { d = x else #ioError -> \"\" else #outOfBounds -> \"\"; ap((positional y) -> trim(y), x) };\n",
             "a,-,gone\n",
         ),
         (
             "lambda_through_two_functions",
             "ap2(positional f, positional v) = ap(f, v);\n\
-             g(positional x) = if (x else \"\") == \"-\" { \"dash\" } else { ap2((positional y) -> trim(y), x) };\n",
+             g(positional x) = if (x else #ioError -> \"\" else #outOfBounds -> \"\") == \"-\" { \"dash\" } else { ap2((positional y) -> trim(y), x) };\n",
             "a,dash,gone\n",
         ),
     ] {
@@ -363,7 +375,7 @@ fn a_lambda_given_a_handled_parameter_through_a_function_passes_its_atoms_by_at_
     }
     // A missing line given to `ap` directly passes by at that call too.
     let direct = format!(
-        "{ap}main(m: MainArgs) {{\n  m.stdout <- ap((positional y) -> trim(y), m.stdin[1]) else \"gone\";\n}}\n"
+        "{ap}main(m: MainArgs) {{\n  m.stdout <- ap((positional y) -> trim(y), m.stdin[1]) else #ioError -> \"gone\" else #outOfBounds -> \"gone\";\n}}\n"
     );
     assert_eq!(output("lambda_direct", &direct), "gone\n");
 }

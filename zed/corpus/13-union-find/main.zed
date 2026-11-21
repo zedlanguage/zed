@@ -9,7 +9,7 @@
 // (queries are answered against all edges).
 import uf.{components, Edge};
 
-num(positional t) = int(t else (#badEncoding | #ioError | #outOfBounds) -> "") else #invalid -> 0;
+num(positional t) = int(t else (#ioError | #outOfBounds) -> "") else #invalid -> 0;
 
 main(m: MainArgs) {
   ws    = m.stdin.map(l -> l.split(" "));

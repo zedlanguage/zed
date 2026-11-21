@@ -19,7 +19,7 @@ fn reading_a_quantity_from_a_form_field() {
         "#invalid",
         "a sign is only `-`, as `String` writes it"
     );
-    assert_eq!(x("int(text(\"twelve\")) else 1"), "1");
+    assert_eq!(x("int(text(\"twelve\")) else #invalid -> 1"), "1");
     assert_eq!(
         x("int(\"123456789012345678901234567890\")"),
         "123456789012345678901234567890"

@@ -30,11 +30,14 @@ fn writes(expr: &str) -> String {
 
 #[test]
 fn a_line_of_standard_input_is_read_in_each_position() {
-    let interpolated = writes("\"<${m.stdin[0] else \"-\"}>\"");
-    let condition = writes("if (m.stdin[0] else \"\") == \"a\" { \"yes\" } else { \"no\" }");
-    let bound = "main(m: MainArgs) {\n  lines = m.stdin;\n  m.stdout <- lines[0] else \"\";\n}\n";
-    let computed = writes("m.stdin[1 + 1] else \"\"");
-    let helper = "first(s: Lines) = s[0] else \"none\";\n\
+    let interpolated =
+        writes("\"<${m.stdin[0] else #ioError -> \"-\" else #outOfBounds -> \"-\"}>\"");
+    let condition = writes(
+        "if (m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") == \"a\" { \"yes\" } else { \"no\" }",
+    );
+    let bound = "main(m: MainArgs) {\n  lines = m.stdin;\n  m.stdout <- lines[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n}\n";
+    let computed = writes("m.stdin[1 + 1] else #ioError -> \"\" else #outOfBounds -> \"\"");
+    let helper = "first(s: Lines) = s[0] else #ioError -> \"none\" else #outOfBounds -> \"none\";\n\
                   main(m: MainArgs) {\n  m.stdout <- first(s: m.stdin);\n}\n";
     expect(
         "stdin_position",
@@ -55,7 +58,7 @@ fn a_line_of_standard_input_is_read_in_each_position() {
 fn a_key_outside_the_lines_gives_out_of_bounds() {
     let at = |k: &str| {
         writes(&format!(
-            "(m.stdin[{k}] else #outOfBounds -> \"oob\") else \"other\""
+            "(m.stdin[{k}] else #outOfBounds -> \"oob\") else #ioError -> \"other\""
         ))
     };
     let (past, negative, huge_negative, zero) =
@@ -74,7 +77,7 @@ fn a_key_outside_the_lines_gives_out_of_bounds() {
 
 #[test]
 fn a_line_is_utf8_text_or_io_error() {
-    let echo = writes("(m.stdin[0] else #ioError -> \"bad\") else \"none\"");
+    let echo = writes("(m.stdin[0] else #ioError -> \"bad\") else #outOfBounds -> \"none\"");
     expect(
         "stdin_utf8",
         &[
@@ -138,7 +141,7 @@ fn a_pushed_value_is_written_as_lines_at_any_depth() {
 #[test]
 fn of_two_push_sites_only_the_one_that_runs_writes() {
     let src = "main(m: MainArgs) {\n  \
-               done = if (m.stdin[0] else \"\") == \"a\" {\n    m.stdout <- \"A\";\n    1\n  } \
+               done = if (m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") == \"a\" {\n    m.stdout <- \"A\";\n    1\n  } \
                else {\n    m.stdout <- \"B\";\n    0\n  };\n}\n";
     expect(
         "two_sites",
@@ -191,14 +194,14 @@ fn a_file_is_read_whole_in_each_position() {
     let read = |p: &std::path::Path| {
         format!(
             "main(m: MainArgs) {{\n  fs = main::files;\n  \
-             t = (fs[\"{}\"] else #notFound -> \"nf\") else \"io\";\n  m.stdout <- \"<${{t}}>\";\n}}\n",
+             t = (fs[\"{}\"] else #notFound -> \"nf\") else #ioError -> \"io\";\n  m.stdout <- \"<${{t}}>\";\n}}\n",
             p.display()
         )
     };
     let by_stdin = "main(m: MainArgs) {\n  fs = main::files;\n  \
-                    m.stdout <- (fs[m.stdin[0] else \"\"] else #notFound -> \"nf\") else \"io\";\n}\n";
+                    m.stdout <- (fs[m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\"] else #notFound -> \"nf\") else #ioError -> \"io\";\n}\n";
     let in_helper = format!(
-        "text(p: String) = (main::files[p] else #notFound -> \"nf\") else \"io\";\n\
+        "text(p: String) = (main::files[p] else #notFound -> \"nf\") else #ioError -> \"io\";\n\
          main(m: MainArgs) {{\n  m.stdout <- text(p: \"{}\");\n}}\n",
         no_end.display()
     );

@@ -111,7 +111,7 @@ fn a_nested_chain_merges_into_one_flat_set() {
 
 #[test]
 fn else_handles_a_merged_failure_as_it_handles_one() {
-    let t = "f(positional x: int | #notFound, positional y: int | #none) = (x + y) else 0;\n";
+    let t = "f(positional x: int | #notFound, positional y: int | #none) = (x + y) else #errs -> 0 else #none -> 0 else #notFound -> 0;\n";
     assert_eq!(sig(t, "f"), "(int | #notFound, int | #none) -> int");
     let run = format!("{t}a = f(#notFound, #none);\nb = f(#notFound, 1);\nc = f(2, 3);\n");
     assert_eq!(value(&run, "a"), "0");
@@ -124,7 +124,7 @@ fn the_readme_examples_give_these_values() {
     // README.md, step 3: two different failures meet, and `else` replaces the merged value.
     let step3 = "one = 1 * #notFound;\n\
                  both = (1 + #notFound) + #invalid;\n\
-                 bothOrZero = ((1 + #notFound) + #invalid) else 0;\n";
+                 bothOrZero = ((1 + #notFound) + #invalid) else #errs -> 0 else #invalid -> 0 else #notFound -> 0;\n";
     assert_eq!(value(step3, "one"), "#notFound");
     assert_eq!(value(step3, "both"), "#errs({#invalid, #notFound})");
     assert_eq!(value(step3, "bothOrZero"), "0");

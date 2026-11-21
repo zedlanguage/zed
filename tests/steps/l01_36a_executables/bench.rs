@@ -54,7 +54,7 @@ fn reader(n: usize) -> String {
     let mut src = "main(m: MainArgs) {\nfs = main::files;\n".to_string();
     for k in 1..=n {
         src += &format!(
-            "  r{k} = (fs[m.args[{}] else \"\"] else #notFound -> \"missing\") \
+            "  r{k} = (fs[m.args[{}] else #outOfBounds -> \"\"] else #notFound -> \"missing\") \
              else #ioError -> \"unreadable\";\n",
             k - 1
         );

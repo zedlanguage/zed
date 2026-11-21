@@ -87,9 +87,9 @@ const NEAR_MISSES: &[NearMiss] = &[
     (
         Row::DisplayInBody,
         LOOKUP,
-        "t = lookup(3) else { (0, 1) };\n",
-        "t = lookup(3) else { 0, 1 };\n",
-        "2:20",
+        "t = lookup(3) else #notFound -> { (0, 1) };\n",
+        "t = lookup(3) else #notFound -> { 0, 1 };\n",
+        "2:33",
         Some("`({ 0, 1 })`, the set display in parentheses"),
     ),
     (
@@ -166,14 +166,24 @@ const NEAR_MISSES: &[NearMiss] = &[
         "2:5",
         Some("remove the `...`"),
     ),
+    // DESIGN.md sec:failure (QUESTIONS A113): every `else` names the atoms it takes; the
+    // repair names each loose atom of the operand.
+    (
+        Row::ElseNamesNoAtoms,
+        LOOKUP,
+        "t = lookup(3) else #notFound -> 0;\n",
+        "t = lookup(3) else 0;\n",
+        "2:5",
+        None,
+    ),
     (
         Row::WritesNothing,
         LOOKUP,
-        "_ = lookup(3) else #ok;\n",
+        "_ = lookup(3) else #notFound -> #ok;\n",
         "_ = lookup(3);\n",
         "2:1",
         Some(
-            "write a default for the value, as `_ = … else #ok;`, so the text names what it \
+            "write a default for the value, as `_ = … else #notFound -> #ok;`, so the text names what it \
              drops",
         ),
     ),
@@ -426,7 +436,7 @@ const NEAR_MISSES: &[NearMiss] = &[
     // `m.args` it cannot block, given `m.stdin` it can.
     (
         Row::NonblockingCanBlock,
-        "@nonblocking\nopt(positional a) = a[0] else \"\";\n",
+        "@nonblocking\nopt(positional a) = a[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n",
         "main(m: MainArgs) -> int {\n  if opt(m.args) == \"x\" { 1 } else { 0 }\n}\n",
         "main(m: MainArgs) -> int {\n  if opt(m.stdin) == \"x\" { 1 } else { 0 }\n}\n",
         "1:1",

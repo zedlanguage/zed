@@ -113,7 +113,7 @@ fn fold_pruning_preserves_named_atom_families() {
     let color = Ty::set(KType::atom("red"))
         .union(&Ty::set(KType::atom("green")))
         .named();
-    let src = "c = 0;\nf() = ([1, 2].foldl(c, (a, x) -> #blue)) else 0;\n\
+    let src = "c = 0;\nf() = ([1, 2].foldl(c, (a, x) -> #blue)) else #blue -> 0;\n\
                g() = ([1, 2].foldl(c, (a, x) -> #blue)) + 1;\n";
     let tokens = zedc::lex::lex_fence(src).unwrap();
     let tree = zedc::parse::parse(src, &tokens, "Unit", zedc::parse::TOP).unwrap();
@@ -472,12 +472,12 @@ fn else_on_a_read_of_the_accumulator_checks() {
     for (name, body, expected) in [
         (
             "fold_else_entry",
-            "${[1, 2, 3].foldl([0], (a, x) -> [(a[0] else 0) + 1])}",
+            "${[1, 2, 3].foldl([0], (a, x) -> [(a[0] else #outOfBounds -> 0) + 1])}",
             "{0 -> 3}",
         ),
         (
             "fold_else_entry_right",
-            "${[1, 2, 3].foldr((x, a) -> [(a[0] else 0) + x], [0])}",
+            "${[1, 2, 3].foldr((x, a) -> [(a[0] else #outOfBounds -> 0) + x], [0])}",
             "{0 -> 6}",
         ),
     ] {
@@ -708,7 +708,8 @@ fn a_delay_chain_settles_where_the_function_is_not_a_tuple_of_projections() {
 /// by hand from `(0, 0)` over `[1, 2, 3]`: `(1, 1)`, `(3, 2)`, `(6, 3)`.
 #[test]
 fn a_handled_part_beside_a_plain_part_settles() {
-    let body = "${[1, 2, 3].foldl((0, 0), (a, x) -> ((a[0] else 0) + x, a[1] + 1))}";
+    let body =
+        "${[1, 2, 3].foldl((0, 0), (a, x) -> ((a[0] else #outOfBounds -> 0) + x, a[1] + 1))}";
     let ran = run("handled_beside_plain", body);
     assert_eq!(
         (ran.status, ran.stdout.trim_end()),
@@ -892,7 +893,7 @@ fn propagated_and_else_reads_of_the_accumulator_check() {
         ),
         (
             "partial_else",
-            "${[1, 2, 3].foldl(m.args.map(y -> 0), (a, x) -> [(a[0] else 0) + 1])}",
+            "${[1, 2, 3].foldl(m.args.map(y -> 0), (a, x) -> [(a[0] else #outOfBounds -> 0) + 1])}",
         ),
     ] {
         let ran = run(name, body);

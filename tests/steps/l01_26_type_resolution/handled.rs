@@ -1,12 +1,20 @@
-//! An undeclared parameter's type holds the atoms its uses handle: every loose atom where the
-//! body writes `line else d`, the atom `#a` where it writes `line is #a` or
-//! `line else #a -> d`. A call passing one of them then runs the body, which handles it, where
-//! before the atom passed the call by (rule 6) and the body's `else` never ran. The atoms are
-//! checked by subtyping, not by their printed text.
+//! An undeclared parameter's type holds the atoms its uses handle: the atom `#a` where the body
+//! writes `line is #a` or `line else #a -> d`, and each atom a chain
+//! `line else #a -> d else #b -> d` names. A call passing one of them then runs the body, which
+//! handles it, where before the atom passed the call by (rule 6) and the body's `else` never
+//! ran. The atoms are checked by subtyping, not by their printed text.
+//!
+//! Every `else` names the atoms it takes (DESIGN.md sec:failure, QUESTIONS A113, 2026-11-21);
+//! before that rule a bare `line else d` took every loose atom, and the tests below that
+//! stated that rule now state the new one. The checker cannot list the atoms of an undeclared
+//! parameter (its refusal says "the atoms ... are not known here"), so these programs name them
+//! by reading: `#ioError` and `#outOfBounds`, the atoms a line `m.stdin[k]` gives, where the
+//! parameter stands for such a line, and `#notFound` or `#nf` and `#other` where the tests
+//! already pass those atoms in.
 
 use zed_kernel::types::Type as KType;
 use zedc::check::read::parse_type;
-use zedc::check::ty::{Arrow, Carrier, Ty, atoms};
+use zedc::check::ty::{Arrow, Carrier, Ty};
 
 use super::{info, sig, type_errors};
 use zed_tests::step_helpers::l01_16_elaboration::value;
@@ -30,20 +38,32 @@ fn string() -> Ty {
     Ty::carrier(Carrier::Str)
 }
 
-fn loose() -> Ty {
-    Ty::set(atoms())
-}
-
 fn atom(name: &str) -> Ty {
     Ty::set(KType::atom(name))
 }
 
+/// The atom `#name` with any payload or none, which `else #name -> d` takes.
+fn named(name: &str) -> Ty {
+    atom(name).union(&Ty::set(KType::atom_with(name, &KType::top())))
+}
+
+/// The atoms a line `m.stdin[k]` gives, `#ioError` and `#outOfBounds`, each with any payload,
+/// which `line else #ioError -> d else #outOfBounds -> d` takes.
+fn line_atoms() -> Ty {
+    named("ioError").union(&named("outOfBounds"))
+}
+
+/// The tail that names the atoms of `line_atoms`, with the default `d`.
+fn line_tail(d: &str) -> String {
+    format!("else #ioError -> {d} else #outOfBounds -> {d}")
+}
+
 #[test]
-fn trimming_a_line_or_the_empty_string_takes_every_loose_atom() {
-    // The issue's repro: `stdin[9]` is `#notFound` on a short input.
-    let a = arrow("trim(line else \"\")");
+fn trimming_a_line_or_the_empty_string_takes_the_atoms_it_names() {
+    // The issue's repro: `m.stdin[9]` misses on a short input.
+    let a = arrow(&format!("trim(line {})", line_tail("\"\"")));
     assert!(
-        same(&a.params[0], &string().union(&loose())),
+        same(&a.params[0], &string().union(&line_atoms())),
         "{}",
         a.params[0]
     );
@@ -51,10 +71,10 @@ fn trimming_a_line_or_the_empty_string_takes_every_loose_atom() {
 }
 
 #[test]
-fn upper_casing_a_line_or_the_empty_string_takes_every_loose_atom() {
-    let a = arrow("upper(line else \"\")");
+fn upper_casing_a_line_or_the_empty_string_takes_the_atoms_it_names() {
+    let a = arrow(&format!("upper(line {})", line_tail("\"\"")));
     assert!(
-        same(&a.params[0], &string().union(&loose())),
+        same(&a.params[0], &string().union(&line_atoms())),
         "{}",
         a.params[0]
     );
@@ -62,19 +82,23 @@ fn upper_casing_a_line_or_the_empty_string_takes_every_loose_atom() {
 }
 
 #[test]
-fn a_count_or_zero_plus_one_takes_every_loose_atom_and_gives_an_int() {
+fn a_count_or_zero_plus_one_takes_the_atoms_it_names_and_gives_an_int() {
     // The atoms the `else` replaces do not reach the sum.
-    let a = arrow("(line else 0) + 1");
+    let a = arrow(&format!("(line {}) + 1", line_tail("0")));
     let int = Ty::carrier(Carrier::Int);
-    assert!(same(&a.params[0], &int.union(&loose())), "{}", a.params[0]);
+    assert!(
+        same(&a.params[0], &int.union(&line_atoms())),
+        "{}",
+        a.params[0]
+    );
     assert!(same(&a.result, &int), "{}", a.result);
 }
 
 #[test]
 fn a_line_named_in_a_block_before_it_is_trimmed_is_the_same() {
-    let a = arrow("{ s = line else \"\"; trim(s) }");
+    let a = arrow(&format!("{{ s = line {}; trim(s) }}", line_tail("\"\"")));
     assert!(
-        same(&a.params[0], &string().union(&loose())),
+        same(&a.params[0], &string().union(&line_atoms())),
         "{}",
         a.params[0]
     );
@@ -82,12 +106,18 @@ fn a_line_named_in_a_block_before_it_is_trimmed_is_the_same() {
 }
 
 #[test]
-fn an_else_on_the_branch_after_an_is_test_takes_every_loose_atom() {
-    // The `else` handles every loose atom, `#notFound` among them, so the parameter takes
-    // them all, and `#absent` is reachable.
-    let a = arrow("if line is #notFound { #absent } else { trim(line else \"\") }");
+fn an_else_on_the_branch_after_an_is_test_takes_the_atoms_it_names() {
+    // The `is` test takes `#notFound` and the `else` the atoms it names, so the parameter
+    // takes all three, and `#absent` is reachable.
+    let a = arrow(&format!(
+        "if line is #notFound {{ #absent }} else {{ trim(line {}) }}",
+        line_tail("\"\"")
+    ));
     assert!(
-        same(&a.params[0], &string().union(&loose())),
+        same(
+            &a.params[0],
+            &string().union(&atom("notFound")).union(&line_atoms())
+        ),
         "{}",
         a.params[0]
     );
@@ -123,13 +153,13 @@ fn a_parameter_of_any_value_stays_a_type_variable() {
     // Its type already holds every atom.
     for body in [
         "if line is #notFound { #absent } else { \"s\" }",
-        "if line is #notFound { #absent } else { line else \"\" }",
-        "line else \"\"",
+        "if line is #notFound { #absent } else { line else #ioError -> \"\" }",
+        "line else #ioError -> \"\"",
     ] {
         let a = arrow(body);
         assert!(a.params[0].as_var().is_some(), "{body}: {}", a.params[0]);
     }
-    let text = "r(positional line) = line else \"\";\n";
+    let text = "r(positional line) = line else #ioError -> \"\";\n";
     assert_eq!(sig(text, "r"), "T -> \"\" | T");
 }
 
@@ -144,15 +174,15 @@ fn a_line_trimmed_without_else_takes_no_atom() {
 
 #[test]
 fn a_declared_parameter_keeps_its_declared_type() {
-    let text = "r(positional line: String | #notFound) = trim(line else \"\");\n";
+    let text = "r(positional line: String | #notFound) = trim(line else #notFound -> \"\");\n";
     assert_eq!(sig(text, "r"), "(String | #notFound) -> String");
 }
 
 #[test]
 fn a_bounded_variable_takes_the_atoms_beside_it() {
-    // `a else b` and `+ b` bound `a` and `b` to one number carrier; `a` also takes the atoms
-    // the `else` replaces with `b`.
-    let text = "add(positional a, positional b) = (a else b) + b;\n";
+    // `a else #notFound -> b` and `+ b` bound `a` and `b` to one number carrier; `a` also
+    // takes the atom the `else` replaces with `b`.
+    let text = "add(positional a, positional b) = (a else #notFound -> b) + b;\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
     let (info, _) = info(text);
     let s = info.sigs.values().next().unwrap();
@@ -161,7 +191,11 @@ fn a_bounded_variable_takes_the_atoms_beside_it() {
     assert_eq!(arrows.len(), 4, "{s}");
     for a in &arrows {
         let c = Ty::carrier(a.result.pieces()[0].carrier().expect("a carrier"));
-        assert!(same(&a.params[0], &c.union(&loose())), "{}", a.params[0]);
+        assert!(
+            same(&a.params[0], &c.union(&named("notFound"))),
+            "{}",
+            a.params[0]
+        );
         assert!(same(&a.params[1], &c), "{}", a.params[1]);
     }
     for (call, want) in [("add(#notFound, 2)", "4"), ("add(1.5f64, 2.0f64)", "3.5")] {
@@ -174,9 +208,12 @@ fn a_bounded_variable_takes_the_atoms_beside_it() {
 fn a_count_or_zero_plus_a_named_step_takes_the_step_s_carrier() {
     // The `else` gives `0 | T`; the sum binds `T` to the step's carrier as `line + bump`
     // would, so a string line is refused where it is passed, not at run time.
-    let text = "r(positional line, bump = 1) = (line else 0) + bump;\n";
+    let text = "r(positional line, bump = 1) = (line else #notFound -> 0) + bump;\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
-    assert_eq!(sig(text, "r"), "(int | #_, bump: int) -> int");
+    assert_eq!(
+        sig(text, "r"),
+        "(int | #notFound | #notFound(..), bump: int) -> int"
+    );
     for (call, want) in [("r(2)", "3"), ("r(#notFound)", "1"), ("r(2, bump: 5)", "7")] {
         let p = format!("{text}y = {call};\n");
         assert_eq!(value(&p, "y"), want, "{call}");
@@ -189,9 +226,12 @@ fn a_count_or_zero_plus_a_named_step_takes_the_step_s_carrier() {
 #[test]
 fn a_count_or_zero_plus_another_parameter_shares_its_carrier() {
     // Both parameters undeclared: the plain literal `0` is an int, which both take.
-    let text = "r(positional line, positional step) = (line else 0) + step;\n";
+    let text = "r(positional line, positional step) = (line else #notFound -> 0) + step;\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
-    assert_eq!(sig(text, "r"), "(int | #_, int) -> int");
+    assert_eq!(
+        sig(text, "r"),
+        "(int | #notFound | #notFound(..), int) -> int"
+    );
     for (call, want) in [("r(2, 3)", "5"), ("r(#notFound, 4)", "4")] {
         let p = format!("{text}y = {call};\n");
         assert_eq!(value(&p, "y"), want, "{call}");
@@ -202,8 +242,7 @@ fn a_count_or_zero_plus_another_parameter_shares_its_carrier() {
 
 #[test]
 fn a_function_that_calls_itself_waits_for_layer_l6() {
-    let text =
-        "r(positional line) = if line is #again { r(\"x\") } else { trim(line else \"\") };\n";
+    let text = "r(positional line) = if line is #again { r(\"x\") } else { trim(line else #ioError -> \"\") };\n";
     let (info, _) = info(text);
     assert!(info.sigs.is_empty());
     let e = zed_tests::step_helpers::l01_16_elaboration::errors(&format!("{text}y = r(#again);\n"));
@@ -215,15 +254,15 @@ fn a_function_that_calls_itself_waits_for_layer_l6() {
 
 #[test]
 fn a_line_bound_to_another_name_takes_the_atoms_that_name_handles() {
-    // `s` is `line` under another name, so `s else ""` handles every loose atom for `line`,
-    // and through a chain of names.
+    // `s` is `line` under another name, so the atoms `s else #ioError -> "" else
+    // #outOfBounds -> ""` names are handled for `line`, and through a chain of names.
     for body in [
-        "{ s = line; trim(s else \"\") }",
-        "{ s = line; t = s; trim(t else \"\") }",
+        "{ s = line; trim(s else #ioError -> \"\" else #outOfBounds -> \"\") }",
+        "{ s = line; t = s; trim(t else #ioError -> \"\" else #outOfBounds -> \"\") }",
     ] {
         let a = arrow(body);
         assert!(
-            same(&a.params[0], &string().union(&loose())),
+            same(&a.params[0], &string().union(&line_atoms())),
             "{body}: {}",
             a.params[0]
         );
@@ -240,11 +279,12 @@ fn a_line_bound_to_another_name_takes_the_atoms_that_name_handles() {
 #[test]
 fn a_name_bound_to_a_computed_value_takes_what_its_handler_handles() {
     // Inference runs after bubbling (the author's Q5, 2026-11-07): an atom passed as `line`
-    // passes out of `trim(line)` into `s` by rule 6, and `s else ""` handles it, so `line`
-    // takes every loose atom, as `line: String | #_` would.
-    let a = arrow("{ s = trim(line); s else \"\" }");
+    // passes out of `trim(line)` into `s` by rule 6, and `s else #ioError -> "" else
+    // #outOfBounds -> ""` handles it, so `line` takes the atoms that `else` names, as
+    // `line: String | #ioError | #outOfBounds` with any payloads would.
+    let a = arrow("{ s = trim(line); s else #ioError -> \"\" else #outOfBounds -> \"\" }");
     assert!(
-        same(&a.params[0], &string().union(&loose())),
+        same(&a.params[0], &string().union(&line_atoms())),
         "{}",
         a.params[0]
     );
@@ -253,17 +293,21 @@ fn a_name_bound_to_a_computed_value_takes_what_its_handler_handles() {
 
 #[test]
 fn a_binding_passes_atoms_from_its_name_to_its_value_and_not_back() {
-    // `s = a + b` passes what `s`'s uses handle to `a` and `b`; `a else 0` handles atoms of
-    // `a` alone, so `b` takes none of them.
-    let text = "r(positional a, positional b) = { s = a + b; s else 0 };\n";
+    // `s = a + b` passes what `s`'s uses handle to `a` and `b`; `a else #notFound -> 0`
+    // handles an atom of `a` alone, so `b` takes none. In the first program both take
+    // `#notFound`; where both hold it with different payloads, `a + b` merges the two into
+    // `#errs` (DESIGN.md sec:failure), which the `else` does not name, so the second arrow's
+    // result holds `#errs`. The bare `s else 0` this test had before QUESTIONS A113 took
+    // `#errs` as well, and its signature had one arrow.
+    let text = "r(positional a, positional b) = { s = a + b; s else #notFound -> 0 };\n";
     assert_eq!(
         sig(text, "r"),
-        "(T | #_, T | #_) -> 0 | T for T in int | f32 | f64 | rat"
+        "type Part1 = #notFound | #notFound(..);\n((T, T) -> 0 | T) & ((T | Part1, T | Part1) -> 0 | T | #errs(Part1 ->? Part1)) for T in int | f32 | f64 | rat"
     );
-    let text = "r(positional a, positional b) = { s = a + b; (a else 0) + s };\n";
+    let text = "r(positional a, positional b) = { s = a + b; (a else #notFound -> 0) + s };\n";
     assert_eq!(
         sig(text, "r"),
-        "type Part1 = int | #_;\n((int, int) -> int) & ((Part1, int) -> Part1)"
+        "type Part1 = int | #notFound | #notFound(..);\n((int, int) -> int) & ((Part1, int) -> Part1)"
     );
 }
 
@@ -271,22 +315,28 @@ fn a_binding_passes_atoms_from_its_name_to_its_value_and_not_back() {
 fn a_handler_on_a_computed_value_prints_its_atoms_on_the_parameter_only() {
     // The atoms that pass by rule 6 out of a call, an operator, a method or a string hole
     // on the parameter reach the handler, which removes them: the parameter takes them and
-    // the result has none. A bare `else` takes every loose atom; `else #nf ->`, `is #nf`,
-    // `== #nf` and `!= #nf` take `#nf`.
+    // the result has none. `else #nf -> d`, `is #nf`, `== #nf` and `!= #nf` take `#nf`, and a chain
+    // `else #nf -> d else #other -> d` takes both atoms.
     for (body, want) in [
-        ("trim(line) else \"dflt\"", "(String | #_) -> String"),
+        (
+            "trim(line) else #nf -> \"dflt\" else #other -> \"dflt\"",
+            "(String | #nf | #nf(..) | #other | #other(..)) -> String",
+        ),
         (
             "trim(line) else #nf -> \"dflt\"",
             "(String | #nf | #nf(..)) -> String",
         ),
         (
-            "(line + 1) else 0",
-            "(T | #_) -> 0 | T for T in int | f32 | f64 | rat",
+            "(line + 1) else #nf -> 0 else #other -> 0",
+            "(T | #nf | #nf(..) | #other | #other(..)) -> 0 | T for T in int | f32 | f64 | rat",
         ),
-        ("line?.trim() else \"dflt\"", "(String | #_) -> String"),
         (
-            "\"${line + 1}\" else \"dflt\"",
-            "(T | #_) -> String for T in int | f32 | f64 | rat",
+            "line?.trim() else #nf -> \"dflt\" else #other -> \"dflt\"",
+            "(String | #nf | #nf(..) | #other | #other(..)) -> String",
+        ),
+        (
+            "\"${line + 1}\" else #nf -> \"dflt\" else #other -> \"dflt\"",
+            "(T | #nf | #nf(..) | #other | #other(..)) -> String for T in int | f32 | f64 | rat",
         ),
         (
             "if trim(line) is #nf { \"dflt\" } else { \"s\" }",
@@ -301,8 +351,8 @@ fn a_handler_on_a_computed_value_prints_its_atoms_on_the_parameter_only() {
             "(String | #nf) -> \"dflt\" | \"s\"",
         ),
         (
-            "(trim(line) else #nf -> \"dflt\") else \"other\"",
-            "(String | #_) -> String",
+            "(trim(line) else #nf -> \"dflt\") else #other -> \"other\"",
+            "(String | #nf | #nf(..) | #other | #other(..)) -> String",
         ),
     ] {
         let text = format!("r(positional line) = {body};\n");
@@ -313,8 +363,11 @@ fn a_handler_on_a_computed_value_prints_its_atoms_on_the_parameter_only() {
         assert_eq!(t.fns[0].to_string(), printed, "{body}");
     }
     // Through a helper: `h(x)` passes the atom by just as `trim(x)` does.
-    let text = "h(positional y) = trim(y);\nr(positional line) = h(line) else \"dflt\";\n";
-    assert_eq!(sig(text, "r"), "(String | #_) -> String");
+    let text = "h(positional y) = trim(y);\nr(positional line) = h(line) else #nf -> \"dflt\" else #other -> \"dflt\";\n";
+    assert_eq!(
+        sig(text, "r"),
+        "(String | #nf | #nf(..) | #other | #other(..)) -> String"
+    );
     assert_eq!(sig(text, "h"), "String -> String");
 }
 
@@ -326,10 +379,10 @@ fn an_inferred_parameter_and_its_declared_twin_give_the_same_value_at_each_call(
     // #nf)` does). Before inference ran after bubbling, `f(#nf)` passed `#nf` by. An atom the
     // handler does not take, `#other`, passes the call by from both.
     let helper = "h(positional y) = trim(y);\n";
-    let (any, nf) = ("String | #_", "String | #nf");
+    let (any, nf) = ("String | #nf | #other", "String | #nf");
     for (body, declared, calls) in [
         (
-            "trim(x) else \"dflt\"",
+            "trim(x) else #nf -> \"dflt\" else #other -> \"dflt\"",
             any,
             [
                 ("\" a \"", "\"a\""),
@@ -383,7 +436,7 @@ fn an_inferred_parameter_and_its_declared_twin_give_the_same_value_at_each_call(
             ],
         ),
         (
-            "h(x) else \"dflt\"",
+            "h(x) else #nf -> \"dflt\" else #other -> \"dflt\"",
             any,
             [
                 ("\" a \"", "\"a\""),
@@ -392,7 +445,7 @@ fn an_inferred_parameter_and_its_declared_twin_give_the_same_value_at_each_call(
             ],
         ),
         (
-            "{ s = trim(x); s else \"dflt\" }",
+            "{ s = trim(x); s else #nf -> \"dflt\" else #other -> \"dflt\" }",
             any,
             [
                 ("\" a \"", "\"a\""),
@@ -423,7 +476,7 @@ fn an_argument_whose_atoms_a_parameter_takes_in_part_passes_the_rest_by() {
         let p = format!("{text}y = g({n});\n");
         assert_eq!(value(&p, "y"), want, "F17 at {n}");
     }
-    let text = "g(positional x: int | #a) = x else 0;\n\
+    let text = "g(positional x: int | #a) = x else #a -> 0;\n\
                 f(positional y: int | #a | #b) = g(y);\n";
     for (y, want) in [("#a", "0"), ("#b", "#b"), ("5", "5")] {
         let p = format!("{text}v = f({y});\n");
@@ -437,7 +490,7 @@ fn a_generic_call_whose_arguments_are_atoms_only_passes_them_by() {
     // the call never takes place, and the `else` around it handles the atoms.
     let text = "add(positional x, positional y) = x + y;\n\
                 w(positional n: int) = if n == 0 { #a } else { #b };\n\
-                g(positional n: int) = add(w(n), w(n + 1)) else -1;\n";
+                g(positional n: int) = add(w(n), w(n + 1)) else #a -> -1 else #b -> -1 else #errs -> -1;\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
     for n in ["0", "1"] {
         assert_eq!(value(&format!("{text}y = g({n});\n"), "y"), "-1", "at {n}");
@@ -446,28 +499,46 @@ fn a_generic_call_whose_arguments_are_atoms_only_passes_them_by() {
 
 #[test]
 fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
-    // The rows of the table in zedlanguage/zed issue 1, and the forms beside them. Every atom
-    // is `#_`, an atom with any payload `#a(..)`; each printed signature reads back as the
-    // same type.
+    // The rows of the table in zedlanguage/zed issue 1, and the forms beside them, each `else`
+    // naming its atoms (QUESTIONS A113). An atom `#a` an `else` takes is printed `#a | #a(..)`,
+    // with any payload or none; each printed signature reads back as the same type.
     for (body, want) in [
         (
             "if line is #notFound { #absent } else { \"s\" }",
             "_ -> \"s\" | #absent",
         ),
         (
-            "if line is #notFound { #absent } else { line else \"\" }",
+            "if line is #notFound { #absent } else { line else #ioError -> \"\" else #outOfBounds -> \"\" }",
             "T -> \"\" | T | #absent",
         ),
         (
-            "if line is #notFound { #absent } else { trim(line else \"\") }",
-            "(String | #_) -> String | #absent",
+            "if line is #notFound { #absent } else { trim(line else #ioError -> \"\" else #outOfBounds -> \"\") }",
+            "(String | #ioError | #ioError(..) | #notFound | #outOfBounds | #outOfBounds(..)) -> String | #absent",
         ),
-        ("trim(line else \"\")", "(String | #_) -> String"),
-        ("line else \"\"", "T -> \"\" | T"),
-        ("upper(line else \"\")", "(String | #_) -> String"),
-        ("(line else 0) + 1", "(int | #_) -> int"),
-        ("{ s = line else \"\"; trim(s) }", "(String | #_) -> String"),
-        ("{ s = line; trim(s else \"\") }", "(String | #_) -> String"),
+        (
+            "trim(line else #ioError -> \"\" else #outOfBounds -> \"\")",
+            "(String | #ioError | #ioError(..) | #outOfBounds | #outOfBounds(..)) -> String",
+        ),
+        (
+            "line else #ioError -> \"\" else #outOfBounds -> \"\"",
+            "T -> \"\" | T",
+        ),
+        (
+            "upper(line else #ioError -> \"\" else #outOfBounds -> \"\")",
+            "(String | #ioError | #ioError(..) | #outOfBounds | #outOfBounds(..)) -> String",
+        ),
+        (
+            "(line else #ioError -> 0 else #outOfBounds -> 0) + 1",
+            "(int | #ioError | #ioError(..) | #outOfBounds | #outOfBounds(..)) -> int",
+        ),
+        (
+            "{ s = line else #ioError -> \"\" else #outOfBounds -> \"\"; trim(s) }",
+            "(String | #ioError | #ioError(..) | #outOfBounds | #outOfBounds(..)) -> String",
+        ),
+        (
+            "{ s = line; trim(s else #ioError -> \"\" else #outOfBounds -> \"\") }",
+            "(String | #ioError | #ioError(..) | #outOfBounds | #outOfBounds(..)) -> String",
+        ),
         (
             "if line is #notFound { \"\" } else { trim(line) }",
             "(String | #notFound) -> String",
@@ -489,35 +560,35 @@ fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
         assert_eq!(t.fns.len(), 1, "{printed}");
         assert_eq!(t.fns[0].to_string(), printed, "{body}");
     }
-    let text = "add(positional a, positional b) = (a else b) + b;\n";
+    let text = "add(positional a, positional b) = (a else #notFound -> b) + b;\n";
     assert_eq!(
         sig(text, "add"),
-        "(T | #_, T) -> T for T in int | f32 | f64 | rat"
+        "(T | #notFound | #notFound(..), T) -> T for T in int | f32 | f64 | rat"
     );
-    let text = "r(positional line: String | #notFound) = trim(line else \"\");\n";
+    let text = "r(positional line: String | #notFound) = trim(line else #notFound -> \"\");\n";
     assert_eq!(sig(text, "r"), "(String | #notFound) -> String");
 }
 
 #[test]
 fn a_function_whose_handled_atoms_also_reach_its_result_has_two_arrows() {
-    // The body handles every loose atom of its parameter and passes the same atoms by to its
-    // result: the first arrow, for an argument with no atom, gives none; the second takes them.
+    // The body handles the atoms its `else` names on its parameter and passes the same atoms by to
+    // its result: the first arrow, for an argument with no atom, gives none; the second takes them.
     // Each printed signature reads back as the same two arrows.
     for (head, body, want) in [
         (
             "r(positional line)",
-            "if (line else \"\") == \"\" { \"empty\" } else { trim(line) }",
-            "type Part1 = String | #_;\n(String -> String) & (Part1 -> Part1)",
+            "if (line else #ioError -> \"\" else #outOfBounds -> \"\") == \"\" { \"empty\" } else { trim(line) }",
+            "type Part1 = String | #ioError | #ioError(..) | #outOfBounds | #outOfBounds(..);\n(String -> String) & (Part1 -> Part1)",
         ),
         (
             "r(positional c)",
-            "{ d = c else false; if c { \"yes\" } else { \"no\" } }",
-            "(bool -> \"no\" | \"yes\") & ((bool | #_) -> \"no\" | \"yes\" | #_)",
+            "{ d = c else #notFound -> false; if c { \"yes\" } else { \"no\" } }",
+            "type Part1 = #notFound(..);\n(bool -> \"no\" | \"yes\") & ((bool | #notFound | Part1) -> \"no\" | \"yes\" | #notFound | Part1)",
         ),
         (
             "r(positional n)",
-            "{ d = n else 0; if n > 3 { \"big\" } else { \"small\" } }",
-            "(T -> \"big\" | \"small\") & ((T | #_) -> \"big\" | \"small\" | #_) \
+            "{ d = n else #notFound -> 0; if n > 3 { \"big\" } else { \"small\" } }",
+            "type Part1 = #notFound(..);\n(T -> \"big\" | \"small\") & ((T | #notFound | Part1) -> \"big\" | \"small\" | #notFound | Part1) \
              for T in int | f32 | f64 | rat",
         ),
     ] {
@@ -536,11 +607,10 @@ fn a_function_whose_handled_atoms_also_reach_its_result_has_two_arrows() {
 fn an_atom_from_elsewhere_stays_on_the_first_arrow() {
     // `#absent` is the body's own, not the parameter's, so the first arrow gives it too; the
     // atoms `trim` passes by are the parameter's, and only the second gives them.
-    let text =
-        "r(positional line) = if (line else \"\") == \"\" { #absent } else { trim(line) };\n";
+    let text = "r(positional line) = if (line else #ioError -> \"\" else #outOfBounds -> \"\") == \"\" { #absent } else { trim(line) };\n";
     assert_eq!(
         sig(text, "r"),
-        "type Part1 = String | #_;\n(String -> String | #absent) & (Part1 -> Part1)"
+        "type Part1 = #ioError(..);\ntype Part2 = #outOfBounds(..);\n(String -> String | #absent) & ((String | #ioError | Part1 | #outOfBounds | Part2) -> String | #absent | #ioError | Part1 | #outOfBounds | Part2)"
     );
 }
 
@@ -607,9 +677,9 @@ fn passing_the_parameter_to_a_function_that_handles_its_atoms_handles_none() {
     // (DESIGN.md sec:type_resolution: the atoms a parameter accepts are those that reach a
     // handler "in the body"), and `f(#nf)` passes `#nf` by although `g` takes it; the
     // declared twin `f(x: String)` does the same (part b).
-    let text = "g(positional y: String | #nf) = trim(y else \"dflt\");\n\
+    let text = "g(positional y: String | #nf) = trim(y else #nf -> \"dflt\");\n\
                 f(positional x) = g(x);\n\
-                l(positional x) = ((y: String | #nf) -> trim(y else \"dflt\"))(x);\n";
+                l(positional x) = ((y: String | #nf) -> trim(y else #nf -> \"dflt\"))(x);\n";
     assert_eq!(type_errors(text), Vec::<String>::new());
     assert_eq!(sig(text, "f"), "String -> String");
     for (call, want) in [("g(#nf)", "\"dflt\""), ("f(#nf)", "#nf"), ("l(#nf)", "#nf")] {
@@ -617,16 +687,16 @@ fn passing_the_parameter_to_a_function_that_handles_its_atoms_handles_none() {
     }
 }
 
-/// `a[0] else 0` makes `a` take every loose atom, and the atoms an argument holds come back
-/// through the parameter's own variable; a component read `a[1]` beside it adds none from
-/// outside, alone or inside a tuple of the result. Before, the result of `k` kept `#_` and the
-/// second part of `f`'s result did too, so `f(f((0, 0), 1), 1)` was refused: its inner call
+/// `a[0] else #outOfBounds -> 0` makes `a` take `#outOfBounds`, and the atoms an argument holds
+/// come back through the parameter's own variable; a component read `a[1]` beside it adds none
+/// from outside, alone or inside a tuple of the result. Before, the result of `k` kept `#_` and
+/// the second part of `f`'s result did too, so `f(f((0, 0), 1), 1)` was refused: its inner call
 /// was `(int, int | #_)`, which `a[1] + 1` does not take (round 2 of
 /// FAIL-fold-rotating-tuple-rounds, E2 of the Opus seat).
 #[test]
 fn a_component_read_beside_a_handled_read_adds_no_atom_from_outside() {
-    let k = "k(positional a) = (a[0] else 0) + a[1];\n";
-    let f = "f(positional a, positional x) = ((a[0] else 0), a[1] + 1);\n";
+    let k = "k(positional a) = (a[0] else #outOfBounds -> 0) + a[1];\n";
+    let f = "f(positional a, positional x) = ((a[0] else #outOfBounds -> 0), a[1] + 1);\n";
     assert_eq!(type_errors(k), Vec::<String>::new(), "{k}");
     assert_eq!(sig(k, "k"), "_ -> int");
     assert_eq!(type_errors(f), Vec::<String>::new(), "{f}");
@@ -647,7 +717,7 @@ fn a_component_read_beside_a_handled_read_adds_no_atom_from_outside() {
 /// `a_component_read_beside_a_handled_read_adds_no_atom_from_outside`).
 #[test]
 fn a_display_read_beside_a_handled_read_keeps_its_miss() {
-    let text = "m(positional a) = (a[0] else 0) + [10, 20][a[1]];\n";
+    let text = "m(positional a) = (a[0] else #outOfBounds -> 0) + [10, 20][a[1]];\n";
     assert_eq!(type_errors(text), Vec::<String>::new(), "{text}");
     let printed = sig(text, "m");
     assert!(printed.contains("#outOfBounds"), "{printed}");

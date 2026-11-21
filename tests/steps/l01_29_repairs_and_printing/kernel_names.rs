@@ -62,7 +62,7 @@ fn args(names: [&str; 6]) -> String {
 /// A unit of `defs` whose `main` calls `ok` at `args`.
 fn calling(defs: &str, args: &str) -> String {
     format!(
-        "{defs}main(m: MainArgs) {{\n  a = int(m.stdin[0] else \"0\") else 0;\n  \
+        "{defs}main(m: MainArgs) {{\n  a = int(m.stdin[0] else #ioError -> \"0\" else #outOfBounds -> \"0\") else #invalid -> 0;\n  \
          r = if ok({args}) {{ \"in\" }} else {{ \"out\" }};\n  m.stdout <- \"${{r}}\";\n}}\n"
     )
 }

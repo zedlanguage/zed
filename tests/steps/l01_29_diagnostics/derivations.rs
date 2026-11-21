@@ -7,7 +7,7 @@ use super::{rejected, steps};
 fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_port() {
     let out = rejected(
         "main(m: MainArgs) {
-  n = int(m.stdin[0]) else 0;
+  n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;
   total = n * 2;
   m.stdout <- \"total: \" ++ total;
 }
@@ -23,33 +23,38 @@ fn a_report_line_that_concatenates_a_number_shows_the_chain_back_to_the_input_po
   [1]  4:15: this expression is "total: "
        4 |   m.stdout <- "total: " ++ total;
          |               ^^^^^^^^^ [1]
-         |               ^^^^^^^^^^^^^^^^^^ [14]
-         |                            ^^^^^ [2, 15]
+         |               ^^^^^^^^^^^^^^^^^^ [18]
+         |                            ^^^^^ [2, 19]
   [2]  4:28: `total` is int here
   [3]  3:11: `total` is defined as this expression, int
        3 |   total = n * 2;
          |           ^ [5]
          |           ^^^^^ [3, 4]
-         |               ^ [13]
+         |               ^ [17]
   [4]  3:11: this `*` gives int
   [5]  3:11: `n` is int here
   [6]  2:7: `n` is defined as this expression, int
-       2 |   n = int(m.stdin[0]) else 0;
-         |       ^^^^^^^^^^^^^^^^^^^^^^ [6, 7]
-         |           ^^^^^^^ [10]     ^ [12]
-         |           ^^^^^^^^^^ [9]
-         |       ^-------------^ [8]
+       2 |   n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;
+         |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ [6, 7]
+         |           ^^^^^^^ [12]                 ^ [14]                                    ^ [16]
+         |           ^^^^^^^^^^ [11]                                 ^ [15]
+         |       ^-------------^------------------^------------------^ [8]
+         |                     [10]               [9]
   [7]  2:7: this `else` gives int
-  [8]  2:7: this call of `int` gives int | #invalid | #ioError(op: String, path: String, why: String) | #outOfBounds
-  [9]  2:11: this expression gives String | #ioError(op: String, path: String, why: String) | #outOfBounds
-  [10] 2:11: `m.stdin` is [String | #ioError(op: String, path: String, why: String)] here
-  [11] 1:9: `m.stdin` is declared `Lines`
+  [8]  2:7: this `else` gives int | #outOfBounds
+  [9]  2:7: this `else` gives int | #ioError(op: String, path: String, why: String) | #outOfBounds
+  [10] 2:7: this call of `int` gives int | #invalid | #ioError(op: String, path: String, why: String) | #outOfBounds
+  [11] 2:11: this expression gives String | #ioError(op: String, path: String, why: String) | #outOfBounds
+  [12] 2:11: `m.stdin` is [String | #ioError(op: String, path: String, why: String)] here
+  [13] 1:9: `m.stdin` is declared `Lines`
        1 | main(m: MainArgs) {
          |         ^^^^^^^^
-  [12] 2:28: this literal, 0, is 0
-  [13] 3:15: this literal, 2, is 2
-  [14] 4:15: `++` takes (String, String) -> String
-  [15] 4:28: repair: write `String(total)`; the checker accepts that"#
+  [14] 2:40: this literal, 0, is 0
+  [15] 2:59: this literal, 0, is 0
+  [16] 2:82: this literal, 0, is 0
+  [17] 3:15: this literal, 2, is 2
+  [18] 4:15: `++` takes (String, String) -> String
+  [19] 4:28: repair: write `String(total)`; the checker accepts that"#
     );
 }
 

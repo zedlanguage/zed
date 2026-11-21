@@ -14,7 +14,7 @@ use super::{dir_program, run_words, zedc};
 /// joined by `|`.
 fn reader(n: usize) -> String {
     let holes: Vec<String> = (0..n)
-        .map(|k| format!("${{m.env[\"V{k}\"] else \"-\"}}"))
+        .map(|k| format!("${{m.env[\"V{k}\"] else #notFound -> \"-\"}}"))
         .collect();
     format!(
         "main(m: MainArgs) {{\n  m.stdout <- \"{}\";\n}}\n",

@@ -24,7 +24,9 @@ pub(super) fn parses(src: &str) -> bool {
 
 /// `main` with `x` bound and the lines `body`.
 pub(super) fn program(body: &str) -> String {
-    format!("main(m: MainArgs) {{\n  x = (m.stdin[0] else \"\").len;\n{body}}}\n")
+    format!(
+        "main(m: MainArgs) {{\n  x = (m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\").len;\n{body}}}\n"
+    )
 }
 
 /// The note on what `<-` is.
@@ -60,7 +62,7 @@ fn refused(src: &str, written: &str, repaired: Option<&str>) {
 /// the comparison as the repair, written in full.
 #[test]
 fn a_push_where_a_comparison_stands_offers_the_comparison() {
-    let src = "main(m: MainArgs) {\n  x = (m.stdin[0] else \"\").len;\n  m.stdout <- if x<-1 { \"a\" } else { \"b\" };\n}\n";
+    let src = "main(m: MainArgs) {\n  x = (m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\").len;\n  m.stdout <- if x<-1 { \"a\" } else { \"b\" };\n}\n";
     let e = rejected(src);
     let headline = e.lines().next().unwrap();
     assert!(headline.contains("Try `if x < -1 {"), "{e}");

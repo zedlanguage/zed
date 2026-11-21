@@ -77,14 +77,14 @@ fn each_word_in_other_positions() {
 #[test]
 fn each_word_in_a_function_body_under_test_tables() {
     for src in [
-        "lead(positional s: String) = codePoint(s) else -1\n\
+        "lead(positional s: String) = codePoint(s) else #notScalar -> -1\n\
          test { \"a\" -> 97, \"é\" -> 233, \"\" -> -1, \"ab\" -> -1 }\n",
-        "glyph(positional n: int) = scalar(n) else \"?\"\n\
+        "glyph(positional n: int) = scalar(n) else #notScalar -> \"?\"\n\
          test { 65 -> \"A\", -1 -> \"?\", 55296 -> \"?\", 1114112 -> \"?\" }\n",
         "same(positional s: String) = fromUtf8(utf8(s)) == s\n\
          test { \"\" -> true, \"a😀\" -> true }\n",
         // An `if` branch.
-        "g(positional n: int) = if n >= 0 { scalar(n) else \"?\" } else { \"-\" }\n\
+        "g(positional n: int) = if n >= 0 { scalar(n) else #notScalar -> \"?\" } else { \"-\" }\n\
          test { 97 -> \"a\", -5 -> \"-\", 57343 -> \"?\" }\n",
     ] {
         assert!(rows_pass(src), "{src}");

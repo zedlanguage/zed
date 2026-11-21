@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
 const READ: &str = "main(m: MainArgs) {\n  \
-    m.stdout <- m.env[\"ZED_ENV_TEST\"] else \"unset\";\n}\n";
+    m.stdout <- m.env[\"ZED_ENV_TEST\"] else #notFound -> \"unset\";\n}\n";
 
 /// What `zedc run`, and an executable `zedc build` wrote, print when [`READ`] reads a value
 /// that is not UTF-8.

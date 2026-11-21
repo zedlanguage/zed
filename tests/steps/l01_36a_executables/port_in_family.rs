@@ -30,15 +30,21 @@ fn every_higher_order_form_reading_a_port_runs_in_an_executable_as_in_zedc_run()
         ("where", "names.where(p -> text(p) != \"-\").map(text)"),
         ("foldl", "names.foldl(\"\", (acc, p) -> acc ++ text(p))"),
         ("nested_map", "[names, names].map(ns -> ns.map(text))"),
-        ("lambda", "names.map(p -> main::files[p] else \"?\")"),
+        (
+            "lambda",
+            "names.map(p -> main::files[p] else #ioError -> \"?\" else #notFound -> \"?\")",
+        ),
         ("chain", "names.map(loud)"),
-        ("stdin", "[0, 1, 2].map(i -> m.stdin[i] else \"-\")"),
+        (
+            "stdin",
+            "[0, 1, 2].map(i -> m.stdin[i] else #ioError -> \"-\" else #notFound -> \"-\" else #outOfBounds -> \"-\")",
+        ),
     ] {
         let src = d.join(format!("{name}.zed"));
         std::fs::write(
             &src,
             format!(
-                "text(positional p: String) = main::files[p] else \"-\";\n\
+                "text(positional p: String) = main::files[p] else #ioError -> \"-\" else #notFound -> \"-\";\n\
                  loud(positional p: String) = text(p) ++ \"!\";\n\
                  main(m: MainArgs) {{\n  names = {names};\n  m.stdout <- \"${{{expr}}}\";\n}}\n"
             ),
@@ -89,7 +95,7 @@ fn a_lookup_port_read_in_families_is_asked_once_per_key_in_an_executable() {
     std::fs::write(
         &src,
         format!(
-            "text(positional p: String) = main::files[p] else \"-\";\n\
+            "text(positional p: String) = main::files[p] else #ioError -> \"-\" else #notFound -> \"-\";\n\
              main(m: MainArgs) {{\n  names = [\"{a}\", \"{b}\", \"{a}\", \"{a}\", \"{b}\", \"{a}\"];\n  \
              m.stdout <- \"${{names.map(text)}} ${{names.map(text)}} ${{[names].map(ns -> ns.map(text))}}\";\n}}\n",
             a = a.display(),
@@ -131,7 +137,7 @@ fn a_function_given_to_map_reads_main_files_in_an_executable() {
     std::fs::write(
         &src,
         format!(
-            "text(p: String) = main::files[p] else \"-\";\n\
+            "text(p: String) = main::files[p] else #ioError -> \"-\" else #notFound -> \"-\";\n\
              main(m: MainArgs) {{\n  names = [\"{a}\", \"{b}\", \"{c}\"];\n  \
              m.stdout <- \"${{names.map(text)}}\";\n}}\n",
             a = a.display(),

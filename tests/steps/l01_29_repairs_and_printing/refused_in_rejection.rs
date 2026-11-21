@@ -184,10 +184,10 @@ fn each_rejection_of_a_value_names_the_refused_question_behind_it() {
             "status",
             format!(
                 "main(m: MainArgs) -> int {{\n  \
-                 x = int(m.stdin[0] else \"\") else 0;\n  \
-                 y = int(m.stdin[1] else \"\") else 0;\n  \
-                 z = int(m.stdin[2] else \"\") else 0;\n  \
-                 w = int(m.stdin[3] else \"\") else 0;\n  \
+                 x = int(m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") else #invalid -> 0;\n  \
+                 y = int(m.stdin[1] else #ioError -> \"\" else #outOfBounds -> \"\") else #invalid -> 0;\n  \
+                 z = int(m.stdin[2] else #ioError -> \"\" else #outOfBounds -> \"\") else #invalid -> 0;\n  \
+                 w = int(m.stdin[3] else #ioError -> \"\" else #outOfBounds -> \"\") else #invalid -> 0;\n  \
                  if x <= 255 && {GROWTH} {{ x }} else {{ 0 }}\n}}\n"
             ),
             6,

@@ -34,7 +34,7 @@ fn two_failures_merge_into_a_set() {
 #[test]
 fn a_merge_flattens_and_else_replaces_it() {
     let src = "price = int(text(\"n/a\"));\nqty = int(text(\"1.5\"));\nfee = 10 div whole(0);\n\
-               total = price * qty + fee;\nshown = total else 0;\n";
+               total = price * qty + fee;\nshown = total else #divByZero -> 0 else #errs -> 0 else #invalid -> 0;\n";
     let v =
         |n| zed_tests::step_helpers::l01_16_elaboration::value(&format!("{}{src}", super::PASS), n);
     assert_eq!(v("total"), "#errs({#divByZero, #invalid})");

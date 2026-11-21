@@ -93,7 +93,7 @@ fn a_fence_of_three_programs_resolves_each_on_its_own() {
     // The form of DESIGN sec:checking_in_zed: two programs of `main` alone, then one whose
     // `main` calls a function written before it.
     let text = "main(m: MainArgs) {\n  m.stdout <- \"one\";\n}\n\
-                main(m: MainArgs) {\n  k = int(m.args[0] else \"\") else 0;\n  m.stdout <- String(k);\n}\n\
+                main(m: MainArgs) {\n  k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n  m.stdout <- String(k);\n}\n\
                 grow(k: int) {\n  return k + 1;\n}\n\
                 main(m: MainArgs) {\n  m.stdout <- String(grow(k: 2));\n}\n";
     let e = run(text).unwrap_err();

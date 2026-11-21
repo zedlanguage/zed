@@ -125,8 +125,8 @@ fn stops(name: &str, src: &str, args: &[&str], want: impl Fn(&str) -> String) {
 /// second, then running `body`: the numbers it builds from them the checker cannot size.
 fn with_args(limit: &str, body: &str) -> String {
     format!(
-        "{limit}\nmain(m: MainArgs) {{\n    k = int(m.args[0] else \"\") else 0;\n    \
-         j = int(m.args[1] else \"\") else 0;\n{body}}}\n"
+        "{limit}\nmain(m: MainArgs) {{\n    k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n    \
+         j = int(m.args[1] else #outOfBounds -> \"\") else #invalid -> 0;\n{body}}}\n"
     )
 }
 
@@ -134,7 +134,8 @@ fn with_args(limit: &str, body: &str) -> String {
 fn a_text_too_large_for_memory_stops_the_run() {
     // `a70` is a tuple of 2^70 copies of the argument, held as 71 shared pairs; its text,
     // two bytes and more for each copy, is past any machine's memory.
-    let mut src = "main(m: MainArgs) {\n    a0 = m.args[0] else \"\";\n".to_string();
+    let mut src =
+        "main(m: MainArgs) {\n    a0 = m.args[0] else #outOfBounds -> \"\";\n".to_string();
     for i in 1..=70 {
         src += &format!("    a{i} = (a{}, a{});\n", i - 1, i - 1);
     }
@@ -209,7 +210,7 @@ fn a_number_too_close_to_a_rounding_boundary_stops_the_run_past_its_memory_limit
     let src = with_args(
         "@limits(memory: 67108864)",
         "    q = if k >= 53 { (2r ^ k + 2r ^ (k - 53) - 1) / 2r ^ k } else { 0r };\n    \
-         m.stdout <- String(f64(q)) else \"\";\n",
+         m.stdout <- String(f64(q));\n",
     );
     stops("round", &src, &["16777216"], |file| {
         format!(
@@ -217,7 +218,7 @@ fn a_number_too_close_to_a_rounding_boundary_stops_the_run_past_its_memory_limit
              to a rounding boundary that it needs about 1.4 × 10^7 digits of it (5.6 MiB), and \
              about 89 MiB of memory to compute it; the run holds _ of 64 MiB.\n  \
              [1] 6:24: the run stopped here\n      \
-             6 |     m.stdout <- String(f64(q)) else \"\";\n        \
+             6 |     m.stdout <- String(f64(q));\n        \
              |                        ^^^^^^\n  \
              [2] 6:24: repair: `@limits(memory: 134217728)` before `main`, the limit doubled \
              to 128 MiB\n  \
@@ -236,7 +237,7 @@ fn a_read_the_record_lacks_stops_the_replay() {
     std::fs::write(&input, "hello\n").unwrap();
     let src = format!(
         "main(m: MainArgs) {{\n    fs = main::files;\n    \
-         m.stdout <- fs[\"{}\"] else \"none\";\n}}\n",
+         m.stdout <- fs[\"{}\"] else #ioError -> \"none\" else #notFound -> \"none\";\n}}\n",
         input.display()
     );
     let file = file("port", &src);
@@ -263,7 +264,7 @@ fn a_read_the_record_lacks_stops_the_replay() {
                  the record has been changed. Replay with the inputs of the recorded run, or \
                  make a new record with `zedc run <file> --record <out>`.\n  \
                  [1] 3:17: the run stopped here\n      \
-                 3 |     m.stdout <- fs[\"{at}\"] else \"none\";\n        \
+                 3 |     m.stdout <- fs[\"{at}\"] else #ioError -> \"none\" else #notFound -> \"none\";\n        \
                  |                 {marks}\n"
             )
         )
@@ -279,7 +280,7 @@ fn a_record_zedc_replay_cannot_use_is_a_usage_error() {
     // reads standard input: each exits with status 2, writes nothing to standard output, and
     // names the record's file and the line where the entry that cannot be read starts.
     let d = dir();
-    let src = "main(m: MainArgs) {\n    m.stdout <- m.stdin[0] else \"none\";\n}\n";
+    let src = "main(m: MainArgs) {\n    m.stdout <- m.stdin[0] else #ioError -> \"none\" else #outOfBounds -> \"none\";\n}\n";
     let file = file("damaged", src);
     let rec = d.join("damaged.rec").display().to_string();
     let recorded = zedc(&["run", &file, "--record", &rec]);
@@ -408,7 +409,8 @@ fn the_run_holds_its_values_not_the_memory_it_freed() {
 
 #[test]
 fn a_run_out_of_memory_offers_a_limit_a_bound_and_the_preallocated_mode() {
-    let mut src = "main(m: MainArgs) {\n    a0 = m.args[0] else \"\";\n".to_string();
+    let mut src =
+        "main(m: MainArgs) {\n    a0 = m.args[0] else #outOfBounds -> \"\";\n".to_string();
     for i in 1..=70 {
         src += &format!("    a{i} = (a{}, a{});\n", i - 1, i - 1);
     }

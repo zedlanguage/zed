@@ -171,7 +171,7 @@ fn a_failure_after_a_write_writes_the_same_on_both_engines() {
 fn a_fault_after_a_write_writes_the_same_on_both_engines() {
     // A fault, status 3: `b ^ k`, a number of more than 2^70 bits, its exponent from the
     // arguments, so the checker cannot fold it.
-    let rest = "    b = 2^64 + 13;\n    k = 2^64 + (int(m.args[0] else \"\") else 0);\n    \
+    let rest = "    b = 2^64 + 13;\n    k = 2^64 + (int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0);\n    \
                 m.stderr <- if k >= 0 { String(b ^ k) } else { \"\" };\n";
     let p = program("fault", &writes_then(rest));
     agree(
@@ -233,7 +233,7 @@ fn a_bug_of_zedc_in_the_run_stops_the_run_not_the_build_stage_before_it() {
     // gave that run an evaluator set to stop made `zedc run` exit with 101 there, which this
     // test caught.
     let src = "sq(positional n: int) = n * n;\nk = [1, 2, 3].map(x -> sq(x));\n";
-    let rest = "    m.stderr <- String(k[0] else 0);\n";
+    let rest = "    m.stderr <- String(k[0]);\n";
     let p = program("bug_staged", &format!("{src}{}", writes_then(rest)));
     // The switch exists only where debug assertions are on (crates/zedc/src/run.rs).
     if cfg!(debug_assertions) {

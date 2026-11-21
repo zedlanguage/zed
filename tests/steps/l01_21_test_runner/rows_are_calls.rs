@@ -45,7 +45,7 @@ fn an_atom_a_declared_parameter_does_not_take_passes_by_in_a_row() {
 fn the_row_of_issue_1_gives_what_the_program_gives() {
     // The function of issue 1: a missing line reads as the empty string.
     agree(
-        "readName(positional line) = trim(line else \"\")",
+        "readName(positional line) = trim(line else #notFound -> \"\")",
         &[
             ("#notFound", "readName(#notFound)", "\"\""),
             ("\" Ada \"", "readName(\" Ada \")", "\"Ada\""),
@@ -57,7 +57,7 @@ fn the_row_of_issue_1_gives_what_the_program_gives() {
 fn an_argument_passes_by_only_the_atoms_its_parameter_does_not_take() {
     // `#missing` goes into the body, which defaults it; `#other` selects no arrow and passes.
     agree(
-        "stock(positional count: int | #missing) = count else 0",
+        "stock(positional count: int | #missing) = count else #missing -> 0",
         &[
             ("#missing", "stock(#missing)", "0"),
             ("#other", "stock(#other)", "#other"),

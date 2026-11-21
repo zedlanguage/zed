@@ -61,7 +61,7 @@ Code under test, piece 2 (plan row FP-ops-strings): `s.split(sep)`, `s.lines` an
 | A loose atom in an operand passes; a family entry that is not a string is refused | `kernel::string_functions_pass_atoms_and_refuse_other_entries` |
 | `concat` of a family of families is rejected with the repair `xss >< (++)` | `cases::split_lines_and_concat` (its `saying` case) |
 | The join law on generated strings of n and 8n characters, O(n); `lines` over n characters; `concat` of n pieces | `bench::split_then_concat_gives_the_text_back_in_linear_time`, `bench::lines_runs_in_linear_time`, `bench::concat_of_n_pieces_runs_in_linear_time` |
-| The results are a rank of strings: a read by an integer key that misses is `#outOfBounds` | `cases::split_lines_and_concat`: `"a,b".split(",")[1] else "none"` is `b`, and reads at 2 and at -1 miss; a read with no `else` pushed to `m.stdout` is rejected as `String \| #outOfBounds`, seen 2026-11-16 |
+| The results are a rank of strings: a read by an integer key that misses is `#outOfBounds` | `cases::split_lines_and_concat`: `"a,b".split(",")[1] else #outOfBounds -> "none"` is `b`, and reads at 2 and at -1 miss; a read with no `else` pushed to `m.stdout` is rejected as `String \| #outOfBounds`, seen 2026-11-16 |
 
 ## Not built yet, each with its plan row
 

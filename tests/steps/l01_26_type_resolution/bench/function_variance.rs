@@ -13,7 +13,7 @@ fn many_functions_passed_to_partial_slots_scale() {
     let what = "n functions, each passed to a partial slot through a domain test";
     let make = |n: usize| {
         let mut src = String::from(
-            "opt(f: (x: int) ->? int) = f(x: 50) else 0;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else 0;\n",
+            "opt(f: (x: int) ->? int) = f(x: 50) else #notFound -> 0;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 0;\n",
         );
         for i in 0..n {
             src.push_str(&format!(
@@ -50,8 +50,8 @@ fn many_and_deep_functions_inside_values_at_partial_slots_scale() {
             deep_get.push_str("[0]");
         }
         let mut src = format!(
-            "useWide(b: ({slot},)) = b[0](x: 2.5) else 0;\napply(f: {slot}) = f(x: 2.5) else 0;\n\
-             useDeep(b: {deep_t}) = {deep_get}(x: 2.5) else 0;\n"
+            "useWide(b: ({slot},)) = b[0](x: 2.5) else #notFound -> 0;\napply(f: {slot}) = f(x: 2.5) else #notFound -> 0;\n\
+             useDeep(b: {deep_t}) = {deep_get}(x: 2.5) else #notFound -> 0;\n"
         );
         for i in 0..n {
             src.push_str(&format!(
@@ -85,7 +85,7 @@ fn functions_passed_through_generic_parameters_to_partial_slots_scale() {
     let what = "n functions passed through generic parameters, a chain of n, and one n deep";
     let make = |n: usize| {
         let mut src = String::from(
-            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 0;\npass(x) = apply(f: x);\nq0(x) = apply(f: x);\n",
+            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 0;\npass(x) = apply(f: x);\nq0(x) = apply(f: x);\n",
         );
         let (mut deep_v, mut deep_get) = ("s0".to_string(), "p".to_string());
         for _ in 0..n {
@@ -161,11 +161,12 @@ fn named_calls_of_generic_parameters_scale() {
 /// `function_variance::values_a_generic_body_passes_on_from_its_arguments_miss_outside_the_domain`.
 #[test]
 fn functions_passed_by_defaults_else_and_generic_values_to_partial_slots_scale() {
-    let what = "n functions passed by a default, `x else x`, and generic functions as values";
+    let what =
+        "n functions passed by a default, `x else #notFound -> x`, and generic functions as values";
     let make = |n: usize| {
         let mut src = String::from(
-            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 0;\npass(x) = apply(f: x);\n\
-             pd(x, y = x) = apply(f: y);\npe(x) = apply(f: x else x);\nrun(g, v) = g(x: v);\n",
+            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 0;\npass(x) = apply(f: x);\n\
+             pd(x, y = x) = apply(f: y);\npe(x) = apply(f: x else #notFound -> x);\nrun(g, v) = g(x: v);\n",
         );
         for i in 0..n {
             src.push_str(&format!(
@@ -206,7 +207,7 @@ fn functions_passed_as_family_entries_to_partial_slots_scale() {
         "n functions passed as family entries by key, by `map` written and in a generic body";
     let make = |n: usize| {
         let mut src = String::from(
-            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else 0;\npass(x) = apply(f: x);\n\
+            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 0;\npass(x) = apply(f: x);\n\
              key(m) = apply(f: m[0]);\nh(m) = m.map(g -> pass(x: g))[0];\nmany(m) = 0",
         );
         for _ in 0..n {

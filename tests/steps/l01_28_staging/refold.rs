@@ -14,7 +14,7 @@ pub(crate) fn nots(n: usize, inner: &str) -> String {
         "dz(k: int) = (5 div k) > 0;\n\
          main(m: MainArgs) {{\n  \
          d = dz(k: 0);\n  \
-         b = (m.stdin[0] else \"\") == \"t\";\n  \
+         b = (m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") == \"t\";\n  \
          m.stdout <- \"${{(if {e} {{ 1 }} else {{ 0 }}) else #divByZero -> 9}}\";\n}}\n"
     )
 }

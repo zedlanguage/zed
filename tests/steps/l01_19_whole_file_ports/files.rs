@@ -1,6 +1,5 @@
 //! `Files` ports: `fs[path]` is `String | #ioError(op:, path:, why:) | #notFound`, and each path
-//! is read from the world at most once per wave.| #ioError | #notFound`, and each path is read from
-//! the world at most once per wave.
+//! is read from the world at most once per wave.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -20,8 +19,8 @@ fn a_config_file_is_read_and_a_missing_one_falls_back() {
     std::fs::write(&cfg, "  verbose  \n").unwrap();
     let src = format!(
         "main(m: MainArgs) {{\n  fs = main::files;\n  \
-         mode = trim(fs[\"{}\"]) else \"quiet\";\n  \
-         extra = (fs[\"{}\"] else #notFound -> \"(no overrides)\") else \"(unreadable)\";\n  \
+         mode = trim(fs[\"{}\"]) else #ioError -> \"quiet\" else #notFound -> \"quiet\";\n  \
+         extra = (fs[\"{}\"] else #notFound -> \"(no overrides)\") else #ioError -> \"(unreadable)\";\n  \
          m.stdout <- \"mode=${{mode}} ${{extra}}\";\n}}\n",
         cfg.display(),
         d.join("absent.conf").display()
@@ -40,7 +39,7 @@ fn a_file_that_is_not_utf8_is_an_io_error() {
     std::fs::write(&bin, [0xffu8, 0x00, 0xfe]).unwrap();
     let src = format!(
         "main(m: MainArgs) {{\n  fs = main::files;\n  \
-         m.stdout <- (fs[\"{}\"] else #ioError -> \"unreadable\") else \"missing\";\n}}\n",
+         m.stdout <- (fs[\"{}\"] else #ioError -> \"unreadable\") else #notFound -> \"missing\";\n}}\n",
         bin.display()
     );
     assert_eq!(run("binary", &src, "", &[]).stdout, "unreadable\n");
@@ -77,7 +76,7 @@ impl Lookup for Counting {
 fn each_path_is_read_once_so_the_wave_sees_one_value() {
     let src = "main(m: MainArgs) {\n  fs = main::files;\n  \
                a = fs[\"notes.txt\"];\n  b = fs[\"notes.txt\"];\n  c = fs[\"todo.txt\"];\n  \
-               m.stdout <- \"${a == b} ${c else \"none\"}\";\n}\n";
+               m.stdout <- \"${a == b} ${c else #ioError -> \"none\" else #notFound -> \"none\"}\";\n}\n";
     let p = load(src.as_bytes()).unwrap();
     let port = Arc::new(Counting::default());
     let wave = p.run(&BTreeMap::new(), |_| port.clone()).unwrap();
@@ -179,7 +178,7 @@ fn a_failed_read_says_what_failed_where_and_why() {
     let src = format!(
         "main(m: MainArgs) {{\n  fs = main::files;\n  \
          m.stdout <- (fs[\"{}\"] else #ioError(op:, path:, why:) -> \"${{op}} ${{path}}: ${{why}}\") \
-         else \"missing\";\n}}\n",
+         else #notFound -> \"missing\";\n}}\n",
         d.display()
     );
     let out = run("failed-read", &src, "", &[]);
@@ -201,7 +200,7 @@ fn a_failed_read_says_what_failed_where_and_why() {
     // A bare `#ioError` still matches it, by the atom alone.
     let src = format!(
         "main(m: MainArgs) {{\n  fs = main::files;\n  \
-         m.stdout <- (fs[\"{}\"] else #ioError -> \"unreadable\") else \"missing\";\n}}\n",
+         m.stdout <- (fs[\"{}\"] else #ioError -> \"unreadable\") else #notFound -> \"missing\";\n}}\n",
         d.display()
     );
     assert_eq!(run("failed-read", &src, "", &[]).stdout, "unreadable\n");

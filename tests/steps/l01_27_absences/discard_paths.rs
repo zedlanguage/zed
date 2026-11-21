@@ -48,7 +48,7 @@ fn accepted(text: &str) {
 fn a_default_in_one_branch_names_nothing_in_the_other() {
     // The first branch names its own miss; the second branch's miss is the same atom, but
     // nothing on its path names it.
-    let t = in_f("_ = if c > 0 { lookup(1) else #notFound } else { lookup(2) };");
+    let t = in_f("_ = if c > 0 { lookup(1) else #notFound -> #notFound } else { lookup(2) };");
     let (message, span, notes) = the_error(&t);
     assert_eq!(
         message,
@@ -56,7 +56,7 @@ fn a_default_in_one_branch_names_nothing_in_the_other() {
     );
     assert_eq!(
         span,
-        "_ = if c > 0 { lookup(1) else #notFound } else { lookup(2) };"
+        "_ = if c > 0 { lookup(1) else #notFound -> #notFound } else { lookup(2) };"
     );
     // Where it enters: the second branch's call, and not the first branch's default.
     assert_eq!(
@@ -72,7 +72,7 @@ fn a_default_in_one_branch_names_nothing_in_the_other() {
     assert!(
         notes.iter().any(|i: &String| i
             == "this `if` gives int | #notFound \
-              [if c > 0 { lookup(1) else #notFound } else { lookup(2) }]"),
+              [if c > 0 { lookup(1) else #notFound -> #notFound } else { lookup(2) }]"),
         "{notes:#?}"
     );
     assert!(
@@ -92,16 +92,16 @@ fn a_default_in_one_branch_names_nothing_in_the_other() {
 #[test]
 fn a_default_in_each_branch_names_every_failure() {
     accepted(&in_f(
-        "_ = if c > 0 { lookup(1) else #notFound } else { lookup(2) else #notFound };",
+        "_ = if c > 0 { lookup(1) else #notFound -> #notFound } else { lookup(2) else #notFound -> #notFound };",
     ));
     // Each branch names its own atom.
     accepted(&in_f(
-        "_ = if c > 0 { lookup(1) else #missing } else { lookup(2) else #absent };",
+        "_ = if c > 0 { lookup(1) else #notFound -> #missing } else { lookup(2) else #notFound -> #absent };",
     ));
     // An `else if` chain, each arm defaulted.
     accepted(&in_f(
-        "_ = if c > 1 { lookup(1) else #ok } else if c > 0 { lookup(2) else #ok } \
-         else { lookup(3) else #ok };",
+        "_ = if c > 1 { lookup(1) else #notFound -> #ok } else if c > 0 { lookup(2) else #notFound -> #ok } \
+         else { lookup(3) else #notFound -> #ok };",
     ));
 }
 
@@ -109,11 +109,11 @@ fn a_default_in_each_branch_names_every_failure() {
 fn a_default_on_an_inner_if_covers_both_its_branches() {
     // The default on the inner `if` is on the path of both inner branches.
     accepted(&in_f(
-        "_ = if c > 0 { (if c > 1 { lookup(1) } else { lookup(2) }) else #notFound } else { 0 };",
+        "_ = if c > 0 { (if c > 1 { lookup(1) } else { lookup(2) }) else #notFound -> #notFound } else { 0 };",
     ));
     // It does not reach the outer `if`'s other branch.
     let t = in_f(
-        "_ = if c > 0 { (if c > 1 { lookup(1) } else { lookup(2) }) else #notFound } \
+        "_ = if c > 0 { (if c > 1 { lookup(1) } else { lookup(2) }) else #notFound -> #notFound } \
          else { lookup(3) };",
     );
     let (_, _, notes) = the_error(&t);
@@ -123,7 +123,7 @@ fn a_default_on_an_inner_if_covers_both_its_branches() {
     );
     // A default on one inner branch covers that branch only.
     let t = in_f(
-        "_ = if c > 0 { if c > 1 { lookup(1) else #notFound } else { lookup(2) } } else { 0 };",
+        "_ = if c > 0 { if c > 1 { lookup(1) else #notFound -> #notFound } else { lookup(2) } } else { 0 };",
     );
     let (message, _, notes) = the_error(&t);
     assert_eq!(
@@ -137,7 +137,7 @@ fn a_default_on_an_inner_if_covers_both_its_branches() {
     // A default on the whole value covers everything under it.
     accepted(&in_f(
         "_ = (if c > 0 { if c > 1 { lookup(1) } else { lookup(2) } } else { lookup(3) }) \
-         else #notFound;",
+         else #notFound -> #notFound;",
     ));
 }
 
@@ -145,10 +145,12 @@ fn a_default_on_an_inner_if_covers_both_its_branches() {
 fn a_block_export_and_a_name_keep_what_their_default_names() {
     // The block exports a value whose default names its miss.
     accepted(&format!(
-        "{LOOKUP}_ = {{\n  y = lookup(1);\n  y else #notFound\n}};\n"
+        "{LOOKUP}_ = {{\n  y = lookup(1);\n  y else #notFound -> #notFound\n}};\n"
     ));
     // A name bound to a defaulted value carries the naming with it.
-    accepted(&format!("{LOOKUP}y = lookup(1) else #notFound;\n_ = y;\n"));
+    accepted(&format!(
+        "{LOOKUP}y = lookup(1) else #notFound -> #notFound;\n_ = y;\n"
+    ));
     // A name bound to the bare call does not.
     let t = format!("{LOOKUP}y = lookup(1);\nz = y;\n_ = z;\n");
     let (_, span, notes) = the_error(&t);
@@ -158,7 +160,8 @@ fn a_block_export_and_a_name_keep_what_their_default_names() {
         "the loose failure #notFound enters here [lookup(1)]"
     );
     // A block whose export is a bare call drops its miss.
-    let t = format!("{LOOKUP}_ = {{\n  y = lookup(1) else #notFound;\n  lookup(y)\n}};\n");
+    let t =
+        format!("{LOOKUP}_ = {{\n  y = lookup(1) else #notFound -> #notFound;\n  lookup(y)\n}};\n");
     let (_, _, notes) = the_error(&t);
     assert_eq!(
         notes[0],
@@ -170,10 +173,12 @@ fn a_block_export_and_a_name_keep_what_their_default_names() {
 fn an_argument_with_a_default_carries_no_loose_failure_into_the_call() {
     // `id` passes its argument on and cannot fail itself.
     let id = "id(positional x) = x;\n";
-    accepted(&format!("{LOOKUP}{id}_ = id(lookup(1) else #ok);\n"));
+    accepted(&format!(
+        "{LOOKUP}{id}_ = id(lookup(1) else #notFound -> #ok);\n"
+    ));
     // `positive` can fail itself: its own failure reaches `_` unnamed.
     let positive = "positive(positional x: int) = if x > 0 { x } else { #negative };\n";
-    let t = format!("{LOOKUP}{positive}_ = positive(lookup(1) else 0);\n");
+    let t = format!("{LOOKUP}{positive}_ = positive(lookup(1) else #notFound -> 0);\n");
     let (message, _, notes) = the_error(&t);
     assert_eq!(
         message,
@@ -181,12 +186,12 @@ fn an_argument_with_a_default_carries_no_loose_failure_into_the_call() {
     );
     assert_eq!(
         notes[0],
-        "the loose failure #negative enters here [positive(lookup(1) else 0)]"
+        "the loose failure #negative enters here [positive(lookup(1) else #notFound -> 0)]"
     );
     // The same when the argument's default writes the very atom the function fails with:
     // the default names the argument's failure, not the function's own.
     let check = "check(positional x: int) = if x > 0 { x } else { #notFound };\n";
-    let t = format!("{LOOKUP}{check}_ = check(lookup(1) else #notFound);\n");
+    let t = format!("{LOOKUP}{check}_ = check(lookup(1) else #notFound -> #notFound);\n");
     let (message, _, notes) = the_error(&t);
     assert_eq!(
         message,
@@ -194,7 +199,7 @@ fn an_argument_with_a_default_carries_no_loose_failure_into_the_call() {
     );
     assert_eq!(
         notes[0],
-        "the loose failure #notFound enters here [check(lookup(1) else #notFound)]"
+        "the loose failure #notFound enters here [check(lookup(1) else #notFound -> #notFound)]"
     );
 }
 
@@ -226,16 +231,18 @@ fn a_generic_call_makes_the_failures_its_type_variable_takes_from_elsewhere() {
         "the loose failure #notFound enters here [first((lookup(1), 2))]"
     );
     // A default on the argument names the argument's own failure, not what `g` makes.
-    let t = format!("{LOOKUP}{apply}_ = apply(lookup, lookup(1) else 1);\n");
+    let t = format!("{LOOKUP}{apply}_ = apply(lookup, lookup(1) else #notFound -> 1);\n");
     let (_, _, notes) = the_error(&t);
     assert_eq!(
         notes[0],
-        "the loose failure #notFound enters here [apply(lookup, lookup(1) else 1)]"
+        "the loose failure #notFound enters here [apply(lookup, lookup(1) else #notFound -> 1)]"
     );
     // A default on the call's value names everything it gives.
-    accepted(&format!("{LOOKUP}{apply}_ = apply(lookup, 1) else #ok;\n"));
     accepted(&format!(
-        "{LOOKUP}{first}_ = first((lookup(1), 2)) else #ok;\n"
+        "{LOOKUP}{apply}_ = apply(lookup, 1) else #notFound -> #ok;\n"
+    ));
+    accepted(&format!(
+        "{LOOKUP}{first}_ = first((lookup(1), 2)) else #notFound -> #ok;\n"
     ));
 }
 
@@ -244,15 +251,19 @@ fn a_generic_call_that_passes_its_argument_on_passes_its_naming_on() {
     // The type variable of `id`'s result is its parameter's own: its atoms are those of the
     // argument, whose default names them.
     let id = "id(positional x) = x;\n";
-    accepted(&format!("{LOOKUP}{id}_ = id(lookup(1) else #notFound);\n"));
-    accepted(&format!("{LOOKUP}{id}_ = id(id(lookup(1) else #ok));\n"));
+    accepted(&format!(
+        "{LOOKUP}{id}_ = id(lookup(1) else #notFound -> #notFound);\n"
+    ));
+    accepted(&format!(
+        "{LOOKUP}{id}_ = id(id(lookup(1) else #notFound -> #ok));\n"
+    ));
     // `pick` gives one of its two arguments.
     let pick = "pick(positional c: int, positional a, positional b) = if c > 0 { a } else { b };\n";
     accepted(&format!(
-        "{LOOKUP}{pick}_ = pick(1, lookup(1) else #ok, lookup(2) else #ok);\n"
+        "{LOOKUP}{pick}_ = pick(1, lookup(1) else #notFound -> #ok, lookup(2) else #notFound -> #ok);\n"
     ));
     // Without a default the argument's miss reaches `_`, and enters at the argument.
-    let t = format!("{LOOKUP}{pick}_ = pick(1, lookup(1) else #ok, lookup(2));\n");
+    let t = format!("{LOOKUP}{pick}_ = pick(1, lookup(1) else #notFound -> #ok, lookup(2));\n");
     let (_, _, notes) = the_error(&t);
     assert_eq!(
         notes[0],

@@ -13,8 +13,8 @@ use super::{Ran, built, dir, executable, interpreter};
 /// is "t", `f` its negation, so no term is decided before the run.
 const SRC: &str = "\
 main(m: MainArgs) {
-  y = int(m.args[0] else \"\") else 1;
-  t = (m.args[1] else \"\") == \"t\";
+  y = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 1;
+  t = (m.args[1] else #outOfBounds -> \"\") == \"t\";
   f = !t;
   x = 5;
   d = (x div y) > 0;

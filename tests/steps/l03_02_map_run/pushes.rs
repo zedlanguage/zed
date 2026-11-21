@@ -58,10 +58,17 @@ fn a_read_of_a_range_is_handled_before_the_push() {
     // `#ioError` bubbles out of a push, and the miss is handled with `else`. The key is one the
     // checker cannot know, as the run passes no argument: a read at a literal key outside the
     // range is a static error (row RANGE-literal-reads).
+    // At key 1 every run reads inside the range, so the read holds no atom and takes no `else`
+    // (DESIGN.md sec:failure, QUESTIONS A113); at key 3 it may miss and names `#outOfBounds`.
     let text = |k: u8| {
+        let tail = if k < 3 {
+            ""
+        } else {
+            " else #outOfBounds -> -1"
+        };
         format!(
             "main(m: MainArgs) {{\n    m.stdout <- \
-             \"${{(0 ..< 3)[if m.args.count > 0 {{ 0 }} else {{ {k} }}] else -1}}\";\n}}\n"
+             \"${{(0 ..< 3)[if m.args.count > 0 {{ 0 }} else {{ {k} }}]{tail}}}\";\n}}\n"
         )
     };
     let ran = both("range_hit", &text(1), b"");

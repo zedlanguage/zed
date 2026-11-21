@@ -158,7 +158,7 @@ fn a_block_function_named_as_a_value_where_it_is_called_runs_the_body_of_each_ca
     // Pushed to a port in `main`.
     let src = at(&format!(
         "main(io: MainArgs) {{ {H} p = h; \
-         io.stdout <- (String(h(mi[\"a\"])) ++ String(p(m[\"a\"]))) else \"\"; }}\n\
+         io.stdout <- (String(h(mi[\"a\"])) ++ String(p(m[\"a\"]))) else #empty -> \"\"; }}\n\
          a = 1;\n"
     ));
     assert!(elab(&src).is_ok(), "{src}: {:?}", all_errors(&src));
@@ -232,7 +232,7 @@ fn a_block_function_called_in_each_form_runs_the_body_of_each_call() {
     // Called by name in `main`, whose port push runs it.
     let src = at(&format!(
         "main(io: MainArgs) {{ {H} \
-         io.stdout <- (String(h(mi[\"a\"])) ++ String(h(m[\"a\"]))) else \"\"; }}\n\
+         io.stdout <- (String(h(mi[\"a\"])) ++ String(h(m[\"a\"]))) else #empty -> \"\"; }}\n\
          a = 1;\n"
     ));
     assert!(elab(&src).is_ok(), "{src}: {:?}", all_errors(&src));

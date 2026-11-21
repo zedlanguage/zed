@@ -57,7 +57,7 @@ fn every_row_passes_natively_with_the_machines_counts() {
         // 92 checks of table rows (7 of them in L25.8's unit, 19 in L1.40d's, 18 in L1.26's
         // readings unit and 7 in L1.26a's), and the 4 marked lines of the two rejection units.
         assert_eq!(rows, 96);
-        let want = if fuse { 199 } else { 225 };
+        let want = if fuse { 199 } else { 241 };
         assert_eq!((runs.get(), cells.get(), writes.get()), (115, 195, want));
     }
 }

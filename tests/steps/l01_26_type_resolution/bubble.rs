@@ -36,7 +36,7 @@ fn rejected_at_write_of(src: &str, value: &str, operand: &str, ty: &str) {
     let expected = format!(
         "A `Lines` port takes a `String` or a family of strings: \
          `m.stdout <- {value} : {ty} | #outOfBounds`. \
-         Try `m.stdout <- {operand} else \"\";` instead. [{value}]"
+         Try `m.stdout <- {operand} else #outOfBounds -> \"\";` instead. [{value}]"
     );
     assert_eq!(type_errors(src), [expected], "{src}");
 }
@@ -281,7 +281,7 @@ const HANDLED: &[(&str, &str, &str)] = &[
     ),
     (
         "bubble_else_default",
-        "main(m: MainArgs) {\n  a = m.args[0] else m.args[1];\n  \
+        "main(m: MainArgs) {\n  a = m.args[0] else #outOfBounds -> m.args[1];\n  \
          m.stdout <- a else #outOfBounds -> \"none\";\n}\n",
         "none\n",
     ),
@@ -408,7 +408,7 @@ const HANDLED_IN_BODY: &[(&str, &str, &str, &str, &str)] = &[
     ),
     (
         "bubble_body_plain_else",
-        "h(args) = (args[0] ++ \"!\") else \"x\";\n",
+        "h(args) = (args[0] ++ \"!\") else #outOfBounds -> \"x\";\n",
         "h(args) = args[0] ++ \"!\";\n",
         "x\n",
         "String",
@@ -489,14 +489,14 @@ fn an_atom_a_body_drops_with_an_underscore_is_still_rejected() {
         type_errors(&src("_ = args[0] ++ \"!\";")),
         [
             "`_` drops a loose failure: `args[0]` may be #outOfBounds when `h` is called as \
-          `h(args: m.args)`. Try `_ = args[0] ++ \"!\" else #ok;` instead. \
+          `h(args: m.args)`. Try `_ = args[0] ++ \"!\" else #outOfBounds -> #ok;` instead. \
           [_ = args[0] ++ \"!\";]"
         ],
     );
     // The repair the message gives is accepted, and runs.
     prints(
         "bubble_underscore_repaired",
-        &src("_ = args[0] ++ \"!\" else #ok;"),
+        &src("_ = args[0] ++ \"!\" else #outOfBounds -> #ok;"),
         "y\n",
     );
 }
@@ -517,20 +517,20 @@ fn an_atom_a_body_drops_in_a_statement_is_rejected_at_the_statement() {
         type_errors(&src("say(s: args[0], out: out);")),
         [
             "A statement drops a loose failure: `args[0]` may be #outOfBounds when `h` is called \
-          as `h(args: m.args, out: m.stdout)`. Try `_ = say(s: args[0], out: out) else #ok;` \
-          instead. [say(s: args[0], out: out);]"
+          as `h(args: m.args, out: m.stdout)`. Try `_ = say(s: args[0], out: out) else \
+          #outOfBounds -> #ok;` instead. [say(s: args[0], out: out);]"
         ],
     );
     // The headline's repair is accepted and, with no arguments, skips the call; handling
     // the read itself keeps the call.
     prints(
         "bubble_statement_dropped",
-        &src("_ = say(s: args[0], out: out) else #ok;"),
+        &src("_ = say(s: args[0], out: out) else #outOfBounds -> #ok;"),
         "",
     );
     prints(
         "bubble_statement_repaired",
-        &src("say(s: args[0] else \"none\", out: out);"),
+        &src("say(s: args[0] else #outOfBounds -> \"none\", out: out);"),
         "none\n",
     );
 }
@@ -559,7 +559,7 @@ fn an_atom_a_default_under_a_written_type_takes_is_rejected_at_the_default() {
     );
     prints(
         "bubble_default_repaired",
-        &src("s: String = \"<\" ++ xs[0] else \"none\""),
+        &src("s: String = \"<\" ++ xs[0] else #outOfBounds -> \"none\""),
         "none!\n",
     );
 }
@@ -581,7 +581,7 @@ fn an_atom_a_body_writes_to_a_port_is_rejected_at_the_write() {
         type_errors(&src("out <- args[0];")),
         [
             "A `Lines` port takes a `String` or a family of strings: `out <- args[0] : String | \
-          #outOfBounds`. Try `out <- args[0] else \"\";` instead. [args[0]]"
+          #outOfBounds`. Try `out <- args[0] else #outOfBounds -> \"\";` instead. [args[0]]"
         ],
     );
     // Through an operation, the atom is one the call makes in the body (`gives_made`), and
@@ -596,7 +596,7 @@ fn an_atom_a_body_writes_to_a_port_is_rejected_at_the_write() {
     );
     prints(
         "bubble_write_repaired",
-        &src("out <- args[0] else \"none\";"),
+        &src("out <- args[0] else #outOfBounds -> \"none\";"),
         "none\n",
     );
 }
@@ -789,7 +789,7 @@ fn an_atom_a_body_holds_in_a_display_reaches_the_caller_as_data() {
     };
     prints(
         "bubble_display_data",
-        &src("[args[0]]", " else \"none\""),
+        &src("[args[0]]", " else #outOfBounds -> \"none\""),
         "none\n",
     );
     rejected_at_write_of(
@@ -800,7 +800,10 @@ fn an_atom_a_body_holds_in_a_display_reaches_the_caller_as_data() {
     );
     prints(
         "bubble_display_repaired",
-        &src("[args[0] else \"none\"]", " else \"none\""),
+        &src(
+            "[args[0] else #outOfBounds -> \"none\"]",
+            " else #outOfBounds -> \"none\"",
+        ),
         "none\n",
     );
 }
@@ -1147,12 +1150,12 @@ fn an_atom_a_numeric_use_makes_passes_the_call_by() {
     // Handled inside the body, in a function and in an applied lambda.
     prints(
         "bubble_abs_safe_else",
-        "h(args) = args[0]?.abs else 7;\nmain(m: MainArgs) {\n  m.stdout <- \"${h(args: m.args.map(y -> 0))}\";\n}\n",
+        "h(args) = args[0]?.abs else #outOfBounds -> 7;\nmain(m: MainArgs) {\n  m.stdout <- \"${h(args: m.args.map(y -> 0))}\";\n}\n",
         "7\n",
     );
     prints(
         "bubble_abs_safe_lambda",
-        "main(m: MainArgs) {\n  m.stdout <- \"${(a -> (a[0]?.abs else 7))(m.args.map(y -> 0))}\";\n}\n",
+        "main(m: MainArgs) {\n  m.stdout <- \"${(a -> (a[0]?.abs else #outOfBounds -> 7))(m.args.map(y -> 0))}\";\n}\n",
         "7\n",
     );
 }

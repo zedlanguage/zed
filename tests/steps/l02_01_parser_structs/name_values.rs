@@ -51,9 +51,12 @@ fn a_chain_of_and_is_one_value() {
 #[test]
 fn a_chain_of_else_is_one_value() {
     check(&[
-        ("v = { a: x else y };", "(= (v) (record (a: (else x y))))"),
         (
-            "v = { a: x else y else z, b: w };",
+            "v = { a: x else #notFound -> y };",
+            "(= (v) (record (a: (else x y))))",
+        ),
+        (
+            "v = { a: x else #notFound -> y else z, b: w };",
             "(= (v) (record (a: (else (else x y) z)) (b: w)))",
         ),
     ]);
@@ -63,7 +66,7 @@ fn a_chain_of_else_is_one_value() {
 #[test]
 fn bare_name_values_round_trip() {
     assert_eq!(
-        fmt("box = {lo:lo,hi:hi};\nt = {a:x else y,b:c&&d};\n"),
-        "box = { lo:, hi: };\nt = { a: x else y, b: c && d };\n"
+        fmt("box = {lo:lo,hi:hi};\nt = {a:x else #notFound -> y,b:c&&d};\n"),
+        "box = { lo:, hi: };\nt = { a: x else #notFound -> y, b: c && d };\n"
     );
 }

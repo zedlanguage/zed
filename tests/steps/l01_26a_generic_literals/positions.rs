@@ -121,17 +121,17 @@ fn a_literal_returned_in_a_tuple_beside_a_parameter_keeps_its_value() {
 fn a_literal_default_of_else_takes_the_carrier_of_the_other_side() {
     // `div` takes `int` alone, so its `else 0` is an `int`, and the default is used where the
     // divisor is zero.
-    let src = "f(x: int, d: int) = x div d else 0;\na = f(x: 7, d: 0);\nb = f(x: 7, d: 2);\n";
+    let src = "f(x: int, d: int) = x div d else #divByZero -> 0;\na = f(x: 7, d: 0);\nb = f(x: 7, d: 2);\n";
     assert_eq!(sig(src, "f"), "(x: int, d: int) -> int");
     values(src, &[("a", "0"), ("b", "3")]);
     // Beside a `rat` the default is a literal of the union, `0 | rat` (L1.26a: one literal
     // branch beside a carrier is fixed as it would be alone, and the union rule applies).
     assert_eq!(
-        sig("g(x: rat, d: rat) = x / d else 0;\n", "g"),
+        sig("g(x: rat, d: rat) = x / d else #divByZero -> 0;\n", "g"),
         "(x: rat, d: rat) -> 0 | rat"
     );
     assert_eq!(
-        sig("g(x: rat, d: rat) = x / d else 0.5;\n", "g"),
+        sig("g(x: rat, d: rat) = x / d else #divByZero -> 0.5;\n", "g"),
         "(x: rat, d: rat) -> 0.5 | rat"
     );
 }

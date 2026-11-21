@@ -17,7 +17,7 @@ pub(crate) use zed_tests::step_helpers::l01_19a_command_line::{Outcome, program,
 
 /// A program that writes the variables `ZED_A` and `ZED_B`, `-` for one that is not set.
 pub(crate) const TWO: &str = "main(m: MainArgs) {\n  \
-    m.stdout <- \"${m.env[\"ZED_A\"] else \"-\"}|${m.env[\"ZED_B\"] else \"-\"}\";\n}\n";
+    m.stdout <- \"${m.env[\"ZED_A\"] else #notFound -> \"-\"}|${m.env[\"ZED_B\"] else #notFound -> \"-\"}\";\n}\n";
 
 /// The variables `vars` as a process holds them.
 pub(crate) fn vars(vars: &[(&str, &[u8])]) -> Vec<(OsString, OsString)> {

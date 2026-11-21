@@ -1,5 +1,5 @@
-//! Loose atoms, the failure channel: `else` defaults them, the pattern form handles the one it
-//! names, and they flow through the operators unchanged.
+//! Loose atoms, the failure channel: an `else` handles the ones it names, and they flow through
+//! the operators unchanged.
 
 use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
@@ -8,8 +8,19 @@ use zed_tests::step_helpers::l01_26_type_resolution::{sig, type_errors};
 const LOOKUP: &str = "positional x: int | #notFound | #none";
 
 #[test]
-fn else_defaults_every_loose_atom() {
-    let t = format!("f({LOOKUP}) = x else 0;\n");
+fn a_chain_of_else_defaults_each_loose_atom_it_names() {
+    // Every `else` names the atoms it takes (DESIGN.md sec:failure, QUESTIONS A113): a bare
+    // `x else 0` is refused, and its repair, the chain that names each loose atom, defaults both.
+    let bare = format!("f({LOOKUP}) = x else 0;\n");
+    assert_eq!(
+        type_errors(&bare),
+        [
+            "`x else 0` does not name the atoms it takes. Try `x else #none -> 0 else #notFound -> 0` \
+          instead.\n  fixes, each checked here:\n    f(positional x: int | #notFound | #none) = x \
+          else #none -> 0 else #notFound -> 0;    the `else` takes #none, #notFound [x else 0]"
+        ]
+    );
+    let t = format!("f({LOOKUP}) = x else #none -> 0 else #notFound -> 0;\n");
     assert_eq!(sig(&t, "f"), "(int | #none | #notFound) -> int");
     let run = format!("{t}a = f(#none);\nb = f(#notFound);\nc = f(4);\n");
     assert_eq!(value(&run, "a"), "0");
@@ -199,17 +210,19 @@ fn a_loose_atom_passes_through_a_generic_function_bounded_to_carriers() {
 
 #[test]
 fn a_call_takes_the_arrow_of_a_generic_function_that_takes_its_atoms() {
-    // `r` handles the atoms of `x` and lets them reach its result, so it has two arrows; the
-    // first, whose `T` is bounded to carriers, takes no atom, and a call passing `#nf` takes
-    // the second.
-    let t = "r(positional x, positional d) = if (x else d) == d { d } else { x + d };\n\
+    // `r` handles the atom `#nf` of `x` and lets the others reach its result, so it has two
+    // arrows; the first, whose `T` is bounded to carriers, takes no atom, and a call passing
+    // `#nf` takes the second. The `else` names `#nf`, the atom the call passes (QUESTIONS A113:
+    // every `else` names the atoms it takes; a generic `else` has no loose atoms to list).
+    let t = "r(positional x, positional d) = if (x else #nf -> d) == d { d } else { x + d };\n\
              h(positional y: int | #nf) = r(y, 1);\n";
     assert!(type_errors(t).is_empty());
     assert_eq!(
         sig(t, "r"),
-        "((T, T) -> T) & ((T | #_, T) -> T | #_) for T in int | f32 | f64 | rat"
+        "type Part1 = #nf | #nf(..);\n((T, T) -> T) & ((T | Part1, T) -> T | Part1) for T in int | \
+         f32 | f64 | rat"
     );
-    assert_eq!(sig(t, "h"), "(int | #nf) -> int | #_");
+    assert_eq!(sig(t, "h"), "(int | #nf) -> int | #nf | #nf(..)");
     let run = format!("{t}a = h(#nf);\nb = h(2);\n");
     assert_eq!(value(&run, "a"), "1");
     assert_eq!(value(&run, "b"), "3");
@@ -236,22 +249,23 @@ fn a_loose_atom_enters_a_parameter_whose_bound_may_take_other_values() {
 
 #[test]
 fn a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values() {
-    // `x`'s atoms reach the result, so `r` has two arrows; `v` may take other values, so in
-    // both arrows its type holds every atom and `#nf` enters it, where `size` refuses it. The
-    // first arrow takes the call, as its other parameter takes the plain `1`. `v`'s variable
+    // `x`'s atom `#nf`, which the `else` names, reaches the result, so `r` has two arrows; `v`
+    // may take other values, so in both arrows its type holds every atom and `#nf` enters it,
+    // where `size` refuses it. The first arrow takes the call, as its other parameter takes
+    // the plain `1`. `v`'s variable
     // stands in both arrows, so it prints by name, `T` (DESIGN sec:diagnostics, UNDERSCORE-print).
     let t = "size(positional v: int | (int, int)) = 1;\n\
-             r(positional x, positional v) = if (x else 0) == 0 { size(v) } else { x + size(v) };\n";
+             r(positional x, positional v) = if (x else #nf -> 0) == 0 { size(v) } else { x + size(v) };\n";
     assert_eq!(
         sig(t, "r"),
-        "type Part1 = int | #_;\n((int, T) -> int) & ((Part1, T) -> Part1)"
+        "type Part1 = int | #nf | #nf(..);\n((int, T) -> int) & ((Part1, T) -> Part1)"
     );
     let bad = format!("{t}h(positional y: int | #nf) = r(1, y);\n");
     assert_eq!(
         type_errors(&bad),
         [
-            "`r` does not take (1, int | #nf): no arrow of `r` takes these types.\n  Part1 stands for a part written more than once:\n    type Part1 = int | #_; [r(1, y)]",
-            "`size` does not take #nf, only int | (int, int).\n  Part1 stands for a part written more than once:\n    type Part1 = int | #_; [r(1, y)]"
+            "`r` does not take (1, int | #nf): no arrow of `r` takes these types.\n  Part1 stands for a part written more than once:\n    type Part1 = int | #nf | #nf(..); [r(1, y)]",
+            "`size` does not take #nf, only int | (int, int).\n  Part1 stands for a part written more than once:\n    type Part1 = int | #nf | #nf(..); [r(1, y)]"
         ]
     );
     let ok = format!("{t}h(positional y: int | #nf) = r(y, 2);\na = h(#nf);\nb = h(2);\n");
@@ -423,17 +437,17 @@ fn the_is_repair_binds_an_argument_expression_to_the_parameters_name() {
     let t = "ap(positional g: (int | #x, int | #x)) = 0;\nk(positional a) = (ap(a), a);\n";
     for (h, want, fixed) in [
         (
-            "h(positional y: (int | #x, int | #x) | #nf) = k(y else 1);\n",
-            "repair: `a = y else 1; if a is (Part1, Part1) { k(a) } else { … }`",
+            "h(positional y: (int | #x, int | #x) | #nf) = k(y else #nf -> 1);\n",
+            "repair: `a = y else #nf -> 1; if a is (Part1, Part1) { k(a) } else { … }`",
             "h(positional y: (int | #x, int | #x) | #nf) = \
-             { a = y else 1; if a is (int | #x, int | #x) { k(a) } else { 0 } };\n",
+             { a = y else #nf -> 1; if a is (int | #x, int | #x) { k(a) } else { 0 } };\n",
         ),
         // The parameter's name is a name the call writes: the next one is taken.
         (
-            "h(positional a: (int | #x, int | #x) | #nf) = k(a else 1);\n",
-            "repair: `a2 = a else 1; if a2 is (Part1, Part1) { k(a2) } else { … }`",
+            "h(positional a: (int | #x, int | #x) | #nf) = k(a else #nf -> 1);\n",
+            "repair: `a2 = a else #nf -> 1; if a2 is (Part1, Part1) { k(a2) } else { … }`",
             "h(positional a: (int | #x, int | #x) | #nf) = \
-             { a2 = a else 1; if a2 is (int | #x, int | #x) { k(a2) } else { 0 } };\n",
+             { a2 = a else #nf -> 1; if a2 is (int | #x, int | #x) { k(a2) } else { 0 } };\n",
         ),
     ] {
         let bad = format!("{t}{h}");
@@ -447,10 +461,11 @@ fn the_is_repair_binds_an_argument_expression_to_the_parameters_name() {
         assert!(type_errors(&ok).is_empty(), "{ok}\n{:?}", type_errors(&ok));
         zedc::run::load(ok.as_bytes()).unwrap_or_else(|e| panic!("{ok}\n{e}"));
     }
-    // The control: a test that keeps the `1` of `y else 1` leaves a value `ap` does not take.
+    // The control: a test that keeps the `1` of `y else #nf -> 1` leaves a value `ap` does not
+    // take.
     let wide = format!(
         "{t}h(positional y: (int | #x, int | #x) | #nf) = \
-         {{ a = y else 1; if a is (int | #x, int | #x) | int {{ k(a) }} else {{ 0 }} }};\n{MAIN}"
+         {{ a = y else #nf -> 1; if a is (int | #x, int | #x) | int {{ k(a) }} else {{ 0 }} }};\n{MAIN}"
     );
     match zedc::run::load(wide.as_bytes()) {
         Ok(_) => panic!("accepted:\n{wide}"),

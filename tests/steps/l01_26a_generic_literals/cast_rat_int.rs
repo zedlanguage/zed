@@ -110,7 +110,7 @@ fn a_use_that_takes_another_carrier_from_the_operand_is_rejected_at_the_use() {
     for (use_, cast, fix) in [
         (
             "c = b + 0.5f64;",
-            "m.stdout <- String(rat(b)) else \"${c}\";",
+            "m.stdout <- String(rat(b));",
             "Try `c = f64(b) + 0.5f64` instead.",
         ),
         // `c = b + 1` is not offered: it makes `rat(b) + c` add an int to a rat

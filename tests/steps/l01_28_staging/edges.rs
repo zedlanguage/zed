@@ -48,8 +48,8 @@ fn the_constants_partial_evaluation_computes_are_built_and_write_as_the_program_
     let src = "big = 2 ^ 64;\nnan = f64(#NaN);\nninf = -f64(#inf);\n\
                main(m: MainArgs) {\n  \
                m.stdout <- String(big);\n  \
-               m.stdout <- String(nan) else \"not a number\";\n  \
-               m.stdout <- String(ninf) else \"minus infinity\";\n}\n";
+               m.stdout <- String(nan) else #NaN -> \"not a number\";\n  \
+               m.stdout <- String(ninf) else #inf -> \"minus infinity\";\n}\n";
     let (p, s, report) = staged(src);
     for name in ["big", "nan", "ninf"] {
         assert!(
@@ -66,7 +66,7 @@ fn the_constants_partial_evaluation_computes_are_built_and_write_as_the_program_
 #[test]
 fn an_else_whose_value_fails_at_build_is_built_to_its_default() {
     let src = "lookup(positional k: int) = if k > 0 { k } else { #notFound };\n\
-               v = lookup(-1) else 5;\nw = lookup(4) else 5;\n\
+               v = lookup(-1) else #notFound -> 5;\nw = lookup(4) else #notFound -> 5;\n\
                main(m: MainArgs) {\n  m.stdout <- String(v + w);\n}\n";
     let (p, s, report) = staged(src);
     assert_eq!(term(&s, "v"), "5");
