@@ -262,7 +262,8 @@ fn a_time_of_a_power_too_large_to_build_is_judged_by_its_size() {
     for tiny in ["1r / 2 ^ (2^40)", "1r / (3 ^ (2^40))"] {
         assert_eq!(built(&format!("@timeout({tiny})\n{main}")), None, "{tiny}");
     }
-    for huge in ["2 ^ (2^40)", "3 ^ (2^40) / 7"] {
+    // `rat(..)`: `/` takes no `int`s, and `3 ^ (2^40) / 7` was rejected for that as well.
+    for huge in ["2 ^ (2^40)", "rat(3 ^ (2^40)) / 7"] {
         let out = rejected(&format!("@timeout({huge})\n{main}"));
         assert!(
             out.contains(
@@ -272,4 +273,22 @@ fn a_time_of_a_power_too_large_to_build_is_judged_by_its_size() {
             "{huge}: {out}"
         );
     }
+}
+
+/// Row PROOF-seconds-unbuildable-in-range: a time between the ends whose two sides are powers
+/// too large to build. `rat(3 ^ (2^40)) / 2 ^ b` with `b = 1742684699131`, the whole part of
+/// `2^40 * log2(3)` (bc at scale 80: `...131.8380069509`), is `2^0.8380069509...`, about 1.79 s,
+/// while `3 ^ (2^40)` has 1.7 * 10^12 bits, 218 GB. Its nanoseconds are
+/// `ceil(1787578937.2732...)` (bc at scale 80). Red before: the rounding divided the sides and
+/// the system refused the memory, so the time was rejected as "not a time the run can have".
+#[test]
+fn a_time_in_range_whose_sides_are_too_large_to_build_is_rounded_up() {
+    let main = "main(m: MainArgs) {\n    m.stdout <- \"hi\";\n}\n";
+    let src = format!("@timeout(rat(3 ^ (2^40)) / 2 ^ 1742684699131)\n{main}");
+    let build = Build::default().for_target("x86_64-linux");
+    let program = load_for(src.as_bytes(), &build).unwrap_or_else(|e| panic!("{src}: {e}"));
+    assert_eq!(
+        program.limits().timeout,
+        Some(std::time::Duration::from_nanos(1_787_578_938))
+    );
 }

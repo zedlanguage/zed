@@ -52,24 +52,32 @@ pub(super) const ADDRESS_BYTES_LOG2: u32 = 64;
 /// `u64::MAX`, for `r > 0`: (1) `r <= 10^-9` gives `0 < r * 10^9 <= 1`, whose ceiling is 1.
 /// (2) `ceil(x) <= u64::MAX` holds iff `x <= u64::MAX`, as `u64::MAX` is an integer; so with
 /// `x = r * 10^9`, `None` iff `r > u64::MAX / 10^9`. (3) Otherwise `1 < r * 10^9 <= u64::MAX`,
-/// and [`Rat::round_whole`] with [`Rounding::Ceil`](zed_kernel::num::Rounding::Ceil) gives its
-/// ceiling, an integer of at most 64 bits, which `built_parts` builds at once. Before (FAIL
-/// found by proofdoc4d), `r` was built first, and a tiny or huge power the system refused the
-/// memory for was rejected as "not a time the run can have" although it is above 0, which the
-/// message itself says a time must be. Test:
+/// so `ceil(r * 10^9)` is the least integer `n` with `r <= n / 10^9`, and it lies in
+/// `[2, u64::MAX]`. The search keeps `r > lo / 10^9` (true for `lo = 1` by (1) not holding)
+/// and `r <= hi / 10^9` (true for `hi = u64::MAX` by (2) not holding); each step halves
+/// `hi - lo` and keeps both, so it ends after at most 64 steps with `hi = lo + 1`, and then
+/// `hi` is the least such integer, since `lo` is not one and nothing lies between them.
+/// Before (FAIL found by proofdoc4d), `r` was built first, and a tiny or huge power the system
+/// refused the memory for was rejected as "not a time the run can have" although it is above
+/// 0, which the message itself says a time must be. Test:
 /// `main_limits::a_time_of_a_power_too_large_to_build_is_judged_by_its_size` in
-/// tests/steps/l01_29_diagnostics, red before (the tiny case was rejected).
+/// tests/steps/l01_29_diagnostics, red before (the tiny case was rejected). Case (3) then
+/// rounded `r * 10^9` by [`Rat::round_whole`], a division of its two sides, and for sides too
+/// large to build, as `rat(3 ^ (2^40)) / 2 ^ 1742684699131`, about 1.79 s, the system refused
+/// the memory and the time was rejected (row PROOF-seconds-unbuildable-in-range); test
+/// `main_limits::a_time_in_range_whose_sides_are_too_large_to_build_is_rounded_up`, red before.
+/// The search compares by bounds ([`Rat::try_cmp`]) and builds neither side.
 ///
-/// Not proved: case (3) for a value between the ends whose sides are both powers too large to
-/// build, as `3 ^ a / 2 ^ b` with `b` the whole part of `a * log2(3)`. [`Rat::round_whole`]
-/// may then return [`TooLarge`], and the time is rejected with the same message. A
-/// comparison with an end may also return [`TooLarge`] for a value that agrees with that end
-/// in more bits than the system gives memory for. Both depend on the machine; no test makes
-/// either happen.
+/// Not proved, and machine-dependent: a comparison returns [`TooLarge`] for a value that
+/// agrees with an end, or with some `n / 10^9` the search tries, in more bits than the system
+/// gives memory for, and the time is then rejected with the same message. No test makes it
+/// happen.
 ///
 /// Complexity tradeoff: the naive way builds `N` and `D` and divides, O(M(n)) in their bits,
-/// unbounded for a kept power; here two comparisons by bounds, which settle in O(1) refinements
-/// unless `r` lies close to an end, and one Euclidean division only for a value in range.
+/// unbounded for a kept power; here two comparisons with the ends and at most 64 in the
+/// search, each settled by bounds in O(1) refinements unless `r` lies close to the value it
+/// is compared with. For a small plain `r` the 64 comparisons cost more than one division, a
+/// constant once per limit written.
 fn seconds(r: &Rat) -> Option<Duration> {
     use std::cmp::Ordering::Greater;
     if r.is_negative() || r.is_zero() {
@@ -84,10 +92,17 @@ fn seconds(r: &Rat) -> Option<Duration> {
     if r.try_cmp(&most).ok()? == Greater {
         return None;
     }
-    let nanos = r.mul(&Rat::int(giga)).ok()?;
-    let nanos = nanos.round_whole(zed_kernel::num::Rounding::Ceil).ok()?;
-    let (n, _) = nanos.built_parts().ok()?;
-    u64::try_from(&*n).ok().map(Duration::from_nanos)
+    // The least `n` with `r <= n / 10^9`, by halving `(lo, hi]`: `r > lo / 10^9` and
+    // `r <= hi / 10^9` hold throughout, from the two comparisons above.
+    let (mut lo, mut hi) = (1u64, u64::MAX);
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        match r.try_cmp(&Rat::new(mid.into(), giga.clone())?).ok()? {
+            Greater => lo = mid,
+            _ => hi = mid,
+        }
+    }
+    Some(Duration::from_nanos(hi))
 }
 
 impl<'a> Ck<'_, 'a> {

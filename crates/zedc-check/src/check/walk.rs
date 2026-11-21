@@ -13859,25 +13859,53 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// restrict both. Two that may still take other values stay apart: the test's need on the
     /// one gives the other at each call.
     ///
-    /// A test's class is newer than the class it tests, so the links, taken in the order of
-    /// the classes tested, run from older to newer: one pass from the last link joins each
-    /// class to a carrier class it leads to, and one from the first joins it to a carrier
-    /// class it comes from. Two passes over the links: `O(n log n)` with the merges.
+    /// A search over the links in both directions, from the classes of carriers: a link is
+    /// joined when one of its ends is a class of carriers (its mask has no `OTHER` bit) or
+    /// both ends are one class, and a join makes the class it gives one of carriers too, so
+    /// the search goes on from the other end. Row FAIL-join-narrowed-root-order: before, two
+    /// passes over the links sorted by tested class's root, one from the last link and one
+    /// from the first, missed the link (k0, k1) of a chain k0 → k1 → k2 → k3 with only k3 a
+    /// carrier class and k1's root after k0's and k2's (`merge` moves `narrowed_to` to the
+    /// root, and union by size may make the root older than the class it stands for); test
+    /// `tests::join_narrowed_joins_a_chain_whatever_the_order_of_its_roots`.
     ///
-    /// Not proved: the passes need the links in order from older to newer classes, but the
-    /// links are sorted by each tested class's root (`merge` moves `narrowed_to` to the root),
-    /// and union by size may make that root older than the class it stands for. Two passes
-    /// then miss a chain k0 → k1 → k2 → k3 with only k3 a carrier and the root of k1 after
-    /// those of k0 and k2: the pass from the last link skips (k1, k2) and (k0, k1) and joins
-    /// (k2, k3), and the pass from the first skips (k0, k1) and joins (k1, k2), so (k0, k1) is
-    /// never joined. No program that makes such roots is known (row
-    /// FAIL-join-narrowed-root-order). A search from each carrier class over the links, one
-    /// visit per link in both directions, would need no order.
+    /// The ends of the links are grouped by their class at the start; a group is a set of
+    /// ends of one class, and stays in one class, since merges only join classes. A group is
+    /// visited once, when its class is one of carriers, and the visit tries each link at it
+    /// not yet tried.
+    ///
+    /// Proof that the search tries every link the naive way below would join (passes over
+    /// the links until no pass joins one): that fixpoint joins a link (a, b) when, as it is
+    /// reached, a's or b's class is one of carriers, or both are in one class. (1) A class
+    /// of carriers stays one: `merge` sets the mask to the intersection, so a mask only
+    /// loses bits, and a mask without `OTHER` keeps none. (2) So a link with an end e whose
+    /// class is one of carriers at any time before the search stops is tried: e's group g
+    /// is one of carriers from then on by (1). If g was one at the start it is pushed at the
+    /// start; if a successful join of a link at g made it one, the join pushes g; otherwise
+    /// some other merge made it one (a merge checks uses on what flowed in, and that may join
+    /// other classes), and the scan of the unseen groups when the stack empties pushes g.
+    /// Each group pushed is popped, and its visit reaches every link at g. (3) A link whose
+    /// two ends are in one class and neither of carriers is never tried: a merge of one class
+    /// with itself changes nothing ([`Self::merge`] returns at once), so leaving it is the
+    /// same. (4) The search tries a link under the same test as the fixpoint, with the
+    /// classes as they are then, so it joins no link the fixpoint would not. A failed merge
+    /// (no carrier in common) reports the error and changes nothing; masks only shrink, so it
+    /// fails at every later attempt too, and both methods try each link once. Not proved:
+    /// that the joins come in the fixpoint's order, so where a use check inside a merge
+    /// depends on which links are joined before it, the errors and the classes may differ in
+    /// order from the fixpoint's; each error is placed at its own link.
     // Complexity tradeoff (COMPLEXITY.md row F119): the naive version passes over the links
     // until no join changes a class, O(n²) for a chain of n links where each pass moves a
-    // carrier one link (inferred). Used: the roots sorted and deduplicated once, then one pass
-    // last to first and one first to last, O(n log n). Precondition: links run from older to
-    // newer classes, which holds since a test's class is made after the class it tests.
+    // carrier one link (inferred). The two passes it was replaced with were O(n log n) but
+    // needed the links in order from older to newer classes, which roots do not keep (above).
+    // Used: the 2n ends' roots sorted and searched, O(n log n); each group pushed once (`seen`
+    // is the visited set, P207), each link reached at most twice and merged at most once,
+    // plus the merges, O(log n) amortized each (union by rank, lists moved from the shorter).
+    // The scan of the unseen groups costs O(g) each time the stack empties; it runs once,
+    // finding nothing, unless a merge's use checks made a class of carriers outside the
+    // search, and then once more per such round. Not proved: a bound on those rounds below
+    // the number of groups, so the worst case is O(n·g); no program is known that makes
+    // more than one (row FAIL-join-narrowed-root-order).
     fn join_narrowed(&mut self, level: usize) {
         let mut from: Vec<usize> = Vec::new();
         for k in self.r10_peek_pending(level) {
@@ -13893,40 +13921,93 @@ impl<'t, 'a> Ck<'t, 'a> {
             let to = std::mem::take(&mut self.classes[r].narrowed_to);
             links.extend(to.into_iter().map(|(j, span)| (r, j, span)));
         }
-        let n = links.len();
-        let mut joined = vec![false; n];
-        for i in (0..n).rev().chain(0..n) {
-            let (k, j, span) = links[i];
-            let (k, j) = (self.find(k), self.find(j));
-            if joined[i]
-                || (k != j
-                    && self.classes[k].mask & OTHER != 0
-                    && self.classes[j].mask & OTHER != 0)
-            {
-                continue;
-            }
-            joined[i] = true;
-            let (kt, jt) = (
-                Ty::of_mask(self.classes[k].mask),
-                Ty::of_mask(self.classes[j].mask),
-            );
-            if !self.merge(k, j, "the value tested", span) {
-                let (kt, jt) = (self.show(&kt), self.show(&jt));
-                let menu = [format!(
-                    "repair: test for a type that the later uses take, or convert the value \
-                     where it is used as {jt}"
-                )];
-                self.error_offering(
-                    span,
-                    format!(
-                        "the value this test leaves is used as {jt}, and the value it tests as \
-                         {kt}: the test narrows the value it tests, so both uses are of one \
-                         value, and no value is both"
-                    ),
-                    menu,
-                );
+        // The ends grouped by their class now: a group's ends stay in one class from here on.
+        let mut roots: Vec<usize> = Vec::with_capacity(2 * links.len());
+        for &(k, j, _) in &links {
+            roots.push(self.find(k));
+            roots.push(self.find(j));
+        }
+        zed_collections::sorted::sort_dedup(&mut roots);
+        let group = |ck: &Self, e: usize| {
+            roots
+                .binary_search(&ck.find(e))
+                .expect("each end's class is among the roots")
+        };
+        let ends: Vec<(usize, usize)> = (links.iter())
+            .map(|&(k, j, _)| (group(self, k), group(self, j)))
+            .collect();
+        let mut at: Vec<Vec<usize>> = vec![Vec::new(); roots.len()];
+        for (i, &(gk, gj)) in ends.iter().enumerate() {
+            at[gk].push(i);
+            if gj != gk {
+                at[gj].push(i);
             }
         }
+        let mut seen: Vec<bool> = (roots.iter())
+            .map(|&r| self.classes[r].mask & OTHER == 0)
+            .collect();
+        let mut stack: Vec<usize> = (0..roots.len()).filter(|&g| seen[g]).collect();
+        let mut joined = vec![false; links.len()];
+        loop {
+            if stack.is_empty() {
+                // A merge checks the uses of each class on what flowed into the other
+                // ([`Self::merge`]), which may make a class of carriers outside the search:
+                // the groups not yet seen are looked at again once the search stops.
+                stack.extend(
+                    (0..roots.len()).filter(|&g| {
+                        !seen[g] && self.classes[self.find(roots[g])].mask & OTHER == 0
+                    }),
+                );
+                for &g in &stack {
+                    seen[g] = true;
+                }
+            }
+            let Some(g) = stack.pop() else { break };
+            for &i in &at[g] {
+                let (k, j, span) = links[i];
+                let (k, j) = (self.find(k), self.find(j));
+                if joined[i]
+                    || (k != j
+                        && self.classes[k].mask & OTHER != 0
+                        && self.classes[j].mask & OTHER != 0)
+                {
+                    continue;
+                }
+                joined[i] = true;
+                let other = if ends[i].0 == g { ends[i].1 } else { ends[i].0 };
+                if self.join_link(k, j, span) && !seen[other] {
+                    seen[other] = true;
+                    stack.push(other);
+                }
+            }
+        }
+    }
+
+    /// Joins the classes `k` and `j` of one link of [`Self::join_narrowed`], the test at
+    /// `span`; false, with the error reported, where they share no carrier.
+    fn join_link(&mut self, k: usize, j: usize, span: Span) -> bool {
+        let (kt, jt) = (
+            Ty::of_mask(self.classes[k].mask),
+            Ty::of_mask(self.classes[j].mask),
+        );
+        if self.merge(k, j, "the value tested", span) {
+            return true;
+        }
+        let (kt, jt) = (self.show(&kt), self.show(&jt));
+        let menu = [format!(
+            "repair: test for a type that the later uses take, or convert the value \
+             where it is used as {jt}"
+        )];
+        self.error_offering(
+            span,
+            format!(
+                "the value this test leaves is used as {jt}, and the value it tests as \
+                 {kt}: the test narrows the value it tests, so both uses are of one \
+                 value, and no value is both"
+            ),
+            menu,
+        );
+        false
     }
 
     /// Merges classes `a` and `b`, as `what` at `span` requires; false, changing nothing, if
@@ -14210,10 +14291,64 @@ impl<'t, 'a> Ck<'t, 'a> {
         // span: a need made again at the span of the use it stands for (a remap, whose need
         // keeps the remap's span through every function between) would, for the left-out
         // use, have been made at that use's own span, its `at`; a need made at another span
-        // (the call in the function around) would have been made there for either use. Two
-        // spans are equal only for one place in the text, so the test picks the first case
-        // exactly (FAIL-remap-computed-key-need-site-product, the note "`mid` needs this of
-        // its argument here" of a left-out remap placed at the kept remap before).
+        // (the call in the function around) would have been made there for either use
+        // (FAIL-remap-computed-key-need-site-product, the note "`mid` needs this of its
+        // argument here" of a left-out remap placed at the kept remap before).
+        // Proof that `span == met` picks the right span (PROOF-ck-need-spans-distinct). Let N
+        // be the need met (`met` its span), N_i = `N.alike_at(at_i, ..)` the left-out use i,
+        // and S the span `meet` was called with. Write M_i for the need that meeting N_i in
+        // N's place would make here; the claim is that its span is the entry this map writes.
+        // Facts used:
+        // (F1) A span names one expression: no two expressions of a unit share one (zedc-syntax
+        //      ast/walk/tests.rs, TEST-read-fit-span-unique, over every desugaring the builder
+        //      makes: a section's lambda stands for the section, a default is the expression
+        //      written after `=`, `t.sum` and `sum(t)` are nodes of their own text), and a
+        //      `Ck` checks one unit's text (mod.rs `put_read`, point 4).
+        // (F2) No definition reaches itself by references: recursion, direct or through
+        //      others, is refused before the check (zedc-resolve resolve/tables.rs, "which is
+        //      recursion"), and the statements of a cycle are not checked (`order_around_cycles`
+        //      in `Self::scope`). The walk of a definition walks the bodies of its
+        //      lambdas but not those of the definitions it calls by name, which it meets
+        //      through their signatures (`Self::replay`).
+        // (F3) Every span a need of a definition F's signature carries, its own and its
+        //      entries', is that of an expression in the text of F or of a definition F
+        //      reaches: each is an S, an operand's span, `n.span` or an entry of a need met in
+        //      F's walk (by induction on the order the walk makes needs, from F's own
+        //      expressions and the signatures of the definitions F calls), or a member's span
+        //      recorded by `share_alike` (a need of F's).
+        // (F4) Where the kind's meeting passes `n.span` down (a remap, which keeps its own
+        //      span through every function between), M's span is `met`, and M_i's is at_i.
+        //      Elsewhere it passes S down: M's span is S, and M_i's is S where N_i is met with
+        //      the same S.
+        // Cases, by the callers of `Self::check_on` and `Self::meet`:
+        // 1. S = `n.span` (the checks of a class's final type, each use met at its own span).
+        //    Then S = `met`, and the left-out use, a use of its own, would be met at at_i: M_i's
+        //    span is at_i by (F4) either way, the entry written.
+        // 2. S is the span of a call c of F, the definition whose signature holds N, met in
+        //    the walk of G (`Self::replay`, and its second meeting under `open`). N_i is met at
+        //    c too, so M_i's span is c, or at_i for a remap by (F4), where M's span is `met`
+        //    and the test is true. Otherwise M's span is c and the test must be false: G refers
+        //    to F, so F does not reach G (F2); c is an expression of G's own walk, and by (F3)
+        //    `met` is one in the text of F or of a definition F reaches, which G's walk does
+        //    not walk (F2); by (F1) they differ.
+        // 3. S is the span of an inflow into a class of G, met in G's walk (`v.at`, and the
+        //    span `Self::flow` passes). Every left-out use is met at the same S, so M_i's span
+        //    is S, or at_i for a remap as in case 2. A need with entries met at an inflow is a
+        //    use of a class of G that this map made in G's walk (a signature's needs are met
+        //    at calls, case 2). Claim K: such a need whose span is that of an expression of
+        //    G's own walk has every at_i equal to its span. By induction on the order needs are
+        //    made: it was made under a meeting of some N' at some S'. Where S' ≠ `met'` every
+        //    entry is S', its span. Where S' = `met'` its span is N'.span, so by (F3) N' is not
+        //    a callee's need (whose spans lie outside G's walk) but a use of a class of G made
+        //    before it, whose entries all equal its span by K, and are copied. So where S =
+        //    `met`, every at_i = S, and both branches write S; where S ≠ `met` the map writes S.
+        // So the entry is the span M_i would have in every case, and no case rests on two
+        // places sharing a span. Tests: `function_variance::uses_alike_at_two_calls_give_the_
+        // errors_of_each_use_alone` fails with the test always false, and it and three others
+        // there (`level_words_and_folds_alike_..`, `sum_of_t_and_t_sum_alike_..`,
+        // `uses_alike_each_give_their_error_through_a_generic_function_between`) fail with it
+        // always true (both checked on 707ae4f3f). No test meets a need with entries at an
+        // inflow at its own span (case 3 with S = `met`), where the two branches agree.
         // Each left-out use's path is the one its own need, met at the call, would have given
         // the need made here ([`Self::passed_on`]): the call's link, at that use's span, before
         // the use's own path; or its own path where no call passes it on ([`Self::check_on`]).
@@ -21616,13 +21751,24 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// holds, alone or beside atoms and other members (FAIL-reorder-union-slot). Elsewhere the
     /// call is refused, with the reason, since a run would
     /// call the function with its arguments in the wrong places. Gives whether it took the
-    /// need: false where `on` and `w` are not one function type each, the names give no
+    /// need: false where `on` is not one function type, or `w` holds none or several, or a type
+    /// variable or the unknown ([`one_fn`]), the names give no
     /// order or the order is the written one, or the value is not that argument.
     ///
     /// Cost: O(p) for the order of p parameters and that of each other slot, plus
     /// [`Self::fit_declared`]'s, at each such need.
     fn reorder_forwarded(&mut self, n: &Need, on: &Ty, w: &Ty) -> bool {
-        let (Some(s), Some(e)) = (only_fn(on), only_fn(w)) else {
+        // `w` as the direct call reads it ([`Want::of`], [`one_fn`]): its one function type,
+        // where its other members are no functions, type variables or the unknown, so a slot
+        // `((y: int, x: int) -> int) | #none` takes the reordered function as a direct call
+        // `app3(k: re2)` does (FAIL-reorder-union-slot-forward-refused; before, `only_fn` here
+        // gave up on such a slot and the call was refused as one `app3` does not take). Sound:
+        // the value is a function, which no other member of `w` holds, so it lies in `w` where
+        // it lies in `e`, which [`Self::fit_declared_as`] checks below with `e`'s domain test.
+        // A slot of two function types gives `None`, refused as the direct call refuses it.
+        // Test: function_variance.rs,
+        // `a_reordered_function_the_generic_body_passes_only_into_a_union_slot_runs`.
+        let (Some(s), Some(e)) = (only_fn(on), one_fn(w)) else {
             return false;
         };
         let Some(order) = order_by_names(&s, &e).filter(|o| !in_order(o)) else {
@@ -30547,6 +30693,34 @@ mod tests {
         ] {
             assert_eq!(unparen(s), want, "{s}");
         }
+    }
+
+    /// Row FAIL-join-narrowed-root-order: a chain of tests k0 → k1 → k2 → k3, only k3 a
+    /// class of carriers, whose tested classes' roots are in the order k0, k2, k1 (made in
+    /// that order here, as union by size may make the roots of a program's classes). Every
+    /// class of the chain joins k3's: each link has a carrier class at one end once the link
+    /// after it is joined. The two passes over the links sorted by root left (k0, k1) apart.
+    #[test]
+    fn join_narrowed_joins_a_chain_whatever_the_order_of_its_roots() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let at = Span { start: 1, end: 2 };
+        let (k0, k2, k1, k3) = (ck.class(), ck.class(), ck.class(), ck.class());
+        ck.classes[k3].mask = Carrier::Int.bit();
+        for (k, j) in [(k0, k1), (k1, k2), (k2, k3)] {
+            ck.classes[k].narrowed_to.push((j, at));
+        }
+        let level = ck.level;
+        ck.join_narrowed(level);
+        for k in [k0, k1, k2] {
+            assert_eq!(
+                ck.find(k),
+                ck.find(k3),
+                "class {k} of the chain {k0} {k1} {k2} {k3}"
+            );
+        }
+        assert!(ck.errors.is_empty());
     }
 
     /// The remap `s as (a -> k -> v) into (k -> a -> v)`, two key levels, as an expression.

@@ -1145,12 +1145,41 @@ fn errors_as_each_alone(one: &str, body: &str, use_text: &str, rest: &str) -> Op
 /// `Ck::bracket_meaning`, which `Ck::replay` gives a use left out; tested here for one use of
 /// each of a bracket with a literal key, `><`, `.sum`, `sum(t)`, `.count` and a remap keyed
 /// by its binder, at every pair of these arguments, directly and through a generic function
-/// between). Not tested here (proofs-in-comments audit): the other kinds of use that are
-/// paired, `.first`, `.last`, `.any(f)`, `.all(f)`, `.find(f)`, `.chunkBy(f)`, `.scan(op)`
-/// and `.reduce(op)` (`LevelWord`, `FoldForm`), a remap with a computed key, and a bracket
-/// whose key is no literal.
+/// between). `.first`, `.last`, `.reduce(op)` and `.scan(op)` are tested by
+/// [`level_words_and_folds_alike_at_two_calls_give_the_errors_of_each_use_alone`]. Not tested
+/// (proofs-in-comments audit): `.any(f)`, `.all(f)`, `.find(f)` and `.chunkBy(f)`, a remap
+/// with a computed key, and a bracket whose key is no literal.
 #[test]
 fn uses_alike_at_two_calls_give_the_errors_of_each_use_alone() {
+    uses_alike_give_the_errors_of_each_use_alone(&[
+        "t[1]",
+        "(t >< (+))",
+        "(t >< max)",
+        "t.sum",
+        "sum(t)",
+        "t.count",
+        "(t as (k -> v) into (v -> k)).count",
+    ]);
+}
+
+/// The uses of [`uses_alike_at_two_calls_give_the_errors_of_each_use_alone`] for the paired
+/// kinds `LevelWord` (`.first`, `.last`) and `FoldForm` (`.reduce(op)`, `.scan(op)`), row
+/// TEST-uses-alike-untested-kinds, at the same arguments and calls. Kept apart so that each
+/// test stays well under 60 s.
+#[test]
+fn level_words_and_folds_alike_at_two_calls_give_the_errors_of_each_use_alone() {
+    uses_alike_give_the_errors_of_each_use_alone(&[
+        "t.first",
+        "t.last",
+        "t.reduce((+))",
+        "t.scan((+)).count",
+    ]);
+}
+
+/// For each of `uses`, three uses of it alike in one generic body `many`, called at every pair
+/// of distinct arguments, directly and through `mid`, give the errors of one use alone
+/// ([`errors_as_each_alone`]); the test fails with every program that does not.
+fn uses_alike_give_the_errors_of_each_use_alone(uses: &[&str]) {
     let args = [
         "g",
         "(5, 6)",
@@ -1163,15 +1192,7 @@ fn uses_alike_at_two_calls_give_the_errors_of_each_use_alone() {
         "\"s\"",
     ];
     let mut wrong = Vec::new();
-    for use_text in [
-        "t[1]",
-        "(t >< (+))",
-        "(t >< max)",
-        "t.sum",
-        "sum(t)",
-        "t.count",
-        "(t as (k -> v) into (v -> k)).count",
-    ] {
+    for &use_text in uses {
         let one = format!("many(t) = {use_text};\n");
         let body = format!("many(t) = ({use_text}, {use_text}, {use_text});\n");
         for a in args {
@@ -2424,6 +2445,52 @@ fn a_reordered_function_the_generic_body_also_passes_into_a_union_slot_is_refuse
         ],
         "also passes it on as `",
     );
+}
+
+/// Row FAIL-reorder-union-slot-forward-refused: a declared function with its parameters in
+/// another order, passed to a generic function whose body passes it on only into a slot that
+/// holds a function type beside other members, runs to the value of the direct call, as it
+/// does where the slot is one function type alone. Before the fix it was refused ("`app3`
+/// does not take (x: int, y: int) -> int"), while the direct call `app3(k: re2)` ran. A slot
+/// of two function types is refused both ways.
+#[test]
+fn a_reordered_function_the_generic_body_passes_only_into_a_union_slot_runs() {
+    let app3 = "app3(k: ((y: int, x: int) -> int) | #none) = k(y: 2, x: 1) else 0;\n";
+    let app4 = "app4(k: ((y: int, x: int) -> int) | ((y: int, x: int) -> f64)) = \
+                { r = k(y: 2, x: 1); if r is int { r } else { 0 } };\n";
+    // `re2` names its parameters in the other order from the slots, `(y: int, x: int)`.
+    let app3 = format!("{app3}re2(x: int, y: int) = x * 10 + y;\n");
+    let app4 = format!("{app4}re2(x: int, y: int) = x * 10 + y;\n");
+    for (rest, want) in [
+        (format!("{app3}a = app3(k: re2);\n"), "12"),
+        (
+            format!("{app3}pass(g) = app3(k: g);\na = pass(g: re2);\n"),
+            "12",
+        ),
+        (
+            format!("{app3}pass(g) = app3(k: g) + app3(k: g);\na = pass(g: re2);\n"),
+            "24",
+        ),
+        (
+            format!("{app3}pass(g) = app3(k: g);\na = pass(g: re);\n"),
+            "12",
+        ),
+    ] {
+        runs_to(&format!("{REORDER_HEAD}{rest}"), "a", want);
+    }
+    // A slot of two function types fixes no one type to fit the function to (`one_fn`), so
+    // the direct call is refused, and the call through `pass` with it.
+    for rest in [
+        format!("{app4}a = app4(k: re2);\n"),
+        format!("{app4}pass(g) = app4(k: g);\na = pass(g: re2);\n"),
+    ] {
+        let src = format!("{REORDER_HEAD}{rest}");
+        let errors = type_errors(&src);
+        assert!(
+            errors.iter().any(|e| e.contains("does not take")),
+            "{src}: {errors:?}"
+        );
+    }
 }
 
 /// Row PROOF-reorder-forwarded-uses-complete, use by storing it: a body that puts the
