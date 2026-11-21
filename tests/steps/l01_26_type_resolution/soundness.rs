@@ -629,6 +629,146 @@ fn a_generic_else_pattern_binds_the_payload_each_call_passes() {
     ));
 }
 
+// An `else` pattern with parts takes from the type each payload it is sure to match, at any
+// depth of its field patterns (DESIGN.md, step L1, "Where this document does not say": "The
+// pattern form `e else p -> d` removes from the type the values of the atom that its pattern
+// `p` matches, as a `match` arm with the same pattern would take them"; "A payload pattern
+// keeps in the type each payload the type holds that it can fail to match, so the atom stays
+// where such a payload remains"). Before ELSE-explicit-atoms x2, a field pattern with a
+// pattern of its own, and any field pattern on a type variable, took nothing.
+
+#[test]
+fn an_else_pattern_with_nested_parts_takes_each_payload_it_matches() {
+    // Matched exactly: no `#o` is left, so the write needs no `else`.
+    let nested = r#"r = #o(i: #e(x: 2)) else #o(i: #e(x:)) -> x * 3; m.stdout <- "${r}";"#;
+    assert_eq!(run(&program("", nested), ""), "6\n");
+    let deeper =
+        r#"r = #o(i: #p(j: #e(x: 2))) else #o(i: #p(j: #e(x:))) -> x * 3; m.stdout <- "${r}";"#;
+    assert_eq!(run(&program("", deeper), ""), "6\n");
+    // A bare atom as a field's pattern takes the bare atom, and `#e()` the atom whose payload
+    // is the empty tuple.
+    let bare = r#"r = #o(i: #e) else #o(i: #e) -> 7; m.stdout <- "${r}";"#;
+    assert_eq!(run(&program("", bare), ""), "7\n");
+    let empty = r#"r = #o(i: #e()) else #o(i: #e()) -> 8; m.stdout <- "${r}";"#;
+    assert_eq!(run(&program("", empty), ""), "8\n");
+    // Nested, `#e` matches the bare atom only when the program runs (the elaborator gives it
+    // the kernel pattern `Atom(e, [])`, zedc-elab state.rs `pattern_open`), so `#e(x: 2)`
+    // passes it by, and the checker keeps `#o`: taking it would let the atom reach the write.
+    let payload = r#"r = #o(i: #e(x: 2)) else #o(i: #e) -> 7;"#;
+    refused(&program("", &format!(r#"{payload} m.stdout <- "${{r}}";"#)));
+    assert_eq!(
+        run(
+            &program(
+                "",
+                &format!(r#"{payload} m.stdout <- "${{r}}" else #o -> "?";"#)
+            ),
+            ""
+        ),
+        "?\n"
+    );
+    // Two fields, one matched by name, one by a nested pattern.
+    let two = r#"r = #o(a: 1, i: #e(x: 2)) else #o(a:, i: #e(x:)) -> a + x; m.stdout <- "${r}";"#;
+    assert_eq!(run(&program("", two), ""), "3\n");
+}
+
+#[test]
+fn an_else_pattern_with_nested_parts_keeps_each_payload_it_can_fail_to_match() {
+    // `#o(i: #f)` and `#o(j: 1)` are not matched by `#o(i: #e(x:))`, so `#o` stays and the
+    // write is refused; handled, it runs.
+    let pick = "pick(positional c: int) = if c == 0 { #o(i: #e(x: 2)) } else if c == 1 { #o(i: #f) } else { #o(j: 1) };";
+    let take = r#"r = pick(0) else #o(i: #e(x:)) -> x * 3;"#;
+    refused(&program(pick, &format!(r#"{take} m.stdout <- "${{r}}";"#)));
+    assert_eq!(
+        run(
+            &program(
+                pick,
+                &format!(r#"{take} m.stdout <- "${{r}}" else #o -> "?";"#)
+            ),
+            ""
+        ),
+        "6\n"
+    );
+    // A field whose type holds a value the field's pattern does not match keeps the payload.
+    let mixed = "mixed(positional c: bool) = #o(i: if c { #e(x: 2) } else { 5 });";
+    refused(&program(
+        mixed,
+        r#"r = mixed(true) else #o(i: #e(x:)) -> x * 3; m.stdout <- "${r}";"#,
+    ));
+    // The atom inside the field lacks the field `x` the nested pattern names.
+    refused(&program(
+        "",
+        r#"r = #o(i: #e(y: 2)) else #o(i: #e(x:)) -> x * 3; m.stdout <- "${r}";"#,
+    ));
+    // A literal as a field's pattern can fail, and is kept whole (the checker does not compare
+    // literals here).
+    refused(&program(
+        "",
+        r#"r = #o(i: 2) else #o(i: 2) -> 3; m.stdout <- "${r}";"#,
+    ));
+}
+
+#[test]
+fn a_generic_else_pattern_with_parts_takes_from_each_call_s_argument() {
+    // The difference is taken where the call puts the argument's type for the variable
+    // (DESIGN.md sec:type_language: "specialized at each call by putting the argument types for
+    // the variables and simplifying").
+    let g = "g(positional e) = e else #e(code:) -> code;";
+    assert_eq!(
+        run(
+            &program(g, r#"m.stdout <- String(g(#e(code: 5)) + 1);"#),
+            ""
+        ),
+        "6\n"
+    );
+    let h = "h(positional e) = e else #o(i: #e(x:)) -> x;";
+    assert_eq!(
+        run(
+            &program(h, r#"m.stdout <- String(h(#o(i: #e(x: 2))) * 3);"#),
+            ""
+        ),
+        "6\n"
+    );
+    // An argument the pattern can fail to match keeps its atom.
+    refused(&program(h, r#"m.stdout <- String(h(#o(i: #f)) * 3);"#));
+    refused(&program(g, r#"m.stdout <- String(g(#e(other: 5)) + 1);"#));
+    assert_eq!(
+        run(&program(h, r#"m.stdout <- String(h(3) * 3);"#), ""),
+        "9\n"
+    );
+}
+
+/// A `main` whose `else` takes an atom of `n` fields, each an atom `#e(xi: i)` matched by the
+/// nested pattern `#e(xi:)`: every payload matched, so the write needs no `else`.
+pub(super) fn else_of_many_nested_fields(n: usize) -> String {
+    let value: Vec<String> = (0..n).map(|i| format!("f{i}: #e(x{i}: {i})")).collect();
+    let pat: Vec<String> = (0..n).map(|i| format!("f{i}: #e(x{i}:)")).collect();
+    let body = format!(
+        r#"r = #o({}) else #o({}) -> x0; m.stdout <- "${{r}}";"#,
+        value.join(", "),
+        pat.join(", ")
+    );
+    program("", &body)
+}
+
+/// A `main` whose `else` takes an atom nested `d` deep, `#o(i: #o(i: … #e(x: 2)))`, by the
+/// pattern of the same shape: matched exactly, so the write needs no `else`.
+pub(super) fn else_nested_deep(d: usize) -> String {
+    let value = format!("{}#e(x: 2){}", "#o(i: ".repeat(d), ")".repeat(d));
+    let pat = format!("{}#e(x:){}", "#o(i: ".repeat(d), ")".repeat(d));
+    program(
+        "",
+        &format!(r#"r = {value} else {pat} -> x; m.stdout <- "${{r}}";"#),
+    )
+}
+
+#[test]
+fn an_else_of_many_nested_fields_takes_them_all() {
+    // Small instances of the benchmarks `bench::soundness::an_else_of_many_nested_fields_scales`
+    // and `bench::soundness::an_else_nested_deep_scales`.
+    assert_eq!(run(&else_of_many_nested_fields(4), ""), "0\n");
+    assert_eq!(run(&else_nested_deep(4), ""), "2\n");
+}
+
 #[test]
 fn a_self_application_takes_the_least_settled_result() {
     // Inside `w(w)` the inner use first gives nothing; the outer then gives 1, which settles.

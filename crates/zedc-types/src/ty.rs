@@ -26,6 +26,7 @@ use zed_kernel::types::order;
 use zed_kernel::types::{Refusal, Spell, TextPlace, Type as KType, Verdict, defs};
 use zed_kernel::{Items, Universe, Value};
 
+use zedc_syntax::ast::Pattern as AstPattern;
 use zedc_syntax::lex::Span;
 
 /// A type.
@@ -1751,7 +1752,7 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         k @ (NeedKind::Destructure { .. }
         | NeedKind::Data(..)
         | NeedKind::Payload { .. }
-        | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_))
+        | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_) | Narrow::Pattern(_))
         | NeedKind::NoInt(_)
         | NeedKind::Power(_)
         | NeedKind::Push { .. }
@@ -6277,6 +6278,252 @@ pub enum Narrow {
     /// `e is t`, where it is false: what is not in `t`. Only the scalars, atoms and tuples
     /// of `t` are subtracted, so its variables need no binding.
     Not(Ty),
+    /// `e else #a(f: p, g:, …) -> d`: what is not taken by the pattern ([`Ty::taken_by`]).
+    /// What it takes depends on the type it narrows, so a type variable's narrowing keeps the
+    /// pattern and a call reads it on the argument's type, where `Not` would need a type made
+    /// before the argument is known.
+    Pattern(Arc<Pat>),
+}
+
+/// An atom pattern with field patterns, `#a(f: p, g:, …)`, as [`Ty::taken_by`] reads it. The
+/// nodes are kept in one list, the root first, each field's pattern by its index, so that a
+/// pattern nested as deep as the program is built and read on an explicit stack, with no call
+/// stack as deep.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Pat(Vec<PatNode>);
+
+/// A node of a [`Pat`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum PatNode {
+    /// A name or `_`, or a field written bare (`g:`): every value.
+    Any,
+    /// `#a` inside a field's pattern: read as the bare atom alone. DESIGN.md sec:grammar, rule
+    /// AtomPattern, says "`#e` the atom with any payload or none", but the elaborator gives a
+    /// nested `#e` the kernel pattern `Atom(e, [])` (zedc-elab state.rs `pattern_open`), which
+    /// matches the bare atom only (zed-kernel eval.rs `matches`); only an `else`'s outermost
+    /// `#e` is elaborated as any payload (zedc-elab walk.rs `else_`). The bare atom is a
+    /// subset of what both match, so the difference is sound under either.
+    Atom(Arc<str>),
+    /// `#a()`: the atom whose payload is the empty tuple.
+    Empty(Arc<str>),
+    /// `#a(f: p, g:, …)`: the atom whose payload has named fields, each field named among
+    /// them and its value matched by the node at the index.
+    Fields(Arc<str>, Vec<(Arc<str>, usize)>),
+    /// Any other pattern: a literal, a tuple, a range, `is`, `|`, a struct, or an atom pattern
+    /// with positional parts. Each can fail on a value of a type the checker lists without
+    /// comparing values, so it is read as taking nothing, which keeps the difference sound.
+    Other,
+}
+
+impl Pat {
+    /// The pattern `p`, read on an explicit stack (one entry a node).
+    pub fn of(p: &AstPattern) -> Pat {
+        let mut nodes = vec![PatNode::Other];
+        let mut stack = vec![(p, 0)];
+        while let Some((p, at)) = stack.pop() {
+            nodes[at] = match p {
+                AstPattern::Name(..) | AstPattern::Wild(_) => PatNode::Any,
+                AstPattern::Atom {
+                    name,
+                    fields,
+                    items,
+                    ..
+                } if fields.is_empty() => match items.as_deref() {
+                    None => PatNode::Atom(name.as_str().into()),
+                    Some([]) => PatNode::Empty(name.as_str().into()),
+                    Some(_) => PatNode::Other,
+                },
+                AstPattern::Atom {
+                    name,
+                    fields,
+                    items,
+                    ..
+                } if items.as_deref().is_none_or(<[_]>::is_empty) => {
+                    let mut fs = Vec::with_capacity(fields.len());
+                    for (f, q) in fields {
+                        fs.push((f.as_str().into(), nodes.len()));
+                        nodes.push(PatNode::Any);
+                        if let Some(q) = q {
+                            stack.push((q, nodes.len() - 1));
+                        }
+                    }
+                    PatNode::Fields(name.as_str().into(), fs)
+                }
+                _ => PatNode::Other,
+            };
+        }
+        Pat(nodes)
+    }
+}
+
+/// A field pattern being read on a type by [`Ty::taken_by`]: the shapes of its atom's payload
+/// that the type lists and still to be read, the shapes taken so far, and the fields of the
+/// shape being read with the index of the next field to read.
+struct TakeFrame<'p> {
+    name: &'p Arc<str>,
+    fields: &'p [(Arc<str>, usize)],
+    family: KType,
+    shapes: std::vec::IntoIter<Shape>,
+    taken: Vec<Shape>,
+    at: Option<(BTreeMap<Arc<str>, Ty>, usize)>,
+}
+
+impl Ty {
+    /// The values of `self` that the pattern `p` is sure to match: a subset of the values it
+    /// matches, so `self` less it ([`Ty::diff`]) holds every value the pattern does not match.
+    ///
+    /// DESIGN.md, step L1, "Where this document does not say": "The pattern form `e else p ->
+    /// d` removes from the type the values of the atom that its pattern `p` matches, as a
+    /// `match` arm with the same pattern would take them. The bare `#a` matches `#a` with any
+    /// payload or none [...] A field pattern of names and `_` alone, as `#e(code:)`, matches
+    /// every payload that has the fields it names [...] A payload pattern keeps in the type
+    /// each payload the type holds that it can fail to match, so the atom stays where such a
+    /// payload remains". The kernel's field pattern (zed-kernel eval.rs `matches`,
+    /// `Pattern::Fields`) takes an atom of the name whose payload has named fields, each field
+    /// the pattern names among them, each field's value matching its pattern.
+    ///
+    /// Proof that the answer `T` is a subset of the values of `self` matched by `p`, by
+    /// induction on `p`. A name or `_`: `T = self`, and every value matches. `#a` inside a
+    /// field: `T` is the bare atom `#a` if `self` holds it, which the kernel's `Atom(a, [])`
+    /// matches and so does the spec's `#a` (see `PatNode::Atom`). `#a()`: `T` lists only the
+    /// shapes of `#a` with no items and no fields, each the empty tuple, which matches (the
+    /// elaborator gives `#a()` the literal pattern of that value). `#a(f1: p1, …)`: `T`
+    /// lists, for each shape `s` of `#a`'s payload that `self` lists, with no items and every
+    /// `fi` among its fields, the shape `s'` with each `fi` of a pattern of its own given the
+    /// part `Ti` of `s.fi` that `pi` is sure to match (by induction a subset of the values of
+    /// `s.fi` that `pi` matches), and drops `s` where some `Ti` lists nothing. A value of `s'`
+    /// is a value of `s` (each `Ti` within `s.fi`) whose every `fi` matches `pi`, so `p`
+    /// matches it. A field pattern takes neither an atom whose payload `self` does not list
+    /// (`None`, or the atom in the set with no entry) nor the bare atom, which has no fields
+    /// and so is never matched by it. Any other pattern: `T` is empty.
+    /// So `self \ T` holds every value of `self` that `p` does not match: dropping a value
+    /// from the type of an `else` is sound only where every run takes it into the `else`'s
+    /// arm. It is not always the least such type: a field whose `Ti` is less than `s.fi`
+    /// leaves `s` kept whole by [`Ty::diff`] when the shape has no kernel type (one with
+    /// fields has none), more than the difference, which is sound.
+    ///
+    /// Complexity tradeoff: each field pattern visits each shape its type lists for that atom
+    /// once, and each field it names once in that shape, so the cost is the sum over the
+    /// pattern's nodes of the shapes and fields met there, linear in the type's parts under
+    /// the pattern. A naive version recursing on the pattern costs the same but needs a call
+    /// stack as deep as the pattern nests; this one keeps one `TakeFrame` a level. A shape
+    /// whose fields all are matched bare is taken whole (its `Arc` shared), with no new shape
+    /// built, as the flat `#e(code:)` was before.
+    pub fn taken_by(&self, p: &Pat) -> Ty {
+        let nodes = &p.0[..];
+        let mut stack: Vec<TakeFrame> = Vec::new();
+        let start = Ty::take_start;
+        match start(nodes, self, 0) {
+            Ok(t) => return t,
+            Err(f) => stack.push(f),
+        }
+        // What the frame just left took, given to the field being read one level up.
+        let mut done: Option<Ty> = None;
+        loop {
+            let top = stack
+                .last_mut()
+                .expect("a frame is read until the root's is left");
+            if let Some(t) = done.take() {
+                let (fs, i) = top.at.as_mut().expect("a field is being read");
+                match t.lists_nothing() {
+                    // The field's pattern is sure to match no value of it: the shape is not
+                    // taken.
+                    true => top.at = None,
+                    false => {
+                        fs.insert(top.fields[*i].0.clone(), t);
+                        *i += 1;
+                    }
+                }
+                continue;
+            }
+            match &mut top.at {
+                None => match top.shapes.next() {
+                    Some(s) if top.fields.iter().all(|(_, c)| nodes[*c] == PatNode::Any) => {
+                        top.taken.push(s);
+                    }
+                    Some(s) => top.at = Some((s.fields.clone(), 0)),
+                    None => {
+                        let f = stack.pop().expect("the frame read");
+                        let t = Ty::of_shapes(f.name, f.family, f.taken);
+                        if stack.is_empty() {
+                            return t;
+                        }
+                        done = Some(t);
+                    }
+                },
+                Some((fs, i)) if *i == top.fields.len() => {
+                    let s = Shape::new(Vec::new(), std::mem::take(fs));
+                    if !s.void {
+                        top.taken.push(s);
+                    }
+                    top.at = None;
+                }
+                Some((fs, i)) => {
+                    let (f, c) = &top.fields[*i];
+                    match start(nodes, &fs[f], *c) {
+                        Ok(t) => done = Some(t),
+                        Err(frame) => stack.push(frame),
+                    }
+                }
+            }
+        }
+    }
+
+    /// What the node `at` of `nodes` takes of `t` ([`Ty::taken_by`]), or the frame that reads
+    /// it when it is a field pattern.
+    fn take_start<'p>(nodes: &'p [PatNode], t: &Ty, at: usize) -> Result<Ty, TakeFrame<'p>> {
+        let with = |n: &str| KType::atom_with(n, &KType::top());
+        match &nodes[at] {
+            PatNode::Any => Ok(t.clone()),
+            PatNode::Other => Ok(Ty::empty()),
+            PatNode::Atom(n) => {
+                let set = &t.set & &KType::atom(n);
+                let mut out = Ty::set(set.clone());
+                out.family = &t.family & &set;
+                Ok(out)
+            }
+            PatNode::Empty(n) => {
+                let ss: Vec<Shape> = (t.payloads.get(n).and_then(Option::as_deref))
+                    .into_iter()
+                    .flatten()
+                    .filter(|s| s.items.is_empty() && s.fields.is_empty())
+                    .cloned()
+                    .collect();
+                Ok(Ty::of_shapes(n, &t.family & &with(n), ss))
+            }
+            PatNode::Fields(name, fields) => {
+                let ss: Vec<Shape> = (t.payloads.get(name).and_then(Option::as_deref))
+                    .into_iter()
+                    .flatten()
+                    .filter(|s| {
+                        s.items.is_empty() && fields.iter().all(|(f, _)| s.fields.contains_key(f))
+                    })
+                    .cloned()
+                    .collect();
+                Err(TakeFrame {
+                    name,
+                    fields,
+                    family: &t.family & &with(name),
+                    shapes: ss.into_iter(),
+                    taken: Vec::new(),
+                    at: None,
+                })
+            }
+        }
+    }
+
+    /// The atom `#name` with the payload shapes `shapes`, of the family `family`, or the
+    /// empty type when there is none: built as [`Ty::atom_of`] is, the any-payload atom in the
+    /// set beside the listed shapes, which [`Ty::diff`] takes away shape by shape.
+    fn of_shapes(name: &Arc<str>, family: KType, shapes: Vec<Shape>) -> Ty {
+        if shapes.is_empty() {
+            return Ty::empty();
+        }
+        let mut t = Ty::set(KType::atom_with(name, &KType::top()));
+        t.family = family;
+        t.payloads.insert(name.clone(), Some(shapes));
+        t
+    }
 }
 
 /// A place in an atom's payload.
@@ -6789,7 +7036,7 @@ impl Need {
             | NeedKind::Entries
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
-            | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
+            | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_) | Narrow::Pattern(_)) => Vec::new(),
             NeedKind::Push { value: t, .. }
             | NeedKind::Component { key: t, .. }
             | NeedKind::Index { key: t, .. }
@@ -6837,7 +7084,7 @@ impl Need {
             | NeedKind::Entries
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
-            | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
+            | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_) | Narrow::Pattern(_)) => Vec::new(),
             NeedKind::Push { value: t, .. }
             | NeedKind::Component { key: t, .. }
             | NeedKind::Index { key: t, .. }
@@ -31178,6 +31425,33 @@ pub mod r10_hash {
                 Narrow::Not(t) => {
                     self.emit(3);
                     self.emit_ty(t);
+                }
+                Narrow::Pattern(p) => {
+                    self.emit(4);
+                    self.emit_usize(p.0.len());
+                    for node in &p.0 {
+                        match node {
+                            PatNode::Any => self.emit(1),
+                            PatNode::Atom(a) => {
+                                self.emit(2);
+                                self.emit_str(a);
+                            }
+                            PatNode::Empty(a) => {
+                                self.emit(3);
+                                self.emit_str(a);
+                            }
+                            PatNode::Fields(a, fs) => {
+                                self.emit(4);
+                                self.emit_str(a);
+                                self.emit_usize(fs.len());
+                                for (f, at) in fs {
+                                    self.emit_str(f);
+                                    self.emit_usize(*at);
+                                }
+                            }
+                            PatNode::Other => self.emit(5),
+                        }
+                    }
                 }
             }
         }

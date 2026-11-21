@@ -2,7 +2,8 @@ use zed_tests::scaling;
 
 use super::super::scaling::resolved;
 use super::super::soundness::{
-    component_exponents, nested_component_exponent, uses_left_on_classes,
+    component_exponents, else_nested_deep, else_of_many_nested_fields, nested_component_exponent,
+    uses_left_on_classes,
 };
 
 /// CHK-obligation-sweep: the end of the walk reads each class and the uses left on it once,
@@ -38,5 +39,28 @@ fn a_component_exponent_bound_d_deep_checks_in_linear_time() {
     let units = resolved(200, nested_component_exponent);
     scaling::check("checking a component exponent bound d deep", 200, |d| {
         assert_eq!(units[&d].check().errors.len(), 1);
+    });
+}
+
+/// ELSE-explicit-atoms x2: what an `else` pattern of `n` fields takes is found by one visit of
+/// each field of each payload shape the type lists, so `n` nested fields check in time linear
+/// in `n`.
+#[test]
+fn an_else_of_many_nested_fields_scales() {
+    let units = resolved(400, else_of_many_nested_fields);
+    scaling::check("an else pattern of n nested fields", 400, |n| {
+        let info = units[&n].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}
+
+/// ELSE-explicit-atoms x2: a pattern nested `d` deep is read on an explicit stack, one frame a
+/// level, so it checks in time linear in `d` and needs no call stack as deep.
+#[test]
+fn an_else_nested_deep_scales() {
+    let units = resolved(200, else_nested_deep);
+    scaling::check("an else pattern nested d deep", 200, |d| {
+        let info = units[&d].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
 }

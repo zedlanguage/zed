@@ -1496,23 +1496,34 @@ impl<'t, 'a> Ck<'t, 'a> {
                         };
                         self.narrowed(&v, &narrow, e.span).union(&d)
                     }
-                    // A field pattern whose fields are bound by name, `#e(code:)`, matches
-                    // each payload of `v` that has those fields, so it removes those payloads,
-                    // as a `match` arm with the same pattern takes them (DESIGN.md step
-                    // L1.27). A positional payload of names, `#bug(m)`, is refused by
-                    // resolution until step L2.3 and reaches the last arm.
-                    // The parser gives a field pattern `items: Some(vec![])`, the parentheses
-                    // being written.
-                    Some(Pattern::Atom {
-                        name,
-                        fields,
-                        items,
-                        ..
-                    }) if !fields.is_empty() && items.as_deref().is_none_or(<[_]>::is_empty) => {
-                        match super::fields_payload_ty(name, fields, &v) {
-                            Some(taken) => self.narrowed(&v, &Narrow::Not(taken), e.span).union(&d),
-                            None => v.union(&d),
-                        }
+                    // A field pattern, `#e(code:)` or `#o(i: #e(x:))`, removes from `v` each
+                    // payload it is sure to match, at any depth of its fields' patterns, as a
+                    // `match` arm with the same pattern takes them (DESIGN.md step L1, "Where
+                    // this document does not say": "The pattern form `e else p -> d` removes
+                    // from the type the values of the atom that its pattern `p` matches"; "A
+                    // payload pattern keeps in the type each payload the type holds that it
+                    // can fail to match"). What it takes is [`Ty::taken_by`], whose comment
+                    // holds the proof that the difference is sound.
+                    //
+                    // Before (ELSE-explicit-atoms x2), `fields_payload_ty` took a payload only
+                    // where every field was bound by a name or `_`, and gave `Narrow::Not` of
+                    // the payloads `v` listed: a field with a pattern of its own took nothing,
+                    // so `#o(i: #e(x: 2)) else #o(i: #e(x:)) -> x` kept `#o(i: #e(x: 2))`,
+                    // which no run returns; and on a type variable `v` lists no payload, so
+                    // the generic `g(e) = e else #e(code:) -> code` made no need and kept `#e`
+                    // at every call. `Narrow::Pattern` keeps the pattern, so a variable's need
+                    // reads it on each call's argument (sec:type_language: a signature is
+                    // "specialized at each call by putting the argument types for the
+                    // variables and simplifying").
+                    //
+                    // A positional payload of names, `#bug(m)`, is refused by resolution until
+                    // step L2.3 and reaches the last arm. The parser gives a field pattern
+                    // `items: Some(vec![])`, the parentheses being written.
+                    Some(p @ Pattern::Atom { fields, items, .. })
+                        if !fields.is_empty() && items.as_deref().is_none_or(<[_]>::is_empty) =>
+                    {
+                        let narrow = Narrow::Pattern(Arc::new(Pat::of(p)));
+                        self.narrowed(&v, &narrow, e.span).union(&d)
                     }
                     Some(_) => v.union(&d),
                 };
@@ -16242,6 +16253,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 rest
             }
             Narrow::Not(t) => v.diff_with(t, &|w| self.stale(w)),
+            Narrow::Pattern(p) => v.diff_with(&v.taken_by(p), &|w| self.stale(w)),
         };
         for x in &v.vars {
             let Some(k) = self.class_of(&Piece::Var(x.clone())).map(|k| self.find(k)) else {

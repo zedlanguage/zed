@@ -94,8 +94,8 @@ use kernel_type::kernel_type;
 use ty::{
     Around, Arrow, Binds, CallPath, Carrier, DataUse, Dense, EVERY, FoldForm, IntDomain, KeyUse,
     LevelWord, MapWord, NameItem, NameRun, Names, Narrow, Need, NeedKind, NodeId, OTHER,
-    ParamRange, PathStep, Piece, PowerUse, Reducer, Renamings, RunMark, RunRenames, SParam, Shape,
-    Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms, carriers_text,
+    ParamRange, Pat, PathStep, Piece, PowerUse, Reducer, Renamings, RunMark, RunRenames, SParam,
+    Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms, carriers_text,
     class_id, errs, fresh_name, mask_text, rename_apart,
 };
 
@@ -15628,38 +15628,6 @@ pub fn empty_payload_ty(name: &str) -> Ty {
         )]),
     );
     t
-}
-
-/// The payloads of the atom `name` in `v` that the field pattern `#name(f:, g: _, …)` with
-/// `fields` matches whole, as a checker type built as [`empty_payload_ty`] is, or `None` when
-/// it matches none of them or a field's pattern can fail. The kernel's field pattern
-/// (`Pattern::Fields`, zed-kernel eval.rs `matches`) takes an atom of that name whose payload
-/// has named fields, each field the pattern names among them, and each field's value matching
-/// its pattern; a field written bare or with a name or `_` matches every value. So a shape of
-/// `v` with no positional items and every field named is matched by every value it holds, and
-/// no other shape is matched by all of its values: one with items has no named fields, one that
-/// lacks a field named fails at that field. The bare atom and an atom whose payload `v` does not
-/// list are not taken.
-pub fn fields_payload_ty(name: &str, fields: &[(String, Option<Pattern>)], v: &Ty) -> Option<Ty> {
-    let all_match = fields
-        .iter()
-        .all(|(_, p)| matches!(p, None | Some(Pattern::Name(..) | Pattern::Wild(_))));
-    let shapes = v.payloads.get(name)?.as_deref()?;
-    let taken: Vec<_> = (shapes.iter())
-        .filter(|s| {
-            s.items.is_empty()
-                && fields
-                    .iter()
-                    .all(|(f, _)| s.fields.contains_key(f.as_str()))
-        })
-        .cloned()
-        .collect();
-    if !all_match || taken.is_empty() {
-        return None;
-    }
-    let mut t = Ty::set(KType::atom_with(name, &KType::top()));
-    t.payloads.insert(name.into(), Some(taken));
-    Some(t)
 }
 
 /// `#ioError(op: String, path: String, why: String)`: a failed read or write, its operation,

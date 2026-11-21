@@ -2,11 +2,14 @@
 //! the type's: `Ty::named` gives it, as a `type` declaration will (step L2.1), and these tests
 //! read the rules from the type representation and the operator rule directly.
 
+use std::collections::BTreeMap;
+
 use zed_kernel::types::Type as KType;
-use zedc::ast::BinaryOp;
+use zedc::ast::{BinaryOp, Pattern};
 use zedc::check::Operator;
-use zedc::check::ty::{Carrier, Ty};
+use zedc::check::ty::{Carrier, Pat, Ty};
 use zedc::check::walk::{check_given, operator};
+use zedc::lex::Span;
 
 /// `#a | #b | …`.
 fn atoms(names: &[&str]) -> Ty {
@@ -40,6 +43,37 @@ fn the_pattern_form_strips_a_family_member() {
     assert_eq!(t.to_string(), "#blue | #green | #ioError");
     // What is left of the family is still the family's.
     assert_eq!(t.without_loose().to_string(), "#blue | #green");
+}
+
+#[test]
+fn a_nested_else_pattern_takes_a_family_member_and_keeps_the_rest() {
+    // `type Res = #o(i: #e(x: int)) | #z`: the difference an `else` takes "removes a named atom
+    // whatever its family marking, as the pattern matches it" (DESIGN.md sec:type_language), at
+    // any depth of the pattern.
+    let e = Ty::atom_of(
+        "e",
+        Vec::new(),
+        BTreeMap::from([("x".into(), Ty::carrier(Carrier::Int))]),
+    );
+    let o = Ty::atom_of("o", Vec::new(), BTreeMap::from([("i".into(), e)]));
+    let res = o.union(&atoms(&["z"])).named();
+    let at = Span { start: 0, end: 0 };
+    let atom = |name: &str, fields: Vec<(String, Option<Pattern>)>| Pattern::Atom {
+        name: name.into(),
+        fields,
+        items: None,
+        span: at,
+    };
+    let inner = |field: &str| atom("e", vec![(field.into(), None)]);
+    // `#o(i: #e(x:))` matches every payload of `#o`: what is left is `#z`, still the family's.
+    let p = Pat::of(&atom("o", vec![("i".into(), Some(inner("x")))]));
+    let left = res.diff(&res.taken_by(&p));
+    assert_eq!(left.to_string(), "#z");
+    assert_eq!(left.without_loose().to_string(), "#z");
+    // `#o(i: #e(y:))` can fail on each payload, so nothing is taken.
+    let q = Pat::of(&atom("o", vec![("i".into(), Some(inner("y")))]));
+    assert!(res.taken_by(&q).lists_nothing());
+    assert_eq!(res.diff(&res.taken_by(&q)).to_string(), res.to_string());
 }
 
 #[test]
