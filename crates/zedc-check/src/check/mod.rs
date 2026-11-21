@@ -2286,6 +2286,9 @@ struct Ck<'t, 'a> {
     rough: bool,
     /// The output ports declared `Lines`.
     lines_out: HashSet<String>,
+    /// The written differences refused as inexact ([`Self::written`]), so that a type read
+    /// more than once is refused once.
+    inexact_diffs: HashSet<Span>,
     /// The parameters that are output ports ([`ports`]): a push to one is checked as a push
     /// to a `Lines` port of `main` is.
     port_params: HashSet<usize>,
@@ -3050,6 +3053,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             marks: std::cell::Cell::new(0),
             rough: false,
             lines_out: HashSet::new(),
+            inexact_diffs: HashSet::new(),
             port_params: HashSet::new(),
             port_writers: HashSet::new(),
             main_memory: None,
@@ -5079,8 +5083,29 @@ impl<'t, 'a> Ck<'t, 'a> {
     // but a removal per name at each function's end. Written types name few variables and
     // functions nest few deep, so the scan is the cheaper one in practice; a type of n names
     // costs O(n·d) for d nested functions.
+    //
+    // A difference whose value holds more than `a & !b` ([`Ty::diff_exact`]: a tuple or payload
+    // holding a function type that `b` may hold in part is kept whole) is refused, once at
+    // its span: read as it is, a parameter of that type took `(inc, #a)` for
+    // `((int) -> int, #a | #b) \ ((int) -> int, #a)` (FAIL-ty-diff-function-rows). Test:
+    // `l01_22_type_representation::kinds::a_difference_that_takes_part_of_a_tuple_holding_a_function_is_refused`.
     pub(super) fn written(&mut self, t: &Type, fresh: bool) -> Ty {
-        let ty = denoted(t);
+        let (ty, inexact) = denoted_inexact(t, &Binds::new(), &HashSet::new());
+        for (span, printed) in inexact {
+            if self.inexact_diffs.insert(span) {
+                let text = match self.t.text {
+                    Some(src) => &src[span.start..span.end],
+                    None => &printed,
+                };
+                let message = format!(
+                    "`{text}` takes away part of a tuple or payload that holds a function type, \
+                     which is part of the Zed language but is not supported by this version of \
+                     zedc. Write the type without `\\`, as the union of the tuples or payloads \
+                     that are left."
+                );
+                self.error_with(span, message, Vec::new());
+            }
+        }
         if self.type_vars.is_empty() {
             return ty;
         }
@@ -16116,14 +16141,26 @@ pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
 /// variables). A printed type writes such a name for a variable that stands in two places or
 /// more (UNDERSCORE-print), which only `parse_type` reads back.
 pub fn denoted_free(t: &Type, leaves: &Binds, free: &HashSet<Arc<str>>) -> Ty {
-    Denote {
+    denoted_inexact(t, leaves, free).0
+}
+
+/// [`denoted_free`], with the span and printed text of each difference in `t` whose value holds
+/// more than the difference ([`Ty::diff_exact`]).
+fn denoted_inexact(
+    t: &Type,
+    leaves: &Binds,
+    free: &HashSet<Arc<str>>,
+) -> (Ty, Vec<(Span, String)>) {
+    let mut d = Denote {
         leaves,
         free,
         bound: HashMap::new(),
         open: Vec::new(),
         empty: None,
-    }
-    .ty(t)
+        inexact: Vec::new(),
+    };
+    let ty = d.ty(t);
+    (ty, d.inexact)
 }
 
 /// The steps that say why each part of the written type `t` that is written as a tuple type, an
@@ -16151,6 +16188,7 @@ fn emptied(t: &Type, out: &mut Vec<Note>) {
         bound: HashMap::new(),
         open: Vec::new(),
         empty: Some(HashSet::new()),
+        inexact: Vec::new(),
     };
     d.ty(t);
     let empty = d.empty.unwrap_or_default();
@@ -16355,6 +16393,10 @@ struct Denote<'a> {
     /// The span of each part read whose type lists no value, kept only by [`emptied`], which
     /// explains them in a message.
     empty: Option<HashSet<Span>>,
+    /// The span and the printed text of each difference `a \ b` read whose value holds more
+    /// than `a & !b` ([`Ty::diff_exact`]), which [`Ck::written`] refuses
+    /// (FAIL-ty-diff-function-rows).
+    inexact: Vec<(Span, String)>,
 }
 
 /// A function type [`Denote`] is reading.
@@ -16610,7 +16652,11 @@ impl<'a> Denote<'a> {
             TypeKind::Diff(..) => {
                 let b = vals.pop().expect("a difference's operands are denoted");
                 let a = vals.pop().expect("a difference's operands are denoted");
-                a.diff(&b)
+                let (d, exact) = a.diff_exact(&b);
+                if !exact {
+                    self.inexact.push((t.span, format_type(t)));
+                }
+                d
             }
             // A partial map `K ->? V` promises no key, so a lookup is `V | #notFound`
             // (DESIGN.md sec:type_language): that is the result of its arrow, which is marked

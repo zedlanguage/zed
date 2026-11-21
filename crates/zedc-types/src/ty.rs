@@ -11527,9 +11527,23 @@ impl<'m, 's> Comparing<'m, 's> {
     /// [`Self::diff`] on the explicit stack, for a difference inside a difference
     /// ([`Self::shape_rest`]): a payload nested 20,000 deep would otherwise take 20,000 native
     /// frames.
+    ///
+    /// The answer is exact ([`Ty::diff_exact`]), so dropping the flag loses nothing. Proof:
+    /// `shape_rest` is called only where the shape and every shape it is cut by have an exact
+    /// kernel type and `u` holds no variable and no unknown (`exact_u && exact` in
+    /// [`Self::diff`]), so `t` and `u` here are components of such shapes and have exact kernel
+    /// types too, with no variable and no unknown. Then in [`Self::diff`] every row of `t` has
+    /// a kernel type `k`, and every tuple of `u` near it an exact one, so its cut is `Some`
+    /// and its row is either kept where the cut misses it (exact) or split; every payload
+    /// shape goes by `shape_rest` again, whose rest stands where the comparison does not
+    /// drop the shape, so no row or shape reaches a branch that clears the flag. Checked by
+    /// the `debug_assert` in every test build.
     fn diff_deep(&'m self, t: Ty, u: Ty, solve: Option<Solve<'s>>) -> Deep<'m, Ty> {
-        self.stack
-            .call(move || async move { self.diff(&t, &u, solve).await })
+        self.stack.call(move || async move {
+            let (d, exact) = self.diff(&t, &u, solve).await;
+            debug_assert!(exact, "a difference of exact components is exact");
+            d
+        })
     }
 
     /// The rest of the payload shape `s` once the shapes `cut` are taken from it, as shapes,
@@ -12693,8 +12707,11 @@ impl<'m, 's> Comparing<'m, 's> {
 
     /// [`Ty::diff`] of `t` and `u`, a tuple compared with `u` as [`Ty::sub_with`] compares, with
     /// the resolver `solve`, if any: each comparison a new one, on this stack, the state of
-    /// the comparisons open set aside meanwhile.
-    async fn diff(&'m self, t: &Ty, u: &Ty, solve: Option<Solve<'s>>) -> Ty {
+    /// the comparisons open set aside meanwhile. With it, whether every row and payload shape
+    /// of `t` was split or kept whole only where `u` shares no value with it
+    /// ([`Ty::diff_exact`]).
+    async fn diff(&'m self, t: &Ty, u: &Ty, solve: Option<Solve<'s>>) -> (Ty, bool) {
+        let mut exact = true;
         let open = std::mem::take(&mut *self.cx.borrow_mut());
         // The atoms whose payloads `u` lists are left out of what is taken from the sets: the
         // kernel type of `u` holds such an atom with any payload, and `#a(bool) \ #a(int)` was
@@ -12743,15 +12760,18 @@ impl<'m, 's> Comparing<'m, 's> {
             // that `u`'s tuples held in part was kept whole: `((..), (..)) \ ((..), (int, int))`
             // was read as `((..), (..))`, and a parameter of that type took `((1, 2), (3, 4))`.
             // A row with no kernel type, or beside a tuple of `u` with none, is still kept whole
-            // when `u` holds it in part, so the type may hold more than the difference. That is
-            // sound for `is not`, whose narrowed type need only hold the values that pass. Not
-            // proved, and false, for a written type (FAIL-ty-diff-function-rows, found by
-            // proofdoc4c): zedc-check reads a written `a \ b` by this function (`TypeKind::Diff`
-            // in its reading of a written type, crates/zedc-check/src/check/mod.rs), so
-            // `f(p: ((int) -> int, #a | #b) \ ((int) -> int, #a)) = p` is read as
-            // `(int -> int, #a | #b)` and `f(p: (inc, #a))` is accepted, though DESIGN.md
-            // sec:type_language makes `t1 \ t2` sugar for `t1 & !t2`. The same holds for
-            // `((int) -> int, (..)) \ ((int) -> int, (int, int))` and `(inc, (1, 2))`.
+            // when `u` may hold it in part, so the type may hold more than the difference. That
+            // is sound for `is not`, whose narrowed type need only hold the values that pass,
+            // and false for a written type, which DESIGN.md sec:type_language makes `t1 & !t2`:
+            // `((int) -> int, #a | #b) \ ((int) -> int, #a)` was read as
+            // `(int -> int, #a | #b)`, and a parameter of that type took `(inc, #a)`
+            // (FAIL-ty-diff-function-rows, found by proofdoc4c). Such a row now marks the
+            // answer inexact, and zedc-check refuses a written difference so marked
+            // (`Denote::make`, crates/zedc-check/src/check/mod.rs). A row kept whole is exact
+            // where `u` shares no value with it: below, where the cut misses its kernel type,
+            // and where `u` has no variable, no unknown, no kind-wide part and no tuple near
+            // the row, since then nothing of `u` is a tuple that may share a value with it
+            // ([`near_pairs`] lists every tuple of `u` not [`apart`] from it).
             let k = a.0.exact.clone().or_else(|| a.kernel());
             // What of `u` may share a value with the row: its kind-wide part and the kernel
             // types, payloads read, of its tuples near the row. None when one of those tuples
@@ -12793,7 +12813,11 @@ impl<'m, 's> Comparing<'m, 's> {
             match (k, &cut, &tk) {
                 (Some(k), Some(cut), _) if met == Some(true) => rest.push(&k - cut),
                 (Some(k), None, Some(tk)) if !(&k & &w).is_empty() => rest.push(&k - tk),
-                _ => kept.push(a),
+                _ => {
+                    exact &=
+                        !u.dynamic && u.vars.is_empty() && w.is_empty() && near.tuples.is_empty();
+                    kept.push(a)
+                }
             }
         }
         // A payload shape of an atom `u` lists is dropped when `u`'s shapes of that atom that
@@ -12814,7 +12838,10 @@ impl<'m, 's> Comparing<'m, 's> {
         // are met through `near_pairs`. A shape with no kernel type, or near a shape of `u`
         // with none, or a `u` that holds a variable or the unknown, is still kept whole, so
         // the type may hold more than the difference, as for tuples: sound for `is not`, and
-        // not proved, as for tuples, for a written type (FAIL-ty-diff-function-rows).
+        // false for a written type, so such a shape marks the answer inexact, as a tuple does
+        // (FAIL-ty-diff-function-rows). A shape with no near shape of `u` is kept whole
+        // exactly: `u`'s shapes not near it share no value with it, and `u` holds the atom
+        // with this payload only through its listed shapes (the atom is left out of `tk`).
         let exact_u = !u.dynamic && u.vars.is_empty();
         let mut gone = Vec::new();
         for (n, us) in &listed {
@@ -12834,7 +12861,8 @@ impl<'m, 's> Comparing<'m, 's> {
             let mut left = Vec::with_capacity(ts.len());
             let mut changed = false;
             for (s, near) in ts.iter().zip(near_pairs(ts.iter(), us.iter())) {
-                if !near.is_empty() {
+                let alone = near.is_empty();
+                if !alone {
                     *self.cx.borrow_mut() = Cx {
                         solve,
                         ..Cx::default()
@@ -12888,6 +12916,7 @@ impl<'m, 's> Comparing<'m, 's> {
                         continue;
                     }
                 }
+                exact &= exact_u && alone;
                 left.push(s.clone());
             }
             if left.is_empty() {
@@ -12905,7 +12934,7 @@ impl<'m, 's> Comparing<'m, 's> {
         *self.cx.borrow_mut() = open;
         out.tuples = kept.into();
         out.set = KType::union_all(std::iter::once(out.set).chain(rest));
-        out
+        (out, exact)
     }
 }
 
@@ -15185,17 +15214,27 @@ impl Ty {
     /// payload shapes of an atom whose payloads `t` lists are dropped as tuples are, and the
     /// atom with them when none is left.
     pub fn diff(&self, t: &Ty) -> Ty {
+        self.diff_in(t, None).0
+    }
+
+    /// [`Self::diff`], and whether it is exactly the values of `self` not in `t`, as a written
+    /// `self \ t` means (DESIGN.md sec:type_language: `t1 \ t2` is sugar for `t1 & !t2`).
+    /// False where a row or payload shape of `self` with no kernel type, or beside one of `t`
+    /// with none, or beside a `t` holding a variable or the unknown, was kept whole though
+    /// `t` may hold part of it: the answer then holds that whole row, more than the
+    /// difference, which only `is not` may read (FAIL-ty-diff-function-rows).
+    pub fn diff_exact(&self, t: &Ty) -> (Ty, bool) {
         self.diff_in(t, None)
     }
 
     /// [`Self::diff`], a tuple compared with `t` as [`Self::sub_with`] compares: each class
     /// variable `solve` gives a type read as that type inside the functions it holds.
     pub fn diff_with(&self, t: &Ty, solve: Solve) -> Ty {
-        self.diff_in(t, Some(solve))
+        self.diff_in(t, Some(solve)).0
     }
 
-    /// [`Self::diff`], with the resolver of the comparisons, if any.
-    fn diff_in(&self, t: &Ty, solve: Option<Solve>) -> Ty {
+    /// [`Self::diff_exact`], with the resolver of the comparisons, if any.
+    fn diff_in(&self, t: &Ty, solve: Option<Solve>) -> (Ty, bool) {
         comparing!(&mut Cx::default(), |c| c.diff(self, t, solve))
     }
 
@@ -18808,6 +18847,7 @@ async fn met<'m>(
             Some(ps) => {
                 c.diff(&qa.params[j], &Ty::union_all(ps.iter().copied()), None)
                     .await
+                    .0
             }
             None => qa.params[j].clone(),
         };

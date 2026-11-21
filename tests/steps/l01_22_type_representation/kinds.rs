@@ -1945,6 +1945,60 @@ fn a_tuple_type_taken_away_in_part_from_a_wide_tuple_type_leaves_its_values_out(
 }
 
 #[test]
+fn a_difference_that_takes_part_of_a_tuple_holding_a_function_is_refused() {
+    // DESIGN.md sec:type_language: "t1 \ t2 is sugar for t1 & !t2". The checker cannot split a
+    // tuple type that holds a function type (it has no kernel type), so where the right side
+    // may hold part of such a tuple of the left side, the difference it reads holds the whole
+    // tuple, more than `t1 & !t2`. Before (FAIL-ty-diff-function-rows, found by proofdoc4c)
+    // that reading was used: `f((inc, #a))` was accepted below, though `(inc, #a)` is in the
+    // part `\` takes away. Now the written difference is refused, once, at the difference.
+    let errors = zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+    for (param, arg) in [
+        ("((int) -> int, #a | #b) \\ ((int) -> int, #a)", "(inc, #a)"),
+        (
+            "((int) -> int, (..)) \\ ((int) -> int, (int, int))",
+            "(inc, (1, 2))",
+        ),
+    ] {
+        let text = format!(
+            "inc(positional x: int) = x + 1;\nf(positional p: {param}) = p;\ng() = f({arg});\n"
+        );
+        let errs = errors(&text);
+        let refused = format!(
+            "`{param}` takes away part of a tuple or payload that holds a function type, which \
+             is part of the Zed language but is not supported by this version of zedc. Write \
+             the type without `\\`, as the union of the tuples or payloads that are left. \
+             [{param}]"
+        );
+        assert_eq!(errs, [refused], "{text}");
+    }
+    // A difference whose right side shares no value with a tuple holding a function is read
+    // exactly, and is not refused.
+    for (param, arg) in [
+        ("((int) -> int, #a) \\ String", "(inc, #a)"),
+        ("(((int) -> int, #a) | (int, #b)) \\ (int, #b)", "(inc, #a)"),
+    ] {
+        let text = format!(
+            "inc(positional x: int) = x + 1;\nf(positional p: {param}) = p;\ng() = f({arg});\n"
+        );
+        assert_eq!(errors(&text), Vec::<String>::new(), "{text}");
+    }
+    // The same on the types, where a payload, which a program cannot yet write as a type, is
+    // read too: a payload shape holding a function that the right side may hold in part is
+    // kept whole, so the answer is inexact; one the right side shares no value with is not.
+    for (a, b, exact) in [
+        ("((int) -> int, #a | #b)", "((int) -> int, #a)", false),
+        ("#c((int) -> int, #a | #b)", "#c((int) -> int, #a)", false),
+        ("((int) -> int, #a)", "String", true),
+        ("#c((int) -> int, #a)", "#c(int, int, int)", true),
+        ("((int, int), (..))", "((int, int), (int, int))", true),
+    ] {
+        let (d, got) = ty(a).diff_exact(&ty(b));
+        assert_eq!(got, exact, "{a} \\ {b}, read as {d}");
+    }
+}
+
+#[test]
 fn a_tuple_type_taken_away_in_whole_leaves_never() {
     // DESIGN.md sec:type_language: "`t1 <: t2` iff `t1 & !t2` is empty", and the empty type is
     // `Never`. A difference whose right side holds every value of its left side has no value,
