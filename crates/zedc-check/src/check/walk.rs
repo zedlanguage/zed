@@ -27319,7 +27319,7 @@ impl<'a> Ck<'_, 'a> {
         };
         let mut notes = Vec::new();
         let reason = match why {
-            // The literal as the program writes it, `0_0` or `0r`.
+            // The literal as the program writes it, `0x0_0` or `0.0_0r`.
             Zero::Literal if is_literal(b) => {
                 format!(
                     "its divisor is the literal {}",

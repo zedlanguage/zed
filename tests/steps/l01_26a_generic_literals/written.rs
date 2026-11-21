@@ -214,8 +214,8 @@ fn a_literal_in_parentheses_is_quoted_without_them() {
     );
     // A type that holds the literal's value spells it as the program does.
     assert_eq!(
-        type_errors("f(x: int) = x / (0_0);\n"),
-        ["`/` does not take (int, 0_0): no arrow of `/` takes these types. [x / (0_0)]"]
+        type_errors("f(x: int) = x / (0x0_0);\n"),
+        ["`/` does not take (int, 0x0_0): no arrow of `/` takes these types. [x / (0x0_0)]"]
     );
 }
 
@@ -242,17 +242,17 @@ fn an_operand_of_a_comparison_is_quoted_as_written() {
 #[test]
 fn a_divisor_literal_is_quoted_as_written() {
     assert_eq!(
-        type_errors("f(x: int) = x mod 0_0;\n"),
+        type_errors("f(x: int) = x mod 0x0_0;\n"),
         [
-            "`mod` here always fails with `#divByZero`: its divisor is the literal 0_0, so no \
-          value that reaches it gives an int. [x mod 0_0]"
+            "`mod` here always fails with `#divByZero`: its divisor is the literal 0x0_0, so no \
+          value that reaches it gives an int. [x mod 0x0_0]"
         ]
     );
     assert_eq!(
-        type_errors("f(x: rat) = x / 0_0r;\n"),
+        type_errors("f(x: rat) = x / 0.0_0r;\n"),
         [
-            "`/` here always fails with `#divByZero`: its divisor is the literal 0_0r, so no value \
-          that reaches it gives a rat. [x / 0_0r]"
+            "`/` here always fails with `#divByZero`: its divisor is the literal 0.0_0r, so no value \
+          that reaches it gives a rat. [x / 0.0_0r]"
         ]
     );
     assert_eq!(
