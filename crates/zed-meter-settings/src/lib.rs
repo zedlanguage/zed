@@ -162,7 +162,8 @@ pub fn running_on_valgrind() -> bool {
 ///
 /// Cost: with a `pre_exec` hook std forks and execs instead of calling `posix_spawn`; one start
 /// per check's run, nothing next to the run. On other systems it does nothing (the first release
-/// is Linux x86_64 only). Test: zed_tests scaling_tests::a_fresh_child_ends_when_its_parent_is_killed.
+/// is Linux x86_64 only). Test: zed_tests
+/// scaling_tests::a_fresh_child_ends_when_its_parent_is_killed.
 #[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 pub fn kill_with_parent(command: &mut std::process::Command) {
