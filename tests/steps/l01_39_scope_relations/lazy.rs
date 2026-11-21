@@ -1345,3 +1345,67 @@ fn a_refused_projection_can_leave_the_lazy_leaf_coarser() {
     assert_eq!(l.get("a"), l.settled(&a), "the lazy leaf is not stale");
     assert_eq!(l.get("a").ints().to_string(), "[-15..]");
 }
+
+/// Three cases beside a conjunct both sides keep, `x == 3·w + v` (row
+/// PROOF-product-join-cases-classes-inexact, the step from sub-case (a) to (b)): `v == 0`
+/// and `v == 1`, each with `0 <= x <= 9`, and `v == 2` with `20 <= x <= 29`; and again with
+/// `x >= 0`, `x >= 0` and `x <= -10`. The inner join of the first two holds `v` in `{0, 1}`,
+/// so the shared conjunct alone could remove `x = 2` at its reduction, which the outer join
+/// (`v` in `[0, 2]`) cannot. The joins of `join_cases`, unreduced and then reduced once, give
+/// the same `x`, `w` and `v` as the joins reduced at each level and as the test assumed
+/// whole, eager and lazy: the cases' finite sets of `x` are exact, so their union is, and an
+/// unbounded `x` keeps no hole.
+#[test]
+fn joins_beside_a_shared_tie_agree_with_and_without_inner_reductions() {
+    let ge = |a: Term, k: i64| prim(Prim::Ge, a, int(k));
+    let le = |a: Term, k: i64| prim(Prim::Le, a, int(k));
+    let eq = |a: Term, b: Term| prim(Prim::Eq, a, b);
+    let tie = eq(
+        var("x"),
+        prim(Prim::Add, prim(Prim::Mul, int(3), var("w")), var("v")),
+    );
+    let v_is = |v: i64| eq(var("v"), int(v));
+    let bounded = [
+        and(v_is(0), and(ge(var("x"), 0), le(var("x"), 9))),
+        and(v_is(1), and(ge(var("x"), 0), le(var("x"), 9))),
+        and(v_is(2), and(ge(var("x"), 20), le(var("x"), 29))),
+    ];
+    let unbounded = [
+        and(v_is(0), ge(var("x"), 0)),
+        and(v_is(1), ge(var("x"), 0)),
+        and(v_is(2), le(var("x"), -10)),
+    ];
+    let p = Premises::new();
+    let at = |s: &Scope| {
+        ["x", "w", "v"]
+            .map(|n| s.settled(&Arc::from(n)).ints().to_string())
+            .join(" ")
+    };
+    for (sides, want) in [
+        (
+            bounded,
+            "[0..=1, 3..=4, 6..=7, 9..=9, 20..=20, 23..=23, 26..=26, 29..=29]",
+        ),
+        (unbounded, ""),
+    ] {
+        for lazy in [false, true] {
+            let s = ints(&names(&["x", "w", "v"]));
+            let s = if lazy { s.lazy() } else { s };
+            let s = s.assume(&tie, true, &p);
+            let cs: Vec<Scope> = sides.iter().map(|t| s.assume(t, true, &p)).collect();
+            let mut non = cs[0].join(&cs[1]).join(&cs[2]);
+            non.reduce();
+            let mut ab = cs[0].join(&cs[1]);
+            ab.reduce();
+            let mut red = ab.join(&cs[2]);
+            red.reduce();
+            let test = or(or(sides[0].clone(), sides[1].clone()), sides[2].clone());
+            let whole = s.assume(&test, true, &p);
+            assert_eq!(at(&non), at(&red), "lazy {lazy}");
+            assert_eq!(at(&non), at(&whole), "lazy {lazy}");
+            if !want.is_empty() {
+                assert_eq!(non.settled(&Arc::from("x")).ints().to_string(), want);
+            }
+        }
+    }
+}

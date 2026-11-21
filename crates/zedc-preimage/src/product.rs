@@ -19035,6 +19035,21 @@ fn balanced(p: Prim, mut level: Vec<Term>) -> Term {
 // that inner projection joins the classes as wide as the outer one does. (a) can then differ
 // only where the projection of a disjunction at an inner level is finer than at the outer
 // one, which is (b). Neither step is proved for every projection; both stay open.
+// Checked 2026-11-21 (pd6pf): the step from (a) to (b) has a gap. The relation of the join is
+// not only the disjunction of the rests: it keeps each conjunct both sides hold, and the inner
+// reduction projects those with the joined products, so a shared conjunct can remove a value
+// that only the class join put in, with no disjunction projected at all. Example: the shared
+// `x == 3·w + v` beside the cases `v == 0`, `v == 1` (each `0 <= x <= 9`) and `v == 2`
+// (`20 <= x <= 29`): the inner join holds `v` in `{0, 1}`, where the outer holds `[0, 2]`.
+// It did not differ: the cases' products of `x` are finite sets, each value its own piece
+// (1001 pieces at `0 <= x <= 3000`, the class never the only record), so their union is exact
+// and the class join adds no value; with `x >= 0`, `x >= 0` and `x <= -10` the joined `x` has
+// no hole to remove (test `l01_39_scope_relations::lazy::
+// joins_beside_a_shared_tie_agree_with_and_without_inner_reductions`, eager and lazy, every
+// name the same unreduced, reduced at each level, and assumed whole). Not proved (row
+// PROOF-product-join-cases-classes-inexact): that a case's product never holds a class over a
+// bounded interval whose values are not its own pieces, which with this gap would let (a)
+// differ without (b); and (b) itself, which no probe here broke.
 fn join_cases(mut cases: Vec<Scope>) -> Scope {
     while cases.len() > 1 {
         let mut it = std::mem::take(&mut cases).into_iter();
