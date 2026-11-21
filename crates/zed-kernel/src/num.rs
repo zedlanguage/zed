@@ -1779,12 +1779,16 @@ pub fn gcd_uint(a: &BigUint, b: &BigUint) -> BigUint {
 /// `(g, s, t)` with `s a + t b = g = gcd(a, b) >= 0`.
 // Complexity tradeoff: extended Euclid writes a quadratic total of remainders.
 // Binary half-GCD accumulates one coefficient column in O(M(n) log n),
-// then one exact division recovers the other coefficient. A failed arithmetic
-// check returns None. No input size changes the verdict. Tests in modular.rs:
+// then one exact division recovers the other coefficient. Always `Some`: `fast::bezout` is
+// total, its halving count fitting in u128 on every target (proof at `num/fast.rs`
+// `bezout_with`, step 6; PROOF-bezout-halvings-address-width). The `Option` stays only
+// because zedc-int `Int::extended_gcd` and its users in zedc-presburger still read it; their
+// `None` arms (zedc-int `Int::bezout_or_euclid`'s Euclid fallback) are unreachable.
+// No input size changes the verdict. Tests in modular.rs:
 // pncx_fast_bezout_matches_euclid, and pncx_fibonacci_scale, deferred to plan row
 // PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
 pub fn bezout_int(a: &BigInt, b: &BigInt) -> Option<(BigInt, BigInt, BigInt)> {
-    let (g, s, t) = fast::bezout(a.magnitude(), b.magnitude())?;
+    let (g, s, t) = fast::bezout(a.magnitude(), b.magnitude());
     let s = if a.is_negative() { -s } else { s };
     let t = if b.is_negative() { -t } else { t };
     Some((BigInt::from(g), s, t))

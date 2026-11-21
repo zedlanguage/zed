@@ -15947,6 +15947,17 @@ impl Placing {
 /// cofinite list or a whole the walk places for that type, in every case of `Parts` (atoms
 /// with payloads, each tuple length, morphisms, the literal universes) and with the lazy
 /// reads of [`Placing`]; the sketches below and the random tests check it, a proof is open.
+/// Not proved (PROOF-kernel-overlaps-order): that the classes do not depend on the order of
+/// `ts`. The proof at the Π_sym runs below covers reversing the components of every tuple, not
+/// reordering `ts`. The open sub-cases are the steps whose result depends on which types were
+/// placed first: the lazy reads of [`Placing`] (a node is read where the type placed for it
+/// first meets it, so which types of lower groups it places then depends on the types placed
+/// before), the `shared_chain` shortcut of `joined` (its conditions on the waiting count, the
+/// least group id and the active set), and the `repeat_stem` shortcut. One order bug was found
+/// here and fixed (FAIL-overlaps-order-ddc1ec274, 8de5fdf5b). The tests compare the classes
+/// under the reversed order and three random orders per case (`check_classes`); on 2026-11-21,
+/// 12 seeds of `types_that_meet_are_joined_in_random_groups_holding_lower_types` (14,400
+/// random orders) all agreed. They cannot show orders they do not draw.
 // Complexity tradeoff: the keys are coarser than the meet of two types in three cases, each of
 // which joins disjoint types: tuples that share a key on every component, each in a different
 // tuple type, as `(1, 1) | (2, 2)` and `(1, 2)`; a tuple part of length two or more that is

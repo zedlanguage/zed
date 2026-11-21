@@ -3008,22 +3008,22 @@ fn inverse_mod_odd(a: &BigUint, b: &BigUint) -> Option<BigUint> {
 /// input is accumulated; an exact division recovers the other coefficient.
 // Complexity tradeoff: extended Euclid uses O(n^2) bit operations, while
 // separately computing the gcd and an inverse repeats the half-GCD. This
-// computes both in one O(M(n) log n) pass. An overflow of the halving count
-// returns None. Tests: pncx_fast_bezout_matches_euclid and
+// computes both in one O(M(n) log n) pass. Total: the halving count cannot overflow (proof at
+// `bezout_with`, step 6). Tests: pncx_fast_bezout_matches_euclid and
 // bezout_coefficients_with_unequal_widths; pncx_fibonacci_scale is deferred to plan row
 // PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
-pub(super) fn bezout(a: &BigUint, b: &BigUint) -> Option<(BigUint, BigInt, BigInt)> {
+pub(super) fn bezout(a: &BigUint, b: &BigUint) -> (BigUint, BigInt, BigInt) {
     bezout_with(a, b, LIFT_BITS)
 }
 
 /// [`bezout`] with the lift of [`half_low`] up to `lift` bits in place of [`LIFT_BITS`].
-fn bezout_with(a: &BigUint, b: &BigUint, lift: u64) -> Option<(BigUint, BigInt, BigInt)> {
+fn bezout_with(a: &BigUint, b: &BigUint, lift: u64) -> (BigUint, BigInt, BigInt) {
     let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
-        return Some((
+        return (
             a | b,
             BigInt::from(!a.is_zero()),
             BigInt::from(!b.is_zero()),
-        ));
+        );
     };
     let common = za.min(zb);
     let (a, b) = (a >> common, b >> common);
@@ -3053,12 +3053,23 @@ fn bezout_with(a: &BigUint, b: &BigUint, lift: u64) -> Option<(BigUint, BigInt, 
     //    < 7), so ν >= 4N would give (2/φ)^ν > 2^N: ν < 4N.
     // (The paper's Theorem 3 gives about 1.555 N, for j >= 9, proved there in sketch only;
     // 4N is enough here.)
-    // 6. Not proved: that 8N < 2^64, so `checked_add` and `checked_mul(2)` below never fail.
-    //    It holds when a and b fit in less than 2^58 bytes: true of every x86_64 and aarch64
-    //    address space (at most 2^57 bytes), not of any 64-bit target Rust allows (a `Vec`
-    //    of up to 2^63 bytes, N up to 2^66). The `?` returns None there, never a wrong answer
-    //    (plan row PROOF-bezout-halvings-address-width).
-    let mut halvings = 0u64;
+    // 6. `halvings` and `shift = 2 halvings` fit in u128 on every target, so the sums below
+    //    cannot overflow (PROOF-bezout-halvings-address-width). A `BigUint` holds its value in
+    //    a `Vec` of 64-bit digits, and its `bits()` is `data.len() * 64 - zeros` (num-bigint
+    //    0.4.8 src/biguint.rs `bits`, read 2026-11-21). Rust allocates no block larger than
+    //    isize::MAX bytes: std::alloc::Layout, "`size`, when rounded up to the nearest
+    //    multiple of `align`, must not overflow `isize` (i.e., the rounded value must be less
+    //    than or equal to `isize::MAX`)" (https://doc.rust-lang.org/std/alloc/struct.Layout.html,
+    //    read 2026-11-21, std 1.100.0). So `data.len() <= isize::MAX / 8 < 2^60` and N < 2^66
+    //    on any target whose `isize` has at most 64 bits; by steps 2 and 5 every partial sum of
+    //    `halvings` is below 4N < 2^68, and `shift` below 2^69 < 2^128. (num-bigint's own
+    //    `bits()` would wrap in u64 for N >= 2^64, a limit of that library this code does not
+    //    reach past: `j` and `m` are its u64 counts, and only their sums here need more room.)
+    //    The earlier u64 count needed N < 2^61, true of the x86_64 and aarch64 address spaces
+    //    but not proved for every 64-bit target, and answered None past it.
+    //    Test: pncx_fast_bezout_matches_euclid checks the answers; no test can hold an input
+    //    of 2^61 bits, so the bound itself rests on this proof alone.
+    let mut halvings = 0u128;
     while !y.is_zero() {
         let n = x.bits().max(y.bits());
         let (j, r, x1, y1) = half(x, y, (n / 2).max(1), Want::Both, lift).both();
@@ -3069,14 +3080,14 @@ fn bezout_with(a: &BigUint, b: &BigUint, lift: u64) -> Option<(BigUint, BigInt, 
                 mul_int(m00, &bx) + mul_int(m01, &by),
                 mul_int(m10, &bx) + mul_int(m11, &by),
             );
-            halvings = halvings.checked_add(j)?;
+            halvings += u128::from(j);
         }
         drop(r);
         if let Some(j) = y.trailing_zeros() {
             let (q, a1, b1) = step(&x, &y, j);
             (bx, by) = (&by << j, (&bx << j) + mul_int(&q, &by));
             (x, y) = (a1, b1);
-            halvings = halvings.checked_add(j)?;
+            halvings += u128::from(j);
         }
     }
     let g = x.magnitude();
@@ -3099,10 +3110,11 @@ fn bezout_with(a: &BigUint, b: &BigUint, lift: u64) -> Option<(BigUint, BigInt, 
         // Complexity tradeoff: one chunk of all `shift` bits needs modulus^-1 to `shift` bits,
         // O(M(shift)) even for a small modulus; chunks of `m` bits reuse one inverse of `m`
         // bits and cost O((shift / m + 1) M(m)), no more. Test pncx_fast_bezout_matches_euclid.
-        let mut shift = halvings.checked_mul(2)?;
+        let mut shift = 2 * halvings;
         let inverse = inverse_mod_pow2(&modulus, m);
         while shift > 0 {
-            let s = shift.min(m);
+            // At most `m`, a u64, so the conversion back is exact.
+            let s = shift.min(u128::from(m)) as u64;
             let mask = (BigUint::one() << s) - 1u32;
             let low = &c & &mask;
             if !low.is_zero() {
@@ -3111,7 +3123,7 @@ fn bezout_with(a: &BigUint, b: &BigUint, lift: u64) -> Option<(BigUint, BigInt, 
             } else {
                 c >>= s;
             }
-            shift -= s;
+            shift -= u128::from(s);
         }
         if c >= modulus {
             c -= &modulus;
@@ -3144,7 +3156,7 @@ fn bezout_with(a: &BigUint, b: &BigUint, lift: u64) -> Option<(BigUint, BigInt, 
     } else {
         (first, second)
     };
-    Some((g << common, s, t))
+    (g << common, s, t)
 }
 
 // ------------------------------------------------------------------------------------------
@@ -4366,7 +4378,7 @@ pub mod crossover {
     }
 
     /// `super::bezout` with the lift of `lift` bits.
-    pub fn bezout(a: &BigUint, b: &BigUint, lift: u64) -> Option<(BigUint, BigInt, BigInt)> {
+    pub fn bezout(a: &BigUint, b: &BigUint, lift: u64) -> (BigUint, BigInt, BigInt) {
         super::bezout_with(a, b, lift)
     }
 }
@@ -4393,7 +4405,7 @@ mod tests {
                     let a = (&a * &factor) << shift;
                     let b = &b * &factor;
                     for (a, b) in [(&a, &b), (&b, &a)] {
-                        let (g, s, t) = bezout(a, b).expect("exact coefficient recovery");
+                        let (g, s, t) = bezout(a, b);
                         assert_eq!(g, a.gcd(b));
                         assert_eq!(
                             &s * BigInt::from(a.clone()) + &t * BigInt::from(b.clone()),
@@ -5229,7 +5241,7 @@ mod tests {
                         (&odd_a << j, shared),
                     ] {
                         let at = format!("j={j}, seed={seed}, words=({wa}, {wb})");
-                        let (g, s, t) = bezout(&a, &b).expect("bezout answers");
+                        let (g, s, t) = bezout(&a, &b);
                         let (want, es, et) = euclid(&a, &b);
                         let (ia, ib) = (BigInt::from(a), BigInt::from(b));
                         let want_int = BigInt::from(want.clone());

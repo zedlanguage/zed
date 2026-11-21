@@ -1100,6 +1100,24 @@ fn check_classes(case: usize, ts: &[Type], met: &mut usize, apart: &mut usize) {
     }
     reversed.sort();
     assert_eq!(reversed, classes, "case {case} in the other order");
+    // Random orders too, not only the reversed one: the shortcuts of `overlaps`
+    // (`shared_chain`, `repeat_stem`) and its lazy reads depend on which types were placed
+    // first, and the proof of order independence is open (`overlaps`, "Not proved"). The
+    // orders are drawn from the case and the length, so a failure names its order and repeats.
+    let mut rng = Rng::new(crate::seed::mix(case as u64 ^ ((n as u64) << 32)));
+    let mut order: Vec<usize> = (0..n).collect();
+    for _ in 0..3 {
+        rng.shuffle(&mut order);
+        let mut moved = overlaps(order.iter().map(|&i| &ts[i]));
+        for is in &mut moved {
+            for i in is.iter_mut() {
+                *i = order[*i];
+            }
+            is.sort();
+        }
+        moved.sort();
+        assert_eq!(moved, classes, "case {case} in the order {order:?}");
+    }
 }
 
 /// `overlaps` on random groups whose members hold types of lower groups, recursive ones too

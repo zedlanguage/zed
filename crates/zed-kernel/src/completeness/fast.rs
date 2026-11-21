@@ -405,7 +405,7 @@ fn bezout_coefficients() {
     for (i, (a, b)) in cases.iter().enumerate() {
         let want = a.gcd(b);
         for lift in [64, crossover::LIFT_BITS] {
-            let (g, s, t) = crossover::bezout(a, b, lift).expect("coefficients");
+            let (g, s, t) = crossover::bezout(a, b, lift);
             assert_eq!(g, want, "case {i}, lift {lift}");
             assert_eq!(
                 s * BigInt::from(a.clone()) + t * BigInt::from(b.clone()),
