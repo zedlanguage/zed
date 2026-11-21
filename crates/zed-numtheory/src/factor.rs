@@ -10,8 +10,9 @@
 //! bases are cited there); J. M. Pollard, "A Monte Carlo method for factorization", BIT
 //! 15(3):331-334, 1975, doi:10.1007/BF01933667, and R. P. Brent, BIT 20, 1980 (cited at
 //! `rho`), for the rho walk; R. S. Lehman, Math. Comp. 28, 1974 (cited at `lehman`), for the
-//! fallback; P. L. Montgomery, 1985 (cited at `Montgomery`), for the products. Checked 2026-11-20: the four DOIs on Crossref; Miller, Rabin and Pollard not read,
-//! from memory; Brent read.
+//! fallback; P. L. Montgomery, 1985 (cited at `Montgomery`), for the products. Checked
+//! 2026-11-20: the four DOIs on Crossref; Miller, Rabin and Pollard not read, from memory;
+//! Brent read.
 
 /// The prime factors of `n` with their multiplicities, in increasing order of prime; empty for
 /// `n <= 1`.

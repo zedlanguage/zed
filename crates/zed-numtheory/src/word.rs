@@ -1,7 +1,8 @@
 //! Arithmetic on words: the greatest common divisor, products and powers modulo a word, and the
-//! inverse modulo `2^64`; and the sieve of the odd primes. A file apart from `lib.rs`, which re-exports them, since `factor.rs`
-//! uses them and `lib.rs` uses `factor.rs` (`next_prime` calls `is_prime`): in one file with
-//! `lib.rs` they closed an import cycle, which the import-graph test (step S.1f) refuses.
+//! inverse modulo `2^64`; and the sieve of the odd primes. A file apart from `lib.rs`, which
+//! re-exports them, since `factor.rs` uses them and `lib.rs` uses `factor.rs` (`next_prime`
+//! calls `is_prime`): in one file with `lib.rs` they closed an import cycle, which the
+//! import-graph test (step S.1f) refuses.
 
 /// The greatest common divisor by Stein's binary algorithm: shifts and subtractions, no
 /// division. `gcd(0, b) = b`.
