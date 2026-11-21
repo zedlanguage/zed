@@ -121,7 +121,19 @@ expression: "tokens_by_key(&fences::design())"
   3 | runs = m . args . map ( f -> run ( [ str["gzip"] , str["--keep"] , str["--"] , f ] , unconsumedStderr : #suppress ) . status ) ;
   4 | m . stdout <- runs . map ( s -> «match» s { #ok -> str["compressed"] , _ -> str["gzip failed"] } ) ;
   5 | }
-== DESIGN.md [sec:ports] 8 L21
+== DESIGN.md [sec:ports] 8 L3
+  2 | main ( m : MainArgs ) -> int {
+  3 | r = seededRandom ( seed : 42₍10₎ ) ;
+  4 | m . stdout <- ( 0₍10₎ ..< 4₍10₎ ) . map ( i -> str[${r . below ( 6₍10₎ ) + 1₍10₎}] ) ;
+  5 | 0₍10₎
+  6 | }
+== DESIGN.md [sec:ports] 9 L7
+  1 | @foreign ( str["c"] , str["random"] ) cRandom : ( ) -> i64 «with» commutes ( #interchangeable ) ;
+  6 | main ( m : MainArgs ) -> int {
+  7 | m . stdout <- ( 0₍10₎ ..< 4₍10₎ ) . map ( i -> str[${cRandom ( )}] ) ;
+  8 | 0₍10₎
+  9 | }
+== DESIGN.md [sec:ports] 10 L21
   1 | orders : Utf8String ->? { total : rat , note : Utf8String | #none }
   2 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
   3 | owed ( «positional» id : Utf8String ) -> rat = orders [ id ] ?. total «else» 0r

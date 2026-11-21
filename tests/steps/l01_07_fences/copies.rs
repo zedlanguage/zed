@@ -64,7 +64,7 @@ fn every_fence_key_is_its_own() {
 #[test]
 fn every_fence_has_a_layer_no_lower_than_its_label() {
     let all = fences::all();
-    assert_eq!(all.len(), 114 + 114);
+    assert_eq!(all.len(), 118 + 112);
     for f in &all {
         // DESIGN.md's table of defined words runs to layer L34 (L33, the automatic
         // differentiation of sec:symbolic, gives the first fence above L29).

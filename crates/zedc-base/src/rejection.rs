@@ -303,6 +303,8 @@ rows! {
     // No diagnostic uses this row yet: plan row L7.2b emits it.
     OrderDependentPortOpInMap =>
         "Port operation in a `map` or a `where` that depends on the order of its entries",
+    // No diagnostic uses this row yet: plan row PORT-interchangeable emits it.
+    UnnamedDraw => "Draw where no keypath names it",
     // No diagnostic uses this row yet: plan row L7.5c emits it.
     EventClassOnNonWavePort => "Event class on a port that starts no wave",
     NonblockingCanBlock => "Function marked `@nonblocking` that can block",
