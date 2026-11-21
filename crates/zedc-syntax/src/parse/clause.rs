@@ -323,7 +323,7 @@ impl Toks<'_, '_> {
 /// sentinel value, at or after a reserved word written where a name stands, at the removed
 /// declaration `mutable x = e;`, at a word other than `carryForward` after `with` at the end
 /// of an `initial` statement, at a pattern built with an operator written bare, at an or-pattern
-/// as an `else` tail's pattern, or at a union, intersection or difference written bare as a key,
+/// as an `else` tail's pattern, at a name alone after `else`, or at a union, intersection or difference written bare as a key,
 /// or at `<-` or `=` in a condition, or after the block of an `if` that gives a value and has
 /// no `else`.
 /// The scans run over the statement, its block, its line or the type, and each check of a word
@@ -338,6 +338,7 @@ pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         .or_else(|| bare_pattern(t, far))
         // Also before `bare_key`, which would read `r else #a | #b -> 0` as a bare key.
         .or_else(|| else_or_pattern(t, far))
+        .or_else(|| else_binder(t, far))
         .or_else(|| bare_key(t, far))
         .or_else(|| push_or_less(t, far))
         .or_else(|| push_target(t, far))
@@ -956,7 +957,7 @@ pub const RESERVED: [(&str, &str, &str); 37] = [
     (
         "else",
         "it gives the other branch or a fallback value, as `if x < 0 { -x } else { x }` or \
-         `xs[0] else 0`",
+         `xs[0] else #outOfBounds -> 0`",
         "other",
     ),
     (
@@ -1775,7 +1776,88 @@ fn else_or_pattern(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         j += 1;
     };
     let last = if wrapped { arrow - 2 } else { arrow - 1 };
-    // On from the `->` to the end of the tail's value: a later `else` tail is not part of it.
+    let end = tail_value_end(t, arrow)?;
+    let start = else_operand_start(t, e)?;
+    let text = |a: usize, b: usize| &t.text[a..b];
+    let operand = text(t.span(start).start, t.span(e - 1).end);
+    let (ps, pe) = (t.span(first).start, t.span(last).end);
+    let pattern = text(ps, pe);
+    let value = text(t.span(arrow + 1).start, t.span(end).end);
+    let span = Span { start: ps, end: pe };
+    let repair = [
+        format!("match {operand} {{ ({pattern}) -> {value}, x -> x }}"),
+        format!("match ({operand}) {{ ({pattern}) -> {value}, x -> x }}"),
+    ]
+    .into_iter()
+    .find(|r| t.parses(start, end, r))?;
+    Some(Clause {
+        row: None,
+        message: format!(
+            "An `else` tail takes atom patterns only, and `{pattern}` is an or-pattern of \
+             other patterns. Try `{repair}` instead."
+        ),
+        span,
+        notes: vec![(span, format!("repair: `{repair}`"))],
+    })
+}
+
+/// The [`Clause`] for a name alone after `else`, `e else err -> f(err)` (DESIGN.md
+/// sec:failure, QUESTIONS A113): a binder that takes every atom is the catch-all a bare `else`
+/// is, so it gets the bare `else`'s headline, "`e else err -> f(err)` does not name the atoms it
+/// takes", with the row "An `else` that does not name its atoms" of sec:diagnostics. The parse
+/// stops at the `->` after the name, since a tail's default is an `Or`, which holds no lambda.
+/// The parser has no types, so the repair says in words what the checker's repair of a bare
+/// `else` writes out: name each atom in place of the binder, and bind a name only inside an
+/// atom's payload, `e else #err(m) -> f(m)`. The scans run over the statement: linear in the
+/// unit, on the error path only.
+fn else_binder(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
+    if t.t(far) != "->" || far < 2 || t.t(far - 2) != "else" {
+        return None;
+    }
+    let name = far - 1;
+    if t.toks[name].0 != Kind::Ident {
+        return None;
+    }
+    let e = far - 2;
+    let start = else_operand_start(t, e)?;
+    let end = tail_value_end(t, far)?;
+    let whole = Span {
+        start: t.span(start).start,
+        end: t.span(end).end,
+    };
+    let binder = t.t(name);
+    let value = &t.text[t.span(far + 1).start..t.span(end).end];
+    let code = &t.text[whole.start..whole.end];
+    let head = match code.contains('\n') {
+        false => format!("`{code}` does not name the atoms it takes."),
+        true => "The `else` does not name the atoms it takes.".to_string(),
+    };
+    Some(Clause {
+        row: Some(Row::ElseNamesNoAtoms),
+        message: head,
+        span: whole,
+        notes: vec![
+            (
+                t.span(name),
+                format!("a name alone after `else`, `{binder}`, takes every atom"),
+            ),
+            (
+                t.span(name),
+                format!(
+                    "repair: name each atom the `else` takes in place of `{binder}`, `else #a -> \
+                     {value}` for an atom `#a`; a name binds only inside an atom's payload, \
+                     `else #a({binder}) -> {value}`"
+                ),
+            ),
+        ],
+    })
+}
+
+/// The token after which the value of the `else` tail whose pattern ends with the `->` at token
+/// `arrow` ends: a later `else` tail is not part of it, nor a `,` or `;` at its depth, nor an
+/// unmatched closing bracket. `None` where the value is empty. One scan over the value.
+fn tail_value_end(t: &Toks<'_, '_>, arrow: usize) -> Option<usize> {
+    let n = t.tokens.len();
     let (mut end, mut d) = (arrow + 1, 0);
     while end < n {
         let x = t.t(end);
@@ -1786,9 +1868,16 @@ fn else_or_pattern(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         end += 1;
     }
     let end = end.checked_sub(1)?;
-    if end <= arrow {
-        return None;
-    }
+    (end > arrow).then_some(end)
+}
+
+/// The first token of the operand of the `else` at token `e`: back from the `else`, at its
+/// depth, over the operators that bind tighter than `else` and over the `else` tails before it,
+/// to a `=`, `,`, `;`, `<-`, an unmatched opening bracket, or an arrow that ends no `else`
+/// tail's pattern (a lambda's, an arm's). `None` for a keyword that begins a form, as `match` or
+/// `if`, since the form's extent is not found by this scan, and for an empty operand. One scan
+/// back over the statement.
+fn else_operand_start(t: &Toks<'_, '_>, e: usize) -> Option<usize> {
     // Whether the `->` at `a` ends an `else` tail's atom pattern, `else #c -> ` or
     // `else #p(x) -> `.
     let tail_arrow = |a: usize| {
@@ -1839,30 +1928,7 @@ fn else_or_pattern(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         d -= depth(p);
         start -= 1;
     }
-    if start == e {
-        return None;
-    }
-    let text = |a: usize, b: usize| &t.text[a..b];
-    let operand = text(t.span(start).start, t.span(e - 1).end);
-    let (ps, pe) = (t.span(first).start, t.span(last).end);
-    let pattern = text(ps, pe);
-    let value = text(t.span(arrow + 1).start, t.span(end).end);
-    let span = Span { start: ps, end: pe };
-    let repair = [
-        format!("match {operand} {{ ({pattern}) -> {value}, x -> x }}"),
-        format!("match ({operand}) {{ ({pattern}) -> {value}, x -> x }}"),
-    ]
-    .into_iter()
-    .find(|r| t.parses(start, end, r))?;
-    Some(Clause {
-        row: None,
-        message: format!(
-            "An `else` tail takes atom patterns only, and `{pattern}` is an or-pattern of \
-             other patterns. Try `{repair}` instead."
-        ),
-        span,
-        notes: vec![(span, format!("repair: `{repair}`"))],
-    })
+    (start != e).then_some(start)
 }
 
 /// Whether token `before`, the one before an arm's first token, opens an arm: the `else` of

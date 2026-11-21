@@ -1455,7 +1455,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Else2(e, v) => {
                 let d = m.take_ty();
-                let ExprKind::Else { of, pattern, .. } = &e.kind else {
+                let ExprKind::Else {
+                    of,
+                    pattern,
+                    default,
+                } = &e.kind
+                else {
                     unreachable!("an `else`")
                 };
                 if let (ExprKind::Name(_), Some(Ref::Bound(ids))) =
@@ -1465,7 +1470,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.narrow_names.insert(e.span);
                 }
                 let t = match pattern {
-                    None => self.narrowed(&v, &Narrow::Loose, e.span).union(&d),
+                    // Refused (DESIGN.md sec:failure, QUESTIONS A113); the type is still the one
+                    // the `else` would give, its repair's, so the check goes on with no message
+                    // that the refusal alone causes.
+                    None => {
+                        self.else_unnamed(of, default, &v);
+                        self.narrowed(&v, &Narrow::Loose, e.span).union(&d)
+                    }
                     Some(Pattern::Atom {
                         name,
                         fields,
@@ -9022,6 +9033,197 @@ impl<'t, 'a> Ck<'t, 'a> {
     // accepted and stopped at run time. Complexity: one walk of the pieces of `x.ty`, and a
     // restriction of each class among them, O(log N) for the find in a union of N classes
     // (union by rank with no path compression; check/mod.rs, struct `Class`).
+    /// Refuses `e else d`, an `else` that names no atom (DESIGN.md sec:failure, "An `else` names
+    /// every atom it takes", QUESTIONS A113), with the row "An `else` that does not name its
+    /// atoms" of sec:diagnostics: the headline shows the `else` rewritten by its first repair;
+    /// the notes give the operand's type and its derivation. The repair names exactly the loose
+    /// atoms of the operand's type at this site, in the order of the printed type, as a chain
+    /// `e else #a -> d else #b -> d` (the union `e else (#a | #b) -> d` is L2's, plan row
+    /// OR-PAT-check); family atoms are data and never listed. Where the operand holds no loose
+    /// atom the menu is that of an `else` with nothing to take (QUESTIONS A67): delete the tail,
+    /// and for a float division, which gives NaN or infinity rather than an atom, a test of the
+    /// divisor with `d` on that branch.
+    ///
+    /// The repair is kept as it is rather than checked by a trial ([`Self::fixes_checked`]),
+    /// since it holds by construction: the bare `else` takes every loose atom of the operand
+    /// (`Narrow::Loose`), and the chain names each of those atoms bare, which takes the atom
+    /// with any payload (step L1.27); so the chain removes the same members and adds `d` once
+    /// per atom, the same type. The operand and the default are kept as written.
+    ///
+    /// Complexity tradeoff: O(n + a log a) for an `else` of n bytes whose operand holds a loose
+    /// atoms, the chain repeating the default once per atom, so O(a · n) bytes of repair text;
+    /// the union form of L2 writes the default once. Each `else` is refused once, so the check
+    /// is linear in the program (tests/steps/l01_27_absences/bare_else.rs, scaling test).
+    fn else_unnamed(&mut self, of: &'a Expr, default: &'a Expr, v: &Ty) {
+        let row = Some(Row::ElseNamesNoAtoms);
+        // The `else` from its operand to its default: the span of `(e else d)` holds its
+        // parentheses, which a chain appended after the default must stay outside of, while the
+        // spans of the operand and the default hold their own.
+        let whole = Span {
+            start: of.span.start,
+            end: default.span.end,
+        };
+        let text = match self.operand_text(Some(whole)) {
+            Some(c) => format!("`{c}` does not name the atoms it takes"),
+            None => "The `else` does not name the atoms it takes".to_string(),
+        };
+        if self.trying {
+            self.reject(row, whole, Msg::from(text), Vec::new());
+            return;
+        }
+        let t = self.settled(v);
+        let shown = self.show(&t);
+        let operand = self.operand_text(Some(of.span));
+        let mut notes = vec![Note {
+            span: of.span,
+            text: match &operand {
+                Some(c) => format!("`{c} : {shown}`"),
+                None => format!("the value before `else` has type `{shown}`"),
+            },
+        }];
+        notes.extend(self.derive(&[of.span]));
+        // Where the program's text is known, the repair inserts the pattern after the keyword
+        // `else`, so the default stays as written, in parentheses or not.
+        let src = self.t.text;
+        let tail = src.and_then(|s| {
+            let gap = s.get(of.span.end..default.span.start)?;
+            let at = of.span.end + gap.find("else")? + "else".len();
+            Some((at, s.get(at..whole.end)?.trim()))
+        });
+        // Decode failures (`#badEncoding`, `#syntaxError`, `#parseError`) arrive as loose
+        // atoms, no named family holding them, so a repair lists them as it lists every other
+        // loose atom. QUESTIONS A179 asks whether they are the family `DecodeFailure`, which
+        // would make them data and leave them out here; this is the one place that decides it.
+        let loose = t.loose();
+        let mut fixes = Vec::new();
+        match loose.atom_names() {
+            Some(names) => {
+                let names: Vec<String> = names.map(|(name, _)| format!("#{name}")).collect();
+                if let (Some(first), Some((at, d))) = (names.first(), tail) {
+                    let here = Span { start: at, end: at };
+                    let end = Span {
+                        start: whole.end,
+                        end: whole.end,
+                    };
+                    let pattern = format!(" {first} ->");
+                    let rest = super::else_chain(&names[1..], d);
+                    let holds = format!("the `else` takes {}", names.join(", "));
+                    let mut edits: Vec<(Span, &dyn std::fmt::Display)> = vec![(here, &pattern)];
+                    if !rest.is_empty() {
+                        edits.push((end, &rest));
+                    }
+                    let alone = format!("else {first} -> {d}{rest}");
+                    fixes.push(Rewrite::new(&edits, &holds, &alone));
+                } else if !names.is_empty() {
+                    notes.push(Note {
+                        span: whole,
+                        text: format!(
+                            "repair: name the atoms the `else` takes, {}",
+                            super::else_chain(&names, "d").trim_start()
+                        ),
+                    });
+                } else {
+                    let d = tail.map(|(_, d)| d);
+                    self.else_takes_nothing(whole, of, &t, d, &mut notes, &mut fixes);
+                }
+            }
+            // Every atom but some, or every atom where the operand's type is not yet known here
+            // (`_`, or an atom variable `#_` in a lambda's parameter): the atoms cannot be listed,
+            // so the repair is said in words.
+            None => {
+                let value = operand.as_deref().unwrap_or("the value");
+                let but = &atoms() - &loose;
+                let text = match but.lists_nothing() {
+                    true => format!(
+                        "repair: name each atom the `else` takes; the atoms `{value}` may hold \
+                         are not known here"
+                    ),
+                    false => format!(
+                        "repair: name each atom the `else` takes; `{value}` may hold any atom \
+                         but those of `{}`",
+                        self.show(&Ty::set(but))
+                    ),
+                };
+                notes.push(Note { span: whole, text });
+            }
+        }
+        let mut m = Msg::new(text, fixes);
+        m.call = Some(whole);
+        self.reject(row, whole, m, notes);
+    }
+
+    /// The menu of a bare `else` whose operand `of`, of type `t`, holds no loose atom, so its
+    /// default `d` is never taken (DESIGN.md sec:failure, QUESTIONS A67): the fix that deletes
+    /// the tail, and where `of` is a float division, which gives NaN or infinity and not an
+    /// atom, the fix that tests the divisor with `d` on that branch, as `if n == 0 { 0.0 }
+    /// else { s / f64(n) }` for `s / f64(n)`: the divisor's int operand where it is a cast to a
+    /// float, as DESIGN.md's `mean` does, else the divisor against `0`. The test covers only a
+    /// zero divisor, the case the `else` was most likely written for; a NaN or infinite
+    /// operand still gives NaN or infinity, which the note says.
+    fn else_takes_nothing(
+        &mut self,
+        whole: Span,
+        of: &'a Expr,
+        t: &Ty,
+        d: Option<&str>,
+        notes: &mut Vec<Note>,
+        fixes: &mut Vec<Option<Rewrite>>,
+    ) {
+        let shown = self.show(t);
+        notes.push(Note {
+            span: of.span,
+            text: format!(
+                "the value has type `{shown}`, which holds no loose atom, so the `else` never \
+                 takes one"
+            ),
+        });
+        let (Some(c), Some(d)) = (self.operand_text(Some(of.span)), d) else {
+            notes.push(Note {
+                span: whole,
+                text: "repair: delete the `else` and its default".to_string(),
+            });
+            return;
+        };
+        let tail = Span {
+            start: of.span.end,
+            end: whole.end,
+        };
+        fixes.push(Rewrite::new(
+            &[(tail, &"")],
+            &format_args!("the `else` is gone; the value is `{c}`"),
+            &c,
+        ));
+        let floats = [KType::f64(), KType::f32()];
+        let float = floats.iter().any(|f| !(&t.set & f).lists_nothing());
+        if let (true, ExprKind::Binary(BinaryOp::Div, _, b)) = (float, &of.kind) {
+            let divisor = match &b.kind {
+                ExprKind::Call {
+                    callee, positional, ..
+                } if positional.len() == 1
+                    && matches!(&callee.kind, ExprKind::Name(n) if n == "f64" || n == "f32") =>
+                {
+                    &positional[0]
+                }
+                _ => b,
+            };
+            if let Some(z) = self.operand_text(Some(divisor.span)) {
+                let guard = format!("if {z} == 0 {{ {d} }} else {{ {c} }}");
+                fixes.push(Rewrite::new(
+                    &[(whole, &guard)],
+                    &format_args!("{d} where {z} is 0"),
+                    &guard,
+                ));
+                notes.push(Note {
+                    span: of.span,
+                    text: "a float division gives NaN or infinity, not an atom, so no `else` \
+                           takes the result of dividing by zero; the test of the divisor takes \
+                           that case, and a NaN or infinite operand still gives NaN or infinity"
+                        .to_string(),
+                });
+            }
+        }
+    }
+
     fn int_not_whole(&mut self, x: &Arg<'a>, values: Option<&WordOperand>, span: Span) {
         let parts = [KType::rat(), KType::f64(), KType::f32()];
         let floats = Carrier::Rat.bit() | Carrier::F64.bit() | Carrier::F32.bit();

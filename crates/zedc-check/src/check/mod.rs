@@ -8293,7 +8293,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             match t.family.atom_names() {
                 Some(names) => {
                     let names: Vec<String> = names.map(|(name, _)| format!("#{name}")).collect();
-                    let chain: String = names.iter().map(|a| format!(" else {a} -> d")).collect();
+                    let chain = else_chain(&names, "d");
                     let mut arms: Vec<String> = names.iter().map(|a| format!("{a} -> d")).collect();
                     // The value may hold more than the family's atoms: a last arm keeps the rest.
                     if !t.diff(&atoms).is_empty() {
@@ -14493,6 +14493,13 @@ fn at_least_zero() -> IntervalSet {
 
 /// The code `c` as the operand of an `else`: as written where it is a name, a call or an
 /// access, else in parentheses, so that the `else` applies to all of it.
+/// The `else` tails that take each atom of `atoms`, written as patterns `#a`, with the default
+/// `d`, in order: ` else #a -> d else #b -> d`, the chain that names several atoms before L2
+/// (DESIGN.md sec:failure). Empty for no atom. It costs the length of the text it writes.
+fn else_chain(atoms: &[String], d: &str) -> String {
+    atoms.iter().map(|a| format!(" else {a} -> {d}")).collect()
+}
+
 fn else_operand(c: &str) -> String {
     match c
         .chars()
