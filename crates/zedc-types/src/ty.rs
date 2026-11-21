@@ -6415,7 +6415,7 @@ impl Ty {
         let start = Ty::take_start;
         match start(nodes, self, 0) {
             Ok(t) => return t,
-            Err(f) => stack.push(f),
+            Err(f) => stack.push(*f),
         }
         // What the frame just left took, given to the field being read one level up.
         let mut done: Option<Ty> = None;
@@ -6462,7 +6462,7 @@ impl Ty {
                     let (f, c) = &top.fields[*i];
                     match start(nodes, &fs[f], *c) {
                         Ok(t) => done = Some(t),
-                        Err(frame) => stack.push(frame),
+                        Err(frame) => stack.push(*frame),
                     }
                 }
             }
@@ -6470,8 +6470,10 @@ impl Ty {
     }
 
     /// What the node `at` of `nodes` takes of `t` ([`Ty::taken_by`]), or the frame that reads
-    /// it when it is a field pattern.
-    fn take_start<'p>(nodes: &'p [PatNode], t: &Ty, at: usize) -> Result<Ty, TakeFrame<'p>> {
+    /// it when it is a field pattern. The frame is boxed to keep the `Result` small (clippy
+    /// `result_large_err`): one allocation for each field pattern met, beside the shapes it
+    /// visits there.
+    fn take_start<'p>(nodes: &'p [PatNode], t: &Ty, at: usize) -> Result<Ty, Box<TakeFrame<'p>>> {
         let with = |n: &str| KType::atom_with(n, &KType::top());
         match &nodes[at] {
             PatNode::Any => Ok(t.clone()),
@@ -6500,14 +6502,14 @@ impl Ty {
                     })
                     .cloned()
                     .collect();
-                Err(TakeFrame {
+                Err(Box::new(TakeFrame {
                     name,
                     fields,
                     family: &t.family & &with(name),
                     shapes: ss.into_iter(),
                     taken: Vec::new(),
                     at: None,
-                })
+                }))
             }
         }
     }
