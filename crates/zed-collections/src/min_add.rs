@@ -30,8 +30,18 @@
 //! Wood, "The measure problem for rectangular ranges in d-space", Utrecht Univ. report
 //! RUU-CS-79-06, 1979, <https://dspace.library.uu.nl/handle/1874/15897>, p. 20, reference 1
 //! (read 2026-11-20), cite the same notes as "Solutions to Klee's rectangle problems". The
-//! notes were not found under either title (no DOI, not on Crossref, 2026-11-20) and are not
-//! read. Test:
+//! notes are not read: searched under both titles on 2026-11-21 through every rung of the
+//! allpapers ladder, none with a copy: paperclip (keyword, semantic, and grep of both result
+//! sets: only citing papers), allpapers-locate (Unpaywall, OpenAlex, CORE; no record; the
+//! notes have no DOI and are not on Crossref), Google Scholar (citation stubs only, no
+//! version with a file), Google web search through agy (only citing works), dblp (bot check,
+//! both mirrors), the CMU SCS report archive (lists start at 1985), KiltHub (no match),
+//! archive.org full-text search (68 books and reports quote the reference line, none is the
+//! notes; its DTIC scans hold other 1977-1983 Bentley reports), the Wayback Machine (no
+//! snapshot), HathiTrust (Cloudflare block), LibGen by title (0 hits), Anna's Archive
+//! (DDoS-Guard block), welib (captcha); Sci-Hub and Sci-Net need a DOI. Nothing here rests
+//! on the notes: the canonical covering and its bound are Bentley and Wood's, read above.
+//! Test:
 //! `tests::additions_and_searches_match_an_array`; it compares with an array on random
 //! operations for n from 0 to 40, so it cannot catch a cost above O(log n) that still gives
 //! right answers.
