@@ -10921,10 +10921,6 @@ fn add_witness(b: &mut RemapPlan, a: &RemapPlan) {
     b.witness = entries.join("+").into();
 }
 
-/// A fold's step function as [`Ck::fold_depth_limit`] reads it: the binder of each of its two
-/// parameters, in order (`None` for a slot no parameter takes), and its body.
-pub(super) type StepFn<'a> = ([Option<usize>; 2], &'a Expr);
-
 /// The expression a branch `e` gives: the one expression of a block of nothing else, else `e`.
 fn exported(e: &Expr) -> &Expr {
     match &e.kind {

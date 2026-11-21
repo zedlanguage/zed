@@ -1854,6 +1854,13 @@ mod obligation_test_modes {
     }
 }
 
+/// A fold's step function as [`Ck::fold_depth_limit`] reads it: the binder of each of its two
+/// parameters, in order (`None` for a slot no parameter takes), and its body. It is written
+/// here, beside the fields of [`Ck`] that hold it, and not in `walk.rs`, which uses it: a type
+/// of `walk.rs` named here would make this file import `walk.rs`, which imports this file, a
+/// cycle the test `s_01f_import_graph` refuses (Zed forbids a cycle between files).
+type StepFn<'a> = ([Option<usize>; 2], &'a Expr);
+
 struct Ck<'t, 'a> {
     t: &'t Tables<'a>,
     env: HashMap<usize, Ty>,
@@ -1963,13 +1970,13 @@ struct Ck<'t, 'a> {
     /// with its text: a need that replays the fold where its receiver is known passes the
     /// function's type only (`NeedKind::Fold`), and the depth limit reads the function's text
     /// (`Ck::fold_depth_limit`; FAIL-fold-rotating-tuple-rounds, E1 of round 2).
-    fold_fns: HashMap<Span, walk::StepFn<'a>>,
+    fold_fns: HashMap<Span, StepFn<'a>>,
     /// The step function of each lambda of two parameters, neither taking a tuple apart, by
     /// the address of its signature, whose `Arc` it keeps so that the address names no other
     /// signature: a fold whose function is a parameter of the function around it meets the
     /// lambda passed for it as a type only (`NeedKind::Fold` with `by`). One entry per such
     /// lambda checked, O(1) each.
-    lambda_fns: HashMap<usize, (Arc<Sig>, walk::StepFn<'a>)>,
+    lambda_fns: HashMap<usize, (Arc<Sig>, StepFn<'a>)>,
     /// What the checker knows of which values share their keys (plan row ZIP-count-facts,
     /// `walk/fp_ops.rs`).
     keyspaces: Keyspaces<'a>,
