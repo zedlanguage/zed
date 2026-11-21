@@ -15254,9 +15254,13 @@ impl<'t> Inner<'t> {
 impl Ck<'_, '_> {
     /// `t` with its variables replaced by `binds`, and each that is not a class and `binds`
     /// leaves unbound by the unknown. Those are added to `binds` for the replacement and
-    /// removed after it, so `binds` is as it was and each need costs the size of `t` and `log`
-    /// of the size of `binds`, not a copy of `binds`; a row or shape of `t` that an earlier
-    /// call found to hold only classes is not entered ([`Self::clean`]).
+    /// removed after it, so `binds` is as it was and no need copies `binds`; a row or shape of
+    /// `t` that an earlier call found to hold only classes is not entered ([`Self::clean`]).
+    /// Cost of a need, with `b` the size of `binds` (an `imbl::OrdMap`, O(log b) a lookup, an
+    /// insert or a removal): the walk of [`Self::unbound`]; one insert and one removal per
+    /// variable it adds, each such variable a variable of `t`, so O(size of `t` · log b) at
+    /// most; and the replacement itself ([`Ty::replace`]), whose lookups in `binds` cost
+    /// O(log b) each. None of the three has a term in `b` alone, which a copy would.
     fn bound(&mut self, t: &Ty, binds: &mut Binds) -> Ty {
         let add = self.unbound(t, binds);
         for v in &add {
@@ -15784,8 +15788,14 @@ fn explain_empty(t: &Type, found: impl Fn(&Type) -> bool, out: &mut Vec<Note>) {
 
 /// One denotation, read from the top down so that each variable a `for` clause bounds is
 /// bounded on the outermost signature of the clause whose arrows name it, as resolve finds its
-/// home: each use looks up its clause and the function type open at that depth, so the cost is
-/// linear in the size of the type, however deeply clauses nest.
+/// home: each use looks up its clause and the function type open at that depth, so the
+/// bookkeeping of bounds does not grow with how deeply clauses nest. Its cost: a clause of `b`
+/// variables does `b` inserts into the hash map `bound` on entry and `b` restores in its
+/// `Step::Unbind`, O(b) expected; a use of a bounded variable does one expected O(1) lookup in
+/// `bound`, one index into `open`, and at most two inserts into its home's sorted sets, each
+/// O(log k) for the `k` variables of that home. So it is O(size of the type · log k) in all,
+/// with no factor of the depth; the operations that make each part's value come on top, as
+/// [`Denote::ty`] says, and are not linear.
 struct Denote<'a> {
     leaves: &'a Binds,
     /// The names read as variables of the outermost function type around them where no clause

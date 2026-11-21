@@ -1306,8 +1306,14 @@ Read so far: the 25 entries in the small crates (zedc, zed-native, zedc-resolve,
 zedc-syntax, zed-numtheory, zed-rt, zed-tools, zedc-lattice) and the `type_var_form` claim of
 4e6c5bfaa with zed-kernel print/names.rs, each message and its diff in that crate; the sites
 were checked on origin/main e1274cda9. Then zedc-int and zedc-solvers, each entry but the two
-crate splits, and 8 of the 39 moved commits, checked on origin/main 8c9dd3cbd. The other 31
-moved commits and the two splits are not read (see "Not read:").
+crate splits, and 8 of the 39 moved commits, checked on origin/main 8c9dd3cbd. Then 21 more
+moved commits (6c2c05101 to a934e9cf8 below), each message and its whole diff, the claims
+found at their sites on origin/main 8f447824e. The rest are listed under "Not read:".
+
+The entries read count the `type_var_form` claim of 4e6c5bfaa, which is not a line of list g:
+list g has 98 lines (39 moved, 18 zedc-solvers, 16 zedc-int, 25 in the small crates), and the
+first count of 66 entries read was 65 lines of list g and that claim, so 65 read and 33 not
+read made the 98.
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
@@ -1323,8 +1329,8 @@ moved commits and the two splits are not read (see "Not read:").
 | `type_var_form` (zedc-resolve, zed-kernel) | 1 | 3 | 1 | 2 | 0 | 0 |
 | zedc-int | 15 | 14 | 12 | 2 | 0 | 0 |
 | zedc-solvers | 17 | 17 | 12 | 4 | 0 | 1 |
-| moved (zedc, zedc-syntax) | 8 | 2 | 1 | 1 | 0 | 0 |
-| Total | 66 | 56 | 39 | 14 | 0 | 3 |
+| moved (zedc, zedc-syntax) | 29 | 36 | 31 | 3 | 1 | 1 |
+| Total | 87 | 90 | 69 | 16 | 1 | 4 |
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -1383,6 +1389,38 @@ moved commits and the two splits are not read (see "Not read:").
 | 745bf800f | a pass-by write costs one argument's entry, not the call's list | zedc-check check/mod.rs `set`, `Undo::Passes` | already there (a map by call span of maps by argument span) |
 | d9495abf6 | phase 2's narrowing keeps a post-fixpoint | zedc-lattice iterate.rs `solve` | completed: `F_v(X) ⊑ X'_v ⊑ X_v` from the contract of `Lattice::narrow`, then monotonicity |
 | e275c5f0b | the final Dijkstra on `r + 1` from `-phi` gives paths shortest in `w` | zedc-solvers negsssp.rs `run` | completed: `r = (n + 1)·w + phi(u) - phi(v)`, the label of a path, a tree path of at most `n - 1 < n + 1` edges, so the least label has the least `w`, and why `w` has no negative cycle there |
+| 6c2c05101 | `apply_one` and `refuses` read a bound in O(1), not O(v a) | zedc-check walk.rs `apply_one` (the `at_of` map); mod.rs `sig.bounds.get` | already there |
+| 6c2c05101 | the denotation of a bounds clause is linear however deeply clauses nest | zedc-check mod.rs `struct Denote` | corrected: the hash map `bound` is O(1) expected, the home's sorted sets O(log k), so O(size · log k) with no factor of the depth, plus the Make and And operations `Denote::ty` states |
+| 1dd869737 | a fresh type variable name is tried once | zedc-types ty.rs `Scope` (F68); zed-kernel print/names.rs `fresh_name` | already there |
+| fd98fb235 | `holds` costs the smaller of `binds` and `f` | zedc-types ty.rs `holds` | already there |
+| fd98fb235 | `bound` copies no `binds` for a need | zedc-check mod.rs `bound` | completed: the three costs, each O(log b) per lookup, insert or removal in the `imbl::OrdMap`, none with a term in `b` alone |
+| 15657d994 | remainders read class by class, `G <= 2d + 1` classes, `O(G n log n)` | zedc-preimage preimage.rs `split_residues`, `split_classes` | already there, see proofdoc2a (5b6845336) |
+| 174c0f20b | a narrowing costs one origin, words only on a reported rejection | zedc-check mod.rs `Origin` (F80) | already there |
+| 585e7f18b | the refused covers: DNF tautology (coNP-complete), Orthogonal Vectors | zedc-types ty.rs `covered` | already there (Frisch, Castagna and Benzaken; Williams; DOIs) |
+| 585e7f18b | a bounded variable bound to several carriers fits at one place | zedc-types ty.rs `one_place` | already there |
+| 63a6f9c4d | `@exact` enumeration searches only the constraints due, and is exact | zedc-preimage product.rs `enumerate_exactly` | already there, see proofdoc4b (06d34a210) |
+| 78e5f708f | `learn` removes `r` disjuncts in `O(log r)` propagations, each removal proved | zedc-presburger presburger.rs `learn` | already there (the bounds without a point are those up to one, so the searches are exact) |
+| 78e5f708f | `bounds_refute` is `O(n log n)`, and each `true` is a proof | zedc-presburger presburger.rs `bounds_refute` | already there |
+| acc4f3aed | a bounded variable of the expected type is held rigid, for every carrier of its bound | zedc-types ty.rs `Cx::rigid` | already there |
+| acc4f3aed | the printer is linear in the depth | zedc-types ty.rs `Ty::write` | already there |
+| 0513b158e | `box_empty_in` reads each row once and finds crossing bounds in any order | zedc-presburger presburger.rs `box_empty_in`, `row_box_empty` | already there |
+| 64781908f | `meet_within` leaves out a rigid variable each carrier of whose bound another result misses | zedc-types ty.rs `meet_within` | already there |
+| 7498c2e7e | `is_perfect_power` doubles the precision at powers of two | zedc-int int.rs `is_perfect_power` | already there |
+| 7498c2e7e | `v mod g` is the least class holding the points | zedc-zir canon/domain.rs `least_class` | completed: why `m \| g` for any class holding them, the modulus 0 case, and the fold from 0; two tests named |
+| 7498c2e7e | the meet of two classes is an exact CRT | zedc-lattice lattice.rs `Congruence` meet | already there |
+| b6d0a2eef | a lambda for a bounded parameter is checked at each carrier | zedc-check walk.rs (the generic route of `fit_lambda`) | already there |
+| 16d8ce615 | BF-Dijkstra's round bound shows a negative cycle; the Bellman–Ford reference | zedc-solvers negsssp.rs `bf_dijkstra`, test `bellman_ford` | already there |
+| 52e4b51fc | a rat literal is offered only the literals that are the same number exactly | zedc-check mod.rs `rat_forms`, `value_kept` | already there |
+| 79885f50d | the index of arrows gives the verdict of every pair | zedc-types ty.rs `ArrowIndex`, `offered_keys` | already there (a closed type holds a scalar or bare atom only if it offers its key) |
+| 889d3e94d | a shared row is replaced once, by address | zedc-types ty.rs `Replacer` | already there (the addresses are of rows the input holds, which outlive the walk) |
+| 9111fb39d | `twovar` O(m log m) and exact | zedc-solvers twovar.rs | already there, see the 1ffeb360d and f9936c4fe rows above |
+| 9111fb39d | the UTVPI test of Lahiri and Musuvathi | zedc-solvers utvpi.rs module doc | already there (DOI) |
+| 9111fb39d | the simplex pivots by Dantzig's rule, then Bland's | none: store/simplex.rs became linear.rs in fb4b2f903 and holds no simplex | already there (no site left) |
+| 9111fb39d | the Omega test decides exactly, splinters one level deep | zedc-presburger presburger.rs, exact/projection.rs | already there, see proofdoc4a (300df7ed3, 4e48ee579 rows) |
+| 961b304c9 | related hubs settle in `O(k)` | zedc-check walk.rs (C26 note) | already there |
+| a934e9cf8 | a signature's facts and digest are memoed once | zedc-types ty.rs `Sig::digest`, `Sig::facts`, `Sig::holds_needs` | already there, see proofdoc1b |
+| a934e9cf8 | a message settles its type in the time of printing it; a class bound to a class is replaced at each depth | zedc-check mod.rs `settled`; walk.rs (F77) | already there |
+| a934e9cf8 | `VarFacts::held` copies each variable O(log n) times over a nest | zedc-types ty.rs `VarFacts::held` | marked unproved: proved where the merged sets are disjoint; with shared variables a set can grow by one per insertion, so the open sub-case is a nest whose facts overlap at every level |
 
 No code claim:
 - zedc: 181885f72, 8c5ccccb9.
@@ -1394,17 +1432,14 @@ No code claim:
 - zedc-int: fffe13699.
 - moved: 26b4df164 (a doc of the ZIR number text), 2bf39d29e (one comment on a decorated
   literal), 1b531cd56 (the rule that an L1 port is `Lines`; the comment is gone since),
-  7433e3145, ce1450451, cf099fcf2 (crate splits with no comment line).
+  7433e3145, ce1450451, cf099fcf2 (crate splits with no comment line), 5354b56d7 (the
+  position of an unreadable file in its message).
 - zedc-solvers: d80e81d08 (a type alias), 2b3e706f1 (searches moved to
   `zed_collections::search`, same contracts), 4c17c8e8f (dev-dependency features), 5168f5a37
   (a type alias), 6da69df6f (the shared interval append).
 
 Not read:
-- moved (zedc, zedc-syntax), 31: 6c2c05101, 1dd869737, fd98fb235, 15657d994, 174c0f20b,
-  585e7f18b, 63a6f9c4d, 78e5f708f, acc4f3aed, 0513b158e, 64781908f, 7498c2e7e, b6d0a2eef,
-  16d8ce615, 52e4b51fc, 5354b56d7, 79885f50d, 889d3e94d, 9111fb39d, 961b304c9, a934e9cf8,
-  e3b9b5c6b, 01d71b2ea, 53d0c3177, 63fa169e7, 8f23b02b7, 9147744bd, 9b7406051, c22a191c9,
-  c3044ee83, fec575742. Their sites are now in zedc-check, zedc-preimage, zedc-presburger,
-  zedc-elab and zedc-lattice, where proofdoc4a to proofdoc4f read those crates' own entries.
+- moved (zedc, zedc-syntax), 10: e3b9b5c6b, 01d71b2ea, 53d0c3177, 63fa169e7, 8f23b02b7,
+  9147744bd, 9b7406051, c22a191c9, c3044ee83, fec575742.
 - zedc-solvers, 1: 87bab4327 (the crate split, 587 comment lines).
 - zedc-int, 1: 6cc6d3efd (the crate split, 528 comment lines).

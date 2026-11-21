@@ -4521,6 +4521,17 @@ impl VarFacts {
     }
     /// Adds the facts of a function it holds: of each set, the larger is kept and the smaller
     /// one added to it, so each variable is copied O(log n) times over a nest of n.
+    // Proof where the sets are disjoint (proofs audit, proofdoc4g): a variable `v` is inserted
+    // only from the smaller set `S` into a copy of the larger `L` ([`merge`]); with `S` and
+    // `L` disjoint the result holds `|S| + |L| >= 2·|S|` variables, and the sets only grow
+    // outward through a nest, so `v`'s set doubles at each insertion of `v` and `v` is
+    // inserted at most `log2 n` times for `n` variables in all. Not proved: sets that share
+    // variables. A shared variable is not inserted again ([`add`]), but it counts in `|L|`
+    // and not in the growth, so `S = A ∪ {v}` merged with `L = A ∪ {w}` inserts `v` into a
+    // set only one larger; a nest that repeats this at each level would insert `v` once per
+    // level, `O(n)` times, not `O(log n)`. Whether a nest of function types can give such
+    // sets at every level (each function's facts all but one variable of the facts around
+    // it) is the open sub-case; no scaling test builds it.
     fn held(&mut self, f: &VarFacts) {
         merge(&mut self.classes, &f.classes);
         merge(&mut self.names, &f.names);

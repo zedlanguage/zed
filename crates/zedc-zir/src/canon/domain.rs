@@ -117,6 +117,15 @@ impl Domain {
 /// The least class holding each of `points`, one or more: `v mod g` for the first point `v`
 /// and the greatest common divisor `g` of the differences. It is exact at every size, a
 /// function of the points alone, so the normal form stays unique.
+// Proof that `v mod g` is the least class holding the points (proofs audit, proofdoc4g).
+// It holds them: each point `w` has `g | w - v`. A class `r mod m` that holds them all has
+// `m | w - v` for each `w` (two members of one class differ by a multiple of `m`), so `m |
+// g`, and every member `v + g·t` of `v mod g` is `v + m·(g/m)·t`, in `r mod m`. Modulus 0
+// is the one value: `g` = 0 exactly when every point is `v`, and a class `m` = 0 holding
+// them means the same. `Num::gcd` is at least 0 and `gcd(0, d) = |d|`, so the fold from 0
+// gives the gcd of the differences. Tests:
+// `m0_07_canonicalization::domains::one_set_of_integers_has_one_normal_form` (`{1, 5, 9}`
+// gives `1 mod 4`) and `…::the_normal_form_admits_the_same_integers_and_is_unique`.
 fn least_class(points: &[&Num]) -> Congruence {
     let first = points[0];
     let g = points[1..]
