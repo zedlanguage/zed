@@ -1049,3 +1049,425 @@ fn private_quotients_match_concrete_models_on_small_systems() {
     check(vec![row(0, 2, 0), row(0, 6, 2)], false);
     check(vec![row(0, 2, 0), row(0, 6, 4)], true);
 }
+
+/// The verdict-only path of `solve_modular` agrees with its model path, and both with the truth,
+/// on every system of two congruences `x = m q + r` with `1 <= m1 <= m2 <= 12`, of three with
+/// `2 <= m1 <= m2 <= m3 <= 6`, and on three triples whose moduli share factors, at every residue;
+/// the two-row systems also with the alias `y = 7 - x`. The truth is enumeration of `x` over one
+/// period, the product of the moduli. A mode that declines (`None`) falls back to the general
+/// solver, as the callers do. Then the edge forms: empty, modulus 1, one-sided and two-sided
+/// bounds with and without an alias, homogeneous rows, a quotient shared by two rows, a
+/// disjunction and a negated point. Taken from the R2 Gemini seat of XR-negated-chain-crt-tree
+/// (2026-11-21, `unit_witness_matches_full_crt_exhaustively`), with the fallback, the enumerated
+/// truth, the two-sided verdicts and the exact count added by num1.
+#[test]
+fn verdict_and_model_paths_agree_exhaustively_and_on_edge_forms() {
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let y = Lin::atom(Atom::Sym("y".into()));
+    let mk_eq = |qi: u32, m: i64, r: i64| -> Formula {
+        let q = Lin::atom(Atom::Aux(qi));
+        Formula::Con(Con::eq(&x.minus(&q.times(m)), &Lin::constant(r)))
+    };
+    let verdict = |f: &Formula, tag: &str| -> bool {
+        let decided = solve_modular(f, false)
+            .map(|m| m.is_some())
+            .unwrap_or_else(|| crate::presburger::decide(f).unwrap());
+        let found =
+            solve_modular(f, true).unwrap_or_else(|| crate::presburger::satisfiable(f).unwrap());
+        assert_eq!(
+            decided,
+            found.is_some(),
+            "verdict and model disagree on {tag}: {f}"
+        );
+        if let Some(model) = found {
+            assert!(f.holds(&model), "model fails {tag}: {f}");
+        }
+        decided
+    };
+    let truth = |rows: &[(i64, i64)]| {
+        let period: i64 = rows.iter().map(|&(m, _)| m).product();
+        (0..period).any(|v| rows.iter().all(|&(m, r)| (v - r).rem_euclid(m) == 0))
+    };
+    let system = |rows: &[(i64, i64)]| {
+        Formula::and(
+            rows.iter()
+                .enumerate()
+                .map(|(i, &(m, r))| mk_eq(i as u32, m, r))
+                .collect(),
+        )
+    };
+
+    let mut checked = 0usize;
+    for m1 in 1..=12i64 {
+        for m2 in m1..=12i64 {
+            for r1 in 0..m1 {
+                for r2 in 0..m2 {
+                    let rows = [(m1, r1), (m2, r2)];
+                    let want = truth(&rows);
+                    let tag = format!("({r1}%{m1}, {r2}%{m2})");
+                    assert_eq!(verdict(&system(&rows), &tag), want, "flat {tag}");
+                    let alias = Formula::and(vec![
+                        Formula::Con(Con::eq(&y, &Lin::constant(7).minus(&x))),
+                        mk_eq(0, m1, r1),
+                        mk_eq(1, m2, r2),
+                    ]);
+                    assert_eq!(verdict(&alias, &tag), want, "alias {tag}");
+                    checked += 2;
+                }
+            }
+        }
+    }
+    let mut triples = Vec::new();
+    for m1 in 2..=6i64 {
+        for m2 in m1..=6i64 {
+            for m3 in m2..=6i64 {
+                triples.push((m1, m2, m3));
+            }
+        }
+    }
+    triples.extend([(4, 6, 10), (6, 9, 12), (4, 8, 12)]);
+    for (m1, m2, m3) in triples {
+        for r1 in 0..m1 {
+            for r2 in 0..m2 {
+                for r3 in 0..m3 {
+                    let rows = [(m1, r1), (m2, r2), (m3, r3)];
+                    let tag = format!("({r1}%{m1}, {r2}%{m2}, {r3}%{m3})");
+                    assert_eq!(verdict(&system(&rows), &tag), truth(&rows), "{tag}");
+                    checked += 1;
+                }
+            }
+        }
+    }
+    // 2 * 3,367 two-row systems (the sum of m1 m2 over 1 <= m1 <= m2 <= 12 is (78^2 + 650) / 2),
+    // 2,380 three-row systems on 2..6 and 240 + 648 + 384 on the three shared-factor triples.
+    assert_eq!(checked, 10_386);
+
+    assert!(verdict(&Formula::and(vec![]), "empty"));
+    assert!(verdict(&mk_eq(0, 1, 3), "modulus 1 alone"));
+    assert!(verdict(
+        &Formula::and(vec![mk_eq(0, 1, 3), mk_eq(1, 6, 5)]),
+        "modulus 1 paired"
+    ));
+    // x = 4 (6) and x = 2 (10) meet at x = 22 (30); x = 0 (6) and x = 1 (10) never meet. A
+    // one-sided bound leaves the verdict of the congruences alone.
+    for (r1, r2, want) in [(4, 2, true), (0, 1, false)] {
+        for bound in [
+            Formula::Con(Con::ge(&x, &Lin::constant(100))),
+            Formula::Con(Con::ge(&Lin::constant(-100), &x)),
+            Formula::Con(Con::ge(&x.times(2), &Lin::constant(11))),
+        ] {
+            let flat = Formula::and(vec![mk_eq(0, 6, r1), mk_eq(1, 10, r2), bound.clone()]);
+            assert_eq!(verdict(&flat, "one-sided"), want);
+            let alias = Formula::and(vec![
+                Formula::Con(Con::eq(&y, &x.plus(&Lin::constant(3)))),
+                mk_eq(0, 6, r1),
+                mk_eq(1, 10, r2),
+                bound,
+            ]);
+            assert_eq!(verdict(&alias, "one-sided alias"), want);
+        }
+    }
+    // On 0 <= x <= hi the class 22 (30) has a point exactly when hi >= 22.
+    for hi in [10i64, 21, 22, 25] {
+        let bounds = || {
+            vec![
+                Formula::Con(Con::ge(&x, &Lin::constant(0))),
+                Formula::Con(Con::ge(&Lin::constant(hi), &x)),
+            ]
+        };
+        let mut flat = vec![mk_eq(0, 6, 4), mk_eq(1, 10, 2)];
+        flat.extend(bounds());
+        assert_eq!(
+            verdict(&Formula::and(flat), "two-sided"),
+            hi >= 22,
+            "hi {hi}"
+        );
+        let mut alias = vec![
+            Formula::Con(Con::eq(&y, &x.plus(&Lin::constant(1)))),
+            mk_eq(0, 6, 4),
+            mk_eq(1, 10, 2),
+        ];
+        alias.extend(bounds());
+        assert_eq!(
+            verdict(&Formula::and(alias), "two-sided alias"),
+            hi >= 22,
+            "hi {hi}"
+        );
+    }
+    assert!(verdict(
+        &Formula::and(vec![mk_eq(0, 6, 0), mk_eq(1, 10, 0)]),
+        "homogeneous"
+    ));
+    assert!(verdict(
+        &Formula::and(vec![
+            mk_eq(0, 6, 0),
+            mk_eq(1, 10, 0),
+            Formula::Con(Con::ge(&x, &Lin::constant(1))),
+        ]),
+        "homogeneous, x >= 1"
+    ));
+    // One quotient q in two rows: x = 2q and x = 3q + 1 at q = -1, x = -2; x = 2q and x = 2q + 1 never;
+    // x = 2q + 1 and x = 6q + 2 force 4q = -1.
+    let q = Lin::atom(Atom::Aux(0));
+    let shared = |m1: i64, c1: i64, m2: i64, c2: i64| {
+        Formula::and(vec![
+            Formula::Con(Con::eq(&x.minus(&q.times(m1)), &Lin::constant(c1))),
+            Formula::Con(Con::eq(&x.minus(&q.times(m2)), &Lin::constant(c2))),
+        ])
+    };
+    assert!(verdict(&shared(2, 0, 3, 1), "shared quotient"));
+    assert!(!verdict(
+        &shared(2, 0, 2, 1),
+        "shared quotient, same modulus"
+    ));
+    assert!(!verdict(&shared(2, 1, 6, 2), "shared quotient, parity"));
+    // x = 1 (4) meets x = 3 (6) at x = 9; x = 4 (6) with x != 4 holds at x = 10.
+    assert!(verdict(
+        &Formula::and(vec![
+            mk_eq(0, 4, 1),
+            Formula::or(vec![mk_eq(1, 6, 3), mk_eq(2, 6, 5)]),
+        ]),
+        "disjunction"
+    ));
+    assert!(verdict(
+        &Formula::and(vec![
+            mk_eq(0, 6, 4),
+            Formula::negate(Formula::Con(Con::eq(&x, &Lin::constant(4)))),
+        ]),
+        "negated point"
+    ));
+}
+
+/// `combine_crt_tree` agrees with a left fold of `combine_crt_pair` on moduli that are not
+/// pairwise coprime: equal moduli, powers of 2 and of 3 out of order, a divisibility chain with
+/// duplicates, repeated coprime moduli and moduli sharing factors without a chain, each also
+/// with a conflict. Taken unchanged from the R2 Gemini seat of XR-negated-chain-crt-tree
+/// (2026-11-21), where it tested that seat's chain and repeated-moduli fast paths; on main it
+/// tests the general tree on the same inputs.
+#[test]
+fn crt_tree_chain_and_repeated_moduli_match_pairwise() {
+    let ref_crt = |pairs: &[(Int, Int)]| -> Option<(Int, Int)> {
+        let mut cur = (Int::ZERO, Int::ONE);
+        for (r, m) in pairs {
+            cur = combine_crt_pair(&cur.0, &cur.1, r, m)?;
+        }
+        Some(cur)
+    };
+    let cases: Vec<Vec<(i64, i64)>> = vec![
+        // Equal moduli (consistent and conflicting)
+        vec![(3, 12), (15, 12), (-9, 12)],
+        vec![(3, 12), (4, 12)],
+        // Powers of 2 (consistent, unsorted, and conflicting)
+        vec![(13, 16), (1, 2), (5, 8), (1, 4), (29, 32)],
+        vec![(1, 2), (2, 4), (5, 8)],
+        // Powers of 3 (consistent and conflicting)
+        vec![(14, 27), (2, 3), (5, 9), (41, 81)],
+        vec![(2, 3), (4, 9), (14, 27)],
+        // General divisibility chain with duplicates
+        vec![(5, 6), (11, 12), (11, 36), (11, 36), (1, 2), (47, 72)],
+        vec![(5, 6), (11, 12), (23, 36)],
+        // Repeated coprime moduli (consistent and conflicting)
+        vec![(1, 3), (2, 5), (4, 7), (7, 3), (12, 5), (4, 7)],
+        vec![(1, 3), (2, 5), (2, 3)],
+        // Non-chain sharing factors (min divides max, middle doesn't: `{2, 4, 6, 12}`)
+        vec![(1, 2), (1, 4), (5, 6), (5, 12)],
+        vec![(1, 2), (3, 4), (5, 6), (5, 12)],
+    ];
+    for raw in cases {
+        let pairs: Vec<(Int, Int)> = raw
+            .iter()
+            .map(|&(r, m)| (Int::from(r), Int::from(m)))
+            .collect();
+        assert_eq!(
+            combine_crt_tree(pairs.clone()),
+            ref_crt(&pairs),
+            "raw={raw:?}"
+        );
+    }
+}
+
+/// One row `x = r (mod m)` with its own quotient `q`: `x - m q = r`, or `m q - x = -r` when
+/// `flip`, so both signs of `x` are covered.
+fn congruence_row(q: u32, m: i64, r: i64, flip: bool) -> Con {
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let mq = Lin::atom(Atom::Aux(q)).times(m);
+    if flip {
+        Con::eq(&mq.minus(&x), &Lin::constant(-r))
+    } else {
+        Con::eq(&x.minus(&mq), &Lin::constant(r))
+    }
+}
+
+/// Whether some `x` in `lo..=hi` meets every `x = r (mod m)`, by enumeration.
+fn some_x_meets(rows: &[(i64, i64)], lo: i64, hi: i64) -> bool {
+    (lo..=hi).any(|x| rows.iter().all(|&(m, r)| (x - r).rem_euclid(m) == 0))
+}
+
+/// `private_quotient_consistency` with step 4 of its proof broken: the requirement of the first
+/// power of each base is kept, not that of the larger one. The negative control below shows
+/// the enumeration catches it.
+fn broken_private_quotient_consistency(cons: &[&Con]) -> Option<bool> {
+    let x = Atom::Sym("x".into());
+    let mut rows = Vec::new();
+    let mut moduli = BTreeSet::new();
+    for c in cons {
+        let s = c.lin.terms.get(&x)?;
+        let (_, k) = c.lin.terms.iter().find(|(a, _)| **a != x)?;
+        let r = if s.is_negative() {
+            c.lin.constant.clone()
+        } else {
+            -&c.lin.constant
+        };
+        moduli.insert(k.abs());
+        rows.push((k.abs(), r));
+    }
+    let factors = coprime_factorization(&moduli);
+    let mut first: HashMap<Int, (Int, Int)> = HashMap::new();
+    for (m, r) in rows {
+        for (base, power) in &factors[&m] {
+            let residue = r.mod_floor(power);
+            let (p0, r0) = first
+                .entry(base.clone())
+                .or_insert((power.clone(), residue.clone()));
+            let small = if *power < *p0 { power } else { &*p0 };
+            if r0.mod_floor(small) != residue.mod_floor(small) {
+                return Some(false);
+            }
+        }
+    }
+    Some(true)
+}
+
+/// Every system of 1 to 3 rows `x = r_i (mod m_i)` with `2 <= m_1 <= m_2 <= m_3 <= 12` and every
+/// residue `0 <= r_i < m_i` (103,103 systems of 3 rows), each with its own quotient. Calls
+/// `check` with the rows, the formula, and the answer by enumeration over one period.
+fn for_each_small_system(mut check: impl FnMut(&[(i64, i64)], &[Con], bool)) {
+    let mut systems: Vec<Vec<i64>> = Vec::new();
+    for a in 2..=12i64 {
+        systems.push(vec![a]);
+        for b in a..=12 {
+            systems.push(vec![a, b]);
+            for c in b..=12 {
+                systems.push(vec![a, b, c]);
+            }
+        }
+    }
+    for ms in systems {
+        let period: i64 = ms.iter().product();
+        let count: i64 = period;
+        for code in 0..count {
+            let mut rest = code;
+            let rows: Vec<(i64, i64)> = (ms.iter())
+                .map(|&m| {
+                    let r = rest % m;
+                    rest /= m;
+                    (m, r)
+                })
+                .collect();
+            let cons: Vec<Con> = (rows.iter().enumerate())
+                .map(|(i, &(m, r))| congruence_row(i as u32, m, r, (code + i as i64) % 2 == 1))
+                .collect();
+            check(&rows, &cons, some_x_meets(&rows, 0, period - 1));
+        }
+    }
+}
+
+/// `private_quotient_consistency` and the whole `solve_modular(f, false)` agree with
+/// enumeration on every small system, and so does `solve_modular(f, true)`, whose model `f`
+/// holds; the broken variant disagrees at least once (negative control). Then the edges of the
+/// proof: modulus 1, a bound added (`x >= 0`, `x <= c`), a quotient shared by two rows, and the
+/// empty conjunction. Taken unchanged from the R2 Opus seat of XR-negated-chain-crt-tree
+/// (2026-11-21); beside `private_quotients_match_concrete_models_on_small_systems` it adds rows
+/// with `x` of coefficient -1, the routine called directly, a negative control kept in the test
+/// and a quotient shared by rows of any two moduli.
+#[test]
+fn private_quotients_match_enumeration_and_the_model_path() {
+    let mut systems = 0usize;
+    let mut broken_wrong = 0usize;
+    for_each_small_system(|rows, cons, expected| {
+        systems += 1;
+        let refs: Vec<&Con> = cons.iter().collect();
+        assert_eq!(
+            private_quotient_consistency(&refs),
+            Some(expected),
+            "{rows:?}"
+        );
+        if broken_private_quotient_consistency(&refs) != Some(expected) {
+            broken_wrong += 1;
+        }
+        let f = Formula::and(cons.iter().cloned().map(Formula::Con).collect());
+        assert_eq!(
+            solve_modular(&f, false).map(|m| m.is_some()),
+            Some(expected),
+            "{rows:?}"
+        );
+        match solve_modular(&f, true) {
+            Some(Some(model)) => assert!(expected && f.holds(&model), "{rows:?}"),
+            Some(None) => assert!(!expected, "{rows:?}"),
+            None => panic!("no verdict from the model path at {rows:?}"),
+        }
+    });
+    assert_eq!(systems, 77 + 3289 + 103_103);
+    assert!(broken_wrong > 0, "the negative control was not caught");
+
+    let x = Lin::atom(Atom::Sym("x".into()));
+    // Both paths give the same verdict, or both none; a verdict matches `want`; a model holds.
+    // Counts the formulas with no verdict, for each edge.
+    let mut silent = [0usize; 3];
+    let mut check = |f: &Formula, want: bool, edge: usize| {
+        let d = solve_modular(f, false).map(|m| m.is_some());
+        let w = solve_modular(f, true);
+        if let Some(Some(model)) = &w {
+            assert!(f.holds(model));
+        }
+        let w = w.map(|m| m.is_some());
+        assert_eq!(d, w);
+        match d {
+            Some(v) => assert_eq!(v, want),
+            None => silent[edge] += 1,
+        }
+    };
+    for m in 2..=12i64 {
+        for r in 0..m {
+            // Modulus 1: `x - q = 0` holds for every `x`; the routine gives no verdict.
+            let unit = congruence_row(1, 1, 0, false);
+            let row = congruence_row(0, m, r, false);
+            assert_eq!(private_quotient_consistency(&[&row, &unit]), None);
+            let f = Formula::and(vec![Formula::Con(row.clone()), Formula::Con(unit)]);
+            check(&f, true, 0);
+            // A bound added later: the routine gives no verdict; both paths agree with
+            // enumeration over the bounded range.
+            for c in 0..12i64 {
+                let lo = Con::ge(&x, &Lin::constant(0));
+                let hi = Con::ge(&Lin::constant(c), &x);
+                assert_eq!(private_quotient_consistency(&[&row, &hi]), None);
+                let f = Formula::and(vec![
+                    Formula::Con(row.clone()),
+                    Formula::Con(lo),
+                    Formula::Con(hi),
+                ]);
+                let want = some_x_meets(&[(m, r)], 0, c);
+                check(&f, want, 1);
+            }
+            // One quotient in two rows: `m q + r = n q + s` needs `(m - n) q = s - r`.
+            for n in 2..=12i64 {
+                for s in 0..n {
+                    let shared = Con::eq(
+                        &x.minus(&Lin::atom(Atom::Aux(0)).times(n)),
+                        &Lin::constant(s),
+                    );
+                    assert_eq!(private_quotient_consistency(&[&row, &shared]), None);
+                    let want = if m == n {
+                        r == s
+                    } else {
+                        (s - r) % (m - n) == 0
+                    };
+                    let f = Formula::and(vec![Formula::Con(row.clone()), Formula::Con(shared)]);
+                    check(&f, want, 2);
+                }
+            }
+        }
+    }
+    assert_eq!(private_quotient_consistency(&[]), None);
+    eprintln!("no verdict (modulus 1, bounds, shared quotient): {silent:?}");
+}
