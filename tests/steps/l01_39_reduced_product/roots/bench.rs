@@ -11,19 +11,10 @@ fn roots_scale_in_the_degree_and_in_the_bits() {
     scaling::check_order("the integer roots of (x^n + 1)(x - 4)", 1 << 12, 1, |n| {
         integer_roots(&degrees[&n], None, None);
     });
-    // 256 and 2,048 bits (plan row ROOTS-cubic-bits-bytes). From 512 bits up the work grew as
-    // num-bigint's products, about `n^1.465`: callgrind, 2026-11-22, 14.1M instructions at
-    // 2,048 bits and 300.0M at 16,384, 21.3 times, 92% in the chain of derivatives
-    // (`chain_roots`), 61% in its evaluations and 22% in num-bigint's `div_floor`. The products
-    // and quotients are now the kernel's (`mul_int`, `div_floor_int`), which keep num-bigint's
-    // Toom-3 up to its measured crossovers (`MUL_LEAF`, `TOOM_COST`). Measured 2026-11-22
-    // (DynamoRIO, instructions at 8 times the bits): 3.9 at 256 bits (3.18M and 12.38M), 8.8
-    // at 512, 16.8 at 1,024, 22.8 at 2,048, 25.3 at 4,096 and 13.2 at 65,536 (2.429G and
-    // 32.07G; bytes 385.8M and 2,216.5M, 5.7 times). At 65,536 bits callgrind puts 91% of the
-    // instructions in num-bigint's products, 77% of them through the kernel's `mul`; by the
-    // code (not counted), `chain_search` takes about log2 n Newton steps at full precision
-    // toward the root of the derivative, so `O(M(n) log n)`. Only 256 bits is under the limit,
-    // a run under 1 ms; a search at doubling precision is open with the row.
+    // 256 and 2,048 bits. From 512 bits up the first runs allocate more than 10.5 times the
+    // bytes at 8 times the bits: 11.6 times from 512, 17.2 from 1,024 and 20.1 from 2,048, with
+    // the instructions 6.2, 7.0 and 7.9 times (TEST-bench-move-l0139; plan row
+    // ROOTS-cubic-bits-bytes). Under 1 ms a run at this size.
     let cubics = scaling::inputs(256, |bits| of_bits(bits as u64).0);
     scaling::check_order(
         "the integer roots of a cubic whose roots have n bits",

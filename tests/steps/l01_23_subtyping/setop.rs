@@ -188,8 +188,9 @@ fn lit(i: usize) -> Type {
 /// values and the outer map's size, neither of which grows with `k`. So nothing a run finds
 /// filled was filled by a run at the other size, and the work measured is the unfolding, the
 /// judging and the search on the written definitions. A meter of processor time takes the least
-/// of several runs of each size; for it, `bench::a_second_run_on_a_fresh_instance_does_the_work_of_the_first`
-/// checks that a second run at `n` does the counted work of the first, within 1%, so that what
+/// of several runs of each size; for it,
+/// `bench::a_second_run_on_a_fresh_instance_does_the_work_of_the_first` checks that a second run
+/// at `n` does the counted work of the first, within 1%, so that what
 /// a first run leaves in kinds 1 and 2 does not lower the least.
 struct Fresh {
     group: Group,
