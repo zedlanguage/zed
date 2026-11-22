@@ -36,6 +36,8 @@ fn checking_a_long_float_literal_costs_order_n() {
 /// `a n (11 L + L^2 / 2 + L / 2)` and predicts `8 * 234 / 165` = 11.35 (and `8 (ln 8n / ln n)^2`
 /// 10.45 counted from one digit). Measured 9.54 times the instructions on 2026-11-18 and 10.07
 /// on 2026-11-20 (8.74 times the bytes).
+/// At three sizes on 2026-11-21 (PERF-ratios-over-9-l0136): 9.54, 9.55 and 9.46 times at `n` =
+/// 2^21, 2^22 and 2^23, no growth with `n`, as the bound predicts.
 #[test]
 fn the_message_for_a_long_literal_costs_n_log_squared_n() {
     // Measured 2026-11-14 at a load of about 35, six benchmarks at once: about 150 ns a

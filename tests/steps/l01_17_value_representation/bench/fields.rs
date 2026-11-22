@@ -22,6 +22,12 @@ fn an_atom_and_a_pattern_with_many_named_fields_scale() {
     });
 }
 
+/// O(n log n): each of the pattern's n fields is found in the atom's sorted field names by a
+/// binary search (`zed_kernel::eval`, the arm `Pattern::Fields`), O(log n) comparisons. So
+/// `8 log(8n) / log n` predicts 9.68 at 20,000 fields; measured on 2026-11-21
+/// (PERF-ratios-over-9-l0136) 9.1, 9.2 and 9.19 times the instructions at 5,000, 10,000 and
+/// 20,000 fields, no growth with `n`. A hash of the names would make it O(n) at the cost of a
+/// table per atom value, built by the atom's maker for every atom, matched or not.
 #[test]
 fn matching_many_named_fields_scales() {
     // Each field of the pattern was looked for in the atom's payload from its start.

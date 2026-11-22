@@ -104,6 +104,12 @@ fn stops_that_reach_functions_scale() {
 
 /// Small instances: `counts::live_cells_are_listed_by_type_and_allocating_node` and
 /// `counts::the_live_cells_of_many_nodes_are_each_listed`.
+///
+/// O(n log g) for `g` = n / 8 + 1 allocating nodes: `Heap::survivors` counts each cell into an
+/// ordered map by type and node, since the listing is in that order, O(log g) per cell. With
+/// `g` growing as `n`, `8 log2(8g) / log2 g` predicts 9.42 at
+/// `n` = 10^6; measured on 2026-11-21 (PERF-ratios-over-9-l0136) 9.4, 9.4 and 9.2 times the
+/// instructions at 10^6, 2 * 10^6 and 4 * 10^6 cells, no growth with `n`.
 #[test]
 fn listing_the_live_cells_scales() {
     let n = 1_000_000;

@@ -618,6 +618,10 @@ impl Heap {
 
     /// The cells live now, grouped by their type and the node that allocated them, in that
     /// order (feature `counts`).
+    // Complexity tradeoff: O(n log g) for n cells in g groups, a lookup in the ordered map per
+    // cell. A hash map and then a sort of the groups would be O(n + g log g), better when few
+    // nodes allocate many cells; the listing is a test and report aid (feature `counts`), so the
+    // ordered map is kept (PERF-ratios-over-9-l0136: 9.4 times at 8n with g = n / 8 + 1).
     #[cfg(feature = "counts")]
     pub fn survivors(&self) -> Vec<Survivor> {
         let mut groups: BTreeMap<(&'static str, Option<usize>), u64> = BTreeMap::new();

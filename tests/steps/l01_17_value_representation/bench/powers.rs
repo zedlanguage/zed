@@ -25,6 +25,9 @@ fn ten_to_n_costs_its_exponent_and_not_its_digits() {
 /// A kept power `3^n` and the built sum `3^n + 1` agree in every bit a bound reads, so their
 /// order builds `3^n`; that build and the sum's cost O(n log n) in the width (item
 /// KERNEL-sum-tower), not the O(n^1.47) of num-bigint's products they took before.
+/// At three sizes on 2026-11-21 (PERF-ratios-over-9-l0136): 9.0, 8.9 and 8.9 times the
+/// instructions at `n` = 3 * 2^21, 3 * 2^22 and 3 * 2^23; `8 log(8n) / log n` is 9.1 at the
+/// first.
 #[test]
 fn a_kept_power_beside_its_built_successor_costs_n_log_n() {
     // `3^n` is built by squaring, so a run's work is a sum over squares of halving widths:

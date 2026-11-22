@@ -76,6 +76,8 @@ fn dividing_a_wide_number_scales() {
 /// 196,608 words the levels counted from the leaves predict 11.68 and `8 (ln 8n / ln n)^2`
 /// 10.96. Measured 2026-11-20 (BENCH-over-nlogn-prediction): 9.98 and 10.04 times the
 /// instructions on two runs, 8.84 times the bytes.
+/// At three sizes on 2026-11-21 (PERF-ratios-over-9-l0136): 9.98, 9.86 and 9.80 times at
+/// 3 * 2^16, 3 * 2^17 and 3 * 2^18 words, falling with `n` as `(ln 8n / ln n)^2` does.
 #[test]
 fn printing_a_wide_number_scales() {
     // Measured 2026-11-14 at a load of about 35, six benchmarks at once: about 3.1 µs a
