@@ -8648,45 +8648,8 @@ impl<'m, 't> Walk<'m, 't> {
                 }
                 self.project(p, a, b, env, z).await
             }
-            (IntDiv | Mod, _, None) => match self.where_defined(t, a, b, env, z).await {
-                Some(r) => r,
-                None => self.project(p, a, b, env, z).await,
-            },
             _ => self.project(p, a, b, env, z).await,
         }
-    }
-
-    /// `a div b` or `a mod b` (the term `t`) in `z`, when `z` holds every value the forward
-    /// pass gives `t`: then the term meets `z` exactly where it is defined, which is where `a`
-    /// and `b` are integers and `b != 0` (the kernel fails a quotient by 0 and no other,
-    /// `zed_kernel::eval::int_binary`; DESIGN.md sec:failure). The answer is the meet of the
-    /// preimage of `a` under every integer and that of `b` under every integer but 0, exact
-    /// when both are ([`Tx::meet`]). When `z` holds no value of `t`, no input meets it, which
-    /// is exact too. `None` when `z` holds some values of `t` and misses others; the caller
-    /// then projects. PREIMAGE-mod-defined: `max(x, 0 mod y) >= 8` reads `0 mod y` under every
-    /// integer, which the projection answered with `y == 0` kept, not exact, and
-    /// `min(x, 0 mod y) <= -9` reads it under `[-inf, -9]`, which the projection answered with
-    /// a box that is not empty, not exact, though `0 mod y` is never negative. Test:
-    /// `l01_25_preimage_catalog::exact_oracle::a_quotient_read_where_it_is_defined_is_exact`.
-    async fn where_defined(
-        &'m self,
-        t: Tid,
-        a: Tid,
-        b: Tid,
-        env: Eid,
-        z: &IntervalSet,
-    ) -> Option<Res> {
-        let f = self.fwd(t, env).await.ints;
-        if f.set().meet(z).is_empty() {
-            return Some(Res::none());
-        }
-        if !f.set().is_subset(z) {
-            return None;
-        }
-        let nonzero = IntervalSet::top().minus(&IntervalSet::of(0, 0));
-        let ra = self.back(a, env, Demand::Ints(IntervalSet::top())).await;
-        let rb = self.back(b, env, Demand::Ints(nonzero)).await;
-        Some(self.meet(ra, rb))
     }
 
     /// `op(c)` in `z`, for an operator the revision table inverts exactly within the forward
