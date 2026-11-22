@@ -330,20 +330,18 @@ fn literal_read_bytes() -> usize {
 /// The message for a literal of `digits` digits whose reading asked `bytes` bytes and was refused:
 /// the size named is that of the literal's number, from its digits, and the memory asked is
 /// named only where the number itself would fit.
-pub(crate) fn unread(digits: usize, bytes: usize) -> String {
-    unread_bits(bits_of_digits(&BigUint::from(digits)), bytes)
+pub(crate) fn unread(digits: usize, bytes: usize, cast: &str) -> String {
+    unread_bits(bits_of_digits(&BigUint::from(digits)), bytes, cast)
 }
 
-/// [`unread`] of a literal whose number is `bits` bits wide.
-pub(crate) fn unread_bits(bits: BigUint, bytes: usize) -> String {
+/// [`unread`] of a literal of the kind `cast` whose number is `bits` bits wide. The message's
+/// text, with its repair, is held in l01_29_diagnostics/too_large_literal.rs; here the size.
+pub(crate) fn unread_bits(bits: BigUint, bytes: usize, cast: &str) -> String {
     let need = TooLarge {
         size: bits,
         ask: BigUint::from(bytes) << 3u32,
     };
-    format!(
-        "Number too large for memory: this literal needs {}. Write it with fewer digits.",
-        need.number()
-    )
+    zedc::lex::unread_literal(&need, cast)
 }
 
 /// The exact rational of [`a_literal_near_a_boundary_under`] 16 MiB, where reading the digits
@@ -355,7 +353,7 @@ fn a_long_decimal_literal_is_refused_when_memory_is_short() {
     }
     assert_eq!(
         a_literal_near_a_boundary_under("r", 16 << 20),
-        Some(unread(54 + (1 << 22), literal_read_bytes()))
+        Some(unread(54 + (1 << 22), literal_read_bytes(), "rat"))
     );
 }
 

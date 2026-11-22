@@ -1273,7 +1273,7 @@ impl<'a> Elab<'a> {
             // are, not copied.
             ExprKind::Int { radix, digits, .. } => match Value::int_text(digits, *radix) {
                 Ok(v) => Some(self.constant(e, v.expect("the lexer's digits"))),
-                Err(r) => self.error(e.span, unread_literal(&r)),
+                Err(r) => self.error(e.span, unread_literal(&r, "int")),
             },
             // A literal with the suffix `f32` is read at `f32`; any other at `f64`, the format a
             // decimal no use fixes takes (DESIGN.md L1.26a).
@@ -1313,7 +1313,7 @@ impl<'a> Elab<'a> {
                     let v = Value::rat(r.expect("the lexer's rat text is a decimal"));
                     Some(self.constant(e, v))
                 }
-                Err(r) => self.error(e.span, unread_literal(&r)),
+                Err(r) => self.error(e.span, unread_literal(&r, "rat")),
             },
             ExprKind::Bool(b) => lit(Value::Bool(*b)),
             ExprKind::Atom(a) => lit(Value::atom(a)),

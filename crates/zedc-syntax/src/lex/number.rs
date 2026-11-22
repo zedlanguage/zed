@@ -64,8 +64,14 @@ pub(super) fn number(text: &str, pos: usize) -> Option<Result<(usize, Tok), Erro
     let digits = match without_separators(&text[start..end]) {
         Ok(d) => Arc::new(d),
         Err(r) => {
+            let cast = match (rational, forced) {
+                (true, _) => "rat",
+                (_, Some(f)) => f.name(),
+                _ if end > int_end => "f64",
+                _ => "int",
+            };
             return Some(Err(Error {
-                kind: ErrorKind::Unread(r),
+                kind: ErrorKind::Unread(r, cast),
                 span: Span {
                     start: pos,
                     end: after,

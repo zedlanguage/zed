@@ -279,7 +279,10 @@ fn a_long_integer_literal_is_refused_when_memory_is_short() {
     ];
     assert_eq!(
         literal_errors(&texts, 512 << 10, false),
-        [unread(n, 6 * n), unread_bits(BigUint::from(4 * n), 3 * n)]
+        [
+            unread(n, 6 * n, "int"),
+            unread_bits(BigUint::from(4 * n), 3 * n, "int")
+        ]
     );
 }
 
@@ -295,7 +298,7 @@ fn checking_a_long_literal_is_refused_when_memory_is_short() {
     let text = format!("x = {};\ny = 0.{};\n", "9".repeat(n), "9".repeat(n));
     assert_eq!(
         literal_errors(&[text], 2 << 20, true),
-        [unread(n, 6 * n), unread(n + 2, n + 2)]
+        [unread(n, 6 * n, "int"), unread(n + 2, n + 2, "f64")]
     );
 }
 
@@ -312,7 +315,7 @@ fn a_long_literal_with_separators_is_refused_by_the_lexer_when_memory_is_short()
     lower_limit_by(SHORT / 4);
     for (n, text) in &all {
         match zedc::lex::lex_fence(text) {
-            Err(e) => assert_eq!(e.to_string(), unread(*n, 2 * n - 1), "n = {n}"),
+            Err(e) => assert_eq!(e.to_string(), unread(*n, 2 * n - 1, "int"), "n = {n}"),
             Ok(_) => panic!("lexed {n} digits"),
         }
     }

@@ -115,8 +115,9 @@ pub enum ErrorKind {
     BadComment(String),
     /// A `~` that starts no infix call `~name~`, and what is wrong with it.
     BadInfix(String),
-    /// A number literal whose digits the system refused the memory to copy.
-    Unread(TooLarge),
+    /// A number literal whose digits the system refused the memory to copy, and the cast of
+    /// its kind, `int`, `rat`, `f64` or `f32`, which the repair names ([`unread_literal`]).
+    Unread(TooLarge, &'static str),
     /// A `Bidi_Control` character ([`is_bidi_control`]) in a comment or in the text of a
     /// string literal (DESIGN.md sec:lexical, `TextChar`): the character, whether it is in a
     /// string, and the repair, when it can be quoted on one line: the comment with each such
@@ -150,7 +151,7 @@ impl fmt::Display for Error {
             | ErrorKind::BadInfix(why) => {
                 write!(f, "{why}")
             }
-            ErrorKind::Unread(r) => write!(f, "{}", unread_literal(r)),
+            ErrorKind::Unread(r, cast) => write!(f, "{}", unread_literal(r, cast)),
             ErrorKind::NonAsciiName { word, repair } => f.write_str(&non_ascii(word, repair)),
             ErrorKind::TextDirection {
                 c,
@@ -432,11 +433,24 @@ pub fn may_not_show(c: char) -> bool {
         || is_blank(c)
 }
 
-/// The message for a numeric literal whose value does not fit in the memory the system gives. It
-/// does not quote the literal, which may be millions of digits long.
-pub fn unread_literal(r: &TooLarge) -> String {
+/// The message for a numeric literal whose value does not fit in the memory the system gives,
+/// with `cast` the cast of the literal's kind (`int`, `rat`, `f64` or `f32`). It does not quote
+/// the literal, which may be millions of digits long. The repair, written as code (DESIGN.md
+/// sec:diagnostics), reads the number from a file when the program runs, the repair "an operand
+/// read from the input" of the row "Number too large for any memory of the target": no rewrite
+/// of the literal keeps its value in fewer digits in general, and the run may have the memory
+/// the compiler lacked. Test: l01_29_diagnostics/too_large_literal.rs compiles each repair.
+pub fn unread_literal(r: &TooLarge, cast: &str) -> String {
+    let zero = match cast {
+        "rat" => "0r",
+        "f64" => "0.0",
+        "f32" => "0.0f32",
+        _ => "0",
+    };
     format!(
-        "Number too large for memory: this literal needs {}. Write it with fewer digits.",
+        "Number too large for memory: this literal needs {}. Write it with fewer digits, or \
+         read it from a file when the program runs: `{cast}(main::files[\"n.txt\"] else \
+         #ioError -> \"0\" else #notFound -> \"0\") else #invalid -> {zero}`.",
         r.number()
     )
 }

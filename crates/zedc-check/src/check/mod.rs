@@ -11055,7 +11055,9 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, Msg> {
     }
     let exact = match &l.value {
         Value::Float(_) => Rat::decimal(&l.text)
-            .map_err(|r| Msg::from(unread_literal(&r)))?
+            // The decimal is read exactly to take a carrier other than its own `f64`, so
+            // the repair reads it at `rat`, where it stays exact.
+            .map_err(|r| Msg::from(unread_literal(&r, "rat")))?
             .map(Value::rat),
         v => run(Prim::CastRat, v),
     };

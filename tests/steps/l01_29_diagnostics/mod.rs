@@ -40,6 +40,7 @@ mod quoted;
 mod recursion;
 mod sum_plus;
 mod syntax_recovery;
+mod too_large_literal;
 mod tyvars;
 mod untracked;
 mod variants;
