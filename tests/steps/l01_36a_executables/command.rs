@@ -162,13 +162,19 @@ fn a_link_that_fails_is_named_with_what_the_linker_printed() {
     // runtime for this build of the library yet, the refusing driver would be asked to prelink
     // and fail there instead of at the link this test is about. One build with the working
     // toolchain first makes it, so the test does not depend on which tests ran before it.
+    // That build must link: an executable kept from an earlier run of this scratch directory
+    // returns before the prelinked runtime is looked for (link.rs, `kept` before `prelinked`),
+    // so its record goes first. Without that, a second run of this test in the same scratch
+    // directory kept `warm` and failed at the prelink on every run (2026-11-21, three runs);
+    // with it, three runs passed.
+    let warm = d.join("warm");
+    match std::fs::remove_file(zed_native::link::Record::path(&warm)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => panic!("{e}"),
+        _ => {}
+    }
     assert_eq!(
         build(
-            &[
-                src.to_str().unwrap(),
-                "-o",
-                d.join("warm").to_str().unwrap()
-            ],
+            &[src.to_str().unwrap(), "-o", warm.to_str().unwrap()],
             &toolchain()
         )
         .0,
