@@ -284,7 +284,7 @@ fn the_search_for_the_stop_binds_each_definition_a_bounded_number_of_times() {
 /// `n` functions, each `(x) -> if false { f(x) } else { x }` with `f` the one before, `n`
 /// bindings each calling the last, and a binding that stops: each binding reaches every
 /// function, though its run calls one.
-fn shared_cone(n: usize) -> Unit {
+pub(super) fn shared_cone(n: usize) -> Unit {
     let name = |i: usize| format!("f{i}");
     let mut defs = vec![def(&name(0), identity(), false)];
     for i in 1..n {
@@ -307,6 +307,25 @@ fn shared_cone(n: usize) -> Unit {
     }
     defs.push(def("s", stops(Prim::Add), true));
     unit(defs)
+}
+
+/// Compares the `n + 1` bindings of [`shared_cone`] at `n` with an engine that refuses: each
+/// differs, and the last, `s`, stops with the interpreter's error.
+pub(super) fn the_cone_is_compared(u: &Unit, n: usize) {
+    let r = bindings(u, &[("refuse", &refuse)]);
+    assert_eq!(r.mismatches.len(), n + 1);
+    assert!(r.mismatches[n].contains("the interpreter gives the error"));
+}
+
+#[test]
+fn bindings_that_share_a_cone_are_compared() {
+    // Run one by one, the bindings would bind every function once each: n² in all.
+    let u = shared_cone(3);
+    assert_eq!(
+        bindings(&u, ENGINES).mismatches,
+        alone(&u, ENGINES).mismatches
+    );
+    the_cone_is_compared(&u, 3);
 }
 
 /// `n` functions as in [`shared_cone`], then `n` pairs of bindings, `c_j = f(j)` and

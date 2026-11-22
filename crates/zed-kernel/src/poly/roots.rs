@@ -56,9 +56,9 @@ use std::collections::BTreeMap;
 
 use num_bigint::BigInt;
 use num_integer::Integer;
-use num_traits::{One, Pow, Signed, Zero};
+use num_traits::{One, Signed, Zero};
 
-use crate::num::nth_root_rem_uint;
+use crate::num::{div_floor_int, mul_int, nth_root_rem_uint, pow_uint};
 use crate::term::{Prim, Term};
 use crate::value::Value;
 
@@ -317,19 +317,27 @@ fn capped_pow(x: &BigInt, g: u64, cap: &BigInt) -> BigInt {
     {
         return cap + 1;
     }
-    Pow::pow(x, g).min(cap + 1)
+    BigInt::from(pow_uint(x.magnitude(), g)).min(cap + 1)
 }
 
 /// The interval tests of the branch and bound, written once and built for two kinds of number:
 /// `BigInt`, here, and `i128` in [`small`], where every number they form is proved to fit.
-/// Each kind has its own `capped_pow`; the bodies are the same text. `$v` is the visibility
-/// given to each function.
+/// Each kind has its own `capped_pow`, `mul_int` and `div_floor_int`; the bodies are the same
+/// text. `$v` is the visibility given to each function.
+///
+/// Complexity tradeoff: on `BigInt` the products and quotients are the kernel's
+/// ([`mul_int`], [`div_floor_int`], [`pow_uint`] in `capped_pow`), which take num-bigint's
+/// below their measured crossovers and transforms, O(n log n) a product, above them; with
+/// num-bigint's alone each is about `n^1.465` (Toom-3, and Burnikel and Ziegler's division
+/// over it), so 8 times the bits cost about `8^1.465 = 21.0` times the work whatever the count
+/// of steps (plan row ROOTS-cubic-bits-bytes; measurements at the benchmark
+/// `l01_39_reduced_product::roots::bench::roots_scale_in_the_degree_and_in_the_bits`).
 macro_rules! interval_tests {
     ($v:vis $n:ty) => {
         /// `floor(n / x^g)` for `x >= 2`, with the power capped above `|n|`, past which the
         /// quotient is 0 or -1 by the sign of `n` alone.
         $v fn floor_over_pow(n: &$n, x: &$n, g: u64) -> $n {
-            Integer::div_floor(n, &capped_pow(x, g, &n.abs()))
+            div_floor_int(n, &capped_pow(x, g, &n.abs()))
         }
 
         /// The carry bounds of `p` at `l >= 2`: for each `k`, `B_k = floor(sum over i < k of
@@ -372,14 +380,14 @@ macro_rules! interval_tests {
                     let cap = &b[k] + p[k].1.abs() + 1;
                     let (pl, ph) = (capped_pow(l, g, &cap), capped_pow(h, g, &cap));
                     let least = if lo.is_negative() {
-                        &lo * &ph
+                        mul_int(&lo, &ph)
                     } else {
-                        &lo * &pl
+                        mul_int(&lo, &pl)
                     };
                     let most = if hi.is_negative() {
-                        &hi * &pl
+                        mul_int(&hi, &pl)
                     } else {
-                        &hi * &ph
+                        mul_int(&hi, &ph)
                     };
                     let within = |v: $n| v.clamp(-&cap, cap.clone()) + &p[k].1;
                     (lo, hi) = (within(least), within(most));
@@ -409,7 +417,7 @@ macro_rules! interval_tests {
                     let g = q[k + 1].0 - q[k].0;
                     let cap = &b[k] + q[k].1.abs() + 1;
                     let x = if lo.is_negative() { h } else { l };
-                    lo = (lo * capped_pow(x, g, &cap)).clamp(-&cap, cap.clone()) + c(k);
+                    lo = mul_int(&lo, &capped_pow(x, g, &cap)).clamp(-&cap, cap.clone()) + c(k);
                 }
                 if lo > b[k] {
                     return true;
@@ -499,6 +507,16 @@ mod small {
         }
         let g = u32::try_from(g).expect("under bits(cap), so under 64");
         x.pow(g).min(cap + 1)
+    }
+
+    /// `a * b`, which fits (proof at the module).
+    fn mul_int(a: &i128, b: &i128) -> i128 {
+        a * b
+    }
+
+    /// `floor(a / b)` for `b` not zero.
+    fn div_floor_int(a: &i128, b: &i128) -> i128 {
+        Integer::div_floor(a, b)
     }
 
     interval_tests!(pub(super) i128);
@@ -768,7 +786,7 @@ fn search(
                     (&hi, fh)
                 };
                 let d = scaled(slope, x, s);
-                (!d.is_zero()).then(|| x - (x * fx).div_floor(&d))
+                (!d.is_zero()).then(|| x - div_floor_int(&mul_int(x, &fx), &d))
             }
         };
         for x in probes(newton, &lo, &hi) {
@@ -815,17 +833,26 @@ fn probes(newton: Option<BigInt>, lo: &BigInt, hi: &BigInt) -> Vec<BigInt> {
     }
 }
 
-/// `p` at `x`, by Horner's rule over the gaps between its exponents.
+/// `p` at `x`, by Horner's rule over the gaps between its exponents. The products and powers
+/// are the kernel's ([`mul_int`], [`pow_uint`]), O(n log n) a product past their crossovers,
+/// where num-bigint's are about `n^1.465` (tradeoff at the macro `interval_tests`).
 fn eval(p: &[(u64, BigInt)], x: &BigInt) -> BigInt {
     let Some((mut last, _)) = p.last().cloned() else {
         return BigInt::zero();
     };
+    let power = |k: u64| {
+        let m = BigInt::from(pow_uint(x.magnitude(), k));
+        match x.is_negative() && k % 2 == 1 {
+            true => -m,
+            false => m,
+        }
+    };
     let mut acc = BigInt::zero();
     for (e, c) in p.iter().rev() {
-        acc = acc * Pow::pow(x, last - e) + c;
+        acc = mul_int(&acc, &power(last - e)) + c;
         last = *e;
     }
-    acc * Pow::pow(x, last)
+    mul_int(&acc, &power(last))
 }
 
 /// The derivative of `q`, divided by the power of the name that leaves its least exponent 0:
@@ -980,7 +1007,7 @@ fn chain_search(
                     (&hi, &fhi)
                 };
                 let d = eval(&slope, x);
-                (!d.is_zero()).then(|| (x * &d - fx).div_floor(&d))
+                (!d.is_zero()).then(|| div_floor_int(&(mul_int(x, &d) - fx), &d))
             }
         };
         for x in probes(newton, &lo, &hi) {
