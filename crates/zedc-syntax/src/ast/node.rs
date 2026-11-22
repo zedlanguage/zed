@@ -593,6 +593,9 @@ pub enum StmtKind {
 pub struct Import {
     /// The unit's path, joined by `.`.
     pub path: String,
+    /// The span of each segment of `path`, in order: where an import of a path that names no
+    /// unit is rejected (DESIGN.md sec:diagnostics, "Import of a path that names no unit").
+    pub segments: Vec<Span>,
     /// What it binds.
     pub kind: ImportKind,
     /// The content address it is pinned to, if written.

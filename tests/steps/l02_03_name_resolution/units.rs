@@ -78,8 +78,8 @@ fn an_import_of_a_unit_with_no_file_names_the_file_looked_for() {
     assert_eq!(
         mistakes(&p),
         [
-            "main.zed:1:1: the unit `geometry.solids` cannot be imported: there is no file \
-          `geometry/solids.zed` under the root."
+            "main.zed:1:8: the unit `geometry.solids` cannot be imported: its segment \
+          `geometry` names nothing, since there is no directory `geometry` in the package root."
         ]
     );
 }

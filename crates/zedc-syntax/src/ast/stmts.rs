@@ -173,6 +173,11 @@ impl Builder<'_, '_> {
         };
         let p = &self.tree.nodes[kids[0]];
         let path = self.path(kids[0]);
+        // The path's tokens alternate a segment and a `.`, as `path` reads them.
+        let segments = (p.start..p.end)
+            .step_by(2)
+            .map(|i| self.tokens[i].span)
+            .collect();
         let kind = match &kids[1..] {
             // `import u.{a, b}`: the path is followed by `.`.
             names if self.word(p.end) == "." => {
@@ -188,7 +193,12 @@ impl Builder<'_, '_> {
             [alias] => ImportKind::Alias(self.word(self.tree.nodes[*alias].start).into()),
             _ => ImportKind::Qualified,
         };
-        Ok(Import { path, kind, pin })
+        Ok(Import {
+            path,
+            segments,
+            kind,
+            pin,
+        })
     }
 
     /// The content address of node `n`, a `Pin`: `@hash("…")` with 64 lowercase hexadecimal

@@ -102,6 +102,28 @@ fn printing_a_quoted_string_scales() {
     });
 }
 
+/// TYPEVAR-gap-rejections (b): a package of n units at its root, imported by one unit through
+/// n misspelled paths, has each nearest path found through one listing of the root filed by
+/// spelling (zedc `unit::Listed`), O(E·L²) once and O(L³) for each import, so O(n) in all,
+/// where testing each of the n units for each of the n imports costs O(n²).
+#[test]
+fn the_nearest_paths_of_n_imports_of_no_unit_among_n_units_scale() {
+    let inputs = scaling::inputs(100, |n| {
+        let mut main: String = (0..n).map(|i| format!("import Uint{i};\n")).collect();
+        main.push_str("main() = 0;\n");
+        let mut files: std::collections::HashMap<String, std::sync::Arc<str>> = (0..n)
+            .map(|i| (format!("Unit{i}.zed"), std::sync::Arc::from("one = 1;\n")))
+            .collect();
+        files.insert("main.zed".into(), main.into());
+        zedc::unit::Memory(files)
+    });
+    scaling::check("n imports of no unit among n units", 100, |n| {
+        let pkg = zedc::unit::load(&mut zedc::query::Db::new(), &inputs[&n], &["main"]);
+        let out = pkg.report(std::path::Path::new("")).join("\n");
+        assert_eq!(out.matches("repair: `import Unit").count(), n);
+    });
+}
+
 /// PROOF-nearest-name-quadratic: a unit of n type declarations and n definitions, each with
 /// its own misspelled type name, has each nearest name found through the spelling index of
 /// name resolution, in time independent of the n types in scope: O(n), where testing each type

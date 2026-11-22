@@ -388,11 +388,46 @@ impl Exports {
     }
 }
 
+/// An import of a path that names no unit, as the loader finds it: the first segment of the
+/// path that names nothing, where that segment was looked for, and the paths nearest in
+/// spelling that differ from the written one at that segment only and name a unit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Missing {
+    /// The segment of the path, counted from 0, that names nothing.
+    pub segment: usize,
+    /// Where it was looked for, as a sentence: "no file `Collectons.zed` and no directory
+    /// `Collectons` is under the package root".
+    pub looked: String,
+    /// The repaired paths, in name order.
+    pub near: Vec<String>,
+}
+
+impl Missing {
+    /// The text a resolve key holds for this failure: everything a resolution reads of it,
+    /// with no two failures sharing a text. The segment comes first, ended by a line break,
+    /// which no number holds; then each path, ended by a comma, which no unit path holds (a
+    /// path is names of `[A-Za-z0-9_']` joined by `.`, DESIGN.md sec:lexical), then a line
+    /// break; the rest is `looked`. So the text is read back to one failure only.
+    pub fn key_text(&self) -> String {
+        let mut s = format!("{}\n", self.segment);
+        for p in &self.near {
+            s.push_str(p);
+            s.push(',');
+        }
+        s.push('\n');
+        s.push_str(&self.looked);
+        s
+    }
+}
+
 /// Why a unit cannot read the exports of a unit it imports.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refused {
     /// The import is rejected with this reason.
     Because(String),
+    /// The import's path names no unit (DESIGN.md sec:diagnostics, "Import of a path that
+    /// names no unit").
+    NoUnit(Missing),
     /// The import lies on an import cycle, which the loader reports once for the cycle's whole
     /// strongly connected component (`unit::order`): the import is rejected with no error of
     /// its own.
@@ -1319,7 +1354,7 @@ impl Resolver<'_> {
         if v.last().is_none_or(|b| b.level != level) {
             v.push(Bound::new(level, kind, false));
             self.scopes.last_mut().expect("a scope").push(name.into());
-            if kind.is_type() {
+            if kind.is_type() && !type_var_form(name) {
                 self.type_names.add(name, 1);
             }
         }
@@ -1399,7 +1434,7 @@ impl Resolver<'_> {
                 b.ids.push_back(id);
                 v.insert(pos, b);
                 self.scopes[level - 1].push(name.into());
-                if kind.is_type() {
+                if kind.is_type() && !type_var_form(name) {
                     self.type_names.add(name, 1);
                 }
             }
@@ -1443,7 +1478,7 @@ impl Resolver<'_> {
         for name in self.scopes.pop().expect("an open scope") {
             let v = self.visible.get_mut(&name).expect("bound in the scope");
             let b = v.pop().expect("bound in the scope");
-            if self.out.binders[b.ids[0]].kind.is_type() {
+            if self.out.binders[b.ids[0]].kind.is_type() && !type_var_form(&name) {
                 self.type_names.add(&name, -1);
             }
             if v.is_empty() {
@@ -1934,6 +1969,10 @@ impl Resolver<'_> {
                 });
                 None
             }
+            Some(Err(Refused::NoUnit(m))) => {
+                self.no_unit(i, span, &m);
+                None
+            }
             Some(Err(Refused::OnCycle)) => None,
             Some(Err(Refused::Unknown)) => {
                 unknown = true;
@@ -1966,6 +2005,49 @@ impl Resolver<'_> {
         if unknown {
             self.broken.insert(id);
         }
+    }
+
+    /// The row "Import of a path that names no unit" (DESIGN.md sec:diagnostics) for the import
+    /// `i`, the statement at `span`, as the loader found it in `m`: rejected at the first
+    /// segment that names nothing, saying where it was looked for, with a repair for each
+    /// nearest path. The loader keeps only the paths that name a unit, so each repair is an
+    /// import that then resolves. The repair rewrites the statement as written, with only the
+    /// segment replaced; without the unit's text it is the path alone.
+    fn no_unit(&mut self, i: &Import, span: Span, m: &Missing) {
+        // The loader splits this import's own path at its `.`s, as the builder split its
+        // tokens into `segments`, so `m.segment` indexes both.
+        let at = i.segments[m.segment];
+        let written = &i.path.split('.').collect::<Vec<_>>()[m.segment];
+        let stmt = self.text.and_then(|t| t.get(span.start..span.end));
+        let notes = (m.near.iter())
+            .map(|p| {
+                let seg = p.split('.').collect::<Vec<_>>()[m.segment];
+                // The segment lies inside the statement, whose span starts at `import`.
+                let text = match stmt {
+                    Some(s) => format!(
+                        "{}{seg}{}",
+                        &s[..at.start - span.start],
+                        &s[at.end - span.start..]
+                    ),
+                    None => p.clone(),
+                };
+                Note {
+                    span,
+                    text: format!("repair: `{text}`"),
+                }
+            })
+            .collect();
+        self.errors.push(Error {
+            row: Some(Row::ImportPathNamesNoUnit),
+            menu: String::new(),
+            span: at,
+            message: format!(
+                "the unit `{}` cannot be imported: its segment `{written}` names nothing, since \
+                 {}.",
+                i.path, m.looked
+            ),
+            notes,
+        });
     }
 
     /// Whether `name`, used at `span` and found nowhere, is a name the prelude unit would
@@ -5092,7 +5174,9 @@ pub use zedc_syntax::ast::type_var_form;
 /// spelling so that the names near in spelling to a written one ([`near_in_spelling`]) are
 /// found without a scan of them all. Each name is filed under its folded form ([`fold`]), and
 /// under itself and each string it gives with one character deleted ([`deletions`]). A name of
-/// a type variable's form is never offered as a type name, so it is not filed.
+/// a type variable's form is never offered as a type name, so the resolver does not file it.
+/// The loader files the units and directories under a directory of a package in one index each,
+/// for the menu of an import of a path that names no unit (zedc `unit::Listed`).
 ///
 /// This is the deletion method of M. Mor and A. S. Fraenkel, "A hash code method for detecting
 /// and correcting spelling errors", Communications of the ACM 25(12):935-938, 1982
@@ -5121,19 +5205,16 @@ pub use zedc_syntax::ast::type_var_form;
 // the first is taken. DESIGN.md step L1.29e's index of a whole unit's written names is not
 // needed for this bound.
 #[derive(Default)]
-struct SpellingIndex {
+pub struct SpellingIndex {
     count: HashMap<String, usize>,
     folded: HashMap<String, BTreeSet<String>>,
     deleted: HashMap<String, BTreeSet<String>>,
 }
 
 impl SpellingIndex {
-    /// Adds `by` to the count of binders in the open scopes that name the type `name`; the
+    /// Adds `by` to the count of `name`, the binders in the open scopes that name it; the
     /// name is filed when the count leaves zero and taken out when it returns there.
-    fn add(&mut self, name: &str, by: isize) {
-        if type_var_form(name) {
-            return;
-        }
+    pub fn add(&mut self, name: &str, by: isize) {
         let count = self.count.entry(name.into()).or_default();
         let was = *count;
         *count = count.saturating_add_signed(by);
@@ -5167,6 +5248,19 @@ impl SpellingIndex {
         (folded.into_iter().chain(deleted)).filter_map(move |names| {
             (names.iter().map(String::as_str)).find(|c| near_in_spelling(n, c))
         })
+    }
+
+    /// Every name filed that is near `n` in spelling, in name order. The cost bound is
+    /// [`SpellingIndex::near`]'s, every name of each key tested: the deletion keys hold O(L)
+    /// names each (the comment at the type), and every name under the folded key is near `n`
+    /// or is `n`, so its tests are paid for by the names returned.
+    pub fn near_all<'a>(&'a self, n: &'a str) -> BTreeSet<&'a str> {
+        let folded = self.folded.get(&fold(n));
+        let deleted = deletions(n).filter_map(|key| self.deleted.get(&key));
+        (folded.into_iter().chain(deleted))
+            .flat_map(|names| names.iter().map(String::as_str))
+            .filter(|c| near_in_spelling(n, c))
+            .collect()
     }
 }
 

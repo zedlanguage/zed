@@ -631,3 +631,81 @@ fn the_nearest_type_is_found_for_each_kind_of_slip() {
     let src = "type Abx = int;\nf(c: Xab) = 0;\nmain() = 0;\n";
     assert!(offered(src).is_empty(), "{src}");
 }
+
+/// The report of loading the unit `main` of a package whose files are `files`.
+fn package_report(files: &[(&str, &str)]) -> String {
+    let files = zedc::unit::Memory(
+        (files.iter())
+            .map(|&(n, t)| (n.to_string(), std::sync::Arc::from(t)))
+            .collect(),
+    );
+    let pkg = zedc::unit::load(&mut zedc::query::Db::new(), &files, &["main"]);
+    pkg.report(std::path::Path::new("")).join("\n")
+}
+
+/// TYPEVAR-gap-rejections (b): an import of a path that names no unit is rejected at the
+/// first segment that names nothing, saying where it was looked for, with the nearest path in
+/// spelling as the menu, a capitalized segment repaired as any other (DESIGN.md
+/// sec:diagnostics, "Import of a path that names no unit"; L2.12's test).
+#[test]
+fn an_import_of_no_unit_offers_the_nearest_path() {
+    let out = package_report(&[
+        ("main.zed", "import Collectons;\nmain() = 0;\n"),
+        ("Collections.zed", "one = 1;\n"),
+    ]);
+    assert!(out.contains("main.zed:1:8:"), "{out}");
+    assert!(out.contains("`Collectons`"), "{out}");
+    assert!(out.contains("package root"), "{out}");
+    assert!(out.contains("repair: `import Collections;`"), "{out}");
+}
+
+/// The same row at a segment before the last: `geometry.shapse` fails at `shapse`, looked for
+/// in the directory `geometry`; a directory misspelled fails at its own segment, and the
+/// repair keeps the rest of the path and the rest of the statement.
+#[test]
+fn an_import_of_no_unit_fails_at_the_first_segment_that_names_nothing() {
+    let shapes = [
+        ("geometry/shapes.zed", "one = 1;\n"),
+        ("geometry/shapsed.zed", "two = 2;\n"),
+        ("geometry/shades.zed", "three = 3;\n"),
+    ];
+    let mut files = vec![("main.zed", "import geometry.shapse as g;\nmain() = 0;\n")];
+    files.extend(shapes);
+    let out = package_report(&files);
+    assert!(out.contains("main.zed:1:17:"), "{out}");
+    assert!(out.contains("directory `geometry`"), "{out}");
+    // `shapes` (two letters swapped) and `shapsed` (one inserted) are one slip from `shapse`,
+    // offered in name order; `shades` is two slips away and is not offered.
+    let shapes_at = out.find("repair: `import geometry.shapes as g;`");
+    let shapsed = out.find("repair: `import geometry.shapsed as g;`");
+    assert!(
+        shapes_at.is_some() && shapsed.is_some() && shapes_at < shapsed,
+        "{out}"
+    );
+    assert!(!out.contains("shades as g"), "{out}");
+
+    let mut files = vec![("main.zed", "import geometyr.shapes;\nmain() = 0;\n")];
+    files.extend(shapes);
+    let out = package_report(&files);
+    assert!(out.contains("main.zed:1:8:"), "{out}");
+    assert!(out.contains("no directory `geometyr`"), "{out}");
+    assert!(out.contains("repair: `import geometry.shapes;`"), "{out}");
+}
+
+/// No repair is offered when no name is near, nor when the near name is a directory that
+/// does not hold the rest of the path, since the import would then not resolve.
+#[test]
+fn an_import_of_no_unit_offers_only_a_path_that_resolves() {
+    let out = package_report(&[
+        ("main.zed", "import Zzz;\nmain() = 0;\n"),
+        ("Collections.zed", "one = 1;\n"),
+    ]);
+    assert!(out.contains("main.zed:1:8:"), "{out}");
+    assert!(!out.contains("repair:"), "{out}");
+    let out = package_report(&[
+        ("main.zed", "import geometyr.shapes;\nmain() = 0;\n"),
+        ("geometry/circles.zed", "one = 1;\n"),
+    ]);
+    assert!(out.contains("main.zed:1:8:"), "{out}");
+    assert!(!out.contains("repair:"), "{out}");
+}

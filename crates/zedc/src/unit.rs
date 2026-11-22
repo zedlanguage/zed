@@ -44,6 +44,20 @@ pub trait Files {
     /// The text of the file `name`, a path under the root with `/` between its parts: `None`
     /// when there is no such file, or why it cannot be read.
     fn read(&self, name: &str) -> Option<Result<Arc<str>, Unreadable>>;
+    /// What is directly under the directory `dir`, a path under the root with `/` between its
+    /// parts and `""` for the root itself; nothing when there is no such directory or it
+    /// cannot be listed. Read only for the message of an import of a path that names no unit.
+    fn list(&self, dir: &str) -> Listing;
+}
+
+/// What a directory under a package root holds, as an import reads it: its units, each the
+/// name of a file `<name>.zed`, and its directories, by name.
+#[derive(Debug, Default)]
+pub struct Listing {
+    /// The names of the files that end in `.zed`, with the `.zed` taken off.
+    pub units: Vec<String>,
+    /// The names of the directories.
+    pub dirs: Vec<String>,
 }
 
 /// Why a file cannot be read.
@@ -97,6 +111,25 @@ impl Files for Dir {
             })),
         }
     }
+
+    fn list(&self, dir: &str) -> Listing {
+        let mut out = Listing::default();
+        let Ok(entries) = std::fs::read_dir(self.0.join(dir)) else {
+            return out;
+        };
+        for e in entries.flatten() {
+            let Ok(name) = e.file_name().into_string() else {
+                continue;
+            };
+            // `Path::is_dir` follows a symbolic link, as `read` follows one to a file.
+            if e.path().is_dir() {
+                out.dirs.push(name);
+            } else if let Some(stem) = name.strip_suffix(".zed") {
+                out.units.push(stem.to_string());
+            }
+        }
+        out
+    }
 }
 
 /// Files held in memory, by name.
@@ -106,6 +139,33 @@ pub struct Memory(pub HashMap<String, Arc<str>>);
 impl Files for Memory {
     fn read(&self, name: &str) -> Option<Result<Arc<str>, Unreadable>> {
         self.0.get(name).map(|t| Ok(t.clone()))
+    }
+
+    // Complexity tradeoff: a scan of every file held, O(F) for F files, where a directory of
+    // the file system is read in time linear in its own entries; files in memory are a test's
+    // few, and the loader lists each directory once (`Listed`).
+    fn list(&self, dir: &str) -> Listing {
+        let mut out = Listing::default();
+        let mut dirs = BTreeSet::new();
+        for name in self.0.keys() {
+            let rest = match dir {
+                "" => Some(name.as_str()),
+                _ => name.strip_prefix(dir).and_then(|r| r.strip_prefix('/')),
+            };
+            match rest.map(|r| r.split_once('/')) {
+                Some(Some((d, _))) => {
+                    dirs.insert(d.to_string());
+                }
+                Some(None) => {
+                    if let Some(stem) = rest.and_then(|r| r.strip_suffix(".zed")) {
+                        out.units.push(stem.to_string());
+                    }
+                }
+                None => {}
+            }
+        }
+        out.dirs = dirs.into_iter().collect();
+        out
     }
 }
 
@@ -747,6 +807,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
     // key holds what it reads, never a hash of it (step L1.37a), and a number per unit keeps
     // an importer's key the size of its imports.
     let mut numbers = vec![[0u8; 8]; pkg.units.len()];
+    let mut listed = Listed::default();
     for k in 0..pkg.order.len() {
         let u = pkg.order[k];
         let Some(parsed) = pkg.units[u].parsed.clone() else {
@@ -773,9 +834,10 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
             let got = match (&dep.resolved, &dep.text, &dep.parsed) {
                 _ if comp[v] == comp[u] => Err(Refused::OnCycle),
                 (Some(r), _, _) => Ok(r.clone()),
-                (None, None, _) => {
-                    because(format!("there is no file `{}` under the root", dep.file))
-                }
+                (None, None, _) => match listed.missing(files, &dep.path) {
+                    Some(m) => Err(Refused::NoUnit(m)),
+                    None => because(format!("there is no file `{}` under the root", dep.file)),
+                },
                 (None, Some(Err(why)), _) => because(unreadable(&dep.file, why)),
                 // A unit whose statements cannot be read has its own errors; the uses of the
                 // names it would define are not checked (step L1.29d).
@@ -799,11 +861,20 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
         let Some(Ok(text)) = &pkg.units[u].text else {
             unreachable!("a parsed unit has text")
         };
+        let missing: Vec<String> = (deps.iter())
+            .filter_map(|(_, d)| match d {
+                Err(Refused::NoUnit(m)) => Some(m.key_text()),
+                _ => None,
+            })
+            .collect();
+        let mut missing = missing.iter();
         let mut parts: Vec<&[u8]> = vec![text.as_bytes()];
         for (path, d) in &deps {
             let read = match d {
                 Ok(_) => Read::Unit(&numbers[pkg.index[path]]),
                 Err(Refused::Because(why)) => Read::Failed(why),
+                // One text per such dep, taken in the same order as made above.
+                Err(Refused::NoUnit(_)) => Read::NoUnit(missing.next().expect("made above")),
                 Err(Refused::OnCycle) => Read::OnCycle,
                 Err(Refused::Unknown) => Read::Unknown,
             };
@@ -1277,6 +1348,8 @@ enum Read<'a> {
     Prelude(&'a [u8; 8]),
     OnCycle,
     Unknown,
+    /// An import of a path that names no unit, by [`resolve::Missing::key_text`].
+    NoUnit(&'a str),
 }
 
 /// Appends to the parts of a resolve key what the resolution reads of the unit `path`: its
@@ -1291,6 +1364,99 @@ fn push_read<'a>(parts: &mut Vec<&'a [u8]>, path: &'a str, read: Read<'a>) {
         Read::Prelude(n) => parts.extend([&[2][..], n]),
         Read::OnCycle => parts.push(&[3]),
         Read::Unknown => parts.push(&[4]),
+        Read::NoUnit(text) => parts.extend([&[5][..], text.as_bytes()]),
+    }
+}
+
+/// The directories of a package listed so far, each with its units and directories filed by
+/// spelling, for the message of an import of a path that names no unit (DESIGN.md
+/// sec:diagnostics). Each directory is listed and filed once, however many imports look in it.
+#[derive(Default)]
+struct Listed(HashMap<String, Filed>);
+
+/// A directory's units and directories, as sets and by spelling.
+struct Filed {
+    units: HashSet<String>,
+    dirs: HashSet<String>,
+    near_units: resolve::SpellingIndex,
+    near_dirs: resolve::SpellingIndex,
+}
+
+impl Listed {
+    /// The directory `dir` of `files`, listed and filed the first time it is asked for.
+    fn get(&mut self, files: &dyn Files, dir: &str) -> &Filed {
+        self.0.entry(dir.to_string()).or_insert_with(|| {
+            let l = files.list(dir);
+            let mut near_units = resolve::SpellingIndex::default();
+            let mut near_dirs = resolve::SpellingIndex::default();
+            // Only a name can be written as a segment of an import (DESIGN.md sec:lexical), so
+            // only names are offered.
+            let names = |v: &Vec<String>, index: &mut resolve::SpellingIndex| {
+                (v.iter().filter(|n| lex::ident::is_name(n))).for_each(|n| index.add(n, 1));
+            };
+            names(&l.units, &mut near_units);
+            names(&l.dirs, &mut near_dirs);
+            Filed {
+                units: l.units.into_iter().collect(),
+                dirs: l.dirs.into_iter().collect(),
+                near_units,
+                near_dirs,
+            }
+        })
+    }
+
+    /// Why the unit `path`, which has no file, names no unit (DESIGN.md sec:diagnostics,
+    /// "Import of a path that names no unit"): its first segment that names nothing, a
+    /// directory for a segment before the last and a file `<segment>.zed` for the last,
+    /// looked for under the segments before it from the package root; and each path that
+    /// differs from `path` at that segment only, by a name near it in spelling under the same
+    /// directory, and names a unit that can be read, so that the import then resolves, in name
+    /// order. `None` when every segment names something, as when the file was taken away
+    /// between the listing and the read.
+    ///
+    /// The manifest declares no other packages in this version of zedc (`Manifest`), so the
+    /// package root is the one place looked in.
+    // Complexity tradeoff: each directory on the path is listed and filed once per load
+    // (`Listed::get`), O(E·L²) for its E entries of length at most L, in place of a test of
+    // every entry for each import, O(M·E·L) for M imports of missing paths under it; a lookup
+    // is then O(L³) (`SpellingIndex::near_all`), and each path offered costs one read of its
+    // file.
+    fn missing(&mut self, files: &dyn Files, path: &str) -> Option<resolve::Missing> {
+        let segs: Vec<&str> = path.split('.').collect();
+        for (k, &seg) in segs.iter().enumerate() {
+            let dir = segs[..k].join("/");
+            let last = k + 1 == segs.len();
+            let filed = self.get(files, &dir);
+            let (names, index) = match last {
+                true => (&filed.units, &filed.near_units),
+                false => (&filed.dirs, &filed.near_dirs),
+            };
+            if names.contains(seg) {
+                continue;
+            }
+            let near = (index.near_all(seg).into_iter())
+                .map(|c| {
+                    let mut p = segs.clone();
+                    p[k] = c;
+                    p.join(".")
+                })
+                .filter(|p| matches!(files.read(&file_of(p)), Some(Ok(_))))
+                .collect();
+            let place = match k {
+                0 => "the package root".to_string(),
+                _ => format!("the directory `{dir}` of the package root"),
+            };
+            let looked = match last {
+                true => format!("there is no file `{seg}.zed` in {place}"),
+                false => format!("there is no directory `{seg}` in {place}"),
+            };
+            return Some(resolve::Missing {
+                segment: k,
+                looked,
+                near,
+            });
+        }
+        None
     }
 }
 
