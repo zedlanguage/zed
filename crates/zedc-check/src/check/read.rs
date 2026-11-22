@@ -679,9 +679,9 @@ mod tests {
                 .map(|t| t.span.start)
                 .chain([text.len()])
                 .collect();
-            for i in 0..whole.len() {
+            for (i, first) in whole.iter().enumerate() {
                 for (j, &to) in ends.iter().enumerate().skip(i + 1) {
-                    let from = whole[i].span.start;
+                    let from = first.span.start;
                     let head = &text[from..to];
                     let part = lex::lex(text).expect("lexed above").into_iter();
                     let moved = part_tokens(text, head, from, part.take(j).skip(i).collect());
