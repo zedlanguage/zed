@@ -328,7 +328,11 @@ fn remainders_read_by_each_class_keep_the_transfer_first_scales() {
         scaling::check("the preimage of k remainders excluded", n, |k| {
             preimage(if k == n { &a } else { &b }, &ds, &d);
         });
-        let n = 16;
+        // Sized at 64 (BENCH-transfer-first-bytes-spread, 2026-11-22): at 16 and 128 the ratio
+        // ran 9.18 to 10.20 over `ZED_TREAP_SEED` 0 to 7 (once 10.9 times the bytes), the
+        // constant cost of the smaller size weighing most; at 64 and 512, 7.48 to 8.57 over
+        // seeds 0 to 15, 0.3 s in all.
+        let n = 64;
         let (a, b) = (above_remainders(n), above_remainders(n * scaling::FACTOR));
         scaling::check("the preimage of k tests above k remainders", n, |k| {
             preimage(if k == n { &a } else { &b }, &ds, &d);
