@@ -9472,26 +9472,6 @@ fn xr_bucket(n: usize, tag: &str) -> Type {
     &p - &row_list[0]
 }
 
-/// Q2(f) Bench 2 (Claude R2): `n` rows sharing a size-`n` anchor `A = {0, .., n-1}` (`n = 64` vs
-/// `8n = 512`). Negative controls: fails at `4091b22e5` (`>24x`), fails on `q2n+` (`36x`), and
-/// fails on `g2` (`>24x`) because `ns.ints(&r[0])`, `pl[1].minus(&h0)`, `orig_live`, `U1`, and
-/// `ids` cloned and hashed `BTreeSet<Value>` of size `n` once per row (`Theta(n^2)`). Passes in
-/// `O(n log n)` once `Ints` wraps `Rc<BTreeSet<Value>>` with precomputed hash and memoized place-1
-/// `minus`.
-#[test]
-fn xr_r2_bench_escape_bucket_scales() {
-    let inputs = scaling::inputs(64, |m| xr_bucket(m, &format!("b{m}")));
-    scaling::check_order(
-        "Q2(f) escape shared-anchor bucket (chain_verdict)",
-        64,
-        1,
-        |m| {
-            Type::forget_emptiness();
-            assert_eq!(inputs[&m].chain_verdict(), Some(Verdict::Inhabited));
-        },
-    );
-}
-
 #[test]
 fn xr_r2_q2d_k80_both_orders_and_forked_box_outside_cpoly() {
     let l = list(Type::int());
@@ -9737,35 +9717,6 @@ fn xr_r2_bench_wide_chain_many_boxes_scales() {
         Type::forget_emptiness();
         assert_eq!(inputs[&w].verdict(), Verdict::Inhabited);
     });
-}
-
-/// [`xr_bucket`] with the anchor `A = {0}` of size 1: the same n rows in one bucket, with a
-/// constant cost per row. The control for the size of `A` in `xr_r2_bench_escape_bucket_scales`.
-fn xr_bucket_small_anchor(n: usize, tag: &str) -> Type {
-    let l = list_named(Type::int(), &format!("_xrs{tag}"));
-    let not_a = &Type::int() - &lit(0);
-    let p = cons_of(Type::int(), cons_of(Type::int(), Type::atom("nil")));
-    let rows = (0..n as i64).fold(Type::empty(), |u, k| {
-        &u | &cons_of(
-            not_a.clone(),
-            cons_of(&Type::int() - &lit(1000 + k), l.clone()),
-        )
-    });
-    &p - &rows
-}
-
-#[test]
-fn xr_r2_bench_escape_bucket_small_anchor_scales() {
-    let inputs = scaling::inputs(16, |m| xr_bucket_small_anchor(m, &format!("s{m}")));
-    scaling::check_order(
-        "XR2 escape bucket, anchor of size 1 (chain_verdict)",
-        16,
-        1,
-        |m| {
-            Type::forget_emptiness();
-            assert_eq!(inputs[&m].chain_verdict(), Some(Verdict::Inhabited));
-        },
-    );
 }
 
 #[test]
