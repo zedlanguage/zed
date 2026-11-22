@@ -9464,44 +9464,51 @@ impl<'t, 'a> Ck<'t, 'a> {
         (!parts.is_empty() && parts.iter().all(|&m| m != 0 && m & !numbers == 0)).then_some(parts)
     }
 
-    /// Each choice of one numeric part per argument of `args` ([`Self::number_parts`]; `None`
-    /// at an argument that is not all numbers), as the masks of one application, for which
-    /// `found` is asked; whether it holds for one. The parts of an argument are its listed
-    /// carriers, at most the four numeric ones, and its classes, each one variable of its
-    /// type, so the choices are at most the product of those counts over the arguments, two
-    /// or three for an operator: a constant for a type of a few classes, and the product of
-    /// the class counts in general. An argument of one part, the common case, adds no choices.
+    /// Whether `found` holds for the masks of `args`, one set of numeric carriers per argument
+    /// (`None` at an argument that is not all numbers): first for each argument's carriers
+    /// together ([`Self::numbers_of`]), then for each pair of arguments `i < j` and each pair
+    /// of their parts ([`Self::number_parts`]) with no carrier in common, `p` at `i` and `q`
+    /// at `j`, each other argument at its carriers together. So a listed `f64` of `1 | f64`
+    /// meets an `int` alone, as it would alone (DESIGN.md sec:type_resolution).
+    /// Complexity tradeoff: the naive reading tries each choice of one part per argument, the
+    /// product of the part counts, which grows with the classes of a type as a power of the
+    /// arity. Used: the pairs alone, as a carrier is missing between two values, O(a² k²)
+    /// trials for a arguments of at most k parts (the four numeric carriers and the classes of
+    /// the type), two or three arguments for an operator.
     fn some_choice(
         &self,
         args: &[Option<Arg>],
         mut found: impl FnMut(&[Option<u8>]) -> bool,
     ) -> bool {
+        let whole: Vec<Option<u8>> = (args.iter())
+            .map(|a| a.as_ref().and_then(|a| self.numbers_of(a)))
+            .collect();
+        if found(&whole) {
+            return true;
+        }
         let parts: Vec<Option<Vec<u8>>> = (args.iter())
             .map(|a| a.as_ref().and_then(|a| self.number_parts(a)))
             .collect();
-        let len = |p: &Option<Vec<u8>>| p.as_ref().map_or(1, Vec::len);
-        let mut at = vec![0usize; parts.len()];
-        loop {
-            let masks: Vec<Option<u8>> = (parts.iter().zip(&at))
-                .map(|(p, &i)| p.as_ref().map(|p| p[i]))
-                .collect();
-            if found(&masks) {
-                return true;
-            }
-            // The next choice, counting in the mixed radix of the part counts.
-            let mut k = 0;
-            while k < at.len() {
-                at[k] += 1;
-                if at[k] < len(&parts[k]) {
-                    break;
+        let mut masks = whole.clone();
+        for i in 0..parts.len() {
+            for j in i + 1..parts.len() {
+                let (Some(ps), Some(qs)) = (&parts[i], &parts[j]) else {
+                    continue;
+                };
+                for &p in ps {
+                    for &q in qs.iter().filter(|&&q| p & q == 0) {
+                        masks[i] = Some(p);
+                        masks[j] = Some(q);
+                        if found(&masks) {
+                            return true;
+                        }
+                    }
                 }
-                at[k] = 0;
-                k += 1;
-            }
-            if k == at.len() {
-                return false;
+                masks[i] = whole[i];
+                masks[j] = whole[j];
             }
         }
+        false
     }
 
     /// Whether two of `masks` share no carrier. The pairs of at most fifteen distinct masks,
@@ -9560,7 +9567,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `a: 1 | f64` and `b: int` has no common carrier at its `f64` (plan row
     /// DIAG-union-carrier-row).
     /// One pass over the arguments per arrow, and the pairs of the fifteen sets of numeric
-    /// carriers, a constant, for each choice of parts ([`Self::some_choice`]).
+    /// carriers, a constant, for each set of masks tried ([`Self::some_choice`]).
     fn no_common_carrier(&self, sig: &Sig, args: &[Option<Arg>]) -> bool {
         self.some_choice(args, |masks| {
             Self::disjoint(masks) && self.no_arrow_takes(sig, masks)
