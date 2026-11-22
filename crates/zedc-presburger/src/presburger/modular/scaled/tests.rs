@@ -729,6 +729,89 @@ fn seed_3730609663341733710_case_223_is_decided() {
     check_answered(&f, true, "seed 3730609663341733710 case 223");
 }
 
+/// Seed 12744803785466090665 case 189 of [`sums_of_quotients_match_enumeration`] (row
+/// PRES-sum-of-quotients-shadows-random; found by b22-checkrest2 on main 090973b27). The
+/// general path asks again with its atoms renamed to `Sym`s, where `4 y + r == 5 x + 11`
+/// (`r` in `[0, 3]`) reads with either end as the quotient; `orient` took `y` as the variable,
+/// the other row became a chain on `x`, `solve` declined, and `decide` refused with `Shadows`.
+/// The module may still decline the formula as first written, as [`check`] allows; `decide` answers.
+#[test]
+fn seed_12744803785466090665_case_189_is_decided() {
+    let aux = |i: u32| Lin::atom(Atom::Aux(i));
+    let c = Lin::constant;
+    let eq = |a: Lin, b: Lin| Formula::Con(Con::eq(&a, &b));
+    let ge = |a: Lin, b: Lin| Formula::Con(Con::ge(&a, &b));
+    let f = Formula::and(vec![
+        eq(x().times(4), aux(0).times(3).plus(&aux(1)).plus(&c(4))),
+        ge(aux(1), c(0)),
+        ge(c(2), aux(1)),
+        eq(x().times(5), aux(2).times(4).plus(&aux(3)).plus(&c(-11))),
+        ge(aux(3), c(0)),
+        ge(c(3), aux(3)),
+        Formula::or(vec![
+            Formula::negate(Formula::and(vec![eq(aux(7), c(0)), ge(c(1), aux(5))])),
+            Formula::and(vec![eq(aux(5), c(1)), ge(aux(7), c(2))]),
+        ]),
+        eq(
+            aux(0),
+            aux(3)
+                .times(3)
+                .plus(&aux(4).times(3))
+                .plus(&aux(5))
+                .plus(&c(-5)),
+        ),
+        ge(aux(5), c(0)),
+        ge(c(2), aux(5)),
+        eq(
+            x().times(3)
+                .plus(&aux(0))
+                .plus(&aux(6).times(4))
+                .plus(&aux(7)),
+            aux(2).times(3).plus(&c(4)),
+        ),
+        ge(aux(7), c(0)),
+        ge(c(3), aux(7)),
+    ]);
+    check(&f, true, "seed 12744803785466090665 case 189");
+}
+
+/// Seed 3700079103403926633 case 92 of [`sums_of_quotients_match_enumeration`] (row
+/// PRES-sum-of-quotients-shadows-random): the sum `3 q0 + 3 q4 == 3 q2 + 3 q3 - 6`, whose
+/// remainder is always zero, is `q0 + q4 - q2 - q3 == -2` divided by its gcd, a sum of modulus
+/// 1. `read_sum` asked for a modulus of at least 2, so `q4` was no sum's quotient, `solve`
+/// declined, and `decide` refused with `Shadows`.
+#[test]
+fn seed_3700079103403926633_case_92_is_decided() {
+    let aux = |i: u32| Lin::atom(Atom::Aux(i));
+    let c = Lin::constant;
+    let eq = |a: Lin, b: Lin| Formula::Con(Con::eq(&a, &b));
+    let ge = |a: Lin, b: Lin| Formula::Con(Con::ge(&a, &b));
+    let f = Formula::and(vec![
+        eq(x().times(2).plus(&aux(0).times(5)).plus(&aux(1)), c(-5)),
+        ge(aux(1), c(0)),
+        ge(c(4), aux(1)),
+        eq(x().times(10), aux(2).times(3).plus(&aux(3)).plus(&c(-10))),
+        ge(aux(3), c(0)),
+        ge(c(2), aux(3)),
+        Formula::or(vec![eq(aux(1), c(3)), eq(aux(3), c(2))]),
+        ge(c(1), aux(7)),
+        eq(
+            aux(0).times(3).plus(&aux(4).times(3)),
+            aux(2).times(3).plus(&aux(3).times(3)).plus(&c(-6)),
+        ),
+        eq(
+            x().plus(&aux(3).times(2))
+                .plus(&aux(6).times(4))
+                .plus(&aux(7)),
+            aux(1).plus(&c(-2)),
+        ),
+        ge(aux(7), c(0)),
+        ge(x(), c(-10)),
+        ge(c(-6), x()),
+    ]);
+    check_answered(&f, true, "seed 3700079103403926633 case 92");
+}
+
 #[test]
 fn sums_of_quotients_match_enumeration() {
     // As in `scaled_remainders_match_enumeration`: every remainder and every sum's remainder is

@@ -125,7 +125,13 @@ fn read_sum(
     };
     let (q_atom, c_q) = rest[q];
     let m = c_q.abs();
-    if m < Int::from(2) {
+    // With no remainder a quotient of coefficient 1 in size is read too, as in [`read_shape`]:
+    // the row is then of modulus 1 (`E mod 1 = 0` at every point, `q = sigma E`), which is how a
+    // sum whose remainder is always zero is written once divided by its gcd: `3 q0 + 3 q4 ==
+    // 3 q2 + 3 q3 - 6` is `q0 + q4 - q2 - q3 == -2` (PRES-sum-of-quotients-shadows-random, seed
+    // 3700079103403926633 case 92). Without it `q4` was no row's quotient, `solve` declined, and
+    // the general path refused with `Shadows`.
+    if m < Int::from(2) && r.is_some() {
         return None;
     }
     let s = r.map_or(Int::ONE, |i| -rest[i].1);
@@ -472,11 +478,23 @@ fn orient<'f>(shapes: &[Shape<'f>], named: Option<&Atom>) -> Option<(Atom, Vec<D
     // remainder as an `Aux` atom (zedc-preimage `Normal::parts`: the remainder `Aux(n)` of a
     // `mod` has its quotient at `Aux(n - 1)`), so a root that fits and is not `Aux` is the
     // checker's variable and is taken first.
+    // Before that, a root on every row is taken: with it no row has a parent, and [`solve`]
+    // declines every reading in which one does (a chain), so a root that leaves a chain is
+    // never better. The general path renames atoms to `Sym`s before it asks again, and then the
+    // `Aux` test cannot tell the variable from a quotient: in seed 12744803785466090665 case 189
+    // of `sums_of_quotients_match_enumeration` (PRES-sum-of-quotients-shadows-random), `4 y + r
+    // == 5 x + 11` with `r` in `[0, 3]` reads either way, the root `y` left the other row (on
+    // `x`) a chain, and the formula was refused with `Shadows`. O(1) a candidate (the degree).
     let root = match named {
         Some(a) => index.get(a).copied().filter(|&i| fits(i))?,
         None => (0..atoms.len())
             .filter(|&i| fits(i))
-            .min_by_key(|&i| matches!(atoms[i], Atom::Aux(_)))?,
+            .min_by_key(|&i| {
+                (
+                    adj[i].len() != shapes.len(),
+                    matches!(atoms[i], Atom::Aux(_)),
+                )
+            })?,
     };
     // Row `e` of the result is the reading of `shapes[e]`, so the indices of `shapes` stay valid;
     let (up, met) = walk(root).expect("connected");
