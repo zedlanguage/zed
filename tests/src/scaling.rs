@@ -53,8 +53,10 @@
 //! PMU driver, software events only"), the instructions can still be counted in software
 //! (BENCH-vm-no-instruction-counter). When `zed_meter_settings::ZED_METER_DRRUN` and
 //! `ZED_METER_ICOUNT` name DynamoRIO and its client `zed_icount` (tools/icount; Colab's job.sh sets
-//! both), a test binary started with `--exact` (a benchmark under `tools/run_tests.sh`, a run in
-//! a new process) starts itself again under them, and [`Meter::new`] reads the client's count:
+//! both), [`Meter::new`] in a test binary started with `--exact` (a benchmark under
+//! `tools/run_tests.sh`, a run in a new process) starts it again under them
+//! (`zed_meter_settings::start_under_dynamorio`), so that only the tests that measure pay the
+//! slowdown, and the meter of the new image reads the client's count:
 //! an add of a basic block's length to a counter of the thread as the block is entered, the
 //! threads folded into the
 //! thread that started them as they end, as the kernel's count with `inherit` is. DynamoRIO:
@@ -419,13 +421,21 @@ impl Meter {
         stop_unless_the_settings_are_in_effect();
         Self::in_software()
             .or_else(|| Self::open(Hardware::INSTRUCTIONS, "instructions", true))
-            .or_else(|| Self::open(Software::TASK_CLOCK, "ns of processor time", false))
+            .or_else(|| {
+                // The new image runs the process's tests from the start, so only a process that
+                // runs this test alone starts again; the call returns where it does not.
+                if std::thread::current().name().is_some_and(runs_alone) {
+                    zed_meter_settings::start_under_dynamorio();
+                }
+                Self::open(Software::TASK_CLOCK, "ns of processor time", false)
+            })
             .unwrap_or_else(|| no_counter())
     }
 
     /// The instructions the DynamoRIO client `zed_icount` counts, when this process runs under
-    /// it (zed_meter_settings::ZED_METER_DRRUN says when it does). It comes first: the process
-    /// runs under the client only where the hardware counter did not open or did not move, and
+    /// it (zed_meter_settings::start_under_dynamorio says when it does). It comes first: the
+    /// process runs under the client only where the hardware counter did not open or did not
+    /// move, and
     /// a hardware counter that did would count DynamoRIO's own work too.
     #[cfg(target_os = "linux")]
     fn in_software() -> Option<Self> {

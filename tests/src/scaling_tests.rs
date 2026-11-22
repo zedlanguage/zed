@@ -22,6 +22,21 @@ fn fails(run: impl FnOnce()) -> bool {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).is_err()
 }
 
+/// A command that runs this test binary with the meter this process has, for a test that
+/// compares the unit a run prints with this process's `Meter::new`. A process that runs more
+/// than one test does not start again under DynamoRIO (`Meter::new`), and one started with
+/// `--exact` for one test does; so where this process does not count in software, the run is
+/// started without `ZED_METER_DRRUN`, and both measure by the hardware or the task clock. Where
+/// it does, DynamoRIO follows the run's `execve`, or the run starts itself again under it.
+fn this_binary_with_this_meter() -> std::process::Command {
+    let mut command =
+        std::process::Command::new(std::env::current_exe().expect("this test binary"));
+    if zed_alloc_count::os::software_instructions().is_none() {
+        command.env_remove(zed_meter_settings::ZED_METER_DRRUN);
+    }
+    command
+}
+
 #[test]
 fn a_reading_grows_by_the_work_between() {
     let mut m = Meter::new();
@@ -462,7 +477,7 @@ fn bytes_of_the_order_given_pass() {
 /// binary runs `bytes_of_the_order_given_pass` alone, as libtest shows a pass's output.
 #[test]
 fn a_passing_check_prints_its_sizes_work_bytes_and_ratios() {
-    let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+    let run = this_binary_with_this_meter()
         .args([
             "--exact",
             "scaling_tests::bytes_of_the_order_given_pass",
@@ -556,7 +571,7 @@ fn bench_fields(out: &str, what: &str) -> (String, [u64; 2], [u64; 2]) {
 #[test]
 fn each_check_prints_a_bench_line_whose_time_grows_with_the_work() {
     let ratios = std::env::temp_dir().join(format!("zed-bench-line-{}", std::process::id()));
-    let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+    let run = this_binary_with_this_meter()
         .args([
             "--exact",
             "scaling_tests::spins_for_the_bench_line",

@@ -38,9 +38,9 @@
 //! TOOL-meter-reexec-profilers.
 //!
 //! Where the hardware has no counter of instructions and [`ZED_METER_DRRUN`] and
-//! [`ZED_METER_ICOUNT`] name DynamoRIO and its client `zed_icount`, a binary started with
-//! `--exact` starts itself again under them instead, so that its instructions are counted in
-//! software ([`ZED_METER_DRRUN`] says when).
+//! [`ZED_METER_ICOUNT`] name DynamoRIO and its client `zed_icount`, a test that makes a meter
+//! starts the binary again under them, so that its instructions are counted in software
+//! ([`start_under_dynamorio`] says when).
 
 /// The settings, in the form `GLIBC_TUNABLES` takes: `name=value` items joined by `:`.
 ///
@@ -86,16 +86,33 @@ pub const ZED_METER_STARTED_AGAIN: &str = "ZED_METER_STARTED_AGAIN";
 /// software where the hardware has no counter (BENCH-vm-no-instruction-counter; Colab's job.sh
 /// sets both on its VMs, which have no counter).
 ///
-/// When both are set and not empty, the process is started with `--exact` (as a benchmark, a
-/// check's run in a new process and `the_instructions_of_a_run_repeat`'s run start a test binary;
-/// a run of a whole binary is not, so the tests that measure nothing do not pay the slowdown),
-/// it does not run under the client already, and the hardware counter does not open or does not
-/// move, the function in `.init_array` starts the binary again as `drrun -c <client> -- <binary>
-/// <arguments>`, with the settings and the marker as for any start again (still at most once:
-/// the image under the client finds the marker). `zed_tests::scaling::Meter::new` then reads
-/// the client's count. The slowdown and how the count compares with the hardware's are in the
-/// comment at `Meter::new`.
+/// [`start_under_dynamorio`] says when the process starts itself again under them.
 pub const ZED_METER_DRRUN: &str = "ZED_METER_DRRUN";
+
+/// The variable [`start_under_dynamorio`] passes to the process it starts under DynamoRIO, which
+/// that process's function in `.init_array` notes and removes, so that it does not start itself
+/// under DynamoRIO again when the client does not answer: such a start happens at most once.
+pub const ZED_METER_UNDER_DRRUN: &str = "ZED_METER_UNDER_DRRUN";
+
+/// Starts the process again under DynamoRIO, as `drrun -c <client> -- <binary> <arguments>` with
+/// [`ZED_METER_DRRUN`] and [`ZED_METER_ICOUNT`], when both are set and not empty, the process was
+/// started with `--exact`, it does not run under the client already (the client's system call
+/// does not answer) and was not started by this function, and the hardware counter of
+/// instructions does not open or does not move. It returns only when it does not start the
+/// process again, or `execve` fails. Linux with glibc only; elsewhere it does nothing.
+///
+/// `zed_tests::scaling::Meter::new` calls it where it finds neither count, so only a test that
+/// makes a meter pays the slowdown, in the process it runs in: the new image runs the same test
+/// (`--exact`) from its start, and its meter reads the client's count. A benchmark, a check's
+/// run in a new process and `the_instructions_of_a_run_repeat`'s run each start a test binary
+/// with `--exact`. Until 2026-11-22 the function in `.init_array` started every `--exact` run
+/// under DynamoRIO; a test farm runs each test that way, and the tests that measure nothing ran
+/// 7.3 times slower there, so 94 of 3059 failed, most of them by their time limit (merge check of
+/// b22-meter1). The slowdown and how the count compares with the hardware's are in the comment at
+/// `zed_tests::scaling`.
+pub fn start_under_dynamorio() {
+    imp::start_under_dynamorio()
+}
 
 /// The variable that names the DynamoRIO client `libzed_icount.so`; see [`ZED_METER_DRRUN`].
 pub const ZED_METER_ICOUNT: &str = "ZED_METER_ICOUNT";
@@ -390,6 +407,16 @@ mod imp {
         });
         let held = tunables.as_deref().is_some_and(holds_the_settings);
         IN_EFFECT.store(held && !secure, Relaxed);
+        let under = super::ZED_METER_UNDER_DRRUN.as_bytes();
+        if env.iter().any(|e| {
+            e.strip_prefix(under)
+                .is_some_and(|r| r.first() == Some(&b'='))
+        }) {
+            STARTED_UNDER_DYNAMORIO.store(true, Relaxed);
+            // SAFETY: the calling thread is the only one (checked at the top), and `envp`'s
+            // strings were copied into `env` above.
+            unsafe { std::env::remove_var(super::ZED_METER_UNDER_DRRUN) };
+        }
         if let Some(name) = again {
             if !name.is_empty() {
                 let name = CString::new(name).expect("an environment string has no NUL");
@@ -404,13 +431,7 @@ mod imp {
             unsafe { std::env::remove_var(ZED_METER_STARTED_AGAIN) };
             return;
         }
-        if secure || running_on_valgrind() {
-            return;
-        }
-        // SAFETY: as for `envp` above: glibc's null-ended vector of NUL-ended strings.
-        let args = unsafe { strings(argv) };
-        let dynamorio = under_dynamorio(&env, &args);
-        if held && dynamorio.is_none() {
+        if secure || running_on_valgrind() || held {
             return;
         }
         // The kernel's name of the process, at most 15 bytes and a NUL.
@@ -429,62 +450,77 @@ mod imp {
         new_env.push(CString::new(marker).expect("no NUL"));
         let mut ptrs: Vec<*const c_char> = new_env.iter().map(|c| c.as_ptr()).collect();
         ptrs.push(std::ptr::null());
-        if let Some((drrun, client)) = dynamorio {
-            // `drrun -c <client> -- <this binary> <its arguments>`. The binary is named by the
-            // file `/proc/self/exe` links to, read here: under DynamoRIO the process is started by
-            // drrun, and the second image must not start drrun again by that name. When the link
-            // cannot be read, or `execve` fails, the process goes on without DynamoRIO.
-            let exe = std::fs::read_link("/proc/self/exe")
-                .ok()
-                .and_then(|p| CString::new(p.into_os_string().into_encoded_bytes()).ok());
-            if let Some(exe) = exe {
-                let mut dargs = vec![
-                    drrun.clone(),
-                    c"-c".to_owned(),
-                    client,
-                    c"--".to_owned(),
-                    exe,
-                ];
-                dargs.extend(
-                    args.iter()
-                        .skip(1)
-                        .map(|a| CString::new(a.as_slice()).expect("an argument has no NUL")),
-                );
-                let mut dptrs: Vec<*const c_char> = dargs.iter().map(|c| c.as_ptr()).collect();
-                dptrs.push(std::ptr::null());
-                // SAFETY: `dptrs` and `ptrs` are null-ended and point into `dargs` and `new_env`,
-                // which live across the call. execve returns only on failure.
-                unsafe { libc::execve(drrun.as_ptr(), dptrs.as_ptr(), ptrs.as_ptr()) };
-            }
-            if held {
-                return;
-            }
-        }
         // SAFETY: `argv` is the program's own null-ended vector, and `ptrs` is null-ended and
         // points into `new_env`, which lives across the call. execve returns only on failure;
         // the process then goes on without the settings, and `in_effect` says so.
         unsafe { libc::execve(c"/proc/self/exe".as_ptr(), argv, ptrs.as_ptr()) };
     }
 
-    /// The `drrun` and client to start this process under, when it is to count its instructions
-    /// in software (see [`super::ZED_METER_DRRUN`]): both variables are set and not empty, the
-    /// arguments hold `--exact`, the process does not run under the client already (its system
-    /// call does not answer), and the hardware counter of instructions does not open or does not
-    /// move.
-    fn under_dynamorio(env: &[Vec<u8>], args: &[Vec<u8>]) -> Option<(CString, CString)> {
+    /// Set by [`start`] when the process was started by [`start_under_dynamorio`], so that it
+    /// does not start itself under DynamoRIO a second time when the client does not answer.
+    static STARTED_UNDER_DYNAMORIO: AtomicBool = AtomicBool::new(false);
+
+    /// See [`super::start_under_dynamorio`].
+    pub(super) fn start_under_dynamorio() {
         let var = |name: &str| {
-            env.iter()
-                .rev()
-                .find_map(|e| e.strip_prefix(name.as_bytes())?.strip_prefix(b"="))
+            std::env::var_os(name)
                 .filter(|v| !v.is_empty())
-                .map(|v| CString::new(v).expect("an environment string has no NUL"))
+                .and_then(|v| CString::new(v.into_encoded_bytes()).ok())
         };
-        let drrun = var(super::ZED_METER_DRRUN)?;
-        let client = var(super::ZED_METER_ICOUNT)?;
-        (args.iter().skip(1).any(|a| a == b"--exact")
-            && zed_alloc_count::os::software_instructions().is_none()
-            && !hardware_counter_moves())
-        .then_some((drrun, client))
+        let (Some(drrun), Some(client)) =
+            (var(super::ZED_METER_DRRUN), var(super::ZED_METER_ICOUNT))
+        else {
+            return;
+        };
+        let args: Vec<CString> = std::env::args_os()
+            .filter_map(|a| CString::new(a.into_encoded_bytes()).ok())
+            .collect();
+        if STARTED_UNDER_DYNAMORIO.load(Relaxed)
+            || !args.iter().skip(1).any(|a| a.as_bytes() == b"--exact")
+            || zed_alloc_count::os::software_instructions().is_some()
+            || hardware_counter_moves()
+        {
+            return;
+        }
+        // `drrun -c <client> -- <this binary> <its arguments>`. The binary is named by the file
+        // `/proc/self/exe` links to, read here, since the new process is drrun's. The environment
+        // is this one, which holds the settings (the caller checks `in_effect` first), with the
+        // marker of a start again, so that the new image's `start` sets the name back and does
+        // not start again, and [`super::ZED_METER_UNDER_DRRUN`], so that it does not come here
+        // again. Each argument and variable came from a NUL-ended string, so `CString::new`
+        // drops none of them (`filter_map` above, `flat_map` below).
+        let Some(exe) = std::fs::read_link("/proc/self/exe")
+            .ok()
+            .and_then(|p| CString::new(p.into_os_string().into_encoded_bytes()).ok())
+        else {
+            return;
+        };
+        let mut name = [0u8; 16];
+        // SAFETY: PR_GET_NAME writes at most 16 bytes, NUL included, to the buffer.
+        unsafe { libc::prctl(libc::PR_GET_NAME, name.as_mut_ptr()) };
+        let name = CStr::from_bytes_until_nul(&name).map_or(&[][..], CStr::to_bytes);
+        let mut env: Vec<CString> = std::env::vars_os()
+            .flat_map(|(k, v)| {
+                CString::new([k.as_encoded_bytes(), b"=", v.as_encoded_bytes()].concat())
+            })
+            .collect();
+        env.push(
+            CString::new([ZED_METER_STARTED_AGAIN.as_bytes(), b"=", name].concat())
+                .expect("no NUL"),
+        );
+        env.push(CString::new(format!("{}=1", super::ZED_METER_UNDER_DRRUN)).expect("no NUL"));
+        let mut ptrs: Vec<*const c_char> = env.iter().map(|c| c.as_ptr()).collect();
+        ptrs.push(std::ptr::null());
+        let mut dargs = vec![drrun, c"-c".to_owned(), client, c"--".to_owned(), exe];
+        dargs.extend(args.into_iter().skip(1));
+        let mut dptrs: Vec<*const c_char> = dargs.iter().map(|c| c.as_ptr()).collect();
+        dptrs.push(std::ptr::null());
+        // Output written before this point, such as the test harness's "running 1 test", is
+        // written once more by the new image; std's stdout is flushed at each line, so none is
+        // lost. SAFETY: `dptrs` and `ptrs` are null-ended and point into `dargs` and `env`,
+        // which live across the call. execve returns only on failure, and the kernel ends the
+        // other threads of the process when it succeeds.
+        unsafe { libc::execve(dargs[0].as_ptr(), dptrs.as_ptr(), ptrs.as_ptr()) };
     }
 
     /// Whether `perf_event_open` opens the hardware counter of the instructions this thread runs
@@ -500,7 +536,7 @@ mod imp {
     /// (bit 5) and `exclude_hv` (bit 6) in declaration order. GCC places the first bit field of a
     /// unit at its least significant bit on a little-endian target and at its most significant
     /// bit on a big-endian one (the System V ABIs of x86_64, AArch64 and RISC-V are little-endian;
-    /// s390x and big-endian PowerPC, where `start` also runs, are not), so bit `k` is `1 << k` or
+    /// s390x and big-endian PowerPC, where this crate also builds, are not), so bit `k` is `1 << k` or
     /// `1 << (63 - k)` by `target_endian`; `disabled` (bit 0) is clear, so the counter counts from
     /// the call on. pid 0 and cpu -1: this thread, on any processor. Run only on x86_64 Colab VMs,
     /// where the counter does not open (strace of 2026-11-22 shows the start under drrun that
@@ -695,6 +731,8 @@ mod imp {
     pub(super) fn threads_at_start() -> Option<usize> {
         None
     }
+
+    pub(super) fn start_under_dynamorio() {}
 
     pub(super) fn running_on_valgrind() -> bool {
         false

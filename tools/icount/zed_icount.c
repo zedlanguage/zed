@@ -5,8 +5,8 @@
  * so that the scaling tests (zed_tests::scaling, Meter::new) count instructions there too.
  *
  * Built by tools/icount/build.sh against a DynamoRIO release; started by the crate
- * zed-meter-settings, which runs a test binary under `drrun -c libzed_icount.so --` when the
- * hardware counter is missing (see its module comment).
+ * zed-meter-settings (start_under_dynamorio), which a scaling test's meter calls to run its
+ * test binary again under `drrun -c libzed_icount.so --` when the hardware counter is missing.
  *
  * Prior work (checked 2026-11-22):
  * - DynamoRIO: D. Bruening, T. Garnett, S. Amarasinghe, "An infrastructure for adaptive
