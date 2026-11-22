@@ -615,16 +615,57 @@ mod tests {
     /// at least one (pigeonhole). A run once found 4 tied digests at 4 bits where the test
     /// asked for exactly 16 (row FAIL-bytype-forced-tie-count); the seed of that run was drawn
     /// at random and not kept, and the 2-bit map meets at most 4 tied digests in every run.
+    /// The short-addresses build, whose name digests keep 8 bits (232 distinct among the 600
+    /// atoms), is where it fails: of the seeds 0 to 999,999 there, 74,095 give fewer than 16
+    /// tied digests at 4 bits, 1880 gives 4 and 33168 gives 1 (all 600 keys in one digest); of
+    /// 0 to 199,999 in the normal build, none. Those two seeds are fixed cases in the test
+    /// below.
     #[test]
     fn a_map_by_type_whose_digests_are_forced_to_tie_agrees_with_an_ordered_map() {
         assert_eq!(same_as_an_ordered_map(ByType::with_mask(0)), 1);
         let four_bits = same_as_an_ordered_map(ByType::with_mask(0xF));
+        println!("four bits: {four_bits} tied");
         assert!(
             (1..=16).contains(&four_bits),
             "{four_bits} tied digests of 16"
         );
         let two_bits = same_as_an_ordered_map(ByType::with_mask(0xC));
         assert!((1..=4).contains(&two_bits), "{two_bits} tied digests of 4");
+    }
+
+    /// The test above at the two seeds that failed the old count (row
+    /// FAIL-bytype-forced-tie-count), each in a child process of this test binary, since
+    /// `ZED_TEXT_SEED` is read once per process (as in `digest::tests`). Red on the test that
+    /// asked for exactly 16: in the short-addresses build, seed 1880 gave 4 and seed 33168 gave
+    /// 1. In that build the child must still meet fewer than 16 tied digests, so the case keeps
+    /// testing a short count; if a change to the digests moves that, pick new seeds with a scan
+    /// of `ZED_TEXT_SEED`. In the normal build the seeds give 16 and the case only checks that
+    /// the test passes.
+    #[test]
+    fn a_map_by_type_forced_to_tie_agrees_at_the_seeds_that_tie_fewer_digests() {
+        const TEST: &str = "types::empty::shared::tests::\
+            a_map_by_type_whose_digests_are_forced_to_tie_agrees_with_an_ordered_map";
+        for seed in ["1880", "33168"] {
+            let out = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--test-threads=1", "--nocapture"])
+                .env("ZED_TEXT_SEED", seed)
+                .output()
+                .unwrap();
+            let text = String::from_utf8_lossy(&out.stdout);
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "ZED_TEXT_SEED={seed}: {text}{err}");
+            let tied: usize = text
+                .split_once("four bits: ")
+                .and_then(|(_, t)| t.split_once(' '))
+                .and_then(|(n, _)| n.parse().ok())
+                .unwrap_or_else(|| panic!("ZED_TEXT_SEED={seed}: no count in {text}"));
+            if cfg!(feature = "short-addresses") {
+                assert!(
+                    tied < 16,
+                    "ZED_TEXT_SEED={seed}: {tied} tied, no longer short"
+                );
+            }
+        }
     }
 
     /// Runs the operations on `m` and a `BTreeMap` side by side, and gives the number of
