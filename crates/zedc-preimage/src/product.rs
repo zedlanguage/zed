@@ -7650,20 +7650,6 @@ impl Block {
         let neg_v = *lv == End::NegInf && uv_rows_full.iter().all(|(r, _)| r[1].is_negative());
         let pos_u = *hu == End::PosInf && uv_rows_full.iter().all(|(r, _)| r[0].is_positive());
         let neg_u = *lu == End::NegInf && uv_rows_full.iter().all(|(r, _)| r[0].is_negative());
-        let push_box_normals = |normals: &mut Vec<[Int; 2]>| {
-            if *lu != End::NegInf {
-                normals.push([Int::ONE, Int::ZERO]);
-            }
-            if *hu != End::PosInf {
-                normals.push([-&Int::ONE, Int::ZERO]);
-            }
-            if *lv != End::NegInf {
-                normals.push([Int::ZERO, Int::ONE]);
-            }
-            if *hv != End::PosInf {
-                normals.push([Int::ZERO, -&Int::ONE]);
-            }
-        };
         let mut out = Vec::new();
         if has_hub {
             if (!pos_v && !neg_v) || (!pos_u && !neg_u) || aux_rows.len() > 1 {
@@ -7715,7 +7701,7 @@ impl Block {
                 let mut normals = Vec::with_capacity(uv_rows_full.len() + 5);
                 normals.push(p_uv.clone());
                 normals.extend(uv_rows_full.iter().map(|(r, _)| r.clone()));
-                push_box_normals(&mut normals);
+                push_box_normals(&mut normals, [lu, hu, lv, hv]);
                 if let Some((r1, r2)) = open_cone_sector(&normals) {
                     for b in &hub_buckets {
                         b.report_sector(&r1, &r2, &mut out);
@@ -7755,41 +7741,7 @@ impl Block {
                         };
                         Int::from(hi)
                     };
-                    let mut q_rows: Vec<(Vec<(usize, Int)>, Int)> =
-                        Vec::with_capacity(uv_rows_full.len() + 5);
-                    if let End::Fin(lo) = lu {
-                        q_rows.push((vec![(0, Int::ONE)], -&Int::from(lo)));
-                    }
-                    if let End::Fin(hi) = hu {
-                        q_rows.push((vec![(0, -&Int::ONE)], Int::from(hi)));
-                    }
-                    if let End::Fin(lo) = lv {
-                        q_rows.push((vec![(1, Int::ONE)], -&Int::from(lo)));
-                    }
-                    if let End::Fin(hi) = hv {
-                        q_rows.push((vec![(1, -&Int::ONE)], Int::from(hi)));
-                    }
-                    for (r, c) in &uv_rows_full {
-                        let mut ts = Vec::with_capacity(2);
-                        if !r[0].is_zero() {
-                            ts.push((0, r[0].clone()));
-                        }
-                        if !r[1].is_zero() {
-                            ts.push((1, r[1].clone()));
-                        }
-                        q_rows.push((ts, c.clone()));
-                    }
-                    let mut leaf_ts = Vec::with_capacity(2);
-                    if !p_uv[0].is_zero() {
-                        leaf_ts.push((0, p_uv[0].clone()));
-                    }
-                    if !p_uv[1].is_zero() {
-                        leaf_ts.push((1, p_uv[1].clone()));
-                    }
-                    q_rows.push((leaf_ts, aux_c + &(s * &w_end)));
-                    let refs: Vec<(&[(usize, Int)], &Int)> =
-                        q_rows.iter().map(|(t, c)| (&t[..], c)).collect();
-                    zedc_solvers::twovar::point(&refs, 0, Some(1), false)?;
+                    box_point([lu, hu, lv, hv], &uv_rows_full, p_uv, aux_c + &(s * &w_end))?;
                     let t = TurnEnd::At(d);
                     for b in &hub_buckets {
                         b.linear.report(&t, &t, &mut out);
@@ -7815,7 +7767,7 @@ impl Block {
                 let mut normals: Vec<[Int; 2]> =
                     aux_rows.iter().map(|(_, p, _)| p.clone()).collect();
                 normals.extend(uv_rows_full.iter().map(|(r, _)| r.clone()));
-                push_box_normals(&mut normals);
+                push_box_normals(&mut normals, [lu, hu, lv, hv]);
                 if normals.is_empty() {
                     return None;
                 }
@@ -7833,7 +7785,7 @@ impl Block {
                 let mut normals: Vec<[Int; 2]> =
                     aux_rows.iter().map(|(_, p, _)| p.clone()).collect();
                 normals.extend(uv_rows_full.iter().map(|(r, _)| r.clone()));
-                push_box_normals(&mut normals);
+                push_box_normals(&mut normals, [lu, hu, lv, hv]);
                 if normals.is_empty() {
                     return None;
                 }
@@ -23116,18 +23068,7 @@ impl HalfLineContext {
             let mut normals: Vec<[Int; 2]> = Vec::with_capacity(uv_rows.len() + 5);
             normals.push(p_uv.clone());
             normals.extend(uv_rows.iter().map(|(r, _)| r.clone()));
-            if *lu != End::NegInf {
-                normals.push([Int::ONE, Int::ZERO]);
-            }
-            if *hu != End::PosInf {
-                normals.push([-&Int::ONE, Int::ZERO]);
-            }
-            if *lv != End::NegInf {
-                normals.push([Int::ZERO, Int::ONE]);
-            }
-            if *hv != End::PosInf {
-                normals.push([Int::ZERO, -&Int::ONE]);
-            }
+            push_box_normals(&mut normals, [lu, hu, lv, hv]);
             // `Q(w_end)` below holds every base row on `u`, `v`, `w`, by the loop over
             // `base_items` above (the same split as `Block::recession_uncertified`'s): rows on
             // none of them share no name with them; rows on them are `>=` over them alone,
@@ -23135,40 +23076,7 @@ impl HalfLineContext {
             // `uv_rows`. `is_idle` needs an arm for every ray, `d` among them, so a part is
             // certified only through `d` as well, which keeps the leaf row for every `w`.
             let d = closed_cone_ray(&normals)?;
-            let mut q_rows: Vec<(Vec<(usize, Int)>, Int)> = Vec::with_capacity(uv_rows.len() + 5);
-            if let End::Fin(lo) = lu {
-                q_rows.push((vec![(0, Int::ONE)], -&Int::from(lo)));
-            }
-            if let End::Fin(hi) = hu {
-                q_rows.push((vec![(0, -&Int::ONE)], Int::from(hi)));
-            }
-            if let End::Fin(lo) = lv {
-                q_rows.push((vec![(1, Int::ONE)], -&Int::from(lo)));
-            }
-            if let End::Fin(hi) = hv {
-                q_rows.push((vec![(1, -&Int::ONE)], Int::from(hi)));
-            }
-            for (r, c) in &uv_rows {
-                let mut ts = Vec::with_capacity(2);
-                if !r[0].is_zero() {
-                    ts.push((0, r[0].clone()));
-                }
-                if !r[1].is_zero() {
-                    ts.push((1, r[1].clone()));
-                }
-                q_rows.push((ts, c.clone()));
-            }
-            let mut leaf_ts = Vec::with_capacity(2);
-            if !p_uv[0].is_zero() {
-                leaf_ts.push((0, p_uv[0].clone()));
-            }
-            if !p_uv[1].is_zero() {
-                leaf_ts.push((1, p_uv[1].clone()));
-            }
-            q_rows.push((leaf_ts, rhs0.clone()));
-            let refs: Vec<(&[(usize, Int)], &Int)> =
-                q_rows.iter().map(|(t, c)| (&t[..], c)).collect();
-            zedc_solvers::twovar::point(&refs, 0, Some(1), false)?;
+            box_point([lu, hu, lv, hv], &uv_rows, p_uv, rhs0.clone())?;
             rays.push(d.0);
         }
         Some(HalfLineContext {
@@ -24525,6 +24433,62 @@ fn open_cone_sector(normals: &[[Int; 2]]) -> Option<(Turn, Turn)> {
 }
 
 /// A nonzero ray `d` in the closed 2D recession cone
+/// The inward normals of the box `lu <= u <= hu`, `lv <= v <= hv` at its finite ends, `u`
+/// first. Shared by `Block::recession_cone_uncertified` and `HalfLineContext::of`, which kept
+/// two copies before DRY-misc-A5 (REPORT-dryA5 row 20).
+fn push_box_normals(normals: &mut Vec<[Int; 2]>, [lu, hu, lv, hv]: [&End; 4]) {
+    if *lu != End::NegInf {
+        normals.push([Int::ONE, Int::ZERO]);
+    }
+    if *hu != End::PosInf {
+        normals.push([-&Int::ONE, Int::ZERO]);
+    }
+    if *lv != End::NegInf {
+        normals.push([Int::ZERO, Int::ONE]);
+    }
+    if *hv != End::PosInf {
+        normals.push([Int::ZERO, -&Int::ONE]);
+    }
+}
+
+/// An integer point `(u, v)` of the box `lu <= u <= hu`, `lv <= v <= hv` that meets every row
+/// `r · (u, v) + c >= 0` of `uv_rows` and the leaf row `p_uv · (u, v) + leaf_c >= 0`, by
+/// [`zedc_solvers::twovar::point`]; `None` when there is none. The witness that a ray from
+/// [`closed_cone_ray`] starts at a point of the base at the leaf's finite end. Shared by
+/// `Block::recession_cone_uncertified` and `HalfLineContext::of`, which kept two copies before
+/// DRY-misc-A5 (REPORT-dryA5 row 20); they differ only in the leaf row's constant.
+fn box_point(
+    [lu, hu, lv, hv]: [&End; 4],
+    uv_rows: &[([Int; 2], Int)],
+    p_uv: &[Int; 2],
+    leaf_c: Int,
+) -> Option<()> {
+    // A row's terms: its nonzero coefficients, by the index of `u` (0) or `v` (1).
+    let terms = |r: &[Int; 2]| -> Vec<(usize, Int)> {
+        (0..2)
+            .filter(|&i| !r[i].is_zero())
+            .map(|i| (i, r[i].clone()))
+            .collect()
+    };
+    let mut q_rows: Vec<(Vec<(usize, Int)>, Int)> = Vec::with_capacity(uv_rows.len() + 5);
+    if let End::Fin(lo) = lu {
+        q_rows.push((vec![(0, Int::ONE)], -&Int::from(lo)));
+    }
+    if let End::Fin(hi) = hu {
+        q_rows.push((vec![(0, -&Int::ONE)], Int::from(hi)));
+    }
+    if let End::Fin(lo) = lv {
+        q_rows.push((vec![(1, Int::ONE)], -&Int::from(lo)));
+    }
+    if let End::Fin(hi) = hv {
+        q_rows.push((vec![(1, -&Int::ONE)], Int::from(hi)));
+    }
+    q_rows.extend(uv_rows.iter().map(|(r, c)| (terms(r), c.clone())));
+    q_rows.push((terms(p_uv), leaf_c));
+    let refs: Vec<(&[(usize, Int)], &Int)> = q_rows.iter().map(|(t, c)| (&t[..], c)).collect();
+    zedc_solvers::twovar::point(&refs, 0, Some(1), false).map(|_| ())
+}
+
 /// `{ d != 0 : n · d >= 0 for all n in normals }`,
 /// or `None` when that closed cone is `{0}`. Used when `open_cone_sector` is empty (e.g., opposing
 /// normals `[-1, -1]` and `[1, 1]` in `persist`) together with an explicit integer feasibility

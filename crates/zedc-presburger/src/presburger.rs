@@ -10985,20 +10985,7 @@ fn pick_reading<'a>(
     // Whether no disjunct has been taken on the projection's word, so that this reading has
     // run as the slow one would ([`pick_reading`]).
     let mut never_invalid = true;
-    let keep: Vec<BTreeSet<Atom>> = if asks {
-        (batch.iter())
-            .map(|ds| {
-                (ds.iter())
-                    .flat_map(|d| d.cons.iter().flat_map(|c| c.lin.terms.keys().cloned()))
-                    .collect()
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let rows: Vec<Con> = (acc.around_atoms(keep.iter().flatten()).into_iter())
-        .cloned()
-        .collect();
+    let (keep, rows) = cover_rows(&acc, asks, batch.iter().copied());
     // Reads the disjunction at `i` and the disjunctions below the disjuncts it takes, given the
     // constraints taken projected onto its atoms (`None`: not known), and returns the
     // constraints it takes. The model is a point of the constraints taken throughout.
@@ -11238,11 +11225,7 @@ fn pick_reading<'a>(
             }
             Ok(added)
         };
-    if asks {
-        by_halves_lazy(rows, &keep, &mut one)?;
-    } else {
-        (0..batch.len()).try_for_each(|i| one(i, &mut || None).map(drop))?;
-    }
+    read_cover(asks, rows, &keep, batch.len(), &mut one)?;
     if !valid {
         model = solve_repair(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
     }
@@ -12180,6 +12163,51 @@ fn by_halves<E>(
     mut leaf: impl FnMut(usize, Option<Vec<Con>>) -> Result<Vec<Con>, E>,
 ) -> Result<(), E> {
     by_halves_lazy(rows, keep, |i, k| leaf(i, k()))
+}
+
+/// For a reading of the disjunctions `dss` against the constraints `acc`: with `asks`, the
+/// atoms of each disjunction's own constraints, onto which [`by_halves_lazy`] projects, and the
+/// constraints of `acc` in their groups, which it projects; without, nothing. Shared with
+/// [`read_cover`] by [`pick_reading`] and [`settle`], two copies before DRY-misc-A5
+/// (REPORT-dryA5 row 23); what each does with a disjunction differs and stays at each.
+fn cover_rows<'a>(
+    acc: &Linked,
+    asks: bool,
+    dss: impl Iterator<Item = &'a [Rc<Parts>]>,
+) -> (Vec<BTreeSet<Atom>>, Vec<Con>) {
+    if !asks {
+        return (Vec::new(), Vec::new());
+    }
+    let keep: Vec<BTreeSet<Atom>> = dss
+        .map(|ds| {
+            (ds.iter())
+                .flat_map(|d| d.cons.iter().flat_map(|c| c.lin.terms.keys().cloned()))
+                .collect()
+        })
+        .collect();
+    let rows = (acc.around_atoms(keep.iter().flatten()).into_iter())
+        .cloned()
+        .collect();
+    (keep, rows)
+}
+
+/// Reads the `n` disjunctions of a cover by `leaf`: with `asks`, by halves
+/// ([`by_halves_lazy`] over `rows` and `keep` from [`cover_rows`]), so a leaf can ask for the
+/// constraints projected onto its disjunction's atoms; without, in order, each leaf told that
+/// no projection is known. Stops at the first error. Shared by [`pick_reading`] (whose error is
+/// a [`Refusal`]) and [`settle`] (whose error is `()`, a disjunction with no disjunct left).
+fn read_cover<E>(
+    asks: bool,
+    rows: Vec<Con>,
+    keep: &[BTreeSet<Atom>],
+    n: usize,
+    mut leaf: impl FnMut(usize, &mut dyn FnMut() -> Option<Vec<Con>>) -> Result<Vec<Con>, E>,
+) -> Result<(), E> {
+    if asks {
+        by_halves_lazy(rows, keep, leaf)
+    } else {
+        (0..n).try_for_each(|i| leaf(i, &mut || None).map(drop))
+    }
 }
 
 /// [`by_halves`] with each leaf given a function that makes its projection, so that a leaf
@@ -14989,20 +15017,7 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                 });
             // The atoms of each disjunction's own constraints, onto which [`by_halves`]
             // projects the base for its questions.
-            let keep: Vec<BTreeSet<Atom>> = if asks {
-                (todo[next..end].iter())
-                    .map(|ds| {
-                        (ds.iter())
-                            .flat_map(|d| d.cons.iter().flat_map(|c| c.lin.terms.keys().cloned()))
-                            .collect()
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            let rows: Vec<Con> = (base.around_atoms(keep.iter().flatten()).into_iter())
-                .cloned()
-                .collect();
+            let (keep, rows) = cover_rows(&base, asks, todo[next..end].iter().map(Vec::as_slice));
             // Tests the disjunction at `i`, given a function that makes the base projected onto
             // its atoms (`None`: not known), asked only when a disjunct needs it, and returns
             // the constraints it adds to the base.
@@ -15137,11 +15152,7 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
                     }
                 }
             };
-            let done = if asks {
-                by_halves_lazy(rows, &keep, |i, k| one(next + i, k))
-            } else {
-                (next..end).try_for_each(|i| one(i, &mut || None).map(drop))
-            };
+            let done = read_cover(asks, rows, &keep, end - next, |i, k| one(next + i, k));
             if done.is_err() {
                 return Ok(None);
             }
