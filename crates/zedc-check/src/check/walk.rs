@@ -2635,6 +2635,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             if let Some((callee, ops)) = ops {
                 self.group_arg_ops(before, &callee, ops);
             }
+            // The whole value of a binding meets nothing that gives it a carrier (QUESTIONS
+            // A61, [`Ck::lit_uncarried`]).
+            self.lit_uncarried_within(value);
         } else {
             let names: Vec<&str> = targets.iter().map(name).collect();
             let bound = format!("the binding of `{}`", names.join(", "));
@@ -2649,6 +2652,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             if !rejected.is_empty() {
                 self.reject_bound(before, rejected, parts(), &what);
             }
+            // As outside every function: the bound value meets nothing that gives it a
+            // carrier, and the binding fixes it to `int` (QUESTIONS A61, A63).
+            self.lit_uncarried_within(value);
             // The name reads as the carrier it takes, as one outside every function does: a
             // use of it then meets an `int`, not a class it could narrow.
             v = v.replace_outside(&binds);
@@ -7037,10 +7043,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             (false, true) => (y, &*x),
             _ => return,
         };
-        let Some(c) = other.ty.numeric_carrier().filter(|&c| c != Carrier::Int) else {
+        let Some(e) = side.expr else {
             return;
         };
-        let Some(e) = side.expr else {
+        // An operand with no numeric carrier gives the operation none: it is an `int`
+        // (QUESTIONS A61, [`Ck::lit_uncarried`]).
+        if other.ty.numeric_carrier().is_none() && other.lit.is_none() {
+            self.lit_uncarried_within(e);
+        }
+        let Some(c) = other.ty.numeric_carrier().filter(|&c| c != Carrier::Int) else {
             return;
         };
         if self.lit_takes(e, c) {
@@ -7077,6 +7088,44 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut todo = vec![e];
         while let Some(e) = todo.pop() {
             if literal(e, None).is_some() || !self.lit_open.insert(e.span) {
+                continue;
+            }
+            match &e.kind {
+                ExprKind::Binary(_, a, b) => todo.extend([&**a, &**b]),
+                ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
+                _ => {}
+            }
+        }
+    }
+
+    /// `e`, an operation on integer literals alone that nothing gives a carrier, and each
+    /// operation in it, recorded as such ([`Ck::lit_uncarried`]): each is an `int`, and a step
+    /// that names one says why (QUESTIONS A61).
+    fn lit_uncarried_within(&mut self, e: &Expr) {
+        // Outside every function such an operation is an `int`. In a body one bound to a name
+        // is fixed to `int` there (QUESTIONS A63), and an operand is a class of carriers,
+        // which the step shows by its carriers, so [`Ck::derive_into`] reads the record only
+        // of an operation whose type is `int`. A trial records nothing, as nothing undoes it.
+        // Each operation is entered once, and the walk stops at one entered already, whose
+        // operations are entered too, as in [`Self::lit_open_within`]: O(size of `e`) over
+        // all calls.
+        // In a body [`Ck::lit_ops`] records nothing, which is filled outside every function
+        // alone, so there the value is read as such an operation where it is one of bare
+        // integer literals alone, with no `/`, decimal or `rat` literal ([`literals_alone`]).
+        let alone = !self.lit_ops.contains(&e.span)
+            && literals_alone(e, None).is_some_and(|(ls, rat)| {
+                !rat && !ls.is_empty() && ls.iter().all(|l| l.bare && !is_decimal(&l.value))
+            });
+        if self.trying || !(alone || self.lit_ops.contains(&e.span)) {
+            return;
+        }
+        let mut todo = vec![e];
+        while let Some(e) = todo.pop() {
+            if literal(e, None).is_some()
+                || !(alone || self.lit_ops.contains(&e.span))
+                || self.lit_open.contains(&e.span)
+                || !self.lit_uncarried.insert(e.span)
+            {
                 continue;
             }
             match &e.kind {

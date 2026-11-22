@@ -2302,6 +2302,15 @@ struct Ck<'t, 'a> {
     /// ([`Ck::derive_into`]). An operation that takes a carrier leaves the set
     /// ([`Ck::lit_takes`]).
     lit_open: HashSet<Span>,
+    /// The operations of [`Ck::lit_ops`] that nothing gives a carrier, so each is an `int`
+    /// where its type is `int`: the whole value of a binding, as `1 + 2` in `s = 1 + 2;`, an
+    /// operand of an operator whose other operand has no numeric carrier, as `1 + 2` in
+    /// `y = (1 + 2) * "a";`, and the operations in those ([`Ck::lit_uncarried_within`]). A step
+    /// of a derivation says why such an operation is an `int` and what follows from it
+    /// (DESIGN.md sec:diagnostics, QUESTIONS A61). Which operations are such is read off the
+    /// text and the other operand's type, so an entry a repair's trial wrote is not kept
+    /// (the writers skip a trial).
+    lit_uncarried: HashSet<Span>,
     /// Each operation on integer literals alone that is a branch of an `if` and keeps its
     /// value there ([`Ck::kept`]), by its span: the class of literals it makes. Written when
     /// the `if` is typed, just before the `if`, as an argument, reads it (`branch_lits` in
@@ -3267,6 +3276,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             lit_ops: HashSet::new(),
             lit_reads: Vec::new(),
             lit_open: HashSet::new(),
+            lit_uncarried: HashSet::new(),
             kept_ops: HashMap::new(),
             lit_written: HashMap::new(),
             lit_order: Vec::new(),
@@ -4509,7 +4519,24 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // program yet ([`Ck::lit_open`]); the type found for it is not the
                     // program's, so the step names none (DESIGN.md sec:diagnostics, "A `/`
                     // of integer literals").
+                    // One that nothing gives a carrier is an `int`, and the step says why
+                    // (DESIGN.md sec:diagnostics, after the `q` example; QUESTIONS A61).
+                    let verb_of = |e: &Expr| match &e.kind {
+                        ExprKind::Binary(BinaryOp::Add, ..) => Some("adds"),
+                        ExprKind::Binary(BinaryOp::Sub, ..) => Some("subtracts"),
+                        ExprKind::Binary(BinaryOp::Mul, ..) => Some("multiplies"),
+                        ExprKind::Binary(BinaryOp::Pow, ..) => Some("takes a power of"),
+                        ExprKind::Unary(UnaryOp::Neg, _) => Some("negates"),
+                        _ => None,
+                    };
+                    let uncarried = (ty == "int" && self.lit_uncarried.contains(&span))
+                        .then(|| verb_of(e))
+                        .flatten();
                     let text = match (&e.kind, self.lit_open.contains(&span)) {
+                        (_, false) if let Some(verb) = uncarried => format!(
+                            "{what} {verb} integer literals alone, so it is a literal too; \
+                             nothing here gives it a carrier, so it is an `int`"
+                        ),
                         (_, false) if untyped => format!("{what} has no type yet"),
                         (_, false) => format!("{what} {verb} {ty}"),
                         (ExprKind::Binary(BinaryOp::Div, ..), true) => format!(
@@ -4576,6 +4603,35 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             stack.extend(next.into_iter().rev());
         }
+    }
+
+    /// The type a message prints for the argument `a` where it is an operation on literals
+    /// alone that met no carrier ([`Ck::lit_open`]), or a name defined as one
+    /// ([`Self::defined_open`]): the union of the carriers it can still take, `f64 | rat` for
+    /// `1 / 2` in `y = (1 / 2) * "a";` and for `q` in `q = (1 + 2) / (3 + 4); z = q * "a";`
+    /// (DESIGN.md sec:diagnostics, "Types in a message"; QUESTIONS A60). The type the walk
+    /// kept for it is the arrow kept after its rejection or no value, `f64` or `Never`, which
+    /// is not the program's. `None` for any other argument.
+    ///
+    /// The carriers are the two a fix of such an operation offers, `rat` and `f64`, as in
+    /// DESIGN's example: a bare literal takes another carrier (`f32`, `f16`, `bf16`) only from
+    /// an operand or a declaration of that carrier, which an operation that met none lacks.
+    /// One is left out where the operation's value at it is no value of it ([`folded`]): `1 / 0`
+    /// is no `rat` and no `f64`, and then the walk's type is printed. O(size of the operation)
+    /// per carrier, on a message's path alone.
+    fn open_carriers(&self, a: &Arg) -> Option<Ty> {
+        let e = a.expr?;
+        let e = match self.seen.get(&e.span) {
+            _ if self.lit_open.contains(&e.span) => e,
+            Some((_, Src::Name(id))) if self.defined_open(*id) => self.facts.get(id)?,
+            _ => return None,
+        };
+        let open: Vec<Ty> = [Carrier::F64, Carrier::Rat]
+            .into_iter()
+            .filter(|&c| folded(e, c).is_some())
+            .map(Ty::carrier)
+            .collect();
+        (!open.is_empty()).then(|| Ty::union_all(&open))
     }
 
     /// Whether binder `id` is defined, as its one origin, by an operation on literals alone
@@ -9946,7 +10002,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             (args.iter().enumerate())
                 .map(|(i, a)| match (a, at) {
                     (_, Some((j, p, _))) if i == j => ck.show(&p.ty()),
-                    (Some(a), _) => ck.show(&a.ty),
+                    (Some(a), _) => ck.show(ck.open_carriers(a).as_ref().unwrap_or(&a.ty)),
                     (None, _) => "_".into(),
                 })
                 .collect()

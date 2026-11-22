@@ -16,6 +16,18 @@ fn open(what: &str) -> String {
     )
 }
 
+/// The step of an operation on integer literals alone that nothing gives a carrier, so it is
+/// an `int`, `what` naming it and `verb` what it does: DESIGN.md sec:diagnostics, "in
+/// `y = (1 + 2) * "a";`, rejected at the `*`, the step for `1 + 2` reads "this `+` adds
+/// integer literals alone, so it is a literal too; nothing here gives it a carrier, so it is
+/// an `int`"" (QUESTIONS A61).
+fn uncarried(what: &str, verb: &str) -> String {
+    format!(
+        "this `{what}` {verb} integer literals alone, so it is a literal too; nothing here \
+         gives it a carrier, so it is an `int`"
+    )
+}
+
 /// The step of such a `/`.
 fn open_div() -> String {
     open("/") + "; `/` has no arrow at `int`"
@@ -102,12 +114,13 @@ fn an_operand_of_a_division_of_literals_is_a_literal_too_and_not_an_int() {
 #[test]
 fn an_operation_on_literals_that_the_program_gives_a_type_keeps_it() {
     // Nothing gives `1 + 2` a carrier, and no `/` or decimal is in it, so it is the `int` the
-    // program gives it: the type found and the program's agree, and the step names it.
+    // program gives it: the type found and the program's agree, and the step names it with
+    // why (QUESTIONS A61).
     let out = rejected("y = (1 + 2) * \"a\";\n");
     assert_eq!(
         steps(&out)[..4],
         [
-            "this `+` gives int",
+            &*uncarried("+", "adds"),
             "this literal, 1, is 1",
             "this literal, 2, is 2",
             "this expression is \"a\"",
@@ -133,6 +146,28 @@ fn an_operation_on_literals_that_the_program_gives_a_type_keeps_it() {
         ],
         "{out}"
     );
+}
+
+/// An operation on literals with no carrier, rejected beside a value it cannot meet, is shown
+/// in the heading as the union of the carriers it can still take (QUESTIONS A60): DESIGN.md
+/// sec:diagnostics, "in `y = (1 / 2) * "a";` the heading reads `(f64 | rat, "a")`". A name
+/// defined as one is shown the same where it is read.
+#[test]
+fn an_operation_on_literals_with_no_carrier_is_shown_by_the_carriers_it_can_take() {
+    let out = rejected("y = (1 / 2) * \"a\";\n");
+    assert!(
+        out.starts_with(
+            "1:5: `*` does not take (f64 | rat, \"a\"): no arrow of `*` takes these types."
+        ),
+        "{out}"
+    );
+    let out = rejected("q = (1 + 2) / (3 + 4);\nz = q * \"a\";\n");
+    let second = out.split_once("\n2:5: ").expect("a second rejection").1;
+    assert!(
+        second.starts_with("`*` does not take (f64 | rat, \"a\")"),
+        "{out}"
+    );
+    assert!(!out.contains("(Never, \"a\")"), "{out}");
 }
 
 /// The step of a read of `name`, defined as an operation on literals alone that met no carrier.
@@ -186,10 +221,40 @@ fn a_name_defined_as_an_operation_on_literals_of_a_type_is_read_with_its_type() 
         [
             "`q` is int here",
             "`q` is defined as this expression, int",
-            "this `+` gives int",
+            &*uncarried("+", "adds"),
         ],
         "{out}"
     );
+}
+
+/// QUESTIONS A61 for `-`, `*`, `^`, a unary `-` and a nest of them: each operation in the
+/// value says why it is an `int`. One that meets a carrier says so by its type instead, and an
+/// `int` operand gives an `int` the operation does not lack: `x * (1 + 2)` with `x: int` is
+/// not one that nothing gives a carrier.
+#[test]
+fn each_operation_on_literals_with_no_carrier_says_why_it_is_an_int() {
+    let out = rejected("y = ((2 - 1) * 3 ^ 2) * \"a\";\n");
+    assert_eq!(
+        steps(&out)[..6],
+        [
+            &*uncarried("*", "multiplies"),
+            &*uncarried("-", "subtracts"),
+            "this literal, 2, is 2",
+            "this literal, 1, is 1",
+            &*uncarried("^", "takes a power of"),
+            "this literal, 3, is 3",
+        ],
+        "{out}"
+    );
+    let out = rejected("y = -(1 + 2) * \"a\";\n");
+    assert_eq!(
+        steps(&out)[..2],
+        [&*uncarried("-", "negates"), &*uncarried("+", "adds")],
+        "{out}"
+    );
+    let out = rejected("x = 4;\ny = (x * (1 + 2)) * \"a\";\n");
+    assert!(!out.contains("nothing here gives it a carrier"), "{out}");
+    assert!(steps(&out).contains(&"this `+` gives int"), "{out}");
 }
 
 /// MSG-wide-value-notes: an operation on literals that meets a use asks its class for a
@@ -218,7 +283,7 @@ fn a_sum_of_literals_is_shown_by_its_carriers_not_by_its_literals() {
         [
             "`b` is int here",
             "`b` is defined as this expression, int",
-            "this `+` gives int",
+            &*uncarried("+", "adds"),
         ],
         "{out}"
     );
