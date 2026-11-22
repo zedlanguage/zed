@@ -18,7 +18,10 @@
 //! - `rem-leaf [q]`: `DIV_LEAF` and `DIV_COST` in `rem`, num-bigint's `%` against the blocks
 //!   of one `Divisor`, `(q + 1) w` by `w` dense words (16 and 256 in `all`).
 //! - `div-rows`: `SPARSE_WORD` and `SPARSE_STEP`, long division over the divisor's nonzero
-//!   words against the division by a reciprocal, `2w - 1` by `w` dense words.
+//!   words against the division by a reciprocal, `2w - 1` by `w` dense words; `div-rows step`
+//!   fits `SPARSE_STEP` on the same divisors.
+//! - `div-sparse [w]`: `SPARSE_STEP`, the same two methods on `2w - 1` by `w` words of which `k`
+//!   are nonzero, from 2 (the kept power `2^(64w - 1) + 1`) to `w` (256, 1024 and 2048 in `all`).
 //! - `recip`: `RECIP_LEAF`, a reciprocal of `p` bits started from num-bigint's division at `p`
 //!   bits against one Newton step from there (the leaf at `p` against at `p - 1`).
 //! - `gcd-leaf`: `GCD_LEAF`, the gcd of two odd numbers of `w` words by Stein's gcd against one
@@ -387,7 +390,10 @@ fn rem_leaf(args: &[String]) -> ExitCode {
     status(verdict.holds())
 }
 
-fn div_rows(_: &[String]) -> ExitCode {
+/// With the argument `step`, the same ladder fits `SPARSE_STEP` in place of `SPARSE_WORD`, so
+/// `all` weighs the dense divisors in the joint fit of `SPARSE_STEP` with `div-sparse`.
+fn div_rows(args: &[String]) -> ExitCode {
+    let step = args.first().is_some_and(|a| a == "step");
     let note = |w: usize| format!(" ({} by {w})", 2 * w - 1);
     let bench = Crossover {
         unit: "words",
@@ -402,18 +408,87 @@ fn div_rows(_: &[String]) -> ExitCode {
             run: &|(a, b): &Pair| x::div_rem_by_reciprocal(a, b),
         },
         takes_above: &|(a, b): &Pair| !x::div_by_rows(a, b),
+        constant: Some(match step {
+            false => Constant {
+                name: "SPARSE_WORD",
+                built: x::SPARSE_WORD,
+                flip: &|(a, b): &Pair| x::sparse_flip(a, b),
+                below_at_most: true,
+            },
+            true => Constant {
+                name: "SPARSE_STEP",
+                built: x::SPARSE_STEP,
+                flip: &|(a, b): &Pair| x::step_flip(a, b),
+                below_at_most: true,
+            },
+        }),
+    };
+    let verdict = bench.report(
+        &mut Meter::new(),
+        match step {
+            false => "div-rows",
+            true => "div-rows step",
+        },
+        "SPARSE_WORD, SPARSE_STEP",
+        &ladder(64, 16_384, 2),
+        TOLERANCE,
+    );
+    status(verdict.holds())
+}
+
+/// A dividend of `2w - 1` words and a divisor of `w` words of which `k` are nonzero: the top
+/// word's top bit, the bottom word's bottom bit, and `k - 2` random words spread evenly
+/// between them, so `k = 2` is the kept power `2^(64w - 1) + 1`.
+fn sparse_division(w: usize, k: usize) -> Vec<Pair> {
+    let mut rng = Rng::new((w * 64 + k) as u64);
+    let mut words = vec![0u64; w];
+    words[0] = 1;
+    words[w - 1] = 1 << 63;
+    for i in 1..k - 1 {
+        words[i * (w - 1) / (k - 1)] |= rng.next_u64() | 1;
+    }
+    let b = BigUint::from_slice(
+        &words
+            .iter()
+            .flat_map(|&d| [d as u32, (d >> 32) as u32])
+            .collect::<Vec<u32>>(),
+    );
+    let a = random(&mut rng, 2 * w - 1);
+    let top = (&b << (64 * (w - 1))) - 1u32;
+    vec![(a, b.clone()), (top, b)]
+}
+
+fn div_sparse(args: &[String]) -> ExitCode {
+    let w: usize = args
+        .first()
+        .map_or(1024, |s| s.parse().expect("divisor words"));
+    let note = move |_: usize| format!(" of {w} ({} by {w})", 2 * w - 1);
+    let inputs = move |k: usize| sparse_division(w, k);
+    let bench = Crossover {
+        unit: "nonzero words",
+        note: &note,
+        inputs: &inputs,
+        below: Method {
+            name: "long division",
+            run: &|(a, b): &Pair| x::div_rem_sparse(a, b),
+        },
+        above: Method {
+            name: "reciprocal",
+            run: &|(a, b): &Pair| x::div_rem_by_reciprocal(a, b),
+        },
+        takes_above: &|(a, b): &Pair| !x::div_by_rows(a, b),
         constant: Some(Constant {
-            name: "SPARSE_WORD",
-            built: x::SPARSE_WORD,
-            flip: &|(a, b): &Pair| x::sparse_flip(a, b),
+            name: "SPARSE_STEP",
+            built: x::SPARSE_STEP,
+            flip: &|(a, b): &Pair| x::step_flip(a, b),
             below_at_most: true,
         }),
     };
     let verdict = bench.report(
         &mut Meter::new(),
-        "div-rows",
-        "SPARSE_WORD, SPARSE_STEP",
-        &ladder(64, 16_384, 2),
+        &format!("div-sparse {w}"),
+        &format!("SPARSE_STEP, SPARSE_WORD {}", x::SPARSE_WORD),
+        &ladder(2, w, 2),
         TOLERANCE,
     );
     status(verdict.holds())
@@ -1164,7 +1239,7 @@ type Bench = (
 );
 
 /// Every benchmark, with its arguments in `all`; `print-never-slower` is not a threshold.
-const BENCHES: [Bench; 45] = [
+const BENCHES: [Bench; 49] = [
     ("mul", mul, &["1"]),
     ("mul", mul, &["4"]),
     ("mul", mul, &["32"]),
@@ -1177,6 +1252,10 @@ const BENCHES: [Bench; 45] = [
     ("rem-leaf", rem_leaf, &["16"]),
     ("rem-leaf", rem_leaf, &["256"]),
     ("div-rows", div_rows, &[]),
+    ("div-rows", div_rows, &["step"]),
+    ("div-sparse", div_sparse, &["256"]),
+    ("div-sparse", div_sparse, &["1024"]),
+    ("div-sparse", div_sparse, &["2048"]),
     ("recip", recip, &[]),
     ("gcd-leaf", gcd_leaf, &[]),
     ("lift-gcd", lift_gcd, &[]),

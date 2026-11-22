@@ -904,7 +904,9 @@ What the curves show, and what is not yet understood:
   at 2048, 1.36 at 4096, 1.02 at 8192, 0.76 at 16,384 and 0.46 at 65,536, for `2w` by `w`.
   The curves then crossed near 8192 words. Since CROSSOVER-bench (2026-11-12) the choice past
   `DIV_LEAF` is made by the fitted cost `DIV_COST` (below), which takes at most 1.089 times the
-  less work at every measured shape; only `SPARSE_STEP` is not fitted (follow-up
+  less work at every measured shape. `SPARSE_STEP` was fitted on 2026-11-22
+  (MEASURE-sparse-step-fit, `crossover div-sparse` and `div-rows step`) at 100, at most 1.11
+  times the less work on sparse and dense divisors; no one value fits every width (follow-up
   DIV-crossover-model).
 - The remainder tree of `zedc_int` `remainders` (CUBE-root-wide, 2026-11-09) has its products
   and its descent near the crossovers of `fast::mul` and `fast::div_rem` at the sizes of
@@ -1308,8 +1310,8 @@ Not benchmarked. `Pairs::meets`'s `l * r <= 1` and `Pairs::tried`'s `l n <= 16 (
 `zedc-types` `ty.rs` (F132) switch between filing and scanning inside the type checker, whose
 cost depends on how many pairs meet and is reached only through a checked program, not through
 an operation the binary can call; both are measured at their sites over 72 cases and are to be
-measured again at the Zed port. `SPARSE_STEP` (20) is not fitted: the divisors of `div-rows`
-have too few nonzero words for its share to show. The support product's cost formula in `Poly::mul` (`poly.rs`, POLY-nf-sparse-product) keeps
+measured again at the Zed port. `SPARSE_STEP` (100) is fitted by `crossover div-sparse` and `div-rows
+step` (fast.rs, the comment at `SPARSE_STEP`). The support product's cost formula in `Poly::mul` (`poly.rs`, POLY-nf-sparse-product) keeps
 unit constants: `poly::crossover` exposes the dense and the sparse product and the value of each
 fitted constant at which the choice between them flips, not the support product.
 

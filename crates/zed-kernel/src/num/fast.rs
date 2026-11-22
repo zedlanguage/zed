@@ -507,20 +507,30 @@ const TRANSFORM_COST: f64 = 7.1;
 /// The cost of a word of a step of [`sparse_div_rem`], and of a step besides its words (the
 /// quotient word's estimate is a 128-bit division), in the units of [`TRANSFORM_COST`]:
 /// measured on 2026-11-05, 2.3 ns a word, and set at 2. Fitted on 2026-11-12 (CROSSOVER-bench,
-/// `crossover div-rows`) with [`SPARSE_STEP`] kept: long division and the reciprocal cross at
-/// 240 words, which 1.68 to 1.72 puts at the crossover, so 1.7. [`SPARSE_STEP`] is not fitted;
-/// the benchmark's divisors have too few nonzero words for its share to show.
+/// `crossover div-rows`) with [`SPARSE_STEP`] at 20: long division and the reciprocal cross at
+/// 240 words, which 1.68 to 1.72 puts at the crossover, so 1.7. Kept at 1.7 when
+/// [`SPARSE_STEP`] was fitted (2026-11-22, below): `div-rows` alone then puts it at 1.32 to
+/// 1.34, but that pair does 1.33 times the less work on the sparse divisors.
 const SPARSE_WORD: f64 = 1.7;
 /// The cost of a step of [`sparse_div_rem`] besides its words, in the units of
-/// [`TRANSFORM_COST`] ([`SPARSE_WORD`]). It is 20 from the 2026-11-05 timings (NUM-subquad) and
-/// has not been fitted since: the `crossover div-rows` divisors are dense, so the per-word
-/// term decides there, and a fit needs divisors with few nonzero words, where the step term
-/// is most of [`sparse_div_cost`] (row MEASURE-sparse-step-fit). Only choices between methods
-/// with the same quotient and remainder read it, through [`sparse_div_cost`]: long division or
-/// the reciprocal in [`div_rem_past_leaf`], num-bigint or [`div_rem_past_leaf`] in
-/// [`num_bigint_divides`], and the blocks or not in [`rem_takes_blocks`]; so a wrong value costs
-/// time and never an answer.
-const SPARSE_STEP: f64 = 20.0;
+/// [`TRANSFORM_COST`] ([`SPARSE_WORD`]). It was 20 from the 2026-11-05 timings (NUM-subquad).
+/// Fitted on 2026-11-22 (MEASURE-sparse-step-fit) by `crossover div-sparse w`, `2w - 1` by `w`
+/// words of which 2 to `w` are nonzero, and `crossover div-rows step`, the dense divisors of
+/// `div-rows`, with [`SPARSE_WORD`] at 1.7. Long division and the reciprocal cross near 200
+/// nonzero words at every width (217 of 256, 193 of 1024, 201 of 2048, 242 dense), while
+/// [`newton_cost`] over the quotient's words grows with the width, so each width alone fits a
+/// different value (29 at 256, 160 at 1024, 192 at 2048, 7 to 14 dense) and no one value meets
+/// all: 20 did 1.33 times the less work at 1024 words, between 189 and 362 nonzero; 98 to 106
+/// do at most 1.11 times it on all four (1.110 at 1024, 1.069 at 2048, 1.067 at 256, 1.036
+/// dense), so 100. Over (word, step) pairs, (1.3, 100) and (1.1, 170) also left 1.33. With at
+/// most 64 nonzero words long division is taken and does the less work at every measured width
+/// (2 to 8 nonzero words do 0.07 to 0.12 of the reciprocal's work at 256 words). Only choices
+/// between methods with the same quotient and remainder read it, through [`sparse_div_cost`]:
+/// long division or the reciprocal in [`div_rem_past_leaf`], num-bigint or
+/// [`div_rem_past_leaf`] in [`num_bigint_divides`], and the blocks or not in
+/// [`rem_takes_blocks`]; so a wrong value costs time and never an answer. `crossover div-leaf`
+/// and `rem-leaf` gave the same counts with 20 and with 100.
+const SPARSE_STEP: f64 = 100.0;
 
 /// The number of 64-bit words of `x`.
 fn words(x: &BigUint) -> usize {
@@ -4628,6 +4638,17 @@ pub mod crossover {
         let q = (aw - bw + 1) as f64;
         let newton = super::newton_cost(aw - bw + 1, bw);
         Some((newton / (q + 1.0) - super::SPARSE_STEP) / super::nonzero_words(b) as f64)
+    }
+
+    /// The value of `super::SPARSE_STEP` at which [`div_rem_past_leaf`] changes method for
+    /// `a / b`, with `super::SPARSE_WORD` as built: long division at or below it, the
+    /// reciprocal above; `a >= b > 0`. From `sparse_div_cost(q, k) <= newton_cost`, that is
+    /// `(q + 1) (SPARSE_WORD k + SPARSE_STEP) <= newton`, solved for `SPARSE_STEP`.
+    pub fn step_flip(a: &BigUint, b: &BigUint) -> Option<f64> {
+        let (aw, bw) = (super::words(a), super::words(b));
+        let q = (aw - bw + 1) as f64;
+        let newton = super::newton_cost(aw - bw + 1, bw);
+        Some(newton / (q + 1.0) - super::SPARSE_WORD * super::nonzero_words(b) as f64)
     }
 
     /// A factor whose spectra are kept for products with numbers of at most `other` words
