@@ -88,6 +88,15 @@ fn a_chain_that_stops_scales() {
     });
 }
 
+/// Small instance: `alone::bindings_that_share_a_cone_are_compared`.
+#[test]
+fn bindings_that_share_a_cone_scale() {
+    let units = inputs(100, alone::shared_cone);
+    check("n bindings reaching n functions, and a stop", 100, |k| {
+        alone::the_cone_is_compared(&units[&k], k);
+    });
+}
+
 /// Small instances: `alone::stops_that_reach_functions_end_the_walk_at_the_second` and
 /// `alone::a_second_stop_through_functions_is_not_compared`.
 ///
