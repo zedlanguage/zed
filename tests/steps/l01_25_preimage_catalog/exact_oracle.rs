@@ -321,11 +321,6 @@ fn mixed(seed: u64, cases: usize) -> Run {
 // the transfer's box of `(-3 * if (6 != 1) { 4 } else { x }) != (4 mod (-6 * 0))` under true,
 // every `x`, now exact: the left side is -12 and the right `#divByZero`, so the two differ at
 // every point. The interpreter refutes no box.
-//
-// Since PREIMAGE-mod-defined, whose transfers read a demand holding every value of `a div b` or
-// `a mod b` as the points where `a` and `b` are integers and `b != 0`, and one holding none of
-// them as no point, both exact, the count rose by 20 and no box disagrees with the interpreter:
-// EXACT_OF_TWO_RUNS 916 -> 936.
 
 /// The first two runs of `s22.rs` (500 mixed terms, the second with tests), with their count
 /// of exact preimages pinned, so that a change in precision shows.
@@ -335,7 +330,7 @@ fn s22_random_terms_match_the_interpreter() {
 }
 
 /// The count of exact preimages of [`s22_random_terms_match_the_interpreter`].
-const EXACT_OF_TWO_RUNS: usize = 936;
+const EXACT_OF_TWO_RUNS: usize = 916;
 
 /// Mixed terms from a new seed each run, every other case a test and every third term reading
 /// through calls.
@@ -468,58 +463,6 @@ fn min_and_max_read_where_the_other_operand_fails() {
             assert_eq!(f.disagreements, Vec::<String>::new(), "{}", c.term);
         }
     }
-}
-
-/// `e div y` and `e mod y` are defined exactly where `e` and `y` are integers and `y != 0`
-/// (DESIGN.md sec:failure; the kernel fails a quotient by 0 and no other), so a demand holding
-/// every value the term can take has, as its preimage, the box of `e` an integer and `y` in
-/// every integer but 0, which is exact when both boxes are. Both transfers once projected
-/// such a demand onto each operand and marked the box not exact (PREIMAGE-mod-defined), so
-/// `max(x, 0 mod y) >= 8` with `x` in `[8, 12]` gave `y` in `[1, 7]` not marked exact. Each
-/// case here agrees with the interpreter and is exact in both transfers; a divisor that reads
-/// two inputs (`y - x`) has a preimage that is not a box and stays sound and not exact.
-#[test]
-fn a_quotient_read_where_it_is_defined_is_exact() {
-    let up = ints(End::of(8), End::of(19));
-    let low = ints(End::of(-20), End::of(-9));
-    let every = ints(End::of(-100), End::of(100));
-    let zero_by_y = |p| prim(p, int(0), var("y"));
-    let mut exact_cases = Vec::new();
-    for p in [Prim::Mod, Prim::IntDiv] {
-        exact_cases.extend([
-            (
-                prim(Prim::Max, var("x"), zero_by_y(p)),
-                xy((8, 12), (0, 7)),
-                up.clone(),
-            ),
-            (
-                prim(Prim::Max, zero_by_y(p), var("x")),
-                xy((8, 12), (-3, 3)),
-                up.clone(),
-            ),
-            (
-                prim(Prim::Min, var("x"), zero_by_y(p)),
-                xy((-12, -8), (-5, 0)),
-                low.clone(),
-            ),
-            (
-                prim(p, var("x"), var("y")),
-                xy((-6, 6), (-2, 7)),
-                every.clone(),
-            ),
-        ]);
-    }
-    for (t, ds, demand) in exact_cases {
-        let c = case(t, ds, demand, false);
-        let f = check(&c);
-        assert_eq!(f.disagreements, Vec::<String>::new(), "{}", c.term);
-        assert_eq!(f.exact, 2, "{}", c.term);
-    }
-    let across = prim(Prim::Mod, var("x"), prim(Prim::Sub, var("y"), var("x")));
-    let c = case(across, xy((-6, 6), (-6, 6)), every, false);
-    let f = check(&c);
-    assert_eq!(f.disagreements, Vec::<String>::new(), "{}", c.term);
-    assert_eq!(f.exact, 0, "{}", c.term);
 }
 
 /// The two runs of seed 17731988998593301615 agree with the interpreter.

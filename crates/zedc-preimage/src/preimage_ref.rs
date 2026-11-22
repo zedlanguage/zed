@@ -4375,25 +4375,6 @@ impl<'t> Tx<'t> {
                 }
                 self.project(p, a, b, env, z)
             }
-            // A demand holding every value of `a div b` or `a mod b`: the term meets it exactly
-            // where it is defined, where `a` and `b` are integers and `b != 0` (the kernel fails
-            // a quotient by 0 and no other, `zed_kernel::eval::int_binary`; DESIGN.md
-            // sec:failure), exact when both preimages are. A demand holding no value of the term
-            // has no input, which is exact too. With doubted values, or a demand holding some
-            // values and not others, the projection below answers, not exact.
-            // PREIMAGE-mod-defined, as `preimage::Walk::where_defined`. Test:
-            // `l01_25_preimage_catalog::exact_oracle::a_quotient_read_where_it_is_defined_is_exact`.
-            (IntDiv | Mod, _, None)
-                if dd.is_empty() && self.fwd(t, env).ints.meet(z).is_empty() =>
-            {
-                Res::none()
-            }
-            (IntDiv | Mod, _, None) if dd.is_empty() && self.fwd(t, env).ints.is_subset(z) => {
-                let nonzero = IntervalSet::top().minus(&IntervalSet::of(0, 0));
-                let ra = self.back_at(a, env, &ints(IntervalSet::top()));
-                let rb = self.back_at(b, env, &ints(nonzero));
-                self.meet(ra, rb)
-            }
             _ => self.project(p, a, b, env, z),
         }
     }
