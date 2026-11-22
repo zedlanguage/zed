@@ -3857,6 +3857,14 @@ fn reversed_parts_give_the_same_boxes() {
     reversed_boxes_are_the_same(seed, 20);
 }
 
+/// FAIL-reversed-boxes-seed-6952189316955771677: with this seed, case 17 of the transfer
+/// before gave `i` the box [5, 11] as written and [5, 5] | [7, 11] with the disjuncts reversed,
+/// on 781c7c30f and 83373e144 (2026-11-17); it gives the same box both ways on ccdf8924f.
+#[test]
+fn reversed_parts_give_the_same_boxes_at_seed_6952189316955771677() {
+    reversed_boxes_are_the_same(6952189316955771677, 20);
+}
+
 /// The probe with `i` in `[-100, 2^62]` and in `[-100, i64::MAX]`, whose sums pass `i64::MAX`
 /// at an end, at the sizes up to 32 that `bench::s22` times at 256 and 2048: each box agrees
 /// with the transfer before and with the interpreter.
