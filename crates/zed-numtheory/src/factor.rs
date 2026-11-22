@@ -23,13 +23,13 @@
 //! doi:10.1090/S0025-5718-1990-1023756-8, Theorem 2 (ERH), p. 372: for `G` a nontrivial
 //! subgroup of `Z/(m)*` with `n ∈ G` for every positive `n < x`, "x < 2(log m)^2"; and pp.
 //! 372-373: "if the ERH is true, then a composite number m has a witness for its compositeness
-//! (in the sense of [30 or 43]) that is at most 2 log^2 m", [30] being Miller's paper (read
-//! 2026-11-21 in the publisher's PDF, the exponents checked on the page images). This bound is
-//! conditional on the hypothesis: a proof of GRH was announced on 2026-11-20 (L. Alpoge, with a
-//! Lean 4 formalization) and its acceptance is pending. Nothing here depends on it:
-//! [`is_prime`] is exact on every `u64`, with no hypothesis, by the fixed bases below
-//! Sorenson and Webster's `psi_12` (cited there). Rabin, sec. 1, p. 130, takes the same condition as his
-//! "witness to the compositeness of n" and proves without ERH (Theorem 1) that if `4 < n` is
+//! (in the sense of [30 or 43]) that is at most 2 log^2 m", its reference 30 being Miller's
+//! paper (read 2026-11-21 in the published version's PDF, the exponents checked on the page
+//! images). This bound is conditional on the hypothesis: a proof of GRH was announced on
+//! 2026-11-20 (L. Alpoge, with a Lean 4 formalization) and its acceptance is pending. Nothing
+//! here depends on it: [`is_prime`] is exact on every `u64`, with no hypothesis, by the fixed
+//! bases below Sorenson and Webster's `psi_12` (cited there). Rabin, sec. 1, p. 130, takes the
+//! same condition as his "witness to the compositeness of n" and proves without ERH (Theorem 1) that if `4 < n` is
 //! composite then at least `3(n-1)/4` of the `1 ≤ b < n` are witnesses; his note of
 //! 1978, p. 137, credits Knuth with the form without the gcd that [`is_prime`] runs: with
 //! `n - 1 = 2^l m`, `x_0 = x^m`, `x_i = x_{i-1}^2`, a composite odd `n` has, for at least
