@@ -92,6 +92,83 @@ fn refused_joins_between_two_large_classes_scale() {
     );
 }
 
+/// The joins of item LOAD-join-disjoint: `k` chains of `k` one-parameter functions (classes
+/// `C_i`), `h` of `k` parameters joined one to each chain's head, and `k` functions `q_i`
+/// joining their parameter to chain `i`'s head and then to every other chain's head. Each
+/// join of `q_i` to chain `j` is refused (`C_i` and `C_j` share `h`, neither caller nor
+/// callee), a distinct pair of classes each time.
+fn shared_function_joins(k: usize) -> (Vec<usize>, Vec<(usize, usize)>) {
+    let mut first = vec![0];
+    let add = |first: &mut Vec<usize>, p: usize| {
+        let at = *first.last().expect("starts with 0");
+        first.push(at + p);
+        at
+    };
+    let mut joins = Vec::new();
+    let mut heads = Vec::new();
+    for _ in 0..k {
+        let mut prev = add(&mut first, 1);
+        heads.push(prev);
+        for _ in 1..k {
+            let c = add(&mut first, 1);
+            joins.push((prev, c));
+            prev = c;
+        }
+    }
+    let h = add(&mut first, k);
+    joins.extend(heads.iter().enumerate().map(|(i, &c)| (h + i, c)));
+    for i in 0..k {
+        let q = add(&mut first, 1);
+        joins.push((q, heads[i]));
+        joins.extend((0..k).filter(|&j| j != i).map(|j| (q, heads[j])));
+    }
+    (first, joins)
+}
+
+/// The joins of [`shared_function_joins`] at `k` = 160 and 452, 25,920 and 205,208
+/// parameters (7.92 times). Each of the `k²` refusals between two classes never refused
+/// before was decided by looking through the smaller class of `k` functions, `n^1.5` in the
+/// `n` parameters: 17.37 times the instructions (item LOAD-join-disjoint, 2026-11-22). The
+/// sets looked through now hold only functions of two or more parameters, here `h` alone,
+/// so each refusal costs `O(1)`: 8.7 times.
+#[test]
+fn joins_refused_for_a_function_shared_by_merged_classes_scale() {
+    let (small, large) = (shared_function_joins(160), shared_function_joins(452));
+    crate::scaling::compare(
+        "joins refused for a function shared by k classes of k functions, k = 160 and 452",
+        1,
+        || {
+            std::hint::black_box(unite(&small.0, &small.1));
+        },
+        || {
+            std::hint::black_box(unite(&large.0, &large.1));
+        },
+    );
+}
+
+/// One function of 256 and of 2048 parameters and no join (from the XR-algos review, Codex,
+/// round 1): a structure that starts a count for each pair of a function's parameters, the
+/// candidate named at [`unite`], would cost `k(k - 1)/2` here before any join; `unite` costs
+/// `O(k)`.
+#[test]
+fn one_high_arity_owner_with_no_attempts_does_not_expand_pairs() {
+    let small = [0, 256];
+    let large = [0, 2048];
+    let (roots, joined) = unite(&small, &[]);
+    assert!(roots.into_iter().eq(0..small[1]));
+    assert_eq!(joined, vec![false; small[1]]);
+    crate::scaling::compare(
+        "one function with 256 and 2048 parameters",
+        1,
+        || {
+            std::hint::black_box(unite(&small, &[]));
+        },
+        || {
+            std::hint::black_box(unite(&large, &[]));
+        },
+    );
+}
+
 /// [`Gen::chain`] makes a chain of `n` `if`s in work of order `n`: each level reads the
 /// one term below it, shared, so neither the work nor the term doubles at a level.
 #[test]

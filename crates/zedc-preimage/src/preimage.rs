@@ -4829,17 +4829,42 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 /// class, its refusals move to that root with its functions, O(log n) moves each. Before the
 /// smaller class's functions, the two functions of the join are looked up in the other class:
 /// a join refused by its caller or its callee, `p(x: x, y: x)`, costs O(1).
+///
+/// The sets looked through hold only the functions of two or more parameters (item
+/// LOAD-join-disjoint). Proof that the answers are unchanged: a class holds at most one
+/// parameter of a function, and each parameter is in one class, so a function of one
+/// parameter is in exactly one class and never in both of two distinct classes; two classes
+/// share a function exactly when they share one of two or more parameters. The root is still
+/// chosen by the number of functions (`size`), which is what the unfiltered set's length was,
+/// so the roots and `joined` are those of the plain union; only which set is looked through,
+/// and which set's entries move at a join, now go by the filtered lengths, neither of which
+/// changes an answer. Each entry still moves only into a set at least as large, O(n log n)
+/// moves in all. Test: `tests::the_classes_are_those_of_a_join_refused_by_looking` (random
+/// functions of 0 to 4 parameters, so ones of one parameter among them) compares with the
+/// union that looks for a shared function at each join; it cannot catch a slower answer.
 // Complexity tradeoff: the first refusal between two classes that share only a third function
-// (neither the join's caller nor its callee) looks through the smaller class's functions, O(m)
-// for classes of m functions, so j such refusals between j distinct pairs of classes of m
-// functions cost O(j m), up to about n^1.5 (a function of k parameters in k classes of k
-// functions each, and k calls each joining one parameter to all k classes). Why: whether two
-// classes share a function is a question of set disjointness, for which no structure answering
-// in O(log n) a question is known. Trigger: a call joining one parameter
-// to the classes of two parameters of a third function. Test
-// `tests::refused_joins_between_two_large_classes_scale` (repeated refusals between two
-// classes, the case remembered) and `tests::the_classes_are_those_of_a_join_refused_by_looking`
-// (the answers of the plain union). COMPLEXITY.md row LOAD-affine-join. A complete solution
+// (neither the join's caller nor its callee) looks through the smaller of the two classes'
+// sets of functions of two or more parameters, O(m) for m such functions, so j such refusals
+// between j distinct pairs of classes cost O(j m), up to about n^1.5 when the classes hold
+// many functions of two or more parameters (k functions of k parameters on each side of the
+// joins). Where they hold functions of one parameter and one shared function of k, as in
+// `tests::bench::joins_refused_for_a_function_shared_by_merged_classes_scale`, each set holds
+// one function and each refusal costs O(1). Why: whether two classes share a function is a
+// question of set disjointness, for which no structure answering in O(log n) a question is
+// known. Kopelowitz, Pettie and Porat, "Dynamic Set Intersection" (WADS 2015,
+// arXiv:1407.6755, full text read 2026-11-22 in the XR-algos review), maintain a dynamic
+// family "using O(N) space where each update costs O(sqrt N) expected time, and each
+// emptiness query costs O(sqrt N) expected time" (their Theorem in the section "Dynamic
+// Emptiness Queries"), and prove 3SUM-conditional lower bounds for incremental set
+// intersection reporting (their appendix A). Departure: here sets only merge, and a join
+// happens only when the two are disjoint; no lower bound found covers that form, and an
+// O(sqrt N) structure would be slower than this scan on the measured cases, so its general
+// bound is open (COMPLEXITY.md row LOAD-join-disjoint). Trigger: a call joining one parameter to
+// the classes of two parameters of a third function, the classes holding many functions of
+// two or more parameters. Test `tests::refused_joins_between_two_large_classes_scale`
+// (repeated refusals between two classes, the case remembered) and
+// `tests::the_classes_are_those_of_a_join_refused_by_looking` (the answers of the plain
+// union). COMPLEXITY.md rows LOAD-affine-join and LOAD-join-disjoint. A complete solution
 // would need a count per pair of classes sharing a function, which a function of k parameters
 // starts at k(k - 1)/2 pairs.
 fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
@@ -4854,7 +4879,17 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
         zed_graph::Compression::Halving,
         zed_graph::Linking::Rank,
     );
-    let mut funs: Vec<HashSet<usize>> = (0..nodes).map(|v| HashSet::from([owner(v)])).collect();
+    // Each class's functions of two or more parameters, and its number of functions (each
+    // parameter of a class is of another function). A function of one parameter is never
+    // shared by two classes, so it is left out of the sets looked through; the count keeps
+    // it, since the root is chosen by the count (item LOAD-join-disjoint).
+    let mut funs: Vec<HashSet<usize>> = (0..nodes)
+        .map(|v| match first[owner(v) + 1] - first[owner(v)] {
+            1 => HashSet::new(),
+            _ => HashSet::from([owner(v)]),
+        })
+        .collect();
+    let mut size = vec![1usize; nodes];
     let mut refused: Vec<HashSet<usize>> = vec![HashSet::new(); nodes];
     let mut joined = vec![false; nodes];
     for &(a, b) in joins {
@@ -4862,19 +4897,27 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
         if ra == rb || refused[ra].contains(&rb) {
             continue;
         }
-        let (big, small) = match funs[ra].len() >= funs[rb].len() {
+        let (big, small) = match size[ra] >= size[rb] {
+            true => (ra, rb),
+            false => (rb, ra),
+        };
+        let (fewer, more) = match funs[ra].len() <= funs[rb].len() {
             true => (ra, rb),
             false => (rb, ra),
         };
         if funs[rb].contains(&owner(a))
             || funs[ra].contains(&owner(b))
-            || funs[small].iter().any(|x| funs[big].contains(x))
+            || funs[fewer].iter().any(|x| funs[more].contains(x))
         {
             refused[ra].insert(rb);
             refused[rb].insert(ra);
             continue;
         }
         parent.union_into(big, small);
+        size[big] += size[small];
+        if funs[small].len() > funs[big].len() {
+            funs.swap(small, big);
+        }
         let f = std::mem::take(&mut funs[small]);
         funs[big].extend(f);
         for r in std::mem::take(&mut refused[small]) {
