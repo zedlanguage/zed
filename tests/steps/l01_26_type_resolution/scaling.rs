@@ -351,26 +351,28 @@ pub(super) fn results_met_alone(n: usize) -> zedc::check::ty::Meet {
     Meet::new(results, u_or_string(), &[("U", bound)])
 }
 
-/// The intersection of `n` results that each hold a function, in the state of a real call
-/// (`check::ty::MeetInCall`): the overload `s` of `n` arrows `(x: #c | int | f64) -> String |
-/// #bi | ((y: int | #bi) -> int)`, met within the result of `q`, `(x: #c | U) -> U | String |
-/// ((y: int) -> int | f64) for U in int | f64`. Read as a call reads them, each function is a
-/// variable of its own and `U` is rigid; every result holds a function, so none is left out,
-/// and each of the `n` is compared with `q`'s, which it fits: it takes more and gives less.
-/// The kernel parts meet in `String`.
-pub(super) fn results_with_functions_met(n: usize) -> zedc::check::ty::MeetInCall {
-    results_met_in_call(n, true, true, true)
+/// The source form of [`results_with_functions_met`]: `p(f: g)` for the slot `(x: #c | U) -> U
+/// | String | ((y: int) -> int | f64) for U in int | f64` and the overload of `n` arrows
+/// `(x: #c | int | f64) -> String | #bi | ((y: {fn_param}) -> int)`.
+pub(super) fn results_holding_functions(n: usize, fn_param: &str) -> String {
+    let arrows = (0..n)
+        .map(|i| format!("((x: #c | int | f64) -> String | #b{i} | ((y: {fn_param}) -> int))"));
+    slot_and_overload(
+        "(x: #c | U) -> U | String | ((y: int) -> int | f64) for U in int | f64",
+        arrows,
+    )
 }
 
-/// [`results_with_functions_met`] with parts left out: the functions of the results and of
-/// the slot (`with_fn`), the atom `#bi` in each function's parameter (`fn_atom`), and `U` of
-/// the slot, written `int | f64` in its place (`with_u`).
-pub(super) fn results_met_in_call(
-    n: usize,
-    with_fn: bool,
-    fn_atom: bool,
-    with_u: bool,
-) -> zedc::check::ty::MeetInCall {
+/// The intersection of `n` results that each hold a function, in the state of a real call
+/// (`check::ty::MeetInCall`): the overload `s` of `n` arrows `(x: #c | int | f64) -> String |
+/// #bi | ((y: int) -> int)`, met within the result of `q`, `(x: #c | U) -> U | String | ((y:
+/// int) -> int | f64) for U in int | f64`. Read as a call reads them, each function is a
+/// variable of its own (each built apart, so none shares a reading or a verdict with another)
+/// and `U` is rigid; every result holds a function, so none is left out, and each of the `n`
+/// is compared with `q`'s, which it fits: the same exact domain, a narrower result. The kernel
+/// parts meet in `String`. A function with a wider domain, `(y: int | #bi) -> int`, would not
+/// fit: a plain function type's domain is exact (`function_variance.rs`; run of 2026-11-22).
+pub(super) fn results_with_functions_met(n: usize) -> zedc::check::ty::MeetInCall {
     use std::sync::Arc;
     use zedc::check::ty::{Arrow, Carrier, MeetInCall, SParam, Sig};
     let named = |name: &str| {
@@ -389,35 +391,23 @@ pub(super) fn results_met_in_call(
         |param: Ty, result: Ty| Ty::func(Arc::new(Sig::one(named("y"), vec![param], result)));
     let results = (0..n).map(|i| {
         let b = atom(&format!("b{i}"));
-        let param = match fn_atom {
-            true => int().union(&b),
-            false => int(),
-        };
-        let f = function(param, int());
-        match with_fn {
-            true => string().union(&b).union(&f),
-            false => string().union(&b),
-        }
+        let f = function(int(), int());
+        string().union(&b).union(&f)
     });
     let mut s = Sig::one(named("x"), vec![atom("c").union(&int_or_f64())], string());
     s.arrows = results
         .map(|r| Arrow::exact(vec![atom("c").union(&int_or_f64())], r))
         .collect();
-    let u = || match with_u {
-        true => Ty::var("U".into()),
-        false => int_or_f64(),
-    };
+    let u = || Ty::var("U".into());
     let g = function(int(), int_or_f64());
-    let result = match with_fn {
-        true => u().union(&string()).union(&g),
-        false => u().union(&string()),
-    };
-    let mut q = Sig::one(named("x"), vec![atom("c").union(&u())], result);
-    if with_u {
-        q.own.insert("U".into());
-        q.bounds
-            .insert("U".into(), Carrier::Int.bit() | Carrier::F64.bit());
-    }
+    let mut q = Sig::one(
+        named("x"),
+        vec![atom("c").union(&u())],
+        u().union(&string()).union(&g),
+    );
+    q.own.insert("U".into());
+    q.bounds
+        .insert("U".into(), Carrier::Int.bit() | Carrier::F64.bit());
     q.note_held();
     MeetInCall::new(s, q)
 }
@@ -775,46 +765,18 @@ fn results_of_arrows_meet_within_the_slots_or_are_refused() {
         "{errors:?}"
     );
     assert!(results_met_alone(4).within());
+    // The same intersection checked from source, where the call builds the state itself: the
+    // checker and `MeetInCall` agree.
+    assert_eq!(
+        type_errors(&results_holding_functions(4, "int")),
+        Vec::<String>::new()
+    );
     assert!(results_with_functions_met(4).within());
-}
-
-/// Temporary probe (TEST-meet-alone-arrows, to be dropped): which part of
-/// [`results_with_functions_met`] makes `within` false. Prints each verdict; asserts nothing.
-#[test]
-fn probe_results_met_in_call() {
-    for (n, with_fn, fn_atom, with_u) in [
-        (4, false, false, true),
-        (4, false, false, false),
-        (4, true, true, true),
-        (1, true, true, true),
-        (4, true, false, true),
-        (4, true, true, false),
-        (1, true, false, false),
-    ] {
-        let ok = results_met_in_call(n, with_fn, fn_atom, with_u).within();
-        eprintln!("PROBE n={n} with_fn={with_fn} fn_atom={fn_atom} with_u={with_u}: {ok}");
-    }
-    for (slot, fn_param) in [
-        (
-            "(x: #c | U) -> U | String | ((y: int) -> int | f64) for U in int | f64",
-            "int | #b",
-        ),
-        (
-            "(x: #c | int | f64) -> int | f64 | String | ((y: int) -> int | f64)",
-            "int | #b",
-        ),
-        (
-            "(x: #c | int | f64) -> int | f64 | String | ((y: int) -> int | f64)",
-            "int",
-        ),
-    ] {
-        let arrows = (0..2).map(|i| {
-            let p = fn_param.replace("#b", &format!("#b{i}"));
-            format!("((x: #c | int | f64) -> String | #b{i} | ((y: {p}) -> int))")
-        });
-        let text = slot_and_overload(slot, arrows);
-        eprintln!("PROBE text {text:?}: {:?}", type_errors(&text));
-    }
+    // A near miss: a function whose domain is wider than that of the slot's function is not
+    // within it, since a plain function type's domain is exact (`function_variance.rs`).
+    let errors = type_errors(&results_holding_functions(4, "int | #c"));
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("as the checker builds it"), "{errors:?}");
 }
 
 #[test]

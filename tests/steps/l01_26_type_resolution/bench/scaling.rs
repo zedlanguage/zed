@@ -429,7 +429,7 @@ fn many_results_that_hold_a_variable_meet_in_linear_time_alone() {
 
 /// [`many_results_that_hold_a_variable_meet_in_linear_time_alone`] with a function in every
 /// result, in the state of a real call (`check::ty::MeetInCall`, TEST-meet-alone-arrows): `n`
-/// results `String | #bi | ((y: int | #bi) -> int)`, each function read as a variable of its
+/// results `String | #bi | ((y: int) -> int)`, each function read as a variable of its
 /// own, met within `U | String | ((y: int) -> int | f64)`, `U` rigid. No result is left
 /// without a function, so the function path of `meet_within` takes all `n`, each compared with
 /// the one function of the slot's result; the test above has none, and the end-to-end test
