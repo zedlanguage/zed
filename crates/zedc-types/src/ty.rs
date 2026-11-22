@@ -19971,26 +19971,13 @@ impl MeetInCall {
     #[doc(hidden)]
     pub fn within(&self) -> bool {
         let mut cx = Cx::default();
-        let ok = comparing!(&mut cx, |c| self.met_in_call(0, &c));
-        cx.decided(ok)
-    }
-
-    /// Negative control, not to be kept (TEST-meet-alone-arrows): [`Self::within`] with a
-    /// quadratic added on the path of the function pieces. After the intersection, `k` times
-    /// for each result, whether some result holds no function ([`holds_no_function`]): the
-    /// test [`meet_within`] makes once, made again for each result, as an edit that moved it
-    /// into the loop over the results would make it.
-    #[doc(hidden)]
-    pub fn within_with_quadratic(&self, k: usize) -> bool {
-        let mut cx = Cx::default();
-        let ok = comparing!(&mut cx, |c| self.met_in_call(k, &c));
+        let ok = comparing!(&mut cx, |c| self.met_in_call(&c));
         cx.decided(ok)
     }
 
     /// [`Self::within`] inside the comparison `c`: opened, set and forgotten as [`fits_in`]
-    /// does around [`every_arrow_fits`]; with `k` above 0, the control of
-    /// [`Self::within_with_quadratic`].
-    async fn met_in_call<'m>(&self, k: usize, c: &'m Comparing<'m, '_>) -> bool {
+    /// does around [`every_arrow_fits`].
+    async fn met_in_call<'m>(&self, c: &'m Comparing<'m, '_>) -> bool {
         let env = Env::new();
         let (mark, sas, qas, _, free, wide, narrow_at) =
             c.cx.borrow_mut().open(&self.s, &env, &self.q, &env);
@@ -20007,14 +19994,6 @@ impl MeetInCall {
         }
         let results: Vec<Ty> = sas.into_iter().map(|a| a.result).collect();
         let ok = meet_within(&results, &result, c).await;
-        {
-            let cx = c.cx.borrow();
-            for _ in 0..k {
-                for _ in &results {
-                    std::hint::black_box(results.iter().any(|r| holds_no_function(r, &cx)));
-                }
-            }
-        }
         c.cx.borrow_mut().forget(mark);
         ok
     }

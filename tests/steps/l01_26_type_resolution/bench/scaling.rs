@@ -449,28 +449,6 @@ fn many_results_that_hold_a_function_meet_in_linear_time_in_a_call() {
     });
 }
 
-/// Negative control of [`many_results_that_hold_a_function_meet_in_linear_time_in_a_call`],
-/// run once and not kept (TEST-meet-alone-arrows): the same intersection with a quadratic on
-/// the function path at K = 1, the test for a result without a function made again for each
-/// result (`MeetInCall::within_with_quadratic`). The test must fail it, by instructions.
-#[test]
-#[should_panic(expected = "times at 8n")]
-fn many_results_that_hold_a_function_meet_with_a_quadratic_fails_the_order_check() {
-    let n = 4_000;
-    let meets: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, results_with_functions_met(m)))
-        .collect();
-    scaling::check_instructions_only(
-        "n results holding a function met in a call, quadratic control K = 1",
-        n,
-        1,
-        |m| {
-            assert!(meets[&m].within_with_quadratic(1));
-        },
-    );
-}
-
 #[test]
 fn needs_that_name_a_variable_the_call_leaves_unbound_check_in_linear_time() {
     // At n = 200 the scan of every bound variable at each signature (`Ty::replace_in`) gave
