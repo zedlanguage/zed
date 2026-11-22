@@ -450,6 +450,16 @@ pub(super) enum Frame<'a> {
     },
     /// A read `v[k]`: the type of `v`, `v` and the span of the read.
     AtKey(Ty, &'a Expr, Span),
+    /// A family `of` applied to keys at `span`, read one level per key: `v` is the type of the
+    /// level being read at the key just checked, `rest` the keys after it, and `first` whether
+    /// that level is `of` itself, whose count a key may be proved within.
+    AtKeys {
+        v: Ty,
+        of: &'a Expr,
+        rest: &'a [Expr],
+        first: bool,
+        span: Span,
+    },
     /// A read `v[i]` with a literal `i`: as [`Frame::AtKey`], with `i` if it is a component number.
     AtIndex(Ty, Option<usize>, Span, Span),
     LambdaEnd {
@@ -2021,6 +2031,24 @@ impl<'t, 'a> Ck<'t, 'a> {
                     };
                     return self.prelude_call(m, &f, call);
                 }
+                // A family applied to keys is the read of one level per key (DESIGN.md
+                // sec:values_morphisms, "Application is indexing", `f(x, y)` is `f[x][y]`;
+                // I2.29): where every piece of `f` is a family whose keys are one integer
+                // interval, `sq(n)` is checked as `sq[n]` and misses with `#outOfBounds` as it
+                // does, and `g(i, j)` as `g[i][j]` (row KERNEL-family-call); the verdict at
+                // `span` makes the elaborator write the reads.
+                if let ([k, rest @ ..], true, false) = (positional, named.is_empty(), curry)
+                    && self.dense_family(&f, positional.len())
+                {
+                    m.k(Frame::AtKeys {
+                        v: f,
+                        of: callee,
+                        rest,
+                        first: true,
+                        span,
+                    });
+                    return m.job(Job::Arg(k, Want::default()));
+                }
                 let args = Args::of(positional, named);
                 self.call_value(m, &f, what.into(), None, args, curry, Some(span), span);
             }
@@ -2076,6 +2104,33 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let within = self.within_count(of, x.expr);
                 let t = self.at_key(&v, x, Some(of.span), None, span, dense, within);
                 m.ty(t);
+            }
+            Frame::AtKeys {
+                v,
+                of,
+                rest,
+                first,
+                span,
+            } => {
+                let x = m.take_arg();
+                let dense = self.dense_read(&v, span);
+                // Only the first level is `of`, whose count `within_count` reads; a deeper
+                // level's key is checked against that level's keys alone.
+                let within = first && self.within_count(of, x.expr);
+                let t = self.at_key(&v, x, Some(of.span), None, span, dense, within);
+                match rest {
+                    [] => m.ty(t),
+                    [k, rest @ ..] => {
+                        m.k(Frame::AtKeys {
+                            v: t,
+                            of,
+                            rest,
+                            first: false,
+                            span,
+                        });
+                        m.job(Job::Arg(k, Want::default()));
+                    }
+                }
             }
             Frame::AtIndex(v, i, of, span) => {
                 let x = m.take_arg();
@@ -22452,6 +22507,43 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         family.then_some(dense)
+    }
+
+    /// Whether a call of `v` with `k` keys is the read of one level per key, each a family
+    /// whose keys are one integer interval, every key present (row KERNEL-family-call): every
+    /// piece of `v` is such a family, and every piece of each level read but the atoms is one,
+    /// to depth `k`. Each read may miss, so a level below the first holds the atom of the miss
+    /// (and a partial arrow's `#notFound`), which passes through the next read as through
+    /// `g[i][j]` ([`Ck::passing`]); `v` itself holding an atom, a tuple, a class or another
+    /// function leaves the call a call, as before, since a call of a tuple is an error and a
+    /// class's call is its need. A deeper level that is no such family also leaves it a call,
+    /// so that every level of a call read this way records the verdict `true` at its span
+    /// ([`Self::dense_read`]), which the elaborator reads as "write `at` at each level".
+    /// One pass over the pieces of each level, k levels.
+    fn dense_family(&self, v: &Ty, k: usize) -> bool {
+        let mut level = v.clone();
+        for depth in 0..k {
+            let pieces = level.pieces();
+            let mut next = Ty::empty();
+            let mut any = false;
+            for p in &pieces {
+                match p {
+                    Piece::Fn(sig) if sig.data && sig.dense.interval() => {
+                        any = true;
+                        for a in &sig.arrows {
+                            next = next.union(&a.result);
+                        }
+                    }
+                    p if depth > 0 && p.is_atoms() => {}
+                    _ => return false,
+                }
+            }
+            if !any {
+                return false;
+            }
+            level = next;
+        }
+        true
     }
 
     /// The verdict of [`Self::dense_read`] for the read written at `site` on a parameter

@@ -178,6 +178,10 @@ enum Frame<'a> {
     AtomArgs(&'a str, &'a [(String, Expr)]),
     /// A call through a value of no known signature: the value and the receiver.
     ValueArgs(Term, Option<Term>),
+    /// A family whose keys are one integer interval, applied to the key being elaborated and
+    /// then to the keys after it: its read `at(f, k)`, then one read per later key
+    /// ([`Elab::call_value`]).
+    AtArg(Term, &'a [Expr]),
     /// A call through a value that the function called places ([`Elab::placed_call`]): the
     /// value, the receiver, and the call's shape with, for a curried call, its result's list.
     PlacedArgs(Term, Option<Term>, Box<Placing>),
@@ -1691,6 +1695,20 @@ impl<'a> Elab<'a> {
     /// declared function; without one, the arguments are positional.
     fn call_value(&mut self, m: &mut M<'a>, f: Term, receiver: Option<Term>, call: Call<'a>) {
         let info = self.info;
+        // A family whose keys are one integer interval applied to keys is the read of one
+        // level per key, each missing with `#outOfBounds` (the checker's verdict at the call,
+        // given only where every level is such a family; row KERNEL-family-call): `sq(n)` is
+        // written as `sq[n]` is ([`Frame::Index`]), and `g(i, j)` as `g[i][j]`.
+        if let (None, [k, rest @ ..], true, false) = (
+            &receiver,
+            call.positional,
+            call.named.is_empty(),
+            call.curry,
+        ) && info.dense.get(&call.span) == Some(&true)
+        {
+            m.k(Frame::AtArg(f, rest));
+            return m.stack.push(Job::Expr(k));
+        }
         let Some(sig) = info.calls.get(&call.span) else {
             if !call.named.is_empty() || call.curry {
                 let t = self.error(
@@ -3285,6 +3303,16 @@ impl<'a> Elab<'a> {
                     Term::App(Shared::new(f), args)
                 });
                 m.give(t);
+            }
+            Frame::AtArg(f, rest) => {
+                let t = m.t().map(|k| Term::Prim(Prim::At, vec![f, k]));
+                match (t, rest) {
+                    (Some(t), [k, rest @ ..]) => {
+                        m.k(Frame::AtArg(t, rest));
+                        m.stack.push(Job::Expr(k));
+                    }
+                    (t, _) => m.give(t),
+                }
             }
             Frame::PlacedArgs(f, receiver, placing) => {
                 let t = all(m.got()).map(|ts| self.placed_args(f, receiver, *placing, ts));

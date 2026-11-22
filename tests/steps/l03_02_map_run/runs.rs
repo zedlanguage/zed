@@ -955,11 +955,13 @@ fn a_family_read_by_key_at_keys_from_stdin() {
     // - `sq(n)` and `sq[n]`, one read in two spellings, which agree inside and outside the
     //   domain `0 ..< 10`, and `sq[n]` misses with `#outOfBounds` outside it (`sameRead`);
     // - `.count` of a family whose entries are all `#none`, read off its domain (`headOnly`).
-    // The call spelling `sq(n)` misses with `#notFound` today, not the `#outOfBounds` of an
-    // integer-interval level; that half of `sameRead` waits for plan row KERNEL-family-call.
+    // The call spelling `sq(n)` misses with the `#outOfBounds` of an integer-interval level, as
+    // `sq[n]` does, and so does the range itself applied, `(0 ..< 10)(n)` (plan row
+    // KERNEL-family-call; DESIGN.md sec:values_morphisms, "Application is indexing").
     // The model is Rust arithmetic on `n`.
     let body = "${[(n ..).where(x -> x mod 2 == 0).find(x -> x >= n) else #none -> -1, \
-                sq(n) else #notFound -> -1, sq[n] else #outOfBounds -> -1, sq[n] is #outOfBounds, q.count]}";
+                sq(n) else #outOfBounds -> -1, sq[n] else #outOfBounds -> -1, sq[n] is #outOfBounds, q.count, \
+                sq(n) is #outOfBounds, (0 ..< 10)(n) is #outOfBounds]}";
     let src = dir("l03_02_map_run/family_by_key").join("family_by_key.zed");
     let text = format!(
         "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n    \
@@ -978,6 +980,8 @@ fn a_family_read_by_key_at_keys_from_stdin() {
             (i(2), i(square)),
             (i(3), Value::Bool(!inside)),
             (i(4), i(n.max(0))),
+            (i(5), Value::Bool(!inside)),
+            (i(6), Value::Bool(!inside)),
         ]));
         let stdin = format!("{n}\n");
         let ran = interpreter(&src, &[], stdin.as_bytes());
@@ -993,6 +997,42 @@ fn a_family_read_by_key_at_keys_from_stdin() {
             ("", 0),
             "executable at {n}"
         );
+        assert_eq!(ran.stdout, want, "executable at {n}");
+    }
+}
+
+/// A family of families applied to two keys reads one level per key: `g(i, j)` is `g[i][j]`
+/// (DESIGN.md sec:values_morphisms, "Application is indexing"; I2.29; row
+/// KERNEL-family-call), and a key outside either level misses with `#outOfBounds`, in
+/// `zedc run` and in the executable. The model is Rust arithmetic on `n`.
+#[test]
+fn a_family_of_families_applied_to_two_keys_reads_one_level_per_key() {
+    let body = "${[g(1, 2), g(n, 2) else #outOfBounds -> -1, g(1, n) else #outOfBounds -> -1, \
+                g(n, n) is #outOfBounds, g[n][n] is #outOfBounds]}";
+    let src = dir("l03_02_map_run/family_two_keys").join("family_two_keys.zed");
+    let text = format!(
+        "main(m: MainArgs) {{\n    n = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n    \
+         g = (0 ..< 3).map(i -> (0 ..< 4).map(j -> i * 10 + j));\n    \
+         m.stdout <- \"{body}\";\n}}\n"
+    );
+    std::fs::write(&src, text).unwrap();
+    let exe = dir("l03_02_map_run/family_two_keys").join("family_two_keys");
+    built(&src, &exe);
+    for n in [-1i64, 0, 2, 3, 4] {
+        let (row, col) = ((0..3).contains(&n), (0..4).contains(&n));
+        let want = expected(&family(vec![
+            (i(0), i(12)),
+            (i(1), i(if row { n * 10 + 2 } else { -1 })),
+            (i(2), i(if col { 10 + n } else { -1 })),
+            (i(3), Value::Bool(!row)),
+            (i(4), Value::Bool(!row)),
+        ]));
+        let stdin = format!("{n}\n");
+        let ran = interpreter(&src, &[], stdin.as_bytes());
+        assert_eq!((ran.stderr.as_str(), ran.status), ("", 0), "zedc run at {n}");
+        assert_eq!(ran.stdout, want, "zedc run at {n}");
+        let ran = executable(&exe, &[], stdin.as_bytes());
+        assert_eq!((ran.stderr.as_str(), ran.status), ("", 0), "executable at {n}");
         assert_eq!(ran.stdout, want, "executable at {n}");
     }
 }
