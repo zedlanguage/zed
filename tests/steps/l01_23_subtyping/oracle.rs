@@ -877,4 +877,58 @@ fn the_systems_reaching_rare_branches_both_ways_agree_with_the_oracle() {
     }
 }
 
+/// PERF-kernel-box-union-search: unions of one-tuples are compared by the unions of their
+/// components, and the verdict is the one the search gives on the difference, each way. Their
+/// cost is measured on the meet of two overloads in `l01_23_groups_and_refusals`,
+/// `judgments::bench::the_meet_of_two_overloads_on_distinct_boxes_scales`.
+#[test]
+fn unions_of_one_tuples_are_compared_by_their_components() {
+    let boxed = |k: &str| Type::atom_with("box", &Type::tuple(vec![Type::atom(k)]));
+    let ones = |ts: &[Type]| Type::union_all(ts.iter().map(|t| Type::tuple(vec![t.clone()])));
+    let (a, b, c) = (boxed("a"), boxed("b"), boxed("c"));
+    let int = Type::int();
+    let lit = |i: i64| Type::lit(&Value::Int(i)).unwrap();
+    let cases = [
+        (
+            ones(&[a.clone(), b.clone()]),
+            ones(&[b.clone(), a.clone(), c.clone()]),
+            true,
+        ),
+        (
+            ones(&[a.clone(), c.clone()]),
+            ones(&[a.clone(), b.clone()]),
+            false,
+        ),
+        (
+            ones(&[a.clone(), b.clone()]),
+            Type::tuple(vec![&a | &b]),
+            true,
+        ),
+        (ones(&[lit(0), lit(1)]), ones(&[int.clone()]), true),
+        (ones(&[lit(0), int.clone()]), ones(&[lit(0), lit(1)]), false),
+        // Not a union of one-tuples on one side: the long way, with the same answer.
+        (
+            ones(&[a.clone()]),
+            &ones(&[a.clone()]) | &Type::tuple(vec![a.clone(), a.clone()]),
+            true,
+        ),
+        (
+            &ones(&[a.clone()]) | &Type::int(),
+            ones(&[a.clone(), b.clone()]),
+            false,
+        ),
+    ];
+    for (x, y, under) in cases {
+        let want = if under {
+            Verdict::Empty
+        } else {
+            Verdict::Inhabited
+        };
+        assert_eq!(x.subtype_verdict(&y), want, "{x} <: {y}");
+        assert_eq!(x.subtype(&y), under, "{x} <: {y}");
+        Type::forget_emptiness();
+        assert_eq!((&x - &y).verdict(), want, "{x} \\ {y}");
+    }
+}
+
 mod bench;

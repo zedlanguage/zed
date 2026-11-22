@@ -70,17 +70,16 @@ fn the_verdict_on_deep_atom_types_scales_with_depth() {
     scales("atoms", atoms, 22_000, Measure::Verdict);
 }
 
-/// TEST-bench-move-l0123, author P169: left at n = 500, its old size; 1x 6.6 ms at load 9. FINDING:
-/// at larger n it fails the limit. At 8000 it measured 214 ms and 2393 ms, 8.33 times the work
-/// and 8.0 times the bytes, 7.5 s wall; at 12,000, 406 ms and 6357 ms, 12.19 times the work and
-/// 14.3 times the bytes, over 10.5, 18.4 s wall and 1.73 GB, at load 25 to 30 (2026-11-14); a
-/// second run at 12,000 gave 12.19 again. A flat `perf` profile of that run (no call graphs)
-/// shows `Type::cmp` 8.5%, `hashbrown` `usize` key compares 5.5%, `Type::name_digest` 5.1%,
-/// `memmove` 2.9% and the drop of a `BTreeMap<(Type, Type), usize>` 1.9%: the time is spread
-/// over the search's tables, with no one hot spot; the growth past n is not yet explained.
+/// Size (PERF-deep-atom-compare): n 500 before, now 5000. At TEST-bench-move-l0123 (2026-11-14,
+/// processor time at load 25 to 30) the ratio was 8.33 at 8000 and 12.19 at 12,000, twice, with
+/// the bytes 14.3 times. On main at de376d336, with no change of this row to the kernel, the
+/// instructions under DynamoRIO grew 8.14 times from 2000 (350M to 2,845M), 8.15 from 8000
+/// (1,415M to 11,532M) and 8.15 from 12,000 (2,103M to 17,139M), bytes 8.0 times at each, on a
+/// Colab VM (2026-11-22): the growth past n no longer reproduces, so an earlier row fixed it.
+/// 1x at 8000 took 1.42 s by `ns`, so the 1 s size is about 5000.
 #[test]
 fn comparing_deep_atom_types_scales_with_depth() {
-    scales("atoms", atoms, 500, Measure::Comparing);
+    scales("atoms", atoms, 5000, Measure::Comparing);
 }
 
 /// TEST-bench-move-l0123, author P169: n was 500, now 24_000; 1x 0.34 s at load 29.

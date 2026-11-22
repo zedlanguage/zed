@@ -972,3 +972,35 @@ fn rows_against_a_chain_of_shapes_are_decided_in_linear_time() {
         assert!(left.subtype(right));
     });
 }
+
+/// PERF-kernel-box-union-search: the meet of the overloads `(#box(#k_0) -> int) & … &
+/// (#box(#k_{m-1}) -> int)` and the same with `#j_i`, empty, as no two of their domains
+/// share a value. `Domains::outside` (`zedc-types`) compares the union of the `m` one-tuples
+/// `(#box(#k_i),)` with that of the `(#box(#j_i),)`, which the kernel now does by their
+/// components ([`Type::subtype_verdict`], `one_tuple_column`). Before, the simulation made
+/// `m²` pairs and the search on the difference was quadratic too: 56, 207, 781 and 3277 ms at
+/// `m` 64, 128, 256 and 512 on a Colab VM (2026-11-22), 4.2 times per doubling.
+fn box_overloads_meet_scale(n: usize) {
+    use zedc::check::read::parse_type;
+    let overload = |m: usize, k: &str| {
+        let text = (0..m)
+            .map(|i| format!("(#box(#{k}{i}) -> int)"))
+            .collect::<Vec<_>>()
+            .join(" & ");
+        parse_type(&text).expect("an overload")
+    };
+    let built = |m: usize| (overload(m, "k"), overload(m, "j"));
+    let (small, large) = (built(n), built(scaling::FACTOR * n));
+    scaling::check("the meet of two overloads on distinct boxes", n, |m| {
+        let (b, c) = if m == n { &small } else { &large };
+        assert!(b.meet(c).fns.is_empty());
+    });
+}
+
+/// Size (PERF-kernel-box-union-search): n 2048, about 1 s at 1x on a Colab VM. Red before the
+/// change, at n 64 (2026-11-22): 334M and 16,928M instructions at 64 and 512, 50.75 times,
+/// failed. After it, at n 4096: 3,336M and 28,993M, 8.69 times, bytes 8.3 times, 1x 2.94 s.
+#[test]
+fn the_meet_of_two_overloads_on_distinct_boxes_scales() {
+    box_overloads_meet_scale(2048);
+}

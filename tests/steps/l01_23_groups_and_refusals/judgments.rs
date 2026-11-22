@@ -745,6 +745,28 @@ mod bench;
 /// in nothing, and two partial ones in their shared keys. Until
 /// FAIL-types-meet-exact-arrows-differing-domains this test held such a meet equal to the
 /// overload of the two, which holds functions of neither side.
+/// PERF-kernel-box-union-search: two overloads on boxes of distinct atoms meet in nothing, as
+/// exact arrows over different domains do; two on the same boxes, listed in another order, meet
+/// in the overload. The small instance of
+/// `bench::the_meet_of_two_overloads_on_distinct_boxes_scales`.
+#[test]
+fn overloads_on_boxes_meet_where_their_boxes_are_shared() {
+    use zedc::check::read::parse_type;
+    let overload = |ks: &[&str]| {
+        let text = ks
+            .iter()
+            .map(|k| format!("(#box(#{k}) -> int)"))
+            .collect::<Vec<_>>()
+            .join(" & ");
+        parse_type(&text).expect("an overload")
+    };
+    let (b, c) = (overload(&["k0", "k1", "k2"]), overload(&["j0", "j1", "j2"]));
+    assert!(b.meet(&c).fns.is_empty());
+    // Sharing one box is not enough: the domains still differ.
+    assert!(b.meet(&overload(&["j0", "k1", "j2"])).fns.is_empty());
+    assert!(!b.meet(&overload(&["k2", "k0", "k1"])).fns.is_empty());
+}
+
 #[test]
 fn a_meet_with_a_union_of_functions_keeps_both_sides() {
     use zedc::check::read::parse_type;

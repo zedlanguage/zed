@@ -1693,6 +1693,15 @@ impl Type {
 
     /// Whether every value of `self` is in `other`: `self <: other`.
     pub fn subtype(&self, other: &Type) -> bool {
+        // Unions of one-tuples compare by their components ([`one_tuple_column`]), as in
+        // `subtype_verdict`.
+        if let (Some(a), Some(b)) = (one_tuple_column(self), one_tuple_column(other)) {
+            match a.subtype_verdict(&b) {
+                Verdict::Empty => return true,
+                Verdict::Inhabited => return false,
+                Verdict::Refused(_) => {}
+            }
+        }
         Simulation::default().holds(self, other) || (self - other).is_empty()
     }
 
@@ -1706,6 +1715,15 @@ impl Type {
     /// and `the_recorded_cases_are_decided_by_the_simulation` in `l01_23_subtyping::oracle`;
     /// COMPLEXITY.md K37).
     pub fn subtype_verdict(&self, other: &Type) -> Verdict {
+        if let (Some(a), Some(b)) = (one_tuple_column(self), one_tuple_column(other)) {
+            // `(a,) <: (b,)` exactly when `a <: b`: a one-tuple `(v,)` is in `(a,)` exactly when
+            // `v` is in `a`, and a value `v` of `a` outside `b` gives `(v,)` of `self` outside
+            // `other`. A refusal keeps the route below, so no verdict made before is lost.
+            match a.subtype_verdict(&b) {
+                Verdict::Refused(_) => {}
+                v => return v,
+            }
+        }
         if Simulation::default().holds(self, other) {
             Verdict::Empty
         } else {
@@ -1717,6 +1735,38 @@ impl Type {
     pub fn equiv(&self, other: &Type) -> bool {
         self.subtype(other) && other.subtype(self)
     }
+}
+
+/// The union `c` of the components of the one-tuple types whose union `t` is, when `t` holds
+/// one-tuples and nothing else and its part of length 1 is a union of tuple types
+/// ([`Part::union_rows`]); then `t` is `(c,)`, as `(a,) | (b,)` and `(a | b,)` hold the same
+/// one-tuples. `None` for any other type, a recursive node among them.
+///
+/// Complexity tradeoff (PERF-kernel-box-union-search, COMPLEXITY.md K142): the union of `m` one-tuples
+/// `(#box(#k_i),)` against `m` others `(#box(#j_i),)` (`Domains::outside` in `zedc-types`, for
+/// the meet of two overloads of `m` functions each) made `m²` pairs in the simulation, whose
+/// [`ByName`] files rows by their first atom name only, all `box` here, and the search on the
+/// difference was quadratic too: 0.78 s at `m = 256` and 3.3 s at `m = 512`, about 4 times per
+/// doubling, 39% of it in `Simulation::holds` and 51% in `Search`. Comparing the components
+/// instead compares the two unions of atoms `#box(…)` name by name, whose payloads are again
+/// such unions. Cost: one pass over the rows of each side, `O(m)`, and the union of their
+/// components, `Type::union_all`. Given up: a union whose part is not a plain union of rows
+/// (a negation, a meet, another length beside 1) goes the long way, as before.
+fn one_tuple_column(t: &Type) -> Option<Type> {
+    let Node::Parts(p, _) = &*t.0 else {
+        return None;
+    };
+    let bare = !p.has_scalars()
+        && p.atoms.is_default()
+        && !p.tuples.rest
+        && !p.structs
+        && p.morphisms.is_leaf() == Some(false);
+    let mut lens = p.tuples.lens.iter();
+    let (true, Some((1, part)), None) = (bare, lens.next(), lens.next()) else {
+        return None;
+    };
+    let rows = part.union_rows()?;
+    Some(Type::union_all(rows.into_iter().map(|r| r[0].clone())))
 }
 
 /// A proof of `a <: b` for unions of tuple types written without negation, with no box split:
