@@ -1412,7 +1412,9 @@ fn calls_are_read_through_and_foreign_ones_stop() {
     assert_eq!(p.domains["x"].to_string(), "[..]", "{}", shown(&p));
     assert!(!p.exact, "{}", shown(&p));
     assert!(
-        p.stop_texts().iter().any(|s| s.contains("stops the transfer")),
+        p.stop_texts()
+            .iter()
+            .any(|s| s.contains("stops the transfer")),
         "{}",
         shown(&p)
     );
