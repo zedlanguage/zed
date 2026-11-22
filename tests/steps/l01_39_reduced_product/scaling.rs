@@ -1507,15 +1507,16 @@ fn disjunctions_of_two_names_left_out_keep_the_projection() {
         .iter()
         .fold(start, |s, t| s.assume(t, true, &p));
     type Pt = [i64; 5];
-    let holds: Vec<(Term, Box<dyn Fn(&Pt) -> bool>)> = vec![
+    type Holds = fn(&Pt) -> bool;
+    let holds: Vec<(Term, Holds)> = vec![
         (
             prim(Prim::Le, prim(Prim::Add, var("n"), var("m")), int(4)),
-            Box::new(|q: &Pt| q[3] + q[4] <= 4),
+            |q: &Pt| q[3] + q[4] <= 4,
         ),
-        (ge(var("n"), int(-3)), Box::new(|q: &Pt| q[3] >= -3)),
-        (ge(var("m"), int(2)), Box::new(|q: &Pt| q[4] >= 2)),
-        (ge(int(1), var("n")), Box::new(|q: &Pt| q[3] <= 1)),
-        (ge(var("n"), int(0)), Box::new(|q: &Pt| q[3] >= 0)),
+        (ge(var("n"), int(-3)), |q: &Pt| q[3] >= -3),
+        (ge(var("m"), int(2)), |q: &Pt| q[4] >= 2),
+        (ge(int(1), var("n")), |q: &Pt| q[3] <= 1),
+        (ge(var("n"), int(0)), |q: &Pt| q[3] >= 0),
     ];
     let base = |q: &Pt| {
         let d = |v: i64, h: i64| v - h >= 5 || h - v >= 5;
@@ -1540,7 +1541,7 @@ fn disjunctions_of_two_names_left_out_keep_the_projection() {
     for (step, (t, f)) in holds.iter().enumerate() {
         eager = eager.assume(t, true, &p);
         lazy = lazy.assume(t, true, &p);
-        points.retain(|q| f(q));
+        points.retain(f);
         for (i, x) in names.iter().enumerate() {
             let mut at: Vec<i64> = points.iter().map(|q| q[i]).collect();
             at.sort_unstable();
