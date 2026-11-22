@@ -1959,13 +1959,120 @@ struct FoldChecks {
     empty: Vec<Span>,
 }
 
-/// The uses a program writes of one call need ([`Ck::call_written`]): the span of each use
-/// and the spans of the arguments it writes.
-type WrittenUses = Vec<(Span, Option<Rc<[Option<Span>]>>)>;
+use written::WrittenUses;
 
-/// The argument each use of a call need writes at one parameter ([`Ck::call_written_via`]):
-/// the number of uses when made, and the list.
-type WrittenVia = (usize, Option<Rc<[Span]>>);
+/// The uses a program writes of one call need, kept in a module of their own so that the
+/// list can only be added to (row PROOF-call-written-append-only).
+mod written {
+    use std::collections::HashMap;
+    use std::rc::Rc;
+
+    use zedc_syntax::lex::Span;
+
+    /// One use of a call need: its span, and the spans of the arguments it writes (`None`
+    /// for a use met while trying or copied from another body's need).
+    pub(super) type Use = (Span, Option<Rc<[Option<Span>]>>);
+
+    /// The uses a program writes of one call need ([`super::Ck::call_written`]), and for each
+    /// parameter `p` the argument each use writes there, as last made, with the number of
+    /// uses it was made from ([`Self::arg_via`]).
+    ///
+    /// Append-only by construction: outside this module the uses are only read and added to
+    /// ([`Self::push`], [`Self::prepend`]), since the fields are private here and no method
+    /// removes or replaces a use. Proof that the kept lists are current: each method that adds
+    /// adds at least one use (`prepend` of an empty list adds none and changes nothing), so
+    /// the number of uses only grows and differs after every change; a list made from `len`
+    /// uses is therefore made from the uses there are now exactly when there are still `len`.
+    /// A trial is not undone here: a use it records is kept with no arguments (the caller
+    /// passes `None` while trying), which makes the list of every parameter `None`, so a
+    /// function passed on through such a need is refused rather than rebuilt from spans whose
+    /// values may be of other types (`Ck::need`). Complexity tradeoff: n calls of a generic
+    /// body meet each of its call needs, and the n calls alike in it are one need of n uses
+    /// (row TEST-call-site-need-key), so a list made at each meeting is n·n spans in all;
+    /// made once and kept, it is O(n), and made again, O(uses), only when uses were added.
+    #[derive(Default)]
+    pub(super) struct WrittenUses {
+        uses: Vec<Use>,
+        via: HashMap<usize, (usize, Option<Rc<[Span]>>)>,
+    }
+
+    impl WrittenUses {
+        /// The uses, in order.
+        pub(super) fn uses(&self) -> &[Use] {
+            &self.uses
+        }
+
+        /// Adds a use after the others.
+        pub(super) fn push(&mut self, u: Use) {
+            self.uses.push(u);
+        }
+
+        /// Adds `earlier` before the others, in their order.
+        pub(super) fn prepend(&mut self, mut earlier: Vec<Use>) {
+            earlier.append(&mut self.uses);
+            self.uses = earlier;
+        }
+
+        /// The argument each use writes at parameter `p`, or `None` when some use writes none
+        /// there; made again only when uses were added since it was last made (see the type).
+        pub(super) fn arg_via(&mut self, p: usize) -> Option<Rc<[Span]>> {
+            let len = self.uses.len();
+            if let Some((made, via)) = self.via.get(&p)
+                && *made == len
+            {
+                return via.clone();
+            }
+            let via: Option<Rc<[Span]>> = (self.uses.iter())
+                .map(|(_, w)| w.as_ref().and_then(|w| w.get(p).copied().flatten()))
+                .collect();
+            self.via.insert(p, (len, via.clone()));
+            via
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn span(n: usize) -> Span {
+            Span {
+                start: n,
+                end: n + 1,
+            }
+        }
+
+        fn fresh(w: &WrittenUses, p: usize) -> Option<Rc<[Span]>> {
+            let mut f = WrittenUses::default();
+            f.prepend(w.uses().to_vec());
+            f.arg_via(p)
+        }
+
+        /// A list kept for a parameter is the list made fresh after each kind of addition: a
+        /// use added after, uses added before, and a use recorded while trying, which writes
+        /// no arguments and so makes the list `None` (row PROOF-call-written-append-only).
+        #[test]
+        fn a_kept_list_is_the_fresh_list_after_every_addition() {
+            let mut w = WrittenUses::default();
+            w.push((span(0), Some(vec![Some(span(10)), None].into())));
+            assert_eq!(w.arg_via(0), Some(vec![span(10)].into()));
+            assert_eq!(w.arg_via(1), None);
+            w.push((span(1), Some(vec![Some(span(11)), Some(span(21))].into())));
+            assert_eq!(w.arg_via(0), fresh(&w, 0));
+            assert_eq!(w.arg_via(0), Some(vec![span(10), span(11)].into()));
+            w.prepend(vec![(span(2), Some(vec![Some(span(12))].into()))]);
+            assert_eq!(w.arg_via(0), fresh(&w, 0));
+            assert_eq!(
+                w.arg_via(0),
+                Some(vec![span(12), span(10), span(11)].into())
+            );
+            w.prepend(Vec::new());
+            assert_eq!(w.arg_via(0), fresh(&w, 0));
+            w.push((span(3), None));
+            assert_eq!(w.arg_via(0), fresh(&w, 0));
+            assert_eq!(w.arg_via(0), None);
+        }
+    }
+}
 
 /// One need being met ([`Ck::meet_alike`]): its span, its site, and the uses alike its
 /// signature left out for it ([`Need::alike`]).
@@ -2331,15 +2438,9 @@ struct Ck<'t, 'a> {
     /// body's need.
     /// [`Self::meet`] reads it for an argument of a type of no variable, whose value is the
     /// same at every run of the body, so a function it passes to a partial slot is rebuilt
-    /// where the use writes it.
+    /// where the use writes it. Each entry also keeps, per argument, the argument each use
+    /// writes, made again only when uses were added ([`WrittenUses::arg_via`]).
     call_written: HashMap<Span, WrittenUses>,
-    /// For argument `p` of the call need kept at a span ([`Self::call_written`]): the number of
-    /// uses recorded when the list was made, and the argument each of them writes
-    /// ([`Self::need_arg_via`]). Complexity tradeoff: n calls of a generic body meet each of its
-    /// call needs, and the n calls alike in it are one need of n uses (row
-    /// TEST-call-site-need-key), so a list made at each meeting is n·n spans in all; made once
-    /// and shared, it is O(n), and again O(uses) only when uses were recorded since.
-    call_written_via: HashMap<(Span, usize), WrittenVia>,
     /// The spans of the `else` expressions whose left side is the bare name of a variable, as
     /// `x else x`, kept for a narrowing need only while every equal use of it is one
     /// ([`Self::need`]). [`Self::meet`] places the result of such a narrowing where the
@@ -3175,7 +3276,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             default_ints: HashMap::new(),
             default_reads: HashMap::new(),
             call_written: HashMap::new(),
-            call_written_via: HashMap::new(),
             narrow_names: HashSet::new(),
             call_spans: None,
             next_found: 0,
@@ -8378,10 +8478,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
         if !skip_cw && !exact_call_written.is_empty() {
             let cw_len = exact_call_written.len();
-            let entry = self.call_written.entry(f.call_span).or_default();
-            let mut combined = exact_call_written;
-            combined.append(entry);
-            *entry = combined;
+            (self.call_written.entry(f.call_span).or_default()).prepend(exact_call_written);
             self.r10.stats.call_written_entries += cw_len;
         }
 
@@ -9939,6 +10036,8 @@ enum Undo {
     DataChecked(NodeId, bool),
     /// The entry of a row or payload shape in [`Ck::clean`], while a repair is tried.
     Clean(NodeId, Option<(usize, u64)>),
+    /// The entry of a lambda in [`Ck::arrow_lambdas`], while a repair is tried.
+    ArrowLambda(Span, Option<Arc<Sig>>),
 }
 
 /// How long the log and the errors were at a point.
@@ -10171,6 +10270,16 @@ impl Ck<'_, '_> {
             && !(self.arrow_lambdas.keys()).any(|l| l.start <= at.start && at.end <= l.end)
     }
 
+    /// Records the lambda at `l`, checked at the arrows of the intersection `e`, in
+    /// [`Self::arrow_lambdas`]; while a repair is tried, with the write that undoes it in the
+    /// log, so the trial's `undo` takes the record back (row TEST-arrow-lambda-trial-stale).
+    fn record_arrow_lambda(&mut self, l: Span, e: Arc<Sig>) {
+        let old = self.set(Undo::ArrowLambda(l, Some(e)));
+        if self.trying {
+            self.log.push(old);
+        }
+    }
+
     /// Records that a trial wrote a fit at `at` ([`Self::trial_fits`]).
     fn trial_wrote(&mut self, at: Span) {
         if self.trying {
@@ -10329,6 +10438,9 @@ impl Ck<'_, '_> {
         if let Undo::Clean(n, v) = w {
             return Undo::Clean(n, set!(self.clean, n, v));
         }
+        if let Undo::ArrowLambda(l, v) = w {
+            return Undo::ArrowLambda(l, set!(self.arrow_lambdas, l, v));
+        }
         let i = &mut self.info;
         match w {
             Undo::Adopt(k, v) => Undo::Adopt(k, set!(i.adopt, k, v)),
@@ -10351,7 +10463,7 @@ impl Ck<'_, '_> {
             }
             Undo::Follows(k, v) => Undo::Follows(k, set!(i.follows, k, v)),
             Undo::Witness(k, v) => Undo::Witness(k, set!(i.witness, k, v)),
-            Undo::DataChecked(..) | Undo::Clean(..) => {
+            Undo::DataChecked(..) | Undo::Clean(..) | Undo::ArrowLambda(..) => {
                 unreachable!("set above")
             }
         }

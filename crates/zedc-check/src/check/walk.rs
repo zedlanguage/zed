@@ -11608,9 +11608,20 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let want = Want::of(&arrow.result.subst(&s.unheld));
             let body = s.body;
-            // Kept after the body, for needs met later ([`Ck::arrow_lambda_twice`]).
+            // Kept after the body, for needs met later ([`Ck::arrow_lambda_twice`]). One
+            // recorded while a repair is tried is taken back with the trial's other writes
+            // (`Undo::ArrowLambda`, row TEST-arrow-lambda-trial-stale): else a lambda the
+            // trial checked at a signature it then discards would stay recorded, and a later
+            // refusal inside its span would name it. Every trial ends with `undo` of a mark
+            // taken before `start_trial` (`trial`, `kept_lists`, `try_outside`, `compares`),
+            // so the entry goes with it. Whether a trial reaches this point is not known: the
+            // walk is driven while trying only through `remap_alone`, `walk_alone` and
+            // `call_found`, and no test of the groups l01_26, l01_26a, l01_29 (both), l03_02
+            // and l08_02 reached it in 62,050 trials (probed 2026-11-22), so no program shows
+            // the wrong name; the test `a_lambda_recorded_in_a_trial_is_undone_with_it` makes
+            // the record by hand.
             if s.e.arrows.len() > 1 {
-                self.arrow_lambdas.insert(s.span, s.e.clone());
+                self.record_arrow_lambda(s.span, s.e.clone());
             }
             s.waiting = Some(FitWait::Body);
             m.k(Frame::FitLambda(s));
@@ -15214,10 +15225,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if matches!(key.0, NeedKind::Call { .. }) {
             let first = self.classes[r].known.get(&key).map_or(span, |&(_, f, _)| f);
             let spans = spans.filter(|_| !self.trying);
-            self.call_written
-                .entry(first)
-                .or_default()
-                .push((span, spans));
+            (self.call_written.entry(first).or_default()).push((span, spans));
             self.r10.stats.call_written_entries += 1;
             self.r10.stats.records_written += 1;
         }
@@ -23844,29 +23852,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         if t.holds_vars() {
             return None;
         }
-        // One list per need and argument, made again only when uses were recorded since
-        // ([`Ck::call_written_via`]): the uses of a need are only ever added to, so a list
-        // made at length `len` is current while the length is `len`. The writes of
-        // `call_written` are the push of a call use in `Self::need` (`self.call_written`
-        // `.entry(..)`) and the prepend of the exact uses when a forward is forced
-        // (`combined`, in mod.rs, only when that list is not empty); neither removes a use,
-        // and no `Undo` takes one back. Each adds at least one use, so the length changes and
-        // the list is made again. Test: the bench
+        // One list per need and argument, made again only when uses were added since
+        // ([`WrittenUses::arg_via`], whose type proves the kept list current: its uses can
+        // only be added to). Tests: the bench
         // `l01_26_type_resolution::bench::function_variance::many_calls_of_a_body_with_many_named_calls_scale`,
-        // which fails on a list made at every meeting; no test catches a stale list, which only
-        // a removal added later could make.
-        let uses = self.call_written.get(&n.span)?;
-        if let Some((len, via)) = self.call_written_via.get(&(n.span, p))
-            && *len == uses.len()
-        {
-            return via.clone();
-        }
-        let via: Option<Rc<[Span]>> = (uses.iter())
-            .map(|(_, w)| w.as_ref().and_then(|w| w.get(p).copied().flatten()))
-            .collect();
-        let len = uses.len();
-        (self.call_written_via).insert((n.span, p), (len, via.clone()));
-        via
+        // which fails on a list made at every meeting, and
+        // `a_kept_list_is_the_fresh_list_after_every_addition`.
+        self.call_written.get_mut(&n.span)?.arg_via(p)
     }
 
     /// Refuses the value at `span`, passed where a partial function type is expected, whose
@@ -33005,6 +32997,33 @@ mod tests {
             "{made_now}"
         );
         assert_eq!(ck.classes.layer_depth(), 0);
+    }
+
+    /// A lambda recorded as checked at the arrows of an intersection while a repair is tried
+    /// is taken back with the trial (row TEST-arrow-lambda-trial-stale), so a later refusal
+    /// inside its span does not name it; one recorded outside a trial is kept past an `undo`,
+    /// for needs met later. No program found makes the record inside a trial (see the comment
+    /// at the record in `Ck::fit_step`), so it is made here by hand.
+    #[test]
+    fn a_lambda_recorded_in_a_trial_is_undone_with_it() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let sig = Arc::new(one_param_sig(Ty::empty()));
+        let (kept, tried) = (Span { start: 0, end: 9 }, Span { start: 20, end: 29 });
+        let saved = ck.mark();
+        ck.record_arrow_lambda(kept, sig.clone());
+        let inner = ck.mark();
+        let was = ck.start_trial();
+        ck.record_arrow_lambda(tried, sig.clone());
+        ck.record_arrow_lambda(kept, sig);
+        assert!(ck.arrow_lambdas.contains_key(&tried));
+        ck.end_trial(was);
+        ck.undo(&inner);
+        assert!(!ck.arrow_lambdas.contains_key(&tried));
+        assert!(ck.arrow_lambdas.contains_key(&kept));
+        ck.undo(&saved);
+        assert!(ck.arrow_lambdas.contains_key(&kept));
     }
 
     /// The signature of a function of one positional parameter `x` of type `param` that gives
