@@ -17,8 +17,8 @@ use zedc_syntax::lex::Span;
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Slot {
     /// The range the parameter is declared with, as `x: u8` or `x: int[-10..=0]`
-    /// ([`SParam::range`](zedc_check::check::ty::SParam::range)). Its arrow types are then `int`, which holds every neighbor, so the
-    /// range is what decides.
+    /// ([`SParam::range`](zedc_check::check::ty::SParam::range)). Its arrow types are then
+    /// `int`, which holds every neighbor, so the range is what decides.
     pub range: Option<WrittenRange>,
     /// The parameter's type in each arrow, in the signature's order.
     pub tys: Arc<[Ty]>,
