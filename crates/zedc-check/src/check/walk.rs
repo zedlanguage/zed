@@ -21345,6 +21345,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 // An `if` of literals written as a component, `if c { 2 + 1 } else { 1 }`,
                 // keeps its branches, each of which adopts as a lone literal would.
+                let top = self.level == 0;
                 let arg = |t: &Ty, w: &Option<Part<'a>>, fixed: Option<Lit>| match w {
                     Some(Part::Lit(l)) => Arg {
                         lit: Some(fixed.unwrap_or_else(|| l.clone())),
@@ -21352,6 +21353,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                     },
                     Some(Part::Branches(bs)) => Arg {
                         branches: Some(bs.clone()),
+                        ..Arg::of(t.clone())
+                    },
+                    // An operation on bare literals alone written as a component, `1 / 2` in
+                    // `min((1 / 2, 1), (1.5, 2))`, stays one, as the argument of `min` it is
+                    // here, so that outside every function [`Self::min_max_lit_ops`] gives it
+                    // the carrier it takes beside the other component, as in a body, where it
+                    // is a class that the component's class merges with (DESIGN.md step
+                    // L1.26b; row FAIL-top-literal-op-nested-or-component: it was read as
+                    // `Part::Other`, typed as walked, and `1 / 2` was rejected at `int`).
+                    // Inside a function the component is read as before, typed as walked.
+                    Some(Part::Op(e)) if top => Arg {
+                        expr: Some(e),
                         ..Arg::of(t.clone())
                     },
                     _ => Arg::of(t.clone()),
@@ -21447,7 +21460,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     for i in 0..n {
                         let join = |rows: &[&[Ty]]| Ty::union_all(rows.iter().map(|r| &r[i]));
                         let part = |w: &Option<Rc<[Part<'a>]>>| match w.as_ref().map(|ps| &ps[i]) {
-                            Some(Part::Other | Part::Op(_)) | None => None,
+                            Some(Part::Other) | None => None,
                             Some(p) => Some(p.clone()),
                         };
                         todo.push((join(&s), join(&t), [part(&ws), part(&wt)]));

@@ -3,7 +3,7 @@ use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
 use super::super::top_body_agree::{
     comparisons, display_ops, generic_ops, nested_int_exponents,
-    nested_powers_by_an_inexact_divisor, powers,
+    nested_powers_by_an_inexact_divisor, powers, tuple_component_ops,
 };
 
 /// `n` top-level calls, each giving an operation on literals alone to a generic parameter or
@@ -116,6 +116,32 @@ fn displays_with_parts_that_take_f64_scale() {
         assert_eq!(type_errors(&srcs[0]), Vec::<String>::new());
         scaling::check(
             "checking a top-level display of n parts that take f64",
+            n,
+            |m| {
+                type_errors(&srcs[usize::from(m != n)]);
+            },
+        );
+    });
+}
+
+/// One top-level `min` of two tuples of `n` components, each pair an operation on literals alone
+/// beside a decimal: each pair is checked once (`Ck::min_max_tuples`), and each operation read
+/// once at a carrier (`Ck::lit_fit`) and walked once more as it takes it (`Ck::lit_takes`),
+/// O(size of the line) (row FAIL-top-literal-op-nested-or-component).
+///
+/// Besides its ratio: no error. Small instance:
+/// `top_body_agree::many_operations_in_tuple_components_take_f64`.
+#[test]
+fn operations_in_tuple_components_scale() {
+    scaling::on_a_thread(1 << 29, || {
+        let n = 300;
+        let srcs = [
+            tuple_component_ops(n),
+            tuple_component_ops(scaling::FACTOR * n),
+        ];
+        assert_eq!(type_errors(&srcs[0]), Vec::<String>::new());
+        scaling::check(
+            "checking a min of two tuples of n operations and decimals",
             n,
             |m| {
                 type_errors(&srcs[usize::from(m != n)]);

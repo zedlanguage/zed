@@ -728,6 +728,24 @@ pub(super) fn generic_ops(n: usize) -> String {
     src + &format!("z = add(x: {sum}, y: 1.5);\nw = min({sum}, 1.5);\n")
 }
 
+/// One top-level `min` of two tuples of `n` components, the `i`th of the first an operation on
+/// literals alone, `1 / (i + 2)`, and that of the second a decimal, `i.5`: each operation
+/// takes `f64` beside its decimal, with no error (row FAIL-top-literal-op-nested-or-component).
+pub(super) fn tuple_component_ops(n: usize) -> String {
+    let ops: Vec<String> = (0..n).map(|i| format!("1 / {}", i + 2)).collect();
+    let decimals: Vec<String> = (0..n).map(|i| format!("{i}.5")).collect();
+    format!(
+        "y = min(({}), ({}));\n",
+        ops.join(", "),
+        decimals.join(", ")
+    )
+}
+
+#[test]
+fn many_operations_in_tuple_components_take_f64() {
+    assert_eq!(type_errors(&tuple_component_ops(20)), Vec::<String>::new());
+}
+
 /// One top-level binding `r` of an array of `n` parts, each an operation on literals that
 /// takes `f64` inside a tuple display, an atom, a set or a map by turns, and of one array
 /// nested `n` deep around such an operation: each takes `f64`, with no error.
@@ -878,6 +896,45 @@ fn a_division_branch_beside_a_decimal_compared_is_rejected_whatever_names_the_co
     let errs = type_errors(&src);
     if errs.len() != 1 || !errs[0].starts_with("Nothing gives the literal `1` a carrier.") {
         bad.push(format!("parameter: {errs:?}"));
+    }
+    assert_eq!(bad, Vec::<String>::new());
+}
+
+/// DESIGN step L1.26b: an operation on literals alone that reaches a class takes the class's
+/// carrier, the same at the top level as in a body (row FAIL-top-literal-op-nested-or-component).
+/// `min((1 / 2, 1), (1.5, 2))`, and the same one tuple deeper under `max`: an operation that is
+/// a tuple component meets the other tuple's component (it was read as `Part::Other`, typed as
+/// walked, and rejected at the top level only); `h((1 / 2, 1.5))`: it meets the other component
+/// through `p`. The nested call `add(x: add(x: 1 / 2, y: 1), y: 1.5)` of the same row is still
+/// rejected at the top level, and its test is
+/// /home/luke/Work/wt/failing-tests/FAIL-top-literal-op-nested-or-component.rs.
+#[test]
+fn an_operation_on_literals_in_a_tuple_component_follows_the_class() {
+    let pre = "add(x, y) = x + y;\nh(positional p) = p[0] + p[1];\n";
+    let cases = [
+        ("min((1 / 2, 1), (1.5, 2))", "(0.5, 1)"),
+        ("max(((1 / 2, 1), 2), ((1.5, 2), 3))", "((1.5, 2), 3)"),
+        ("h((1 / 2, 1.5))", "2.0"),
+    ];
+    let mut bad = Vec::new();
+    for (e, want) in cases {
+        for (src, place) in places(&[e]).iter().zip(["top", "body", "block"]) {
+            let src = format!("{pre}{src}");
+            let errs = type_errors(&src);
+            if !errs.is_empty() {
+                bad.push(format!("{e} {place}: rejected: {errs:?}"));
+                continue;
+            }
+            let out = run(
+                &format!("l01_26a_top_literal_op_nested_{place}"),
+                &src,
+                "",
+                &[],
+            );
+            if (out.status, out.stdout.as_str()) != (0, format!("{want}\n").as_str()) {
+                bad.push(format!("{e} {place}: {:?}", out.stdout));
+            }
+        }
     }
     assert_eq!(bad, Vec::<String>::new());
 }
