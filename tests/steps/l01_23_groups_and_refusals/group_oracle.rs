@@ -4647,40 +4647,6 @@ fn xr_r2_build_long_tuple_cgroup(m: usize, inhabited: bool, tag: &str) -> Vec<Ty
 }
 
 #[test]
-fn xr_r2_bench_cgroup_long_tuples_and_many_diffs_scales() {
-    for inhabited in [true, false] {
-        let n = 8usize;
-        // One group held at a time, built before its run (MEM-l0126-40gb).
-        let make = |k: usize, r: usize| {
-            let size = if k == n { "s" } else { "l" };
-            xr_r2_build_long_tuple_cgroup(k, inhabited, &format!("_{size}_{inhabited}_{r}"))
-        };
-        let want = if inhabited {
-            Verdict::Inhabited
-        } else {
-            Verdict::Empty
-        };
-        scaling::check_order_fresh(
-            if inhabited {
-                "Q2 C_group 6-tuples with many diffs (inhabited)"
-            } else {
-                "Q2 C_group 6-tuples with many diffs (empty)"
-            },
-            n,
-            1,
-            make,
-            |_, ts: Vec<Type>| {
-                Type::forget_emptiness();
-                for t in &ts {
-                    assert_eq!(t.verdict(), want);
-                }
-                ts
-            },
-        );
-    }
-}
-
-#[test]
 fn xr_r2_q2d_outside_narrow_cgroup_seed1908_nested_pair_agrees_across_orders() {
     let c_pair = tup(vec![E::Atom("c"), E::Atom("c")]);
     let sub = E::Union(vec![

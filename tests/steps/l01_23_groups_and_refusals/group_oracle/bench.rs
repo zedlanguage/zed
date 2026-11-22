@@ -481,3 +481,40 @@ fn a_tuple_holding_a_chain_of_groups_is_decided_on_a_small_stack() {
         }
     }
 }
+
+/// Q2 C_group 6-tuples with many diffs at `n = 8` and `8n = 64`, inhabited and empty. A
+/// benchmark, moved here from the correctness tests of `group_oracle.rs` (TEST-bench-split,
+/// MEM-l0126-40gb).
+#[test]
+fn xr_r2_bench_cgroup_long_tuples_and_many_diffs_scales() {
+    for inhabited in [true, false] {
+        let n = 8usize;
+        // One group held at a time, built before its run (MEM-l0126-40gb).
+        let make = |k: usize, r: usize| {
+            let size = if k == n { "s" } else { "l" };
+            xr_r2_build_long_tuple_cgroup(k, inhabited, &format!("_{size}_{inhabited}_{r}"))
+        };
+        let want = if inhabited {
+            Verdict::Inhabited
+        } else {
+            Verdict::Empty
+        };
+        scaling::check_order_fresh(
+            if inhabited {
+                "Q2 C_group 6-tuples with many diffs (inhabited)"
+            } else {
+                "Q2 C_group 6-tuples with many diffs (empty)"
+            },
+            n,
+            1,
+            make,
+            |_, ts: Vec<Type>| {
+                Type::forget_emptiness();
+                for t in &ts {
+                    assert_eq!(t.verdict(), want);
+                }
+                ts
+            },
+        );
+    }
+}

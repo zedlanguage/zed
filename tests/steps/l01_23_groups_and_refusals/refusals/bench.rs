@@ -1821,3 +1821,27 @@ fn many_forks_of_plain_unions_without_values_are_refused_in_their_size() {
         forked_unions_without_values,
     );
 }
+
+/// Q2(f) Bench 1 (Gemini R2): `n = 512` vs `8n = 4096` distinct cofinite partners in one `U1`
+/// bucket. Negative controls: fails at `4091b22e5` (`Refused(Fork)`) and fails `T(8n)/T(n)` on
+/// `q2n+` (`36.1x`).
+#[test]
+fn xr_r2_bench_escape_single_bucket_scales_n_log_n() {
+    let n = 512usize;
+    // One input held at a time, built before its run (MEM-l0126-40gb).
+    let make = |k: usize, i: usize| {
+        let size = if k == n { "s" } else { "l" };
+        xr_r2_build_single_bucket_escape(k, &format!("_xrb_{size}_{i}"))
+    };
+    scaling::check_order_fresh(
+        "Q2(f) escape single-bucket cofinite intersection",
+        n,
+        1,
+        make,
+        |k, t: Type| {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Empty, "single-bucket at {k}");
+            t
+        },
+    );
+}
