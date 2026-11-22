@@ -143,6 +143,50 @@ pub(crate) fn digits_above_a_tie(n: usize) -> String {
     )
 }
 
+/// The sample of Nigel Tao's corpus in `tests/data/parse-number-fxx`, whose source, license
+/// and choice of lines are in that directory: lines of the `f16`, `f32` and `f64` encodings in
+/// hex and a float literal. zed-kernel's `float_text::tests` checks every line in all three
+/// formats.
+const CORPUS: &str = include_str!("../../data/parse-number-fxx/sample.txt");
+
+/// `m` texts of the corpus with their `f64` encodings, the `i`th the corpus's `i mod 8000`th:
+/// the inputs of `bench::literals`'s reading and printing of many literals
+/// (TESTS-float-text-corpus).
+pub(super) fn corpus_lines(m: usize) -> Vec<(&'static str, u64)> {
+    let lines: Vec<(&str, u64)> = CORPUS
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| {
+            let fields: Vec<&str> = line.split(' ').collect();
+            let [_, _, f64, text] = fields[..] else {
+                panic!("a corpus line of four fields: `{line}`");
+            };
+            (text, u64::from_str_radix(f64, 16).expect("hex"))
+        })
+        .collect();
+    lines.iter().cycle().take(m).copied().collect()
+}
+
+#[test]
+fn corpus_literals_read_to_their_encodings_and_print_back() {
+    // The inputs of `bench::literals`'s reading and printing at a small size, past the end of
+    // the corpus: each text reads to its encoding, and each encoding prints as a text that
+    // reads back to it.
+    let lines = corpus_lines(9_000);
+    assert_eq!(lines[8_000], lines[0]);
+    for (text, bits) in lines {
+        let x = f64::from_bits(bits);
+        let read = zed_kernel::num::read_f64_ieee(text).expect("a decimal");
+        assert_eq!(read.to_bits(), bits, "`{text}`");
+        let shown = zed_kernel::num::show_f64(x);
+        let back = zed_kernel::num::read_f64_ieee(&shown);
+        assert!(
+            back == Some(x) || x.is_infinite(),
+            "`{text}` shown as `{shown}`"
+        );
+    }
+}
+
 #[test]
 fn a_long_literal_rounds_by_every_digit() {
     // The inputs of `bench::literals` at a small size: 3331.0e-3 and the digits above a tie.

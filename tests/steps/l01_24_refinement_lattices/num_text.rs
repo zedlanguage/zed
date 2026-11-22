@@ -207,6 +207,50 @@ fn a_written_end_is_num_bigints_text_at_the_edges() {
     }
 }
 
+/// TESTS-float-text-corpus (TEST-IDEAS.md test 4): at every digit count from 1 to 39, where a
+/// number moves from a 64-bit word to a wider one (19 digits for `i64`, 20 for `u64`, 39 for
+/// `u128`), the texts `10^(d-1)`, `10^d - 1` and 100 random ones of `d` digits, both signs, and
+/// the ends of `i64` and `u64` with their neighbors, are read as num-bigint reads them and
+/// written back as the same text: by `Num`, and by the kernel's `Value::int_text`, which keeps
+/// a value of 64 bits as `Value::Int` and a wider one as `Value::Big`.
+#[test]
+fn every_digit_count_to_39_reads_and_writes_back_on_both_sides_of_a_word() {
+    use zed_kernel::value::Value;
+    let (mut rng, seed) = Rng::fresh("digit counts 1 to 39");
+    let mut texts = vec!["0".to_string()];
+    for d in 1..=39 {
+        texts.push(format!("1{}", "0".repeat(d - 1)));
+        texts.push("9".repeat(d));
+        for _ in 0..100 {
+            texts.push(format!("{}{}", rng.int(1, 9), digits(&mut rng, d - 1)));
+        }
+    }
+    for edge in [BigInt::from(i64::MAX), BigInt::from(u64::MAX)] {
+        texts.extend([&edge - 1, edge.clone(), &edge + 1].map(|x| x.to_string()));
+    }
+    for magnitude in texts {
+        let signed = format!("-{magnitude}");
+        let both = if magnitude == "0" {
+            vec![magnitude]
+        } else {
+            vec![magnitude, signed]
+        };
+        for text in both {
+            let x: BigInt = text.parse().expect("digits");
+            let num = text.parse::<Num>();
+            assert_eq!(num, by_num_bigint(&text), "{text}, ZED_TEST_SEED={seed}");
+            assert_eq!(
+                num.expect("digits").to_string(),
+                text,
+                "ZED_TEST_SEED={seed}"
+            );
+            let value = Value::int_text(&text, 10).expect("memory").expect("digits");
+            assert_eq!(value, Value::int(x), "{text}, ZED_TEST_SEED={seed}");
+            assert_eq!(value.to_string(), text, "ZED_TEST_SEED={seed}");
+        }
+    }
+}
+
 /// Item PRINT-below-whole: an end's text against a reference that shares no code with either
 /// way of printing: the text it was read from by num-bigint's parser (`BigInt::from_str`, by
 /// products of powers of the base), both signs. Random texts of the digits in the middle of

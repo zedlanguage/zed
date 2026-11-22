@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use zed_kernel::num::LiteralRounding;
-use zed_tests::scaling::{check_instructions_only, check_order, inputs};
+use zed_tests::scaling::{check, check_instructions_only, check_order, inputs};
 use zed_tests::step_helpers::l01_16_elaboration::elab;
 
 /// `zed_kernel::num::literal_f64` of a decimal; every text of these benchmarks is one.
@@ -13,7 +13,52 @@ fn literal_f64(text: &str) -> Result<f64, LiteralRounding> {
     zed_kernel::num::literal_f64(text).expect("a decimal")
 }
 
-use super::super::literals::{digits_above_a_tie, digits_near_one};
+use super::super::literals::{corpus_lines, digits_above_a_tie, digits_near_one};
+
+/// TESTS-float-text-corpus: reading the texts of a hard-case corpus, each of at most 90
+/// characters, costs a bounded amount each, so n of them cost order n.
+#[test]
+fn reading_many_literals_of_a_hard_case_corpus_scales() {
+    // It allocates nothing, and takes about 78 ns a text: 1x about 20 ms, 8x 0.16 s (Colab hm5,
+    // 2026-11-22).
+    let n = 1 << 18;
+    let built = inputs(n, corpus_lines);
+    check_instructions_only(
+        "reading n float literals of a hard-case corpus",
+        n,
+        1,
+        |m| {
+            let wrong = built[&m]
+                .iter()
+                .filter(|&&(text, bits)| literal_bits(text) != bits)
+                .count();
+            assert_eq!(wrong, 0);
+        },
+    );
+}
+
+/// TESTS-float-text-corpus: printing a float as its shortest text (`show_f64`, Schubfach)
+/// costs a bounded amount each, so n floats cost order n; no other test scales float printing.
+#[test]
+fn printing_many_floats_of_a_hard_case_corpus_scales() {
+    // About 120 ns and 18 bytes a float: 1x about 32 ms, 8x 0.25 s (Colab hm5, 2026-11-22).
+    let n = 1 << 18;
+    let built = inputs(n, corpus_lines);
+    check("printing n floats of a hard-case corpus", n, |m| {
+        let chars: usize = built[&m]
+            .iter()
+            .map(|&(_, bits)| zed_kernel::num::show_f64(f64::from_bits(bits)).len())
+            .sum();
+        assert!(chars >= m);
+    });
+}
+
+/// The `f64` encoding of the decimal `text` as IEEE 754 reads it, infinities and zeros kept.
+fn literal_bits(text: &str) -> u64 {
+    zed_kernel::num::read_f64_ieee(text)
+        .expect("a decimal")
+        .to_bits()
+}
 
 #[test]
 fn elaborating_a_literal_of_n_digits_scales() {

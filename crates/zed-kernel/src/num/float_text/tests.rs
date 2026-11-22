@@ -512,6 +512,49 @@ fn syntax_and_sign() {
     );
 }
 
+/// 8,000 texts with their `f16`, `f32` and `f64` encodings in hex, 2,000 from each of the
+/// texts that Nigel Tao's corpus took from the tests of Ryu, double-conversion, IBM's fpgen and
+/// Rémy Oudompheng's fptest (Apache-2.0; the source, the commit and how the lines were chosen
+/// are at the top of the file, the license beside it). Each text is one Zed's lexer reads as a
+/// float literal (TESTS-float-text-corpus).
+const CORPUS: &str = include_str!("../../../../../tests/data/parse-number-fxx/sample.txt");
+
+/// TESTS-float-text-corpus (TEST-IDEAS.md test 3): each text of [`CORPUS`] reads in `f16`,
+/// `f32` and `f64` to the corpus's encoding; under the literal rule an encoding of infinity is
+/// `Infinite`, and an encoding of zero from a text with a nonzero digit is `Zero`. The
+/// encodings were computed by the corpus's own Go program (`script/extract-numbery-strings.go`,
+/// per its README), so this checks the reader against an answer made with none of its code,
+/// where `check` uses the exact rational and std. `bf16` is left out: the corpus gives no
+/// rounded `bf16` encoding (its README says the high half of the `f32` encoding is the format,
+/// which truncates).
+#[test]
+fn a_sample_of_a_hard_case_corpus_reads_to_its_encodings() {
+    let mut lines = 0;
+    for line in CORPUS.lines().filter(|line| !line.starts_with('#')) {
+        let fields: Vec<&str> = line.split(' ').collect();
+        let [f16, f32, f64, text] = fields[..] else {
+            panic!("a corpus line of four fields: `{line}`");
+        };
+        for (format, hex) in [
+            (FloatFormat::F16, f16),
+            (FloatFormat::F32, f32),
+            (FloatFormat::F64, f64),
+        ] {
+            let bits = u64::from_str_radix(hex, 16).expect("hex");
+            let magnitude = bits & !(1 << (format.width() - 1));
+            let infinity = ((2 * format.emax() + 1) as u64) << (format.precision() - 1);
+            let expected = by_std(text, magnitude == infinity, magnitude == 0, bits);
+            assert_eq!(
+                read_float(text, format),
+                Some(expected),
+                "{format:?} `{text}`"
+            );
+        }
+        lines += 1;
+    }
+    assert_eq!(lines, 8000);
+}
+
 /// `show_f64` as it was: std's `{:e}` rebuilt into the layout.
 fn std_show(x: f64) -> String {
     if x.is_nan() {
