@@ -17,7 +17,7 @@ use zed_kernel::num::{TooLarge, literal_f64};
 use zed_kernel::{Rat, Value};
 
 use super::ty::{Binds, NodeId, Row, Shape, Sig, Ty};
-use super::{carrier_mask, denoted_free};
+use super::{Inexact, Loss, carrier_mask, denoted_inexact};
 use zedc_syntax::ast::{self, Type, TypeKind};
 use zedc_syntax::lex::{self, Part, Tok};
 use zedc_syntax::parse::{self, TOP};
@@ -72,15 +72,46 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
 /// end, given `tokens`, the tokens the whole text has there: the same tokens with their spans
 /// moved to start at `head`, as lexing `head` gives them. A part with a string is lexed again:
 /// a string holds tokens of its own, and a `"""` string reads its indentation from the text.
-// Not proved (row PROOF-part-tokens-slice-lex): that lexing a text from a token's start to
-// another token's start (or the end) gives the tokens the whole text has between them, string
-// tokens apart. It rests on the lexer reading each token from its first byte without looking
-// back, and ending a name, number, operator or comment at a byte that is in neither text past
-// the cut (a token starts there).
-// Evidence: while this was written, an assertion that the moved tokens equal those of a new lex
-// held on all 914 test pieces of the groups that read printed types (l01_15, l01_19, l01_22,
-// l01_23, l01_26, l01_28, l01_29, l01_31, l01_37a, l02_12, m0_01) and on the 5.6 MB of printed
-// types of the many-bounded-variables bench.
+// Claim (row PROOF-part-tokens-slice-lex): where `lex(text)` succeeds, lexing `text[s..c]`,
+// with `s` the start of a token and `c` the start of a later token or the end, gives the tokens
+// of `lex(text)` that lie in `s..c`, with spans moved by `s`, provided none is a string.
+// Proof, from `lex_from` and its readers in crates/zedc-syntax/src/lex (zedc-syntax at this
+// commit; a change there must keep each step):
+// 1. The start. Outside a string, `lex_from` keeps no state from one token to the next but
+//    `pos`: `levels` and `reading` are empty there, `docs` only collects, and `elisions` is
+//    false for `lex`. Each reader (`comment::comment`, `number::number`, `name::word`,
+//    `name::wildcard`, `infix::infix`, `punct::operator`) is called with `(text, pos)` and reads
+//    bytes from `pos` on; the one look back, `text[..end].ends_with('\'')` in `name::word`,
+//    looks at the word's own last byte. So the lexer at byte 0 of the slice is in the state the
+//    whole lex is in at byte `s`, and step 2 applies to each token in turn.
+// 2. The end. Take a reader run at `p < c` in both texts; they hold the same bytes below `c`,
+//    and where the whole text has the byte that starts a token at `c`, the slice has its end.
+//    The whole lex's token ends at `e <= c`, since a token starts at `c`. Each test a reader
+//    makes at or past `c` is one of:
+//    a. "the next character is in a set of characters that continue the token": digits, `_`
+//       before a digit, `.` before a digit, `e`/`E` and its sign before a digit, `r`, `f32` or
+//       `f64` after a fraction, a name character (`number`, `name::word`, `wildcard`), `'` after
+//       a word, or the rest of an operator (`punct::operator`). Each holds for a byte and fails
+//       at the end of the text. In the whole text it fails at `c` too, or the token would run
+//       past `c`; and a test past `c` is made only after one at `c` holds. So the slice sees the
+//       same answers.
+//    b. a search for a closing mark: the `\n` that ends a `//` comment, the `*/` that closes a
+//       block comment, the `~` that closes `~f~`. In the whole text the mark is found before
+//       `c`, or the comment or call would hold the byte at `c`; so it is found at the same
+//       place in the slice.
+//    c. `punct::operator` takes the first entry of `OPERATORS` that `text[p..]` starts with. An
+//       entry that ends past `c` is false in the slice; it is false in the whole text too, or
+//       the operator would run past `c` (an entry wholly before `c` reads the same bytes in
+//       both). So the first true entry is the same.
+//    The error paths of the readers (`run_on`, `leading_zero`, the infix messages) are not
+//    reached in the whole text, which lexes; by a. to c. they are not reached in the slice.
+// 3. A string is read by `Reading`, which reads holes and a `"""` string's indentation from
+//    the text around it; such a part is lexed again, which needs no proof.
+// Test: `tests::a_cut_at_any_token_start_lexes_as_the_whole_text` cuts at every pair of token
+// starts in texts that end each token kind at a cut. Evidence before the proof: an assertion
+// that the moved tokens equal those of a new lex held on all 914 test pieces of the groups
+// that read printed types and on the 5.6 MB of printed types of the many-bounded-variables
+// bench.
 fn part_tokens(
     text: &str,
     head: &str,
@@ -119,17 +150,20 @@ fn read_part(
         .collect();
     // A part with no leaf is parsed from the tokens it has; one with a leaf is lexed again,
     // since each leaf there is now a name.
-    let (body, tokens) = match leaves(text, head, &tokens, named, &mut found)? {
+    let mut written = Written::default();
+    let (body, tokens) = match leaves(text, head, &tokens, named, &mut found, &mut written)? {
         Some(body) => {
-            let tokens = lex::lex(&body).map_err(|e| format!("`{text}`: {e}"))?;
+            let tokens = lex::lex(&body)
+                .map_err(|e| format!("`{text}`: {}", written.back(&e.to_string())))?;
             (Cow::Owned(body), tokens)
         }
         None => (Cow::Borrowed(head), tokens),
     };
     let binds = &*named;
     let tree = parse::parse(&body, &tokens, "Type", TOP)
-        .map_err(|e| format!("`{text}` is not a type: {e}"))?;
-    let t = ast::ty(&body, &tokens, &tree).map_err(|e| format!("`{text}`: {e}"))?;
+        .map_err(|e| format!("`{text}` is not a type: {}", written.back(&e.to_string())))?;
+    let t = ast::ty(&body, &tokens, &tree)
+        .map_err(|e| format!("`{text}`: {}", written.back(&e.to_string())))?;
     // A later layer's form, found with an explicit stack, and the variables bounded.
     let mut bounded = Vec::new();
     let mut stack = vec![&t];
@@ -163,7 +197,7 @@ fn read_part(
             TypeKind::Tuple(ts) | TypeKind::Union(ts) => stack.extend(ts),
             TypeKind::And(ts) => {
                 let ts = Type::and_operands(ts);
-                Type::overload(&ts).map_err(|why| format!("`{text}`: {why}"))?;
+                Type::overload(&ts).map_err(|why| format!("`{text}`: {}", written.back(&why)))?;
                 stack.extend(ts);
             }
             TypeKind::AtomApply(_, ps) => stack.extend(ps.iter().map(|p| &p.ty)),
@@ -180,7 +214,7 @@ fn read_part(
             TypeKind::For { ty, bounds } => {
                 for b in bounds {
                     if let Err(c) = carrier_mask(&b.carriers) {
-                        let c = &body[c.span.start..c.span.end];
+                        let c = written.back(&body[c.span.start..c.span.end]);
                         return Err(format!(
                             "`{text}`: `{c}` in the bound of `{}` is not a carrier",
                             b.name
@@ -213,7 +247,36 @@ fn read_part(
         .map(|(n, _)| n.into())
         .collect();
     found.extend(free.iter().cloned());
-    let ty = denoted_free(&t, binds, &free);
+    // A difference the checker's types cannot hold exactly is refused, as a program's written
+    // type is (`Ck::written`), rather than read as more than it says: before, `_ \ #a` read
+    // as `_` (TEST-read-type-flaws), so a printed type that lost its difference would have
+    // read back as another type with no word of it. A difference that takes part of a
+    // variable is held by `left_of` and never reaches the list.
+    let (ty, inexact) = denoted_inexact(&t, binds, &free);
+    if let Some(Inexact {
+        span,
+        printed,
+        cause,
+    }) = inexact.into_iter().next()
+    {
+        let d = match body.get(span.start..span.end) {
+            Some(s) => written.back(s),
+            None => printed,
+        };
+        let why = match cause {
+            Loss::Unknown => "part of the unknown `_`, which no type the checker holds can \
+                              state; it would read back as all of `_`"
+                .to_string(),
+            Loss::Var(right) => format!(
+                "`{}`, which holds a type variable, so what it takes away is not known",
+                written.back(&right)
+            ),
+            Loss::FunctionRow => "part of a tuple or payload that holds a function type, which \
+                                  the checker keeps whole"
+                .to_string(),
+        };
+        return Err(format!("`{text}`: `{d}` takes away {why}"));
+    }
     // Each variable the part bounds must be on a signature its type reaches, at any depth,
     // the definitions it names included. Only a part with a `for` clause is walked: with no
     // bound there is nothing to find.
@@ -269,7 +332,7 @@ fn read_part(
     // The names the resolver finds, as in a written type: a variable no clause bounds is not
     // defined.
     if let Err(es) = zedc_resolve::resolve::printed_type(&t, found) {
-        let why: Vec<String> = es.into_iter().map(|e| e.message).collect();
+        let why: Vec<String> = es.into_iter().map(|e| written.back(&e.message)).collect();
         return Err(format!("`{text}`: {}", why.join("; ")));
     }
     Ok(ty)
@@ -403,15 +466,62 @@ impl Seen {
     }
 }
 
+/// The text each leaf of a part was written as, by the name [`leaves`] gave it, so that an
+/// error about the part names the leaf as the printed type writes it, `int \ 0`, never as the
+/// name it was given there, `int \ Leaf0` (TEST-read-type-flaws).
+#[derive(Default)]
+struct Written<'a> {
+    by_name: HashMap<Arc<str>, &'a str>,
+}
+
+impl Written<'_> {
+    /// `s` with each leaf name in it, a whole name, put back as the leaf was written. One
+    /// pass over `s` with a hash lookup per name found: O(|s|) besides the text put back.
+    fn back(&self, s: &str) -> String {
+        if self.by_name.is_empty() {
+            return s.to_string();
+        }
+        let name_byte = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'\'';
+        let bytes = s.as_bytes();
+        let mut out = String::with_capacity(s.len());
+        let (mut from, mut i) = (0, 0);
+        while let Some(at) = s[i..].find(LEAF).map(|k| i + k) {
+            let digits = bytes[at + LEAF.len()..]
+                .iter()
+                .take_while(|b| b.is_ascii_digit())
+                .count();
+            let end = at + LEAF.len() + digits;
+            let whole = digits > 0
+                && (at == 0 || !name_byte(bytes[at - 1]))
+                && bytes.get(end).is_none_or(|&b| !name_byte(b));
+            match self.by_name.get(&s[at..end]) {
+                Some(w) if whole => {
+                    out.push_str(&s[from..at]);
+                    out.push_str(w);
+                    from = end;
+                }
+                _ => {}
+            }
+            i = end.max(at + 1);
+        }
+        out.push_str(&s[from..]);
+        out
+    }
+}
+
+/// The start of the name [`leaves`] gives each leaf, followed by its number in `binds`.
+const LEAF: &str = "Leaf";
+
 /// `head` with each leaf of layer L10 replaced by a type variable, put in `binds` with what it
-/// stands for (`_` the unknown, `!_` the empty type, a literal its value) and in `found`; `None`
-/// when `head` has no leaf.
-fn leaves(
+/// stands for (`_` the unknown, `!_` the empty type, a literal its value) and in `found`, and
+/// in `written` with its text in `head`; `None` when `head` has no leaf.
+fn leaves<'h>(
     text: &str,
-    head: &str,
+    head: &'h str,
     tokens: &[lex::Token],
     binds: &mut Binds,
     found: &mut HashSet<Arc<str>>,
+    written: &mut Written<'h>,
 ) -> Result<Option<String>, String> {
     let mut out = String::new();
     let mut any = false;
@@ -463,7 +573,7 @@ fn leaves(
                 continue;
             }
         };
-        let name: Arc<str> = format!("Leaf{}", binds.len()).into();
+        let name: Arc<str> = format!("{LEAF}{}", binds.len()).into();
         if !any {
             any = true;
             out.reserve(head.len());
@@ -471,6 +581,7 @@ fn leaves(
         out.push_str(&head[from..start]);
         out.push_str(&name);
         from = tokens[i + used - 1].span.end;
+        written.by_name.insert(name.clone(), &head[start..from]);
         found.insert(name.clone());
         binds.insert(name, ty);
         i += used;
@@ -540,4 +651,58 @@ fn int(radix: u32, digits: &str, negative: bool, text: &str) -> Result<Value, St
 /// system gives.
 fn refused(text: &str, e: &TooLarge) -> String {
     format!("Number too large for memory: `{text}` needs {}", e.number())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Written, lex, part_tokens};
+
+    /// Row PROOF-part-tokens-slice-lex: the tokens `part_tokens` moves from the whole text are
+    /// those a new lex of the slice gives, for a cut at every pair of token starts. The texts
+    /// end each token kind right before a token: numbers with a fraction, an exponent, a sign,
+    /// separators, a base, `r` and `f32`; names with `'`; keywords; atoms and annotations; the
+    /// wildcard; infix calls; each operator that has a shorter operator as its start; a `//`
+    /// comment and a nested block comment; a string.
+    #[test]
+    fn a_cut_at_any_token_start_lexes_as_the_whole_text() {
+        let texts = [
+            "1.5e+3;1.5;1e3;1E-2 ;0x1F;0o7;0b1;1_000;3r;1.5f32;2.0f64;0..1;1..<2;0..=9;1.x",
+            "a' b'c type T = int;_ _x x_ #a #_ @ann x ~f~ y ~a.b~ z",
+            "x->?y->z...w..<v..=u..t?.s*.r^q++p<-o<=n>=m><l==k!=j&&i||h::g:f",
+            "x // a comment\n;y /* a /* nested */ block */ z;(int, #a) | !_ \\ 0",
+            "f(\"text\", 1) -> [int] for T in int",
+        ];
+        for text in texts {
+            let whole = lex::lex(text).unwrap_or_else(|e| panic!("{text:?}: {e}"));
+            let ends: Vec<usize> = whole
+                .iter()
+                .map(|t| t.span.start)
+                .chain([text.len()])
+                .collect();
+            for i in 0..whole.len() {
+                for (j, &to) in ends.iter().enumerate().skip(i + 1) {
+                    let from = whole[i].span.start;
+                    let head = &text[from..to];
+                    let part = lex::lex(text).expect("lexed above").into_iter();
+                    let moved = part_tokens(text, head, from, part.take(j).skip(i).collect());
+                    let fresh = lex::lex(head).map_err(|e| e.to_string());
+                    assert_eq!(moved, fresh, "{text:?} cut to {head:?}");
+                }
+            }
+        }
+    }
+
+    /// Row TEST-read-type-flaws: a leaf name in an error is put back as the leaf was written,
+    /// only as a whole name, so `Leaf1` is never read inside `Leaf10` or `Leaf1x`.
+    #[test]
+    fn a_leaf_name_is_put_back_only_whole() {
+        let mut w = Written::default();
+        w.by_name.insert("Leaf1".into(), "0");
+        w.by_name.insert("Leaf10".into(), "!_");
+        assert_eq!(
+            w.back("`Leaf1` and `Leaf10`, not Leaf1x, xLeaf1 or Leaf"),
+            "`0` and `!_`, not Leaf1x, xLeaf1 or Leaf"
+        );
+        assert_eq!(Written::default().back("Leaf0"), "Leaf0");
+    }
 }

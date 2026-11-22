@@ -5246,11 +5246,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     // `l01_22_type_representation::kinds::a_difference_that_takes_away_a_type_variable_is_refused`.
     pub(super) fn written(&mut self, t: &Type, fresh: bool) -> Ty {
         let (ty, inexact) = denoted_inexact(t, &Binds::new(), &HashSet::new());
-        let any_var = inexact.iter().any(|i| i.by_var.is_some());
+        let any_var = inexact.iter().any(|i| matches!(i.cause, Loss::Var(_)));
         for Inexact {
             span,
             printed,
-            by_var,
+            cause,
         } in inexact
         {
             if self.inexact_diffs.insert(span) {
@@ -5258,13 +5258,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Some(src) => &src[span.start..span.end],
                     None => &printed,
                 };
-                let message = match by_var {
-                    Some(right) => format!(
+                let message = match cause {
+                    Loss::Var(right) => format!(
                         "`{text}` takes away `{right}`, which holds a type variable whose \
                          carrier only a call picks; that is part of the Zed language but is not \
                          supported by this version of zedc. Write the type without `\\ {right}`."
                     ),
-                    None => format!(
+                    // Never reached: `_` is a leaf of layer L10, which a program's written type
+                    // cannot hold. Proof: the type here is denoted with no leaves (the empty
+                    // `Binds` above), and `Denote::ty` makes the unknown only from a leaf
+                    // (`TypeKind::Name` bound in `leaves`); every other form it reads is a
+                    // carrier, a port, a variable, an atom or a set. Only `read::parse_type`
+                    // passes leaves, and it states its own message for this cause.
+                    Loss::Unknown => format!(
+                        "`{text}` takes away part of the unknown `_`, which no written type can \
+                         state. Write the type without `_`."
+                    ),
+                    Loss::FunctionRow => format!(
                         "`{text}` takes away part of a tuple or payload that holds a function \
                          type, which is part of the Zed language but is not supported by this \
                          version of zedc. Write the type without `\\`, as the union of the \
@@ -16776,10 +16786,22 @@ struct Inexact {
     span: Span,
     /// The difference printed, for a message with no source text.
     printed: String,
-    /// `b` printed, where its value holds a type variable: then what `b` takes away is not
-    /// known where the type is read (FAIL-diff-type-var-right-inexact). None where the cause
-    /// is a tuple or payload holding a function type (FAIL-ty-diff-function-rows).
-    by_var: Option<String>,
+    /// Why its value holds more than the difference.
+    cause: Loss,
+}
+
+/// Why a difference `a \ b` read from a type holds more than `a & !b` ([`Inexact`]).
+enum Loss {
+    /// `b` printed, whose value holds a type variable: what `b` takes away is not known where
+    /// the type is read (FAIL-diff-type-var-right-inexact).
+    Var(String),
+    /// `a` or `b` holds the unknown `_`, a leaf of layer L10 that only the reader of printed
+    /// types reads (`read::parse_type`): `Ty` has no form for part of the unknown, so `_ \ #a`
+    /// was read as `_` (TEST-read-type-flaws).
+    Unknown,
+    /// A tuple or payload holding a function type that `b` may hold in part is kept whole
+    /// (FAIL-ty-diff-function-rows).
+    FunctionRow,
 }
 
 /// A function type [`Denote`] is reading.
@@ -17044,10 +17066,15 @@ impl<'a> Denote<'a> {
                 if exact {
                     return d;
                 }
+                let cause = match () {
+                    () if !b.vars.is_empty() => Loss::Var(format_type(right)),
+                    () if a.dynamic || b.dynamic => Loss::Unknown,
+                    () => Loss::FunctionRow,
+                };
                 self.inexact.push(Inexact {
                     span: t.span,
                     printed: format_type(t),
-                    by_var: (!b.vars.is_empty()).then(|| format_type(right)),
+                    cause,
                 });
                 d
             }

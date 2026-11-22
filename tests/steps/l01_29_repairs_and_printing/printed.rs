@@ -1096,6 +1096,37 @@ fn a_rejection_writes_an_empty_product_as_never() {
     }
 }
 
+/// Item TEST-read-type-flaws (a): the reader of printed types held `_ \ #a` as `_`, exact, so
+/// the difference was lost with no word of it. `Ty` has no form for part of the unknown, so
+/// the reader refuses the difference, naming it, as a program's written type is refused.
+#[test]
+fn a_difference_from_the_unknown_is_refused_not_lost() {
+    let text = "_ \\ #a";
+    assert_eq!(
+        parse_type(text).map(|t| t.to_string()),
+        Err(format!(
+            "`{text}`: `_ \\ #a` takes away part of the unknown `_`, which no type the checker \
+             holds can state; it would read back as all of `_`"
+        ))
+    );
+    // Taking away nothing leaves the unknown whole, exactly.
+    assert_eq!(
+        parse_type("_ \\ !_").map(|t| t.to_string()),
+        Ok("_".to_string())
+    );
+}
+
+/// Item TEST-read-type-flaws (b): an error about a part with a literal leaf named the name the
+/// reader gave the leaf, `Leaf2`, which the printed type never says; it names `0` as written.
+#[test]
+fn a_read_error_names_the_literal_as_written() {
+    let text = "(0, 1) for T in 0";
+    assert_eq!(
+        parse_type(text).err(),
+        Some(format!("`{text}`: `0` in the bound of `T` is not a carrier"))
+    );
+}
+
 /// Item PRINT-group-site-defs: a signature printed alone declares the part it uses twice on a
 /// line of its own, as a program declares it, and the text reads back as the signature (zed
 /// DOCS-TODO 55); with no part used twice it is one line.

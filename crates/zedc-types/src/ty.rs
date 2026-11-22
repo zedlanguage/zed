@@ -13493,6 +13493,16 @@ impl<'m, 's> Comparing<'m, 's> {
         if (u.dynamic || !u.vars.is_empty()) && !out.lists_nothing() {
             exact = false;
         }
+        // The unknown in `t` is kept whole (`out` is `t` with parts taken away, and `dynamic`
+        // is never cleared above), since `Ty` has no form for part of it: `_ \ #a` was read
+        // as `_`, exact, though `#a` is not in the difference (TEST-read-type-flaws). So the
+        // answer is not exact where `u` lists a value, which the unknown may hold. Where `u`
+        // lists none, `_ \ u` is `_`, exact. Only a printed type read back holds `_` here
+        // (`denoted_inexact` in zedc-check: a leaf of layer L10). Test: l01_29_repairs_and_printing
+        // printed `a_difference_from_the_unknown_is_refused_not_lost`.
+        if t.dynamic && !u.lists_nothing() {
+            exact = false;
+        }
         (out, exact)
     }
 }
