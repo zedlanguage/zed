@@ -9387,7 +9387,16 @@ pub enum Cause {
     /// have holes alone.
     Holes {
         /// The names with holes, as written, in order.
-        holed: Vec<Arc<str>>,
+        ///
+        /// Complexity tradeoff: naive version, a `Vec`, which [`Scope::refuse`] copies once for
+        /// each name the constraint mentions (`index_refused`), O(k²) time and memory for a
+        /// refused tree of `k` names all with holes: 11.9 times the bytes from 1,200 to 9,600
+        /// names (`linked::bench::a_tree_of_blocks_with_holes_projected_from_scratch_takes_
+        /// time_near_its_size`, row BENCH-scope-project-due-blocks). Used: shared behind an
+        /// `Arc`, so each copy is O(1) and the list is held once, O(k). Tradeoff: none; the
+        /// order and equality of [`Refused`] are the list's, as before. COMPLEXITY.md row
+        /// BENCH-scope-project-due-blocks.
+        holed: Arc<[Arc<str>]>,
         /// The number of names the constraints join.
         names: usize,
     },
@@ -15411,7 +15420,7 @@ impl Scope {
                         constraint,
                         asked: Asked::Projection,
                         cause: Cause::Holes {
-                            holed,
+                            holed: holed.into(),
                             names: part.len(),
                         },
                     },
@@ -28801,7 +28810,7 @@ mod tests {
             constraint: Arc::from("n * n >= 1"),
             asked: Asked::Projection,
             cause: Cause::Holes {
-                holed: vec![n.clone()],
+                holed: Arc::from([n.clone()]),
                 names: 1,
             },
         };

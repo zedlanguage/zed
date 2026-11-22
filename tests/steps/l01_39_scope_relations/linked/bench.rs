@@ -501,6 +501,57 @@ fn disjunctions_over_four_names_take_time_near_their_number() {
     scaling::check_order("disjunctions over four names", 8, 1, four_name_run);
 }
 
+/// A binary tree of `k` names, each `x_i` tied to its parent `x_((i-1)/2)` by
+/// `1 <= x_i - x_p <= 3`, one block each, which shares its parent's name with the block above
+/// it; every name a hole one above its least value. `Scope::by_holes` is asked for the ends
+/// once, over the whole tree, and refuses (more than two of the joined names have holes), with
+/// one refusal that names all `k` names; each block is then projected once
+/// (`Scope::project`, item FAIL-linked-scratch-misses-hole). The work stays near the number of
+/// blocks (row BENCH-scope-project-due-blocks): the refusal's list of holed names was copied
+/// once for each name it is filed under, Theta(k²) bytes, 11.9 times the bytes at 8 times
+/// the names, until the list was shared (`Cause::Holes`).
+#[test]
+fn a_tree_of_blocks_with_holes_projected_from_scratch_takes_time_near_its_size() {
+    let p = Premises::new();
+    scaling::check_inputs(
+        "a tree of blocks with holes projected from scratch",
+        DUE_BLOCKS,
+        |k| holed_tree_of_blocks(k, &p),
+        |built| {
+            let mut s = built.clone();
+            s.forget_projections();
+            s.reduce();
+            assert!(!s.bottom);
+        },
+    );
+}
+
+/// The size of the benchmark above at 1x.
+const DUE_BLOCKS: usize = 1200;
+
+/// The scope of [`a_tree_of_blocks_with_holes_projected_from_scratch_takes_time_near_its_size`]
+/// with `k` names: `x0` in `[0, 1000]`, each other name `1 <= x_i - x_p <= 3` with its parent,
+/// and `x_i != d_i + 1` at depth `d_i`, which lies in its interval `[d_i, 1000 + 3 d_i]`.
+fn holed_tree_of_blocks(k: usize, p: &Premises) -> Scope {
+    let n = named(k, "x");
+    let mut s = ints(&n)
+        .assume(&prim(Prim::Ge, var("x0"), int(0)), true, p)
+        .assume(&prim(Prim::Le, var("x0"), int(1000)), true, p);
+    let mut depth = vec![0i64; k];
+    for i in 1..k {
+        let up = (i - 1) / 2;
+        depth[i] = depth[up] + 1;
+        s = s
+            .assume(&ge(&n[i], &n[up], 1), true, p)
+            .assume(&ge(&n[up], &n[i], -3), true, p);
+    }
+    for i in 0..k {
+        s = s.assume(&prim(Prim::Ne, var(&n[i]), int(depth[i] + 1)), true, p);
+    }
+    assert!(!s.bottom);
+    s
+}
+
 fn four_name_run(k: usize) {
     let ns = named(5, "x");
     let p = Premises::new();
