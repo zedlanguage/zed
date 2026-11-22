@@ -523,8 +523,10 @@ impl Rat {
             // Complexity tradeoff: the memory asked for is eight times the width of the two
             // sides together, the factor `to_integer` asks for the same build (powers by
             // squaring, the product by `num::fast::mul`), whose peak it measured at
-            // 5.49 times the width; this build was not measured on its own, and a power of 2
-            // here is a shift, which needs less. So a number needing less is refused when the
+            // 5.49 times the width; this build was not measured on its own (the same ask in
+            // `zedc_int::Num::built` peaked at 8.08 times the value for a power of 3 built by
+            // squaring, below its ask: item NATIVE-shape-test), and a power of 2 here is a
+            // shift, which needs less. So a number needing less is refused when the
             // free memory lies between the two, and none aborts. Tested by
             // `l01_17_value_representation::asks::addressing_a_wide_constant_is_refused_when_memory_is_short`
             // (COMPLEXITY.md K30). A complete solution would ask each allocation of the build

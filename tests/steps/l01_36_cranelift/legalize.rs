@@ -151,7 +151,7 @@ fn refused_comparisons(p: Prim, weight_first: bool) -> [Term; 3] {
 
 /// The bytes of the stack a native run maps (`zed_rt::Stack::new`): memory and swap together,
 /// to a page or two.
-fn native_stack() -> u64 {
+pub(super) fn native_stack() -> u64 {
     let bytes = |key: &str| -> u64 {
         zed_kernel::limits::proc_bytes("/proc/meminfo", key)
             .unwrap_or_else(|| panic!("/proc/meminfo has {key} in kB"))

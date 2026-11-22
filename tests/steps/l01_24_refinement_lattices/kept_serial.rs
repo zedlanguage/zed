@@ -186,4 +186,48 @@ fn a_dense_wide_end_and_class_are_addressed() {
     }
 }
 
+/// The memory `Num::built` takes at its peak, against what it asks for first: a byte for each bit
+/// of a bound on the widest number it builds (`Kept::widths`), read from the refusal at a
+/// bound of 0 bits (`fixed_room`) (item NATIVE-shape-test). Measured as the growth of the
+/// resident peak (`VmHWM`, reset through `/proc/self/clear_refs`) in a child process of one
+/// thread, at a power of 2, a power of 3 built by squaring and a sum of two powers; a peak past
+/// the ask would let a build the system cannot hold pass `room` and then abort.
+#[test]
+fn a_kept_value_built_takes_less_memory_than_it_asks_for() {
+    if !in_child("a_kept_value_built_takes_less_memory_than_it_asks_for") {
+        return;
+    }
+    let kb = |key: &str| {
+        zed_kernel::limits::proc_bytes("/proc/self/status", key)
+            .unwrap_or_else(|| panic!("/proc/self/status has {key}"))
+    };
+    let k = 1u32 << 26;
+    let sum = &Num::from(3).pow(k) + &Num::from(5).pow(k);
+    for (what, v) in [
+        ("2^(2^30)", two(1 << 30)),
+        ("3^(2^27)", Num::from(3).pow(2 * k)),
+        ("3^(2^26) + 5^(2^26)", sum),
+    ] {
+        std::fs::write("/proc/self/clear_refs", "5").expect("the resident peak is reset");
+        let ask = (zed_kernel::num::fixed_room(0, || v.built().map(|_| ()))
+            .expect_err("a kept value asks for memory")
+            .ask
+            + 7u32)
+            >> 3u32;
+        let ask = u64::try_from(ask).expect("the ask fits in u64");
+        let base = kb("VmRSS");
+        let built = v.built().expect("the memory to build it");
+        let peak = kb("VmHWM").saturating_sub(base);
+        let bytes = built.bits().div_ceil(8);
+        println!(
+            "{what}: peak {peak} bytes, {:.2} times the value's {bytes}, ask {ask} bytes",
+            peak as f64 / bytes as f64
+        );
+        assert!(
+            peak <= ask,
+            "{what}: peak {peak} bytes past the ask of {ask} bytes"
+        );
+    }
+}
+
 mod bench;

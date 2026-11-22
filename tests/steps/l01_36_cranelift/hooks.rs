@@ -165,3 +165,66 @@ fn a_lookup_port_as_a_condition_is_read() {
         zed_kernel::KernelError::Type("expected data, found a function".into()).to_string()
     );
 }
+
+/// `"a"` joined to itself `d` times, a string of `2^d` bytes in `d` nodes.
+fn doubled(d: usize) -> Term {
+    let twice = lam(&["t"], prim(Prim::Concat, vec![var("t"), var("t")]));
+    let t = (0..d).fold(lit("a"), |t, _| app(var("twice"), vec![t]));
+    let_("twice", twice, t)
+}
+
+/// The bytes of the joined names of
+/// `an_atom_named_by_a_join_the_system_cannot_write_out_is_the_kernels_refusal`: 2 GiB, eight
+/// times its margin.
+const JOINED: usize = 31;
+
+/// An atom whose name, or whose one field name, is a join of `2^31` bytes, holding a function,
+/// so the native run makes it in `hooks::shape`, while the system has a quarter of a GiB left:
+/// writing the name out in one piece is asked for first and refused, and the atom goes to the
+/// kernel, whose refusal every back end gives (item NATIVE-shape-test). The child runs the
+/// native back end under its stack and the margin, then the machine and the kernel under the
+/// margin alone; an allocation not asked for first would abort it.
+#[test]
+fn an_atom_named_by_a_join_the_system_cannot_write_out_is_the_kernels_refusal() {
+    use zed_tests::step_helpers::l01_17_value_representation::{in_child_at, lower_limit_by};
+    if !in_child_at(
+        module_path!(),
+        "an_atom_named_by_a_join_the_system_cannot_write_out_is_the_kernels_refusal",
+    ) {
+        return;
+    }
+    let f = lam(&["x"], var("x"));
+    let by_name = prim(
+        Prim::Atom,
+        vec![doubled(JOINED), lit(Value::tuple(Vec::new())), f.clone()],
+    );
+    let names = prim(Prim::Tuple, vec![doubled(JOINED)]);
+    let by_field = prim(Prim::Atom, vec![lit("a"), names, f]);
+    let cases = [by_name, by_field].map(|t| {
+        let (g, p) = planned(&t);
+        (t, g, p)
+    });
+    let margin = 1 << 28;
+    lower_limit_by(super::legalize::native_stack() + margin);
+    let native: Vec<_> = (cases.iter())
+        .map(|(_, g, p)| zed_native::run(g, p, &mut Evaluator::new(World::new())).map(|o| o.value))
+        .collect();
+    lower_limit_by(margin);
+    let want = format!(
+        "{}",
+        zed_kernel::KernelError::Type(format!(
+            "an atom's name or field name is a joined string of {} bytes, and the memory to \
+             write it in one piece was refused",
+            1u64 << JOINED
+        ))
+    );
+    for ((t, g, p), native) in cases.iter().zip(native) {
+        let kernel = (Evaluator::new(World::new()).run(t))
+            .map(|v| v.to_string())
+            .map_err(|e| e.to_string());
+        assert_eq!(kernel, Err(want.clone()), "{t}: kernel");
+        let m = memory::run(g.graph(), p, &mut Evaluator::new(World::new())).map(|(v, _)| v);
+        assert_eq!(m, Err(want.clone()), "{t}: machine");
+        assert_eq!(native, Err(want.clone()), "{t}: native");
+    }
+}

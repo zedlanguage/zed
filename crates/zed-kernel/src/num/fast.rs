@@ -3638,7 +3638,13 @@ impl<'a> Divisor<'a> {
     /// `d`, for dividends of at most `a_bits` bits.
     pub(crate) fn new(d: Cow<'a, BigUint>, a_bits: u64) -> Divisor<'a> {
         assert!(!d.is_zero(), "a division by zero");
-        let by = match divisor_way(&d, a_bits) {
+        let way = divisor_way(&d, a_bits);
+        Divisor::with_way(d, way)
+    }
+
+    /// `d`, not zero, dividing the way `way` says.
+    fn with_way(d: Cow<'a, BigUint>, way: Way) -> Divisor<'a> {
+        let by = match way {
             Way::Leaf => By::Leaf,
             Way::Sparse => By::Sparse,
             Way::Reciprocal(points) => {
@@ -4666,6 +4672,16 @@ pub mod crossover {
     /// `(a / b, a mod b)` by a reciprocal; `a >= b > 0`.
     pub fn div_rem_by_reciprocal(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
         super::div_rem_by_reciprocal(a, b)
+    }
+
+    /// `(a / b, a mod b)` by a reciprocal at every block, where [`div_rem_by_reciprocal`]'s
+    /// blocks divide the way `super::divisor_way` chooses, which may be long division over the
+    /// nonzero words; `a >= b > 0`, `b` past `super::DIV_LEAF`.
+    pub fn div_rem_by_levels(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
+        let n = b.bits();
+        let (linear, cyclic) = super::level_points(n, n);
+        let way = super::Way::Reciprocal(linear.max(cyclic));
+        super::Divisor::with_way(std::borrow::Cow::Borrowed(b), way).div_rem(a)
     }
 
     /// Whether [`div_rem_past_leaf`] takes long division over the nonzero words of `b` for

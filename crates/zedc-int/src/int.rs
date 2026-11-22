@@ -2478,8 +2478,11 @@ impl Num {
     /// it refuses. A value not kept is borrowed, or built from its one word.
     // Complexity tradeoff: the memory asked for is a byte for each bit of a bound on the widest
     // number built (each power, product, sum and radicand), the factor `Rat::built_parts`
-    // asks, which `to_integer` measured at a peak of 5.49 times the width; this build was not
-    // measured on its own. So a value needing less is refused when the free memory lies
+    // asks. Measured on its own (`kept_serial::a_kept_value_built_takes_less_memory_than_it_asks_for`,
+    // item NATIVE-shape-test, one thread, growth of `VmHWM`): 2^(2^30) peaks at 2.51 times the
+    // value's bytes against an ask of 16.0 times, 3^(2^27) (squaring) at 8.08 times against
+    // 10.1, 3^(2^26) + 5^(2^26) at 6.51 times against 10.3; every peak lies below its ask. So a
+    // value needing less is refused when the free memory lies
     // between the two, and none aborts. Trigger: the canonical serialization of an interval end
     // or a class past `i64` (`canon::serial`). Test:
     // `l01_24_refinement_lattices::kept_serial` (refused at two widths, exact when given);
