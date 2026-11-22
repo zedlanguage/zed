@@ -6219,6 +6219,9 @@ pub struct PowerUse {
     pub test: bool,
     /// Whether the exponent takes a float as it is: a literal, or of a type variable.
     pub exponent_takes_float: bool,
+    /// Whether the exponent is an int the checker shows within ±2^53, which `f64` casts
+    /// exactly, so a repair may write `f64(k)` (MSG-power-f64-repair).
+    pub exponent_f64_exact: bool,
     /// Whether the base takes a float as it is: a literal, or of a type variable.
     pub base_takes_float: bool,
     /// Whether the base is an `int`, which widens to a `rat` with no failure.
@@ -32137,6 +32140,7 @@ pub mod r10_hash {
             self.emit_opt(p.tested.as_deref(), |e, s| e.emit_str(s));
             self.emit_bool(p.test);
             self.emit_bool(p.exponent_takes_float);
+            self.emit_bool(p.exponent_f64_exact);
             self.emit_bool(p.base_takes_float);
             self.emit_bool(p.base_int);
             self.emit_opt(p.base_var.as_deref(), |e, s| e.emit_str(s));

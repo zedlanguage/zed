@@ -14784,11 +14784,15 @@ pub fn written_ints(r: &WrittenRange) -> IntervalSet {
 /// The range from the least to the greatest of `ints`, each end inclusive, as a signature
 /// prints it (`int[1..=10]`), the inverse of [`written_ints`] on one interval; `None` where
 /// `ints` is empty or has neither end, as `int` then says as much. A set of several pieces
-/// gives its hull, which holds each of them. O(1).
+/// gives its hull, which holds each of them. O(1) in the ends' digits: an end kept as a power
+/// ([`Num::is_kept`]), as `2^(2^53)` of `2^k` with `k: int[0..=2^53]`, is left open, not
+/// written out, which took time and memory in its 2^53 digits and did not end. An open end
+/// holds the kept one, so the hull still holds every int the body gives: the result is read
+/// in a wider range at each call ([`Ck::call_hull`]), never a narrower one.
 pub(super) fn written_hull(ints: &IntervalSet) -> Option<WrittenRange> {
     let (lo, hi) = ints.bounds()?;
     let value = |e: &End| match e {
-        Fin(n) => Some(Value::from(n)),
+        Fin(n) if !n.is_kept() => Some(Value::from(n)),
         _ => None,
     };
     let (low, high) = (value(lo), value(hi));

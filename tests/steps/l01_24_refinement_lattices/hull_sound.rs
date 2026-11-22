@@ -593,3 +593,21 @@ fn a_default_inside_the_range_is_accepted_and_held_by_the_hull() {
         one(text, &[("a", 0, 1)]).sound();
     }
 }
+
+/// A hull end kept as a power, `2^(2^53)` of `2^k` with `k` up to 2^53, is left open rather
+/// than written out: writing its 2^53 binary digits did not end. The other end is kept.
+#[test]
+fn a_hull_end_kept_as_a_power_is_left_open() {
+    let at = std::time::Instant::now();
+    for top in ["9007199254740992", "9007199254740993"] {
+        let text = format!("f(positional k: int[0..={top}]) = 2^k;\n");
+        let sig = sig_of(&text, "f");
+        let h = sig.hull.as_ref().expect("a hull");
+        assert_eq!(h.high, None, "{sig}");
+        assert_eq!(h.low.as_ref().map(|v| format!("{v:?}")), Some("Int(1)".into()), "{sig}");
+    }
+    // Written out, the end of a smaller power is kept: `2^100`.
+    let sig = sig_of("f(positional k: int[0..=100]) = 2^k;\n", "f");
+    assert!(sig.hull.as_ref().is_some_and(|h| h.high.is_some()), "{sig}");
+    assert!(at.elapsed().as_secs() < 20, "{:?}", at.elapsed());
+}

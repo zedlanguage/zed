@@ -605,3 +605,47 @@ fn a_tower_at_its_least_power_checks() {
         );
     }
 }
+
+#[test]
+fn an_exponent_that_is_a_class_of_literals_is_offered_a_test() {
+    // `e`, a class of literals in a body, is narrowed by a test of it, so the test is offered
+    // and the program it gives checks (plan row CHK-test-narrows-literal-class, which said a
+    // test did not narrow such an exponent; at 7b58d316e it already did).
+    let power = "2^e";
+    for e in ["if c { 1 } else { 0 - 1 }", "if c { 2 } else { 1 - 4 }"] {
+        let src = format!("f(positional c: bool) {{\n  e = {e};\n  return {power};\n}}\n");
+        let out = rejected(&src);
+        let rs = repairs(&out);
+        assert!(rs.contains(&"if e >= 0 { 2^e } else { … }"), "{out}");
+        for r in rs {
+            checks(&repaired(&src, power, r));
+        }
+    }
+    // Every value below 0: a test would leave nothing to raise, and none is offered.
+    let src = "f(positional c: bool) {\n  e = if c { 0 - 1 } else { 0 - 2 };\n  return 2^e;\n}\n";
+    let out = rejected(src);
+    assert!(!out.contains(">= 0"), "{out}");
+}
+
+#[test]
+fn an_int_exponent_within_two_to_the_53_is_offered_its_cast_to_f64() {
+    // `f64(k)` is exact for an int within ±2^53 and rounds above (CAST-round-whole), so the
+    // float power with the exponent cast is offered there alone (plan row
+    // MSG-power-f64-repair), and the program it gives checks.
+    let f64_power = "2.0f64^f64(k)";
+    for range in ["-10..=10", "-9007199254740992..=9007199254740992"] {
+        let src = format!("q(positional k: int[{range}]) = 2^k;\n");
+        let out = rejected(&src);
+        let rs = repairs(&out);
+        assert!(rs.contains(&f64_power), "{out}");
+        assert_eq!(tried(&out), Some("2r^k"), "{out}");
+        checks(&repaired(&src, "2^k", f64_power));
+    }
+    for range in ["-9007199254740993..=0", "-1..=9007199254740993", "-1.."] {
+        let src = format!("q(positional k: int[{range}]) = 2^k;\n");
+        let out = rejected(&src);
+        assert!(!out.contains("f64(k)"), "{range}: {out}");
+    }
+    let out = rejected("q(positional k: int) = 2^k;\n");
+    assert!(!out.contains("f64(k)"), "{out}");
+}

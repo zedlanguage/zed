@@ -18132,8 +18132,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut derived = Vec::new();
         self.derive_narrowed(&[n.at.unwrap_or(span)], &shown_here, &mut derived);
         steps.extend(derived);
-        let p =
-            Arc::new(self.power_use(x, n, e, span, Some(shown.as_str().into()), negative, steps));
+        let mut p = self.power_use(x, n, e, span, Some(shown.as_str().into()), negative, steps);
+        p.exponent_f64_exact = !p.exponent_takes_float && self.exact_in_f64(n);
+        let p = Arc::new(p);
         if x_generic {
             self.power_vars(&x.ty, &p, x.at.unwrap_or(span));
         }
@@ -18182,6 +18183,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             tested: self.tested(e).map(Into::into),
             test: !negative && n.ty.vars.is_empty(),
             exponent_takes_float: n.lit.is_some() || !n.ty.vars.is_empty(),
+            // Set by [`Self::exponent`] for a need on the base, where a repair is written.
+            exponent_f64_exact: false,
             base_takes_float: !x.ty.vars.is_empty() || x.lit.is_some(),
             base_int: x.ty.numeric_carrier() == Some(Carrier::Int),
             base_var: match (x.ty.vars.len(), x.ty.vars.first()) {
@@ -18397,11 +18400,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// sec:diagnostics gives (plan row POW-rat-first-repair): first on a `rat`, exact for an
     /// exponent of either sign, with an int base written `2r` for the literal `2` and `rat(x)`
     /// for anything else, a cast that cannot fail; then, where the exponent may be at least 0
-    /// and is no class of literals, which a test does not narrow, a test of it, of a name
+    /// and holds no type variable (a class of literals in a body that took its type holds none
+    /// and is narrowed by the test, CHK-test-narrows-literal-class), a test of it, of a name
     /// bound in the body or of a new name that holds it ([`fresh`]); and last on floats, which
     /// take a negative exponent, with an int literal base or exponent written as a float
-    /// literal, or with a base parameter declared a float. No repair casts an int to a float:
-    /// `f64(k)` rounds above 2^53 in magnitude. Without the program's text, the test in words.
+    /// literal, or with a base parameter declared a float, and `f64(k)` for an int exponent
+    /// shown within ±2^53 only: `f64(k)` rounds above 2^53 in magnitude. Without the program's
+    /// text, the test in words.
     /// Each repair on a `rat` or a float comes with the operand it rewrites, the base 0 or the
     /// exponent 1, and the carrier it writes there, which [`Self::power_swapped`] checks.
     fn power_repairs(&self, p: &PowerUse) -> Vec<(Repair, Option<(usize, Carrier)>)> {
@@ -18508,6 +18513,20 @@ impl<'t, 'a> Ck<'t, 'a> {
             && let Some(p) = rewrite(&[(ns, &format!("{et}.0f64"))])
         {
             out.push(((p, pass), Some((1, Carrier::F64))));
+        }
+        // An int exponent the checker shows within ±2^53 is cast to `f64` exactly (proof at
+        // [`Self::exact_in_f64`]), so `2.0f64^f64(k)` is the power on floats with the same
+        // exponent (plan row MSG-power-f64-repair); above 2^53 `f64(k)` rounds
+        // (CAST-round-whole), and it is not offered. Checked as the exponent written as an
+        // `f64`, which it is. Cost: one read of the exponent's ints, done once per rejection.
+        if p.exponent_f64_exact
+            && int_literal(bt)
+            && let Some(p) = rewrite(&[
+                (xs, &format!("{bt}.0f64")),
+                (ns, &format!("f64({})", unparen(et))),
+            ])
+        {
+            out.push(((p, String::new()), Some((1, Carrier::F64))));
         }
         out
     }
