@@ -67,13 +67,12 @@ m = stats(xs).mean;                // sd's sub-graph never runs
 whoTeaches = teacherOf as (teacher -> course) into (course -> teacher -> _);   // teacherOf : Teacher -> Course; result Course ->? {Teacher}
 
 // 14 — A tiny service, split into client and server by the compiler.
-req: Stream(Query);
-resp: Stream(Answer);
-
-main() {
-  resp <- req.map(q -> lookup(db, q) else #notFound -> #unknown);
+main(m: MainArgs) {
+  m.stdout <- m.stdin.map(q -> lookup(db, q) else #notFound -> #unknown);
 }
-// Deploy with a keypath cut: the boundary serializes via struct grammars — RPC without stubs.
+// Deploy with a keypath cut between reading a query and its lookup: the boundary serializes
+// via struct grammars — RPC without stubs. The ports are main's argument (QUESTIONS Q51), so
+// the service declares none at the top level.
 
 // 15 — Exhaustive correctness, free, when domains are small.
 @exhaustive romanDigit(n: int[1..=9]) -> Utf8String { … }

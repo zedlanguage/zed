@@ -1172,22 +1172,20 @@ expression: "tokens_by_key(&fences::design())"
  61 | }
  62 | m = stats ( xs ) . mean ;
  66 | whoTeaches = teacherOf «as» ( teacher -> course ) «into» ( course -> teacher -> _ ) ;
- 69 | req : Stream ( Query ) ;
- 70 | resp : Stream ( Answer ) ;
- 72 | main ( ) {
- 73 | resp <- req . map ( q -> lookup ( db , q ) «else» #notFound -> #unknown ) ;
- 74 | }
- 78 | @exhaustive romanDigit ( n : int [ 1₍10₎ ..= 9₍10₎ ] ) -> Utf8String { … }
- 79 | «test» { 1₍10₎ -> str["I"] , 4₍10₎ -> str["IV"] , 9₍10₎ -> str["IX"] }
- 88 | out = files . map ( read ) . map ( parse ) . map ( transform ) ;
- 89 | bad = out . where ( r -> r «is» «not» Row ) ;
- 92 | pos [ i «in» 0₍10₎ ..< n ] = 2₍10₎ * pos [ i - 1₍10₎ ] - pos [ i - 2₍10₎ ] + accel ( pos [ i - 1₍10₎ ] ) * dt ^ 2₍10₎
- 93 | «with» pos [ - 1₍10₎ ] = p0 , pos [ - 2₍10₎ ] = p0 - v0 * dt ;
- 94 | last = pos [ n - 1₍10₎ ] «else» #outOfBounds -> p0 ;
- 99 | report = logs . map ( rowCost ) . sum ;
-107 | cur [ i ] = max ( xs [ i ] , cur [ i - 1₍10₎ ] + xs [ i ] ) «with» cur [ - 1₍10₎ ] = 0₍10₎ ;
-108 | best = cur >< max «else» #empty -> 0₍10₎ ;
-115 | «struct» User { id : int , name : Utf8String }
-116 | u : User | #parseError ( .. ) = Json . decode ( text ) ;
-124 | ok : User | #parseError ( .. ) = Json . decode ( str["{\"id\": 5, \"name\": \"John\"}"] ) ;
-125 | bad : User | #parseError ( .. ) = Json . decode ( str["{\"id\": \"5\", \"name\": \"John\"}"] ) ;
+ 69 | main ( m : MainArgs ) {
+ 70 | m . stdout <- m . stdin . map ( q -> lookup ( db , q ) «else» #notFound -> #unknown ) ;
+ 71 | }
+ 77 | @exhaustive romanDigit ( n : int [ 1₍10₎ ..= 9₍10₎ ] ) -> Utf8String { … }
+ 78 | «test» { 1₍10₎ -> str["I"] , 4₍10₎ -> str["IV"] , 9₍10₎ -> str["IX"] }
+ 87 | out = files . map ( read ) . map ( parse ) . map ( transform ) ;
+ 88 | bad = out . where ( r -> r «is» «not» Row ) ;
+ 91 | pos [ i «in» 0₍10₎ ..< n ] = 2₍10₎ * pos [ i - 1₍10₎ ] - pos [ i - 2₍10₎ ] + accel ( pos [ i - 1₍10₎ ] ) * dt ^ 2₍10₎
+ 92 | «with» pos [ - 1₍10₎ ] = p0 , pos [ - 2₍10₎ ] = p0 - v0 * dt ;
+ 93 | last = pos [ n - 1₍10₎ ] «else» #outOfBounds -> p0 ;
+ 98 | report = logs . map ( rowCost ) . sum ;
+106 | cur [ i ] = max ( xs [ i ] , cur [ i - 1₍10₎ ] + xs [ i ] ) «with» cur [ - 1₍10₎ ] = 0₍10₎ ;
+107 | best = cur >< max «else» #empty -> 0₍10₎ ;
+114 | «struct» User { id : int , name : Utf8String }
+115 | u : User | #parseError ( .. ) = Json . decode ( text ) ;
+123 | ok : User | #parseError ( .. ) = Json . decode ( str["{\"id\": 5, \"name\": \"John\"}"] ) ;
+124 | bad : User | #parseError ( .. ) = Json . decode ( str["{\"id\": \"5\", \"name\": \"John\"}"] ) ;

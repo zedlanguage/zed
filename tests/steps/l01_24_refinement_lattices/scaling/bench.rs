@@ -281,8 +281,9 @@ fn equal_cores_scale_with_the_bits_of_the_exponent() {
     );
 }
 
-/// At 4,096 and 32,768 bits, at 262,144 and 2,097,152, and at 2^23 and 2^26. From 32,768 bits on, the indices
-/// above 511, which no prime below 1,024 is 1 modulo, have roots wider than a word. Before the
+/// At 4,096 and 32,768 bits, at 262,144 and 2,097,152, and at 2^23 and 2^26. From 32,768 bits
+/// on, the indices above 511, which no prime below 1,024 is 1 modulo, have roots wider than a
+/// word. Before the
 /// remainder tree each of those indices took a 2-adic root: 11.0 and 12.2 times (bytes)
 /// against 11.00 and 10.6 from 4,096 and from 32,768 bits (CUBE-root-alloc, COMPLEXITY.md S46).
 /// The tree's first division, of the end by the product of the primes, is by 24 and 37 words
