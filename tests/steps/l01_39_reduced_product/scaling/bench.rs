@@ -409,10 +409,17 @@ fn tightenings_beside_a_chain_of_disjunctions_scale() {
 /// 512 and 1024 to 1.18G, 2.52G, 5.71G and 14.2G (b22-preimage4, 2026-11-22); the piece
 /// takes 5.4 s at 64 and 22.8 s at 128 (load 45), and 51 s at 256. What is left of the
 /// growth past `k log k` is the O(k) blocks at the hub read on each move (plan row
-/// SCOPE-assume-disjunctions-index).
+/// SCOPE-assume-disjunctions-index). A block found to stay is now kept (`Stay` in
+/// `product.rs`), and a later move answers for it by two subset tests and four comparisons of
+/// ends, but each move still lists the blocks at the hub (plan row
+/// SCOPE-assume-disjunctions-listing). Measured on a Colab VM (hm1, b22-preimage5,
+/// 2026-11-22): 8.70 times the work from 256 to 2048 (0.15 and 1.29 s), piece 46.9 s; 8.30
+/// and 7.99 times from 128 to 1024, pieces 21.7 and 30.0 s. So the size stays at 64: the
+/// set-up, about 13 ms a disjunction and 58% of it under `Scope::case_list` (plan row
+/// PERF-case-list-setup-constant), puts 128 over the 20 s piece limit.
 #[test]
 fn tightenings_of_a_sum_beside_disjunctions_on_each_name_scale() {
-    let n = 256;
+    let n = 64;
     let inputs = scaling::inputs(n, tightenings_of_a_sum);
     scaling::check(
         "k tightenings of n + m beside k disjunctions each on n or m",
