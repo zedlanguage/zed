@@ -42,19 +42,15 @@ fn a_meet_of_morphism_types_is_written_as_one_arrow_where_the_kernel_decides_its
     let one_set = &arrow(int.clone(), Type::top(), one.clone())
         & &arrow(never.clone(), int.clone(), one.clone());
     assert_eq!(printed(&one_set), "int -> 1");
-    // The value `(1 | 2) & (2 | 3)`, which is `2`, is named by no literal: the connective stays.
+    // The value `(1 | 2) & (2 | 3)`, which is `2`, holds no other type, so it can close no
+    // cycle of texts: one arrow (row FAIL-print-meet-unnamed-bound).
     let unnamed = &any(&lit(1) | &lit(2)) & &any(&lit(2) | &lit(3));
-    assert_eq!(printed(&unnamed), "(_ ->? 1 | 2) & (_ ->? 2 | 3)");
-    // The lower bound `int | bool` is named by no literal, and the upper bound `_` is not
-    // within it: the connective stays.
+    assert_eq!(printed(&unnamed), "_ ->? 2");
+    // The lower bound `int | bool` is named by no literal but holds no other type, and the
+    // upper bound `_` is not within it: one arrow, both bounds written.
     let lower_unnamed =
         &arrow(int.clone(), Type::top(), one.clone()) & &arrow(b.clone(), Type::top(), one.clone());
-    let text = printed(&lower_unnamed);
-    assert!(
-        text == "(bool .. _ -> 1) & (int .. _ -> 1)"
-            || text == "(int .. _ -> 1) & (bool .. _ -> 1)",
-        "{text}"
-    );
+    assert_eq!(printed(&lower_unnamed), "(int | bool) .. _ -> 1");
     // A meet of four literals whose upper bound `int & bool` is empty and within the lower
     // bound `Never`: one list, written as one arrow.
     let four = &(&any(lit(1)) & &arrow(never.clone(), int.clone(), lit(1)))
