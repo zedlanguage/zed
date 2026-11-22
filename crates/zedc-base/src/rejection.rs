@@ -43,6 +43,9 @@ rows! {
     // No diagnostic uses this row yet: `zed_kernel::poly::Refusal::message` writes its text for
     // `Refused::Work`, and plan rows L3.9 (rung 3) and ASSOC-demand (rung 2) emit it.
     ExpansionTooCostly => "Expansion too costly",
+    // No diagnostic uses the next two rows yet (warnings): plan row L3.9 (rung 3) emits them.
+    LawDirectionShapedOperands => "Law direction with two shaped operands under one associative and commutative operator",
+    LawDirectionRepeatedName => "Law direction with a repeated name under one associative and commutative operator",
     // No diagnostic uses this row yet: plan row ASSOC-select emits it.
     SelectionKeysNotInOneOrder => "Selection keys not in one order",
     // No diagnostic uses this row yet: plan row ASSOC-table emits it.
@@ -95,10 +98,15 @@ rows! {
     PositionalMap =>
         "Positional `.map`, or a name that is not a parameter, on a value that is not a morphism",
     KeyOutsideBound => "Key outside the permission bound",
+    // No diagnostic uses this row yet: plan row CHECK-lambda-notfound-partial emits it.
+    FunctionAnswersOutsidePartialMap => "Function value that answers outside a partial map's value type",
     AlwaysFails => "Operation that always fails",
     // No diagnostic uses the next two rows yet: plan row L5.4c emits them.
     KeyEditOnPositions => "Insert or delete by key on a level keyed by position",
     SpliceWithoutPositions => "`splice` on a level with no positions",
+    // No diagnostic uses this row yet: plan row CHECK-concat-non-rank-menu emits it, in place of
+    // the headline `list_concat_end` (zedc-check walk/fp_ops.rs) gives today.
+    ConcatNonRankKeys => "`++` on a family keyed by `int` that is not a rank level",
     UndischargedRegion => "Undischarged region assertion",
     ReadBelowDomain => "Read below the domain with no boundary entry",
     BareBoundary => "Boundary item with neither `initial` nor an index",
@@ -146,20 +154,24 @@ rows! {
         "Order read on a level with no natural order — origin keys outside their `Seq`",
     TwoOrders => "Two declared orders meet in one key type",
     EmissionDisjointness => "Emission-disjointness",
-    // No diagnostic uses these thirty-two rows yet. The plan rows that emit them: L7.4 the first,
-    // fifth, seventh and thirty-second; TERM-1 the second to fourth; FFI-token-check the sixth,
-    // tenth and thirteenth to sixteenth; IMPL-consume-unless the eighth and ninth;
-    // FFI-release-failure the eleventh; FFI-release-zed the twelfth; FFI-held the seventeenth to
-    // nineteenth; FFI-thread the twentieth and twenty-first; FFI-isolate the twenty-second to
-    // twenty-fourth and the thirtieth; FFI-sandbox-linux the twenty-fifth to twenty-eighth;
-    // STRICT-build the twenty-ninth; EXPORT-unique the thirty-first.
+    // No diagnostic uses these thirty-six rows yet. The plan rows that emit them: L7.4 the first,
+    // second, sixth, eighth to tenth, twenty-first and thirty-sixth; TERM-1 the third to fifth;
+    // FFI-token-check the seventh, thirteenth and sixteenth to nineteenth; IMPL-consume-unless the
+    // eleventh and twelfth; FFI-release-failure the fourteenth; FFI-release-zed the fifteenth;
+    // FFI-held the twentieth, twenty-second and twenty-third; FFI-thread the twenty-fourth and
+    // twenty-fifth; FFI-isolate the twenty-sixth to twenty-eighth and the thirty-fourth;
+    // FFI-sandbox-linux the twenty-ninth to thirty-second; STRICT-build the thirty-third;
+    // EXPORT-unique the thirty-fifth.
     BitFieldWithNoUnit => "Bit-field of a foreign struct with no C unit",
+    ForeignFieldMisaligned => "Foreign field at an offset its alignment does not divide",
     ItemWithNoBitOrder => "Grammar item narrower than a byte with no bit order",
     MixedTextBinaryGrammar => "Struct grammar that mixes text and binary items",
     ParseOfOtherMode => "Parse function of the other mode",
     ReleaseWhileKept => "Release of a foreign value while a result that keeps it is still read",
     UseAfterRelease => "Use of a value after the program releases it",
     ReleaseParametersUnfilled => "Release function whose parameters the `release` does not fill",
+    TerminatorInArgument => "Terminated argument that may hold its terminator",
+    IntegerHandleAsInteger => "Integer handle used as an integer",
     ConsumesMisplaced => "Parameter declared `with consumes()` that is not typed `Ptr(…)` or is given a value Zed does not own",
     UseOfPossiblyTakenValue => "Use of a value that a call may have taken",
     ReleasedValueUnused => "Released value that nothing uses",
@@ -171,6 +183,7 @@ rows! {
     ReleaseCallWithoutToken => "Call of a token's release that names no token",
     ForeignSignatureWithoutState => "Foreign signature that does not take its library's state",
     UseOfHeldValue => "Use of a value after a call that holds it",
+    OneCFunctionTwoNames => "One C function declared under two library names for one file",
     HoldNeverEnds => "Hold that Zed cannot end",
     HolderCallUnordered =>
         "Call on a holder with nothing ordering it with a call that changes its holds",
@@ -280,8 +293,10 @@ rows! {
     // (limits.rs:253). Plan row MAIN-limits, which built them, is done.
     OutOfMemory => "Out of memory in a run",
     MainLimitPassed => "Limit of `main` passed in a run",
-    // No diagnostic uses the next two rows yet: plan row STOP-releases-rt emits them.
+    // No diagnostic uses the next three rows yet: plan row STOP-releases-rt emits the first and
+    // third, PORT-stdout-close-status the second.
     StopReleaseFailed => "Release that fails during a stop",
+    StdoutCloseFailed => "Standard output failed when the run closed it",
     StopReleasesCut => "Releases of a stop cut short",
     SignalsReadWithoutHandles => "Signals of `main` read without `handles`",
     SignalDeclarationCannotHold => "Signal declaration of `main` that cannot hold",
@@ -290,6 +305,8 @@ rows! {
     UnboundedSize => "Size with no proven bound under `@preallocated` or the `preallocated` mode",
     // No diagnostic uses the next row yet: plan row MEM-verdicts emits it.
     NoProvedMemoryBound => "No proved memory bound",
+    // No diagnostic uses this row yet: plan row MAIN-limits-strict emits it.
+    ThreadCountUnknown => "Thread count that `--strict` cannot fix",
     CellReadsItself => "Cell read on a path back to its own cell",
     MeaningCase => "Meaning function with a case `@decides` cannot reify",
     NonLinearQuestion =>
@@ -299,11 +316,14 @@ rows! {
     // emitted at a division whose divisor is 0 at a root where a constraint fails (ROOTS-listed).
     OneTargetForResults => "One target for a call with several results",
     RootConstraintFails => "A root of an obligation's equation at which a written constraint does not yield `true` or `false`",
-    // No diagnostic uses the next four rows yet: plan rows L2.12d, IMPL-reached-effects, L15.8b
-    // and L21.0b emit them.
+    // No diagnostic uses this row yet: plan row MOD-residue-fragment emits it.
+    ResidueRefused => "Residue question refused",
+    // No diagnostic uses the next five rows yet: plan rows L2.12d, IMPL-reached-effects, L15.8b,
+    // L7.4 and L21.0b emit them.
     UnreadBinding => "Block binding that nothing reads",
     PortOpInLogLine => "Port operation in a log line",
     ProgramHole => "Hole in the program",
+    LibraryNameUnresolved => "Foreign library name the build cannot resolve",
     UngrantedReach => "Dependency reaching what its importer did not grant",
     // No diagnostic uses this row yet: plan row L7.2 emits it.
     UncommutedPortOps => "Two operations on one port that may not commute, with nothing ordering them",

@@ -779,6 +779,7 @@ pub const ANNOTATIONS: &[(&str, u32)] = &[
     ("export", 7),
     ("borrowed", 7),
     ("stateless", 7),
+    ("packed", 7),
     ("log", 7),
     ("after", 7),
     ("thread", 7),

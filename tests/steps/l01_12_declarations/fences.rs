@@ -21,9 +21,11 @@ fn every_unit_builds_or_names_its_layer() {
     // 23 and 113 at step L1.12; later steps build more. The sec:type_language fence of a type
     // computed from a schema file (QUESTIONS A72) is the 212th; the two sec:units fences of a
     // `local` field (QUESTIONS A80) are the 213th and 214th; the two sec:ports fences of seeded
-    // random numbers and of a foreign generator (SPEC-a108-interchangeable-ops) bring 216.
+    // random numbers and of a foreign generator (SPEC-a108-interchangeable-ops) bring 216; the
+    // sec:units fence of `buildFile` (SPEC-build-read-layers) and the two sec:ffi fences of a
+    // packed struct and of integer handles (SPEC-packed-align, SPEC-ffi-int-handles) bring 219.
     assert!(
-        built >= 23 && built + later == 216,
+        built >= 23 && built + later == 219,
         "built {built}, later {later}"
     );
 }
