@@ -2648,7 +2648,7 @@ thread_local! {
 }
 
 /// The bodies of one inequality the linear stage answered from the ends of the domains
-/// ([`one_inequality`]) on this thread since the last call, which resets the count.
+/// (`one_inequality`) on this thread since the last call, which resets the count.
 pub fn one_inequality_reads() -> u64 {
     ONE_INEQUALITY.replace(0)
 }

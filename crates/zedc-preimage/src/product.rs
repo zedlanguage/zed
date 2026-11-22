@@ -9911,7 +9911,7 @@ impl Scope {
     /// A3 proved (row PROOF-product-lazy-a1-a4, b22-preimage6, 2026-11-22): every entry
     /// `(key, (with, at))` of the joined scope's `projected` records a projection of the
     /// part `key` with `with` made at products within the joined products at its names.
-    /// The joined map is built in [`Scope::join_settled`] from `self.projected` by its diff
+    /// The joined map is built in `Scope::join_settled` from `self.projected` by its diff
     /// against `other.projected`, case by case: (1) an entry the two sides hold equal is
     /// kept as it is; both sides projected the part at those products `at`, and each side's
     /// product at a name is within the join's (`Product::join` is the hull of the two, a
@@ -9923,7 +9923,7 @@ impl Scope {
     /// products, so within the joined ones; the record now names the joined products, which
     /// hold both, and the part's block is marked to be checked again (`seen.drop_part`). No
     /// other write to `projected` happens in the join. Within one side, an entry's `at` is
-    /// the snapshot taken right after that projection ([`Scope::project_due`]) and products
+    /// the snapshot taken right after that projection (`Scope::project_due`) and products
     /// only narrow between joins, so it holds of the products at the join too. Case (4)
     /// records products wider than either projection read, which is the direction step 2
     /// needs: a projection read products no wider than those recorded, so by A2 (exact
