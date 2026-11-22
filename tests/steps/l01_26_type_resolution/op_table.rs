@@ -188,15 +188,30 @@ fn unit(table: &Table, ns: &[usize]) -> (String, HashMap<usize, usize>) {
     (text, lines)
 }
 
-/// The result of each case of `ns`, checked in one unit, or `None` when the unit does not get
-/// past the syntax tree or resolution.
-fn check(table: &Table, ns: &[usize]) -> Option<HashMap<usize, String>> {
+/// The unit of the cases `ns` checked: its text, the case of each of its lines, its resolution and
+/// what the check found; `None` when the unit does not get past the syntax tree or resolution.
+fn checked_unit(
+    table: &Table,
+    ns: &[usize],
+) -> Option<(
+    String,
+    HashMap<usize, usize>,
+    zedc::resolve::Resolution,
+    zedc::check::Info,
+)> {
     let (text, lines) = unit(table, ns);
     let tokens = zedc::lex::lex_fence(&text).ok()?;
     let tree = zedc::parse::parse(&text, &tokens, "Unit", zedc::parse::TOP).ok()?;
     let stmts = zedc::ast::unit(&text, &tokens, &tree).ok()?;
     let res = zedc::resolve::resolve(&stmts).ok()?;
     let info = check_text(&stmts, &res, Some(&text));
+    Some((text, lines, res, info))
+}
+
+/// The result of each case of `ns`, checked in one unit, or `None` when the unit does not get
+/// past the syntax tree or resolution.
+fn check(table: &Table, ns: &[usize]) -> Option<HashMap<usize, String>> {
+    let (text, lines, res, info) = checked_unit(table, ns)?;
     let line_of = |start: usize| text[..start].matches('\n').count() + 1;
     let mut errors: HashMap<usize, String> = HashMap::new();
     for e in &info.errors {
@@ -470,6 +485,43 @@ fn each_case_alone_is_read_up_to_resolution() {
     for (n, w) in want.iter().enumerate() {
         assert_eq!(front_end(&table, n).as_deref(), *w, "case {n}");
         assert_eq!(check_alone(&table, n), w.unwrap_or("int"), "case {n}");
+    }
+}
+
+/// The table's warning branch runs (TEST-op-table-warn-case, audit P266-3): div_mod.txt has a case
+/// expected to warn with no known failure, and checked alone it gives one warning, at its line,
+/// whose headline is the refused question's (step L1.39: "Its headline names what the checker
+/// could not find exactly"). Before this case no fixture warned, so `warned` was always empty.
+#[test]
+fn a_case_that_warns_gives_its_warning_at_its_line() {
+    let table = read_table("div_mod.txt");
+    let warns: Vec<usize> = (0..table.cases.len())
+        .filter(|&n| table.cases[n].known.is_none() && table.cases[n].expected.ends_with(" warn"))
+        .collect();
+    assert!(
+        !warns.is_empty(),
+        "no case of div_mod.txt is expected to warn"
+    );
+    for n in warns {
+        let (text, lines, _, info) =
+            checked_unit(&table, &[n]).expect("the case gets past resolution");
+        let at: Vec<(usize, &str)> = (info.warnings.iter())
+            .map(|w| {
+                let line = text[..w.span.start].matches('\n').count() + 1;
+                (line, w.message.as_str())
+            })
+            .collect();
+        let line = lines.iter().find(|&(_, &c)| c == n).map(|(&l, _)| l);
+        assert_eq!(
+            at,
+            [(
+                line.unwrap(),
+                // The message as stored; the printer ends it with a period.
+                "Cannot find exactly which values meet the conditions here"
+            )],
+            "div_mod.txt:{}",
+            table.cases[n].line
+        );
     }
 }
 

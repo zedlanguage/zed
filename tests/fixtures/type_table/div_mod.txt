@@ -259,6 +259,20 @@ f64 | #none, =k => error * -- sec:lexical "div / mod integer division"; sec:fail
 =k, =2r => error * -- sec:lexical "div / mod integer division"; sec:failure "Where some reaching inputs give it"
 =k, =k => int -- sec:lexical "div / mod integer division"; sec:failure "Where some reaching inputs give it"
 
+# A div under a test the checker refuses to solve exactly (TEST-op-table-warn-case): the four
+# conditions on four variables of tests/steps/l01_29_repairs_and_printing/refused_warning.rs
+# GROWTH ($0 = x, $1 = y, $2 = z, $3 = w), where removing any one variable would leave more
+# conditions than there are. The refused question is a warning at the line. The divisor is never
+# 0 under the test, so the result is `int`: with x = 0 the conditions, each written g <= 0, are
+# g1 = 12w + 10y + 12z - 11, g2 = -4w + 10y + 11z + 28, g3 = -11w + y - 12z + 28 and
+# g4 = 8w - 12y + z - 31, and 543 g1 + 539 g2 + 1120 g3 + 995 g4 = 9634 (the w, y and z terms
+# cancel: 6516 - 2156 - 12320 + 7960, 5430 + 5390 + 1120 - 11940 and 6516 + 5929 - 13440 + 995
+# are 0), which is not <= 0, so no rational point meets them (Farkas' lemma) and no whole one
+# does. The one case whose expected result ends in ` warn` and gives it, so the table's warning
+# branch runs.
+template: if 4 * $0 - 12 * $3 - 10 * $1 - 12 * $2 + 11 >= 0 && 4 * $3 + 10 * $0 - 10 * $1 - 11 * $2 - 28 >= 0 && 11 * $3 + 4 * $0 - $1 + 12 * $2 - 28 >= 0 && 0 - 8 * $3 - 5 * $0 + 12 * $1 - $2 + 31 >= 0 { 100 div $0 } else { 0 }
+int, int, int, int => int warn -- step L1.39 "A question refused at one place twice is one warning" (its headline names what the checker could not find exactly; it may then reject or warn about correct code); sec:failure "Where some reaching inputs give it"
+
 template: $0 mod $1
 int, int => error * -- sec:domains "`mod` takes `m` in int[1..]"; QUESTIONS A174 "make sure `m > 0` both `mod` and `floatMod`"
 int, rat => error * -- sec:lexical "div / mod integer division"; sec:failure "Where some reaching inputs give it"
