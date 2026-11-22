@@ -293,11 +293,20 @@ fn diff_takes_linear_time_in_the_depth() {
 
 /// Besides its ratio: equal signatures fit. Small instance: `deep_ops::signatures` in
 /// `deep_ops::the_operations_on_a_type_a_few_levels_deep_are_as_built`.
+///
+/// n is 5,000, not 20,000 (TEST-bench-first-phase-limit). tools/run_tests.sh holds a benchmark's
+/// first phase, which builds the inputs at n and makes the runs there, to max(20 s, 20 x load /
+/// cores) (`piece_limit`, tools/lib.sh); only the phase at 8n gets 10.5 times the first. Since
+/// MEM-l0126-40gb builds one input per run, that phase at 20,000 took about 15.5 s on hm4 and
+/// ended rc=124 at 20.3 s under DynamoRIO (b22-meter1). The cap is not widened; the size is
+/// lowered. Tradeoff: four times fewer levels make each run's count smaller, but a count of
+/// instructions at 5,000 levels is still far above the overhead a run's thread start adds, and
+/// the ratio checked is the same linear one.
 #[test]
 fn fits_sig_takes_linear_time_in_the_depth() {
     linear(
         "fits_sig of two signatures n deep",
-        20_000,
+        5_000,
         |k| {
             (
                 sig(levels(k, z()), levels(k, z())),

@@ -404,6 +404,7 @@ fn counts_of(run: fn(), metered: bool) -> Vec<u64> {
 /// takes the least of its runs for that reason.
 #[test]
 fn counts_of_a_run_on_each_heap() {
+    println!("meter unit {}", Meter::new().unit());
     let ours = counts_of(churn_on_threads, true);
     let glibc = counts_of(churn_on_threads, false);
     println!("metered heap {ours:?}, glibc {glibc:?}");
@@ -432,6 +433,23 @@ fn the_instructions_of_a_run_repeat() {
         .expect("running this test binary");
     let out = String::from_utf8_lossy(&run.stdout);
     assert!(run.status.success(), "{out}");
+    // The spreads compared below are of instructions. Where the run alone found neither the
+    // hardware counter nor DynamoRIO's zed_icount, its meter reads processor time, whose spread
+    // from run to run is the load's and says nothing of the heaps: b22-mem40's merge check
+    // (2026-11-22, run 3) failed so with counts of 3 to 5 million ns, on a checkout older than
+    // tools/icount, for which Colab's job.sh sets no ZED_METER_DRRUN (TEST-instructions-repeat-
+    // recheck). That case is named here, not reported as a spread.
+    let unit = out
+        .lines()
+        .find_map(|l| l.strip_prefix("meter unit "))
+        .unwrap_or_else(|| panic!("no line naming the meter in:\n{out}"));
+    assert!(
+        unit.starts_with("instructions"),
+        "the run alone counted {unit}, not instructions: this machine has no hardware counter of \
+         instructions, and ZED_METER_DRRUN and ZED_METER_ICOUNT (crate zed-meter-settings) do not \
+         name DynamoRIO and its client zed_icount (tools/icount), so the spreads of the two heaps \
+         cannot be compared"
+    );
     let line = out
         .lines()
         .find_map(|l| l.strip_prefix("metered heap "))
