@@ -11,13 +11,16 @@
 //! every prime reported is proved prime.
 //!
 //! Factoring: trial division by the primes below 1000, then for each composite part above `2^64`
-//! a perfect-square test, Pollard's rho (Brent's form, [`rho_within`]) for about one curve's
-//! worth of products, then curves of the elliptic curve method until one splits it. Parts below
-//! `2^64` go to [`factor`](crate::factor()).
+//! a perfect-power test, Pollard's rho (Brent's form, [`rho_within`]), a short pass of curves of
+//! the elliptic curve method, then the self-initializing quadratic sieve (`siqs.rs`); the steps
+//! and their measured costs are at `split_u128`. Parts below `2^64` go to
+//! [`factor`](crate::factor()).
 
 use crate::ecm::{self, Primes};
 use crate::factor::{Montgomery, rho_within};
 use crate::pratt::{PSI_13, PrattCertificate, PrattFactor, is_prime_below_psi_13, passes_13_bases};
+use crate::siqs::siqs;
+use crate::word::root_exact_u128;
 use crate::{factor, odd_primes_below, sqrt_exact_u128};
 
 /// Whether `n` is prime, proved: the method at the top of this file.
@@ -186,37 +189,61 @@ fn factor_certified(n: u128) -> Vec<(u128, u64, Option<PrattCertificate>)> {
     out
 }
 
-/// The steps of rho before the elliptic curve method: about the products of one curve at the
-/// first bound of [`SCHEDULE`] (measured in COMPLEXITY.md row FACTOR-u128).
+/// The steps of rho before the elliptic curve method: about the products of six curves of
+/// `b1 =` [`SHORT_B1`] (measured 2026-11-22: 1.7 ms for `2^16` steps at 128 bits, 0.27 ms a curve).
 const RHO_STEPS: u64 = 1 << 16;
 
-/// The curves of the elliptic curve method: `(b1, curves)`, each with `b2 = 100 b1`, then curves
-/// of `b1 =` [`LAST_B1`] until one splits `n`. Measured 2026-11-22 on 64 products of two primes
-/// in `[2^63, 2^64)` (seed 11), the curves until the first split, mean and most: 140 and 820 at
-/// `b1 = 3000`, 61 and 235 at 5000, 41 and 152 at 8000, 28 and 135 at 11000. A curve costs about
-/// `b1` times a constant (both stages), so the mean costs `b1 * curves` are 421k, 304k, 325k and
-/// 309k: flat from 5000 to 11000. The schedule rises, so the curves of small `b1` find the
-/// smaller primes of 80- to 112-bit inputs first, at a small share of the cost of a 64-bit prime.
-const SCHEDULE: [(u64, u32); 2] = [(2000, 25), (5000, 60)];
-/// The stage-1 bound of the curves after [`SCHEDULE`].
+/// The stage-1 bound of the short pass of curves between rho and SIQS, each with `b2 = 100 b1`.
+/// Measured 2026-11-22 on products of a prime of `f` bits and primes making 128 bits, 12 each,
+/// the curves until the first split at `b1 = 1000`, median and most: 1 and 5 at `f = 32`, 1 and 6
+/// at 36, 1 and 2 at 40, 1 and 1 at 44 and 48; at `b1 = 500` the most were 11 and 4 at 32 and 36,
+/// at `b1 = 2000` 2 and 2 at twice the cost a curve (0.61 ms against 0.27 ms).
+const SHORT_B1: u64 = 1000;
+
+/// The curves of the short pass for `n` of `bits` bits: `(bits - 64)^2 / 200`, 0 at 64 bits, 5
+/// at 96, 11 at 112, 20 at 128, so the pass costs at most about a fifth of SIQS's mean at that
+/// size (measured 2026-11-22: SIQS means 7.3, 17.5 and 55 ms at 96, 112 and 128 bits, against
+/// 0.27 ms a curve). A prime of `n` of 36 to 48 bits is then found by curves in a few tenths of
+/// a millisecond each instead of a full SIQS run.
+fn short_curves(bits: u32) -> u32 {
+    (bits.saturating_sub(64)).pow(2) / 200
+}
+
+/// The stage-1 bound of the curves after SIQS gives up, which it does only on a prime power the
+/// root tests at [`split_u128`] missed (none, by their proof there). Measured 2026-11-22 on 64
+/// products of two primes in `[2^63, 2^64)` (seed 11), the curves until the first split, mean and
+/// most: 140 and 820 at `b1 = 3000`, 61 and 235 at 5000, 41 and 152 at 8000, 28 and 135 at 11000.
+/// A curve costs about `b1` times a constant (both stages), so the mean costs `b1 * curves` are
+/// 421k, 304k, 325k and 309k: flat from 5000 to 11000.
 const LAST_B1: u64 = 11000;
+
+/// The odd primes `k` for which [`split_u128`] tests whether `n` is a `k`-th power.
+const ROOTS: [u32; 4] = [3, 5, 7, 11];
 
 /// A factor of the odd composite `n >= 2^64` above 1 and below `n`, with no prime below
 /// [`TRIAL`].
+///
+/// The steps: a root when `n` is a perfect power; rho; a short pass of curves of the elliptic
+/// curve method ([`short_curves`]); then SIQS (`siqs.rs`), which splits any `n` that is not a
+/// prime power. A perfect power `n = m^j`, `j >= 2`, is a square or a `q`-th power for an odd
+/// prime `q` dividing `j`, as `n = (m^(j/q))^q`; and `m >= 1009` (no prime below 1000), so
+/// `1009^q <= n < 2^128` gives `q <= 128 / log2(1009) < 12.9`, so `q` is one of [`ROOTS`]. So a
+/// prime power reaching SIQS is a prime, which the caller excludes.
 // Complexity tradeoff: rho costs about `sqrt(p)` steps for the least prime `p` of `n` (Pollard's
 // heuristic, unproved), so it is cut off after `RHO_STEPS`, enough for `p` up to about `2^32`;
-// the elliptic curve method then costs `L(p)^(sqrt 2 + o(1))` products in expectation by
-// Lenstra's conjecture (unproved), a mean of about 60 curves of `b1 = 5000` for `p` near `2^64`
-// (the measurement at `SCHEDULE`). The
-// worst case is a product of two primes near `2^64`; measured in COMPLEXITY.md row FACTOR-u128.
-// SIQS (Contini 1997) would cost `L(n)^(1 + o(1))`, the same order at `p ~ sqrt(n)`, with a
-// smaller constant at 128 bits in published measurements but several times the code (a factor
-// base, sieving, and linear algebra over GF(2)); it is not written, pending a measured need.
-// Rho alone, the naive method here, would take about `2^32` steps on the worst case. Given up:
-// a proved bound (none of the three methods has one); the answer is exact, as every factor is
-// a gcd with `n`.
+// the curves cost `L(p)^(sqrt 2 + o(1))` products in expectation by Lenstra's conjecture
+// (unproved), cheap for `p` up to about `2^48` (the measurement at `SHORT_B1`). SIQS costs
+// `L(n)^(1 + o(1))` (Pomerance's heuristic, unproved), set by the size of `n` alone, so it takes
+// the case the curves are worst at: two primes near `2^64`, where the curves alone took a mean
+// of 0.6 s and up to 2.3 s on 48 inputs and SIQS takes about 55 ms (COMPLEXITY.md rows
+// FACTOR-u128 and FACTOR-u128-tail). Rho alone, the naive method here, would take about `2^32`
+// steps on that case. Given up: a proved bound (none of the three methods has one); the answer
+// is exact, as every factor is a gcd with `n` or a root checked by powering.
 fn split_u128(n: u128) -> u128 {
     if let Some(r) = sqrt_exact_u128(n) {
+        return r;
+    }
+    if let Some(r) = ROOTS.iter().find_map(|&k| root_exact_u128(n, k)) {
         return r;
     }
     let mont = Montgomery::new(n);
@@ -225,11 +252,17 @@ fn split_u128(n: u128) -> u128 {
         return g;
     }
     let primes = Primes::up_to(LAST_B1);
-    let rows = SCHEDULE
-        .iter()
-        .flat_map(|&(b1, k)| std::iter::repeat_n(b1, k as usize));
-    for (sigma, b1) in (6..).zip(rows.chain(std::iter::repeat(LAST_B1))) {
-        if let Some(d) = ecm::curve(&mont, sigma, b1, 100 * b1, &primes) {
+    let short = short_curves(128 - n.leading_zeros());
+    for sigma in 6..6 + u64::from(short) {
+        if let Some(d) = ecm::curve(&mont, sigma, SHORT_B1, 100 * SHORT_B1, &primes) {
+            return d;
+        }
+    }
+    if let Some(d) = siqs(n) {
+        return d;
+    }
+    for sigma in 6 + u64::from(short).. {
+        if let Some(d) = ecm::curve(&mont, sigma, LAST_B1, 100 * LAST_B1, &primes) {
             return d;
         }
     }
@@ -237,5 +270,4 @@ fn split_u128(n: u128) -> u128 {
 }
 
 #[cfg(test)]
-#[path = "wide_tests.rs"]
 mod tests;

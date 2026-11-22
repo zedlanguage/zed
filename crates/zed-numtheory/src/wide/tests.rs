@@ -430,3 +430,131 @@ fn small_primes_have_certificates_and_composites_do_not() {
         );
     }
 }
+
+/// A prime of `bits` bits (top bit set), from the generator.
+fn prime_of_bits(rng: &mut Rng, bits: u32) -> u64 {
+    loop {
+        let x = (rng.next_u64() >> (64 - bits)) | 1 << (bits - 1) | 1;
+        if let Some(p) =
+            next_prime(x).filter(|p| p >> (bits - 1) == 1 && p.checked_shr(bits).unwrap_or(0) == 0)
+        {
+            return p;
+        }
+    }
+}
+
+/// SIQS splits products of two primes of equal size from 66 to 128 bits, and of three primes,
+/// into a proper factor; a wrong root, `b` or `c` would leave it with no relations, and a wrong
+/// exponent vector with no square, so it would not end.
+#[test]
+fn siqs_splits_products_of_two_and_three_primes() {
+    let (mut rng, s) = Rng::fresh("siqs_splits_products_of_two_and_three_primes");
+    for bits in [33u32, 40, 48, 56, 64] {
+        for _ in 0..2 {
+            let p = prime_of_bits(&mut rng, bits);
+            let q = prime_of_bits(&mut rng, bits);
+            if p == q {
+                continue;
+            }
+            let n = u128::from(p) * u128::from(q);
+            let d = crate::siqs::siqs(n).unwrap_or_else(|| panic!("seed {s}: {p} * {q}"));
+            assert!(
+                d == u128::from(p) || d == u128::from(q),
+                "seed {s}: {p} * {q}: {d}"
+            );
+        }
+    }
+    let (p, q, r) = (
+        prime_of_bits(&mut rng, 30),
+        prime_of_bits(&mut rng, 31),
+        prime_of_bits(&mut rng, 32),
+    );
+    let n = u128::from(p) * u128::from(q) * u128::from(r);
+    let d = crate::siqs::siqs(n).expect("a split");
+    assert!(d > 1 && d < n && n % d == 0, "seed {s}: {p} {q} {r}: {d}");
+}
+
+/// Square roots modulo primes square back, for every nonzero square below each prime.
+#[test]
+fn square_roots_mod_primes_square_back() {
+    let odd = odd_primes_below(3000);
+    for p in (3..3000u64).step_by(2).filter(|&p| odd[(p / 2) as usize]) {
+        for x in 1..p.min(200) {
+            if crate::pow_mod(x, (p - 1) / 2, p) == 1 {
+                let r = crate::siqs::sqrt_mod_prime(x, p);
+                assert_eq!(crate::mul_mod(r, r, p), x, "sqrt({x}) mod {p}");
+            }
+        }
+    }
+}
+
+/// `root_exact_u128` against powering: for each odd `k` of `ROOTS`, every `r^k` that fits in a
+/// `u128` among `r` up to `2^20` and the largest `r`, and the neighbors `r^k - 1` and `r^k + 1`.
+#[test]
+fn odd_roots_are_exact() {
+    for k in ROOTS {
+        // The largest `r` with `r^k < 2^128`, from a float estimate corrected by powering.
+        let mut top = 2f64.powf(128.0 / f64::from(k)) as u128 + 2;
+        while top.checked_pow(k).is_none() {
+            top -= 1;
+        }
+        let rs = (1..=top.min(1 << 20)).chain(top.saturating_sub(1000)..=top);
+        for r in rs {
+            let v = r.pow(k);
+            assert_eq!(root_exact_u128(v, k), Some(r), "{r}^{k}");
+            if r > 1 {
+                assert_eq!(root_exact_u128(v - 1, k), None, "{r}^{k} - 1");
+            }
+            assert_eq!(root_exact_u128(v + 1, k), None, "{r}^{k} + 1");
+        }
+        assert_eq!(root_exact_u128(u128::MAX, k), None, "2^128 - 1, {k}");
+    }
+}
+
+/// Prime powers above `2^64` with no prime below 1000 factor: SIQS never splits one, so these
+/// pass only through the root tests of `split_u128`, one for each of `ROOTS` and the square.
+#[test]
+fn prime_powers_above_2_64_are_factored() {
+    // 1009 is the least prime above 1000; `1009^11 = 2^109.7`, and `1009^13 > 2^128`.
+    for (p, e) in [
+        (1009u128, 11u64),
+        (1009, 7),
+        (100_003, 5),
+        (4_294_967_291, 3),
+        (4_294_967_291, 4),
+    ] {
+        let n = p.pow(e as u32);
+        assert!(n >> 64 != 0);
+        assert_eq!(factor_u128(n), vec![(p, e)], "{p}^{e}");
+    }
+    let (mut rng, s) = Rng::fresh("prime_powers_above_2_64_are_factored");
+    for _ in 0..3 {
+        let p = prime_of_bits(&mut rng, 42);
+        let n = u128::from(p).pow(3);
+        assert_eq!(factor_u128(n), vec![(u128::from(p), 3)], "seed {s}: {p}^3");
+    }
+}
+
+/// Products of a prime of `f` bits, one of 64 bits and one of `64 - f` bits, near 128 bits in all,
+/// for `f` from 34 to 58, and of two primes of 64 bits: rho, the short pass of curves or SIQS
+/// each take some of them, and each factorization is exact.
+#[test]
+fn unbalanced_products_up_to_128_bits_are_factored() {
+    let (mut rng, s) = Rng::fresh("unbalanced_products_up_to_128_bits_are_factored");
+    for f in [34u32, 40, 46, 52, 58, 64] {
+        let p = u128::from(prime_of_bits(&mut rng, f));
+        let q = u128::from(prime_of_bits(&mut rng, 64));
+        let r = if f == 64 {
+            1
+        } else {
+            u128::from(prime_of_bits(&mut rng, 64 - f))
+        };
+        let n = p * q * r;
+        let got = factor_u128(n);
+        assert_eq!(product(&got), n, "seed {s}: {p} {q} {r}");
+        assert!(
+            got.iter().all(|&(x, _)| is_prime_u128(x)),
+            "seed {s}: {got:?}"
+        );
+    }
+}

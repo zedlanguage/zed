@@ -14,6 +14,7 @@ mod ecm;
 mod factor;
 mod factored;
 mod pratt;
+mod siqs;
 mod wide;
 mod word;
 

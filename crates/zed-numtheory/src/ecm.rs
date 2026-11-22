@@ -146,9 +146,9 @@ const GIANT: u64 = 210;
 // (24 pairs per 210 numbers; the baby points share one denominator), about `0.23 b2` products,
 // so `b2 = 100 b1` costs about 1.4 times stage 1 and covers primes 100 times larger. Measured at
 // `b1 = 8000`: `b2 = 50 b1` took 50.0 curves in the mean against 40.6 at `100 b1`, at 0.64 the
-// time per curve, so 0.79 the time; not yet measured at the bounds of `SCHEDULE` (plan row
-// FACTOR-u128-tail). The naive stage 2, one ladder per prime between `b1` and
-// `b2`, costs `11 log2 p` products per prime; Montgomery's FFT continuation (thesis, 1992)
+// time per curve, so 0.79 the time; not measured at the bounds in `wide.rs`, where SIQS now
+// takes the inputs with two primes near `2^64`. The naive stage 2, one ladder per prime between
+// `b1` and `b2`, costs `11 log2 p` products per prime; Montgomery's FFT continuation (thesis, 1992)
 // would cost `O(sqrt(b2) log b2)` products, a gain that pays off only at larger `b2` than a
 // 64-bit factor needs. Given up: the tests of pairs that are not primes (about two thirds), which
 // keep stage 2 free of a table of primes.

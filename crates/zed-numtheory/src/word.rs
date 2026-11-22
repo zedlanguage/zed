@@ -149,6 +149,29 @@ pub fn sqrt_exact_u128(v: u128) -> Option<u128> {
     (s * s == v).then_some(s)
 }
 
+/// Whether `v` is the `k`-th power of an integer, for `k >= 3`, and that integer.
+///
+/// The float estimate `v^(1/k)` only starts the search: the two loops end at the one `r` with
+/// `r^k <= v < (r + 1)^k`, the powers taken with `checked_pow`, an overflow counting as above
+/// `v`. The root is below `2^43` (`k >= 3`, `v < 2^128`), so the estimate is off by far less than
+/// 1 and each loop runs once or not at all; a worse estimate would only cost more turns.
+/// `odd_roots_are_exact` checks it against powering.
+// Complexity tradeoff: one `powf` and two or three powers of at most `log2 k` products each;
+// binary search on the root costs about 43 powers.
+pub(crate) fn root_exact_u128(v: u128, k: u32) -> Option<u128> {
+    debug_assert!(k >= 3);
+    let above = |r: u128| r.checked_pow(k).is_none_or(|p| p > v);
+    // `as` from a float saturates and truncates: an estimate, corrected below.
+    let mut r = (v as f64).powf(1.0 / f64::from(k)) as u128;
+    while r > 0 && above(r) {
+        r -= 1;
+    }
+    while !above(r + 1) {
+        r += 1;
+    }
+    (r.pow(k) == v).then_some(r)
+}
+
 /// `x^-1 mod 2^64` for an odd `x`: `3x XOR 2` is right in its low 5 bits (`x (3x XOR 2) = 1
 /// mod 32` for each of the 16 odd residues modulo 32, checked by
 /// `the_inverse_seed_is_right_in_five_bits`), and each of four Newton steps `y (2 - x y)`
