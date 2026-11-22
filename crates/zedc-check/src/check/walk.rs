@@ -7150,11 +7150,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // The class keeps only the carriers at which each operation has a
                     // value ([`Ck::generic_parts`]), so each takes `c`.
                     for e in own {
-                        self.lit_takes(e, c);
+                        // One that takes no value at `c` keeps its rejection, now settled.
+                        if !self.lit_takes(e, c) {
+                            self.lit_park(e, false);
+                        }
                     }
                     Ty::carrier(c)
                 }
                 None => {
+                    for &e in &own {
+                        self.lit_park(e, false);
+                    }
                     if self.classes[r].refused {
                         unmet.extend(own);
                     }
@@ -7492,6 +7498,39 @@ impl<'t, 'a> Ck<'t, 'a> {
         while let Some(e) = todo.pop() {
             if let Some(r) = self.lit_written.remove(&e.span) {
                 self.lit_dropped.insert(r.start, r.end);
+            }
+            match &e.kind {
+                ExprKind::Binary(_, a, b) => todo.extend([&**a, &**b]),
+                ExprKind::Unary(UnaryOp::Neg, a) => todo.push(a),
+                _ => {}
+            }
+        }
+    }
+
+    /// Whether the error numbered `id` is still found and parked ([`Found::parked`]). The
+    /// errors keep the order of their numbers ([`Ck::errors`]), so one binary search.
+    fn error_parked(&self, id: usize) -> bool {
+        (self.errors.binary_search_by_key(&id, |e| e.id).ok())
+            .is_some_and(|i| self.errors[i].parked)
+    }
+
+    /// Marks the errors that `e`, an operation on bare literals alone, and the operations in
+    /// it wrote as they were walked ([`Ck::lit_written`]) parked, or no longer parked, as
+    /// `on` says ([`Found::parked`]): parked while the class `e` joined is open
+    /// ([`Self::top_op_class`]), until [`Self::resolve_top_parts`] settles it, which drops
+    /// them where `e` takes a carrier ([`Self::lit_takes`]) and keeps them, no longer parked,
+    /// where it does not. Nothing in a repair's trial or a run again of a body, which record
+    /// none. It costs the size of `e` and the errors it wrote.
+    fn lit_park(&mut self, e: &Expr, on: bool) {
+        if self.trying || self.replaying != 0 {
+            return;
+        }
+        let mut todo = vec![e];
+        while let Some(e) = todo.pop() {
+            if let Some(r) = self.lit_written.get(&e.span) {
+                for f in self.errors.get_mut(r.clone()).into_iter().flatten() {
+                    f.parked = on;
+                }
             }
             match &e.kind {
                 ExprKind::Binary(_, a, b) => todo.extend([&**a, &**b]),
@@ -10418,6 +10457,98 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The arguments of a call that fits, each at the parameter types of its slot; then the
     /// application.
+    /// [`Self::as_written`] of a call outside every function, with the classes of literals
+    /// its application leaves open (row FAIL-top-literal-op-nested-or-component). A call that
+    /// is itself an argument at a bounded type variable of the call around it, the inner `add`
+    /// of `add(x: add(x: 1 / 2, y: 1), y: 1.5)`, is applied as in a body ([`Ck::top_nested`]):
+    /// its literals and operations on literals alone make a generic class, which is its
+    /// result's type, and that class is settled when the call around it ends, where it has
+    /// met the `1.5` ([`Self::resolve_top_parts`]), so the call is the `f64` `3.0` as the
+    /// same text in a body is. Before, the inner call chose its carrier at once, from its own
+    /// literals alone, and rejected the `1` as unfixed.
+    ///
+    /// The entries each nested call leaves are kept in [`Ck::top_open`] with the depth of the
+    /// stack at which the call around it ends: its frame lies just below the argument's, the
+    /// record of the call's expression ([`Frame::Seen`]) and the check after a declared
+    /// function's call ([`Frame::CallAlso`]), so at depth `n - 4` where the nested call ends
+    /// at depth `n` (less where those two are absent). That call takes them and
+    /// settles them with its own ([`Ck::top_from`]). A call whose arguments are walked in
+    /// between takes none of them, so a call at a closed parameter inside a sibling argument,
+    /// `m(3)` of `add(x: add(x: 1 / 2, y: 1), y: k(m(3)))`, settles only its own. Proof that
+    /// each entry is settled once: the walk is a stack, so the calls ending at depths above
+    /// `d` end before the one at `d`, and each takes the entries of its depth before it ends;
+    /// entries of one depth are merged into one, the first index of them, since the indices
+    /// the calls of one depth left are increasing and contiguous to the end of `top_parts`.
+    /// An undo ([`Ck::undo`]) drops the entries past what it keeps. O(1) per call beside the
+    /// application, and the classes are settled once each, as before.
+    fn top_nested_written(
+        &mut self,
+        m: &M<'a>,
+        form: Construct<'a>,
+        args: Vec<Option<Arg<'a>>>,
+        span: Span,
+    ) -> Ty {
+        if self.level != 0 || self.trying || self.replaying != 0 {
+            return self.as_written(form, args, span);
+        }
+        let depth = m.stack.len();
+        // The call around, where this call is its argument: its frame, then the argument's,
+        // then the record of the expression the walk gives each call ([`Frame::Seen`]) and
+        // the check of a declared function's call after its signature ([`Frame::CallAlso`]),
+        // each where present. The depth at which the call around ends is that of its frame.
+        let mut below = depth;
+        if let Some(Job::K(Frame::CallAlso { .. })) = below.checked_sub(1).map(|i| &m.stack[i]) {
+            below -= 1;
+        }
+        if let Some(Job::K(Frame::Seen(_))) = below.checked_sub(1).map(|i| &m.stack[i]) {
+            below -= 1;
+        }
+        let around = match m.stack[..below] {
+            [.., Job::K(Frame::CallSig(ref c)), Job::K(Frame::ArgOf(_))] => Some((c, below - 2)),
+            _ => None,
+        };
+        let (nested, outer) = match around {
+            Some((c, outer)) if !c.curry => {
+                let j = c.redo.unwrap_or(c.got.len());
+                let sig = c.inst.as_ref().unwrap_or(&c.sig);
+                let bounded = !sig.arrows.is_empty()
+                    && sig.arrows.iter().all(|a| {
+                        (a.params.get(j).and_then(|p| p.as_var()))
+                            .is_some_and(|v| sig.bounds.contains_key(v))
+                    });
+                (bounded, outer)
+            }
+            _ => (false, 0),
+        };
+        let from = match self.top_open.last() {
+            Some(&(d, f)) if d == depth => {
+                self.top_open.pop();
+                Some(f)
+            }
+            _ => None,
+        };
+        let start = from.unwrap_or(self.top_parts.len());
+        self.top_from = from;
+        self.top_nested = nested;
+        let t = self.as_written(form, args, span);
+        self.top_from = None;
+        self.top_nested = false;
+        if self.top_parts.len() > start {
+            match nested {
+                true => match self.top_open.last_mut() {
+                    Some((d, f)) if *d == outer => *f = (*f).min(start),
+                    _ => self.top_open.push((outer, start)),
+                },
+                // An application that took no entries, as one a trial stood for: settled
+                // here, as the application settles its own.
+                false => {
+                    self.resolve_top_parts(start);
+                }
+            }
+        }
+        t
+    }
+
     fn call_sig_step(&mut self, m: &mut M<'a>, mut s: Box<CallSigF<'a>>) {
         if s.waiting {
             s.waiting = false;
@@ -10528,7 +10659,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     _ => None,
                 };
                 let form = Construct::Call(what.as_str().into(), sig.clone());
-                let t = self.as_written(form, args, s.span);
+                let t = self.top_nested_written(m, form, args, s.span);
                 match with {
                     Some(with) => self.try_outside(&what, &sig, with, s.span),
                     None if from_outside => self.tried_at(s.span, Some(t.loose())),
@@ -13121,7 +13252,7 @@ impl<'a> Ck<'_, 'a> {
     }
 
     /// The value of binder `b` as a term and the place the questions its read refuses are
-    /// placed at: the value of a written `name = value` read as [`Reading::Defined`], or that
+    /// placed at: the value of a written `name = value` read as [`Reading::Bound`], or that
     /// of a name of its own a test or an operand gave an `if` or a call ([`Implicit`]).
     ///
     /// [`Implicit`]: super::arms::Implicit
@@ -13131,7 +13262,7 @@ impl<'a> Ck<'_, 'a> {
             return Some((v.value.clone(), v.span));
         }
         let &value = self.facts.get(&b)?;
-        Some((self.term_for(value, Reading::Defined), value.span))
+        Some((self.term_for(value, Reading::Bound), value.span))
     }
 
     /// The summary of the value `t` of binder `b`, the summaries of the binders it reads made
@@ -13631,7 +13762,7 @@ impl<'a> Ck<'_, 'a> {
     /// [`Implicit`]: super::arms::Implicit
     /// [`Called::summed`]: super::arms::Called::summed
     fn term_for(&mut self, e: &'a Expr, reading: Reading) -> Rc<Translated> {
-        let defined = reading == Reading::Defined;
+        let defined = matches!(reading, Reading::Defined | Reading::Bound);
         if let Some(t) = self.arms.terms.get(&(e.span, reading)) {
             return t.clone();
         }
@@ -13679,7 +13810,24 @@ impl<'a> Ck<'_, 'a> {
                         let f = self.callable(callee, positional.len());
                         let (id, f) = f.expect("a definition whose calls are kept");
                         let args = done.split_off(done.len() - positional.len());
-                        match defined || !f.summed {
+                        // Read for a binder's summary, a summed call is a name of its own as
+                        // in a test (CHECK-binder-call-summary), and so is a call of a body
+                        // with no summary over its parameters whose body under these
+                        // arguments has one, each name the arguments read at top: the test
+                        // `summed` puts to the body ([`Ck::translate_called`]), put to the
+                        // call.
+                        // `least(x, 20)` of `least(a, b) = if a < b { a } else { b }` is
+                        // `min(x, 20)`, where `least` over `a` and `b` has no summary over one
+                        // input. The binder a call of neither kind feeds keeps the call as
+                        // an application, which its summary does not read, as before.
+                        let bound = reading == Reading::Bound && !f.summed && {
+                            let mut every = Domains::new();
+                            for (x, _) in &parts.vars[m[1]..] {
+                                every.insert(x.clone(), IntervalSet::top());
+                            }
+                            let_summary(&f.applied(args.clone()), &every, Lets::new()).is_some()
+                        };
+                        match reading == Reading::Defined || !(f.summed || bound) {
                             true => {
                                 parts.calls.push(id);
                                 Term::App(Shared::new(Term::Var(f.name.clone())), args)
@@ -25001,16 +25149,20 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.written = outer;
         // The fixes kept in the arguments that change their types, from the arguments' own
         // checks just before this one.
+        // Fixes of parked errors only are not carried ([`Found::parked`]): the class their
+        // operation joined settles those errors, dropping them where it takes a carrier.
+        // Complexity tradeoff: carried, each level of one call nested n deep, each given an
+        // operation on literals alone, checked the fixes of every level below it in a trial
+        // that copied the class they all joined, Θ(n²) bytes (13.0 times at 8n); dropped,
+        // O(fixes) lookups of their errors, each a binary search by id.
         let mut carried = Vec::new();
         for (i, a) in w.args.iter().enumerate() {
             if let Some(at) = a.as_ref().and_then(|a| a.at) {
-                carried.extend(
-                    self.carried
-                        .remove(&at)
-                        .into_iter()
-                        .flatten()
-                        .map(|c| (i, c)),
-                );
+                for c in self.carried.remove(&at).into_iter().flatten() {
+                    if !c.fixes.list.iter().all(|p| self.error_parked(p.id)) {
+                        carried.push((i, c));
+                    }
+                }
             }
         }
         // A check of this span before, as a function's body is checked at each call, carries
@@ -26805,8 +26957,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         let defer = std::mem::take(&mut self.defer);
         let passing = self.need_passed.len();
         let refusals = self.lit_refused.len();
-        let made = self.top_parts.len();
+        // The entries the nested arguments of the call left open are settled with the
+        // application's own, and a nested call leaves its own open
+        // ([`Self::top_nested_written`]); a trial takes neither.
+        let real = !self.trying && self.replaying == 0;
+        let (from, nested) = match real {
+            true => (self.top_from.take(), std::mem::take(&mut self.top_nested)),
+            false => (None, false),
+        };
+        let made = from
+            .unwrap_or(self.top_parts.len())
+            .min(self.top_parts.len());
         let found = self.errors.len();
+        self.top_nested = nested;
         let r = match (sig.arrows.len(), self.first_taking(sig, &args, pass)) {
             (1, _) => self.apply_one(what.text(), sig, 0, &args, &unneeded, defer, span),
             (_, Some(k)) => self.apply_one(what.text(), sig, k, &args, &unneeded, defer, span),
@@ -26816,9 +26979,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 r
             }
         };
+        self.top_nested = false;
         // The literals of tuple arguments outside every function take the carriers the
-        // application gave their classes, and the result names those types.
-        let r = match self.top_parts.len() > made {
+        // application gave their classes, and the result names those types. A nested call
+        // that took its arguments leaves them for the call around it.
+        let open = nested && r.is_ok() && self.errors.len() == found;
+        let r = match self.top_parts.len() > made && !open {
             true => {
                 let unmet = self.resolve_top_parts(made);
                 // The application wrote its rejection, or failed: it stands for the rejection
@@ -27444,6 +27610,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         let arrow = &sig.arrows[k];
         let fail = |ck: &Self| Err(ck.rejected(what, args));
         let errors = self.errors.len();
+        // A call outside every function that is an argument at a bounded variable of the call
+        // around it ([`Self::top_nested_written`]): read first, before an application inside
+        // this one can take it.
+        let nested = std::mem::take(&mut self.top_nested);
         let mut binds = Binds::new();
         let mut grouped = vec![false; args.len()];
         // The arguments each bounded variable stands at, in one pass over the arguments: one
@@ -27485,6 +27655,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let a = args[i].as_ref().expect("an argument");
                 if let Some(l) = &a.lit {
                     lits.push(l.clone());
+                    continue;
+                }
+                // In a nested call, the operation makes its own class, which the literals and
+                // classes beside it join and the call around it meets, as an operation in a
+                // body does ([`Self::top_nested_written`]).
+                if top
+                    && nested
+                    && a.branches.is_none()
+                    && let Some(e) = a.expr.filter(|e| self.lit_ops.contains(&e.span))
+                    && let Some(k) = self.top_op_class(e, &a.ty, what, span)
+                {
+                    classes.push(k);
+                    valued = true;
                     continue;
                 }
                 if top
@@ -27644,9 +27827,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let ints = lits.iter().all(|l| lit_carrier(&l.value) == Carrier::Int);
                     match takes[..] {
                         [] => return fail(self),
-                        _ if self.level > 0 && self.replaying == 0 => {
+                        // A nested call outside every function makes the class too, which
+                        // the call around it settles ([`Self::top_nested_written`]).
+                        _ if (self.level > 0 || top && nested) && self.replaying == 0 => {
                             let k = self.class();
                             self.classes[k].generic = true;
+                            if self.level == 0 {
+                                self.top_parts.push((k, None));
+                            }
                             if !self.restrict(k, m, what, span) {
                                 return fail(self);
                             }
@@ -30797,6 +30985,39 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// literals and one fold per numeric carrier, kept by operation ([`Self::lit_fit`]),
     /// O(its size) for the four carriers; the naive form, the component typed as walked, is
     /// `int` for `1 + 2` and rejected for `3 / 2`, whatever the body does with it.
+    /// The generic class of `e`, an operation on literals alone outside every function
+    /// ([`Ck::lit_ops`]) of type `own`, as a tuple component ([`Self::generic_parts`]) or an
+    /// argument of a nested call ([`Self::top_nested_written`]): its mask is the carriers at
+    /// which it has a value ([`Self::lit_fit`]), it holds its literals, and it is settled with
+    /// the application ([`Self::resolve_top_parts`]), where the operation takes the class's
+    /// carrier. `None` where no carrier gives it a value, as `1 / 0`: it then keeps its type,
+    /// and its rejection stands. O(size of `e`) per carrier.
+    fn top_op_class(&mut self, e: &'a Expr, own: &Ty, what: &str, span: Span) -> Option<usize> {
+        let mask = Carrier::ALL
+            .into_iter()
+            .filter(|&c| c.numeric() && self.lit_fit(e, c).0)
+            .fold(0, |m, c| m | c.bit());
+        let k = self.class();
+        self.classes[k].generic = true;
+        let joined = self.restrict_asking(k, mask, what, span, false)
+            && op_lits(e, self.t.text)
+                .iter()
+                .all(|l| self.join(k, &l.joining(), l.exponent));
+        if !joined {
+            return None;
+        }
+        // An operation its walk rejected, as `2^-1` at `int`, has no value of the type it was
+        // walked at: its values are those of the carriers it may take.
+        let own = match self.lit_written.contains_key(&e.span) {
+            true => Ty::of_mask(mask),
+            false => own.clone(),
+        };
+        self.classes[k].ops.push((e.span, own));
+        self.top_parts.push((k, Some(e)));
+        self.lit_park(e, true);
+        Some(k)
+    }
+
     fn generic_parts(&mut self, a: &Arg<'a>, what: &str, span: Span) -> Result<Option<Ty>, ()> {
         let Some(parts) = (a.parts.as_deref()).filter(|_| self.replaying == 0) else {
             return Ok(None);
@@ -30835,32 +31056,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 &Part::Op(e) if self.level == 0 && self.lit_ops.contains(&e.span) => {
                     let own = c.clone();
-                    let mask = Carrier::ALL
-                        .into_iter()
-                        .filter(|&c| c.numeric() && self.lit_fit(e, c).0)
-                        .fold(0, |m, c| m | c.bit());
-                    let k = self.class();
-                    self.classes[k].generic = true;
-                    let joined = self.restrict_asking(k, mask, what, span, false)
-                        && op_lits(e, self.t.text)
-                            .iter()
-                            .all(|l| self.join(k, &l.joining(), l.exponent));
+                    let k = self.top_op_class(e, &own, what, span);
                     let open = stack.last_mut().expect("an open tuple");
-                    match joined {
+                    match k {
                         // No carrier gives the operation a value, as `1 / 0`: it keeps its
                         // type, and its rejection stands.
-                        false => open.out.push(own),
-                        true => {
+                        None => open.out.push(own),
+                        Some(k) => {
                             open.out.push(Ty::var(format!("${k}").into()));
-                            // An operation its walk rejected, as `2^-1` at `int`, has no value
-                            // of the type it was walked at: its values are those of the
-                            // carriers it may take.
-                            let own = match self.lit_written.contains_key(&e.span) {
-                                true => Ty::of_mask(mask),
-                                false => own,
-                            };
-                            self.classes[k].ops.push((e.span, own));
-                            self.top_parts.push((k, Some(e)));
                             made = true;
                         }
                     }

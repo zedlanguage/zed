@@ -189,4 +189,36 @@ fn an_atom_reads_a_call_through_the_callee() {
     rejected(&[&at(-1)]);
 }
 
+/// A name bound to a call of a summarized callee is summarized through the call
+/// (CHECK-binder-call-summary): after `m = clamp(x)`, `m > 10` holds only for `x >= 11`, so
+/// `popCount(x - 11)` is never given a negative int, as with the `if` written in place of the
+/// call, and `popCount(x - 12)` is, at `x = 11`. Before, the binder's value kept the call as an
+/// application, which its summary does not read, and the boundary was rejected too. The
+/// binder read through a second binder, and a call of two arguments, are read alike.
+#[test]
+fn a_name_bound_to_a_call_is_summarized_through_the_callee() {
+    let clamp = "clamp(positional y: int) = if y > 0 { y } else { 0 };\n";
+    let one = |c: i32| {
+        format!(
+            "{clamp}f(positional x: int) {{\n  m = clamp(x);\n  \
+             return if m > 10 {{ popCount(x - {c}) }} else {{ 0 }};\n}}\n"
+        )
+    };
+    let chain = |c: i32| {
+        format!(
+            "{clamp}f(positional x: int) {{\n  m = clamp(x);\n  k = m + 1;\n  \
+             return if k > 11 {{ popCount(x - {c}) }} else {{ 0 }};\n}}\n"
+        )
+    };
+    let two = |c: i32| {
+        format!(
+            "least(positional a: int, positional b: int) = if a < b {{ a }} else {{ b }};\n\
+             f(positional x: int) {{\n  m = least(x, 20);\n  \
+             return if m > 10 {{ popCount(x - {c}) }} else {{ 0 }};\n}}\n"
+        )
+    };
+    accepted(&[&one(11), &chain(11), &two(11)]);
+    rejected(&[&one(12), &chain(12), &two(12)]);
+}
+
 mod bench;

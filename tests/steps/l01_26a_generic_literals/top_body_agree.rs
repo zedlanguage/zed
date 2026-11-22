@@ -905,9 +905,8 @@ fn a_division_branch_beside_a_decimal_compared_is_rejected_whatever_names_the_co
 /// `min((1 / 2, 1), (1.5, 2))`, and the same one tuple deeper under `max`: an operation that is
 /// a tuple component meets the other tuple's component (it was read as `Part::Other`, typed as
 /// walked, and rejected at the top level only); `h((1 / 2, 1.5))`: it meets the other component
-/// through `p`. The nested call `add(x: add(x: 1 / 2, y: 1), y: 1.5)` of the same row is still
-/// rejected at the top level, and its test is
-/// /home/luke/Work/wt/failing-tests/FAIL-top-literal-op-nested-or-component.rs.
+/// through `p`. The nested call of the same row is
+/// `an_operation_on_literals_in_a_nested_call_follows_the_class`.
 #[test]
 fn an_operation_on_literals_in_a_tuple_component_follows_the_class() {
     let pre = "add(x, y) = x + y;\nh(positional p) = p[0] + p[1];\n";
@@ -937,4 +936,80 @@ fn an_operation_on_literals_in_a_tuple_component_follows_the_class() {
         }
     }
     assert_eq!(bad, Vec::<String>::new());
+}
+
+/// DESIGN step L1.26b: an operation on literals alone that reaches a class takes the class's
+/// carrier, the same at the top level as in a body (row FAIL-top-literal-op-nested-or-component).
+/// In `add(x: add(x: 1 / 2, y: 1), y: 1.5)` the inner call's `1 / 2` meets only the `1` there,
+/// and the outer call's `1.5` through the inner call's result: it takes `f64` as in a body. The
+/// inner call was settled as it was walked, at the top level only, and its `1 / 2` rejected
+/// there. The deeper nest and two nested calls side by side, whose classes meet only at the
+/// outer call, are read alike; a nest with no decimal anywhere, whose `1 / 2` nothing fixes,
+/// is rejected in all three places, as in a body before. Red before the fix: the top-level
+/// cases only.
+#[test]
+fn an_operation_on_literals_in_a_nested_call_follows_the_class() {
+    let pre = "add(x, y) = x + y;\n";
+    let cases = [
+        ("add(x: add(x: 1 / 2, y: 1), y: 1.5)", Some("3.0")),
+        ("add(x: 1.5, y: add(x: 1, y: 1 / 2))", Some("3.0")),
+        (
+            "add(x: add(x: add(x: 1 / 2, y: 1), y: 1), y: 0.5)",
+            Some("3.0"),
+        ),
+        ("add(x: add(x: 1 / 2, y: 1 / 2), y: 2.5)", Some("3.5")),
+        (
+            "add(x: add(x: 1 / 2, y: 1), y: add(x: 1, y: 0.5))",
+            Some("3.0"),
+        ),
+        ("add(x: add(x: 1 / 2, y: 1), y: 1)", None),
+    ];
+    let mut bad = Vec::new();
+    for (e, want) in cases {
+        for (src, place) in places(&[e]).iter().zip(["top", "body", "block"]) {
+            let src = format!("{pre}{src}");
+            let errs = type_errors(&src);
+            let Some(want) = want else {
+                if errs.is_empty() {
+                    bad.push(format!("{e} {place}: accepted"));
+                }
+                continue;
+            };
+            if !errs.is_empty() {
+                bad.push(format!("{e} {place}: rejected: {errs:?}"));
+                continue;
+            }
+            let out = run(
+                &format!("l01_26a_top_literal_op_nested_call_{place}"),
+                &src,
+                "",
+                &[],
+            );
+            if (out.status, out.stdout.as_str()) != (0, format!("{want}\n").as_str()) {
+                bad.push(format!("{e} {place}: {:?}", out.stdout));
+            }
+        }
+    }
+    assert_eq!(bad, Vec::<String>::new());
+}
+
+/// `add(x, y) = x + y;`, `n` top-level bindings of a call nested in a call, the inner one given
+/// `1 / 2` and the outer one a decimal, and one binding of a call nested `n` deep, each level
+/// given `1 / 2` beside the call below and only the outermost a decimal: each operation takes
+/// `f64` with its class, with no error (row FAIL-top-literal-op-nested-or-component).
+pub(super) fn nested_call_ops(n: usize) -> String {
+    let mut src = String::from("add(x, y) = x + y;\n");
+    for i in 0..n {
+        src += &format!("y{i} = add(x: add(x: 1 / 2, y: {i}), y: 1.5);\n");
+    }
+    let deep = (0..n).fold(String::from("1 / 2"), |e, _| {
+        format!("add(x: {e}, y: 1 / 2)")
+    });
+    src + &format!("z = add(x: {deep}, y: 1.5);\n")
+}
+
+#[test]
+fn many_operations_in_nested_calls_take_f64() {
+    // A small instance of `bench::top_body_agree::operations_in_nested_calls_scale`.
+    assert_eq!(type_errors(&nested_call_ops(8)), Vec::<String>::new());
 }

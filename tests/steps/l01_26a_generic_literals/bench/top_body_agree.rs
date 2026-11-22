@@ -2,7 +2,7 @@ use zed_tests::scaling;
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
 use super::super::top_body_agree::{
-    comparisons, display_ops, generic_ops, nested_int_exponents,
+    comparisons, display_ops, generic_ops, nested_call_ops, nested_int_exponents,
     nested_powers_by_an_inexact_divisor, powers, tuple_component_ops,
 };
 
@@ -147,5 +147,29 @@ fn operations_in_tuple_components_scale() {
                 type_errors(&srcs[usize::from(m != n)]);
             },
         );
+    });
+}
+
+/// `n` top-level calls nested in calls and one call nested `n` deep, each level given an
+/// operation on literals alone: a nested call leaves the classes it made open for the call
+/// around it (`Ck::top_nested_written`), O(1) a level beside its arguments' walk, and the
+/// outermost call settles them all once (`Ck::resolve_top_parts`), each operation read once
+/// at a carrier (`Ck::lit_fit`) and walked once more as it takes it (`Ck::lit_takes`): O(size
+/// of the line) per line, O(n) in all (row FAIL-top-literal-op-nested-or-component).
+///
+/// Besides its ratio: no error. Small instance:
+/// `top_body_agree::many_operations_in_nested_calls_take_f64`. The walk rejects each level's
+/// operation until the outermost call settles its class; that rejection is parked
+/// (`Found::parked` in zedc-check), so the calls around it add it no notes: before, each
+/// level gave notes to every rejection below it, 14.7 times the instructions at 8n.
+#[test]
+fn operations_in_nested_calls_scale() {
+    scaling::on_a_thread(1 << 29, || {
+        let n = 300;
+        let srcs = [nested_call_ops(n), nested_call_ops(scaling::FACTOR * n)];
+        assert_eq!(type_errors(&srcs[0]), Vec::<String>::new());
+        scaling::check("checking n operations in nested calls", n, |m| {
+            type_errors(&srcs[usize::from(m != n)]);
+        });
     });
 }

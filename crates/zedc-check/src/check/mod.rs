@@ -2891,6 +2891,21 @@ struct Ck<'t, 'a> {
     /// the class of an operation on literals alone ([`Part::Op`]), the operation, which
     /// takes the carrier a use asks its class for.
     top_parts: Vec<(usize, Option<&'a Expr>)>,
+    /// Outside every function, whether the call being applied is itself an argument at a
+    /// bounded type variable of the call around it (`top_nested_written` sets it,
+    /// `apply_demanding` and `apply_one` take it): its literals and operations on literals
+    /// alone then make a generic class, as in a body, which the call around it meets (row
+    /// FAIL-top-literal-op-nested-or-component).
+    top_nested: bool,
+    /// The entries of [`Self::top_parts`] that calls applied with [`Self::top_nested`] left
+    /// for the call around them to settle ([`Self::resolve_top_parts`]): the depth of the
+    /// walk's stack at which that call ends, and the first entry left; one per depth, the
+    /// depths increasing.
+    top_open: Vec<(usize, usize)>,
+    /// The first entry of [`Self::top_parts`] the application being made settles, where its
+    /// nested arguments left some open (`top_nested_written` sets it, `apply_demanding`
+    /// takes it).
+    top_from: Option<usize>,
     /// The declared functions whose bodies can end in a decimal literal with no suffix
     /// ([`Self::tail_reach`]), found when first asked.
     tail_reach: Option<HashSet<usize>>,
@@ -3381,6 +3396,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             entry_classes: HashMap::new(),
             rat_folds: HashMap::new(),
             top_parts: Vec::new(),
+            top_nested: false,
+            top_open: Vec::new(),
+            top_from: None,
             tail_reach: None,
             tail_calls: HashMap::new(),
             handled: handled(t.res),
@@ -4053,6 +4071,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             also: Vec::new(),
             lits: Vec::new(),
             as_written: false,
+            parked: false,
         });
         // A trial's errors are undone after it, so they take no number of their own: the
         // number of the error a repair checked before it is found stays the one it gets.
@@ -9422,7 +9441,23 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         }
         let notes = notes(self);
+        // A parked error is skipped: its class drops it where its operation takes a carrier,
+        // and only then is the error kept, without the notes of the calls it lay in while
+        // parked ([`Ck::lit_park`]).
+        // Complexity tradeoff: naive version, every error from `from` on given the notes,
+        // which built a set of each error's notes at every call around it: one call nested
+        // n deep, each level given an operation on literals alone that the walk rejects until
+        // the outermost call settles its class (row FAIL-top-literal-op-nested-or-component),
+        // cost Θ(n²) notes and sets (14.7 times the instructions at 8n; 8.0 with parked errors
+        // skipped). Used: a parked error costs one test of its flag at each call around it,
+        // O(n · depth) flag tests and no notes, a few instructions each; making the calls'
+        // notes only when an error is printed would take that out too (the work row
+        // MSG-declared-step-per-error-checker proposes). Test:
+        // `l01_26a_generic_literals::bench::top_body_agree::operations_in_nested_calls_scale`.
         for e in &mut self.errors[from..] {
+            if e.parked {
+                continue;
+            }
             let have: HashSet<&Note> = e.notes.iter().collect();
             let new: Vec<Note> = (notes.iter())
                 .filter(|n| !have.contains(n))
@@ -10679,6 +10714,9 @@ impl Ck<'_, '_> {
         self.errors_cut(m.errors);
         self.errors.truncate(m.errors);
         self.top_parts.truncate(m.top_parts);
+        // An entry left open for the application around is gone with the entries undone.
+        let kept = self.top_parts.len();
+        self.top_open.retain(|&(_, f)| f < kept);
         self.alike_calls.truncate(m.alike_calls);
         for site in self.alike_log.drain(m.alike_log..) {
             self.alike_sites.remove(&site);
@@ -12038,6 +12076,11 @@ struct Found {
     /// program's text ([`Ck::reject_as_written`]): they are kept as written, with no `$k`
     /// replaced ([`Ck::named`]) and no part laid out ([`lay_out`]).
     as_written: bool,
+    /// Whether it is the rejection an operation on literals alone wrote as it was walked
+    /// outside every function, while the class that operation joined is open
+    /// ([`Ck::lit_park`]): the class settles it, dropping it where the operation takes a
+    /// carrier, so the calls around it add no notes to it ([`Ck::also_notes`]).
+    parked: bool,
 }
 
 impl Found {

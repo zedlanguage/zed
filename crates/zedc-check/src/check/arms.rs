@@ -191,10 +191,17 @@ pub(super) enum Reading {
     /// so that its values and whether it may be 0 (`Scope::zero_reached`) are read through
     /// them; another call is a name of its own, by its span: `forward` does not enter a call.
     Operand,
-    /// The body of a definition whose calls are kept ([`Called`]) or the value of a binder:
-    /// read once, where it is defined or bound, and through the name at each use. An `if`
-    /// and every call it can keep are translated.
+    /// The body of a definition whose calls are kept ([`Called`]), or the value of a binder
+    /// read for the names it reads (`Ck::narrowed_at`): read once, where it is defined or
+    /// bound, and through the name at each use. An `if` and every call it can keep are
+    /// translated.
     Defined,
+    /// The value of a binder read for its summary (`Ck::value_of`): as [`Reading::Defined`],
+    /// but a call of a definition whose body has a summary ([`Called::summed`]) is a name
+    /// bound to its value ([`Implicit`]), as in a test, so that the binder is summarized
+    /// through the call (CHECK-binder-call-summary): a summary does not enter an
+    /// application.
+    Bound,
 }
 
 /// A definition of the unit, `f(positional x) = e` or `f = x -> e`, whose calls a term keeps
