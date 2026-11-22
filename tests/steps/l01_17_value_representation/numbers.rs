@@ -95,6 +95,17 @@ fn numbers_of_different_kinds_do_not_mix() {
         ]
     );
     assert!(elab("x = 1r;\na = f64(x) + f64(1);\n").is_ok());
+    // A comparison is repaired as `+` is, by the values `x` holds and not by its signature
+    // (row CMP-repair-values).
+    for op in ["==", "!=", "<", ">="] {
+        let errs = errors(&format!("x = 1r;\na = x {op} f64(1);\n"));
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(
+            errs[0].contains(&format!("`f64(x) {op} f64(1)`")),
+            "{errs:?}"
+        );
+        assert!(elab(&format!("x = 1r;\na = f64(x) {op} f64(1);\n")).is_ok());
+    }
     // A name bound to an integer literal is an `int`, and does not mix with a `rat`; the
     // literal whose suffix forces the `rat` is named, with the line rewritten without it
     // (DESIGN sec:diagnostics, "A short headline").

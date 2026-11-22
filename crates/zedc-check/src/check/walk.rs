@@ -12129,14 +12129,17 @@ impl<'t, 'a> Ck<'t, 'a> {
                 with(&exact)
             ),
         });
-        let message =
-            format!("`{slot}` holds only `{v}` values, and {shown} answers `#notFound`");
-        let fix = display.and_then(|d| {
-            Rewrite::new(&[(s.span, &d)], &"the keys present as a display", &d)
-        });
+        let message = format!("`{slot}` holds only `{v}` values, and {shown} answers `#notFound`");
+        let fix = display
+            .and_then(|d| Rewrite::new(&[(s.span, &d)], &"the keys present as a display", &d));
         let mut msg = Msg::new(message, vec![fix]);
         msg.call = s.slot.as_ref().map(|(_, call)| *call);
-        self.reject(Some(Row::FunctionAnswersOutsidePartialMap), s.span, msg, notes);
+        self.reject(
+            Some(Row::FunctionAnswersOutsidePartialMap),
+            s.span,
+            msg,
+            notes,
+        );
     }
 
     /// Records how the lambda at `span` was fitted, unless its parameters are the slots'
@@ -28026,7 +28029,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut stack = vec![exported(a.expr?)];
         while let Some(e) = stack.pop() {
             match &e.kind {
-                ExprKind::If { then, otherwise, .. } => {
+                ExprKind::If {
+                    then, otherwise, ..
+                } => {
                     stack.push(exported(otherwise));
                     stack.push(exported(then));
                 }

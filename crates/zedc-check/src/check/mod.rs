@@ -9646,51 +9646,82 @@ impl<'t, 'a> Ck<'t, 'a> {
         (!parts.is_empty() && parts.iter().all(|&m| m != 0 && m & !numbers == 0)).then_some(parts)
     }
 
-    /// Whether `found` holds for the masks of `args`, one set of numeric carriers per argument
-    /// (`None` at an argument that is not all numbers): first for each argument's carriers
-    /// together ([`Self::numbers_of`]), then for each pair of arguments `i < j` and each pair
-    /// of their parts ([`Self::number_parts`]) with no carrier in common, `p` at `i` and `q`
-    /// at `j`, each other argument at its carriers together. So a listed `f64` of `1 | f64`
-    /// meets an `int` alone, as it would alone (DESIGN.md sec:type_resolution).
-    /// Complexity tradeoff: the naive reading tries each choice of one part per argument, the
-    /// product of the part counts, which grows with the classes of a type as a power of the
-    /// arity. Used: the pairs alone, as a carrier is missing between two values, O(a² k²)
-    /// trials for a arguments of at most k parts (the four numeric carriers and the classes of
-    /// the type), two or three arguments for an operator.
-    fn some_choice(
-        &self,
-        args: &[Option<Arg>],
-        mut found: impl FnMut(&[Option<u8>]) -> bool,
-    ) -> bool {
-        let whole: Vec<Option<u8>> = (args.iter())
+    /// The masks of `args` taken together, one set of numeric carriers per argument
+    /// ([`Self::numbers_of`]; `None` at an argument that is not all numbers), and each part of
+    /// each argument ([`Self::number_parts`]) with its place. A part is within its argument's
+    /// mask, which is the union of its parts, and an argument has parts exactly where it has a
+    /// mask (both are `None` for the same types, and parts that are all nonempty sets of
+    /// numbers join into a nonempty set of numbers). One pass over the arguments.
+    fn masks_and_parts(&self, args: &[Option<Arg>]) -> (Vec<Option<u8>>, Vec<(usize, u8)>) {
+        let whole = (args.iter())
             .map(|a| a.as_ref().and_then(|a| self.numbers_of(a)))
             .collect();
-        if found(&whole) {
-            return true;
-        }
-        let parts: Vec<Option<Vec<u8>>> = (args.iter())
-            .map(|a| a.as_ref().and_then(|a| self.number_parts(a)))
+        let parts = (args.iter().enumerate())
+            .filter_map(|(i, a)| Some((i, self.number_parts(a.as_ref()?)?)))
+            .flat_map(|(i, ps)| ps.into_iter().map(move |p| (i, p)))
             .collect();
-        let mut masks = whole.clone();
-        for i in 0..parts.len() {
-            for j in i + 1..parts.len() {
-                let (Some(ps), Some(qs)) = (&parts[i], &parts[j]) else {
-                    continue;
-                };
-                for &p in ps {
-                    for &q in qs.iter().filter(|&&q| p & q == 0) {
-                        masks[i] = Some(p);
-                        masks[j] = Some(q);
-                        if found(&masks) {
-                            return true;
-                        }
+        (whole, parts)
+    }
+
+    /// Whether two of `parts`, each `(place, mask, key)`, lie at different places, share no
+    /// carrier and have keys that `meet`. `lead` says which keys may meet at all, by the first
+    /// test of `meet` (see [`Lead`]): `meet(x, y)` may hold only if one of `x`, `y` leads
+    /// [`Lead::Any`], or both lead the same [`Lead::Group`].
+    /// Complexity tradeoff: the naive search tries every pair of parts, O(a²k²) `meet`s for a
+    /// arguments of at most k parts each, and it made the carrier row of a call of 200
+    /// arguments, one refused, quadratic (b59573ce6; benchmark
+    /// `a_long_call_taking_all_but_one_argument_scales`). Used: the parts are first merged by
+    /// mask and key, keeping two places of each, which is all that a partner at another place
+    /// needs; then each `Any` key is tried against every key, and each key of a group against
+    /// the others of its group. For d distinct keys that is O(d · (|Any| + the largest group))
+    /// `meet`s, after O(a · k) hashing; how small `|Any|` and the groups are is the callers'
+    /// part (see [`Self::no_common_carrier`]).
+    fn two_parts<'s, K: Eq + std::hash::Hash>(
+        parts: impl IntoIterator<Item = (usize, u8, K)>,
+        lead: impl Fn(&K) -> Lead<'s>,
+        meet: impl Fn(&K, &K) -> bool,
+    ) -> bool {
+        // Each distinct (mask, key) with at most two of its places: a key at two places has a
+        // partner at another place than its own whatever the partner's places are.
+        let mut index: HashMap<(u8, K), usize> = HashMap::new();
+        let mut keys: Vec<(u8, usize, Option<usize>)> = vec![];
+        for (at, mask, key) in parts {
+            match index.entry((mask, key)) {
+                Entry::Occupied(e) => {
+                    let k = &mut keys[*e.get()];
+                    if k.1 != at && k.2.is_none() {
+                        k.2 = Some(at);
                     }
                 }
-                masks[i] = whole[i];
-                masks[j] = whole[j];
+                Entry::Vacant(e) => {
+                    e.insert(keys.len());
+                    keys.push((mask, at, None));
+                }
             }
         }
-        false
+        let mut by_key: Vec<Option<&K>> = vec![None; keys.len()];
+        for ((_, key), &k) in &index {
+            by_key[k] = Some(key);
+        }
+        let key = |k: usize| by_key[k].expect("every key is indexed");
+        let meets = |x: usize, y: usize| {
+            let ((p, i1, i2), (q, j1, j2)) = (keys[x], keys[y]);
+            // Two keys at one place each, the same one, have no two places to stand at.
+            p & q == 0 && (i2.is_some() || j2.is_some() || i1 != j1) && meet(key(x), key(y))
+        };
+        let mut any = vec![];
+        let mut groups: HashMap<&str, Vec<usize>> = HashMap::new();
+        for k in 0..keys.len() {
+            match lead(key(k)) {
+                Lead::Any => any.push(k),
+                Lead::Group(v) => groups.entry(v).or_default().push(k),
+                Lead::Alone => {}
+            }
+        }
+        any.iter().any(|&x| (0..keys.len()).any(|y| meets(x, y)))
+            || (groups.values()).any(|g| {
+                (g.iter().enumerate()).any(|(a, &x)| g[a + 1..].iter().any(|&y| meets(x, y)))
+            })
     }
 
     /// Whether two of `masks` share no carrier. The pairs of at most fifteen distinct masks,
@@ -9709,8 +9740,19 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// DIAG-slash-mixed-carrier, decided by the standing rules). `7 / 2`, of one carrier, stays
     /// in the row of an operator with no arrow at its operands' carrier.
     fn slash_no_common_carrier(&self, what: Label<'_>, args: &[Option<Arg>]) -> bool {
-        matches!(what.operator(), Some(Operator::Binary(BinaryOp::Div)))
-            && self.some_choice(args, Self::disjoint)
+        if !matches!(what.operator(), Some(Operator::Binary(BinaryOp::Div))) {
+            return false;
+        }
+        // Two values with no carrier in common: two arguments' carriers together, or two
+        // parts of two arguments, each other argument at its carriers together, which holds
+        // two disjoint masks as soon as those two parts are. Every part key leads `Any`.
+        let (whole, parts) = self.masks_and_parts(args);
+        Self::disjoint(&whole)
+            || Self::two_parts(
+                parts.into_iter().map(|(i, p)| (i, p, ())),
+                |_| Lead::Any,
+                |_, _| true,
+            )
     }
 
     /// The row of an application of numbers with no carrier in common: that of a literal at a
@@ -9748,12 +9790,101 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// as each listed value would be alone (DESIGN.md sec:type_resolution): `a + b` of
     /// `a: 1 | f64` and `b: int` has no common carrier at its `f64` (plan row
     /// DIAG-union-carrier-row).
-    /// One pass over the arguments per arrow, and the pairs of the fifteen sets of numeric
-    /// carriers, a constant, for each set of masks tried ([`Self::some_choice`]).
+    ///
+    /// The search. The masks of the arguments together are tried first; then each two parts
+    /// `p` at `i` and `q` at `j`, `i ≠ j`, with no carrier in common, every other argument at
+    /// its mask `w_k`: the trial `T(i←p, j←q)`. Two such parts make the masks of the trial
+    /// disjoint, so the trial is found exactly when [`Self::no_arrow_takes`] holds of it.
+    /// Trying every pair, each in a pass over the arguments, is O(a³) for a arguments, and it
+    /// made the carrier row of a call of 200 arguments, one refused, fail its benchmark
+    /// (b59573ce6; `a_long_call_taking_all_but_one_argument_scales`: 50.4 times the work at
+    /// 1600 arguments as at 200, on a Colab VM, 2026-11-22; 7.5 to 7.6 with this search, two
+    /// runs of both series, row FAIL-long-call-carrier-pairs). Instead
+    /// each trial is decided from facts of `i` and `p` alone and of `j` and `q` alone, read
+    /// against the masks together, and the pairs are found by key ([`Self::two_parts`]).
+    /// Proof that the facts decide the trial. Write `t_k(m) = m & P(ar, k)` for the carriers
+    /// the parameter `k` of the arrow `ar` takes of `m` ([`Self::param_mask`]); it is monotone
+    /// in `m`, and `p ⊆ w_i`, `q ⊆ w_j` ([`Self::masks_and_parts`]).
+    /// 1. "Each argument alone" ([`Self::no_arrow_takes`], `each`): for `k ∉ {i, j}` it reads
+    ///    `w_k` as with the masks together; at `i` it reads `p`, and if some arrow takes `p`
+    ///    at `i` it takes `w_i ⊇ p` there too. So the trial passes `each` iff the masks
+    ///    together pass it and some arrow takes `p` at `i` and `q` at `j` (`alone` below); if
+    ///    the masks together fail it, every trial fails, and the search stops.
+    /// 2. "An arrow takes all together" ([`Self::arrow_takes`]): every place within the
+    ///    arrow's arity with a mask has `t_k ≠ 0`, and each bounded variable `v` has a nonzero
+    ///    AND of `t_k` over its places. By monotonicity, a trial that `ar` takes has masks
+    ///    together that `ar` takes; so an arrow that does not take the masks together takes
+    ///    no trial and is left out. For an arrow that takes them, with ANDs `C_v`: the places
+    ///    other than `i` and `j` keep their `t_k ≠ 0`, the variables at neither keep `C_v`,
+    ///    and a variable `v` at `i` gets `C_v & t_i(p)` (as `C_v ⊆ t_i(w_i)` and
+    ///    `t_i(p) ⊆ t_i(w_i)`, replacing the AND's term `t_i(w_i)` by `t_i(p)` gives
+    ///    `C_v & t_i(p)`), at both `C_v & t_i(p) & t_j(q)`. So the arrow takes the trial iff
+    ///    neither `(i, p)` nor `(j, q)` is `Kill` and not both are of the group of one `v`
+    ///    with `m_i & m_j = 0`, where `(k, r)` at `ar` is: outside the arity, `Free`; `Kill`
+    ///    if `t_k(r) = 0`, or `k` holds a bounded `v` and `C_v & t_k(r) = 0`; `Group(v, C_v &
+    ///    t_k(r))` if `k` holds a bounded `v`; else `Free`.
+    /// 3. So the trial is found iff `alone` holds of both, and at every arrow left one of them
+    ///    is `Kill` or both are of one group with disjoint masks ([`PartCarry::meets`]).
+    /// Cost: O(a · A) for the masks of A arrows, O(a · k · A) for the facts of the parts, and
+    /// the pairs by [`Self::two_parts`] led by the first arrow left: a `Kill` there may meet
+    /// any key (`Any`), a `Group(v, _)` only `Kill`s and its group, a `Free` only `Kill`s. With
+    /// one arrow left, as for a function of one arrow, the `Kill` keys are at most the fifteen
+    /// masks and a group's keys at most fifteen masks times fifteen, so the pairs are
+    /// O(d) for d ≤ a · k keys: linear. With several arrows left, a key is the mask and one
+    /// state per arrow, and the `Any` keys and the groups at the first arrow are bounded by
+    /// the states at the others: fifteen times the product over the other arrows of two plus
+    /// fifteen per group, a constant for operators (a few arrows, at most one shared variable
+    /// each); it reaches d only for several arrows that each bound as many variables, each at
+    /// two places or more, as there are arguments, where the pairs are O(d²) (unproved better:
+    /// with only `Kill` and `Free` states the question is whether two keys' `Kill` sets cover
+    /// the arrows, the orthogonal vectors problem, quadratic in general for many arrows).
+    /// Test: `a_long_call_taking_all_but_one_argument_scales` (l01_29_repairs_and_printing),
+    /// the type tables, l01_26a and l01_29_diagnostics for the rows.
     fn no_common_carrier(&self, sig: &Sig, args: &[Option<Arg>]) -> bool {
-        self.some_choice(args, |masks| {
-            Self::disjoint(masks) && self.no_arrow_takes(sig, masks)
-        })
+        let (whole, parts) = self.masks_and_parts(args);
+        if Self::disjoint(&whole) && self.no_arrow_takes(sig, &whole) {
+            return true;
+        }
+        let alone = |i: usize, m: u8| {
+            (sig.arrows.iter())
+                .any(|ar| (ar.params.get(i)).is_some_and(|p| m & self.param_mask(sig, p) != 0))
+        };
+        if !(whole.iter().enumerate()).all(|(i, m)| m.is_none_or(|m| alone(i, m))) {
+            return false;
+        }
+        let left: Vec<(&Arrow, HashMap<&str, u8>)> = (sig.arrows.iter())
+            .filter_map(|ar| Some((ar, self.arrow_takes(sig, ar, &whole)?)))
+            .collect();
+        let carry = |i: usize, p: u8| -> Vec<PartCarry<'_>> {
+            (left.iter())
+                .map(|(ar, common)| {
+                    let Some(ty) = ar.params.get(i) else {
+                        return PartCarry::Free;
+                    };
+                    let t = p & self.param_mask(sig, ty);
+                    match ty.as_var().filter(|v| sig.bounds.contains_key(*v)) {
+                        _ if t == 0 => PartCarry::Kill,
+                        Some(v) => match common[&**v] & t {
+                            0 => PartCarry::Kill,
+                            m => PartCarry::Group(&**v, m),
+                        },
+                        None => PartCarry::Free,
+                    }
+                })
+                .collect()
+        };
+        let keyed = (parts.into_iter())
+            .filter(|&(i, p)| alone(i, p))
+            .map(|(i, p)| (i, p, carry(i, p)));
+        Self::two_parts(
+            keyed,
+            |k| match k.first() {
+                None | Some(PartCarry::Kill) => Lead::Any,
+                Some(&PartCarry::Group(v, _)) => Lead::Group(v),
+                Some(PartCarry::Free) => Lead::Alone,
+            },
+            |x, y| x.iter().zip(y).all(|(a, b)| a.meets(b)),
+        )
     }
 
     /// Whether some arrow of `sig` takes each of `masks` alone, a set of numeric carriers per
@@ -9765,24 +9896,36 @@ impl<'t, 'a> Ck<'t, 'a> {
                 (sig.arrows.iter()).any(|ar| ar.params.get(i).is_some_and(|p| takes(p, m) != 0))
             })
         });
-        each && !sig.arrows.iter().any(|ar| {
-            let mut common: HashMap<&str, u8> = HashMap::new();
-            masks.iter().zip(&ar.params).all(|(m, p)| {
-                let Some(m) = *m else {
-                    return true;
-                };
-                let t = takes(p, m);
-                match p.as_var().filter(|v| sig.bounds.contains_key(*v)) {
-                    _ if t == 0 => false,
-                    Some(v) => {
-                        let c = common.entry(&**v).or_insert(EVERY);
-                        *c &= t;
-                        *c != 0
-                    }
-                    None => true,
+        each && !(sig.arrows.iter()).any(|ar| self.arrow_takes(sig, ar, masks).is_some())
+    }
+
+    /// Whether the arrow `ar` of `sig` takes all of `masks` together (`None` at an argument
+    /// read as any; a place past the arrow's arity is not read): each place takes some of its
+    /// mask, and each bounded variable some carrier of the masks at all its places. If so, the
+    /// AND of those carriers for each bounded variable met. One pass over the places.
+    fn arrow_takes<'s>(
+        &self,
+        sig: &'s Sig,
+        ar: &'s Arrow,
+        masks: &[Option<u8>],
+    ) -> Option<HashMap<&'s str, u8>> {
+        let mut common: HashMap<&str, u8> = HashMap::new();
+        let all = masks.iter().zip(&ar.params).all(|(m, p)| {
+            let Some(m) = *m else {
+                return true;
+            };
+            let t = m & self.param_mask(sig, p);
+            match p.as_var().filter(|v| sig.bounds.contains_key(*v)) {
+                _ if t == 0 => false,
+                Some(v) => {
+                    let c = common.entry(&**v).or_insert(EVERY);
+                    *c &= t;
+                    *c != 0
                 }
-            })
-        })
+                None => true,
+            }
+        });
+        all.then_some(common)
     }
 
     /// The numeric carriers a value of the argument `a` may be of, `None` unless every value
@@ -17049,6 +17192,43 @@ mod clean_check {
             .unwrap_or_else(|e| panic!("{}: {e}", p.display()));
         writeln!(f, "queries {q} held {h}").unwrap_or_else(|e| panic!("{}: {e}", p.display()));
     }
+}
+
+/// What one numeric part of an argument does to one arrow's taking the masks of a trial of
+/// [`Ck::no_common_carrier`], given that the arrow takes the masks of all the arguments
+/// together: the proof of the three cases is at that function.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum PartCarry<'s> {
+    /// The arrow takes no trial that holds this part.
+    Kill,
+    /// The part is at a place of the bounded variable named, which takes these carriers of
+    /// it together with every other place of the variable.
+    Group(&'s str, u8),
+    /// The part alone keeps the arrow from nothing.
+    Free,
+}
+
+impl PartCarry<'_> {
+    /// Whether the arrow takes no trial that holds the two parts `self` and `other`, at two
+    /// places: one of them takes it out, or both are at places of one variable that takes no
+    /// carrier of both.
+    fn meets(&self, other: &Self) -> bool {
+        match (self, other) {
+            (PartCarry::Kill, _) | (_, PartCarry::Kill) => true,
+            (PartCarry::Group(v, m), PartCarry::Group(w, n)) => v == w && m & n == 0,
+            _ => false,
+        }
+    }
+}
+
+/// Which keys a key of [`Ck::two_parts`] may meet.
+enum Lead<'s> {
+    /// Any key.
+    Any,
+    /// Keys that lead `Any`, and those of this group.
+    Group(&'s str),
+    /// Only keys that lead `Any`.
+    Alone,
 }
 
 /// The carriers a value of `t` may be of, and [`OTHER`] if it may be a tuple, a function or
