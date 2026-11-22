@@ -3961,6 +3961,32 @@ fn random_terms_of_seed_11714205704670991641_keep_their_preimages() {
     random_terms(11714205704670991641, 24);
 }
 
+/// [`random_terms`] of seed 6074285001668388487 (FAIL-s22-random-terms-6074285001668388487).
+#[test]
+fn random_terms_of_seed_6074285001668388487_keep_their_preimages() {
+    random_terms(6074285001668388487, 24);
+}
+
+/// The remainder of an operand that fails at every point (`x div 0`) is exact and empty
+/// without listing the box (FAIL-s22-random-terms-6074285001668388487): `mod_pre` in
+/// zedc-preimage `preimage.rs` read an empty operand range as unbounded and not exact.
+#[test]
+fn a_remainder_of_a_division_by_zero_is_exact_and_empty_unlisted() {
+    let ds: Domains = [
+        (Arc::from("x"), IntervalSet::of(3, 15)),
+        (Arc::from("y"), IntervalSet::of(-9, -8)),
+    ]
+    .into_iter()
+    .collect();
+    let d0 = || prim(Prim::IntDiv, var("x"), int(0));
+    for k in [prim(Prim::Mul, int(4), int(-1)), int(-4), int(4)] {
+        let t = prim(Prim::Ne, prim(Prim::Mod, d0(), k), int(1));
+        let p = preimage(&t, &ds, &Demand::Bool(false));
+        assert!(p.exact && !p.enumerated, "{t}: {p:?}");
+        assert!(p.domains.values().all(IntervalSet::is_empty), "{t}: {p:?}");
+    }
+}
+
 /// The comparison of two relations' sets behind the renamed-relation allowances
 /// ([`same_relation_set`], item TEST-renamed-relation-same-set): `2 <= x <= 5` stated through
 /// an auxiliary variable equal to `x` is the same set with that variable numbered anew, and

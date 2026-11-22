@@ -15048,7 +15048,17 @@ fn mod_pre(z: &IntervalSet, c: i64, within: &IntervalSet) -> (IntervalSet, bool)
     if rem == all {
         return (within.clone(), true);
     }
-    let Some((Fin(lo), Fin(hi))) = within.bounds() else {
+    // An empty `within` (the operand fails at every point, as `x div 0` does) has no member,
+    // so the empty set is all of its members with a remainder in `z` and no more: exact.
+    // Before FAIL-s22-random-terms-6074285001668388487 it fell to the unbounded case below
+    // (`bounds` is `None` only for the empty set, zedc-lattice interval.rs `bounds`) and was
+    // marked not exact, so `((x div 0) mod -4) == 1` was listed point by point where the
+    // transfer before answered exact and empty unlisted. Test:
+    // `l01_25_preimage_catalog::s22::random_terms_of_seed_6074285001668388487_keep_their_preimages`.
+    let Some(bounds) = within.bounds() else {
+        return (IntervalSet::empty(), true);
+    };
+    let (Fin(lo), Fin(hi)) = bounds else {
         return (within.clone(), false);
     };
     let (k0, k1) = (lo.div_floor(&m), hi.div_floor(&m));
