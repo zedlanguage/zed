@@ -672,6 +672,24 @@ for (const fan of [40, 80, 200]) {
   });
 }
 
+// DAGVIEW-shape-edges (c): fanIn's layers each hold 11 boxes that cannot move
+// (a spine node and its 10 fillers, each filler fixed between the spine nodes
+// above and below it), so no layering draws it narrower than 11 boxes in its
+// 40 layers, which is just over w/h 0.6, and K = 10 must split every such
+// layer, doubling the rows. Such a graph is drawn as it is, at K = 11, a
+// little over the band: fitLayers takes the K nearer the band when w/h jumps
+// over it. Before, it took the K under the band: fanIn(0) was drawn in 80
+// rows at w/h 0.183 and fanIn(200) in 99 rows at 0.367.
+for (const fan of [0, 40, 80, 200]) {
+  test(`a spine of 40 layers of 11 boxes that cannot move, with ${fan} sources over one child, is drawn in about its 40 layers, not in twice as many rows, and at w/h of at least 0.4`, () => {
+    const l = d3dagLayout(fanIn(fan));
+    const rows = new Set(Object.values(l.layers!)).size, r = l.w / l.h;
+    console.log(`fanIn(${fan}): ${rows} rows, K = ${l.rowLimit}, ${Math.round(l.w)} x ${Math.round(l.h)}, w/h ${r.toFixed(3)}`);
+    assert.ok(rows <= 1.6 * 40, `fanIn(${fan}): ${rows} rows, over 1.6 x the 40 layers of its spine`);
+    assert.ok(r >= 0.4, `fanIn(${fan}): w/h ${r.toFixed(3)} under 0.4`);
+  });
+}
+
 // k sources sharing one child T, all in the row above it (layer 1 of a spine
 // of k / 4 layers; T has parent s_0 and child the last spine node). makeRoom
 // inserts the empty layers above that row that balanceLayers fills.

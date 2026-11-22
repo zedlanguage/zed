@@ -704,7 +704,14 @@ export function shapeOf(y: Int32Array, size: { w: ArrayLike<number>; h: ArrayLik
 // so w/h grows with K. If even the largest K is under BAND[0] (a longest path
 // too long for the band), that K is taken: the fewest rows, the nearest
 // shape; if no K lands within BAND (w/h jumps over it between two adjacent
-// K), the larger K under it.
+// K), of those two K the one whose estimate lies nearer the band (by
+// outside), the smaller on a tie. Until DAGVIEW-shape-edges (c) it was always
+// the smaller, under the band: on fanIn(0) of d3dag.test.ts, a spine whose
+// layers each hold 11 boxes that cannot move, K = 10 split every layer, 80
+// rows at w/h 0.183, where K = 11 draws 41 rows at 0.602; fanIn(200) went
+// from 99 rows at 0.367 to 61 at 0.653. Both K are probed already (the
+// larger only if it is at most the widest layer, beyond which it is not
+// tried), so the choice costs no probe.
 // The first probe is at the K where boxes of the mean size give w/h = TARGET,
 // in rows of K boxes and max(rows of base, n / K) rows, by bisection on that
 // formula. The estimate ignores the lanes of edges passing through a row, so
@@ -760,6 +767,7 @@ export function fitLayers(base: Int32Array, size: { w: ArrayLike<number>; h: Arr
     slow = 2 * (hi - lo) > width ? slow + 1 : 0;
     K = Math.min(hi - 1, Math.max(lo + 1, slow >= 2 ? (lo + hi) >> 1 : Math.round(K * Math.sqrt(TARGET / r))));
   }
+  if (hi <= most && outside(probe(hi).ratio) < outside(probe(lo).ratio)) return { K: hi, ...probe(hi) };
   return { K: lo, ...probe(lo) };
 }
 
