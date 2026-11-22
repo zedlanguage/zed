@@ -10496,20 +10496,48 @@ impl Scope {
         // set in each cache, O(log n); the cache then shares no nodes with the exact map,
         // so the reduction that reads it after a refused test diffs it in O(n), which the
         // materialization of that test costs anyway.
-        let x_now = before
-            .is_none()
+        //
+        // The same with names on paths whose exact map is built (`before` is `Some`) and a
+        // cache that is not that map (item PATH-reads-scale): naive, the rebase by the diff,
+        // which costs the entries where the cache and the names differ. A test admitted onto a
+        // path moves the bounds of every member of the path without a reduction (that is what
+        // the paths are for, `NameProducts`), so a cache made before the admissions differs
+        // from the names at each member, and the rebase keeps those entries: it costs
+        // Theta(m log n) for `m` members at every fresh binding, and a scope under a chain of
+        // `n` difference tests that binds the `n` names its reads need, once a read, cost
+        // Theta(n² log n) (12.9 times the instructions at 8 times the names from 64; the
+        // rebase was 26 % of the instructions at 256 names, 18.7 times its count at 64, in a
+        // callgrind profile of the bench's program). Used: `x`'s
+        // entry set in the cache, as in the case before, O(log n). The result is the same map
+        // (the proof below), so only the sharing of nodes differs: the diff a later reduction
+        // makes of this cache costs the members it differs at, which an exact cache of names
+        // on moved paths costs anyway, and the `k` names set in it since, each a path of
+        // O(log n) nodes no longer shared. A cache that is the names' exact map (`ptr_eq`)
+        // still becomes the names' map, O(1), so a scope whose caches a reduction made
+        // keeps sharing them. Test:
+        // `l01_39_scope_relations::path_check::bench::the_checker_reading_names_bound_under_a_chain_is_linear`.
+        let implicit = self.names.implicit();
+        let x_now = (before.is_none() || implicit)
             .then(|| self.names.read(x).map(std::borrow::Cow::into_owned));
         let now = before.map(|_| self.names.view());
         let rebase = |cache: &mut imbl::OrdMap<Arc<str>, Product>| {
+            let set_x = |cache: &mut imbl::OrdMap<Arc<str>, Product>| match x_now
+                .as_ref()
+                .and_then(Option::as_ref)
+            {
+                Some(p) => _ = cache.insert(x.clone(), p.clone()),
+                None => _ = cache.remove(x),
+            };
             let (Some(before), Some(now)) = (before, now) else {
-                match x_now.as_ref().and_then(Option::as_ref) {
-                    Some(p) => _ = cache.insert(x.clone(), p.clone()),
-                    None => _ = cache.remove(x),
-                }
+                set_x(cache);
                 return;
             };
             if cache.ptr_eq(before) {
                 *cache = now.clone();
+                return;
+            }
+            if implicit {
+                set_x(cache);
                 return;
             }
             let mut out = now.clone();

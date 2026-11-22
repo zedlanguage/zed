@@ -1038,6 +1038,9 @@ struct Carried {
     also: HashMap<Arc<str>, Vec<Reached>>,
     /// The names reached and not yet expanded, in the order reached.
     queue: VecDeque<(Arc<str>, bool)>,
+    /// The name being expanded, taken from the front of `queue`, with the readers of it left
+    /// to visit ([`Carried::step`]).
+    walk: Option<Walk>,
     /// The tests whose names have been reached.
     expanded: HashSet<usize>,
     /// Each name expanded, with the tests above that read it, in the order reached.
@@ -1054,6 +1057,7 @@ impl Carried {
             depth: fresh.iter().map(|(y, _)| (y.clone(), 0)).collect(),
             also: HashMap::new(),
             queue: fresh.iter().map(|(y, _)| (y.clone(), false)).collect(),
+            walk: None,
             expanded: HashSet::new(),
             readers: HashMap::new(),
             from: HashMap::new(),
@@ -1070,10 +1074,9 @@ impl Carried {
         x: &Arc<str>,
     ) -> Vec<(usize, bool)> {
         while !self.via.contains_key(x) {
-            let Some((y, joined)) = self.queue.pop_front() else {
+            if !self.step(nodes, chains) {
                 return Vec::new();
-            };
-            self.expand(nodes, chains, &y, joined);
+            }
         }
         self.back(x)
     }
@@ -1093,14 +1096,8 @@ impl Carried {
         let Some(&far) = self.depth.get(x) else {
             return Vec::new();
         };
-        while let Some((y, joined)) = self
-            .queue
-            .front()
-            .filter(|(y, _)| self.depth[y] < far)
-            .cloned()
-        {
-            self.queue.pop_front();
-            self.expand(nodes, chains, &y, joined);
+        while self.front().is_some_and(|y| self.depth[y] < far) {
+            self.step(nodes, chains);
         }
         let Some(steps) = self.also.get(x) else {
             return Vec::new();
@@ -1118,9 +1115,7 @@ impl Carried {
     /// Expands every name reached and not yet expanded: after it, [`Carried::readers`] and
     /// [`Carried::from`] hold the whole relation above, each test with all its names.
     fn drain(&mut self, nodes: &[Node<'_>], chains: &[Option<Chains>]) {
-        while let Some((y, joined)) = self.queue.pop_front() {
-            self.expand(nodes, chains, &y, joined);
-        }
+        while self.step(nodes, chains) {}
     }
 
     /// A breadth-first search of the whole relation above, from the names `starts` the
@@ -1172,16 +1167,36 @@ impl Carried {
         out
     }
 
-    /// Reaches the names of each test above that reads `y`, following `y`'s chain of readers
-    /// through both sides of each join, each node once.
-    fn expand(
-        &mut self,
-        nodes: &[Node<'_>],
-        chains: &[Option<Chains>],
-        y: &Arc<str>,
-        joined: bool,
-    ) {
-        let read = |n: usize| {
+    /// The name the search expands next: the one being expanded, else the front of the queue.
+    fn front(&self) -> Option<&Arc<str>> {
+        match &self.walk {
+            Some(w) => Some(&w.y),
+            None => self.queue.front().map(|(y, _)| y),
+        }
+    }
+
+    /// One step of the expansion of the names reached: the readers of the name being
+    /// expanded (else of the next in the queue) are visited, following its chain of readers
+    /// through both sides of each join, each node once, up to and including the next test
+    /// that reads it, whose names are reached. False when every name reached is expanded.
+    ///
+    /// Complexity tradeoff (item NARROW-hub-interleaved-scale): naive, a name was expanded
+    /// whole at once, every test above that reads it. A carrying test's search is its own
+    /// (`Arms::carried`, by node), and under `k` levels `ai >= n`, `n >= -(k - i)`, each
+    /// test on `n` carries to `ai` and searches from `n`: the first lookup of `ai` expanded
+    /// all `2i` readers of `n` above, Theta(k²) over the levels (16.2 times the instructions
+    /// of `expand` at 4 times the levels from 200, 31 % of the check at 800, in a callgrind
+    /// profile; the bench 14.5 times from 200). Used, the walk stops at each test reached and
+    /// a later call resumes it, so a lookup visits the readers up to the first test that
+    /// reaches its name: here the parent, `ai >= n`, O(1) a level. The order in which names
+    /// and tests are reached is that of the whole expansion (the walk is the same depth-first
+    /// visit of the same chain, paused), so `via`, `depth`, `also`, `readers` and `from` are,
+    /// at every point where the queue is empty or a name has been fully expanded, those the
+    /// naive method gives; [`Carried::others`] and [`Carried::drain`] finish the walk under
+    /// way first, as they need every name at a smaller distance expanded. Over all calls
+    /// each reader of each name is still visited once, so the whole cost is unchanged.
+    fn step(&mut self, nodes: &[Node<'_>], chains: &[Option<Chains>]) -> bool {
+        let read = |n: usize, y: &Arc<str>| {
             chains[n]
                 .as_ref()
                 .expect("an ancestor of a settled node is settled")
@@ -1189,17 +1204,31 @@ impl Carried {
                 .get(y)
                 .copied()
         };
-        let far = self.depth[y] + 1;
-        let mut seen = HashSet::new();
-        let mut stack: Vec<(usize, bool)> =
-            read(self.above).map(|q| (q, joined)).into_iter().collect();
-        while let Some((k, case)) = stack.pop() {
-            if !seen.insert(k) {
+        let mut w = match self.walk.take() {
+            Some(w) => w,
+            None => {
+                let Some((y, joined)) = self.queue.pop_front() else {
+                    return false;
+                };
+                Walk {
+                    far: self.depth[&y] + 1,
+                    stack: read(self.above, &y)
+                        .map(|q| (q, joined))
+                        .into_iter()
+                        .collect(),
+                    seen: HashSet::new(),
+                    y,
+                }
+            }
+        };
+        while let Some((k, case)) = w.stack.pop() {
+            if !w.seen.insert(k) {
                 continue;
             }
             match &nodes[k] {
                 Node::Root => {}
                 Node::Assume { parent, fresh, .. } => {
+                    let y = &w.y;
                     self.readers.entry(y.clone()).or_default().push(k);
                     self.from.entry(k).or_default().push((y.clone(), case));
                     if self.expanded.insert(k) {
@@ -1207,10 +1236,10 @@ impl Carried {
                             match self.depth.get(z) {
                                 None => {
                                     self.via.insert(z.clone(), Some((k, y.clone(), case)));
-                                    self.depth.insert(z.clone(), far);
+                                    self.depth.insert(z.clone(), w.far);
                                     self.queue.push_back((z.clone(), case));
                                 }
-                                Some(&d) if d == far => {
+                                Some(&d) if d == w.far => {
                                     let step = (k, y.clone(), case);
                                     self.also.entry(z.clone()).or_default().push(step);
                                 }
@@ -1218,16 +1247,33 @@ impl Carried {
                             }
                         }
                     }
-                    stack.extend(read(*parent).map(|q| (q, case)));
+                    w.stack.extend(read(*parent, y).map(|q| (q, case)));
+                    break;
                 }
                 Node::Join(a, b) => {
                     for side in [*b, *a] {
-                        stack.extend(read(side).map(|q| (q, true)));
+                        w.stack.extend(read(side, &w.y).map(|q| (q, true)));
                     }
                 }
             }
         }
+        if !w.stack.is_empty() {
+            self.walk = Some(w);
+        }
+        true
     }
+}
+
+/// A name of [`Carried`]'s search being expanded: its readers left to visit, depth first.
+struct Walk {
+    /// The name.
+    y: Arc<str>,
+    /// The distance of the names its readers reach.
+    far: usize,
+    /// The nodes left to visit, each with whether a join was passed.
+    stack: Vec<(usize, bool)>,
+    /// The nodes visited.
+    seen: HashSet<usize>,
 }
 
 /// The chain of a join `k` of two nodes whose chains are `a` and `b`: `a`'s, with each name the

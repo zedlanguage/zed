@@ -488,12 +488,14 @@ fn a_hub_tested_between_its_spokes_settles_in_time_linear_in_the_tests() {
     // Each level relates `ai` to `n`, strengthens `n` and reads `ai`: `k` rejections, each
     // naming its level's two tests. Settling every scope whole cost 0.19 to 12.9 s at `k` =
     // 25 to 200 (wt/narrow-if, NARROW-hub-settle ledger).
-    // The size stays 25, though the larger run takes 0.6 s: at 225 and 1800 the checker took
-    // 16.3 times the instructions and 11.9 times the bytes (TEST-bench-move-l0139, 2026-11-14;
-    // plan row NARROW-hub-interleaved-scale).
+    // At 225 and 1800 the checker took 16.3 times the instructions and 11.9 times the bytes
+    // (TEST-bench-move-l0139, 2026-11-14), 14.5 times from 200: the search of the relation
+    // for each level's note expanded every test on `n` above it. It stops at the first test
+    // that reaches the name now (`Carried::step` in zedc-check `arms.rs`, item
+    // NARROW-hub-interleaved-scale), and the size is 200 (was 25), about 1 s.
     check_notes(
         "checking k readings each related to n, each under a stronger test on n",
-        25,
+        200,
         2,
         hub_interleaved,
     );
@@ -779,12 +781,12 @@ fn satellites_of_two_hubs_keep_the_stars_of_their_hubs_in_linear_time() {
     // above, which went into one block of the forest, projected at each level: 21.5 times the
     // bytes for 8 times the levels on main at b5a32b5c. `ai` is a satellite now, related to
     // `n` and `m` alone, which the hubs admit.
-    // The size stays 24, though the larger run takes 0.5 s: at 240 and 1920 the checker took
-    // 21.5 times the instructions and 14.2 times the bytes (TEST-bench-move-l0139, 2026-11-14;
-    // plan row STAR-satellite-scale).
+    // At 240 and 1920 the checker took 21.5 times the instructions and 14.2 times the bytes
+    // (TEST-bench-move-l0139, 2026-11-14); on 7b58d316e with PATH-reads-scale, 8.46 times from
+    // 192 (load 68), so the size is 192 (was 24), about 1 s (item STAR-satellite-scale).
     check_alone(
         "k levels of stars of two hubs over satellites",
-        24,
+        192,
         1,
         |k| negated_hub_nest(k, |i| format!("#s{i}")),
     );

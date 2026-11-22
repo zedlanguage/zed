@@ -13,12 +13,14 @@ fn the_checker_on_a_raised_head_is_linear() {
     checked_in_linear_work("n raises of a chain's head, zedc check", N_CHECK, raise);
 }
 
-/// At [`N_READS`]: from 32 names up the work grows more than 10.5 times at 8 times the names,
-/// 12.2 times in instructions from 32, 16.1 from 64 and 22.9 from 128 (TEST-bench-move-l0139;
-/// plan row PATH-reads-scale). A profile at 128 and 1,024 spends its time in insertions into
-/// the persistent maps of the names' products and in comparisons of interval sets. Not yet
-/// confirmed as the cause: the `O(n)` diff after each refused test on a difference path that
-/// the note in `Scope::seen_fresh` (zedc-preimage `product.rs`) accepts, `n` tests here.
+/// Before PATH-reads-scale the work grew more than 10.5 times at 8 times the names: 12.2 times
+/// in instructions from 32, 16.1 from 64 and 22.9 from 128 (TEST-bench-move-l0139; 12.9 from
+/// 64 on 7b58d316e). The cause, found in a callgrind profile at 64 and 256 names: each
+/// read of a `w_i` in the innermost scope binds the names it reads there, and each fresh
+/// binding rebased the scope's caches by their diff with the names (`Scope::seen_fresh`,
+/// zedc-preimage `product.rs`), which the chain's admissions onto paths had moved at every
+/// member, `Theta(n)` a binding. Now the binding sets its own entry in each cache, `O(log n)`:
+/// 8.10 times from 128 (load 159), 8.15 from 384 (load 50).
 #[test]
 fn the_checker_reading_names_bound_under_a_chain_is_linear() {
     checked_in_linear_work(
@@ -42,6 +44,7 @@ fn checked_in_linear_work(what: &str, n: usize, make: fn(usize) -> String) {
 }
 
 /// The sizes. [`N_CHECK`] is set so the 1x check runs about 0.13 s (TEST-bench-move-l0139;
-/// was 16, 0.03 s); [`N_READS`] stays at 16, 0.03 s.
+/// was 16, 0.03 s); [`N_READS`] so it runs about 1 s (PATH-reads-scale; was 16, 0.03 s;
+/// 0.60 s at 384 under load 50).
 const N_CHECK: usize = 128;
-const N_READS: usize = 16;
+const N_READS: usize = 384;
