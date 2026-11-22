@@ -27992,6 +27992,66 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.rejected_because(what, args, &why)
     }
 
+    /// The rejection of `what` applied to `args` where the argument `a` is an `if` refused at
+    /// the parameter `p` for its piece `piece`, the carrier `f64` or `f32`, that a branch
+    /// written as a decimal with that suffix gives, as `hr(if b { r } else { 2.5f64 })` at
+    /// `hr(positional z: rat)` (plan row MSG-if-suffixed-branch-refused). A decimal with a
+    /// suffix is a value of its carrier and is refused at any other (DESIGN.md
+    /// sec:type_resolution, "a decimal a call gives, or one with a suffix, is an `f64`, and is
+    /// refused there"), so the message names that branch and its two repairs, as
+    /// [`Self::unread_call`] does for a listed value: the decimal without its suffix, which
+    /// takes the carrier its use fixes (step L1.26b), or with the suffix of the parameter's
+    /// carrier. `None` where the parameter has not exactly one carrier among `rat`, `f32` and
+    /// `f64`, as at an `int`, where neither repair holds, or where no branch is such a
+    /// decimal. O(the branches of the `if`).
+    fn suffixed_branch(
+        &self,
+        what: &str,
+        args: &[Option<Arg>],
+        a: &Arg,
+        piece: &Piece,
+        p: &Ty,
+    ) -> Option<String> {
+        let (have, t) = (piece.carrier()?, self.t.text?);
+        let want = match &p.pieces()[..] {
+            [q] => q.carrier()?,
+            _ => return None,
+        };
+        let suffix = match want {
+            Carrier::Rat => "r",
+            Carrier::F32 => "f32",
+            Carrier::F64 => "f64",
+            _ => return None,
+        };
+        let mut stack = vec![exported(a.expr?)];
+        while let Some(e) = stack.pop() {
+            match &e.kind {
+                ExprKind::If { then, otherwise, .. } => {
+                    stack.push(exported(otherwise));
+                    stack.push(exported(then));
+                }
+                ExprKind::Float {
+                    forced: Some(_), ..
+                } => {
+                    let written = t.get(e.span.start..e.span.end)?;
+                    let Some(digits) = written.strip_suffix(have.name()) else {
+                        continue;
+                    };
+                    let (have, want) = (have.name(), want.name());
+                    let why = format!(
+                        ": the `if` may give the decimal {written}, an `{have}` where it is \
+                         written, and no `{have}` is read as a `{want}`. Write {digits} or \
+                         {digits}{suffix} where it is written, or give this parameter of \
+                         {what} the type `{have}`"
+                    );
+                    return Some(self.rejected_because(what, args, &why));
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// Binds each variable of the parameter `p` that no other argument binds to `Never`, for an
     /// argument with no value: a union with the empty type.
     ///
@@ -28558,7 +28618,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                         _ => piece,
                     };
-                    refused = Some((i, self.rejected_at(what, args, Some((i, &piece, p)))));
+                    let msg = (self.suffixed_branch(what, args, a, &piece, p))
+                        .unwrap_or_else(|| self.rejected_at(what, args, Some((i, &piece, p))));
+                    refused = Some((i, msg));
                     break 'args;
                 }
             }

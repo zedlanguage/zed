@@ -232,16 +232,41 @@ fn a_decimal_from_a_call_or_with_a_suffix_is_still_refused_at_rat() {
     assert!(type_errors(&with("hr(rat(if b { gd(b) } else { 2.5 }))")).is_empty());
     // A branch with a suffix is a value of its carrier, an `f64` (DESIGN.md
     // sec:type_resolution, "a decimal a call gives, or one with a suffix, is an `f64`, and is
-    // refused there"; plan row LIT-forced-carrier). The message that names the branch and
-    // its repair `2.5r`, which the listed value `2.5f64` gave before, is plan row
-    // MSG-if-suffixed-branch-refused.
+    // refused there"; plan row LIT-forced-carrier). The message names the branch and its
+    // repairs, as the listed value `2.5f64` gave before (plan row
+    // MSG-if-suffixed-branch-refused); before that row it was "`hr` does not take (f64): no
+    // arrow of `hr` takes these types."
     assert_eq!(
         type_errors(&with("hr(if b { r } else { 2.5f64 })")),
         [
-            "`hr` does not take (f64): no arrow of `hr` takes these types. \
-          [hr(if b { r } else { 2.5f64 })]"
+            "`hr` does not take (f64 | rat): the `if` may give the decimal 2.5f64, an `f64` \
+             where it is written, and no `f64` is read as a `rat`. Write 2.5 or 2.5r where it \
+             is written, or give this parameter of `hr` the type `f64`. \
+             [hr(if b { r } else { 2.5f64 })]"
         ]
     );
+    // Each repair checks.
+    assert!(type_errors(&with("hr(if b { r } else { 2.5 })")).is_empty());
+    assert!(type_errors(&with("hr(if b { r } else { 2.5r })")).is_empty());
+    // At an `f32`, the repair with a suffix is `f32`'s.
+    // (With a literal in the other branch, `hf(if b { 1.5 } else { 2.5f64 })`, the literal's
+    // own message is given, with its checked fix `2.5`.)
+    let at_f32 = "hf(positional z: f32) = z;\n\
+                  k(positional b: bool, positional y: f32) = hf(if b { y } else { 2.5f64 });\n";
+    assert_eq!(
+        type_errors(at_f32),
+        [
+            "`hf` does not take (f32 | f64): the `if` may give the decimal 2.5f64, an `f64` \
+             where it is written, and no `f64` is read as a `f32`. Write 2.5 or 2.5f32 where \
+             it is written, or give this parameter of `hf` the type `f64`. \
+             [hf(if b { y } else { 2.5f64 })]"
+        ]
+    );
+    // Negative control: at an `int` neither repair holds, so the message stays the general one.
+    let at_int = "hi(positional z: int) = z;\nk(positional b: bool) = hi(if b { 1 } else { 2.5f64 });\n";
+    let errs = type_errors(at_int);
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert!(!errs[0].contains("where it is written"), "{errs:?}");
 }
 
 const PROGRAM: &str = "\
