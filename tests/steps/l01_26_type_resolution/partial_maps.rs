@@ -98,6 +98,12 @@ fn a_function_that_answers_not_found_fits_a_map_whose_values_hold_it() {
             && errors[0].contains("answers `#notFound`"),
         "{errors:?}"
     );
+    // A named function that answers `#notFound` is refused there too: the rule is of the
+    // function's answer, not of the lambda's form.
+    let named = "look(m: String ->? int) = m[\"a\"] else #notFound -> 0;\n\
+                 h(positional k: String) = if k == \"a\" { 1 } else { #notFound };\n\
+                 x = look(m: h);\n";
+    assert_eq!(type_errors(named).len(), 1, "{:?}", type_errors(named));
     for fits in [
         "look(m: String ->? int | #notFound) = m[\"a\"] else #notFound -> 0;\n",
         "look(m: String -> int | #notFound) = m[\"a\"];\n",
