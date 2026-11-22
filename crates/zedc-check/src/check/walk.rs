@@ -7691,10 +7691,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             return false;
         };
         let taken = match self.level {
-            // `1 / 0` has no `rat` value, and takes `f64`, where it is an infinity.
+            // `1 / 0` has no `rat` value, and takes `f64`, where it is an infinity. So `rat` is
+            // tried only where `e` has a value there ([`Self::lit_fit`]): `lit_takes` at `rat`
+            // would take `1 / 0` as a division that always fails (QUESTIONS A62), which is for
+            // a `/` that something else puts at `rat`, as `1r + 1 / 0`, not for a choice of
+            // carrier (test `l01_26a_generic_literals::call_arguments::a_division_of_literals_at_an_int_or_untyped_parameter_is_still_rejected`).
             0 => {
                 self.lit_ops.contains(&e.span)
-                    && (self.lit_takes(e, Carrier::Rat) || self.lit_takes(e, Carrier::F64))
+                    && ((self.lit_fit(e, Carrier::Rat).0 && self.lit_takes(e, Carrier::Rat))
+                        || self.lit_takes(e, Carrier::F64))
             }
             _ => {
                 let ks: Vec<usize> = (a.ty.pieces().iter())
@@ -26169,19 +26174,45 @@ impl<'t, 'a> Ck<'t, 'a> {
         let apart = !rounds.is_empty()
             && matches!(&w.form, Construct::Call(_, sig) if params_met_apart(sig))
             && found.iter().all(|&s| arg_holding(&ats, s).is_some());
+        // Each fix with the type the construct has with it and whether it settles the
+        // construct's own errors (`true`), or leaves one of them (`false`).
+        let mut tried: Vec<(Carry, Option<(Ty, bool)>)> = Vec::new();
         for round in rounds {
             let left = match apart {
                 true => self.carried_together(w, t, &found, &ats, round, &mut up),
                 false => round,
             };
             for (i, c) in left {
-                let ty = (self.carried_alone(w, &found, &ats, i, &c))
-                    .or_else(|| self.carried_lent(w, (&found, &ats), &lent, i, &c));
-                match ty {
-                    Some(ty) if ty != *t => carry_joined(&mut up, ty, c.fixes),
-                    Some(_) => {}
-                    None => c.fixes.list.iter().for_each(|p| self.fix_dropped(p)),
+                let ty = (self.carried_alone(w, &found, &ats, i, &c)).or_else(|| {
+                    (self.carried_lent(w, (&found, &ats), &lent, i, &c)).map(|ty| (ty, true))
+                });
+                tried.push((c, ty));
+            }
+        }
+        // A fix that leaves an error of the construct's own is kept only where no fix settles
+        // them: with `x: f64`, `z = 2^-1; return z * x;` keeps `2.0f64^-1`, which makes the
+        // `*` take `z`, and drops `2r^-1`, at which `*` still takes no `(rat, f64)` (test
+        // `l01_29_repairs_and_printing::power_repairs::a_use_beside_a_fixed_carrier_keeps_the_repairs_of_that_carrier`);
+        // in `y = (1 / 2) * "a";` no fix settles the `*`, so each carrier keeps its fix (QUESTIONS
+        // A60, DESIGN.md "Types in a message": "its repairs offer one conversion per carrier";
+        // test `l01_29_diagnostics::literal_steps`). O(1) a fix beside its checks above.
+        // Only the fixes of literals that nothing gives a carrier (row UnfixedDecimal,
+        // [`Self::unfixed_only`]) are kept so: a fix of another error, as `rat(k)` for
+        // `k * 0.5`, is one the construct must take, or it is dropped (test
+        // `l01_29_repairs_and_printing::scaling::fixes_of_alike_arguments_keep_their_types`).
+        let settles = tried.iter().any(|(_, ty)| matches!(ty, Some((_, true))));
+        for (mut c, ty) in tried {
+            let ty = match ty {
+                Some((_, false)) if settles || !self.unfixed_only(&mut c.fixes) => None,
+                ty => ty,
+            };
+            match ty {
+                Some((ty, _)) => {
+                    if ty != *t {
+                        carry_joined(&mut up, ty, c.fixes);
+                    }
                 }
+                _ => c.fixes.list.iter().for_each(|p| self.fix_dropped(p)),
             }
         }
         self.carried_up(w.span, up);
@@ -26489,7 +26520,8 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The type the construct `w` has with the fixes `c` carried into its argument `i`, where
     /// it then adds no error but those its own check `found`, each outside argument `i`
-    /// (`ats`, [`arg_holding`]); `None` where it adds another. One check of the construct and
+    /// (`ats`, [`arg_holding`]), and whether each error it adds lies inside another argument,
+    /// so that the fix settles the construct; `None` where it adds another. One check of the construct and
     /// a binary search per error it adds.
     fn carried_alone(
         &mut self,
@@ -26498,7 +26530,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         ats: &[(Span, usize)],
         i: usize,
         c: &Carry,
-    ) -> Option<Ty> {
+    ) -> Option<(Ty, bool)> {
         // A fix that puts the operand of a word at `rat`, where the text gives the operand's
         // value there, gives the word that one value: `1r / 2` in `int(1 / 2)` is `1/2`, which
         // is not whole, so the cast is rejected ([`Self::int_not_whole`]) and the fix is
@@ -26522,11 +26554,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         // is kept beside `1.0f64`, one conversion per carrier (DESIGN.md sec:diagnostics,
         // "Types in a message": "its repairs offer one conversion per carrier"; QUESTIONS
         // A60), as [`Self::fixes_checked`] keeps a fix whose errors its construct's own check
-        // gives. Test: `l01_29_diagnostics::literal_steps`.
+        // gives. Such a fix settles nothing (`false`): the caller keeps it only where no fix
+        // settles the construct. Test: `l01_29_diagnostics::literal_steps`.
+        let needs = needs?;
+        let elsewhere = |s: &Span| arg_holding(ats, *s).is_some_and(|j| j != i);
         let apart = |s: &Span| found.contains(s) && arg_holding(ats, *s) != Some(i);
         needs
-            .is_some_and(|needs| needs.iter().all(apart))
-            .then_some(ty)
+            .iter()
+            .all(apart)
+            .then(|| (ty, needs.iter().all(elsewhere)))
     }
 
     /// Settles the fixes of `round`, each carried into its own argument of the call `w`

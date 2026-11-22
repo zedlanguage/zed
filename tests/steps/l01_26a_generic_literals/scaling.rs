@@ -490,7 +490,8 @@ fn a_power_at_rat_with_a_long_or_deep_exponent_checks() {
 /// that `f`'s `T` does not take with it, or takes only at another carrier: the table of types
 /// lent across arguments is not made then (04555ad8b), and the verdicts are those of 76705768a,
 /// which made it at every call (checked with the table made always, PERF-carried-lent-two-args).
-/// Beside `"s"` the call is rejected and the literal offered `f64`, the type the call gives it;
+/// Beside `"s"` the call is rejected and the literal offered one conversion per carrier, `rat`
+/// first in the menu's order, since no carrier makes the call checked (QUESTIONS A60);
 /// beside `1.0f64` the literal takes `f64` and the program runs; beside `#a` it is offered `rat`,
 /// and the program with `1r` checks.
 #[test]
@@ -508,9 +509,13 @@ fn carries_in_one_argument_beside_one_that_fails_keep_their_verdicts() {
             // The `/` has no carrier, so it is shown by the carriers it can take (A60).
             "`f` does not take (f64 | rat, \"s\"): no arrow of `f` takes these types. Try \
              `f(String(1 / 2), \"s\")` instead. [f(1 / 2, \"s\")]",
-            "Nothing gives the literal `1` a carrier. Try `y = f(1.0f64 / 2, \"s\")` instead.",
+            "Nothing gives the literal `1` a carrier. Try `y = f(1r / 2, \"s\")` instead.",
         ]
     );
+    let all = type_errors(&format!("{decl}y = f(1 / 2, \"s\");\n")).join("\n");
+    for fix in ["    y = f(1r / 2, \"s\");", "    y = f(1.0f64 / 2, \"s\");"] {
+        assert!(all.contains(fix), "{fix} is not offered:\n{all}");
+    }
     let src = format!("{decl}y = f(1 / 2, 1.0f64);\n");
     assert_eq!(type_errors(&src), Vec::<String>::new());
     assert_eq!(value(&src, "y"), "true");
