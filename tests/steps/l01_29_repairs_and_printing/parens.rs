@@ -980,6 +980,22 @@ fn a_kernel_meet_of_function_types_prints_as_the_one_arrow_it_is() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// A meet of morphism literals whose built permission no literal names, `int` here, is still
+/// written as the one arrow it is (`Printer::meet_text`): a type whose parts hold no other type
+/// can close no cycle of the texts. Before, the meet kept its `&`, `((int | #a) ->? bool) &
+/// ((int | #b) ->? bool)`, which reads with permission `int | #a | #b`, another type (row
+/// FAIL-print-meet-unnamed-bound, found by ty-meet 2026-11-16).
+#[test]
+fn a_kernel_meet_whose_permission_no_literal_names_prints_as_one_arrow() {
+    let t = &KType::partial(&KType::int() | &KType::atom("a"), KType::bool())
+        & &KType::partial(&KType::int() | &KType::atom("b"), KType::bool());
+    let printed = t.surface();
+    assert_eq!(printed.root, "int ->? bool");
+    let mut wrong = Vec::new();
+    assert!(!kernel_read_back("int ->? bool", &printed.root, &mut wrong));
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 /// A function giving a type built to print a form.
 type BuiltType = fn() -> Built;
 

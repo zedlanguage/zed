@@ -2383,6 +2383,25 @@ impl Type {
         matches!(&*self.0, Node::Rec(_))
     }
 
+    /// Whether its parts hold no other type: it is no recursive type by name, it has no
+    /// tuple, struct or morphism, no atom of it has a payload (the tree of payloads lists
+    /// every name whose payload is not empty, [`Atoms::payloads`]), and its atoms are
+    /// finitely many names (a cofinite set holds every payload of a name it does not list).
+    /// Then each value of it is a scalar or a bare atom, and every type its parts name is
+    /// none: so it reaches no type, a recursive one least of all. A sufficient test, not a
+    /// complete one: `(int,)` holds no recursive type and is not such a type. O(1).
+    pub(super) fn holds_no_type(&self) -> bool {
+        let Node::Parts(p, _) = &*self.0 else {
+            return false;
+        };
+        !p.structs
+            && p.morphisms.is_leaf() == Some(false)
+            && !p.tuples.rest
+            && p.tuples.lens.is_empty()
+            && !p.atoms.cofinite()
+            && p.atoms.payloads().is_empty()
+    }
+
     /// Whether this is a recursive member on a cycle of its group, or a part kept unevaluated: a
     /// type that may unfold to itself. A member on no cycle unfolds, in a bounded number of steps,
     /// to types none of which is it.

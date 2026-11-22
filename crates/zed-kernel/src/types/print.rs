@@ -1035,12 +1035,16 @@ impl Printer<'_> {
     /// kernel decides neither whether the lower bound is within the upper nor that it is not,
     /// or where the arrow would name a type the literals do not.
     ///
-    /// The arrow is written only when each type it names, its bounds and its value, is empty
-    /// or a type some literal's own text names. Each such type is then a node the text of the
-    /// literals would refer to as well ([`Printer::refer`] keys a node by its type), or the
-    /// node `Never`, which names nothing; so the folded text adds no edge to the graph of the
-    /// texts that could close a cycle, and every cycle still passes through a recursive type
-    /// with a definition, as [`Printer::heights`] needs. A type built here could hold a cycle
+    /// The arrow is written only when each type it names, its bounds and its value, is empty,
+    /// a type whose parts hold no other type, or a type some literal's own text names. Each
+    /// such type is then a node the text of the literals would refer to as well
+    /// ([`Printer::refer`] keys a node by its type), the node `Never`, which names nothing, or
+    /// a node every node below which holds a subset of its scalars and bare atoms (the text of
+    /// a type names only types its parts hold, or groups of its own parts), none of them a
+    /// recursive type; so the folded text adds no edge to the graph of the texts that could
+    /// close a cycle, since every cycle of the texts passes through a recursive type
+    /// ([`Printer::force_cycles`]), and every cycle still passes through a recursive type with
+    /// a definition, as [`Printer::heights`] needs. A type built here could hold a cycle
     /// of its own the printer has no name for: in `R0 = (R0, R1) | (int -> R1);
     /// R1 = (R0 & (int -> R0)) | (int, R1)`, the value of `(int -> R1) & (int -> R0)` is
     /// `R1 & R0`, which holds `int -> (R1 & R0)`. Such a meet keeps its connective.
@@ -1055,8 +1059,13 @@ impl Printer<'_> {
         let lower = Type::union_all(ms.iter().map(|m| m.guarantee.clone()));
         let upper = Type::meet_all(ms.iter().map(|m| m.permission.clone()));
         let value = Type::meet_all(ms.iter().map(|m| m.value.clone()));
+        // A type whose parts hold no other type ([`Type::holds_no_type`]), as the permission
+        // `int` of `partial(int | #a, bool) & partial(int | #b, bool)`, reaches no node and no
+        // recursive type least of all, so it adds no edge that could close a cycle, as a type
+        // a literal names adds none (row FAIL-print-meet-unnamed-bound).
         let named = |t: &Type| {
             *t == Type::empty()
+                || t.holds_no_type()
                 || (ms.iter()).any(|m| m.guarantee == *t || m.permission == *t || m.value == *t)
         };
         // Where the upper bound is also within the lower, the two are one set (the verdict
