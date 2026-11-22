@@ -4868,7 +4868,8 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // R = N (log2 n + 1) / D roots ever hold a set of more than D entries, and the largest sets
 // ever held by all roots sum to at most N (log2 n + 1); a refusal between two such roots costs
 // at most the largest set ever held by the root of the smaller set, charged to that root,
-// which has at most R such partners, so (3) costs at most R N (log2 n + 1), O(N² log² n / D); (4) D = N log n / sqrt(j) gives O(N sqrt(j) log n), O(n^1.5 log n) for j = O(n).
+// which has at most R such partners, so (3) costs at most R N (log2 n + 1), O(N² log² n / D);
+// (4) D = N log n / sqrt(j) gives O(N sqrt(j) log n), O(n^1.5 log n) for j = O(n).
 // Both constructions of the deferred tests (/home/luke/Work/wt/scratch/deferred-tests/
 // LOAD-join-disjoint-multi-owner.rs) take Θ(n^1.5): k² or k(k - 1)/2 refusals, each between
 // classes of k + 1 functions sharing one, for n about 2k² parameters. No lower bound is known
