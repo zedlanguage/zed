@@ -317,6 +317,11 @@ fn sleep_until(at: Duration) {
 /// The memory limit in bytes, for the handlers' messages; 0 where none is set.
 static MEMORY_LIMIT: AtomicU64 = AtomicU64::new(0);
 
+/// Whether a panic has begun in the process under a memory limit, set by the panic hook that
+/// `memory` puts before the one in place: an abort after it is the panic's, not an allocation's
+/// (`on_abort`). Relaxed: the hook and the abort of a panic run on one thread, in that order.
+static PANICKED: AtomicBool = AtomicBool::new(false);
+
 /// The memory limit in force, for the stack's growth (`crate::stack`).
 pub(crate) fn memory_limit() -> Option<u64> {
     Some(MEMORY_LIMIT.load(Ordering::Relaxed)).filter(|&b| b > 0)
@@ -332,6 +337,11 @@ fn memory(b: u64) -> Result<(), String> {
         )
     })?;
     install(libc::SIGABRT, on_abort)?;
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        PANICKED.store(true, Ordering::Relaxed);
+        hook(info);
+    }));
     MEMORY_LIMIT.store(b, Ordering::Relaxed);
     set_memory(b, base);
     count_in_use(in_use, in_use());
@@ -357,16 +367,31 @@ fn in_use() -> u64 {
 
 /// The handler of `SIGABRT` under a memory limit: Rust's allocator aborts the process when the
 /// system refuses an allocation it cannot report otherwise, after writing `memory allocation
-/// of n bytes failed`, so under the limit an abort is that refusal (the runtime's own code
-/// unwinds a panic and never aborts).
-// Not proved: that no other abort happens under the limit. Confirmed only that the workspace
-// sets no `panic = "abort"` (Cargo.toml) and that zed-rt and zed-native call no `abort()`.
-// Open sub-cases: a panic while a panic unwinds, and a panic that reaches the end of an
-// `extern "C"` function (a hook the compiled code calls, or a handler), both abort the process
-// (Rust reference, "Panic": unwinding out of an `extern "C"` function aborts), and this
-// handler would then name the memory limit for what is an internal fault. Row
-// PROOF-rt-abort-is-allocation.
+/// of n bytes failed`, and that abort is reported as the run passing its limit. An abort after
+/// a panic began is the panic's ([`PANICKED`]): the handler returns, and `abort` then ends the
+/// process by `SIGABRT` as with no limit (glibc `abort` sets the default action and raises the
+/// signal again when a handler returns, abort(3)), after the panic's own message.
+//
+// Proof that an abort after a panic is never named a refused allocation, and a refused
+// allocation is, under the limit (row PROOF-rt-abort-is-allocation). The workspace sets no
+// `panic = "abort"` (Cargo.toml), and zed-rt and zed-native call no `abort()`, so a Rust abort
+// is one of: (1) the allocation error handler of std, which writes its line and aborts with no
+// panic and no hook (std::alloc::handle_alloc_error, stable Rust); (2) a panic while a panic
+// unwinds, a panic that reaches the end of an `extern "C"` function (Rust reference, "Panic"),
+// or a panic inside a panic hook, each of which aborts after a first panic, and std runs the
+// panic hook at the start of every panic, so the hook `memory` installed set `PANICKED` first.
+// In case (2) the handler therefore returns; in case (1) `PANICKED` is still false, since in
+// `zedc run` and in an executable the hook in place before `memory` ends the process at the
+// first panic (`bug_report`, `stop_at_bug`), so no panic is caught and the run goes on to a
+// later allocation. Test: `a_panic_that_aborts_under_the_memory_limit_is_no_allocation_refused`
+// and `an_allocation_past_the_memory_limit_stops_the_run_with_status_3`.
+// Not proved: an abort of the C library itself, glibc's malloc on finding its heap corrupted
+// (malloc(3)), which only a memory-safety fault reaches; it would be named a refused
+// allocation.
 extern "C" fn on_abort(_: c_int, _: *mut libc::siginfo_t, _: *mut libc::c_void) {
+    if PANICKED.load(Ordering::Relaxed) {
+        return;
+    }
     let mut line = Line::new();
     let _ = line.write_str(
         "Memory limit of `main` passed: the system refused an allocation of the run, which may \
@@ -641,6 +666,35 @@ pub(crate) mod tests {
             ),
             "{err}"
         );
+    }
+
+    /// Row PROOF-rt-abort-is-allocation: a panic that reaches the end of an `extern "C"`
+    /// function aborts the process (Rust reference, "Panic"); under a memory limit that abort
+    /// is the panic's, reported by the panic's own message, and never named a refused
+    /// allocation.
+    #[test]
+    fn a_panic_that_aborts_under_the_memory_limit_is_no_allocation_refused() {
+        extern "C" fn fails() {
+            panic!("a broken check");
+        }
+        let Some(out) = in_child(
+            "limits::tests::a_panic_that_aborts_under_the_memory_limit_is_no_allocation_refused",
+            || {
+                let limits = MainLimits {
+                    memory: Some(64 << 20),
+                    ..MainLimits::default()
+                };
+                enforce(&limits).unwrap();
+                fails();
+                unreachable!("a panic left an `extern \"C\"` function");
+            },
+        ) else {
+            return;
+        };
+        let (code, err) = status(&out);
+        assert_eq!(code, None, "{err}");
+        assert!(err.contains("a broken check"), "{err}");
+        assert!(!err.contains("Memory limit"), "{err}");
     }
 
     #[test]
