@@ -177,6 +177,79 @@ fn a_whole_number_on_f64_has_its_neighbors_at_f64() {
     assert_eq!(pairs(text).len(), 4, "{text}");
 }
 
+/// Plan row TESTS-L25.8-neighbors: a literal passed to a parameter of a narrower type keeps
+/// only the neighbors that type holds, since a value outside a declared range is a program the
+/// checker rejects (MUTATION.md 3.7). `255` passed as a `u8` gives `254` and not `256`, by
+/// position and by name; `-10` passed as an `int[-10..=0]` gives `-9` (the constant `10`
+/// replaced by `9`) and not `-11`; the same literals at an `int` parameter keep both.
+#[test]
+fn a_literal_argument_keeps_the_neighbors_its_parameter_holds() {
+    let cases = [
+        (
+            "g(positional x: u8) = x",
+            "g(255)",
+            ("255", "254"),
+            ("255", "256"),
+        ),
+        ("g(x: u8) = x", "g(x: 255)", ("255", "254"), ("255", "256")),
+        ("g(positional x: u8) = x", "g(0)", ("0", "1"), ("0", "-1")),
+        (
+            "g(positional x: int[-10..=0]) = x",
+            "g(-10)",
+            ("10", "9"),
+            ("10", "11"),
+        ),
+    ];
+    for (g, call, kept, dropped) in cases {
+        let text = format!("{g}\nf(positional a: int) = a + {call} test {{ 0 -> 0 }}\n");
+        let found = pairs(&text);
+        let kept = (kept.0.to_string(), kept.1.to_string());
+        let dropped = (dropped.0.to_string(), dropped.1.to_string());
+        assert!(found.contains(&kept), "{text}: {found:?}");
+        assert!(!found.contains(&dropped), "{text}: {found:?}");
+    }
+    let text = "g(positional x: int) = x\nf(positional a: int) = a + g(255) test { 0 -> 255 }\n";
+    let found = pairs(text);
+    for to in ["254", "256"] {
+        let pair = ("255".to_string(), to.to_string());
+        assert!(found.contains(&pair), "{text}: {found:?}");
+    }
+}
+
+/// Plan row TESTS-L25.8-neighbors: the `==` to `!=` mutant, and the `!=` to `==` one, are
+/// detected by a table whose row the comparison decides.
+#[test]
+fn an_equality_mutant_is_detected() {
+    for op in ["==", "!="] {
+        let text = format!(
+            "f(positional a: int, b: int) = a {op} b test {{ (1, 1) -> {} }}\n",
+            op == "=="
+        );
+        assert_eq!(
+            report(&text),
+            ["1 mutants: 1 detected, 0 undetected, 0 skipped, 0 not run"],
+            "{text}"
+        );
+    }
+}
+
+/// Plan row TESTS-L25.8-neighbors: at `f64`, a literal at 2^53 has a neighbor above that
+/// rounds back to 2^53 (2^53 + 1 is no `f64`; ties to even give 2^53), written as a decimal
+/// and as an integer. That neighbor is the original program, so it is skipped, never reported
+/// as a mutant no table detects; the neighbor below, 2^53 - 1, is an `f64` and is detected.
+#[test]
+fn an_f64_literal_at_two_to_the_53_gives_no_mutant_equal_to_the_original() {
+    for lit in ["9007199254740992.0", "9007199254740992"] {
+        let text =
+            format!("f(positional x: f64) = x + {lit} test {{ 0.0 -> 9007199254740992.0 }}\n");
+        let lines = report(&text);
+        let counts = lines.last().expect("the counts");
+        assert!(counts.contains(" 0 undetected,"), "{text}: {lines:?}");
+        let skipped = (lines.iter()).filter(|l| l.contains("skipped:")).count();
+        assert_eq!(skipped, 1, "{text}: {lines:?}");
+    }
+}
+
 /// The column of an operator mutant is the operator's, after parentheses, line breaks and a
 /// `//` comment between it and its left operand; so is that of a mutant of the whole operation
 /// (H11, H6), whose operands keep the text the source gives them.

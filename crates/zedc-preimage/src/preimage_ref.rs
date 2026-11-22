@@ -136,7 +136,8 @@
 //! T(8n)/T(n), the
 //! larger of the instruction and byte ratios, over the 48 families of the scaling tests
 //! (`l01_25_preimage_catalog::ref_memo`, load about 37 on 32 cores): at most 10.6
-//! (`normal_abs_gap`, whose test has since left the tree for row REF-normal-abs-gap), 9.0 to
+//! (`normal_abs_gap` at 16 links, the log term of the path copies of the persistent inverse
+//! tree; timed at 1024 links its test measures 9.67, row REF-normal-abs-gap), 9.0 to
 //! 10.4 on six more (`normal_min_gap`, `normal_round_down`,
 //! `pathological_abs`, `normal_holey_guards`, `normal_mod_chain`, `normal_div_chain`), under 9 on
 //! the rest; `output_grid` (four values demanded, 4n pieces) 8.0 from 64 to 512 links, and with

@@ -2,8 +2,51 @@
 //! [`elaborate_marked`](super::elaborate_marked) finds them. Which nodes, and why, is the set
 //! of MUTATION.md (QUESTIONS A103).
 
+use std::sync::Arc;
+
 use zed_kernel::{Prim, Term, Value};
+use zedc_check::check::ty::Ty;
 use zedc_syntax::lex::Span;
+
+/// The parameter a numeric literal written as a call's argument fills (MUTATION.md 3.7, plan
+/// row TESTS-L25.8-neighbors): its type in each arrow of the callee's signature, and whether
+/// the argument is the literal under a written `-`. A neighbor of the literal that one of
+/// these types holding the original's value does not hold is a program the checker rejects
+/// (a `u8` parameter given `255`, whose neighbor `256` is no `u8`), so no mutant is made of it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Slot {
+    /// The parameter's type in each arrow, in the signature's order.
+    pub tys: Arc<[Ty]>,
+    /// Whether the argument is `-n` for the literal `n`.
+    pub neg: bool,
+}
+
+impl Slot {
+    /// Whether the neighbor `to` of the literal whose value is `was` fits the parameter: every
+    /// arrow whose parameter holds the argument's value holds the neighbor's. The arrow the
+    /// checker took for the original call holds the original's value, so the neighbor fits it
+    /// too, and whichever arrow that was, the call is still one the checker accepts at this
+    /// argument. Keeping a neighbor that some arrow holding the original does not hold would
+    /// make, where that arrow is the one taken, a mutant that does not compile; dropping it
+    /// where another arrow would take it loses one mutant, the cheaper error. O(arrows) tests
+    /// of a value against a type.
+    pub fn fits(&self, was: &Value, to: &Value) -> bool {
+        let signed = |v: &Value| match (self.neg, v) {
+            (false, _) => v.clone(),
+            (true, Value::Float(x)) => Value::float(-x.get()),
+            (true, Value::Float32(x)) => Value::float32(-x.get()),
+            (true, Value::Rat(r)) => Value::rat(r.neg()),
+            (true, _) => match v.as_integer() {
+                Some(n) => Value::integer(n.neg()),
+                None => v.clone(),
+            },
+        };
+        let (was, to) = (signed(was), signed(to));
+        (self.tys.iter())
+            .filter(|t| t.contains(&was))
+            .all(|t| t.contains(&to))
+    }
+}
 
 /// What kind of written node a mark is on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -25,7 +68,7 @@ pub enum Kind {
 
 /// A written node that a mutant may change (step L25.8), found by
 /// [`elaborate_marked`](super::elaborate_marked).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Mark {
     /// For an operator or `&&` and `||`, the text between its operands, which holds it; for a
     /// constant, the constant; for a unary operator or an `if`, the whole expression.
@@ -46,10 +89,12 @@ pub struct Mark {
     /// expression; the operands of `&&` and `||`; a unary operator's operand; an `if`'s
     /// condition, then branch and else branch. Unused entries are empty.
     pub parts: [Span; 3],
+    /// For a constant written as a call's argument, the parameter it fills ([`Slot`]).
+    pub slot: Option<Slot>,
 }
 
 impl Mark {
-    /// A mark of kind `kind` on `span`, its flags false and its parts empty.
+    /// A mark of kind `kind` on `span`, its flags false, its parts empty and no slot.
     pub fn on(span: Span, kind: Kind) -> Mark {
         let empty = Span { start: 0, end: 0 };
         Mark {
@@ -60,6 +105,7 @@ impl Mark {
             inner: false,
             literal: [false; 2],
             parts: [empty; 3],
+            slot: None,
         }
     }
 }

@@ -30,7 +30,7 @@ use zedc_syntax::ast::{
 use zedc_syntax::lex::{Span, unread_literal};
 
 use super::instances::{Dropped, Env, Local};
-use super::mark::{Kind, Mark, arithmetic, mark_of, mutable, op_mark};
+use super::mark::{Kind, Mark, Slot, arithmetic, mark_of, mutable, op_mark};
 use super::state::{Bind, Elab};
 use fp_ops::Quantifier;
 use zedc_check::check::ty::{Carrier, Sig};
@@ -1952,6 +1952,36 @@ impl<'a> Elab<'a> {
         self.fill(m, Box::new(ff));
     }
 
+    /// In a marked elaboration, where the argument `a` filling parameter `j` of `callee` is a
+    /// numeric literal under at most one `-`, the parameter's type in each arrow, for the mark
+    /// of the literal ([`Slot`], plan row TESTS-L25.8-neighbors). An ordinary elaboration
+    /// keeps nothing. O(arrows) clones of a type, each O(1) or its size, per such argument.
+    fn note_slot(&mut self, callee: &Callee<'a>, j: usize, a: &Expr) {
+        if self.marks.is_none() {
+            return;
+        }
+        let (inner, neg) = match &a.kind {
+            ExprKind::Unary(UnaryOp::Neg, x) => (&**x, true),
+            _ => (a, false),
+        };
+        if !numeric(inner) {
+            return;
+        }
+        let sig: &Sig = match *callee {
+            Callee::Value(_, sig) => sig,
+            Callee::Declared(id, _) => match self.info.sigs.get(&id) {
+                Some(sig) => &**sig,
+                None => return,
+            },
+        };
+        let tys: Option<Arc<[_]>> = (sig.arrows.iter())
+            .map(|arrow| arrow.params.get(j).cloned())
+            .collect();
+        if let Some(tys) = tys {
+            self.slots.insert(inner.span, Slot { tys, neg });
+        }
+    }
+
     /// The next argument of a call, or what follows once they are all elaborated.
     fn fill(&mut self, m: &mut M<'a>, mut ff: Box<FillF<'a>>) {
         let n = ff.callee.len();
@@ -1963,6 +1993,7 @@ impl<'a> Elab<'a> {
                 let who = ff.callee.who();
                 self.misfit(a.span, Misfit::Named(name), &who)
             } else {
+                self.note_slot(&ff.callee, ff.next, a);
                 ff.pending = ff.next;
                 ff.next += 1;
                 ff.pi += 1;
@@ -1992,6 +2023,7 @@ impl<'a> Elab<'a> {
                     self.misfit(a.span, Misfit::Supplied(name), &who)
                 }
                 Some(j) => {
+                    self.note_slot(&ff.callee, j, a);
                     ff.pending = j;
                     ff.ni += 1;
                     m.k(Frame::Fill(ff));

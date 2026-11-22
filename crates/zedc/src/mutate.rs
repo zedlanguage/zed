@@ -753,7 +753,13 @@ impl Site<'_> {
                         // each mutant replaces it in every arm by its neighbor there, and is
                         // named by the last node, the literal's own value, which the source
                         // writes.
-                        let to = literal_neighbors(t, v, drop)?;
+                        let mut to = literal_neighbors(t, v, drop)?;
+                        // A neighbor the parameter it is passed to does not hold is a program
+                        // the checker rejects (MUTATION.md 3.7: a value outside a range is a
+                        // compile error), so it is no mutant ([`mark::Slot::fits`]).
+                        if let Some(slot) = &mark.slot {
+                            to.retain(|c| !matches!(c, Change::Num(w, _) if !slot.fits(v, w)));
+                        }
                         if let Some((made, _)) = first.get(&k) {
                             let made = &mut out[made.clone()];
                             if made.iter().any(|x| !matches!(x.was, Change::Num(..))) {

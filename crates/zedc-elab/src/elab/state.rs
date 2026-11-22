@@ -58,6 +58,10 @@ pub(super) struct Elab<'a> {
     /// The marks of a marked elaboration ([`elaborate_marked`](super::elaborate_marked)), `None`
     /// for an ordinary one.
     pub(super) marks: Option<Vec<Mark>>,
+    /// In a marked elaboration, each numeric literal written as a call's argument, by the
+    /// literal's span under any `-`: the parameter it fills, which its mark takes
+    /// ([`Self::constant`], [`mark::Slot`]).
+    pub(super) slots: HashMap<Span, mark::Slot>,
     /// The spans of the checker's errors, by start, each with the greatest end among it and
     /// those before it ([`Self::in_checker_error`]); empty when the checker accepted the unit.
     pub(super) checker_spans: Vec<(usize, usize)>,
@@ -118,6 +122,7 @@ impl<'a> Elab<'a> {
             errors: Vec::new(),
             defaults: HashMap::new(),
             marks: None,
+            slots: HashMap::new(),
             checker_spans: Vec::new(),
             sited: HashSet::new(),
             outputs,
@@ -175,7 +180,10 @@ impl<'a> Elab<'a> {
         match &mut self.marks {
             Some(marks) if numeric => {
                 let m = Term::Lit(Value::Int(marks.len() as i64));
-                marks.push(Mark::on(e.span, mark::Kind::Const));
+                marks.push(Mark {
+                    slot: self.slots.get(&e.span).cloned(),
+                    ..Mark::on(e.span, mark::Kind::Const)
+                });
                 Term::Prim(Prim::Neg, vec![Term::Lit(v), m])
             }
             _ => Term::Lit(v),
