@@ -2,7 +2,7 @@
 //! is a type variable in scope in `t`, its bound is resolved outside it, and the function type
 //! that holds every use of `X` takes one carrier of the bound for it at each call.
 
-use super::{info, sig, type_errors};
+use super::{info, sig, sig_of, type_errors};
 use zed_tests::step_helpers::l01_10_lambdas_types_else_tuples::sx;
 use zed_tests::step_helpers::l01_13_formatter::fmt;
 use zed_tests::step_helpers::l01_16_elaboration::value;
@@ -621,6 +621,76 @@ pub(super) fn nested(n: usize) -> String {
         t.push_str(&format!(") -> T{i} for T{i} in f64"));
     }
     format!("h(g: {t}) = 0;\n")
+}
+
+/// The signature the checker gives `h` in `nested(n)`, built from its parts with no text: the
+/// benchmark `printing_a_deep_function_type_scales` builds its inputs so
+/// (FAIL-bench-deep-print-near-limit). Checking the text took 0.69 s at n = 25,600 and 5.7 s at
+/// 204,800 (native, load 2 to 5), against 0.11 s and 1.2 s for the print the benchmark
+/// times, so the set-up was most of the piece's time and pushed it past its limit under load.
+/// `h` and its innermost level `T0 -> T0 for T0 in int` are taken from the checker at n = 1;
+/// each level `i` above it is built as the checker denotes `(…) -> Ti for Ti in f64`
+/// (zedc-check `Denote::make` and `sig_of`): one positional parameter with no name, the
+/// variable its own and bounded by f64, and held by no parameter, since `Ti` stands only in its
+/// result. `held` is set so and not by `Sig::note_held`, whose walk of the parameters would
+/// cost the depth below each level, O(n²) in all.
+/// `building_nested_gives_what_checking_its_text_gives` holds the two to the checked types.
+pub(super) fn nested_built(n: usize) -> std::sync::Arc<zedc::check::ty::Sig> {
+    use std::sync::Arc;
+    use zedc::check::ty::{Carrier, SParam, Sig, Ty};
+    let mut h = Sig::unwrap_to_change(sig_of(&nested(1), "h"));
+    let mut g = h.arrows[0].params[0].clone();
+    for i in 1..n {
+        let v: Arc<str> = Arc::from(format!("T{i}"));
+        let param = SParam {
+            name: Arc::from(""),
+            positional: true,
+            default: None,
+            range: None,
+        };
+        let mut s = Sig::one(vec![param], vec![g], Ty::var(v.clone()));
+        s.bounds.insert(v.clone(), Carrier::F64.bit());
+        s.own.insert(v);
+        g = Ty::func(Arc::new(s));
+    }
+    h.arrows[0].params[0] = g;
+    Arc::new(h)
+}
+
+/// `nested_built` gives the signature checking `nested` gives `h`: equal, printed alike by
+/// `Debug`, which writes each part, and by `Display`, and equal in each field that equality of
+/// signatures does not compare, at the outer level and at each level of the parameter. The
+/// builder makes each level the same way whatever `n` is, so depths 1 to 40 stand for the
+/// benchmark's 25,600 and 204,800.
+#[test]
+fn building_nested_gives_what_checking_its_text_gives() {
+    for n in 1..=40 {
+        let read = sig_of(&nested(n), "h");
+        let built = nested_built(n);
+        assert_eq!(read, built, "n = {n}");
+        assert_eq!(format!("{read:?}"), format!("{built:?}"), "n = {n}");
+        assert_eq!(read.to_string(), built.to_string(), "n = {n}");
+        let (mut r, mut b) = (read.clone(), built.clone());
+        for depth in 0..=n {
+            assert_eq!(r.params, b.params, "n = {n}, depth {depth}");
+            assert_eq!(r.bounds, b.bounds, "n = {n}, depth {depth}");
+            assert_eq!(r.own, b.own, "n = {n}, depth {depth}");
+            assert_eq!(r.held, b.held, "n = {n}, depth {depth}");
+            assert_eq!(r.named, b.named, "n = {n}, depth {depth}");
+            assert_eq!(r.needs.len(), b.needs.len(), "n = {n}, depth {depth}");
+            assert_eq!(r.word, b.word, "n = {n}, depth {depth}");
+            assert_eq!(r.hull, b.hull, "n = {n}, depth {depth}");
+            assert_eq!(r.keys, b.keys, "n = {n}, depth {depth}");
+            assert_eq!(r.dense, b.dense, "n = {n}, depth {depth}");
+            assert_eq!(r.data, b.data, "n = {n}, depth {depth}");
+            if depth == n {
+                break;
+            }
+            let inner =
+                |s: &std::sync::Arc<zedc::check::ty::Sig>| s.arrows[0].params[0].fns[0].clone();
+            (r, b) = (inner(&r), inner(&b));
+        }
+    }
 }
 
 /// A function that passes its argument, of `n` parameters each of its own variable bounded by

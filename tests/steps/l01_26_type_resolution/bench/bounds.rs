@@ -7,9 +7,9 @@ use zedc::resolve::resolve;
 
 use super::super::bounds::{
     bounded_chain, bounded_in_a_payload, bounded_or_free_built, distinct_bounds_chain,
-    free_beside_a_carrier, free_in_one_tuple, many_bounds, nested, nested_lambdas, passed,
-    passed_deep, passed_through_fns, passed_through_fns_in_tuples, shared_bounded_chain, wide,
-    wide_lambda,
+    free_beside_a_carrier, free_in_one_tuple, many_bounds, nested, nested_built, nested_lambdas,
+    passed, passed_deep, passed_through_fns, passed_through_fns_in_tuples, shared_bounded_chain,
+    wide, wide_lambda,
 };
 use super::super::info;
 
@@ -151,24 +151,60 @@ fn nested_bounds_clauses_scale() {
     check_scales("n nested bounds clauses", 12_800, nested);
 }
 
+/// Temporary probe (FAIL-bench-deep-print-near-limit): the wall time of the set-up of the test
+/// below, split into its parts, and of one print, at each size of `ZED_PROBE_N`.
+#[test]
+fn probe_deep_print() {
+    let sizes: Vec<usize> = std::env::var("ZED_PROBE_N")
+        .unwrap_or_else(|_| "25600,204800".into())
+        .split(',')
+        .map(|s| s.parse().expect("a size"))
+        .collect();
+    for n in sizes {
+        let t = std::time::Instant::now();
+        let text = nested(n);
+        let text_ms = t.elapsed().as_millis();
+        let t = std::time::Instant::now();
+        let (info, names) = info(&text);
+        let info_ms = t.elapsed().as_millis();
+        let t = std::time::Instant::now();
+        let (_, s) = info
+            .sigs
+            .iter()
+            .find(|(id, _)| names[**id] == "h")
+            .expect("h");
+        let s = s.clone();
+        let find_ms = t.elapsed().as_millis();
+        let t = std::time::Instant::now();
+        let len = s.to_string().len();
+        let print_ms = t.elapsed().as_millis();
+        let t = std::time::Instant::now();
+        drop((info, names, s));
+        let drop_ms = t.elapsed().as_millis();
+        let t = std::time::Instant::now();
+        let b = nested_built(n);
+        let built_ms = t.elapsed().as_millis();
+        let t = std::time::Instant::now();
+        let built_len = b.to_string().len();
+        let built_print_ms = t.elapsed().as_millis();
+        let t = std::time::Instant::now();
+        drop(b);
+        eprintln!(
+            "probe deep_print n={n} text_ms={text_ms} info_ms={info_ms} find_ms={find_ms} \
+             print_ms={print_ms} len={len} drop_ms={drop_ms} built_ms={built_ms} \
+             built_print_ms={built_print_ms} built_len={built_len} built_drop_ms={}",
+            t.elapsed().as_millis()
+        );
+    }
+}
+
 #[test]
 fn printing_a_deep_function_type_scales() {
     // Each function type is written in place: building each part as a string and copying it
     // into the whole cost O(n^2) for n nested function types.
-    // On the test thread's stack: `Denote::ty` (zedc-check) recursed on the nesting of a
-    // written type and overflowed 2 MiB here; it keeps its own stack (TY-write-stack).
-    let inputs: std::collections::HashMap<usize, _> = [25_600, 204_800]
-        .into_iter()
-        .map(|n| {
-            let (info, names) = info(&nested(n));
-            let (_, s) = info
-                .sigs
-                .iter()
-                .find(|(id, _)| names[**id] == "h")
-                .expect("h");
-            (n, s.clone())
-        })
-        .collect();
+    // The signatures are built from their parts (`nested_built`): checking the two texts took
+    // most of the piece's time (FAIL-bench-deep-print-near-limit).
+    let inputs = zed_tests::scaling::inputs(25_600, nested_built);
     assert!(inputs[&25_600].to_string().ends_with(" -> 0"));
     zed_tests::scaling::check("printing n nested function types", 25_600, |n| {
         assert!(!inputs[&n].to_string().is_empty());
