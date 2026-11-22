@@ -8,6 +8,10 @@ publish.workspace = true
 
 [dependencies]
 libc = "0.2.191"
+# The switch that makes each test give back the free memory of the C library as it ends, turned
+# on as the process starts (`imp::start`); every binary that links this crate links zed-alloc-count
+# already.
+zed-alloc-count.workspace = true
 
 # The workspace forbids `unsafe`; a function in `.init_array` and the call of `execve` that starts
 # the process again are unsafe, and are the only unsafe code here.

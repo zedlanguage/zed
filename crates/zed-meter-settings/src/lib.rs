@@ -317,6 +317,10 @@ mod imp {
     }
 
     extern "C" fn start(_argc: c_int, argv: *const *const c_char, envp: *const *const c_char) {
+        // Each test gives back the free memory of the C library as it ends, in this binary as in
+        // every test binary (TEST-l01-26-peak-memory; why and what it costs:
+        // zed_alloc_count::give_back_as_each_test_ends). It stores one flag and allocates nothing.
+        zed_alloc_count::give_back_as_each_test_ends();
         // The check of the argument at `START`.
         let threads = std::fs::read_dir("/proc/self/task").map_or(0, |d| d.count());
         THREADS_AT_START.store(threads, Relaxed);
@@ -485,6 +489,14 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The start hook turns on the trim at the end of each test (TEST-l01-26-peak-memory):
+    /// `zed_alloc_count::give_back_as_each_test_ends` has been called before any test runs.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[test]
+    fn each_test_gives_back_its_free_memory_as_it_ends() {
+        assert!(zed_alloc_count::gives_back());
+    }
 
     #[test]
     fn the_settings_are_held_only_when_each_is_the_last_of_its_name() {

@@ -647,3 +647,86 @@ fn threads_started_in_a_metered_run_have_heaps_of_their_own_and_threads_outside_
     let mut outside = std::thread::spawn(|| vec![0u8; 100]).join().unwrap();
     assert!(!ours(outside.as_mut_ptr()));
 }
+
+/// The variable that gives a process of this test binary its part in
+/// [`a_test_gives_back_what_it_freed_when_it_ends`].
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+const TRIM_ROLE: &str = "ZED_ALLOC_COUNT_TRIM_ROLE";
+
+/// The resident memory of this process, in kB, as the kernel reports it (`VmRSS` of
+/// `/proc/self/status`, proc_pid_status(5)).
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn resident_kb() -> u64 {
+    let status = std::fs::read_to_string("/proc/self/status").expect("/proc/self/status");
+    let line = (status.lines())
+        .find_map(|l| l.strip_prefix("VmRSS:"))
+        .expect("a VmRSS line");
+    let kb = line.trim().strip_suffix("kB").expect("VmRSS in kB");
+    kb.trim().parse().expect("VmRSS a number")
+}
+
+/// What a test freed is given back to the kernel when its thread ends, so a later test in the
+/// same process does not run on top of it (TEST-l01-26-peak-memory; `start` in the crate calls
+/// `malloc_trim` as each thread the main thread started ends). The test starts this binary with
+/// one test thread and two tests that run in turn, by name. The first, on its own thread,
+/// allocates 4096 blocks of 64 KiB, under glibc's mmap threshold of 128 KiB, so they come from
+/// a heap of an arena, with a 16-byte block kept between each two, and frees the large ones:
+/// each freed block lies between kept ones, so `free` cannot give it back from the heap's top,
+/// and 256 MiB stays resident. The second reads the process's resident memory, which must be
+/// under 128 MiB. Without the trim it read 265,968 kB on 2026-11-22; with it, the kept
+/// blocks and the binary.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn a_test_gives_back_what_it_freed_when_it_ends() {
+    let exe = std::env::current_exe().expect("this test binary");
+    let out = std::process::Command::new(exe)
+        .args(["--exact", "--test-threads=1", "--nocapture"])
+        .args(["trim_part_1_frees", "trim_part_2_reads"])
+        .env(TRIM_ROLE, "1")
+        .output()
+        .expect("this test binary starts");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{text}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("2 passed"), "{text}");
+}
+
+/// The first part of [`a_test_gives_back_what_it_freed_when_it_ends`]; does nothing in a run of
+/// its own.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn trim_part_1_frees() {
+    if std::env::var_os(TRIM_ROLE).is_none() {
+        return;
+    }
+    // This binary links no zed_meter_settings, which turns it on in the other test binaries.
+    zed_alloc_count::give_back_as_each_test_ends();
+    static KEPT: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
+    let mut kept = KEPT.lock().unwrap();
+    let large: Vec<Vec<u8>> = (0..4096)
+        .map(|i| {
+            let block = vec![1u8; 64 << 10];
+            kept.push(vec![i as u8; 16]);
+            block
+        })
+        .collect();
+    black_box(&large);
+    drop(large);
+    println!("resident after the frees: {} kB", resident_kb());
+}
+
+/// The second part of [`a_test_gives_back_what_it_freed_when_it_ends`]; does nothing in a run of
+/// its own.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn trim_part_2_reads() {
+    if std::env::var_os(TRIM_ROLE).is_none() {
+        return;
+    }
+    let kb = resident_kb();
+    println!("resident in the next test: {kb} kB");
+    assert!(kb < 128 << 10, "{kb} kB still resident");
+}

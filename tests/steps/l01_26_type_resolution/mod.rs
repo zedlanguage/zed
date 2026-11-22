@@ -57,3 +57,16 @@ mod tuple_keys;
 pub(crate) use zed_tests::step_helpers::l01_26_type_resolution::{
     Resolved, info, menu, sig, sig_of, tried, type_errors,
 };
+
+/// Each test of this binary gives the C library's free memory back to the kernel as it ends
+/// (TEST-l01-26-peak-memory): `zed_meter_settings`, linked into every test binary, turns it on as
+/// the process starts. Without it, a run of the whole binary on one thread
+/// (`--test-threads=1`) held 40,348,564 kB at its peak (Colab, 2026-11-22), each test adding the
+/// free pages it left in glibc's arenas to the next one's peak, where no test alone reaches
+/// 3.0 GB; the mechanism's own test is `a_test_gives_back_what_it_freed_when_it_ends` in
+/// crates/zed-alloc-count/tests/zed_alloc_count.rs.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn each_test_gives_back_its_free_memory_as_it_ends() {
+    assert!(zed_alloc_count::gives_back());
+}

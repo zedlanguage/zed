@@ -511,6 +511,9 @@ extern "C" fn start(start_arg: *mut c_void) -> *mut c_void {
         parent,
         metered: in_run,
     } = *unsafe { Box::from_raw(start_arg.cast::<Start>()) };
+    // A thread with no parent count was started by the main thread: in a test binary, libtest's
+    // thread for one test, which libtest starts from the main thread and names after the test.
+    let started_by_main = parent.is_none();
     let run = || {
         let count = Arc::new(Count {
             bytes: AtomicU64::new(0),
@@ -522,5 +525,84 @@ extern "C" fn start(start_arg: *mut c_void) -> *mut c_void {
         drop(count);
         out
     };
-    if in_run { metered(run) } else { run() }
+    let out = if in_run { metered(run) } else { run() };
+    if started_by_main && GIVE_BACK.load(Relaxed) {
+        release_free_memory();
+    }
+    out
+}
+
+/// Whether [`give_back_as_each_test_ends`] has been called.
+#[cfg(target_os = "linux")]
+static GIVE_BACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Makes each thread the main thread starts give the C library's free memory back to the kernel
+/// as it ends ([`release_free_memory`]), for the rest of the process. Test binaries turn it on:
+/// `zed_meter_settings` calls it as the process starts, in every binary that links it, which
+/// are the test binaries only. Other binaries that link this crate, the `zedc` executable of
+/// zed-native, keep glibc's own behavior, so a program whose main thread starts many short
+/// threads pays no trim for each. On other systems it does nothing.
+pub fn give_back_as_each_test_ends() {
+    #[cfg(target_os = "linux")]
+    GIVE_BACK.store(true, Relaxed);
+}
+
+/// Whether [`give_back_as_each_test_ends`] has been called in this process: true in every test
+/// binary that links `zed_meter_settings` on Linux, false elsewhere. Read by the tests that check
+/// each test binary gives its free memory back (TEST-l01-26-peak-memory).
+pub fn gives_back() -> bool {
+    #[cfg(target_os = "linux")]
+    return GIVE_BACK.load(Relaxed);
+    #[cfg(not(target_os = "linux"))]
+    false
+}
+
+#[cfg(target_os = "linux")]
+/// Gives the kernel back the free memory the C library's allocator holds in every arena; called,
+/// once [`give_back_as_each_test_ends`] has been, as each thread the main thread started ends,
+/// which in a test binary is the end of each test, once the test's own threads have been joined
+/// and its values dropped (TEST-l01-26-peak-memory).
+///
+/// Why: glibc's malloc gives threads that allocate at once arenas of their own, and returns memory
+/// to the kernel only from the top of an arena's heap past its trim threshold. A test that builds
+/// its inputs on several threads at once and drops them leaves the free pages in several arenas,
+/// and the next test's threads, taking arenas in another order or asking for blocks the freed ones
+/// do not fit, add their own peak to what is held. Measured on l01_26_type_resolution at
+/// 1ce03f689 (`--test-threads=1`, `/usr/bin/time -v`, maximum resident set):
+/// `bench::deep_ops::meets_takes_linear_time_in_the_depth` alone 2,468,244 kB,
+/// `bench::deep_ops::fits_sig_takes_linear_time_in_the_depth` alone 2,489,244 kB, the two in that
+/// order in one process 4,169,604 kB, and the pair with `glibc.malloc.arena_max=1` 2,493,328 kB.
+/// The whole binary passed its 942 tests at 40,348,564 kB in one process with one test thread,
+/// and with 8 test threads was killed by the out-of-memory killer at 51.5 GB, while no test alone
+/// reaches 3,000,000 kB. A trim at the start of each scaling check was tried first and changed
+/// nothing (4,169,016 kB): the next test builds its inputs before its first check.
+///
+/// What the C library promises (malloc_trim(3), Linux man-pages 6.x, read 2026-11-22): "Since
+/// glibc 2.8 this function frees memory in all arenas and in all chunks with whole free pages";
+/// it does so by `madvise(MADV_DONTNEED)` on free pages inside a heap as well as by shrinking each
+/// heap's top. Its argument, 0 here, is the free space left at the top of the main heap; its
+/// return value only says whether any memory was released, so it is not read.
+///
+/// Why this and not a glibc setting: `glibc.malloc.arena_max=1` also holds the pair at its larger
+/// test's peak, but puts every allocation of the tests that run at once behind one lock; a fixed
+/// `glibc.malloc.mmap_threshold` or `glibc.malloc.trim_threshold` (either one turns off glibc's
+/// moving mmap threshold) made a 64,000-deep l01_26 test 6 times slower (see
+/// `zed_meter_settings::GLIBC_TUNABLES`).
+///
+/// Cost: one walk of the free chunks of every arena and a system call per run of free pages, once
+/// per test; never inside a measured run, since a thread the main thread starts is not in one (a
+/// run starts on a test's thread or below it). Thread safety: glibc's `malloc_trim` takes each
+/// arena's lock while it trims it, as `malloc` and `free` do, so other tests may allocate
+/// meanwhile. Blocks of the metered heap (module `meter`) are not the C library's and are not
+/// touched; a metered heap unmaps its own spans when its run ends.
+///
+/// Test: `a_test_gives_back_what_it_freed_when_it_ends` in tests/zed_alloc_count.rs.
+fn release_free_memory() {
+    #[cfg(target_env = "gnu")]
+    #[expect(unsafe_code, reason = "calling the C library's malloc_trim")]
+    // SAFETY: `malloc_trim` takes a size and frees only pages of free chunks of the C library's
+    // own arenas, each under its arena's lock; it reads or writes no memory the caller owns.
+    unsafe {
+        libc::malloc_trim(0);
+    }
 }
