@@ -22228,7 +22228,8 @@ fn projections_met(a: Result<Each, Refusal>, b: Result<Each, Refusal>) -> Result
 // costs one more look at its conjunct's top-level parts and at the one-atom constraints of
 // its remainder, read once into a map: O(N) in all. The naive way compares the definitions of
 // each pair of atoms: O(A²) comparisons for A defined atoms, each as long as a conjunct. Here
-// each step is linear or near it, in the size N of the formula's distinct parts: one walk of the formula with a visited set
+// each step is linear or near it, in the size N of the formula's distinct parts: one walk of
+// the formula with a visited set
 // ([`functional`], whose unions merge the smaller set into the larger, O(N log N)); the atoms
 // of each conjunct that defines one atom, listed once, since a conjunct that defines two or
 // more waits for none; the strongly connected components, O(N); and one numbered, sorted and
