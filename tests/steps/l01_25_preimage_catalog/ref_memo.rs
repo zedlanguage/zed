@@ -927,7 +927,8 @@ const UNTIMED_FAMILIES: [&str; 0] = [];
 /// [`UNTIMED_FAMILIES`]: the reference preimage holds every
 /// point of `[-12, 12]` on each input (within its domain) that meets the demand, and, where
 /// it is marked exact, every point of it there meets the demand, by the interpreter. The
-/// benchmarks time these families at 2 to 1280 links (`normal_abs_gap` at 1024) and check only their work.
+/// benchmarks time these families at 2 to 1280 links (`normal_abs_gap` at 1024) and check only
+/// their work.
 #[test]
 fn every_family_the_benchmarks_time_is_answered_soundly_at_small_sizes() {
     for name in FAMILIES
