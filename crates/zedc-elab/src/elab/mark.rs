@@ -5,16 +5,21 @@
 use std::sync::Arc;
 
 use zed_kernel::{Prim, Term, Value};
-use zedc_check::check::ty::Ty;
+use zedc_check::check::ty::{Ty, WrittenRange};
 use zedc_syntax::lex::Span;
 
 /// The parameter a numeric literal written as a call's argument fills (MUTATION.md 3.7, plan
-/// row TESTS-L25.8-neighbors): its type in each arrow of the callee's signature, and whether
-/// the argument is the literal under a written `-`. A neighbor of the literal that one of
-/// these types holding the original's value does not hold is a program the checker rejects
-/// (a `u8` parameter given `255`, whose neighbor `256` is no `u8`), so no mutant is made of it.
+/// row TESTS-L25.8-neighbors): the range it is declared with, its type in each arrow of the
+/// callee's signature, and whether the argument is the literal under a written `-`. A
+/// neighbor of the literal that the range, or one of these types holding the original's
+/// value, does not hold is a program the checker rejects (a `u8` parameter given `255`, whose
+/// neighbor `256` is no `u8`), so no mutant is made of it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Slot {
+    /// The range the parameter is declared with, as `x: u8` or `x: int[-10..=0]`
+    /// ([`SParam::range`](zedc_check::check::ty::SParam::range)). Its arrow types are then `int`, which holds every neighbor, so the
+    /// range is what decides.
+    pub range: Option<WrittenRange>,
     /// The parameter's type in each arrow, in the signature's order.
     pub tys: Arc<[Ty]>,
     /// Whether the argument is `-n` for the literal `n`.
@@ -22,14 +27,16 @@ pub struct Slot {
 }
 
 impl Slot {
-    /// Whether the neighbor `to` of the literal whose value is `was` fits the parameter: every
-    /// arrow whose parameter holds the argument's value holds the neighbor's. The arrow the
-    /// checker took for the original call holds the original's value, so the neighbor fits it
-    /// too, and whichever arrow that was, the call is still one the checker accepts at this
-    /// argument. Keeping a neighbor that some arrow holding the original does not hold would
-    /// make, where that arrow is the one taken, a mutant that does not compile; dropping it
-    /// where another arrow would take it loses one mutant, the cheaper error. O(arrows) tests
-    /// of a value against a type.
+    /// Whether the neighbor `to` of the literal whose value is `was` fits the parameter: the
+    /// declared range holds it, and every arrow whose parameter holds the argument's value
+    /// holds the neighbor's. The checker tests each call against the range (an `InDomain` need
+    /// of the signature), so a neighbor outside it is rejected whichever arrow is taken. The
+    /// arrow the checker took for the original call holds the original's value, so the
+    /// neighbor fits it too, and whichever arrow that was, the call is still one the checker
+    /// accepts at this argument. Keeping a neighbor that some arrow holding the original does
+    /// not hold would make, where that arrow is the one taken, a mutant that does not compile;
+    /// dropping it where another arrow would take it loses one mutant, the cheaper error.
+    /// O(arrows) tests of a value against a type, and two comparisons with the range's ends.
     pub fn fits(&self, was: &Value, to: &Value) -> bool {
         let signed = |v: &Value| match (self.neg, v) {
             (false, _) => v.clone(),
@@ -42,9 +49,10 @@ impl Slot {
             },
         };
         let (was, to) = (signed(was), signed(to));
-        (self.tys.iter())
-            .filter(|t| t.contains(&was))
-            .all(|t| t.contains(&to))
+        (self.range.as_ref()).is_none_or(|r| r.holds(&to))
+            && (self.tys.iter())
+                .filter(|t| t.contains(&was))
+                .all(|t| t.contains(&to))
     }
 }
 

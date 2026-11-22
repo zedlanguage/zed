@@ -18,7 +18,7 @@
 # a benchmark of each binary by the name the table lists; `fresh`, the
 # listings with --only afresh; `short`, the short-addresses pieces and their clone; `copy`, a
 # piece that starts its binary again after the build is gone; `concurrent`, two runs at once on
-# one log directory; `trace`; and `nobus`, two pieces run with no user bus (FARM-run-tests-systemd-run).
+# one log directory; `trace`; and `nobus`, three pieces run with no user bus (FARM-run-tests-systemd-run).
 # select, table, except and benches are run after list, with no build of the tests between them. With no part named
 # it runs list, select, table, except, benches, fresh, short, copy and concurrent one after another.
 # Each part has a log directory of its own, under which every run of run_tests.sh writes a
@@ -606,21 +606,24 @@ check "latest is one of them" "yes" \
 check "no lock file is left" "" "$(find "$logs" -maxdepth 1 -name '*.lock')"
 fi
 # With no user bus, as on a Colab VM, `systemd-run --user` fails ("Failed to connect to bus"), and
-# each piece runs with a data limit of 112 GiB instead of in zedtests.slice
-# (FARM-run-tests-systemd-run). Taking away both ways to reach the bus, DBUS_SESSION_BUS_ADDRESS
-# and XDG_RUNTIME_DIR, gives that error here too. A plain piece and a metered one pass: the
-# metered test reserves 2^46 bytes of address space (zed-alloc-count), which an address-space
-# limit of 112 GiB would refuse and the data limit does not. Before the fallback both failed.
+# each piece runs with a data limit instead of in zedtests.slice (FARM-run-tests-systemd-run).
+# Taking away both ways to reach the bus, DBUS_SESSION_BUS_ADDRESS and XDG_RUNTIME_DIR, gives that
+# error here too. Three pieces pass: a plain one; a metered one, whose allocator reserves 2^46
+# bytes of address space (zed-alloc-count), which an address-space limit would refuse; and one
+# that runs on a native stack, which reserves a writable mapping as large as memory and swap
+# together (zed-rt `Stack::new`), which the data limit counts. Before the fallback all three
+# failed ("Failed to connect to bus").
 if want nobus; then
 logs=build/test-run-tests-nobus
-for only in '^l01_06_lexer_tokens$' '^zed_tests::scaling_tests::bytes_of_the_order_given_pass$'; do
+for only in '^l01_06_lexer_tokens$' '^zed_tests::scaling_tests::bytes_of_the_order_given_pass$' \
+  '^zed_rt::stack::tests::a_run_is_on_its_own_stack_and_gives_its_result$'; do
   env -u DBUS_SESSION_BUS_ADDRESS -u XDG_RUNTIME_DIR tools/run_tests.sh --logs "$logs" \
     --only "$only" >"$logs.out" 2>&1
   rc=$?
   check "with no user bus the pieces of $only pass" "0" "$rc"
   [ "$rc" = 0 ] || command grep -a -v '@' "$logs.out"
   check "the run says each piece has a data limit" "1" \
-    "$(command grep -a -c '^no user bus: each piece runs with a data limit of 112 GiB' "$logs.out")"
+    "$(command grep -a -c '^no user bus: each piece runs with a data limit of [0-9]* KiB' "$logs.out")"
   check "the run ran one piece" "1" "$(wc -l <"$(last_run)/pieces")"
 done
 fi

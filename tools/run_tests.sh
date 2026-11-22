@@ -1493,31 +1493,39 @@ if [ -n "$trace" ]; then
 fi
 export root out cores run_kind cov trace spec_dir spec_real
 # Every piece, and every link made before the timed pieces, runs under `capped`: in the systemd
-# slice zedtests.slice (above) when a user bus answers, and otherwise with its data limit at
-# 112 GiB, the slice's MemoryMax (FARM-run-tests-systemd-run). A Colab VM has no user bus, and
-# `systemd-run --user` there fails with "Failed to connect to bus", so every piece failed
-# (found by b22-presburger4, who put a stand-in systemd-run on PATH).
+# slice zedtests.slice (above) when a user bus answers, and otherwise with a data limit
+# (RLIMIT_DATA, `ulimit -d`) of 112 GiB, the slice's MemoryMax, plus the machine's memory and
+# swap (FARM-run-tests-systemd-run). A Colab VM, a docker container, has no user bus, and
+# `systemd-run --user` there fails with "Failed to connect to bus", so every piece failed (found
+# by b22-presburger4). tools/farm_run.sh puts a stand-in systemd-run first on PATH on a VM, which
+# runs the piece with no limit; the probe below finds that stand-in, so there it is used instead.
+# Why memory and swap are added: a native run reserves a stack as large as memory and swap
+# together, writable (crates/zed-rt/src/stack.rs, `Stack::new` with no limit of `main`), which
+# the data limit counts in full though it is not written; 112 GiB alone refused it on a machine
+# with more than that (this one has 192 GiB). So each piece may write 112 GiB beyond that stack.
+# Why the data limit and not the address-space limit (`ulimit -v`, `prlimit --as`):
+# zed-alloc-count reserves 2^46 bytes of address space with no access before it meters
+# (`RESERVED`, crates/zed-alloc-count/src/meter.rs), and zed-native 64 GiB (`FarApart`), which
+# the address-space limit counts and so would refuse; the data limit counts only private
+# writable mappings (Linux 4.7 and later), which those are not until they are used.
 # Tradeoff: the slice caps the memory of every piece of every checkout together; the fallback
-# caps each piece alone, so pieces side by side may together use more than 112 GiB. That cannot
-# happen on a machine with less memory than that (every Colab shape), where the kernel's
-# out-of-memory killer ends a piece first, as it would under the slice. Why RLIMIT_DATA
-# (`ulimit -d`) and not the address-space limit (`ulimit -v`, `prlimit --as`): zed-alloc-count
-# reserves 2^46 bytes of address space before it meters (`RESERVED`, crates/zed-alloc-count/
-# src/meter.rs), a mapping with no access, which the address-space limit counts and so would
-# refuse in every metered test; the data limit counts only private writable mappings (Linux 4.7
-# and later), the memory a piece writes. A cgroup of the run's own would cap pieces together as
-# the slice does, but needs a writable /sys/fs/cgroup, which a run as an ordinary user lacks
-# (untried as root on a VM). tools/test_run_tests.sh nobus runs a plain and a metered piece with
-# no user bus.
-user_bus=
-systemd-run --user --scope --quiet true 2>/dev/null && user_bus=1
-[ -n "$user_bus" ] ||
-  echo "no user bus: each piece runs with a data limit of 112 GiB (ulimit -d), not in zedtests.slice"
+# caps each piece alone, so pieces side by side may together use more than the machine has, and
+# then the kernel's out-of-memory killer ends one, as it does on a VM alone. A cgroup of the run's
+# own would cap them together as the slice does, but needs a writable /sys/fs/cgroup, which a
+# docker container and an ordinary user lack. tools/test_run_tests.sh nobus runs a plain and a
+# metered piece with no user bus.
+user_bus= data_kib=
+if systemd-run --user --scope --quiet true 2>/dev/null; then
+  user_bus=1
+else
+  data_kib=$(awk '/^(MemTotal|SwapTotal):/ { s += $2 } END { print s + 112 * 1024 * 1024 }' /proc/meminfo)
+  echo "no user bus: each piece runs with a data limit of $data_kib KiB (112 GiB, memory and swap), not in zedtests.slice" >&2
+fi
 capped() {
   [ -z "$user_bus" ] || exec systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice "$@"
-  ulimit -d $((112 << 20)) && exec "$@"
+  ulimit -d "$data_kib" && exec "$@"
 }
-export user_bus
+export user_bus data_kib
 export -f capped
 # Prints the paths the strace output $1 (strace -f -y -e trace=%file,getdents64) names under the
 # checkout, relative to it, and under the spec checkout ($spec_dir above), as spec:<path>

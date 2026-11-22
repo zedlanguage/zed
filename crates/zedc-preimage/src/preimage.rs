@@ -19629,8 +19629,10 @@ mod tests {
         }
 
         /// `f(f, n) = if n <= 0 { 2 < 2 } else { let s = f(f, n - 1) || -1 + y == 2 * y in (s
-        /// || n < n) || ((u) -> s || s)(-2) }` with `f(f, -3)`: the `||` within the lambda of
-        /// `u` reads `s` only from the memo, and stops where `s` stopped.
+        /// || n < n) || ((u) -> s || s)(-2) }` with `f(f, 3)`: the `||` within the lambda of
+        /// `u` reads `s` only from the memo, and stops where `s` stopped. The argument is
+        /// positive so that the `else` arm, which holds the hit and the stop, is live: an arm
+        /// whose guard no input meets is not read (DESIGN L1.25, DOC-preimage-dead-arm-stops).
         #[test]
         fn a_hit_passes_its_cut_to_the_reader() {
             let (made, reads, checked, shown) = run(&hit_with_cut());
@@ -19657,7 +19659,7 @@ mod tests {
                 s,
                 prim(Or, prim(Or, v("s"), prim(Lt, v("n"), v("n"))), inner),
             );
-            rec(prim(Lt, int(2), int(2)), step, int(-3))
+            rec(prim(Lt, int(2), int(2)), step, int(3))
         }
 
         /// `x mod m == r`.

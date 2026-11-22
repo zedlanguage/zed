@@ -1953,9 +1953,11 @@ impl<'a> Elab<'a> {
     }
 
     /// In a marked elaboration, where the argument `a` filling parameter `j` of `callee` is a
-    /// numeric literal under at most one `-`, the parameter's type in each arrow, for the mark
-    /// of the literal ([`Slot`], plan row TESTS-L25.8-neighbors). An ordinary elaboration
-    /// keeps nothing. O(arrows) clones of a type, each O(1) or its size, per such argument.
+    /// numeric literal under at most one `-`, the range the parameter is declared with and its
+    /// type in each arrow, for the mark of the literal ([`Slot`], plan row
+    /// TESTS-L25.8-neighbors). `j` indexes the declared parameters, which the signature's
+    /// parameters follow in order. An ordinary elaboration keeps nothing. O(arrows) clones of
+    /// a type, each O(1) or its size, per such argument.
     fn note_slot(&mut self, callee: &Callee<'a>, j: usize, a: &Expr) {
         if self.marks.is_none() {
             return;
@@ -1974,11 +1976,15 @@ impl<'a> Elab<'a> {
                 None => return,
             },
         };
+        let Some(param) = sig.params.get(j) else {
+            return;
+        };
+        let range = (param.range.as_ref()).and_then(|r| r.int()).cloned();
         let tys: Option<Arc<[_]>> = (sig.arrows.iter())
             .map(|arrow| arrow.params.get(j).cloned())
             .collect();
         if let Some(tys) = tys {
-            self.slots.insert(inner.span, Slot { tys, neg });
+            self.slots.insert(inner.span, Slot { range, tys, neg });
         }
     }
 
