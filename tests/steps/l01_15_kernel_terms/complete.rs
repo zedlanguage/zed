@@ -12,8 +12,9 @@ use super::deep::every_variant;
 
 /// Each primitive applied to `a`, `b`, ... at its arity (two for one of any arity), as the
 /// printer writes it: an operator between its operands in parentheses, `-` and `!` before
-/// one, an entry or component as an index, an atom with no literal name as `#_(..)`, and
-/// every other primitive as its prelude word called.
+/// one, an entry or component as an index, `.count`, `.first` and `.last` after their
+/// receiver, an atom with no literal name as `#_(..)`, and every other primitive as its
+/// prelude word called.
 const WRITTEN: [(Prim, &str); 89] = [
     (Prim::Add, "(a + b)"),
     (Prim::Sub, "(a - b)"),
@@ -34,7 +35,7 @@ const WRITTEN: [(Prim, &str); 89] = [
     (Prim::Min, "min(a, b)"),
     (Prim::Max, "max(a, b)"),
     (Prim::Get, "a[b]"),
-    (Prim::Count, "count(a)"),
+    (Prim::Count, "a.count"),
     (Prim::Union, "union(a, b)"),
     (Prim::Path, "path(a, b)"),
     (Prim::PathKey, "pathKey(a, b)"),
@@ -88,8 +89,8 @@ const WRITTEN: [(Prim, &str); 89] = [
     (Prim::LastEntry, "lastEntry(a)"),
     (Prim::EntryAfter, "entryAfter(a, b)"),
     (Prim::EntryBefore, "entryBefore(a, b)"),
-    (Prim::First, "first(a)"),
-    (Prim::Last, "last(a)"),
+    (Prim::First, "a.first"),
+    (Prim::Last, "a.last"),
     (Prim::Split, "split(a, b)"),
     (Prim::Lines, "lines(a)"),
     (Prim::Join, "concat(a, b)"),

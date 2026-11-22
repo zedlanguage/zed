@@ -556,7 +556,9 @@ impl<'a> Pieces<'a> {
             }
             // An atom is written as Zed writes it: `#err(1)`, `#err(code: 3)`. Elaboration gives
             // the name and the field names as literals; a term that gives them any other way has
-            // no written form, so its name is written `#_` and its payload positionally.
+            // no written form, so its name is written `#_` and its payload positionally. No such
+            // term reaches a message: elaboration builds an atom at one place (zedc-elab
+            // walk.rs, `Frame::AtomArgs`), always with literal name and field names.
             Term::Prim(Prim::Atom, args) if !args.is_empty() => {
                 let open = match &args[0] {
                     Term::Lit(Value::Str(name)) => format!("#{name}("),
@@ -601,30 +603,20 @@ impl<'a> Pieces<'a> {
                     keys.push(&inner[1]);
                     receiver = &inner[0];
                 }
-                // A number receiver is parenthesized, `(5)[1]`, as the formatter writes every
-                // postfix of a number (zedc-syntax format.rs, `Job::Postfix`: a `.` after it
-                // would read as a decimal point), so that the formatter leaves this text as it
-                // is. `PRIMARY + 1` is above every level, so `at` always parenthesizes it.
-                let number = matches!(
-                    receiver,
-                    Term::Lit(
-                        Value::Int(_)
-                            | Value::Big(_)
-                            | Value::Rat(_)
-                            | Value::Float(_)
-                            | Value::Float32(_)
-                    )
-                );
-                let min = if number {
-                    level::PRIMARY + 1
-                } else {
-                    level::POSTFIX
-                };
-                self.cat().at(receiver, min);
+                self.cat().at(receiver, receiver_level(receiver));
                 for k in keys.into_iter().rev() {
                     self.list("[", ", ", "]").term(k).end();
                 }
                 self.end();
+            }
+            // `f.count`, `l.first` and `l.last`: methods, written after their receiver as the
+            // program writes them (DESIGN.md sec:reduction: `count` "is a method (`.count`)"),
+            // not as calls `count(f)`, which no program writes (KERNEL-print-distinct).
+            Term::Prim(p @ (Prim::Count | Prim::First | Prim::Last), args) if args.len() == 1 => {
+                self.cat()
+                    .at(&args[0], receiver_level(&args[0]))
+                    .text(p.written())
+                    .end();
             }
             Term::Prim(p, args) => match (infix(*p), &args[..]) {
                 // In [`written`]'s text each operand is parenthesized only below the level
@@ -911,6 +903,20 @@ fn connective<'t>(a: &'t Term, b: &'t Term) -> Option<(bool, bool, &'t Term)> {
         (Some(false), _) => Some((true, true, b)),
         (_, Some(true)) => Some((false, true, a)),
         _ => None,
+    }
+}
+
+/// The level the receiver `t` of a postfix (`t[k]`, `t.count`) needs. A number receiver is
+/// parenthesized, `(5)[1]`, as the formatter writes every postfix of a number (zedc-syntax
+/// format.rs, `Job::Postfix`: a `.` after it would read as a decimal point), so that the
+/// formatter leaves this text as it is. `PRIMARY + 1` is above every level, so `at` always
+/// parenthesizes it.
+fn receiver_level(t: &Term) -> u8 {
+    match t {
+        Term::Lit(
+            Value::Int(_) | Value::Big(_) | Value::Rat(_) | Value::Float(_) | Value::Float32(_),
+        ) => level::PRIMARY + 1,
+        _ => level::POSTFIX,
     }
 }
 

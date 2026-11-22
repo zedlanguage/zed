@@ -165,7 +165,7 @@ fn tuples_primitives_and_applied_lambdas_print_unambiguously() {
     assert_eq!(pair.to_string(), "(1, \"a\")");
     assert_eq!(prim(Prim::Tuple, vec![lit(1)]).to_string(), "(1,)");
     assert_eq!(prim(Prim::Neg, vec![var("x")]).to_string(), "-x");
-    assert_eq!(count(var("orders")).to_string(), "count(orders)");
+    assert_eq!(count(var("orders")).to_string(), "orders.count");
     assert_eq!(Term::PrimFn(Prim::Max).to_string(), "max");
     // A lambda applied in place is parenthesized, so its body does not swallow the call.
     let applied = app(lam(&["x"], add(var("x"), lit(1))), vec![lit(2)]);

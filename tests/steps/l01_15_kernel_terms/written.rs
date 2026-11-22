@@ -206,6 +206,47 @@ fn operands_are_parenthesized_only_where_precedence_needs_it() {
     }
 }
 
+/// Each kernel form a message can show is written as the program wrote it (plan row
+/// KERNEL-print-distinct): an entry `f[k]` (`Get`), a component `t[0]` (`TupleGet`) and a read
+/// at a proved key `m[k]` (`At`) as the index the program wrote for all three, and `.count`,
+/// `.first` and `.last` as methods after their receiver, not as the calls `count(f)`,
+/// `first(l)` and `last(l)`, which no program writes. A receiver that is an operation or a
+/// number is parenthesized, as the formatter writes it.
+#[test]
+fn indexes_and_methods_are_written_as_the_program_wrote_them() {
+    let w = |t: &Term| written(t, before_at, &|_| true);
+    let cases = [
+        (prim(Prim::Get, vec![var("f@1"), var("k@1")]), "f[k]"),
+        (prim(Prim::TupleGet, vec![var("t@1"), lit(0)]), "t[0]"),
+        (prim(Prim::At, vec![var("m@1"), var("k@1")]), "m[k]"),
+        (prim(Prim::Count, vec![var("f@1")]), "f.count"),
+        (prim(Prim::First, vec![var("l@1")]), "l.first"),
+        (prim(Prim::Last, vec![var("l@1")]), "l.last"),
+        (
+            prim(
+                Prim::Count,
+                vec![prim(Prim::Get, vec![var("f@1"), var("k@1")])],
+            ),
+            "f[k].count",
+        ),
+        (
+            prim(
+                Prim::Count,
+                vec![prim(Prim::Add, vec![var("a@1"), var("b@1")])],
+            ),
+            "(a + b).count",
+        ),
+        (prim(Prim::Last, vec![lit(5)]), "(5).last"),
+        (
+            prim(Prim::Gt, vec![prim(Prim::Count, vec![var("f@1")]), lit(2)]),
+            "f.count > 2",
+        ),
+    ];
+    for (t, text) in cases {
+        assert_eq!(w(&t), text, "{t}");
+    }
+}
+
 /// A random term of the arithmetic, comparison, logical, prefix and index forms, `d` deep,
 /// with `&&` and `||` in the forms elaboration gives them and no negative literal, so that the
 /// text reads back to exactly one term (`-3` would also read back as `-(3)`).

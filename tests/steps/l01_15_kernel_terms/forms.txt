@@ -199,21 +199,21 @@ discounted(subtotal, 10, customerTier)
 --- primitives written by name, width 20
 (
   min(left, right),
-  count(orders),
+  orders.count,
   String(amount),
   +(a, b, c)
 )
 --- primitives written by name, width 40
 (
   min(left, right),
-  count(orders),
+  orders.count,
   String(amount),
   +(a, b, c)
 )
 --- primitives written by name, width 80
-(min(left, right), count(orders), String(amount), +(a, b, c))
+(min(left, right), orders.count, String(amount), +(a, b, c))
 --- primitives written by name, on one line
-(min(left, right), count(orders), String(amount), +(a, b, c))
+(min(left, right), orders.count, String(amount), +(a, b, c))
 --- primitives as values, width 20
 (
   (x -> -x),
