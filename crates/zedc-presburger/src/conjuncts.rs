@@ -4548,6 +4548,46 @@ mod tests {
         Formula::Con(Con { lin, rel })
     }
 
+    /// `Rows::ends` gives the conjuncts that are no rows and, of each key, exactly the rows of
+    /// least and greatest `b`, also with the middle rows added after the ends and after the
+    /// greatest row is removed (row TEST-hub-bounds-extreme-row-mutation). The scope-level test
+    /// `l01_39_reduced_product::scaling::hub_bounds_match_the_full_core_after_rows_among_the_
+    /// hubs` cannot tell a wrong end from the right one: every row of a key `(x, y, a, c)` passes
+    /// through `(-c/a, 0)`, so no case has rows of one key that do not meet at one point, and
+    /// each new row is projected exactly when it is assumed, whatever `ends` gives later. So
+    /// `ends` is checked here: reading the second-greatest row in place of the greatest, when a
+    /// key has more than two rows, fails this test at `k = 2` (run once, not kept).
+    #[test]
+    fn rows_ends_are_the_rows_of_least_and_greatest_b_of_each_key() {
+        let arc = |g: Formula| Arc::new(g);
+        let x_jy = |j: i64| arc(row(&[("x", 1), ("y", j)], -1, Rel::Ge));
+        let x_jz = |j: i64| arc(row(&[("x", 2), ("z", j)], 3, Rel::Ge));
+        let other = arc(row(&[("x", 1), ("y", 1), ("z", 1)], 0, Rel::Ge));
+        for k in 2..=5i64 {
+            let mut rows = Rows::default();
+            rows.insert(&other);
+            // The ends first, then the middle rows, and a second key of two rows.
+            for j in [k, -k].into_iter().chain((1..k).flat_map(|j| [j, -j])) {
+                rows.insert(&x_jy(j));
+            }
+            rows.insert(&x_jz(-1));
+            rows.insert(&x_jz(4));
+            let ends = |rows: &Rows| {
+                let mut e: Vec<Arc<Formula>> = rows.ends().cloned().collect();
+                e.sort();
+                e
+            };
+            let want = |hi: i64| {
+                let mut w = vec![other.clone(), x_jy(-k), x_jy(hi), x_jz(-1), x_jz(4)];
+                w.sort();
+                w
+            };
+            assert_eq!(ends(&rows), want(k), "k = {k}");
+            rows.remove(&x_jy(k));
+            assert_eq!(ends(&rows), want(k - 1), "k = {k}, greatest removed");
+        }
+    }
+
     /// `add_with` and `remove_with` through one `Last` give the sets plain `add` and `remove`
     /// give, step by step, over adds and removes of present and absent values, a set emptied
     /// and a name with no set; and two names given the same values in turn share one set.
