@@ -684,6 +684,14 @@ pub(super) fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
         }
         "normal_named" => one(named(n, |j| j), i_in(-1000, 1000)),
         "normal_named_modguard" => one(named(n, |j| j % 7 - 3), i_in(-1000, 1000)),
+        "normal_abs_gap" => {
+            let g = |j| prim(Prim::Le, var("i"), int(1000 * j));
+            let t = chain(n, var("i"), g, |j, t| sub_c(j % 5 + 4, abs(t)));
+            // The domain of `mega` up to 999 links; past that it grows with n, so that the guard
+            // i <= 1000 j of every link still cuts it (bench::ref_memo times this family at 1024).
+            let wide = 1_000_000.max(1000 * (n as i64 + 1));
+            vec![(t, i_in(-wide, wide), gap())]
+        }
         "normal_min_gap" => {
             let t = steps(n, |j, t| sub_c(j % 5 + 4, prim(Prim::Min, t, int(20))));
             vec![(t, mega(), gap())]
@@ -849,7 +857,7 @@ fn output_grid_answers_have_k_n_pieces() {
 }
 
 /// The families that `bench::ref_memo` times, each named once.
-pub(super) const FAMILIES: [&str; 52] = [
+pub(super) const FAMILIES: [&str; 53] = [
     "alt2var_m",
     "alternating_2var",
     "alternating_moduli",
@@ -880,6 +888,7 @@ pub(super) const FAMILIES: [&str; 52] = [
     "nested_moduli_eq",
     "nested_moduli_eq_4096",
     "nested_moduli_mod7",
+    "normal_abs_gap",
     "normal_add_base",
     "normal_div_chain",
     "normal_div_neg2_chain",
@@ -918,7 +927,7 @@ const UNTIMED_FAMILIES: [&str; 0] = [];
 /// [`UNTIMED_FAMILIES`]: the reference preimage holds every
 /// point of `[-12, 12]` on each input (within its domain) that meets the demand, and, where
 /// it is marked exact, every point of it there meets the demand, by the interpreter. The
-/// benchmarks time these families at 2 to 1280 links and check only their work.
+/// benchmarks time these families at 2 to 1280 links (`normal_abs_gap` at 1024) and check only their work.
 #[test]
 fn every_family_the_benchmarks_time_is_answered_soundly_at_small_sizes() {
     for name in FAMILIES

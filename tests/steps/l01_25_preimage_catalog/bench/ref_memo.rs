@@ -76,6 +76,20 @@ scaling_tests! {
     nested_moduli_eq_4096_scales: "nested_moduli_eq_4096" at 160;
     nested_moduli_eq_long_scales: "nested_moduli_eq" at 128;
     nested_moduli_mod7_scales: "nested_moduli_mod7" at 2;
+    // At 1024 (REF-normal-abs-gap), as `normal_min_gap` below: the answer is 2 pieces at every n,
+    // and the first run costs a + b log2 n per link, the path copies of the persistent inverse
+    // tree (`tree_restrict`, `tree_union`, `tree_join` in `preimage_ref`), whose pieces grow
+    // with the n guards. abs restricts the tree to values >= 0 and unions it with its mirror;
+    // the two overlap only at 0, so the union descends one spine and splits once, O(log n);
+    // the reflection is a lazy tag, O(1). Measured 2026-11-22 (instructions and bytes per
+    // link, by n: 4, 16, 128, 512, 1024, 4096, 8192): 247k, 342k, 454k, 563k, 607k, 690k,
+    // 733k instructions and 41k, 53k, 70k, 85k, 92k, 105k, 112k bytes, a rise per doubling
+    // of about 43k and 6.7k from 512 on that does not grow, so the work is n log n, not
+    // n log^2 n. At 16 the ratio is then 8 (a + 7b) / (a + 4b), measured 10.63 (instructions)
+    // and 10.65 (bytes), over 10.5; at 64 it is 10.44; at 1024 the ratio of such work is at
+    // most 8 log(8n) / log n = 10.4 for any a (P300), measured 9.67. The family widens its
+    // domain past 1000 links so that every guard still cuts it.
+    normal_abs_gap_scales: "normal_abs_gap" at 1024;
     normal_add_base_scales: "normal_add_base" at 16;
     normal_div_chain_scales: "normal_div_chain" at 16;
     normal_holey_guards_scales: "normal_holey_guards" at 16;
