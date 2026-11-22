@@ -60,10 +60,11 @@ impl Builder<'_, '_> {
         let (header, param) = main.get_or_insert_with(|| self.top_main());
         let moved = format!("{header} {{ {stmt} }}");
         // `while c;`, `until c;` and `break;` are statements of a `loop` or `for` body only
-        // (DESIGN.md, the table of generation forms in sec:syntax, and the paragraph on `break;`
-        // in sec:loops), so the row's repair, a move into `main`'s body, holds for them only
-        // inside such a loop there: `main(m) { break; }` would be rejected again. Their repairs
-        // are that move, said in words, and deleting the statement.
+        // (DESIGN.md, the row of the generation forms in the operator table of sec:lexical, and
+        // the paragraph on `break;` in sec:generations), so the row's repair, a move into
+        // `main`'s body, holds for them only inside such a loop there: `main(m) { break; }`
+        // would be rejected again. Their repairs are that move, said in words, and deleting the
+        // statement.
         if let Some(kw) = match rule {
             "While" => Some("while"),
             "Until" => Some("until"),

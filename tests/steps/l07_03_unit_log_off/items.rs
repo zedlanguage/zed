@@ -57,15 +57,21 @@ fn below_layer_l7_the_text_is_not_the_unit_item() {
 
 #[test]
 fn an_annotation_before_a_parenthesized_statement_keeps_its_reading() {
-    // `@fused` annotates `(a + b).map(f);`, at L6 as at every layer above it.
-    let text = "@fused (a + b).map(f);";
+    // `@fused` annotates `(a + b).map(f);`, at L6 as at every layer above it. The statement
+    // stands in `main`'s body, since a unit's top level holds declarations only
+    // (TOP-statements-reject).
+    let text = "main(m: MainArgs) {\n    @fused (a + b).map(f);\n}\n";
     let tokens = lex(text).unwrap();
     let at = |ring: u32| {
         let tree = parse(text, &tokens, "Unit", ring).unwrap();
         unit(text, &tokens, &tree).unwrap()[0].to_string()
     };
     assert_eq!(at(6), at(TOP));
-    assert_eq!(at(6), "(annotated @fused (do (call (. (+ a b) map) f)))");
+    assert!(
+        at(6).contains("(annotated @fused (do (call (. (+ a b) map) f)))"),
+        "{}",
+        at(6)
+    );
     // `@fused (a + b);` is the unit item, which resolution refuses for `@fused`.
     assert_eq!(shown("@fused (a + b);"), "(unit (@fused (+ a b)))");
     assert!(

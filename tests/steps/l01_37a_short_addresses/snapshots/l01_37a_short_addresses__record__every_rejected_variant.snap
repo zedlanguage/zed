@@ -1143,6 +1143,45 @@ taint-reaches-clean-sink
             SyntaxError,
         ),
     },
+    Diagnostic {
+        line: 51,
+        col: 1,
+        message: "Statement at the top level of the unit: `exec(db, userInput);`. Move it into the body of `main`, as in `main(m: MainArgs) { exec(db, userInput); }`.",
+        steps: [
+            Step {
+                line: 51,
+                col: 1,
+                text: "a unit's top level holds declarations, which take any order and run in no frame; a statement has an order and runs in a frame, so it stands in a body",
+                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink",
+                width: 20,
+            },
+            Step {
+                line: 51,
+                col: 1,
+                text: "repair: `main(m: MainArgs) { exec(db, userInput); }`",
+                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink",
+                width: 20,
+            },
+            Step {
+                line: 51,
+                col: 1,
+                text: "repair: `value = exec(db, userInput);`, to keep the value",
+                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink",
+                width: 20,
+            },
+            Step {
+                line: 51,
+                col: 1,
+                text: "repair: delete the statement; nothing reads its value",
+                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink",
+                width: 20,
+            },
+        ],
+        menu: "",
+        row: Some(
+            TopLevelStatement,
+        ),
+    },
 ]
   checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 24, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 29, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 37, col: 1, failure: Some("the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 46, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 51, col: 1, failure: Some("the mark names the row \"Taint at a sink whose parameter does not take it\", and the diagnostic is in the row \"Syntax error\": Syntax error at `exec`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead."), not_run: None }]
 
@@ -1523,5 +1562,44 @@ value-binding-has-no-next-generation
         menu: "",
         row: None,
     },
+    Diagnostic {
+        line: 19,
+        col: 1,
+        message: "Statement at the top level of the unit: `p*.bump(3);`. Move it into the body of `main`, as in `main(m: MainArgs) { p*.bump(3); }`.",
+        steps: [
+            Step {
+                line: 19,
+                col: 1,
+                text: "a unit's top level holds declarations, which take any order and run in no frame; a statement has an order and runs in a frame, so it stands in a body",
+                source: "p*.bump(3);                   // ✗ `*.` call on a receiver that is not a state variable: p is a value binding — no next generation to write",
+                width: 11,
+            },
+            Step {
+                line: 19,
+                col: 1,
+                text: "repair: `main(m: MainArgs) { p*.bump(3); }`",
+                source: "p*.bump(3);                   // ✗ `*.` call on a receiver that is not a state variable: p is a value binding — no next generation to write",
+                width: 11,
+            },
+            Step {
+                line: 19,
+                col: 1,
+                text: "repair: `value = p*.bump(3);`, to keep the value",
+                source: "p*.bump(3);                   // ✗ `*.` call on a receiver that is not a state variable: p is a value binding — no next generation to write",
+                width: 11,
+            },
+            Step {
+                line: 19,
+                col: 1,
+                text: "repair: delete the statement; nothing reads its value",
+                source: "p*.bump(3);                   // ✗ `*.` call on a receiver that is not a state variable: p is a value binding — no next generation to write",
+                width: 11,
+            },
+        ],
+        menu: "",
+        row: Some(
+            TopLevelStatement,
+        ),
+    },
 ]
-  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 19, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 19, col: 1, failure: Some("the mark names the row \"`*.` call on a receiver that is not a state variable\", and the diagnostic is in the row \"Statement at a unit's top level\": Statement at the top level of the unit: `p*.bump(3);`. Move it into the body of `main`, as in `main(m: MainArgs) { p*.bump(3); }`."), not_run: None }]

@@ -11027,9 +11027,9 @@ fn is_decimal(v: &Value) -> bool {
 /// with no `int` exponent. DESIGN.md step L1.18: "`x ^ n` with `x : f32` and `n : int` is an
 /// `f32`, the one operator arrow whose operands have two carriers: the power is taken in `f64`
 /// and rounded to `f32`"; `^` takes an `int` exponent at `int` and `rat` too; so at `int`,
-/// `rat` and `f32` the exponent keeps its `int` (plan row DOC-lit-follows-exponent-f32: at `f32` it took
-/// `f32` here, and `x * (2.67 ^ 6)` gave `f32 ^ f32`, `362.2994f32` at `x = 1.0f32`, against the
-/// `362.29944f32` of the arrow `f32 ^ int`).
+/// `rat` and `f32` the exponent keeps its `int` (plan row DOC-lit-follows-exponent-f32: at `f32`
+/// it took `f32` here, and `x * (2.67 ^ 6)` gave `f32 ^ f32`, `362.2994f32` at `x = 1.0f32`,
+/// against the `362.29944f32` of the arrow `f32 ^ int`).
 fn takes_carrier(l: &Lit, c: Carrier) -> bool {
     !l.exponent || c == Carrier::F64
 }

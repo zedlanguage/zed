@@ -228,11 +228,12 @@ fn a_quotient_a_decimal_or_a_power_among_literals_is_one_match() {
         "x -> (x * match x { (is rat) -> (3r/2r + 1r), (is f32) -> (1.5f32 + 1.0f32), \
          _ -> (1.5 + 1.0) })"
     );
-    // The exponent lists `f64` and `f32`, and keeps its own `2` at `rat` and `int`.
+    // The exponent lists `f64` alone, and keeps its own `2` at `rat`, `f32` and `int`: at `f32`
+    // the arrow is `f32 ^ int` (DESIGN.md L1.18; plan row DOC-lit-follows-exponent-f32).
     assert_eq!(
         term("f(positional x) = x * ((2 + 1) ^ 2);\n", "f"),
         "x -> (x * match x { (is f64) -> ((2.0 + 1.0)^2.0), (is rat) -> ((2r + 1r)^2), \
-         (is f32) -> ((2.0f32 + 1.0f32)^2.0f32), _ -> ((2 + 1)^2) })"
+         (is f32) -> ((2.0f32 + 1.0f32)^2), _ -> ((2 + 1)^2) })"
     );
 }
 
