@@ -247,7 +247,8 @@ fn words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
 /// (3 to 4 times the instructions an input at 8 times the inputs), so the crossover is in both.
 ///
 /// Measured switchovers, not proved bounds (author decision A96), from
-/// `num::bench::the_factor_bits_crossover_axis` (2026-11-20, load 51, instructions of
+/// `crossover factor-bits` (crate zed-benches; until TEST-kernel-unit-benches-out the unit
+/// benchmark `num::bench::the_factor_bits_crossover_axis`) (2026-11-20, load 51, instructions of
 /// factoring over those of the trees, base / shared inputs; under 1 means factoring is the
 /// cheaper). The worst family at a width is the disjoint products of two primes of half the
 /// width, where rho takes about `2^(b/4)` products: at 4096 inputs 0.39 at 33 bits, 0.51 at
@@ -1609,7 +1610,7 @@ mod tests {
     /// short lists of `WORD_INPUTS + 1` and 40 inputs, widths `FACTOR_BITS` and one more, the
     /// methods are run directly: the base is `cb S` by the definition (`by_primes`) and has
     /// `by_halves`'s elements and factors, and the shared inputs are
-    /// `shares_a_factor_by_tree`'s. Families as on `num::bench::the_factor_bits_crossover_axis`:
+    /// `shares_a_factor_by_tree`'s. Families as on zed-benches' `crossover factor-bits`:
     /// distinct primes of the width, products and chains of primes of half the width, and
     /// random products of those primes with repeats and small primes; a 1 among the inputs in
     /// some lists. Then the switch: `FACTOR_INPUTS - 1` inputs never take the path, and

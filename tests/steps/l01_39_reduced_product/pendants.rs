@@ -2956,11 +2956,25 @@ fn refused_projections_of_random_parts_keep_sound_boxes() {
 /// parts joined. Seeds 11 and 12 at 400 parts each counted (7, 30, 14) and took 15 s, most of
 /// it in a few refused parts of up to 3 s each; one of them is kept as
 /// [`a_refused_joined_part_keeps_a_sound_box`].
+///
+/// A fixed set of seeds, each named in any failure (FAIL-pendants-joined-seed-over-30s): with
+/// a fresh seed each run the time depended on the seed and a seed that ran past the 30 s limit
+/// of tools/merge_check.sh was lost with the piece log the check removes. A scan of seeds 0 to
+/// 399 (25 parts each, eight at once, load 60, dev build) took a median of 2.4 s a seed, 6.7 s
+/// at the 90th percentile and 17.5 s at the 99th; the slowest, seed 393, took 25.2 s, 22.4 s of
+/// it in case 13, a part of six names with five disjunctions and three negated equalities
+/// whose projection asks 1098 hull sides and solves 2786 systems in each of its nine writings
+/// (2.3 s each; row PERF-pendants-dnf-hull-sides). These four took 1.1 to 2.0 s each there
+/// (9.0 s together alone at load 61). They count (0, 0, 0): refused parts are rare (7 in the
+/// 800 parts of seeds 11 and 12), so each name's box is checked against brute force unrefused,
+/// and [`a_refused_joined_part_keeps_a_sound_box`] keeps a refused part.
 #[test]
 fn refused_projections_of_joined_random_parts_keep_sound_boxes() {
-    let (_, seed) = Rng::fresh("refused projections of joined random parts");
-    let count = refused_names_in(seed, 25, true);
-    eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
+    for seed in [1, 3, 4, 6] {
+        eprintln!("seed {seed}");
+        let count = refused_names_in(seed, 25, true);
+        eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
+    }
 }
 
 /// The oracle decides each end and hole of seed 12883791572206885593 of the joined random

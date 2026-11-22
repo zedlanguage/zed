@@ -41,6 +41,10 @@
 //!   of COMPLEXITY.md K81 (10,000 to 1,280,000 digits by default), which must never be the
 //!   slower by more than [`NEVER_SLOWER`]; exits with status 1 where it is. Not a threshold, so
 //!   not in `all`.
+//! - `factor-bits`: `FACTOR_BITS` and `FACTOR_INPUTS` of `num::coprime`, factoring each word
+//!   input against Bernstein's trees, in a coprime base and in the inputs that share a prime,
+//!   on three families of inputs at widths of 16 to 56 bits and counts of 2 to 4096; prints
+//!   each method's work for the comment of `FACTOR_BITS`, not a fit, so not in `all`.
 //!
 //! In `zed_kernel::text`: `text-leaf`, `LEAF`, a setting: a `foldl` of 200,000 joins of pieces
 //! of 1, 8 and 64 bytes, then `==`, a hash and the print, with each leaf from 16 to 1024 bytes.
@@ -1186,6 +1190,99 @@ fn poly_square(args: &[String]) -> ExitCode {
     status(verdict.holds())
 }
 
+/// The first `n` primes at or above `from`, by `zed_numtheory::next_prime`.
+fn primes_from(from: u64, n: usize) -> Vec<u64> {
+    let mut out = Vec::with_capacity(n);
+    let mut p = from;
+    while out.len() < n {
+        p = zed_numtheory::next_prime(p).expect("a prime below 2^64");
+        out.push(p);
+        p += 1;
+    }
+    out
+}
+
+/// `factor-bits`: `x::FACTOR_BITS` and `x::FACTOR_INPUTS` of `num::coprime` (PERF-negated-chain-unsolved,
+/// author decision A96), the word path by factoring (`zed_numtheory::coprime_base_by_factoring`
+/// and `shares_a_factor_by_factoring`) against the general methods (Bernstein's trees,
+/// `x::coprime_base_by_halves`, and `x::shares_a_factor_by_tree`) on `k` word inputs whose
+/// largest has `b` bits, on both sides of each switchover. Three families of each width:
+/// distinct primes of `b` bits (a primality test each); disjoint products `p_(2i) p_(2i+1)` of
+/// primes of `b / 2` bits (Pollard's rho's worst case at a width, about `2^(b/4)` products
+/// each); and chains `p_i p_(i+1)` of such primes (every prime shared). Where `k` primes of
+/// `b / 2` bits do not exist the primes run past that width, and the printed `bits` is the
+/// largest input's. Prints the instructions and bytes of each method, and exits with status 1
+/// where their answers differ. Factoring costs a fixed amount an input at a width and the trees
+/// more an input at more inputs, so the switch is in both: the path is taken from
+/// `FACTOR_INPUTS` inputs on, up to the largest width at which it is the cheaper on every family
+/// there; the measurements are in the comment of `FACTOR_BITS`. Widths past 56 bits only repeat
+/// the trees' side at a higher cost (1.8 M instructions an input by factoring at 63 bits) and
+/// are left out to keep the run short. Not a fit, so not in `all`. Moved here from the kernel's
+/// unit tests (`num::bench::the_factor_bits_crossover_axis`, 44 s of the unit test binary,
+/// TEST-kernel-unit-benches-out); `num::coprime::tests::the_factored_paths_agree` holds the two
+/// methods equal on both sides of each switchover in the tests.
+fn factor_bits(_: &[String]) -> ExitCode {
+    let mut meter = Meter::new();
+    let mut widths: Vec<u32> = vec![16, 24, 32, 40, 44, 48, 52, 56];
+    widths.extend([x::FACTOR_BITS, x::FACTOR_BITS + 1]);
+    widths.sort_unstable();
+    widths.dedup();
+    let fi = x::FACTOR_INPUTS;
+    let mut ks = vec![2usize, 4, 8, 13, 64, 512, fi / 2, fi];
+    ks.sort_unstable();
+    ks.dedup();
+    let mut agree = true;
+    for k in ks {
+        for &b in &widths {
+            let half = 1u64 << (b / 2 - 1);
+            let pairs = primes_from(half, 2 * k);
+            let chain = primes_from(half, k + 1);
+            let families: [(&str, Vec<u64>); 3] = [
+                ("distinct", primes_from(1 << (b - 1), k)),
+                (
+                    "pairs",
+                    (0..k).map(|i| pairs[2 * i] * pairs[2 * i + 1]).collect(),
+                ),
+                ("chain", (0..k).map(|i| chain[i] * chain[i + 1]).collect()),
+            ];
+            for (family, ws) in families {
+                let xs: Vec<BigUint> = ws.iter().map(|&w| BigUint::from(w)).collect();
+                let bits = ws.iter().map(|w| 64 - w.leading_zeros()).max().unwrap_or(0);
+                let (mut factored, mut halves) = (Vec::new(), Vec::new());
+                let fb = meter.work(|| {
+                    factored = zed_numtheory::coprime_base_by_factoring(&ws).0;
+                });
+                let hb = meter.work(|| halves = x::coprime_base_by_halves(&xs));
+                factored.sort_unstable();
+                halves.sort();
+                let factored: Vec<BigUint> = factored.into_iter().map(BigUint::from).collect();
+                let (mut s_factored, mut s_tree) = (Vec::new(), Vec::new());
+                let fs =
+                    meter.work(|| s_factored = zed_numtheory::shares_a_factor_by_factoring(&ws));
+                let ts = meter.work(|| s_tree = x::shares_a_factor_by_tree(&xs));
+                if factored != halves || s_factored != s_tree {
+                    agree = false;
+                    println!("DIFFER family={family} k={k} b={b}");
+                }
+                println!(
+                    "bench FACTOR_BITS family={family} k={k} bits={bits} factor_side={} base: factored={}/{} halves={}/{} shares: factored={}/{} tree={}/{}",
+                    bits <= x::FACTOR_BITS && k >= fi,
+                    fb.units,
+                    fb.bytes,
+                    hb.units,
+                    hb.bytes,
+                    fs.units,
+                    fs.bytes,
+                    ts.units,
+                    ts.bytes
+                );
+            }
+        }
+    }
+    println!("{}", conditions());
+    status(agree)
+}
+
 fn print_never_slower(args: &[String]) -> ExitCode {
     let digits: Vec<u32> = match args.is_empty() {
         true => vec![
@@ -1403,12 +1500,15 @@ fn main() -> ExitCode {
     if name == "print-never-slower" {
         return print_never_slower(rest);
     }
+    if name == "factor-bits" {
+        return factor_bits(rest);
+    }
     match BENCHES.iter().find(|(n, _, _)| *n == name) {
         Some((_, run, _)) => run(rest),
         None => {
             let names: Vec<&str> = BENCHES.iter().map(|(n, _, _)| *n).collect();
             eprintln!(
-                "usage: crossover all | print-never-slower [digits...] | {}",
+                "usage: crossover all | print-never-slower [digits...] | factor-bits | {}",
                 names.join(" | ")
             );
             ExitCode::FAILURE

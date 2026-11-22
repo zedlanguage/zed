@@ -4522,6 +4522,22 @@ pub mod crossover {
     pub const SPARSE_STEP: f64 = super::SPARSE_STEP;
     /// `super::CACHED_COST` as built.
     pub const CACHED_COST: f64 = super::CACHED_COST;
+    /// `num::coprime::FACTOR_BITS` as built, in bits.
+    pub const FACTOR_BITS: u32 = crate::num::coprime::FACTOR_BITS;
+    /// `num::coprime::FACTOR_INPUTS` as built.
+    pub const FACTOR_INPUTS: usize = crate::num::coprime::FACTOR_INPUTS;
+
+    /// The elements of the coprime base of `xs` by Bernstein's trees
+    /// (`num::coprime::by_halves`), the general side of `FACTOR_BITS`, whatever the inputs.
+    pub fn coprime_base_by_halves(xs: &[BigUint]) -> Vec<BigUint> {
+        crate::num::coprime::by_halves(xs).elements
+    }
+
+    /// Which of `xs` share a prime with another, by the product and remainder trees
+    /// (`num::coprime::shares_a_factor_by_tree`), the general side of `FACTOR_BITS`.
+    pub fn shares_a_factor_by_tree(xs: &[BigUint]) -> Vec<bool> {
+        crate::num::coprime::shares_a_factor_by_tree(xs)
+    }
 
     /// The method [`super::mul`] takes for `a * b`: "num-bigint", "rows" or "transforms".
     pub fn mul_method(a: &BigUint, b: &BigUint) -> &'static str {

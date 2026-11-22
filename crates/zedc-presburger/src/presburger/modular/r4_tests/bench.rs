@@ -144,7 +144,7 @@ fn pncx_common_factor_scale() {
 /// (`zed_numtheory::shares_a_factor_by_factoring`, proof and cost at zed-kernel
 /// `num/coprime.rs` `FACTOR_BITS`), so both sizes here, 4096 and 32768 cofactors of 15 to 19
 /// bits, take that path; fewer values take the trees, at most 4096 of 44 bits, a bounded size.
-/// The switch itself is benched on both sides by zed-kernel's `the_factor_bits_crossover_axis`.
+/// The switch itself is benched on both sides by zed-benches' `crossover factor-bits`.
 /// Measured 2026-11-20 at 4096 and 32768: 23,886,782 / 204,386,090 instructions, 8.556, bytes
 /// 8.0 (load 76); at 512 and 4096 (the old sizes, across the switch, so not a test of either
 /// side): 6.683 (load 42). Above 8 as the primes widen from about 2^16 to 2^19 with `n`, and a
