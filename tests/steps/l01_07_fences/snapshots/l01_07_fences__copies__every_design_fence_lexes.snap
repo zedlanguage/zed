@@ -741,13 +741,13 @@ expression: "tokens_by_key(&fences::design())"
   7 | #forall ( id : , body : ) where id != from -> #forall ( id : id , body : rename ( body , from , to ) ) ,
   8 | _ -> t ,
   9 | } ;
- 13 | @memoized fits ( a : Ty , b : Ty , binds : int ->? Ty ) -> bool = «match» ( a , b ) {
- 14 | ( #int , #rat ) -> «true» ,
- 15 | ( #var ( id : i ) , _ ) -> «match» binds [ i ] { #notFound -> a == b , t -> fits ( t , b , binds ) } ,
- 16 | ( #fn ( param : p , result : r ) , #fn ( param : q , result : s ) ) -> fits ( q , p , binds ) && fits ( r , s , binds ) ,
- 17 | ( #forall ( id : i , body : x ) , #forall ( id : j , body : y ) ) -> @memoizationArena fits ( x , rename ( y , j , i ) , binds ) ,
- 18 | _ -> a == b ,
- 19 | } ;
+ 15 | @memoized fits ( a : Ty , b : Ty , binds : int ->? Ty ) -> bool = «match» ( a , b ) {
+ 16 | ( #int , #rat ) -> «true» ,
+ 17 | ( #var ( id : i ) , _ ) -> «match» binds [ i ] { #notFound -> a == b , t -> fits ( t , b , binds ) } ,
+ 18 | ( #fn ( param : p , result : r ) , #fn ( param : q , result : s ) ) -> fits ( q , p , binds ) && fits ( r , s , binds ) ,
+ 19 | ( #forall ( id : i , body : x ) , #forall ( id : j , body : y ) ) -> @memoizationArena fits ( x , rename ( y , j , i ) , binds ) ,
+ 20 | _ -> a == b ,
+ 21 | } ;
 == DESIGN.md [sec:robustness] 1 L21
   1 | prices : Utf8String ->? rat «with» peers ( [ str["a"] , str["b"] ] , assign : #roundRobin ) «with» commutes ( #distinctKeys ) ;
   3 | main ( m : MainArgs ) {
@@ -787,7 +787,7 @@ expression: "tokens_by_key(&fences::design())"
   1 | @foreign «struct» Env { }
   2 | @foreign «struct» Txn { }
   3 | @foreign ( str["lmdb"] , str["mdb_txn_abort"] ) @nonblocking abort : ( txn : Ptr ( Txn ) ) -> #ok | #lost ;
-  4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) «with» keeps ( env ) «with» keeps ( parent ) ) | #lost ;
+  4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) «with» keeps ( env , parent ) ) | #lost ;
   5 | @foreign ( str["lmdb"] , str["mdb_txn_commit"] ) commit : ( txn : Ptr ( Txn ) «with» consumes ( ) ) -> i32 | #lost ;
 == DESIGN.md [sec:ffi] 6 L7
   1 | @foreign «struct» Zip { }
