@@ -12,6 +12,10 @@
 //! - `mul-rows`: `TRANSFORM_COST` against rows, a dense factor of 8192 words by one of the same
 //!   width with `k` nonzero words spread over it: rows over the nonzero words against the
 //!   transforms.
+//! - `wrap [n]`: `WRAP_COST`, the choice of `points` between two computed costs, a
+//!   balanced product by transforms on `n / 2` points with the top words' product subtracted
+//!   against on all `n`, dense random factors of `n / 4` to `n / 2` words (4096 and 8192 in
+//!   `all`).
 //! - `div-leaf [q d]`: `DIV_LEAF` and `DIV_COST`, num-bigint's division against the division
 //!   past the leaf, `(q + d) w - 1` by `d w` dense words, a quotient of about `q w` (`1 1`,
 //!   `1 4`, `4 1`, `16 1` and `256 1` in `all`).
@@ -281,6 +285,57 @@ fn mul_rows(_: &[String]) -> ExitCode {
         "mul-rows",
         "TRANSFORM_COST",
         &ladder(16, 1024, 2),
+        TOLERANCE,
+    );
+    status(verdict.holds())
+}
+
+/// The wrapped plan of `points` against the full one (RADIX-balanced-mul-regress): balanced
+/// products of `w` by `w` words from just above `n / 4` to `n / 2` words, `n` the points at
+/// or above their coefficients (`n` = 4096 and 8192 in `all`). The wrapped plan transforms
+/// on `n / 2` points and subtracts the product of the top words; it gains most just above
+/// `n / 4` words and less as `w` nears `n / 2`, so the full plan is the method above.
+/// `WRAP_COST` decides; its flip holds `WRAP_COST` as built in the top product's own cost, so
+/// the fit it reports is that of the top level only (the sweep of 2026-11-22 rebuilt at each
+/// value, `zed_kernel::num::fast`, `WRAP_COST`).
+fn wrap(args: &[String]) -> ExitCode {
+    let n: usize = args
+        .first()
+        .map_or(4096, |s| s.parse().expect("a power of two"));
+    let inputs = |w: usize| {
+        let mut rng = Rng::new(w as u64);
+        let ones = (BigUint::from(1u32) << (64 * w)) - 1u32;
+        vec![
+            (random(&mut rng, w), random(&mut rng, w)),
+            (ones.clone(), ones),
+        ]
+    };
+    let note = |_: usize| String::new();
+    let bench = Crossover {
+        unit: "words",
+        note: &note,
+        inputs: &inputs,
+        below: Method {
+            name: "wrapped",
+            run: &|(a, b): &Pair| x::mul_on_points(a, b, true),
+        },
+        above: Method {
+            name: "full",
+            run: &|(a, b): &Pair| x::mul_on_points(a, b, false),
+        },
+        takes_above: &|(a, b): &Pair| !x::wraps(a, b),
+        constant: Some(Constant {
+            name: "WRAP_COST",
+            built: x::WRAP_COST,
+            flip: &|(a, b): &Pair| x::wrap_flip(a, b),
+            below_at_most: true,
+        }),
+    };
+    let verdict = bench.report(
+        &mut Meter::new(),
+        &format!("wrap {n}"),
+        "WRAP_COST",
+        &ladder(n / 4 + n / 64, n / 2, 8),
         TOLERANCE,
     );
     status(verdict.holds())
@@ -1480,11 +1535,13 @@ type Bench = (
 );
 
 /// Every benchmark, with its arguments in `all`; `print-never-slower` is not a threshold.
-const BENCHES: [Bench; 53] = [
+const BENCHES: [Bench; 55] = [
     ("mul", mul, &["1"]),
     ("mul", mul, &["4"]),
     ("mul", mul, &["32"]),
     ("mul-rows", mul_rows, &[]),
+    ("wrap", wrap, &["4096"]),
+    ("wrap", wrap, &["8192"]),
     ("div-leaf", div_leaf, &["1", "1"]),
     ("div-leaf", div_leaf, &["1", "4"]),
     ("div-leaf", div_leaf, &["4", "1"]),

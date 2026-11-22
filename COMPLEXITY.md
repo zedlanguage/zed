@@ -1180,13 +1180,17 @@ its fit, exit status 0.
 | threshold | old | measured | now | worst as built before | spread |
 |---|---|---|---|---|---|
 | `MUL_LEAF` (`mul 32`) | 512 words | 460 | 459 | 1.16 at 512 | 1.0005 |
+| `MUL_LEAF` (`mul 4`, `mul 32`; with `WRAP_COST`, 2026-11-22) | 459 words | 390, 417 | 400 | 1.038 at 431 (`mul 4`) | 1.0003 |
 | `TOOM_COST` (`mul 1`, `mul 4`, `mul 32` together) | 6.8 | 5.71 to 5.87 | 5.8 | 1.17 | 1.0008 |
+| `TOOM_COST` (the same three, with `WRAP_COST` 10 and `MUL_LEAF` 400, 2026-11-22) | 5.8 | 6.34 to 7.81, 6.80 up, 6.33 to 6.42 | 7.0 | 1.038 at 431 to 512 (`mul 4`) | 1.0003 |
 | `DIV_LEAF` alone (`div-leaf 1 1`, `1 4`, `4 1`, `16 1`, `256 1`) | 64 words | 3192, 919, 899, 417, 242 by shape | 64 words and `DIV_COST` | 3.38 (`1 4`) | 1.0146 |
 | `DIV_COST` (the five `div-leaf` together) | none | 9.06 to 9.22 | 9.1 | | 1.0146 |
 | `RECIP_LEAF` (`recip`) | 32 words | 417 | 416 | 1.82 | 1.0187 |
 | `GCD_LEAF` (`gcd-leaf`) | 512 words | 300; 311 on the C library's heap | 299; 310 since PERF-crossover-heap (below) | 1.25; 1.0111 at 304 | 1.0049; 1.0026 |
 | `LIFT_BITS` = 64 `MUL_LEAF` bits (`lift-gcd`, `lift-bezout`; sizes are the inputs' words) | 32,768 bits | 1798 words | 29,376 bits, lifting from 1878 words | held | 1.0022 |
+| `LIFT_BITS` again, with `MUL_LEAF` 400 (2026-11-22) | 29,376 bits | 1579 words | 25,600 bits, lifting from 1722 words | held | 1.0015 |
 | `TRANSFORM_COST` (`mul-rows`) | 7 | 7.07 to 7.14 | 7.1 | 1.0072 | 1.0000 |
+| `WRAP_COST` (`wrap 4096`, `wrap 8192` together; RADIX-balanced-mul-regress, 2026-11-22) | none (0) | 8 to 12 | 10 | 1.014 at 1411 words (`wrap 4096`; `wrap 8192` 1.05 at 3144 inside its tolerance) | 1.0000 |
 | `SPARSE_WORD` (`div-rows`) | 2 | 1.68 to 1.72 | 1.7 | 1.0665 | 1.0021 |
 | `CACHED_COST` (`cached`) | 5 | 4.17 to 4.22 | 4.2 | 1.10 | 1.0000 |
 | `PRINT_WHOLE` (`print-whole`) | 7845 words | 7761 | 7845 | held | 1.0055 |
@@ -1209,6 +1213,16 @@ POLY-nf section; 1.47 to 1.50 on 2026-11-22, caused by `num::mul_cost`'s Toom-3 
 below `MUL_LEAF`, not by the zero words between slots, POLY-mul-cost-gaps); a better model, not another
 constant, would lower them. The kernel `LEAF_DIGITS` stayed at 1024 here: at 2048 the sum over
 its sizes was 1.0279 times less, within its spread of 1.0340.
+
+RADIX-balanced-mul-regress (2026-11-22, load 55 to 90): the new `wrap 4096` and `wrap 8192`
+found the wrapped plan of `points` taken where it does more work (1.014 times at 1411 words),
+fixed by `WRAP_COST` 10 per point of a wrap; the cheaper transforms then moved `MUL_LEAF` to
+400 and `TOOM_COST` to 7.0 (rows above). With these values all 47 benchmarks were run one by
+one: every row whose code depends on `zed_kernel::num` held (exit status 0), `LIFT_BITS`
+following `MUL_LEAF` to 25,600 bits. `transform-words` (1.0081 at 3999 32-bit words, measured
+crossover 3913) and `kept-words` (1.0301 at 1798, measured 1741) did not; both are
+`zed-corpus-ref` constants, a crate that does not depend on `zed-kernel`, so the change is not
+this one's.
 
 `rem` (DRY-numeric-shared-rest, 2026-11-20, load 40 to 89). `rem-leaf q`, a dividend of
 `(q + 1) w` words by `w`, num-bigint's `%` against the blocks of one `Divisor`, which `rem`

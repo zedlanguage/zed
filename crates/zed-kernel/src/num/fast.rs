@@ -280,10 +280,10 @@
 //! unit tests compare at every leaf setting. What depends on measurement and is to be measured
 //! again on the Zed code: the leaves [`MUL_LEAF`], [`DIV_LEAF`], [`RECIP_LEAF`], [`GCD_LEAF`],
 //! [`PRINT_HANDOFF`], [`PRINT_WHOLE`] and the cost constants [`TOOM_COST`], [`DIV_COST`],
-//! [`TRANSFORM_COST`], [`SPARSE_WORD`], [`SPARSE_STEP`], [`CACHED_COST`]; the benchmark
-//! `crossover all` (crate zed-benches) measures each against its crossover. [`HALF_LEAF`] and
-//! [`PRINT_LEAF`] are derived, not measured. The Rust constructs that need a Zed form are
-//! listed in ZED_PORT_GAPS.md, sections "Entries from NUM-subquad", "Entries from
+//! [`TRANSFORM_COST`], [`WRAP_COST`], [`SPARSE_WORD`], [`SPARSE_STEP`], [`CACHED_COST`];
+//! the benchmark `crossover all` (crate zed-benches) measures each against its crossover.
+//! [`HALF_LEAF`] and [`PRINT_LEAF`] are derived, not measured. The Rust constructs that need
+//! a Zed form are listed in ZED_PORT_GAPS.md, sections "Entries from NUM-subquad", "Entries from
 //! BIGINT-fast-mul" and "Entries from NUM-print-fast".
 //!
 //! Each leaf is a crossover between two methods whose results are identical, set from timings
@@ -321,10 +321,14 @@ use crate::machine_int::BitLen;
 /// (CROSSOVER-bench, `crossover mul 32`, load 41 to 48) at 256 to 2048 by 32 times the
 /// words, the shape where the transform gains soonest: num-bigint does less work up to 455
 /// words (1.012 times the transform's instructions) and the transform from 460 (0.988), so
-/// 459. The product does not depend on it; the unit tests use a smaller leaf, so that they
-/// reach the transforms at small sizes.
+/// 459. Measured again on 2026-11-22 (RADIX-balanced-mul-regress), after [`WRAP_COST`] made
+/// the transforms cheaper at these widths: `mul 4` crosses at 390 words and `mul 32` at 417
+/// (num-bigint 1.005 times the transform's instructions at 413 by 13,216 words, 0.992 at
+/// 417), and at 459 the transform was 1.038 times cheaper at 431 by 1724 words, so 400. The
+/// product does not depend on it; the unit tests use a smaller leaf, so that they reach the
+/// transforms at small sizes.
 #[cfg(not(test))]
-const MUL_LEAF: usize = 459;
+const MUL_LEAF: usize = 400;
 #[cfg(test)]
 const MUL_LEAF: usize = 48;
 
@@ -344,10 +348,15 @@ const MUL_LEAF: usize = 48;
 /// (CROSSOVER-bench) over `crossover mul 1`, `mul 4` and `mul 32` together, which alone ask
 /// for 5.92 to 6.22, 5.64 to 5.69 and above 5.94: from 5.71 to 5.87 the most work any of them
 /// does is the least, 1.047 times the less of the two methods', so 5.8; 6.8 did up to 1.17
-/// times. The product does not depend on it; the unit tests never take num-bigint's product
-/// above [`MUL_LEAF`], so that they reach the transforms.
+/// times. Fitted again on 2026-11-22 (RADIX-balanced-mul-regress) with [`WRAP_COST`] 10 and
+/// [`MUL_LEAF`] 400: `mul 1` asks for 6.34 to 7.81, `mul 4` for 6.80 or more and `mul 32` for
+/// 6.33 to 6.42 alone, and at 7.0 each of the three takes the method of its measured
+/// crossover at every size (exit status 0); at 5.8, `mul 4` took num-bigint's product at 431
+/// to 512 by 4 times the words, up to 1.038 times the transform's work. The product does not
+/// depend on it; the unit tests never take num-bigint's product above [`MUL_LEAF`], so that
+/// they reach the transforms.
 #[cfg(not(test))]
-const TOOM_COST: f64 = 5.8;
+const TOOM_COST: f64 = 7.0;
 #[cfg(test)]
 const TOOM_COST: f64 = f64::INFINITY;
 
@@ -503,6 +512,21 @@ const fn leaf_bits(handoff: usize) -> u64 {
 /// (CROSSOVER-bench, `crossover mul-rows`): rows and transforms cross at 199 nonzero words,
 /// which 7.07 to 7.14 puts at the crossover, so 7.1.
 const TRANSFORM_COST: f64 = 7.1;
+
+/// The cost of a wrapped plan of [`points`] per point, besides its transforms and the top
+/// words' product, in the units of [`TRANSFORM_COST`]: the subtraction of the top product
+/// from the wrapped coefficients modulo each prime and the extra residues and carries, linear
+/// in the points. Without it the wrap was taken where it costs more (RADIX-balanced-mul-regress):
+/// on 2026-11-22, `crossover wrap 4096` measured the wrapped plan 1.3% to 1.4% dearer at 1411
+/// to 1539 words, which it took up to 1678, and `wrap 8192` 2.5% to 5% dearer at 3110 to 3144
+/// words, which it took up to 3213. Fitted by `crossover wrap 4096` and `wrap 8192` both: 4
+/// still takes the wrap at 1539 words (1.27% dearer), 16 drops it at 2822 words (4.6% dearer),
+/// and 8 to 12 put both at the crossover, so 10 (each value a rebuild: the constant is in
+/// [`transform_cost`] too, at each depth). The fit the benchmark reports moves only the top
+/// level's value, the depths below kept at 10: 14.2 to 16.3 for `wrap 4096` and up to 3.8 for
+/// `wrap 8192`, so a model with one cost per point at every depth cannot match the top level
+/// of both alone; at 10 both take the cheaper plan at every size off their crossover.
+const WRAP_COST: f64 = 10.0;
 
 /// The cost of a word of a step of [`sparse_div_rem`], and of a step besides its words (the
 /// quotient word's estimate is a 128-bit division), in the units of [`TRANSFORM_COST`]:
@@ -921,8 +945,25 @@ impl Field {
     ) -> Vec<u64> {
         let la = words(a) - sa;
         let lb = b.map_or(la, |(b, sb)| words(b) - sb);
+        self.linear_on(a, sa, b, points(la, lb), tw, fb)
+    }
+
+    /// [`Field::linear`] on the points `n` and wrapped or not as `(n, wrap)` says, whatever
+    /// [`points`] would choose; the top product, when wrapped, as [`points`] chooses. With
+    /// `wrap`, `n` is half the power of two at or above the coefficients and each factor has
+    /// at most `n` words; without, `n` is at or above the coefficients.
+    fn linear_on(
+        &self,
+        a: &BigUint,
+        sa: usize,
+        b: Option<(&BigUint, usize)>,
+        (n, wrap): (usize, bool),
+        tw: &[(u64, u64)],
+        fb: &mut Vec<u64>,
+    ) -> Vec<u64> {
+        let la = words(a) - sa;
+        let lb = b.map_or(la, |(b, sb)| words(b) - sb);
         let coeffs = la + lb - 1;
-        let (n, wrap) = points(la, lb);
         if !wrap {
             let mut v = self.convolve(a, sa, b, n, coeffs + 1, tw, fb);
             v.truncate(coeffs);
@@ -1106,12 +1147,12 @@ const FIELDS: [Field; 3] = [
 /// The cost of a product by transforms whose coefficients number `coeffs`, in units of one
 /// word product of [`sparse_mul`], as [`Field::linear`] takes it: `TRANSFORM_COST n log2(n)`
 /// for `n` points, the constant measured (see [`TRANSFORM_COST`]), on the power of two of
-/// points at or above the coefficients, or on half as many plus the cost of the top
-/// coefficients' product when that is less (see [`points`]).
+/// points at or above the coefficients, or on half as many plus [`WRAP_COST`] per point and
+/// the cost of the top coefficients' product when that is less (see [`points`]).
 fn transform_cost(coeffs: usize) -> f64 {
     let (n, wrap) = points(coeffs.div_ceil(2), coeffs / 2 + 1);
     let top = match wrap {
-        true => transform_cost(2 * (coeffs - n) - 1),
+        true => WRAP_COST * n as f64 + transform_cost(2 * (coeffs - n) - 1),
         false => 0.0,
     };
     TRANSFORM_COST * points_cost(n) as f64 + top
@@ -1126,24 +1167,33 @@ fn points_cost(n: usize) -> u128 {
 /// The points of a product of `la` and `lb` words by [`Field::linear`], and whether it wraps
 /// its top coefficients around: `n`, the power of two at or above the `la + lb - 1`
 /// coefficients, or `n / 2` when that plus the product of the top words (the `r = la + lb -
-/// 1 - n / 2` coefficients above `n / 2` need at most `min(la, r) + min(lb, r) - 1`) costs
-/// less by [`transform_cost`]. The choice is the cheaper of two computed costs, with no size
-/// constant. Both factors must fit in `n / 2` words to wrap: a wider one would have to be
-/// folded by coefficients, and [`spectra`] folds by words.
+/// 1 - n / 2` coefficients above `n / 2` need at most `min(la, r) + min(lb, r) - 1`) and
+/// [`WRAP_COST`] per point costs less by [`transform_cost`]. The choice is the cheaper of two
+/// computed costs, with no size constant. Both factors must fit in `n / 2` words to wrap: a
+/// wider one would have to be folded by coefficients, and [`spectra`] folds by words.
 fn points(la: usize, lb: usize) -> (usize, bool) {
+    let n = (la + lb - 1).next_power_of_two();
+    match wrap_flip(la, lb) {
+        Some(flip) if WRAP_COST < flip => (n / 2, true),
+        _ => (n, false),
+    }
+}
+
+/// The value of [`WRAP_COST`] below which [`points`] wraps a product of `la` and `lb` words,
+/// `None` where it cannot wrap. The wrap costs `TRANSFORM_COST points_cost(n / 2) + WRAP_COST
+/// n / 2 + T` against `TRANSFORM_COST points_cost(n)`, `T` the top words' [`transform_cost`]
+/// (which holds [`WRAP_COST`] as built at the depths below), so it is the cheaper exactly when
+/// `WRAP_COST < (TRANSFORM_COST (points_cost(n) - points_cost(n / 2)) - T) / (n / 2)`.
+fn wrap_flip(la: usize, lb: usize) -> Option<f64> {
     let coeffs = la + lb - 1;
     let n = coeffs.next_power_of_two();
     if coeffs <= 2 || n == coeffs || la.max(lb) > n / 2 {
-        return (n, false);
+        return None;
     }
     let r = coeffs - n / 2;
     let top = la.min(r) + lb.min(r) - 1;
-    match TRANSFORM_COST * points_cost(n / 2) as f64 + transform_cost(top)
-        < TRANSFORM_COST * points_cost(n) as f64
-    {
-        true => (n / 2, true),
-        false => (n, false),
-    }
+    let saved = TRANSFORM_COST * (points_cost(n) - points_cost(n / 2)) as f64;
+    Some((saved - transform_cost(top)) / (n / 2) as f64)
 }
 
 /// The cheapest way to multiply a factor of `short` words by one of `long >= short` words by
@@ -1172,7 +1222,7 @@ fn nonzero_words(x: &BigUint) -> usize {
     x.iter_u64_digits().filter(|&d| d != 0).count()
 }
 
-/// `a * b`. When the narrower factor has at most `MUL_LEAF` (512) words, by num-bigint's
+/// `a * b`. When the narrower factor has at most `MUL_LEAF` (400) words, by num-bigint's
 /// multiplication; above that, by whichever of three methods has the least computed cost:
 /// num-bigint's (Toom-3, about `n^1.465`), rows over the nonzero words of one factor, or
 /// transforms modulo three primes joined by the Chinese remainder theorem, O(n log n). Every
@@ -1474,19 +1524,34 @@ fn pieces_mul(a: &BigUint, b: &BigUint, piece: usize) -> BigUint {
 
 /// `a * b` by transforms modulo three primes joined by the Chinese remainder theorem.
 fn transform_mul(a: &BigUint, b: &BigUint) -> BigUint {
-    let (la, lb) = (words(a), words(b));
+    let plan = points(words(a), words(b));
+    transform_mul_on(a, b, plan, plan.0)
+}
+
+/// [`transform_mul`] on the points and plan `plan`, as [`Field::linear_on`] takes them, with
+/// the roots of `table >= plan.0` points. [`transform_mul`] passes the points of the plan
+/// [`points`] chose. When it wraps on `N = plan.0` points, every product inside (the top
+/// words', at each depth) is on at most `N` points. Proof: [`points`] wraps only when
+/// `C(N) + WRAP_COST N + T < C(2N)`, with `C(m) = TRANSFORM_COST points_cost(m)` and `T` the
+/// top product's [`transform_cost`], so only when `T < C(2N)`. The top product has at most `2N - 1` coefficients, so its
+/// power of two of points is at most `2N`; were it `2N` unwrapped, `T` would be `C(2N)` and
+/// the wrap would not be chosen; wrapped, it is on at most `N`. The same holds at each depth
+/// below, whose `N` is at most this one. A wrap [`points`] did not choose
+/// (`crossover::mul_on_points`) may put the top product on `2N` points.
+fn transform_mul_on(a: &BigUint, b: &BigUint, plan: (usize, bool), table: usize) -> BigUint {
     // The product has `la + lb - 1` coefficients and `la + lb` words: the top word is the
     // last carry, pushed into the room [`Field::linear`] leaves.
-    let (n, _) = points(la, lb);
+    let n = plan.0;
     assert!(n <= 1 << 50, "a product of at most 2^50 words");
     let square = std::ptr::eq(a, b) || a == b;
     let other = (!square).then_some((b, 0));
-    let tw = roots(n);
+    let tw = roots(table);
     // `b`'s transform for each prime in turn, in one buffer; the peak, during the last
     // transform, is four vectors of `n` words (two residues, `a`'s transform and `b`'s), and
     // the roots, kept by [`roots`] for later products.
     let mut fb = Vec::with_capacity(if square { 0 } else { n });
-    let [mut r0, r1, r2] = [0, 1, 2].map(|k| FIELDS[k].linear(a, 0, other, &tw[k], &mut fb));
+    let [mut r0, r1, r2] =
+        [0, 1, 2].map(|k| FIELDS[k].linear_on(a, 0, other, plan, &tw[k], &mut fb));
     drop(fb);
     let carry = garner(&mut r0, &r1, &r2);
     debug_assert!(
@@ -4544,6 +4609,29 @@ pub mod crossover {
         let (la, lb) = (super::words(a), super::words(b));
         let (_, piece) = super::transform_plan(la.min(lb), la.max(lb));
         super::pieces_mul(a, b, piece)
+    }
+
+    /// `a * b` by transforms whole (`super::transform_mul`), on half the power of two of
+    /// points at or above its coefficients with the top coefficients' product subtracted
+    /// (`wrap`), or on all of them, whatever `super::points` chooses for the whole product;
+    /// both factors nonzero and, with `wrap`, each of at most half the points' words.
+    pub fn mul_on_points(a: &BigUint, b: &BigUint, wrap: bool) -> BigUint {
+        let n = (super::words(a) + super::words(b) - 1).next_power_of_two();
+        super::transform_mul_on(a, b, (if wrap { n / 2 } else { n }, wrap), n)
+    }
+
+    /// Whether `super::points` wraps `a * b` onto half the points ([`mul_on_points`]).
+    pub fn wraps(a: &BigUint, b: &BigUint) -> bool {
+        super::points(super::words(a), super::words(b)).1
+    }
+
+    /// `super::WRAP_COST` as built.
+    pub const WRAP_COST: f64 = super::WRAP_COST;
+
+    /// The value of `super::WRAP_COST` below which `super::points` wraps `a * b`, `None` where
+    /// it cannot wrap (`super::wrap_flip`).
+    pub fn wrap_flip(a: &BigUint, b: &BigUint) -> Option<f64> {
+        super::wrap_flip(super::words(a), super::words(b))
     }
 
     /// `a * b` by rows over the nonzero words of one factor (`super::sparse_mul`).

@@ -5653,9 +5653,10 @@ fn combine_crt_pair(r1: &Int, m1: &Int, r2: &Int, m2: &Int) -> Option<(Int, Int)
 /// the last remainder 0.10 M / 1.04 M (10.4x). The model with `M(N) = N log N` predicts
 /// `10.17 * (ln 259,803 / ln 25,546) * (14 / 11) = 15.9`; the larger phase ratios come from
 /// the multiplication, whose balanced products cost 3.1x a doubling from 64 to 256 words
-/// (num-bigint's Karatsuba and Toom-3, below `MUL_LEAF` = 459 words, where the transforms cost
-/// more) and 2.0x to 2.2x from 1,024 words on: the tree's top node is 400 words at 2,048
-/// primes and 4,059 at 16,384, so the two sizes sit on different parts of that curve. So the
+/// (num-bigint's Karatsuba and Toom-3, below `MUL_LEAF`, then 459 words and 400 since
+/// 2026-11-22, where the transforms cost more) and 2.0x to 2.2x from 1,024 words on: the
+/// tree's top node is 400 words at 2,048 primes and 4,059 at 16,384, so the two sizes sit on
+/// different parts of that curve. So the
 /// limit 10.5 at these sizes is out of reach of every known method; the bench stays in the
 /// deferred file (the author decision BENCH-crt-tree-size-by-bits holds the sizing).
 ///
