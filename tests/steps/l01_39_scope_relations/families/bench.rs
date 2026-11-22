@@ -226,19 +226,21 @@ fn hopon_scales() {
 }
 
 /// 9.85 times the work at 2 (8.21 the bytes), 10.94 at 3, and 8.27 at 2 on 2026-11-20 (8.18 the
-/// bytes; PERF-l139-under9; not measured at 3 since); back from the deferred tests of
+/// bytes; PERF-l139-under9); at 3 on 2026-11-22, 8.42 (51.3M and 431.9M instructions, 8.16 the
+/// bytes, load 67; PERF-l139-hopb-wakes), so it runs at 3; back from the deferred tests of
 /// PERF-l139-family (XR-l139-family, 2026-11-14: `with` kept as the group's shared rows and the
 /// bounds entries of a part on two names kept while which of their ends are finite holds).
 #[test]
 fn hopb_scales() {
-    scales("hopb", 2, 1);
+    scales("hopb", 3, 1);
 }
 
 /// 9.87 times the work at 2 (8.22 the bytes), 10.96 at 3, and 8.28 at 2 on 2026-11-20 (8.19 the
-/// bytes); see `hopb_scales`.
+/// bytes); at 3 on 2026-11-22, 8.43 (51.3M and 431.8M, 8.17 the bytes, load 67); see
+/// `hopb_scales`.
 #[test]
 fn hoponb_scales() {
-    scales("hoponb", 2, 1);
+    scales("hoponb", 3, 1);
 }
 
 /// 10.81 times the instructions, 10.19 the bytes at 8n after PERF-l139-persist-due; 9.26 (20.3M
