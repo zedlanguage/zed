@@ -542,6 +542,32 @@ test("with a fixture QUESTIONS.md, every plan row an open question holds is bloc
   assert.equal(nodes.get("L7.5")!.ready, false);
 });
 
+// DAGVIEW-held-digitless (AUDIT-p184): an id without a digit or a dash, such as the row FPWARN that
+// Q53 holds, was never held, so the row showed unstarted; an all-capitals word holds the row of that
+// id, and one the plan has no row for (DESIGN) holds nothing and makes no node.
+test("an all-capitals word in the questions table holds the plan row of that id, and no other word does", () => {
+  const rows = `# Plan
+## Items by level
+
+| Level | Id | Title | Size | Hard | Needs | Paths |
+|---|---|---|---|---|---|---|
+| 0 | FPWARN | The @fpwarn warning | S | no | none |  |
+| 0 | DESIGNX | Not named | S | no | none |  |
+`;
+  const md = `## Which plan steps each question holds up
+
+| Question | Steps held up | Rows an answer would add |
+|---|---|---|
+| Q53 | FPWARN (parts 4 to 6), the DESIGN text, Fpwarn |  |
+`;
+  const inp = { ...inputs("", ""), plan: parsePlan(rows), held: parseQuestions(md) };
+  const nodes = by(buildNodes(inp));
+  assert.equal(nodes.get("FPWARN")!.state, "blocked");
+  assert.deepEqual(nodes.get("FPWARN")!.questions, ["Q53"]);
+  assert.equal(nodes.get("DESIGNX")!.state, "unstarted");
+  assert.deepEqual([...nodes.keys()].sort(), ["DESIGNX", "FPWARN"]);
+});
+
 test("the commit list finds a commit by any prefix of 7 or more hex digits, and nothing else", () => {
   const l = new CommitList();
   const a = "8646a2b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6", b = "8646a2c000000000000000000000000000000000", c = "ffff000011112222333344445555666677778888";

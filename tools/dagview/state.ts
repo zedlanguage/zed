@@ -324,7 +324,9 @@ export function parseQuestions(markdown: string): Map<string, string[]> {
     text = text.replace(/\b([A-Za-z][\w-]*\.)(\d+) to \1(\d+)\b/g, (_, p: string, a: string, b: string) =>
       Array.from({ length: Math.max(0, Number(b) - Number(a) + 1) }, (_, k) => p + (Number(a) + k)).join(", "));
     for (const id of text.match(/\b[A-Z][A-Za-z0-9]*(?:[.-][A-Za-z0-9]+)*\b/g) ?? []) {
-      if (!/[\d-]/.test(id)) continue;
+      // An id has a digit or a dash, or is all capitals, as the row FPWARN (DAGVIEW-held-digitless):
+      // heldRows keeps such a word only when it is a plan row's id, so DESIGN in a cell holds nothing.
+      if (!/[\d-]/.test(id) && !/^[A-Z]{2,}$/.test(id)) continue;
       if (!held.has(id)) held.set(id, []);
       if (!held.get(id)!.includes(q)) held.get(id)!.push(q);
     }
@@ -339,10 +341,14 @@ export function buildNodes(inp: Inputs): ViewNode[] {
 // The held items (parseQuestions) by plan row: an id the plan has, in any
 // case, is that row; a DESIGN sub-step the plan has no row for, a row id with
 // a lowercase letter added ("L10.3b"), is its row ("L10.3"). Any other id is
-// kept as written (an item the ledger alone names).
+// kept as written (an item the ledger alone names), except a word of capitals
+// alone, which parseQuestions keeps for rows such as FPWARN: it is kept only when
+// it is a plan row's id as written, since such a word is as likely plain text in
+// capitals (DESIGN, DAG).
 export function heldRows(held: Map<string, string[]> | undefined, known: Map<string, string>): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const [raw, qs] of held ?? []) {
+    if (/^[A-Z]{2,}$/.test(raw) && known.get(raw.toLowerCase()) !== raw) continue;
     const sub = /^(.*\d)[a-z]$/.exec(raw);
     const id = known.get(raw.toLowerCase()) ?? (sub ? known.get(sub[1].toLowerCase()) : undefined) ?? raw;
     const list = out.get(id) ?? [];
