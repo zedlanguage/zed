@@ -211,12 +211,12 @@ pub fn term_roots(
 /// spends exactly `2 log2(t) + 8` units at every `t` from 32 to 131,072 (measured 2026-11-20,
 /// BENCH-over-nlogn-prediction item 15), each O(t) operations on numbers of one or two words:
 /// so the work is `a t (log2 t + 4)`, 1,842 to 2,216 instructions per term and unit. The
-/// enclosures of `positive_on` and `may_hold_a_root` in the monomial form widen with the
-/// terms, so one more cut is needed at each doubling of `t` before the slope's sign is shown
-/// (inferred from the counts; the proof of the count is plan row PROOF-roots-terms-depth). The
-/// depth is at most the bits of the bound, so for coefficients of fixed size the count is
-/// bounded and the work linear once `log2 t` passes them. Given up: the paper's chain of `t`
-/// derivatives, O(t^3) evaluations (80.5 times the work at 8 times the terms), which bounds the
+/// enclosure of the slope in the monomial form shows its sign only within `r / (t - 1)` of the
+/// root, so one more cut is needed at each doubling of `t` (proved, with the count, at the test
+/// `the_count_of_units_on_far_roots_is_proved`, row PROOF-roots-terms-depth). The depth is at
+/// most the bits of the bound, so for coefficients of fixed size the count is bounded and the
+/// work linear once `log2 t` passes them. Given up: the paper's chain of `t` derivatives,
+/// O(t^3) evaluations (80.5 times the work at 8 times the terms), which bounds the
 /// number of intervals where this method has no proven bound; and on dense polynomials with many
 /// integer roots, as `(x - 2) … (x - 65)`, the chain was about 2 times faster (40 against 80 ms
 /// at 64 roots), and on a small cubic as `(x - 4)(x - 5)(x - 7)` about 1.5 times (27 against
@@ -541,6 +541,8 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
         if spent > budget {
             #[cfg(test)]
             tests::CHAINED.with(|c| c.set(c.get() + 1));
+            #[cfg(test)]
+            tests::UNITS.with(|u| u.set(u.get() + budget));
             return chain_roots(p, a, Some(hi));
         }
         if l > h || !may_hold_a_root(p, &l, &h) {
@@ -568,6 +570,8 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
         open.push((&m + 1, h));
         open.push((l, m));
     }
+    #[cfg(test)]
+    tests::UNITS.with(|u| u.set(u.get() + spent));
     out.sort();
     out
 }
@@ -897,6 +901,9 @@ mod tests {
     thread_local! {
         /// How many times [`positive_roots`] has handed over to [`chain_roots`] on this thread.
         pub(super) static CHAINED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        /// The units [`positive_roots`] has spent on this thread, a handover to the chain counted
+        /// as the whole budget.
+        pub(super) static UNITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     }
 
     fn big(terms: &[(u64, BigInt)]) -> Sparse {
@@ -1244,5 +1251,64 @@ mod tests {
         assert_eq!(term_roots(&t, "p", &none, None, None), None);
         let t = prim(Prim::Sub, vec![p(), var("q")]);
         assert_eq!(term_roots(&t, "p", &none, None, None), None);
+    }
+
+    /// The count of units on far roots (row PROOF-roots-terms-depth). On
+    /// `p = (x - r)(1 + x^2 + ... + x^(t - 2))`, `r = 2^40`, `t = 2^tau` terms (`-r` on the even
+    /// powers, 1 on the odd), [`positive_roots`] spends exactly `2 tau + 8` units, the count
+    /// [`integer_roots`] states, and the reflected polynomial 1 more. The proof, for
+    /// `8 <= t <= 2^37`, with `l..=h` an interval the branch and bound pops:
+    ///
+    /// 1. Where `h < r`, [`may_hold_a_root`] drops it. The carry bounds of `p` at `l`
+    ///    ([`bounds`]) satisfy `B_odd <= (B_even + r) / l` and `B_even <= (B_odd + 1) / l`, so
+    ///    `B_even <= (l + r) / (l^2 - 1)`. Horner's rule starts from the top term, 1, and the
+    ///    next step encloses `U = x - r` in `l - r..=h - r`, which misses `-B_even..=B_even` when
+    ///    `r - h > (l + r) / (l^2 - 1)`: at `l = 2` (only with `h = 2^21 - 1`) the right side is
+    ///    about `r / 3` and the left about `r`, and for `l >= 2^21` the right side is below 1.
+    /// 2. The slope `q = x p'(x)` has `(t - 1)` on `x^(t - 1)` and `-(t - 2) r` on `x^(t - 2)`.
+    ///    For `l > 3t + 2` its carry bound at the even powers is 0 and at the top
+    ///    `B_top = floor((t - 2) r / l)`, so [`positive_on`] returns true at its first step
+    ///    exactly when `t - 1 > B_top`, that is when `l > r (t - 2) / (t - 1)`. Otherwise its
+    ///    next value is `(t - 1) l - (t - 2) r`, which is not 0 (`t - 1` is odd and prime to
+    ///    `t - 2`, so it divides no `(t - 2) 2^40`), so it is below the bound 0 and the test
+    ///    returns false. The negated test starts at `-(t - 1) >= -B_top`, and its next value
+    ///    `-(t - 1) h + (t - 2) r`, with `h >= r`, passes the cap `(t - 2) r + 1` and is cut to
+    ///    `-1 < 0`: false. On the intervals of step 3 with `l <= 2^36` both tests fail the same
+    ///    way, the negative values being cut at the cap.
+    /// 3. The cuts. While `4 l < h` the cut is `2^((bits l + bits h) / 2) - 1`: from `2..=r + 1`
+    ///    the right parts start at `2^21`, `2^31`, `2^36` and `2^39`, four cuts, each costing the
+    ///    unit of the cut interval and the unit of its left part, dropped by (1): 8 units. Then
+    ///    bisection of `l..=r + 1` with `d = r - l`: `d_0 = 2^39`, `d_(k + 1) = ceil((d_k - 1) /
+    ///    2) - 1`, so `d_1 = 2^38 - 1` and `d_k = 2^(39 - k) - 2` for `k >= 2`, again 2 units a
+    ///    cut. By (2) the slope is shown positive first where `d_k < r / (t - 1)`: true at
+    ///    `k = tau - 1`, `2^(40 - tau) - 2 < 2^40 / (2^tau - 1)`, and false at `k = tau - 2`, as
+    ///    `(2^(41 - tau) - 2)(2^tau - 1) >= 2^40` is `2^40 + 2 >= 2^(41 - tau) + 2^(tau + 1)`,
+    ///    true for `1 <= tau <= 39`. That is `2 (tau - 1)` units, 1 for the interval the slope
+    ///    decides, and 1 for the one [`search`] step, whose Newton guess from `r + 1` lands
+    ///    within 1 of `r`: `8 + 2 (tau - 1) + 2 = 2 tau + 8`.
+    /// 4. The reflected polynomial `p(-x)` has `-r` on the even powers and `-1` on the odd, all
+    ///    negative, so its one interval is dropped in 1 unit.
+    ///
+    /// For an `r` of `B` bits the first phase halves the bits between the ends at each cut,
+    /// `O(log B)` cuts, and the count is `2 log2 t + O(log B)`. The test checks the count at
+    /// `tau = 3` to 14, and the trace of the intervals at `tau = 3` was read against (3): eight
+    /// units on the powers of 2, two cuts, the interval the slope decides.
+    #[test]
+    fn the_count_of_units_on_far_roots_is_proved() {
+        let r = BigInt::one() << 40u32;
+        for tau in 3..=14u32 {
+            let t = 1u64 << tau;
+            let mut terms = Vec::new();
+            for i in 0..t / 2 {
+                terms.push((2 * i, -r.clone()));
+                terms.push((2 * i + 1, BigInt::one()));
+            }
+            UNITS.with(|u| u.set(0));
+            let roots = integer_roots(&big(&terms), None, None);
+            let units = UNITS.with(|u| u.get());
+            assert_eq!(roots, Roots::Listed(vec![r.clone()]), "tau = {tau}");
+            // `2 tau + 8` in the search above 1, 1 for the reflected polynomial.
+            assert_eq!(units, u64::from(2 * tau + 9), "tau = {tau}");
+        }
     }
 }
