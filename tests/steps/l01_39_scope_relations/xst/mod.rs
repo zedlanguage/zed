@@ -19,7 +19,14 @@
 //!   enumeration (Claude's model and Codex's), with Property P, order independence,
 //!   monotonicity and the controls that break each; Codex's round-3 integer octagon projection
 //!   on 6,561 bound choices, the two-hub component with a dominating disjunction and the
-//!   implication walk, with their controls.
+//!   implication walk, with their controls; and the whole-case implication test on boxes of
+//!   intervals against gapped boxes.
+//! - [`s4_names`]: the S4 base study of round 4 on two and three names with cases of several
+//!   atoms (`pn`, `pnorders`): property P and the order of parts, whole-case against atom-wise
+//!   implication, and the CONTROL that skips a part with no live case, in the study's sizes.
+//! - [`s4_holed`]: the same study's `holed`: S4 in the topological order of the class check on
+//!   random systems with holed names on cycles, against chaotic iteration, with the CONTROLS of
+//!   the reversed order and of the class without condition (iii), in the study's sizes.
 //! - [`threshold`]: the threshold-implication solver of QUESTIONS A57 (`threshold::solve`)
 //!   against enumeration in each sign case, the unbounded hub, A57's reachability reduction,
 //!   and the scaling of the walk and of the hub search (ported from `a57.mjs` and `red.mjs`).
@@ -32,7 +39,9 @@
 mod holes;
 mod holes_model;
 mod s4;
+mod s4_holed;
 mod s4_model;
+mod s4_names;
 mod threshold;
 
 use std::sync::Arc;

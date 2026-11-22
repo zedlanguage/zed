@@ -107,7 +107,7 @@ fn bx(xs: &[i64], ys: &[i64]) -> Bx {
 
 /// How the base projection is computed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Pi {
+pub(super) enum Pi {
     /// The projection of the points (enumeration).
     Exact,
     /// Each atom alone removes the values without a support, to a fixpoint.
@@ -532,12 +532,35 @@ fn control_promotion_on_arrival_depends_on_the_order() {
 /// 3. `o` two atoms, atom by atom as DESIGN L1.39 promotes: an atom `o_i` with no point of `b`
 ///    meeting `o_i` and not `a`.
 ///
-/// Claude drew from seed `0x9c4ec`.
+/// Claude drew from seed `0x9c4ec`, each box a random sub-box of the full box
+/// ([`gapped_box`]).
 fn pcheck(pi: Pi, count: usize, seed: u64) -> [[usize; 3]; 4] {
+    pcheck_on(pi, count, seed, gapped_box)
+}
+
+/// Claude's box: each value of each name kept with probability 2/3, so most boxes have gaps.
+fn gapped_box(g: &mut Lcg) -> Bx {
+    sub_box(FULL, g)
+}
+
+/// A box of intervals: for each name, two values drawn in `0..W`, and the values between them.
+fn interval_box(g: &mut Lcg) -> Bx {
+    let mut out = [0u8; 2];
+    for m in &mut out {
+        let (a, b) = (g.next(W as u64), g.next(W as u64));
+        for v in a.min(b)..=a.max(b) {
+            *m |= 1 << v;
+        }
+    }
+    out
+}
+
+/// [`pcheck`] with each box drawn by `draw_box`.
+fn pcheck_on(pi: Pi, count: usize, seed: u64, draw_box: fn(&mut Lcg) -> Bx) -> [[usize; 3]; 4] {
     let mut g = Lcg(seed);
     let mut tally = [[0usize; 3]; 4];
     for _ in 0..count {
-        let b = sub_box(FULL, &mut g);
+        let b = draw_box(&mut g);
         let phi: Vec<Atom> = (0..1 + g.next(3)).map(|_| atom(&mut g)).collect();
         let a = atom(&mut g);
         let o = [atom(&mut g), atom(&mut g)];
@@ -682,6 +705,85 @@ fn control_the_whole_case_implication_test_fails_property_p() {
     );
     assert_eq!(pcheck(Pi::Arc, 22_494, 1227236632955857713)[2][1], 1);
     assert_eq!(pcheck(Pi::Arc, 22_493, 1227236632955857713)[2][1], 0);
+}
+
+/// Whether a failure of property P under the test of two atoms as a whole (index 2 of
+/// [`pcheck`]) needs a gap in the box (row S4-interval-boxes; the failure of
+/// [`control_the_whole_case_implication_test_fails_property_p`] has gaps in both names). Piece
+/// `k` draws [`BOX_DRAWS`] boxes of intervals ([`interval_box`]) and as many of Claude's
+/// gapped boxes ([`gapped_box`]) from seed `0x9c4ec + k` (piece 0's gapped draws are Claude's
+/// first), under arc and bounds projection, and prints for each the premises, the failures of
+/// P, and the failures where `phi` and `o` have a point in the box. The last is 0: arc and
+/// bounds projection are sound, so when the projection of `o` and `not a` is empty no point
+/// meets both, and a point of `phi` and `o` would meet `a`.
+///
+/// The counts per piece are pinned in [`BOX_PINNED`] after the first run. Pending that run:
+/// whether interval boxes give any failure.
+const BOX_DRAWS: usize = 1_000_000;
+
+const BOX_PIECES: usize = 12;
+
+/// Per piece: boxes of intervals under arc and bounds projection, then gapped boxes under arc
+/// and bounds projection; each `[premises, P fails, P fails and a point is lost]`.
+const BOX_PINNED: &[[[usize; 3]; 4]] = &[];
+
+fn whole_case_on_interval_and_gapped_boxes(piece: usize) {
+    assert!(piece < BOX_PIECES, "piece {piece}");
+    let seed = 0x9c4ec + piece as u64;
+    let draws: [fn(&mut Lcg) -> Bx; 2] = [interval_box, gapped_box];
+    let mut t = [[0; 3]; 4];
+    for (i, draw_box) in draws.into_iter().enumerate() {
+        for (j, pi) in [Pi::Arc, Pi::Bounds].into_iter().enumerate() {
+            t[2 * i + j] = pcheck_on(pi, BOX_DRAWS, seed, draw_box)[2];
+        }
+    }
+    eprintln!(
+        "seed {seed:#x}, {BOX_DRAWS} draws of each box: two atoms as a whole, [premises, P fails, \
+         a point lost] for intervals under arc and bounds, gapped under arc and bounds: {t:?}"
+    );
+    for (r, what) in t.iter().zip([
+        "intervals, arc",
+        "intervals, bounds",
+        "gapped, arc",
+        "gapped, bounds",
+    ]) {
+        assert_eq!(r[2], 0, "seed {seed:#x}, {what}: a point lost");
+    }
+    if let Some(want) = BOX_PINNED.get(piece) {
+        assert_eq!(t, *want, "seed {seed:#x}: the pinned counts");
+    }
+}
+
+/// Every piece of [`whole_case_on_interval_and_gapped_boxes`] has its counts pinned.
+#[test]
+fn the_interval_box_pieces_are_pinned() {
+    assert_eq!(BOX_PINNED.len(), BOX_PIECES);
+}
+
+macro_rules! box_pieces {
+    ($($test:ident $k:literal;)*) => {
+        $(
+            #[test]
+            fn $test() {
+                whole_case_on_interval_and_gapped_boxes($k);
+            }
+        )*
+    };
+}
+
+box_pieces! {
+    whole_case_on_interval_and_gapped_boxes_piece_0 0;
+    whole_case_on_interval_and_gapped_boxes_piece_1 1;
+    whole_case_on_interval_and_gapped_boxes_piece_2 2;
+    whole_case_on_interval_and_gapped_boxes_piece_3 3;
+    whole_case_on_interval_and_gapped_boxes_piece_4 4;
+    whole_case_on_interval_and_gapped_boxes_piece_5 5;
+    whole_case_on_interval_and_gapped_boxes_piece_6 6;
+    whole_case_on_interval_and_gapped_boxes_piece_7 7;
+    whole_case_on_interval_and_gapped_boxes_piece_8 8;
+    whole_case_on_interval_and_gapped_boxes_piece_9 9;
+    whole_case_on_interval_and_gapped_boxes_piece_10 10;
+    whole_case_on_interval_and_gapped_boxes_piece_11 11;
 }
 
 /// CONTROL (Claude round 4): the implication tested relative to the base (`phi`) fails P under
