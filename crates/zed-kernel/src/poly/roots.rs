@@ -730,9 +730,13 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
 /// The integer root of `p` in `lo..=hi`, `2 <= lo < hi`, on which `p` is strictly monotone
 /// (`slope`, `x p'(x)`, has one sign there), if it has one. With the signs of `p` at the ends
 /// ([`sign_at`]) opposite, each step takes Newton's guess from the end of the smaller value
-/// and the integers beside it, so that a guess within 1 of the root closes the bracket; a step
-/// that does not halve the bracket is followed by a bisection, so a search takes at most twice
-/// the bits of `hi - lo` steps. Before those steps, while `hi > 4 lo`, the bracket is cut at
+/// and the integers beside it, so that a guess within 1 of the root closes the bracket; a
+/// Newton step that does not halve the bracket is followed by one bisection, which leaves at
+/// most `ceil(w / 2)` of a width `w`, so a search takes at most twice the bits of `hi - lo`
+/// steps. A bisection is not followed by another: on an odd width `2k + 1` its right half has
+/// `k + 1 > (2k + 1) / 2`, and before plan row ROOTS-bisect-flag that kept the flag set for
+/// runs of bisections in place of Newton steps (test
+/// `a_bisection_is_followed_by_a_newton_step`). Before those steps, while `hi > 4 lo`, the bracket is cut at
 /// the power of 2 whose exponent is the mean of its ends' bits, so a root far below the end
 /// Newton's method starts from is reached in O(log B) steps for ends of B bits.
 ///
@@ -782,8 +786,14 @@ fn search(
         }
         let width = &hi - &lo;
         let newton = match bisect {
-            true => None,
+            true => {
+                #[cfg(test)]
+                tests::BISECTIONS.with(|n| n.set(n.get() + 1));
+                None
+            }
             false => {
+                #[cfg(test)]
+                tests::NEWTON_STEPS.with(|n| n.set(n.get() + 1));
                 let (fl, fh) = (scaled(p, &lo, s), scaled(p, &hi, s));
                 let (x, fx) = if fl.abs() <= fh.abs() {
                     (&lo, fl)
@@ -804,7 +814,7 @@ fn search(
                 _ => hi = x,
             }
         }
-        bisect = (&hi - &lo) * 2 > width;
+        bisect = !bisect && (&hi - &lo) * 2 > width;
     }
     None
 }
@@ -972,8 +982,9 @@ fn chain_cells(q: &[(u64, BigInt)], below: &[BigInt], a: &BigInt, hi: &BigInt) -
 /// A cell `c` in `lo..hi` at which `q`, monotone on `lo..=hi`, changes sign or is 0, given
 /// its values `flo` and `fhi`, of opposite signs, at the ends. Each step takes Newton's guess
 /// from the end of the smaller value and the integer beside it toward the root, so that a
-/// guess within 1 of a simple root closes the bracket; a step that does not halve the bracket
-/// is followed by a bisection, so a search takes at most twice the bits of `hi - lo` steps.
+/// guess within 1 of a simple root closes the bracket; a Newton step that does not halve the
+/// bracket is followed by one bisection, so a search takes at most twice the bits of `hi - lo`
+/// steps (the proof, and why a bisection is not followed by another, at [`search`]).
 /// Before those steps, while `hi > 4 max(lo, 1)`, the bracket is cut at the power of 2 whose
 /// exponent is the mean of its ends' bits, so a root far below the end Newton's method starts
 /// from is reached in O(log B) steps for ends of B bits.
@@ -1012,8 +1023,14 @@ fn chain_search(
         }
         let width = &hi - &lo;
         let newton = match bisect {
-            true => None,
+            true => {
+                #[cfg(test)]
+                tests::BISECTIONS.with(|n| n.set(n.get() + 1));
+                None
+            }
             false => {
+                #[cfg(test)]
+                tests::NEWTON_STEPS.with(|n| n.set(n.get() + 1));
                 let (x, fx) = if flo.abs() <= fhi.abs() {
                     (&lo, &flo)
                 } else {
@@ -1037,7 +1054,7 @@ fn chain_search(
                 (hi, fhi) = (x, fx);
             }
         }
-        bisect = (&hi - &lo) * 2 > width;
+        bisect = !bisect && (&hi - &lo) * 2 > width;
     }
     lo
 }
@@ -1081,6 +1098,41 @@ mod tests {
         pub(super) static UNITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         /// The evaluations [`chain_cells`] has made at the ends of stretches on this thread.
         pub(super) static END_EVALS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        /// The Newton steps and the bisections [`search`] and [`chain_search`] have taken on
+        /// this thread.
+        pub(super) static NEWTON_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        pub(super) static BISECTIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    /// The cubic `(x - a)(x - b)(x - 5)` with `a = 2^bits + 3` and `b = -(2^bits + 7)`, of the
+    /// benchmark `l01_39_reduced_product::roots::bench::roots_scale_in_the_degree_and_in_the_bits`,
+    /// and its roots in order.
+    fn of_bits(bits: u64) -> (Sparse, Vec<BigInt>) {
+        let a = (BigInt::one() << bits) + 3;
+        let b = -((BigInt::one() << bits) + 7);
+        let rs = vec![b, BigInt::from(5), a];
+        (from_big_roots(&rs), rs)
+    }
+
+    /// A bisection is followed by a Newton step (plan row ROOTS-bisect-flag): on the cubic of
+    /// [`of_bits`] at 2,048 bits the five searches of the chain take at most one bisection per
+    /// Newton step, and the count of bisections is the one measured here. Before the row a
+    /// bisection on an odd width `2k + 1` whose root lay in the right half, of `k + 1`, set the
+    /// flag again, so bisections ran on in place of Newton steps. Negative control: the old
+    /// line, `bisect = (&hi - &lo) * 2 > width`, at both sites fails both assertions.
+    #[test]
+    fn a_bisection_is_followed_by_a_newton_step() {
+        let (f, rs) = of_bits(2048);
+        NEWTON_STEPS.with(|n| n.set(0));
+        BISECTIONS.with(|n| n.set(0));
+        assert_eq!(integer_roots(&f, None, None), Roots::Listed(rs));
+        let newton = NEWTON_STEPS.with(|n| n.get());
+        let bisections = BISECTIONS.with(|n| n.get());
+        println!("of_bits(2048): {newton} Newton steps, {bisections} bisections");
+        assert!(
+            bisections <= newton,
+            "{bisections} bisections, {newton} Newton steps"
+        );
     }
 
     /// The roots [`chain_roots`] finds on `p` in `2..=b`, and the evaluations at the ends of
