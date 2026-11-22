@@ -201,9 +201,11 @@ fn products_whose_factors_keep_open_sides_scale() {
     // factor is then asked of the solver over the rows of that factor's link alone (its
     // cluster, `clusters` in `part_bounds`), not over the whole chain, so the work stays
     // linear in the number of links.
+    // At 130 (PRES-growth-ladder-bytes, b22-presburger3, 2026-11-22): 766 M and 6,767 M
+    // instructions, 8.84 times; on 2026-11-14 the bytes at 8n were 12.0 times and it stayed at 16.
     open_side_chain_scales(
         "a sum of products whose factors keep open sides",
-        16,
+        130,
         link_with_open_sides,
         false,
     );
@@ -213,7 +215,9 @@ fn products_whose_factors_keep_open_sides_scale() {
 fn products_whose_factors_one_sum_on_the_factors_joins_scale() {
     // As `products_whose_factors_one_sum_joins_scale`, with the sum on the factors `b{i}`
     // themselves (C2-pairs-long-row).
-    let n = 8;
+    // At 120 (PRES-growth-ladder-bytes, b22-presburger3, 2026-11-22): 747 M and 6,586 M
+    // instructions, 8.82 times; on 2026-11-14 the bytes at 8n were 11.6 times and it stayed at 8.
+    let n = 120;
     let built = scaling::inputs(n, one_sum_on_factors);
     let measure = move || {
         scaling::check(

@@ -4,22 +4,32 @@ use crate::linked_nest::*;
 use zed_tests::scaling;
 use zedc::store::presburger::Formula;
 
+/// At 450 to 3600 levels (PRES-growth-linked-nest, b22-presburger3, 2026-11-22): 617 M and
+/// 5,037 M instructions, 8.16 times, and 8.1 times the bytes. On 2026-11-14 the same sizes took
+/// 34.1 times the instructions and 20.7 times the bytes, and the test stayed at 16; the growth
+/// was gone on origin/main of 2026-11-22 (81deb6d28) without a change aimed at it, so this
+/// moves the test to the size it was meant to have.
 #[test]
 fn a_linked_nest_projects_in_time_linear_in_its_depth() {
-    let sizes = [16, 32, 64, 128];
-    let w = even_weights(128);
-    let inputs = scaling::inputs(16, |k| nest(k, &w, (2, 1), true));
-    let all: Vec<(usize, Formula)> = sizes
-        .iter()
-        .map(|&k| (k, nest(k, &w, (2, 1), true)))
-        .collect();
-    exponents("project_each of the linked nest, x[k] odd", &sizes, |k| {
-        let f = &all.iter().find(|(n, _)| *n == k).expect("an input").1;
-        assert_no_way_has_an_odd_top(f);
-    });
-    scaling::check("project_each of a linked nest k deep, x[k] odd", 16, |k| {
-        assert_no_way_has_an_odd_top(&inputs[&k]);
-    });
+    // On a stack of 1 GiB: building and projecting the nest recurse once per level, and 8 × 450
+    // levels overflow the test thread's stack (an explicit stack is row PRE-stack-explicit).
+    scaling::on_a_thread(1 << 30, || {
+        let sizes = [16, 32, 64, 128];
+        let n = 450;
+        let w = even_weights(scaling::FACTOR * n);
+        let inputs = scaling::inputs(n, |k| nest(k, &w, (2, 1), true));
+        let all: Vec<(usize, Formula)> = sizes
+            .iter()
+            .map(|&k| (k, nest(k, &w, (2, 1), true)))
+            .collect();
+        exponents("project_each of the linked nest, x[k] odd", &sizes, |k| {
+            let f = &all.iter().find(|(n, _)| *n == k).expect("an input").1;
+            assert_no_way_has_an_odd_top(f);
+        });
+        scaling::check("project_each of a linked nest k deep, x[k] odd", n, |k| {
+            assert_no_way_has_an_odd_top(&inputs[&k]);
+        });
+    })
 }
 
 /// The nest named against its links ([`against`]), asked with the names as written, costs what
