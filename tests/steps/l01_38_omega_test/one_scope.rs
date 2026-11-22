@@ -5624,3 +5624,30 @@ fn a_remainder_row_without_points_answers_no_under_either_reading() {
     assert!(answered > 0);
     assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
+
+/// The unit that seed 7431387621846350106 of
+/// `each_answer_through_a_projection_kept_over_pairs_is_the_answer_of_the_relation_whole` drew on
+/// origin/main fc45de380 (FAIL-omega-pairs-7431387621846350106, pinned by b22-presburger3 on a
+/// checkout of that commit, where this test fails): the `holds` question of `c1` was refused
+/// for Growth when each call reads its callee's body again, and answered when read alone. The
+/// seed draws another unit since 4010cd0d7, so the unit is written out here.
+#[test]
+fn the_unit_of_seed_7431387621846350106_is_answered_as_its_bodies_read() {
+    answers_are_those_reading_bodies(
+        "g0(x: int) = x mod 2 == 1 && x < 68;\n\
+         g1(x: int) = g0(x: x + 1) && x div 2 > 2;\n\
+         g2(x: int) = g1(x: x + (0 - 1)) && x > (0 - 3);\n\
+         g3(x: int) = g2(x: x + (0 - 1)) && x > (0 - 2);\n\
+         v0(x: int) = x mod 4;\n\
+         v1(x: int) = v0(x: x + (0 - 2)) + x mod 3;\n\
+         v2(x: int) = v1(x: x + (0 - 1)) + x div 5;\n\
+         v3(x: int) = v2(x: x + 3) + x mod 3;\n\
+         w(x: int, y: int) = x mod 4 == y mod 4 && x < y + 7;\n\
+         c0(x: int) = x > (0 - 9);\n\
+         c1(x: int) = g1(x: x + 0) && v3(x: x + (0 - 3)) < 7 && c0(x: x + 1) && x < 63;\n\
+         c2(x: int) = g3(x: x + (0 - 4)) && c1(x: x + (0 - 1)) && x < 79;\n\
+         c3(x: int) = g1(x: x + 4) && v0(x: x + (0 - 3)) < 12 && c2(x: x + (0 - 1)) && x < 82;\n\
+         c4(x: int) = g0(x: x + (0 - 3)) && c3(x: x + (0 - 1)) && x < 88;\n\
+         c5(x: int) = g3(x: x + (0 - 1)) || v0(x: x + (0 - 3)) < (0 - 2) || c4(x: x + 2) && x < 38;",
+    );
+}
