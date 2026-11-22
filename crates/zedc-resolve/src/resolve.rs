@@ -634,7 +634,7 @@ pub const WORDS: &[(&str, u32)] = &[
     ("dnf", 22),
     ("cnf", 22),
     ("minimize", 22),
-    ("factor", 22),
+    ("collect", 22),
     ("sat", 22),
     ("valid", 22),
     ("modelCount", 22),
