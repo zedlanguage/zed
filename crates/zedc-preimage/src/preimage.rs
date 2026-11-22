@@ -19636,9 +19636,11 @@ mod tests {
         #[test]
         fn a_hit_passes_its_cut_to_the_reader() {
             let (made, reads, checked, shown) = run(&hit_with_cut());
+            // `s` stops at `f(f, 2)`, so neither side is exact; it is false wherever its last
+            // operand `-1 + y == 2 * y` is, at each `y` but `-1`.
             assert_eq!(
                 shown,
-                "x [] y [] exact stops 1; x [-6..=6] y [-6..=6] exact stops 1"
+                "x [-6..=6] y [-6..=6] stops 1; x [-6..=6] y [-6..=-2, 0..=6] stops 1"
             );
             assert!(
                 made > 0 && reads[0] > 0 && checked[0] > 0,
