@@ -2208,6 +2208,60 @@ fn a_tuple_type_taken_away_in_whole_leaves_never() {
 }
 
 #[test]
+fn a_difference_nested_in_a_parameter_type_names_the_component_it_takes_away() {
+    // MSG-diff-nested-arg-step: the step names the innermost component of a tuple display in
+    // the part a nested difference takes away, read as the body reads it, `p[1]`.
+    let inner = "`(2, 3) : (int, int)` is in the part `\\` takes away from \
+                 `p[1] : (..) \\ (int, int)`";
+    let deep = "`(3, 4) : (int, int)` is in the part `\\` takes away from \
+                `p[1][1] : (..) \\ (int, int)`";
+    for (param, arg, step) in [
+        ("(int, (..) \\ (int, int))", "(1, (2, 3))", inner),
+        // The outer difference takes the argument away too; only the innermost is named.
+        (
+            "(int, (..) \\ (int, int)) \\ (int, (int, int))",
+            "(1, (2, 3))",
+            inner,
+        ),
+        // The outer difference takes nothing away here.
+        (
+            "(int, (..) \\ (int, int)) \\ (int, (int, bool))",
+            "(1, (2, 3))",
+            inner,
+        ),
+        ("(int, (int, (..) \\ (int, int)))", "(1, (2, (3, 4)))", deep),
+        // A difference in the left side of a difference, at the same component.
+        (
+            "((..) \\ (int, int)) \\ (bool, bool)",
+            "(true, false)",
+            "`(true, false) : (bool, bool)` is in the part `\\` takes away from \
+             `p : (..) \\ (int, int) \\ (bool, bool)`",
+        ),
+        (
+            "((..) \\ (int, int)) \\ (int, int)",
+            "(1, 2)",
+            "`(1, 2) : (int, int)` is in the part `\\` takes away from `p : (..) \\ (int, int)`",
+        ),
+    ] {
+        let text = format!("f(p: {param}) = p;\ng() = f(p: {arg});\n");
+        let errs = errors_with_steps(&text);
+        assert_eq!(errs.len(), 1, "{text}{errs:#?}");
+        let took: Vec<&String> = (errs[0].1.iter())
+            .filter(|s| s.contains("takes away"))
+            .collect();
+        assert_eq!(took, [step], "{text}{errs:#?}");
+    }
+    // A component reached through a name is named where the display holds the name.
+    let text = "f(p: (int, (..) \\ (int, int))) = p;\ng() = { t = (2, 3); f(p: (1, t)) };\n";
+    let errs = errors_with_steps(text);
+    assert!(
+        (errs.iter().flat_map(|e| &e.1))
+            .any(|s| s.ends_with("takes away from `p[1] : (..) \\ (int, int)`")),
+        "{text}{errs:#?}"
+    );
+}
+
+#[test]
 fn only_an_argument_in_the_part_taken_away_gets_the_step_about_it() {
     // An argument refused for being outside the left side of the difference, or a call refused
     // for another argument, says nothing of the part `\` takes away.

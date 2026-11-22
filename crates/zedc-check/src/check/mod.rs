@@ -4591,9 +4591,17 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `positional` and `named`, are in the part a difference takes away: for a parameter
     /// whose type is written `a \ b`, an argument whose value is a value of `b`. Positional
     /// arguments fill the parameters in order and named ones the parameter of their name, as
-    /// the call placed them. `b` with a variable is skipped, since it holds no value fixed
-    /// here. Built only for a message that is printed: one denotation of each `b`, linear in
-    /// its size, and one subtype check per such parameter.
+    /// the call placed them. A difference nested in a written tuple type is reached through a
+    /// tuple display written at the argument, component by component, and the step names the
+    /// component as the body reads it, `p[1]` (MSG-diff-nested-arg-step); when a difference and
+    /// one nested in its left side both take a component away, only the innermost is named.
+    /// `b` with a variable is skipped, since it holds no value fixed here.
+    ///
+    /// Complexity tradeoff: built only for a message that is printed. The walk visits each
+    /// written type node once, with an explicit stack so a deeply nested written type does not
+    /// grow the call stack; each difference costs one denotation of its `b`, linear in its size,
+    /// and one subtype check. Dropping the outer steps compares each pair of the `k` steps
+    /// found, `O(k²)` with `k` at most the number of differences written, which is small.
     fn subtracted_args(
         &self,
         id: usize,
@@ -4608,9 +4616,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(w) = &p.ty else {
                 continue;
             };
-            let TypeKind::Diff(_, b) = &bare(w).kind else {
-                continue;
-            };
             let e = match named.iter().find(|(n, _)| *n == p.name) {
                 Some((_, e)) => e,
                 None => match positional.get(j) {
@@ -4618,29 +4623,72 @@ impl<'t, 'a> Ck<'t, 'a> {
                     None => continue,
                 },
             };
-            let v = match self.seen.get(&e.span) {
-                Some((Some(t), _)) => t.clone(),
-                _ => match self.tuple_seen(e) {
-                    Some(t) => t,
-                    None => continue,
-                },
-            };
-            let taken = denoted(b);
-            if v.is_empty() || taken.dynamic || !taken.vars.is_empty() || !self.subtype(&v, &taken)
-            {
-                continue;
+            // Each step found, with the path of the component it names.
+            let mut found: Vec<(String, Note)> = Vec::new();
+            let mut stack: Vec<(String, &Type, &Expr)> = vec![(p.name.clone(), w, e)];
+            while let Some((path, w, e)) = stack.pop() {
+                match &bare(w).kind {
+                    TypeKind::Diff(a, b) => {
+                        if let Some(note) = self.subtracted_step(&path, w, b, e) {
+                            found.push((path.clone(), note));
+                        }
+                        stack.push((path, a, e));
+                    }
+                    TypeKind::Tuple(ws) => {
+                        if let ExprKind::Tuple(es) = &e.kind
+                            && es.len() == ws.len()
+                        {
+                            for (i, (w, e)) in ws.iter().zip(es).enumerate() {
+                                stack.push((format!("{path}[{i}]"), w, e));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
-            let shown = self.near(Some(e.span), |ck| ck.show(&v));
-            out.push(Note {
-                span: e.span,
-                text: format!(
-                    "`{shown} : {}` is in the part `\\` takes away from `{} : {}`",
-                    format_type(b),
-                    p.name,
-                    format_type(w)
-                ),
-            });
+            // A step is dropped when another names a component inside its own, or names the
+            // same component under a difference nested in its left side (found later, since
+            // the walk checks a difference before it walks the left side).
+            let inner = |i: usize| {
+                let outer = &found[i].0;
+                let below = format!("{outer}[");
+                found
+                    .iter()
+                    .enumerate()
+                    .any(|(k, (p, _))| p.starts_with(&below) || (k > i && p == outer))
+            };
+            let kept: Vec<bool> = (0..found.len()).map(|i| !inner(i)).collect();
+            let mut steps: Vec<Note> = found
+                .into_iter()
+                .zip(kept)
+                .filter_map(|((_, n), keep)| keep.then_some(n))
+                .collect();
+            steps.sort_by_key(|n| n.span.start);
+            out.extend(steps);
         }
+    }
+
+    /// The step of [`Ck::subtracted_args`] for the argument component `e`, read as `path`, at
+    /// the written type `w`, a difference whose right side is `b`: it says `e` is in the part
+    /// `\` takes away when the value found for `e` is a value of `b`.
+    fn subtracted_step(&self, path: &str, w: &Type, b: &Type, e: &Expr) -> Option<Note> {
+        let v = match self.seen.get(&e.span) {
+            Some((Some(t), _)) => t.clone(),
+            _ => self.tuple_seen(e)?,
+        };
+        let taken = denoted(b);
+        if v.is_empty() || taken.dynamic || !taken.vars.is_empty() || !self.subtype(&v, &taken) {
+            return None;
+        }
+        let shown = self.near(Some(e.span), |ck| ck.show(&v));
+        Some(Note {
+            span: e.span,
+            text: format!(
+                "`{shown} : {}` is in the part `\\` takes away from `{path} : {}`",
+                format_type(b),
+                format_type(w)
+            ),
+        })
     }
 
     fn id(&self, span: Span, name: &str) -> usize {
