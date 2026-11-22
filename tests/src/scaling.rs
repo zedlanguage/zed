@@ -49,7 +49,54 @@
 //! directly, and 10.41 with the settings of that time, which then also turned off malloc's
 //! cache).
 //!
-//! Where the hardware has no counter, as in most virtual machines, [`Meter`] falls back on the
+//! Where the hardware has no counter, as in most virtual machines (the Colab VMs' kernels say "no
+//! PMU driver, software events only"), the instructions can still be counted in software
+//! (BENCH-vm-no-instruction-counter). When `zed_meter_settings::ZED_METER_DRRUN` and
+//! `ZED_METER_ICOUNT` name DynamoRIO and its client `zed_icount` (tools/icount; Colab's job.sh sets
+//! both), a test binary started with `--exact` (a benchmark under `tools/run_tests.sh`, a run in
+//! a new process) starts itself again under them, and [`Meter::new`] reads the client's count:
+//! an add of a basic block's length to a counter of the thread as the block is entered, the
+//! threads folded into the
+//! thread that started them as they end, as the kernel's count with `inherit` is. DynamoRIO:
+//! Bruening, Garnett and Amarasinghe, "An infrastructure for adaptive dynamic optimization", CGO
+//! 2003, doi:10.1109/CGO.2003.1191551 (Crossref's record read, not the paper's text; a binary is
+//! run from a cache of its basic blocks, copied and changed by the client as each is first
+//! reached; tools/icount/zed_icount.c says what it counts and how it differs from the hardware). Tradeoff, measured 2026-11-22 on a Colab hm
+//! VM with the client's own test program (tools/icount/selftest.c, `work 40000`, a Θ(n²) sort,
+//! 0.88 s natively), against the other ways to count in software:
+//!
+//! | counter | time | same count twice | 8n ratio against the hardware's |
+//! |---|---|---|---|
+//! | zed_icount (DynamoRIO 11.3.0) | 0.99 s, 1.12x | yes | 63.461 against 63.402 (0.09%) |
+//! | DynamoRIO's sample inscount | 1.52 s, 1.73x | no (45 apart at n = 5000) | not read in the process |
+//! | valgrind's callgrind | 18.43 s, 21x | yes | not read in the process |
+//! | QEMU's plugin libinsn | not measured | | Ubuntu's qemu 8.2.2 ships no plugin |
+//!
+//! The hardware ratio is this machine's `perf stat -e instructions:u` of the same binary, built
+//! on the VM. The software count is about 133,000 instructions below the hardware's at both sizes:
+//! the start of the process before the client loads and its exit after the read, the same at
+//! every size, so ratios at sizes the benchmarks use agree.
+//!
+//! Cost on zedc's code, which is far larger than the sort and runs much of it few times, so the
+//! copying into the cache weighs more (hm3, 2026-11-22, handoff of b22-meter1): the 328 unit tests
+//! of l01_29 (`--skip bench --test-threads=8`) took 4.9 s and 4.7 s natively, 23.0 s and 23.3 s
+//! under DynamoRIO with no client, and 34.7 s and 35.2 s with zed_icount: 4.8x for DynamoRIO and
+//! 1.5x more for the count, 7.3x in all. A benchmark run under it pays the cache once per process:
+//! presburger's `products_whose_factors_one_sum_joins_scale` took 1.17 s to 1.41 s at n (24 ms
+//! natively) and 2.27 s to 2.48 s at 8n (0.28 s) in four runs, the whole test 9.7 s to 10.5 s. Placing each block's add where the
+//! arithmetic flags are dead, so that drreg need not save them, was tried and gave the same counts
+//! and the same times within the spread (34.7 s and 35.9 s), so the simpler add at the block's
+//! first instruction stays. Why accepted: only the ratio of counts is read, which the time does
+//! not change, and the phase limit of a benchmark (tools/bench_limit.sh) is on time; a benchmark
+//! whose sizes then pass that limit on a VM is the benchmark's cost to fix, as l01_26's
+//! `fits_sig_takes_linear_time_in_the_depth` already does natively there (50.6 s and 61.2 s a
+//! run on hm3, most of it building the 160,000-deep types outside the measured runs).
+//! Valgrind (Nethercote and Seward, PLDI 2007, doi:10.1145/1250734.1250746) is exact too but 20
+//! times slower, and Intel's Pin and SDE (Luk et al., PLDI 2005, doi:10.1145/1065010.1065034) are
+//! not free software and were not measured, so neither was taken. Checked by
+//! `the_instructions_of_a_run_repeat`, which fails on processor time and passes on this count.
+//!
+//! Without either counter [`Meter`] falls back on the
 //! kernel's task clock: the processor time of this thread and the threads it starts, without the
 //! tests running beside it in the process. It changes with load, so it needs more runs: each size
 //! the fastest of five, three measurements in a row over the limit. Processor time of the whole
@@ -363,15 +410,35 @@ pub struct Meter {
 }
 
 impl Meter {
-    /// A meter of instructions where the hardware counts them, or else of the processor time of
-    /// this thread and the threads it starts. With no counter at all a test cannot measure the
-    /// work, so it stops; see `no_counter`.
+    /// A meter of instructions where the hardware counts them, or where DynamoRIO's client
+    /// `zed_icount` counts them in software, or else of the processor time of this thread and
+    /// the threads it starts. With no counter at all a test cannot measure the work, so it stops;
+    /// see `no_counter`.
     #[cfg(target_os = "linux")]
     pub fn new() -> Self {
         stop_unless_the_settings_are_in_effect();
-        Self::open(Hardware::INSTRUCTIONS, "instructions", true)
+        Self::in_software()
+            .or_else(|| Self::open(Hardware::INSTRUCTIONS, "instructions", true))
             .or_else(|| Self::open(Software::TASK_CLOCK, "ns of processor time", false))
             .unwrap_or_else(|| no_counter())
+    }
+
+    /// The instructions the DynamoRIO client `zed_icount` counts, when this process runs under
+    /// it (zed_meter_settings::ZED_METER_DRRUN says when it does). It comes first: the process
+    /// runs under the client only where the hardware counter did not open or did not move, and
+    /// a hardware counter that did would count DynamoRIO's own work too.
+    #[cfg(target_os = "linux")]
+    fn in_software() -> Option<Self> {
+        zed_alloc_count::os::software_instructions()?;
+        let read = || {
+            zed_alloc_count::os::software_instructions()
+                .expect("zed_icount answered at the meter's start")
+        };
+        Self::first_that_moves([(
+            Box::new(read) as Read,
+            "instructions (counted in software by DynamoRIO's zed_icount)",
+            true,
+        )])
     }
 
     /// A meter of the instructions of the whole process where the kernel counts them, or else of
@@ -617,8 +684,10 @@ fn stop_unless_the_settings_are_in_effect() {
 pub(crate) fn no_counter() -> ! {
     panic!(
         "this scaling test cannot measure work: perf_event_open opens neither the instructions \
-         counter nor the task clock here. Run it where kernel.perf_event_paranoid is 2 or less \
-         and no sandbox refuses that system call"
+         counter nor the task clock here, and it does not run under DynamoRIO's zed_icount. Run \
+         it where kernel.perf_event_paranoid is 2 or less and no sandbox refuses that system \
+         call, or set ZED_METER_DRRUN and ZED_METER_ICOUNT (crate zed-meter-settings) and start \
+         it with --exact"
     )
 }
 

@@ -57,8 +57,11 @@
 #    short-addresses clone can be mounted on a VM (FARM-local-residue). They are neither passed
 #    nor failed: they print no summary line.
 #  - Benchmarks: a VM has no hardware instruction counter (perf_event_open of instructions gives
-#    ENOENT, probed 2026-11-22), so the benchmarks fall back on the task clock (tests/src/scaling.rs),
-#    which is noisier. A benchmark that fails is run once more on the same VM at once, alone; that
+#    ENOENT, probed 2026-11-22), so each benchmark counts its instructions in software under
+#    DynamoRIO's client zed_icount, which job.sh's VM setup builds and names in ZED_METER_DRRUN and
+#    ZED_METER_ICOUNT (BENCH-vm-no-instruction-counter; tests/src/scaling.rs). Where that build
+#    failed (the job's out/icount.log says so), they fall back on the task clock, which is
+#    noisier. A benchmark that fails is run once more on the same VM at once, alone; that
 #    second run's line is the verdict, and the first run's failed line is kept prefixed
 #    `farm: first run: `, which no reader of summary lines takes for one.
 #  - A share whose job did not run to the end (job.sh exit 2, 4 or 5, or no output) is run again on

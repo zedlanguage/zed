@@ -36,6 +36,11 @@
 //! `execve` and needs nothing (checked on `l07_03_unit_log_off`: the share of samples with Rust
 //! frames is the same with and without the start again, with frame pointers and with DWARF).
 //! TOOL-meter-reexec-profilers.
+//!
+//! Where the hardware has no counter of instructions and [`ZED_METER_DRRUN`] and
+//! [`ZED_METER_ICOUNT`] name DynamoRIO and its client `zed_icount`, a binary started with
+//! `--exact` starts itself again under them instead, so that its instructions are counted in
+//! software ([`ZED_METER_DRRUN`] says when).
 
 /// The settings, in the form `GLIBC_TUNABLES` takes: `name=value` items joined by `:`.
 ///
@@ -75,6 +80,25 @@ glibc.cpu.x86_rep_stosb_threshold=0xffffffffffffffff";
 /// image runs the function once, as glibc runs each entry of `.init_array` once, so the chain of
 /// images from one start from outside has at most two.
 pub const ZED_METER_STARTED_AGAIN: &str = "ZED_METER_STARTED_AGAIN";
+
+/// The variable that names DynamoRIO's `drrun`, with [`ZED_METER_ICOUNT`] the client
+/// `libzed_icount.so` (tools/icount), under which a test binary counts its instructions in
+/// software where the hardware has no counter (BENCH-vm-no-instruction-counter; Colab's job.sh
+/// sets both on its VMs, which have no counter).
+///
+/// When both are set and not empty, the process is started with `--exact` (as a benchmark, a
+/// check's run in a new process and `the_instructions_of_a_run_repeat`'s run start a test binary;
+/// a run of a whole binary is not, so the tests that measure nothing do not pay the slowdown),
+/// it does not run under the client already, and the hardware counter does not open or does not
+/// move, the function in `.init_array` starts the binary again as `drrun -c <client> -- <binary>
+/// <arguments>`, with the settings and the marker as for any start again (still at most once:
+/// the image under the client finds the marker). `zed_tests::scaling::Meter::new` then reads
+/// the client's count. The slowdown and how the count compares with the hardware's are in the
+/// comment at `Meter::new`.
+pub const ZED_METER_DRRUN: &str = "ZED_METER_DRRUN";
+
+/// The variable that names the DynamoRIO client `libzed_icount.so`; see [`ZED_METER_DRRUN`].
+pub const ZED_METER_ICOUNT: &str = "ZED_METER_ICOUNT";
 
 /// Whether `tunables`, a value of `GLIBC_TUNABLES`, holds every item of [`GLIBC_TUNABLES`].
 ///
@@ -125,7 +149,8 @@ pub fn threads_at_start() -> Option<usize> {
 }
 
 /// Whether the process runs under valgrind, where it does not start again (see the module
-/// comment). On Linux with glibc on x86_64 valgrind's own answer; elsewhere false.
+/// comment). On Linux with glibc on x86_64, AArch64 and RISC-V 64 valgrind's own answer;
+/// elsewhere false.
 pub fn running_on_valgrind() -> bool {
     imp::running_on_valgrind()
 }
@@ -379,7 +404,13 @@ mod imp {
             unsafe { std::env::remove_var(ZED_METER_STARTED_AGAIN) };
             return;
         }
-        if held || secure || running_on_valgrind() {
+        if secure || running_on_valgrind() {
+            return;
+        }
+        // SAFETY: as for `envp` above: glibc's null-ended vector of NUL-ended strings.
+        let args = unsafe { strings(argv) };
+        let dynamorio = under_dynamorio(&env, &args);
+        if held && dynamorio.is_none() {
             return;
         }
         // The kernel's name of the process, at most 15 bytes and a NUL.
@@ -398,10 +429,136 @@ mod imp {
         new_env.push(CString::new(marker).expect("no NUL"));
         let mut ptrs: Vec<*const c_char> = new_env.iter().map(|c| c.as_ptr()).collect();
         ptrs.push(std::ptr::null());
+        if let Some((drrun, client)) = dynamorio {
+            // `drrun -c <client> -- <this binary> <its arguments>`. The binary is named by the
+            // file `/proc/self/exe` links to, read here: under DynamoRIO the process is started by
+            // drrun, and the second image must not start drrun again by that name. When the link
+            // cannot be read, or `execve` fails, the process goes on without DynamoRIO.
+            let exe = std::fs::read_link("/proc/self/exe")
+                .ok()
+                .and_then(|p| CString::new(p.into_os_string().into_encoded_bytes()).ok());
+            if let Some(exe) = exe {
+                let mut dargs = vec![
+                    drrun.clone(),
+                    c"-c".to_owned(),
+                    client,
+                    c"--".to_owned(),
+                    exe,
+                ];
+                dargs.extend(
+                    args.iter()
+                        .skip(1)
+                        .map(|a| CString::new(a.as_slice()).expect("an argument has no NUL")),
+                );
+                let mut dptrs: Vec<*const c_char> = dargs.iter().map(|c| c.as_ptr()).collect();
+                dptrs.push(std::ptr::null());
+                // SAFETY: `dptrs` and `ptrs` are null-ended and point into `dargs` and `new_env`,
+                // which live across the call. execve returns only on failure.
+                unsafe { libc::execve(drrun.as_ptr(), dptrs.as_ptr(), ptrs.as_ptr()) };
+            }
+            if held {
+                return;
+            }
+        }
         // SAFETY: `argv` is the program's own null-ended vector, and `ptrs` is null-ended and
         // points into `new_env`, which lives across the call. execve returns only on failure;
         // the process then goes on without the settings, and `in_effect` says so.
         unsafe { libc::execve(c"/proc/self/exe".as_ptr(), argv, ptrs.as_ptr()) };
+    }
+
+    /// The `drrun` and client to start this process under, when it is to count its instructions
+    /// in software (see [`super::ZED_METER_DRRUN`]): both variables are set and not empty, the
+    /// arguments hold `--exact`, the process does not run under the client already (its system
+    /// call does not answer), and the hardware counter of instructions does not open or does not
+    /// move.
+    fn under_dynamorio(env: &[Vec<u8>], args: &[Vec<u8>]) -> Option<(CString, CString)> {
+        let var = |name: &str| {
+            env.iter()
+                .rev()
+                .find_map(|e| e.strip_prefix(name.as_bytes())?.strip_prefix(b"="))
+                .filter(|v| !v.is_empty())
+                .map(|v| CString::new(v).expect("an environment string has no NUL"))
+        };
+        let drrun = var(super::ZED_METER_DRRUN)?;
+        let client = var(super::ZED_METER_ICOUNT)?;
+        (args.iter().skip(1).any(|a| a == b"--exact")
+            && zed_alloc_count::os::software_instructions().is_none()
+            && !hardware_counter_moves())
+        .then_some((drrun, client))
+    }
+
+    /// Whether `perf_event_open` opens the hardware counter of the instructions this thread runs
+    /// in user mode, and it counts some of a loop of 10^5 steps: the test of
+    /// `zed_tests::scaling::Meter::new` (`Meter::open`, `first_that_moves`), made here with the
+    /// system call itself, since this crate does not link perf-event. Some virtual machines open
+    /// the counter and leave it at 0, as that test says.
+    ///
+    /// The attribute is `struct perf_event_attr` of `linux/perf_event.h` at its first size,
+    /// `PERF_ATTR_SIZE_VER0` = 64 bytes, which every kernel since 2.6.31 takes (perf_event_open(2):
+    /// "size ... for forward/backward compatibility"): `type` `PERF_TYPE_HARDWARE` (0), `config`
+    /// `PERF_COUNT_HW_INSTRUCTIONS` (1), and in the flags word the bit fields `exclude_kernel`
+    /// (bit 5) and `exclude_hv` (bit 6) in declaration order. GCC places the first bit field of a
+    /// unit at its least significant bit on a little-endian target and at its most significant
+    /// bit on a big-endian one (the System V ABIs of x86_64, AArch64 and RISC-V are little-endian;
+    /// s390x and big-endian PowerPC, where `start` also runs, are not), so bit `k` is `1 << k` or
+    /// `1 << (63 - k)` by `target_endian`; `disabled` (bit 0) is clear, so the counter counts from
+    /// the call on. pid 0 and cpu -1: this thread, on any processor. Run only on x86_64 Colab VMs,
+    /// where the counter does not open (strace of 2026-11-22 shows the start under drrun that
+    /// follows); neither the case where it opens nor the big-endian form has been run.
+    fn hardware_counter_moves() -> bool {
+        #[repr(C)]
+        struct Attr {
+            kind: u32,
+            size: u32,
+            config: u64,
+            sample_period: u64,
+            sample_type: u64,
+            read_format: u64,
+            flags: u64,
+            wakeup_events: u32,
+            bp_type: u32,
+            config1: u64,
+        }
+        const _: () = assert!(std::mem::size_of::<Attr>() == 64);
+        let bit = |k: u32| {
+            if cfg!(target_endian = "little") {
+                1 << k
+            } else {
+                1 << (63 - k)
+            }
+        };
+        let attr = Attr {
+            kind: 0,
+            size: 64,
+            config: 1,
+            sample_period: 0,
+            sample_type: 0,
+            read_format: 0,
+            flags: bit(5) | bit(6),
+            wakeup_events: 0,
+            bp_type: 0,
+            config1: 0,
+        };
+        // SAFETY: the kernel reads `size` = 64 bytes of `attr`, which is 64 bytes long and lives
+        // across the call; the other arguments are numbers.
+        let fd = unsafe { libc::syscall(libc::SYS_perf_event_open, &raw const attr, 0, -1, -1, 0) };
+        let Ok(fd) = c_int::try_from(fd) else {
+            return false;
+        };
+        if fd < 0 {
+            return false;
+        }
+        let mut k = 100_000u64;
+        while std::hint::black_box(k) > 0 {
+            k -= 1;
+        }
+        let mut count = 0u64;
+        // SAFETY: `fd` is the counter just opened; a read of it without `read_format` writes one
+        // u64 to `count`, 8 bytes long. `close` ends it.
+        let read = unsafe { libc::read(fd, (&raw mut count).cast(), 8) };
+        // SAFETY: as above.
+        unsafe { libc::close(fd) };
+        read == 8 && count > 0
     }
 
     /// Whether the process runs under valgrind: valgrind's client request
@@ -420,8 +577,17 @@ mod imp {
     /// 0 natively, 1 under valgrind 3.27.1 with the tools none, memcheck and callgrind; test
     /// `under_valgrind_the_binary_runs_without_starting_again` runs this binary under valgrind.
     ///
-    /// Other architectures have other sequences, not written here: there valgrind gives the
-    /// failure the module comment describes (the first release is for Linux on x86_64 alone).
+    /// AArch64 and RISC-V 64 (PORTABLE-meter-valgrind; the Linux targets of REL-aarch64 and
+    /// REL-riscv) have their own sequences, from the macros `PLAT_arm64_linux` and
+    /// `PLAT_riscv64_linux` of the same header and copy, read 2026-11-22: on AArch64 `x12` rotated
+    /// by 3, 13, 51 and 61 bits (128 in all), then `orr x10, x10, x10`, with `x4` the address of
+    /// the six words and `x3` the default and the answer; on RISC-V `srli zero, zero, 3`, 13, 51
+    /// and 61 (shifts into the zero register, which do nothing) in uncompressed form
+    /// (`.option norvc`, as the header does, so that the translator sees the 4-byte encodings),
+    /// then `or a0, a0, a0`, with `a4` the address and `a3` the default and the answer. Natively
+    /// each changes no register. Other architectures valgrind runs on Linux (32-bit ARM, PowerPC,
+    /// s390x, MIPS) are no target of the plan; there valgrind gives the failure the module
+    /// comment describes.
     #[cfg(target_arch = "x86_64")]
     pub(super) fn running_on_valgrind() -> bool {
         let request: [u64; 6] = [0x1001, 0, 0, 0, 0, 0];
@@ -443,7 +609,56 @@ mod imp {
         answer != 0
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(target_arch = "aarch64")]
+    pub(super) fn running_on_valgrind() -> bool {
+        let request: [u64; 6] = [0x1001, 0, 0, 0, 0, 0];
+        let mut answer: u64 = 0;
+        // SAFETY: natively the sequence changes no register (`x12` is rotated by 128 bits in all,
+        // `orr` writes `x10` its own value; neither sets the flags) and reads no memory; valgrind
+        // reads the six words at `x4`, which live across the call, and writes only `x3`.
+        unsafe {
+            std::arch::asm!(
+                "ror x12, x12, #3",
+                "ror x12, x12, #13",
+                "ror x12, x12, #51",
+                "ror x12, x12, #61",
+                "orr x10, x10, x10",
+                in("x4") request.as_ptr(),
+                inout("x3") answer,
+            );
+        }
+        answer != 0
+    }
+
+    #[cfg(target_arch = "riscv64")]
+    pub(super) fn running_on_valgrind() -> bool {
+        let request: [u64; 6] = [0x1001, 0, 0, 0, 0, 0];
+        let mut answer: u64 = 0;
+        // SAFETY: natively the sequence changes no register (shifts into `zero` are discarded,
+        // `or` writes `a0` its own value) and reads no memory; valgrind reads the six words at
+        // `a4`, which live across the call, and writes only `a3`.
+        unsafe {
+            std::arch::asm!(
+                ".option push",
+                ".option norvc",
+                "srli zero, zero, 3",
+                "srli zero, zero, 13",
+                "srli zero, zero, 51",
+                "srli zero, zero, 61",
+                "or a0, a0, a0",
+                ".option pop",
+                in("a4") request.as_ptr(),
+                inout("a3") answer,
+            );
+        }
+        answer != 0
+    }
+
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "riscv64"
+    )))]
     pub(super) fn running_on_valgrind() -> bool {
         false
     }
@@ -673,43 +888,62 @@ mod tests {
     /// Valgrind is seen exactly when the run is under it, which valgrind also shows by preloading
     /// its library `vgpreload_core` into every program it runs (valgrind 3.27.1 with the tools
     /// none and memcheck: `LD_PRELOAD=/usr/libexec/valgrind/vgpreload_core-amd64-linux.so…`).
-    /// In the run [`under_valgrind_the_binary_runs_without_starting_again`] starts, without the
-    /// settings, the binary did not start again, so it runs without them.
+    /// In the runs [`under_valgrind_the_binary_runs_without_starting_again`] starts the binary
+    /// did not start again, so it runs with the settings exactly when it was started with them
+    /// ([`UNDER_VALGRIND`] is "with" or "without").
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     #[test]
     fn valgrind_is_seen_exactly_under_valgrind() {
         let preload = std::env::var("LD_PRELOAD").unwrap_or_default();
         let under = preload.contains("vgpreload_core");
         assert_eq!(running_on_valgrind(), under, "LD_PRELOAD={preload:?}");
-        if std::env::var_os(UNDER_VALGRIND).is_some() {
+        if let Ok(settings) = std::env::var(UNDER_VALGRIND) {
             assert!(under);
-            assert!(!in_effect());
-            assert!(std::env::var_os("GLIBC_TUNABLES").is_none());
+            let with = settings == "with";
+            let tunables = std::env::var("GLIBC_TUNABLES").unwrap_or_default();
+            assert_eq!(in_effect(), with, "{tunables:?}");
+            assert_eq!(holds_the_settings(&tunables), with, "{tunables:?}");
         }
     }
 
-    /// This binary, started without the settings under valgrind, runs its tests: valgrind's tool
-    /// binary, which `/proc/self/exe` names there, would refuse to be started ("You cannot run
-    /// '…' directly"). Needs valgrind.
-    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    /// This binary, started under valgrind with the tools none and memcheck, each without and
+    /// with the settings, runs its tests without starting again: valgrind's tool binary, which
+    /// `/proc/self/exe` names there, would refuse to be started ("You cannot run '…' directly").
+    /// On the architectures whose client request [`running_on_valgrind`] sends
+    /// (PORTABLE-meter-valgrind). Needs valgrind.
+    #[cfg(all(
+        target_os = "linux",
+        target_env = "gnu",
+        any(
+            target_arch = "x86_64",
+            target_arch = "aarch64",
+            target_arch = "riscv64"
+        )
+    ))]
     #[test]
     fn under_valgrind_the_binary_runs_without_starting_again() {
-        let out = std::process::Command::new("valgrind")
-            .args(["-q", "--tool=none"])
-            .arg(std::env::current_exe().unwrap())
-            .args(["--exact", "tests::valgrind_is_seen_exactly_under_valgrind"])
-            .env_remove("GLIBC_TUNABLES")
-            .env_remove(ZED_METER_STARTED_AGAIN)
-            .env(UNDER_VALGRIND, "1")
-            .output()
-            .expect(
-                "this test runs valgrind, which is not installed (Fedora: dnf install valgrind)",
-            );
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(
-            out.status.success() && stdout.contains(" 1 passed;"),
-            "{stdout}{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        for tool in ["--tool=none", "--tool=memcheck"] {
+            for with in [false, true] {
+                let mut run = std::process::Command::new("valgrind");
+                run.args(["-q", tool, "--error-exitcode=99"])
+                    .arg(std::env::current_exe().unwrap())
+                    .args(["--exact", "tests::valgrind_is_seen_exactly_under_valgrind"])
+                    .env_remove("GLIBC_TUNABLES")
+                    .env_remove(ZED_METER_STARTED_AGAIN)
+                    .env(UNDER_VALGRIND, if with { "with" } else { "without" });
+                if with {
+                    run.env("GLIBC_TUNABLES", GLIBC_TUNABLES);
+                }
+                let out = run.output().expect(
+                    "this test runs valgrind, which is not installed (Fedora: dnf install valgrind)",
+                );
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                assert!(
+                    out.status.success() && stdout.contains(" 1 passed;"),
+                    "{tool}, with the settings: {with}\n{stdout}{}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+        }
     }
 }

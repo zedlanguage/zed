@@ -20,6 +20,10 @@
 //! which the pseudo handle of `GetCurrentProcess` has). `GetThreadTimes(GetCurrentThread(), ...)`
 //! gives the kernel-mode and user-mode time of this thread in units of 100 ns (Microsoft Learn,
 //! "GetThreadTimes function (processthreadsapi.h)").
+//!
+//! Linux: `perf_event_open` counts the instructions of a thread and the threads it starts where
+//! the hardware has a counter; where it has none, as on the Colab VMs, the DynamoRIO client
+//! `zed_icount` counts them in software, and [`software_instructions`] reads its count.
 
 #[cfg(windows)]
 use std::time::Duration;
@@ -112,4 +116,31 @@ pub fn thread_cpu_time() -> Duration {
     );
     let hundreds = |t: FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
     Duration::from_nanos((hundreds(kernel) + hundreds(user)) * 100)
+}
+
+/// The number of the system call the DynamoRIO client `zed_icount` (tools/icount/zed_icount.c)
+/// answers in place of the kernel, and the key its first argument must hold ("zedins" in ASCII);
+/// the client's file comment gives the protocol and why these values.
+#[cfg(target_os = "linux")]
+const ZED_ICOUNT_SYSCALL: libc::c_long = 0x5a45;
+#[cfg(target_os = "linux")]
+const ZED_ICOUNT_KEY: libc::c_long = 0x7a65_6469_6e73;
+
+/// The instructions this thread and the threads it started have run, as the DynamoRIO client
+/// `zed_icount` counts them in software where the hardware has no counter (row
+/// BENCH-vm-no-instruction-counter; `zed_tests::scaling::Meter::new` says when it is read, and
+/// tools/icount/zed_icount.c what it counts). `None` when the process does not run under that
+/// client: the kernel then answers the unknown system call with ENOSYS, or a seccomp filter with
+/// EPERM or a kill (none in the test binaries' runs). Proof that a count is never taken for an
+/// error: libc's `syscall` gives -1 for every error, and the client gives the count itself,
+/// which is at least 0; and a count is below 2^63 (at 10^10 instructions a second, 29 years), so
+/// as a `c_long` it is never negative.
+#[cfg(target_os = "linux")]
+pub fn software_instructions() -> Option<u64> {
+    #[expect(unsafe_code, reason = "a system call")]
+    // SAFETY: natively the kernel refuses a system call it does not know (ENOSYS) and touches no
+    // memory; under zed_icount the client answers it without the kernel and writes only the
+    // result register. The one argument is a number, no pointer.
+    let count = unsafe { libc::syscall(ZED_ICOUNT_SYSCALL, ZED_ICOUNT_KEY) };
+    u64::try_from(count).ok()
 }

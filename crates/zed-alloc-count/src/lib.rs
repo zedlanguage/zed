@@ -64,7 +64,7 @@ use std::sync::{Arc, OnceLock};
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
 pub mod meter;
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod os;
 
 #[cfg(target_os = "linux")]
