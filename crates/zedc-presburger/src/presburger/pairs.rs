@@ -42,13 +42,19 @@ use super::formula::{Factor, Lin};
 /// cancel inside `p ⊗ q`, O(min(|p|, partners of w) × log) for those mentioned, and for each
 /// live pair `{r, s}` with `r` holding `w`, O(log) when `s` is `p` and `p` does not hold `w`
 /// (then `r ⊗ p` holds every `w * z`), and otherwise O(min(|s|, |p|) × log) for the variables
-/// `s` and `p` share. After its first test a pair is tested again only when a pair that held
-/// one of its atoms at its last test is dropped, so each drop costs a test of the pairs that
+/// `s` and `p` share; or, when the variables of `p` not yet known to be blocked are on fewer
+/// pairs than `w` is, for each such `z` O(log) for each live pair on a row holding `z` (see the
+/// comment in [`Index::frees`]), whichever reads fewer pairs. After its first test a pair is
+/// tested again only when a pair that held one of its atoms at its last test is dropped, so
+/// each drop costs a test of the pairs that
 /// share an atom with it, and each pair is tested at most once more than the number of its
 /// blockers that go. On the family the sum is only ever `p`, each `w` is on a constant number
-/// of pairs, and the whole costs O(k log k). In general it is not O(n log n): many long rows
-/// that share variables cost O(|s| × |p|) for each pair read, and no bound better than the
-/// products themselves is known for that case. Tests:
+/// of pairs, and the whole costs O(k log k); with one sum `x + z0 + ... + z{k-1}` and the row
+/// `x - 1` beside k rows `y - w{j}`, the test of `{x - 1, y - w{j}}` reads the two pairs on
+/// `w{j}`, not the k on `x`, and the whole is again O(k log k)
+/// (`products_whose_premise_holds_k_atoms_in_no_product_scale`). In general it is not
+/// O(n log n): many long rows that share variables cost O(|s| × |p|) for each pair read, and
+/// no bound better than the products themselves is known for that case. Tests:
 /// `tests::the_pairs_kept_are_those_left_by_expanding_every_product` (against the naive
 /// method) and
 /// `l01_38_presburger::ladder::products_whose_factors_one_sum_on_the_factors_joins_scale`.
@@ -211,6 +217,58 @@ impl<'a> Index<'a> {
                     .map(|&(z, _)| z)
                     .filter(|&z| self.coef(p, z).is_some() && !self.holds(p, q, w, z)),
             );
+            if not.len() == width {
+                continue 'w;
+            }
+            // Two ways to find the live pairs that hold an atom `w * z` (PRES-growth-ladder-bytes):
+            // from the rows holding `w` (below, `weight[w]` pairs, each read for the variables it
+            // shares with `p`), or from the rows holding each `z` of `p` still open (`by_z`,
+            // `weight[z]` pairs each). Both are complete: a pair `{r, s}` holds `w * z` only
+            // when its coefficient `r_w s_z + r_z s_w` (`r_w s_w` for `z = w`) is not zero, so
+            // one of its rows holds `w` and one holds `z`. So both put the same `z` into `not`,
+            // and `e` frees an atom through `w` by one exactly when it does by the other; for
+            // each `z` put in through a pair, one blocking pair is watched, which is all
+            // `kept` needs (a pair is tested again when a pair that blocked one of its atoms
+            // goes; while the watched blocker of `z` stays, `z` stays blocked). The way taken
+            // is the one of fewer pairs, `weight[w]` against the sum of `weight[z]` over the
+            // open `z`, summed only until it passes `weight[w]` (each `weight[z] >= 1`, as `z`
+            // is on `p`, which is on `e`), so choosing costs O(min(weight[w], open z)).
+            // Complexity tradeoff: from `w` alone, the earlier method, one row `x - 1` paired
+            // with k rows `y - w{j}` read all k pairs of each to free the atom `x * w{j}`,
+            // Θ(k²) for the k pairs (34.1 times the instructions at 8 times the atoms, the
+            // benchmark `products_whose_premise_holds_k_atoms_in_no_product_scale`); from the
+            // open `z` alone, a long row with many open variables beside a short row holding
+            // `w` costs the same the other way. The cheaper of the two is O(min) per `w`.
+            let open = || {
+                (self.vars[p].iter())
+                    .map(|&(z, _)| z)
+                    .filter(|z| !not.contains(z))
+            };
+            let mut by_z = 0usize;
+            for z in open() {
+                by_z += self.weight[z];
+                if by_z > self.weight[w] {
+                    break;
+                }
+            }
+            if by_z <= self.weight[w] {
+                let open: Vec<usize> = open().collect();
+                for z in open {
+                    'z: for &s in &self.holding[z] {
+                        for &(r, f) in &self.opp[s] {
+                            if f != e && live[f] && self.holds(r, s, w, z) {
+                                not.insert(z);
+                                watch[f].push(e);
+                                break 'z;
+                            }
+                        }
+                    }
+                }
+                if not.len() < width {
+                    return true;
+                }
+                continue 'w;
+            }
             let p_holds_w = self.coef(p, w).is_some();
             for &r in &self.holding[w] {
                 for &(s, f) in &self.opp[r] {

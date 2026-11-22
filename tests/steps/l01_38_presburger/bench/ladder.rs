@@ -112,8 +112,11 @@ fn products_of_premises_in_pairs_scale() {
 fn products_along_a_chain_with_a_disjunction_on_each_link_scale() {
     // The chain of `product_chain` (deferred, see [`product_chain_with`]) with
     // `abs(x{i} - y{i}) <= z{i} + 1` on each link: the definition of each `abs` is a disjunction
-    // over the link's atoms, so k disjunctions lie in the one part (C2-chain-general).
-    let n = 16;
+    // over the link's atoms, so k disjunctions lie in the one part (C2-chain-general). Each
+    // link fixed in turn rewrote the long row of the Omega test, Θ(k²) terms (21.2 times the
+    // instructions at k = 280, 14.9 times the bytes); the rows each fix leaves with one
+    // variable are written alone (`Omega::write_lone`, PRES-growth-ladder-bytes).
+    let n = 280;
     let built = scaling::inputs(n, product_chain_with_abs);
     let measure = move || {
         scaling::check(
@@ -237,8 +240,11 @@ fn products_whose_factors_one_sum_on_the_factors_joins_scale() {
 fn products_whose_premise_holds_k_atoms_in_no_product_scale() {
     // The sum on `x` holds k atoms that no product holds and that no other row holds, so its
     // product with each row `y - w{j}` alone holds `z{i} * w{j}` and is left out; the k
-    // products of the sum cost Θ(k²) terms (C2-pairs-long-row, C2-pairs-exact).
-    let n = 8;
+    // products of the sum cost Θ(k²) terms (C2-pairs-long-row, C2-pairs-exact). The test of
+    // each pair `{x - 1, y - w{j}}` read the k pairs on `x`, Θ(k²) in all (34.1 times the
+    // instructions at k = 1,000, 16.1 times the bytes); it reads the pairs on `w{j}` instead
+    // (`pairs::Index::frees`, PRES-growth-ladder-bytes).
+    let n = 1000;
     let built = scaling::inputs(n, one_sum_of_atoms_in_no_product);
     let measure = move || {
         scaling::check(

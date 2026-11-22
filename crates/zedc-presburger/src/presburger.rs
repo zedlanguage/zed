@@ -19016,12 +19016,15 @@ struct Omega {
     /// The definitions not yet written into the inequalities: each inequality is rewritten once
     /// for all of them, however many of its variables they define.
     pending: Vec<(usize, Row)>,
-    /// The variables of `pending` read so far by [`Omega::deferred`]; for each row that holds
-    /// one, how many of its variables are among them; and whether the definitions must be
-    /// written before the next step. All three are cleared by [`Omega::flush`].
-    pending_vars: HashSet<usize>,
+    /// The variables of `pending` read so far by [`Omega::deferred`], each with its place in
+    /// `pending`; for each row that holds one, how many of its variables are among them;
+    /// whether the definitions must be written before the next step; and the rows left with
+    /// one variable not pending, which [`Omega::write_lone`] writes alone. All four are
+    /// cleared by [`Omega::flush`].
+    pending_vars: HashMap<usize, usize>,
     pending_rows: HashMap<usize, usize>,
     write_first: bool,
+    lone: Vec<usize>,
     /// Whether a model is wanted.
     want: bool,
     /// Whether the real shadow was tested, at the first inexact elimination.
@@ -19149,9 +19152,10 @@ impl Omega {
                     es,
                     steps,
                     pending: Vec::new(),
-                    pending_vars: HashSet::new(),
+                    pending_vars: HashMap::new(),
                     pending_rows: HashMap::new(),
                     write_first: false,
+                    lone: Vec::new(),
                     want,
                     tested: false,
                     gray: Vec::new(),
@@ -19177,9 +19181,10 @@ impl Omega {
             es,
             steps,
             pending: Vec::new(),
-            pending_vars: HashSet::new(),
+            pending_vars: HashMap::new(),
             pending_rows: HashMap::new(),
             write_first: false,
+            lone: Vec::new(),
             want,
             tested: false,
             gray: Vec::new(),
@@ -20304,12 +20309,13 @@ impl Omega {
     /// another variable, so a row that pulls a variable one way still does once it is
     /// written. A definition that holds a variable is written first, as is every case where
     /// the rows of the variables reach a pending one, and a tie of [`System::least`]. So is
-    /// a row with one variable not pending ([`Omega::read_pending`]): written, it is a bound
-    /// on that variable, which can make it fixable, and the fixes it starts can run along a
-    /// chain of such rows; eliminated first instead, the variables of the chain pass their
-    /// rows on, 2, 4, ..., 2n of them (`products_whose_factor_bounds_wait_on_each_other_scale`:
-    /// 39 times the instructions from 160 to 1,280 links). A row whose variables are all
-    /// pending becomes a constant, which can wait.
+    /// a row with one variable not pending ([`Omega::read_pending`]), but that row alone
+    /// ([`Omega::write_lone`]): written, it is a bound on that variable, which can make it
+    /// fixable, and the fixes it starts can run along a chain of such rows; eliminated first
+    /// instead, the variables of the chain pass their rows on, 2, 4, ..., 2n of them
+    /// (`products_whose_factor_bounds_wait_on_each_other_scale`: 39 times the instructions
+    /// from 160 to 1,280 links). A row whose variables are all pending becomes a constant,
+    /// which can wait.
     ///
     /// Complexity tradeoff: written at once, the values rewrite their rows before the next
     /// step, so where each elimination leaves one variable of a long row of m terms at a bound,
@@ -20330,10 +20336,16 @@ impl Omega {
             return None;
         }
         // A variable already defined keeps its rows until they are written, and may be
-        // fixable among them; it is not defined again.
-        let pending = &self.pending_vars;
-        self.sys.fixable.retain(|j| !pending.contains(j));
-        if !self.sys.fixable.is_empty() {
+        // fixable among them; it is not defined again. The rows left with one variable not
+        // pending are written first (`Omega::write_lone`); the bounds they become can make
+        // variables fixable, whose values can leave more such rows, along a chain.
+        loop {
+            self.write_lone();
+            let pending = &self.pending_vars;
+            self.sys.fixable.retain(|j| !pending.contains_key(j));
+            if self.sys.fixable.is_empty() || meter::spent() {
+                break;
+            }
             self.fix();
             self.read_pending();
             if self.write_first {
@@ -20345,10 +20357,10 @@ impl Omega {
             return None;
         };
         let clear = |j: &usize| {
-            !self.pending_vars.contains(j)
+            !self.pending_vars.contains_key(j)
                 && self.sys.vars[*j].rows.iter().all(|id| {
                     let a = self.sys.ids[*id].as_ref().expect("a row held");
-                    a.iter().all(|t| !self.pending_vars.contains(&t.0))
+                    a.iter().all(|t| !self.pending_vars.contains_key(&t.0))
                 })
         };
         (fill <= 0 && js.iter().all(clear)).then_some(js)
@@ -20357,23 +20369,29 @@ impl Omega {
     /// Reads the definitions added to `pending` since the last call, and takes each defined
     /// variable out of the ranks; [`System::count`] puts it back if its rows change before
     /// [`Omega::flush`] takes them. Notes that the definitions must be written first when one
-    /// holds a variable, or when a row is left with one variable not pending. A row that
-    /// holds a pending variable is not changed until the writing, since a deferred
-    /// elimination reads no such row, so its count of pending variables stays true; the
-    /// counts are read once all the new definitions are counted, so that two variables of a
-    /// row fixed at once are both counted.
-    // Assumption, not proved (ASSUME-documented): the two `write_first` rules below choose
-    // only whether the pending definitions are written before the next elimination. The
-    // first (a definition that holds a variable) is what the argument for deferring needs,
-    // since writing such a definition changes the rows of the variables it holds; the second
-    // (a row left with one variable not pending) is for speed alone (39 times the
-    // instructions from 160 to 1,280 links without it). That either choice reaches the same
-    // set of points is argued, not proved; the evidence is at the call of
-    // [`Omega::deferred`] in the loop. If false, the answer could change with it: unsound.
+    /// holds a variable, and notes each row left with one variable not pending, for
+    /// [`Omega::write_lone`]. A row that holds a pending variable is not changed until it is
+    /// written, since a deferred elimination reads no such row, so its count of pending
+    /// variables stays true; the counts are read once all the new definitions are counted, so
+    /// that two variables of a row fixed at once are both counted.
+    // Assumption, not proved (ASSUME-documented): the `write_first` rule and the rows noted
+    // for `write_lone` below choose only which pending definitions are written before the
+    // next elimination, and into which rows. The rule (a definition that holds a variable) is
+    // what the argument for deferring needs, since writing such a definition changes the rows
+    // of the variables it holds; the rows noted (a row left with one variable not pending) are
+    // for speed alone (39 times the instructions from 160 to 1,280 links without them). That
+    // either choice reaches the same set of points is argued, not proved; the evidence is at
+    // the call of [`Omega::deferred`] in the loop. If false, the answer could change with it:
+    // unsound.
     fn read_pending(&mut self) {
         let mut counted = Vec::new();
-        for (j, def) in &self.pending[self.pending_vars.len()..] {
-            self.pending_vars.insert(*j);
+        for (p, (j, def)) in self
+            .pending
+            .iter()
+            .enumerate()
+            .skip(self.pending_vars.len())
+        {
+            self.pending_vars.insert(*j, p);
             self.write_first |= !def.a.is_empty();
             let v = &self.sys.vars[*j];
             let rank = v.sides.rank(v.key, *j);
@@ -20387,7 +20405,74 @@ impl Omega {
         }
         for id in counted {
             let terms = self.sys.ids[id].as_ref().expect("a row held").len();
-            self.write_first |= terms - self.pending_rows[&id] == 1;
+            if terms - self.pending_rows[&id] == 1 {
+                self.lone.push(id);
+            }
+        }
+    }
+
+    /// Writes the pending definitions into the rows [`Omega::read_pending`] noted as left with
+    /// one variable not pending, alone, while every pending definition is a value; the other
+    /// rows of the pending variables wait for [`Omega::flush`] (PRES-growth-ladder-bytes).
+    ///
+    /// Why the result is the one `flush` gives: a value `x[j] = v` written into a row
+    /// `c·x[j] + rest + k >= 0` gives `rest + (k + c·v) >= 0` whenever it is written, and the
+    /// values of two pending variables are written into a row in either order alike, so a row
+    /// written here is the row `flush` would have added; `flush` takes only the rows still
+    /// held of the pending variables, so it writes each other row once, as before. Between
+    /// the two, the rows held are those of `flush` for the rows written and the rows not yet
+    /// written for the rest: no step reads the rest but [`Omega::deferred`], whose test
+    /// `clear` keeps every elimination off a row that holds a pending variable, and
+    /// [`Omega::fix`], which reads only rows of one variable (`Sides::fixable`), none of them
+    /// holding a pending variable, as the variable fixed is not pending. A pending variable
+    /// is kept out of the ranks: [`System::count`] puts back the rank of each variable of a
+    /// row it removes, so the ranks of the pending variables of each row written are taken
+    /// out again here, as `read_pending` took them out.
+    ///
+    /// Complexity tradeoff: the earlier rule wrote all the pending definitions into all their
+    /// rows whenever one row was left with one variable not pending, so a long row of m terms
+    /// beside a chain of m short rows, each fixed in turn, was rewritten at each link, Θ(m²)
+    /// terms (`products_along_a_chain_with_a_disjunction_on_each_link_scale`: 21.2 times the
+    /// instructions at 8 times the links, 280 to 2,240). Here each row is written once for
+    /// the definitions it holds when it is noted, plus once by `flush`: O(t log t) for the t
+    /// terms of the rows written.
+    fn write_lone(&mut self) {
+        for id in std::mem::take(&mut self.lone) {
+            if meter::spent() {
+                return;
+            }
+            // A row noted twice, by two definitions, is written once.
+            if self.sys.ids[id].is_none() {
+                continue;
+            }
+            self.pending_rows.remove(&id);
+            let r = self.sys.remove(id);
+            let mut k = r.k.clone();
+            let mut a = Vec::with_capacity(r.a.len());
+            for (v, c) in r.a.iter() {
+                match self.pending_vars.get(v) {
+                    Some(&p) => {
+                        let def = &self.pending[p].1;
+                        debug_assert!(def.a.is_empty(), "a value: write_first is unset");
+                        k = &k + &(c * &def.k);
+                        let var = &self.sys.vars[*v];
+                        let rank = var.sides.rank(var.key, *v);
+                        self.sys.exact.remove(&rank);
+                        self.sys.inexact.remove(&rank);
+                        self.sys.lossless.remove(&rank);
+                    }
+                    None => a.push((*v, c.clone())),
+                }
+            }
+            let loose = self.sys.loose.contains(&lesser(&r.a));
+            let r = Row {
+                a: a.into_iter().collect(),
+                k,
+            };
+            if loose && !r.a.is_empty() {
+                self.sys.loose.insert(lesser(&r.a));
+            }
+            self.sys.add(r);
         }
     }
 
@@ -20397,6 +20482,7 @@ impl Omega {
         self.pending_vars.clear();
         self.pending_rows.clear();
         self.write_first = false;
+        self.lone.clear();
         let defs = std::mem::take(&mut self.pending);
         let at: HashMap<usize, usize> =
             defs.iter().enumerate().map(|(p, (j, _))| (*j, p)).collect();

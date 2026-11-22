@@ -487,14 +487,12 @@ fn orient<'f>(shapes: &[Shape<'f>], named: Option<&Atom>) -> Option<(Atom, Vec<D
     // `x`) a chain, and the formula was refused with `Shadows`. O(1) a candidate (the degree).
     let root = match named {
         Some(a) => index.get(a).copied().filter(|&i| fits(i))?,
-        None => (0..atoms.len())
-            .filter(|&i| fits(i))
-            .min_by_key(|&i| {
-                (
-                    adj[i].len() != shapes.len(),
-                    matches!(atoms[i], Atom::Aux(_)),
-                )
-            })?,
+        None => (0..atoms.len()).filter(|&i| fits(i)).min_by_key(|&i| {
+            (
+                adj[i].len() != shapes.len(),
+                matches!(atoms[i], Atom::Aux(_)),
+            )
+        })?,
     };
     // Row `e` of the result is the reading of `shapes[e]`, so the indices of `shapes` stay valid;
     let (up, met) = walk(root).expect("connected");
