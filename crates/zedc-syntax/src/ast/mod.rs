@@ -33,6 +33,7 @@ mod node;
 mod sentinel;
 mod show;
 mod stmts;
+mod top;
 mod types;
 mod walk;
 
@@ -124,27 +125,22 @@ pub fn unit(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<Stmt>, Erro
 /// The statements of `tree`, parsed as `Unit` from `tokens` of `text`, in written order but
 /// for guards, which are ordered as in a block (`StmtKind::place`), or the error of each item
 /// that cannot be built, in written order. Every item is built, so which errors are reported
-/// does not depend on the order of the items (step L1.29b). A unit's top level exports its
-/// declarations, so `return` there is an error.
+/// does not depend on the order of the items (step L1.29b). A unit's top level holds
+/// declarations only, so a statement there is an error (`Builder::top_statement`), in place
+/// of any error building it gave, as `break;` outside a loop.
 pub fn unit_all_errors(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<Stmt>, Vec<Error>> {
     with_holes(text, tokens, tree, |b| {
         b.fill(tree.root);
         let kids = b.kids(tree.root);
         let mut out = Vec::with_capacity(kids.len());
         let mut errors = Vec::new();
+        let mut main = None;
         for &k in kids {
+            if let Some(e) = b.top_statement(k, &mut main) {
+                errors.push(e);
+                continue;
+            }
             match b.item(k) {
-                Ok(s) if matches!(s.kind, StmtKind::Return(_)) => errors.push(Error {
-                    row: None,
-                    menu: String::new(),
-                    span: s.span,
-                    message:
-                        "`return` gives the value a block exports, and this one stands at the top \
-                              level of the unit, outside every block. Write it inside the block \
-                              whose value it gives, or remove it."
-                            .into(),
-                    notes: Vec::new(),
-                }),
                 Ok(s) => out.push(s),
                 Err(e) => errors.push(e),
             }

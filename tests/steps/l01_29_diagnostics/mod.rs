@@ -41,6 +41,7 @@ mod recursion;
 mod sum_plus;
 mod syntax_recovery;
 mod too_large_literal;
+mod top_statements;
 mod tyvars;
 mod untracked;
 mod variants;

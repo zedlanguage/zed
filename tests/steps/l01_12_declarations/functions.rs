@@ -62,9 +62,11 @@ fn the_unit_top_level_exports_nothing_and_block_bodies_still_export_once() {
     check(&[
         (
             "return 1;",
-            "error: `return` gives the value a block exports, and this one stands at the top level of \
-             the unit, outside every block. Write it inside the block whose value it gives, or \
-             remove it.",
+            "error: Statement at the top level of the unit: `return 1;`. Move it into the body of \
+             `main`, as in `main(m: MainArgs) { return 1; }`.; a unit's top level holds \
+             declarations, which take any order and run in no frame; a statement has an order and \
+             runs in a frame, so it stands in a body at byte 0; repair: `main(m: MainArgs) { \
+             return 1; }` at byte 0",
         ),
         (
             "f(x) { return x; x }",
@@ -84,8 +86,9 @@ fn a_form_of_a_later_layer_is_refused_as_not_compiled_yet() {
                 zed_tests::not_yet!("the declared result type `-> int`")
             ),
         ),
+        // In a body: at the top level a push is a statement out of place (TOP-statements-reject).
         (
-            "t[i] <- 1;",
+            "f(t, i) { t[i] <- 1; }",
             concat!(
                 "error: ",
                 zed_tests::not_yet!("the push at a key `t[i] <- 1;`")

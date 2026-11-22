@@ -111,7 +111,10 @@ fn an_indexed_definition_with_no_key_is_a_syntax_error() {
         ("x[] = 0;", "syntax"),
         ("x[i][] = 0;", "syntax"),
         ("x[i] = 0 with x[] = 1;", "syntax"),
-        ("x[i];", "(do (index x i))"),
+        (
+            "f(x, i) { x[i]; }",
+            "(def f (x i) (block (do (index x i))))",
+        ),
     ]);
 }
 

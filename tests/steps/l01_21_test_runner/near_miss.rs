@@ -311,6 +311,22 @@ const NEAR_MISSES: &[NearMiss] = &[
         Some("`return e;`, which ends the function `f` with the value `e`"),
     ),
     (
+        Row::TopLevelStatement,
+        FEE,
+        "y = fee(2, rate: 3);\n",
+        "fee(2, rate: 3);\n",
+        "2:1",
+        Some("`main(m: MainArgs) { fee(2, rate: 3); }`"),
+    ),
+    (
+        Row::LeadingZero,
+        "",
+        "x = 755;\n",
+        "x = 0755;\n",
+        "1:5",
+        Some("`755`"),
+    ),
+    (
         Row::ReservedWordAsName,
         "",
         "rest = 3;\n",

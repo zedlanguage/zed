@@ -113,12 +113,9 @@ fn a_break_with_no_loop_around_it_is_refused() {
             "repair: `return e;`, which ends the function `f` with the value `e` [break;]",
         ],
     );
-    refused(
-        "break;",
-        "Invalid use of `break;` outside a loop: it ends only a `loop` or `for` whose body holds \
-         it.",
-        &["repair: delete the `break;`, or move it into the body of a `loop` or `for` [break;]"],
-    );
+    // At the top level a `break;` is a statement out of place, the row DESIGN.md
+    // sec:diagnostics lists it under (TOP-statements-reject, l01_29 top_statements.rs).
+    assert_eq!(refusal("break;").0, Some(Row::TopLevelStatement));
 }
 
 /// `f(n) = loop t0 { if t0 > 1 { break; }; loop t1 { … }; };`, `n` loops nested, each
