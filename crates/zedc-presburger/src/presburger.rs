@@ -13123,7 +13123,8 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
                 // Complexity tradeoff: on a chain of definitions, a bound at the i-th stage
                 // reached the end of the chain in about i rounds of `settle`, each a pass over
                 // the whole formula, so the bounds of a chain of k stages cost O(k^2) passes,
-                // cubic in k in all (22.4 times the bytes from 4 to 32 stages, PREIMAGE-slow-rounds).
+                // cubic in k in all (22.4 times the bytes from 4 to 32 stages,
+                // PREIMAGE-slow-rounds).
                 // Measured since: `a_staged_chain_under_false_is_read_in_time_near_its_length`
                 // in zedc-preimage, no longer ignored, reads 8.03 times the instructions from
                 // 3000 to 24,000 stages (DynamoRIO count on a VM, b5f736dc6, 2026-11-22), so the
@@ -22225,9 +22226,9 @@ fn projections_met(a: Result<Each, Refusal>, b: Result<Each, Refusal>) -> Result
 // ([`quotient_pair`]; `i == 3 * q0 + q1` with `q1` unbounded, or three atoms), or by two
 // conjuncts, stay apart, and the projection keeps the refusals the tie gives. A quotient pair
 // costs one more look at its conjunct's top-level parts and at the one-atom constraints of
-// its remainder, read once into a map: O(N) in all. The naive way compares the definitions of each pair of atoms: O(A²) comparisons for
-// A defined atoms, each as long as a conjunct. Here each step is linear or near it, in the
-// size N of the formula's distinct parts: one walk of the formula with a visited set
+// its remainder, read once into a map: O(N) in all. The naive way compares the definitions of
+// each pair of atoms: O(A²) comparisons for A defined atoms, each as long as a conjunct. Here
+// each step is linear or near it, in the size N of the formula's distinct parts: one walk of the formula with a visited set
 // ([`functional`], whose unions merge the smaller set into the larger, O(N log N)); the atoms
 // of each conjunct that defines one atom, listed once, since a conjunct that defines two or
 // more waits for none; the strongly connected components, O(N); and one numbered, sorted and
