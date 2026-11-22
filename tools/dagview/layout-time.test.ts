@@ -1,5 +1,6 @@
 // Times one layout of a plan-shaped graph of 1,000 nodes and 2,700 edges, one
-// of 4,000 nodes and 10,800 edges (see synthetic.ts), and one of the plan as
+// of 3,000 nodes and 8,100 edges (4,000 and 10,800 until 2026-11-22; the
+// measures below for that size are history; see synthetic.ts), and one of the plan as
 // /api/state gave it on 2026-11-10 (plan-graph-2026-11-10.json: 1,661 nodes,
 // 2,580 edges, the sizes the page asks for).
 //
@@ -45,14 +46,18 @@ import { planLike } from "./synthetic.ts";
 const plan = JSON.parse(readFileSync(new URL("./plan-graph-2026-11-10.json", import.meta.url), "utf8")) as Graph;
 const cases: [string, () => Graph, number][] = [
   ["a plan-shaped graph of 1000 nodes and 2700 edges", () => planLike(1000, 2700), 0.37],
-  ["a plan-shaped graph of 4000 nodes and 10800 edges", () => planLike(4000, 10800), 0.095],
+  // 3,000 nodes, not 4,000 (TEST-dagview-layout-time-cap, 2026-11-22): the 4,000-node layout took
+  // 21.0 s at load 56 to 62, over the limit of 20 s a piece (author P169, P214), and one layout
+  // cannot be split. 3,000 nodes took 14.4 s at load 90 to 92 (2,500 took 9.1 s), 4,304 x 35,990 px
+  // (0.1196); its limit 0.123 keeps the 2.6% margin 0.095 gave the 4,000-node graph's 0.0926.
+  ["a plan-shaped graph of 3000 nodes and 8100 edges", () => planLike(3000, 8100), 0.123],
   ["the plan of 2026-11-10", () => plan, 0.77],
 ];
 
 // The three run at once, each in its own worker, so the file takes as long as the largest.
 describe("layout time", { concurrency: true }, () => {
   for (const [name, make, ratio] of cases) {
-    test(`${name} is laid out within 60 s, top to bottom and narrow, every node placed and every edge drawn`, { timeout: 60_000 }, async () => {
+    test(`${name} is laid out within 20 s, top to bottom and narrow, every node placed and every edge drawn`, { timeout: 20_000 }, async () => {
       const g = make();
       const t0 = Date.now();
       const l = await layoutInWorker(g);
