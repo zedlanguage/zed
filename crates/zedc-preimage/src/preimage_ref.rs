@@ -132,7 +132,8 @@
 //! about 760 pieces at every n): 21.4 times the instructions from 16 to 128 links and 11.5
 //! times from 64 to 512 while each guard rewrote that state; with the guards' input
 //! restrictions waiting (`Parts1d`, REF-nested-moduli-state) 12.07 and 8.12, against
-//! state growth (label pieces reaching the chain's input) of 12.1 and 8.84. Measured T(8n)/T(n), the
+//! state growth (label pieces reaching the chain's input) of 12.1 and 8.84. Measured
+//! T(8n)/T(n), the
 //! larger of the instruction and byte ratios, over the 48 families of the scaling tests
 //! (`l01_25_preimage_catalog::ref_memo`, load about 37 on 32 cores): at most 10.6
 //! (`normal_abs_gap`, whose test has since left the tree for row REF-normal-abs-gap), 9.0 to
