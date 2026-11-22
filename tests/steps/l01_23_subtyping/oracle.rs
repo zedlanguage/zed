@@ -884,39 +884,22 @@ fn the_systems_reaching_rare_branches_both_ways_agree_with_the_oracle() {
 #[test]
 fn unions_of_one_tuples_are_compared_by_their_components() {
     let boxed = |k: &str| Type::atom_with("box", &Type::tuple(vec![Type::atom(k)]));
-    let ones = |ts: &[Type]| Type::union_all(ts.iter().map(|t| Type::tuple(vec![t.clone()])));
+    let ones =
+        |ts: Vec<&Type>| Type::union_all(ts.into_iter().map(|t| Type::tuple(vec![t.clone()])));
     let (a, b, c) = (boxed("a"), boxed("b"), boxed("c"));
     let int = Type::int();
     let lit = |i: i64| Type::lit(&Value::Int(i)).unwrap();
+    let (zero, one) = (lit(0), lit(1));
+    let pair = Type::tuple(vec![a.clone(), a.clone()]);
     let cases = [
-        (
-            ones(&[a.clone(), b.clone()]),
-            ones(&[b.clone(), a.clone(), c.clone()]),
-            true,
-        ),
-        (
-            ones(&[a.clone(), c.clone()]),
-            ones(&[a.clone(), b.clone()]),
-            false,
-        ),
-        (
-            ones(&[a.clone(), b.clone()]),
-            Type::tuple(vec![&a | &b]),
-            true,
-        ),
-        (ones(&[lit(0), lit(1)]), ones(&[int.clone()]), true),
-        (ones(&[lit(0), int.clone()]), ones(&[lit(0), lit(1)]), false),
+        (ones(vec![&a, &b]), ones(vec![&b, &a, &c]), true),
+        (ones(vec![&a, &c]), ones(vec![&a, &b]), false),
+        (ones(vec![&a, &b]), Type::tuple(vec![&a | &b]), true),
+        (ones(vec![&zero, &one]), ones(vec![&int]), true),
+        (ones(vec![&zero, &int]), ones(vec![&zero, &one]), false),
         // Not a union of one-tuples on one side: the long way, with the same answer.
-        (
-            ones(&[a.clone()]),
-            &ones(&[a.clone()]) | &Type::tuple(vec![a.clone(), a.clone()]),
-            true,
-        ),
-        (
-            &ones(&[a.clone()]) | &Type::int(),
-            ones(&[a.clone(), b.clone()]),
-            false,
-        ),
+        (ones(vec![&a]), &ones(vec![&a]) | &pair, true),
+        (&ones(vec![&a]) | &int, ones(vec![&a, &b]), false),
     ];
     for (x, y, under) in cases {
         let want = if under {
