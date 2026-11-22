@@ -347,8 +347,9 @@ fn components_with_both_signs_and_a_hub_of_two_values_equal_enumeration() {
     assert_eq!(n, COUNT, "seed {seed}: every hub of two values is solved");
 }
 
-/// A hub of three or more values with coefficients of both signs is left to plan row
-/// S4-hub-mixed.
+/// A hub of three or more values with coefficients of both signs is not solved as a whole
+/// (study S4-hub-mixed, `docs/studies/s4-hub-mixed.md`: such a solve would multiply Boolean
+/// matrices, [`the_least_values_under_a_mixed_hub_are_a_boolean_product`]).
 #[test]
 fn a_hub_of_three_values_with_both_signs_is_left_open() {
     let sys = System {
@@ -359,6 +360,237 @@ fn a_hub_of_three_values_with_both_signs_is_left_open() {
         lowers: vec![],
     };
     assert_eq!(threshold::solve(&sys), Answer::MixedHub);
+}
+
+/// The exact answer of a component, found by solving it with the hub fixed at each of its
+/// values in turn and joining the answers: the points that pass are the union over the hub's
+/// values `c` of those that pass at `c` (the proof at `threshold::mixed`), and each solve at
+/// one value is exact (the corpora above). O(W) solves for a hub of W values.
+fn joined_over_hub(sys: &System) -> Option<Passing> {
+    let fin = |e: &End| e.to_i64().expect("finite");
+    let hub: Vec<i64> = (sys.hub.pieces())
+        .flat_map(|(lo, hi)| fin(lo)..=fin(hi))
+        .collect();
+    let mut out: Option<Passing> = None;
+    for c in hub {
+        let one = System {
+            hub: IntervalSet::of(c, c),
+            ..sys.clone()
+        };
+        let Some(Some((names, _))) = solved(&one) else {
+            continue;
+        };
+        let o = out.get_or_insert_with(|| (vec![(i64::MAX, i64::MIN); names.len()], vec![]));
+        for (b, (lo, hi)) in o.0.iter_mut().zip(names) {
+            *b = (b.0.min(lo), b.1.max(hi));
+        }
+        o.1.push(c);
+    }
+    out
+}
+
+/// Name 0 of [`product_gadget`] and [`steep_lines`]: `t` in `1..=1`.
+const ONE: usize = 0;
+
+/// Adds to `sys` a name `y` in `0..=top` and the two parts `t + w <= l || y + w >= l + 1` and
+/// `y <= 0 || target >= 1`: the first fires when `w >= l` and then sets `y >= l + 1 - w`, which
+/// fires the second when `w <= l`, so `target >= 1` is forced exactly when `w = l`. The first
+/// part's coefficients are 1 and -1, both signs.
+fn edge_at(sys: &mut System, l: i64, top: i64, target: usize) {
+    let y = sys.names.len();
+    sys.names.push(IntervalSet::of(0, top));
+    sys.parts.push((upper(ONE, 1, l), lower(y, -1, l + 1)));
+    sys.parts.push((upper(y, 0, 0), lower(target, 0, 1)));
+}
+
+/// The reduction of study S4-hub-mixed from the Boolean product of two k×k matrices `a` and
+/// `b`: the hub `w` in `1..=k`; names `u_i`, `v_j`, `x_ij` in `0..=1`; an edge of [`edge_at`]
+/// to `u_i` at `w = l` for each `a[i][l-1]` false and to `v_j` at `w = l` for each
+/// `b[l-1][j]` false; and the parts `u_i <= 0 || x_ij >= 1`, `v_j <= 0 || x_ij >= 1`. At
+/// `w = l` the least value of `x_ij` is 1 exactly when `a[i][l-1]` or `b[l-1][j]` is false;
+/// every value of `w` passes, so the exact least value of `x_ij` is 1 exactly when that holds
+/// at every `l`, that is when entry `(i, j)` of the product is false. Returns the component and
+/// the index of `x_ij` at `i * k + j`. Its size: at most 4k² + 2k² parts and 3k² + 2k + 1
+/// names, the hub's width k, every coefficient in `-1..=1`.
+fn product_gadget(a: &[Vec<bool>], b: &[Vec<bool>]) -> (System, Vec<usize>) {
+    let k = a.len();
+    let kk = k as i64;
+    let u = |i: usize| 1 + i;
+    let v = |j: usize| 1 + k + j;
+    let x = |i: usize, j: usize| 1 + 2 * k + i * k + j;
+    let mut sys = System {
+        names: [
+            vec![IntervalSet::of(1, 1)],
+            vec![IntervalSet::of(0, 1); 2 * k + k * k],
+        ]
+        .concat(),
+        hub: IntervalSet::of(1, kk),
+        parts: vec![],
+        uppers: vec![],
+        lowers: vec![],
+    };
+    for i in 0..k {
+        for j in 0..k {
+            sys.parts.push((upper(u(i), 0, 0), lower(x(i, j), 0, 1)));
+            sys.parts.push((upper(v(j), 0, 0), lower(x(i, j), 0, 1)));
+        }
+    }
+    for l in 0..k {
+        for i in 0..k {
+            if !a[i][l] {
+                edge_at(&mut sys, l as i64 + 1, kk, u(i));
+            }
+            if !b[l][i] {
+                edge_at(&mut sys, l as i64 + 1, kk, v(i));
+            }
+        }
+    }
+    let xs = (0..k * k).map(|ij| x(ij / k, ij % k)).collect();
+    (sys, xs)
+}
+
+/// The Boolean product of two square matrices.
+fn boolean_product(a: &[Vec<bool>], b: &[Vec<bool>]) -> Vec<Vec<bool>> {
+    let k = a.len();
+    (0..k)
+        .map(|i| (0..k).map(|j| (0..k).any(|l| a[i][l] && b[l][j])).collect())
+        .collect()
+}
+
+/// Study S4-hub-mixed: the exact least values of a threshold-implication component whose hub
+/// has k values and coefficients of both signs give the Boolean product of two k×k matrices
+/// ([`product_gadget`]), from a component of O(k²) parts. So a solve in O(N log N log W) for
+/// N parts and a hub of width W would multiply k×k Boolean matrices in O(k² log³ k); the proof
+/// and the citations are at `threshold::mixed`. Checked here on random matrices of k from 1 to
+/// 6 against [`boolean_product`], through [`joined_over_hub`]; at k = 2, where the hub has two
+/// values and [`threshold::solve`] answers, against its answer, and against enumeration when
+/// the component has at most 4 edges (its points then number at most 3^4 · 2^8 per hub value).
+/// Negative control, run once and not committed: with the first part of [`edge_at`] written
+/// `t + w <= l || y - w >= 1 - l` (one sign, so the edge holds at every `w >= l`), the test
+/// failed on all 20 seeds tried (`ZED_TEST_SEED` 1 to 20), 19 of them at an entry of the
+/// product and one at the check that the component is refused.
+#[test]
+fn the_least_values_under_a_mixed_hub_are_a_boolean_product() {
+    let seed = fresh("boolean product under a mixed hub");
+    let mut r = Rng(seed);
+    let mut enumerated = 0;
+    for it in 0..300 {
+        let k = 1 + r.below(6) as usize;
+        let mut matrix = || -> Vec<Vec<bool>> {
+            (0..k)
+                .map(|_| (0..k).map(|_| r.below(3) != 0).collect())
+                .collect()
+        };
+        let (a, b) = (matrix(), matrix());
+        let (sys, xs) = product_gadget(&a, &b);
+        let at = format!("seed {seed}, draw {it}, a {a:?}, b {b:?}");
+        let want = boolean_product(&a, &b);
+        let (names, hub) = joined_over_hub(&sys).expect("every hub value passes");
+        assert_eq!(hub, (1..=k as i64).collect::<Vec<_>>(), "{at}");
+        for (ij, &x) in xs.iter().enumerate() {
+            let zero = !want[ij / k][ij % k];
+            assert_eq!(names[x], (i64::from(zero), 1), "{at}, entry {ij}");
+        }
+        // With no false entry there is no edge and no coefficient of the hub.
+        if k >= 3 && sys.names.len() > 1 + 2 * k + k * k {
+            assert_eq!(threshold::solve(&sys), Answer::MixedHub, "{at}");
+        }
+        if k == 2 {
+            assert_eq!(
+                solved(&sys),
+                Some(Some((names.clone(), hub.clone()))),
+                "{at}"
+            );
+            if sys.parts.len() <= 2 * 4 + 2 * 4 {
+                enumerated += 1;
+                assert_eq!(enumerate(&sys), Some((names, hub)), "{at}");
+            }
+        }
+    }
+    eprintln!("seed {seed}: {enumerated} components of k = 2 enumerated");
+    // A fixed pair, so a component of k = 2 is enumerated on every run: three edges, to `u_0`
+    // at `w = 2` and to `v_0` and `v_1` at `w = 1`.
+    let a = vec![vec![true, false], vec![true, true]];
+    let b = vec![vec![false, false], vec![true, true]];
+    let (sys, xs) = product_gadget(&a, &b);
+    let (names, hub) = enumerate(&sys).expect("every hub value passes");
+    let lows: Vec<i64> = xs.iter().map(|&x| names[x].0).collect();
+    // The product: row 0 is a[0][0] b[0][j] or a[0][1] b[1][j] = false or false: [0, 0]; row
+    // 1 is a[1][1] b[1][j] = true: [1, 1]. A false entry has least value 1.
+    assert_eq!(lows, [1, 1, 0, 0]);
+    assert_eq!(hub, [1, 2]);
+}
+
+/// The component of study S4-hub-mixed's second family, `n` blocks of `m` hub values: the hub
+/// `w` in `0..=n*m - 1`; `y` in `0..=m`; for each block `i` a name `p_i` in `0..=n*m` and the
+/// parts `t + w <= i*m || p_i + w >= (i+1)*m` and `p_i <= 0 || y - w >= -i*m`, so that
+/// `y >= w - i*m` holds exactly when `w` is in block `i` (`i*m <= w < (i+1)*m`); and for each
+/// `j` in `1..m` a name `x_j` in `0..=1` with the part `y <= j - 1 || x_j >= 1`. With the hub
+/// at `c` the least value of `x_j` is 1 exactly when `c mod m >= j`. Returns the component and
+/// the indices of the `x_j`.
+fn steep_lines(n: usize, m: usize) -> (System, Vec<usize>) {
+    let (ni, mi) = (n as i64, m as i64);
+    let y = 1;
+    let xs: Vec<usize> = (2..m + 1).collect();
+    let mut sys = System {
+        names: [
+            vec![IntervalSet::of(1, 1), IntervalSet::of(0, mi)],
+            vec![IntervalSet::of(0, 1); m - 1],
+        ]
+        .concat(),
+        hub: IntervalSet::of(0, ni * mi - 1),
+        parts: vec![],
+        uppers: vec![],
+        lowers: vec![],
+    };
+    for (j, &x) in xs.iter().enumerate() {
+        sys.parts.push((upper(y, 0, j as i64), lower(x, 0, 1)));
+    }
+    for i in 0..ni {
+        let p = sys.names.len();
+        sys.names.push(IntervalSet::of(0, ni * mi));
+        sys.parts
+            .push((upper(ONE, 1, i * mi), lower(p, -1, (i + 1) * mi)));
+        sys.parts.push((upper(p, 0, 0), lower(y, 1, -i * mi)));
+    }
+    (sys, xs)
+}
+
+/// Study S4-hub-mixed: the least values at each hub value change Θ(N²) times in all as the
+/// hub runs over its values, for N parts ([`steep_lines`], N = 2n + m - 1): `x_j` changes
+/// 2n - 1 times (up at `c = i*m + j` for each block, down at each block's start but the
+/// first), so (m - 1)(2n - 1) changes in all, 465 at n = m = 16 with 47 parts. So a method that
+/// walks the hub values where the answer changes and updates the names that change does
+/// Θ(N²) updates on this family. Checked here at n = m = 4, 8, 16 against the formula, each
+/// value solved by [`threshold::solve`] with the hub fixed.
+#[test]
+fn the_answer_at_each_hub_value_changes_quadratically_often() {
+    for s in [4usize, 8, 16] {
+        let (sys, xs) = steep_lines(s, s);
+        assert_eq!(threshold::solve(&sys), Answer::MixedHub, "n = m = {s}");
+        let mut was: Option<Vec<i64>> = None;
+        let mut changes = 0;
+        for c in 0..(s * s) as i64 {
+            let one = System {
+                hub: IntervalSet::of(c, c),
+                ..sys.clone()
+            };
+            let Some(Some((names, _))) = solved(&one) else {
+                panic!("n = m = {s}: hub value {c} passes");
+            };
+            let lows: Vec<i64> = xs.iter().map(|&x| names[x].0).collect();
+            let want: Vec<i64> = (1..s as i64)
+                .map(|j| i64::from(c % s as i64 >= j))
+                .collect();
+            assert_eq!(lows, want, "n = m = {s}, hub value {c}");
+            if let Some(w) = &was {
+                changes += w.iter().zip(&lows).filter(|(a, b)| a != b).count();
+            }
+            was = Some(lows);
+        }
+        assert_eq!(sys.parts.len(), 3 * s - 1, "n = m = {s}");
+        assert_eq!(changes, (s - 1) * (2 * s - 1), "n = m = {s}");
+    }
 }
 
 fn fin(v: i64) -> End {

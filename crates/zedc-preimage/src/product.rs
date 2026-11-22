@@ -17601,8 +17601,9 @@ impl Scope {
 
     /// Meets each name of the threshold-implication component `shape` with its exact bounds,
     /// and the hub with its values that pass ([`threshold::solve`]); `false`, changing nothing,
-    /// when the hub has three or more values and its coefficients have both signs (plan row
-    /// S4-hub-mixed); and `false`, changing nothing, when the solve does not show that the
+    /// when the hub has three or more values and its coefficients have both signs (refused as a
+    /// whole, study S4-hub-mixed: such a solve would multiply Boolean matrices, the proof at
+    /// `threshold::mixed`); and `false`, changing nothing, when the solve does not show that the
     /// values between each name's bounds pass (`filled` false at [`threshold::solve`]): meeting
     /// the names with their bounds then kept a hull with no refusal, `x + 1 <= 3y <= x + 2` on
     /// `0..=4` leaving x in `1..=4` where the exact set is {1, 2, 4}

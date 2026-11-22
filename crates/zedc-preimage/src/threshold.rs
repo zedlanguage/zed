@@ -100,7 +100,9 @@ pub enum Answer {
         filled: bool,
     },
     /// The hub has three or more values and the coefficients have both signs: each value is
-    /// solved exactly, but the values can be many (plan row S4-hub-mixed).
+    /// solved exactly, but a solve of the whole component in O(N log N log W) would multiply
+    /// Boolean matrices faster than any known method (study S4-hub-mixed; the proof at
+    /// `mixed`).
     MixedHub,
 }
 
@@ -558,6 +560,62 @@ fn leaves_gap(d: &IntervalSet, a: &(End, End), b: &(End, End)) -> bool {
 /// greatest the greatest, and the hub's values that pass are those `c`. The loop that lists
 /// the values stops at the third, so it costs O(1) whatever the hub's width. Test:
 /// `components_with_both_signs_and_a_hub_of_two_values_equal_enumeration`.
+///
+/// Why a hub of three or more values is refused ([`Answer::MixedHub`]; study S4-hub-mixed,
+/// `docs/studies/s4-hub-mixed.md`, 2026-11-22). The join above over every value costs W solves
+/// for a hub of W values, and no method in O(N log N log W) is known; one would multiply
+/// Boolean matrices in near-quadratic time, by this reduction. Take k×k Boolean matrices A and
+/// B. Give the hub the values 1 to k, a name `t` the value 1, and names `u_i`, `v_j`, `x_ij`
+/// the values 0 and 1. For each `(i, l)` with `A[i][l]` false add a name `y` in `0..=k` and the
+/// parts `t + w <= l || y + w >= l + 1` and `y <= 0 || u_i >= 1`; for each `(l, j)` with
+/// `B[l][j]` false the same with `v_j`; and for each `(i, j)` the parts `u_i <= 0 || x_ij >= 1`
+/// and `v_j <= 0 || x_ij >= 1`. Proof that the exact least value of `x_ij` is 1 exactly when
+/// entry `(i, j)` of the product AB is false, step by step. (1) Fix the hub at `c`. The first
+/// part of an edge fails its upper arm when `1 + c > l`, that is `c >= l`, and then forces
+/// `y >= l + 1 - c`; at `c < l` nothing forces `y` above its least value 0. (2) The second part
+/// fires when `y >= 1`, so at the least member (`members`) `u_i` is 1 exactly when some edge to
+/// `u_i` has `c >= l` and `l + 1 - c >= 1`, that is `c = l`: exactly when `A[i][c]` is false;
+/// likewise `v_j` exactly when `B[c][j]` is false. (3) So the least value of `x_ij` at `c` is 1
+/// exactly when `A[i][c]` or `B[c][j]` is false. (4) Every value of the hub passes: the
+/// component has no upper bound but the names' own, and the least member stays within them
+/// (`y`'s forced value `l + 1 - c` is at most k). (5) The points that pass are the union over
+/// the hub's values of those that pass at each (the proof above), so the exact least value of
+/// `x_ij` is the least over `c` of its least value at `c`: 1 exactly when (3) holds for every
+/// `c`, that is when no `c` has both `A[i][c]` and `B[c][j]` true, that is when entry `(i, j)`
+/// of AB is false. The component has at most 6k² parts and 3k² + 2k + 1 names, a hub of width
+/// W = k, and every coefficient in `-1..=1`; only the first part of each edge has the hub on
+/// both arms, with coefficients 1 and -1, which is why one sign does not suffice. So a solve in
+/// O(N log N log W) would give the product in O(k² log³ k), and then the exponent of matrix
+/// multiplication over the Booleans would be 2; the best bound known is below 2.371339 (J.
+/// Alman, R. Duan, V. Vassilevska Williams, Y. Xu, Z. Xu, R. Zhou, "More Asymmetry Yields
+/// Faster Matrix Multiplication", 2024, arXiv:2404.16349, doi:10.48550/arXiv.2404.16349,
+/// checked 2026-11-22: "ω < 2.371339"), and no combinatorial method is known in k^(3-ε) (A.
+/// Abboud, V. Vassilevska Williams, "Popular conjectures imply strong lower bounds for dynamic
+/// problems", 2014, arXiv:1402.0054, checked 2026-11-22, Conjecture 5: "any combinatorial
+/// algorithm requires n^{3-o(1)} time ... to compute the Boolean product of two n × n
+/// matrices"). The same style of argument refuses parts with two lower bounds (DESIGN L1.39,
+/// item (2)). The bound is conditional: it shows no such solve is known, not that none exists.
+/// How it was checked: `the_least_values_under_a_mixed_hub_are_a_boolean_product` compares the
+/// join over the hub's values with the Boolean product on 300 random pairs of k from 1 to 6 a
+/// run, and with enumeration at k = 2; with the first part of each edge made one-signed it
+/// failed on all 20 seeds tried, 19 at an entry of the product (negative control, not
+/// committed).
+///
+/// What a faster exact method would have to beat, measured on a second family. With the hub
+/// at `c`, every comparison the propagation makes is between two affine functions of `c` (a
+/// name's forced value `b + m*c` and a part's threshold `a - k*c + 1`, or an end of a name's
+/// values), so the parts that fire, and the answer, change only where two of them cross: at
+/// most O(N²) hub values for N parts (with P pieces in the names' values, O(N² + N*P)). Unlike
+/// parametric shortest paths, whose answer changes n^Ω(log n) times (P. J. Carstensen, PhD
+/// thesis, University of Michigan, 1983, as quoted by E. Fischer, O. Lachish, R. Yuster,
+/// "Two-phase algorithms for the parametric shortest path problem", arXiv:1001.3749,
+/// doi:10.48550/arXiv.1001.3749, checked 2026-11-22: "the number of shortest path changes ...
+/// is n^{\Omega(\log n)}"), a forced value here is a maximum of lines and not a sum along a
+/// path, so the count stays polynomial. But it reaches Θ(N²): in
+/// `the_answer_at_each_hub_value_changes_quadratically_often`, n blocks of m hub values with
+/// N = 2n + m - 1 parts change the least values (m - 1)(2n - 1) times in all, 465 at
+/// n = m = 16. So walking the hub values where the answer changes is O(N³ log N) in the worst
+/// case, strongly polynomial but not O(N log N log W), and it is not built here.
 fn mixed(sys: &System) -> Answer {
     let mut values: Vec<Int> = Vec::new();
     for (lo, hi) in sys.hub.pieces() {
