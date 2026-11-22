@@ -203,6 +203,25 @@ fn a_facet_attached_at_the_top_level_is_a_declaration_and_a_struct_update_is_not
     assert_eq!(errs[0].0, Some(Row::TopLevelStatement), "{errs:?}");
 }
 
+/// A facet attachment in parentheses, or after another facet, is the same declaration (handoff
+/// question on `facet_declaration`): its one error is the facet's later layer, not a statement.
+#[test]
+fn a_facet_in_parentheses_or_after_another_is_a_declaration() {
+    for item in [
+        "(orders with store(kv(\"localhost\")));",
+        "((orders with store(kv(\"localhost\"))));",
+        "orders with store(kv(\"localhost\")) with store(kv(\"backup\"));",
+    ] {
+        let errs = errors(&unit(item));
+        assert_eq!(errs.len(), 1, "{item}: {errs:?}");
+        assert_ne!(errs[0].0, Some(Row::TopLevelStatement), "{item}: {errs:?}");
+        assert!(zed_tests::is_not_yet(&errs[0].1), "{item}: {errs:?}");
+    }
+    // A facet inside an operand is a value, not the attachment: still a statement.
+    let errs = errors(&unit("(orders with store(kv(\"localhost\"))) + 1;"));
+    assert_eq!(errs[0].0, Some(Row::TopLevelStatement), "{errs:?}");
+}
+
 #[test]
 fn local_and_annotations_do_not_hide_a_statement_and_declarations_stay() {
     // A statement behind `local` is still one.

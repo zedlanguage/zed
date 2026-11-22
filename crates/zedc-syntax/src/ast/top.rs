@@ -179,14 +179,17 @@ impl Builder<'_, '_> {
     /// `orders with store(postgres(…));`. It is left to the facet's later layer (L7).
     // `ExprStmt = Expr ';'` holds its expression as its one kid, an `Expr` node around it;
     // `x with f(…)` is a `Reduce` whose last kid is the `ReduceTail` `'with' FacetCall`, of
-    // layer 7 (syntax.peg), the one `ReduceTail` of that layer that begins with `with`. O(depth
-    // of the single-kid `Expr` wrappers), one in the trees seen.
+    // layer 7 (syntax.peg), the one `ReduceTail` of that layer that begins with `with`. A
+    // `Group`, `(x with f(…))`, holds the same expression, so its one kid is read in its place
+    // (handoff question of b22-small: the parenthesized form was rejected as a statement); a
+    // facet inside an operand, `(x with f(…)) + 1`, is a value and stays a statement. O(depth
+    // of the single-kid `Expr` and `Group` wrappers).
     fn facet_declaration(&self, d: usize) -> bool {
         if self.tree.name(d) != "ExprStmt" {
             return false;
         }
         let mut e = self.kids(d)[0];
-        while self.tree.name(e) == "Expr" && self.kids(e).len() == 1 {
+        while matches!(self.tree.name(e), "Expr" | "Group") && self.kids(e).len() == 1 {
             e = self.kids(e)[0];
         }
         if self.tree.name(e) != "Reduce" {
