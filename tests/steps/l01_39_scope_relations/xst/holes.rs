@@ -4,9 +4,9 @@
 //! over every point that meets all the tests.
 //!
 //! Main's ends (least and greatest kept value) are exact on every named system in every
-//! order; its interior sets are not exact on CE-B (it keeps `a = 4`) and the collective
-//! example (it keeps `z = 4`), and it takes superlinear time on laps and the mixed family.
-//! Those tests wait for ST-holes-moves.
+//! order. Its interior sets were not exact on CE-B (it kept `a = 4`) and the collective
+//! example (it kept `z = 4`) before ST-holes-moves; those tests and the random and chain set
+//! tests now pass and are here (HOLES-exact-between, b22-preimage-a, 2026-11-21).
 
 use zed_kernel::Value;
 use zed_tests::instances::Rng;
@@ -860,6 +860,101 @@ fn the_staircase_of_four_has_exact_sets() {
     let inst = staircase(4);
     assert_eq!(inst.exact(), vec![(0..=4).collect::<Vec<i64>>(); 4]);
     check_named("staircase of 4", &inst, true);
+}
+
+/// The collective example: `z` in `{0, 1, 2, 3, 5, 6}` in all 120 orders (HOLES-exact-between;
+/// main kept `z = 4` until ST-holes-moves, COMPLEXITY.md S25).
+#[test]
+fn collective_sets_are_exact_in_every_order() {
+    assert_eq!(collective().exact()[2], [0, 1, 2, 3, 5, 6]);
+    check_named("collective", &collective(), true);
+}
+
+/// Every system of [`corpus`]: every name's whole set is exact, its tests in order and as
+/// one conjunction (META4 result 1, HOLES-exact-between). A system with no solution may
+/// instead be bottom, as in [`random_systems_have_exact_ends`].
+#[test]
+fn random_systems_have_exact_sets() {
+    let (mut rng, seed) = Rng::fresh("random systems with holes, exact sets");
+    for inst in corpus(&mut rng, EACH) {
+        let want = inst.exact();
+        let order: Vec<usize> = (0..inst.tests().1.len()).collect();
+        let (seq, once) = (inst.in_order(&order), inst.at_once());
+        if want.iter().any(Vec::is_empty) {
+            for (s, how) in [(&seq, "in order"), (&once, "at once")] {
+                let got = inst.values(s);
+                assert!(
+                    got.iter().any(Vec::is_empty) || s.bottom,
+                    "seed {seed}, {how}: no solution, but the scope keeps {got:?}: {inst:?}"
+                );
+            }
+            continue;
+        }
+        assert_eq!(inst.values(&seq), want, "seed {seed}, in order: {inst:?}");
+        assert_eq!(inst.values(&once), want, "seed {seed}, at once: {inst:?}");
+    }
+}
+
+/// `k` copies of the collective example, copy `c + 1`'s `x` at most copy `c`'s `z`: one
+/// chain of cycles with holes (Claude round 4, `collective_chain`).
+fn collective_chain(k: usize) -> Inst {
+    let mut inst = Inst {
+        range: vec![],
+        out: vec![],
+        edges: vec![],
+    };
+    for c in 0..k {
+        let b = 3 * c;
+        inst.range.extend([(0, 6), (0, 6), (0, 6)]);
+        inst.out.extend([vec![5], vec![4], vec![]]);
+        inst.edges
+            .extend([(b + 1, b + 2, 0), (b, b + 1, 0), (b + 2, b, 1)]);
+        if c > 0 {
+            inst.edges.push((b + 2, b - 1, 0));
+        }
+    }
+    inst
+}
+
+/// Claude round 4 (`probe_r4_holes_collective_chain_sets_are_exact`): two copies of the
+/// collective example in a chain; every name's set is exact in order, reversed and as one
+/// conjunction (HOLES-exact-between).
+#[test]
+fn a_chain_of_two_collective_examples_has_exact_sets() {
+    let inst = collective_chain(2);
+    let want = inst.exact();
+    assert_ne!(inst.hull(), want, "CONTROL: the hull is exact");
+    let k = inst.tests().1.len();
+    let forward: Vec<usize> = (0..k).collect();
+    let backward: Vec<usize> = (0..k).rev().collect();
+    assert_eq!(inst.values(&inst.in_order(&forward)), want, "in order");
+    assert_eq!(inst.values(&inst.in_order(&backward)), want, "reversed");
+    assert_eq!(inst.values(&inst.at_once()), want, "one conjunction");
+}
+
+/// Gemini round 4: two cycles through three names with holes (`z <= y <= x <= z + 1`,
+/// `z <= x <= y + 1`, `x != 5`, `y != 4`, `z != 3`, all in `0..=6`). The deferred form of this
+/// test asked for a refusal (META4 result 1 refuses a component that is not one simple cycle
+/// with three names with holes); the scope now gives every name's exact set, in every
+/// rotation and as one conjunction, which P197 allows in place of a refusal
+/// (HOLES-exact-between).
+#[test]
+fn two_cycles_through_three_names_with_holes_have_exact_sets() {
+    let inst = Inst {
+        range: vec![(0, 6); 3],
+        out: vec![vec![5], vec![4], vec![3]],
+        edges: vec![(1, 2, 0), (0, 1, 0), (2, 0, 1), (0, 2, 0), (1, 0, 1)],
+    };
+    let want = inst.exact();
+    let k = inst.tests().1.len();
+    let mut runs: Vec<(String, zedc::store::product::Scope)> = rotations(k)
+        .into_iter()
+        .map(|o| (format!("{o:?}"), inst.in_order(&o)))
+        .collect();
+    runs.push(("one conjunction".into(), inst.at_once()));
+    for (order, s) in runs {
+        assert_eq!(inst.values(&s), want, "order {order}");
+    }
 }
 
 mod bench;
