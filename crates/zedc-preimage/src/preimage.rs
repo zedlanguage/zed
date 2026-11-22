@@ -5030,21 +5030,72 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // (4) D = N log n / sqrt(j) gives O(N sqrt(j) log n), O(n^1.5 log n) for j = O(n).
 // Both constructions of the deferred tests (/home/luke/Work/wt/scratch/deferred-tests/
 // LOAD-join-disjoint-multi-owner.rs) take Θ(n^1.5): k² or k(k - 1)/2 refusals, each between
-// classes of k + 1 functions sharing one, for n about 2k² parameters. No lower bound is known
-// either way. Deciding whether any join of a list merges is at least as hard as deciding
-// whether some pair of a list of sets is disjoint (one function per element with a parameter
-// per set holding it, one class per set built first, then a join per pair: the first disjoint
-// pair merges, and while none is disjoint nothing changes), which with a graph's neighborhoods
-// as the sets asks whether some edge lies in no triangle; no near-linear method for that is
-// known (Fischer, Künnemann and Redzic, arXiv:2312.14593, relate the all-edge triangle problems
-// to the 3SUM and APSP hypotheses). The 3SUM bound for offline set disjointness, N^(4/3 -
-// o(1)) (Kopelowitz, Pettie and Porat, "Higher Lower Bounds from the 3SUM Conjecture", SODA
-// 2016, arXiv:1407.6756, Theorem `set_disjoint_improved` with gamma = 1/2), needs every
-// answer, and here the first disjoint pair merges and changes the answers after it; a
-// reduction from SETH would refute NSETH, since both answers have certificates of near-linear
-// size (Carmosino et al., ITCS 2016, doi:10.1145/2840728.2840746, Theorem 2). Read in the
-// LOAD-join-disjoint study, b22-research3, 2026-11-22. So the general bound is open
-// (COMPLEXITY.md row LOAD-join-disjoint). Trigger: a call joining one parameter to
+// classes of k + 1 functions sharing one, for n about 2k² parameters. No conditional lower
+// bound above n log n under a published hypothesis is known for this function; what is proved
+// (b22-research4, 2026-11-22) is the following.
+// (R1) Reduction. Given a graph G = (V, E) with m edges, build: for each vertex c a function
+// f_c with one parameter p(c, u) per neighbor u of c; for each vertex u a function H_u of one
+// parameter h_u; the joins (h_u, p(c, u)) for every edge {c, u}, in any order (the building
+// joins), then one join (h_u, h_v) per edge {u, v} (the query joins). A building join never
+// refuses: the class of h_u holds h_u and parameters p(c, u) for distinct c, so of distinct
+// functions, and p(c, u) is alone. After them the class C_u of h_u holds f_c exactly for the
+// c adjacent to u. Size: 2m + |V| parameters, 3m joins, so n = O(m). Claim: no query join
+// merges if and only if every edge of G lies in a triangle. (If) by induction over the query
+// joins: while none has merged, the classes are the C_u, and the join (h_u, h_v) for edge
+// {u, v} in a triangle {u, v, c} is refused, since C_u and C_v both hold f_c. (Only if) if
+// edge {u, v} lies in no triangle, consider the first query join that merges, if any: none
+// merged before it, so when the join (h_u, h_v) is reached either some earlier one merged or
+// the classes are C_u and C_v, which share no f_c (a shared c is a common neighbor) and merge.
+// So `unite` decides "every edge lies in a triangle" (its result, whether each h_u's root is
+// its own, tells which). The source program reaches every such list: a call of a function of
+// one parameter makes exactly one join, so H_u called from f_c with p(c, u) as its argument
+// gives the building joins and a call of H_v with h_u gives a query join (`identity_classes`;
+// parameter names must be distinct across functions, since `by_param` drops a name bound
+// twice). The fixtures above are of this kind.
+// (R2) The triangle hypotheses do not carry over through (R1). The Triangle Conjecture as
+// stated by Abboud, Bringmann, Khoury and Zamir, "Hardness of Approximation in P via Short
+// Cycle Removal", STOC 2022, arXiv:2204.10465 (LaTeX source read 2026-11-22, file
+// zero_triangle.tex), attributed there to Abboud and Vassilevska Williams, FOCS 2014: "Triangle
+// detection requires $m^{4/3-o(1)}$ time, for some density regime $m=\Omega(n)$". It is about
+// whether SOME triple is a triangle (an OR of ORs); (R1) decides whether EVERY edge has a
+// common neighbor (an AND of ORs), and no reduction from triangle detection to that is known
+// to me or found in the searches below. Nor does whether ANY join is refused help: some join
+// is refused if and only if some function has two parameters in one connected component of
+// the graph of all joins. Proof: a refusal of (x, y) needs parameters p, q of one function in
+// the classes of x and y, and every class lies in one component, as does the edge (x, y);
+// conversely, if no join is refused, every join merges, the final classes are the components,
+// and a class never holds two parameters of one function. That test is O(n α(n)) by a plain
+// union-find, so the bit carries no triangle-detection hardness. The all-edges form
+// (AE-Sparse-Triangle: for each edge, whether it is in a triangle), which Vassilevska Williams
+// and Xu (FOCS 2020) show needs m^(4/3 - o(1)) under 3SUM or APSP (cited in the same file;
+// Fischer, Künnemann and Redzic, arXiv:2312.14593, extend that line), would need every answer,
+// and here the first query join that merges pollutes the later ones: after C_u and C_v merge,
+// a join (h_u, h_w) asks whether N(u) ∪ N(v) meets N(w). Per-query copies of the classes would
+// cost the sum of the squared degrees, up to Θ(m^1.5), which loses the bound.
+// (R3) What meeting the limit would take. 10.5 at 8 times n means an exponent at most
+// log 10.5 / log 8 = 1.131. By (R1), an O(n^1.131) `unite` decides "every edge lies in a
+// triangle" in O(m^1.131). The best method I know for that is the high/low degree split of
+// Alon, Yuster and Zwick, "Finding and counting given length cycles", Algorithmica 17 (1997),
+// doi:10.1007/BF02523189 (from memory, not re-read): with degree threshold D, an edge with a
+// low endpoint is checked by scanning that endpoint's neighbors, O(m D); a common neighbor c of
+// low degree is found by listing the pairs of c's neighbors, O(m D); among the at most 2m / D
+// high vertices one Boolean matrix product, O((m / D)^ω); D = m^((ω - 1) / (ω + 1)) gives
+// O(m^(2ω / (ω + 1))), m^1.41 for ω = 2.371 and m^(4/3) even for ω = 2. So any method under
+// the limit would decide this question below m^(4/3), faster than every known method by a
+// polynomial factor, also for ω = 2: not proved impossible, and not known.
+// Earlier reading kept: the 3SUM bound for offline set disjointness, N^(4/3 - o(1))
+// (Kopelowitz, Pettie and Porat, "Higher Lower Bounds from the 3SUM Conjecture", SODA 2016,
+// arXiv:1407.6756, Theorem `set_disjoint_improved` with gamma = 1/2), needs every answer, as
+// AE-Sparse-Triangle does (R2); a reduction from SETH would refute NSETH, since both answers
+// have certificates of near-linear size (Carmosino et al., ITCS 2016,
+// doi:10.1145/2840728.2840746, Theorem 2). Read in the LOAD-join-disjoint study,
+// b22-research3, 2026-11-22. Searches of 2026-11-22 (allpapers, paperclip arXiv and
+// abstracts): "sparse triangle hypothesis", "Triangle Collection matching triangles", "every
+// edge in a triangle" and union-find with disjoint classes found no bound for the single-bit
+// AND-of-ORs form (arXiv:2509.11448, "Triangle-Covered Graphs", is about adding edges, not
+// this). So the general bound is open, with (R3) as the evidence that the limit is out of
+// reach (COMPLEXITY.md row LOAD-join-disjoint; the author's options are in QUESTIONS).
+// Trigger: a call joining one parameter to
 // the classes of two parameters of a third function, the classes holding many functions of
 // two or more parameters. Test `tests::refused_joins_between_two_large_classes_scale`
 // (repeated refusals between two classes, the case remembered) and
