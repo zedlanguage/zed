@@ -608,18 +608,35 @@ fn big(p: Prim, ns: &[Cow<'_, Rat>]) -> Result<Value, TooLarge> {
             };
             // The `w - r` low digits move up `r` places; the `r` high digits move down to the
             // bottom. With `x` built and `w` in a `u64`, `0 <= r < w` is in a `u64` too, and
-            // `x < 2^w` (checked by `domain`), so `high = x >> (w - r)` is `x div 2^(w - r)`,
-            // `x - high * 2^(w - r)` is `x mod 2^(w - r)`, and the low part shifted up `r`
-            // stays below `2^w`, apart from `high < 2^r`, so `+` is `|`.
+            // `0 <= x < 2^w` (checked by `domain`). Let `s = w - r` and `d` the digits of `x`.
+            // If `s >= d`, `x < 2^s`, so `x div 2^s = 0` and `x mod 2^s = x`. Else
+            // `high = x >> s` is `x div 2^s` (`x >= 0`, so the shift's rounding toward minus
+            // infinity is the floor) and `x - high * 2^s` is `x mod 2^s`; `high * 2^s <= x`
+            // has at most `d` digits. The low part times `2^r` is below `2^s * 2^r = 2^w`
+            // and a multiple of `2^r`, while `high < 2^r`, so `+` is `|`.
             //
             // Complexity tradeoff: by the same measure as `shr`, the remainder and quotient by
-            // a built `2^(w - r)` took O(M(n)) time and bytes rising faster than the digits
-            // (BIT-shift-bytes); the shifts are O(n) time and bytes. A kept `x` or `w` keeps
-            // them, as at `shr`.
+            // a built `2^s` took O(M(n)) time and bytes rising faster than the digits
+            // (BIT-shift-bytes); the shifts are O(n) time and bytes. The low part shifted up
+            // `r` has at most `d + r` digits, so it is built only when `r <= d` (at most `2d`
+            // digits); for a larger `r` (a width far past the digits of `x`, as
+            // l01_39a_bit_words transfer.rs draws) `2^r` stays a kept exponent, as in the path
+            // below, and building it would take `r / 8` bytes. A kept `x` or `w` keeps the
+            // quotient, as at `shr`. Test: `bits::tests::shifting_a_built_value_agrees_with_dividing_by_the_power`.
             if let (Some(x), Some(w), Some(r)) = (as_built(x), built_u64(w), built_u64(&r)) {
-                let high = x >> (w - r);
-                let low = x - (&high << (w - r));
-                return Ok(int((low << r) | high));
+                let (s, d) = (w - r, x.bits());
+                let (high, low) = if s >= d {
+                    (BigInt::zero(), Cow::Borrowed(x))
+                } else {
+                    let high = x >> s;
+                    let low = x - (&high << s);
+                    (high, Cow::Owned(low))
+                };
+                if r <= d {
+                    return Ok(int((low.as_ref() << r) | high));
+                }
+                let up = Rat::int(low.into_owned()).mul(&two_pow(&count(r))?)?;
+                return Ok(Value::integer(up.add(&Rat::int(high))?));
             }
             let low_width = two_pow(&w.sub(&r)?)?;
             let low = x.rem_euclid(&low_width)?.mul(&two_pow(&r)?)?;
@@ -761,10 +778,13 @@ mod tests {
             seed
         };
         let shr = |x: &Rat, k: u64| Value::integer(x.div_euclid(&pow2(k)).unwrap());
-        let rot = |x: &Rat, r: u64, w: u64| {
+        // The quotient and remainder by kept powers, the path before BIT-shift-bytes; a
+        // result that only a built number of more digits than memory holds can be is refused
+        // here as there.
+        let rot = |x: &Rat, r: u64, w: u64| -> Result<Value, TooLarge> {
             let low_width = pow2(w - r);
-            let low = x.rem_euclid(&low_width).unwrap().mul(&pow2(r)).unwrap();
-            Value::integer(low.add(&x.div_euclid(&low_width).unwrap()).unwrap())
+            let low = x.rem_euclid(&low_width)?.mul(&pow2(r))?;
+            Ok(Value::integer(low.add(&x.div_euclid(&low_width)?)?))
         };
         for w in (1..=70u64).chain([95, 96, 97, 127, 128, 129, 300]) {
             let words: Vec<u32> = (0..w.div_ceil(32)).map(|_| next() as u32).collect();
@@ -780,12 +800,36 @@ mod tests {
                 assert_eq!(got, shr(&Rat::int(neg.clone()), k), "shr {neg} {k}");
                 let wb = BigInt::from(w);
                 let r = k % w;
-                let got = big(Prim::Rotl, &[rat(&x), rat(&kb), rat(&wb)]).unwrap();
+                let got = big(Prim::Rotl, &[rat(&x), rat(&kb), rat(&wb)]);
                 assert_eq!(got, rot(&xr, r, w), "rotl {x} {k} {w}");
-                let got = big(Prim::Rotr, &[rat(&x), rat(&kb), rat(&wb)]).unwrap();
+                let got = big(Prim::Rotr, &[rat(&x), rat(&kb), rat(&wb)]);
                 assert_eq!(got, rot(&xr, (w - r) % w, w), "rotr {x} {k} {w}");
             }
         }
+        // A width far past the digits of `x`: the low part moves up `r > d` places, which
+        // keeps `2^r` as an exponent (a built `2^(2^62)` would need 2^59 bytes; the
+        // l01_39a_bit_words transfer test draws such widths), and a shift down by `w - r`
+        // at or past `d` digits gives 0. Where the high part is not 0 the result is
+        // `low * 2^r + high`, which has `r` digits and only a built number holds: at 2^62 it
+        // is refused, by this path and the one before it alike.
+        let mut refused = 0;
+        for x in [0u64, 1, 5, (1 << 40) + 3, u64::MAX] {
+            let (xb, xr) = (BigInt::from(x), Rat::int(BigInt::from(x)));
+            for w in [64u64, 65, 100, 1 << 20, 1 << 62] {
+                let wb = BigInt::from(w);
+                for k in [0, 1, 2, 63, 64, w / 2, w - 2, w - 1, w, w + 7] {
+                    let (kb, r) = (BigInt::from(k), k % w);
+                    let got = big(Prim::Rotl, &[rat(&xb), rat(&kb), rat(&wb)]);
+                    assert_eq!(got, rot(&xr, r, w), "rotl {x} {k} {w}");
+                    refused += usize::from(got.is_err());
+                    let got = big(Prim::Rotr, &[rat(&xb), rat(&kb), rat(&wb)]);
+                    assert_eq!(got, rot(&xr, (w - r) % w, w), "rotr {x} {k} {w}");
+                    refused += usize::from(got.is_err());
+                }
+            }
+        }
+        // Some cases at 2^62 are refused and most are not, so both outcomes are compared.
+        assert!((1..100).contains(&refused), "{refused} refused");
         // A count past `u64` takes the quotient: 0 for `x >= 0`, -1 for `x < 0`.
         let huge = BigInt::one() << 70;
         let at = |x: i64| big(Prim::Shr, &[rat(&BigInt::from(x)), rat(&huge)]).unwrap();

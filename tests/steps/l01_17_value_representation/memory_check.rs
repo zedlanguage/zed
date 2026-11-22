@@ -519,9 +519,13 @@ fn third() -> Value {
     Value::rat(Rat::new(BigInt::from(1), BigInt::from(3)).unwrap())
 }
 
-/// An integer and a rational at one place in two tuples, or as a family's key and the key
-/// looked up, are ordered by value with the wide one read where it is held; ordering them
-/// multiplies the integer by 3, which the system refuses, and each stops with its own error.
+/// An integer and a rational as a family's key and the key looked up are ordered by value
+/// with the wide one read where it is held; ordering them multiplies the integer by 3, which
+/// the system refuses with its own error. At one place in two tuples, `<` does not order
+/// them: the language does not order an `int` against a `rat`, at the top level or inside a
+/// tuple, so it is a type error, decided from the kinds before any digit is read
+/// (FAIL-kernel-tuple-order-kinds); `ordering_wide_rationals_is_refused_when_memory_is_short`
+/// covers `<` refused for memory.
 #[test]
 fn ordering_a_wide_integer_against_a_rational_is_refused_when_memory_is_short() {
     if !in_child("ordering_a_wide_integer_against_a_rational_is_refused_when_memory_is_short") {
@@ -532,10 +536,7 @@ fn ordering_a_wide_integer_against_a_rational_is_refused_when_memory_is_short() 
     let family = lit(Value::Family(Family::of([(wide_int(), 1)])));
     lower_limit();
     let err = eval(&bin(Prim::Lt, a.clone(), b)).unwrap_err();
-    let KernelError::OrderTooLarge { op: "<", need } = &err else {
-        panic!("{err:?}")
-    };
-    assert_eq!(need.ask, BigUint::from(WIDE + 3));
+    assert!(matches!(&err, KernelError::Type(_)), "{err:?}");
     let err = eval(&get(family, lit(third()))).unwrap_err();
     assert!(
         matches!(&err, KernelError::KeyOrderTooLarge { .. }),
