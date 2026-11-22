@@ -385,3 +385,31 @@ fn equality_over_a_wide_odd_base_scales_with_its_bits() {
         |m| equal_over_a_wide_base(if m == n { &small } else { &large }),
     );
 }
+
+/// Row L1.39-head-rule: the head of `loops::houdini_loop(k)`, entered with `k` candidate
+/// conjuncts `i <= s_j`, keeps the even ones by the M0.5 widening (Houdini's greatest fixpoint,
+/// FME 2001, doi:10.1007/3-540-45251-6_29). The first phase stabilizes the head in a constant
+/// number of passes (the entry, a pass that refutes the odd conjuncts, a pass that changes
+/// nothing), each a join, a meet, a shift and a widening of `k` bounds in ordered sets,
+/// O(k log k) in all: predicted T(8k)/T(k) = 8 · log 32768 / log 4096 = 10.0 at k = 4096;
+/// measured 9.93 (instructions, 2026-11-21, load5 70), under the limit 10.5.
+#[test]
+fn a_loop_head_drops_refuted_conjuncts_in_k_log_k() {
+    use super::super::loops::{houdini_loop, upper_symbols};
+    use zedc::store::iterate::{order, phase1};
+    let k = 1 << 12;
+    let systems = scaling::inputs(k, |m| {
+        let s = houdini_loop(m);
+        let o = order(&s).unwrap();
+        (s, o)
+    });
+    scaling::check(
+        "the head of a loop entered with k candidate conjuncts",
+        k,
+        |m| {
+            let (s, o) = &systems[&m];
+            let head = &phase1(s, o)[0];
+            assert_eq!(upper_symbols(head).len(), m.div_ceil(2));
+        },
+    );
+}

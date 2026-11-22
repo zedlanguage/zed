@@ -27,7 +27,7 @@ struct Term {
 /// `cell[v] = init[v] ⊔ ⋃ terms[v]`: a loop's counter starts at `init` and moves by `step`
 /// while `guard` holds.
 #[derive(Clone, Debug)]
-struct System {
+pub(super) struct System {
     init: Vec<Bounds>,
     terms: Vec<Vec<Term>>,
     reads: Vec<Vec<usize>>,
@@ -185,6 +185,80 @@ fn a_loop_counting_down_keeps_its_symbolic_bound() {
     let cells = solve(&s).unwrap();
     assert_eq!(cells[0].to_string(), "[min(0, n - 1)..=n - 1]");
     assert_eq!(cells[1].to_string(), "[1..=n - 1]");
+}
+
+/// Row L1.39-head-rule: `i = 0; while i <= n - 1 && i <= s0 - 1 && i <= s2 - 1 && … { i = i +
+/// 1 }`, with `i <= s_j` for each `j < k` as the loop's entry relation, `k` candidate conjuncts
+/// over `k` symbols. The guard keeps `i <= s_j - 1` for each even `j`, so the step `i + 1`
+/// preserves the candidate `i <= s_j` exactly for even `j`, and refutes it for odd `j` (from
+/// `i <= s_j` alone, `i + 1 <= s_j + 1`, and no other candidate names `s_j`). So the largest
+/// inductive subset of the candidates, the greatest fixpoint of Houdini (Flanagan and Leino,
+/// FME 2001, doi:10.1007/3-540-45251-6_29), is `{i <= s_j : j even}`.
+pub(super) fn houdini_loop(k: usize) -> System {
+    let s = |j: usize| Affine::sym(&format!("s{j}"));
+    let entry = Bounds::new(IntervalSet::single(0), [], (0..k).map(s));
+    let guard = Bounds::new(
+        IntervalSet::top(),
+        [],
+        std::iter::once(n().plus(-1)).chain((0..k).step_by(2).map(|j| s(j).plus(-1))),
+    );
+    System::new(
+        vec![entry],
+        vec![vec![Term {
+            from: 0,
+            guard,
+            step: 1,
+        }]],
+    )
+}
+
+/// The symbols of the upper bounds of `b`, one name for each bound.
+pub(super) fn upper_symbols(b: &Bounds) -> Vec<String> {
+    let names = b.bounds(zedc::store::affine::Side::Upper).iter().map(|u| {
+        let names: Vec<&str> = u.affine.terms.keys().map(|s| s.0.as_str()).collect();
+        names.join("+")
+    });
+    names.collect()
+}
+
+/// The head of a loop keeps the largest inductive subset of the conjuncts of its entry
+/// relation, the rule of step M0.5 (row L1.39-head-rule, DESIGN.md sec:domains, "At a widening
+/// point a linear relation forms no disjunction"):
+/// after the first phase the head of `houdini_loop(k)` holds `i <= s_j` for each even `j` and
+/// no other symbolic bound, and narrowing adds none, since the side already has bounds. A
+/// second case with the test symbols `n` and `m` is checked against the values a run takes:
+/// `i = 0; while i <= n - 1 { i = i + 1 }` entered with `i <= n` and `i <= m` keeps `i <= n`,
+/// which the guard re-establishes, and drops `i <= m`, which the step refutes.
+#[test]
+fn a_loop_head_keeps_the_largest_inductive_subset_of_its_entry_conjuncts() {
+    use zedc::store::iterate::{order, phase1};
+    for k in [1, 2, 5, 6] {
+        let s = houdini_loop(k);
+        let even: Vec<String> = (0..k).step_by(2).map(|j| format!("s{j}")).collect();
+        let head = &phase1(&s, &order(&s).unwrap())[0];
+        assert_eq!(upper_symbols(head), even, "k = {k}: {head}");
+        let solved = &solve(&s).unwrap()[0];
+        assert_eq!(upper_symbols(solved), even, "k = {k}: {solved}");
+    }
+    let m = Affine::sym("m");
+    let s = System::new(
+        vec![Bounds::new(IntervalSet::single(0), [], [n(), m])],
+        vec![vec![Term {
+            from: 0,
+            guard: Bounds::range(None, Some(n().plus(-1))),
+            step: 1,
+        }]],
+    );
+    let solved = &solve(&s).unwrap()[0];
+    assert_eq!(upper_symbols(solved), ["n"], "{solved}");
+    for env in envs() {
+        for x in &s.run(env)[0] {
+            assert!(
+                solved.contains(*x, &at(env)),
+                "{x} at {env:?} outside {solved}"
+            );
+        }
+    }
 }
 
 #[test]

@@ -576,6 +576,29 @@ impl Lattice for Bounds {
     /// (polyhedra or acceleration of affine loops), at exponential cost in the symbols.
     /// Naive version: the join, whose chains need not end; used: a chain of widenings changes at
     /// most once per bound of its first element, plus the interval widening's O(|K|) steps.
+    ///
+    /// This is the rule of DESIGN.md sec:domains at a widening point ("keeps the conjuncts of
+    /// the relation it is entered with that one pass of the loop body preserves", row
+    /// L1.39-head-rule), Houdini's check-and-refute loop over the entry's bounds: C. Flanagan,
+    /// K. R. M. Leino, "Houdini, an Annotation Assistant for ESC/Java", FME 2001,
+    /// doi:10.1007/3-540-45251-6_29, authors' copy p. 4, "repeat invoke ESC/Java to check P;
+    /// remove any refuted candidate annotations from P; until quiescence" (zed repo
+    /// verification/bib.md, entry Flanagan_2001). The head's first value is the entry `E`; at
+    /// each later pass `next` is the head joined with the body's result, and a bound of `self`
+    /// survives exactly when `next` has it unchanged, that is when the body, run under the bounds
+    /// still kept, gives it back: a bound the body loosens (`i <= m + 1` from `i <= m`) or loses
+    /// is refuted and dropped, and none is added. Proof that the head ends at the largest subset
+    /// of `E`'s bounds that the body preserves, `S*`: (1) the kept set only shrinks, so the passes
+    /// end; (2) at the end no kept bound is refuted, so the kept set is preserved, and it is a
+    /// subset of `E`'s, so it is within `S*`; (3) no bound of `S*` is ever dropped: while the kept
+    /// set holds `S*`, the body runs under a value at most the one `S*` alone gives, the join,
+    /// meet and shift are monotone (`l01_24_refinement_lattices::bounds`), so it gives back each
+    /// bound of `S*` as it does under `S*` alone. This is the monotone checker (Ch1) of the
+    /// uniqueness proof, C. Flanagan, R. Joshi, K. R. M. Leino, IPL 77(2-4):97-108, 2001,
+    /// doi:10.1016/s0020-0190(00)00196-4, p. 99: "there is a unique greatest subset of A that is
+    /// valid for P". Test: `l01_24_refinement_lattices::loops::
+    /// a_loop_head_keeps_the_largest_inductive_subset_of_its_entry_conjuncts`; scaling,
+    /// `l01_24_refinement_lattices::scaling::bench::a_loop_head_drops_refuted_conjuncts_in_k_log_k`.
     fn widen(&self, next: &Self, marks: &Landmarks) -> Self {
         if *self == Bounds::bottom() {
             return next.clone();
