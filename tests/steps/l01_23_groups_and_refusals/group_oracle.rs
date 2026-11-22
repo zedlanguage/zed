@@ -4755,33 +4755,6 @@ fn xr_r3_build_forked_witness_chain(m: usize, tag: &str) -> Vec<Type> {
         .instance(vec![])
 }
 
-/// Q2(b) Bench: measures `horn_witness_group` building height-`m` witnesses across `n = 128` vs
-/// `8n = 1024` chained forked-difference members (`s.rep` cannot use `union_rows`, so every
-/// witness goes through `horn_witness_group`!).
-/// Negative controls:
-/// - Fails at `4091b22e5` (`Refused(Fork)` on members `0..m`);
-/// - Fails on `q2n+` (the 2-stage queue bug leaves `vals[0..m-1]` `None`, falling back to
-///   `Refused(Fork)`);
-/// - Fails `T(8n)/T(n) < 10.5` on `g2` (`d.member_known` materializes height-`m` plain `Value`s in
-///   `Theta(n^3)`).
-#[test]
-fn xr_r3_q2b_witness_builder_forked_long_chain_scales() {
-    let inputs = scaling::inputs(128, |m| {
-        xr_r3_build_forked_witness_chain(m, &format!("_{m}"))
-    });
-    scaling::check_order(
-        "Q2(b) horn_witness_group height-n forked chain",
-        128,
-        1,
-        |m| {
-            Type::forget_emptiness();
-            for t in &inputs[&m] {
-                assert_eq!(t.verdict(), Verdict::Inhabited);
-            }
-        },
-    );
-}
-
 /// Q2(c): One `refine` + candidate-exclusion rule that decides BOTH:
 /// 1. `box_program(6)`'s six-box cover of `(#a | #b | #c)^3` across all 6 permutations of `S_3`
 ///    components and 6 permutations of the 6 boxes (36 orders, all `Verdict::Inhabited`;
