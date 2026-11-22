@@ -2,13 +2,16 @@
 //! default run (TEST-bench-move-crates). The correctness test that keeps a small instance of
 //! what each checks besides the ratio is `the_benchmark_inputs_have_their_answers_at_small_sizes`.
 //!
-//! The graph-coloring benchmarks stay at n = 32, the size they had (1x a few milliseconds),
-//! and do not reach the 1 s size the other benchmarks have: their witness is one integer
-//! built by `combine_crt_tree` from one prime modulus per vertex, O(M(N) log k) for `k`
-//! moduli of `N` bits in all, with `N` about `k log k`, and that grows faster than the limit
-//! of 10.5 at 8n allows once the integers are wide. Measured 2026-11-14 (instructions at 8n):
-//! 8.4 to 8.9 at n = 32, 8.9 to 10.7 at 256, 11.8 to 14.9 at 4000, 12.3 to 13.2 at 24,000 to
-//! 80,000; most of the work is in big-integer multiplication, not in the coloring.
+//! The graph-coloring benchmarks scale the coloring at [`COLORS`] (8,000) without the CRT
+//! that joins its witness, and measure the whole question against its coloring and its CRT
+//! ([`against_its_crt`], PNCX-coloring-crt-scale). The witness is one integer built by
+//! `combine_crt_tree` from one prime modulus per vertex, O(M(N) log k) for `k` moduli of `N`
+//! bits in all, with `N` about `k log k`; that grows faster than the limit of 10.5 at 8n allows
+//! once the integers are wide, and no smaller witness exists in general (the product of the
+//! moduli is its period). Measured 2026-11-14 with the CRT (instructions at 8n): 8.4 to 8.9 at
+//! n = 32, 8.9 to 10.7 at 256, 11.8 to 14.9 at 4000, 12.3 to 13.2 at 24,000 to 80,000, most
+//! of the work in big-integer multiplication; the benchmarks stayed at n = 32 until then. The
+//! coloring alone, 2026-11-22 on a VM: 8.19 to 8.69 at 16,000 (CPU time).
 //! The other benchmarks are sized (2026-11-14) so the 1x case takes about 0.3 to 1 s, or less
 //! where building the inputs takes most of the piece, and a piece stays under 20 s.
 
@@ -69,25 +72,36 @@ fn pncx_kept_prefix_scale() {
 
 #[test]
 fn pncx_connected_colors_scale() {
-    let inputs = scaling::inputs(32, connected_color_system);
-    scaling::check_order("color connected triangles by removal order", 32, 1, |n| {
+    let n = COLORS;
+    let inputs = scaling::inputs(n, connected_color_system);
+    scaling::check_order("color connected triangles by removal order", n, 1, |n| {
         let (info, allowed, clauses) = &inputs[&n];
-        assert!(graph_coloring_witness(info, allowed, clauses).is_some());
+        assert!(graph_coloring_choices(info, allowed, clauses).is_some());
     });
 }
 
 #[test]
 fn pncx_independent_components_scale() {
-    let inputs = scaling::inputs(32, color_system);
-    scaling::check_order("independent residue components", 32, 1, |n| {
+    let n = COLORS;
+    let inputs = scaling::inputs(n, color_system);
+    scaling::check_order("color independent triangles", n, 1, |n| {
         let (info, allowed, clauses) = &inputs[&n];
-        // Keep the measured assertion weak so the old path's slower
-        // Undecided result is caught by the cost check itself.
-        assert!(!matches!(
-            solve_coprime_system(&None, &None, info, allowed.clone(), clauses.clone(), true),
-            RegimeOut::Empty
-        ));
+        assert!(graph_coloring_choices(info, allowed, clauses).is_some());
     });
+    for (what, system) in [
+        ("independent residue components", &inputs[&n]),
+        ("connected residue components", &connected_color_system(n)),
+    ] {
+        let (info, allowed, clauses) = system;
+        against_its_crt(what, system, || {
+            // Keep the measured assertion weak so the old path's slower
+            // Undecided result is caught by the cost check itself.
+            assert!(!matches!(
+                solve_coprime_system(&None, &None, info, allowed.clone(), clauses.clone(), true),
+                RegimeOut::Empty
+            ));
+        });
+    }
 }
 
 #[test]

@@ -379,6 +379,59 @@ fn connected_color_system(
     (info, allowed, clauses)
 }
 
+/// A coloring question: the bases, the residues each vertex allows, and the clauses (the
+/// arguments of `graph_coloring_choices`).
+pub(super) type Coloring = (
+    Vec<BaseInfo>,
+    Vec<ResidueSet>,
+    Vec<BTreeMap<usize, ResidueSet>>,
+);
+
+/// The size of the coloring benchmarks of `r4_tests` and `r6_tests` (PNCX-coloring-crt-scale).
+/// At 16,000 the prism cores took a phase past the 20 s limit on a 12-core VM (2026-11-22), and
+/// the other four families 17 to 35 s a piece, ratios 8.16 to 8.22.
+pub(super) const COLORS: usize = 8_000;
+
+/// The most work a whole coloring question may take, as a multiple of its two parts measured
+/// apart: the coloring and the CRT that joins its witness (PNCX-coloring-crt-scale).
+pub(super) const CRT_SHARE: f64 = 1.5;
+
+/// Panics unless `run`, a whole question over `system` whose witness is the coloring's, takes
+/// at most [`CRT_SHARE`] times the work of its coloring ([`graph_coloring_choices`]) and of
+/// [`combine_crt_tree`] on the residues it chooses. The witness is one integer modulo the product of all
+/// the moduli, `N` bits for `k` moduli, which no point avoids: the product of the moduli is
+/// its period, and a point of a system whose moduli are all needed has no smaller
+/// representative in general. Its CRT costs `O(M(N) log k)`, which grows faster than the
+/// limit of 10.5 at 8n once the integers are wide, so the coloring is measured apart, without
+/// the CRT (`graph_coloring_choices`, by `scaling::check_order`), and the whole question here
+/// against its two parts, as `pncx_fibonacci_crt_scale` measures its question against one gcd:
+/// a replay of the bases or clauses on top of the CRT (Stage C's repeated scans) shows here
+/// as a share past the bound.
+pub(super) fn against_its_crt(what: &str, system: &Coloring, run: impl FnOnce()) {
+    let (info, allowed, clauses) = system;
+    let mut meter = scaling::Meter::new();
+    let whole = meter.work(run).units;
+    let mut choices = None;
+    let coloring = meter
+        .work(|| choices = graph_coloring_choices(info, allowed, clauses))
+        .units;
+    let choices = choices.expect("a coloring");
+    let crt = meter
+        .work(|| {
+            std::hint::black_box(combine_crt_tree(choices));
+        })
+        .units;
+    let share = whole as f64 / (coloring + crt) as f64;
+    eprintln!(
+        "{what}: the question {whole} units, its coloring {coloring}, its CRT {crt}, {share:.2} times"
+    );
+    assert!(
+        share <= CRT_SHARE,
+        "{what}: the question takes {share:.2} times the work of its coloring and its CRT, at \
+         most {CRT_SHARE}"
+    );
+}
+
 #[test]
 fn pncx_coloring_small_graphs_match_enumeration() {
     let (mut info, mut allowed, _) = color_system(2);

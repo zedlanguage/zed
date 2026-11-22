@@ -850,7 +850,11 @@ fn u_values(
     }
     let wu: Vec<Row> = uw.iter().map(|&(e, d, c)| (d, e, c)).collect();
     let h = halves.len() as u64;
-    work.charge(PIECE.saturating_mul(3 * h * h + h))?;
+    // A unit for each 16 pairs of half-planes the three shadows meet, not `PIECE` (16) a pair:
+    // a pair costs about 2 ns, and `PIECE` is fit to the 0.6 to 0.8 µs pieces of
+    // `exact::residues` (PRES-two-pin-charge-fit; measured at the site's own benchmark case,
+    // `exact::tests::bench`, `sides`: 1.0 ms for 3 names at h = 240, 536,000 pairs).
+    work.charge((3 * h * h + h).div_ceil(16))?;
     let (Some(real), Some(dark), Some(across)) =
         (shadow(&uw, false), shadow(&uw, true), shadow(&wu, false))
     else {
@@ -937,7 +941,9 @@ fn u_runs(
     {
         // The narrower way: each integer `w` of the polygon gives one interval of `u`.
         for w in wl..=wh {
-            work.charge(PIECE.saturating_mul(h))?;
+            // A unit a half-plane `fiber` reads, not `PIECE` (PRES-two-pin-charge-fit; at the
+            // site's benchmark case, `exact::tests::bench`, `line`, 52 ns a unit, 2026-11-22).
+            work.charge(h)?;
             match fiber(wu, w) {
                 None => return Ok(None),
                 Some(None) => {}
@@ -968,7 +974,8 @@ fn u_runs(
         }
         let mut u = lo;
         while u <= hi {
-            work.charge(PIECE.saturating_mul(h))?;
+            // As for each `w` above: a unit a half-plane `fiber` reads.
+            work.charge(h)?;
             match fiber(uw, u) {
                 None => return Ok(None),
                 Some(None) => {}
@@ -1700,7 +1707,10 @@ fn poly_values(
     };
     let n = poly.n() as u64;
     let log = u64::from(n.bit_len() + 1);
-    let step = PIECE.saturating_mul(log);
+    // 4 units a step for each bit of `n`, a quarter of `PIECE`: at `PIECE` the site's benchmark
+    // case (`exact::tests::bench`, `strip`) cost 4.7 to 9.5 ns a unit, now 37 ns
+    // (PRES-two-pin-charge-fit, 2026-11-22).
+    let step = 4 * log;
     work.charge(step.saturating_mul(8))?;
     let to_uw = |(ha, hb, hc): Form| -> Option<Row> {
         let e = ha.checked_mul(s)?.checked_add(hb.checked_mul(t)?)?;

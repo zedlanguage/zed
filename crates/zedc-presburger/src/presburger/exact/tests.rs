@@ -5045,6 +5045,44 @@ fn a_choice_shared_only_through_the_head_the_reading_gives_it_stops_the_search()
     }
 }
 
+/// The line `7·q == 5·p` with `p` in `0..=10`, `y == p + 2·q`, and 200 more sides
+/// `p + i·q <= 10^6 + i` that no point meets (`bench::sides`): each name reads 204 half-planes
+/// whole (`u_values`), under the reading's own allowance (`EXACT_LIMIT`, as `exact::tried`
+/// gives it). Before PRES-two-pin-charge-fit their shadows were charged 16 units a pair of
+/// half-planes, 2,000,832 units a name for 0.1 to 0.3 ns each, so the second name passed the
+/// allowance and the reading was refused; now each name costs 7,816 units and all three are
+/// read. The reading is called directly, as its benchmark calls it: `exact_each` solves the
+/// equality first, and the part it reads then has one pin.
+#[test]
+fn many_sides_are_read_with_two_pins_within_the_allowance() {
+    let mut rows = vec![
+        eq(&[("q", 7), ("p", -5)], 0),
+        ge(&[("p", 1)], 0),
+        ge(&[("p", -1)], 10),
+        eq(&[("y", 1), ("p", -1), ("q", -2)], 0),
+    ];
+    rows.extend((1..=200).map(|i| ge(&[("p", -1), ("q", -i)], 1_000_000 + i)));
+    let f = Formula::And(Shared::new(rows));
+    let mut work = Work {
+        used: 0,
+        limit: EXACT_LIMIT,
+        solver: SOLVER,
+    };
+    let prep = guarded::prepare(&f, &mut work).unwrap().unwrap();
+    let two = (prep.two_pins(3, &mut work).unwrap()).expect("the part is read with two pins");
+    // The points are `(p, q)` = (0, 0) and (7, 5).
+    for (s, want) in [("p", [0, 7]), ("q", [0, 5]), ("y", [0, 17])] {
+        let got = two.values(&a(s), &mut work);
+        let Ok(Some(set)) = &got else {
+            panic!("{s}: {got:?} after {} units", work.used);
+        };
+        for v in -5..=25i64 {
+            let has = set.ranges.contains(v) && set.class.contains(&Num::from(v));
+            assert_eq!(has, want.contains(&v), "{s} at {v}: {set:?}");
+        }
+    }
+}
+
 /// A leaf choice for each name over a polygon of many true edges: `y(j) == p + 2·q + j` where
 /// `q - 4·p - m >= 0`, else `y(j) == 2·p + q + j`, `m = j mod 7`, over the tangents of
 /// `names_over_a_polygon_of_many_true_edges_cost_log_of_them`. Each arm's query is over the

@@ -4823,6 +4823,18 @@ fn graph_coloring_witness(
     allowed: &[ResidueSet],
     clauses: &[BTreeMap<usize, ResidueSet>],
 ) -> Option<Int> {
+    combine_crt_tree(graph_coloring_choices(info, allowed, clauses)?).map(|(x, _)| x)
+}
+
+/// The residue [`graph_coloring_witness`] takes modulo each base, as `(residue, modulus)`
+/// pairs for [`combine_crt_tree`]: the coloring without the one integer that joins them, so
+/// that its cost is measured apart from the CRT's (PNCX-coloring-crt-scale,
+/// `pncx_connected_colors_scale` and the other coloring benchmarks).
+fn graph_coloring_choices(
+    info: &[BaseInfo],
+    allowed: &[ResidueSet],
+    clauses: &[BTreeMap<usize, ResidueSet>],
+) -> Option<Vec<(Int, Int)>> {
     if info.len() != allowed.len() || clauses.is_empty() {
         return None;
     }
@@ -4999,7 +5011,7 @@ fn graph_coloring_witness(
         let r = &info[i].u + &(&info[i].stride * &domains[i][local]);
         choices.push((r, info[i].max_q.clone()));
     }
-    combine_crt_tree(choices).map(|(x, _)| x)
+    Some(choices)
 }
 
 fn independent_component_witness(

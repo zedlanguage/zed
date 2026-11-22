@@ -105,34 +105,61 @@ impl<T: Ord + Clone> Uses<T> {
     /// Adds (`add`) or removes `t` at `name`: when `last` made the same change to a set equal
     /// by pointer to the one at `name`, its result is taken in O(1); otherwise the change is
     /// made and kept in `last`.
+    // Complexity tradeoff: naive version, `get` to compare the set with `last`, then `insert`,
+    // or `add` or `remove` (a second descent) and `get` for the set after (a third): three
+    // descents of O(log n) name comparisons for each change, most of them `Arc<str>` compares
+    // through `memcmp`, which grew 10.3 times from 512 to 4096 in the satellite benchmark
+    // (callgrind, 2026-11-22: 74.6M and 768.7M instructions of 523.7M and 4,910M in all, the
+    // change itself 75.3M and 754.3M). Used: one `get_mut` at a name that has a set, which the
+    // change is made in or replaced in, and a second descent only to take out a set left empty
+    // or to put in a new name. The same O(log n), a third of the descents for a name in use:
+    // the change 51.3M and 508.9M, the benchmark's ratio 9.371 to 9.330.
+    // PERF-satellite-formula-cmp.
     fn change(&mut self, name: &Arc<str>, t: &T, add: bool, last: &mut Last<T>) {
-        let now = self.0.get(name);
-        if let Some((v, a, before, after)) = &last.0
-            && *a == add
-            && v == t
-            && match (before, now) {
-                (Some(x), Some(y)) => x.ptr_eq(y),
-                (None, None) => true,
-                _ => false,
-            }
-        {
-            match after {
-                Some(s) => {
-                    self.0.insert(name.clone(), s.clone());
+        let after = match self.0.get_mut(name) {
+            Some(s) => {
+                if let Some((v, a, Some(before), after)) = &last.0
+                    && *a == add
+                    && v == t
+                    && before.ptr_eq(s)
+                {
+                    match after {
+                        Some(x) => *s = x.clone(),
+                        None => {
+                            self.0.remove(name);
+                        }
+                    }
+                    return;
                 }
-                None => {
+                let before = s.clone();
+                if add {
+                    s.insert(t.clone());
+                } else {
+                    s.remove(t);
+                }
+                let after = (!s.is_empty()).then(|| s.clone());
+                if after.is_none() {
                     self.0.remove(name);
                 }
+                last.0 = Some((t.clone(), add, Some(before), after));
+                return;
             }
-            return;
+            None => {
+                if let Some((v, a, None, after)) = &last.0
+                    && *a == add
+                    && v == t
+                {
+                    after.clone()
+                } else {
+                    let after = add.then(|| OrdSet::unit(t.clone()));
+                    last.0 = Some((t.clone(), add, None, after.clone()));
+                    after
+                }
+            }
+        };
+        if let Some(s) = after {
+            self.0.insert(name.clone(), s);
         }
-        let before = now.cloned();
-        if add {
-            self.add(name, t);
-        } else {
-            self.remove(name, t);
-        }
-        last.0 = Some((t.clone(), add, before, self.0.get(name).cloned()));
     }
 }
 

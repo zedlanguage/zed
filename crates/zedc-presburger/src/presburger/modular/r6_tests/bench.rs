@@ -3,13 +3,9 @@
 //! what each checks besides the ratio are `the_benchmark_inputs_have_their_answers_at_small_sizes`,
 //! and for the graph cores `pncx_bipartite_core`, `pncx_prism_models` and `pncx_wheel_models`.
 //!
-//! The graph-coloring benchmarks stay at n = 32, the size they had (1x a few milliseconds),
-//! and do not reach the 1 s size the other benchmarks have: their witness is one integer
-//! built by `combine_crt_tree` from one prime modulus per vertex, O(M(N) log k) for `k`
-//! moduli of `N` bits in all, with `N` about `k log k`, and that grows faster than the limit
-//! of 10.5 at 8n allows once the integers are wide. Measured 2026-11-14 (instructions at 8n):
-//! 8.4 to 8.9 at n = 32, 8.9 to 10.7 at 256, 11.8 to 14.9 at 4000, 12.3 to 13.2 at 24,000 to
-//! 80,000; most of the work is in big-integer multiplication, not in the coloring.
+//! The graph-coloring benchmarks scale the coloring without the CRT that joins its witness,
+//! and measure the whole question against its coloring and its CRT (`coloring_scales`; the
+//! reason and the measurements are in `r4_tests::bench`, PNCX-coloring-crt-scale).
 //! The other benchmarks are sized (2026-11-14) so the 1x case takes about 0.3 to 1 s, or less
 //! where building the inputs takes most of the piece, and a piece stays under 20 s.
 //! The two matching benchmarks went from n = 640,000 to 160,000 (b22-presburger3, 2026-11-22):
@@ -17,15 +13,29 @@
 //! million clauses at 8n; at 160,000 they take 11 to 15 s at the same load, 1x 0.3 G
 //! instructions, ratio 8.63 and 8.65 (8.86 and 8.88 at 640,000).
 
+use super::super::r4_tests::{COLORS, Coloring, against_its_crt};
 use super::*;
+
+/// The coloring of a core family scales at [`COLORS`] and 8 times it without the CRT that
+/// joins its witness, and the whole question costs a bounded multiple of its coloring and that
+/// CRT ([`against_its_crt`], PNCX-coloring-crt-scale).
+fn coloring_scales(what: &str, make: fn(usize) -> Coloring) {
+    let n = COLORS;
+    let inputs = scaling::inputs(n, make);
+    scaling::check_order(what, n, 1, |n| {
+        let (info, allowed, clauses) = &inputs[&n];
+        assert!(graph_coloring_choices(info, allowed, clauses).is_some());
+    });
+    let system = &inputs[&n];
+    let (info, allowed, clauses) = system;
+    against_its_crt(what, system, || {
+        assert!(graph_coloring_witness(info, allowed, clauses).is_some());
+    });
+}
 
 #[test]
 fn pncx_bipartite_core_scale() {
-    let inputs = scaling::inputs(32, bipartite_core);
-    scaling::check_order("color a bipartite three-core", 32, 1, |n| {
-        let (info, allowed, clauses) = &inputs[&n];
-        assert!(graph_coloring_witness(info, allowed, clauses).is_some());
-    });
+    coloring_scales("color a bipartite three-core", bipartite_core);
 }
 
 #[test]
@@ -72,20 +82,12 @@ fn pncx_power_propagation_scale() {
 
 #[test]
 fn pncx_prism_core_scale() {
-    let inputs = scaling::inputs(32, prism_core);
-    scaling::check_order("Brooks coloring on odd prism cores", 32, 1, |n| {
-        let (info, allowed, clauses) = &inputs[&n];
-        assert!(graph_coloring_witness(info, allowed, clauses).is_some());
-    });
+    coloring_scales("Brooks coloring on odd prism cores", prism_core);
 }
 
 #[test]
 fn pncx_wheel_core_scale() {
-    let inputs = scaling::inputs(32, wheel_core);
-    scaling::check_order("a universal vertex and a bipartite remainder", 32, 1, |n| {
-        let (info, allowed, clauses) = &inputs[&n];
-        assert!(graph_coloring_witness(info, allowed, clauses).is_some());
-    });
+    coloring_scales("a universal vertex and a bipartite remainder", wheel_core);
 }
 
 #[test]
