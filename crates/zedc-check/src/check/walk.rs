@@ -3944,7 +3944,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             Err(r) => {
                 // `read_literal` reads only an `int` literal and a float literal.
                 let cast = match &e.kind {
-                    ExprKind::Float { forced: Some(f), .. } => f.name(),
+                    ExprKind::Float {
+                        forced: Some(f), ..
+                    } => f.name(),
                     ExprKind::Float { .. } => "f64",
                     _ => "int",
                 };

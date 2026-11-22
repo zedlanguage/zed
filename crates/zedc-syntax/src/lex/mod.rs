@@ -18,8 +18,8 @@ pub use punct::{KEYWORDS, OPERATORS};
 use string::{Holes, Reading, Stop};
 pub use token::{
     Digits, Doc, Error, ErrorKind, LEADING_ZERO_NOTE, Part, Span, Tok, Token, UNICODE_VERSION,
-    is_bidi_control,
-    is_blank, is_default_ignorable, is_format, may_not_show, text_direction_note, unread_literal,
+    is_bidi_control, is_blank, is_default_ignorable, is_format, may_not_show, text_direction_note,
+    unread_literal,
 };
 /// The grammar's names, shared with the kernel and the readers of names in a program's text.
 pub use zed_kernel::text::ident;

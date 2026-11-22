@@ -29,7 +29,12 @@ fn last_code(message: &str) -> &str {
 #[test]
 fn a_literal_too_large_for_memory_is_refused_with_a_repair_written_as_code() {
     let read = r#"main::files["n.txt"] else #ioError -> "0" else #notFound -> "0""#;
-    for (cast, zero) in [("int", "0"), ("rat", "0r"), ("f64", "0.0"), ("f32", "0.0f32")] {
+    for (cast, zero) in [
+        ("int", "0"),
+        ("rat", "0r"),
+        ("f64", "0.0"),
+        ("f32", "0.0f32"),
+    ] {
         let message = zedc::lex::unread_literal(&refusal(), cast);
         let number = refusal().number();
         let repair = format!("{cast}({read}) else #invalid -> {zero}");
