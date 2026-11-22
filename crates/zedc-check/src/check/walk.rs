@@ -14142,7 +14142,24 @@ impl<'t, 'a> Ck<'t, 'a> {
             ck.classes[r].resolved.as_ref() == Some(&Ty::var(format!("${r}").into()))
         };
         let (vars, typed): (Vec<usize>, Vec<usize>) = own.iter().partition(|&&r| var_of(self, r));
+        // Every class this function end writes is readied first with `touch` (R10 barrier
+        // f6), as every other write to a class made while a repair is tried is (row
+        // CHK-generalize-undo). Whether a program reaches a function end inside a trial is
+        // not known: the row inferred it (`resume` under `drive`, entered from `remap_alone`),
+        // and twelve probed programs through tried repairs, arrow lambdas and `map` did not
+        // reach it (2026-11-22). Should one do so, the writes go to the trial's layer of the
+        // class store, which the end of the trial drops, so the trial's names, types and uses
+        // are undone with it; what `touch` adds is that a forward watching the class is
+        // forced before the class changes under it. Not undone in a trial: the R10 pending
+        // lists this function end takes (`r10_take_pending`), which live outside the class
+        // store. Outside a trial `touch` does nothing. Test:
+        // `a_function_end_inside_a_trial_is_undone_with_it`.
+        #[cfg(test)]
+        if self.trying {
+            GENERALIZED_TRYING.with(|n| n.set(n.get() + 1));
+        }
         let take = |ck: &mut Self, r: usize| {
+            ck.touch(r);
             let uses = std::mem::take(&mut ck.classes[r].uses);
             ck.classes[r].known.clear();
             ck.classes[r].orders.clear();
@@ -14283,6 +14300,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if self.classes[r].mask != EVERY {
                     sig.bounds.insert(v.clone(), self.classes[r].mask);
                 }
+                self.touch(r);
                 self.classes[r].name = Some(name);
                 self.classes[r].written = wrote;
                 mine_seen.insert(v);
@@ -14293,6 +14311,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     && let Some(t) = &self.classes[r].resolved
                     && t.vars.iter().any(|v| class_id(v).is_some())
                 {
+                    self.touch(r);
                     self.classes[r].resolved = Some(Ty::dynamic());
                 }
             }
@@ -32988,6 +33007,36 @@ mod tests {
         assert_eq!(ck.classes.layer_depth(), 0);
     }
 
+    /// The signature of a function of one positional parameter `x` of type `param` that gives
+    /// nothing, for the tests that end a level by hand ([`Ck::generalize`]).
+    fn one_param_sig(param: Ty) -> Sig {
+        Sig {
+            params: vec![SParam {
+                name: "x".into(),
+                positional: true,
+                default: None,
+                range: None,
+            }],
+            arrows: vec![Arrow {
+                params: vec![param],
+                result: Ty::empty(),
+                partial: false,
+                stores_not_found: false,
+            }],
+            bounds: BTreeMap::new(),
+            data: false,
+            dense: Dense::No,
+            keys: None,
+            word: None,
+            needs: Vec::new(),
+            own: BTreeSet::new(),
+            held: BTreeSet::new(),
+            named: 0,
+            hull: None,
+            facts: Default::default(),
+        }
+    }
+
     /// A row the memo of clean rows found clean at a level is walked again once that level
     /// ends: the end names the level's classes, which then no longer last, so [`Ck::bound`]
     /// at the level around binds the variable the row holds (CK-data-memo). Kept past the
@@ -33005,32 +33054,7 @@ mod tests {
         let node = row.tuples[0].node();
         assert_eq!(ck.bound(&row, &mut Binds::new()), row);
         assert!(ck.is_clean(node));
-        let sig = Sig {
-            params: vec![SParam {
-                name: "x".into(),
-                positional: true,
-                default: None,
-                range: None,
-            }],
-            arrows: vec![Arrow {
-                params: vec![row.clone()],
-                result: Ty::empty(),
-                partial: false,
-                stores_not_found: false,
-            }],
-            bounds: BTreeMap::new(),
-            data: false,
-            dense: Dense::No,
-            keys: None,
-            word: None,
-            needs: Vec::new(),
-            own: BTreeSet::new(),
-            held: BTreeSet::new(),
-            named: 0,
-            hull: None,
-            facts: Default::default(),
-        };
-        ck.generalize(1, sig, &[]);
+        ck.generalize(1, one_param_sig(row.clone()), &[]);
         assert_eq!(ck.level, 0);
         assert!(ck.classes[k].name.is_some());
         assert!(!ck.is_clean(node));
@@ -33225,6 +33249,40 @@ mod tests {
             assert!(last_discharged(why) > 0, "{why:?}: {text}");
             assert_eq!(last_discharged(Discharge::Swept), 0, "{why:?}: {text}");
         }
+    }
+
+    /// A function end inside a trial (row CHK-generalize-undo): [`Ck::generalize`] names the
+    /// level's class and gives it its type, and the end of the trial drops both, since they
+    /// went to the trial's layer of the class store. No program found reaches a function end
+    /// inside a trial (twelve candidates through tried repairs, arrow lambdas and `map` were
+    /// probed with the `GENERALIZED_TRYING` count, 2026-11-22, each 0), so the function is
+    /// called here as `a_row_found_clean_is_walked_again_after_its_level_ends` calls it.
+    /// What this cannot catch: a forward watching the class that is not forced before the
+    /// write (the `touch` calls), since no forward watches this class.
+    #[test]
+    fn a_function_end_inside_a_trial_is_undone_with_it() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        ck.level += 1;
+        ck.r10_open_level(ck.level);
+        let k = ck.class();
+        let row = Ty::tuple(vec![
+            Ty::var(format!("${k}").into()),
+            Ty::lit(&Value::int(1.into())),
+        ]);
+        let saved = ck.mark();
+        let was = ck.start_trial();
+        GENERALIZED_TRYING.with(|n| n.set(0));
+        ck.generalize(1, one_param_sig(row), &[]);
+        assert_eq!(GENERALIZED_TRYING.with(|n| n.get()), 1);
+        assert!(ck.classes[k].name.is_some());
+        assert!(ck.classes[k].resolved.is_some());
+        ck.end_trial(was);
+        ck.undo(&saved);
+        assert!(ck.classes[k].name.is_none());
+        assert!(ck.classes[k].resolved.is_none());
+        assert_eq!(ck.classes.layer_depth(), 0);
     }
 
     /// A sum of a class of carriers alone is refused once, with no use recorded for the end
@@ -33474,6 +33532,13 @@ thread_local! {
     /// The counts of discharged uses of the last check on this thread, by [`Discharge`].
     static LAST_DISCHARGED: std::cell::Cell<[usize; Discharge::ALL.len()]> =
         const { std::cell::Cell::new([0; Discharge::ALL.len()]) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The number of function ends ([`Ck::generalize`]) reached while a repair was tried, on
+    /// this thread, since the test last set it to 0 (row CHK-generalize-undo).
+    static GENERALIZED_TRYING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The count of uses the last check on this thread discharged for the reason `why`.

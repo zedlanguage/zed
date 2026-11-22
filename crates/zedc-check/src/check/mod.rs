@@ -6079,6 +6079,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
+        // Readied as every write to a class in a trial is (`Ck::generalize`, row
+        // CHK-generalize-undo).
+        self.touch(r);
         self.classes[r].resolved = Some(ty);
     }
 
