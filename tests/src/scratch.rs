@@ -7,6 +7,8 @@
 
 use std::collections::BTreeMap;
 use std::fs::{File, TryLockError};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
@@ -52,15 +54,7 @@ pub fn target_tmpdir() -> PathBuf {
 pub fn process_tmpdir() -> &'static Path {
     static DIR: OnceLock<(PathBuf, File)> = OnceLock::new();
     &DIR.get_or_init(|| {
-        let exe = std::env::current_exe().expect("the test binary has a path");
-        let name = exe
-            .file_name()
-            .expect("a test binary has a file name")
-            .to_string_lossy();
-        let binary = name
-            .rsplit_once('-')
-            .map_or(&*name, |(binary, _hash)| binary);
-        let tmp = target_tmpdir().join(binary);
+        let tmp = binary_tmpdir();
         for k in 0u32.. {
             let path = tmp.join(format!("process-{k}"));
             std::fs::create_dir_all(&path).expect("making a scratch directory of a process");
@@ -78,31 +72,252 @@ pub fn process_tmpdir() -> &'static Path {
     .0
 }
 
+/// The directory of the running test binary's processes, `<target dir>/tmp/<binary>`, where
+/// `<binary>` is the binary's name without its hash.
+fn binary_tmpdir() -> PathBuf {
+    let exe = std::env::current_exe().expect("the test binary has a path");
+    let name = exe
+        .file_name()
+        .expect("a test binary has a file name")
+        .to_string_lossy();
+    let binary = name
+        .rsplit_once('-')
+        .map_or(&*name, |(binary, _hash)| binary);
+    target_tmpdir().join(binary)
+}
+
 /// `path` under [`process_tmpdir`], for the calling test alone; nothing is made. A test is
-/// told apart by its thread's name, which libtest sets to the test's path. A second test of
-/// this process that names the same `path` panics, so two tests that share a name fail at
-/// once, every time they run in one process, instead of now and then: two l01_19 tests both
-/// wrote `twice/prog.zed` and read each other's program (TEST-shared-tmpdir-race). A call
-/// from a thread with no name, which a test may start, is not checked.
+/// told apart by its thread's name, which libtest sets to the test's path. A second test that
+/// names the same `path`, a path inside it or a directory holding it panics, so two tests that
+/// share a file fail at once instead of now and then: two l01_19 tests both wrote
+/// `twice/prog.zed` and read each other's program (TEST-shared-tmpdir-race).
+///
+/// Which tests are compared (TEST-shared-path-check-gaps, three cases the check once missed):
+///
+/// - Every test of this build of the binary, in any of its processes and runs, not only those
+///   of this process. tools/run_tests.sh runs each benchmark in a process of its own, and the
+///   correctness tests in others with `--skip bench::`, so a benchmark never met another test
+///   in one process; yet each process takes a directory another took before
+///   ([`process_tmpdir`]) and finds the files it left. So each claim of a path is written to a
+///   record all processes of the binary share, `<target dir>/tmp/<binary>/scratch-owners`, as
+///   a line `<test>\t<path>`, under an exclusive lock (`flock`) on the record, and each claim
+///   is checked against every line. The record's first line names the build of the binary
+///   (the binary's modification time); a process of another build empties it and starts it
+///   again, so a test renamed or a path moved to another test in a new build is not held to
+///   the claims of the old one. A process of `compare_by` (tests/src/scaling.rs), which runs
+///   the same test again in a new process, claims with the same name and passes.
+/// - A path inside another test's path, or holding it: `scratch_dir("d")` of one test and
+///   `scratch("d/prog.zed")` of another reuse the directory `d`, and a test that empties its
+///   directory (`fs::remove_dir_all`, as m0_01 `cases.rs` does) removes the other's files. Two
+///   paths are compared by their components, so `d/./f`, `d//f` and `d/f` are one path; a path
+///   must be relative and made of plain names (no `..`, no `.` first, not absolute, which
+///   `join` would put outside the directory), in UTF-8 with no tab or newline, as the record
+///   holds it.
+/// - A call from a thread with no name is refused, since no test can be told apart by it.
+///   No caller of `scratch` or `scratch_dir` under tests/ calls from such a thread (each of
+///   the tests that start threads, l01_36b `at_once`, l02_08 `pins_binary`, m0_09
+///   `treap_seeds_binary` and l01_36a `one_engine`, asks for its paths on the test's thread
+///   and passes them in; the harness's own threads, [`crate::scaling::on_a_stack`] and the
+///   runs it measures, take the test's name), so refusing costs no caller anything, where
+///   passing an owner in would add an argument every caller must give. A thread that needs a
+///   path is given it, or is started with the test's name.
+///
+/// Not checked: a directory made from [`process_tmpdir`] without `scratch`, as the zedc
+/// tests of zed-native do with one directory a test target shares (l01_36a `binary.rs`).
+///
+/// Complexity tradeoff: a test's first claim of a path in a process takes the record's lock,
+/// reads the lines other processes added since this process last read (each line is read once
+/// a process), and looks the path, its ancestors and the paths inside it up in a sorted map:
+/// O(d log p + the lines read) for a path of d components among p claims. A later claim of
+/// the same path by the same test is a lookup alone, with no lock. Keeping claims per process,
+/// as before, needs no file, but misses the benchmarks above.
 pub fn scratch(path: impl AsRef<Path>) -> PathBuf {
-    static OWNERS: Mutex<BTreeMap<PathBuf, String>> = Mutex::new(BTreeMap::new());
     let path = path.as_ref();
-    if let Some(test) = std::thread::current().name() {
-        let mut owners = OWNERS.lock().unwrap_or_else(PoisonError::into_inner);
-        let owner = owners
-            .entry(path.to_path_buf())
-            .or_insert_with(|| test.to_string());
-        if owner != test {
-            let owner = owner.clone();
-            drop(owners);
-            panic!(
-                "two tests use the scratch path {}: {owner} and {test}; give each a name of \
-                 its own",
-                path.display()
-            );
-        }
-    }
+    let thread = std::thread::current();
+    let Some(test) = thread.name() else {
+        panic!(
+            "the scratch path {} was asked for on a thread with no name, which no test can be \
+             told apart by; ask for it on the test's own thread and pass it to the thread, or \
+             start the thread with the test's name (std::thread::Builder::name with \
+             std::thread::current().name())",
+            path.display()
+        );
+    };
+    let plain = path.to_str().is_some_and(|p| !p.contains(['\t', '\n']))
+        && path.components().next().is_some()
+        && path
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)));
+    assert!(
+        plain,
+        "the scratch path {} is not a relative path of plain names in UTF-8 with no tab or \
+         newline",
+        path.display()
+    );
+    // Spelled by its components alone, as the record and the messages show it.
+    let path: PathBuf = path.components().collect();
+    claim(&path, test);
     process_tmpdir().join(path)
+}
+
+/// The claims of scratch paths in this build of the test binary that this process has read
+/// from the record (see [`scratch`]) or added to it.
+struct Claims {
+    /// Each path claimed, with the test that claimed it. No path is inside another test's.
+    owners: BTreeMap<PathBuf, String>,
+    /// The bytes of the record read so far.
+    read: u64,
+}
+
+/// Claims `path` for `test`, or panics naming the test that claimed it or a path inside it or
+/// holding it first.
+fn claim(path: &Path, test: &str) {
+    static CLAIMS: Mutex<Claims> = Mutex::new(Claims {
+        owners: BTreeMap::new(),
+        read: 0,
+    });
+    static RECORD: OnceLock<File> = OnceLock::new();
+    let mut claims = CLAIMS.lock().unwrap_or_else(PoisonError::into_inner);
+    if claims.owners.get(path).is_some_and(|owner| owner == test) {
+        return;
+    }
+    let record = RECORD.get_or_init(|| {
+        let dir = binary_tmpdir();
+        std::fs::create_dir_all(&dir).expect("making the directory of a test binary");
+        let at = dir.join("scratch-owners");
+        std::fs::OpenOptions::new()
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(&at)
+            .unwrap_or_else(|e| panic!("opening the scratch record {}: {e}", at.display()))
+    });
+    record.lock().expect("locking the scratch record");
+    let locked = Unlock(record);
+    claims.catch_up(record);
+    let clash = claims
+        .clash(path, test)
+        .map(|(owned, owner)| (owned.to_path_buf(), owner.to_string()));
+    if clash.is_none() {
+        let line = format!("{test}\t{}\n", path.display());
+        let mut writer = record;
+        writer
+            .write_all(line.as_bytes())
+            .expect("writing the scratch record");
+        claims.read += line.len() as u64;
+        claims.owners.insert(path.to_path_buf(), test.to_string());
+    }
+    drop(locked);
+    drop(claims);
+    let Some((owned, owner)) = clash else {
+        return;
+    };
+    if owned.as_path() == path {
+        panic!(
+            "two tests use the scratch path {}: {owner} and {test}; give each a name of its own",
+            path.display()
+        );
+    }
+    let (outer, inner) = if path.starts_with(&owned) {
+        (owned.as_path(), path)
+    } else {
+        (path, owned.as_path())
+    };
+    panic!(
+        "two tests use the scratch path {} and the path {} inside it: {owner} (of {}) and \
+         {test} (of {}); give each a name of its own, neither inside the other",
+        outer.display(),
+        inner.display(),
+        owned.display(),
+        path.display()
+    );
+}
+
+/// Releases the lock on the scratch record when dropped, on a panic too, so that no other
+/// process waits on it forever.
+struct Unlock<'a>(&'a File);
+
+impl Drop for Unlock<'_> {
+    fn drop(&mut self) {
+        // Best effort: the lock goes when the process ends in any case.
+        let _ = self.0.unlock();
+    }
+}
+
+impl Claims {
+    /// Reads the lines other processes added to `record` since the last read. A record of
+    /// another build of the binary, or an empty one, is emptied and started with this build's
+    /// first line. Called under the record's lock.
+    fn catch_up(&mut self, mut record: &File) {
+        // The first line is read again at each call: a process of another build running at
+        // the same time (two builds sharing one target directory) may have emptied the record
+        // and written lines of its own where this process would read on.
+        let first = format!("build {}\n", build_stamp());
+        let mut head = vec![0; first.len()];
+        record
+            .seek(SeekFrom::Start(0))
+            .expect("seeking in the scratch record");
+        if record.read_exact(&mut head).is_err() || head != first.as_bytes() {
+            record
+                .set_len(0)
+                .expect("emptying the scratch record of another build");
+            record
+                .write_all(first.as_bytes())
+                .expect("writing the scratch record");
+            self.owners.clear();
+            self.read = first.len() as u64;
+            return;
+        }
+        self.read = self.read.max(first.len() as u64);
+        record
+            .seek(SeekFrom::Start(self.read))
+            .expect("seeking in the scratch record");
+        let mut lines = String::new();
+        record
+            .read_to_string(&mut lines)
+            .expect("reading the scratch record");
+        for line in lines.split_terminator('\n') {
+            // Every line is written whole under the lock, in one write to a file opened to
+            // append; a line with no tab, which only a write cut short could leave, is skipped.
+            if let Some((test, path)) = line.split_once('\t') {
+                self.owners.insert(PathBuf::from(path), test.to_string());
+            }
+        }
+        self.read += lines.len() as u64;
+    }
+
+    /// The first claim of another test on `path`, on a directory holding it or on a path inside
+    /// it: the path claimed and its test.
+    fn clash(&self, path: &Path, test: &str) -> Option<(&Path, &str)> {
+        // The paths inside `path` follow it in the map: paths are ordered by their components,
+        // and every path that starts with the components of `path` sorts after it and before
+        // any other path that sorts after it.
+        let inside = self
+            .owners
+            .range::<Path, _>((Bound::Excluded(path), Bound::Unbounded))
+            .take_while(|(owned, _)| owned.starts_with(path));
+        path.ancestors()
+            .filter_map(|a| self.owners.get_key_value(a))
+            .chain(inside)
+            .find(|(_, owner)| *owner != test)
+            .map(|(owned, owner)| (owned.as_path(), owner.as_str()))
+    }
+}
+
+/// This build of the test binary: the modification time of its file, which a new build
+/// changes and the hard links of a run copy keep.
+fn build_stamp() -> &'static str {
+    static STAMP: OnceLock<String> = OnceLock::new();
+    STAMP.get_or_init(|| {
+        let exe = std::env::current_exe().expect("the test binary has a path");
+        let modified = std::fs::metadata(&exe)
+            .and_then(|m| m.modified())
+            .unwrap_or_else(|e| panic!("reading the modification time of {}: {e}", exe.display()));
+        let since = modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        format!("{}.{:09}", since.as_secs(), since.subsec_nanos())
+    })
 }
 
 /// The directory [`scratch`]`(path)`, made if it is missing. Files a run leaves in it stay

@@ -10,35 +10,99 @@ use zed_tests::scaling;
 
 use crate::deep::{dag, indents, nested, printed};
 
-#[test]
-fn copying_comparing_and_printing_scale_with_size() {
-    let n = 20_000;
-    zed_tests::deep::on_small_stack(|| {
-        let built = |k: usize| (nested(k), nested(k));
-        let (small, large) = (built(n), built(scaling::FACTOR * n));
-        let at = |k: usize| if k == n { &small } else { &large };
-        for i in 0..small.0.len() {
-            let what = small.0[i].0;
-            scaling::check(&format!("copying {what}"), n, |k| {
-                drop(std::hint::black_box(at(k).0[i].1.clone()));
+/// One test for each term of `nested`, each copying, comparing and writing the `Debug` text of
+/// it, and one for the DAG (TEST-bench-replay-sweep). Until then the four terms and the DAG were
+/// one test of 13 checks, 9.8 s at load 39: on a count of instructions the run at 8n of each
+/// check runs in a new process of the test binary, which runs the test from its start and
+/// replays each earlier check at both sizes (`scaling::compare_by`; `on_small_stack` keeps the
+/// test's thread name, so its checks are replayed too), so 13 checks in one test ran
+/// 13 · 14 / 2 = 91 checks' runs where 13 do. Now a test of a term runs 1 + 2 + 3 = 6 and the
+/// DAG's test 1, 25 in all. The terms, sizes and checks are as before. Each test builds all four
+/// terms, as `displaying_and_breaking_scale_with_depth` builds all ten: a build is one pass over
+/// 180,000 nodes a term, small beside a check's runs.
+///
+/// Skipping the replay in the child process instead was ruled out: the child would then
+/// measure each check after no earlier check had run in its process, where the run at n,
+/// measured in the test's own process, comes after them, so state they leave (memo tables,
+/// interners, a warmed allocator) would differ between the two runs, which
+/// TEST-scaling-cold-shared-memo (2936015a7) removed. Its test
+/// `a_fixed_set_up_kept_by_the_process_passes_in_each_check_of_a_test`
+/// (tests/src/scaling_tests.rs) fails without the replay: the second check's run at 8n would pay
+/// a set-up the first check built, alone.
+mod copying_comparing_and_printing_scale_with_size {
+    use super::*;
+
+    /// The names of the terms of `nested`, in their order: test `k` below times term `k`, and
+    /// each test checks the generator still makes exactly these, so a term added there fails
+    /// until it is listed here and has a test.
+    const TERMS: [&str; 4] = [
+        "nested lambdas",
+        "a left-nested sum",
+        "nested `match` arms",
+        "a nested tuple pattern",
+    ];
+
+    /// Copies, compares (with a second build) and writes the `Debug` text of term `k` of
+    /// [`TERMS`] at depth 20,000 and 8 times that.
+    fn case(k: usize) {
+        let n = 20_000;
+        zed_tests::deep::on_small_stack(|| {
+            let built = |m: usize| (nested(m), nested(m));
+            let (small, large) = (built(n), built(scaling::FACTOR * n));
+            let names = small.0.iter().map(|(what, _)| *what).collect::<Vec<_>>();
+            assert_eq!(names, TERMS, "the terms of nested");
+            let at = |m: usize| {
+                let (a, b) = if m == n { &small } else { &large };
+                (&a[k].1, &b[k].1)
+            };
+            let what = TERMS[k];
+            scaling::check(&format!("copying {what}"), n, |m| {
+                drop(std::hint::black_box(at(m).0.clone()));
             });
-            scaling::check(&format!("comparing {what}"), n, |k| {
-                let (a, b) = at(k);
-                assert!(std::hint::black_box(a[i].1 == b[i].1));
+            scaling::check(&format!("comparing {what}"), n, |m| {
+                let (a, b) = at(m);
+                assert!(std::hint::black_box(a == b));
             });
-            scaling::check(&format!("writing the Debug text of {what}"), n, |k| {
-                std::hint::black_box(format!("{:?}", at(k).0[i].1));
+            scaling::check(&format!("writing the Debug text of {what}"), n, |m| {
+                std::hint::black_box(format!("{:?}", at(m).0));
             });
-        }
-        let (small, large) = (
-            (dag(n), dag(n)),
-            (dag(scaling::FACTOR * n), dag(scaling::FACTOR * n)),
-        );
-        scaling::check("comparing a DAG of shared subterms", n, |k| {
-            let (a, b) = if k == n { &small } else { &large };
-            assert!(std::hint::black_box(a == b));
         });
-    });
+    }
+
+    #[test]
+    fn nested_lambdas() {
+        case(0);
+    }
+
+    #[test]
+    fn a_left_nested_sum() {
+        case(1);
+    }
+
+    #[test]
+    fn nested_match_arms() {
+        case(2);
+    }
+
+    #[test]
+    fn a_nested_tuple_pattern() {
+        case(3);
+    }
+
+    #[test]
+    fn a_dag_of_shared_subterms() {
+        let n = 20_000;
+        zed_tests::deep::on_small_stack(|| {
+            let (small, large) = (
+                (dag(n), dag(n)),
+                (dag(scaling::FACTOR * n), dag(scaling::FACTOR * n)),
+            );
+            scaling::check("comparing a DAG of shared subterms", n, |m| {
+                let (a, b) = if m == n { &small } else { &large };
+                assert!(std::hint::black_box(a == b));
+            });
+        });
+    }
 }
 
 /// One test for each term of `nested` and `printed` (TEST-split-chkbub1-long), each displaying

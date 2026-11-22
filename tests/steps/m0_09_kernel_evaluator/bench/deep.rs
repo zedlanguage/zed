@@ -11,20 +11,41 @@ use zed_tests::scaling;
 
 use crate::deep::{continuations, count_down, through_regions, total};
 
-#[test]
-fn nested_calls_scale_with_depth() {
-    scaling::check("a recursion, by nested calls", 20_000, |n| {
-        eval(&total(n as i64)).unwrap();
-    });
-    scaling::check("a tail-recursive loop, by iterations", 20_000, |n| {
-        eval(&count_down(n as i64)).unwrap();
-    });
-    scaling::check("a chain of continuations, by length", 20_000, |n| {
-        eval(&continuations(n as i64, |then| app(then, vec![lit(0)]))).unwrap();
-    });
-    scaling::check("a recursion through regions, by depth", 5_000, |n| {
-        eval(&through_regions(n as i64)).unwrap();
-    });
+/// One test for each program (TEST-bench-replay-sweep). Until then the four were one test of 4
+/// checks: on a count of instructions the run at 8n of each check runs in a new process of the
+/// test binary, which runs the test from its start and replays each earlier check at both sizes
+/// (`scaling::compare_by`), so it ran 4 · 5 / 2 = 10 checks' runs where 4 do. The checks build
+/// no input outside their runs, so the split repeats nothing. Programs and sizes are as before.
+mod nested_calls_scale_with_depth {
+    use super::*;
+
+    #[test]
+    fn a_recursion() {
+        scaling::check("a recursion, by nested calls", 20_000, |n| {
+            eval(&total(n as i64)).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_tail_recursive_loop() {
+        scaling::check("a tail-recursive loop, by iterations", 20_000, |n| {
+            eval(&count_down(n as i64)).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_chain_of_continuations() {
+        scaling::check("a chain of continuations, by length", 20_000, |n| {
+            eval(&continuations(n as i64, |then| app(then, vec![lit(0)]))).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_recursion_through_regions() {
+        scaling::check("a recursion through regions, by depth", 5_000, |n| {
+            eval(&through_regions(n as i64)).unwrap();
+        });
+    }
 }
 
 #[test]
