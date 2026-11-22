@@ -9908,6 +9908,44 @@ impl Scope {
     /// semantic claim: none added in this run; the seeds of `Case::eager_join` reach (ii)
     /// and (iii).
     ///
+    /// A3 proved (row PROOF-product-lazy-a1-a4, b22-preimage6, 2026-11-22): every entry
+    /// `(key, (with, at))` of the joined scope's `projected` records a projection of the
+    /// part `key` with `with` made at products within the joined products at its names.
+    /// The joined map is built in [`Scope::join_settled`] from `self.projected` by its diff
+    /// against `other.projected`, case by case: (1) an entry the two sides hold equal is
+    /// kept as it is; both sides projected the part at those products `at`, and each side's
+    /// product at a name is within the join's (`Product::join` is the hull of the two, a
+    /// join per domain), so `at` is within the joined products. (2) An entry only `self`
+    /// holds (`Remove`) is dropped, and one only `other` holds (`Add`) is not added. (3) An
+    /// entry both hold with different `with` is dropped. (4) An entry both hold with the
+    /// same `with` and other `at` is kept with `at` set to the joined products at its names:
+    /// each side projected the part with that `with` at its own `at`, within that side's
+    /// products, so within the joined ones; the record now names the joined products, which
+    /// hold both, and the part's block is marked to be checked again (`seen.drop_part`). No
+    /// other write to `projected` happens in the join. Within one side, an entry's `at` is
+    /// the snapshot taken right after that projection ([`Scope::project_due`]) and products
+    /// only narrow between joins, so it holds of the products at the join too. Case (4)
+    /// records products wider than either projection read, which is the direction step 2
+    /// needs: a projection read products no wider than those recorded, so by A2 (exact
+    /// projections) it is no wider than a projection at the recorded products would be.
+    /// Tests: `case_wake::tests_after_a_join_of_cases_that_recorded_one_part_differently_give_the_projection_from_scratch`
+    /// (case 3 and 4 against the projection from scratch); it cannot catch a record that is
+    /// right but whose projection was inexact (A2 for inexact projections, below).
+    ///
+    /// A4, reduced (b22-preimage6, 2026-11-22): a projection reads only the part's formula
+    /// (its key), its `with`, and the intervals and classes of the part's names (the doc of
+    /// `projected`). Take a leaf `a` that is not stale, a value `v` in `lazy.get(a)`, and an
+    /// eager projection of `a`'s part made after the lazy scope's last one, due by `a`'s own
+    /// product alone. `v` lies in the lazy projection, so some integer point `x` with
+    /// `x_a = v` meets the key, the lazy `with` and the lazy products then; the other names'
+    /// products are the same in both scopes (step 1) and unchanged since (the lazy part is
+    /// not due), and `v` lies within the eager product of `a` at that time (the claim,
+    /// inductively, before that projection). So `x` meets the eager projection's key and
+    /// products, and `v` is kept by it if `x` also meets the eager `with`. A1' gives that
+    /// only for the lazy scope's whole relation, `C_l ∧ P_l ⊨ c`, not for the part's own
+    /// `with` at `x`: the open sub-case of A4 is a conjunct of the eager `with` implied in
+    /// the lazy scope only through a conjunct outside the part.
+    ///
     /// Not proved (row PROOF-product-lazy-not-coarser): A1' in sub-cases (iv) and (vii)
     /// above, and so the not-coarser claim after a join; A2 for a projection that is not exact
     /// but not refused: the projection one disjunction at a time (S16) and the hulls. Such a
@@ -9916,7 +9954,7 @@ impl Scope {
     /// exact answer, in that order, and `[-4, ∞)` with the two disjunctions first, eagerly
     /// and lazily alike. Across all 720 orders of those four tests, `x - n - m >= -20` and
     /// `n >= -50`, the lazy and eager scopes agreed at `x` in every one (probe of 2026-11-21,
-    /// not kept as a test). A3, the record of projected parts across a join; A4, that an eager
+    /// not kept as a test). A4, that an eager
     /// projection due only by the leaf's own product reads no constraint on another term added
     /// after the lazy scope's last projection. Tests:
     /// `Case::eager_join` in `l01_39_scope_relations::lazy` checks the eager and lazy joins
@@ -10444,7 +10482,10 @@ impl Scope {
     // (4) In zed-kernel, `Lits::union` makes 5 differences a binding and the zip of two
     // `Atoms` 1; only one of them is of two maps not the same, and it compares one key at
     // both sizes counted below (these sets are of the arms' literals, not of the names; that
-    // they stay this small is counted, not proved here).
+    // they stay this small is counted, not proved here). This claim bears on cost only: the
+    // union and the zip are exact at every size, so no value, narrowing or refusal reads how
+    // large these sets are; a larger set makes the binding slower and its result the same
+    // (PROOF-sweep-zedc-preimage).
     // In all, 6 + 2 × 11 = 28 differences per binding, 1 + 2 × 3 = 7 of maps not the same.
     // Counted in a copy of imbl with counters (not committed), at 250 and 2,000 bindings:
     // 28.0 calls and 7.0 not the same per binding, 8.2 and 8.0 keys compared per call that

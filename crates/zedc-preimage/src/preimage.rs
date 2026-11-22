@@ -2533,6 +2533,20 @@ fn linear(
                 .collect();
             Formula::and(parts)
         };
+        // One inequality over inputs alone, as each arm `v - n >= 5` of a two-name disjunction:
+        // its projections and whether the narrowed box entails it are read off the ends of the
+        // domains ([`one_inequality`], which proves that this is what the solver answers), so
+        // neither `boxed_projections` nor `decide` is asked. Under `EXACT_OFF` (the solver
+        // alone) the solver is asked as before.
+        if rel.defs.is_empty()
+            && rel.bit_ands.is_empty()
+            && !presburger::exact::EXACT_OFF.get()
+            && !ONE_INEQUALITY_OFF.get()
+            && let Some((out, exact)) = one_inequality(&rel.body, dom)
+        {
+            ONE_INEQUALITY.set(ONE_INEQUALITY.get() + 1);
+            return Ok((out, exact, None));
+        }
         // Each total definition in the part of the body that reads its variable, so that a nest
         // of disjunctions does not carry the definitions of the levels below each level
         // ([`presburger::placing::placed`], FAIL-relational-if-chain-growth).
@@ -2622,6 +2636,128 @@ fn linear(
     };
     let found = go();
     Some((rel, found))
+}
+
+thread_local! {
+    /// Set by a test to make [`linear`] ask the solver for one inequality as for any body, so
+    /// that the two answers can be compared.
+    pub(crate) static ONE_INEQUALITY_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The bodies [`linear`] answered by [`one_inequality`] on this thread since
+    /// [`one_inequality_reads`] last read it.
+    static ONE_INEQUALITY: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The bodies of one inequality the linear stage answered from the ends of the domains
+/// ([`one_inequality`]) on this thread since the last call, which resets the count.
+pub fn one_inequality_reads() -> u64 {
+    ONE_INEQUALITY.replace(0)
+}
+
+/// For a body that is one inequality `t >= 0`, or the negation of one, every atom of `t` an
+/// input of `dom`: the box `dom` with each input of `t` met with its projection, and whether
+/// every point of that box meets the body; every input empty and `true` when the body has no
+/// point in the box. That is what [`linear`] gives from the solver for such a body
+/// ([`boxed_projections`] of `beside ∧ within(dom) ∧ body` with `beside` true, as there are no
+/// definitions, then `decide` of a point outside it). `None` for any other body.
+///
+/// Proof. Write `t = c + Σ a_j x_j`, `a_j ≠ 0` ([`Lin`] keeps no zero coefficient), each
+/// `x_j` ranging over the integer set `D_j` of `dom`; `¬(t >= 0)` over the integers is
+/// `-t - 1 >= 0`, so the negated form is the same case. (1) If some domain of `dom` is empty
+/// the box holds no point, and `linear`'s answer is every input empty and exact (its
+/// `is_empty(&out)` branch, `out` keeping that empty domain); so here. (2) Otherwise `x_i = v`
+/// extends to a point of the box meeting `t >= 0` iff `a_i v >= -c - S_i` with `S_i =
+/// sup Σ_{j≠i} a_j x_j` over the other domains, since the box is a product and the sum is
+/// largest at each term's own supremum; `a_j x_j` is largest at the greatest member of `D_j`
+/// for `a_j > 0` and at the least for `a_j < 0`, an end of the set's hull, which is a member
+/// (an [`IntervalSet`]'s pieces end at members), and is unbounded when that end is infinite.
+/// So the projection onto `x_i` is `D_i` met with `x_i >= ceil(B / a_i)` for `a_i > 0` and
+/// `x_i <= floor(-B / -a_i)` for `a_i < 0`, `B = -c - S_i`, and all of `D_i` when `S_i` is
+/// unbounded. The solver's projection of `within(dom) ∧ t >= 0` onto `x_i` is that set
+/// (exact: module `exact` of zedc-presburger, a set refused there would leave a cause, which
+/// the test below finds absent in each case it draws), met with `D_i` by
+/// `boxed_projections`; a name of `dom` that `t` does not read keeps its domain there and
+/// here. If a projection is empty the box narrowed has no point: (1) again. (3) Exact: a
+/// point of the narrowed box `D'` fails `t >= 0` iff `inf (c + Σ a_j x_j) < 0` over `D'`,
+/// the infimum taken term by term at the ends of each `D'_j` as in (2); an infinite end
+/// gives a point that fails. This is `decide` of `within(D') ∧ ¬body`, where `D'` written as
+/// a progression (`singleton_progression`) holds the same integers. Test:
+/// `tests::one_inequality_answers_as_the_solver` (random inequalities of one to three names
+/// over random sets, both outcomes, against the solver's path, every field of [`Preimage`]).
+// Complexity tradeoff: naive version, the projection of `within(dom) ∧ t >= 0` onto each input
+// and a `decide`, about 0.34M instructions for an arm `v - n >= 5` of two ranges, 65% of its
+// preimage (callgrind, PERF-case-list-setup-constant). Used: O(m) arithmetic on the ends for
+// `m` atoms, and one meet per input. Trigger: any other body (more than one constraint, an
+// equation, a definition, a product atom) takes the solver as before.
+fn one_inequality(body: &Formula, dom: &Domains) -> Option<(Domains, bool)> {
+    use presburger::{Atom, Rel};
+    let lin = match body {
+        Formula::Con(Con { lin, rel: Rel::Ge }) => lin.clone(),
+        Formula::Not(g) => match &**g {
+            Formula::Con(Con { lin, rel: Rel::Ge }) => lin.times(-1).plus(&Lin::constant(-1)),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if lin.terms.is_empty() {
+        return None;
+    }
+    let mut xs: Vec<(&Arc<str>, &Int, &IntervalSet)> = Vec::with_capacity(lin.terms.len());
+    for (a, k) in &lin.terms {
+        let Atom::Sym(x) = a else { return None };
+        let (x, d) = dom.get_key_value(x)?;
+        xs.push((x, k, d));
+    }
+    let none = || {
+        let d = dom
+            .keys()
+            .map(|k| (k.clone(), IntervalSet::empty()))
+            .collect();
+        Some((d, true))
+    };
+    if is_empty(dom) {
+        return none();
+    }
+    // The supremum (`up`) or infimum of `a x` over `d`, `None` when unbounded.
+    let extreme = |a: &Int, d: &IntervalSet, up: bool| -> Option<Int> {
+        let (lo, hi) = d.bounds()?;
+        let end = if a.is_positive() == up { hi } else { lo };
+        match end {
+            Fin(v) => Some(a * &Int::from(v)),
+            _ => None,
+        }
+    };
+    let sups: Vec<Option<Int>> = xs.iter().map(|(_, a, d)| extreme(a, d, true)).collect();
+    let unbounded = sups.iter().filter(|s| s.is_none()).count();
+    let total: Int = sups.iter().flatten().fold(Int::ZERO, |s, v| &s + v);
+    let mut out = dom.clone();
+    for (i, (x, a, d)) in xs.iter().enumerate() {
+        // `S_i`: the other terms' suprema, unbounded when one of them is.
+        let others = match &sups[i] {
+            Some(v) if unbounded == 0 => Some(&total - v),
+            None if unbounded == 1 => Some(total.clone()),
+            _ => None,
+        };
+        let Some(s) = others else { continue };
+        let b = &(-&lin.constant) - &s;
+        let half = if a.is_positive() {
+            IntervalSet::range(Fin(Num::from(&b.div_ceil(a))), PosInf)
+        } else {
+            IntervalSet::range(NegInf, Fin(Num::from(&(-&b).div_floor(&-*a))))
+        };
+        let met = d.meet(&half);
+        if met.is_empty() {
+            return none();
+        }
+        out.insert((*x).clone(), met);
+    }
+    let mut least = lin.constant.clone();
+    for (x, a, _) in &xs {
+        match extreme(a, &out[*x], false) {
+            Some(v) => least = &least + &v,
+            None => return Some((out, false)),
+        }
+    }
+    Some((out, !least.is_negative()))
 }
 
 /// The translation of terms into the linear-relation domain: the definitions of the auxiliary
@@ -18086,6 +18222,126 @@ mod tests {
             }
         }
         println!("{read} read at once, {empty} empty");
+    }
+
+    /// A random set of one to three pieces in `-20..=29`, an end infinite one time in eight.
+    fn random_domain(rng: &mut Rng) -> IntervalSet {
+        let mut pieces = Vec::new();
+        for _ in 0..1 + rng.below(3) {
+            let lo = rng.below(41) as i64 - 20;
+            let hi = lo + rng.below(10) as i64;
+            let lo = if rng.below(8) == 0 {
+                NegInf
+            } else {
+                End::of(lo)
+            };
+            let hi = if rng.below(8) == 0 {
+                PosInf
+            } else {
+                End::of(hi)
+            };
+            pieces.push((lo, hi));
+        }
+        IntervalSet::from_pieces(pieces)
+    }
+
+    /// The linear stage answers one inequality from the ends of the domains
+    /// ([`one_inequality`]) as it answers it from the solver: every field of the preimage the
+    /// same, over random tests `Σ a_j x_j op k` of one to three names (coefficients in
+    /// `-3..=3` but 0, each order), random sets of one to three pieces, some empty, some ends
+    /// infinite, a name of the box the test does not read, and both outcomes.
+    #[test]
+    fn one_inequality_answers_as_the_solver() {
+        let (mut rng, _) = Rng::fresh("one_inequality_answers_as_the_solver");
+        let names: Vec<Arc<str>> = ["x", "y", "z", "w"].iter().map(|&n| n.into()).collect();
+        let ops = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge];
+        let (mut read, mut exact, mut empty) = (0, 0, 0);
+        for _ in 0..3000 {
+            let m = 1 + rng.below(3);
+            let mut sum: Option<Term> = None;
+            for x in &names[..m] {
+                let a = [-3i64, -2, -1, 1, 2, 3][rng.below(6)];
+                let t = if a == 1 {
+                    Term::Var(x.clone())
+                } else {
+                    Term::Prim(
+                        Prim::Mul,
+                        vec![Term::Lit(Value::Int(a)), Term::Var(x.clone())],
+                    )
+                };
+                sum = Some(match sum {
+                    None => t,
+                    Some(s) => Term::Prim(Prim::Add, vec![s, t]),
+                });
+            }
+            let k = Term::Lit(Value::Int(rng.below(41) as i64 - 20));
+            let term = Term::Prim(ops[rng.below(4)], vec![sum.expect("a name"), k]);
+            let inputs: Domains = (names.iter())
+                .map(|n| {
+                    let d = if rng.below(30) == 0 {
+                        IntervalSet::empty()
+                    } else {
+                        random_domain(&mut rng)
+                    };
+                    (n.clone(), d)
+                })
+                .collect();
+            let demand = Demand::Bool(rng.below(2) == 0);
+            one_inequality_reads();
+            let fast = preimage(&term, &inputs, &demand);
+            let taken = one_inequality_reads();
+            ONE_INEQUALITY_OFF.set(true);
+            let slow = preimage(&term, &inputs, &demand);
+            ONE_INEQUALITY_OFF.set(false);
+            assert_eq!(fast, slow, "{term} at {demand:?} over {inputs:?}");
+            read += usize::from(taken > 0);
+            // The stages before the linear one answer a test that every point of the box
+            // meets, or none, so the linear stage is also asked directly, where those
+            // outcomes reach `one_inequality`.
+            let stage = || {
+                let mut tx = Tx::new();
+                let root = tx.terms.add(&term);
+                linear(&mut tx, root, &inputs, &demand).map(|(_, found)| found)
+            };
+            let fast = stage();
+            let taken = one_inequality_reads();
+            ONE_INEQUALITY_OFF.set(true);
+            let slow = stage();
+            ONE_INEQUALITY_OFF.set(false);
+            assert_eq!(fast, slow, "linear: {term} at {demand:?} over {inputs:?}");
+            if taken > 0
+                && let Some(Ok((dom, e, _))) = &fast
+            {
+                exact += usize::from(*e);
+                empty += usize::from(is_empty(dom));
+            }
+        }
+        println!("{read} read from the ends, {exact} exact, {empty} empty in the linear stage");
+        assert!(read > 1000, "only {read} of 3000 read from the ends");
+        assert!(exact > 100 && empty > 100, "{exact} exact, {empty} empty");
+    }
+
+    /// An arm of a two-name disjunction, `v - n >= 5` over two ranges, is read from the ends
+    /// of the domains, not by the solver (PERF-case-list-setup-constant): `v` from 0, `n` in
+    /// `0..=10` give `v >= 5`, and `n <= v - 5` is not exact.
+    #[test]
+    fn an_arm_of_two_names_is_read_from_the_ends() {
+        let (v, n): (Arc<str>, Arc<str>) = ("v".into(), "n".into());
+        let inputs = Domains::from([
+            (v.clone(), IntervalSet::range(End::of(0), PosInf)),
+            (n.clone(), IntervalSet::of(0, 10)),
+        ]);
+        let diff = Term::Prim(Prim::Sub, vec![Term::Var(v.clone()), Term::Var(n.clone())]);
+        let term = Term::Prim(Prim::Ge, vec![diff, Term::Lit(Value::Int(5))]);
+        one_inequality_reads();
+        let p = preimage(&term, &inputs, &Demand::Bool(true));
+        assert_eq!(one_inequality_reads(), 1, "the arm went to the solver");
+        assert_eq!(p.domains[&v], IntervalSet::range(End::of(5), PosInf));
+        assert_eq!(p.domains[&n], IntervalSet::of(0, 10));
+        assert!(
+            !p.exact && p.relation.is_some() && p.refusal.is_none(),
+            "{p:?}"
+        );
     }
 
     #[test]

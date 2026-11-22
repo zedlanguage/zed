@@ -414,12 +414,17 @@ fn tightenings_beside_a_chain_of_disjunctions_scale() {
 /// ends, but each move still lists the blocks at the hub (plan row
 /// SCOPE-assume-disjunctions-listing). Measured on a Colab VM (hm1, b22-preimage5,
 /// 2026-11-22): 8.70 times the work from 256 to 2048 (0.15 and 1.29 s), piece 46.9 s; 8.30
-/// and 7.99 times from 128 to 1024, pieces 21.7 and 30.0 s. So the size stays at 64: the
-/// set-up, 17 to 25 ms a disjunction and 58% of it under `Scope::case_list` (plan row
-/// PERF-case-list-setup-constant), puts 128 over the 20 s piece limit.
+/// and 7.99 times from 128 to 1024, pieces 21.7 and 30.0 s. The set-up was 17 to 25 ms a
+/// disjunction, 58% of it under `Scope::case_list`, most of that in `preimage::linear`
+/// asking the solver for an arm of one inequality. Such an arm is now read from the ends of
+/// its names' intervals (`one_inequality` in `preimage.rs`, plan row
+/// PERF-case-list-setup-constant), and the size is 128: on hm1 (b22-preimage6, 2026-11-22)
+/// 8.3 to 9.2 times the work from 128 to 1024 (47 to 52 ms and 418 to 442 ms, 28.1 and
+/// 239.9 MB), pieces 11.3 to 13.4 s, one cold 20.2 s; without the fast path 8.2 to 8.8
+/// times (70 to 77 ms and 601 to 658 ms, 47.0 and 390.6 MB), pieces 14.2 to 16.0 s.
 #[test]
 fn tightenings_of_a_sum_beside_disjunctions_on_each_name_scale() {
-    let n = 64;
+    let n = 128;
     let inputs = scaling::inputs(n, tightenings_of_a_sum);
     scaling::check(
         "k tightenings of n + m beside k disjunctions each on n or m",
