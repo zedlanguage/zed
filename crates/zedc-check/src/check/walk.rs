@@ -3410,9 +3410,10 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The decimal literals with no suffix that the value `x`, bound outside every function
     /// and of type `t`, ends in where nothing gives them a carrier, other than those
-    /// [`unfixed_parts`] reads (DESIGN.md L1.26a: "`y = g(c)` is rejected at the `2.5`, which
-    /// nothing fixes"; L1.26b: "Where nothing fixes its carrier a decimal literal is
-    /// rejected"). A value ends in each branch of an `if`, the value of a block, each component
+    /// [`unfixed_parts`] reads, and that `f64` does not hold (DESIGN.md L1.26b: "Where nothing
+    /// fixes its carrier a decimal literal takes `f64`"): each such literal that fits `f64`
+    /// is given `f64` here, and one past the range of `f64` is rejected, with the `rat` fix.
+    /// A value ends in each branch of an `if`, the value of a block, each component
     /// of a tuple display, each payload of an atom, each component of a tuple display that is
     /// indexed, and what a declared function it calls returns, each read the same way in turn:
     /// `0.5` in `y = if c { 0.5 } else { 1 }`, in `y = (0.5, 1)[0]`, and in `y = f()` with
@@ -32009,17 +32010,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         Ok(Some(kept))
     }
 
-    /// Rejects the decimal literals with no suffix that a call among `args` may give through
+    /// Reads the decimal literals with no suffix that a call among `args` may give through
     /// its body, where the arrows of `sig` that the other arguments meet hold both `f64` and
-    /// `rat` at its place, so that nothing gives them a carrier: `f64(g(c))` with
-    /// `g(positional c: bool) = if c { 1 } else { 2.5 }` is
-    /// rejected at the `2.5`, as `f64(0.5)` is (L1.26b: "Where nothing fixes its carrier a
-    /// decimal literal is rejected"), and as `y = g(c)` is (L1.26a). One arrow at one
-    /// carrier fixes it: `x * g(c)` with `x: f64` reads the call at `f64`. A generic
-    /// parameter fixes none here; the call is the function's, whose use fixes it.
-    /// Inside a function too: `k(positional d: bool) = f64(g(d))` is rejected, since only a
-    /// call whose type lists values alone is read, and a value `g` gives from a parameter of
-    /// `k` would make its type list that parameter's class, as in `f64(g(d, x))` with
+    /// `rat` at its place, so that nothing gives them a carrier, as a binding's are read
+    /// ([`Self::unfixed_tails`]; L1.26b: "Where nothing fixes its carrier a decimal literal
+    /// takes `f64`"): in `f64(g(c))` with `g(positional c: bool) = if c { 1 } else { 2.5 }`
+    /// the `2.5` takes `f64`, as in `f64(0.5)` and `y = g(c)`, and a literal there past the
+    /// range of `f64` is rejected, with the `rat` fix. One arrow at one carrier fixes it:
+    /// `x * g(c)` with `x: f64` reads the call at `f64`. A generic parameter fixes none here;
+    /// the call is the function's, whose use fixes it. Inside a function too: in
+    /// `k(positional d: bool) = f64(g(d))` the call is read, since only a call whose type
+    /// lists values alone is read, and a value `g` gives from a parameter of `k` would make
+    /// its type list that parameter's class, as in `f64(g(d, x))` with
     /// `g(positional c: bool, positional x) = if c { x } else { 0.5 }`. Whether it rejected
     /// one.
     // Complexity tradeoff: the arguments' types are met with the A arrows' parameters,

@@ -139,6 +139,23 @@ fn a_cast_reads_a_decimal_a_call_returns_at_f64() {
 }
 
 #[test]
+fn a_cast_rejects_a_decimal_past_f64_a_call_returns() {
+    // The `1e400` takes `f64`, as the `2.5` above does, and lies past its range: it is
+    // rejected once, at the literal, with the `rat` form (step L1.26b; `Walk::unfixed_calls`).
+    for word in ["f64", "abs", "String"] {
+        let src = format!(
+            "g(positional c: bool) = if c {{ 1 }} else {{ 1e400 }};\ny = {word}(g(false));\n"
+        );
+        let e = type_errors(&src);
+        assert_eq!(e.len(), 1, "{word}: {e:?}");
+        assert!(
+            e[0].starts_with("`1e400` is larger than the largest f64") && e[0].contains("`1e400r`"),
+            "{word}: {e:?}"
+        );
+    }
+}
+
+#[test]
 fn a_cast_gives_no_carrier_to_a_division_a_call_returns() {
     // `y = g(c)` settles each branch as it would be alone (DESIGN.md L1.26a), so the `5 / 2`
     // is rejected at its `5`, as `f64(5 / 2)` is, and its fixes rewrite the `5`
