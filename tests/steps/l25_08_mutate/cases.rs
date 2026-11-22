@@ -186,15 +186,15 @@ fn a_whole_number_on_f64_has_its_neighbors_at_f64() {
 fn a_literal_argument_keeps_the_neighbors_its_parameter_holds() {
     let cases = [
         (
-            "g(positional x: u8) = x",
+            "g(positional x: u8) = x;",
             "g(255)",
             ("255", "254"),
             ("255", "256"),
         ),
-        ("g(x: u8) = x", "g(x: 255)", ("255", "254"), ("255", "256")),
-        ("g(positional x: u8) = x", "g(0)", ("0", "1"), ("0", "-1")),
+        ("g(x: u8) = x;", "g(x: 255)", ("255", "254"), ("255", "256")),
+        ("g(positional x: u8) = x;", "g(0)", ("0", "1"), ("0", "-1")),
         (
-            "g(positional x: int[-10..=0]) = x",
+            "g(positional x: int[-10..=0]) = x;",
             "g(-10)",
             ("10", "9"),
             ("10", "11"),
@@ -208,7 +208,7 @@ fn a_literal_argument_keeps_the_neighbors_its_parameter_holds() {
         assert!(found.contains(&kept), "{text}: {found:?}");
         assert!(!found.contains(&dropped), "{text}: {found:?}");
     }
-    let text = "g(positional x: int) = x\nf(positional a: int) = a + g(255) test { 0 -> 255 }\n";
+    let text = "g(positional x: int) = x;\nf(positional a: int) = a + g(255) test { 0 -> 255 }\n";
     let found = pairs(text);
     for to in ["254", "256"] {
         let pair = ("255".to_string(), to.to_string());
@@ -233,20 +233,24 @@ fn an_equality_mutant_is_detected() {
     }
 }
 
-/// Plan row TESTS-L25.8-neighbors: at `f64`, a literal at 2^53 has a neighbor above that
-/// rounds back to 2^53 (2^53 + 1 is no `f64`; ties to even give 2^53), written as a decimal
-/// and as an integer. That neighbor is the original program, so it is skipped, never reported
-/// as a mutant no table detects; the neighbor below, 2^53 - 1, is an `f64` and is detected.
+/// Plan row TESTS-L25.8-neighbors: at `f64`, a literal at 2^53 has neighbors that round back
+/// to 2^53, and such a neighbor is the original program, so it is skipped, never reported as a
+/// mutant no table detects. Written as an integer, the neighbors are 2^53 - 1, an `f64`, which
+/// the table detects, and 2^53 + 1, no `f64` (ties to even give 2^53), skipped. Written as a
+/// decimal, the neighbors step the last digit, `...1.9` and `...2.1`, and both round to 2^53
+/// (the spacing of `f64` there is 2), so both are skipped.
 #[test]
 fn an_f64_literal_at_two_to_the_53_gives_no_mutant_equal_to_the_original() {
-    for lit in ["9007199254740992.0", "9007199254740992"] {
+    for (lit, same) in [("9007199254740992", 1), ("9007199254740992.0", 2)] {
         let text =
             format!("f(positional x: f64) = x + {lit} test {{ 0.0 -> 9007199254740992.0 }}\n");
         let lines = report(&text);
         let counts = lines.last().expect("the counts");
         assert!(counts.contains(" 0 undetected,"), "{text}: {lines:?}");
-        let skipped = (lines.iter()).filter(|l| l.contains("skipped:")).count();
-        assert_eq!(skipped, 1, "{text}: {lines:?}");
+        let skipped = (lines.iter())
+            .filter(|l| l.contains("skipped:") && l.contains("the original's term"))
+            .count();
+        assert_eq!(skipped, same, "{text}: {lines:?}");
     }
 }
 
