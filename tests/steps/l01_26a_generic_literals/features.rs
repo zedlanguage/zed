@@ -397,3 +397,25 @@ fn several_literal_arguments_a_call_refuses_are_one_error_that_counts_them() {
         );
     }
 }
+
+#[test]
+fn a_curried_function_generic_in_a_literal_fits_a_curried_slot_at_each_carrier() {
+    // Plan row CURRIED-generic-fit: `g`, whose `+ 1` leaves it generic, is passed where a
+    // curried function is wanted, at `int` and at `f64`; the literal takes the slot's carrier.
+    let g = "g(positional a0) = (a1) -> a0 + a1 + 1;\n";
+    let at = |t: &str, args: &str| {
+        format!("p(f: ({t}) -> ({t}) -> {t}) = f({args});\n{g}y = p(f: g);\n")
+    };
+    assert_eq!(value(&at("int", "1)(2"), "y"), "4");
+    assert_eq!(value(&at("f64", "0.5)(2.0f64"), "y"), "3.5");
+    assert_eq!(value(&at("rat", "1r / 2)(1r"), "y"), "5r/2r");
+    // Three levels, and the parameter used only at the last level.
+    let deep = "h(positional a) = (b) -> (c) -> c * 2 + 1;\n\
+                p(f: (String) -> (bool) -> (int) -> int) = f(\"s\")(true)(3);\ny = p(f: h);\n";
+    assert_eq!(value(deep, "y"), "7");
+    // A slot whose carrier no literal holds is refused: `+` takes no `String`.
+    let errors = type_errors(&format!(
+        "p(f: (String) -> (String) -> String) = \"\";\n{g}y = p(f: g);\n"
+    ));
+    assert!(!errors.is_empty(), "accepted");
+}

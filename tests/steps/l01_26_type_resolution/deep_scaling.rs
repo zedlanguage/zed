@@ -188,8 +188,8 @@ pub(super) fn bit_words(n: usize) -> String {
 
 /// `p` expects a function of `d` curried arrows that take int, String at `at`, and return a pair
 /// of ints at the end; `g` has `d` curried parameters and returns the one at `uses` plus `int(1)`,
-/// and `last`. The `int(1)` fixes the carrier: a curried function generic in its first
-/// parameter does not yet fit the curried type (follow-up CURRIED-generic-fit).
+/// and `last`. The `int(1)` fixes the carrier, so the refusal names `int`; a curried function
+/// generic in a literal fits a curried slot too (l01_26a_generic_literals, CURRIED-generic-fit).
 fn curried_refusal(d: usize, uses: usize, at: usize, last: &str) -> String {
     let arrows: String = (0..d)
         .map(|i| if i == at { "(String) -> " } else { "(int) -> " })
