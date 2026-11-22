@@ -354,11 +354,13 @@ impl Rat {
         // when the free memory lies between the two, and none aborts. Tested by
         // `building_a_kept_power_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would ask each allocation of the build for its own memory.
-        let size = width(
-            &self.num,
-            self.pows.iter().map(|(p, e)| (*p, e.magnitude())),
-        );
-        room(size.clone(), size << 3u32)?;
+        // The refusal names a lower bound on the integer's bits and asks by the upper bound
+        // (row CONST-least-refusal-size): `5^k` has about 2.32k bits, where `width` says 3k.
+        let pows = || self.pows.iter().map(|(p, e)| (*p, e.magnitude()));
+        room(
+            least_bits(&self.num, pows()),
+            width(&self.num, pows()) << 3u32,
+        )?;
         self.integer_built()
     }
 
@@ -435,8 +437,18 @@ impl Rat {
     /// `Ok` when the system gives the memory to write its digits (`Rat::text_ask`); else
     /// [`TooLarge`] naming that memory, before anything is built.
     pub fn text_room(&self) -> Result<(), TooLarge> {
-        let (bits, _) = self.text_size();
-        room(bits, self.text_ask())
+        room(self.least_size(), self.text_ask())
+    }
+
+    /// At most the bits of its numerator and denominator together, built: the size a refusal
+    /// to build or write them names, a lower bound, where [`Rat::text_size`] bounds them from
+    /// above for the memory asked (row CONST-least-refusal-size).
+    fn least_size(&self) -> BigUint {
+        let side = |coef: &BigInt, sign: Sign| {
+            let pows = self.pows.iter().filter(move |(_, e)| e.sign() == sign);
+            least_bits(coef, pows.map(|(p, e)| (*p, e.magnitude())))
+        };
+        side(&self.num, Sign::Plus) + side(&self.den, Sign::Minus)
     }
 
     /// The memory writing its digits asks for, in bits.
@@ -517,7 +529,7 @@ impl Rat {
             // (COMPLEXITY.md K30). A complete solution would ask each allocation of the build
             // for its own memory.
             let (bits, _) = self.text_size();
-            room(bits.clone(), bits << 3u32)?;
+            room(self.least_size(), bits << 3u32)?;
         }
         fn side<'s>(
             coef: &'s BigInt,
@@ -878,8 +890,13 @@ impl Rat {
         let sizes = [(&a.num, &rest_a, &b.den), (&b.num, &rest_b, &a.den)]
             .map(|(n, rest, d)| width(n, rest.iter().map(|(p, e)| (*p, e))) + d.bits());
         let [x, y] = sizes;
-        let size = x.max(y) + 1u32;
-        room(size.clone(), size << 3u32)?;
+        let ask = (x.max(y) + 1u32) << 3u32;
+        // The refusal names the bits of the wider cross product, a lower bound, by the formula
+        // and proof of [`Rat::sum_least`], and asks by the upper bound (row
+        // CONST-least-refusal-size).
+        let [x, y] = [(&a.num, &rest_a, &b.den), (&b.num, &rest_b, &a.den)]
+            .map(|(n, rest, d)| least_log2(n, rest.iter().map(|(p, e)| (*p, e))) + d.bits());
+        room(x.max(y), ask)?;
         let ra = fast::mul_int(&a.num, &built(&rest_a)?);
         let rb = fast::mul_int(&b.num, &built(&rest_b)?);
         Ok(Rat::build(
@@ -2040,6 +2057,17 @@ fn least_log2<'a>(coef: &BigInt, pows: impl Iterator<Item = (u64, &'a BigUint)>)
     bits
 }
 
+/// At most the number of bits of `coef * prod p^e`, 0 for a zero `coef`: the size a refusal
+/// names (`TooLarge::size`), which a message reads as what the step needs at least, where
+/// [`width`], an upper bound, is the memory asked for. Proof: [`least_log2`] gives an `l` with
+/// `x >= 2^l`, so `x` has `floor(log2 x) + 1 >= l + 1` bits (row CONST-least-refusal-size).
+fn least_bits<'a>(coef: &BigInt, pows: impl Iterator<Item = (u64, &'a BigUint)>) -> BigUint {
+    match coef.is_zero() {
+        true => BigUint::zero(),
+        false => least_log2(coef, pows) + 1u32,
+    }
+}
+
 /// Whether `p` divides `m`, read one word at a time with no quotient built, so a wide `m` costs
 /// no memory.
 fn divides(m: &BigUint, p: u64) -> bool {
@@ -2727,6 +2755,52 @@ mod tests {
         );
     }
 
+    /// Row CONST-least-refusal-size: each refusal of a build of kept powers names a size at most
+    /// the bits the build makes, which a message reads as what it needs at least, and asks at
+    /// least that many. Each value is refused under a bound of 64 bits ([`fixed_room`]) and then
+    /// built outside it, and its bits compared: `5^k` (its `width` overstates it by 29%),
+    /// `3^k * 7^j`, `5^k / 3^j` and `-(11^k)`, writing their digits and their parts, and the
+    /// sums `5^k + 1` and `5^k + 3^j`, at `k` and `j` from 1,000 to 20,000.
+    #[test]
+    fn a_refusal_names_at_most_the_bits_built_and_asks_at_least() {
+        let check = |what: &str, refused: TooLarge, bits: u64| {
+            let TooLarge { size, ask } = refused;
+            assert!(size <= BigUint::from(bits), "{what}: size {size} > {bits}");
+            assert!(BigUint::from(bits) <= ask, "{what}: ask {ask} < {bits}");
+        };
+        for (k, j) in [(1_000u64, 1_000u64), (4_321, 777), (20_000, 13_001)] {
+            let quotient = power(5, k).div(&power(3, j)).unwrap().unwrap();
+            let values = [
+                power(5, k),
+                power(3, k).mul(&power(7, j)).unwrap(),
+                quotient,
+                power(11, k).neg(),
+            ];
+            for v in &values {
+                let (n, d) = v.built_parts().unwrap();
+                let parts = n.bits() + d.bits();
+                if v.is_integer() {
+                    let refused = fixed_room(64, || v.to_integer()).unwrap_err();
+                    check(&format!("to_integer {v}"), refused, n.bits());
+                }
+                let refused = fixed_room(64, || v.built_parts().map(|_| ())).unwrap_err();
+                check(&format!("built_parts {v}"), refused, parts);
+                let refused = fixed_room(64, || v.text_room()).unwrap_err();
+                check(&format!("text_room {v}"), refused, parts);
+            }
+            for (a, b) in [
+                (power(5, k), Rat::int(BigInt::one())),
+                (power(5, k), power(3, j)),
+            ] {
+                let refused = fixed_room(64, || a.add(&b)).unwrap_err();
+                // The wider cross product the sum builds, `5^k * 1` or `5^k` beside `3^j`.
+                let bits = |r: &Rat| r.built_parts().unwrap().0.bits();
+                let built = bits(&a).max(bits(&b));
+                check(&format!("{a} + {b}"), refused, built);
+            }
+        }
+    }
+
     #[test]
     fn a_power_whose_digits_no_memory_holds_is_refused_and_written_by_its_powers() {
         // NUM-no-panic-built: an exponent of 2^64 or more has more bits than any memory holds.
@@ -2736,21 +2810,23 @@ mod tests {
         let big = |b: u64| Rat::int(BigInt::from(b)).pow(&k).unwrap();
         let (two, three, ten) = (big(2), big(3), big(10));
         let k_text = "1267650600228229401496703205376";
-        // `2^K` has `K` bits, `3^K` fewer than `2K`; `10^K` is its `K` zeros, a byte each.
+        // `2^K` has `K + 1` bits, `3^K` about `1.585 K`, named from below, with `2K` asked;
+        // `10^K` is its `K` zeros, a byte each (row CONST-least-refusal-size).
         assert_eq!(
             two.numer_text(),
             Err(TooLarge {
-                size: k.clone(),
+                size: &k + 1u32,
                 ask: k.clone()
             })
         );
-        assert_eq!(
-            three.numer_text(),
-            Err(TooLarge {
-                size: &k << 1u32,
-                ask: &k << 1u32
-            })
-        );
+        // `log2 3 = 1.5849625007…`, read to within 33 units of 2^-32 from below.
+        let three_bits = |r: Result<String, TooLarge>| {
+            let TooLarge { size, ask } = r.unwrap_err();
+            assert_eq!(ask, &k << 1u32);
+            assert!(&k * 1_584_962u32 / 1_000_000u32 < size, "{size}");
+            assert!(size < &k * 1_584_962_501u64 / 1_000_000_000u64, "{size}");
+        };
+        three_bits(three.numer_text());
         assert_eq!(
             ten.numer_text(),
             Err(TooLarge {
@@ -2765,13 +2841,12 @@ mod tests {
         assert_eq!(three.neg().integer_text(), format!("-3^{k_text}"));
         let third = Rat::int(BigInt::from(5)).div(&three).unwrap().unwrap();
         assert_eq!(third.to_string(), format!("rat(5)/rat(3^{k_text})"));
-        assert_eq!(
-            third.denom_text(),
-            Err(TooLarge {
-                size: &k << 1u32,
-                ask: &k << 1u32
-            })
-        );
+        three_bits(third.denom_text());
+        // Building it refuses with the same lower bound and asks eight times the upper one.
+        let TooLarge { size, ask } = three.to_integer().unwrap_err();
+        // `width`: the coefficient 1's one bit and `ceil(log2 3) = 2` per factor.
+        assert_eq!(ask, ((&k << 1u32) + 1u32) << 3u32);
+        assert!(size < &k * 1_584_962_501u64 / 1_000_000_000u64, "{size}");
         assert!(third.literal_text().starts_with("rat(5)/"));
         // The order is told by the bit lengths, and nothing is built.
         assert_eq!(two.try_cmp(&three), Ok(Ordering::Less));

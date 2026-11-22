@@ -4337,8 +4337,9 @@ fn add_around(x: &mut [u64], mut c: u128) {
 
 /// `prod p^e`, built. A power of 2 is a shift, done last, so `2^e` costs its `e` bits and
 /// not the squarings of a multiplication. [`TooLarge`] when an exponent is 2^64 or more: the
-/// power has at least that many bits, more than any memory holds, and it names the bits of
-/// the whole product, `sum e * ceil(log2 p)`, as the memory asked for. Every other build asks
+/// power has at least that many bits, more than any memory holds, and it names a lower bound
+/// on the bits of the whole product as its size, and `sum e * ceil(log2 p)`, an upper bound,
+/// as the memory asked for. Every other build asks
 /// the system for its memory before calling this.
 ///
 /// Complexity tradeoff (NUM-no-panic-built): the exponents are read once before the build,
@@ -4350,8 +4351,11 @@ pub(super) fn built(pows: &[(u64, BigUint)]) -> Result<BigInt, TooLarge> {
         .collect();
     let Some(small) = small else {
         let bits: BigUint = (pows.iter()).map(|(p, e)| e * p.ceil_log2()).sum();
+        // The size named is a lower bound on the product's bits (`super::least_bits`), the
+        // memory asked the upper bound (row CONST-least-refusal-size).
+        let one = BigInt::one();
         return Err(TooLarge {
-            size: bits.clone(),
+            size: super::least_bits(&one, pows.iter().map(|(p, e)| (*p, e))),
             ask: bits,
         });
     };

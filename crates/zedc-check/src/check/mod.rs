@@ -13098,8 +13098,9 @@ fn kernel_folded(p: Prim, args: Vec<Value>) -> Option<Value> {
 /// word. For `String` of a number it is the text, a byte a digit, sized before any digit is
 /// written and bounded from below ([`Rat::text_least`]), as a message says it needs at least
 /// that; [`Rat::text_size`], the bound from above that the run asks memory by, overstates the
-/// digits of `5^k` by 29%. A refusal's size is the kernel's bound from above too, the same
-/// overstatement where kept odd primes are built (row CONST-least-refusal-size). `None` where
+/// digits of `5^k` by 29%. A refusal's size is bounded from below as well, the bits of what
+/// the step builds by `log2 p` per factor `p` (row CONST-least-refusal-size), with the bound
+/// from above kept in its `ask`. `None` where
 /// the evaluator builds nothing it keeps, as a comparison it decides within the bound, an `int`
 /// in a word or an atom.
 //
