@@ -1036,6 +1036,225 @@ fn chain_of_quotients(depth: usize) -> (Vec<Div>, Formula) {
     (divs, f)
 }
 
+/// Runs `body` with [`sumset`] taken whatever the costs, and returns how many formulas it
+/// answered.
+fn with_sumset_always(body: impl FnOnce()) -> usize {
+    sumset::ALWAYS.with(|a| a.set(true));
+    let before = sumset::TAKEN.with(std::cell::Cell::get);
+    body();
+    sumset::ALWAYS.with(|a| a.set(false));
+    sumset::TAKEN.with(std::cell::Cell::get) - before
+}
+
+/// Rows over pairwise coprime moduli (two rows may share one, a block of two rows), sums of
+/// their parts modulo powers of 2, top-level literals on the rows' remainders and any Boolean
+/// combination of literals on the sums' remainders: the shape [`sumset`] decides, here taken
+/// on every formula (`with_sumset_always`), against enumeration over one period of `x` (the
+/// sums' lcm `M` times the rows' moduli: every remainder of a row and of a sum has a period
+/// dividing it, the latter by [`sum_residues`]'s proof).
+#[test]
+fn sumset_decisions_match_enumeration() {
+    let (mut rng, seed) = Rng::fresh("sumset_decisions_match_enumeration");
+    crate::presburger::CHECK_LOSSLESS.with(|c| c.set(true));
+    let mut answered = [0usize; 2];
+    let mut taken = 0;
+    for case in 0..300 {
+        let mut moduli: Vec<i64> = vec![3, 5, 7, 11];
+        rng.shuffle(&mut moduli);
+        let mut divs: Vec<Div> = Vec::new();
+        for &m in &moduli[..1 + rng.below(3)] {
+            for _ in 0..1 + usize::from(rng.below(4) == 0) {
+                let a = rng.int(1, 2 * m);
+                let a = if rng.coin() { a } else { -a };
+                let fixed = (rng.below(5) == 0).then(|| rng.int(0, m - 1));
+                divs.push(Div {
+                    t: 0,
+                    a,
+                    k: rng.int(-12, 12),
+                    m,
+                    fixed,
+                });
+            }
+        }
+        let sums: Vec<Sum> = random_sums(&mut rng, &divs)
+            .into_iter()
+            .map(|s| Sum {
+                m: rng.pick(&[2, 4, 8]),
+                ..s
+            })
+            .collect();
+        // Literals on the rows' remainders at the top level only, as the path needs.
+        let mut lits = vec![random_sum_literals(&mut rng, &divs, &sums, 2)];
+        for (i, d) in divs.iter().enumerate() {
+            if d.fixed.is_none() && rng.coin() {
+                let c = Lin::constant(rng.int(0, d.m - 1));
+                lits.push(Formula::Con(if rng.coin() {
+                    Con::ge(&r(i), &c)
+                } else {
+                    Con::ge(&c, &r(i))
+                }));
+            }
+        }
+        let f = formula(&divs, Formula::and(lits), sum_formulas(&divs, &sums));
+        let period: i64 = 8 * divs.iter().map(|d| d.m).product::<i64>();
+        let want = (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
+        let what = format!("seed {seed} case {case} {divs:?} {sums:?}");
+        // `solve` itself, then the entries above it ([`check`]).
+        let n = with_sumset_always(|| {
+            for want_model in [true, false] {
+                if let Some(got) = solve(&f, want_model) {
+                    assert_eq!(got.is_some(), want, "{what}: solve\n{f}");
+                    if let Some(m) = got.filter(|_| want_model) {
+                        assert!(f.holds(&m), "{what}: point {m:?} of\n{f}");
+                    }
+                }
+            }
+            check(&f, want, &what);
+        });
+        taken += usize::from(n > 0);
+        answered[usize::from(want)] += 1;
+    }
+    // The path declines only where `solve` declines before it (a reading `orient` or
+    // [`read_sum`] refuses), which these shapes rarely meet.
+    assert!(
+        answered[0] > 30 && answered[1] > 30 && taken > 250,
+        "seed {seed}: answers {answered:?}, taken in {taken} of 300 cases"
+    );
+}
+
+/// The path's scope: moduli that share a factor, a literal on `x`, and a literal on a row's
+/// remainder under a disjunction are left to the other paths, which give the enumerated answer.
+#[test]
+fn the_sumset_path_takes_the_coprime_sums() {
+    let row = |a, m| Div {
+        t: 0,
+        a,
+        k: 0,
+        m,
+        fixed: None,
+    };
+    let sum = Sum {
+        parts: vec![(1, 1), (3, 1)],
+        k: 0,
+        m: 2,
+        rem: true,
+    };
+    let even = Formula::Con(Con::eq(&r(2), &Lin::constant(0)));
+    let cases: Vec<(&str, Vec<Div>, Formula, bool)> = vec![
+        ("coprime", vec![row(1, 3), row(1, 5)], even.clone(), true),
+        (
+            "a sum modulus shares 3",
+            vec![row(1, 3), row(1, 5)],
+            even.clone(),
+            false,
+        ),
+        (
+            "rows share 3",
+            vec![row(1, 3), row(1, 9)],
+            even.clone(),
+            false,
+        ),
+        (
+            "a literal on x",
+            vec![row(1, 3), row(1, 5)],
+            Formula::and(vec![
+                even.clone(),
+                Formula::Con(Con::ge(&x(), &Lin::constant(4))),
+            ]),
+            false,
+        ),
+        (
+            "a nested row literal",
+            vec![row(1, 3), row(1, 5)],
+            Formula::or(vec![
+                even.clone(),
+                Formula::Con(Con::eq(&r(0), &Lin::constant(1))),
+            ]),
+            false,
+        ),
+    ];
+    for (what, divs, lits, takes) in cases {
+        let sums = vec![Sum {
+            m: if what == "a sum modulus shares 3" {
+                6
+            } else {
+                2
+            },
+            ..sum.clone()
+        }];
+        let f = formula(&divs, lits, sum_formulas(&divs, &sums));
+        let period: i64 = 6 * divs.iter().map(|d| d.m).product::<i64>();
+        let want = (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
+        let mut got = None;
+        let taken = with_sumset_always(|| got = solve(&f, false).map(|m| m.is_some()));
+        assert_eq!(taken > 0, takes, "{what}: taken {taken}\n{f}");
+        assert!(
+            got.is_none_or(|g| g == want),
+            "{what}: {got:?}, want {want}\n{f}"
+        );
+        if takes {
+            assert_eq!(got, Some(want), "{what}\n{f}");
+        }
+        let got = crate::presburger::decide(&f);
+        assert!(
+            got.is_err() || got == Ok(want),
+            "{what}: {got:?}, want {want}\n{f}"
+        );
+    }
+}
+
+/// The rows `x == p_i q_i + r_i` for the first `k` odd primes, and the sums
+/// `E = sum_i q_i` and `E + 1`, each modulo 2, with `E mod 2 == 0` and, with `point`,
+/// `(E + 1) mod 2 == 1`, else `== 0`. Without `point` there is no point, so every reachable
+/// tuple is visited. The residues of `x` that [`sum_residues`] writes number `2 prod_i p_i`,
+/// exponential in `k`; [`sumset`] keeps 4 tuples, so its work is linear in `k`. From `k = 2`:
+/// at `k = 1` each sum, `q_0 == 2 q + r`, reads as a row on the quotient of another row, a
+/// chain, which [`solve`] declines before either path.
+fn bench_coprime_sums(k: usize, point: bool) -> (Vec<Div>, Vec<Sum>, Formula) {
+    let divs: Vec<Div> = zed_numtheory::first_primes(k + 1)
+        .into_iter()
+        .skip(1)
+        .map(|p| Div {
+            t: 0,
+            a: 1,
+            k: 0,
+            m: p as i64,
+            fixed: None,
+        })
+        .collect();
+    let sums: Vec<Sum> = [0, 1]
+        .into_iter()
+        .map(|c| Sum {
+            parts: (0..k).map(|i| (2 * i + 1, 1)).collect(),
+            k: c,
+            m: 2,
+            rem: true,
+        })
+        .collect();
+    let lits = Formula::and(vec![
+        Formula::Con(Con::eq(&r(k), &Lin::constant(0))),
+        Formula::Con(Con::eq(&r(k + 1), &Lin::constant(i64::from(point)))),
+    ]);
+    let f = formula(&divs, lits, sum_formulas(&divs, &sums));
+    (divs, sums, f)
+}
+
+/// The small instances of `bench::sums_over_many_coprime_moduli_scale`, against enumeration,
+/// with the costs choosing the path as they do in the benchmark.
+#[test]
+fn the_coprime_sums_benchmark_has_its_answers_at_small_sizes() {
+    for k in 2..=5 {
+        for point in [false, true] {
+            let (divs, sums, f) = bench_coprime_sums(k, point);
+            let period: i64 = 2 * divs.iter().map(|d| d.m).product::<i64>();
+            let want =
+                (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
+            assert_eq!(want, point, "k = {k}");
+            check_answered(&f, want, &format!("k = {k}, point {point}"));
+        }
+    }
+}
+
 /// The rows of FAIL-omega-pairs-4972743790605253739: `x - s == m q + r` for `(m, s)` in
 /// `(5, 0), (4, 2), (5, 5), (4, 7)`.
 fn four_pairs() -> Vec<Div> {

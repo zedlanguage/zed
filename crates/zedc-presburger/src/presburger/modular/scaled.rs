@@ -32,6 +32,7 @@
 
 use super::*;
 
+mod sumset;
 pub(crate) mod sweep;
 #[cfg(test)]
 mod tests;
@@ -848,6 +849,14 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             f.holds(&model)
                 .then(|| if want_model { model } else { Model::new() }),
         );
+    }
+    // Sums over coprime moduli: decided over the sums' remainders ([`sumset`]), which does not
+    // write the residues of `x` whose number is the product of the moduli.
+    let skip: HashSet<&Con> = def_cons.union(&sum_cons).copied().collect();
+    if let Some(answer) =
+        sumset::solve_by_sums(f, &x, &top, &rows, &sums, &r_of, &sum_r, &skip, want_model)
+    {
+        return Some(answer);
     }
 
     // The new remainders of `x`, one per modulus, numbered past every auxiliary atom of `f`.
