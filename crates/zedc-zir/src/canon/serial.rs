@@ -54,8 +54,9 @@
 //! and
 //! `l01_32_canonical_zir::bench::string_nodes::a_doubling_program_is_addressed_in_time_linear_in_its_text`.
 
-use num_bigint::{BigUint, Sign};
-use zed_kernel::num::{Rat, TooLarge};
+use crate::zir::binary::ByteOut;
+use num_bigint::Sign;
+use zed_kernel::num::TooLarge;
 use zed_kernel::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Term, Witness};
 use zed_kernel::text::Text;
 use zed_kernel::value::Value;
@@ -78,36 +79,16 @@ struct Out<'a> {
     refused: Option<TooLarge>,
 }
 
+/// The bytes of a word, a string, a magnitude and an exact number, plain or kept with prime
+/// powers, are the binary form's ([`ByteOut`], shared since DRY-misc-A5); the tags here are
+/// this serialization's own.
+impl ByteOut for Out<'_> {
+    fn sink(&mut self) -> (&mut Vec<u8>, &mut Option<TooLarge>) {
+        (&mut self.bytes, &mut self.refused)
+    }
+}
+
 impl Out<'_> {
-    /// Appends `bytes` once the system gives the memory the vector grows to; a refusal is kept
-    /// and nothing more written.
-    fn put(&mut self, bytes: &[u8]) {
-        if self.refused.is_some() {
-            return;
-        }
-        let (len, cap) = (self.bytes.len(), self.bytes.capacity());
-        if cap - len < bytes.len() && self.bytes.try_reserve(bytes.len()).is_err() {
-            // What `Vec` asks to grow: twice its capacity, or what the bytes need if more.
-            let ask = (2 * cap).max(len + bytes.len());
-            self.refused = Some(TooLarge::of_bytes(ask));
-            return;
-        }
-        self.bytes.extend_from_slice(bytes);
-    }
-
-    fn tag(&mut self, t: u8) {
-        self.put(&[t]);
-    }
-
-    fn word(&mut self, n: u64) {
-        self.put(&n.to_le_bytes());
-    }
-
-    fn str(&mut self, s: &str) {
-        self.word(s.len() as u64);
-        self.put(s.as_bytes());
-    }
-
     /// The string `t`: tag 3, its length in bytes as a word, then its bytes in its type's
     /// encoding (UTF-8; DESIGN.md M0.7, author answer A106, 2026-11-20), read block by block
     /// from left to right ([`Text::chunks`]). Equal strings give equal bytes whatever their
@@ -148,74 +129,8 @@ impl Out<'_> {
         t.chunks().for_each(|c| self.put(c.as_bytes()));
     }
 
-    /// A number's magnitude: its count of 64-bit limbs, then the limbs, least significant
-    /// first, each a word. Linear in its bits, where decimal digits cost more than linear time
-    /// to convert.
-    // Complexity tradeoff: as at `zir::binary`'s `magnitude` (COMPLEXITY.md Z26): decimal
-    // digits, about n^1.5 in the bits n, replaced by the 64-bit limbs, O(n); the kernel address
-    // changed with the form. Test
-    // `l01_32_canonical_zir::bench::wide_constants::addressing_a_wide_constant_is_linear_in_its_bits`.
-    fn magnitude(&mut self, m: &BigUint) {
-        self.word(m.iter_u64_digits().len() as u64);
-        m.iter_u64_digits().for_each(|d| self.word(d));
-    }
-
-    /// An exact number: its sign as a tag, then the magnitude of its numerator, and of a
-    /// rational its denominator. Both are built, and the bytes for them reserved, only after
-    /// the system gives the memory; a refusal is kept and nothing more of the number written.
-    fn number(&mut self, r: &Rat, rational: bool) {
-        if self.refused.is_some() {
-            return;
-        }
-        let parts = r.built_parts().and_then(|(num, den)| {
-            let limbs = num.iter_u64_digits().len() + den.iter_u64_digits().len();
-            let bytes = 8 * (limbs + 2);
-            self.bytes
-                .try_reserve(bytes)
-                .map_err(|_| TooLarge::of_bytes(bytes))?;
-            Ok((num, den))
-        });
-        match parts {
-            Ok((num, den)) => {
-                self.tag(u8::from(r.is_negative()));
-                self.magnitude(&num);
-                if rational {
-                    self.magnitude(&den);
-                }
-            }
-            Err(e) => self.refused = Some(e),
-        }
-    }
-
-    /// A number kept with prime powers ([`Rat::kept`]), as `zir::binary` writes one: the sign
-    /// of its numerator as a tag, the magnitude of the numerator, of a rational the magnitude
-    /// of the denominator, then the count of powers and each power's prime as a word and its
-    /// exponent's sign and magnitude. No digits are built.
-    // Complexity tradeoff: as at `zir::binary`'s `kept`: `number` builds the digits, O(n) for
-    // n bits, and a literal such as `1e100000000000000000000r` made both `zedc run` and `zedc
-    // build` refuse a program for want of memory to address it (item ENGINE-one). Here O(w)
-    // for the w words of the kept parts. Tradeoff: `1e3r` and `1000r`, equal numbers written
-    // differently, already had different normal forms as written; now their serializations
-    // differ too, which changed the address of every program holding a kept power
-    // (canonicalization version 5 to 6, when the address had a version). Test
-    // `l01_32_canonical_zir::wide_constants::a_kept_power_is_written_as_its_powers`.
-    fn kept(&mut self, r: &Rat, rational: bool) {
-        let (num, den, pows) = r.kept();
-        self.tag(u8::from(num.sign() == Sign::Minus));
-        self.magnitude(num.magnitude());
-        if rational {
-            self.magnitude(den.magnitude());
-        }
-        self.word(pows.len() as u64);
-        for (p, e) in pows {
-            self.word(*p);
-            self.tag(u8::from(e.sign() == Sign::Minus));
-            self.magnitude(e.magnitude());
-        }
-    }
-
     /// An integer of an interval end or a class past `i64`: its sign as a tag, then its
-    /// magnitude, as [`Out::number`] writes a numerator. A kept value is written out only after
+    /// magnitude, as [`ByteOut::number`] writes a numerator. A kept value is written out only after
     /// the system gives the memory ([`Num::built`]); a refusal is kept and nothing more of the
     /// integer written.
     fn int(&mut self, v: &Num) {

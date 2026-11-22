@@ -144,38 +144,134 @@ struct W(
     Option<Keyed>,
 );
 
-impl W {
+/// A writer of bytes that keeps the first refusal of memory, after which it writes nothing:
+/// the binary form here ([`W`]) and the content address's serialization
+/// (`canon::serial`'s `Out`), which wrote the same bytes for a word, a string, a magnitude,
+/// an exact number and a number kept with prime powers with two copies of the code before
+/// DRY-misc-A5 (REPORT-dryA5 row 15). Each form keeps its own tags, which differ on purpose:
+/// the tags are part of what each form's readers and addresses fix.
+pub(crate) trait ByteOut {
+    /// The bytes written and the first refusal.
+    fn sink(&mut self) -> (&mut Vec<u8>, &mut Option<TooLarge>);
+
     /// `bytes` at the end, once the system gives the memory to grow the bytes written for them;
     /// a refusal is kept, naming the capacity the growth asked, and nothing more is written.
     /// So a write after a wide number or a long string, which doubles the bytes written so far,
     /// asks for that memory first, as the number and the string did.
     fn put(&mut self, bytes: &[u8]) {
-        if self.1.is_some() {
+        let (out, refused) = self.sink();
+        if refused.is_some() {
             return;
         }
-        let (len, cap) = (self.0.len(), self.0.capacity());
-        if cap - len < bytes.len() && self.0.try_reserve(bytes.len()).is_err() {
+        let (len, cap) = (out.len(), out.capacity());
+        if cap - len < bytes.len() && out.try_reserve(bytes.len()).is_err() {
             // What `Vec` asks to grow: twice its capacity, or what the bytes need if more.
             let ask = (2 * cap).max(len + bytes.len());
-            self.1 = Some(TooLarge::of_bytes(ask));
+            *refused = Some(TooLarge::of_bytes(ask));
             return;
         }
-        self.0.extend_from_slice(bytes);
+        out.extend_from_slice(bytes);
     }
 
     fn tag(&mut self, t: u8) {
         self.put(&[t]);
     }
 
-    fn n(&mut self, n: u64) {
+    /// `n` as a little-endian 64-bit word.
+    fn word(&mut self, n: u64) {
         self.put(&n.to_le_bytes());
     }
 
-    fn s(&mut self, s: &str) {
-        self.n(s.len() as u64);
+    /// `s`: its length in bytes as a word, then its UTF-8 bytes.
+    fn str(&mut self, s: &str) {
+        self.word(s.len() as u64);
         self.put(s.as_bytes());
     }
 
+    /// A number's magnitude: its count of 64-bit limbs, then the limbs, least significant
+    /// first, each a little-endian word. Linear in its bits, where decimal digits cost more
+    /// than linear time to convert.
+    // Complexity tradeoff: the form this replaced wrote a number past `i64` as its decimal
+    // digits (`Rat::numer_text`, `denom_text`), about n^1.5 in its bits n by num-bigint's
+    // conversion (COMPLEXITY.md Z26: 15.6 s at 2^25 bits, about 80 minutes at 2^30). Here the
+    // sign and the 64-bit limbs of the numerator and denominator in lowest terms are written,
+    // O(n). Tradeoffs: the bytes are not readable as a number, and the change of form changed
+    // every content address (canonicalization version 3 to 4). Nothing is refused beyond the
+    // memory refusal of `number`. Tests
+    // `l01_32_canonical_zir::bench::wide_constants::addressing_a_wide_constant_is_linear_in_its_bits`
+    // and `..._stays_linear_over_64_times_the_bits`.
+    fn magnitude(&mut self, m: &BigUint) {
+        self.word(m.iter_u64_digits().len() as u64);
+        m.iter_u64_digits().for_each(|d| self.word(d));
+    }
+
+    /// An exact number: its sign as a tag, then the magnitude of its numerator, and of a
+    /// rational its denominator. Both are built, and the bytes for them reserved, only after
+    /// the system gives the memory; a refusal is kept and nothing more of the number written.
+    fn number(&mut self, r: &Rat, rational: bool) {
+        let (out, refused) = self.sink();
+        if refused.is_some() {
+            return;
+        }
+        let parts = r.built_parts().and_then(|(num, den)| {
+            let limbs = num.iter_u64_digits().len() + den.iter_u64_digits().len();
+            let bytes = 8 * (limbs + 2);
+            out.try_reserve(bytes)
+                .map_err(|_| TooLarge::of_bytes(bytes))?;
+            Ok((num, den))
+        });
+        match parts {
+            Ok((num, den)) => {
+                self.tag(u8::from(r.is_negative()));
+                self.magnitude(&num);
+                if rational {
+                    self.magnitude(&den);
+                }
+            }
+            Err(e) => *refused = Some(e),
+        }
+    }
+
+    /// A number kept with prime powers ([`Rat::kept`]), in the form it is kept in: the sign of
+    /// `num` as a tag, the magnitude of `num`, of a rational the magnitude of `den`, then the
+    /// count of powers and each power's prime as a word and its exponent's sign and magnitude.
+    /// No digits are built, so `2^2^100` is a few words.
+    // Complexity tradeoff: `number` builds the digits, O(n) words for a number of n bits and a
+    // refusal when the system cannot hold them, so a constant such as `2^2^100`, which staging
+    // folds and a run uses only through operations that never build it (`mod`, a comparison),
+    // made `zedc build` refuse a program `zedc run` runs (item ENGINE-one). Here the kept form
+    // is written as it is: O(w) words for the w words of its parts, whatever the number's
+    // size, and nothing is refused but the memory for those words. Tradeoff: equal numbers
+    // kept in different forms (`1e3r` holds 2^3 5^3, `1000r` none) are written differently,
+    // so two equal constants can get two node keys; a normal form would need the digits,
+    // which is what this avoids. Their serializations differ too, which changed the address
+    // of every program holding a kept power (canonicalization version 5 to 6, when the
+    // address had a version). A plain number keeps its tags and its bytes. Tests
+    // `l01_32_canonical_zir::wide_constants::a_kept_power_is_written_as_its_powers` and
+    // `..._in_time_linear_in_its_parts`.
+    fn kept(&mut self, r: &Rat, rational: bool) {
+        let (num, den, pows) = r.kept();
+        self.tag(u8::from(num.sign() == Sign::Minus));
+        self.magnitude(num.magnitude());
+        if rational {
+            self.magnitude(den.magnitude());
+        }
+        self.word(pows.len() as u64);
+        for (p, e) in pows {
+            self.word(*p);
+            self.tag(u8::from(e.sign() == Sign::Minus));
+            self.magnitude(e.magnitude());
+        }
+    }
+}
+
+impl ByteOut for W {
+    fn sink(&mut self) -> (&mut Vec<u8>, &mut Option<TooLarge>) {
+        (&mut self.0, &mut self.1)
+    }
+}
+
+impl W {
     /// A string value's text, as the tree it is held in: the count of its nodes not yet
     /// written in this graph, then each after the nodes it joins, a block as tag 0 and the
     /// block, a join as tag 1 and the indices of its parts in order, then the index of the text.
@@ -203,8 +299,8 @@ impl W {
                 .entry(t.node_id())
                 .or_insert_with(|| (t.len() as u64, t.poly_hash()));
             k.held.push((len, hash, t.clone()));
-            self.n(len);
-            self.n(hash);
+            self.word(len);
+            self.word(hash);
             return;
         }
         // Postorder: the nodes in the order they are written. A node is opened once, and every
@@ -226,103 +322,29 @@ impl W {
                 }
             }
         }
-        self.n(order.len() as u64);
+        self.word(order.len() as u64);
         for u in order {
             match u.piece() {
                 Piece::Block(b) => {
                     self.tag(0);
-                    self.s(b);
+                    self.str(b);
                 }
                 Piece::Parts(parts) => {
                     self.tag(1);
-                    self.n(parts.len() as u64);
+                    self.word(parts.len() as u64);
                     for p in parts {
-                        self.n(self.2[&p.node_id()]);
+                        self.word(self.2[&p.node_id()]);
                     }
                 }
             }
             let next = self.2.len() as u64;
             self.2.insert(u.node_id(), next);
         }
-        self.n(self.2[&t.node_id()]);
-    }
-
-    /// A number's magnitude: its count of 64-bit limbs, then the limbs, least significant
-    /// first, each a little-endian word. Linear in its bits, where decimal digits cost more
-    /// than linear time to convert.
-    // Complexity tradeoff: the form this replaced wrote a number past `i64` as its decimal
-    // digits (`Rat::numer_text`, `denom_text`), about n^1.5 in its bits n by num-bigint's
-    // conversion (COMPLEXITY.md Z26: 15.6 s at 2^25 bits, about 80 minutes at 2^30). Here the
-    // sign and the 64-bit limbs of the numerator and denominator in lowest terms are written,
-    // O(n). Tradeoffs: the bytes are not readable as a number, and the change of form changed
-    // every content address (canonicalization version 3 to 4). Nothing is refused beyond the
-    // memory refusal of `number`. Tests
-    // `l01_32_canonical_zir::bench::wide_constants::addressing_a_wide_constant_is_linear_in_its_bits`
-    // and `..._stays_linear_over_64_times_the_bits`; the same form in `canon/serial.rs`.
-    fn magnitude(&mut self, m: &BigUint) {
-        self.n(m.iter_u64_digits().len() as u64);
-        m.iter_u64_digits().for_each(|d| self.n(d));
-    }
-
-    /// An exact number: its sign as a tag, then the magnitude of its numerator, and of a
-    /// rational its denominator. Both are built, and the bytes for them reserved, only after
-    /// the system gives the memory; a refusal is kept and nothing more of the number written.
-    fn number(&mut self, r: &Rat, rational: bool) {
-        if self.1.is_some() {
-            return;
-        }
-        let parts = r.built_parts().and_then(|(num, den)| {
-            let limbs = num.iter_u64_digits().len() + den.iter_u64_digits().len();
-            let bytes = 8 * (limbs + 2);
-            self.0
-                .try_reserve(bytes)
-                .map_err(|_| TooLarge::of_bytes(bytes))?;
-            Ok((num, den))
-        });
-        match parts {
-            Ok((num, den)) => {
-                self.tag(u8::from(r.is_negative()));
-                self.magnitude(&num);
-                if rational {
-                    self.magnitude(&den);
-                }
-            }
-            Err(e) => self.1 = Some(e),
-        }
-    }
-
-    /// A number kept with prime powers ([`Rat::kept`]), in the form it is kept in: the sign of
-    /// `num` as a tag, the magnitude of `num`, of a rational the magnitude of `den`, then the
-    /// count of powers and each power's prime as a word and its exponent's sign and magnitude.
-    /// No digits are built, so `2^2^100` is a few words.
-    // Complexity tradeoff: `number` builds the digits, O(n) words for a number of n bits and a
-    // refusal when the system cannot hold them, so a constant such as `2^2^100`, which staging
-    // folds and a run uses only through operations that never build it (`mod`, a comparison),
-    // made `zedc build` refuse a program `zedc run` runs (item ENGINE-one). Here the kept form
-    // is written as it is: O(w) words for the w words of its parts, whatever the number's
-    // size, and nothing is refused but the memory for those words. Tradeoff: equal numbers
-    // kept in different forms (`1e3r` holds 2^3 5^3, `1000r` none) are written differently,
-    // so two equal constants can get two node keys; a normal form would need the digits,
-    // which is what this avoids. A plain number keeps tags 2 and 3 and its bytes. Tests
-    // `l01_32_canonical_zir::wide_constants::a_kept_power_is_written_as_its_powers` and
-    // `..._in_time_linear_in_its_parts`; the same form in `canon/serial.rs`.
-    fn kept(&mut self, r: &Rat, rational: bool) {
-        let (num, den, pows) = r.kept();
-        self.tag(u8::from(num.sign() == Sign::Minus));
-        self.magnitude(num.magnitude());
-        if rational {
-            self.magnitude(den.magnitude());
-        }
-        self.n(pows.len() as u64);
-        for (p, e) in pows {
-            self.n(*p);
-            self.tag(u8::from(e.sign() == Sign::Minus));
-            self.magnitude(e.magnitude());
-        }
+        self.word(self.2[&t.node_id()]);
     }
 
     fn many<T>(&mut self, xs: &[T], mut f: impl FnMut(&mut Self, &T)) {
-        self.n(xs.len() as u64);
+        self.word(xs.len() as u64);
         for x in xs {
             f(self, x);
         }
@@ -343,7 +365,7 @@ impl W {
                 Job::Region(r) => {
                     self.tag(index(&KINDS, &r.kind));
                     self.many(&r.args, Self::edge);
-                    self.n(r.nodes.len() as u64);
+                    self.word(r.nodes.len() as u64);
                     jobs.push(Job::Results(&r.results));
                     jobs.extend(r.nodes.iter().rev().map(Job::Node));
                 }
@@ -351,7 +373,7 @@ impl W {
                     self.op(&n.op);
                     self.many(&n.inputs, Self::src);
                     self.many(&n.outputs, Self::edge);
-                    self.n(n.regions.len() as u64);
+                    self.word(n.regions.len() as u64);
                     jobs.extend(n.regions.iter().rev().map(|r| Job::Region(r)));
                 }
                 Job::Results(rs) => self.many(rs, Self::src),
@@ -360,19 +382,19 @@ impl W {
     }
 
     fn edge(&mut self, e: &Edge) {
-        self.s(&text::edge(e));
+        self.str(&text::edge(e));
     }
 
     fn src(&mut self, s: &Src) {
         match s {
             Src::Arg(i) => {
                 self.tag(0);
-                self.n(*i as u64);
+                self.word(*i as u64);
             }
             Src::Out(k, p) => {
                 self.tag(1);
-                self.n(*k as u64);
-                self.n(*p as u64);
+                self.word(*k as u64);
+                self.word(*p as u64);
             }
             Src::Const(v) => {
                 self.tag(2);
@@ -399,7 +421,7 @@ impl W {
             }
             Value::Int(i) => {
                 self.tag(1);
-                self.n(*i as u64);
+                self.word(*i as u64);
             }
             Value::Big(b) if b.kept().2.is_empty() => {
                 self.tag(2);
@@ -420,12 +442,12 @@ impl W {
             Value::Float(x) => {
                 self.tag(4);
                 let x = x.get();
-                self.n(if x.is_nan() { NAN_BITS } else { x.to_bits() });
+                self.word(if x.is_nan() { NAN_BITS } else { x.to_bits() });
             }
             Value::Float32(x) => {
                 self.tag(11);
                 let x = x.get();
-                self.n(u64::from(if x.is_nan() {
+                self.word(u64::from(if x.is_nan() {
                     NAN_BITS_F32
                 } else {
                     x.to_bits()
@@ -438,29 +460,29 @@ impl W {
             // `#e()`, apart from the bare `#e` (tag 6 with no parts).
             Value::Atom(a) if !a.is_bare() && a.args().is_empty() => {
                 self.tag(10);
-                self.s(&a.name);
+                self.str(&a.name);
             }
             Value::Atom(a) => {
                 self.tag(6);
-                self.s(&a.name);
-                self.many(&a.fields, |w, f| w.s(f));
-                self.n(a.args().len() as u64);
+                self.str(&a.name);
+                self.many(&a.fields, |w, f| w.str(f));
+                self.word(a.args().len() as u64);
                 jobs.extend(a.args().iter().rev());
             }
             Value::Tuple(vs) => {
                 self.tag(7);
-                self.n(vs.len() as u64);
+                self.word(vs.len() as u64);
                 jobs.extend(vs.iter().rev());
             }
             Value::Path(vs) => {
                 self.tag(8);
-                self.n(vs.len() as u64);
+                self.word(vs.len() as u64);
                 jobs.extend(vs.iter().rev());
             }
             Value::Family(f) => {
                 self.tag(9);
                 let entries: Vec<_> = f.iter().collect();
-                self.n(entries.len() as u64);
+                self.word(entries.len() as u64);
                 for (k, v) in entries.into_iter().rev() {
                     jobs.push(v);
                     jobs.push(k);
@@ -472,7 +494,7 @@ impl W {
     fn evidence(&mut self, ev: &Evidence) {
         let items: Vec<_> = ev.iter().collect();
         self.many(&items, |w, (k, g)| {
-            w.s(k);
+            w.str(k);
             w.tag(index(&GRADES, g));
         });
     }
@@ -482,7 +504,7 @@ impl W {
             Op::Reindex(Witness::Residue) => self.tag(0),
             Op::Reindex(Witness::Catalog(entry)) => {
                 self.tag(1);
-                self.s(entry);
+                self.str(entry);
             }
             Op::Discard => self.tag(2),
             Op::Fold {
@@ -491,7 +513,7 @@ impl W {
                 ev,
             } => {
                 self.tag(3);
-                self.n(*depth as u64);
+                self.word(*depth as u64);
                 self.tag(*identity as u8);
                 self.evidence(ev);
             }
@@ -506,11 +528,11 @@ impl W {
             }
             Op::Read(port) => {
                 self.tag(6);
-                self.s(port);
+                self.str(port);
             }
             Op::Push(port) => {
                 self.tag(7);
-                self.s(port);
+                self.str(port);
             }
             Op::Fam => self.tag(8),
             Op::Derived(d) => {
@@ -540,13 +562,13 @@ impl W {
         let mut jobs: Vec<(Option<&str>, &Pattern)> = vec![(None, p)];
         while let Some((field, p)) = jobs.pop() {
             if let Some(k) = field {
-                self.s(k);
+                self.str(k);
             }
             match p {
                 Pattern::Wild => self.tag(0),
                 Pattern::Bind(x) => {
                     self.tag(1);
-                    self.s(x);
+                    self.str(x);
                 }
                 Pattern::Lit(v) => {
                     self.tag(2);
@@ -554,25 +576,25 @@ impl W {
                 }
                 Pattern::Atom(name, ps) => {
                     self.tag(3);
-                    self.s(name);
-                    self.n(ps.len() as u64);
+                    self.str(name);
+                    self.word(ps.len() as u64);
                     jobs.extend(ps.iter().rev().map(|q| (None, q)));
                 }
                 Pattern::Fields(name, fs) => {
                     self.tag(4);
-                    self.s(name);
-                    self.n(fs.len() as u64);
+                    self.str(name);
+                    self.word(fs.len() as u64);
                     jobs.extend(fs.iter().rev().map(|(k, q)| (Some(&**k), q)));
                 }
                 Pattern::Tuple(ps) => {
                     self.tag(5);
-                    self.n(ps.len() as u64);
+                    self.word(ps.len() as u64);
                     jobs.extend(ps.iter().rev().map(|q| (None, q)));
                 }
                 Pattern::AnyAtom => self.tag(6),
                 Pattern::Is(t) => {
                     self.tag(7);
-                    self.s(&t.to_string());
+                    self.str(&t.to_string());
                 }
             }
         }
