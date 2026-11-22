@@ -843,7 +843,7 @@ fn the_product_takes_the_support_product_where_it_is_cheaper() {
         terms: terms.into_iter().collect(),
     };
     let plan = a.plan(&a).expect("packed keys");
-    let budget = plan.dense.min(plan.sparse);
+    let budget = plan.support_bound();
     let mut spent = 0.0;
     assert_eq!(
         a.support_mul(&a, &plan, budget, &mut spent),
@@ -853,7 +853,7 @@ fn the_product_takes_the_support_product_where_it_is_cheaper() {
     // Sides whose pairs are all distinct go to the sparse product: the sampled estimate says so.
     let b = sum_at((0..64u128).map(|i| (i * i * i * 1009 + i, 1)));
     let plan = b.plan(&b).expect("packed keys");
-    let budget = plan.dense.min(plan.sparse);
+    let budget = plan.support_bound();
     assert_eq!(b.support_mul(&b, &plan, budget, &mut 0.0), None);
 }
 
@@ -887,7 +887,7 @@ fn merged_terms(s: usize) -> f64 {
 /// The charges of [`LIMIT`]'s units: a sum of `s` names written `x1 + … + xs` merges its `s`
 /// one-word summands two at a time, smallest first, each term read [`SUM_TERM`] and its word
 /// [`SUM_WORD`]; a product of two sums in different names, sparse below the dense cost,
-/// [`PAIR`] plus one word for each pair.
+/// [`PAIR`] plus one word product, [`CHOICE_UNIT`], for each pair.
 #[test]
 fn the_charges_are_the_measured_ones() {
     let names: Vec<String> = (0..40).map(|i| format!("x{i}")).collect();
@@ -902,7 +902,8 @@ fn the_charges_are_the_measured_ones() {
     }
     let (work, _) = work_of(&t(&format!("{} * {}", sum(0, 20), sum(20, 20))), &binders);
     let sums = 2.0 * merged_terms(20) * (SUM_TERM + SUM_WORD);
-    assert!((work - sums - 400.0 * (PAIR + 1.0)).abs() < 1e-9, "{work}");
+    let pair = PAIR + CHOICE_UNIT * mul_cost(1, 1);
+    assert!((work - sums - 400.0 * pair).abs() < 1e-9, "{work}");
 }
 
 /// A chain of sums and differences is read as one sum of its summands with their signs, in
@@ -1062,8 +1063,9 @@ fn a_square_by_its_pairs_once_agrees_with_the_general_product() {
     };
     assert_eq!(a.sparse_mul(&a, true), a.sparse_mul(&a, false));
     // Keys that are not packed have no plan: `mul` takes the sparse square, charged its
-    // 4 * 5 / 2 pairs at a square's cost, each with a product of 4 by 4 words (2^200).
-    let charge = 10.0 * (PAIR + CHOICE_UNIT * SQUARE_PAIR_COST + 16.0);
+    // 4 * 5 / 2 pairs at a square's cost, each with a product of 4 by 4 words (2^200),
+    // 16 in the units of `mul_cost`.
+    let charge = 10.0 * (PAIR + CHOICE_UNIT * (SQUARE_PAIR_COST + mul_cost(4, 4)));
     assert!((a.sparse_charge(&a, true) - charge).abs() < 1e-9);
     let mut budget = Budget::new(1e6);
     let square = a.mul(&a.clone(), &mut budget).expect("within the budget");
@@ -1080,15 +1082,16 @@ fn a_square_counts_each_unordered_pair_once() {
     assert!(plan.square && !plan.takes_dense);
     // 64 * 65 / 2 pairs, not 64 * 64.
     assert_eq!(plan.choice.pairs, 2080.0);
-    assert_eq!(plan.sparse, 2080.0);
-    let pair = PAIR + CHOICE_UNIT * SQUARE_PAIR_COST;
-    assert!((a.sparse_charge(&a, true) - 2080.0 * (pair + 1.0)).abs() < 1e-6);
+    let pair = PAIR + CHOICE_UNIT * (SQUARE_PAIR_COST + mul_cost(1, 1));
+    assert!((plan.sparse - 2080.0 * pair).abs() < 1e-6);
+    assert!((a.sparse_charge(&a, true) - plan.sparse).abs() < 1e-6);
     // Not a square: the same monomials with other coefficients, every ordered pair.
     let b = packed(&at, -3);
     let plan = a.plan(&b).expect("packed keys");
     assert!(!plan.square);
     assert_eq!(plan.choice.pairs, 4096.0);
-    assert_eq!(plan.sparse, 4096.0);
+    let ordered = PAIR + CHOICE_UNIT * mul_cost(1, 1);
+    assert!((plan.sparse - 4096.0 * ordered).abs() < 1e-6);
     // Through the whole normal form: a sum of 20 names squared is charged its 210 pairs, each
     // at a square's cost.
     let names: Vec<String> = (0..20).map(|i| format!("x{i}")).collect();
@@ -1097,7 +1100,7 @@ fn a_square_counts_each_unordered_pair_once() {
     let (square, _) = work_of(&t(&format!("{sum} * {sum}")), &binders);
     let (sum, _) = work_of(&t(&sum), &binders);
     assert!(
-        (square - 2.0 * sum - 210.0 * (pair + 1.0)).abs() < 1e-9,
+        (square - 2.0 * sum - 210.0 * pair).abs() < 1e-9,
         "{square} {sum}"
     );
 }
@@ -1128,7 +1131,10 @@ fn one_decide_spends_at_most_four_budgets() {
     // A refused identity on the same path spends more than one limit in all: the factors
     // `p + 1` and `p * q + q` are expanded within the limit, and then the sides, whose two
     // products `p * q` pass it. The old doc's "a refusal costs at most the limit" fails here.
-    let n = 460;
+    // One `p * q` is charged about 11.8 M units at n = 700: 701^2 sparse pairs of 11-word
+    // coefficients (n = 460 was proved once a pair's word products were charged at
+    // `CHOICE_UNIT`, POLY-support-bench).
+    let n = 700;
     let p = format!("(1 + x) ^ {n}");
     let q = format!("(1 + y) ^ {n}");
     let l = format!("({p} + (2 - 1) ^ {WIDE}) * {q}");

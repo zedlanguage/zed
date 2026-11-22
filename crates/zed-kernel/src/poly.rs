@@ -136,8 +136,28 @@ const SUM_WORD: f64 = 0.2;
 /// product's allocation, its sorting and its merge.
 const PAIR: f64 = 8.0;
 
-/// The charge for each unit the support product counts: about 30 ns.
-const SUPPORT: f64 = 2.0;
+/// The charge for each unit the support product counts, in the units of [`LIMIT`]: its cost
+/// in the choice's units, [`SUPPORT_COST`], at [`CHOICE_UNIT`] each.
+const SUPPORT: f64 = CHOICE_UNIT * SUPPORT_COST;
+
+/// The cost of each unit the support product counts ([`Poly::support_mul`]: its rounds'
+/// transforms, `ntt_cost`, and the terms each round reads), in `Poly::mul`'s choice of method,
+/// in the units of `num::mul_cost`: `Poly::mul` tries the support product when this times its
+/// estimated units is below the cheaper of the dense and the sparse product's estimates.
+/// Measured by `crossover poly-support <words>` and `crossover poly-support-gaps <terms>`
+/// (POLY-support-bench, 2026-11-22, processor time on a Colab VM, dev profile): the squares of
+/// `(x + y)^k + x` cross over at `k` about 354 at 4 and 16 words and about 512 at 1 word, where
+/// the support product took 0.6 to 0.9 of the fallback's time; the two-index progressions
+/// (`poly-support-gaps 256`) never cross up to gap 4096 (the support product 1.4 to 3.0 times
+/// the sparse square's time), so they only bound this from below (4.8). Fitted over the four
+/// together: from 5.416 to 5.440 the worst method taken costs 1.555 times the faster; 5.416 is
+/// the flip of the 4-word square at `k = 332`, where the support product took 1.78 times the
+/// time, and 5.440 that of the 16-word square at `k = 362`, where it took 0.59 times. Below
+/// 5.1 it is taken at `k` up to 304 at 3.2 times; above 5.44 the worst is 1.69, the 16-word
+/// squares left to the sparse product. Set inside the window, not rounded to 5.4, which would
+/// take the 1.78 case. The estimate ranks these inputs loosely (the 16-word square at
+/// `k = 304` has the highest flip, 9.4, and took 1.56 times): POLY-support-cost-ranking.
+const SUPPORT_COST: f64 = 5.43;
 
 /// The cost of a pair of the sparse product besides its coefficients' product, in `Poly::mul`'s
 /// choice of method, in the units of `num::mul_cost` (one word product, about 16 instructions).
@@ -2016,9 +2036,10 @@ impl<K: Key> Poly<K> {
     /// `l03_09_egraph::scaling` (COMPLEXITY.md K107, Crossovers, POLY-nf-sparse-product).
     ///
     /// Charged to `budget`, in the units of [`LIMIT`]: [`SUPPORT`] times what the support
-    /// product counted, which it bounds by the cheaper of the dense and the sparse cost and by
-    /// what is left; and when it gives up, the chosen method's charge, before it runs: the dense
-    /// cost, or [`Poly::sparse_charge`]. `None` when a charge would pass the budget.
+    /// product counted, which it bounds by the cheaper method's estimate
+    /// ([`Plan::support_bound`]) and by what is left; and when it gives up, the chosen
+    /// method's charge, before it runs: the dense cost, or [`Poly::sparse_charge`]. `None`
+    /// when a charge would pass the budget.
     fn mul(&self, o: &Poly<K>, budget: &mut Budget) -> Option<Poly<K>> {
         let den = &self.den * &o.den;
         if self.terms.is_empty() || o.terms.is_empty() {
@@ -2034,9 +2055,8 @@ impl<K: Key> Poly<K> {
                 self.sparse_mul(o, square)
             }
             Some(plan) => {
-                let cheaper = plan.dense.min(plan.sparse);
                 let mut tried = 0.0;
-                let bound = cheaper.min(budget.left() / SUPPORT);
+                let bound = plan.support_bound().min(budget.left() / SUPPORT);
                 let support = self.support_mul(o, &plan, bound, &mut tried);
                 budget.spend(tried * SUPPORT)?;
                 match support {
@@ -2045,7 +2065,7 @@ impl<K: Key> Poly<K> {
                         budget.spend(if plan.takes_dense {
                             plan.dense
                         } else {
-                            self.sparse_charge(o, plan.square)
+                            plan.sparse
                         })?;
                         if plan.takes_dense {
                             self.dense_mul(o, plan.slot, plan.step)
@@ -2075,25 +2095,31 @@ impl<K: Key> Poly<K> {
         }
     }
 
-    /// The cost of the sparse product with `o`: one product of `w1 * w2` words for each of its
-    /// pairs ([`Poly::pairs`]), `w` the widest coefficient's words.
-    fn sparse_cost(&self, o: &Poly<K>, square: bool) -> f64 {
+    /// The cost of one pair's coefficient product with `o`, at the widest coefficients' 64-bit
+    /// words `w1` and `w2`, in the units of `num::mul_cost`: `w1 w2` word products, or Toom's
+    /// count where that is less.
+    fn pair_cost(&self, o: &Poly<K>) -> f64 {
         let w = |p: &Poly<K>| {
             let bits = p.terms.iter().map(|(_, c)| c.bits()).max().unwrap_or(0);
-            bits.div_ceil(64).max(1) as f64
+            usize::try_from(bits.div_ceil(64).max(1)).unwrap_or(usize::MAX)
         };
-        self.pairs(o, square) * w(self) * w(o)
+        mul_cost(w(self), w(o))
     }
 
-    /// The charge for the sparse product with `o`: [`PAIR`] plus `w1 * w2` for each of its pairs
-    /// ([`Poly::pairs`]), in units of the dense product's ([`LIMIT`]): a pair's allocation,
-    /// sorting and merge take about 8 of the dense product's units.
+    /// The charge for the sparse product with `o`, in units of the dense product's
+    /// ([`LIMIT`]): [`PAIR`] for each of its pairs ([`Poly::pairs`]), a pair's allocation,
+    /// sorting and merge, about 8 of the dense product's units, and its coefficient product
+    /// ([`Poly::pair_cost`]) and a square's [`SQUARE_PAIR_COST`] at [`CHOICE_UNIT`] each.
+    ///
+    /// Complexity tradeoff: the coefficient product was charged one unit of the limit, about
+    /// 14 ns, a word product, which takes about 2 ns (16 instructions, [`CHOICE_UNIT`]): a
+    /// square of 256 terms of 16 words (32 896 pairs) was charged 8.9 M units, 127 ms at the
+    /// limit's rate, where its sparse square took 10.1 ms (measured by POLY-square-sparse-half,
+    /// quoted in plan row POLY-support-bench), so wide sparse products were refused far below
+    /// the limit's time, and the support product, bounded by that charge, ran where the sparse
+    /// product was twice as fast.
     fn sparse_charge(&self, o: &Poly<K>, square: bool) -> f64 {
-        let pair = match square {
-            true => PAIR + CHOICE_UNIT * SQUARE_PAIR_COST,
-            false => PAIR,
-        };
-        self.pairs(o, square) * pair + self.sparse_cost(o, square)
+        pairs_charge(self.pairs(o, square), square, self.pair_cost(o))
     }
 
     /// The costs of the dense and the sparse product with `o`, the dense product's slot width in
@@ -2157,9 +2183,8 @@ impl<K: Key> Poly<K> {
             .checked_mul(u128::from(slot_words))
             .map_or(f64::INFINITY, |w| share * ntt_cost(w as f64))
             + CHOICE_UNIT * (DENSE_COST + SLOT_COST * span as f64);
-        let sparse = self.sparse_cost(o, square);
-        let words =
-            |p: &Poly<K>| usize::try_from(bits(p).div_ceil(64).max(1)).unwrap_or(usize::MAX);
+        let (pairs, pair) = (self.pairs(o, square), self.pair_cost(o));
+        let sparse = pairs_charge(pairs, square, pair);
         // Complexity tradeoff: the choice was `dense <= sparse` on the charges above, both with
         // unit constants; the dense product's fixed cost and its packed product's method
         // (schoolbook, Toom or transform, as `num::mul` takes it; their sources are cited in
@@ -2180,8 +2205,8 @@ impl<K: Key> Poly<K> {
         // `SQUARE_PAIR_COST` (POLY-square-sparse-half) it changes method at the measured
         // crossover, gap 20.
         let choice = Choice {
-            pairs: self.pairs(o, square),
-            pair: mul_cost(words(self), words(o)),
+            pairs,
+            pair,
             square_pair: match square {
                 true => SQUARE_PAIR_COST,
                 false => 0.0,
@@ -2372,15 +2397,17 @@ impl<K: Key> Poly<K> {
     /// costs time, never a wrong term, and the budget bounds the time (at most twice the cheaper
     /// method's cost when the estimate is wrong).
     ///
-    /// Steps of that bound: `Poly::mul` passes `budget` at most `cheaper`, the smaller of the
-    /// dense and the sparse estimates in the units of [`LIMIT`]. Every round adds its cost to
-    /// `spent` and returns `None` past `budget` before its work (`sumset`, `coefficients`), as
-    /// do the two checks here before the sampling and the first round; so the counted work is
-    /// at most `budget`, besides one round's candidate counting (`CANDIDATES` times the open
-    /// indices), added just before a check. A unit counted here costs [`SUPPORT`] = 2 units of
-    /// the limit, so the support product's time is at most about twice `cheaper`; when it
-    /// gives up, the cheaper method then runs as well, so the whole product costs at most
-    /// about three times `cheaper`. No test measures a refused support product's time.
+    /// Steps of that bound: `Poly::mul` passes `budget` at most [`Plan::support_bound`],
+    /// `cheaper / SUPPORT_COST`, `cheaper` the smaller of the dense and the sparse estimates in
+    /// the units of `num::mul_cost`. Every round adds its cost to `spent` and returns `None`
+    /// past `budget` before its work (`sumset`, `coefficients`), as do the two checks here
+    /// before the sampling and the first round; so the counted work is at most `budget`,
+    /// besides one round's candidate counting (`CANDIDATES` times the open indices), added just
+    /// before a check. A unit counted here is estimated at [`SUPPORT_COST`] units of
+    /// `num::mul_cost`, so the support product's estimated time is at most about `cheaper`'s;
+    /// when it gives up, the cheaper method then runs as well, so the whole product costs at
+    /// most about twice `cheaper`, as far as the estimates hold. No test measures a refused
+    /// support product's time.
     fn support_mul(
         &self,
         o: &Poly<K>,
@@ -2388,6 +2415,58 @@ impl<K: Key> Poly<K> {
         budget: f64,
         spent: &mut f64,
     ) -> Option<Vec<(K, BigInt)>> {
+        let s = self.support_setup(o, plan)?;
+        if s.sampling() + s.cost((s.terms - 1) as f64) >= budget {
+            return None;
+        }
+        let mut rng = s.seed();
+        let estimate = s.estimate(&mut rng);
+        *spent = s.sampling();
+        if *spent + s.cost(estimate) >= budget {
+            return None;
+        }
+        let support = sumset(
+            &s.ra,
+            &s.rb,
+            s.sub,
+            estimate as u64,
+            &mut rng,
+            spent,
+            budget,
+        )?;
+        let (a, b) = (&self.terms, &o.terms);
+        let coefficients = coefficients(
+            [(&a[..], &s.ra[..]), (&b[..], &s.rb[..])],
+            &support,
+            s.slot,
+            s.folds,
+            &mut rng,
+            spent,
+            budget,
+        )?;
+        let base = s.base;
+        Some(
+            support
+                .iter()
+                .zip(coefficients)
+                .filter(|(_, c)| !c.is_zero())
+                .map(|(s, c)| (K::at(base + s * plan.step), c))
+                .collect(),
+        )
+    }
+
+    /// The support product's units before its rounds: the sampling and the rounds at the
+    /// sampled estimate of the support's size, as [`Poly::support_mul`] weighs them against its
+    /// budget. `None` where the support product cannot run (its words do not fit a `usize`).
+    fn support_units(&self, o: &Poly<K>, plan: &Plan) -> Option<f64> {
+        let s = self.support_setup(o, plan)?;
+        let estimate = s.estimate(&mut s.seed());
+        Some(s.sampling() + s.cost(estimate))
+    }
+
+    /// The indices of `self` and `o` reduced by the step and moved to 0, and the sizes the
+    /// support product's rounds cost by. `O(t1 + t2)` index operations and coefficient words.
+    fn support_setup(&self, o: &Poly<K>, plan: &Plan) -> Option<SupportSetup> {
         let (a, b) = (&self.terms, &o.terms);
         let (ta, tb) = (a.len(), b.len());
         let lo = |t: &[(K, BigInt)]| t[0].0.index().expect("a packed key");
@@ -2419,58 +2498,15 @@ impl<K: Key> Poly<K> {
                 .map(|(_, c)| c.bits().div_ceil(64).max(1) as f64)
                 .sum()
         };
-        let folds = words(a) + words(b);
-        let cost = |s: f64| {
-            let p = 1.5 * s;
-            2.0 * (sumset_round(p, sub, ta + tb) + coefficient_round(p, slot, folds))
-        };
-        let sampling = SAMPLES as f64 * (ta + tb) as f64;
-        if sampling + cost((ta + tb - 1) as f64) >= budget {
-            return None;
-        }
-        let mut rng = {
-            let mut h = Digest::default();
-            ra.hash(&mut h);
-            rb.hash(&mut h);
-            h.finish()
-        };
-        // Complexity tradeoff: the support's size `s` is not known before the sumset is found, and
-        // the sumset of sides whose pairs are all distinct costs more than the sparse product of
-        // the same sides. A mean of `1 / count` over `SAMPLES` pairs drawn at random, `count` the
-        // number of pairs on the drawn pair's index, estimates `s / (t1 t2)` in
-        // `O(SAMPLES (t1 + t2))`, so such a product goes to the sparse one at once.
-        let mut inverse = 0.0;
-        for _ in 0..SAMPLES {
-            rng = step(rng, 1);
-            let i = (rng % ta as u64) as usize;
-            rng = step(rng, 2);
-            let j = (rng % tb as u64) as usize;
-            inverse += 1.0 / pairs_at(&ra, &rb, ra[i] + rb[j]) as f64;
-        }
-        let estimate = (pairs as f64 * inverse / SAMPLES as f64).max((ta + tb - 1) as f64);
-        *spent = sampling;
-        if *spent + cost(estimate) >= budget {
-            return None;
-        }
-        let support = sumset(&ra, &rb, sub, estimate as u64, &mut rng, spent, budget)?;
-        let coefficients = coefficients(
-            [(&a[..], &ra[..]), (&b[..], &rb[..])],
-            &support,
+        Some(SupportSetup {
+            folds: words(a) + words(b),
+            ra,
+            rb,
+            sub,
             slot,
-            folds,
-            &mut rng,
-            spent,
-            budget,
-        )?;
-        let base = lo_a + lo_b;
-        Some(
-            support
-                .iter()
-                .zip(coefficients)
-                .filter(|(_, c)| !c.is_zero())
-                .map(|(s, c)| (K::at(base + s * plan.step), c))
-                .collect(),
-        )
+            terms: ta + tb,
+            base: lo_a + lo_b,
+        })
     }
 
     /// `self ^ e`: a monomial's power directly, otherwise by squaring with [`Poly::mul`], each
@@ -2593,9 +2629,10 @@ struct Plan {
     slot: u64,
     /// The step between the indices that may hold a term.
     step: u128,
-    /// The dense product's cost, infinite when its integer's length does not fit in a `u128`.
+    /// The dense product's charge, in the units of [`LIMIT`], infinite when its integer's
+    /// length does not fit in a `u128`.
     dense: f64,
-    /// The sparse product's cost.
+    /// The sparse product's charge, in the units of [`LIMIT`] ([`Poly::sparse_charge`]).
     sparse: f64,
     /// Whether the product is a square ([`Poly::squares`]).
     square: bool,
@@ -2637,11 +2674,99 @@ impl Choice {
     fn takes_dense(&self) -> bool {
         self.dense() <= self.sparse()
     }
+
+    /// The estimated cost of the method taken when the support product gives way, the cheaper
+    /// of the two.
+    fn cheaper(&self) -> f64 {
+        self.dense().min(self.sparse())
+    }
+}
+
+impl Plan {
+    /// The most units the support product ([`Poly::support_mul`]) may count: the cheaper
+    /// method's estimated cost over [`SUPPORT_COST`], so it is tried only where it is estimated
+    /// cheaper, in the same units as that choice.
+    fn support_bound(&self) -> f64 {
+        self.choice.cheaper() / SUPPORT_COST
+    }
+}
+
+/// The charge for `pairs` pairs of the sparse product, each with a coefficient product of
+/// `pair` in the units of `num::mul_cost`, a `square`'s or not ([`Poly::sparse_charge`]).
+fn pairs_charge(pairs: f64, square: bool, pair: f64) -> f64 {
+    let square_pair = match square {
+        true => SQUARE_PAIR_COST,
+        false => 0.0,
+    };
+    pairs * (PAIR + CHOICE_UNIT * (square_pair + pair))
 }
 
 /// The pairs drawn to estimate the size of a product's support ([`Poly::support_mul`]): the
 /// estimate only chooses a method, so its error costs time, never a wrong term.
 const SAMPLES: u32 = 32;
+
+/// What the support product ([`Poly::support_mul`]) reads its two sides as
+/// ([`Poly::support_setup`]).
+struct SupportSetup {
+    /// The first side's indices, less its lowest, over the step.
+    ra: Vec<u128>,
+    /// The second side's, likewise.
+    rb: Vec<u128>,
+    /// The 32-bit words of a moment of a slot of the sumset's rounds.
+    sub: usize,
+    /// The 32-bit words of a slot of the coefficients' rounds.
+    slot: usize,
+    /// The 64-bit words of both sides' coefficients.
+    folds: f64,
+    /// The terms of both sides.
+    terms: usize,
+    /// The sum of the two sides' lowest indices.
+    base: u128,
+}
+
+impl SupportSetup {
+    /// The units of the sampled estimate: [`SAMPLES`] merges of both sides.
+    fn sampling(&self) -> f64 {
+        SAMPLES as f64 * self.terms as f64
+    }
+
+    /// The units of the rounds for a support of `s` indices: about two rounds of each kind at
+    /// a prime near `1.5 s`.
+    fn cost(&self, s: f64) -> f64 {
+        let p = 1.5 * s;
+        2.0 * (sumset_round(p, self.sub, self.terms) + coefficient_round(p, self.slot, self.folds))
+    }
+
+    /// The first state of the draws, from the sides' reduced indices, so the work is the same
+    /// on every run.
+    fn seed(&self) -> u64 {
+        let mut h = Digest::default();
+        self.ra.hash(&mut h);
+        self.rb.hash(&mut h);
+        h.finish()
+    }
+
+    /// The estimated size of the support, at least `terms - 1`, advancing `rng`.
+    ///
+    /// Complexity tradeoff: the support's size `s` is not known before the sumset is found,
+    /// and the sumset of sides whose pairs are all distinct costs more than the sparse product
+    /// of the same sides. A mean of `1 / count` over `SAMPLES` pairs drawn at random, `count`
+    /// the number of pairs on the drawn pair's index, estimates `s / (t1 t2)` in
+    /// `O(SAMPLES (t1 + t2))`, so such a product goes to the sparse one at once.
+    fn estimate(&self, rng: &mut u64) -> f64 {
+        let (ta, tb) = (self.ra.len(), self.rb.len());
+        let mut inverse = 0.0;
+        for _ in 0..SAMPLES {
+            *rng = step(*rng, 1);
+            let i = (*rng % ta as u64) as usize;
+            *rng = step(*rng, 2);
+            let j = (*rng % tb as u64) as usize;
+            inverse += 1.0 / pairs_at(&self.ra, &self.rb, self.ra[i] + self.rb[j]) as f64;
+        }
+        let pairs = ta as f64 * tb as f64;
+        (pairs * inverse / SAMPLES as f64).max((self.terms - 1) as f64)
+    }
+}
 
 /// The primes tried for each round of [`coefficients`], the one that leaves the most indices alone
 /// for its size taken.
@@ -3070,6 +3195,9 @@ pub mod crossover {
     /// `super::SQUARE_PAIR_COST` as built.
     pub const SQUARE_PAIR_COST: f64 = super::SQUARE_PAIR_COST;
 
+    /// `super::SUPPORT_COST` as built.
+    pub const SUPPORT_COST: f64 = super::SUPPORT_COST;
+
     /// A polynomial of packed monomials with denominator 1, as `Poly::mul` multiplies them.
     #[derive(Clone, Debug)]
     pub struct Sum(Poly<u128>);
@@ -3151,6 +3279,39 @@ pub mod crossover {
     pub fn fixed_flip(a: &Sum, b: &Sum) -> Option<f64> {
         let c = a.0.plan(&b.0).expect("packed keys").choice;
         Some(c.sparse() - c.dense() + super::DENSE_COST)
+    }
+
+    /// `a * b` by the support product, with no bound on its work; `None` where it cannot run
+    /// (`Poly::support_setup`) or its rounds do not finish.
+    pub fn support(a: &Sum, b: &Sum) -> Option<Vec<(u128, BigInt)>> {
+        let plan = a.0.plan(&b.0).expect("packed keys");
+        a.0.support_mul(&b.0, &plan, f64::INFINITY, &mut 0.0)
+    }
+
+    /// `a * b` by the method `Poly::mul` takes when the support product gives way: the dense
+    /// or the sparse product.
+    pub fn fallback(a: &Sum, b: &Sum) -> Vec<(u128, BigInt)> {
+        match takes_dense(a, b) {
+            true => dense(a, b),
+            false => sparse(a, b),
+        }
+    }
+
+    /// Whether `Poly::mul` tries the support product for `a * b` with no other bound on its
+    /// work: its estimated units (`SupportSetup::estimate`) times `super::SUPPORT_COST` below
+    /// the cheaper method's estimate. A try can still give way when its rounds pass the bound.
+    pub fn takes_support(a: &Sum, b: &Sum) -> bool {
+        support_flip(a, b).is_some_and(|flip| super::SUPPORT_COST < flip)
+    }
+
+    /// The value of `super::SUPPORT_COST` at which `Poly::mul` changes method for `a * b`: the
+    /// support product below it, the dense or the sparse one at or above. From
+    /// `Plan::support_bound`, the try is made when `units < cheaper / SUPPORT_COST`, so at
+    /// `SUPPORT_COST < cheaper / units`. `None` where the support product cannot run.
+    pub fn support_flip(a: &Sum, b: &Sum) -> Option<f64> {
+        let plan = a.0.plan(&b.0).expect("packed keys");
+        let units = a.0.support_units(&b.0, &plan)?;
+        Some(plan.choice.cheaper() / units)
     }
 }
 

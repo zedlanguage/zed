@@ -64,6 +64,14 @@
 //!   indices, `g` from 1 to 512: a square is charged `SQUARE_SHARE` of its transform cost
 //!   (POLY-square-choice-cost) and `t (t + 1) / 2` sparse pairs (POLY-square-sparse-half).
 //!
+//! And its `SUPPORT_COST`, which decides when it tries the support product, against the method
+//! taken when that gives way, fitted over these two shapes together (POLY-support-bench):
+//!
+//! - `poly-support [words]`: the square of a sum shaped as `(x + y)^k + x`, `k` from 8 to 512,
+//!   coefficients of `words` 64-bit words (1, 4 and 16).
+//! - `poly-support-gaps [terms]`: the square of a sum of `terms` terms (256) in pairs `i s`,
+//!   `i s + 1`, `s` a gap from 3 to 4098.
+//!
 //! In `zed_corpus_ref::zedrt` (the corpus's reference programs):
 //!
 //! - `corpus-leaf-digits`: its `LEAF_DIGITS`, as `leaf-digits`.
@@ -1205,6 +1213,126 @@ fn poly_square(args: &[String]) -> ExitCode {
     status(verdict.holds())
 }
 
+/// `SUPPORT_COST` of `Poly::mul`'s choice to try the support product, for benchmarks that
+/// order it second: it is tried below the flip, so a higher constant takes the first method,
+/// the dense or the sparse product, sooner.
+fn support_constant() -> Constant<'static, Sums> {
+    Constant {
+        name: "SUPPORT_COST",
+        built: px::SUPPORT_COST,
+        flip: &|(a, b): &Sums| px::support_flip(a, b),
+        below_at_most: false,
+    }
+}
+
+/// `a * b` by the support product, which these shapes give no bound.
+fn support_run((a, b): &Sums) -> Vec<(u128, BigInt)> {
+    px::support(a, b).expect("the support product runs")
+}
+
+/// The support product against the method `Poly::mul` takes when it gives way, on the square
+/// of a sum shaped as `(x + y)^k + x` in one packed index (`k + 2` terms, at `i + (k - i) r`,
+/// `r = 2k + 1`, and at 1), coefficients of `words` 64-bit words (1, 4 and 16 in `all`), `k`
+/// from 8 to 512 in halves of a doubling; and, checked only, the product of two such sums.
+/// The square's support has about `3k` indices against its `k^2 / 2` pairs, so the support
+/// product wins from some `k` on, sooner at wide coefficients, whose pairs cost the sparse
+/// product the more (POLY-support-bench).
+fn poly_support(args: &[String]) -> ExitCode {
+    let words: usize = args.first().map_or(1, |s| s.parse().expect("words"));
+    let note = move |k: usize| format!(" ({} terms of {words} words, squared)", k + 2);
+    let inputs = move |k: usize| {
+        let mut rng = Rng::new(k as u64);
+        let k = k as u128;
+        let r = 2 * k + 1;
+        let mut shape = || {
+            let at = (0..=k).map(|i| i + (k - i) * r).chain(std::iter::once(1));
+            sum_at(&mut rng, at, words)
+        };
+        let a = shape();
+        let (b, c) = (shape(), shape());
+        vec![(a.clone(), a), (b, c)]
+    };
+    let bench = Crossover {
+        unit: "k",
+        note: &note,
+        inputs: &inputs,
+        below: Method {
+            name: "fallback",
+            run: &|(a, b): &Sums| px::fallback(a, b),
+        },
+        above: Method {
+            name: "support",
+            run: &support_run,
+        },
+        takes_above: &|(a, b): &Sums| px::takes_support(a, b),
+        constant: Some(support_constant()),
+    };
+    let verdict = bench.report(
+        &mut Meter::new(),
+        &format!("poly-support {words}"),
+        &format!("SUPPORT_COST {}", px::SUPPORT_COST),
+        &ladder(8, 512, 2),
+        TOLERANCE,
+    );
+    status(verdict.holds())
+}
+
+/// The support product against the method `Poly::mul` takes when it gives way, on the square
+/// of a sum of `t` terms (256 in `all`) in pairs at `i s` and `i s + 1`, `s = g + 2`,
+/// coefficients of `words` 64-bit words (1 when left out), `g` from 1 to 4096 in quarters of a
+/// doubling; and, checked only, the product of that sum with one in pairs at `i s` and
+/// `i s + 2`. Its support has about `1.5 t` indices whatever `g`, the dense product's span
+/// grows as `t g` and the sparse product's pairs stay `t^2 / 2`, so the support product's
+/// estimate falls below the dense one's from some gap on; but there the sparse square is the
+/// fallback, and at 256 terms of one word it took 0.33 to 0.7 of the support product's time
+/// at every gap to 4096 (POLY-support-bench, 2026-11-22). So this shape bounds
+/// `SUPPORT_COST` from below only.
+fn poly_support_gaps(args: &[String]) -> ExitCode {
+    let t: u128 = args.first().map_or(256, |s| s.parse().expect("terms"));
+    let words: usize = args.get(1).map_or(1, |s| s.parse().expect("words"));
+    let note = move |_: usize| format!(" ({t} terms of {words} words, squared)");
+    let inputs = move |g: usize| {
+        let mut rng = Rng::new(g as u64);
+        let g = g as u128;
+        let mut pairs = |d: u128| {
+            let at = (0..t / 2).flat_map(|i| [i * (g + 2), i * (g + 2) + d]);
+            sum_at(&mut rng, at, words)
+        };
+        let a = pairs(1);
+        let (b, c) = (pairs(1), pairs(2));
+        vec![(a.clone(), a), (b, c)]
+    };
+    let bench = Crossover {
+        unit: "gap",
+        note: &note,
+        inputs: &inputs,
+        below: Method {
+            name: "fallback",
+            run: &|(a, b): &Sums| px::fallback(a, b),
+        },
+        above: Method {
+            name: "support",
+            run: &support_run,
+        },
+        takes_above: &|(a, b): &Sums| px::takes_support(a, b),
+        constant: Some(support_constant()),
+    };
+    let verdict = bench.report(
+        &mut Meter::new(),
+        &format!(
+            "poly-support-gaps {t}{}",
+            match words {
+                1 => String::new(),
+                w => format!(" {w}"),
+            }
+        ),
+        &format!("SUPPORT_COST {}", px::SUPPORT_COST),
+        &ladder(1, 4096, 4),
+        TOLERANCE,
+    );
+    status(verdict.holds())
+}
+
 /// The first `n` primes at or above `from`, by `zed_numtheory::next_prime`.
 fn primes_from(from: u64, n: usize) -> Vec<u64> {
     let mut out = Vec::with_capacity(n);
@@ -1352,7 +1480,7 @@ type Bench = (
 );
 
 /// Every benchmark, with its arguments in `all`; `print-never-slower` is not a threshold.
-const BENCHES: [Bench; 49] = [
+const BENCHES: [Bench; 53] = [
     ("mul", mul, &["1"]),
     ("mul", mul, &["4"]),
     ("mul", mul, &["32"]),
@@ -1402,6 +1530,10 @@ const BENCHES: [Bench; 49] = [
     ("poly-wide", poly_wide, &["2", "fixed"]),
     ("poly-wide", poly_wide, &["8", "fixed"]),
     ("poly-square", poly_square, &["256", "fixed"]),
+    ("poly-support", poly_support, &["1"]),
+    ("poly-support", poly_support, &["4"]),
+    ("poly-support", poly_support, &["16"]),
+    ("poly-support-gaps", poly_support_gaps, &["256"]),
 ];
 
 /// The limit on each benchmark of `all`.
