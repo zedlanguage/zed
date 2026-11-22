@@ -9825,6 +9825,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///    t_k(r))` if `k` holds a bounded `v`; else `Free`.
     /// 3. So the trial is found iff `alone` holds of both, and at every arrow left one of them
     ///    is `Kill` or both are of one group with disjoint masks ([`PartCarry::meets`]).
+    ///
     /// Cost: O(a · A) for the masks of A arrows, O(a · k · A) for the facts of the parts, and
     /// the pairs by [`Self::two_parts`] led by the first arrow left: a `Kill` there may meet
     /// any key (`Any`), a `Group(v, _)` only `Kill`s and its group, a `Free` only `Kill`s. With
@@ -9866,7 +9867,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         _ if t == 0 => PartCarry::Kill,
                         Some(v) => match common[&**v] & t {
                             0 => PartCarry::Kill,
-                            m => PartCarry::Group(&**v, m),
+                            m => PartCarry::Group(v, m),
                         },
                         None => PartCarry::Free,
                     }
