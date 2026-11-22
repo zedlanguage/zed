@@ -7695,7 +7695,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             // tried only where `e` has a value there ([`Self::lit_fit`]): `lit_takes` at `rat`
             // would take `1 / 0` as a division that always fails (QUESTIONS A62), which is for
             // a `/` that something else puts at `rat`, as `1r + 1 / 0`, not for a choice of
-            // carrier (test `l01_26a_generic_literals::call_arguments::a_division_of_literals_at_an_int_or_untyped_parameter_is_still_rejected`).
+            // carrier (test
+            // `l01_26a_generic_literals::call_arguments::a_division_of_literals_at_an_int_or_untyped_parameter_is_still_rejected`).
             0 => {
                 self.lit_ops.contains(&e.span)
                     && ((self.lit_fit(e, Carrier::Rat).0 && self.lit_takes(e, Carrier::Rat))
@@ -26521,8 +26522,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The type the construct `w` has with the fixes `c` carried into its argument `i`, where
     /// it then adds no error but those its own check `found`, each outside argument `i`
     /// (`ats`, [`arg_holding`]), and whether each error it adds lies inside another argument,
-    /// so that the fix settles the construct; `None` where it adds another. One check of the construct and
-    /// a binary search per error it adds.
+    /// so that the fix settles the construct; `None` where it adds another. One check of the
+    /// construct and a binary search per error it adds.
     fn carried_alone(
         &mut self,
         w: &Written<'a>,
