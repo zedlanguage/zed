@@ -522,6 +522,19 @@ fn settling_on_one_pin_scales() {
     });
 }
 
+/// The worst case of SETTLE-rounds, held to its order: about `m / 3.4` rounds, each a walk of
+/// the whole part, so `O(m^2)` (COMPLEXITY K144). Small instance:
+/// `a_chain_pinned_one_a_round_settles_as_the_scans_do`.
+#[test]
+fn settling_a_chain_pinned_one_a_round_stays_quadratic() {
+    let n = 128;
+    let chains = scaling::inputs(n, |m| pinned_one_a_round(20 * m as u64, m));
+    // Complexity tradeoff: K144, rounds of trials whose number grows with the part.
+    scaling::check_order("settling a chain pinned one a round, by depth", n, 2, |m| {
+        assert_eq!(chains[&m].settle().distinct_atoms().len(), 4);
+    });
+}
+
 #[test]
 fn the_connectives_on_parts_scale_by_depth() {
     // Small instances: `the_connectives_on_parts_hold_at_small_depths`.

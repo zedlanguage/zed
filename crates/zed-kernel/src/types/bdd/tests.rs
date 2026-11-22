@@ -1136,6 +1136,59 @@ pub(super) fn settled_by_one_pin(base: u64, m: usize) -> Part<Row> {
     Part::connect(Op::And, p, Part::not_expr(t))
 }
 
+/// `T_1 & (T_2 & (… & T_m))` with `T_k = s_k | !s_{k+1}` for `k < m` and `T_m = s_m`, each `s_k`
+/// the union of two meets of two atoms of its own, which is no chain under `|`, so that it stays
+/// an expression when a round rebuilds the part ([`settled_by_one_pin`]). `s_k`'s trial `false`
+/// makes the part `false` only once `s_{k+1}` is pinned `true` (then `!s_{k+1}` is `false` and
+/// `T_k` is `s_k`), so a round pins `s_k` only where the walk of [`Part::pins`] reaches it after
+/// `s_{k+1}`. The first walk finds `s_2, …, s_m` in that order and pins `s_m` alone; the walks
+/// of the rebuilt parts find them in other orders, and pin 1 to 17 at a time. Measured (VM):
+/// 14 rounds at m 64, 38 at 128 and 75 at 256, so the rounds grow with `m` (COMPLEXITY K144).
+pub(super) fn pinned_one_a_round(base: u64, m: usize) -> Part<Row> {
+    // One expression per `s_k`, so that its two uses are one expression.
+    let s: Vec<Part<Row>> = (0..=m as u64)
+        .map(|k| {
+            let at = base + 4 * k;
+            Part::connect(Op::Or, Part::Bdd(meet(at, 2)), Part::Bdd(meet(at + 2, 2)))
+        })
+        .collect();
+    let terms: Vec<Part<Row>> = (1..=m)
+        .map(|k| match k < m {
+            true => Part::connect(Op::Or, s[k].clone(), Part::not_expr(s[k + 1].clone())),
+            false => s[m].clone(),
+        })
+        .collect();
+    terms
+        .into_iter()
+        .rev()
+        .reduce(|rest, t| Part::connect(Op::And, t, rest))
+        .expect("m is at least 1")
+}
+
+#[test]
+fn a_chain_pinned_one_a_round_settles_as_the_scans_do() {
+    for m in [1, 2, 3, 5, 9] {
+        let p = pinned_one_a_round(900, m);
+        let settled = p.settle();
+        assert!(settled == p.settle_by_scans(), "m = {m}");
+        // Every `s_k` with `k >= 2` is pinned `true`, which leaves `T_1 = s_1`, four atoms.
+        assert_eq!(settled.distinct_atoms().len(), 4, "m = {m}");
+        // The rounds of `settle`: each `s_k` with `k >= 2` pinned once, in more than one round
+        // from m 3 on.
+        let (mut q, mut rounds) = (p, Vec::new());
+        loop {
+            let pins = q.pins();
+            if pins.is_empty() {
+                break;
+            }
+            rounds.push(pins.len());
+            q = q.substitute_all(&pins);
+        }
+        assert_eq!(rounds.iter().sum::<usize>(), m - 1, "m = {m}: {rounds:?}");
+        assert_eq!(m >= 3, rounds.len() > 1, "m = {m}: {rounds:?}");
+    }
+}
+
 /// The list `x_0 & x_1 & … & x_{m-1}`, one block of `m` literals, the atoms from `base`.
 pub(super) fn meet(base: u64, m: usize) -> Bdd<Row> {
     (0..m as u64).fold(Bdd::Leaf(true), |b, k| {

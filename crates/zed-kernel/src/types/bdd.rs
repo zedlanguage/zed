@@ -21,8 +21,9 @@
 //! first read, `O(n log n)` expected over all of them, module `xor`); asked which atoms every
 //! value takes or refuses (`Part::forced`), in `O(n log n)` on a list and in one pass over the
 //! nodes of an expression once the forms it reads are made (COMPLEXITY.md K32); and settled on
-//! its shared subexpressions (`Part::settle`), one evaluation per shared subexpression in each
-//! round. The last is above the rule of low complexity, an open item (DESIGN.md L1.23). Listing
+//! its shared subexpressions (`Part::settle`), one trial carried up per shared subexpression in
+//! each round. The last is above the rule of low complexity: its rounds grow with the part, so
+//! its worst case is `O(N^2)` (COMPLEXITY.md K144, a complexity tradeoff). Listing
 //! values takes one pass over a list's first nodes, as a diagram would have them
 //! (`Bdd::reaching`).
 //!
@@ -1792,6 +1793,21 @@ impl<A: Literal> Part<A> {
     /// same with `true` and `false` swapped, and each round of the loop keeps every value of
     /// the round before, so the end does too. Of a superset, what every value forces is forced
     /// on the part as well (`Part::forced`'s use in `narrow_tuples`).
+    ///
+    /// Complexity tradeoff (COMPLEXITY.md K144): a round costs `O(N)` for a part of `N` nodes
+    /// (the walk, the trials each carried only through what they change, the rebuild), but the
+    /// rounds are not bounded by a constant: a pin found late in a round can make the trial of an
+    /// expression tried earlier in it succeed, and the next round finds that. On
+    /// `tests::pinned_one_a_round`, `m` terms, there are about `m / 3.4` rounds, so `O(N^2)` in all
+    /// (bench `settling_a_chain_pinned_one_a_round_stays_quadratic`, held to power 2). Not used: a
+    /// worklist that tries again only the expressions a pin could affect, for two reasons. A trial
+    /// reads the other operand of each operator on its way up, so a pin that changes a node can
+    /// affect the trial of every shared expression below that node's parents, and nothing bounds
+    /// those re-trials below `O(N)` a pin. And a round gains from the rebuild that a worklist on
+    /// the old graph does not see: `substitute_all` joins two diagrams into one, which may be a
+    /// leaf, and makes equal expressions one, so new expressions become shared. A worklist that
+    /// gave other pins would also change which superset `settle` returns, which the callers in
+    /// `empty.rs` read. The work to remove this is SETTLE-rounds-worklist.
     pub(super) fn settle(&self) -> Part<A> {
         let mut p = self.clone();
         loop {
