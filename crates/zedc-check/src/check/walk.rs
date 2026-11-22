@@ -1182,7 +1182,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     ) -> Ty {
         let mut m = M::new();
         let args = Rc::new(args);
-        self.call_value(&mut m, f, what.into(), None, args, curry, site, span);
+        self.call_value(&mut m, f, what.into(), None, args, curry, site, None, span);
         self.drive(&mut m);
         m.take_ty()
     }
@@ -2066,7 +2066,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     return m.job(Job::Arg(k, Want::default()));
                 }
                 let args = Args::of(positional, named);
-                self.call_value(m, &f, what.into(), None, args, curry, Some(span), span);
+                let (site, of) = (Some(span), Some(callee.span));
+                self.call_value(m, &f, what.into(), None, args, curry, site, of, span);
             }
             Frame::Word(w, span) => {
                 let x = m.take_arg();
@@ -2680,7 +2681,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     _ => None,
                 };
                 for (i, target) in targets.iter().enumerate() {
-                    let c = self.component(&v, i, n, value.span);
+                    let c = self.component(&v, i, n, Some(value.span), value.span);
                     match target {
                         Target::Name(name, _) => {
                             let id = self.id(s.span, name);
@@ -9049,7 +9050,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => {
                     let args = Args::of(c.positional, c.named);
                     let site = Some(c.span);
-                    self.call_value(m, f, c.w.into(), receiver, args, false, site, c.span)
+                    self.call_value(m, f, c.w.into(), receiver, args, false, site, None, c.span)
                 }
             };
         }
@@ -10014,7 +10015,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         m.ty(t);
     }
 
-    /// A call through a value: each function its type holds, applied; an atom passes.
+    /// A call through a value: each function its type holds, applied; an atom passes. `of` is
+    /// the span of the value called as written, where there is one, which a family atom's
+    /// message shows and its repairs rewrite ([`Ck::passing`]).
     #[allow(clippy::too_many_arguments)]
     fn call_value(
         &mut self,
@@ -10025,9 +10028,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         args: Rc<Args<'a>>,
         curry: bool,
         site: Option<Span>,
+        of: Option<Span>,
         span: Span,
     ) {
-        let out = self.passing(f, "a call", span, None);
+        let out = self.passing(f, "a call", span, of);
         let mut pieces = f.pieces();
         // A class's calls are recorded with the arguments' types, found once.
         let class = pieces.iter().any(|p| self.class_of(p).is_some());
@@ -11042,7 +11046,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 } else {
                     let site = Some(span);
-                    self.call_value(m, &f, name.into(), Some(x), args, curry, site, span);
+                    self.call_value(m, &f, name.into(), Some(x), args, curry, site, None, span);
                 }
             }
             Some(Ref::Bound(_)) => m.ty(Ty::empty()),
@@ -14305,8 +14309,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// atoms, which `TupleGet` passes. A value of a class needs a tuple of `n` of each type
     /// the class meets, and so a value that is no carrier: a class of carriers alone, as the
     /// literal `3` of `(1, 3)` bound by a call, is no tuple and is refused, as an `int` is.
-    fn component(&mut self, v: &Ty, i: usize, n: usize, span: Span) -> Ty {
-        let mut out = self.passing(v, "a tuple", span, None);
+    /// `of` is the span of the value as written, where there is one, which a family atom's
+    /// message shows and its repairs rewrite ([`Ck::passing`]).
+    fn component(&mut self, v: &Ty, i: usize, n: usize, of: Option<Span>, span: Span) -> Ty {
+        let mut out = self.passing(v, "a tuple", span, of);
         for p in v.pieces() {
             match p {
                 Piece::Tuple(cs) if cs.len() == n => out = out.union(&cs[i]),
@@ -15911,7 +15917,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let dense = self.dense_met(&on, *site, span);
                 self.at_key(&on, k, None, *site, span, dense, false)
             }
-            NeedKind::Destructure { i, n } => self.component(&on, *i, *n, span),
+            NeedKind::Destructure { i, n } => self.component(&on, *i, *n, None, span),
             NeedKind::Call {
                 what,
                 positional,

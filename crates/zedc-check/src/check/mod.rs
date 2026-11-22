@@ -8826,8 +8826,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             let then = (repairs.first()).map_or(String::new(), |r| format!(" Try `{r}` instead."));
             let message = format!("No case for `{atoms}` in {what}: `{c} : {t}`.{then}");
             notes.extend(repairs.iter().map(|r| format!("repair: `{r}`")));
-            // In the row "Atom of a named family reaching …" of the rejection table, named from
-            // L2.5, when a source program can raise it and so have a near miss (step L1.29).
+            // In the row "Atom of a named family reaching …" of the rejection table, named once a
+            // source program can raise it and so have a near miss (step L1.29): the resolver
+            // refuses `type` declarations until elaboration takes them (step L2.4), and no other
+            // form gives a value a named family (plan row MSG-family-atom-row-name).
             self.error_offering(span, message, notes);
         }
         t.loose_ty()

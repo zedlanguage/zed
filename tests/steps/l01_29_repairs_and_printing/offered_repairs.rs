@@ -640,3 +640,38 @@ fn a_cast_that_turns_a_number_into_an_atom_is_not_offered() {
     let got = offered("f(n: int | #NaN | #overflow, r: rat) = n == r;");
     assert!(got.contains("repair: write `rat(n) == r`"), "{got}");
 }
+
+/// A cast whose result keeps an atom the argument already holds is offered at a declared
+/// function's parameter that does not take the atom, since the atom bubbles out of the call
+/// where the repair is written (DESIGN.md sec:failure, "atoms bubble out of an argument"):
+/// `h(int(g(true)))`, with `g(true)` giving `1.0 | #none` and `h` taking `int`, checks, so
+/// `h(g(true))` offers it, the call written alone or inside another construct (row
+/// MSG-repair-atom-at-param). Each repaired program checks.
+#[test]
+fn a_cast_keeping_an_atom_is_offered_at_a_parameter_without_it() {
+    let decls = "g(positional b: bool) = if b { 1.0 } else { #none };
+h(positional x: int) = x;
+h2(positional x: int, positional y: int) = x + y;
+";
+    for (line, at) in [
+        ("k() = h(g(true));", "g(true)"),
+        ("k() = h(g(true)) + 1;", "g(true)"),
+        ("k() = (h(g(true)), 2);", "g(true)"),
+        ("k() = h2(g(true), 3);", "g(true)"),
+        ("k() = h(h(g(true)));", "g(true)"),
+        ("k() = { y = h(g(true)); y };", "g(true)"),
+        ("k(positional f: int -> int) = f(g(true));", "g(true)"),
+    ] {
+        let src = format!("{decls}{line}\n");
+        let got = offered(&src);
+        assert!(
+            got.contains("repair: wrap this in `int(…)`; the checker accepts that"),
+            "{src}{got}"
+        );
+        let wrapped = src.replacen(&format!("({at}"), &format!("(int({at})"), 1);
+        assert!(type_errors(&wrapped).is_empty(), "{wrapped}");
+        for (fixed, how) in repaired(&src) {
+            assert!(type_errors(&fixed).is_empty(), "{how}\n{fixed}");
+        }
+    }
+}

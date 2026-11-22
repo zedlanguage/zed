@@ -323,3 +323,28 @@ fn an_errs_of_a_family_s_atoms_is_rejected() {
     let loose = atoms(&["red", "green", "blue"]);
     assert_eq!(errors_given(text, &loose), Vec::<String>::new());
 }
+
+/// A family atom reaching a call through the value called, or a destructuring, is shown with
+/// the value's own text, and the repairs rewrite it, as at the condition of `if` (row
+/// MSG-family-atom-repair-text): neither says the repair in words.
+#[test]
+fn a_family_atom_called_or_destructured_shows_the_value_s_text() {
+    let v = atoms(&["off"]).union(&Ty::carrier(Carrier::Bool)).named();
+    for (text, what) in [
+        ("v = 0;\ny = v(1);\n", "a call"),
+        ("v = 0;\na, b = v;\n", "a tuple"),
+    ] {
+        let errors = errors_given(text, &v);
+        let e = (errors.iter())
+            .find(|e| e.starts_with("No case for"))
+            .unwrap_or_else(|| panic!("{text}{errors:?}"));
+        assert!(
+            e.starts_with(&format!(
+                "No case for `#off` in {what}: `v : bool | #off`. Try `(v else #off -> d)` \
+                 instead."
+            )),
+            "{text}{e}"
+        );
+        assert!(e.contains("\nrepair: `(v else #off -> d)`"), "{text}{e}");
+    }
+}

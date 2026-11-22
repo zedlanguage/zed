@@ -2312,6 +2312,36 @@ fn the_steps_of_differences_side_by_side_take_linear_time_in_their_number() {
             assert_eq!(count(n), n);
         },
     );
+    // A difference at each of `n` depths, `((..) \ (int, int), ((..) \ (int, int), … int))`:
+    // each step's path is as long as its depth, and each pair of steps shares that prefix.
+    // Side by side, the steps' paths are short, so comparing each pair of the `k` steps, the
+    // walk before b22-msgtypes, stayed within the limit up to k = 1000 (9.5 times at 8n,
+    // measured at f36f5888e), each step's own check costing far more than a comparison.
+    // Nested, the run measured 25.0 times the bytes at 8n at f36f5888e and at 964ae4d8c,
+    // from the derivation building the type of each nested display at every level
+    // (PERF-deep-tuple-call-refusal), which the depth test below measures alone.
+    let comb = |n: usize| {
+        format!(
+            "f(p: {}int{}) = p;\ng() = f(p: {}1{});\n",
+            "((..) \\ (int, int), ".repeat(n),
+            ")".repeat(n),
+            "((2, 3), ".repeat(n),
+            ")".repeat(n)
+        )
+    };
+    let nested = |n: usize| {
+        let errs = errors_with_steps(&comb(n));
+        assert_eq!(errs.len(), 1);
+        errs[0]
+            .1
+            .iter()
+            .filter(|s| s.contains("takes away"))
+            .count()
+    };
+    assert_eq!(nested(3), 3);
+    scaling::check("the steps of differences nested, by depth", 40, |n| {
+        assert_eq!(nested(n), n);
+    });
 }
 
 #[test]
