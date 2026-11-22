@@ -624,8 +624,16 @@ impl Meter {
 
     /// The least work and the least bytes of the runs of `f`, as many as [`Meter::repeats`] says.
     pub(crate) fn least(&mut self, f: impl Fn()) -> Work {
+        self.least_after(|| {}, f)
+    }
+
+    /// [`Meter::least`] with `before` run before each run of `f`, outside what is measured.
+    fn least_after(&mut self, before: impl Fn(), f: impl Fn()) -> Work {
         (0..self.repeats().0)
-            .map(|_| self.work(&f))
+            .map(|_| {
+                before();
+                self.work(&f)
+            })
             .reduce(|a, b| Work {
                 units: a.units.min(b.units),
                 bytes: a.bytes.min(b.bytes),
@@ -923,6 +931,116 @@ pub fn check_inputs<T: Sync>(
     });
 }
 
+/// [`check`] of `run` on an input of its own for each run, which `make` builds outside what is
+/// measured, so the run is cold: no fact a run finds and keeps in its input (such as a row's
+/// keys) is there for the next (FAIL-ratio-meet-deep). Before the runs of a size, as each
+/// [`Meter::least`] begins, the inputs of the runs before are released and one input per run
+/// of that least is built, each on a thread of its own; no input is built or released inside a
+/// run. A size this process does not run (one run in a new process, see [`compare_by`]) is
+/// never built here.
+///
+/// Why (MEM-l0126-40gb, 2026-11-22): the tests built every input of the check, [`Meter::runs`]
+/// per size, before the first run, and kept all of them to the end. On a meter of processor time,
+/// which a machine without a hardware counter of instructions uses (Colab VMs:
+/// /sys/bus/event_source/devices has no `cpu`), that is [`TIME_RUNS`] × [`TRIES`] = 15 per size,
+/// 30 held at once: `bench::deep_ops::fits_sig_takes_linear_time_in_the_depth` of l01_26 held
+/// 37.5 GB (sampled by `ps` every 2 s, test binary run whole at 1 thread), against 2.49 GB
+/// where instructions are counted (2 inputs), and ran a 50 GB VM out of memory at 8 threads.
+///
+/// Complexity tradeoff: the same `make` calls as before at most (`Meter::runs` per size, fewer
+/// when a measurement passes before the last), and the same runs; the memory of the inputs held
+/// at once falls from `Meter::runs` per size, both sizes, to one batch of [`Meter::least`]'s runs
+/// of one size: 30 to 5 inputs on processor time, 2 to 1 on instructions. Wall time: a batch is
+/// built at once, as before, but the batches of the two sizes no longer overlap, and a
+/// measurement after the first builds its batches again.
+pub fn check_fresh_inputs<T: Send + Sync>(
+    what: &str,
+    n: usize,
+    make: impl Fn(usize) -> T + Sync,
+    run: impl Fn(&T) + Sync,
+) {
+    check_fresh_inputs_by(&mut Meter::new(), what, n, &make, &run)
+}
+
+/// [`check_fresh_inputs`] by the given meter, compiled once for the reason [`check_by`] gives.
+pub(crate) fn check_fresh_inputs_by<T: Send + Sync>(
+    meter: &mut Meter,
+    what: &str,
+    n: usize,
+    make: &(dyn Fn(usize) -> T + Sync),
+    run: &(dyn Fn(&T) + Sync),
+) {
+    /// The inputs of the size `k` that runs now: those no run has read yet, and those read.
+    struct Batch<T> {
+        k: usize,
+        unread: Vec<T>,
+        read: Vec<T>,
+    }
+    /// Releases `inputs` each on a thread of its own: one after another, the inputs of `meets`
+    /// of shared tuples in l01_26 (512,000 levels) took 5 to 6 s to release at load 80.
+    fn release<T: Send>(inputs: Vec<T>) {
+        std::thread::scope(|s| {
+            for input in inputs {
+                s.spawn(move || drop(input));
+            }
+        });
+    }
+    let runs = meter.repeats().0;
+    let batch = std::sync::Mutex::new(Batch {
+        k: 0,
+        unread: Vec::new(),
+        read: Vec::new(),
+    });
+    let lock = || batch.lock().unwrap_or_else(|e| e.into_inner());
+    let prepare = |large: bool| {
+        let k = if large { FACTOR * n } else { n };
+        let mut b = lock();
+        if b.k == k && !b.unread.is_empty() {
+            return;
+        }
+        let old: Vec<T> = b.unread.drain(..).chain(b.read.drain(..)).collect();
+        release(old);
+        b.unread = std::thread::scope(|s| {
+            let building: Vec<_> = (0..runs).map(|_| s.spawn(move || make(k))).collect();
+            building
+                .into_iter()
+                .map(|t| t.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+                .collect()
+        });
+        // Room for every input read, so the push in a run allocates nothing.
+        b.read.reserve(runs);
+        b.k = k;
+    };
+    let read_at = |k: usize| {
+        let input = {
+            let mut b = lock();
+            assert_eq!(
+                b.k, k,
+                "{what}: the inputs built are of size {}, not {k}",
+                b.k
+            );
+            b.unread.pop().unwrap_or_else(|| {
+                panic!("{what}: no input left at size {k}: a run with no `prepare` before it")
+            })
+        };
+        run(&input);
+        lock().read.push(input);
+    };
+    let what = format!("{what}: sizes {n} and {}", FACTOR * n);
+    compare_by_dyn(
+        meter,
+        Measures::Both,
+        Some(n),
+        &what,
+        Bound::Order(1),
+        &|| read_at(n),
+        &|| read_at(FACTOR * n),
+        &prepare,
+    );
+    let b = batch.into_inner().unwrap_or_else(|e| e.into_inner());
+    release(b.unread.into_iter().chain(b.read).collect());
+}
+
 /// Which of the sizes n and 8n of the check this thread enters next, by a meter that runs each
 /// size in a new process when `fresh` is true, run in this process, as [`compare_by`] places
 /// them: in a process a check started for its test (`target`), each check before the target's
@@ -1036,6 +1154,7 @@ fn check_by_dyn(
         Bound::Order(power),
         &small,
         &large,
+        &|_| {},
     );
 }
 
@@ -1274,11 +1393,14 @@ fn replay_or_measure(
     fresh: bool,
     small: &(dyn Fn() + Sync),
     large: &(dyn Fn() + Sync),
+    prepare: &(dyn Fn(bool) + Sync),
 ) {
     use std::io::Write;
     if j < *k {
+        prepare(false);
         alone(&small);
         if !fresh {
+            prepare(true);
             alone(&large);
         }
         if let Ok(message) = std::env::var(format!("{FRESH_FAILED}{j}")) {
@@ -1294,11 +1416,14 @@ fn replay_or_measure(
     );
     let run = if *measure_large { large } else { small };
     let (bytes, ns) = (Cell::new(0), Cell::new(0));
-    let work = meter.least(|| {
-        let (b, n) = alone(&run);
-        bytes.set(b);
-        ns.set(n);
-    });
+    let work = meter.least_after(
+        || prepare(*measure_large),
+        || {
+            let (b, n) = alone(&run);
+            bytes.set(b);
+            ns.set(n);
+        },
+    );
     // Written to the standard output itself, which libtest's capture of `print!` does not hold,
     // on a line of its own after what libtest printed.
     let mut stdout = std::io::stdout().lock();
@@ -1368,11 +1493,14 @@ pub(crate) fn compare_by(
     small: impl Fn() + Sync,
     large: impl Fn() + Sync,
 ) {
-    compare_by_dyn(meter, measures, n, what, bound, &small, &large)
+    compare_by_dyn(meter, measures, n, what, bound, &small, &large, &|_| {})
 }
 
 /// [`compare_by`], compiled once: where the run at 8n runs, and the check's outcome kept for the
-/// process a later check of the test starts ([`replay_or_measure`]).
+/// process a later check of the test starts ([`replay_or_measure`]). `prepare(large)` runs
+/// before each run of `large` (`true`) or of `small` (`false`) in this process, outside what is
+/// measured, as [`check_fresh_inputs`] builds the input of the run there.
+#[allow(clippy::too_many_arguments)]
 fn compare_by_dyn(
     meter: &mut Meter,
     measures: Measures,
@@ -1381,23 +1509,24 @@ fn compare_by_dyn(
     bound: Bound,
     small: &(dyn Fn() + Sync),
     large: &(dyn Fn() + Sync),
+    prepare: &(dyn Fn(bool) + Sync),
 ) {
     // A meter that takes the least of several runs would start a process per run.
     let fresh = meter.fresh && meter.repeats() == (1, 1);
     let Some((test, j)) = enter_check() else {
-        return compare_measured(meter, measures, n, what, bound, small, large, None);
+        return compare_measured(meter, measures, n, what, bound, small, large, prepare, None);
     };
     if let Some(target) = fresh_target() {
         // A process started for one check: the checks of its test replay, and nothing else
         // starts a process.
         if target.2 == test {
-            return replay_or_measure(meter, target, j, what, fresh, small, large);
+            return replay_or_measure(meter, target, j, what, fresh, small, large, prepare);
         }
-        return compare_measured(meter, measures, n, what, bound, small, large, None);
+        return compare_measured(meter, measures, n, what, bound, small, large, prepare, None);
     }
     let at = fresh.then_some((test.as_str(), j));
     let run = std::panic::AssertUnwindSafe(|| {
-        compare_measured(meter, measures, n, what, bound, small, large, at)
+        compare_measured(meter, measures, n, what, bound, small, large, prepare, at)
     });
     if let Err(payload) = std::panic::catch_unwind(run) {
         note_panic(&test, j, &*payload);
@@ -1416,6 +1545,7 @@ fn compare_measured(
     bound: Bound,
     small: &(dyn Fn() + Sync),
     large: &(dyn Fn() + Sync),
+    prepare: &(dyn Fn(bool) + Sync),
     at: Option<(&str, usize)>,
 ) {
     let (limit, why) = match bound {
@@ -1489,10 +1619,13 @@ fn compare_measured(
                 set_small(bytes, ns);
                 work
             }
-            None => meter.least(|| {
-                let (bytes, ns) = alone(&small);
-                set_small(bytes, ns);
-            }),
+            None => meter.least_after(
+                || prepare(false),
+                || {
+                    let (bytes, ns) = alone(&small);
+                    set_small(bytes, ns);
+                },
+            ),
         };
         // Written after the phase at n, so its work is not counted in either run's.
         start_bench_phase(Some(phase.elapsed()));
@@ -1510,10 +1643,13 @@ fn compare_measured(
                 set(bytes, ns);
                 work
             }
-            None => meter.least(|| {
-                let (bytes, ns) = alone(&large);
-                set(bytes, ns);
-            }),
+            None => meter.least_after(
+                || prepare(true),
+                || {
+                    let (bytes, ns) = alone(&large);
+                    set(bytes, ns);
+                },
+            ),
         };
         // What follows, up to the next phase at 8n, has the runner's limit again.
         start_bench_phase(None);

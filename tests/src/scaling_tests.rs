@@ -783,6 +783,65 @@ fn each_run_starts_with_empty_thread_memos() {
     assert_eq!(fresh.into_inner(), small + large);
 }
 
+/// [`check_fresh_inputs`] holds at most one batch of inputs, those of one [`Meter::least`] of
+/// one size, and builds each input before its run is measured: on processor time [`TIME_RUNS`]
+/// inputs at once, not the 30 of both sizes that the tests building every input first held
+/// (MEM-l0126-40gb: 37.5 GB for one benchmark of l01_26 on a VM without a counter of
+/// instructions). The bytes of an input built inside a run would count in the run's bytes, 8
+/// times the input at 8n, and still pass a linear check, so the builds are counted too: one per
+/// run.
+#[test]
+fn fresh_inputs_are_held_one_batch_at_a_time_and_built_outside_the_runs() {
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+    static MOST: AtomicUsize = AtomicUsize::new(0);
+    static BUILT: AtomicUsize = AtomicUsize::new(0);
+    static IN_RUN: AtomicUsize = AtomicUsize::new(0);
+    static BUILT_IN_RUN: AtomicUsize = AtomicUsize::new(0);
+    static RUNS: AtomicUsize = AtomicUsize::new(0);
+    struct Input(Vec<u8>);
+    impl Drop for Input {
+        fn drop(&mut self) {
+            LIVE.fetch_sub(1, Relaxed);
+        }
+    }
+    let make = |k: usize| {
+        BUILT.fetch_add(1, Relaxed);
+        if IN_RUN.load(Relaxed) > 0 {
+            BUILT_IN_RUN.fetch_add(1, Relaxed);
+        }
+        let live = LIVE.fetch_add(1, Relaxed) + 1;
+        MOST.fetch_max(live, Relaxed);
+        Input(vec![1; k])
+    };
+    let run = |input: &Input| {
+        IN_RUN.fetch_add(1, Relaxed);
+        RUNS.fetch_add(1, Relaxed);
+        black_box(input.0.iter().map(|b| b ^ 1).collect::<Vec<u8>>());
+        IN_RUN.fetch_sub(1, Relaxed);
+    };
+    let mut meter = Meter::of_cpu_time();
+    check_fresh_inputs_by(
+        &mut meter,
+        "a pass over a fresh input",
+        200_000,
+        &make,
+        &run,
+    );
+    assert_eq!(LIVE.load(Relaxed), 0, "every input released");
+    assert!(
+        MOST.load(Relaxed) <= TIME_RUNS,
+        "{} inputs held at once, over one batch of {TIME_RUNS}",
+        MOST.load(Relaxed)
+    );
+    assert_eq!(BUILT.load(Relaxed), RUNS.load(Relaxed), "one input per run");
+    assert_eq!(
+        BUILT_IN_RUN.load(Relaxed),
+        0,
+        "an input built while a run ran"
+    );
+}
+
 /// A quadratic pass behind a memo the process keeps for all threads, keyed by size, as a
 /// table not keyed by thread is: the first run of each size does `n²` work and allocates `n²`
 /// bytes, every later run finds the size in the memo and does `n`. The least of several runs
