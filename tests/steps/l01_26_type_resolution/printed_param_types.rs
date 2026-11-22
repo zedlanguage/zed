@@ -38,10 +38,12 @@ fn accepted(src: &str) -> bool {
     type_errors(src).is_empty()
 }
 
+/// Definitions, function, printed type, arguments inside, arguments outside.
+type Case<'a> = (&'a str, &'a str, &'a str, &'a [&'a str], &'a [&'a str]);
+
 #[test]
 fn the_printed_type_of_a_passed_parameter_is_what_calls_accept() {
-    // (definitions, function, printed type, arguments inside, arguments outside)
-    let cases: &[(&str, &str, &str, &[&str], &[&str])] = &[
+    let cases: &[Case] = &[
         (
             "takes(n: int | f64 | String) = 1;\nnum(x) = takes(n: x) + x;\n",
             "num",

@@ -1250,40 +1250,47 @@ fn points_asked(k: usize) -> Vec<Term> {
     out
 }
 
+/// The scope over the names of [`points_asked`] at size `k`, before its tests.
+fn points_asked_scope(k: usize) -> Scope {
+    let ns: Vec<String> = (0..k)
+        .flat_map(|i| [format!("x{i}"), format!("y{i}"), format!("z{i}")])
+        .collect();
+    let ns: Vec<&str> = ns.iter().map(|s| s.as_str()).collect();
+    ints(&names(&ns))
+}
+
+/// `s` with the tests `ts` of [`points_asked`] at size `k` assumed in order, its first two
+/// and last two groups' `x_i` checked: 0 for an even `i`, 0 or 10 for an odd one.
+fn points_asked_settled(s: &Scope, ts: &[Term], k: usize, lazy: bool) -> Scope {
+    let p = Premises::new();
+    let s = if lazy { s.clone().lazy() } else { s.clone() };
+    let s = ts.iter().fold(s, |s, t| s.assume(t, true, &p));
+    for i in [0, 1, k - 2, k - 1] {
+        let x = s
+            .settled(&Arc::from(format!("x{i}").as_str()))
+            .ints()
+            .clone();
+        let want = if i % 2 == 0 {
+            IntervalSet::of(0, 0)
+        } else {
+            IntervalSet::of(0, 0).join(&IntervalSet::of(10, 10))
+        };
+        assert_eq!(x, want, "x{i} at {k}, lazy {lazy}");
+    }
+    s
+}
+
 /// A constraint written after a kept test whose case fixes one of its names and leaves
 /// another open is asked at the case's point (`Scope::written_dead`, `Scope::no_point_at`):
-/// k groups of [`points_asked`], eager and lazy, at k and 8k. The even groups' `x_i` is 0
-/// and the odd groups' is 0 or 10, checked at each size.
+/// 64 groups of [`points_asked`], eager and lazy. The even groups' `x_i` is 0 and the odd
+/// groups' is 0 or 10. The timing at 64 and 512 groups is `bench::points_asked_after_a_
+/// disjunction_scale`: in this module's piece it ran 21 s alone on a Colab VM against the
+/// limit of 20 s (TEST-vm-pieces-over-20s, 2026-11-22).
 #[test]
-fn points_asked_after_a_disjunction_scale() {
-    let p = Premises::new();
-    let made = zed_tests::scaling::inputs(64, |k| {
-        let ns: Vec<String> = (0..k)
-            .flat_map(|i| [format!("x{i}"), format!("y{i}"), format!("z{i}")])
-            .collect();
-        let ns: Vec<&str> = ns.iter().map(|s| s.as_str()).collect();
-        (ints(&names(&ns)), points_asked(k))
-    });
+fn points_asked_after_a_disjunction_are_answered() {
+    let (s, ts) = (points_asked_scope(64), points_asked(64));
     for lazy in [false, true] {
-        let what = format!("constraints asked at kept points, lazy: {lazy}");
-        zed_tests::scaling::check(&what, 64, |k| {
-            let (s, ts) = &made[&k];
-            let s = if lazy { s.clone().lazy() } else { s.clone() };
-            let s = ts.iter().fold(s, |s, t| s.assume(t, true, &p));
-            for i in [0, 1, k - 2, k - 1] {
-                let x = s
-                    .settled(&Arc::from(format!("x{i}").as_str()))
-                    .ints()
-                    .clone();
-                let want = if i % 2 == 0 {
-                    IntervalSet::of(0, 0)
-                } else {
-                    IntervalSet::of(0, 0).join(&IntervalSet::of(10, 10))
-                };
-                assert_eq!(x, want, "x{i} at {k}, lazy {lazy}");
-            }
-            std::hint::black_box(s);
-        });
+        points_asked_settled(&s, &ts, 64, lazy);
     }
 }
 
@@ -1419,3 +1426,5 @@ fn joins_beside_a_shared_tie_agree_with_and_without_inner_reductions() {
         }
     }
 }
+
+mod bench;

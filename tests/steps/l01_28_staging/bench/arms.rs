@@ -7,9 +7,10 @@ use crate::arms::{cut_reads_loaded, mixed_from, staging_work, stopped_each, stop
 
 /// DESIGN step L1.28: an evaluation that stops leaves the term to run whole, and the name it
 /// binds becomes run-stage, so nothing evaluates it twice. The evaluations are counted by
-/// their work: the stop of `huge` costs about 6.8 million instructions, and 8 readers of it
-/// cost about 0.5 million more than one (measured 2026-11-11); were each reader to evaluate
-/// `huge` again, 7 more readers would cost 7 stops more.
+/// their work: one more stop (`costly_stop` in `arms.rs`) costs about 300 million instructions,
+/// and 8 readers of one stopped binding cost at most 7.5 million more than one reader (five
+/// runs on a v5e VM, 2026-11-22); were each reader to evaluate the binding again, 7 more
+/// readers would cost 7 stops more.
 #[test]
 fn a_stopped_binding_read_twice_is_evaluated_once() {
     let mut meter = Meter::new();

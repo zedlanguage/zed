@@ -14267,20 +14267,32 @@ impl<'a> Ck<'_, 'a> {
                                 let printed: Vec<String> =
                                     args.iter().map(|a| a.to_string()).collect();
                                 let key = format!("{}({})", f.name, printed.join(", "));
-                                // Assumption, not proved (ASSUME-documented): one
-                                // implicit name per call, bound once at the root by
+                                // One implicit name per call, bound once at the root by
                                 // `self.implicit`, stands for every call of `f.name` whose
                                 // `args` are equal `Term`s reading the same binders. Equal
                                 // printed keys never merge different calls, since `args` are
                                 // compared too, and so are the binders they read: a name
                                 // alone does not tell the binder, as two functions no use
                                 // names share their parameters' names
-                                // (`Ck::name_by_place`). What is not shown: that `args` reading a
-                                // name bound inside an arm or a lambda still mean the same
-                                // value at the root. Evidence: the 6 tests of
-                                // `l01_39_reduced_product/arm_test_through_call.rs`, all
-                                // with arguments from the enclosing scope. If false, a
-                                // fact about the wrong value narrows a test: unsound.
+                                // (`Ck::name_by_place`).
+                                // Proof that `args` reading a name bound inside an arm or a
+                                // lambda is sound (TEST-term-for-uncovered): (1) the root
+                                // binds the implicit name `c` by the fact `c = f(args)`, a
+                                // relation between `c` and the binders `args` read, with no
+                                // value of any of them fixed. (2) `f` is a function of its
+                                // arguments (the checker never runs code, and a summed callee
+                                // has no effect), so wherever the binders hold values `v`,
+                                // the call's value is `f(v)`, and `c = f(v)` holds there.
+                                // (3) The arm scope reads each binder as the one symbol of
+                                // (1), so a fact on `c` in a test becomes a fact on that
+                                // symbol at that test's point, never on a value of another
+                                // evaluation. So a lambda called at several arguments, or
+                                // two arms that each bind a name, narrow each call to its own
+                                // argument; two arms binding `y` read different binders and
+                                // get different names by the key above. Tests:
+                                // `a_call_reading_a_name_bound_in_a_lambda_or_an_arm_
+                                // narrows_at_each_value` in
+                                // `l01_39_reduced_product/arm_test_through_call.rs`.
                                 let read: Vec<usize> =
                                     parts.vars[m[1]..].iter().map(|&(_, b)| b).collect();
                                 let found = (self.arms.implicit_calls.get(&key))

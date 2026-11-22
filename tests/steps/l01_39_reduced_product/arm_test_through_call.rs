@@ -221,4 +221,69 @@ fn a_name_bound_to_a_call_is_summarized_through_the_callee() {
     rejected(&[&one(12), &chain(12), &two(12)]);
 }
 
+/// A test that calls a definition and compares a `rat` with a literal reads the literal at its
+/// value (`Walk::term_for` through `Walk::rat_literal`, TEST-term-for-uncovered): `r >= 1r/2r`
+/// keeps `r` from `0r`, so `x / r` adds no `#divByZero`, and `r >= -1r/2r` does not.
+#[test]
+fn a_test_with_a_call_reads_a_rat_literal_at_its_value() {
+    let at = |lo: &str| {
+        format!(
+            "next(positional y: int) = y + 1;\n\
+             f(positional c: int, x: rat, r: rat) = \
+             if next(c) > 0 && r >= {lo} {{ x / r }} else {{ 0r }};\n"
+        )
+    };
+    assert_eq!(sig(&at("1r/2r"), "f"), "(int, x: rat, r: rat) -> rat");
+    assert_eq!(
+        sig(&at("-1r/2r"), "f"),
+        "(int, x: rat, r: rat) -> rat | #divByZero"
+    );
+}
+
+/// A part of a test that the arm scopes do not read, here a call with a named argument, is an
+/// opaque name (`Walk::term_for`'s fallback, TEST-term-for-uncovered): it narrows nothing, so
+/// the arm is reached where the rest of the test holds, and the rest still narrows it.
+#[test]
+fn a_part_of_a_test_the_scopes_do_not_read_narrows_nothing() {
+    let at = |c: i32| {
+        format!(
+            "clamp(positional y: int) = if y > 10 {{ 10 }} else {{ y }};\n\
+             g(positional a: int, b: int) = a + b;\n\
+             f(positional x: int) = \
+             if clamp(x) >= {c} && g(x, b: 1) > 100 {{ popCount(x - 10) }} else {{ 0 }};\n"
+        )
+    };
+    // `clamp(x) >= 10` holds for x >= 10 alone, `>= 9` lets x = 9 reach the arm; the named
+    // call, read as no fact, keeps neither out.
+    accepted(&[&at(10)]);
+    rejected(&[&at(9)]);
+}
+
+/// A call in a test whose argument reads a name bound inside an arm is one implicit name bound
+/// at the root (`Walk::term_for`, the key of `implicit_calls`) that stands for the call at
+/// every value of the argument. Sound, because the name is the call's value as a function of
+/// its arguments' terms, and those terms read the inner binder itself, not a value of it: a
+/// fact derived at the root, `c = next(y)`, holds wherever `y` is bound and whatever `y` holds
+/// there. Two calls at equal terms that read different binders are two names, since the
+/// binders read are part of the key. So `next(y) > 5` keeps `y >= 5` in each of two arms that
+/// bind their own `y`: `popCount(y - 5)` is accepted, and `popCount(y - 6)` is rejected at
+/// `y = 5` (TEST-term-for-uncovered). The same test in a lambda, `g = y -> if next(y) > 5 ...`,
+/// is rejected at `popCount(y - 5)` (measured 2026-11-22): a lambda's test does not narrow
+/// through a call, which is sound and less precise.
+#[test]
+fn a_call_reading_a_name_bound_in_an_arm_narrows_at_each_value() {
+    let arms = |c: i32| {
+        format!(
+            "next(positional y: int) = y + 1;\n\
+             f(positional x: int) = if x > 0 {{\n  \
+             y = x - 3;\n  return if next(y) > 5 {{ popCount(y - {c}) }} else {{ 0 }};\n\
+             }} else {{\n  \
+             y = 3 - x;\n  return if next(y) > 5 {{ popCount(y - {c}) }} else {{ 0 }};\n\
+             }};\n"
+        )
+    };
+    accepted(&[&arms(5)]);
+    rejected(&[&arms(6)]);
+}
+
 mod bench;

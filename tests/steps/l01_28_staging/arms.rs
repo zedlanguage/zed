@@ -223,9 +223,39 @@ fn a_split_function_called_with_a_value_read_at_run_time_gives_what_the_function
     assert_eq!(out_with(&p, &changed, "4\n"), "60\n");
 }
 
+/// An expression whose evaluation stops, as [`zed_tests::too_long`] does, after joining
+/// [`STOP_PIECES`] distinct strings into the one it doubles: `twice(…twice(("t_0" ++ "t_1") ++
+/// …)…)`. The joins are what an evaluation of it costs: since STAGE-byte-keys (0265e784b) the
+/// stage keys `s ++ s` by its canonical form, so the 64 doublings of one string cost little,
+/// and a stop of `too_long()` alone measured 0.19 ms against 0.53 ms for 7 more readers (v5e
+/// VM, 2026-11-22), too little for `bench::arms` to tell a second evaluation from a reader
+/// (FAIL-l01_28-staging-arms). The pieces are joined as a balanced tree, of depth
+/// log2(STOP_PIECES), so no walk of the term recurses deeper than that.
+fn costly_stop(tag: &str) -> String {
+    fn joined(tag: &str, lo: usize, hi: usize) -> String {
+        match hi - lo {
+            1 => format!("\"{tag}_{lo}\""),
+            n => format!(
+                "({} ++ {})",
+                joined(tag, lo, lo + n / 2),
+                joined(tag, lo + n / 2, hi)
+            ),
+        }
+    }
+    format!(
+        "{}{}{}",
+        "twice(".repeat(64),
+        joined(tag, 0, STOP_PIECES),
+        ")".repeat(64)
+    )
+}
+
+/// The number of distinct strings [`costly_stop`] joins.
+const STOP_PIECES: usize = 4096;
+
 /// A program in which `readers` definitions read one binding, `huge`, whose evaluation stops.
 pub(super) fn stopped_read_by(readers: usize) -> String {
-    let mut s = format!("{}huge = {};\n", zed_tests::TWICE, zed_tests::too_long());
+    let mut s = format!("{}huge = {};\n", zed_tests::TWICE, costly_stop("t"));
     for i in 0..readers {
         s += &format!("r{i} = huge ++ \"{i}\";\n");
     }
@@ -244,7 +274,7 @@ pub(super) fn stopped_each(readers: usize) -> String {
     for i in 0..readers {
         s += &format!(
             "h{i} = {};\nr{i} = h{i} ++ \"{i}\";\n",
-            zed_tests::too_long()
+            costly_stop(&format!("h{i}"))
         );
     }
     let all: Vec<String> = (0..readers).map(|i| format!("r{i}")).collect();
