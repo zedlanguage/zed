@@ -64,6 +64,9 @@
 #    noisier. A benchmark that fails is run once more on the same VM at once, alone; that
 #    second run's line is the verdict, and the first run's failed line is kept prefixed
 #    `farm: first run: `, which no reader of summary lines takes for one.
+#  - Tests: a test piece stopped by its limit (not one that failed otherwise) is run once more in
+#    the same way, alone, after the load has fallen, and named on a line `farm: stopped by its
+#    limit under load, passed alone: ...` when it passed then (FARM-share-load-timeouts; vm_side).
 #  - A share whose job did not run to the end (job.sh exit 2, 4 or 5, or no output) is run again on
 #    another VM, up to 3 attempts.
 # Cost here: packing the checkout once per VM (tar of the tracked and untracked files, about 2,500
@@ -237,17 +240,69 @@ vm_side() {
   fi
   bash "$w/run_tests.sh" --logs "$w/run" "${a[@]}" --pieces "$w/share" "$cores" >"$w/r1.out" 2>&1
   rc=$?
-  if [ "$kind" = bench ] && [ "$rc" = 1 ] &&
-    awk '$2 ~ /^rc=[1-9]/ { print $1 }' "$w/r1.out" | sort -u >"$w/failed" && [ -s "$w/failed" ]; then
-    awk 'NR == FNR { f[$1] = 1; next } $1 in f' "$w/failed" "$w/share" >"$w/again"
-    if [ -s "$w/again" ]; then
-      bash "$w/run_tests.sh" --logs "$w/again-run" "${a[@]}" --pieces "$w/again" 1 >"$w/r2.out" 2>&1
-      rc=$?
-      awk '$2 ~ /^rc=[1-9]/ || /^pieces: / { $0 = "farm: first run: " $0 } { print }' "$w/r1.out"
+  # The failed pieces run again once, alone: every failed benchmark (see the Design above), and a
+  # test piece only when its limit stopped it (FARM-share-load-timeouts), never one that failed an
+  # assertion or crashed.
+  #
+  # How a stopped piece shows. run_tests.sh's piece() runs a test piece under `timeout -k 5 <limit>`
+  # and prints `<piece> rc=<rc> <ms>ms load=<load> limit=<limit>s ...`. GNU timeout exits 124 when
+  # the limit ran out and its TERM ended the command, and 137 (128 + KILL) when the command outlived
+  # the TERM by the 5 s of -k and was killed (coreutils `timeout --help`; checked 2026-11-22 with
+  # coreutils 9.10: `timeout -k 1 1 sleep 3` gave 124, the same around a bash that ignores TERM
+  # gave 137). 137 is also what a process killed by the kernel's OOM killer gives, so 137 counts
+  # as stopped by the limit only when the piece ran at least its limit: a timeout fires only after
+  # <limit> s, so a stopped piece has ms >= 1000 x limit, and a kill before that is not the limit's.
+  # On a VM systemd-run is the stub above, which execs its command, so the rc is timeout's own.
+  #
+  # Why alone (FARM-share-load-timeouts). A share runs one piece per core, and the same heavy pieces
+  # (lazy points_asked_after_a_disjunction_scale, zedc_check, l01_39 case_wake, l01_23
+  # group_oracle, l08_02_remaps) were stopped at loads of 13 to 49 on 12-core VMs in every agent's
+  # merge check, and passed alone (main-watch's run of 2026-11-22T11:30Z). The run alone keeps
+  # run_tests.sh's own limit, max(20, 20 x load / cores) s, so a piece slow by itself still fails.
+  # That limit reads the 1-minute load, which the share leaves high: Linux's load1 is an average
+  # damped by e^(-5/60) a 5 s tick (kernel/sched/loadavg.c, EXP_1 = 1884/2048 = 0.9199; from
+  # memory of the source, not read today; e^(-5/60) = 0.9200), so with nothing running it falls
+  # from L0 to the cores c in 60 ln(L0 / c) s: 84 s from 49 on 12 cores, 149 s from 96 on 8. So
+  # the run alone first waits, up to 240 s (enough for L0 up to c e^4 = 54.6 c), until the load is
+  # at most the cores, where the limit is the plain 20 s; past 240 s it runs anyway, and its
+  # summary line prints the load and the limit it had. tools/test_farm_run.sh's cases
+  # timeout-rerun, timeout-alone-too, assert-fail, killed, timeout-and-fail and load-wait check
+  # this with a stub of run_tests.sh; they cannot check the real run_tests.sh's lines or a real
+  # timeout, which a merge check on VMs exercises.
+  : >"$w/failed"
+  if [ "$rc" = 1 ] && [ "$kind" = bench ]; then
+    awk '$2 ~ /^rc=[1-9]/ { print $1 }' "$w/r1.out" | sort -u >"$w/failed"
+  elif [ "$rc" = 1 ]; then
+    awk '$2 ~ /^rc=(124|137)$/ && $3 ~ /^[0-9]+ms$/ && $5 ~ /^limit=[0-9]+s$/ &&
+      $3 + 0 >= 1000 * substr($5, 7) { print $1 }' "$w/r1.out" | sort -u >"$w/failed"
+  fi
+  awk 'NR == FNR { f[$1] = 1; next } $1 in f' "$w/failed" "$w/share" >"$w/again"
+  if [ -s "$w/again" ]; then
+    local lf=${FARM_VM_LOADAVG:-/proc/loadavg} l=0 t=0 others alone
+    if [ "$kind" = test ]; then
+      while read -r l _ <"$lf" && awk -v l="$l" -v c="$cores" 'BEGIN { exit !(l > c) }' && [ "$t" -lt 240 ]; do
+        sleep 5
+        t=$((t + 5))
+      done
+    fi
+    bash "$w/run_tests.sh" --logs "$w/again-run" "${a[@]}" --pieces "$w/again" 1 >"$w/r2.out" 2>&1
+    rc=$?
+    awk 'NR == FNR { f[$1] = 1; next } ($1 in f && $2 ~ /^rc=[1-9]/) || /^pieces: / { $0 = "farm: first run: " $0 } { print }' \
+      "$w/failed" "$w/r1.out"
+    if [ "$kind" = bench ]; then
       echo "farm: each failed benchmark run again once, alone, on the same VM; its verdict:"
       cat "$w/r2.out"
       return "$rc"
     fi
+    echo "farm: each test piece stopped by its limit run again once, alone, on the same VM; its verdict:"
+    echo "farm: waited $t s for the load to fall to the $cores cores (load $l)"
+    cat "$w/r2.out"
+    alone=$(awk '$2 == "rc=0" { print $1 }' "$w/r2.out" | paste -sd' ')
+    [ -z "$alone" ] || echo "farm: stopped by its limit under load, passed alone: $alone"
+    # The share fails when a piece failed alone or a piece failed otherwise in the first run.
+    others=$(awk 'NR == FNR { f[$1] = 1; next } $2 ~ /^rc=[1-9]/ && !($1 in f)' "$w/failed" "$w/r1.out" | wc -l)
+    [ "$others" = 0 ] || rc=1
+    return "$rc"
   fi
   cat "$w/r1.out"
   return "$rc"

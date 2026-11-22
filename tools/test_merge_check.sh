@@ -133,6 +133,13 @@ chmod +x tools/test_merge_check.sh
 # part and, as the real one does, "checks failed: <n>" last, 1 for the part named by $STUB_RT_FAIL.
 printf '#!/bin/bash\necho "rt $1"\n[ "$1" != "$STUB_RT_FAIL" ] || { echo "checks failed: 1"; exit 1; }\necho "checks failed: 0"\n' >tools/test_run_tests.sh
 chmod +x tools/test_run_tests.sh
+# The toy's own tools/test_farm_run.sh (step 0c, FARM-share-load-timeouts), which fails when
+# $STUB_FARM_FAIL is set, and a tools/farm_run.sh to change (MERGE_CHECK_FARM=local below: it
+# never runs).
+printf '#!/bin/bash\necho "farm self"\n[ -z "$STUB_FARM_FAIL" ]\n' >tools/test_farm_run.sh
+chmod +x tools/test_farm_run.sh
+printf '#!/bin/bash\nexit 2\n' >tools/farm_run.sh
+chmod +x tools/farm_run.sh
 # The toy's own tools/check_changed_docs.sh, which the chunks of step 2b leave to the merge check
 # (tools/run_tests.sh --pieces does not run it): it fails when $STUB_DOCS_FAIL is set.
 printf '#!/bin/bash\n[ -z "$STUB_DOCS_FAIL" ] || { echo "a doc link names no item"; exit 1; }\n' >tools/check_changed_docs.sh
@@ -269,7 +276,7 @@ toy_files=(
   tests/src/viamod.rs tests/src/inl.rs tests/src/nest.rs
   tests/steps/x/mod.rs tests/steps/y/mod.rs tests/steps/f/feat.rs tests/full/main.rs tests/full/w/mod.rs tests/full/z/mod.rs
   tools/spec_groups.sh tools/test_merge_check.sh tools/test_run_tests.sh tools/test_lib.sh tools/run_tests.sh
-  tools/check_changed_docs.sh
+  tools/check_changed_docs.sh tools/test_farm_run.sh tools/farm_run.sh
   docs/notes.md docs/plan.md data/notes.txt
 )
 git read-tree --empty
@@ -376,6 +383,9 @@ check "a change to tools/run_tests.sh selects every local group" \
 check "a change to tools/lib.sh, which tools/run_tests.sh sources, selects every local group" \
   "merge check: groups: $(sorted "$(short a b c feat feat_f lnk rootuse step_x step_y t tool)")" \
   "$(groups_after tools/lib.sh '# changed')"
+check "a change to tools/farm_run.sh, which runs every piece on Colab VMs, selects every local group" \
+  "merge check: groups: $(sorted "$(short a b c feat feat_f lnk rootuse step_x step_y t tool)")" \
+  "$(groups_after tools/farm_run.sh '# changed')"
 # The narrowing of step 2 (MERGE-dep-by-target).
 check "a crate the package of tests/full depends on, named by one step alone, selects that step alone" \
   "merge check: groups: $(sorted "$(short s_01f_import_graph step_x tool)")" \
@@ -538,7 +548,7 @@ check "a failing run of tests/full stops the check with exit 1" "merge check: FA
 # The self-tests (MERGE-tools-self-tests): a change to tools/run_tests.sh runs all parts of
 # tools/test_merge_check.sh; a part that fails refuses the branch.
 check "a change to tools/run_tests.sh runs all parts of tools/test_merge_check.sh and every part of tools/test_run_tests.sh" \
-  "merge check: a file of the test runner changed (tools/run_tests.sh, tools/lib.sh or tools/merge_check.sh): every local group
+  "merge check: a file of the test runner changed (tools/run_tests.sh, tools/lib.sh, tools/farm_run.sh or tools/merge_check.sh): every local group
 merge check: a file tools/test_merge_check.sh tests changed: all its parts run
 merge check: a file tools/test_run_tests.sh tests changed: all its parts run
 merge check: tools/test_merge_check.sh select, select2, record and chunks passed
@@ -587,6 +597,21 @@ merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh
 merge check: passed
 0" "$(change_on_base tools/test_run_tests.sh '# changed'
     "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
+    echo "${PIPESTATUS[0]}")"
+# Step 0c (FARM-share-load-timeouts): a change to tools/farm_run.sh runs tools/test_farm_run.sh,
+# and its failure refuses the branch.
+check "a change to tools/farm_run.sh runs tools/test_farm_run.sh and none of the other self-tests" \
+  "merge check: a file of the test runner changed (tools/run_tests.sh, tools/lib.sh, tools/farm_run.sh or tools/merge_check.sh): every local group
+merge check: a file tools/test_farm_run.sh tests changed: it runs
+merge check: tools/test_farm_run.sh passed
+merge check: passed
+0" "$(change_on_base tools/farm_run.sh '# changed'
+    "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
+    echo "${PIPESTATUS[0]}")"
+check "a failing tools/test_farm_run.sh refuses the branch with exit 1" \
+  "merge check: FAILED: tools/test_farm_run.sh
+1" "$(STUB_FARM_FAIL=1 "$check_script" --base base 2>&1 |
+    command grep -a -o -E '^merge check: FAILED: tools/test_farm_run.sh'
     echo "${PIPESTATUS[0]}")"
 # Step 0's parts are timed, so they start only once step 0b's build (which has no limit) has ended.
 check "the build for tools/test_run_tests.sh ends before the timed parts of tools/test_merge_check.sh start" \

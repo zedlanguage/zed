@@ -6,7 +6,9 @@
 # short-addresses piece short-g1 when its copy still has short_steps set, and with --full the pieces
 # full-a (needs bash, run on a VM) and full-b (needs podman, which no VM has: not run, with
 # short-g1, and named on farm_run.sh's `farm: not run` line); it fails a piece matching
-# STUB_FAIL, and a benchmark matching STUB_FLAKY on its first run in a log directory's parent only.
+# STUB_FAIL, and a benchmark matching STUB_FLAKY on its first run in a log directory's parent only;
+# it stops a piece matching STUB_TIMEOUT by its limit when run beside others (and alone too with
+# STUB_TIMEOUT_ALONE), and kills one matching STUB_KILLED early (see the stub).
 # Each case checks that every piece runs exactly once, the counts of the last line, the exit code,
 # and that every VM acquired is released. Run from a checkout's root:
 #   tools/test_farm_run.sh
@@ -26,7 +28,7 @@ cat >"$toy/tools/run_tests.sh" <<'STUB'
 set -u -o pipefail
 short_steps="g1"
 short_libs="lib"
-logs= list= pieces= only= except= bench= full= trace=
+logs= list= pieces= only= except= bench= full= trace= jobs=
 while [ $# -gt 0 ]; do
   case $1 in
     --short-groups) echo g1; exit 0 ;;
@@ -39,7 +41,7 @@ while [ $# -gt 0 ]; do
     --bench) bench=1 ;;
     --full) full=1 ;;
     --skip-other-kind) ;;
-    [0-9]*) ;;
+    [0-9]*) jobs=$1 ;;
     *) echo "stub: unknown argument $1"; exit 2 ;;
   esac
   shift
@@ -73,16 +75,27 @@ while read -r name rest; do
   # STUB_SKIP: a piece given but neither run nor reported, which farm_run.sh must not pass.
   [ -z "${STUB_SKIP:-}" ] || [[ ! $name =~ $STUB_SKIP ]] || continue
   n=$((n + 1))
-  rc=0
+  rc=0 ms=1
   [ -z "${STUB_FAIL:-}" ] || [[ ! $name =~ $STUB_FAIL ]] || rc=1
+  # STUB_TIMEOUT: stopped by its limit of 20 s (rc 124 after 21 s, as `timeout` reports it) when
+  # run beside others (more than 1 job), and also alone with STUB_TIMEOUT_ALONE=1. STUB_KILLED:
+  # killed (rc 137) after 1 ms, well before its limit, as by the kernel's OOM killer.
+  if [ -n "${STUB_TIMEOUT:-}" ] && [[ $name =~ $STUB_TIMEOUT ]] && { [ "$jobs" != 1 ] || [ -n "${STUB_TIMEOUT_ALONE:-}" ]; }; then
+    rc=124 ms=21000
+  fi
+  [ -z "${STUB_KILLED:-}" ] || [[ ! $name =~ $STUB_KILLED ]] || rc=137
   if [ -n "$bench" ] && [ -n "${STUB_FLAKY:-}" ] && [[ $name =~ $STUB_FLAKY ]] && [ ! -e "$logs/../flaky-$name" ]; then
     : >"$logs/../flaky-$name"
     rc=1
   fi
   [ -z "$trace" ] || echo "read $name" >"$trace/$name.reads"
   [ "$rc" = 0 ] || f=$((f + 1))
-  echo "$name rc=$rc 1ms"
+  echo "$name rc=$rc ${ms}ms load=0.5 limit=20s wait=0ms jobs=$jobs"
 done <"$pieces"
+# STUB_LOWER_LOAD: the load file a run beside others leaves high, lowered to 0.1 2 s after it ends.
+if [ -n "${STUB_LOWER_LOAD:-}" ] && [ "$jobs" != 1 ]; then
+  (sleep 2 && echo '0.10 0.10 0.10 1/100 1' >"$STUB_LOWER_LOAD") >/dev/null 2>&1 &
+fi
 echo "pieces: $n, failed: $f"
 [ "$f" = 0 ]
 STUB
@@ -144,6 +157,10 @@ mkdir -p "$ws/bin" && printf '#!/bin/sh\nexit 0\n' >"$ws/bin/strace" && chmod +x
 # needs no GNU extension).
 command -v gawk >/dev/null || ln -s "$(command -v awk)" "$ws/bin/gawk" || exit 2
 export PATH=$ws/bin:$PATH
+# The load vm_side reads before it runs timed-out pieces again (FARM_VM_LOADAVG, /proc/loadavg on a
+# VM): low, so that no case but load-wait waits, whatever this machine's own load.
+echo '0.10 0.10 0.10 1/100 1' >"$ws/loadavg" || exit 2
+export FARM_VM_LOADAVG=$ws/loadavg
 pass=0 fail=0
 # case <name> <expected exit> <expected last line> <ERE each piece must match once, or ''> -- <farm_run arguments>
 n=0
@@ -209,6 +226,41 @@ notrun terms-here-only short-g1
 STUB_FLAKY='^p4$' case_ bench-rerun 0 "pieces: 7, failed: 0" "$all" -- --owner t --vms 2 --bench
 command grep -q -c '^farm: first run: p4 rc=1' "$ws/case-$n-bench-rerun.out" || { fail=$((fail + 1)); echo "FAIL bench-rerun: no first-run line"; }
 STUB_FAIL='^p5$' case_ bench-fail 1 "pieces: 7, failed: 1" "$all" -- --owner t --vms 2 --bench
+# has <case> <ERE> <count>: the case's output has exactly <count> lines matching <ERE>.
+has() {
+  local c
+  c=$(command grep -a -c -E "$2" "$ws/case-$n-$1.out")
+  [ "$c" = "$3" ] || { fail=$((fail + 1)); echo "FAIL $1: $c lines match '$2', not $3 ($ws/case-$n-$1.out)"; }
+}
+# Tests (FARM-share-load-timeouts): a piece stopped by its limit under the share's load runs once
+# more alone; passing alone it is reported passed, its first line kept with the prefix, and named.
+STUB_TIMEOUT='^p4$' case_ timeout-rerun 0 "pieces: 7, failed: 0" "$all" -- --owner t --vms 2
+has timeout-rerun '^farm: first run: p4 rc=124 21000ms ' 1
+has timeout-rerun '^p4 rc=0 .* jobs=1$' 1
+has timeout-rerun '^farm: each test piece stopped by its limit run again once, alone, on the same VM' 1
+has timeout-rerun '^farm: stopped by its limit under load, passed alone: p4$' 1
+# Stopped by its limit alone too: failed.
+STUB_TIMEOUT='^p4$' STUB_TIMEOUT_ALONE=1 case_ timeout-alone-too 1 "pieces: 7, failed: 1" "$all" -- --owner t --vms 2
+has timeout-alone-too '^farm: first run: p4 rc=124 ' 1
+has timeout-alone-too '^p4 rc=124 .* jobs=1$' 1
+has timeout-alone-too '^farm: stopped by its limit under load, passed alone: ' 0
+# A failed assertion (rc 1) and a kill well before the limit (rc 137) are not run again.
+STUB_FAIL='^p4$' case_ assert-fail 1 "pieces: 7, failed: 1" "$all" -- --owner t --vms 2
+has assert-fail '^farm: (first run|each )' 0
+STUB_KILLED='^p6$' case_ killed 1 "pieces: 7, failed: 1" "$all" -- --owner t --vms 2
+has killed '^farm: (first run|each )' 0
+# Both in one share: the timed-out piece passes alone, the failed one stays failed.
+STUB_FAIL='^p3$' STUB_TIMEOUT='^p5$' case_ timeout-and-fail 1 "pieces: 7, failed: 1" "$all" -- --owner t --vms 1
+has timeout-and-fail '^p3 rc=1 ' 1
+has timeout-and-fail '^farm: first run: p3 ' 0
+has timeout-and-fail '^p5 rc=0 .* jobs=1$' 1
+# Before the run alone vm_side waits for the load to fall to the cores: the stub's share run
+# leaves the load at 9999 for 2 s (STUB_LOWER_LOAD), so that the run alone has run_tests.sh's
+# limit of 20 s, not one raised by the load the share left behind.
+echo '9999.00 9999.00 9999.00 1/100 1' >"$ws/loadavg-high" || exit 2
+FARM_VM_LOADAVG=$ws/loadavg-high STUB_LOWER_LOAD=$ws/loadavg-high STUB_TIMEOUT='^p2$' \
+  case_ load-wait 0 "pieces: 7, failed: 0" "$all" -- --owner t --vms 1
+has load-wait '^farm: waited [1-9][0-9]* s for the load to fall to the [0-9]+ cores \(load 0\.10\)' 1
 FAKE_DIE_FIRST=1 case_ died-once 0 "pieces: 7, failed: 0" "$all" -- --owner t --vms 2
 ls -d "$ws/case-$n-died-once/run/"vm?-2 >/dev/null 2>&1 || { fail=$((fail + 1)); echo "FAIL died-once: no second attempt"; }
 FAKE_FREE=1 case_ one-free 0 "pieces: 7, failed: 0" "$all" -- --owner t --vms 4

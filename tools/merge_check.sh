@@ -25,6 +25,9 @@
 #     (TOOL-merge-check-run-tests-self: until 2026-11-20 a change
 #     to the test runner landed without its own tests, cc7961f67 tested by hand). Not recorded
 #     either;
+#  0c. when tools/farm_run.sh or tools/test_farm_run.sh changed: runs tools/test_farm_run.sh (a
+#     fake pool and job.sh, about 23 s) under max(60, the piece limit) s, and fails if it fails
+#     (FARM-share-load-timeouts). Not recorded;
 #  0a. when a Cargo.toml or Cargo.lock changed: fails if some workspace package, built alone
 #     (`cargo tree -p <package>`, dev-dependencies included), gets a crate with features the
 #     workspace build (`cargo tree --workspace`) does not give it. tools/run_tests.sh --only
@@ -73,7 +76,9 @@
 #     it, crates/zed-native/../../tests/steps/l01_36a_executables/binary.rs for build_binary, a
 #     path no changed file has, so until MERGE-target-path-dots a change to such a file selected
 #     none of the 14 test targets of zed-native and zed-clif under tests/steps/. A file
-#     of the test runner, tools/run_tests.sh, tools/lib.sh (which it and this script source) or
+#     of the test runner, tools/run_tests.sh, tools/lib.sh (which it and this script source),
+#     tools/farm_run.sh (which runs every piece on Colab VMs, step 2's run_farm, and decides which
+#     timed-out pieces run again alone, FARM-share-load-timeouts) or
 #     this script, selects every local group: every piece runs under tools/run_tests.sh, so a
 #     change to it can break any piece, and compilation selects nothing for it
 #     (MERGE-runner-selects-all; 324a94ebe, a change to tools/run_tests.sh, broke build_binary,
@@ -247,10 +252,11 @@ mb=$(git merge-base "$base" HEAD) || { echo "merge check: no merge base with $ba
 mapfile -t changed < <(git diff --no-renames --name-only "$mb" HEAD)
 echo "merge check: ${#changed[@]} files changed since $(git rev-parse --short "$mb") ($base)"
 [ ${#changed[@]} -gt 0 ] || exit 0
-selftest= rtself=
+selftest= rtself= farmself=
 for f in "${changed[@]}"; do
   case $f in tools/merge_check.sh | tools/test_merge_check.sh | tools/run_tests.sh | tools/spec_groups.sh | tools/test_lib.sh) selftest=1 ;; esac
   case $f in tools/run_tests.sh | tools/test_run_tests.sh | tools/test_lib.sh) rtself=1 ;; esac
+  case $f in tools/farm_run.sh | tools/test_farm_run.sh) farmself=1 ;; esac
 done
 
 meta=$(cargo metadata --no-deps --format-version 1 -q) || { echo "merge check: cargo metadata failed" >&2; exit 1; }
@@ -436,7 +442,7 @@ walk() {
       # The root's clippy configuration applies to every package's lints, and to no test.
       clippy.toml | .clippy.toml) clippy_all=1 ;;
       # The test runner: every piece runs under it (MERGE-runner-selects-all, header step 2).
-      tools/run_tests.sh | tools/lib.sh | tools/merge_check.sh) runner=1 ;;
+      tools/run_tests.sh | tools/lib.sh | tools/merge_check.sh | tools/farm_run.sh) runner=1 ;;
     esac
     if [[ $f =~ ^crates/([^/]+)/src/ ]] && [[ " ${crate_srcs[*]} " != *" crates/${BASH_REMATCH[1]}/src "* ]]; then
       [ -d "crates/${BASH_REMATCH[1]}/src" ] && crate_srcs+=("crates/${BASH_REMATCH[1]}/src")
@@ -696,7 +702,7 @@ select_groups() {
   local gsel=$selected
   if [ -n "$runner" ]; then
     gsel=$(jq -r '[.packages[].name] | join(" ")' <<<"$meta")
-    echo "merge check$label: a file of the test runner changed (tools/run_tests.sh, tools/lib.sh or tools/merge_check.sh): every local group"
+    echo "merge check$label: a file of the test runner changed (tools/run_tests.sh, tools/lib.sh, tools/farm_run.sh or tools/merge_check.sh): every local group"
   fi
   groups=$(jq -r --arg sel " $gsel " '.packages[] | select(.name as $n | $sel | contains(" \($n) "))
     | .targets[] | select(.test and ((.["required-features"] // []) == [])
@@ -779,6 +785,7 @@ s=$(part_of full "$snew")
 [ -z "$s" ] || echo "merge check: tests/full pieces: $(paste -sd' ' <<<"$s")"
 [ -z "$selftest" ] || echo "merge check: a file tools/test_merge_check.sh tests changed: all its parts run"
 [ -z "$rtself" ] || echo "merge check: a file tools/test_run_tests.sh tests changed: all its parts run"
+[ -z "$farmself" ] || echo "merge check: a file tools/test_farm_run.sh tests changed: it runs"
 
 # The record (see the header): `<commit>`, then `spec <commit>` when the spec checkout's commit
 # is known (tools/spec_groups.sh --commit), then `group <g>` for each group that passed there, then
@@ -986,6 +993,23 @@ if [ -n "$selftest" ] && [ -z "$list" ]; then
   # On a failure here step 0b is still waited for, so no part outlives the check.
   [ -z "$sbad" ] || { rt_wait; exit 1; }
   echo "merge check: tools/test_merge_check.sh select, select2, record and chunks passed"
+fi
+# Step 0c: tools/test_farm_run.sh, the cases of tools/farm_run.sh with a fake pool.sh and job.sh
+# (no VM, no build), when either changed. Until FARM-share-load-timeouts a change to farm_run.sh
+# ran no test at all. Its limit is max(60, the piece limit): one case waits 15 s by design (the
+# pool's retry period) and another 5 s (the load wait); the whole took 22.7 s at load 2 here
+# (2026-11-22).
+if [ -n "$farmself" ] && [ -z "$list" ]; then
+  flog=$(git rev-parse --path-format=absolute --git-path merge-check-farm-self.log)
+  piece_limit
+  flimit=$((limit > 60 ? limit : 60))
+  if ! timeout -k 5 "$flimit" tools/test_farm_run.sh >"$flog" 2>&1; then
+    command grep -a -E '^(FAIL|test_farm_run)' "$flog"
+    echo "merge check: FAILED: tools/test_farm_run.sh (limit ${flimit}s; log $flog)" >&2
+    rt_wait
+    exit 1
+  fi
+  echo "merge check: tools/test_farm_run.sh passed"
 fi
 rt_wait
 
