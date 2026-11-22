@@ -3686,7 +3686,10 @@ fn order_sweep(
     (differ, wrong)
 }
 
-fn order_sweep_asserts(seeds: std::ops::Range<u64>) {
+/// The order sweep over `seeds` of [`gen_cells`], four orders each, asserting no verdict differs
+/// and none is wrong. Its tests, of 500 seeds each, are in `super::cell_order_sweep`, a module of
+/// its own so that each is a piece of tools/run_tests.sh (TEST-group-oracle-seed-split).
+pub(super) fn order_sweep_asserts(seeds: std::ops::Range<u64>) {
     let seeds: Vec<u64> = seeds.collect();
     let (differ, wrong) = order_sweep("osc", gen_cells, &seeds, 4);
     eprintln!(
@@ -3700,68 +3703,6 @@ fn order_sweep_asserts(seeds: std::ops::Range<u64>) {
         eprintln!("order sweep {d}");
     }
     assert!(differ.is_empty() && wrong.is_empty());
-}
-
-#[test]
-fn the_cells_of_seeds_0_500_agree_exactly_in_every_order() {
-    order_sweep_asserts(0..500);
-}
-
-#[test]
-fn the_cells_of_seeds_500_1000_agree_exactly_in_every_order() {
-    order_sweep_asserts(500..1000);
-}
-
-// The three ranges below found order differences before GROUP-order-cpoly-merge (cells 1140,
-// 1558, 1696 and 1908 with tuple components reversed).
-#[test]
-fn the_cells_of_seeds_1000_1500_agree_exactly_in_every_order() {
-    order_sweep_asserts(1000..1500);
-}
-
-#[test]
-fn the_cells_of_seeds_1500_2000_agree_exactly_in_every_order() {
-    order_sweep_asserts(1500..2000);
-}
-
-#[test]
-fn the_cells_of_seeds_2000_2500_agree_exactly_in_every_order() {
-    order_sweep_asserts(2000..2500);
-}
-
-#[test]
-fn the_cells_of_seeds_2500_3000_agree_exactly_in_every_order() {
-    order_sweep_asserts(2500..3000);
-}
-
-#[test]
-fn the_cells_of_seeds_3000_3500_agree_exactly_in_every_order() {
-    order_sweep_asserts(3000..3500);
-}
-
-#[test]
-fn the_cells_of_seeds_3500_4000_agree_exactly_in_every_order() {
-    order_sweep_asserts(3500..4000);
-}
-
-#[test]
-fn the_cells_of_seeds_4000_4500_agree_exactly_in_every_order() {
-    order_sweep_asserts(4000..4500);
-}
-
-#[test]
-fn the_cells_of_seeds_4500_5000_agree_exactly_in_every_order() {
-    order_sweep_asserts(4500..5000);
-}
-
-#[test]
-fn the_cells_of_seeds_5000_5500_agree_exactly_in_every_order() {
-    order_sweep_asserts(5000..5500);
-}
-
-#[test]
-fn the_cells_of_seeds_5500_6000_agree_exactly_in_every_order() {
-    order_sweep_asserts(5500..6000);
 }
 
 // GROUP-order-classes-outside-cpoly (XR-group-order-5 round 3, the Gemini seat's finding F5):

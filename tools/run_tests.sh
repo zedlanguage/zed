@@ -1159,6 +1159,9 @@ fi
 # past its limit of 90 s in a full run at load 48; it is four tests of 96 formulas, each a piece
 # (2026-11-11, REFUSAL-front-xr after batch merge 128). r6_reduction, refusals and the decider's
 # modules moved to l01_23_groups_and_refusals, split the same way (2026-11-14, TESTS-split).
+# l01_23 group_oracle ran 20.0 to 36 s against its limit of 20 s: twelve order sweeps of 500
+# seeds took 6.9 to 8.9 s each alone, every other test under 1.3 s (b22-mem40, 2026-11-22). The
+# sweeps are the module cell_order_sweep now, each test a piece (TEST-group-oracle-seed-split).
 # l01_28_staging took 46 to 65 s whole at load 41 and more, 28 s of it the test of four shapes
 # 100,000 deep on a small stack and 20 s the test of lets of built values (alone, load 41); those
 # are now four tests and two. Each module is a piece, and each test of scaling and dag
@@ -1188,6 +1191,7 @@ fi
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_groups_and_refusals l01_23_groups_and_refusals::r6_reduction
+  l01_23_groups_and_refusals::cell_order_sweep
   l01_23_subtyping l01_23_subtyping::scaling
   l01_25_preimage_catalog l01_25_preimage_catalog::s22
   l01_25_preimage_catalog::exact_oracle

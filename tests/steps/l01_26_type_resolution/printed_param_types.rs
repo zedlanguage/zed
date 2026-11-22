@@ -163,7 +163,9 @@ fn random_printed_parameter_types_are_what_calls_accept() {
             // "`t0` does not take #a, only f64 -> f64", while `h(y: f64 -> f64)` lets it pass
             // out of the call; that difference is in how an atom passes out of an argument, not
             // in the printed type, and is row FAIL-atom-into-arrow-param-not-passed-out.
-            if v.starts_with('#') && ty.contains("->") {
+            // The printed type of `x` may be the meet of arrows (`Never` for two that differ),
+            // so the skip looks at the parameters `x` is passed to, not at the printed type.
+            if v.starts_with('#') && defs.contains("->") {
                 continue;
             }
             let g_errors = type_errors(&format!("{defs}a = g(x: {v}, c: true);\n"));

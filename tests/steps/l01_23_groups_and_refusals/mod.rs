@@ -8,6 +8,7 @@
 mod bes;
 mod bes_families;
 mod cases;
+mod cell_order_sweep;
 mod complete;
 mod cycle_dup;
 mod group_oracle;
