@@ -1533,7 +1533,8 @@ fn transform_mul(a: &BigUint, b: &BigUint) -> BigUint {
 /// [`points`] chose. When it wraps on `N = plan.0` points, every product inside (the top
 /// words', at each depth) is on at most `N` points. Proof: [`points`] wraps only when
 /// `C(N) + WRAP_COST N + T < C(2N)`, with `C(m) = TRANSFORM_COST points_cost(m)` and `T` the
-/// top product's [`transform_cost`], so only when `T < C(2N)`. The top product has at most `2N - 1` coefficients, so its
+/// top product's [`transform_cost`], so only when `T < C(2N)`. The top product has at most
+/// `2N - 1` coefficients, so its
 /// power of two of points is at most `2N`; were it `2N` unwrapped, `T` would be `C(2N)` and
 /// the wrap would not be chosen; wrapped, it is on at most `N`. The same holds at each depth
 /// below, whose `N` is at most this one. A wrap [`points`] did not choose
