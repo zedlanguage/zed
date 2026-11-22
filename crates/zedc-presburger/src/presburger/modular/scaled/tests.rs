@@ -734,7 +734,8 @@ fn seed_3730609663341733710_case_223_is_decided() {
 /// general path asks again with its atoms renamed to `Sym`s, where `4 y + r == 5 x + 11`
 /// (`r` in `[0, 3]`) reads with either end as the quotient; `orient` took `y` as the variable,
 /// the other row became a chain on `x`, `solve` declined, and `decide` refused with `Shadows`.
-/// The module may still decline the formula as first written, as [`check`] allows; `decide` answers.
+/// The module may still decline the formula as first written, as [`check`] allows; `decide`
+/// answers.
 #[test]
 fn seed_12744803785466090665_case_189_is_decided() {
     let aux = |i: u32| Lin::atom(Atom::Aux(i));
