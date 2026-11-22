@@ -333,7 +333,9 @@ impl Refusal {
     /// [`Refused::Work`] it is the row "Expansion too costly" of the rejection table: the law (in
     /// the repair), the product, the predicted time against 250 ms, the predicted work against
     /// [`LIMIT`], that the limit was measured once so that every machine refuses the same laws,
-    /// and the points at which the two sides agreed.
+    /// and the points at which the two sides agreed. For [`Refused::Exponent`] it is the row "Exponent
+    /// too large": the law (in the repair), the product, the widest exponent, and the points that
+    /// agreed.
     pub fn message(&self, law: &str) -> String {
         let mut out = match &self.why {
             Refused::Work(work) => format!(

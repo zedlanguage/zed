@@ -43,6 +43,10 @@ rows! {
     // No diagnostic uses this row yet: `zed_kernel::poly::Refusal::message` writes its text for
     // `Refused::Work`, and plan rows L3.9 (rung 3) and ASSOC-demand (rung 2) emit it.
     ExpansionTooCostly => "Expansion too costly",
+    // No diagnostic uses this row yet: `zed_kernel::poly::Refusal::message` writes its text for
+    // `Refused::Exponent`, and plan rows L3.9 (rung 3) and ASSOC-demand (rung 2) emit it, as for
+    // `ExpansionTooCostly`.
+    ExponentTooLarge => "Exponent too large",
     // No diagnostic uses the next two rows yet (warnings): plan row L3.9 (rung 3) emits them.
     LawDirectionShapedOperands => "Law direction with two shaped operands under one associative and commutative operator",
     LawDirectionRepeatedName => "Law direction with a repeated name under one associative and commutative operator",
