@@ -1345,9 +1345,9 @@ farm=${MERGE_CHECK_FARM:-$(pwd -P)/tools/farm_run.sh}
 # origin/main), so that check runs here first, as run_chunks runs it after its list. With
 # --record each VM's trace comes back as a directory of `groups` and `<piece>.reads` files,
 # which join tdirs as run_chunks' chunk directories do. The spec the VMs get is the one the
-# tests here would read (tools/spec_groups.sh --dir). The pieces no VM can run (the short-*
-# pieces, s00_01_tools and s09_release: see the head of tools/farm_run.sh) run nowhere, named on
-# farm_run.sh's `farm: not run` line, until FARM-local-only-pieces-on-vm is done.
+# tests here would read (tools/spec_groups.sh --dir). The short-* pieces run on VMs too since
+# FARM-short-pieces-on-vm-tmpfs; a folder of tests/full whose needs no VM has runs nowhere, named
+# on farm_run.sh's `farm: not run` line (see the head of tools/farm_run.sh).
 run_farm() {
   local terms=$1 o owner spec rc d
   o=$(git rev-parse --path-format=absolute --git-path "merge-check-farm${fullarg:+-full}")/$(date -u +%Y%m%dT%H%M%S)-$$

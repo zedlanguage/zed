@@ -14,7 +14,9 @@
 #   --trace <dir>   run_tests.sh --trace: each VM's read lists land in <dir>/vm<k>, with its
 #                   file groups (tools/merge_check.sh --record)
 #   --spec <dir>    the spec checkout the VMs get (job.sh's 5th argument; default /home/luke/Work/zed)
-# Exit 0 when every piece passed, 1 when a piece or the build failed, 2 on a usage error, 129 when
+# Exit 0 when every piece passed, 1 when a piece or the build failed or a share did not report each
+# piece it was given once (a line `farm: FAILED: share <k> of <n> on <VM> ...` names it and the
+# failing step: FARM-setup-fail-silent), 2 on a usage error, 129 when
 # a VM's share could not be run after 3 attempts or its run ended past the job's hour: the pieces
 # of that share are then not reported, so a caller must not read their absence as passing
 # (tools/main_watch.sh treats an exit of 128 or more as a crashed runner).
@@ -40,26 +42,22 @@
 #    groups as the next (l01_26_type_resolution alone is 543 pieces).
 #  - On the VM (vm_side, below, sent in the job's tests file as one `!` line) tools/run_tests.sh
 #    runs from a copy outside the checkout, so the checkout the tests read stays as packed. The
-#    copy's changes, each checked to apply: (1) no short-addresses pieces (short_steps and
-#    short_libs empty), since their clone is mounted at the fixed path of zrun, which a VM lacks;
-#    (2) with --full, the tools check reads the needs of the folders of tests/full run there only.
+#    copy's changes, each checked to apply: (1) when no short-addresses piece is selected, none
+#    (short_steps and short_libs empty), so the list call builds no clone; (2) with --full, the
+#    tools check reads the needs of the folders of tests/full run there only.
 #    A `systemd-run` first on PATH runs its command without the scope: a Colab VM is a docker
 #    container with no user systemd bus ("Failed to connect to bus", probed 2026-11-22 on std1),
 #    and the VM is the job's alone, so the slice's machine-wide memory cap has nothing to share.
 #    The list call builds; the share then runs with --pieces, which neither builds nor lists again.
-#  - Not run: the short-addresses pieces (tools/run_tests.sh --short-groups, as short-<group>) and
-#    the folders of tests/full whose needs file names a tool a VM lacks (vm_tools below lists what a
-#    VM has; s00_01_tools and s09_release run on VMs since FARM-local-only-pieces-on-vm, with the
-#    tools job.sh installs, rootless podman and tools/fetch_test_deps.sh, vm_side). No build, test
-#    or benchmark runs on this machine (author, 2026-11-22, after main-watch's local bench run at
-#    11:15Z), so these pieces go untested, named on a line `farm: not run, ...`, until the
-#    short-addresses clone can be mounted on a VM (FARM-local-residue). They are neither passed
-#    nor failed: they print no summary line. Probed on l42 (2026-11-22): a bind mount works, but
-#    the clone's overlay does not, as its upper directory under the fixed path would be on
-#    /content, itself overlayfs ("wrong fs type, bad option", as root and in `unshare -Urm`); the
-#    same overlay with its upper and work directories on a tmpfs mounts, index=on included. So a
-#    VM can run them with the checkout bound at /home/luke/Work/wt/.build-root and a tmpfs at its
-#    build/short-clone (FARM-short-pieces-on-vm-tmpfs).
+#  - The short-addresses pieces (tools/run_tests.sh --short-groups, as short-<group>) run on VMs
+#    since FARM-short-pieces-on-vm-tmpfs, in a mount namespace with the checkout at zrun's fixed
+#    path and a tmpfs for the clone's upper layer (vm_side). Not run: the folders of tests/full
+#    whose needs file names a tool a VM lacks (vm_tools below lists what a VM has; s00_01_tools and
+#    s09_release run on VMs since FARM-local-only-pieces-on-vm, with the tools job.sh installs,
+#    rootless podman and tools/fetch_test_deps.sh, vm_side). No build, test or benchmark runs on
+#    this machine (author, 2026-11-22, after main-watch's local bench run at 11:15Z), so these
+#    pieces go untested, named on a line `farm: not run, ...` (FARM-local-residue). They are
+#    neither passed nor failed: they print no summary line.
 #  - Benchmarks: a VM has no hardware instruction counter (perf_event_open of instructions gives
 #    ENOENT, probed 2026-11-22), so each benchmark counts its instructions in software under
 #    DynamoRIO's client zed_icount, which job.sh's VM setup builds and names in ZED_METER_DRRUN and
@@ -126,8 +124,8 @@ mkdir -p "$out" || die "cannot create $out"
 # alternative: run_tests.sh reads the text before the first :: of an alternative as a group).
 ere_of() { sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' "$1" | paste -sd'|'; }
 
-# Which pieces run here: short-<group> for each short-addresses group, and full-<folder> for each
-# folder of tests/full whose needs a VM lacks.
+# Which pieces run here (that is, are not run): full-<folder> for each folder of tests/full whose
+# needs a VM lacks.
 local_full=() vm_full=()
 for d in tests/full/*/; do
   [ -d "$d" ] || continue
@@ -141,13 +139,9 @@ for d in tests/full/*/; do
   fi
   if [ -n "$ok" ]; then vm_full+=("$n"); else local_full+=("$n"); fi
 done
-short_groups=$(tools/run_tests.sh --short-groups) || die "tools/run_tests.sh --short-groups failed"
 # here_name <name>: whether the piece or group <name> runs here.
 here_name() {
   local g
-  for g in $short_groups; do
-    [[ $1 == "short-$g" || $1 == "short-$g::"* ]] && return 0
-  done
   for g in "${local_full[@]}"; do
     [[ $1 == "full-$g" || $1 == "full-$g::"* ]] && return 0
   done
@@ -161,9 +155,16 @@ if [ -n "$terms" ]; then
     [[ $t != *' '* ]] || die "a term with a space: '$t'"
     if here_name "$t"; then echo "$t" >>"$out/terms.here"; else echo "$t" >>"$out/terms.vm"; fi
   done <"$terms"
-elif [ -z "$list" ]; then
-  for g in $short_groups; do echo "short-$g" >>"$out/terms.here"; done
-  [ -z "$full" ] || for g in "${local_full[@]}"; do echo "full-$g" >>"$out/terms.here"; done
+elif [ -z "$list" ] && [ -n "$full" ]; then
+  for g in "${local_full[@]}"; do echo "full-$g" >>"$out/terms.here"; done
+fi
+# Whether the VMs select short-addresses pieces (vm_side's short): every piece but in --list
+# (whose list then leaves them out, as their listing builds the clone), or a term that names one.
+vm_short=0
+if [ -z "$terms" ]; then
+  [ -n "$list" ] || vm_short=1
+elif grep -q '^short-' "$out/terms.vm"; then
+  vm_short=1
 fi
 # The VM's --only (empty: every piece) and --except, which also leaves out the pieces run here.
 vm_only= vm_except=$except
@@ -176,25 +177,55 @@ run_vm=1
 [ -z "$terms" ] || [ -s "$out/terms.vm" ] || run_vm=
 
 # vm_side <k> <n> <kind> <full 0|1> <skip-other 0|1> <list 0|1> <trace 0|1> <only> <except>
-#   <vm full folders, space-separated>: runs on the VM in the checkout's root (job.sh's `!` line);
-# see the Design above. Exit as run_tests.sh's run of the share.
+#   <vm full folders, space-separated> <short 0|1>: runs on the VM in the checkout's root (job.sh's
+# `!` line); see the Design above. Exit as run_tests.sh's run of the share.
 vm_side() {
   set -u -o pipefail
-  local k=${1-} n=${2-} kind=${3-} full=${4-} skip=${5-} list=${6-} trace=${7-} only=${8-} except=${9-} vmfull=${10-}
+  local k=${1-} n=${2-} kind=${3-} full=${4-} skip=${5-} list=${6-} trace=${7-} only=${8-} except=${9-} vmfull=${10-} short=${11-}
   [[ $k =~ ^[1-9][0-9]*$ && $n =~ ^[1-9][0-9]*$ && $k -le $n ]] || { echo "vm_side: bad share '$k/$n'"; return 2; }
   [[ $kind == test || $kind == bench ]] || { echo "vm_side: bad kind '$kind'"; return 2; }
-  [[ $full$skip$list$trace =~ ^[01]{4}$ ]] || { echo "vm_side: bad flags"; return 2; }
+  [[ $full$skip$list$trace$short =~ ^[01]{5}$ ]] || { echo "vm_side: bad flags"; return 2; }
   [ -x tools/run_tests.sh ] || { echo "vm_side: no tools/run_tests.sh in $PWD"; return 2; }
+  # The short-addresses pieces (FARM-short-pieces-on-vm-tmpfs). run_tests.sh builds them only in
+  # the checkout's root at zrun's fixed path, R = /home/luke/Work/wt/.build-root, in an overlay over
+  # R/build/cargo whose upper and work directories lie in R/build/short-clone. On a VM that upper
+  # directory would be on /content, itself an overlayfs, where the kernel refuses an overlay's upper
+  # layer ("wrong fs type, bad option", probed on l42 2026-11-22 by b22-farm1); on a tmpfs it mounts,
+  # index=on included. So with short = 1 the share runs in a mount namespace of its own (unshare;
+  # as root on a VM, whose docker container has CAP_SYS_ADMIN, CapEff a82c25fb, bit 21; with a user
+  # namespace too where not root, as in tools/test_farm_run.sh) in which the checkout is bound at
+  # R, the target directory (CARGO_TARGET_DIR, /content/target from job.sh) at R/build/cargo, and a
+  # tmpfs is mounted at R/build/short-clone. The namespace ends with the share, and the tmpfs with
+  # it, so each share builds the short-addresses crates once (its list call) and keeps nothing.
+  # FARM_VM_BUILD_ROOT: another R, tools/test_farm_run.sh's.
+  local R=${FARM_VM_BUILD_ROOT:-/home/luke/Work/wt/.build-root}
+  [[ $R == /?* ]] || { echo "vm_side: the build root '$R' is not absolute"; return 2; }
+  if [ "$short" = 1 ] && [ "$PWD" != "$R" ]; then
+    local tgt=${CARGO_TARGET_DIR:-$PWD/build/cargo} ns=(unshare -m --propagation private)
+    [[ $tgt == /?* ]] || { echo "vm_side: the target directory '$tgt' is not absolute"; return 2; }
+    [ "$(id -u)" = 0 ] || ns=(unshare -U -r -m --propagation private)
+    mkdir -p "$tgt" "$PWD/build/cargo" "$PWD/build/short-clone" "$R" ||
+      { echo "vm_side: making the mount points for the short-addresses pieces failed"; return 2; }
+    # The script is this function's file ($0, job.sh's farm_vm.sh), run again in the namespace.
+    "${ns[@]}" bash -c 'mount --bind "$1" "$2" && mount --bind "$3" "$2/build/cargo" &&
+      mount -t tmpfs tmpfs "$2/build/short-clone" || { echo "vm_side: the mounts of the short-addresses build root failed"; exit 2; }
+      cd "$2" || { echo "vm_side: cd to $2 failed"; exit 2; }
+      shift 4
+      CARGO_TARGET_DIR=$PWD/build/cargo exec bash "$0" "$@"' "$0" "$PWD" "$R" "$tgt" _ "$@"
+    return
+  fi
   # FARM_VM_JOB: the job's directory, /content/job on a VM (job.sh); tools/test_farm_run.sh's own.
   local J=${FARM_VM_JOB:-/content/job} w cores a=() rc d
   [[ $J == /?* ]] || { echo "vm_side: the job directory '$J' is not absolute"; return 2; }
   w=$J/farm-$k
-  mkdir -p "$w/bin" "$w/cache/zed-test-deps" || return 2
+  # Every step that can fail prints a line `vm_side: <step> failed ...`, which farm_run.sh quotes
+  # with the share and the VM (FARM-setup-fail-silent).
+  mkdir -p "$w/bin" "$w/cache/zed-test-deps" "$J/out" || { echo "vm_side: mkdir of $w failed"; return 2; }
   cores=$(nproc)
   [[ $cores =~ ^[1-9][0-9]*$ ]] || { echo "vm_side: nproc gave '$cores'"; return 2; }
   printf '%s\n' '#!/bin/bash' '# The scope options of run_tests.sh, then the command, run without a scope.' \
-    'while [ $# -gt 0 ] && [ "${1#--}" != "$1" ]; do shift; done' 'exec "$@"' >"$w/bin/systemd-run"
-  chmod +x "$w/bin/systemd-run" || return 2
+    'while [ $# -gt 0 ] && [ "${1#--}" != "$1" ]; do shift; done' 'exec "$@"' >"$w/bin/systemd-run" &&
+    chmod +x "$w/bin/systemd-run" || { echo "vm_side: writing the systemd-run stub failed"; return 2; }
   # tools/run_tests.sh is written for GNU awk (match() with an array, in the parse of --trace's
   # strace output); a Colab VM's awk is mawk, which refused that program and left every .reads file
   # empty (end-to-end run of 2026-11-22). gawk is installed once per VM and put first as awk.
@@ -203,7 +234,7 @@ vm_side() {
       { apt-get update -qq && apt-get install -y -qq gawk; } >>"$w/gawk-install.log" 2>&1 ||
       { echo "vm_side: gawk could not be installed"; return 2; }
   fi
-  ln -sfn "$(command -v gawk)" "$w/bin/awk" || return 2
+  ln -sfn "$(command -v gawk)" "$w/bin/awk" || { echo "vm_side: linking gawk as awk failed"; return 2; }
   # The folders of tests/full here whose needs name podman (s00_01_tools and s09_release) read
   # what tools/fetch_test_deps.sh fetches and builds: the sysroots, the pinned rustc, alpine and
   # the rustup image. It runs before the share, into a cache kept across the jobs on this VM
@@ -224,9 +255,9 @@ vm_side() {
     printf '%s\n' '#!/bin/bash' '# podman as the user zp, rootless, in its own storage (tools/farm_run.sh vm_side).' \
       'mkdir -p /tmp/zp-run && chown zp: /tmp/zp-run && chmod 700 /tmp/zp-run || exit 125' \
       'exec runuser -u zp -- env -u CONTAINERS_STORAGE_CONF XDG_RUNTIME_DIR=/tmp/zp-run HOME=/home/zp /usr/bin/podman "$@"' \
-      >"$w/bin/podman"
-    chmod +x "$w/bin/podman" || return 2
-    [ ! -x /usr/bin/gdb-multiarch ] || ln -sfn /usr/bin/gdb-multiarch "$w/bin/gdb" || return 2
+      >"$w/bin/podman" && chmod +x "$w/bin/podman" || { echo "vm_side: writing the podman wrapper failed"; return 2; }
+    [ ! -x /usr/bin/gdb-multiarch ] || ln -sfn /usr/bin/gdb-multiarch "$w/bin/gdb" ||
+      { echo "vm_side: linking gdb-multiarch as gdb failed"; return 2; }
     cache=${FARM_VM_CACHE:-/content/farm-cache}
     [[ $cache == /?* ]] || { echo "vm_side: the cache directory '$cache' is not absolute"; return 2; }
     t0=$SECONDS
@@ -242,9 +273,13 @@ vm_side() {
   export PATH=$w/bin:$PATH XDG_CACHE_HOME=$cache
   : >"$w/needs"
   for d in $vmfull; do [ ! -f "tests/full/$d/needs" ] || cat "tests/full/$d/needs" >>"$w/needs"; done
-  sed -e 's/^short_steps=.*/short_steps=""/' -e 's/^short_libs=.*/short_libs=""/' \
-    -e "s|cat tests/full/\\*/needs|cat $w/needs|" tools/run_tests.sh >"$w/run_tests.sh" || return 2
-  [ "$(grep -c -x -e 'short_steps=""' -e 'short_libs=""' "$w/run_tests.sh")" = 2 ] &&
+  # The copy's short_steps and short_libs are emptied when no short-addresses piece is selected
+  # (short = 0), so its list call builds no clone.
+  local noshort=(-e 's/^short_steps=.*/short_steps=""/' -e 's/^short_libs=.*/short_libs=""/')
+  [ "$short" = 0 ] || noshort=(-e '')
+  sed "${noshort[@]}" -e "s|cat tests/full/\\*/needs|cat $w/needs|" tools/run_tests.sh >"$w/run_tests.sh" ||
+    { echo "vm_side: writing the copy of tools/run_tests.sh failed"; return 2; }
+  { [ "$short" = 1 ] || [ "$(grep -c -x -e 'short_steps=""' -e 'short_libs=""' "$w/run_tests.sh")" = 2 ]; } &&
     grep -q -F "cat $w/needs" "$w/run_tests.sh" ||
     { echo "vm_side: tools/run_tests.sh no longer has the lines farm_run.sh changes in its copy"; return 2; }
   [ "$kind" = test ] || a+=(--bench)
@@ -259,13 +294,23 @@ vm_side() {
     cat "$w/list.out"
     return "$rc"
   fi
-  # --skip-other-kind with nothing of this kind selected: nothing to run.
+  # An empty list is only right for --skip-other-kind with nothing of this kind selected, which
+  # run_tests.sh says in those words; any other empty list ran nothing silently.
   if [ ! -s "$w/list/latest/pieces" ]; then
     cat "$w/list.out"
-    return 0
+    if [ "$skip" = 1 ] && grep -q -x -E -e '--skip-other-kind: nothing to run( among the benchmarks)?' "$w/list.out"; then
+      : >"$J/out/farm-share"
+      echo "farm: share $k of $n: 0 of 0 pieces"
+      return 0
+    fi
+    echo "vm_side: the list call exited 0 and listed no piece"
+    return 2
   fi
-  awk -v k="$k" -v n="$n" '(NR - 1) % n == k - 1' "$w/list/latest/pieces" >"$w/share"
-  # Read by farm_run.sh, which checks that the shares cover the list and each reports its pieces.
+  awk -v k="$k" -v n="$n" '(NR - 1) % n == k - 1' "$w/list/latest/pieces" >"$w/share" &&
+    cut -d ' ' -f 1 "$w/share" >"$J/out/farm-share" ||
+    { echo "vm_side: writing the share's list failed"; return 2; }
+  # Read by farm_run.sh, which checks that the shares cover the list, and that each reports each
+  # piece of $J/out/farm-share (in the job's out.tgz) once.
   echo "farm: share $k of $n: $(wc -l <"$w/share") of $(wc -l <"$w/list/latest/pieces") pieces"
   [ -s "$w/share" ] || return 0
   if [ "$trace" = 1 ]; then
@@ -273,13 +318,31 @@ vm_side() {
     command -v strace >/dev/null || apt-get install -y -qq strace >"$w/strace-install.log" 2>&1 ||
       { apt-get update -qq && apt-get install -y -qq strace; } >>"$w/strace-install.log" 2>&1 ||
       { echo "vm_side: strace could not be installed"; return 2; }
-    mkdir -p "$J/out/trace-$k" || return 2
+    mkdir -p "$J/out/trace-$k" || { echo "vm_side: mkdir of $J/out/trace-$k failed"; return 2; }
     awk 'NR == FNR { p[$1] = 1; next } $3 in p { print $3, $1, $2 }' "$w/share" "$w/list/latest/chosen" \
       >"$J/out/trace-$k/groups"
     a+=(--trace "$J/out/trace-$k")
   fi
-  bash "$w/run_tests.sh" --logs "$w/run" "${a[@]}" --pieces "$w/share" "$cores" >"$w/r1.out" 2>&1
-  rc=$?
+  # A short-addresses piece's binary lies in the clone of the run that listed it, which that run
+  # unmounted, so run_tests.sh refuses it in --pieces: the share's short-addresses pieces run by
+  # name (--only), in a run that mounts the clone again over this namespace's tmpfs, whose upper
+  # layer holds the list call's build of them, so it builds nothing again.
+  awk '$1 !~ /^short-/' "$w/share" >"$w/share-main" &&
+    awk '$1 ~ /^short-/ { print $1 }' "$w/share" >"$w/share-short" ||
+    { echo "vm_side: splitting the share failed"; return 2; }
+  : >"$w/r1.out"
+  rc=0
+  if [ -s "$w/share-main" ]; then
+    bash "$w/run_tests.sh" --logs "$w/run" "${a[@]}" --pieces "$w/share-main" "$cores" >"$w/r1.out" 2>&1
+    rc=$?
+  fi
+  if [ -s "$w/share-short" ]; then
+    local rs
+    bash "$w/run_tests.sh" --logs "$w/run-short" "${a[@]}" \
+      --only "$(sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' "$w/share-short" | paste -sd'|')" "$cores" >>"$w/r1.out" 2>&1
+    rs=$?
+    [ "$rc" != 0 ] || rc=$rs
+  fi
   # The failed pieces run again once, alone: every failed benchmark (see the Design above), and a
   # test piece only when its limit stopped it (FARM-share-load-timeouts), never one that failed an
   # assertion or crashed.
@@ -309,16 +372,20 @@ vm_side() {
   # timeout-rerun, timeout-alone-too, assert-fail, killed, timeout-and-fail and load-wait check
   # this with a stub of run_tests.sh; they cannot check the real run_tests.sh's lines or a real
   # timeout, which a merge check on VMs exercises.
+  # A short-addresses piece is not run again (--pieces refuses it, above): its first verdict stands.
   : >"$w/failed"
   if [ "$rc" = 1 ] && [ "$kind" = bench ]; then
-    awk '$2 ~ /^rc=[1-9]/ { print $1 }' "$w/r1.out" | sort -u >"$w/failed"
+    awk '$2 ~ /^rc=[1-9]/ && $1 !~ /^short-/ { print $1 }' "$w/r1.out" | sort -u >"$w/failed"
   elif [ "$rc" = 1 ]; then
-    awk '$2 ~ /^rc=(124|137)$/ && $3 ~ /^[0-9]+ms$/ && $5 ~ /^limit=[0-9]+s$/ &&
+    awk '$2 ~ /^rc=(124|137)$/ && $3 ~ /^[0-9]+ms$/ && $5 ~ /^limit=[0-9]+s$/ && $1 !~ /^short-/ &&
       $3 + 0 >= 1000 * substr($5, 7) { print $1 }' "$w/r1.out" | sort -u >"$w/failed"
   fi
-  awk 'NR == FNR { f[$1] = 1; next } $1 in f' "$w/failed" "$w/share" >"$w/again"
+  awk 'NR == FNR { f[$1] = 1; next } $1 in f' "$w/failed" "$w/share-main" >"$w/again"
   if [ -s "$w/again" ]; then
-    local lf=${FARM_VM_LOADAVG:-/proc/loadavg} l=0 t=0 others alone
+    local lf=${FARM_VM_LOADAVG:-/proc/loadavg} l=0 t=0 alone others
+    # The pieces that failed in the first run and are not run again (a test piece that failed
+    # otherwise than by its limit, a short-addresses piece): each fails the share.
+    others=$(awk 'NR == FNR { f[$1] = 1; next } $2 ~ /^rc=[1-9]/ && !($1 in f)' "$w/failed" "$w/r1.out" | wc -l)
     if [ "$kind" = test ]; then
       while read -r l _ <"$lf" && awk -v l="$l" -v c="$cores" 'BEGIN { exit !(l > c) }' && [ "$t" -lt 240 ]; do
         sleep 5
@@ -332,6 +399,7 @@ vm_side() {
     if [ "$kind" = bench ]; then
       echo "farm: each failed benchmark run again once, alone, on the same VM; its verdict:"
       cat "$w/r2.out"
+      [ "$others" = 0 ] || rc=1
       return "$rc"
     fi
     echo "farm: each test piece stopped by its limit run again once, alone, on the same VM; its verdict:"
@@ -340,7 +408,6 @@ vm_side() {
     alone=$(awk '$2 == "rc=0" { print $1 }' "$w/r2.out" | paste -sd' ')
     [ -z "$alone" ] || echo "farm: stopped by its limit under load, passed alone: $alone"
     # The share fails when a piece failed alone or a piece failed otherwise in the first run.
-    others=$(awk 'NR == FNR { f[$1] = 1; next } $2 ~ /^rc=[1-9]/ && !($1 in f)' "$w/failed" "$w/r1.out" | wc -l)
     [ "$others" = 0 ] || rc=1
     return "$rc"
   fi
@@ -396,13 +463,36 @@ acquire() {
 
 rc_all=0
 : >"$out/report"
+# The reports of a share that failed (FARM-setup-fail-silent: a share whose build or setup failed
+# printed nothing but `pieces: 0, failed: 0`). Each joins its lines with "; ", drops every line
+# with an @ (FARM.md: no account names in kept logs), and repeats no line.
+join_lines() { command grep -a -v '@' | awk 'NF && !s[$0]++ { printf "%s%s", (c++ ? "; " : ""), $0 }'; }
+# job_why <job.out>: why job.sh stopped, in its own and run.sh's words.
+job_why() { command grep -a -E '^(job died on |run\.sh: |job\.sh: |launch failed)' "$1" 2>/dev/null | join_lines; }
+# share_why <1.log>: why a share ran no piece: vm_side's own lines, else run_tests.sh's verdict
+# and the first compiler error, else the log's last line.
+share_why() {
+  local s
+  s=$(command grep -a '^vm_side: ' "$1" | join_lines)
+  [ -n "$s" ] || s=$({ command grep -a -E '^(BUILD FAILED|MISSING |NO PIECE)' "$1"
+    command grep -a -m 1 -E '^error(\[|:)' "$1"; } | join_lines)
+  [ -n "$s" ] || s=$(command grep -a . "$1" | tail -n 1 | join_lines)
+  echo "${s:-no output}"
+}
+# names <list>: the names of a list one a line, on one line, the first 20 and a count of the rest.
+names() { awk 'NF { if (++c <= 20) printf "%s%s", (c > 1 ? " " : ""), $1 } END { if (c > 20) printf " and %d more", c - 20 }' <<<"$1"; }
+# share_failed <message>: a line naming a failed share, and the run failed.
+share_failed() {
+  echo "farm: FAILED: $*" >>"$out/report"
+  [ "$rc_all" != 0 ] || rc_all=1
+}
 # The VM shares.
 if [ -n "$run_vm" ]; then
   want=$vms
   [ -z "$list" ] || want=1
   acquire "$want"
   n=${#held[@]}
-  declare -A tries=() done_k=()
+  declare -A tries=() done_k=() vm_last=() vms_of=()
   pending=$(seq 1 "$n")
   while [ -n "$pending" ]; do
     [ ${#held[@]} -gt 0 ] || acquire "$(wc -w <<<"$pending")"
@@ -416,11 +506,13 @@ if [ -n "$run_vm" ]; then
       mkdir -p "$d" || die "cannot create $d"
       line=$(printf '!printf %%s %s | base64 -d >/content/job/farm_vm.sh && bash /content/job/farm_vm.sh' "$vm_b64")
       for x in "$k" "$n" "$kind" "${full:-0}" "${skip_other:-0}" "${list:-0}" "$([ -n "$trace" ] && echo 1 || echo 0)" \
-        "$vm_only" "$vm_except" "${vm_full[*]}"; do
+        "$vm_only" "$vm_except" "${vm_full[*]}" "$vm_short"; do
         line+=" $(printf '%q' "$x")"
       done
       printf '%s\n' "$line" >"$d/tests.txt"
       echo "farm: share $k of $n on $v (attempt ${tries[$k]}; logs $d)"
+      vm_last[$k]=$v
+      vms_of[$k]+=" $v"
       "$colab_dir/job.sh" "$v" "$wt" "$d/job" "$d/tests.txt" ${spec:+"$spec"} >"$d/job.out" 2>&1 &
       started+=("$k:$!")
       kids+=("$!")
@@ -440,9 +532,10 @@ if [ -n "$run_vm" ]; then
       log=$d/job/out/1.log
       lrc=$(awk -F '\t' 'NR == 1 { print $2 }' "$d/job/summary.tsv" 2>/dev/null)
       if [[ ! $jrc =~ ^[01]$ ]] || [ ! -f "$log" ] || [[ ! $lrc =~ ^[0-9]+$ ]]; then
-        echo "farm: share $k of $n did not run to its end (job.sh exit ${jrc:-none}; $d/job.out)"
+        why=$(job_why "$d/job.out")
+        echo "farm: share $k of $n on ${vm_last[$k]} did not run to its end (job.sh exit ${jrc:-none})${why:+: $why}; $d/job.out"
         if [ "${tries[$k]}" -ge 3 ]; then
-          echo "farm: share $k of $n lost after 3 attempts; its pieces are not reported"
+          echo "farm: FAILED: share $k of $n lost after 3 attempts, on${vms_of[$k]}; its pieces are not reported"
           rc_all=129
         else
           next+=" $k"
@@ -468,20 +561,46 @@ if [ -n "$run_vm" ]; then
     elif [ "$lrc" != 0 ] && [ "$rc_all" = 0 ]; then
       rc_all=1
     fi
+    # The pieces run against the pieces sent (FARM-setup-fail-silent). A share that printed no
+    # share line ran no piece: its list call failed (a failed build or setup, named by share_why)
+    # or it ended silently, which before this check passed with `pieces: 0, failed: 0` when the
+    # other shares' sizes did not add up to the list's only because one was missing. A share that
+    # did list must report each of its pieces once, by name: equal counts can hide a piece run
+    # twice and another not at all.
+    if [ -z "$list" ]; then
+      log=$d/job/out/1.log sent=$d/job/out/farm-share
+      if ! command grep -a -q -E '^farm: share [0-9]+ of [0-9]+: [0-9]+ of [0-9]+ pieces$' "$log"; then
+        share_failed "share $k of $n on ${vm_last[$k]} ran no piece (exit $lrc): $(share_why "$log"); log $log"
+      elif [ ! -f "$sent" ]; then
+        share_failed "share $k of $n on ${vm_last[$k]} listed its pieces but sent back no list of them ($sent)"
+      else
+        ran=$(awk '/^farm: / { next } $2 ~ /^rc=[0-9]+$/ { print $1 }' "$log" | sort)
+        miss=$(comm -23 <(sort -u "$sent") <(sort -u <<<"$ran"))
+        twice=$(uniq -d <<<"$ran")
+        extra=$(comm -13 <(sort -u "$sent") <(sort -u <<<"$ran"))
+        why=
+        [ -z "$miss" ] || why+="; not reported: $(names "$miss")"
+        [ -z "$twice" ] || why+="; reported more than once: $(names "$twice")"
+        [ -z "$extra" ] || why+="; reported but not sent: $(names "$extra")"
+        [ -z "$why" ] || share_failed "share $k of $n on ${vm_last[$k]} did not run the pieces it was given: ${why#; }"
+      fi
+      # A failed setup of the full tests' tools (job.sh's run.sh) fails a --full run even when its
+      # pieces passed: a piece whose tool is missing may skip, not fail.
+      if [ -n "$full" ] && [ -f "$d/job/out/setup-full.log" ]; then
+        share_failed "share $k of $n on ${vm_last[$k]}: $(join_lines <"$d/job/out/setup-full.log"); $d/job/setup.log"
+      fi
+    fi
     if [ -n "$trace" ] && [ -d "$d/job/out/trace-$k" ]; then
       mkdir -p "$trace" && cp -r "$d/job/out/trace-$k" "$trace/vm$k" || die "cannot copy the trace of share $k"
     fi
   done
-  # Every share that listed must report each of its pieces once, and the shares' sizes must add
-  # up to the list's: a piece neither reported nor counted would read as passing. (A share whose
-  # list call failed prints no share line, and its failure is already counted above.)
+  # The shares' sizes must add up to the list's, and every share must have listed as many pieces:
+  # a piece in no share would read as passing. (Each share's own pieces are checked by name above,
+  # and a share with no share line is failed there.)
   cover=$(awk '
     /^farm: share [0-9]+ of [0-9]+: [0-9]+ of [0-9]+ pieces$/ { k = $3; m[k] = $6; t[k] = $8; next }
-    /^farm: / { next }
-    $2 ~ /^rc=[0-9]+$/ && k != "" { r[k]++ }
     END {
       for (k in m) {
-        if (r[k] + 0 != m[k]) print "share " k " ran " r[k] + 0 " of its " m[k] " pieces"
         s += m[k]; if (tot == "") tot = t[k]; else if (t[k] != tot) print "shares listed " tot " and " t[k] " pieces"
       }
       if (tot != "" && length(m) == '"$n"' && s != tot) print "the shares hold " s " of the " tot " pieces listed"
