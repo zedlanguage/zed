@@ -87,6 +87,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use zed_benches::{Constant, Crossover, Method, Setting, Steps, conditions, least};
 use zed_corpus_ref::zedrt::{self, product};
+use zed_kernel::num::coprime::crossover as cx;
 use zed_kernel::num::crossover as x;
 use zed_kernel::num::{
     PRINT_HANDOFF, PRINT_WHOLE, mul_uint, to_decimal, to_decimal_split, to_decimal_split_at,
@@ -1202,10 +1203,11 @@ fn primes_from(from: u64, n: usize) -> Vec<u64> {
     out
 }
 
-/// `factor-bits`: `x::FACTOR_BITS` and `x::FACTOR_INPUTS` of `num::coprime` (PERF-negated-chain-unsolved,
-/// author decision A96), the word path by factoring (`zed_numtheory::coprime_base_by_factoring`
-/// and `shares_a_factor_by_factoring`) against the general methods (Bernstein's trees,
-/// `x::coprime_base_by_halves`, and `x::shares_a_factor_by_tree`) on `k` word inputs whose
+/// `factor-bits`: `cx::FACTOR_BITS` and `cx::FACTOR_INPUTS` of `num::coprime`
+/// (PERF-negated-chain-unsolved, author decision A96), the word path by factoring
+/// (`zed_numtheory::coprime_base_by_factoring` and `shares_a_factor_by_factoring`) against the
+/// general methods (Bernstein's trees, `cx::coprime_base_by_halves`, and
+/// `cx::shares_a_factor_by_tree`) on `k` word inputs whose
 /// largest has `b` bits, on both sides of each switchover. Three families of each width:
 /// distinct primes of `b` bits (a primality test each); disjoint products `p_(2i) p_(2i+1)` of
 /// primes of `b / 2` bits (Pollard's rho's worst case at a width, about `2^(b/4)` products
@@ -1224,10 +1226,10 @@ fn primes_from(from: u64, n: usize) -> Vec<u64> {
 fn factor_bits(_: &[String]) -> ExitCode {
     let mut meter = Meter::new();
     let mut widths: Vec<u32> = vec![16, 24, 32, 40, 44, 48, 52, 56];
-    widths.extend([x::FACTOR_BITS, x::FACTOR_BITS + 1]);
+    widths.extend([cx::FACTOR_BITS, cx::FACTOR_BITS + 1]);
     widths.sort_unstable();
     widths.dedup();
-    let fi = x::FACTOR_INPUTS;
+    let fi = cx::FACTOR_INPUTS;
     let mut ks = vec![2usize, 4, 8, 13, 64, 512, fi / 2, fi];
     ks.sort_unstable();
     ks.dedup();
@@ -1252,21 +1254,21 @@ fn factor_bits(_: &[String]) -> ExitCode {
                 let fb = meter.work(|| {
                     factored = zed_numtheory::coprime_base_by_factoring(&ws).0;
                 });
-                let hb = meter.work(|| halves = x::coprime_base_by_halves(&xs));
+                let hb = meter.work(|| halves = cx::coprime_base_by_halves(&xs));
                 factored.sort_unstable();
                 halves.sort();
                 let factored: Vec<BigUint> = factored.into_iter().map(BigUint::from).collect();
                 let (mut s_factored, mut s_tree) = (Vec::new(), Vec::new());
                 let fs =
                     meter.work(|| s_factored = zed_numtheory::shares_a_factor_by_factoring(&ws));
-                let ts = meter.work(|| s_tree = x::shares_a_factor_by_tree(&xs));
+                let ts = meter.work(|| s_tree = cx::shares_a_factor_by_tree(&xs));
                 if factored != halves || s_factored != s_tree {
                     agree = false;
                     println!("DIFFER family={family} k={k} b={b}");
                 }
                 println!(
                     "bench FACTOR_BITS family={family} k={k} bits={bits} factor_side={} base: factored={}/{} halves={}/{} shares: factored={}/{} tree={}/{}",
-                    bits <= x::FACTOR_BITS && k >= fi,
+                    bits <= cx::FACTOR_BITS && k >= fi,
                     fb.units,
                     fb.bytes,
                     hb.units,

@@ -41,7 +41,7 @@ test = false
 # The meter of the scaling tests: instructions where the hardware counts them, and bytes.
 zed-tests = { path = "../tests" }
 zed-kernel.workspace = true
-# The factoring side of `crossover factor-bits` (`zed_kernel::num::crossover::FACTOR_BITS`).
+# The factoring side of `crossover factor-bits` (`zed_kernel::num::coprime::crossover::FACTOR_BITS`).
 zed-numtheory.workspace = true
 # With the features the tests give it, as for the dylibs below.
 zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref"] }

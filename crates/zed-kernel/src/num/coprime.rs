@@ -1118,6 +1118,31 @@ fn pair_base(out: &mut Vec<BigUint>, a: BigUint, b: BigUint) {
     }
 }
 
+/// The switchovers of this module as built, and the general methods on either side of them,
+/// for `zed-benches`' `crossover factor-bits` (QUESTIONS A96). Here rather than in
+/// `num::crossover`, whose module `num::fast` this module imports through `num`, so that no
+/// import cycle joins them (`s_01f_import_graph`).
+pub mod crossover {
+    use num_bigint::BigUint;
+
+    /// [`super::FACTOR_BITS`] as built, in bits.
+    pub const FACTOR_BITS: u32 = super::FACTOR_BITS;
+    /// [`super::FACTOR_INPUTS`] as built.
+    pub const FACTOR_INPUTS: usize = super::FACTOR_INPUTS;
+
+    /// The elements of the coprime base of `xs` by Bernstein's trees ([`super::by_halves`]),
+    /// the general side of `FACTOR_BITS`, whatever the inputs.
+    pub fn coprime_base_by_halves(xs: &[BigUint]) -> Vec<BigUint> {
+        super::by_halves(xs).elements
+    }
+
+    /// Which of `xs` share a prime with another, by the product and remainder trees
+    /// ([`super::shares_a_factor_by_tree`]), the general side of `FACTOR_BITS`.
+    pub fn shares_a_factor_by_tree(xs: &[BigUint]) -> Vec<bool> {
+        super::shares_a_factor_by_tree(xs)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
