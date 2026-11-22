@@ -63,7 +63,8 @@
 //! Bruening, Garnett and Amarasinghe, "An infrastructure for adaptive dynamic optimization", CGO
 //! 2003, doi:10.1109/CGO.2003.1191551 (Crossref's record read, not the paper's text; a binary is
 //! run from a cache of its basic blocks, copied and changed by the client as each is first
-//! reached; tools/icount/zed_icount.c says what it counts and how it differs from the hardware). Tradeoff, measured 2026-11-22 on a Colab hm
+//! reached; tools/icount/zed_icount.c says what it counts and how it differs from the hardware).
+//! Tradeoff, measured 2026-11-22 on a Colab hm
 //! VM with the client's own test program (tools/icount/selftest.c, `work 40000`, a Θ(n²) sort,
 //! 0.88 s natively), against the other ways to count in software:
 //!
@@ -85,7 +86,8 @@
 //! under DynamoRIO with no client, and 34.7 s and 35.2 s with zed_icount: 4.8x for DynamoRIO and
 //! 1.5x more for the count, 7.3x in all. A benchmark run under it pays the cache once per process:
 //! presburger's `products_whose_factors_one_sum_joins_scale` took 1.17 s to 1.41 s at n (24 ms
-//! natively) and 2.27 s to 2.48 s at 8n (0.28 s) in four runs, the whole test 9.7 s to 10.5 s. Placing each block's add where the
+//! natively) and 2.27 s to 2.48 s at 8n (0.28 s) in four runs, the whole test 9.7 s to 10.5 s.
+//! Placing each block's add where the
 //! arithmetic flags are dead, so that drreg need not save them, was tried and gave the same counts
 //! and the same times within the spread (34.7 s and 35.9 s), so the simpler add at the block's
 //! first instruction stays. Why accepted: only the ratio of counts is read, which the time does

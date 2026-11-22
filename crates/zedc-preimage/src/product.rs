@@ -9928,7 +9928,8 @@ impl Scope {
     /// records products wider than either projection read, which is the direction step 2
     /// needs: a projection read products no wider than those recorded, so by A2 (exact
     /// projections) it is no wider than a projection at the recorded products would be.
-    /// Tests: `case_wake::tests_after_a_join_of_cases_that_recorded_one_part_differently_give_the_projection_from_scratch`
+    /// Tests:
+    /// `case_wake::tests_after_a_join_of_cases_that_recorded_one_part_differently_give_the_projection_from_scratch`
     /// (case 3 and 4 against the projection from scratch); it cannot catch a record that is
     /// right but whose projection was inexact (A2 for inexact projections, below).
     ///

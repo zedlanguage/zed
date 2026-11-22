@@ -536,7 +536,8 @@ mod imp {
     /// (bit 5) and `exclude_hv` (bit 6) in declaration order. GCC places the first bit field of a
     /// unit at its least significant bit on a little-endian target and at its most significant
     /// bit on a big-endian one (the System V ABIs of x86_64, AArch64 and RISC-V are little-endian;
-    /// s390x and big-endian PowerPC, where this crate also builds, are not), so bit `k` is `1 << k` or
+    /// s390x and big-endian PowerPC, where this crate also builds, are not), so bit `k` is
+    /// `1 << k` or
     /// `1 << (63 - k)` by `target_endian`; `disabled` (bit 0) is clear, so the counter counts from
     /// the call on. pid 0 and cpu -1: this thread, on any processor. Run only on x86_64 Colab VMs,
     /// where the counter does not open (strace of 2026-11-22 shows the start under drrun that
