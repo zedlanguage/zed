@@ -3,7 +3,11 @@
 //!
 //! Each recursive call of the walk is a `Job`. What the caller does with the call's result
 //! is a `Frame` pushed below the job, which reads the result from `M::ret` when the job
-//! is done. A sequence of calls is one frame that starts the next call each time it resumes.
+//! is done. A sequence of cal                .and_then(|ls| ls.first().copied())
+                && let Some(t) = self.t.text
+            {
+                return Some(Zero::Branches(t[first.span.start..first.span.end].to_string()));
+            } is one frame that starts the next call each time it resumes.
 //! The jobs run in the order the calls ran, so the errors, the classes, the needs and the
 //! records come out in the same order.
 
