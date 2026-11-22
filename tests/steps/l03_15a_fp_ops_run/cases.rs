@@ -1314,6 +1314,28 @@ fn a_generic_lambda_parameter_in_a_refused_tuple_is_noted_with_its_entries() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// The headline and the note of the refused tuple print the entry type found for the lambda's
+/// parameter, `(String, 1)`, not `(_, 1)`, whose `_` reads as every value (plan row
+/// MSG-tuple-generic-headline).
+#[test]
+fn a_refused_tuple_of_a_generic_lambda_parameter_prints_its_entry_type() {
+    let src = "main(m: MainArgs) {\n  m.stdout <- m.stdin.flatMap(l -> [\"${(l, 1) + 1}\"]);\n}\n";
+    let out = run("fp_ops/entry_type_in_headline", src, "", &[]);
+    assert_eq!(out.status, 1, "{}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("`+` does not take ((String, 1), 1): no arrow of `+` takes these types."),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("this expression gives (String, 1)"),
+        "{}",
+        out.stderr
+    );
+    assert!(!out.stderr.contains("(_, 1)"), "{}", out.stderr);
+}
+
 /// A list type written in a program, `[T]`, resolves and checks as the type the checker prints
 /// for a list (plan row LIST-type-written): a parameter of type `[String]`, a list of lists,
 /// and a list inside a tuple. The row's test named the function `count`, which `ps.count`

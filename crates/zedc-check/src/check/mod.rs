@@ -4318,7 +4318,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.near(at, |ck| ck.show(&t))
                 }
                 (None, Src::Other(e), _) => match self.tuple_seen(e) {
-                    Some(t) => self.near(at, |ck| ck.show(&t)),
+                    Some(t) => {
+                        let t = self.with_entries(&t, &entry_roots).into_owned();
+                        self.near(at, |ck| ck.show(&t))
+                    }
                     None => continue,
                 },
                 (None, _, _) => continue,
@@ -6346,6 +6349,20 @@ impl<'t, 'a> Ck<'t, 'a> {
     // Complexity tradeoff: one pass over the class variables of `t`, each one root lookup,
     // and `noted_entries` (O(arrows of the receiver)) for each that matches; with no match
     // `t` is returned as is, borrowed.
+    /// [`Self::with_entries`] with the roots found here, for a headline, which is written
+    /// once per error (plan row MSG-tuple-generic-headline: "`+` does not take ((String,
+    /// 1), 1)", not `((_, 1), 1)`). O(E) for E classes of lambda parameters given entries,
+    /// and nothing where there are none.
+    fn entries_shown<'k>(&self, t: &'k Ty) -> Cow<'k, Ty> {
+        if self.entry_classes.is_empty() {
+            return Cow::Borrowed(t);
+        }
+        let roots: HashMap<usize, &Ty> = (self.entry_classes.iter())
+            .map(|(&k, x)| (self.find(k), x))
+            .collect();
+        self.with_entries(t, &roots)
+    }
+
     fn with_entries<'k>(&self, t: &'k Ty, roots: &HashMap<usize, &Ty>) -> Cow<'k, Ty> {
         if roots.is_empty() {
             return Cow::Borrowed(t);

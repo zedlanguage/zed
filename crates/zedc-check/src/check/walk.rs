@@ -28641,7 +28641,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let shown: Vec<String> = ck.near(Some(span), |ck| {
                     (path.iter().zip(&no_value))
                         .map(|(p, &none)| match p {
-                            Some(p) => ck.show(&p.ty()),
+                            Some(p) => ck.show(&ck.entries_shown(&p.ty())),
                             None if none => ck.show(&Ty::empty()),
                             None => "_".into(),
                         })
