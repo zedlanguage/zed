@@ -57,7 +57,7 @@ fn run(term: &Term) -> String {
             let what = &e[at..];
             format!(
                 "error: {}",
-                &what[..what.find(". Please").unwrap_or(what.len())]
+                &what[..what.find(".\nPlease report it at ").unwrap_or(what.len())]
             )
         }
     }

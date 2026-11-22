@@ -37,8 +37,9 @@ const USAGE: &str = "The commands of zedc are:
 /// What zedc prints when it stops at a broken assumption of its own (a panic): that this is a
 /// bug in zedc and not in the program, the declaration it was at work on, and how to report it,
 /// then a details block with zedc's version, the stage, what zedc expected and where in zedc
-/// that was (DESIGN.md sec:diagnostics, plan row MSG-bug-report-plain). In a run of a program it reports the bug as the
-/// executable `zedc build` makes does, and exits as it does, with status 3
+/// that was (DESIGN.md sec:diagnostics, plan row MSG-bug-report-plain). In a run of a program
+/// it reports the bug as the executable `zedc build` makes does, and exits as it does, with
+/// status 3
 /// (`zedc::run::stop_at_bug`, plan row EXE-panic-status).
 fn bug_report(info: &std::panic::PanicHookInfo<'_>) {
     if zedc::run::running() {
