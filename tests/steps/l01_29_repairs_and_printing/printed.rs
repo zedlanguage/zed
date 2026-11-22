@@ -1123,7 +1123,9 @@ fn a_read_error_names_the_literal_as_written() {
     let text = "(0, 1) for T in 0";
     assert_eq!(
         parse_type(text).err(),
-        Some(format!("`{text}`: `0` in the bound of `T` is not a carrier"))
+        Some(format!(
+            "`{text}`: `0` in the bound of `T` is not a carrier"
+        ))
     );
 }
 

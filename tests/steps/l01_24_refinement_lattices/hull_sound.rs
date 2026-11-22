@@ -604,7 +604,11 @@ fn a_hull_end_kept_as_a_power_is_left_open() {
         let sig = sig_of(&text, "f");
         let h = sig.hull.as_ref().expect("a hull");
         assert_eq!(h.high, None, "{sig}");
-        assert_eq!(h.low.as_ref().map(|v| format!("{v:?}")), Some("Int(1)".into()), "{sig}");
+        assert_eq!(
+            h.low.as_ref().map(|v| format!("{v:?}")),
+            Some("Int(1)".into()),
+            "{sig}"
+        );
     }
     // Written out, the end of a smaller power is kept: `2^100`.
     let sig = sig_of("f(positional k: int[0..=100]) = 2^k;\n", "f");

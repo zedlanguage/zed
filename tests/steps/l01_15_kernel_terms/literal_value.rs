@@ -35,7 +35,10 @@ fn a_tuple_of_literals_at_any_depth_has_the_value_of_its_literals() {
 fn a_tuple_holding_anything_but_a_literal_has_no_literal_value() {
     assert_eq!(var("x").literal_value(), None);
     assert_eq!(tuple(vec![lit(1i64), var("x")]).literal_value(), None);
-    let deep = tuple(vec![lit(1i64), tuple(vec![tuple(vec![var("x")]), lit(2i64)])]);
+    let deep = tuple(vec![
+        lit(1i64),
+        tuple(vec![tuple(vec![var("x")]), lit(2i64)]),
+    ]);
     assert_eq!(deep.literal_value(), None);
     let neg = prim(Prim::Neg, vec![lit(1i64)]);
     assert_eq!(tuple(vec![neg]).literal_value(), None);

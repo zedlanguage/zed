@@ -307,7 +307,10 @@ fn a_program_on_a_tuple_of_bools_is_accepted_and_its_arms_read_the_type() {
     let nested = Value::tuple(vec![tf.clone(), Value::Bool(true)]);
     let of = |ty: Type| arms(&body, &Scope::new([("x".into(), Product::of_type(ty))]));
     let a = of(Type::tuple(vec![bools(2), Type::bool()]));
-    assert_eq!(super::arm(&a, "==", true).scope.get("x").value(), Some(&nested));
+    assert_eq!(
+        super::arm(&a, "==", true).scope.get("x").value(),
+        Some(&nested)
+    );
 }
 
 mod bench;
