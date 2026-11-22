@@ -5171,9 +5171,9 @@ pub fn undefined_type(name: &str) -> String {
 pub use zedc_syntax::ast::type_var_form;
 
 /// The names of the types in the open scopes, with how many binders give each, indexed by
-/// spelling so that the names near in spelling to a written one ([`near_in_spelling`]) are
-/// found without a scan of them all. Each name is filed under its folded form ([`fold`]), and
-/// under itself and each string it gives with one character deleted ([`deletions`]). A name of
+/// spelling so that the names near in spelling to a written one (`near_in_spelling`) are
+/// found without a scan of them all. Each name is filed under its folded form (`fold`), and
+/// under itself and each string it gives with one character deleted (`deletions`). A name of
 /// a type variable's form is never offered as a type name, so the resolver does not file it.
 /// The loader files the units and directories under a directory of a package in one index each,
 /// for the menu of an import of a path that names no unit (zedc `unit::Listed`).
@@ -5192,7 +5192,7 @@ pub use zedc_syntax::ast::type_var_form;
 /// replaced: `c` and `n` with `i` deleted are equal; (4) the characters at `i` and `i + 1`
 /// swapped: `c` with `i + 1` deleted and `n` with `i` deleted are equal, each the other
 /// characters in order. In each case `c` is filed under one of the keys `n` gives. Every
-/// candidate is then tested with [`near_in_spelling`], so a name filed under a shared key but
+/// candidate is then tested with `near_in_spelling`, so a name filed under a shared key but
 /// two slips away (`xab` and `abx` share `ab`) is not offered.
 // Complexity tradeoff (COMPLEXITY.md TYPEVAR-names, PROOF-nearest-name-quadratic): the
 // standard search, a test of each of the K names in scope, costs O(K·L) for a name of length L.
@@ -5251,7 +5251,7 @@ impl SpellingIndex {
     }
 
     /// Every name filed that is near `n` in spelling, in name order. The cost bound is
-    /// [`SpellingIndex::near`]'s, every name of each key tested: the deletion keys hold O(L)
+    /// `SpellingIndex::near`'s, every name of each key tested: the deletion keys hold O(L)
     /// names each (the comment at the type), and every name under the folded key is near `n`
     /// or is `n`, so its tests are paid for by the names returned.
     pub fn near_all<'a>(&'a self, n: &'a str) -> BTreeSet<&'a str> {
