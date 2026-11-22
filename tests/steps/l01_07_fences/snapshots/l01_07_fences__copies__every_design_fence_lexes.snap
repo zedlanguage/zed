@@ -314,6 +314,11 @@ expression: "tokens_by_key(&fences::design())"
   1 | «import» geometry . shapes ;
   2 | «import» geometry . shapes «as» g ;
   3 | «import» geometry . shapes . { area , Rect } ;
+== DESIGN.md [sec:units] 4 L7
+  2 | stopwords = buildFile ( str["data/stopwords.txt"] ) . via ( utf8Text ( ) . then ( lines ( ) ) ) ;
+  3 | main ( m : MainArgs ) {
+  4 | m . stdout <- str[${stopwords :: len} " stop words"] ;
+  5 | }
 == DESIGN.md [sec:facets] 1 L20
   1 | «type» Nonzero = Utf8String «matching» «grammar» { str["0"] * ( str["1"] | str["2"] | str["3"] | str["4"] | str["5"] | str["6"] | str["7"] | str["8"] | str["9"] ) digit * } ;
   2 | «type» UnitName = Utf8String «matching» «grammar» { alpha ( alpha | digit | str["_"] ) * | str["°"] alpha * | str["%"] | str["℃"] | str["′"] | str["″"] | str["'"] | str["\""] } ;
@@ -766,6 +771,8 @@ expression: "tokens_by_key(&fences::design())"
   5 | «return» «if» y { x } «else» { #none } ;
   6 | }
 == DESIGN.md [sec:ffi] 3 L7
+  1 | @packed @foreign «struct» Record { kind : u8 , size : u32 «with» endian ( #big ) }
+== DESIGN.md [sec:ffi] 4 L7
   1 | @foreign «struct» Device { }
   2 | @foreign «struct» Buffer { }
   3 | @foreign «struct» Extension { }
@@ -776,19 +783,19 @@ expression: "tokens_by_key(&fences::design())"
   8 | }
   9 | @foreign ( str["vulkan"] , str["vkDestroyBuffer"] ) @nonblocking destroyBuffer : ( device : Ptr ( Device ) , buffer : Ptr ( Buffer ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> #ok | #lost ;
  10 | @foreign ( str["vulkan"] , str["vkCreateBuffer"] ) createBuffer : ( device : Ptr ( Device ) , info : Ptr ( BufferCreateInfo ) , allocator : Ptr ( AllocationCallbacks ) | #none ) -> ( i32 , Ptr ( Buffer ) | #none «with» release ( destroyBuffer , device , allocator ) ) | #lost ;
-== DESIGN.md [sec:ffi] 4 L7
+== DESIGN.md [sec:ffi] 5 L7
   1 | @foreign «struct» Env { }
   2 | @foreign «struct» Txn { }
   3 | @foreign ( str["lmdb"] , str["mdb_txn_abort"] ) @nonblocking abort : ( txn : Ptr ( Txn ) ) -> #ok | #lost ;
   4 | @foreign ( str["lmdb"] , str["mdb_txn_begin"] ) begin : ( env : Ptr ( Env ) , parent : Ptr ( Txn ) | #none , flags : u32 ) -> ( i32 , Ptr ( Txn ) | #none «with» release ( abort ) «with» keeps ( env ) «with» keeps ( parent ) ) | #lost ;
   5 | @foreign ( str["lmdb"] , str["mdb_txn_commit"] ) commit : ( txn : Ptr ( Txn ) «with» consumes ( ) ) -> i32 | #lost ;
-== DESIGN.md [sec:ffi] 5 L7
+== DESIGN.md [sec:ffi] 6 L7
   1 | @foreign «struct» Zip { }
   2 | @foreign «struct» Source { }
   3 | @foreign ( str["zip"] , str["zip_source_free"] ) @nonblocking sourceFree : ( source : Ptr ( Source ) ) -> #ok | #lost ;
   4 | @foreign ( str["zip"] , str["zip_source_file"] ) sourceFile : ( archive : Ptr ( Zip ) , path : [ u8 ] «with» terminated ( 0₍10₎ ) , start : u64 , length : i64 ) -> Ptr ( Source ) | #none | #lost «with» release ( sourceFree ) ;
   5 | @foreign ( str["zip"] , str["zip_file_add"] ) fileAdd : ( archive : Ptr ( Zip ) , name : [ u8 ] «with» terminated ( 0₍10₎ ) , source : Ptr ( Source ) «with» consumes ( unless : - 1₍10₎ ) , flags : u32 ) -> i64 | #lost ;
-== DESIGN.md [sec:ffi] 6 L2
+== DESIGN.md [sec:ffi] 7 L2
   1 | «match» sourceFile ( archive : , path : , start : 0₍10₎ , length : - 1₍10₎ ) {
   2 | #none -> - 1₍10₎ ,
   3 | source -> «match» fileAdd ( archive : , name : , source : , flags : 0₍10₎ ) {
@@ -796,38 +803,38 @@ expression: "tokens_by_key(&fences::design())"
   5 | index -> index ,
   6 | } ,
   7 | }
-== DESIGN.md [sec:ffi] 7 L7
+== DESIGN.md [sec:ffi] 8 L7
   1 | @foreign «struct» File { }
   2 | @foreign ( str["c"] , str["fclose"] ) fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 | #lost ;
   3 | @foreign ( str["c"] , str["fputs"] ) fputs : ( s : [ u8 ] «with» terminated ( 0₍10₎ ) , file : Ptr ( File ) ) -> i32 | #lost ;
   4 | @foreign ( str["c"] , str["fopen"] ) fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( fclose ) ;
   5 | @foreign ( str["c"] , str["fopen"] ) openLog : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #lost -> #ok ; #ok } ) ;
-== DESIGN.md [sec:ffi] 8 L7
+== DESIGN.md [sec:ffi] 9 L7
   1 | @foreign «struct» Lock { }
   2 | @foreign ( str["locks"] , str["lock_release"] ) @nonblocking unlock : ( lock : Ptr ( Lock ) ) -> #ok | #lost ;
   3 | @foreign ( str["locks"] , str["lock_acquire"] ) acquire : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( Lock ) «with» release ( unlock ) ;
-== DESIGN.md [sec:ffi] 9 L7
+== DESIGN.md [sec:ffi] 10 L7
   1 | @foreign «struct» Db { }
   2 | @foreign «struct» Stmt { }
   3 | @foreign ( str["sqlite3"] , str["sqlite3_close_v2"] ) close : ( db : Ptr ( Db ) «with» consumes ( ) ) -> i32 | #lost ;
   4 | @foreign ( str["sqlite3"] , str["sqlite3_finalize"] ) finalize : ( stmt : Ptr ( Stmt ) «with» consumes ( ) ) -> i32 | #lost ;
   7 | @foreign ( str["sqlite3"] , str["sqlite3_open"] ) open : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> ( i32 , Ptr ( Db ) | #none «with» release ( db -> { _ = close ( db ) «else» #lost -> #ok ; #ok } ) ) ;
   8 | @foreign ( str["sqlite3"] , str["sqlite3_prepare_v2"] ) prepare : ( db : Ptr ( Db ) , sql : [ u8 ] «with» terminated ( 0₍10₎ ) , bytes : i32 , tail : Ptr ( Ptr ( [ u8 ] «with» terminated ( 0₍10₎ ) ) ) | #none ) -> ( i32 , Ptr ( Stmt ) | #none «with» arg ( 3₍10₎ ) «with» release ( stmt -> { _ = finalize ( stmt ) «else» #lost -> #ok ; #ok } ) «with» keeps ( db ) ) | #lost ;
- 12 | openQuery ( path : Utf8String , sql : Utf8String ) -> ( Ptr ( Db ) , Ptr ( Stmt ) ) | i32 | #lost {
- 13 | rc , opened = open ( path : ) ;
- 14 | «match» opened {
- 15 | #none -> rc ,
- 16 | db -> «if» rc != 0₍10₎ { rc } «else» {
- 17 | rc2 , prepared = prepare ( db : , sql : , bytes : - 1₍10₎ , tail : #none ) ;
- 18 | «match» prepared {
- 19 | #none -> rc2 ,
- 20 | #lost -> #lost ,
- 21 | stmt -> ( db , stmt ) ,
- 22 | }
- 23 | } ,
- 24 | }
+ 13 | openQuery ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , sql : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> ( Ptr ( Db ) , Ptr ( Stmt ) ) | i32 | #lost {
+ 14 | rc , opened = open ( path : ) ;
+ 15 | «match» opened {
+ 16 | #none -> rc ,
+ 17 | db -> «if» rc != 0₍10₎ { rc } «else» {
+ 18 | rc2 , prepared = prepare ( db : , sql : , bytes : - 1₍10₎ , tail : #none ) ;
+ 19 | «match» prepared {
+ 20 | #none -> rc2 ,
+ 21 | #lost -> #lost ,
+ 22 | stmt -> ( db , stmt ) ,
+ 23 | }
+ 24 | } ,
  25 | }
-== DESIGN.md [sec:ffi] 10 L7
+ 26 | }
+== DESIGN.md [sec:ffi] 11 L7
   1 | @foreign «struct» Termios {
   2 | iflag : u32 , oflag : u32 , cflag : u32 , lflag : u32 ,
   3 | line : u8 , cc : [ u8 ] «with» length ( 32₍10₎ ) ,
@@ -866,7 +873,7 @@ expression: "tokens_by_key(&fences::design())"
  44 | } ,
  45 | } ;
  46 | }
-== DESIGN.md [sec:ffi] 11 L7
+== DESIGN.md [sec:ffi] 12 L7
   1 | «struct» Dir { fd : i32 }
   2 | @foreign ( str["c"] , str["open"] ) openPath : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , flags : i32 ) -> i32 ;
   3 | @foreign ( str["c"] , str["chdir"] ) chdir : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> i32 ;
@@ -888,7 +895,7 @@ expression: "tokens_by_key(&fences::design())"
  24 | } «else» { ( 0₍10₎ , Dir ( fd : old ) ) }
  25 | } ;
  26 | }
-== DESIGN.md [sec:ffi] 12 L7
+== DESIGN.md [sec:ffi] 13 L7
   1 | @foreign «struct» Curl { }
   2 | «struct» CurlState { }
   3 | @foreign ( str["curl"] , str["curl_global_init"] ) globalInit : ( flags : i64 ) -> i32 ;
@@ -898,7 +905,7 @@ expression: "tokens_by_key(&fences::design())"
   9 | startCurl ( ) -> CurlState | #none «with» release ( globalCleanup ) {
  10 | «return» «if» globalInit ( flags : 3₍10₎ ) != 0₍10₎ { #none } «else» { CurlState ( ) } ;
  11 | }
-== DESIGN.md [sec:ffi] 13 L7
+== DESIGN.md [sec:ffi] 14 L7
   1 | @foreign «struct» File { }
   2 | @foreign ( str["c"] , str["fclose"] ) fclose : ( file : Ptr ( File ) «with» consumes ( ) ) -> i32 | #lost ;
   3 | @foreign ( str["c"] , str["fopen"] ) fopen : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none «with» release ( file -> { _ = fclose ( file ) «else» #lost -> #ok ; #ok } ) ;
@@ -911,7 +918,7 @@ expression: "tokens_by_key(&fences::design())"
  13 | @foreign ( str["uringshim"] , str["submit_read"] ) submitRead : ( ring : Ptr ( Ring ) , fd : i32 , offset : u64 , page : Ptr ( Page ) «with» held ( by : ring , aligned : 4096₍10₎ ) ) -> i32 | #lost ;
  14 | @foreign ( str["uringshim"] , str["wait_read"] ) waitRead : ( ring : Ptr ( Ring ) ) -> ( i32 , Ptr ( Page ) | #none «with» arg ( 1₍10₎ ) «with» handedBack ( ) ) | #lost ;
  16 | @foreign ( str["uringshim"] , str["unregister_pages"] ) unregisterPages : ( ring : Ptr ( Ring ) «with» dropsHeld ( ) ) -> i32 | #lost ;
-== DESIGN.md [sec:ffi] 14 L7
+== DESIGN.md [sec:ffi] 15 L7
   1 | «struct» Glfw { }
   2 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwInit"] ) glfwInit : ( ) -> i32 ;
   3 | @thread ( #main ) @foreign ( str["glfw"] , str["glfwTerminate"] ) terminate : ( ) -> #ok ;
@@ -934,7 +941,7 @@ expression: "tokens_by_key(&fences::design())"
  25 | startGlfw ( ) -> Glfw | #none «with» release ( terminate ) {
  26 | «return» «if» glfwInit ( ) != 1₍10₎ { #none } «else» { Glfw ( ) } ;
  27 | }
-== DESIGN.md [sec:ffi] 15 L7
+== DESIGN.md [sec:ffi] 16 L7
   1 | «struct» Plugin { }
   2 | @foreign ( str["plugin"] , str["plugin_step"] , isolate : «true» ) pluginStep : ( plugin : Plugin «with» notPassed ( ) , x : f64 ) -> f64 | #signal ( Signal ) | #exit ( code : int [ 0₍10₎ ..= 255₍10₎ ] ) | #lost ;
   6 | startPlugin ( ) -> Plugin | #ioError ( op : Utf8String , path : Utf8String , why : IoReason , text : Utf8String ) «with» release ( plugin -> #ok ) {
@@ -948,7 +955,7 @@ expression: "tokens_by_key(&fences::design())"
  16 | } ;
  17 | m . stdout <- ys . map ( y -> str[${y}] ) ;
  18 | }
-== DESIGN.md [sec:ffi] 16 L12
+== DESIGN.md [sec:ffi] 17 L12
   1 | «struct» Fetcher { }
   2 | @foreign ( str["fetch"] , str["fetch_url"] , isolate : «true» ) fetchUrl : ( f : Fetcher «with» notPassed ( ) , url : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> i32 | #signal ( Signal ) | #exit ( code : int [ 0₍10₎ ..= 255₍10₎ ] ) | #lost ;
   5 | startFetcher ( ) -> Fetcher | #ioError ( op : Utf8String , path : Utf8String , why : IoReason , text : Utf8String ) «with» release ( f -> #ok ) «with» restrict ( network : #outbound ) «with» limits ( memory : 256₍10₎ «with» units ( str["MiB"] ) ) {
@@ -959,7 +966,15 @@ expression: "tokens_by_key(&fences::design())"
  13 | startModel ( ) -> Model | #ioError ( op : Utf8String , path : Utf8String , why : IoReason , text : Utf8String ) «with» release ( m -> #ok ) «with» restrict ( read : [ str["/usr/share/model"] ] , write : [ str["/var/cache/model"] ] ) {
  14 | «return» Model ( ) ;
  15 | }
-== DESIGN.md [sec:ffi] 17 L7
+== DESIGN.md [sec:ffi] 18 L7
+  1 | @foreign «type» Fd = i32 [ 0₍10₎ .. ] ;
+  2 | @foreign «struct» File { }
+  3 | @foreign ( str["c"] , str["close"] ) closeFd : ( fd : Fd «with» consumes ( ) ) -> i32 | #lost ;
+  4 | @foreign ( str["c"] , str["open"] ) openFd : ( path : [ u8 ] «with» terminated ( 0₍10₎ ) , flags : i32 ) -> Fd | #none «with» release ( closeFd ) ;
+  5 | @foreign ( str["c"] , str["fclose"] ) fclose : ( stream : Ptr ( File ) «with» consumes ( ) ) -> i32 | #lost ;
+  6 | @foreign ( str["c"] , str["fdopen"] ) fdopen : ( fd : Fd «with» consumes ( unless : #none ) , mode : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> Ptr ( File ) | #none | #lost «with» release ( fclose ) ;
+  7 | @foreign ( str["c"] , str["fileno"] ) @borrowed fileno : ( stream : Ptr ( File ) ) -> Fd | #lost «with» keeps ( stream ) ;
+== DESIGN.md [sec:ffi] 19 L7
   1 | @foreign ( str["m"] , str["fesetround"] ) fesetround : ( mode : i32 ) -> i32 ;
   3 | tenth ( n : f64 ) -> f64 { 1.0f / n }
   5 | main ( m : MainArgs ) -> int {
@@ -968,7 +983,7 @@ expression: "tokens_by_key(&fences::design())"
   8 | after = tenth ( n : 10.0f ) ;
   9 | «return» «if» rc == 0₍10₎ && after == before { 0₍10₎ } «else» { 1₍10₎ } ;
  10 | }
-== DESIGN.md [sec:ffi] 18 L7
+== DESIGN.md [sec:ffi] 20 L7
   3 | @export ( str["c"] )
   4 | area ( w : f64 , h : f64 ) -> f64 { w * h }
   7 | @export ( str["c"] , str["geo_at_i32"] , S : i32 , T : i64 )
