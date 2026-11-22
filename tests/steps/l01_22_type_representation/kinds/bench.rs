@@ -136,16 +136,15 @@ fn payloads_of_many_atoms_are_compared_in_the_size_of_the_union() {
 fn many_payloads_of_one_atom_are_compared_in_the_size_of_the_union() {
     // `#a(0, 0) | … | #a(n-1, n-1)` against itself and `#a(n, n)`: each payload tried against
     // each would be n² component checks; the kernel reads both unions once.
-    // TEST-bench-move-l0123 (author P169): left at its old size, n = 256, for a finding. Measured
-    // 2026-11-14 at load about 30: at 256 ns=51669447/357041452, instructions ratio 5.77, bytes
-    // 7.0, 0.99 s, 52 MB; at 320 instructions 64.75, bytes 17.1 (fails); at 384 instructions
-    // 42.67, bytes 18.1 (fails, 14.3 s). The second check, `!big.subtype(&small)`, grows faster
-    // than linearly and unevenly in m: one call takes 41 ms at 256, 229 ms at 1,024, 1.77 s at
-    // 2,560 and 9.8 s at 4,096, while `small.subtype(&big)` stays near linear. A flat profile
-    // (perf cycles:u) puts the time in digests_cmp 14%, Row::cmp 11%, Type::member 10% and the
-    // BTreeMap<Row, Option<bool>> search 4%: the emptiness search tries rows as witnesses with
-    // a member test each.
-    scaling::check("n payloads of one atom against n + 1", 256, |n| {
+    // PERF-kinds-one-atom-payloads: on 2026-11-14 the second check, `!big.subtype(&small)`, was
+    // quadratic (64.75 times the instructions at n = 320 to 8n, 9.8 s for one call at 4,096). By
+    // 2026-11-22 it was linear: processor time 7.66 times at 320, 8.28 at 1,024, 8.46 at 4,096
+    // and 8.36 at 8,192 (8.0 times the bytes), on a Colab VM. `big - small` is a union of
+    // diagonal pairs less another, the case K128 (PERF-diagonal-rows-difference) split into
+    // regions; that K128 is the fix is inferred, not bisected. n = 4,096 runs in 8.9 s; 8,192
+    // took 18 s, too near the 20 s piece cap. Control: 16·n² extra loop steps in the body fail
+    // the check at 24.6.
+    scaling::check("n payloads of one atom against n + 1", 4096, |n| {
         let pairs = |m: usize| with_payloads("a", (0..m).map(|i| vec![int(i), int(i)]).collect());
         let (small, big) = (pairs(n), pairs(n + 1));
         assert!(small.subtype(&big));
