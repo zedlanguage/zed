@@ -18,7 +18,17 @@
 //! `a | n`, if `a^(n-1) ≢ 1 mod n`, or if `1 < gcd((a^((n-1)/2^k) mod n) - 1, n) < n` for some
 //! `1 ≤ k ≤ ν_2(n-1)`, after a check that `n` is no perfect power; with `f(n) = c |n|^2`,
 //! `|n|` the bit length, it decides primality under the extended Riemann hypothesis (proof
-//! of Theorem 2, p. 305). Rabin, sec. 1, p. 130, takes the same condition as his
+//! of Theorem 2, p. 305). The explicit constant is E. Bach's: "Explicit bounds for primality
+//! testing and related problems", Math. Comp. 55(191):355-380, 1990,
+//! doi:10.1090/S0025-5718-1990-1023756-8, Theorem 2 (ERH), p. 372: for `G` a nontrivial
+//! subgroup of `Z/(m)*` with `n ∈ G` for every positive `n < x`, "x < 2(log m)^2"; and pp.
+//! 372-373: "if the ERH is true, then a composite number m has a witness for its compositeness
+//! (in the sense of [30 or 43]) that is at most 2 log^2 m", [30] being Miller's paper (read
+//! 2026-11-21 in the publisher's PDF, the exponents checked on the page images). This bound is
+//! conditional on the hypothesis: a proof of GRH was announced on 2026-11-20 (L. Alpoge, with a
+//! Lean 4 formalization) and its acceptance is pending. Nothing here depends on it:
+//! [`is_prime`] is exact on every `u64`, with no hypothesis, by the fixed bases below
+//! Sorenson and Webster's `psi_12` (cited there). Rabin, sec. 1, p. 130, takes the same condition as his
 //! "witness to the compositeness of n" and proves without ERH (Theorem 1) that if `4 < n` is
 //! composite then at least `3(n-1)/4` of the `1 ≤ b < n` are witnesses; his note of
 //! 1978, p. 137, credits Knuth with the form without the gcd that [`is_prime`] runs: with
