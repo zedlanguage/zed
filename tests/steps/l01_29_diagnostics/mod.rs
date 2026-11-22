@@ -38,6 +38,7 @@ mod overload_cycles;
 mod package_recovery;
 mod quoted;
 mod recursion;
+mod shared_parts;
 mod sum_plus;
 mod syntax_recovery;
 mod too_large_literal;

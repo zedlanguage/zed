@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use super::super::Type;
-use super::tests::{decision_list, part_ring, three_carriers};
+use super::tests::{decision_list, doubled, part_ring, three_carriers};
 use crate::scaling;
 
 /// Small instances: `the_text_of_a_decision_list_has_a_connective_between_each_two_literals`.
@@ -28,6 +28,21 @@ fn the_text_of_a_long_decision_list_scales() {
             );
         },
     );
+}
+
+/// QUESTIONS A5, answer A (row A5-print): a tuple doubled to depth `m` holds `2^m` copies of
+/// `(int, int)` on `m + 1` distinct parts, and prints as `m` definitions, each read back by the
+/// checker (`l01_29_diagnostics::shared_parts`), in work that grows with `m`, not `2^m`.
+/// Small instances: `a_doubled_tuple_names_each_level_once`.
+#[test]
+fn a_type_doubled_to_depth_n_prints_in_n_definitions() {
+    let n = 2_000;
+    scaling::check("building and printing a tuple doubled to depth n", n, |m| {
+        let t = doubled(Type::tuple(vec![Type::int(), Type::int()]), m);
+        let s = t.surface();
+        assert_eq!(s.defs.len(), m);
+        assert_eq!(s.root, format!("(Part{m}, Part{m})"));
+    });
 }
 
 /// Small instances: `a_union_of_numeric_literals_of_three_carriers_prints_ascending`.

@@ -969,3 +969,32 @@ fn a_cycle_of_parts_inside_every_value_but_one_atom_payload_is_defined() {
         assert!(plain.contains("#c("), "{plain}");
     }
 }
+
+#[test]
+fn a_doubled_tuple_names_each_level_once() {
+    // QUESTIONS A5, answer A (A5-print): the example of the row.
+    let pair = Type::tuple(vec![Type::int(), Type::int()]);
+    assert_eq!(
+        doubled(pair.clone(), 2).surface().to_string(),
+        "type Part1 = (int, int);\ntype Part2 = (Part1, Part1);\n(Part2, Part2)"
+    );
+    // `2^d` copies of the base, `d` definitions: the text grows with `d`, whatever the base
+    // (a tuple of types, of literals, or a difference).
+    for base in [
+        pair,
+        Type::tuple(vec![lit(1), lit(1)]),
+        &Type::int() - &lit(1),
+    ] {
+        for d in 1..=12 {
+            let s = doubled(base.clone(), d).surface();
+            assert_eq!(s.defs.len(), d, "d = {d}");
+            assert_eq!(s.root, format!("(Part{d}, Part{d})"), "d = {d}");
+        }
+    }
+}
+
+/// `t_0 = base` and `t_{k+1} = (t_k, t_k)`, so `t_d`: `2^d` copies of `base` on `d + 1`
+/// distinct parts.
+pub(super) fn doubled(base: Type, d: usize) -> Type {
+    (0..d).fold(base, |t, _| Type::tuple(vec![t.clone(), t]))
+}
