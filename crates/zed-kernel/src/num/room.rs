@@ -140,12 +140,33 @@ pub fn fixed_room<R>(most: u64, f: impl FnOnce() -> R) -> R {
 }
 
 /// Whether the allocator gives `bits` bits at once, asked and freed at once; a refusal records
-/// what the run holds for its message ([`crate::limits::refused`]).
+/// what the run holds for its message ([`crate::limits::refused`]). More than the machine's
+/// memory and swap together ([`memory_and_swap`]) is refused without asking.
+///
+/// Why the allocator alone is not asked for that (FAIL-power-too-large-built-before-refusal):
+/// its answer depends on the kernel's mode of accounting (`/proc/sys/vm/overcommit_memory`).
+/// In mode 0, the default, Linux refuses a request past the memory and the swap; in mode 1
+/// "the kernel pretends there is always enough memory, until memory actually runs out"
+/// (proc_sys_vm(5), Linux man-pages 6.13), so the request is granted and the build that
+/// then writes the number is killed, with no message, once the machine runs out. So `x < 3 ^
+/// (2 ^ 40)`, whose build asks for 2.2 TB, was refused here (mode 0, 194 GiB of memory and
+/// swap) and on the test machines in mode 1 was built until the run was killed at about
+/// 52 GB, or stopped by the tests' timeout (main-watch, 2026-11-22). A request past the memory
+/// and the swap is never filled in any mode, as no page of it can be held, so refusing it
+/// unasked refuses nothing that could be built, and gives every mode the answer of mode 0
+/// there; the evaluator still sets no limit of its own. Below that size the allocator's answer
+/// stands, as before: a smaller build that the machine cannot hold for the other processes'
+/// memory is still the machine's failure (DESIGN.md sec:domains). Cost: one comparison; the
+/// file is read once. Tests: `a_request_past_memory_and_swap_is_refused_unasked` (this file)
+/// and `l01_38_presburger::checker::a_power_too_large_to_build_refuses_the_question`, which
+/// also bounds the peak heap of the refused run.
 fn given(bits: &BigUint) -> bool {
+    let fits = memory_and_swap().is_none_or(|most| bytes_of(bits) <= BigUint::from(most));
     let words = (bits + 63u32) >> 6u32;
-    let ok = words
-        .to_usize()
-        .is_some_and(|w| Vec::<u64>::new().try_reserve_exact(w).is_ok());
+    let ok = fits
+        && words
+            .to_usize()
+            .is_some_and(|w| Vec::<u64>::new().try_reserve_exact(w).is_ok());
     if !ok {
         crate::limits::refused();
     }
@@ -157,6 +178,17 @@ fn given(bits: &BigUint) -> bool {
 pub fn machine_memory() -> Option<u64> {
     static MEMORY: OnceLock<Option<u64>> = OnceLock::new();
     *MEMORY.get_or_init(|| crate::limits::proc_bytes("/proc/meminfo", "MemTotal"))
+}
+
+/// The machine's memory and swap in bytes, `MemTotal` and `SwapTotal` of `/proc/meminfo`, read
+/// once: the most any one request can ever be given pages for ([`given`]). `None` where either
+/// field cannot be read, and then the allocator alone answers.
+fn memory_and_swap() -> Option<u64> {
+    static MOST: OnceLock<Option<u64>> = OnceLock::new();
+    *MOST.get_or_init(|| {
+        let swap = crate::limits::proc_bytes("/proc/meminfo", "SwapTotal")?;
+        machine_memory()?.checked_add(swap)
+    })
 }
 
 /// The end of a message for a value of `size` bytes whose step asked for `ask` bytes and was
@@ -436,5 +468,19 @@ mod tests {
             memory_clause(&small, &small),
             format!("; this run could not get that much memory, though this machine has {machine}")
         );
+    }
+
+    /// One byte past the machine's memory and swap is refused whatever the kernel's mode of
+    /// accounting, and a small request is still given (FAIL-power-too-large-built-before-
+    /// refusal). In mode 0 the allocator refuses it too, so this fails before the fix only on a
+    /// machine in mode 1, as the test machines are.
+    #[test]
+    fn a_request_past_memory_and_swap_is_refused_unasked() {
+        let Some(most) = memory_and_swap() else {
+            return;
+        };
+        let past = (BigUint::from(most) + 1u32) << 3u32;
+        assert!(room(past.clone(), past).is_err());
+        assert!(room(BigUint::from(8u32 << 20), BigUint::from(8u32 << 20)).is_ok());
     }
 }

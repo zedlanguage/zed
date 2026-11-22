@@ -1280,6 +1280,13 @@ fn pncx_kept_number_cli() {
 /// 8·b memory ask is refused) refuses the question with the message of `Walk::built`'s
 /// `unbuilt` flag (zedc front.rs), not silently: the refused path `pncx_kept_number_cli`
 /// does not reach, as its powers are kept or built.
+///
+/// The number is refused before any of it is built, on a machine in either mode of the
+/// kernel's accounting (FAIL-power-too-large-built-before-refusal: in mode 1 the allocator
+/// granted the 2.2 TB asked for, and the build ran until the run was killed at about 52 GB):
+/// the peak heap of the run, on this thread (`zed_alloc_count::live`; zedc starts no thread),
+/// stays under 1 GiB, a two-hundredth of the number's 204 GiB, where an allocator granting the
+/// ask would count its 2.2 TB.
 #[test]
 fn a_power_too_large_to_build_refuses_the_question() {
     let rows = "ok(x, y, z, w) = 4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y - 11 * z - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y - z + 31 >= 0";
@@ -1287,9 +1294,11 @@ fn a_power_too_large_to_build_refuses_the_question() {
         &format!("{rows} && x < 3 ^ (2 ^ 40);"),
         "x: a, y: a, z: a, w: a",
     );
-    let got = rejection("power-too-large-to-build", &src);
+    let (got, live) = zed_alloc_count::live(|| rejection("power-too-large-to-build", &src));
     assert!(
         got.contains("whose digits are too many to hold in memory"),
         "{got}"
     );
+    println!("peak heap of the refused run: {} bytes", live.peak);
+    assert!(live.peak < 1 << 30, "peak heap {} bytes", live.peak);
 }
