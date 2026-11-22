@@ -54,7 +54,9 @@ use std::fmt::{Display, Write as _};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use zed_kernel::eval::{Made, MadeNode, MadeShape, leaf_at_end, placed_fun_term};
+use zed_kernel::eval::{
+    FamilyGot, HeldFamilyAt, Made, MadeNode, MadeShape, held_family_got, placed_fun_term,
+};
 use zed_kernel::paths::{Kept, Paths};
 use zed_kernel::term::{Pattern, Prim, Shared, Term};
 use zed_kernel::text::prose::counted;
@@ -974,6 +976,27 @@ impl Held<'_> {
             HeldKind::Family(f) => Some(f),
             _ => None,
         }
+    }
+}
+
+/// This machine's held family, read by the kernel's [`held_family_got`] from `family_read`.
+impl<'a, 'g> HeldFamilyAt for &'a Held<'g> {
+    type Part = &'a Mv<'g>;
+    type Error = std::convert::Infallible;
+
+    fn family(&self) -> &HeldFamily {
+        Held::family(self).expect("only held families are read as families")
+    }
+
+    fn part(&self, i: usize) -> &'a Mv<'g> {
+        &self.parts[i]
+    }
+
+    fn sub_family(&self, i: usize) -> Result<Option<Self>, Self::Error> {
+        Ok(match &self.parts[i] {
+            Mv::Held(n) if n.family().is_some() => Some(&**n),
+            _ => None,
+        })
     }
 }
 
@@ -1957,15 +1980,11 @@ impl<'g> Machine<'g, '_> {
     // Complexity tradeoff: the naive read hands the family to the kernel, O(n) per read to build
     // its term, and an entry that is a function cannot come back as the machine's own value.
     // Here each read is one lookup in the family's keys, O(log n), and `first` and `last`
-    // descend one level per step, O(depth · log n). Tradeoff: the kernel's rules for these
-    // reads are written a third time (kernel, native code, here); the three-way tests in
-    // `l01_36_cranelift::held_values` check that they agree.
+    // descend one level per step, O(depth · log n). Tradeoff: none; the rules of each read are
+    // the kernel's `held_family_got`, shared with the kernel and native code (DRY-misc-A5), and
+    // this reads the key and makes the value in this machine's cells. The three-way tests in
+    // `l01_36_cranelift::held_values` check that the three machines agree.
     fn family_read(&mut self, p: Prim, ins: &[Mv<'g>]) -> Option<Mv<'g>> {
-        enum Got<'a, 'g> {
-            Part(&'a Mv<'g>),
-            Data(Value),
-            Pair(Value, &'a Mv<'g>),
-        }
         let at = family_at(p, ins).expect("a held family operand");
         // The key read, or the entry tuple stepped from.
         let other = (ins.len() == 2).then(|| &ins[1 - at]);
@@ -1996,66 +2015,15 @@ impl<'g> Machine<'g, '_> {
         let Mv::Held(h) = &ins[at] else {
             unreachable!("`family_at` found a held family")
         };
-        let f = h.family().expect("a held family");
-        let entry = |e: HeldEntry<'_>| match e {
-            HeldEntry::Data(v) => Got::Data(v.clone()),
-            HeldEntry::Part(i) => Got::Part(&h.parts[i]),
-        };
-        let pair = |k: &Value, e: HeldEntry<'_>| match e {
-            HeldEntry::Data(v) => Got::Data(Value::tuple(vec![k.clone(), v.clone()])),
-            HeldEntry::Part(i) => Got::Pair(k.clone(), &h.parts[i]),
-        };
-        let none = || Got::Data(Value::tuple(Vec::new()));
-        let got = match p {
-            Prim::Get | Prim::TupleGet | Prim::At | Prim::Has => {
-                let k = key.expect("a key");
-                match (p, f.get(&k)) {
-                    (Prim::Has, e) => Got::Data(Value::Bool(e.is_some())),
-                    (_, Some(e)) => entry(e),
-                    (Prim::At, None) => Got::Data(Value::atom("outOfBounds")),
-                    (_, None) => Got::Data(Value::atom("notFound")),
-                }
-            }
-            Prim::Count => Got::Data(Value::Int(f.len() as i64)),
-            Prim::FirstEntry | Prim::LastEntry => match f.end(p == Prim::LastEntry) {
-                Some((k, e)) => pair(k, e),
-                None => none(),
-            },
-            Prim::EntryAfter | Prim::EntryBefore => {
-                match f.beside(&key.expect("a key"), p == Prim::EntryAfter) {
-                    Some((k, e)) => pair(k, e),
-                    None => none(),
-                }
-            }
-            Prim::First | Prim::Last => {
-                // A part that is a held family is a level beneath its key: descend into it.
-                let last = p == Prim::Last;
-                let mut cur: &Held<'g> = h;
-                loop {
-                    let f = cur.family().expect("only held families are entered");
-                    match f.end(last) {
-                        None => break Got::Data(Value::atom("none")),
-                        Some((_, HeldEntry::Data(Value::Family(inner)))) => {
-                            break Got::Data(leaf_at_end(inner, last));
-                        }
-                        Some((_, HeldEntry::Data(v))) => break Got::Data(v.clone()),
-                        Some((_, HeldEntry::Part(i))) => match &cur.parts[i] {
-                            Mv::Held(n) if n.family().is_some() => cur = n,
-                            m => break Got::Part(m),
-                        },
-                    }
-                }
-            }
-            _ => unreachable!("`family_at` names these primitives only"),
-        };
+        let Ok(got) = held_family_got(p, &**h, key.as_ref());
         Some(match got {
-            Got::Data(v) => self.fresh(v),
-            Got::Part(m) => {
+            FamilyGot::Data(v) => self.fresh(v),
+            FamilyGot::Part(m) => {
                 let m = m.clone();
                 self.inc(m.cell());
                 m
             }
-            Got::Pair(k, m) => {
+            FamilyGot::Pair(k, m) => {
                 let k = self.fresh(k);
                 let m = m.clone();
                 self.inc(m.cell());

@@ -10,9 +10,11 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use zed_kernel::eval::{Made, MadeNode, MadeShape, leaf_at_end, placed_fun_term};
+use zed_kernel::eval::{
+    FamilyGot, HeldFamilyAt, Made, MadeNode, MadeShape, held_family_got, placed_fun_term,
+};
 use zed_kernel::text::prose;
-use zed_kernel::value::{HeldEntry, HeldFamily};
+use zed_kernel::value::HeldFamily;
 use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Shared, Term, Text, Value};
 use zedc::zir::Op;
 use zedc::zir::lower::raise_node;
@@ -1146,20 +1148,48 @@ fn family_called(t: &Tables, s: &Run, ins: &[Word]) -> Result<Option<(Prim, usiz
     Ok(family_at(s, p, &ins[1..])?.map(|_| (p, 1)))
 }
 
+/// A held family on the heap, read by the kernel's [`held_family_got`] from [`family_read`].
+struct NativeFamily<'a> {
+    heap: &'a Heap,
+    h: &'a HeldObj,
+}
+
+impl HeldFamilyAt for NativeFamily<'_> {
+    type Part = Word;
+    type Error = String;
+
+    fn family(&self) -> &HeldFamily {
+        self.h
+            .family()
+            .expect("only held families are read as families")
+    }
+
+    fn part(&self, i: usize) -> Word {
+        self.h.parts[i]
+    }
+
+    fn sub_family(&self, i: usize) -> Result<Option<Self>, String> {
+        Ok(match self.heap.held(self.h.parts[i])? {
+            Some(n) if n.family().is_some() => Some(NativeFamily {
+                heap: self.heap,
+                h: n,
+            }),
+            _ => None,
+        })
+    }
+}
+
 /// What primitive `p` gives on `ins`, which hold a held family where [`family_at`] says, as
 /// the kernel's `Machine::held_family` gives it, as an owned word; `None` where the kernel
 /// gives an error, which is then the kernel's to give.
 // Complexity tradeoff: the naive read hands the family to the kernel, O(n) per read to build
 // its term, so a loop of n reads is O(n²), and an entry that is a function cannot come back.
 // Here each read is one lookup in the family's keys, O(log n), and `first` and `last` descend
-// one level per step, O(depth · log n). Tradeoff: the kernel's rules for these reads are
-// written a second time and must agree with it; tests in `completeness` check that they do.
+// one level per step, O(depth · log n). Tradeoff: none; the rules of each read are the
+// kernel's `held_family_got`, shared with the kernel and the memory machine (DRY-misc-A5), and
+// this reads the key and makes the word on the heap. Tests in `completeness` and
+// `l01_36_cranelift::held_values` check that the machines agree.
 fn family_read(s: &mut Run, p: Prim, ins: &[Word]) -> Result<Option<Word>, String> {
-    enum Got {
-        Part(Word),
-        Data(Value),
-        Pair(Value, Word),
-    }
     let at = family_at(s, p, ins)?.expect("a held family operand");
     let fam = ins[at];
     // The key read, or the entry tuple stepped from.
@@ -1200,65 +1230,14 @@ fn family_read(s: &mut Run, p: Prim, ins: &[Word]) -> Result<Option<Word>, Strin
         }
     };
     let h = s.heap.held(fam)?.expect("a held family");
-    let f = h.family().expect("a held family");
-    let entry = |e: HeldEntry<'_>| match e {
-        HeldEntry::Data(v) => Got::Data(v.clone()),
-        HeldEntry::Part(i) => Got::Part(h.parts[i]),
-    };
-    let pair = |k: &Value, e: HeldEntry<'_>| match e {
-        HeldEntry::Data(v) => Got::Data(Value::tuple(vec![k.clone(), v.clone()])),
-        HeldEntry::Part(i) => Got::Pair(k.clone(), h.parts[i]),
-    };
-    let none = || Got::Data(Value::tuple(Vec::new()));
-    let got = match p {
-        Prim::Get | Prim::TupleGet | Prim::At | Prim::Has => {
-            let k = key.expect("a key");
-            match (p, f.get(&k)) {
-                (Prim::Has, e) => Got::Data(Value::Bool(e.is_some())),
-                (_, Some(e)) => entry(e),
-                (Prim::At, None) => Got::Data(Value::atom("outOfBounds")),
-                (_, None) => Got::Data(Value::atom("notFound")),
-            }
-        }
-        Prim::Count => Got::Data(Value::Int(f.len() as i64)),
-        Prim::FirstEntry | Prim::LastEntry => match f.end(p == Prim::LastEntry) {
-            Some((k, e)) => pair(k, e),
-            None => none(),
-        },
-        Prim::EntryAfter | Prim::EntryBefore => {
-            match f.beside(&key.expect("a key"), p == Prim::EntryAfter) {
-                Some((k, e)) => pair(k, e),
-                None => none(),
-            }
-        }
-        Prim::First | Prim::Last => {
-            // A part that is a held family is a level beneath its key: descend into it.
-            let last = p == Prim::Last;
-            let mut at = h;
-            loop {
-                let f = at.family().expect("only held families are entered");
-                match f.end(last) {
-                    None => break Got::Data(Value::atom("none")),
-                    Some((_, HeldEntry::Data(Value::Family(inner)))) => {
-                        break Got::Data(leaf_at_end(inner, last));
-                    }
-                    Some((_, HeldEntry::Data(v))) => break Got::Data(v.clone()),
-                    Some((_, HeldEntry::Part(i))) => match s.heap.held(at.parts[i])? {
-                        Some(n) if n.family().is_some() => at = n,
-                        _ => break Got::Part(at.parts[i]),
-                    },
-                }
-            }
-        }
-        _ => unreachable!("`family_at` names these primitives only"),
-    };
+    let got = held_family_got(p, NativeFamily { heap: &s.heap, h }, key.as_ref())?;
     Ok(Some(match got {
-        Got::Data(v) => s.heap.fresh(&v)?,
-        Got::Part(w) => {
+        FamilyGot::Data(v) => s.heap.fresh(&v)?,
+        FamilyGot::Part(w) => {
             s.heap.inc(w)?;
             w
         }
-        Got::Pair(k, w) => {
+        FamilyGot::Pair(k, w) => {
             let k = s.heap.fresh(&k)?;
             s.heap.inc(w)?;
             s.heap.alloc(Obj::Held(Box::new(HeldObj {

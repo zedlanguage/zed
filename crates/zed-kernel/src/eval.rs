@@ -125,6 +125,30 @@ impl Held<'_> {
     }
 }
 
+/// The kernel's held family, read by [`held_family_got`] from `Machine::held_family`.
+impl<'t> HeldFamilyAt for Rc<Held<'t>> {
+    type Part = V<'t>;
+    type Error = std::convert::Infallible;
+
+    fn family(&self) -> &HeldFamily {
+        let Shape::Family(f) = &self.shape else {
+            unreachable!("only held families are read as families")
+        };
+        f
+    }
+
+    fn part(&self, i: usize) -> V<'t> {
+        self.parts[i].clone()
+    }
+
+    fn sub_family(&self, i: usize) -> Result<Option<Self>, Self::Error> {
+        Ok(match &self.parts[i] {
+            V::Held(n) if matches!(n.shape, Shape::Family(_)) => Some(n.clone()),
+            _ => None,
+        })
+    }
+}
+
 impl Drop for Held<'_> {
     fn drop(&mut self) {
         self.drops
@@ -2526,51 +2550,25 @@ impl<'t> Machine<'_, 't> {
     /// step gives the tuple `(k, v)`, held when `v` is a part.
     // Complexity tradeoff: each read is one lookup in the family's keys, O(log n), as for
     // data ([`HeldFamily`]); `first` and `last` descend one level per step, O(depth · log n).
+    // The rules of each read are [`held_family_got`]'s, shared with the memory machine and
+    // native code (DRY-misc-A5); this reads the key, and makes the entry tuple of a part.
     fn held_family(&mut self, p: Prim, h: Rc<Held<'t>>, args: &[V<'t>]) -> R<Step<'t>> {
-        let Shape::Family(f) = &h.shape else {
-            unreachable!("called on a held family")
-        };
-        let entry = |e: HeldEntry<'_>| match e {
-            HeldEntry::Data(v) => V::Data(v.clone()),
-            HeldEntry::Part(i) => h.parts[i].clone(),
-        };
-        let drops = self.drops.clone();
-        let pair = |k: &Value, e: HeldEntry<'_>| match e {
-            HeldEntry::Data(v) => V::Data(Value::tuple(vec![k.clone(), v.clone()])),
-            HeldEntry::Part(i) => V::Held(Rc::new(Held {
-                shape: Shape::Tuple,
-                parts: vec![V::Data(k.clone()), h.parts[i].clone()],
-                drops,
-            })),
-        };
-        let none = || give(Value::tuple(Vec::new()));
-        match p {
+        let key = match p {
             Prim::Get | Prim::TupleGet | Prim::At | Prim::Has => {
-                let k = &args[usize::from(p != Prim::Has)];
-                match k {
-                    V::Data(k @ Value::Atom(_)) => give(k.clone()),
-                    V::Data(k) => match (p, f.get(k)) {
-                        (Prim::Has, e) => give(Value::Bool(e.is_some())),
-                        (_, Some(e)) => Ok(Step::Give(entry(e))),
-                        (Prim::At, None) => give(Value::atom("outOfBounds")),
-                        (_, None) => give(Value::atom("notFound")),
-                    },
-                    k if held_atom(k) => Ok(Step::Give(k.clone())),
-                    _ => type_err(format!("{} at a function", p.named(None))),
+                match &args[usize::from(p != Prim::Has)] {
+                    V::Data(k @ Value::Atom(_)) => return give(k.clone()),
+                    V::Data(k) => Some(k),
+                    k if held_atom(k) => return Ok(Step::Give(k.clone())),
+                    _ => return type_err(format!("{} at a function", p.named(None))),
                 }
             }
-            Prim::Count => give(Value::Int(f.len() as i64)),
-            Prim::FirstEntry | Prim::LastEntry => match f.end(p == Prim::LastEntry) {
-                Some((k, e)) => Ok(Step::Give(pair(k, e))),
-                None => none(),
-            },
             Prim::EntryAfter | Prim::EntryBefore => {
                 // The entry tuple given is one an entry step made: data, or held when its
                 // value is a part.
-                let k = match &args[1] {
-                    V::Data(Value::Tuple(e)) if e.len() == 2 => &e[0],
+                match &args[1] {
+                    V::Data(Value::Tuple(e)) if e.len() == 2 => Some(&e[0]),
                     V::Held(e) if e.is_tuple() && e.parts.len() == 2 => match &e.parts[0] {
-                        V::Data(k) => k,
+                        V::Data(k) => Some(k),
                         _ => return type_err(format!("{} at a function", p.named(None))),
                     },
                     _ => {
@@ -2579,36 +2577,20 @@ impl<'t> Machine<'_, 't> {
                             p.named(None)
                         ));
                     }
-                };
-                match f.beside(k, p == Prim::EntryAfter) {
-                    Some((k, e)) => Ok(Step::Give(pair(k, e))),
-                    None => none(),
                 }
             }
-            Prim::First | Prim::Last => {
-                let last = p == Prim::Last;
-                // A part that is a held family is a level beneath its key: descend into it.
-                let mut at = h.clone();
-                loop {
-                    let Shape::Family(f) = &at.shape else {
-                        unreachable!("only held families are entered")
-                    };
-                    let next = match f.end(last) {
-                        None => return give(Value::atom("none")),
-                        Some((_, HeldEntry::Data(Value::Family(inner)))) => {
-                            return give(leaf_at_end(inner, last));
-                        }
-                        Some((_, HeldEntry::Data(v))) => return give(v.clone()),
-                        Some((_, HeldEntry::Part(i))) => match &at.parts[i] {
-                            V::Held(n) if matches!(n.shape, Shape::Family(_)) => n.clone(),
-                            v => return Ok(Step::Give(v.clone())),
-                        },
-                    };
-                    at = next;
-                }
-            }
-            _ => unreachable!("`family_operand` names these primitives only"),
-        }
+            _ => None,
+        };
+        let Ok(got) = held_family_got(p, h, key);
+        Ok(Step::Give(match got {
+            FamilyGot::Data(v) => V::Data(v),
+            FamilyGot::Part(v) => v,
+            FamilyGot::Pair(k, v) => V::Held(Rc::new(Held {
+                shape: Shape::Tuple,
+                parts: vec![V::Data(k), v],
+                drops: self.drops.clone(),
+            })),
+        }))
     }
 
     fn prim(&mut self, p: Prim, args: Vec<V<'t>>) -> R<Step<'t>> {
@@ -4227,6 +4209,108 @@ pub fn leaf_at_end(f: &Family, last: bool) -> Value {
             Some((_, v)) => return v,
         }
     }
+}
+
+/// What a primitive that reads a held family gives ([`held_family_got`]): data, a part of the
+/// family or of a family beneath it, or the entry tuple of a key and a part.
+pub enum FamilyGot<P> {
+    /// Data: an entry, an answer such as `#notFound`, a count, or an entry tuple of data.
+    Data(Value),
+    /// A part, as the machine names it.
+    Part(P),
+    /// The entry tuple `(k, v)` of key `k` and a part `v`, made by the machine.
+    Pair(Value, P),
+}
+
+/// A held family as one machine stores it: the kernel (`Rc<Held>` here), the memory machine
+/// (zedc-zir `memory.rs`) and native code (zed-native `hooks.rs`) each keep its parts in their
+/// own storage, and [`held_family_got`] reads all three through this.
+pub trait HeldFamilyAt: Sized {
+    /// A part as the machine names it.
+    type Part;
+    /// The error of reading the machine's storage.
+    type Error;
+    /// The family's keys and entries.
+    fn family(&self) -> &HeldFamily;
+    /// Part `i` of the family ([`HeldEntry::Part`]).
+    fn part(&self, i: usize) -> Self::Part;
+    /// Part `i` when it is itself a held family, a level beneath its key; none otherwise.
+    fn sub_family(&self, i: usize) -> Result<Option<Self>, Self::Error>;
+}
+
+/// What primitive `p` gives on the held family `at`, as [`prim_on`] reads a data family: for
+/// `Get`, `TupleGet`, `At` and `Has` at `key` (data, not an atom: an atom key passes through,
+/// which each machine does before this), the entry, `#notFound` (`#outOfBounds` for `At`) or
+/// whether it is there; for `Count` the number of entries; for an entry step the entry tuple
+/// `(k, v)` (`()` past the end), from `key`, the key of the entry tuple given, for
+/// `EntryAfter` and `EntryBefore`; and for `First` and `Last` the leaf at the least (greatest)
+/// keypath, descending into each part that is a held family and each data family
+/// ([`leaf_at_end`]), `#none` at an empty level. Shared by the kernel's `Machine::held_family`,
+/// the memory machine's `family_read` (zedc-zir) and native code's `family_read` (zed-native),
+/// which held three copies of these rules before DRY-misc-A5 (REPORT-dryA5 row 9); each
+/// machine keeps the reading of its operands and the making of what this gives. Panics on a
+/// primitive other than these, or on a missing `key`: the callers ask only for these, each
+/// through its own `family_at` or `family_operand`.
+// Complexity tradeoff: each read is one lookup in the family's keys, O(log n) ([`HeldFamily`]);
+// `first` and `last` descend one level per step, O(depth · log n). The naive read hands the
+// family to the kernel as data, O(n) per read. Tradeoff: none; the trait's calls are resolved
+// when each machine's copy is compiled.
+pub fn held_family_got<N: HeldFamilyAt>(
+    p: Prim,
+    at: N,
+    key: Option<&Value>,
+) -> Result<FamilyGot<N::Part>, N::Error> {
+    let f = at.family();
+    let entry = |e: HeldEntry<'_>| match e {
+        HeldEntry::Data(v) => FamilyGot::Data(v.clone()),
+        HeldEntry::Part(i) => FamilyGot::Part(at.part(i)),
+    };
+    let pair = |k: &Value, e: HeldEntry<'_>| match e {
+        HeldEntry::Data(v) => FamilyGot::Data(Value::tuple(vec![k.clone(), v.clone()])),
+        HeldEntry::Part(i) => FamilyGot::Pair(k.clone(), at.part(i)),
+    };
+    let none = || FamilyGot::Data(Value::tuple(Vec::new()));
+    Ok(match p {
+        Prim::Get | Prim::TupleGet | Prim::At | Prim::Has => {
+            match (p, f.get(key.expect("a key"))) {
+                (Prim::Has, e) => FamilyGot::Data(Value::Bool(e.is_some())),
+                (_, Some(e)) => entry(e),
+                (Prim::At, None) => FamilyGot::Data(Value::atom("outOfBounds")),
+                (_, None) => FamilyGot::Data(Value::atom("notFound")),
+            }
+        }
+        Prim::Count => FamilyGot::Data(Value::Int(f.len() as i64)),
+        Prim::FirstEntry | Prim::LastEntry => match f.end(p == Prim::LastEntry) {
+            Some((k, e)) => pair(k, e),
+            None => none(),
+        },
+        Prim::EntryAfter | Prim::EntryBefore => {
+            match f.beside(key.expect("a key"), p == Prim::EntryAfter) {
+                Some((k, e)) => pair(k, e),
+                None => none(),
+            }
+        }
+        Prim::First | Prim::Last => {
+            // A part that is a held family is a level beneath its key: descend into it.
+            let last = p == Prim::Last;
+            let mut cur = at;
+            loop {
+                let next = match cur.family().end(last) {
+                    None => break FamilyGot::Data(Value::atom("none")),
+                    Some((_, HeldEntry::Data(Value::Family(inner)))) => {
+                        break FamilyGot::Data(leaf_at_end(inner, last));
+                    }
+                    Some((_, HeldEntry::Data(v))) => break FamilyGot::Data(v.clone()),
+                    Some((_, HeldEntry::Part(i))) => match cur.sub_family(i)? {
+                        Some(n) => n,
+                        None => break FamilyGot::Part(cur.part(i)),
+                    },
+                };
+                cur = next;
+            }
+        }
+        _ => unreachable!("a primitive that reads no held family"),
+    })
 }
 
 /// [`prim_data`] for a primitive other than `Tuple` and `Path`, which keeps none of `vals`.
