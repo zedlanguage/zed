@@ -591,7 +591,10 @@ fn spins_for_the_bench_line() {
 /// The sleep of a run of [`spins_for_the_bench_line`] per unit of n.
 const SLEEP_PER_N: Duration = Duration::from_micros(20);
 
-/// The fields of the bench line of `what` in `out`: n, the two times and the two counts.
+/// The fields of the bench line of `what` in `out`: n, the two times and the two counts, by
+/// `instr=` where the run that printed the line counted instructions and `work=` where it did
+/// not. The key is read from the line, not from this process's meter, since the run alone may
+/// count by DynamoRIO where this process, which runs more than one test, does not.
 fn bench_fields(out: &str, what: &str) -> (String, [u64; 2], [u64; 2]) {
     let line = out
         .lines()
@@ -611,7 +614,7 @@ fn bench_fields(out: &str, what: &str) -> (String, [u64; 2], [u64; 2]) {
     for key in ["bytes=", "ratio="] {
         field(key);
     }
-    let key = if Meter::new().instructions {
+    let key = if line.split(' ').any(|f| f.starts_with("instr=")) {
         "instr="
     } else {
         "work="
@@ -633,10 +636,24 @@ fn bench_fields(out: &str, what: &str) -> (String, [u64; 2], [u64; 2]) {
 /// a run preempted or moved to a busy core takes longer by the clock. Instructions and bytes
 /// decide, time is only reported; no upper bound on a time holds under load, so only the
 /// lower bounds the sleeps give are held.
+///
+/// The run is started with this process's environment, ZED_METER_DRRUN included, not by
+/// [`this_binary_with_this_meter`]: run alone with `--exact`, it counts instructions under
+/// DynamoRIO even where this process does not (TEST-bench-line-grows-under-dr). Started without
+/// it on Colab std1 (2 cores, no hardware counter), the run read processor time, and with the
+/// rest of the lib running the counts of the growing spin were 3.29 to 3.39 million ns at n
+/// and 12.2 to 12.6 million at 8n, 3.6 to 3.75 times, failing 4 of 5 runs of the lib; alone
+/// they were 1.8 to 1.9 and 12.2 to 12.3 million, 6.4 to 6.7 times. A spin 4 times as long did
+/// not help (12.2 to 12.7 million ns at n against 6.3 million alone, 48 million at 8n, failing
+/// 3 of 5): the slowdown is in proportion to the run, as from a second thread on the same
+/// physical core while the other tests run, so no length of spin makes processor time a count
+/// of work. Under DynamoRIO the counts were 16015189 and 128015348, 7.993 times, in 3 of 3 runs.
+/// On a machine with neither counter the run still reads processor time, as every check there
+/// does.
 #[test]
 fn each_check_prints_a_bench_line_whose_time_grows_with_the_work() {
     let ratios = std::env::temp_dir().join(format!("zed-bench-line-{}", std::process::id()));
-    let run = this_binary_with_this_meter()
+    let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
         .args([
             "--exact",
             "scaling_tests::spins_for_the_bench_line",
