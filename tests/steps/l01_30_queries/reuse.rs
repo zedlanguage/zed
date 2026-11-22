@@ -535,7 +535,8 @@ import duty.{{rate}};
     );
     let ran = run(&script);
     let cycle = "the imports form a cycle";
-    let absent = "main.zed:2:1: the unit `duty` cannot be imported: there is no file `duty.zed`";
+    let absent = "main.zed:2:8: the unit `duty` cannot be imported: its segment `duty` names \
+                  nothing, since there is no file `duty.zed` in the package root";
     let said: Vec<[bool; 2]> = ran
         .iter()
         .map(|r| [says(&r.seen, cycle), says(&r.seen, absent)])
