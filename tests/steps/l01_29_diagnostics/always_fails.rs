@@ -456,3 +456,26 @@ fn the_other_tuple_component_prints_its_own_literal() {
         assert!(out.lines().any(|l| l == line), "{line}\nnot in\n{out}");
     }
 }
+
+/// A tuple reached through a name, `p, q = t` with `t = (0r, -0r)`, and through two: the
+/// chain goes from `z` to `q`, through the names to the tuple written out, and to its item,
+/// `-0r` (plan row MSG-neg-zero-followups). The step for the tuple as a whole still prints both
+/// zeros alike: the printer texts the one zero once (plan row MSG-neg-zero-tuple-print).
+#[test]
+fn a_tuple_component_through_a_name_prints_the_component_as_written() {
+    for (names, line) in [("t", 4), ("s = (0r, -0r);\n  t = s", 5)] {
+        let src = format!(
+            "a = 0r;\nf(x: rat) = {{\n  {names};\n  p, q = t;\n  z = q;\n  return x / z;\n}};\n"
+        )
+        .replace("  t;\n", "  t = (0r, -0r);\n");
+        let out = shown(&src);
+        for want in [
+            "`/` here always fails with `#divByZero`: its divisor has the type `-0r`".to_string(),
+            "`z` is defined as this expression, -0r".to_string(),
+            format!("{line}:10: `q` is -0r, component 1 of this tuple"),
+        ] {
+            assert!(out.contains(&want), "{want}\nnot in\n{out}");
+        }
+        assert!(!out.contains("is 0r here"), "{out}");
+    }
+}

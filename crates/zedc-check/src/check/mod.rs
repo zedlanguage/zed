@@ -3504,7 +3504,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 break end;
             }
             let next = match self.seen.get(&at) {
-                Some((_, Src::Name(id))) => (self.whence.get(id)).and_then(|o| self.value_at(o)),
+                Some((_, Src::Name(id))) => {
+                    (self.whence.get(id)).and_then(|o| self.value_at(o, memo))
+                }
                 _ => None,
             };
             match next {
@@ -3520,16 +3522,31 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// expression it is defined as, or, for a component of a tuple written out, as `q` in
     /// `p, q = (0r, -0r)`, that component's item; `None` for any other origin, and for a
     /// component of a tuple that is not written out there.
-    fn value_at(&self, o: &Origin<'a>) -> Option<Span> {
+    /// A tuple reached through names, as `q` of `t = (0r, -0r); p, q = t`, is followed to the
+    /// tuple written out ([`Self::written_at`], sharing its `memo`).
+    // Termination: the inner `written_at` walks the chain of the name the tuple is taken from,
+    // which ends as every chain does (see `written_at`); a destructuring whose value comes back
+    // to one of its own components is a recursive definition, which zedc refuses before it
+    // checks. Cost: the inner walk records each name it passes in `memo`, so the calls of one
+    // message pass each name once in all, as `written_at`'s own walk does. Test:
+    // tests/steps/l01_29_diagnostics/always_fails.rs
+    // `a_tuple_component_through_a_name_prints_the_component_as_written`.
+    fn value_at(&self, o: &Origin<'a>, memo: &mut HashMap<Span, Span>) -> Option<Span> {
         match o.why {
             Why::Defined(_) => Some(o.span),
-            Why::Component(i, _) => match self.seen.get(&o.span) {
-                Some((_, Src::Other(e))) => match &e.kind {
-                    ExprKind::Tuple(items) => items.get(i).map(|x| x.span),
+            Why::Component(i, _) => {
+                let at = match self.seen.get(&o.span) {
+                    Some((_, Src::Name(_))) => self.written_at(o.span, memo),
+                    _ => o.span,
+                };
+                match self.seen.get(&at) {
+                    Some((_, Src::Other(e))) => match &e.kind {
+                        ExprKind::Tuple(items) => items.get(i).map(|x| x.span),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            },
+                }
+            }
             _ => None,
         }
     }
@@ -4543,7 +4560,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // Its value printed as the expression that writes it does, followed
                     // through any names: `-0r` for `z = y` with `y = -0r`.
                     _ => {
-                        let at = (self.value_at(origin)).map(|s| self.written_at(s, &mut written));
+                        let at = (self.value_at(origin, &mut written))
+                            .map(|s| self.written_at(s, &mut written));
                         self.near(at.or(Some(origin.span)), |ck| ck.said(id, &origin.why))
                     }
                 };

@@ -173,6 +173,33 @@ fn a_chain_of_names_to_a_negated_zero_prints_every_step() {
     }
 }
 
+/// The chain of [`zero_chain`] read by a `+` beside an `f64`, whose repair `f64(z…)` the
+/// checker tries before it offers it (plan row MSG-neg-zero-followups): a trial that walked the
+/// chain again for each step it checks would cost O(n) per step, O(n²) for the message.
+pub(super) fn zero_chain_tried(n: usize) -> String {
+    let mut src = String::from("a = 0r;\nz0 = -0r;\n");
+    for i in 1..n {
+        src += &format!("z{i} = z{};\n", i - 1);
+    }
+    src + &format!("g(x: f64) = x + z{};\n", n - 1)
+}
+
+/// The message of [`zero_chain_tried`]: every step of the chain prints `-0r`, and the repair is
+/// offered as checked.
+pub(super) fn a_repair_tried_over_a_chain_of_names(src: &str, n: usize) {
+    let out = rejected(src);
+    assert_eq!(out.matches(" is -0r here").count(), n, "{out}");
+    let repair = format!("repair: write `f64(z{})`; the checker accepts that", n - 1);
+    assert!(out.contains(&repair), "{out}");
+}
+
+#[test]
+fn a_repair_tried_over_a_chain_of_names_prints_every_step() {
+    for n in [1, 2, 9] {
+        a_repair_tried_over_a_chain_of_names(&zero_chain_tried(n), n);
+    }
+}
+
 /// `n` rejections whose fixes are each checked as written (MSG-converted-claims-checked): the
 /// menu fixes `1.0 + gr(true)` and `1.0r + gr(true)`, dropped, the message naming `true`; a
 /// comparison cast, `int(r)`, dropped; a cast beside

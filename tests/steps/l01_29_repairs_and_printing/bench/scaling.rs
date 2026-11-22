@@ -69,6 +69,17 @@ fn a_chain_of_names_to_a_negated_zero_prints_in_linear_time() {
 }
 
 #[test]
+fn a_repair_tried_over_a_chain_of_names_scales() {
+    let n = 5700;
+    let srcs = scaling::inputs(n, zero_chain_tried);
+    scaling::check(
+        "the message of a `+` with a tried repair, read through a chain of n names from -0r",
+        n,
+        |k| a_repair_tried_over_a_chain_of_names(&srcs[&k], k),
+    );
+}
+
+#[test]
 fn checking_each_offered_fix_as_written_scales() {
     let n = 200;
     let srcs = scaling::inputs(n, checked_fixes);
