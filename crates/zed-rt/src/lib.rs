@@ -14,6 +14,7 @@ mod bug;
 pub mod close;
 pub mod heap;
 pub mod limits;
+mod line;
 pub mod ports;
 pub mod stack;
 

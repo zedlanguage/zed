@@ -35,6 +35,8 @@ use std::time::Duration;
 
 use zed_kernel::limits::{MainLimits, count_in_use, data_bytes, duration_text, set_memory};
 
+use crate::line::Line;
+
 /// The exit status of a run stopped by a fault (DESIGN.md sec:ports).
 pub const FAULT: c_int = 3;
 
@@ -76,37 +78,6 @@ pub(crate) fn fault_exit(bytes: &[u8]) -> ! {
         // The streams closed as at the end of every run, the status kept (step L7.3p).
         crate::close::after_stop();
         libc::_exit(FAULT)
-    }
-}
-
-/// A message built in a fixed buffer, for a handler that may not allocate; text past its end
-/// is dropped.
-pub(crate) struct Line {
-    bytes: [u8; 512],
-    len: usize,
-}
-
-impl Line {
-    /// An empty line.
-    pub(crate) const fn new() -> Line {
-        Line {
-            bytes: [0; 512],
-            len: 0,
-        }
-    }
-
-    /// The bytes written.
-    pub(crate) fn bytes(&self) -> &[u8] {
-        &self.bytes[..self.len]
-    }
-}
-
-impl std::fmt::Write for Line {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        let n = s.len().min(self.bytes.len() - self.len);
-        self.bytes[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
-        self.len += n;
-        Ok(())
     }
 }
 

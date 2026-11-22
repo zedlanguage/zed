@@ -27,7 +27,8 @@ use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::sync::{Once, OnceLock};
 
-use crate::limits::{Line, fault_exit, install, memory_limit, write_bytes};
+use crate::limits::{fault_exit, install, memory_limit, write_bytes};
+use crate::line::Line;
 
 /// A stack mapped for one run, with the guard page below it; unmapped when dropped.
 #[derive(Debug)]

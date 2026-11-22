@@ -41,8 +41,9 @@
 
 use std::ffi::c_int;
 use std::fmt::Write as _;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::limits::Line;
+use crate::line::Line;
 
 /// Closes descriptors 1 and 2, standard output and then standard error, at the end of a run
 /// whose exit status is `status`, and gives the status the process exits with: 1 where a close
@@ -68,9 +69,30 @@ pub(crate) fn after_stop() {
 
 /// Closes descriptor 1, writing the row's message if that fails, then descriptor 2; whether
 /// either close failed.
+///
+/// The path is read into the static [`PATH`], not onto the stack. A limit's stop calls this from
+/// a handler of `SIGXCPU` or `SIGSEGV` installed with `SA_ONSTACK` (`limits::install`), so it runs
+/// on the alternate stack Rust's std gives each thread: `max(SIGSTKSZ, getauxval(AT_MINSIGSTKSZ))`
+/// bytes, 8192 on x86_64, above one guard page (rust-lang/rust master,
+/// library/std/src/sys/pal/unix/stack_overflow/handler_signal.rs, `sigstack_size` and
+/// `get_stack`, read 2026-11-22), and the kernel's signal frame, with the processor's saved
+/// registers, takes part of that. A 4096-byte buffer there overflowed into the guard page
+/// (SEGV_ACCERR, killing the run instead of exiting with status 3; caught by
+/// `processor_time_past_the_limit_stops_the_run_with_status_3` in limits.rs and
+/// `a_run_within_its_processor_time_runs_and_one_past_it_stops_with_status_3` in
+/// limits_binary.rs). Only one caller can hold the buffer: a stop on one thread may race the end
+/// of `main` on another, and [`PATH_TAKEN`] gives the buffer to the first, while a second caller
+/// names no file. Each process calls this at most twice, so the claim is never given back.
 fn close_both() -> bool {
-    let mut path = [0u8; 4096];
-    let named = file_of(1, &mut path);
+    let named = if PATH_TAKEN.swap(true, Ordering::AcqRel) {
+        None
+    } else {
+        // SAFETY: the swap above gave this call the only access to `PATH` there will ever be,
+        // so no other reference to it exists.
+        #[expect(unsafe_code, reason = "the claimed static buffer")]
+        let path = unsafe { &mut *std::ptr::addr_of_mut!(PATH) };
+        file_of(1, path)
+    };
     let out = close(1);
     if let Some(e) = out {
         message(e, named);
@@ -79,9 +101,16 @@ fn close_both() -> bool {
     out.is_some() || err.is_some()
 }
 
+/// The buffer [`close_both`] reads the path of descriptor 1 into, `PATH_MAX` bytes; held by
+/// whoever set [`PATH_TAKEN`].
+static mut PATH: [u8; 4096] = [0; 4096];
+
+/// Whether a call of [`close_both`] has taken [`PATH`].
+static PATH_TAKEN: AtomicBool = AtomicBool::new(false);
+
 /// The path of the file open at descriptor `fd`, read into `buf`, or `None` when the system
 /// gives none, as for a pipe or a socket.
-fn file_of(fd: c_int, buf: &mut [u8; 4096]) -> Option<&str> {
+fn file_of(fd: c_int, buf: &'static mut [u8; 4096]) -> Option<&'static str> {
     let mut link = Line::new();
     let _ = write!(link, "/proc/self/fd/{fd}\0");
     #[expect(unsafe_code, reason = "readlink is a libc call")]
@@ -198,7 +227,9 @@ fn message(e: c_int, file: Option<&str>) {
     }
     let _ = line.write_str("; output written before it may be lost.\n");
     write_all(line.bytes());
-    let mut line = Line::new();
+    // One `Line` reused, not one for each part: the stack of a signal handler is small
+    // (close_both).
+    line = Line::new();
     let _ = line.write_str("The run closed standard output, descriptor 1");
     if file.is_some() {
         let _ = line.write_str(", which was the file `");
@@ -207,7 +238,7 @@ fn message(e: c_int, file: Option<&str>) {
     if let Some(f) = file {
         write_all(f.as_bytes());
     }
-    let mut line = Line::new();
+    line = Line::new();
     if file.is_some() {
         let _ = line.write_str("`");
     }
