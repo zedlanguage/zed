@@ -695,8 +695,8 @@ fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() 
          |       ^^^^ [8]
          |       ^^^^^^^^^ [6, 7]
          |         ^^ [10]
-  [7]  2:7: this `+` gives int
-  [8]  2:7: this `^` gives int
+  [7]  2:7: this `+` adds integer literals alone, so it is a literal too; nothing here gives it a carrier, so it is an `int`
+  [8]  2:7: this `^` takes a power of integer literals alone, so it is a literal too; nothing here gives it a carrier, so it is an `int`
   [9]  2:7: this literal, 2, is 2
   [10] 2:9: this literal, 64, is 64
   [11] 2:14: this literal, 13, is 13

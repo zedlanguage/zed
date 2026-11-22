@@ -505,7 +505,8 @@ fn carries_in_one_argument_beside_one_that_fails_keep_their_verdicts() {
     assert_eq!(
         check("y = f(1 / 2, \"s\");"),
         [
-            "`f` does not take (f64, \"s\"): no arrow of `f` takes these types. Try \
+            // The `/` has no carrier, so it is shown by the carriers it can take (A60).
+            "`f` does not take (f64 | rat, \"s\"): no arrow of `f` takes these types. Try \
              `f(String(1 / 2), \"s\")` instead. [f(1 / 2, \"s\")]",
             "Nothing gives the literal `1` a carrier. Try `y = f(1.0f64 / 2, \"s\")` instead.",
         ]

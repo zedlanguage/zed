@@ -163,7 +163,8 @@ fn a_number_computed_from_literals_is_rejected_before_the_run() {
          |                         ^^^^ [2, 3]\n        \
          |                           ^^ [5]\n  \
          [2] 1:25: `b` is defined as this expression, int\n  \
-         [3] 1:25: this `^` gives int\n  \
+         [3] 1:25: this `^` takes a power of integer literals alone, so it is a literal too; \
+         nothing here gives it a carrier, so it is an `int`\n  \
          [4] 1:25: this literal, 2, is 2\n  \
          [5] 1:27: this literal, 62, is 62\n  \
          [6] 1:43: the port `m.stdout` writes each value pushed to it as one line of text\n  \

@@ -111,8 +111,8 @@ const NOT_FOLDED: &str = r#"4:24: Int power with an exponent that may be negativ
          |         ^^^^ [8]
          |         ^^^^^^^^^ [6, 7]
          |           ^^ [10]
-  [7]  2:9: this `+` gives int
-  [8]  2:9: this `^` gives int
+  [7]  2:9: this `+` adds integer literals alone, so it is a literal too; nothing here gives it a carrier, so it is an `int`
+  [8]  2:9: this `^` takes a power of integer literals alone, so it is a literal too; nothing here gives it a carrier, so it is an `int`
   [9]  2:9: this literal, 2, is 2
   [10] 2:11: this literal, 64, is 64
   [11] 2:16: this literal, 13, is 13

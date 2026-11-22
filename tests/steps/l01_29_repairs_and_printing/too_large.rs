@@ -840,7 +840,7 @@ fn printing_a_kept_power_is_rejected_where_the_power_is_not() {
          |         ^^^^^^ [5]
          |          ^ [6]
          |            ^^ [7]
-  [3]  2:7: this `^` gives int
+  [3]  2:7: this `^` takes a power of integer literals alone, so it is a literal too; nothing here gives it a carrier, so it is an `int`
   [4]  2:7: this literal, 2, is 2
   [5]  2:9: this `^` gives 2^70
   [6]  2:10: this literal, 2, is 2
