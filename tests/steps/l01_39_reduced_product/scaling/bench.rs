@@ -415,7 +415,7 @@ fn tightenings_beside_a_chain_of_disjunctions_scale() {
 /// SCOPE-assume-disjunctions-listing). Measured on a Colab VM (hm1, b22-preimage5,
 /// 2026-11-22): 8.70 times the work from 256 to 2048 (0.15 and 1.29 s), piece 46.9 s; 8.30
 /// and 7.99 times from 128 to 1024, pieces 21.7 and 30.0 s. So the size stays at 64: the
-/// set-up, about 13 ms a disjunction and 58% of it under `Scope::case_list` (plan row
+/// set-up, 17 to 25 ms a disjunction and 58% of it under `Scope::case_list` (plan row
 /// PERF-case-list-setup-constant), puts 128 over the 20 s piece limit.
 #[test]
 fn tightenings_of_a_sum_beside_disjunctions_on_each_name_scale() {

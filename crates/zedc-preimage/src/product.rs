@@ -9779,8 +9779,8 @@ impl Scope {
     ///    (`Scope::refresh`), and the eager join projects again the stars it refreshes, so by
     ///    steps 1 and 2 each side's lazy product is within the eager one at every name the
     ///    join reads. `Product::join` is monotone in each argument (a join per domain), and
-    ///    by A1' the lazy join's conjuncts imply the eager join's, so the joined lazy product is within
-    ///    the eager one. A leaf stale on both sides stays stale and is covered by the
+    ///    by A1' the lazy join's conjuncts imply the eager join's, so the joined lazy product is
+    ///    within the eager one. A leaf stale on both sides stays stale and is covered by the
     ///    paragraph above. After the join, products may be wider than before it, so step 2
     ///    needs, for a part recorded projected in the joined scope, that it was projected at
     ///    products no wider than the joined ones (A3).
@@ -9847,16 +9847,16 @@ impl Scope {
     /// and (iii).
     ///
     /// Not proved (row PROOF-product-lazy-not-coarser): A1' in sub-cases (iv) and (vii)
-    /// above, and so the not-coarser claim after a join; A2 for a projection that is not exact but not refused: the projection one
-    /// disjunction at a time (S16) and the hulls. Such a projection can depend on the order
-    /// of the tests: `x - n >= 0`, `x + m >= 0`, `n - m >= -6 || n <= -8` and `n - m >= -8
-    /// || n - m >= -6` give `x` in `[-3, ∞)`, the exact answer, in that order, and `[-4, ∞)`
-    /// with the two disjunctions first, eagerly and lazily alike. Across all 720 orders of
-    /// those four tests, `x - n - m >= -20` and `n >= -50`, the lazy and eager scopes
-    /// agreed at `x` in every one (probe of 2026-11-21, not kept as a test). A3, the record
-    /// of projected parts across a join; A4,
-    /// that an eager projection due only by the leaf's own product reads no constraint on
-    /// another term added after the lazy scope's last projection. Tests:
+    /// above, and so the not-coarser claim after a join; A2 for a projection that is not exact
+    /// but not refused: the projection one disjunction at a time (S16) and the hulls. Such a
+    /// projection can depend on the order of the tests: `x - n >= 0`, `x + m >= 0`,
+    /// `n - m >= -6 || n <= -8` and `n - m >= -8 || n - m >= -6` give `x` in `[-3, ∞)`, the
+    /// exact answer, in that order, and `[-4, ∞)` with the two disjunctions first, eagerly
+    /// and lazily alike. Across all 720 orders of those four tests, `x - n - m >= -20` and
+    /// `n >= -50`, the lazy and eager scopes agreed at `x` in every one (probe of 2026-11-21,
+    /// not kept as a test). A3, the record of projected parts across a join; A4, that an eager
+    /// projection due only by the leaf's own product reads no constraint on another term added
+    /// after the lazy scope's last projection. Tests:
     /// `Case::eager_join` in `l01_39_scope_relations::lazy` checks the eager and lazy joins
     /// equal at every name, in every case it draws (before 2026-11-21 it checked only
     /// eager within lazy, and `Case::run` checked equality only for a case that keeps the
