@@ -268,6 +268,16 @@ fn seed_3011_a_new_star_settles_its_leaf_as_the_eager_scope_does() {
     assert!(two > 0, "seed 3011 no longer makes a star of two hubs");
 }
 
+#[test]
+fn wide_seed_13834_settles_a_hub_bounded_through_a_bound_leaf() {
+    // Seed 13834 of `wide` (FAIL-lazy-wide-seed-13834): `m >= 3`, then `a1` bound to the product
+    // of `m` (so `a1` is in [3, 20] in its own product only), then `a1 - n - m >= 2` and
+    // `n >= 0`, so that `m <= 18`. The eager scope gave m in [3, 18], the lazy `settled(m)`
+    // [3, 20]: `a1` is a leaf of the star at the hub `m` whose upper bound came by the binding,
+    // not by a conjunct. `run` panics on the first name the two scopes settle apart.
+    _ = run(&bounded_hubs(), [13834], wide);
+}
+
 /// Whether a star of two hubs or more stands beside a satellite of its hubs: a conjunct of a
 /// hub of the star and one other name, neither a leaf of a star nor a hub of that one.
 fn satellite_kept(s: &Scope) -> bool {

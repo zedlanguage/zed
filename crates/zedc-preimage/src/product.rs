@@ -6624,6 +6624,15 @@ impl Block {
         out
     }
 
+    /// Whether `g`, a conjunct new to the block, reads a name other than the star's leaf that
+    /// holds more than one piece in `names`: the test of [`Block::update`] for asking for the
+    /// whole block ([`Block::hole_pending`]). O(m log N) for the `m` names of `g`.
+    fn reads_hole(&self, g: &Formula, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
+        conjuncts::names(g).iter().any(|n| {
+            self.leaf.as_ref() != Some(n) && names.get(n).is_some_and(|p| p.ints().len() > 1)
+        })
+    }
+
     /// Whether a name of the block changed since it was last kept and now holds more than one
     /// piece, or such a change is still pending ([`Block::hole_pending`]).
     ///
@@ -8854,6 +8863,20 @@ impl Block {
                 if was {
                     removed_cons.push(g.clone());
                 } else {
+                    // A constraint new to the block asks for the whole block on the same rule as
+                    // any other new conjunct below ([`Block::reads_hole`]); until
+                    // FAIL-case-wake-pair-17975651743790410 only the conjuncts of the loop below
+                    // asked. There `x` held {-1} ∪ [2, inf) and the case `3x - 2y >= -1` of a
+                    // test came into the block: each part alone took -1 from `x` and moved
+                    // nothing else, while the whole block, with `x >= 2`, rules out `y = 3`
+                    // (only `x = -1` met both `-3x - y >= 0 || x - 3y >= 5` and
+                    // `-2x + 2y >= 1 || y <= 2` at `y = 3`), as the block made from scratch
+                    // gave (test
+                    // `case_wake::tests_on_two_names_give_the_projection_from_scratch_at_seed_17975651743790410`).
+                    // Cost: as below, O(m log N) for the m names of the constraint.
+                    if !next.hole_pending {
+                        next.hole_pending = next.reads_hole(g, names);
+                    }
                     added_cons.push(g.clone());
                 }
             }
@@ -8916,10 +8939,7 @@ impl Block {
                 // conjunct added, and one whole-block projection per such conjunct while no other
                 // asks for one.
                 if !next.hole_pending {
-                    next.hole_pending = conjuncts::names(&g).iter().any(|n| {
-                        next.leaf.as_ref() != Some(n)
-                            && names.get(n).is_some_and(|p| p.ints().len() > 1)
-                    });
+                    next.hole_pending = next.reads_hole(&g, names);
                 }
                 due.extend(next.enter(&g, added));
             }
@@ -10616,6 +10636,23 @@ impl Scope {
             self.bottom = true;
             self.empty_if_bottom();
         }
+        // The relation is told the new `x`'s bounds, not the shadowed one's: a lazy scope may
+        // read the relation before any reduction finds `x` moved. Left out, an `a1` bound again
+        // to `m`'s product kept the old `a1`'s sides in the relation, so a later
+        // `a1 - n - m >= 2` made `a1` a star leaf of the hubs `n` and `m`, and the lazy scope
+        // never settled `m` through `a1 <= 20` (`m` in `[3, 20]` against `[3, 18]` eager;
+        // FAIL-lazy-wide-seed-13834, test
+        // `l01_39_scope_relations::lazy::wide_seed_13834_settles_a_hub_bounded_through_a_bound_leaf`).
+        // Cost: O(log² n) to read `x`, two index writes, and a flush of `x`'s conjuncts when a
+        // side their shape reads changes; this path already clones the scope. The fresh path
+        // above and `unbind` must not call `sync_bounds`: `seen_fresh` states `x`'s bounds
+        // there through `Relation::state_fresh` and keeps the relation's mark, while
+        // `sync_bounds` writes through `DerefMut`, which moves the relation off the mark, so
+        // the next difference test is refused and run by the solver. Measured with those two
+        // calls: 154G instructions at 1024 against 2.9G at 128, ratio 52.6, in
+        // `l01_39_scope_relations::path_check::bench::the_checker_on_a_raised_head_is_linear`
+        // (8.04 without them).
+        self.sync_bounds([x]);
         saved
     }
 

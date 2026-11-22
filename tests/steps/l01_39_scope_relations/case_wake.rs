@@ -482,6 +482,14 @@ fn tests_on_two_names_give_the_projection_from_scratch_at_seed_33949413440098542
     run_at(Aim::Pair, 3_394_941_344_009_854_253);
 }
 
+/// Seed 17975651743790410 of the two-name attack: case 9, step 2, test `3x - 2y >= -1 || 2a >= 5`
+/// true, where `x` loses its isolated point at -1 and the incremental side kept `y` in [-1, 3]
+/// against [-1, 2] from scratch (FAIL-case-wake-pair-17975651743790410).
+#[test]
+fn tests_on_two_names_give_the_projection_from_scratch_at_seed_17975651743790410() {
+    run_at(Aim::Pair, 17_975_651_743_790_410);
+}
+
 #[test]
 fn tests_on_three_names_give_the_projection_from_scratch() {
     run_at(Aim::Three, 2);

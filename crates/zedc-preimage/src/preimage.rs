@@ -8634,6 +8634,21 @@ impl<'m, 't> Walk<'m, 't> {
                     };
                     return self.union(ra, rb);
                 }
+                // A demand that is no ray, such as `min(x, x) != -2`: where both operands are
+                // summaries of one input, so is the term ([`Walk::pa_prim`]), and its preimage
+                // is exact ([`Tx::invert_pa`]), as for `+` and `-` below; the projection reads
+                // each operand against the other's interval and is not exact there. Found by
+                // FAIL-if-shortcut-seed-13376472606931704830: the transfer lost the summary of
+                // `if (-2 == min(x, x)) { 1 } else { 2 }`, the guard's preimage not exact, and
+                // read a scope one point wider than the walk that peels. Test
+                // `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_agree_at_seed_13376472606931704830`.
+                // Cost: the summary is cached by term and scope ([`Walk::pa`]); O(P) for its
+                // `P` pieces, only on this path, which the projection took before.
+                if let Some(pa) = self.pa(t, env).await
+                    && let Some(r) = self.with(|tx| tx.invert_pa(&pa, z))
+                {
+                    return r;
+                }
                 self.project(p, a, b, env, z).await
             }
             // A sum or difference of two summaries of one input is a summary ([`Pa::plus`]),

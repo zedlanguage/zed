@@ -227,9 +227,67 @@ fn difference((a, p): &(Vec<Arm>, Product), (b, q): &(Vec<Arm>, Product)) -> Opt
 /// it ran the seeds 0 to 799, one block each, in four tests of about 6.5 s at load 30).
 #[test]
 fn one_pass_and_transfer_agree_on_random_blocks() {
+    let (rng, seed) = Rng::fresh("one_pass_and_transfer_agree_on_random_blocks");
+    blocks_agree(rng, seed);
+}
+
+/// Seed 13376472606931704830 of [`one_pass_and_transfer_agree_on_random_blocks`]: at block 11
+/// the one pass and the transfer differed at arm 5 (`((-2 - z103) < x)` false), the one pass
+/// giving `x` the ints `[..=-4]` and the transfer `[..=-3]`, where `z103` is
+/// `if (-2 == min(x, x)) { 1 } else { 2 }`: the guard's preimage under `min` of two copies of
+/// `x` was not exact, so the transfer had no summary of `z103` (FAIL-if-shortcut-seed-
+/// 13376472606931704830).
+#[test]
+fn one_pass_and_transfer_agree_at_seed_13376472606931704830() {
+    blocks_agree(
+        Rng::new(13_376_472_606_931_704_830),
+        13_376_472_606_931_704_830,
+    );
+}
+
+/// The block of seed 13376472606931704830 and its neighbors: `z103` bound to
+/// `if (-2 == z102) { 1 } else { 2 }` for `z102` each of `min(x, x)`, `max(x, x)`, `min(x, 3)`,
+/// `min(x, y)`, `x + 0` and `x * 1`, then a test of `x` against `-2 - z103`. The one pass and
+/// the transfer agree on each; before the fix the two of `min(x, x)` and `max(x, x)` differed
+/// (`x` in `[..=-4]` against `[..=-3]` where the test fails).
+#[test]
+fn one_pass_and_transfer_agree_on_min_and_max_of_one_name_under_a_test() {
+    let p = |op, a, b| prim(op, vec![a, b]);
+    let outer = |z102: Term, test: Term| {
+        let_(
+            "z103",
+            let_("z102", z102, if_(test, int(1), int(2))),
+            if_(
+                p(Prim::Lt, p(Prim::Sub, int(-2), var("z103")), var("x")),
+                int(1),
+                int(2),
+            ),
+        )
+    };
+    let eq = || p(Prim::Eq, int(-2), var("z102"));
+    let scope = ints(&["x".into(), "y".into()]);
+    let cases = [
+        ("min xx", outer(p(Prim::Min, var("x"), var("x")), eq())),
+        ("max xx", outer(p(Prim::Max, var("x"), var("x")), eq())),
+        ("min x3", outer(p(Prim::Min, var("x"), int(3)), eq())),
+        ("min xy", outer(p(Prim::Min, var("x"), var("y")), eq())),
+        ("x+0", outer(p(Prim::Add, var("x"), int(0)), eq())),
+        ("x*1", outer(p(Prim::Mul, var("x"), int(1)), eq())),
+    ];
+    for (name, t) in cases {
+        let one = arms_and_value(&t, &scope);
+        let two = arms_and_value_by_transfer(&t, &scope);
+        if let Some(d) = difference(&one, &two) {
+            panic!("{name}: the one pass and the transfer differ on\n{t}\n{d}");
+        }
+    }
+}
+
+/// The one pass and the transfer agree on [`BLOCKS`] blocks drawn from `rng`; `seed` names the
+/// run in the message of a difference.
+fn blocks_agree(rng: Rng, seed: u64) {
     let names: Vec<Arc<str>> = vec!["x".into(), "y".into()];
     let scope = ints(&names);
-    let (rng, seed) = Rng::fresh("one_pass_and_transfer_agree_on_random_blocks");
     let mut g = Gen {
         rng,
         fresh: 0,
