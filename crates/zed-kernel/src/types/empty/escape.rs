@@ -90,7 +90,9 @@ use zed_collections::index::to_u32_below;
 use zed_collections::intern::Interner;
 
 use super::super::{Lits, Parts, Row, Type};
-use super::shared::{ByType, ChainHint, ChainPlan, Digests, TwoSat, list_step};
+use super::shared::{
+    ByType, ChainHint, ChainPlan, Digests, TwoSat, link_pairs, list_atoms, list_step,
+};
 use crate::digest::Digest;
 use crate::value::Value;
 
@@ -385,25 +387,9 @@ fn finite_positive_alphabet(rows: &[Row]) -> Option<BTreeSet<Value>> {
             // Complexity tradeoff: continuing after k unknown positives could
             // reread a shared width-w diagram k times, O(k*w). Stop this
             // optional prepass at its first mismatch, O(k+w) including roots.
-            // The only recognized non-link terminal is one bare stop atom.
-            let p = t.p();
-            let scalar_empty = p.bools == 0
-                && [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
-                    .iter()
-                    .all(|l: &&Lits| !l.cofinite && l.values.is_empty());
-            if !scalar_empty
-                || !p.tuples.is_default()
-                || p.structs
-                || p.morphisms.is_leaf() != Some(false)
-                || p.atoms.cofinite()
-                || p.atoms.names().len() != 1
-                || !p
-                    .atoms
-                    .names()
-                    .values()
-                    .next()
-                    .is_some_and(|a| a.bare && a.payload == Type::empty())
-            {
+            // The only recognized non-link terminal is one bare stop atom (`list_atoms`, the
+            // list reader shared with `list_step`, DRY-misc-A5).
+            if !matches!(list_atoms(&t.p()), Some((Some(_), None))) {
                 return None;
             }
         }
@@ -516,32 +502,10 @@ impl Nodes {
                 continue;
             }
             // The end: the bare stop atom and nothing else.
-            let p = cur.p();
-            let lits_empty = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
-                .iter()
-                .all(|l: &&Lits| !l.cofinite && l.values.is_empty());
-            if p.bools != 0
-                || !lits_empty
-                || p.structs
-                || p.morphisms.is_leaf() != Some(false)
-                || !p.tuples.is_default()
-                || p.atoms.cofinite()
-            {
+            // (`list_atoms`, the list reader shared with `list_step`, DRY-misc-A5.)
+            let (Some(stop), None) = list_atoms(&cur.p())? else {
                 return None;
-            }
-            let mut stop = None;
-            for (n, a) in p.atoms.names() {
-                match (a.bare, a.payload == Type::empty()) {
-                    (true, true) if stop.is_none() => stop = Some(n.clone()),
-                    // A finite map of atoms lists no name whose part is none, the bare atom out
-                    // and no payload (`Atoms::set`), and the map is finite here.
-                    (false, true) => {
-                        unreachable!("a finite map of atoms lists no name of no atom")
-                    }
-                    _ => return None,
-                }
-            }
-            let stop = stop?;
+            };
             match &self.stop {
                 None => self.stop = Some(stop),
                 Some(t) if *t == stop => {}
@@ -660,40 +624,14 @@ pub(super) fn cell_counts(t: &Type) -> (usize, usize) {
 }
 
 fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
-    let p = t.p();
-    let lits_empty = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings]
-        .iter()
-        .all(|l: &&Lits| !l.cofinite && l.values.is_empty());
-    if p.bools != 0
-        || !lits_empty
-        || p.structs
-        || p.morphisms.is_leaf() != Some(false)
-        || !p.tuples.is_default()
-        || p.atoms.cofinite()
-    {
+    // Atoms of finitely many names only, no bare atom, one link atom whose payload is pairs
+    // alone: the list readers shared with `list_step` (DRY-misc-A5).
+    let (None, Some((link, payload))) = list_atoms(&t.p())? else {
         return None;
-    }
-    let mut link: Option<(std::sync::Arc<str>, Type)> = None;
-    for (name, a) in p.atoms.names() {
-        match (a.bare, a.payload == Type::empty()) {
-            (true, _) => return None,
-            // A finite map of atoms lists no name whose part is none, the bare atom out and no
-            // payload (`Atoms::set`), and the map is finite here.
-            (false, true) => unreachable!("a finite map of atoms lists no name of no atom"),
-            (false, false) => {
-                if link.is_some() {
-                    return None;
-                }
-                link = Some((name.clone(), a.payload.clone()));
-            }
-        }
-    }
-    let (link, payload) = link?;
-    let q = payload.p();
-    if q.tuples.rest || q.tuples.lens.len() != 1 || q.structs {
+    };
+    let (f, false) = link_pairs(&payload)? else {
         return None;
-    }
-    let f = q.tuples.lens.get(&2)?;
+    };
     let (taken, refused) = f.forced();
     let atoms = f.distinct_atoms();
     if taken.is_empty() || refused.is_empty() || taken.len() + refused.len() != atoms.len() {

@@ -2953,6 +2953,86 @@ fn the_check_of_a_list_witness_is_membership_on_chains_with_exits() {
     assert_check_is_membership(systems);
 }
 
+/// The list readers shared by DRY-misc-A5 (`list_atoms`, `link_pairs`) on link payloads that
+/// hold a tuple of one item beside their pairs: such a payload is no list step (`link_pairs`
+/// refuses a payload with tuples of two lengths), and each type below holds `cons(5)` (the
+/// chain one step in), alone and met with another such type. Without the tuple of one, the three types with no stop atom
+/// hold no value (every list through them is infinite) and the one with a stop holds `nil`.
+/// It catches a reader that takes the pairs and leaves the tuple of one out, which answers
+/// empty for the first three; it cannot catch a fault on a payload with scalars or atoms, which
+/// no constructor reachable from a test builds (`Type::atom_with` meets a payload with
+/// tuples and records).
+#[test]
+fn a_tuple_of_one_beside_the_pairs_of_a_link_is_a_value_of_the_list() {
+    use super::super::rec::{Expr, Group};
+    use fork_inputs::{cons, def, lit, nil, r};
+    let ty = |t: Type| Expr::Type(t);
+    let one = Type::atom_with("cons", &Type::tuple(vec![lit(5)]));
+    let cons5 = Value::atom_with("cons", vec![Value::Int(5)]);
+    assert!(one.contains(&cons5));
+    for with_one in [false, true] {
+        let extra = if with_one { one.clone() } else { Type::empty() };
+        let systems: Vec<(&str, Vec<Expr>)> = vec![
+            (
+                "self loop",
+                vec![Expr::Union(vec![cons(ty(lit(1)), r(0)), ty(extra.clone())])],
+            ),
+            (
+                "two step loop",
+                vec![
+                    Expr::Union(vec![cons(ty(lit(1)), r(1)), ty(extra.clone())]),
+                    Expr::Union(vec![cons(ty(lit(2)), r(0))]),
+                ],
+            ),
+            (
+                "chain into loop",
+                vec![
+                    Expr::Union(vec![cons(ty(Type::int()), r(1))]),
+                    Expr::Union(vec![cons(ty(lit(2)), r(1)), ty(extra.clone())]),
+                ],
+            ),
+            (
+                "with stop",
+                vec![
+                    Expr::Union(vec![nil(), cons(ty(lit(1)), r(1)), ty(extra.clone())]),
+                    Expr::Union(vec![cons(ty(lit(2)), r(1))]),
+                ],
+            ),
+        ];
+        for (sname, bodies) in systems {
+            Type::forget_emptiness();
+            let defs = (bodies.into_iter().enumerate())
+                .map(|(k, b)| def(&format!("W{k}"), b))
+                .collect();
+            let t = Group::new(defs)
+                .expect("a group")
+                .instance(vec![])
+                .remove(0);
+            let has_nil = sname == "with stop";
+            assert_eq!(t.is_empty(), !with_one && !has_nil, "{sname}, {with_one}");
+            // The chain's tuple of one is one step in.
+            let member = match sname {
+                "chain into loop" => Value::atom_with("cons", vec![Value::Int(1), cons5.clone()]),
+                _ => cons5.clone(),
+            };
+            assert_eq!(t.contains(&member), with_one, "{sname}, {with_one}");
+            let other = Group::new(vec![def(
+                "V0",
+                Expr::Union(vec![cons(ty(lit(3)), r(0)), ty(extra.clone())]),
+            )])
+            .expect("a group")
+            .instance(vec![])
+            .remove(0);
+            Type::forget_emptiness();
+            assert_eq!(
+                (&t & &other).is_empty(),
+                !with_one,
+                "{sname} met, {with_one}"
+            );
+        }
+    }
+}
+
 /// Item TEST-kernel-unreached-paths-12: the check of a list witness
 /// (`Searching::check_chain_witness`) on lists whose link payloads hold records beside their
 /// pairs: its answer is membership (`Type::contains`), both ways, for every list of up to five

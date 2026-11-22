@@ -7,6 +7,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::BuildHasherDefault;
 
+use super::super::bdd::Part;
 use super::super::{Lits, Parts, Row, Type};
 use crate::digest::{Digest, text_hash};
 
@@ -332,38 +333,81 @@ pub(super) fn finite_atoms_only(p: &Parts) -> bool {
     !p.structs && p.tuples.is_default() && only_atoms(p) && !p.atoms.cofinite()
 }
 
-/// The parts of one step of a list, as [`list_step`] gives them.
-pub(super) type Step = (Option<std::sync::Arc<str>>, std::sync::Arc<str>, Type, Type);
+/// The stop atom and link atom of a list type, as [`list_atoms`] gives them: the name held bare,
+/// and the name held with a payload, with that payload.
+pub(super) type ListAtoms = (
+    Option<std::sync::Arc<str>>,
+    Option<(std::sync::Arc<str>, Type)>,
+);
 
-/// One step of a list: the stop atom of `t` if it has one, the link atom, its item, and the
-/// rest; none when `t` is not of that shape.
-pub(super) fn list_step(t: &Type) -> Option<Step> {
-    let p = t.p();
-    if !finite_atoms_only(&p) {
+/// The atoms of a list type `p`: its stop atom, the one name it holds bare and with no payload,
+/// and its link atom, the one name it holds with a payload, with that payload; each none when
+/// `p` holds no such name. None when `p` holds a value other than atoms of finitely many names
+/// ([`finite_atoms_only`]), a second bare name, a second name with a payload, or a name both bare
+/// and with a payload. The list readers `list_step`, `step_shape`, `find_prefix_chains`,
+/// `decide_counted` (module `escape`) and `list_rows` (module `empty`) each held a copy of this
+/// loop before DRY-misc-A5 (REPORT-dryA5 row 2); each caller adds its own test of the names it
+/// takes (a stop atom refused, or names fixed in advance). Cost: one pass over the atom names.
+pub(super) fn list_atoms(p: &Parts) -> Option<ListAtoms> {
+    if !finite_atoms_only(p) {
         return None;
     }
     let (mut stop, mut link) = (None, None);
     for (name, a) in p.atoms.names() {
         match (a.bare, a.payload == Type::empty()) {
             (true, true) if stop.is_none() => stop = Some(name.clone()),
-            // A finite map of atoms lists no name whose part is none, the bare atom out and no
-            // payload (`Atoms::set`), and the map is finite here.
-            (false, true) => unreachable!("a finite map of atoms lists no name of no atom"),
+            // Never met: the atoms are finite (tested above), and `Atoms::set`, the one writer
+            // of `names` (module `types::atoms`), keeps no name whose part is
+            // `AtomPart::none()`, neither bare nor with a payload.
+            (false, true) => unreachable!("a finite atoms map lists a name with no part"),
             (false, false) if link.is_none() => link = Some((name.clone(), a.payload.clone())),
             _ => return None,
         }
     }
-    let (name, payload) = link?;
+    Some((stop, link))
+}
+
+/// The pairs of the payload of a list's link atom: the part of its tuples of length two, and
+/// whether the payload also holds records (`structs` of its parts). None when the payload holds
+/// a tuple of another length, tuples of every length, or a value that is neither a tuple nor a
+/// record. Shared by the list readers of [`list_atoms`] (DRY-misc-A5); a reader that cannot
+/// read records refuses the payload when the `bool` is true.
+///
+/// The test of values other than tuples and records: `Type::atom_with` meets a payload with
+/// `PAYLOADS` (tuples and records), but `Type::rewrite_levels` sets a payload to the rewrite of
+/// one without that meet, so no proof here says every payload is a subset of `PAYLOADS`. Of
+/// the five copies this replaces, only `list_rows` refused a payload with atoms, and none one
+/// with scalars or functions; the other four read the pairs alone, which would drop such a
+/// value from a list step. Refusing it is sound: every caller already meets a refusal here on
+/// payloads that occur, such as one of tuples of three items (`cons((1, 2, 3))`), so each
+/// caller's answer on a refusal (none, "not a carrier", or the end of a walk) cannot rest on
+/// why the payload was refused; the shared reader refuses such a value for all five. Cost:
+/// constant (flags of the parts, [`only_atoms`]), and one clone of a part (a shared pointer).
+pub(super) fn link_pairs(payload: &Type) -> Option<(Part<Row>, bool)> {
     let q = payload.p();
+    if q.tuples.rest || q.tuples.lens.len() != 1 || !only_atoms(&q) || !q.atoms.is_default() {
+        return None;
+    }
+    Some((q.tuples.lens.get(&2)?.clone(), q.structs))
+}
+
+/// The parts of one step of a list, as [`list_step`] gives them.
+pub(super) type Step = (Option<std::sync::Arc<str>>, std::sync::Arc<str>, Type, Type);
+
+/// One step of a list: the stop atom of `t` if it has one, the link atom, its item, and the
+/// rest; none when `t` is not of that shape.
+pub(super) fn list_step(t: &Type) -> Option<Step> {
+    let (stop, link) = list_atoms(&t.p())?;
+    let (name, payload) = link?;
     // Complexity tradeoff: the general payload search can require an exponential subset
     // construction over recursive alternatives. A functional list step is read in
     // O(atom names + pair BDD nodes), but only with at most one stop, one link and positional pairs
     // alone. Mixed named/positional payloads or multiple names stay on the general path.
     // Check the constant-time shape flags before walking the pair BDD (R7-C2/C3).
-    if q.structs || q.tuples.rest || q.tuples.lens.len() != 1 {
+    let (f, structs) = link_pairs(&payload)?;
+    if structs {
         return None;
     }
-    let f = q.tuples.lens.get(&2)?;
     let atoms = f.distinct_atoms();
     if atoms.len() != 1 || !f.eval(&|_| true) {
         return None;
@@ -410,43 +454,26 @@ pub(super) fn step_shape(x: &Type, link: &str, stop: &str) -> Option<(StepShape,
         // `list_step` takes no payload with records.
         return Some((StepShape::List(s.is_some(), h, next), false));
     }
-    let xp = x.p();
-    if !finite_atoms_only(&xp) {
+    let (s, l) = list_atoms(&x.p())?;
+    if s.as_deref().is_some_and(|st| st != stop) || l.as_ref().is_some_and(|(n, _)| **n != *link) {
         return None;
     }
-    let mut has_stop = false;
-    let mut l_payload: Option<Type> = None;
-    for (n, a) in xp.atoms.names() {
-        match (a.bare, a.payload == Type::empty()) {
-            (true, true) if **n == *stop => has_stop = true,
-            // Never met: the atoms are finite (tested above), and `Atoms::set`, the one writer of
-            // `names` (module `types::atoms`), keeps no name whose part is `AtomPart::none()`
-            // there.
-            (false, true) => unreachable!("a finite atoms map lists a name with no part"),
-            (false, false) if **n == *link && l_payload.is_none() => {
-                l_payload = Some(a.payload.clone());
-            }
-            _ => return None,
-        }
-    }
+    let has_stop = s.is_some();
     // No `link`: `x`'s lists are `stop` or none, as with no rows below.
-    let Some(l_payload) = l_payload else {
+    let Some((_, l_payload)) = l else {
         return has_stop.then_some((StepShape::Stop, false));
     };
-    let xq = l_payload.p();
-    if xq.tuples.rest || xq.tuples.lens.len() != 1 || !xq.tuples.lens.contains_key(&2) {
-        return None;
-    }
+    let (pairs, structs) = link_pairs(&l_payload)?;
     // Typed, so that the import graph (zed-tools `imports`, test group s_01f) reads
     // `rows.is_empty()` as a call on a `Vec` and not as `Type::is_empty`, written in `empty.rs`,
     // which would close a cycle `empty.rs` -> `shared.rs` -> `empty.rs`.
-    let rows: Vec<Row> = xq.tuples.lens[&2].union_rows()?;
+    let rows: Vec<Row> = pairs.union_rows()?;
     // No rows: `x` has no `link` of a pair (the union of no rows holds no pair), so its lists are
     // `stop` or none; the empty type is no step.
     if rows.is_empty() {
-        return has_stop.then_some((StepShape::Stop, xq.structs));
+        return has_stop.then_some((StepShape::Stop, structs));
     }
-    Some((StepShape::Rows { has_stop, rows }, xq.structs))
+    Some((StepShape::Rows { has_stop, rows }, structs))
 }
 
 /// How [`follow`] ended.

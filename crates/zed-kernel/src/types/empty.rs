@@ -91,8 +91,8 @@ use crate::digest::{DigestMap, DigestSet};
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
 use shared::{
-    ByType, ChainHint, ChainPlan, Digests, Literal2, PathEnd, StepShape, TwoSat, finite_atoms_only,
-    follow, list_step, only_atoms, step_shape,
+    ByType, ChainHint, ChainPlan, Digests, Literal2, PathEnd, StepShape, TwoSat, follow,
+    link_pairs, list_atoms, list_step, only_atoms, step_shape,
 };
 
 /// The numbers of the types of a search, one number for the types equal but for definition
@@ -8918,35 +8918,16 @@ impl<'m> Searching<'m> {
     // proves `Empty` soundly if a later step becomes empty, and otherwise returns `None` so the
     // general decider runs unchanged.
     async fn find_prefix_chains(&'m self, t: &Type) -> Option<ChainPlan> {
-        let p = t.p();
-        if !finite_atoms_only(&p) {
+        // A type with a bare atom (a stop) is refused here; `list_atoms` and `link_pairs` are the
+        // list readers shared with `list_step` (DRY-misc-A5).
+        let (None, Some((link_name, payload))) = list_atoms(&t.p())? else {
             return None;
-        }
-        let mut link: Option<(std::sync::Arc<str>, Type)> = None;
-        for (name, a) in p.atoms.names() {
-            match (a.bare, a.payload == Type::empty()) {
-                (true, _) => return None,
-                // Not met: the atoms are finite (tested above), so `Atoms::set`, the one writer
-                // of `names` (module `types::atoms`), keeps no name whose part is
-                // `AtomPart::none()`, neither bare nor with a payload.
-                (false, true) => unreachable!("a finite atoms map lists a name with no part"),
-                (false, false) => {
-                    if link.is_some() {
-                        return None;
-                    }
-                    link = Some((name.clone(), a.payload.clone()));
-                }
-            }
-        }
-        let (link_name, payload) = link?;
-        let q = payload.p();
+        };
         // Named struct payloads are an alternative to positional list pairs, not a list
         // constraint. Ignoring that alternative gives a wrong Empty (R7-C2).
-        if q.structs || q.tuples.rest || q.tuples.lens.len() != 1 || !q.tuples.lens.contains_key(&2)
-        {
+        let (f, false) = link_pairs(&payload)? else {
             return None;
-        }
-        let f = &q.tuples.lens[&2];
+        };
         let (taken, refused) = f.forced();
         if taken.is_empty() || refused.is_empty() {
             return None;
@@ -15612,34 +15593,18 @@ fn list_rows(t: &Type, names: &mut [Option<Arc<str>>; 2]) -> Option<(bool, Part<
     // payload, so a type of more names is refused before any is read: this is asked of every
     // root of every search, and a scan of a union of n atoms there made n searches cost n^2
     // (REGRESS-l01_26-overload). A second bare atom or a second link atom also ends or
-    // continues a list, so it is refused too: the rows of a second link atom passed over made a
-    // meet with lists through it read as empty.
-    if p.structs
-        || !p.tuples.is_default()
-        || !only_atoms(&p)
-        || p.atoms.cofinite()
-        || p.atoms.names().len() > 2
-    {
+    // continues a list, so it is refused too (`list_atoms`): the rows of a second link atom
+    // passed over made a meet with lists through it read as empty.
+    if p.atoms.cofinite() || p.atoms.names().len() > 2 {
         return None;
     }
-    let (mut stop, mut link) = (None, None);
-    for (name, a) in p.atoms.names() {
-        match (a.bare, a.payload == Type::empty()) {
-            (true, true) if stop.is_none() => stop = Some(name.clone()),
-            // Never met: the atoms are finite (tested above), and `Atoms::set`, the one writer
-            // of `names` (module `types::atoms`), keeps no name whose part is `AtomPart::none()`
-            // there.
-            (false, true) => unreachable!("a finite atoms map lists a name with no part"),
-            (false, false) if link.is_none() => link = Some((name.clone(), a.payload.clone())),
-            _ => return None,
-        }
-    }
+    // `list_atoms` and `link_pairs` are the list readers shared with `list_step` (DRY-misc-A5);
+    // `list_atoms` also refuses a value other than atoms (`finite_atoms_only`).
+    let (stop, link) = list_atoms(&p)?;
     let (name, payload) = link?;
-    let q = payload.p();
-    if q.tuples.rest || q.tuples.lens.len() != 1 || !q.atoms.is_default() || q.structs {
+    let (f, false) = link_pairs(&payload)? else {
         return None;
-    }
-    let f = q.tuples.lens.get(&2)?.clone();
+    };
     for (known, name) in names.iter_mut().zip([stop.clone(), Some(name)]) {
         match (&*known, name) {
             (_, None) => {}
