@@ -2508,6 +2508,10 @@ fn projection_shortcut_cases() {
 
 /// The facts of [`projection_shortcut_cases`] on origin/main 9568d1a8d, the same as on abf5d24cd
 /// except C2, where main now gives x = 2 or 4 (x = 2w, w in 1..=2) for the interval 2..=4.
+/// Since FAIL-preimage-threshold-hull-unrefused (the threshold solve leaves a hub of two values
+/// with a hole between its ranges to the parts) G1 and G4 give the exact x {1, 2, 4} where they
+/// gave the hull `1..=4`, and C2 the exact y {1, 3} (y = x - 1, x in {2, 4}) where it gave
+/// `1..=3`.
 const WANT_SHORTCUT_CASES: &str = "
 P1 eq-then-ne: x=[0..=1, 3..=4] y=[0..=1, 3..=4]
 P2 ne-then-eq: x=[0..=1, 3..=4] y=[0..=1, 3..=4]
@@ -2653,15 +2657,15 @@ U5,6,false: a=[2..] x=[0..=4] y=[1..=4]
 U5,6,true: a=[2..] x=[0..=4] y=[1..=4]
 U5,7,false: a=[2..] x=[0..=4] y=[1..=4]
 U5,7,true: a=[2..] x=[0..=4] y=[1..=4]
-G1 shadow, base after part: x=[1..=4] y=[1..=2]
+G1 shadow, base after part: x=[1..=2, 4..=4] y=[1..=2]
 G2 hole in eliminated y: x=[0..=1, 3..=4] y=[0..=1, 3..=4]
 G3 two lower rows: x=[0..=3] y=[0..=4] z=[0..=4]
-G4 shadow, woken by x <= 4: x=[1..=4] y=[1..=2]
+G4 shadow, woken by x <= 4: x=[1..=2, 4..=4] y=[1..=2]
 G5 x <= 2y <= x + 1: x=[0..=4] y=[0..=2]
 E1 G5 then y >= 1: x=[1..=5] y=[1..=3]
 A26 audit seed 26 steps 0-4: a=[-8..=5] x=[-8..=3] y=[-8..=5] z=[-4..=8]
 C1 x = 2w, x = 2y + 1: bottom
-C2 x = 2w, x = y + 1: x=[2..=2, 4..=4] y=[1..=3] w=[1..=2]
+C2 x = 2w, x = y + 1: x=[2..=2, 4..=4] y=[1..=1, 3..=3] w=[1..=2]
 C3 x = 2w + 1, x = 2y: bottom
 C4 x = 3w + 1, x >= y: x=[1..=1, 4..=4, 7..=7] y=[0..=3] w=[0..=2]
 ";
