@@ -129,7 +129,7 @@ fn linear<T: Send + Sync>(
     build: impl Fn(usize) -> T + Sync,
     op: impl Fn(&T) + Sync,
 ) {
-    on_small_stack(|| scaling::check_fresh_inputs(what, n, build, op));
+    on_small_stack(|| scaling::check_fresh_inputs(what, n, &build, &op));
 }
 
 /// What [`linear`] relies on in giving each run an input of its own: copies built alike share
