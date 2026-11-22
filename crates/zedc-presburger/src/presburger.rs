@@ -20129,8 +20129,9 @@ impl Omega {
     /// the splinters; [`splinters`] checks that `τ` maps those onto themselves as well before
     /// it builds any, and gives the tie's refusal otherwise, which both runs then give alike.
     /// The exact, the lossless and the inexact stage pass the tie of
-    /// [`System::least_unfilled`], which is `None` at a fill above 0: there `taken` was false, so this function returned the tie
-    /// unread and the stage then did what it does at `None`; and that the fill is above 0 is
+    /// [`System::least_unfilled`], which is `None` at a fill above 0: there `taken` was false,
+    /// so this function returned the tie unread and the stage then did what it does at `None`;
+    /// and that the fill is above 0 is
     /// read from the ranks, the same under a renaming. So those steps, and the argument here,
     /// are as they were when the tie was formed at every fill.
     ///
