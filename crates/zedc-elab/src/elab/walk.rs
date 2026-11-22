@@ -1972,7 +1972,7 @@ impl<'a> Elab<'a> {
         let sig: &Sig = match *callee {
             Callee::Value(_, sig) => sig,
             Callee::Declared(id, _) => match self.info.sigs.get(&id) {
-                Some(sig) => &**sig,
+                Some(sig) => sig,
                 None => return,
             },
         };
