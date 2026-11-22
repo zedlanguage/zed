@@ -1029,10 +1029,18 @@ fn a_family_of_families_applied_to_two_keys_reads_one_level_per_key() {
         ]));
         let stdin = format!("{n}\n");
         let ran = interpreter(&src, &[], stdin.as_bytes());
-        assert_eq!((ran.stderr.as_str(), ran.status), ("", 0), "zedc run at {n}");
+        assert_eq!(
+            (ran.stderr.as_str(), ran.status),
+            ("", 0),
+            "zedc run at {n}"
+        );
         assert_eq!(ran.stdout, want, "zedc run at {n}");
         let ran = executable(&exe, &[], stdin.as_bytes());
-        assert_eq!((ran.stderr.as_str(), ran.status), ("", 0), "executable at {n}");
+        assert_eq!(
+            (ran.stderr.as_str(), ran.status),
+            ("", 0),
+            "executable at {n}"
+        );
         assert_eq!(ran.stdout, want, "executable at {n}");
     }
 }
