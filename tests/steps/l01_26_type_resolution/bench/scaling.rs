@@ -10,12 +10,12 @@ use super::super::Resolved;
 use super::super::info;
 use super::super::scaling::{
     a_chain_of_tests, bounded_at_many_parameters, call_chain, chain, constants_and_functions,
-    covering_overload, curried, curried_sums, curried_tested, disjoint_rows, else_patterns, fan,
-    functions_holding_one, generic_applied_to_many, many_destructurings, meeting_on_different_sets,
-    met_and_within, nested_overload, never_arguments, overlapping_rows, overloads, payloads,
-    resolved, results_holding_a_variable, results_met_alone, shared_overloads, shared_rows, sum,
-    sums_of_a_line_or_a_count, tuple, variables, wide_arrows, wide_destructuring, wider_overloads,
-    with_a_function_arrow,
+    covering_overload, curried, curried_bare_sums, curried_sums, curried_tested, disjoint_rows,
+    else_patterns, fan, functions_holding_one, generic_applied_to_many, many_destructurings,
+    meeting_on_different_sets, met_and_within, nested_overload, never_arguments, overlapping_rows,
+    overloads, payloads, resolved, results_holding_a_variable, results_met_alone, shared_overloads,
+    shared_rows, sum, sums_of_a_line_or_a_count, tuple, variables, wide_arrows, wide_destructuring,
+    wider_overloads, with_a_function_arrow,
 };
 
 /// Runs `want` on the unit `text(m)` at `n` and `8 * n`, both read and resolved before either
@@ -177,6 +177,23 @@ fn curried_lambdas_whose_parameters_take_a_carrier_check_in_linear_time() {
     let built = built(n, curried_sums);
     scaling::check_order(
         "n curried lambdas whose parameters take a carrier",
+        n,
+        1,
+        |m| {
+            let (stmts, res) = &built[&m];
+            let info = zedc::check::walk::check(stmts, res);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
+    );
+}
+
+/// Besides its ratio: no type error (GENERIC-nested-quadratic).
+#[test]
+fn curried_lambdas_generic_in_their_parameters_check_in_linear_time() {
+    let n = 200;
+    let built = built(n, curried_bare_sums);
+    scaling::check_order(
+        "n curried lambdas whose parameters stay generic",
         n,
         1,
         |m| {

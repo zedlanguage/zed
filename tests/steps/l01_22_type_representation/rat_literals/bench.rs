@@ -29,6 +29,12 @@ fn a_rat_literal_costs_the_length_of_its_text() {
     // bytes 7.22; at 20,000 digits instructions 15.48, bytes 11.7, and at 200,000 digits
     // (1x 110 ms) instructions 12.72, bytes 12.8, both over the limit of 10.5. The cost of a
     // literal grows faster than the length of its text once it has some thousands of digits.
+    // b22-misc3, 2026-11-22, at 20,000 and 160,000 digits: instructions 13.20, bytes about
+    // 11.0. perf: num-bigint's `mac3` 18.9%, `Field::forward` 12.2%, `inverse_pair` 5.4%,
+    // `Printer::named` 3.4%: the exponent is read into a BigInt (`read_digits`) and printed back
+    // in decimal, each O(n log^2 n), the order of RADIX-nlog2-10_5, which passes 10.5 only from
+    // about 1.6 million digits. Left at 200 digits until the exponent is kept as its decimal
+    // text or the conversion is faster (PERF-rat-literal-text-length).
     let digits = [200usize, 1600];
     let ns = digits.map(|d| format!("1{}", "0".repeat(d - 1)));
     let texts = programs(&ns);

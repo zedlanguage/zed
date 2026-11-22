@@ -116,6 +116,15 @@ pub(super) fn curried_sums(n: usize) -> String {
     format!("g(positional a0) = {lambdas}({});\n", all.join(", "))
 }
 
+/// `g(positional a0) = (a1) -> … -> (an) -> (a0 + 1, …, an + 1);`, [`curried_sums`] with a
+/// bare `1`, which takes the carrier of its operand (steps L1.26a, L1.26b), so each parameter
+/// stays generic (GENERIC-nested-quadratic).
+pub(super) fn curried_bare_sums(n: usize) -> String {
+    let lambdas: String = (1..=n).map(|i| format!("(a{i}) -> ")).collect();
+    let all: Vec<String> = (0..=n).map(|i| format!("a{i} + 1")).collect();
+    format!("g(positional a0) = {lambdas}({});\n", all.join(", "))
+}
+
 /// [`curried_sums`] with `h = g(0)` put in a tuple and tested by `is` against its written
 /// type, whose `n` arrows take int.
 pub(super) fn curried_tested(n: usize) -> String {
