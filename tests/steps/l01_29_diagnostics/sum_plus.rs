@@ -175,6 +175,72 @@ fn checking_sum_failing_at_the_first_plus() {
     }
 }
 
+/// `f` adding `n` (at least 1) `int` parameters and an `f64` last with `sum`: every `+` but
+/// the last adds two `int`s; the last fails on (int, f64), its `int` the running total.
+pub(super) fn components_failing_at_the_last_plus(n: usize) -> String {
+    let params: String = (0..n).map(|i| format!("positional x{i}: int, ")).collect();
+    let items: String = (0..n).map(|i| format!("x{i}, ")).collect();
+    program(
+        &format!("{params}positional z: f64"),
+        &format!("sum(({items}z))"),
+    )
+}
+
+/// `src`, a [`components_failing_at_the_last_plus`] of at least 2 `int`s, is rejected at the
+/// last `+` of its `sum`, whose first step says what its running total is.
+pub(super) fn sum_failing_at_the_last_plus_rejected(src: &str) {
+    let out = rejected(src);
+    let all = diagnostics(&out);
+    assert_eq!(all.len(), 1, "{out}");
+    assert!(
+        all[0]
+            .0
+            .starts_with("`+` in `sum` does not take (int, f64)"),
+        "{out}"
+    );
+    assert_eq!(
+        all[0].1.first(),
+        Some(&"these components add up to int"),
+        "{out}"
+    );
+}
+
+/// A later `+` in `sum` adds the running total of the components before it, which has no
+/// expression of its own; its first step says what that total is, at those components, as a
+/// written `x + y + z` says "this `+` gives int" of its `x + y` (row
+/// MSG-sum-running-total-note). The first `+` adds two components, each with its own steps,
+/// and gets no such note.
+#[test]
+fn a_later_plus_in_sum_says_what_its_running_total_is() {
+    let params = "positional x: int, positional y: int, positional z: f64";
+    let src = program(params, "sum((x, y, z))");
+    let summed = rejected(&src);
+    let added = rejected(&program(params, "x + y + z"));
+    let (s, a) = (&diagnostics(&summed)[0].1, &diagnostics(&added)[0].1);
+    assert_eq!(
+        s.first(),
+        Some(&"these components add up to int"),
+        "{summed}"
+    );
+    assert_eq!(a.first(), Some(&"this `+` gives int"), "{added}");
+    // The total's place is the components it adds up, `x, y`, as the written chain's note
+    // stands at `x + y`.
+    let col = src.find("x, y, z").map_or(0, |i| i + 1);
+    assert!(
+        summed.contains(&format!("1:{col}: these components add up to int")),
+        "{summed}"
+    );
+    for n in [2, 3, 9] {
+        sum_failing_at_the_last_plus_rejected(&components_failing_at_the_last_plus(n));
+    }
+    // Failing at the first `+`, there is no running total yet.
+    let first = rejected(&program(
+        "positional z: f64, positional x: int, positional y: int",
+        "sum((z, x, y))",
+    ));
+    assert!(!first.contains("add up to"), "{first}");
+}
+
 /// The headline of the first diagnostic of `out`, without its place.
 fn headline(out: &str) -> String {
     diagnostics(out)

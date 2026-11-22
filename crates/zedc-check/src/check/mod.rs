@@ -4321,6 +4321,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Work::Show(_) => None,
             })
             .collect();
+        // The type of each tuple written out built so far ([`Ck::tuple_seen`]).
+        let mut tuples = HashMap::new();
         let mut stack: Vec<Work> = start.into_iter().rev().collect();
         let note = |span: Span, text: String| Work::Show(Note { span, text });
         // The receiver of each class of a lambda parameter given entries, by the class's root
@@ -4368,7 +4370,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let t = self.with_entries(t, &entry_roots);
                     self.near(at, |ck| ck.show(&t))
                 }
-                (None, Src::Other(e), _) => match self.tuple_seen(e) {
+                (None, Src::Other(e), _) => match self.tuple_seen(e, &mut tuples) {
                     Some(t) => {
                         let t = self.with_entries(&t, &entry_roots).into_owned();
                         self.near(at, |ck| ck.show(&t))
@@ -4573,25 +4575,45 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The type of the tuple `e` as last found: its components' types, a tuple written as a
     /// component found the same way; `None` when `e` is no tuple or a component was not
     /// checked. The tuples nest as deep as the text, so the walk keeps its own stack: each
-    /// open tuple's items and its component types so far.
-    fn tuple_seen(&self, e: &Expr) -> Option<Ty> {
+    /// open tuple's span, items and component types so far.
+    ///
+    /// Each tuple written out that the walk builds is kept in `memo` by its span, and a
+    /// component found there is not built again.
+    // Complexity tradeoff (PERF-deep-tuple-call-refusal): naive, a fresh walk per call, as
+    // this was, costs `O(s)` for a tuple of `s` parts at any depth, and a derivation or a
+    // difference step asks for the type of each of `n` nested tuples in turn, `O(n^2)` in
+    // all (a refused call on a display 400 tuples deep took 3.3e9 instructions in the check
+    // stage, 3.5 times those at 200). Used: the caller keeps one memo over all its asks, so
+    // each tuple is built once from its components' kept types, `O(width)` by [`Ty::tuple`]
+    // ([`Row::new`] reads only its components' outer levels), `O(s)` over every ask.
+    // Tradeoff: one `Ty` (an `Arc`) kept per tuple built, for the lifetime of one message.
+    // Test: `l01_22_type_representation::kinds::
+    // a_refused_call_on_a_deeply_nested_display_takes_linear_time_in_its_depth`.
+    fn tuple_seen(&self, e: &Expr, memo: &mut HashMap<Span, Ty>) -> Option<Ty> {
         let ExprKind::Tuple(items) = &e.kind else {
             return None;
         };
-        let mut stack: Vec<(&[Expr], Vec<Ty>)> = vec![(items, Vec::new())];
-        while let Some((items, out)) = stack.last_mut() {
+        if let Some(t) = memo.get(&e.span) {
+            return Some(t.clone());
+        }
+        let mut stack: Vec<(Span, &[Expr], Vec<Ty>)> = vec![(e.span, items, Vec::new())];
+        while let Some((_, items, out)) = stack.last_mut() {
             let Some(item) = items.get(out.len()) else {
-                let (_, out) = stack.pop()?;
+                let (span, _, out) = stack.pop()?;
                 let t = Ty::tuple(out);
+                memo.insert(span, t.clone());
                 match stack.last_mut() {
                     None => return Some(t),
-                    Some(up) => up.1.push(t),
+                    Some(up) => up.2.push(t),
                 }
                 continue;
             };
             match (&item.kind, &self.seen.get(&item.span)?.0) {
                 (_, Some(t)) => out.push(t.clone()),
-                (ExprKind::Tuple(inner), None) => stack.push((inner, Vec::new())),
+                (ExprKind::Tuple(_), None) if let Some(t) = memo.get(&item.span) => {
+                    out.push(t.clone());
+                }
+                (ExprKind::Tuple(inner), None) => stack.push((item.span, inner, Vec::new())),
                 (_, None) => return None,
             }
         }
@@ -4788,6 +4810,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let Some(f) = self.t.funcs.get(&id) else {
             return;
         };
+        // The type of each tuple written out built so far ([`Ck::tuple_seen`]): differences
+        // nested `n` deep each ask for their component's.
+        let mut tuples = HashMap::new();
         for (j, p) in f.params.iter().enumerate() {
             let Some(w) = &p.ty else {
                 continue;
@@ -4820,7 +4845,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             while let Some((c, w, e)) = stack.pop() {
                 match &bare(w).kind {
                     TypeKind::Diff(a, b) => {
-                        if let Some(note) = self.subtracted_step(|| path(&parts, c), w, b, e) {
+                        if let Some(note) =
+                            self.subtracted_step(|| path(&parts, c), w, b, e, &mut tuples)
+                        {
                             found.push((c, note));
                         }
                         stack.push((c, a, e));
@@ -4875,10 +4902,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         w: &Type,
         b: &Type,
         e: &Expr,
+        tuples: &mut HashMap<Span, Ty>,
     ) -> Option<Note> {
         let v = match self.seen.get(&e.span) {
             Some((Some(t), _)) => t.clone(),
-            _ => self.tuple_seen(e)?,
+            _ => self.tuple_seen(e, tuples)?,
         };
         let taken = denoted(b);
         if v.is_empty() || taken.dynamic || !taken.vars.is_empty() || !self.subtype(&v, &taken) {
@@ -9441,6 +9469,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 text: text(ck),
             }]
         });
+    }
+
+    /// Puts `note` first among the notes of each error from the `from`th on that lacks it, as
+    /// the step a derivation starts from: O(m) for an error's `m` notes.
+    fn lead_note(&mut self, from: usize, note: Note) {
+        if self.trying {
+            return;
+        }
+        for e in self.errors.iter_mut().skip(from) {
+            if !e.notes.contains(&note) {
+                e.notes.insert(0, note.clone());
+            }
+        }
     }
 
     /// [`Self::also`] of the notes `notes` makes, in order: each error from the `from`th on

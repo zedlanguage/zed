@@ -29124,11 +29124,26 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // the last of the components it adds, as a written `+` is from its left
                     // operand to its right one; at the call when the tuple is not written.
                     let mut written = acc.at;
+                    // Whether `acc` is a running total, made by a `+` before, and not a
+                    // component with its own derivation.
+                    let mut total = false;
                     for (i, c) in args {
                         let site = written.zip(c.at).map(|(a, b)| Span {
                             start: a.start.min(b.start),
                             end: a.end.max(b.end),
                         });
+                        // A running total has no expression of its own, so the `+` that
+                        // takes it says what it is, at the components it adds up, as a
+                        // written `x + y + z` says "this `+` gives int" of its `x + y` (row
+                        // MSG-sum-running-total-note). The note alone, with no walk into the
+                        // components, each of which an earlier `+` already derived: O(1)
+                        // per `+` refused, where the walk would cost the components so far
+                        // at each of `n` refused steps, O(n^2).
+                        let shown = (total && !self.trying)
+                            .then_some(written)
+                            .flatten()
+                            .map(|w| (w, self.near(Some(w), |ck| ck.show(&acc.ty))));
+                        let from = self.errors.len();
                         let pair = if i < at { [c, acc] } else { [acc, c] };
                         let ty = self
                             .apply(
@@ -29139,7 +29154,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 site.unwrap_or(span),
                             )
                             .0;
-                        (at, acc, written) = (at.min(i), Arg::of(ty), site);
+                        if let Some((w, shown)) = shown {
+                            let text = match shown.as_str() {
+                                "_" => "these components have no type yet".to_string(),
+                                _ => format!("these components add up to {shown}"),
+                            };
+                            self.lead_note(from, Note { span: w, text });
+                        }
+                        (at, acc, written, total) = (at.min(i), Arg::of(ty), site, true);
                     }
                     // The sum is a number: each `+` gives a number, a class or the atoms that
                     // pass, and a `+` that fails reports its own error and gives only the atoms.

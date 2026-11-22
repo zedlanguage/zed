@@ -2315,6 +2315,30 @@ fn the_steps_of_differences_side_by_side_take_linear_time_in_their_number() {
 }
 
 #[test]
+fn a_refused_call_on_a_deeply_nested_display_takes_linear_time_in_its_depth() {
+    // PERF-deep-tuple-call-refusal: the derivation of a refused call asks for the type of each
+    // tuple written out in the argument, and built each one from its parts at any depth, so a
+    // display `n` tuples deep cost time and memory quadratic in `n` (3.3e9 instructions in the
+    // check stage at n = 400, 3.5 times those at 200); each tuple is now built once.
+    let deep = |n: usize| {
+        format!(
+            "f(p: {}(int, bool){}) = p;\ng() = f(p: {}(2, 3){});\n",
+            "(int, ".repeat(n),
+            ")".repeat(n),
+            "(1, ".repeat(n),
+            ")".repeat(n)
+        )
+    };
+    let refused = |n: usize| {
+        let errs = errors_with_steps(&deep(n));
+        assert_eq!(errs.len(), 1, "{errs:#?}");
+        assert!(errs[0].0.contains("does not take"), "{errs:#?}");
+    };
+    refused(3);
+    scaling::check("a refused call on a nested display, by depth", 40, refused);
+}
+
+#[test]
 fn only_an_argument_in_the_part_taken_away_gets_the_step_about_it() {
     // An argument refused for being outside the left side of the difference, or a call refused
     // for another argument, says nothing of the part `\` takes away.
