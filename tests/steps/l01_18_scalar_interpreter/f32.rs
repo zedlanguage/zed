@@ -143,6 +143,13 @@ fn a_generic_exponent_keeps_its_int_at_an_f32_base() {
     // An exponent that is an operation on integer literals keeps its `int` in the same way.
     let src = "f(positional x) = x * (2.67 ^ (5 + 1));\na = f(1.0f32);\n";
     assert_eq!(value(src, "a"), "362.29944f32");
+    // The base is the generic value itself: at `f32` the exponent `(1 + 1)` stays the `int` 2
+    // (no `f32` arm in the follows, so the cast 7beecd868 dropped is never reached), at `f64` it
+    // is cast once, at `int` it is the `int`.
+    let src = "p(positional x) = x ^ (1 + 1);\na = p(3.0f32);\nb = p(3.0f64);\nc = p(3);\n";
+    assert_eq!(value(src, "a"), "9.0f32");
+    assert_eq!(value(src, "b"), "9.0");
+    assert_eq!(value(src, "c"), "9");
 }
 
 #[test]
