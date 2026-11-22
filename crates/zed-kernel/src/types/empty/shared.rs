@@ -636,11 +636,11 @@ mod tests {
     /// The test above at the two seeds that failed the old count (row
     /// FAIL-bytype-forced-tie-count), each in a child process of this test binary, since
     /// `ZED_TEXT_SEED` is read once per process (as in `digest::tests`). Red on the test that
-    /// asked for exactly 16: in the short-addresses build, seed 1880 gave 4 and seed 33168 gave
-    /// 1. In that build the child must still meet fewer than 16 tied digests, so the case keeps
-    /// testing a short count; if a change to the digests moves that, pick new seeds with a scan
-    /// of `ZED_TEXT_SEED`. In the normal build the seeds give 16 and the case only checks that
-    /// the test passes.
+    /// asked for exactly 16: in the short-addresses build, seed 1880 gave 4 tied digests and
+    /// seed 33168 gave one. In that build the child must still meet fewer than 16 tied
+    /// digests, so the case keeps testing a short count; if a change to the digests moves
+    /// that, pick new seeds with a scan of `ZED_TEXT_SEED`. In the normal build the seeds give
+    /// 16 and the case only checks that the test passes.
     #[test]
     fn a_map_by_type_forced_to_tie_agrees_at_the_seeds_that_tie_fewer_digests() {
         const TEST: &str = "types::empty::shared::tests::\
