@@ -194,8 +194,9 @@ vm_side() {
   # index=on included. So with short = 1 the share runs in a mount namespace of its own (unshare;
   # as root on a VM, whose docker container has CAP_SYS_ADMIN, CapEff a82c25fb, bit 21; with a user
   # namespace too where not root, as in tools/test_farm_run.sh) in which the checkout is bound at
-  # R, the target directory (CARGO_TARGET_DIR, /content/target from job.sh) at R/build/cargo, and a
-  # tmpfs is mounted at R/build/short-clone. The namespace ends with the share, and the tmpfs with
+  # R, a tmpfs at R/build, and the target directory (CARGO_TARGET_DIR, /content/target from job.sh)
+  # at R/build/cargo (probed on l43 2026-11-22: the overlay mounts with its upper and work on such a
+  # tmpfs, and a second mount of it is refused). The namespace ends with the share, and the tmpfs with
   # it, so each share builds the short-addresses crates once (its list call) and keeps nothing.
   # FARM_VM_BUILD_ROOT: another R, tools/test_farm_run.sh's.
   local R=${FARM_VM_BUILD_ROOT:-/home/luke/Work/wt/.build-root}
@@ -204,11 +205,16 @@ vm_side() {
     local tgt=${CARGO_TARGET_DIR:-$PWD/build/cargo} ns=(unshare -m --propagation private)
     [[ $tgt == /?* ]] || { echo "vm_side: the target directory '$tgt' is not absolute"; return 2; }
     [ "$(id -u)" = 0 ] || ns=(unshare -U -r -m --propagation private)
-    mkdir -p "$tgt" "$PWD/build/cargo" "$PWD/build/short-clone" "$R" ||
+    mkdir -p "$tgt" "$PWD/build" "$R" ||
       { echo "vm_side: making the mount points for the short-addresses pieces failed"; return 2; }
     # The script is this function's file ($0, job.sh's farm_vm.sh), run again in the namespace.
-    "${ns[@]}" bash -c 'mount --bind "$1" "$2" && mount --bind "$3" "$2/build/cargo" &&
-      mount -t tmpfs tmpfs "$2/build/short-clone" || { echo "vm_side: the mounts of the short-addresses build root failed"; exit 2; }
+    # The tmpfs is mounted on R/build, not on R/build/short-clone: run_tests.sh drops a clone made
+    # from another build by renaming build/short-clone, and a mount point cannot be renamed
+    # ("mv: cannot move ...: Device or resource busy", l43 2026-11-22, a fresh tmpfs having no
+    # stamp). tools/test_farm_run.sh's stub renames it.
+    "${ns[@]}" bash -c 'mount --bind "$1" "$2" && mount -t tmpfs tmpfs "$2/build" &&
+      mkdir "$2/build/cargo" && mount --bind "$3" "$2/build/cargo" ||
+      { echo "vm_side: the mounts of the short-addresses build root failed"; exit 2; }
       cd "$2" || { echo "vm_side: cd to $2 failed"; exit 2; }
       shift 4
       CARGO_TARGET_DIR=$PWD/build/cargo exec bash "$0" "$@"' "$0" "$PWD" "$R" "$tgt" _ "$@"

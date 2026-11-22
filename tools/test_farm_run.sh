@@ -4,7 +4,8 @@
 # checkout on this machine, with FARM_VM_JOB as the VM's /content/job, so the VM side of
 # farm_run.sh (vm_side) runs here as it runs on a VM. The stub lists the pieces p1 to p7, the
 # short-addresses piece short-g1 when its copy still has short_steps set (it then checks that it
-# runs at the build root FARM_VM_BUILD_ROOT with a tmpfs at build/short-clone, and it refuses
+# runs at the build root FARM_VM_BUILD_ROOT with build/short-clone on a tmpfs and renamable, as
+# run_tests.sh renames it to drop a clone of another build), and it refuses
 # short-g1 in --pieces, as run_tests.sh does), and with --full the pieces full-a (needs bash, run
 # on a VM), full-b (needs qemu-s390x, which no VM has: not run, and named on farm_run.sh's
 # `farm: not run` line) and full-c (needs podman: run on a VM after the fake
@@ -94,8 +95,12 @@ if [ -z "$pieces" ]; then
     # a tmpfs (FARM-short-pieces-on-vm-tmpfs).
     if [[ $n == short-* ]]; then
       [ "$(pwd)" = "${FARM_VM_BUILD_ROOT:-}" ] || { echo "SHORT BUILD: in $(pwd), not at the build root"; exit 1; }
-      [ "$(findmnt -n -o FSTYPE --mountpoint "$(pwd)/build/short-clone")" = tmpfs ] ||
-        { echo "SHORT BUILD: no tmpfs at build/short-clone"; exit 1; }
+      mkdir -p build/short-clone && [ "$(findmnt -n -o FSTYPE --target "$(pwd)/build/short-clone")" = tmpfs ] ||
+        { echo "SHORT BUILD: build/short-clone is not on a tmpfs"; exit 1; }
+      # run_tests.sh drops a clone of another build by renaming build/short-clone, which fails
+      # ("Device or resource busy") when it is a mount point (l43, 2026-11-22).
+      mv -T build/short-clone build/short-clone-dropped && mv -T build/short-clone-dropped build/short-clone ||
+        { echo "SHORT BUILD: build/short-clone cannot be renamed"; exit 1; }
     fi
     echo "$n dir bin-$n" >>"$d/pieces"
     echo "grp-$n step-$n $n" >>"$d/chosen"
