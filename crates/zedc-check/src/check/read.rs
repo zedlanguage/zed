@@ -252,7 +252,8 @@ fn read_part(
     // difference read back as another type with no word of it. `Ty` has no form for part of
     // the unknown. Only this cause is refused: the exactness flag of `Ty::diff_exact` is
     // conservative for payloads and tuples (`#a(x: int) \ #a(y: int)` is flagged though it
-    // reads back as `#a(x: int)`, l01_22 `kinds::the_difference_of_payloads_of_one_atom_takes_the_payloads`),
+    // reads back as `#a(x: int)`, l01_22
+    // `kinds::the_difference_of_payloads_of_one_atom_takes_the_payloads`),
     // and a difference that takes part of a variable is held by `left_of`.
     let (ty, inexact) = denoted_inexact(&t, binds, &free);
     if let Some(Inexact { span, printed, .. }) = inexact
