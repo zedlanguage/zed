@@ -717,15 +717,33 @@ fn control_the_whole_case_implication_test_fails_property_p() {
 /// bounds projection are sound, so when the projection of `o` and `not a` is empty no point
 /// meets both, and a point of `phi` and `o` would meet `a`.
 ///
-/// The counts per piece are pinned in [`BOX_PINNED`] after the first run. Pending that run:
-/// whether interval boxes give any failure.
+/// The counts per piece are pinned in [`BOX_PINNED`], from a run on an 8-core VM with 8 test
+/// threads (2026-11-22; 8.6 to 9.1 s a piece). Over the 12 pieces, under arc and under bounds
+/// projection alike: boxes of intervals 928,689 premises and no failure of P; gapped boxes
+/// 1,192,872 premises and one failure (piece 9, seed `0x9c4f5`). This does not show that a
+/// failure needs a gap: at the gapped rate per premise, about 0.78 interval failures were
+/// expected, and none is seen with probability about 0.46. Whether a failure needs a gap is
+/// still open.
 const BOX_DRAWS: usize = 1_000_000;
 
 const BOX_PIECES: usize = 12;
 
 /// Per piece: boxes of intervals under arc and bounds projection, then gapped boxes under arc
 /// and bounds projection; each `[premises, P fails, P fails and a point is lost]`.
-const BOX_PINNED: &[[[usize; 3]; 4]] = &[];
+const BOX_PINNED: &[[[usize; 3]; 4]] = &[
+    [[77164, 0, 0], [77164, 0, 0], [100140, 0, 0], [100140, 0, 0]],
+    [[77581, 0, 0], [77581, 0, 0], [99195, 0, 0], [99195, 0, 0]],
+    [[77333, 0, 0], [77333, 0, 0], [99752, 0, 0], [99752, 0, 0]],
+    [[77522, 0, 0], [77522, 0, 0], [99646, 0, 0], [99646, 0, 0]],
+    [[77644, 0, 0], [77644, 0, 0], [99362, 0, 0], [99362, 0, 0]],
+    [[77262, 0, 0], [77262, 0, 0], [99232, 0, 0], [99232, 0, 0]],
+    [[77903, 0, 0], [77903, 0, 0], [99389, 0, 0], [99389, 0, 0]],
+    [[77329, 0, 0], [77329, 0, 0], [99389, 0, 0], [99389, 0, 0]],
+    [[77203, 0, 0], [77203, 0, 0], [99073, 0, 0], [99073, 0, 0]],
+    [[76894, 0, 0], [76894, 0, 0], [99592, 1, 0], [99592, 1, 0]],
+    [[77534, 0, 0], [77534, 0, 0], [99022, 0, 0], [99022, 0, 0]],
+    [[77320, 0, 0], [77320, 0, 0], [99080, 0, 0], [99080, 0, 0]],
+];
 
 fn whole_case_on_interval_and_gapped_boxes(piece: usize) {
     assert!(piece < BOX_PIECES, "piece {piece}");

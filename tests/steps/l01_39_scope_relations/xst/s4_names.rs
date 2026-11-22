@@ -502,12 +502,14 @@ impl Battery {
     }
 }
 
-// The study's sizes and seeds. The sizes of the pieces are first guesses at under 20 s each in
-// a dev build (a draw of `pn` costs about ten small projections, a system of `pnorders` 18 runs
-// of the fixpoint); the runs on the VM set them.
+// The study's sizes and seeds. Piece sizes, from runs on an 8-core VM with 8 test threads
+// (2026-11-22): a `pn` piece of 2,000,000 draws took 2.8 to 7.3 s, the later pieces longer
+// because they skip the draws before them; an Exact `pn` piece of 500,000 draws 1.6 to 2.6 s; a
+// `pnorders` piece of 25,000 systems 3.0 to 4.5 s, and of 5,000 under Exact 1.4 to 1.5 s.
 //
 // Study counts, from the logs (`pn_*.log`, `pnorders_*.log`): arc and bounds projection give
-// the same counts on each seed.
+// the same counts on each seed, and on each piece, so the bounds batteries share the arc
+// batteries' pinned rows.
 
 const PN_ARC_101: Battery = Battery {
     command: Command::Pn,
@@ -516,7 +518,13 @@ const PN_ARC_101: Battery = Battery {
     size: 10_000_000,
     per_piece: 2_000_000,
     study: [629_846, 3, 614_364, 0],
-    pinned: &[],
+    pinned: &[
+        [126_165, 0, 123_016, 0],
+        [125_947, 0, 122_850, 0],
+        [126_132, 1, 123_073, 0],
+        [125_831, 1, 122_648, 0],
+        [125_771, 1, 122_777, 0],
+    ],
 };
 
 const PN_BOUNDS_101: Battery = Battery {
@@ -531,7 +539,13 @@ const PN_ARC_202: Battery = Battery {
     size: 10_000_000,
     per_piece: 2_000_000,
     study: [629_323, 5, 613_784, 0],
-    pinned: &[],
+    pinned: &[
+        [126_235, 0, 123_103, 0],
+        [125_956, 0, 122_849, 0],
+        [125_723, 2, 122_569, 0],
+        [125_428, 2, 122_334, 0],
+        [125_981, 1, 122_929, 0],
+    ],
 };
 
 const PN_BOUNDS_202: Battery = Battery {
@@ -546,7 +560,14 @@ const PN_EXACT_303: Battery = Battery {
     size: 3_000_000,
     per_piece: 500_000,
     study: [188_564, 0, 183_979, 0],
-    pinned: &[],
+    pinned: &[
+        [31_327, 0, 30_540, 0],
+        [31_344, 0, 30_565, 0],
+        [31_491, 0, 30_748, 0],
+        [31_508, 0, 30_750, 0],
+        [31_543, 0, 30_810, 0],
+        [31_351, 0, 30_566, 0],
+    ],
 };
 
 const ORDERS_ARC_A1: Battery = Battery {
@@ -556,7 +577,16 @@ const ORDERS_ARC_A1: Battery = Battery {
     size: 200_000,
     per_piece: 25_000,
     study: [199_616, 2, 0, 11_488],
-    pinned: &[],
+    pinned: &[
+        [24_944, 1, 0, 1_499],
+        [24_958, 0, 0, 1_429],
+        [24_954, 1, 0, 1_404],
+        [24_948, 0, 0, 1_445],
+        [24_952, 0, 0, 1_449],
+        [24_952, 0, 0, 1_376],
+        [24_959, 0, 0, 1_430],
+        [24_949, 0, 0, 1_456],
+    ],
 };
 
 const ORDERS_BOUNDS_A1: Battery = Battery {
@@ -571,7 +601,16 @@ const ORDERS_ARC_B2: Battery = Battery {
     size: 200_000,
     per_piece: 25_000,
     study: [199_593, 1, 0, 11_524],
-    pinned: &[],
+    pinned: &[
+        [24_952, 0, 0, 1_443],
+        [24_941, 1, 0, 1_450],
+        [24_956, 0, 0, 1_438],
+        [24_961, 0, 0, 1_491],
+        [24_936, 0, 0, 1_397],
+        [24_947, 0, 0, 1_440],
+        [24_950, 0, 0, 1_413],
+        [24_950, 0, 0, 1_452],
+    ],
 };
 
 const ORDERS_BOUNDS_B2: Battery = Battery {
@@ -586,7 +625,14 @@ const ORDERS_EXACT_C3: Battery = Battery {
     size: 30_000,
     per_piece: 5_000,
     study: [29_927, 0, 0, 1_948],
-    pinned: &[],
+    pinned: &[
+        [4_986, 0, 0, 324],
+        [4_985, 0, 0, 344],
+        [4_989, 0, 0, 323],
+        [4_988, 0, 0, 327],
+        [4_991, 0, 0, 313],
+        [4_988, 0, 0, 317],
+    ],
 };
 
 const BATTERIES: [&Battery; 10] = [
