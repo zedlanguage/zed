@@ -437,6 +437,9 @@ fn many_results_that_hold_a_variable_meet_in_linear_time_alone() {
 /// only on this path was caught only there, and only at a K of 128 or more (plan row
 /// TEST-meet-alone-arrows). The reading of the two sides, linear in the arrows, is timed with
 /// it.
+// 1x measured 639 ms (ns=639009858) on 2026-11-22; 8.14 times the instructions at 8n. A
+// quadratic on the function path at K = 1 (a scan of the results for each result) gave 60.1
+// times the instructions, so the test fails it (negative control, run once, not kept).
 #[test]
 fn many_results_that_hold_a_function_meet_in_linear_time_in_a_call() {
     let n = 4_000;
