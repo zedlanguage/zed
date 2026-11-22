@@ -16,6 +16,7 @@ use zed_kernel::{Prim, Value};
 use zedc::zir::legalize::{Legalized, Swapped, nodes_in};
 use zedc::zir::memory::{Mode, Plan, RegionPlan};
 use zedc::zir::{Edge, Node, Op, Region, Src};
+use zedc_lattice::float_kinds::Kinds;
 
 use zed_rt::Word;
 
@@ -47,6 +48,13 @@ pub(crate) struct NodeInfo {
     pub placing: Option<u32>,
     /// For a `callNamed` whose shape is a literal of the form the kernel reads: the shape.
     pub named: Option<Box<NamedShape>>,
+    /// The kinds of float each of the node's first two inputs may be, read from the graph by
+    /// [`Tables::kinds_of`] (FLOAT-class-zir); what float `^` reads to leave out its NaN test
+    /// (`codegen.rs`, fn `pow`). Two, since no primitive the rules cover takes more.
+    pub kinds: [Kinds; 2],
+    /// The kinds of float the node's first output may be: by [`Kinds::transfer`] for a
+    /// primitive, every kind otherwise, less the NaN when the output's edge type excludes it.
+    pub out: Kinds,
 }
 
 /// The parameter list a `place` node gives the closure it makes (DESIGN.md
@@ -192,21 +200,15 @@ impl NodeInfo {
     pub fn node(&self) -> &Node {
         &self.region.nodes[self.k]
     }
+}
 
-    /// Whether input `i` may be a NaN by what the graph records: a constant only when it is
-    /// the NaN, an argument or an output unless its edge's type excludes the NaN. No
-    /// analysis runs here; the edge types are what earlier passes wrote.
-    pub fn may_be_nan(&self, i: usize) -> bool {
-        let nan = Value::float(f64::NAN);
-        let edge = match &self.node().inputs[i] {
-            Src::Const(v) => return *v == nan,
-            Src::Arg(a) => &self.region.args[*a],
-            Src::Out(n, p) => &self.region.nodes[*n].outputs[*p],
-        };
-        match edge {
-            Edge::Value(e) => e.ty.contains(&nan),
-            Edge::State(_) => false,
-        }
+/// Whether the edge's type excludes the NaN, as an earlier pass may have written it; lowering
+/// types every edge `_`, which holds it (ZIR-checker-facts is the row that will write the
+/// checker's types). A state edge holds no value.
+fn excludes_nan(edge: &Edge) -> bool {
+    match edge {
+        Edge::Value(e) => !e.ty.contains(&Value::float(f64::NAN)),
+        Edge::State(_) => true,
     }
 }
 
@@ -411,6 +413,22 @@ impl Tables {
             for s in &node.inputs {
                 self.constant(s);
             }
+            let mut kinds = [Kinds::ALL; 2];
+            for (i, s) in node.inputs.iter().take(2).enumerate() {
+                kinds[i] = self.kinds_of(at, region, s);
+            }
+            let out = match node.outputs.first() {
+                Some(e) if excludes_nan(e) => Kinds::ALL.minus(Kinds::NAN),
+                _ => Kinds::ALL,
+            };
+            let out = match &node.op {
+                Op::Prim(p) if node.inputs.len() <= 2 => {
+                    let ins = &kinds[..node.inputs.len()];
+                    // The edge rule and the transfer each hold, so their meet does.
+                    Kinds::transfer(*p, ins).and(out)
+                }
+                _ => out,
+            };
             let mut info = NodeInfo {
                 region: region.clone(),
                 at,
@@ -424,6 +442,8 @@ impl Tables {
                 number,
                 placing: None,
                 named: None,
+                kinds,
+                out,
             };
             number += 1;
             match (&node.op, node.inputs.first()) {
@@ -644,6 +664,32 @@ impl Tables {
         match self.regions[at].up {
             None => "r".into(),
             Some((up, i)) => format!("{}/{i}", self.path(up)),
+        }
+    }
+
+    /// The kinds of float input `s` of a node of region `at` (the graph's `region`) may be: a
+    /// constant's own kind; the first output of a node before it in the region, the kinds
+    /// [`Tables::visit`] found for it, which it numbered first; any other output and an
+    /// argument every kind. Either less the NaN when its edge's type excludes it. The checker's
+    /// classes of a parameter are not in the graph, so an argument stays every kind until row
+    /// ZIR-checker-facts writes them on the edges, which this then reads. O(1).
+    fn kinds_of(&self, at: usize, region: &Region, s: &Src) -> Kinds {
+        let (k, edge) = match s {
+            Src::Const(v) => return Kinds::of(v),
+            Src::Arg(a) => (Kinds::ALL, &region.args[*a]),
+            Src::Out(n, p) => {
+                let ids = &self.regions[at].ids;
+                let k = match (p, ids.get(*n)) {
+                    (0, Some(&id)) => self.nodes.get(id).map_or(Kinds::ALL, |i| i.out),
+                    _ => Kinds::ALL,
+                };
+                (k, &region.nodes[*n].outputs[*p])
+            }
+        };
+        if excludes_nan(edge) {
+            k.minus(Kinds::NAN)
+        } else {
+            k
         }
     }
 

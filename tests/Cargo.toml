@@ -331,6 +331,8 @@ zed-native ={ workspace = true, features = ["counts"] }
 zed-rt = { workspace = true, features = ["counts"] }
 # The integers of tests/src/bellman_ford_moore.rs, which zedc-solvers' tests also compile.
 zedc-int.workspace = true
+# The float kinds of FLOAT-class-zir, checked against the kernel in l01_36_cranelift.
+zedc-lattice.workspace = true
 stacker.workspace = true
 unicode-normalization = "0.1.26"
 num-bigint = "0.4.8"

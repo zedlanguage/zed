@@ -7,6 +7,7 @@
 pub mod affine;
 pub mod cell;
 pub mod float;
+pub mod float_kinds;
 pub mod grade;
 pub mod interval;
 pub mod iterate;

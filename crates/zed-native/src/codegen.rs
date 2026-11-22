@@ -28,6 +28,7 @@ use zed_kernel::Prim;
 use zedc::zir::legalize::Expansion;
 use zedc::zir::memory::{Mode, RegionPlan};
 use zedc::zir::{Op, Src, binds};
+use zedc_lattice::float_kinds::Kinds;
 
 use zed_rt::Word;
 
@@ -831,12 +832,19 @@ impl<M: Module> Gen<'_, M> {
         fx.b.ins().bitcast(F64, MemFlagsData::new(), x)
     }
 
-    /// The float word of `r`, a NaN replaced by the canonical NaN, as the kernel does.
-    fn float_word(&mut self, fx: &mut Fx<'_>, r: V) -> W {
-        let nan = fx.b.ins().fcmp(FloatCC::Unordered, r, r);
+    /// The float word of `r`, the result of node `id`, a NaN replaced by the canonical NaN, as
+    /// the kernel does. The test and the replacement are left out when the kinds
+    /// `Tables::visit` found for the node's result exclude the NaN (FLOAT-class-zir): no NaN
+    /// can reach the word then, so the replacement would never fire.
+    fn float_word(&mut self, fx: &mut Fx<'_>, id: usize, r: V) -> W {
         let bits = fx.b.ins().bitcast(I64, MemFlagsData::new(), r);
-        let canon = fx.b.ins().iconst(I64, zed_kernel::F64::NAN_BITS as i64);
-        let bits = fx.b.ins().select(nan, canon, bits);
+        let bits = if self.t.nodes[id].out.meets(Kinds::NAN) {
+            let nan = fx.b.ins().fcmp(FloatCC::Unordered, r, r);
+            let canon = fx.b.ins().iconst(I64, zed_kernel::F64::NAN_BITS as i64);
+            fx.b.ins().select(nan, canon, bits)
+        } else {
+            bits
+        };
         (fx.b.ins().iconst(I64, Word::FLOAT), bits)
     }
 
@@ -868,7 +876,7 @@ impl<M: Module> Gen<'_, M> {
                     self.when(fx, c, slow);
                     let x = self.float(fx, a.1);
                     let r = fx.b.ins().fneg(x);
-                    let w = self.float_word(fx, r);
+                    let w = self.float_word(fx, id, r);
                     self.jump(fx, merge, &[w]);
                 }
                 Prim::Not => {
@@ -896,7 +904,7 @@ impl<M: Module> Gen<'_, M> {
                     self.when(fx, c, slow);
                     let x = self.float(fx, a.1);
                     let r = fx.b.ins().sqrt(x);
-                    let w = self.float_word(fx, r);
+                    let w = self.float_word(fx, id, r);
                     self.jump(fx, merge, &[w]);
                     fx.b.switch_to_block(next);
                     fx.b.ins().jump(slow, &[]);
@@ -923,7 +931,7 @@ impl<M: Module> Gen<'_, M> {
                 self.float(fx, c.1),
             );
             let r = fx.b.ins().fma(x, y, z);
-            let w = self.float_word(fx, r);
+            let w = self.float_word(fx, id, r);
             self.jump(fx, merge, &[w]);
         } else {
             let b = self.get(fx, ins[1]);
@@ -966,7 +974,7 @@ impl<M: Module> Gen<'_, M> {
                         Prim::Max => fx.b.ins().fmax(x, y),
                         _ => fx.b.ins().fdiv(x, y),
                     };
-                    let w = self.float_word(fx, r);
+                    let w = self.float_word(fx, id, r);
                     self.jump(fx, merge, &[w]);
                 }
                 fx.b.switch_to_block(next);
@@ -997,8 +1005,8 @@ impl<M: Module> Gen<'_, M> {
     /// Float `^` of node `id` on words `a` and `b` when both are floats, by `rt_pow`, its
     /// result jumping to `merge`; any other operands continue in a new block. NaN in, NaN out
     /// (DESIGN.md sec:domains, NaN rule 5), where IEEE 754 `pow` gives `pow(NaN, 0) = 1` and
-    /// `pow(1, NaN) = 1`: an operand the graph does not rule the NaN out of is tested, one
-    /// `fcmp uno` for one such operand or for two, and an operand it does is not. Citation:
+    /// `pow(1, NaN) = 1`: an operand is tested where the graph does not rule out one of those
+    /// two cases (FLOAT-class-zir), one `fcmp uno` for one such operand or for two. Citation:
     /// IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 9.2; the full comment is in
     /// zed-kernel `eval.rs`, fn `prim_on`, at `Prim::Pow`.
     fn pow(&mut self, fx: &mut Fx<'_>, id: usize, a: W, b: W, merge: Block) {
@@ -1008,7 +1016,16 @@ impl<M: Module> Gen<'_, M> {
         let c = self.both(fx, a, b, Word::FLOAT);
         self.when(fx, c, next);
         let tag = fx.b.ins().iconst(I64, Word::FLOAT);
-        let test = match (ni.may_be_nan(0), ni.may_be_nan(1)) {
+        // IEEE 754 `pow` gives a number for a NaN operand only as `pow(NaN, 0) = 1` and
+        // `pow(1, NaN) = 1` (section 9.2.1), and `rt_pow` gives the NaN for every other NaN
+        // operand by itself. So the base needs a test only when it may be the NaN and the
+        // exponent may be a zero, and the exponent only when it may be the NaN and the base may
+        // be the one (FLOAT-class-zir); the kinds are what `Tables::visit` found for each
+        // operand from the graph (zedc-lattice `float_kinds.rs`).
+        let [ka, kb] = ni.kinds;
+        let test_a = ka.meets(Kinds::NAN) && kb.meets(Kinds::ZERO);
+        let test_b = kb.meets(Kinds::NAN) && ka.meets(Kinds::ONE);
+        let test = match (test_a, test_b) {
             (true, true) => Some((a.1, b.1)),
             (true, false) => Some((a.1, a.1)),
             (false, true) => Some((b.1, b.1)),

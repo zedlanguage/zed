@@ -37,7 +37,7 @@ from the tree at origin/main 7f34b01a9 plus this study's change.
 
 | Fact | Where derived | Where read after lowering | Carried or recomputed | Row |
 |---|---|---|---|---|
-| Type of each value | checker, `crates/zedc-check/src/check/walk.rs`, `check/mod.rs` | native NaN test `crates/zed-native/src/tables.rs:198-206`, used at `codegen.rs:1003` | **dropped at lowering**: `lower.rs:44`, `lower.rs:291` takes a term; every edge is `_`, so `may_be_nan` returns true and a NaN test runs that a float edge known NaN-free would skip | ZIR-checker-facts |
+| Type of each value | checker, `crates/zedc-check/src/check/walk.rs`, `check/mod.rs` | native NaN test `crates/zed-native/src/tables.rs:198-206`, used at `codegen.rs:1003` | **dropped at lowering**: `lower.rs:44`, `lower.rs:291` takes a term; every edge is `_`, so `may_be_nan` returns true and a NaN test runs that a float edge known NaN-free would skip (since FLOAT-class-zir, `Tables::kinds_of` finds what the graph's constants and operations rule out, and a parameter still counts as any float) | ZIR-checker-facts |
 | Interval, congruence, finite set (the domain) | lattice store `crates/zedc-lattice/src/cell.rs:348` (`Cell`), `:477` (`Store`); checker `check/coprime.rs`, `check/limits.rs` | none | **dropped at lowering** (as above). The graph has the form for them (`ValueEdge{ty, domain, facets}`, text `int in [0..=10] class 1 mod 4 set {5}`) and both forms keep it (test below) | ZIR-checker-facts |
 | May block | `crates/zedc-check/src/check/blocking.rs:183` (`facts`) | none; a port operation blocks as it runs | **dropped at lowering**; the runtime needs no flag, but a consumer cannot re-check it | ZIR-checker-facts |
 | Cost, work and depth bounds | not derived (L18.1 open; `crates/zedc-base/src/cost.rs` holds the cost model only) | none | **not derived** | ZIR-cost-facts |
@@ -150,7 +150,7 @@ carried in ZIR, and the stripped form".
    checker's type, the store's domain (interval, congruence, finite set) and a facet for
    may-block; make `recheck` prove each stored fact again in one forward pass from its node's
    inputs, as abstraction-carrying code checks a certificate, carrying in full only the facts a
-   fixpoint found. Then `may_be_nan` reads a real type and skips the run-time NaN test on a float
+   fixpoint found. Then `Tables::kinds_of` (FLOAT-class-zir; `may_be_nan` before it) reads a real type and skips the run-time NaN test on a float
    edge known NaN-free. Direct consumer: ZIR-cost-facts, which stores the cost bounds beside
    these facts. L24.2, whose vectorization reads intervals and types from the edges, reaches it
    through S.4 and L24.1, so it is not a direct need of L24.2.

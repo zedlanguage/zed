@@ -106,6 +106,21 @@ pub(crate) fn lambdas(n: usize) -> Term {
     })
 }
 
+/// `x0 = 2.0; x1 = x0 * 1.0; …; x{n} = x{n-1} * 1.0; x{n} ^ 0.5`: `n` float operations in a
+/// chain, each of whose results the native back end finds is never the NaN (FLOAT-class-zir),
+/// so the code has no NaN test.
+pub(crate) fn float_chain(n: usize) -> Term {
+    let mut body = prim(Prim::Pow, vec![var(&format!("x{n}")), super::float(0.5)]);
+    for i in (1..=n).rev() {
+        let step = prim(
+            Prim::Mul,
+            vec![var(&format!("x{}", i - 1)), super::float(1.0)],
+        );
+        body = let_(&format!("x{i}"), step, body);
+    }
+    let_("x0", super::float(2.0), body)
+}
+
 /// `x = "a" ++ "b"; (x, x, …)`: one cell used `n` times by one node.
 pub(crate) fn dups(n: usize) -> Term {
     let_(

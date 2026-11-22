@@ -10,9 +10,10 @@
 //! ([`recheck`]):
 //!
 //! - every value edge's type, domain and facets, hints included: the edge becomes `_`. No pass
-//!   after lowering reads them but the native back end's NaN test (`zed_native::tables`,
-//!   `may_be_nan`), which treats `_` as "may be NaN" and so tests at run time what a known
-//!   type would let it skip;
+//!   after lowering reads them but the native back end's NaN tests (`zed_native::tables`,
+//!   `Tables::kinds_of`), which treat `_` as "may be NaN" and find the kinds of float each edge
+//!   may hold from the graph's constants and operations alone (FLOAT-class-zir), so a stripped
+//!   module has the same tests as the full one;
 //! - the evidence of a `fold` and a `fix`, which becomes empty ("nothing known"); the evaluator
 //!   and the native back end never read it.
 //!

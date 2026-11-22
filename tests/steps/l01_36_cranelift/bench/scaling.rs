@@ -12,7 +12,7 @@ use zedc::zir::memory;
 
 use crate::planned;
 use crate::scaling::{
-    both, cases, consts, counted_in, curried, dups, fields, invoice, lambdas, list,
+    both, cases, consts, counted_in, curried, dups, fields, float_chain, invoice, lambdas, list,
     matched_invoice, nest, paired, ports, rate_table, read_to_the_end, strings, tiers, unused,
     world,
 };
@@ -51,6 +51,18 @@ fn a_tuple_of_many_lookup_ports_scales() {
 #[test]
 fn many_constants_scale() {
     check("a tuple of n constants", 18_000, &World::new(), consts);
+}
+
+/// The float kinds of FLOAT-class-zir are found in one pass over the nodes, O(1) each, within
+/// building the back end's tables (zed-native `tables.rs`, `Tables::visit`).
+#[test]
+fn a_chain_of_float_operations_scales() {
+    check(
+        "a chain of n float operations",
+        2_000,
+        &World::new(),
+        float_chain,
+    );
 }
 
 #[test]

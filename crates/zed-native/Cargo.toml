@@ -107,6 +107,7 @@ zed-graph.workspace = true
 zed-kernel.workspace = true
 zed-rt.workspace = true
 zedc.workspace = true
+zedc-lattice.workspace = true
 # The counters of `zedc --report` (TIME-report), used by the `zedc` executable only: the
 # library names neither, so the static library above links neither, and a program `zedc build`
 # makes keeps the system allocator.

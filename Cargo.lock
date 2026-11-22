@@ -1140,6 +1140,7 @@ dependencies = [
  "zed-native",
  "zed-rt",
  "zedc",
+ "zedc-lattice",
  "zedc-presburger",
 ]
 
@@ -1202,6 +1203,7 @@ dependencies = [
  "zed-tools",
  "zedc",
  "zedc-int",
+ "zedc-lattice",
  "zedc-presburger",
 ]
 
