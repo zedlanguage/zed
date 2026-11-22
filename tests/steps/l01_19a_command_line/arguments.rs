@@ -152,6 +152,31 @@ fn the_arguments_are_an_input() {
     );
 }
 
+/// `len` counts the characters of a text, so `len(m.args)` is refused; the repair counts the
+/// arguments, `m.args.count`, not the characters of their text, as `len(String(m.args))` did
+/// (plan row DIAG-len-args-repair). The repair runs and gives the count meant.
+#[test]
+fn len_of_the_arguments_is_offered_their_count() {
+    let src = "main(m: MainArgs) {\n  m.stdout <- \"${len(m.args)}\";\n}\n";
+    let err = zedc::run::load(src.as_bytes()).err().unwrap_or_default();
+    assert!(
+        err.starts_with(
+            "2:18: `len` does not take ([String]): no arrow of `len` takes these types. \
+             Try `m.args.count` instead."
+        ),
+        "{err}"
+    );
+    assert!(!err.contains("String(m.args)"), "{err}");
+    let fixed = "main(m: MainArgs) {\n  m.stdout <- \"${m.args.count}\";\n}\n";
+    let out = run("args_count", fixed, &["--", "a", "bc", "d"]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "3\n"),
+        "{}",
+        out.stderr
+    );
+}
+
 #[test]
 fn a_push_target_may_end_in_one_view() {
     // `PushTarget = Name ('.' Name)* ('::' Name)?` (sec:grammar): `m.stdout::bytes` parses as

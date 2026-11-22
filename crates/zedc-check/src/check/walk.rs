@@ -24444,6 +24444,37 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => (None, None, false),
             };
             let a = a.as_ref().expect("an argument");
+            // `len` counts the characters of a text; the entries of a list, a function from
+            // its keys, are counted by `.count` (DESIGN.md sec:fp_ops), so `len(xs)` of
+            // `xs: [int]` is offered `xs.count`, and not `len(String(xs))`, which counts the
+            // characters of the list's text (plan row DIAG-len-args-repair). Offered where the
+            // argument is written as a name or a path of fields, which `.count` follows
+            // without parentheses; the fix is checked as written ([`Self::reject`]).
+            let values = held.without_atoms();
+            let families = !values.fns.is_empty()
+                && values.tuples.is_empty()
+                && values.set.is_empty()
+                && values.vars.is_empty()
+                && !values.dynamic;
+            let families = families && what.text().trim_matches('`') == "len";
+            if families
+                && let Some(code) =
+                    (self.t.text)
+                        .and_then(|t| t.get(at.start..at.end))
+                        .filter(|c| {
+                            c.chars()
+                                .all(|ch| ch.is_ascii_alphanumeric() || "_.'".contains(ch))
+                        })
+            {
+                let count = format!("{code}.count");
+                let text = format!("repair: write `{count}`, the number of entries of `{code}`");
+                let holds = format_args!("counts the entries of `{code}`");
+                literals.push(Repaired {
+                    note: Note { span, text },
+                    got: None,
+                    fix: Rewrite::new(&[(span, &count)], &holds, &count),
+                });
+            }
             if let Some(forms) = written {
                 for (ty, lit, text) in forms {
                     // The form is offered for its own carrier: `1` for `1r` where an `int` is
@@ -24509,7 +24540,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             }
             for w in ["String", "int", "rat", "f64"] {
-                if (cast_word || number_text) && w == "String" {
+                if (cast_word || number_text || families) && w == "String" {
                     continue;
                 }
                 let Some(r) = self
