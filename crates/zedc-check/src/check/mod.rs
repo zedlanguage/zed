@@ -2498,6 +2498,12 @@ struct Ck<'t, 'a> {
     /// ([`Self::follows_error`]). An application refused for its own types stays out: a read
     /// of `q` after the rejected `q = (1 + 2) / (3 + 4)` is reported with its own steps.
     failed: HashSet<Span>,
+    /// The place of each error reported outside a trial, with its index in [`Self::errors`]
+    /// when it was pushed ([`Ck::reject`]): a derivation that reaches an expression of type
+    /// `Never` refused by an earlier error says so in one step, not repeating that error's
+    /// steps ([`Ck::refused_before`]). An index is read only where the error there still has
+    /// this place, since errors after a point can be undone or regrouped.
+    error_at: HashMap<Span, usize>,
     /// Whether a repair's rewritten call is being tried ([`Ck::repaired`]), so a decimal
     /// literal at `rat` takes the type `rat` and its digits are not read ([`adopted`]).
     rough: bool,
@@ -3289,6 +3295,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             cuts: Vec::new(),
             opened: false,
             failed: HashSet::new(),
+            error_at: HashMap::new(),
             trying: false,
             class_log: None,
             fitting: false,
@@ -4034,6 +4041,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !self.trying && !m.fixes.is_empty() {
             (self.check_fixes)(self, span, &mut m);
         }
+        if !self.trying {
+            self.error_at.insert(span, self.errors.len());
+        }
         self.errors.push(Found {
             id: self.next_found,
             row,
@@ -4248,6 +4258,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.derive_work(start, narrowed, to_function, out);
     }
 
+    /// Whether the expression at `span`, of type `kept`, is `Never` because an error reported
+    /// before refused it there ([`Self::error_at`]): `x + 1` in `x + 1 + x` with `x` a
+    /// `String`, whose error the second `+`'s error follows. The error must still be the one
+    /// pushed at that index with this place, as an undone or regrouped error leaves another
+    /// there, and the place must not be an operation on literals alone, whose errors are
+    /// dropped once it meets a carrier ([`Ck::lit_ops`]). O(1) expected: two lookups.
+    fn refused_before(&self, span: Span, kept: &Option<Ty>) -> bool {
+        kept.as_ref().is_some_and(Ty::is_empty)
+            && !self.lit_ops.contains(&span)
+            && (self.error_at.get(&span))
+                .is_some_and(|&i| self.errors.get(i).is_some_and(|f| f.span == span))
+    }
+
     /// [`Ck::derive_walk`] of the work `start`, in order: expressions to derive and notes to
     /// show among them, each note shown once.
     fn derive_work(
@@ -4270,6 +4293,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut held = HashMap::new();
         // The end of each chain of names the steps have followed ([`Ck::written_at`]).
         let mut written = HashMap::new();
+        // The places the derivation is about: its own error's expressions, which an error
+        // reported before at the same place does not cut short.
+        let roots: HashSet<Span> = (start.iter())
+            .filter_map(|w| match w {
+                Work::Derive(s) => Some(*s),
+                Work::Show(_) => None,
+            })
+            .collect();
         let mut stack: Vec<Work> = start.into_iter().rev().collect();
         let note = |span: Span, text: String| Work::Show(Note { span, text });
         // The receiver of each class of a lambda parameter given entries, by the class's root
@@ -4451,6 +4482,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                              and takes the carrier of what it meets"
                         ),
                     };
+                    // An operand of type `Never` that an earlier error refused is that error's
+                    // value: one step names it and the derivation stops there, where repeating
+                    // its steps made the k-th error of a chain of n refused operations list the
+                    // k before it, Theta(n^2) steps in all (DERIV-never-chain-quadratic).
+                    if !roots.contains(&span) && self.refused_before(span, kept) {
+                        next.push(note(
+                            span,
+                            format!("{what} gives Never, since it is refused by its own error"),
+                        ));
+                        stack.extend(next.into_iter().rev());
+                        continue;
+                    }
                     next.push(note(span, text));
                     for p in parts {
                         next.push(match literal(p, self.t.text) {

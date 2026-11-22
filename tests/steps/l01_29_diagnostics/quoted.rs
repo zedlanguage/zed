@@ -320,3 +320,40 @@ fn listing_many_diagnostics_on_one_line_shows_it_once() {
         }
     }
 }
+
+/// `f` adding `n` copies of `x + 1`, `x` a `String`, in one written chain of `+`: the first `+`
+/// is refused, its value is `Never`, and each later `+` that meets `x` is refused too.
+pub(super) fn refused_chain(n: usize) -> String {
+    let body = vec!["x + 1"; n].join(" + ");
+    format!("{START}{body};\nmain(m: MainArgs) = 0;\n")
+}
+
+/// In a chain of refused `+`, each error names the `Never` operand it takes from an error
+/// before it in one step, `this + gives Never, since it is refused by its own error`, and does
+/// not repeat that error's steps. Each error listed every earlier `this + gives Never` step and
+/// every operand before (DERIV-never-chain-quadratic: 907,460 bytes at 100 copies and
+/// 59,375,392 at 800, Theta(n^2)); the bytes are now O(n). An error gives at most two such
+/// steps: the `+ 1` after a refused `+` gives `Never` with no error of its own, and the refused
+/// `+` under it is named. The second error gives the steps of the first in full, as before.
+#[test]
+fn a_chain_of_refused_operations_names_the_error_before_once() {
+    let out = rejected(&refused_chain(6));
+    let ds = diagnostics(&out);
+    assert!(ds.len() > 3, "{out}");
+    for d in &ds {
+        let never = d.iter().filter(|l| l.contains("gives Never")).count();
+        assert!(
+            never <= 2,
+            "an error repeats the steps of those before it:\n{out}"
+        );
+    }
+    let named = (ds.iter()).filter(|d| {
+        d.iter()
+            .any(|l| l.contains("since it is refused by its own error"))
+    });
+    assert_eq!(named.count(), ds.len() - 2, "{out}");
+    assert!(
+        ds[0].iter().any(|l| l.contains("`x` is declared `String`")),
+        "{out}"
+    );
+}

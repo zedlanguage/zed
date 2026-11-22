@@ -3,7 +3,10 @@
 use zed_tests::scaling;
 use zedc::front::Diagnostic;
 
-use crate::quoted::{failing_sum, listing, many_errors_rendered_on_one_line, operands, sums};
+use crate::quoted::{
+    failing_sum, listing, many_errors_rendered_on_one_line, operands, refused_chain, sums,
+};
+use crate::rejected;
 
 #[test]
 fn rendering_many_errors_on_one_line_scales() {
@@ -34,4 +37,23 @@ fn listing_many_diagnostics_on_one_line_scales() {
             std::hint::black_box(listing(&made[&k]));
         });
     }
+}
+
+#[test]
+fn a_chain_of_refused_operations_scales() {
+    // Each error of the chain names the error before it in one step, so the listing is O(n)
+    // bytes (DERIV-never-chain-quadratic: 65.4 times the bytes at 8n before).
+    let n = 100;
+    let made = scaling::inputs(n, refused_chain);
+    let bytes = |k: usize| rejected(&made[&k]).len();
+    scaling::hold(
+        "the listing of a chain of n refused `+`",
+        "bytes",
+        bytes(n) as u64,
+        bytes(scaling::FACTOR * n) as u64,
+        1,
+    );
+    scaling::check("checking a chain of n refused `+`", n, |k| {
+        std::hint::black_box(rejected(&made[&k]));
+    });
 }
