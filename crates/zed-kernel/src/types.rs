@@ -858,9 +858,42 @@ fn order(first: Step<'_>) -> Ordering {
     // nodes is read once, O(pairs compared) steps, each a hash lookup; the stack is on the heap.
     // Given up: memory for the set, O(pairs found equal), and one hash insert per pair found
     // equal; a comparison its digests decide allocates nothing.
+    //
+    // Complexity tradeoff (COMPLEXITY.md K143): a stack made for each comparison allocated it
+    // again at every comparison of tied digests, and a lookup among `n` keys of one digest
+    // makes `O(log n)` of them, so `n` lookups allocated `O(n log n)` bytes. Used: the stack's
+    // buffer is kept on the thread between comparisons (`STEPS`), so that a comparison
+    // allocates for its stack only past the largest stack before it on its thread. Given up:
+    // each thread holds the buffer of its largest stack, one `Step` per entry, until it ends.
+    // A comparison made by another thread-local's destructor, once `STEPS` is gone, makes a
+    // stack of its own and frees it.
+    let mut steps = emptied(STEPS.try_with(std::cell::Cell::take).unwrap_or_default());
+    let c = order_on(first, &mut steps);
+    let _ = STEPS.try_with(|s| s.set(emptied(steps)));
+    c
+}
+
+thread_local! {
+    /// The buffer of the stack [`order()`] last used on this thread, empty. Taken while a
+    /// comparison runs, so that a comparison inside it starts with an empty one of its own.
+    static STEPS: std::cell::Cell<Vec<Step<'static>>> = const { std::cell::Cell::new(Vec::new()) };
+}
+
+/// `v` emptied, as a vector of another element type of the same size and alignment, with its
+/// buffer: collecting a vector's own iterator into a vector reuses its buffer in place, so no
+/// allocation is made (`alloc::vec::in_place_collect`; the scaling tests of `row_hash_sites`
+/// in `bdd/set/tests.rs` count the bytes).
+fn emptied<T, U>(mut v: Vec<T>) -> Vec<U> {
+    v.clear();
+    v.into_iter()
+        .map(|_| unreachable!("the vector is empty"))
+        .collect()
+}
+
+/// The loop of [`order()`] on the stack `steps`, empty at the start.
+fn order_on<'a>(first: Step<'a>, steps: &mut Vec<Step<'a>>) -> Ordering {
     let mut equal = Equal::default();
-    // The first step is held apart, so that a comparison its digests decide allocates nothing.
-    let mut steps = Vec::new();
+    // The first step is held apart, so that a comparison its digests decide pushes nothing.
     let mut next = Some(first);
     while let Some(step) = next.take().or_else(|| steps.pop()) {
         let c = match step {
@@ -869,15 +902,15 @@ fn order(first: Step<'_>) -> Ordering {
                 Ordering::Equal
             }
             Step::Is(c) => c,
-            Step::Tuples(w) => walk(w, &mut steps, &equal),
-            Step::Arrows(w) => walk(w, &mut steps, &equal),
-            Step::Types(a, b) => types(a, b, &mut steps, &equal),
+            Step::Tuples(w) => walk(w, steps, &equal),
+            Step::Arrows(w) => walk(w, steps, &equal),
+            Step::Types(a, b) => types(a, b, steps, &equal),
             Step::Rows(a, b) => {
                 if Arc::ptr_eq(&a.0, &b.0) {
                     continue;
                 }
                 digests_cmp((a.digest(), a.name_digest()), (b.digest(), b.name_digest()))
-                    .then_with(|| items(a.iter(), b.iter(), &mut steps, &equal))
+                    .then_with(|| items(a.iter(), b.iter(), steps, &equal))
             }
             Step::Morphisms(a, b) => {
                 if std::ptr::eq(a, b) {
@@ -894,7 +927,7 @@ fn order(first: Step<'_>) -> Ordering {
                 let mut c = Ordering::Equal;
                 for (i, &(x, y)) in pairs.iter().enumerate() {
                     let n = steps.len();
-                    c = types(x, y, &mut steps, &equal);
+                    c = types(x, y, steps, &equal);
                     if c != Ordering::Equal {
                         break;
                     }
@@ -906,9 +939,9 @@ fn order(first: Step<'_>) -> Ordering {
                 }
                 c
             }
-            Step::Items(x, y) => items(x, y, &mut steps, &equal),
-            Step::Names(p, q, from) => atom_names((p, q), from, &mut steps),
-            Step::Lens(p, q, from) => tuple_lens((p, q), from, &mut steps, &equal),
+            Step::Items(x, y) => items(x, y, steps, &equal),
+            Step::Names(p, q, from) => atom_names((p, q), from, steps),
+            Step::Lens(p, q, from) => tuple_lens((p, q), from, steps, &equal),
         };
         if c != Ordering::Equal {
             return c;
@@ -8000,22 +8033,6 @@ pub mod rec {
                 list.iter().chain(boxes.into_iter().flatten())
             }
 
-            pub(super) fn same_head(&self, other: &Shape) -> bool {
-                match (self, other) {
-                    (Shape::Param(i), Shape::Param(j)) => i == j,
-                    (Shape::Ref(i, xs), Shape::Ref(j, ys)) => i == j && xs.len() == ys.len(),
-                    (Shape::Type(s), Shape::Type(t)) => s == t,
-                    (Shape::Union(xs), Shape::Union(ys))
-                    | (Shape::And(xs), Shape::And(ys))
-                    | (Shape::Tuple(xs), Shape::Tuple(ys)) => xs.len() == ys.len(),
-                    (Shape::Atom(m, xs), Shape::Atom(n, ys)) => m == n && xs.len() == ys.len(),
-                    (Shape::Not(_), Shape::Not(_))
-                    | (Shape::Diff(..), Shape::Diff(..))
-                    | (Shape::Morphism(..), Shape::Morphism(..)) => true,
-                    _ => false,
-                }
-            }
-
             fn open(&self, f: &mut fmt::Formatter<'_>) -> Result<&'static str, fmt::Error> {
                 Ok(match self {
                     Shape::Param(i) => {
@@ -8183,6 +8200,69 @@ pub mod rec {
 
         impl Eq for Expr {}
 
+        /// The order of two expressions, part by part from a stack of pairs as [`equal`] reads
+        /// them: the first pair whose heads differ decides. Two expressions are equal in it
+        /// exactly when `==` says so. Two equal heads have as many parts, so the heads read form
+        /// a code of each expression that no other's extends, and the order is total.
+        /// The stack's buffer is kept on the thread between comparisons, as in
+        /// [`super::super::order()`] (COMPLEXITY.md K143).
+        fn order(a: &Expr, b: &Expr) -> std::cmp::Ordering {
+            let mut pairs =
+                super::super::emptied(PAIRS.try_with(std::cell::Cell::take).unwrap_or_default());
+            pairs.push((a, b));
+            let mut c = std::cmp::Ordering::Equal;
+            while let Some((a, b)) = pairs.pop() {
+                if std::ptr::eq(a, b) {
+                    continue;
+                }
+                c = a.head().cmp(&b.head());
+                if c.is_ne() {
+                    break;
+                }
+                pairs.extend(a.kids().zip(b.kids()));
+            }
+            let _ = PAIRS.try_with(|s| s.set(super::super::emptied(pairs)));
+            c
+        }
+
+        thread_local! {
+            /// The buffer of the stack [`order`] last used on this thread, empty.
+            static PAIRS: std::cell::Cell<Vec<(&'static Expr, &'static Expr)>> =
+                const { std::cell::Cell::new(Vec::new()) };
+        }
+
+        impl Expr {
+            /// What [`Expr::same_head`] compares, in an order: the kind, the index of a
+            /// parameter or definition, an atom's name, a held type, and the number of parts.
+            fn head(&self) -> (u8, usize, &str, Option<&super::Type>, usize) {
+                let n = self.kids().count();
+                match self {
+                    Expr::Param(i) => (1, *i, "", None, n),
+                    Expr::Ref(i, _) => (2, *i, "", None, n),
+                    Expr::Type(t) => (3, 0, "", Some(t), n),
+                    Expr::Union(_) => (4, 0, "", None, n),
+                    Expr::And(_) => (5, 0, "", None, n),
+                    Expr::Not(_) => (6, 0, "", None, n),
+                    Expr::Diff(..) => (7, 0, "", None, n),
+                    Expr::Tuple(_) => (8, 0, "", None, n),
+                    Expr::Atom(name, _) => (9, 0, name, None, n),
+                    Expr::Morphism(..) => (10, 0, "", None, n),
+                }
+            }
+        }
+
+        impl Ord for Expr {
+            fn cmp(&self, other: &Expr) -> std::cmp::Ordering {
+                order(self, other)
+            }
+        }
+
+        impl PartialOrd for Expr {
+            fn partial_cmp(&self, other: &Expr) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
         impl fmt::Debug for Expr {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 show(self, f)
@@ -8296,7 +8376,7 @@ pub mod rec {
     }
 
     /// A definition `type name(params) = body`.
-    #[derive(Clone, PartialEq, Eq, Debug)]
+    #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
     pub struct Def {
         /// Its name.
         pub name: String,
@@ -8319,7 +8399,9 @@ pub mod rec {
         /// The hash of the definitions (`group::digest`), by which `GROUPS` finds the group; its
         /// types' digests are made from the canonical form's ([`Canon`]).
         digest: u64,
-        defs: Vec<Def>,
+        /// Shared with the group's key in `GROUPS`, which orders the groups of one digest by
+        /// their definitions.
+        defs: Arc<Vec<Def>>,
         /// Each definition identifier hashed once, before its occurrences and instances.
         name_hashes: Vec<u64>,
         /// Each body as a shared tree.
@@ -8428,7 +8510,7 @@ pub mod rec {
 
         /// The top of the shape, without its children or type, for [`Canon::order`] and [`canon`]:
         /// the kind, the index of a parameter or definition, and an atom's name.
-        fn head(&self) -> (u8, usize, &str) {
+        pub(in crate::types) fn head(&self) -> (u8, usize, &str) {
             match self {
                 Shape::Param(i) => (1, *i, ""),
                 Shape::Ref(i, _) => (2, *i, ""),

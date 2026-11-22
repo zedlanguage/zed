@@ -78,6 +78,203 @@ pub type DigestMap<K, V> = HashMap<K, V, BuildHasherDefault<Digest>>;
 /// A set hashed by [`Digest`], with the keys of a [`DigestMap`].
 pub type DigestSet<K> = HashSet<K, BuildHasherDefault<Digest>>;
 
+/// A map keyed by values whose hashes a program can make tie: types, rows and groups, whose
+/// `Hash` writes a digest of their contents that a program can solve for (each step of
+/// [`step`] is a bijection in either argument; PERF-set-tied-digest-depth). It is hashed by `H`
+/// ([`ByHash`], the key's `Hash` by [`Digest`], unless another is named), and the keys of one
+/// hash are kept in their order. A key whose hash ties with `b`
+/// others then costs `O(log b)` comparisons, where a [`DigestMap`] compares it with all `b`
+/// (PERF-row-hash-tied-digest: 4,096 rows of one digest took 8,386,560 comparisons). The keys'
+/// `Ord` must agree with their `Eq` and `Hash`: keys equal by order hash alike.
+//
+// Complexity tradeoff (COMPLEXITY.md K142): the naive map is a `DigestMap`, one hash and one
+// comparison per key in the usual case, but `O(b)` comparisons for a key in a bucket of `b`
+// tied keys, so `n` keys of one hash cost `n(n-1)/2`. Used: a hashed map of slots, each one key
+// or an ordered map of the keys of one hash, `O(log b)` comparisons per key. A slot of one key
+// costs what the `DigestMap` does; the ordered map is made only on a tie. Given up: a tie
+// allocates an ordered map, and the keys of one hash are compared by `Ord`, which for tied types
+// reads their contents (as `Eq` did). Prior work: hashing with ordered buckets is Java 8's
+// `HashMap`, which turns a bucket of more than 8 keys into a red-black tree ordered by
+// `Comparable` (JEP 180, "Handle Frequent HashMap Collisions with Balanced Trees", 2012).
+pub struct TiedMap<K, V, H = ByHash> {
+    slots: DigestMap<u64, Slot<K, V>>,
+    len: usize,
+    hash: std::marker::PhantomData<H>,
+}
+
+/// The hash a [`TiedMap`] files a key by: equal for keys equal by `Ord`.
+pub trait KeyHash<K> {
+    /// The hash of `k`.
+    fn hash(k: &K) -> u64;
+}
+
+/// A key's `Hash`, by [`Digest`]: a [`TiedMap`]'s hash unless it names another.
+pub struct ByHash;
+
+impl<K: std::hash::Hash> KeyHash<K> for ByHash {
+    fn hash(k: &K) -> u64 {
+        digest_hash(k)
+    }
+}
+
+/// The keys of one hash in a [`TiedMap`]: one, nearly always, or an ordered map once a second
+/// key ties with it.
+enum Slot<K, V> {
+    One(K, V),
+    Many(std::collections::BTreeMap<K, V>),
+}
+
+impl<K, V, H> Default for TiedMap<K, V, H> {
+    fn default() -> Self {
+        TiedMap {
+            slots: DigestMap::default(),
+            len: 0,
+            hash: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<K: Ord, V, H: KeyHash<K>> TiedMap<K, V, H> {
+    /// The slot `k` is filed in: its hash by `H` hashed again by the process's seeded
+    /// [`text_hash`]. A program can solve for keys whose hashes differ but fall in one probe
+    /// sequence of an unseeded table (the flooding of [`DigestMap`]'s rule, KERNEL-bytype-
+    /// flooding); with the seed, distinct hashes spread, and equal ones meet in one slot, where
+    /// their order tells them apart.
+    fn slot(k: &K) -> u64 {
+        text_hash(&H::hash(k))
+    }
+
+    /// The number of keys.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether the map holds no key.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The value of `k`.
+    pub fn get(&self, k: &K) -> Option<&V> {
+        match self.slots.get(&Self::slot(k))? {
+            Slot::One(key, v) => (key == k).then_some(v),
+            Slot::Many(m) => m.get(k),
+        }
+    }
+
+    /// The value of `k`, to change.
+    pub fn get_mut(&mut self, k: &K) -> Option<&mut V> {
+        match self.slots.get_mut(&Self::slot(k))? {
+            Slot::One(key, v) => (&*key == k).then_some(v),
+            Slot::Many(m) => m.get_mut(k),
+        }
+    }
+
+    /// Whether `k` is a key.
+    pub fn contains_key(&self, k: &K) -> bool {
+        self.get(k).is_some()
+    }
+
+    /// Puts `v` at `k`, giving back the value that was there.
+    pub fn insert(&mut self, k: K, v: V) -> Option<V> {
+        let mut v = Some(v);
+        let old = self.at(k, &mut || v.take().expect("one value"));
+        // `v` is still there when `k` was a key, and then it replaces that key's value.
+        let new = v?;
+        Some(std::mem::replace(old, new))
+    }
+
+    /// The value of `k`, put there by `f` when `k` is not a key.
+    pub fn get_or_insert_with(&mut self, k: K, f: impl FnOnce() -> V) -> &mut V {
+        let mut f = Some(f);
+        self.at(k, &mut || (f.take().expect("one call"))())
+    }
+
+    /// The value of `k`, made by `make` when `k` is not a key; `make` runs at most once.
+    fn at(&mut self, k: K, make: &mut dyn FnMut() -> V) -> &mut V {
+        use std::collections::hash_map::Entry;
+        let slot = match self.slots.entry(Self::slot(&k)) {
+            Entry::Vacant(e) => {
+                self.len += 1;
+                return match e.insert(Slot::One(k, make())) {
+                    Slot::One(_, v) => v,
+                    Slot::Many(_) => unreachable!("a slot just made holds one key"),
+                };
+            }
+            Entry::Occupied(e) => e.into_mut(),
+        };
+        if let Slot::One(key, _) = slot
+            && *key != k
+        {
+            let Slot::One(key, v) = std::mem::replace(slot, Slot::Many(Default::default())) else {
+                unreachable!("the slot held one key")
+            };
+            let Slot::Many(m) = slot else {
+                unreachable!("the slot was just made a map")
+            };
+            m.insert(key, v);
+        }
+        match slot {
+            Slot::One(_, v) => v,
+            Slot::Many(m) => m.entry(k).or_insert_with(|| {
+                self.len += 1;
+                make()
+            }),
+        }
+    }
+
+    /// Takes `k` out, giving back its value.
+    pub fn remove(&mut self, k: &K) -> Option<V> {
+        self.remove_entry(k).map(|(_, v)| v)
+    }
+
+    /// Takes `k` out, giving back the key that was stored and its value.
+    pub fn remove_entry(&mut self, k: &K) -> Option<(K, V)> {
+        let h = Self::slot(k);
+        let slot = self.slots.get_mut(&h)?;
+        let kv = match slot {
+            Slot::One(key, _) if &*key != k => return None,
+            Slot::One(..) => match self.slots.remove(&h) {
+                Some(Slot::One(key, v)) => (key, v),
+                _ => unreachable!("the slot held one key"),
+            },
+            Slot::Many(m) => {
+                let kv = m.remove_entry(k)?;
+                if m.is_empty() {
+                    self.slots.remove(&h);
+                }
+                kv
+            }
+        };
+        self.len -= 1;
+        Some(kv)
+    }
+
+    /// The keys and their values, in an order that changes from run to run with the seed of
+    /// [`text_hash`]: a caller must reach no result through it.
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
+        self.slots.values().flat_map(|slot| {
+            let (one, many) = match slot {
+                Slot::One(k, v) => (Some((k, v)), None),
+                Slot::Many(m) => (None, Some(m.iter())),
+            };
+            one.into_iter().chain(many.into_iter().flatten())
+        })
+    }
+
+    /// The values, in the order of [`TiedMap::iter`].
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.iter().map(|(_, v)| v)
+    }
+}
+
+impl<K: Ord, V, H: KeyHash<K>> std::ops::Index<&K> for TiedMap<K, V, H> {
+    type Output = V;
+    fn index(&self, k: &K) -> &V {
+        self.get(k).expect("a key of the map")
+    }
+}
+
 /// The [`Digest`] of `x`, the same in every run: for a content hash of ids, numbers or digests.
 pub fn digest_hash<T: std::hash::Hash + ?Sized>(x: &T) -> u64 {
     use std::hash::BuildHasher;

@@ -44,7 +44,7 @@ use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicBool, Ordering as Atomic};
 use std::sync::{Arc, Mutex, Weak};
 
-use crate::digest::{DigestMap, DigestSet};
+use crate::digest::{DigestMap, DigestSet, KeyHash, TiedMap};
 use crate::frames::{Deep, Stack};
 
 use super::hash::digests_cmp;
@@ -131,6 +131,15 @@ impl<A: Literal> Owned<A> {
         } else {
             drop(self);
         }
+    }
+}
+
+/// Files an atom and a value by the atom's digest ([`Literal::digest`]), in a [`TiedMap`].
+struct ByAtomDigest;
+
+impl<A: Literal> KeyHash<(A, bool)> for ByAtomDigest {
+    fn hash(k: &(A, bool)) -> u64 {
+        k.0.digest()
     }
 }
 
@@ -2335,21 +2344,19 @@ impl<A: Literal> Part<A> {
             };
             exprs.insert(e.id, found);
         }
-        // The settings that make the root `false`, each atom's found by its digest.
-        let mut off: Option<DigestMap<u64, Vec<(A, bool)>>> = None;
+        // The settings that make the root `false`, found by the atom's digest. Atoms of one
+        // digest are kept in their order (`TiedMap`, PERF-row-hash-tied-digest): a list of
+        // them, scanned, made `n` tied atoms cost `n^2` comparisons.
+        let mut off: Option<TiedMap<(A, bool), (), ByAtomDigest>> = None;
         if let Some(s) = &exprs[&root.id].0 {
-            let mut by_digest: DigestMap<u64, Vec<(A, bool)>> = DigestMap::default();
+            let mut settings_off = TiedMap::default();
             for k in settings::keys(s) {
-                by_digest.entry(k.0.digest()).or_default().push(k);
+                settings_off.insert(k, ());
             }
-            off = Some(by_digest);
+            off = Some(settings_off);
         }
-        let makes_false = |a: &A, v: bool| {
-            off.as_ref().is_none_or(|m| {
-                m.get(&a.digest())
-                    .is_some_and(|ks| ks.iter().any(|(b, w)| *w == v && b == a))
-            })
-        };
+        let makes_false =
+            |a: &A, v: bool| off.as_ref().is_none_or(|m| m.contains_key(&(a.clone(), v)));
         let (mut taken, mut refused) = (Vec::new(), Vec::new());
         for a in self.distinct_atoms() {
             if makes_false(&a, false) {

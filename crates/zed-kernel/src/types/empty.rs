@@ -87,7 +87,7 @@ use super::{
     Filer, Held, Lits, Morphism, Node, Parts, PartsRef, Reading, Refusal, Row, RowIndex, Split,
     Tuples, Type, Universes, Verdict, blind, makeable,
 };
-use crate::digest::{DigestMap, DigestSet};
+use crate::digest::{DigestMap, DigestSet, KeyHash, TiedMap};
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
 use shared::{
@@ -104,34 +104,33 @@ use shared::{
 // of the harness, item GSX-unsolved, I7.3-Opus). Used: a map by the name-free digest, where a
 // type is compared with the keys of its digest with names left out, O(1) where the digests
 // differ and linear in the size of the two types where they tie. Given up: a copy met again is
-// compared in full with the first copy each time, and a collision of the name-free digest
-// leaves a list whose keys are compared one by one, O(b) comparisons for b keys.
+// compared in full with the first copy each time. The keys of one name-free digest are kept in
+// the blind order (`TiedMap`), O(log b) comparisons for b keys, where a list compared them one
+// by one (PERF-row-hash-tied-digest). Every operation runs under [`blind`], so the map is only
+// ever ordered by the blind order.
 #[derive(Default)]
-struct Ids(HashMap<u64, Vec<(Type, usize)>, Digests>);
+struct Ids(TiedMap<Type, usize, NameFree>);
+
+/// Files a type by its name-free digest, equal for types equal under [`blind`].
+struct NameFree;
+
+impl KeyHash<Type> for NameFree {
+    fn hash(t: &Type) -> u64 {
+        t.digest()
+    }
+}
 
 impl Ids {
     fn get(&self, t: &Type) -> Option<&usize> {
-        let keys = self.0.get(&t.digest())?;
-        blind(|| keys.iter().find(|(k, _)| k == t)).map(|(_, i)| i)
+        blind(|| self.0.get(t))
     }
 
     fn insert(&mut self, t: Type, i: usize) {
-        let keys = self.0.entry(t.digest()).or_default();
-        match blind(|| keys.iter().position(|(k, _)| *k == t)) {
-            Some(j) => keys[j].1 = i,
-            None => keys.push((t, i)),
-        }
+        blind(|| self.0.insert(t, i));
     }
 
     fn remove(&mut self, t: &Type) {
-        let d = t.digest();
-        let Some(keys) = self.0.get_mut(&d) else {
-            return;
-        };
-        blind(|| keys.retain(|(k, _)| k != t));
-        if keys.is_empty() {
-            self.0.remove(&d);
-        }
+        blind(|| self.0.remove(t));
     }
 }
 
@@ -3267,7 +3266,9 @@ struct Region {
     structural_empty: bool,
     r: Vec<Type>,
     atoms: Vec<Row>,
-    index: DigestMap<Row, usize>,
+    /// Each atom's place in `atoms`. Rows of one digest share a hash, so they are kept in their
+    /// order (`TiedMap`, PERF-row-hash-tied-digest).
+    index: TiedMap<Row, usize>,
     /// For each component, the distinct types the tuple types have there.
     cells: Vec<Vec<Cell>>,
     /// The cell of tuple type `k` in component `j`, at `k * r.len() + j`.
@@ -6601,17 +6602,19 @@ impl<'m> Searching<'m> {
             changed: vec![true; n],
             missed: vec![0; atoms.len()],
             loose: vec![(0, 0); atoms.len()],
-            index: DigestMap::default(),
+            index: TiedMap::default(),
             atoms: Vec::new(),
             log: Vec::new(),
             forked_holds: Vec::new(),
             r,
         };
         for j in 0..n {
-            let mut found: DigestMap<&Type, usize> = DigestMap::default();
+            // Tied types share a hash, so the types of one hash are kept in their order
+            // (`TiedMap`, PERF-row-hash-tied-digest).
+            let mut found: TiedMap<&Type, usize> = TiedMap::default();
             for (k, a) in atoms.iter().enumerate() {
                 let cells = &mut g.cells[j];
-                let c = *found.entry(&a[j]).or_insert_with(|| {
+                let c = *found.get_or_insert_with(&a[j], || {
                     cells.push(Cell {
                         ty: a[j].clone(),
                         rows: Vec::new(),

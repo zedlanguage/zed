@@ -483,10 +483,11 @@ struct Printer<'s> {
     // 16,000 parts, and grew 13 times from 2,000. Used: a hash of the name-free digests
     // ([`Key`]'s `Hash`), O(1) expected per reference. Nothing reads the map in order: its
     // one iteration ([`Printer::remember`]) puts each key into an ordered table of its own.
-    // In the build with short addresses, where a digest keeps 8 bits, the keys of a large
-    // print share 256 hashes and a lookup compares the keys of its bucket, as the ordered map
-    // there compared the keys whose digests tie.
-    index: crate::digest::DigestMap<Key, usize>,
+    // Keys whose hashes tie (renamed recursive definitions have equal name-free digests, and in
+    // the build with short addresses a digest keeps 8 bits) are kept in their order
+    // ([`crate::digest::TiedMap`], PERF-row-hash-tied-digest), O(log b) comparisons for a key
+    // whose hash `b` others share, where a hashed map compared it with all `b`.
+    index: crate::digest::TiedMap<Key, usize>,
     texts: Vec<Option<Text>>,
     uses: Vec<u32>,
     /// A recursive type, named however often it is used: its context, its name and the

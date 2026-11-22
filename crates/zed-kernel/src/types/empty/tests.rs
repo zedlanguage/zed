@@ -3597,7 +3597,7 @@ fn a_type_numbered_again_keeps_one_entry_and_a_type_not_held_is_not_removed() {
     ids.insert(t.clone(), 1);
     ids.insert(t.clone(), 2);
     assert_eq!(ids.get(&t), Some(&2));
-    assert_eq!(ids.0[&t.digest()].len(), 1, "one entry for the type");
+    assert_eq!(ids.0.len(), 1, "one entry for the type");
     ids.remove(&u);
     assert_eq!(
         ids.get(&t),

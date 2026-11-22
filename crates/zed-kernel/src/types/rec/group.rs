@@ -1,30 +1,40 @@
 //! The checks of a group of definitions (module `rec`), and the tables of its groups and
 //! instances.
 
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::BuildHasherDefault;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, Weak};
 
 use super::unfold::{ENVS, Show, eval, thread};
 use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, covers, free, same};
-use crate::digest::Digest;
+use crate::digest::{Digest, KeyHash, TiedMap};
 use crate::types::{Type, Verdict, bytes, defs, mix};
 use zed_graph::{IdSource, on_cycle};
 
 /// The accepted groups, one per distinct definition list, by the digest of the definitions
-/// ([`digest`]). `Def` equality picks the entry, so a digest only narrows the search: equal
-/// definitions get one group, and so one number, however often they were written while it lives.
-/// Each group is held weakly and leaves the table when it is dropped (step TABLE-life).
-static GROUPS: LazyLock<Mutex<HashMap<u64, Vec<Weak<Checked>>>>> = LazyLock::new(Mutex::default);
+/// ([`digest`]). The definition lists of one digest are kept in their order (`Def`'s `Ord`), so
+/// a digest only narrows the search: equal definitions get one group, and so one number, however
+/// often they were written while it lives. Each group is held weakly and leaves the table when it
+/// is dropped (step TABLE-life).
+// Complexity tradeoff: a program can make the digests of `n` distinct groups tie (their rows
+// solved through the hash), and a list per digest, scanned, compared each new group with every
+// group of its digest, `n^2` comparisons. Used: an ordered map per digest, O(log b) comparisons
+// for `b` groups of one digest (PERF-row-hash-tied-digest). Given up: the key shares the group's
+// definitions (`Checked::defs`), one reference count more per group.
+static GROUPS: LazyLock<Mutex<HashMap<u64, Groups>>> = LazyLock::new(Mutex::default);
+
+/// The groups of one digest in [`GROUPS`], by their definitions.
+type Groups = BTreeMap<Arc<Vec<Def>>, Weak<Checked>>;
 
 /// The live instances of each thread that has any, by the thread that made them, then by the
 /// group's number and the arguments, each held weakly.
 type Instances = HashMap<u64, ThreadInstances, BuildHasherDefault<Digest>>;
 
-/// One thread's live instances, by the group's number and the arguments.
-type ThreadInstances = HashMap<(u64, Vec<Type>), Weak<Env>, BuildHasherDefault<Digest>>;
+/// One thread's live instances, by the group's number and the arguments. Arguments of one
+/// digest are kept in their order (`TiedMap`, PERF-row-hash-tied-digest): a hashed map compared
+/// a key with every key of its digest, so `n` instances at tied types cost `n^2` comparisons.
+type ThreadInstances = TiedMap<(u64, Vec<Type>), Weak<Env>>;
 
 /// The live instances, by the thread that made them (`Unit::thread`), the group's number and
 /// the arguments. Each thread's instances are a table of their own, removed when its last
@@ -49,10 +59,53 @@ static INSTANCES: LazyLock<Mutex<Instances>> = LazyLock::new(Mutex::default);
 struct Numbering {
     /// The number the next node built gets.
     next: u32,
-    /// The first node built of each shape, by its digest and its place among the shapes of that
-    /// digest. A node whose head equals one's and whose children are of that one's children's
-    /// classes is equal to it, and takes its class.
-    first: HashMap<(u64, u32), Arc<Node>, BuildHasherDefault<Digest>>,
+    /// The class of the first node built of each shape. A node whose head equals one's and whose
+    /// children are of that one's children's classes is equal to it, and takes its class.
+    first: TiedMap<ByShape, u32, ByShape>,
+}
+
+/// A node, ordered by what makes two nodes of one group equal: whether it is recursive and
+/// open, its head (with a held type) and its children's classes. Hashed by its name digest,
+/// which nodes equal in this order share.
+struct ByShape(Arc<Node>);
+
+impl ByShape {
+    fn key(&self) -> (bool, bool, (u8, usize, &str), Option<&Type>) {
+        let n = &*self.0;
+        let held = match &n.e {
+            Shape::Type(t) => Some(t),
+            _ => None,
+        };
+        (n.recursive, n.open, n.e.head(), held)
+    }
+}
+
+impl Ord for ByShape {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        self.key()
+            .cmp(&o.key())
+            .then_with(|| (self.0.e.kids().map(|c| c.class)).cmp(o.0.e.kids().map(|c| c.class)))
+    }
+}
+
+impl PartialOrd for ByShape {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+
+impl PartialEq for ByShape {
+    fn eq(&self, o: &Self) -> bool {
+        self.cmp(o).is_eq()
+    }
+}
+
+impl Eq for ByShape {}
+
+impl KeyHash<ByShape> for ByShape {
+    fn hash(k: &ByShape) -> u64 {
+        k.0.name_digest
+    }
 }
 
 impl Node {
@@ -114,38 +167,32 @@ impl Node {
                 });
             let at = numbering.next;
             numbering.next += 1;
-            let equal = |c: &Node| {
-                c.recursive == recursive
-                    && c.open == open
-                    && c.e.same_head(&shape)
-                    && c.e
-                        .kids()
-                        .zip(shape.kids())
-                        .all(|(a, b)| a.class == b.class)
-            };
-            // Complexity tradeoff: equal-form external types can share a primary hash.
-            // Their cached presentation hashes separate retained syntax without walking
-            // those types at each lookup. Genuine collisions retain the structural probe.
-            // The nodes of one hash and differing shapes are at probes 0, 1, 2 and on.
-            let mut probe = 0;
-            let (class, vacant) = loop {
-                match numbering.first.entry((name_digest, probe)) {
-                    Entry::Occupied(c) if equal(c.get()) => break (c.get().class, None),
-                    Entry::Occupied(_) => probe += 1,
-                    Entry::Vacant(v) => break (at, Some(v)),
-                }
-            };
-            let node = Arc::new(Node {
+            let mut node = Arc::new(Node {
                 digest,
                 name_digest,
                 recursive,
                 open,
                 at,
-                class,
+                class: at,
                 e: shape,
             });
-            if let Some(v) = vacant {
-                v.insert(node.clone());
+            // Complexity tradeoff: equal-form external types can share a primary hash.
+            // Their cached presentation hashes separate retained syntax without walking
+            // those types at each lookup. The nodes of one hash and differing shapes are kept
+            // in their order ([`ByShape`], `TiedMap`): a probe sequence over them compared a
+            // node with every node of its hash, `n^2` comparisons for `n` tied types
+            // (PERF-row-hash-tied-digest).
+            let probe = ByShape(node);
+            let found = numbering.first.get(&probe).copied();
+            match found {
+                Some(class) => {
+                    node = probe.0;
+                    Arc::get_mut(&mut node).expect("a node just made").class = class;
+                }
+                None => {
+                    node = probe.0.clone();
+                    numbering.first.insert(probe, at);
+                }
             }
             done.push(node);
         }
@@ -171,7 +218,7 @@ impl Group {
         let g = Group(Arc::new(Checked {
             number: NEXT.next(),
             digest,
-            defs,
+            defs: Arc::new(defs),
             name_hashes,
             bodies,
             plain,
@@ -194,25 +241,23 @@ impl Group {
                 return Err(r);
             }
         }
-        // The groups looked at are dropped after the lock is released, as `g` is when an equal
-        // one is found.
-        let mut seen = Vec::new();
-        // Under the lock the map changes only by an empty bucket added and one weak handle pushed,
-        // each whole before the next step, so a panic under it (in `Def` equality) leaves the
-        // map whole, and a poisoned lock is taken as it is: before, every later `Group::new`
-        // panicked after one panic here.
+        // Under the lock the map changes only by an empty bucket added and one entry taken out
+        // and one put in, each after the comparisons of its search, so a panic under it (in
+        // `Def`'s order) leaves the map whole, and a poisoned lock is taken as it is: before,
+        // every later `Group::new` panicked after one panic here.
         let mut groups = GROUPS.lock().unwrap_or_else(PoisonError::into_inner);
         let bucket = groups.entry(digest).or_default();
-        for h in bucket.iter().filter_map(Weak::upgrade) {
-            if h.defs == g.0.defs {
-                drop(groups);
-                return Ok(Group(h));
-            }
-            seen.push(h);
+        if let Some(h) = bucket.get(&g.0.defs).and_then(Weak::upgrade) {
+            // `g` is dropped after the lock is released.
+            drop(groups);
+            return Ok(Group(h));
         }
-        bucket.push(Arc::downgrade(&g.0));
+        // An equal group whose handle no longer upgrades is being dropped; its entry, and with it
+        // its definitions, is given up after the lock is released.
+        let gone = bucket.remove_entry(&g.0.defs);
+        bucket.insert(g.0.defs.clone(), Arc::downgrade(&g.0));
         drop(groups);
-        drop(seen);
+        drop(gone);
         Ok(g)
     }
 
@@ -845,20 +890,26 @@ fn free_types(types: Vec<Type>) {
     }
 }
 
-/// A group leaves [`GROUPS`], with the dead entries of its bucket.
+/// A group leaves [`GROUPS`]: its entry, unless an equal group made since holds it.
 impl Drop for Checked {
     fn drop(&mut self) {
         // A panic under the lock leaves the map whole (see `Group::new`), so a poisoned lock is
         // taken as it is.
         let mut groups = GROUPS.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut removed = None;
         if let Some(bucket) = groups.get_mut(&self.digest) {
-            // Its own handle is dead now, as are those of groups dropped before. Only weak
-            // handles are dropped here, which drop no group.
-            bucket.retain(|w| w.strong_count() > 0);
+            let mine = (bucket.get(&self.defs)).is_some_and(|w| std::ptr::eq(w.as_ptr(), self));
+            if mine {
+                removed = bucket.remove_entry(&self.defs);
+            }
             if bucket.is_empty() {
                 groups.remove(&self.digest);
             }
         }
+        // The entry's key shares this group's definitions, so dropping it drops no type; it is
+        // still dropped after the lock is released.
+        drop(groups);
+        drop(removed);
     }
 }
 
@@ -894,7 +945,7 @@ mod tests {
             .unwrap_or_else(PoisonError::into_inner)
             .get(&digest)
             .is_some_and(|b| {
-                b.iter()
+                b.values()
                     .filter_map(Weak::upgrade)
                     .any(|h| h.number == number)
             })
@@ -1189,7 +1240,7 @@ mod tests {
         drop((g, again));
         let left = (GROUPS.lock().unwrap_or_else(PoisonError::into_inner))
             .get(&digest)
-            .is_some_and(|b| b.iter().any(|w| w.ptr_eq(&handle)));
+            .is_some_and(|b| b.values().any(|w| w.ptr_eq(&handle)));
         assert!(!left, "the dropped group's handle leaves its bucket");
     }
 }
