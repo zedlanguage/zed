@@ -141,6 +141,35 @@ fn every_edge() {
     }
 }
 
+/// Each form of the grammar below tier 6 at an operand's inner edge (the proof at
+/// `two_readings`, plan row PROOF-infix-edge-walk): a suffix, a call, an index, a member, a
+/// tuple, a block-ended `if` or `match`, an annotation that runs to the end of the right operand,
+/// give one reading; an operator over such a form still gives two.
+#[test]
+fn each_form_at_an_inner_edge() {
+    for e in [
+        "p.q ~f~ r[0]",
+        "g(a) ~f~ (b, c)",
+        "p::len ~f~ q?.r",
+        "if t { a } else { b } ~f~ if t { a } else { b }",
+        "match t { 1 -> a, _ -> b } ~f~ k",
+    ] {
+        let got = sx(e);
+        assert!(got.starts_with('('), "{e}: {got}");
+    }
+    for (e, op) in [
+        ("p ~f~ if t { a } else { b } + 2", "+"),
+        ("g(a) * 2 ~f~ k", "*"),
+        ("p ~f~ r[0] ^ 2", "^"),
+    ] {
+        let got = sx(e);
+        assert!(
+            got.starts_with(&format!("error: Infix call next to `{op}`")),
+            "{e}: {got}"
+        );
+    }
+}
+
 /// Parentheses take the second reading away, on either side.
 #[test]
 fn parentheses_leave_one_reading() {

@@ -76,6 +76,30 @@ impl Builder<'_, '_> {
     /// operands' sizes, each edge node visited once. Checking every operator inside an operand
     /// would also reject the ones parentheses already enclose; the edge walk is what the two
     /// readings are made of.
+    //
+    // Proof that the walk misses no form with two readings (row PROOF-infix-edge-walk), from the
+    // rules below `Infix` in syntax.peg: `Infix = Infix INFIX Additive`; `Additive`,
+    // `Multiplicative` and `Power` are binary, operand, operator, operand; `Prefix = ('-' | '!')
+    // Prefix | AnnotExpr | ~Power`; `Postfix = Postfix Suffix | ~Primary`. A second reading needs
+    // an operator token at the operand's inner edge whose own operand could take the call or the
+    // call's other operand. The node at an inner edge is one of: (1) a binary node: its edge kid
+    // is its operand on the call's side, and the walk records the operator and goes into that
+    // kid; (2) a prefix `-` or `!`: on the left its token stands before the operand, so the call
+    // could lie under it, and the walk records it; on the right the token is the operand's first,
+    // with nothing before the call for it to take, and the walk goes into its kid; (3) an
+    // `AnnotExpr`, `@a Or`: it is followed only by an `AnnotEnd` token, none of them INFIX, so it
+    // is never a left operand's edge; as a right operand its `Or` runs to that end, so its
+    // operators lie inside it as inside parentheses, one reading; (4) a `Postfix` with a suffix:
+    // on the right edge the suffix ends with `)`, `]` or a name, and on the left edge the walk
+    // meets the `Primary` it starts with; (5) a `Primary`: a token (literal, name, atom, `this`,
+    // the hole `?`), or a form that begins with its own keyword or bracket and ends with `)`, `]`
+    // or `}` (`Group`, tuple, `(op)`, array, display, block, `if`, `match`, `for`, `loop`), so no
+    // operator inside it is at its edge; (6) an `Infix` as the left operand: the chain, left
+    // associative by the rule itself, with no arithmetic operator. `Range`, `Reduce`, the
+    // comparisons and `Lambda` lie above `Infix`, so an operand holds them only inside a
+    // `Primary`. The walk stops at (3) to (6) and goes on at (1) and (2), so every operator at an
+    // inner edge is found. Tests: `every_edge`, `each_form_at_an_inner_edge` and
+    // `parentheses_leave_one_reading` (l02_06c rejections.rs).
     fn two_readings(&self, n: usize, l: usize, r: usize, f: &str) -> Option<Error> {
         let tree = self.tree;
         // The left operand's right edge: the innermost operator and the leaf next to the call.
