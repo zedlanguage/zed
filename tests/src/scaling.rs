@@ -622,13 +622,9 @@ impl Meter {
         (least * measurements, least * measurements)
     }
 
-    /// The least work and the least bytes of the runs of `f`, as many as [`Meter::repeats`] says.
-    pub(crate) fn least(&mut self, f: impl Fn()) -> Work {
-        self.least_after(|| {}, f)
-    }
-
-    /// [`Meter::least`] with `before` run before each run of `f`, outside what is measured.
-    fn least_after(&mut self, before: impl Fn(), f: impl Fn()) -> Work {
+    /// The least work and the least bytes of the runs of `f`, as many as [`Meter::repeats`] says,
+    /// with `before` run before each run of `f`, outside what is measured.
+    pub(crate) fn least(&mut self, before: impl Fn(), f: impl Fn()) -> Work {
         (0..self.repeats().0)
             .map(|_| {
                 before();
@@ -994,7 +990,8 @@ pub(crate) fn check_fresh_inputs_by<T: Send + Sync>(
     let lock = || batch.lock().unwrap_or_else(|e| e.into_inner());
     let prepare = |large: bool| {
         let k = if large { FACTOR * n } else { n };
-        let mut b = lock();
+        let mut guard = lock();
+        let b = &mut *guard;
         if b.k == k && !b.unread.is_empty() {
             return;
         }
@@ -1384,7 +1381,9 @@ fn run_in_a_new_process(test: &str, k: usize, large: bool, what: &str) -> Option
 /// so that the check at `k` starts from that process's state. Before `k` it runs its run at n,
 /// and its run at 8n too when that ran in that process (`fresh` false), unmeasured, and panics
 /// with the message it panicked with there, if it did; at `k` it measures the run it was
-/// started for, writes the counts and ends the process.
+/// started for, writes the counts and ends the process. `prepare` runs before each run here, as
+/// in [`compare_by_dyn`].
+#[allow(clippy::too_many_arguments)]
 fn replay_or_measure(
     meter: &mut Meter,
     (k, measure_large, test, target): &(usize, bool, String, String),
@@ -1416,7 +1415,7 @@ fn replay_or_measure(
     );
     let run = if *measure_large { large } else { small };
     let (bytes, ns) = (Cell::new(0), Cell::new(0));
-    let work = meter.least_after(
+    let work = meter.least(
         || prepare(*measure_large),
         || {
             let (b, n) = alone(&run);
@@ -1619,7 +1618,7 @@ fn compare_measured(
                 set_small(bytes, ns);
                 work
             }
-            None => meter.least_after(
+            None => meter.least(
                 || prepare(false),
                 || {
                     let (bytes, ns) = alone(&small);
@@ -1643,7 +1642,7 @@ fn compare_measured(
                 set(bytes, ns);
                 work
             }
-            None => meter.least_after(
+            None => meter.least(
                 || prepare(true),
                 || {
                     let (bytes, ns) = alone(&large);

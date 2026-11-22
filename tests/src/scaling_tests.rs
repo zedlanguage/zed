@@ -257,8 +257,8 @@ fn copies_and_fills_count_by_their_length() {
         let copy = |len| to.borrow_mut()[..len].copy_from_slice(black_box(&from[..len]));
         let fill = |len: usize| to.borrow_mut()[..len].fill(black_box(3));
         for (what, f) in [("copy", &copy as &dyn Fn(usize)), ("fill", &fill)] {
-            let small = meter.least(|| f(len));
-            let large = meter.least(|| f(FACTOR * len));
+            let small = meter.least(|| {}, || f(len));
+            let large = meter.least(|| {}, || f(FACTOR * len));
             let (small, large) = (small.units, large.units);
             let ratio = large as f64 / small as f64;
             assert!(
