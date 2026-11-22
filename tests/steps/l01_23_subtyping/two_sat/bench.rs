@@ -47,24 +47,26 @@ fn a_parity_cycle_is_decided_in_the_size_of_its_type() {
     scales_at("xorcycle", (1000, 2828));
 }
 
-/// The parity cycle at 11 and 88 variables, within 24 times: linear in the clauses, a smaller
-/// measure than the type, whose size grows 64 times. The search before item T6-2sat costs about
-/// `vars^3` here, which is `n^1.5` in the type's size: 22 times at 8 times the size, inside the
-/// limit of [`scales_at`], so only this test tells it from the 2-CNF reading (it allocated 446
-/// times the bytes from 11 to 88 variables).
+/// The parity cycle at 256 and 2048 variables, held to work of order `vars^2`, the size of its
+/// type: the search before item T6-2sat costs about `vars^3` here (COMPLEXITY.md K54), 512
+/// times at 8 times the variables, against the limit 84 (168 by processor time), while at 8
+/// times the type, as [`scales_at`] measures, it is 22.6 times, inside the limit 21 that a
+/// processor-time meter allows. Control, run once (2026-11-22, Colab VM, processor time): a
+/// `vars^3` busy loop in `Searching::two_sat` fails this test at 180.1 times and passes
+/// [`scales_at`] at 17.9; without it this test reads 46.8. Until PERF-two-sat-parity-cycle
+/// (2026-11-22) this test held the cycle to order `vars`, as if linear in the clauses, at 11
+/// and 88 variables: below the size of the input, which the decision reads, since
+/// `Searching::region` keeps a cell for each atom and component, `atoms * vars`. The ratio rose
+/// with the size toward 64 (10.8, 14.4, 16.1 and 21.4 times the instructions from 11, 22, 32
+/// and 64 variables), and it passed at 11 only through the meter heap's cost per call
+/// (TEST-meter-ref-constant).
 #[test]
-fn a_parity_cycle_is_decided_in_time_linear_in_its_clauses() {
-    // Left at its old size, 11 variables, as a finding (TEST-bench-move-l0123, author P169):
-    // it fails the limit 10.5 at that size too. Instructions at n and 8n, load 27 to 57: n 11,
-    // 2518740 and 27181124, 10.792 (bytes 9.16), the same in two runs (the baseline of
-    // 2026-11-13 had 3009355 and 30413409, 10.106); n 22, 4985098 and 71559247, 14.355 (bytes
-    // 11.11); n 32, 7867806 and 126869932, 16.125 (bytes 11.21); n 64, 18234809 and
-    // 390442319, 21.412 (bytes 13.97). By variables the ratio grows toward 8^1.5 = 22.6:
-    // more than linear in the clauses, far less than `vars^3` (512). The 1x at 11 took
-    // 0.53 ms by `ns`. Not profiled: perf cannot open events here.
-    let n = 11;
+fn a_parity_cycle_is_decided_in_time_quadratic_in_its_variables() {
+    // PERF-two-sat-parity-cycle: n 256, 1x 0.013 s and 8x 0.60 s of processor time on a Colab
+    // VM; the type at 8n has 2048 variables and 8.4 million components.
+    let n = 256;
     let types = scaling::inputs(n, |m| instance("xorcycle", m));
-    scaling::check("2-CNF xorcycle, by variables", n, |m| {
+    scaling::check_order("2-CNF xorcycle, by variables", n, 2, |m| {
         decide("xorcycle", m, &types[&m]);
     });
 }
