@@ -57,20 +57,52 @@ fn work_of_the_order_given_passes() {
     check_instructions_only("quadratic work", 100, 2, |n| work(n, 2, 2));
 }
 
+/// Work of a power of n above the order a check is given fails, and the same work at its own
+/// order passes (the negative control). On the meter this machine gives, the work is two powers
+/// above, since processor time, the meter of a machine with no counter of instructions (Colab
+/// VMs), cannot tell one power from the next at the sizes of a unit test: `work(n, 2, 2)` at 100
+/// and 800, 64 times the work, took 5.2 times the time on hm5 (2026-11-22), the start of the
+/// run's thread, about 0.22 ms, being most of the run at 100, and over 21 ([`LIMIT`] ×
+/// [`TIME_ALLOWANCE`]) a ratio of the fastest of five runs can fall to 0.34 of the work's (see
+/// [`TIME_RUNS`]). Cubic work at power 1 is 512 times the work for a limit of 21 there, and
+/// `work(n, 3, 500)` runs 500,000 passes at 10, about 0.4 ms, so the ratio stays over 100 at
+/// 0.34 of the work's. One power above, at power 2, is held on a counter only the run moves,
+/// as a count of instructions and as one of processor time (TEST-scaling-lib-no-counter: until
+/// 2026-11-22 this test held quadratic work at power 1 and cubic at power 2 on the machine's
+/// meter, which failed on every Colab VM).
 #[test]
 fn work_a_power_of_n_above_the_order_given_fails() {
-    assert!(fails(|| check_instructions_only(
-        "quadratic work",
-        100,
-        1,
-        |n| work(n, 2, 2)
-    )));
+    let cubic = |n| work(n, 3, 500);
     assert!(fails(|| check_instructions_only(
         "cubic work",
         10,
-        2,
-        |n| work(n, 3, 20)
+        1,
+        cubic
     )));
+    check_instructions_only("cubic work", 10, 3, cubic);
+    static PASSES: AtomicU64 = AtomicU64::new(0);
+    let cubic = |n: usize| {
+        spin((n * n * n) as u64);
+        PASSES.fetch_add((n * n * n) as u64, Relaxed);
+    };
+    for instructions in [true, false] {
+        let mut meter = Meter {
+            read: Box::new(|| PASSES.load(Relaxed)),
+            unit: "passes",
+            instructions,
+            fresh: false,
+        };
+        let only = Measures::WorkOnly;
+        assert!(fails(|| check_by(
+            &mut meter,
+            only,
+            "cubic passes",
+            10,
+            2,
+            cubic
+        )));
+        check_by(&mut meter, only, "cubic passes", 10, 3, cubic);
+    }
 }
 
 /// A meter of the passes `passes` counts, which only one test adds to, so the ratio of two runs
@@ -208,27 +240,42 @@ fn a_comparison_holds_two_sizes_to_the_limit_of_their_order() {
     });
 }
 
+/// A comparison by the meter this machine gives runs each size once on a count of instructions
+/// (author A160, 2026-11-20), and on processor time the fastest of [`TIME_RUNS`] in each
+/// measurement, up to [`TRIES`] measurements: a comparison under its limit runs each size
+/// [`TIME_RUNS`] times, and one over it in every measurement [`Meter::runs`] times (the negative
+/// control) and fails. Both sizes run in this process (see
+/// `a_set_up_hidden_in_a_memo_the_process_keeps_is_counted_at_8n` for the run in a new process).
+/// The limits, one no ratio is over and one every ratio is over, make the count the same at any
+/// load. Until TEST-scaling-lib-no-counter (2026-11-22) this test held [`Meter::runs`] to one
+/// run of each size, which failed on every machine with no counter of instructions (Colab VMs).
 #[test]
 fn a_comparison_runs_each_size_as_often_as_the_meter_says() {
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
-    let (small, large) = (AtomicUsize::new(0), AtomicUsize::new(0));
     let mut meter = Meter::new();
-    // Once each on a count of instructions (author A160, 2026-11-20), counted here: the run at
-    // 8n in this process (see `a_set_up_hidden_in_a_memo_the_process_keeps_is_counted_at_8n`
-    // for the run in a new process).
     meter.fresh = false;
-    let runs = meter.runs();
-    assert_eq!(runs, (1, 1));
-    compare_by(
-        &mut meter,
-        Measures::WorkOnly,
-        None,
-        "counted runs",
-        Bound::Order(1),
-        || _ = small.fetch_add(1, Relaxed),
-        || _ = large.fetch_add(1, Relaxed),
-    );
-    assert_eq!((small.into_inner(), large.into_inner()), runs);
+    let one = if meter.instructions { 1 } else { TIME_RUNS };
+    let most = meter.runs();
+    let mut counted = |limit: f64| {
+        let (small, large) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let failed = fails(|| {
+            compare_by(
+                &mut meter,
+                Measures::WorkOnly,
+                None,
+                "counted runs",
+                Bound::Given(
+                    limit,
+                    "a limit no ratio is over, or one every ratio is over",
+                ),
+                || _ = small.fetch_add(1, Relaxed),
+                || _ = large.fetch_add(1, Relaxed),
+            )
+        });
+        (failed, small.into_inner(), large.into_inner())
+    };
+    assert_eq!(counted(f64::INFINITY), (false, one, one));
+    assert_eq!(counted(0.0), (true, most.0, most.1));
 }
 
 #[test]
@@ -756,31 +803,48 @@ thread_local! {
 }
 
 /// Fails if the runs share a thread, for then each run after the first finds the memo the
-/// first filled (F44).
+/// first filled (F44). Every run made is counted, on the meter this machine gives, both sizes
+/// in this process. The negative control: a memo the process keeps, which every run after the
+/// first finds filled. Until TEST-scaling-lib-no-counter (2026-11-22) the test expected
+/// [`Meter::runs`] runs, the most a meter of processor time makes, where a comparison that
+/// passes its first measurement makes [`TIME_RUNS`] of each size: 10 found the memo empty
+/// against 30 expected on every Colab VM.
 #[test]
 fn each_run_starts_with_empty_thread_memos() {
-    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
-    let fresh = AtomicUsize::new(0);
+    use std::sync::atomic::AtomicBool;
+    let mut meter = Meter::new();
+    meter.fresh = false;
+    let (runs, fresh) = memo_runs(&mut meter, || FILLED.replace(true));
+    assert!(runs >= 2, "{runs} runs");
+    assert_eq!(fresh, runs);
+    static KEPT: AtomicBool = AtomicBool::new(false);
+    let (runs, fresh) = memo_runs(&mut meter, || KEPT.swap(true, Relaxed));
+    assert!(runs >= 2, "{runs} runs");
+    assert_eq!(fresh, 1);
+}
+
+/// How many runs a comparison by `meter` made, and in how many of them `filled`, which marks a
+/// memo filled and says whether it was filled before, found it empty. The limit no ratio is over
+/// makes the count the same at any load.
+fn memo_runs(meter: &mut Meter, filled: impl Fn() -> bool + Sync) -> (usize, usize) {
+    use std::sync::atomic::AtomicUsize;
+    let (runs, fresh) = (AtomicUsize::new(0), AtomicUsize::new(0));
     let run = || {
-        if !FILLED.replace(true) {
+        runs.fetch_add(1, Relaxed);
+        if !filled() {
             fresh.fetch_add(1, Relaxed);
         }
     };
-    let mut meter = Meter::new();
-    // Both runs in this process, where they can be counted.
-    meter.fresh = false;
-    let (small, large) = meter.runs();
-    let only = Measures::WorkOnly;
     compare_by(
-        &mut meter,
-        only,
+        meter,
+        Measures::WorkOnly,
         None,
         "memo runs",
-        Bound::Order(1),
+        Bound::Given(f64::INFINITY, "runs counted, not compared"),
         run,
         run,
     );
-    assert_eq!(fresh.into_inner(), small + large);
+    (runs.into_inner(), fresh.into_inner())
 }
 
 /// [`check_fresh_inputs`] holds at most one batch of inputs, those of one [`Meter::least`] of
