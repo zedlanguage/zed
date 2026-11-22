@@ -991,17 +991,25 @@ fn poly_constant(which: Option<&String>, sparse_first: bool) -> Constant<'static
             flip: &|(a, b): &Sums| px::fixed_flip(a, b),
             below_at_most: !sparse_first,
         },
-        Some(other) => panic!("no constant {other}: pair, slot or fixed"),
+        // Only a square reads it, so only `poly-square` takes it.
+        Some("square") => Constant {
+            name: "SQUARE_PAIR_COST",
+            built: px::SQUARE_PAIR_COST,
+            flip: &|(a, b): &Sums| px::square_flip(a, b),
+            below_at_most: sparse_first,
+        },
+        Some(other) => panic!("no constant {other}: pair, slot, fixed or square"),
     }
 }
 
 /// The constants of `Poly::mul`'s choice of method as built, for the tables.
 fn poly_constants() -> String {
     format!(
-        "PAIR_COST {}, SLOT_COST {}, DENSE_COST {}",
+        "PAIR_COST {}, SLOT_COST {}, DENSE_COST {}, SQUARE_PAIR_COST {}",
         px::PAIR_COST,
         px::SLOT_COST,
-        px::DENSE_COST
+        px::DENSE_COST,
+        px::SQUARE_PAIR_COST
     )
 }
 
@@ -1147,10 +1155,12 @@ fn poly_wide(args: &[String]) -> ExitCode {
 /// numbers, which `Poly::mul`'s choice counts (`SQUARE_SHARE`), and the sparse product forms
 /// only the `t (t + 1) / 2` pairs `i <= j`, which it counts too. The sparse product wins from
 /// some gap on. At 64 terms the packed integer is squared by Toom in a release build, not by
-/// transforms, so the share does not apply and the choice is as for two numbers.
+/// transforms, so the share does not apply and the choice is as for two numbers. A third
+/// argument gives the coefficients' 64-bit words, 1 when left out (POLY-square-cost-sizes).
 fn poly_square(args: &[String]) -> ExitCode {
     let t: u128 = args.first().map_or(256, |s| s.parse().expect("terms"));
-    let note = move |_: usize| format!(" ({t} terms, squared)");
+    let words: usize = args.get(2).map_or(1, |s| s.parse().expect("words"));
+    let note = move |_: usize| format!(" ({t} terms of {words} words, squared)");
     let inputs = move |g: usize| {
         let mut rng = Rng::new(g as u64);
         let g = g as u128;
@@ -1158,7 +1168,7 @@ fn poly_square(args: &[String]) -> ExitCode {
             let at: Vec<u128> = (0..t)
                 .map(|i| g * i + u128::from(rng.next_u64()) % g)
                 .collect();
-            let a = sum_at(&mut rng, at.into_iter(), 1);
+            let a = sum_at(&mut rng, at.into_iter(), words);
             (a.clone(), a)
         };
         vec![square(), square()]
@@ -1181,8 +1191,12 @@ fn poly_square(args: &[String]) -> ExitCode {
     let verdict = bench.report(
         &mut Meter::new(),
         &format!(
-            "poly-square {t} {}",
-            args.get(1).map_or("pair", String::as_str)
+            "poly-square {t} {}{}",
+            args.get(1).map_or("pair", String::as_str),
+            match words {
+                1 => String::new(),
+                w => format!(" {w}"),
+            }
         ),
         &poly_constants(),
         &ladder(1, 512, 8),

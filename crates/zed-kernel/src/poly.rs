@@ -3049,6 +3049,9 @@ pub mod crossover {
     /// `super::DENSE_COST` as built.
     pub const DENSE_COST: f64 = super::DENSE_COST;
 
+    /// `super::SQUARE_PAIR_COST` as built.
+    pub const SQUARE_PAIR_COST: f64 = super::SQUARE_PAIR_COST;
+
     /// A polynomial of packed monomials with denominator 1, as `Poly::mul` multiplies them.
     #[derive(Clone, Debug)]
     pub struct Sum(Poly<u128>);
@@ -3106,6 +3109,16 @@ pub mod crossover {
     pub fn pair_flip(a: &Sum, b: &Sum) -> Option<f64> {
         let c = a.0.plan(&b.0).expect("packed keys").choice;
         Some(c.dense() / c.pairs - c.square_pair - c.pair)
+    }
+
+    /// The value of `super::SQUARE_PAIR_COST` at which `Poly::mul` changes method for the
+    /// square `a * b`: the dense product at or above it, the sparse one below. `None` when
+    /// `a * b` is not a square, whose choice does not read it. From `Choice::sparse`,
+    /// `pairs (PAIR_COST + s + pair) = dense` at `s = dense / pairs - PAIR_COST - pair`.
+    pub fn square_flip(a: &Sum, b: &Sum) -> Option<f64> {
+        let p = a.0.plan(&b.0).expect("packed keys");
+        p.square
+            .then(|| p.choice.dense() / p.choice.pairs - super::PAIR_COST - p.choice.pair)
     }
 
     /// The value of `super::SLOT_COST` at which `Poly::mul` changes method for `a * b`: the

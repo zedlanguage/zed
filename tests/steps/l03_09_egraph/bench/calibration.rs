@@ -63,6 +63,20 @@ fn the_split_law_at_exponent_72() {
     );
 }
 
+/// A square whose `t (t + 1) / 2` pairs merge into few terms, the one family the `LIMIT` doc
+/// named outside 2x (52 ns a unit, before the sparse square formed each unordered pair once;
+/// POLY-square-cost-sizes measures it again).
+#[test]
+fn a_square_whose_pairs_merge_into_few_terms() {
+    within_2x(
+        "((x + y) ^ 64 + x) ^ 2",
+        "x: int, y: int",
+        "((x + y) ^ 64 + x) ^ 2",
+        "(x + y) ^ 128 + 2 * x * (x + y) ^ 64 + x ^ 2",
+        9,
+    );
+}
+
 #[test]
 fn the_split_law_near_the_limit() {
     // Exponent 4096 is proved in about 150 ms; 8192, refused, is checked in `calibration.rs`.
