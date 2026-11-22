@@ -186,6 +186,9 @@ a `PTRACE_MODE_ATTACH_FSCREDS` check; process_vm_readv(2): `PTRACE_MODE_ATTACH_R
 ## 4. Author questions
 
 Each is a real choice of behavior; DESIGN names the question and does not decide it.
+L-Q1 is settled as DESIGN is written (a), and L-Q5 waits for step S.12a under the rule that
+portability comes last (b22-research3, 2026-11-22). L-Q2, L-Q3 and L-Q4 are the spec repository's
+QUESTIONS A212, A213 and A214.
 
 **L-Q1. One wrapper per library, or one generic launcher?** (a) zedc builds one wrapper per
 isolated library with the library's call table compiled in (DESIGN as written); (b) one generic
