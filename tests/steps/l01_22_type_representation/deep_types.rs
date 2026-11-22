@@ -9,7 +9,6 @@
 //! item T2-types-rest).
 
 use std::cell::RefCell;
-use std::sync::Mutex;
 use zed_kernel::Shared;
 
 use zed_kernel::types::Type;
@@ -319,30 +318,18 @@ fn random_in(s: &mut Rng, d: u32, print: bool, tree: Option<&Trees>) -> Type {
 }
 
 /// Checks that `run` scales as n log n at sizes `n` and 8 times it. Each run takes an input of
-/// its own, `make(n, i)` for the `i`-th run at size `n`, all built before any run is timed, and
-/// what it returns is kept until the check ends, so its release is not timed either.
-/// (TEST-bench-move-l0123, author P169: `scales`, the same at the one size 20,000 for every
-/// benchmark, was removed when each benchmark was given its own size.)
+/// its own, `make(n, i)` for the `i`-th run at size `n`, built before its run is timed, and what
+/// it returns is released only after the run, so its release is not timed either; one input is
+/// held at a time (`scaling::check_order_fresh`, MEM-l0126-40gb). (TEST-bench-move-l0123,
+/// author P169: `scales`, the same at the one size 20,000 for every benchmark, was removed when
+/// each benchmark was given its own size.)
 fn scales_at<I: Send, O: Send>(
     what: &str,
     n: usize,
-    make: impl Fn(usize, usize) -> I,
+    make: impl Fn(usize, usize) -> I + Sync,
     run: impl Fn(usize, I) -> O + Sync,
 ) {
-    let (small, large) = scaling::Meter::new().runs();
-    let pool = |n: usize, runs: usize| (n, Mutex::new((0..runs).map(|i| make(n, i)).collect()));
-    let pools: [(usize, Mutex<Vec<I>>); 2] = [pool(n, small), pool(scaling::FACTOR * n, large)];
-    let kept = Mutex::new(Vec::new());
-    scaling::check(what, n, |n| {
-        let (_, inputs) = pools.iter().find(|(m, _)| *m == n).expect("a size checked");
-        let input = inputs
-            .lock()
-            .expect("the inputs of a size")
-            .pop()
-            .expect("one input per run");
-        let out = run(n, input);
-        kept.lock().expect("the outputs kept").push(out);
-    });
+    scaling::check_order_fresh(what, n, 1, make, run);
 }
 
 /// A list type `d` deep on the literal `leaf`: types built on different leaves share no part,

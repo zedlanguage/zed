@@ -222,26 +222,20 @@ fn comparing_exclusive_ors(
     other: Other,
     equal: bool,
 ) {
-    let (small_runs, large_runs) = scaling::Meter::new().runs();
-    let make = |c, b| (odd_tuples(c, b), other(c, b));
-    let pools = [
-        (n, pool(n, small_runs * pairs, k, make)),
-        (
-            scaling::FACTOR * n,
-            pool(scaling::FACTOR * n, large_runs * pairs, k, make),
-        ),
-    ];
-    scaling::check(what, n, |c| {
-        let (_, pool) = pools.iter().find(|(size, _)| *size == c).expect("a size");
-        for _ in 0..pairs {
-            let (x, y) = pool
-                .lock()
-                .expect("the pool")
-                .pop()
-                .expect("`pairs` pairs per run");
+    let make = |c: usize, i: usize| -> Vec<(Type, Type)> {
+        (i * pairs..(i + 1) * pairs)
+            .map(|j| {
+                let b = base(c, k, j);
+                (odd_tuples(c, b), other(c, b))
+            })
+            .collect()
+    };
+    scaling::check_order_fresh(what, n, 1, make, |c, run_pairs: Vec<(Type, Type)>| {
+        for (x, y) in &run_pairs {
             Type::forget_emptiness();
-            assert_eq!(x.equiv(&y), equal, "c = {c}");
+            assert_eq!(x.equiv(y), equal, "c = {c}");
         }
+        run_pairs
     });
 }
 

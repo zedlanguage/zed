@@ -2,8 +2,6 @@
 //! handed to the kernel many times, or read many times, is read once (COMPLEXITY.md R1). The
 //! small instances are in `kernel_inputs.rs`.
 
-use std::sync::Mutex;
-
 use zed_kernel::Evaluator;
 use zed_rt::{Heap, Obj, Word};
 use zed_tests::scaling;
@@ -46,26 +44,19 @@ fn manifest(n: usize) -> (Heap, Word) {
 /// reads a manifest of its own, so the first read, which makes the value, is timed in each.
 #[test]
 fn a_record_the_program_built_read_many_times_scales() {
+    // One manifest held at a time, built before its run's timing starts and freed after it
+    // ends (MEM-l0126-40gb).
     let n = 10_000;
-    let (small_runs, large_runs) = scaling::Meter::new().runs();
-    let made = Mutex::new(
-        [(n, small_runs), (scaling::FACTOR * n, large_runs)]
-            .map(|(m, runs)| (m, (0..runs).map(|_| manifest(m)).collect::<Vec<_>>())),
-    );
-    let used = Mutex::new(Vec::new());
-    scaling::check(
+    scaling::check_order_fresh(
         "the value of a tuple of 64n strings, read n times",
         n,
-        |m| {
-            let (mut h, w) = {
-                let mut made = made.lock().unwrap();
-                let at = made.iter_mut().find(|(k, _)| *k == m).unwrap();
-                at.1.pop().expect("a manifest for each run")
-            };
+        1,
+        |m, _| manifest(m),
+        |m, (mut h, w): (Heap, Word)| {
             for _ in 0..m {
                 std::hint::black_box(h.value(w).unwrap());
             }
-            used.lock().unwrap().push(h);
+            h
         },
     );
 }

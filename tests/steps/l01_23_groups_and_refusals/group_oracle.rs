@@ -4648,29 +4648,19 @@ fn xr_r2_build_long_tuple_cgroup(m: usize, inhabited: bool, tag: &str) -> Vec<Ty
 
 #[test]
 fn xr_r2_bench_cgroup_long_tuples_and_many_diffs_scales() {
-    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
     for inhabited in [true, false] {
         let n = 8usize;
-        let (s_runs, l_runs) = scaling::Meter::new().runs();
-        let small: Vec<Vec<Type>> = (0..s_runs)
-            .map(|r| xr_r2_build_long_tuple_cgroup(n, inhabited, &format!("_s_{inhabited}_{r}")))
-            .collect();
-        let large: Vec<Vec<Type>> = (0..l_runs)
-            .map(|r| {
-                xr_r2_build_long_tuple_cgroup(
-                    scaling::FACTOR * n,
-                    inhabited,
-                    &format!("_l_{inhabited}_{r}"),
-                )
-            })
-            .collect();
-        let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        // One group held at a time, built before its run (MEM-l0126-40gb).
+        let make = |k: usize, r: usize| {
+            let size = if k == n { "s" } else { "l" };
+            xr_r2_build_long_tuple_cgroup(k, inhabited, &format!("_{size}_{inhabited}_{r}"))
+        };
         let want = if inhabited {
             Verdict::Inhabited
         } else {
             Verdict::Empty
         };
-        scaling::check_order(
+        scaling::check_order_fresh(
             if inhabited {
                 "Q2 C_group 6-tuples with many diffs (inhabited)"
             } else {
@@ -4678,16 +4668,13 @@ fn xr_r2_bench_cgroup_long_tuples_and_many_diffs_scales() {
             },
             n,
             1,
-            |k| {
+            make,
+            |_, ts: Vec<Type>| {
                 Type::forget_emptiness();
-                let ts = if k == n {
-                    &small[si.fetch_add(1, Relaxed)]
-                } else {
-                    &large[li.fetch_add(1, Relaxed)]
-                };
-                for t in ts {
+                for t in &ts {
                     assert_eq!(t.verdict(), want);
                 }
+                ts
             },
         );
     }

@@ -8,9 +8,6 @@ mod deep;
 mod stack;
 mod written;
 
-use std::sync::Mutex;
-
-use zed_kernel::Term;
 use zed_kernel::print::pretty;
 use zed_tests::scaling;
 
@@ -49,33 +46,13 @@ fn the_printer_scales_with_depth() {
 #[test]
 fn dropping_deep_and_wide_terms_scales() {
     // `Term`'s drop keeps the parts still to free on a heap stack (COMPLEXITY.md F62), each part
-    // moved there once. Only the drop is measured: each run frees a term built before any run.
+    // moved there once. Only the drop is measured: each run frees a term built before it, one
+    // at a time (`scaling::check_order_fresh`, MEM-l0126-40gb).
     let n = 12_500;
     zed_tests::deep::on_small_stack(|| {
-        let (small_runs, large_runs) = scaling::Meter::new().runs();
-        let pools = |k: usize, runs: usize| -> Vec<(&'static str, Mutex<Vec<Term>>)> {
-            let built: Vec<_> = dropped_shapes(k)
-                .into_iter()
-                .map(|(what, t)| (what, Mutex::new(vec![t])))
-                .collect();
-            for _ in 1..runs {
-                for ((_, pool), (_, t)) in built.iter().zip(dropped_shapes(k)) {
-                    pool.lock().expect("no run panicked").push(t);
-                }
-            }
-            built
-        };
-        let (small, large) = (pools(n, small_runs), pools(scaling::FACTOR * n, large_runs));
-        for ((what, s), (_, l)) in small.iter().zip(&large) {
-            scaling::check(&format!("dropping {what}"), n, |k| {
-                let pool = if k == n { s } else { l };
-                drop(
-                    pool.lock()
-                        .expect("no run panicked")
-                        .pop()
-                        .expect("a term built for each run"),
-                );
-            });
+        for (j, (what, _)) in dropped_shapes(1).into_iter().enumerate() {
+            let make = |k: usize, _: usize| dropped_shapes(k).swap_remove(j).1;
+            scaling::check_order_fresh(&format!("dropping {what}"), n, 1, make, |_, t| drop(t));
         }
     });
 }

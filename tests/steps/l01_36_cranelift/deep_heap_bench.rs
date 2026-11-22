@@ -48,26 +48,6 @@ fn unread_list_heap(n: usize) -> (Heap, Word) {
     (h, w)
 }
 
-/// The heaps of each size, `n` and `8n`, each taken by one run.
-type Heaps = Mutex<[(usize, Vec<(Heap, Word)>); 2]>;
-
-/// A heap made by `make` for each run at each of `n` and `8n`, as many as the meter takes,
-/// built before any timing starts.
-fn heaps(n: usize, make: fn(usize) -> (Heap, Word)) -> Heaps {
-    let (small_runs, large_runs) = scaling::Meter::new().runs();
-    Mutex::new(
-        [(n, small_runs), (scaling::FACTOR * n, large_runs)]
-            .map(|(m, runs)| (m, (0..runs).map(|_| make(m)).collect())),
-    )
-}
-
-/// One of the heaps of size `n` that [`heaps`] built.
-fn take(heaps: &Heaps, n: usize) -> (Heap, Word) {
-    let mut heaps = heaps.lock().unwrap();
-    let at = heaps.iter_mut().find(|(m, _)| *m == n).unwrap();
-    at.1.pop().expect("a heap for each run")
-}
-
 /// HEAP-fresh-ratio, measured 2026-11-22 (debug build, a count of instructions): 155.1M at
 /// n = 400,000 and 1,251.7M at 3.2M, about 388 and 391 instructions a level, ratio 8.07, the
 /// same over 4 runs. The 2.45 of 2026-11-14 (471.5M at n, 1,155.7M at 8n) was a cost of the
@@ -93,18 +73,24 @@ fn making_a_deep_value_scales() {
 
 /// Each run reads a heap of its own: a cell keeps the value read from it, so a second read of
 /// one heap would time only that kept value. A list of 3 built the same way reads as the list.
+/// Each heap is built before its run's timing starts and freed with its value after it ends,
+/// one held at a time (`scaling::check_order_fresh`, MEM-l0126-40gb).
 #[test]
 fn reading_a_deep_value_scales() {
     let n = N;
-    let heaps = heaps(n, unread_list_heap);
     let (mut h, w) = unread_list_heap(3);
     assert_eq!(h.value(w).unwrap(), nested(in_tuple, 3, Value::Int(0)));
-    let used = Mutex::new(Vec::new());
-    scaling::check("Heap::value on a list", n, |m| {
-        let (mut h, w) = take(&heaps, m);
+    let read = |_: usize, (mut h, w): (Heap, Word)| {
         let v = h.value(w).unwrap();
-        used.lock().unwrap().push((h, v));
-    });
+        (h, v)
+    };
+    scaling::check_order_fresh(
+        "Heap::value on a list",
+        n,
+        1,
+        |m, _| unread_list_heap(m),
+        read,
+    );
 }
 
 #[test]
@@ -125,16 +111,22 @@ fn matching_a_deep_pattern_scales() {
 
 #[test]
 fn releasing_a_deep_value_scales() {
+    // Each heap is built before its run's timing starts and freed after it ends, one held at a
+    // time (`scaling::check_order_fresh`, MEM-l0126-40gb).
     let n = N;
     let paths = [n, scaling::FACTOR * n].map(|m| (m, one_path(&vec![1; m])));
-    let heaps = heaps(n, list_heap);
-    let used = Mutex::new(Vec::new());
-    scaling::check("Heap::release on a list", n, |m| {
+    let release = |m: usize, (mut h, w): (Heap, Word)| {
         let (paths, end) = &paths.iter().find(|(k, _)| *k == m).unwrap().1;
-        let (mut h, w) = take(&heaps, m);
         h.release(w, paths, &[*end]).unwrap();
-        used.lock().unwrap().push(h);
-    });
+        h
+    };
+    scaling::check_order_fresh(
+        "Heap::release on a list",
+        n,
+        1,
+        |m, _| list_heap(m),
+        release,
+    );
 }
 
 /// Compiling and running the wide function natively, at `WIDE` and `8 * WIDE` concatenations, on a

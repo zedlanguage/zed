@@ -153,6 +153,7 @@
 
 use std::cell::Cell;
 use std::hint::black_box;
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
@@ -927,115 +928,178 @@ pub fn check_inputs<T: Sync>(
     });
 }
 
-/// [`check`] of `run` on an input of its own for each run, which `make` builds outside what is
-/// measured, so the run is cold: no fact a run finds and keeps in its input (such as a row's
-/// keys) is there for the next (FAIL-ratio-meet-deep). Before the runs of a size, as each
-/// [`Meter::least`] begins, the inputs of the runs before are released and one input per run
-/// of that least is built, each on a thread of its own; no input is built or released inside a
-/// run. A size this process does not run (one run in a new process, see [`compare_by`]) is
-/// never built here.
-///
-/// Why (MEM-l0126-40gb, 2026-11-22): the tests built every input of the check, [`Meter::runs`]
-/// per size, before the first run, and kept all of them to the end. On a meter of processor time,
-/// which a machine without a hardware counter of instructions uses (Colab VMs:
-/// /sys/bus/event_source/devices has no `cpu`), that is [`TIME_RUNS`] × [`TRIES`] = 15 per size,
-/// 30 held at once: `bench::deep_ops::fits_sig_takes_linear_time_in_the_depth` of l01_26 held
-/// 37.5 GB (sampled by `ps` every 2 s, test binary run whole at 1 thread), against 2.49 GB
-/// where instructions are counted (2 inputs), and ran a 50 GB VM out of memory at 8 threads.
-///
-/// Complexity tradeoff: the same `make` calls as before at most (`Meter::runs` per size, fewer
-/// when a measurement passes before the last), and the same runs; the memory of the inputs held
-/// at once falls from `Meter::runs` per size, both sizes, to one batch of [`Meter::least`]'s runs
-/// of one size: 30 to 5 inputs on processor time, 2 to 1 on instructions. Wall time: a batch is
-/// built at once, as before, but the batches of the two sizes no longer overlap, and a
-/// measurement after the first builds its batches again.
+/// [`check_order_fresh`] of `run` on what `make` builds for each size, at power 1, for an input
+/// that the run reads and does not change; each input is built on a thread of its own, as the
+/// l01_26 benchmarks of deep types need (their inputs at 8n are built on a 2 MiB stack). The
+/// input is kept after its run and released before the next is built.
 pub fn check_fresh_inputs<T: Send + Sync>(
     what: &str,
     n: usize,
     make: impl Fn(usize) -> T + Sync,
     run: impl Fn(&T) + Sync,
 ) {
-    check_fresh_inputs_by(&mut Meter::new(), what, n, &make, &run)
+    let make = |k: usize, _: usize| {
+        std::thread::scope(|s| {
+            s.spawn(|| make(k))
+                .join()
+                .unwrap_or_else(|p| std::panic::resume_unwind(p))
+        })
+    };
+    check_order_fresh(what, n, 1, make, |_, input: T| {
+        run(&input);
+        input
+    })
 }
 
-/// [`check_fresh_inputs`] by the given meter, compiled once for the reason [`check_by`] gives.
-pub(crate) fn check_fresh_inputs_by<T: Send + Sync>(
-    meter: &mut Meter,
+/// [`check_order`] with an input of its own for each run: `make(k, i)` builds the input of the
+/// `i`-th run at size `k` (`i` from 0 at each size, so a test can give each run's types names of
+/// their own), outside what is measured, so the run is cold: no fact a run finds and keeps in
+/// its input (such as a row's keys) is there for the next (FAIL-ratio-meet-deep). `run(k, input)`
+/// is measured; what it returns is kept until the next input is built and released then, outside
+/// what is measured, so a run that should not pay for the release of its input returns it, and
+/// a run that measures a release drops it. One input or output is held at a time: before each
+/// run the output of the run before is released, then the run's input is built, both on the
+/// thread the check is on, which built the inputs of every such test before. A size this process
+/// does not run (one run in a new process, see [`compare_by`]) is never built here.
+///
+/// Why (MEM-l0126-40gb, 2026-11-22): the tests built every input of the check, [`Meter::runs`]
+/// per size, before the first run, and kept all of them to the end. On a meter of processor time,
+/// which a machine without a hardware counter of instructions uses (Colab VMs:
+/// /sys/bus/event_source/devices has no `cpu`), that is [`TIME_RUNS`] × [`TRIES`] = 15 per size,
+/// 30 held at once: `bench::deep_ops::fits_sig_takes_linear_time_in_the_depth` of l01_26 held
+/// 37,066,996 kB alone at 1 test thread (hm5), against 2.49 GB where instructions are counted
+/// (2 inputs), and ran a 50 GB VM out of memory at 8 test threads. Holding the [`TIME_RUNS`]
+/// inputs of one size at once, built side by side, still held 11,022,424 kB for that test alone,
+/// and the binary at 8 test threads 39,144,428 kB.
+///
+/// Complexity tradeoff: the same `make` calls as before at most (`Meter::runs` per size, fewer
+/// when a measurement passes before the last), and the same runs; the inputs held at once fall
+/// from `Meter::runs` per size, both sizes (30 on processor time, 2 on instructions), to 1. Wall
+/// time: the builds of a size come one after another between its runs, never side by side; on a
+/// count of instructions each size builds one input, as before, and on processor time the
+/// [`TIME_RUNS`] builds of a size are inside the time limit of its phase
+/// ([`start_bench_phase`]), the 5 builds at 8n against 10.5 times the phase at n, which holds the
+/// 5 builds at n.
+pub fn check_order_fresh<T: Send, O: Send>(
     what: &str,
     n: usize,
-    make: &(dyn Fn(usize) -> T + Sync),
-    run: &(dyn Fn(&T) + Sync),
+    power: u32,
+    make: impl Fn(usize, usize) -> T + Sync,
+    run: impl Fn(usize, T) -> O + Sync,
 ) {
-    /// The inputs of the size `k` that runs now: those no run has read yet, and those read.
-    struct Batch<T> {
-        k: usize,
-        unread: Vec<T>,
-        read: Vec<T>,
-    }
-    /// Releases `inputs` each on a thread of its own: one after another, the inputs of `meets`
-    /// of shared tuples in l01_26 (512,000 levels) took 5 to 6 s to release at load 80.
-    fn release<T: Send>(inputs: Vec<T>) {
-        std::thread::scope(|s| {
-            for input in inputs {
-                s.spawn(move || drop(input));
-            }
-        });
-    }
-    let runs = meter.repeats().0;
-    let batch = std::sync::Mutex::new(Batch {
-        k: 0,
-        unread: Vec::new(),
-        read: Vec::new(),
-    });
-    let lock = || batch.lock().unwrap_or_else(|e| e.into_inner());
-    let prepare = |large: bool| {
-        let k = if large { FACTOR * n } else { n };
-        let mut guard = lock();
-        let b = &mut *guard;
-        if b.k == k && !b.unread.is_empty() {
-            return;
-        }
-        let old: Vec<T> = b.unread.drain(..).chain(b.read.drain(..)).collect();
-        release(old);
-        b.unread = std::thread::scope(|s| {
-            let building: Vec<_> = (0..runs).map(|_| s.spawn(move || make(k))).collect();
-            building
-                .into_iter()
-                .map(|t| t.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
-                .collect()
-        });
-        // Room for every input read, so the push in a run allocates nothing.
-        b.read.reserve(runs);
-        b.k = k;
-    };
-    let read_at = |k: usize| {
-        let input = {
-            let mut b = lock();
-            assert_eq!(
-                b.k, k,
-                "{what}: the inputs built are of size {}, not {k}",
-                b.k
-            );
-            b.unread.pop().unwrap_or_else(|| {
-                panic!("{what}: no input left at size {k}: a run with no `prepare` before it")
-            })
-        };
-        run(&input);
-        lock().read.push(input);
-    };
     let what = format!("{what}: sizes {n} and {}", FACTOR * n);
-    compare_by_dyn(
+    let bound = Bound::Order(power);
+    let (meter, sizes) = (&mut Meter::new(), (n, FACTOR * n));
+    fresh_inputs_by(
         meter,
         Measures::Both,
         Some(n),
         &what,
-        Bound::Order(1),
-        &|| read_at(n),
-        &|| read_at(FACTOR * n),
+        bound,
+        sizes,
+        &make,
+        &run,
+    )
+}
+
+/// [`check_order_fresh`] without the bytes allocated, as [`check_instructions_only`] is
+/// [`check_order`] without them.
+pub fn check_instructions_only_fresh<T: Send, O: Send>(
+    what: &str,
+    n: usize,
+    power: u32,
+    make: impl Fn(usize, usize) -> T + Sync,
+    run: impl Fn(usize, T) -> O + Sync,
+) {
+    let what = format!("{what}: sizes {n} and {}", FACTOR * n);
+    let bound = Bound::Order(power);
+    let (meter, sizes) = (&mut Meter::new(), (n, FACTOR * n));
+    fresh_inputs_by(
+        meter,
+        Measures::WorkOnly,
+        Some(n),
+        &what,
+        bound,
+        sizes,
+        &make,
+        &run,
+    )
+}
+
+/// [`compare`] of `run` at the sizes `small` and `large` with an input of its own for each run,
+/// as [`check_order_fresh`] gives them, for a test whose larger size is not 8 times the smaller.
+pub fn compare_fresh<T: Send, O: Send>(
+    what: &str,
+    power: u32,
+    (small, large): (usize, usize),
+    make: impl Fn(usize, usize) -> T + Sync,
+    run: impl Fn(usize, T) -> O + Sync,
+) {
+    let bound = Bound::Order(power);
+    let (meter, sizes) = (&mut Meter::new(), (small, large));
+    fresh_inputs_by(meter, Measures::Both, None, what, bound, sizes, &make, &run)
+}
+
+/// [`check_order_fresh`] by the given meter, measures, bound and sizes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fresh_inputs_by<T: Send, O: Send>(
+    meter: &mut Meter,
+    measures: Measures,
+    n: Option<usize>,
+    what: &str,
+    bound: Bound,
+    (small, large): (usize, usize),
+    make: &(dyn Fn(usize, usize) -> T + Sync),
+    run: &(dyn Fn(usize, T) -> O + Sync),
+) {
+    /// What a check holds between its runs: the input built for the next run, of its size, or
+    /// what the last run returned.
+    enum Held<T, O> {
+        Nothing,
+        Input(usize, T),
+        Output(O),
+    }
+    let held = std::sync::Mutex::new(Held::<T, O>::Nothing);
+    let lock = || held.lock().unwrap_or_else(|e| e.into_inner());
+    // How many inputs of each size have been built: the `i` of the next.
+    let built = (AtomicUsize::new(0), AtomicUsize::new(0));
+    let prepare = |is_large: bool| {
+        let (k, count) = if is_large {
+            (large, &built.1)
+        } else {
+            (small, &built.0)
+        };
+        // Released before the next input is built, so that one is held at a time.
+        drop(std::mem::replace(&mut *lock(), Held::Nothing));
+        let input = make(k, count.fetch_add(1, Relaxed));
+        *lock() = Held::Input(k, input);
+    };
+    let read_at = |k: usize| {
+        let input = match std::mem::replace(&mut *lock(), Held::Nothing) {
+            Held::Input(size, input) => {
+                assert_eq!(
+                    size, k,
+                    "{what}: the input built is of size {size}, not {k}"
+                );
+                input
+            }
+            Held::Nothing | Held::Output(_) => {
+                panic!("{what}: no input at size {k}: a run with no `prepare` before it")
+            }
+        };
+        let out = run(k, input);
+        *lock() = Held::Output(out);
+    };
+    compare_by_dyn(
+        meter,
+        measures,
+        n,
+        what,
+        bound,
+        &|| read_at(small),
+        &|| read_at(large),
         &prepare,
     );
-    let b = batch.into_inner().unwrap_or_else(|e| e.into_inner());
-    release(b.unread.into_iter().chain(b.read).collect());
 }
 
 /// Which of the sizes n and 8n of the check this thread enters next, by a meter that runs each

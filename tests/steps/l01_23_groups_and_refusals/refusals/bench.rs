@@ -12,30 +12,16 @@
 use super::*;
 
 /// One probe case of `rfx_case` at `n` and `8 * n`, checked as `cases_scale_from` of refusals.rs
-/// checks its cases: a fresh copy of the type for each run, built before any run is timed, and
+/// checks its cases: a fresh copy of the type for each run, built before its run is timed, and
 /// the verdict `want` at both sizes. `what` names the check in its `bench` line and `tag` keeps
 /// the names of this test's types apart from those of the tests running beside it.
 fn case_scales(what: &str, tag: &str, case: &str, n: usize, want: Verdict) {
     big(|| {
-        let (s_runs, l_runs) = scaling::Meter::new().runs();
-        let copies = |k: usize, runs: usize| -> Vec<Type> {
-            (0..runs)
-                .map(|i| rfx_case(case, k, &format!("_{tag}_{k}_{i}")))
-                .collect()
-        };
-        let (small, large) = (
-            copies(n, s_runs),
-            copies(zed_tests::scaling::FACTOR * n, l_runs),
-        );
-        let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
-        scaling::check(&format!("{what} {case}"), n, |k| {
+        let copy = |k: usize, i: usize| rfx_case(case, k, &format!("_{tag}_{k}_{i}"));
+        scaling::check_order_fresh(&format!("{what} {case}"), n, 1, copy, |k, t: Type| {
             Type::forget_emptiness();
-            let t = if k == n {
-                &small[si.fetch_add(1, Relaxed)]
-            } else {
-                &large[li.fetch_add(1, Relaxed)]
-            };
             assert_eq!(t.verdict(), want, "{case} at {k}");
+            t
         });
     });
 }
@@ -938,25 +924,17 @@ fn r9_active_groups_have_one_entry_across_simultaneous_reentry() {
 /// (measured at n 1024).
 fn escape_cells_scale(case: &str, n: usize) {
     big(|| {
-        let (s_runs, l_runs) = scaling::Meter::new().runs();
-        let copies = |k: usize, runs: usize| -> Vec<Type> {
-            (0..runs)
-                .map(|i| rfx_case(case, k, &format!("_esc_{case}_{k}_{i}")))
-                .collect()
-        };
-        let (small, large) = (
-            copies(n, s_runs),
-            copies(zed_tests::scaling::FACTOR * n, l_runs),
+        let copy = |k: usize, i: usize| rfx_case(case, k, &format!("_esc_{case}_{k}_{i}"));
+        scaling::check_order_fresh(
+            &format!("escape cells of {case}"),
+            n,
+            1,
+            copy,
+            |_, t: Type| {
+                std::hint::black_box(t.escape_cell_counts());
+                t
+            },
         );
-        let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
-        scaling::check(&format!("escape cells of {case}"), n, |k| {
-            let t = if k == n {
-                &small[si.fetch_add(1, Relaxed)]
-            } else {
-                &large[li.fetch_add(1, Relaxed)]
-            };
-            std::hint::black_box(t.escape_cell_counts());
-        });
     });
 }
 
@@ -1557,29 +1535,16 @@ fn every_random_prefix_chain_agrees_with_the_oracle() {
 fn two_clauses_scale(kind: u8, n: usize, want: Verdict) {
     let k = (8.0 * n as f64).sqrt() as usize + 2;
     big(|| {
-        let (s_runs, l_runs) = scaling::Meter::new().runs();
-        let copies = |c: usize, runs: usize| -> Vec<Type> {
-            (0..runs)
-                .map(|i| {
-                    let (k, cls) = r6_two_clauses_over(k, c, kind);
-                    assert_eq!(cls.len(), c, "{c} clauses over {k} variables");
-                    r5_sat_type(k, &cls, &format!("_r6two{kind}_{c}_{i}"))
-                })
-                .collect()
+        let copy = |c: usize, i: usize| {
+            let (k, cls) = r6_two_clauses_over(k, c, kind);
+            assert_eq!(cls.len(), c, "{c} clauses over {k} variables");
+            r5_sat_type(k, &cls, &format!("_r6two{kind}_{c}_{i}"))
         };
-        let (small, large) = (
-            copies(n, s_runs),
-            copies(zed_tests::scaling::FACTOR * n, l_runs),
-        );
-        let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
-        scaling::check(&format!("r6two kind {kind}, {k} variables"), n, |c| {
+        let what = format!("r6two kind {kind}, {k} variables");
+        scaling::check_order_fresh(&what, n, 1, copy, |c, t: Type| {
             Type::forget_emptiness();
-            let t = if c == n {
-                &small[si.fetch_add(1, Relaxed)]
-            } else {
-                &large[li.fetch_add(1, Relaxed)]
-            };
             assert_eq!(t.verdict(), want, "kind {kind} at {c}");
+            t
         });
     });
 }
@@ -1785,7 +1750,7 @@ fn r11_payload_name_prefixes_must_scale() {
 }
 
 /// `make` at `n` and `8 * n` with the verdict `want` at both, each run on a type built before
-/// any run is timed. `tag` keeps the names of each run's types apart.
+/// its run is timed, one held at a time. `tag` keeps the names of each run's types apart.
 fn forked_tuples_scale(
     what: &str,
     tag: &str,
@@ -1794,25 +1759,11 @@ fn forked_tuples_scale(
     make: fn(usize, &str) -> Type,
 ) {
     big(|| {
-        let (s_runs, l_runs) = scaling::Meter::new().runs();
-        let copies = |k: usize, runs: usize| -> Vec<Type> {
-            (0..runs)
-                .map(|i| make(k, &format!("_{tag}_{k}_{i}")))
-                .collect()
-        };
-        let (small, large) = (
-            copies(n, s_runs),
-            copies(zed_tests::scaling::FACTOR * n, l_runs),
-        );
-        let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
-        scaling::check(what, n, |k| {
+        let copy = |k: usize, i: usize| make(k, &format!("_{tag}_{k}_{i}"));
+        scaling::check_order_fresh(what, n, 1, copy, |k, t: Type| {
             Type::forget_emptiness();
-            let t = if k == n {
-                &small[si.fetch_add(1, Relaxed)]
-            } else {
-                &large[li.fetch_add(1, Relaxed)]
-            };
             assert_eq!(t.verdict(), want, "{what} at {k}");
+            t
         });
     });
 }

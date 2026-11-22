@@ -10,7 +10,6 @@
 //! decided in 60 s.
 
 use std::hint::black_box;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use zed_kernel::Value;

@@ -9,7 +9,6 @@
 //! built before any run is timed, one for each run, each named apart, so that no run reads a
 //! group another run judged.
 
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use zed_kernel::Value;
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
@@ -128,32 +127,21 @@ fn refusal_scales(
     make: impl Fn(usize, &str) -> (Type, Type) + Send + Sync,
 ) {
     scaling::on_a_thread(1 << 28, || {
-        let (small_runs, large_runs) = scaling::Meter::new().runs();
-        let inputs = |m: usize, runs: usize| -> Vec<(Type, Type, Type)> {
-            (0..runs)
-                .map(|i| {
-                    let (a, b) = make(m, &format!("_rc{m}_{i}"));
-                    let d = &a - &b;
-                    (a, b, d)
-                })
-                .collect()
+        let input = |m: usize, i: usize| {
+            let (a, b) = make(m, &format!("_rc{m}_{i}"));
+            let d = &a - &b;
+            (a, b, d)
         };
-        let small = inputs(n, small_runs);
-        let large = inputs(scaling::FACTOR * n, large_runs);
-        let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
-        scaling::check_order(what, n, 2, |m| {
+        scaling::check_order_fresh(what, n, 2, input, |m, input: (Type, Type, Type)| {
             Type::forget_emptiness();
-            let (a, b, d) = if m == n {
-                &small[si.fetch_add(1, Relaxed)]
-            } else {
-                &large[li.fetch_add(1, Relaxed)]
-            };
+            let (a, b, d) = &input;
             let v = if subtype {
                 a.subtype_verdict(b)
             } else {
                 d.verdict()
             };
             assert_eq!(v, Verdict::Refused(cause), "{what} at {m}");
+            input
         });
     });
 }

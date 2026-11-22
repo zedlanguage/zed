@@ -30,21 +30,15 @@ fn deciding_a_group_scales() {
 #[test]
 fn the_canonical_form_of_a_component_scales() {
     // TEST-bench-move-l0123, author P169: n 2048 before, now 65536; 1x 0.31 s by `ns`, load 36.
-    let (n, (small_runs, large_runs)) = (65536, scaling::Meter::new().runs());
-    let pool = |m: usize, runs: usize| {
-        std::sync::Mutex::new((0..runs).map(|_| marked_ring(m)).collect::<Vec<_>>())
-    };
-    let (small, large) = (pool(n, small_runs), pool(scaling::FACTOR * n, large_runs));
-    scaling::check("the canonical form of a ring of definitions", n, |m| {
-        let pool = if m == n { &small } else { &large };
-        let g = pool
-            .lock()
-            .expect("the pool of groups")
-            .pop()
-            .expect("one group per run");
+    // Each group is built before its run's timing starts, one held at a time (MEM-l0126-40gb),
+    // and released inside the run, as it was.
+    let n = 65536;
+    let form = |m: usize, g: Group| {
         let types = g.instance(vec![]);
         assert_eq!(types.len(), m);
-    });
+    };
+    let what = "the canonical form of a ring of definitions";
+    scaling::check_order_fresh(what, n, 1, |m, _| marked_ring(m), form);
 }
 
 #[test]

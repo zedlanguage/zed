@@ -2,8 +2,6 @@
 //! its default run (TEST-bench-move-crates). Each check they make besides the ratio has a small
 //! instance among the correctness tests in `tests.rs`, named at each benchmark.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use super::tests::{
     RINGS, Ring, ring_family, tuple_diff_union_pair, tuple_diff_union_payload_key_pair,
     tuple_diff_union_payload_pair,
@@ -37,34 +35,32 @@ use super::*;
 /// more than the later ones, the same at 64 types and at 2048, so it does not grow with k
 /// (`each_run_of_a_ring_benchmark_does_the_same_work`).
 // Complexity tradeoff: the runs that the meter takes (2 at each size on a count of instructions)
-// cost one build each, Θ(runs · k) time and memory where one shared input cost Θ(k), all of it
-// before any run is timed; a shared input measures a memo in place of the pass.
+// cost one build each, Θ(runs · k) time where one shared input cost Θ(k); a shared input
+// measures a memo in place of the pass. Since MEM-l0126-40gb the benchmarks hold one copy at a
+// time ([`ring_apart`]), Θ(k) memory; `rings_each` is for the test of the copies alone.
 fn rings_each(k: usize, i: usize, runs: usize) -> Vec<Ring> {
-    (0..runs)
-        .map(|_| {
-            std::thread::spawn(move || ring_family(k, i))
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-        })
-        .collect()
+    (0..runs).map(|_| ring_apart(k, i)).collect()
+}
+
+/// One copy of [`rings_each`], built on a thread of its own.
+fn ring_apart(k: usize, i: usize) -> Ring {
+    std::thread::spawn(move || ring_family(k, i))
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 /// Checks the families `range` of [`super::tests::rings`] at 2048 and 16384 types, each run on an
-/// input of its own ([`rings_each`]).
+/// input of its own ([`ring_apart`]), built before its run and held alone
+/// (`scaling::check_order_fresh`).
 fn rings_scale(range: std::ops::Range<usize>) {
     let n = 2048;
-    let (small, large) = crate::scaling::Meter::new().runs();
     for i in range {
         let (what, _, _) = ring_family(1, i);
-        let inputs: HashMap<usize, (Vec<Ring>, AtomicUsize)> =
-            [(n, small), (crate::scaling::FACTOR * n, large)]
-                .into_iter()
-                .map(|(k, runs)| (k, (rings_each(k, i, runs), AtomicUsize::new(0))))
-                .collect();
-        crate::scaling::check(what, n, |k| {
-            let (each, next) = &inputs[&k];
-            let (_, ts, classes) = &each[next.fetch_add(1, Ordering::Relaxed)];
+        let make = |k: usize, _: usize| ring_apart(k, i);
+        crate::scaling::check_order_fresh(what, n, 1, make, |_, ring: Ring| {
+            let (_, ts, classes) = &ring;
             assert_eq!(&overlaps(ts.iter()), classes);
+            ring
         });
     }
 }
@@ -178,37 +174,28 @@ fn the_emptiness_of_a_meet_of_tuple_differences_with_payload_keys_scales() {
 /// is most of the time (profiled 2026-11-20: type unfolding and allocation, no lifting frame
 /// above 1%). One check per run, not the eight of `long_chain_answers`: eight at 65536 tails
 /// took 9.3 s, past the 20 s of the piece with the runs of both sizes. Each run has an input of
-/// its own, built on a thread of its own before any run is timed, as [`rings_each`] gives the
-/// ring benchmarks for the reason written there. Small instances, every answer:
-/// `a_list_witness_jumps_a_chain_of_tails_to_the_right_tail`; past `2^18` links:
+/// its own, built on a thread of its own before its run is timed and held alone, as
+/// [`ring_apart`] gives the ring benchmarks for the reason written there. Small instances, every
+/// answer: `a_list_witness_jumps_a_chain_of_tails_to_the_right_tail`; past `2^18` links:
 /// [`a_list_witness_jumps_more_than_2_to_the_18_tails_at_once`].
 #[test]
 fn a_list_witness_jumps_a_long_chain_of_tails_in_log_time() {
     use super::tests::{long_chain, long_chain_check};
     let n = 8192;
-    let (small, large) = crate::scaling::Meter::new().runs();
     let special = |k: usize| k / 2 + 1;
-    let inputs: HashMap<usize, (Vec<Type>, AtomicUsize)> =
-        [(n, small), (crate::scaling::FACTOR * n, large)]
-            .into_iter()
-            .map(|(k, runs)| {
-                let each = (0..runs)
-                    .map(|_| {
-                        std::thread::spawn(move || long_chain(k, special(k)))
-                            .join()
-                            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-                    })
-                    .collect();
-                (k, (each, AtomicUsize::new(0)))
-            })
-            .collect();
-    crate::scaling::check(
+    let make = |k: usize, _: usize| {
+        std::thread::spawn(move || long_chain(k, special(k)))
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    };
+    crate::scaling::check_order_fresh(
         "the check of a list witness along a chain of n tails, hint Miss(n/2 + 1)",
         n,
-        |k| {
-            let (each, next) = &inputs[&k];
-            let t = &each[next.fetch_add(1, Ordering::Relaxed)];
-            assert!(!long_chain_check(t, k, special(k), false, 1), "n {k}");
+        1,
+        make,
+        |k, t: Type| {
+            assert!(!long_chain_check(&t, k, special(k), false, 1), "n {k}");
+            t
         },
     );
 }

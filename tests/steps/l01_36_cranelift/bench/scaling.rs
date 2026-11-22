@@ -5,8 +5,6 @@
 //! matches of one, and the value of cells that share their parts (COMPLEXITY.md R3). The small
 //! instances are in `scaling.rs`.
 
-use std::sync::Mutex;
-
 use zed_kernel::{Evaluator, Term, World};
 use zed_rt::Paths;
 use zed_tests::scaling;
@@ -110,30 +108,25 @@ fn a_curried_function_of_many_parameters_scales() {
     check_depth("n nested lambdas, to an object file", 1_200, curried);
 }
 
-/// `make(m)` for each run at each of `n` and `8n`, as many as the meter takes, built before any
-/// timing starts; `run` is timed on one of them per run, and each is dropped after the timing
-/// ends (COMPLEXITY.md R3).
+/// `make(m)` for each run at each of `n` and `8n`, built before its run's timing starts; `run`
+/// is timed on it, and it is dropped after the timing ends (COMPLEXITY.md R3), before the next
+/// is built: one is held at a time (`scaling::check_order_fresh`, MEM-l0126-40gb).
 fn heap_scales<T: Send>(
     what: &str,
     n: usize,
-    make: impl Fn(usize) -> T,
+    make: impl Fn(usize) -> T + Sync,
     run: impl Fn(&mut T, usize) + Sync,
 ) {
-    let (small_runs, large_runs) = scaling::Meter::new().runs();
-    let made = Mutex::new(
-        [(n, small_runs), (scaling::FACTOR * n, large_runs)]
-            .map(|(m, runs)| (m, (0..runs).map(|_| make(m)).collect::<Vec<_>>())),
+    scaling::check_order_fresh(
+        what,
+        n,
+        1,
+        |m, _| make(m),
+        |m, mut x: T| {
+            run(&mut x, m);
+            x
+        },
     );
-    let used = Mutex::new(Vec::new());
-    scaling::check_order(what, n, 1, |m| {
-        let mut x = {
-            let mut made = made.lock().unwrap();
-            let at = made.iter_mut().find(|(k, _)| *k == m).unwrap();
-            at.1.pop().expect("a heap for each run")
-        };
-        run(&mut x, m);
-        used.lock().unwrap().push(x);
-    });
 }
 
 #[test]

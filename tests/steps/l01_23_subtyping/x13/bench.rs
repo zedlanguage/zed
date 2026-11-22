@@ -50,28 +50,18 @@ fn the_union_of_nth_from_end_is_decided_in_its_size() {
         // TEST-bench-move-l0123, author P169: `NTH_SIZES`, n 64 and 186, before; now n 128
         // and 367, 8.0 times the definitions; 1x 0.39 s by `ns`, load 36.
         let (n, m) = (128, 367);
-        let (runs_small, runs_large) = scaling::Meter::new().runs();
-        let pool = |k: usize, runs: usize| {
-            let pairs = (0..runs).map(|i| nth_pair(k, &format!("_{k}_{i}")));
-            Mutex::new(pairs.collect::<Vec<_>>())
-        };
-        let (small_pairs, large_pairs) = (pool(n, runs_small), pool(m, runs_large));
-        let decide = |pairs: &Mutex<Vec<(Type, Type)>>| {
-            let (t, v) = pairs
-                .lock()
-                .expect("the pool of pairs")
-                .pop()
-                .expect("one pair per run");
+        let decide = |_: usize, (t, v): (Type, Type)| {
             Type::forget_emptiness();
             assert!(t.subtype(&v));
             assert!(!v.subtype(&t));
         };
         let (small, large) = (nth_pair_size(n), nth_pair_size(m));
-        scaling::compare(
+        scaling::compare_fresh(
             &format!("the nth union decided: n {n} and {m}, {small} and {large} definitions"),
             1,
-            || decide(&small_pairs),
-            || decide(&large_pairs),
+            (n, m),
+            |k, i| nth_pair(k, &format!("_{k}_{i}")),
+            decide,
         );
     });
 }

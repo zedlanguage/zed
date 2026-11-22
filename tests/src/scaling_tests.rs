@@ -847,30 +847,35 @@ fn memo_runs(meter: &mut Meter, filled: impl Fn() -> bool + Sync) -> (usize, usi
     (runs.into_inner(), fresh.into_inner())
 }
 
-/// [`check_fresh_inputs`] holds at most one batch of inputs, those of one [`Meter::least`] of
-/// one size, and builds each input before its run is measured: on processor time [`TIME_RUNS`]
-/// inputs at once, not the 30 of both sizes that the tests building every input first held
-/// (MEM-l0126-40gb: 37.5 GB for one benchmark of l01_26 on a VM without a counter of
-/// instructions). The bytes of an input built inside a run would count in the run's bytes, 8
-/// times the input at 8n, and still pass a linear check, so the builds are counted too: one per
-/// run.
+/// [`fresh_inputs_by`] holds one input or output at a time, and builds and releases each outside
+/// the measured runs: not the 30 inputs of both sizes that the tests building every input first
+/// held on processor time (MEM-l0126-40gb: 37,066,996 kB for one benchmark of l01_26 on a VM
+/// without a counter of instructions), nor a batch of [`TIME_RUNS`] (11,022,424 kB). The bytes
+/// of an input built inside a run would count in the run's bytes, 8 times the input at 8n, and
+/// still pass a linear check, so the builds are counted too: one per run, numbered from 0 at
+/// each size; and an input released inside a run would put its release in the measure.
 #[test]
-fn fresh_inputs_are_held_one_batch_at_a_time_and_built_outside_the_runs() {
+fn fresh_inputs_are_held_one_at_a_time_and_built_outside_the_runs() {
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
     static LIVE: AtomicUsize = AtomicUsize::new(0);
     static MOST: AtomicUsize = AtomicUsize::new(0);
-    static BUILT: AtomicUsize = AtomicUsize::new(0);
     static IN_RUN: AtomicUsize = AtomicUsize::new(0);
     static BUILT_IN_RUN: AtomicUsize = AtomicUsize::new(0);
+    static DROPPED_IN_RUN: AtomicUsize = AtomicUsize::new(0);
     static RUNS: AtomicUsize = AtomicUsize::new(0);
     struct Input(Vec<u8>);
     impl Drop for Input {
         fn drop(&mut self) {
+            if IN_RUN.load(Relaxed) > 0 {
+                DROPPED_IN_RUN.fetch_add(1, Relaxed);
+            }
             LIVE.fetch_sub(1, Relaxed);
         }
     }
-    let make = |k: usize| {
-        BUILT.fetch_add(1, Relaxed);
+    let built = Mutex::new(Vec::new());
+    let make = |k: usize, i: usize| {
+        built.lock().unwrap().push((k, i));
         if IN_RUN.load(Relaxed) > 0 {
             BUILT_IN_RUN.fetch_add(1, Relaxed);
         }
@@ -878,31 +883,42 @@ fn fresh_inputs_are_held_one_batch_at_a_time_and_built_outside_the_runs() {
         MOST.fetch_max(live, Relaxed);
         Input(vec![1; k])
     };
-    let run = |input: &Input| {
+    let run = |_: usize, input: Input| {
         IN_RUN.fetch_add(1, Relaxed);
         RUNS.fetch_add(1, Relaxed);
         black_box(input.0.iter().map(|b| b ^ 1).collect::<Vec<u8>>());
         IN_RUN.fetch_sub(1, Relaxed);
+        input
     };
-    let mut meter = Meter::of_cpu_time();
-    check_fresh_inputs_by(
-        &mut meter,
+    let n = 200_000;
+    fresh_inputs_by(
+        &mut Meter::of_cpu_time(),
+        Measures::Both,
+        Some(n),
         "a pass over a fresh input",
-        200_000,
+        Bound::Order(1),
+        (n, FACTOR * n),
         &make,
         &run,
     );
     assert_eq!(LIVE.load(Relaxed), 0, "every input released");
-    assert!(
-        MOST.load(Relaxed) <= TIME_RUNS,
-        "{} inputs held at once, over one batch of {TIME_RUNS}",
-        MOST.load(Relaxed)
-    );
-    assert_eq!(BUILT.load(Relaxed), RUNS.load(Relaxed), "one input per run");
+    assert_eq!(MOST.load(Relaxed), 1, "inputs held at once");
+    let built = built.into_inner().unwrap();
+    assert_eq!(built.len(), RUNS.load(Relaxed), "one input per run");
+    for k in [n, FACTOR * n] {
+        let numbers: Vec<usize> = built.iter().filter(|b| b.0 == k).map(|b| b.1).collect();
+        let from_0: Vec<usize> = (0..numbers.len()).collect();
+        assert_eq!(numbers, from_0, "the inputs of size {k} numbered from 0");
+    }
     assert_eq!(
         BUILT_IN_RUN.load(Relaxed),
         0,
         "an input built while a run ran"
+    );
+    assert_eq!(
+        DROPPED_IN_RUN.load(Relaxed),
+        0,
+        "an input released while a run ran"
     );
 }
 

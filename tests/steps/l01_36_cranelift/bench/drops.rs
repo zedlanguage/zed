@@ -2,16 +2,15 @@
 //! linear in the cells freed otherwise (COMPLEXITY.md R8). The small instances are in
 //! `drops.rs`.
 
-use std::sync::Mutex;
-
 use zed_rt::{Heap, Word};
-use zed_tests::scaling::{self, FACTOR};
+use zed_tests::scaling;
 
 use crate::drops::{deep, shared, wide};
 
-/// `what`, the time of `run` on heaps from `make`, one for each run the meter takes, all built
-/// before any timing starts. Its bytes are held too when `allocates`; a run that allocates
-/// nothing has none to compare.
+/// `what`, the time of `run` on heaps from `make`, one for each run the meter takes, each built
+/// before its run's timing starts and freed after it ends, one held at a time
+/// (`scaling::check_order_fresh`, MEM-l0126-40gb). Its bytes are held too when `allocates`; a
+/// run that allocates nothing has none to compare.
 fn scales(
     what: &str,
     n: usize,
@@ -19,26 +18,15 @@ fn scales(
     run: fn(&mut Heap, Word, usize),
     allocates: bool,
 ) {
-    let (small_runs, large_runs) = scaling::Meter::new().runs();
-    let heaps = Mutex::new(
-        [(n, small_runs), (FACTOR * n, large_runs)]
-            .map(|(m, runs)| (m, (0..runs).map(|_| make(m)).collect::<Vec<_>>())),
-    );
-    // Each heap is freed after the timing ends.
-    let used = Mutex::new(Vec::new());
-    let timed = |m| {
-        let (mut h, w) = {
-            let mut heaps = heaps.lock().unwrap();
-            let at = heaps.iter_mut().find(|(k, _)| *k == m).unwrap();
-            at.1.pop().expect("a heap for each run")
-        };
+    let make = |m: usize, _: usize| make(m);
+    let timed = |m: usize, (mut h, w): (Heap, Word)| {
         run(&mut h, w, m);
-        used.lock().unwrap().push(h);
+        h
     };
     if allocates {
-        scaling::check(what, n, timed);
+        scaling::check_order_fresh(what, n, 1, make, timed);
     } else {
-        scaling::check_instructions_only(what, n, 1, timed);
+        scaling::check_instructions_only_fresh(what, n, 1, make, timed);
     }
 }
 

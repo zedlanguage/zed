@@ -7,7 +7,6 @@
 //! types are disjoint. A product of tuple types covered by many negated ones is split into disjoint
 //! pieces, and a negated type disjoint from a piece is passed over.
 
-use std::sync::Mutex;
 use std::sync::atomic::Ordering::Relaxed;
 use zed_kernel::Value;
 use zed_kernel::types::{Type, Universe, Verdict};
@@ -198,11 +197,10 @@ fn exclusive_ors_of_none_one_and_more_tuple_types_are_compared_exactly() {
     assert!(parity([row(&[0, 1]), row(&[0, 1])]).is_empty());
 }
 
-/// The `runs` inputs `make` builds for count `c` in case `k` of a test, each at a base no other
-/// input uses, so that no run reads a result another kept.
-fn pool<T>(c: usize, runs: usize, k: usize, make: impl Fn(usize, usize) -> T) -> Mutex<Vec<T>> {
-    let base = |i: usize| 100_000_000 * k + 1_000_000 * (i + 1) + 1_000 * c;
-    Mutex::new((0..runs).map(|i| make(c, base(i))).collect())
+/// The base of input `i` at count `c` in case `k` of a test, one no other input uses, so that no
+/// run reads a result another kept.
+fn base(c: usize, k: usize, i: usize) -> usize {
+    100_000_000 * k + 1_000_000 * (i + 1) + 1_000 * c
 }
 
 /// The rows of a decision tree on `c` columns of `{b, b + 1, b + 2}`: on column `i`, after

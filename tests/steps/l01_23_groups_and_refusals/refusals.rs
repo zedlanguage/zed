@@ -4485,22 +4485,13 @@ fn r5_sat_decide(
 fn cases_scale_from(cases: &[(&str, Verdict)], base: usize) {
     big(|| {
         for &(case, want) in cases {
-            let (s_runs, l_runs) = scaling::Meter::new().runs();
-            let small: Vec<Type> = (0..s_runs)
-                .map(|i| rfx_case(case, base, &format!("_r5s_{case}_{base}_{i}")))
-                .collect();
-            let large: Vec<Type> = (0..l_runs)
-                .map(|i| rfx_case(case, 8 * base, &format!("_r5s_{case}_{}_{i}", 8 * base)))
-                .collect();
-            let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
-            scaling::check(&format!("probe case {case}"), base, |n| {
+            // One copy held at a time, built before its run (MEM-l0126-40gb).
+            let make = |k: usize, i: usize| rfx_case(case, k, &format!("_r5s_{case}_{k}_{i}"));
+            let what = format!("probe case {case}");
+            scaling::check_order_fresh(&what, base, 1, make, |n, t: Type| {
                 Type::forget_emptiness();
-                let t = if n == base {
-                    &small[si.fetch_add(1, Relaxed)]
-                } else {
-                    &large[li.fetch_add(1, Relaxed)]
-                };
                 assert_eq!(t.verdict(), want, "{case} at {n}");
+                t
             });
         }
     });
@@ -9448,26 +9439,20 @@ fn xr_r2_build_single_bucket_escape(n: usize, tag: &str) -> Type {
 #[test]
 fn xr_r2_bench_escape_single_bucket_scales_n_log_n() {
     let n = 512usize;
-    let (s_runs, l_runs) = scaling::Meter::new().runs();
-    let small: Vec<Type> = (0..s_runs)
-        .map(|i| xr_r2_build_single_bucket_escape(n, &format!("_xrb_s_{i}")))
-        .collect();
-    let large: Vec<Type> = (0..l_runs)
-        .map(|i| xr_r2_build_single_bucket_escape(scaling::FACTOR * n, &format!("_xrb_l_{i}")))
-        .collect();
-    let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
-    scaling::check_order(
+    // One input held at a time, built before its run (MEM-l0126-40gb).
+    let make = |k: usize, i: usize| {
+        let size = if k == n { "s" } else { "l" };
+        xr_r2_build_single_bucket_escape(k, &format!("_xrb_{size}_{i}"))
+    };
+    scaling::check_order_fresh(
         "Q2(f) escape single-bucket cofinite intersection",
         n,
         1,
-        |k| {
+        make,
+        |k, t: Type| {
             Type::forget_emptiness();
-            let t = if k == n {
-                &small[si.fetch_add(1, Relaxed)]
-            } else {
-                &large[li.fetch_add(1, Relaxed)]
-            };
             assert_eq!(t.verdict(), Verdict::Empty, "single-bucket at {k}");
+            t
         },
     );
 }

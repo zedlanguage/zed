@@ -534,22 +534,14 @@ fn the_connectives_on_parts_scale_by_depth() {
     });
     // A union keeps the complements it makes with the expressions, so each run of it takes
     // chains of its own, on atoms of their own.
-    let (small, large) = scaling::Meter::new().runs();
-    type Pairs = std::sync::Mutex<Vec<(Part<Row>, Part<Row>)>>;
-    let chains: BTreeMap<usize, Pairs> = [(n, small), (scaling::FACTOR * n, large)]
-        .map(|(m, runs)| {
-            let pairs = (0..runs as u64)
-                .map(|i| {
-                    let base = (1000 + 10 * i) * m as u64;
-                    (
-                        choices(base, base + 2 * m as u64, m),
-                        choices(base, base + 4 * m as u64, m),
-                    )
-                })
-                .collect();
-            (m, std::sync::Mutex::new(pairs))
-        })
-        .into();
+    // One pair is held at a time, built before its run (MEM-l0126-40gb).
+    let chains = |m: usize, i: usize| {
+        let base = (1000 + 10 * i as u64) * m as u64;
+        (
+            choices(base, base + 2 * m as u64, m),
+            choices(base, base + 4 * m as u64, m),
+        )
+    };
     scaling::check("the meet of two lists, by depth", n, |m| {
         let (a, b) = &meets[&m];
         assert_eq!(a.zip_chain(b, Op::And), Some(Bdd::Leaf(false)));
@@ -558,14 +550,12 @@ fn the_connectives_on_parts_scale_by_depth() {
     scaling::check_instructions_only("the complement of a list, by depth", n, 1, |m| {
         assert!(meets[&m].0.not() != meets[&m].0);
     });
-    scaling::check("the union of two chains of choices, by depth", n, |m| {
-        let (p, q) = chains[&m]
-            .lock()
-            .expect("the chains of a size")
-            .pop()
-            .expect("a pair of chains per run");
+    let union = |_: usize, (p, q): (Part<Row>, Part<Row>)| {
         assert!(p.zip(&q, Op::Or) != p);
-    });
+        (p, q)
+    };
+    let what = "the union of two chains of choices, by depth";
+    scaling::check_order_fresh(what, n, 1, chains, union);
 }
 
 #[test]
@@ -585,69 +575,50 @@ fn the_union_of_a_choices_meets_scales() {
     // second check. A choice keeps the complements it makes, so each run takes parts of its
     // own, on atoms of their own.
     let n = 1 << 12;
-    let (small, large) = scaling::Meter::new().runs();
-    type Pairs = std::sync::Mutex<Vec<(Part<Row>, Part<Row>, Part<Row>)>>;
+    // One triple is held at a time, built before its run (MEM-l0126-40gb).
     let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
     let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
     let lits = |base: u64, m: usize| (base..base + m as u64).map(|i| Part::literal(atom(i)));
-    let meets: BTreeMap<usize, Pairs> = [(n, small), (scaling::FACTOR * n, large)]
-        .map(|(m, runs)| {
-            let parts = (0..runs as u64)
-                .map(|i| {
-                    let base = (2000 + 3 * i) * m as u64;
-                    let a = Part::literal(atom(base));
-                    let d = lits(base + 1, m).fold(Part::leaf(true), |f, l| and(&f, &l));
-                    let [r, s, t, u] =
-                        [m + 1, m + 2, m + 3, m + 4].map(|k| Part::literal(atom(base + k as u64)));
-                    let (w, z) = (xor_by_or(&r, &s), xor_by_or(&t, &u));
-                    let (ad, nad) = (and(&a, &d), and(&a.not(), &d));
-                    let left = or(&and(&a, &or(&ad, &w)), &and(&a.not(), &or(&nad, &z)));
-                    let right = or(
-                        &and(&a, &or(&ad, &w.not())),
-                        &and(&a.not(), &or(&nad, &z.not())),
-                    );
-                    (left, right, d)
-                })
-                .collect();
-            (m, std::sync::Mutex::new(parts))
-        })
-        .into();
-    scaling::check(
+    let meets = |m: usize, i: usize| {
+        let base = (2000 + 3 * i as u64) * m as u64;
+        let a = Part::literal(atom(base));
+        let d = lits(base + 1, m).fold(Part::leaf(true), |f, l| and(&f, &l));
+        let [r, s, t, u] =
+            [m + 1, m + 2, m + 3, m + 4].map(|k| Part::literal(atom(base + k as u64)));
+        let (w, z) = (xor_by_or(&r, &s), xor_by_or(&t, &u));
+        let (ad, nad) = (and(&a, &d), and(&a.not(), &d));
+        let left = or(&and(&a, &or(&ad, &w)), &and(&a.not(), &or(&nad, &z)));
+        let right = or(
+            &and(&a, &or(&ad, &w.not())),
+            &and(&a.not(), &or(&nad, &z.not())),
+        );
+        (left, right, d)
+    };
+    scaling::check_order_fresh(
         "the meet of two choices whose meets are chains on one condition, by literals",
         n,
-        |m| {
-            let (left, right, d) = meets[&m]
-                .lock()
-                .expect("the parts of a size")
-                .pop()
-                .expect("parts per run");
+        1,
+        meets,
+        |_, (left, right, d): (Part<Row>, Part<Row>, Part<Row>)| {
             assert!(and(&left, &right) == d);
+            (left, right, d)
         },
     );
-    let picks: BTreeMap<usize, Pairs> = [(n, small), (scaling::FACTOR * n, large)]
-        .map(|(m, runs)| {
-            let parts = (0..runs as u64)
-                .map(|i| {
-                    let base = (5000 + 3 * i) * m as u64;
-                    let [a, c] = [0, 1].map(|k| Part::literal(atom(base + k)));
-                    let y = lits(base + 2, m).fold(Part::leaf(false), |f, l| xor_by_or(&f, &l));
-                    let pick = |x: &Part<Row>| or(&and(&c, x), &and(&c.not(), &y));
-                    (pick(&a), pick(&a.not()), or(&c, &y))
-                })
-                .collect();
-            (m, std::sync::Mutex::new(parts))
-        })
-        .into();
-    scaling::check(
+    let picks = |m: usize, i: usize| {
+        let base = (5000 + 3 * i as u64) * m as u64;
+        let [a, c] = [0, 1].map(|k| Part::literal(atom(base + k)));
+        let y = lits(base + 2, m).fold(Part::leaf(false), |f, l| xor_by_or(&f, &l));
+        let pick = |x: &Part<Row>| or(&and(&c, x), &and(&c.not(), &y));
+        (pick(&a), pick(&a.not()), or(&c, &y))
+    };
+    scaling::check_order_fresh(
         "the union of two choices with the branch true, by the atoms of the other",
         n,
-        |m| {
-            let (p, q, direct) = picks[&m]
-                .lock()
-                .expect("the parts of a size")
-                .pop()
-                .expect("parts per run");
+        1,
+        picks,
+        |_, (p, q, direct): (Part<Row>, Part<Row>, Part<Row>)| {
             assert!(or(&p, &q) == direct);
+            (p, q, direct)
         },
     );
 }
