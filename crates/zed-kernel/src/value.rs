@@ -144,31 +144,43 @@ impl F64 {
     }
 }
 
-impl PartialEq for F64 {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.to_bits() == other.0.to_bits()
-    }
+/// Equality, order and `Debug` of a float wrapper ([`F64`], [`F32`]), written once for both
+/// (DRY-misc-A5, REPORT-dryA5 row 31; `f64` and `f32` share no std trait for `to_bits` and
+/// `total_cmp`, so a macro, not a generic impl): equal when the bits are, which the NaN
+/// canonicalization of `new` makes a law-abiding equality, and ordered by IEEE 754
+/// `totalOrder` (`total_cmp`), which agrees with it: `total_cmp` is `Equal` exactly on equal
+/// bits.
+macro_rules! float_compare {
+    ($t:ty) => {
+        impl PartialEq for $t {
+            fn eq(&self, other: &Self) -> bool {
+                self.0.to_bits() == other.0.to_bits()
+            }
+        }
+
+        impl Eq for $t {}
+
+        impl Ord for $t {
+            fn cmp(&self, other: &Self) -> Ordering {
+                self.0.total_cmp(&other.0)
+            }
+        }
+
+        impl PartialOrd for $t {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        impl fmt::Debug for $t {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{:?}", self.0)
+            }
+        }
+    };
 }
 
-impl Eq for F64 {}
-
-impl Ord for F64 {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.total_cmp(&other.0)
-    }
-}
-
-impl PartialOrd for F64 {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl fmt::Debug for F64 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.0)
-    }
-}
+float_compare!(F64);
 
 /// A 32-bit float, compared as [`F64`] is: bitwise after NaN canonicalization.
 #[derive(Clone, Copy)]
@@ -196,31 +208,7 @@ impl F32 {
     }
 }
 
-impl PartialEq for F32 {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.to_bits() == other.0.to_bits()
-    }
-}
-
-impl Eq for F32 {}
-
-impl Ord for F32 {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.total_cmp(&other.0)
-    }
-}
-
-impl PartialOrd for F32 {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl fmt::Debug for F32 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.0)
-    }
-}
+float_compare!(F32);
 
 /// An atom such as `#empty`, `#ioError("disk full")` or `#err(code: 3)`. Failure is data
 /// (sec:failure): an atom is an ordinary value that flows through the kernel like any other.
