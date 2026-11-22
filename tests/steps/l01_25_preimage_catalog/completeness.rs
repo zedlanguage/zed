@@ -1397,13 +1397,25 @@ fn calls_are_read_through_and_foreign_ones_stop() {
         ),
     ]);
     // A string operation in an arm that never runs does not narrow the answer: the box is
-    // the taken arm's, exact. DESIGN does not say whether the stop in the other arm is
-    // reported, so the test does not look at the stops.
+    // the taken arm's, exact, and its stop is not reported, since no run reaches it (DESIGN
+    // L1.25, DOC-preimage-dead-arm-stops).
     let t = p2(Ge, if_(lit(true), x(), p1(Len, p1(Show, x()))), k(3));
     let p = preimage(&t, &any_x(), &T);
     check(&t, &any_x(), &T, &p, (-40, 40));
     assert_eq!(p.domains["x"].to_string(), "[3..]", "{}", shown(&p));
     assert!(p.exact, "{}", shown(&p));
+    assert!(p.stop_texts().is_empty(), "{}", shown(&p));
+    // The same string operation in the arm taken stops the transfer, and its stop is reported.
+    let t = p2(Ge, if_(lit(false), x(), p1(Len, p1(Show, x()))), k(3));
+    let p = preimage(&t, &any_x(), &T);
+    check(&t, &any_x(), &T, &p, (-40, 40));
+    assert_eq!(p.domains["x"].to_string(), "[..]", "{}", shown(&p));
+    assert!(!p.exact, "{}", shown(&p));
+    assert!(
+        p.stop_texts().iter().any(|s| s.contains("stops the transfer")),
+        "{}",
+        shown(&p)
+    );
     // A foreign call on constants is not run and keeps the box, necessary; that its stop is
     // reported too is row FAIL-preimage-foreign-constant-unreported.
     let t = p2(Lt, hash(k(1)), x());

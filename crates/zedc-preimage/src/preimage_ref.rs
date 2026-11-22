@@ -4002,10 +4002,21 @@ impl<'t> Tx<'t> {
                 self.back_doubt(b, inner, d, dd)
             }
             Node::If(g, a, b) => {
+                // An arm no input takes is not read, so its stops are not reported (DESIGN
+                // L1.25, DOC-preimage-dead-arm-stops); proof at the same arm of
+                // `preimage::Walk::back`.
                 let gt = self.back_at(g, env, &Demand::Bool(true));
-                let at = self.back_doubt(a, env, d, dd);
+                let at = if self.empty(&gt) {
+                    Res::none()
+                } else {
+                    self.back_doubt(a, env, d, dd)
+                };
                 let gf = self.back_at(g, env, &Demand::Bool(false));
-                let bf = self.back_doubt(b, env, d, dd);
+                let bf = if self.empty(&gf) {
+                    Res::none()
+                } else {
+                    self.back_doubt(b, env, d, dd)
+                };
                 let yes = self.meet(gt, at);
                 let no = self.meet(gf, bf);
                 self.union(yes, no)

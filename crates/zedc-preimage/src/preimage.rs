@@ -8181,10 +8181,26 @@ impl<'m, 't> Walk<'m, 't> {
                 } else if let Some(r) = self.back_by_class(t, g, env, &d).await {
                     return r;
                 }
+                // An arm whose guard box is empty is read no further: no input takes it, so
+                // a stop inside it is not reported (DESIGN L1.25, DOC-preimage-dead-arm-stops).
+                // Proof that no input takes it: every input that takes the arm `a` makes `g`
+                // true, so it lies in `gt`, which holds every point where `g` is true (the box
+                // is necessary, module doc); `gt` holds no point, so no input takes `a`; the
+                // same for `b` and `gf`. The answer is unchanged, since `meet` with an empty box
+                // is empty whatever the arm gives; only its stops and the reading go. The arms
+                // are read in the order they were, so the stops keep their order.
                 let gt = self.back(g, env, Demand::Bool(true)).await;
-                let at = self.back(a, env, d.clone()).await;
+                let at = if self.empty(&gt) {
+                    Res::none()
+                } else {
+                    self.back(a, env, d.clone()).await
+                };
                 let gf = self.back(g, env, Demand::Bool(false)).await;
-                let bf = self.back(b, env, d).await;
+                let bf = if self.empty(&gf) {
+                    Res::none()
+                } else {
+                    self.back(b, env, d).await
+                };
                 let yes = self.meet(gt, at);
                 let no = self.meet(gf, bf);
                 self.union(yes, no)

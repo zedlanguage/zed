@@ -80,7 +80,7 @@ refusal arms, which the catalog under test reaches first.
 | A foreign call on constants: a stop, reported | | FAIL-preimage-foreign-constant-unreported: the box is kept, necessary, with no stop |
 | A primitive with the wrong number of operands: a stop, reported | | FAIL-preimage-arity-stop-unreported: the box is kept, necessary, with no stop |
 | String operations: a stop; `len` read through; on constants alone, run | `stops.rs` `a_string_operation_stops_the_transfer`, `a_string_operation_on_constants_only_is_run`, `a_length_under_arithmetic_is_read_through_to_its_stop` | |
-| A stop in an arm that never runs | `calls_are_read_through_and_foreign_ones_stop` checks the box (`[3..]`, exact) only | DESIGN does not say whether the stop in the untaken arm is reported; the test does not look at the stops |
+| A stop in an arm that never runs | `calls_are_read_through_and_foreign_ones_stop` checks the box (`[3..]`, exact) and that no stop is reported, and that the same stop in the arm taken is reported | DESIGN L1.25 (DOC-preimage-dead-arm-stops): a stop no run can reach is not reported |
 | `fold`, `gen`, `fix`, a tuple component between the demand and an input | `stops.rs` (`a_fold_...`, `a_gen_...`, `a_fix_...`, `a_term_outside_the_scalar_catalog_is_reported`); `calls_are_read_through_and_foreign_ones_stop` | |
 | Copies of one stop; stops over one shared term | `stops.rs` `copies_of_a_stop_are_two_stops_shown_once`, `stops_over_one_shared_term_are_each_reported` | |
 | A listed box: enumerated with one input of several members, not with two | `a_listed_box_with_two_inputs_of_several_members_is_not_enumerated`; `entries.rs` `a_listed_box_is_enumerated_and_a_range_is_not`; `scaling.rs` `a_listed_set_is_enumerated` | |
