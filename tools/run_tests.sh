@@ -1332,6 +1332,23 @@ alone="
   zedc_presburger::presburger::exact::tests::every_writing_at_seed_17656181055615743818
   zedc_presburger::presburger::exact::tests::every_writing_at_seed_11354000743705775971
 "
+# Tests of short-zed_kernel (the zed-kernel unit tests of the short-addresses build) each run as a
+# piece of their own, `--exact`, and skipped by the binary's other piece, as for alone above.
+# short-zed_kernel as one piece ran past its 20 s limit on l43 (an l4 VM, 12 cores) twice, at load
+# 5.4 and 5.5 (FARM-short-pieces-on-vm-tmpfs, 2026-11-22), so it ran on no VM. Each of its 713
+# tests alone on v5e3 (24 cores, load 3.6; TEST-short-zed_kernel-split, 2026-11-22): 75.6 s
+# together, the whole piece 11.7 s with 8 threads, its time set by its slowest test, 9.8 s. The
+# six below took 9.8, 5.5, 5.4, 3.9, 3.8 and 3.5 s (32 s of the 75.6); the other 707 took
+# 2.7 s or less each and 43.6 s together, about 5.5 s spread over 8 threads. No name here is
+# part of another test's name but the first bes test's, which is the second's (both listed).
+short_alone="
+  poly::tests::one_decide_spends_at_most_four_budgets
+  types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random
+  types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random_second_half
+  eval::binder_tests::reads_lies_between_the_tree_walk_and_the_shared_bound_on_deeply_shared_terms
+  poly::roots::tests::the_search_is_bounded_on_families_that_defeat_the_cuts
+  types::bdd::tests::a_chain_joined_at_once_is_the_chain_joined_literal_by_literal
+"
 # The pieces of step folder $1 in the test binary $2, or of its module $3 (a path in the
 # binary) when one is given. A module's piece filters by `$3::`, which libtest matches anywhere in
 # a name, so it is a piece only when every test matching the filter lies in the module; otherwise
@@ -1427,7 +1444,16 @@ step_pieces() {
       # here at f215d9c90 and 25 at e4e3ad871, each passing in the workspace build
       # (FAIL-bench-main-f215d9c90).
       # The steps of short_steps have benchmarks written for both builds and keep them.
-      short-zed_kernel) echo "$n $n $n crates/zed-kernel $p --skip bench::" ;;
+      # Each test of short_alone is a piece of its own, named short-zed_kernel::<test> and run
+      # `--exact`, and the other piece skips them (see short_alone).
+      short-zed_kernel)
+        skips=
+        for t in $short_alone; do
+          echo "$n $n $n::$t crates/zed-kernel $p --exact $t"
+          skips="$skips --skip $t"
+        done
+        echo "$n $n $n crates/zed-kernel $p --skip bench::$skips"
+        ;;
       *) echo "$n $n $n tests $p" ;;
     esac
   done

@@ -14,6 +14,10 @@
 #   --trace <dir>   run_tests.sh --trace: each VM's read lists land in <dir>/vm<k>, with its
 #                   file groups (tools/merge_check.sh --record)
 #   --spec <dir>    the spec checkout the VMs get (job.sh's 5th argument; default /home/luke/Work/zed)
+#   --commands <file>  runs no piece: runs each line of <file> with bash on one VM, in order, in
+#                   the build root of the short-addresses pieces, with FARM_OUT a directory that
+#                   comes back under --out (tools/merge_check.sh's steps 0b, 0, 0c and 1a,
+#                   FARM-merge-check-clippy-selftests-remote); see vm_cmd
 # Exit 0 when every piece passed, 1 when a piece or the build failed or a share did not report each
 # piece it was given once (a line `farm: FAILED: share <k> of <n> on <VM> ...` names it and the
 # failing step: FARM-setup-fail-silent), 2 on a usage error, 129 when
@@ -51,9 +55,9 @@
 #    The list call builds; the share then runs with --pieces, which neither builds nor lists again.
 #  - The short-addresses pieces (tools/run_tests.sh --short-groups, as short-<group>) run on VMs
 #    since FARM-short-pieces-on-vm-tmpfs, in a mount namespace with the checkout at zrun's fixed
-#    path and a tmpfs for the clone's upper layer (vm_side), but for short-zed_kernel, too long as
-#    one piece for a VM (local_short below). Not run: short-zed_kernel and the folders of tests/full
-#    whose needs file names a tool a VM lacks (vm_tools below lists what a VM has; s00_01_tools and
+#    path and a tmpfs for the clone's upper layer (vm_side); short-zed_kernel too since
+#    TEST-short-zed_kernel-split cut it into pieces that fit (run_tests.sh's short_alone). Not run:
+#    the folders of tests/full whose needs file names a tool a VM lacks (vm_tools below lists what a VM has; s00_01_tools and
 #    s09_release run on VMs since FARM-local-only-pieces-on-vm, with the tools job.sh installs,
 #    rootless podman and tools/fetch_test_deps.sh, vm_side). No build, test or benchmark runs on
 #    this machine (author, 2026-11-22, after main-watch's local bench run at 11:15Z), so these
@@ -70,7 +74,7 @@
 #  - Tests: a test piece stopped by its limit (not one that failed otherwise) is run once more in
 #    the same way, alone, after the load has fallen, and named on a line `farm: stopped by its
 #    limit under load, passed alone: ...` when it passed then (FARM-share-load-timeouts; vm_side).
-#  - A share whose job did not run to the end (job.sh exit 2, 4 or 5, or no output) is run again on
+#  - A share whose job did not run to the end (job.sh exit 2, 4, 5, 6 or 7, or no output) is run again on
 #    another VM, up to 3 attempts.
 # Cost here: packing the checkout once per VM (tar of the tracked and untracked files, about 2,500
 # files, 63 MB) and the polls of job.sh; the build and the pieces run on the VMs.
@@ -84,15 +88,15 @@ colab_dir=${FARM_RUN_COLAB_DIR:-/home/luke/Work/wt/colab}
 # gdb-multiarch and podman from job.sh's setup, podman run rootless and gdb as gdb-multiarch by
 # vm_side, and systemd-run is vm_side's stub).
 vm_tools=" bash sh unshare ip tc cargo rustc clang ld.lld qemu-aarch64 qemu-riscv64 gdb podman systemd-run "
-owner= vms= out= jobs= kind=test full= skip_other= list= terms= except= trace= spec=
+owner= vms= out= jobs= kind=test full= skip_other= list= terms= except= trace= spec= commands=
 while [ $# -gt 0 ]; do
   case $1 in
-    --owner | --vms | --out | --jobs | --terms | --except | --trace | --spec)
+    --owner | --vms | --out | --jobs | --terms | --except | --trace | --spec | --commands)
       [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a non-empty value"
       case $1 in
         --owner) owner=$2 ;; --vms) vms=$2 ;; --out) out=$2 ;; --jobs) jobs=$2 ;;
         --terms) terms=$2 ;; --except) except=$2 ;; --trace) trace=$2 ;;
-        --spec) spec=$2 ;;
+        --spec) spec=$2 ;; --commands) commands=$2 ;;
       esac
       shift
       ;;
@@ -109,6 +113,8 @@ done
 [[ $jobs =~ ^[1-9][0-9]*$ ]] || die "--jobs must be a positive number, got '$jobs'"
 [[ $out == /?* ]] && [ ! -e "$out" ] || die "--out must be an absolute path that does not exist yet, got '$out'"
 [ -z "$terms" ] || [ -s "$terms" ] || die "--terms file '$terms' is missing or empty"
+[ -z "$commands" ] || [ -s "$commands" ] || die "--commands file '$commands' is missing or empty"
+[ -z "$commands" ] || [ -z "$terms$list$trace$full$except" ] || die "--commands runs no piece: no --terms, --list, --trace, --full or --except with it"
 [ -z "$trace" ] || [[ $trace == /?* ]] || die "--trace must be an absolute path, got '$trace'"
 [ -z "$spec" ] || { [[ $spec == /?* ]] && [ -d "$spec" ]; } || die "--spec must be an absolute path of a directory, got '$spec'"
 [ -x tools/run_tests.sh ] || die "run from a checkout's root (no tools/run_tests.sh in $PWD)"
@@ -140,18 +146,10 @@ for d in tests/full/*/; do
   fi
   if [ -n "$ok" ]; then vm_full+=("$n"); else local_full+=("$n"); fi
 done
-# The short-addresses pieces that stay off the VMs. short-zed_kernel, the zed-kernel unit tests
-# (470) as one piece, ran past its 20 s limit on l43 (an l4 VM, 12 cores) twice: beside the other
-# two short pieces (1.6 and 2.0 s) and alone, at load 5.4 and 5.5 (2026-11-22, FARM-short-pieces-on-
-# vm-tmpfs); in this machine's merge checks it takes 8 to 18 s at load 25 to 72 on 32 cores. It goes
-# to the VMs once it is cut into pieces that each fit (TEST-short-zed_kernel-split).
-local_short=(short-zed_kernel)
-# here_name <name>: whether the piece or group <name> runs here.
+# here_name <name>: whether the piece or group <name> runs here (is not run). short-zed_kernel
+# was one such until TEST-short-zed_kernel-split (2026-11-22): see run_tests.sh's short_alone.
 here_name() {
   local g
-  for g in "${local_short[@]}"; do
-    [[ $1 == "$g" || $1 == "$g::"* ]] && return 0
-  done
   for g in "${local_full[@]}"; do
     [[ $1 == "full-$g" || $1 == "full-$g::"* ]] && return 0
   done
@@ -166,7 +164,6 @@ if [ -n "$terms" ]; then
     if here_name "$t"; then echo "$t" >>"$out/terms.here"; else echo "$t" >>"$out/terms.vm"; fi
   done <"$terms"
 elif [ -z "$list" ]; then
-  printf '%s\n' "${local_short[@]}" >>"$out/terms.here"
   [ -z "$full" ] || for g in "${local_full[@]}"; do echo "full-$g" >>"$out/terms.here"; done
 fi
 # Whether the VMs select short-addresses pieces (vm_side's short): every piece but in --list
@@ -180,16 +177,51 @@ fi
 # The VM's --only (empty: every piece) and --except, which also leaves out the pieces run here.
 vm_only= vm_except=$except
 [ ! -s "$out/terms.vm" ] || vm_only=$(ere_of "$out/terms.vm")
-if [ "$vm_short" = 1 ] && [ -z "$terms" ]; then
-  printf '%s\n' "${local_short[@]}" >"$out/short.here"
-  vm_except=${vm_except:+$vm_except|}$(ere_of "$out/short.here")
-fi
 if [ -n "$full" ] && [ ${#local_full[@]} -gt 0 ]; then
   printf 'full-%s\n' "${local_full[@]}" >"$out/full.here"
   vm_except=${vm_except:+$vm_except|}$(ere_of "$out/full.here")
 fi
 run_vm=1
 [ -z "$terms" ] || [ -s "$out/terms.vm" ] || run_vm=
+
+# vm_ns <R> <arguments>: runs this script ($0, job.sh's farm_vm.sh) again with <arguments>, in the
+# checkout's root bound at R, in a mount namespace of its own with a tmpfs at R/build and the
+# target directory at R/build/cargo: the build root of the short-addresses pieces (see vm_side).
+vm_ns() {
+  local R=$1 tgt=${CARGO_TARGET_DIR:-$PWD/build/cargo} ns=(unshare -m --propagation private)
+  shift
+  [[ $tgt == /?* ]] || { echo "vm_side: the target directory '$tgt' is not absolute"; return 2; }
+  [ "$(id -u)" = 0 ] || ns=(unshare -U -r -m --propagation private)
+  mkdir -p "$tgt" "$PWD/build" "$R" ||
+    { echo "vm_side: making the mount points for the short-addresses pieces failed"; return 2; }
+  # The tmpfs is mounted on R/build, not on R/build/short-clone: run_tests.sh drops a clone made
+  # from another build by renaming build/short-clone, and a mount point cannot be renamed
+  # ("mv: cannot move ...: Device or resource busy", l43 2026-11-22, a fresh tmpfs having no
+  # stamp). tools/test_farm_run.sh's stub renames it.
+  "${ns[@]}" bash -c 'mount --bind "$1" "$2" && mount -t tmpfs tmpfs "$2/build" &&
+    mkdir "$2/build/cargo" && mount --bind "$3" "$2/build/cargo" ||
+    { echo "vm_side: the mounts of the short-addresses build root failed"; exit 2; }
+    cd "$2" || { echo "vm_side: cd to $2 failed"; exit 2; }
+    shift 4
+    CARGO_TARGET_DIR=$PWD/build/cargo exec bash "$0" "$@"' "$0" "$PWD" "$R" "$tgt" _ "$@"
+}
+
+# vm_cmd <command, base64>: runs one command of --commands on the VM with bash, in the build root
+# of the short-addresses pieces (vm_ns), with FARM_OUT the job's out/ directory, which job.sh
+# brings back. Exit as the command's.
+vm_cmd() {
+  set -u -o pipefail
+  local R=${FARM_VM_BUILD_ROOT:-/home/luke/Work/wt/.build-root} J=${FARM_VM_JOB:-/content/job} c
+  [[ $R == /?* ]] || { echo "vm_side: the build root '$R' is not absolute"; return 2; }
+  [[ $J == /?* ]] || { echo "vm_side: the job directory '$J' is not absolute"; return 2; }
+  if [ "$PWD" != "$R" ]; then
+    vm_ns "$R" cmd "${1-}"
+    return
+  fi
+  c=$(printf %s "${1-}" | base64 -d) && [ -n "$c" ] || { echo "vm_side: the command is not base64"; return 2; }
+  mkdir -p "$J/out" || { echo "vm_side: mkdir of $J/out failed"; return 2; }
+  FARM_OUT=$J/out bash -c "$c"
+}
 
 # vm_side <k> <n> <kind> <full 0|1> <skip-other 0|1> <list 0|1> <trace 0|1> <only> <except>
 #   <vm full folders, space-separated> <short 0|1>: runs on the VM in the checkout's root (job.sh's
@@ -217,22 +249,7 @@ vm_side() {
   local R=${FARM_VM_BUILD_ROOT:-/home/luke/Work/wt/.build-root}
   [[ $R == /?* ]] || { echo "vm_side: the build root '$R' is not absolute"; return 2; }
   if [ "$short" = 1 ] && [ "$PWD" != "$R" ]; then
-    local tgt=${CARGO_TARGET_DIR:-$PWD/build/cargo} ns=(unshare -m --propagation private)
-    [[ $tgt == /?* ]] || { echo "vm_side: the target directory '$tgt' is not absolute"; return 2; }
-    [ "$(id -u)" = 0 ] || ns=(unshare -U -r -m --propagation private)
-    mkdir -p "$tgt" "$PWD/build" "$R" ||
-      { echo "vm_side: making the mount points for the short-addresses pieces failed"; return 2; }
-    # The script is this function's file ($0, job.sh's farm_vm.sh), run again in the namespace.
-    # The tmpfs is mounted on R/build, not on R/build/short-clone: run_tests.sh drops a clone made
-    # from another build by renaming build/short-clone, and a mount point cannot be renamed
-    # ("mv: cannot move ...: Device or resource busy", l43 2026-11-22, a fresh tmpfs having no
-    # stamp). tools/test_farm_run.sh's stub renames it.
-    "${ns[@]}" bash -c 'mount --bind "$1" "$2" && mount -t tmpfs tmpfs "$2/build" &&
-      mkdir "$2/build/cargo" && mount --bind "$3" "$2/build/cargo" ||
-      { echo "vm_side: the mounts of the short-addresses build root failed"; exit 2; }
-      cd "$2" || { echo "vm_side: cd to $2 failed"; exit 2; }
-      shift 4
-      CARGO_TARGET_DIR=$PWD/build/cargo exec bash "$0" "$@"' "$0" "$PWD" "$R" "$tgt" _ "$@"
+    vm_ns "$R" "$@"
     return
   fi
   # FARM_VM_JOB: the job's directory, /content/job on a VM (job.sh); tools/test_farm_run.sh's own.
@@ -437,8 +454,9 @@ vm_side() {
 }
 vm_script=$out/vm_side.sh
 {
-  declare -f vm_side
-  echo 'vm_side "$@"'
+  declare -f vm_ns vm_cmd vm_side
+  # A share's arguments start with its number; a command's with `cmd`.
+  echo 'if [ "${1-}" = cmd ]; then shift; vm_cmd "$@"; else vm_side "$@"; fi'
 } >"$vm_script" || die "cannot write $vm_script"
 vm_b64=$(base64 -w0 "$vm_script") && [ -n "$vm_b64" ] || die "cannot encode $vm_script"
 
@@ -507,6 +525,45 @@ share_failed() {
   echo "farm: FAILED: $*" >>"$out/report"
   [ "$rc_all" != 0 ] || rc_all=1
 }
+# --commands: the file's lines, each a `!` line of one job.sh job on one VM (vm_cmd), run in order;
+# a job that did not run to its end (job.sh exit other than 0 or 1, or a line with no exit in
+# summary.tsv) is run again on another VM, up to 3 attempts, as a share is. Prints each line's log
+# and `farm: command <i> rc=<n>: <line>`; exit 0 when every line passed, 1 when one failed, 129
+# when the job could not be run.
+if [ -n "$commands" ]; then
+  mapfile -t cl < <(command grep -a . "$commands")
+  for try in 1 2 3; do
+    acquire 1
+    v=${held[0]}
+    d=$out/commands-$try
+    mkdir -p "$d" || die "cannot create $d"
+    for c in "${cl[@]}"; do
+      printf '!printf %%s %s | base64 -d >/content/job/farm_vm.sh && bash /content/job/farm_vm.sh cmd %s\n' \
+        "$vm_b64" "$(printf %s "$c" | base64 -w0)"
+    done >"$d/tests.txt"
+    echo "farm: ${#cl[@]} commands on $v (attempt $try; logs $d)"
+    "$colab_dir/job.sh" "$v" "$wt" "$d/job" "$d/tests.txt" ${spec:+"$spec"} >"$d/job.out" 2>&1 &
+    kids=("$!")
+    wait "$!"
+    jrc=$?
+    kids=()
+    release_all
+    if [[ $jrc =~ ^[01]$ ]] && [ "$(awk -F '\t' '$2 ~ /^[0-9]+$/' "$d/job/summary.tsv" 2>/dev/null | wc -l)" = ${#cl[@]} ]; then
+      for i in "${!cl[@]}"; do
+        k=$((i + 1))
+        r=$(awk -F '\t' -v k="$k" 'NR == k { print $2 }' "$d/job/summary.tsv")
+        command grep -a -v '@' "$d/job/out/$k.log" 2>/dev/null
+        echo "farm: command $k rc=$r: ${cl[$i]}"
+        [ "$r" = 0 ] || rc_all=1
+      done
+      exit "$rc_all"
+    fi
+    why=$(job_why "$d/job.out")
+    echo "farm: the commands on $v did not run to their end (job.sh exit $jrc)${why:+: $why}; $d/job.out"
+  done
+  echo "farm: FAILED: the commands could not be run after 3 attempts"
+  exit 129
+fi
 # The VM shares.
 if [ -n "$run_vm" ]; then
   want=$vms

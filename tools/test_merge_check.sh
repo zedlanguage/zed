@@ -451,6 +451,33 @@ check "a clean branch passes clippy on its selected packages, then runs its test
 merge check: passed
 0
 $(two_calls '' "$(sorted "$(short c s_01f_import_graph)" | tr ' ' '|')")" "$(clippy_run)"
+# With a farm runner, steps 0b, 0, 0c and 1a go to one VM as one command of `--commands`
+# (FARM-merge-check-clippy-selftests-remote), and none runs here. The stub farm records its
+# arguments and the commands file, prints the line a step would, and exits $STUB_FARM_RC.
+stub_farm=$ws/target/stub-farm
+printf '#!/bin/bash\necho "$*" >>"$STUB_FARM_LOG"\nwhile [ $# -gt 0 ]; do [ "$1" != --commands ] || cat "$2" >>"$STUB_FARM_LOG"; shift; done\necho "farm stub ran"\nexit "${STUB_FARM_RC:-0}"\n' >"$stub_farm"
+chmod +x "$stub_farm"
+export STUB_FARM_LOG=$ws/target/stub-farm-log
+steps_farm_run() {
+  : >"$STUB_FARM_LOG"
+  calls >/dev/null
+  MERGE_CHECK_FARM=$stub_farm "$check_script" --base base 2>&1 |
+    command grep -a -E '^merge check: (steps|clippy|FAILED)|^farm stub ran|^(self|rt|farm self) ' |
+    sed -E 's/ as merge-check-[^ ]+ \(logs [^)]*\)$/ as merge-check-<branch>/'
+  echo "${PIPESTATUS[0]}"
+}
+r=$(STUB_FARM_RC=0 steps_farm_run | head -3)
+check "with a farm runner, clippy runs as one command on one VM, and not here" \
+  "merge check: steps --clippy c on a Colab VM as merge-check-<branch>
+farm stub ran" "$(head -2 <<<"$r")"
+check "the steps' farm call takes one VM, the command file and the spec, and its command runs the step script" \
+  "--owner merge-check- --vms 1 --jobs 6 --commands --spec
+tools/merge_check_steps.sh --logs \"\$FARM_OUT/merge-check\" --clippy c" \
+  "$(head -2 "$STUB_FARM_LOG" | sed -E 's/merge-check-[^ ]+/merge-check-/; s# (--out|--commands|--spec) /[^ ]+# \1#g; s# --out##')"
+check "a failed farm run of the steps refuses the merge with exit 1, and no test runs" "merge check: steps --clippy c on a Colab VM as merge-check-<branch>
+farm stub ran
+1
+1" "$(STUB_FARM_RC=1 steps_farm_run; command grep -a -c '^--owner ' "$STUB_FARM_LOG"; calls >/dev/null)"
 change_on_base crates/c/src/lib.rs 'pub fn n(v: &Vec<u8>) -> usize { v.len() }'
 check "a branch with a clippy warning is refused with exit 1, and its tests do not run" \
   "merge check: clippy -D warnings on: c

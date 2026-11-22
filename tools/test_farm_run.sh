@@ -85,7 +85,7 @@ if [ -z "$pieces" ]; then
   fi
   names="p1 p2 p3 p4 p5 p6 p7"
   [ -z "$short_steps" ] || names+=" short-g1"
-  # short-zed_kernel, past its limit on a VM, stays off the VMs (farm_run.sh's local_short).
+  # short-zed_kernel runs on the VMs since TEST-short-zed_kernel-split, as a short piece.
   [ -z "$short_libs" ] || names+=" short-zed_kernel"
   [ -z "$full" ] || names+=" full-a full-b full-c"
   : >"$d/pieces"
@@ -95,7 +95,6 @@ if [ -z "$pieces" ]; then
     [ -z "$except" ] || [[ ! $n =~ $except ]] || continue
     # A short-addresses piece builds only at the build root, here with its clone's upper layer on
     # a tmpfs (FARM-short-pieces-on-vm-tmpfs).
-    [ "$n" != short-zed_kernel ] || { echo "SHORT BUILD: short-zed_kernel selected on a VM"; exit 1; }
     if [[ $n == short-* ]]; then
       [ "$(pwd)" = "${FARM_VM_BUILD_ROOT:-}" ] || { echo "SHORT BUILD: in $(pwd), not at the build root"; exit 1; }
       mkdir -p build/short-clone && [ "$(findmnt -n -o FSTYPE --target "$(pwd)/build/short-clone")" = tmpfs ] ||
@@ -196,17 +195,24 @@ mkdir -p "$out/src" "$out/out" || exit 2
 ( cd "$wt" && git ls-files -z -co --exclude-standard | tar --null -T - -cf - ) | tar xf - -C "$out/src" || exit 2
 [ "${FAKE_SETUP_FULL_FAIL:-}" != 1 ] ||
   echo "run.sh: the setup of the full tests' tools failed (setup.log)" >"$out/out/setup-full.log"
-line=$(head -1 "$tests")
-line=${line//\/content\/job/$out}
-if [ -n "${FAKE_EMPTY_SHARE:-}" ] && [[ $line == *"farm_vm.sh $FAKE_EMPTY_SHARE "* ]]; then
-  : >"$out/out/1.log"
-  rc=0
-else
-  ( cd "$out/src" && FARM_VM_JOB=$out bash -c "${line#!}" ) >"$out/out/1.log" 2>&1
-  rc=$?
-fi
-printf '%s\t%s\t0\t1\t1\n' "$(head -1 "$tests")" "$rc" >"$out/summary.tsv"
-[ "$rc" = 0 ]
+# Each line in order, as run.sh runs them: out/<k>.log and a line of summary.tsv each (a share's
+# job has one line, a --commands job one per command).
+k=0 all=0
+: >"$out/summary.tsv"
+while IFS= read -r raw; do
+  k=$((k + 1))
+  line=${raw//\/content\/job/$out}
+  if [ -n "${FAKE_EMPTY_SHARE:-}" ] && [[ $line == *"farm_vm.sh $FAKE_EMPTY_SHARE "* ]]; then
+    : >"$out/out/$k.log"
+    rc=0
+  else
+    ( cd "$out/src" && FARM_VM_JOB=$out bash -c "${line#!}" ) >"$out/out/$k.log" 2>&1
+    rc=$?
+  fi
+  printf '%s\t%s\t0\t1\t1\n' "$raw" "$rc" >>"$out/summary.tsv"
+  [ "$rc" = 0 ] || all=1
+done <"$tests"
+[ "$all" = 0 ]
 JOB
 chmod +x "$colab/pool.sh" "$colab/job.sh"
 git -C "$toy" init -q && git -C "$toy" add -A && git -C "$toy" -c user.name=t -c user.email=t commit -qm toy || exit 2
@@ -260,7 +266,7 @@ case_() {
     echo "FAIL $name:$bad (output $o.out)"
   fi
 }
-all="p1 p2 p3 p4 p5 p6 p7 short-g1"
+all="p1 p2 p3 p4 p5 p6 p7 short-g1 short-zed_kernel"
 # notrun <case> <names>: the case's output names exactly <names> on its `farm: not run` line (the
 # pieces no VM can run, which run nowhere) and reports none of them as run.
 notrun() {
@@ -279,26 +285,27 @@ has() {
   c=$(command grep -a -c -E "$2" "$ws/case-$n-$1.out")
   [ "$c" = "$3" ] || { fail=$((fail + 1)); echo "FAIL $1: $c lines match '$2', not $3 ($ws/case-$n-$1.out)"; }
 }
-case_ all 0 "pieces: 8, failed: 0" "$all" -- --owner t --vms 3
+case_ all 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 3
 command grep -q -c 'acquire hm3 t' "$colab/log" || { fail=$((fail + 1)); echo "FAIL all: not 3 VMs of owner t"; }
-# short-zed_kernel stays off the VMs (the stub fails a list that selects it), named as not run.
-notrun all "short-zed_kernel"
+# short-zed_kernel runs on a VM, at the build root as every short piece (TEST-short-zed_kernel-split;
+# until then it stayed off the VMs, named as not run), and nothing is named as not run.
+notrun all ""
 # Tests (FARM-short-pieces-on-vm-tmpfs): short-g1 ran on a VM (the stub checked its build root
 # and tmpfs), by name in a run of its own, as --pieces refuses it.
 has all '^stub: --pieces refuses' 0
-STUB_HAS_PODMAN=1 case_ full 0 "pieces: 10, failed: 0" "$all full-a full-c" -- --owner t --vms 2 --full
-notrun full "short-zed_kernel full-b"
+STUB_HAS_PODMAN=1 case_ full 0 "pieces: 11, failed: 0" "$all full-a full-c" -- --owner t --vms 2 --full
+notrun full "full-b"
 # Tests (FARM-local-only-pieces-on-vm): full-c needs podman, so each share fetches the deps first,
 # into FARM_VM_CACHE (the stub fails a --full run whose deps are not done).
 has full '^farm: tools/fetch_test_deps\.sh ran in [0-9]+ s ' 2
 [ -e "$FARM_VM_CACHE/zed-test-deps/done" ] || { fail=$((fail + 1)); echo "FAIL full: nothing fetched into $FARM_VM_CACHE"; }
-STUB_HAS_PODMAN=1 case_ full-no-c 0 "pieces: 9, failed: 0" "$all full-a" -- --owner t --vms 2 --full --except '^full-c$'
+STUB_HAS_PODMAN=1 case_ full-no-c 0 "pieces: 10, failed: 0" "$all full-a" -- --owner t --vms 2 --full --except '^full-c$'
 has full-no-c '^farm: tools/fetch_test_deps' 0
 STUB_HAS_PODMAN=1 STUB_FETCH_FAIL=1 case_ fetch-fail 1 "pieces: 0, failed: 0" "" -- --owner t --vms 1 --full
 has fetch-fail '^vm_side: tools/fetch_test_deps\.sh failed' 1
 has fetch-fail '^farm: FAILED: share 1 of 1 on hm1 ran no piece \(exit 2\): vm_side: tools/fetch_test_deps\.sh failed' 1
-STUB_FAIL='^p3$' case_ fail 1 "pieces: 8, failed: 1" "$all" -- --owner t --vms 4
-STUB_SKIP='^p3$' case_ skipped 1 "pieces: 7, failed: 0" "p1 p2 p4 p5 p6 p7 short-g1" -- --owner t --vms 2
+STUB_FAIL='^p3$' case_ fail 1 "pieces: 9, failed: 1" "$all" -- --owner t --vms 4
+STUB_SKIP='^p3$' case_ skipped 1 "pieces: 8, failed: 0" "p1 p2 p4 p5 p6 p7 short-g1 short-zed_kernel" -- --owner t --vms 2
 has skipped '^farm: FAILED: share 1 of 2 on hm[0-9]+ did not run the pieces it was given: not reported: p3$' 1
 # Tests (FARM-setup-fail-silent): each way a share can run fewer pieces than it was given, or none,
 # fails the run with a line naming the share, its VM and the failing step.
@@ -311,19 +318,19 @@ has empty-list '^farm: FAILED: share 1 of 1 on hm1 ran no piece \(exit 2\): vm_s
 STUB_NOTHING=1 case_ nothing-to-run 0 "pieces: 0, failed: 0" "" -- --owner t --vms 2 --skip-other-kind
 has nothing-to-run '^farm: FAILED' 0
 # Share 2 of 3 prints nothing and exits 0: its pieces p2, p5 and short-g1 ran nowhere.
-FAKE_EMPTY_SHARE=2 case_ silent-share 1 "pieces: 5, failed: 0" "p1 p3 p4 p6 p7" -- --owner t --vms 3
+FAKE_EMPTY_SHARE=2 case_ silent-share 1 "pieces: 6, failed: 0" "p1 p3 p4 p6 p7" -- --owner t --vms 3
 has silent-share '^farm: FAILED: share 2 of 3 on hm[0-9]+ ran no piece \(exit 0\): no output' 1
 # One piece reported twice and another not at all: the counts agree, the names do not.
-STUB_DUP='^p3$' STUB_SKIP='^p5$' case_ dup-and-missing 1 "pieces: 8, failed: 0" "" -- --owner t --vms 2
+STUB_DUP='^p3$' STUB_SKIP='^p5$' case_ dup-and-missing 1 "pieces: 9, failed: 0" "" -- --owner t --vms 2
 has dup-and-missing '^farm: FAILED: share 1 of 2 on hm[0-9]+ did not run the pieces it was given: not reported: p5; reported more than once: p3$' 1
 # Every job dies in its setup: each attempt is named with its VM and the setup's own words.
 FAKE_DIE_ALWAYS=1 case_ die-always 129 "pieces: 0, failed: 0" "" -- --owner t --vms 1
 has die-always '^farm: share 1 of 1 on hm[0-9]+ did not run to its end \(job\.sh exit 5\): job died on hm[0-9]+; run\.sh: setup failed: rustup \(setup\.log\)' 3
 has die-always '^farm: FAILED: share 1 of 1 lost after 3 attempts, on hm1 hm2 hm3; its pieces are not reported$' 1
 # The setup of the full tests' tools failed on the VM: the run fails, though its pieces passed.
-STUB_HAS_PODMAN=1 FAKE_SETUP_FULL_FAIL=1 case_ setup-full-fail 1 "pieces: 10, failed: 0" "$all full-a full-c" -- --owner t --vms 1 --full
+STUB_HAS_PODMAN=1 FAKE_SETUP_FULL_FAIL=1 case_ setup-full-fail 1 "pieces: 11, failed: 0" "$all full-a full-c" -- --owner t --vms 1 --full
 has setup-full-fail "^farm: FAILED: share 1 of 1 on hm1: run\.sh: the setup of the full tests' tools failed" 1
-case_ except 0 "pieces: 6, failed: 0" "p1 p2 p4 p5 p7 short-g1" -- --owner t --vms 3 --except '^p3$|^p6$'
+case_ except 0 "pieces: 7, failed: 0" "p1 p2 p4 p5 p7 short-g1 short-zed_kernel" -- --owner t --vms 3 --except '^p3$|^p6$'
 printf '%s\n' p2 full-b short-g1 >"$ws/terms"
 STUB_HAS_PODMAN=1 case_ terms 0 "pieces: 2, failed: 0" "p2 short-g1" -- --owner t --vms 1 --full --terms "$ws/terms"
 notrun terms "full-b"
@@ -333,44 +340,45 @@ case_ terms-short 0 "pieces: 1, failed: 0" "short-g1" -- --owner t --vms 2 --ter
 printf '%s\n' p2 >"$ws/terms-p2"
 case_ terms-no-short 0 "pieces: 1, failed: 0" "p2" -- --owner t --vms 1 --terms "$ws/terms-p2"
 has terms-no-short '^short-g1 ' 0
+# A term naming short-zed_kernel runs it on the VM beside p2.
 printf '%s\n' p2 short-zed_kernel >"$ws/terms-local-short"
-case_ terms-local-short 0 "pieces: 1, failed: 0" "p2" -- --owner t --vms 1 --terms "$ws/terms-local-short"
-notrun terms-local-short short-zed_kernel
+case_ terms-local-short 0 "pieces: 2, failed: 0" "p2 short-zed_kernel" -- --owner t --vms 1 --terms "$ws/terms-local-short"
+notrun terms-local-short ""
 printf '%s\n' full-b >"$ws/terms-here"
 case_ terms-here-only 0 "pieces: 0, failed: 0" "" -- --owner t --vms 2 --full --terms "$ws/terms-here"
 [ "$(command grep -c '^acquire' "$colab/log")" = 0 ] || { fail=$((fail + 1)); echo "FAIL terms-here-only: a VM acquired"; }
 notrun terms-here-only full-b
 # A short-addresses piece is not run again: failed, or stopped by its limit, its verdict stands,
 # and it fails the share even when the share's other stopped piece passes alone.
-STUB_FAIL='^short-g1$' case_ short-fail 1 "pieces: 8, failed: 1" "$all" -- --owner t --vms 2
+STUB_FAIL='^short-g1$' case_ short-fail 1 "pieces: 9, failed: 1" "$all" -- --owner t --vms 2
 has short-fail '^farm: (first run|each )' 0
-STUB_TIMEOUT='^short-g1$' case_ short-timeout 1 "pieces: 8, failed: 1" "$all" -- --owner t --vms 2
+STUB_TIMEOUT='^short-g1$' case_ short-timeout 1 "pieces: 9, failed: 1" "$all" -- --owner t --vms 2
 has short-timeout '^farm: (first run|each )' 0
-STUB_TIMEOUT='^p2$' STUB_FAIL='^short-g1$' case_ short-fail-and-timeout 1 "pieces: 8, failed: 1" "$all" -- --owner t --vms 1
+STUB_TIMEOUT='^p2$' STUB_FAIL='^short-g1$' case_ short-fail-and-timeout 1 "pieces: 9, failed: 1" "$all" -- --owner t --vms 1
 has short-fail-and-timeout '^farm: stopped by its limit under load, passed alone: p2$' 1
 has short-fail-and-timeout '^short-g1 rc=1 ' 1
-STUB_FLAKY='^p4$' case_ bench-rerun 0 "pieces: 8, failed: 0" "$all" -- --owner t --vms 2 --bench
+STUB_FLAKY='^p4$' case_ bench-rerun 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2 --bench
 command grep -q -c '^farm: first run: p4 rc=1' "$ws/case-$n-bench-rerun.out" || { fail=$((fail + 1)); echo "FAIL bench-rerun: no first-run line"; }
-STUB_FAIL='^p5$' case_ bench-fail 1 "pieces: 8, failed: 1" "$all" -- --owner t --vms 2 --bench
+STUB_FAIL='^p5$' case_ bench-fail 1 "pieces: 9, failed: 1" "$all" -- --owner t --vms 2 --bench
 # Tests (FARM-share-load-timeouts): a piece stopped by its limit under the share's load runs once
 # more alone; passing alone it is reported passed, its first line kept with the prefix, and named.
-STUB_TIMEOUT='^p4$' case_ timeout-rerun 0 "pieces: 8, failed: 0" "$all" -- --owner t --vms 2
+STUB_TIMEOUT='^p4$' case_ timeout-rerun 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2
 has timeout-rerun '^farm: first run: p4 rc=124 21000ms ' 1
 has timeout-rerun '^p4 rc=0 .* jobs=1$' 1
 has timeout-rerun '^farm: each test piece stopped by its limit run again once, alone, on the same VM' 1
 has timeout-rerun '^farm: stopped by its limit under load, passed alone: p4$' 1
 # Stopped by its limit alone too: failed.
-STUB_TIMEOUT='^p4$' STUB_TIMEOUT_ALONE=1 case_ timeout-alone-too 1 "pieces: 8, failed: 1" "$all" -- --owner t --vms 2
+STUB_TIMEOUT='^p4$' STUB_TIMEOUT_ALONE=1 case_ timeout-alone-too 1 "pieces: 9, failed: 1" "$all" -- --owner t --vms 2
 has timeout-alone-too '^farm: first run: p4 rc=124 ' 1
 has timeout-alone-too '^p4 rc=124 .* jobs=1$' 1
 has timeout-alone-too '^farm: stopped by its limit under load, passed alone: ' 0
 # A failed assertion (rc 1) and a kill well before the limit (rc 137) are not run again.
-STUB_FAIL='^p4$' case_ assert-fail 1 "pieces: 8, failed: 1" "$all" -- --owner t --vms 2
+STUB_FAIL='^p4$' case_ assert-fail 1 "pieces: 9, failed: 1" "$all" -- --owner t --vms 2
 has assert-fail '^farm: (first run|each )' 0
-STUB_KILLED='^p6$' case_ killed 1 "pieces: 8, failed: 1" "$all" -- --owner t --vms 2
+STUB_KILLED='^p6$' case_ killed 1 "pieces: 9, failed: 1" "$all" -- --owner t --vms 2
 has killed '^farm: (first run|each )' 0
 # Both in one share: the timed-out piece passes alone, the failed one stays failed.
-STUB_FAIL='^p3$' STUB_TIMEOUT='^p5$' case_ timeout-and-fail 1 "pieces: 8, failed: 1" "$all" -- --owner t --vms 1
+STUB_FAIL='^p3$' STUB_TIMEOUT='^p5$' case_ timeout-and-fail 1 "pieces: 9, failed: 1" "$all" -- --owner t --vms 1
 has timeout-and-fail '^p3 rc=1 ' 1
 has timeout-and-fail '^farm: first run: p3 ' 0
 has timeout-and-fail '^p5 rc=0 .* jobs=1$' 1
@@ -379,15 +387,15 @@ has timeout-and-fail '^p5 rc=0 .* jobs=1$' 1
 # limit of 20 s, not one raised by the load the share left behind.
 echo '9999.00 9999.00 9999.00 1/100 1' >"$ws/loadavg-high" || exit 2
 FARM_VM_LOADAVG=$ws/loadavg-high STUB_LOWER_LOAD=$ws/loadavg-high STUB_TIMEOUT='^p2$' \
-  case_ load-wait 0 "pieces: 8, failed: 0" "$all" -- --owner t --vms 1
+  case_ load-wait 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 1
 has load-wait '^farm: waited [1-9][0-9]* s for the load to fall to the [0-9]+ cores \(load 0\.10\)' 1
-FAKE_DIE_FIRST=1 case_ died-once 0 "pieces: 8, failed: 0" "$all" -- --owner t --vms 2
+FAKE_DIE_FIRST=1 case_ died-once 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2
 ls -d "$ws/case-$n-died-once/run/"vm?-2 >/dev/null 2>&1 || { fail=$((fail + 1)); echo "FAIL died-once: no second attempt"; }
-FAKE_FREE=1 case_ one-free 0 "pieces: 8, failed: 0" "$all" -- --owner t --vms 4
+FAKE_FREE=1 case_ one-free 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 4
 # A round in which every shape is refused: one wait of 15 s (the reaper's period, FARM-run-retry-15s),
 # then the next round takes both VMs wanted, not only the first.
 t0=$(date +%s)
-FAKE_BUSY=3 case_ busy-round 0 "pieces: 8, failed: 0" "$all" -- --owner t --vms 2
+FAKE_BUSY=3 case_ busy-round 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2
 t1=$(date +%s)
 [ "$(command grep -a -c '^farm: no Colab VM free for t; trying again in 15 s ' "$ws/case-$n-busy-round.out")" = 1 ] &&
   [ "$(command grep -c '^busy' "$colab/log")" = 3 ] && [ "$(command grep -c '^acquire' "$colab/log")" = 2 ] &&
@@ -395,14 +403,32 @@ t1=$(date +%s)
   { fail=$((fail + 1)); echo "FAIL busy-round: not one 15 s wait then 2 VMs ($((t1 - t0)) s; $ws/case-$n-busy-round.out)"; }
 case_ list 0 "pieces: 0, failed: 0" "" -- --owner t --vms 4 --list
 [ "$(command grep -c '^acquire' "$colab/log")" = 1 ] || { fail=$((fail + 1)); echo "FAIL list: not one VM"; }
-case_ trace 0 "pieces: 8, failed: 0" "$all" -- --owner t --vms 2 --trace "$ws/trace"
+case_ trace 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2 --trace "$ws/trace"
 c=$(ls "$ws/trace"/vm*/*.reads 2>/dev/null | wc -l)
-[ "$c" = 8 ] && [ -s "$ws/trace/vm1/groups" ] && [ ! -e "$ws/trace/local" ] ||
+[ "$c" = 9 ] && [ -s "$ws/trace/vm1/groups" ] && [ ! -e "$ws/trace/local" ] ||
   { fail=$((fail + 1)); echo "FAIL trace: $c read lists, or a local trace"; }
+# --commands (FARM-merge-check-clippy-selftests-remote): each line runs on one VM, in order, in the
+# build root, with FARM_OUT set; its log and exit are printed; exit 0, 1 for a failed line, 129 when
+# the job never ran.
+printf '%s\n' 'echo "cwd $PWD"' 'echo "out ${FARM_OUT:-unset}"; ls "$FARM_OUT" >/dev/null' >"$ws/cmd-pass"
+case_ cmd-pass 0 "farm: command 2 rc=0: echo \"out \${FARM_OUT:-unset}\"; ls \"\$FARM_OUT\" >/dev/null" "" -- --owner t --vms 1 --commands "$ws/cmd-pass"
+o=$ws/case-$n-cmd-pass.out
+[ "$(command grep -a -c -x "cwd $FARM_VM_BUILD_ROOT" "$o")" = 1 ] && [ "$(command grep -a -c '^out /' "$o")" = 1 ] &&
+  [ "$(command grep -c '^acquire' "$colab/log")" = 1 ] ||
+  { fail=$((fail + 1)); echo "FAIL cmd-pass: not run in the build root with FARM_OUT, or not on one VM ($o)"; }
+printf '%s\n' 'echo first' 'exit 3' 'echo third' >"$ws/cmd-fail"
+case_ cmd-fail 1 "farm: command 3 rc=0: echo third" "" -- --owner t --vms 1 --commands "$ws/cmd-fail"
+o=$ws/case-$n-cmd-fail.out
+[ "$(command grep -a -c -x 'farm: command 2 rc=3: exit 3' "$o")" = 1 ] && [ "$(command grep -a -c -x 'first' "$o")" = 1 ] ||
+  { fail=$((fail + 1)); echo "FAIL cmd-fail: line 2's exit 3 or line 1's log not printed ($o)"; }
+FAKE_DIE_ALWAYS=1 case_ cmd-die 129 "farm: FAILED: the commands could not be run after 3 attempts" "" -- --owner t --vms 1 --commands "$ws/cmd-pass"
+[ "$(command grep -c '^acquire' "$colab/log")" = 3 ] || { fail=$((fail + 1)); echo "FAIL cmd-die: not 3 attempts"; }
+FAKE_DIE_FIRST=1 case_ cmd-died-once 0 "farm: command 2 rc=0: echo \"out \${FARM_OUT:-unset}\"; ls \"\$FARM_OUT\" >/dev/null" "" -- --owner t --vms 1 --commands "$ws/cmd-pass"
 # Usage errors: exit 2, nothing made, no VM acquired.
 for bad in "--owner '' --vms 1" "--owner t --vms 5" "--owner t --vms 0" "--owner 't x' --vms 1" "--owner t --vms 1 --jobs 0" \
   "--owner t --vms 1 --terms /nonexistent" "--owner t --vms 1 --trace rel" "--owner t --vms 1 --zrun /bin/true" \
-  "--owner t --vms 1 --except '('" "--owner t --vms 1 --bogus"; do
+  "--owner t --vms 1 --except '('" "--owner t --vms 1 --bogus" "--owner t --vms 1 --commands /nonexistent" \
+  "--owner t --vms 1 --commands $ws/cmd-pass --list" "--owner t --vms 1 --commands $ws/cmd-pass --terms $ws/cmd-pass"; do
   : >"$colab/log"
   n=$((n + 1))
   o=$ws/case-$n-usage

@@ -65,6 +65,10 @@
 #     "The record" (in the toy of tools/test_merge_check.sh, clippy on every run of its record
 #     part took it from 12.2 to 20.6 s, over the 20 s limit at low load). Skipped with --groups
 #     and --list;
+#     Steps 0b, 0, 0c and 1a run, in that order, in tools/merge_check_steps.sh, on one Colab VM
+#     through `tools/farm_run.sh --commands` (FARM-merge-check-clippy-selftests-remote), or here
+#     with MERGE_CHECK_FARM=local; this script decides which of them run. A change to that script
+#     runs step 0, as one to this script does;
 #  2. runs, with tools/run_tests.sh --only, every test group of every workspace package that
 #     depends on a changed package, directly or through others, and of the changed packages
 #     themselves. The packages and their dependencies come from `cargo metadata`; nothing is
@@ -254,7 +258,7 @@ echo "merge check: ${#changed[@]} files changed since $(git rev-parse --short "$
 [ ${#changed[@]} -gt 0 ] || exit 0
 selftest= rtself= farmself=
 for f in "${changed[@]}"; do
-  case $f in tools/merge_check.sh | tools/test_merge_check.sh | tools/run_tests.sh | tools/spec_groups.sh | tools/test_lib.sh) selftest=1 ;; esac
+  case $f in tools/merge_check.sh | tools/merge_check_steps.sh | tools/test_merge_check.sh | tools/run_tests.sh | tools/spec_groups.sh | tools/test_lib.sh) selftest=1 ;; esac
   case $f in tools/run_tests.sh | tools/test_run_tests.sh | tools/test_lib.sh) rtself=1 ;; esac
   case $f in tools/farm_run.sh | tools/test_farm_run.sh) farmself=1 ;; esac
 done
@@ -774,7 +778,7 @@ if [ -n "$reads" ]; then
   [ -z "$u" ] || echo "merge check: the map has no reads of $(wc -l <<<"$u") tests/full pieces, which only compilation selects: $(paste -sd' ' <<<"$u")"
   sel=$(command grep -a . <<<"$sel"$'\n'"$rsel" | sort -u)
 fi
-if [ -z "$sel" ] && [ -z "$selftest$rtself" ] && [ -z "$clippy_pkgs" ]; then
+if [ -z "$sel" ] && [ -z "$selftest$rtself$farmself" ] && [ -z "$clippy_pkgs" ]; then
   echo "merge check: no package changed; no tests to run"
   exit 0
 fi
@@ -913,112 +917,59 @@ write_reads() {
   echo "merge check: the map's reads of $(wc -l <<<"$torun") groups written to $reads"
 }
 
-# Step 0b: the parts of tools/test_run_tests.sh, started here and waited for after step 0, so the
-# two steps run at once. A part that is not run (its chain stopped first) is reported as failed.
-# The parts list the tests of the built binaries, and each builds first as run_tests.sh does,
-# which does nothing on a built tree; on a worktree whose tests are not built yet every part ran
-# into its limit while building (2026-11-20: all six killed at 60 s with empty logs). So the
-# build comes first, `run_tests.sh --list` with no --only (the build of the full listing, with
-# the short-addresses clone), with no time limit, since it is a build and not a test, and the
-# parts start when it has passed. The build runs in the foreground, before step 0 starts its
-# timed parts too: run beside them, a workspace build (at load 50 on 2026-11-20) pushed
-# tools/test_merge_check.sh select, 15 to 21 s alone, past its 25 s limit.
-rtparts=(list select table except benches fresh short copy concurrent trace nobus)
-rtpids=()
-if [ -n "$rtself" ] && [ -z "$list" ]; then
-  rlog=$(git rev-parse --path-format=absolute --git-path merge-check-rt)
-  piece_limit
-  rtlimit=$((limit > 60 ? limit : 60))
-  rt_part() { timeout -k 5 "$rtlimit" tools/test_run_tests.sh "$1" >"$rlog-$1.log" 2>&1; }
-  # Emptied first, so a part its chain did not reach shows no line of an earlier check.
-  for p in "${rtparts[@]}"; do : >"$rlog-$p.log"; done
-  if ! tools/run_tests.sh --logs "$rlog-build" --list >"$rlog-build.log" 2>&1; then
-    tail -n 40 "$rlog-build.log"
-    echo "merge check: FAILED: the build for tools/test_run_tests.sh (log $rlog-build.log)" >&2
-    exit 1
-  fi
-  # The parts' verdicts are read from their logs.
-  # short starts when list has ended: both list fresh with the short-addresses clone, and a run
-  # waits while another has it mounted, so beside list short spent list's time (30 to 57 s) out
-  # of its own 60 s (killed at 60 s at load 52 on 2026-11-20; 6 to 11 s alone). select and table
-  # reuse list's table and mount no clone, as does except after table, so short runs beside them.
-  (
-    (rt_part list && {
-      rt_part short &
-      rt_part select && rt_part table && rt_part except && rt_part benches
-      wait
-    }) &
-    for p in fresh copy concurrent trace nobus; do rt_part "$p" & done
-    wait
-  ) &
-  rtpids+=($!)
-fi
-# Waits for step 0b and fails when a part failed: each part's last line is "checks failed: 0"
-# exactly when it passed (a part killed by its limit has no such line).
-rt_wait() {
-  [ ${#rtpids[@]} -gt 0 ] || return 0
-  local p bad=
-  wait "${rtpids[0]}"
-  for p in "${rtparts[@]}"; do
-    if [ "$(tail -n 1 "$rlog-$p.log" 2>/dev/null)" != "checks failed: 0" ]; then
-      [ ! -f "$rlog-$p.log" ] || cat "$rlog-$p.log"
-      echo "merge check: FAILED: tools/test_run_tests.sh $p (limit ${rtlimit}s; log $rlog-$p.log)" >&2
-      bad=1
-    fi
-  done
-  [ -z "$bad" ] || exit 1
-  echo "merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace and nobus passed"
+# farm_dir <name>: a new directory under the git directory for one call of the farm runner.
+farm_dir() {
+  local o
+  o=$(git rev-parse --path-format=absolute --git-path "$1")/$(date -u +%Y%m%dT%H%M%S)-$$
+  [[ $o == /?*/"$1"/*-$$ ]] || { echo "merge check: bad farm directory '$o'"; return 1; }
+  mkdir -p "$o" || return 1
+  echo "$o"
 }
-
-# Step 0: the toy cases of this script, each part under the limit of a piece of run_tests.sh.
-if [ -n "$selftest" ] && [ -z "$list" ]; then
-  slog=$(git rev-parse --path-format=absolute --git-path merge-check-self)
-  piece_limit
-  sparts=(select select2 record chunks) spids=()
-  for part in "${sparts[@]}"; do
-    timeout -k 5 "$limit" tools/test_merge_check.sh "$part" >"$slog-$part.log" 2>&1 &
-    spids+=($!)
-  done
-  sbad=
-  for part in "${sparts[@]}"; do
-    wait "${spids[0]}"
-    rc=$?
-    spids=("${spids[@]:1}")
-    if [ "$rc" -ne 0 ]; then
-      cat "$slog-$part.log"
-      echo "merge check: FAILED: tools/test_merge_check.sh $part, rc=$rc (limit ${limit}s; log $slog-$part.log)" >&2
-      sbad=1
-    fi
-  done
-  # On a failure here step 0b is still waited for, so no part outlives the check.
-  [ -z "$sbad" ] || { rt_wait; exit 1; }
-  echo "merge check: tools/test_merge_check.sh select, select2, record and chunks passed"
-fi
-# Step 0c: tools/test_farm_run.sh, the cases of tools/farm_run.sh with a fake pool.sh and job.sh
-# (no VM, no build), when either changed. Until FARM-share-load-timeouts a change to farm_run.sh
-# ran no test at all. Its limit is max(60, the piece limit): one case waits 15 s by design (the
-# pool's retry period) and another 5 s (the load wait); the whole took 22.7 s at load 2 here
-# (2026-11-22).
-if [ -n "$farmself" ] && [ -z "$list" ]; then
-  flog=$(git rev-parse --path-format=absolute --git-path merge-check-farm-self.log)
-  piece_limit
-  flimit=$((limit > 60 ? limit : 60))
-  if ! timeout -k 5 "$flimit" tools/test_farm_run.sh >"$flog" 2>&1; then
-    command grep -a -E '^(FAIL|test_farm_run)' "$flog"
-    echo "merge check: FAILED: tools/test_farm_run.sh (limit ${flimit}s; log $flog)" >&2
-    rt_wait
-    exit 1
+# farm_owner: the VMs' owner, merge-check-<branch>, so the pool shows whose check holds them.
+farm_owner() {
+  local owner
+  owner=merge-check-$(git branch --show-current | tr -c 'A-Za-z0-9._\n-' '-' | sed 's#^wt-##')
+  [ "$owner" != merge-check- ] || owner=merge-check-$(git rev-parse --short=9 HEAD)
+  echo "$owner"
+}
+# run_steps_farm: the steps in $steps on one VM, as one command of `$farm --commands`, which runs
+# it in the checkout's root at the build root of the short-addresses build (test_run_tests.sh's
+# list and short parts build that clone), with the logs under the job's out/ (FARM_OUT), which
+# come back to the farm's directory. Prints the step script's lines; fails when it failed or did
+# not run to its end.
+run_steps_farm() {
+  local o spec
+  o=$(farm_dir merge-check-steps) || return 1
+  spec=$(tools/spec_groups.sh --dir) && [[ $spec == /?* ]] && [ -d "$spec" ] ||
+    { echo "merge check: tools/spec_groups.sh --dir gave no spec directory ('$spec')"; return 1; }
+  printf 'tools/merge_check_steps.sh --logs "$FARM_OUT/merge-check"%s\n' "$(printf ' %q' "${steps[@]}")" >"$o/commands" || return 1
+  echo "merge check: steps ${steps[*]} on a Colab VM as $(farm_owner) (logs $o)"
+  "$farm" --owner "$(farm_owner)" --vms 1 --jobs "$jobs" --out "$o/run" --commands "$o/commands" --spec "$spec"
+}
+# Steps 0b, 0, 0c and 1a, in that order (see the header), in tools/merge_check_steps.sh: run here
+# with MERGE_CHECK_FARM=local, else on one Colab VM through `$farm --commands`
+# (FARM-merge-check-clippy-selftests-remote; author 2026-11-22: "start all future jobs in the
+# cloud via Colab"). Until then they ran here on every check: cargo clippy over the selected
+# packages and, when a tool changed, its self-tests, which build the workspace's tests here.
+# The VM gets the checkout's files and no git repository, so this script decides which steps run
+# and the step script reads only its arguments. Clippy's verdict is the same on the VM: it reads
+# the same sources with the same toolchain (rust-toolchain), and the packages whose clippy passed
+# at the record's commit are left out of --clippy here, as before. The VM's logs come back under
+# the farm's directory, named on a failure.
+farm=${MERGE_CHECK_FARM:-$(pwd -P)/tools/farm_run.sh}
+[ "$farm" = local ] || [ -x "$farm" ] || { echo "merge check: no farm runner '$farm' (MERGE_CHECK_FARM)" >&2; exit 2; }
+steps=()
+[ -z "$selftest" ] || steps+=(--self)
+[ -z "$rtself" ] || steps+=(--rt)
+[ -z "$farmself" ] || steps+=(--farm)
+[ -z "$clippy_run" ] || steps+=(--clippy "$clippy_run")
+if [ ${#steps[@]} -gt 0 ] && [ -z "$list" ]; then
+  if [ "$farm" = local ]; then
+    "${BASH_SOURCE[0]%/*}/merge_check_steps.sh" --logs "$(git rev-parse --path-format=absolute --git-path merge-check)" "${steps[@]}" ||
+      exit 1
+  else
+    run_steps_farm || exit 1
   fi
-  echo "merge check: tools/test_farm_run.sh passed"
-fi
-rt_wait
-
-# Step 1a: clippy on the selected packages, before the tests (see the header), less those whose
-# clippy passed at the record's commit with the same inputs.
-if [ -n "$clippy_run" ] && [ -z "$list" ]; then
-  echo "merge check: clippy -D warnings on: $clippy_run"
-  cargo clippy -q $(printf -- '-p %s ' $clippy_run) --all-targets -- -D warnings ||
-    { echo "merge check: FAILED: clippy (above)" >&2; exit 1; }
 fi
 
 if [ -n "$snew" ] && [ -z "$torun" ]; then
@@ -1333,10 +1284,8 @@ run_chunks() {
 # Where the pieces run (FARM-merge-check-remote; author 2026-11-22: "start all future jobs in the
 # cloud via Colab"). By default on Colab VMs, through tools/farm_run.sh (MERGE_CHECK_FARM names
 # another runner); `local` runs them here in chunks (run_chunks above), as before, and is what
-# tools/test_merge_check.sh's toy uses. The selection above, step 0's self-tests, the clippy
-# decision, this script's checks of the trace and the verdict stay here.
-farm=${MERGE_CHECK_FARM:-$(pwd -P)/tools/farm_run.sh}
-[ "$farm" = local ] || [ -x "$farm" ] || { echo "merge check: no farm runner '$farm' (MERGE_CHECK_FARM)" >&2; exit 2; }
+# tools/test_merge_check.sh's toy uses ($farm, set above for the steps). The selection above, the
+# clippy decision, this script's checks of the trace and the verdict stay here.
 # run_farm <terms>: runs the pieces the terms (one a line, each a group) select, of kind $fullarg,
 # on Colab VMs; fails if a piece failed or a VM's share was lost. Each term is anchored alone,
 # as '^(<terms>)$' anchors them in run_chunks. The VMs' owner is merge-check-<branch>, so the
@@ -1346,22 +1295,19 @@ farm=${MERGE_CHECK_FARM:-$(pwd -P)/tools/farm_run.sh}
 # --record each VM's trace comes back as a directory of `groups` and `<piece>.reads` files,
 # which join tdirs as run_chunks' chunk directories do. The spec the VMs get is the one the
 # tests here would read (tools/spec_groups.sh --dir). The short-* pieces run on VMs too since
-# FARM-short-pieces-on-vm-tmpfs, except short-zed_kernel, too long as one piece there
-# (TEST-short-zed_kernel-split); it and a folder of tests/full whose needs no VM has run nowhere,
-# named on farm_run.sh's `farm: not run` line (see the head of tools/farm_run.sh).
+# FARM-short-pieces-on-vm-tmpfs, short-zed_kernel too since TEST-short-zed_kernel-split cut it into
+# pieces under the limit; a folder of tests/full whose needs no VM has runs nowhere, named on
+# farm_run.sh's `farm: not run` line (see the head of tools/farm_run.sh).
 run_farm() {
   local terms=$1 o owner spec rc d
-  o=$(git rev-parse --path-format=absolute --git-path "merge-check-farm${fullarg:+-full}")/$(date -u +%Y%m%dT%H%M%S)-$$
-  [[ $o == /?*/merge-check-farm*/*-$$ ]] || { echo "merge check: bad farm directory '$o'"; return 1; }
-  mkdir -p "$o" || return 1
+  o=$(farm_dir "merge-check-farm${fullarg:+-full}") || return 1
   printf '%s\n' "$terms" >"$o/terms" || return 1
   if ! tools/check_changed_docs.sh "$o/doc-changed.log" >"$o/doc-changed.out" 2>&1; then
     cat "$o/doc-changed.out"
     echo "merge check: FAILED: the check of the changed documentation (log $o/doc-changed.log)"
     return 1
   fi
-  owner=merge-check-$(git branch --show-current | tr -c 'A-Za-z0-9._\n-' '-' | sed 's#^wt-##')
-  [ "$owner" != merge-check- ] || owner=merge-check-$(git rev-parse --short=9 HEAD)
+  owner=$(farm_owner)
   spec=$(tools/spec_groups.sh --dir) && [[ $spec == /?* ]] && [ -d "$spec" ] ||
     { echo "merge check: tools/spec_groups.sh --dir gave no spec directory ('$spec')"; return 1; }
   local a=(--owner "$owner" --vms 4 --jobs "$jobs" --out "$o/run" --terms "$o/terms" --skip-other-kind --spec "$spec")

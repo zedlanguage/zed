@@ -482,6 +482,20 @@ check "a module of short-zed_kernel selects its tests, one piece each" "$plain" 
   "$(run --list --only '^short-zed_kernel::treap_set::' | others | sort)"
 check "each runs its one test --exact in crates/zed-kernel" "" "$(awk '{ t = $1; sub(/^short-zed_kernel::/, "", t)
   if (NF != 5 || $2 != "crates/zed-kernel" || $4 != "--exact" || $5 != t) print }' "$(last_run)/pieces")"
+# The group short-zed_kernel is a piece per test of run_tests.sh's short_alone, run --exact, and
+# one piece of the binary's other tests that skips each of them and the benchmarks
+# (TEST-short-zed_kernel-split: as one piece it ran past its limit on a VM).
+alone_k=$(sed -n '/^short_alone="$/,/^"$/p' tools/run_tests.sh | sed '1d;$d' | tr -d ' ')
+check "short_alone names tests" "yes" "$([ -n "$alone_k" ] && echo yes)"
+run --list --only '^short-zed_kernel$' >/dev/null
+check "short-zed_kernel is a piece per test of short_alone and one piece more" \
+  "$({ echo short-zed_kernel; sed 's/^/short-zed_kernel::/' <<<"$alone_k"; } | sort)" \
+  "$(cut -d ' ' -f 1 "$(last_run)/pieces" | sort)"
+check "each of short_alone runs --exact" "" "$(awk '$1 != "short-zed_kernel" { t = $1; sub(/^short-zed_kernel::/, "", t)
+  if (NF != 5 || $2 != "crates/zed-kernel" || $4 != "--exact" || $5 != t) print }' "$(last_run)/pieces")"
+check "the other piece skips the benchmarks and each of short_alone" \
+  "--skip bench:: $(sed 's/^/--skip /' <<<"$alone_k" | paste -sd ' ')" \
+  "$(awk '$1 == "short-zed_kernel" { $1 = $2 = $3 = ""; sub(/^ +/, ""); print }' "$(last_run)/pieces")"
 bin37=$(run --list --only '^l01_37_oracle$' >/dev/null && awk 'NR == 1 { print $3 }' "$(last_run)/pieces")
 t37=$("$bin37" --list --format terse | sed -n 's/: test$//p' | head -1)
 check "a test of a short-addresses step is selected as short-<step>::<test>" "short-l01_37_oracle::$t37" \
