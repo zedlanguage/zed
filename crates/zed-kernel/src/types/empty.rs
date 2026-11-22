@@ -1742,16 +1742,16 @@ impl Type {
 /// ([`Part::union_rows`]); then `t` is `(c,)`, as `(a,) | (b,)` and `(a | b,)` hold the same
 /// one-tuples. `None` for any other type, a recursive node among them.
 ///
-/// Complexity tradeoff (PERF-kernel-box-union-search, COMPLEXITY.md K142): the union of `m` one-tuples
-/// `(#box(#k_i),)` against `m` others `(#box(#j_i),)` (`Domains::outside` in `zedc-types`, for
-/// the meet of two overloads of `m` functions each) made `m²` pairs in the simulation, whose
-/// [`ByName`] files rows by their first atom name only, all `box` here, and the search on the
-/// difference was quadratic too: 0.78 s at `m = 256` and 3.3 s at `m = 512`, about 4 times per
-/// doubling, 39% of it in `Simulation::holds` and 51% in `Search`. Comparing the components
-/// instead compares the two unions of atoms `#box(…)` name by name, whose payloads are again
-/// such unions. Cost: one pass over the rows of each side, `O(m)`, and the union of their
-/// components, `Type::union_all`. Given up: a union whose part is not a plain union of rows
-/// (a negation, a meet, another length beside 1) goes the long way, as before.
+/// Complexity tradeoff (PERF-kernel-box-union-search, COMPLEXITY.md K142): the union of `m`
+/// one-tuples `(#box(#k_i),)` against `m` others `(#box(#j_i),)` (`Domains::outside` in
+/// `zedc-types`, for the meet of two overloads of `m` functions each) made `m²` pairs in the
+/// simulation, whose [`ByName`] files rows by their first atom name only, all `box` here, and
+/// the search on the difference was quadratic too: 0.78 s at `m = 256` and 3.3 s at `m = 512`,
+/// about 4 times per doubling, 39% of it in `Simulation::holds` and 51% in `Search`. Comparing
+/// the components instead compares the two unions of atoms `#box(…)` name by name, whose
+/// payloads are again such unions. Cost: one pass over the rows of each side, `O(m)`, and the
+/// union of their components, `Type::union_all`. Given up: a union whose part is not a plain
+/// union of rows (a negation, a meet, another length beside 1) goes the long way, as before.
 fn one_tuple_column(t: &Type) -> Option<Type> {
     let Node::Parts(p, _) = &*t.0 else {
         return None;
