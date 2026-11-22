@@ -399,9 +399,9 @@ pub(super) const CRT_SHARE: f64 = 1.5;
 /// Panics unless `run`, a whole question over `system` whose witness is the coloring's, takes
 /// at most [`CRT_SHARE`] times the work of its coloring ([`graph_coloring_choices`]) and of
 /// [`combine_crt_tree`] on the residues it chooses. The witness is one integer modulo the
-/// product of all the moduli, `N` bits for `k` moduli, which no point avoids: the product of the moduli is
-/// its period, and a point of a system whose moduli are all needed has no smaller
-/// representative in general. Its CRT costs `O(M(N) log k)`, which grows faster than the
+/// product of all the moduli, `N` bits for `k` moduli, which no point avoids: the product of
+/// the moduli is its period, and a point of a system whose moduli are all needed has no
+/// smaller representative in general. Its CRT costs `O(M(N) log k)`, which grows faster than the
 /// limit of 10.5 at 8n once the integers are wide, so the coloring is measured apart, without
 /// the CRT (`graph_coloring_choices`, by `scaling::check_order`), and the whole question here
 /// against its two parts, as `pncx_fibonacci_crt_scale` measures its question against one gcd:
