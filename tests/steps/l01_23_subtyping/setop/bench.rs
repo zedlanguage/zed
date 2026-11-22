@@ -213,6 +213,53 @@ fn shared_cofinite_boundaries_are_not_enumerated_per_row() {
     cofinite_rows_scale(16384);
 }
 
+/// A run of a parity benchmark on a [`Fresh`] leaves nothing that a later run on it finds: a
+/// second run at one size does the counted work of the first (PROOF-bench-fresh-instance; the
+/// proof is at [`Fresh`]).
+#[test]
+fn a_second_run_on_a_fresh_instance_does_the_work_of_the_first() {
+    check_a_second_run_does_the_work_of_the_first(&|fresh| fresh.member());
+}
+
+/// The check of [`a_second_run_on_a_fresh_instance_does_the_work_of_the_first`], with `member`
+/// giving each run the member it decides: two runs of the check of
+/// [`parity_verdicts_scale_with_the_number_of_constraints`] at one size on one [`Fresh`], each on
+/// a new thread, as `scaling::check` runs them, and their instructions and bytes within 1% of
+/// each other (PROOF-bench-fresh-instance). One instance kept for both runs gave the second
+/// about half the work of the first (FAIL-setop-parity-bench-time), so a memo a run leaves
+/// where the next run finds it shows here.
+fn check_a_second_run_does_the_work_of_the_first(member: &(dyn Fn(&Fresh) -> Type + Sync)) {
+    const STACK: usize = 256 << 20;
+    let k = 1024;
+    let (group, meet) = parity_variant_group(k, 0, Some("Scale_"), false);
+    let fresh = Fresh::new(group, meet);
+    let mut meter = scaling::Meter::new();
+    let mut run = || {
+        meter.work(|| {
+            scaling::on_a_thread(STACK, || {
+                Type::forget_emptiness();
+                assert_eq!(member(&fresh).verdict(), Verdict::Inhabited);
+            })
+        })
+    };
+    let (first, second) = (run(), run());
+    let unit = meter.unit();
+    eprintln!(
+        "two runs on a fresh instance at {k}: {} and {} {unit}, {} and {} bytes",
+        first.units, second.units, first.bytes, second.bytes
+    );
+    let within = |a: u64, b: u64| a.abs_diff(b) * 100 <= a.max(b);
+    assert!(
+        within(first.units, second.units) && within(first.bytes, second.bytes),
+        "a second run at {k} differs from the first by more than 1%: {} and {} {unit}, {} and {} \
+         bytes",
+        first.units,
+        second.units,
+        first.bytes,
+        second.bytes
+    );
+}
+
 /// The exponent has n+1 decimal digits; the integer has far more than 2^n
 /// digits. A checked point must keep those powers instead of expanding them. The types are
 /// [`beside_a_large_power`]; small instance, with the check that each holds `(1,)`:

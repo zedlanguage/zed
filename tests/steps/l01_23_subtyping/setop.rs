@@ -152,10 +152,45 @@ fn lit(i: usize) -> Type {
 /// every check: about 18 times the time at n where 10 passes (FAIL-setop-parity-bench-time).
 /// A fresh instance on each run's thread (instances are kept per thread) does the whole work
 /// each time, so the runs compared are alike and the first runs are those the check holds.
-/// Assumed, not proved: the work a run does on a fresh instance (unfolding the members, judging
-/// the group and the search) is the work these benchmarks mean to measure, the verdict on the
-/// written definitions, and not a cost of the test. Evidence: each part grows with the number
-/// of constraints, 8.2 to 8.3 times the instructions from 4096 to 32768 in all five checks.
+///
+/// What a run on a fresh instance shares with earlier runs (PROOF-bench-fresh-instance). The
+/// group path reaches zed-kernel and, of the workspace, zed-graph, zed-collections and
+/// zed-numtheory; their `static`, `thread_local!`, `OnceLock` and `LazyLock` items fall in four
+/// kinds (searched 2026-11-22):
+///
+/// 1. The group itself, built before the timing: its definitions, its trees, whose leaves are
+///    the written types (`int`, the literals, `int - j`, the atoms), and two `OnceLock`s. Its
+///    canonical form (`Checked::canon`) is built by [`Fresh::new`], so no run builds it. Its
+///    order of definitions by name (`Checked::by_name`) is filled only when two groups of one
+///    canonical form are ordered (`Checked::names_order`), and a run reads one group, so no run
+///    fills it. The leaf types are shared, and a lazily filled part of one (a printed text, a
+///    diagram's complement or index) filled by one run is read by the next; each such part is of
+///    one leaf, of a size that does not grow with `k`, so at most O(k) work a run is saved by
+///    them, inside work that grows with `k` (8.2 to 8.3 times from 4096 to 32768).
+/// 2. Tables the process keeps for all threads: `GROUPS`, by the definitions, which only
+///    `Group::new` reads, before the timing; `INSTANCES`, by the thread first, so a run's new
+///    thread finds no instance an earlier run made, and its own table leaves when its last
+///    instance is dropped, at the run's end; the outer map holds an entry for each thread with a
+///    live instance, a number that does not grow with `k`. The id counters (`IdSource`: groups,
+///    instances, threads, units, nodes) give other numbers in a later run, and their atomic
+///    increments cost the same.
+/// 3. Values fixed for the process on first use: the digest seed (`digest::SEED`, `TEXT`) and
+///    the treap priorities (`Priorities` statics). Building the inputs reads them first.
+/// 4. Everything else is `thread_local!`: the emptiness memos (`empty::MEMO`, `VERDICTS` and the
+///    rest), the diagram tables (`TUPLES`, `MORPHISMS`), the unit of `rec::unfold` and the
+///    printer's tables. Each run is on a new thread (`scaling::alone`), so they start empty,
+///    and `Type::forget_emptiness` empties this thread's emptiness memos besides.
+///
+/// Proof that the runs compared are comparable: on a count of instructions each size runs once
+/// (author A160), the run at 8n in a new process of the test (TEST-scaling-cold-shared-memo), so
+/// each run measured is the first on its own `Fresh`, built the same way, and starts with kinds 1
+/// and 3 in the same state at its own size, kind 4 empty and kind 2 differing only in the counters'
+/// values and the outer map's size, neither of which grows with `k`. So nothing a run finds
+/// filled was filled by a run at the other size, and the work measured is the unfolding, the
+/// judging and the search on the written definitions. A meter of processor time takes the least
+/// of several runs of each size; for it, `bench::a_second_run_on_a_fresh_instance_does_the_work_of_the_first`
+/// checks that a second run at `n` does the counted work of the first, within 1%, so that what
+/// a first run leaves in kinds 1 and 2 does not lower the least.
 struct Fresh {
     group: Group,
     member: usize,
