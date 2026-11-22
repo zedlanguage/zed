@@ -935,6 +935,16 @@ pub(super) fn through_a_call(n: usize) -> String {
     format!("g(positional c: int) = {body};\n{H}f(positional c: int) = h(g(c));\n")
 }
 
+/// The same nest compared by `==` with the `f64` `x`, each branch read at `f64`.
+pub(super) fn compared(n: usize) -> String {
+    let mut body = String::new();
+    for i in 0..n {
+        body += &format!("if c == {i} {{ 2 * {i} + 1 }} else ");
+    }
+    body += &format!("{{ 2 * {n} + 1 }}");
+    format!("f(positional c: int, positional x: f64) = x == ({body});\n")
+}
+
 /// A body of `n` products `x * g(c)`, each call read at the `f64` of `x`.
 pub(super) fn products(n: usize) -> String {
     let mut body = String::new();
@@ -954,4 +964,43 @@ fn many_operation_branches_take_f64_at_a_parameter_or_through_a_call() {
     assert_eq!(sig(&through_a_call(3), "f"), "int -> f64");
     assert_eq!(type_errors(&products(3)), Vec::<String>::new());
     assert_eq!(type_errors(&tuple_calls(3)), Vec::<String>::new());
+}
+
+/// Row LIT-branch-reads-followups, item 2: an `if` of literals beside `==` takes the carrier
+/// of the other side, as it does beside `+` and at a parameter (L1.26a: "each keeps its own
+/// value and is fixed where the result is used"), on either side and with an operation on
+/// literals as a branch; the comparison then compares the numbers.
+#[test]
+fn an_if_of_literals_beside_eq_takes_the_other_side_s_carrier() {
+    let src = "f(positional c: bool, positional x: f64) = x == (if c { 2 } else { 1 });\n\
+               g(positional c: bool, positional x: f64) = (if c { 2 + 1 } else { 1.5 }) == x;\n\
+               r(positional c: bool, positional x: rat) = x != (if c { 2 } else { 1 });\n\
+               a1 = f(false, 1.0);\na2 = f(true, 1.0);\na3 = f(true, 2.0);\n\
+               a4 = g(true, 3.0);\na5 = g(false, 1.5);\na6 = g(false, 3.0);\n\
+               a7 = r(true, 2r);\na8 = r(false, 2r);\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    for (name, want) in [
+        ("a1", "true"),
+        ("a2", "false"),
+        ("a3", "true"),
+        ("a4", "true"),
+        ("a5", "true"),
+        ("a6", "false"),
+        ("a7", "false"),
+        ("a8", "true"),
+    ] {
+        assert_eq!(value(src, name), want, "{name}");
+    }
+    // A decimal branch at `rat` is the exact number it writes, as `x == 1.5` reads it there.
+    let src = "q(positional c: bool, positional x: rat) = x == (if c { 2 } else { 1.5 });\n\
+               b1 = q(false, 3r / 2r);\nb2 = q(true, 3r / 2r);\n";
+    assert_eq!(type_errors(src), Vec::<String>::new());
+    assert_eq!(value(src, "b1"), "true");
+    assert_eq!(value(src, "b2"), "false");
+    // A small instance of `bench::lit_branch_ops::scaling_an_if_of_operation_branches_beside_eq`.
+    assert_eq!(type_errors(&compared(3)), Vec::<String>::new());
+    // At `int`, which no `if` of literals is read at, the comparison is checked as before.
+    let errs =
+        type_errors("f(positional c: bool, positional x: int) = x == (if c { 2 } else { 1 });\n");
+    assert_eq!(errs, Vec::<String>::new());
 }

@@ -7,7 +7,7 @@
 use zed_tests::scaling;
 use zed_tests::step_helpers::l01_26_type_resolution::Resolved;
 
-use super::super::lit_branch_ops::{nest, products, through_a_call, tuple_calls};
+use super::super::lit_branch_ops::{compared, nest, products, through_a_call, tuple_calls};
 
 /// Checks `make(m)` at `n` and `8n`.
 fn checks(what: &str, n: usize, make: fn(usize) -> String) {
@@ -66,5 +66,19 @@ fn scaling_ifs_in_tuple_arguments() {
         "reading the `if`s of n tuple arguments at `(f64, f64)`",
         1000,
         tuple_calls,
+    );
+}
+
+/// Row LIT-branch-reads-followups: the `if` beside `==` adopts its branches once, O(n), as
+/// at a parameter ([`scaling_an_if_of_operation_branches`]).
+///
+/// Besides its ratio: the check ends. Small instance, with no type error:
+/// `lit_branch_ops::an_if_of_literals_beside_eq_takes_the_other_side_s_carrier`.
+#[test]
+fn scaling_an_if_of_operation_branches_beside_eq() {
+    checks(
+        "checking an `if` of n operation branches beside `==` with an `f64`",
+        450,
+        compared,
     );
 }

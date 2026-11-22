@@ -26046,10 +26046,49 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// nested d deep at s shapes costs O(d·s) and not a copy of each level's type.
     fn equal(&mut self, x: &Arg<'a>, y: &Arg<'a>) {
         let from = self.errors.len();
-        self.pair(side(x), side(y));
+        let (x, y) = (self.branches_read(x, y), self.branches_read(y, x));
+        self.pair(side(&x), side(&y));
         if !self.trying {
-            self.equal_repairs(from, x, y);
-            self.equal_repairs(from, y, x);
+            self.equal_repairs(from, &x, &y);
+            self.equal_repairs(from, &y, &x);
+        }
+    }
+
+    /// The side `a` of `==` where it is an `if` of literals ([`branch_lits`]) and the other
+    /// side `o` holds numbers of one carrier, `f64`, `f32` or `rat` ([`read_carrier`]), with
+    /// no literal or `if` of literals of its own: `a` with each branch adopted at `o`'s type,
+    /// as at a parameter of that type ([`adopted`]), so `x == (if c { 2 } else { 1 })` with
+    /// `x: f64` compares `2.0` or `1.0` (DESIGN.md step L1.26a: "each keeps its own value and
+    /// is fixed where the result is used"; row LIT-branch-reads-followups). `a` itself
+    /// otherwise, which [`Ck::pair`] checks as before; a branch the carrier cannot take is
+    /// left to it too, so its rejection is the one a lone literal there gets.
+    // Complexity tradeoff: one call of [`adopted`] on the branches, O(b) for b branches (and
+    // the digits of each decimal), only where `a` has branches, which every other side skips
+    // at O(1). The naive form, the union `2 | 1` of the branches' values compared with `f64`,
+    // finds no common carrier and rejects the comparison that `x + (if c { 2 } else { 1 })`
+    // accepts. Test `l01_26a_generic_literals::lit_branch_ops::an_if_of_literals_beside_eq_takes_the_other_side_s_carrier`.
+    fn branches_read<'b>(&mut self, a: &'b Arg<'a>, o: &Arg<'a>) -> Cow<'b, Arg<'a>> {
+        if a.branches.is_none()
+            || a.lit.is_some()
+            || a.parts.is_some()
+            || o.lit.is_some()
+            || o.branches.is_some()
+            || read_carrier(&o.ty).is_none()
+        {
+            return Cow::Borrowed(a);
+        }
+        match adopted(a, &o.ty, self.rough) {
+            Ok(Some((ty, ads))) => {
+                for (s, v) in ads {
+                    self.put(Undo::Adopt(s, Some(v)));
+                }
+                Cow::Owned(Arg {
+                    ty,
+                    branches: None,
+                    ..a.clone()
+                })
+            }
+            _ => Cow::Borrowed(a),
         }
     }
 
