@@ -29,16 +29,31 @@ if [ -z "$dir" ] || [ ! -s "$dir/summary" ] || [ ! -s "$dir/pieces" ]; then
 fi
 {
   printf 'group\ttest\tms\trc\tload\n'
+  # The group is the piece's binary without its hash (the third field of the pieces file), not
+  # the piece's name before its first ::, which for deep_heap, deep_values and deep_scaling, split
+  # a piece per test and named <test> alone, is the test (TOOLS-time-tests-fixes). The test is
+  # the name after its first ::, the `--exact` argument --each-test gives each piece.
   awk '
+    FNR == NR {
+      bin = $3
+      sub(/.*\//, "", bin)
+      sub(/-[0-9a-f]+$/, "", bin)
+      # A short-addresses piece runs a binary of the same name in the clone; its group is
+      # short-<group>, as --only names it.
+      if ($1 ~ /^short-/) {
+        bin = $1
+        sub(/::.*/, "", bin)
+      }
+      group_of[$1] = bin
+      next
+    }
     $2 ~ /^rc=/ && $3 ~ /ms$/ && $4 ~ /^load=/ {
-      group = $1
-      sub(/::.*/, "", group)
-      sub(/-[0-9a-f]+$/, "", group)
+      group = group_of[$1]
       test = substr($1, index($1, "::") + 2)
       ms = $3
       sub(/ms$/, "", ms)
       printf "%s\t%s\t%s\t%s\t%s\n", group, test, ms, substr($2, 4), substr($4, 6)
-    }' "$dir/summary" | sort -t "$(printf '\t')" -k 3,3nr -k 1,2
+    }' "$dir/pieces" "$dir/summary" | sort -t "$(printf '\t')" -k 3,3nr -k 1,2
 } >"$dir/test-times.tsv"
 mkdir -p build/test-logs
 cp "$dir/test-times.tsv" "build/test-logs/test-times.tsv.$$" &&

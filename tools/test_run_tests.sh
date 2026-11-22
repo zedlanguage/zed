@@ -134,6 +134,14 @@ check "a split module is one piece per test" \
   "$("$bin38" --list --format terse --skip bench:: live3:: | sed -n 's/: test$//p' | sed 's/^/l01_38_omega_test::/' | sort)" "$live3"
 check "a split module selects its tests" "$live3" "$(selected '^l01_38_omega_test::live3::')"
 check "a split step selects all its pieces" "$(by_binary l01_38_presburger)" "$(selected '^l01_38_presburger')"
+# l01_26_type_resolution is split a piece per module, l01_26_type_resolution::random running
+# `random::`; a test of such a piece is selected as <step>::<module>::<test>, alone, as
+# tools/time_tests.sh --only names one (TOOLS-time-tests-fixes: NO PIECE MATCHES).
+check "a test of a split step's module piece is selected as <step>::<module>::<test>" \
+  "l01_26_type_resolution::random::a_wrong_claim_is_caught" \
+  "$(selected '^l01_26_type_resolution::random::a_wrong_claim_is_caught$')"
+check "a split step's module piece is still selected whole by its name" "l01_26_type_resolution::random" \
+  "$(selected '^l01_26_type_resolution::random$')"
 check "zedc's unit tests are one piece" "$(by_binary zedc)" "$(selected '^zedc$')"
 check "a short-addresses piece is selected by its name" "short-l01_37_oracle" "$(selected '^short-l01_37_oracle$')"
 fresh=$(run --list --only '^l01_36_cranelift$' | sort)
@@ -402,6 +410,20 @@ A test or a module is selected only with its binary's group, as <group>::<path>.
 out=$(run --list --only '(l01_38::x|y)')
 rc=$?
 check "a part whose binary cannot be read off stops the run" "2" "$rc"
+# tools/time_tests.sh names each test's group by the binary its piece runs: deep_heap's pieces
+# are named <test> alone, and were reported with the test as the group (TOOLS-time-tests-fixes).
+# It also publishes its table as build/test-logs/test-times.tsv, which nothing reads; the checks
+# read the copy in the run's own log directory.
+heap1=$(run --list --only '^deep_heap$' | sort | head -1)
+out=$(tools/time_tests.sh --only "^deep_heap::$heap1\$|^l01_26_type_resolution::random::a_wrong_claim_is_caught\$" 4)
+rc=$?
+tdir=$(sed -n 's/^logs: //p' <<<"$out" | head -1)
+check "time_tests times a test of a split step's module and one of deep_heap, each under its group" \
+  "0
+deep_heap	$heap1
+l01_26_type_resolution	random::a_wrong_claim_is_caught" \
+  "$rc
+$(tail -n +2 "$tdir/test-times.tsv" | cut -f 1,2 | sort)"
 fi
 # `short`: the short-addresses pieces, in fresh listings, since a --reuse-table run cannot list
 # the binaries of an earlier run's clone. A part of its own, as each listing mounts the clone and

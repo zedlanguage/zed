@@ -726,9 +726,20 @@ select_pieces() {
       # short-addresses build alone (TOOL-short-piece-test-filter: until then such a pattern
       # built the clone and selected nothing). Its binary lies in this run's clone, mounted
       # until the run ends, so a --reuse-table run, whose table names the clone of an earlier
-      # run, cannot list its tests and selects none of them.
+      # run, cannot list its tests and selects none of them. A module piece of a split step,
+      # <group>::<module> running `<module>::`, is split the same way when --only holds the text
+      # <group>:: itself, so that --only '^l01_26_type_resolution::random::a_wrong_claim_is_caught'
+      # runs that one test, as tools/time_tests.sh needs (TOOLS-time-tests-fixes: it printed NO
+      # PIECE MATCHES). That text is the condition, and not a pattern that could match such a
+      # name, so that only the binaries --only names are listed, not every split step's; a step
+      # that is one piece named <group> is not split, so <group>:: alone still selects nothing
+      # there and check_terms says how to select the step (TOOL-run-tests-empty-filter). A piece
+      # that runs one test `--exact` is that test already, matched or not by selected above;
+      # listing each such piece's tests cost an awk a piece, 15 s for the 850 pieces of l01_26 at
+      # load 64, where the old selection took 3 s.
       [[ $k == test && $only == *::* &&
-        ($name =~ ^$group-[0-9a-f]+(::|$) || ($name == short-* && $name == "$group")) ]] || continue
+        ($name =~ ^$group-[0-9a-f]+(::|$) || ($name == short-* && $name == "$group") ||
+        ($name == "$group::"* && $args != --exact* && $only == *"$group::"*)) ]] || continue
       list_binary "$bin"
       for t in $(piece_tests "$bin" $args); do
         [[ $group::$t =~ $only ]] || continue
@@ -1235,6 +1246,13 @@ split="
 # shapes (0.7 s), whose name holds that of the index of arrows, which the other piece skips
 # (TEST-zedc-types-lib-split, 2026-11-20). The slowest, of the index of functions, still took
 # 30.1 s at load 64 against 41 s as a piece, so it is split into four parts of 750 cases.
+# zedc_presburger's other piece ran past its limit of 23 s at load 37 (rc=124, 23106 ms, the
+# merge check of PERF-varfacts-held-shared-dag, 2026-11-21). Each of its 514 tests alone, at load
+# 29 to 30 (tools/time_tests.sh, 2026-11-22): the 504 not listed here took 164 s of wall time
+# together, 83 s of it in the 29 below: the test of probes in every order 7.5 s, the two tests of
+# private quotients 5.2 and 3.9 s, the test of every split of the moduli 2.5 s and the 25 tests of
+# every writing at one seed 2.0 to 4.3 s each (65 s together). Each is now a piece, which leaves
+# the other piece 81 s of wall time spread over its threads (TEST-presburger-unit-piece-probe-order).
 alone="
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_1
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_2
@@ -1265,6 +1283,35 @@ alone="
   zedc_presburger::presburger::row_sums::tests::the_route_and_the_join_agree_on_wide_ranges_with_several_defined_atoms
   zedc_presburger::presburger::exact::tests::read_once_formulas_project_to_the_values_of_their_points
   zedc_presburger::presburger::exact::tests::every_writing_of_a_formula_gets_one_answer
+  zedc_presburger::presburger::probe_order::probe_leaves_the_same_parts_in_every_order
+  zedc_presburger::presburger::modular::r4_tests::private_quotients_match_enumeration_and_the_model_path
+  zedc_presburger::presburger::modular::r4_tests::private_quotients_match_concrete_models_on_small_systems
+  zedc_presburger::presburger::modular::r7_tests::every_split_of_the_moduli_decides_a_regime_as_testing_each_point_does
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_17553006884555075817
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_16338078841102802578
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_5302762248333478882
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_14168001171561652264
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_6791152268047101565
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_17216371871131204067
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_11367085356800913199
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_8124016268280057850
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_3465706508361208641
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_13310776365412627736
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_6248376677308887027
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_6356906811914704334
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_5480617911147767323
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_1018193249963013246
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_11124692055269125873
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_4748931191768879917
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_15275908352311422565
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_9041673993373821060
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_17109464074316566127
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_7570078408948364398
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_13472915549060986335
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_8136853401859909784
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_10746534589920032955
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_17656181055615743818
+  zedc_presburger::presburger::exact::tests::every_writing_at_seed_11354000743705775971
 "
 # The pieces of step folder $1 in the test binary $2, or of its module $3 (a path in the
 # binary) when one is given. A module's piece filters by `$3::`, which libtest matches anywhere in
