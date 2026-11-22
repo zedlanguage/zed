@@ -5,7 +5,6 @@
 
 use zed_kernel::{Prim, Shared, Term, Value};
 use zed_tests::scaling;
-use zedc::store::interval::{End, IntervalSet};
 use zedc::store::preimage::{Demand, Domains, forward_pieces, preimage};
 use zedc::store::preimage_ref as before;
 
@@ -679,29 +678,6 @@ fn a_chain_of_ifs_beside_a_square_compares_in_linear_time() {
             },
         );
     });
-}
-
-/// `k` guards `y == x - j` (or `y < x - j`), the even arms `min(y, -4 - j) < -1`, the odd ones
-/// `false`, over `x` in [-1, 7] and `y` in [-12 - k, 1] (FAIL-relational-if-chain-growth).
-fn relational_chain(k: usize, lt: bool) -> (Term, Domains) {
-    let t = (0..k)
-        .rev()
-        .fold(Term::Lit(Value::Bool(false)), |inner, j| {
-            let at = prim(Prim::Sub, var("x"), int(j as i64));
-            let g = prim(if lt { Prim::Lt } else { Prim::Eq }, var("y"), at);
-            let arm = match j % 2 {
-                0 => prim(
-                    Prim::Lt,
-                    prim(Prim::Min, var("y"), int(-4 - j as i64)),
-                    int(-1),
-                ),
-                _ => Term::Lit(Value::Bool(false)),
-            };
-            Term::If(Shared::new(g), Shared::new(arm), Shared::new(inner))
-        });
-    let y = IntervalSet::range(End::of(-12 - k as i64), End::of(1));
-    let ds = over(&[("x", IntervalSet::range(End::of(-1), End::of(7))), ("y", y)]);
-    (t, ds)
 }
 
 /// [`scaling::check`] on the preimage of `true` under each term `make` builds, after checking

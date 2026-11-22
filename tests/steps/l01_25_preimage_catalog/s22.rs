@@ -4212,6 +4212,62 @@ fn a_chain_of_ifs_beside_a_square_has_a_relation() {
     }
 }
 
+/// `k` guards `y == x - j` (or `y < x - j`), the even arms `min(y, -4 - j) < -1`, the odd ones
+/// `false`, over `x` in [-1, 7] and `y` in [-12 - k, 1] (FAIL-relational-if-chain-growth). The
+/// benchmarks `bench::s22::relational_equal_guards_scale` and `relational_less_guards_scale`
+/// time it at `k` and `8k`.
+pub(super) fn relational_chain(k: usize, lt: bool) -> (Term, Domains) {
+    let t = (0..k)
+        .rev()
+        .fold(Term::Lit(Value::Bool(false)), |inner, j| {
+            let at = prim(Prim::Sub, var("x"), int(j as i64));
+            let g = prim(if lt { Prim::Lt } else { Prim::Eq }, var("y"), at);
+            let arm = match j % 2 {
+                0 => prim(
+                    Prim::Lt,
+                    prim(Prim::Min, var("y"), int(-4 - j as i64)),
+                    int(-1),
+                ),
+                _ => Term::Lit(Value::Bool(false)),
+            };
+            Term::If(Shared::new(g), Shared::new(arm), Shared::new(inner))
+        });
+    let y = IntervalSet::range(End::of(-12 - k as i64), End::of(1));
+    let ds = over(&[("x", IntervalSet::range(End::of(-1), End::of(7))), ("y", y)]);
+    (t, ds)
+}
+
+/// FAIL-s22-relational-equal-guards-relation: the preimage of `true` under
+/// [`relational_chain`] with equation guards has a relation, and it holds at a point of the box
+/// exactly where the first guard that holds, `y == x - j`, is an even `j`'s (whose arm
+/// `min(y, -4 - j) < -1` is `true`, since `-4 - j < -1`); where no guard holds, or the first is
+/// an odd `j`'s, the test is `false`. On main c531f8482, before PRES-cover-bench-regressions
+/// (3527c0a74) let the exact cover's `direct` read such a chain with no question, the
+/// preimage had a relation for each k up to 40 and none, refused with `Questions`, for each
+/// k from 41 to 48 and at 64, 96, 128, 192 and 256 (measured on c531f8482: the cover asked a
+/// question per level and was refused past its work limit), which the benchmark
+/// `relational_equal_guards_scale` met as a failed precondition (`"a relation"`) at its larger size, 256.
+/// Red on c531f8482 at k = 41, green after 3527c0a74. This test holds the relation and its
+/// points in the correctness tests, where it runs on every change, not only with `--bench`.
+#[test]
+fn a_chain_of_equal_guards_has_a_relation_where_the_first_guard_is_even() {
+    let names: Vec<Arc<str>> = vec!["x".into(), "y".into()];
+    for k in [1, 2, 3, 4, 5, 8, 16, 32, 40, 41, 48, 64] {
+        let (t, ds) = relational_chain(k, false);
+        let p = preimage(&t, &ds, &Demand::Bool(true));
+        let rel = (p.relation.as_ref()).unwrap_or_else(|| panic!("k = {k}: {p:?}"));
+        for x in -1..=7i64 {
+            for y in (-12 - k as i64)..=1 {
+                let first = (0..k as i64).find(|j| y == x - j);
+                let want = first.is_some_and(|j| j % 2 == 0);
+                let inside = p.domains["x"].contains(x) && p.domains["y"].contains(y);
+                let held = inside && relation_holds(rel, &names, &[x, y]) == Some(true);
+                assert_eq!(held, want, "k = {k}, x = {x}, y = {y}: {p:?}");
+            }
+        }
+    }
+}
+
 /// `(if y == v { v * v } else { y }) < 10`, the body of the tests of
 /// TEST-preimage-decided-arm-open-summary: the arm `v * v < 10` does not translate (a
 /// product), so `Walk::compare_untranslated` decides it by its range over the box the run
