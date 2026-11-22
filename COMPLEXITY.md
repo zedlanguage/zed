@@ -846,6 +846,17 @@ author accepted crossovers set from timings for now (2026-11-06), on these condi
   when the cost characteristics and the anomalies below are to be understood more fully;
 - where one method is never slower than the other, it is used alone, with no crossover.
 
+Since A96 (DESIGN sec:plan) a crossover is set by instructions counted in `benches/`
+(`crossover`), and each benchmark also prints each method's median time of five runs at the
+measured crossover, beside the count, as the line `median time at <size>: ...` (plan row
+BENCH-splice-crossover-time). The time does not set the threshold; it shows where the time on
+the machine at hand would put it. Methods with different memory traffic part most: for the
+splice of L6.13g, a C prototype (b22-spec-h4, 2026-11-22) put the instruction crossover near
+`k/n = 1/2000` at `n = 2^16` to `2^22`, and the time crossover near `1/700` at `2^16` and `2^18`
+and `1/1400` at `2^20` and `2^22`. The splice benchmark itself is written with L6.13g, whose
+code it measures; first run of the line, `crossover recip`, 2026-11-22, load 44: at 399 words
+one division 169 µs, a Newton step 155 µs, ratio 0.915.
+
 ### NUM-subquad, `zed-kernel/src/num/fast.rs`, measured 2026-11-06
 
 Procedure (the test was not committed): a release test build of `zed-kernel`, load average 1.0

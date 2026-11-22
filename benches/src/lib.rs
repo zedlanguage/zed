@@ -12,7 +12,10 @@
 //! its speed, resetting each threshold whose crossover moved by more than the spread of
 //! repeated runs. The work is counted in instructions where the hardware counts them
 //! ([`zed_tests::scaling::Meter`]), which load does not change, in the build the tests use (the
-//! `dev` profile); the load is printed with each table all the same.
+//! `dev` profile); the load is printed with each table all the same. Beside the count, a
+//! crossover prints each method's median time at the measured crossover ([`median_time`]),
+//! which shows how far the instruction count is from the time on the machine at hand; the time
+//! does not set the threshold (DESIGN.md sec:plan, A96, plan row BENCH-splice-crossover-time).
 //!
 //! [`Crossover`] is for a threshold on the size of the input: it measures at given sizes, then
 //! halves the interval in which the faster method changes until it is narrower than a given
@@ -29,6 +32,7 @@
 
 use std::fmt::Debug;
 use std::hint::black_box;
+use std::time::{Duration, Instant};
 
 use zed_tests::scaling::{Meter, Work};
 
@@ -128,6 +132,14 @@ pub enum Threshold {
 }
 
 impl Threshold {
+    /// The size this threshold names: the measured crossover, or the least or largest size
+    /// measured where one method won at every size.
+    pub fn size(self) -> usize {
+        match self {
+            Threshold::AtOrBelow(s) | Threshold::At(s) | Threshold::Above(s) => s,
+        }
+    }
+
     /// Whether the second method is taken at `size` with this threshold.
     pub fn takes_above(self, size: usize) -> bool {
         match self {
@@ -515,6 +527,18 @@ impl<I, O: PartialEq + Debug> Crossover<'_, I, O> {
         }
     }
 
+    /// Each method's median time of [`TIMED_RUNS`] runs on the first input at `size`, below
+    /// first: printed beside the instruction count at the measured crossover, which the time does
+    /// not move (DESIGN.md sec:plan, A96).
+    pub fn times(&self, size: usize) -> (Duration, Duration) {
+        let inputs = (self.inputs)(size);
+        let x = inputs.first().expect("at least one input at each size");
+        (
+            median_time(|| drop(black_box((self.below.run)(x)))),
+            median_time(|| drop(black_box((self.above.run)(x)))),
+        )
+    }
+
     /// The work at each of `sizes`, and then at sizes between the two measured sizes around the
     /// change, each the geometric mean of the two around it, until those two are within
     /// `tolerance` of each other (`hi <= lo (1 + tolerance)`) or next to each other. The
@@ -613,6 +637,18 @@ impl<I, O: PartialEq + Debug> Crossover<'_, I, O> {
         println!(
             "built: {} from {built} {unit}; measured crossover: {threshold} {unit}",
             self.above.name,
+            unit = self.unit
+        );
+        // Each method's median time at the measured crossover, beside the instruction count,
+        // which alone sets the threshold (DESIGN.md sec:plan, A96).
+        let (below, above) = self.times(threshold.size());
+        println!(
+            "median time at {} {unit}: {} {below:.3?}, {} {above:.3?}, ratio {:.3} (time does not \
+             set the threshold)",
+            threshold.size(),
+            self.below.name,
+            self.above.name,
+            above.as_secs_f64() / below.as_secs_f64(),
             unit = self.unit
         );
         let mut measured = format!("{threshold} {}", self.unit);
@@ -800,6 +836,30 @@ pub fn runs(meter: &mut Meter, f: impl Fn()) -> Runs {
     )
 }
 
+/// How many timed runs give a method's median time at a crossover. Time varies with load and
+/// with the state of the caches far more than an instruction count does, so it takes more runs
+/// than [`RUNS`]; an odd number, so the median is one run's time.
+pub const TIMED_RUNS: usize = 5;
+
+/// The median wall-clock time of [`TIMED_RUNS`] runs of `f`.
+pub fn median_time(f: impl Fn()) -> Duration {
+    median(
+        (0..TIMED_RUNS)
+            .map(|_| {
+                let start = Instant::now();
+                f();
+                start.elapsed()
+            })
+            .collect(),
+    )
+}
+
+/// The median of `times`, of which there is an odd number: the middle one in order.
+fn median(mut times: Vec<Duration>) -> Duration {
+    times.sort_unstable();
+    times[times.len() / 2]
+}
+
 /// The least work and the least bytes of [`RUNS`] runs of `f`.
 pub fn least(meter: &mut Meter, f: impl Fn()) -> Work {
     runs(meter, f).least
@@ -846,5 +906,17 @@ mod tests {
         assert!(!metered_block(|f| _ = runs(&mut meter, f)));
         assert!(!metered_block(|f| _ = least(&mut meter, f)));
         assert!(metered_block(|f| _ = meter.work(f)));
+    }
+
+    /// A crossover benchmark prints each method's median time at the crossover (A96): the
+    /// middle of [`TIMED_RUNS`] runs, each run once.
+    #[test]
+    fn the_time_at_a_crossover_is_the_median_of_its_timed_runs() {
+        let ms = Duration::from_millis;
+        assert_eq!(median(vec![ms(5), ms(1), ms(4), ms(2), ms(3)]), ms(3));
+        assert_eq!(median(vec![ms(7)]), ms(7));
+        let calls = Cell::new(0);
+        let _ = median_time(|| calls.set(calls.get() + 1));
+        assert_eq!(calls.get(), TIMED_RUNS);
     }
 }
