@@ -109,70 +109,223 @@ pub fn factor(n: u64) -> Vec<(u64, u64)> {
     out
 }
 
-use crate::{gcd_u64, inverse_mod_2_64};
+use crate::{gcd_u64, gcd_u128, inverse_mod_2_64};
+
+/// A machine word that [`Montgomery`] works modulo: `u64`, for [`factor`] and [`is_prime`], and
+/// `u128`, for `factor_u128` and `is_prime_u128` (FACTOR-u128, PRIME-u128). One generic form, not
+/// a copy per width (DRY-number-theory: one routine per job); each width is compiled apart, so
+/// the `u64` code is the same machine code as before the generalization.
+pub(crate) trait Word:
+    Copy
+    + Eq
+    + Ord
+    + std::fmt::Debug
+    + std::ops::Sub<Output = Self>
+    + std::ops::Rem<Output = Self>
+    + std::ops::Shr<u32, Output = Self>
+    + std::ops::BitAnd<Output = Self>
+    + From<u64>
+{
+    /// The product of two words, twice as wide.
+    type Wide: Copy;
+    const ZERO: Self;
+    const ONE: Self;
+    fn wide_mul(a: Self, b: Self) -> Self::Wide;
+    /// The low and the high word of a wide value.
+    fn halves(t: Self::Wide) -> (Self, Self);
+    /// The wide value of one word.
+    fn widen(self) -> Self::Wide;
+    fn wrapping_mul(self, b: Self) -> Self;
+    fn wrapping_add(self, b: Self) -> Self;
+    fn wrapping_sub(self, b: Self) -> Self;
+    fn overflowing_add(self, b: Self) -> (Self, bool);
+    fn overflowing_sub(self, b: Self) -> (Self, bool);
+    /// `self^-1 mod R`, for an odd `self`.
+    fn inverse_mod_r(self) -> Self;
+    fn gcd(self, b: Self) -> Self;
+    fn trailing_zeros(self) -> u32;
+    /// `R^2 mod n`, for an odd `n > 1`.
+    fn r_squared_mod(n: Self) -> Self;
+}
+
+impl Word for u64 {
+    type Wide = u128;
+    const ZERO: u64 = 0;
+    const ONE: u64 = 1;
+    fn wide_mul(a: u64, b: u64) -> u128 {
+        u128::from(a) * u128::from(b)
+    }
+    fn halves(t: u128) -> (u64, u64) {
+        (t as u64, (t >> 64) as u64)
+    }
+    fn widen(self) -> u128 {
+        u128::from(self)
+    }
+    fn wrapping_mul(self, b: u64) -> u64 {
+        u64::wrapping_mul(self, b)
+    }
+    fn wrapping_add(self, b: u64) -> u64 {
+        u64::wrapping_add(self, b)
+    }
+    fn wrapping_sub(self, b: u64) -> u64 {
+        u64::wrapping_sub(self, b)
+    }
+    fn overflowing_add(self, b: u64) -> (u64, bool) {
+        u64::overflowing_add(self, b)
+    }
+    fn overflowing_sub(self, b: u64) -> (u64, bool) {
+        u64::overflowing_sub(self, b)
+    }
+    fn inverse_mod_r(self) -> u64 {
+        inverse_mod_2_64(self)
+    }
+    fn gcd(self, b: u64) -> u64 {
+        gcd_u64(self, b)
+    }
+    fn trailing_zeros(self) -> u32 {
+        u64::trailing_zeros(self)
+    }
+    /// `2^128 mod n = ((2^128 - 1) mod n + 1) mod n`, one 128-bit division.
+    fn r_squared_mod(n: u64) -> u64 {
+        // Exact: the remainder is below `n`, a `u64`.
+        ((u128::MAX % u128::from(n) + 1) % u128::from(n)) as u64
+    }
+}
+
+impl Word for u128 {
+    /// `(low, high)`.
+    type Wide = (u128, u128);
+    const ZERO: u128 = 0;
+    const ONE: u128 = 1;
+    /// Schoolbook on 64-bit halves: `a b = a1 b1 2^128 + (a0 b1 + a1 b0) 2^64 + a0 b0`. The
+    /// middle sum `hi(a0 b0) + lo(a0 b1) + lo(a1 b0)` is below `3 * 2^64`, a `u128`, and its high
+    /// part carries into the high word, which cannot overflow since `a b < 2^256`.
+    fn wide_mul(a: u128, b: u128) -> (u128, u128) {
+        let lo64 = |x: u128| x & u128::from(u64::MAX);
+        let (a0, a1, b0, b1) = (lo64(a), a >> 64, lo64(b), b >> 64);
+        let (p00, p01, p10, p11) = (a0 * b0, a0 * b1, a1 * b0, a1 * b1);
+        let mid = (p00 >> 64) + lo64(p01) + lo64(p10);
+        (
+            lo64(p00) | (mid << 64),
+            p11 + (p01 >> 64) + (p10 >> 64) + (mid >> 64),
+        )
+    }
+    fn halves(t: (u128, u128)) -> (u128, u128) {
+        t
+    }
+    fn widen(self) -> (u128, u128) {
+        (self, 0)
+    }
+    fn wrapping_mul(self, b: u128) -> u128 {
+        u128::wrapping_mul(self, b)
+    }
+    fn wrapping_add(self, b: u128) -> u128 {
+        u128::wrapping_add(self, b)
+    }
+    fn wrapping_sub(self, b: u128) -> u128 {
+        u128::wrapping_sub(self, b)
+    }
+    fn overflowing_add(self, b: u128) -> (u128, bool) {
+        u128::overflowing_add(self, b)
+    }
+    fn overflowing_sub(self, b: u128) -> (u128, bool) {
+        u128::overflowing_sub(self, b)
+    }
+    /// Newton's step `y (2 - x y)` from the inverse modulo `2^64` ([`inverse_mod_2_64`] on the
+    /// low word, right in 64 bits) doubles the right bits once more, to 128 (the argument at
+    /// [`inverse_mod_2_64`]).
+    fn inverse_mod_r(self) -> u128 {
+        let y = u128::from(inverse_mod_2_64(self as u64));
+        y.wrapping_mul(2u128.wrapping_sub(self.wrapping_mul(y)))
+    }
+    fn gcd(self, b: u128) -> u128 {
+        gcd_u128(self, b)
+    }
+    fn trailing_zeros(self) -> u32 {
+        u128::trailing_zeros(self)
+    }
+    /// `R mod n = ((2^128 - 1) mod n + 1) mod n`, then `R^2 mod n` by doubling it 128 times
+    /// modulo `n`: 128 additions, where one division of the 256-bit `2^256` would need a
+    /// 256-by-128-bit division routine, which `u128` lacks.
+    fn r_squared_mod(n: u128) -> u128 {
+        let mut r = (u128::MAX % n + 1) % n;
+        for _ in 0..128 {
+            // `r < n`, so `2 r < 2 n`; one subtraction brings it below `n`, with the carry out of
+            // `u128` when `2 r >= 2^128 > n`.
+            let (s, carry) = r.overflowing_add(r);
+            r = if carry || s >= n {
+                s.wrapping_sub(n)
+            } else {
+                s
+            };
+        }
+        r
+    }
+}
 
 /// Products modulo an odd `n > 1` in Montgomery form (P. L. Montgomery, "Modular multiplication
 /// without trial division", Math. Comp. 44(170):519-521, 1985,
 /// doi:10.1090/S0025-5718-1985-0777282-X): a residue `x` is held as `x R mod n`, for
-/// `R = 2^64`, and the product of two held residues `a R` and `b R` is `a b R mod n`, found
-/// with three multiplications and no division. Read 2026-11-21 in the publisher's PDF as
-/// OpenAlex caches it (AMS's own link gave no PDF). Sec. 1, p. 519, with `R R^-1 - N N' = 1`
-/// (so `N' = -N^-1 mod R`), "function REDC(T): m ← (T mod R)N' mod R [so 0 ≤ m < R];
-/// t ← (T + mN)/R; if t ≥ N then return t − N else return t", valid for `0 ≤ T < RN`, since
-/// `mN ≡ −T mod R` makes `t` an integer, `t ≡ T R^-1 mod N`, and `0 ≤ t < 2N`; `REDC(x y)` of
-/// two held residues is their held product, and a number enters as `REDC((x mod N)(R^2 mod N))`
-/// (p. 520). Departure: [`Montgomery::reduce`] uses `+N^-1` and subtracts, `(T - m N) / R`,
-/// adding `N` back on a borrow, so no sum can pass `2^128` and `n` may be any odd 64-bit
-/// number. The paper foresees this on p. 519: "If R and N are large, then T + mN may exceed
-/// the largest double-precision value. One can circumvent this by adjusting m so −R < m ≤ 0."
-/// `montgomery_arithmetic_agrees_with_division` checks every operation against plain
-/// division, on moduli up to `2^64 - 1`; it samples the moduli, so it cannot show that no odd
-/// modulus fails.
+/// `R = 2^k`, `k` the bits of the word `W` (64 or 128), and the product of two held residues
+/// `a R` and `b R` is `a b R mod n`, found with three multiplications and no division. Read
+/// 2026-11-21 in the publisher's PDF as OpenAlex caches it (AMS's own link gave no PDF). Sec. 1,
+/// p. 519, with `R R^-1 - N N' = 1` (so `N' = -N^-1 mod R`), "function REDC(T): m ← (T mod R)N'
+/// mod R [so 0 ≤ m < R]; t ← (T + mN)/R; if t ≥ N then return t − N else return t", valid for
+/// `0 ≤ T < RN`, since `mN ≡ −T mod R` makes `t` an integer, `t ≡ T R^-1 mod N`, and
+/// `0 ≤ t < 2N`; `REDC(x y)` of two held residues is their held product, and a number enters as
+/// `REDC((x mod N)(R^2 mod N))` (p. 520). Departure: [`Montgomery::reduce`] uses `+N^-1` and
+/// subtracts, `(T - m N) / R`, adding `N` back on a borrow, so no sum can pass `R^2` and `n` may
+/// be any odd word. The paper foresees this on p. 519: "If R and N are large, then T + mN may
+/// exceed the largest double-precision value. One can circumvent this by adjusting m so −R < m
+/// ≤ 0." `montgomery_arithmetic_agrees_with_division` checks every operation against plain
+/// division, on moduli up to `2^64 - 1`, and `wide_montgomery_arithmetic_agrees_with_num_bigint`
+/// on moduli up to `2^128 - 1`; they sample the moduli, so they cannot show that no odd modulus
+/// fails.
 // Complexity tradeoff: `mul_mod` divides a 128-bit product by `n`, a call of the 128-bit
 // division routine; the form here costs one division per modulus (for `R^2 mod n`) and then
-// three word multiplications per product. Measured by `examples/timing.rs` (COMPLEXITY.md row
-// DRY-number-theory). Its residues are in `[0, n)`, so equal residues are equal words.
-struct Montgomery {
-    n: u64,
+// three word multiplications per product (on `u128`, three schoolbook products of four 64-bit
+// multiplications each, against a 256-by-128-bit division per product without it). Measured by
+// `examples/timing.rs` (COMPLEXITY.md row DRY-number-theory). Its residues are in `[0, n)`, so
+// equal residues are equal words.
+pub(crate) struct Montgomery<W: Word> {
+    pub(crate) n: W,
     /// `n^-1 mod R`.
-    n_inv: u64,
+    n_inv: W,
     /// `R^2 mod n`, which [`Montgomery::to`] multiplies by.
-    r2: u64,
+    r2: W,
 }
 
-impl Montgomery {
-    fn new(n: u64) -> Montgomery {
-        debug_assert!(n % 2 == 1 && n > 1, "an odd modulus above 1");
-        // `R^2 mod n = 2^128 mod n = ((2^128 - 1) mod n + 1) mod n`.
-        let r2 = (u128::MAX % u128::from(n) + 1) % u128::from(n);
+impl<W: Word> Montgomery<W> {
+    pub(crate) fn new(n: W) -> Montgomery<W> {
+        debug_assert!(n & W::ONE == W::ONE && n > W::ONE, "an odd modulus above 1");
         Montgomery {
             n,
-            n_inv: inverse_mod_2_64(n),
-            // Exact: `r2 < n`, a `u64`.
-            r2: r2 as u64,
+            n_inv: n.inverse_mod_r(),
+            r2: W::r_squared_mod(n),
         }
     }
 
     /// `t R^-1 mod n`, in `[0, n)`, for `t < n R`.
-    fn reduce(&self, t: u128) -> u64 {
+    pub(crate) fn reduce(&self, t: W::Wide) -> W {
         // `m = t n^-1 mod R` makes `m n = t mod R`, so the low words of `t` and `m n` are equal
         // and `(t - m n) / R = hi(t) - hi(m n)` exactly, `t R^-1` modulo `n`. Both high words
         // are below `n` (`t < n R` and `m n < R n`), so the difference is in `(-n, n)`: a
-        // borrow means it is negative, and adding `n` (wrapping back past `2^64`) gives the
-        // residue in `[0, n)`. This subtracting form needs no `n < 2^63`, unlike the adding one.
-        let m = (t as u64).wrapping_mul(self.n_inv);
-        let mn = u128::from(m) * u128::from(self.n);
-        let (d, borrow) = ((t >> 64) as u64).overflowing_sub((mn >> 64) as u64);
+        // borrow means it is negative, and adding `n` (wrapping back past `R`) gives the
+        // residue in `[0, n)`. This subtracting form needs no `n < R / 2`, unlike the adding one.
+        let (lo, hi) = W::halves(t);
+        let m = lo.wrapping_mul(self.n_inv);
+        let (_, mn_hi) = W::halves(W::wide_mul(m, self.n));
+        let (d, borrow) = hi.overflowing_sub(mn_hi);
         if borrow { d.wrapping_add(self.n) } else { d }
     }
 
     /// The product of two held residues, each below `n` (so `a b < n^2 < n R`).
-    fn mul(&self, a: u64, b: u64) -> u64 {
-        self.reduce(u128::from(a) * u128::from(b))
+    pub(crate) fn mul(&self, a: W, b: W) -> W {
+        self.reduce(W::wide_mul(a, b))
     }
 
     /// The sum of two held residues, each below `n`.
-    fn add(&self, a: u64, b: u64) -> u64 {
+    pub(crate) fn add(&self, a: W, b: W) -> W {
         let (s, carry) = a.overflowing_add(b);
         if carry || s >= self.n {
             s.wrapping_sub(self.n)
@@ -181,27 +334,59 @@ impl Montgomery {
         }
     }
 
+    /// The difference of two held residues, each below `n`.
+    pub(crate) fn sub(&self, a: W, b: W) -> W {
+        let (d, borrow) = a.overflowing_sub(b);
+        if borrow { d.wrapping_add(self.n) } else { d }
+    }
+
     /// `x R mod n`, the held form of `x`.
-    fn to(&self, x: u64) -> u64 {
+    pub(crate) fn to(&self, x: W) -> W {
         self.mul(x % self.n, self.r2)
     }
 
     /// `R mod n`, the held form of 1.
-    fn one(&self) -> u64 {
-        self.reduce(u128::from(self.r2))
+    pub(crate) fn one(&self) -> W {
+        self.reduce(self.r2.widen())
     }
 
     /// The held form of `a^e`, for `a` held, by squaring: O(log e) products.
-    fn pow(&self, mut a: u64, mut e: u64) -> u64 {
+    pub(crate) fn pow(&self, mut a: W, mut e: W) -> W {
         let mut r = self.one();
-        while e > 0 {
-            if e & 1 == 1 {
+        while e > W::ZERO {
+            if e & W::ONE == W::ONE {
                 r = self.mul(r, a);
             }
             a = self.mul(a, a);
-            e >>= 1;
+            e = e >> 1;
         }
         r
+    }
+
+    /// Whether the odd `n` passes the strong probable-prime test to each base of `bases`
+    /// (Miller 1976 and Rabin 1980, cited at the top of this file): with `n - 1 = 2^s d`, `d`
+    /// odd, `a^d = 1` or `a^(2^i d) = -1` for some `0 <= i < s`. A prime passes every base not
+    /// divisible by it; a composite fails at least `3/4` of the bases below it (Rabin, Theorem
+    /// 1). O(log n) products a base.
+    pub(crate) fn strong_probable_prime(&self, bases: &[u64]) -> bool {
+        let n = self.n;
+        let (one, minus_one) = (self.one(), n - self.one());
+        let s = (n - W::ONE).trailing_zeros();
+        let d = (n - W::ONE) >> s;
+        'bases: for &a in bases {
+            let mut x = self.pow(self.to(W::from(a)), d);
+            if x == one || x == minus_one {
+                continue;
+            }
+            for _ in 1..s {
+                x = self.mul(x, x);
+                if x == minus_one {
+                    continue 'bases;
+                }
+            }
+            return false;
+        }
+        true
     }
 }
 
@@ -257,24 +442,7 @@ pub fn is_prime(n: u64) -> bool {
         .iter()
         .position(|&psi| n < psi)
         .map_or(BASES.len(), |i| i + 1);
-    let mont = Montgomery::new(n);
-    let (one, minus_one) = (mont.one(), n - mont.one());
-    let s = (n - 1).trailing_zeros();
-    let d = (n - 1) >> s;
-    'bases: for &a in &BASES[..k] {
-        let mut x = mont.pow(mont.to(a), d);
-        if x == one || x == minus_one {
-            continue;
-        }
-        for _ in 1..s {
-            x = mont.mul(x, x);
-            if x == minus_one {
-                continue 'bases;
-            }
-        }
-        return false;
-    }
-    true
+    Montgomery::new(n).strong_probable_prime(&BASES[..k])
 }
 
 /// A factor of the odd composite `n` other than 1 and `n`: Pollard's rho in Brent's form with
@@ -306,10 +474,10 @@ struct RhoCost {
 }
 
 /// The run of Brent's search with `c = 1` on the odd modulus `n > 1` of `mont`.
-struct RhoRun {
-    /// The gcd it ends with, above 1: a factor of `n`, and `n` itself when the search back
-    /// found every prime of `n` at once.
-    g: u64,
+pub(crate) struct RhoRun<W: Word> {
+    /// The gcd it ends with: a factor of `n` above 1, `n` itself when the search back
+    /// found every prime of `n` at once, and 1 when [`rho_within`] stopped at its step count.
+    pub(crate) g: W,
     /// The cost through the batch whose gcd first passed 1. Read only by the tests that check
     /// the cost bound (counting costs a few additions a batch); the counts are made by this
     /// code, not by a copy, so the table test measures the walk `split` runs.
@@ -371,31 +539,38 @@ struct RhoRun {
 /// back recomputes those differences in order from `ys` with the same `x`, so it stops after
 /// at most 128 steps. Tests: `the_rho_cost_below_2_22_is_the_table` (every odd prime below
 /// 2^22) and `a_run_stops_no_later_than_on_its_least_prime` (the inequality on composites).
-fn rho(mont: &Montgomery) -> RhoRun {
+fn rho<W: Word>(mont: &Montgomery<W>) -> RhoRun<W> {
+    rho_within(mont, u64::MAX)
+}
+
+/// [`rho`], stopped with `g = 1` once a round ends with `max_steps` steps or more taken:
+/// `factor_u128` runs it for as many products as one curve of the elliptic curve method
+/// costs (the comment at `split_u128`).
+pub(crate) fn rho_within<W: Word>(mont: &Montgomery<W>, max_steps: u64) -> RhoRun<W> {
     let n = mont.n;
     let one = mont.one();
-    let f = |x: u64| mont.add(mont.mul(x, x), one);
-    let start = mont.to(2);
-    let (mut x, mut y, mut g, mut r) = (start, start, 1u64, 1u64);
+    let f = |x: W| mont.add(mont.mul(x, x), one);
+    let start = mont.to(W::from(2));
+    let (mut x, mut y, mut g, mut r) = (start, start, W::ONE, 1u64);
     // Any unit modulo `n`: the products only need their gcd with `n`.
-    let mut q = 1u64;
+    let mut q = W::ONE;
     let mut ys = y;
     let mut batches = RhoCost::default();
-    while g == 1 {
+    while g == W::ONE && batches.steps < max_steps {
         x = y;
         for _ in 0..r {
             y = f(y);
         }
         batches.steps += r;
         let mut k = 0;
-        while k < r && g == 1 {
+        while k < r && g == W::ONE {
             ys = y;
             let m = 128.min(r - k);
             for _ in 0..m {
                 y = f(y);
-                q = mont.mul(q, x.abs_diff(y));
+                q = mont.mul(q, abs_diff(x, y));
             }
-            g = gcd_u64(q, n);
+            g = q.gcd(n);
             batches.steps += m;
             batches.products += m;
             batches.gcds += 1;
@@ -407,14 +582,19 @@ fn rho(mont: &Montgomery) -> RhoRun {
     if g == n {
         loop {
             ys = f(ys);
-            g = gcd_u64(x.abs_diff(ys), n);
+            g = abs_diff(x, ys).gcd(n);
             back += 1;
-            if g > 1 {
+            if g > W::ONE {
                 break;
             }
         }
     }
     RhoRun { g, batches, back }
+}
+
+/// `|a - b|`.
+fn abs_diff<W: Word>(a: W, b: W) -> W {
+    if a > b { a - b } else { b - a }
 }
 
 /// What [`lehman`] cost: trial divisions, and values of `x` tried in the search for a square.
@@ -839,14 +1019,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "an odd modulus above 1")]
     fn a_montgomery_form_of_an_even_modulus() {
-        Montgomery::new(4);
+        Montgomery::new(4u64);
     }
 
     #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "an odd modulus above 1")]
     fn a_montgomery_form_of_one() {
-        Montgomery::new(1);
+        Montgomery::new(1u64);
     }
 
     /// Negative control for `montgomery_arithmetic_agrees_with_division`: `reduce` without

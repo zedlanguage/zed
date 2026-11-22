@@ -10,14 +10,19 @@
 //! `num::inverse_mod_uint`, `num::bezout_int`), since their half gcd is built on the kernel's
 //! fast multiplication (`num/fast.rs`); for a word operand they call [`gcd_big_u64`] here.
 
+mod ecm;
 mod factor;
 mod factored;
+mod pratt;
+mod wide;
 mod word;
 
 use num_bigint::BigUint;
 
 pub use factor::{factor, is_prime};
 pub use factored::{coprime_base_by_factoring, shares_a_factor_by_factoring};
+pub use pratt::{PSI_13, PrattCertificate, PrattError, PrattFactor};
+pub use wide::{factor_u128, is_prime_u128};
 pub use word::{
     cbrt_floor, gcd_u64, gcd_u128, inverse_mod_2_64, mul_mod, odd_primes_below, pow_mod,
     sqrt_exact_u128,
