@@ -13,6 +13,7 @@
 
 mod bench;
 mod cases;
+mod conway;
 mod derived;
 mod laws_01_10;
 mod laws_11_20;
