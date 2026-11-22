@@ -148,44 +148,61 @@ pub(crate) trait Word:
     fn r_squared_mod(n: Self) -> Self;
 }
 
+// `#[inline]` on these methods and on the small `Montgomery` ones: the dev profile builds with
+// `lto = "off"` (Cargo.toml), and a generic instance may be placed in another codegen unit than
+// its caller, where it is then called, not inlined. Without the attributes the debug test binary
+// took 27.5 s at load 67 (over its 36 s limit in merge_check at load 57), with
+// `the_rho_cost_below_2_22_is_the_table` at 45.6 s; with them 9.9 s and 5.8 s at load 48.
 impl Word for u64 {
     type Wide = u128;
     const ZERO: u64 = 0;
     const ONE: u64 = 1;
+    #[inline]
     fn wide_mul(a: u64, b: u64) -> u128 {
         u128::from(a) * u128::from(b)
     }
+    #[inline]
     fn halves(t: u128) -> (u64, u64) {
         (t as u64, (t >> 64) as u64)
     }
+    #[inline]
     fn widen(self) -> u128 {
         u128::from(self)
     }
+    #[inline]
     fn wrapping_mul(self, b: u64) -> u64 {
         u64::wrapping_mul(self, b)
     }
+    #[inline]
     fn wrapping_add(self, b: u64) -> u64 {
         u64::wrapping_add(self, b)
     }
+    #[inline]
     fn wrapping_sub(self, b: u64) -> u64 {
         u64::wrapping_sub(self, b)
     }
+    #[inline]
     fn overflowing_add(self, b: u64) -> (u64, bool) {
         u64::overflowing_add(self, b)
     }
+    #[inline]
     fn overflowing_sub(self, b: u64) -> (u64, bool) {
         u64::overflowing_sub(self, b)
     }
+    #[inline]
     fn inverse_mod_r(self) -> u64 {
         inverse_mod_2_64(self)
     }
+    #[inline]
     fn gcd(self, b: u64) -> u64 {
         gcd_u64(self, b)
     }
+    #[inline]
     fn trailing_zeros(self) -> u32 {
         u64::trailing_zeros(self)
     }
     /// `2^128 mod n = ((2^128 - 1) mod n + 1) mod n`, one 128-bit division.
+    #[inline]
     fn r_squared_mod(n: u64) -> u64 {
         // Exact: the remainder is below `n`, a `u64`.
         ((u128::MAX % u128::from(n) + 1) % u128::from(n)) as u64
@@ -200,6 +217,7 @@ impl Word for u128 {
     /// Schoolbook on 64-bit halves: `a b = a1 b1 2^128 + (a0 b1 + a1 b0) 2^64 + a0 b0`. The
     /// middle sum `hi(a0 b0) + lo(a0 b1) + lo(a1 b0)` is below `3 * 2^64`, a `u128`, and its high
     /// part carries into the high word, which cannot overflow since `a b < 2^256`.
+    #[inline]
     fn wide_mul(a: u128, b: u128) -> (u128, u128) {
         let lo64 = |x: u128| x & u128::from(u64::MAX);
         let (a0, a1, b0, b1) = (lo64(a), a >> 64, lo64(b), b >> 64);
@@ -210,43 +228,54 @@ impl Word for u128 {
             p11 + (p01 >> 64) + (p10 >> 64) + (mid >> 64),
         )
     }
+    #[inline]
     fn halves(t: (u128, u128)) -> (u128, u128) {
         t
     }
+    #[inline]
     fn widen(self) -> (u128, u128) {
         (self, 0)
     }
+    #[inline]
     fn wrapping_mul(self, b: u128) -> u128 {
         u128::wrapping_mul(self, b)
     }
+    #[inline]
     fn wrapping_add(self, b: u128) -> u128 {
         u128::wrapping_add(self, b)
     }
+    #[inline]
     fn wrapping_sub(self, b: u128) -> u128 {
         u128::wrapping_sub(self, b)
     }
+    #[inline]
     fn overflowing_add(self, b: u128) -> (u128, bool) {
         u128::overflowing_add(self, b)
     }
+    #[inline]
     fn overflowing_sub(self, b: u128) -> (u128, bool) {
         u128::overflowing_sub(self, b)
     }
     /// Newton's step `y (2 - x y)` from the inverse modulo `2^64` ([`inverse_mod_2_64`] on the
     /// low word, right in 64 bits) doubles the right bits once more, to 128 (the argument at
     /// [`inverse_mod_2_64`]).
+    #[inline]
     fn inverse_mod_r(self) -> u128 {
         let y = u128::from(inverse_mod_2_64(self as u64));
         y.wrapping_mul(2u128.wrapping_sub(self.wrapping_mul(y)))
     }
+    #[inline]
     fn gcd(self, b: u128) -> u128 {
         gcd_u128(self, b)
     }
+    #[inline]
     fn trailing_zeros(self) -> u32 {
         u128::trailing_zeros(self)
     }
     /// `R mod n = ((2^128 - 1) mod n + 1) mod n`, then `R^2 mod n` by doubling it 128 times
     /// modulo `n`: 128 additions, where one division of the 256-bit `2^256` would need a
     /// 256-by-128-bit division routine, which `u128` lacks.
+    #[inline]
     fn r_squared_mod(n: u128) -> u128 {
         let mut r = (u128::MAX % n + 1) % n;
         for _ in 0..128 {
@@ -306,6 +335,7 @@ impl<W: Word> Montgomery<W> {
     }
 
     /// `t R^-1 mod n`, in `[0, n)`, for `t < n R`.
+    #[inline]
     pub(crate) fn reduce(&self, t: W::Wide) -> W {
         // `m = t n^-1 mod R` makes `m n = t mod R`, so the low words of `t` and `m n` are equal
         // and `(t - m n) / R = hi(t) - hi(m n)` exactly, `t R^-1` modulo `n`. Both high words
@@ -320,11 +350,13 @@ impl<W: Word> Montgomery<W> {
     }
 
     /// The product of two held residues, each below `n` (so `a b < n^2 < n R`).
+    #[inline]
     pub(crate) fn mul(&self, a: W, b: W) -> W {
         self.reduce(W::wide_mul(a, b))
     }
 
     /// The sum of two held residues, each below `n`.
+    #[inline]
     pub(crate) fn add(&self, a: W, b: W) -> W {
         let (s, carry) = a.overflowing_add(b);
         if carry || s >= self.n {
@@ -335,17 +367,20 @@ impl<W: Word> Montgomery<W> {
     }
 
     /// The difference of two held residues, each below `n`.
+    #[inline]
     pub(crate) fn sub(&self, a: W, b: W) -> W {
         let (d, borrow) = a.overflowing_sub(b);
         if borrow { d.wrapping_add(self.n) } else { d }
     }
 
     /// `x R mod n`, the held form of `x`.
+    #[inline]
     pub(crate) fn to(&self, x: W) -> W {
         self.mul(x % self.n, self.r2)
     }
 
     /// `R mod n`, the held form of 1.
+    #[inline]
     pub(crate) fn one(&self) -> W {
         self.reduce(self.r2.widen())
     }
