@@ -12,6 +12,10 @@
 //! 80,000; most of the work is in big-integer multiplication, not in the coloring.
 //! The other benchmarks are sized (2026-11-14) so the 1x case takes about 0.3 to 1 s, or less
 //! where building the inputs takes most of the piece, and a piece stays under 20 s.
+//! The two matching benchmarks went from n = 640,000 to 160,000 (b22-presburger3, 2026-11-22):
+//! at 640,000 each piece took 49 to 52 s at load 49, most of it building and dropping 5.12
+//! million clauses at 8n; at 160,000 they take 11 to 15 s at the same load, 1x 0.3 G
+//! instructions, ratio 8.63 and 8.65 (8.86 and 8.88 at 640,000).
 
 use super::*;
 
@@ -26,7 +30,7 @@ fn pncx_bipartite_core_scale() {
 
 #[test]
 fn pncx_bound_matching_scale() {
-    let inputs = scaling::inputs(640_000, |n| {
+    let inputs = scaling::inputs(160_000, |n| {
         (0..n)
             .map(|i| FlatClause {
                 bounds: Domain::ge(Int::from(100)),
@@ -40,7 +44,7 @@ fn pncx_bound_matching_scale() {
             })
             .collect::<Vec<_>>()
     });
-    scaling::check_order("three-pair implication by matching", 640_000, 1, |n| {
+    scaling::check_order("three-pair implication by matching", 160_000, 1, |n| {
         assert_eq!(forced_pair_bounds(&inputs[&n]), Domain::all());
     });
 }
@@ -86,7 +90,7 @@ fn pncx_wheel_core_scale() {
 
 #[test]
 fn pncx_empty_pair_bound_scale() {
-    let inputs = scaling::inputs(640_000, |n| {
+    let inputs = scaling::inputs(160_000, |n| {
         (0..n)
             .map(|i| FlatClause {
                 bounds: Domain::empty(),
@@ -100,7 +104,7 @@ fn pncx_empty_pair_bound_scale() {
             })
             .collect::<Vec<_>>()
     });
-    scaling::check_order("empty shared bounds tested by matching", 640_000, 1, |n| {
+    scaling::check_order("empty shared bounds tested by matching", 160_000, 1, |n| {
         assert_eq!(forced_pair_bounds(&inputs[&n]), Domain::all());
     });
 }
