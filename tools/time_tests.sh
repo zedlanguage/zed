@@ -31,7 +31,8 @@ fi
   printf 'group\ttest\tms\trc\tload\n'
   # The group is the piece's binary without its hash (the third field of the pieces file), not
   # the piece's name before its first ::, which for deep_heap, deep_values and deep_scaling, split
-  # a piece per test and named <test> alone, is the test (TOOLS-time-tests-fixes). The test is
+  # a piece per test and named <test> alone until BENCH-listing-double-prefix, was the test
+  # (TOOLS-time-tests-fixes). The test is
   # the name after its first ::, the `--exact` argument --each-test gives each piece.
   awk '
     FNR == NR {

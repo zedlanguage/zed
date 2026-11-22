@@ -14,12 +14,13 @@
 # the selections of steps, modules and tests on the table list published (about 20 of 0.9 to 1.5 s
 # each at load 64 to 94: with the full listing in the same part it ran past 60 s at load 47 to 94,
 # 2026-11-19); `table`, the selections of --bench and --each-test on that table; `except`, the
-# pieces --except leaves out of a selection on that table; `fresh`, the
+# pieces --except leaves out of a selection on that table; `benches`, a fresh listing that selects
+# a benchmark of each binary by the name the table lists; `fresh`, the
 # listings with --only afresh; `short`, the short-addresses pieces and their clone; `copy`, a
 # piece that starts its binary again after the build is gone; `concurrent`, two runs at once on
 # one log directory; and `trace`.
-# select, table and except are run after list, with no build of the tests between them. With no part named
-# it runs list, select, table, except, fresh, short, copy and concurrent one after another.
+# select, table, except and benches are run after list, with no build of the tests between them. With no part named
+# it runs list, select, table, except, benches, fresh, short, copy and concurrent one after another.
 # Each part has a log directory of its own, under which every run of run_tests.sh writes a
 # directory of its own and points <dir>/latest at it; the parts are run one run at a time, so
 # right after a run, latest is that run's.
@@ -27,9 +28,9 @@ fails=0
 . tools/test_lib.sh || exit 2
 part=${1:-all}
 case $part in
-  all | list | select | table | except | fresh | short | copy | concurrent | trace) ;;
+  all | list | select | table | except | benches | fresh | short | copy | concurrent | trace) ;;
   *)
-    echo "usage: tools/test_run_tests.sh [list | select | table | except | fresh | short | copy | concurrent | trace]"
+    echo "usage: tools/test_run_tests.sh [list | select | table | except | benches | fresh | short | copy | concurrent | trace]"
     exit 2
     ;;
 esac
@@ -115,8 +116,11 @@ step29=$(ls tests/steps | grep '^l01_29_')
 heap=$(by_binary deep_heap)
 check "deep_heap is one piece per test, more than one" "yes" "$([ "$(echo "$heap" | wc -l)" -gt 1 ] && echo yes)"
 check "deep_heap selects each of its tests" "$heap" "$(selected deep_heap)"
+# Each piece of deep_heap is named deep_heap::<test>, as a split step's are
+# (BENCH-listing-double-prefix: named <test> alone, its benchmarks were listed bench::bench::<test>).
+check "deep_heap's pieces are named deep_heap::<test>" "$heap" "$(echo "$heap" | grep '^deep_heap::[a-z]')"
 check "a test of deep_heap matches as deep_heap::<test>" "$(echo "$heap" | head -1)" \
-  "$(selected "^deep_heap::$(echo "$heap" | head -1)\$")"
+  "$(selected "^$(echo "$heap" | head -1)\$")"
 check "a union selects both groups" "$(by_binary $step29 deep_heap)" "$(selected 'l01_29|deep_heap')"
 check "deep_values and deep_scaling are split per test too" "$(by_binary deep_values deep_scaling)" \
   "$(selected '^deep_(values|scaling)$')"
@@ -125,7 +129,7 @@ check "a step selects the deep binaries in its folder" \
 check "a step selects each test of a deep binary split per test" \
   "$(by_binary l01_36_cranelift deep_heap)" "$(selected '^l01_36_cranelift$')"
 check "a test of deep_heap matches as <step>::<test>" "$(echo "$heap" | head -1)" \
-  "$(selected "^l01_36_cranelift::$(echo "$heap" | head -1)\$")"
+  "$(selected "^l01_36_cranelift::$(echo "$heap" | head -1 | sed 's/^deep_heap:://')\$")"
 check "m0_09 selects deep_values and deep_scaling" \
   "$(by_binary m0_09_kernel_evaluator deep_values deep_scaling)" "$(selected '^m0_09_')"
 live3=$(echo "$all" | grep '^l01_38_omega_test::live3::' | sort)
@@ -200,6 +204,8 @@ check "and by that name with another hash" "$hashed" \
 # gets 256), so short-zed_kernel runs the unit tests alone and a --bench run makes no short- piece
 # of it (3f857488a, FAIL-bench-main-f215d9c90; TEST-short-benches-full-digest, found by dryS2,
 # where 24 of 48 failed bench pieces were short-zed_kernel).
+check "--each-test names a test of deep_heap deep_heap::<test>" "$(by_binary deep_heap | grep -v '::bench::')" \
+  "$(run --list --reuse-table --each-test --only '^deep_heap$' | sort)"
 benches_k=$(run --list --reuse-table --bench --only 'zed_kernel')
 check "--bench over zed_kernel selects its benchmarks" "yes" \
   "$([ "$(echo "$benches_k" | grep -c '^zed_kernel-[0-9a-f]*::')" -gt 0 ] && echo yes)"
@@ -393,6 +399,34 @@ out=$(run --pieces "$lines.short" 1)
 rc=$?
 check "--pieces refuses a short-addresses piece, whose clone the list run unmounted" "2" "$rc"
 fi
+if want benches; then
+[ -s "$logs/table" ] || { echo "FAILED: no $logs/table: run tools/test_run_tests.sh list first"; exit 1; }
+# A benchmark is selected by the name a --bench listing gives it, in a fresh listing, where the
+# binaries are chosen by the text before the name's first :: (BENCH-listing-double-prefix:
+# deep_heap's were listed bench::bench::<test>, which chose no binary, so HEAP-fresh-ratio's
+# benchmark could not be run by its name). First, on the table, that the text before the first ::
+# of every benchmark's name, without a hash, is its group or its step, which is what --only
+# chooses a binary by. Then a fresh listing selects the first benchmark of each way of naming one
+# (name from the group or the step, step folder of the same name or not, hash or not), as
+# anchored alternatives. Not every name: all 3131 are one argument of 270 KB, past Linux's 128 KB
+# for one argument (E2BIG), and with one name per binary (about 100) the listing took 89 s at
+# load 55 (2026-11-22), 39 s of it matching each term against every piece, against 60 s for a
+# part. A part of its own, after except: it lists afresh, which select's 30 s could not take.
+check "every benchmark is named from its group or its step" "" \
+  "$(awk '$1 == "bench" { p = $4; sub(/::.*/, "", p); sub(/-[0-9a-f]+$/, "", p); if (p != $2 && p != $3) print $4 }' "$logs/table")"
+benches=$(awk '$1 == "bench" {
+    p = $4; sub(/::.*/, "", p); h = sub(/-[0-9a-f]+$/, "", p)
+    if (!seen[(p == $2) " " ($2 == $3) " " h]++) print $4
+  }' "$logs/table" | sort)
+check "deep_heap's benchmarks are listed as deep_heap::bench::<test>" "yes" \
+  "$([ "$(run --list --reuse-table --bench --only '^deep_heap$' | grep -c '^deep_heap::bench::')" -gt 0 ] && echo yes)"
+# A library's unit-test binary is named with its hash, which another build of it (other features)
+# changes, and a name is selected with any hash (see "and by that name with another hash"), so
+# the two lists are compared without it.
+unhash() { sed 's/^\([a-z0-9_]*\)-[0-9a-f]\{16\}::/\1::/' | sort; }
+check "a benchmark named each way is selected by its listed name" "$(echo "$benches" | unhash)" \
+  "$(run --list --bench --only "$(echo "$benches" | sed 's/.*/^&$/' | paste -sd '|')" | unhash)"
+fi
 if want fresh; then
 logs=build/test-run-tests-fresh
 run --list --only '^zedc$' >/dev/null
@@ -411,16 +445,17 @@ out=$(run --list --only '(l01_38::x|y)')
 rc=$?
 check "a part whose binary cannot be read off stops the run" "2" "$rc"
 # tools/time_tests.sh names each test's group by the binary its piece runs: deep_heap's pieces
-# are named <test> alone, and were reported with the test as the group (TOOLS-time-tests-fixes).
+# were named <test> alone, and were reported with the test as the group (TOOLS-time-tests-fixes);
+# they are named deep_heap::<test> now (BENCH-listing-double-prefix).
 # It also publishes its table as build/test-logs/test-times.tsv, which nothing reads; the checks
 # read the copy in the run's own log directory.
 heap1=$(run --list --only '^deep_heap$' | sort | head -1)
-out=$(tools/time_tests.sh --only "^deep_heap::$heap1\$|^l01_26_type_resolution::random::a_wrong_claim_is_caught\$" 4)
+out=$(tools/time_tests.sh --only "^$heap1\$|^l01_26_type_resolution::random::a_wrong_claim_is_caught\$" 4)
 rc=$?
 tdir=$(sed -n 's/^logs: //p' <<<"$out" | head -1)
 check "time_tests times a test of a split step's module and one of deep_heap, each under its group" \
   "0
-deep_heap	$heap1
+deep_heap	${heap1#deep_heap::}
 l01_26_type_resolution	random::a_wrong_claim_is_caught" \
   "$rc
 $(tail -n +2 "$tdir/test-times.tsv" | cut -f 1,2 | sort)"

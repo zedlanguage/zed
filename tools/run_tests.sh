@@ -697,7 +697,7 @@ alternatives() {
 # becomes a piece per test it runs, <its name before the first ::>::<test> running
 # `--exact <test>`.
 select_pieces() {
-  local k group step name dir bin args first t
+  local k group step name dir bin args first t stepname
   # The groups and steps of the table's pieces of the run's kind, for the hints of check_terms,
   # and those of the other kind, for --skip-other-kind.
   local -A groups others
@@ -714,7 +714,11 @@ select_pieces() {
     [ "$k" = "$run_kind" ] || { others[$group]=1 others[$step]=1 && continue; }
     groups[$group]=1 groups[$step]=1
     [ "$k" = test ] || args="${args:+$args }--nocapture"
-    if ! selected "$group" "$name" && ! selected "$step" "$name"; then
+    # A piece of a binary whose step folder has another name (deep_heap in l01_36_cranelift) is
+    # named <group>::<test>, and matches as <step>::<test> too, without its group.
+    stepname=$name
+    [ "$group" = "$step" ] || stepname=${name#"$group::"}
+    if ! selected "$group" "$name" && ! selected "$step" "$stepname"; then
       # A piece of a binary named with its hash, not selected as a whole, still gives each of
       # its tests whose <group>::<test> --only matches as a piece of its own, run as with
       # --each-test, so that --only '^zed_kernel::btree::' runs those unit tests of the library
@@ -840,13 +844,16 @@ group_hint() {
 # other term is matched against the chosen pieces until one matches, at most O(pieces) a term,
 # the cost the selection itself paid for that term inside --only's regular expression.
 check_terms() {
-  local t g s n x name saved=$only bad=
+  local t g s n x m name saved=$only bad=
   local -A have
   while read -r g s n; do
     have[$n]=1
     for x in "$g" "$s"; do
       have[$x]=1
-      [[ $n == "$x"* ]] || have[$x::$n]=1
+      # As in select_pieces: <group>::<test> matches as <step>::<test> too.
+      m=$n
+      [ "$x" = "$g" ] || [ "$g" = "$s" ] || m=${n#"$g::"}
+      [[ $m == "$x"* ]] || have[$x::$m]=1
       [[ $n =~ ^$x-[0-9a-f]+(::.*)?$ ]] && have[$x${BASH_REMATCH[1]}]=1
     done
   done <"$out/chosen"
@@ -869,7 +876,9 @@ check_terms() {
     else
       only=$t
       while read -r g s n; do
-        selected "$g" "$n" || selected "$s" "$n" || continue
+        m=$n
+        [ "$g" = "$s" ] || m=${n#"$g::"}
+        selected "$g" "$n" || selected "$s" "$m" || continue
         only=
         break
       done <"$out/chosen"
@@ -1354,9 +1363,14 @@ step_pieces() {
           # Tests of many gigabytes at once slow each other through the lock on the address space
           # of their process: 59 s together against 17 s alone at load 50. Each gets a process.
           # deep_heap also compiles functions of up to 20,000 concatenations natively.
+          # Each piece is named <group>::<test>, as a split step's pieces are: split_benchmarks
+          # and --each-test name a piece's tests after the name's text before its first ::, and
+          # the binaries of a run with --only are chosen by that text. Named <test> alone, a
+          # benchmark of deep_heap was listed as bench::bench::<test>, which --only could not
+          # select, and a correctness test as <test>::<test> (BENCH-listing-double-prefix).
           if tests=$("$p" --list --format terse); then
             for t in $(echo "$tests" | sed -n "s/: test$//p"); do
-              echo "$t tests $p --exact $t"
+              echo "$g::$t tests $p --exact $t"
             done
           else
             echo "$n tests $p"
