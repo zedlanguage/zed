@@ -401,13 +401,6 @@ pub(super) fn family(name: &str, k: usize) -> (Term, Domains, Demand) {
     }
 }
 
-pub(super) fn old(d: &Demand) -> before::Demand {
-    match d {
-        Demand::Ints(z) => before::Demand::Ints(z.clone()),
-        Demand::Bool(b) => before::Demand::Bool(*b),
-    }
-}
-
 /// The cases compared, the differences found, each shown, the cases whose inexact box is
 /// narrower than the one before and still sound, the other boxes of `c - x` that S22b changed,
 /// the cases now exact that the transfer before left inexact, refused or listed (by
@@ -593,7 +586,7 @@ impl Diffs {
     fn preimage_listed(&mut self, what: &str, t: &Term, ds: &Domains, listed: &Listed, d: &Demand) {
         let (now, then) = (
             preimage_listed(t, ds, listed, d),
-            before::preimage_listed(t, ds, listed, &old(d)),
+            before::preimage_listed(t, ds, listed, d),
         );
         let (new, old) = (format!("{now:?}"), format!("{then:?}"));
         // Every box of both transfers, whether or not the two differ, holds each point that
@@ -763,7 +756,7 @@ impl Diffs {
     /// Compares the exact preimage of `d` under `t` over `ds` and `cs` with the one before.
     fn exact(&mut self, what: &str, t: &Term, ds: &Domains, cs: &Classes, d: &Demand) {
         let now = exact_preimage(t, ds, cs, d);
-        let then = before::exact_preimage(t, ds, cs, &old(d));
+        let then = before::exact_preimage(t, ds, cs, d);
         // Item PA-plus-if: the summary reads a sum of two summaries of one input, so a preimage
         // the transfer before found exact by listing its points is read exact without a
         // listing. The set, the stops, the relation and the refusal are those before.
@@ -1367,7 +1360,7 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
     );
     let ds = over(&[("i", IntervalSet::range(End::NegInf, End::of(12)))]);
     let d = Demand::Ints(pieces(&[(-30, -29), (6, 10)]));
-    let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
+    let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &d));
     // The cover of module `exact` (PRES-pugh-exact-projection-research) runs under both
     // transfers, so the transfer before is now exact as well, with the same true set.
     assert!(now.exact && then.exact);
@@ -2270,7 +2263,7 @@ fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
             Some("j if q1 <= 0, j + 1 if q1 >= 1"),
         ),
     ] {
-        let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &old(&d)));
+        let (now, then) = (preimage(&t, &ds, &d), before::preimage(&t, &ds, &d));
         match def {
             None => assert_eq!(format!("{now:?}"), format!("{then:?}"), "{t}"),
             Some(def) => {
@@ -2295,10 +2288,7 @@ fn a_split_by_remainders_is_given_up_where_it_cannot_be_exact() {
         check(&t, &ds, &d, &now, (-60, 60));
     }
     let (ds, d) = (i_in(-1000, 1000), ints(10, 2000));
-    let (now, then) = (
-        preimage(&wide, &ds, &d),
-        before::preimage(&wide, &ds, &old(&d)),
-    );
+    let (now, then) = (preimage(&wide, &ds, &d), before::preimage(&wide, &ds, &d));
     // The cover of module `exact` (PRES-pugh-exact-projection-research) lists every even
     // value of `10..=1000`, the exact preimage: an odd `i` gives 0, outside the demand. The
     // split listed the first and last periods and kept `14..=994` whole. The cover runs under
@@ -2664,7 +2654,7 @@ fn remainder_splits_at_their_corners_keep_their_preimages() {
         for (t, d) in &terms {
             for (set, window) in &boxes {
                 let ds = over(&[("i", set.clone())]);
-                let (now, then) = (preimage(t, &ds, d), before::preimage(t, &ds, &old(d)));
+                let (now, then) = (preimage(t, &ds, d), before::preimage(t, &ds, d));
                 let what = format!("{t} over {ds:?}, demand {d:?}");
                 check(t, &ds, d, &now, *window);
                 assert!(now.exact || !then.exact, "{what}: {now:?} before {then:?}");
@@ -3798,7 +3788,7 @@ fn a_power_zero_of_a_quotient_by_a_term_is_not_exact_where_the_divisor_is_zero()
     let ds = over(&[("x", IntervalSet::top())]);
     for (t, d) in cases {
         let now = preimage(&t, &ds, &d);
-        let then = before::preimage(&t, &ds, &old(&d));
+        let then = before::preimage(&t, &ds, &d);
         assert!(
             !refuted(&t, &ds, &d, &now.domains, now.exact),
             "{t}: {now:?}"
@@ -3841,7 +3831,6 @@ fn reversed_boxes_are_the_same(seed: u64, cases: usize) {
                 a.domains, b.domains
             ));
         }
-        let d = old(&d);
         let (a, b) = (
             before::preimage(&t, &ds, &d),
             reversed(|| before::preimage(&t, &ds, &d)),
@@ -3925,7 +3914,7 @@ fn holes_of_c_minus_t_at_small_sizes() {
         let reflected = (-n..n).rev().map(|j| (c - 4 * j - 1, c - 4 * j));
         let ds = over(&[("i", pieces(&reflected.collect::<Vec<_>>()))]);
         let (t, d) = (prim(Prim::Sub, int(c), var("i")), Demand::Ints(z));
-        let p = before::preimage(&t, &ds, &old(&d));
+        let p = before::preimage(&t, &ds, &d);
         assert!(p.exact && p.domains == ds, "{t}: {p:?}");
     }
     let constants: [fn(i64) -> i64; 3] = [|j| 3 * j + 1, |_| 2, |j| j % 5];
@@ -3934,7 +3923,7 @@ fn holes_of_c_minus_t_at_small_sizes() {
             let g = |j: i64| prim(Prim::Le, var("i"), int(j % 7 - 3));
             let t = chain(n, var("i"), g, |j, t| prim(Prim::Sub, int(c(j)), t));
             let (t, ds, d) = (prim(Prim::Ne, t, int(0)), i_in(-20, 20), Demand::Bool(true));
-            let p = before::preimage(&t, &ds, &old(&d));
+            let p = before::preimage(&t, &ds, &d);
             assert!(p.exact && !p.enumerated, "n = {n}: {p:?}");
             assert_eq!(first_refuted(&t, &ds, &d, &[(&p.domains, true)]), None);
         }

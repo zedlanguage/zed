@@ -103,7 +103,7 @@ pub type Domains = BTreeMap<Arc<str>, IntervalSet>;
 pub type Listed = BTreeSet<Arc<str>>;
 
 /// No input listed.
-const NONE_LISTED: &Listed = &Listed::new();
+pub(crate) const NONE_LISTED: &Listed = &Listed::new();
 
 /// What the term's value must be.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -3940,9 +3940,9 @@ impl Res {
 }
 
 /// A box over every input, after the transfer.
-struct Whole {
-    dom: Domains,
-    exact: bool,
+pub(crate) struct Whole {
+    pub(crate) dom: Domains,
+    pub(crate) exact: bool,
 }
 
 /// What forward transfer knows of a term's value.
@@ -15443,7 +15443,7 @@ fn fails_in(term: &Term, root: Domains, classes: &Classes, demand: &Demand) -> O
 }
 
 /// The value of `term` at the point `b`, each input one value; `None` when it cannot be run.
-fn run_point(term: &Term, b: &Domains) -> Option<Value> {
+pub(crate) fn run_point(term: &Term, b: &Domains) -> Option<Value> {
     let mut t = term.clone();
     for (k, s) in b.iter().rev() {
         let Some((Fin(v), _)) = s.bounds() else {
@@ -15460,7 +15460,7 @@ fn run_point(term: &Term, b: &Domains) -> Option<Value> {
 
 /// Pushes onto `boxes` the two halves of `b` split at the middle of its widest input, each
 /// within `classes` and dropped when it holds no point of them.
-fn halve(b: &Domains, classes: &Classes, boxes: &mut Vec<Domains>) {
+pub(crate) fn halve(b: &Domains, classes: &Classes, boxes: &mut Vec<Domains>) {
     let (k, lo, hi) = b
         .iter()
         .filter_map(|(k, s)| match s.bounds() {
@@ -15484,7 +15484,7 @@ fn halve(b: &Domains, classes: &Classes, boxes: &mut Vec<Domains>) {
 
 /// What a search of [`branch`] does with the boxes: which it skips, and what it takes from each
 /// box whose every point meets the demand.
-trait Search {
+pub(crate) trait Search {
     /// Whether `b` adds nothing to what the search has found.
     fn skip(&self, _b: &Domains) -> bool {
         false
@@ -15567,7 +15567,7 @@ fn branch(
 
 /// Whether every integer point with each input in its class meets `demand` under `term`
 /// (`Some(true)`), none does (`Some(false)`), or the classes do not decide.
-fn classes_decide(term: &Term, classes: &Classes, demand: &Demand) -> Option<bool> {
+pub(crate) fn classes_decide(term: &Term, classes: &Classes, demand: &Demand) -> Option<bool> {
     match demand {
         Demand::Bool(d) => class_test(term, classes).map(|b| b == *d),
         Demand::Ints(z) => match class_of(term, classes)? {
@@ -15694,7 +15694,7 @@ fn unbound(classes: &Classes, x: &str) -> Classes {
 }
 
 /// `dom` with each input's set tightened to its class, or `None` when one is then empty.
-fn within_classes(dom: &Domains, classes: &Classes) -> Option<Domains> {
+pub(crate) fn within_classes(dom: &Domains, classes: &Classes) -> Option<Domains> {
     let d: Domains = dom
         .iter()
         .map(|(k, s)| match classes.get(k) {
@@ -15706,12 +15706,16 @@ fn within_classes(dom: &Domains, classes: &Classes) -> Option<Domains> {
 }
 
 /// Whether `s` is one value.
-fn is_point(s: &IntervalSet) -> bool {
+pub(crate) fn is_point(s: &IntervalSet) -> bool {
     matches!(s.bounds(), Some((Fin(a), Fin(b))) if a == b)
 }
 
 /// The enumeration of [`enumerate`] over `axes`, each point evaluated in turn.
-fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<Num>)], demand: &Demand) -> Option<Whole> {
+pub(crate) fn enumerate_on(
+    term: &Term,
+    axes: &[(Arc<str>, Vec<Num>)],
+    demand: &Demand,
+) -> Option<Whole> {
     let mut met: Vec<Vec<&Num>> = vec![Vec::new(); axes.len()];
     let mut count: u64 = 0;
     let mut point = vec![0usize; axes.len()];

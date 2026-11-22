@@ -158,16 +158,12 @@ struct Found {
 
 /// The disagreements of the interpreter with both transfers' preimages of `case`.
 fn check(case: &Case) -> Found {
-    let old = match &case.demand {
-        Demand::Ints(z) => before::Demand::Ints(z.clone()),
-        Demand::Bool(b) => before::Demand::Bool(*b),
-    };
     let (t, ds) = (&case.term, &case.domains);
     let (now, then) = match &case.classes {
         None => {
             let (a, b) = (
                 preimage_listed(t, ds, &case.listed, &case.demand),
-                before::preimage_listed(t, ds, &case.listed, &old),
+                before::preimage_listed(t, ds, &case.listed, &case.demand),
             );
             ((a.domains, a.exact), (b.domains, b.exact))
         }
@@ -175,7 +171,7 @@ fn check(case: &Case) -> Found {
             let cs: &Classes = cs;
             let (a, b) = (
                 exact_preimage(t, ds, cs, &case.demand),
-                before::exact_preimage(t, ds, cs, &old),
+                before::exact_preimage(t, ds, cs, &case.demand),
             );
             ((a.domains, a.exact), (b.domains, b.exact))
         }

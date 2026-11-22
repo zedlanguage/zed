@@ -157,13 +157,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use zed_collections::index::to_u32;
-use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, eval};
+use zed_kernel::{Prim, Shared, Term, Value, eval};
 
 use End::{Fin, NegInf, PosInf};
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::landmarks::Landmarks;
-use zedc_lattice::lattice::{Congruence, Lattice};
 use zedc_lattice::revision::{self, Op, Tonicity, reduce_congruence};
 use zedc_presburger::presburger::{self, Con, Formula, Lin, Refusal, Relation};
 use zedc_stage::stage;
@@ -175,35 +174,14 @@ use mod_chain::{
     normal, periodic, pieces_of, residues, set_of,
 };
 
-/// An interval per input name.
-pub type Domains = BTreeMap<Arc<str>, IntervalSet>;
-
-/// The input names whose domains are sets the source lists member by member
-/// ([`preimage_listed`]).
-pub type Listed = BTreeSet<Arc<str>>;
-
-/// No input listed.
-const NONE_LISTED: &Listed = &Listed::new();
-
-/// What the term's value must be.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub enum Demand {
-    /// An integer in the set.
-    Ints(IntervalSet),
-    /// The boolean.
-    Bool(bool),
-}
-
-impl Demand {
-    /// Whether `v` meets the demand, exact at any magnitude.
-    pub fn holds(&self, v: &Value) -> bool {
-        match (self, v) {
-            (Demand::Ints(z), v) => Num::of_integer(v).is_some_and(|n| z.contains_end(&Fin(n))),
-            (Demand::Bool(w), Value::Bool(b)) => w == b,
-            _ => false,
-        }
-    }
-}
+// The search helpers and the types they read are those of the solver (DRY-preimage-ref-oracle):
+// this file is an independent oracle for the backward transfer, which stays a copy, and the
+// box search around it (the classes, halving, running a point) is not what it checks.
+pub use crate::preimage::{Classes, Demand, Domains, Listed, Point};
+use crate::preimage::{
+    NONE_LISTED, Search, Whole, classes_decide, enumerate_on, halve, is_point, run_point,
+    within_classes,
+};
 
 /// Why the transfer stopped.
 #[derive(Clone, PartialEq, Debug)]
@@ -2447,12 +2425,6 @@ enum StepKind {
     Div(i64, At),
     Mod(i64, IntervalSet, At),
     Pow(Num, IntervalSet, At),
-}
-
-/// A box over every input, after the transfer.
-struct Whole {
-    dom: Domains,
-    exact: bool,
 }
 
 /// What forward transfer knows of a term's value.
@@ -7432,10 +7404,6 @@ fn enumerate(term: &Term, dom: &Domains, listed: &Listed, demand: &Demand) -> Op
     enumerate_on(term, &axes, demand)
 }
 
-/// The congruence class of each input that has one, under `@exact`; an input not listed may be
-/// any integer.
-pub type Classes = BTreeMap<Arc<str>, Congruence>;
-
 /// The preimage of `demand` under `term` when its declaration is annotated `@exact`
 /// (DESIGN.md sec:constraints): [`preimage`], and where that is not exact, every input is
 /// bounded and the term's form shows that it ends, the projection of the points of the box, in
@@ -7473,9 +7441,6 @@ pub fn exact_preimage(
         refusal: if exact { None } else { p.refusal },
     }
 }
-
-/// A point of the inputs, each input within its class, at which the term meets the demand.
-pub type Point = BTreeMap<Arc<str>, Num>;
 
 /// A point of `inputs`, each input within its class, at which `term` meets `demand`:
 /// `Some(Some(point))`, or `Some(None)` when there is none. The search of [`exact_preimage`]
@@ -7632,58 +7597,6 @@ fn fails_in(term: &Term, root: Domains, classes: &Classes, demand: &Demand) -> O
     Some(false)
 }
 
-/// The value of `term` at the point `b`, each input one value; `None` when it cannot be run.
-fn run_point(term: &Term, b: &Domains) -> Option<Value> {
-    let mut t = term.clone();
-    for (k, s) in b.iter().rev() {
-        let Some((Fin(v), _)) = s.bounds() else {
-            unreachable!("a point is finite")
-        };
-        t = Term::Let(
-            k.clone(),
-            Shared::new(Term::Lit(Value::from(v))),
-            Shared::new(t),
-        );
-    }
-    Evaluator::new(World::new()).run(&t).ok()
-}
-
-/// Pushes onto `boxes` the two halves of `b` split at the middle of its widest input, each
-/// within `classes` and dropped when it holds no point of them.
-fn halve(b: &Domains, classes: &Classes, boxes: &mut Vec<Domains>) {
-    let (k, lo, hi) = b
-        .iter()
-        .filter_map(|(k, s)| match s.bounds() {
-            Some((Fin(lo), Fin(hi))) if lo < hi => Some((k, lo, hi)),
-            _ => None,
-        })
-        .max_by_key(|(_, lo, hi)| *hi - *lo)
-        .expect("a box of more than one point has an input of more than one value");
-    let mid = lo + &(hi - lo).div_floor(&Num::from(2i64));
-    for half in [
-        IntervalSet::range(Fin(&mid + &Num::ONE), PosInf),
-        IntervalSet::range(NegInf, Fin(mid.clone())),
-    ] {
-        let mut h = b.clone();
-        h.insert(k.clone(), b[k].meet(&half));
-        if let Some(h) = within_classes(&h, classes) {
-            boxes.push(h);
-        }
-    }
-}
-
-/// What a search of [`branch`] does with the boxes: which it skips, and what it takes from each
-/// box whose every point meets the demand.
-trait Search {
-    /// Whether `b` adds nothing to what the search has found.
-    fn skip(&self, _b: &Domains) -> bool {
-        false
-    }
-
-    /// Takes `b`, whose every point meets the demand; `true` stops the search.
-    fn all(&mut self, b: &Domains) -> bool;
-}
-
 /// Branch and prune over `root`: each box not skipped by `search` is narrowed by [`preimage_in`]
 /// and its inputs' classes, and dropped when empty, given to `search` when every point meets
 /// `demand`, and otherwise halved on its widest input; a single point is evaluated. Every box
@@ -7739,217 +7652,6 @@ fn branch(
         halve(&b, classes, &mut boxes);
     }
     Some(false)
-}
-
-/// Whether every integer point with each input in its class meets `demand` under `term`
-/// (`Some(true)`), none does (`Some(false)`), or the classes do not decide.
-fn classes_decide(term: &Term, classes: &Classes, demand: &Demand) -> Option<bool> {
-    match demand {
-        Demand::Bool(d) => class_test(term, classes).map(|b| b == *d),
-        Demand::Ints(z) => match class_of(term, classes)? {
-            Congruence::Bottom => Some(false),
-            Congruence::Class { modulus, residue } if modulus.is_zero() => {
-                Some(z.contains_end(&End::Fin(residue)))
-            }
-            _ => None,
-        },
-    }
-}
-
-/// The value of the test `term` at every point with each input in its class, if one value.
-fn class_test(term: &Term, classes: &Classes) -> Option<bool> {
-    let Term::Prim(p, xs) = term else {
-        return match term {
-            Term::Lit(Value::Bool(b)) => Some(*b),
-            Term::Let(x, _, body) => class_test(body, &unbound(classes, x)),
-            _ => None,
-        };
-    };
-    match (p, xs.as_slice()) {
-        (Prim::Not, [a]) => class_test(a, classes).map(|b| !b),
-        // The kernel primitives `and` and `or` read both operands, so a failing one fails the
-        // term, as `and((0 mod x) < -4, false)` at `x == 0` (DESIGN.md step L1.25; the surface
-        // `a && b` is the `if` of sec:failure, which this match does not read): a decided operand
-        // decides the term only when the other is decided too, and so cannot fail, since
-        // `class_test` decides only forms that cannot. Reading one decided operand alone kept
-        // the points where the other fails (FAIL-exact-oracle-mod-zero-seed). Complexity: both
-        // operands are read where one was, O(size of the term) as before.
-        (Prim::And | Prim::Or, [a, b]) => {
-            let (x, y) = (class_test(a, classes)?, class_test(b, classes)?);
-            Some(if *p == Prim::And { x && y } else { x || y })
-        }
-        (Prim::Eq | Prim::Ne, [a, b]) => {
-            let (x, y) = (class_of(a, classes)?, class_of(b, classes)?);
-            let eq = match (&x, &y) {
-                (
-                    Congruence::Class {
-                        modulus: m,
-                        residue: u,
-                    },
-                    Congruence::Class {
-                        modulus: n,
-                        residue: v,
-                    },
-                ) if m.is_zero() && n.is_zero() => u == v,
-                _ if x.meet(&y) == Congruence::Bottom => false,
-                _ => return None,
-            };
-            Some(eq == (*p == Prim::Eq))
-        }
-        _ => None,
-    }
-}
-
-/// The class of the integer `term` at every point with each input in its class, by Granger's
-/// arithmetic of congruences; `None` for a form it does not cover or a class too fine to hold.
-/// Granger 1989, doi:10.1080/00207168908803778; the full comment is in zedc-lattice
-/// `lattice.rs`, enum `Congruence`.
-fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
-    // A class as (modulus, residue) in i128, and back, `None` when it leaves u64 and i64.
-    let parts = |c: Congruence| match c {
-        Congruence::Bottom => None,
-        Congruence::Class { modulus, residue } => Some((modulus.to_i128()?, residue.to_i128()?)),
-    };
-    let class = |m: i128, r: i128| -> Option<Congruence> {
-        let r = if m == 0 { r } else { r.rem_euclid(m) };
-        Some(Congruence::new(
-            u64::try_from(m).ok()?,
-            i64::try_from(r).ok()?,
-        ))
-    };
-    // The shared gcd: this file is an independent oracle for the preimage solver, but the gcd
-    // is not what it checks (the solver's class arithmetic is), and the gcd has its own tests
-    // in zed-numtheory against num-integer, so sharing it costs the oracle no independence.
-    // `None` only for a gcd of `2^127` (an operand `i128::MIN` with the other 0 or a multiple),
-    // where the old `abs` overflowed.
-    let gcd = |a: i128, b: i128| {
-        i128::try_from(zed_numtheory::gcd_u128(a.unsigned_abs(), b.unsigned_abs())).ok()
-    };
-    match term {
-        Term::Lit(Value::Int(v)) => Some(Congruence::single(*v)),
-        Term::Var(x) => Some(classes.get(x).cloned().unwrap_or(Congruence::top())),
-        Term::Let(x, _, body) => class_of(body, &unbound(classes, x)),
-        Term::Prim(p, xs) => match (p, xs.as_slice()) {
-            (Prim::Neg, [a]) => {
-                let (m, r) = parts(class_of(a, classes)?)?;
-                class(m, -r)
-            }
-            (Prim::Add | Prim::Sub, [a, b]) => {
-                let ((m, r), (n, s)) =
-                    (parts(class_of(a, classes)?)?, parts(class_of(b, classes)?)?);
-                class(gcd(m, n)?, if *p == Prim::Add { r + s } else { r - s })
-            }
-            (Prim::Mul, [a, b]) => {
-                // (r mod m)(s mod n) is rs mod gcd(mn, rn, sm).
-                let ((m, r), (n, s)) =
-                    (parts(class_of(a, classes)?)?, parts(class_of(b, classes)?)?);
-                let g = gcd(
-                    gcd(m.checked_mul(n)?, r.checked_mul(n)?)?,
-                    s.checked_mul(m)?,
-                )?;
-                class(g, r.checked_mul(s)?)
-            }
-            (Prim::Mod, [a, Term::Lit(Value::Int(k))]) if *k > 0 => {
-                // `x mod k` is Euclidean, so in 0..k; when k divides the modulus it is one value,
-                // and otherwise it is x's residue modulo gcd(m, k).
-                let (m, r) = parts(class_of(a, classes)?)?;
-                let k = *k as i128;
-                if m % k == 0 {
-                    class(0, r.rem_euclid(k))
-                } else {
-                    class(gcd(m, k)?, r)
-                }
-            }
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// `classes` without `x`, which a `let` has bound to a value the classes do not hold.
-fn unbound(classes: &Classes, x: &str) -> Classes {
-    let mut c = classes.clone();
-    c.remove(x);
-    c
-}
-
-/// `dom` with each input's set tightened to its class, or `None` when one is then empty.
-fn within_classes(dom: &Domains, classes: &Classes) -> Option<Domains> {
-    let d: Domains = dom
-        .iter()
-        .map(|(k, s)| match classes.get(k) {
-            Some(c) => (k.clone(), reduce_congruence(s, c).0),
-            None => (k.clone(), s.clone()),
-        })
-        .collect();
-    (!is_empty(&d)).then_some(d)
-}
-
-/// Whether `s` is one value.
-fn is_point(s: &IntervalSet) -> bool {
-    matches!(s.bounds(), Some((Fin(a), Fin(b))) if a == b)
-}
-
-/// The enumeration of [`enumerate`] over `axes`, each point evaluated in turn.
-fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<Num>)], demand: &Demand) -> Option<Whole> {
-    let mut met: Vec<Vec<&Num>> = vec![Vec::new(); axes.len()];
-    let mut count: u64 = 0;
-    let mut point = vec![0usize; axes.len()];
-    loop {
-        let mut t = term.clone();
-        for ((k, vs), &i) in axes.iter().zip(&point).rev() {
-            t = Term::Let(
-                k.clone(),
-                Shared::new(Term::Lit(Value::from(&vs[i]))),
-                Shared::new(t),
-            );
-        }
-        let v = Evaluator::new(World::new()).run(&t).ok()?;
-        if demand.holds(&v) {
-            count += 1;
-            for (j, &i) in point.iter().enumerate() {
-                met[j].push(&axes[j].1[i]);
-            }
-        }
-        // The next point, the last axis fastest.
-        let mut j = axes.len();
-        loop {
-            if j == 0 {
-                let dom: Domains = axes
-                    .iter()
-                    .zip(&met)
-                    .map(|((k, _), vs)| {
-                        (
-                            k.clone(),
-                            IntervalSet::from_pieces(
-                                vs.iter()
-                                    .map(|&v| (Fin(v.clone()), Fin(v.clone())))
-                                    .collect(),
-                            ),
-                        )
-                    })
-                    .collect();
-                let product: u64 = met
-                    .iter()
-                    .map(|vs| {
-                        let mut vs = vs.clone();
-                        zed_collections::sorted::sort_dedup(&mut vs);
-                        vs.len() as u64
-                    })
-                    .product();
-                return Some(Whole {
-                    exact: product == count,
-                    dom,
-                });
-            }
-            j -= 1;
-            point[j] += 1;
-            if point[j] < axes[j].1.len() {
-                break;
-            }
-            point[j] = 0;
-        }
-    }
 }
 
 impl Tx<'_> {

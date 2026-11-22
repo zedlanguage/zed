@@ -159,13 +159,6 @@ fn sound(t: &Term, ds: &Domains, d: &Demand, p: &Preimage, near: &[Num]) {
     }
 }
 
-fn old(d: &Demand) -> before::Demand {
-    match d {
-        Demand::Ints(z) => before::Demand::Ints(z.clone()),
-        Demand::Bool(b) => before::Demand::Bool(*b),
-    }
-}
-
 /// Whether every piece of `s` lies inside a piece of `o`.
 fn inside(s: &IntervalSet, o: &IntervalSet) -> bool {
     s.pieces()
@@ -190,7 +183,7 @@ enum Same {
 /// The preimage of `d` under `t` over `ds`, checked by [`sound`] and against the transfer
 /// before: the box lies inside the one before, and is exact wherever that one is.
 fn compared(t: &Term, ds: &Domains, d: &Demand, near: &[Num]) -> Same {
-    let (now, then) = (preimage(t, ds, d), before::preimage(t, ds, &old(d)));
+    let (now, then) = (preimage(t, ds, d), before::preimage(t, ds, d));
     sound(t, ds, d, &now, near);
     assert!(
         inside(&now.domains["i"], &then.domains["i"]),
@@ -498,7 +491,7 @@ fn ends_past_i128_take_the_transfer_before() {
                 summary_preimage(t, ds, z).is_none(),
                 "{t} over {ds:?}, {d:?}"
             );
-            let (now, then) = (preimage(t, ds, d), before::preimage(t, ds, &old(d)));
+            let (now, then) = (preimage(t, ds, d), before::preimage(t, ds, d));
             assert_eq!(
                 format!("{now:?}"),
                 format!("{then:?}"),

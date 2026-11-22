@@ -507,12 +507,12 @@ fn constant_minus_holes_scale() {
     let (a, b) = (case(n), case(n * scaling::FACTOR));
     on_big_stack(|| {
         for (t, ds, d) in [&a, &b] {
-            let p = before::preimage(t, ds, &old(d));
+            let p = before::preimage(t, ds, d);
             assert!(p.exact && p.domains == *ds, "{t}: {p:?}");
         }
         scaling::check("the transfer before of `c - i` with holes", n, |k| {
             let (t, ds, d) = if k == n { &a } else { &b };
-            before::preimage(t, ds, &old(d));
+            before::preimage(t, ds, d);
         });
     });
 }
@@ -537,7 +537,7 @@ fn guarded_holes_scale() {
     let (a, b) = (case(n), case(n * scaling::FACTOR));
     on_big_stack(|| {
         for (t, ds, d) in [&a, &b] {
-            let p = before::preimage(t, ds, &old(d));
+            let p = before::preimage(t, ds, d);
             assert!(p.exact && !p.enumerated, "{p:?}");
             assert_eq!(first_refuted(t, ds, d, &[(&p.domains, true)]), None);
         }
@@ -546,7 +546,7 @@ fn guarded_holes_scale() {
             n,
             |k| {
                 let (t, ds, d) = if k == n { &a } else { &b };
-                before::preimage(t, ds, &old(d));
+                before::preimage(t, ds, d);
             },
         );
     });
@@ -576,7 +576,7 @@ fn constant_guarded_chains_scale() {
     let moving = case(n, |j| j % 5);
     on_big_stack(|| {
         for (t, ds, d) in cases.values().chain([&moving]) {
-            let p = before::preimage(t, ds, &old(d));
+            let p = before::preimage(t, ds, d);
             assert!(p.exact && !p.enumerated, "{p:?}");
             assert_eq!(first_refuted(t, ds, d, &[(&p.domains, true)]), None);
         }
@@ -586,7 +586,7 @@ fn constant_guarded_chains_scale() {
             1,
             |k| {
                 let (t, ds, d) = &cases[&k];
-                before::preimage(t, ds, &old(d));
+                before::preimage(t, ds, d);
             },
         );
     });
