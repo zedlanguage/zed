@@ -125,24 +125,35 @@ fn debug_writes_the_derived_text() {
 /// the arguments of a sum (a `Vec`), the arms of a `match`, and a pattern of tuples, each built
 /// afresh so that no two builds share a subterm.
 pub(super) fn nested(n: usize) -> Vec<(&'static str, Term)> {
-    let lams = (0..n).fold(var("x"), |b, _| Term::Lam(vec!["y".into()], sh(b)));
-    let sum = (0..n).fold(var("x"), |a, _| {
-        Term::Prim(Prim::Add, vec![a, Term::Lit(Value::Int(1))])
-    });
-    let arms = (0..n).fold(var("x"), |b, _| {
-        Term::Match(sh(var("v")), vec![(Pattern::Wild, b)])
-    });
-    let pattern = (0..n).fold(Pattern::Bind("p".into()), |p, _| {
-        Pattern::Tuple(vec![p, Pattern::Wild])
-    });
-    let deep_pattern = Term::Match(sh(var("v")), vec![(pattern, var("x"))]);
-    vec![
-        ("nested lambdas", lams),
-        ("a left-nested sum", sum),
-        ("nested `match` arms", arms),
-        ("a nested tuple pattern", deep_pattern),
-    ]
+    NESTED
+        .iter()
+        .map(|&(what, build)| (what, build(n)))
+        .collect()
 }
+
+/// The terms of [`nested`], each with its builder, so that a benchmark of one term builds that
+/// term alone (`bench::deep::copying_comparing_and_printing_scale_with_size`).
+pub(super) const NESTED: [(&str, fn(usize) -> Term); 4] = [
+    ("nested lambdas", |n| {
+        (0..n).fold(var("x"), |b, _| Term::Lam(vec!["y".into()], sh(b)))
+    }),
+    ("a left-nested sum", |n| {
+        (0..n).fold(var("x"), |a, _| {
+            Term::Prim(Prim::Add, vec![a, Term::Lit(Value::Int(1))])
+        })
+    }),
+    ("nested `match` arms", |n| {
+        (0..n).fold(var("x"), |b, _| {
+            Term::Match(sh(var("v")), vec![(Pattern::Wild, b)])
+        })
+    }),
+    ("a nested tuple pattern", |n| {
+        let pattern = (0..n).fold(Pattern::Bind("p".into()), |p, _| {
+            Pattern::Tuple(vec![p, Pattern::Wild])
+        });
+        Term::Match(sh(var("v")), vec![(pattern, var("x"))])
+    }),
+];
 
 /// `n` levels of `if s { s } else { s }`, each level's three parts one shared subterm: a DAG
 /// of `n + 1` nodes with `3^n` paths.

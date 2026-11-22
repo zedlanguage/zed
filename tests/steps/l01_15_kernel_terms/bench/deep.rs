@@ -8,7 +8,7 @@
 use zed_kernel::print::pretty;
 use zed_tests::scaling;
 
-use crate::deep::{dag, indents, nested, printed};
+use crate::deep::{NESTED, dag, indents, nested, printed};
 
 /// One test for each term of `nested`, each copying, comparing and writing the `Debug` text of
 /// it, and one for the DAG (TEST-bench-replay-sweep). Until then the four terms and the DAG were
@@ -17,9 +17,10 @@ use crate::deep::{dag, indents, nested, printed};
 /// replays each earlier check at both sizes (`scaling::compare_by`; `on_small_stack` keeps the
 /// test's thread name, so its checks are replayed too), so 13 checks in one test ran
 /// 13 · 14 / 2 = 91 checks' runs where 13 do. Now a test of a term runs 1 + 2 + 3 = 6 and the
-/// DAG's test 1, 25 in all. The terms, sizes and checks are as before. Each test builds all four
-/// terms, as `displaying_and_breaking_scale_with_depth` builds all ten: a build is one pass over
-/// 180,000 nodes a term, small beside a check's runs.
+/// DAG's test 1, 25 in all. The terms, sizes and checks are as before. Each test builds its own
+/// term alone (`crate::deep::NESTED`), in its process and in each process `compare_by` starts:
+/// built all four in each, the four tests took 4.5 to 4.9 s each at load 4.2 on the VM of
+/// b22-tests6 on 2026-11-22, where the DAG's test, which builds the DAG alone, took 0.7 s.
 ///
 /// Skipping the replay in the child process instead was ruled out: the child would then
 /// measure each check after no earlier check had run in its process, where the run at n,
@@ -32,9 +33,9 @@ use crate::deep::{dag, indents, nested, printed};
 mod copying_comparing_and_printing_scale_with_size {
     use super::*;
 
-    /// The names of the terms of `nested`, in their order: test `k` below times term `k`, and
-    /// each test checks the generator still makes exactly these, so a term added there fails
-    /// until it is listed here and has a test.
+    /// The names of the terms of `NESTED`, in their order: test `k` below times term `k`, and
+    /// each test checks `NESTED` still lists exactly these, so a term added there fails until
+    /// it is listed here and has a test.
     const TERMS: [&str; 4] = [
         "nested lambdas",
         "a left-nested sum",
@@ -46,16 +47,13 @@ mod copying_comparing_and_printing_scale_with_size {
     /// [`TERMS`] at depth 20,000 and 8 times that.
     fn case(k: usize) {
         let n = 20_000;
+        let names = NESTED.map(|(what, _)| what);
+        assert_eq!(names, TERMS, "the terms of NESTED");
+        let (what, build) = NESTED[k];
         zed_tests::deep::on_small_stack(|| {
-            let built = |m: usize| (nested(m), nested(m));
+            let built = |m: usize| (build(m), build(m));
             let (small, large) = (built(n), built(scaling::FACTOR * n));
-            let names = small.0.iter().map(|(what, _)| *what).collect::<Vec<_>>();
-            assert_eq!(names, TERMS, "the terms of nested");
-            let at = |m: usize| {
-                let (a, b) = if m == n { &small } else { &large };
-                (&a[k].1, &b[k].1)
-            };
-            let what = TERMS[k];
+            let at = |m: usize| if m == n { &small } else { &large };
             scaling::check(&format!("copying {what}"), n, |m| {
                 drop(std::hint::black_box(at(m).0.clone()));
             });
