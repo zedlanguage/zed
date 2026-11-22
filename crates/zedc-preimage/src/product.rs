@@ -102,7 +102,7 @@ use super::images;
 use super::loops;
 use super::preimage::{
     Classes, Demand, Domains, LetIn, LetPa, Lets, Listed, Shift, TermBounds, follow_own,
-    let_narrowing, let_summary, preimage_listed, relations, singleton_progression, witness,
+    guard_preimage_listed, let_narrowing, let_summary, relations, singleton_progression, witness,
 };
 use super::spans::Spans;
 use super::threshold;
@@ -14082,8 +14082,8 @@ impl Scope {
         // (one range and the class) and `holes_cut_one_at_a_time_drop_each_case` (the values).
         // Complexity tradeoff: naive version, the preimage of the test taken as for any other
         // test, which lists each value of the class in the name's interval as a range of its
-        // own ([`preimage_listed`]'s split by remainders), O(v) for v values, and the name then
-        // held as v ranges, read by every later part that frames it as v disjuncts: O(k v)
+        // own ([`guard_preimage_listed`]'s split by remainders), O(v) for v values, and the
+        // name then held as v ranges, read by every later part that frames it as v disjuncts: O(k v)
         // for k tests (`xst::s4::bench::holes_cut_one_at_a_time_scale`). Used: the congruence
         // alone, O(1), and the interval keeps one range (PRES-interval-strided-piece, stage
         // 2). A test of more names, of a name read through a summary, or of a name bound by a
@@ -14154,7 +14154,7 @@ impl Scope {
                     (n.clone(), d)
                 })
                 .collect();
-            let pre = preimage_listed(t, &doms, &listed_names, &Demand::Bool(outcome));
+            let pre = guard_preimage_listed(t, &doms, &listed_names, &Demand::Bool(outcome));
             exact = pre.exact;
             if let Some(cause) = pre.refusal {
                 // What the refused preimage kept: its bounds on the test's variables, which

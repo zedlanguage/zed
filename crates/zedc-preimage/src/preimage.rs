@@ -257,6 +257,26 @@ pub fn preimage_listed(
     preimage_of(term, inputs, listed, demand)
 }
 
+/// [`preimage_listed`] for the reduced product's narrowing of a scope by a written test,
+/// which keeps the points where the test fails ([`Tx::fails_kept`]): a constraint that fails
+/// at a root of an obligation's equation does not rule the root out (DESIGN.md
+/// sec:diagnostics). It gives what [`preimage_listed`] gives but for `a div b` and `a mod b`
+/// under a demand holding all or none of their values, which it projects (PREIMAGE-mod-defined).
+pub fn guard_preimage_listed(
+    term: &Term,
+    inputs: &Domains,
+    listed: &Listed,
+    demand: &Demand,
+) -> Preimage {
+    if let Some(p) = order_with_literal(term, inputs, demand) {
+        return p;
+    }
+    let mut tx = Tx::new();
+    tx.fails_kept = true;
+    let root = tx.terms.add(term);
+    preimage_in(&mut tx, root, term, inputs, listed, demand)
+}
+
 /// The work of [`preimage`] and [`preimage_listed`].
 fn preimage_of(term: &Term, inputs: &Domains, listed: &Listed, demand: &Demand) -> Preimage {
     if let Some(p) = order_with_literal(term, inputs, demand) {
@@ -365,6 +385,7 @@ pub fn summary_preimage(term: &Term, inputs: &Domains, z: &IntervalSet) -> Optio
 pub fn let_preimage(term: &Term, inputs: &Domains, lets: Lets, demand: &Demand) -> Domains {
     let mut tx = Tx::new();
     tx.lets = lets;
+    tx.fails_kept = true;
     let root = tx.terms.add(term);
     let marks = tx.landmarks(inputs, demand);
     tx.start(inputs, marks);
@@ -389,6 +410,7 @@ pub fn let_narrowing(
     counts::INPUTS.set(counts::INPUTS.get() + inputs.len() as u64);
     let mut tx = Tx::new();
     tx.lets = lets;
+    tx.fails_kept = true;
     let root = tx.terms.add(term);
     let marks = tx.landmarks(inputs, demand);
     tx.start(inputs, marks);
@@ -5310,6 +5332,14 @@ struct Tx<'t> {
     /// Whether this transfer reads the questions of a scope ([`Scoped`]), where a constant
     /// written as a power is built ([`Walk::built`]); a preimage keeps it unbuilt.
     asking: bool,
+    /// Whether this transfer narrows a scope by a written test ([`guard_preimage_listed`],
+    /// [`let_narrowing`], [`let_preimage`]), where a point at which the test fails is not
+    /// ruled out: a constraint that fails at a root of an obligation's equation does not rule
+    /// the root out, and the failure is reported there (DESIGN.md sec:diagnostics, the row for
+    /// a root of an obligation's equation; plan row Q-early-pass-root-failures). Read by
+    /// [`Walk::where_defined`] alone, which then leaves `a div b` and `a mod b` to the
+    /// projection, as before PREIMAGE-mod-defined.
+    fails_kept: bool,
 }
 
 /// The meets of sets with the inputs' domains, by the domain's address, which the entry keeps
@@ -5407,6 +5437,7 @@ impl<'t> Tx<'t> {
             split_meets: RefCell::new(None),
             unbuilt: false,
             asking: false,
+            fails_kept: false,
         }
     }
 
@@ -8663,8 +8694,60 @@ impl<'m, 't> Walk<'m, 't> {
                 }
                 self.project(p, a, b, env, z).await
             }
+            (IntDiv | Mod, _, None) => match self.where_defined(t, a, b, env, z).await {
+                Some(r) => r,
+                None => self.project(p, a, b, env, z).await,
+            },
             _ => self.project(p, a, b, env, z).await,
         }
+    }
+
+    /// `a div b` or `a mod b` (the term `t`, its divisor not a constant) in `z`, when `z`
+    /// holds every value the forward pass gives `t`: then the term meets `z` exactly where it
+    /// is defined, which is where `a` and `b` are integers and `b != 0` (the kernel fails a
+    /// quotient by 0 and no other, `zed_kernel::eval::int_binary`; DESIGN.md sec:failure). The
+    /// answer is the meet of the preimage of `a` under every integer and that of `b` under
+    /// every integer but 0, exact when both are ([`Walk::meet`]). When `z` holds no value of
+    /// `t`, no input meets it, which is exact too. `None` when `z` holds some values of `t`
+    /// and misses others, and in a narrowing that keeps the points where a test fails
+    /// ([`Tx::fails_kept`]): the caller then projects, as before. PREIMAGE-mod-defined:
+    /// `max(x, 0 mod y) >= 8` reads `0 mod y` under every integer, which the projection
+    /// answered with `y == 0` kept, not exact; `min(x, 0 mod y) <= -9` reads it under
+    /// `[-inf, -9]`, which the projection answered with a box that is not empty, not exact,
+    /// though `0 mod y` is never negative.
+    ///
+    /// Tradeoff: the first try (b22-misc4, bc5504ed6, reverted in 24746cdc5) applied this
+    /// in every transfer, and the guard narrowing of the reduced product then removed `p = 4`
+    /// from `if p >= 4 && p <= 12 && 12 div (p - 4) > 0 { 10 div (p - 4) }`, so the root
+    /// failure the spec requires there was lost. The plan row proposed keeping, per name, the
+    /// points a narrowing removed only because a constraint fails there; used instead: the
+    /// narrowing does not remove them, since it never takes this arm, which is the behavior
+    /// the spec asks of it and costs no new state in the scope. Cost: one forward read of `t`
+    /// (memoized by the run) and two backward reads, as the projection's. Tests:
+    /// `l01_25_preimage_catalog::exact_oracle::a_quotient_read_where_it_is_defined_is_exact`,
+    /// `l01_39_reduced_product::roots::a_constraint_that_fails_at_a_root_is_rejected`.
+    async fn where_defined(
+        &'m self,
+        t: Tid,
+        a: Tid,
+        b: Tid,
+        env: Eid,
+        z: &IntervalSet,
+    ) -> Option<Res> {
+        if self.with(|tx| tx.fails_kept) {
+            return None;
+        }
+        let f = self.fwd(t, env).await.ints;
+        if f.set().meet(z).is_empty() {
+            return Some(Res::none());
+        }
+        if !f.set().is_subset(z) {
+            return None;
+        }
+        let nonzero = IntervalSet::top().minus(&IntervalSet::of(0, 0));
+        let ra = self.back(a, env, ints(IntervalSet::top())).await;
+        let rb = self.back(b, env, ints(nonzero)).await;
+        Some(self.meet(ra, rb))
     }
 
     /// `op(c)` in `z`, for an operator the revision table inverts exactly within the forward

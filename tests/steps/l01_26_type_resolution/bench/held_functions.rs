@@ -219,6 +219,36 @@ fn a_function_in_many_nested_tuples_is_one_error_in_linear_time() {
     }
 }
 
+/// [`a_function_in_many_nested_tuples_is_one_error_in_linear_time`] with `scale` generic in
+/// its parameter (`x * 2`, a bare literal taking the carrier of `x`): each binding `t{i} =
+/// (t{i-1}, 1)` instantiates the generic type of the binding before it, one tuple deeper, and
+/// generalizes it again. Copying each instantiation made the bindings cost `O(n^2)` in all
+/// (61.1 times the instructions at 8n, GENERIC-nested-quadratic, b22-misc3 2026-11-22).
+#[test]
+fn a_generic_function_put_in_a_tuple_by_n_bindings_is_one_error_in_linear_time() {
+    let text = |n: usize| {
+        let mut text = String::from("scale(positional x) = x * 2;\nt0 = (scale, 1);\n");
+        text.extend((1..n).map(|i| format!("t{i} = (t{}, 1);\n", i - 1)));
+        format!("{text}same = t{} == #b;\n", n - 1)
+    };
+    let what = "a generic function put in a tuple by n bindings";
+    let one = type_errors(&text(3));
+    assert_eq!(one.len(), 1, "{what}: {one:?}");
+    let units: BTreeMap<usize, Resolved> = [500, scaling::FACTOR * 500]
+        .into_iter()
+        .map(|n| (n, Resolved::new(&text(n))))
+        .collect();
+    scaling::check_order(what, 500, 1, |n| {
+        let info = units[&n].check();
+        assert_eq!(info.errors.len(), 1, "{what} at {n}");
+        assert_eq!(
+            info.errors[0].notes.len(),
+            notes_in_named_steps(n),
+            "{what} at {n}"
+        );
+    });
+}
+
 /// Besides its ratio: one error where a payload holds a function, none where none does. Small
 /// instance: `held_functions::a_function_in_an_atom_s_payload_is_one_error`.
 #[test]

@@ -465,6 +465,60 @@ fn min_and_max_read_where_the_other_operand_fails() {
     }
 }
 
+/// `e div y` and `e mod y` are defined exactly where `e` and `y` are integers and `y != 0`
+/// (DESIGN.md sec:failure; the kernel fails a quotient by 0 and no other), so a demand holding
+/// every value the term can take has, as its preimage, the box of `e` an integer and `y` in
+/// every integer but 0, which is exact when both boxes are. Both transfers once projected
+/// such a demand onto each operand and marked the box not exact (PREIMAGE-mod-defined), so
+/// `max(x, 0 mod y) >= 8` with `x` in `[8, 12]` gave `y` in `[1, 7]` not marked exact. Each
+/// case here agrees with the interpreter and is exact in both transfers; a divisor that reads
+/// two inputs (`y - x`) has a preimage that is not a box and stays sound and not exact. The
+/// reduced product's narrowing keeps the points where a test fails and does not read this
+/// (`l01_39_reduced_product::roots::a_constraint_that_fails_at_a_root_is_rejected`).
+#[test]
+fn a_quotient_read_where_it_is_defined_is_exact() {
+    let up = ints(End::of(8), End::of(19));
+    let low = ints(End::of(-20), End::of(-9));
+    let every = ints(End::of(-100), End::of(100));
+    let zero_by_y = |p| prim(p, int(0), var("y"));
+    let mut exact_cases = Vec::new();
+    for p in [Prim::Mod, Prim::IntDiv] {
+        exact_cases.extend([
+            (
+                prim(Prim::Max, var("x"), zero_by_y(p)),
+                xy((8, 12), (0, 7)),
+                up.clone(),
+            ),
+            (
+                prim(Prim::Max, zero_by_y(p), var("x")),
+                xy((8, 12), (-3, 3)),
+                up.clone(),
+            ),
+            (
+                prim(Prim::Min, var("x"), zero_by_y(p)),
+                xy((-12, -8), (-5, 0)),
+                low.clone(),
+            ),
+            (
+                prim(p, var("x"), var("y")),
+                xy((-6, 6), (-2, 7)),
+                every.clone(),
+            ),
+        ]);
+    }
+    for (t, ds, demand) in exact_cases {
+        let c = case(t, ds, demand, false);
+        let f = check(&c);
+        assert_eq!(f.disagreements, Vec::<String>::new(), "{}", c.term);
+        assert_eq!(f.exact, 2, "{}", c.term);
+    }
+    let across = prim(Prim::Mod, var("x"), prim(Prim::Sub, var("y"), var("x")));
+    let c = case(across, xy((-6, 6), (-6, 6)), every, false);
+    let f = check(&c);
+    assert_eq!(f.disagreements, Vec::<String>::new(), "{}", c.term);
+    assert_eq!(f.exact, 0, "{}", c.term);
+}
+
 /// The two runs of seed 17731988998593301615 agree with the interpreter.
 #[test]
 fn exact_terms_of_seed_17731988998593301615_match_the_interpreter() {
