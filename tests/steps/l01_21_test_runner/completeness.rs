@@ -253,8 +253,9 @@ fn a_known_target_runs_the_rows_for_it() {
 
 #[test]
 fn a_rejected_file_fails_its_rows_and_prints_its_diagnostic() {
-    // The row cannot run and fails with its reason; the rejection fails too; neither is a
-    // rejection unit, since no line is marked ✗.
+    // The row cannot run and is counted as not run, with its reason, and fails the run; the
+    // rejection fails; neither is a rejection unit, since no line is marked ✗
+    // (ZEDC-cli-consistency).
     let rej = unit(
         "rejected.zed",
         "f(positional x) = x + 1 test { 1 -> 2 }\ng = 3 + \"pounds\";\n",
@@ -273,7 +274,7 @@ fn a_rejected_file_fails_its_rows_and_prints_its_diagnostic() {
     );
     assert_eq!(
         lines.last(),
-        Some(&"0 passed, 2 failed, 0 rejection units"),
+        Some(&"0 passed, 1 failed, 1 not run, 0 rejection units"),
         "{out}"
     );
 }

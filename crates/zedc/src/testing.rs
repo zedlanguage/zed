@@ -41,7 +41,9 @@ pub struct Outcome {
     /// Why it fails; `None` when it passes or is not run.
     pub failure: Option<String>,
     /// Why it is not run, a row of a function only branches the build does not take reach
-    /// (plan row TEST-staged); `None` when it runs.
+    /// (plan row TEST-staged); `None` when it runs. A row of a rejected unit has both: it is
+    /// not run, and since no check passes unrun it fails the file, so `zedc test` counts it
+    /// as not run and exits non-zero (ZEDC-cli-consistency).
     pub not_run: Option<String>,
     /// The part its text decides ([`front::Diagnostic::address`]) of the address of the
     /// rejection its failure reports, if it reports one: `zedc test` prints the address under
@@ -137,8 +139,9 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
                 });
             }
             // A rejected unit runs no table, and a row that does not run does not pass (DESIGN.md
-            // L1.21: no check passes on a fraction of its cases), so each row fails. A unit the
-            // parser rejects has no rows to show.
+            // L1.21: no check passes on a fraction of its cases), so each row fails the file;
+            // the summary counts it as not run, which is what happened. A unit the parser
+            // rejects has no rows to show.
             if let Ok((stmts, _, broken)) = &*db.parse(text)
                 && broken.errors.is_empty()
             {
@@ -157,7 +160,7 @@ fn checks(db: &mut Db, text: &str, map: &Through<'_>) -> (Vec<Outcome>, Accepted
                                 "`{case}` of `{}`: not run, since the unit is rejected",
                                 f.name
                             )),
-                            not_run: None,
+                            not_run: Some("the unit is rejected".into()),
                             address: None,
                         });
                     }
@@ -380,8 +383,13 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         return 2;
     }
     let (mut passed, mut failed, mut not_run, mut rejection) = (0, 0, 0, 0);
+    // Whether a row was not run because its unit is rejected, which fails the run.
+    let mut unrun_rejected = false;
     let mut db = Db::new();
     let mut texts = Vec::new();
+    // Named after the files it was looked for in, as `zedc run` names its one file
+    // (ZEDC-cli-consistency): with one file the two commands write the same line.
+    let searched = args.join(", ");
     for file in args {
         work::unit(file);
         let text = match std::fs::read(file) {
@@ -450,7 +458,13 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
                     let _ = writeln!(stdout, "{file}:{}:{}: {why}", o.line, o.col);
                     not_run += 1;
                 }
-                (Some(why), _) => {
+                // A row of a rejected unit: not run, and the run fails.
+                (Some(why), Some(_)) => {
+                    let _ = writeln!(stdout, "{file}:{}:{}: {why}", o.line, o.col);
+                    not_run += 1;
+                    unrun_rejected = true;
+                }
+                (Some(why), None) => {
                     let address = o.address.map(|a| suppress.address_line(at.join(a)));
                     let address = address.unwrap_or_default();
                     let _ = writeln!(stdout, "{file}:{}:{}: {why}{address}", o.line, o.col);
@@ -460,7 +474,7 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         }
     }
     for line in suppress.unmatched() {
-        let _ = writeln!(stderr, "{line}");
+        let _ = writeln!(stderr, "{searched}: {line}");
     }
     let units = if rejection == 1 { "unit" } else { "units" };
     // The count of rows not run is written when one is not, so a run whose build takes every
@@ -473,7 +487,7 @@ pub fn command(args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) 
         stdout,
         "{passed} passed, {failed} failed, {not_run}{rejection} rejection {units}"
     );
-    if failed > 0 {
+    if failed > 0 || unrun_rejected {
         if mutate {
             let _ = writeln!(stdout, "no mutant runs: the original's checks fail");
         }

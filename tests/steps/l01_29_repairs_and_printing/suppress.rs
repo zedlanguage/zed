@@ -362,9 +362,18 @@ fn an_address_that_names_nothing_is_reported() {
          see each warning's address now, and remove or replace `--suppress {none}`.\n"
     );
     assert_eq!(more, format!("{err}{file}: {why}"));
+    // `zedc test` names the file as `zedc run` does (ZEDC-cli-consistency), and with two files
+    // names both, since the address matched no warning of either.
     let (status, _, more) = zedc_test(&["--suppress", &none, &file]);
     assert_eq!(status, 0);
-    assert_eq!(more, format!("{err}{why}"));
+    assert_eq!(more, format!("{err}{file}: {why}"));
+    let second = unit("suppress", "nothing_too.zed", &area());
+    let (status, _, more) = zedc_test(&["--suppress", &none, &file, &second]);
+    assert_eq!(status, 0, "{more}");
+    assert!(
+        more.ends_with(&format!("{file}, {second}: {why}")),
+        "{more}"
+    );
 }
 
 #[test]

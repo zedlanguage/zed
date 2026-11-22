@@ -156,8 +156,47 @@ fn a_rejection_unit_with_a_table_fails_each_row_and_exits_non_zero() {
                 "{a}:2:8: `1 -> 999` of `inc`: not run, since the unit is rejected\n\
                  {a}:2:18: `2 -> 3` of `inc`: not run, since the unit is rejected\n\
                  {a}:2:26: `5 -> \"wrong\"` of `inc`: not run, since the unit is rejected\n\
-                 1 passed, 3 failed, 1 rejection unit\n"
+                 1 passed, 0 failed, 3 not run, 1 rejection unit\n"
             ),
+            String::new()
+        )
+    );
+}
+
+/// The summary says what happened to the rows of a rejected unit: they are not run, and the
+/// run still exits non-zero, since none of them was checked (ZEDC-cli-consistency). A row not
+/// run beside a row that fails is counted apart from it.
+#[test]
+fn the_rows_of_a_rejected_unit_count_as_not_run_and_fail_the_run() {
+    let a = unit(
+        "rows-rejected-alone.zed",
+        "inc(positional x: int) = x + 1\ntest { 1 -> 2 }\nbad = inc();    // ✗ Missing argument: x\n",
+    );
+    let wrong = unit(
+        "row-wrong.zed",
+        "dec(positional x: int) = x - 1\ntest { 1 -> 5 }\n",
+    );
+    let (status, out, _) = run(&[&a, &wrong]);
+    assert_eq!(status, 1, "{out}");
+    assert!(
+        out.ends_with("1 passed, 1 failed, 1 not run, 1 rejection unit\n"),
+        "{out}"
+    );
+}
+
+/// `zedc test`, as `zedc run`, takes a file whose name does not end in `.zed`: the command
+/// line names the file, and only an import names a unit by its path (ZEDC-cli-consistency).
+#[test]
+fn a_file_not_named_dot_zed_is_tested_as_zedc_run_runs_it() {
+    let a = unit(
+        "plain.txt",
+        "inc(positional x: int) = x + 1\ntest { 1 -> 2 }\n",
+    );
+    assert_eq!(
+        run(&[&a]),
+        (
+            0,
+            "1 passed, 0 failed, 0 rejection units\n".into(),
             String::new()
         )
     );
