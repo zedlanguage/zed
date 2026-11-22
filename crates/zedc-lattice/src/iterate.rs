@@ -85,6 +85,7 @@ pub fn dependency_graph(reads: &[Vec<usize>]) -> Vec<Vec<usize>> {
 pub fn order<L: Lattice>(eq: &impl Equations<L>) -> Result<Vec<Element>, SameKey> {
     let keys: Vec<_> = (0..eq.reads().len()).map(|v| eq.key(v)).collect();
     ordered_by(&dependency_graph(eq.reads()), &keys).map_err(|Tie(u, w)| SameKey {
+        name: keys[u].name.to_string(),
         cells: [u, w],
         spans: [eq.span(u), eq.span(w)],
     })

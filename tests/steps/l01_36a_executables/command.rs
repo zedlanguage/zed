@@ -2,9 +2,10 @@
 //! line, tool and output it cannot build with (DESIGN.md step L1.36a; `link::command` and
 //! `link::build` called in this process): a command line not of the form `<file> -o <out>`, a
 //! runtime library that is not an archive, a linker that cannot be run or whose link fails,
-//! and an output path that names a directory or lies in a directory that does not exist. The
-//! linker of each of these fails before it links, or is a script that does not link, so only
-//! the output that is a directory costs a real link.
+//! and an output path that names a directory or lies in a directory that does not exist or in
+//! a file, which is refused before the program is read (ZEDC-build-out-dir). The linker of each
+//! of these fails before it links, or is a script that does not link, so none costs a real
+//! link.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -227,44 +228,80 @@ fn an_output_that_names_no_file_is_refused() {
             )
         )
     );
-    // An output in a directory that does not exist: its working directory cannot be made.
-    let missing = d.join("no-such-directory").join("quiet");
-    let (status, stderr) = build(
-        &[src.to_str().unwrap(), "-o", missing.to_str().unwrap()],
-        &tools,
+    // A path written with a final `/` names a directory too, whether or not it exists.
+    let slash = format!("{}/", d.join("not-yet").display());
+    assert_eq!(
+        build(&[src.to_str().unwrap(), "-o", &slash], &tools),
+        (
+            2,
+            format!(
+                "zedc cannot build {slash}: the path after `-o` names a directory, not a file. \
+                 Repair: name the executable to write, as in `-o {}/program`\n",
+                d.join("not-yet").display()
+            )
+        )
     );
-    let starts = format!(
-        "zedc could not write {}.zed-build.{}.",
-        missing.display(),
-        std::process::id()
+    // An output in a directory that does not exist.
+    let gone = d.join("no-such-directory");
+    let missing = gone.join("quiet");
+    assert_eq!(
+        build(
+            &[src.to_str().unwrap(), "-o", missing.to_str().unwrap()],
+            &tools
+        ),
+        (
+            2,
+            format!(
+                "zedc cannot build {m}: the directory {g} does not exist. Repair: make it with \
+                 `mkdir -p {g}`, or name the executable to write in a directory that exists\n",
+                m = missing.display(),
+                g = gone.display()
+            )
+        )
     );
-    let ends = format!(
-        " while building {m}: No such file or directory (os error 2). Repair: check that the \
-         directory of {m} exists and can be written, and that the disk has room\n",
-        m = missing.display()
-    );
-    assert_eq!(status, 1, "{stderr}");
-    assert!(
-        stderr.starts_with(&starts) && stderr.ends_with(&ends),
-        "{stderr}"
+    // An output inside a file.
+    let inside = src.join("quiet");
+    assert_eq!(
+        build(
+            &[src.to_str().unwrap(), "-o", inside.to_str().unwrap()],
+            &tools
+        ),
+        (
+            2,
+            format!(
+                "zedc cannot build {i}: {s} is a file, not a directory, so no file can be \
+                 written inside it. Repair: name the executable to write in a directory that \
+                 exists\n",
+                i = inside.display(),
+                s = src.display()
+            )
+        )
     );
 }
 
+/// An output path that is an existing directory is refused before the program is read
+/// (ZEDC-build-out-dir): the source named does not exist, and the refusal is still the output
+/// path's, and the directory is left as it is, with no working directory beside it.
 #[test]
-fn an_output_that_is_a_directory_is_left_as_it_is() {
-    let (d, src) = program("output-directory");
+fn an_output_that_is_a_directory_is_refused_before_the_build_and_left_as_it_is() {
+    let (d, _) = program("output-directory");
     let out = d.join("a-directory");
     std::fs::create_dir_all(out.join("inside")).unwrap();
-    let (status, stderr) = build(
-        &[src.to_str().unwrap(), "-o", out.to_str().unwrap()],
-        &toolchain(),
+    let src = d.join("no-such-source.zed");
+    assert_eq!(
+        build(
+            &[src.to_str().unwrap(), "-o", out.to_str().unwrap()],
+            &toolchain()
+        ),
+        (
+            2,
+            format!(
+                "zedc cannot build {o}: {o} is a directory, and the executable is written as a \
+                 file. Repair: name the executable to write, as in `-o {o}/program`\n",
+                o = out.display()
+            )
+        )
     );
-    let starts = format!(
-        "zedc could not write {o} while building {o}: ",
-        o = out.display()
-    );
-    assert_eq!(status, 1, "{stderr}");
-    assert!(stderr.starts_with(&starts), "{stderr}");
     assert!(out.join("inside").is_dir());
     assert_eq!(left(&out), Vec::<String>::new());
 }

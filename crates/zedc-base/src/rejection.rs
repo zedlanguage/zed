@@ -406,22 +406,62 @@ pub fn not_yet(what: &str) -> String {
     )
 }
 
-/// Where a bug in zedc is reported.
-pub const REPORT_TO: &str = "https://github.com/zedlanguage/zed/issues";
+use crate::work::Place;
+/// Where a bug in zedc is reported, defined once in `zed_kernel::bug` with the words every
+/// message for a bug in zedc shares (plan row MSG-bug-sentence-one).
+pub use zed_kernel::bug::REPORT_TO;
+use zed_kernel::bug::{Stopped, report, with_details};
+
+/// The version of zedc, as `zedc` with no arguments prints it: every package of the workspace
+/// takes the workspace's version, so this package's is zedc's.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// What zedc prints when it stops at a broken assumption of its own (a panic): that this is a
-/// bug in zedc and not in the program, what zedc `expected`, the file and line of zedc where it
-/// stopped, and how to report it (DESIGN.md sec:diagnostics).
+/// bug in zedc and not in the program, the declaration of the program it was at work on, and
+/// how to report it (DESIGN.md sec:diagnostics), then the details for the report: zedc's
+/// version, the stage, the declaration and the unit, what zedc `expected` (a panic's text) and
+/// the file and line of zedc where it stopped (plan row MSG-bug-report-plain, author
+/// 2026-11-09 and 2026-11-15). The place is this thread's ([`crate::work::place`]).
 pub fn bug(expected: &str, place: Option<(&str, u32)>) -> String {
-    let place = place.map_or(String::new(), |(file, line)| {
-        format!(" ({file}, line {line})")
-    });
-    format!(
-        "zedc stopped because of a bug in zedc itself, not in your program. zedc expected this \
-         to hold, and it did not: {expected}{place}.\n\
-         Please report it at {REPORT_TO}, with the command line you ran and the files it read, \
-         so that it can be repeated."
+    bug_at(expected, place, &crate::work::place())
+}
+
+/// [`bug`] at the place `at`.
+pub fn bug_at(expected: &str, place: Option<(&str, u32)>, at: &Place) -> String {
+    with_details(
+        report(
+            Stopped::Zedc,
+            &format!(
+                "zedc expected something of its own to hold, and it did not{}.",
+                at_work_on(at)
+            ),
+            "the command line you ran, the files it read and the details below",
+        ),
+        &details(expected, place, at),
     )
+}
+
+/// The words that name what zedc was at work on at `at`, after "it did not": the declaration
+/// and the unit, each where known, or nothing.
+fn at_work_on(at: &Place) -> String {
+    match (&at.declaration, &at.unit) {
+        (Some(d), Some(u)) => format!(", while it was at work on the declaration `{d}` in `{u}`"),
+        (Some(d), None) => format!(", while it was at work on the declaration `{d}`"),
+        (None, Some(u)) => format!(", while it was at work on `{u}`"),
+        (None, None) => String::new(),
+    }
+}
+
+/// The details of a report of a bug in zedc, each where known: zedc's version, the stage, the
+/// declaration and the unit of `at`, what zedc `expected`, and the file and line of zedc.
+fn details(expected: &str, place: Option<(&str, u32)>, at: &Place) -> Vec<(&'static str, String)> {
+    let mut out = vec![("zedc version", VERSION.to_string())];
+    out.extend(at.stage.map(|s| ("stage", s.name().to_string())));
+    out.extend(at.declaration.clone().map(|d| ("declaration", d)));
+    out.extend(at.unit.clone().map(|u| ("unit", u)));
+    out.push(("expected", expected.to_string()));
+    out.extend(place.map(|(file, line)| ("in zedc at", format!("{file}, line {line}"))));
+    out
 }
 
 /// What a run prints when it stops at a broken assumption of zedc's own (a panic) while it
@@ -447,19 +487,39 @@ pub fn run_bug(
     place: Option<(&str, u32)>,
     program: Option<ContentAddress>,
 ) -> String {
-    let place = place.map_or(String::new(), |(file, line)| {
-        format!(" ({file}, line {line})")
-    });
+    run_bug_at(expected, place, program, &crate::work::place())
+}
+
+/// [`run_bug`] at the place `at`.
+pub fn run_bug_at(
+    expected: &str,
+    place: Option<(&str, u32)>,
+    program: Option<ContentAddress>,
+    at: &Place,
+) -> String {
+    // The program's content address names the program, so the report of a run names no unit:
+    // an executable is run with no source file, and `zedc run`'s path is the one given on its
+    // command line, so a unit would make the two engines' reports differ.
+    let at = &Place {
+        unit: None,
+        ..at.clone()
+    };
     let program = program.map_or(String::new(), |a| {
         format!(
             "\nThe run was of the program whose content address is {a}, the address a record \
              of its run names."
         )
     });
-    format!(
-        "the run stopped because of a bug in zedc, not in your program. zedc expected this to \
-         hold, and it did not: {expected}{place}.{program}\n\
-         Please report it at {REPORT_TO}, with this message, the program's source, the command \
-         line you ran and the files the run read, so that it can be repeated."
+    with_details(
+        report(
+            Stopped::Run,
+            &format!(
+                "zedc expected something of its own to hold, and it did not{}.{program}",
+                at_work_on(at)
+            ),
+            "this message, the program's source, the command line you ran and the files the run \
+             read",
+        ),
+        &details(expected, place, at),
     )
 }

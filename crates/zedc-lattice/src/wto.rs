@@ -117,9 +117,13 @@ pub struct Tie(pub usize, pub usize);
 /// their static nodes were written at. A key is the whole fact address, so the two are one
 /// fact given two cells: a defect of the store that built them, never of the program. The
 /// traversal could visit them only in the order they were numbered, which is where they were
-/// written, so the order is refused.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// written, so the order is refused. The message names the declaration both cells belong to,
+/// the key's name, not the bytes they were written at (plan row MSG-bug-sentence-one).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SameKey {
+    /// The name both keys hold ([`VertexKey::name`]): a declaration's written name, or, for a
+    /// local binder, `\0` and its de Bruijn level.
+    pub name: String,
     /// The two cells.
     pub cells: [usize; 2],
     /// Where each cell's static node is written, in the order of `cells`.
@@ -128,22 +132,21 @@ pub struct SameKey {
 
 impl fmt::Display for SameKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let [a, b] = self.cells;
-        let [s, t] = self.spans;
-        write!(
-            f,
-            "zedc stopped because of a bug in zedc itself, not in your program: zedc expected \
-             each fact it works out about the program to be stored once, and found two facts \
-             (numbers {a} and {b}, written at bytes {}..{} and {}..{}) with the same name, the \
-             same content and the same place, so the order in which it works through them is \
-             not fixed. Please report it at {}, with the command line you ran and the files it \
-             read, so that it can be repeated",
-            s.start,
-            s.end,
-            t.start,
-            t.end,
-            zed_kernel::value::REPORT_TO
-        )
+        // A local binder's name is `\0` and its level, which no reader wrote: it is named as
+        // a binding inside a declaration instead.
+        let of = match self.name.strip_prefix('\0') {
+            Some(_) => "a local binding".to_string(),
+            None => format!("the declaration `{}`", self.name),
+        };
+        f.write_str(&zed_kernel::bug::report(
+            zed_kernel::bug::Stopped::Zedc,
+            &format!(
+                "zedc expected each fact it works out about the program to be stored once, and \
+                 found two facts about {of} with the same name, the same content and the same \
+                 place, so the order in which it works through them is not fixed."
+            ),
+            "the command line you ran and the files it read",
+        ))
     }
 }
 

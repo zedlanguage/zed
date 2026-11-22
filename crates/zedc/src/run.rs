@@ -1777,9 +1777,12 @@ pub fn executable(
         let lines = options.read_lines(ports, stdin)?;
         let env = Arc::new(Environment::new(std::env::vars_os()));
         running_program(address);
-        let mut wave = ports
-            .run(&lines, &words.args, local(ports, &env), run)
-            .map_err(|e| stopped(&env, e))?;
+        // Marked as `zedc run` marks its run of `main`, so a report of a bug in zedc names
+        // the same stage and declaration on both engines (MSG-bug-report-plain).
+        let mut wave = work::stage(Stage::Run, Some("main"), || {
+            ports.run(&lines, &words.args, local(ports, &env), run)
+        })
+        .map_err(|e| stopped(&env, e))?;
         wave.record.program = Some(address);
         options.finish(&wave, stdout, stderr)
     });

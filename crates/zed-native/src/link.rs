@@ -231,6 +231,7 @@ pub fn build(
     tools: &Toolchain,
     stderr: &mut dyn Write,
 ) -> Result<(), (u8, String)> {
+    output_path(out)?;
     if !tools.runtime.is_file() {
         return Err((
             2,
@@ -891,6 +892,61 @@ struct Scratch {
     _lock: std::fs::File,
 }
 
+/// Refuses at once, before the program is read or compiled, an `-o` path `out` that cannot
+/// name the executable (plan row ZEDC-build-out-dir): a path with no file name or written with
+/// a final `/`, an existing directory, and a path whose directory is missing or is not a
+/// directory. Each is a usage error (status 2) whose repair names a file path. A path that
+/// passes can still fail to be written (no permission, no room), which the write reports.
+/// O(1) system calls.
+fn output_path(out: &Path) -> Result<(), (u8, String)> {
+    let o = out.display();
+    let refused = |why: String, repair: String| {
+        Err((2, format!("zedc cannot build {o}: {why}. Repair: {repair}")))
+    };
+    let names_file =
+        out.file_name().is_some() && !out.as_os_str().as_encoded_bytes().ends_with(b"/");
+    if !names_file {
+        return refused(
+            "the path after `-o` names a directory, not a file".into(),
+            format!(
+                "name the executable to write, as in `-o {}/program`",
+                o.to_string().trim_end_matches('/')
+            ),
+        );
+    }
+    if out.is_dir() {
+        return refused(
+            format!("{o} is a directory, and the executable is written as a file"),
+            format!("name the executable to write, as in `-o {o}/program`"),
+        );
+    }
+    // A bare file name has the empty parent: the working directory, which exists.
+    let dir = out.parent().filter(|p| !p.as_os_str().is_empty());
+    if let Some(dir) = dir {
+        let d = dir.display();
+        match std::fs::metadata(dir) {
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => {
+                return refused(
+                    format!("{d} is a file, not a directory, so no file can be written inside it"),
+                    "name the executable to write in a directory that exists".into(),
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return refused(
+                    format!("the directory {d} does not exist"),
+                    format!(
+                        "make it with `mkdir -p {d}`, or name the executable to write in a directory that exists"
+                    ),
+                );
+            }
+            // Another reason (a permission on a directory above) is the write's to report.
+            Err(_) => {}
+        }
+    }
+    Ok(())
+}
+
 /// The number of the next attempt at a working directory in this process.
 static ATTEMPT: zed_graph::IdSource = zed_graph::IdSource::starting_at(0);
 
@@ -901,17 +957,10 @@ impl Scratch {
     /// build's, is passed over the same way: after its lock is taken, the name must still
     /// name it.
     fn new(out: &Path) -> Result<Scratch, (u8, String)> {
-        let name = out.file_name().ok_or_else(|| {
-            (
-                2,
-                format!(
-                    "zedc cannot build {}: the path after `-o` names a directory, not a file. \
-                     Repair: name the executable to write, as in `-o {}/program`",
-                    out.display(),
-                    out.display()
-                ),
-            )
-        })?;
+        // `build` began with `output_path`, which refuses a path with no file name.
+        let name = out
+            .file_name()
+            .expect("`output_path` refused an output path with no file name");
         loop {
             let mut path = out.as_os_str().to_owned();
             path.push(format!(

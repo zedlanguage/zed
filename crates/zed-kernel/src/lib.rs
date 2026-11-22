@@ -10,6 +10,7 @@
 pub mod address;
 pub mod bits;
 pub(crate) mod btree;
+pub mod bug;
 mod deep;
 pub mod digest;
 pub mod eval;

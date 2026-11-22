@@ -103,8 +103,8 @@ fn a_borrowed_argument_to_a_consuming_parameter_is_the_machines_error() {
     let want = zedc::zir::memory::run(g.graph(), &p, &mut ev).unwrap_err();
     let got = run(&g, &p).unwrap_err();
     assert!(
-        got.starts_with("the program stopped because of a bug in zedc")
-            && got.ends_with(want.trim_start_matches("memory: ")),
+        got.starts_with(&zed_kernel::bug::opening(zed_kernel::bug::Stopped::Run))
+            && got.contains(&format!("{}.\n", want.trim_start_matches("memory: "))),
         "{got}"
     );
     assert!(want.contains("is passed borrowed to"), "{want}");
@@ -134,10 +134,13 @@ fn a_body_returning_its_capture_dups_it_and_without_the_dup_frees_it_early() {
 /// The message of a failure of zedc's own making of machine code, with `detail` for zedc's
 /// developers.
 fn codegen_bug(detail: &str) -> String {
-    format!(
-        "zedc could not make machine code for the program because of a bug in zedc, not in the \
-         program. Please report it to the Zed developers with the program's source and this \
-         line: {detail}. Until it is fixed, `zedc run` runs the program without machine code"
+    zed_kernel::bug::report(
+        zed_kernel::bug::Stopped::Zedc,
+        &format!(
+            "zedc could not make machine code for the program: {detail}. Until it is fixed, \
+             `zedc run` runs the program without machine code."
+        ),
+        "this message and the program's source",
     )
 }
 

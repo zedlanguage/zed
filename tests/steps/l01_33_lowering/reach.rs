@@ -42,16 +42,45 @@ fn same(t: &Term) {
     assert_eq!(run(&back), run(t));
 }
 
-/// The refusal of a read or push of `port` at a place the state cannot reach.
+/// The refusal of a read or push of `port` at a place the state cannot reach. Binding with
+/// `let` is a repair only where the place is a function not so bound (MSG-lower-port-repair-kind).
 fn refused(port: &str, inside: &str, out: &str) -> String {
+    let bind = if out == "the function" {
+        " bind the function with `let` and call it by its name;"
+    } else {
+        ""
+    };
     format!(
         "`zedc build` cannot compile this program: it reads or pushes the port `{port}` \
          {inside}. Built code carries the state of a port only into the arms of a `match` and \
          into a function bound by `let` and called by its name. Repairs: move the reads and \
-         pushes of `{port}` out of {out} and pass the values in or out; bind the function with \
-         `let` and call it by its name; or run the program with `zedc run`, which has no such \
-         limit"
+         pushes of `{port}` out of {out} and pass the values in or out;{bind} or run the program \
+         with `zedc run`, which has no such limit"
     )
+}
+
+/// Each region kind's refusal lists only the repairs that apply to it: no `let` binding inside
+/// a family, a loop or a recursive function, where there is no function to bind; the binding
+/// inside a function passed as a value (plan row MSG-lower-port-repair-kind).
+#[test]
+fn a_refusal_lists_only_the_repairs_its_region_allows() {
+    let in_family = fam(set(), "i", push("stdout", var("i")));
+    let in_loop = fix_defined(set(), |_, k| push("stdout", k));
+    for t in [&in_family, &in_loop] {
+        let e = lower(t).unwrap_err();
+        assert!(e.contains("inside a loop or a family"), "{e}");
+        assert!(!e.contains("bind the function"), "{e}");
+    }
+    let passed = let_(
+        "g",
+        lam(&["h"], app(var("h"), vec![lit(1)])),
+        app(var("g"), vec![lam(&["x"], push("stdout", var("x")))]),
+    );
+    let e = lower(&passed).unwrap_err();
+    assert!(
+        e.contains("; bind the function with `let` and call it by its name; or run"),
+        "{e}"
+    );
 }
 
 /// `let f = λ(m). body(m) in (f(2), f(3))`: two calls, so `f` is one lambda.
@@ -446,10 +475,10 @@ fn a_fields_pattern_lowers_and_raises_to_the_same_value() {
 fn a_variadic_primitive_as_a_value_is_refused() {
     assert_eq!(
         lower(&Term::PrimFn(Prim::Tuple)).unwrap_err(),
-        "zedc could not compile the program because of a bug in zedc, not in the program. \
-         Please report it to the Zed developers with the program's source and this line: \
-         `(..)` takes any number of arguments, so with no inputs its node is a call, not the \
-         function. Until it is fixed, `zedc run` runs the program without compiling it"
+        super::errors::bug(
+            "`(..)` takes any number of arguments, so with no inputs its node is a call, not \
+             the function"
+        )
     );
 }
 

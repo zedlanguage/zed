@@ -485,24 +485,30 @@ impl<'t> Lower<'t> {
             let kind = self.frames[from].region.kind;
             if !matches!(kind, RegionKind::Match | RegionKind::Port) {
                 let family = self.frames[from].family;
-                let (inside, out) = match kind {
-                    RegionKind::Loop => ("inside a loop or a family", "the loop or family"),
+                // Each region kind gets only the repairs the program can be rewritten to
+                // (plan row MSG-lower-port-repair-kind): binding with `let` helps only a
+                // function that is not so bound; the body of a loop, a family or a recursive
+                // function has no function to bind.
+                let (inside, out, bind) = match kind {
+                    RegionKind::Loop => ("inside a loop or a family", "the loop or family", ""),
                     RegionKind::Function if family => {
-                        ("inside a loop or a family", "the loop or family")
+                        ("inside a loop or a family", "the loop or family", "")
                     }
-                    RegionKind::Rec => ("inside a recursive function", "the recursive function"),
+                    RegionKind::Rec => {
+                        ("inside a recursive function", "the recursive function", "")
+                    }
                     _ => (
                         "inside a function that is not bound by `let` and called by its name",
                         "the function",
+                        " bind the function with `let` and call it by its name;",
                     ),
                 };
                 return Err(format!(
                     "{CANNOT_BUILD}: it reads or pushes the port `{p}` {inside}. Built code \
                      carries the state of a port only into the arms of a `match` and into a \
                      function bound by `let` and called by its name. Repairs: move the reads \
-                     and pushes of `{p}` out of {out} and pass the values in or out; bind the \
-                     function with `let` and call it by its name; or run the program with \
-                     `zedc run`, which has no such limit"
+                     and pushes of `{p}` out of {out} and pass the values in or out;{bind} or \
+                     run the program with `zedc run`, which has no such limit"
                 ));
             }
             from -= 1;
@@ -1606,12 +1612,16 @@ fn top() -> Edge {
 }
 
 /// The message for a condition a checked program cannot reach: a bug in zedc, with `detail`
-/// for the report.
+/// for the report, in the words every such message shares (`zed_kernel::bug`, plan row
+/// MSG-bug-sentence-one).
 fn bug(detail: impl std::fmt::Display) -> String {
-    format!(
-        "zedc could not compile the program because of a bug in zedc, not in the program. \
-         Please report it to the Zed developers with the program's source and this line: \
-         {detail}. Until it is fixed, `zedc run` runs the program without compiling it"
+    zed_kernel::bug::report(
+        zed_kernel::bug::Stopped::Zedc,
+        &format!(
+            "zedc could not compile the program: {detail}. Until it is fixed, `zedc run` runs \
+             the program without compiling it."
+        ),
+        "this message and the program's source",
     )
 }
 

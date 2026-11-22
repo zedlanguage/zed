@@ -4,9 +4,10 @@
 //!
 //! The compiler marks each stage with [`stage`], naming the definition it works on where it
 //! works on one at a time, and each unit with [`unit()`]; a recorder installed by [`with`] counts
-//! the work between the marks. With no recorder installed on the thread, a mark only calls its
-//! closure, so a compilation that is not reported does no more than read a thread-local cell
-//! per mark.
+//! the work between the marks. With no recorder installed on the thread, a mark only notes its
+//! stage and definition in a thread-local [`Place`], which the report of a bug in zedc names,
+//! and calls its closure: a compilation that is not reported does two thread-local updates and
+//! a copy of the definition's name per mark.
 //!
 //! A row's work is its own: the work of the stages marked inside it is in their rows and not
 //! in its. The work outside every mark, the reading of the command line and of files, the
@@ -314,8 +315,55 @@ pub fn with<R>(counter: Counter, f: impl FnOnce() -> R) -> (R, Report) {
     (out, recorder.into_report(total))
 }
 
+/// What zedc is at work on, on this thread, at this moment: the innermost stage marked by
+/// [`stage`], the unit named by [`unit()`], and the declaration, the definition the stage was
+/// marked with or the one the checker last began ([`declaration`]). The report of a bug in
+/// zedc names them (`rejection::bug`, plan row MSG-bug-report-plain). Kept whether or not a
+/// recorder is installed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Place {
+    /// The innermost stage marked, if any.
+    pub stage: Option<Stage>,
+    /// The unit's file.
+    pub unit: Option<String>,
+    /// The declaration of the program being worked on.
+    pub declaration: Option<String>,
+}
+
+thread_local! {
+    static PLACE: RefCell<Place> = const {
+        RefCell::new(Place {
+            stage: None,
+            unit: None,
+            declaration: None,
+        })
+    };
+}
+
+/// What zedc is at work on, on this thread ([`Place`]). Gives an empty place when the cell is
+/// in use or gone, as it may be in a panic hook run while a mark updates it or while the
+/// thread ends.
+pub fn place() -> Place {
+    PLACE
+        .try_with(|p| p.try_borrow().map(|p| p.clone()).unwrap_or_default())
+        .unwrap_or_default()
+}
+
+/// Makes `name` the declaration the current stage works on, until the stage ends or the next
+/// call: the checker marks each top-level declaration it begins (it checks a function where
+/// its uses need it, so this is the last one it began, not always the one whose body it is
+/// in). O(length of `name`), reusing the cell's buffer.
+pub fn declaration(name: &str) {
+    PLACE.with_borrow_mut(|p| {
+        let d = p.declaration.get_or_insert_with(String::new);
+        d.clear();
+        d.push_str(name);
+    });
+}
+
 /// Makes `name` the unit of the stages that follow, until the next call.
 pub fn unit(name: &str) {
+    PLACE.with_borrow_mut(|p| p.unit = Some(name.to_string()));
     RECORDER.with_borrow_mut(|r| {
         if let Some(r) = r {
             r.unit = Some(r.units.number(name));
@@ -325,6 +373,23 @@ pub fn unit(name: &str) {
 
 /// Runs `f` as the work of `stage` on the current unit and `definition`.
 pub fn stage<R>(stage: Stage, definition: Option<&str>, f: impl FnOnce() -> R) -> R {
+    // The place around this mark, put back when `f` returns; a panic in `f` leaves this one
+    // in the cell, for the report of the bug. A stage with no definition of its own keeps the
+    // declaration of the stage around it.
+    let outer = PLACE.with_borrow_mut(|p| {
+        let declaration = match definition {
+            Some(d) => p.declaration.replace(d.to_string()),
+            None => p.declaration.clone(),
+        };
+        (p.stage.replace(stage), declaration)
+    });
+    let out = mark(stage, definition, f);
+    PLACE.with_borrow_mut(|p| (p.stage, p.declaration) = outer);
+    out
+}
+
+/// [`stage`]'s count of the work of `f`, with a recorder installed.
+fn mark<R>(stage: Stage, definition: Option<&str>, f: impl FnOnce() -> R) -> R {
     let on = RECORDER.with_borrow_mut(|r| match r {
         Some(r) => {
             r.enter(stage, definition);

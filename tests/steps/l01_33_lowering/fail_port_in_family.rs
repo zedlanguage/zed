@@ -32,8 +32,8 @@ fn a_port_in_a_family_s_body_is_refused_as_inside_a_family() {
                  inside a loop or a family. Built code carries the state of a port only into \
                  the arms of a `match` and into a function bound by `let` and called by its \
                  name. Repairs: move the reads and pushes of `{port}` out of the loop or family \
-                 and pass the values in or out; bind the function with `let` and call it by its \
-                 name; or run the program with `zedc run`, which has no such limit"
+                 and pass the values in or out; or run the program with `zedc run`, which has no \
+                 such limit"
             );
             let got = lower(t).err().unwrap_or_default();
             (got != want).then(|| format!("`{port}`: got {got:?}"))

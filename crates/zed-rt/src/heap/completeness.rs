@@ -573,7 +573,7 @@ fn each_use_of_a_freed_cell_names_what_the_code_did() {
             "{m}"
         );
         assert!(
-            m.starts_with("the program stopped because of a bug in zedc"),
+            m.starts_with("the run stopped because of a bug in zedc, not in your program. "),
             "{m}"
         );
     }
@@ -584,9 +584,12 @@ fn a_bug_message_says_the_fault_is_zedcs_and_names_the_place() {
     let m = crate::bug::bug("did a thing", "place 7");
     assert_eq!(
         m,
-        "the program stopped because of a bug in zedc, not in the program: the code zedc made \
-         for the program did a thing. Please report it to the Zed developers with the \
-         program's source, the input it was given, and this line: place 7"
+        format!(
+            "the run stopped because of a bug in zedc, not in your program. The code zedc made \
+             for the program did a thing: place 7.\nPlease report it at {}, with this message, \
+             the program's source and the input it was given, so that it can be repeated.",
+            zed_kernel::bug::REPORT_TO
+        )
     );
 }
 

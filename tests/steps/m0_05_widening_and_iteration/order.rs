@@ -231,11 +231,14 @@ fn two_cells_with_one_key_are_refused_with_their_spans_wherever_they_are_written
         let m = eq.renumbered(&old);
         let err = order(&m).unwrap_err();
         let SameKey {
+            ref name,
             cells: [u, w],
             spans,
         } = err;
         assert!(u < w && m.names[u] == "x" && m.names[w] == "x", "{err}");
-        // The spans are those the two cells were written at, cells 0 and 1 of `eq`.
+        assert_eq!(name, "x");
+        // The spans are those the two cells were written at, cells 0 and 1 of `eq`; the
+        // message names the declaration, not the bytes (MSG-bug-sentence-one).
         assert_eq!(spans, [m.spans[u], m.spans[w]]);
         let mut written = spans;
         written.sort_by_key(|s| s.start);
@@ -243,12 +246,10 @@ fn two_cells_with_one_key_are_refused_with_their_spans_wherever_they_are_written
         assert_eq!(solve(&m).unwrap_err(), err);
         let text = err.to_string();
         assert!(
-            text.contains("a bug in zedc itself")
+            text.starts_with(&zed_kernel::bug::opening(zed_kernel::bug::Stopped::Zedc))
+                && text.contains("two facts about the declaration `x` with the same name")
                 && text.contains("the same name, the same content and the same place")
-                && text.contains(&format!(
-                    "bytes {}..{} and {}..{}",
-                    spans[0].start, spans[0].end, spans[1].start, spans[1].end
-                )),
+                && !text.contains("bytes"),
             "{text}"
         );
         // With no edges the traversal visits x@[0], x@[1], y in the order of their keys, and

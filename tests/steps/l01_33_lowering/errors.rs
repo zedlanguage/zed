@@ -6,12 +6,16 @@ use zed_tests::kernel::fold;
 use zedc::zir::lower::{lower, raise};
 use zedc::zir::{Region, RegionKind, Src};
 
-/// The message for a term no checked program lowers to: a bug in zedc, with `detail`.
-fn bug(detail: &str) -> String {
-    format!(
-        "zedc could not compile the program because of a bug in zedc, not in the program. \
-         Please report it to the Zed developers with the program's source and this line: \
-         {detail}. Until it is fixed, `zedc run` runs the program without compiling it"
+/// The message for a term no checked program lowers to: a bug in zedc, with `detail`, in the
+/// words every such message shares (MSG-bug-sentence-one).
+pub(super) fn bug(detail: &str) -> String {
+    zed_kernel::bug::report(
+        zed_kernel::bug::Stopped::Zedc,
+        &format!(
+            "zedc could not compile the program: {detail}. Until it is fixed, `zedc run` runs \
+             the program without compiling it."
+        ),
+        "this message and the program's source",
     )
 }
 
@@ -97,13 +101,13 @@ fn names_and_primitives_are_checked() {
     assert!(
         lower(&tuple)
             .unwrap_err()
-            .ends_with("takes any number of arguments, so with no inputs its node is a call, not the function. Until it is fixed, `zedc run` runs the program without compiling it")
+            .contains("takes any number of arguments, so with no inputs its node is a call, not the function. Until it is fixed, `zedc run` runs the program without compiling it.\nPlease report it at ")
     );
     let neg = prim(Prim::Neg, vec![lit(1), lit(2)]);
     assert!(
         lower(&neg)
             .unwrap_err()
-            .ends_with("takes 1 argument and is given 2. Until it is fixed, `zedc run` runs the program without compiling it")
+            .contains("takes 1 argument and is given 2. Until it is fixed, `zedc run` runs the program without compiling it.\nPlease report it at ")
     );
 }
 

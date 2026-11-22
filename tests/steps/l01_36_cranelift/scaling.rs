@@ -273,8 +273,10 @@ fn a_wrong_plan_deep_in_the_term_names_the_path() {
     p.regions[up].nodes[k].regions.clear();
     let e = zed_native::object(&g, &p).unwrap_err();
     assert!(
-        e.starts_with("zedc could not make machine code for the program because of a bug in zedc")
-            && e.contains(&format!("this line: arm `{arm}` has no plan.")),
+        e.starts_with(&zed_kernel::bug::opening(zed_kernel::bug::Stopped::Zedc))
+            && e.contains(&format!(
+                "zedc could not make machine code for the program: arm `{arm}` has no plan."
+            )),
         "{e}"
     );
 }

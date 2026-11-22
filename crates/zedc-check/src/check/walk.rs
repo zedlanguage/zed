@@ -2231,6 +2231,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let Some(&k) = s.order.get(s.i) {
             let st = s.items[k];
             s.i += 1;
+            // The declaration a report of a bug in zedc names (MSG-bug-report-plain): the
+            // last top-level one begun. O(length of its name).
+            if s.top {
+                match &st.kind {
+                    StmtKind::Function(f) => zedc_base::work::declaration(&f.name),
+                    StmtKind::Bind { targets, .. } => {
+                        if let [Target::Name(n, _)] = &targets[..] {
+                            zedc_base::work::declaration(n);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             m.k(Frame::Scope(s));
             return self.stmt(m, st);
         }

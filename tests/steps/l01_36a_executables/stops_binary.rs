@@ -221,6 +221,66 @@ fn a_bug_of_zedc_in_the_run_stops_both_engines_alike() {
     }
 }
 
+/// The report of a bug in zedc (plan row MSG-bug-report-plain, author 2026-11-09 and
+/// 2026-11-15) says in plain words what happened and which declaration zedc was at work on,
+/// asks for the report, and then puts what zedc's developers need in a details block: zedc's
+/// version as `zedc` with no arguments prints it, the stage, the declaration, what zedc
+/// expected (the panic's text) and zedc's own file and line. Both engines mark the run of
+/// `main` (`zedc::run`), so both name `main` and the stage `run`, and neither names a unit:
+/// the program's content address names the program.
+#[test]
+fn a_bug_report_names_the_declaration_and_puts_the_version_in_a_details_block() {
+    // The switch exists only where debug assertions are on (crates/zedc/src/run.rs).
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let p = program(
+        "bug_details",
+        &writes_then("    m.stderr <- String(m.args);\n"),
+    );
+    let version = zedc(&[], Stdio::piped());
+    let version = String::from_utf8(version.stdout).unwrap();
+    let version = version
+        .trim()
+        .strip_prefix("zedc ")
+        .expect("`zedc` prints its version");
+    let ran = both_with(&p, Stdio::piped, &[("ZEDC_TEST_BUG", "1")]);
+    for (engine, (status, _, err)) in ["zedc run", "executable"].into_iter().zip(ran) {
+        let err = String::from_utf8_lossy(&err).into_owned();
+        assert_eq!(status, Some(3), "{engine}: {err}");
+        let (message, details) = err
+            .split_once("\nDetails for the report:\n")
+            .unwrap_or_else(|| panic!("{engine}: no details block: {err}"));
+        // The message is plain: no zedc file, no panic text, no version.
+        assert!(
+            message.starts_with("the run stopped because of a bug in zedc, not in your program.")
+                && message.contains("\nPlease report it at ")
+                && !message.contains(".rs")
+                && !message.contains(version),
+            "{engine}: {err}"
+        );
+        let lines: Vec<&str> = details.lines().collect();
+        assert_eq!(
+            lines.first().copied(),
+            Some(&*format!("  zedc version: {version}")),
+            "{engine}: {err}"
+        );
+        assert!(
+            lines.iter().any(|l| l.starts_with("  expected: "))
+                && lines
+                    .iter()
+                    .any(|l| l.starts_with("  in zedc at: ") && l.contains(".rs, line ")),
+            "{engine}: {err}"
+        );
+        assert!(
+            message.contains("while it was at work on the declaration `main`.")
+                && lines.contains(&"  stage: run")
+                && lines.contains(&"  declaration: main"),
+            "{engine}: {err}"
+        );
+    }
+}
+
 #[test]
 fn a_bug_of_zedc_in_the_run_stops_the_run_not_the_build_stage_before_it() {
     // `k` calls `sq` inside `map`, a family operation, so the build stage runs it as written

@@ -4916,10 +4916,6 @@ pub enum KernelError {
     },
 }
 
-/// Where a bug in zedc is reported: a message for a broken invariant names it
-/// (DESIGN.md sec:diagnostics).
-pub const REPORT_TO: &str = "https://github.com/zedlanguage/zed/issues";
-
 /// The first words of a message for a number too large for this machine's memory.
 const NUMBER_TOO_LARGE: &str = "Number too large for memory";
 /// The first words of a message for a text too large for this machine's memory.
@@ -5147,13 +5143,14 @@ impl fmt::Display for KernelError {
                  values at more than one depth of keys, so it has no one level to collapse. \
                  To repair it, give every entry of the family the same number of keys"
             ),
-            KernelError::Type(msg) => write!(
-                f,
-                "the run stopped because of a bug in zedc itself, not in your program: a \
-                 program the checker accepts never gives an operation a value it cannot take, \
-                 and here the evaluator met this: {msg}. Please report it at {REPORT_TO}, with \
-                 the command line you ran and the files it read, so that it can be repeated"
-            ),
+            KernelError::Type(msg) => f.write_str(&crate::bug::report(
+                crate::bug::Stopped::Run,
+                &format!(
+                    "A program the checker accepts never gives an operation a value it cannot \
+                     take, and here the evaluator met this: {msg}."
+                ),
+                "the command line you ran and the files it read",
+            )),
             KernelError::UnknownPort(name) => write!(
                 f,
                 "the program uses the port `{name}`, and the run was given no port of that \
@@ -6999,11 +6996,11 @@ mod tests {
         );
         assert_eq!(
             KernelError::Type("`+` applied to `int`, `bool`".into()).to_string(),
-            "the run stopped because of a bug in zedc itself, not in your program: a program \
-             the checker accepts never gives an operation a value it cannot take, and here the \
-             evaluator met this: `+` applied to `int`, `bool`. Please report it at \
+            "the run stopped because of a bug in zedc, not in your program. A program the \
+             checker accepts never gives an operation a value it cannot take, and here the \
+             evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at \
              https://github.com/zedlanguage/zed/issues, with the command line you ran and the \
-             files it read, so that it can be repeated"
+             files it read, so that it can be repeated."
         );
         assert_eq!(
             KernelError::UnknownPort("p".into()).to_string(),
