@@ -125,20 +125,24 @@ fn keying_a_call_at_a_join_and_a_tuple_of_n_parts_scales() {
     );
 }
 
-/// The values passed at n calls, the i-th at `"s(i/2)"` doubled 60 times or at `i/2` doubled
-/// 40 times as a tuple, each built apart: each pair of equal values is one value, keyed by its
-/// canonical form, so the work is O(n log n) and no value is read whole (item STAGE-byte-keys).
+/// The values passed at n calls, the i-th at `"s(i/2)"` (i/2 in four digits) doubled 60 times
+/// or at `i/2` doubled 40 times as a tuple, each built apart: each pair of equal values is one
+/// value, keyed by its canonical form, so the work is O(n log n) and no value is read whole
+/// (item STAGE-byte-keys).
 /// The strings are doubled 60 times, not 62: from `"s100"` on, a seed of 4 bytes doubled 62
 /// times is 2^64 bytes, past the longest string, so its evaluation stops and the call is left
 /// to run, not passed (measured: 100 values passed at 800 calls). Doubled 60 times, a seed of
-/// up to 16 bytes stays below 2^64.
+/// up to 16 bytes stays below 2^64. The seeds are all 5 bytes: with `"s{i/2}"`, 2 to 3 bytes at
+/// n and 4 at 8n, the strings differed in period and so in the size of their summaries
+/// (`text::names`), 12.2 times the bytes at 8n against 8.9 with one width (std VM, 2026-11-22,
+/// 10.3 times the processor time; each join is about 27 MB and 50 ms to name).
 #[test]
 fn the_values_passed_at_long_joins_scale() {
     let n = 100;
     let joins = scaling::inputs(n, |k| {
         calls_at(
             (0..k)
-                .map(|i| doubled(lit(format!("s{}", i / 2).as_str()), 60, false))
+                .map(|i| doubled(lit(format!("s{:04}", i / 2).as_str()), 60, false))
                 .collect(),
         )
     });
