@@ -229,8 +229,6 @@ rows! {
     InfixOperand => "Arithmetic operator written without parentheses in an operand of an infix call",
     ReservedWordAsName => "Reserved word written where a name stands",
     BidiControlInText => "`Bidi_Control` character in a comment or in the text of a string literal",
-    // No diagnostic uses this row yet: plan row PITFALL-leading-zero attaches it to the lexer's
-    // rejection, with its note.
     LeadingZero => "Decimal number with a leading `0`",
     PushWhereLessMeant => "`<-` written where a comparison with a negative operand was meant",
     PushTargetNotPushable => "Push to a target that cannot be pushed to",

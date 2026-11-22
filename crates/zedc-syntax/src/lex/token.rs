@@ -109,6 +109,16 @@ pub enum ErrorKind {
     },
     /// A malformed number, and what is wrong with it.
     BadNumber(String),
+    /// A decimal number whose whole-number part starts with `0` and is not `0` alone, as
+    /// `0755` (DESIGN.md sec:diagnostics, row "Decimal number with a leading `0`").
+    LeadingZero {
+        /// The literal as written.
+        written: String,
+        /// The literal with the zeros and `_` before its first other digit dropped.
+        decimal: String,
+        /// For an integer whose digits are all below 8 and not all `0`, its `0o` form.
+        octal: Option<String>,
+    },
     /// A malformed string, and what is wrong with it.
     BadString(String),
     /// A block comment that is not closed.
@@ -152,6 +162,17 @@ impl fmt::Display for Error {
                 write!(f, "{why}")
             }
             ErrorKind::Unread(r, cast) => write!(f, "{}", unread_literal(r, cast)),
+            ErrorKind::LeadingZero {
+                written,
+                decimal,
+                octal,
+            } => {
+                write!(f, "`{written}` is no number: a leading `0` is octal in C. ")?;
+                match octal {
+                    Some(o) => write!(f, "Try `{decimal}`, or `{o}` for the octal number."),
+                    None => write!(f, "Try `{decimal}` instead."),
+                }
+            }
             ErrorKind::NonAsciiName { word, repair } => f.write_str(&non_ascii(word, repair)),
             ErrorKind::TextDirection {
                 c,
@@ -204,6 +225,13 @@ pub(super) fn first_bidi_control(s: &str) -> Option<(usize, char)> {
     }
     None
 }
+
+/// The note of the sec:diagnostics row "Decimal number with a leading `0`": the reading other
+/// languages give such a number (C11 6.4.4.1 `octal-constant`; PEP 3127 for Python 3's
+/// rejection) and how Zed writes the other bases.
+pub const LEADING_ZERO_NOTE: &str = "C, Java, Go and JavaScript read a number with a leading \
+     `0` as octal, so `0755` is 493 there; Zed writes octal as `0o755`, binary as `0b1011` and \
+     hexadecimal as `0xFF`";
 
 /// Why a comment or a string's text may not hold the `Bidi_Control` character `c` (the note of
 /// the sec:diagnostics row), which a message names by its code point.

@@ -139,17 +139,12 @@ fn leading_zero(text: &str, pos: usize, int_end: usize, after: usize) -> Error {
     let integer = int_end == after;
     let octal =
         (integer && whole != "0" && whole.bytes().all(|d| d < b'8')).then(|| format!("0o{whole}"));
-    let why = match octal {
-        Some(o) => format!(
-            "`{written}` is no number: a leading `0` is octal in C. Try `{decimal}`, or `{o}` for \
-             the octal number."
-        ),
-        None => format!(
-            "`{written}` is no number: a leading `0` is octal in C. Try `{decimal}` instead."
-        ),
-    };
     Error {
-        kind: ErrorKind::BadNumber(why),
+        kind: ErrorKind::LeadingZero {
+            written: written.to_string(),
+            decimal,
+            octal,
+        },
         span: Span {
             start: pos,
             end: after,

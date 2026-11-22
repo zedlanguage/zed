@@ -984,6 +984,17 @@ impl From<crate::lex::Error> for Error {
                 }));
                 (notes, Some(Row::BidiControlInText))
             }
+            crate::lex::ErrorKind::LeadingZero { decimal, octal, .. } => {
+                let mut notes = vec![Note {
+                    span: e.span,
+                    text: crate::lex::LEADING_ZERO_NOTE.to_string(),
+                }];
+                notes.extend(std::iter::once(decimal).chain(octal).map(|r| Note {
+                    span: e.span,
+                    text: format!("repair: `{r}`"),
+                }));
+                (notes, Some(Row::LeadingZero))
+            }
             _ => (Vec::new(), None),
         };
         Error {
