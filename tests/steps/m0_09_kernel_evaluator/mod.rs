@@ -1458,3 +1458,63 @@ fn printing_a_number_too_large_to_build_is_an_error_naming_its_size() {
     assert_eq!(s.char_count(), 1_000_001);
     assert!(s.flat().starts_with("10") && s.flat()[1..].bytes().all(|b| b == b'0'));
 }
+
+// Plan row FAIL-kernel-tuple-order-kinds (dropfix2, 2026-11-19). The checker rejects
+// `(1, "a") < ("b", 2)` (l01_26_type_resolution/soundness.rs); the kernel ordered the two tuples
+// by the total order on their first components, an int against a string, and gave `true`.
+#[test]
+fn tuples_whose_deciding_components_differ_in_kind_are_a_type_error() {
+    let a = || lit(Value::tuple(vec![Value::Int(1), Value::str("a")]));
+    let b = || lit(Value::tuple(vec![Value::str("b"), Value::Int(2)]));
+    for p in [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge, Prim::Min, Prim::Max] {
+        let r = eval(&prim(p, vec![a(), b()]));
+        assert!(
+            matches!(r, Err(KernelError::Type(_))),
+            "{p:?} on (1, \"a\") and (\"b\", 2) gave {r:?}"
+        );
+    }
+}
+
+// The same rule one level down, and its controls: a pair of two kinds behind a first component
+// that ties is a type error, while a pair the order does not reach is not read, as `min` reads
+// it, and a NaN (unordered, of one kind) still makes each comparison false, not an error.
+#[test]
+fn only_the_deciding_pair_of_two_tuples_must_be_of_one_kind() {
+    let t = |xs: Vec<Value>| lit(Value::tuple(xs));
+    let deep = |p| {
+        eval(&prim(
+            p,
+            vec![
+                t(vec![Value::Int(1), Value::tuple(vec![Value::Int(2)])]),
+                t(vec![Value::Int(1), Value::tuple(vec![Value::str("x")])]),
+            ],
+        ))
+    };
+    for p in [Prim::Lt, Prim::Ge, Prim::Min] {
+        assert!(matches!(deep(p), Err(KernelError::Type(_))), "{p:?}");
+    }
+    let undecided = eval(&prim(
+        Prim::Lt,
+        vec![
+            t(vec![Value::Int(1), Value::str("a")]),
+            t(vec![Value::Int(2), Value::Int(3)]),
+        ],
+    ));
+    assert_eq!(undecided.unwrap(), Value::Bool(true));
+    // An integer of either width is one kind.
+    let wide = eval(&prim(
+        Prim::Lt,
+        vec![
+            t(vec![Value::Int(1)]),
+            t(vec![Value::int(num_bigint::BigInt::from(1u8) << 70)]),
+        ],
+    ));
+    assert_eq!(wide.unwrap(), Value::Bool(true));
+    for p in [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge] {
+        let nan = eval(&prim(
+            p,
+            vec![t(vec![Value::float(f64::NAN)]), t(vec![Value::float(1.0)])],
+        ));
+        assert_eq!(nan.unwrap(), Value::Bool(false), "{p:?}");
+    }
+}
