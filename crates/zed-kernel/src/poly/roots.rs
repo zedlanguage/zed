@@ -327,9 +327,14 @@ fn capped_pow(x: &BigInt, g: u64, cap: &BigInt) -> BigInt {
 ///
 /// Complexity tradeoff: on `BigInt` the products and quotients are the kernel's
 /// ([`mul_int`], [`div_floor_int`], [`pow_uint`] in `capped_pow`), which take num-bigint's
-/// below their measured crossovers and transforms, O(n log n) a product, above them; with
-/// num-bigint's alone each is about `n^1.465` (Toom-3, and Burnikel and Ziegler's division
-/// over it), so 8 times the bits cost about `8^1.465 = 21.0` times the work whatever the count
+/// below their measured crossovers and transforms, O(n log n) a product, above them. Below
+/// the crossovers the work is mostly num-bigint's, whose method is chosen by word counts
+/// (num-bigint 0.4.8, `biguint/multiplication.rs` and `biguint/division.rs`, read
+/// 2026-11-22): a product is long multiplication, `n^2`, while its shorter factor has at most
+/// 32 words, Karatsuba's, `n^1.585`, up to 256, and Toom-3, `n^1.465`, past that; a quotient
+/// is Knuth's algorithm D, `n^2`, unless the dividend has over 128 words and the divisor over
+/// 64, and then Burnikel and Ziegler's, whose cost is its products'. So 8 times the bits cost
+/// from `8^1.465 = 21.0` to 64 times the work of one product, by the size, whatever the count
 /// of steps (plan row ROOTS-cubic-bits-bytes; measurements at the benchmark
 /// `l01_39_reduced_product::roots::bench::roots_scale_in_the_degree_and_in_the_bits`).
 macro_rules! interval_tests {
@@ -835,7 +840,8 @@ fn probes(newton: Option<BigInt>, lo: &BigInt, hi: &BigInt) -> Vec<BigInt> {
 
 /// `p` at `x`, by Horner's rule over the gaps between its exponents. The products and powers
 /// are the kernel's ([`mul_int`], [`pow_uint`]), O(n log n) a product past their crossovers,
-/// where num-bigint's are about `n^1.465` (tradeoff at the macro `interval_tests`).
+/// and num-bigint's below them, from `n^2` to `n^1.465` by the size (tradeoff at the macro
+/// `interval_tests`).
 fn eval(p: &[(u64, BigInt)], x: &BigInt) -> BigInt {
     let Some((mut last, _)) = p.last().cloned() else {
         return BigInt::zero();

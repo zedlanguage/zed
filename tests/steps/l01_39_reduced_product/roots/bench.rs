@@ -12,18 +12,38 @@ fn roots_scale_in_the_degree_and_in_the_bits() {
         integer_roots(&degrees[&n], None, None);
     });
     // 256 and 2,048 bits (plan row ROOTS-cubic-bits-bytes). From 512 bits up the work grew as
-    // num-bigint's products, about `n^1.465`: callgrind, 2026-11-22, 14.1M instructions at
+    // num-bigint's products and quotients: callgrind, 2026-11-22, 14.1M instructions at
     // 2,048 bits and 300.0M at 16,384, 21.3 times, 92% in the chain of derivatives
-    // (`chain_roots`), 61% in its evaluations and 22% in num-bigint's `div_floor`. The products
-    // and quotients are now the kernel's (`mul_int`, `div_floor_int`), which keep num-bigint's
-    // Toom-3 up to its measured crossovers (`MUL_LEAF`, `TOOM_COST`). Measured 2026-11-22
-    // (DynamoRIO, instructions at 8 times the bits): 3.9 at 256 bits (3.18M and 12.38M), 8.8
-    // at 512, 16.8 at 1,024, 22.8 at 2,048, 25.3 at 4,096 and 13.2 at 65,536 (2.429G and
-    // 32.07G; bytes 385.8M and 2,216.5M, 5.7 times). At 65,536 bits callgrind puts 91% of the
-    // instructions in num-bigint's products, 77% of them through the kernel's `mul`; by the
-    // code (not counted), `chain_search` takes about log2 n Newton steps at full precision
-    // toward the root of the derivative, so `O(M(n) log n)`. Only 256 bits is under the limit,
-    // a run under 1 ms; a search at doubling precision is open with the row.
+    // (`chain_roots`), 61% in its evaluations and 22% in num-bigint's `div_floor`. num-bigint
+    // 0.4.8 multiplies by long multiplication while the shorter factor, here `x` of `n / 64`
+    // words, has at most 32 words (to 2,048 bits), by Karatsuba's method to 256 words (16,384
+    // bits) and by Toom-3 past that; it divides by Knuth's algorithm D unless the dividend has
+    // over 128 words and the divisor over 64 (tradeoff at the macro `interval_tests` in
+    // `zed_kernel::poly::roots`). So from 1,024 to 4,096 bits each product grows by 21 to 64
+    // times at 8 times the bits. The products and quotients are now the kernel's (`mul_int`,
+    // `div_floor_int`), which keep num-bigint's up to their measured crossovers (`MUL_LEAF`,
+    // `TOOM_COST`, `DIV_LEAF`, `DIV_COST`). Measured 2026-11-22 (DynamoRIO, instructions at 8
+    // times the bits): 3.9 at 256 bits (3.18M and 12.38M), 8.8 at 512, 16.8 at 1,024, 22.8 at
+    // 2,048, 25.3 at 4,096 and 13.2 at 65,536 (2.429G and 32.07G; bytes 385.8M and 2,216.5M,
+    // 5.7 times). At 65,536 bits callgrind puts 91% of the instructions in num-bigint's
+    // products, 77% of them through the kernel's `mul`. The steps of that search, counted by
+    // the reviewers' model of it (cross-review XR-ROOTS-REF round 1, not measured here), all
+    // at full precision over the five searches of the chain (two members of each sign, and
+    // the root 5):
+    //
+    //   bits     cuts  Newton steps  bisections  evaluations
+    //   256        42            33          51          212
+    //   512        47            37          49          227
+    //   1,024      52            41          50          245
+    //   2,048      57            45          79          291
+    //   4,096      62            49          78          307
+    //   8,192      67            53          75          321
+    //   16,384     72            57          92          355
+    //   32,768     77            61          96          376
+    //
+    // Each of the four wide searches, of the cubic and of its derivative, for either sign,
+    // takes about log2 n Newton steps, so `O(M(n) log n)`. Only 256 bits is under the limit, a
+    // run under 1 ms; a search at doubling precision is open with the row.
     let cubics = scaling::inputs(256, |bits| of_bits(bits as u64).0);
     scaling::check_order(
         "the integer roots of a cubic whose roots have n bits",
