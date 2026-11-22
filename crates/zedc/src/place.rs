@@ -34,7 +34,7 @@ impl Place {
     /// for a manifest names one part, and neither this process nor the kernel goes over the
     /// whole path again per directory.
     pub fn of(file: &Path) -> Result<Place, String> {
-        let full = std::fs::canonicalize(file).map_err(|e| {
+        let full = resolved(file).map_err(|e| {
             format!(
                 "zedc cannot follow the path `{}` to the file it names, to find the package the \
                  file belongs to: {e}. Name a file that exists, on a path whose directories zedc \
@@ -90,5 +90,30 @@ impl Place {
             dir = openat(&dir, "..", flags, Mode::empty()).map_err(cannot)?;
             up += 1;
         }
+    }
+}
+
+/// The path of `file` with every symbolic link and every `.` and `..` step resolved, as
+/// `std::fs::canonicalize` gives it, in time linear in the length of the path, the kernel's
+/// work included.
+///
+/// `canonicalize` is glibc's `realpath`, which calls `readlink` on each prefix of the path in
+/// turn, and the kernel walks each prefix from the root: for a file n directories deep that is
+/// n walks of up to n steps, O(n²) work in the kernel. The benchmark
+/// `bench::rejection_addresses::the_file_part_of_an_address_scales_with_the_depth_of_the_file`
+/// measured it at 54 to 56 times the processor time at 8 times the depth on a VM with no
+/// instruction counter, where the meter counts processor time, kernel time included (row
+/// FAIL-file-address-depth-scaling). Here the kernel resolves the path once, opening the file
+/// for its place only (`O_PATH`, which follows links as `canonicalize` does), and the resolved
+/// path is read back once from the descriptor's link in `/proc/self/fd`, which the kernel
+/// writes by walking up from the file, O(depth). Where `/proc` is not mounted, or the link
+/// does not read back as an absolute path (a file removed while it was open is written with
+/// " (deleted)" after it), `canonicalize` gives the same answer more slowly.
+fn resolved(file: &Path) -> std::io::Result<PathBuf> {
+    use std::os::fd::AsRawFd;
+    let fd = openat(CWD, file, OFlags::PATH | OFlags::CLOEXEC, Mode::empty())?;
+    match std::fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd())) {
+        Ok(p) if p.is_absolute() && p.exists() => Ok(p),
+        _ => std::fs::canonicalize(file),
     }
 }

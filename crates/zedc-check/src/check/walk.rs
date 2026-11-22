@@ -17914,6 +17914,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             span: self.fixed_at(a),
             text: base_is,
         });
+        notes.extend(self.base_origins(a));
         let k_text = number_text(k);
         let exponent_is = match negative {
             true => format!("the exponent k, `{exponent_code}`, is at most -{k_text}"),
@@ -18369,6 +18370,53 @@ impl<'t, 'a> Ck<'t, 'a> {
         );
     }
 
+    /// Where the base `a` of a power too large comes from, past the note [`Self::fixed_at`]
+    /// puts at it: the declaration of the name a cast of the base reads (`b` in `rat(b)`),
+    /// and of each name that name is bound to in turn (`b = c; c = 2^64 + 13`), each a note
+    /// "`b` is bound here to `c`". DESIGN.md sec:diagnostics, "Number too large for any memory
+    /// of the target": the least `|x|` "with where it came from, the literal or the
+    /// declaration" (row MSG-too-large-cast-origin; before, `rat(b)` named no declaration).
+    /// A bare name's own declaration is the base note's place already, so its chain starts at
+    /// the value it is bound to. O(names in the chain), each a lookup; `seen` is the visited
+    /// set (P207), though the statements' dependency order already rules out a cycle.
+    fn base_origins(&self, a: &'a Expr) -> Vec<Note> {
+        let mut x = match &a.kind {
+            ExprKind::Call {
+                callee,
+                positional,
+                named,
+                curry: false,
+                ..
+            } if named.is_empty()
+                && positional.len() == 1
+                && matches!(&callee.kind, ExprKind::Name(w) if ["rat", "int", "f64", "f32"].contains(&w.as_str()))
+                && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_))) =>
+            {
+                &positional[0]
+            }
+            ExprKind::Name(_) => match self.bound_value(a) {
+                Some(v) => v,
+                None => return Vec::new(),
+            },
+            _ => return Vec::new(),
+        };
+        let mut notes = Vec::new();
+        let mut seen = HashSet::new();
+        while let (ExprKind::Name(n), Some(Ref::Bound(b))) = (&x.kind, self.t.res.uses.get(&x.span))
+            && b.len() == 1
+            && seen.insert(b[0])
+        {
+            let Some(v) = self.bound_value(x) else { break };
+            let code = self.code(Some(v.span)).unwrap_or("its value");
+            notes.push(Note {
+                span: self.t.res.binders[b[0]].span,
+                text: format!("`{n}` is bound here to `{code}`"),
+            });
+            x = v;
+        }
+        notes
+    }
+
     /// Where the text fixes `x`: the declaration of the one binder a name names, else `x`
     /// itself, a literal or an operation.
     fn fixed_at(&self, x: &Expr) -> Span {
@@ -18714,7 +18762,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !floor && ns.is_empty() {
             return;
         }
-        let (ints, narrowed) = self.ints_here(e);
+        // The interval the text gives `e` is the exponent's only where the exponent is `e` as
+        // written. A repair tried in its place, as `int(k)` for `k` ([`Self::repaired`]), is a
+        // value of its type alone, here any int, where `e` may have had no int at all and so an
+        // empty interval, which is at least 0; reading that passed `gr(true) ^ int(k)`, a
+        // repair the program then refused (row FAIL-int-power-repair-may-be-negative, test
+        // l01_29 offered_repairs::a_cast_exponent_that_may_be_negative_is_no_repair).
+        let written = n.expr.is_some_and(|x| std::ptr::eq(x, e));
+        let (ints, narrowed) = match written {
+            true => self.ints_here(e),
+            false => (IntervalSet::range(NegInf, PosInf), false),
+        };
         let shown_at_least_zero = ints.is_subset(&at_least_zero());
         if floor && !shown_at_least_zero {
             // A part of a parameter, as `a` of `a, b = p` or `p[0]`, takes the need on that

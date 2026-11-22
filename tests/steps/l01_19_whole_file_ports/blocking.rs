@@ -202,7 +202,8 @@ fn the_causes_are_recorded_by_binder() {
         got[&id("b")],
         Cause::Calls {
             callee: id("c"),
-            at: got[&id("b")].at()
+            at: got[&id("b")].at(),
+            via: None
         }
     );
     assert!(!got.contains_key(&id("d")));
@@ -249,9 +250,31 @@ fn a_helper_that_pushes_to_its_port_blocks() {
         got["say"],
         "`say` can block: it pushes to `out`, which can wait while its reader does not read."
     );
+    // The port is named as the caller passed it, with the parameter as the step between (row
+    // PORT-block-name); before, `main`'s explanation named only `say`'s parameter `out`.
     assert_eq!(
         got["main"],
-        "`main` can block: it calls `say`, which pushes to `out`, which can wait while its reader \
-         does not read."
+        "`main` can block: it calls `say`, which pushes to `out`, which holds `m.stdout`, which \
+         can wait while its reader does not read."
+    );
+}
+
+#[test]
+fn a_port_passed_down_a_chain_of_helpers_is_named_in_the_caller_s_words() {
+    // `relay` passes its own `out` on under the same name, which adds no step; `main`'s
+    // explanation names the port it passed `relay`.
+    let text = "say(positional s, out: Lines) { out <- s; }\n\
+                relay(positional s, out: Lines) { _ = say(s, out: out); }\n\
+                main(m: MainArgs) {\n  _ = relay(\"hi\", out: m.stderr);\n}\n";
+    let got = blocking(text);
+    assert_eq!(
+        got["relay"],
+        "`relay` can block: it calls `say`, which pushes to `out`, which can wait while its \
+         reader does not read."
+    );
+    assert_eq!(
+        got["main"],
+        "`main` can block: it calls `relay`, which calls `say`, which pushes to `out`, which \
+         holds `m.stderr`, which can wait while its reader does not read."
     );
 }

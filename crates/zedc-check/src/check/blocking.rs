@@ -63,6 +63,11 @@ pub enum Cause {
         callee: usize,
         /// The use of its name.
         at: Span,
+        /// Where `callee` blocks by pushing to a port parameter of its own (or by passing
+        /// one on to a function that does), the argument this call writes for that parameter:
+        /// the port in the caller's words, `m.stdout` in `say("hi", out: m.stdout)` (row
+        /// PORT-block-name). `None` where the call writes none or `callee` blocks otherwise.
+        via: Option<Span>,
     },
 }
 
@@ -155,6 +160,9 @@ struct Walk<'t, 'a> {
     seen_values: HashSet<usize>,
     /// The calls of declared functions, joined to the parameters after the walk.
     calls: Vec<CallFlow<'a>>,
+    /// The named arguments of each call of a declared function, by the callee's span (the
+    /// use of its name), from which a blocking call names the port it passes ([`Cause::Calls`]).
+    named_at: HashMap<Span, &'a [(String, Expr)]>,
     /// The node of the results of each list of functions a call may call, made once per list.
     results: HashMap<ListKey<'a>, usize>,
     /// The result node of each function.
@@ -207,6 +215,7 @@ pub fn facts_and_marks<'a>(
         unseen: Vec::new(),
         seen_values: HashSet::new(),
         calls: Vec::new(),
+        named_at: HashMap::new(),
         results: HashMap::new(),
         result_of: HashMap::new(),
         passed: HashSet::new(),
@@ -513,6 +522,7 @@ impl<'t, 'a> Walk<'t, 'a> {
                 args.push((Slot::Named(n.as_str()), self.values(a)));
             }
             self.calls.push(CallFlow { callee: ids, args });
+            self.named_at.insert(callee.span, named);
             return;
         }
         let Some(f) = owner else { return };
@@ -829,12 +839,34 @@ impl<'t, 'a> Walk<'t, 'a> {
                 queue.push_back((f, f));
             }
         }
+        // The port parameter of `callee` through which its cause blocks: the one it pushes to,
+        // or the one it passes on as the port of a blocking call; `None` for any other cause.
+        // A parameter, not a binding, is what a caller's argument fills, so only one counts.
+        let uses = &self.t.res.uses;
+        let param = |b: usize| (binders[b].kind == Kind::Param).then_some(b);
+        let port_param = |c: &Cause| match c {
+            Cause::Pushes { port, .. } => param(*port),
+            Cause::Calls { via: Some(s), .. } => match uses.get(s) {
+                Some(Ref::Bound(ids)) if ids.len() == 1 => param(ids[0]),
+                _ => None,
+            },
+            _ => None,
+        };
         while let Some((n, callee)) = queue.pop_front() {
             for u in up.get(&n).map_or(&[][..], Vec::as_slice) {
                 match *u {
                     Up::Caller(f, at) => {
-                        if let std::collections::btree_map::Entry::Vacant(e) = out.entry(f) {
-                            e.insert(Cause::Calls { callee, at });
+                        if !out.contains_key(&f) {
+                            // The argument this call writes for that parameter, by its name:
+                            // one lookup in the call's named arguments, O(arguments). The
+                            // callee's cause is in `out` already: the search visits a callee
+                            // before its callers.
+                            let via = port_param(&out[&callee]).and_then(|p| {
+                                let name = binders[p].name.as_str();
+                                let named = self.named_at.get(&at)?;
+                                named.iter().find(|(n, _)| n == name).map(|(_, e)| e.span)
+                            });
+                            out.insert(f, Cause::Calls { callee, at, via });
                             queue.push_back((f, f));
                         }
                     }
@@ -898,7 +930,7 @@ pub fn marked_errors(
         let mut g = f;
         loop {
             let (at, says) = match cause {
-                Cause::Calls { callee, at } => (
+                Cause::Calls { callee, at, .. } => (
                     *at,
                     format!("{} calls {}, which can block", name(g), name(*callee)),
                 ),
@@ -1012,6 +1044,12 @@ pub fn explain(
     let mut g = f;
     let mut cause = facts.get(&f)?;
     let mut lead = " it";
+    // The port `f`'s first call passes for the parameter the path ends by pushing to, in
+    // `f`'s words ([`Cause::Calls`]); the vias of later calls are in their callers' words.
+    let held = match cause {
+        Cause::Calls { via, .. } => via.zip(text).map(|(s, t)| &t[s.start..s.end]),
+        _ => None,
+    };
     loop {
         seen.insert(g);
         match cause {
@@ -1040,8 +1078,14 @@ pub fn explain(
                 return Some(out);
             }
             Cause::Pushes { port, .. } => {
+                // A port parameter is named with the port the caller passed, the parameter
+                // kept as the step between (row PORT-block-name), as a read names the binding
+                // and the input it holds. A port passed on under the same name (`out: out`)
+                // adds no step.
+                let holds = (held.filter(|p| *p != res.binders[*port].name))
+                    .map_or(String::new(), |p| format!(", which holds `{p}`"));
                 out.push_str(&format!(
-                    "{lead} pushes to {}, which can wait while its reader does not read.",
+                    "{lead} pushes to {}{holds}, which can wait while its reader does not read.",
                     name(*port)
                 ));
                 return Some(out);

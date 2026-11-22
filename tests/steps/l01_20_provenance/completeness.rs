@@ -347,6 +347,40 @@ fn a_primitive_a_fold_calls_is_no_fact() {
 }
 
 #[test]
+fn a_fold_over_three_different_failures_merges_them() {
+    // fold({0 -> #x, 1 -> #y, 2 -> #z}, +) (row CHECK-fold-merge-errs). DESIGN step L3.10: a
+    // level folded by `(+)` gives "`#errs({#a, #b})` when `#a` and `#b` are both present", by
+    // the merge rule of sec:failure ("the set of distinct failures ... flattened"), and "`#a`
+    // with the origins of both entries when `#a` is at two keys".
+    let atoms = |names: &[&str]| {
+        let leaves = names.iter().enumerate();
+        Family::from_leaves(leaves.map(|(i, a)| (vec![Value::Int(i as i64)], Value::atom(a))))
+            .unwrap()
+    };
+    let t = fold(
+        lit(Value::Family(atoms(&["x", "y", "z"]))),
+        Term::PrimFn(Prim::Add),
+        None,
+    );
+    let (v, _) = trace(&t);
+    assert_eq!(v.errs().map(|e| e.len()), Some(3), "{v}");
+    let t = fold(
+        lit(Value::Family(atoms(&["x", "y", "x"]))),
+        Term::PrimFn(Prim::Add),
+        None,
+    );
+    let (v, _) = trace(&t);
+    assert_eq!(v.errs().map(|e| e.len()), Some(2), "{v}");
+    let t = fold(
+        lit(Value::Family(atoms(&["x", "x", "x"]))),
+        Term::PrimFn(Prim::Add),
+        None,
+    );
+    let (v, _) = trace(&t);
+    assert_eq!(v, Value::atom("x"));
+}
+
+#[test]
 fn a_run_that_stops_with_an_error_records_nothing() {
     let t = add(lit(1), lit(s("x")));
     let mut ev = Evaluator::new(World::new()).with_provenance(vec![Value::Int(0)]);

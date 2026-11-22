@@ -733,12 +733,15 @@ fn zedc_run_rejects_a_power_of_wide_literals_too_large_for_any_memory_of_the_tar
   [1] 3:22: the numerator p of the base `rat(b)` is at least 2^64 in magnitude, so ⌊log₂ |p|⌋ is 64
       3 |   m.stdout <- String(rat(b) ^ (2^64));
         |                      ^^^^^^ [1]
-        |                      ^^^^^^^^^^^^^^^ [3, 4, 5]
-        |                               ^^^^^^ [2]
-  [2] 3:31: the exponent k, `(2^64)`, is at least 2^64
-  [3] 3:22: so `rat(b) ^ (2^64)` has at least 2^64 * 64 + 1 bits from the base's numerator: |k| * ⌊log₂ |p|⌋ + 1 at the least |p| and |k|
-  [4] 3:22: or read the exponent from the input: the run then stops if no memory holds the result
-  [5] 3:22: or delete `rat(b) ^ (2^64)` if its result is not used
+        |                      ^^^^^^^^^^^^^^^ [4, 5, 6]
+        |                               ^^^^^^ [3]
+  [2] 2:3: `b` is bound here to `2^64 + 13`
+      2 |   b = 2^64 + 13;
+        |   ^^^^^^^^^^^^^^
+  [3] 3:31: the exponent k, `(2^64)`, is at least 2^64
+  [4] 3:22: so `rat(b) ^ (2^64)` has at least 2^64 * 64 + 1 bits from the base's numerator: |k| * ⌊log₂ |p|⌋ + 1 at the least |p| and |k|
+  [5] 3:22: or read the exponent from the input: the run then stops if no memory holds the result
+  [6] 3:22: or delete `rat(b) ^ (2^64)` if its result is not used
   fixes, each checked here:
     m.stdout <- String(rat(b) ^ (2^60));    needs at least 8 EiB
 "#

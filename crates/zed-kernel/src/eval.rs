@@ -3459,17 +3459,20 @@ impl<'t> Machine<'_, 't> {
 }
 
 /// The result of a level that needs no call of `op`: an empty level's, or, for the primitive
-/// `+`, that of a level holding an atom, which is its first atom. A level of floats goes
-/// round the canonical tree like any other: sec:reduction item 1 fixes the tree, and item 2
-/// says no float policy is the exact sum (that is `rat`'s, written `xs.map(x -> rat(x)) >< (+)`).
+/// `+`, that of a level holding an atom, which is the merge of its atoms (DESIGN.md L3.10: `#a`
+/// when `#a` is at two keys, `#errs({#a, #b})` when `#a` and `#b` are both present, by the
+/// merge rule of sec:failure). Until row CHECK-fold-merge-errs this gave the level's first
+/// atom, dropping the others. A level of floats goes round the canonical tree like any other:
+/// sec:reduction item 1 fixes the tree, and item 2 says no float policy is the exact sum (that
+/// is `rat`'s, written `xs.map(x -> rat(x)) >< (+)`). Costs one pass over the level and the
+/// merge's O(m log m) for its `m` atoms.
 fn reduced(values: &[Value], op: &V<'_>, identity: &Option<Value>) -> Option<Value> {
     if values.is_empty() {
         return Some(identity.clone().unwrap_or_else(|| Value::atom("empty")));
     }
-    if matches!(op, V::Prim(Prim::Add))
-        && let Some(atom) = values.iter().find(|v| matches!(v, Value::Atom(_)))
-    {
-        return Some(atom.clone());
+    if matches!(op, V::Prim(Prim::Add)) && values.iter().any(|v| matches!(v, Value::Atom(_))) {
+        let atoms = values.iter().filter(|v| matches!(v, Value::Atom(_)));
+        return Some(Value::merge_failures(atoms.cloned()));
     }
     None
 }

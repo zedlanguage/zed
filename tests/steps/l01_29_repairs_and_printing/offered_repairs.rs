@@ -130,10 +130,37 @@ fn repaired(src: &str) -> Vec<(String, String)> {
 
 #[test]
 fn every_offered_repair_checks_as_written() {
-    assert_eq!(type_errors(PRELUDE), Vec::<String>::new());
-    let seed = zed_tests::seed::seed(
+    every_offered_repair_checks_at(zed_tests::seed::seed(
         "l01_29_repairs_and_printing::offered_repairs::every_offered_repair_checks_as_written",
-    );
+    ));
+}
+
+/// The seed under which [`every_offered_repair_checks_as_written`] was offered `int(k)` for
+/// the exponent of `y = gr(true) ^ k;`, which the program then refused, "Int power with an
+/// exponent that may be negative" (row FAIL-int-power-repair-may-be-negative): the trial of
+/// the repair read the interval of `k`, 3000000000000, for the cast, which the checker
+/// reads as any int.
+#[test]
+fn every_offered_repair_checks_as_written_at_seed_11215830651146876564() {
+    every_offered_repair_checks_at(11215830651146876564);
+}
+
+/// The one line of that seed alone: no repair of it is a cast exponent that may be negative.
+#[test]
+fn a_cast_exponent_that_may_be_negative_is_no_repair() {
+    let src = format!("{PRELUDE}y = gr(true) ^ k;\n");
+    for (fixed, repair) in repaired(&src) {
+        assert_eq!(
+            type_errors(&fixed),
+            Vec::<String>::new(),
+            "{repair}\n{fixed}"
+        );
+    }
+}
+
+/// Every repair offered on the grid of `seed` ([`grid`]) checks as written.
+fn every_offered_repair_checks_at(seed: u64) {
+    assert_eq!(type_errors(PRELUDE), Vec::<String>::new());
     let mut failed = Vec::new();
     let mut tried = 0;
     for line in grid(seed) {

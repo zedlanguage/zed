@@ -127,14 +127,36 @@ fn a_negative_exponent_is_bounded_by_its_magnitude() {
   [1] 3:24: the numerator p of the base `rat(b)` is at least 2^64 in magnitude, so ⌊log₂ |p|⌋ is 64
       3 |     m.stdout <- String(rat(b) ^ -(2^64));
         |                        ^^^^^^ [1]
-        |                        ^^^^^^^^^^^^^^^^ [3, 4, 5]
-        |                                 ^^^^^^^ [2]
-  [2] 3:33: the exponent k, `-(2^64)`, is at most -2^64
-  [3] 3:24: so `rat(b) ^ -(2^64)` has at least 2^64 * 64 + 1 bits from the base's numerator: |k| * ⌊log₂ |p|⌋ + 1 at the least |p| and |k|
-  [4] 3:24: or read the exponent from the input: the run then stops if no memory holds the result
-  [5] 3:24: or delete `rat(b) ^ -(2^64)` if its result is not used
+        |                        ^^^^^^^^^^^^^^^^ [4, 5, 6]
+        |                                 ^^^^^^^ [3]
+  [2] 2:5: `b` is bound here to `2^64 + 13`
+      2 |     b = 2^64 + 13;
+        |     ^^^^^^^^^^^^^^
+  [3] 3:33: the exponent k, `-(2^64)`, is at most -2^64
+  [4] 3:24: so `rat(b) ^ -(2^64)` has at least 2^64 * 64 + 1 bits from the base's numerator: |k| * ⌊log₂ |p|⌋ + 1 at the least |p| and |k|
+  [5] 3:24: or read the exponent from the input: the run then stops if no memory holds the result
+  [6] 3:24: or delete `rat(b) ^ -(2^64)` if its result is not used
   fixes, each checked here:
     m.stdout <- String(rat(b) ^ -(2^60));    needs at least 8 EiB"#
+    );
+}
+
+/// The base of a too-large power written as a cast of a name says where its value came from,
+/// through a chain of names (row MSG-too-large-cast-origin; DESIGN.md sec:diagnostics, row
+/// "Number too large for any memory of the target": the least `|x|` and `k` "each with where it
+/// came from, the literal or the declaration"). Before, no note pointed at a binding.
+#[test]
+fn a_cast_base_names_the_bindings_it_reads() {
+    let src = "main(m: MainArgs) {\n    a = 2^64 + 13;\n    b = a;\n    m.stdout <- String(rat(b) ^ (2^64));\n}\n";
+    let out = rejected(src);
+    assert!(
+        out.contains("4:24: Number too large for any memory of the target"),
+        "{out}"
+    );
+    assert!(out.contains("3:5: `b` is bound here to `a`"), "{out}");
+    assert!(
+        out.contains("2:5: `a` is bound here to `2^64 + 13`"),
+        "{out}"
     );
 }
 
