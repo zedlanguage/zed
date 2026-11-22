@@ -391,6 +391,22 @@ fn a_cycle_among_statements_is_an_error_whether_a_value_or_a_function() {
         "`f`, `g` are defined in terms of each other, which is recursion: recursion is not \
          supported by this version of zedc. [f(n) = g(n: n);]"
     );
+    // A cycle of two values, and of a value and a function (plan row DOC-l116-value-cycle).
+    assert_eq!(
+        one("a = b; b = a; x = a;"),
+        "`a`, `b` are defined in terms of each other's values. [a = b;]"
+    );
+    assert_eq!(
+        one("a = g(n: 1); g(n) = a + n; x = a;"),
+        "`a`, `g` are defined in terms of each other, which is recursion: recursion is not \
+         supported by this version of zedc. [a = g(n: 1);]"
+    );
+    // A lambda is a function, so a value whose lambda calls it is recursion too.
+    assert_eq!(
+        one("f = (n) -> f(n); x = 1;"),
+        "`f` is defined in terms of itself, which is recursion: recursion is not supported by \
+         this version of zedc. [f = (n) -> f(n);]"
+    );
     // An order of definitions that is not a cycle is fine whatever the written order.
     assert_eq!(value("a = b; b = 1; x = a;", "x"), "1");
 }
