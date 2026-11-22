@@ -50,6 +50,7 @@ fn nests(rule: &str) -> bool {
             | "OutPattern"
             | "GAlt"
             | "Args"
+            | "AnnotArgs"
             | "Params"
             | "Postfix"
             | "Or"

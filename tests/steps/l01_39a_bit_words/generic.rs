@@ -196,12 +196,15 @@ fn an_expression_of_a_parameter_is_checked_at_the_wrapper() {
 
 #[test]
 fn a_guarded_use_gives_0_directly_and_through_a_helper() {
-    // `n` is declared `int`: a test narrows only a name whose values are all ints, and with
-    // `n` undeclared the bare `0` leaves it `int | f64 | rat` (follow-up GUARD-follow).
     let defs =
         "e(positional n: int) = if n >= 0 { popCount(n) } else { 0 };\ng(positional m) = e(m);";
     let src = printing(defs, "String(e(-1)) ++ \" \" ++ String(g(-1))");
     assert_eq!(prints("generic_guard", &src), "0 0");
+    // With `n` undeclared the guard still narrows it: `popCount` fixes `n` at `int`, and the
+    // test `n >= 0` follows that class (row GUARD-follow).
+    let undeclared = "e(positional n) = if n >= 0 { popCount(n) } else { 0 };";
+    let src = printing(undeclared, "String(e(-1)) ++ \" \" ++ String(e(5))");
+    assert_eq!(prints("generic_guard_undeclared", &src), "0 2");
     let src = format!(
         "{defs}\nmain(m: MainArgs) {{\n  m.stdout <- String(g(int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0));\n}}\n"
     );

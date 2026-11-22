@@ -6,6 +6,7 @@
 
 use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
+use zed_tests::step_helpers::l01_29_diagnostics::rejected_with_main;
 
 /// The value of `y` in `src`, which the checker accepts.
 fn y(src: &str) -> String {
@@ -203,4 +204,22 @@ fn a_division_of_literals_at_an_int_or_rat_parameter_takes_rat() {
     assert_eq!(y(src), "3r/4r");
     let src = "f(x: int | rat) = x;\ny = f(x: 1 + 2);\n";
     assert_eq!(y(src), "3");
+}
+
+#[test]
+fn a_derivation_gives_a_generic_call_its_carrier_and_not_the_argument() {
+    // `half(x: 3r)` is a rat, not the single value `3r` written as its argument (row
+    // CALL-var-singleton), both where the call is an argument and where a name holds it.
+    let out = rejected_with_main(
+        "half(x) = x / 2;\nf(positional a: int) = a + 1;\ny = f(half(x: 3r));\n",
+    );
+    assert!(out.contains("this call of `half` gives rat\n"), "{out}");
+    assert!(!out.contains("gives 3r"), "{out}");
+    let out = rejected_with_main("half(x) = x / 2;\ny = half(x: 3r);\nz = popCount(y);\n");
+    assert!(
+        out.contains("`y` is defined as this expression, rat\n"),
+        "{out}"
+    );
+    assert!(out.contains("this call of `half` gives rat\n"), "{out}");
+    assert!(!out.contains("gives 3r"), "{out}");
 }

@@ -72,6 +72,30 @@ pub const CASES: &[(&str, &str, u32, &str, &str)] = &[
     ),
     ("Annot#0", "Annot", 0, "@inline", "@inline"),
     ("Annot#0", "Annot", 0, "@inline()", "@inline ( )"),
+    (
+        "AnnotArgs#0",
+        "AnnotArgs",
+        0,
+        "@a, x, b: 1, ...",
+        "@a , x , b : 1 , ...",
+    ),
+    ("AnnotArgs#0", "AnnotArgs", 0, "x > 0,", "x > 0 ,"),
+    // An annotation as an argument of an annotation, bare or called, ends at `,` or `)`.
+    (
+        "AnnotArg#0",
+        "Annot",
+        0,
+        "@assume(@associative)",
+        "@associative",
+    ),
+    (
+        "AnnotArg#0",
+        "Annot",
+        0,
+        "@require(@target(#cpu, cores: 8))",
+        "@target ( #cpu , cores : 8 )",
+    ),
+    ("AnnotArg#0", "AnnotArgs", 0, "@a, @b(1), x", "@b ( 1 )"),
     // Decl: each alternative is a `~` mark.
     ("Decl#0", "Decl", 0, "local x = 1;", "local x = 1 ;"),
     ("Decl#1", "Decl", 0, "initial x = 0;", "initial x = 0 ;"),

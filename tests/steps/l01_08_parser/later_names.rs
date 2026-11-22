@@ -3,7 +3,7 @@
 //! `without f(…)` attach and drop a facet (sec:facets); `m[day: 1]` is a named slice
 //! (sec:level_names).
 
-use zedc::ast::build;
+use zedc::ast::{build, unit};
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
 
@@ -46,5 +46,58 @@ fn each_form_is_named_for_what_it_is() {
         ),
     ] {
         assert_eq!(later(text), (message.to_string(), at), "{text}");
+    }
+}
+
+/// An annotation written as an argument of an annotation (rule `AnnotArg`, plan row
+/// ANNOT-arg-peg): `@assume(@associative)` (sec:verification) and `@require(@target(#cpu))`
+/// (sec:runtime) parse, and the argument is named as a form this zedc does not support. In a
+/// call's arguments an annotation alone is still no argument: `f(@a)` does not parse.
+#[test]
+fn an_annotation_as_an_annotation_argument_is_named_for_what_it_is() {
+    for (text, message, at) in [
+        (
+            "@assume(@associative)\nf(x) = x;",
+            zed_tests::not_yet!("the annotation argument `@associative`"),
+            "@associative",
+        ),
+        (
+            "@require(@target(#cpu, cores: 8))\nf(x) = x;",
+            zed_tests::not_yet!("the annotation argument `@target(#cpu, cores: 8)`"),
+            "@target(#cpu, cores: 8)",
+        ),
+        (
+            "@assume(x > 0, @associative)\nf(x) = x;",
+            zed_tests::not_yet!("the annotation argument `@associative`"),
+            "@associative",
+        ),
+    ] {
+        let tokens = lex(text).unwrap();
+        let tree = parse(text, &tokens, "Unit", TOP).unwrap_or_else(|e| panic!("{text}: {e}"));
+        let e = unit(text, &tokens, &tree).unwrap_err();
+        assert_eq!(
+            (e.message.as_str(), &text[e.span.start..e.span.end]),
+            (message, at),
+            "{text}"
+        );
+    }
+    let text = "y = f(@a);";
+    let tokens = lex(text).unwrap();
+    assert!(parse(text, &tokens, "Unit", TOP).is_err(), "{text}");
+    // In a call, and in an annotation before an operand, an annotated expression is still one.
+    for (text, message) in [
+        (
+            "y = g(@fpsafe (x - y));",
+            zed_tests::not_yet!("the annotated expression `@fpsafe (x - y)`"),
+        ),
+        (
+            "@a(@fpsafe x)\nf(x) = x;",
+            zed_tests::not_yet!("the annotated expression `@fpsafe x`"),
+        ),
+    ] {
+        let tokens = lex(text).unwrap();
+        let tree = parse(text, &tokens, "Unit", TOP).unwrap_or_else(|e| panic!("{text}: {e}"));
+        let e = unit(text, &tokens, &tree).unwrap_err();
+        assert_eq!(e.message, message, "{text}");
     }
 }

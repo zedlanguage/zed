@@ -8,7 +8,9 @@ Annotated     = Annot+ Decl                                                     
               | ANNOT+ Decl                                                        L2
               | (Annot &ANNOT)* ANNOT Decl                                         L2
 UnitAnnot     = Annot ';'                                                          L7
-Annot         = ANNOT ('(' nest(Args?) ')')?                                       L2
+Annot         = ANNOT ('(' nest(AnnotArgs?) ')')?                                  L2
+AnnotArgs     = (NamedArg | AnnotArg | PosArg) % ',' (',' '...' | ','?)            L2
+AnnotArg      = Annot &(',' | ')')                                                 L2
 
 Decl          = ~Local                                                             L2
               | ~Initial                                                           L6
@@ -156,7 +158,7 @@ Multiplicative = Multiplicative ('*' | '/' | 'div' | 'mod') Prefix              
 Prefix        = ('-' | '!') Prefix                                                 L1
               | AnnotExpr                                                          L7
               | ~Power                                                             L1
-AnnotExpr     = ANNOT '(' nest(Args?) ')' !'-' Or &AnnotEnd                        L7
+AnnotExpr     = ANNOT '(' nest(AnnotArgs?) ')' !'-' Or &AnnotEnd                   L7
               | ANNOT Or &AnnotEnd                                                 L7
 AnnotEnd      = ')' | ']' | '}' | ',' | ';' | 'else' | '{' | END                   L7
 Power         = Postfix '^' Prefix                                                L1

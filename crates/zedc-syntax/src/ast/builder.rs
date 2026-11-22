@@ -983,7 +983,7 @@ impl<'a, 's> Builder<'a, 's> {
         for &k in &node.kids {
             let kids = self.kids(k);
             let rule = self.tree.name(k);
-            if let (Some((word, at)), "PlainArg" | "SortArg") = (first_named, rule) {
+            if let (Some((word, at)), "PlainArg" | "SortArg" | "AnnotArg") = (first_named, rule) {
                 return Err(Error {
                     row: Some(Row::NamedBeforePositional),
                     menu: String::new(),
@@ -1016,6 +1016,12 @@ impl<'a, 's> Builder<'a, 's> {
                     positional.push(self.node(kids[0])?);
                     continue;
                 }
+                // An annotation written as an argument of an annotation, `@assume(@associative)`
+                // or `@require(@target(#cpu))` (rule `AnnotArg`, only in `AnnotArgs`): the
+                // annotations that take one (`@assume`, step L16.1; `@require`, step L24.4) are
+                // not built yet, so its node gives the error for a form this zedc does not
+                // support, before the annotation that holds it is resolved by name.
+                "AnnotArg" => return Err(self.later(k)),
                 "SortArg" => {
                     positional.push(Expr {
                         kind: ExprKind::SortKey {
@@ -1143,6 +1149,7 @@ fn kind_of(rule: &str) -> &'static str {
         "ArrayType" => "the array type",
         "Update" => "the field update",
         "AnnotExpr" => "the annotated expression",
+        "AnnotArg" => "the annotation argument",
         _ => "the form",
     }
 }
