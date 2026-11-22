@@ -17795,8 +17795,9 @@ impl Scope {
         // nothing is dropped. (4) Hence `base` is the same formula, `cons` is empty in
         // neither or both, every part is the same formula, and the bound is the same. Every
         // row is a constraint and so exact; every other conjunct is checked as before.
-        // Test: `l01_39_reduced_product::scaling::hub_bounds_match_the_full_core_after_rows_among_the_hubs`
-        // compares the scope's bounds with the lazy scope's at each step.
+        // Test: `l01_39_reduced_product::scaling::
+        // hub_bounds_match_the_full_core_after_rows_among_the_hubs` compares the scope's bounds
+        // with every point counted and with a lazy scope.
         if hubs.len() > 1 {
             let at: Vec<&conjuncts::Rows> =
                 hubs.iter().filter_map(|h| relation.free_rows(h)).collect();
