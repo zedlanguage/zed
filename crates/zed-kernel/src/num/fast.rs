@@ -4351,11 +4351,11 @@ pub(super) fn built(pows: &[(u64, BigUint)]) -> Result<BigInt, TooLarge> {
         .collect();
     let Some(small) = small else {
         let bits: BigUint = (pows.iter()).map(|(p, e)| e * p.ceil_log2()).sum();
-        // The size named is a lower bound on the product's bits (`super::least_bits`), the
+        // The size named is a lower bound on the product's bits (`super::room::least_bits`), the
         // memory asked the upper bound (row CONST-least-refusal-size).
         let one = BigInt::one();
         return Err(TooLarge {
-            size: super::least_bits(&one, pows.iter().map(|(p, e)| (*p, e))),
+            size: super::room::least_bits(&one, pows.iter().map(|(p, e)| (*p, e))),
             ask: bits,
         });
     };

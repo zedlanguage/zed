@@ -7,8 +7,8 @@
 use std::cell::Cell;
 use std::sync::OnceLock;
 
-use num_bigint::BigUint;
-use num_traits::ToPrimitive;
+use num_bigint::{BigInt, BigUint};
+use num_traits::{ToPrimitive, Zero};
 
 /// A number the evaluator must build, read or compare, for which the system refused the memory
 /// (DESIGN.md sec:domains): the number is a value of the language, and building it is the
@@ -400,5 +400,40 @@ mod tests {
             memory_clause(&small, &small),
             format!("; this run could not get that much memory, though this machine has {machine}")
         );
+    }
+}
+
+/// An `l` with `coef * prod p^e >= 2^l`, or 0 for a zero `coef`: `num::width` bounds the number's bits
+/// from above, this its `log2` from below, each prime's `log2 p` to within 2^-27.
+pub(super) fn least_log2<'a>(
+    coef: &BigInt,
+    pows: impl Iterator<Item = (u64, &'a BigUint)>,
+) -> BigUint {
+    let mut bits = BigUint::from(coef.bits().saturating_sub(1));
+    for (p, e) in pows {
+        // `log2 p` in units of 2^-32, rounded down: exact for a power of two; otherwise from
+        // the system's `log2`, whose error on `p < 2^64` is far below the 32 units taken off
+        // (a relative error of a few `2^-53` on a `log2 p` of at most 64 is a few 2^-15 units),
+        // as `bound::by_logs` allows for.
+        let units = match p.is_power_of_two() {
+            true => u64::from(p.ilog2()) << 32,
+            false => ((p as f64).log2() * 4294967296.0) as u64 - 32,
+        };
+        bits += (e * units) >> 32u32;
+    }
+    bits
+}
+
+/// At most the number of bits of `coef * prod p^e`, 0 for a zero `coef`: the size a refusal
+/// names (`TooLarge::size`), which a message reads as what the step needs at least, where
+/// `num::width`, an upper bound, is the memory asked for. Proof: [`least_log2`] gives an `l` with
+/// `x >= 2^l`, so `x` has `floor(log2 x) + 1 >= l + 1` bits (row CONST-least-refusal-size).
+pub(super) fn least_bits<'a>(
+    coef: &BigInt,
+    pows: impl Iterator<Item = (u64, &'a BigUint)>,
+) -> BigUint {
+    match coef.is_zero() {
+        true => BigUint::zero(),
+        false => least_log2(coef, pows) + 1u32,
     }
 }
