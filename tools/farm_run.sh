@@ -51,7 +51,8 @@
 #    The list call builds; the share then runs with --pieces, which neither builds nor lists again.
 #  - The short-addresses pieces (tools/run_tests.sh --short-groups, as short-<group>) run on VMs
 #    since FARM-short-pieces-on-vm-tmpfs, in a mount namespace with the checkout at zrun's fixed
-#    path and a tmpfs for the clone's upper layer (vm_side). Not run: the folders of tests/full
+#    path and a tmpfs for the clone's upper layer (vm_side), but for short-zed_kernel, too long as
+#    one piece for a VM (local_short below). Not run: short-zed_kernel and the folders of tests/full
 #    whose needs file names a tool a VM lacks (vm_tools below lists what a VM has; s00_01_tools and
 #    s09_release run on VMs since FARM-local-only-pieces-on-vm, with the tools job.sh installs,
 #    rootless podman and tools/fetch_test_deps.sh, vm_side). No build, test or benchmark runs on
@@ -139,9 +140,18 @@ for d in tests/full/*/; do
   fi
   if [ -n "$ok" ]; then vm_full+=("$n"); else local_full+=("$n"); fi
 done
+# The short-addresses pieces that stay off the VMs. short-zed_kernel, the zed-kernel unit tests
+# (470) as one piece, ran past its 20 s limit on l43 (an l4 VM, 12 cores) twice: beside the other
+# two short pieces (1.6 and 2.0 s) and alone, at load 5.4 and 5.5 (2026-11-22, FARM-short-pieces-on-
+# vm-tmpfs); in this machine's merge checks it takes 8 to 18 s at load 25 to 72 on 32 cores. It goes
+# to the VMs once it is cut into pieces that each fit (TEST-short-zed_kernel-split).
+local_short=(short-zed_kernel)
 # here_name <name>: whether the piece or group <name> runs here.
 here_name() {
   local g
+  for g in "${local_short[@]}"; do
+    [[ $1 == "$g" || $1 == "$g::"* ]] && return 0
+  done
   for g in "${local_full[@]}"; do
     [[ $1 == "full-$g" || $1 == "full-$g::"* ]] && return 0
   done
@@ -155,8 +165,9 @@ if [ -n "$terms" ]; then
     [[ $t != *' '* ]] || die "a term with a space: '$t'"
     if here_name "$t"; then echo "$t" >>"$out/terms.here"; else echo "$t" >>"$out/terms.vm"; fi
   done <"$terms"
-elif [ -z "$list" ] && [ -n "$full" ]; then
-  for g in "${local_full[@]}"; do echo "full-$g" >>"$out/terms.here"; done
+elif [ -z "$list" ]; then
+  printf '%s\n' "${local_short[@]}" >>"$out/terms.here"
+  [ -z "$full" ] || for g in "${local_full[@]}"; do echo "full-$g" >>"$out/terms.here"; done
 fi
 # Whether the VMs select short-addresses pieces (vm_side's short): every piece but in --list
 # (whose list then leaves them out, as their listing builds the clone), or a term that names one.
@@ -169,6 +180,10 @@ fi
 # The VM's --only (empty: every piece) and --except, which also leaves out the pieces run here.
 vm_only= vm_except=$except
 [ ! -s "$out/terms.vm" ] || vm_only=$(ere_of "$out/terms.vm")
+if [ "$vm_short" = 1 ] && [ -z "$terms" ]; then
+  printf '%s\n' "${local_short[@]}" >"$out/short.here"
+  vm_except=${vm_except:+$vm_except|}$(ere_of "$out/short.here")
+fi
 if [ -n "$full" ] && [ ${#local_full[@]} -gt 0 ]; then
   printf 'full-%s\n' "${local_full[@]}" >"$out/full.here"
   vm_except=${vm_except:+$vm_except|}$(ere_of "$out/full.here")

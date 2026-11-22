@@ -85,6 +85,8 @@ if [ -z "$pieces" ]; then
   fi
   names="p1 p2 p3 p4 p5 p6 p7"
   [ -z "$short_steps" ] || names+=" short-g1"
+  # short-zed_kernel, past its limit on a VM, stays off the VMs (farm_run.sh's local_short).
+  [ -z "$short_libs" ] || names+=" short-zed_kernel"
   [ -z "$full" ] || names+=" full-a full-b full-c"
   : >"$d/pieces"
   : >"$d/chosen"
@@ -93,6 +95,7 @@ if [ -z "$pieces" ]; then
     [ -z "$except" ] || [[ ! $n =~ $except ]] || continue
     # A short-addresses piece builds only at the build root, here with its clone's upper layer on
     # a tmpfs (FARM-short-pieces-on-vm-tmpfs).
+    [ "$n" != short-zed_kernel ] || { echo "SHORT BUILD: short-zed_kernel selected on a VM"; exit 1; }
     if [[ $n == short-* ]]; then
       [ "$(pwd)" = "${FARM_VM_BUILD_ROOT:-}" ] || { echo "SHORT BUILD: in $(pwd), not at the build root"; exit 1; }
       mkdir -p build/short-clone && [ "$(findmnt -n -o FSTYPE --target "$(pwd)/build/short-clone")" = tmpfs ] ||
@@ -278,12 +281,13 @@ has() {
 }
 case_ all 0 "pieces: 8, failed: 0" "$all" -- --owner t --vms 3
 command grep -q -c 'acquire hm3 t' "$colab/log" || { fail=$((fail + 1)); echo "FAIL all: not 3 VMs of owner t"; }
-has all '^farm: not run' 0
+# short-zed_kernel stays off the VMs (the stub fails a list that selects it), named as not run.
+notrun all "short-zed_kernel"
 # Tests (FARM-short-pieces-on-vm-tmpfs): short-g1 ran on a VM (the stub checked its build root
 # and tmpfs), by name in a run of its own, as --pieces refuses it.
 has all '^stub: --pieces refuses' 0
 STUB_HAS_PODMAN=1 case_ full 0 "pieces: 10, failed: 0" "$all full-a full-c" -- --owner t --vms 2 --full
-notrun full "full-b"
+notrun full "short-zed_kernel full-b"
 # Tests (FARM-local-only-pieces-on-vm): full-c needs podman, so each share fetches the deps first,
 # into FARM_VM_CACHE (the stub fails a --full run whose deps are not done).
 has full '^farm: tools/fetch_test_deps\.sh ran in [0-9]+ s ' 2
@@ -329,6 +333,9 @@ case_ terms-short 0 "pieces: 1, failed: 0" "short-g1" -- --owner t --vms 2 --ter
 printf '%s\n' p2 >"$ws/terms-p2"
 case_ terms-no-short 0 "pieces: 1, failed: 0" "p2" -- --owner t --vms 1 --terms "$ws/terms-p2"
 has terms-no-short '^short-g1 ' 0
+printf '%s\n' p2 short-zed_kernel >"$ws/terms-local-short"
+case_ terms-local-short 0 "pieces: 1, failed: 0" "p2" -- --owner t --vms 1 --terms "$ws/terms-local-short"
+notrun terms-local-short short-zed_kernel
 printf '%s\n' full-b >"$ws/terms-here"
 case_ terms-here-only 0 "pieces: 0, failed: 0" "" -- --owner t --vms 2 --full --terms "$ws/terms-here"
 [ "$(command grep -c '^acquire' "$colab/log")" = 0 ] || { fail=$((fail + 1)); echo "FAIL terms-here-only: a VM acquired"; }
