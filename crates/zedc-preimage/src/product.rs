@@ -17810,8 +17810,7 @@ impl Scope {
             {
                 return None;
             }
-            let mut ends: BTreeMap<&(Atom, Atom, Int, Int), [&(Int, Arc<Formula>); 2]> =
-                BTreeMap::new();
+            let mut ends: BTreeMap<&conjuncts::RowKey, [&(Int, Arc<Formula>); 2]> = BTreeMap::new();
             for rows in &at {
                 // The greatest conjunct alone does not decide: the negation of an equation
                 // sorts among the negations of bounds and is not exact.

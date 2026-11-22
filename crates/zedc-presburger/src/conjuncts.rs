@@ -365,11 +365,14 @@ fn renamed(g: &Formula, x: &str, to: &Arc<str>) -> Formula {
     })
 }
 
+/// The key `(x, y, a, c)` of a row `a x + b y + c >= 0` ([`extreme_bucket_key`]).
+pub type RowKey = (Atom, Atom, Int, Int);
+
 /// The key of a row `a x + b y + c >= 0` of two symbols, `(x, y, a, c)`: the rows that differ
 /// only in `b` share it. `None` for any other constraint. The preimage scope keeps of each key
 /// only the rows of least and greatest `b` in the formula it projects (`extreme_base` in
 /// zedc-preimage's product.rs, which proves the others implied).
-pub fn extreme_bucket_key(c: &Con) -> Option<(Atom, Atom, Int, Int)> {
+pub fn extreme_bucket_key(c: &Con) -> Option<RowKey> {
     let mut terms = c.lin.terms.iter();
     match (c.rel, terms.next(), terms.next(), terms.next()) {
         (Rel::Ge, Some((x @ Atom::Sym(_), a)), Some((y @ Atom::Sym(_), _)), None) => {
@@ -388,7 +391,7 @@ pub struct Rows {
     /// The conjuncts that are no rows of [`extreme_bucket_key`].
     pub other: OrdSet<Arc<Formula>>,
     /// The rows, by their key and then by `b`, the coefficient of the key's `y`.
-    pub rows: OrdMap<(Atom, Atom, Int, Int), OrdMap<Int, Arc<Formula>>>,
+    pub rows: OrdMap<RowKey, OrdMap<Int, Arc<Formula>>>,
 }
 
 impl Rows {
@@ -397,7 +400,7 @@ impl Rows {
     /// within its key. A row with `b` 0 counts as no row, so that between the least and
     /// greatest `b` of a key, -1 and 1, no row of `b` 0 is left out (the proof at
     /// `Scope::project_block` uses this).
-    fn row(g: &Formula) -> Option<((Atom, Atom, Int, Int), Int)> {
+    fn row(g: &Formula) -> Option<(RowKey, Int)> {
         let Formula::Con(c) = g else {
             return None;
         };
