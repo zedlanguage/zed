@@ -1,7 +1,8 @@
 //! Primality and factoring of `u128` (FACTOR-u128, PRIME-u128), for HULL-conic.
 //!
-//! Primality, the method the author approved 2026-11-22: below `2^64`, [`is_prime`](crate::is_prime); from `2^64`
-//! to [`PSI_13`], the strong probable-prime test to the 13 prime bases 2 to 41, exact there by
+//! Primality, the method the author approved 2026-11-22: below `2^64`,
+//! [`is_prime`](crate::is_prime); from `2^64` to [`PSI_13`], the strong probable-prime test to
+//! the 13 prime bases 2 to 41, exact there by
 //! Sorenson and Webster's search (cited at [`PSI_13`]); from [`PSI_13`] up, a Pratt certificate
 //! (cited in `pratt.rs`), built from the factorization of `p - 1` and checked before the answer
 //! is given. No step relies on the generalized Riemann hypothesis or any other unproved claim:
@@ -25,10 +26,11 @@ use crate::{factor, odd_primes_below, sqrt_exact_u128};
 // product of two primes near `2^64`, measured in COMPLEXITY.md row PRIME-u128) and the
 // certificates of its primes at or above `PSI_13`, recursively: `p - 1` has at most one prime at
 // or above `PSI_13` (two would multiply past `PSI_13^2 > 2^163`), at most `(p - 1) / 2`, so the
-// chain of certificates has at most `128 - 81 = 47` levels; a composite above `PSI_13` that passes the 13 bases
-// costs the same factoring and the bases tried before a witness. The naive method, trial division
-// to `sqrt(n)`, costs up to `2^64` divisions; the ECPP and APR-CL tests are polynomial in `log n`
-// but far more code, for numbers that a certificate covers in milliseconds at 128 bits. Given up:
+// chain of certificates has at most `128 - 81 = 47` levels; a composite above `PSI_13` that
+// passes the 13 bases costs the same factoring and the bases tried before a witness. The naive
+// method, trial division to `sqrt(n)`, costs up to `2^64` divisions; the ECPP and APR-CL tests
+// are polynomial in `log n` but far more code, while a certificate costs one factoring of
+// `p - 1` (under 1.3 ms for the largest primes below `2^b` measured, seconds at worst). Given up:
 // a proved time bound (the factoring's bound is heuristic), against a proved answer.
 pub fn is_prime_u128(n: u128) -> bool {
     matches!(decide(n), Primality::Prime(_))
@@ -147,7 +149,7 @@ fn factor_certified(n: u128) -> Vec<(u128, u64, Option<PrattCertificate>)> {
         let sieve = odd_primes_below(TRIAL);
         for p in (3..TRIAL).step_by(2).filter(|&p| sieve[(p / 2) as usize]) {
             let p = u128::from(p);
-            while m % p == 0 {
+            while m.is_multiple_of(p) {
                 found.push((p, None));
                 m /= p;
             }
@@ -223,15 +225,13 @@ fn split_u128(n: u128) -> u128 {
         return g;
     }
     let primes = Primes::up_to(LAST_B1);
-    let mut sigma = 6;
     let rows = SCHEDULE
         .iter()
         .flat_map(|&(b1, k)| std::iter::repeat_n(b1, k as usize));
-    for b1 in rows.chain(std::iter::repeat(LAST_B1)) {
+    for (sigma, b1) in (6..).zip(rows.chain(std::iter::repeat(LAST_B1))) {
         if let Some(d) = ecm::curve(&mont, sigma, b1, 100 * b1, &primes) {
             return d;
         }
-        sigma += 1;
     }
     unreachable!("the curves repeat without end")
 }

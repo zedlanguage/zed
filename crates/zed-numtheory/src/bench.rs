@@ -8,7 +8,10 @@
 //! Not here, since their cost does not grow with an input size: the word routines (`gcd_u64`,
 //! `gcd_u128`, `mul_mod`, `pow_mod`, `pow_mod_2_64`, `inverse_mod_2_64`, `odd_root_mod_2_64`,
 //! `bezout_i128`, the `m61` word arithmetic), whose operands are at most 128 bits, and
-//! `is_prime`, `factor` and `next_prime`, whose input is one 64-bit word.
+//! `is_prime`, `factor` and `next_prime`, whose input is one 64-bit word. `is_prime_u128`,
+//! `factor_u128` and Pratt certificates, whose input is one 128-bit word, are held here per count
+//! of inputs (a cost that drifts with the count would show), and timed per bit size in
+//! `the_wide_routines_by_bit_size_print_their_times` (COMPLEXITY.md rows FACTOR-u128, PRIME-u128).
 
 use std::hint::black_box;
 
@@ -16,8 +19,8 @@ use num_bigint::BigUint;
 
 use crate::scaling;
 use crate::{
-    first_primes, gcd_big_u64, least_prime_factors, m61, odd_primes_below, pow_mod_big,
-    rem_big_u64, shares_a_factor_by_table,
+    PrattCertificate, factor_u128, first_primes, gcd_big_u64, is_prime_u128, least_prime_factors,
+    m61, next_prime, odd_primes_below, pow_mod_big, rem_big_u64, shares_a_factor_by_table,
 };
 
 /// The `i`th of a sequence of numbers spread over `u64` (Fibonacci hashing: multiplication by
@@ -124,4 +127,121 @@ fn the_shared_factor_table_takes_top_and_the_values() {
         let shared = shares_a_factor_by_table(black_box(&vals[&m]), m as u32);
         assert!(shared.iter().any(|&s| s));
     });
+}
+
+/// O(n) for n odd numbers from `2^64 + 1` up, each decided by the strong test to 13 bases (or
+/// the first base it fails), nothing allocated. Small instances: `wide::tests`.
+#[test]
+fn the_wide_prime_test_takes_the_count_of_its_inputs() {
+    const N: usize = 4_000;
+    scaling::check_instructions_only("is_prime_u128 on n odd numbers above 2^64", N, 1, |m| {
+        for i in 0..m as u128 {
+            black_box(is_prime_u128(black_box((1 << 64) + 2 * i + 1)));
+        }
+    });
+}
+
+/// O(n) for the certificates of n primes from `PSI_13` up (odd, as `PSI_13` is), built before the
+/// runs; checking allocates nothing. Small
+/// instances: `wide::tests::the_mersenne_primes_89_107_127_have_checked_certificates`.
+#[test]
+fn checking_certificates_takes_their_count() {
+    const N: usize = 4;
+    let make = |m: usize| -> Vec<PrattCertificate> {
+        (crate::PSI_13..)
+            .step_by(2)
+            .filter_map(PrattCertificate::build)
+            .take(m)
+            .collect()
+    };
+    let certs = scaling::inputs(N, make);
+    scaling::check_instructions_only("PrattCertificate::check of n certificates", N, 1, |m| {
+        for c in &certs[&m] {
+            assert_eq!(black_box(c).check(), Ok(()));
+        }
+    });
+}
+
+/// O(n) for n products of two 36-bit primes (fixed seeds, built before the runs), factored:
+/// each takes rho past its cut-off and then curves of the elliptic curve method. Products of one
+/// size, not consecutive numbers: the cost of a random number is mostly trial division with a
+/// rare product of two large primes, so the first 128 numbers above `2^80` cost 13.2 times less
+/// than the first 1024 per number (measured 2026-11-22), a sample spread and not a growth. Small
+/// instances: `wide::tests`.
+#[test]
+fn factoring_72_bit_products_takes_their_count() {
+    const N: usize = 96;
+    let make = |m: usize| -> Vec<u128> {
+        let mut x = 0x7a_2026_1122u64;
+        let mut prime = move || loop {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            if let Some(p) = next_prime(x >> 28 | 1 << 35).filter(|p| p >> 36 == 0) {
+                return u128::from(p);
+            }
+        };
+        (0..m).map(|_| prime() * prime()).collect()
+    };
+    let ns = scaling::inputs(N, make);
+    scaling::check_order(
+        "factor_u128 on n products of two 36-bit primes",
+        N,
+        1,
+        |m| {
+            for &n in &ns[&m] {
+                black_box(factor_u128(black_box(n)));
+            }
+        },
+    );
+}
+
+/// Prints the least time of three runs of `is_prime_u128` on the largest prime below `2^b` and
+/// the most over 6 products of two primes of `b / 2` bits (fixed seeds) of `factor_u128`, for the
+/// bit sizes of the plan (65, 80, 82, 96, 112, 128): the worst cases of COMPLEXITY.md rows
+/// FACTOR-u128 and PRIME-u128. Only the answers are checked; the times are a record.
+#[test]
+fn the_wide_routines_by_bit_size_print_their_times() {
+    let mut x = 0x2026_1122u64;
+    let mut next = move || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    for bits in [65u32, 80, 82, 96, 112, 128] {
+        let top = if bits == 128 {
+            u128::MAX
+        } else {
+            (1u128 << bits) - 1
+        };
+        let p = (0..=top)
+            .rev()
+            .step_by(2)
+            .find(|&p| is_prime_u128(p))
+            .expect("a prime");
+        let (prime_ns, ok) = scaling::least_cpu_ns(3, || is_prime_u128(black_box(p)));
+        assert!(ok);
+        let half = bits / 2;
+        let mut most = 0u128;
+        for _ in 0..6 {
+            let pick = |r: u64, b: u32| -> u64 {
+                let r = r >> (64 - b) | 1 << (b - 1);
+                next_prime(r)
+                    .filter(|&q| u128::from(q) >> b == 0)
+                    .unwrap_or_else(|| (0..r).rev().find(|&q| crate::is_prime(q)).expect("a prime"))
+            };
+            let a = pick(next(), half);
+            let b = pick(next(), bits - half);
+            let n = u128::from(a) * u128::from(b);
+            let (ns, f) = scaling::least_cpu_ns(1, || factor_u128(black_box(n)));
+            assert_eq!(f.iter().map(|&(q, e)| q.pow(e as u32)).product::<u128>(), n);
+            most = most.max(ns);
+        }
+        eprintln!(
+            "{bits} bits: is_prime_u128(largest prime) {:.3} ms; factor_u128(two {half}-bit primes) most {:.1} ms",
+            prime_ns as f64 / 1e6,
+            most as f64 / 1e6
+        );
+    }
 }

@@ -240,7 +240,11 @@ fn the_primes_above_2_64_agree_with_a_sieve() {
     let windows = &sieve_windows();
     let small_flags = odd_primes_below(1 << 16);
     let small: Vec<u64> = std::iter::once(2)
-        .chain((3..1 << 16).step_by(2).filter(|&p| small_flags[(p / 2) as usize]))
+        .chain(
+            (3..1 << 16)
+                .step_by(2)
+                .filter(|&p| small_flags[(p / 2) as usize]),
+        )
         .collect();
     // `2^64 mod p` for the start of each window: `(2^64 - 1) mod p + 1`.
     let cross = |p: u64, crossed: &mut [Vec<bool>]| {
@@ -303,10 +307,10 @@ fn the_primes_above_2_64_agree_with_a_sieve() {
     }
     let mut primes = 0;
     for (w, &start) in windows.iter().enumerate() {
-        for i in 0..WIDTH {
+        for (i, &composite) in crossed[w].iter().enumerate() {
             let n = start + i as u128;
-            assert_eq!(is_prime_u128(n), !crossed[w][i], "{n}");
-            primes += usize::from(!crossed[w][i]);
+            assert_eq!(is_prime_u128(n), !composite, "{n}");
+            primes += usize::from(!composite);
         }
     }
     // About `8 * 4096 / ln(2^64) = 739` primes.

@@ -20,8 +20,9 @@
 //!   Z_{m-n}[(X_m - Z_m)(X_n + Z_n) + (X_m + Z_m)(X_n - Z_n)]^2, Z_{m+n} <- X_{m-n}[(X_m -
 //!   Z_m)(X_n + Z_n) - (X_m + Z_m)(X_n - Z_n)]^2, and 4 X_n Z_n = (X_n + Z_n)^2 - (X_n - Z_n)^2,
 //!   X_{2n} <- (X_n + Z_n)^2 (X_n - Z_n)^2, Z_{2n} <- (4 X_n Z_n)((X_n - Z_n)^2 + ((A + 2)/4)(4
-//!   X_n Z_n))"; "The addition formula is valid everywhere if we allow GCD(X_n, Z_n, N) to exceed
-//!   1. Once that condition occurs, it will persist, so we can periodically test GCD(Z_n, N)."
+//!   X_n Z_n))"; "The addition formula is valid everywhere if we allow GCD(X_n, Z_n, N) to
+//!   exceed 1. Once that condition occurs, it will persist, so we can periodically test GCD(Z_n,
+//!   N)."
 //!   And: "Using the binary method, we can compute nP from P with 11 log_2 n multiplications",
 //!   the ladder of [`Curve::mul`]. Stage 2 is the baby-step giant-step continuation of his sec.
 //!   4.1, which p. 250 says applies to the elliptic curve method: "The methods of Subsection 4.1
@@ -141,9 +142,12 @@ const GIANT: u64 = 210;
 /// the curve finds none (or finds all of `n` at once).
 // Complexity tradeoff: stage 1 costs about `11 log2 b1` products per prime power below `b1`,
 // about `11 * 1.44 b1` products in all (the ladder, p. 261; the product of the prime powers has
-// about `1.44 b1` bits). Stage 2 tests each `k 210 ± j` up to `b2` with three products per pair
-// (24 pairs per 210 numbers), about `0.35 b2` products, so `b2 = 100 b1` costs about twice stage
-// 1 and covers primes 100 times larger. The naive stage 2, one ladder per prime between `b1` and
+// about `1.44 b1` bits). Stage 2 tests each `k 210 ± j` up to `b2` with two products per pair
+// (24 pairs per 210 numbers; the baby points share one denominator), about `0.23 b2` products,
+// so `b2 = 100 b1` costs about 1.4 times stage 1 and covers primes 100 times larger. Measured at
+// `b1 = 8000`: `b2 = 50 b1` took 50.0 curves in the mean against 40.6 at `100 b1`, at 0.64 the
+// time per curve, so 0.79 the time; not yet measured at the bounds of `SCHEDULE` (plan row
+// FACTOR-u128-tail). The naive stage 2, one ladder per prime between `b1` and
 // `b2`, costs `11 log2 p` products per prime; Montgomery's FFT continuation (thesis, 1992)
 // would cost `O(sqrt(b2) log b2)` products, a gain that pays off only at larger `b2` than a
 // 64-bit factor needs. Given up: the tests of pairs that are not primes (about two thirds), which

@@ -133,7 +133,7 @@ impl PrattCertificate {
             last = f.q;
             for _ in 0..f.exponent {
                 product = match product.checked_mul(f.q) {
-                    Some(x) if x <= p - 1 => x,
+                    Some(x) if x < p => x,
                     _ => return Err(PrattError::WrongProduct(p)),
                 };
             }
