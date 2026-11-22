@@ -130,6 +130,21 @@ fn an_f32_to_an_int_power_is_an_f32() {
     assert_eq!(x("0.5 ^ whole(-2)"), "4r");
 }
 
+/// An integer exponent of a generic power keeps its `int` where its base is an `f32`, so the
+/// power is the arrow `f32 ^ int`, taken in `f64` and rounded once (DESIGN.md L1.18), not
+/// `f32 ^ f32` (plan row DOC-lit-follows-exponent-f32). The two differ at `2.67 ^ 6`: `f32`'s
+/// `powf` gives `362.2994`, the power in `f64` rounded gives `362.29944`.
+#[test]
+fn a_generic_exponent_keeps_its_int_at_an_f32_base() {
+    let src = "f(positional x) = x * (2.67 ^ 6);\na = f(1.0f32);\nb = f(1.0f64);\n";
+    assert_eq!(value(src, "a"), x("2.67f32 ^ whole(6)"));
+    assert_eq!(value(src, "a"), "362.29944f32");
+    assert_eq!(value(src, "b"), x("2.67f64 ^ 6.0f64"));
+    // An exponent that is an operation on integer literals keeps its `int` in the same way.
+    let src = "f(positional x) = x * (2.67 ^ (5 + 1));\na = f(1.0f32);\n";
+    assert_eq!(value(src, "a"), "362.29944f32");
+}
+
 #[test]
 fn a_use_fixes_a_decimal_literal_at_f32() {
     let src = "h(positional v: f32) = v;\ny = h(0.1);\nz = y + 0.2;\n";

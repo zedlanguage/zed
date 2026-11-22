@@ -3690,9 +3690,10 @@ impl<'a> Elab<'a> {
         // that a mutant of a literal inside it, which changes that one term, changes the
         // exponent at every carrier, not only in the last arm (plan row
         // MUTATE-follows-operation). The cast gives the arm's constant: the exponent is an `int`
-        // and the follows map lists a carrier only where the `int` is exact there, for an
-        // exponent `f64` and `f32` alone (`check::Ck::lit_follows`); at any other carrier the
-        // arm keeps its constant. Built so with or without marks, since the mutants are placed
+        // and the follows map lists for an exponent `f64` alone, where the `int` is exact there
+        // (`check::takes_carrier`: `f32 ^ int` is an arrow, so at `f32` the exponent keeps its
+        // `int`, plan row DOC-lit-follows-exponent-f32); at any other carrier the arm keeps its
+        // constant. Built so with or without marks, since the mutants are placed
         // by the paths of the elaboration without them (`zedc::mutate`).
         // Complexity tradeoff: O(1) nodes per arm, a `Var` and a cast, against a copy of the
         // exponent's term per arm, O(size) each; one `let` more. The old arms were constants,
@@ -3711,7 +3712,6 @@ impl<'a> Elab<'a> {
             .map(|(c, v)| {
                 let cast = match c {
                     Carrier::F64 => Some(Prim::CastF64),
-                    Carrier::F32 => Some(Prim::CastF32),
                     _ => None,
                 };
                 let t = match cast.filter(|_| operation) {

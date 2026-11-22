@@ -6031,7 +6031,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         [Carrier::Int, Carrier::F64, Carrier::Rat, Carrier::F32]
                             .into_iter()
                             .filter(|&c| mask & c.bit() != 0 && c != lit_carrier(&l.value))
-                            .filter(|&c| !(l.exponent && c == Carrier::Rat))
+                            .filter(|&c| takes_carrier(l, c))
                             .filter_map(|c| match adopt(l, c) {
                                 Ok(Some(v)) => Some((c, neg_value(&v, l.neg()))),
                                 // A literal that is not exactly a value of `c`, as
@@ -8463,7 +8463,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// takes `c` only where it is `f64`, and keeps its `int` where `^` takes an `int`
     /// exponent, at `int`, `rat` and `f32`; any other literal adopts `c` ([`Self::adopt_to`]).
     fn lit_follows(&mut self, l: &Lit, c: Carrier) {
-        if !l.exponent || c == Carrier::F64 {
+        if takes_carrier(l, c) {
             self.adopt_to(l, c);
         }
     }
@@ -8494,7 +8494,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             [Carrier::Int, Carrier::F64, Carrier::Rat, Carrier::F32]
                 .into_iter()
                 .filter(|&c| m & c.bit() != 0 && c != lit_carrier(&l.value))
-                .filter(|&c| !(l.exponent && c == Carrier::Rat))
+                .filter(|&c| takes_carrier(l, c))
                 .filter_map(|c| match adopt(l, c) {
                     Ok(Some(v)) => Some((c, neg_value(&v, l.neg()))),
                     _ => None,
@@ -11020,6 +11020,18 @@ fn lit_ty(v: &Value, neg: bool) -> Ty {
 /// `f64` where it has none.
 fn is_decimal(v: &Value) -> bool {
     matches!(v, Value::Float(_) | Value::Float32(_))
+}
+
+/// Whether the literal `l` takes the carrier `c` of its class: any literal but an integer
+/// exponent of `^` ([`Lit::exponent`]) does, and an exponent takes `f64` alone, the one carrier
+/// with no `int` exponent. DESIGN.md step L1.18: "`x ^ n` with `x : f32` and `n : int` is an
+/// `f32`, the one operator arrow whose operands have two carriers: the power is taken in `f64`
+/// and rounded to `f32`"; `^` takes an `int` exponent at `int` and `rat` too; so at `int`,
+/// `rat` and `f32` the exponent keeps its `int` (plan row DOC-lit-follows-exponent-f32: at `f32` it took
+/// `f32` here, and `x * (2.67 ^ 6)` gave `f32 ^ f32`, `362.2994f32` at `x = 1.0f32`, against the
+/// `362.29944f32` of the arrow `f32 ^ int`).
+fn takes_carrier(l: &Lit, c: Carrier) -> bool {
+    !l.exponent || c == Carrier::F64
 }
 
 fn lit_carrier(v: &Value) -> Carrier {
