@@ -351,6 +351,53 @@ pub(super) fn results_met_alone(n: usize) -> zedc::check::ty::Meet {
     Meet::new(results, u_or_string(), &[("U", bound)])
 }
 
+/// The intersection of `n` results that each hold a function, in the state of a real call
+/// (`check::ty::MeetInCall`): the overload `s` of `n` arrows `(x: #c | int | f64) -> String |
+/// #bi | ((y: int | #bi) -> int)`, met within the result of `q`, `(x: #c | U) -> U | String |
+/// ((y: int) -> int | f64) for U in int | f64`. Read as a call reads them, each function is a
+/// variable of its own and `U` is rigid; every result holds a function, so none is left out,
+/// and each of the `n` is compared with `q`'s, which it fits: it takes more and gives less.
+/// The kernel parts meet in `String`.
+pub(super) fn results_with_functions_met(n: usize) -> zedc::check::ty::MeetInCall {
+    use std::sync::Arc;
+    use zedc::check::ty::{Arrow, Carrier, MeetInCall, SParam, Sig};
+    let named = |name: &str| {
+        vec![SParam {
+            name: name.into(),
+            positional: false,
+            default: None,
+            range: None,
+        }]
+    };
+    let atom = |name: &str| Ty::set(KType::atom(name));
+    let int = || Ty::carrier(Carrier::Int);
+    let int_or_f64 = || int().union(&Ty::carrier(Carrier::F64));
+    let string = || Ty::carrier(Carrier::Str);
+    let function =
+        |param: Ty, result: Ty| Ty::func(Arc::new(Sig::one(named("y"), vec![param], result)));
+    let results = (0..n).map(|i| {
+        let b = atom(&format!("b{i}"));
+        let f = function(int().union(&b), int());
+        string().union(&b).union(&f)
+    });
+    let mut s = Sig::one(named("x"), vec![atom("c").union(&int_or_f64())], string());
+    s.arrows = results
+        .map(|r| Arrow::exact(vec![atom("c").union(&int_or_f64())], r))
+        .collect();
+    let u = || Ty::var("U".into());
+    let g = function(int(), int_or_f64());
+    let mut q = Sig::one(
+        named("x"),
+        vec![atom("c").union(&u())],
+        u().union(&string()).union(&g),
+    );
+    q.own.insert("U".into());
+    q.bounds
+        .insert("U".into(), Carrier::Int.bit() | Carrier::F64.bit());
+    q.note_held();
+    MeetInCall::new(s, q)
+}
+
 /// `f`, which destructures its parameter into `n` names and gives the last and the first, and
 /// a call of it on a tuple of `n`: `n` needs of one class, each checked at the call.
 pub(super) fn wide_destructuring(n: usize) -> String {
@@ -683,7 +730,7 @@ fn overloads_passed_to_slots_of_arrows_check() {
 fn results_of_arrows_meet_within_the_slots_or_are_refused() {
     // Small instances of the benchmarks in `bench::scaling` from
     // `many_arrows_whose_results_intersect_within_the_slots_scale` to
-    // `many_results_that_hold_a_variable_meet_in_linear_time_alone`.
+    // `many_results_that_hold_a_function_meet_in_linear_time_in_a_call`.
     for text in [
         met_and_within(3),
         with_a_function_arrow(3),
@@ -704,6 +751,7 @@ fn results_of_arrows_meet_within_the_slots_or_are_refused() {
         "{errors:?}"
     );
     assert!(results_met_alone(4).within());
+    assert!(results_with_functions_met(4).within());
 }
 
 #[test]

@@ -13,9 +13,9 @@ use super::super::scaling::{
     covering_overload, curried, curried_bare_sums, curried_sums, curried_tested, disjoint_rows,
     else_patterns, fan, functions_holding_one, generic_applied_to_many, many_destructurings,
     meeting_on_different_sets, met_and_within, nested_overload, never_arguments, overlapping_rows,
-    overloads, payloads, resolved, results_holding_a_variable, results_met_alone, shared_overloads,
-    shared_rows, sum, sums_of_a_line_or_a_count, tuple, variables, wide_arrows, wide_destructuring,
-    wider_overloads, with_a_function_arrow,
+    overloads, payloads, resolved, results_holding_a_variable, results_met_alone,
+    results_with_functions_met, shared_overloads, shared_rows, sum, sums_of_a_line_or_a_count,
+    tuple, variables, wide_arrows, wide_destructuring, wider_overloads, with_a_function_arrow,
 };
 
 /// Runs `want` on the unit `text(m)` at `n` and `8 * n`, both read and resolved before either
@@ -423,6 +423,28 @@ fn many_results_that_hold_a_variable_meet_in_linear_time_alone() {
         .map(|m| (m, results_met_alone(m)))
         .collect();
     scaling::check("n results holding a variable met alone", n, |m| {
+        assert!(meets[&m].within());
+    });
+}
+
+/// [`many_results_that_hold_a_variable_meet_in_linear_time_alone`] with a function in every
+/// result, in the state of a real call (`check::ty::MeetInCall`, TEST-meet-alone-arrows): `n`
+/// results `String | #bi | ((y: int | #bi) -> int)`, each function read as a variable of its
+/// own, met within `U | String | ((y: int) -> int | f64)`, `U` rigid. No result is left
+/// without a function, so the function path of `meet_within` takes all `n`, each compared with
+/// the one function of the slot's result; the test above has none, and the end-to-end test
+/// [`many_results_that_hold_a_variable_or_a_function_meet_in_linear_time`] one, so a quadratic
+/// only on this path was caught only there, and only at a K of 128 or more (plan row
+/// TEST-meet-alone-arrows). The reading of the two sides, linear in the arrows, is timed with
+/// it.
+#[test]
+fn many_results_that_hold_a_function_meet_in_linear_time_in_a_call() {
+    let n = 4_000;
+    let meets: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
+        .into_iter()
+        .map(|m| (m, results_with_functions_met(m)))
+        .collect();
+    scaling::check("n results holding a function met in a call", n, |m| {
         assert!(meets[&m].within());
     });
 }

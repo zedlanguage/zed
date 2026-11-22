@@ -19943,6 +19943,62 @@ impl Meet {
     }
 }
 
+/// [`Meet`] in the state a real comparison of function types gives [`meet_within`]: the
+/// results of the arrows of `s` met within the result of the one arrow of `q`, each side read
+/// by [`Cx::open`] as [`fits_in`] reads it, so that each function the results hold is a
+/// variable of [`Cx::fns`] and each bounded own variable of `q` a parameter holds is rigid,
+/// and the state [`fits_in`] sets from what [`Cx::open`] gives is set alike. [`Meet`] gives
+/// `meet_within` the results as written, with no function read and only the rigid variables
+/// it is told of, so a quadratic only on the path of the function pieces did not show there
+/// (TEST-meet-alone-arrows). The timing holds the reading of both sides, linear in the arrows
+/// of `s`, besides the intersection.
+#[doc(hidden)]
+pub struct MeetInCall {
+    s: Sig,
+    q: Sig,
+}
+
+impl MeetInCall {
+    /// The arrows of `s`, whose results are met, and `q`, whose one arrow's result they are
+    /// met within.
+    #[doc(hidden)]
+    pub fn new(s: Sig, q: Sig) -> Self {
+        MeetInCall { s, q }
+    }
+
+    /// Whether the intersection of the results of the arrows of `s` is within the result of
+    /// the arrow of `q`, as [`met`] asks it of the arrows that take all of that arrow.
+    #[doc(hidden)]
+    pub fn within(&self) -> bool {
+        let mut cx = Cx::default();
+        let ok = comparing!(&mut cx, |c| self.met_in_call(&c));
+        cx.decided(ok)
+    }
+
+    /// [`Self::within`] inside the comparison `c`: opened, set and forgotten as [`fits_in`]
+    /// does around [`every_arrow_fits`].
+    async fn met_in_call<'m>(&self, c: &'m Comparing<'m, '_>) -> bool {
+        let env = Env::new();
+        let (mark, sas, qas, _, free, wide, narrow_at) =
+            c.cx.borrow_mut().open(&self.s, &env, &self.q, &env);
+        let Some(result) = qas.first().map(|qa| qa.result.clone()) else {
+            c.cx.borrow_mut().forget(mark);
+            return false;
+        };
+        {
+            let mut cx = c.cx.borrow_mut();
+            cx.free = free;
+            cx.wide = wide;
+            cx.narrow_at = narrow_at;
+            cx.q_arrows = qas.into();
+        }
+        let results: Vec<Ty> = sas.into_iter().map(|a| a.result).collect();
+        let ok = meet_within(&results, &result, c).await;
+        c.cx.borrow_mut().forget(mark);
+        ok
+    }
+}
+
 /// The carriers a value of `t`, as a comparison reads it, may be of, and [`OTHER`] if it may
 /// be another value: a rigid variable stands for its bound, and a function read as a variable
 /// for no carrier.
