@@ -1978,18 +1978,19 @@ mod written {
     /// uses it was made from ([`Self::arg_via`]).
     ///
     /// Append-only by construction: outside this module the uses are only added to
-    /// ([`Self::push`], [`Self::prepend`]) and read through [`Self::arg_via`], since the fields are private here and no method
-    /// removes or replaces a use. Proof that the kept lists are current: each method that adds
-    /// adds at least one use (`prepend` of an empty list adds none and changes nothing), so
-    /// the number of uses only grows and differs after every change; a list made from `len`
-    /// uses is therefore made from the uses there are now exactly when there are still `len`.
-    /// A trial is not undone here: a use it records is kept with no arguments (the caller
-    /// passes `None` while trying), which makes the list of every parameter `None`, so a
-    /// function passed on through such a need is refused rather than rebuilt from spans whose
-    /// values may be of other types (`Ck::need`). Complexity tradeoff: n calls of a generic
-    /// body meet each of its call needs, and the n calls alike in it are one need of n uses
-    /// (row TEST-call-site-need-key), so a list made at each meeting is n·n spans in all;
-    /// made once and kept, it is O(n), and made again, O(uses), only when uses were added.
+    /// ([`Self::push`], [`Self::prepend`]) and read through [`Self::arg_via`], since the fields
+    /// are private here and no method removes or replaces a use. Proof that the kept lists are
+    /// current: each method that adds adds at least one use (`prepend` of an empty list adds
+    /// none and changes nothing), so the number of uses only grows and differs after every
+    /// change; a list made from `len` uses is therefore made from the uses there are now
+    /// exactly when there are still `len`. A trial is not undone here: a use it records is
+    /// kept with no arguments (the caller passes `None` while trying), which makes the list of
+    /// every parameter `None`, so a function passed on through such a need is refused rather
+    /// than rebuilt from spans whose values may be of other types (`Ck::need`). Complexity
+    /// tradeoff: n calls of a generic body meet each of its call needs, and the n calls alike
+    /// in it are one need of n uses (row TEST-call-site-need-key), so a list made at each
+    /// meeting is n·n spans in all; made once and kept, it is O(n), and made again, O(uses),
+    /// only when uses were added.
     #[derive(Default)]
     pub(super) struct WrittenUses {
         uses: Vec<Use>,
