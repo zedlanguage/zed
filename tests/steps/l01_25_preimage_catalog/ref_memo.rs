@@ -728,6 +728,12 @@ pub(super) fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
         "nested_moduli_mod7" => one(moduli(n, g_mod7, &[7, 64]), mega()),
         "nested_moduli_946_eq" => one(moduli(n, g_eqj, &[9, 4, 6]), mega()),
         "nested_moduli_eq_4096" => one(moduli(n, g_eqj, &[7, 4096]), mega()),
+        "nested_moduli_eq_4096_at_6" => {
+            // The links next to the root take the constants they take at n = 6 mod 10, the
+            // class whose answer has about 760 pieces, at every n.
+            let d = (6 - n as i64).rem_euclid(10);
+            one(moduli_from(n, g_eqj, &[7, 4096], d), mega())
+        }
         "normal_holey_guards" => {
             let g = |j| prim(Prim::Le, var("i"), int(4 * j));
             let t = chain(n, var("i"), g, |j, t| sub_c(j % 5, t));

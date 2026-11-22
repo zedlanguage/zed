@@ -125,12 +125,14 @@
 //! shapes that keep main's memo and the products and quotients that visit every piece of the
 //! state. Terms that read two or more inputs grow faster than n on that memo (row
 //! PERF-ref-memo-multi-input). Nested remainders do not
-//! meet that bound: each link costs the pieces of its state, which the listing keeps large
-//! whatever the answer, so the chain costs O(n s) for s state pieces. Measured on
+//! meet that bound: the state the listing keeps holds every residue of the larger modulus,
+//! with labels that gain input pieces at each link whatever the answer, so the pass costs at
+//! least the size of that state. Measured on
 //! `nested_moduli_eq_4096` with the constants of n = 6 mod 10 next to the root (an answer of
-//! about 760 pieces at every n): about 150M instructions a link, 21.4 times the instructions
-//! from 16 to 128 links and 11.5 times from 64 to 512, the per-link cost still rising
-//! (REF-nested-moduli-state). Measured T(8n)/T(n), the
+//! about 760 pieces at every n): 21.4 times the instructions from 16 to 128 links and 11.5
+//! times from 64 to 512 while each guard rewrote that state; with the guards' input
+//! restrictions waiting ([`Parts1d`], REF-nested-moduli-state) 12.07 and 8.12, against
+//! state growth (label pieces reaching the chain's input) of 12.1 and 8.84. Measured T(8n)/T(n), the
 //! larger of the instruction and byte ratios, over the 48 families of the scaling tests
 //! (`l01_25_preimage_catalog::ref_memo`, load about 37 on 32 cores): at most 10.6
 //! (`normal_abs_gap`, whose test has since left the tree for row REF-normal-abs-gap), 9.0 to
@@ -6248,10 +6250,13 @@ impl Tx<'_> {
         let dom = self.cx.inputs[&x].clone();
         let mut states = HashMap::from([(
             (root, ROOT),
-            HashMap::from([(None, State1d::init(&dom, &IntervalSet::top().minus(&z)))]),
+            HashMap::from([(
+                None,
+                Parts1d::of(State1d::init(&dom, &IntervalSet::top().minus(&z))),
+            )]),
         )]);
         let push =
-            |states: &mut HashMap<At, HashMap<Option<u64>, State1d>>, (at, mode), next: State1d| {
+            |states: &mut HashMap<At, HashMap<Option<u64>, Parts1d>>, (at, mode), next: Parts1d| {
                 if !next.live.is_empty() {
                     let modes = states.entry(at).or_default();
                     let next = match modes.remove(&mode) {
@@ -6275,14 +6280,16 @@ impl Tx<'_> {
                 // This checked periodic language is total (nonzero moduli).
                 // With no excluded values every input label already succeeds;
                 // do not redistribute it through the remaining guard DAG.
-                if st.excl.is_none() {
+                // A part left by a waiting mask may hold no pair; the steps below then exclude
+                // nothing, as this shortcut does.
+                if st.parts.is_empty() {
                     regular = regular.join(&st.live);
                     continue;
                 }
                 let step = self.step_1d(u.0, u.1)?;
-                let tagged = |st: State1d, tag: &ValTag| match mode {
-                    None => st.apply_tag(tag),
-                    Some(m) => st.residue_tag(tag, &Num::from(m as i128)),
+                let tagged = |st: Parts1d, tag: &ValTag| match mode {
+                    None => st.map_trees(|t| tree_apply(t, tag)),
+                    Some(m) => st.map_trees(|t| tree_residue_tag(t, tag, &Num::from(m as i128))),
                 };
                 match step.kind {
                     StepKind::Forward(c) => push(&mut states, (c, mode), st),
@@ -6309,7 +6316,7 @@ impl Tx<'_> {
                                 push(&mut states, (c, mode), st)
                             }
                             Some(old) if m < old => {
-                                push(&mut states, (c, Some(m)), st.clip_values(&all))
+                                push(&mut states, (c, Some(m)), Parts1d::of(st.clip_values(&all)))
                             }
                             Some(old) => {
                                 // Restrict an incompatible residual period to the proved
@@ -6322,8 +6329,8 @@ impl Tx<'_> {
                                         st.live.bounds().is_some_and(|(lo, _)| lo >= lower)
                                     })
                                     .map_or(all.clone(), |(_, r)| all.meet(&r));
-                                let next = st.clone().modulo_bounded(modulus_i64(old), &all)?;
-                                push(&mut states, (c, Some(m)), next);
+                                let next = st.settle().modulo_bounded(modulus_i64(old), &all)?;
+                                push(&mut states, (c, Some(m)), Parts1d::of(next));
                             }
                             None => {
                                 let fc = self
@@ -6332,10 +6339,12 @@ impl Tx<'_> {
                                         st.live.bounds().is_some_and(|(lo, _)| lo >= lower)
                                     })
                                     .map_or(fc, |(_, r)| r);
+                                let st = st.settle();
                                 if let Some(next) = st.clone().modulo_exact(k, &fc) {
-                                    push(&mut states, (c, None), next);
+                                    push(&mut states, (c, None), Parts1d::of(next));
                                 } else {
-                                    push(&mut states, (c, Some(m)), st.clip_values(&all));
+                                    let next = Parts1d::of(st.clip_values(&all));
+                                    push(&mut states, (c, Some(m)), next);
                                 }
                             }
                         }
@@ -6345,11 +6354,12 @@ impl Tx<'_> {
                             .unwrap_or_else(|| unreachable!("a constant step holds an int"));
                         let n =
                             mode.map_or_else(|| n.clone(), |m| n.rem_euclid(&Num::from(m as i128)));
+                        let st = st.settle();
                         regular = regular.join(&st.live.minus(&st.xs_at_value(&n)));
                     }
-                    StepKind::Input => match mode {
-                        None => regular = regular.join(&st.eval_diagonal()),
-                        Some(m) => {
+                    StepKind::Input => match (mode, st.settle()) {
+                        (None, st) => regular = regular.join(&st.eval_diagonal()),
+                        (Some(m), st) => {
                             let modulus = Num::from(m as i128);
                             let all = IntervalSet::range(End::of(0), Fin(&modulus - &Num::ONE));
                             for (lo, hi, ex) in st.to_slices() {
@@ -6660,25 +6670,164 @@ fn residue_image(s: &IntervalSet, m: &Num) -> IntervalSet {
     out
 }
 
-impl State1d {
-    fn residue_tag(self, tag: &ValTag, m: &Num) -> Self {
-        let tag = ValTag(tag.0, tag.1.rem_euclid(m));
-        let mut st = self.apply_tag(&tag);
-        st.excl = {
-            let t = &st.excl;
-            let lo = tree_apply(
-                tree_restrict(t, &NegInf, &End::of(-1)),
-                &ValTag(false, m.clone()),
-            );
-            let mid = tree_restrict(t, &End::of(0), &Fin(m - &Num::ONE));
-            let hi = tree_apply(
-                tree_restrict(t, &Fin(m.clone()), &PosInf),
-                &ValTag(false, -m),
-            );
-            tree_union(tree_union(lo, mid), hi)
-        };
-        st
+/// `tree` under `tag` with its values taken back into the residues `0..m`.
+fn tree_residue_tag(tree: Tree, tag: &ValTag, m: &Num) -> Tree {
+    let tag = ValTag(tag.0, tag.1.rem_euclid(m));
+    let t = &tree_apply(tree, &tag);
+    let lo = tree_apply(
+        tree_restrict(t, &NegInf, &End::of(-1)),
+        &ValTag(false, m.clone()),
+    );
+    let mid = tree_restrict(t, &End::of(0), &Fin(m - &Num::ONE));
+    let hi = tree_apply(
+        tree_restrict(t, &Fin(m.clone()), &PosInf),
+        &ValTag(false, -m),
+    );
+    tree_union(tree_union(lo, mid), hi)
+}
+
+/// A [`State1d`] of the periodic pass ([`Tx::periodic`]) whose input restrictions wait: its
+/// excluded pairs are those of each part, the part's tree with every label met with the part's
+/// mask (`None`: no mask). [`Parts1d::settle`] applies the masks and returns the [`State1d`].
+///
+/// Why (REF-nested-moduli-state): on `nested_moduli_eq_4096` the state below a link's guard
+/// holds every residue of 4096, s = 4096 value pieces whose labels hold most inputs. Applied at
+/// once, the two arms of each `i == j` guard rewrite every label that holds `j` (the `j`
+/// arm keeps them, the other arm cuts `j` out), and the arm of `j`, s pieces labelled `{j}`,
+/// is united back into the state two steps later: O(s log l) for labels of l pieces at each
+/// link, with s growing to 4096 over the first links and l growing with n (21.4 times the
+/// instructions from 16 to 128 links, 11.47 from 64 to 512; 12.07 and 8.12 with the masks
+/// waiting, COMPLEXITY.md REF-nested-moduli-state). Waiting, a guard costs one mask meet per
+/// part; the
+/// other arm reaches its `mod 7` before any union, and its clip to seven values
+/// ([`Parts1d::clip_values`]) leaves seven pieces per part to restrict; the arm of `j` reaches
+/// the next union as one part, which waits there too.
+///
+/// Why the answer is unchanged: a mask acts on labels, every step that waits acts on values
+/// only (a tag, a clip), and a union is taken label by label, so restricting before or after
+/// those steps gives the same pairs: `restrict(T, M)` then a value map `f` excludes `(f v, x)`
+/// for `x ∈ label(v) ∩ M`, and `f` then `restrict` excludes the same pairs; `restrict(A ∪ B, M)`
+/// = `restrict(A, M) ∪ restrict(B, M)` pair by pair. Every other step reads the settled state.
+/// The consumers read sets (labels and value ranges), not the cut of the tree into nodes,
+/// except where adjacent equal labels are merged anyway (`to_slices`, the listing of
+/// `modulo_bounded`). Tests: the `ref_memo` tests of `l01_25_preimage_catalog`, which compare
+/// this pass with the interpreter and with main, and the dump tests.
+//
+// Complexity tradeoff (COMPLEXITY.md REF-nested-moduli-state): naive, every guard applies its
+// masks at once (`State1d::restrict_x`),
+// O(s) per guard for a state of s pieces whose labels cross the mask. Used: masks wait, O(p)
+// mask meets per guard for p parts and O(p log s) per tag (`tree_residue_tag`), and a
+// clip settles its p clipped parts. A union settles the parts whose mask is not a single input
+// (so a chain of interval guards cannot double its parts at each link; it pays the naive cost
+// there), keeps the single-input parts, and unites the unmasked ones, so p is one plus the
+// single-input parts carried since the last clip or union. A chain of n `i == j` guards with
+// no clip between them carries up to n such parts, O(n²) part steps where the naive cost is
+// O(n s); on `nested_moduli_eq_4096` p is at most 3.
+#[derive(Clone, Default)]
+struct Parts1d {
+    live: IntervalSet,
+    cover: IntervalSet,
+    inexact: IntervalSet,
+    parts: Vec<(Arc<PartitionNode>, Option<IntervalSet>)>,
+}
+
+impl Parts1d {
+    fn of(st: State1d) -> Self {
+        Self {
+            live: st.live,
+            cover: st.cover,
+            inexact: st.inexact,
+            parts: st.excl.map(|t| (t, None)).into_iter().collect(),
+        }
     }
+    fn settle(self) -> State1d {
+        let excl = settle_parts(self.parts);
+        State1d {
+            live: self.live,
+            cover: self.cover,
+            inexact: self.inexact,
+            excl,
+        }
+    }
+    /// [`State1d::restrict_x`], the masks met with the arm's cover and left to wait. A part
+    /// whose labels (inside its tree's `span`) the mask misses goes; one whose labels it holds
+    /// loses its mask, since the labels stay as they are.
+    fn restrict_x(&self, mask: &ArmMask) -> Self {
+        let Some((live, cover)) = mask else {
+            return self.clone();
+        };
+        let parts = (self.parts.iter())
+            .filter_map(|(t, m)| {
+                let m = m
+                    .as_ref()
+                    .map_or_else(|| (**cover).clone(), |m| m.meet(cover));
+                let (ml, mh) = m.piece_at_or_above(&t.span.0)?;
+                if ml > &t.span.1 {
+                    return None;
+                }
+                let held = ml <= &t.span.0 && &t.span.1 <= mh;
+                Some((t.clone(), (!held).then_some(m)))
+            })
+            .collect();
+        Self {
+            live: self.live.meet(cover),
+            cover: self.cover.meet(cover),
+            inexact: self.inexact.meet(live),
+            parts,
+        }
+    }
+    /// [`State1d::union`]. When both sides hold parts, the parts masked by more than one input
+    /// and the unmasked ones are settled into one unmasked part; the single-input parts wait.
+    fn union(self, other: Self) -> Self {
+        if self.live.is_empty() {
+            return other;
+        }
+        if other.live.is_empty() {
+            return self;
+        }
+        let both = !self.parts.is_empty() && !other.parts.is_empty();
+        let mut parts = self.parts;
+        parts.extend(other.parts);
+        if both {
+            let single = |m: &Option<IntervalSet>| {
+                m.as_ref()
+                    .and_then(|m| m.only())
+                    .is_some_and(|(lo, hi)| lo == hi)
+            };
+            let (wait, now): (Vec<_>, Vec<_>) = parts.into_iter().partition(|(_, m)| single(m));
+            parts = wait;
+            parts.extend(settle_parts(now).map(|t| (t, None)));
+        }
+        Self {
+            live: self.live.join(&other.live),
+            cover: self.cover.join(&other.cover),
+            inexact: self.inexact.join(&other.inexact),
+            parts,
+        }
+    }
+    fn map_trees(mut self, f: impl Fn(Tree) -> Tree) -> Self {
+        self.parts = (self.parts.into_iter())
+            .filter_map(|(t, m)| Some((f(Some(t))?, m)))
+            .collect();
+        self
+    }
+    fn clip_values(self, range: &IntervalSet) -> State1d {
+        self.map_trees(|t| tree_restrict_set(&t, range)).settle()
+    }
+}
+
+/// The tree of the pairs of `parts`, each tree restricted to its mask, united.
+fn settle_parts(parts: Vec<(Arc<PartitionNode>, Option<IntervalSet>)>) -> Tree {
+    parts.into_iter().fold(None, |out, (t, m)| {
+        let t = Some(t);
+        tree_union(
+            out,
+            match m {
+                None => t,
+                Some(m) => tree_restrict_input(&t, &m),
+            },
+        )
+    })
 }
 
 #[derive(Clone, PartialEq, Eq)]

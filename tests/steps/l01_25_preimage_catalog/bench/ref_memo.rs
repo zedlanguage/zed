@@ -232,3 +232,17 @@ fn output_grid_work_grows_with_its_answer() {
         assert_eq!(answer_pieces(&large), 512 * n);
     });
 }
+
+/// [`scales`] on `nested_moduli_eq_4096` with the constants of n = 6 mod 10 next to the root at
+/// every n, an answer of about 760 pieces at both sizes (REF-nested-moduli-state).
+///
+/// At 64, not 16: the state reaching the chain's input holds a few input pieces per residue
+/// for every residue of 4096 only after the first links (3,511 of the 4,096 residues at n =
+/// 16), so from 16 to 128 the state itself grows 12.1 times (8,192 to 99,474 label pieces) and
+/// any pass that builds it does at least that much more work: 12.07 times the instructions,
+/// 2026-11-21. From 64 to 512 the state grows 8.84 times (46,813 to 413,696 label pieces) and
+/// the pass 8.12 times (11.47 times before the waiting masks of `Parts1d` in `preimage_ref.rs`).
+#[test]
+fn nested_moduli_eq_4096_at_6_scales() {
+    scales("nested_moduli_eq_4096_at_6", 64);
+}
