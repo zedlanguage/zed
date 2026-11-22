@@ -1003,6 +1003,12 @@ pub(super) struct FitF<'a> {
     /// Each bounded variable of `e` that no parameter holds, bound to its whole bound.
     unheld: Binds,
     span: Span,
+    /// Where the lambda is an argument of a call: the name of the parameter it is passed to
+    /// and the call's span ([`slot_of`]), which a rejection names and rewrites.
+    slot: Option<(Arc<str>, Span)>,
+    /// Whether the answer of the lambda was refused at an arrow already checked, so that the
+    /// later arrows do not refuse it again.
+    answered: bool,
     order: Vec<Option<usize>>,
     extra: Vec<usize>,
     /// The arrow being checked, and whether its parameters are bound.
@@ -11843,12 +11849,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         let unheld = e.unheld();
         let joined = e.arrows.len() > 1 && !self.trying;
         self.arrow_fits += usize::from(joined);
+        let slot = slot_of(m);
         let s = FitF {
             params,
             body,
             e,
             unheld,
             span,
+            slot,
+            answered: false,
             order,
             extra,
             a: 0,
@@ -11874,8 +11883,32 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Some(FitWait::Body) => {
                 let r = m.take_ty();
-                let want = s.e.arrows[s.a].result.subst(&s.unheld);
-                if !self.subtype(&r, &want) {
+                // The answer must lie in the arrow's value type, not its lookup type: for a
+                // partial arrow `K ->? V` the lookup is `V | #notFound`, and the `#notFound`
+                // there is the mark of an absent key, while what a function answers is a value
+                // it stores at a key it is defined at (DESIGN.md sec:corner_cases, "Absence vs.
+                // stored atoms"; plan row CHECK-lambda-notfound-partial). So `(k) -> if k ==
+                // "a" { 1 } else { #notFound }` fits `K ->? int | #notFound` and `K -> int |
+                // #notFound`, and not `K ->? int`. For an exact arrow, and a partial one whose
+                // value type holds the atom, the value type is the result ([`Arrow::value`]).
+                // Proof that this refuses exactly the answers outside `V`: `value()` is
+                // `result` less the bare atom `#notFound` where `V` lacks it, and `V` itself
+                // otherwise (`Arrow::partial_of` builds `result` as `V | #notFound`), so `r`
+                // is a subtype of `value()` iff every value it holds is a value of `V`.
+                let arrow = &s.e.arrows[s.a];
+                let want = arrow.value().subst(&s.unheld);
+                let lookup = arrow.result.subst(&s.unheld);
+                // One rejection of the answer per lambda: a bounded map `L .. U -> V` is an
+                // exact arrow on `L` and a partial one on `U`, and an answer outside `V` is
+                // refused by both. Where the type has an exact arrow, the general message is
+                // given, since an answer `#notFound` there also fails a key the guarantee
+                // promises; the row's own message is for a type of partial arrows only.
+                let refused = !s.answered && !self.subtype(&r, &want);
+                s.answered |= refused;
+                let all_partial = s.e.arrows.iter().all(|a| a.partial);
+                if refused && all_partial && self.subtype(&r, &lookup) {
+                    self.answers_miss(&s, &want);
+                } else if refused {
                     let why = r.refused(&want);
                     let (r, want, e) = (self.text(&r), self.text(&want), self.sig_text(&s.e));
                     let menu = [
@@ -11945,6 +11978,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 m.k(Frame::FitLambda(s));
                 return m.job(Job::Expr(d));
             }
+            // The body is checked against the lookup type, so that an answer of the miss atom is
+            // not refused inside the body, branch by branch; the answer is then compared with
+            // the value type when the body is done (`FitWait::Body` above), where the rejection
+            // names the slot and the atom.
             let want = Want::of(&arrow.result.subst(&s.unheld));
             let body = s.body;
             // Kept after the body, for needs met later ([`Ck::arrow_lambda_twice`]). One
@@ -11984,6 +12021,124 @@ impl<'t, 'a> Ck<'t, 'a> {
         m.ty(Ty::func(e));
     }
 
+    /// Rejects the lambda of `s`, fitted to its partial arrow `K ->? V` that does not store
+    /// `#notFound`, whose answer `r` lies in the arrow's lookup type `V | #notFound` and not
+    /// in its value type `want`: the lambda answers `#notFound` at some key. DESIGN.md
+    /// sec:diagnostics, row "Function value that answers outside a partial map's value type":
+    /// the headline "`m: Utf8String ->? int` holds only `int` values, and `(k) -> … else {
+    /// #notFound }` answers `#notFound`. Try `look(m: { "a" -> 1 })` instead."; notes on each
+    /// branch that answers the atom and on what a function's answer is; and the repairs: the
+    /// keys present as a display, offered as a checked fix where the body is a chain `if k ==
+    /// c { v } else … else { #notFound }` of literal keys ([`keyed_chain`]), a family with a
+    /// guard, and the slot's type written to hold the atom, partial or exact.
+    ///
+    /// Why the extra values are exactly `#notFound`: `r` is a subtype of the lookup type,
+    /// which `Arrow::partial_of` builds as `V | #notFound`, and not of `V`, so it holds the
+    /// atom and nothing else outside `V`.
+    // Complexity: one walk of the `if`s of the body for the branches that answer the atom
+    // ([`miss_leaves`]) and one of its `else if` chain ([`keyed_chain`]), each O(its
+    // branches), plus the texts printed; once per rejected lambda.
+    fn answers_miss(&mut self, s: &FitF<'a>, want: &Ty) {
+        let ty = self.sig_text(&s.e);
+        let v = self.text(want);
+        let slot = match &s.slot {
+            Some((name, _)) => format!("{name}: {ty}"),
+            None => ty.clone(),
+        };
+        let leaves = miss_leaves(s.body);
+        let source = self.t.text;
+        let head = source
+            .and_then(|t| t.get(s.span.start..s.body.span.start))
+            .map(|h| h.trim_end().to_string());
+        // The lambda as the headline shows it: its parameters, then the branch that answers
+        // the atom, `(k) -> … else { #notFound }`; the whole lambda where the body is that
+        // branch; its parameters alone where no branch of an `if` answers it.
+        let shown = match (&head, leaves.first(), source) {
+            (Some(h), Some(&(leaf, true)), Some(t)) => {
+                let leaf = t.get(leaf.span.start..leaf.span.end).unwrap_or("#notFound");
+                format!("{h} … else {leaf}")
+            }
+            (Some(h), Some(&(_, false)), Some(t)) if std::ptr::eq(leaves[0].0, s.body) => t
+                .get(s.span.start..s.span.end)
+                .map_or_else(|| format!("{h} …"), str::to_string),
+            (Some(h), _, _) => format!("{h} …"),
+            (None, _, _) => "the lambda".to_string(),
+        };
+        let shown = match head {
+            Some(_) => format!("`{shown}`"),
+            None => shown,
+        };
+        let arrow = &s.e.arrows[s.a];
+        let holds = |partial: bool| {
+            let value = want.union(&Ty::set(KType::atom("notFound")));
+            let mut e = (*s.e).clone();
+            e.arrows = vec![match partial {
+                true => Arrow::partial_of(arrow.params.clone(), value),
+                false => Arrow::exact(arrow.params.clone(), value),
+            }];
+            e
+        };
+        let (partial, exact) = (self.sig_text(&holds(true)), self.sig_text(&holds(false)));
+        let mut notes = self.derive(&[s.span]);
+        for &(leaf, _) in &leaves {
+            notes.push(Note {
+                span: leaf.span,
+                text: "this branch answers `#notFound`".to_string(),
+            });
+        }
+        notes.push(Note {
+            span: s.span,
+            text: format!(
+                "a function's answer is a value it holds at that key, not an absent key, so the \
+                 miss of `->?` does not cover it: a map is a memoized function, and the same \
+                 value held as a table or as code has the same keys; `{ty}` lets a key be \
+                 absent, and then its value is `{v}`"
+            ),
+        });
+        let display = source.and_then(|t| {
+            let [p] = s.params else { return None };
+            let pairs = keyed_chain(&p.name, s.body)?;
+            let code = |e: &Expr| t.get(e.span.start..e.span.end);
+            let entries = (pairs.iter())
+                .map(|(c, a)| Some(format!("{} -> {}", code(c)?, code(a)?)))
+                .collect::<Option<Vec<String>>>()?;
+            Some(match entries.is_empty() {
+                true => "{}".to_string(),
+                false => format!("{{ {} }}", entries.join(", ")),
+            })
+        });
+        let name = s.slot.as_ref().map(|(n, _)| n.to_string());
+        let with = |t: &str| match &name {
+            Some(n) => format!("{n}: {t}"),
+            None => t.to_string(),
+        };
+        notes.push(Note {
+            span: s.span,
+            text: format!(
+                "repair: give the keys present as a display, as `{}`, or as a family with a \
+                 guard, as `for k in ks where p(k) {{ f(k) }}`",
+                display.as_deref().unwrap_or("{ \"a\" -> 1 }")
+            ),
+        });
+        notes.push(Note {
+            span: s.span,
+            text: format!(
+                "repair: write the type to hold the atom, as `{}`, or, where the function is \
+                 only called, `{}`",
+                with(&partial),
+                with(&exact)
+            ),
+        });
+        let message =
+            format!("`{slot}` holds only `{v}` values, and {shown} answers `#notFound`");
+        let fix = display.and_then(|d| {
+            Rewrite::new(&[(s.span, &d)], &"the keys present as a display", &d)
+        });
+        let mut msg = Msg::new(message, vec![fix]);
+        msg.call = s.slot.as_ref().map(|(_, call)| *call);
+        self.reject(Some(Row::FunctionAnswersOutsidePartialMap), s.span, msg, notes);
+    }
+
     /// Records how the lambda at `span` was fitted, unless its parameters are the slots'
     /// in order with none left to a default.
     fn fitted(&mut self, span: Span, order: Vec<Option<usize>>, extra: Vec<usize>) {
@@ -12014,6 +12169,100 @@ fn add_witness(b: &mut RemapPlan, a: &RemapPlan) {
         }
     }
     b.witness = entries.join("+").into();
+}
+
+/// Where the expression being checked is an argument of a call, the name of the parameter it
+/// is passed to and the call's span: `call_sig_step` pushes the call's frame and then the
+/// argument's, so they lie on top of the stack when the argument is reached (as `expr_at`
+/// reads them). A named argument names its parameter; the `i`th positional argument goes to
+/// the `i`th positional parameter of the callee's signature. `None` elsewhere, as for a lambda
+/// in a typed binding. O(arguments) pointer comparisons.
+fn slot_of<'a>(m: &M<'a>) -> Option<(Arc<str>, Span)> {
+    let [.., Job::K(Frame::CallSig(c)), Job::K(Frame::ArgOf(a))] = m.stack.as_slice() else {
+        return None;
+    };
+    let is = |s: &ArgSrc<'a>| matches!(s, ArgSrc::Expr(e) if std::ptr::eq(*e, *a));
+    let name = match c.args.named.iter().find(|(_, s)| is(s)) {
+        Some((n, _)) => n.as_str().into(),
+        None => {
+            let i = c.args.positional.iter().position(is)?;
+            let p = c.sig.params.iter().filter(|p| p.positional).nth(i)?;
+            p.name.clone()
+        }
+    };
+    Some((name, c.span))
+}
+
+/// The branches of the `if`s of `body` that give the bare atom `#notFound`, each with whether
+/// it is the `else` of its `if`; `body` itself where it is that atom. The walk goes through the
+/// branches of each `if` and stops at anything else, with its own stack, O(branches).
+fn miss_leaves(body: &Expr) -> Vec<(&Expr, bool)> {
+    let mut out = Vec::new();
+    let mut stack = vec![(body, false)];
+    while let Some((branch, otherwise)) = stack.pop() {
+        let e = exported(branch);
+        match &e.kind {
+            // The branch as written, `{ #notFound }`, which the headline quotes.
+            ExprKind::Atom(a) if a == "notFound" => out.push((branch, otherwise)),
+            ExprKind::If {
+                then, otherwise: o, ..
+            } => {
+                stack.push((o, true));
+                stack.push((then, false));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The keys and answers of a lambda of the one parameter `k` whose body is the chain `if k ==
+/// c₁ { v₁ } else if k == c₂ { v₂ } … else { #notFound }`, each `cᵢ` a literal (either side of
+/// the `==`): the function is then the display `{ c₁ -> v₁, c₂ -> v₂, … }`
+/// on the keys it answers a value at (DESIGN.md sec:diagnostics, row "Function value that
+/// answers outside a partial map's value type", its first repair). Proof that the display and
+/// the lambda agree on each key `cᵢ`: the chain answers `vᵢ` at the first `i` with `k == cᵢ`,
+/// and a display with a repeated key is rejected by the checker, so a repeated `cᵢ` makes a
+/// fix that is dropped as it does not check, never a wrong one; `vᵢ` may not read `k`, which
+/// the display does not bind, so a `vᵢ` that does makes a fix that does not check either.
+/// `None` for any other shape. O(the chain).
+fn keyed_chain<'e>(k: &str, body: &'e Expr) -> Option<Vec<(&'e Expr, &'e Expr)>> {
+    let literal = |e: &Expr| {
+        matches!(
+            e.kind,
+            ExprKind::Int { .. }
+                | ExprKind::Float { .. }
+                | ExprKind::Rat(_)
+                | ExprKind::Str(_)
+                | ExprKind::Bool(_)
+                | ExprKind::Atom(_)
+        )
+    };
+    let is_k = |e: &Expr| matches!(&e.kind, ExprKind::Name(n) if n == k);
+    let mut pairs = Vec::new();
+    let mut e = exported(body);
+    loop {
+        match &e.kind {
+            ExprKind::If {
+                cond,
+                then,
+                otherwise,
+            } => {
+                let ExprKind::Binary(BinaryOp::Eq, l, r) = &cond.kind else {
+                    return None;
+                };
+                let c = match (is_k(l), is_k(r)) {
+                    (true, false) if literal(r) => &**r,
+                    (false, true) if literal(l) => &**l,
+                    _ => return None,
+                };
+                pairs.push((c, exported(then)));
+                e = exported(otherwise);
+            }
+            ExprKind::Atom(a) if a == "notFound" => return Some(pairs),
+            _ => return None,
+        }
+    }
 }
 
 /// The expression a branch `e` gives: the one expression of a block of nothing else, else `e`.

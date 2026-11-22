@@ -79,14 +79,36 @@ fn a_miss_passes_by_a_call_that_takes_the_value_type() {
     );
 }
 
+/// DESIGN.md sec:corner_cases, "Absence vs. stored atoms" (plan row
+/// CHECK-lambda-notfound-partial): what a function answers is a value it stores, never the
+/// mark of an absent key, so a lambda that answers `#notFound` fits a map type whose value type
+/// holds the atom, partial or exact, and not `String ->? int`, whose values are `int`; the
+/// rejection names the parameter's type and the atom, as the sec:diagnostics row "Function
+/// value that answers outside a partial map's value type" says. The display of the keys
+/// present, the row's first repair, is accepted. Negative control: before this row the
+/// partial case was accepted, and the first assertion failed with an empty list.
 #[test]
-fn a_function_that_answers_not_found_fits_a_partial_map_and_not_a_total_one() {
-    let partial = "look(m: String ->? int) = m[\"a\"] else #notFound -> 0;\n\
-                   x = look(m: (k) -> if k == \"a\" { 1 } else { #notFound });\n";
-    assert_eq!(type_errors(partial), Vec::<String>::new());
-    let total = "look(m: String -> int) = m[\"a\"];\n\
-                 x = look(m: (k) -> if k == \"a\" { 1 } else { #notFound });\n";
-    assert!(!type_errors(total).is_empty(), "{:?}", type_errors(total));
+fn a_function_that_answers_not_found_fits_a_map_whose_values_hold_it() {
+    let lambda = "x = look(m: (k) -> if k == \"a\" { 1 } else { #notFound });\n";
+    let partial = format!("look(m: String ->? int) = m[\"a\"] else #notFound -> 0;\n{lambda}");
+    let errors = type_errors(&partial);
+    assert!(
+        errors.len() == 1
+            && errors[0].contains("`m: String ->? int` holds only `int` values")
+            && errors[0].contains("answers `#notFound`"),
+        "{errors:?}"
+    );
+    for fits in [
+        "look(m: String ->? int | #notFound) = m[\"a\"] else #notFound -> 0;\n",
+        "look(m: String -> int | #notFound) = m[\"a\"];\n",
+    ] {
+        assert_eq!(type_errors(&format!("{fits}{lambda}")), Vec::<String>::new(), "{fits}");
+    }
+    let total = format!("look(m: String -> int) = m[\"a\"];\n{lambda}");
+    assert!(!type_errors(&total).is_empty(), "{:?}", type_errors(&total));
+    let display = "look(m: String ->? int) = m[\"a\"] else #notFound -> 0;\n\
+                   x = look(m: { \"a\" -> 1 });\n";
+    assert_eq!(type_errors(display), Vec::<String>::new());
 }
 
 #[test]

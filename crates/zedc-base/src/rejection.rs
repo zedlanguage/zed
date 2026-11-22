@@ -102,7 +102,6 @@ rows! {
     PositionalMap =>
         "Positional `.map`, or a name that is not a parameter, on a value that is not a morphism",
     KeyOutsideBound => "Key outside the permission bound",
-    // No diagnostic uses this row yet: plan row CHECK-lambda-notfound-partial emits it.
     FunctionAnswersOutsidePartialMap => "Function value that answers outside a partial map's value type",
     AlwaysFails => "Operation that always fails",
     // No diagnostic uses the next two rows yet: plan row L5.4c emits them.

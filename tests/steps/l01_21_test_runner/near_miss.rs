@@ -266,6 +266,19 @@ const NEAR_MISSES: &[NearMiss] = &[
         "1:19",
         Some("read the map with a key in `#a`"),
     ),
+    // A function's answer is a value it holds, so one that answers `#notFound` does not fit a
+    // partial map whose values are `int` (plan row CHECK-lambda-notfound-partial).
+    (
+        Row::FunctionAnswersOutsidePartialMap,
+        "look(m: String ->? int) = m[\"a\"] else #notFound -> 0;\n",
+        "x = look(m: (k) -> if k == \"a\" { 1 } else { 2 });\n",
+        "x = look(m: (k) -> if k == \"a\" { 1 } else { #notFound });\n",
+        "2:13",
+        Some(
+            "give the keys present as a display, as `{ \"a\" -> 1 }`, or as a family with a \
+             guard, as `for k in ks where p(k) { f(k) }`",
+        ),
+    ),
     // A key-less item on an indexed definition reads as a value at every key.
     (
         Row::BareBoundary,
