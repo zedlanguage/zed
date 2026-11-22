@@ -17,6 +17,7 @@ pub mod fences;
 pub mod instances;
 pub mod kernel;
 pub mod layout;
+pub mod linker_comment;
 pub mod oracle;
 pub mod readme;
 #[cfg(test)]

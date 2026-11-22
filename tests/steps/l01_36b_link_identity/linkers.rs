@@ -15,13 +15,10 @@ fn with(ld: Ld) -> Toolchain {
     Toolchain { ld, ..toolchain() }
 }
 
-/// Whether the executable `exe` was linked by LLD, which writes `Linker: LLD <version>` in the
-/// section `.comment`; GNU ld writes nothing there of its own.
+/// Whether the executable `exe` was linked by LLD, which writes `Linker: [<vendor> ]LLD <version>`
+/// in the section `.comment` (`zed_tests::linker_comment`); GNU ld writes nothing there of its own.
 fn by_lld(exe: &Path) -> bool {
-    let bytes = std::fs::read(exe).unwrap();
-    bytes
-        .windows(b"Linker: LLD".len())
-        .any(|w| w == b"Linker: LLD")
+    zed_tests::linker_comment::names_lld(&std::fs::read(exe).unwrap())
 }
 
 #[test]

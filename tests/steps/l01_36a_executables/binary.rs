@@ -4,6 +4,8 @@
 //! only a test of that package can name the executable.
 #![cfg(target_os = "linux")]
 
+#[path = "../../src/linker_comment.rs"]
+mod linker_comment;
 /// This process's scratch directory, as the step tests have it. A test target of zed-native
 /// cannot depend on zed-tests, so the module is compiled in; a target may use part of it.
 #[allow(dead_code)]
@@ -108,7 +110,7 @@ fn a_built_executable_runs() {
 }
 
 /// The bytes of the section `.comment` of the executable `exe`, where LLD writes
-/// `Linker: LLD <version>` and GNU ld writes nothing of its own.
+/// `Linker: [<vendor> ]LLD <version>` and GNU ld writes nothing of its own.
 fn comment(exe: &Path) -> Vec<u8> {
     use object::{Object as _, ObjectSection as _};
     let bytes = std::fs::read(exe).unwrap();
@@ -116,6 +118,30 @@ fn comment(exe: &Path) -> Vec<u8> {
     elf.section_by_name(".comment")
         .map(|s| s.data().unwrap().to_vec())
         .unwrap_or_default()
+}
+
+/// LLD is told from GNU ld by the `.comment` strings each leaves, as `readelf -p .comment`
+/// printed them for `int main(void){return 0;}` linked by `cc -fuse-ld=lld` and by GNU ld, on
+/// Fedora 44 (LLD 22.1.8, GCC 16.2.1) and on Ubuntu 24.04 (a Colab VM: LLD 18.1.3, GCC 13.3.0),
+/// 2026-11-22. The section holds NUL-ended strings; LLD's executables also hold GCC's.
+#[test]
+fn lld_is_told_by_its_comment_with_or_without_a_vendor() {
+    let names = linker_comment::names_lld;
+    let fedora_gcc = b"GCC: (GNU) 16.2.1 20261029 (Red Hat 16.2.1-3)\0\
+                       GCC: (GNU) 16.2.1 20260819 (Red Hat 16.2.1-2)\0";
+    assert!(names(
+        &[b"\0Linker: LLD 22.1.8\0".as_slice(), fedora_gcc].concat()
+    ));
+    assert!(!names(fedora_gcc));
+    let ubuntu_gcc = b"GCC: (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0\0";
+    assert!(names(
+        &[ubuntu_gcc.as_slice(), b"Linker: Ubuntu LLD 18.1.3\0"].concat()
+    ));
+    assert!(!names(ubuntu_gcc));
+    assert!(!names(b""));
+    // Two words before LLD, or none and a space, are not LLD's string.
+    assert!(!names(b"Linker: GNU ld LLD\0"));
+    assert!(!names(b"Linker:  LLD 1\0"));
 }
 
 /// `zedc build` links with LLD when `ld.lld` is on `PATH`, and with the driver's own linker
@@ -160,11 +186,7 @@ fn a_path_without_lld_links_with_the_drivers_linker() {
         failed(&zedc_build(&src, &gnu, &no_lld)),
         (Some(0), String::new())
     );
-    let by_lld = |exe: &Path| {
-        comment(exe)
-            .windows(b"Linker: LLD".len())
-            .any(|w| w == b"Linker: LLD")
-    };
+    let by_lld = |exe: &Path| linker_comment::names_lld(&comment(exe));
     assert_eq!((by_lld(&lld), by_lld(&gnu)), (true, false));
     let says = |exe: &Path| {
         let ran = Command::new(exe).args(["--", "evening"]).output().unwrap();
