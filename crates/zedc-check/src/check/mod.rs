@@ -4600,8 +4600,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Complexity tradeoff: built only for a message that is printed. The walk visits each
     /// written type node once, with an explicit stack so a deeply nested written type does not
     /// grow the call stack; each difference costs one denotation of its `b`, linear in its size,
-    /// and one subtype check. Dropping the outer steps compares each pair of the `k` steps
-    /// found, `O(k²)` with `k` at most the number of differences written, which is small.
+    /// and one subtype check. A component is kept as its parent and index, not as its path
+    /// text, so a walk `n` tuples deep costs `O(n)`, not the `O(n²)` of writing every path;
+    /// a path is written out only for a step taken, as long as the step's own text. Dropping
+    /// the outer steps marks the components above each step, each component at most once,
+    /// so it is linear in the components walked, where comparing each pair of steps was
+    /// `O(k²)` in the `k` steps found.
     fn subtracted_args(
         &self,
         id: usize,
@@ -4623,23 +4627,39 @@ impl<'t, 'a> Ck<'t, 'a> {
                     None => continue,
                 },
             };
-            // Each step found, with the path of the component it names.
-            let mut found: Vec<(String, Note)> = Vec::new();
-            let mut stack: Vec<(String, &Type, &Expr)> = vec![(p.name.clone(), w, e)];
-            while let Some((path, w, e)) = stack.pop() {
+            // The components walked, each its parent's and its index there; component 0 is the
+            // argument. A path, `p[1][0]`, is written out only for a difference's step.
+            let mut parts: Vec<(usize, usize)> = vec![(0, 0)];
+            let path = |parts: &[(usize, usize)], mut c: usize| {
+                let mut at = Vec::new();
+                while c != 0 {
+                    at.push(parts[c].1);
+                    c = parts[c].0;
+                }
+                let mut s = p.name.clone();
+                for i in at.into_iter().rev() {
+                    s.push_str(&format!("[{i}]"));
+                }
+                s
+            };
+            // Each step found, with the component it names.
+            let mut found: Vec<(usize, Note)> = Vec::new();
+            let mut stack: Vec<(usize, &Type, &Expr)> = vec![(0, w, e)];
+            while let Some((c, w, e)) = stack.pop() {
                 match &bare(w).kind {
                     TypeKind::Diff(a, b) => {
-                        if let Some(note) = self.subtracted_step(&path, w, b, e) {
-                            found.push((path.clone(), note));
+                        if let Some(note) = self.subtracted_step(|| path(&parts, c), w, b, e) {
+                            found.push((c, note));
                         }
-                        stack.push((path, a, e));
+                        stack.push((c, a, e));
                     }
                     TypeKind::Tuple(ws) => {
                         if let ExprKind::Tuple(es) = &e.kind
                             && es.len() == ws.len()
                         {
                             for (i, (w, e)) in ws.iter().zip(es).enumerate() {
-                                stack.push((format!("{path}[{i}]"), w, e));
+                                parts.push((c, i));
+                                stack.push((parts.len() - 1, w, e));
                             }
                         }
                     }
@@ -4648,20 +4668,26 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             // A step is dropped when another names a component inside its own, or names the
             // same component under a difference nested in its left side (found later, since
-            // the walk checks a difference before it walks the left side).
-            let inner = |i: usize| {
-                let outer = &found[i].0;
-                let below = format!("{outer}[");
-                found
-                    .iter()
-                    .enumerate()
-                    .any(|(k, (p, _))| p.starts_with(&below) || (k > i && p == outer))
-            };
-            let kept: Vec<bool> = (0..found.len()).map(|i| !inner(i)).collect();
+            // the walk checks a difference before it walks the left side). The components
+            // above each step are marked once: a mark met again ends the climb, since the
+            // components above it are marked already.
+            let mut above = vec![false; parts.len()];
+            let mut last: HashMap<usize, usize> = HashMap::new();
+            for (k, &(c, _)) in found.iter().enumerate() {
+                last.insert(c, k);
+                let mut a = c;
+                while a != 0 {
+                    a = parts[a].0;
+                    if above[a] {
+                        break;
+                    }
+                    above[a] = true;
+                }
+            }
             let mut steps: Vec<Note> = found
                 .into_iter()
-                .zip(kept)
-                .filter_map(|((_, n), keep)| keep.then_some(n))
+                .enumerate()
+                .filter_map(|(k, (c, n))| (!above[c] && last[&c] == k).then_some(n))
                 .collect();
             steps.sort_by_key(|n| n.span.start);
             out.extend(steps);
@@ -4671,7 +4697,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The step of [`Ck::subtracted_args`] for the argument component `e`, read as `path`, at
     /// the written type `w`, a difference whose right side is `b`: it says `e` is in the part
     /// `\` takes away when the value found for `e` is a value of `b`.
-    fn subtracted_step(&self, path: &str, w: &Type, b: &Type, e: &Expr) -> Option<Note> {
+    fn subtracted_step(
+        &self,
+        path: impl FnOnce() -> String,
+        w: &Type,
+        b: &Type,
+        e: &Expr,
+    ) -> Option<Note> {
         let v = match self.seen.get(&e.span) {
             Some((Some(t), _)) => t.clone(),
             _ => self.tuple_seen(e)?,
@@ -4684,8 +4716,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         Some(Note {
             span: e.span,
             text: format!(
-                "`{shown} : {}` is in the part `\\` takes away from `{path} : {}`",
+                "`{shown} : {}` is in the part `\\` takes away from `{} : {}`",
                 format_type(b),
+                path(),
                 format_type(w)
             ),
         })
@@ -14832,15 +14865,20 @@ pub fn written_ints(r: &WrittenRange) -> IntervalSet {
 /// The range from the least to the greatest of `ints`, each end inclusive, as a signature
 /// prints it (`int[1..=10]`), the inverse of [`written_ints`] on one interval; `None` where
 /// `ints` is empty or has neither end, as `int` then says as much. A set of several pieces
-/// gives its hull, which holds each of them. O(1) in the ends' digits: an end kept as a power
-/// ([`Num::is_kept`]), as `2^(2^53)` of `2^k` with `k: int[0..=2^53]`, is left open, not
-/// written out, which took time and memory in its 2^53 digits and did not end. An open end
-/// holds the kept one, so the hull still holds every int the body gives: the result is read
-/// in a wider range at each call ([`Ck::call_hull`]), never a narrower one.
+/// gives its hull, which holds each of them. An end kept as a power ([`Num::is_kept`]) is
+/// written out through [`Num::built`], which first asks the system for a byte for each bit of
+/// the widest number the writing builds: `2^128 - 1` of `u128` is written out, and
+/// `2^(2^53)` of `2^k` with `k: int[0..=2^53]`, which wrote out 2^53 digits and did not end,
+/// is refused and its end left open. An open end holds the kept one, so the hull still holds
+/// every int the body gives: the result is then read in a wider range at each call
+/// ([`Ck::call_hull`]), never a narrower one.
+// Complexity tradeoff: an end written out costs its digits, which the memory check bounds by
+// what the system can give; a refused end costs O(1) and loses only the end's precision.
 pub(super) fn written_hull(ints: &IntervalSet) -> Option<WrittenRange> {
     let (lo, hi) = ints.bounds()?;
     let value = |e: &End| match e {
-        Fin(n) if !n.is_kept() => Some(Value::from(n)),
+        Fin(n) if n.is_kept() => n.built().ok().map(|b| Value::int(b.into_owned())),
+        Fin(n) => Some(Value::from(n)),
         _ => None,
     };
     let (low, high) = (value(lo), value(hi));

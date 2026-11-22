@@ -166,7 +166,15 @@ fn power_case(defs: &str, body: &str, fixed: &[(&str, &str, &str)]) -> String {
     };
     assert!(!out.contains("`v"), "{out}");
     assert!(!out.contains("`n: int[0..]`"), "{out}");
-    assert!(!out.contains("f64("), "{out}");
+    // An `f64(…)` cast of the exponent is offered only where the headline shows the exponent
+    // as one int within ±2^53, where the cast is exact (MSG-power-f64-repair).
+    if out.contains("f64(") {
+        let head = out.lines().next().unwrap_or("");
+        let shown = head.rsplit(" : ").next().and_then(|s| s.split('`').next());
+        let v: i64 = (shown.and_then(|s| s.parse().ok()))
+            .unwrap_or_else(|| panic!("an f64 cast of an exponent not shown as an int:\n{out}"));
+        assert!(v.unsigned_abs() <= 1 << 53, "{out}");
+    }
     for (b, stdin, want) in fixed {
         assert_eq!(run(&main(b), stdin), *want, "{b}");
     }
@@ -177,19 +185,28 @@ fn power_case(defs: &str, body: &str, fixed: &[(&str, &str, &str)]) -> String {
 /// as `k` is an int, and `f64(k)` or `f64(x)` rounds above 2^53 in magnitude, so the one repair is
 /// the exact `rat` power, `2r^k` for a literal base and `rat(x)^-1` for a name, each printed
 /// as the headline's `Try`, and each runs to `1r/2r` as printed. Before, neither had a repair.
+/// Where the checker shows `k` as one int within ±2^53, `f64(k)` is exact, and
+/// `2.0f64^f64(k)` is offered too (MSG-power-f64-repair).
 #[test]
 fn an_int_power_rejection_through_a_name_shows_its_value() {
     let out = power_case(
         "",
         "  k = -1;\n  m.stdout <- \"${2^k}\";",
-        &[("  k = -1;\n  m.stdout <- \"${2r^k}\";", "", "1r/2r\n")],
+        &[
+            ("  k = -1;\n  m.stdout <- \"${2r^k}\";", "", "1r/2r\n"),
+            (
+                "  k = -1;\n  m.stdout <- \"${2.0f64^f64(k)}\";",
+                "",
+                "0.5\n",
+            ),
+        ],
     );
     assert_eq!(
         out,
         r#"4:18: Int power with a negative exponent: `2 : int ^ k : -1`. Try `2r^k` instead.
   [1] 4:20: `k` is -1 here
       4 |   m.stdout <- "${2^k}";
-        |                  ^^^ [5]
+        |                  ^^^ [5, 6]
         |                    ^ [1]
   [2] 3:7: `k` is defined as this expression, -1
       3 |   k = -1;
@@ -197,7 +214,8 @@ fn an_int_power_rejection_through_a_name_shows_its_value() {
         |        ^ [4]
   [3] 3:7: this `-` gives -1
   [4] 3:8: this literal, 1, is 1
-  [5] 4:18: repair: `2r^k`"#
+  [5] 4:18: repair: `2r^k`
+  [6] 4:18: repair: `2.0f64^f64(k)`"#
     );
     // A name of the top level, the same.
     let top = rejected("k = -1;", r#""${2^k}""#);
@@ -278,7 +296,11 @@ fn an_int_power_rejection_at_the_top_level_shows_the_value_of_a_literal_exponent
     assert!(!out.contains("gives int"), "{out}");
     let out = rejected("x = 2^((1 - 3) * 2 + 1);", r#""${x}""#);
     assert!(out.contains("`2 : int ^ ((1 - 3) * 2 + 1) : -3`"), "{out}");
-    for step in ["this `+` gives -3", "this `*` gives -4", "this `-` gives -2"] {
+    for step in [
+        "this `+` gives -3",
+        "this `*` gives -4",
+        "this `-` gives -2",
+    ] {
         assert!(out.contains(step), "{step}: {out}");
     }
     // A name in the exponent gives no one value: it is shown by what is known of it.

@@ -2261,6 +2261,59 @@ fn a_difference_nested_in_a_parameter_type_names_the_component_it_takes_away() {
     );
 }
 
+/// `f(p: (int, (int, … (..) \ (int, int) …)))`, the difference `n` tuples deep, called with a
+/// display that reaches it, `(1, (1, … (2, 3) …))`.
+fn nested_difference(n: usize) -> String {
+    format!(
+        "f(p: {}(..) \\ (int, int){}) = p;\ng() = f(p: {}(2, 3){});\n",
+        "(int, ".repeat(n),
+        ")".repeat(n),
+        "(1, ".repeat(n),
+        ")".repeat(n)
+    )
+}
+
+#[test]
+fn the_steps_of_differences_side_by_side_take_linear_time_in_their_number() {
+    // MSG-diff-nested-arg-step: the walk visits each written component once, writes a path
+    // only for a step taken, and drops the outer steps in one pass, where comparing each pair
+    // of steps took time quadratic in their number. `n` differences side by side in one tuple
+    // each take a component away, and each gets its step.
+    let step = format!(
+        "takes away from `p{} : (..) \\ (int, int)`",
+        "[1]".repeat(4)
+    );
+    let errs = errors_with_steps(&nested_difference(4));
+    assert!(
+        errs.iter().flat_map(|e| &e.1).any(|s| s.ends_with(&step)),
+        "{errs:#?}"
+    );
+    let side_by_side = |n: usize| {
+        format!(
+            "f(p: ({}int)) = p;\ng() = f(p: ({}1));\n",
+            "(..) \\ (int, int), ".repeat(n),
+            "(2, 3), ".repeat(n)
+        )
+    };
+    let count = |n: usize| {
+        let errs = errors_with_steps(&side_by_side(n));
+        assert_eq!(errs.len(), 1);
+        errs[0]
+            .1
+            .iter()
+            .filter(|s| s.contains("takes away"))
+            .count()
+    };
+    assert_eq!(count(3), 3);
+    scaling::check(
+        "the steps of differences side by side, by number",
+        40,
+        |n| {
+            assert_eq!(count(n), n);
+        },
+    );
+}
+
 #[test]
 fn only_an_argument_in_the_part_taken_away_gets_the_step_about_it() {
     // An argument refused for being outside the left side of the difference, or a call refused
