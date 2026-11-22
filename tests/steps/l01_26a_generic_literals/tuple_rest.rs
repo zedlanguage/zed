@@ -439,3 +439,30 @@ fn calls_of_a_chain_that_returns_a_division_are_one_error() {
     // With a decimal the chain returns an `f64`.
     assert_eq!(value(&chain(2, "0.5"), "y1"), "0.5");
 }
+
+#[test]
+fn a_declared_parameter_or_an_f64_operand_fixes_the_literals_of_a_value() {
+    // Plan row LIT-op-top: `id(1 / 2)` with `id(x: f64)` at the top level was rejected as a
+    // decimal nothing fixes; the parameter fixes the `/` at `f64`, as a written type does.
+    let id = "id(positional x: f64) = x;\n";
+    assert_eq!(value(&format!("{id}y = id(1 / 2);\n"), "y"), "0.5");
+    assert_eq!(value(&format!("{id}y = id(1 - 3 * 2);\n"), "y"), "-5.0");
+    // Plan row LIT-result-at-operator: the `f64` operand of `*` settles the literal results of
+    // `g`; `*` was refused with "* does not take (1, 1.0f64)". (A declared binding,
+    // `z: f64 = g(true)`, is row LIT-decl-binding, pending step L10.)
+    let g = "g(positional c: bool) = if c { 1 } else { 2.5 };\n";
+    assert_eq!(value(&format!("{g}z = g(true) * 1.0f64;\n"), "z"), "1.0");
+    assert_eq!(value(&format!("{g}z = 1.0f64 * g(false);\n"), "z"), "2.5");
+}
+
+#[test]
+fn a_hole_of_literal_branches_reads_alike_in_a_function_and_outside_one() {
+    // Plan row LIT-hole-in-function: the hole was accepted in a function and rejected outside
+    // one. A decimal that nothing fixes takes `f64` (DESIGN.md step L1.26b, author 2026-11-12),
+    // so it is accepted in both, with the same text.
+    let hole = "\"${if x > 0.0f64 { 0.5 } else { 1 }}\"";
+    let f = format!("f(positional x: f64) = {hole};\ns = f(1.0f64);\n");
+    let top = format!("x = 1.0f64;\ns = {hole};\n");
+    assert_eq!(value(&f, "s"), value(&top, "s"));
+    assert_eq!(value(&top, "s"), "\"0.5\"");
+}
