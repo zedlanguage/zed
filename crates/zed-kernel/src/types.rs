@@ -7899,7 +7899,7 @@ pub mod rec {
     //! - *of the form the admission check accepts*: no recursive occurrence stands under a
     //!   complement, to the right of `\`, or in the guarantee of a morphism type whose value type
     //!   may be empty or mentions the group, since `type T = (T) -> (#a & #b)` is inhabited exactly
-    //!   when it is empty, unless the value type holds the guarantee as written ([`covers`]:
+    //!   when it is empty, unless the value type holds the guarantee as written (`covers`:
     //!   `type U = (U) -> U` holds the identity on `U`, plan row GROUP-admit-precision); nor in
     //!   the guarantee of a morphism type whose guarantee and permission differ, or that stands
     //!   under `&`, `\`, a complement or differing domain bounds, directly or through a

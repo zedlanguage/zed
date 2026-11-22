@@ -1830,7 +1830,7 @@ impl<'u> Specializer<'u> {
     }
 
     /// The values the static calls of `name` pass its parameter `param` ([`passed`]), each
-    /// once, in the order of their canonical forms ([`Key`]).
+    /// once, in the order of their canonical forms (`Key`).
     pub fn passed(&self, name: &str, param: usize) -> Vec<Value> {
         let Some(&at) = self.by_name.get(name) else {
             return Vec::new();
