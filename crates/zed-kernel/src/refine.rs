@@ -266,5 +266,55 @@ impl Refine {
     }
 }
 
+/// The coarsest stable coloring ([`Refine`]) of a graph of nodes and places: vertices `0..v`
+/// are the nodes and vertex `v + e` is place `e` of `places`, given as (the node it is a place
+/// of, the node it holds). The arcs counted are a child's places and a place's node, so two
+/// nodes keep one color exactly when their places, in each color, hold children of like
+/// colors. `color` (one entry per vertex, `v + places.len()` in all) starts each vertex in
+/// `0..colors`. Shared by the quotient of a group's trie (`types::empty`, `quotient`) and the
+/// canonical form of a recursive group (`types`, `Group::canon`), which built this graph with
+/// two copies of the code before DRY-misc-A5 (REPORT-dryA5 row 12).
+// Complexity tradeoff: the arrays by vertex are filled by counting, O(V + E) for V vertices
+// and E arcs, then [`Refine::run`], O((V + E) log V). The degree bound `Refine` needs is the
+// most arcs a vertex has into one class, which a node that is a meet or a union (all its places
+// of one color, `types`) reaches with all its children, so the bound is each vertex's arcs out
+// or in, the larger: one more pass, O(V + E); no naive version is cheaper.
+pub fn refine_places<I>(color: Vec<usize>, colors: usize, v: usize, places: I) -> Vec<usize>
+where
+    I: IntoIterator<Item = (usize, usize)>,
+    I::IntoIter: Clone,
+{
+    let places = places.into_iter();
+    let size = color.len();
+    // The vertices counted when the class of a vertex refines: a child's places, a place's
+    // node.
+    let mut start = vec![0; size + 1];
+    for (e, (_, c)) in places.clone().enumerate() {
+        start[c + 1] += 1;
+        start[v + e + 1] = 1;
+    }
+    for x in 0..size {
+        start[x + 1] += start[x];
+    }
+    let mut adj = vec![0; start[size]];
+    let mut cursor = start[..size].to_vec();
+    for (e, (u, c)) in places.enumerate() {
+        adj[cursor[c]] = v + e;
+        cursor[c] += 1;
+        adj[cursor[v + e]] = u;
+    }
+    let mut into = vec![0; size];
+    for &w in &adj {
+        into[w] += 1;
+    }
+    let degree = (0..size)
+        .map(|x| (start[x + 1] - start[x]).max(into[x]))
+        .max()
+        .unwrap_or(0);
+    let mut refine = Refine::new(color, colors, degree);
+    refine.run(&start, &adj);
+    refine.color
+}
+
 #[cfg(test)]
 mod tests;

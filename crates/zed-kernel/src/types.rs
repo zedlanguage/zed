@@ -9268,39 +9268,9 @@ pub mod rec {
             color[v + e] = next + position(p);
         }
         next += widest;
-        // The vertices counted when the class of a vertex refines: a child's places, a place's
-        // node.
-        let mut start = vec![0; size + 1];
-        for (e, &(_, _, c)) in places.iter().enumerate() {
-            start[c + 1] += 1;
-            start[v + e + 1] = 1;
-        }
-        for x in 0..size {
-            start[x + 1] += start[x];
-        }
-        let mut adj = vec![0; start[size]];
-        let mut cursor = start[..size].to_vec();
-        for (e, &(u, _, c)) in places.iter().enumerate() {
-            adj[cursor[c]] = v + e;
-            cursor[c] += 1;
-            adj[cursor[v + e]] = u;
-        }
-        // The most arcs a vertex has into one class: a node's places are all of one color when
-        // it is a meet or a union, so a node counts up to its number of children.
-        // Complexity tradeoff: one pass over the arcs, O(V + E), so that `Refine`'s degree bound
-        // holds where a meet's or a union's arcs all go into one color; no naive version is
-        // cheaper.
-        let mut into = vec![0; size];
-        for &w in &adj {
-            into[w] += 1;
-        }
-        let degree = (0..size)
-            .map(|x| (start[x + 1] - start[x]).max(into[x]))
-            .max()
-            .unwrap_or(0);
-        let mut refine = crate::refine::Refine::new(color, next, degree);
-        refine.run(&start, &adj);
-        let color = refine.color;
+        // The graph built and refined by `refine_places`, whose degree bound counts the places
+        // of a meet or a union, all of one color, into one class.
+        let color = crate::refine::refine_places(color, next, v, places.iter().map(|p| (p.0, p.2)));
         // The nodes' colors, numbered from 0 in their order.
         let mut class = vec![u32::MAX; size];
         for &c in &color[..v] {

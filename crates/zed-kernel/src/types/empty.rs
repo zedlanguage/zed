@@ -15320,34 +15320,7 @@ fn quotient(nodes: Vec<GroupNode>) -> (Vec<GroupNode>, Vec<usize>) {
         color[v + e] = next + *edges.entry(edge).or_insert(k);
     }
     next += edges.len();
-    // The vertices counted when the class of a vertex refines: a node's places as a child, a
-    // place's node.
-    let mut start = vec![0; size + 1];
-    for (e, &(_, _, c)) in places.iter().enumerate() {
-        start[c + 1] += 1;
-        start[v + e + 1] = 1;
-    }
-    for x in 0..size {
-        start[x + 1] += start[x];
-    }
-    let mut adj = vec![0; start[size]];
-    let mut cursor = start[..size].to_vec();
-    for (e, &(u, _, c)) in places.iter().enumerate() {
-        adj[cursor[c]] = v + e;
-        cursor[c] += 1;
-        adj[cursor[v + e]] = u;
-    }
-    let mut into = vec![0; size];
-    for &w in &adj {
-        into[w] += 1;
-    }
-    let degree = (0..size)
-        .map(|x| (start[x + 1] - start[x]).max(into[x]))
-        .max()
-        .unwrap_or(0);
-    let mut refine = crate::refine::Refine::new(color, next, degree);
-    refine.run(&start, &adj);
-    let color = refine.color;
+    let color = crate::refine::refine_places(color, next, v, places.iter().map(|p| (p.0, p.2)));
     // The classes numbered in the order of their first node, so node 0 stays 0.
     let mut class = vec![usize::MAX; size];
     let mut quot = vec![0; v];

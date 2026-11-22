@@ -2,7 +2,7 @@
 //! comment): the partition is the coarsest stable one that refines the starting coloring, and
 //! the colors are canonical, the same at corresponding vertices of isomorphic graphs.
 
-use super::Refine;
+use super::{Refine, refine_places};
 
 /// splitmix64, a fixed stream so that each run tests the same graphs.
 struct Rng(u64);
@@ -138,5 +138,57 @@ fn refinement_colors_are_canonical() {
                 "trial {trial}: {color:?} {adj:?} under {p:?}"
             );
         }
+    }
+}
+
+/// [`refine_places`] gives the coarsest stable partition of its graph of nodes and places, by
+/// comparison with [`naive`] on 3,000 random graphs, in which a node may hold itself, a node
+/// twice, or a node of no place, and the places of one node may share a color, as a meet's do.
+/// Red when a place's arc to its node is dropped (checked 2026-11-22 by deleting
+/// `adj[cursor[v + e]] = u` in `refine_places`), and when the degree bound counts only the arcs
+/// out of a vertex (checked by mapping each vertex to `start[x + 1] - start[x]` alone: `Refine`
+/// then indexes past its tally on a node whose places all share a color).
+#[test]
+fn refinement_of_nodes_and_places_is_the_coarsest_stable_partition() {
+    let mut rng = Rng(3);
+    for trial in 0..3000 {
+        let v = 1 + rng.below(7);
+        let places: Vec<(usize, usize)> = (0..rng.below(12))
+            .map(|_| (rng.below(v), rng.below(v)))
+            .collect();
+        let size = v + places.len();
+        let node_colors = 1 + rng.below(v.min(3));
+        let place_colors = 1 + rng.below(3);
+        let mut color: Vec<usize> = (0..v)
+            .map(|x| {
+                if x < node_colors {
+                    x
+                } else {
+                    rng.below(node_colors)
+                }
+            })
+            .collect();
+        color.extend((0..places.len()).map(|_| node_colors + rng.below(place_colors)));
+        // The colors are numbered so that every one below the count has a vertex.
+        let mut used: Vec<usize> = color.clone();
+        used.sort_unstable();
+        used.dedup();
+        let color: Vec<usize> = color
+            .iter()
+            .map(|c| used.binary_search(c).expect("a color"))
+            .collect();
+        // The arcs as `naive` reads them: `w` in `adj[x]` refines `w` by `x`, so a place is
+        // refined by the child it holds and a node by its places.
+        let mut adj = vec![Vec::new(); size];
+        for (e, &(u, c)) in places.iter().enumerate() {
+            adj[c].push(v + e);
+            adj[v + e].push(u);
+        }
+        let got = refine_places(color.clone(), used.len(), v, places.iter().copied());
+        let want = naive(&color, &adj);
+        assert!(
+            same_partition(&got, &want),
+            "trial {trial}: {color:?} {places:?}: got {got:?}, want {want:?}"
+        );
     }
 }
