@@ -487,6 +487,16 @@ fn each_conclusion_of_rung_2_is_printed() {
         Entailment::NotProved(model(&[("x", 2)])).to_string(),
         "not proved: the linear reading fails at x = 2"
     );
+    // A model with no symbols (row EMPTY-countermodel-print): it printed nothing after
+    // "countermodel".
+    assert_eq!(
+        Entailment::Refuted(model(&[])).to_string(),
+        "refuted: the goal names no symbol and fails outright"
+    );
+    assert_eq!(
+        Entailment::NotProved(model(&[])).to_string(),
+        "not proved: the linear reading names no symbol and fails outright"
+    );
     assert_eq!(
         Entailment::Refused(Refusal::Growth).to_string(),
         format!("refused: {}", Refusal::Growth)

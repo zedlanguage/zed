@@ -6987,7 +6987,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ([`Ck::lit_wrote`], [`Ck::drop_met`]).
     ///
     /// An operation is left as it was where its value at the carrier is no value of it
-    /// ([`folded`]), as `1r + 1 / 0`, whose `/` always fails: its rejection stands. At `rat`
+    /// ([`folded`]) for a reason other than a zero divisor, as `1r + 2^0.5`: its rejection
+    /// stands. In `1r + 1 / 0` the `/` takes `rat`, and the one error is that it always fails
+    /// with `#divByZero` ([`Self::lit_takes`]; QUESTIONS A62). At `rat`
     /// each `^` in it takes an `int` exponent, so it takes `rat` only where each exponent is an
     /// integer literal, which keeps the carrier `int`: `(3/2)^-2 * 1r` is `4/9`.
     ///
@@ -7185,12 +7187,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// [`Ck::lit_open`]), and the errors its operations wrote as they were walked dropped
     /// ([`Ck::lit_wrote`]); at `rat` the exponent of each `^`, an integer literal, adopts `int`,
     /// which `^` takes there. `false`, with nothing changed, where `e` holds a `/` or a `^` and
-    /// its value at `c` is no value of `c` ([`folded`]), as `1 / 0` at `rat`, or `(3/2)^0.5`
-    /// at `rat`, whose exponent is no `int`: the rejection of the operation stands. It
+    /// its value at `c` is no value of `c` ([`folded`]), as `(3/2)^0.5` at `rat`, whose
+    /// exponent is no `int`: the rejection of the operation stands. Where the only reason is a
+    /// `/` whose divisor is zero at `c`, as `1 / 0` at `rat`, `e` takes `c` and each such `/`
+    /// is rejected as one that always fails ([`Self::lit_zero_divisions`]; QUESTIONS A62). It
     /// costs the size of `e`, twice where it holds a `/` or a `^`; in a repair's trial
     /// ([`Self::tried`]), which changes nothing that lasts, what it finds is read from
     /// [`Self::lit_fit`] instead.
-    pub(super) fn lit_takes(&mut self, e: &Expr, c: Carrier) -> bool {
+    pub(super) fn lit_takes(&mut self, e: &'a Expr, c: Carrier) -> bool {
         if self.trying {
             let (takes, refused) = self.lit_fit(e, c);
             // A literal that is not exactly a `c` is rejected as below, which fails the trial.
@@ -7223,9 +7227,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => {}
             }
         }
-        if (div || pow) && !self.lit_fit(e, c).0 {
-            return false;
-        }
+        // Where the only reason `e` has no value at `c` is a `/` whose divisor is zero there, `e`
+        // takes `c` all the same, and each such `/` is rejected below as one that always fails
+        // ([`Self::lit_zero_divisions`]).
+        let zeros = match (div || pow) && !self.lit_fit(e, c).0 {
+            false => Vec::new(),
+            true => match self.lit_zero_divisions(e, c) {
+                Some(zeros) => zeros,
+                None => return false,
+            },
+        };
         let live = !self.trying && self.replaying == 0;
         for (e, at) in nodes {
             if let Some(l) = literal(e, self.t.text) {
@@ -7260,6 +7271,33 @@ impl<'t, 'a> Ck<'t, 'a> {
             if live {
                 self.lit_spared.remove(&e.span);
             }
+        }
+        // The errors the operations of `e` wrote as they were walked are dropped above, with
+        // the statement's end ([`Self::drop_met`]); these are written after every range that
+        // drop removes, which each end where their operation's walk ended, before this call,
+        // so they stand. The step that says why the `/` is a `c` comes first.
+        let met = (self.t.text)
+            .filter(|_| !zeros.is_empty())
+            .and_then(|t| written_alone(t, e.span, &[]))
+            .map(|w| Note {
+                span: e.span,
+                // Only `rat` finds a zero division ([`Self::lit_zero_divisions`]).
+                text: format!("`{w}` meets a `rat`, so it is a `rat`"),
+            });
+        for x in zeros {
+            let ExprKind::Binary(BinaryOp::Div, a, b) = &x.kind else {
+                continue;
+            };
+            let why = match is_literal(b) {
+                true => Zero::Literal,
+                false => Zero::Folded,
+            };
+            let dividend = match literal(a, self.t.text) {
+                Some(l) => l.written().to_string(),
+                None => "…".to_string(),
+            };
+            let steps = met.iter().cloned().collect();
+            self.divides_by_zero(BinaryOp::Div, why, &dividend, steps, b, x.span);
         }
         true
     }
@@ -7537,7 +7575,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         alone: bool,
         m: u8,
     ) -> Option<Carrier> {
-        let exprs: Vec<&Expr> = ops.iter().filter_map(|a| a.expr).collect();
+        let exprs: Vec<&'a Expr> = ops.iter().filter_map(|a| a.expr).collect();
         let c = match carriers.count_ones() {
             1 => Carrier::of_mask(carriers).next()?,
             0 if alone => {
@@ -7953,6 +7991,126 @@ impl<'t, 'a> Ck<'t, 'a> {
         let f = fits.pop().expect("one fit for `e`");
         let takes = !((f.div || f.pow) && f.value.is_none());
         (takes, f.refused)
+    }
+
+    /// The divisions of `e`, an operation on bare literals alone that takes no value at `c`
+    /// ([`Self::lit_fit`]), that always fail with `#divByZero` at `c`, where they alone are why
+    /// it takes none: each `/` whose operands have values at `c` and whose divisor's value is
+    /// zero, as the `/` in `1 / 0` at `rat`. `None` where something else gives no value too (a
+    /// literal with no value at `c`, a `^` at `rat` whose exponent is no `int`, a value past
+    /// the fold's bound): the rejection then stands, as before. Then `e` takes `c` before the
+    /// always-fails check (DESIGN.md sec:diagnostics, row "Operation that always fails": "A
+    /// literal takes its carrier before this check: in `y = 1r + 1 / 0;` [...] the one error
+    /// is that the `/` always gives `#divByZero`, with no error for a literal without a
+    /// carrier"; QUESTIONS A62).
+    ///
+    /// Each node is read bottom up as one of three: it has a value at `c` (its kept fit,
+    /// [`Ck::lit_fits`], or its literal's value), it has none only because a division found
+    /// here is in it, or it has none for another reason. An operation whose operand has none
+    /// for another reason has none for that reason. One whose operand has none only because
+    /// of a found division has none only for that reason too: an operation needs the values
+    /// of all its operands ([`prim_folded`], [`rat_step`]), and a run fails at the division
+    /// first, so `1 / (1 / 0)` holds one such division, the inner one, and `(1 / 0)^0.5` at
+    /// `rat` fails at its `/` before its `^` is reached. A `/` whose operands both have values
+    /// and whose divisor's is zero is found; any other operation with no value has none for
+    /// another reason. At `rat` the exponent of a `^` is read at `int` apart from this walk
+    /// ([`Self::lit_fit`]): the `^` then has a value or not by its own fit, and an exponent
+    /// with a `/` in it, as `2^(1 / 0)`, is no `int`, so its rejection stands.
+    ///
+    /// Complexity: [`Self::lit_takes`] calls this only after [`Self::lit_fit`] of `e` at `c`,
+    /// which keeps the fit of each operation it reads, so each node is read once here, with
+    /// one lookup: O(size of `e`). The one operation it does not read, the base of a `^` at
+    /// `rat` whose exponent is no `int`, is read here by [`Self::lit_fit`] once, and its
+    /// operations are kept then. The naive way, a fold of both operands at each `/`, costs
+    /// the square of the depth of a nest of divisions; the fold of [`folded`] would build the
+    /// digits of a power at `rat`, as `3^200000 + 1`, which the fit reads as a range instead.
+    /// Tests: `l01_29_diagnostics::literal_steps` (the A62 cases).
+    ///
+    /// Only `rat` is read: at `int` a `/` is no operation at all (it has no arrow there), so a
+    /// zero divisor is not why it has no value, and at `f64` and `f32` a division by zero has a
+    /// value, an infinity (DESIGN.md P361), so the fit has a value and this is not called.
+    fn lit_zero_divisions(&mut self, e: &'a Expr, c: Carrier) -> Option<Vec<&'a Expr>> {
+        if c != Carrier::Rat {
+            return None;
+        }
+        #[derive(Clone, Copy, PartialEq)]
+        enum Has {
+            Value,
+            ZeroDivision,
+            None,
+        }
+        enum Step<'e> {
+            Visit(&'e Expr),
+            Done(&'e Expr, usize),
+        }
+        // The value at `c` of a node read already: a literal's, a `rat` literal's, else its
+        // kept fit's.
+        let value_at = |ck: &Self, x: &Expr| -> Option<Value> {
+            if let Some(l) = literal(x, None) {
+                return lit_value(&l, c);
+            }
+            match &x.kind {
+                ExprKind::Rat(d) if c == Carrier::Rat => {
+                    Rat::decimal(d).ok().flatten().map(Value::rat)
+                }
+                _ => match ck.lit_fits.get(&(x.span, c))?.value.as_ref()? {
+                    RatFact::Value(v) => Some(v.clone()),
+                    RatFact::Range(_) => None,
+                },
+            }
+        };
+        let mut found = Vec::new();
+        let mut has: Vec<Has> = Vec::new();
+        let mut todo = vec![Step::Visit(e)];
+        while let Some(step) = todo.pop() {
+            match step {
+                Step::Visit(x) if literal(x, None).is_some() => has.push(match value_at(self, x) {
+                    Some(_) => Has::Value,
+                    None => Has::None,
+                }),
+                Step::Visit(x) => match &x.kind {
+                    ExprKind::Binary(BinaryOp::Pow, a, _) if c == Carrier::Rat => {
+                        todo.extend([Step::Done(x, 1), Step::Visit(a)]);
+                    }
+                    ExprKind::Binary(_, a, b) => {
+                        todo.extend([Step::Done(x, 2), Step::Visit(b), Step::Visit(a)]);
+                    }
+                    ExprKind::Unary(UnaryOp::Neg, a) => {
+                        todo.extend([Step::Done(x, 1), Step::Visit(a)]);
+                    }
+                    _ => has.push(match value_at(self, x) {
+                        Some(_) => Has::Value,
+                        None => Has::None,
+                    }),
+                },
+                Step::Done(x, n) => {
+                    let parts = has.split_off(has.len() - n);
+                    if !self.lit_fits.contains_key(&(x.span, c)) {
+                        self.lit_fit(x, c);
+                    }
+                    let fits = (self.lit_fits.get(&(x.span, c))).is_some_and(|f| f.value.is_some());
+                    // [`is_zero`], not `surface_cmp` with `Value::Int(0)`: a `rat` and an `int`
+                    // are two kinds, which that comparison leaves unordered.
+                    let zero = |v: Value| is_zero(&v);
+                    let h = if fits {
+                        Has::Value
+                    } else if parts.contains(&Has::None) {
+                        Has::None
+                    } else if parts.contains(&Has::ZeroDivision) {
+                        Has::ZeroDivision
+                    } else if let ExprKind::Binary(BinaryOp::Div, _, b) = &x.kind
+                        && value_at(self, b).is_some_and(zero)
+                    {
+                        found.push(x);
+                        Has::ZeroDivision
+                    } else {
+                        Has::None
+                    };
+                    has.push(h);
+                }
+            }
+        }
+        (has.pop() == Some(Has::ZeroDivision)).then_some(found)
     }
 
     /// At the top level, each argument of `args` that is an operation on bare literals alone
@@ -8685,7 +8843,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if let Some(why) = zero
                     && r.0.atoms().contains(&Value::atom("divByZero"))
                 {
-                    self.divides_by_zero(op, why, &dividend, b, span);
+                    self.divides_by_zero(op, why, &dividend, Vec::new(), b, span);
                 }
                 self.lit_wrote(span, from);
                 if op == BinaryOp::Mul {
@@ -26330,7 +26488,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The type the construct `w` has with the fixes `c` carried into its argument `i`, where
-    /// it then adds no error but those its own check `found`, each inside another argument
+    /// it then adds no error but those its own check `found`, each outside argument `i`
     /// (`ats`, [`arg_holding`]); `None` where it adds another. One check of the construct and
     /// a binary search per error it adds.
     fn carried_alone(
@@ -26358,7 +26516,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             return None;
         }
         let (ty, needs) = self.carried_check(w, &[(i, &c.ty)]);
-        let apart = |s: &Span| found.contains(s) && arg_holding(ats, *s).is_some_and(|j| j != i);
+        // An error the construct's own check gives too is not one the fix adds, wherever it
+        // lies but in argument `i`: in `y = (1 / 2) * "a";` the `*` is rejected at `f64`, the
+        // type the walk kept, and at `rat`, the type the fix `1r` gives `1 / 2`, so that fix
+        // is kept beside `1.0f64`, one conversion per carrier (DESIGN.md sec:diagnostics,
+        // "Types in a message": "its repairs offer one conversion per carrier"; QUESTIONS
+        // A60), as [`Self::fixes_checked`] keeps a fix whose errors its construct's own check
+        // gives. Test: `l01_29_diagnostics::literal_steps`.
+        let apart = |s: &Span| found.contains(s) && arg_holding(ats, *s) != Some(i);
         needs
             .is_some_and(|needs| needs.iter().all(apart))
             .then_some(ty)
@@ -31034,12 +31199,14 @@ impl<'a> Ck<'_, 'a> {
 
     /// Rejects `x op y` at `span`, `dividend` the dividend as the program writes it (its literal
     /// or its name, else `…`) and `b` the divisor as written, whose divisor is always zero for
-    /// the reason `why`: every value that reaches it fails with `#divByZero`.
+    /// the reason `why`: every value that reaches it fails with `#divByZero`. `steps`, the
+    /// notes that say how the operation came to its type, come first.
     fn divides_by_zero(
         &mut self,
         op: BinaryOp,
         why: Zero,
         dividend: &str,
+        steps: Vec<Note>,
         b: &'a Expr,
         span: Span,
     ) {
@@ -31062,7 +31229,7 @@ impl<'a> Ck<'_, 'a> {
             | BinaryOp::Mul
             | BinaryOp::Pow => unreachable!("only a division has a divisor"),
         };
-        let mut notes = Vec::new();
+        let mut notes = steps;
         let reason = match why {
             // The literal as the program writes it, `0x0_0` or `0.0_0r`.
             Zero::Literal if is_literal(b) => {

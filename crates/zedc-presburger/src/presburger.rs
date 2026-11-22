@@ -28219,6 +28219,17 @@ impl fmt::Display for Entailment {
                 let parts: Vec<String> = ps.iter().map(|p| p.to_string()).collect();
                 write!(f, "proved from {}", parts.join(" && "))
             }
+            // A model with no symbols prints nothing after "countermodel", which hides why
+            // the question was refuted (row EMPTY-countermodel-print): the premises and the
+            // goal then name no symbol, and the goal fails outright. Test:
+            // `l01_38_omega_test::completeness::each_conclusion_of_rung_2_is_printed`.
+            Entailment::Refuted(m) if m.is_empty() => {
+                write!(f, "refuted: the goal names no symbol and fails outright")
+            }
+            Entailment::NotProved(m) if m.is_empty() => write!(
+                f,
+                "not proved: the linear reading names no symbol and fails outright"
+            ),
             Entailment::Refuted(m) => {
                 write!(f, "refuted: countermodel ")?;
                 model(m, f)

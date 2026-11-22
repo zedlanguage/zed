@@ -317,3 +317,79 @@ fn a_choice_between_literals_is_still_shown_by_its_literals() {
     let s = steps(&out);
     assert!(s.contains(&"this `if` gives 2 | 13"), "{out}");
 }
+
+/// The repairs of a division by zero, in the order DESIGN gives them.
+fn div_repairs(at: &str, dividend: &str) -> String {
+    format!(
+        "  [3] {at}: repair: divide by a value that can be other than 0, such as a parameter \
+         `d: rat`: `{dividend} / d`
+  [4] {at}: repair: write `#divByZero` in place of this division, where the failure is meant
+  [5] {at}: repair: write `#bug(\"…\")` in place of this division, where it is never meant to \
+         be reached"
+    )
+}
+
+/// A `/` of literals whose divisor is zero at `rat` takes the carrier of what it meets, and
+/// the one error is that it always fails (DESIGN.md sec:diagnostics, row "Operation that
+/// always fails": "A literal takes its carrier before this check: in `y = 1r + 1 / 0;` [...]
+/// the one error is that the `/` always gives `#divByZero`, with no error for a literal
+/// without a carrier"; QUESTIONS A62). On origin/main the `/` kept no carrier, and zedc gave
+/// two false errors: "The suffix makes the literal `1r` a `rat`, never `f64`" and "Nothing
+/// gives the literal `1` a carrier".
+#[test]
+fn a_division_of_literals_by_zero_takes_rat_and_always_fails() {
+    let out = rejected("y = 1r + 1 / 0;\n");
+    let repairs = div_repairs("1:10", "1");
+    let want = format!(
+        "1:10: `/` here always fails with `#divByZero`: its divisor is the literal 0, so no \
+         value that reaches it gives a rat.
+  [1] 1:10: `1 / 0` meets a `rat`, so it is a `rat`
+      1 | y = 1r + 1 / 0;
+        |          ^^^^^ [1, 3, 4, 5]
+        |              ^ [2]
+  [2] 1:14: this divisor is always 0
+{repairs}"
+    );
+    assert_eq!(out.trim_end(), want, "{out}");
+}
+
+/// The same where the divisor is an operation on literals that works out to zero, and where
+/// the zero divisor is inside the divisor of another `/`: the error is at the `/` that
+/// divides by zero, the inner one, since a run fails there first.
+#[test]
+fn a_division_by_a_folded_or_nested_zero_takes_rat_and_always_fails() {
+    let out = rejected("y = 1r + (2 - 2 * 1) / (3 - 3);\n");
+    assert!(
+        out.starts_with(
+            "1:10: `/` here always fails with `#divByZero`: its divisor is built from \
+             constants and works out to 0, so no value that reaches it gives a rat.\n  [1] \
+             1:10: `(2 - 2 * 1) / (3 - 3)` meets a `rat`, so it is a `rat`\n"
+        ),
+        "{out}"
+    );
+    let out2 = rejected("y = 1r + 1 / (1 / 0);\n");
+    assert!(
+        out2.starts_with(
+            "1:14: `/` here always fails with `#divByZero`: its divisor is the literal 0, so \
+             no value that reaches it gives a rat.\n  [1] 1:10: `1 / (1 / 0)` meets a `rat`, \
+             so it is a `rat`\n"
+        ),
+        "{out2}"
+    );
+    for o in [&out, &out2] {
+        assert_eq!(o.matches("always fails").count(), 1, "{o}");
+        assert!(!o.contains("Nothing gives"), "{o}");
+        assert!(!o.contains("The suffix makes"), "{o}");
+    }
+}
+
+/// An operation on literals that met no carrier is printed as the union of its carriers, and
+/// its repairs offer one conversion per carrier (DESIGN.md sec:diagnostics, "Types in a
+/// message"; QUESTIONS A60): `1r` as well as `1.0f64`. On origin/main the `1r` fix was
+/// dropped, since the `*` it is carried to is rejected at `rat` as it is at `f64`.
+#[test]
+fn an_operation_on_literals_with_no_carrier_offers_each_carrier() {
+    let out = rejected("y = (1 / 2) * \"a\";\n");
+    assert!(out.contains("    y = (1r / 2) * \"a\";"), "{out}");
+    assert!(out.contains("    y = (1.0f64 / 2) * \"a\";"), "{out}");
+}
