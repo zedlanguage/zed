@@ -201,61 +201,98 @@ fn shallow(levels: usize, bottom: Type) -> Type {
     })
 }
 
-/// The chain of union, meet, difference, pair and morphism `levels` deep is built, decided and
-/// compared on a 2 MiB stack, whatever `RUST_MIN_STACK` says: it is the type its pairs and
-/// morphisms alone build, in both directions, and is not the one with another bottom. Prints
-/// the time of each phase, so that a phase whose time grows faster than the depth is seen.
-fn chain_is_the_shallow_composition(levels: usize) {
+/// Runs `f` on a 2 MiB stack, whatever `RUST_MIN_STACK` says, and prints its time.
+fn timed(what: &str, f: impl FnOnce() + Send) {
     zed_tests::deep::on_small_stack(|| {
-        let mut at = std::time::Instant::now();
-        let mut phase = |what: &str| {
-            eprintln!("{levels} levels: {what} in {:.2?}", at.elapsed());
-            at = std::time::Instant::now();
-        };
-        let t = chain(levels, lit(0));
-        phase("the chain built");
-        let (same, other) = (shallow(levels, lit(0)), shallow(levels, lit(1)));
-        phase("the shallow compositions built");
-        assert!(t.subtype(&same), "the chain under its shallow composition");
-        phase("the chain under its shallow composition");
-        assert!(same.subtype(&t), "the shallow composition under the chain");
-        phase("the shallow composition under the chain");
-        assert!(
-            !t.subtype(&other),
-            "the chain is not under another bottom's"
-        );
-        phase("the chain not under another bottom's");
-        assert_eq!(t.verdict(), Verdict::Inhabited);
-        phase("the verdict");
+        let start = std::time::Instant::now();
+        f();
+        eprintln!("{what} in {:.2?}", start.elapsed());
     });
 }
 
-// STACK-big-tests (a44c82a2) probed a chain 50,000 levels deep on a 2 MiB stack and did not
-// commit it (TESTS-STACK-big-tests-deep-ops, test audit 2026-11-08 row 15). At 50,000 levels
-// the run took 600 s on an 8-thread VM; these depths measure how the time grows, so that the
-// test is sized under 20 s and a phase whose time grows faster than the depth is found.
+/// The levels of the chain STACK-big-tests (a44c82a2) probed on a 2 MiB stack and did not
+/// commit (TESTS-STACK-big-tests-deep-ops, test audit 2026-11-08 row 15).
+const CHAIN: usize = 50_000;
 
+/// The chain of union, meet, difference, pair and morphism `CHAIN` levels deep is built and
+/// decided on a 2 MiB stack, and is the type its pairs and morphisms alone build, in both
+/// directions. Each of these steps took time linear in the depth: 28 ms to build 16,000
+/// levels, 40 ms for the verdict, microseconds for each comparison, since the chain is built
+/// equal to its shallow composition (2026-11-22, five depths from 1000 to 16,000 run at once).
 #[test]
-fn a_chain_of_the_five_operations_1000_levels_deep_is_the_shallow_composition() {
-    chain_is_the_shallow_composition(1000);
+fn a_chain_of_the_five_operations_50_000_levels_deep_is_the_shallow_composition() {
+    timed(&format!("a chain of {CHAIN} levels"), || {
+        let t = chain(CHAIN, lit(0));
+        let same = shallow(CHAIN, lit(0));
+        assert!(t.subtype(&same), "the chain under its shallow composition");
+        assert!(same.subtype(&t), "the shallow composition under the chain");
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+    });
+}
+
+/// The levels of [`a_chain_of_the_five_operations_4000_levels_deep_is_not_under_another_bottoms`]:
+/// 800 morphisms and 800 pairs in turn, past the depth at which a search by recursion
+/// overflowed a 2 MiB stack.
+// FINDING (2026-11-22, not yet fixed): the comparison below takes time quadratic in the depth.
+// At 1000, 2000, 4000, 8000 and 16,000 levels of `chain` it took 0.25 s, 0.99 s, 3.18 s,
+// 11.80 s and 48.20 s, about 4 times a doubling (five depths run at once on an 8-thread VM);
+// at 50,000 levels the whole test took 600 s. Pure tuple and pure morphism types compare within
+// the ratio limit (`comparing_deep_tuple_types_scales_with_depth`,
+// `comparing_deep_morphism_types_scales_with_depth`); a morphism of a pair does not. The
+// simulation fails at the top (`Simulation::rows`: the two morphism parts differ), so the time
+// is in building `a - b` or in its `is_empty`. No ratio is checked here until it is fixed.
+const UNEQUAL: usize = 4000;
+
+/// The chain `UNEQUAL` levels deep is not under the shallow composition around another bottom,
+/// on a 2 MiB stack.
+#[test]
+fn a_chain_of_the_five_operations_4000_levels_deep_is_not_under_another_bottoms() {
+    timed(&format!("a chain of {UNEQUAL} levels compared"), || {
+        let t = chain(UNEQUAL, lit(0));
+        assert!(!t.subtype(&shallow(UNEQUAL, lit(1))));
+    });
+}
+
+/// TEMPORARY PROBE (2026-11-22, to be removed): where the time of comparing a morphism of a
+/// pair goes, at four depths of nesting, building `a - b` and deciding it timed apart.
+fn probe(what: &str, level: fn(Type) -> Type) {
+    for n in [200, 400, 800, 1600] {
+        zed_tests::deep::on_small_stack(|| {
+            let nest = |b: Type| (0..n).fold(b, |t, _| level(t));
+            let (a, b) = (nest(lit(0)), nest(lit(1)));
+            let start = std::time::Instant::now();
+            let d = &a - &b;
+            let built = start.elapsed();
+            let start = std::time::Instant::now();
+            assert!(!d.is_empty());
+            eprintln!(
+                "{what} {n} deep: a - b built in {built:.2?}, decided in {:.2?}",
+                start.elapsed()
+            );
+        });
+    }
 }
 
 #[test]
-fn a_chain_of_the_five_operations_2000_levels_deep_is_the_shallow_composition() {
-    chain_is_the_shallow_composition(2000);
+fn probe_morphisms_of_pairs() {
+    probe("{int: (t, 1)}", |t| {
+        Type::exact(Type::int(), Type::tuple(vec![t, lit(1)]))
+    });
 }
 
 #[test]
-fn a_chain_of_the_five_operations_4000_levels_deep_is_the_shallow_composition() {
-    chain_is_the_shallow_composition(4000);
+fn probe_morphisms_of_one_tuples() {
+    probe("{int: (t,)}", |t| {
+        Type::exact(Type::int(), Type::tuple(vec![t]))
+    });
 }
 
 #[test]
-fn a_chain_of_the_five_operations_8000_levels_deep_is_the_shallow_composition() {
-    chain_is_the_shallow_composition(8000);
+fn probe_morphisms() {
+    probe("{int: t}", |t| Type::exact(Type::int(), t));
 }
 
 #[test]
-fn a_chain_of_the_five_operations_16_000_levels_deep_is_the_shallow_composition() {
-    chain_is_the_shallow_composition(16_000);
+fn probe_pairs() {
+    probe("(t, 1)", |t| Type::tuple(vec![t, lit(1)]));
 }
