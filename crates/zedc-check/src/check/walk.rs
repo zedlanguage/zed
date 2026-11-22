@@ -26066,7 +26066,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     // the digits of each decimal), only where `a` has branches, which every other side skips
     // at O(1). The naive form, the union `2 | 1` of the branches' values compared with `f64`,
     // finds no common carrier and rejects the comparison that `x + (if c { 2 } else { 1 })`
-    // accepts. Test `l01_26a_generic_literals::lit_branch_ops::an_if_of_literals_beside_eq_takes_the_other_side_s_carrier`.
+    // accepts. Test
+    // `l01_26a_generic_literals::lit_branch_ops::an_if_of_literals_beside_eq_takes_the_other_side_s_carrier`.
     fn branches_read<'b>(&mut self, a: &'b Arg<'a>, o: &Arg<'a>) -> Cow<'b, Arg<'a>> {
         if a.branches.is_none()
             || a.lit.is_some()
