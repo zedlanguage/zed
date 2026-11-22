@@ -68,6 +68,16 @@ fn take(heaps: &Heaps, n: usize) -> (Heap, Word) {
     at.1.pop().expect("a heap for each run")
 }
 
+/// HEAP-fresh-ratio, measured 2026-11-22 (debug build, a count of instructions): 155.1M at
+/// n = 400,000 and 1,251.7M at 3.2M, about 388 and 391 instructions a level, ratio 8.07, the
+/// same over 4 runs. The 2.45 of 2026-11-14 (471.5M at n, 1,155.7M at 8n) was a cost of the
+/// process the run at n ran in, not of the walk: in one process, each `Heap::fresh` of these
+/// lists run after an earlier one whose heap is kept (here in `used`) takes about 3 times the
+/// instructions of the first, on the meter's own heap (`Meter::work`: 155.1M, then 477.9M at n)
+/// and on glibc's (`Meter::work_on_the_c_heap`: 145.7M, then 468.4M at n), while the ratio of
+/// the two sizes stays 8.0 on either. The run at n was such a later run in 2026-11-14's order;
+/// since 2936015a7 and da9af7352 (2026-11-20) each size runs first in a new process, and the
+/// levels of the two lists are not shared (each `nested` call builds its own).
 #[test]
 fn making_a_deep_value_scales() {
     let n = N;
