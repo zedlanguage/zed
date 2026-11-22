@@ -3211,3 +3211,28 @@ fn a_hole_left_with_two_cases_wakes_the_parts_of_their_groups() {
     );
     hole_false_gives_the_projection_from_scratch(3, &steps, &hole);
 }
+
+/// Seed 60 of [`shortest_paths_give_the_intervals_of_the_projection_block_by_block`], pinned
+/// (LINKED-incremental-scratch-agree (a)). On 9bfce9cf8 its case 16 step 7, the test assumed
+/// false, left the incremental scope at `x0 <= -5` where the projection from scratch was empty:
+/// the incremental path missed a negative cycle. 614b9d0cf (FLAKE-l01-39-scope-one-failure)
+/// found the cause, the potential's order read the edges of one tree only, and
+/// [`a_join_that_moves_a_name_to_another_tree_keeps_its_cycles_found`] is its minimized form.
+/// The draws of [`random_ladders`] are those of the test on 9bfce9cf8 (compared line by line
+/// 2026-11-21), so this runs the failing case itself; every step agrees on 7b58d316e.
+#[test]
+fn shortest_paths_of_seed_60_agree_with_the_projection_from_scratch() {
+    random_ladders(60);
+}
+
+/// Seed 25 of [`holes_in_trees`] at 6 trees, without and with piling, pinned
+/// (LINKED-incremental-scratch-agree (b)). On 9bfce9cf8 its case 4 step 17, the hole `x0 != 1`
+/// false, gave `x7` in `[-1, 1]` incrementally and `[-2, 1]` from scratch. The generator's
+/// draws are those of the test on 9bfce9cf8 (compared line by line 2026-11-21); every step of
+/// both runs agrees on 7b58d316e. The commit that made them agree was not found: this test
+/// holds the agreement from now on.
+#[test]
+fn holes_of_seed_25_agree_with_the_projection_from_scratch() {
+    holes_in_trees(25, false, 6);
+    holes_in_trees(25, true, 6);
+}

@@ -1968,6 +1968,27 @@ fn audit_seeds_against_the_oracle() {
     }
 }
 
+/// Audit seed 108 keeps the oracle's facts in all 9 of its records (FAIL-audit-seed-
+/// 17180819687505084927). Run seed 17180819687505084927 drew audit seed 108 and failed with
+/// (9, 9) against the table's (7, 7): the scope had become exact on that seed and the table had
+/// not followed (4f7bb8726 corrected the entry). The seed is pinned here so that a later loss
+/// of precision on it fails every run, not one run in 64. Checked 2026-11-21 on 7b58d316e: all
+/// 64 even seeds equal their `AUDIT_EVEN` entries and all 128 seeds pass `check_sound`.
+#[test]
+fn audit_seed_108_keeps_the_oracles_facts_in_every_record() {
+    let r = audit(108..109);
+    let got = (
+        r.iter().filter(|r| r.ends).count(),
+        r.iter().filter(|r| r.got == r.found).count(),
+    );
+    assert_eq!(
+        got,
+        (9, 9),
+        "audit seed 108: records with the oracle's ends and facts"
+    );
+    assert_eq!(got, AUDIT_EVEN[54]);
+}
+
 /// Audit seed 126 keeps the oracle's ends in 9 of its 9 records. The atom `3x + y == 4` gives
 /// y its exact set {-8, -5, -2, 1, 4, 7} in one step, where the box gives [-8, 7] and then
 /// narrows it again; with one move of y the block of seven parts was never projected whole,

@@ -9,6 +9,8 @@
 //! purpose (`a57_ctl1.mjs`: bounds at `c*` in place of `p`; `a57_ctl2.mjs`: a part firing only
 //! above `a + k*c`) were run as negative controls against this port and are not committed.
 
+use std::collections::BTreeSet;
+
 use zed_tests::scaling;
 use zedc::store::int::{Int, Num};
 use zedc::store::interval::{End, IntervalSet};
@@ -72,6 +74,11 @@ type Passing = (Vec<(i64, i64)>, Vec<i64>);
 /// The values of each name and of the hub that pass, by enumeration over finite sets: each
 /// name's least and greatest value, and the hub's values; `None` when none pass.
 fn enumerate(sys: &System) -> Option<Passing> {
+    enumerate_values(sys).0
+}
+
+/// [`enumerate`], and each name's values that pass, every one.
+fn enumerate_values(sys: &System) -> (Option<Passing>, Vec<BTreeSet<i64>>) {
     let values = |d: &IntervalSet| -> Vec<i64> {
         d.pieces()
             .flat_map(|(lo, hi)| lo.to_i64().expect("finite")..=hi.to_i64().expect("finite"))
@@ -81,6 +88,7 @@ fn enumerate(sys: &System) -> Option<Passing> {
     let i = |v: &Int| Num::from(v).to_i64().expect("small");
     let n = doms.len();
     let mut out: Option<Passing> = None;
+    let mut sets: Vec<BTreeSet<i64>> = vec![BTreeSet::new(); n];
     let mut x = vec![0i64; n];
     fn rec(
         i: usize,
@@ -89,6 +97,7 @@ fn enumerate(sys: &System) -> Option<Passing> {
         doms: &[Vec<i64>],
         ok: &dyn Fn(&[i64], i64) -> bool,
         out: &mut Option<Passing>,
+        sets: &mut [BTreeSet<i64>],
     ) {
         if i == doms.len() {
             if ok(x, c) {
@@ -99,12 +108,15 @@ fn enumerate(sys: &System) -> Option<Passing> {
                 if o.1.last() != Some(&c) {
                     o.1.push(c);
                 }
+                for (s, v) in sets.iter_mut().zip(x.iter()) {
+                    s.insert(*v);
+                }
             }
             return;
         }
         for &v in &doms[i] {
             x[i] = v;
-            rec(i + 1, c, x, doms, ok, out);
+            rec(i + 1, c, x, doms, ok, out, sets);
         }
     }
     let up = |u: &Upper, x: &[i64], c: i64| x[u.x] + i(&u.k) * c <= i(&u.a);
@@ -115,9 +127,9 @@ fn enumerate(sys: &System) -> Option<Passing> {
             && sys.parts.iter().all(|(u, l)| up(u, x, c) || low(l, x, c))
     };
     for c in values(&sys.hub) {
-        rec(0, c, &mut x, &doms, &ok, &mut out);
+        rec(0, c, &mut x, &doms, &ok, &mut out, &mut sets);
     }
-    out
+    (out, sets)
 }
 
 /// The answer of [`threshold::solve`] in the form [`enumerate`] gives.
@@ -126,7 +138,7 @@ fn solved(sys: &System) -> Option<Option<Passing>> {
     match threshold::solve(sys) {
         Answer::Empty => Some(None),
         Answer::MixedHub => None,
-        Answer::Bounds { names, hub } => Some(Some((
+        Answer::Bounds { names, hub, .. } => Some(Some((
             names.iter().map(|(l, h)| (fin(l), fin(h))).collect(),
             hub.pieces()
                 .flat_map(|(lo, hi)| fin(lo)..=fin(hi))
@@ -207,11 +219,64 @@ fn corpus(seed: u64, count: usize, hub: i64, ks: &[i64]) -> (usize, usize) {
 /// Asserts that [`threshold::solve`]'s answer on `sys` is the enumerated one (`at` names the
 /// component in a failure): `None` when the component is left to S4-hub-mixed, else whether no
 /// value passes.
+///
+/// An answer marked `filled` is also checked value by value: each name's values that pass are
+/// then every one of its own values between its bounds (FAIL-preimage-threshold-hull-unrefused).
 fn component_checked(sys: &System, at: &str) -> Option<bool> {
     let got = solved(sys)?;
-    let want = enumerate(sys);
+    let (want, sets) = enumerate_values(sys);
     assert_eq!(got, want, "{at}: {sys:?}");
+    if let (Answer::Bounds { filled: true, .. }, Some((ends, _))) = (threshold::solve(sys), &want) {
+        for (i, ((lo, hi), d)) in ends.iter().zip(&sys.names).enumerate() {
+            let between: BTreeSet<i64> = (*lo..=*hi).filter(|v| d.contains(*v)).collect();
+            assert_eq!(sets[i], between, "{at}, name {i}, filled: {sys:?}");
+        }
+    }
     Some(want.is_none())
+}
+
+/// A cycle of parts can leave a hole between a name's bounds, so the answer is not `filled`:
+/// with the hub at 0, `x <= 0 || z >= 1` and `z <= 0 || x >= 2` on x in `0..=2` and z in
+/// `0..=1` leave x {0, 2}. And a hub of two values with both signs: `x + 1 <= 3w <= x + 2` on
+/// x in `0..=4`, w in `1..=2`, leaves x {1, 2} at w = 1 and {4} at w = 2. Both gave `filled`
+/// answers before FAIL-preimage-threshold-hull-unrefused, which kept the hull.
+#[test]
+fn a_cycle_of_parts_is_not_filled() {
+    let cycle = System {
+        names: vec![IntervalSet::of(0, 2), IntervalSet::of(0, 1)],
+        hub: IntervalSet::of(0, 0),
+        parts: vec![
+            (upper(0, 0, 0), lower(1, 0, 1)),
+            (upper(1, 0, 0), lower(0, 0, 2)),
+        ],
+        uppers: vec![],
+        lowers: vec![],
+    };
+    assert_eq!(
+        threshold::solve(&cycle),
+        Answer::Bounds {
+            names: vec![(fin(0), fin(2)), (fin(0), fin(1))],
+            hub: IntervalSet::of(0, 0),
+            filled: false,
+        }
+    );
+    assert_eq!(enumerate_values(&cycle).1[0], BTreeSet::from([0, 2]));
+    let mixed = System {
+        names: vec![IntervalSet::of(0, 4)],
+        hub: IntervalSet::of(1, 2),
+        parts: vec![],
+        uppers: vec![upper(0, -3, -1)],
+        lowers: vec![lower(0, 3, -2)],
+    };
+    assert_eq!(
+        threshold::solve(&mixed),
+        Answer::Bounds {
+            names: vec![(fin(1), fin(4))],
+            hub: IntervalSet::of(1, 2),
+            filled: false,
+        }
+    );
+    assert_eq!(enumerate_values(&mixed).1[0], BTreeSet::from([1, 2, 4]));
 }
 
 /// A new seed for [`Rng`] ([`zed_tests::instances::Rng::fresh`], printed with `what`), below
@@ -321,6 +386,7 @@ fn the_walk_is_exact() {
             Answer::Bounds {
                 names: vec![(fin(1), fin(3)); n],
                 hub: IntervalSet::of(0, 1),
+                filled: true,
             }
         );
     }
@@ -347,6 +413,7 @@ fn an_unbounded_hub_is_searched_by_doubling() {
         Answer::Bounds {
             names: vec![(End::NegInf, End::PosInf), (End::NegInf, fin(7))],
             hub: IntervalSet::range(End::NegInf, fin(5)),
+            filled: true,
         }
     );
     // With no bound on y every hub value passes.
@@ -359,6 +426,7 @@ fn an_unbounded_hub_is_searched_by_doubling() {
         Answer::Bounds {
             names: vec![(End::NegInf, End::PosInf), (End::NegInf, End::PosInf)],
             hub: IntervalSet::top(),
+            filled: true,
         }
     );
 }
@@ -379,6 +447,7 @@ fn an_unbounded_hub_below_is_searched_by_doubling() {
         Answer::Bounds {
             names: vec![(fin(-100), End::PosInf), (End::NegInf, fin(7))],
             hub: IntervalSet::of(-5, 100),
+            filled: true,
         }
     );
 }
@@ -500,6 +569,7 @@ fn a_wide_finite_hub_is_searched() {
             Answer::Bounds {
                 names,
                 hub: IntervalSet::of(0, w / 2),
+                filled: true,
             },
             "w = {w}"
         );

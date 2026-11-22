@@ -16420,9 +16420,12 @@ impl Scope {
                     // (the walk through a shared name 9.2 to 9.0 times at 8n). Running the due
                     // parts here instead, to the loop's fixed point, gave the exact sets but
                     // 19.1 and 22.5 times at 8n on `xst::s4::bench` (holes cut one at a time,
-                    // class cases moved), past the limit. The hull this exit leaves where the
-                    // test fails is coarser than exact without a refusal (P197); that is a
-                    // fault of the answer, filed apart from the record. Tests:
+                    // class cases moved), past the limit. The hull itself is exact here: the
+                    // solve reaches this exit only where it shows that every value between a
+                    // name's bounds passes (`filled` at [`threshold::solve`]), else
+                    // `project_threshold` gives false and the parts are projected one by one
+                    // below (FAIL-preimage-threshold-hull-unrefused; the example above, with y
+                    // the hub of two values, now leaves that exit). Tests:
                     // `product::tests::projected_entries_after_a_threshold_solve_hold_at_its_
                     // snapshot` (red with the record and no test: the entry of
                     // `3y - x - 1 >= 0` recorded at x `1..=4`, y `1..=2`) and
@@ -17383,11 +17386,16 @@ impl Scope {
     /// Meets each name of the threshold-implication component `shape` with its exact bounds,
     /// and the hub with its values that pass ([`threshold::solve`]); `false`, changing nothing,
     /// when the hub has three or more values and its coefficients have both signs (plan row
-    /// S4-hub-mixed).
+    /// S4-hub-mixed); and `false`, changing nothing, when the solve does not show that the
+    /// values between each name's bounds pass (`filled` false at [`threshold::solve`]): meeting
+    /// the names with their bounds then kept a hull with no refusal, `x + 1 <= 3y <= x + 2` on
+    /// `0..=4` leaving x in `1..=4` where the exact set is {1, 2, 4}
+    /// (FAIL-preimage-threshold-hull-unrefused). The caller then projects the block's parts
+    /// one by one, exact where it records no refusal (Lemma E at [`Scope::record`]).
     fn project_threshold(&mut self, shape: &threshold::Shape) -> bool {
         let sys = shape.system(|n| self.get(n).ints().clone());
         match threshold::solve(&sys) {
-            threshold::Answer::MixedHub => false,
+            threshold::Answer::MixedHub | threshold::Answer::Bounds { filled: false, .. } => false,
             threshold::Answer::Empty => {
                 match shape.names.first().or(shape.hub.as_ref()) {
                     Some(n) => self.empty_at(&n.clone()),
@@ -17395,7 +17403,7 @@ impl Scope {
                 }
                 true
             }
-            threshold::Answer::Bounds { names, hub } => {
+            threshold::Answer::Bounds { names, hub, .. } => {
                 for (n, (lo, hi)) in shape.names.iter().zip(names) {
                     self.meet_own(n, IntervalSet::range(lo, hi));
                 }
@@ -28565,6 +28573,47 @@ mod tests {
             })
             .count();
         assert_eq!(live, steps.len(), "{:?}", s.projected);
+    }
+
+    /// A threshold component whose values between a name's bounds do not all pass keeps the
+    /// exact values, with no refusal (FAIL-preimage-threshold-hull-unrefused): the row's case
+    /// `x + 1 <= 3y <= x + 2` on `0..=4`, y the hub of two values `1..=2` and both signs,
+    /// exact x {1, 2, 4}; red before the fix (2026-11-21, on 7b58d316e: x kept `1..=4`). A
+    /// cycle of parts (`filled` at [`threshold::solve`], case (i)) also leaves the exit, but
+    /// the parts projected one by one keep the same hull there: with the hub w fixed at 0,
+    /// `x + w <= 0 || z - w >= 1` and `z <= 0 || x >= 2`, bounds given after the parts, keep
+    /// x in `0..=2` where the exact set is {0, 2}; deferred to HOLES-exact-between.
+    #[test]
+    fn a_threshold_hull_with_a_hole_is_not_kept() {
+        use zed_kernel::term::build::{lit, prim, var};
+        let le = |a, b| prim(Prim::Le, vec![a, b]);
+        let ge = |a, b| prim(Prim::Ge, vec![a, b]);
+        let p = Premises::new();
+        let values = |s: &Scope, n: &str| -> Vec<i64> {
+            (s.get(n).ints().pieces())
+                .flat_map(|(lo, hi)| lo.to_i64().expect("finite")..=hi.to_i64().expect("finite"))
+                .collect()
+        };
+        let mut s =
+            Scope::new(["x", "y"].map(|n| (Arc::<str>::from(n), Product::of_type(Type::int()))));
+        for n in ["x", "y"] {
+            s = s.assume(&ge(var(n), lit(0)), true, &p);
+            s = s.assume(&le(var(n), lit(4)), true, &p);
+        }
+        let three_y = || prim(Prim::Mul, vec![lit(3), var("y")]);
+        s = s.assume(
+            &le(prim(Prim::Add, vec![var("x"), lit(1)]), three_y()),
+            true,
+            &p,
+        );
+        s = s.assume(
+            &le(three_y(), prim(Prim::Add, vec![var("x"), lit(2)])),
+            true,
+            &p,
+        );
+        assert_eq!(values(&s, "x"), vec![1, 2, 4], "(a) x: {s}");
+        assert_eq!(values(&s, "y"), vec![1, 2], "(a) y: {s}");
+        assert!(s.refusals.is_empty(), "(a) no refusal: {s}");
     }
 
     /// The same check on random histories of rows on `a`, `x` and `y`, disjunctions of two rows

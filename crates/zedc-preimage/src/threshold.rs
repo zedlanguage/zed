@@ -93,6 +93,11 @@ pub enum Answer {
         names: Vec<(End, End)>,
         /// The hub's values.
         hub: IntervalSet,
+        /// Whether every value of each name's own values between its least and greatest is
+        /// taken by some point that passes, so that those values, met with `names`, are the
+        /// exact values of the name that pass. `false` when that is not shown: a value
+        /// between the ends may then pass or not ([`solve`], `filled`).
+        filled: bool,
     },
     /// The hub has three or more values and the coefficients have both signs: each value is
     /// solved exactly, but the values can be many (plan row S4-hub-mixed).
@@ -438,20 +443,112 @@ fn mirrored(sys: &System) -> System {
 /// neither sign, so a component with all coefficients 0 goes to `rising`, where (1) of its
 /// proof holds with equality. The mirror adds O(N + P) for the hub's P pieces
 /// (`IntervalSet::neg`), once.
+///
+/// `filled` (FAIL-preimage-threshold-hull-unrefused): the answer gives each name's least and
+/// greatest value only, and the values between them can leave holes, in two ways. (i) A cycle
+/// of parts through a name: on `x` in `0..=2` and `z` in `0..=1`, the parts
+/// `x <= 0 || z >= 1` and `z <= 0 || x >= 2` read "x >= 1 forces z >= 1, which forces
+/// x >= 2", so x = 1 passes nowhere and x takes {0, 2}, where the bounds give `0..=2`.
+/// (ii) A hub of two values with both signs, at `mixed`: `x + 1 <= 3w <= x + 2` with w in
+/// `1..=2` takes x in {1, 2} at w = 1 and {4} at w = 2, and their join `1..=4` holds 3.
+/// `filled` is true when neither can happen, and then the values that pass of each name `x`
+/// are exactly `x`'s own values met with `[lo, hi]`. Proof, with no cycle of parts (no
+/// sequence of parts each with its lower arm's name the next one's upper arm's name, the last
+/// back to the first; `acyclic`). Fix the hub at `c` and take `v`, one of `x`'s values with
+/// `lo_x <= v <= hi_x`, `lo` and `hi` the least and greatest members at `c` ([`members`]).
+/// Run the forward loop of [`members`] again from `lo` with `lo_x` raised to `v` (a member of
+/// `x`'s values, at or above `lo_x`). Call the result `q`. (1) Only names reached from `x`
+/// along parts are raised (a name is pushed only when a part from a raised name fires), and
+/// `x` is not among them, as that would close a cycle; so `q_x = v`. (2) `q <= hi`: `hi` is a
+/// point that passes with `hi_x >= v`, so it lies at or above the point the loop starts from,
+/// and each firing raises a name to the least member at or above a bound that every point
+/// that passes with `x >= v` meets ((a) of [`members`] for the points with `x >= v`). (3) `q`
+/// passes: each value is one of its name's values (from [`ceil`] or the start); the base
+/// upper bounds hold since `q <= hi` and `hi` meets them, and they only grow easier lower
+/// down; the base lower bounds hold since `q >= lo`; a part holds by its upper arm when its
+/// threshold is above its name's value, and otherwise it fired ((b) of [`members`], every name
+/// raised being pushed again), so its lower arm holds. So `v` passes at `c`. Over the hub's
+/// values: with every coefficient at least 0 the points that pass are those at `p` (`rising`,
+/// step (3)), so the claim at `p` is the claim; when the hub has no least value, the values of
+/// `x` that pass at `c` grow as `c` falls and each is `x`'s own values met with an interval,
+/// so their union is `x`'s own values met with the union of those intervals, an interval whose
+/// ends are the limits `rising` gives; the mirror changes neither the names nor the parts; and
+/// at `mixed`, each hub value gives such a set, and `filled` there also asks that their union
+/// leave no value of `x` between the two intervals. A cycle need not leave a hole, so `false`
+/// is "not shown", not "a hole": the caller then projects the parts one by one
+/// ([`crate::product`], `project_threshold`). Cost: `acyclic` is O(n + N), below the solve.
+/// Tests: `l01_39_scope_relations::xst::threshold`, the corpora (each `filled` answer checked
+/// against every value by enumeration) and `a_cycle_of_parts_is_not_filled`;
+/// `product::tests::a_threshold_hull_with_a_hole_is_not_kept`.
 pub fn solve(sys: &System) -> Answer {
     if sys.hub.is_empty() || sys.names.iter().any(IntervalSet::is_empty) {
         return Answer::Empty;
     }
-    match signs(sys) {
+    let answer = match signs(sys) {
         (true, true) => mixed(sys),
         (false, true) => match rising(&mirrored(sys)) {
-            Answer::Bounds { names, hub } => Answer::Bounds {
+            Answer::Bounds { names, hub, filled } => Answer::Bounds {
                 names,
                 hub: hub.neg(),
+                filled,
             },
             a => a,
         },
         _ => rising(sys),
+    };
+    match answer {
+        Answer::Bounds { names, hub, filled } => Answer::Bounds {
+            names,
+            hub,
+            filled: filled && acyclic(sys),
+        },
+        a => a,
+    }
+}
+
+/// Whether no cycle of parts runs through the names: the graph with an edge from each part's
+/// upper arm's name to its lower arm's name has no cycle. Kahn's algorithm (A. B. Kahn,
+/// "Topological sorting of large networks", Commun. ACM 5(11), 558-562, 1962,
+/// doi:10.1145/368996.369025): a graph has no cycle exactly when repeatedly removing a node
+/// with no edge in removes every node. O(n + N) for n names and N parts.
+fn acyclic(sys: &System) -> bool {
+    let n = sys.names.len();
+    let mut into = vec![0usize; n];
+    let mut out: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (up, low) in &sys.parts {
+        out[up.x].push(low.y);
+        into[low.y] += 1;
+    }
+    let mut ready: Vec<usize> = (0..n).filter(|&v| into[v] == 0).collect();
+    let mut removed = 0;
+    while let Some(v) = ready.pop() {
+        removed += 1;
+        for &w in &out[v] {
+            into[w] -= 1;
+            if into[w] == 0 {
+                ready.push(w);
+            }
+        }
+    }
+    removed == n
+}
+
+/// Whether some value of `d` lies strictly between the two ranges `a` and `b` and in
+/// neither, so that the join of the two ranges holds a value of `d` their union does not.
+fn leaves_gap(d: &IntervalSet, a: &(End, End), b: &(End, End)) -> bool {
+    let (a, b) = if a.0 <= b.0 { (a, b) } else { (b, a) };
+    if a.1 >= b.0 {
+        return false;
+    }
+    let (End::Fin(h), End::Fin(l)) = (&a.1, &b.0) else {
+        // An infinite end on the inner side of two ranges that do not meet does not arise;
+        // answered "a gap", which only sends the component to the parts.
+        return true;
+    };
+    let above = End::Fin(Num::from(&(&int(h) + &Int::ONE)));
+    match d.piece_at_or_above(&above) {
+        Some((lo, _)) => lo.clone().max(above) < End::Fin(l.clone()),
+        None => false,
     }
 }
 
@@ -479,6 +576,9 @@ fn mixed(sys: &System) -> Answer {
     }
     let mut names: Option<Vec<(End, End)>> = None;
     let mut hub = IntervalSet::empty();
+    // Whether no value of a name lies between its ranges at the two hub values (`filled` at
+    // [`solve`], case (ii)).
+    let mut filled = true;
     for c in &values {
         let Some((lo, hi)) = members(sys, At::Value(c)) else {
             continue;
@@ -486,16 +586,19 @@ fn mixed(sys: &System) -> Answer {
         let these: Vec<(End, End)> = lo.iter().zip(&hi).map(|(l, h)| (end(l), end(h))).collect();
         names = Some(match names {
             None => these,
-            Some(was) => was
-                .into_iter()
-                .zip(these)
-                .map(|((l0, h0), (l1, h1))| (l0.min(l1), h0.max(h1)))
-                .collect(),
+            Some(was) => {
+                filled &= (sys.names.iter().zip(&was).zip(&these))
+                    .all(|((d, a), b)| !leaves_gap(d, a, b));
+                was.into_iter()
+                    .zip(these)
+                    .map(|((l0, h0), (l1, h1))| (l0.min(l1), h0.max(h1)))
+                    .collect()
+            }
         });
         hub = hub.join(&IntervalSet::point(Num::from(c)));
     }
     match names {
-        Some(names) => Answer::Bounds { names, hub },
+        Some(names) => Answer::Bounds { names, hub, filled },
         None => Answer::Empty,
     }
 }
@@ -596,6 +699,7 @@ fn rising(sys: &System) -> Answer {
     Answer::Bounds {
         names,
         hub: sys.hub.meet(&cut),
+        filled: true,
     }
 }
 
