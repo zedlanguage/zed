@@ -15200,7 +15200,8 @@ impl Ty {
             return None;
         }
         // Its numbers are those of one numeric carrier: read off one split, where a meet and
-        // a subtype test per carrier would build each part anew.
+        // a subtype test per carrier would build each part anew. Not written through
+        // [`Self::numeric_carriers`], which collects a vector this hot path does not need.
         let s = self.set.split();
         let mut present = Carrier::NUMBERS
             .into_iter()
@@ -15209,6 +15210,23 @@ impl Ty {
             (Some(c), None) => Some(c),
             _ => None,
         }
+    }
+
+    /// The numeric carriers this type holds numbers of, in the order of `Carrier::NUMBERS`,
+    /// when it holds no variable or unknown, which could stand for numbers of another; `None`
+    /// otherwise. Its other members do not count, as at [`Self::numeric_carrier`], which is the
+    /// case of one carrier: `int | rat` gives `[int, rat]`. One split of the set, where a meet
+    /// and a subtype test per carrier would build each part anew; O(number of carriers).
+    pub fn numeric_carriers(&self) -> Option<Vec<Carrier>> {
+        if !self.vars.is_empty() || self.dynamic {
+            return None;
+        }
+        let s = self.set.split();
+        Some(
+            (Carrier::NUMBERS.into_iter())
+                .filter(|c| s.bases[c.base()].is_some())
+                .collect(),
+        )
     }
 
     /// Whether it holds no variable and no unknown, outside functions, at any depth, in its

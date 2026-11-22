@@ -5550,6 +5550,34 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.restrict_asking(k, mask, what, span, mask & OTHER == 0)
     }
 
+    /// [`Self::restrict`] of class `k` to `m`, the carriers of a closed parameter type the
+    /// callee declares, as `int | rat` of `f(x: int | rat)`, at an argument whose class `k` is.
+    /// Where `m` holds `rat` and the restriction leaves `rat` the class's one number, the
+    /// declared type asks the class for `rat` ([`Class::rat`]), and its literals take it, as
+    /// DESIGN.md sec:domains fixes a literal's carrier "at a declared type, that type's". So
+    /// `g() = f(x: 1 / 2)` gives `1r/2r`, where `/` leaves `rat` alone of the declared two, as
+    /// the top level does ([`Ck::lit_param_carrier_of`]; row FAIL-int-or-rat-param-division;
+    /// test `a_division_of_literals_at_an_int_or_rat_parameter_takes_rat`). Operators alone
+    /// that leave `rat`, as in `2 ^ (2^100 - 1) / 3`, meet no declared parameter type and
+    /// still ask for it nowhere, so they are rejected as before (POW-domains; checked by the
+    /// l01_26a and POW tests). A type that leaves two numbers or more, `rat | f64` with
+    /// `1 / 2`, asks for none. O(1) beside the restriction.
+    fn restrict_declared(&mut self, k: usize, m: u8, what: &str, span: Span) -> bool {
+        if !self.restrict(k, m, what, span) {
+            return false;
+        }
+        let r = self.find(k);
+        let numbers = self.classes[r].mask & Carrier::NUMBER_BITS;
+        if m & numbers == Carrier::Rat.bit()
+            && numbers == Carrier::Rat.bit()
+            && !self.classes[r].rat
+        {
+            self.touch(r);
+            self.classes[r].rat = true;
+        }
+        true
+    }
+
     /// [`Self::restrict`], which asks the class for a carrier if `asks`.
     fn restrict_asking(&mut self, k: usize, mask: u8, what: &str, span: Span, asks: bool) -> bool {
         let r = self.find(k);

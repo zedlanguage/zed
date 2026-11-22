@@ -7713,7 +7713,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(e) = a.expr.filter(|e| self.lit_ops.contains(&e.span)) else {
                 continue;
             };
-            let Some(c) = lit_param_carrier(sig, i) else {
+            let Some(c) = self.lit_param_carrier_of(sig, i, e) else {
                 continue;
             };
             if self.lit_takes(e, c) {
@@ -7769,8 +7769,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///    `follows_error` and misfit included (test cases `z: true + 1` and `z: "a"`). The
     ///    arguments are `s.got`, indexed by slot, so its index `i` is `j`; the signature is
     ///    `s.inst` or `s.sig`. `instantiated` keeps a single arrow and replaces type
-    ///    variables only, and the parameter `j` names one carrier and no variable, so
-    ///    `lit_param_carrier` gives the same `c` (test case `g(x: 1 / 2, xs: 3, f: ...)`).
+    ///    variables only, and the parameter `j` names its numbers and no variable, so
+    ///    `lit_param_carrier_of` gives the same `c`: its one carrier, or else the one of its
+    ///    carriers `lit_fit` lets `e` take, `lit_fit` reading only `e` and the carrier (test
+    ///    cases `g(x: 1 / 2, xs: 3, f: ...)` and `f(x: int | rat)` with `1 / 2`).
     /// 4. `lit_args_take` reads `lit_ops.contains(&e.span)`. The walk of `e` at the top
     ///    level outside a trial records exactly what `lit_op_recorded` reads off the text
     ///    (its doc); that the two agree is read, not proved by a test of its own: where they
@@ -7806,8 +7808,54 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.level != 0 || self.trying || self.replaying != 0 || s.curry {
             return None;
         }
-        let c = lit_param_carrier(&s.sig, j)?;
-        (lit_op_recorded(e, self.t.text) && self.lit_fit(e, c).0).then_some(e.span)
+        if !lit_op_recorded(e, self.t.text) {
+            return None;
+        }
+        let c = self.lit_param_carrier_of(&s.sig, j, e)?;
+        self.lit_fit(e, c).0.then_some(e.span)
+    }
+
+    /// The carrier the operation on literals alone `e` takes at the parameter `i` of `sig`:
+    /// [`lit_param_carrier`]'s where the arrows declare one, else, where every arrow declares
+    /// numbers of the same two or more carriers there, the one of them `e` has a value at
+    /// ([`Self::lit_fit`]), when it is the only one and not `int`. DESIGN.md sec:domains: a
+    /// use fixes a literal's carrier "at a declared type, that type's", and an operation on
+    /// literals alone "takes the carrier of what it meets". At `f(x: int | rat)`, `1 / 2` has
+    /// no value at `int` (`/` has no arrow there) and one at `rat`, so it is `1r/2r` (row
+    /// FAIL-int-or-rat-param-division). `1 + 2` has a value at `int`, so it is left to the
+    /// walk, which types it `int` as at an `int` parameter ([`lit_param_reads`]); `1 / 2` at
+    /// `rat | f64` has a value at both, so no use fixes one, and it is rejected with its
+    /// repairs as before.
+    ///
+    /// Why the choice is sound: the carrier taken is one the parameter declares, so the
+    /// argument's type `c` lies in the parameter's type at every arrow, and [`Self::lit_takes`]
+    /// then checks that `e`'s value at `c` is a value of `c`, as for one declared carrier. Why
+    /// it is the only reading: each other declared carrier either gives `e` no value (so no
+    /// reading at it runs) or is `int`, and an `int` reading excludes the choice. Cost: one
+    /// read of each arrow's parameter, and [`Self::lit_fit`] at each declared carrier, at most
+    /// the four numeric ones, each kept by operation and carrier ([`Ck::lit_fits`]), so
+    /// O(size of `e`) once. Test:
+    /// `l01_26a_generic_literals::call_arguments::a_division_of_literals_at_an_int_or_rat_parameter_takes_rat`.
+    fn lit_param_carrier_of(&mut self, sig: &Sig, i: usize, e: &Expr) -> Option<Carrier> {
+        if let Some(c) = lit_param_carrier(sig, i) {
+            return Some(c);
+        }
+        let mut at =
+            (sig.arrows.iter()).map(|a| a.params.get(i).and_then(|p| p.numeric_carriers()));
+        let cs = at.next()??;
+        if cs.len() < 2 || !at.all(|o| o.as_ref() == Some(&cs)) {
+            return None;
+        }
+        let mut fits = Vec::new();
+        for c in cs {
+            if self.lit_fit(e, c).0 {
+                fits.push(c);
+            }
+        }
+        match fits[..] {
+            [c] if c != Carrier::Int => Some(c),
+            _ => None,
+        }
     }
 
     /// The errors after the first `from` that the operation at `span` wrote, recorded where it
@@ -27689,7 +27737,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             };
                             self.need(k, kind, false, span);
                         }
-                        self.restrict(k, mask_of(p), what, span)
+                        self.restrict_declared(k, mask_of(p), what, span)
                     }
                     None => match &piece {
                         Piece::Fn(s) if let Some(ok) = self.fn_into_classes(s, p, what, span) => ok,

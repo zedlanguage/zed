@@ -188,3 +188,19 @@ fn a_rejection_a_call_drops_is_not_built_and_one_that_stands_is_unchanged() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// Row FAIL-int-or-rat-param-division: at a parameter declared `int | rat`, `/` has an arrow at
+/// `rat` alone among the parameter's carriers, so an operation on literals alone holding a `/`
+/// takes `rat` there, at the top level and in a body alike, as it does at `f(x: rat)`; `+`, which
+/// has an arrow at both, leaves the integer literals at `int`.
+#[test]
+fn a_division_of_literals_at_an_int_or_rat_parameter_takes_rat() {
+    for uses in ["y = f(x: 1 / 2);\n", "g() = f(x: 1 / 2);\ny = g();\n"] {
+        let src = format!("f(x: int | rat) = x;\n{uses}");
+        assert_eq!(y(&src), "1r/2r", "{src}");
+    }
+    let src = "f(x: int | rat) = x;\ny = f(x: (1 + 2) / 4);\n";
+    assert_eq!(y(src), "3r/4r");
+    let src = "f(x: int | rat) = x;\ny = f(x: 1 + 2);\n";
+    assert_eq!(y(src), "3");
+}
