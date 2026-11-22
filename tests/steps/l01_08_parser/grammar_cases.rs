@@ -72,11 +72,13 @@ pub const CASES: &[(&str, &str, u32, &str, &str)] = &[
     ),
     ("Annot#0", "Annot", 0, "@inline", "@inline"),
     ("Annot#0", "Annot", 0, "@inline()", "@inline ( )"),
+    // A case holding an annotation starts at `Annot`: the formatter's places use `@` as the
+    // hole, so none can hold an annotation's arguments alone (l01_13 alternatives).
     (
         "AnnotArgs#0",
-        "AnnotArgs",
+        "Annot",
         0,
-        "@a, x, b: 1, ...",
+        "@assume(@a, x, b: 1, ...)",
         "@a , x , b : 1 , ...",
     ),
     ("AnnotArgs#0", "AnnotArgs", 0, "x > 0,", "x > 0 ,"),
@@ -95,7 +97,13 @@ pub const CASES: &[(&str, &str, u32, &str, &str)] = &[
         "@require(@target(#cpu, cores: 8))",
         "@target ( #cpu , cores : 8 )",
     ),
-    ("AnnotArg#0", "AnnotArgs", 0, "@a, @b(1), x", "@b ( 1 )"),
+    (
+        "AnnotArg#0",
+        "Annot",
+        0,
+        "@assume(@a, @b(1), x)",
+        "@b ( 1 )",
+    ),
     // Decl: each alternative is a `~` mark.
     ("Decl#0", "Decl", 0, "local x = 1;", "local x = 1 ;"),
     ("Decl#1", "Decl", 0, "initial x = 0;", "initial x = 0 ;"),
