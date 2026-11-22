@@ -305,9 +305,10 @@ fn a_doubling_chain_past_the_bound_is_read_in_time_near_its_length() {
 /// to the solver over the whole formula (`presburger::project_each`). Before item
 /// PREIMAGE-slow-rounds each question probed every disjunct again; now the points found
 /// are kept across the questions and a disjunct is searched from both ends of the chain.
-/// What is left is the probe of the formula itself, whose `learn` settles a bound at
+/// What was left was the probe of the formula itself, whose `learn` settled a bound at
 /// stage `i` in about `i` rounds of the whole formula (COMPLEXITY.md
-/// PREIMAGE-slow-rounds).
+/// PREIMAGE-slow-rounds); at 3000 to 24,000 stages it reads 8.03 times the instructions
+/// (2026-11-22, PRES-settle-chain-rounds).
 #[test]
 fn a_staged_chain_under_false_is_read_in_time_near_its_length() {
     crate::scaling::check_order(

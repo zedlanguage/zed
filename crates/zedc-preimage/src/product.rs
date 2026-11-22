@@ -25119,7 +25119,9 @@ impl ArmNormals {
 // is known that loses a bound to the last rule: LAZY-hub-cleanups compared 15 rows of a case
 // on the name of a second equality with the oracle; the answers differed only at the oracle's
 // window, in congruences, or in one bound that adding every such equality does not give
-// either (`families::two_eq_case_against_the_oracle`, PRODUCT-two-eq-round).
+// either (`b <= 2` in `families::two_eq_case_against_the_oracle`, PRODUCT-two-eq-round), which
+// the exact cover of the projection (PRES-pugh-work-budget) now finds, so no part of that
+// case loses it here (the test passes on b5f736dc6, colab run of 2026-11-22).
 // Pairs of names that only rows on one name reach: naive version, every pair
 // of such names, O(s^2) for s names, quadratic on two arms of s bounds each. Used: the pair
 // when there are just two, and the pairs a row of `with` is on, O(w log s); lost: a pair no

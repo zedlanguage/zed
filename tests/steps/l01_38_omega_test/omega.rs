@@ -1581,6 +1581,48 @@ fn twin_definitions_are_merged_before_a_tied_projection() {
     assert_eq!(values_of_i(&f, -40, 40), vec![-9], "{f}");
 }
 
+/// `i == 3*q(2k) + q(2k+1) && 0 <= q(2k+1) <= 2`, the quotient and remainder of `i` by 3, written
+/// twice for each `k` below `n` (atoms `q(4k)`, `q(4k+1)` and `q(4k+2)`, `q(4k+3)`), each pair of
+/// twin quotients summing to at least 6 and each pair of twin remainders to at most `rem`, and
+/// `i <= 20`.
+fn twin_quotients(n: usize, rem: i128) -> Formula {
+    let mut parts = Vec::new();
+    for k in 0..n {
+        let q = |j: usize| format!("q{}", 4 * k + j);
+        for (a, b) in [(q(0), q(1)), (q(2), q(3))] {
+            parts.push(aux_eq(&[("i", 1), (a.as_str(), -3), (b.as_str(), -1)], 0));
+            parts.push(aux_ge(&[(b.as_str(), 1)], 0));
+            parts.push(aux_ge(&[(b.as_str(), -1)], 2));
+        }
+        parts.push(aux_ge(&[(q(0).as_str(), 1), (q(2).as_str(), 1)], -6));
+        parts.push(aux_ge(&[(q(1).as_str(), -1), (q(3).as_str(), -1)], rem));
+    }
+    parts.push(aux_ge(&[("i", -1)], 20));
+    Formula::and(parts)
+}
+
+#[test]
+fn twin_quotients_and_remainders_are_merged_before_a_tied_projection() {
+    // PROJECT-twin-qr: the twin definitions of a quotient and its remainder define two atoms in
+    // one conjunct, so `twins_merged` kept them apart and the projection stayed tied. Each twin
+    // pair is one pair of values at every point (the window of the remainder is narrower than
+    // the divisor), so the projection is that of one copy: twin quotients summing to at least
+    // 6 give `i >= 9`, and with `i <= 20`, `i` in `9..=20`.
+    for n in 1..=3 {
+        let f = twin_quotients(n, 4);
+        assert_eq!(
+            values_of_i(&f, -40, 40),
+            (9..=20).collect::<Vec<_>>(),
+            "{f}"
+        );
+        let (each, _) = project_each(&f, &[sym("i")]).expect("answered");
+        let got = each[0].clone().expect("answered");
+        let want =
+            IntervalSet::from_pieces(vec![(End::Fin(Num::from(9)), End::Fin(Num::from(20)))]);
+        assert_eq!(got, want, "n = {n}: {f}");
+    }
+}
+
 /// The hole_end family's formula (`l01_39_scope_relations::families`) with `k` padding
 /// disjunctions `x + j*y >= -1000j || x - j*y >= 1000j`, the first disjunct of each true on
 /// the box of `x` and `y`.

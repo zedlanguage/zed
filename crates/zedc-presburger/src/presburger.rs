@@ -13121,12 +13121,15 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
                 let mut q = f.clone();
                 q.cons.push(c);
                 // Complexity tradeoff: on a chain of definitions, a bound at the i-th stage
-                // reaches the end of the chain in about i rounds of `settle`, each a pass over the
-                // whole formula, so the bounds of a chain of k stages cost O(k^2) passes, cubic in
-                // k in all (`a_staged_chain_under_false_is_read_in_time_near_its_length` in
-                // zedc-preimage, ignored; 22.4 times the bytes from 4 to 32 stages). Propagating
-                // the bound along the chain's definitions in one pass is item
-                // PRES-settle-chain-rounds; every bound recorded stays proved.
+                // reached the end of the chain in about i rounds of `settle`, each a pass over
+                // the whole formula, so the bounds of a chain of k stages cost O(k^2) passes,
+                // cubic in k in all (22.4 times the bytes from 4 to 32 stages, PREIMAGE-slow-rounds).
+                // Measured since: `a_staged_chain_under_false_is_read_in_time_near_its_length`
+                // in zedc-preimage, no longer ignored, reads 8.03 times the instructions from
+                // 3000 to 24,000 stages (DynamoRIO count on a VM, b5f736dc6, 2026-11-22), so the
+                // chain no longer pays those rounds; which later change removed them is not
+                // traced (PRES-settle-chain-rounds closed by that measurement). Every bound
+                // recorded stays proved.
                 matches!(settle(q, false), Ok(None))
             };
             if !none(&ws[0]) {
@@ -22189,9 +22192,15 @@ fn projections_met(a: Result<Each, Refusal>, b: Result<Each, Refusal>) -> Result
 /// The atoms are numbered as in value numbering: an atom with one defining conjunct is
 /// numbered once every other atom of that conjunct defined so has been, by the conjunct
 /// written with the atom as `#` and each other atom as its number; two atoms with the same
-/// such conjunct get one number. An atom used as a factor of a product (unless `factors_too`),
-/// an atom with two defining conjuncts or none, an atom whose conjunct defines another atom
-/// too, and an atom whose definition reaches itself through others, is its own number.
+/// such conjunct get one number. A conjunct that defines two atoms as a quotient and a
+/// remainder, one pair at most for each value of its other atoms ([`quotient_pair`]), numbers
+/// the pair at once by the conjunct with both written as placeholders and the remainder's
+/// window, so two pairs defined alike are merged pairwise (PROJECT-twin-qr): `D(q, r, a)` and
+/// `D(q', r', a)` with `D` allowing one pair give `q == q'` and `r == r'` at every point, and
+/// the argument above holds for each. An atom used as a factor of a product (unless
+/// `factors_too`), an atom with two defining conjuncts or none, an atom whose conjunct defines
+/// another atom too (other than such a pair), and an atom whose definition reaches itself
+/// through others, is its own number.
 ///
 /// With `factors_too`, a factor of a product may be replaced as well, and each product of a
 /// replaced factor by the product of the factors that replaced them (`x * y` by `x * x` when
@@ -22212,9 +22221,11 @@ fn projections_met(a: Result<Each, Refusal>, b: Result<Each, Refusal>) -> Result
 // Complexity tradeoff: two atoms are found equal only through definitions alike as written,
 // up to the order of the parts, `Formula::and`'s tightening and the numbers of the other atoms:
 // equal atoms defined by different formulas, by a disjunction of three cases or more, by a
-// conjunct that defines two atoms of a cycle (`i == 3 * q0 + q1`, with `q0` and `q1` both
-// unknown), or by two conjuncts, stay apart, and the projection keeps the refusals the tie
-// gives. The naive way compares the definitions of each pair of atoms: O(A²) comparisons for
+// conjunct that defines two atoms other than as a quotient and a remainder with a window
+// ([`quotient_pair`]; `i == 3 * q0 + q1` with `q1` unbounded, or three atoms), or by two
+// conjuncts, stay apart, and the projection keeps the refusals the tie gives. A quotient pair
+// costs one more look at its conjunct's top-level parts and at the one-atom constraints of
+// its remainder, read once into a map: O(N) in all. The naive way compares the definitions of each pair of atoms: O(A²) comparisons for
 // A defined atoms, each as long as a conjunct. Here each step is linear or near it, in the
 // size N of the formula's distinct parts: one walk of the formula with a visited set
 // ([`functional`], whose unions merge the smaller set into the larger, O(N log N)); the atoms
@@ -22277,31 +22288,62 @@ fn twins_merged(
     for &i in def.values() {
         *defined.entry(i).or_default() += 1;
     }
+    // A conjunct that defines two atoms as a quotient and a remainder ([`quotient_pair`],
+    // PROJECT-twin-qr) defines the pair as one: the pair is numbered at once, under its
+    // quotient (the lead), by the conjunct with both written as placeholders and the
+    // remainder's window. The windows read the one-atom constraints of the top level.
+    let mut alone: HashMap<&Atom, Vec<(Int, Int, Rel)>> = HashMap::new();
+    for c in &conjuncts {
+        if let Formula::Con(k) = c
+            && k.lin.terms.len() == 1
+            && let Some((a, v)) = k.lin.terms.iter().next()
+        {
+            (alone.entry(a).or_default()).push((v.clone(), k.lin.constant.clone(), k.rel));
+        }
+    }
+    let mut two: HashMap<usize, Vec<&Atom>> = HashMap::new();
+    for (a, &i) in &def {
+        if defined[&i] == 2 {
+            two.entry(i).or_default().push(a);
+        }
+    }
+    let pair: HashMap<usize, (Atom, Atom, Int, Int)> = (two.into_iter())
+        .filter_map(|(i, mut xs)| {
+            xs.sort_unstable();
+            quotient_pair(conjuncts[i], xs[0], xs[1], &alone).map(|p| (i, p))
+        })
+        .collect();
+    let lead_of: HashMap<&Atom, &Atom> = pair.values().map(|(q, r, ..)| (r, q)).collect();
+    let led = |a: &Atom| -> Atom { lead_of.get(a).map_or_else(|| a.clone(), |&q| q.clone()) };
     // The defined atoms, in the order of their conjuncts and then of the atoms, and for each,
-    // the defined atoms of its conjunct that it waits for: none for a conjunct that defines
-    // two atoms or more, so that each conjunct's atoms are listed once.
+    // the defined atoms of its conjunct that it waits for, a remainder read as its lead: none
+    // for a conjunct that defines two atoms or more, other than a lead's, so that each
+    // conjunct's atoms are listed once.
     let mut order: Vec<&Atom> = def.keys().collect();
     order.sort_unstable_by(|a, b| def[*a].cmp(&def[*b]).then_with(|| a.cmp(b)));
     let place: HashMap<&Atom, usize> = order.iter().enumerate().map(|(k, a)| (*a, k)).collect();
-    let shared = |x: &Atom| defined[&def[x]] > 1;
+    let shared = |x: &Atom| defined[&def[x]] > 1 && !pair.contains_key(&def[x]);
     let waits_for: Vec<Vec<usize>> = (order.iter())
-        .map(|&x| match shared(x) {
+        .map(|&x| match shared(x) || lead_of.contains_key(x) {
             true => Vec::new(),
             false => (conjuncts[def[x]].atoms().iter())
-                .filter(|a| *a != x)
-                .filter_map(|a| place.get(a).copied())
+                .map(&led)
+                .filter(|a| a != x)
+                .filter_map(|a| place.get(&a).copied())
                 .collect(),
         })
         .collect();
     // An atom whose definition reaches itself is its own number, and waited for by none: the
     // atoms of a strongly connected component of two atoms or more, and of a conjunct that
-    // defines two atoms or more.
+    // defines two atoms or more, other than a quotient pair. A remainder is numbered with its
+    // lead, so it is no step of its own.
     let comp = zed_graph::components(&waits_for, |&w| w);
     let mut size: HashMap<usize, usize> = HashMap::new();
     for &c in &comp {
         *size.entry(c).or_default() += 1;
     }
-    let cyclic = |k: usize| size[&comp[k]] > 1 || shared(order[k]);
+    let cyclic =
+        |k: usize| size[&comp[k]] > 1 || shared(order[k]) || lead_of.contains_key(order[k]);
     let mut waits: Vec<usize> = vec![0; order.len()];
     let mut waiting: Vec<Vec<usize>> = vec![Vec::new(); order.len()];
     let mut ready: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
@@ -22319,7 +22361,9 @@ fn twins_merged(
     }
     // The number of each atom numbered, written as the first atom given it.
     let mut number: HashMap<Atom, Atom> = HashMap::new();
-    let mut seen: HashMap<Formula, Atom> = HashMap::new();
+    // The key of a pair holds the remainder's window, and its formula a `##`, which no key of
+    // one atom has, so a pair is never numbered as one atom.
+    let mut seen: HashMap<(Formula, Option<(Int, Int)>), Atom> = HashMap::new();
     let mut merged = false;
     // Each atom after the atoms it waits for (Kahn's order, first ready first; Kahn 1962,
     // doi:10.1145/368996.369025, read 2026-11-21; see the crate's `lib.rs`).
@@ -22329,10 +22373,24 @@ fn twins_merged(
         |k| mem::take(&mut waiting[k]),
         |k| {
             let x = order[k];
-            let key = numbered(conjuncts[def[x]], x, &number);
+            let c = conjuncts[def[x]];
+            let Some((_, r, lo, hi)) = pair.get(&def[x]) else {
+                let key = (numbered(c, x, None, &number), None);
+                let n = seen.entry(key).or_insert_with(|| x.clone()).clone();
+                merged |= n != *x;
+                number.insert(x.clone(), n);
+                return;
+            };
+            let key = (
+                numbered(c, x, Some(r), &number),
+                Some((lo.clone(), hi.clone())),
+            );
             let n = seen.entry(key).or_insert_with(|| x.clone()).clone();
+            // The twin's remainder: the pair of the lead `n` is keyed alike, so it has one.
+            let m = pair[&def[&n]].1.clone();
             merged |= n != *x;
             number.insert(x.clone(), n);
+            number.insert(r.clone(), m);
         },
     );
     if !merged {
@@ -22402,14 +22460,18 @@ fn con_renamed(c: &Con, to: &dyn Fn(&Atom) -> Option<Atom>) -> Con {
     }
 }
 
-/// The conjunct `c` of [`twins_merged`] with `x` written `#`, which no atom is named, each
-/// atom numbered written as its number, and the parts of each conjunction and disjunction
-/// sorted, so that two conjuncts that define two atoms alike give one formula.
-fn numbered(c: &Formula, x: &Atom, number: &HashMap<Atom, Atom>) -> Formula {
+/// The conjunct `c` of [`twins_merged`] with `x` written `#` and `y`, when given, `##`, which
+/// no atom is named, each atom numbered written as its number, and the parts of each
+/// conjunction and disjunction sorted, so that two conjuncts that define two atoms alike give
+/// one formula.
+fn numbered(c: &Formula, x: &Atom, y: Option<&Atom>, number: &HashMap<Atom, Atom>) -> Formula {
     let hash = Atom::Sym(Arc::from("#"));
+    let hash2 = Atom::Sym(Arc::from("##"));
     let to = |a: &Atom| {
         if a == x {
             Some(hash.clone())
+        } else if Some(a) == y {
+            Some(hash2.clone())
         } else {
             number.get(a).cloned()
         }
@@ -22430,6 +22492,53 @@ fn numbered(c: &Formula, x: &Atom, number: &HashMap<Atom, Atom>) -> Formula {
             out
         },
     )
+}
+
+/// The quotient and the remainder of a conjunct `c` of [`twins_merged`] that defines the two
+/// atoms `a` and `b`, with the remainder's window: `(q, r, lo, hi)` when `c` is, or has as a
+/// top-level part, an equation `c_q·q + c_r·r + t == 0` (`t` over other atoms), and the
+/// one-atom constraints of `c` and of `alone` (the top-level ones of the formula) give
+/// `lo <= r <= hi` with `(hi - lo)·gcd(c_q, c_r) < |c_q|`. Then the pair `(q, r)` is one at
+/// most for each value of `t`: two pairs with `c_q·(q - q') == -c_r·(r - r')` have `r - r'` a
+/// multiple of `c_q / gcd(c_q, c_r)`, and the window holds no two such values unless they are
+/// equal; then `q == q'` as `c_q` is not zero. This is the quotient and remainder of `-t` by
+/// `c_q` when `c_r == 1` and the window is `0..=|c_q| - 1` (`i == 3*q0 + q1 && 0 <= q1 <= 2`,
+/// PROJECT-twin-qr). Checked by hand above and by the test
+/// `l01_38_omega_test::omega::twin_quotients_and_remainders_are_merged_before_a_tied_projection`,
+/// which compares the projection with the values of `i` the solver finds one at a time.
+/// `None` when neither atom has such a window.
+fn quotient_pair(
+    c: &Formula,
+    a: &Atom,
+    b: &Atom,
+    alone: &HashMap<&Atom, Vec<(Int, Int, Rel)>>,
+) -> Option<(Atom, Atom, Int, Int)> {
+    let parts = c.conjuncts();
+    let eq = parts.iter().find_map(|p| match p {
+        Formula::Con(e)
+            if e.rel == Rel::Eq && e.lin.terms.contains_key(a) && e.lin.terms.contains_key(b) =>
+        {
+            Some(e)
+        }
+        _ => None,
+    })?;
+    for (q, r) in [(a, b), (b, a)] {
+        let own = parts.iter().filter_map(|p| match p {
+            Formula::Con(k) if k.lin.terms.len() == 1 => {
+                Some((k.lin.terms.get(r)?.clone(), k.lin.constant.clone(), k.rel))
+            }
+            _ => None,
+        });
+        let rows = alone.get(r).into_iter().flatten().cloned().chain(own);
+        let Some((Some(lo), Some(hi))) = int_bounds(rows) else {
+            continue;
+        };
+        let (cq, cr) = (&eq.lin.terms[q], &eq.lin.terms[r]);
+        if &(&hi - &lo) * &cq.gcd(cr) < cq.abs() {
+            return Some((q.clone(), r.clone(), lo, hi));
+        }
+    }
+    None
 }
 
 /// For each conjunct of `f`, the atoms it allows at most one value of for each value of its
@@ -33770,6 +33879,29 @@ mod forced_against_solver {
         ]);
         assert!(twins_merged(&f, &[], true).is_none(), "{f}");
         assert_ne!(decide(&f).ok(), Some(false), "{f}");
+    }
+
+    /// Twin quotient and remainder definitions, `i == 3*q0 + q1 && 0 <= q1 <= 2` written twice
+    /// (PROJECT-twin-qr, s22 row 1000 case 3640): each conjunct defines two atoms, and the
+    /// remainder's window makes the pair a function of `i`, so the second pair is merged into
+    /// the first. With the remainder's window one wider, `0 <= q3 <= 3`, the pair is not a
+    /// function of `i` (`i == 3` is `3*1 + 0` and `3*0 + 3`) and stays apart.
+    #[test]
+    fn twin_quotients_and_remainders_are_merged() {
+        let i = sym("i");
+        let pair = |q0: u32, q1: u32, hi: i64| {
+            vec![
+                eq(&i, &q(q0).times(3).plus(&q(q1))),
+                ge(&q(q1), &k(0)),
+                ge(&k(hi), &q(q1)),
+            ]
+        };
+        let f = Formula::and([pair(0, 1, 2), pair(2, 3, 2)].concat());
+        let (g, to) = twins_merged(&f, &[], true).expect("the twins merged");
+        assert_eq!(to.len(), 2, "{to:?}");
+        assert_eq!(g.atoms().len(), 3, "{g}");
+        let wide = Formula::and([pair(0, 1, 2), pair(2, 3, 3)].concat());
+        assert!(twins_merged(&wide, &[], true).is_none(), "{wide}");
     }
 
     /// What the whole solver says of `f`: the point it finds, or `None` when it finds none, and
