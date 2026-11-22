@@ -939,8 +939,15 @@ fn chain_cells(q: &[(u64, BigInt)], below: &[BigInt], a: &BigInt, hi: &BigInt) -
     if &u <= hi {
         stretches.push((u, hi.clone()));
     }
+    // Every evaluation at the end of a stretch goes through `end`, so that the tests count
+    // them against `chain_ends` (`chain_cells_makes_the_end_evaluations_chain_ends_bounds`).
+    let end = |x: &BigInt| {
+        #[cfg(test)]
+        tests::END_EVALS.with(|n| n.set(n.get() + 1));
+        eval(q, x)
+    };
     for (u, v) in stretches {
-        let (fu, fv) = (eval(q, &u), eval(q, &v));
+        let (fu, fv) = (end(&u), end(&v));
         if fu.is_zero() {
             out.push(u.clone());
         }
@@ -1041,7 +1048,9 @@ fn chain_search(
 /// products: so the branch and bound, stopped past this many units, costs a constant factor
 /// times this part of the chain's bound, not at most it. Measured (`poly::roots::bench`,
 /// 2026-11-20): a unit costs 9.3 to 18.0 end evaluations on the families that reach the budget.
-/// Tests: `chain_ends_is_the_sum_it_bounds`.
+/// Tests: `chain_ends_is_the_sum_it_bounds`, and
+/// `chain_cells_makes_the_end_evaluations_chain_ends_bounds`, which counts the evaluations
+/// and reaches the bound.
 fn chain_ends(t: usize) -> u64 {
     let t = t as u128;
     if t < 2 {
@@ -1064,6 +1073,43 @@ mod tests {
         /// The units [`positive_roots`] has spent on this thread, a handover to the chain counted
         /// as the whole budget.
         pub(super) static UNITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        /// The evaluations [`chain_cells`] has made at the ends of stretches on this thread.
+        pub(super) static END_EVALS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    /// The roots [`chain_roots`] finds on `p` in `2..=b`, and the evaluations at the ends of
+    /// stretches it made.
+    fn chain_and_ends(p: &[(u64, BigInt)], b: Option<i64>) -> (Vec<BigInt>, u64) {
+        END_EVALS.with(|n| n.set(0));
+        let roots = chain_roots(p, BigInt::from(2), b.map(BigInt::from));
+        (roots, END_EVALS.with(|n| n.get()))
+    }
+
+    /// [`chain_cells`] makes the evaluations at the ends of stretches that [`chain_ends`]
+    /// bounds, counted: exactly `chain_ends(t)` on the product of `x - 10^k` for `k` in
+    /// `1..t`, `t = 2..=6`, where each member of the chain has as many positive roots as
+    /// Descartes' rule allows and each lies in a stretch of its own, so the bound is reached
+    /// (2, 6, 14, 28 and 50), and on `(x - 4)(x - 10)(x - 12)` within `2..=60` (14); at most
+    /// `chain_ends(t)` over the 400 random polynomials of
+    /// `the_chain_agrees_with_the_branch_and_bound`. Negative control: one more evaluation per
+    /// stretch fails the equalities.
+    #[test]
+    fn chain_cells_makes_the_end_evaluations_chain_ends_bounds() {
+        for t in 2..=6usize {
+            let ten = num_bigint::BigUint::from(10u8);
+            let rs: Vec<BigInt> = (1..t as u64)
+                .map(|k| BigInt::from(pow_uint(&ten, k)))
+                .collect();
+            let f = from_big_roots(&rs);
+            assert_eq!(f.terms().len(), t);
+            let (roots, n) = chain_and_ends(f.terms(), None);
+            assert_eq!(roots, rs, "t = {t}");
+            assert_eq!(n, chain_ends(t), "t = {t}");
+        }
+        let f = from_roots(1, &[4, 10, 12]);
+        let (roots, n) = chain_and_ends(f.terms(), Some(60));
+        assert_eq!(roots, [4, 10, 12].map(BigInt::from));
+        assert_eq!(n, chain_ends(4));
     }
 
     fn big(terms: &[(u64, BigInt)]) -> Sparse {
@@ -1170,8 +1216,12 @@ mod tests {
                 .map(BigInt::from)
                 .filter(|x| eval(p, x).is_zero())
                 .collect();
-            let chain = chain_roots(p, BigInt::from(2), Some(hi.clone()));
+            let (chain, ends) = chain_and_ends(p, Some(60));
             assert_eq!(chain, want, "the chain on {f:?}");
+            assert!(
+                ends <= chain_ends(p.len()),
+                "{ends} end evaluations on {f:?}"
+            );
             let branch = positive_roots(p, BigInt::from(2), Some(hi.clone()));
             assert_eq!(branch, want, "the branch and bound on {f:?}");
         }
