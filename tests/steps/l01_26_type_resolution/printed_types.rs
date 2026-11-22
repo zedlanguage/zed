@@ -9,11 +9,24 @@ use std::fmt::Write;
 
 use zed_tests::{deep, oracle};
 
+/// [`deep::statements`] of `text`, with the error that stops it as text in place of a panic.
+fn statements(text: &str) -> Result<Vec<zedc::ast::Stmt>, String> {
+    let tokens = zedc::lex::lex_fence(text).map_err(|e| format!("{e:?}"))?;
+    let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP)
+        .map_err(|e| format!("{e:?}"))?;
+    zedc::ast::unit(text, &tokens, &tree).map_err(|e| format!("{e:?}"))
+}
+
 /// The signature of each declared function, by binder, the type of each top-level name bound by
-/// `=`, sorted by name, and the number of type errors, of the unit `text`; or that it does not
-/// resolve alone (a corpus program that imports units of its package).
+/// `=`, sorted by name, and the number of type errors, of the unit `text`; or the message of
+/// the first error that stops it before the checker (a corpus program written with a form this
+/// zedc does not take yet), or that it does not resolve alone (a corpus program that imports
+/// units of its package).
 fn printed(text: &str) -> String {
-    let stmts = deep::statements(text);
+    let stmts = match statements(text) {
+        Ok(stmts) => stmts,
+        Err(message) => return format!("  does not parse: {message}\n"),
+    };
     let Ok(res) = zedc::resolve::resolve(&stmts) else {
         return "  does not resolve alone\n".into();
     };

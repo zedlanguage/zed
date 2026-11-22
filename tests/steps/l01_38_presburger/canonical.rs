@@ -396,12 +396,14 @@ pub(super) fn colors_follow_random_namings_and_row_orders(
     assert!(ties > 0, "no system with a tie");
 }
 
-/// `bench::canonical` takes 4200 shuffles.
+/// 400 systems of one shuffle each; `bench::canonical` takes 4200 shuffles. About one system in
+/// 20 has a tie (20 of 420 in the bench), so 400 systems miss every tie with chance about
+/// `0.95^400`, near `1e-9`; 40 systems missed them on one run of eight.
 #[test]
 fn colors_follow_random_namings_and_row_orders_of_random_systems() {
     colors_follow_random_namings_and_row_orders(
         "colors_follow_random_namings_and_row_orders_of_random_systems",
-        40,
-        5,
+        400,
+        1,
     );
 }

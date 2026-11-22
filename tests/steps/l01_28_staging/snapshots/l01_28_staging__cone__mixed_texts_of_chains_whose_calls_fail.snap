@@ -1,0 +1,528 @@
+---
+source: tests/steps/l01_28_staging/cone.rs
+expression: "mixed_texts(|rng, n| stub_fail_unit(rng, n).0, 16)"
+---
+seed 0:
+h = (g, y) -> (g(y) + 1)
+f9 = y -> (y + -2)
+f14 = y -> (y + -1)
+main = c -> ((0 + c), (h(f9, 0) + c))
+Report { built: [], unread: ["f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f10", "f11", "f12", "f13", "f15"], left: [(App(Var("h"), [Var("f9"), Lit(Int(0))]), "its form does not show that it ends")], untaken: {} }
+seed 1:
+f1 = y -> (y + true)
+main = c -> ((f1(0) + c), (f1(-2) + c))
+Report { built: [], unread: ["h", "f0"], left: [(App(Var("f1"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 2:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + -1)
+f1 = y -> (y + true)
+f2 = y -> f1(0)
+f3 = y -> f2(y)
+f5 = y -> (y + -1)
+f6 = y -> h(f3, y)
+f8 = y -> f1((y + 1))
+f10 = y -> h(f8, y)
+f11 = y -> if (y >= 1) { h(f0, y) } else { if (y >= 1) { f6((y + 1)) } else { (y + true) } }
+main = c -> ((h(f5, 1) + c), (h(f10, -1) + c), (f6(3) + c), (f11(-1) + c))
+Report { built: [], unread: ["f4", "f7", "f9", "f12", "f13", "f14"], left: [(App(Var("f1"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f5"), Lit(Int(1))]), "its form does not show that it ends"), (App(Var("h"), [Var("f10"), Lit(Int(-1))]), "its form does not show that it ends"), (App(Var("f6"), [Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f11"), [Lit(Int(-1))]), "its form does not show that it ends")], untaken: {} }
+seed 3:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f4 = y -> h(f0, y)
+f6 = y -> f4((y - 1))
+f8 = y -> (y + -1)
+f9 = y -> (y + true)
+f11 = y -> f9(y)
+f12 = y -> (y + true)
+f13 = y -> h(f8, y)
+main = c -> ((f11(0) + c), (h(f8, 3) + c), (f12(-2) + c), (h(f6, 1) + c), (f4(-1) + c), (f13(2) + c))
+Report { built: [], unread: ["f1", "f2", "f3", "f5", "f7", "f10"], left: [(App(Var("f11"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f8"), Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f12"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f6"), Lit(Int(1))]), "its form does not show that it ends"), (App(Var("f4"), [Lit(Int(-1))]), "its form does not show that it ends"), (App(Var("f13"), [Lit(Int(2))]), "its form does not show that it ends")], untaken: {} }
+seed 4:
+h = (g, y) -> (g(y) + 1)
+f1 = y -> (y + true)
+f2 = y -> h(f1, y)
+f3 = y -> (f2((y - 1)) + true)
+f8 = y -> (y + -1)
+main = c -> ((f1(0) + c), (1 + c), (2 + c), (f1(-1) + c), (f3(1) + c))
+Report { built: [], unread: ["f0", "f4", "f5", "f6", "f7", "f9", "f10"], left: [(App(Var("f1"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(-1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f3"), [Lit(Int(1))]), "its form does not show that it ends")], untaken: {} }
+seed 5:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + 1)
+f1 = y -> f0((y + 1))
+f2 = y -> (y + true)
+f3 = y -> (y + true)
+f9 = y -> f3((y + 1))
+main = c -> ((2 + c), (f2(3) + c), (h(f9, 1) + c), (h(f0, -1) + c))
+Report { built: [], unread: ["f4", "f5", "f6", "f7", "f8", "f10"], left: [(App(Var("f2"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f9"), Lit(Int(1))]), "its form does not show that it ends"), (App(Var("h"), [Var("f0"), Lit(Int(-1))]), "its form does not show that it ends")], untaken: {} }
+seed 6:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+main = c -> ((h(f0, 1) + c), (f0(-2) + c), (f0(3) + c))
+Report { built: [], unread: [], left: [(App(Var("h"), [Var("f0"), Lit(Int(1))]), "its form does not show that it ends"), (App(Var("f0"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f0"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 7:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + -1)
+f1 = y -> f0((y - 1))
+f2 = y -> (f1((y - 1)) + true)
+f7 = y -> f0(y)
+main = c -> ((0 + c), (h(f0, 0) + c), (f2(1) + c))
+Report { built: [], unread: ["f3", "f4", "f5", "f6"], left: [(App(Var("h"), [Var("f0"), Lit(Int(0))]), "its form does not show that it ends"), (App(Var("f2"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 8:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> h(f0, y)
+f2 = y -> (y + 0)
+f3 = y -> (y + 2)
+f4 = y -> if (y >= -1) { h(f0, y) } else { f2((y - 1)) }
+f6 = y -> (f4((y + 1)) + true)
+main = c -> ((f4(-1) + c), (3 + c), (f1(1) + c), (f1(3) + c), (f6(2) + c), (h(f6, -1) + c))
+Report { built: [], unread: ["f5"], left: [(App(Var("f4"), [Lit(Int(-1))]), "its form does not show that it ends"), (App(Var("f1"), [Lit(Int(1))]), "its form does not show that it ends"), (App(Var("f1"), [Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f6"), [Lit(Int(2))]), "its form does not show that it ends"), (App(Var("h"), [Var("f6"), Lit(Int(-1))]), "its form does not show that it ends")], untaken: {} }
+seed 9:
+f1 = y -> (y + -1)
+f2 = y -> (y + true)
+f4 = y -> (y + true)
+main = c -> ((f2(1) + c), (f2(3) + c), (-3 + c), (f4(2) + c), (-1 + c))
+Report { built: [], unread: ["h", "f0", "f3"], left: [(App(Var("f2"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f4"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 10:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + 1)
+f1 = y -> if (y >= -1) { f0((y + 1)) } else { f0((y + 1)) }
+f2 = y -> (f0(y) + true)
+f3 = y -> if (y >= 0) { 0 } else { f0(y) }
+f4 = y -> f2(2)
+f6 = y -> (f3(y) + true)
+f7 = y -> if (y >= 2) { h(f1, y) } else { f1((y - 1)) }
+f8 = y -> h(f6, y)
+f10 = y -> (y + true)
+main = c -> ((h(f7, 3) + c), (0 + c), (f10(1) + c), (h(f8, 0) + c), (h(f4, 0) + c))
+Report { built: [], unread: ["f5", "f9"], left: [(App(Var("f2"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f7"), Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f10"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f8"), Lit(Int(0))]), "its form does not show that it ends"), (App(Var("h"), [Var("f4"), Lit(Int(0))]), "its form does not show that it ends")], untaken: {} }
+seed 11:
+h = (g, y) -> (g(y) + 1)
+f1 = y -> (y + -2)
+f3 = y -> f1((y - 1))
+f4 = y -> f3((y + 1))
+f8 = y -> (y + true)
+f11 = y -> (f4(2) + true)
+f12 = y -> f11(1)
+f13 = y -> (y + -1)
+main = c -> ((f11(-2) + c), (f12(-2) + c), (0 + c), (f8(0) + c), (h(f13, 1) + c), (f11(3) + c))
+Report { built: [], unread: ["f0", "f2", "f5", "f6", "f7", "f9", "f10"], left: [(Prim(Add, [App(Var("f4"), [Lit(Int(2))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f11"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f11"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f12"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f8"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f13"), Lit(Int(1))]), "its form does not show that it ends"), (App(Var("f11"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 12:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> f0((y + 1))
+main = c -> ((h(f1, -1) + c), (f0(0) + c))
+Report { built: [], unread: ["f2", "f3"], left: [(App(Var("h"), [Var("f1"), Lit(Int(-1))]), "its form does not show that it ends"), (App(Var("f0"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 13:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> f0(1)
+f2 = y -> h(f0, y)
+f3 = y -> if (y >= 2) { h(f1, y) } else { (y + 2) }
+f11 = y -> f3((y + 1))
+f13 = y -> f11((y + 1))
+main = c -> ((f2(3) + c), (f13(-2) + c))
+Report { built: [], unread: ["f4", "f5", "f6", "f7", "f8", "f9", "f10", "f12", "f14", "f15"], left: [(App(Var("f0"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f13"), [Lit(Int(-2))]), "its form does not show that it ends")], untaken: {} }
+seed 14:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + -1)
+f1 = y -> (y + 2)
+f2 = y -> 2
+f3 = y -> h(f2, y)
+f5 = y -> f3((y + 1))
+f9 = y -> h(f2, y)
+f10 = y -> f9((y - 1))
+main = c -> ((f10(2) + c), (h(f5, 3) + c), (-1 + c))
+Report { built: [], unread: ["f4", "f6", "f7", "f8", "f11", "f12", "f13", "f14"], left: [(App(Var("f10"), [Lit(Int(2))]), "its form does not show that it ends"), (App(Var("h"), [Var("f5"), Lit(Int(3))]), "its form does not show that it ends")], untaken: {} }
+seed 15:
+f0 = y -> (y + -1)
+f1 = y -> (y + -2)
+f4 = y -> (f0(y) + true)
+main = c -> ((f4(1) + c), (-4 + c), (f4(-1) + c))
+Report { built: [], unread: ["h", "f2", "f3", "f5"], left: [(App(Var("f4"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f4"), [Lit(Int(-1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 16:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> (f0((y - 1)) + true)
+f3 = y -> (y + 0)
+f4 = y -> (y + -1)
+f5 = y -> (f3(y) + true)
+main = c -> ((f0(-1) + c), (f1(0) + c), (h(f4, 3) + c), (f5(-1) + c))
+Report { built: [], unread: ["f2", "f6", "f7"], left: [(App(Var("f0"), [Lit(Int(-1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f4"), Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f5"), [Lit(Int(-1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 17:
+f0 = y -> (y + true)
+f1 = y -> f0(2)
+f2 = y -> f0((y + 1))
+main = c -> ((f2(3) + c), (f1(0) + c))
+Report { built: [], unread: ["h", "f3"], left: [(App(Var("f0"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 18:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + -2)
+f1 = y -> if (y >= 1) { (y + true) } else { h(f0, y) }
+main = c -> ((-4 + c), (f1(-1) + c), (f1(1) + c), (f1(3) + c))
+Report { built: [], unread: ["f2"], left: [(App(Var("f1"), [Lit(Int(-1))]), "its form does not show that it ends"), (App(Var("f1"), [Lit(Int(1))]), "its form does not show that it ends"), (App(Var("f1"), [Lit(Int(3))]), "its form does not show that it ends")], untaken: {} }
+seed 19:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + 1)
+f1 = y -> f0((y - 1))
+f2 = y -> h(f0, y)
+f3 = y -> h(f1, y)
+f4 = y -> (f3((y + 1)) + true)
+main = c -> ((f4(2) + c), (f4(0) + c), (0 + c), (f4(-1) + c), (f2(-2) + c))
+Report { built: [], unread: [], left: [(App(Var("f4"), [Lit(Int(2))]), "its form does not show that it ends"), (App(Var("f4"), [Lit(Int(0))]), "its form does not show that it ends"), (App(Var("f4"), [Lit(Int(-1))]), "its form does not show that it ends"), (App(Var("f2"), [Lit(Int(-2))]), "its form does not show that it ends")], untaken: {} }
+seed 20:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f2 = y -> (y + true)
+f10 = y -> (y + true)
+main = c -> ((f0(1) + c), (h(f0, 2) + c), (f10(3) + c), (f2(-2) + c))
+Report { built: [], unread: ["f1", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f11", "f12"], left: [(App(Var("f0"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f0"), Lit(Int(2))]), "its form does not show that it ends"), (App(Var("f10"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 21:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> (y + true)
+f4 = y -> if (y >= -1) { h(f1, y) } else { f0(-1) }
+main = c -> ((f4(2) + c), (f0(2) + c))
+Report { built: [], unread: ["f2", "f3", "f5", "f6", "f7"], left: [(App(Var("f0"), [Lit(Int(-1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f4"), [Lit(Int(2))]), "its form does not show that it ends"), (App(Var("f0"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 22:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + 1)
+f1 = y -> f0((y - 1))
+f2 = y -> (y + true)
+f3 = y -> if (y >= 0) { if (y >= 2) { (y + true) } else { f0((y - 1)) } } else { (y + 2) }
+f4 = y -> (f1(0) + true)
+f5 = y -> f4((y - 1))
+f6 = y -> f5((y + 1))
+f8 = y -> f6((y + 1))
+main = c -> ((h(f8, 2) + c), (f2(1) + c), (h(f6, 2) + c), (0 + c), (h(f8, -1) + c))
+Report { built: [], unread: ["f7", "f9", "f10"], left: [(Prim(Add, [App(Var("f1"), [Lit(Int(0))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f8"), Lit(Int(2))]), "its form does not show that it ends"), (App(Var("f2"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f6"), Lit(Int(2))]), "its form does not show that it ends"), (App(Var("h"), [Var("f8"), Lit(Int(-1))]), "its form does not show that it ends")], untaken: {} }
+seed 23:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> if (y >= 2) { if (y >= 1) { if (y >= 0) { (y + true) } else { (y + true) } } else { if (y >= 2) { (y + 1) } else { (y + 1) } } } else { (y + true) }
+f2 = y -> if (y >= -1) { f1(y) } else { f1(3) }
+f3 = y -> (y + -1)
+f4 = y -> f1(3)
+main = c -> ((f2(-1) + c), (f4(2) + c), (h(f3, 2) + c), (f0(0) + c))
+Report { built: [], unread: ["f5", "f6"], left: [(App(Var("f1"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(-1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f4"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f3"), Lit(Int(2))]), "its form does not show that it ends"), (App(Var("f0"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 24:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> f0(0)
+f3 = y -> f1(y)
+main = c -> ((f0(1) + c), (f3(-2) + c), (h(f0, 3) + c))
+Report { built: [], unread: ["f2", "f4"], left: [(App(Var("f0"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f0"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f3"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f0"), Lit(Int(3))]), "its form does not show that it ends")], untaken: {} }
+seed 25:
+f0 = y -> (y + -1)
+f3 = y -> f0((y + 1))
+f5 = y -> f3(y)
+f7 = y -> (y + 0)
+f8 = y -> (y + -2)
+main = c -> ((3 + c), (3 + c), (-3 + c), (0 + c))
+Report { built: [], unread: ["h", "f1", "f2", "f4", "f6", "f9"], left: [], untaken: {} }
+seed 26:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> f0(y)
+f2 = y -> (y + true)
+f3 = y -> h(f0, y)
+f4 = y -> f2(y)
+f6 = y -> (f3(y) + true)
+f9 = y -> (y + true)
+main = c -> ((f4(-1) + c), (f1(3) + c), (f9(3) + c), (f6(-2) + c))
+Report { built: [], unread: ["f5", "f7", "f8", "f10"], left: [(App(Var("f4"), [Lit(Int(-1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f9"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f6"), [Lit(Int(-2))]), "its form does not show that it ends")], untaken: {} }
+seed 27:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + 1)
+f1 = y -> (f0((y - 1)) + true)
+f2 = y -> if (y >= 1) { (f0((y - 1)) + true) } else { (f1((y - 1)) + true) }
+f4 = y -> (y + true)
+f5 = y -> (f4((y - 1)) + true)
+f7 = y -> (f2(y) + true)
+f8 = y -> (y + 2)
+main = c -> ((f5(3) + c), (f2(-1) + c), (3 + c), (h(f7, 3) + c))
+Report { built: [], unread: ["f3", "f6", "f9", "f10"], left: [(App(Var("f5"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(-1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f7"), Lit(Int(3))]), "its form does not show that it ends")], untaken: {} }
+seed 28:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + 0)
+f1 = y -> (f0(0) + true)
+f2 = y -> f1(y)
+f3 = y -> if (y >= 0) { (f0(0) + true) } else { (f1(2) + true) }
+f4 = y -> h(f2, y)
+f5 = y -> if (y >= -1) { if (y >= 2) { (f2(-2) + true) } else { f4((y - 1)) } } else { f3(y) }
+f7 = y -> h(f5, y)
+f10 = y -> (y + 2)
+main = c -> ((h(f1, 0) + c), (f1(0) + c), (f1(3) + c), (f7(-2) + c), (0 + c))
+Report { built: [], unread: ["f6", "f8", "f9", "f11", "f12"], left: [(Prim(Add, [App(Var("f0"), [Lit(Int(0))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (Prim(Add, [App(Var("f0"), [Lit(Int(0))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (Prim(Add, [App(Var("f1"), [Lit(Int(2))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (Prim(Add, [App(Var("f2"), [Lit(Int(-2))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f1"), Lit(Int(0))]), "its form does not show that it ends"), (App(Var("f1"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f7"), [Lit(Int(-2))]), "its form does not show that it ends")], untaken: {} }
+seed 29:
+f0 = y -> (y + -2)
+main = c -> ((1 + c), (-4 + c), (-4 + c), (-1 + c))
+Report { built: [], unread: ["h"], left: [], untaken: {} }
+seed 30:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + -1)
+f2 = y -> h(f0, y)
+f3 = y -> f2(y)
+f4 = y -> f2((y - 1))
+f6 = y -> h(f4, y)
+f9 = y -> (y + true)
+f11 = y -> f9(y)
+f12 = y -> (y + true)
+f14 = y -> (y + 0)
+main = c -> ((h(f6, 1) + c), (3 + c), (f12(-2) + c), (f11(3) + c), (h(f3, -2) + c))
+Report { built: [], unread: ["f1", "f5", "f7", "f8", "f10", "f13"], left: [(App(Var("h"), [Var("f6"), Lit(Int(1))]), "its form does not show that it ends"), (App(Var("f12"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f11"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f3"), Lit(Int(-2))]), "its form does not show that it ends")], untaken: {} }
+seed 31:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + 1)
+f1 = y -> f0((y + 1))
+f3 = y -> (f0(1) + true)
+f4 = y -> (f3((y + 1)) + true)
+f7 = y -> f1((y - 1))
+f8 = y -> h(f0, y)
+main = c -> ((3 + c), (h(f8, 2) + c), (f4(-2) + c))
+Report { built: [], unread: ["f2", "f5", "f6", "f9", "f10"], left: [(Prim(Add, [App(Var("f0"), [Lit(Int(1))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f8"), Lit(Int(2))]), "its form does not show that it ends"), (App(Var("f4"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 32:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + 2)
+f1 = y -> if (y >= 2) { f0(y) } else { h(f0, y) }
+main = c -> ((f1(3) + c), (3 + c), (f1(3) + c), (f1(1) + c), (h(f0, 3) + c))
+Report { built: [], unread: [], left: [(App(Var("f1"), [Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f1"), [Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f1"), [Lit(Int(1))]), "its form does not show that it ends"), (App(Var("h"), [Var("f0"), Lit(Int(3))]), "its form does not show that it ends")], untaken: {} }
+seed 33:
+f0 = y -> (y + 1)
+f1 = y -> f0((y + 1))
+f4 = y -> f1(y)
+f5 = y -> (y + true)
+main = c -> ((5 + c), (f5(2) + c))
+Report { built: [], unread: ["h", "f2", "f3", "f6", "f7", "f8"], left: [(App(Var("f5"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 34:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> (f0(0) + true)
+f4 = y -> h(f1, y)
+f5 = y -> (f1(y) + true)
+f6 = y -> (f0(1) + true)
+f7 = y -> if (y >= -1) { if (y >= 0) { if (y >= 0) { (y + -2) } else { (y + 2) } } else { f5((y + 1)) } } else { h(f6, y) }
+f9 = y -> f4(3)
+f11 = y -> if (y >= -1) { f1(y) } else { (f9((y - 1)) + true) }
+f13 = y -> f7((y + 1))
+main = c -> ((h(f13, 2) + c), (f11(2) + c))
+Report { built: [], unread: ["f2", "f3", "f8", "f10", "f12"], left: [(Prim(Add, [App(Var("f0"), [Lit(Int(0))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (Prim(Add, [App(Var("f0"), [Lit(Int(1))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f4"), [Lit(Int(3))]), "its form does not show that it ends"), (App(Var("h"), [Var("f13"), Lit(Int(2))]), "its form does not show that it ends"), (App(Var("f11"), [Lit(Int(2))]), "its form does not show that it ends")], untaken: {} }
+seed 35:
+h = (g, y) -> (g(y) + 1)
+f6 = y -> (y + 2)
+f7 = y -> h(f6, y)
+f8 = y -> f6(y)
+f9 = y -> (f7(y) + true)
+main = c -> ((f9(2) + c), (5 + c))
+Report { built: [], unread: ["f0", "f1", "f2", "f3", "f4", "f5", "f10", "f11"], left: [(App(Var("f9"), [Lit(Int(2))]), "its form does not show that it ends")], untaken: {} }
+seed 36:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> f0(y)
+f2 = y -> f1((y - 1))
+f4 = y -> (y + -2)
+f6 = y -> (y + true)
+f10 = y -> h(f4, y)
+main = c -> ((f10(0) + c), (f6(-1) + c), (f2(0) + c), (f1(1) + c))
+Report { built: [], unread: ["f3", "f5", "f7", "f8", "f9", "f11"], left: [(App(Var("f10"), [Lit(Int(0))]), "its form does not show that it ends"), (App(Var("f6"), [Lit(Int(-1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 37:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + -1)
+f1 = y -> (f0(2) + true)
+f2 = y -> if (y >= -1) { h(f1, y) } else { (y + -1) }
+f3 = y -> if (y >= -1) { (y + true) } else { f1(1) }
+f6 = y -> (f3(y) + true)
+main = c -> ((f6(-2) + c), (f2(-2) + c), (h(f0, 3) + c))
+Report { built: [], unread: ["f4", "f5", "f7"], left: [(Prim(Add, [App(Var("f0"), [Lit(Int(2))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f6"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(-2))]), "its form does not show that it ends"), (App(Var("h"), [Var("f0"), Lit(Int(3))]), "its form does not show that it ends")], untaken: {} }
+seed 38:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + 0)
+main = c -> ((-1 + c), (0 + c), (h(f0, 1) + c), (-2 + c), (h(f0, -1) + c))
+Report { built: [], unread: [], left: [(App(Var("h"), [Var("f0"), Lit(Int(1))]), "its form does not show that it ends"), (App(Var("h"), [Var("f0"), Lit(Int(-1))]), "its form does not show that it ends")], untaken: {} }
+seed 39:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + -2)
+f1 = y -> f0((y - 1))
+f2 = y -> h(f0, y)
+f4 = y -> f1((y + 1))
+f5 = y -> -4
+f6 = y -> (f1(y) + true)
+f10 = y -> (y + true)
+main = c -> ((f2(-2) + c), (f6(0) + c), (f10(0) + c), (h(f6, -2) + c), (-4 + c), (0 + c))
+Report { built: [], unread: ["f3", "f7", "f8", "f9", "f11", "f12"], left: [(App(Var("f2"), [Lit(Int(-2))]), "its form does not show that it ends"), (App(Var("f6"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f10"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f6"), Lit(Int(-2))]), "its form does not show that it ends")], untaken: {} }
+seed 40:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> if (y >= -1) { f0(0) } else { h(f0, y) }
+f2 = y -> f0((y - 1))
+main = c -> ((f2(-2) + c), (f0(2) + c), (f2(2) + c), (f1(3) + c), (f1(0) + c), (h(f0, 3) + c))
+Report { built: [], unread: [], left: [(App(Var("f0"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f0"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f1"), [Lit(Int(0))]), "its form does not show that it ends"), (App(Var("h"), [Var("f0"), Lit(Int(3))]), "its form does not show that it ends")], untaken: {} }
+seed 41:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + 2)
+f1 = y -> h(f0, y)
+f5 = y -> f0((y - 1))
+main = c -> ((f1(2) + c), (f1(-1) + c), (0 + c))
+Report { built: [], unread: ["f2", "f3", "f4", "f6", "f7", "f8", "f9"], left: [(App(Var("f1"), [Lit(Int(2))]), "its form does not show that it ends"), (App(Var("f1"), [Lit(Int(-1))]), "its form does not show that it ends")], untaken: {} }
+seed 42:
+f1 = y -> (y + 2)
+f3 = y -> f1(y)
+main = c -> ((1 + c), (1 + c))
+Report { built: [], unread: ["h", "f0", "f2", "f4", "f5"], left: [], untaken: {} }
+seed 43:
+f0 = y -> (y + true)
+f1 = y -> f0(1)
+f3 = y -> (y + 0)
+f5 = y -> (y + 2)
+f6 = y -> (y + -1)
+f8 = y -> (f5(y) + true)
+main = c -> ((f1(0) + c), (-2 + c), (1 + c), (f1(3) + c), (f8(0) + c))
+Report { built: [], unread: ["h", "f2", "f4", "f7"], left: [(App(Var("f0"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f8"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 44:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + 0)
+f1 = y -> (y + true)
+f2 = y -> (f0(2) + true)
+f3 = y -> (f2(y) + true)
+main = c -> ((f3(1) + c), (f3(0) + c), (f3(-2) + c), (h(f1, -1) + c), (f3(2) + c))
+Report { built: [], unread: [], left: [(Prim(Add, [App(Var("f0"), [Lit(Int(2))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f3"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f3"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f3"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f1"), Lit(Int(-1))]), "its form does not show that it ends"), (App(Var("f3"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 45:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + -1)
+f1 = y -> h(f0, y)
+f2 = y -> f0((y - 1))
+f3 = y -> if (y >= 0) { f1(-2) } else { (f2(3) + true) }
+f4 = y -> if (y >= -1) { (f3((y - 1)) + true) } else { (y + 2) }
+f5 = y -> h(f3, y)
+main = c -> ((f5(2) + c), (f4(3) + c), (h(f3, -1) + c))
+Report { built: [], unread: ["f6"], left: [(App(Var("f1"), [Lit(Int(-2))]), "its form does not show that it ends"), (Prim(Add, [App(Var("f2"), [Lit(Int(3))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f5"), [Lit(Int(2))]), "its form does not show that it ends"), (App(Var("f4"), [Lit(Int(3))]), "its form does not show that it ends"), (App(Var("h"), [Var("f3"), Lit(Int(-1))]), "its form does not show that it ends")], untaken: {} }
+seed 46:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> h(f0, y)
+f3 = y -> h(f1, y)
+main = c -> ((f3(-2) + c), (f0(3) + c))
+Report { built: [], unread: ["f2", "f4", "f5", "f6", "f7"], left: [(App(Var("f3"), [Lit(Int(-2))]), "its form does not show that it ends"), (App(Var("f0"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 47:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> f0((y - 1))
+f2 = y -> if (y >= 2) { if (y >= 2) { (y + 0) } else { (f0(0) + true) } } else { (f1((y + 1)) + true) }
+f3 = y -> h(f2, y)
+main = c -> ((f3(1) + c), (f3(0) + c), (f0(-2) + c))
+Report { built: [], unread: ["f4", "f5"], left: [(Prim(Add, [App(Var("f0"), [Lit(Int(0))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f3"), [Lit(Int(1))]), "its form does not show that it ends"), (App(Var("f3"), [Lit(Int(0))]), "its form does not show that it ends"), (App(Var("f0"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 48:
+f0 = y -> (y + true)
+f1 = y -> (f0(-1) + true)
+main = c -> ((f0(2) + c), (f1(2) + c))
+Report { built: [], unread: ["h", "f2", "f3"], left: [(Prim(Add, [App(Var("f0"), [Lit(Int(-1))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f0"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 49:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f4 = y -> (y + -1)
+main = c -> ((h(f0, 1) + c), (h(f4, -2) + c), (f0(1) + c), (-3 + c))
+Report { built: [], unread: ["f1", "f2", "f3", "f5", "f6", "f7", "f8"], left: [(App(Var("h"), [Var("f0"), Lit(Int(1))]), "its form does not show that it ends"), (App(Var("h"), [Var("f4"), Lit(Int(-2))]), "its form does not show that it ends"), (App(Var("f0"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 50:
+f2 = y -> (y + true)
+f4 = y -> f2(y)
+f9 = y -> (y + 0)
+main = c -> ((f4(3) + c), (-1 + c))
+Report { built: [], unread: ["h", "f0", "f1", "f3", "f5", "f6", "f7", "f8", "f10", "f11"], left: [(App(Var("f4"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 51:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f2 = y -> h(f0, y)
+f3 = y -> f2(y)
+f4 = y -> (y + 1)
+f5 = y -> (y + true)
+main = c -> ((f3(1) + c), (f2(3) + c), (h(f5, 3) + c), (f5(3) + c), (2 + c))
+Report { built: [], unread: ["f1", "f6", "f7", "f8"], left: [(App(Var("f3"), [Lit(Int(1))]), "its form does not show that it ends"), (App(Var("f2"), [Lit(Int(3))]), "its form does not show that it ends"), (App(Var("h"), [Var("f5"), Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f5"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 52:
+f0 = y -> (y + 2)
+f1 = y -> if (y >= -1) { if (y >= 2) { (y + true) } else { (y + true) } } else { (y + true) }
+f2 = y -> f1(y)
+f3 = y -> if (y >= 2) { f2((y - 1)) } else { (y + -1) }
+f5 = y -> (y + -2)
+main = c -> ((5 + c), (-1 + c), (-4 + c))
+Report { built: [], unread: ["h", "f4", "f6", "f7", "f8", "f9", "f10"], left: [], untaken: {} }
+seed 53:
+h = (g, y) -> (g(y) + 1)
+f1 = y -> (y + -1)
+f2 = y -> (f1((y - 1)) + true)
+f3 = y -> if (y >= -1) { (y + 2) } else { (y + -2) }
+f5 = y -> h(f2, y)
+main = c -> ((h(f1, 2) + c), (1 + c), (h(f5, 2) + c))
+Report { built: [], unread: ["f0", "f4", "f6"], left: [(App(Var("h"), [Var("f1"), Lit(Int(2))]), "its form does not show that it ends"), (App(Var("h"), [Var("f5"), Lit(Int(2))]), "its form does not show that it ends")], untaken: {} }
+seed 54:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + 2)
+f2 = y -> (f0(y) + true)
+main = c -> ((f2(1) + c), (h(f2, -2) + c))
+Report { built: [], unread: ["f1", "f3", "f4", "f5"], left: [(App(Var("f2"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f2"), Lit(Int(-2))]), "its form does not show that it ends")], untaken: {} }
+seed 55:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> (y + true)
+f3 = y -> (f1((y - 1)) + true)
+main = c -> ((f3(2) + c), (h(f0, -1) + c))
+Report { built: [], unread: ["f2", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"], left: [(App(Var("f3"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f0"), Lit(Int(-1))]), "its form does not show that it ends")], untaken: {} }
+seed 56:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> h(f0, y)
+f2 = y -> f1(y)
+f4 = y -> (y + true)
+f5 = y -> h(f4, y)
+f7 = y -> f1(0)
+main = c -> ((f4(0) + c), (h(f2, 0) + c), (f5(3) + c), (f0(-1) + c), (f7(-1) + c))
+Report { built: [], unread: ["f3", "f6"], left: [(App(Var("f1"), [Lit(Int(0))]), "its form does not show that it ends"), (App(Var("f4"), [Lit(Int(0))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f2"), Lit(Int(0))]), "its form does not show that it ends"), (App(Var("f5"), [Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f0"), [Lit(Int(-1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f7"), [Lit(Int(-1))]), "its form does not show that it ends")], untaken: {} }
+seed 57:
+f1 = y -> (y + true)
+main = c -> ((f1(3) + c), (f1(2) + c))
+Report { built: [], unread: ["h", "f0"], left: [(App(Var("f1"), [Lit(Int(3))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f1"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 58:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> (f0((y - 1)) + true)
+f2 = y -> if (y >= 1) { f0(y) } else { h(f1, y) }
+main = c -> ((h(f1, 3) + c), (f1(-2) + c), (f2(2) + c), (f2(2) + c))
+Report { built: [], unread: [], left: [(App(Var("h"), [Var("f1"), Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f1"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(2))]), "its form does not show that it ends"), (App(Var("f2"), [Lit(Int(2))]), "its form does not show that it ends")], untaken: {} }
+seed 59:
+f0 = y -> (y + 2)
+f1 = y -> f0(y)
+f2 = y -> (f1(y) + true)
+f11 = y -> (y + true)
+main = c -> ((f11(-2) + c), (f2(-1) + c), (0 + c))
+Report { built: [], unread: ["h", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f12"], left: [(App(Var("f11"), [Lit(Int(-2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(-1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated.")], untaken: {} }
+seed 60:
+h = (g, y) -> (g(y) + 1)
+f1 = y -> (y + 0)
+f2 = y -> (y + 0)
+f3 = y -> (f1((y + 1)) + true)
+f5 = y -> h(f3, y)
+main = c -> ((1 + c), (h(f5, 0) + c))
+Report { built: [], unread: ["f0", "f4", "f6", "f7"], left: [(App(Var("h"), [Var("f5"), Lit(Int(0))]), "its form does not show that it ends")], untaken: {} }
+seed 61:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> (y + -2)
+main = c -> ((f0(1) + c), (h(f1, 2) + c), (h(f0, -1) + c))
+Report { built: [], unread: [], left: [(App(Var("f0"), [Lit(Int(1))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f1"), Lit(Int(2))]), "its form does not show that it ends"), (App(Var("h"), [Var("f0"), Lit(Int(-1))]), "its form does not show that it ends")], untaken: {} }
+seed 62:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + -2)
+f1 = y -> f0((y - 1))
+f2 = y -> (f1(3) + true)
+f8 = y -> f2(2)
+f10 = y -> (y + -2)
+main = c -> ((h(f8, -2) + c), (-1 + c), (-1 + c))
+Report { built: [], unread: ["f3", "f4", "f5", "f6", "f7", "f9"], left: [(Prim(Add, [App(Var("f1"), [Lit(Int(3))]), Lit(Bool(true))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("f2"), [Lit(Int(2))]), "the run stopped because of a bug in zedc, not in your program. A program the checker accepts never gives an operation a value it cannot take, and here the evaluator met this: `+` applied to `int`, `bool`.\nPlease report it at https://github.com/zedlanguage/zed/issues, with the command line you ran and the files it read, so that it can be repeated."), (App(Var("h"), [Var("f8"), Lit(Int(-2))]), "its form does not show that it ends")], untaken: {} }
+seed 63:
+h = (g, y) -> (g(y) + 1)
+f0 = y -> (y + true)
+f1 = y -> h(f0, y)
+f2 = y -> (f1(1) + true)
+f3 = y -> if (y >= 1) { f1((y + 1)) } else { f1((y + 1)) }
+f5 = y -> f3(3)
+main = c -> ((f3(0) + c), (f5(-1) + c), (h(f2, 0) + c), (f1(2) + c), (f3(-1) + c))
+Report { built: [], unread: ["f4"], left: [(Prim(Add, [App(Var("f1"), [Lit(Int(1))]), Lit(Bool(true))]), "its form does not show that it ends"), (App(Var("f3"), [Lit(Int(3))]), "its form does not show that it ends"), (App(Var("f3"), [Lit(Int(0))]), "its form does not show that it ends"), (App(Var("f5"), [Lit(Int(-1))]), "its form does not show that it ends"), (App(Var("h"), [Var("f2"), Lit(Int(0))]), "its form does not show that it ends"), (App(Var("f1"), [Lit(Int(2))]), "its form does not show that it ends"), (App(Var("f3"), [Lit(Int(-1))]), "its form does not show that it ends")], untaken: {} }

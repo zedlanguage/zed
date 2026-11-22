@@ -553,6 +553,9 @@ pub(super) fn random_parts_agree(rng: &mut Rng, groups: usize, rounds: usize) {
                 1 => (a.zip(&b, op), x.apply(&y, op)),
                 2 => (a.not(), x.not()),
                 _ if r >> 9 & 1 == 0 => (Part::connect(op, a, b), x.apply(&y, op)),
+                // `Part::not_expr` is called only on an expression (`negate`), never on a leaf:
+                // `Not` of a leaf is a constant that is not the leaf, which `Form` excludes.
+                _ if a.is_leaf().is_some() => (a.not(), x.not()),
                 _ => (Part::not_expr(a), x.not()),
             };
             let got = values(&p);
