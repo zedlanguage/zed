@@ -9417,6 +9417,120 @@ impl<'t, 'a> Ck<'t, 'a> {
             })
     }
 
+    /// The numeric parts of the argument `a`, each a set of carriers that one value of it is
+    /// one of: a plain literal's carriers ([`Self::numbers_of`]) as one part, and otherwise one
+    /// part for each carrier the type lists, `f64` and `int` of `int | f64` apart, as each
+    /// listed value is read as it would be alone (DESIGN.md sec:type_resolution), and one for
+    /// each class, which is one of its carriers. `None` unless every value is a number of a
+    /// known carrier; atoms, which pass by, are not read. One split of the set and one lookup
+    /// per variable.
+    fn number_parts(&self, a: &Arg) -> Option<Vec<u8>> {
+        if a.lit.is_some() {
+            return self.numbers_of(a).map(|m| vec![m]);
+        }
+        let t = &a.ty;
+        if t.dynamic || !t.tuples.is_empty() || !t.fns.is_empty() {
+            return None;
+        }
+        let s = t.set.split();
+        if s.rest.is_some() {
+            return None;
+        }
+        let mut parts: Vec<u8> = (Carrier::ALL.into_iter())
+            .filter(|c| s.bases[c.base()].is_some())
+            .map(|c| c.bit())
+            .collect();
+        for v in &t.vars {
+            parts.push(self.classes[self.class_of(&Piece::Var(v.clone()))?].mask);
+        }
+        let numbers = Carrier::NUMBER_BITS;
+        (!parts.is_empty() && parts.iter().all(|&m| m != 0 && m & !numbers == 0)).then_some(parts)
+    }
+
+    /// Each choice of one numeric part per argument of `args` ([`Self::number_parts`]; `None`
+    /// at an argument that is not all numbers), as the masks of one application, for which
+    /// `found` is asked; whether it holds for one. The parts of an argument are its listed
+    /// carriers, at most the four numeric ones, and its classes, each one variable of its
+    /// type, so the choices are at most the product of those counts over the arguments, two
+    /// or three for an operator: a constant for a type of a few classes, and the product of
+    /// the class counts in general. An argument of one part, the common case, adds no choices.
+    fn some_choice(
+        &self,
+        args: &[Option<Arg>],
+        mut found: impl FnMut(&[Option<u8>]) -> bool,
+    ) -> bool {
+        let parts: Vec<Option<Vec<u8>>> = (args.iter())
+            .map(|a| a.as_ref().and_then(|a| self.number_parts(a)))
+            .collect();
+        let len = |p: &Option<Vec<u8>>| p.as_ref().map_or(1, Vec::len);
+        let mut at = vec![0usize; parts.len()];
+        loop {
+            let masks: Vec<Option<u8>> = (parts.iter().zip(&at))
+                .map(|(p, &i)| p.as_ref().map(|p| p[i]))
+                .collect();
+            if found(&masks) {
+                return true;
+            }
+            // The next choice, counting in the mixed radix of the part counts.
+            let mut k = 0;
+            while k < at.len() {
+                at[k] += 1;
+                if at[k] < len(&parts[k]) {
+                    break;
+                }
+                at[k] = 0;
+                k += 1;
+            }
+            if k == at.len() {
+                return false;
+            }
+        }
+    }
+
+    /// Whether two of `masks` share no carrier. The pairs of at most fifteen distinct masks,
+    /// each a nonempty subset of the four number bits: a constant.
+    fn disjoint(masks: &[Option<u8>]) -> bool {
+        // The sets of carriers present, each a bit: a mask is within `Carrier::NUMBER_BITS`,
+        // below 64.
+        let kinds = masks.iter().flatten().fold(0u64, |k, &m| k | 1 << m);
+        let present: Vec<u8> = (1..64u8).filter(|&m| kinds & 1 << m != 0).collect();
+        (present.iter()).any(|&m| present.iter().any(|&n| m & n == 0))
+    }
+
+    /// Whether `what` is `/` and two of `args` are numbers with no carrier in common, as
+    /// `n / r` of an `int` and a `rat`: the carrier question comes first, as for `+`, `-` and
+    /// `*` ([`Self::no_common_carrier`]), though no arrow of `/` takes the `int` (plan row
+    /// DIAG-slash-mixed-carrier, decided by the standing rules). `7 / 2`, of one carrier, stays
+    /// in the row of an operator with no arrow at its operands' carrier.
+    fn slash_no_common_carrier(&self, what: Label<'_>, args: &[Option<Arg>]) -> bool {
+        matches!(what.operator(), Some(Operator::Binary(BinaryOp::Div)))
+            && self.some_choice(args, Self::disjoint)
+    }
+
+    /// The row of an application of numbers with no carrier in common: that of a literal at a
+    /// carrier it cannot take where an argument is an operation on literals alone, as
+    /// `(2 + 2.5) * x` of `x: int`, whose `2.5` cannot be an `int` as in `2.5 * x` (DESIGN.md
+    /// L1.26a, an operation on literals alone is a literal; plan row LIT-op-carrier-headline),
+    /// else "Two numeric values with no common carrier". A class of literals alone is a
+    /// class of generic literals of no parameter. One lookup per variable.
+    fn carrier_row(&self, args: &[Option<Arg>]) -> Row {
+        let literals = |a: &Arg| {
+            let t = a.ty.without_atoms();
+            a.lit.is_none()
+                && t.as_var().is_some()
+                && t.vars.iter().all(|v| {
+                    self.class_of(&Piece::Var(v.clone())).is_some_and(|r| {
+                        let c = &self.classes[r];
+                        c.generic && c.binder.is_none() && !c.lits.is_empty()
+                    })
+                })
+        };
+        match args.iter().flatten().any(literals) {
+            true => Row::LiteralCarrier,
+            false => Row::NoCommonCarrier,
+        }
+    }
+
     /// Whether two of `args` are numbers with no carrier in common and no arrow of `sig`
     /// takes all the numbers of `args` together, though some arrow takes each alone: `r + x`
     /// of a `rat` and an `f64`, `q + 1.5` of an `int` and an `f64` literal, `max(r, x)`. A
@@ -9424,22 +9538,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `f(a: T, b: T)` takes no `rat` and `f64` together. An argument whose values are not
     /// all numbers of known carriers, an integer literal without a suffix among them, decides
     /// nothing.
+    /// An argument whose type lists several carriers is read one listed carrier at a time,
+    /// as each listed value would be alone (DESIGN.md sec:type_resolution): `a + b` of
+    /// `a: 1 | f64` and `b: int` has no common carrier at its `f64` (plan row
+    /// DIAG-union-carrier-row).
     /// One pass over the arguments per arrow, and the pairs of the fifteen sets of numeric
-    /// carriers, a constant.
+    /// carriers, a constant, for each choice of parts ([`Self::some_choice`]).
     fn no_common_carrier(&self, sig: &Sig, args: &[Option<Arg>]) -> bool {
-        let masks: Vec<Option<u8>> = args
-            .iter()
-            .map(|a| a.as_ref().and_then(|a| self.numbers_of(a)))
-            .collect();
-        // The sets of carriers the arguments take, each a bit: a mask is within
-        // `Carrier::NUMBER_BITS`, below 64.
-        let kinds = masks.iter().flatten().fold(0u64, |k, &m| k | 1 << m);
-        // The masks present, at most fifteen: each is a nonempty subset of the four number bits.
-        let present: Vec<u8> = (1..64u8).filter(|&m| kinds & 1 << m != 0).collect();
-        let disjoint = (present.iter()).any(|&m| present.iter().any(|&n| m & n == 0));
-        if !disjoint {
-            return false;
-        }
+        self.some_choice(args, |masks| {
+            Self::disjoint(masks) && self.no_arrow_takes(sig, masks)
+        })
+    }
+
+    /// Whether some arrow of `sig` takes each of `masks` alone, a set of numeric carriers per
+    /// argument (`None` at an argument read as any), and no arrow takes them all together.
+    fn no_arrow_takes(&self, sig: &Sig, masks: &[Option<u8>]) -> bool {
         let takes = |p: &Ty, m: u8| m & self.param_mask(sig, p);
         let each = masks.iter().enumerate().all(|(i, m)| {
             m.is_none_or(|m| {

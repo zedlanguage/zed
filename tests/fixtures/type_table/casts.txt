@@ -12,7 +12,7 @@ Utf8String => int | #invalid !! STR-types: notyet -- sec:corner_cases "Casts are
 (int, f64) => error * -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 int | #none => int | #none -- sec:corner_cases "Casts are domain proofs"
 f64 | #none => error * -- sec:corner_cases "Casts are domain proofs": a cast to an integer type of a value not proved whole is a compile error
-=#none => error * !! CAST-atom-arg: #none -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
+=#none => error * -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => int -- sec:corner_cases "Casts are domain proofs"
 =2.5 => error * -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => error * -- sec:corner_cases "Casts are domain proofs"
@@ -30,7 +30,7 @@ Utf8String => rat | #invalid !! STR-types: notyet -- sec:corner_cases "Casts are
 (int, f64) => error * -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 int | #none => rat | #none -- sec:corner_cases "Casts are domain proofs"
 f64 | #none => rat | #NaN | #none | #overflow -- sec:corner_cases "Casts are domain proofs"
-=#none => error * !! CAST-atom-arg: #none -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
+=#none => error * -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => rat \ 0r -- L1.17 "rat(n) of an int n whose interval holds no 0 has a type without 0r"; sec:lexical "\ type difference"
 =2.5 => rat -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => rat -- sec:corner_cases "Casts are domain proofs"
@@ -48,7 +48,7 @@ Utf8String => f32 | #invalid !! STR-types: notyet -- sec:corner_cases "Casts are
 (int, f64) => error * -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 int | #none => f32 | #none -- sec:corner_cases "Casts are domain proofs": a cast to a float format rounds
 f64 | #none => f32 | #none -- sec:corner_cases "Casts are domain proofs": a cast to a float format rounds
-=#none => error * !! CAST-atom-arg: #none -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
+=#none => error * -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => f32 -- sec:corner_cases "Casts are domain proofs"
 =2.5 => f32 -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => f32 -- sec:corner_cases "Casts are domain proofs"
@@ -66,7 +66,7 @@ Utf8String => f64 | #invalid !! STR-types: notyet -- sec:corner_cases "Casts are
 (int, f64) => error * -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 int | #none => f64 | #none -- sec:corner_cases "Casts are domain proofs": a cast to a float format rounds
 f64 | #none => f64 | #none -- sec:corner_cases "Casts are domain proofs"
-=#none => error * !! CAST-atom-arg: #none -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
+=#none => error * -- sec:diagnostics "no cast from or to a type that has none, such as bool, an atom other than the #NaN and #inf"
 =2 => f64 -- sec:corner_cases "Casts are domain proofs"
 =2.5 => f64 -- L1.26b "Where nothing fixes its carrier a decimal literal takes `f64`": the cast is of the constant `2.5f64`, as in the row below
 =2.5f64 => f64 -- sec:corner_cases "Casts are domain proofs"

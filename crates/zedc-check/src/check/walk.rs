@@ -9123,6 +9123,35 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         if matches!(w, "int" | "rat" | "f64" | "f32") {
+            // No cast reads an atom other than the `#NaN` and `#inf` the float casts take
+            // (DESIGN.md sec:diagnostics, "no cast from or to a type that has none"), as none
+            // reads a `bool`. An operand that may hold a number passes its atoms by, as
+            // `int(x)` of `x: int | #none` gives `int | #none`; one that holds atoms alone,
+            // `int(x)` of `x = #none`, has no value any cast reads, and is rejected. One meet
+            // of the operand's atoms with two atoms.
+            let t = &x.ty;
+            let floats = matches!(w, "f64" | "f32");
+            let cast = &KType::atom("NaN") | &KType::atom("inf");
+            if !t.dynamic
+                && t.vars.is_empty()
+                && t.without_atoms().is_empty()
+                && !t.atoms().is_empty()
+                && !(floats && !(&t.atoms() & &cast).is_empty())
+            {
+                let ty = self.text(t);
+                self.error_offering(
+                    x.at.unwrap_or(span),
+                    format!(
+                        "`{w}` does not take ({ty}): no cast reads an atom other than the \
+                         `#NaN` and `#inf` that `f64` and `f32` take"
+                    ),
+                    [format!(
+                        "repair: give `{w}` a number, or handle each atom with `match` before \
+                         the cast"
+                    )],
+                );
+                return Ty::empty();
+            }
             self.cast_takes_int(&mut x, w, span);
         }
         let sig = word_sig(w);
@@ -21213,7 +21242,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         if repairs.is_empty() {
             step(format!("repair: {change}"));
         }
-        self.error_with(span, message, notes);
+        // Two numbers with no carrier in common, `a < b` of an `int` and a `rat`, are in the
+        // row `==` gives the same pair (DESIGN.md sec:diagnostics, "Two numeric values with no
+        // common carrier"; plan row DIAG-order-carrier-row). One lookup per variable.
+        let carriers = ty.each_ref().map(|t| self.numbers_in(&t.without_atoms()));
+        match carriers {
+            [Some(a), Some(b)] if a & b == 0 => {
+                self.rejects_with(Row::NoCommonCarrier, span, message, notes)
+            }
+            _ => self.error_with(span, message, notes),
+        }
     }
 
     /// `min` or `max`, whose signature is `sig`, applied to `x` and `y`, one of them holding a
@@ -26888,10 +26926,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                     notes.push(r.note);
                 }
-                let row = if self.no_arrow_at_carrier(what, sig, &args) {
+                let row = if self.slash_no_common_carrier(what, &args) {
+                    Some(self.carrier_row(&args))
+                } else if self.no_arrow_at_carrier(what, sig, &args) {
                     Some(Row::NoArrowAtCarrier)
                 } else if self.no_common_carrier(sig, &args) {
-                    Some(Row::NoCommonCarrier)
+                    Some(self.carrier_row(&args))
                 } else {
                     None
                 };

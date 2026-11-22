@@ -10,7 +10,7 @@ f64 | #none, =1.5, f64 => f64 | #none -- sec:failure "passes through"; L1.26b "a
 =2, =3, rat => rat -- L1.26b "a literal takes that carrier, exactly or not at all"
 =2.5, =2, f64 => f64 -- L1.26b "a literal takes that carrier"
 =1, =2, f32 => f32 -- L1.26b "a literal takes that carrier"
-=2, =2.5, int => error Numeric literal at a carrier that cannot take it !! LIT-op-carrier-headline: error Two numeric values with no common carrier -- L1.26b "a literal takes that carrier, exactly or not at all"
+=2, =2.5, int => error Numeric literal at a carrier that cannot take it -- L1.26b "a literal takes that carrier, exactly or not at all"
 =2, =3, =4 => int -- sec:domains "three() = 1 + 2 is () -> int"
 =2.5, =2, =3 => f64 -- L1.26b "so does an operation on literals alone with a decimal among its operands"
 
@@ -20,7 +20,7 @@ rat => rat -- sec:type_resolution "each listed value ... as it would be alone th
 int => error Numeric literal at a carrier that cannot take it -- L1.26b "a literal takes that carrier, exactly or not at all"
 
 template: (if c { 1 } else { $0 }) + $1
-f64, int => error Two numeric values with no common carrier !! DIAG-union-carrier-row: error - -- sec:type_resolution "no carrier holds both and the operation is refused"
+f64, int => error Two numeric values with no common carrier -- sec:type_resolution "no carrier holds both and the operation is refused"
 f64, f64 => f64 -- sec:type_resolution "read at that carrier ... so the sum is an f64"
 
 template: $0[0]
