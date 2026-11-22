@@ -741,13 +741,13 @@ expression: "tokens_by_key(&fences::design())"
   7 | #forall ( id : , body : ) where id != from -> #forall ( id : id , body : rename ( body , from , to ) ) ,
   8 | _ -> t ,
   9 | } ;
- 12 | @memoized fits ( a : Ty , b : Ty , binds : int ->? Ty ) -> bool = «match» ( a , b ) {
- 13 | ( #int , #rat ) -> «true» ,
- 14 | ( #var ( id : i ) , _ ) -> «match» binds [ i ] { #notFound -> a == b , t -> fits ( t , b , binds ) } ,
- 15 | ( #fn ( param : p , result : r ) , #fn ( param : q , result : s ) ) -> fits ( q , p , binds ) && fits ( r , s , binds ) ,
- 16 | ( #forall ( id : i , body : x ) , #forall ( id : j , body : y ) ) -> @memoizationArena fits ( x , rename ( y , j , i ) , binds ) ,
- 17 | _ -> a == b ,
- 18 | } ;
+ 13 | @memoized fits ( a : Ty , b : Ty , binds : int ->? Ty ) -> bool = «match» ( a , b ) {
+ 14 | ( #int , #rat ) -> «true» ,
+ 15 | ( #var ( id : i ) , _ ) -> «match» binds [ i ] { #notFound -> a == b , t -> fits ( t , b , binds ) } ,
+ 16 | ( #fn ( param : p , result : r ) , #fn ( param : q , result : s ) ) -> fits ( q , p , binds ) && fits ( r , s , binds ) ,
+ 17 | ( #forall ( id : i , body : x ) , #forall ( id : j , body : y ) ) -> @memoizationArena fits ( x , rename ( y , j , i ) , binds ) ,
+ 18 | _ -> a == b ,
+ 19 | } ;
 == DESIGN.md [sec:robustness] 1 L21
   1 | prices : Utf8String ->? rat «with» peers ( [ str["a"] , str["b"] ] , assign : #roundRobin ) «with» commutes ( #distinctKeys ) ;
   3 | main ( m : MainArgs ) {
