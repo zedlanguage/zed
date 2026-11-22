@@ -455,18 +455,18 @@ fn mirrored(sys: &System) -> System {
 /// are exactly `x`'s own values met with `[lo, hi]`. Proof, with no cycle of parts (no
 /// sequence of parts each with its lower arm's name the next one's upper arm's name, the last
 /// back to the first; `acyclic`). Fix the hub at `c` and take `v`, one of `x`'s values with
-/// `lo_x <= v <= hi_x`, `lo` and `hi` the least and greatest members at `c` ([`members`]).
-/// Run the forward loop of [`members`] again from `lo` with `lo_x` raised to `v` (a member of
+/// `lo_x <= v <= hi_x`, `lo` and `hi` the least and greatest members at `c` (`members`).
+/// Run the forward loop of `members` again from `lo` with `lo_x` raised to `v` (a member of
 /// `x`'s values, at or above `lo_x`). Call the result `q`. (1) Only names reached from `x`
 /// along parts are raised (a name is pushed only when a part from a raised name fires), and
 /// `x` is not among them, as that would close a cycle; so `q_x = v`. (2) `q <= hi`: `hi` is a
 /// point that passes with `hi_x >= v`, so it lies at or above the point the loop starts from,
 /// and each firing raises a name to the least member at or above a bound that every point
-/// that passes with `x >= v` meets ((a) of [`members`] for the points with `x >= v`). (3) `q`
-/// passes: each value is one of its name's values (from [`ceil`] or the start); the base
+/// that passes with `x >= v` meets ((a) of `members` for the points with `x >= v`). (3) `q`
+/// passes: each value is one of its name's values (from `ceil` or the start); the base
 /// upper bounds hold since `q <= hi` and `hi` meets them, and they only grow easier lower
 /// down; the base lower bounds hold since `q >= lo`; a part holds by its upper arm when its
-/// threshold is above its name's value, and otherwise it fired ((b) of [`members`], every name
+/// threshold is above its name's value, and otherwise it fired ((b) of `members`, every name
 /// raised being pushed again), so its lower arm holds. So `v` passes at `c`. Over the hub's
 /// values: with every coefficient at least 0 the points that pass are those at `p` (`rising`,
 /// step (3)), so the claim at `p` is the claim; when the hub has no least value, the values of
