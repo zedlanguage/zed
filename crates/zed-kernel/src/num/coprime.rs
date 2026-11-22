@@ -1125,19 +1125,20 @@ fn pair_base(out: &mut Vec<BigUint>, a: BigUint, b: BigUint) {
 pub mod crossover {
     use num_bigint::BigUint;
 
-    /// [`super::FACTOR_BITS`] as built, in bits.
+    /// `num::coprime`'s private `FACTOR_BITS` as built, in bits.
     pub const FACTOR_BITS: u32 = super::FACTOR_BITS;
-    /// [`super::FACTOR_INPUTS`] as built.
+    /// `num::coprime`'s private `FACTOR_INPUTS` as built.
     pub const FACTOR_INPUTS: usize = super::FACTOR_INPUTS;
 
-    /// The elements of the coprime base of `xs` by Bernstein's trees ([`super::by_halves`]),
+    /// The elements of the coprime base of `xs` by Bernstein's trees (the private `by_halves`),
     /// the general side of `FACTOR_BITS`, whatever the inputs.
     pub fn coprime_base_by_halves(xs: &[BigUint]) -> Vec<BigUint> {
         super::by_halves(xs).elements
     }
 
     /// Which of `xs` share a prime with another, by the product and remainder trees
-    /// ([`super::shares_a_factor_by_tree`]), the general side of `FACTOR_BITS`.
+    /// (the private `shares_a_factor_by_tree` of `num::coprime`), the general side of
+    /// `FACTOR_BITS`.
     pub fn shares_a_factor_by_tree(xs: &[BigUint]) -> Vec<bool> {
         super::shares_a_factor_by_tree(xs)
     }
