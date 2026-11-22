@@ -3,7 +3,8 @@
 //! UTF-8, and lengths and integers are little-endian 64-bit words. An exact number past `i64`
 //! is its sign as a tag, then the limbs of its numerator, and of a rational its denominator, in
 //! lowest terms; one kept with prime powers, such as `2^2^100`, is the form it is kept in, its
-//! numerator, denominator and powers, with no digits built ([`Rat::kept`]).
+//! numerator, denominator and powers, with no digits built
+//! ([`Rat::kept`](zed_kernel::num::Rat::kept)).
 //! A string value is its length in bytes, then its bytes in its type's encoding, UTF-8 for
 //! `Utf8String` (DESIGN.md M0.7; author answer A106, 2026-11-20), whatever tree of blocks
 //! holds it ([`Out::string`]).
@@ -498,8 +499,9 @@ enum Job<'t> {
 }
 
 /// The serialization of a definition in normal form, or [`TooLarge`] when the system refuses
-/// the memory to build or write one of its exact numbers ([`Rat::built_parts`], [`Num::built`])
-/// or to grow the bytes.
+/// the memory to build or write one of its exact numbers
+/// ([`Rat::built_parts`](zed_kernel::num::Rat::built_parts), [`Num::built`]) or to grow the
+/// bytes.
 pub fn def(d: &Def, refs: Refs<'_>) -> Result<Vec<u8>, TooLarge> {
     let mut out = Out {
         bytes: Vec::new(),

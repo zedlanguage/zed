@@ -4238,7 +4238,7 @@ pub trait HeldFamilyAt: Sized {
     fn sub_family(&self, i: usize) -> Result<Option<Self>, Self::Error>;
 }
 
-/// What primitive `p` gives on the held family `at`, as [`prim_on`] reads a data family: for
+/// What primitive `p` gives on the held family `at`, as `prim_on` reads a data family: for
 /// `Get`, `TupleGet`, `At` and `Has` at `key` (data, not an atom: an atom key passes through,
 /// which each machine does before this), the entry, `#notFound` (`#outOfBounds` for `At`) or
 /// whether it is there; for `Count` the number of entries; for an entry step the entry tuple
