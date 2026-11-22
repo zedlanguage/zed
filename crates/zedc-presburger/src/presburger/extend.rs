@@ -3398,6 +3398,8 @@ impl Summaries {
                 if all_covered {
                     frontier.retain(|d| d.id == largest);
                 } else {
+                    #[cfg(test)]
+                    FRONTIER_UNIONS.with(|v| v.set(v.get() + 1));
                     let ancestors = frontier_ancestors(&frontier, &self.cone);
                     frontier.retain(|d| {
                         #[cfg(test)]
@@ -4324,6 +4326,10 @@ thread_local! {
     /// Rows read to make the rests of the forms of a piece in [`merge_pieces`] (tests of its
     /// cost only).
     static FRONTIER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Calls of [`frontier_ancestors`] from [`Summaries::local`], the union of the cones of a
+    /// frontier whose cones differ in size and none of which covers the rest (tests of its
+    /// reach only, BENCH-frontier-containment-reach).
+    static FRONTIER_UNIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static KEY_AUDIT: std::cell::Cell<bool> = const {std::cell::Cell::new(false)};
     static KEY_AUDITS: std::cell::Cell<usize> = const {std::cell::Cell::new(0)};
     static FOLD_ROW_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -8261,6 +8267,26 @@ mod tests {
                 Local::Ready(_, _) => return calls,
                 _ => panic!("fixture must be decomposable"),
             }
+        }
+    }
+
+    /// The frontier of `r5_unequal_shared_frontiers_scale` (unequal heights above one shared
+    /// prefix, no cone covering the rest) is decided by the union of its cones
+    /// ([`frontier_ancestors`]), so that benchmark measures that union, which the wide
+    /// questions do not reach (they are answered before it, by `Rays::same_sign_sum`;
+    /// BENCH-frontier-containment-reach). The leaf frontiers and `r5_frontier_measurement`
+    /// do not reach it either: their cones are all of one size, or one covers the rest.
+    #[test]
+    fn unequal_frontiers_above_a_shared_prefix_take_the_union_of_their_cones() {
+        for n in [4, 50] {
+            let (sums, defs, reads) = r5_unequal_shared_frontier(n);
+            let def = |n: u32| defs[n as usize].clone();
+            FRONTIER_UNIONS.with(|v| v.set(0));
+            assert!(matches!(
+                sums.local(&reads, &BTreeSet::new(), None, &[], &def),
+                Local::Ready(_, _)
+            ));
+            assert!(FRONTIER_UNIONS.with(|v| v.get()) > 0, "n = {n}");
         }
     }
 
