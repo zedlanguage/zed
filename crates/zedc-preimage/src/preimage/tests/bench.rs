@@ -169,6 +169,29 @@ fn one_high_arity_owner_with_no_attempts_does_not_expand_pairs() {
     );
 }
 
+/// One function of 50,000 and of 400,000 parameters, and a join between each two adjacent
+/// parameters, every one refused since both classes hold the function (from the XR-algos
+/// review, Gemini, round 1, adversary 2B): each refusal looks through one function on each
+/// side.
+#[test]
+fn joins_refused_between_the_parameters_of_one_wide_function_scale() {
+    let build = |n: usize| ([0, n], (1..n).map(|i| (i - 1, i)).collect::<Vec<_>>());
+    let (small, large) = (build(50_000), build(400_000));
+    let (roots, joined) = unite(&small.0, &small.1);
+    assert!(roots.into_iter().eq(0..small.0[1]));
+    assert_eq!(joined, vec![false; small.0[1]]);
+    crate::scaling::compare(
+        "one function of n parameters, n - 1 refused joins, n = 50,000 and 400,000",
+        1,
+        || {
+            std::hint::black_box(unite(&small.0, &small.1));
+        },
+        || {
+            std::hint::black_box(unite(&large.0, &large.1));
+        },
+    );
+}
+
 /// [`Gen::chain`] makes a chain of `n` `if`s in work of order `n`: each level reads the
 /// one term below it, shared, so neither the work nor the term doubles at a level.
 #[test]

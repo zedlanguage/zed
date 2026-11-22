@@ -1003,9 +1003,7 @@ fn replacing_variables_no_row_holds_in_rows_on_every_bit_scales() {
         1,
         |m| {
             let (t, binds) = &made[&m];
-            binds
-                .iter()
-                .for_each(|b| assert!(&t.replace(b) == t));
+            binds.iter().for_each(|b| assert!(&t.replace(b) == t));
         },
     );
     scaling::check_order(
@@ -1014,9 +1012,70 @@ fn replacing_variables_no_row_holds_in_rows_on_every_bit_scales() {
         1,
         |m| {
             let (t, binds) = &names[&m];
-            binds
-                .iter()
-                .for_each(|b| assert!(&t.replace(b) == t));
+            binds.iter().for_each(|b| assert!(&t.replace(b) == t));
+        },
+    );
+}
+
+/// Two shapes that defeat simpler ways of paying for a row's variable set (review XR-algos,
+/// Gemini round 1, adversaries 1A and 1B), COMPLEXITY.md CK-every-bit: `m` rows `wj = (h,
+/// $(64j))`, each replaced once with a class it does not hold, around one shared row `h` on
+/// every bit (the wasted work must reach `h`, not only the row replaced); and `m` rows `ri =
+/// (c, $(2m + i))` of length 2 over one row `c` of `m` classes that `VarBits` rules out, each
+/// replaced twice (a row whose walk is short must not pay for a set as large as `c`'s).
+#[test]
+fn replacing_variables_in_wrappers_of_a_shared_row_scales() {
+    use std::sync::Arc;
+    use zedc::check::ty::Binds;
+    let class = |k: usize| Ty::var(format!("${k}").into());
+    let bind =
+        |v: String| -> Binds { [(Arc::<str>::from(v), Ty::dynamic())].into_iter().collect() };
+    let wrappers = scaling::inputs(40, |m| {
+        let h = Ty::tuple(
+            (0..64)
+                .map(class)
+                .chain((0..64).map(|b| class(64 * (m + 2) + b)))
+                .collect(),
+        );
+        (1..=m)
+            .map(|j| {
+                (
+                    Ty::tuple(vec![h.clone(), class(64 * j)]),
+                    bind(format!("${}", 64 * j + 64)),
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    let short = scaling::inputs(80, |m| {
+        let c = Ty::tuple((0..m).map(class).collect());
+        (0..m)
+            .map(|i| {
+                let r = Ty::tuple(vec![c.clone(), class(2 * m + i)]);
+                let binds = [64, 128].map(|o| bind(format!("${}", 2 * m + i + o)));
+                (r, binds)
+            })
+            .collect::<Vec<_>>()
+    });
+    scaling::check_order(
+        "one replacement of each of m wrappers of a shared row",
+        40,
+        1,
+        |m| {
+            for (w, b) in &wrappers[&m] {
+                assert!(&w.replace(b) == w);
+            }
+        },
+    );
+    scaling::check_order(
+        "two replacements of each of m short rows over one row",
+        80,
+        1,
+        |m| {
+            for (r, binds) in &short[&m] {
+                for b in binds {
+                    assert!(&r.replace(b) == r);
+                }
+            }
         },
     );
 }

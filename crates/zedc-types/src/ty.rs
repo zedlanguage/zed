@@ -2485,7 +2485,9 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
 fn same_nodes(a: &Ty, b: &Ty) -> bool {
     let shapes = |x: &Option<Vec<Shape>>, y: &Option<Vec<Shape>>| match (x, y) {
         (None, None) => true,
-        (Some(x), Some(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| p.as_ptr() == q.as_ptr()),
+        (Some(x), Some(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| p.as_ptr() == q.as_ptr())
+        }
         _ => false,
     };
     a.dynamic == b.dynamic

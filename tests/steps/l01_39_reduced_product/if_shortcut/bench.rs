@@ -62,3 +62,22 @@ fn one_pass_and_transfer_scale_on_deep_nests() {
         }
     }
 }
+
+/// The walk over forms 5 and 6 of [`nest`], blocks bound inside bound blocks whose names a
+/// test reads, at depths 64 and 512 (item PA-walk-read-all): each test makes the summary of
+/// the name it reads, which, before, read the whole bound term below it (61.56 times the
+/// instructions on form 5).
+#[test]
+fn the_walk_over_blocks_whose_names_tests_read_scales() {
+    let scope = ints(&["x".into()]);
+    for form in [5, 6] {
+        let terms = scaling::inputs(64, |k| nest(form, k as i64));
+        scaling::check(
+            &format!("form {form}: the one pass over blocks bound `k` deep, each name read"),
+            64,
+            |k| {
+                arms_and_value(&terms[&k], &scope);
+            },
+        );
+    }
+}

@@ -471,7 +471,7 @@ fn a_settled_product_written_again_is_reduced_again() {
 /// The random products [`the_change_flag_matches_a_comparison`] reduces in a run.
 const PRODUCTS: usize = 4_000;
 
-/// A term `d` deep over the integer `x`, of one of five forms, each level `k` built around
+/// A term `d` deep over the integer `x`, of one of seven forms, each level `k` built around
 /// the one below, `t`:
 ///
 /// 0. a block bound inside a bound block, `z_k = { t }; z_k + 1`;
@@ -481,7 +481,12 @@ const PRODUCTS: usize = 4_000;
 ///    `if x > k { z_k = if x > k + 1 { 1 } else { 2 }; t } else { x }`;
 /// 3. a chain of literal-armed `if`s bound one after another,
 ///    `z_k = if x > k { 1 } else { 2 }; t`;
-/// 4. `if`s nested in arms, `if x > k { t } else { x }`.
+/// 4. `if`s nested in arms, `if x > k { t } else { x }`;
+/// 5. a block bound inside a bound block whose name a test reads,
+///    `z_k = { t }; if z_k > k { z_k + 1 } else { z_k }` (item PA-walk-read-all);
+/// 6. form 5 with the test `z_k > 3k`, whose cuts move with the level, so the value of a
+///    level has `Θ(k)` pieces (review XR-algos, Codex round 1: "the positive thresholds are
+///    now separated by two integers").
 fn nest(form: u8, d: i64) -> Term {
     let gt = |n| prim(Prim::Gt, vec![var("x"), int(n)]);
     (0..d).fold(var("x"), |t, k| {
@@ -491,21 +496,154 @@ fn nest(form: u8, d: i64) -> Term {
             1 => if_(gt(k), let_(&z, t, var(&z)), var("x")),
             2 => if_(gt(k), let_(&z, if_(gt(k + 1), int(1), int(2)), t), var("x")),
             3 => let_(&z, if_(gt(k), int(1), int(2)), t),
+            5 | 6 => {
+                let read = if_(
+                    prim(
+                        Prim::Gt,
+                        vec![var(&z), int(if form == 5 { k } else { 3 * k })],
+                    ),
+                    prim(Prim::Add, vec![var(&z), int(1)]),
+                    var(&z),
+                );
+                let_(&z, t, read)
+            }
             _ => if_(gt(k), t, var("x")),
         }
     })
 }
 
-/// The five forms of [`nest`], deep: the random blocks are at most three deep. (Until
+/// The forms of [`nest`], deep: the random blocks are at most three deep. Forms 5 and 6
+/// compare the one pass, which reads a block's summary from its body's, with the transfer,
+/// which summarizes each whole (`Lazy::get` in `product.rs`, item PA-walk-read-all). (Until
 /// TEST-bench-move-l0139 twice these depths, 0.55 to 0.75 s at load 32.)
 #[test]
 fn one_pass_and_transfer_agree_on_deep_nests() {
     let scope = ints(&["x".into()]);
-    for (form, d) in [(0, 32), (1, 16), (2, 64), (3, 128), (4, 128)] {
+    for (form, d) in [
+        (0, 32),
+        (1, 16),
+        (2, 64),
+        (3, 128),
+        (4, 128),
+        (5, 32),
+        (6, 32),
+    ] {
         let t = nest(form, d);
         let one = arms_and_value(&t, &scope);
         if let Some(diff) = difference(&one, &arms_and_value_by_transfer(&t, &scope)) {
             panic!("form {form}, {d} deep: {diff}");
+        }
+    }
+}
+
+/// One bound block, the same shared term, `{ u = x; if u > 0 { 1 } else { 2 } }`, bound in
+/// both arms of `if x > 0`: the one pass reads each binding's summary from the block's body in
+/// the scope of its own arm (item PA-walk-read-all), so `z > 1` can only fail in the first arm
+/// and only hold in the second (review XR-algos, Codex round 1,
+/// `a_shared_rhs_is_read_in_its_own_scope`).
+#[test]
+fn a_shared_bound_block_is_read_in_its_own_arm() {
+    let part = Shared::new(let_(
+        "u",
+        var("x"),
+        if_(prim(Prim::Gt, vec![var("u"), int(0)]), int(1), int(2)),
+    ));
+    let read = |same: Shared| {
+        Term::Let(
+            "z".into(),
+            same,
+            Shared::new(if_(
+                prim(Prim::Gt, vec![var("z"), int(1)]),
+                int(10),
+                int(20),
+            )),
+        )
+    };
+    let scope = ints(&["x".into()]);
+    // Whether `z > 1` can hold and can fail where `x > 0` (the block is 1) and where `x <= 0`
+    // (it is 2); the test is also written the other way round, so that a summary kept from
+    // the first arm walked would be wrong in the second.
+    let (pos, neg) = ([false, true], [true, false]);
+    for (test, reach) in [(Prim::Gt, [pos, neg]), (Prim::Le, [neg, pos])] {
+        let t = if_(
+            prim(test, vec![var("x"), int(0)]),
+            read(part.clone()),
+            read(part.clone()),
+        );
+        let one = arms_and_value(&t, &scope);
+        if let Some(diff) = difference(&one, &arms_and_value_by_transfer(&t, &scope)) {
+            panic!("{t}: {diff}");
+        }
+        let z_test = prim(Prim::Gt, vec![var("z"), int(1)]).to_string();
+        let inner: Vec<_> = (one.0.iter())
+            .filter(|a| a.guard == z_test)
+            .map(|a| (a.outcome, a.reachable()))
+            .collect();
+        let expected: Vec<_> = (reach.iter())
+            .flat_map(|r| [(true, r[0]), (false, r[1])])
+            .collect();
+        assert_eq!(inner, expected, "{t}");
+    }
+}
+
+/// A bound block `z = { y = e'; b }` read by a test, for bodies `b` that the summary of the
+/// whole block and the summary of `b` read through `y`'s (item PA-walk-read-all) treat by
+/// different code paths: `y` cancelled in a sum, `y` doubled, `y` shadowing the input, a
+/// `mod`, an `if` in the body, and a block in an arm that rules out a branch of `e'` (review
+/// XR-algos, Gemini round 1, "Five subtle exactness traps"). The one pass and the transfer,
+/// which does not peel, give the same arms and value.
+#[test]
+fn a_peeled_block_agrees_with_the_whole_block_on_awkward_bodies() {
+    let p = |op, a, b| prim(op, vec![a, b]);
+    let (x, y) = (|| var("x"), || var("y"));
+    let read = |block: Term, test: Prim, k: i64| {
+        let_("z", block, if_(p(test, var("z"), int(k)), int(1), int(2)))
+    };
+    let cases = [
+        read(
+            let_("y", x(), p(Prim::Sub, p(Prim::Add, y(), x()), y())),
+            Prim::Gt,
+            0,
+        ),
+        read(let_("y", x(), p(Prim::Add, y(), y())), Prim::Eq, 1),
+        read(
+            let_("x", p(Prim::Add, x(), int(1)), p(Prim::Add, x(), x())),
+            Prim::Gt,
+            2,
+        ),
+        read(
+            let_("y", p(Prim::Mod, x(), int(3)), p(Prim::Add, y(), int(1))),
+            Prim::Gt,
+            1,
+        ),
+        read(
+            let_(
+                "y",
+                x(),
+                if_(p(Prim::Gt, y(), int(0)), y(), p(Prim::Sub, int(0), y())),
+            ),
+            Prim::Gt,
+            3,
+        ),
+        if_(
+            p(Prim::Gt, x(), int(0)),
+            read(
+                let_(
+                    "y",
+                    if_(p(Prim::Lt, x(), int(0)), p(Prim::Mul, x(), x()), x()),
+                    y(),
+                ),
+                Prim::Gt,
+                1,
+            ),
+            int(0),
+        ),
+    ];
+    let scope = ints(&["x".into()]);
+    for t in cases {
+        let one = arms_and_value(&t, &scope);
+        if let Some(diff) = difference(&one, &arms_and_value_by_transfer(&t, &scope)) {
+            panic!("{t}: {diff}");
         }
     }
 }

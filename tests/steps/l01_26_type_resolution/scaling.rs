@@ -792,8 +792,9 @@ fn sums_tests_and_never_arguments_give_their_signatures() {
     assert_eq!(sig(&never_arguments(3), "f"), "Never -> Never");
 }
 
-/// A small instance of `bench::scaling::replacing_variables_no_row_holds_in_rows_on_every_bit_scales`,
-/// with the check the benchmark cannot make: once replacements that leave the rows unchanged
+/// A small instance of
+/// `bench::scaling::replacing_variables_no_row_holds_in_rows_on_every_bit_scales`, with the
+/// check the benchmark cannot make: once replacements that leave the rows unchanged
 /// have made each row keep the set of its variables (CK-every-bit, `Replacer::wasted`), a
 /// replacement of a variable a row holds, at its top or only in the shared row below, still
 /// changes it, and one of a variable none holds still gives the type back equal. What it cannot
@@ -817,7 +818,13 @@ fn rows_that_keep_their_variables_are_still_replaced_where_they_hold_one() {
     let t = Ty::tuple(rows.collect());
     let names = Ty::tuple(
         (0..4)
-            .map(|i| Ty::tuple((0..300).map(|b| Ty::var(format!("N{i}_{b}").into())).collect()))
+            .map(|i| {
+                Ty::tuple(
+                    (0..300)
+                        .map(|b| Ty::var(format!("N{i}_{b}").into()))
+                        .collect(),
+                )
+            })
             .collect(),
     );
     // Enough unchanged replacements for every row to make its set: the work told doubles at
@@ -827,10 +834,16 @@ fn rows_that_keep_their_variables_are_still_replaced_where_they_hold_one() {
         assert!(names.replace(&bind(format!("M{round}"))) == names);
     }
     for held in ["$5", "$63", "$128", "$400", "$831"] {
-        assert!(t.replace(&bind(held.into())) != t, "replacing {held} changed nothing");
+        assert!(
+            t.replace(&bind(held.into())) != t,
+            "replacing {held} changed nothing"
+        );
     }
     for held in ["N0_0", "N3_299", "N2_150"] {
-        assert!(names.replace(&bind(held.into())) != names, "replacing {held} changed nothing");
+        assert!(
+            names.replace(&bind(held.into())) != names,
+            "replacing {held} changed nothing"
+        );
     }
     assert!(t.replace(&bind("$70".into())) == t);
 }

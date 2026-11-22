@@ -2456,14 +2456,18 @@ struct Binding {
 /// .. in ..) in ..`) cost `Θ(d²)` though no test reads them. Made when read, a binding no test
 /// reads costs `O(1)` beside a copy in `O(1)` of the scope's persistent maps, which the binding
 /// keeps until its summary is made; the summaries made are the same, made in the same scopes.
-/// Trigger: the residual is a nest in which each bound name is read by a test, such as
-/// `let z = (let y = .. in if y > 0 ..) in if z > 0 ..`: each read summary still costs its
-/// whole bound term, `Θ(d²)` for `d` levels (measured in COMPLEXITY.md row PA-walk-nest-cost). Test
-/// of the fixed case:
-/// `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_scale_on_deep_nests`;
-/// a deep chain is made and dropped without recursion in
+/// A nest in which each bound name is read by a test, such as `let z = (let y = .. in if y >
+/// 0 ..) in if z > 0 ..`, read each summary over its whole bound term, `Θ(d²)` for `d`
+/// levels, until PA-walk-read-all: a bound term `let y = .. in b` whose `y` the walk bound
+/// keeps the scope it walked `b` in ([`Peeled`]), and its summary is that of `b` there,
+/// read through `y`'s, so each level summarizes its own body once (proof at [`Lazy::get`]).
+/// Trigger: a bound term that is not a `let` whose body gives its value (a sum of blocks, a
+/// call, a test whose arms are blocks) is still summarized whole, and so is a peeled one
+/// whose check fails ([`Lazy::peel_agrees`]). Tests of the fixed cases:
+/// `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_scale_on_deep_nests` (forms 0
+/// to 4) and `..::the_walk_over_blocks_whose_names_tests_read_scales` (forms 5 and 6); a deep chain
+/// is made and dropped without recursion in
 /// `l01_39_reduced_product::if_shortcut::a_deep_chain_of_bindings_is_walked_and_dropped`.
-/// A complete solution would make a block's summary from those of its parts, bottom up.
 #[derive(Clone)]
 struct Lazy(Arc<Mutex<Making>>);
 
@@ -2474,8 +2478,20 @@ enum Making {
         e: Shared,
         basis: Basis,
         free: Option<BTreeSet<Arc<str>>>,
+        /// When `e` is `let name = .. in b` and the walk bound `name` itself, the scope it
+        /// walked `b` in ([`Peeled`]); `free` is then that of `b`.
+        peeled: Option<Peeled>,
     },
     Made(Option<Arc<Held>>),
+}
+
+/// The scope a walk bound `name` in, just after binding it, for a bound term `let name = ..
+/// in b` whose value the walk took from `b` ([`Run::walk_value_at`]): the summary of the
+/// term is that of `b` in this scope, read through the summary `name` has there, made when
+/// a test read `name` (item PA-walk-read-all, proof at [`Lazy::get`]).
+struct Peeled {
+    name: Arc<str>,
+    basis: Basis,
 }
 
 /// The parts of the scope a [`Lazy`] summary is made in that a summary reads
@@ -2780,16 +2796,62 @@ impl Lazy {
         Lazy(Arc::new(Mutex::new(Making::Made(held))))
     }
 
-    fn pending(e: &Shared, basis: Parts) -> Lazy {
+    fn pending(e: &Shared, basis: Parts, peeled: Option<(Arc<str>, Parts)>) -> Lazy {
         Lazy(Arc::new(Mutex::new(Making::Pending {
             e: e.clone(),
             basis: Basis(Some(Box::new(basis))),
             free: None,
+            peeled: peeled.map(|(name, s)| Peeled {
+                name,
+                basis: Basis(Some(Box::new(s))),
+            }),
         })))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Making> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether the summary of `b`, of free names `free`, made in `inner`, the scope a walk
+    /// bound `name` in just after binding it, reads what the summary of `let name = .. in b`
+    /// made in `outer` would: every name it reads besides `name` (the names of `free`, and
+    /// the inputs of the summaries it reads them through) has in `inner` the product and
+    /// order it has in `outer`, and `name`, when `b` reads it, has a summary that holds, made
+    /// in a scope whose products and orders at its inputs are those of `outer`. `O(m)`
+    /// product comparisons for the `m` names read; a summary over `m` inputs is read at the
+    /// same cost by [`View::summarize_free`] anyway.
+    fn peel_agrees(
+        inner: &Parts,
+        outer: &Parts,
+        name: &Arc<str>,
+        free: &BTreeSet<Arc<str>>,
+    ) -> bool {
+        let same = |at: &imbl::OrdMap<Arc<str>, Product>, orders: &Orders, v: &Arc<str>| {
+            at.get(v) == outer.names.get(v) && orders.get(v) == outer.orders.get(v)
+        };
+        let view = inner.view();
+        for n in free {
+            let held = view.summary(n);
+            if n == name {
+                let Some(h) = held else { return false };
+                let Made::Scope(at) = &h.made else {
+                    return false;
+                };
+                if !h.summary.vars().iter().all(|v| same(at, &h.orders, v)) {
+                    return false;
+                }
+                continue;
+            }
+            if !same(&inner.names, &inner.orders, n) {
+                return false;
+            }
+            if let Some(h) = held
+                && !(h.summary.vars().iter()).all(|v| same(&inner.names, &inner.orders, v))
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// The summary, made first when it was not. The summaries of the names its term reads are
@@ -2814,27 +2876,75 @@ impl Lazy {
     /// `l01_39_reduced_product::if_shortcut::a_chain_of_bindings_is_walked_and_dropped`
     /// (a chain read and unread); it cannot catch a deadlock between threads, since the
     /// walk runs on one thread.
+    ///
+    /// Peeled (item PA-walk-read-all, [`Peeled`]). The term `e = let y = e' in b` is
+    /// summarized as `b` in the scope `inner` the walk bound `y` in, just after binding it,
+    /// with `y` read through its own summary. The order proof above still holds: `inner`
+    /// holds the bindings of the outer scope and `y`'s, whose `Lazy` was made while `e` was
+    /// walked, before `e`'s binding, so every summary waited on is still older. Value, sketch:
+    /// `let_summary` reads a `let` inside a residual by binding `y` to `e'` in the residual's
+    /// lexical scope, so `b`'s value is the same function of the inputs whether `y` is
+    /// expanded there or read through a summary of `e'` over the same inputs at the same
+    /// integers and orders. [`Lazy::peel_agrees`] checks exactly that sameness (each name `b`
+    /// reads, and each input of the summaries it reads them through, has the same product and
+    /// order in `inner` as in the outer scope; `y`'s summary holds and was made at the outer
+    /// products), and on failure the whole of `e` is summarized as before. Departures: the
+    /// representation differs (edges to `y`'s summary instead of `e'` inlined), so the regions
+    /// and bounds a test reads may be cut at other points, and a summary may exist one way
+    /// and not the other; this is not proved equal, only checked by test (proof row
+    /// PROOF-pa-peel-summary). Cost: each level summarizes its own body once, beside the
+    /// `O(m)` check for its `m` names. Tests: the comparison of the one pass, which peels,
+    /// with `arms_and_value_by_transfer`, which does not (`Run::peel`), on random blocks and
+    /// on the forms of `nest`, forms 5 and 6 those that peel
+    /// (`l01_39_reduced_product::if_shortcut::one_pass_and_transfer_agree_on_deep_nests`), a
+    /// block shared by both arms of a test (`..::a_shared_bound_block_is_read_in_its_own_arm`,
+    /// from the XR-algos review, Codex, round 1), and bodies that cancel, double or shadow `y`,
+    /// take a `mod`, hold an `if`, or sit in an arm that rules out a branch of `e'`
+    /// (`..::a_peeled_block_agrees_with_the_whole_block_on_awkward_bodies`, the same review,
+    /// Gemini, round 1); they compare arms and values, not the summaries themselves, so a
+    /// summary that differs but gives the same arms is not caught.
     fn get(&self) -> Option<Arc<Held>> {
         let mut todo = vec![self.clone()];
         while let Some(top) = todo.last().cloned() {
             let mut m = top.lock();
-            let Making::Pending { e, basis, free } = &mut *m else {
+            let Making::Pending {
+                e,
+                basis,
+                free,
+                peeled,
+            } = &mut *m
+            else {
                 todo.pop();
                 continue;
             };
-            let s = basis
-                .0
-                .as_deref()
-                .expect("a pending summary keeps its parts");
-            let free = free.get_or_insert_with(|| stage::free(e));
-            let waiting: Vec<Lazy> = (free.iter())
+            // The term summarized and the scope it is summarized in: `b` in the scope its
+            // walk bound `name` in, when peeled, and otherwise `e` in the scope of its binding.
+            let (term, s) = match (peeled.as_ref(), &**e) {
+                (Some(p), Term::Let(_, _, b)) => (b, &p.basis),
+                _ => (&*e, &*basis),
+            };
+            let s = s.0.as_deref().expect("a pending summary keeps its parts");
+            let names = free.get_or_insert_with(|| stage::free(term));
+            let waiting: Vec<Lazy> = (names.iter())
                 .filter(|n| s.names.contains_key(n))
                 .filter_map(|n| s.bindings.get(n))
                 .filter(|b| matches!(*b.summary.lock(), Making::Pending { .. }))
                 .map(|b| b.summary.clone())
                 .collect();
             if waiting.is_empty() {
-                let held = s.view().summarize_free(e, free);
+                let outer = basis
+                    .0
+                    .as_deref()
+                    .expect("a pending summary keeps its parts");
+                let lost = peeled
+                    .as_ref()
+                    .is_some_and(|p| !Lazy::peel_agrees(s, outer, &p.name, names));
+                if lost {
+                    *peeled = None;
+                    *free = None;
+                    continue;
+                }
+                let held = s.view().summarize_free(term, names);
                 *m = Making::Made(held);
                 todo.pop();
             } else {
@@ -10206,7 +10316,20 @@ impl Scope {
     //   is a point of difference constraints and none is left on `x`; `projected` and `seen`
     //   compare `x`'s product, which changed, so the parts and stars on `x` are due again.
     pub fn bind(&mut self, x: &Arc<str>, p: Product, e: &Shared) -> Unbind {
-        self.bind_with(x, p, e, None)
+        self.bind_with(x, p, e, None, None)
+    }
+
+    /// [`Scope::bind`] of `e`, a term `let name = .. in b` whose value a walk took from `b`,
+    /// with the scope `inner` the walk bound `name` in: the summary of `e`, when read, is
+    /// that of `b` there ([`Peeled`]).
+    fn bind_peeled(
+        &mut self,
+        x: &Arc<str>,
+        p: Product,
+        e: &Shared,
+        peeled: Option<(Arc<str>, Parts)>,
+    ) -> Unbind {
+        self.bind_with(x, p, e, None, peeled)
     }
 
     /// [`Scope::bind`] with the summary `s` of the bound value ([`let_summary`]), made over the
@@ -10226,7 +10349,7 @@ impl Scope {
         s: &LetPa,
         doms: &Domains,
     ) -> Unbind {
-        self.bind_with(x, p, e, Some((s, doms)))
+        self.bind_with(x, p, e, Some((s, doms)), None)
     }
 
     /// [`Scope::bind`] of `x` to `p` met with `image`, the integers a summary of its value takes
@@ -10335,6 +10458,7 @@ impl Scope {
         mut p: Product,
         e: &Shared,
         given: Option<(&LetPa, &Domains)>,
+        peeled: Option<(Arc<str>, Parts)>,
     ) -> Unbind {
         let summary = match given {
             Some((s, doms)) if self.summarizes(&p) => {
@@ -10356,7 +10480,7 @@ impl Scope {
         // Until no reduction changes a domain; each change is a meet, so the loop descends.
         while p.reduce_domains() {}
         let summary = match given {
-            None => self.summarize(e, &p),
+            None => self.summarize(e, &p, peeled),
             Some(_) => Lazy::made(summary),
         };
         let order = self.clock;
@@ -10621,11 +10745,11 @@ impl Scope {
     /// the scope's orders, each a copy in `O(1)` of a persistent map. Made, it costs `e`'s size
     /// and the domains of the inputs it reads itself, not the summaries of the names it reads
     /// ([`Scope::inputs_and_lets`]), beside checking that those hold ([`Scope::holds`]).
-    fn summarize(&self, e: &Shared, p: &Product) -> Lazy {
+    fn summarize(&self, e: &Shared, p: &Product, peeled: Option<(Arc<str>, Parts)>) -> Lazy {
         if !self.summarizes(p) {
             return Lazy::made(None);
         }
-        Lazy::pending(e, self.basis())
+        Lazy::pending(e, self.basis(), peeled)
     }
 
     /// The parts of this scope a summary reads ([`View::summarize_free`]): the names and the
@@ -20234,6 +20358,13 @@ struct Run<'m> {
     /// the arms it reached; off only in the reference walk of the test that checks it
     /// (`arms_and_value_by_transfer`, built with the feature `preimage-ref`).
     shortcut: bool,
+    /// The last `let` whose value [`Run::walk_value_at`] took from its body: the term, its
+    /// name, and the scope just after binding the name, for the `let` that binds that term
+    /// to read its summary from the body's ([`Peeled`]).
+    peeled: RefCell<Option<(*const Term, Arc<str>, Parts)>>,
+    /// Whether a binding's summary is read from its body's when it is a `let` ([`Peeled`]);
+    /// off only in the reference walk (`arms_and_value_by_transfer`).
+    peel: bool,
 }
 
 impl<'m> Run<'m> {
@@ -20246,6 +20377,8 @@ impl<'m> Run<'m> {
             count: std::cell::Cell::new(0),
             premises: RefCell::new(Vec::new()),
             shortcut: true,
+            peeled: RefCell::new(None),
+            peel: true,
         }
     }
 
@@ -20343,11 +20476,21 @@ impl<'m> Run<'m> {
         }
         match t {
             Term::Let(x, e, b) => {
+                self.peeled.take();
                 let p = self.walk_value(e).await;
+                // The scope `e`'s own walk bound its name in, when `e` is a `let` whose value
+                // is its body's: set by that walk as its last step, so a later walk inside
+                // `e` cannot have replaced it, and matched to `e` by address.
+                let peeled = (self.peeled.take())
+                    .filter(|(at, ..)| self.peel && std::ptr::eq(*at, &**e))
+                    .map(|(_, name, inner)| (name, inner));
                 // As in `Run::forward_at`: a comparison that follows its carrier is, at an
                 // integer, the literal compared with the value just found.
                 let plain = follow(t).filter(|_| p.ty.element.subtype(&Type::int()));
-                let u = self.scope(|s| s.bind(x, p, e));
+                let u = self.scope(|s| s.bind_peeled(x, p, e, peeled));
+                let inner = (self.peel && plain.is_none())
+                    .then(|| self.scope(|s| (!s.bottom).then(|| s.basis())))
+                    .flatten();
                 let out = match plain {
                     Some(f) => {
                         self.walk(b).await;
@@ -20368,6 +20511,7 @@ impl<'m> Run<'m> {
                     None => self.walk_value(b).await,
                 };
                 self.scope(|s| s.unbind(u));
+                *self.peeled.borrow_mut() = inner.map(|s| (t as *const Term, x.clone(), s));
                 out
             }
             // A literal in each arm: the value is the literal of each arm some state reaches,
@@ -20774,6 +20918,7 @@ pub fn arms_and_value_by_transfer(term: &Term, scope: &Scope) -> (Vec<Arm>, Prod
     let mut scope = scope.clone();
     let mut run = Run::new(&mut scope);
     run.shortcut = false;
+    run.peel = false;
     let p = run.stack.run(run.walk_value(term));
     (run.out.take(), p)
 }
