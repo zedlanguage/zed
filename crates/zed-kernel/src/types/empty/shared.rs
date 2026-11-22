@@ -74,9 +74,9 @@ impl<V> ByType<V> {
     /// still meet in one entry, where [`Tied::Many`] tells them apart by an ordered map,
     /// `O(log b)` comparisons for `b` keys of one digest, so equal digests cost a log factor,
     /// not a walk. A name digest is folded from the parts of the type alone (`types.rs`,
-    /// `name_digest`), so equal types have equal digests and still meet in one entry. The order of the table now follows the run's seed; no
-    /// caller reads it: the map is only looked up, and `retain`, its one walk, keeps or drops
-    /// each entry by its own key and value alone.
+    /// `name_digest`), so equal types have equal digests and still meet in one entry. The order
+    /// of the table now follows the run's seed; no caller reads it: the map is only looked up,
+    /// and `retain`, its one walk, keeps or drops each entry by its own key and value alone.
     /// Test: `the_key_is_the_seeded_hash_of_the_digest` checks the key; no test builds a
     /// program whose digests collide, which needs inverting the digest steps.
     fn digest(&self, t: &Type) -> u64 {
