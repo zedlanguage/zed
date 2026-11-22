@@ -353,9 +353,13 @@ fn each_package_of_cycles_names_its_cycles_at_small_sizes() {
 }
 
 /// `k` units `u0` … `u{k-1}`, each a new empty file, all given as roots, as when every unit of
-/// a package just laid out is checked at once. An empty unit costs little to read, parse and
-/// resolve (6,500 instructions; a unit of one comment costs 200,000), so the work of finding a
-/// unit among those read so far is what would grow with `k`.
+/// a package just laid out is checked at once. The `k` texts are equal, so the database parses
+/// and checks the text once (`Db::parse` and `Db::check` are keyed by the text) and each further
+/// unit costs about 6,500 instructions, so the work of finding a unit among those read so far is
+/// what would grow with `k`. A unit read alone costs about 700,000 instructions, empty or of one
+/// comment alike ([`a_unit_of_comments_costs_what_an_empty_unit_costs`]); the 200,000 once
+/// written here for a comment was the cost of a text not met before, not of the comment (plan
+/// row PERF-load-comment-only).
 pub(super) fn placeholders(k: usize) -> (Memory, Vec<String>) {
     let fs = (0..k)
         .map(|i| (format!("u{i}.zed"), String::new()))
@@ -374,6 +378,45 @@ fn a_few_roots_load_each_once() {
         assert_eq!(p.units.len(), k);
         assert_eq!(mistakes(&p), Vec::<String>::new());
     }
+}
+
+/// Loads the unit `u0` of text `text` into a new database, so nothing is reused from an
+/// earlier load.
+fn load_alone(text: &str) {
+    let fs = memory(vec![("u0.zed".into(), text.into())]);
+    let p = load(&mut Db::new(), &fs, &["u0"]);
+    assert_eq!(mistakes(&p), Vec::<String>::new(), "{text}");
+}
+
+/// A unit of one comment costs what an empty unit costs, each read into a new database: work
+/// of order 1 against work of order 1, held to the limit of power 0 (plan row
+/// PERF-load-comment-only, which reported 200,000 instructions against 6,500; measured
+/// 2026-11-21, both cost about 700,000, and the 6,500 was of an empty text the database had
+/// parsed and checked before, `placeholders`).
+#[test]
+fn a_unit_of_comments_costs_what_an_empty_unit_costs() {
+    zed_tests::scaling::compare(
+        "loading an empty unit, then a unit of one comment",
+        0,
+        || load_alone(""),
+        || load_alone("// the notes of this unit\n"),
+    );
+    zed_tests::scaling::compare(
+        "loading an empty unit, then a unit of one block comment",
+        0,
+        || load_alone(""),
+        || load_alone("/* the notes of this unit */\n"),
+    );
+}
+
+/// A unit of `n` comment lines is loaded in time linear in `n`: the lexer passes over each
+/// comment once (`lex::comment`, O(bytes)).
+#[test]
+fn a_unit_of_comments_loads_in_linear_time() {
+    zed_tests::scaling::check("loading a unit of n comment lines", 2000, |n| {
+        let text: String = (0..n).map(|i| format!("// note {i}\n")).collect();
+        load_alone(&text);
+    });
 }
 
 /// A package with no file read, and the import graph edges [`order`] reads.
