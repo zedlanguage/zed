@@ -1498,6 +1498,54 @@ does eliminate (its end variables have one set), is unchanged at load 53: decide
 8.94. Test of the path: the front_cost bench, which failed before the change and passes after;
 correctness by the 19 `forced` tests of `zedc-presburger`, among them `forced_against_solver`.
 
+### S.3-cost-utvpi, the two- and three-variable rows (UTVPI, LIVE3), measured 2026-11-22
+
+The baseline the Zed checker of S.3 is compared with for UTVPI (rows C24, S38, S44) and LIVE3
+(`zedc-solvers/src/live3.rs`). All 24 benchmarks of `l01_38_omega_test::bench::stages` and
+`bench::live3` ran together on one commit (7b58d316e, `run_tests.sh --bench --only
+'l01_38_omega_test::bench::(live3|stages)::'`, 24 pieces, 0 failed, load 51 to 56 on 32 cores).
+The ratio is instructions at 8n over instructions at n (`zed_tests::scaling`); the limit is 10.5,
+the goal 9.
+
+| Benchmark (bench line) | Sizes | Instructions n to 8n | Ratio | Bytes ratio |
+|---|---|---|---|---|
+| stages, the acyclic hub | 83,000 to 664,000 | 452M to 3,613M | 8.00 | 8.00 |
+| stages, a cycle of negative edges | 8,400 to 67,200 | 638M to 5,459M | 8.56 | 8.00 |
+| stages, the cyclic hub | 21,000 to 168,000 | 1,005M to 8,312M | 8.27 | 8.00 |
+| stages, BAD-GOR augmented | 3,300 to 26,400 | 343M to 2,694M | 7.85 | 7.97 |
+| stages, BAD-GOR with its path split | 2,600 to 20,800 | 508M to 4,122M | 8.12 | 7.99 |
+| stages, BAD-GOR augmented and a fan | 2,800 to 22,400 | 424M to 3,538M | 8.35 | 8.00 |
+| stages, BAD-GOR and a fan with no cycle | 3,100 to 24,800 | 66M to 531M | 7.99 | 8.00 |
+| stages, the joined union family | 2,200 to 17,600 | 444M to 3,531M | 7.95 | 8.14 |
+| stages, the union family through decide | 1,200 to 9,600 | 482M to 4,071M | 8.45 | 8.01 |
+| stages, the joined union family through decide | 810 to 6,480 | 356M to 2,991M | 8.39 | 8.00 |
+| stages, the union family joined by a wide row, through decide | 240 to 1,920 | 484M to 4,393M | 9.07 | 8.04 |
+| stages, two aggregates | 1,800 to 14,400 | 177M to 1,558M | 8.78 | 8.01 |
+| stages, three variables in many rows | 4,900 to 39,200 | 709M to 6,931M | 9.78 | 8.01 |
+| stages, a box point held by many rows | 5,900 to 47,200 | 509M to 4,219M | 8.28 | 7.99 |
+| live3, rows over three variables | 290 to 2,320 | 2,299M to 18,961M | 8.25 | 8.96 |
+| live3, rows over a slab of million coefficients | 192 to 1,536 | 1,942M to 15,231M | 7.84 | 8.68 |
+| live3, a lens of tangent planes away from the origin | 380 to 3,040 | 3,351M to 17,161M | 5.12 | 6.43 |
+| live3, a lens of tangent planes in a thin slab, in `point` | 70 to 560 | 2,541M to 21,438M | 8.44 | 9.19 |
+
+Two benchmarks are not an n to 8n ratio: `the_race_costs_little_more_than_duong_where_duong_wins`
+compares the race of searches with Duong's search alone on BAD-GOR split both ways at k = 1,024
+(2.96 times the instructions, within its limit; RACE-constant), and
+`coefficients_of_many_bits_scale` grows the coefficient bits from 64 to 512 (3.76 times). The
+other four live3 benchmarks check answers against enumeration (seeds 0x13a01, 0x13a02, 0x13a03,
+0x13a06) and pass.
+
+Two ratios lie between 9 and 10.5, so they pass with a note: three variables in many rows
+(9.78) and the union family joined by a wide row (9.07). Both rows already name their cost at
+their tests in `tests/steps/l01_38_omega_test/bench/stages.rs`.
+
+Negative controls: each of these tests was shown to fail on the code before its fix when it was
+added; the counts are in the comments of `bench/stages.rs` (Goldberg and Radzik's search alone
+on BAD-GOR 59.8 times the work; BAD-GOR and a fan before UTVPI-union 60.6 times the work and
+48.8 times the bytes; the joined union family on the old code 47.6 times the bytes). They were
+run once and not committed, since a control needs the old code; they were not rerun for this
+row. `bench/live3.rs` records no control counts at its tests.
+
 ## Kept
 
 | ID | Where | Why it is kept, or its cost | Cost, test or status | Test or status |

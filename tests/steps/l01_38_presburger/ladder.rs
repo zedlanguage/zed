@@ -1,5 +1,5 @@
 //! Rung 2 of the discharge ladder at its boundaries with the rungs around it (LADDER-study;
-//! the study is docs/studies/ladder.md; DESIGN.md sec:verification, "The discharge ladder").
+//! the study is docs/ladder-study.md; DESIGN.md sec:verification, "The discharge ladder").
 //! Each test is one class of corner case: an obligation rung 2 only just proves, one it only
 //! just leaves open, one it must refute, one where a wrong "proved" or a wrong refutation would
 //! be unsound, and the determinism cases. Rung 2 is called directly on an obligation: the
@@ -178,7 +178,7 @@ const CLAMP: &str = "clamp(positional v, positional l, positional h) = if v < l 
 fn clamp_is_in_range_exactly_when_lo_is_at_most_hi() {
     // "`clamp(x, lo, hi) in lo..=hi` is exact `min`/`max` transfer": it holds from
     // `lo <= hi`, and without that premise it is false (`lo = 1, hi = 0`), which DESIGN's
-    // example leaves out (docs/studies/ladder.md, defect D5). `clamp` as DESIGN writes it
+    // example leaves out (docs/ladder-study.md, defect D5). `clamp` as DESIGN writes it
     // (sec:grammar), an `if` chain, and as `max` of `min`.
     let chain = format!("{CLAMP}ok(x, lo, hi) = lo <= clamp(x, lo, hi) && clamp(x, lo, hi) <= hi;");
     let minmax = "ok(x, lo, hi) = lo <= max(lo, min(x, hi)) && max(lo, min(x, hi)) <= hi;";
@@ -226,7 +226,7 @@ fn a_refutation_at_a_zero_divisor_is_a_point_where_the_operation_fails() {
     // "at `n == 0`, where the operation fails, they are left free ... from `n >= 0` neither
     // is." Rung 2 refutes `x mod n < n` with the witness `n = 0`, where the goal is no
     // boolean: `x mod 0` gives the atom `#divByZero`. DESIGN does not say whether such a point is a
-    // refutation (docs/studies/ladder.md, defect D4); this test fixes what rung 2 does today.
+    // refutation (docs/ladder-study.md, defect D4); this test fixes what rung 2 does today.
     let (premise, goal) = ("ok(x, n) = n == 0;", "ok(x, n) = x mod n < 1;");
     let e = rung2(premise, goal);
     let Entailment::Refuted(m) = &e else {
@@ -243,7 +243,7 @@ fn a_refutation_at_a_zero_divisor_is_a_point_where_the_operation_fails() {
     // The contrast: a guard that excludes the zero divisor removes the failing point, and the
     // goal is proved. A residual that drops a `mod` by a divisor that may be zero, as
     // `(x mod n) * 0 == 0`, is `false` at `n = 0`, so it is proved only where a premise
-    // excludes the zero (RUNG2-definedness, docs/studies/ladder.md defect D9; the tests
+    // excludes the zero (RUNG2-definedness, docs/ladder-study.md defect D9; the tests
     // below).
     assert_proved(
         "ok(x, n) = true;",
@@ -579,7 +579,7 @@ fn the_halves_of_the_triangle_inequality_are_proved_through_their_symmetry() {
     // written as `p` and `q`, is symmetric under swapping `a` with `b` and `p` with `q` at
     // once. Until FAIL-alone-point-refused-at-model the solver refused the tie of `a` with `b`
     // (and of `p` with `q`), since no swap of two variables alone maps the rows onto
-    // themselves (docs/studies/ladder.md, defect D3). The double swap does, and fixing one of
+    // themselves (docs/ladder-study.md, defect D3). The double swap does, and fixing one of
     // the tied variables tells every variable apart, so the solver takes the tie
     // (`System::symmetries`) and both halves are proved, under either order of the binders.
     let abs = "ok(a, b, p, q) = p >= a && p >= -a && q >= b && q >= -b";

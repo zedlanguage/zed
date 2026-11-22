@@ -980,7 +980,8 @@ pub fn compare(what: &str, power: u32, small: impl Fn() + Sync, large: impl Fn()
 
 /// [`compare`] for two runs that are not one pass at n and 8n, such as two methods at one size:
 /// panics when `second` does more than `limit` times the work of `first`, or allocates more than
-/// `limit` times its bytes. `why` says where the limit comes from. No scaling test calls it.
+/// `limit` times its bytes. `why` says where the limit comes from. Benchmarks call it to compare
+/// two methods or two shapes of one input at one size (l01_23, l01_26, l01_38, l01_39 and others).
 pub fn compare_costs(
     what: &str,
     why: &str,
