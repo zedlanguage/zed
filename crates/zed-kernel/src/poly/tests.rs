@@ -946,19 +946,29 @@ fn a_square_is_chosen_at_its_share() {
         let at: Vec<u128> = (0..64).map(|i| g * i + (i * 7) % g).collect();
         packed(&at, 3)
     };
-    // About every 18 indices: the dense product at its share, where the whole cost would
-    // have taken the sparse one (POLY-square-choice-cost). Both give the same square.
-    let a = square(18);
-    let plan = a.plan(&a).expect("packed keys");
-    let whole = Choice {
-        packed: plan.choice.packed / SQUARE_SHARE,
-        ..plan.choice
+    // Some spacing takes the dense product at its share where the whole cost would have taken
+    // the sparse one (POLY-square-choice-cost); which spacing moves with `SQUARE_PAIR_COST`
+    // (gap 18 at 20, past it at 50: POLY-square-cost-sizes), so it is searched for. Both
+    // give the same square there. The whole cost is the plan's own for a product that is not
+    // a square: one coefficient 2 in place of 3 keeps every size, so the packed integers
+    // too, and charges it at the whole `mul_cost`. Were the plan to charge the square
+    // its whole cost too, no spacing would differ.
+    let shared = |g: u128| {
+        let a = square(g);
+        let plan = a.plan(&a).expect("packed keys");
+        let mut b = a.clone();
+        b.terms[0].1 = BigInt::from(2);
+        let whole = Choice {
+            packed: a.plan(&b).expect("packed keys").choice.packed,
+            ..plan.choice
+        };
+        plan.takes_dense && !whole.takes_dense()
     };
-    assert!(
-        plan.takes_dense && !whole.takes_dense(),
-        "{:?}",
-        plan.choice
-    );
+    let g = (2..256)
+        .find(|&g| shared(g))
+        .expect("a square taken dense at its share");
+    let a = square(g);
+    let plan = a.plan(&a).expect("packed keys");
     let sparse = a.sparse_mul(&a, true);
     assert_eq!(a.dense_mul(&a, plan.slot, plan.step), sparse);
     // About every 256 indices: past the crossover even at the share, the sparse product.

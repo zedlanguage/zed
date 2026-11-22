@@ -81,9 +81,15 @@ pub enum Carrier {
 /// 36 - x` at 0.3 ms, while it allowed a sum of 4096 names that takes 4 s; its units tracked
 /// the time within a factor of 40. This limit refuses by the predicted time itself, at the cost
 /// of one constant measured on one machine, which a faster or idle machine spends in less than
-/// 250 ms; the counted work predicts the time within a factor of 2 on every family but one,
-/// a sparse product whose pairs merge into few terms (`((x + y) ^ 64 + x) ^ 2`, 52 ns a unit,
-/// measured before a square formed each unordered pair once). Not counted: the reading of the
+/// 250 ms; the counted work predicts the time within a factor of 2 on every family. A sparse
+/// product whose pairs merge into few terms (`((x + y) ^ 64 + x) ^ 2`) took 52 ns a unit
+/// before a square formed each unordered pair once (on the Ryzen 9 5950X above, 2026-11-13,
+/// load 36 to 41, test profile). With that and `SQUARE_PAIR_COST` at 50 it took 9.6 ns: 0.440
+/// ms for 46 022 units, 0.67 of the prediction, and the other laws of
+/// `l03_09_egraph::calibration` 0.83 to 0.91. That is the least of its runs in the thread's
+/// processor time (`CLOCK_THREAD_CPUTIME_ID`), not instructions, which the VM has no counter
+/// for, on the Colab TPU v5e VM `v5e4`, test profile, 2026-11-22 (POLY-square-cost-sizes);
+/// a different machine and meter from the 52 ns. Not counted: the reading of the
 /// identity, its points and its factors, linear in its size
 /// (about 0.2 ms for a size of 6000), so no identity is refused for its length alone.
 ///
@@ -142,8 +148,9 @@ const SUPPORT: f64 = 2.0;
 /// to 96, `poly-gaps 64` 59 to 69, `poly-square 256` 57 to 62, `poly-wide 2` up to 210,
 /// `poly-wide 8` from 48. No value fits all, so the choice is off somewhere by at most 1.09
 /// times the cheaper method's instructions, at any value from 59 to 65; `poly-wide 8` is off
-/// by 1.30 at every value of all three constants, since `num::mul_cost` overcounts its packed
-/// product.
+/// by 1.30 at every value of all three constants (1.47 to 1.50 measured again on 2026-11-22),
+/// since `num::mul_cost` undercounts its packed product of 372 to 1892 words, num-bigint's
+/// Toom-3 below `MUL_LEAF` (POLY-mul-cost-gaps; the comment in `num::fast::mul_cost`).
 const PAIR_COST: f64 = 60.0;
 
 /// The cost of a slot of the dense product's output besides the product of the packed
@@ -169,10 +176,20 @@ const DENSE_COST: f64 = 700.0;
 /// `PAIR_COST` only from 77 to 82, which no other shape allows (`poly-dense 1` takes the
 /// slower method by 1.41 at 68), and at 60 it took the sparse product from gap 17, at up to
 /// 1.16 times the dense product's instructions; at 17 to 22 its fit takes in 60, and the
-/// choice changes method at the measured crossover, gap 20. Fitted at 256 terms only: the
-/// sparse square took 0.48 to 0.67 of the general product's instructions at 63 to 511 terms
-/// of one word, the most at 511, so a square of far more terms is estimated a little low.
-const SQUARE_PAIR_COST: f64 = 20.0;
+/// choice changes method at the measured crossover, gap 20. Fitted again over 64 to 1024 terms
+/// (POLY-square-cost-sizes, 2026-11-22, `crossover poly-square <terms> square <words>` in the
+/// dev profile on Colab TPU v5e VMs at a load of 1 to 5, in processor time, as the VMs have no
+/// instruction counter; `poly-dense 4 slot`, which this does not touch, measured 1.00 in one
+/// run and 1.24 in the next, a spread not yet explained). As set at 20 the choice took up to
+/// 1.40 times the faster method's time (1024 terms); 64 terms fit 0 to 18.5, 256 terms 33.5 to
+/// 41.3, 256 terms of 4 words 33.0 to 55.8, 1024 terms 72.3 to 79.1 and 1024 terms of 4 words
+/// 122.3 to 122.5. The ranges do not meet, as each pair's share of the sort over all
+/// `t (t - 1) / 2` cross products grows with `t`, while this is one constant a pair. At 50 the
+/// worst was 1.08 to 1.21 at 64 terms of 1 to 16 words, 1.00 to 1.12 at 256 terms, 1.14 at
+/// 1024 terms and 1.58 at 1024 terms of 4 words; the best one value over all eight sizes, 51.9
+/// to 53.8, leaves 1.42 there, inside the spread above, so 50 is kept. 1024 terms of 16 words
+/// did not finish its series in 300 s (POLY-square-1024-wide).
+const SQUARE_PAIR_COST: f64 = 50.0;
 
 /// The units of [`LIMIT`] in one unit of `num::mul_cost`, as [`PAIR`] and [`PAIR_COST`] measure
 /// the same cost of a pair in each: about 2 ns, a word product's 16 instructions.
@@ -1988,7 +2005,8 @@ impl<K: Key> Poly<K> {
     /// A96). The naive choice, `L log2 L` against `t1 t2 w1 w2` with unit constants, took the
     /// slower method by up to 9.6 times its instructions (univariate sums of one-word
     /// coefficients went sparse up to 45 terms each; the crossover is at 5); the fitted one by at
-    /// most 1.09, and 1.30 on 8 terms of 8 to 1024 words. So a product whose monomials
+    /// most 1.09, and 1.30 on 8 terms of 8 to 1024 words (1.50 on 2026-11-22; see
+    /// [`PAIR_COST`]). So a product whose monomials
     /// merge densely, as of two univariate sums, costs `O(n log n)` in its output, and one of
     /// sums in different names, whose `t1 * t2` products are all distinct, costs
     /// `O(t1 t2 log(t1 t2))`, near-linear in its output too. Between them, a product whose

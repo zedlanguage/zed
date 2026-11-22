@@ -1203,7 +1203,8 @@ the cost models themselves: `DIV_COST` 1.089 times the less work (`div-leaf 1 1`
 to 11.9 and `div-leaf 256 1` for 7.7 to 8.2; `1 4` 10.4 to 10.5, `4 1` 9.06 to 9.22, `16 1`
 9.0 to 10.0), `TOOM_COST` 1.047 (`mul 4` against `mul 1`), and `Poly::mul`'s three constants
 1.087 (`poly-dense 4` against `poly-dense 1`) and 1.30 on `poly-wide 8` at any value (the
-POLY-nf section); a better model, not another
+POLY-nf section; 1.47 to 1.50 on 2026-11-22, caused by `num::mul_cost`'s Toom-3 estimate
+below `MUL_LEAF`, not by the zero words between slots, POLY-mul-cost-gaps); a better model, not another
 constant, would lower them. The kernel `LEAF_DIGITS` stayed at 1024 here: at 2048 the sum over
 its sizes was 1.0279 times less, within its spread of 1.0340.
 

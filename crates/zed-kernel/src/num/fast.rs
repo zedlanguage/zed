@@ -1388,8 +1388,14 @@ fn dense_cost(a: usize, b: usize) -> f64 {
 /// Infinite when the product's words do not fit in a `usize` with room to round up.
 pub(crate) fn mul_cost(a: usize, b: usize) -> f64 {
     // Complexity tradeoff: `O(log)` in the sizes, as `transform_plan`; counting the rows over
-    // nonzero words would read the factors, `O(L)`, for a choice that is off by 1.30 at most
-    // without them (`crossover poly-wide 8`).
+    // nonzero words would read the factors, `O(L)`. It would not mend `crossover poly-wide 8`
+    // (POLY-mul-cost-gaps, 2026-11-22): there the dense product took up to 1.50 times the
+    // sparse one's time where it was estimated cheaper, and fewer counted words only lower its
+    // estimate. A packed integer with terms of both signs has about half its words nonzero
+    // (`poly::pack` writes `pos - neg`, so a borrow fills the gap after each term of the other
+    // sign), and rows over them cost more than `toom_cost`. The error is `toom_cost` below
+    // `MUL_LEAF`, fitted from 512 words: at 372 words num-bigint's Toom-3 took about 1.6 times
+    // the time per estimated unit of the 23-word long multiplications it was weighed against.
     let (short, long) = (a.min(b).max(1), a.max(b).max(1));
     if long > usize::MAX / 4 {
         return f64::INFINITY;
