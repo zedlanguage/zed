@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::BuildHasherDefault;
 
 use super::super::{Lits, Parts, Row, Type};
-use crate::digest::Digest;
+use crate::digest::{Digest, text_hash};
 
 /// The hasher of the maps and sets keyed by types: a type hashes as its digest, made once when it
 /// is built, so a lookup reads one node of the type, where a search of a `BTreeMap` compared the
@@ -60,9 +60,27 @@ impl<V> ByType<V> {
         }
     }
 
-    /// The digest `t` is keyed by.
+    /// The digest `t` is keyed by: its presentation digest hashed by the process's seeded text
+    /// hash ([`text_hash`]), not the digest itself (row KERNEL-bytype-flooding).
+    ///
+    /// Why the seed. A type can hold the program's literal values, and its digest is built by
+    /// unseeded [`crate::digest::step`]s, each of which can be inverted in its argument (the
+    /// module comment of `types::bdd::set` says so), so a program could choose literals whose
+    /// types take digests that the map's own hash ([`Digests`], also unseeded) sends to one
+    /// probe sequence of the table: each lookup would then walk all of them, `O(n)` and
+    /// `O(n^2)` over a run (hash flooding; the rule at [`crate::digest::DigestMap`]: keys of a
+    /// `Digest` map are never chosen by the program). With the seed the program does not know,
+    /// distinct digests spread as foldhash spreads its keys. Digests a program makes equal
+    /// still meet in one entry, where [`Tied::Many`] tells them apart by an ordered map,
+    /// `O(log b)` comparisons for `b` keys of one digest, so equal digests cost a log factor,
+    /// not a walk. A name digest is folded from the parts of the type alone (`types.rs`,
+    /// `name_digest`), so equal types have equal digests and still meet in one entry. The order of the table now follows the run's seed; no
+    /// caller reads it: the map is only looked up, and `retain`, its one walk, keeps or drops
+    /// each entry by its own key and value alone.
+    /// Test: `the_key_is_the_seeded_hash_of_the_digest` checks the key; no test builds a
+    /// program whose digests collide, which needs inverting the digest steps.
     fn digest(&self, t: &Type) -> u64 {
-        let d = t.name_digest();
+        let d = text_hash(&t.name_digest());
         #[cfg(test)]
         let d = d & self.mask;
         d
@@ -559,6 +577,24 @@ mod tests {
         assert!(shape(&(&two | &lit(5))).is_none());
         let three = Type::atom_with("cons", &Type::tuple(vec![lit(1), lit(2), lit(3)]));
         assert!(shape(&(&two | &three)).is_none());
+    }
+
+    /// A [`ByType`] keys a type by the seeded hash of its digest, not by the digest a program
+    /// can steer (row KERNEL-bytype-flooding): the key of each of 600 atoms is
+    /// `text_hash(name_digest)`. On main before that row the key was the digest itself, and
+    /// this test failed there. It cannot show that a program fails to flood the table, only
+    /// that the key is out of the program's reach.
+    #[test]
+    fn the_key_is_the_seeded_hash_of_the_digest() {
+        let m: ByType<()> = ByType::new();
+        for i in 0..600 {
+            let t = Type::atom(&format!("k{i}"));
+            assert_eq!(
+                m.digest(&t),
+                crate::digest::text_hash(&t.name_digest()),
+                "{t}"
+            );
+        }
     }
 
     /// Every operation of [`ByType`] agrees with a `BTreeMap` on 600 atoms. In the

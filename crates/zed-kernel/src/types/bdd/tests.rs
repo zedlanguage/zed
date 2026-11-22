@@ -806,6 +806,54 @@ fn an_exclusive_or_is_found_again_when_only_its_complement_lives() {
     }
 }
 
+/// Row KERNEL-xor-complement-dedup (audit P266-3) said that after an exclusive or is built
+/// again, equal complement nodes are built more than once. The table of a thread keeps one
+/// node per set id and constant, so a second node of one function could only be one left
+/// live outside the table. This test holds every node built for `a ^ b ^ c ^ d ^ e` and its
+/// complement, built in several orders, by both helpers, after an atom is added and taken out
+/// again, with each complement first taken by `not` and then dropped and asked for again, and
+/// counts the distinct nodes: two, one per constant. It passed on main at 7b58d316e with no
+/// change to `xor` (b22-misc, 2026-11-22), so the claim was not reproduced: `Part::xor` finds
+/// the live node and the live complement (`found`) before it makes either.
+#[test]
+fn an_exclusive_or_built_again_shares_its_two_nodes() {
+    let lits: Vec<Part<Row>> = (0..6).map(|i| Part::literal(atom(i))).collect();
+    let chain = |order: &[usize], by_or: bool| {
+        let first = lits[order[0]].clone();
+        order[1..].iter().fold(first, |f, &i| {
+            if by_or {
+                xor_by_or(&f, &lits[i])
+            } else {
+                xor_by_and(&f, &lits[i])
+            }
+        })
+    };
+    let mut held = vec![chain(&[0, 1, 2, 3, 4], false)];
+    held.push(held[0].not());
+    for (order, by_or) in [
+        (&[4, 3, 2, 1, 0][..], true),
+        (&[2, 0, 4, 1, 3][..], false),
+        (&[1, 3, 0, 4, 2][..], true),
+    ] {
+        let x = chain(order, by_or);
+        held.push(x.not());
+        held.push(x);
+    }
+    // An atom added and taken out again: the set is made anew and must find the live nodes.
+    let back = xor_by_and(&xor_by_or(&held[0], &lits[5]), &lits[5]);
+    held.push(back.not());
+    held.push(back);
+    let ids: std::collections::BTreeSet<u64> = held.iter().map(Part::id).collect();
+    assert_eq!(ids.len(), 2, "one node per constant");
+    // The caller's handles on the complement dropped and the complement asked for again, while
+    // the node lives (it holds its complement, so the same node comes back).
+    let x = chain(&[3, 1, 4, 0, 2], true);
+    held.retain(|p| p.id() == x.id());
+    assert_eq!(held.len(), 5, "the held nodes of one constant");
+    let again: std::collections::BTreeSet<u64> = [x.not().id(), x.id()].into();
+    assert_eq!(again, ids, "the same two nodes");
+}
+
 #[test]
 fn exclusive_ors_agree_with_their_values() {
     let firsts = exclusive_or_rounds(

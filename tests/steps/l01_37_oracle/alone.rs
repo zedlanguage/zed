@@ -187,10 +187,10 @@ fn each_binding_gives_what_its_run_alone_gives() {
 
 #[test]
 fn natively_too() {
-    // A native run that stops leaves the cells it holds live (item NATIVE-stop-cells), and
-    // `native` refuses that: the run of `FUNCTION`'s `m` alone, as the run of all its
-    // bindings, stops holding the function.
-    for (what, u) in units().into_iter().filter(|(what, _)| *what != FUNCTION) {
+    // Every unit, `FUNCTION` included: its run of `m` stops holding the function in a tuple,
+    // and `native` checks that the stopped run leaves no cell live (item NATIVE-stop-cells,
+    // which left that unit out; it passes on main at 7b58d316e).
+    for (what, u) in units() {
         let ((want, got), _) = native(|engines| (alone(&u, engines), bindings(&u, engines)));
         assert_eq!(got.compared, want.compared, "{what}");
         assert_eq!(got.mismatches, want.mismatches, "{what}");

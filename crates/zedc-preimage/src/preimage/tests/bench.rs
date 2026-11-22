@@ -149,6 +149,58 @@ fn a_chain_of_comparisons_is_read_in_time_near_its_length() {
     );
 }
 
+/// A chain of guards on `x mod 2` over `[-6, 6]`, which the first split finds wide
+/// ([`Split::Wide`]) and the split over the box it found reads exactly ([`preimage_in`]).
+/// Row PRE-class-int found it exponential past k = 360 (359G instructions at k = 640) when
+/// the bound of [`ByClass`] passed `i64` and each class was read by its own run; item
+/// PREIMAGE-chain-cliff fixed the bound after a clamp. The deferred test ran sizes 10 and 80
+/// and failed on main cdf07ac4f at 16.1 times the bytes; on main at 7b58d316e it passes, at
+/// 8.2 times the work and 8.6 times the bytes, and at k = 2000 and 16,000, past the cliff, at
+/// 6.8 and 6.2 (b22-misc, 2026-11-22, load near 50). So this test passed before b22-misc
+/// changed any code: it is the deferred test put back, with a size past the cliff added.
+#[test]
+fn a_chain_split_by_two_classes_is_read_in_time_near_its_length() {
+    for n in [10, 2000] {
+        crate::scaling::check_order("the preimage of a chain of k ifs, x mod 2", n, 1, |k| {
+            chain_preimage(2, k)
+        });
+    }
+}
+
+/// `if x mod 2 == 0 { 2 * s } else { 2 * s + 1 }` nested `k` times over `x` in `[-6, 6]`, then
+/// `<= 2`: the values double at every level, so from k near 60 the bound of [`ByClass`]
+/// passes `i64` ([`Bound::holds`]) and the summary by class is given up for the run of each
+/// class ([`Walk::by_class`]), the fallback row PRE-class-int called exponential. Measured
+/// on main at 7b58d316e (b22-misc, 2026-11-22): 29, 101, 175, 392 and 808 ms at k = 100,
+/// 200, 400, 800 and 1600, near linear, every answer exact; this test, k = 200 and 1600, 9.3
+/// times the instructions and 9.2 times the bytes, under the limit, over the preferred 9. Not
+/// proved for every term: a family on which that fallback costs more than `O(n log n)` is
+/// not excluded by an argument, only by this test and its siblings above.
+#[test]
+fn a_doubling_chain_past_the_bound_is_read_in_time_near_its_length() {
+    let lit = |n: i64| Term::Lit(Value::Int(n));
+    let x = Term::Var("x".into());
+    let even = Term::Prim(
+        Prim::Eq,
+        vec![Term::Prim(Prim::Mod, vec![x.clone(), lit(2)]), lit(0)],
+    );
+    crate::scaling::check_order("the preimage of k doublings by class", 200, 1, |k| {
+        let mut t = x.clone();
+        for _ in 0..k {
+            let twice = Term::Prim(Prim::Mul, vec![lit(2), t]);
+            let odd = Term::Prim(Prim::Add, vec![twice.clone(), lit(1)]);
+            t = Term::If(
+                Shared::new(even.clone()),
+                Shared::new(twice),
+                Shared::new(odd),
+            );
+        }
+        let t = Term::Prim(Prim::Le, vec![t, lit(2)]);
+        let p = preimage(&t, &domains(), &Demand::Bool(true));
+        assert!(p.exact, "k = {k}: {p:?}");
+    });
+}
+
 /// The preimage of [`staged_chain`] under `false`, whose hulls are tightened by questions
 /// to the solver over the whole formula (`presburger::project_each`). Before item
 /// PREIMAGE-slow-rounds each question probed every disjunct again; now the points found

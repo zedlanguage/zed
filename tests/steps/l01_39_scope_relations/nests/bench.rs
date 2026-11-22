@@ -12,6 +12,17 @@ fn narrowing_by_a_nest_of_disjunctions_scales() {
     check_built("a chain of k `if`s on a difference", 400, |k| {
         (ints(&names(&["x0", "y"])), if_chain(k))
     });
+    // Row ST-single-value-cases-bytes (audit P266-2): `x0 == 3 || x0 == 5 || …`, values two
+    // apart, so no two cases are adjacent integers, as they are in the nest above;
+    // `check_built` holds the bytes to the same limit as the work.
+    check_built("a disjunction of k equalities two apart", 1_024, |k| {
+        let t = (1..k as i64)
+            .rev()
+            .fold(prim(Prim::Eq, var("x0"), int(2 * k as i64 + 1)), |t, i| {
+                or(prim(Prim::Eq, var("x0"), int(2 * i + 1)), t)
+            });
+        (x0(), t)
+    });
     check_built("k nested thresholds", 500, |k| (x0(), thresholds(k)));
     check_built("k differences over k/4 names", 400, |k| {
         let (t, ns) = pairs(k);

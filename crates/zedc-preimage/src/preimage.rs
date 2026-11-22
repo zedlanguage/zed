@@ -13214,7 +13214,12 @@ enum Leaf {
 /// coefficient past `i64` whose values are small (`2^100 * x` on the piece `0..=0` after a
 /// hundred doublings each clamped): (V) counts values and not coefficients, and by (E) the
 /// coefficient is exact. The limit at `i64` is a size limit left from when summaries were
-/// machine words; row PRE-class-int replaces it with `Int` bounds.
+/// machine words. Row PRE-class-int asked for `Int` bounds because the run of each class
+/// that follows a summary given up was exponential on a chain by `x mod 2`; that cost went
+/// with item PREIMAGE-chain-cliff, and the tests `a_chain_split_by_two_classes_is_read_in_time_
+/// near_its_length` and `a_doubling_chain_past_the_bound_is_read_in_time_near_its_length`
+/// (`tests/bench.rs`) measure the fallback near linear past the limit, so the limit stays: it
+/// decides only when a summary is given up, never an answer (by (E) above).
 #[derive(Clone, Copy)]
 struct Bound {
     a: u128,
