@@ -801,7 +801,8 @@ impl Value {
 
     /// The language's order on two values of one kind: structural, except that two floats
     /// compare as IEEE 754 does, so `-0.0` and `0.0` are equal and a NaN is unordered, and
-    /// tuples compare component by component in that order. `None` when they are unordered.
+    /// tuples compare component by component in that order. `None` when they are unordered, or
+    /// when the pair that decides is of two kinds ([`Value::surface_order`] tells these apart).
     // Source of the float rule: IEEE Std 754-2019, "IEEE Standard for Floating-Point
     // Arithmetic", IEEE, 2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11, "Details of
     // comparison predicates". Sketch of the rule used: every pair of floats is in exactly one of
@@ -882,6 +883,27 @@ impl Value {
             Value::Path(_) => 5,
             Value::Family(_) => 6,
         }
+    }
+
+    /// The language's order on two values of one kind ([`Value::surface_cmp`]), and `None`
+    /// when a pair of components the order reaches, or the two values themselves, are of two
+    /// kinds ([`Value::same_kind`]), which the language does not order: `<`, `<=`, `>`, `>=`,
+    /// `min` and `max` on them are a type error, as the checker rejects them
+    /// (`l01_26_type_resolution/soundness.rs`). Only the pair that decides the order is read:
+    /// `(1, "a") < (2, 3)` is decided at its first components, as `min` decides it.
+    pub fn surface_order(&self, other: &Value) -> Option<Option<Ordering>> {
+        surface_order(self, other)
+    }
+
+    /// Whether `self` and `other` are of one kind, the kinds the language's order and `min` and
+    /// `max` compare within (DESIGN.md sec:reduction, item 5): one numeric kind
+    /// ([`Value::number_kind`]; an integer of either width is one kind), or else one variant.
+    /// Two variants of one numeric kind are only `Int` and `Big`, since each other numeric kind
+    /// is one variant, so one variant or two integers is the whole test.
+    #[inline]
+    pub(crate) fn same_kind(&self, other: &Value) -> bool {
+        mem::discriminant(self) == mem::discriminant(other)
+            || (self.number_kind() == Some(0) && other.number_kind() == Some(0))
     }
 
     /// The numeric kind: `int` (either width), `rat`, `f32` or `f64`, in the order of equal
@@ -3570,6 +3592,7 @@ thread_local! {
                 [const { ReadSet::new() }; RELATIONS],
             ),
             shallow: Cell::new(false),
+            kinds: Cell::new(false),
         }
     };
 }
@@ -3594,6 +3617,9 @@ struct Comparisons {
     /// Whether [`Family::shallow_diff`] is running: two families that do not share their map
     /// are then taken to differ, without reading them.
     shallow: Cell<bool>,
+    /// Whether the walk of the language's order that just ended ended at a pair of two kinds
+    /// ([`two_kinds`]); read and cleared by [`surface_order`].
+    kinds: Cell<bool>,
 }
 
 impl Comparisons {
@@ -4089,8 +4115,22 @@ fn surface_order_step<'a>(a: &'a Value, b: &'a Value) -> Step<'a> {
             o => Step::Ends(o),
         },
         (Value::Tuple(x), Value::Tuple(y)) => items(x, y, Relation::SurfaceOrder),
-        _ => plain_step(a, b, Relation::Total),
+        _ if a.same_kind(b) => plain_step(a, b, Relation::Total),
+        _ => two_kinds(),
     }
+}
+
+/// The end of a walk of the language's order at a pair of two kinds, which it does not order:
+/// `None`, as for an unordered pair, with the reason kept in `kinds` ([`Comparisons`]) for
+/// [`surface_order`]. The flag is set exactly when the walk ends here, since every `Ends` ends
+/// the walk (`walk_in`) and nothing else sets it; and only a walk under
+/// [`Relation::SurfaceOrder`] reaches this, since beneath its tuples that walk compares by the
+/// total order, which never calls `surface_order_step`.
+#[cold]
+#[inline(never)]
+fn two_kinds<'a>() -> Step<'a> {
+    COMPARISONS.with(|c| c.kinds.set(true));
+    Step::Ends(None)
 }
 
 /// [`step`] under [`Relation::Min`] or [`Relation::Max`], which order two values of one kind
@@ -4098,9 +4138,7 @@ fn surface_order_step<'a>(a: &'a Value, b: &'a Value) -> Step<'a> {
 #[cold]
 #[inline(never)]
 fn min_max_step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
-    if a.number_kind() != b.number_kind()
-        || (a.number_kind().is_none() && mem::discriminant(a) != mem::discriminant(b))
-    {
+    if !a.same_kind(b) {
         return Step::Ends(None);
     }
     match (a, b) {
@@ -4415,9 +4453,20 @@ pub(crate) fn surface_eq(a: &Value, b: &Value) -> bool {
     walk(step(a, b, Relation::SurfaceEq)) == Some(Ordering::Equal)
 }
 
-/// The language's order; `None` when the two are unordered.
+/// The language's order; `None` when the two are unordered or the deciding pair is of two kinds.
 pub(crate) fn surface_cmp(a: &Value, b: &Value) -> Option<Ordering> {
-    walk(step(a, b, Relation::SurfaceOrder))
+    surface_order(a, b).flatten()
+}
+
+/// The language's order, `None` when the deciding pair is of two kinds ([`two_kinds`]), else
+/// `Some` of the order (`Some(None)` for an unordered pair, a NaN). The flag is read only when
+/// the walk gave `None`, so an ordered comparison, the common case, does not touch it.
+pub(crate) fn surface_order(a: &Value, b: &Value) -> Option<Option<Ordering>> {
+    let o = walk(step(a, b, Relation::SurfaceOrder));
+    if o.is_none() && COMPARISONS.with(|c| c.kinds.replace(false)) {
+        return None;
+    }
+    Some(o)
 }
 
 /// What a sequence of copied values is rebuilt into.

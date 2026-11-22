@@ -4449,14 +4449,16 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
             }
         }
         (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::Min | Prim::Max, [a, b]) => {
-            let same = match (a.number_kind(), b.number_kind()) {
-                (None, None) => std::mem::discriminant(a) == std::mem::discriminant(b),
-                (x, y) => x == y,
-            };
-            if !same {
+            if !a.same_kind(b) {
                 return ty(vals);
             }
-            let o = a.surface_cmp(b);
+            // Two tuples whose deciding components are of two kinds are not ordered by the
+            // language, so the comparison is a type error, as `min` and `max` of them are in
+            // the arm above (plan row FAIL-kernel-tuple-order-kinds; test
+            // `m0_09_kernel_evaluator::tuples_whose_deciding_components_differ_in_kind_are_a_type_error`).
+            let Some(o) = a.surface_order(b) else {
+                return ty(vals);
+            };
             match p {
                 Prim::Lt => Bool(o == Some(Ordering::Less)),
                 Prim::Le => Bool(matches!(o, Some(Ordering::Less | Ordering::Equal))),
