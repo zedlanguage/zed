@@ -4857,9 +4857,35 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // emptiness query costs O(sqrt N) expected time" (their Theorem in the section "Dynamic
 // Emptiness Queries"), and prove 3SUM-conditional lower bounds for incremental set
 // intersection reporting (their appendix A). Departure: here sets only merge, and a join
-// happens only when the two are disjoint; no lower bound found covers that form, and an
-// O(sqrt N) structure would be slower than this scan on the measured cases, so its general
-// bound is open (COMPLEXITY.md row LOAD-join-disjoint). Trigger: a call joining one parameter to
+// happens only when the two are disjoint; an O(sqrt N) structure would be no faster in order
+// than this scan and slower on the measured cases. Bound of this scan, every step (N <= n the
+// entries of the filtered sets, j the joins): (1) a merge moves the smaller set into the
+// larger, so each entry moves O(log n) times, O(N log n) in all; (2) a refusal whose smaller
+// set holds at most D entries costs O(D), O(j D) in all; (3) a refusal is remembered for its
+// two roots and moves with them, so each pair of roots is looked through at most once; a
+// function's root changes only when its class is the smaller one, whose size then at least
+// doubles, so each function lies under at most log2 n + 1 roots in the run, and at most
+// R = N (log2 n + 1) / D roots ever hold a set of more than D entries, and the largest sets
+// ever held by all roots sum to at most N (log2 n + 1); a refusal between two such roots costs
+// at most the largest set ever held by the root of the smaller set, charged to that root,
+// which has at most R such partners, so (3) costs at most R N (log2 n + 1), O(N² log² n / D); (4) D = N log n / sqrt(j) gives O(N sqrt(j) log n), O(n^1.5 log n) for j = O(n).
+// Both constructions of the deferred tests (/home/luke/Work/wt/scratch/deferred-tests/
+// LOAD-join-disjoint-multi-owner.rs) take Θ(n^1.5): k² or k(k - 1)/2 refusals, each between
+// classes of k + 1 functions sharing one, for n about 2k² parameters. No lower bound is known
+// either way. Deciding whether any join of a list merges is at least as hard as deciding
+// whether some pair of a list of sets is disjoint (one function per element with a parameter
+// per set holding it, one class per set built first, then a join per pair: the first disjoint
+// pair merges, and while none is disjoint nothing changes), which with a graph's neighborhoods
+// as the sets asks whether some edge lies in no triangle; no near-linear method for that is
+// known (Fischer, Künnemann and Redzic, arXiv:2312.14593, relate the all-edge triangle problems
+// to the 3SUM and APSP hypotheses). The 3SUM bound for offline set disjointness, N^(4/3 -
+// o(1)) (Kopelowitz, Pettie and Porat, "Higher Lower Bounds from the 3SUM Conjecture", SODA
+// 2016, arXiv:1407.6756, Theorem `set_disjoint_improved` with gamma = 1/2), needs every
+// answer, and here the first disjoint pair merges and changes the answers after it; a
+// reduction from SETH would refute NSETH, since both answers have certificates of near-linear
+// size (Carmosino et al., ITCS 2016, doi:10.1145/2840728.2840746, Theorem 2). Read in the
+// LOAD-join-disjoint study, b22-research3, 2026-11-22. So the general bound is open
+// (COMPLEXITY.md row LOAD-join-disjoint). Trigger: a call joining one parameter to
 // the classes of two parameters of a third function, the classes holding many functions of
 // two or more parameters. Test `tests::refused_joins_between_two_large_classes_scale`
 // (repeated refusals between two classes, the case remembered) and
