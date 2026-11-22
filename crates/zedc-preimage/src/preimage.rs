@@ -15122,7 +15122,12 @@ fn minmax_pre(p: Prim, z: &IntervalSet, c: i64) -> IntervalSet {
 /// domains (for example `v.meet(&r.dom[&k])` in [`preimage_in`] and `x.meet(v)` in
 /// [`boxed_projections`]); were a set wider, the cost would be its width, not `L`. Tests: the
 /// two named above check which boxes are listed, not the cost.
-fn enumerate(term: &Term, dom: &Domains, listed: &Listed, demand: &Demand) -> Option<Whole> {
+pub(crate) fn enumerate(
+    term: &Term,
+    dom: &Domains,
+    listed: &Listed,
+    demand: &Demand,
+) -> Option<Whole> {
     let mut axes: Vec<(Arc<str>, Vec<Num>)> = Vec::new();
     for (k, s) in dom {
         if !s.is_empty() && !listed.contains(k) {
@@ -15711,11 +15716,7 @@ pub(crate) fn is_point(s: &IntervalSet) -> bool {
 }
 
 /// The enumeration of [`enumerate`] over `axes`, each point evaluated in turn.
-pub(crate) fn enumerate_on(
-    term: &Term,
-    axes: &[(Arc<str>, Vec<Num>)],
-    demand: &Demand,
-) -> Option<Whole> {
+fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<Num>)], demand: &Demand) -> Option<Whole> {
     let mut met: Vec<Vec<&Num>> = vec![Vec::new(); axes.len()];
     let mut count: u64 = 0;
     let mut point = vec![0usize; axes.len()];

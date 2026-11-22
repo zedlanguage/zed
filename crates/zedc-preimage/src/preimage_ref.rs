@@ -179,7 +179,7 @@ use mod_chain::{
 // box search around it (the classes, halving, running a point) is not what it checks.
 pub use crate::preimage::{Classes, Demand, Domains, Listed, Point};
 use crate::preimage::{
-    NONE_LISTED, Search, Whole, classes_decide, enumerate_on, halve, is_point, run_point,
+    NONE_LISTED, Search, Whole, classes_decide, enumerate, halve, is_point, run_point,
     within_classes,
 };
 
@@ -7349,59 +7349,6 @@ fn minmax_pre(p: Prim, z: &IntervalSet, c: i64) -> IntervalSet {
     };
     let own = z.meet(&below);
     if z.contains(c) { own.join(&at_c) } else { own }
-}
-
-/// The projection of the points of a listed box at which the term meets the demand: every
-/// input's set is empty or one the source lists member by member (`listed`,
-/// [`preimage_listed`]), and at most one input has more than one member, so the points
-/// number no more than the members the source lists (docs/thresholds.md, replacement 8). The
-/// term's form must show that it ends ([`stage::ends`]). A range is left to the catalog and the
-/// linear relation, whatever its width: `int[0..=1]`, `int[0..=2]` and `int[0..=3]` are read
-/// by the same steps, and `{0, 1, 2}` is enumerated (DESIGN.md L1.25, author's answer to Q11).
-///
-/// Complexity tradeoff: a box with an input the source gives as a range, with two or more
-/// inputs of several members, or with a term whose ending is not shown is not enumerated; it
-/// gets the catalog's and the linear relation's answer, which may be wider. Why: the points
-/// of a box are the product of its axes, exponential in the inputs and in the bits of each
-/// range, and a term not shown to end may not end. Trigger: those three properties of the
-/// box and the term, each read from what is written, never from a width or a constant. Tests:
-/// `l01_25_preimage_catalog::entries::a_listed_box_is_enumerated_and_a_range_is_not`,
-/// `l01_25_preimage_catalog::entries::ranges_of_every_width_are_read_by_one_method`.
-/// COMPLEXITY.md row C18 (thresholds.md replacement 8). A complete solution is `@exact`
-/// ([`exact_preimage`]), branch and prune over the box, at a cost in its points.
-fn enumerate(term: &Term, dom: &Domains, listed: &Listed, demand: &Demand) -> Option<Whole> {
-    if !stage::ends(term) {
-        return None;
-    }
-    let mut axes: Vec<(Arc<str>, Vec<Num>)> = Vec::new();
-    for (k, s) in dom {
-        if !s.is_empty() && !listed.contains(k) {
-            return None;
-        }
-        // Each member of a listed set is one the source lists, so this costs the list.
-        let mut vs = Vec::new();
-        for (lo, hi) in s.pieces() {
-            let (Fin(lo), Fin(hi)) = (lo, hi) else {
-                return None;
-            };
-            let mut v = lo.clone();
-            while v <= *hi {
-                vs.push(v.clone());
-                v = &v + &Num::ONE;
-            }
-        }
-        axes.push((k.clone(), vs));
-    }
-    if axes.iter().filter(|(_, vs)| vs.len() > 1).count() > 1 {
-        return None;
-    }
-    if axes.iter().any(|(_, vs)| vs.is_empty()) {
-        return Some(Whole {
-            dom: dom.clone(),
-            exact: true,
-        });
-    }
-    enumerate_on(term, &axes, demand)
 }
 
 /// The preimage of `demand` under `term` when its declaration is annotated `@exact`
