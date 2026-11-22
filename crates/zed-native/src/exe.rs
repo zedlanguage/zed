@@ -320,9 +320,11 @@ pub extern "C" fn zed_main(
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
     let status = start(&words, data, root);
-    // Rust flushes standard output when its own `main` returns; this `main` is C's.
+    // Rust flushes standard output when its own `main` returns; this `main` is C's. Flushed
+    // before the runtime closes descriptors 1 and 2, whose failure turns a status of 0 into 1
+    // (step L7.3p).
     let _ = std::io::stdout().flush();
-    c_int::from(status)
+    c_int::from(zed_rt::close::standard_streams(status))
 }
 
 /// Runs the program in `data` on the command line `words`, the first word the executable's
@@ -331,7 +333,9 @@ fn start(words: &[OsString], data: &[u8], root: extern "C" fn() -> Word) -> u8 {
     // A panic is a broken check of zedc's own code: reported as `zedc run` reports one in a
     // run, and the process ends with status 3 from the hook, before the panic unwinds into a
     // runtime hook or `zed_main`, where it would abort (plan row EXE-panic-status).
-    std::panic::set_hook(Box::new(|info| zedc::run::stop_at_bug(info)));
+    std::panic::set_hook(Box::new(|info| {
+        zedc::run::stop_at_bug(info, zed_rt::close::standard_streams)
+    }));
     let (mut stdin, mut stdout, mut stderr) =
         (std::io::stdin(), std::io::stdout(), std::io::stderr());
     let program = match Program::decode(data) {

@@ -56,9 +56,10 @@ pub fn enforce(limits: &MainLimits) -> Result<(), String> {
     Ok(())
 }
 
-/// Writes `bytes` to standard error and ends the process at once with [`FAULT`]: what a
-/// handler does, with no allocation, no lock and no unwinding, all of which may be held by the
-/// code the signal stopped.
+/// Writes `bytes` to standard error, closes standard output and standard error as every run
+/// ends (`crate::close`), and ends the process at once with [`FAULT`]: what a handler does,
+/// with no allocation, no lock and no unwinding, all of which may be held by the code the
+/// signal stopped.
 pub(crate) fn fault_exit(bytes: &[u8]) -> ! {
     #[expect(unsafe_code, reason = "write and _exit are libc calls")]
     // SAFETY: `write` reads `bytes`, which is borrowed for the call; `write` and `_exit` are
@@ -72,6 +73,8 @@ pub(crate) fn fault_exit(bytes: &[u8]) -> ! {
             }
             rest = &rest[n.unsigned_abs()..];
         }
+        // The streams closed as at the end of every run, the status kept (step L7.3p).
+        crate::close::after_stop();
         libc::_exit(FAULT)
     }
 }

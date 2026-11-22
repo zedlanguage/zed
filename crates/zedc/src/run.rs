@@ -317,9 +317,11 @@ pub fn running() -> bool {
 /// panic in a runtime hook that machine code called, or out of the executable's C `main`,
 /// would abort the process with SIGABRT, which a memory limit's handler reports as passing the
 /// limit. The wave in progress commits nothing, since a wave's writes are committed only at its
-/// end; what an earlier wave committed is already flushed (`Options::finish`), and
-/// `std::process::exit` flushes standard output again.
-pub fn stop_at_bug(info: &std::panic::PanicHookInfo<'_>) -> ! {
+/// end; what an earlier wave committed is already flushed (`Options::finish`). Before it exits,
+/// standard output is flushed again and `close` closes descriptors 1 and 2 and gives the status,
+/// which stays 3 (step L7.3p): the caller passes `zed_rt::close::standard_streams`, which this
+/// crate, below the runtime, cannot name.
+pub fn stop_at_bug(info: &std::panic::PanicHookInfo<'_>, close: fn(u8) -> u8) -> ! {
     let payload = info.payload();
     let expected = payload
         .downcast_ref::<&str>()
@@ -335,7 +337,8 @@ pub fn stop_at_bug(info: &std::panic::PanicHookInfo<'_>) -> ! {
         "{}",
         crate::rejection::run_bug(expected, place, program)
     );
-    std::process::exit(3)
+    let _ = std::io::stdout().flush();
+    std::process::exit(i32::from(close(3)))
 }
 
 /// The exit status of a wave whose `main` gave `value` (DESIGN.md sec:ports, step L1.19): its

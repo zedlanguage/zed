@@ -43,7 +43,7 @@ const USAGE: &str = "The commands of zedc are:
 /// (`zedc::run::stop_at_bug`, plan row EXE-panic-status).
 fn bug_report(info: &std::panic::PanicHookInfo<'_>) {
     if zedc::run::running() {
-        zedc::run::stop_at_bug(info);
+        zedc::run::stop_at_bug(info, zed_rt::close::standard_streams);
     }
     let payload = info.payload();
     let expected = payload
@@ -61,17 +61,29 @@ fn main() -> ExitCode {
     // The words stay as the system gives them: a `CommandLine` argument need not be UTF-8 to
     // reach `zedc run`, which names the one that is not (step L1.19a).
     let mut os: Vec<OsString> = std::env::args_os().skip(1).collect();
-    if os.first().is_some_and(|w| w == "--report") {
+    let report = os.first().is_some_and(|w| w == "--report");
+    if report {
         os.remove(0);
+    }
+    let runs = matches!(os.first(), Some(cmd) if cmd == "run" || cmd == "replay");
+    let status = if report {
         let (counter, why) = counter();
         let (status, report) = zedc::work::with(counter, || command(os));
         eprint!("{report}");
         if let Some(why) = why {
             eprintln!("instructions are not counted: {why}");
         }
+        status
+    } else {
+        command(os)
+    };
+    if !runs {
         return ExitCode::from(status);
     }
-    ExitCode::from(command(os))
+    // A run ends as an executable's does: standard output flushed, then descriptors 1 and 2
+    // closed by the runtime, a failed close turning a status of 0 into 1 (step L7.3p).
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    ExitCode::from(zed_rt::close::standard_streams(status))
 }
 
 /// Runs the command `os`, the words after `zedc`, and gives its exit status.

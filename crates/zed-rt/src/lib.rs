@@ -11,6 +11,7 @@
 //! so the oracle does not test it.
 
 mod bug;
+pub mod close;
 pub mod heap;
 pub mod limits;
 pub mod ports;

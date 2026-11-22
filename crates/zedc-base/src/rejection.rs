@@ -297,10 +297,12 @@ rows! {
     // (limits.rs:253). Plan row MAIN-limits, which built them, is done.
     OutOfMemory => "Out of memory in a run",
     MainLimitPassed => "Limit of `main` passed in a run",
-    // No diagnostic uses the next three rows yet: plan row STOP-releases-rt emits the first and
-    // third, PORT-stdout-close-status the second.
+    // No diagnostic uses the next row yet: plan row STOP-releases-rt emits it.
     StopReleaseFailed => "Release that fails during a stop",
+    // No code names the next row: the runtime prints its message itself, in a signal handler
+    // too, where no row can be formatted (zed-rt close.rs, `message`; PORT-stdout-close-status).
     StdoutCloseFailed => "Standard output failed when the run closed it",
+    // No diagnostic uses the next row yet: plan row STOP-releases-rt emits it.
     StopReleasesCut => "Releases of a stop cut short",
     SignalsReadWithoutHandles => "Signals of `main` read without `handles`",
     SignalDeclarationCannotHold => "Signal declaration of `main` that cannot hold",

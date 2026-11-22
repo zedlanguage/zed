@@ -50,6 +50,12 @@ path = "../../tests/steps/l01_36a_executables/limits_binary.rs"
 name = "stops_binary"
 path = "../../tests/steps/l01_36a_executables/stops_binary.rs"
 
+# The run's own close of standard output and standard error, failed by a seccomp filter, under
+# `zedc run` and an executable (PORT-stdout-close-status).
+[[test]]
+name = "close_binary"
+path = "../../tests/steps/l01_36a_executables/close_binary.rs"
+
 # A program doubling a string 62 and 63 times, built and run as a user does
 # (BUILD-doubling-60s).
 [[test]]

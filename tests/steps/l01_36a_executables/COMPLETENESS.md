@@ -5,7 +5,7 @@ The code under test is `zedc build <file> -o <out>` (`crates/zed-native/src/link
 data an executable carries and its start (`crates/zed-native/src/exe.rs`), and the run-time
 limits (`crates/zed-rt/src/limits.rs`, `stack.rs`). The tests of this directory are the target
 `l01_36a_executables` and, named in `crates/zed-native/Cargo.toml`, `build_binary`
-(`binary.rs`) and `limits_binary` (`limits_binary.rs`). Each row is a case; the second column
+(`binary.rs`), `limits_binary` (`limits_binary.rs`) and `close_binary` (`close_binary.rs`). Each row is a case; the second column
 names the test that covers it, or says why no test is needed.
 
 | Case | Covering test, or reason none is needed |
@@ -59,6 +59,18 @@ names the test that covers it, or says why no test is needed.
 | the cache of links, the identity of the toolchain, the files a link read | step L1.36b (`tests/steps/l01_36b_link_identity`) |
 | **The executable's own start** | |
 | the data the build writes read back, and an executable whose data does not read back | `exe::tests::the_data_reads_back` in `crates/zed-native` (out of this row's scope). The data is written by the same build that reads it, and is no input of the user's; every build test above reads it back |
+| **The run's close of standard output and standard error** (step L7.3p; `crates/zed-rt/src/close.rs`) | |
+| a failed close of descriptor 1, `main` giving 0: status 1 and the row's message, under both engines | `close_binary::a_failed_close_of_standard_output_turns_status_0_into_1_with_the_row` |
+| a failed close of descriptor 1, `main` giving 2: status 2 kept, the message written | `close_binary::a_failed_close_of_standard_output_keeps_the_status_main_gave` |
+| a failed close of descriptor 2: status 1, nothing written; both failing: the message once, status 1 | `close_binary::a_failed_close_of_standard_error_turns_status_0_into_1_and_writes_nothing` |
+| no close failing, or a filter on another descriptor: the status `main` gave, no message | `close_binary::with_no_failed_close_a_run_exits_with_its_status_and_no_message` |
+| a stop by the memory limit (status 3): status kept, the row after the limit's message | `close_binary::a_run_stopped_by_its_memory_limit_keeps_status_3_and_the_row_follows_the_limits_message` |
+| a stop by the deadline, from the runtime's thread through `fault_exit`: status 3 kept, the row after the deadline's message | `close_binary::a_run_stopped_by_its_deadline_keeps_status_3_and_the_row_follows_the_deadlines_message` |
+| a write that fails (`/dev/full`): the write's failure, status 1, no close row | `close_binary::a_full_device_fails_the_write_and_the_close_then_succeeds` |
+| the error names and texts the message uses are the system's, each code distinct | `zed-rt` unit test `close::tests::every_listed_error_has_its_own_name_and_number` |
+| a stop at a bug in zedc (`zedc::run::stop_at_bug`, status 3; a debug build with `ZEDC_TEST_BUG`): status kept, the row after the report | `close_binary::a_bug_of_zedc_in_the_run_keeps_status_3_and_the_row_follows_the_report` |
+| a whole-file write `main::files[p] <- s` whose close fails, and a child's `p.stdin` | not reachable: the whole-file write is not supported by this version of zedc, and child processes wait on PORT-process |
+| a close that a signal interrupts (`EINTR`) or another errno | the message names each listed errno by the same code path as `EIO`; no filter test per errno, since only the table differs, which the unit test checks |
 | **Scaling** | in `bench.rs` (`--bench`); not correctness tests (P178) |
 
 ## Coverage
