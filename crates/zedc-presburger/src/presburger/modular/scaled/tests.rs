@@ -777,9 +777,9 @@ fn seed_12744803785466090665_case_189_is_decided() {
 
 /// Seed 3700079103403926633 case 92 of [`sums_of_quotients_match_enumeration`] (row
 /// PRES-sum-of-quotients-shadows-random): the sum `3 q0 + 3 q4 == 3 q2 + 3 q3 - 6`, whose
-/// remainder is always zero, is `q0 + q4 - q2 - q3 == -2` divided by its gcd, a sum of modulus
-/// 1. `read_sum` asked for a modulus of at least 2, so `q4` was no sum's quotient, `solve`
-/// declined, and `decide` refused with `Shadows`.
+/// remainder is always zero, is `q0 + q4 - q2 - q3 == -2` divided by its gcd, a sum of
+/// modulus one. `read_sum` asked for a modulus of at least 2, so `q4` was no sum's quotient,
+/// `solve` declined, and `decide` refused with `Shadows`.
 #[test]
 fn seed_3700079103403926633_case_92_is_decided() {
     let aux = |i: u32| Lin::atom(Atom::Aux(i));
