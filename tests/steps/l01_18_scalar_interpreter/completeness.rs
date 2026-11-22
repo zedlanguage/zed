@@ -40,6 +40,11 @@ fn a_rat_text_takes_the_written_forms_and_no_others() {
         ("-0.5", "-1r/2r"),
         ("10.00", "10r"),
         ("1 / 2", "#invalid"),
+        // A fraction only in lowest terms, a decimal at any digits (DESIGN.md L1.18; plan row
+        // CAST-rat-unreduced-text).
+        ("7/3", "7r/3r"),
+        ("14/6", "#invalid"),
+        ("2.50", "5r/2r"),
     ];
     for (s, want) in cases {
         assert_eq!(x(&format!("rat(text(\"{s}\"))")), want, "rat(\"{s}\")");
