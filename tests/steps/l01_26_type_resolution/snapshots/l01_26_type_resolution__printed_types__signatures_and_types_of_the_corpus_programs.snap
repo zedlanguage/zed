@@ -1,0 +1,68 @@
+---
+source: tests/steps/l01_26_type_resolution/printed_types.rs
+expression: out
+---
+01-word-count.zed (L4):
+  does not resolve alone
+02-histogram.zed (L4):
+  does not resolve alone
+03-edit-distance.zed (L6):
+  does not resolve alone
+04-running-variance.zed (L5):
+  does not resolve alone
+05-max-prefix-sum.zed (L5):
+  does not resolve alone
+06-matrix-multiply.zed (L5):
+  does not resolve alone
+07-json-parser/main.zed (L20):
+  does not resolve alone
+08-utf8-percent.zed (L6):
+  does not resolve alone
+09-canonical-equal.zed (L3):
+  sig 0: String -> Never
+  sig 1: (m.stdin: [String | #ioError(op: String, path: String, why: String)]) -> ()
+  2 type errors
+10-regex-matcher/main.zed (L19):
+  does not resolve alone
+11-csv-split.zed (L5):
+  does not resolve alone
+12-cyk-table.zed (L6):
+  does not resolve alone
+13-union-find/main.zed (L6):
+  does not resolve alone
+14-clustering.zed (L7):
+  does not parse: Error { span: Span { start: 796, end: 811 }, message: "the inner generator `, j -> q in pts` is part of the Zed language but is not supported by this version of zedc. Write the program without it.", notes: [], menu: "", row: None }
+15-spreadsheet.zed (L7):
+  does not resolve alone
+16-game-tick.zed (L7):
+  does not parse: Error { span: Span { start: 808, end: 860 }, message: "the signature `moves: int ->? Utf8String ->? int with reducer((+));` is part of the Zed language but is not supported by this version of zedc. Write the program without it.", notes: [], menu: "", row: None }
+17-sensor-pipeline.zed (L7):
+  does not resolve alone
+18-socket-wordfreq.zed (L7):
+  does not parse: Error { span: Span { start: 547, end: 572 }, message: "the signature `sock: Stream(Utf8String);` is part of the Zed language but is not supported by this version of zedc. Write the program without it.", notes: [], menu: "", row: None }
+19-bank-ledger.zed (L6):
+  does not resolve alone
+20-taint.zed (L13):
+  does not parse: Error { span: Span { start: 749, end: 766 }, message: "the facet `with taint(#user)` is part of the Zed language but is not supported by this version of zedc. Write the program without it.", notes: [], menu: "", row: None }
+21-stats-module/main.zed (L3):
+  does not resolve alone
+22-top-k.zed (L5):
+  does not resolve alone
+23-join-zoo.zed (L5):
+  does not resolve alone
+24-weighted-pick.zed (L6):
+  does not resolve alone
+25-autocorrelation.zed (L5):
+  does not resolve alone
+26-heat-stencil.zed (L6):
+  does not resolve alone
+27-parent-chain.zed (L6):
+  does not resolve alone
+28-precedence-climbing.zed (L6):
+  does not resolve alone
+29-late-dedup.zed (L7):
+  does not parse: Error { span: Span { start: 1092, end: 1120 }, message: "the signature `sensors: Stream(Utf8String);` is part of the Zed language but is not supported by this version of zedc. Write the program without it.", notes: [], menu: "", row: None }
+30-client-server/main.zed (L20):
+  does not resolve alone
+31-typechecker/main.zed (L6):
+  does not resolve alone
