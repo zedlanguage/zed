@@ -1977,8 +1977,8 @@ mod written {
     /// parameter `p` the argument each use writes there, as last made, with the number of
     /// uses it was made from ([`Self::arg_via`]).
     ///
-    /// Append-only by construction: outside this module the uses are only read and added to
-    /// ([`Self::push`], [`Self::prepend`]), since the fields are private here and no method
+    /// Append-only by construction: outside this module the uses are only added to
+    /// ([`Self::push`], [`Self::prepend`]) and read through [`Self::arg_via`], since the fields are private here and no method
     /// removes or replaces a use. Proof that the kept lists are current: each method that adds
     /// adds at least one use (`prepend` of an empty list adds none and changes nothing), so
     /// the number of uses only grows and differs after every change; a list made from `len`
@@ -1993,11 +1993,16 @@ mod written {
     #[derive(Default)]
     pub(super) struct WrittenUses {
         uses: Vec<Use>,
-        via: HashMap<usize, (usize, Option<Rc<[Span]>>)>,
+        via: HashMap<usize, Kept>,
     }
 
+    /// A list made by [`WrittenUses::arg_via`]: the number of uses it was made from, and the
+    /// list.
+    type Kept = (usize, Option<Rc<[Span]>>);
+
     impl WrittenUses {
-        /// The uses, in order.
+        /// The uses, in order; read only by the test, which builds a fresh list from them.
+        #[cfg(test)]
         pub(super) fn uses(&self) -> &[Use] {
             &self.uses
         }
