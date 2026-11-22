@@ -36,7 +36,7 @@ run  = loop t { while t < edits::len && !closed; initial doc = empty; doc' = doc
      // history bounded by edits::len; retained because ::frames is demanded below
 past = run::frames[run::len - 2].doc else #outOfBounds -> empty;  // any past state, O(log n), shared
 
-// 8 — A spreadsheet cell is just a memoized value; editing one input reflows in milliseconds.
+// 8 — A spreadsheet cell is just a memoized value; editing one input recomputes only the cells that depend on it.
 @memoized report = sales.join(costs, on: #sku).group(((s, c)) -> s.region).map(rows -> rows.map(((s, c)) -> margin(s, c)).sum);
 // Edit one row of sales ⇒ exactly the dirty cone recomputes, with provenance for every cell.
 

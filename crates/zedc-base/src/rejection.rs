@@ -342,6 +342,19 @@ rows! {
     EventClassOnNonWavePort => "Event class on a port that starts no wave",
     NonblockingCanBlock => "Function marked `@nonblocking` that can block",
     BlockingWritten => "`@blocking` written",
+    // No diagnostic uses the next nine rows yet: plan row DIAG-scan-rows emits them.
+    RecursiveTypeIrregular =>
+        "Recursive type that is not contractive, not regular, or whose emptiness is not monotone",
+    FunctionWhereFamilyNeeded =>
+        "`==`, `!=` or a fold over the whole present domain given a function where a family is needed",
+    NoArrowTakesCall => "Call that no arrow of the name takes",
+    ExportUninferable =>
+        "Exported definition whose signature cannot be inferred without its call sites",
+    LawBodyNotBool => "Law whose body is not exactly `bool`",
+    LawProofCycle => "Laws whose proofs depend on each other in a cycle",
+    RunTimeReadsHint => "Run-time value that depends on a hint-kind fact or an `f::ast` read",
+    GenericCallAtBuiltType => "Call of a generic definition at a type its body builds",
+    ReadOfComputedValue => "Read of `::source` or `::shape` on a computed value",
     NoArrowAtCarrier => "Operator with no arrow at its operands' carrier",
     ModOnFloat => "`mod` on a float",
     UnitsDiffer => "Units that differ where an operation requires equal ones",
