@@ -29,9 +29,9 @@
 //! 2026-11-20 (L. Alpoge, with a Lean 4 formalization) and its acceptance is pending. Nothing
 //! here depends on it: [`is_prime`] is exact on every `u64`, with no hypothesis, by the fixed
 //! bases below Sorenson and Webster's `psi_12` (cited there). Rabin, sec. 1, p. 130, takes the
-//! same condition as his "witness to the compositeness of n" and proves without ERH (Theorem 1) that if `4 < n` is
-//! composite then at least `3(n-1)/4` of the `1 ≤ b < n` are witnesses; his note of
-//! 1978, p. 137, credits Knuth with the form without the gcd that [`is_prime`] runs: with
+//! same condition as his "witness to the compositeness of n" and proves without ERH (Theorem
+//! 1) that if `4 < n` is composite then at least `3(n-1)/4` of the `1 ≤ b < n` are
+//! witnesses; his note of 1978, p. 137, credits Knuth with the form without the gcd that [`is_prime`] runs: with
 //! `n - 1 = 2^l m`, `x_0 = x^m`, `x_i = x_{i-1}^2`, a composite odd `n` has, for at least
 //! `3(n-1)/4` of the `x`, either `x_l ≠ 1` or some `x_i = 1` with `x_{i-1} ≠ n - 1`. Neither
 //! paper gives the fixed bases that decide every 64-bit number; those are cited at
