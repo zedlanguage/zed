@@ -1099,6 +1099,10 @@ export function balanceLayers(y: Int32Array, parents: number[][], children: numb
   while (S < L) S *= 2;
   const depth = Math.log2(S) + 1;
   const rises = new Map<number, number[]>(), falls = new Map<number, number[]>();
+  // fallsAt[t]: the waits on a fall to t not yet woken (voided ones included),
+  // so that a move skips the walk up the tree when none waits on the count
+  // its layer falls to.
+  const fallsAt = new Int32Array(Math.max(n, K) + 2);
   const hold = (m: Map<number, number[]>, key: number, i: number) => {
     const w = m.get(key);
     if (w) w.push(i, ver[i]); else m.set(key, [i, ver[i]]);
@@ -1115,8 +1119,8 @@ export function balanceLayers(y: Int32Array, parents: number[][], children: numb
     if (t < 0) return;
     for (let x = lo + S, z = hi + S + 1; x < z; x >>= 1, z >>= 1) {
       steps++;
-      if (x & 1) hold(falls, t * 2 * S + x++, i);
-      if (z & 1) hold(falls, t * 2 * S + --z, i);
+      if (x & 1) { fallsAt[t]++; hold(falls, t * 2 * S + x++, i); }
+      if (z & 1) { fallsAt[t]++; hold(falls, t * 2 * S + --z, i); }
     }
   };
   // i, in layer a with slack lo..hi, moves once c[a] - c[l] >= 2 for a layer
@@ -1174,8 +1178,18 @@ export function balanceLayers(y: Int32Array, parents: number[][], children: numb
     }
     c.add(a, -1);
     c.add(b, 1);
-    steps += depth + 1;
-    for (let k = a + S; k; k >>= 1) wake(falls, c.at(a) * 2 * S + k);
+    // The walk up from a, O(log L), only when a wait on its new count exists:
+    // on k sources sharing one child it took 9 percent of the steps and grew
+    // with log L, while most moves find none (DAGVIEW-rows-under9).
+    const t = c.at(a);
+    steps++;
+    if (fallsAt[t]) {
+      steps += depth;
+      for (let k = a + S; k; k >>= 1) {
+        const w = falls.get(t * 2 * S + k);
+        if (w) { fallsAt[t] -= w.length / 2; wake(falls, t * 2 * S + k); }
+      }
+    }
     wake(rises, b * (n + 2) + c.at(b));
     // A parent's slack widens only if i was its one highest child and moved
     // down, a child's only if i was its one lowest parent and moved up. Both
@@ -1384,10 +1398,12 @@ export function spreadSources(y: Int32Array, parents: number[][], children: numb
   return passes;
 }
 
-// Node counts per layer in a segment tree of minimums. It counts no steps;
-// countsFor gives a CountedCounts when the caller passed a Work.
+// Node counts per layer in a segment tree of minimums. It adds to `seen` the
+// tree nodes add, first and last visit, a field increment per call; only
+// CountedCounts, which countsFor gives when the caller passed a Work, reads it.
 class Counts {
   protected size = 1;
+  protected seen = 0;
   private t: Int32Array;
   constructor(L: number) {
     while (this.size < L) this.size *= 2;
@@ -1397,9 +1413,17 @@ class Counts {
   }
   at(l: number): number { return this.t[this.size + l]; }
   add(l: number, d: number): void {
-    let k = this.size + l;
+    let k = this.size + l, seen = 1;
     this.t[k] += d;
-    for (k >>= 1; k; k >>= 1) this.t[k] = Math.min(this.t[2 * k], this.t[2 * k + 1]);
+    // An ancestor whose least count is unchanged leaves those above it as
+    // they were, so the walk up stops there.
+    for (k >>= 1; k; k >>= 1) {
+      seen++;
+      const v = Math.min(this.t[2 * k], this.t[2 * k + 1]);
+      if (v === this.t[k]) break;
+      this.t[k] = v;
+    }
+    this.seen += seen;
   }
   // The least count in layers lo..hi.
   min(lo: number, hi: number): number {
@@ -1432,7 +1456,11 @@ class Counts {
     for (let cur = s > 0 ? lo : hi; s > 0 ? cur <= hi : cur >= lo;) {
       const T = Math.min(cap, Math.ceil((B - s * cur) / w) - 1);
       if (T < 0) break;
-      const b = s > 0 ? this.first(cur, hi, T) : this.last(lo, cur, T);
+      // f(b) >= s b, so only layers with s b < B can improve on B: b < B / s
+      // for s > 0, b > B / s for s < 0. Bounding the range so keeps a search
+      // from climbing past them to a layer that cannot be taken
+      // (DAGVIEW-rows-under9).
+      const b = s > 0 ? this.first(cur, Math.min(hi, Math.ceil(B / s) - 1), T) : this.last(Math.max(lo, Math.floor(B / s) + 1), cur, T);
       if (b < 0) break;
       const f = w * this.at(b) + s * b;
       if (f < B) { B = f; best = b; }
@@ -1440,59 +1468,92 @@ class Counts {
     }
     return best;
   }
-  // The first (last) layer in lo..hi with at most m nodes, or -1.
-  first(lo: number, hi: number, m: number, k = 1, l = 0, r = this.size - 1): number {
-    if (r < lo || l > hi || this.t[k] > m) return -1;
-    if (l === r) return l;
-    const mid = (l + r) >> 1;
-    const left = this.first(lo, hi, m, 2 * k, l, mid);
-    return left >= 0 ? left : this.first(lo, hi, m, 2 * k + 1, mid + 1, r);
+  // The first (last) layer in lo..hi with at most m nodes, or -1. A finger
+  // search from lo (hi): climb from that leaf while the subtree to the right
+  // (left) of the path holds no count at most m, then descend into the first
+  // subtree that does, always taking its leftmost (rightmost) child holding
+  // one. On the way up every layer from lo to the right end of the current
+  // subtree holds more than m, so the first subtree found holds the answer;
+  // a subtree starting past hi (ending before lo) ends the search with -1.
+  // Complexity tradeoff: the descent from the root, used until
+  // DAGVIEW-rows-under9, visits O(log L) nodes whatever the answer; this
+  // visits O(log d) for an answer d layers from lo (hi), or for a range of
+  // d layers when there is none. The callers search outward from a node's own layer
+  // and mostly find room a few layers away, so the steps of makeRoom and
+  // balanceLayers on k sources sharing one child grew 10.36 times at 8k
+  // before and see the scaling test of d3dag.test.ts after.
+  first(lo: number, hi: number, m: number): number {
+    if (lo > hi) return -1;
+    const t = this.t, S = this.size;
+    let k = lo + S, h = 0, seen = 1;
+    if (t[k] > m) {
+      for (;;) {
+        if (k === 1 || ((k + 1) << h) - S > hi) { this.seen += seen; return -1; }
+        if (!(k & 1) && t[k + 1] <= m) { k++; break; }
+        k >>= 1; h++; seen++;
+      }
+      for (; k < S; seen++) k = t[2 * k] <= m ? 2 * k : 2 * k + 1;
+    }
+    this.seen += seen;
+    return k - S <= hi ? k - S : -1;
   }
-  last(lo: number, hi: number, m: number, k = 1, l = 0, r = this.size - 1): number {
-    if (r < lo || l > hi || this.t[k] > m) return -1;
-    if (l === r) return l;
-    const mid = (l + r) >> 1;
-    const right = this.last(lo, hi, m, 2 * k + 1, mid + 1, r);
-    return right >= 0 ? right : this.last(lo, hi, m, 2 * k, l, mid);
+  last(lo: number, hi: number, m: number): number {
+    if (lo > hi) return -1;
+    const t = this.t, S = this.size;
+    let k = hi + S, h = 0, seen = 1;
+    if (t[k] > m) {
+      for (;;) {
+        if (k === 1 || (k << h) - S - 1 < lo) { this.seen += seen; return -1; }
+        if (k & 1 && t[k - 1] <= m) { k--; break; }
+        k >>= 1; h++; seen++;
+      }
+      for (; k < S; seen++) k = t[2 * k + 1] <= m ? 2 * k + 1 : 2 * k;
+    }
+    this.seen += seen;
+    return k - S >= lo ? k - S : -1;
   }
 }
 
 // Counts that adds to work.steps the tree nodes it visits (see Work), for the
-// scaling tests. The layout passes no Work and uses Counts, which keeps
-// nothing: counting in Counts itself cost 5 to 9 percent more instructions
-// in spreadSources, balanceCounts and layers (DAGVIEW-counter-cost,
-// 2026-11-11). first and last recurse through this.first and this.last, so
-// each node they visit is counted. add and min count by the bounds of Counts'
-// own loops (add the depth of the tree, min the same walk up from lo and hi),
-// so a change to either loop in Counts must change its count here too.
+// scaling tests. The layout passes no Work and uses Counts: counting into a
+// Work in Counts itself cost 5 to 9 percent more instructions in
+// spreadSources, balanceCounts and layers (DAGVIEW-counter-cost,
+// 2026-11-11), so Counts only sums the nodes add, first and last visit in a
+// local and adds it to `seen` once per call, which this class moves to the
+// steps. min counts by the bounds of Counts' own loop (the same walk up from
+// lo and hi), so a change to that loop must change its count here too.
 class CountedCounts extends Counts {
   private readonly work: Work;
-  private readonly depth: number;
   constructor(L: number, work: Work) {
     super(L);
     this.work = work;
-    this.depth = Math.log2(this.size);
     work.steps += 2 * this.size;
   }
   add(l: number, d: number): void {
     super.add(l, d);
-    this.work.steps += this.depth;
+    this.count();
   }
   min(lo: number, hi: number): number {
     for (let a = lo + this.size, b = hi + this.size + 1; a < b; a = (a + (a & 1)) >> 1, b = (b - (b & 1)) >> 1) this.work.steps++;
     return super.min(lo, hi);
   }
-  first(lo: number, hi: number, m: number, k = 1, l = 0, r = this.size - 1): number {
-    this.work.steps++;
-    return super.first(lo, hi, m, k, l, r);
+  first(lo: number, hi: number, m: number): number {
+    const b = super.first(lo, hi, m);
+    this.count();
+    return b;
   }
-  last(lo: number, hi: number, m: number, k = 1, l = 0, r = this.size - 1): number {
-    this.work.steps++;
-    return super.last(lo, hi, m, k, l, r);
+  last(lo: number, hi: number, m: number): number {
+    const b = super.last(lo, hi, m);
+    this.count();
+    return b;
+  }
+  private count(): void {
+    this.work.steps += this.seen;
+    this.seen = 0;
   }
 }
 
-const countsFor = (L: number, work?: Work): Counts => (work ? new CountedCounts(L, work) : new Counts(L));
+export const countsFor = (L: number, work?: Work): Counts => (work ? new CountedCounts(L, work) : new Counts(L));
 
 // The author's rule (2026-11-13): a wide row's nodes stagger up or down into
 // less full rows, and that takes priority over the spring of their edges.
@@ -1516,6 +1577,17 @@ const countsFor = (L: number, work?: Work): Counts => (work ? new CountedCounts(
 // crossings against 33,379 on the live plan of 2026-11-13 (top comment). Run
 // once per round of layers, not in each balanceLayers call, so every move of
 // the inner loop still lowers (Q, F) and the loop ends (see balanceLayers).
+// Prior work (allpapers search for DAGVIEW-rows-under9, 2026-11-22, keyword
+// and semantic, 238 to 250 hits each): a layering with a bound on the nodes
+// per layer is NP-hard to make optimal; Rueegg, Ehlers, Spoenemann and von
+// Hanxleden, "A Generalization of the Directed Graph Layering Problem",
+// arXiv:1608.07809, on Healy and Nikolov: "The problem is NP-hard, even
+// without considering dummy nodes", and they cite heuristics only. North,
+// "Incremental Layout in DynaDAG", Graph Drawing 1995, LNCS 1027,
+// doi:10.1007/BFb0021824 (full text read), bounds no layer's width: "As a
+// simplifying assumption, we compute new rank assignments by DFS and only
+// move nodes downward." So makeRoom and balanceLayers are a heuristic of our
+// own, as the comments above derive.
 export function makeRoom(y: Int32Array, K: number, work?: Work): number {
   const n = y.length;
   if (!n) return 0;

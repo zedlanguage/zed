@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { graph, layerSeparation, layeringSimplex } from "d3-dag";
-import { balanceCounts, balanceLayers, compactLayers, d3dagLayout, fromPrevious, layers, lowerSources, makeRoom, operators, splitRows, spreadSources } from "./d3dag.ts";
+import { balanceCounts, balanceLayers, compactLayers, countsFor, d3dagLayout, fromPrevious, layers, lowerSources, makeRoom, operators, splitRows, spreadSources } from "./d3dag.ts";
 import type { Work } from "./d3dag.ts";
 import type { Graph } from "./layout.ts";
 import { planLike } from "./synthetic.ts";
@@ -340,10 +340,10 @@ function measured(warm: () => void, run: (work: Work) => void): { steps: number;
 
 // A pass of balanceCounts costs O((n + m) log L) and the passes stay few (3
 // to 13 measured), so 8 times the graph should take about 8 log(8n) / log n
-// times the steps. The limit is twice that.
-function scalingLimit(n: number): number {
-  return 2 * 8 * (Math.log2(8 * n) / Math.log2(n));
-}
+// times the steps. Until DAGVIEW-rows-under9 the test allowed twice that,
+// 20.0 at n = 4000, over the standing limit of 10.5 (2026-11-13); it now
+// holds the standing limit (measured 8.67, 9.26 and 9.57 before the finger
+// search of Counts, 8.18, 8.56 and 9.42 after).
 
 // The ratio of steps at 8n to n, and the log line of a pair of measurements.
 const ratio = (r: { steps: number }[]) => r[1].steps / r[0].steps;
@@ -381,7 +381,7 @@ test("count balancing and layering from an earlier layering scale as n log n: pl
   const balance = graphs.map(({ d, y0 }) => { const y = Int32Array.from(y0); return measured(() => balanceCounts(Int32Array.from(y0), d.parents, d.children), (w) => balanceCounts(y, d.parents, d.children, undefined, w)); });
   const again = graphs.map(({ d, byId }) => measured(() => layers(d.dag, d.nodes, d.parents, d.children, byId), (w) => layers(d.dag, d.nodes, d.parents, d.children, byId, undefined, w)));
   const wide = graphs.map(({ wide: g }) => { const y = Int32Array.from(g.y); return measured(() => balanceCounts(Int32Array.from(g.y), g.parents, g.children), (w) => balanceCounts(y, g.parents, g.children, undefined, w)); });
-  const limit = scalingLimit(n);
+  const limit = 10.5;
   console.log(`balanceCounts ${show(balance)}; layers from earlier layers ${show(again)}; whole-spine slack ${show(wide)}; step limit ${limit.toFixed(1)}`);
   for (const [what, r] of [["balanceCounts", balance], ["layers", again], ["whole-spine slack", wide]] as const) assert.ok(ratio(r) < limit, `${what}: ${show(r)}`);
 });
@@ -412,8 +412,10 @@ test("spreadSources on k sources crowded into one row spreads them to rows of at
   // The standing limit of 2026-11-13: under 10.5 times the steps at 8n. The
   // negative control, run once and not kept: with the sources' own row tried
   // before the rows with room (main before DAGVIEW-spread-scaling), 14.19.
-  console.log(`spreadSources on crowded sources: ${show(r)}; step limit 10.5`);
-  assert.ok(ratio(r) < 10.5, show(r));
+  // Under the preferred 9 since DAGVIEW-rows-under9: 9.76 before the finger
+  // search of Counts, 8.85 after.
+  console.log(`spreadSources on crowded sources: ${show(r)}; step limit 9`);
+  assert.ok(ratio(r) < 9, show(r));
 });
 
 // The sources (no parents, some children) whose highest child is not exactly
@@ -719,8 +721,13 @@ test("makeRoom then balanceLayers on k sources sharing one child moves them out 
   // The negative control, run once and not kept: reading a parent again only
   // when the moved node was its one highest child scans the shared child's k
   // parents at each move, 62.33 times.
-  console.log(`makeRoom and balanceLayers on sources sharing a child: ${show(r)}; step limit 10.5`);
-  assert.ok(ratio(r) < 10.5, show(r));
+  // DAGVIEW-rows-under9: 10.36 before the finger search of Counts, the
+  // bounded range of bestLayer and the walk skipped when no wait is on the
+  // count, 9.59 after; held under 10 so it cannot drift back. The rest is the
+  // log of the distance from a crowded source to the nearest row with room,
+  // which grows as the inserted rows fill.
+  console.log(`makeRoom and balanceLayers on sources sharing a child: ${show(r)}; step limit 10`);
+  assert.ok(ratio(r) < 10, show(r));
 });
 
 test("makeRoom inserts above each row over K enough empty layers to hold its excess in rows of K, keeps every edge going down, and changes nothing when no row is over K", () => {
@@ -735,4 +742,38 @@ test("makeRoom inserts above each row over K enough empty layers to hold its exc
   assert.equal(makeRoom(z, 2), 0);
   assert.deepEqual([...z], [0, 1, 1, 2]);
   assert.equal(makeRoom(new Int32Array(0), 2), 0);
+});
+
+// DAGVIEW-rows-under9: first and last search outward from one end of the
+// range (a finger search) instead of down from the root, add stops where a
+// least count is unchanged, and bestLayer bounds its range. Each answer must
+// equal a plain scan of the layers, on random counts changed by +1 and -1 as
+// the callers change them, with and without a Work.
+test("the counts tree answers first, last, min and bestLayer as a scan of the layers does, after random changes", () => {
+  let seed = 11;
+  const rand = (k: number) => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return (seed >>> 8) % k; };
+  for (const L of [1, 2, 3, 5, 8, 13, 64, 100, 257]) {
+    for (const work of [undefined, { steps: 0 }]) {
+      const c = countsFor(L, work), ref = new Int32Array(L);
+      for (let step = 0; step < 40 * L + 200; step++) {
+        const l = rand(L);
+        if (ref[l] && rand(2)) { ref[l]--; c.add(l, -1); } else if (ref[l] < 9) { ref[l]++; c.add(l, 1); }
+        const a = rand(L), b = rand(L), lo = Math.min(a, b), hi = Math.max(a, b), m = rand(10);
+        let first = -1, last = -1, min = 0x7fffffff;
+        for (let k = lo; k <= hi; k++) { if (ref[k] <= m) { if (first < 0) first = k; last = k; } min = Math.min(min, ref[k]); }
+        assert.equal(c.first(lo, hi, m), first, `L ${L}: first(${lo}, ${hi}, ${m})`);
+        assert.equal(c.last(lo, hi, m), last, `L ${L}: last(${lo}, ${hi}, ${m})`);
+        assert.equal(c.min(lo, hi), min, `L ${L}: min(${lo}, ${hi})`);
+        assert.equal(c.first(hi + 1, lo, m), -1);
+        const s = (rand(2) ? 1 : -1) * (1 + rand(25)), w = 2, cap = rand(10), below = rand(3) ? rand(60) - 20 + s * rand(L) : Infinity;
+        let best = -1, B = below;
+        for (let k = s > 0 ? lo : hi; s > 0 ? k <= hi : k >= lo; k += s > 0 ? 1 : -1) {
+          const f = w * ref[k] + s * k;
+          if (ref[k] <= cap && f < B) { B = f; best = k; }
+        }
+        assert.equal(c.bestLayer(lo, hi, s, w, below, cap), best, `L ${L}: bestLayer(${lo}, ${hi}, ${s}, ${w}, ${below}, ${cap})`);
+      }
+      for (let l = 0; l < L; l++) assert.equal(c.at(l), ref[l]);
+    }
+  }
 });
