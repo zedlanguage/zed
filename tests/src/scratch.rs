@@ -198,7 +198,11 @@ fn claim(path: &Path, test: &str) {
     let clash = claims
         .clash(path, test)
         .map(|(owned, owner)| (owned.to_path_buf(), owner.to_string()));
-    if clash.is_none() {
+    // A claim another process of the same test made (a process of `compare_by`, or an earlier
+    // run) is in the record already: a second line would only make every later process read
+    // more.
+    let known = claims.owners.get(path).is_some_and(|owner| owner == test);
+    if clash.is_none() && !known {
         let line = format!("{test}\t{}\n", path.display());
         let mut writer = record;
         writer

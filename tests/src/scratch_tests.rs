@@ -269,8 +269,21 @@ fn alone(test: &str) -> (bool, String) {
 fn two_tests_naming_a_path_in_processes_of_their_own_fail() {
     let first = "scratch_tests::a_child_process_names_a_shared_path";
     let second = "scratch_tests::another_child_process_names_the_shared_path";
-    let (passed, out) = alone(first);
-    assert!(passed, "the first test names the path:\n{out}");
+    // Twice, as `compare_by` runs a test again in a new process: the second run passes and
+    // adds no line to the record.
+    for _ in 0..2 {
+        let (passed, out) = alone(first);
+        assert!(passed, "the first test names the path:\n{out}");
+    }
+    let record = process_tmpdir().parent().unwrap().join("scratch-owners");
+    let lines = std::fs::read_to_string(&record).unwrap();
+    let line = format!("{first}\t{SHARED}");
+    assert_eq!(
+        lines.lines().filter(|l| *l == line).count(),
+        1,
+        "the lines of {}:\n{lines}",
+        record.display()
+    );
     let (passed, out) = alone(second);
     assert!(!passed, "the second test names the path too:\n{out}");
     let expected = format!(
