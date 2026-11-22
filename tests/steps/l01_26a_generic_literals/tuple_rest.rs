@@ -361,6 +361,47 @@ fn a_literal_branch_joins_a_class_beside_atoms() {
     );
 }
 
+/// TESTS-branch-kept-op-beside-atoms: `Ck::branches` keeps the value of an operation on
+/// integer literals alone (`1 + 1`, a kept operation) only where the other branch is of no
+/// class; where the other branch is a class beside atoms (`x / x`, `T | #divByZero`), the
+/// operation joins the class as a literal does. The case above has the operation in the
+/// `else`; these are its siblings: the operation in the `then`, the values at calls that fix
+/// the class, and the same operation beside a branch of atoms alone, which is of no class and
+/// so keeps the operation's value.
+#[test]
+fn a_kept_operation_beside_a_class_with_atoms_joins_the_class_in_either_branch() {
+    let swapped = "f(positional x) = if x > 0 { 1 + 1 } else { x / x };\n";
+    assert_eq!(
+        sig(swapped, "f"),
+        "T -> T | #divByZero for T in f32 | f64 | rat"
+    );
+    let cases = [
+        (format!("{swapped}y = f(-1.0f64);\n"), "1.0"),
+        (format!("{swapped}y = f(2.0f64);\n"), "2.0"),
+        (format!("{swapped}y = f(-2r);\n"), "1r"),
+        (
+            "f(positional x) = if x > 0 { x / x } else { 1 + 1 };\ny = f(-1r);\n".to_string(),
+            "2r",
+        ),
+        (
+            "f(positional x) = if x > 0 { x / x } else { 1 + 1 };\ny = f(3.0f32);\n".to_string(),
+            "1.0f32",
+        ),
+    ];
+    for (src, v) in &cases {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+        assert_eq!(value(src, "y"), *v, "{src}");
+    }
+    // Beside atoms alone the other branch is of no class: the operation keeps its value.
+    assert_eq!(
+        sig(
+            "f(positional c: bool) = if c { 1 + 1 } else { #bad };\n",
+            "f"
+        ),
+        "bool -> 2 | #bad"
+    );
+}
+
 #[test]
 fn the_divisions_in_two_branched_parts_of_a_value_are_each_rejected() {
     // Each `if` is its own place, so each division is one rejection at its own literal. (A
