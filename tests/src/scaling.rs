@@ -960,7 +960,7 @@ pub fn check_fresh_inputs<T: Send + Sync>(
 /// a run that measures a release drops it. One input or output is held at a time: before each
 /// run the output of the run before is released, then the run's input is built, both on the
 /// thread the check is on, which built the inputs of every such test before. A size this process
-/// does not run (one run in a new process, see [`compare_by`]) is never built here.
+/// does not run (one run in a new process, see `compare_by`) is never built here.
 ///
 /// Why (MEM-l0126-40gb, 2026-11-22): the tests built every input of the check, [`Meter::runs`]
 /// per size, before the first run, and kept all of them to the end. On a meter of processor time,
@@ -978,7 +978,7 @@ pub fn check_fresh_inputs<T: Send + Sync>(
 /// time: the builds of a size come one after another between its runs, never side by side; on a
 /// count of instructions each size builds one input, as before, and on processor time the
 /// [`TIME_RUNS`] builds of a size are inside the time limit of its phase
-/// ([`start_bench_phase`]), the 5 builds at 8n against 10.5 times the phase at n, which holds the
+/// (`start_bench_phase`), the 5 builds at 8n against 10.5 times the phase at n, which holds the
 /// 5 builds at n.
 pub fn check_order_fresh<T: Send, O: Send>(
     what: &str,
