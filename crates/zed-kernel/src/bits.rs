@@ -622,7 +622,8 @@ fn big(p: Prim, ns: &[Cow<'_, Rat>]) -> Result<Value, TooLarge> {
             // digits); for a larger `r` (a width far past the digits of `x`, as
             // l01_39a_bit_words transfer.rs draws) `2^r` stays a kept exponent, as in the path
             // below, and building it would take `r / 8` bytes. A kept `x` or `w` keeps the
-            // quotient, as at `shr`. Test: `bits::tests::shifting_a_built_value_agrees_with_dividing_by_the_power`.
+            // quotient, as at `shr`. Test:
+            // `bits::tests::shifting_a_built_value_agrees_with_dividing_by_the_power`.
             if let (Some(x), Some(w), Some(r)) = (as_built(x), built_u64(w), built_u64(&r)) {
                 let (s, d) = (w - r, x.bits());
                 let (high, low) = if s >= d {
