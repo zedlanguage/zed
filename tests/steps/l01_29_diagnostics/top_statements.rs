@@ -95,19 +95,62 @@ fn emit_at_the_top_level_is_rejected() {
     rejected_with("emit 1;", "emit 1;", &[]);
 }
 
+/// The one error of the loop statement `stmt`, of keyword `kw`, at the top level: it stands
+/// only in a `loop` or `for` body (DESIGN.md, the generation forms), so the repair is a move
+/// into such a loop in `main`, in words, or deleting it, never `main(m) { stmt }`, which is
+/// rejected again.
+fn loop_statement_rejected(stmt: &str, kw: &str) {
+    let src = unit(stmt);
+    assert_eq!(
+        errors(&src),
+        [(
+            Some(Row::TopLevelStatement),
+            format!(
+                "Statement at the top level of the unit: `{stmt}`. A `{kw}` statement stands \
+                 in the body of a `loop` or `for`, and none is around it here. Move it into a \
+                 `loop` or `for` in the body of `main`, or delete it."
+            ),
+            vec![
+                WHY.to_string(),
+                "repair: delete the statement; no loop is around it".to_string()
+            ]
+        )],
+        "{src}"
+    );
+}
+
 #[test]
 fn while_at_the_top_level_is_rejected() {
-    rejected_with("while true;", "while true;", &[]);
+    loop_statement_rejected("while true;", "while");
 }
 
 #[test]
 fn until_at_the_top_level_is_rejected() {
-    rejected_with("until true;", "until true;", &[]);
+    loop_statement_rejected("until true;", "until");
 }
 
 #[test]
 fn break_at_the_top_level_is_rejected() {
-    rejected_with("break;", "break;", &[]);
+    loop_statement_rejected("break;", "break");
+}
+
+/// The move into `main` that a loop statement's repair describes is legal: inside a `loop`
+/// in `main`'s body each of the three is accepted, where `main(m) { break; }` is not.
+#[test]
+fn a_loop_statement_moved_into_a_loop_in_main_is_accepted() {
+    for stmt in ["while true;", "until true;", "break;"] {
+        let src = format!(
+            "main(m: MainArgs) {{\n    sim = loop {{\n        {stmt}\n    }};\n    \
+             m.stdout <- \"hi\";\n}}\n"
+        );
+        let tokens = zedc::lex::lex_fence(&src).expect("the text lexes");
+        let tree =
+            zedc::parse::parse(&src, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
+        assert!(
+            zedc::ast::unit_all_errors(&src, &tokens, &tree).is_ok(),
+            "{src}"
+        );
+    }
 }
 
 #[test]

@@ -25,6 +25,10 @@ const STATEMENTS: [&str; 10] = [
     "ExprStmt",
 ];
 
+/// The note every top-level statement gets: why a statement does not stand at the top level.
+const WHY: &str = "a unit's top level holds declarations, which take any order and run in no \
+                   frame; a statement has an order and runs in a frame, so it stands in a body";
+
 impl Builder<'_, '_> {
     /// The error for item `k` of the unit's top level when it holds a statement, through any
     /// `local` and annotations, else `None`; `main` keeps [`Builder::top_main`] once found.
@@ -55,6 +59,42 @@ impl Builder<'_, '_> {
         let quotable = !stmt.contains(['\n', '`']);
         let (header, param) = main.get_or_insert_with(|| self.top_main());
         let moved = format!("{header} {{ {stmt} }}");
+        // `while c;`, `until c;` and `break;` are statements of a `loop` or `for` body only
+        // (DESIGN.md, the table of generation forms in sec:syntax, and the paragraph on `break;`
+        // in sec:loops), so the row's repair, a move into `main`'s body, holds for them only
+        // inside such a loop there: `main(m) { break; }` would be rejected again. Their repairs
+        // are that move, said in words, and deleting the statement.
+        if let Some(kw) = match rule {
+            "While" => Some("while"),
+            "Until" => Some("until"),
+            "Break" => Some("break"),
+            _ => None,
+        } {
+            let quoted = match quotable {
+                true => format!(": `{stmt}`"),
+                false => String::new(),
+            };
+            return Some(Error {
+                row: Some(Row::TopLevelStatement),
+                menu: String::new(),
+                span,
+                message: format!(
+                    "Statement at the top level of the unit{quoted}. A `{kw}` statement stands \
+                     in the body of a `loop` or `for`, and none is around it here. Move it into \
+                     a `loop` or `for` in the body of `main`, or delete it."
+                ),
+                notes: vec![
+                    Note {
+                        span,
+                        text: WHY.into(),
+                    },
+                    Note {
+                        span,
+                        text: "repair: delete the statement; no loop is around it".into(),
+                    },
+                ],
+            });
+        }
         let message = match quotable {
             true => format!(
                 "Statement at the top level of the unit: `{stmt}`. Move it into the body of \
@@ -65,11 +105,7 @@ impl Builder<'_, '_> {
             }
         };
         let note = |text: String| Note { span, text };
-        let mut notes = vec![note(
-            "a unit's top level holds declarations, which take any order and run in no frame; \
-             a statement has an order and runs in a frame, so it stands in a body"
-                .into(),
-        )];
+        let mut notes = vec![note(WHY.into())];
         if let Some(t) = self
             .kids(d)
             .iter()
