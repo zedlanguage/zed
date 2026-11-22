@@ -146,6 +146,8 @@ mod row_sums;
 mod slack;
 #[cfg(test)]
 mod solve_names_tests;
+#[cfg(test)]
+mod two_var_tests;
 mod values;
 
 use forced::{Facts, Forced};
@@ -21608,60 +21610,91 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
             }
         }
         // Eliminate unit equalities (and single-atom equalities) on atoms other than `sym`.
-        loop {
-            let mut progressed = false;
-            for i in 0..eq.len() {
-                if eq[i].0.is_empty() {
-                    if !eq[i].1.is_zero() {
-                        return Some(IntervalSet::empty());
-                    }
-                    continue;
+        // Complexity tradeoff (XR-l139-neon-r4, found by AUDIT-kept-rows, b22-research3): naive
+        // version, passes over every equality until one changes nothing, each substitution
+        // reading every row: O(e·r) rows read for e equalities and r rows even when each atom
+        // is in two rows, quadratic on the chain `x_i == x_{i+1} + 1` of
+        // `two_var_tests::bench::a_chain_of_unit_equalities_scales`. Used: the rows holding each
+        // atom (`holds`), so a substitution reads only the rows that hold its atom, and a work
+        // list of equalities, which takes an equality again only after a substitution changed
+        // it. Whether an equality is used, and how, depends on its own terms alone, so an
+        // equality left unchanged since it was last read is still unused, and the list stops at
+        // the fixed point the passes stopped at. A substitution costs O(t log a) for each row
+        // holding its atom (t terms in its equality, a atoms), so the chain costs O(e log e)
+        // and the general case is bounded as the cost proof above states.
+        let ne = eq.len();
+        let mut holds: HashMap<Atom, BTreeSet<usize>> = HashMap::new();
+        for (j, row) in eq.iter().chain(ge.iter()).enumerate() {
+            for x in row.0.keys() {
+                holds.entry(x.clone()).or_default().insert(j);
+            }
+        }
+        let mut queued = vec![true; ne];
+        let mut work: std::collections::VecDeque<usize> = (0..ne).collect();
+        while let Some(i) = work.pop_front() {
+            queued[i] = false;
+            if eq[i].0.is_empty() {
+                if !eq[i].1.is_zero() {
+                    return Some(IntervalSet::empty());
                 }
-                // Check for a single-atom equality `a*x + k == 0` with `x != sym`.
-                if eq[i].0.len() == 1 {
-                    let (x, a) = eq[i].0.iter().next().expect("one term");
-                    if x != sym {
-                        let (x, a) = (x.clone(), a.clone());
-                        let k = eq[i].1.clone();
-                        if !k.mod_floor(&a).is_zero() {
-                            return Some(IntervalSet::empty());
-                        }
-                        let val = -&k.div_floor(&a);
-                        eq[i] = (BTreeMap::new(), Int::ZERO);
-                        for row in eq.iter_mut().chain(ge.iter_mut()) {
-                            if let Some(m) = row.0.remove(&x) {
-                                row.1 = &row.1 + &(&m * &val);
-                            }
-                        }
-                        progressed = true;
-                        continue;
-                    }
-                }
-                let Some((x, a)) = (eq[i].0.iter())
+                continue;
+            }
+            // A single-atom equality `a*x + k == 0` with `x != sym` gives `x` its value; else
+            // a term of `x != sym` with a unit coefficient is solved for.
+            let single = eq[i].0.len() == 1;
+            let pick = if single {
+                let (x, a) = eq[i].0.iter().next().expect("one term");
+                (x != sym).then(|| (x.clone(), a.clone()))
+            } else {
+                (eq[i].0.iter())
                     .find(|(x, a)| *x != sym && a.abs() == Int::ONE)
                     .map(|(x, a)| (x.clone(), a.clone()))
-                else {
+            };
+            let Some((x, a)) = pick else {
+                continue;
+            };
+            let val = if single {
+                let k = &eq[i].1;
+                if !k.mod_floor(&a).is_zero() {
+                    return Some(IntervalSet::empty());
+                }
+                Some(-&k.div_floor(&a))
+            } else {
+                None
+            };
+            let (t, k) = std::mem::take(&mut eq[i]);
+            for y in t.keys() {
+                if let Some(set) = holds.get_mut(y) {
+                    set.remove(&i);
+                }
+            }
+            let holders = holds.remove(&x).unwrap_or_default();
+            for j in holders {
+                let row = if j < ne { &mut eq[j] } else { &mut ge[j - ne] };
+                let Some(m) = row.0.remove(&x) else {
                     continue;
                 };
-                let (t, k) = std::mem::take(&mut eq[i]);
-                for row in eq.iter_mut().chain(ge.iter_mut()) {
-                    let Some(m) = row.0.remove(&x) else {
-                        continue;
-                    };
+                if let Some(val) = &val {
+                    row.1 = &row.1 + &(&m * val);
+                } else {
                     meter::charge(t.len() as u64 + 1).ok()?;
                     let f = -&(&m * &a);
                     for (y, v) in t.iter().filter(|(y, _)| **y != x) {
                         let s = &row.0.remove(y).unwrap_or(Int::ZERO) + &(&f * v);
-                        if !s.is_zero() {
+                        let set = holds.entry(y.clone()).or_default();
+                        if s.is_zero() {
+                            set.remove(&j);
+                        } else {
                             row.0.insert(y.clone(), s);
+                            set.insert(j);
                         }
                     }
                     row.1 = &row.1 + &(&f * &k);
                 }
-                progressed = true;
-            }
-            if !progressed {
-                break;
+                if j < ne && !queued[j] {
+                    queued[j] = true;
+                    work.push_back(j);
+                }
             }
         }
         let mut rows: Vec<Row> = Vec::with_capacity(ge.len() + 2 * eq.len());
