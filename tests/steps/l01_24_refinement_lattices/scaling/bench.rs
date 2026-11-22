@@ -281,7 +281,7 @@ fn equal_cores_scale_with_the_bits_of_the_exponent() {
     );
 }
 
-/// At 4,096 and 32,768 bits, and at 131,072 and 1,048,576. From 32,768 bits on, the indices
+/// At 4,096 and 32,768 bits, at 262,144 and 2,097,152, and at 2^23 and 2^26. From 32,768 bits on, the indices
 /// above 511, which no prime below 1,024 is 1 modulo, have roots wider than a word. Before the
 /// remainder tree each of those indices took a 2-adic root: 11.0 and 12.2 times (bytes)
 /// against 11.00 and 10.6 from 4,096 and from 32,768 bits (CUBE-root-alloc, COMPLEXITY.md S46).
@@ -295,15 +295,16 @@ fn equal_cores_scale_with_the_bits_of_the_exponent() {
 /// product grows about 6 times for 8 times the bits; the work of the two methods is equal at
 /// the crossover, so crossing it changes the ratio little (8.5 times the work, 7.7 the bytes).
 /// The figures above were measured at the old sizes.
-/// TEST-bench-move-l0123, author P169: both pairs keep their sizes (4,096 and 131,072 bits;
-/// 1x 0.39 ms and 12.3 ms). The pair from 4,096 bits is the pair whose division stays within
-/// `DIV_LEAF`. The pair past the leaf, moved up to reach 1x of 0.5 s, fails its limit there (a
-/// finding of TEST-bench-move-l0123, measured at load 44–59 on 2026-11-14): from 2^22 bits it
-/// passes, 1x 0.24 s, 8.4 times the work and 9.5 times the bytes; from 2^23 bits, 1x 0.51 s, it
-/// does 9.0 times the work but its first runs allocate 10.6 times the bytes, over 10.5.
+/// TEST-bench-move-l0123, author P169: the pair from 4,096 bits is the pair whose division stays
+/// within `DIV_LEAF`. On 2026-11-14 the pair from 2^23 bits allocated 10.6 times the bytes, and
+/// on 2026-11-17 the pair from 262,144 bits 10.71 times; neither repeats. Remeasured on
+/// 2026-11-22 at load 66 to 91 (PERF-l0124-cube-bytes, CUBE-remtree-crossover), work and bytes:
+/// from 4,096 bits 6.43 and 3.36; from 262,144 bits, the pair that crosses `DIV_COST`'s
+/// crossover, 8.80 and 4.38; from 2^20 bits 8.46 and 8.34; from 2^23 bits, 1x 0.6 to 0.7 s,
+/// 8.52 and 8.63. So the three pairs below are the leaf, the crossover and the 1 s size.
 #[test]
 fn the_cube_of_a_wide_end_scales_with_its_bits() {
-    for n in [4096, 131_072] {
+    for n in [4096, 262_144, 1 << 23] {
         let (small, large) = (
             (num_bigint::BigInt::from(1) << n) + 3,
             (num_bigint::BigInt::from(1) << (scaling::FACTOR * n)) + 3,

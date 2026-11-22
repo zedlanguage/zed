@@ -32,19 +32,19 @@ expression: without_addresses(&out)
 07-json-parser/json.zed:10:27: the `matching` refinement of layer L20 `matching grammar { "-"? digit+ ("." digit+)? }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 07-json-parser/json.zed:11:27: the `matching` refinement of layer L20 `matching grammar { "true" | "false" | "null" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 07-json-parser/main.zed:9:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
-08-utf8-percent.zed (L6): does not load: 08-utf8-percent.zed:8:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
-08-utf8-percent.zed:8:39: The type `Utf8String` is not defined.
-08-utf8-percent.zed:11:24: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
-08-utf8-percent.zed:23:31: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
-08-utf8-percent.zed:23:37: `char32` is not defined.
-08-utf8-percent.zed:25:36: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
-08-utf8-percent.zed:41:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
-08-utf8-percent.zed:43:10: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
-08-utf8-percent.zed:43:25: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
-08-utf8-percent.zed:44:13: `char32` is not defined.
-08-utf8-percent.zed:44:43: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
-08-utf8-percent.zed:44:79: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
-08-utf8-percent.zed:46:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed (L6): does not load: 08-utf8-percent.zed:10:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:10:49: The type `Utf8String` is not defined.
+08-utf8-percent.zed:13:24: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:25:31: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:25:37: `char32` is not defined.
+08-utf8-percent.zed:27:36: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:44:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:46:10: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:46:25: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:47:13: `char32` is not defined.
+08-utf8-percent.zed:47:43: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:47:79: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:49:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 09-canonical-equal.zed (L3): does not load: 09-canonical-equal.zed:7:23: `concat` takes a family of strings, and an optional separator `sep:` by name.
   [1] 7:23: repair: write `s.lower.split("-").concat`
       7 | canon(positional s) = s.lower.split("-").concat("").split(" ").concat("");

@@ -711,7 +711,7 @@ text
 > hit = fetch(key)
 
 == README.md [Databases] 1
-comment n = orders[id]?.note; // Utf8String | #none | #notFound | #dbError
+comment n = orders[id]?.note; // Utf8String | #none | #notFound | #ioError
 table input: `orders`
 | id | total | note |
 | 1 | 9r | "gift" |
