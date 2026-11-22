@@ -18,7 +18,7 @@
 # a benchmark of each binary by the name the table lists; `fresh`, the
 # listings with --only afresh; `short`, the short-addresses pieces and their clone; `copy`, a
 # piece that starts its binary again after the build is gone; `concurrent`, two runs at once on
-# one log directory; and `trace`.
+# one log directory; `trace`; and `nobus`, two pieces run with no user bus (FARM-run-tests-systemd-run).
 # select, table, except and benches are run after list, with no build of the tests between them. With no part named
 # it runs list, select, table, except, benches, fresh, short, copy and concurrent one after another.
 # Each part has a log directory of its own, under which every run of run_tests.sh writes a
@@ -28,9 +28,9 @@ fails=0
 . tools/test_lib.sh || exit 2
 part=${1:-all}
 case $part in
-  all | list | select | table | except | benches | fresh | short | copy | concurrent | trace) ;;
+  all | list | select | table | except | benches | fresh | short | copy | concurrent | trace | nobus) ;;
   *)
-    echo "usage: tools/test_run_tests.sh [list | select | table | except | benches | fresh | short | copy | concurrent | trace]"
+    echo "usage: tools/test_run_tests.sh [list | select | table | except | benches | fresh | short | copy | concurrent | trace | nobus]"
     exit 2
     ;;
 esac
@@ -604,6 +604,25 @@ check "each has a directory of its own" "2" \
 check "latest is one of them" "yes" \
   "$(case $(readlink "$logs/latest") in *-"$a" | *-"$b") echo yes ;; esac)"
 check "no lock file is left" "" "$(find "$logs" -maxdepth 1 -name '*.lock')"
+fi
+# With no user bus, as on a Colab VM, `systemd-run --user` fails ("Failed to connect to bus"), and
+# each piece runs with a data limit of 112 GiB instead of in zedtests.slice
+# (FARM-run-tests-systemd-run). Taking away both ways to reach the bus, DBUS_SESSION_BUS_ADDRESS
+# and XDG_RUNTIME_DIR, gives that error here too. A plain piece and a metered one pass: the
+# metered test reserves 2^46 bytes of address space (zed-alloc-count), which an address-space
+# limit of 112 GiB would refuse and the data limit does not. Before the fallback both failed.
+if want nobus; then
+logs=build/test-run-tests-nobus
+for only in '^l01_06_lexer_tokens$' '^zed_tests::scaling_tests::bytes_of_the_order_given_pass$'; do
+  env -u DBUS_SESSION_BUS_ADDRESS -u XDG_RUNTIME_DIR tools/run_tests.sh --logs "$logs" \
+    --only "$only" >"$logs.out" 2>&1
+  rc=$?
+  check "with no user bus the pieces of $only pass" "0" "$rc"
+  [ "$rc" = 0 ] || command grep -a -v '@' "$logs.out"
+  check "the run says each piece has a data limit" "1" \
+    "$(command grep -a -c '^no user bus: each piece runs with a data limit of 112 GiB' "$logs.out")"
+  check "the run ran one piece" "1" "$(wc -l <"$(last_run)/pieces")"
+done
 fi
 echo "checks failed: $fails"
 [ "$fails" = 0 ]

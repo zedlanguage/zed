@@ -1492,6 +1492,33 @@ if [ -n "$trace" ]; then
   [ -z "$spec_dir" ] || spec_real=$(realpath -m -- "$spec_dir")
 fi
 export root out cores run_kind cov trace spec_dir spec_real
+# Every piece, and every link made before the timed pieces, runs under `capped`: in the systemd
+# slice zedtests.slice (above) when a user bus answers, and otherwise with its data limit at
+# 112 GiB, the slice's MemoryMax (FARM-run-tests-systemd-run). A Colab VM has no user bus, and
+# `systemd-run --user` there fails with "Failed to connect to bus", so every piece failed
+# (found by b22-presburger4, who put a stand-in systemd-run on PATH).
+# Tradeoff: the slice caps the memory of every piece of every checkout together; the fallback
+# caps each piece alone, so pieces side by side may together use more than 112 GiB. That cannot
+# happen on a machine with less memory than that (every Colab shape), where the kernel's
+# out-of-memory killer ends a piece first, as it would under the slice. Why RLIMIT_DATA
+# (`ulimit -d`) and not the address-space limit (`ulimit -v`, `prlimit --as`): zed-alloc-count
+# reserves 2^46 bytes of address space before it meters (`RESERVED`, crates/zed-alloc-count/
+# src/meter.rs), a mapping with no access, which the address-space limit counts and so would
+# refuse in every metered test; the data limit counts only private writable mappings (Linux 4.7
+# and later), the memory a piece writes. A cgroup of the run's own would cap pieces together as
+# the slice does, but needs a writable /sys/fs/cgroup, which a run as an ordinary user lacks
+# (untried as root on a VM). tools/test_run_tests.sh nobus runs a plain and a metered piece with
+# no user bus.
+user_bus=
+systemd-run --user --scope --quiet true 2>/dev/null && user_bus=1
+[ -n "$user_bus" ] ||
+  echo "no user bus: each piece runs with a data limit of 112 GiB (ulimit -d), not in zedtests.slice"
+capped() {
+  [ -z "$user_bus" ] || exec systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice "$@"
+  ulimit -d $((112 << 20)) && exec "$@"
+}
+export user_bus
+export -f capped
 # Prints the paths the strace output $1 (strace -f -y -e trace=%file,getdents64) names under the
 # checkout, relative to it, and under the spec checkout ($spec_dir above), as spec:<path>
 # relative to it, sorted: for a call of the *at family each path after a directory
@@ -1565,8 +1592,7 @@ piece() {
   [ -z "$trace" ] || tracer=(strace -f -qq --seccomp-bpf --kill-on-exit -y -e signal=none
     -e trace=%file,getdents64 -o "$out/slot-$slot.strace")
   (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
-    systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice \
-    "${bound[@]}" bash -c 'in_run_copy "$@"' in_run_copy "$1" "${tracer[@]}" "$@" >"$scratch" 2>&1)
+    capped "${bound[@]}" bash -c 'in_run_copy "$@"' in_run_copy "$1" "${tracer[@]}" "$@" >"$scratch" 2>&1)
   rc=$?
   if [ -n "$trace" ]; then
     trace_reads "$out/slot-$slot.strace" >"$trace/${name//\//_}.reads"
@@ -1709,8 +1735,7 @@ warm() {
   shift 2
   start=$(date +%s%N)
   (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
-    systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice \
-    bash -c 'in_run_copy "$@"' in_run_copy "$1" "$@" >"$out/warm-$slot.out" 2>&1)
+    capped bash -c 'in_run_copy "$@"' in_run_copy "$1" "$@" >"$out/warm-$slot.out" 2>&1)
   rc=$?
   : >"$out/warm-$slot.out"
   echo "$name links made before the timed pieces: rc=$rc $((($(date +%s%N) - start) / 1000000))ms"

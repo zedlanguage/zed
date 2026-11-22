@@ -17,7 +17,7 @@
 #     part of tools/test_run_tests.sh, list then select then table then except then benches (all
 #     four read the table list publishes, in one log directory), short after list and beside them
 #     (list and short both mount the short-addresses clone, and a run waits while another has
-#     it), and fresh, copy, concurrent and trace beside that chain (each in a log directory of
+#     it), and fresh, copy, concurrent, trace and nobus beside that chain (each in a log directory of
 #     its own), each part under max(60, the piece limit) s:
 #     the header of test_run_tests.sh gives each part 60 s, and list alone took 30 to 57 s at load
 #     36 to 76. The parts start after the build of the tests they list, which runs first with no
@@ -916,7 +916,7 @@ write_reads() {
 # parts start when it has passed. The build runs in the foreground, before step 0 starts its
 # timed parts too: run beside them, a workspace build (at load 50 on 2026-11-20) pushed
 # tools/test_merge_check.sh select, 15 to 21 s alone, past its 25 s limit.
-rtparts=(list select table except benches fresh short copy concurrent trace)
+rtparts=(list select table except benches fresh short copy concurrent trace nobus)
 rtpids=()
 if [ -n "$rtself" ] && [ -z "$list" ]; then
   rlog=$(git rev-parse --path-format=absolute --git-path merge-check-rt)
@@ -941,7 +941,7 @@ if [ -n "$rtself" ] && [ -z "$list" ]; then
       rt_part select && rt_part table && rt_part except && rt_part benches
       wait
     }) &
-    for p in fresh copy concurrent trace; do rt_part "$p" & done
+    for p in fresh copy concurrent trace nobus; do rt_part "$p" & done
     wait
   ) &
   rtpids+=($!)
@@ -960,7 +960,7 @@ rt_wait() {
     fi
   done
   [ -z "$bad" ] || exit 1
-  echo "merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent and trace passed"
+  echo "merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace and nobus passed"
 }
 
 # Step 0: the toy cases of this script, each part under the limit of a piece of run_tests.sh.
