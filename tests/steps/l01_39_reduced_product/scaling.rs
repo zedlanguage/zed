@@ -1464,6 +1464,95 @@ fn hub_bounds_match_the_full_core_after_rows_among_the_hubs() {
     }
 }
 
+/// Disjunctions of two names, each a block of its own, that a move of a name may leave out
+/// when their projection cannot change either name (`Scope::disjunction_stays` in
+/// `product.rs`, row SCOPE-assume-disjunctions-setup): after each test the products of an
+/// eager and a lazy scope must be the projections of every point, counted one by one. The
+/// tests narrow `n` until the window of `v_i - n >= 5 || n - v_i >= 5` meets `v0` and `v1`,
+/// so a block that may no longer be left out is projected; the blocks form a tree, so each
+/// name's projection is exact. Arms with coefficients other than 1 and a hub `m` of its own
+/// cover the other signs of `a` and `b` in `arms_cover`.
+#[test]
+fn disjunctions_of_two_names_left_out_keep_the_projection() {
+    let p = Premises::new();
+    let names: Vec<Arc<str>> = ["v0", "v1", "v2", "n", "m"]
+        .into_iter()
+        .map(Arc::from)
+        .collect();
+    let within = |s: Scope, x: &str, lo: i64, hi: i64| {
+        let t = prim(
+            Prim::And,
+            prim(Prim::Ge, var(x), int(lo)),
+            prim(Prim::Le, var(x), int(hi)),
+        );
+        s.assume(&t, true, &p)
+    };
+    let ge = |a: Term, b: Term| prim(Prim::Ge, a, b);
+    let sub = |a: &str, b: &str| prim(Prim::Sub, var(a), var(b));
+    let times = |k: i64, x: &str| prim(Prim::Mul, int(k), var(x));
+    // `v - h >= 5 || h - v >= 5` and `2 v + h >= 9 || v - 2 h >= 3`.
+    let d = |v: &str, h: &str| or(ge(sub(v, h), int(5)), ge(sub(h, v), int(5)));
+    let e = |v: &str, h: &str| {
+        or(
+            ge(prim(Prim::Add, times(2, v), var(h)), int(9)),
+            ge(prim(Prim::Sub, var(v), times(2, h)), int(3)),
+        )
+    };
+    let (vs, hs) = ([0, 0, 0, -12, -12], [10, 10, 10, 12, 12]);
+    let mut start = ints(&names);
+    for (i, x) in names.iter().enumerate() {
+        start = within(start, x, vs[i], hs[i]);
+    }
+    let start = [d("v0", "n"), d("v1", "n"), e("v2", "m")]
+        .iter()
+        .fold(start, |s, t| s.assume(t, true, &p));
+    type Pt = [i64; 5];
+    let holds: Vec<(Term, Box<dyn Fn(&Pt) -> bool>)> = vec![
+        (
+            prim(Prim::Le, prim(Prim::Add, var("n"), var("m")), int(4)),
+            Box::new(|q: &Pt| q[3] + q[4] <= 4),
+        ),
+        (ge(var("n"), int(-3)), Box::new(|q: &Pt| q[3] >= -3)),
+        (ge(var("m"), int(2)), Box::new(|q: &Pt| q[4] >= 2)),
+        (ge(int(1), var("n")), Box::new(|q: &Pt| q[3] <= 1)),
+        (ge(var("n"), int(0)), Box::new(|q: &Pt| q[3] >= 0)),
+    ];
+    let base = |q: &Pt| {
+        let d = |v: i64, h: i64| v - h >= 5 || h - v >= 5;
+        d(q[0], q[3]) && d(q[1], q[3]) && (2 * q[2] + q[4] >= 9 || q[2] - 2 * q[4] >= 3)
+    };
+    let mut points: Vec<Pt> = Vec::new();
+    for v0 in 0..=10 {
+        for v1 in 0..=10 {
+            for v2 in 0..=10 {
+                for n in -12..=12 {
+                    for m in -12..=12 {
+                        let q = [v0, v1, v2, n, m];
+                        if base(&q) {
+                            points.push(q);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let (mut eager, mut lazy) = (start.clone(), start.lazy());
+    for (step, (t, f)) in holds.iter().enumerate() {
+        eager = eager.assume(t, true, &p);
+        lazy = lazy.assume(t, true, &p);
+        points.retain(|q| f(q));
+        for (i, x) in names.iter().enumerate() {
+            let mut at: Vec<i64> = points.iter().map(|q| q[i]).collect();
+            at.sort_unstable();
+            at.dedup();
+            let want =
+                IntervalSet::from_pieces(at.iter().map(|&v| (End::of(v), End::of(v))).collect());
+            assert_eq!(eager.get(x).ints(), &want, "eager, step {step}, {x}");
+            assert_eq!(lazy.settled(x).ints(), &want, "lazy, step {step}, {x}");
+        }
+    }
+}
+
 #[test]
 fn distinct_disjunctions_among_the_hubs_of_a_star_are_each_kept() {
     let p = Premises::new();

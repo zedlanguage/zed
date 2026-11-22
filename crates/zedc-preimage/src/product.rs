@@ -17697,7 +17697,9 @@ impl Scope {
     /// these sizes only.
     fn moved_blocks(&self, relation: &Conjuncts, n: &str) -> Vec<BlockId> {
         let blocks = relation.blocks();
-        let mut out: Vec<BlockId> = blocks.moving_blocks(n).collect();
+        let mut out: Vec<BlockId> = (blocks.moving_blocks(n))
+            .filter(|&b| !self.disjunction_stays(relation, b))
+            .collect();
         if self.lazy {
             return out;
         }
@@ -17727,6 +17729,108 @@ impl Scope {
             }
         }
         out
+    }
+
+    /// Whether block `b` is one disjunction of half-planes on two names whose projection, with
+    /// the names' products as they are now, would change neither: such a block is left out of
+    /// the blocks a move makes due ([`Scope::moved_blocks`]), as a star whose leaf the move
+    /// cannot cut is ([`Scope::cut_leaves`]). In O(a log N) for its `a` arms and `N` names.
+    ///
+    /// The block qualifies when it holds one conjunct, `g = A1 || … || Ar`, each arm `Ai` a
+    /// constraint `ai x + bi y + ci >= 0` over the two names `x` and `y` and no other atom, and
+    /// neither name's product is empty or has a class of remainders ([`classed`]).
+    ///
+    /// Proof that leaving it out is sound and loses nothing. Write `P(x)` and `P(y)` for the
+    /// two names' sets of integers now.
+    /// 1. The block's conjuncts are `g` alone and they name only `x` and `y`, so the most
+    ///    its exact projection can give `x` is `{x in P(x) : some y in P(y) has g(x, y)}`,
+    ///    and the same for `y`; a projection that is not exact gives a superset of that, met
+    ///    with the product. If both sets are the products themselves, any sound projection of
+    ///    the block met with the products gives the products back, so projecting it moves
+    ///    no name, and skipping it gives the products a projection would.
+    /// 2. The `x` with some `y` in `P(y)` meeting arm `i` ([`arms_cover`]): for `bi > 0` the
+    ///    arm is easiest to meet at the greatest `y`, `max P(y)`, which is a member (an
+    ///    interval set's ends are its pieces' ends, integers), so the set is
+    ///    `ai x + bi max P(y) + ci >= 0`, and every `x` when `P(y)` has no greatest member;
+    ///    for `bi < 0` the same with `min P(y)`; for `bi = 0` it is `ai x + ci >= 0`. This is
+    ///    exact for any `P(y)`, holes or not, since only its end is read. Each such set is a
+    ///    half-line `x >= Li` (`ai > 0`), `x <= Ui` (`ai < 0`), every integer or none
+    ///    (`ai = 0`), with `Li = ⌈-t / ai⌉` and `Ui = ⌊t / -ai⌋` for `t` the arm's value apart
+    ///    from `ai x` ([`row_bound`]).
+    /// 3. The `x` meeting `g` for some `y` is the union over the arms (an `x` meets `g` with
+    ///    some `y` exactly when it meets some arm with some `y`), `(-inf, max Ui] ∪
+    ///    [min Li, inf)`, so its complement is the integers strictly between `max Ui` and
+    ///    `min Li` (all of them when no arm gives a half-line or every integer). `P(x)` lies
+    ///    in the union exactly when it misses that window. The same for `y` with the roles
+    ///    swapped. Both are checked against the products now, so no history of earlier
+    ///    projections is relied on, and a block left out at one move is checked again at the
+    ///    next move of either name.
+    /// 4. A class of remainders on a name narrows its set below its intervals, so its ends
+    ///    need not be members: such a name is not read. An empty product is a scope that is
+    ///    already bottom.
+    /// 5. What a projection of the block does besides narrowing names: it keeps the block as
+    ///    projected ([`Scope::keep`]) with the names' snapshot, and asks for a whole-block
+    ///    projection when a name gained a hole ([`Block::gained_hole`]). Left out, the block
+    ///    keeps its older snapshot, so its next projection finds more of its parts due, not
+    ///    fewer; and a whole-block projection is again a projection of the block, which by
+    ///    (1) moves nothing.
+    ///
+    /// Complexity tradeoff (SCOPE-assume-disjunctions-setup): naive version, every block that
+    /// mentions a name moved was projected: a disjunction `v_i - n >= 5 || n - v_i >= 5`
+    /// assumed into a scope is split into two cases ([`Scope::case_list`]) that each narrow
+    /// `n`, and the move of `n` made each of the `i` disjunctions assumed before due, about
+    /// 43,000 instructions a projection, O(k²) projections for `k` of them (callgrind,
+    /// b22-preimage3: 812 and 3,164 calls of `project_block` at k = 32 and 64). Used: each
+    /// such block checked by its two names' ends, O(a log N) a block. Tradeoffs: the blocks at
+    /// the name are still listed at each move ([`conjuncts::Blocks::moving_blocks`]), O(k) a
+    /// move, so the set-up is still O(k²) checks; keeping the blocks ordered by the window
+    /// their arms give would bring that to O(log k) a move, as the order of a family of stars
+    /// does ([`Scope::cut_leaves`]). Test:
+    /// `l01_39_reduced_product::scaling::bench::tightenings_of_a_sum_beside_disjunctions_on_each_name_scale`
+    /// (set-up of 256 and 2048 disjunctions); correctness against every point counted:
+    /// `l01_39_reduced_product::scaling::disjunctions_of_two_names_left_out_keep_the_projection`.
+    /// It cannot catch a block of three names or more, which is never left out.
+    fn disjunction_stays(&self, relation: &Conjuncts, b: BlockId) -> bool {
+        let blocks = relation.blocks();
+        if blocks.is_apart(b) {
+            return false;
+        }
+        let mut members = blocks.members(b);
+        let (Some(g), None) = (members.next(), members.next()) else {
+            return false;
+        };
+        let Formula::Or(arms) = &**g else {
+            return false;
+        };
+        let mut names: Vec<&Arc<str>> = Vec::with_capacity(2);
+        for arm in arms.iter() {
+            let Formula::Con(c) = arm else {
+                return false;
+            };
+            if c.rel != Rel::Ge {
+                return false;
+            }
+            for a in c.lin.terms.keys() {
+                let Atom::Sym(s) = a else {
+                    return false;
+                };
+                if !names.contains(&s) {
+                    if names.len() == 2 {
+                        return false;
+                    }
+                    names.push(s);
+                }
+            }
+        }
+        let [x, y] = names[..] else {
+            return false;
+        };
+        let (px, py) = (self.get(x), self.get(y));
+        if [&px, &py].iter().any(|p| p.ints().is_empty() || classed(p)) {
+            return false;
+        }
+        arms_cover(&arms[..], x, px.ints(), y, py.ints())
+            && arms_cover(&arms[..], y, py.ints(), x, px.ints())
     }
 
     /// The bound family `f`'s conjuncts and those among its hubs ([`Conjuncts::core`]) give
@@ -20691,6 +20795,63 @@ fn pendant_row(f: &Formula) -> Option<(Arc<str>, PendantRow)> {
         }
     }
     None
+}
+
+/// Whether every member of `sx` meets some arm of `arms` with some `y` in `sy`, the arms
+/// constraints `a x + b y + c >= 0` over the names `x` and `y` alone (steps 2 and 3 of the
+/// proof at [`Scope::disjunction_stays`]): the arms' half-lines in `x`, each found from the
+/// one end of `sy` that the sign of `b` picks, cover `sx` when `sx` misses the integers
+/// strictly between the greatest upper end and the least lower end. `false` for an arm of
+/// any other form. One multiplication and one floor division an arm ([`row_bound`]).
+fn arms_cover(arms: &[Formula], x: &str, sx: &IntervalSet, y: &str, sy: &IntervalSet) -> bool {
+    let Some((ylo, yhi)) = sy.bounds() else {
+        return false;
+    };
+    // `up` is the least `L` of the arms `x >= L`, `down` the greatest `U` of the arms `x <= U`.
+    let (mut up, mut down): (Option<Int>, Option<Int>) = (None, None);
+    for arm in arms {
+        let Formula::Con(c) = arm else {
+            return false;
+        };
+        let (mut a, mut b) = (Int::ZERO, Int::ZERO);
+        for (atom, k) in &c.lin.terms {
+            match atom {
+                Atom::Sym(s) if &**s == x => a = k.clone(),
+                Atom::Sym(s) if &**s == y => b = k.clone(),
+                _ => return false,
+            }
+        }
+        // `t`: the arm's value apart from `a x`, at the end of `sy` easiest for it.
+        let t = if b.is_zero() {
+            c.lin.constant.clone()
+        } else {
+            match if b.is_positive() { yhi } else { ylo } {
+                End::Fin(e) => &c.lin.constant + &(&b * &Int::from(e)),
+                // No end on that side: some `y` meets the arm at every `x`.
+                _ => return true,
+            }
+        };
+        if a.is_zero() {
+            if !t.is_negative() {
+                return true;
+            }
+            continue;
+        }
+        let e = row_bound(&a, &t);
+        if a.is_positive() {
+            up = Some(up.map_or(e.clone(), |u| u.min(e)));
+        } else {
+            down = Some(down.map_or(e.clone(), |d| d.max(e)));
+        }
+    }
+    let lo = down.map_or(End::NegInf, |d| End::Fin(Num::from(&(&d + &Int::ONE))));
+    let hi = up.map_or(End::PosInf, |u| End::Fin(Num::from(&(&u - &Int::ONE))));
+    if let (End::Fin(l), End::Fin(h)) = (&lo, &hi)
+        && l > h
+    {
+        return true;
+    }
+    sx.meet(&IntervalSet::range(lo, hi)).is_empty()
 }
 
 fn classed(p: &Product) -> bool {

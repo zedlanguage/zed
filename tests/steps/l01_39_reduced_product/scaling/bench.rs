@@ -400,10 +400,16 @@ fn tightenings_beside_a_chain_of_disjunctions_scale() {
 /// `m`, each of k/2 parts, and no part holds both, so no part is due by the group (item
 /// LAZY-hub-coarse); the parts of one of the two are read to find that out
 /// (`Block::reframe` in `product.rs`), O(k) reads per test, O(k^2 log k) in all, beside the
-/// projections each test costs. COMPLEXITY.md C52. Sized at 64 (8.9 times the work at 8n,
-/// 0.02 and 0.2 s), not at 256 (8.8 times, 0.06 and 0.54 s), because building the scopes
-/// before the timing grows near `k^2`: the run takes 5.2, 18.9 and 68 s at 64, 128 and 256,
-/// over the 20 s piece limit from 128 (plan row SCOPE-assume-disjunctions-setup).
+/// projections each test costs. COMPLEXITY.md C52. Sized at 64 (8.6 times the work at 8n,
+/// 0.02 and 0.18 s), not at 256 (8.55 times, 0.10 and 0.87 s), because building the scopes
+/// before the timing is untimed but counts toward the 20 s piece limit. A disjunction of
+/// two names that the move of its hub cannot change is no longer projected on each move
+/// (`Scope::disjunction_stays` in `product.rs`, plan row SCOPE-assume-disjunctions-setup),
+/// which cuts the set-up from 2.04G, 6.19G, 21.0G and 77.6G instructions at k = 128, 256,
+/// 512 and 1024 to 1.18G, 2.52G, 5.71G and 14.2G (b22-preimage4, 2026-11-22); the piece
+/// takes 5.4 s at 64 and 22.8 s at 128 (load 45), and 51 s at 256. What is left of the
+/// growth past `k log k` is the O(k) blocks at the hub read on each move (plan row
+/// SCOPE-assume-disjunctions-index).
 #[test]
 fn tightenings_of_a_sum_beside_disjunctions_on_each_name_scale() {
     let n = 64;
