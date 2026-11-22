@@ -657,6 +657,43 @@ const NEAR_MISSES: &[NearMiss] = &[
     ),
 ];
 
+/// A near miss of a row that only a package raises: its row, the package's other files, the
+/// accepted and the rejected text of its unit `main` (one edit apart), the place of the row's
+/// diagnostic in `main.zed`, and the first entry of its menu, after `repair: `.
+type PackageNearMiss = (
+    Row,
+    &'static [(&'static str, &'static str)],
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+);
+
+const PACKAGE_NEAR_MISSES: &[PackageNearMiss] = &[(
+    Row::ImportPathNamesNoUnit,
+    &[("Collections.zed", "one = 1;\n")],
+    "import Collections;\nmain() = 0;\n",
+    "import Collectons;\nmain() = 0;\n",
+    "1:8",
+    Some("`import Collections;`"),
+)];
+
+/// The start of the message zedc gives at an import it resolves, since it does not yet tie the
+/// names an import brings in to their definitions.
+const IMPORT_LATER: &str = "an import is part of the Zed language, and this version of zedc \
+                            does not yet tie a name";
+
+/// The problems of loading the unit `main` of the package whose `main.zed` is `main` and whose
+/// other files are `others`.
+fn package_problems(others: &[(&str, &str)], main: &str) -> Vec<zedc::unit::Problem> {
+    let files = zedc::unit::Memory(
+        (others.iter().chain([&("main.zed", main)]))
+            .map(|&(n, t)| (n.to_string(), std::sync::Arc::from(t)))
+            .collect(),
+    );
+    zedc::unit::load(&mut Db::new(), &files, &["main"]).problems
+}
+
 /// Rows whose accepted program holds a form zedc does not support (a boundary `with`, step
 /// L6.2, a `loop`, step L6.1, or `with handles(…)` on `main`, plan row SIGNALS-rt): their
 /// accepted program is refused only with the message that names the form as not supported.
@@ -725,8 +762,14 @@ fn raised() -> BTreeSet<Row> {
 
 #[test]
 fn each_row_the_implementation_raises_has_a_near_miss() {
-    let listed: BTreeSet<Row> = NEAR_MISSES.iter().map(|m| m.0).collect();
-    assert_eq!(listed.len(), NEAR_MISSES.len(), "a row is listed twice");
+    let listed: BTreeSet<Row> = (NEAR_MISSES.iter().map(|m| m.0))
+        .chain(PACKAGE_NEAR_MISSES.iter().map(|m| m.0))
+        .collect();
+    assert_eq!(
+        listed.len(),
+        NEAR_MISSES.len() + PACKAGE_NEAR_MISSES.len(),
+        "a row is listed twice"
+    );
     let raised = raised();
     let missing: Vec<&str> = raised.difference(&listed).map(|r| r.name()).collect();
     let stale: Vec<&str> = listed.difference(&raised).map(|r| r.name()).collect();
@@ -774,4 +817,39 @@ fn each_near_miss_gives_its_row_place_and_first_repair() {
         }
     }
     assert!(failed.is_empty(), "{failed:#?}");
+}
+
+#[test]
+fn each_package_near_miss_gives_its_row_place_and_first_repair() {
+    for &(row, others, accepted, rejected, at, first) in PACKAGE_NEAR_MISSES {
+        // zedc does not yet tie an imported name to its definition, and says so at each
+        // import of an accepted package, with no row; once it does, the package is accepted
+        // and this test asks for that.
+        let good = package_problems(others, accepted);
+        assert!(
+            !good.is_empty()
+                && good
+                    .iter()
+                    .all(|p| p.error.row.is_none() && p.error.message.starts_with(IMPORT_LATER)),
+            "{}: the accepted package is not refused only for its import: if it is accepted \
+             now, ask for no problem here: {good:?}",
+            row.name()
+        );
+        let bad = package_problems(others, rejected);
+        let Some(e) = bad.iter().find(|p| p.error.row == Some(row)) else {
+            panic!("{}: no problem in the row: {bad:?}", row.name());
+        };
+        assert_eq!(e.file, "main.zed", "{}", row.name());
+        // The texts are ASCII, so a column is a byte offset in its line, from 1.
+        let before = &rejected[..e.error.span.start];
+        let line = before.matches('\n').count() + 1;
+        let col = before.len() - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+        let repair = (e.error.notes.iter()).find_map(|n| n.text.strip_prefix("repair: "));
+        assert_eq!(
+            (format!("{line}:{col}"), repair),
+            (at.to_string(), first),
+            "{}",
+            row.name()
+        );
+    }
 }
