@@ -280,23 +280,34 @@ fn a_program_on_a_tuple_of_bools_is_accepted_and_its_arms_read_the_type() {
     let tt = Value::tuple(vec![Value::Bool(true), Value::Bool(true)]);
     let of = |ty: Type| arms(&body, &Scope::new([("x".into(), Product::of_type(ty))]));
     // The program writes `(true, false)` as a tuple built of two literals, which the equality
-    // with a literal (`Scope::assume`) does not read, so neither arm narrows `x` (a gap of its
-    // own, follow-up TUPLE-eq-lit). `x: (bool, bool)`, a named type: both arms are reached,
-    // and `x` keeps its type and no list, whatever the number of its values.
+    // with a literal (`Scope::assume`) reads as the literal of its value (TUPLE-eq-lit), so
+    // the arm where the test holds fixes `x`. `x: (bool, bool)`, a named type: the `then` arm
+    // gives `x` the one value; the `else` arm keeps the type and no list, and holds the other
+    // three values, since the type cannot take a tuple out (a key path of its shape is in the
+    // tuple type).
+    let tf = Value::tuple(vec![Value::Bool(true), Value::Bool(false)]);
     let a = of(bools(2));
-    for outcome in [true, false] {
-        let arm = super::arm(&a, "==", outcome);
-        assert!(arm.reachable());
-        let x = arm.scope.get("x");
-        assert_eq!(finite(&x), None);
-        assert!(x.contains(&tt) && !x.is_empty());
-    }
-    // `x: (true, true) | (false, true)`, written as a list: each arm keeps the two values.
+    let then = super::arm(&a, "==", true);
+    assert!(then.reachable());
+    assert_eq!(then.scope.get("x").value(), Some(&tf));
+    let other = super::arm(&a, "==", false);
+    assert!(other.reachable());
+    let x = other.scope.get("x");
+    assert_eq!(finite(&x), None);
+    assert!(x.contains(&tt) && x.contains(&ft) && !x.is_empty());
+    // `x: (true, true) | (false, true)`, written as a list: `(true, false)` is not in it, so
+    // the `then` arm is not reached, and the `else` arm keeps the two values.
     let a = of(&lit(&tt) | &lit(&ft));
-    for outcome in [true, false] {
-        let x = super::arm(&a, "==", outcome).scope.get("x");
-        assert_eq!(finite(&x), Some([ft.clone(), tt.clone()].into()));
-    }
+    assert!(!super::arm(&a, "==", true).reachable());
+    let x = super::arm(&a, "==", false).scope.get("x");
+    assert_eq!(finite(&x), Some([ft.clone(), tt.clone()].into()));
+    // A nested tuple of literals is read the same way: `x == ((true, false), true)`.
+    let src = "ok = (x) -> if x == ((true, false), true) { 1 } else { 2 };";
+    let (_, body) = zed_tests::step_helpers::l01_25_preimage_catalog::function(src);
+    let nested = Value::tuple(vec![tf.clone(), Value::Bool(true)]);
+    let of = |ty: Type| arms(&body, &Scope::new([("x".into(), Product::of_type(ty))]));
+    let a = of(Type::tuple(vec![bools(2), Type::bool()]));
+    assert_eq!(super::arm(&a, "==", true).scope.get("x").value(), Some(&nested));
 }
 
 mod bench;

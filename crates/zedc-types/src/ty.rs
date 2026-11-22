@@ -19582,8 +19582,9 @@ impl Narrowing {
 
 /// Whether the intersection of `results` is within `result`. A result that holds `_` is left
 /// out unless every result holds it (proof at the site). Each result is split into its
-/// kernel part, its scalars and atoms and the tuple shapes that hold no function, variable or
-/// unknown at any depth, and the rest. The kernel parts are intersected exactly. A value in
+/// kernel part, its scalars and atoms with their payloads read and the tuple shapes that hold
+/// no function, variable, unknown or payload with fields at any depth ([`Ty::exact_data`]),
+/// and the rest. The kernel parts are intersected exactly. A value in
 /// every result outside that intersection is outside the kernel part of some result `i`, so
 /// in a piece of the rest of `i` and in every other result: each such piece must be within
 /// `result`, unless no value of it is in every other result. That is known of a function,
@@ -19635,16 +19636,34 @@ async fn meet_within<'m>(results: &[Ty], result: &Ty, c: &'m Comparing<'m, '_>) 
         for (i, r) in results.iter().enumerate() {
             let others = before & after[i + 1];
             before &= masks[i];
+            // The kernel part is read with the payloads of its atoms (TY-sub-fn-payload): read
+            // by [`Ty::kernel`], which holds every `#a` with any payload, the meet of results
+            // `#a(#z)` was `#a(_)`, and so was `result.kernel()` below for `#a(#y)`, and
+            // `(x: #z) -> #a(#z)` fit `(x: #z) -> #a(#y)`. A row or an atom's payloads with no
+            // exact kernel type (a payload with fields, or a function, a variable or the
+            // unknown at any depth) go to the rest whole, which is compared with `result` by
+            // [`Comparing::sub_in`], payloads and all. Cost: each row and shape keeps its exact
+            // kernel type, so this reads the outer level, as before.
             let mut shapes = Vec::new();
             for row in &r.tuples {
-                match row.iter().map(Ty::kernel).collect::<Option<Vec<_>>>() {
-                    Some(cs) => shapes.push(KType::tuple(cs)),
+                match row.0.exact.clone() {
+                    Some(k) => shapes.push(k),
                     None => rest.tuples.push(row.clone()),
                 }
             }
-            kernels.push(KType::union_all(
-                std::iter::once(r.set.clone()).chain(shapes),
-            ));
+            let set = match payload_set(&r.set, &r.payloads, |_, s| s.0.exact.clone()) {
+                Some(set) => set,
+                None => {
+                    let listed = KType::union_all(
+                        (r.payloads.keys()).map(|n| KType::atom_with(n, &KType::top())),
+                    );
+                    let mut paid = Ty::set(&r.set & &listed);
+                    paid.payloads = r.payloads.clone();
+                    rest = rest.union(&paid);
+                    &r.set - &listed
+                }
+            };
+            kernels.push(KType::union_all(std::iter::once(set).chain(shapes)));
             if !no_function {
                 rest.fns.extend(r.fns.iter().cloned());
             }
@@ -19668,7 +19687,7 @@ async fn meet_within<'m>(results: &[Ty], result: &Ty, c: &'m Comparing<'m, '_>) 
         return false;
     };
     let mut b = Binds::new();
-    let kernel_within = match result.kernel() {
+    let kernel_within = match result.exact_kernel() {
         Some(r) => k.subtype(&r),
         None => c.sub_in(&Ty::set(k), result, &mut b).await && b.is_empty(),
     };

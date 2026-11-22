@@ -8,6 +8,7 @@ mod deep;
 mod evidence;
 mod forms;
 mod layout;
+mod literal_value;
 mod notation;
 mod read_back;
 mod scaling;

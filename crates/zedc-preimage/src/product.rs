@@ -13689,7 +13689,21 @@ impl Scope {
             && a.len() == 2
         {
             let equal = (*op == Prim::Eq) == outcome;
-            for (l, r) in [(&a[0], &a[1]), (&a[1], &a[0])] {
+            // A source tuple of literals, `x == (true, false)`, elaborates to a tuple built of
+            // literals, `Prim(Tuple, [Lit, Lit])`; it is read here as the literal of its value,
+            // so the arms below narrow `x` by it (TUPLE-eq-lit). The `!=` side is safe: there
+            // `equality` takes the value out of the finite list only, and its complement in the
+            // type takes out no tuple, since a key path of the tuple's shape is in the tuple
+            // type and differs from it (types.rs `Universe::of`, value.rs `eq`). Tested by
+            // l01_39_reduced_product finite_from_type
+            // a_program_on_a_tuple_of_bools_is_accepted_and_its_arms_read_the_type.
+            let read = |t: &Term| match t {
+                Term::Prim(Prim::Tuple, _) => t.literal_value().map(Term::Lit),
+                _ => None,
+            };
+            let (l0, r0) = (read(&a[0]), read(&a[1]));
+            let (a0, a1) = (l0.as_ref().unwrap_or(&a[0]), r0.as_ref().unwrap_or(&a[1]));
+            for (l, r) in [(a0, a1), (a1, a0)] {
                 match (l, r) {
                     // Both sides of `==` have one carrier, so an `int` literal beside a name
                     // with no `int` value stands for a literal of the name's carrier that the

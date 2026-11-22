@@ -18106,9 +18106,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         if ns.is_empty() || shown_at_least_zero || listed_at_least_zero(&ns) {
             return;
         }
-        let shown = match narrowed {
-            true => ints.type_text(),
-            false => self.show(&Ty::set(ns.clone())),
+        // An exponent of integer literals alone, `(1 - 3)`, has one value, which the headline
+        // shows, `(1 - 3) : -2`, and which the step of each of its operations shows, "this `-`
+        // gives -2" ([`Ck::derive`] reads it from [`Ck::int_exponents`]), not the class's `int`
+        // (plan row MSG-power-literal-derivation). Complexity tradeoff: one walk of the
+        // exponent, each operation read once and kept ([`Self::int_exponent_at`]); a name in it
+        // gives no value.
+        let shown = match (self.int_exponent_at(e), narrowed) {
+            (Some(v), _) => self.show(&Ty::lit(&v)),
+            (None, true) => ints.type_text(),
+            (None, false) => self.show(&Ty::set(ns.clone())),
         };
         // Every value of the exponent below 0: a test of it leaves nothing to raise.
         let negative = ints.meet(&at_least_zero()).is_empty()

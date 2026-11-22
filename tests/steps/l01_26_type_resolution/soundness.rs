@@ -265,6 +265,28 @@ fn an_int_power_rejection_through_an_expression_shows_its_derivation() {
 }
 
 #[test]
+fn an_int_power_rejection_at_the_top_level_shows_the_value_of_a_literal_exponent() {
+    // Outside a body, the exponent of literals alone was shown by its class, `int`, with
+    // "this `-` gives int" (plan row MSG-power-literal-derivation); its value is shown, as in a
+    // body, and at each operation of a nested exponent.
+    let out = rejected("x = 2^(1 - 3);", r#""${x}""#);
+    assert!(
+        out.contains("Int power with a negative exponent: `2 : int ^ (1 - 3) : -2`."),
+        "{out}"
+    );
+    assert!(out.contains("this `-` gives -2"), "{out}");
+    assert!(!out.contains("gives int"), "{out}");
+    let out = rejected("x = 2^((1 - 3) * 2 + 1);", r#""${x}""#);
+    assert!(out.contains("`2 : int ^ ((1 - 3) * 2 + 1) : -3`"), "{out}");
+    for step in ["this `+` gives -3", "this `*` gives -4", "this `-` gives -2"] {
+        assert!(out.contains(step), "{step}: {out}");
+    }
+    // A name in the exponent gives no one value: it is shown by what is known of it.
+    let out = rejected("k = -2;\nx = 2^(k + 0);", r#""${x}""#);
+    assert!(out.contains("Int power with a negative exponent"), "{out}");
+}
+
+#[test]
 fn an_int_power_whose_exponent_may_be_below_zero_offers_a_test_of_it() {
     let read =
         "  k = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n";

@@ -1067,6 +1067,47 @@ impl Term {
             _ => None,
         }
     }
+
+    /// The value of a literal, or of a tuple built of literals at any depth, as the source
+    /// tuple `(true, false)` elaborates to `Prim(Tuple, [Lit(true), Lit(false)])`; `None` for
+    /// any other term (TUPLE-eq-lit).
+    ///
+    /// The walk keeps the tuples still open on a stack on the heap, so a tuple nested to any
+    /// depth runs on a small thread stack. Each node is pushed and popped once: O(n) for a term
+    /// of n nodes, and it stops at the first node that is neither a literal nor a tuple.
+    pub fn literal_value(&self) -> Option<Value> {
+        if let Term::Lit(v) = self {
+            return Some(v.clone());
+        }
+        // Each open tuple: its items and the values of those already read.
+        let mut open: Vec<(&[Term], Vec<Value>)> = Vec::new();
+        let mut at = self;
+        loop {
+            let mut done = match at {
+                Term::Lit(v) => v.clone(),
+                Term::Prim(Prim::Tuple, items) if !items.is_empty() => {
+                    open.push((items, Vec::with_capacity(items.len())));
+                    at = &items[0];
+                    continue;
+                }
+                Term::Prim(Prim::Tuple, _) => Value::tuple(Vec::new()),
+                _ => return None,
+            };
+            // Hand the finished value to the tuples that hold it, closing each one that is full.
+            loop {
+                let Some((items, vals)) = open.last_mut() else {
+                    return Some(done);
+                };
+                vals.push(done);
+                if vals.len() < items.len() {
+                    at = &items[vals.len()];
+                    break;
+                }
+                let (_, vals) = open.pop().expect("the tuple just read is open");
+                done = Value::tuple(vals);
+            }
+        }
+    }
 }
 
 /// The address one past the last element of `xs`.

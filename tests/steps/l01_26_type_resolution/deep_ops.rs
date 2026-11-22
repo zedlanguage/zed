@@ -596,6 +596,39 @@ fn a_shared_pair_met_again_under_other_bindings_keeps_them() {
     assert_eq!(binds, all);
 }
 
+#[test]
+fn a_function_result_compares_the_payloads_of_its_atoms() {
+    // TY-sub-fn-payload: `(x: #z) -> #a(#z, f: #z)` and `(x: #z) -> #a(#y, f: #z)` differ in
+    // the payload of the result alone, and neither holds the other; each was read as a subtype
+    // of the other. A function is a subtype of another whose parameters it takes and whose
+    // result holds its own, so the result's payloads must be compared as the payloads of any
+    // atom are.
+    let (az, ay) = (atom(vec![z()], z()), atom(vec![y()], z()));
+    assert!(!az.sub(&ay, &mut Binds::new()) && !ay.sub(&az, &mut Binds::new()));
+    let (on_z, on_y) = (func(z(), az), func(z(), ay));
+    assert_ne!(on_z, on_y);
+    assert!(!on_z.sub(&on_y, &mut Binds::new()));
+    assert!(!on_y.sub(&on_z, &mut Binds::new()));
+    // The result `#a(#z | #y, f: #z)` holds both, so each is a subtype of that one and not it
+    // of either.
+    let either = func(z(), atom(vec![z().union(&y())], z()));
+    assert!(on_z.sub(&either, &mut Binds::new()));
+    assert!(on_y.sub(&either, &mut Binds::new()));
+    assert!(!either.sub(&on_z, &mut Binds::new()));
+    // The field compared too.
+    let field_y = func(z(), atom(vec![z()], y()));
+    assert!(!on_z.sub(&field_y, &mut Binds::new()));
+    assert!(on_z.sub(&on_z.clone(), &mut Binds::new()));
+    // With no field, which has an exact kernel type, and in a tuple of the result.
+    let p = |t: Ty| Ty::atom_of("a", vec![t], Default::default());
+    for wrap in [|t: Ty| t, |t: Ty| Ty::tuple(vec![t, z()])] {
+        let (fz, fy) = (func(z(), wrap(p(z()))), func(z(), wrap(p(y()))));
+        assert!(!fz.sub(&fy, &mut Binds::new()) && !fy.sub(&fz, &mut Binds::new()));
+        let both = func(z(), wrap(p(z().union(&y()))));
+        assert!(fz.sub(&both, &mut Binds::new()) && !both.sub(&fz, &mut Binds::new()));
+    }
+}
+
 /// A comparison of rows made after the comparison is refused is neither read from nor kept in
 /// the memo of rows (`Cx::compared`): `search` then answers false at once, so that answer is the
 /// refusal's and not the rows'. Here the first shape of `g`'s parameter, `(B, bool)`, is
