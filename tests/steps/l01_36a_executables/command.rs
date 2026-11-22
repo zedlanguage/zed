@@ -4,8 +4,8 @@
 //! runtime library that is not an archive, a linker that cannot be run or whose link fails,
 //! and an output path that names a directory or lies in a directory that does not exist or in
 //! a file, which is refused before the program is read (ZEDC-build-out-dir). The linker of each
-//! of these fails before it links, or is a script that does not link, so none costs a real
-//! link.
+//! of these fails before it links, or is a script that does not link a program, so none costs
+//! a real link of one.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -157,39 +157,37 @@ fn a_linker_that_cannot_be_run_is_named() {
 #[test]
 fn a_link_that_fails_is_named_with_what_the_linker_printed() {
     let (d, src) = program("link-fails");
-    // The driver below gives the system compiler's versions, so it shares the working
-    // toolchain's prelinked runtime (zed-native link.rs, `path.is_file()`). With no prelinked
-    // runtime for this build of the library yet, the refusing driver would be asked to prelink
-    // and fail there instead of at the link this test is about. One build with the working
-    // toolchain first makes it, so the test does not depend on which tests ran before it.
-    // That build must link: an executable kept from an earlier run of this scratch directory
-    // returns before the prelinked runtime is looked for (link.rs, `kept` before `prelinked`),
-    // so its record goes first. Without that, a second run of this test in the same scratch
-    // directory kept `warm` and failed at the prelink on every run (2026-11-21, three runs);
-    // with it, three runs passed.
-    let warm = d.join("warm");
-    match std::fs::remove_file(zed_native::link::Record::path(&warm)) {
+    // The driver below makes the prelinked runtime itself (zed-native link.rs, `prelink`, whose
+    // first flag is `-r`) and refuses only the program's link, so the build fails at the link
+    // this test is about whether or not a prelinked runtime exists. It reaches the library
+    // through a link in this test's own directory, where `prelinked` looks first, so no other
+    // process's object or clean-up is read. FAIL-l01-36a-prelink-refusing-linker: the test
+    // made the prelinked runtime with one build of the working toolchain and relied on finding
+    // it in Cargo's `deps` directory, shared with every test process and build; once in
+    // merge_check.sh (load about 50, another cargo build running) the refusing driver was
+    // asked to prelink and failed there. That object is missed only when the library's bytes
+    // differ between the two builds (link.rs `Identity::of` hashes them on each build) or when
+    // a maker for other bytes removes it as stale (`prelink`'s clean-up). Not reproduced in 10
+    // runs of the group at load 37 (2026-11-22); with no prelinked runtime, as here, the old
+    // driver failed at the prelink with that message.
+    let runtime = d.join("libzed_native.a");
+    match std::fs::remove_file(&runtime) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => panic!("{e}"),
         _ => {}
     }
-    assert_eq!(
-        build(
-            &[src.to_str().unwrap(), "-o", warm.to_str().unwrap()],
-            &toolchain()
-        )
-        .0,
-        0
-    );
-    // The driver gives the system compiler's versions, and refuses every link.
+    std::os::unix::fs::symlink(&toolchain().runtime, &runtime).unwrap();
+    // The driver gives the system compiler's versions, makes a relocatable object, and refuses
+    // every other link.
     let linker = d.join("cc-refuses");
     install(
         &linker,
-        "#!/bin/sh\ncase \"$1\" in --version|-Wl,--version) exec cc \"$@\" ;; esac\n\
+        "#!/bin/sh\ncase \"$1\" in --version|-Wl,--version|-r) exec cc \"$@\" ;; esac\n\
          echo 'the link is refused' >&2\nexit 1\n",
         "755",
     );
     let tools = Toolchain {
         linker: linker.clone().into(),
+        runtime: runtime.clone(),
         ..toolchain()
     };
     let out = d.join("quiet");
