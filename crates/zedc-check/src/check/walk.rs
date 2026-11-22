@@ -24445,7 +24445,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             let a = a.as_ref().expect("an argument");
             // `len` counts the characters of a text; the entries of a list, a function from
-            // its keys, are counted by `.count` (DESIGN.md sec:fp_ops), so `len(xs)` of
+            // its keys, are counted by `.count` (DESIGN.md sec:read_or_call), so `len(xs)` of
             // `xs: [int]` is offered `xs.count`, and not `len(String(xs))`, which counts the
             // characters of the list's text (plan row DIAG-len-args-repair). Offered where the
             // argument is written as a name or a path of fields, which `.count` follows

@@ -411,17 +411,28 @@ fn euclidean_div_and_mod_at_the_edges() {
     }
 }
 
-/// A loose atom an operand carries in passes through every cast, `String`, interpolation, `sum`
-/// and the number and string words, as a failure does (DESIGN.md sec:failure, "An operation
-/// that always fails is rejected", limit (2), and "A cast of an atom gives the atom"); the
-/// type error of a cast is for data that is neither a number nor a string.
+/// A loose atom an operand carries in passes through `String`, interpolation, `sum` and the
+/// number and string words, as a failure does (DESIGN.md sec:failure, "An operation that always
+/// fails is rejected", limit (2)). A number cast of an operand of atoms alone is refused: "no
+/// cast from or to a type that has none, such as `bool`, an atom other than the `#NaN` and
+/// `#inf` that the float casts take" (DESIGN.md sec:diagnostics; plan row CAST-atom-arg, which
+/// replaced the pass-through of `int(#none)` this test asserted before).
 #[test]
-fn a_loose_atom_passes_through_casts_and_words() {
+fn a_loose_atom_passes_through_words_and_number_casts_refuse_it() {
     for e in [
         "int(#none)",
         "rat(#none)",
         "f64(#none)",
         "f32(#none)",
+        "int(#e(code: 2))",
+    ] {
+        let errs = errors(&format!("{PASS}x = {e};\n"));
+        assert!(
+            errs.iter().any(|m| m.contains("no cast reads an atom")),
+            "{e}: {errs:?}"
+        );
+    }
+    for e in [
         "String(#none)",
         "\"${#none}\"",
         "abs(#none)",
@@ -432,7 +443,6 @@ fn a_loose_atom_passes_through_casts_and_words() {
     ] {
         assert_eq!(x(e), "#none", "{e}");
     }
-    assert_eq!(x("int(#e(code: 2))"), "#e(code: 2)");
 }
 
 /// A one-component tuple is written with its comma, alone and inside `String`.
