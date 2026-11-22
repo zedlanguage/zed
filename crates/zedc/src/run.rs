@@ -924,7 +924,9 @@ pub fn join_lines(port: &str, v: &Value) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// A `Files` port over the file system: each path is read when the program reads it.
+/// A `Files` port over the file system: each path is read when the program reads it. A file
+/// that is not UTF-8 is `#ioError`, as DESIGN step L1.19 says of `main::files` at L1; the
+/// failure `#badEncoding` that sec:ports gives such a file arrives with step L7.3i.
 #[derive(Debug)]
 pub struct Disk;
 

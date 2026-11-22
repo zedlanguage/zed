@@ -247,22 +247,31 @@ fn a_short_matrix_row_or_too_few_rows_read_as_zeros() {
 }
 
 #[test]
-fn percent_decoding_of_a_surrogate_or_a_value_past_u10ffff_fails_the_line() {
-    // %ED%A0%80 is U+D800 and %F7%BF%BF%BF is 0x1FFFFF: neither is a character.
+fn percent_decoding_drops_a_surrogate_a_value_past_u10ffff_an_overlong_form_and_a_bad_lead() {
+    // "Malformed UTF-8 is dropped, not repaired" (08-utf8-percent.zed's header), and the line
+    // goes on. %ED%A0%80 is U+D800 and %F7%BF%BF%BF is 0x1FFFFF: neither is a character.
+    check("08", "case_surrogate", "a%ED%A0%80b\n", "ab\n", Ok(()));
+    check("08", "case_past", "ok\n%F7%BF%BF%BF!\n", "ok\n!\n", Ok(()));
+    // %F4%90%80%80 is 0x110000, the first value past U+10FFFF.
+    check("08", "case_first_past", "x%F4%90%80%80y\n", "xy\n", Ok(()));
+    // Overlong forms: U+0000 in two bytes, U+07FF in three, U+FFFF in four, and C1 BF (U+007F).
     check(
         "08",
-        "case_surrogate",
-        "%ED%A0%80\n",
-        "",
-        Err("not a printable character: U+d800"),
+        "case_overlong",
+        "a%C0%80b%E0%9F%BFc%F0%8F%BF%BFd%C1%BFe\n",
+        "abcde\n",
+        Ok(()),
     );
+    // The shortest form of each length stays: U+0080, U+0800 and U+10000.
     check(
         "08",
-        "case_past",
-        "ok\n%F7%BF%BF%BF\n",
-        "ok\n",
-        Err("not a printable character: U+1fffff"),
+        "case_shortest",
+        "%C2%80%E0%A0%80%F0%90%80%80\n",
+        "\u{80}\u{800}\u{10000}\n",
+        Ok(()),
     );
+    // A byte from F8 up starts no sequence; its three bytes after are stray continuations.
+    check("08", "case_bad_lead", "%F9%90%80%80z\n", "z\n", Ok(()));
 }
 
 #[test]

@@ -2039,13 +2039,13 @@ A database table is declared as a map on a store, and its schema is checked at b
 **Syntax:** `name: K ->? V with store(...)`
 
 > [!NOTE]
-> **`sql(path)`** reads a table's schema, the columns and types it declares, from an SQL file. **`#none`** in a stored row's type stands for a NULL column, and **`#dbError`** is the failure when the database fails.
+> **`sql(path)`** reads a table's schema, the columns and types it declares, from an SQL file. **`#none`** in a stored row's type stands for a NULL column, and a failure of the database is **`#ioError`**, as for every port.
 
 ```zed
 orders: OrderId ->? { total: rat, note: Utf8String | #none }
   with store(postgres(dbUrl, table: "orders", schema: sql("db/orders.sql")));
 
-n = orders[id]?.note;     // Utf8String | #none | #notFound | #dbError
+n = orders[id]?.note;     // Utf8String | #none | #notFound | #ioError
 ```
 
 **input: `orders`**
@@ -2065,7 +2065,7 @@ n = orders[id]?.note;     // Utf8String | #none | #notFound | #dbError
 <tr><td><code>3</code></td><td><code>#notFound</code></td></tr>
 </table>
 
-If the database can't answer, `n` is `#dbError` for any `id`.
+If the database can't answer, `n` is `#ioError(...)` for any `id`.
 
 You read a stored table with the same `[key]` as any other map, and the same `where` that is a loop over a map in memory may run as an SQL `WHERE` clause here. The schema check compares your declaration with the SQL schema and needs no live connection: reading a column that allows NULL as non-optional, or writing an unbounded string to a `varchar(80)`, is a compile error at the line that does it, whereas in many other languages it would fail a request in production. At startup, the program compares the columns it uses with the real database. On a port that supports transactions, such as Postgres, writes made in one step of the program form one transaction, and you never write `begin` or `commit`.
 
@@ -2680,7 +2680,6 @@ Forms, in the order the page defines them:
 - `with bound(n, overflow: policy)`: limits a port's queue and says what a full queue does ([Timeouts and retries](#timeouts-and-retries))
 - `u8`: an integer from 0 to 255 ([Timeouts and retries](#timeouts-and-retries))
 - `sql(path)`: reads a table's schema from an SQL file ([Databases](#databases))
-- `#dbError`: the failure when the database fails ([Databases](#databases))
 - `@memoized`: the build fails if this value isn't kept for reuse ([Incremental updates](#incremental-updates))
 - `x.refine(p)` and `#invalid`: `x`, or the failure `#invalid` if `p` fails ([Ranges and refinements](#ranges-and-refinements))
 - `@ensure`: every condition in the definition must be proved, with no run-time check ([Ranges and refinements](#ranges-and-refinements))
