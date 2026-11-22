@@ -1104,3 +1104,15 @@ fn a_tuple_with_a_parity_meet_as_a_field_is_empty() {
     let t = Type::tuple(vec![bounded_parity(2, 1, None), Type::int()]);
     assert_eq!(verdict_and_searched(&t), (Verdict::Empty, 0));
 }
+
+/// Small instance of `bench::the_verdict_on_k_parity_lists_is_inhabited`: the verdict, not only
+/// `is_empty`, on the product of a few parity lists is `Inhabited` (`[k]` is in it), where the
+/// value search after a fork once walked the product of the meet's states and answered
+/// `Refused(Fork)` (row VERDICT-fork-value: 178M, 1.11G and 4.51G instructions at k 2, 3, 4).
+#[test]
+fn the_verdict_on_a_few_parity_lists_is_inhabited() {
+    for k in 1..=6 {
+        Type::forget_emptiness();
+        assert_eq!(parity_meet(k).verdict(), Verdict::Inhabited, "k = {k}");
+    }
+}

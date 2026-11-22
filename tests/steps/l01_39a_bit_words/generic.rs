@@ -453,3 +453,19 @@ fn calls_and_a_chain_of_wrappers_of_a_function_with_three_needs_are_checked_clea
         }
     }
 }
+
+#[test]
+fn a_guard_follows_the_class_through_a_chain_of_helpers_and_every_written_order() {
+    // Row GUARD-follow, checked past its own example (b22-misc6): `n` undeclared, reached through
+    // two helpers that declare nothing, and the guard written as `n > -1` and `-1 < n`.
+    for guard in ["n >= 0", "n > -1", "-1 < n", "0 <= n"] {
+        let defs = format!(
+            "e(positional n) = if {guard} {{ popCount(n) }} else {{ 0 }};\ng(positional m) = e(m);\nh(positional k) = g(k);"
+        );
+        let src = printing(
+            &defs,
+            "String(e(-1)) ++ \" \" ++ String(g(-1)) ++ \" \" ++ String(h(-1)) ++ \" \" ++ String(h(7))",
+        );
+        assert_eq!(prints("generic_guard_chain", &src), "0 0 0 3", "{guard}");
+    }
+}

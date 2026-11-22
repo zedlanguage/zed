@@ -223,3 +223,29 @@ fn a_derivation_gives_a_generic_call_its_carrier_and_not_the_argument() {
     assert!(out.contains("this call of `half` gives rat\n"), "{out}");
     assert!(!out.contains("gives 3r"), "{out}");
 }
+
+#[test]
+fn a_derivation_gives_the_carrier_for_every_literal_class_and_through_a_chain_of_calls() {
+    // Row CALL-var-singleton, checked past its own example (b22-misc6): a decimal literal (`f64`
+    // when nothing fixes its carrier, DESIGN.md sec:domains, author decision 2026-11-12), a float
+    // literal with its suffix, a call through a second generic function, and a name that holds
+    // a name that holds the call each give the carrier, never the single value written.
+    for (arg, carrier) in [("2.5", "f64"), ("3.0f64", "f64"), ("3r", "rat")] {
+        let out = rejected_with_main(&format!(
+            "half(x) = x / 2;\nq(x) = half(x: x);\nf(positional a: int) = a + 1;\ny = f(q(x: {arg}));\n"
+        ));
+        assert!(
+            out.contains(&format!("this call of `q` gives {carrier}\n")),
+            "{arg}: {out}"
+        );
+        assert!(!out.contains(&format!("gives {arg}")), "{arg}: {out}");
+        let out = rejected_with_main(&format!(
+            "half(x) = x / 2;\ny = half(x: {arg});\nw = y;\nz = popCount(w);\n"
+        ));
+        assert!(
+            out.contains(&format!("this call of `half` gives {carrier}\n")),
+            "{arg}: {out}"
+        );
+        assert!(!out.contains(&format!("gives {arg}")), "{arg}: {out}");
+    }
+}

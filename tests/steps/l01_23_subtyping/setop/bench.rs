@@ -235,3 +235,16 @@ fn cofinite_integer_points_keep_large_powers_symbolic() {
         },
     );
 }
+
+/// The verdict on the product of `k` parity lists, at `k` and `8k`: `Inhabited`, found without
+/// walking the product of the meet's `2^(k+1)` states (row VERDICT-fork-value). Small instance
+/// `the_verdict_on_a_few_parity_lists_is_inhabited`.
+#[test]
+fn the_verdict_on_k_parity_lists_is_inhabited() {
+    let n = 512;
+    let meets = scaling::inputs(n, |k| Fresh::new(parity_meet_group(k), 2 * k + 2));
+    scaling::check("the verdict on the product of k parity lists", n, |k| {
+        Type::forget_emptiness();
+        assert_eq!(meets[&k].member().verdict(), Verdict::Inhabited);
+    });
+}
