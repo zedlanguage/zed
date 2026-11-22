@@ -56,17 +56,20 @@ fn taking_k_values_costs_k_times_the_depth() {
 #[test]
 fn taking_k_values_costs_k_times_the_depth_by_depth() {
     // Split from `taking_k_values_costs_k_times_the_depth` (TEST-bench-move-l0123, author
-    // P169). Left at its old size, depth 12, as a finding (TEST-bench-move-l0123): the ratio
-    // grows with the depth, so the cost is not linear in it. Instructions at d and 8d, load
-    // 27 to 40: d 12, 49444361 and 488534612, 9.880 (bytes 9.38); d 48, 232411461 and
-    // 2337583030, 10.058 (bytes 8.30); d 96, 488539406 and 5640883776, 11.546 (bytes 8.15),
-    // over the limit 10.5; d 300, 1761426468 and 30524334961, 17.329 (bytes 8.04). The 1x at
-    // depth 12 took 10.5 ms by `ns`. The bytes ratio stays near 8: the growth is in the
-    // instructions, not in the memory allocated. Not profiled: perf cannot open events here.
-    let built = scaling::inputs(12, doubling);
+    // P169), and left at depth 12 because the instruction ratio grew with the depth (9.88 at
+    // 12, 11.55 at 96, 17.33 at 300; TEST-bench-move-l0123, 2026-11-14). That growth is gone
+    // since `Filer` files each type once per `each_value` call (MAKER-file-chain, COMPLEXITY.md
+    // K109): doubling(d) is a chain of types each holding the one before in its first
+    // component. PERF-listing-take-by-depth (2026-11-22, Colab VM): callgrind counts 682 M and
+    // 5,549 M instructions at d 100 and 800, 8.13 times; this test by processor time reads 9.90
+    // at 96, 9.46 at 300 and 12.25 at 800, where 8n allocates 4.1 GB and the memory, not the
+    // instructions, grows. Depth 300: 1x 0.33 s, the whole test 18 s, under the 20 s cap.
+    // Negative control, run once: a new `Filer` for each maker, the walk before K109, fails
+    // this test at 20.0 times the bytes (16.6 times the processor time).
+    let built = scaling::inputs(300, doubling);
     scaling::check(
         "taking the first 500 values of doubling(d), by d",
-        12,
+        300,
         |d| take(&built[&d], 500),
     );
 }
