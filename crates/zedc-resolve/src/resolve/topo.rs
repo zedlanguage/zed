@@ -1,7 +1,7 @@
 //! Orders of a dependency graph: each item after what it depends on, or the cycles.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BinaryHeap};
+use std::collections::BTreeMap;
+use zed_graph::MinHeap;
 
 /// An order of `0..deps.len()` with each item after its dependencies, ties by index; else the
 /// items of one cycle, in order along it. The ready items wait in a heap, smallest first, each
@@ -132,10 +132,10 @@ fn place(deps: &[Vec<usize>], items: usize, out: &[bool]) -> (Vec<usize>, Vec<bo
             users[d].push(i);
         }
     }
-    let ready: BinaryHeap<Reverse<usize>> = (0..items)
-        .filter(|&i| !out[i] && waits[i] == 0)
-        .map(Reverse)
-        .collect();
+    // Complexity tradeoff: the shared min-heap, O(log n) a push or pop, so the placement is
+    // O((n + e) log n); a bucket queue would be O(n + e) but gives the least ready item first
+    // only with a scan (DRY-graph-shared-rest).
+    let ready: MinHeap<usize> = (0..items).filter(|&i| !out[i] && waits[i] == 0).collect();
     let passed: Vec<usize> = (items..n).filter(|&j| waits[j] == 0).collect();
     let mut done = vec![false; n];
     let mut order = Vec::with_capacity(items);
@@ -162,20 +162,18 @@ fn place(deps: &[Vec<usize>], items: usize, out: &[bool]) -> (Vec<usize>, Vec<bo
 struct JoinsFirst {
     items: usize,
     passed: Vec<usize>,
-    ready: BinaryHeap<Reverse<usize>>,
+    ready: MinHeap<usize>,
 }
 
 impl zed_graph::Ready for JoinsFirst {
     fn push(&mut self, v: usize) {
         match v < self.items {
-            true => self.ready.push(Reverse(v)),
+            true => self.ready.push(v),
             false => self.passed.push(v),
         }
     }
     fn pop(&mut self) -> Option<usize> {
-        self.passed
-            .pop()
-            .or_else(|| self.ready.pop().map(|Reverse(i)| i))
+        self.passed.pop().or_else(|| self.ready.pop())
     }
 }
 

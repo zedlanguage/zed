@@ -2228,6 +2228,28 @@ fn the_unit_of_seed_4236942624890658512_is_answered_as_its_bodies_read() {
     );
 }
 
+/// A unit of seed 7257106572222707110 that
+/// `each_answer_through_a_projection_kept_over_pairs_is_the_answer_of_the_relation_whole` drew
+/// (FAIL-one-scope-bodies-seed-shadows): a question of `c4` was refused for Shadows when each
+/// call writes its callee's projection, and decided when each call reads its callee's body
+/// again.
+#[test]
+fn the_unit_of_seed_7257106572222707110_is_answered_as_its_bodies_read() {
+    answers_are_those_reading_bodies(
+        "g0(x: int) = x mod 5 == 1 && x < 68;\n\
+         g1(x: int) = g0(x: x + 3) && x mod 5 == 1;\n\
+         g2(x: int) = g1(x: x + (0 - 3)) && x mod 5 == 4;\n\
+         v0(x: int) = x mod 5;\n\
+         v1(x: int) = v0(x: x + 0) + x mod 4;\n\
+         w(x: int, y: int) = x mod 4 == y mod 4 && x < y + 17;\n\
+         c0(x: int) = x > (0 - 1);\n\
+         c1(x: int) = g0(x: x + 4) && w(x: x + (0 - 2), y: 2) && c0(x: x + (0 - 2)) && x < 62;\n\
+         c2(x: int) = g2(x: x + 3) || c1(x: x + 1) && x < 77;\n\
+         c3(x: int) = g1(x: x + 2) || v1(x: x + (0 - 2)) < 2 || c2(x: x + 3) && x < (0 - 5);\n\
+         c4(x: int) = g2(x: x + 4) && c3(x: x + 0) && x < 27;\n",
+    );
+}
+
 /// `count` units of [`random_congruence_unit`]: each answer is the one read with each call
 /// reading its callee's body again, and the one of the whole where both are decided. The 80
 /// of seed 0x1c4e, as first written, are in `bench::one_scope` (5.1 s with the two fixed units

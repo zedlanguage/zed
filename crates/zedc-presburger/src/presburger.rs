@@ -26271,6 +26271,25 @@ enum Along {
     Down,
 }
 
+/// The reduced distance of a node in [`Differences::search`]: `At(d)`, or `Not` while no
+/// source reaches it, which orders after every distance.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Reach {
+    At(Int),
+    Not,
+}
+
+/// The nearest source of a node in [`Differences::search`] at its distance: `From(s)`, or
+/// `Tied` when two or more are nearest (or a nearest path passes through such a node), which
+/// orders before every `From`, so that lowering a label to `Tied` at the same distance is a
+/// lowering for `zed_graph::Dijkstra`. Two `From` labels at one distance are never compared to
+/// choose between them: the search turns them into `Tied` first.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Nearest {
+    Tied,
+    From(usize),
+}
+
 impl<'a> Differences<'a> {
     /// The graph of `cons`, constraints with the point `m`; `None` when one is not a difference
     /// constraint or a bound, or `m` gives no value to one of their atoms.
@@ -26364,53 +26383,59 @@ impl<'a> Differences<'a> {
             Along::Down => (&self.back, Int::from(-1)),
         };
         let p = &self.p;
-        // Each node's least reduced distance, with its one nearest source, or `None` for two
-        // or more; and how far it has been expanded: 0 not yet, 1 with one source, 2 with none.
-        let mut label: Vec<Option<(Int, Option<usize>)>> = vec![None; edges.len()];
-        let mut expanded = vec![0u8; edges.len()];
-        let mut heap = zed_graph::MinHeap::new();
+        // Each node's label: its least reduced distance so far, `Reach::Not` while no source
+        // reaches it, with its one nearest source or `Nearest::Tied` for two or more. The search
+        // is `zed_graph::Dijkstra` on the pairs, ordered by distance and then `Tied` below every
+        // `From` (DRY-graph-shared-rest), so the merge rule is one lowering: a node reached
+        // again at its distance from another source, or from a node with no nearest, is
+        // lowered from `From(s)` to `Tied`, which `Dijkstra::lower` takes as a smaller label
+        // and queues once more, and a `Tied` label is never raised back, since `lower` takes
+        // only smaller labels. So each node comes up at most twice at its least distance (once
+        // `From`, once `Tied`), as before, and `Dijkstra::pop` drops the stale entries the old
+        // loop dropped by hand.
+        // Complexity tradeoff: O(m log n) as before, each node popped at most twice at its least
+        // distance; keeping the meet of every tied path instead was not taken (O(rows × tied
+        // sources), quadratic on a hub; COMPLEXITY.md C2 and DRY-graph-shared-rest).
+        let mut labels = vec![(Reach::Not, Nearest::Tied); edges.len()];
         for &s in sources {
-            label[s] = Some((Int::ZERO, Some(s)));
-            heap.push((Int::ZERO, s));
+            labels[s] = (Reach::At(Int::ZERO), Nearest::From(s));
         }
-        while let Some((d, u)) = heap.pop() {
-            let Some((du, from)) = label[u].clone() else {
-                continue;
+        let mut search = zed_graph::Dijkstra::starting(labels, sources.iter().copied());
+        while let Some((label, u)) = search.pop() {
+            let (Reach::At(d), from) = label else {
+                unreachable!("only a node a source reaches is queued")
             };
-            let stage = if from.is_some() { 1 } else { 2 };
-            if d > du || expanded[u] >= stage {
-                continue;
-            }
-            expanded[u] = stage;
             for (v, w) in &edges[u] {
-                if (*v == 0 && !through_z)
-                    || label[*v].as_ref().is_some_and(|(_, s)| *s == Some(*v))
-                {
+                if (*v == 0 && !through_z) || search.labels()[*v].1 == Nearest::From(*v) {
                     continue;
                 }
-                let nd = &d + &(w + &(&sign * &(&p[u] - &p[*v])));
-                let next = match &label[*v] {
-                    Some((old, _)) if nd > *old => continue,
-                    Some((old, s)) if nd == *old => {
-                        if s.is_none() || *s == from {
+                // `Differences::of` returned `None` on a negative reduced weight, and each edge
+                // `u → v` here is one it checked, read forward (`Up`, `w + p(u) - p(v)`) or
+                // backward (`Down`, the edge `v → u` of `out`, `w + p(v) - p(u)`, the same
+                // quantity), so the check cannot fail.
+                let r = zed_graph::reduced(w + &(&sign * &(&p[u] - &p[*v])), &Int::ZERO)
+                    .expect("Differences::of checked every reduced weight");
+                let nd = &d + &r;
+                let next = match &search.labels()[*v] {
+                    (Reach::At(old), s) if nd == *old => {
+                        if *s == Nearest::Tied || *s == from {
                             continue;
                         }
-                        None
+                        Nearest::Tied
                     }
                     _ => from,
                 };
-                label[*v] = Some((nd.clone(), next));
-                heap.push((nd, *v));
+                search.lower(*v, (Reach::At(nd), next));
             }
         }
         // Back from reduced distances: `d(v) = d'(v) - sign·(p(s) - p(v))` for the source `s`.
-        label
+        search
+            .into_labels()
             .into_iter()
             .enumerate()
-            .map(|(v, l)| {
-                let (d, s) = l?;
-                let s = s?;
-                Some((&d - &(&sign * &(&p[s] - &p[v])), s))
+            .map(|(v, l)| match l {
+                (Reach::At(d), Nearest::From(s)) => Some((&d - &(&sign * &(&p[s] - &p[v])), s)),
+                _ => None,
             })
             .collect()
     }
