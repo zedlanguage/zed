@@ -16,31 +16,35 @@ const plan = JSON.parse(readFileSync(new URL("./plan-graph-2026-11-10.json", imp
 const again = (g: Graph, l: Omit<Layout, "key">) =>
   d3dagLayout(g, operators, l.layers, Object.fromEntries(Object.entries(l.boxes).map(([id, b]) => [id, { x: b.x, y: b.y }])), l.edges, l.rowLimit);
 
-// The first relayout after a layout from scratch keeps the layers, K and the
-// height, but moves boxes sideways: from scratch the order within each row
-// starts from d3-dag's, on a relayout from the earlier positions, so a
-// different crossing-reduction result is placed. That was so before this
-// change too (on the plan 1,465 of 1,509 boxes moved, by up to 3,734 px);
-// from then on the layout is a fixed point, which the second check asserts.
-// The width is the widest drawn row, and splitRows picks the drawn rows from
-// those x, so it can change too: on main at ca7c70736 planLike(n, 2.7n) kept
-// it only at n = 500 of 300, 400, 450, 500, 550, 600, 700 and 800, by up to
-// 54 px (DAGVIEW-spread-scaling); the relayout is held to the band instead,
-// until DAGVIEW-first-relayout-x makes the first relayout keep the x.
+// The first relayout after a layout from scratch keeps the whole layout:
+// layers, K, height, width and every box and edge. Until
+// DAGVIEW-first-relayout-x (2026-11-22) it kept the layers, K and the height
+// but moved boxes sideways, as from scratch the order within each row started
+// from d3-dag's and on a relayout from the earlier positions (on the plan
+// 1,465 of 1,509 boxes moved, by up to 3,734 px; on the 500-node graph the
+// width went from 3,600 to 3,582 px); from then on the layout was a fixed
+// point. Now the layout from scratch ends with that relayout of itself (see
+// the end of layoutOnce in d3dag.ts), and DAGVIEW-spread-scaling's band check
+// of the relayout is an exact check again. The sizes 300 to 800 are those at
+// which planLike(n, 2.7n) changed width on the first relayout on main at
+// ca7c70736 (by up to 54 px).
 // Compared as JSON, as assert.deepEqual on a mismatch of layouts this size
 // spends minutes building its message.
-test("an unchanged graph laid out again keeps its layers, row limit and height, and from a relayout the layout exactly: the plan and a plan-shaped graph of 500 nodes", () => {
-  for (const [what, g] of [["the plan", plan], ["a plan-shaped graph of 500 nodes", planLike(500, 1350)]] as const) {
+const unchanged: [string, () => Graph][] = [["the plan", () => plan], ...[300, 400, 500, 600, 800].map((n): [string, () => Graph] => [`a plan-shaped graph of ${n} nodes`, () => planLike(n, Math.round(2.7 * n))])];
+for (const [what, make] of unchanged) {
+  test(`an unchanged graph laid out again keeps its layout exactly, from scratch and from a relayout: ${what}`, () => {
+    const g = make();
     const l0 = d3dagLayout(g);
     inBand(l0, what);
     const l1 = again(g, l0);
     assert.ok(JSON.stringify(l1.layers) === JSON.stringify(l0.layers), `${what}: layers changed`);
     assert.equal(l1.rowLimit, l0.rowLimit, what);
     assert.equal(l1.h, l0.h, what);
-    inBand(l1, `${what}, relaid out`);
+    assert.equal(l1.w, l0.w, `${what}: the width changed on the first relayout`);
+    assert.ok(JSON.stringify(l1) === JSON.stringify(l0), `${what}: the layout changed on the first relayout`);
     assert.ok(JSON.stringify(again(g, l1)) === JSON.stringify(l1), `${what}: the layout changed on a second relayout`);
-  }
-});
+  });
+}
 
 // Rows of w = sqrt(0.54 n) nodes of 210 x 52 px (one row per layer would
 // draw about 1:0.83), and 2.7 n edges as planLike draws them: 3 in 4 from

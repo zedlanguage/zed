@@ -183,6 +183,17 @@ export const operators: Operators = {
 // boxes' centers, from which the order in each layer starts (decrossSeeded
 // below) and each node of a split row keeps the half it was in (splitRows).
 export function d3dagLayout(g: Graph, ops: Operators = operators, prev?: Record<string, number>, prevAt?: Record<string, { x: number; y: number }>, prevEdges?: Layout["edges"], prevK?: number): Omit<Layout, "key"> {
+  return layoutOnce(g, ops, prev, prevAt, prevEdges, prevK, false)!;
+}
+
+// The boxes' centers of a layout, as a relayout reads them (prevAt).
+const centers = (l: Omit<Layout, "key">) => Object.fromEntries(Object.entries(l.boxes).map(([id, b]) => [id, { x: b.x, y: b.y }]));
+
+// One layout. With earlierOnly set it is the relayout that settles a layout
+// from scratch (DAGVIEW-first-relayout-x, see the end of this function): it
+// draws only from the earlier layout and returns undefined where a relayout
+// would go back to scratch.
+function layoutOnce(g: Graph, ops: Operators, prev: Record<string, number> | undefined, prevAt: Record<string, { x: number; y: number }> | undefined, prevEdges: Layout["edges"] | undefined, prevK: number | undefined, earlierOnly: boolean): Omit<Layout, "key"> | undefined {
   const known = new Map(g.nodes.map((n, i) => [n.id, i]));
   const edges = g.edges.filter(([a, b]) => known.has(a) && known.has(b));
   const out: number[][] = g.nodes.map(() => []);
@@ -375,11 +386,15 @@ export function d3dagLayout(g: Graph, ops: Operators = operators, prev?: Record<
   if (old) {
     const { y, K } = prevK === undefined ? fitLayers(old, size, parents, children, 1) : { K: scaledK(prevK, nodes.length, prev!), y: layersAt(old, parents, children, scaledK(prevK, nodes.length, prev!)) };
     const R = counts(y).length;
-    if (R <= ROOM * pathNodes(parents, children) || R <= ROOM * counts(fitLayers(scratch(), size, parents, children, 1).y).length) {
+    // The settling relayout (earlierOnly) starts from layers fitLayers just
+    // chose from scratch, which the bound would only check against themselves
+    // at the cost of a second network simplex.
+    if (earlierOnly || R <= ROOM * pathNodes(parents, children) || R <= ROOM * counts(fitLayers(scratch(), size, parents, children, 1).y).length) {
       best = draw(y, K, !!prevAt);
-      if (!outside(ratio(best))) return best;
+      if (!outside(ratio(best)) || earlierOnly) return best;
     }
   }
+  if (earlierOnly) return undefined;
   scratch();
   const drawnAt = new Set<number>();
   for (;;) {
@@ -391,6 +406,53 @@ export function d3dagLayout(g: Graph, ops: Operators = operators, prev?: Record<
     if (!outside(ratio(l))) break;
     e = ratio(l) / (f.ratio / e);
   }
+  // DAGVIEW-first-relayout-x: the first relayout of an unchanged graph after
+  // a layout from scratch kept the layers and K but moved boxes sideways (on
+  // the 500-node synthetic graph the width went from 3,600 to 3,582 px), as
+  // from scratch the order in each row starts from d3-dag's crossing
+  // reduction (decrossFrom) and on a relayout from the earlier x (seedPlaces,
+  // decrossSeeded). So the layout from scratch ends with that relayout of
+  // itself, and the page's first relayout is then the second relayout of the
+  // scratch drawing, which the tests found to be a fixed point.
+  // Why the second relayout keeps the boxes (argument, not a proof): a
+  // relayout from layout l keeps l's layers when they are the fixed point
+  // layersAt reaches at their K (see layersAt). It sorts each row by l's x,
+  // which, if narrow and the placement keep the order within each row, is the
+  // order l was drawn in, and decrossSeeded then runs a pass of swaps from
+  // that order; the order l was drawn in ended where a pass removed no
+  // crossing, and the sweeps are deterministic, so the same pass removes none
+  // again and is undone. The same order, layers and split give the same
+  // placement. Unproved steps: that narrow keeps the order of boxes and
+  // lanes within a row, and that splitRows, which reads x values and not only
+  // the order, picks the same rows from l's narrowed x as from the x it was
+  // drawn from. The tests check the result on the plan of 2026-11-10 and the
+  // 500-node synthetic graph (aspect.test.ts, exact) and over 20 generations
+  // (aspect-*.test.ts). If the relayout changes the layers or the height, or
+  // leaves the band the scratch drawing was in, the scratch drawing is kept
+  // as before.
+  // Literature (P324, searched 2026-11-22 with allpapers-search, keyword
+  // "incremental layered graph drawing stability mental map Sugiyama" and a
+  // semantic query on relayouts of an unchanged graph, 245 and 250 hits, all
+  // titles read): no paper states a relayout-is-a-fixed-point rule for
+  // Sugiyama layouts. Nearest: S. Domroes and R. von Hanxleden, "Diagram
+  // Control and Model Order for Sugiyama Layouts", arXiv:2406.11393 (2024),
+  // which seeds crossing minimization with the input ("model") order so that
+  // the result follows it, as decrossSeeded seeds from the earlier x; read:
+  // title and metadata only, not the text. The incremental DynaDAG of S. C.
+  // North ("Incremental Layout in DynaDAG", Graph Drawing 1995, LNCS 1027,
+  // doi:10.1007/BFb0021828) also starts each relayout from the last drawing;
+  // from memory, not found by the search and not checked.
+  // Complexity tradeoff: one more seeded drawing per layout from scratch, a
+  // crossing reduction and a placement (the scratch drawing runs two, on the
+  // unsplit and on the split rows), plus fromPrevious and layersAt, O(n log n
+  // + m) (see each); relayouts, which the page runs on every change, cost
+  // the same as before. It skips the room bound of the earlier path (a second
+  // network simplex; see there). Measured 2026-11-22 at load about 50 on
+  // planLike(n, 2.7n): 0.98 s before and 1.32 s after at 1,000 nodes, 1.68 s
+  // and 3.0 s at 2,000, the settling relayout most of the difference
+  // (decrossSeeded runs its passes until one removes no crossing).
+  const settled = layoutOnce(g, ops, best!.layers, centers(best!), best!.edges, best!.rowLimit, true);
+  if (settled && JSON.stringify(settled.layers) === JSON.stringify(best!.layers) && settled.h === best!.h && outside(ratio(settled)) <= outside(ratio(best!))) return settled;
   return best!;
 }
 
@@ -515,7 +577,7 @@ export function scratchLayers(dag: any, nodes: any[], parents: number[][], child
 // nothing where no row is over K. With balanceCounts on the earlier path too
 // it did not: from an unchanged graph 14 nodes moved.
 // Until 2026-11-13 a second, outer loop lowered K to the split rule's limit
-// of the result (1.5 x the median count, rowLimit) and ran again whenever
+// of the result (1.5 x the median count, rowLimit in d3dag.test.ts) and ran again whenever
 // that was below K. The rows makeRoom inserts lower the median, so K only
 // fell, and the next layout started from that K: on the live plan K went
 // from 27 to 4 over the page's relayouts, 774 rows against a longest path of
@@ -534,7 +596,54 @@ export function scratchLayers(dag: any, nodes: any[], parents: number[][], child
 // moves, 45 ms); on the plan-shaped graph of 4,000 nodes 2 pairs, 6 and 2
 // passes. On the wide family of aspect.test.ts, with K growing with n,
 // layersAt now grows 9.2 to 10.2 times in steps at 8n (d3dag.test.ts).
+// DAGVIEW-relayout-stable: one round (layersOnce) can end with a row still
+// over K, and a round from its result then inserted rows again and moved
+// nodes into them: on fanIn(40) of d3dag.test.ts (a spine whose layers hold 11
+// nodes that no move can take out, K = 11) a row of 12 was left, and the
+// page's first relayout of the unchanged graph moved 201 nodes down a row.
+// So rounds run from the result while a row is over K and the round lowers
+// Q, the sum over rows of max(0, c - K)^2 (balanceLayers' Q).
+// Why the result is the layers a relayout of the unchanged graph gives: a
+// relayout reads them through fromPrevious, which keeps a layering in which
+// every edge goes down (see fromPrevious), and then runs layersAt at the same
+// K. If no row is over K, makeRoom inserts nothing, and balanceLayers and
+// spreadSources make no move, as the round that gave y ended where neither
+// could move and compactLayers removed only empty layers, which no move
+// reads (layersAt's comment above); so the round gives y back, and the loop
+// below makes no round. Unproved sub-case: the loop stops at a round that
+// leaves a row over K and does not lower Q; then a relayout's round can still
+// move nodes. It ends: Q is a nonnegative integer and each kept round lowers
+// it, so there are at most Q(first round) + 1 rounds after the first.
+// Complexity tradeoff: each round costs what layersAt cost before (above);
+// the bound Q + 1 on the rounds is not O(log n), and a graph whose rounds each
+// lower Q by one would cost O(Q) rounds. On the graphs measured (fanIn(40) and
+// fanIn(80), the plans of 2026-11-10 and 2026-11-13, the plan-shaped graphs)
+// there are at most two rounds; the steps at n and 8n of the scaling tests in
+// aspect.test.ts and d3dag.test.ts include the extra rounds. A round that
+// only checked the layers left by the first would not be enough: here the
+// second round lowered Q from 1 to 0.
 export function layersAt(base: Int32Array, parents: number[][], children: number[][], K: number, work?: Work): Int32Array {
+  let y = layersOnce(base, parents, children, K, work);
+  let q = excess(y, K);
+  while (q > 0) {
+    const z = layersOnce(y, parents, children, K, work);
+    const r = excess(z, K);
+    if (r >= q) break;
+    y = z;
+    q = r;
+  }
+  return y;
+}
+
+// balanceLayers' Q for layers y at K: the sum over rows of max(0, c - K)^2.
+function excess(y: Int32Array, K: number): number {
+  let q = 0;
+  for (const c of counts(y)) if (c > K) q += (c - K) * (c - K);
+  return q;
+}
+
+// One round of layersAt (see its comment above for the rounds).
+function layersOnce(base: Int32Array, parents: number[][], children: number[][], K: number, work?: Work): Int32Array {
   const y = Int32Array.from(base);
   makeRoom(y, K, work);
   // Each call ends where it can move nothing, so once a call after the first
@@ -1265,23 +1374,6 @@ export function spreadSources(y: Int32Array, parents: number[][], children: numb
   }
   if (work) work.steps += steps;
   return passes;
-}
-
-// The row-size limit of the author's split rule (splitRows): a row is full
-// at floor(1.5 x median) nodes, the median of the counts of the nonempty
-// layers of y, the mean of the two middle counts when their number is even.
-// Complexity tradeoff: O(n + L log L), sorting the counts; a selection
-// algorithm would give O(n + L), a difference of microseconds here.
-export function rowLimit(y: Int32Array, work?: Work): number {
-  const c = new Map<number, number>();
-  for (const v of y) c.set(v, (c.get(v) ?? 0) + 1);
-  const s = Int32Array.from(c.values()).sort();
-  const L = s.length;
-  // The sort is the engine's, so its comparisons are taken as L log2 L.
-  if (work) work.steps += y.length + L * Math.ceil(Math.log2(L + 1));
-  if (!L) return 1;
-  const median = L % 2 ? s[(L - 1) / 2] : (s[L / 2 - 1] + s[L / 2]) / 2;
-  return Math.max(1, Math.floor(1.5 * median));
 }
 
 // Node counts per layer in a segment tree of minimums. It counts no steps;

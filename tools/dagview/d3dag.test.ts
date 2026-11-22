@@ -2,10 +2,29 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { graph, layerSeparation, layeringSimplex } from "d3-dag";
-import { balanceCounts, balanceLayers, compactLayers, fromPrevious, layers, lowerSources, makeRoom, rowLimit, splitRows, spreadSources } from "./d3dag.ts";
+import { balanceCounts, balanceLayers, compactLayers, d3dagLayout, fromPrevious, layers, lowerSources, makeRoom, operators, splitRows, spreadSources } from "./d3dag.ts";
 import type { Work } from "./d3dag.ts";
 import type { Graph } from "./layout.ts";
 import { planLike } from "./synthetic.ts";
+
+// The row-size limit of the author's split rule (splitRows in d3dag.ts): a
+// row is full at floor(1.5 x median) nodes, the median of the counts of the
+// nonempty layers of y, the mean of the two middle counts when their number
+// is even. The tests below use it as a measure of a layering and as a K for
+// balanceLayers. It was exported by d3dag.ts until DAGVIEW-shape-edges
+// (2026-11-22): since DAGVIEW-aspect K comes from the shape (fitLayers), and
+// only these tests read it, so it lives here. splitRows applies the same
+// cutoff as c > 1.5 x median, which for an integer count c is c > floor(1.5 x
+// median).
+function rowLimit(y: Int32Array): number {
+  const c = new Map<number, number>();
+  for (const v of y) c.set(v, (c.get(v) ?? 0) + 1);
+  const s = Int32Array.from(c.values()).sort();
+  const L = s.length;
+  if (!L) return 1;
+  const median = L % 2 ? s[(L - 1) / 2] : (s[L / 2 - 1] + s[L / 2]) / 2;
+  return Math.max(1, Math.floor(1.5 * median));
+}
 
 const plan = JSON.parse(readFileSync(new URL("./plan-graph-2026-11-10.json", import.meta.url), "utf8")) as Graph;
 
@@ -635,6 +654,23 @@ test("a node with 80 parents that are sources (DAGVIEW-wide-rows): the sources s
   for (const [i, n] of g.nodes.entries()) if (n.id.startsWith("q")) assert.ok(c[y[i]] <= K, `${n.id} in a layer of ${c[y[i]]} nodes, over K = ${K}`);
   assert.deepEqual(pinGaps(y, parents, children, K), []);
 });
+
+// DAGVIEW-relayout-stable: a relayout of an unchanged graph gives the same
+// layout, also where the layers balanced at K once ended with a row over K.
+// Before the rounds of layersAt (d3dag.ts), fanIn(40), fanIn(80) and
+// fanIn(200) each ended a layout from scratch with one row over K, and the
+// first relayout inserted a row and moved 201 (fanIn(40)) nodes down.
+for (const fan of [40, 80, 200]) {
+  test(`a relayout of the unchanged graph of ${fan} sources over one child gives the same layout exactly, as does a second`, () => {
+    const g = fanIn(fan);
+    const again = (l: ReturnType<typeof d3dagLayout>) => d3dagLayout(g, operators, l.layers, Object.fromEntries(Object.entries(l.boxes).map(([id, b]) => [id, { x: b.x, y: b.y }])), l.edges, l.rowLimit);
+    const l0 = d3dagLayout(g);
+    const l1 = again(l0);
+    assert.ok(JSON.stringify(l1.layers) === JSON.stringify(l0.layers), `fanIn(${fan}): the layers changed on the first relayout`);
+    assert.ok(JSON.stringify(l1) === JSON.stringify(l0), `fanIn(${fan}): the layout changed on the first relayout`);
+    assert.ok(JSON.stringify(again(l1)) === JSON.stringify(l1), `fanIn(${fan}): the layout changed on the second relayout`);
+  });
+}
 
 // k sources sharing one child T, all in the row above it (layer 1 of a spine
 // of k / 4 layers; T has parent s_0 and child the last spine node). makeRoom

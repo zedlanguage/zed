@@ -1,6 +1,6 @@
 // Times one layout of a plan-shaped graph of 1,000 nodes and 2,700 edges, one
-// of 3,000 nodes and 8,100 edges (4,000 and 10,800 until 2026-11-22; the
-// measures below for that size are history; see synthetic.ts), and one of the plan as
+// of 2,000 nodes and 5,400 edges (4,000 and 10,800 until 2026-11-22, then 3,000
+// and 8,100; the measures below for 4,000 nodes are history; see synthetic.ts), and one of the plan as
 // /api/state gave it on 2026-11-10 (plan-graph-2026-11-10.json: 1,661 nodes,
 // 2,580 edges, the sizes the page asks for).
 //
@@ -46,11 +46,19 @@ import { planLike } from "./synthetic.ts";
 const plan = JSON.parse(readFileSync(new URL("./plan-graph-2026-11-10.json", import.meta.url), "utf8")) as Graph;
 const cases: [string, () => Graph, number][] = [
   ["a plan-shaped graph of 1000 nodes and 2700 edges", () => planLike(1000, 2700), 0.37],
-  // 3,000 nodes, not 4,000 (TEST-dagview-layout-time-cap, 2026-11-22): the 4,000-node layout took
+  // 2,000 nodes, not 4,000 (TEST-dagview-layout-time-cap, 2026-11-22): the 4,000-node layout took
   // 21.0 s at load 56 to 62, over the limit of 20 s a piece (author P169, P214), and one layout
-  // cannot be split. 3,000 nodes took 14.4 s at load 90 to 92 (2,500 took 9.1 s), 4,304 x 35,990 px
-  // (0.1196); its limit 0.123 keeps the 2.6% margin 0.095 gave the 4,000-node graph's 0.0926.
-  ["a plan-shaped graph of 3000 nodes and 8100 edges", () => planLike(3000, 8100), 0.123],
+  // cannot be split. 3,000 nodes then took 14.4 s at load 90 to 92, too close to 20 s for a
+  // machine whose load is often 55 to 90 (b22-tests2). Measured 2026-11-22 at load 67, all three
+  // sizes in one run: 1,500 nodes 4.5 s, 2,000 nodes 6.9 s, 3,000 nodes 12.4 s. 2,000 nodes keeps
+  // the margin to 20 s near 2.9x at load 67, so near 2x at load 90 if time grows with load as the
+  // 3,000-node run did (12.4 s at 67, 14.4 s at 90). The layout is deterministic (planLike is
+  // seeded): 4,350 x 24,236 px (0.1795); its limit 0.184 keeps the 2.6% margin 0.095 gave the
+  // 4,000-node graph's 0.0926. The scaling of each layout step is checked by the n and 8n tests
+  // in d3dag.test.ts and aspect.test.ts, which count steps, not time. With the settling
+  // relayout of DAGVIEW-first-relayout-x the 2,000-node layout took 5.5 s at load 58 (this file
+  // alone) and 13.6 s with all twelve dagview test files run at once (load 34 to 47).
+  ["a plan-shaped graph of 2000 nodes and 5400 edges", () => planLike(2000, 5400), 0.184],
   ["the plan of 2026-11-10", () => plan, 0.77],
 ];
 
