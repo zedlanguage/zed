@@ -4246,7 +4246,8 @@ pub(super) fn relational_chain(k: usize, lt: bool) -> (Term, Domains) {
 /// preimage had a relation for each k up to 40 and none, refused with `Questions`, for each
 /// k from 41 to 48 and at 64, 96, 128, 192 and 256 (measured on c531f8482: the cover asked a
 /// question per level and was refused past its work limit), which the benchmark
-/// `relational_equal_guards_scale` met as a failed precondition (`"a relation"`) at its larger size, 256.
+/// `relational_equal_guards_scale` met as a failed precondition (`"a relation"`) at its larger
+/// size, 256.
 /// Red on c531f8482 at k = 41, green after 3527c0a74. This test holds the relation and its
 /// points in the correctness tests, where it runs on every change, not only with `--bench`.
 #[test]
