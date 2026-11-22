@@ -18150,22 +18150,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `bench::too_large::reading_a_chain_of_names_and_divisions_scales`. None makes a cycle of
     /// reads, which the statements' dependency order rules out.
     pub(super) fn fixed_value(&mut self, a: &'a Expr) -> Option<Value> {
-        if !self.fixed.contains_key(&a.span) {
-            // Each node is entered once: the graph through binders is acyclic, as statements
-            // are checked in dependency order, and the set keeps it finite if not.
-            let mut entered = HashSet::new();
-            let mut stack = vec![(a, false)];
-            while let Some((x, ready)) = stack.pop() {
-                if ready {
-                    let v = self.fixed_uncached(x);
-                    self.fixed.insert(x.span, v);
-                } else if !self.fixed.contains_key(&x.span) && entered.insert(x.span) {
-                    stack.push((x, true));
-                    stack.extend(self.fixed_reads(x).into_iter().map(|c| (c, false)));
-                }
-            }
-        }
-        self.fixed[&a.span].clone()
+        self.memo_post(a, |c| &mut c.fixed, Self::fixed_reads, Self::fixed_uncached)
     }
 
     /// The expressions [`Self::fixed_uncached`] reads to read `e`: the value a name is bound
@@ -18249,22 +18234,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// reads in all and no native stack; a read adds or multiplies bit lengths, numbers of
     /// O(log) words, beside what [`Self::fixed_value`] reads of it.
     fn least_built(&mut self, e: &'a Expr) -> Built {
-        if !self.built.contains_key(&e.span) {
-            // Each node is entered once: the graph through binders is acyclic, as statements
-            // are checked in dependency order, and the set keeps it finite if not.
-            let mut entered = HashSet::new();
-            let mut stack = vec![(e, false)];
-            while let Some((x, ready)) = stack.pop() {
-                if ready {
-                    let w = self.built_uncached(x);
-                    self.built.insert(x.span, w);
-                } else if !self.built.contains_key(&x.span) && entered.insert(x.span) {
-                    stack.push((x, true));
-                    stack.extend(self.built_reads(x).into_iter().map(|c| (c, false)));
-                }
-            }
-        }
-        self.built[&e.span].clone()
+        self.memo_post(e, |c| &mut c.built, Self::built_reads, Self::built_uncached)
     }
 
     /// The expressions [`Self::built_uncached`] reads to read `e`: the value a name is bound

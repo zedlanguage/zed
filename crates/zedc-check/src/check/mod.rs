@@ -6329,20 +6329,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // is exactly.
             None => {
                 for (l, _) in lits.iter().filter(|(l, follows)| *follows || l.generic) {
-                    let values: Vec<(Carrier, Value)> =
-                        [Carrier::Int, Carrier::F64, Carrier::Rat, Carrier::F32]
-                            .into_iter()
-                            .filter(|&c| mask & c.bit() != 0 && c != lit_carrier(&l.value))
-                            .filter(|&c| takes_carrier(l, c))
-                            .filter_map(|c| match adopt(l, c) {
-                                Ok(Some(v)) => Some((c, neg_value(&v, l.neg()))),
-                                // A literal that is not exactly a value of `c`, as
-                                // `9007199254740993` at `f64`, equals no value of `c`: it keeps its
-                                // own carrier, and the comparison is false there, as it is in exact
-                                // arithmetic.
-                                _ => None,
-                            })
-                            .collect();
+                    let values = follow_values(l, mask);
                     if !values.is_empty() {
                         self.put(Undo::Follows(l.span, Some(values)));
                         if l.witness {
@@ -8811,16 +8798,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.replaying == 0 || self.trying || !self.remap_keys.last().is_some_and(inside) {
             return;
         }
-        let values: Vec<(Carrier, Value)> =
-            [Carrier::Int, Carrier::F64, Carrier::Rat, Carrier::F32]
-                .into_iter()
-                .filter(|&c| m & c.bit() != 0 && c != lit_carrier(&l.value))
-                .filter(|&c| takes_carrier(l, c))
-                .filter_map(|c| match adopt(l, c) {
-                    Ok(Some(v)) => Some((c, neg_value(&v, l.neg()))),
-                    _ => None,
-                })
-                .collect();
+        let values = follow_values(l, m);
         if !values.is_empty() {
             self.info.follows.insert(l.span, values);
         }
@@ -11525,6 +11503,26 @@ fn is_decimal(v: &Value) -> bool {
 /// against the `362.29944f32` of the arrow `f32 ^ int`).
 fn takes_carrier(l: &Lit, c: Carrier) -> bool {
     !l.exponent || c == Carrier::F64
+}
+
+/// The values the literal `l` takes at the numeric carriers of the mask `m` other than its own,
+/// with its sign: one for each carrier it may take ([`takes_carrier`]) of which it is exactly a
+/// value. The elaborator picks among them by the other operand's carrier at run time. Shared by
+/// [`Ck::resolve`] (a generic literal of a class left a type variable) and [`Ck::key_follows`]
+/// (a literal of a need key), two copies before DRY-misc-A5 (REPORT-dryA5 row 21).
+fn follow_values(l: &Lit, m: u8) -> Vec<(Carrier, Value)> {
+    [Carrier::Int, Carrier::F64, Carrier::Rat, Carrier::F32]
+        .into_iter()
+        .filter(|&c| m & c.bit() != 0 && c != lit_carrier(&l.value))
+        .filter(|&c| takes_carrier(l, c))
+        .filter_map(|c| match adopt(l, c) {
+            Ok(Some(v)) => Some((c, neg_value(&v, l.neg()))),
+            // A literal that is not exactly a value of `c`, as `9007199254740993` at `f64`,
+            // equals no value of `c`: it keeps its own carrier, and the comparison is false
+            // there, as it is in exact arithmetic.
+            _ => None,
+        })
+        .collect()
 }
 
 fn lit_carrier(v: &Value) -> Carrier {
@@ -15997,22 +15995,41 @@ impl<'a> Ck<'_, 'a> {
     /// case-5 binder whose value differs between runs in a form not compiled yet (frames),
     /// nor a span shared by a new desugaring, since no program of this version builds either.
     fn known(&mut self, e: &'a Expr) -> Known {
-        if !self.known.contains_key(&e.span) {
+        self.memo_post(e, |c| &mut c.known, Self::reads, |c, x| c.known_uncached(x))
+    }
+
+    /// What `uncached` gives for `e`, kept by span in the map `memo` names: each expression
+    /// `reads` gives is read first, children before parents on an explicit stack, and each is
+    /// read once, so `uncached` finds what it reads in the map. Shared by [`Ck::known`],
+    /// [`Ck::fixed_value`] and [`Ck::least_built`], three copies before DRY-misc-A5
+    /// (REPORT-dryA5 row 14).
+    // Complexity tradeoff: the naive read recurses through `reads`, reading an expression
+    // again at each parent that reads it: O(n) reads per read through a chain of n names, and
+    // O(n) native stack. Used: each node entered once and kept, O(n) reads in all for any
+    // number of reads through it, no native stack. Tradeoff: a map entry per expression read.
+    fn memo_post<K: Clone>(
+        &mut self,
+        e: &'a Expr,
+        memo: fn(&mut Self) -> &mut HashMap<Span, K>,
+        reads: fn(&Self, &'a Expr) -> Vec<&'a Expr>,
+        uncached: fn(&mut Self, &'a Expr) -> K,
+    ) -> K {
+        if !memo(self).contains_key(&e.span) {
             // Each node is entered once: the graph through binders is acyclic, as statements
             // are checked in dependency order, and the set keeps it finite if not.
             let mut entered = HashSet::new();
             let mut stack = vec![(e, false)];
             while let Some((x, ready)) = stack.pop() {
                 if ready {
-                    let k = self.known_uncached(x);
-                    self.known.insert(x.span, k);
-                } else if !self.known.contains_key(&x.span) && entered.insert(x.span) {
+                    let k = uncached(self, x);
+                    memo(self).insert(x.span, k);
+                } else if !memo(self).contains_key(&x.span) && entered.insert(x.span) {
                     stack.push((x, true));
-                    stack.extend(self.reads(x).into_iter().map(|c| (c, false)));
+                    stack.extend(reads(self, x).into_iter().map(|c| (c, false)));
                 }
             }
         }
-        self.known[&e.span].clone()
+        memo(self)[&e.span].clone()
     }
 
     /// What has been read of `e`; any `int` when it has not been.
