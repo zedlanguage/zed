@@ -189,17 +189,24 @@ fn headline(stderr: &str) -> &str {
 
 /// A number computed from literals that sits beside an atom, `b` or `#a`, is rejected when
 /// the program is checked, and the repair the headline offers writes the number into a
-/// string and an empty line in place of the atom (PORT-lines-int-name-rest).
+/// string and an empty line in place of the atom (PORT-lines-int-name-rest). The test that
+/// picks the branch reads the input: a test the checker can decide, as `b > 0` of `b = 2^62`,
+/// leaves out the arm no value reaches, so `t` would be the number alone (`t : int` in the
+/// message, run of 2026-11-22).
 #[test]
 fn a_number_computed_from_literals_beside_an_atom_is_rejected_before_the_run() {
-    let src = "main(m: MainArgs) { b = 2^62; t = if b > 0 { b } else { #a }; m.stdout <- t; }\n";
-    let out = run("number_beside_atom", src, "", &[]);
+    let src = "main(m: MainArgs) {\n  \
+               k = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0;\n  \
+               b = 2^62;\n  \
+               t = if k > 0 { b } else { #a };\n  \
+               m.stdout <- t;\n}\n";
+    let out = run("number_beside_atom", src, "1\n", &[]);
     assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{}", out.stderr);
     let first = headline(&out.stderr);
     let repair = "m.stdout <- \"${t}\" else #a -> \"\";";
     assert!(
         first.starts_with(
-            "1:75: A `Lines` port takes a `String` or a family of strings: `m.stdout <- t : "
+            "5:15: A `Lines` port takes a `String` or a family of strings: `m.stdout <- t : "
         ),
         "{}",
         out.stderr
@@ -210,13 +217,18 @@ fn a_number_computed_from_literals_beside_an_atom_is_rejected_before_the_run() {
         out.stderr
     );
     let fixed = src.replace("m.stdout <- t;", repair);
-    let out = run("number_beside_atom_fixed", &fixed, "", &[]);
-    assert_eq!(
-        (out.status, out.stdout.as_str()),
-        (0, "4611686018427387904\n"),
-        "{}",
-        out.stderr
-    );
+    for (name, stdin, stdout) in [
+        ("number_beside_atom_fixed", "1\n", "4611686018427387904\n"),
+        ("number_beside_atom_fixed_atom", "0\n", "\n"),
+    ] {
+        let out = run(name, &fixed, stdin, &[]);
+        assert_eq!(
+            (out.status, out.stdout.as_str()),
+            (0, stdout),
+            "{stdin:?}\n{}",
+            out.stderr
+        );
+    }
 }
 
 /// A number computed from literals pushed to a `Lines` port the function takes as a parameter

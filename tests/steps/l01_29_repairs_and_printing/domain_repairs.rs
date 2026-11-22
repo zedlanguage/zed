@@ -367,10 +367,15 @@ fn a_lines_port_repair_writes_the_programs_value() {
 
 /// A number computed from literals beside an atom, pushed with no `else`: the repair writes the
 /// number into a string and an empty line in place of the atom, and is accepted
-/// (PORT-lines-int-name-rest).
+/// (PORT-lines-int-name-rest). The branch is picked by the input: a test the checker decides,
+/// as `b > 0` of `b = 2^62`, leaves out the arm no value reaches, and `t` is the number alone
+/// (`t : int` in the message, run of 2026-11-22).
 #[test]
 fn a_lines_port_repair_of_a_number_beside_an_atom_is_accepted() {
-    let src = pushing("b = 2^62; t = if b > 0 { b } else { #a };");
+    let src = pushing(
+        "k = int(m.stdin[0]) else #invalid -> 0 else #ioError -> 0 else #outOfBounds -> 0; \
+         b = 2^62; t = if k > 0 { b } else { #a };",
+    );
     let out = rejected(&src);
     in_the_programs_words(&out);
     let line = "m.stdout <- \"${t}\" else #a -> \"\";";
