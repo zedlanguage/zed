@@ -77,3 +77,39 @@ fn a_cycle_of_two_rules_under_a_list_at_the_growing_token_is_quadratic() {
         2,
     );
 }
+
+/// With its operators on the top rung, each operand passes through every rung. A rung's match,
+/// once ended, reads no seed of the rung above, so each is matched once at each token: the
+/// work is linear in the rungs, not quadratic.
+#[test]
+fn each_operand_costs_a_constant_per_rung() {
+    use std::collections::HashMap;
+    use zedc::lex::{Token, lex};
+    use zedc::parse::{TOP, parse_with};
+    let grammars: HashMap<usize, Grammar> = [8, 64].map(|k| (k, ladder(k))).into();
+    let texts: HashMap<usize, String> = [8, 64]
+        .map(|k| (k, format!("1 o{k} ").repeat(100) + "2"))
+        .into();
+    let tokens: HashMap<usize, Vec<Token>> =
+        texts.iter().map(|(k, t)| (*k, lex(t).unwrap())).collect();
+    zed_tests::scaling::check("a ladder of n rungs", 8, |k| {
+        parse_with(
+            &grammars[&k],
+            &texts[&k],
+            &tokens[&k],
+            &format!("R{k}"),
+            TOP,
+        )
+        .unwrap();
+    });
+}
+
+/// A ladder of `k` left-recursive rungs over an amount, rung `i` with the operator `o{i}`.
+fn ladder(k: usize) -> Grammar {
+    let mut text = String::from("R0 = INT L1\n");
+    for i in 1..=k {
+        let below = i - 1;
+        text += &format!("R{i} = R{i} 'o{i}' R{below} L1\n  | R{below} L1\n");
+    }
+    Grammar::read(&[&text]).unwrap()
+}
