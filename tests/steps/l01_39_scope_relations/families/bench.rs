@@ -81,6 +81,41 @@ fn unary_arms_scale() {
     scales("unary_arms", 1536, 1);
 }
 
+/// Temporary probe (BENCH-unary-arms-wall-near-limit): the work, bytes and time of one run of
+/// the family at each size of `ZED_PROBE_N` (comma-separated).
+#[test]
+fn probe_unary_arms() {
+    let sizes: Vec<usize> = std::env::var("ZED_PROBE_N")
+        .unwrap_or_else(|_| "192,1536".into())
+        .split(',')
+        .map(|s| s.parse().expect("a size"))
+        .collect();
+    // Under valgrind (ZED_PROBE_PLAIN) the meter's heap cannot reserve its address space.
+    let mut meter = std::env::var_os("ZED_PROBE_PLAIN")
+        .is_none()
+        .then(scaling::Meter::new);
+    for k in sizes {
+        let made = family("unary_arms", k);
+        let t = std::time::Instant::now();
+        let f = || {
+            run(&made);
+        };
+        let w = match meter.as_mut() {
+            Some(m) => m.work(f),
+            None => {
+                f();
+                scaling::Work { units: 0, bytes: 0 }
+            }
+        };
+        eprintln!(
+            "probe unary_arms k={k} units={} bytes={} ms={}",
+            w.units,
+            w.bytes,
+            t.elapsed().as_millis()
+        );
+    }
+}
+
 /// 10.7 times the instructions at 8n while each side of a hull over two names was searched;
 /// 7.1 since those sides are read off the envelopes of their rows (XR-l139-family).
 #[test]
