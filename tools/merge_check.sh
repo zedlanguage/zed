@@ -1346,8 +1346,9 @@ farm=${MERGE_CHECK_FARM:-$(pwd -P)/tools/farm_run.sh}
 # --record each VM's trace comes back as a directory of `groups` and `<piece>.reads` files,
 # which join tdirs as run_chunks' chunk directories do. The spec the VMs get is the one the
 # tests here would read (tools/spec_groups.sh --dir). The short-* pieces run on VMs too since
-# FARM-short-pieces-on-vm-tmpfs; a folder of tests/full whose needs no VM has runs nowhere, named
-# on farm_run.sh's `farm: not run` line (see the head of tools/farm_run.sh).
+# FARM-short-pieces-on-vm-tmpfs, except short-zed_kernel, too long as one piece there
+# (TEST-short-zed_kernel-split); it and a folder of tests/full whose needs no VM has run nowhere,
+# named on farm_run.sh's `farm: not run` line (see the head of tools/farm_run.sh).
 run_farm() {
   local terms=$1 o owner spec rc d
   o=$(git rev-parse --path-format=absolute --git-path "merge-check-farm${fullarg:+-full}")/$(date -u +%Y%m%dT%H%M%S)-$$
