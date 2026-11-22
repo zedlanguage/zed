@@ -30,7 +30,7 @@ fn a_port_bound_on_the_command_line_is_a_usage_error() {
              it.\n\nThe forms are:\n  \
              zedc run <file> [--record <out>] [--suppress <address> …] [--addresses] \
              [--option <name> …] [-- arg …]\n  \
-             zedc replay <file> <record> [--suppress <address> …] [--addresses] \
+             zedc replay <file> <record> [--program <new.zed>] [--suppress <address> …] [--addresses] \
              [--option <name> …] [-- arg …]\n"
         )
     );
@@ -254,7 +254,8 @@ fn names_no_port(port: &str, path: &str) -> String {
 const USAGE: &str = "The forms are:\n  \
                      zedc run <file> [--record <out>] [--suppress <address> …] [--addresses] \
                      [--option <name> …] [-- arg …]\n  \
-                     zedc replay <file> <record> [--suppress <address> …] [--addresses] \
+                     zedc replay <file> <record> [--program <new.zed>] [--suppress <address> …] \
+                     [--addresses] \
                      [--option <name> …] [-- arg …]\n";
 
 #[test]

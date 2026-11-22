@@ -4,7 +4,7 @@ use crate::live3::*;
 use crate::scaling::decides;
 use zed_tests::instances::Rng;
 use zed_tests::scaling;
-use zedc::store::live3::point;
+use zedc::store::live3::{self, Row3, point};
 
 #[test]
 fn many_rows_scale_linearly() {
@@ -86,6 +86,58 @@ fn a_lens_of_tangent_planes_scales_in_point() {
             let rows = if m == 70 { &small } else { &large };
             std::hint::black_box(point(rows));
         },
+    );
+}
+
+/// The linear programs `point` solves on `rows`: the path it takes there.
+fn programs(rows: &[Row3]) -> u64 {
+    let before = live3::counts::programs();
+    std::hint::black_box(point(rows));
+    live3::counts::programs() - before
+}
+
+#[test]
+fn a_lens_of_tangent_planes_over_the_origin_scales_in_point_on_its_long_path() {
+    // The lens alone over the origin, at two sizes 8 times apart where `point` takes its long
+    // path: all six linear programs and the reduction (the rounded point then holds the rows,
+    // so no slice is tried). With the seed of `tangents`, no such pair under 60 s was found
+    // (LIVE3-lp-tangents), and 64 and 512 pairs compared the short path with the long one:
+    // 97.5 times the bytes (2026-11-13, LIVE3-origin-long-path). The path depends on the seed
+    // and the size. Counted with `counts::programs` (2026-11-22, b22-small5): of seeds 0 to 199
+    // at 16 to 64 pairs, six programs are common at 24 and 32 pairs and rarer at 48 and 64; of
+    // the seeds with six at 48, only 33 and 190 keep six at 384, and of those with six at 64
+    // only 189 keeps six at 512. Pairs on the long path at both sizes measured, in work and
+    // bytes: seeds 22, 166 and 176 at 32 and 256 pairs 11.0, 10.1 and 9.7 times the work and
+    // 12.0, 11.7 and 10.7 times the bytes, over the limit; seed 189 at 64 and 512 pairs 8.52;
+    // seed 33 at 48 and 384 pairs 8.17; seed 190 at 48 and 384 pairs 8.08 and 8.57 times the
+    // bytes, 20 s, the pair kept. All the time is in the linear programs (the reduction takes
+    // about 5 ms), and their work is linear (Megiddo's method, see `live3::least`); at 32
+    // pairs the pieces visited by `solve1` grew 8.2 to 10.7 times to 256 pairs, since the
+    // rounds near the end, on few pieces, are a larger part of a small system's work.
+    let (seed, n) = (190, 48);
+    let (small, large) = (
+        tangents_of_seed(seed, n, 0),
+        tangents_of_seed(seed, n * scaling::FACTOR, 0),
+    );
+    // The test measures one path only when both sizes take it; a change of `point` that moves
+    // either size to a shorter path fails here, before the ratio, and says so.
+    assert_eq!(
+        (programs(&small), programs(&large)),
+        (6, 6),
+        "the lens of seed {seed} over the origin no longer takes the long path of `point` (six \
+         linear programs) at both {n} and {} pairs, so this test would compare two paths; \
+         count the programs of other seeds with `counts::programs` and choose a pair on one path",
+        n * scaling::FACTOR
+    );
+    scaling::compare(
+        &format!(
+            "the lens of tangent planes of seed {seed} over the origin, in `point` on its long \
+             path: {n} and {} pairs",
+            n * scaling::FACTOR
+        ),
+        1,
+        || drop(point(&small)),
+        || drop(point(&large)),
     );
 }
 

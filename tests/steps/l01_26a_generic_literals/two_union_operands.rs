@@ -263,7 +263,8 @@ fn a_decimal_from_a_call_or_with_a_suffix_is_still_refused_at_rat() {
         ]
     );
     // Negative control: at an `int` neither repair holds, so the message stays the general one.
-    let at_int = "hi(positional z: int) = z;\nk(positional b: bool) = hi(if b { 1 } else { 2.5f64 });\n";
+    let at_int =
+        "hi(positional z: int) = z;\nk(positional b: bool) = hi(if b { 1 } else { 2.5f64 });\n";
     let errs = type_errors(at_int);
     assert_eq!(errs.len(), 1, "{errs:?}");
     assert!(!errs[0].contains("where it is written"), "{errs:?}");

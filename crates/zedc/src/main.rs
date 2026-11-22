@@ -21,9 +21,10 @@ const USAGE: &str = "The commands of zedc are:
   zedc run <file> [--record <out>] [--suppress <address> …] [--addresses]
           [--option <name> …] [-- arg …]
       run the program in the file
-  zedc replay <file> <record> [--suppress <address> …] [--addresses]
-          [--option <name> …] [-- arg …]
-      run the program again on the inputs a record of an earlier run holds
+  zedc replay <file> <record> [--program <new.zed>] [--suppress <address> …]
+          [--addresses] [--option <name> …] [-- arg …]
+      run the program again on the inputs a record of an earlier run holds; with
+      --program, run new.zed on them too and report where the outputs differ
   zedc build <file> -o <out> [--suppress <address> …] [--addresses] [--option <name> …]
       compile the program to an executable
   zedc test [--mutate] [--suppress <address> …] [--addresses] [--option <name> …]

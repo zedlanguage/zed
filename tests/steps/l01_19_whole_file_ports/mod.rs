@@ -2,6 +2,7 @@
 //! whole, each output written once when the wave ends, and a record of the inputs replays
 //! the wave without the world.
 
+mod against;
 mod bench;
 mod blocking;
 mod blocking_word;
@@ -21,4 +22,4 @@ mod sharing;
 mod signals;
 mod writes;
 
-pub(crate) use zed_tests::step_helpers::l01_19_whole_file_ports::{dir, run, zedc};
+pub(crate) use zed_tests::step_helpers::l01_19_whole_file_ports::{Outcome, dir, run, zedc};

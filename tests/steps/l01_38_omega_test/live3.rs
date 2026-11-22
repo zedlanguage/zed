@@ -840,7 +840,12 @@ fn normals_in_one_plane_unbounded_and_empty_systems() {
 /// (Y - p)²` from above, at random points: the body between them is near a lens over `(p, p)`,
 /// with many planes on its boundary.
 pub(super) fn tangents(n: usize, p: i64) -> Vec<Row3> {
-    let mut rng = Rng::new(0x4_3335);
+    tangents_of_seed(0x4_3335, n, p)
+}
+
+/// [`tangents`] with the points of tangency drawn from the seed `seed`.
+pub(super) fn tangents_of_seed(seed: u64, n: usize, p: i64) -> Vec<Row3> {
+    let mut rng = Rng::new(seed);
     let c = 2_000_000i64;
     (0..2 * n)
         .map(|i| {

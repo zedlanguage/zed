@@ -73,11 +73,28 @@ impl LineReader {
         }
     }
 
-    /// The lines of `bytes`, a whole input read at once, each a slice of it.
-    pub fn whole(bytes: &[u8], mut line: impl FnMut(&[u8])) {
-        let mut reader = LineReader::new();
-        reader.read(bytes, &mut line);
-        reader.finish(line);
+    /// The lines of `bytes`, a whole input read at once, each a slice of it that lives as long
+    /// as `bytes`, so a caller may keep them (step L1.19d compares two outputs' lines). O(len),
+    /// nothing copied.
+    ///
+    /// The same lines as [`LineReader::read`] of `bytes` then [`LineReader::finish`]: with one
+    /// read, no line straddles reads, so each line `read` gives is the slice up to its line end;
+    /// a `\n` after a `\r` is dropped as `read` drops it within a read; and the bytes after the
+    /// last line end, if any, are the line `finish` gives (`read` holds them, and holds nothing
+    /// when they are empty). Test: `tests::whole_gives_the_lines_of_one_read`.
+    pub fn whole<'a>(bytes: &'a [u8], mut line: impl FnMut(&'a [u8])) {
+        let mut rest = bytes;
+        while let Some(i) = rest.iter().position(|&b| b == b'\n' || b == b'\r') {
+            line(&rest[..i]);
+            let cr = rest[i] == b'\r';
+            rest = &rest[i + 1..];
+            if cr && let [b'\n', after @ ..] = rest {
+                rest = after;
+            }
+        }
+        if !rest.is_empty() {
+            line(rest);
+        }
     }
 }
 
@@ -143,5 +160,33 @@ mod tests {
         }
         let bytes: Vec<&[u8]> = input.chunks(1).collect();
         assert_eq!(lines(&bytes), whole, "one byte per read");
+    }
+
+    /// `whole`, which gives slices of its input, gives the lines one `read` and `finish` give,
+    /// for every input of up to 7 bytes over `a`, `\r` and `\n` (3^0 + … + 3^7 = 3280 inputs),
+    /// which holds every order of the two line ends and a line around and between them.
+    #[test]
+    fn whole_gives_the_lines_of_one_read() {
+        let mut inputs = vec![Vec::new()];
+        for len in 1..=7 {
+            let shorter: Vec<Vec<u8>> = inputs
+                .iter()
+                .filter(|i| i.len() == len - 1)
+                .cloned()
+                .collect();
+            for s in shorter {
+                for b in [b'a', b'\r', b'\n'] {
+                    let mut i = s.clone();
+                    i.push(b);
+                    inputs.push(i);
+                }
+            }
+        }
+        assert_eq!(inputs.len(), 3280);
+        for input in &inputs {
+            let mut got = Vec::new();
+            LineReader::whole(input, |l| got.push(String::from_utf8(l.to_vec()).unwrap()));
+            assert_eq!(got, lines(&[input]), "{input:?}");
+        }
     }
 }

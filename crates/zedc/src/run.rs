@@ -11,7 +11,9 @@
 //!
 //! A [`Record`] holds every input the wave read and the content address of its program, so
 //! [`Program::replay`] runs it again without reading the world, and only against that program
-//! (step L1.19b).
+//! (step L1.19b), or beside another program, comparing their outputs (step L1.19d, run/against.rs).
+
+mod against;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
@@ -1409,7 +1411,7 @@ fn command_inner(
                 "{why}\n\nThe forms are:\n  \
                  zedc run <file> [--record <out>] [--suppress <address> …] \
                  [--addresses] [--option <name> …] [-- arg …]\n  \
-                 zedc replay <file> <record> [--suppress <address> …] \
+                 zedc replay <file> <record> [--program <new.zed>] [--suppress <address> …] \
                  [--addresses] [--option <name> …] [-- arg …]"
             ),
         )
@@ -1433,7 +1435,16 @@ fn command_inner(
     let (mut suppress, rest) = Suppress::take(rest).map_err(|why| (2, why))?;
     let (on, rest) = crate::build::take(&rest).map_err(|why| (2, why))?;
     let options = Options::parse(&rest, replay.is_none()).map_err(usage)?;
-    let program = load_file(file, &on, &mut suppress, stderr)?;
+    let program = load_one(file, &on, &mut suppress, stderr, options.program.is_none())?;
+    // `zedc replay old.zed <record> --program new.zed` (step L1.19d): both programs are loaded
+    // before the run starts, so a rejection of either is reported as `zedc run` reports one.
+    let other = match options.program {
+        Some(new_file) => Some((
+            new_file,
+            load_one(new_file, &on, &mut suppress, stderr, true)?,
+        )),
+        None => None,
+    };
     // The run starts here: the part an executable does too, from its limits to its writes, so
     // a panic from here on is reported and ends the process as it does in one
     // ([`stop_at_bug`]).
@@ -1457,6 +1468,40 @@ fn command_inner(
                 .map_err(|e| (2, format!("{path}: {e}")))?;
             if let Some(why) = program.lacks_input(&record) {
                 return Err((2, format!("{path}: {why}")));
+            }
+            if let Some((new_file, new)) = &other {
+                // Step L1.19d. Each recorded input is checked against `new`'s ports before
+                // either program runs, so a record that does not fit runs nothing. Both waves
+                // run under the limits of the program that wrote the record, set above: a
+                // process has one set of limits, and the record is that program's.
+                against::check_inputs(&program, new, &record, path, new_file)
+                    .map_err(|why| (2, why))?;
+                let replayed = |p: &Program| {
+                    work::stage(Stage::Run, Some("main"), || p.replay_noting(&record)).map_err(
+                        |(by_miss, e)| match by_miss {
+                            true => (2, e),
+                            false => stopped(env, e),
+                        },
+                    )
+                };
+                let (old_wave, new_wave) = (replayed(&program)?, replayed(new)?);
+                let report =
+                    against::report((&program, &old_wave, file), (new, &new_wave, new_file));
+                return stdout
+                    .write_all(report.as_bytes())
+                    .and_then(|()| stdout.flush())
+                    .map(|()| 0)
+                    .map_err(|e| {
+                        (
+                            1,
+                            format!(
+                                "zedc could not write the report of the replay to standard \
+                                 output: {}. Send standard output to a place that accepts it, \
+                                 such as a file, with `> report.txt`.",
+                                io_reason(&e)
+                            ),
+                        )
+                    });
             }
             work::stage(Stage::Run, Some("main"), || program.replay_noting(&record))
                 // A stop at a read the record holds no answer for is the record's fault, a
@@ -1492,6 +1537,20 @@ pub fn load_file(
     on: &[&str],
     suppress: &mut Suppress,
     stderr: &mut dyn Write,
+) -> Result<Program, (u8, String)> {
+    load_one(file, on, suppress, stderr, true)
+}
+
+/// [`load_file`], which writes the lines of the addresses `suppress` names that no warning has
+/// only when `last`: a command that loads two programs (`zedc replay --program`, step L1.19d)
+/// writes them after the second, so an address is unmatched when neither program's warnings
+/// have it.
+fn load_one(
+    file: &str,
+    on: &[&str],
+    suppress: &mut Suppress,
+    stderr: &mut dyn Write,
+    last: bool,
 ) -> Result<Program, (u8, String)> {
     work::unit(file);
     let bytes = std::fs::read(file).map_err(|e| (2, unreadable(file, &e)))?;
@@ -1539,10 +1598,12 @@ pub fn load_file(
         }
     };
     let written = write_warnings(stderr, file, at, program.warnings(), suppress).and_then(|()| {
-        suppress
-            .unmatched()
-            .iter()
-            .try_for_each(|line| writeln!(stderr, "{file}: {line}"))
+        match last {
+            true => suppress.unmatched(),
+            false => Vec::new(),
+        }
+        .iter()
+        .try_for_each(|line| writeln!(stderr, "{file}: {line}"))
     });
     written.map_err(|e| {
         (
@@ -1558,9 +1619,12 @@ pub fn load_file(
     Ok(program.stage().0)
 }
 
-/// The words of a command line after the program: the file `--record` names.
+/// The words of a command line after the program: the file `--record` names, and the file of
+/// the program `--program` names, which `zedc replay` runs beside the one that wrote the record
+/// (step L1.19d).
 struct Options<'a> {
     record_to: Option<&'a str>,
+    program: Option<&'a str>,
 }
 
 /// The field of `main`'s argument the port `port` is: `stdin` for `m.stdin`.
@@ -1584,11 +1648,36 @@ fn write_failed(port: &str, why: &str) -> String {
 }
 
 impl<'a> Options<'a> {
-    /// The options `rest` holds, `--record <out>` among them only when `record`; or why a word
-    /// is neither.
+    /// The options `rest` holds, `--record <out>` among them only when `record` (`zedc run` and
+    /// an executable) and `--program <new>` only when not (`zedc replay`); or why a word is
+    /// neither.
     fn parse(mut rest: &[&'a str], record: bool) -> Result<Options<'a>, String> {
-        let mut options = Options { record_to: None };
+        let mut options = Options {
+            record_to: None,
+            program: None,
+        };
         while let [word, more @ ..] = rest {
+            // `zedc run` and an executable take no `--program`: it is a word they do not
+            // understand, told so below.
+            if *word == "--program" && !record {
+                rest = more;
+                let [new, more @ ..] = rest else {
+                    return Err(
+                        "`--program` needs the file of the program to replay the record \
+                         against after it: write `--program <new.zed>`."
+                            .into(),
+                    );
+                };
+                if options.program.replace(new).is_some() {
+                    return Err(
+                        "`--program` is given twice, and a record replays against one other \
+                         program at a time. Keep one `--program <new.zed>`."
+                            .into(),
+                    );
+                }
+                rest = more;
+                continue;
+            }
             rest = more;
             if *word == "--record" && record {
                 let [out, more @ ..] = rest else {
@@ -1617,11 +1706,17 @@ impl<'a> Options<'a> {
                      standard output to a file, write `> {path}`; to give the path to the \
                      program, put it after `--`, where `m.args` reads it."
                 ));
-            } else {
+            } else if record {
                 return Err(format!(
                     "`{word}` is not understood here: before `--` comes only `--record <out>`, \
                      which writes a record of the run; after `--` come the program's own \
                      arguments. If `{word}` is meant for the program, put it after `--`."
+                ));
+            } else {
+                return Err(format!(
+                    "`{word}` is not understood here: after the record comes only `--program \
+                     <new.zed>`, which replays the record against another program. A replay \
+                     gives the program the arguments the record holds."
                 ));
             }
         }

@@ -108,7 +108,11 @@ fn a_function_that_answers_not_found_fits_a_map_whose_values_hold_it() {
         "look(m: String ->? int | #notFound) = m[\"a\"] else #notFound -> 0;\n",
         "look(m: String -> int | #notFound) = m[\"a\"];\n",
     ] {
-        assert_eq!(type_errors(&format!("{fits}{lambda}")), Vec::<String>::new(), "{fits}");
+        assert_eq!(
+            type_errors(&format!("{fits}{lambda}")),
+            Vec::<String>::new(),
+            "{fits}"
+        );
     }
     let total = format!("look(m: String -> int) = m[\"a\"];\n{lambda}");
     assert!(!type_errors(&total).is_empty(), "{:?}", type_errors(&total));

@@ -12,7 +12,7 @@ use zedc::check::walk::check_text;
 use zedc::rejection::Row;
 
 use super::signals::{REPEATS_REPAIR, built, reads, repeats};
-use super::{blocking, main_args, nonblocking, outside, ports, scaling, sharing};
+use super::{against, blocking, main_args, nonblocking, outside, ports, scaling, sharing};
 
 /// Small instance: `scaling::a_lines_input_is_split_and_joined`.
 #[test]
@@ -177,6 +177,20 @@ fn a_wave_over_n_lines_and_its_replay_share_the_input_and_scale() {
     check("a wave over n lines and its replay", n, |m| {
         let (program, input) = &waves[&m];
         sharing::replays_sharing_the_input(program, input);
+    });
+}
+
+/// `zedc replay old.zed <record> --program new.zed` on a record and outputs of n lines, the two
+/// outputs differing in their last line, so that every line of both is compared (DESIGN.md
+/// L1.19d: "compared in one pass per port"). The measured run checks the record against both
+/// programs, replays both and compares; the record is written before. Small instance:
+/// `against::a_long_record_is_compared_to_its_last_line`.
+#[test]
+fn comparing_the_outputs_of_n_and_8n_lines_scales() {
+    let n = 20_000;
+    let files = inputs(n, against::long_record);
+    check("zedc replay --program over n lines", n, |m| {
+        against::replays_long(&files[&m], m);
     });
 }
 

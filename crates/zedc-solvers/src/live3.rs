@@ -199,11 +199,19 @@ pub mod counts {
 
     thread_local! {
         pub(super) static MINUS: Cell<u64> = const { Cell::new(0) };
+        pub(super) static PROGRAMS: Cell<u64> = const { Cell::new(0) };
     }
 
     /// The calls of `Lin2::minus` on this thread since it started.
     pub fn minus() -> u64 {
         MINUS.get()
+    }
+
+    /// The linear programs `simplex` has solved on this thread since it started: the path
+    /// `point` takes on a system, which a scaling test holds equal at its two sizes
+    /// (LIVE3-origin-long-path).
+    pub fn programs() -> u64 {
+        PROGRAMS.get()
     }
 }
 
@@ -808,6 +816,8 @@ fn simplex(rows: &[Row3], bx: &[Row3]) -> Result<[[Q; 3]; 4], Box<Shape>> {
     // Each vertex found is rounded to the nearest integer point, which ends the search when
     // it holds the rows.
     let lp = |f: &[Int; 3]| -> Result<Option<([Q; 3], Q)>, Box<Shape>> {
+        #[cfg(feature = "counts")]
+        counts::PROGRAMS.set(counts::PROGRAMS.get() + 1);
         let r = least(rows, bx, f);
         if let Some((v, _)) = &r {
             let z = v.clone().map(|c| nearest(&c));
