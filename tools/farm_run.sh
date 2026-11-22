@@ -48,14 +48,18 @@
 #    and the VM is the job's alone, so the slice's machine-wide memory cap has nothing to share.
 #    The list call builds; the share then runs with --pieces, which neither builds nor lists again.
 #  - Not run: the short-addresses pieces (tools/run_tests.sh --short-groups, as short-<group>) and
-#    the folders of tests/full whose needs file names a tool a VM lacks (podman, systemd-run with a
-#    user bus, clang, ld.lld, gdb, qemu: s00_01_tools and s09_release on 2026-11-22; vm_tools below
-#    lists what a VM has). No build, test or benchmark runs on this machine (author, 2026-11-22,
-#    after main-watch's local bench run at 11:15Z), so these pieces, 5 of about 3,000 (about 27 s
-#    of 2,350 s of piece time in main-watch's run of 2026-11-22T09:48Z), go untested, named on a
-#    line `farm: not run, ...`, until a VM image has podman and a user systemd and the
+#    the folders of tests/full whose needs file names a tool a VM lacks (vm_tools below lists what a
+#    VM has; s00_01_tools and s09_release run on VMs since FARM-local-only-pieces-on-vm, with the
+#    tools job.sh installs, rootless podman and tools/fetch_test_deps.sh, vm_side). No build, test
+#    or benchmark runs on this machine (author, 2026-11-22, after main-watch's local bench run at
+#    11:15Z), so these pieces go untested, named on a line `farm: not run, ...`, until the
 #    short-addresses clone can be mounted on a VM (FARM-local-residue). They are neither passed
-#    nor failed: they print no summary line.
+#    nor failed: they print no summary line. Probed on l42 (2026-11-22): a bind mount works, but
+#    the clone's overlay does not, as its upper directory under the fixed path would be on
+#    /content, itself overlayfs ("wrong fs type, bad option", as root and in `unshare -Urm`); the
+#    same overlay with its upper and work directories on a tmpfs mounts, index=on included. So a
+#    VM can run them with the checkout bound at /home/luke/Work/wt/.build-root and a tmpfs at its
+#    build/short-clone (FARM-short-pieces-on-vm-tmpfs).
 #  - Benchmarks: a VM has no hardware instruction counter (perf_event_open of instructions gives
 #    ENOENT, probed 2026-11-22), so each benchmark counts its instructions in software under
 #    DynamoRIO's client zed_icount, which job.sh's VM setup builds and names in ZED_METER_DRRUN and
@@ -77,8 +81,10 @@ die() { echo "farm_run: $*" >&2; exit 2; }
 colab_dir=${FARM_RUN_COLAB_DIR:-/home/luke/Work/wt/colab}
 [[ $colab_dir == /?* ]] || die "FARM_RUN_COLAB_DIR must be an absolute path, got '$colab_dir'"
 # The tools a Colab VM has (probed 2026-11-22 on std1: bash, sh, ip, tc and unshare --user work;
-# cargo and rustc come from job.sh's rustup).
-vm_tools=" bash sh unshare ip tc cargo rustc "
+# cargo and rustc come from job.sh's rustup; on std2: clang, ld.lld, qemu-aarch64, qemu-riscv64,
+# gdb-multiarch and podman from job.sh's setup, podman run rootless and gdb as gdb-multiarch by
+# vm_side, and systemd-run is vm_side's stub).
+vm_tools=" bash sh unshare ip tc cargo rustc clang ld.lld qemu-aarch64 qemu-riscv64 gdb podman systemd-run "
 owner= vms= out= jobs= kind=test full= skip_other= list= terms= except= trace= spec=
 while [ $# -gt 0 ]; do
   case $1 in
@@ -198,8 +204,42 @@ vm_side() {
       { echo "vm_side: gawk could not be installed"; return 2; }
   fi
   ln -sfn "$(command -v gawk)" "$w/bin/awk" || return 2
-  export PATH=$w/bin:$PATH XDG_CACHE_HOME=$w/cache
-  : >"$w/cache/zed-test-deps/done"
+  # The folders of tests/full here whose needs name podman (s00_01_tools and s09_release) read
+  # what tools/fetch_test_deps.sh fetches and builds: the sysroots, the pinned rustc, alpine and
+  # the rustup image. It runs before the share, into a cache kept across the jobs on this VM
+  # (FARM_VM_CACHE, /content/farm-cache; a second run checks each file's SHA-256 and builds the
+  # image from podman's layer cache). Podman runs as the user zp that job.sh sets up, rootless:
+  # as root it cannot run in a Colab VM's docker container (no CAP_NET_ADMIN, a read-only
+  # /sys/fs/cgroup; job.sh has the probe), and in its own storage, since CONTAINERS_STORAGE_CONF
+  # names root's. gdb is gdb-multiarch: Ubuntu's gdb has no aarch64 or riscv (probed on std2,
+  # 2026-11-22; FARM-local-only-pieces-on-vm). Other folders get an empty deps directory, as before.
+  # Only when the run can hold such a folder's piece: --only empty or naming full-<folder> (it is
+  # made of the names, ere_of), and --except not leaving it out.
+  local cache=$w/cache deps= t0
+  for d in $vmfull; do
+    [ -f "tests/full/$d/needs" ] && tr -s ' \t' '\n\n' <"tests/full/$d/needs" | grep -q -x podman || continue
+    { [ -z "$only" ] || [[ $only == *"full-$d"* ]]; } && { [ -z "$except" ] || [[ ! full-$d =~ $except ]]; } && deps=1
+  done
+  if [ "$full" = 1 ] && [ -n "$deps" ]; then
+    printf '%s\n' '#!/bin/bash' '# podman as the user zp, rootless, in its own storage (tools/farm_run.sh vm_side).' \
+      'mkdir -p /tmp/zp-run && chown zp: /tmp/zp-run && chmod 700 /tmp/zp-run || exit 125' \
+      'exec runuser -u zp -- env -u CONTAINERS_STORAGE_CONF XDG_RUNTIME_DIR=/tmp/zp-run HOME=/home/zp /usr/bin/podman "$@"' \
+      >"$w/bin/podman"
+    chmod +x "$w/bin/podman" || return 2
+    [ ! -x /usr/bin/gdb-multiarch ] || ln -sfn /usr/bin/gdb-multiarch "$w/bin/gdb" || return 2
+    cache=${FARM_VM_CACHE:-/content/farm-cache}
+    [[ $cache == /?* ]] || { echo "vm_side: the cache directory '$cache' is not absolute"; return 2; }
+    t0=$SECONDS
+    if ! PATH=$w/bin:$PATH XDG_CACHE_HOME=$cache bash tools/fetch_test_deps.sh >"$w/fetch.log" 2>&1; then
+      echo "vm_side: tools/fetch_test_deps.sh failed; the end of its log:"
+      tail -n 20 "$w/fetch.log" | grep -v '@'
+      return 2
+    fi
+    echo "farm: tools/fetch_test_deps.sh ran in $((SECONDS - t0)) s for the folders that need podman"
+  else
+    : >"$w/cache/zed-test-deps/done"
+  fi
+  export PATH=$w/bin:$PATH XDG_CACHE_HOME=$cache
   : >"$w/needs"
   for d in $vmfull; do [ ! -f "tests/full/$d/needs" ] || cat "tests/full/$d/needs" >>"$w/needs"; done
   sed -e 's/^short_steps=.*/short_steps=""/' -e 's/^short_libs=.*/short_libs=""/' \

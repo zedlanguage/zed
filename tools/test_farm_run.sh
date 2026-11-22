@@ -4,8 +4,9 @@
 # checkout on this machine, with FARM_VM_JOB as the VM's /content/job, so the VM side of
 # farm_run.sh (vm_side) runs here as it runs on a VM. The stub lists the pieces p1 to p7, the
 # short-addresses piece short-g1 when its copy still has short_steps set, and with --full the pieces
-# full-a (needs bash, run on a VM) and full-b (needs podman, which no VM has: not run, with
-# short-g1, and named on farm_run.sh's `farm: not run` line); it fails a piece matching
+# full-a (needs bash, run on a VM), full-b (needs qemu-s390x, which no VM has: not run, with
+# short-g1, and named on farm_run.sh's `farm: not run` line) and full-c (needs podman: run on a
+# VM after the fake tools/fetch_test_deps.sh, which the stub checks); it fails a piece matching
 # STUB_FAIL, and a benchmark matching STUB_FLAKY on its first run in a log directory's parent only;
 # it stops a piece matching STUB_TIMEOUT by its limit when run beside others (and alone too with
 # STUB_TIMEOUT_ALONE), and kills one matching STUB_KILLED early (see the stub).
@@ -19,9 +20,20 @@ farm=${FARM_RUN:-$(pwd)/tools/farm_run.sh}
 ws=$(pwd)/build/test-farm-run/$(date -u +%Y%m%dT%H%M%S)-$$
 [[ $ws == /?*/build/test-farm-run/*-$$ ]] || { echo "bad workspace '$ws'"; exit 2; }
 toy=$ws/toy colab=$ws/colab
-mkdir -p "$toy/tools" "$toy/tests/full/a" "$toy/tests/full/b" "$colab" || exit 2
+mkdir -p "$toy/tools" "$toy/tests/full/a" "$toy/tests/full/b" "$toy/tests/full/c" "$colab" || exit 2
 echo bash >"$toy/tests/full/a/needs"
-echo podman >"$toy/tests/full/b/needs"
+echo qemu-s390x >"$toy/tests/full/b/needs"
+echo podman >"$toy/tests/full/c/needs"
+# The fake tools/fetch_test_deps.sh: marks the deps directory of XDG_CACHE_HOME done, or fails
+# with STUB_FETCH_FAIL; vm_side runs it when a folder of tests/full that needs podman can run.
+cat >"$toy/tools/fetch_test_deps.sh" <<'FETCH'
+#!/bin/bash
+[ -z "${STUB_FETCH_FAIL:-}" ] || { echo "fetch: failed on purpose"; exit 1; }
+[ -n "${XDG_CACHE_HOME:-}" ] || { echo "fetch: no XDG_CACHE_HOME"; exit 2; }
+mkdir -p "$XDG_CACHE_HOME/zed-test-deps" && touch "$XDG_CACHE_HOME/zed-test-deps/done" && echo fetched
+FETCH
+chmod +x "$toy/tools/fetch_test_deps.sh"
+export FARM_VM_CACHE=$ws/vm-cache
 cat >"$toy/tools/run_tests.sh" <<'STUB'
 #!/bin/bash
 # Stub of tools/run_tests.sh (tools/test_farm_run.sh).
@@ -48,8 +60,9 @@ while [ $# -gt 0 ]; do
 done
 if [ -n "$full" ]; then
   for t in $(cat tests/full/*/needs | sort -u); do
-    command -v "$t" >/dev/null || { [ "$t" = podman ] && [ -n "${STUB_HAS_PODMAN:-}" ]; } || { echo "MISSING TOOLS: $t"; exit 1; }
+    command -v "$t" >/dev/null || { [ "$t" = qemu-s390x ] && [ -n "${STUB_HAS_PODMAN:-}" ]; } || { echo "MISSING TOOLS: $t"; exit 1; }
   done
+  [ -e "${XDG_CACHE_HOME:-$HOME/.cache}/zed-test-deps/done" ] || { echo "MISSING deps: run tools/fetch_test_deps.sh"; exit 1; }
 fi
 [ -n "$logs" ] || { echo "stub: no --logs"; exit 2; }
 d=$logs/$(date +%s%N)-$$
@@ -57,7 +70,7 @@ mkdir -p "$d" && ln -sfn "$d" "$logs/latest" || exit 2
 if [ -z "$pieces" ]; then
   names="p1 p2 p3 p4 p5 p6 p7"
   [ -z "$short_steps" ] || names+=" short-g1"
-  [ -z "$full" ] || names+=" full-a full-b"
+  [ -z "$full" ] || names+=" full-a full-b full-c"
   : >"$d/pieces"
   : >"$d/chosen"
   for n in $names; do
@@ -209,8 +222,16 @@ notrun() {
 case_ all 0 "pieces: 7, failed: 0" "$all" -- --owner t --vms 3
 command grep -q -c 'acquire hm3 t' "$colab/log" || { fail=$((fail + 1)); echo "FAIL all: not 3 VMs of owner t"; }
 notrun all short-g1
-STUB_HAS_PODMAN=1 case_ full 0 "pieces: 8, failed: 0" "$all full-a" -- --owner t --vms 2 --full
+STUB_HAS_PODMAN=1 case_ full 0 "pieces: 9, failed: 0" "$all full-a full-c" -- --owner t --vms 2 --full
 notrun full "short-g1 full-b"
+# Tests (FARM-local-only-pieces-on-vm): full-c needs podman, so each share fetches the deps first,
+# into FARM_VM_CACHE (the stub fails a --full run whose deps are not done).
+has full '^farm: tools/fetch_test_deps\.sh ran in [0-9]+ s ' 2
+[ -e "$FARM_VM_CACHE/zed-test-deps/done" ] || { fail=$((fail + 1)); echo "FAIL full: nothing fetched into $FARM_VM_CACHE"; }
+STUB_HAS_PODMAN=1 case_ full-no-c 0 "pieces: 8, failed: 0" "$all full-a" -- --owner t --vms 2 --full --except '^full-c$'
+has full-no-c '^farm: tools/fetch_test_deps' 0
+STUB_HAS_PODMAN=1 STUB_FETCH_FAIL=1 case_ fetch-fail 1 "pieces: 0, failed: 0" "" -- --owner t --vms 1 --full
+has fetch-fail '^vm_side: tools/fetch_test_deps\.sh failed' 1
 STUB_FAIL='^p3$' case_ fail 1 "pieces: 7, failed: 1" "$all" -- --owner t --vms 4
 STUB_SKIP='^p3$' case_ skipped 1 "pieces: 6, failed: 0" "p1 p2 p4 p5 p6 p7" -- --owner t --vms 2
 command grep -q -c '^farm: the VMs did not run the listed pieces each once: share 1 ran 3 of its 4 pieces$' \
