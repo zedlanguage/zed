@@ -537,7 +537,7 @@ extern "C" fn start(start_arg: *mut c_void) -> *mut c_void {
 static GIVE_BACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Makes each thread the main thread starts give the C library's free memory back to the kernel
-/// as it ends ([`release_free_memory`]), for the rest of the process. Test binaries turn it on:
+/// as it ends (`release_free_memory`), for the rest of the process. Test binaries turn it on:
 /// `zed_meter_settings` calls it as the process starts, in every binary that links it, which
 /// are the test binaries only. Other binaries that link this crate, the `zedc` executable of
 /// zed-native, keep glibc's own behavior, so a program whose main thread starts many short
