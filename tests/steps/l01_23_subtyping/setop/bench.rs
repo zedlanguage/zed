@@ -221,6 +221,18 @@ fn a_second_run_on_a_fresh_instance_does_the_work_of_the_first() {
     check_a_second_run_does_the_work_of_the_first(&|fresh| fresh.member());
 }
 
+/// Negative control, run once and not kept (PROOF-bench-fresh-instance): one instance made
+/// before the runs and kept for both, as before FAIL-setop-parity-bench-time. Its judgment
+/// outlives the first run, so the second does less work, and the check must fail.
+#[test]
+#[should_panic(expected = "differs from the first")]
+fn a_second_run_on_a_kept_instance_does_less_work_than_the_first() {
+    let kept = std::sync::OnceLock::new();
+    check_a_second_run_does_the_work_of_the_first(&|fresh| {
+        kept.get_or_init(|| fresh.member()).clone()
+    });
+}
+
 /// The check of [`a_second_run_on_a_fresh_instance_does_the_work_of_the_first`], with `member`
 /// giving each run the member it decides: two runs of the check of
 /// [`parity_verdicts_scale_with_the_number_of_constraints`] at one size on one [`Fresh`], each on
