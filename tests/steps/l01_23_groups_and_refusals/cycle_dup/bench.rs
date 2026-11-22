@@ -280,6 +280,63 @@ fn shared_morphism_constraints_in_a_tuple_scale_without_a_group_query() {
     shared_morphism_constraints_without_a_group_query("tuple", 4096);
 }
 
+/// Temporary probe (BENCH-cycle-dup-tuple-load): the work, bytes and time of building the
+/// inputs of the "tuple" route and of one run over them, at each size of `ZED_PROBE_N`
+/// (comma-separated).
+#[test]
+fn probe_tuple_route() {
+    let sizes: Vec<usize> = std::env::var("ZED_PROBE_N")
+        .unwrap_or_else(|_| "4096,32768".into())
+        .split(',')
+        .map(|s| s.parse().expect("a size"))
+        .collect();
+    // Under valgrind (ZED_PROBE_PLAIN) the meter's heap cannot reserve its address space.
+    let mut meter = std::env::var_os("ZED_PROBE_PLAIN")
+        .is_none()
+        .then(scaling::Meter::new);
+    let mut work = |f: &mut dyn FnMut()| match meter.as_mut() {
+        Some(m) => m.work(f),
+        None => {
+            f();
+            scaling::Work { units: 0, bytes: 0 }
+        }
+    };
+    for m in sizes {
+        let mut ts = Vec::new();
+        let t = std::time::Instant::now();
+        let built = work(&mut || {
+            ts = (arm_family(false, m).instance(vec![]).into_iter())
+                .map(|t| Type::tuple(vec![t]))
+                .collect::<Vec<_>>();
+        });
+        let built_ms = t.elapsed().as_millis();
+        let t = std::time::Instant::now();
+        let ran = work(&mut || {
+            Type::forget_emptiness();
+            for t in &ts {
+                assert_eq!(t.verdict(), Verdict::Empty);
+            }
+        });
+        let ran_ms = t.elapsed().as_millis();
+        let t = std::time::Instant::now();
+        let again = work(&mut || {
+            Type::forget_emptiness();
+            for t in &ts {
+                assert_eq!(t.verdict(), Verdict::Empty);
+            }
+        });
+        eprintln!(
+            "probe tuple n={m} built units={} bytes={} ms={built_ms} ran units={} bytes={} ms={ran_ms} again units={} ms={}",
+            built.units,
+            built.bytes,
+            ran.units,
+            ran.bytes,
+            again.units,
+            t.elapsed().as_millis()
+        );
+    }
+}
+
 /// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; 1x 162 ms at load
 /// 12.92.
 #[test]
