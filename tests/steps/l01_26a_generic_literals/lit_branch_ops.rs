@@ -824,7 +824,8 @@ fn the_probe_programs_of_lit_branch_op_value_keep_their_results() {
     let src = "g(positional c: bool) = if c { 1 } else { 2.5r };\nh(positional z: rat) = z;\n\
                f(positional c: bool) = h(g(c));\na = f(false);\nb = f(true);\n";
     assert_eq!(type_errors(src), Vec::<String>::new());
-    assert_eq!(sig(src, "g"), "bool -> 1 | 25e-1r");
+    // The branch with a suffix is a value of its carrier (plan row LIT-forced-carrier).
+    assert_eq!(sig(src, "g"), "bool -> 1 | rat");
     assert_eq!(sig(src, "f"), "bool -> rat");
     assert_eq!(value(src, "a"), "5r/2r");
     assert_eq!(value(src, "b"), "1r");

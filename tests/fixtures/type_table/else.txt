@@ -14,7 +14,7 @@ rat | #none => 0 | rat -- sec:type_resolution "Unions split, joins merge"
 int => int warn !! L2.12e: int -- sec:failure "else with nothing to strip" (QUESTIONS A67)
 
 template: $0 else #none -> 2.5f64
-int | #none => int | f64 !! LIT-forced-carrier: 2.5 | int -- sec:type_resolution "Unions split, joins merge", no conversion
+int | #none => int | f64 -- sec:type_resolution "Unions split, joins merge", no conversion
 f64 | #none => f64 -- sec:failure "`e else #a -> d` replaces the atom `#a`"
 
 template: $0 else #none -> false

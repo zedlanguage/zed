@@ -299,8 +299,9 @@ fn an_operation_beside_an_integer_literal_takes_the_carrier_of_its_use() {
 #[test]
 fn a_negated_rat_literal_is_a_literal() {
     // DESIGN.md step L1.26a: "An operation on literals alone, as `2 + 1` or `-1`, is a
-    // literal too"; `-3r` is the value -3 at `rat`, as `3r` is 3.
-    assert_eq!(sig("f() = -3r;\n", "f"), "() -> -3r");
+    // literal too"; `-3r` is the value -3 at `rat`, as `3r` is 3. As the value of a body it is
+    // a value of its carrier, as `t() = 2.5f64` is an `f64` (plan row LIT-forced-carrier).
+    assert_eq!(sig("f() = -3r;\n", "f"), "() -> rat");
     assert_eq!(value("y = -3r;\n", "y"), "-3r");
 }
 

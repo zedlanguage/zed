@@ -692,8 +692,9 @@ pub struct Info {
     pub remaps: HashMap<Span, RemapPlan>,
     /// The type errors.
     pub errors: Vec<Error>,
-    /// The sites of the literals that the errors of rows `UnfixedDecimal` and `LiteralCarrier`
-    /// in [`Self::errors`] report, sorted: where such an error rejects a class of literals, or
+    /// The sites of the literals that the errors of rows `UnfixedDecimal`, `LiteralCarrier`
+    /// and `NoCommonCarrier` (a literal with a suffix) in [`Self::errors`] report, sorted:
+    /// where such an error rejects a class of literals, or
     /// a part of a value, at one literal, the site of each literal of the class or the part,
     /// as `y = 1e400 + 1e400` is rejected at its first `1e400` for both. Elaboration does not
     /// report the range of these literals again, and reports that of every other literal.
@@ -8204,7 +8205,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         // Complexity tradeoff: none beyond the sort, O(l log l) for the l literal sites the
         // errors list, so that elaboration finds a literal by binary search.
         let mut reported: Vec<Span> = (self.errors.iter())
-            .filter(|f| matches!(f.row, Some(Row::UnfixedDecimal | Row::LiteralCarrier)))
+            .filter(|f| {
+                matches!(
+                    f.row,
+                    Some(Row::UnfixedDecimal | Row::LiteralCarrier | Row::NoCommonCarrier)
+                )
+            })
             .flat_map(|f| f.lits.iter().chain(&f.also).copied())
             .collect();
         zed_collections::sorted::sort_dedup(&mut reported);
@@ -9198,12 +9204,15 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Reports the literal `l`, compared by `==` with a value of one of the types `ts`,
     /// rejected with the message `m`: in the row of a literal at a carrier it cannot take
-    /// where `ts` holds numbers (`n == 1.5` with `n: int`), whose derivation and repairs
-    /// [`Self::equal_repairs`] adds; in no row otherwise.
+    /// where `ts` holds numbers (`n == 1.5` with `n: int`), or, written with a
+    /// suffix, in the row of two numeric values with no common carrier (`n == 1.0f64`; DESIGN.md
+    /// sec:diagnostics), whose derivation and repairs [`Self::equal_repairs`] adds; in no row
+    /// otherwise.
     fn compared(&mut self, l: &Lit, ts: &[&Ty], m: Msg) {
         let numbers = (ts.iter()).try_fold(0, |acc, t| self.numbers_in(t).map(|m| acc | m));
         let row = match numbers {
-            Some(n) if n != 0 => Some(Row::LiteralCarrier),
+            Some(n) if n != 0 && l.bare => Some(Row::LiteralCarrier),
+            Some(n) if n != 0 => Some(Row::NoCommonCarrier),
             _ => None,
         };
         let notes = self.derive(&[l.site]);

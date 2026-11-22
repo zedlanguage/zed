@@ -1200,7 +1200,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Job::Scope(stmts, top) => self.scope(m, stmts, top),
                 Job::Body(e, w) => match &e.kind {
                     ExprKind::Block(stmts) => self.scope(m, stmts, false),
-                    _ => self.expr_at(m, e, w),
+                    _ => {
+                        // The value a body gives is read at the carrier of a literal with a
+                        // suffix ([`Self::suffixed`]): `t() = 2.5f64` is `() -> f64`.
+                        if let Some(c) = self.suffixed(e) {
+                            m.k(Frame::Const(Ty::carrier(c)));
+                        }
+                        self.expr_at(m, e, w)
+                    }
                 },
                 Job::Infer(f, span) => self.infer(m, f, span),
                 Job::K(f) => self.resume(m, f),
@@ -1509,6 +1516,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 else {
                     unreachable!("an `else`")
                 };
+                // A default that is a literal with a suffix gives a value of its carrier:
+                // `x else 2.5f64` is `int | f64` for `x: int | #none` ([`Self::suffixed`]).
+                let d = self.read_as_value(default, d);
                 if let (ExprKind::Name(_), Some(Ref::Bound(ids))) =
                     (&of.kind, self.t.res.uses.get(&of.span))
                     && ids.len() == 1
@@ -1657,6 +1667,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 dead,
             } => {
                 let b = m.take_ty();
+                // A branch that is a literal with a suffix gives a value of its carrier
+                // ([`Self::suffixed`]): `if c { 1 } else { 2.5f64 }` is `1 | f64`.
+                let (a, b) = (
+                    self.read_as_value(then, *a),
+                    self.read_as_value(otherwise, b),
+                );
                 // An unreachable branch is still checked, and adds nothing to the result
                 // (sec:constraints: an arm a narrowing test makes bottom adds nothing to the join).
                 // The reduced product is asked only of a branch whose type adds something to
@@ -1674,7 +1690,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // O(size of the two branches), as at `note_alone`.
                 let live = match dead {
                     (true, false) => Some((&b, otherwise, then)),
-                    (false, true) => Some((&*a, then, otherwise)),
+                    (false, true) => Some((&a, then, otherwise)),
                     _ => None,
                 };
                 if let Some((t, e, gone)) = live
@@ -1695,7 +1711,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let t = match dead {
                     (true, true) => Ty::empty(),
                     (true, false) => b,
-                    (false, true) => *a,
+                    (false, true) => a,
                     (false, false) => self.branches(then, &a, otherwise, &b),
                 };
                 m.ty(out.union(&t));
@@ -3883,7 +3899,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         m.k(Frame::InferEnd(s));
         match &f.body.kind {
             ExprKind::Block(stmts) if !f.equation => m.job(Job::Scope(stmts, false)),
-            _ => m.job(Job::Expr(&f.body)),
+            _ => {
+                // The value of a body that is a literal with a suffix is of its carrier:
+                // `t() = 2.5f64` is `() -> f64` ([`Self::suffixed`]).
+                if let Some(c) = self.suffixed(&f.body) {
+                    m.k(Frame::Const(Ty::carrier(c)));
+                }
+                m.job(Job::Expr(&f.body))
+            }
         }
     }
 
@@ -3893,6 +3916,40 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.spells(&l.value, l.span);
         if l.neg() && is_zero(&l.value) {
             self.spells(&l.value, l.site);
+        }
+    }
+
+    /// The carrier of `e` where it is a literal with a suffix, perhaps under `-` or as the one
+    /// value of a block, as `2.5f64`, `-2r` or `{ 2.5f32 }`: such a literal is a value of its
+    /// carrier where a value is read, at a branch of an `if`, the default of an `else` and the
+    /// value of a body (DESIGN.md sec:type_resolution: `if c { 1 } else { 2.5f64 }` is
+    /// `1 | f64`, and "a decimal ... with a suffix, is an `f64`"; plan row LIT-forced-carrier).
+    /// As an operand it keeps its value, so a divisor `3r` holds no zero (L1.26a). O(the
+    /// literal's text).
+    fn suffixed(&self, e: &Expr) -> Option<Carrier> {
+        let e = exported(e);
+        let x = match &e.kind {
+            ExprKind::Unary(UnaryOp::Neg, x) => &**x,
+            _ => e,
+        };
+        match &x.kind {
+            ExprKind::Rat(_) => Some(Carrier::Rat),
+            ExprKind::Float {
+                forced: Some(_), ..
+            } => match read_literal(x, self.t.text) {
+                Ok(Some(l)) => Some(lit_carrier(&l.value)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `t`, the type of `e`, where `e` is read as a value: its carrier where it is a literal
+    /// with a suffix ([`Self::suffixed`]).
+    fn read_as_value(&self, e: &Expr, t: Ty) -> Ty {
+        match self.suffixed(e) {
+            Some(c) => Ty::carrier(c),
+            None => t,
         }
     }
 
@@ -8413,7 +8470,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     || divides
                         && ((!y.ty.contains(&Value::Int(0)) && !y.ty.contains(&rat_zero))
                             || (int_divisor && !self.ints_here(b).0.contains(0))
-                            || (carried_only(Carrier::Rat) && !self.may_be_here(b, &rat_zero)));
+                            || (carried_only(Carrier::Rat)
+                                && (!self.may_be_here(b, &rat_zero) || rat_literals_no_zero(b))));
                 // An int divisor whose range holds 0 under the tests: whether a state reaches
                 // it at 0 at all, the written constraints evaluated at the integer roots of
                 // the divisor (QUESTIONS A81, `Scope::zero_reached`). Outside every test, or
@@ -8444,6 +8502,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // A `rat` power fails only for `0r` to a negative power.
                 let total_power = op == BinaryOp::Pow
                     && (!x.ty.contains(&rat_zero)
+                        || x.expr.is_some_and(rat_literals_no_zero)
                         || self.ints_here(b).0.is_subset(&at_least_zero()));
                 let carried = [&x.ty, &y.ty]
                     .iter()
@@ -25999,7 +26058,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let Some(k) = (from..self.errors.len()).find(|&k| {
             let e = &self.errors[k];
-            e.span == lit.site && e.row == Some(Row::LiteralCarrier)
+            e.span == lit.site && matches!(e.row, Some(Row::LiteralCarrier | Row::NoCommonCarrier))
         }) else {
             return;
         };
@@ -27461,13 +27520,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
+        // A literal written with a suffix is a value of its carrier (DESIGN.md sec:diagnostics:
+        // "a forced literal beside a value of another carrier, `q + 1.5f64` with `q: int`" is
+        // in the row of two numeric values with no common carrier; "a literal without a
+        // suffix has the row above"), so where every refused literal has one, the row is that
+        // one (plan row LIT-forced-carrier).
+        let forced = refused
+            .iter()
+            .all(|(s, _)| lits.get(s).is_some_and(|l| !l.bare));
         let row = match self.no_arrow_at_carrier(what, sig, args) {
             true => Row::NoArrowAtCarrier,
+            false if forced => Row::NoCommonCarrier,
             false => Row::LiteralCarrier,
         };
         // Where the operands have no common carrier, the application's derivation and
         // repairs, once for all its literals; otherwise each literal's own derivation.
-        let applied = row == Row::LiteralCarrier && self.no_common_carrier(sig, args);
+        let applied = matches!(row, Row::LiteralCarrier | Row::NoCommonCarrier)
+            && self.no_common_carrier(sig, args);
         // In a trial such a refusal stands at the application, as [`Self::forced_rat`] puts a
         // `rat` literal's: it is the operands' together, so a type a repair gives another
         // operand that the literal still refuses, as `rat` for `z` in `z * 2.0f64`, is
@@ -29996,6 +30065,9 @@ enum Zero {
     Literal,
     /// Its type, written here, holds no value but zero.
     Type(String),
+    /// Each branch that gives it is a zero `rat` literal with its suffix, the first written here,
+    /// as in `if c { -0r } else { 0r }`, whose type is `rat` (plan row LIT-forced-carrier).
+    Branches(String),
     /// The int value its text folds to is `0`.
     Folded,
     /// The tests the walk is in leave it only `0`.
@@ -30025,6 +30097,45 @@ fn zero_rat(e: &Expr) -> bool {
             m.bytes().all(|c| c == b'0' || c == b'.') && m.bytes().any(|c| c == b'0')
         }),
         _ => false,
+    }
+}
+
+/// The `rat` literals, perhaps under `-`, that give every value `e` gives, in the order of the
+/// text, read through the branches of `if`s and blocks that end in one value, or `None` where a
+/// value comes from anything else: `if c { 1r } else { -2r }` gives `[1r, -2r]`. A literal with
+/// a suffix is a value of its carrier where a value is read, so the type of such an `if` is
+/// `rat` (plan row LIT-forced-carrier), and the values its branches write are read here, where
+/// a divisor or the base of `^` asks whether it may be, or must be, `0r` (DESIGN.md
+/// sec:failure). O(size of `e`), one pass over its branches.
+fn rat_literal_branches(e: &Expr) -> Option<Vec<&Expr>> {
+    let mut todo = vec![e];
+    let mut out = Vec::new();
+    while let Some(e) = todo.pop() {
+        let e = exported(e);
+        match &e.kind {
+            // Pushed in reverse, so `then` is read first and the literals come in text order.
+            ExprKind::If {
+                then, otherwise, ..
+            } => todo.extend([&**otherwise, &**then]),
+            ExprKind::Unary(UnaryOp::Neg, x) if matches!(x.kind, ExprKind::Rat(_)) => out.push(e),
+            ExprKind::Rat(_) => out.push(e),
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// Whether `e` gives only `rat` literals and none is zero ([`rat_literal_branches`],
+/// [`zero_rat`]): where no reaching input gives `#divByZero` the result has none.
+fn rat_literals_no_zero(e: &Expr) -> bool {
+    rat_literal_branches(e).is_some_and(|ls| !ls.iter().any(|l| zero_rat(under_neg(l))))
+}
+
+/// The literal under one `-`, or `e` itself.
+fn under_neg(e: &Expr) -> &Expr {
+    match &e.kind {
+        ExprKind::Unary(UnaryOp::Neg, x) => x,
+        _ => e,
     }
 }
 
@@ -30105,13 +30216,25 @@ impl<'a> Ck<'_, 'a> {
         if value.closed() && !value.lists_nothing() {
             let zeros = Ty::lit(&Value::Int(0)).union(&Ty::lit(&Value::rat(Rat::int(0.into()))));
             if value.subtype(&zeros) {
-                // Its zero printed as the divisor writes it, `-0r` in `x / (if c { -0r } else
-                // { 0r })`, which writes it first.
+                // Its zero printed as the divisor writes it, `-0r` for `z: -0r`.
                 // The chain of names is walked once per such division, O(its length), which is
                 // also the length of the derivation the message prints.
                 let at = self.written_at(b.span, &mut HashMap::new());
                 let text = self.near(Some(at), |ck| ck.text(&y.ty));
                 return Some(Zero::Type(text));
+            }
+            // An `if` whose branches are all zero `rat` literals, each with its suffix, has the
+            // type `rat` (plan row LIT-forced-carrier), and still gives only 0: its zero prints
+            // as the first literal the divisor writes.
+            if let Some(first) = rat_literal_branches(b)
+                .filter(|ls| ls.iter().all(|l| zero_rat(under_neg(l))))
+                .and_then(|ls| ls.first().copied())
+            {
+                if let Some(t) = self.t.text {
+                    return Some(Zero::Branches(
+                        t[first.span.start..first.span.end].to_string(),
+                    ));
+                }
             }
             // The narrowing of the tests reads values as ints, so it is read only for an int
             // divisor.
@@ -30245,6 +30368,7 @@ impl<'a> Ck<'_, 'a> {
             }
             Zero::Literal => "its divisor is the literal 0".to_string(),
             Zero::Type(t) => format!("its divisor has the type `{t}`, whose only value is 0"),
+            Zero::Branches(t) => format!("each branch of its divisor is a literal 0, as `{t}` is"),
             Zero::Folded => "its divisor is built from constants and works out to 0".to_string(),
             Zero::Tests => {
                 notes.extend(self.deciding_notes(b));

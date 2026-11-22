@@ -400,8 +400,10 @@ fn a_plain_literal_beside_a_value_of_another_carrier_is_a_case_of_the_row() {
     // row.
     checks(&program("half(r: rat) = r * 1.5;"));
     // `f64(r)` is inexact, so no cast is offered.
+    // A forced literal beside a value of another carrier is in the row "Two numeric values with
+    // no common carrier" (DESIGN.md sec:diagnostics; plan row LIT-forced-carrier).
     let src = program("half(r: rat) = r * 1.5f64;");
-    assert_eq!(rows(&src), [Some(Row::LiteralCarrier)]);
+    assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
     assert!(menu(&src).is_empty());
 }
 
@@ -490,8 +492,10 @@ fn a_comparison_with_a_literal_of_another_carrier_offers_the_cast_of_the_value()
 #[test]
 fn two_literals_of_different_carriers_compared_show_both() {
     // Each literal has a suffix, so neither takes the other's carrier.
+    // Forced literals are in the row "Two numeric values with no common carrier" (DESIGN.md
+    // sec:diagnostics; plan row LIT-forced-carrier).
     let src = program("same() = 1r == 1.0f64;");
-    assert_eq!(rows(&src), [Some(Row::LiteralCarrier)]);
+    assert_eq!(rows(&src), [Some(Row::NoCommonCarrier)]);
     let out = rejected(&src);
     let s = steps(&out);
     // A `rat` literal is shown as the expression it is.

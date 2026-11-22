@@ -127,8 +127,9 @@ impl<'a> Elab<'a> {
     }
 
     /// Keeps, for [`Self::in_checker_error`], the span of each of the checker's errors
-    /// `errors`, and the site of each literal that an error of rows `UnfixedDecimal` and
-    /// `LiteralCarrier` reports at another literal ([`Info::reported_literals`]): such an error
+    /// `errors`, and the site of each literal that an error of rows `UnfixedDecimal`,
+    /// `LiteralCarrier` and `NoCommonCarrier` reports at another literal
+    /// ([`Info::reported_literals`]): such an error
     /// stands for every literal of the class or the part of a value it rejects, at the site of
     /// one of them, as `y = 1e400 + 1e400` is reported at its first `1e400`.
     // Complexity tradeoff: a test of each literal against each error costs O(k*e) for k

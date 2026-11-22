@@ -15,8 +15,8 @@ f64 | #none => f64 | #none -- sec:type_resolution "each value keeps its own carr
 =#none => #none -- L1.26b "f(x) = (x, 1) is (x: T) -> (T, 1)" (a literal returned keeps its value); sec:diagnostics "-3 for -3r" (a signed literal is a literal)
 =2 => 2 -- L1.26b "f(x) = (x, 1) is (x: T) -> (T, 1)" (a literal returned keeps its value); sec:diagnostics "-3 for -3r" (a signed literal is a literal)
 =2.5 => 2.5 -- L1.26b "f(x) = (x, 1) is (x: T) -> (T, 1)" (a literal returned keeps its value); sec:diagnostics "-3 for -3r" (a signed literal is a literal)
-=2.5f64 => f64 !! LIT-forced-carrier: 2.5 -- sec:type_resolution "each value keeps its own carrier"
-=2r => rat !! LIT-forced-carrier: 2r -- sec:type_resolution "each value keeps its own carrier"
+=2.5f64 => f64 -- sec:type_resolution "each value keeps its own carrier"
+=2r => rat -- sec:type_resolution "each value keeps its own carrier"
 =k => 2 -- L1.26b "f(x) = (x, 1) is (x: T) -> (T, 1)" (a literal returned keeps its value); sec:diagnostics "-3 for -3r" (a signed literal is a literal)
 
 template: -$0
@@ -33,8 +33,8 @@ f64 | #none => f64 | #none -- sec:lexical "+ - * arithmetic on numbers"; sec:dom
 =#none => #none -- sec:failure "an atom an operand carries in passes through"; author decision "loose atoms bubble when the rest matches"
 =2 => -2 -- L1.26b "f(x) = (x, 1) is (x: T) -> (T, 1)" (a literal returned keeps its value); sec:diagnostics "-3 for -3r" (a signed literal is a literal)
 =2.5 => -2.5 -- L1.26b "f(x) = (x, 1) is (x: T) -> (T, 1)" (a literal returned keeps its value); sec:diagnostics "-3 for -3r" (a signed literal is a literal)
-=2.5f64 => f64 !! LIT-forced-carrier: -2.5 -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
-=2r => rat !! LIT-forced-carrier: -2r -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
+=2.5f64 => f64 -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
+=2r => rat -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
 =k => int -- sec:lexical "+ - * arithmetic on numbers"; sec:domains "three() = 1 + 2 is () -> int"
 
 template: !$0

@@ -198,14 +198,15 @@ fn a_constant_defined_as_zero_rat_prints_its_own_literal() {
     );
 }
 
-/// `-0r` and `0r` are one value, so the branch's type has one member. It prints as the first
-/// literal of that value written in the divisor, and each branch's step prints its own literal.
+/// `-0r` and `0r` are one value. Each branch is a literal with a suffix, so the `if` gives `rat`
+/// (plan row LIT-forced-carrier); the headline names the first literal written in the divisor,
+/// and each branch's step prints its own literal.
 #[test]
 fn a_branch_of_two_zero_rat_spellings_prints_the_first_written() {
     assert_eq!(
         shown("f(x: rat, c: bool) = x / (if c { -0r } else { 0r });\n"),
         "\
-1:22: `/` here always fails with `#divByZero`: its divisor has the type `-0r`, whose only value is 0, so no value that reaches it gives a rat.
+1:22: `/` here always fails with `#divByZero`: each branch of its divisor is a literal 0, as `-0r` is, so no value that reaches it gives a rat.
   [1]  1:26: this divisor is always 0
        1 | f(x: rat, c: bool) = x / (if c { -0r } else { 0r });
          |           ^^^^^^^ [4]    ^^^^^^^^^^^^^^^^^^^^^^^^^^ [1, 2]
@@ -214,7 +215,7 @@ fn a_branch_of_two_zero_rat_spellings_prints_the_first_written() {
          |                                ^^^^^^^ [5]
          |                                  ^^^ [6]      ^^ [9]
          |                                   ^^ [7]
-  [2]  1:26: this `if` gives -0r
+  [2]  1:26: this `if` gives rat
   [3]  1:30: `c` is bool here
   [4]  1:11: `c` is declared `bool`
   [5]  1:32: this block gives -0r
@@ -236,7 +237,7 @@ fn a_branch_of_two_zero_rat_spellings_in_the_other_order() {
     assert_eq!(
         shown("f(x: rat, c: bool) = x / (if c { 0r } else { -0r });\n"),
         "\
-1:22: `/` here always fails with `#divByZero`: its divisor has the type `0r`, whose only value is 0, so no value that reaches it gives a rat.
+1:22: `/` here always fails with `#divByZero`: each branch of its divisor is a literal 0, as `0r` is, so no value that reaches it gives a rat.
   [1]  1:26: this divisor is always 0
        1 | f(x: rat, c: bool) = x / (if c { 0r } else { -0r });
          |           ^^^^^^^ [4]    ^^^^^^^^^^^^^^^^^^^^^^^^^^ [1, 2]
@@ -244,7 +245,7 @@ fn a_branch_of_two_zero_rat_spellings_in_the_other_order() {
          |                              ^ [3]         ^^^^^^^ [7]
          |                                ^^^^^^ [5]     ^^ [9]
          |                                  ^^ [6]      ^^^ [8]
-  [2]  1:26: this `if` gives 0r
+  [2]  1:26: this `if` gives rat
   [3]  1:30: `c` is bool here
   [4]  1:11: `c` is declared `bool`
   [5]  1:32: this block gives 0r

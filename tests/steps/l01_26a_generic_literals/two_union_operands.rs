@@ -230,13 +230,16 @@ fn a_decimal_from_a_call_or_with_a_suffix_is_still_refused_at_rat() {
     // `1` and `2.5` each convert to a `rat` exactly, so that `rat(…)` gives no atom and `hr`
     // takes it (item CAST-literal-exact).
     assert!(type_errors(&with("hr(rat(if b { gd(b) } else { 2.5 }))")).is_empty());
+    // A branch with a suffix is a value of its carrier, an `f64` (DESIGN.md
+    // sec:type_resolution, "a decimal a call gives, or one with a suffix, is an `f64`, and is
+    // refused there"; plan row LIT-forced-carrier). The message that names the branch and
+    // its repair `2.5r`, which the listed value `2.5f64` gave before, is plan row
+    // MSG-if-suffixed-branch-refused.
     assert_eq!(
         type_errors(&with("hr(if b { r } else { 2.5f64 })")),
         [
-            "`hr` does not take (2.5f64 | rat): the `if` may give the decimal 2.5, an `f64` \
-             where it is written, and no `f64` is read as a `rat`. Write 2.5r where it is \
-             written, or give this parameter of `hr` the type `f64`. \
-             [hr(if b { r } else { 2.5f64 })]"
+            "`hr` does not take (f64): no arrow of `hr` takes these types. \
+          [hr(if b { r } else { 2.5f64 })]"
         ]
     );
 }

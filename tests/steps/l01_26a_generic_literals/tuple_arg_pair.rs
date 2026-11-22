@@ -206,7 +206,8 @@ fn a_component_returned_beside_a_carrier_checks_as_the_literal_alone() {
             "h(positional p) = if p[0] < 5 { p[0] } else { 0r };",
             "h((7, 2))",
             "h(7)",
-            "0r | int",
+            // The branch `0r` is a value of its carrier (plan row LIT-forced-carrier).
+            "int | rat",
             "0r\n",
         ),
     ] {
