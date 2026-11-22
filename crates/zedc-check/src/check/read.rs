@@ -247,35 +247,26 @@ fn read_part(
         .map(|(n, _)| n.into())
         .collect();
     found.extend(free.iter().cloned());
-    // A difference the checker's types cannot hold exactly is refused, as a program's written
-    // type is (`Ck::written`), rather than read as more than it says: before, `_ \ #a` read
-    // as `_` (TEST-read-type-flaws), so a printed type that lost its difference would have
-    // read back as another type with no word of it. A difference that takes part of a
-    // variable is held by `left_of` and never reaches the list.
+    // A difference from the unknown `_` is refused rather than read as more than it says:
+    // before, `_ \ #a` read as `_` (TEST-read-type-flaws), so a printed type that lost its
+    // difference read back as another type with no word of it. `Ty` has no form for part of
+    // the unknown. Only this cause is refused: the exactness flag of `Ty::diff_exact` is
+    // conservative for payloads and tuples (`#a(x: int) \ #a(y: int)` is flagged though it
+    // reads back as `#a(x: int)`, l01_22 `kinds::the_difference_of_payloads_of_one_atom_takes_the_payloads`),
+    // and a difference that takes part of a variable is held by `left_of`.
     let (ty, inexact) = denoted_inexact(&t, binds, &free);
-    if let Some(Inexact {
-        span,
-        printed,
-        cause,
-    }) = inexact.into_iter().next()
+    if let Some(Inexact { span, printed, .. }) = inexact
+        .into_iter()
+        .find(|i| matches!(i.cause, Loss::Unknown))
     {
         let d = match body.get(span.start..span.end) {
             Some(s) => written.back(s),
             None => printed,
         };
-        let why = match cause {
-            Loss::Unknown => "part of the unknown `_`, which no type the checker holds can \
-                              state; it would read back as all of `_`"
-                .to_string(),
-            Loss::Var(right) => format!(
-                "`{}`, which holds a type variable, so what it takes away is not known",
-                written.back(&right)
-            ),
-            Loss::FunctionRow => "part of a tuple or payload that holds a function type, which \
-                                  the checker keeps whole"
-                .to_string(),
-        };
-        return Err(format!("`{text}`: `{d}` takes away {why}"));
+        return Err(format!(
+            "`{text}`: `{d}` takes away part of the unknown `_`, which no type the checker \
+             holds can state; it would read back as all of `_`"
+        ));
     }
     // Each variable the part bounds must be on a signature its type reaches, at any depth,
     // the definitions it names included. Only a part with a `for` clause is walked: with no
