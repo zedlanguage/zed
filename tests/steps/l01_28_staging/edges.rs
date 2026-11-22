@@ -12,8 +12,10 @@ use zed_tests::step_helpers::l01_16_elaboration::elab;
 
 use super::{out, staged, term};
 
-fn ints(vs: &[i64]) -> BTreeSet<Value> {
-    vs.iter().copied().map(Value::Int).collect()
+/// The ints `vs`, each once, ascending: the order [`passed`] gives ints in.
+fn ints(vs: &[i64]) -> Vec<Value> {
+    let set: BTreeSet<Value> = vs.iter().copied().map(Value::Int).collect();
+    set.into_iter().collect()
 }
 
 const NONE_PASSED: &str = "no static call passes a value of the domain";

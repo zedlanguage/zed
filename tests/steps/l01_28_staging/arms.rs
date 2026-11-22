@@ -199,7 +199,7 @@ fn stopped_at_join(out: &str) {
 fn a_split_function_called_with_a_value_read_at_run_time_gives_what_the_function_gives() {
     let p = load(PORT.as_bytes()).unwrap();
     let u = p.unit();
-    assert_eq!(passed(u, "ship", 0), [Value::Int(0), Value::Int(3)].into());
+    assert_eq!(passed(u, "ship", 0), [Value::Int(0), Value::Int(3)]);
     let (lam, _) = split(u, "ship", 0, &Domain::Ints(Some(0), Some(9))).unwrap();
     assert_eq!(
         lam.to_string(),
@@ -255,9 +255,14 @@ pub(super) fn stopped_each(readers: usize) -> String {
     s
 }
 
-/// The least work of staging `p` in two runs.
+/// The least work of staging `p` in two runs, or in as many as [`Meter::runs`] allows where
+/// that is more.
 pub(super) fn staging_work(meter: &mut Meter, p: &Program) -> u64 {
-    (0..2)
+    // On processor time, which changes with load, the least of as many runs as the meter
+    // allows (`Meter::runs`); two runs of each program were not enough there: 8 readers
+    // measured 0.43 ms more than 1 against a stop of 0.49 ms (std VM, 2026-11-22), where
+    // instructions give 0.5 million against 6.8 million.
+    (0..meter.runs().0.max(2))
         .map(|_| {
             meter
                 .work(|| {
@@ -498,7 +503,7 @@ fn the_trick_splits_a_tuple_domain_on_the_tuples_passed_within_it() {
     );
     let u = elab(ROUTES).unwrap();
     assert_eq!(
-        passed(&u, "fee", 0),
+        passed(&u, "fee", 0).into_iter().collect::<BTreeSet<_>>(),
         [route(true, "air"), route(false, "sea"), route(true, "rail")].into()
     );
     let mut rng = Rng::new(SEED);
@@ -532,7 +537,7 @@ fn the_trick_splits_a_finite_literal_set_on_the_values_passed_within_it() {
         Choice::Split(vec![Value::Int(0), Value::Int(3)])
     );
     assert_eq!(
-        trick(&d, &[Value::Int(9)].into()),
+        trick(&d, &[Value::Int(9)]),
         Choice::Keep("no static call passes a value of the domain".into())
     );
     let u = elab(SHOP).unwrap();

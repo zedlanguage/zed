@@ -1698,9 +1698,9 @@ pub enum Choice {
     Keep(String),
 }
 
-/// The Trick: split on the members of `d` among `passed` only when `d` is finite. A type is
-/// finite here when it is known finite ([`Type::finite`]).
-pub fn trick(d: &Domain, passed: &BTreeSet<Value>) -> Choice {
+/// The Trick: split on the members of `d` among `passed`, in their order, only when `d` is
+/// finite. A type is finite here when it is known finite ([`Type::finite`]).
+pub fn trick<'v>(d: &Domain, passed: impl IntoIterator<Item = &'v Value>) -> Choice {
     let within: Vec<Value> = match d {
         Domain::Type(t) => {
             if !t.finite() {
@@ -1713,10 +1713,14 @@ pub fn trick(d: &Domain, passed: &BTreeSet<Value>) -> Choice {
                 }
                 return Choice::Keep(why);
             }
-            passed.iter().filter(|v| t.contains(v)).cloned().collect()
+            passed
+                .into_iter()
+                .filter(|v| t.contains(v))
+                .cloned()
+                .collect()
         }
         Domain::Ints(Some(lo), Some(hi)) => passed
-            .iter()
+            .into_iter()
             .filter(|v| matches!(v, Value::Int(i) if lo <= i && i <= hi))
             .cloned()
             .collect(),
@@ -1732,8 +1736,9 @@ pub fn trick(d: &Domain, passed: &BTreeSet<Value>) -> Choice {
 
 /// The values the static calls of `name` in `unit` pass its parameter `param`: each call by
 /// its kernel name, in a definition once mixed, whose argument there is a literal, and each
-/// case of a test of `name` whose argument there is a literal.
-pub fn passed(unit: &Unit, name: &str, param: usize) -> BTreeSet<Value> {
+/// case of a test of `name` whose argument there is a literal; each value once, in the order
+/// of [`Specializer::passed`].
+pub fn passed(unit: &Unit, name: &str, param: usize) -> Vec<Value> {
     Specializer::new(unit).passed(name, param)
 }
 
@@ -1758,10 +1763,12 @@ pub struct Specializer<'u> {
     unit: &'u Unit,
     /// The position of the first definition of each source name.
     by_name: HashMap<&'u str, usize>,
-    /// The literal arguments of the calls of each kernel name, by parameter.
-    calls: HashMap<(Arc<str>, usize), BTreeSet<Value>>,
+    /// The literal arguments of the calls of each kernel name, by parameter, keyed by their
+    /// canonical forms ([`Key`]), so a joined string or a shared tuple is not read whole at a
+    /// comparison (item STAGE-byte-keys).
+    calls: HashMap<(Arc<str>, usize), BTreeSet<Key>>,
     /// The literal arguments of the tests' cases of each source name, by parameter.
-    cases: HashMap<(&'u str, usize), BTreeSet<Value>>,
+    cases: HashMap<(&'u str, usize), BTreeSet<Key>>,
     mixer: Mixer,
 }
 
@@ -1778,7 +1785,8 @@ impl<'u> Specializer<'u> {
         // definition whose mix fails is left to run.
         let (mixed, mut mixer) = mix_keeping(unit, &roots);
         mixer.report = Report::default();
-        let mut calls: HashMap<(Arc<str>, usize), BTreeSet<Value>> = HashMap::new();
+        let mut calls: HashMap<(Arc<str>, usize), BTreeSet<Key>> = HashMap::new();
+        let key = |v: &Value| Key::new(&mixer.names, v);
         // Each part held in a node is read once, however many places reach it.
         let mut seen = HashSet::new();
         let mut todo: Vec<Part<'_>> = mixed.defs.iter().map(|d| Part::held(&d.term)).collect();
@@ -1793,7 +1801,7 @@ impl<'u> Specializer<'u> {
             {
                 for (i, x) in args.iter().enumerate() {
                     if let Term::Lit(v) = x {
-                        calls.entry((f.clone(), i)).or_default().insert(v.clone());
+                        calls.entry((f.clone(), i)).or_default().insert(key(v));
                     }
                 }
             }
@@ -1801,14 +1809,14 @@ impl<'u> Specializer<'u> {
             let subs = subs(p.term).into_iter();
             todo.extend(subs.filter(|(_, _, join)| !join).map(|(q, ..)| q));
         }
-        let mut cases: HashMap<(&'u str, usize), BTreeSet<Value>> = HashMap::new();
+        let mut cases: HashMap<(&'u str, usize), BTreeSet<Key>> = HashMap::new();
         for t in unit.tests.iter() {
             // A clause's values give `main` its inputs, not an argument of a parameter.
             let written = &t.args[..t.args.len() - t.ports.len()];
             for (i, x) in written.iter().enumerate() {
                 if let Term::Lit(v) = x {
-                    let key = (t.function.as_str(), i);
-                    cases.entry(key).or_default().insert(v.clone());
+                    let at = (t.function.as_str(), i);
+                    cases.entry(at).or_default().insert(key(v));
                 }
             }
         }
@@ -1821,15 +1829,17 @@ impl<'u> Specializer<'u> {
         }
     }
 
-    /// The values the static calls of `name` pass its parameter `param` ([`passed`]).
-    pub fn passed(&self, name: &str, param: usize) -> BTreeSet<Value> {
+    /// The values the static calls of `name` pass its parameter `param` ([`passed`]), each
+    /// once, in the order of their canonical forms ([`Key`]).
+    pub fn passed(&self, name: &str, param: usize) -> Vec<Value> {
         let Some(&at) = self.by_name.get(name) else {
-            return BTreeSet::new();
+            return Vec::new();
         };
         let kernel = self.unit.defs[at].kernel.clone();
         let calls = self.calls.get(&(kernel, param)).into_iter().flatten();
         let cases = self.cases.get(&(name, param)).into_iter().flatten();
-        calls.chain(cases).cloned().collect()
+        let keys: BTreeSet<&Key> = calls.chain(cases).collect();
+        keys.into_iter().map(|k| k.value.clone()).collect()
     }
 
     /// The function `name` split on its parameter `param` ([`split`]). Every definition is
@@ -1853,6 +1863,8 @@ impl<'u> Specializer<'u> {
             .get(param)
             .ok_or_else(|| format!("`{name}` has no parameter {param}"))?
             .clone();
+        // The arms are in the order of the keys, which is that of the names and not of the
+        // bytes; their patterns are distinct literals, so no order changes what the split gives.
         let values = match trick(d, &self.passed(name, param)) {
             Choice::Split(vs) => vs,
             Choice::Keep(why) => return Err(why),
@@ -2166,8 +2178,9 @@ fn compared(v: &Value) -> bool {
 /// equal and ordered. The canonical form names each string by its bytes ([`text::names::Names`])
 /// and each tuple or keypath by its kind and the forms of its parts ([`Namer`]), so two keys are
 /// equal exactly when their values are. The order is that of names, not of bytes, and no
-/// result reads it: each map is only looked up, and the run log is read in the order of the
-/// run (item STAGE-joined-eq-build).
+/// result depends on it: each map is only looked up, the run log is read in the order of the
+/// run (item STAGE-joined-eq-build), and the arms of a split, whose literal patterns are
+/// distinct, are in that order (item STAGE-byte-keys).
 // Complexity tradeoff: a key holding a string compared by its bytes reads every byte at each
 // comparison, and a join doubled k times is 2^k bytes in O(k) nodes, so staging gave up
 // keying calls at joins (item STAGE-joined-eq). Here a key's strings are named once, when the
@@ -2179,7 +2192,10 @@ fn compared(v: &Value) -> bool {
 // Tests `l01_28_staging::dag::calls_at_joins_of_100_and_200_bytes_stage_alike`,
 // `l01_28_staging::dag::a_call_at_a_long_join_is_mixed_once` and
 // `l01_28_staging::dag::calls_at_a_doubled_tuple_stage_alike`; COMPLEXITY.md row
-// STAGE-joined-eq-build.
+// STAGE-joined-eq-build. The values the Trick reads ([`Specializer::passed`]) are keyed the
+// same way (item STAGE-byte-keys): tests
+// `l01_28_staging::dag::a_long_join_and_a_doubled_tuple_passed_twice_are_one_value` and
+// `l01_28_staging::bench::dag::the_values_passed_at_long_joins_scale`.
 #[derive(Clone, Debug)]
 struct Key {
     canon: Canon,

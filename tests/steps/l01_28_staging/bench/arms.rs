@@ -19,12 +19,13 @@ fn a_stopped_binding_read_twice_is_evaluated_once() {
         staging_work(&mut meter, &one),
         staging_work(&mut meter, &eight),
     );
-    let stop = staging_work(&mut meter, &each_two) - staging_work(&mut meter, &each_one);
+    let stop =
+        staging_work(&mut meter, &each_two).saturating_sub(staging_work(&mut meter, &each_one));
     assert!(
-        eight - one < stop / 2,
+        eight.saturating_sub(one) < stop / 2,
         "8 readers of one stopped binding cost {} {unit} more than 1 reader; one more stop costs \
          {stop}",
-        eight - one,
+        eight.saturating_sub(one),
         unit = meter.unit()
     );
 }

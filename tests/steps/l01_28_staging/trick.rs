@@ -11,8 +11,10 @@ use zedc::stage::{Choice, Domain, Specializer, passed, split, trick};
 
 use zed_tests::step_helpers::l01_16_elaboration::{elab, with_prelude};
 
-fn ints(vs: &[i64]) -> BTreeSet<Value> {
-    vs.iter().copied().map(Value::Int).collect()
+/// The ints `vs`, each once, ascending: the order [`passed`] gives ints in.
+fn ints(vs: &[i64]) -> Vec<Value> {
+    let set: BTreeSet<Value> = vs.iter().copied().map(Value::Int).collect();
+    set.into_iter().collect()
 }
 
 #[test]
@@ -41,7 +43,7 @@ fn a_finite_domain_is_split_on_the_values_passed_and_an_infinite_one_is_kept() {
         Choice::Keep("the domain `int` is not known to be finite".into())
     );
     assert!(matches!(
-        trick(&Domain::Type(Type::string()), &[Value::str("a")].into()),
+        trick(&Domain::Type(Type::string()), &[Value::str("a")]),
         Choice::Keep(_)
     ));
 }
@@ -109,7 +111,7 @@ fn a_split_function_computes_what_the_function_does() {
 #[test]
 fn the_values_passed_are_read_from_the_calls_once_mixed() {
     let u = elab(PRICE).unwrap();
-    let tiers: BTreeSet<Value> = [Value::atom("basic"), Value::atom("gold")].into();
+    let tiers = [Value::atom("basic"), Value::atom("gold")];
     assert_eq!(passed(&u, "price", 0), tiers);
     // `price(tier: #gold, n: 5)` is all build-stage, so the build computes it and leaves no
     // call; `n` is passed no other literal.

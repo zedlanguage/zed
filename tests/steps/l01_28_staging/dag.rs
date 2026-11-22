@@ -143,10 +143,7 @@ fn mixing_nested_ifs_whose_arms_are_one_part_gives_what_the_tree_gives() {
         assert_eq!(color(&unit(d, true))[1].1, Stage::Build);
         assert_eq!(passed(&unit(d, true), "f", 1).len(), 1);
     }
-    assert_eq!(
-        passed(&unit(3, true), "f", 1),
-        [Value::Int(1)].into_iter().collect()
-    );
+    assert_eq!(passed(&unit(3, true), "f", 1), [Value::Int(1)]);
 }
 
 #[test]
@@ -554,6 +551,58 @@ fn calls_at_a_doubled_tuple_stage_alike() {
     let at_doubled = mixed_nodes_of(doubled);
     let at_literal = mixed_nodes_of(lit(1i64));
     assert_eq!(at_doubled, at_literal);
+}
+
+/// `let twice = (t) -> t ++ t in twice(twice(… seed))`, `d` calls, or with `(t, t)` for
+/// `t ++ t` when `pair`: a string `2^d` times as long as `seed`, or a tuple of `2^d` places,
+/// each built in `d` nodes.
+pub(super) fn doubled(seed: Term, d: usize, pair: bool) -> Term {
+    let both = vec![var("t"), var("t")];
+    let body = prim(if pair { Prim::Tuple } else { Prim::Concat }, both);
+    let twice = lam(&["t"], body);
+    let t = (0..d).fold(seed, |t, _| Term::App(Shared::new(var("twice")), vec![t]));
+    Term::Let("twice".into(), Shared::new(twice), Shared::new(t))
+}
+
+/// `f = (x, y) -> x; main = (n) -> f(n, a0) + (f(n, a1) + … f(n, a(k-1)))` for the `k`
+/// arguments `args`, each built apart: the values passed to `f`'s second parameter are those of
+/// `args`.
+pub(super) fn calls_at(args: Vec<Term>) -> Unit {
+    let f = lam(&["x", "y"], var("x"));
+    let call = |a: Term| Term::App(Shared::new(var("f")), vec![var("n"), a]);
+    let mut args = args.into_iter().rev();
+    let last = call(args.next().expect("an argument"));
+    let body = args.fold(last, |sum, a| prim(Prim::Add, vec![call(a), sum]));
+    let main = Term::Lam(vec!["n".into()], Shared::new(body));
+    Unit {
+        defs: vec![def("f", f), def("main", main)],
+        tests: Arc::from([]),
+        warnings: Vec::new(),
+        int_params: Default::default(),
+        param_names: Default::default(),
+        limits: Default::default(),
+    }
+}
+
+/// Two strings each `"a"` doubled 62 times, `2^62` bytes, built apart, are one value passed, as
+/// are two tuples each `1` doubled 40 times, `2^40` places (item STAGE-byte-keys): the values
+/// are keyed by their canonical forms ([`stage::passed`]), each shared node read once. Before,
+/// they were a `BTreeSet<Value>`, which compared the two joins byte by byte and the two tuples
+/// as trees, `2^62` and `2^40` steps, and did not end. Distinct values stay apart.
+#[test]
+fn a_long_join_and_a_doubled_tuple_passed_twice_are_one_value() {
+    let join = |s: &str| doubled(lit(s), 62, false);
+    let tuple = |i: i64| doubled(lit(i), 40, true);
+    let count = |args: Vec<Term>| passed(&calls_at(args), "f", 1).len();
+    assert_eq!(count(vec![join("a"), join("a")]), 1);
+    assert_eq!(count(vec![tuple(1), tuple(1)]), 1);
+    assert_eq!(count(vec![join("a"), join("b")]), 2);
+    assert_eq!(count(vec![tuple(1), tuple(2)]), 2);
+    assert_eq!(count(vec![join("a"), tuple(1), join("a"), tuple(1)]), 2);
+    // Short values are listed in value order, as before: ints ascending.
+    let ints = (0..4).rev().map(|i| lit(i as i64)).collect();
+    let values = (0..4).map(Value::Int).collect::<Vec<_>>();
+    assert_eq!(passed(&calls_at(ints), "f", 1), values);
 }
 
 /// A call at `("s0" ++ ("s1" ++ … "s(n-1)"), (0, (1, … (n-1, 0))))`, n distinct strings joined and

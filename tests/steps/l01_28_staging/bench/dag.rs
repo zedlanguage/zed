@@ -7,8 +7,8 @@ use zed_tests::scaling;
 use zedc::stage::{self, Stage, color, free, passed};
 
 use crate::dag::{
-    a_join_and_a_tuple, built, distinct, ifs, left_unit, lets, mixed_nodes_of, nodes,
-    the_term_left_reported, unit,
+    a_join_and_a_tuple, built, calls_at, distinct, doubled, ifs, left_unit, lets, mixed_nodes_of,
+    nodes, the_term_left_reported, unit,
 };
 
 #[test]
@@ -122,6 +122,42 @@ fn keying_a_call_at_a_join_and_a_tuple_of_n_parts_scales() {
         n,
         1,
         |d| assert_eq!(mixed_nodes_of(args[&d].clone()), at_literal),
+    );
+}
+
+/// The values passed at n calls, the i-th at `"s(i/2)"` doubled 60 times or at `i/2` doubled
+/// 40 times as a tuple, each built apart: each pair of equal values is one value, keyed by its
+/// canonical form, so the work is O(n log n) and no value is read whole (item STAGE-byte-keys).
+/// The strings are doubled 60 times, not 62: from `"s100"` on, a seed of 4 bytes doubled 62
+/// times is 2^64 bytes, past the longest string, so its evaluation stops and the call is left
+/// to run, not passed (measured: 100 values passed at 800 calls). Doubled 60 times, a seed of
+/// up to 16 bytes stays below 2^64.
+#[test]
+fn the_values_passed_at_long_joins_scale() {
+    let n = 100;
+    let joins = scaling::inputs(n, |k| {
+        calls_at(
+            (0..k)
+                .map(|i| doubled(lit(format!("s{}", i / 2).as_str()), 60, false))
+                .collect(),
+        )
+    });
+    scaling::check(
+        "stage::passed at n strings, each doubled 60 times, built apart",
+        n,
+        |k| assert_eq!(passed(&joins[&k], "f", 1).len(), k / 2),
+    );
+    let tuples = scaling::inputs(n, |k| {
+        calls_at(
+            (0..k)
+                .map(|i| doubled(lit((i / 2) as i64), 40, true))
+                .collect(),
+        )
+    });
+    scaling::check(
+        "stage::passed at n tuples, each doubled 40 times, built apart",
+        n,
+        |k| assert_eq!(passed(&tuples[&k], "f", 1).len(), k / 2),
     );
 }
 
