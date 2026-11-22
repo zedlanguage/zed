@@ -1306,6 +1306,52 @@ run_chunks() {
   echo "merge check: pieces: $sum_p, failed: $sum_f, in $nchunks chunks, $((($(date +%s%N) - start) / 1000000000)) s"
   [ -z "$bad" ]
 }
+# Where the pieces run (FARM-merge-check-remote; author 2026-11-22: "start all future jobs in the
+# cloud via Colab"). By default on Colab VMs, through tools/farm_run.sh (MERGE_CHECK_FARM names
+# another runner); `local` runs them here in chunks (run_chunks above), as before, and is what
+# tools/test_merge_check.sh's toy uses. The selection above, step 0's self-tests, the clippy
+# decision, this script's checks of the trace and the verdict stay here.
+farm=${MERGE_CHECK_FARM:-$(pwd -P)/tools/farm_run.sh}
+[ "$farm" = local ] || [ -x "$farm" ] || { echo "merge check: no farm runner '$farm' (MERGE_CHECK_FARM)" >&2; exit 2; }
+# run_farm <terms>: runs the pieces the terms (one a line, each a group) select, of kind $fullarg,
+# on Colab VMs; fails if a piece failed or a VM's share was lost. Each term is anchored alone,
+# as '^(<terms>)$' anchors them in run_chunks. The VMs' owner is merge-check-<branch>, so the
+# pool shows whose check holds them; 4 VMs, the most one owner may hold (FARM.md). The VMs run
+# tools/run_tests.sh, whose --list there checks no changed documentation (the VM's copy has no
+# origin/main), so that check runs here first, as run_chunks runs it after its list. With
+# --record each VM's trace comes back as a directory of `groups` and `<piece>.reads` files,
+# which join tdirs as run_chunks' chunk directories do. The spec the VMs get is the one the
+# tests here would read (tools/spec_groups.sh --dir). The pieces no VM can run (the short-*
+# pieces, s00_01_tools and s09_release: see the head of tools/farm_run.sh) run nowhere, named on
+# farm_run.sh's `farm: not run` line, until FARM-local-only-pieces-on-vm is done.
+run_farm() {
+  local terms=$1 o owner spec rc d
+  o=$(git rev-parse --path-format=absolute --git-path "merge-check-farm${fullarg:+-full}")/$(date -u +%Y%m%dT%H%M%S)-$$
+  [[ $o == /?*/merge-check-farm*/*-$$ ]] || { echo "merge check: bad farm directory '$o'"; return 1; }
+  mkdir -p "$o" || return 1
+  printf '%s\n' "$terms" >"$o/terms" || return 1
+  if ! tools/check_changed_docs.sh "$o/doc-changed.log" >"$o/doc-changed.out" 2>&1; then
+    cat "$o/doc-changed.out"
+    echo "merge check: FAILED: the check of the changed documentation (log $o/doc-changed.log)"
+    return 1
+  fi
+  owner=merge-check-$(git branch --show-current | tr -c 'A-Za-z0-9._\n-' '-' | sed 's#^wt-##')
+  [ "$owner" != merge-check- ] || owner=merge-check-$(git rev-parse --short=9 HEAD)
+  spec=$(tools/spec_groups.sh --dir) && [[ $spec == /?* ]] && [ -d "$spec" ] ||
+    { echo "merge check: tools/spec_groups.sh --dir gave no spec directory ('$spec')"; return 1; }
+  local a=(--owner "$owner" --vms 4 --jobs "$jobs" --out "$o/run" --terms "$o/terms" --skip-other-kind --spec "$spec")
+  [ -z "$fullarg" ] || a+=("$fullarg")
+  [ -z "$record" ] || a+=(--trace "$o/trace")
+  echo "merge check: $(wc -l <"$o/terms") groups${fullarg:+ of tests/full} on Colab VMs as $owner (logs $o)"
+  "$farm" "${a[@]}"
+  rc=$?
+  if [ -n "$record" ] && [ "$rc" = 0 ]; then
+    for d in "$o/trace"/*/; do
+      [ -f "$d/groups" ] && tdirs+=("${d%/}")
+    done
+  fi
+  [ "$rc" = 0 ]
+}
 # The local groups run first, then the pieces of tests/full with --full; the record is written
 # once both passed. A merge check with --list makes one call of each kind, which lists alone.
 tdirs=()
@@ -1320,7 +1366,11 @@ for kind in local full; do
       { echo "merge check: FAILED: $what (above)" >&2; exit 1; }
     continue
   fi
-  run_chunks "$run" || { echo "merge check: FAILED: $what (above)" >&2; exit 1; }
+  if [ "$farm" = local ]; then
+    run_chunks "$run" || { echo "merge check: FAILED: $what (above)" >&2; exit 1; }
+  else
+    run_farm "$run" || { echo "merge check: FAILED: $what (above)" >&2; exit 1; }
+  fi
 done
 # The groups whose pieces read a file of the spec checkout must be those tools/spec_groups.sh
 # names (step 3 above). One pass over the trace's files; spec_groups.sh runs only when a group

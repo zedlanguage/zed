@@ -209,7 +209,7 @@ EOF
     MAIN_WATCH_PREPARE=$t/bin/prepare MAIN_WATCH_REMOVE=$t/bin/remove MAIN_WATCH_RUN=$t/bin/run \
     MAIN_WATCH_PUBLISH=$t/bin/publish \
     MAIN_WATCH_FIXER=$t/bin/fix MAIN_WATCH_TEMPLATE=$t/template MAIN_WATCH_POLL=0 MAIN_WATCH_POLLS=2 \
-    MW_STATE=$t/state
+    MAIN_WATCH_FARM=local MW_STATE=$t/state
   unset MW_FIX MW_FIX_BREAK MAIN_WATCH_ZRUN MW_LEAK MAIN_WATCH_QUEUE MAIN_WATCH_MIN MW_SEGV MW_FIRST3 MW_DIRTY MW_RUNKILL MW_LIST
 }
 
@@ -309,6 +309,53 @@ FAIL-main-${b:0:9}" "$(command grep -a '"state":"done"' "$t/home/ledger.jsonl" |
       "$(cat "$t/home/main-watch-runs"/*/brief-FAIL-main-"${a:0:9}"-1.md | command grep -a -c -F '(a & b)')"
     check "two: the watcher's and the fixers' worktrees are removed" 1 "$(git -C "$t/repo" worktree list | wc -l)"
     check "two: no bisect is left open" "" "$(git -C "$t/repo" for-each-ref refs/bisect)"
+    ;;
+  farm)
+    # The real run_pieces with a stub tools/farm_run.sh (MAIN_WATCH_FARM; FARM-main-watch-remote):
+    # every run goes through it as owner main-watch, with the pinned spec; nothing runs on this
+    # machine (the zrun given is never called); a run of every piece takes 4 VMs and a run of a
+    # few named pieces 1; the names reach it as a terms file, one a line; the culprits are found as
+    # with zrun.
+    setup
+    unset MAIN_WATCH_RUN
+    cat >"$t/bin/farm" <<'EOF'
+#!/bin/bash
+owner= vms= out= jobs= spec= terms= kind=test list= full=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --owner) owner=$2 && shift ;; --vms) vms=$2 && shift ;; --out) out=$2 && shift ;;
+    --jobs) jobs=$2 && shift ;; --spec) spec=$2 && shift ;;
+    --terms) terms=$2 && shift ;; --except) shift ;;
+    --bench) kind=bench ;; --full) full=1 ;; --list) list=1 ;;
+    *) echo "farm stub: unknown argument $1"; exit 2 ;;
+  esac
+  shift
+done
+names=()
+[ -z "$terms" ] || mapfile -t names <"$terms"
+[ -z "$list" ] || names=(BUILD)
+echo "$owner $vms $kind ${#names[@]} $([ -n "$jobs" ] && [ -d "$spec" ] && [ "$spec" = "$ZED_SPEC_DIR" ] && [ ! -e "$out" ] && echo ok)" >>"$MW_STATE/farm.log"
+"$MW_RUN" "$out" "$kind" "${names[@]}"
+EOF
+    chmod +x "$t/bin/farm"
+    printf '#!/bin/bash\necho "$*" >>"%s"\nexit 0\n' "$t/state/zrun-called" >"$t/bin/zrun-unused"
+    chmod +x "$t/bin/zrun-unused"
+    export MAIN_WATCH_FARM=$t/bin/farm MAIN_WATCH_ZRUN=$t/bin/zrun-unused MW_RUN=$t/bin/run
+    twenty
+    local a b
+    a=$(breaker t_alpha)
+    b=$(breaker b_beta)
+    watch
+    check "farm: exit 0" 0 "$rc"
+    check "farm: the culprits, in order: t_alpha's commit, then b_beta's" "$a
+$b" "$(opened)"
+    check "farm: every run went through it as main-watch, with jobs and the pinned spec" "" \
+      "$(awk '$1 != "main-watch" || $5 != "ok"' "$t/state/farm.log")"
+    check "farm: nothing ran here under zrun" "" "$(cat "$t/state/zrun-called" 2>/dev/null)"
+    check "farm: the runs of every piece took 4 VMs" "" "$(awk '$4 == 0 && $2 != 4' "$t/state/farm.log")"
+    check "farm: the runs of 1 to 8 named pieces took 1 VM" "" "$(awk '$4 >= 1 && $4 <= 8 && $2 != 1' "$t/state/farm.log")"
+    check "farm: runs of every piece of both kinds and of named pieces were made" yes \
+      "$(awk '$4 == 0 && $3 == "test" { t = 1 } $4 == 0 && $3 == "bench" { b = 1 } $4 > 0 { n = 1 } END { if (t && b && n) print "yes" }' "$t/state/farm.log")"
     ;;
   zrun)
     # The real run_pieces (MAIN_WATCH_ZRUN, not MAIN_WATCH_RUN), with pieces named
@@ -807,7 +854,7 @@ bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
   esac
 }
 
-all_cases="two zrun fixbreak failfix nofix segv runkill nottwice nobisect setuperr clean few old oldqueue spec specold known fixedby fixedbyfail fixedbyrace queuedup oldknown oldknownlog skip queue reap build controls"
+all_cases="two farm zrun fixbreak failfix nofix segv runkill nottwice nobisect setuperr clean few old oldqueue spec specold known fixedby fixedbyfail fixedbyrace queuedup oldknown oldknownlog skip queue reap build controls"
 for c in ${@:-$all_cases}; do run_case "$c"; done
 echo "checks failed: $fails"
 [ "$fails" = 0 ]

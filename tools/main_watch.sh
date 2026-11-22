@@ -139,7 +139,8 @@
 # (unlimited), MAIN_WATCH_FULL the run_tests.sh option for the full battery (--full; empty for the
 # local suite alone), MAIN_WATCH_SPEC_SEED the local spec repository its clone is made from
 # (/home/luke/Work/zed; only read), MAIN_WATCH_SPEC_URL the spec remote it fetches (that
-# repository's origin).
+# repository's origin), MAIN_WATCH_FARM the runner of pieces on Colab VMs (tools/farm_run.sh beside
+# this script; `local` runs them here under zrun, as before FARM-main-watch-remote).
 home=${MAIN_WATCH_HOME:-/home/luke/Work/wt}
 repo=${MAIN_WATCH_REPO:-/home/luke/Work/zed-impl}
 trees=${MAIN_WATCH_TREES:-$home/trees}
@@ -166,7 +167,17 @@ flakes=$home/main-watch-flakes.log
 known_file=$home/main-watch-known.txt
 queue=${MAIN_WATCH_QUEUE:-}
 self=$(realpath -e "$0")
-export MAIN_WATCH_HOME=$home MAIN_WATCH_REPO=$repo MAIN_WATCH_FULL=$full MAIN_WATCH_JOBS=$jobs
+[ -n "$self" ] || { echo "main-watch: cannot resolve the path of $0" >&2; exit 2; }
+# The farm runner sits beside this script, so that, like this script (main-watch.sh runs a copy
+# of it), it does not change under a run, and every commit of a bisect runs its pieces the same
+# way, though older commits lack tools/farm_run.sh. main-watch.sh copies only this script, so the
+# first start copies tools/farm_run.sh of $repo beside it.
+farm=${MAIN_WATCH_FARM:-${self%/*}/farm_run.sh}
+if [ "$farm" != local ] && [ ! -x "$farm" ]; then
+  [ "$farm" = "${self%/*}/farm_run.sh" ] && [ -x "$repo/tools/farm_run.sh" ] && cp "$repo/tools/farm_run.sh" "$farm" ||
+    { echo "main-watch: no farm runner $farm (MAIN_WATCH_FARM; \`local\` runs the pieces here)" >&2; exit 2; }
+fi
+export MAIN_WATCH_HOME=$home MAIN_WATCH_REPO=$repo MAIN_WATCH_FULL=$full MAIN_WATCH_JOBS=$jobs MAIN_WATCH_FARM=$farm
 
 ts() { date -u +%FT%TZ; }
 say() { echo "main-watch: $*"; }
@@ -208,26 +219,51 @@ run_pieces() {
   local logs=$1 kind=$2 p names=()
   shift 2
   for p in "$@"; do [ "$p" = BUILD ] || names+=("$p"); done
-  local a=(--logs "$logs")
+  local a=() skip=
   if [ "$kind" = bench ]; then a+=(--bench); elif [ -n "$full" ]; then a+=("$full"); fi
-  if [ ${#names[@]} -gt 0 ]; then
-    # Each name its own alternative, ^<name>$|^<name>$: run_tests.sh reads the text before the
-    # first :: of each top-level alternative as the group, which must be an extended regular
-    # expression by itself, so ^(a::x|b::y)$ is refused (exit 2, no piece run) and each failure
-    # read as a flake (TOOL-main-watch-start-green, 2026-11-20; test_main_watch.sh case zrun).
-    a+=(--only "$(printf '%s\n' "${names[@]}" | sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' | paste -sd'|')")
-  elif [ $# -gt 0 ]; then
-    a+=(--list)
-  else
+  if [ ${#names[@]} -eq 0 ] && [ $# -eq 0 ]; then
     # A run of every piece leaves out those of this kind the known list marks skip, each as its
-    # own anchored alternative, as for --only above; only lines in force at the commit checked out
+    # own anchored alternative, as for --only below; only lines in force at the commit checked out
     # here, so a skipped piece runs at a commit holding its fix and can be seen to pass.
-    local skip
     skip=$(known_lines "$(git rev-parse HEAD)" in | awk -v k="$kind:" '$3 == "skip" && index($1, k) == 1 { print substr($1, length(k) + 1) }' |
       sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' | paste -sd'|')
     [ -z "$skip" ] || a+=(--except "$skip")
   fi
-  "$zrun" tools/run_tests.sh "${a[@]}" "$jobs"
+  if [ "$farm" = local ]; then
+    if [ ${#names[@]} -gt 0 ]; then
+      # Each name its own alternative, ^<name>$|^<name>$: run_tests.sh reads the text before the
+      # first :: of each top-level alternative as the group, which must be an extended regular
+      # expression by itself, so ^(a::x|b::y)$ is refused (exit 2, no piece run) and each failure
+      # read as a flake (TOOL-main-watch-start-green, 2026-11-20; test_main_watch.sh case zrun).
+      a+=(--only "$(printf '%s\n' "${names[@]}" | sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' | paste -sd'|')")
+    elif [ $# -gt 0 ]; then
+      a+=(--list)
+    fi
+    "$zrun" tools/run_tests.sh --logs "$logs" "${a[@]}" "$jobs"
+    return
+  fi
+  # On Colab VMs (FARM-main-watch-remote; author 2026-11-22: "start all future jobs in the cloud
+  # via Colab"): tools/farm_run.sh takes the same selection, the names one a line in a file (it
+  # anchors each as above), with the log directory as its --out, and prints the same summary
+  # lines and BUILD FAILED; see its head for how the pieces are dealt to the VMs, why a
+  # benchmark's series stays on one VM and is run again there once when it fails, and which few
+  # pieces no VM can run yet (run nowhere, named on a `farm: not run` line; nothing runs on this
+  # machine, author 2026-11-22). A run of up to 8 named pieces (fails_twice's runs, each step of a
+  # bisect) takes one VM: a VM's start (packing, upload, an incremental build) takes minutes,
+  # longer than such pieces; a larger run takes 4, the most one owner may hold (FARM.md). Its
+  # exit, 129 when a VM's share could not be run, is 128 or more, which run's callers read as a
+  # crashed runner (see Stuck above), never as passing pieces.
+  local vms=4
+  [ $# -eq 0 ] || [ ${#names[@]} -gt 8 ] || vms=1
+  a+=(--owner main-watch --vms "$vms" --jobs "$jobs" --out "$logs")
+  [ -z "${ZED_SPEC_DIR:-}" ] || a+=(--spec "$ZED_SPEC_DIR")
+  if [ ${#names[@]} -gt 0 ]; then
+    printf '%s\n' "${names[@]}" >"$logs.terms" || return 2
+    a+=(--terms "$logs.terms")
+  elif [ $# -gt 0 ]; then
+    a+=(--list)
+  fi
+  "$farm" "${a[@]}"
 }
 # --pieces <sid file> <run_pieces arguments>: run_pieces in a process of its own, which run starts
 # as a new session; it writes its pid, the session's id, to <sid file> first.
@@ -819,12 +855,12 @@ check() {
       [ "$r" -lt 128 ] || crashed+="$k (exit $r) "
     done
     # The runner itself ended by a signal (tools/run_tests.sh killed, by the kernel's OOM killer
-    # or by hand): the pieces it did not report would read as passing, so the head is not checked;
+    # or by hand), or tools/farm_run.sh could not run a VM's share (exit 129): the pieces it did not report would read as passing, so the head is not checked;
     # the next poll runs everything again. (A crashing piece is not this: run_tests.sh reports it
     # with its rc.) The runs of fails_twice are not checked this way: a runner killed there reads
     # as the pieces passing, which at worst calls a failure a flake or moves a bisect step.
     if [ -n "$crashed" ]; then
-      stuck - "the run of every ${crashed% } at $(short "$head") ended by a signal" "The pieces it did not report would read as passing, so $(short "$head") is not checked; the next poll runs everything again. Outputs: $all"
+      stuck - "the run of every ${crashed% } at $(short "$head") ended by a signal or lost a VM's share" "The pieces it did not report would read as passing, so $(short "$head") is not checked; the next poll runs everything again. Outputs: $all"
       return 0
     fi
     fails=$(sed '/^$/d' <<<"$fails")

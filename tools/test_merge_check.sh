@@ -304,6 +304,9 @@ sorted() { tr ' ' '\n' <<<"$*" | command grep -a . | sort | paste -sd' '; }
 # each kind once to list the pieces, with its jobs, then once for each chunk, with jobs 1.
 export STUB_CALLS=$ws/target/stub-calls
 : >"$STUB_CALLS"
+# The toy's pieces run here, in chunks (run_chunks), not on Colab VMs (tools/farm_run.sh, which
+# tools/test_farm_run.sh tests on a toy of its own).
+export MERGE_CHECK_FARM=local
 # The runs of main_watch the check reads piece times from (MERGE_CHECK_TIMES_FROM): one toy run
 # that times every piece p-<group> of the toy's groups at 5 ms, so that no piece is of unknown
 # time (each of which would be a chunk alone) and each kind's pieces make one chunk.
