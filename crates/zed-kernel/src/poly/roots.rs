@@ -320,106 +320,215 @@ fn capped_pow(x: &BigInt, g: u64, cap: &BigInt) -> BigInt {
     Pow::pow(x, g).min(cap + 1)
 }
 
-/// `floor(n / x^g)` for `x >= 2`, with the power capped above `|n|`, past which the quotient
-/// is 0 or -1 by the sign of `n` alone.
-fn floor_over_pow(n: &BigInt, x: &BigInt, g: u64) -> BigInt {
-    n.div_floor(&capped_pow(x, g, &n.abs()))
+/// The interval tests of the branch and bound, written once and built for two kinds of number:
+/// `BigInt`, here, and `i128` in [`small`], where every number they form is proved to fit.
+/// Each kind has its own `capped_pow`; the bodies are the same text. `$v` is the visibility
+/// given to each function.
+macro_rules! interval_tests {
+    ($v:vis $n:ty) => {
+        /// `floor(n / x^g)` for `x >= 2`, with the power capped above `|n|`, past which the
+        /// quotient is 0 or -1 by the sign of `n` alone.
+        $v fn floor_over_pow(n: &$n, x: &$n, g: u64) -> $n {
+            Integer::div_floor(n, &capped_pow(x, g, &n.abs()))
+        }
+
+        /// The carry bounds of `p` at `l >= 2`: for each `k`, `B_k = floor(sum over i < k of
+        /// |c_i| l^(e_i - e_k))`, `B_0 = 0`. Write
+        /// `U_k(x) = sum over i >= k of c_i x^(e_i - e_k)`, the terms from the `k`th up
+        /// divided by the `k`th power. At an integer root `x >= l`, `p(x) = 0` gives
+        /// `x^(e_k) U_k(x) = -(the terms below the k-th)`, so the carry `-U_k(x)` is an
+        /// integer of magnitude at most `sum over i < k of |c_i| x^(e_i - e_k)`, which
+        /// falls as `x` grows: so `|U_k(x)| <= B_k`. `B_k = floor((B_(k-1) +
+        /// |c_(k-1)|) / l^(e_k - e_(k-1)))`, as `floor(floor(z) / L) = floor(z / L)` for an
+        /// integer `L >= 1`. O(t) divisions of numbers of at most the bits of the 1-norm.
+        $v fn bounds(p: &[(u64, $n)], l: &$n) -> Vec<$n> {
+            let mut out = Vec::with_capacity(p.len());
+            out.push(<$n>::zero());
+            for k in 1..p.len() {
+                let below = &out[k - 1] + p[k - 1].1.abs();
+                out.push(floor_over_pow(&below, l, p[k].0 - p[k - 1].0));
+            }
+            out
+        }
+
+        /// Whether `p` may have an integer root in `l..=h`, `2 <= l <= h`: false only where
+        /// none lies there, and, where `l == h`, true exactly where `l` is a root. Horner's rule
+        /// from the top term encloses `U_k` over the interval, `U_k = c_k + x^(e_(k+1) - e_k)
+        /// U_(k+1)`, and each enclosure is cut to `-B_k..=B_k` ([`bounds`]): an empty one leaves
+        /// no root, and as `B_0 = 0` the last asks that `p` itself may be 0. A product past `cap
+        /// = B_k + |c_k| + 1` is cut to `cap`, which changes no cut enclosure, so each number
+        /// keeps the bits of the 1-norm and the interval's ends, whatever the degree. O(t)
+        /// products of such numbers.
+        ///
+        /// The cut also does what the gap split does: where `B_k = 0`, `U_k` must be 0 at a
+        /// root.
+        $v fn may_hold_a_root(p: &[(u64, $n)], l: &$n, h: &$n) -> bool {
+            let b = bounds(p, l);
+            let n = p.len();
+            let (mut lo, mut hi) = (p[n - 1].1.clone(), p[n - 1].1.clone());
+            for k in (0..n).rev() {
+                if k + 1 < n {
+                    let g = p[k + 1].0 - p[k].0;
+                    let cap = &b[k] + p[k].1.abs() + 1;
+                    let (pl, ph) = (capped_pow(l, g, &cap), capped_pow(h, g, &cap));
+                    let least = if lo.is_negative() {
+                        &lo * &ph
+                    } else {
+                        &lo * &pl
+                    };
+                    let most = if hi.is_negative() {
+                        &hi * &pl
+                    } else {
+                        &hi * &ph
+                    };
+                    let within = |v: $n| v.clamp(-&cap, cap.clone()) + &p[k].1;
+                    (lo, hi) = (within(least), within(most));
+                }
+                lo = lo.max(-&b[k]);
+                hi = hi.min(b[k].clone());
+                if lo > hi {
+                    return false;
+                }
+            }
+            true
+        }
+
+        /// Whether `q` (`-q` where `negate`) is positive at every real point of `l..=h`, `2 <= l
+        /// <= h`; where `l == h`, exactly whether it is positive at `l`. The least value of
+        /// each `U_k` over the interval is carried down from the top term (it depends on the
+        /// least value of `U_(k+1)` alone); where it passes `B_k` (`b`, the [`bounds`] of `q` at
+        /// `l`), `U_k` outweighs every term below and `q` is positive, and where it falls under
+        /// `-B_k` the proof is given up. As in [`may_hold_a_root`], a product past `cap` decides
+        /// the step either way, so it is cut there. O(t) products of numbers of the bits of the
+        /// 1-norm and the interval's ends.
+        $v fn positive_on(q: &[(u64, $n)], b: &[$n], l: &$n, h: &$n, negate: bool) -> bool {
+            let c = |k: usize| if negate { -&q[k].1 } else { q[k].1.clone() };
+            let mut lo = c(q.len() - 1);
+            for k in (0..q.len()).rev() {
+                if k + 1 < q.len() {
+                    let g = q[k + 1].0 - q[k].0;
+                    let cap = &b[k] + q[k].1.abs() + 1;
+                    let x = if lo.is_negative() { h } else { l };
+                    lo = (lo * capped_pow(x, g, &cap)).clamp(-&cap, cap.clone()) + c(k);
+                }
+                if lo > b[k] {
+                    return true;
+                }
+                if lo < -&b[k] {
+                    return false;
+                }
+            }
+            false
+        }
+
+        /// The sign of `q` at `x >= 2`, by [`positive_on`] at the point.
+        $v fn sign_at(q: &[(u64, $n)], x: &$n) -> Ordering {
+            let b = bounds(q, x);
+            if positive_on(q, &b, x, x, false) {
+                Ordering::Greater
+            } else if positive_on(q, &b, x, x, true) {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        }
+    };
 }
 
-/// The carry bounds of `p` at `l >= 2`: for each `k`, `B_k = floor(sum over i < k of |c_i|
-/// l^(e_i - e_k))`, `B_0 = 0`. Write `U_k(x) = sum over i >= k of c_i x^(e_i - e_k)`, the terms
-/// from the `k`th up divided by the `k`th power. At an integer root `x >= l`, `p(x) = 0` gives
-/// `x^(e_k) U_k(x) = -(the terms below the k-th)`, so the carry `-U_k(x)` is an integer of
-/// magnitude at most `sum over i < k of |c_i| x^(e_i - e_k)`, which falls as `x` grows: so
-/// `|U_k(x)| <= B_k`. `B_k = floor((B_(k-1) + |c_(k-1)|) / l^(e_k - e_(k-1)))`, as
-/// `floor(floor(z) / L) = floor(z / L)` for an integer `L >= 1`. O(t) divisions of numbers of
-/// at most the bits of the 1-norm.
-fn bounds(p: &[(u64, BigInt)], l: &BigInt) -> Vec<BigInt> {
-    let mut out = Vec::with_capacity(p.len());
-    out.push(BigInt::zero());
-    for k in 1..p.len() {
-        let below = &out[k - 1] + p[k - 1].1.abs();
-        out.push(floor_over_pow(&below, l, p[k].0 - p[k - 1].0));
-    }
-    out
-}
+interval_tests!(BigInt);
 
-/// Whether `p` may have an integer root in `l..=h`, `2 <= l <= h`: false only where none lies
-/// there, and, where `l == h`, true exactly where `l` is a root. Horner's rule from the top
-/// term encloses `U_k` over the interval, `U_k = c_k + x^(e_(k+1) - e_k) U_(k+1)`, and each
-/// enclosure is cut to `-B_k..=B_k` ([`bounds`]): an empty one leaves no root, and as `B_0 = 0`
-/// the last asks that `p` itself may be 0. A product past `cap = B_k + |c_k| + 1` is cut to
-/// `cap`, which changes no cut enclosure, so each number keeps the bits of the 1-norm and the
-/// interval's ends, whatever the degree. O(t) products of such numbers.
+/// The interval tests in `i128`, for a polynomial and its slope whose coefficients are under
+/// [`small::BOUND`] in magnitude and an interval within `2..=BOUND`.
 ///
-/// The cut also does what the gap split does: where `B_k = 0`, `U_k` must be 0 at a root.
-fn may_hold_a_root(p: &[(u64, BigInt)], l: &BigInt, h: &BigInt) -> bool {
-    let b = bounds(p, l);
-    let n = p.len();
-    let (mut lo, mut hi) = (p[n - 1].1.clone(), p[n - 1].1.clone());
-    for k in (0..n).rev() {
-        if k + 1 < n {
-            let g = p[k + 1].0 - p[k].0;
-            let cap = &b[k] + p[k].1.abs() + 1;
-            let (pl, ph) = (capped_pow(l, g, &cap), capped_pow(h, g, &cap));
-            let least = if lo.is_negative() {
-                &lo * &ph
-            } else {
-                &lo * &pl
-            };
-            let most = if hi.is_negative() {
-                &hi * &pl
-            } else {
-                &hi * &ph
-            };
-            let within = |v: BigInt| v.clamp(-&cap, cap.clone()) + &p[k].1;
-            (lo, hi) = (within(least), within(most));
-        }
-        lo = lo.max(-&b[k]);
-        hi = hi.min(b[k].clone());
-        if lo > hi {
-            return false;
-        }
+/// Proof that no number overflows. Let `M < 2^60` bound the magnitudes of the coefficients of
+/// the polynomial and of its slope, and let every point `x` be in `2..=2^60` (the branch and
+/// bound's intervals lie in `a..=1 + max |c| <= 2^60`). [`bounds`]: the exponents rise
+/// strictly, so `e_k - e_i >= k - i`, and `l >= 2`, so `B_k = floor(sum over i < k of |c_i|
+/// l^(e_i - e_k)) <= floor(sum over j >= 1 of M 2^(-j)) < M`, and `below = B_(k-1) +
+/// |c_(k-1)| < 2M`. `capped_pow(x, g, cap)` is called with `cap < 2M < 2^61` (by
+/// [`may_hold_a_root`] and [`positive_on`], `cap = B_k + |c_k| + 1 <= (M - 1) + M + 1`; by
+/// `floor_over_pow`, `cap = |n| = below`), and forms `x^g` only where
+/// `(bits(x) - 1) g < bits(cap) <= 61`; as `x >= 2`, `bits(x) <= 2 (bits(x) - 1)`, so
+/// `x^g < 2^(bits(x) g) <= 2^(2 (bits(x) - 1) g) <= 2^120`, and it returns at most
+/// `cap + 1 <= 2^61`. The enclosures of [`may_hold_a_root`] and [`positive_on`] start at a
+/// coefficient, at most `M`, and each step clamps to `-cap..=cap` before adding a coefficient,
+/// so they stay within `cap + M < 2^62`; a product of one of them and a capped power is under
+/// `2^62 2^61 = 2^123`. Every sum is of two numbers under `2^123`. So all numbers are under
+/// `2^124 < 2^127`.
+///
+/// The bound is on the greatest coefficient, not on the 1-norm, so the number of terms does not
+/// decide which kind runs: `t` terms of a fixed size take the `i128` path at every `t`, and a
+/// benchmark over `t` (`roots_are_linear_in_the_number_of_terms`) times one kind at both of its
+/// sizes. A bound on the 1-norm put its slope (coefficients `2i 2^40`, 1-norm about `t^2 2^40`)
+/// on the `i128` path at 1,024 terms and the `BigInt` path at 8,192.
+///
+/// Complexity tradeoff: the same steps as the `BigInt` tests, so the same O(t) per interval;
+/// what falls is the constant of each step, which no longer allocates. Measured 2026-11-22 on a
+/// Colab VM, processor time, against the `BigInt` path (ROOTS-small-constant): 13 against 27 us
+/// on the cubic `(x-4)(x-5)(x-7)`, 11 against 33 us on a cubic with roots in -100..=100, 0.11
+/// against 0.74 ms on `(x-2)...(x-17)`, 45 against 154 ms on 8,192 terms with a root at 2^40;
+/// equal on 64 roots and past `i128`, where the time is in the evaluations and in `BigInt`.
+// The shared bodies clone as `BigInt` needs; on `i128` the clone is a copy.
+#[allow(clippy::clone_on_copy)]
+mod small {
+    use std::cmp::Ordering;
+
+    use num_bigint::BigInt;
+    use num_integer::Integer;
+    use num_traits::Zero;
+
+    /// The bound on the coefficients and the points of the proof above: `2^60`.
+    pub(super) const BOUND: i128 = 1 << 60;
+
+    /// `p` in `i128`, where each coefficient is under [`BOUND`] in magnitude.
+    pub(super) fn words(p: &[(u64, BigInt)]) -> Option<Vec<(u64, i128)>> {
+        p.iter()
+            .map(|(e, c)| {
+                let c = i128::try_from(c).ok().filter(|c| c.abs() < BOUND)?;
+                Some((*e, c))
+            })
+            .collect()
     }
-    true
+
+    /// `super::capped_pow` in `i128`: `x^g` where it is at most `cap`, and `cap + 1` where it
+    /// is above. `x >= 2`. The power fits (proof at the module).
+    fn capped_pow(x: &i128, g: u64, cap: &i128) -> i128 {
+        let bits = |v: &i128| u64::from(128 - v.unsigned_abs().leading_zeros());
+        if (bits(x) - 1).checked_mul(g).is_none_or(|b| b >= bits(cap)) {
+            return cap + 1;
+        }
+        let g = u32::try_from(g).expect("under bits(cap), so under 64");
+        x.pow(g).min(cap + 1)
+    }
+
+    interval_tests!(pub(super) i128);
 }
 
-/// Whether `q` (`-q` where `negate`) is positive at every real point of `l..=h`, `2 <= l <=
-/// h`; where `l == h`, exactly whether it is positive at `l`. The least value of each `U_k` over
-/// the interval is carried down from the top term (it depends on the least value of `U_(k+1)`
-/// alone); where it passes `B_k` (`b`, the [`bounds`] of `q` at `l`), `U_k` outweighs every term
-/// below and `q` is positive, and where it falls under `-B_k` the proof is given up. As in
-/// [`may_hold_a_root`], a product past `cap` decides the step either way, so it is cut there.
-/// O(t) products of numbers of the bits of the 1-norm and the interval's ends.
-fn positive_on(q: &[(u64, BigInt)], b: &[BigInt], l: &BigInt, h: &BigInt, negate: bool) -> bool {
-    let c = |k: usize| if negate { -&q[k].1 } else { q[k].1.clone() };
-    let mut lo = c(q.len() - 1);
-    for k in (0..q.len()).rev() {
-        if k + 1 < q.len() {
-            let g = q[k + 1].0 - q[k].0;
-            let cap = &b[k] + q[k].1.abs() + 1;
-            let x = if lo.is_negative() { h } else { l };
-            lo = (lo * capped_pow(x, g, &cap)).clamp(-&cap, cap.clone()) + c(k);
-        }
-        if lo > b[k] {
-            return true;
-        }
-        if lo < -&b[k] {
-            return false;
-        }
-    }
-    false
+/// A polynomial and its slope in `i128`, for the tests of [`small`].
+struct Words {
+    p: Vec<(u64, i128)>,
+    slope: Vec<(u64, i128)>,
 }
 
-/// The sign of `q` at `x >= 2`, by [`positive_on`] at the point.
-fn sign_at(q: &[(u64, BigInt)], x: &BigInt) -> Ordering {
-    let b = bounds(q, x);
-    if positive_on(q, &b, x, x, false) {
-        Ordering::Greater
-    } else if positive_on(q, &b, x, x, true) {
-        Ordering::Less
-    } else {
-        Ordering::Equal
+impl Words {
+    /// `p` and `slope` in `i128`, where every coefficient of both is under [`small::BOUND`] in
+    /// magnitude.
+    fn of(p: &[(u64, BigInt)], slope: &[(u64, BigInt)]) -> Option<Words> {
+        Some(Words {
+            p: small::words(p)?,
+            slope: small::words(slope)?,
+        })
+    }
+
+    /// These and the interval `l..=h` in `i128`, where both ends are in `2..=small::BOUND`, as
+    /// the proof at [`small`] asks.
+    fn at(&self, l: &BigInt, h: &BigInt) -> Option<(&Words, i128, i128)> {
+        let word = |x: &BigInt| {
+            i128::try_from(x)
+                .ok()
+                .filter(|x| (2..=small::BOUND).contains(x))
+        };
+        Some((self, word(l)?, word(h)?))
     }
 }
 
@@ -532,6 +641,7 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
     let slope: Vec<(u64, BigInt)> = (p[1..].iter())
         .map(|(e, c)| (*e, c * BigInt::from(*e)))
         .collect();
+    let words = Words::of(p, &slope);
     let budget = chain_ends(p.len());
     let mut spent: u64 = 0;
     let mut out = Vec::new();
@@ -545,7 +655,15 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
             tests::UNITS.with(|u| u.set(u.get() + budget));
             return chain_roots(p, a, Some(hi));
         }
-        if l > h || !may_hold_a_root(p, &l, &h) {
+        if l > h {
+            continue;
+        }
+        let at = words.as_ref().and_then(|w| w.at(&l, &h));
+        let may_hold = match &at {
+            Some((w, l, h)) => small::may_hold_a_root(&w.p, l, h),
+            None => may_hold_a_root(p, &l, &h),
+        };
+        if !may_hold {
             continue;
         }
         if l == h {
@@ -558,9 +676,19 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
             open.push((l.clone(), l));
             continue;
         }
-        let b = bounds(&slope, &l);
-        if positive_on(&slope, &b, &l, &h, false) || positive_on(&slope, &b, &l, &h, true) {
-            out.extend(search(p, &slope, l, h, &mut spent));
+        let monotone = match &at {
+            Some((w, l, h)) => {
+                let b = small::bounds(&w.slope, l);
+                small::positive_on(&w.slope, &b, l, h, false)
+                    || small::positive_on(&w.slope, &b, l, h, true)
+            }
+            None => {
+                let b = bounds(&slope, &l);
+                positive_on(&slope, &b, &l, &h, false) || positive_on(&slope, &b, &l, &h, true)
+            }
+        };
+        if monotone {
+            out.extend(search(p, &slope, words.as_ref(), l, h, &mut spent));
             continue;
         }
         let m = match &l * 4 < h {
@@ -595,10 +723,15 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
 fn search(
     p: &[(u64, BigInt)],
     slope: &[(u64, BigInt)],
+    words: Option<&Words>,
     lo: BigInt,
     hi: BigInt,
     steps: &mut u64,
 ) -> Option<BigInt> {
+    let sign_at = |p: &[(u64, BigInt)], x: &BigInt| match words.and_then(|w| w.at(x, x)) {
+        Some((w, x, _)) => small::sign_at(&w.p, &x),
+        None => sign_at(p, x),
+    };
     let (mut lo, mut hi) = (lo, hi);
     let below = sign_at(p, &lo);
     if below == Ordering::Equal {
@@ -1125,6 +1258,102 @@ mod tests {
                 got => assert_eq!(listed(got), want, "{f:?}"),
             }
         }
+    }
+
+    /// The `i128` interval tests ([`small`]) give the `BigInt` tests' answers, on random
+    /// polynomials whose coefficients reach past [`small::BOUND`] at random intervals in
+    /// `2..=BOUND`, and on fixed ones at the ends of the proof there: every coefficient at
+    /// `BOUND - 1` with gaps of 1, the most the carry bounds can hold, and points at `BOUND`. A
+    /// coefficient of `BOUND` or more is declined (ROOTS-small-constant).
+    #[test]
+    fn the_word_tests_agree_with_the_bigint_tests() {
+        type Case = (Vec<(u64, BigInt)>, i128, i128);
+        let (mut rng, seed) = crate::seed::Rng::fresh("the_word_tests_agree_with_the_bigint_tests");
+        let bound = BigInt::from(small::BOUND);
+        let m: BigInt = &bound - 1;
+        let top_heavy: Vec<(u64, BigInt)> = (0..6)
+            .map(|e| (e, if e % 2 == 0 { m.clone() } else { -m.clone() }))
+            .collect();
+        let mut cases: Vec<Case> = vec![
+            (
+                vec![(0, &bound - 2), (1, BigInt::one())],
+                small::BOUND,
+                small::BOUND,
+            ),
+            (
+                vec![(0, -(&bound - 2)), (1, BigInt::one())],
+                2,
+                small::BOUND,
+            ),
+            (
+                vec![(0, BigInt::one()), (60, -(&bound - 2))],
+                small::BOUND - 1,
+                small::BOUND,
+            ),
+            (
+                vec![(0, -BigInt::one()), (1, -(&bound - 3)), (2, BigInt::one())],
+                2,
+                2,
+            ),
+            (top_heavy.clone(), 2, small::BOUND),
+            (top_heavy.clone(), 2, 2),
+            (top_heavy.iter().map(|(e, c)| (*e, c.abs())).collect(), 2, 3),
+            (
+                vec![(0, -m.clone()), (1, -m.clone()), (2, m.clone())],
+                2,
+                small::BOUND,
+            ),
+            (vec![(0, bound.clone()), (1, BigInt::one())], 2, 2),
+        ];
+        for _ in 0..3000 {
+            let bits = [4, 20, 58, 60, 61][rng.below_u64(5) as usize];
+            let mut e = 0;
+            let p: Vec<(u64, BigInt)> = (0..2 + rng.below_u64(5))
+                .map(|i| {
+                    e += u64::from(i > 0) + rng.below_u64(4);
+                    let c = 1 + rng.below_u64((1 << bits) - 1) as i64;
+                    (e, BigInt::from(if rng.below_u64(2) == 0 { c } else { -c }))
+                })
+                .collect();
+            let top = [16, 1 << 20, small::BOUND][rng.below_u64(3) as usize];
+            let l = 2 + i128::from(rng.below_u64(top as u64 - 1));
+            let h = l + i128::from(rng.below_u64((small::BOUND - l) as u64 + 1) % (top as u64));
+            cases.push((p, l, h.min(small::BOUND)));
+        }
+        let (mut checked, mut declined) = (0, 0);
+        for (p, l, h) in cases {
+            let words = Words::of(&p, &p);
+            let over = p.iter().any(|(_, c)| c.abs() >= bound);
+            assert_eq!(words.is_none(), over, "{p:?} ZED_TEST_SEED={seed}");
+            let Some((w, wl, wh)) = words.as_ref().and_then(|w| w.at(&l.into(), &h.into())) else {
+                declined += 1;
+                continue;
+            };
+            let (bl, bh) = (BigInt::from(l), BigInt::from(h));
+            let at = format!("{p:?} on {l}..={h}, ZED_TEST_SEED={seed}");
+            let b = bounds(&p, &bl);
+            let wb = small::bounds(&w.p, &wl);
+            assert_eq!(
+                b,
+                wb.iter().map(|&x| BigInt::from(x)).collect::<Vec<_>>(),
+                "{at}"
+            );
+            assert_eq!(
+                may_hold_a_root(&p, &bl, &bh),
+                small::may_hold_a_root(&w.p, &wl, &wh),
+                "{at}"
+            );
+            for negate in [false, true] {
+                assert_eq!(
+                    positive_on(&p, &b, &bl, &bh, negate),
+                    small::positive_on(&w.p, &wb, &wl, &wh, negate),
+                    "{at}"
+                );
+            }
+            assert_eq!(sign_at(&p, &bh), small::sign_at(&w.p, &wh), "{at}");
+            checked += 1;
+        }
+        assert!(checked > 1000 && declined > 100, "{checked} {declined}");
     }
 
     /// A piece of two terms has the root of its quotient, where that is an integer power.
