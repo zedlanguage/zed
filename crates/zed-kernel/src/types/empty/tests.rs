@@ -2956,8 +2956,9 @@ fn the_check_of_a_list_witness_is_membership_on_chains_with_exits() {
 /// The list readers shared by DRY-misc-A5 (`list_atoms`, `link_pairs`) on link payloads that
 /// hold a tuple of one item beside their pairs: such a payload is no list step (`link_pairs`
 /// refuses a payload with tuples of two lengths), and each type below holds `cons(5)` (the
-/// chain one step in), alone and met with another such type. Without the tuple of one, the three types with no stop atom
-/// hold no value (every list through them is infinite) and the one with a stop holds `nil`.
+/// chain one step in), alone and met with another such type. Without the tuple of one, the
+/// three types with no stop atom hold no value (every list through them is infinite) and the
+/// one with a stop holds `nil`.
 /// It catches a reader that takes the pairs and leaves the tuple of one out, which answers
 /// empty for the first three; it cannot catch a fault on a payload with scalars or atoms, which
 /// no constructor reachable from a test builds (`Type::atom_with` meets a payload with

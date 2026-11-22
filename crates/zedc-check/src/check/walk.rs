@@ -3423,8 +3423,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// 1.0f64)`: so a literal reached through a call is rejected only where the type at its
     /// place holds its value alone, not every `f64`, or where it is in a payload. `x` itself,
     /// and its tuple components and payloads that are reached through none of these, are
-    /// [`unfixed_parts`]'s. Each message names the literal with each carrier it fits, and the
-    /// call it came through. Each part is a literal's site, with its message.
+    /// [`unfixed_parts`]'s. Each message names the literal and the range of `f64` it lies
+    /// past, with the `rat` form, as for `y = 1e400`, and the call it came through. Each part
+    /// is a literal's site, with its message.
     ///
     /// Complexity tradeoff: the naive way reads the body of a called function at every call,
     /// a function called inside the functions it calls again and again, which grows with the
@@ -3455,19 +3456,29 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.adopt_to(&l, Carrier::F64);
                 continue;
             }
-            let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
-                .into_iter()
-                .filter(|&c| fits(&l, c))
-                .collect();
-            let mut m = unfixed(&l, &cs);
+            // The literal took `f64`, so the reason is the range of `f64`, worded as for `y =
+            // 1e400` ([`past`]); `unfixed`'s "Nothing gives the literal a carrier" would state
+            // the rule L1.26b replaced. `unfixed` stays for a literal `past` does not name.
+            let (mut m, sentence) = match past(&l, Carrier::F64) {
+                Some(m) => (m, true),
+                None => {
+                    let cs: Vec<Carrier> = [Carrier::F64, Carrier::Rat]
+                        .into_iter()
+                        .filter(|&c| fits(&l, c))
+                        .collect();
+                    (unfixed(&l, &cs), false)
+                }
+            };
             if let Some(c) = call {
                 let callee = match &c.kind {
                     ExprKind::Call { callee, .. } => callee.span,
                     _ => c.span,
                 };
                 let name = src.map_or("", |s| &s[callee.start..callee.end]);
-                m.text
-                    .push_str(&format!("; the value holds it through a call of `{name}`"));
+                m.text.push_str(&match sentence {
+                    true => format!(" The value holds it through a call of `{name}`."),
+                    false => format!("; the value holds it through a call of `{name}`"),
+                });
             }
             out.push((l.site, l.site, m));
         }
