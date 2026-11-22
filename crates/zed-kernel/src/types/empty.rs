@@ -821,10 +821,15 @@ fn group_verdicts(members: &[Type]) {
         }
     });
     if !undecided.is_empty() {
+        // Complexity tradeoff (PERF-blame-settlement): the undecided members are looked up in a
+        // set hashed by digest, built once, `O(m)` for `m` members. A scan of the `undecided`
+        // slice per member was `O(m · u)`, order `m²` when the whole group is refused, as in
+        // `setop::bench::canonical_blame_settlement_scales` (COMPLEXITY.md K141).
+        let open: TypeSet = undecided.iter().cloned().collect();
         DECIDING.with(|dec| {
             let mut dec = dec.borrow_mut();
             for m in members {
-                if !undecided.contains(m) {
+                if !open.contains(m) {
                     dec.remove(m);
                 }
             }
@@ -12824,6 +12829,8 @@ struct Read<'p> {
     known: HashMap<u64, Known<'p>>,
     indexes: HashMap<u64, Index>,
     blame: Option<usize>,
+    /// The values by cell of the nodes read by [`Choices::one`].
+    ones: HashMap<u64, OneFn>,
 }
 
 /// A point of [`Choices::meet`] on a shared component: the component's place among them, its
@@ -12936,6 +12943,107 @@ struct Picks {
     stuck: usize,
 }
 
+/// The value of a part open on one component at each choice on it, for [`Choices::one`]
+/// (REFUSAL-one-component-shared-meet): the value at each cell in `cells`, and at every other
+/// cell and at a value of no cell `rest`, each stored as the exclusive or of the value and
+/// `not`, so that `!` costs `O(1)`; `trues` counts the entries stored `true`.
+///
+/// Complexity tradeoff: the map is persistent (`imbl::OrdMap`, `O(1)` to clone), and an `&`
+/// or `|` writes the smaller operand's cells into the larger operand's map
+/// ([`OneFn::meet`]), `O(s log n)` for the smaller's `s` cells. Proof sketch of the total: the
+/// `s` writes are charged to the smaller's cells when the result keeps the larger map, and each
+/// such cell is then in a map at least twice as large as before, so it is charged at most
+/// `lg n` times; when the result keeps only the smaller's cells, they are charged to the
+/// larger's `l >= s` cells, which are dropped then and never charged again. So a part written
+/// out as a tree of `n` atoms costs `O(n log n)` writes, `O(n log^2 n)` time (the
+/// weighted-union argument of Cormen, Leiserson, Rivest and Stein, "Introduction to
+/// Algorithms", 3rd ed., MIT Press, 2009, sec. 21.2, Theorem 21.1: with the smaller list
+/// appended to the larger, each object's pointer is updated at most `ceil(lg n)` times). Test:
+/// `one_pass::bench::meets_on_one_component_scale`. A subpart the part shares
+/// (one node reached from two parents) is read once but may be the smaller operand of each
+/// parent, so a part whose written form repeats a subpart pays for each repeat, as its written
+/// size does. Naive alternative: evaluate the part at each cell it mentions, `O(n m)` for `m`
+/// cells.
+#[derive(Clone)]
+struct OneFn {
+    cells: imbl::OrdMap<usize, bool>,
+    rest: bool,
+    not: bool,
+    trues: usize,
+}
+
+impl OneFn {
+    /// The part of value `v` at every choice.
+    fn constant(v: bool) -> Self {
+        OneFn {
+            cells: imbl::OrdMap::new(),
+            rest: v,
+            not: false,
+            trues: 0,
+        }
+    }
+
+    /// The value at the cell `c`.
+    fn at(&self, c: usize) -> bool {
+        self.cells.get(&c).copied().unwrap_or(self.rest) ^ self.not
+    }
+
+    /// The value at a cell not in `cells` and at a value of no cell.
+    fn rest(&self) -> bool {
+        self.rest ^ self.not
+    }
+
+    /// The number of cells in `cells` of value `v`.
+    fn count(&self, v: bool) -> usize {
+        if v ^ self.not {
+            self.trues
+        } else {
+            self.cells.len() - self.trues
+        }
+    }
+
+    /// Gives the cell `c` the value `v`, `O(log n)`.
+    fn set(&mut self, c: usize, v: bool) {
+        let stored = v ^ self.not;
+        if let Some(old) = self.cells.insert(c, stored) {
+            self.trues -= usize::from(old);
+        }
+        self.trues += usize::from(stored);
+    }
+
+    /// The value of `!p` where this is `p`, `O(1)`.
+    fn negate(&self) -> Self {
+        OneFn {
+            not: !self.not,
+            ..self.clone()
+        }
+    }
+
+    /// The value of `x | y` when `or`, else of `x & y`. With `s` the operand of fewer cells and
+    /// `l` the other: at a cell of neither, the value is `rest` of each, met; at a cell of `l`
+    /// only, it is `l`'s value met with `s`'s `rest`, which is that `rest` when it decides the
+    /// meet (`false` for `&`, `true` for `|`), and else `l`'s value. So the result is `s`'s
+    /// cells over `rest` the deciding value in the first case, and `l` with `s`'s cells
+    /// rewritten in the second: `O(s log n)` either way.
+    fn meet(x: &Self, y: &Self, or: bool) -> Self {
+        let (s, l) = if x.cells.len() <= y.cells.len() {
+            (x, y)
+        } else {
+            (y, x)
+        };
+        let op = |a: bool, b: bool| if or { a || b } else { a && b };
+        let mut r = if s.rest() == or {
+            OneFn::constant(or)
+        } else {
+            l.clone()
+        };
+        for &c in s.cells.keys() {
+            r.set(c, op(l.at(c), s.at(c)));
+        }
+        r
+    }
+}
+
 impl Choices<'_> {
     /// Whether some choice on each component puts a tuple in `f`: `None` when not known. Each
     /// node is read once, from a stack, keyed by its id:
@@ -12948,10 +13056,13 @@ impl Choices<'_> {
     ///   they are open on no component in common: the choices on their components are then
     ///   made apart;
     /// - else, when `p` and `q` are each a decision list or an exclusive or under any number
-    ///   of `!`, by [`Choices::meet`] on the components they share (step EMPTY-overlap-fast).
+    ///   of `!`, by [`Choices::meet`] on the components they share (step EMPTY-overlap-fast);
+    /// - else, when `p` and `q` are each open on one component only, the same, by their values
+    ///   at each choice on it ([`Choices::one`], REFUSAL-one-component-shared-meet).
     ///
     /// `Err` names the least component shared by the operands of an `&` or `|` read neither
-    /// way.
+    /// way: one shared by operands open on two or more components, at least one of them not a
+    /// list or an exclusive or under `!`.
     fn decide(&self, f: &Part<Row>) -> Result<bool, usize> {
         let read = self.read(f);
         read.known[&f.id()].sat.ok_or_else(|| {
@@ -12973,7 +13084,7 @@ impl Choices<'_> {
             Some(false) => Ok(None),
             Some(true) => {
                 let mut picks = vec![None; self.count.len()];
-                self.extract(f, &read.known, &mut read.indexes, &mut picks);
+                self.extract(f, &read.known, &mut read.indexes, &read.ones, &mut picks);
                 for (j, pick) in picks.iter_mut().enumerate() {
                     if pick.is_none()
                         && let Some(&c) = self.cells[j].first()
@@ -13004,6 +13115,7 @@ impl Choices<'_> {
         let mut known: HashMap<u64, Known<'p>> = HashMap::new();
         let mut indexes: HashMap<u64, Index> = HashMap::new();
         let mut blame: Option<usize> = None;
+        let mut ones: HashMap<u64, OneFn> = HashMap::new();
         let mut stack = vec![(f, false)];
         while let Some((p, ready)) = stack.pop() {
             if !ready && known.contains_key(&p.id()) {
@@ -13050,6 +13162,8 @@ impl Choices<'_> {
                                     Some(true)
                                 } else if sat == Some(false) {
                                     Some(false)
+                                } else if let Some(j) = one_component(x, y) {
+                                    Some(self.one(p, j, &mut indexes, &mut ones).1)
                                 } else {
                                     // Every choice is in `x | y` when none is in `!x & !y`.
                                     self.pair(x, y, true, &mut indexes, &mut blame).map(|s| !s)
@@ -13071,6 +13185,8 @@ impl Choices<'_> {
                                     Some(false)
                                 } else if valid == Some(true) {
                                     Some(true)
+                                } else if let Some(j) = one_component(x, y) {
+                                    Some(self.one(p, j, &mut indexes, &mut ones).0)
                                 } else {
                                     self.pair(x, y, false, &mut indexes, &mut blame)
                                 };
@@ -13095,7 +13211,89 @@ impl Choices<'_> {
             known,
             indexes,
             blame,
+            ones,
         }
+    }
+
+    /// Whether some choice puts a tuple in the part `f` and whether every choice does, `f` open
+    /// on the component `j` only (REFUSAL-one-component-shared-meet): its value at each choice
+    /// on `j` ([`OneFn`]), read once for each node below it, from a stack, into `ones` (the
+    /// leaves by [`Choices::index`], into `indexes`), `O(n log^2 n)` for a part of `n` atoms
+    /// written out as a tree, as at [`OneFn`]. A tuple's value at another component plays no
+    /// part, so the choices are those on `j`: each of its open cells, and a value of none when
+    /// `other`; a cell not in the map, or a value of none, has the map's `rest`.
+    ///
+    /// Proof that this is exact: a part open on `j` only is a function of the choice on `j`
+    /// (each tuple type it is made of is open on `j` alone, so whether a tuple of the box is in
+    /// it is fixed by the one cell of `j`, or none, that the tuple is in); a leaf's value at a
+    /// cell is the value of its first block that holds there, or its parity there, as
+    /// [`Choices::index`] reads them; `!`, `&` and `|` act on those values cell by cell; and
+    /// [`OneFn::meet`] keeps every cell's value. Some choice is in `f` when a cell in the map is
+    /// `true` or `rest` is `true` and some choice is outside the map's cells; every choice is
+    /// when none in the map is `false` and `rest` is `true` or no choice is outside them. The
+    /// Orthogonal Vectors hardness that makes [`Refusal::SharedCells`] (answer A46) needs two
+    /// components chosen together, which a part open on one component does not have. Tests:
+    /// `one_pass::a_meet_open_on_one_component_only_is_decided_cell_by_cell` and the random
+    /// parts of `one_pass` against enumeration.
+    fn one(
+        &self,
+        f: &Part<Row>,
+        j: usize,
+        indexes: &mut HashMap<u64, Index>,
+        ones: &mut HashMap<u64, OneFn>,
+    ) -> (bool, bool) {
+        let mut stack = vec![(f, false)];
+        while let Some((p, ready)) = stack.pop() {
+            if ones.contains_key(&p.id()) {
+                continue;
+            }
+            // An exclusive or is told by its tag, before `view`, which would make its halves.
+            let form = if p.expr_id().is_some() && p.is_exclusive_or() {
+                None
+            } else {
+                p.view().err()
+            };
+            let value = match form {
+                None => {
+                    let index = indexes.entry(p.id()).or_insert_with(|| self.index(p));
+                    one_leaf(index, j)
+                }
+                Some(form) => {
+                    let (x, y) = match form {
+                        Form::Not(q) => (q, None),
+                        Form::Or(a, b) | Form::And(a, b) => (a, Some(b)),
+                    };
+                    if !ready {
+                        stack.push((p, true));
+                        stack.push((x, false));
+                        stack.extend(y.map(|y| (y, false)));
+                        continue;
+                    }
+                    let x = &ones[&x.id()];
+                    match (form, y) {
+                        (Form::Not(_), _) => x.negate(),
+                        (Form::Or(..), Some(y)) => OneFn::meet(x, &ones[&y.id()], true),
+                        (_, Some(y)) => OneFn::meet(x, &ones[&y.id()], false),
+                        (_, None) => unreachable!("an `or` and an `and` have two operands"),
+                    }
+                }
+            };
+            ones.insert(p.id(), value);
+        }
+        let value = &ones[&f.id()];
+        let outside = self.other[j] || value.cells.len() < self.count[j];
+        let sat = value.count(true) > 0 || (outside && value.rest());
+        let valid = value.count(false) == 0 && (!outside || value.rest());
+        (sat, valid)
+    }
+
+    /// A choice on `j` at which `value` is `want`, one [`Choices::one`] found.
+    fn one_choice(&self, value: &OneFn, j: usize, want: bool) -> Choice {
+        if let Some(&c) = value.cells.keys().find(|&&c| value.at(c) == want) {
+            return Choice::Cell(c);
+        }
+        assert_eq!(value.rest(), want, "the value wanted is had at some choice");
+        self.rest_choice(j, |c| value.cells.contains_key(&c))
     }
 
     /// Writes into `picks` a choice on the components of `f` under which `f` is `true`, as
@@ -13111,6 +13309,7 @@ impl Choices<'_> {
         f: &'p Part<Row>,
         known: &HashMap<u64, Known<'p>>,
         indexes: &mut HashMap<u64, Index>,
+        ones: &HashMap<u64, OneFn>,
         picks: &mut [Option<Choice>],
     ) {
         let mut stack = vec![(f, true)];
@@ -13156,6 +13355,13 @@ impl Choices<'_> {
                 stack.push((y, want));
             } else if (k.valid == Some(true) && want) || (k.sat == Some(false) && !want) {
                 // Every choice gives it.
+            } else if let Some(j) = one_component(&known[&x.id()], &known[&y.id()]) {
+                // Read by `one` in `read`, under the same test: the node is open on `j` only,
+                // so the choice on `j` fixes it, and no other node reached is open on `j`.
+                let value = ones
+                    .get(&p.id())
+                    .expect("a node read by `one` is in `ones`");
+                picks[j] = Some(self.one_choice(value, j, want));
             } else {
                 self.pair_picks(&known[&x.id()], &known[&y.id()], or, indexes, picks);
             }
@@ -13698,6 +13904,40 @@ impl Picks {
         }
         let now = p.fits(s.count[j], s.other[j]);
         self.stuck = self.stuck + usize::from(was && !now) - usize::from(!was && now);
+    }
+}
+
+/// The one component both operands of an `&` or `|` are open on, when each is open on it
+/// alone and one of them is not a list or an exclusive or under `!` ([`Choices::meet`] reads
+/// two of those): such a node is read by [`Choices::one`].
+fn one_component(x: &Known<'_>, y: &Known<'_>) -> Option<usize> {
+    (x.on.len() == 1 && x.on == y.on && (x.leaf.is_none() || y.leaf.is_none())).then(|| x.on[0])
+}
+
+/// The value at each choice on the component `j` of a decision list or an exclusive or open on
+/// `j` alone (or on none), from its index: for a list, the value of the first block that holds
+/// at the cell (`ListComponent::at`, `rest` for a value of no cell it mentions; the tail when
+/// it has no literal on `j`); for an exclusive or, its constant changed at each cell on an odd
+/// number of its tuple types.
+fn one_leaf(index: &Index, j: usize) -> OneFn {
+    match index {
+        Index::List(l) => {
+            let Some(e) = l.components.get(&j) else {
+                return OneFn::constant(l.values[l.values.len() - 1]);
+            };
+            let mut value = OneFn::constant(l.values[e.rest]);
+            for (&c, &i) in &e.at {
+                value.set(c, l.values[i]);
+            }
+            value
+        }
+        Index::Parity(q) => {
+            let mut value = OneFn::constant(q.constant);
+            for (&c, &odd) in q.components.get(&j).map(|e| &e.at).into_iter().flatten() {
+                value.set(c, q.constant ^ odd);
+            }
+            value
+        }
     }
 }
 

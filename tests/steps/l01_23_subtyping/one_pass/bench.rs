@@ -129,3 +129,58 @@ fn chains_sharing_two_of_four_components_are_met_in_n_log_n() {
         },
     );
 }
+
+/// The `|` of `ts`, joined as a balanced tree, so that its depth is `log` of their number.
+fn balanced(ts: &[Type]) -> Type {
+    if ts.len() == 1 {
+        return ts[0].clone();
+    }
+    let (x, y) = ts.split_at(ts.len() / 2);
+    &balanced(x) | &balanced(y)
+}
+
+/// A balanced `|` of exclusive ors of two tuple types each, every tuple type on component 0, less
+/// the exclusive or of all its `c` tuple types (empty) and less that of all but the last
+/// (inhabited), joined by `|` to a part open on components 1 and 2 that the box
+/// `(top, 1 | 2 | 3, top)` leaves empty, so that the part is not a product of components and
+/// goes to the one pass, at `c` and `8c` tuple types (REFUSAL-one-component-shared-meet): each
+/// `|` of two parts that are not both lists or exclusive ors, and each meet, is read cell by
+/// cell on component 0 (`OneFn` in zed-kernel `types/empty.rs`), `O(c log^2 c)`. Before the
+/// row the meet was refused with `SharedCells(0)` (kept output, 2026-11-22: "assertion `left ==
+/// right` failed: 256 left: Refused(SharedCells(0)) right: Empty"). Measured on a Colab VM
+/// (v5e2, DynamoRIO instruction counts, 2026-11-22): 1,199M and 9,983M instructions at 256
+/// and 2048, 8.32 times; 1x 1.29 s. Small instance:
+/// `a_meet_open_on_one_component_only_is_decided_cell_by_cell`.
+#[test]
+fn meets_on_one_component_scale() {
+    let n = 256;
+    let b = Type::tuple(vec![
+        Type::top(),
+        Type::union_all([1, 2, 3].map(lit)),
+        Type::top(),
+    ]);
+    // True at component 1 = 0 only, which the box leaves out.
+    let others = F::And(
+        Box::new(F::Xor(vec![(1, 0), (1, 1)])),
+        Box::new(F::Xor(vec![(1, 0), (1, 2)])),
+    )
+    .ty(3);
+    let types = scaling::inputs(n, |c| {
+        let pairs: Vec<Type> = (0..c / 2)
+            .map(|i| F::Xor(vec![(0, 1000 + 2 * i), (0, 1001 + 2 * i)]).ty(3))
+            .collect();
+        let union = balanced(&pairs);
+        let xor = |k: usize| F::Xor((0..k).map(|i| (0, 1000 + i)).collect()).ty(3);
+        let part = |t: Type| &b & &(&t | &others);
+        (part(&union - &xor(c)), part(&union - &xor(c - 1)))
+    });
+    scaling::check("meets on one component, by tuple types", n, |c| {
+        let (empty, inhabited) = &types[&c];
+        for (t, expected) in [(empty, Verdict::Empty), (inhabited, Verdict::Inhabited)] {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), expected, "{c}");
+            Type::forget_emptiness();
+            assert_eq!(t.is_empty(), expected == Verdict::Empty, "{c}");
+        }
+    });
+}

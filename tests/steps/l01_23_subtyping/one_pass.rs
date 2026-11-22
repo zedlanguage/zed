@@ -6,9 +6,10 @@
 //! exclusive ors and chains of overlapping tuple types are decided in time linear in them. An
 //! `&` or `|` whose operands share a component through different cells is read exactly when
 //! both are decision lists or exclusive ors under `!`, such as the comparison `x & !y` of two
-//! such parts (item EMPTY-overlap-fast), in time `O(n log n)`; other such meets are refused
-//! with `Refusal::SharedCells` naming the component (COMPLEXITY.md K71, answer A46), since
-//! they encode Orthogonal Vectors.
+//! such parts (item EMPTY-overlap-fast), in time `O(n log n)`, and when both are open on that
+//! one component only, whatever they are, cell by cell (REFUSAL-one-component-shared-meet);
+//! other such meets are refused with `Refusal::SharedCells` naming the component
+//! (COMPLEXITY.md K71, answer A46), since they encode Orthogonal Vectors.
 
 use zed_kernel::Value;
 use zed_kernel::types::{Refusal, Type, Verdict};
@@ -111,12 +112,15 @@ fn random(g: &mut Rng, on: &[usize], depth: usize, shared: bool) -> F {
         _ => {
             let meet = |x, y| if k == 4 { F::Or(x, y) } else { F::And(x, y) };
             if on.len() < 2 && !shared {
-                // One component cannot be split in two, so the operands share it, and only a
-                // meet of two decision lists or exclusive ors under `!` is read exactly
-                // (EMPTY-overlap-fast); another meet there, such as a list met with a union of
-                // two lists, is refused with `SharedCells` as the header says. Seed 71 drew
-                // none of those; new seeds do (TEST-bench-move-l0123).
-                return meet(Box::new(random_leaf(g, on)), Box::new(random_leaf(g, on)));
+                // One component cannot be split in two, so the operands share it. A meet of two
+                // operands open on that one component only is read cell by cell, whatever the
+                // operands (REFUSAL-one-component-shared-meet); until that row, only a meet of
+                // two lists or exclusive ors under `!` was read there, and these meets took two
+                // `random_leaf` operands (TEST-bench-move-l0123).
+                return meet(
+                    Box::new(random(g, on, depth - 1, shared)),
+                    Box::new(random(g, on, depth - 1, shared)),
+                );
             }
             if on.len() < 2 || (shared && g.below(4) == 0) {
                 return F::And(
@@ -667,6 +671,56 @@ fn a_list_met_with_a_union_of_exclusive_ors_on_shared_components_is_refused() {
     assert_eq!(t.verdict(), Verdict::Refused(Refusal::SharedCells(0)));
     Type::forget_emptiness();
     assert!(!t.is_empty());
+}
+
+/// `(list | row) & (list | list)` with every tuple type on component 0, `|` a part open on
+/// components 1 and 2 that is empty on the box: a meet of two parts that are neither a list
+/// nor an exclusive or, sharing component 0 only. It is decided cell by cell on that
+/// component (REFUSAL-one-component-shared-meet). The part is the one the random parts drew
+/// at seed 18241312886909743055 (`random_parts_of_one_choice_per_component_...`, with the
+/// one-component meets of compound operands that test now draws), refused with
+/// `SharedCells(0)` before this step though enumeration finds it empty (kept output: "left:
+/// Refused(SharedCells(0)) right: Empty", 2026-11-22). The first operand is true at cell `v`
+/// only (the chain `- row(0, 1)` is empty), the second at cells 0 to 2, so the meet is empty
+/// at `v = 3`, as drawn, and inhabited at `v = 2`. The meets on two shared components are
+/// still refused: `an_orthogonal_vectors_meet_is_refused_naming_its_component` and
+/// `a_list_met_with_a_union_of_exclusive_ors_on_shared_components_is_refused`.
+#[test]
+fn a_meet_open_on_one_component_only_is_decided_cell_by_cell() {
+    let all: Vec<usize> = (0..VALUES).chain([OUTSIDE]).collect();
+    let boxed = [all.clone(), vec![1, 2, 3], all.clone()];
+    let b = Type::tuple(vec![
+        Type::top(),
+        Type::union_all([1, 2, 3].map(lit)),
+        Type::top(),
+    ]);
+    for v in [3, 2] {
+        let one = F::And(
+            Box::new(F::Or(
+                Box::new(F::Chain(vec![(0, 1, false)])),
+                Box::new(F::Row(0, v)),
+            )),
+            Box::new(F::Or(
+                Box::new(F::Chain(vec![(0, 2, true), (0, 0, true), (0, 3, false)])),
+                Box::new(F::Chain(vec![
+                    (0, 1, true),
+                    (0, 1, true),
+                    (0, 3, false),
+                    (0, 2, false),
+                ])),
+            )),
+        );
+        // True at component 1 = 0 only, which the box leaves out.
+        let others = F::And(
+            Box::new(F::And(
+                Box::new(F::Xor(vec![(1, 0), (1, 1), (1, 2), (1, 2)])),
+                Box::new(F::Xor(vec![(1, 0), (1, 2)])),
+            )),
+            Box::new(F::Not(Box::new(F::Chain(vec![(2, 0, false)])))),
+        );
+        let f = F::Or(Box::new(one), Box::new(others));
+        assert_eq!(decide_in(&b, &boxed, 3, &f), v == 2, "{f:?}");
+    }
 }
 
 /// Small instance of

@@ -702,10 +702,10 @@ fn pinwheels_less_a_box_scale(
     });
 }
 
-/// Size (TEST-bench-move-l0123, author P169): left at n 32, its old size, because the ratio
-/// fails at 64; 1x 180 ms at load 25.24. Instructions from k to 8k: 9.61 times
-/// from 32 (measured at the old size) and 10.70 from 64 (2,100M to 22,474M), over the limit
-/// 10.5. From 128 the run at 8k would pass the 20 s cap on a test, so it was not measured.
+/// Size (PERF-pinwheel-end-outside): n 32 before, now 256; 1x 0.69 s by `ns` on a Colab VM
+/// (v5e2, 2026-11-22), 7.84 times the work at 8n. At TEST-bench-move-l0123 the ratio was 9.61
+/// at 32 and 10.70 at 64; on main at 96f8fde43, with no change of this row to the kernel, it
+/// was 7.73 at 64 and 7.72 at 256, so the cost was fixed by an earlier row.
 #[test]
 fn pinwheels_with_an_end_outside_every_tuple_type_scale() {
     // An end outside every tuple type held every one-tuple, so all k pinwheels fell in one
@@ -714,7 +714,7 @@ fn pinwheels_with_an_end_outside_every_tuple_type_scale() {
     // less a box, full. `overlaps` now places such an end at the first components it can
     // hold, which meet only its own pinwheel. COMPLEXITY.md K36. The verdict of the full union
     // here; the subtype checks and the union less a box in the three tests after this one.
-    pinwheels_empty_scale("one end outside", negated_ends, 32);
+    pinwheels_empty_scale("one end outside", negated_ends, 256);
 }
 
 /// Size (TEST-bench-move-l0123, author P169): n 64 before, now 512; 1x 418 ms at load
@@ -731,13 +731,14 @@ fn full_pinwheels_with_an_end_outside_less_a_box_scale() {
     pinwheels_less_a_box_scale("one end outside", negated_ends, true, true, 32);
 }
 
-/// Size (TEST-bench-move-l0123, author P169): left at n 16, its old size, because the ratio
-/// fails at larger sizes; 1x 46 ms at load 26.19. Instructions from k to 8k: 8.76
-/// times from 16 (measured at the old size), 10.85 from 32 and 12.04 from 64 (1,658M to
-/// 19,960M), over the limit 10.5.
+/// Size (PERF-pinwheel-end-outside): n 16 before, now 2048; 1x 0.72 s by `ns` on a Colab VM
+/// (v5e2, 2026-11-22), 9.74 times the work at 8n, bytes 8.0 times. At TEST-bench-move-l0123
+/// the ratio was 8.76 at 16, 10.85 at 32 and 12.04 at 64; on main at 96f8fde43, with no change
+/// of this row to the kernel, it was 7.58 at 64 and 9.35 at 256, so the cost was fixed by an
+/// earlier row.
 #[test]
 fn open_pinwheels_with_an_end_outside_less_a_box_scale() {
-    pinwheels_less_a_box_scale("one end outside", negated_ends, true, false, 16);
+    pinwheels_less_a_box_scale("one end outside", negated_ends, true, false, 2048);
 }
 
 /// Size (TEST-bench-move-l0123, author P169): n 32 before, now 64; 1x 264 ms at load

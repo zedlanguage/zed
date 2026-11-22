@@ -49,13 +49,17 @@ fn the_product_of_k_parity_lists_has_a_checked_singleton() {
     });
 }
 
-/// Size (TEST-bench-move-l0123, author P169): left at n 64, its old size, because the ratio
-/// fails at larger sizes; 1x 4.0 ms at load 23.33. Instructions from m to 8m: 8.51
-/// times from 64 (measured at the old size), 13.88 from 512 and 25.93 from 2048 (833M to
-/// 21,587M, while bytes grew 8.0 times), over the limit 10.5.
+/// Size (PERF-blame-settlement): n 64 before, now 2048; 1x 1.38 s by `ns` on a Colab VM
+/// (v5e2, 2026-11-22). Before the row the instruction ratio grew with n: 8.51 at 64, 13.88 at
+/// 512 and 25.93 at 2048 (TEST-bench-move-l0123), while bytes grew 8.0 times. A callgrind
+/// profile at 1024 and 4096 found the step: `group_verdicts` dropped the decided members from
+/// `DECIDING` with a scan of the `undecided` slice per member, order `m²` here, where every
+/// member is refused. Negative control, run once and not committed (the slice scan restored):
+/// 1,324M and 23,887M instructions at 2048 and 16384, 18.04 times, failed. With the set:
+/// 1,095M and 8,785M, 8.02 times; bytes 8.0 times. COMPLEXITY.md K141.
 #[test]
 fn canonical_blame_settlement_scales() {
-    let n = 64;
+    let n = 2048;
     let groups = scaling::inputs(n, canonical_blame_chain);
     scaling::check_order(
         "canonical blame settlement on m refused chain members",
