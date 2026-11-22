@@ -1215,34 +1215,25 @@ fn a_refused_question_over_a_remainder_of_a_quotient_names_its_moduli() {
 }
 
 #[test]
-fn a_refused_question_over_a_sum_of_quotients_names_its_moduli() {
+fn a_question_over_a_sum_of_quotients_is_decided() {
     // A remainder of a sum of two quotients of `x`, `(x div 3 + x div 5) mod 7`, is periodic in
-    // `x` (period 105) but is not a remainder of a multiple of `x` that `modular::scaled`
-    // rewrites (a row with two quotients is not one of its definition rows), and the checker
-    // still refuses it,
-    // a defect filed as row PRES-one-variable-sum-of-quotients. Until then this test checks,
-    // end to end, how `front.rs` fills the program's variable and its moduli into the shadows
-    // reason (I4.11): the variables the reason counts are the checker's, one for each remainder
-    // and quotient. `a_question_whose_point_lies_past_one_splinter_is_rejected` keeps the reason
-    // over four variables of the program.
+    // `x` (period 105). Refused (shadows) until PRES-one-variable-sum-of-quotients;
+    // `modular::scaled` now reads the sum's row and rewrites the literal on its remainder into
+    // residues of `x` modulo 105. It holds at 4 (4 div 3 + 4 div 5 = 1, (4 - 4) mod 30 = 0,
+    // 4 mod 6 = 4) and not at 10 (3 + 2 = 5 > 2). The shadows reason's moduli stay pinned by
+    // `a_refused_question_over_a_remainder_of_a_quotient_names_its_moduli`.
     let src = program(
         "ok(x) = (x div 3 + x div 5) mod 7 <= 2 && (x - 4) mod 30 <= 9 && x mod 6 != 1;",
         "x: a",
     );
-    let printed = rejection("shadows-sum-of-quotients", &src);
-    assert!(
-        printed.contains(
-            "The program has one variable, `x`, and the conditions read it through its \
-             remainders and quotients by 3, 5, 6, 7 and 30; the checker gives each \
-             remainder and quotient a variable of its own. Where the values a variable can take \
-             have gaps, it splits the conditions into cases, one for each gap. Here the only \
-             values could lie in a case that would have to be split again with as many of the \
-             checker's variables left as before, so the splitting need not end. The checker \
-             stopped there, with no values found and none ruled out.\n"
-        ),
-        "{printed}"
-    );
-    assert!(!printed.contains("as many variables left"), "{printed}");
+    for (input, out) in [("4\n", "in\n"), ("10\n", "out\n")] {
+        let o = run("sum-of-quotients-decided", &src, input, &[]);
+        assert_eq!(
+            (o.status, o.stdout.as_str(), o.stderr.as_str()),
+            (0, out, ""),
+            "{input}"
+        );
+    }
 }
 #[test]
 fn written_wide_divisors_keep_the_question() {

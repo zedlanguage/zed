@@ -484,22 +484,280 @@ fn other_shapes_are_still_declined() {
         ]
         .concat(),
     );
-    let sum_of_quotients = Formula::and(
+    // A sum whose remainder's bound reaches the modulus is not a remainder ([`read_sum`]).
+    let sum_bound_too_high = Formula::and(
+        [
+            row(x(), 3, 0),
+            row(x(), 5, 1),
+            vec![
+                Formula::Con(Con::eq(&q(0).plus(&q(1)), &q(2).times(7).plus(&r(2)))),
+                ge(&r(2), 0),
+                Formula::Con(Con::ge(&Lin::constant(7), &r(2))),
+            ],
+        ]
+        .concat(),
+    );
+    // A sum whose quotient another constraint reads.
+    let sum_quotient_read = Formula::and(
         [
             row(x(), 3, 0),
             row(x(), 5, 1),
             row(q(0).plus(&q(1)), 7, 2),
-            vec![Formula::Con(Con::ge(&Lin::constant(2), &r(2)))],
+            vec![Formula::Con(Con::ge(&q(2).plus(&x()), &Lin::constant(4)))],
         ]
         .concat(),
     );
     for (what, f) in [
         ("two variables", two_vars),
         ("a quotient read by a bound", quotient_bound),
-        ("a sum of quotients", sum_of_quotients),
+        (
+            "a sum whose remainder may reach the modulus",
+            sum_bound_too_high,
+        ),
+        ("a sum whose quotient is read", sum_quotient_read),
     ] {
         assert!(solve(&f, true).is_none(), "{what}: answered\n{f}");
     }
+}
+
+/// The example of row PRES-one-variable-sum-of-quotients, `(x div 3 + x div 5) mod 7 <= 2`, with
+/// the checker's `(x - 4) mod 30 <= 9` and `x mod 6 != 1` (the program of
+/// tests/steps/l01_38_presburger/checker.rs), and the same with `== 6` added, decided against
+/// enumeration over one period (`3 * 5 * 7 * 30 * 6` covers every row's period).
+#[test]
+fn the_rows_sum_example_is_decided() {
+    let ge = |a: &Lin, c: i64| Formula::Con(Con::ge(a, &Lin::constant(c)));
+    let le = |a: &Lin, c: i64| Formula::Con(Con::ge(&Lin::constant(c), a));
+    let row = |left: Lin, m: i64, i: usize| {
+        vec![
+            Formula::Con(Con::eq(&left, &q(i).times(m).plus(&r(i)))),
+            ge(&r(i), 0),
+            le(&r(i), m - 1),
+        ]
+    };
+    let rows = [
+        row(x(), 3, 0),
+        row(x(), 5, 1),
+        row(q(0).plus(&q(1)), 7, 2),
+        row(x().plus(&Lin::constant(-4)), 30, 3),
+        row(x(), 6, 4),
+    ]
+    .concat();
+    let lits = vec![
+        le(&r(2), 2),
+        le(&r(3), 9),
+        Formula::or(vec![le(&r(4), 0), ge(&r(4), 2)]),
+    ];
+    let value = |v: i64, eq6: bool| {
+        let s = v.div_euclid(3) + v.div_euclid(5);
+        s.rem_euclid(7) <= 2
+            && (v - 4).rem_euclid(30) <= 9
+            && v.rem_euclid(6) != 1
+            && (!eq6 || s.rem_euclid(7) == 6)
+    };
+    for eq6 in [false, true] {
+        let mut parts = [rows.clone(), lits.clone()].concat();
+        if eq6 {
+            parts.push(Formula::Con(Con::eq(&r(2), &Lin::constant(6))));
+        }
+        let f = Formula::and(parts);
+        let want = (0..3 * 5 * 7 * 30 * 6).any(|v| value(v, eq6));
+        check_answered(&f, want, &format!("the row's example, == 6: {eq6}"));
+    }
+}
+
+/// A sum `sum c_j p_j + k == m qs + rs` (or `== m qs` with no remainder) over parts of the
+/// divisions: part `0` is `x`, part `2 i + 1` the quotient and `2 i + 2` the remainder of
+/// division `i`. Its quotient and remainder are `Aux` atoms past every division's.
+#[derive(Clone, Debug)]
+struct Sum {
+    parts: Vec<(usize, i64)>,
+    k: i64,
+    m: i64,
+    rem: bool,
+}
+
+fn part(p: usize) -> Lin {
+    match p {
+        0 => x(),
+        p if p % 2 == 1 => q(p / 2),
+        p => r(p / 2 - 1),
+    }
+}
+
+/// Up to two sums over two or three distinct parts of `divs` each (remainders only of
+/// divisions whose remainder is not fixed), as constraints, with their atoms numbered from
+/// division `divs.len()` on.
+fn random_sums(rng: &mut Rng, divs: &[Div]) -> Vec<Sum> {
+    let mut avail: Vec<usize> = vec![0];
+    for (i, d) in divs.iter().enumerate() {
+        avail.push(2 * i + 1);
+        if d.fixed.is_none() {
+            avail.push(2 * i + 2);
+        }
+    }
+    (0..1 + rng.below(2))
+        .map(|_| {
+            let rem = avail.len() < 3 || rng.below(4) != 0;
+            // Three parts with no remainder, so the equation has four terms and is no row.
+            let want = if rem { 2 + rng.below(2) } else { 3 };
+            let mut parts: Vec<(usize, i64)> = Vec::new();
+            while parts.len() < (want as usize).min(avail.len()) {
+                let p = rng.pick(&avail);
+                if parts.iter().all(|(o, _)| *o != p) {
+                    let c = rng.int(1, 4);
+                    parts.push((p, if rng.coin() { c } else { -c }));
+                }
+            }
+            Sum {
+                parts,
+                k: rng.int(-6, 6),
+                m: rng.int(2, 6),
+                rem,
+            }
+        })
+        .collect()
+}
+
+fn sum_formulas(divs: &[Div], sums: &[Sum]) -> Vec<Formula> {
+    let mut out = Vec::new();
+    for (j, s) in sums.iter().enumerate() {
+        let i = divs.len() + j;
+        let mut left = Lin::constant(s.k);
+        for (p, c) in &s.parts {
+            left = left.plus(&part(*p).times(*c));
+        }
+        if s.rem {
+            out.push(Formula::Con(Con::eq(&left, &q(i).times(s.m).plus(&r(i)))));
+            out.push(Formula::Con(Con::ge(&r(i), &Lin::constant(0))));
+            out.push(Formula::Con(Con::ge(&Lin::constant(s.m - 1), &r(i))));
+        } else {
+            out.push(Formula::Con(Con::eq(&left, &q(i).times(s.m))));
+        }
+    }
+    out
+}
+
+/// [`point`], with each sum's quotient and remainder; `None` when a sum with no remainder is
+/// not divisible.
+fn point_sums(divs: &[Div], sums: &[Sum], v: i64) -> Option<Model> {
+    let mut model = point(divs, v)?;
+    for (j, s) in sums.iter().enumerate() {
+        let i = divs.len() + j;
+        let mut e = s.k;
+        for (p, c) in &s.parts {
+            let at = match *p {
+                0 => v,
+                p if p % 2 == 1 => model[&q_atom(p / 2)].to_i128().expect("small") as i64,
+                p => model[&r_atom(p / 2 - 1)].to_i128().expect("small") as i64,
+            };
+            e += c * at;
+        }
+        let (fl, rem) = (e.div_euclid(s.m), e.rem_euclid(s.m));
+        if s.rem {
+            model.insert(r_atom(i), Int::from(rem));
+        } else if rem != 0 {
+            return None;
+        }
+        model.insert(q_atom(i), Int::from(fl));
+    }
+    Some(model)
+}
+
+/// A random Boolean combination of one-term literals on the sums' remainders.
+fn random_sum_literals(rng: &mut Rng, divs: &[Div], sums: &[Sum], depth: u32) -> Formula {
+    let free: Vec<usize> = (0..sums.len()).filter(|&j| sums[j].rem).collect();
+    if free.is_empty() {
+        return Formula::top();
+    }
+    if depth == 0 || rng.below(3) == 0 {
+        let j = rng.pick(&free);
+        let i = divs.len() + j;
+        // In `0..m`, so a top-level literal leaves the remainder's bounds a nonempty part of
+        // `[0, m - 1]`, which [`read_sum`] needs.
+        let c = Lin::constant(rng.int(0, sums[j].m - 1));
+        return Formula::Con(match rng.below(3) {
+            0 => Con::ge(&r(i), &c),
+            1 => Con::ge(&c, &r(i)),
+            _ => Con::eq(&r(i), &c),
+        });
+    }
+    let kids = (0..2 + rng.below(2))
+        .map(|_| random_sum_literals(rng, divs, sums, depth - 1))
+        .collect();
+    match rng.below(3) {
+        0 => Formula::and(kids),
+        1 => Formula::or(kids),
+        _ => Formula::negate(Formula::and(kids)),
+    }
+}
+
+#[test]
+fn sums_of_quotients_match_enumeration() {
+    // As in `scaled_remainders_match_enumeration`: every remainder and every sum's remainder is
+    // periodic in `x` with a period dividing the product `P` of all the moduli (a sum's period
+    // `m L` divides it, [`sum_residues`]), so `[-20 - P, 20 + P]` holds a point exactly when
+    // the line does.
+    let (mut rng, seed) = Rng::fresh("sums_of_quotients_match_enumeration");
+    crate::presburger::CHECK_LOSSLESS.with(|c| c.set(true));
+    let mut answered = [0usize; 2];
+    let mut by_solve = [0usize; 2];
+    for case in 0..300 {
+        let divs: Vec<Div> = random_divs(&mut rng)
+            .into_iter()
+            .map(|d| Div {
+                m: 2 + d.m % 4,
+                fixed: d.fixed.map(|c| c % (2 + d.m % 4)),
+                ..d
+            })
+            // A multiple of the modulus (`(-5 x - 5) mod 5`) normalizes to `x + q == -1`, no
+            // row, so `solve` declines and the general path refuses the sum over it (seed
+            // 3730609663341733710 case 223, `Shadows`); row PRES-sum-of-quotients-period-product
+            // records it.
+            .filter(|d| d.a % d.m != 0)
+            .collect();
+        let sums = random_sums(&mut rng, &divs);
+        let lits = Formula::and(vec![
+            random_literals(&mut rng, &divs, 1),
+            random_sum_literals(&mut rng, &divs, &sums, 2),
+        ]);
+        let period: i64 = divs
+            .iter()
+            .map(|d| d.m)
+            .chain(sums.iter().map(|s| s.m))
+            .product();
+        let (extra, xs): (Vec<Formula>, Vec<i64>) = if rng.coin() {
+            (vec![], (-20 - period..=20 + period).collect())
+        } else {
+            let lo = rng.int(-30, 30);
+            let hi = lo + rng.int(0, 40);
+            (
+                vec![
+                    Formula::Con(Con::ge(&x(), &Lin::constant(lo))),
+                    Formula::Con(Con::ge(&Lin::constant(hi), &x())),
+                ],
+                (lo..=hi).collect(),
+            )
+        };
+        let f = formula(&divs, lits, [sum_formulas(&divs, &sums), extra].concat());
+        let want = xs
+            .into_iter()
+            .any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
+        let by_module = check(
+            &f,
+            want,
+            &format!("seed {seed} case {case} {divs:?} {sums:?}"),
+        );
+        answered[usize::from(want)] += 1;
+        by_solve[usize::from(want)] += usize::from(by_module);
+    }
+    // `solve` answers 293 to 300 of 300 over eleven seeds when written (the rest
+    // `solve_modular_whole` declines, as in `check`, and `decide` answers them), so a module
+    // that declined the sums would fail here and on `decide`.
+    assert!(
+        answered[0] > 40 && answered[1] > 40 && by_solve[0] + by_solve[1] > 270,
+        "seed {seed}: answers {answered:?}, by solve {by_solve:?}"
+    );
 }
 
 #[test]
@@ -559,6 +817,53 @@ fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
         let want = has_point(&f, &divs, 0..m);
         check_answered(&f, want, &format!("modulus {m}"));
     }
+    for m in [7, 30, 101] {
+        let (divs, f) = bench_sum(m);
+        let want = (0..15 * m).any(|v| {
+            let s = v.div_euclid(3) + v.div_euclid(5);
+            point(&divs, v).is_some_and(|mut p| {
+                for (i, k) in [(2, 0), (3, 1)] {
+                    p.insert(q_atom(i), Int::from((s + k).div_euclid(m)));
+                    p.insert(r_atom(i), Int::from((s + k).rem_euclid(m)));
+                }
+                f.holds(&p)
+            })
+        });
+        assert!(!want, "sum modulus {m}: a point");
+        check_answered(&f, want, &format!("sum modulus {m}"));
+    }
+}
+
+/// `(x div 3 + x div 5) mod m == 0` and `(x div 3 + x div 5 + 1) mod m == 0`, two sums with no
+/// common point (for `m >= 2`): no point stops the search early, and each sum's literal gives
+/// residues of `x` modulo its period `15 m` ([`sum_residues`]), so the work is at least linear
+/// in `m`. The second sum's quotient and remainder are those of division 3.
+fn bench_sum(m: i64) -> (Vec<Div>, Formula) {
+    let divs: Vec<Div> = [3, 5]
+        .into_iter()
+        .map(|d| Div {
+            t: 0,
+            a: 1,
+            k: 0,
+            m: d,
+            fixed: None,
+        })
+        .collect();
+    let mut sums = Vec::new();
+    for (i, k) in [(2, 0), (3, 1)] {
+        sums.push(Formula::Con(Con::eq(
+            &q(0).plus(&q(1)).plus(&Lin::constant(k)),
+            &q(i).times(m).plus(&r(i)),
+        )));
+        sums.push(Formula::Con(Con::ge(&r(i), &Lin::constant(0))));
+        sums.push(Formula::Con(Con::ge(&Lin::constant(m - 1), &r(i))));
+    }
+    let lits = Formula::or(vec![
+        Formula::negate(Formula::Con(Con::eq(&r(2), &Lin::constant(0)))),
+        Formula::Con(Con::eq(&r(3), &Lin::constant(0))),
+    ]);
+    let lits = Formula::and(vec![lits, Formula::Con(Con::eq(&r(2), &Lin::constant(0)))]);
+    (divs.clone(), formula(&divs, lits, sums))
 }
 
 /// `(a x + 3) mod m` with `a` the nearest integer to `m / 3` coprime to `m`, in the lower half

@@ -5,7 +5,9 @@
 //! and hands it the rewritten formula. A remainder of a quotient of `x`, such as
 //! `(x div 3) mod 10`, is declined and stays refused: rewritten into residues of `x`, a chain of
 //! `n` quotients writes about `n^2` bits (measured ratio 35.1 at 8n), so it needs a method of
-//! its own (row PRES-nested-quotient-residues).
+//! its own (row PRES-nested-quotient-residues). A remainder of a sum of rows' parts, such as
+//! `(x div 3 + x div 5) mod 7`, is read as a [`SumRow`] and rewritten into residues of `x`
+//! modulo its period (row PRES-one-variable-sum-of-quotients, [`sum_residues`]).
 //!
 //! No source is used: the identity below is elementary and is proved here.
 //!
@@ -24,6 +26,7 @@
 //! enumeration over a period or the bounds), `tests::an_affine_preimage_matches_enumeration`,
 //! `tests::the_rows_scaled_example_is_decided`,
 //! `tests::a_remainder_of_a_quotient_is_still_declined`,
+//! `tests::sums_of_quotients_match_enumeration`, `tests::the_rows_sum_example_is_decided`,
 //! and end to end
 //! `l01_38_presburger::checker::a_question_over_one_scaled_variable_is_decided`.
 
@@ -47,6 +50,204 @@ struct DefRow<'f> {
     /// The row whose quotient is `t`, or `None` when `t` is the variable; [`solve`] declines a
     /// formula with any row that has one.
     parent: Option<usize>,
+}
+
+/// A part of a [`SumRow`]: the variable, or the quotient or the remainder of row `i`.
+#[derive(Clone, Copy)]
+enum Part {
+    X,
+    Q(usize),
+    R(usize),
+}
+
+/// A top-level equation `sum_j c_j p_j + c_q q + c_r r + k0 == 0` (or with no `r`) whose parts
+/// `p_j` are the variable and quotients and remainders of rows on it, read as
+/// `r = E mod m` and `q = sigma * floor(E / m)` with `E = s (sum_j c_j p_j + k0)`, `s = -c_r`
+/// (`1` with no remainder, which then says `E mod m = 0`), `m = |c_q|` and
+/// `sigma = -sgn(s c_q)`. The proof is that of [`def_row`] with `A t` replaced by
+/// `s sum_j c_j p_j`, which nothing in it reads beyond being an integer at each point.
+/// `parts` holds `s c_j`, `k` holds `s k0`.
+struct SumRow {
+    parts: Vec<(Part, Int)>,
+    k: Int,
+    m: Int,
+    q: Atom,
+    sigma: i8,
+    r: Option<Atom>,
+}
+
+/// Reads `c` as a [`SumRow`] over the rows `rows` on `x`, or `None`. Every atom of `c` other than
+/// one quotient atom and at most one remainder atom must be `x`, a row's quotient (`q_row`) or a
+/// row's remainder (`r_of`), and at least one must be; the remainder is the one other atom of
+/// coefficient `1` or `-1` that the top-level bounds hold in `[0, hi]` with `hi` below the size
+/// of the quotient's coefficient, and the quotient's coefficient is at least 2 in size.
+fn read_sum(
+    c: &Con,
+    x: &Atom,
+    q_row: &HashMap<&Atom, usize>,
+    r_of: &HashMap<Atom, usize>,
+    bounds: &HashMap<Atom, (Option<Int>, Option<Int>)>,
+) -> Option<SumRow> {
+    if c.rel != Rel::Eq {
+        return None;
+    }
+    let mut parts: Vec<(Part, Int)> = Vec::new();
+    let mut rest: Vec<(&Atom, &Int)> = Vec::new();
+    for (a, k) in &c.lin.terms {
+        let part = if a == x {
+            Some(Part::X)
+        } else if let Some(&i) = q_row.get(a) {
+            Some(Part::Q(i))
+        } else {
+            r_of.get(a).map(|&i| Part::R(i))
+        };
+        match part {
+            Some(p) => parts.push((p, k.clone())),
+            None => rest.push((a, k)),
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let below = |r: usize, q: usize| -> bool {
+        let (a, k) = rest[r];
+        matches!(bounds.get(a), Some((Some(lo), Some(hi)))
+            if k.is_unit() && !lo.is_negative() && lo <= hi && *hi < rest[q].1.abs())
+    };
+    let (q, r) = match rest.len() {
+        1 => (0, None),
+        2 => match (below(0, 1), below(1, 0)) {
+            (true, false) => (1, Some(0)),
+            (false, true) => (0, Some(1)),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let (q_atom, c_q) = rest[q];
+    let m = c_q.abs();
+    if m < Int::from(2) {
+        return None;
+    }
+    let s = r.map_or(Int::ONE, |i| -rest[i].1);
+    let cq = &s * c_q;
+    Some(SumRow {
+        parts: parts.into_iter().map(|(p, k)| (p, &s * &k)).collect(),
+        k: &s * &c.lin.constant,
+        m,
+        q: q_atom.clone(),
+        sigma: if cq.is_positive() { -1 } else { 1 },
+        r: r.map(|i| rest[i].0.clone()),
+    })
+}
+
+/// `E` of `sum` at the values `model` of the rows' parts (from [`point_at`]); `x` is the
+/// variable's value. O(parts) arithmetic operations.
+fn sum_value(sum: &SumRow, rows: &[DefRow<'_>], model: &Model, x: &Int) -> Int {
+    let mut e = sum.k.clone();
+    for (p, k) in &sum.parts {
+        let v = match p {
+            Part::X => x,
+            Part::Q(i) => &model[&rows[*i].q],
+            Part::R(i) => &model[rows[*i].r.as_ref().expect("a remainder part has its atom")],
+        };
+        e = &e + &(k * v);
+    }
+    e
+}
+
+/// The residues of `x` at which the remainder `E mod m` of `sum` lies in `u` (a residue set
+/// modulo `m`), as `(n, T)`: `x mod n` in `T`.
+///
+/// Proof. Let `L` be the least common multiple of the moduli `m_i` of the rows `sum` reads, and
+/// `alpha = sum_j c_j d_j` with `d_j = L` for `x`, `sigma_i a_i L / m_i` for the quotient of row
+/// `i` and `0` for its remainder. For every `x` and integer `j`, `E(x + j L) = E(x) + j alpha`:
+/// `x` grows by `j L`; the dividend `a_i x + k_i` of row `i` grows by `a_i j L`, a multiple of
+/// `m_i`, so its floor quotient grows by exactly `a_i j L / m_i` and its remainder is unchanged.
+/// So `E mod m` has period `n = m L` (`E(x + m L) = E(x) + m alpha`), and for `x = c + j L` with
+/// `0 <= c < L`, `0 <= j < m`, `E(x) mod m = (E(c) + j alpha) mod m`. QED.
+// Complexity tradeoff: naive version, none (the general path refused these formulas with the
+// shadows reason). Used: `E(c)` for each `c < L` (O(L * parts) operations), then one addition
+// and one reduction modulo `m` for each of the `n = m L` residues, O(n + L * parts) in all, and
+// the residue set written has at most `n / 2 + 1` runs, so the work is within a constant of the
+// largest output. `n` is the product of the moduli the sum reads (for coprime moduli), so a sum
+// over `k` coprime moduli costs their product, exponential in `k`: such a set of residues can
+// need that many runs, and a method that does not write residues of `x` is row
+// PRES-sum-of-quotients-period-product. Tests: `tests::sums_of_quotients_match_enumeration`;
+// benchmark `bench::sums_of_quotients_scale` (`x div 3 + x div 5` modulo `m`, ratio 7.66 at
+// 8m when written). COMPLEXITY.md row
+// PRES-one-variable-sum-of-quotients.
+/// `None` when `L` or `m` does not fit a machine word: the loop below runs `m L` steps, which
+/// cannot finish at such sizes, so this is the limit of what can be written, not a threshold.
+fn sum_residues(
+    sum: &SumRow,
+    rows: &[DefRow<'_>],
+    x: &Atom,
+    u: &ResidueSet,
+) -> Option<(Int, ResidueSet)> {
+    let mut l = Int::ONE;
+    let mut alpha = Int::ZERO;
+    for (p, _) in &sum.parts {
+        if let Part::Q(i) | Part::R(i) = p {
+            l = l.lcm(&rows[*i].m);
+        }
+    }
+    for (p, k) in &sum.parts {
+        let d = match p {
+            Part::X => l.clone(),
+            Part::Q(i) => {
+                let row = &rows[*i];
+                // Exact: `m_i` divides `L`.
+                let step = (&row.a * &l).div_floor(&row.m);
+                if row.sigma > 0 { step } else { -&step }
+            }
+            Part::R(_) => Int::ZERO,
+        };
+        alpha = &alpha + &(k * &d);
+    }
+    let m = &sum.m;
+    let n = m * &l;
+    let alpha = alpha.mod_floor(m);
+    let (l_n, m_n) = (
+        u64::try_from(l.to_i128()?).ok()?,
+        u64::try_from(m.to_i128()?).ok()?,
+    );
+    let mut start: Vec<Int> = Vec::new();
+    let mut c = Int::ZERO;
+    for _ in 0..l_n {
+        start.push(sum_value(sum, rows, &point_at(rows, x, &c), &c).mod_floor(m));
+        c = &c + &Int::ONE;
+    }
+    let inside = |v: &Int| u.iter().any(|(lo, hi)| lo <= v && v <= hi);
+    let mut out: ResidueSet = Vec::new();
+    let mut run: Option<Int> = None;
+    let mut t = Int::ZERO;
+    let mut shift = Int::ZERO;
+    for _ in 0..m_n {
+        for e in &start {
+            let mut v = e + &shift;
+            if &v >= m {
+                v = &v - m;
+            }
+            match (inside(&v), &run) {
+                (true, None) => run = Some(t.clone()),
+                (false, Some(lo)) => {
+                    out.push((lo.clone(), &t - &Int::ONE));
+                    run = None;
+                }
+                _ => {}
+            }
+            t = &t + &Int::ONE;
+        }
+        shift = &shift + &alpha;
+        if &shift >= m {
+            shift = &shift - m;
+        }
+    }
+    if let Some(lo) = run {
+        out.push((lo, &n - &Int::ONE));
+    }
+    let set = res_normalize(out, &n);
+    Some((n, set))
 }
 
 /// The bounds `(lo, hi)` the top-level one-term constraints put on each atom; an equation that
@@ -521,10 +722,28 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     }
     // The atoms of the tree that a constraint other than a row names; at most one may be `x`.
     let shape_cons: HashSet<&Con> = shapes.iter().map(|s| s.con).collect();
+    // The top-level equations of three or more terms over the rows' parts: each must read as a
+    // [`SumRow`] once `x` is known, or the formula is declined (as it was before
+    // PRES-one-variable-sum-of-quotients, so no earlier answer changes).
+    // In the order of `top`, so the fresh atoms are numbered the same on every run.
+    let sum_list: Vec<&Con> = top
+        .iter()
+        .copied()
+        .filter(|c| {
+            c.rel == Rel::Eq
+                && c.lin.terms.len() >= 3
+                && !shape_cons.contains(c)
+                && c.lin
+                    .terms
+                    .keys()
+                    .any(|a| ends.contains(a) || r_of.contains_key(a))
+        })
+        .collect();
+    let sum_cons: HashSet<&Con> = sum_list.iter().copied().collect();
     let mut named: Option<&Atom> = None;
     let mut two_named = false;
     f.walk(&mut |c| {
-        if shape_cons.contains(c) {
+        if shape_cons.contains(c) || sum_cons.contains(c) {
             return;
         }
         for a in c.lin.terms.keys() {
@@ -547,14 +766,37 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
 
     // Every constraint: a definition row (top level only), a one-term constraint on a remainder,
     // or one on `x` alone.
+    let q_row: HashMap<&Atom, usize> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, row)| (&row.q, i))
+        .collect();
+    let mut sums: Vec<SumRow> = Vec::new();
+    for c in &sum_list {
+        sums.push(read_sum(c, &x, &q_row, &r_of, &bounds)?);
+    }
+    // Each sum's quotient and remainder are its own: no other sum names them.
+    let mut sum_r: HashMap<Atom, usize> = HashMap::new();
+    let mut sum_atoms: HashSet<&Atom> = HashSet::new();
+    for (j, sum) in sums.iter().enumerate() {
+        if !sum_atoms.insert(&sum.q) {
+            return None;
+        }
+        if let Some(r) = &sum.r {
+            if !sum_atoms.insert(r) {
+                return None;
+            }
+            sum_r.insert(r.clone(), j);
+        }
+    }
     let def_cons: HashSet<&Con> = rows.iter().map(|row| row.con).collect();
     let allowed = |c: &Con, at_top: bool| -> bool {
-        if at_top && def_cons.contains(c) {
+        if at_top && (def_cons.contains(c) || sum_cons.contains(c)) {
             return true;
         }
         if c.lin.terms.len() == 1 {
             let a = c.lin.terms.keys().next().expect("one term");
-            return *a == x || r_of.contains_key(a);
+            return *a == x || r_of.contains_key(a) || sum_r.contains_key(a);
         }
         c.lin.terms.keys().all(|a| *a == x)
     };
@@ -575,7 +817,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     if let Some((Some(lo), Some(hi))) = bounds.get(&x)
         && lo == hi
     {
-        let model = point_at(&rows, &x, lo);
+        let model = point_with_sums(&rows, &sums, &x, lo);
         return Some(
             f.holds(&model)
                 .then(|| if want_model { model } else { Model::new() }),
@@ -623,10 +865,14 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             return;
         }
         let a = c.lin.terms.keys().next().expect("one term");
-        let Some(&i) = r_of.get(a) else {
+        let found = if let Some(&i) = r_of.get(a) {
+            pull_back(&rows, i, remainder_values(c, &rows[i].m))
+        } else if let Some(&j) = sum_r.get(a) {
+            sum_residues(&sums[j], &rows, &x, &remainder_values(c, &sums[j].m))
+        } else {
             return;
         };
-        match pull_back(&rows, i, remainder_values(c, &rows[i].m)) {
+        match found {
             Some((n, t)) => {
                 replaced.insert(c.clone(), residue_literal(n, t));
             }
@@ -641,11 +887,16 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             zero_remainders.push(residue_literal(n, t));
         }
     }
+    // A sum with no remainder says `E mod m = 0` ([`SumRow`]).
+    for sum in sums.iter().filter(|sum| sum.r.is_none()) {
+        let (n, t) = sum_residues(sum, &rows, &x, &vec![(Int::ZERO, Int::ZERO)])?;
+        zero_remainders.push(residue_literal(n, t));
+    }
     if failed {
         return None;
     }
     let body = f.map_cons(&|c| {
-        if def_cons.contains(c) {
+        if def_cons.contains(c) || sum_cons.contains(c) {
             Formula::top()
         } else if let Some(g) = replaced.get(c) {
             g.clone()
@@ -682,7 +933,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         return Some(Some(Model::new()));
     }
     let x_value = point.get(&x).cloned().unwrap_or(Int::ZERO);
-    let model = point_at(&rows, &x, &x_value);
+    let model = point_with_sums(&rows, &sums, &x, &x_value);
     // By (2) of the proof this is a point of `f`; a failure here is a defect of this module,
     // and declining leaves `f` to the general path.
     let holds = f.holds(&model);
@@ -691,6 +942,20 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         "the point rebuilt from x = {x_value} is not one of\n{f}"
     );
     holds.then_some(Some(model))
+}
+
+/// [`point_at`], and the quotient and remainder of each sum at `x = v` as [`SumRow`] reads them.
+fn point_with_sums(rows: &[DefRow<'_>], sums: &[SumRow], x: &Atom, v: &Int) -> Model {
+    let mut model = point_at(rows, x, v);
+    for sum in sums {
+        let e = sum_value(sum, rows, &model, v);
+        let fl = e.div_floor(&sum.m);
+        if let Some(r) = &sum.r {
+            model.insert(r.clone(), &e - &(&sum.m * &fl));
+        }
+        model.insert(sum.q.clone(), if sum.sigma > 0 { fl } else { -&fl });
+    }
+    model
 }
 
 /// The values at `x = v` of `x` and of each quotient and remainder its row (a row on `x`)

@@ -2748,9 +2748,10 @@ fn solve_regime_step(
     // that does (row PRES-one-variable-scaled-and-nested-residues; test
     // `checker::a_question_over_one_scaled_variable_is_decided`). Still refused: a remainder of
     // a quotient of `x` (row PRES-nested-quotient-residues; test
-    // `checker::a_refused_question_over_a_remainder_of_a_quotient_names_its_moduli`) and a
-    // remainder of a sum of quotients of `x` (row PRES-one-variable-sum-of-quotients; test
-    // `checker::a_refused_question_over_a_sum_of_quotients_names_its_moduli`).
+    // `checker::a_refused_question_over_a_remainder_of_a_quotient_names_its_moduli`). A
+    // remainder of a sum of quotients of `x` is rewritten by [`scaled`] too (row
+    // PRES-one-variable-sum-of-quotients; test
+    // `checker::a_question_over_a_sum_of_quotients_is_decided`).
     //
     // Complexity tradeoff: naive version (before), as for the bounded regime above, the general
     // path, which refused these. Used: the lcm `p`, M - 1 steps of `Int::lcm` over the M moduli
