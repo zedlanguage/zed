@@ -175,7 +175,7 @@ mod tests {
                 .cloned()
                 .collect();
             for s in shorter {
-                for b in [b'a', b'\r', b'\n'] {
+                for b in *b"a\r\n" {
                     let mut i = s.clone();
                     i.push(b);
                     inputs.push(i);
