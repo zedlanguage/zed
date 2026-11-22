@@ -955,3 +955,68 @@ fn a_variable_in_a_tuple_shared_n_levels_deep_is_compared_in_linear_time() {
         assert!(fits_sig(s, q));
     });
 }
+
+/// `n` rows `ri = (c, $(128i), ..., $(128i + 63))`, with `c` the row of `$0, ..., $63` each
+/// shares, in one row `t = (r1, ..., rn)`, and `n` replacements of `t`, each binding a class
+/// `$(128j + 64)` that no row holds: each row's classes are on every bit and range from `$0`
+/// to `$(128i + 63)`, so the bits and ranges of `VarBits` say that the rows from `r(j+1)`
+/// on may hold `$(128j + 64)` (CK-data-memo, COMPLEXITY.md F93). The same with names: `n`
+/// rows that each hold 300 names of their own, which cover the 64 bits, and replacements of
+/// names no row holds, `n / 2` of them. COMPLEXITY.md CK-every-bit.
+#[test]
+fn replacing_variables_no_row_holds_in_rows_on_every_bit_scales() {
+    use std::sync::Arc;
+    use zedc::check::ty::Binds;
+    let n = 40;
+    let class = |k: usize| Ty::var(format!("${k}").into());
+    let bind =
+        |v: String| -> Binds { [(Arc::<str>::from(v), Ty::dynamic())].into_iter().collect() };
+    let made = scaling::inputs(n, |m| {
+        let c = Ty::tuple((0..64).map(class).collect());
+        let rows = (1..=m).map(|i| {
+            Ty::tuple(
+                std::iter::once(c.clone())
+                    .chain((0..64).map(|b| class(128 * i + b)))
+                    .collect(),
+            )
+        });
+        let binds: Vec<Binds> = (0..m).map(|j| bind(format!("${}", 128 * j + 64))).collect();
+        (Ty::tuple(rows.collect()), binds)
+    });
+    let names = scaling::inputs(n / 2, |m| {
+        let rows = (0..m).map(|i| {
+            Ty::tuple(
+                (0..300)
+                    .map(|b| Ty::var(format!("N{i}_{b}").into()))
+                    .collect(),
+            )
+        });
+        let binds: Vec<Binds> = (0..m).map(|j| bind(format!("M{j}"))).collect();
+        (Ty::tuple(rows.collect()), binds)
+    });
+    // Each replacement is checked to give the type back equal inside the timed run, not before
+    // it: a row keeps the work spent in it and, past its cost, the set of its variables
+    // (`Replacer::wasted`), so replacements made before the timing would make the sets.
+    scaling::check_order(
+        "replacing classes no row holds in n rows on every bit",
+        n,
+        1,
+        |m| {
+            let (t, binds) = &made[&m];
+            binds
+                .iter()
+                .for_each(|b| assert!(&t.replace(b) == t));
+        },
+    );
+    scaling::check_order(
+        "replacing names no row holds in n rows on every bit",
+        n / 2,
+        1,
+        |m| {
+            let (t, binds) = &names[&m];
+            binds
+                .iter()
+                .for_each(|b| assert!(&t.replace(b) == t));
+        },
+    );
+}

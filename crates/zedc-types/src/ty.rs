@@ -599,6 +599,12 @@ struct RowData {
     /// is read from them to file the row, found the first time the row is filed
     /// ([`Row::keys`]) and kept.
     keys: std::sync::OnceLock<Keys>,
+    /// Every variable it holds at any depth, the set its bits stand for ([`row_vars`]): made
+    /// only once replacements that left it unchanged have spent as much work in it as the set
+    /// costs ([`Replacer::wasted`]), and then read in place of the bits.
+    vars: std::sync::OnceLock<NameSet>,
+    /// The work replacements spent in it that left it unchanged, while `vars` is not made.
+    wasted: std::sync::atomic::AtomicU64,
 }
 
 impl Row {
@@ -689,6 +695,8 @@ impl Row {
             needs,
             absorbs,
             keys: std::sync::OnceLock::new(),
+            vars: std::sync::OnceLock::new(),
+            wasted: std::sync::atomic::AtomicU64::new(0),
         }))
     }
 
@@ -2261,6 +2269,9 @@ trait Rebuild {
     fn made_ty(&mut self, t: Ty) -> Ty {
         t
     }
+    /// Notes that the walk entered the row `r` and spent `work` steps in it to make it into
+    /// itself, where no row around it was also left unchanged.
+    fn wasted(&mut self, _r: &Row, _work: u64) {}
 }
 
 /// A step of [`rebuild`]: a part to enter, or a part whose parts are made, to be made from them.
@@ -2270,7 +2281,8 @@ enum Step<'a> {
     Shape(&'a Shape),
     Held(&'a Arc<Sig>),
     TyDone(&'a Ty),
-    RowDone(&'a Row),
+    /// A row entered, with the walk's step count when it was entered.
+    RowDone(&'a Row, u64),
     ShapeDone(&'a Shape),
     HeldDone(&'a Arc<Sig>),
 }
@@ -2325,6 +2337,15 @@ fn rebuild_held(w: &mut impl Rebuild, s: &Arc<Sig>) -> Arc<Sig> {
 /// payload shapes; a function's arrows, each parameter then the result, then its needs), and
 /// makes each part once its own are made, the last on top of their stacks in `out`; `w` sees
 /// each part as the recursive walk did, so its memos and the variables it hides do not change.
+///
+/// A row whose components all come back as they were ([`same_nodes`]) is given back itself,
+/// not a copy with a new number. The walk counts its steps (one a part popped, one a variable
+/// of a type made), and tells `w` ([`Rebuild::wasted`]) of each row it gave back itself that
+/// no row around it in this walk was also given back itself, with the steps spent inside it:
+/// each step is told once at most, to the outermost such row that holds it, so the work told
+/// in all is at most the steps of the walk. Those rows are found by their entry counts: rows
+/// are left in the order they are entered last first, so the rows left inside an unchanged row
+/// `r` are the ones on the list entered after it, which `r` takes off.
 fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt) {
     /// Pushes `done`, then `parts` so that they pop in order.
     fn enter<'a>(stack: &mut Vec<Step<'a>>, done: Step<'a>, parts: impl Iterator<Item = Step<'a>>) {
@@ -2333,7 +2354,12 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
         stack.extend(parts);
         stack[from..].reverse();
     }
+    let mut steps: u64 = 0;
+    // The rows given back themselves that no row left so far holds, with their entry counts
+    // and the steps spent inside them.
+    let mut unchanged: Vec<(&'a Row, u64, u64)> = Vec::new();
     while let Some(step) = stack.pop() {
+        steps += 1;
         match step {
             Step::Ty(t) => match w.known_ty(t) {
                 Some(done) => out.tys.push(done),
@@ -2346,7 +2372,7 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
             },
             Step::Row(r) => match w.known_row(r) {
                 Some(done) => out.rows.push(done),
-                None => enter(&mut stack, Step::RowDone(r), r.iter().map(Step::Ty)),
+                None => enter(&mut stack, Step::RowDone(r, steps), r.iter().map(Step::Ty)),
             },
             Step::Shape(s) => match w.known_shape(s) {
                 Some(done) => out.shapes.push(done),
@@ -2360,6 +2386,7 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
                 None => enter(&mut stack, Step::HeldDone(s), sig_tys(s).map(Step::Ty)),
             },
             Step::TyDone(t) => {
+                steps += t.vars.len() as u64;
                 let mut tuples = out.rows.split_off(out.rows.len() - t.tuples.len());
                 let fns = out.sigs.split_off(out.sigs.len() - t.fns.len());
                 let from = out.shapes.len() - t.payload_shapes().count();
@@ -2411,8 +2438,18 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
                 }
                 out.tys.push(w.made_ty(made));
             }
-            Step::RowDone(r) => {
-                let made = Row::new(out.tys.split_off(out.tys.len() - r.len()));
+            Step::RowDone(r, from) => {
+                let cs = out.tys.split_off(out.tys.len() - r.len());
+                let made = match cs.iter().zip(r.iter()).all(|(a, b)| same_nodes(a, b)) {
+                    true => {
+                        while unchanged.last().is_some_and(|&(_, at, _)| at > from) {
+                            unchanged.pop();
+                        }
+                        unchanged.push((r, from, steps - from));
+                        r.clone()
+                    }
+                    false => Row::new(cs),
+                };
                 w.made_row(r, &made);
                 out.rows.push(made);
             }
@@ -2437,6 +2474,83 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
             }
         }
     }
+    for (r, _, work) in unchanged {
+        w.wasted(r, work);
+    }
+}
+
+/// Whether `a` is `b` with the same rows, payload shapes and functions, node for node: what a
+/// walk that entered `b` and changed none of them makes of it. At the cost of their outer
+/// levels, as making `a` was.
+fn same_nodes(a: &Ty, b: &Ty) -> bool {
+    let shapes = |x: &Option<Vec<Shape>>, y: &Option<Vec<Shape>>| match (x, y) {
+        (None, None) => true,
+        (Some(x), Some(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| p.as_ptr() == q.as_ptr()),
+        _ => false,
+    };
+    a.dynamic == b.dynamic
+        && a.tuples.len() == b.tuples.len()
+        && a.fns.len() == b.fns.len()
+        && a.payloads.len() == b.payloads.len()
+        && a.vars == b.vars
+        && (a.tuples.iter().zip(b.tuples.iter())).all(|(x, y)| Arc::ptr_eq(&x.0, &y.0))
+        && (a.fns.iter().zip(b.fns.iter())).all(|(x, y)| Arc::ptr_eq(x, y))
+        && (a.payloads.iter().zip(&b.payloads)).all(|((m, x), (n, y))| m == n && shapes(x, y))
+        && a.set == b.set
+        && a.family == b.family
+}
+
+/// Every variable the row `r` holds at any depth, inside functions and payloads too, or none
+/// once that takes more than `budget` steps: the variables whose bits make the row's bits
+/// ([`VarBits::ty`]: the variables of its types, the facts of the functions they hold, those
+/// of its rows and payload shapes), so a replacement that binds none of them leaves the row
+/// unchanged, as one whose keys miss its bits does ([`BindKeys::meets`]). A row met that keeps
+/// its set adds it whole; the others are entered once each, as in [`VarFacts::tys`].
+///
+/// Steps: one a type, row and shape met, one a variable inserted, and for each set added the
+/// smaller of its size and that of the set made so far, the work of the treap union ([`merge`])
+/// less its logarithm.
+fn row_vars(r: &Row, budget: u64) -> Option<NameSet> {
+    let mut set = NameSet::new();
+    let mut seen = HashSet::new();
+    let mut spent: u64 = 0;
+    let mut stack: Vec<&Ty> = r.iter().collect();
+    while let Some(t) = stack.pop() {
+        spent += 1 + t.vars.len() as u64;
+        t.vars.iter().for_each(|v| {
+            set.insert(v.clone());
+        });
+        for s in &t.fns {
+            let f = s.facts();
+            for part in [&f.classes, &f.names] {
+                spent += 1 + part.len().min(set.len()) as u64;
+                merge(&mut set, part);
+            }
+        }
+        for row in &t.tuples {
+            spent += 1;
+            match row.0.vars.get() {
+                Some(e) => {
+                    spent += e.len().min(set.len()) as u64;
+                    merge(&mut set, e);
+                }
+                None if !row.0.bits.is_empty() && seen.insert(row.node()) => {
+                    stack.extend(row.iter());
+                }
+                None => {}
+            }
+        }
+        for s in t.payload_shapes() {
+            spent += 1;
+            if !s.bits.is_empty() && seen.insert(s.node()) {
+                stack.extend(s.items.iter().chain(s.fields.values()));
+            }
+        }
+        if spent > budget {
+            return None;
+        }
+    }
+    Some(set)
 }
 
 /// The types of the arrows and needs of `s` that a rebuilding walk enters, in order: each
@@ -2981,6 +3095,17 @@ struct Memo {
 }
 
 impl<'b> Replacer<'b> {
+    /// Whether no variable of `vars` is one `binds` binds: by a lookup of each of the smaller
+    /// in the larger, O(m log n) for `m <= n`. Those hidden in a signature the walk is inside
+    /// count as bound, so the answer errs only toward entering the row.
+    fn binds_none_of(&self, vars: &NameSet) -> bool {
+        let map = &self.binds.map;
+        match map.len() <= vars.len() {
+            true => map.keys().all(|v| !vars.contains(&**v)),
+            false => vars.iter().all(|v| !map.contains_key(&**v)),
+        }
+    }
+
     fn new(binds: &'b Binds, mode: Mode) -> Self {
         Replacer {
             binds,
@@ -3273,7 +3398,10 @@ impl Rebuild for Replacer<'_> {
             _ if r.0.fixed => true,
             Mode::Outside if !r.open() => true,
             Mode::Rename if r.0.bits.internal => false,
-            _ => !self.binds.index().meets(&r.0.bits),
+            _ => {
+                !self.binds.index().meets(&r.0.bits)
+                    || (r.0.vars.get()).is_some_and(|e| self.binds_none_of(e))
+            }
         };
         kept.then(|| {
             self.made_row(r, r);
@@ -3283,6 +3411,64 @@ impl Rebuild for Replacer<'_> {
 
     fn made_row(&mut self, r: &Row, out: &Row) {
         self.memo().made.rows.insert(Arc::as_ptr(&r.0), out.clone());
+    }
+
+    /// Makes the set of the row's variables ([`row_vars`]) once the work spent in it by
+    /// replacements that left it unchanged reaches what the set costs, so that a later one
+    /// reads the set where the bits say only that it may hold a variable bound.
+    ///
+    /// The rule is that of renting skis until the rent paid reaches their price (Karlin,
+    /// Manasse, Rudolph and Sleator, "Competitive snoopy caching", Algorithmica 3, 1988,
+    /// doi:10.1007/BF01762111): the set's cost is not known before it is made, so it is tried
+    /// with a budget of the work told so far each time that work passes a power of two, and
+    /// given up past the budget. Checked 2026-11-22: the reference's title, authors, journal,
+    /// volume (pages 79 to 119) and date by Crossref; its full text could not be fetched, so
+    /// no quote is given, and the bound below is proved here without it. Departure: the paper
+    /// buys at a known price; here the price is found by trying, which the doubling budgets
+    /// pay for.
+    ///
+    /// Proof of the bound: a try is made at a total `T_i` whose bit length `b_i` is larger than
+    /// that of every earlier total, so the `b_i` are distinct and `T_i < 2^(b_i)`; the budgets
+    /// sum to less than `2^(b_last + 1) <= 4 T_last`, as `T_last >= 2^(b_last - 1)`. Each step
+    /// of a walk is told for at most one row ([`rebuild`] tells only the unchanged rows that no
+    /// unchanged row around them holds), so `T_last` of all rows together is at most the steps
+    /// of the walks, and the tries cost at most four times those steps, times a `log`: `spent` in
+    /// [`row_vars`] counts a merge of two sets at the size of the smaller, which a treap
+    /// union costs times a `log`. A try succeeds once its
+    /// budget reaches the set's cost, so a row walked again and again makes its set after at
+    /// most twice that cost in walks; it then costs the bound keys or its set, whichever is
+    /// smaller, at each replacement, in place of a walk of it. That the set answers as the bits
+    /// would: it holds every variable the bits are made from ([`VarBits::ty`]: the Ty's
+    /// variables, its functions' facts, its rows' and payload shapes'), so a replacement that
+    /// binds none of it changes nothing in the row. Tests: the benchmark
+    /// `l01_26_type_resolution::bench::scaling::replacing_variables_no_row_holds_in_rows_on_every_bit_scales`
+    /// (the bound) and
+    /// `l01_26_type_resolution::scaling::rows_that_keep_their_variables_are_still_replaced_where_they_hold_one`
+    /// (a row with its set still replaced where it holds a variable bound); neither puts
+    /// functions or payload shapes in the rows, so a set missing a function's variables would
+    /// pass them.
+    // Complexity tradeoff (COMPLEXITY.md CK-every-bit): naive version, the bits alone
+    // (CK-data-memo), which say a row may hold a bound variable whenever its classes cover every
+    // bit and its range holds the class, so `n` replacements of variables none of `n` such rows
+    // holds rebuilt them all: O(n^2) (62.66 times the instructions at 8n in
+    // `replacing_variables_no_row_holds_in_rows_on_every_bit_scales`). An exact set made with
+    // every row is the closure of the DAG of rows, O(n^2 log n) on rows of disjoint sets (F93,
+    // question A8). Used: a set made only for a row whose wasted walks have paid for it, so the
+    // sets cost at most a constant times the walks the bits alone made. Tradeoffs: a set and a
+    // counter in each row, 16 bytes besides the set; a payload shape keeps none, so shapes that
+    // cover every bit still cost a walk per replacement.
+    fn wasted(&mut self, r: &Row, work: u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        if self.runs.is_some() || r.0.vars.get().is_some() {
+            return;
+        }
+        let before = r.0.wasted.fetch_add(work, Relaxed);
+        let after = before.saturating_add(work);
+        if after.leading_zeros() < before.leading_zeros()
+            && let Some(e) = row_vars(r, after)
+        {
+            let _ = r.0.vars.set(e);
+        }
     }
 
     /// A payload shape: kept whole where it holds none of the variables replaced here.
@@ -4487,9 +4673,10 @@ impl VarFacts {
 
     /// Adds the variables of the types `roots`, at any depth: the facts of each function they
     /// hold as it keeps them, and each row and payload shape that may hold a variable
-    /// ([`VarBits`]) entered once. A row keeps no set of its own, which for each node of a
-    /// shared DAG would be its transitive closure (question A8), so the cost is that of the
-    /// rows and shapes that hold variables, as at the first walk of them.
+    /// ([`VarBits`]) entered once. A row keeps a set of its own only once replacements have
+    /// paid for it ([`Replacer::wasted`]); a set for each node of a shared DAG would be its
+    /// transitive closure (question A8). So the cost is that of the rows and shapes that hold
+    /// variables, as at the first walk of them.
     fn tys<'a>(&mut self, roots: impl IntoIterator<Item = &'a Ty>, added: &mut Added<'a>) {
         let mut seen = HashSet::new();
         let mut stack: Vec<&Ty> = roots.into_iter().collect();
@@ -4640,12 +4827,12 @@ type Added<'a> = zed_kernel::digest::TextSet<(bool, &'a str)>;
 // all those of the rows it meets (a call's fresh classes, a signature's own), which the range
 // tells apart. Tests `replacing_in_rows_shared_on_many_paths_scales`,
 // `rows_shared_on_many_paths_scale` and `rows_made_from_disjoint_variable_sets_scale`
-// (l01_26); COMPLEXITY.md F93. Open: rows whose classes cover every bit and a wide range,
-// or whose names cover every bit, met by `n` replacements of variables they do not hold,
-// cost `O(n^2)` (test `replacing_variables_no_row_holds_in_rows_on_every_bit_scales`,
-// 61.7 times the bytes for 8 times the rows, deferred to plan row CK-every-bit in
-// wt/scratch/deferred-tests/CK-every-bit.rs): COMPLEXITY.md CK-every-bit, open for
-// the hard-algorithm cross-review XR-algos.
+// (l01_26); COMPLEXITY.md F93. Rows whose classes cover every bit and a wide range, or whose
+// names cover every bit, met by `n` replacements of variables they do not hold, cost `O(n^2)`
+// on the bits alone (62.66 times the instructions for 8 times the rows); such a row makes the
+// set of its variables once the walks that left it unchanged have paid for it, and reads the
+// set after ([`Replacer::wasted`], COMPLEXITY.md CK-every-bit; test
+// `replacing_variables_no_row_holds_in_rows_on_every_bit_scales`, 8.4 times).
 #[derive(Clone, Copy, Debug)]
 struct VarBits {
     /// The smallest `k` of a class variable `$k`, `usize::MAX` for none.

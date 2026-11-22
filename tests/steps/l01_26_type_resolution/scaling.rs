@@ -791,3 +791,46 @@ fn sums_tests_and_never_arguments_give_their_signatures() {
     assert_eq!(sig(&a_chain_of_tests(4), "f"), "int -> 0 | 2 | 5");
     assert_eq!(sig(&never_arguments(3), "f"), "Never -> Never");
 }
+
+/// A small instance of `bench::scaling::replacing_variables_no_row_holds_in_rows_on_every_bit_scales`,
+/// with the check the benchmark cannot make: once replacements that leave the rows unchanged
+/// have made each row keep the set of its variables (CK-every-bit, `Replacer::wasted`), a
+/// replacement of a variable a row holds, at its top or only in the shared row below, still
+/// changes it, and one of a variable none holds still gives the type back equal. What it cannot
+/// catch: the variables of functions and payload shapes in a row, which the set takes from
+/// their facts and bits, are not exercised here.
+#[test]
+fn rows_that_keep_their_variables_are_still_replaced_where_they_hold_one() {
+    use std::sync::Arc;
+    use zedc::check::ty::Binds;
+    let class = |k: usize| Ty::var(format!("${k}").into());
+    let bind =
+        |v: String| -> Binds { [(Arc::<str>::from(v), Ty::dynamic())].into_iter().collect() };
+    let c = Ty::tuple((0..64).map(class).collect());
+    let rows = (1..=6).map(|i| {
+        Ty::tuple(
+            std::iter::once(c.clone())
+                .chain((0..64).map(|b| class(128 * i + b)))
+                .collect(),
+        )
+    });
+    let t = Ty::tuple(rows.collect());
+    let names = Ty::tuple(
+        (0..4)
+            .map(|i| Ty::tuple((0..300).map(|b| Ty::var(format!("N{i}_{b}").into())).collect()))
+            .collect(),
+    );
+    // Enough unchanged replacements for every row to make its set: the work told doubles at
+    // each, and each try's budget is the work told.
+    for round in 0..40 {
+        assert!(t.replace(&bind(format!("${}", 128 * (round % 6) + 64))) == t);
+        assert!(names.replace(&bind(format!("M{round}"))) == names);
+    }
+    for held in ["$5", "$63", "$128", "$400", "$831"] {
+        assert!(t.replace(&bind(held.into())) != t, "replacing {held} changed nothing");
+    }
+    for held in ["N0_0", "N3_299", "N2_150"] {
+        assert!(names.replace(&bind(held.into())) != names, "replacing {held} changed nothing");
+    }
+    assert!(t.replace(&bind("$70".into())) == t);
+}
