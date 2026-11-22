@@ -71,16 +71,18 @@ fn the_digit_wise_words_are_linear_in_the_digits() {
 
 #[test]
 fn the_shifts_bit_not_and_the_rotations_are_linear_in_the_digits() {
-    // Run 1500 times at 2^16 digits, not once at a size that takes 1 s: at 2^20 and 2^23 digits
-    // `shr`, `rotl` and `rotr` allocate 13 to 15 times the bytes for 8 times the digits (their
-    // instructions grow 7.8 to 7.9 times), against 8.1 times at 2^16 (TEST-bench-move-l0139,
-    // 2026-11-14; plan row BIT-shift-bytes).
-    let n = 1 << 16;
+    // At 2^23 and 2^26 digits, the sizes where the bytes of `shr`, `rotl` and `rotr` once rose
+    // 13 to 15 times for 8 times the digits, when they divided by a built power of two
+    // (TEST-bench-move-l0139, 2026-11-14); they now shift the digits (BIT-shift-bytes,
+    // 2026-11-22: one run took 8.2 and 64.3 ms, instructions 6.0 times, bytes 7.4 times, at
+    // load 142). A run at 2^23 takes about 8 ms, so it repeats 120 times, about 1 s; one run of
+    // 1 s would need about 2^30 digits, operands of gigabytes.
+    let n = 1 << 23;
     let ops = operands(n);
     scaling::check_order("shl, shr, bitNot, rotl, rotr", n, 1, |m| {
         let (a, _, w) = &ops[&m];
         let k = Value::Int(m as i64 / 3);
-        for _ in 0..1500 {
+        for _ in 0..120 {
             run(Prim::Shl, &[a.clone(), k.clone()]);
             run(Prim::Shr, &[a.clone(), k.clone()]);
             run(Prim::BitNot, &[a.clone(), w.clone()]);

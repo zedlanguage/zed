@@ -25,7 +25,7 @@
 use std::borrow::Cow;
 
 use num_bigint::{BigInt, BigUint};
-use num_traits::{One, Zero};
+use num_traits::{One, ToPrimitive, Zero};
 
 use crate::KernelError;
 use crate::num::{Rat, TooLarge};
@@ -474,6 +474,20 @@ fn low_words(x: &Rat, k: u64) -> Result<Vec<u32>, TooLarge> {
     }
 }
 
+/// The integer `r` as built digits, `None` when it keeps any prime power. Every operand of a
+/// word is an integer (`word` checks), so its denominator is 1.
+fn as_built(r: &Rat) -> Option<&BigInt> {
+    match r.integer_factors() {
+        (built, []) => Some(built),
+        _ => None,
+    }
+}
+
+/// The integer `r` as a `u64`, when it is built and fits in one.
+fn built_u64(r: &Rat) -> Option<u64> {
+    as_built(r).and_then(|n| n.to_u64())
+}
+
 /// The words on exact numbers, every operand in its domain.
 fn big(p: Prim, ns: &[Cow<'_, Rat>]) -> Result<Value, TooLarge> {
     let int = |b: BigInt| Value::int(b);
@@ -506,8 +520,25 @@ fn big(p: Prim, ns: &[Cow<'_, Rat>]) -> Result<Value, TooLarge> {
             let all = two_pow(&ns[1])?.sub(&Rat::int(BigInt::one()))?;
             Value::integer(all.sub(&ns[0])?)
         }
+        // `x * 2^k` with `2^k` kept as its exponent: O(digits of x) time and bytes, and `2^k`
+        // is never built, so `shl(3, 2^4096)` stays small (bench
+        // `a_shift_by_a_huge_count_keeps_the_power`).
         Prim::Shl => Value::integer(ns[0].mul(&two_pow(&ns[1])?)?),
-        Prim::Shr => Value::integer(ns[0].div_euclid(&two_pow(&ns[1])?)?),
+        // A built `x` and a count that fits in a `u64` are shifted digit by digit:
+        // num-bigint's `>>` on a `BigInt` rounds toward minus infinity (its documentation of
+        // `impl Shr for BigInt`, "rounding towards negative infinity"; checked against the
+        // quotient below by `shifting_a_built_value_agrees_with_dividing_by_the_power`), which
+        // is the Euclidean quotient by the positive `2^k`, as the arm for `i64` argues.
+        //
+        // Complexity tradeoff: the Euclidean quotient by `2^k` built that power and divided by
+        // it, O(M(n)) time, and its bytes rose 13 to 15 times for 8 times the digits at 2^20 and
+        // 2^23 (BIT-shift-bytes); the shift is O(n) time and bytes. An `x` kept as powers, or a
+        // count past `u64` or kept as powers, keeps the quotient, which builds only what the
+        // result needs of `x`; such an `x` has no digits to shift.
+        Prim::Shr => match (as_built(&ns[0]), built_u64(&ns[1])) {
+            (Some(x), Some(k)) => int(x >> k),
+            _ => Value::integer(ns[0].div_euclid(&two_pow(&ns[1])?)?),
+        },
         Prim::MulHi => Value::integer(ns[0].mul(&ns[1])?.div_euclid(&two_pow(&ns[2])?)?),
         Prim::BitReverse => {
             let x = built(&ns[0])?;
@@ -576,7 +607,20 @@ fn big(p: Prim, ns: &[Cow<'_, Rat>]) -> Result<Value, TooLarge> {
                 w.sub(&r)?.rem_euclid(w)?
             };
             // The `w - r` low digits move up `r` places; the `r` high digits move down to the
-            // bottom.
+            // bottom. With `x` built and `w` in a `u64`, `0 <= r < w` is in a `u64` too, and
+            // `x < 2^w` (checked by `domain`), so `high = x >> (w - r)` is `x div 2^(w - r)`,
+            // `x - high * 2^(w - r)` is `x mod 2^(w - r)`, and the low part shifted up `r`
+            // stays below `2^w`, apart from `high < 2^r`, so `+` is `|`.
+            //
+            // Complexity tradeoff: by the same measure as `shr`, the remainder and quotient by
+            // a built `2^(w - r)` took O(M(n)) time and bytes rising faster than the digits
+            // (BIT-shift-bytes); the shifts are O(n) time and bytes. A kept `x` or `w` keeps
+            // them, as at `shr`.
+            if let (Some(x), Some(w), Some(r)) = (as_built(x), built_u64(w), built_u64(&r)) {
+                let high = x >> (w - r);
+                let low = x - (&high << (w - r));
+                return Ok(int((low << r) | high));
+            }
             let low_width = two_pow(&w.sub(&r)?)?;
             let low = x.rem_euclid(&low_width)?.mul(&two_pow(&r)?)?;
             let high = x.div_euclid(&low_width)?;
@@ -695,5 +739,72 @@ mod tests {
             err(Prim::Pdep, &[-1, 3]),
             "`pdep` needs `x` in int[0..], and it is negative"
         );
+    }
+
+    /// BIT-shift-bytes: `shr`, `rotl` and `rotr` on a built `x` shift its digits; each result
+    /// equals the definition by the Euclidean quotient and remainder by a power of two, the
+    /// computation those words made before, on widths 1 to 300 (inside one 32-digit word, at
+    /// its edges and across several), every count below the width and some past it, negative
+    /// `x` for `shr`, a count past `u64`, and `x` kept as a power of two, which takes the
+    /// quotient and must agree with the same number built.
+    #[test]
+    fn shifting_a_built_value_agrees_with_dividing_by_the_power() {
+        let pow2 = |k: u64| two_pow(&Rat::int(BigInt::from(k))).unwrap();
+        let rat = |n: &BigInt| -> Cow<'static, Rat> { Cow::Owned(Rat::int(n.clone())) };
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            // xorshift64 (Marsaglia 2003, doi:10.18637/jss.v008.i14), enough to spread the
+            // digits; any sequence would test the same identities.
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let shr = |x: &Rat, k: u64| Value::integer(x.div_euclid(&pow2(k)).unwrap());
+        let rot = |x: &Rat, r: u64, w: u64| {
+            let low_width = pow2(w - r);
+            let low = x.rem_euclid(&low_width).unwrap().mul(&pow2(r)).unwrap();
+            Value::integer(low.add(&x.div_euclid(&low_width).unwrap()).unwrap())
+        };
+        for w in (1..=70u64).chain([95, 96, 97, 127, 128, 129, 300]) {
+            let words: Vec<u32> = (0..w.div_ceil(32)).map(|_| next() as u32).collect();
+            let mask: BigInt = (BigInt::one() << w) - 1;
+            let x: BigInt = BigInt::from(BigUint::new(words)) & mask;
+            let xr = Rat::int(x.clone());
+            for k in (0..w).chain([w, w + 1, 2 * w + 3]) {
+                let kb = BigInt::from(k);
+                let got = big(Prim::Shr, &[rat(&x), rat(&kb)]).unwrap();
+                assert_eq!(got, shr(&xr, k), "shr {x} {k}");
+                let neg = -&x - 1;
+                let got = big(Prim::Shr, &[rat(&neg), rat(&kb)]).unwrap();
+                assert_eq!(got, shr(&Rat::int(neg.clone()), k), "shr {neg} {k}");
+                let wb = BigInt::from(w);
+                let r = k % w;
+                let got = big(Prim::Rotl, &[rat(&x), rat(&kb), rat(&wb)]).unwrap();
+                assert_eq!(got, rot(&xr, r, w), "rotl {x} {k} {w}");
+                let got = big(Prim::Rotr, &[rat(&x), rat(&kb), rat(&wb)]).unwrap();
+                assert_eq!(got, rot(&xr, (w - r) % w, w), "rotr {x} {k} {w}");
+            }
+        }
+        // A count past `u64` takes the quotient: 0 for `x >= 0`, -1 for `x < 0`.
+        let huge = BigInt::one() << 70;
+        let at = |x: i64| big(Prim::Shr, &[rat(&BigInt::from(x)), rat(&huge)]).unwrap();
+        assert_eq!((at(12345), at(-12345)), (Value::Int(0), Value::Int(-1)));
+        // `x = 3 * 2^40` kept as a power takes the quotient and the remainder, and agrees with
+        // the same number built.
+        let kept = Rat::int(BigInt::from(3)).mul(&pow2(40)).unwrap();
+        assert!(as_built(&kept).is_none(), "{kept:?} keeps its power");
+        let built: Cow<'_, Rat> = Cow::Owned(Rat::int(BigInt::from(3u64 << 40)));
+        for (k, w) in [(0u64, 42u64), (5, 42), (41, 42), (17, 64)] {
+            let (kb, wb) = (rat(&BigInt::from(k)), rat(&BigInt::from(w)));
+            for p in [Prim::Rotl, Prim::Rotr] {
+                let a = big(p, &[Cow::Borrowed(&kept), kb.clone(), wb.clone()]).unwrap();
+                let b = big(p, &[built.clone(), kb.clone(), wb.clone()]).unwrap();
+                assert_eq!(a, b, "{p:?} 3 * 2^40 {k} {w}");
+            }
+            let a = big(Prim::Shr, &[Cow::Borrowed(&kept), kb.clone()]).unwrap();
+            let b = big(Prim::Shr, &[built.clone(), kb]).unwrap();
+            assert_eq!(a, b, "shr 3 * 2^40 {k}");
+        }
     }
 }
