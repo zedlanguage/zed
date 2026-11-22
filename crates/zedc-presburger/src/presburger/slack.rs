@@ -2018,58 +2018,73 @@ mod r6_row_order_tests {
     use crate::scaling;
     use std::hint::black_box;
 
+    /// The order of `n` disjoint rows of four disjuncts, at n = 64, 512 and 4096, held by
+    /// [`scaling::compare`] at each step of 8. Until FAIL-r6order-vm-time it held one
+    /// [`scaling::Meter::work`] of each size to [`scaling::hold`]: right on a count of
+    /// instructions, but on a meter of processor time (a VM with no counter of instructions) one
+    /// run with no allowance, where [`scaling::compare`] takes the least of
+    /// [`scaling::TIME_RUNS`] runs, up to [`scaling::TRIES`] times, under
+    /// [`scaling::TIME_ALLOWANCE`] times the limit (the ratios measured are in that row of
+    /// docs/plan_dag.md). `PDCX_RED` times the scan of every atom instead, O(K) a row, the
+    /// negative control, which fails.
     #[test]
     fn disjoint_row_orders_scale_and_match() {
         let red = std::env::var_os("PDCX_RED").is_some();
-        let (mut counts, mut unit) = (Vec::new(), "");
-        for n in [64, 512, 4096] {
-            let atoms: Vec<Atom> = (0..4 * n)
-                .map(|i| Atom::Sym(format!("a{i}").into()))
-                .collect();
-            let rank: HashMap<&Atom, usize> =
-                atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
-            let rows: Vec<Vec<DisjInfo>> = (0..n)
-                .map(|r| {
-                    (0..4)
-                        .rev()
-                        .map(|j| DisjInfo {
-                            disj_idx: 4 * r + j,
-                            atom: atoms[4 * r + j].clone(),
-                            low_arm: 0,
-                            high_arm: 1,
-                            low_val: Int::ZERO,
-                            high_val: Int::ONE,
-                            weight: Int::ONE,
-                        })
-                        .collect()
-                })
-                .collect();
-            if n == 64 {
-                for row in &rows {
-                    super::ROW_ORDER_SCAN.with(|c| c.set(false));
-                    let fast = row_order(row, &atoms, &rank);
-                    super::ROW_ORDER_SCAN.with(|c| c.set(true));
-                    let slow = row_order(row, &atoms, &rank);
-                    assert_eq!(fast, slow);
-                    assert_eq!(fast, vec![3, 2, 1, 0]);
-                }
-            }
-            super::ROW_ORDER_SCAN.with(|c| c.set(red));
-            let mut meter = scaling::Meter::new();
-            unit = meter.unit();
-            let w = meter.work(|| {
-                for row in &rows {
-                    black_box(row_order(row, &atoms, &rank));
-                }
-            });
+        let sizes = [64, 512, 4096];
+        let built: Vec<(Vec<Atom>, Vec<Vec<DisjInfo>>)> = sizes
+            .iter()
+            .map(|&n| {
+                let atoms: Vec<Atom> = (0..4 * n)
+                    .map(|i| Atom::Sym(format!("a{i}").into()))
+                    .collect();
+                let rows = (0..n)
+                    .map(|r| {
+                        (0..4)
+                            .rev()
+                            .map(|j| DisjInfo {
+                                disj_idx: 4 * r + j,
+                                atom: atoms[4 * r + j].clone(),
+                                low_arm: 0,
+                                high_arm: 1,
+                                low_val: Int::ZERO,
+                                high_val: Int::ONE,
+                                weight: Int::ONE,
+                            })
+                            .collect()
+                    })
+                    .collect();
+                (atoms, rows)
+            })
+            .collect();
+        let ranks: Vec<HashMap<&Atom, usize>> = built
+            .iter()
+            .map(|(atoms, _)| atoms.iter().enumerate().map(|(i, a)| (a, i)).collect())
+            .collect();
+        let (atoms, rows) = &built[0];
+        for row in rows {
             super::ROW_ORDER_SCAN.with(|c| c.set(false));
-            println!("R6ORDER n={n} red={red} work={}", w.units);
-            counts.push(w.units);
+            let fast = row_order(row, atoms, &ranks[0]);
+            super::ROW_ORDER_SCAN.with(|c| c.set(true));
+            let slow = row_order(row, atoms, &ranks[0]);
+            assert_eq!(fast, slow);
+            assert_eq!(fast, vec![3, 2, 1, 0]);
         }
-        for (i, n) in [64, 512].into_iter().enumerate() {
-            let what = format!("row orders, red {red}: n = {n} and {}", 8 * n);
-            let ratio = scaling::hold(&what, unit, counts[i], counts[i + 1], 1);
-            println!("R6ORDER ratio={ratio}");
+        super::ROW_ORDER_SCAN.with(|c| c.set(false));
+        // The flag is per thread, and a run may be on a thread of its own, so each run sets it.
+        let run = |i: usize| {
+            super::ROW_ORDER_SCAN.with(|c| c.set(red));
+            for row in &built[i].1 {
+                black_box(row_order(row, &built[i].0, &ranks[i]));
+            }
+            super::ROW_ORDER_SCAN.with(|c| c.set(false));
+        };
+        for i in 0..2 {
+            let what = format!(
+                "row orders, red {red}: n = {} and {}",
+                sizes[i],
+                sizes[i + 1]
+            );
+            scaling::compare(&what, 1, || run(i), || run(i + 1));
         }
     }
 }
