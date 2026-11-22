@@ -695,7 +695,15 @@ pub(crate) mod tests {
                         std::ffi::CString::new(std::env::temp_dir().as_os_str().as_encoded_bytes())
                             .unwrap();
                     // A file with no name, removed when closed, of 512 MiB that holds no block.
-                    let fd = libc::open(dir.as_ptr(), libc::O_TMPFILE | libc::O_RDWR, 0o600);
+                    // Where the temporary directory's file system has no `O_TMPFILE` (the
+                    // overlay root of the Colab VMs, Linux 6.6: EOPNOTSUPP, 2026-11-22), a
+                    // memory file stands in: the data limit counts a mapping by its flags
+                    // alone, not by what the file is stored on (`may_expand_vm` in mm/mmap.c).
+                    let mut fd = libc::open(dir.as_ptr(), libc::O_TMPFILE | libc::O_RDWR, 0o600);
+                    if fd < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::EOPNOTSUPP)
+                    {
+                        fd = libc::memfd_create(c"which-mappings".as_ptr(), libc::MFD_CLOEXEC);
+                    }
                     assert!(fd >= 0, "{}", io::Error::last_os_error());
                     assert_eq!(libc::ftruncate(fd, SIZE as libc::off_t), 0);
                     set_limit(libc::RLIMIT_DATA, LIMIT, None, "memory").unwrap();
@@ -769,12 +777,9 @@ pub(crate) mod tests {
         ) else {
             return;
         };
-        assert_eq!(
-            status(&out).0,
-            Some(0),
-            "{}",
-            String::from_utf8_lossy(&out.stdout)
-        );
+        // The child's panic, which names the row that failed, is on its standard error.
+        let (code, err) = status(&out);
+        assert_eq!(code, Some(0), "{err}");
     }
 
     /// P188: a deadline already passed when the limits are set, as one shorter than the time the
