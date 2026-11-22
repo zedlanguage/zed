@@ -181,6 +181,90 @@ fn a_number_computed_from_literals_is_rejected_before_the_run() {
     );
 }
 
+/// The first line of the message `zedc run` writes for a rejected program, after the path.
+fn headline(stderr: &str) -> &str {
+    let (_, rest) = stderr.split_once("prog.zed:").expect("a located message");
+    rest.lines().next().expect("a headline")
+}
+
+/// A number computed from literals that sits beside an atom, `b` or `#a`, is rejected when
+/// the program is checked, and the repair the headline offers writes the number into a
+/// string and an empty line in place of the atom (PORT-lines-int-name-rest).
+#[test]
+fn a_number_computed_from_literals_beside_an_atom_is_rejected_before_the_run() {
+    let src = "main(m: MainArgs) { b = 2^62; t = if b > 0 { b } else { #a }; m.stdout <- t; }\n";
+    let out = run("number_beside_atom", src, "", &[]);
+    assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{}", out.stderr);
+    let first = headline(&out.stderr);
+    let repair = "m.stdout <- \"${t}\" else #a -> \"\";";
+    assert!(
+        first.starts_with(
+            "1:75: A `Lines` port takes a `String` or a family of strings: `m.stdout <- t : "
+        ),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        first.ends_with(&format!("Try `{repair}` instead.")),
+        "{}",
+        out.stderr
+    );
+    let fixed = src.replace("m.stdout <- t;", repair);
+    let out = run("number_beside_atom_fixed", &fixed, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "4611686018427387904\n"),
+        "{}",
+        out.stderr
+    );
+}
+
+/// A number computed from literals pushed to a `Lines` port the function takes as a parameter
+/// is rejected when the program is checked, both where the function computes it and where
+/// `main` passes it in, and the repairs, the number written into a string, run
+/// (PORT-lines-int-name-rest).
+#[test]
+fn a_number_computed_from_literals_pushed_to_a_port_parameter_is_rejected_before_the_run() {
+    // Computed in the function that pushes it.
+    let src = "say(out: Lines) { b = 2^62; out <- b; }\n\
+               main(m: MainArgs) { say(out: m.stdout); }\n";
+    let out = run("number_to_port_parameter", src, "", &[]);
+    assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{}", out.stderr);
+    assert!(
+        headline(&out.stderr).starts_with(
+            "1:36: A `Lines` port takes a `String` or a family of strings: `out <- b : "
+        ),
+        "{}",
+        out.stderr
+    );
+    let fixed = src.replace("out <- b;", "out <- \"${b}\";");
+    let out = run("number_to_port_parameter_fixed", &fixed, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "4611686018427387904\n"),
+        "{}",
+        out.stderr
+    );
+    // Computed in `main` and passed in beside the port.
+    let src = "say(positional s, out: Lines) { out <- s; }\n\
+               main(m: MainArgs) { b = 2^62; say(b, out: m.stdout); }\n";
+    let out = run("number_passed_to_port_parameter", src, "", &[]);
+    assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{}", out.stderr);
+    assert!(
+        headline(&out.stderr).contains("A `Lines` port takes a `String` or a family of strings"),
+        "{}",
+        out.stderr
+    );
+    let fixed = src.replace("say(b,", "say(\"${b}\",");
+    let out = run("number_passed_to_port_parameter_fixed", &fixed, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "4611686018427387904\n"),
+        "{}",
+        out.stderr
+    );
+}
+
 #[test]
 fn the_first_failed_write_aborts_the_rest() {
     let writes = vec![

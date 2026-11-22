@@ -365,6 +365,48 @@ fn a_lines_port_repair_writes_the_programs_value() {
     assert!(out.contains("A `Lines` port takes"), "{out}");
 }
 
+/// A number computed from literals beside an atom, pushed with no `else`: the repair writes the
+/// number into a string and an empty line in place of the atom, and is accepted
+/// (PORT-lines-int-name-rest).
+#[test]
+fn a_lines_port_repair_of_a_number_beside_an_atom_is_accepted() {
+    let src = pushing("b = 2^62; t = if b > 0 { b } else { #a };");
+    let out = rejected(&src);
+    in_the_programs_words(&out);
+    let line = "m.stdout <- \"${t}\" else #a -> \"\";";
+    assert!(
+        out.lines()
+            .next()
+            .unwrap()
+            .contains("A `Lines` port takes a `String` or a family of strings: `m.stdout <- t : "),
+        "{src}\n{out}"
+    );
+    assert_eq!(tried(&out), Some(line), "{src}\n{out}");
+    assert!(out.contains(&format!(", as `{line}`")), "{src}\n{out}");
+    checks(&src.replace("m.stdout <- t;", line));
+}
+
+/// A number computed from literals pushed to a `Lines` port the function takes as a parameter:
+/// the repair names the parameter, writes the number into a string, and is accepted
+/// (PORT-lines-int-name-rest).
+#[test]
+fn a_lines_port_repair_of_a_push_to_a_port_parameter_is_accepted() {
+    let src = "say(out: Lines) {\n  b = 2^62;\n  out <- b;\n}\n\
+               main(m: MainArgs) {\n  say(out: m.stdout);\n}\n";
+    let out = rejected(src);
+    in_the_programs_words(&out);
+    let line = "out <- \"${b}\";";
+    assert!(
+        out.lines()
+            .next()
+            .unwrap()
+            .contains("A `Lines` port takes a `String` or a family of strings: `out <- b : "),
+        "{src}\n{out}"
+    );
+    assert_eq!(tried(&out), Some(line), "{src}\n{out}");
+    checks(&src.replace("out <- b;", line));
+}
+
 /// `t1 = 2^62; t2 = t1 + 1; …; m.stdout <- tn;` pushed to the output.
 pub(super) fn a_pushed_chain(n: usize) -> String {
     let binds: String = (2..=n)
