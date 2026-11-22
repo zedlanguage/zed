@@ -692,6 +692,43 @@ fn random_sum_literals(rng: &mut Rng, divs: &[Div], sums: &[Sum], depth: u32) ->
     }
 }
 
+/// Seed 3730609663341733710 case 223 of [`sums_of_quotients_match_enumeration`] (row
+/// PRES-sum-of-quotients-period-product, part 2): the remainder of `(-5 x - 5) mod 5` is fixed
+/// at 0, so the row is written `5 x + 5 q4 == -5`, and divided by its gcd it is `x + q4 == -1`,
+/// a row of modulus 1. `solve` declined the formula, since `q4` was no row's quotient, and
+/// `decide` refused it with `Shadows`; it has a point (`x = -3`: `q1 = 1`, `q3 = 2`, the sum
+/// `x + 3 q6 + q7 == 3 q1 + q3 - 4` gives `q7 = 1`).
+#[test]
+fn seed_3730609663341733710_case_223_is_decided() {
+    let aux = |i: u32| Lin::atom(Atom::Aux(i));
+    let c = Lin::constant;
+    let eq = |a: Lin, b: Lin| Formula::Con(Con::eq(&a, &b));
+    let ge = |a: Lin, b: Lin| Formula::Con(Con::ge(&a, &b));
+    let q7 = || aux(7);
+    let f = Formula::and(vec![
+        eq(x().times(2).plus(&aux(0).times(3)).plus(&aux(1)), c(-5)),
+        ge(aux(1), c(0)),
+        ge(c(2), aux(1)),
+        eq(x().plus(&aux(2).times(4)).plus(&aux(3)), c(-9)),
+        ge(aux(3), c(0)),
+        ge(c(3), aux(3)),
+        eq(x().times(5).plus(&aux(4).times(5)), c(-5)),
+        Formula::negate(Formula::and(vec![ge(aux(3), c(3)), ge(c(4), aux(3))])),
+        Formula::negate(Formula::and(vec![
+            ge(c(0), q7()),
+            eq(q7(), c(0)),
+            Formula::or(vec![ge(c(2), q7()), eq(q7(), c(1)), ge(c(2), q7())]),
+        ])),
+        eq(
+            x().plus(&aux(6).times(3)).plus(&q7()),
+            aux(1).times(3).plus(&aux(3)).plus(&c(-4)),
+        ),
+        ge(q7(), c(0)),
+        ge(c(2), q7()),
+    ]);
+    check_answered(&f, true, "seed 3730609663341733710 case 223");
+}
+
 #[test]
 fn sums_of_quotients_match_enumeration() {
     // As in `scaled_remainders_match_enumeration`: every remainder and every sum's remainder is
@@ -710,11 +747,6 @@ fn sums_of_quotients_match_enumeration() {
                 fixed: d.fixed.map(|c| c % (2 + d.m % 4)),
                 ..d
             })
-            // A multiple of the modulus (`(-5 x - 5) mod 5`) normalizes to `x + q == -1`, no
-            // row, so `solve` declines and the general path refuses the sum over it (seed
-            // 3730609663341733710 case 223, `Shadows`); row PRES-sum-of-quotients-period-product
-            // records it.
-            .filter(|d| d.a % d.m != 0)
             .collect();
         let sums = random_sums(&mut rng, &divs);
         let lits = Formula::and(vec![

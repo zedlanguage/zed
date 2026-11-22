@@ -342,9 +342,15 @@ fn read_shape<'f>(
         rest.next().expect("two ends"),
     );
     let end = |j: usize| (terms[j].0.clone(), terms[j].1.clone());
+    // With no remainder an end of coefficient 1 in size fits too: the row is then of modulus 1,
+    // its quotient linear in the other end (`q = sigma (A t + K)`, [`def_row`] with `m = 1`).
+    // That is how a remainder that is always zero is written once the row is divided by its
+    // gcd: `(-5 x - 5) mod 5 == 0` is `x + q == -1` (PRES-sum-of-quotients-period-product,
+    // part 2). Without it the quotient was no row's, so `solve` declined the formula and the
+    // general path refused a sum beside it with `Shadows`.
     let fits = |j: usize| {
         let size = terms[j].1.abs();
-        size >= Int::from(2) && size > hi
+        (size >= Int::from(2) || r.is_none()) && size > hi
     };
     let can_q = [fits(u), fits(v)];
     if !can_q[0] && !can_q[1] {
