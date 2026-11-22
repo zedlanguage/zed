@@ -1277,7 +1277,12 @@ impl<'a> Elab<'a> {
             },
             // A literal with the suffix `f32` is read at `f32`; any other at `f64`, the format a
             // decimal no use fixes takes (DESIGN.md L1.26a).
-            ExprKind::Float { digits: s, forced } => match Value::literal_float(s, *forced) {
+            // Only the AST builder makes an `ExprKind::Float`, from the lexer's `Tok::Float`,
+            // whose digits are always a decimal (`literal_f64`; tested by zed-kernel's
+            // `the_lexer_s_float_and_decimal_forms_are_read`).
+            ExprKind::Float { digits: s, forced } => match Value::literal_float(s, *forced)
+                .expect("the lexer's float text is a decimal")
+            {
                 Ok(v) => Some(self.constant(e, v)),
                 // Without a suffix the literal could have taken `rat`, where it is exact
                 // (DESIGN.md L1.26b), and it is reported here where it stayed at `f64`, as in

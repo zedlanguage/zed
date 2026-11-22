@@ -4,9 +4,14 @@
 
 use std::collections::HashMap;
 
-use zed_kernel::num::literal_f64;
+use zed_kernel::num::LiteralRounding;
 use zed_tests::scaling::{check_instructions_only, check_order, inputs};
 use zed_tests::step_helpers::l01_16_elaboration::elab;
+
+/// `zed_kernel::num::literal_f64` of a decimal; every text of these benchmarks is one.
+fn literal_f64(text: &str) -> Result<f64, LiteralRounding> {
+    zed_kernel::num::literal_f64(text).expect("a decimal")
+}
 
 use super::super::literals::{digits_above_a_tie, digits_near_one};
 

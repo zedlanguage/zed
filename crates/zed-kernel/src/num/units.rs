@@ -846,10 +846,14 @@ mod rat {
         ] {
             for (s, x) in [("", dec(t)), ("-", dec(t).neg())] {
                 let sign = if s.is_empty() { 1.0 } else { -1.0 };
-                assert_eq!(x.to_f64(), literal_f64(t).map(|f| sign * f), "{s}{t}");
+                assert_eq!(
+                    x.to_f64(),
+                    literal_f64(t).unwrap().map(|f| sign * f),
+                    "{s}{t}"
+                );
                 assert_eq!(
                     x.to_f32(),
-                    literal_f32(t).map(|f| sign as f32 * f),
+                    literal_f32(t).unwrap().map(|f| sign as f32 * f),
                     "{s}{t}"
                 );
             }

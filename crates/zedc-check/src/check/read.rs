@@ -537,7 +537,9 @@ fn leaves<'h>(
             (Tok::Int { radix, digits }, _) => (Ty::lit(&int(*radix, digits, false, text)?), 1),
             (Tok::Float { digits: s, .. }, _) => (
                 Ty::lit(&Value::float(
-                    literal_f64(s).map_err(|_| format!("`{text}`: the float `{s}`"))?,
+                    literal_f64(s)
+                        .and_then(Result::ok)
+                        .ok_or_else(|| format!("`{text}`: the float `{s}`"))?,
                 )),
                 1,
             ),

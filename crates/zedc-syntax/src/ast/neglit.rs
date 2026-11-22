@@ -176,7 +176,9 @@ fn bare_names(text: &str) -> HashSet<&str> {
 fn number(e: &Expr) -> Option<Value> {
     match &e.kind {
         ExprKind::Int { radix, digits, .. } => Value::int_text(digits, *radix).ok().flatten(),
-        ExprKind::Float { digits, forced } => Value::literal_float(digits, *forced).ok(),
+        ExprKind::Float { digits, forced } => {
+            Value::literal_float(digits, *forced).and_then(Result::ok)
+        }
         ExprKind::Rat(s) => Rat::decimal(s).ok().flatten().map(Value::rat),
         _ => None,
     }

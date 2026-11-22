@@ -10522,17 +10522,19 @@ fn read_literal(e: &Expr, src: Option<&str>) -> Result<Option<Lit>, TooLarge> {
             None => return Ok(None),
         },
         ExprKind::Float { digits: s, forced } => match Value::literal_float(s, *forced) {
-            Ok(v) => (v, forced.is_none(), None),
+            Some(Ok(v)) => (v, forced.is_none(), None),
             // A decimal with no suffix may still take `rat`, where it is exact; one with a
             // suffix has no other carrier, and elaboration rejects it.
-            Err(r @ (LiteralRounding::Infinite | LiteralRounding::Zero)) if forced.is_none() => {
+            Some(Err(r @ (LiteralRounding::Infinite | LiteralRounding::Zero)))
+                if forced.is_none() =>
+            {
                 let stand_in = match r {
                     LiteralRounding::Infinite => f64::INFINITY,
                     _ => f64::from_bits(1),
                 };
                 (Value::float(stand_in), true, Some(r))
             }
-            Err(_) => return Ok(None),
+            _ => return Ok(None),
         },
         _ => return Ok(None),
     };
@@ -10966,8 +10968,8 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, Msg> {
     // 0.1, not the `f64` nearest it rounded again.
     if c == Carrier::F32 && is_decimal(&l.value) {
         return match literal_f32(lit_digits(l)) {
-            Ok(x) => Ok(Some(Value::float32(x))),
-            Err(_) => Err(menu(l, &[c])),
+            Some(Ok(x)) => Ok(Some(Value::float32(x))),
+            _ => Err(menu(l, &[c])),
         };
     }
     let exact = match &l.value {
@@ -11924,7 +11926,7 @@ fn lit_value(l: &Lit, c: Carrier) -> Option<Value> {
         (own, c) if own == c => l.value.clone(),
         (Carrier::F64, Carrier::Rat) => Value::rat(Rat::decimal(lit_digits(l)).ok()??),
         (Carrier::Int, Carrier::F64) => float_exact(Prim::CastF64, &l.value)?,
-        (Carrier::F64, Carrier::F32) => Value::float32(literal_f32(lit_digits(l)).ok()?),
+        (Carrier::F64, Carrier::F32) => Value::float32(literal_f32(lit_digits(l))?.ok()?),
         (Carrier::Int, Carrier::F32) => float_exact(Prim::CastF32, &l.value)?,
         (Carrier::Int, Carrier::Rat) => run(Prim::CastRat, &l.value)?,
         _ => return None,
@@ -12766,7 +12768,7 @@ fn menu(l: &Lit, held: &[Carrier]) -> Msg {
         let digits = Some(lit_digits(l)).filter(|d| d.bytes().all(|b| b.is_ascii_digit()));
         let nearest = match (digits, &l.value) {
             _ if !has(Carrier::F64) => None,
-            (Some(d), _) => literal_f64(d).ok(),
+            (Some(d), _) => literal_f64(d).and_then(Result::ok),
             (None, Value::Int(i)) if l.exponent => Some(*i as f64),
             (None, Value::Big(r)) if l.exponent => r.to_f64().ok(),
             (None, _) => None,

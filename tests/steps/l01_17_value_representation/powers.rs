@@ -4,8 +4,18 @@
 
 use num_bigint::{BigInt, BigUint};
 use zed_kernel::Rat;
-use zed_kernel::num::{LiteralRounding, TooLarge, literal_f32, literal_f64};
+use zed_kernel::num::{LiteralRounding, TooLarge};
 use zed_tests::instances::Rng;
+
+/// `zed_kernel::num::literal_f64` of a decimal; every text of these tests is one.
+fn literal_f64(text: &str) -> Result<f64, LiteralRounding> {
+    zed_kernel::num::literal_f64(text).expect("a decimal")
+}
+
+/// `zed_kernel::num::literal_f32` of a decimal.
+fn literal_f32(text: &str) -> Result<f32, LiteralRounding> {
+    zed_kernel::num::literal_f32(text).expect("a decimal")
+}
 
 /// The value built out: the plain rational of its digits.
 fn built(r: &Rat) -> Rat {

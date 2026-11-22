@@ -4,10 +4,20 @@
 //! an f64 is written with `f64`: a decimal literal that nothing gives a carrier is rejected
 //! (L1.26b).
 
-use zed_kernel::num::{LiteralRounding, literal_f32, literal_f64};
+use zed_kernel::num::LiteralRounding;
 
 use super::x;
 use zed_tests::step_helpers::l01_16_elaboration::{elab, errors};
+
+/// `zed_kernel::num::literal_f64` of a decimal; every text of these tests is one.
+fn literal_f64(text: &str) -> Result<f64, LiteralRounding> {
+    zed_kernel::num::literal_f64(text).expect("a decimal")
+}
+
+/// `zed_kernel::num::literal_f32` of a decimal.
+fn literal_f32(text: &str) -> Result<f32, LiteralRounding> {
+    zed_kernel::num::literal_f32(text).expect("a decimal")
+}
 
 #[test]
 fn a_price_reads_as_the_nearest_f64() {

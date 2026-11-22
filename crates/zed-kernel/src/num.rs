@@ -2479,24 +2479,20 @@ impl Exact<'_> {
 /// format by [`read_float`], correctly rounded, to nearest with ties to even; it is
 /// [`LiteralRounding::Infinite`] when that rounds to infinity and [`LiteralRounding::Zero`] when
 /// it rounds to zero while the literal is not zero, so `0e999` is zero and `1e-400` is an error.
-pub fn literal_f64(text: &str) -> Result<f64, LiteralRounding> {
-    // Unreachable for every caller: each passes the digits the lexer keeps of a `Float`
-    // (`Decimal '.' Decimal Exponent? | Decimal Exponent`, zedc-syntax lex/number.rs) or of a
-    // decimal `Integer`, with the `_` removed, and `read_float` reads every such text: digits,
-    // an optional `.` and digits, an optional `e`/`E`, sign and digits. Tested by
-    // `the_lexer_s_float_and_decimal_forms_are_read`.
-    read_float(text, FloatFormat::F64)
-        .expect("the lexer's float text is a decimal")
-        .map(f64::from_bits)
+/// `None` when `text` is not such a decimal (`abc`, `1e`, `0x1p3`): the lexer's digits of a
+/// `Float` (`Decimal '.' Decimal Exponent? | Decimal Exponent`, zedc-syntax lex/number.rs) or
+/// of a decimal `Integer`, with the `_` removed, are always one, which
+/// `the_lexer_s_float_and_decimal_forms_are_read` tests; a caller passing other text is told
+/// so here rather than reaching a panic (LIT-f64-pub-expect).
+pub fn literal_f64(text: &str) -> Option<Result<f64, LiteralRounding>> {
+    Some(read_float(text, FloatFormat::F64)?.map(f64::from_bits))
 }
 
 /// The float literal `text` at `f32`, by the rule of [`literal_f64`]: `1e39` rounds to
-/// infinity and `1e-46` to zero.
-pub fn literal_f32(text: &str) -> Result<f32, LiteralRounding> {
-    // Unreachable for every caller, by the argument at `literal_f64`.
-    read_float(text, FloatFormat::F32)
-        .expect("the lexer's float text is a decimal")
-        .map(|bits| f32::from_bits(bits as u32))
+/// infinity and `1e-46` to zero; `None` when `text` is not a decimal.
+pub fn literal_f32(text: &str) -> Option<Result<f32, LiteralRounding>> {
+    // The cast keeps every bit: `read_float` at `F32` gives a 32-bit encoding in a `u64`.
+    Some(read_float(text, FloatFormat::F32)?.map(|bits| f32::from_bits(bits as u32)))
 }
 
 #[cfg(test)]
@@ -2950,9 +2946,9 @@ mod tests {
     }
 
     /// NUM-expect-audit: every form the lexer keeps of a `Float` (`Decimal '.' Decimal
-    /// Exponent? | Decimal Exponent`, `_` removed) and of a decimal `Integer` is read, so the
-    /// `expect` in `literal_f64` and `literal_f32` is never reached; each value is the one std
-    /// reads.
+    /// Exponent? | Decimal Exponent`, `_` removed) and of a decimal `Integer` is read, so a
+    /// caller that `expect`s `literal_f64` or `literal_f32` on the lexer's text never panics;
+    /// each value is the one std reads.
     #[test]
     fn the_lexer_s_float_and_decimal_forms_are_read() {
         let forms = [
@@ -2974,19 +2970,33 @@ mod tests {
         ];
         for text in forms {
             let want: f64 = text.parse().unwrap();
-            match literal_f64(text) {
+            match literal_f64(text).expect("a decimal") {
                 Ok(x) => assert_eq!(x, want, "{text}"),
                 Err(LiteralRounding::Infinite) => assert!(want.is_infinite(), "{text}"),
                 Err(LiteralRounding::TooLarge(e)) => panic!("{text}: {e:?}"),
                 Err(LiteralRounding::Zero) => assert_eq!(want, 0.0, "{text}"),
             }
             let want: f32 = text.parse().unwrap();
-            match literal_f32(text) {
+            match literal_f32(text).expect("a decimal") {
                 Ok(x) => assert_eq!(x, want, "{text}"),
                 Err(LiteralRounding::Infinite) => assert!(want.is_infinite(), "{text}"),
                 Err(LiteralRounding::Zero) => assert_eq!(want, 0.0, "{text}"),
                 Err(LiteralRounding::TooLarge(e)) => panic!("{text}: {e:?}"),
             }
+        }
+    }
+
+    /// LIT-f64-pub-expect: text that is not a decimal is refused with `None`, at both formats,
+    /// with no panic: letters, an exponent with no digits, a point with no digits, a
+    /// hexadecimal float, `_`, spaces, a suffix, two signs, and the empty text.
+    #[test]
+    fn text_that_is_not_a_decimal_is_refused() {
+        for text in [
+            "", "abc", "1e", "1e+", ".", "-", "0x1p3", "1_000.0", " 1.0", "1.0 ", "inf", "NaN",
+            "1.0f64", "--1.0",
+        ] {
+            assert_eq!(literal_f64(text), None, "{text:?}");
+            assert_eq!(literal_f32(text), None, "{text:?}");
         }
     }
 

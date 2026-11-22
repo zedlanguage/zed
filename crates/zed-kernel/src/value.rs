@@ -530,12 +530,16 @@ impl Value {
     }
 
     /// The float literal `text` as a value of the format `suffix` names, `f32` or `f64`, or of
-    /// `f64` with no suffix: the format a decimal no use fixes takes (DESIGN.md L1.26a).
-    pub fn literal_float(text: &str, suffix: Option<FloatFormat>) -> Result<Self, LiteralRounding> {
-        match suffix {
-            Some(FloatFormat::F32) => literal_f32(text).map(Value::float32),
-            _ => literal_f64(text).map(Value::float),
-        }
+    /// `f64` with no suffix: the format a decimal no use fixes takes (DESIGN.md L1.26a); `None`
+    /// when `text` is not a decimal ([`literal_f64`]).
+    pub fn literal_float(
+        text: &str,
+        suffix: Option<FloatFormat>,
+    ) -> Option<Result<Self, LiteralRounding>> {
+        Some(match suffix {
+            Some(FloatFormat::F32) => literal_f32(text)?.map(Value::float32),
+            _ => literal_f64(text)?.map(Value::float),
+        })
     }
 
     /// A bare atom such as `#empty`, given its name without the `#`.
@@ -887,7 +891,7 @@ impl Value {
 
     /// The language's order on two values of one kind ([`Value::surface_cmp`]), and `None`
     /// when a pair of components the order reaches, or the two values themselves, are of two
-    /// kinds ([`Value::same_kind`]), which the language does not order: `<`, `<=`, `>`, `>=`,
+    /// kinds (`Value::same_kind`), which the language does not order: `<`, `<=`, `>`, `>=`,
     /// `min` and `max` on them are a type error, as the checker rejects them
     /// (`l01_26_type_resolution/soundness.rs`). Only the pair that decides the order is read:
     /// `(1, "a") < (2, 3)` is decided at its first components, as `min` decides it.
