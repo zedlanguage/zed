@@ -17728,7 +17728,7 @@ fn exact_flat_diff_decide(
                     }
                     match &e.e {
                         rec::Shape::Morphism(l, u, val) if l.recursive || u.recursive => {
-                            if !val.recursive && eval_cached(val).verdict() == Verdict::Inhabited {
+                            if recursive_bounds_inhabited(l, u, val, |x| eval_cached(x).verdict()) {
                                 let pair = (top_node, top_node);
                                 seen.insert(e.class, pair);
                                 if root {
@@ -18891,6 +18891,30 @@ impl<'a> Made<'a> {
     }
 }
 
+/// Whether the morphism type `l .. u -> val` of a group, a domain bound of which mentions the
+/// group, is shown inhabited whatever the group's members are; `verdict` reads a closed part.
+/// `false` leaves the part to the search. Proof, case by case, using that a morphism type
+/// holds a value exactly when `l <: u` and `l` is empty or `val` is inhabited:
+/// - `l` and `u` written alike (`rec::same`), so `l <: u`, and `val` holds `l` as written
+///   (`rec::covers`, proved there), so `l` nonempty makes `val` nonempty: `type U = (U) -> U`;
+/// - `l` and `u` written alike and `val` closed and inhabited: the group's own case;
+/// - `l` closed and empty: the empty morphism is a value, whatever `u` and `val` are.
+///
+/// Before plan row GROUP-admit-precision the second case was read without `l <: u`, so
+/// `type R = (int .. R -> int)`, whose guarantee `int` lies outside the morphisms `R` holds,
+/// was called inhabited; the admission check guards only a recursive guarantee. Test:
+/// `l01_23_subtyping::admission::a_recursive_permission_below_a_closed_guarantee_is_empty`.
+fn recursive_bounds_inhabited(
+    l: &Arc<rec::Node>,
+    u: &rec::Node,
+    val: &Arc<rec::Node>,
+    mut verdict: impl FnMut(&Arc<rec::Node>) -> Verdict,
+) -> bool {
+    let same = rec::same(l, u)
+        && (rec::covers(val, l) || (!val.recursive && verdict(val) == Verdict::Inhabited));
+    same || (!l.recursive && verdict(l) == Verdict::Empty)
+}
+
 /// What a type of a group's system is, across its definitions ([`names::absorb`]): a part
 /// with children by what it is made of, its children read across definitions, and a part with
 /// none by its class.
@@ -18985,9 +19009,8 @@ fn system(env: &Arc<Env>) -> System {
                             Verdict::Inhabited => Some(Some(Kind::Top)),
                             Verdict::Refused(_) => Some(None),
                         },
-                        // Admitted only with equal bounds and a value type that is not empty.
                         rec::Shape::Morphism(l, u, val) if l.recursive || u.recursive => Some(
-                            (!val.recursive && eval(val, env).verdict() == Verdict::Inhabited)
+                            recursive_bounds_inhabited(l, u, val, |x| eval(x, env).verdict())
                                 .then_some(Kind::Top),
                         ),
                         rec::Shape::Morphism(l, u, val) => {

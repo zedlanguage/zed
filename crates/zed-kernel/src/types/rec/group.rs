@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, Weak};
 
 use super::unfold::{ENVS, Show, eval, thread};
-use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, free, same};
+use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, covers, free, same};
 use crate::digest::Digest;
 use crate::types::{Type, Verdict, bytes, defs, mix};
 use zed_graph::{IdSource, on_cycle};
@@ -394,7 +394,13 @@ impl Group {
                 Shape::Morphism(l, u, v) => {
                     if l.recursive {
                         let m = text(e);
-                        if let Some(flaw) = self.value_flaw(v) {
+                        // A value type that holds the guarantee as written (`covers`) leaves
+                        // `l -> v` inhabited whatever `l` is, so it cannot flip.
+                        let flaw = match covers(v, l) {
+                            true => None,
+                            false => self.value_flaw(v),
+                        };
+                        if let Some(flaw) = flaw {
                             return Some(format!(
                                 "a recursive occurrence stands in the guarantee of `{m}`, whose \
                                  value type `{}` {flaw}",

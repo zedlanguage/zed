@@ -120,6 +120,55 @@ fn a_morphism_promising_more_than_it_permits_is_empty_in_a_group() {
     assert_eq!(member(empty()).verdict(), Verdict::Inhabited);
 }
 
+/// The member `R0` of the group whose one definition is `body`, its verdict read fresh.
+fn verdict_of(body: Expr) -> Verdict {
+    let defs = vec![Def {
+        name: "R0".into(),
+        params: vec![],
+        body,
+    }];
+    let t = Group::new(defs).unwrap().instance(vec![]).pop().unwrap();
+    Type::forget_emptiness();
+    t.verdict()
+}
+
+fn union(xs: Vec<Expr>) -> Expr {
+    Expr::Union(xs)
+}
+
+/// A value type that holds the guarantee as written leaves the morphism type inhabited
+/// whatever the guarantee is, so the group cannot flip and is accepted (plan row
+/// GROUP-admit-precision): `U = (U) -> U` holds the identity on `U`, and an arm of the
+/// guarantee may stand anywhere among the value type's arms. A guarantee arm the value type
+/// does not write is still refused: in `(U | int) -> U` the value type need not hold `int`.
+#[test]
+fn a_value_type_holding_the_guarantee_is_accepted() {
+    assert_eq!(verdict_of(m(r(0), r(0), r(0))), Verdict::Inhabited);
+    let l = || union(vec![r(0), int()]);
+    assert_eq!(
+        verdict_of(m(
+            l(),
+            l(),
+            union(vec![Expr::Type(Type::string()), int(), r(0)])
+        )),
+        Verdict::Inhabited
+    );
+    assert!(accepted(vec![m(r(0), r(0), union(vec![r(0), int()]))]));
+    assert!(!accepted(vec![m(l(), l(), r(0))]));
+    assert!(!accepted(vec![m(r(0), r(0), pair(int(), r(0)))]));
+}
+
+/// A permission that mentions the group below a closed guarantee: `R = (int .. R -> int)`
+/// promises every integer key and permits only keys in `R`, which holds morphisms alone, so
+/// no morphism has those bounds and `R` is empty. The group's system read such a morphism by
+/// its value type alone and called it inhabited (plan row GROUP-admit-precision). With the
+/// guarantee empty, `(empty .. R -> R)`, the empty morphism is a value.
+#[test]
+fn a_recursive_permission_below_a_closed_guarantee_is_empty() {
+    assert_eq!(verdict_of(m(int(), r(0), int())), Verdict::Empty);
+    assert_eq!(verdict_of(m(empty(), r(0), r(0))), Verdict::Inhabited);
+}
+
 #[test]
 fn a_rejection_names_its_cause() {
     let defs = vec![
@@ -207,11 +256,11 @@ fn arms() -> Vec<(&'static str, String, String)> {
         ),
         (
             "value type mentions the group",
-            refusal(&["U"], &[], vec![m(r(0), r(0), r(0))]),
+            refusal(&["U"], &[], vec![m(r(0), r(0), pair(int(), r(0)))]),
             outside(
                 "U",
-                "a recursive occurrence stands in the guarantee of `U -> U`, whose value type \
-                 `U` mentions the group",
+                "a recursive occurrence stands in the guarantee of `U -> (int, U)`, whose \
+                 value type `(int, U)` mentions the group",
             ),
         ),
         (

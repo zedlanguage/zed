@@ -7899,9 +7899,11 @@ pub mod rec {
     //! - *of the form the admission check accepts*: no recursive occurrence stands under a
     //!   complement, to the right of `\`, or in the guarantee of a morphism type whose value type
     //!   may be empty or mentions the group, since `type T = (T) -> (#a & #b)` is inhabited exactly
-    //!   when it is empty; nor in the guarantee of a morphism type whose guarantee and permission
-    //!   differ, or that stands under `&`, `\`, a complement or differing domain bounds, directly
-    //!   or through a definition named there (cross-review X14: `W = (W) -> int` is accepted,
+    //!   when it is empty, unless the value type holds the guarantee as written ([`covers`]:
+    //!   `type U = (U) -> U` holds the identity on `U`, plan row GROUP-admit-precision); nor in
+    //!   the guarantee of a morphism type whose guarantee and permission differ, or that stands
+    //!   under `&`, `\`, a complement or differing domain bounds, directly or through a
+    //!   definition named there (cross-review X14: `W = (W) -> int` is accepted,
     //!   `((W) -> int) & top` and `R0 = (R1) -> int; R1 = (int, R0 & ((empty) -> int))` are not).
     //!
     //! The admission check is sufficient for the group's emptiness to be monotone in its members'
@@ -8547,8 +8549,30 @@ pub mod rec {
     // classes), expected O(1) a node, and the test compares classes, O(1). Tradeoffs: the table
     // lives while the group's trees are built, O(nodes) memory; nodes of equal digest and
     // differing shape take further probes, never a wrong class.
-    fn same(l: &Node, u: &Node) -> bool {
+    pub(in crate::types) fn same(l: &Node, u: &Node) -> bool {
         l.class == u.class
+    }
+
+    /// Whether the value type `v` of a morphism type holds its guarantee `l` as written: each
+    /// arm of `l` (`l` itself when it is not a union) is written as `v` or as an arm of `v`.
+    /// Then `l <: v` at every argument and every value of the group's members, so `l -> v`
+    /// holds a value whatever they are: with `l` empty the empty morphism, and otherwise `v`
+    /// is inhabited too and a constant morphism into it is one (plan row GROUP-admit-precision).
+    /// `type U = (U) -> U` is the case: `U` holds the identity on `U`.
+    /// Proof that `l <: v`: two nodes of one group of equal class are written alike
+    /// ([`same`]), so they denote one type at every argument and every value of the members;
+    /// an arm of a union is a subtype of it. Sufficient, not necessary: `l = int`, `v = num`
+    /// is not seen. O(|arms of l| + |arms of v|) expected, by one hash set of classes.
+    pub(in crate::types) fn covers(v: &Node, l: &Node) -> bool {
+        let arms = |e: &Node| -> Vec<u32> {
+            match &e.e {
+                Shape::Union(xs) => xs.iter().map(|x| x.class).collect(),
+                _ => vec![e.class],
+            }
+        };
+        let mut held: std::collections::HashSet<u32> = arms(v).into_iter().collect();
+        held.insert(v.class);
+        arms(l).iter().all(|c| held.contains(c))
     }
 
     /// What an expression is evaluated in: the arguments, and the group's types at them.

@@ -208,13 +208,20 @@ fn other_rejections() {
         def("B", &[], or(vec![r(0, vec![]), ty(Type::int())])),
     ];
     assert!(msg(mutual).contains("`A` is not contractive"));
-    // Under a complement, to the right of `\`, and in a guarantee whose value is the group.
+    // Under a complement, to the right of `\`, and in a guarantee whose value type mentions the
+    // group without holding the guarantee as written (`U -> U` is admitted,
+    // GROUP-admit-precision).
     let under_not = atom("a", vec![Expr::Not(Box::new(n()))]);
     assert!(msg(vec![def("N", &[], under_not)]).contains("under a complement"));
     let diff = Expr::Diff(Box::new(ty(Type::int())), Box::new(atom("b", vec![n()])));
     assert!(msg(vec![def("N", &[], diff)]).contains("to the right of `\\`"));
     assert!(
-        msg(vec![def("U", &[], Expr::exact(n(), n()))]).contains("in the guarantee of `U -> U`")
+        msg(vec![def(
+            "U",
+            &[],
+            Expr::exact(n(), Expr::Tuple(vec![ty(Type::int()), n()]))
+        )])
+        .contains("in the guarantee of `U -> (int, U)`")
     );
     // A value type that a parameter can make empty: `type F(A) = (F(A)) -> A`, and one that a
     // larger argument shrinks, `(H(A)) -> (int \ A)`.
@@ -715,18 +722,24 @@ fn a_group_writes_its_trees_for_debugging() {
 
 /// Author rule P191: a group's message writes parentheses exactly where the type grammar's
 /// precedence needs them. An arrow's key is a `TypeNot` (`TypeNot '->' Arrow`, author P222), so
-/// `U -> U` holds no pair and a union key keeps one, `(U | int) -> U`; a tuple key keeps one,
-/// `((U, int)) -> U`, since `Arrow` tries `ArrowParams` first and `(U, int) -> U` reads as two
-/// parameters.
+/// `U -> (int, U)` holds no pair and a union key keeps one, `(U | int) -> (int, U)`; a tuple
+/// key keeps one, `((U, int)) -> (int, U)`, since `Arrow` tries `ArrowParams` first and
+/// `(U, int) -> (int, U)` reads as two parameters. The value type `(int, U)` mentions the group
+/// without holding the guarantee as written, so each is refused (`U -> U` is admitted, plan row
+/// GROUP-admit-precision).
 #[test]
 fn a_group_message_parenthesizes_an_arrow_key_only_where_needed() {
     let n = || r(0, vec![]);
     for (key, text) in [
-        (n(), "U -> U"),
-        (or(vec![n(), ty(Type::int())]), "(U | int) -> U"),
-        (Expr::Tuple(vec![n(), ty(Type::int())]), "((U, int)) -> U"),
+        (n(), "U -> (int, U)"),
+        (or(vec![n(), ty(Type::int())]), "(U | int) -> (int, U)"),
+        (
+            Expr::Tuple(vec![n(), ty(Type::int())]),
+            "((U, int)) -> (int, U)",
+        ),
     ] {
-        let message = rejected(vec![def("U", &[], Expr::exact(key, n()))]);
+        let value = Expr::Tuple(vec![ty(Type::int()), n()]);
+        let message = rejected(vec![def("U", &[], Expr::exact(key, value))]);
         assert!(
             message.contains(&format!("in the guarantee of `{text}`")),
             "{message}"
