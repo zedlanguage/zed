@@ -87,8 +87,9 @@ echo "pieces: $n, failed: $f"
 [ "$f" = 0 ]
 STUB
 chmod +x "$toy/tools/run_tests.sh"
-# The fake pool: VM names hm1, hm2...; FAKE_FREE VMs at most held at once (default 4). Its log
-# has a line per acquire and per release.
+# The fake pool: VM names hm1, hm2...; FAKE_FREE VMs at most held at once (default 4); the first
+# FAKE_BUSY acquires of a case are refused (exit 3) as when every VM is taken. Its log has a line
+# per acquire, per refused acquire (busy) and per release.
 cat >"$colab/pool.sh" <<'POOL'
 #!/bin/bash
 set -u -o pipefail
@@ -96,6 +97,10 @@ d=$(dirname "$0")
 case ${1-} in
   acquire)
     [[ ${2-} =~ ^(hm|std|l4|v5e)$ ]] && [ -n "${3-}" ] || { echo "pool: bad acquire $*" >&2; exit 2; }
+    if [ "$(command grep -c '^busy' "$d/log" 2>/dev/null)" -lt "${FAKE_BUSY:-0}" ]; then
+      echo "busy $2" >>"$d/log"
+      exit 3
+    fi
     held=$(( $(command grep -c '^acquire' "$d/log" 2>/dev/null) - $(command grep -c '^release' "$d/log" 2>/dev/null) ))
     [ "$held" -lt "${FAKE_FREE:-4}" ] || exit 3
     i=$(( $(command grep -c '^acquire' "$d/log" 2>/dev/null) + 1 ))
@@ -207,6 +212,15 @@ STUB_FAIL='^p5$' case_ bench-fail 1 "pieces: 7, failed: 1" "$all" -- --owner t -
 FAKE_DIE_FIRST=1 case_ died-once 0 "pieces: 7, failed: 0" "$all" -- --owner t --vms 2
 ls -d "$ws/case-$n-died-once/run/"vm?-2 >/dev/null 2>&1 || { fail=$((fail + 1)); echo "FAIL died-once: no second attempt"; }
 FAKE_FREE=1 case_ one-free 0 "pieces: 7, failed: 0" "$all" -- --owner t --vms 4
+# A round in which every shape is refused: one wait of 15 s (the reaper's period, FARM-run-retry-15s),
+# then the next round takes both VMs wanted, not only the first.
+t0=$(date +%s)
+FAKE_BUSY=3 case_ busy-round 0 "pieces: 7, failed: 0" "$all" -- --owner t --vms 2
+t1=$(date +%s)
+[ "$(command grep -a -c '^farm: no Colab VM free for t; trying again in 15 s ' "$ws/case-$n-busy-round.out")" = 1 ] &&
+  [ "$(command grep -c '^busy' "$colab/log")" = 3 ] && [ "$(command grep -c '^acquire' "$colab/log")" = 2 ] &&
+  [ $((t1 - t0)) -ge 15 ] && [ $((t1 - t0)) -lt 60 ] ||
+  { fail=$((fail + 1)); echo "FAIL busy-round: not one 15 s wait then 2 VMs ($((t1 - t0)) s; $ws/case-$n-busy-round.out)"; }
 case_ list 0 "pieces: 0, failed: 0" "" -- --owner t --vms 4 --list
 [ "$(command grep -c '^acquire' "$colab/log")" = 1 ] || { fail=$((fail + 1)); echo "FAIL list: not one VM"; }
 case_ trace 0 "pieces: 7, failed: 0" "$all" -- --owner t --vms 2 --trace "$ws/trace"

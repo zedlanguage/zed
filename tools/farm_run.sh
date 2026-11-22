@@ -22,9 +22,14 @@
 # Design.
 #  - The VMs. Up to --vms VMs of owner --owner from /home/luke/Work/wt/colab/pool.sh, shapes hm (8
 #    cores, 50 GB), then l4 (12, 52 GB), then v5e (24, 47 GB); std (2 cores, 12 GB) is too small for
-#    the suite's pieces. When no VM can be had (pool.sh exits 3 for every shape) it waits 2 minutes
-#    and tries again, without end (FARM.md: never fall back to running here). Every VM is released,
-#    on failure and on a signal too (the trap below).
+#    the suite's pieces. When no VM can be had (pool.sh exits 3 for every shape) it waits 15 s and
+#    tries again, without end (FARM.md: never fall back to running here), keeping every VM a round
+#    gets, up to the count wanted. 15 s is the period of the pool's reaper, which stops a VM idle
+#    for 60 s: with the earlier 2 minutes, VMs freed while main-watch waited were reaped instead of
+#    reused (l42 and v5e1, 2026-11-22 11:33Z; author 2026-11-22: "Machines should be claimed and
+#    reused by workers when idle"). pool.sh claims under a flock, so two waiting runs never take
+#    one VM (FARM-run-retry-15s). Every VM is released, on failure and on a signal too (the trap
+#    below).
 #  - The shares. With n VMs, VM k runs the pieces at positions k, k + n, k + 2n... of the list that
 #    `run_tests.sh --list` makes on it. Every VM builds the same files and lists them in the same
 #    order (the table's order, by test binary and step folder), so the shares are disjoint and
@@ -272,8 +277,8 @@ trap stop_all EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 trap 'exit 129' HUP
-# acquire <count>: adds up to <count> VMs to held, at least one, waiting 2 minutes between rounds
-# while none can be had.
+# acquire <count>: adds up to <count> VMs to held, at least one, waiting 15 s between rounds while
+# none can be had (see "The VMs" above).
 acquire() {
   local want=$1 got=0 shape v
   while :; do
@@ -286,8 +291,8 @@ acquire() {
       done
     done
     [ "$got" -eq 0 ] || return 0
-    echo "farm: no Colab VM free for $owner; trying again in 2 minutes ($(date -u +%FT%TZ))"
-    sleep 120
+    echo "farm: no Colab VM free for $owner; trying again in 15 s ($(date -u +%FT%TZ))"
+    sleep 15
   done
 }
 
