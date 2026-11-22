@@ -107,7 +107,7 @@ use super::preimage::{
 use super::spans::Spans;
 use super::threshold;
 use zed_collections::search::first_true;
-use zedc_int::int::{Int, IntRange, row_bound, row_range};
+use zedc_int::int::{Int, IntRange, meet_range, row_bound, row_range};
 use zedc_lattice::affine::Bounds;
 use zedc_lattice::cell::{Cell, Entry, Premise, Premises};
 use zedc_lattice::interval::{End, IntervalSet, Num};
@@ -3045,6 +3045,12 @@ struct Seen {
     bounds: imbl::OrdMap<conjuncts::Class, LeafBound>,
     /// The leaves of the stars, ordered by their products ([`Order`]), in an eager scope.
     order: Order,
+    /// Each block of one two-name disjunction last found to stay ([`Stay`]), so that a later
+    /// move checks it in a few comparisons ([`Scope::moved_blocks`]). An entry is read only
+    /// through [`Stay::holds`], which checks it against the block and the products now, so an
+    /// entry for a block changed or gone is never trusted; such an entry stays until the
+    /// block's id is next read at a move.
+    stays: imbl::OrdMap<BlockId, Arc<Stay>>,
 }
 
 /// A lower-end witness for all rows added after independent unary bounds. The snapshots make
@@ -9752,7 +9758,8 @@ impl Scope {
     /// avoid. At such a leaf [`Scope::settled`] returns [`Scope::get`] (it settles only
     /// when `Scope::stale` names a block), so the claim is `lazy.get(a) ⊆ eager.get(a)`.
     /// The argument, over a sequence of tests, joins and bindings applied to both scopes:
-    /// 1. Tests. Both scopes write the same conjuncts (A1), and every name that is not a
+    /// 1. Tests. The lazy scope's conjuncts and products imply each eager conjunct (A1',
+    ///    below; A1, the same conjuncts, is false), and every name that is not a
     ///    leaf holds the same product in both, by the paragraph above (a leaf's projection
     ///    moves no hub).
     /// 2. A leaf `a` that is not stale. Its block has no due part, so each part's last
@@ -9772,7 +9779,7 @@ impl Scope {
     ///    (`Scope::refresh`), and the eager join projects again the stars it refreshes, so by
     ///    steps 1 and 2 each side's lazy product is within the eager one at every name the
     ///    join reads. `Product::join` is monotone in each argument (a join per domain), and
-    ///    by A1 the two joins keep the same conjuncts, so the joined lazy product is within
+    ///    by A1' the lazy join's conjuncts imply the eager join's, so the joined lazy product is within
     ///    the eager one. A leaf stale on both sides stays stale and is covered by the
     ///    paragraph above. After the join, products may be wider than before it, so step 2
     ///    needs, for a part recorded projected in the joined scope, that it was projected at
@@ -9786,9 +9793,61 @@ impl Scope {
     /// too, since a meet is monotone in each argument. The test above checks the claim right
     /// up to the refusal (the settled lazy `a` equals the eager one there).
     ///
-    /// Not proved (row PROOF-product-lazy-not-coarser): A1, that the two scopes hold the same
-    /// conjuncts (true of the written tests; not checked for the conjuncts that reduction
-    /// adds); A2 for a projection that is not exact but not refused: the projection one
+    /// A1 as written, the same conjuncts in both scopes, is false, and the argument needs
+    /// only a weaker form (row PROOF-product-lazy-a1-a4, b22-preimage5, 2026-11-22). Every
+    /// write to `relation` was found by searching this file for `relation.and(`,
+    /// `self.relation = ` and `relation.forget` (November 2026); four of them choose what to
+    /// write from the products, so a lazy scope whose products differ from the eager one's
+    /// can write other conjuncts:
+    /// - `Scope::atom` substitutes the names of one value (`statics_of`) and writes the
+    ///   test's relation only when it has two inputs or more or its preimage is not exact
+    ///   (`atom_names`); a name of one value in one scope and two in the other gives a
+    ///   two-name conjunct in one and none in the other.
+    /// - The narrowing of a nest the value does not force (`Scope::narrow_linear`, `Kind::Nest`)
+    ///   writes the relation of the live sides alone, liveness read from the cases, so a
+    ///   side dead only in the finer scope gives it `g` where the other has `g || h`.
+    /// - The same narrowing adds the equations of two atoms or more that the narrowed
+    ///   relation gained (Karr's join of the cases), which depend on the cases' products.
+    /// - `Scope::narrow` sends a test to `Scope::lower_gap_test` (which writes the test's
+    ///   relation `body` itself) or, when that declines from the products, to the ordinary
+    ///   narrowing (`Scope::atom`, first item).
+    ///
+    /// The weaker form, A1': at every step, the lazy scope's conjuncts and products imply
+    /// each conjunct of the eager scope (`C_l ∧ P_l ⊨ c` for each `c` in `C_e`). Proof, by
+    /// induction over the sequence of steps, with the not-coarser claim `P_l ⊆ P_e` at the
+    /// names a step reads as the second half of the hypothesis (a test settles its own names
+    /// first, `Scope::settle_test`, so the products it reads are settled ones): (i) a write
+    /// independent of the products writes the same `c` to both. (ii) `atom`: a name static
+    /// only in the lazy scope (narrower, by the hypothesis) has its value `v` in `P_l`, and
+    /// the lazy scope writes the relation of `t[n := v]`, or nothing when that preimage is
+    /// exact, in which case `P_l` holds `t[n := v]` itself; either way `C_l ∧ P_l ⊨ t`.
+    /// (iii) a nest: the lazy live sides are a subset of the eager ones (a case empty under
+    /// `P_e` is empty under `P_l ⊆ P_e`), so the lazy disjunction implies the eager one.
+    /// (iv) Karr's equations: each lazy case's affine hull is within the eager case's (its
+    /// points are a subset), and a case dead in the lazy scope only shrinks the union, so the
+    /// affine hull of the union is within the eager one and its equations imply the eager
+    /// ones; this step assumes both scopes detect the hull exactly, which `narrow_tree` does
+    /// only for the equations the narrowed relation states, so (iv) is Not proved when the
+    /// eager scope states an equation the lazy one, finer, leaves implied by its products.
+    /// (v) `lower_gap_test` writes `body`, the test's own relation; the ordinary path writes
+    /// the same relation or, by (ii), less with products that imply the rest; so whichever
+    /// path each scope takes, `C_l ∧ P_l ⊨ body`. (vi) `forget` removes the same name's
+    /// conjuncts from both. (vii) a join (`Scope::join_settled`) keeps the conjuncts the two
+    /// sides share and replaces the rest by the disjunction of each side's own conjuncts
+    /// with the bounds of the names the other side mentions (`Formula::either`), and adds
+    /// the equations `conjuncts::reach_eqs` finds on both. Were that disjunction written
+    /// whole, the hypothesis on each side would give it: each lazy side implies its eager
+    /// side, so the lazy disjunction implies the eager one. Not proved: that the
+    /// simplifications of `Formula::either` (a conjunct dropped against the other side) and
+    /// the split between shared and own conjuncts, which differs when the sides' conjuncts
+    /// differ, keep the implication.
+    /// For an exact projection A2 then holds with `⊨` in place of `⊇`, by the same image
+    /// argument (the lazy points are a subset). Test of the syntactic difference and the
+    /// semantic claim: none added in this run; the seeds of `Case::eager_join` reach (ii)
+    /// and (iii).
+    ///
+    /// Not proved (row PROOF-product-lazy-not-coarser): A1' in sub-cases (iv) and (vii)
+    /// above, and so the not-coarser claim after a join; A2 for a projection that is not exact but not refused: the projection one
     /// disjunction at a time (S16) and the hulls. Such a projection can depend on the order
     /// of the tests: `x - n >= 0`, `x + m >= 0`, `n - m >= -6 || n <= -8` and `n - m >= -8
     /// || n - m >= -6` give `x` in `[-3, ∞)`, the exact answer, in that order, and `[-4, ∞)`
@@ -14579,13 +14638,19 @@ impl Scope {
         if !self.lazy {
             self.seen.order.sync(&self.relation, &self.names);
         }
+        if force || self.seen.projection.is_none() {
+            return Some(Due::All);
+        }
+        // The blocks each moved name makes due, found first: `moved_blocks` keeps what it
+        // found in `self.seen` ([`Stay`]), and reads a copy of the relation, a persistent one.
+        let relation = self.relation.clone();
+        let mut out: BTreeSet<BlockId> = BTreeSet::new();
+        for n in moved {
+            out.extend(self.moved_blocks(&relation, n));
+        }
         let Some((_, old)) = &self.seen.projection else {
             return Some(Due::All);
         };
-        if force {
-            return Some(Due::All);
-        }
-        let mut out: BTreeSet<BlockId> = BTreeSet::new();
         let mut seeds = Seeds::default();
         let mut any = false;
         let blocks = self.relation.blocks();
@@ -14593,7 +14658,6 @@ impl Scope {
             any = true;
             seeds.names.insert(n.clone());
             seeds.changed.insert(n.clone());
-            out.extend(self.moved_blocks(&self.relation, n));
             // A satellite moved changes the stars at the hubs it relates to, whose conjuncts do
             // not mention it ([`Conjuncts::around`]); a lazy scope finds their leaves stale.
             if !self.lazy {
@@ -17695,11 +17759,23 @@ impl Scope {
     /// `an_eager_join_settles_the_stars_as_the_lazy_one`, check the cut against a path that does
     /// not use it. They build three stars each and cannot catch a family whose bound is right at
     /// these sizes only.
-    fn moved_blocks(&self, relation: &Conjuncts, n: &str) -> Vec<BlockId> {
+    fn moved_blocks(&mut self, relation: &Conjuncts, n: &str) -> Vec<BlockId> {
         let blocks = relation.blocks();
-        let mut out: Vec<BlockId> = (blocks.moving_blocks(n))
-            .filter(|&b| !self.disjunction_stays(relation, b))
-            .collect();
+        let mut out: Vec<BlockId> = Vec::new();
+        for b in blocks.moving_blocks(n) {
+            if (self.seen.stays.get(&b)).is_some_and(|s| s.holds(self, blocks, b)) {
+                continue;
+            }
+            match self.disjunction_stays(relation, b) {
+                Some(s) => {
+                    self.seen.stays.insert(b, Arc::new(s));
+                }
+                None => {
+                    self.seen.stays.remove(&b);
+                    out.push(b);
+                }
+            }
+        }
         if self.lazy {
             return out;
         }
@@ -17781,56 +17857,91 @@ impl Scope {
     /// `n`, and the move of `n` made each of the `i` disjunctions assumed before due, about
     /// 43,000 instructions a projection, O(k²) projections for `k` of them (callgrind,
     /// b22-preimage3: 812 and 3,164 calls of `project_block` at k = 32 and 64). Used: each
-    /// such block checked by its two names' ends, O(a log N) a block. Tradeoffs: the blocks at
+    /// such block checked by its two names' ends, O(a log N) a block. Tradeoff: the blocks at
     /// the name are still listed at each move ([`conjuncts::Blocks::moving_blocks`]), O(k) a
-    /// move, so the set-up is still O(k²) checks; keeping the blocks ordered by the window
-    /// their arms give would bring that to O(log k) a move, as the order of a family of stars
-    /// does ([`Scope::cut_leaves`]). Test:
+    /// move, so the set-up is still O(k²) checks.
+    ///
+    /// Complexity tradeoff (SCOPE-assume-disjunctions-index): naive version, this check run
+    /// for every listed block at every move, about 18,000 instructions a check (callgrind,
+    /// b22-preimage5: `disjunction_stays` 17.6M and 301M instructions in the set-up of k = 64
+    /// and 256 disjunctions, 17.1 times for 4 times k; the rest of the set-up 4.0 to 4.6
+    /// times). Used: a block found to stay is kept with what it was found on ([`Stay`]), and
+    /// at a later move [`Stay::holds`] answers for it in two lookups of products, two subset
+    /// tests that share their trees (`IntervalSet::is_subset`, O(1) when a name has not
+    /// changed) and four comparisons of ends; it answers yes only where this check would
+    /// (proof at [`Stay`]), so the blocks made due are the same. Tradeoffs: the blocks at
+    /// the name are still listed, O(k log k) a move with the sort of
+    /// [`conjuncts::Blocks::moving_blocks`], a few hundred instructions a block in place of
+    /// some 18,000; an output-sensitive listing would keep the blocks that stay out of the
+    /// list by the hull of the ends that could move them, ordered by its two ends, which
+    /// needs the listing kept apart from `moving_at` in [`conjuncts::Blocks`] (filed as row
+    /// SCOPE-assume-disjunctions-listing). Memory: one [`Stay`] a block that stayed, kept
+    /// until its id is next listed and the block no longer stays. Test:
     /// `l01_39_reduced_product::scaling::bench::tightenings_of_a_sum_beside_disjunctions_on_each_name_scale`
     /// (set-up of 256 and 2048 disjunctions); correctness against every point counted:
-    /// `l01_39_reduced_product::scaling::disjunctions_of_two_names_left_out_keep_the_projection`.
+    /// `l01_39_reduced_product::scaling::disjunctions_of_two_names_left_out_keep_the_projection`,
+    /// and the rule of the kept answers against this check, on random disjunctions:
+    /// `zedc-preimage` unit test `product::tests::kept_disjunctions_answer_as_the_check`.
     /// It cannot catch a block of three names or more, which is never left out.
-    fn disjunction_stays(&self, relation: &Conjuncts, b: BlockId) -> bool {
+    fn disjunction_stays(&self, relation: &Conjuncts, b: BlockId) -> Option<Stay> {
         let blocks = relation.blocks();
         if blocks.is_apart(b) {
-            return false;
+            return None;
         }
         let mut members = blocks.members(b);
         let (Some(g), None) = (members.next(), members.next()) else {
-            return false;
+            return None;
         };
         let Formula::Or(arms) = &**g else {
-            return false;
+            return None;
         };
         let mut names: Vec<&Arc<str>> = Vec::with_capacity(2);
         for arm in arms.iter() {
             let Formula::Con(c) = arm else {
-                return false;
+                return None;
             };
             if c.rel != Rel::Ge {
-                return false;
+                return None;
             }
             for a in c.lin.terms.keys() {
                 let Atom::Sym(s) = a else {
-                    return false;
+                    return None;
                 };
                 if !names.contains(&s) {
                     if names.len() == 2 {
-                        return false;
+                        return None;
                     }
                     names.push(s);
                 }
             }
         }
         let [x, y] = names[..] else {
-            return false;
+            return None;
         };
         let (px, py) = (self.get(x), self.get(y));
         if [&px, &py].iter().any(|p| p.ints().is_empty() || classed(p)) {
-            return false;
+            return None;
         }
-        arms_cover(&arms[..], x, px.ints(), y, py.ints())
-            && arms_cover(&arms[..], y, py.ints(), x, px.ints())
+        if !(arms_cover(&arms[..], x, px.ints(), y, py.ints())
+            && arms_cover(&arms[..], y, py.ints(), x, px.ints()))
+        {
+            return None;
+        }
+        Some(Stay {
+            members: blocks.member_set(b)?.clone(),
+            sides: [
+                (
+                    x.clone(),
+                    px.ints().clone(),
+                    arms_hull(&arms[..], x, y, py.ints()),
+                ),
+                (
+                    y.clone(),
+                    py.ints().clone(),
+                    arms_hull(&arms[..], y, x, px.ints()),
+                ),
+            ],
+        })
     }
 
     /// The bound family `f`'s conjuncts and those among its hubs ([`Conjuncts::core`]) give
@@ -20852,6 +20963,142 @@ fn arms_cover(arms: &[Formula], x: &str, sx: &IntervalSet, y: &str, sy: &Interva
         return true;
     }
     sx.meet(&IntervalSet::range(lo, hi)).is_empty()
+}
+
+/// A block of one disjunction `g` of half-planes on two names that
+/// [`Scope::disjunction_stays`] found to stay: its conjuncts then, and for each of its two
+/// names `z` (the other `w`) the integers `P0(z)` of `z` then and a hull `H(z)` of the set
+/// `T(z)` of integers `t` at which some `w` in `P0(w)` meets no arm of `g` ([`arms_hull`];
+/// `None` when `T(z)` is empty).
+///
+/// Proof that [`Stay::holds`] answers yes only where `disjunction_stays` would. Write
+/// `P(z)` for `z`'s integers now and `C(z)` for "every member of `P(z)` meets some arm with
+/// some `w` in `P(w)`" ([`arms_cover`]`(g, z, P(z), w, P(w))`); the block stays when it is
+/// not apart, holds `g` alone, both products are not empty and have no class, and `C(x)`
+/// and `C(y)` hold.
+/// 1. `holds` asks that the block is not apart and that its conjunct set is the very set
+///    kept (`OrdSet::ptr_eq`: one tree, so one set of conjuncts, `{g}` as checked then),
+///    and that both products are not empty and have no class ([`classed`]), as the check
+///    does.
+/// 2. `holds` asks `P(z) ⊆ P0(z)` for both names. Then `C(x)`: suppose some `t` in `P(x)`
+///    meets no arm with any `w` in `P(y)`. As `t` is in `P0(x)`, `T(y)` holds every member
+///    of `P(y)` (each meets no arm at `x = t`). In particular `min P(y)` and
+///    `max P(y)` are in `T(y)` (when they exist; an interval set's ends are members), so the
+///    ends of `P(y)` lie inside `H(y)`, a hull of `T(y)`; with no end on one side, `T(y)` is
+///    unbounded on that side too and so is its hull. So when the ends of `P(y)` are not both
+///    inside `H(y)`, or `T(y)` is empty, `C(x)` holds. The same for `C(y)` with `H(x)`.
+///    (`T(y)` is found from `P0(x)`; with `P(x) ⊆ P0(x)` the argument above used only a `t`
+///    of `P0(x)`, so the older, larger set serves.)
+/// 3. `holds` asks of both names that their ends are not both inside their hull. With (1)
+///    and (2), every condition of the check holds, so it would answer yes.
+///
+/// Nothing here reads the history between the check and now: a block changed, a product
+/// widened, or a class come in each fails one test of `holds`, which then answers no and
+/// the block is checked in full as before.
+struct Stay {
+    members: imbl::OrdSet<Arc<Formula>>,
+    sides: [StaySide; 2],
+}
+
+/// One name of a [`Stay`]: the name, its integers `P0` when kept, and its hull `H`.
+type StaySide = (Arc<str>, IntervalSet, Option<(End, End)>);
+
+impl Stay {
+    /// Whether block `b` of `blocks` still stays in scope `s` by what was kept (proof at
+    /// [`Stay`]): O(log N) for the two products, and the two subset tests, O(1) for a name
+    /// that has not changed.
+    fn holds(&self, s: &Scope, blocks: &conjuncts::Blocks, b: BlockId) -> bool {
+        if blocks.is_apart(b)
+            || !blocks
+                .member_set(b)
+                .is_some_and(|m| m.ptr_eq(&self.members))
+        {
+            return false;
+        }
+        self.sides.iter().all(|(z, then, hull)| {
+            let p = s.get(z);
+            let Some((lo, hi)) = p.ints().bounds() else {
+                return false;
+            };
+            !classed(&p)
+                && p.ints().is_subset(then)
+                && hull.as_ref().is_none_or(|(l, h)| lo < l || hi > h)
+        })
+    }
+}
+
+/// A hull `(l, h)` of the integers `t` at which some `y` in `sy` meets no arm of `arms` with
+/// `x = t`, the arms constraints `a x + b y + c >= 0` over the names `x` and `y` alone; `None`
+/// when there is no such `t`, and every integer for an arm of any other form ([`Stay`]).
+/// O(a²) for `a` arms.
+///
+/// Derivation. `y` meets no arm at `x = t` when `a t + b y + c <= -1` for each arm. Let `y`
+/// range over the reals between the ends of `sy`, a superset of `sy`, so the set found is a
+/// superset of the one asked, which a hull may be. Each arm with `b > 0` bounds `y` above by
+/// `(-a t - c - 1) / b`, each with `b < 0` below by `(a t + c + 1) / -b`, each with `b = 0`
+/// gives `-a t - c - 1 >= 0` on `t` alone, and the ends of `sy` bound `y` by constants.
+/// Fourier-Motzkin elimination of `y` (J. B. J. Fourier, 1827; T. S. Motzkin, thesis, Basel,
+/// 1936; exact over the reals, as in A. Schrijver, "Theory of Linear and Integer
+/// Programming", Wiley 1986, section 12.2): some real `y` lies between all lower and upper
+/// bounds exactly when each lower bound `(α1 t + β1) / δ1` is at most each upper bound
+/// `(α2 t + β2) / δ2`, `δ1, δ2 > 0`, that is `(δ1 α2 - δ2 α1) t + (δ1 β2 - δ2 β1) >= 0`. Each
+/// such constraint `A t + K >= 0` with `A != 0` is a half-line in the integers, its end
+/// [`row_bound`]; with `A = 0` it holds for every `t` or none. The integers `t` meeting them
+/// all are an interval, which is the hull returned.
+fn arms_hull(arms: &[Formula], x: &str, y: &str, sy: &IntervalSet) -> Option<(End, End)> {
+    let every = Some((End::NegInf, End::PosInf));
+    let (ylo, yhi) = sy.bounds()?;
+    // Bounds on `y` as `(α, β, δ)`: `y >= (α t + β) / δ` or `y <= (α t + β) / δ`, `δ > 0`.
+    let (mut lower, mut upper): (Vec<[Int; 3]>, Vec<[Int; 3]>) = (Vec::new(), Vec::new());
+    // Constraints `A t + K >= 0` on `t` alone.
+    let mut on_t: Vec<[Int; 2]> = Vec::new();
+    for arm in arms {
+        let Formula::Con(c) = arm else {
+            return every;
+        };
+        if c.rel != Rel::Ge {
+            return every;
+        }
+        let (mut a, mut b) = (Int::ZERO, Int::ZERO);
+        for (atom, k) in &c.lin.terms {
+            match atom {
+                Atom::Sym(s) if &**s == x => a = k.clone(),
+                Atom::Sym(s) if &**s == y => b = k.clone(),
+                _ => return every,
+            }
+        }
+        let k = &c.lin.constant + &Int::ONE;
+        if b.is_positive() {
+            upper.push([-&a, -&k, b]);
+        } else if b.is_negative() {
+            lower.push([a, k, -&b]);
+        } else {
+            on_t.push([-&a, -&k]);
+        }
+    }
+    if let End::Fin(v) = ylo {
+        lower.push([Int::ZERO, Int::from(v), Int::ONE]);
+    }
+    if let End::Fin(v) = yhi {
+        upper.push([Int::ZERO, Int::from(v), Int::ONE]);
+    }
+    for [a1, b1, d1] in &lower {
+        for [a2, b2, d2] in &upper {
+            on_t.push([&(d1 * a2) - &(d2 * a1), &(d1 * b2) - &(d2 * b1)]);
+        }
+    }
+    let mut r: IntRange = (None, None);
+    for [a, k] in &on_t {
+        if a.is_zero() {
+            if k.is_negative() {
+                return None;
+            }
+        } else if meet_range(&mut r, row_range(a, k, false).0) {
+            return None;
+        }
+    }
+    let end = |v: Option<Int>, inf: End| v.map_or(inf, |v| End::Fin(Num::from(&v)));
+    Some((end(r.0, End::NegInf), end(r.1, End::PosInf)))
 }
 
 fn classed(p: &Product) -> bool {
@@ -27097,6 +27344,117 @@ mod tests {
             (BTreeMap::from([(y, Num::from(-1i64))]), Num::ZERO),
         ];
         assert!(out.contains(&arm), "{out:?}");
+    }
+
+    /// [`arms_hull`] holds every `t` that an enumeration finds meeting no arm with some `y`,
+    /// and the rule of [`Stay::holds`] (products narrowed from those kept, the ends of each
+    /// outside its hull) answers yes only where [`arms_cover`] holds on both sides, the check
+    /// of [`Scope::disjunction_stays`] (proof at [`Stay`]): 4,000 random disjunctions of one
+    /// to four arms, coefficients in -3..=3, products of one or two ranges, some unbounded.
+    #[test]
+    fn kept_disjunctions_answer_as_the_check() {
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |m: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % m
+        };
+        let (x, y): (Arc<str>, Arc<str>) = ("x".into(), "y".into());
+        let fin = |v: i64| End::Fin(Num::from(v));
+        let mut skips = 0;
+        for round in 0..4000 {
+            let arms: Vec<Formula> = (0..1 + next(4))
+                .map(|_| {
+                    let mut terms = BTreeMap::new();
+                    for n in [&x, &y] {
+                        let k = next(7) as i64 - 3;
+                        if k != 0 {
+                            terms.insert(Atom::Sym(n.clone()), Int::from(k));
+                        }
+                    }
+                    let constant = Int::from(next(17) as i64 - 8);
+                    Formula::Con(Con {
+                        lin: Lin { terms, constant },
+                        rel: Rel::Ge,
+                    })
+                })
+                .collect();
+            // Rounds below 1,000 keep every end finite, for the enumeration.
+            let finite = round < 1000;
+            let set = |next: &mut dyn FnMut(u64) -> u64| {
+                let mut s = IntervalSet::default();
+                for _ in 0..1 + next(2) {
+                    let lo = next(21) as i64 - 10;
+                    let hi = lo + next(8) as i64;
+                    let lo = if !finite && next(6) == 0 {
+                        End::NegInf
+                    } else {
+                        fin(lo)
+                    };
+                    let hi = if !finite && next(6) == 0 {
+                        End::PosInf
+                    } else {
+                        fin(hi)
+                    };
+                    s = s.join(&IntervalSet::range(lo, hi));
+                }
+                s
+            };
+            let (p0x, p0y) = (set(&mut next), set(&mut next));
+            if finite {
+                for (z, w, pw) in [(&x, &y, &p0y), (&y, &x, &p0x)] {
+                    let hull = arms_hull(&arms, z, w, pw);
+                    for t in -60..=60i64 {
+                        let free = (-60..=60i64).any(|v| {
+                            pw.contains(v)
+                                && arms.iter().all(|g| {
+                                    let Formula::Con(c) = g else { unreachable!() };
+                                    let at = |n: &Arc<str>, v: i64| {
+                                        let k = c.lin.terms.get(&Atom::Sym(n.clone()));
+                                        &k.cloned().unwrap_or(Int::ZERO) * &Int::from(v)
+                                    };
+                                    let val = &(&c.lin.constant + &at(z, t)) + &at(w, v);
+                                    val.is_negative()
+                                })
+                        });
+                        let inside = hull
+                            .as_ref()
+                            .is_some_and(|(l, h)| l <= &fin(t) && &fin(t) <= h);
+                        assert!(
+                            !free || inside,
+                            "round {round}: t = {t} free, hull {hull:?}, arms {arms:?}"
+                        );
+                    }
+                }
+            }
+            let covers = |px: &IntervalSet, py: &IntervalSet| {
+                arms_cover(&arms, &x, px, &y, py) && arms_cover(&arms, &y, py, &x, px)
+            };
+            if !covers(&p0x, &p0y) {
+                continue;
+            }
+            let (hx, hy) = (
+                arms_hull(&arms, &x, &y, &p0y),
+                arms_hull(&arms, &y, &x, &p0x),
+            );
+            for _ in 0..8 {
+                let (px, py) = (p0x.meet(&set(&mut next)), p0y.meet(&set(&mut next)));
+                let outside = |p: &IntervalSet, h: &Option<(End, End)>| {
+                    let (lo, hi) = p.bounds().expect("not empty");
+                    h.as_ref().is_none_or(|(l, h)| lo < l || hi > h)
+                };
+                if px.is_empty() || py.is_empty() || !outside(&px, &hx) || !outside(&py, &hy) {
+                    continue;
+                }
+                skips += 1;
+                assert!(
+                    covers(&px, &py),
+                    "round {round}: kept, not covered: {px:?} {py:?} {arms:?}"
+                );
+            }
+        }
+        assert!(skips > 1000, "{skips} kept answers checked");
     }
 
     #[test]

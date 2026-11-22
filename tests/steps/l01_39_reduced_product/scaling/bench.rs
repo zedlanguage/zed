@@ -412,7 +412,7 @@ fn tightenings_beside_a_chain_of_disjunctions_scale() {
 /// SCOPE-assume-disjunctions-index).
 #[test]
 fn tightenings_of_a_sum_beside_disjunctions_on_each_name_scale() {
-    let n = 64;
+    let n = 256;
     let inputs = scaling::inputs(n, tightenings_of_a_sum);
     scaling::check(
         "k tightenings of n + m beside k disjunctions each on n or m",
