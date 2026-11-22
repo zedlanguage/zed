@@ -8,6 +8,8 @@
 //! literals then need to stay one format. NaN and the infinities are written as quotients, since
 //! the casts `f64(#NaN)` and `f64(#inf)` of DESIGN come with plan row NAN-cast-atoms.
 
+use std::cmp::Ordering;
+
 use zed_kernel::Value;
 
 use zed_tests::step_helpers::l01_16_elaboration::{elab, errors, value, with_prelude};
@@ -281,6 +283,21 @@ fn the_natural_order_places_zeros_subnormals_and_nan() {
     );
     // The NaN of `-nan` is the canonical NaN, equal to the other.
     assert_eq!(vs[11], vs[12]);
+}
+
+// DESIGN.md L1.17: the natural order puts, "within one format `-0.0` just before `0.0`, so on
+// the floats of one format the order is IEEE 754-2019 `totalOrder` (5.10)"; DESIGN.md
+// sec:order: the two zeros are the one pair of values of one format that the natural order
+// tells apart and `==` does not, and as keys they are one key. The kernel's order must agree
+// with its bitwise `Eq` (the two zeros print differently), so they cannot tie there. The test
+// fails if the order ties them or puts `0.0` first; it does not check the key, which
+// `key_leaf` maps to `0.0`.
+#[test]
+fn the_two_float_zeros_order_negative_zero_first() {
+    let vs = values("z = 0.0f64;\nm = -0.0f64;\n", &["z", "m"]);
+    assert_eq!(vs[1].cmp(&vs[0]), Ordering::Less);
+    assert_eq!(vs[0].cmp(&vs[1]), Ordering::Greater);
+    assert_eq!(vs[1].to_string(), "-0.0");
 }
 
 // DESIGN.md L1.18: "`sum` of a tuple ... is `0` for the empty tuple"; DESIGN.md L1.22:
