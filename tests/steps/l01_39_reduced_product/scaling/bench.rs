@@ -687,3 +687,22 @@ fn the_checker_reads_the_needs_of_a_generic_function_under_nested_tests_in_time_
         },
     );
 }
+
+#[test]
+fn an_eager_scope_bounds_the_hubs_of_a_star_after_constraints_the_box_comes_to_entail() {
+    let inputs = scaling::inputs(
+        80,
+        hub_bounds_after_entailed_constraints_in_a_nonnegative_box,
+    );
+    let p = Premises::new();
+    scaling::check(
+        "k bounds on a hub after k constraints among the hubs of a star that the box comes to entail, eager",
+        80,
+        |k| {
+            let (start, tests) = &inputs[&k];
+            tests
+                .iter()
+                .fold(start.clone(), |s, t| s.assume(t, true, &p));
+        },
+    );
+}

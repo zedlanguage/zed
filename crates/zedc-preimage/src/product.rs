@@ -114,7 +114,7 @@ use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::landmarks::Landmarks;
 use zedc_lattice::lattice::{Congruence, FiniteSet, Lattice};
 use zedc_lattice::revision::{self, Op, reduce_congruence};
-use zedc_presburger::conjuncts::{self, BlockId, Conjuncts, Edge, Uses};
+use zedc_presburger::conjuncts::{self, BlockId, Conjuncts, Edge, Uses, extreme_bucket_key};
 use zedc_presburger::hull::Hull;
 use zedc_presburger::presburger::{self, Atom, Con, Factor, Formula, Lin, Rel};
 use zedc_presburger::upper_hull::UpperHull;
@@ -5304,16 +5304,6 @@ struct Split {
     leaf: Option<Arc<str>>,
 }
 
-fn extreme_bucket_key(c: &Con) -> Option<(Atom, Atom, Int, Int)> {
-    let mut terms = c.lin.terms.iter();
-    match (c.rel, terms.next(), terms.next(), terms.next()) {
-        (Rel::Ge, Some((x @ Atom::Sym(_), a)), Some((y @ Atom::Sym(_), _)), None) => {
-            Some((x.clone(), y.clone(), a.clone(), c.lin.constant.clone()))
-        }
-        _ => None,
-    }
-}
-
 /// Counts a constraint on the factors `fs`, sorted and distinct, into `adj` (`add`) or out of
 /// it: each factor with itself, the number of constraints that mention it, and each factor and
 /// the next in `fs`, both ways, the number of constraints that link them so. A count that
@@ -6310,6 +6300,10 @@ struct Block {
     /// Each of its conjuncts ([`Conjuncts::core`]), with the number of ways it is one: as a
     /// member, and as a free conjunct at each name of the members.
     core: imbl::OrdMap<Arc<Formula>, usize>,
+    /// The keys of `core`, sorted into rows so that [`Scope::project_block`] reads only the
+    /// rows of least and greatest `b` of each key ([`conjuncts::Rows`]); changed with `core`
+    /// in [`Block::enter`] and [`Block::leave`], the only places a key of `core` comes or goes.
+    rows: conjuncts::Rows,
     /// The conjuncts each of which shows that the core is no threshold-implication component
     /// while it stays ([`Block::unshaped`]).
     unshaped: imbl::OrdSet<Arc<Formula>>,
@@ -6466,6 +6460,7 @@ impl Block {
             stair_due: None,
             leaf,
             core: imbl::OrdMap::new(),
+            rows: conjuncts::Rows::default(),
             unshaped: imbl::OrdSet::new(),
             outer_cons: cons.clone(),
             cons,
@@ -6662,6 +6657,7 @@ impl Block {
         if *count != k {
             return None;
         }
+        self.rows.insert(g);
         if Block::unshaped(g) {
             self.unshaped.insert(g.clone());
         }
@@ -6690,6 +6686,7 @@ impl Block {
             return;
         }
         self.core.remove(g);
+        self.rows.remove(g);
         self.unshaped.remove(g);
         if self.cons.remove(g).is_some() {
             self.ray_least.take();
@@ -16408,7 +16405,63 @@ impl Scope {
         // the wholly covered shape uses the persistent O(log k) threshold queries above.
         let all_stairs = covered.is_some() && b.roles.keys().all(|r| *r == Role::Stair);
         if b.unshaped.is_empty() && !all_stairs {
-            let core: Vec<Arc<Formula>> = b.core.keys().cloned().collect();
+            // Complexity tradeoff: naive version, `threshold::shape` read over every key of
+            // the core, O(k) for `k` conjuncts at each projection, so O(k^2) over a walk that
+            // adds a row `x + j*y >= 1` at each step (bench `an_eager_scope_bounds_the_hubs_
+            // of_a_star_after_constraints_the_box_comes_to_entail`, row
+            // PERF-star-block-hub-move). Used: the core's rows of each key `(x, y, a, c)` of
+            // `a x + b y + c >= 0` ([`conjuncts::extreme_bucket_key`]) are kept sorted by `b`
+            // ([`Block::rows`]), and only the conjuncts that are no such row and the rows of
+            // least and greatest `b` of each key are read, sorted, O(m log m) for `m` of them.
+            // Tradeoffs: O(log k) more work as each conjunct comes and goes. COMPLEXITY.md row
+            // PERF-star-block-hub-move.
+            //
+            // Proof that `threshold::solve` of the shape read from these, `P`, gives what it
+            // gives for the shape read from the whole core `C`. Call a row of `C` whose `b`
+            // lies strictly between the least and greatest `b` of its key a middle row; `P` is
+            // `C` without its middle rows, and both are sorted in the order of `Formula`, so
+            // `P` is a subsequence of `C`. A row has `b` not 0 ([`conjuncts::Rows`]).
+            // 1. The hubs. `shape` meets the name sets of the two-name atoms; a middle row has
+            //    names {x, y}, as the row of least `b` of its key in `P` has, so the meet and
+            //    the list of candidate hubs, both subsets of {x, y} when a row exists, are the
+            //    same. A middle row is a `Con` of `>=`, so `at_least_zero` gives its term and
+            //    it fails none of `shape`'s own tests.
+            // 2. Each candidate hub reads both or neither. `read` fails exactly when one
+            //    atom fails, whatever the others; a middle row is one atom and no `Or`, so the
+            //    pairs of `Or` atoms are as before. `P`'s atoms are among `C`'s. A middle row
+            //    that fails with hub `y` fails since `a` is not 1 or -1 (`bound`), and so does
+            //    the row of least `b` of its key, in `P`. With hub `x` `bound` needs `b` 1 or
+            //    -1; a key with a middle row has least and greatest `b` at least 2 apart, so
+            //    both are 1 or -1 only as -1 and 1 around a middle `b` of 0, which is no row:
+            //    one of its ends, in `P`, fails as well. So `find_map` picks the same hub.
+            // 3. The shape. With hub `y` a middle row is `Lower(x, -b, -c)` (`a` = 1) or
+            //    `Upper(x, -b, c)` (`a` = -1): no part, no hub values. It names only `x`, and
+            //    the row of least `b` of its key, which sorts before it (`Con` compares `lin`
+            //    first, whose terms compare `(x, a)`, equal, then `(y, b)`), names `x` too, so
+            //    the first appearance of every name is outside the middle rows: `names` and
+            //    every index into it are the same. The shapes differ only in that `C`'s
+            //    `lowers` and `uppers` hold, in other places, the entries of the middle rows,
+            //    each with the same name and constant as its key's ends and its `m` (or `k`)
+            //    strictly between theirs.
+            // 4. `solve` reads `lowers` and `uppers` only in `members`, `signs` and
+            //    `mirrored` (threshold.rs). `members` folds `lo[y] = ceil(D, max(lo[y], v))`
+            //    over the lowers, from the least member of `D`; since `ceil(D, v)` is the
+            //    least member at or above `v`, it is monotone, at least `v`, and fixes a
+            //    member, so the fold is `ceil(D, max of every v)` in any order (or `None` at
+            //    once exactly when that is `None`, the arguments only growing). `v` is
+            //    `At::plus(b', m)`, at a hub value `b' + m*c`, linear in `m`, and at `Above`
+            //    and `Below` `(m, b')` and `(-m, b')` in lexicographic order, so over `m`
+            //    between two ends with the same `b'` its greatest is at an end: the middle
+            //    entries change no maximum. The uppers are the mirror case, `floor` and `min`.
+            //    `signs`: an `m` strictly between two others has the sign of one of them or
+            //    is 0, which sets no sign. `mirrored` negates each `m` and `k` alone, so it
+            //    maps `C`'s shape to `P`'s plus middle entries again, and the argument
+            //    repeats. `parts`, `names` and `hub` are equal, so the answer is.
+            // `project_threshold` reads only the system, `names` and `hub`, all equal.
+            // Test: `l01_39_reduced_product::scaling::
+            // hub_bounds_match_the_full_core_after_rows_among_the_hubs`.
+            let mut core: Vec<Arc<Formula>> = b.rows.ends().cloned().collect();
+            core.sort();
             if let Some(shape) = &threshold::shape(&core) {
                 let shaped: Vec<Arc<str>> = shape.names.iter().chain(&shape.hub).cloned().collect();
                 let plain = |s: &Self| shaped.iter().all(|n| !classed(&s.get(n)));
@@ -17708,23 +17761,82 @@ impl Scope {
         // rejects disjunction-bearing hubs in O(h log k) instead of copying all k constraints into
         // `core` (`BTreeSet` + `Formula::cmp`, 3.95M Ir / 54.4x at k = 16 in `persist`) before
         // encountering the trailing `Formula::Or`.
+        // Complexity tradeoff (PERF-star-block-hub-move): naive version, every free conjunct at
+        // every hub copied into `core`, O(k log k) per call for `k` of them, and this runs at
+        // each move of a hub, so `k` tests that each add a row among the hubs and then bound a
+        // hub cost O(k²) (34.1 times the instructions at 8k on
+        // `an_eager_scope_bounds_the_hubs_of_a_star_after_constraints_the_box_comes_to_entail`).
+        // Used: the free conjuncts at each hub sorted into rows `a x + b y + c >= 0` by key
+        // `(x, y, a, c)` and `b` ([`Conjuncts::free_rows`], kept as the free sets change), and
+        // of each key only the rows of least and greatest `b` over all the hubs put in `core`,
+        // with every conjunct that is no such row: O((r + o) log n) for `r` keys and `o` other
+        // conjuncts at the hubs, O(log n) per hub when the rows share one key. Tradeoffs:
+        // memory for the sorted copy of the free sets (persistent, shared between versions);
+        // the answer is the same, as proved here.
+        //
+        // Proof that the bound is the one the full core gives. (1) `core_leaf_bound(core)`
+        // reads its constraints only through `Split::new(&cons, None)`, and of that only
+        // `base` (each part is `g and base`, `Split::part` and `Split::formula`) and whether
+        // `least` is `Some` (`Split::constraints`), which holds when `cons` is not empty; the
+        // other conjuncts it reads as they are. (2) `base` is `extreme_base` of the
+        // constraints in order, without repeats. A row in the sense of `extreme_bucket_key`
+        // is exactly a constraint `extreme_base` calls eligible (`Ge`, two terms, both
+        // symbols); it keeps every other conjunct in order, and of each key, in key order,
+        // the rows of greatest and least `b` among those given; and it keeps all conjuncts
+        // when fewer than two are eligible. (3) Let `R` be the rows of one key in the full
+        // core, `lo` and `hi` those of least and greatest `b` (unique: two rows of one key
+        // and one `b` are one constraint). A row dropped here lies at some hub with `b`
+        // strictly between the least and greatest `b` of that key over all the hubs, which
+        // are kept, so it is neither `lo` nor `hi` of `R` (the class's own rows, all kept,
+        // can only widen that range). So every key keeps the same `lo` and `hi`, the same
+        // keys are present, the non-rows and their order are the same (`core` is a sorted
+        // set either way), and a key with a dropped row keeps at least two rows, so the
+        // count of eligible rows is below two before exactly when it is after, and then
+        // nothing is dropped. (4) Hence `base` is the same formula, `cons` is empty in
+        // neither or both, every part is the same formula, and the bound is the same. Every
+        // row is a constraint and so exact; every other conjunct is checked as before.
+        // Test: `l01_39_reduced_product::scaling::hub_bounds_match_the_full_core_after_rows_among_the_hubs`
+        // compares the scope's bounds with the lazy scope's at each step.
         if hubs.len() > 1 {
-            for h in &hubs {
-                if let Some(set) = relation.free_set(h)
-                    && let Some(last) = set.get_max()
-                    && !exact(last)
-                {
-                    return None;
+            let at: Vec<&conjuncts::Rows> =
+                hubs.iter().filter_map(|h| relation.free_rows(h)).collect();
+            // `Formula::Ord` places `Con` (rank 0) and `Not` (rank 1) before `And` (rank 2)
+            // and `Or` (rank 3), so the greatest conjunct of each hub's other set shows
+            // whether any is inexact, in O(h log k), before anything is copied (`persist`,
+            // 3.95M Ir / 54.4x at k = 16 when every conjunct was copied first).
+            if at
+                .iter()
+                .any(|rows| rows.other.get_max().is_some_and(|g| !exact(g)))
+            {
+                return None;
+            }
+            let mut ends: BTreeMap<&(Atom, Atom, Int, Int), [&(Int, Arc<Formula>); 2]> =
+                BTreeMap::new();
+            for rows in &at {
+                // The greatest conjunct alone does not decide: the negation of an equation
+                // sorts among the negations of bounds and is not exact.
+                for g in &rows.other {
+                    if !exact(g) {
+                        return None;
+                    }
+                    core.insert(g.clone());
+                }
+                for (key, bs) in &rows.rows {
+                    let (Some(lo), Some(hi)) = (bs.get_min(), bs.get_max()) else {
+                        continue;
+                    };
+                    let e = ends.entry(key).or_insert([lo, hi]);
+                    if lo.0 < e[0].0 {
+                        e[0] = lo;
+                    }
+                    if hi.0 > e[1].0 {
+                        e[1] = hi;
+                    }
                 }
             }
-            for g in hubs
-                .iter()
-                .flat_map(|h| relation.free_set(h).into_iter().flatten())
-            {
-                if !exact(g) {
-                    return None;
-                }
-                core.insert(g.clone());
+            for [lo, hi] in ends.into_values() {
+                core.insert(lo.1.clone());
+                core.insert(hi.1.clone());
             }
         }
         let core: Vec<Arc<Formula>> = core.into_iter().collect();

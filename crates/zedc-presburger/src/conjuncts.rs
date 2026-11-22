@@ -365,6 +365,109 @@ fn renamed(g: &Formula, x: &str, to: &Arc<str>) -> Formula {
     })
 }
 
+/// The key of a row `a x + b y + c >= 0` of two symbols, `(x, y, a, c)`: the rows that differ
+/// only in `b` share it. `None` for any other constraint. The preimage scope keeps of each key
+/// only the rows of least and greatest `b` in the formula it projects (`extreme_base` in
+/// zedc-preimage's product.rs, which proves the others implied).
+pub fn extreme_bucket_key(c: &Con) -> Option<(Atom, Atom, Int, Int)> {
+    let mut terms = c.lin.terms.iter();
+    match (c.rel, terms.next(), terms.next(), terms.next()) {
+        (Rel::Ge, Some((x @ Atom::Sym(_), a)), Some((y @ Atom::Sym(_), _)), None) => {
+            Some((x.clone(), y.clone(), a.clone(), c.lin.constant.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// A set of conjuncts sorted so that a reader can take only the rows of least and greatest
+/// `b` of each [`extreme_bucket_key`]: the free conjuncts at one name
+/// ([`Conjuncts::free_rows`], read by `Scope::family_bound` in zedc-preimage's product.rs),
+/// and the core of a block (`Block::rows` there, read by `Scope::project_block`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Rows {
+    /// The conjuncts that are no rows of [`extreme_bucket_key`].
+    pub other: OrdSet<Arc<Formula>>,
+    /// The rows, by their key and then by `b`, the coefficient of the key's `y`.
+    pub rows: OrdMap<(Atom, Atom, Int, Int), OrdMap<Int, Arc<Formula>>>,
+}
+
+impl Rows {
+    /// The key and `b` of conjunct `g`, when it is a row of [`extreme_bucket_key`] with `b`
+    /// not 0. Two rows of one key and one `b` are the same constraint, so `b` names the row
+    /// within its key. A row with `b` 0 counts as no row, so that between the least and
+    /// greatest `b` of a key, -1 and 1, no row of `b` 0 is left out (the proof at
+    /// `Scope::project_block` uses this).
+    fn row(g: &Formula) -> Option<((Atom, Atom, Int, Int), Int)> {
+        let Formula::Con(c) = g else {
+            return None;
+        };
+        let k = extreme_bucket_key(c)?;
+        let b = c.lin.terms[&k.1].clone();
+        (b != Int::ZERO).then_some((k, b))
+    }
+
+    /// Adds conjunct `g`. O(log n).
+    pub fn insert(&mut self, g: &Arc<Formula>) {
+        match Rows::row(g) {
+            Some((k, b)) => {
+                self.rows.entry(k).or_default().insert(b, g.clone());
+            }
+            None => {
+                self.other.insert(g.clone());
+            }
+        }
+    }
+
+    /// Removes conjunct `g`, dropping a key left empty. O(log n).
+    pub fn remove(&mut self, g: &Arc<Formula>) {
+        match Rows::row(g) {
+            Some((k, b)) => {
+                if let Some(bs) = self.rows.get_mut(&k) {
+                    bs.remove(&b);
+                    if bs.is_empty() {
+                        self.rows.remove(&k);
+                    }
+                }
+            }
+            None => {
+                self.other.remove(g);
+            }
+        }
+    }
+
+    /// Whether no conjunct is in the set.
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty() && self.other.is_empty()
+    }
+
+    /// The conjuncts other than rows, then of each key the rows of least and greatest `b`
+    /// (one row when they are the same). O(m) for `m` conjuncts and keys returned.
+    pub fn ends(&self) -> impl Iterator<Item = &Arc<Formula>> {
+        let ends = self.rows.values().flat_map(|bs| {
+            let lo = bs.get_min().map(|(_, g)| g);
+            let hi = bs.get_max().filter(|_| bs.len() > 1).map(|(_, g)| g);
+            lo.into_iter().chain(hi)
+        });
+        self.other.iter().chain(ends)
+    }
+
+    /// Adds (`add`) or removes conjunct `g` at name `h` of `at`, dropping a name left empty.
+    /// O(log n).
+    fn change(at: &mut OrdMap<Arc<str>, Rows>, h: &Arc<str>, g: &Arc<Formula>, add: bool) {
+        if add {
+            at.entry(h.clone()).or_default().insert(g);
+            return;
+        }
+        let Some(rows) = at.get_mut(h) else {
+            return;
+        };
+        rows.remove(g);
+        if rows.is_empty() {
+            at.remove(h);
+        }
+    }
+}
+
 /// The stars of a conjunction ([`Conjuncts::star`]) and the indexes that keep them current.
 #[derive(Clone, Debug, Default)]
 struct StarIndex {
@@ -382,6 +485,9 @@ struct StarIndex {
     solo: Uses<Arc<Formula>>,
     /// The conjuncts at each name in neither `owned` nor `solo`, as last found.
     free: Uses<Arc<Formula>>,
+    /// The conjuncts of `free` at each name, sorted into rows ([`Rows`]), kept with `free`
+    /// at its one place of change (`Conjuncts::refree`).
+    free_rows: OrdMap<Arc<str>, Rows>,
     /// Of each name, the other names of its `free` conjuncts of two names, each with how many
     /// mention it: of a satellite ([`Conjuncts::star`]), the names it relates to.
     ties: OrdMap<Arc<str>, OrdMap<Arc<str>, usize>>,
@@ -870,6 +976,12 @@ impl Conjuncts {
     /// The free conjuncts at `n` ([`Conjuncts::core`]) as their persistent set ([`Uses::set`]).
     pub fn free_set(&self, n: &str) -> Option<&OrdSet<Arc<Formula>>> {
         self.index.free.set(n)
+    }
+
+    /// The free conjuncts at `n` ([`Conjuncts::free_set`]) sorted into rows ([`Rows`]), in
+    /// O(log n); `None` when there are none.
+    pub fn free_rows(&self, n: &str) -> Option<&Rows> {
+        self.index.free_rows.get(n)
     }
 
     /// The leaves of the stars of class `c`.
@@ -1483,6 +1595,7 @@ impl Conjuncts {
                 } else {
                     self.index.free.remove_with(h, &g, &mut self.last);
                 }
+                Rows::change(&mut self.index.free_rows, h, &g, want);
                 self.tie(h, &ns, want, &mut log);
                 for y in ns.iter().filter(|y| *y != h) {
                     let Some(near) = self.index.near.get_mut(h) else {

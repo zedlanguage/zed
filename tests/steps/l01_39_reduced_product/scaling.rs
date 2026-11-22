@@ -600,6 +600,25 @@ fn distinct_disjunctions_among_the_hubs_of_a_star(k: usize) -> (Scope, Vec<Term>
     (ints(&names), tests)
 }
 
+/// The tests of [`distinct_disjunctions_among_the_hubs_of_a_star`] at size `k` with `x` and
+/// `y` within `0..=4*k`, then `x >= i` for `i` = 1 to `k` (row PERF-star-block-hub-move).
+fn hub_bounds_after_entailed_constraints_in_a_nonnegative_box(k: usize) -> (Scope, Vec<Term>) {
+    let p = Premises::new();
+    let names: Vec<Arc<str>> = ["a", "x", "y"].into_iter().map(Arc::from).collect();
+    let top = 4 * k as i64;
+    let start = ["x", "y"].iter().fold(ints(&names), |s, h| {
+        let within = prim(
+            Prim::And,
+            prim(Prim::Ge, var(h), int(0)),
+            prim(Prim::Le, var(h), int(top)),
+        );
+        s.assume(&within, true, &p)
+    });
+    let (_, mut tests) = distinct_disjunctions_among_the_hubs_of_a_star(k);
+    tests.extend((1..=k as i64).map(|i| prim(Prim::Ge, var("x"), int(i))));
+    (start, tests)
+}
+
 /// The scope of `a` and `b` within `0..=100000`, with `a + b <= 150000` and the disjunction
 /// `a < 3 || b > 7`, and the `k` tests of [`changes_of_one_block_hold_bounded_memory`]: each
 /// tightens `a - b <= c`, and every fourth is followed by an `if a + 2 * b == c` whose arms
@@ -1394,6 +1413,55 @@ fn a_lazy_scope_settles_the_hubs_of_a_star_under_disjunctions_as_the_eager_one()
     // Each disjunction implies the ones before it, which the relation drops: the star and
     // the last disjunction stay.
     assert_eq!(eager.relation.set().len(), 2, "{}", eager.relation);
+}
+
+/// Rows `x + j*y >= 1` of one key and many `j` (row PERF-star-block-hub-move): a block's
+/// projection reads only the rows of least and greatest `j` (`Scope::project_block`), and the
+/// bounds of `x` and `y` must be those of every point, counted one by one, and those of a lazy
+/// scope.
+#[test]
+fn hub_bounds_match_the_full_core_after_rows_among_the_hubs() {
+    let p = Premises::new();
+    let names: Vec<Arc<str>> = ["x", "y"].into_iter().map(Arc::from).collect();
+    for k in 1..=4i64 {
+        let top = 6 * k;
+        let start = ["x", "y"].iter().fold(ints(&names), |s, h| {
+            let within = prim(
+                Prim::And,
+                prim(Prim::Ge, var(h), int(-top)),
+                prim(Prim::Le, var(h), int(top)),
+            );
+            s.assume(&within, true, &p)
+        });
+        // The middle rows come last, after both ends.
+        let mut js: Vec<i64> = vec![k, -k];
+        js.extend((1..k).flat_map(|j| [j, -j]));
+        let tests: Vec<Term> = js
+            .iter()
+            .map(|&j| {
+                let jy = prim(Prim::Mul, int(j), var("y"));
+                prim(Prim::Ge, prim(Prim::Add, var("x"), jy), int(1))
+            })
+            .collect();
+        let eager = tests
+            .iter()
+            .fold(start.clone(), |s, t| s.assume(t, true, &p));
+        let lazy = tests
+            .iter()
+            .fold(start.lazy(), |s, t| s.assume(t, true, &p));
+        let points: Vec<(i64, i64)> = (-top..=top)
+            .flat_map(|x| (-top..=top).map(move |y| (x, y)))
+            .filter(|(x, y)| js.iter().all(|j| x + j * y >= 1))
+            .collect();
+        for (i, n) in names.iter().enumerate() {
+            let at = |q: &(i64, i64)| if i == 0 { q.0 } else { q.1 };
+            let lo = points.iter().map(at).min().expect("a point");
+            let hi = points.iter().map(at).max().expect("a point");
+            let want = format!("[{lo}..={hi}]");
+            assert_eq!(eager.get(n).ints().to_string(), want, "k = {k}, {n}");
+            assert_eq!(eager.get(n), lazy.settled(n), "k = {k}, {n}");
+        }
+    }
 }
 
 #[test]
