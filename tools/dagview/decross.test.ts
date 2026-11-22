@@ -49,9 +49,10 @@ function wide(L: number, w: number, reads?: Work) {
 // unoptimized run. The test compares the steps: a ratio of times measured
 // contention under parallel load (merge batch 131, 2026-11-11: the control's
 // ratio fell to 18.3, under its bound, with nothing changed). The time is
-// only logged.
-function measured(make: (work: Work) => () => void): { steps: number; ms: number } {
-  make({ steps: 0 })();
+// only logged. With warm false the first run is the measured one, for a run
+// whose time does not matter.
+function measured(make: (work: Work) => () => void, warm = true): { steps: number; ms: number } {
+  if (warm) make({ steps: 0 })();
   const work = { steps: 0 };
   const run = make(work);
   work.steps = 0;
@@ -60,7 +61,7 @@ function measured(make: (work: Work) => () => void): { steps: number; ms: number
   return { steps: work.steps, ms: performance.now() - t0 };
 }
 
-test("crossing reduction from a seeded order scales as n log n in the layer width: 12 layers of 150 and of 1200 nodes; d3-dag's two-layer greedy sweep from the same order (the negative control) grows as the width squared", () => {
+test("crossing reduction from a seeded order scales as n log n in the layer width: 12 layers of 150 and of 1200 nodes; d3-dag's two-layer greedy sweep from the same kind of order (the negative control, at 75 and 600) grows as the width squared", () => {
   const L = 12, w = 150;
   const seeded = (k: number) => (work: Work) => { const g = wide(L, k); return () => decrossSeeded(g.index, g.x, g.y, undefined, work)(g.layers); };
   const ours = [w, 8 * w].map((k) => measured(seeded(k)));
@@ -78,7 +79,12 @@ test("crossing reduction from a seeded order scales as n log n in the layer widt
     for (const row of h.layers) row.sort((p: any, q: any) => h.x[p.data.node] - h.x[q.data.node]);
     return () => decrossTwoLayer().order(twolayerGreedy()).inits([]).passes(1)(h.layers as any);
   };
-  const control = [w, 8 * w].map((k) => measured(greedy(k)));
+  // The control runs at half the widths (75 and 600) and once, with no warm-up
+  // run: only its steps are compared, and their ratio over 8 times the width
+  // still shows the growth as the width squared (about 64). At 1200 with the
+  // warm-up its two runs took 25 of the test's 26 s at load 50 (2026-11-22),
+  // over the time cap of 20 s.
+  const control = [w / 2, 4 * w].map((k) => measured(greedy(k), false));
   // 8 times the nodes at n log n is 8 log(8n) / log n times the steps, 10.2
   // here; the limit is the standing 10.5. Before DAGVIEW-seeded-scale every
   // pass rebuilt all the gains and the passes grew from 4 to 5, so the ratio

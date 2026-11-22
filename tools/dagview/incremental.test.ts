@@ -94,13 +94,13 @@ function changed(base: Layout): [string, Graph][] {
 }
 
 describe("layout from an earlier layout", () => {
-  test("the plan changed by one edge, and by a batch, is laid out from its earlier layers with every edge pointing down, and the result is logged against a layout from scratch", { timeout: 60_000 }, async () => {
-    const base = await layoutInWorker(plan);
-    assert.ok(base.layers && Object.keys(base.layers).length === plan.nodes.length);
-    const runs = changed(base).flatMap(([what, g]) => [
-      (async () => { const t0 = Date.now(); const l = await layoutInWorker(g, base); return { what, g, from: "the earlier layers", l, ms: Date.now() - t0 }; })(),
-      (async () => { const t0 = Date.now(); const l = await layoutInWorker(g); return { what, g, from: "scratch", l, ms: Date.now() - t0 }; })(),
-    ]);
+  // The base layout, shared by the tests below; as one test, the relayouts and the
+  // layouts from scratch took 23 s at load 64, over the time cap of 20 s,
+  // once a layout from scratch ended with its settling relayout
+  // (DAGVIEW-first-relayout-x).
+  let baseLayout: Promise<Layout> | undefined;
+  const baseOf = () => (baseLayout ??= layoutInWorker(plan));
+  const check = async (runs: Promise<{ what: string; g: Graph; from: string; l: Layout; ms: number }>[]) => {
     const load = readFileSync("/proc/loadavg", "utf8").split(" ")[0];
     for (const { what, g, from, l, ms } of await Promise.all(runs)) {
       for (const n of g.nodes) assert.ok(l.boxes[n.id], `${n.id} has no place`);
@@ -109,6 +109,19 @@ describe("layout from an earlier layout", () => {
       const s = drawnStats(l);
       console.log(`${what}, from ${from}: ${s.rows} rows, at most ${s.widest} boxes in a row, ${s.crossings} crossings, ${Math.round(l.w)} x ${Math.round(l.h)} px, ${ms} ms at load ${load}`);
     }
+  };
+  test("the plan laid out from scratch in a worker, the base of the tests below, gives every node a layer", { timeout: 60_000 }, async () => {
+    const base = await baseOf();
+    assert.ok(base.layers && Object.keys(base.layers).length === plan.nodes.length);
+  });
+  test("the plan changed by one edge, and by a batch, is laid out from its earlier layers with every edge pointing down", { timeout: 60_000 }, async () => {
+    const base = await baseOf();
+    await check(changed(base).map(([what, g]) =>
+      (async () => { const t0 = Date.now(); const l = await layoutInWorker(g, base); return { what, g, from: "the earlier layers", l, ms: Date.now() - t0 }; })()));
+  });
+  test("the same changed graphs laid out from scratch, for the log to compare against, with every edge pointing down", { timeout: 60_000 }, async () => {
+    await check(changed(await baseOf()).map(([what, g]) =>
+      (async () => { const t0 = Date.now(); const l = await layoutInWorker(g); return { what, g, from: "scratch", l, ms: Date.now() - t0 }; })()));
   });
 });
 

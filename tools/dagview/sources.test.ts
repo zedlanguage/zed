@@ -76,8 +76,11 @@ function finalProperty(name: string, g: Graph, l: Omit<Layout, "key">): void {
   assert.deepEqual(inRows, [], `${name}: sources not directly above their highest child in the drawn rows`);
 }
 
-test("in the final layout of the plan, of the live plan of 2026-11-11, of a plan-shaped graph and of sources whose child sits deep, every source sits directly above its highest child unless that row is full, in Layout.layers and in the drawn rows", () => {
-  for (const [name, g] of [["the plan", plan], ["the live plan", live], ["a plan-shaped graph of 1000 nodes", planLike(1000, 2700)], ["12 sources over deep children", deepSources(12, 6)]] as const) {
+// One test per graph: the four in one test took 23 s at load 64, over the
+// time cap of 20 s, once a layout from scratch ended with its settling
+// relayout (DAGVIEW-first-relayout-x).
+for (const [name, g] of [["the plan", plan], ["the live plan", live], ["a plan-shaped graph of 1000 nodes", planLike(1000, 2700)], ["12 sources over deep children", deepSources(12, 6)]] as const) {
+  test(`in the final layout of ${name}, every source sits directly above its highest child unless that row is full, in Layout.layers and in the drawn rows`, () => {
     const t0 = Date.now();
     const l = d3dagLayout(g);
     finalProperty(name, g, l);
@@ -85,8 +88,8 @@ test("in the final layout of the plan, of the live plan of 2026-11-11, of a plan
     const per = new Map<number, number>();
     for (const n of g.nodes) per.set(r(n.id), (per.get(r(n.id)) ?? 0) + 1);
     console.log(`${name}: ${per.size} rows, widest ${Math.max(...per.values())}, ${Date.now() - t0} ms`);
-  }
-});
+  });
+}
 
 test("the property check fires: a source two layers above its child is reported, in the layers and in the drawn rows, and one layer above is not; two above is allowed when the row above the child is full", () => {
   // Chain a -> b -> c and source s with child c, laid out by hand.

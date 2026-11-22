@@ -53,42 +53,60 @@ export function inBand(l: Drawn, what: string) {
   assert.ok(r >= BAND[0] && r <= BAND[1], `${what}: w/h ${r.toFixed(3)} (${Math.round(l.w)} x ${Math.round(l.h)}) outside [${BAND[0]}, ${BAND[1]}]`);
 }
 
-// Runs the generations, checking each final layout: w/h within BAND every
-// generation, and after the last the row count at most 1.25 times the larger
-// of the longest path and the rows of a layout of the same graph from
-// scratch (the count the shape needs).
-export function relayouts(g: Graph, gens: number, what: string): string {
-  let seed = 7;
+// The generations of g, laid out in order on demand, so that a test can check
+// them in pieces under the time cap of 20 s (as one test the 20 generations
+// of the live plan took 44 s at load 50). through(n) lays out the generations
+// up to n, each from the earlier layout, checking w/h within BAND every
+// generation; finish() lays out the last graph from scratch, checks it, and
+// checks that the row count is at most 1.25 times the larger of the longest
+// path and the rows of that layout (the count the shape needs). A piece run
+// alone lays out the generations before it first. The chain must not be cut
+// short: on fa79422ba^, the commit before DAGVIEW-aspect, the plan of
+// 2026-11-10 passes 6 generations and fails at 10 (its graph of generation 10
+// drawn from scratch has w/h 0.727), and the live plan of 2026-11-11 passes
+// 10 and fails at 20 (w/h 0.888); measured 2026-11-22.
+export function chain(g: Graph, what: string) {
+  let seed = 7, gen = 0, l: Drawn | undefined, first = "";
   const rand = (k: number) => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed % k; };
-  let l = d3dagLayout(g);
-  inBand(l, `${what}, from scratch`);
-  const first = `${rowsOf(l)} rows, w/h ${(l.w / l.h).toFixed(3)}`;
-  for (let gen = 1; gen <= gens; gen++) {
-    const L = l.layers!;
-    const gone = new Set<string>();
-    for (let k = 0; k < 3; k++) gone.add(g.nodes[rand(g.nodes.length)].id);
-    const edges = [...g.edges];
-    for (let k = 0; k < 3; k++) edges.splice(rand(edges.length), 1);
-    const nodes = g.nodes.filter((n) => !gone.has(n.id));
-    const kept = edges.filter(([a, b]) => !gone.has(a) && !gone.has(b));
-    for (let k = 0; k < 3; k++) {
-      const id = `G${gen}_${k}`, p = nodes[rand(nodes.length)].id, c = nodes[rand(nodes.length)].id;
-      nodes.push({ id, w: 210, h: 52 });
-      if (L[p] < L[c]) kept.push([p, id], [id, c]); else kept.push([c, id], [id, p]);
+  const through = (gens: number) => {
+    if (!l) {
+      l = d3dagLayout(g);
+      inBand(l, `${what}, from scratch`);
+      first = `${rowsOf(l)} rows, w/h ${(l.w / l.h).toFixed(3)}`;
     }
-    for (let k = 0; k < 3; k++) {
-      const a = nodes[rand(nodes.length)].id, b = nodes[rand(nodes.length)].id;
-      if (L[a] !== undefined && L[b] !== undefined && L[a] !== L[b]) kept.push(L[a] < L[b] ? [a, b] : [b, a]);
+    while (gen < gens) {
+      gen++;
+      const L = l.layers!;
+      const gone = new Set<string>();
+      for (let k = 0; k < 3; k++) gone.add(g.nodes[rand(g.nodes.length)].id);
+      const edges = [...g.edges];
+      for (let k = 0; k < 3; k++) edges.splice(rand(edges.length), 1);
+      const nodes = g.nodes.filter((n) => !gone.has(n.id));
+      const kept = edges.filter(([a, b]) => !gone.has(a) && !gone.has(b));
+      for (let k = 0; k < 3; k++) {
+        const id = `G${gen}_${k}`, p = nodes[rand(nodes.length)].id, c = nodes[rand(nodes.length)].id;
+        nodes.push({ id, w: 210, h: 52 });
+        if (L[p] < L[c]) kept.push([p, id], [id, c]); else kept.push([c, id], [id, p]);
+      }
+      for (let k = 0; k < 3; k++) {
+        const a = nodes[rand(nodes.length)].id, b = nodes[rand(nodes.length)].id;
+        if (L[a] !== undefined && L[b] !== undefined && L[a] !== L[b]) kept.push(L[a] < L[b] ? [a, b] : [b, a]);
+      }
+      g = { nodes, edges: kept };
+      const at = Object.fromEntries(Object.entries(l.boxes).map(([id, b]) => [id, { x: b.x, y: b.y }]));
+      l = d3dagLayout(g, operators, l.layers, at, l.edges, l.rowLimit);
+      inBand(l, `${what}, generation ${gen}`);
     }
-    g = { nodes, edges: kept };
-    const at = Object.fromEntries(Object.entries(l.boxes).map(([id, b]) => [id, { x: b.x, y: b.y }]));
-    l = d3dagLayout(g, operators, l.layers, at, l.edges, l.rowLimit);
-    inBand(l, `${what}, generation ${gen}`);
-  }
-  const fresh = d3dagLayout(g);
-  inBand(fresh, `${what}, generation ${gens} from scratch`);
-  const lp = pathNodes(g), R = rowsOf(l), need = Math.max(lp, rowsOf(fresh));
-  assert.ok(R <= 1.25 * need, `${what}: ${R} rows after ${gens} relayouts, over 1.25 x ${need} (longest path ${lp}, ${rowsOf(fresh)} rows from scratch)`);
-  const s = spans(g, l);
-  return `${what}: ${first} from scratch; after ${gens} relayouts ${R} rows (longest path ${lp}, ${rowsOf(fresh)} from scratch), w/h ${(l.w / l.h).toFixed(3)}, K ${l.rowLimit}, edge spans median ${s.median}, 90th percentile ${s.p90}, max ${s.max}`;
+    return l;
+  };
+  const finish = (gens: number): string => {
+    const l = through(gens);
+    const fresh = d3dagLayout(g);
+    inBand(fresh, `${what}, generation ${gens} from scratch`);
+    const lp = pathNodes(g), R = rowsOf(l), need = Math.max(lp, rowsOf(fresh));
+    assert.ok(R <= 1.25 * need, `${what}: ${R} rows after ${gens} relayouts, over 1.25 x ${need} (longest path ${lp}, ${rowsOf(fresh)} rows from scratch)`);
+    const s = spans(g, l);
+    return `${what}: ${first} from scratch; after ${gens} relayouts ${R} rows (longest path ${lp}, ${rowsOf(fresh)} from scratch), w/h ${(l.w / l.h).toFixed(3)}, K ${l.rowLimit}, edge spans median ${s.median}, 90th percentile ${s.p90}, max ${s.max}`;
+  };
+  return { through, finish };
 }
