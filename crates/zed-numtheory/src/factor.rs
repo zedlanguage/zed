@@ -943,18 +943,32 @@ mod tests {
     /// with a prime that does not divide `n` in place of its least prime is false, and the
     /// comparison the test makes catches it on some input. (The proof at `rho` holds for every
     /// divisor of `n`, so a bound by the largest prime of `n` would be true and is no control.)
+    ///
+    /// `n` is a product of two primes at or just above `2^20` to `2^21` and `q` a prime from 3 to
+    /// just above `2^10`, each the least prime at or above a random draw: the run
+    /// on `n` takes about `sqrt(2^20) = 2^10` steps and the run on `q` about `2^5`, so most
+    /// draws catch the false claim. With `n` a product of two random odd numbers and `q` a
+    /// random 20-bit prime, as before, `n` nearly always has a prime factor below `q`, and the
+    /// run on `n` stops first: the seed 17228275523130318634 (merge check of b22-tests4,
+    /// 2026-11-22) caught nothing in 2000 draws.
     #[test]
     fn a_bound_by_a_prime_not_dividing_n_is_caught() {
-        let (mut rng, _) = crate::seed::Rng::fresh("a_bound_by_a_prime_not_dividing_n_is_caught");
-        let caught = (0..2000).any(|_| {
-            let n = ((rng.next_u64() >> 42) | 1) * ((rng.next_u64() >> 42) | 1);
-            let q = (rng.next_u64() >> 44) | 1;
-            if n < 9 || is_prime(n) || !is_prime(q) || q < 3 || n.is_multiple_of(q) {
-                return false;
+        let (mut rng, seed) =
+            crate::seed::Rng::fresh("a_bound_by_a_prime_not_dividing_n_is_caught");
+        // The least prime at or above `m`.
+        let prime_from = |mut m: u64| {
+            while !is_prime(m) {
+                m += 1;
             }
+            m
+        };
+        let caught = (0..2000).any(|_| {
+            let n = prime_from((1 << 20) | (rng.next_u64() >> 44))
+                * prime_from((1 << 20) | (rng.next_u64() >> 44));
+            let q = prime_from(3 + rng.below(1021) as u64);
             rho(&Montgomery::new(n)).batches.steps > rho(&Montgomery::new(q)).batches.steps
         });
-        assert!(caught);
+        assert!(caught, "seed {seed}");
     }
 
     /// NUM-expect-audit: `split` returns for every composite below `2^16`, and the factors are
