@@ -49,7 +49,7 @@ impl Builder<'_, '_> {
             }
         }
         let rule = self.tree.name(d);
-        if !STATEMENTS.contains(&rule) {
+        if !STATEMENTS.contains(&rule) || self.facet_declaration(d) {
             return None;
         }
         let span = self.span(d);
@@ -170,5 +170,30 @@ impl Builder<'_, '_> {
             }
             None => ("main(m: MainArgs)".into(), "m".into()),
         }
+    }
+
+    /// Whether the node `d` is an expression statement `x with f(…);`: a facet attached to a
+    /// collection, which is declaration metadata, not a statement (DESIGN.md sec:ports, "Stored
+    /// collections": "It is declaration metadata — attached with `with`"), as in
+    /// `orders with store(postgres(…));`. It is left to the facet's later layer (L7).
+    // `ExprStmt = Expr ';'` holds its expression as its one kid, an `Expr` node around it;
+    // `x with f(…)` is a `Reduce` whose last kid is the `ReduceTail` `'with' FacetCall`, of
+    // layer 7 (syntax.peg), the one `ReduceTail` of that layer that begins with `with`. O(depth
+    // of the single-kid `Expr` wrappers), one in the trees seen.
+    fn facet_declaration(&self, d: usize) -> bool {
+        if self.tree.name(d) != "ExprStmt" {
+            return false;
+        }
+        let mut e = self.kids(d)[0];
+        while self.tree.name(e) == "Expr" && self.kids(e).len() == 1 {
+            e = self.kids(e)[0];
+        }
+        if self.tree.name(e) != "Reduce" {
+            return false;
+        }
+        let t = *self.kids(e).last().expect("a Reduce has kids");
+        self.tree.name(t) == "ReduceTail"
+            && self.tree.layer(t) == 7
+            && self.word(self.tree.nodes[t].start) == "with"
     }
 }

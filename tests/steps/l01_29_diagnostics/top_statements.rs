@@ -144,8 +144,7 @@ fn a_loop_statement_moved_into_a_loop_in_main_is_accepted() {
              m.stdout <- \"hi\";\n}}\n"
         );
         let tokens = zedc::lex::lex_fence(&src).expect("the text lexes");
-        let tree =
-            zedc::parse::parse(&src, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
+        let tree = zedc::parse::parse(&src, &tokens, "Unit", zedc::parse::TOP).expect("it parses");
         assert!(
             zedc::ast::unit_all_errors(&src, &tokens, &tree).is_ok(),
             "{src}"
@@ -186,6 +185,22 @@ fn an_expression_statement_at_the_top_level_is_rejected() {
             ]
         )
     );
+}
+
+/// `x with f(…);` at the top level attaches a facet to a collection, which is declaration
+/// metadata (DESIGN.md, "Stored collections": "attached with `with`"), so it is not a
+/// statement: its one error is the facet's later layer, as for EXAMPLES.md's
+/// `orders with store(…);`. A struct update `p with { … };` is still a statement.
+#[test]
+fn a_facet_attached_at_the_top_level_is_a_declaration_and_a_struct_update_is_not() {
+    let src = unit("orders with store(kv(\"localhost\"));");
+    let errs = errors(&src);
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert_ne!(errs[0].0, Some(Row::TopLevelStatement), "{errs:?}");
+    assert!(zed_tests::is_not_yet(&errs[0].1), "{errs:?}");
+    let errs = errors(&unit("p = 1;\np with { x = 1 };"));
+    assert_eq!(errs.len(), 1, "{errs:?}");
+    assert_eq!(errs[0].0, Some(Row::TopLevelStatement), "{errs:?}");
 }
 
 #[test]
