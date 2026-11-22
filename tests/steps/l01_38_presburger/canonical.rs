@@ -357,3 +357,51 @@ fn corner_cases() {
     let c = colors(&[row(&[("a", 1)], 0, true), row(&[("b", 1)], 0, false)]);
     assert_eq!(distinct(&c), 2);
 }
+
+/// `systems` random systems of 3 to 8 variables and 2 to 12 rows ([`random`]), each under
+/// `shuffles` random namings with its rows in a random order: a variable's color follows it,
+/// and the colors along the order the solver takes the variables stay the same (plan row
+/// TESTS-random-batteries-to-size, CANON-stable; the verifier ran 2400 and 1800 shuffles).
+/// `colors_do_not_depend_on_the_names_or_the_order_of_the_rows` only reverses the rows.
+pub(super) fn colors_follow_random_namings_and_row_orders(
+    name: &str,
+    systems: usize,
+    shuffles: usize,
+) {
+    let (mut rng, seed) = Rng::fresh(name);
+    let mut ties = 0;
+    for case in 0..systems {
+        let n = 3 + rng.below(6);
+        let rows = 2 + rng.below(11);
+        let sys = random(&mut rng, n, rows, "x");
+        let base = names(n, "x");
+        let first = colors(&sys);
+        let first_order: Vec<u64> = order(&sys).iter().map(|a| first[a]).collect();
+        ties += usize::from(distinct(&first) < first.len());
+        for _ in 0..shuffles {
+            let mut p: Vec<usize> = (0..n).collect();
+            rng.shuffle(&mut p);
+            let (mut other, rename) = renamed(&sys, &base, &p);
+            rng.shuffle(&mut other);
+            let at = || format!("seed {seed}, case {case}: {sys:?} renamed by {p:?} as {other:?}");
+            let got = colors(&other);
+            let got_order: Vec<u64> = order(&other).iter().map(|a| got[a]).collect();
+            assert_eq!(got_order, first_order, "the order, {}", at());
+            for (a, k) in &first {
+                assert_eq!(got[&rename(a)], *k, "{}", at());
+            }
+        }
+    }
+    eprintln!("{name}: {systems} systems, {ties} with a tie, {shuffles} shuffles each");
+    assert!(ties > 0, "no system with a tie");
+}
+
+/// `bench::canonical` takes 4200 shuffles.
+#[test]
+fn colors_follow_random_namings_and_row_orders_of_random_systems() {
+    colors_follow_random_namings_and_row_orders(
+        "colors_follow_random_namings_and_row_orders_of_random_systems",
+        40,
+        5,
+    );
+}

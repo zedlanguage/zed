@@ -31108,6 +31108,114 @@ pub(super) mod tests {
         assert!(difference_hulls(&[&three[0]], &m).is_none());
     }
 
+    /// The ends [`difference_ends`] finds by its shortest-path pass (C2-chain, 8780d212) are
+    /// the least and greatest values each name takes over the integer points of the rows,
+    /// found by listing every point of a box, with no solver (TESTS-C2-chain-old-products, test
+    /// audit 2026-11-08 row 17: C2-chain compared its products with the method it replaced on
+    /// 3,000 random premise sets, then deleted that method). 300 random systems here, 3,000 in
+    /// `bench::difference_ends_of_3000_systems_are_those_found_by_listing_the_points`; each of
+    /// 1 to 8 difference rows and bounds, constants -4 to 4, a fifth of them equations, over
+    /// `a`, `b`, `c`, each boxed in `-h..=h` for an `h` from 1 to 3 by two more bounds, and `d`,
+    /// not boxed. `solve` finds a point exactly when the listing does.
+    ///
+    /// Why listing `d` over `-8..=8` shows its ends: a finite end of `d` is the length of a
+    /// shortest path from or to the node for 0 (see [`difference_hulls`]), whose first edge
+    /// out of or into `d` is a bound of `d` (`|k| <= 4`) or a row `d - y + k` with `y` boxed
+    /// (`|y| <= 3`); so a finite end lies in `-7..=7`. The values of `d` over the points are
+    /// every integer between its ends (the proof at [`difference_hulls`]), so the listing meets
+    /// one of them where there is a point, reaches 8 exactly when `d` has no greatest value,
+    /// and -8 exactly when it has no least.
+    #[test]
+    fn difference_ends_are_those_found_by_listing_the_points() {
+        difference_ends_listed("difference_ends_are_those_found_by_listing_the_points", 300);
+    }
+
+    /// [`difference_ends_are_those_found_by_listing_the_points`] on `cases` systems drawn from
+    /// a seed of its own for `name`.
+    fn difference_ends_listed(name: &str, cases: usize) {
+        const NAMES: [&str; 4] = ["a", "b", "c", "d"];
+        const FREE: i128 = 8;
+        let (mut rng, _) = Rng::fresh(name);
+        let (mut with_point, mut without) = (0, 0);
+        for case in 0..cases {
+            let h = [0; 3].map(|_| rng.int_i128(1, 3));
+            // Each row as its terms (name, coefficient), its constant and whether it is `== 0`.
+            type Row = (Vec<(usize, i128)>, i128, bool);
+            let mut rows: Vec<Row> = Vec::new();
+            for (i, &h) in h.iter().enumerate() {
+                rows.push((vec![(i, 1)], h, false));
+                rows.push((vec![(i, -1)], h, false));
+            }
+            for _ in 0..1 + rng.below(8) {
+                let x = rng.below(4);
+                let k = rng.int_i128(-4, 4);
+                let terms = match rng.below(4) {
+                    0 => vec![(x, 1)],
+                    1 => vec![(x, -1)],
+                    _ => match rng.below(4) {
+                        y if y == x => vec![(x, 1)],
+                        y => vec![(x, 1), (y, -1)],
+                    },
+                };
+                rows.push((terms, k, rng.below(5) == 0));
+            }
+            let cons: Vec<Con> = (rows.iter())
+                .map(|(terms, k, eq)| {
+                    let named: Vec<(&str, i128)> =
+                        terms.iter().map(|&(i, c)| (NAMES[i], c)).collect();
+                    Con {
+                        lin: lin(&named, *k),
+                        rel: if *eq { Rel::Eq } else { Rel::Ge },
+                    }
+                })
+                .collect();
+            // The least and greatest value of each name over the points of the box.
+            let mut seen: [Option<(i128, i128)>; 4] = [None; 4];
+            for a in -h[0]..=h[0] {
+                for b in -h[1]..=h[1] {
+                    for c in -h[2]..=h[2] {
+                        for d in -FREE..=FREE {
+                            let v = [a, b, c, d];
+                            let holds = rows.iter().all(|(terms, k, eq)| {
+                                let s = k + terms.iter().map(|&(i, c)| c * v[i]).sum::<i128>();
+                                if *eq { s == 0 } else { s >= 0 }
+                            });
+                            if holds {
+                                for (s, &x) in seen.iter_mut().zip(&v) {
+                                    *s = Some(s.map_or((x, x), |(lo, hi)| (lo.min(x), hi.max(x))));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let model = solve(&cons, true)
+                .unwrap_or_else(|r| panic!("case {case}: refused {r:?} on {cons:?}"));
+            assert_eq!(model.is_some(), seen[0].is_some(), "case {case}: {cons:?}");
+            let Some(model) = model else {
+                without += 1;
+                continue;
+            };
+            with_point += 1;
+            let refs: Vec<&Con> = cons.iter().collect();
+            let ends = difference_ends(&refs, &model).expect("difference rows");
+            for (i, name) in NAMES.iter().enumerate() {
+                // `d` has no ends when no row mentions it; every other name has its box.
+                let Some(got) = ends.get(&sym(name)) else {
+                    assert_eq!(*name, "d", "case {case}: no ends for {name} in {cons:?}");
+                    continue;
+                };
+                let (lo, hi) = seen[i].expect("a point");
+                let want = (
+                    (lo != -FREE).then(|| Int::from(lo)),
+                    (hi != FREE).then(|| Int::from(hi)),
+                );
+                assert_eq!(got, &want, "case {case}: the ends of {name} in {cons:?}");
+            }
+        }
+        eprintln!("{with_point} systems with a point compared, {without} without one");
+    }
+
     /// The hulls [`substituted_difference_hulls`] gives are those found by asking the solver of
     /// each atom ([`hull_from`]), on random systems of up to 9 rows over the kept names `a`,
     /// `b`, `c` and the others `y`, `z`: difference rows and bounds, rows `x - w ± y + k` of
@@ -32256,6 +32364,7 @@ pub(super) mod tests {
 mod difference_rows {
     use super::*;
     use crate::seed::Rng;
+    mod bench;
 
     fn x(i: usize) -> Lin {
         Lin::atom(Atom::Sym(format!("x{i}").into()))
@@ -32313,9 +32422,15 @@ mod difference_rows {
     /// rows are all alike, stars of alike leaves, chains, and random graphs.
     #[test]
     fn solve_never_refuses_rows_of_two_unit_terms() {
-        let (mut rng, _) = Rng::fresh("solve_never_refuses_rows_of_two_unit_terms");
+        never_refuses("solve_never_refuses_rows_of_two_unit_terms", 1000);
+    }
+
+    /// [`solve_never_refuses_rows_of_two_unit_terms`] on `cases` systems drawn from a seed of
+    /// its own for `name`.
+    fn never_refuses(name: &str, cases: usize) {
+        let (mut rng, _) = Rng::fresh(name);
         let (mut empty, mut point) = (0, 0);
-        for case in 0..1000 {
+        for case in 0..cases {
             let n = 2 + rng.below(24);
             let sum_ok = case % 3 == 2;
             let k = |rng: &mut Rng, alike: bool| {
@@ -33663,6 +33778,11 @@ mod probe_order {
     fn rows(rng: &mut Rng) -> Formula {
         let n = 2 + rng.below(5);
         let b = 2 + rng.int_i128(0, 8);
+        rows_in(rng, n, b)
+    }
+
+    /// [`rows`] on the atoms `v0` to `v(n-1)`, each in `0..=b`.
+    fn rows_in(rng: &mut Rng, n: usize, b: i128) -> Formula {
         let mut fs = Vec::new();
         for i in 0..n {
             fs.push(ge(v(i)));
@@ -33863,6 +33983,89 @@ mod probe_order {
             diffs.join("\n")
         );
     }
+
+    /// Every point with the atoms `v0` to `v(n-1)` each in `0..=b`.
+    fn box_points(n: usize, b: i128) -> Vec<Model> {
+        let mut out = vec![Model::new()];
+        for i in 0..n {
+            out = (out.iter())
+                .flat_map(|m| {
+                    (0..=b).map(move |x| {
+                        let mut m = m.clone();
+                        m.insert(Atom::Sym(format!("v{i}").into()), Int::from(x as i64));
+                        m
+                    })
+                })
+                .collect();
+        }
+        out
+    }
+
+    /// [`probe`] against brute force (plan row TESTS-random-batteries-to-size, LIN-probe):
+    /// `cases` formulas of [`rows_in`] on two to four atoms in `0..=b`, `b` from 2 to 5, so at
+    /// most 1296 points each. The probe answers `None` only when no point of the box satisfies
+    /// the formula, and the parts it leaves hold at exactly the points where the formula holds:
+    /// a disjunct it removes covers no point that the other disjuncts do not. The LIN-probe
+    /// change (keep without a test a disjunct held by a point found) was compared with the old
+    /// probe once, on 14,000+ calls; this checks the answers themselves.
+    fn probe_keeps_the_points_of_the_box(name: &str, cases: usize) {
+        let (mut rng, seed) = Rng::fresh(name);
+        let (mut asked, mut empty, mut kept_empty, mut refused, mut removed) = (0, 0, 0, 0, 0);
+        for case in 0..cases {
+            let n = 2 + rng.below(3);
+            let b = 2 + rng.int_i128(0, 3);
+            let f = rows_in(&mut rng, n, b);
+            let p = Parts::of(nnf(&f, true));
+            if p.ors.len() < 2 {
+                continue;
+            }
+            asked += 1;
+            let before: usize = p.ors.iter().map(Vec::len).sum();
+            let all = box_points(n, b);
+            let points: Vec<&Model> = all.iter().filter(|m| f.holds(m)).collect();
+            if points.is_empty() {
+                empty += 1;
+            }
+            match probe(p, &HashSet::new()) {
+                Err(_) => refused += 1,
+                Ok(None) => assert!(
+                    points.is_empty(),
+                    "seed {seed:#x}, case {case}: the probe found no point of {f:?}, \
+                     which holds at {:?}",
+                    points[0]
+                ),
+                Ok(Some(q)) => {
+                    if points.is_empty() {
+                        kept_empty += 1;
+                    }
+                    for m in &all {
+                        assert_eq!(
+                            f.holds(m),
+                            q.holds(m),
+                            "seed {seed:#x}, case {case}: at {m:?} the formula {f:?} and the \
+                             parts the probe leaves differ"
+                        );
+                    }
+                    let after: usize = q.ors.iter().map(Vec::len).sum();
+                    removed += before.saturating_sub(after);
+                }
+            }
+        }
+        eprintln!(
+            "seed {seed:#x}: {asked} of {cases} formulas with two disjunctions or more, \
+             {empty} with no point ({kept_empty} of them not refuted by the probe), \
+             {refused} refused, {removed} disjuncts removed"
+        );
+        assert!(asked > 0 && empty < asked && removed > 0);
+    }
+
+    /// 300 formulas; 3000 in `bench`.
+    #[test]
+    fn probe_keeps_the_points_of_random_boxed_formulas() {
+        probe_keeps_the_points_of_the_box("probe_keeps_the_points_of_random_boxed_formulas", 300);
+    }
+
+    mod bench;
 }
 
 // Propagation over forced parts (module `forced`, PRES-small-cost) against the whole solver.

@@ -3,6 +3,7 @@
 //! has a small instance among the correctness tests of `deep_search.rs`.
 
 use super::*;
+use zed_kernel::types::Universe;
 use zed_tests::scaling;
 
 /// Which of the three measures a test takes.
@@ -175,4 +176,54 @@ fn a_deep_morphism_type_is_under_one_wider_at_the_bottom() {
 fn a_deep_atom_type_is_compared_by_its_bottom() {
     compares_deep(atoms, lit(1), false);
     compares_deep(atoms, Type::int(), true);
+}
+
+/// The levels of the chain STACK-big-tests (a44c82a2) probed on a 2 MiB stack and did not
+/// commit (TESTS-STACK-big-tests-deep-ops, test audit 2026-11-08 row 15).
+const CHAIN: usize = 50_000;
+
+/// `CHAIN` levels around `bottom`, five operations in turn: a pair `(t, 1)`, a union with `0`,
+/// a meet with the tuples (which takes the `0` away again), a union with `#nil` less `#nil`, and
+/// the morphism `{int: t}`. The meet and the difference give back the type they were given, so
+/// the chain is the type [`shallow`] builds with only the pairs and the morphisms.
+fn chain(bottom: Type) -> Type {
+    let (zero, nil) = (lit(0), Type::atom("nil"));
+    let tuples = Type::universe(Universe::Tuple);
+    (0..CHAIN).fold(bottom, |t, k| match k % 5 {
+        0 => Type::tuple(vec![t, lit(1)]),
+        1 => &t | &zero,
+        2 => &t & &tuples,
+        3 => (&t | &nil) - &nil,
+        _ => Type::exact(Type::int(), t),
+    })
+}
+
+/// The type [`chain`] is, built with only its pairs and morphisms.
+fn shallow(bottom: Type) -> Type {
+    (0..CHAIN / 5).fold(bottom, |t, _| {
+        Type::exact(Type::int(), Type::tuple(vec![t, lit(1)]))
+    })
+}
+
+/// The chain of union, meet, difference, pair and morphism `CHAIN` levels deep is built,
+/// decided and compared on a 2 MiB stack, whatever `RUST_MIN_STACK` says: it is the type its
+/// pairs and morphisms alone build, in both directions, and is not the one with another bottom.
+#[test]
+fn a_chain_of_the_five_operations_50_000_levels_deep_is_the_shallow_composition() {
+    zed_tests::deep::on_small_stack(|| {
+        let start = std::time::Instant::now();
+        let t = chain(lit(0));
+        let (same, other) = (shallow(lit(0)), shallow(lit(1)));
+        assert!(t.subtype(&same), "the chain under its shallow composition");
+        assert!(same.subtype(&t), "the shallow composition under the chain");
+        assert!(
+            !t.subtype(&other),
+            "the chain is not under another bottom's"
+        );
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+        eprintln!(
+            "a chain of {CHAIN} levels built, compared three times and decided in {:.2?}",
+            start.elapsed()
+        );
+    });
 }

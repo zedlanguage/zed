@@ -4,6 +4,57 @@
 
 use super::*;
 
+/// The types of one piece of the 12,000-type battery ([`fuzz`]; plan row
+/// TESTS-T2-types-rest-4-random-vs-recursive). Small instance:
+/// `random_types_agree_with_the_oracle`, 200 types.
+const FUZZ_PIECE: usize = 1500;
+
+fn fuzz_piece(k: usize) {
+    let start = std::time::Instant::now();
+    fuzz(&format!("12,000 types, piece {k}"), FUZZ_PIECE);
+    eprintln!("12,000 types, piece {k}, in {:.2?}", start.elapsed());
+}
+
+#[test]
+fn twelve_thousand_types_agree_with_the_oracle_0() {
+    fuzz_piece(0);
+}
+
+#[test]
+fn twelve_thousand_types_agree_with_the_oracle_1() {
+    fuzz_piece(1);
+}
+
+#[test]
+fn twelve_thousand_types_agree_with_the_oracle_2() {
+    fuzz_piece(2);
+}
+
+#[test]
+fn twelve_thousand_types_agree_with_the_oracle_3() {
+    fuzz_piece(3);
+}
+
+#[test]
+fn twelve_thousand_types_agree_with_the_oracle_4() {
+    fuzz_piece(4);
+}
+
+#[test]
+fn twelve_thousand_types_agree_with_the_oracle_5() {
+    fuzz_piece(5);
+}
+
+#[test]
+fn twelve_thousand_types_agree_with_the_oracle_6() {
+    fuzz_piece(6);
+}
+
+#[test]
+fn twelve_thousand_types_agree_with_the_oracle_7() {
+    fuzz_piece(7);
+}
+
 /// Every system of seeds 1 and 2 the cross-review measured (wt/xv/Q1Q7/REPORT.md, check 4),
 /// with the check the correctness test made on all 8000 before TEST-bench-move-l0123;
 /// `the_two_routes_agree_on_recursive_systems` asks 1500 of them each run.

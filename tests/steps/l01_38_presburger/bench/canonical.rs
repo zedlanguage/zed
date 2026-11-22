@@ -20,3 +20,17 @@ fn refinement_scales() {
         drop(colors(if m == n { &sparse.0 } else { &sparse.1 }));
     });
 }
+
+/// The 2400 and 1800 shuffles of the CANON-stable verifier (plan row
+/// TESTS-random-batteries-to-size), 420 systems of 10 each. Correctness test:
+/// `colors_follow_random_namings_and_row_orders_of_random_systems`, 200 shuffles.
+#[test]
+fn colors_follow_4200_random_namings_and_row_orders() {
+    let start = std::time::Instant::now();
+    colors_follow_random_namings_and_row_orders(
+        "colors_follow_4200_random_namings_and_row_orders",
+        420,
+        10,
+    );
+    eprintln!("4200 shuffles in {:.2?}", start.elapsed());
+}

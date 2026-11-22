@@ -45,6 +45,7 @@ mod out_of_bounds;
 mod partial_maps;
 mod payload_variables;
 mod printed_param_types;
+mod printed_types;
 mod random;
 mod range_elements;
 mod ranges;

@@ -900,3 +900,15 @@ fn the_connectives_on_parts_nested_deep_run_on_the_default_stack() {
     // overflowed in the old recursions.
     the_connectives_on_parts_hold(DIAGRAM_DEPTH, CHOICE_DEPTH);
 }
+
+/// The 3,000 random parts of T2-types-rest-4's probe, in 100 groups of 30, against the
+/// recursive diagrams (TESTS-T2-types-rest-4-random-vs-recursive). Small instance:
+/// `random_parts_agree_with_the_recursive_diagrams`, 300.
+#[test]
+fn three_thousand_random_parts_agree_with_the_recursive_diagrams() {
+    let (mut rng, _) =
+        crate::seed::Rng::fresh("three_thousand_random_parts_agree_with_the_recursive_diagrams");
+    let start = std::time::Instant::now();
+    random_parts_agree(&mut rng, 100, 30);
+    eprintln!("3000 random parts in {:.2?}", start.elapsed());
+}

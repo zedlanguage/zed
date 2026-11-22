@@ -23,3 +23,12 @@ fn the_representatives_of_joined_equalities_do_not_depend_on_their_order_or_orie
     });
     assert!(roots.len() > 1, "the roots never differ: {roots:?}");
 }
+
+/// The 3,000 systems C2-chain compared on (TESTS-C2-chain-old-products, test audit 2026-11-08
+/// row 17). Small instance: `difference_ends_are_those_found_by_listing_the_points`, 300.
+#[test]
+fn difference_ends_of_3000_systems_are_those_found_by_listing_the_points() {
+    let start = std::time::Instant::now();
+    difference_ends_listed("difference ends of 3000 systems, listed", 3000);
+    eprintln!("3000 systems listed in {:.2?}", start.elapsed());
+}

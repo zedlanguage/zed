@@ -511,6 +511,81 @@ fn list_agrees(
     }
 }
 
+/// [`random`] beside the diagram [`Old`] builds from the same draws, by its recursive `apply`
+/// and `not`.
+fn random_beside_old(rng: &mut Rng, depth: u32) -> (Part<Row>, Old) {
+    let pick = rng.next_u64();
+    if depth == 0 || pick.is_multiple_of(5) {
+        let i = (pick % 6) as usize;
+        return (Part::literal(atom(i as u64)), Old::literal(i));
+    }
+    let (a, x) = random_beside_old(rng, depth - 1);
+    let (b, y) = random_beside_old(rng, depth - 1);
+    match pick % 3 {
+        0 => (a.zip(&b, Op::Or), x.apply(&y, Op::Or)),
+        1 => (a.zip(&b, Op::And), x.apply(&y, Op::And)),
+        _ => (a.not(), x.not()),
+    }
+}
+
+/// The parts of [`random_parts_agree_with_the_recursive_diagrams`], made `groups` groups of
+/// `rounds` at a time from the seed of `rng`, each group from the six literals: a part is a
+/// fresh [`random_beside_old`], or `zip`, `not`, [`Part::connect`] or [`Part::not_expr`] of
+/// parts of the group made before it, so that expressions are shared, met again and negated.
+/// Each part has, on every set of the atoms, the value of the diagram the recursive `apply` and
+/// `not` of [`Old`] build from the same draws; its complement has the opposite values; and it
+/// met with its complement is the leaf, as the old `zip` gave it through `same_as_not`.
+pub(super) fn random_parts_agree(rng: &mut Rng, groups: usize, rounds: usize) {
+    let mut kinds = [0usize; 4];
+    for _ in 0..groups {
+        let mut pool: Vec<(Part<Row>, Old)> = (0..6)
+            .map(|i| (Part::literal(atom(i as u64)), Old::literal(i)))
+            .collect();
+        for _ in 0..rounds {
+            let r = rng.next_u64();
+            let (a, x) = pool[rng.below(pool.len())].clone();
+            let (b, y) = pool[rng.below(pool.len())].clone();
+            let op = if r >> 8 & 1 == 0 { Op::Or } else { Op::And };
+            let kind = (r % 4) as usize;
+            kinds[kind] += 1;
+            let (p, d) = match kind {
+                0 => random_beside_old(rng, 5),
+                1 => (a.zip(&b, op), x.apply(&y, op)),
+                2 => (a.not(), x.not()),
+                _ if r >> 9 & 1 == 0 => (Part::connect(op, a, b), x.apply(&y, op)),
+                _ => (Part::not_expr(a), x.not()),
+            };
+            let got = values(&p);
+            let want: Vec<bool> = (0..64u32).map(|set| d.eval(set)).collect();
+            assert_eq!(got, want, "{p:?} beside {d:?}");
+            let n = p.not();
+            let opposite: Vec<bool> = want.iter().map(|v| !v).collect();
+            assert_eq!(values(&n), opposite, "the complement {n:?} of {p:?}");
+            assert_eq!(p.zip(&n, Op::And), Part::leaf(false), "{p:?} & !{p:?}");
+            assert_eq!(p.zip(&n, Op::Or), Part::leaf(true), "{p:?} | !{p:?}");
+            pool.push((p, d));
+        }
+    }
+    eprintln!("fresh, zip, not, kept as expressions: {kinds:?}");
+}
+
+/// T2-types-rest-4 (a34629bf) moved `Part::not` and `Part::zip` (with `choose`, `choice`,
+/// `choice_of`, `same_as_not`) and `Bdd::apply` from recursion to frames on the heap; its
+/// probe, not committed, built 3,000 random parts with both and found byte-identical ids,
+/// digests, Debug texts and paths (TESTS-T2-types-rest-4-random-vs-recursive, test audit
+/// 2026-11-08 row 8). Those cannot be compared now: an id counts parts made on any thread, and
+/// the forms of parts have changed since (lists in place of diagrams, exclusive ors in their
+/// one form, the `_at_once` shortcuts), so the recursive code of `a34629bf^` would build other
+/// forms of the same functions. What the old code fixed and the new must keep is the function:
+/// each seeded random part, here 300 in 10 groups of 30, has the values of the diagram the
+/// recursive `apply` and `not` of [`Old`] build from the same draws. The probe's 3,000 are
+/// `bench::three_thousand_random_parts_agree_with_the_recursive_diagrams`.
+#[test]
+fn random_parts_agree_with_the_recursive_diagrams() {
+    let (mut rng, _) = Rng::fresh("random_parts_agree_with_the_recursive_diagrams");
+    random_parts_agree(&mut rng, 10, 30);
+}
+
 #[test]
 fn list_matches_the_one_form_found_from_its_values() {
     let (mut rng, _) = Rng::fresh("list_matches_the_one_form_found_from_its_values");

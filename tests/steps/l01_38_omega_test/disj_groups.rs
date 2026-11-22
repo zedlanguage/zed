@@ -3,6 +3,9 @@
 //! the disjuncts near it, so `n` disjunctions cost about `n log n`, not `n` solves of the
 //! whole group.
 
+use std::collections::BTreeSet;
+
+use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zed_tests::step_helpers::l01_38_presburger::{project_alone, solver_alone};
 use zedc::store::interval::{End, IntervalSet, Num};
@@ -1922,4 +1925,138 @@ fn two_wide_atoms_are_projected_exactly_at_small_sizes() {
             }
         }
     }
+}
+
+/// The box of [`random_three_atom_formula`]: each atom in `-BOX..=BOX`.
+const BOX: i128 = 4;
+
+/// A random formula over `a`, `b` and `c`, each held in `-BOX..=BOX` by two rows, met with
+/// `and`, `or` and `not` of rows `k·a + l·b + m·c + d >= 0` or `== 0` (coefficients in
+/// -2..=2, `d` in -4..=4), at most `depth` levels deep. The box rows stand outside every
+/// `not`, so the formula's points all lie in the box.
+pub(super) fn random_three_atom_formula(rng: &mut Rng, depth: usize, names: &[Atom]) -> Formula {
+    fn part(rng: &mut Rng, depth: usize, names: &[Atom]) -> Formula {
+        if depth == 0 || rng.below(3) == 0 {
+            let mut l = Lin::constant(rng.int_i128(-4, 4));
+            for a in names {
+                l = l.plus(&Lin::atom(a.clone()).times(rng.int_i128(-2, 2)));
+            }
+            let zero = Lin::constant(0);
+            return Formula::Con(if rng.below(4) == 0 {
+                Con::eq(&l, &zero)
+            } else {
+                Con::ge(&l, &zero)
+            });
+        }
+        let parts = (0..2 + rng.below(2))
+            .map(|_| part(rng, depth - 1, names))
+            .collect();
+        match rng.below(3) {
+            0 => Formula::and(parts),
+            1 => Formula::or(parts),
+            _ => Formula::negate(Formula::or(parts)),
+        }
+    }
+    let mut all: Vec<Formula> = names
+        .iter()
+        .flat_map(|a| {
+            let a = Lin::atom(a.clone());
+            [
+                ge(a.plus(&Lin::constant(BOX))),
+                ge(Lin::constant(BOX).minus(&a)),
+            ]
+        })
+        .collect();
+    all.push(part(rng, depth, names));
+    Formula::and(all)
+}
+
+/// The values each of `names` takes over the points of `f` in the box of
+/// [`random_three_atom_formula`], each point read on `f` itself.
+fn values_in_the_box(f: &Formula, names: &[Atom]) -> Vec<BTreeSet<i128>> {
+    let mut values = vec![BTreeSet::new(); names.len()];
+    let mut model = zedc::store::presburger::Model::new();
+    for p in 0..(2 * BOX + 1).pow(names.len() as u32) {
+        let mut rest = p;
+        let point: Vec<i128> = names
+            .iter()
+            .map(|_| {
+                let v = rest % (2 * BOX + 1) - BOX;
+                rest /= 2 * BOX + 1;
+                v
+            })
+            .collect();
+        for (a, &v) in names.iter().zip(&point) {
+            model.insert(a.clone(), v.into());
+        }
+        if f.holds(&model) {
+            for (s, &v) in values.iter_mut().zip(&point) {
+                s.insert(v);
+            }
+        }
+    }
+    values
+}
+
+/// `cases` random formulas of three atoms ([`random_three_atom_formula`], up to three levels
+/// of `and`, `or` and `not`): the set [`project_each`] gives each atom holds every value the
+/// atom takes at a point of the box, and where no disjunction was left out (no cause), its
+/// least and greatest values are those of the points, and it is empty when there is none
+/// (plan row TESTS-random-batteries-to-size, TD-ends; the verifier compared the hulls of 2882
+/// such formulas with the base commit's). A set refused, or wider for a cause, is counted.
+pub(super) fn random_hulls_are_those_of_the_points(name: &str, cases: usize) {
+    let (mut rng, seed) = Rng::fresh(name);
+    let names: Vec<Atom> = ["a", "b", "c"]
+        .iter()
+        .map(|n| Atom::Sym((*n).into()))
+        .collect();
+    let (mut exact, mut caused, mut refused, mut empty) = (0, 0, 0, 0);
+    for case in 0..cases {
+        let depth = 1 + rng.below(3);
+        let f = random_three_atom_formula(&mut rng, depth, &names);
+        let want = values_in_the_box(&f, &names);
+        let (got, causes) = project_each(&f, &names).expect("a projection");
+        let at = |i: usize| format!("seed {seed}, case {case}, {:?} of {f}", names[i]);
+        empty += usize::from(want[0].is_empty());
+        for (i, (got, want)) in got.iter().zip(&want).enumerate() {
+            let Ok(s) = got else {
+                refused += 1;
+                continue;
+            };
+            for &v in want {
+                assert!(s.contains(v as i64), "{}: {v} left out of {s:?}", at(i));
+            }
+            if !causes.is_empty() {
+                caused += 1;
+                continue;
+            }
+            exact += 1;
+            match (want.first(), want.last()) {
+                (Some(&lo), Some(&hi)) => {
+                    let (lo, hi) = (lo as i64, hi as i64);
+                    assert_eq!(
+                        s.hull(),
+                        IntervalSet::of(lo, hi),
+                        "{}: {s:?}, points from {lo} to {hi}",
+                        at(i)
+                    );
+                }
+                _ => assert!(s.is_empty(), "{}: {s:?}, no point", at(i)),
+            }
+        }
+    }
+    eprintln!(
+        "{name}: {cases} formulas, {empty} with no point; sets: {exact} hulls exact, \
+         {caused} wider for a cause, {refused} refused"
+    );
+    assert!(exact > 0 && empty > 0 && empty < cases, "{exact}, {empty}");
+}
+
+/// `bench::disj_groups` projects 3000 formulas.
+#[test]
+fn hulls_of_random_three_atom_formulas_are_those_of_their_points() {
+    random_hulls_are_those_of_the_points(
+        "hulls_of_random_three_atom_formulas_are_those_of_their_points",
+        200,
+    );
 }

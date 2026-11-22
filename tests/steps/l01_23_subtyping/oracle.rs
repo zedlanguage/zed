@@ -914,4 +914,60 @@ fn unions_of_one_tuples_are_compared_by_their_components() {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// 12,000 types (plan row TESTS-T2-types-rest-4-random-vs-recursive, with TESTS-T5-xv-type-fuzz)
+// ---------------------------------------------------------------------------------------------
+
+/// T5-xv's probe (running log, 2026-11-02 20:04) compared the answers on 12,000 random types
+/// ("efuzz") before and after its change to the reading of refused rows and literal meets,
+/// and found them the same; its generator was never committed and is lost. This battery puts
+/// the oracle in its place: `count` types of `random` and `deep` in turn, from a fresh seed for
+/// `name`, each checked for `is_empty` (and of its tuple part), for its verdict, and for
+/// subtyping in both directions against another type met with it, every answer against the
+/// values of [`reps`]. A verdict may refuse; an `Empty` or `Inhabited` must be right. The
+/// 12,000 run in eight pieces among the benchmarks (`bench::twelve_thousand_types_*`).
+fn fuzz(name: &str, count: usize) {
+    let reps = reps();
+    let (mut r, seed) = Rng::fresh(name);
+    let run = format!("ZED_TEST_SEED={seed}");
+    let mut refused = 0usize;
+    for i in 0..count {
+        let e = if i % 2 == 0 {
+            random(&mut r)
+        } else {
+            deep(&mut r)
+        };
+        check_emptiness(&reps, &e, &run);
+        let t = build(&e);
+        let empty = !reps.iter().any(|v| holds(&e, v));
+        match t.verdict() {
+            Verdict::Empty => assert!(empty, "{t} is inhabited, not empty ({run})"),
+            Verdict::Inhabited => assert!(!empty, "{t} is empty, not inhabited ({run})"),
+            Verdict::Refused(_) => refused += 1,
+        }
+        // Half the time `a` is `e` met with another type, so that `a <: e` holds often.
+        let other = if r.coin() {
+            random(&mut r)
+        } else {
+            deep(&mut r)
+        };
+        let a = match r.below(2) {
+            0 => E::And(Box::new(other), Box::new(e.clone())),
+            _ => other,
+        };
+        let ta = build(&a);
+        let under = reps.iter().all(|v| !holds(&a, v) || holds(&e, v));
+        assert_eq!(ta.subtype(&t), under, "{ta} <: {t} ({run})");
+        let over = reps.iter().all(|v| !holds(&e, v) || holds(&a, v));
+        assert_eq!(t.subtype(&ta), over, "{t} <: {ta} ({run})");
+    }
+    eprintln!("{name}: {count} types, {refused} verdicts refused");
+}
+
+/// The small instance of the 12,000-type battery ([`fuzz`]).
+#[test]
+fn random_types_agree_with_the_oracle() {
+    fuzz("random_types_agree_with_the_oracle", 200);
+}
+
 mod bench;

@@ -845,3 +845,37 @@ fn a_call_that_gives_a_function_is_run_as_written() {
     assert!(report.left.is_empty(), "{:?}", left(&report));
     assert_eq!(mixed.defs[3].term.to_string(), "c -> (2 + c)");
 }
+
+/// The [`mixed_text`] of the units `make` draws from seeds `0..64`, each with a number of
+/// functions drawn as the test of its family draws it, `1..=max`.
+fn mixed_texts(make: impl Fn(&mut Rng, usize) -> Unit, max: usize) -> String {
+    let mut out = String::new();
+    for seed in 0..64u64 {
+        let mut rng = Rng::new(seed);
+        let n = 1 + rng.below(max);
+        out += &format!("seed {seed}:\n{}", mixed_text(&make(&mut rng, n)));
+    }
+    out
+}
+
+// Expected output of the mix on seeded units of the three random families here (plan row
+// TESTS-STACK-big-tests-deep-ops, item STAGE-stub-env). Commit 6937d125 found 11.4 MB of
+// printed mixes byte-identical before and after, by a comparison that was not kept; the old
+// code is gone, so these snapshots are written from the code as it stands and catch a later
+// change to what a mix prints. The seeds are fixed, not drawn by `Rng::fresh`: a snapshot must
+// be the same on every run.
+
+#[test]
+fn mixed_texts_of_random_units() {
+    insta::assert_snapshot!(mixed_texts(random_unit, 12));
+}
+
+#[test]
+fn mixed_texts_of_chains_whose_calls_fail() {
+    insta::assert_snapshot!(mixed_texts(|rng, n| stub_fail_unit(rng, n).0, 16));
+}
+
+#[test]
+fn mixed_texts_of_calls_at_float_zeros_and_at_functions() {
+    insta::assert_snapshot!(mixed_texts(|rng, n| stub_float_unit(rng, n).0, 12));
+}

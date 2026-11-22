@@ -534,3 +534,16 @@ fn two_wide_atoms_are_projected_in_work_that_does_not_grow_with_their_ranges() {
         );
     }
 }
+
+/// The 3000 random three-atom formulas of plan row TESTS-random-batteries-to-size (TD-ends;
+/// the verifier projected 2882). Correctness test:
+/// `hulls_of_random_three_atom_formulas_are_those_of_their_points`, 200 formulas.
+#[test]
+fn hulls_of_3000_random_three_atom_formulas_are_those_of_their_points() {
+    let start = std::time::Instant::now();
+    random_hulls_are_those_of_the_points(
+        "hulls_of_3000_random_three_atom_formulas_are_those_of_their_points",
+        3000,
+    );
+    eprintln!("3000 formulas projected in {:.2?}", start.elapsed());
+}

@@ -6,6 +6,7 @@ use zed_kernel::Shared;
 
 use zed_kernel::term::build::{lam, lit, var};
 use zed_kernel::{FixKind, GuardPos, Pattern, Prim, Term};
+use zed_tests::instances::Rng;
 use zedc::stage::{ends, reading};
 
 fn app(f: Term, args: Vec<Term>) -> Term {
@@ -388,4 +389,205 @@ fn reading_a_term_built_into_freed_blocks() {
     for k in [1, 2, 9] {
         mixed_levels_read(&built_into_freed_blocks(k));
     }
+}
+
+/// One node of a random term ([`random_dag`]). Its parts are nodes made before it, by index,
+/// and a part may be held by many nodes.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Node {
+    /// An integer from 0 to 3.
+    Lit(i64),
+    /// `n` or `x`.
+    Int(&'static str),
+    /// `a + b`.
+    Add(usize, usize),
+    /// `if a >= k { b } else { c }`.
+    If(usize, i64, usize, usize),
+    /// `f(a)` or `g(a)`: a prelude word when free, a function when a `let` binds it, a
+    /// parameter under the lambda of [`under_parameters`].
+    Call(&'static str, usize),
+    /// `f = (x) -> a; b`, or the same with `g`.
+    Let(&'static str, usize, usize),
+    /// A `fix` whose step is its own name: its form does not show that it ends.
+    Fix,
+}
+
+/// The parts of `n`, with a part held twice listed twice.
+fn node_parts(n: Node) -> Vec<usize> {
+    match n {
+        Node::Lit(_) | Node::Int(_) | Node::Fix => vec![],
+        Node::Add(a, b) | Node::Let(_, a, b) => vec![a, b],
+        Node::If(a, _, b, c) => vec![a, b, c],
+        Node::Call(_, a) => vec![a],
+    }
+}
+
+/// The most places a node's term written out as a tree may have, which bounds the work of
+/// [`tree_term`], of comparing a shared term with its tree, and of evaluating it.
+const TREE_CAP: usize = 1000;
+
+/// `count` random nodes, each over nodes made before it: half the time one of the last four,
+/// else any. A node whose tree would pass [`TREE_CAP`] places is made a leaf. With `fix`, one
+/// node in 20 is a `fix`; without it the terms have no form that loops, so the build stage
+/// can evaluate them.
+pub(super) fn random_dag(rng: &mut Rng, count: usize, fix: bool) -> Vec<Node> {
+    let mut dag: Vec<Node> = Vec::with_capacity(count);
+    let mut size: Vec<usize> = Vec::with_capacity(count);
+    let leaf = |rng: &mut Rng| match rng.below(3) {
+        0 => Node::Lit(rng.int(0, 3)),
+        1 => Node::Int("n"),
+        _ => Node::Int("x"),
+    };
+    while dag.len() < count {
+        let k = dag.len();
+        let part = |rng: &mut Rng| {
+            if rng.coin() {
+                k - 1 - rng.below(k.min(4))
+            } else {
+                rng.below(k)
+            }
+        };
+        let name = |rng: &mut Rng| if rng.coin() { "f" } else { "g" };
+        let mut node = if k == 0 {
+            leaf(rng)
+        } else {
+            match rng.below(20) {
+                0 | 1 => leaf(rng),
+                2..=5 => Node::Add(part(rng), part(rng)),
+                6..=9 => Node::If(part(rng), rng.int(0, 3), part(rng), part(rng)),
+                10..=13 => Node::Call(name(rng), part(rng)),
+                19 if fix => Node::Fix,
+                _ => Node::Let(name(rng), part(rng), part(rng)),
+            }
+        };
+        // The `if`'s guard and the `let`'s lambda add places of their own.
+        let places = 3 + node_parts(node).iter().map(|&i| size[i]).sum::<usize>();
+        if places > TREE_CAP {
+            node = leaf(rng);
+        }
+        size.push(3 + node_parts(node).iter().map(|&i| size[i]).sum::<usize>());
+        dag.push(node);
+    }
+    dag
+}
+
+/// A random order of the nodes of `dag` with each node after its parts.
+pub(super) fn random_order(rng: &mut Rng, dag: &[Node]) -> Vec<usize> {
+    let mut waiting: Vec<usize> = dag.iter().map(|&n| node_parts(n).len()).collect();
+    let mut users = vec![Vec::new(); dag.len()];
+    for (i, &n) in dag.iter().enumerate() {
+        for j in node_parts(n) {
+            users[j].push(i);
+        }
+    }
+    let mut ready: Vec<usize> = (0..dag.len()).filter(|&i| waiting[i] == 0).collect();
+    let mut order = Vec::with_capacity(dag.len());
+    while !ready.is_empty() {
+        let i = ready.swap_remove(rng.below(ready.len()));
+        order.push(i);
+        for &u in &users[i] {
+            waiting[u] -= 1;
+            if waiting[u] == 0 {
+                ready.push(u);
+            }
+        }
+    }
+    assert_eq!(order.len(), dag.len(), "every node after its parts");
+    order
+}
+
+/// The term of `node`, its parts given by `part`. An argument of a call or a primitive is a
+/// copy of the part's term, whose own parts stay shared.
+fn node_term(node: Node, part: &mut dyn FnMut(usize) -> Shared) -> Term {
+    match node {
+        Node::Lit(k) => lit(k),
+        Node::Int(x) => var(x),
+        Node::Add(a, b) => prim(Prim::Add, vec![(*part(a)).clone(), (*part(b)).clone()]),
+        Node::If(a, k, b, c) => {
+            let guard = prim(Prim::Ge, vec![(*part(a)).clone(), lit(k)]);
+            Term::If(Shared::new(guard), part(b), part(c))
+        }
+        Node::Call(f, a) => app(var(f), vec![(*part(a)).clone()]),
+        Node::Let(f, a, b) => {
+            let function = Term::Lam(vec!["x".into()], part(a));
+            Term::Let(f.into(), Shared::new(function), part(b))
+        }
+        Node::Fix => Term::Fix {
+            init: Shared::new(var("d")),
+            step: Shared::new(var("this")),
+            this: "this".into(),
+            key: "k".into(),
+            kind: FixKind::Definedness,
+            ev: Default::default(),
+        },
+    }
+}
+
+/// The nodes of `dag` as terms, made in the order `order` gives: each node is one `Shared`
+/// held by every node that has it as a part. The ids of the nodes follow `order`.
+pub(super) fn shared_terms(dag: &[Node], order: &[usize]) -> Vec<Shared> {
+    let mut made: Vec<Option<Shared>> = vec![None; dag.len()];
+    for &i in order {
+        let t = node_term(dag[i], &mut |j| {
+            made[j].clone().expect("a part made before its node")
+        });
+        made[i] = Some(Shared::new(t));
+    }
+    made.into_iter()
+        .map(|s| s.expect("every node made"))
+        .collect()
+}
+
+/// The term of node `i` of `dag` written out as a tree: each place holds a node of its own.
+pub(super) fn tree_term(dag: &[Node], i: usize) -> Shared {
+    Shared::new(node_term(dag[i], &mut |j| tree_term(dag, j)))
+}
+
+/// `t` under a lambda of `n`, `x`, `f` and `g`: a call of `f` or `g` no `let` binds is a call
+/// through a parameter.
+pub(super) fn under_parameters(t: Shared) -> Term {
+    let names = ["n", "x", "f", "g"];
+    Term::Lam(names.iter().map(|&p| p.into()).collect(), t)
+}
+
+/// `cases` random terms of 1 to 40 nodes with parts shared ([`random_dag`]), each read at
+/// its root and at three random nodes, free and [`under_parameters`], against the same term
+/// written out as a tree ([`tree_term`]), where no part is reached from two places: the two
+/// are equal and `ends` gives one answer (plan row TESTS-random-batteries-to-size, ENDS-dag;
+/// the verifier compared the old reader, now removed, with the new on 200,000 to 300,000
+/// terms). The tree is the old reader's view: it read every place.
+pub(super) fn shared_and_tree_terms_read_alike(name: &str, cases: usize) {
+    let (mut rng, seed) = Rng::fresh(name);
+    let (mut end, mut not) = (0usize, 0usize);
+    for case in 0..cases {
+        let n = 1 + rng.below(40);
+        let dag = random_dag(&mut rng, n, true);
+        let shared = shared_terms(&dag, &(0..n).collect::<Vec<_>>());
+        let picked = [n - 1, rng.below(n), rng.below(n), rng.below(n)];
+        for i in picked {
+            let tree = tree_term(&dag, i);
+            let at = || format!("seed {seed}, case {case}, node {i} of {dag:?}");
+            assert_eq!(shared[i], tree, "{}", at());
+            let want = ends(&tree);
+            assert_eq!(ends(&shared[i]), want, "{}", at());
+            let want_under = ends(&under_parameters(tree));
+            let got_under = ends(&under_parameters(shared[i].clone()));
+            assert_eq!(got_under, want_under, "under parameters, {}", at());
+            for answer in [want, want_under] {
+                if answer {
+                    end += 1;
+                } else {
+                    not += 1;
+                }
+            }
+        }
+    }
+    eprintln!("{name}: {cases} terms, {end} readings end, {not} do not");
+    assert!(end > 0 && not > 0, "both answers drawn: {end} and {not}");
+}
+
+/// `bench::ends` reads 3000 terms.
+#[test]
+fn random_shared_terms_read_as_their_trees() {
+    shared_and_tree_terms_read_alike("random_shared_terms_read_as_their_trees", 200);
 }

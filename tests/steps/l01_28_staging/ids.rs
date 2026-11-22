@@ -9,9 +9,12 @@ use std::sync::Arc;
 
 use zed_kernel::term::build::{lam, lit, var};
 use zed_kernel::{Prim, Shared, Term};
+use zed_tests::instances::Rng;
 use zedc::elab::{Def, Unit};
 use zedc::run::load;
 use zedc::stage::{self, ends, reading};
+
+use crate::ends::{random_dag, random_order, shared_terms, tree_term, under_parameters};
 
 fn prim(p: Prim, args: Vec<Term>) -> Term {
     Term::Prim(p, args)
@@ -256,4 +259,64 @@ fn a_shared_part_with_a_fix_does_not_end_at_any_place() {
     });
     assert!(!ends(&t));
     assert_eq!(reading(&t).len(), 4 * d + 1);
+}
+
+/// The unit whose one definition is `main = (n, x, f, g) -> t`.
+fn main_of(t: Shared) -> Unit {
+    let def = Def {
+        name: "main".into(),
+        kernel: "main".into(),
+        term: Shared::new(under_parameters(t)),
+        first_order: false,
+    };
+    Unit {
+        defs: vec![def],
+        tests: Arc::from([]),
+        warnings: Vec::new(),
+        int_params: Default::default(),
+        param_names: Default::default(),
+        limits: Default::default(),
+    }
+}
+
+/// `cases` random terms of 1 to 30 nodes with parts shared and no `fix` ([`random_dag`]),
+/// each built twice, the nodes made in two random orders ([`random_order`]), so their ids
+/// fall in two orders: the two builds are one term, read with the same numbers and answer,
+/// and stage to the same output and report (plan row TESTS-random-batteries-to-size,
+/// TERM-id; the probe compared the reader keyed by ids with main's reader on up to 200,000
+/// terms). The staged term also equals that of the term written out as a tree
+/// ([`tree_term`]).
+pub(super) fn random_build_orders_read_and_stage_alike(name: &str, cases: usize) {
+    let (mut rng, seed) = Rng::fresh(name);
+    let mut left = 0usize;
+    for case in 0..cases {
+        let n = 1 + rng.below(30);
+        let dag = random_dag(&mut rng, n, false);
+        let [a, b] = [0, 1].map(|_| shared_terms(&dag, &random_order(&mut rng, &dag)));
+        let (a, b) = (&a[n - 1], &b[n - 1]);
+        let at = || format!("seed {seed}, case {case}, {dag:?}");
+        assert_eq!(a, b, "{}", at());
+        assert_eq!(reading(a), reading(b), "{}", at());
+        assert_eq!(ends(a), ends(b), "{}", at());
+        let (staged_a, report_a) = stage::mix(&main_of(a.clone()), &["main"]);
+        let (staged_b, report_b) = stage::mix(&main_of(b.clone()), &["main"]);
+        let printed = |u: &Unit| u.defs[0].term.to_string();
+        assert_eq!(printed(&staged_a), printed(&staged_b), "{}", at());
+        assert_eq!(report_a, report_b, "{}", at());
+        // Compared as terms: the text labels a shared part that reads a name bound in two
+        // places (`#1=`), and the tree has no shared part.
+        let (staged_tree, _) = stage::mix(&main_of(tree_term(&dag, n - 1)), &["main"]);
+        assert_eq!(staged_tree.defs[0].term, staged_a.defs[0].term, "{}", at());
+        left += usize::from(!report_a.left.is_empty());
+    }
+    eprintln!("{name}: {cases} terms, {left} with a term left to run");
+}
+
+/// `bench::ids` stages 200,000 terms in 20 pieces.
+#[test]
+fn random_terms_built_in_two_orders_read_and_stage_alike() {
+    random_build_orders_read_and_stage_alike(
+        "random_terms_built_in_two_orders_read_and_stage_alike",
+        100,
+    );
 }
