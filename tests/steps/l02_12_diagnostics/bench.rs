@@ -101,3 +101,36 @@ fn printing_a_quoted_string_scales() {
         prints_no_esc(d, t);
     });
 }
+
+/// PROOF-nearest-name-quadratic: a unit of n type declarations and n definitions, each with
+/// its own misspelled type name, has each nearest name found through the spelling index of
+/// name resolution, in time independent of the n types in scope: O(n), where testing each type
+/// in scope for each misspelled name costs O(n²). Name resolution alone is measured, with the
+/// lexing and parsing it needs, since the menus' check by one compile is the benchmark above.
+#[test]
+fn the_nearest_names_of_n_misspelled_types_among_n_types_scale() {
+    let inputs = scaling::inputs(200, |n| {
+        let mut src: String = (0..n).map(|i| format!("type Type{i} = int;\n")).collect();
+        for i in 0..n {
+            src.push_str(&format!("g{i}(c: Tpye{i}) = {i};\n"));
+        }
+        src.push_str("main() = 0;\n");
+        src
+    });
+    scaling::check("n misspelled names among n types", 200, |n| {
+        let src = &inputs[&n];
+        let tokens = zedc::lex::lex(src).unwrap();
+        let tree = zedc::parse::parse(src, &tokens, "Unit", zedc::parse::TOP).unwrap();
+        let stmts = zedc::ast::unit(src, &tokens, &tree).unwrap();
+        // Each `type` declaration is also reported as not supported by this zedc.
+        let errors = zedc::resolve::resolve_text(&stmts, Some(src)).unwrap_err();
+        let unknown: Vec<_> = (errors.iter())
+            .filter(|e| e.row == Some(zedc::rejection::Row::UnknownTypeName))
+            .collect();
+        assert_eq!(unknown.len(), n);
+        assert_eq!(
+            unknown[n - 1].notes[0].text,
+            format!("repair: `Type{}`", n - 1)
+        );
+    });
+}

@@ -1076,14 +1076,8 @@ struct Resolver<'u> {
     // per use; a stack per name is O(1) per use, at one entry per variable and a pop of each
     // variable a table holds when it ends.
     free_at: HashMap<String, Vec<usize>>,
-    /// The names of the types in scope, with how many binders in the open scopes give each, and
-    /// a count of the changes to them, which keys [`Resolver::nearest`]'s memo.
-    type_names: HashMap<String, usize>,
-    type_changes: u64,
-    /// For each unknown type name, the nearest type name found for it and the count of changes
-    /// to `type_names` when it was found: a name written again in the same scope is answered in
-    /// `O(1)`.
-    nearest_memo: HashMap<String, (u64, Option<String>)>,
+    /// The names of the types in scope, indexed by spelling for [`Resolver::nearest`].
+    type_names: SpellingIndex,
     /// The or-patterns being walked, innermost last ([`OrPat`]).
     ors: Vec<OrPat>,
     /// The text of the `match` arm whose pattern is being walked, which the repair of an
@@ -1326,7 +1320,7 @@ impl Resolver<'_> {
             v.push(Bound::new(level, kind, false));
             self.scopes.last_mut().expect("a scope").push(name.into());
             if kind.is_type() {
-                type_named(&mut self.type_names, &mut self.type_changes, name, 1);
+                self.type_names.add(name, 1);
             }
         }
         // Cannot fire: either `v.last()` was `Some` with this level, or a `Bound` was just
@@ -1406,7 +1400,7 @@ impl Resolver<'_> {
                 v.insert(pos, b);
                 self.scopes[level - 1].push(name.into());
                 if kind.is_type() {
-                    type_named(&mut self.type_names, &mut self.type_changes, name, 1);
+                    self.type_names.add(name, 1);
                 }
             }
         }
@@ -1450,7 +1444,7 @@ impl Resolver<'_> {
             let v = self.visible.get_mut(&name).expect("bound in the scope");
             let b = v.pop().expect("bound in the scope");
             if self.out.binders[b.ids[0]].kind.is_type() {
-                type_named(&mut self.type_names, &mut self.type_changes, &name, -1);
+                self.type_names.add(&name, -1);
             }
             if v.is_empty() {
                 self.visible.remove(&name);
@@ -4595,7 +4589,8 @@ impl Resolver<'_> {
             return;
         };
         if matches!(self.free[inner].owner, Owner::Fields) {
-            return self.errors.push(field_type_var(n, span));
+            let near = self.nearest(n);
+            return self.errors.push(field_type_var(n, span, near));
         }
         let at = match self.free_at.get(n).and_then(|v| v.last()) {
             Some(&at) => at,
@@ -4765,28 +4760,18 @@ impl Resolver<'_> {
     /// in spelling"): of the prelude types and the type binders in scope that are one slip from
     /// `n` or equal to it once case and underscores are folded ([`near_in_spelling`]), the first
     /// in name order, or none when no name is near; never a name of a type variable's form.
-    // Complexity tradeoff (COMPLEXITY.md TYPEVAR-names): DESIGN.md step L1.29e's spelling
-    // index answers every written name of a unit together in O(n log n); that index is its own
-    // row (L1.29e), so this scan tests each of the K candidates in O(L) for a name of length
-    // L, O(K·L) for one name, and the memo answers a name written again while the types in
-    // scope are unchanged in O(1): U uses of D distinct unknown names cost O(U + D·K·L), where
-    // the naive search (no memo) costs O(U·K·L). The D·K term is a cost, not a claim the
-    // result rests on: the answer is right for any D, and a program with many distinct unknown
-    // names is only slower; L1.29e removes the term (PROOF-nearest-name-quadratic).
-    fn nearest(&mut self, n: &str) -> Option<String> {
-        if let Some((at, near)) = self.nearest_memo.get(n)
-            && *at == self.type_changes
-        {
-            return near.clone();
-        }
-        let in_scope = self.type_names.keys().map(String::as_str);
-        let near = (TYPES.iter().copied().chain(in_scope))
-            .filter(|c| !type_var_form(c) && near_in_spelling(n, c))
+    // Complexity tradeoff (COMPLEXITY.md TYPEVAR-names, PROOF-nearest-name-quadratic): the
+    // prelude types, a fixed list, are tested one by one; the K type binders in scope are found
+    // through `type_names`, the spelling index ([`SpellingIndex::near`]), in time independent
+    // of K, where the scan of every binder that this replaces cost O(K·L) a name and O(D·K·L)
+    // for D distinct unknown names, O(n²) when D and K both grow with the program.
+    fn nearest(&self, n: &str) -> Option<String> {
+        let prelude = (TYPES.iter().copied()).filter(|c| near_in_spelling(n, c));
+        [prelude.min(), self.type_names.near(n).min()]
+            .into_iter()
+            .flatten()
             .min()
-            .map(str::to_string);
-        self.nearest_memo
-            .insert(n.into(), (self.type_changes, near.clone()));
-        near
+            .map(str::to_string)
     }
 
     /// The end of the type `ty` of a bounds clause of `bounds`: the clause closes, each variable
@@ -5103,15 +5088,104 @@ pub fn undefined_type(name: &str) -> String {
 /// `zedc-types`, which does not depend on this crate, tells the same names apart.
 pub use zedc_syntax::ast::type_var_form;
 
-/// Adds `by` to the count of binders in the open scopes that name the type `name`, removing it
-/// at zero, and counts the change.
-fn type_named(names: &mut HashMap<String, usize>, changes: &mut u64, name: &str, by: isize) {
-    *changes += 1;
-    let count = names.entry(name.into()).or_default();
-    *count = count.saturating_add_signed(by);
-    if *count == 0 {
-        names.remove(name);
+/// The names of the types in the open scopes, with how many binders give each, indexed by
+/// spelling so that the names near in spelling to a written one ([`near_in_spelling`]) are
+/// found without a scan of them all. Each name is filed under its folded form ([`fold`]), and
+/// under itself and each string it gives with one character deleted ([`deletions`]). A name of
+/// a type variable's form is never offered as a type name, so it is not filed.
+///
+/// This is the deletion method of M. Mor and A. S. Fraenkel, "A hash code method for detecting
+/// and correcting spelling errors", Communications of the ACM 25(12):935-938, 1982
+/// (doi:10.1145/358728.358752; checked: the issue's table of contents and the abstract, "The
+/// most common spelling errors are one extra letter, one missing letter, one wrong letter, or
+/// the transposition of two letters", corrected with deletion operators and hashing), with the
+/// folded form added for the case and underscore rule of DESIGN.md sec:diagnostics.
+///
+/// Every name near `n` is found (proof). Let `c` be near `n`. If `c` equals `n` once folded,
+/// it is filed under `fold(n)`. Otherwise `c` and `n` differ by one slip: (1) `c` is `n` with a
+/// character inserted at `i`: `c` with `i` deleted is `n`, a key of `n`; (2) `c` is `n` with
+/// the character at `i` deleted: `c` itself is that deletion of `n`; (3) the character at `i`
+/// replaced: `c` and `n` with `i` deleted are equal; (4) the characters at `i` and `i + 1`
+/// swapped: `c` with `i + 1` deleted and `n` with `i` deleted are equal, each the other
+/// characters in order. In each case `c` is filed under one of the keys `n` gives. Every
+/// candidate is then tested with [`near_in_spelling`], so a name filed under a shared key but
+/// two slips away (`xab` and `abx` share `ab`) is not offered.
+// Complexity tradeoff (COMPLEXITY.md TYPEVAR-names, PROOF-nearest-name-quadratic): the
+// standard search, a test of each of the K names in scope, costs O(K·L) for a name of length L.
+// The index costs O(L²) time and space per name filed (L + 2 keys of O(L) characters), and a
+// search O(L³) whatever K: it reads L + 2 keys and, in each, tests names in name order up to
+// the first near one. The names filed under a deletion key `k` are `k` itself and names made
+// by inserting one character into `k`, at most 1 + (|k| + 1)·64 of them for names of
+// `[A-Za-z0-9_]` and `'` (DESIGN.md sec:lexical), so the tests per key are bounded by L; the
+// names under a folded key are all near `n` but `n` itself, which names no type in scope, so
+// the first is taken. DESIGN.md step L1.29e's index of a whole unit's written names is not
+// needed for this bound.
+#[derive(Default)]
+struct SpellingIndex {
+    count: HashMap<String, usize>,
+    folded: HashMap<String, BTreeSet<String>>,
+    deleted: HashMap<String, BTreeSet<String>>,
+}
+
+impl SpellingIndex {
+    /// Adds `by` to the count of binders in the open scopes that name the type `name`; the
+    /// name is filed when the count leaves zero and taken out when it returns there.
+    fn add(&mut self, name: &str, by: isize) {
+        if type_var_form(name) {
+            return;
+        }
+        let count = self.count.entry(name.into()).or_default();
+        let was = *count;
+        *count = count.saturating_add_signed(by);
+        let now = *count;
+        if now == 0 {
+            self.count.remove(name);
+        }
+        if (was == 0) == (now == 0) {
+            return;
+        }
+        let file = |map: &mut HashMap<String, BTreeSet<String>>, key: String| {
+            if now > 0 {
+                map.entry(key).or_default().insert(name.into());
+            } else if let Some(names) = map.get_mut(&key) {
+                names.remove(name);
+                if names.is_empty() {
+                    map.remove(&key);
+                }
+            }
+        };
+        file(&mut self.folded, fold(name));
+        for key in deletions(name) {
+            file(&mut self.deleted, key);
+        }
     }
+
+    /// The names filed that are near `n` in spelling, the first of each key in name order.
+    fn near<'a>(&'a self, n: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        let folded = self.folded.get(&fold(n));
+        let deleted = deletions(n).filter_map(|key| self.deleted.get(&key));
+        (folded.into_iter().chain(deleted)).filter_map(move |names| {
+            (names.iter().map(String::as_str)).find(|c| near_in_spelling(n, c))
+        })
+    }
+}
+
+/// `s` with ASCII letters lowercased and underscores dropped.
+fn fold(s: &str) -> String {
+    (s.chars())
+        .filter(|&c| c != '_')
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// `s` itself, then `s` with each of its characters deleted in turn.
+fn deletions(s: &str) -> impl Iterator<Item = String> + '_ {
+    std::iter::once(s.to_string()).chain(s.char_indices().map(|(i, c)| {
+        let mut d = String::with_capacity(s.len());
+        d.push_str(&s[..i]);
+        d.push_str(&s[i + c.len_utf8()..]);
+        d
+    }))
 }
 
 /// Whether `written` and `name` are near in spelling (DESIGN.md sec:diagnostics, "Nearest in
@@ -5124,13 +5198,7 @@ fn near_in_spelling(written: &str, name: &str) -> bool {
     if a == b {
         return false;
     }
-    let fold = |s: &[char]| -> Vec<char> {
-        (s.iter())
-            .filter(|&&c| c != '_')
-            .map(char::to_ascii_lowercase)
-            .collect()
-    };
-    if fold(&a) == fold(&b) {
+    if fold(written) == fold(name) {
         return true;
     }
     // The first and the last place where the two differ, from each end.
@@ -5157,10 +5225,15 @@ fn near_in_spelling(written: &str, name: &str) -> bool {
 }
 
 /// The row "Type variable in a `struct` field that is not one of the struct's declared type
-/// parameters" (DESIGN.md sec:diagnostics) for `n` at `span`. DESIGN.md's menu declares the
-/// struct's parameters, `struct Pair(A, B) {…}`, a form this zedc does not support, so the
-/// error offers no menu.
-fn field_type_var(n: &str, span: Span) -> Error {
+/// parameters" (DESIGN.md sec:diagnostics) for `n` at `span`, with `near`, the type name in scope
+/// nearest in spelling, if any. Of DESIGN.md's menu, the declaration of the struct's parameters,
+/// `struct Pair(A, B) {…}`, is a form this zedc does not support; the nearest type name is
+/// offered when the declaration then checks ([`checked_menu_edit`]).
+fn field_type_var(n: &str, span: Span, near: Option<String>) -> Error {
+    let near = near.map(|near| Note {
+        span,
+        text: format!("{REPAIR}{near}`"),
+    });
     Error {
         row: Some(Row::StructFieldTypeVariable),
         menu: String::new(),
@@ -5182,21 +5255,25 @@ fn field_type_var(n: &str, span: Span) -> Error {
                 span,
                 text: "repair: write the field's type in full".into(),
             },
-        ],
+        ]
+        .into_iter()
+        .chain(near)
+        .collect(),
     }
 }
 
 /// The edit of the unit `text` that the repair of `e` makes, as the span replaced and its
 /// replacement, when `e` is of a row whose menu DESIGN.md sec:diagnostics offers "only when the
 /// definition then checks" and name resolution gives that menu: the nearest type name in place
-/// of an unknown one (`Resolver::unknown_type`), or a parameter with its type, a type variable
+/// of an unknown one (`Resolver::unknown_type`) or of a type variable in a struct field
+/// (`field_type_var`), or a parameter with its type, a type variable
 /// written once, dropped from the `:` on (`written_once`). Name resolution cannot tell
 /// whether the definition then checks, so the front end makes the edit, checks the unit, and
 /// otherwise withholds the menu ([`withhold_checked_menu`]).
 pub fn checked_menu_edit(e: &Error, text: &str) -> Option<(Span, String)> {
     let repair = e.notes.iter().find(|n| n.text.starts_with(REPAIR))?;
     match e.row? {
-        Row::UnknownTypeName => {
+        Row::UnknownTypeName | Row::StructFieldTypeVariable => {
             let near = repair.text.strip_prefix(REPAIR)?.strip_suffix('`')?;
             Some((e.span, near.to_string()))
         }
@@ -5219,7 +5296,10 @@ pub fn checked_menu_edit(e: &Error, text: &str) -> Option<(Span, String)> {
 /// `e` without the menu [`checked_menu_edit`] reads, when the definition was not shown to
 /// check with it; any other error is left as it is.
 pub fn withhold_checked_menu(e: &mut Error) {
-    if matches!(e.row, Some(Row::UnknownTypeName | Row::TypeVariableOnce)) {
+    if matches!(
+        e.row,
+        Some(Row::UnknownTypeName | Row::StructFieldTypeVariable | Row::TypeVariableOnce)
+    ) {
         e.notes.retain(|n| !n.text.starts_with(REPAIR));
     }
 }

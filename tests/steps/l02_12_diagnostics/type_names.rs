@@ -589,3 +589,45 @@ fn a_type_variable_in_function_types_takes_results_of_each_shape() {
         assert_eq!(writes(&defs, out), want, "{out}");
     }
 }
+
+/// Row MSG-struct-field-nearest-name: a type variable in a struct field is offered the type
+/// name in scope nearest in spelling, as a misspelled type is, when the declaration then
+/// checks (DESIGN.md sec:diagnostics, "Type variable in a `struct` field …"). A struct is not
+/// compiled yet, so the front end withholds it; name resolution offers it.
+#[test]
+fn a_type_variable_in_a_struct_field_is_offered_the_nearest_type() {
+    let src = "type Pt = int;\nstruct Box { p: P }\nmain() = 0;\n";
+    assert_eq!(
+        offered(src),
+        ["repair: write the field's type in full", "repair: `Pt`"]
+    );
+    let out = rejects(
+        src,
+        &["2:17: The type variable `P` stands in a field of a struct"],
+    );
+    assert!(!out.contains("repair: `Pt`"), "{out}");
+    // No type name is one slip from `P`: only the field's type in full is offered.
+    let src = "type Point = int;\nstruct Box { p: P }\nmain() = 0;\n";
+    assert_eq!(offered(src), ["repair: write the field's type in full"]);
+}
+
+/// PROOF-nearest-name-quadratic: the spelling index finds every slip DESIGN.md names (one
+/// character inserted, deleted or replaced, two adjacent swapped, case and underscores), the
+/// first in name order of several, and no name two slips away, though it shares a key.
+#[test]
+fn the_nearest_type_is_found_for_each_kind_of_slip() {
+    for (written, declared) in [
+        ("Confg", "Config"),
+        ("Configg", "Config"),
+        ("Conflg", "Config"),
+        ("Cofnig", "Config"),
+        ("CONF_IG", "Config"),
+    ] {
+        let src = format!("type {declared} = int;\nf(c: {written}) = 0;\nmain() = 0;\n");
+        assert_eq!(offered(&src), [format!("repair: `{declared}`")], "{src}");
+    }
+    let src = "type Confb = int;\ntype Confa = int;\nf(c: Confc) = 0;\nmain() = 0;\n";
+    assert_eq!(offered(src), ["repair: `Confa`"]);
+    let src = "type Abx = int;\nf(c: Xab) = 0;\nmain() = 0;\n";
+    assert!(offered(src).is_empty(), "{src}");
+}
