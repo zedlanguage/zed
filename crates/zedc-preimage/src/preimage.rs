@@ -4871,7 +4871,10 @@ impl<'a> Normal<'a> {
 /// a class holding it would read it a second time over the class's atom, its callees under
 /// both reads, whose claims the two reads would then dispute, so each would be read again at
 /// each call. Which join of two parameters of one function is refused depends on the order of
-/// the calls; the class atoms are never bound, so any classes are sound.
+/// the calls, and where some function has two parameters in one component of the joins, a join
+/// of two classes that each hold two or more functions of two or more parameters is refused
+/// ([`unite`], item LOAD-join-disjoint); the class atoms are never bound, so any classes are
+/// sound.
 ///
 /// Time of the functions' bodies, each part once (the terms share parts), and of the joins
 /// ([`unite`]).
@@ -4977,178 +4980,223 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 
 /// The classes of the parameters `0..` the last of `first`, those of function `k` numbered from
 /// `first[k]`, after the joins `joins` in their order: the root of each parameter's class, and
-/// whether a root's class holds two or more. A join is refused where the two classes hold
-/// parameters of one function, so a class never holds two of one function.
+/// whether a root's class holds two or more. A class never holds two parameters of one
+/// function. A join merges where the two classes share no function, except inside a marked
+/// component (below), where it is also refused when each class holds two or more functions of
+/// two or more parameters (item LOAD-join-disjoint; cross-review XR-join-disjoint round 1,
+/// option E of the Claude seat with rule B' of the Gemini seat, chosen by the orchestrator).
 ///
-/// Union by the number of functions in a class, each class's functions held at its root: a set
-/// moves only into one at least as large, O(n log n) moves in all. A refusal is permanent, since
-/// a class's functions only grow, so it is remembered for the two roots, and a join refused
-/// again between those classes, or classes holding them, costs O(1); when a root joins a larger
-/// class, its refusals move to that root with its functions, O(log n) moves each. Before the
-/// smaller class's functions, the two functions of the join are looked up in the other class:
-/// a join refused by its caller or its callee, `p(x: x, y: x)`, costs O(1).
+/// Method. (1) A plain union of all the joins gives the connected components of the graph of
+/// joins; a component is marked when it holds two parameters of one function. (2) The joins are
+/// made again in their order, union by the number of functions in a class (`size`). In an
+/// unmarked component every join merges. In a marked component each class's root holds the set
+/// of its functions of two or more parameters (`funs`); with `fewer` the class whose set is
+/// smaller and `more` the other, the join merges when `fewer`'s set is empty, or holds one
+/// function that `more`'s set does not, and is refused when `fewer`'s set holds two or more.
 ///
-/// The sets looked through hold only the functions of two or more parameters (item
-/// LOAD-join-disjoint). Proof that the answers are unchanged: a class holds at most one
-/// parameter of a function, and each parameter is in one class, so a function of one
-/// parameter is in exactly one class and never in both of two distinct classes; two classes
-/// share a function exactly when they share one of two or more parameters. The root is still
-/// chosen by the number of functions (`size`), which is what the unfiltered set's length was,
-/// so the roots and `joined` are those of the plain union; only which set is looked through,
-/// and which set's entries move at a join, now go by the filtered lengths, neither of which
-/// changes an answer. Each entry still moves only into a set at least as large, O(n log n)
-/// moves in all. Test: `tests::the_classes_are_those_of_a_join_refused_by_looking` (random
-/// functions of 0 to 4 parameters, so ones of one parameter among them) compares with the
-/// union that looks for a shared function at each join; it cannot catch a slower answer.
-// Complexity tradeoff: the first refusal between two classes that share only a third function
-// (neither the join's caller nor its callee) looks through the smaller of the two classes'
-// sets of functions of two or more parameters, O(m) for m such functions, so j such refusals
-// between j distinct pairs of classes cost O(j m), up to about n^1.5 when the classes hold
-// many functions of two or more parameters (k functions of k parameters on each side of the
-// joins). Where they hold functions of one parameter and one shared function of k, as in
-// `tests::bench::joins_refused_for_a_function_shared_by_merged_classes_scale`, each set holds
-// one function and each refusal costs O(1). Why: whether two classes share a function is a
-// question of set disjointness, for which no structure answering in O(log n) a question is
-// known. Kopelowitz, Pettie and Porat, "Dynamic Set Intersection" (WADS 2015,
-// arXiv:1407.6755, full text read 2026-11-22 in the XR-algos review), maintain a dynamic
-// family "using O(N) space where each update costs O(sqrt N) expected time, and each
-// emptiness query costs O(sqrt N) expected time" (their Theorem in the section "Dynamic
-// Emptiness Queries"), and prove 3SUM-conditional lower bounds for incremental set
-// intersection reporting (their appendix A). Departure: here sets only merge, and a join
-// happens only when the two are disjoint; an O(sqrt N) structure would be no faster in order
-// than this scan and slower on the measured cases. Bound of this scan, every step (N <= n the
-// entries of the filtered sets, j the joins): (1) a merge moves the smaller set into the
-// larger, so each entry moves O(log n) times, O(N log n) in all; (2) a refusal whose smaller
-// set holds at most D entries costs O(D), O(j D) in all; (3) a refusal is remembered for its
-// two roots and moves with them, so each pair of roots is looked through at most once; a
-// function's root changes only when its class is the smaller one, whose size then at least
-// doubles, so each function lies under at most log2 n + 1 roots in the run, and at most
-// R = N (log2 n + 1) / D roots ever hold a set of more than D entries, and the largest sets
-// ever held by all roots sum to at most N (log2 n + 1); a refusal between two such roots costs
-// at most the largest set ever held by the root of the smaller set, charged to that root,
-// which has at most R such partners, so (3) costs at most R N (log2 n + 1), O(N² log² n / D);
-// (4) D = N log n / sqrt(j) gives O(N sqrt(j) log n), O(n^1.5 log n) for j = O(n).
-// Both constructions of the deferred tests (/home/luke/Work/wt/scratch/deferred-tests/
-// LOAD-join-disjoint-multi-owner.rs) take Θ(n^1.5): k² or k(k - 1)/2 refusals, each between
-// classes of k + 1 functions sharing one, for n about 2k² parameters. No conditional lower
-// bound above n log n under a published hypothesis is known for this function; what is proved
-// (b22-research4, 2026-11-22) is the following.
-// (R1) Reduction. Given a graph G = (V, E) with m edges, build: for each vertex c a function
-// f_c with one parameter p(c, u) per neighbor u of c; for each vertex u a function H_u of one
-// parameter h_u; the joins (h_u, p(c, u)) for every edge {c, u}, in any order (the building
-// joins), then one join (h_u, h_v) per edge {u, v} (the query joins). A building join never
-// refuses: the class of h_u holds h_u and parameters p(c, u) for distinct c, so of distinct
-// functions, and p(c, u) is alone. After them the class C_u of h_u holds f_c exactly for the
-// c adjacent to u. Size: 2m + |V| parameters, 3m joins, so n = O(m). Claim: no query join
-// merges if and only if every edge of G lies in a triangle. (If) by induction over the query
-// joins: while none has merged, the classes are the C_u, and the join (h_u, h_v) for edge
-// {u, v} in a triangle {u, v, c} is refused, since C_u and C_v both hold f_c. (Only if) if
-// edge {u, v} lies in no triangle, consider the first query join that merges, if any: none
-// merged before it, so when the join (h_u, h_v) is reached either some earlier one merged or
-// the classes are C_u and C_v, which share no f_c (a shared c is a common neighbor) and merge.
-// So `unite` decides "every edge lies in a triangle" (its result, whether each h_u's root is
-// its own, tells which). The source program reaches every such list: a call of a function of
-// one parameter makes exactly one join, so H_u called from f_c with p(c, u) as its argument
-// gives the building joins and a call of H_v with h_u gives a query join (`identity_classes`;
-// parameter names must be distinct across functions, since `by_param` drops a name bound
-// twice). The fixtures above are of this kind.
-// (R2) The triangle hypotheses do not carry over through (R1). The Triangle Conjecture as
+/// Proof that a class never holds two parameters of one function, by induction over the joins.
+/// At the start each class is one parameter. A function of one parameter lies in one class
+/// only, whatever merges. A merge in an unmarked component: both classes lie in it, and it holds
+/// at most one parameter of each function (it is unmarked), so their union does too. A merge in
+/// a marked component: each root's set holds exactly the class's functions of two or more
+/// parameters (true at the start; a merge puts the union of the two sets at the new root), and
+/// the merge is made only when the two sets are disjoint: an empty set meets nothing, and a set
+/// of one function `g` meets the other exactly when `g` is in it, which is looked up. So the
+/// union holds at most one parameter of each function.
+///
+/// Proof that the classes of an unmarked component are those of the exact rule (a join refused
+/// exactly when the two classes share a function, `tests::unite_by_looking`), root for root: no
+/// two classes in it ever share a function (each function has at most one parameter in it), so
+/// the exact rule also merges every join whose ends lie in two classes; the root is chosen by
+/// the same count with the same tie (the exact rule's set of all functions has the length
+/// `size`), and the joins of other components never touch these classes. In a marked component
+/// the classes can differ from the exact rule's, coarser or finer (cross-review
+/// XR-join-disjoint, Codex seat, round 1: a refusal here can let a later join merge that the
+/// exact rule refuses). Any classes are sound, since the class atoms are never bound
+/// ([`identity_classes`]); a refusal only loses sharing. Tests:
+/// `tests::a_class_never_holds_two_parameters_of_one_function` (soundness, exactness on unmarked
+/// components, and the rule, against brute force, over random functions and joins) and
+/// `tests::the_classes_are_those_of_a_join_refused_by_looking` (the exact classes on every
+/// unmarked component).
+///
+/// Time, every step, for n parameters and j joins: (1) is j unions by rank with halving and
+/// 2n finds, O(n + j α(j + n, n)) (Tarjan and van Leeuwen 1984, doi:10.1145/62.2160, Theorem 3,
+/// quoted in zed-graph's union_find.rs), and the marks one pass over the
+/// functions' parameters with a stamp per component (the last function whose parameter was found
+/// in it), part of those finds; (2) each join is two finds (roots kept by the caller with
+/// halving, O(log_(2+j/n) n) amortized, Theorem 6 there), a comparison of two lengths and at
+/// most one look-up in a hash set, O(1) expected, and each merge moves the smaller set into
+/// the larger (they are swapped first when the kept root's set is the smaller), so an entry
+/// moves only into a set at least as large, the
+/// set holding it at least doubles at each move, and it moves at most log2 n times: O(n log n)
+/// moves in all. In total O((n + j) log n), expected for the hash sets.
+// Complexity tradeoff: the exact rule (refuse exactly when the classes share a function) is
+// what LOAD-affine-join built and LOAD-join-disjoint measured at Θ(n^1.5) on the fixtures
+// `tests::bench::many_multi_owner_functions_can_refuse_the_same_cross_pairs_scale` and
+// `tests::bench::joins_refused_for_a_shared_function_over_chains_of_two_parameter_functions_scale`
+// (k² or k(k - 1)/2 refusals, each between classes of k + 1 functions sharing one, for n about
+// 2k² parameters; its scan was proved O(n^1.5 log n)). This rule keeps the exact classes
+// wherever no function has two parameters in a component, and in the other components gives up
+// a join when both classes hold two or more functions of two or more parameters; the lost
+// sharing on the l01 tests is in COMPLEXITY.md row LOAD-join-disjoint. Why not the exact rule
+// in near-linear time: (R1) to (R3) below show that it would decide, below m^(4/3), whether
+// every edge of a sparse graph lies in a triangle, which no known method does.
+// (R1) Reduction. Given a graph G = (V, E) with m edges and no isolated vertex (an isolated
+// vertex changes no answer, so it is dropped: |V| <= 2m; an empty edge list answers true),
+// write, in this text order: for each vertex u the leaf H_u(x_u) = x_u > 0; for each vertex c
+// the builder f_c with one parameter p(c, u) per neighbor u of c, its body the AND of the
+// calls H_u(x_u: p(c, u)); for each edge {u, v} the proxy
+// Q_uv(t_uv) = H_u(x_u: t_uv) && H_v(x_v: t_uv). Definitions come each after those they use
+// (zedc-stage defs.rs, `Unit::defs`; Kahn's order, ties by text index, zedc-resolve topo.rs),
+// so the order is the text's, and `identity_classes` takes the joins of one caller at a time,
+// caller first: the building joins (p(c, u), x_u), then for each proxy (t_uv, x_u) and the
+// query join (t_uv, x_v). A call of a function of one parameter makes exactly one join
+// (`identity_classes`; parameter names must be distinct across functions, since `by_param`
+// drops a name bound twice). Size: |V| + 3m parameters, 4m joins, so n = O(m). Under the exact
+// rule a building join never refuses: the class of x_u holds x_u and parameters p(c, u) for
+// distinct c, so of distinct functions, and p(c, u) is alone. After them the class C_u of x_u
+// holds f_c exactly for the c adjacent to u. A join (t_uv, x_u) always merges (t_uv is alone,
+// of a function of one parameter, which no other class can hold). Claim: no query join merges
+// if and only if every edge of G lies in a triangle. (If) by induction over the query joins:
+// while none has merged, the classes are the C_u, each with some t's of one-parameter
+// functions, and the query join for an edge {u, v} in a triangle {u, v, c} is refused, since
+// C_u and C_v both hold f_c. (Only if) if an edge {u, v} lies in no triangle, either some
+// earlier query join merged, or when its query join is reached the classes are C_u and C_v
+// (with their t's), which share no f_c (a shared c is a common neighbor), so it merges. So the
+// exact rule decides "every edge lies in a triangle": the roots of the x_u are pairwise
+// distinct exactly when it holds (the root of x_u need not be x_u, since the caller-first join
+// (p(c, u), x_u) of two classes of one parameter keeps p(c, u)). Checked by the Codex and Gemini
+// seats of cross-review XR-join-disjoint round 1 (2026-11-22) on every graph of up to 6
+// vertices against a copy of the exact rule.
+// (R2) No published conditional bound carries over through (R1). The Triangle Conjecture as
 // stated by Abboud, Bringmann, Khoury and Zamir, "Hardness of Approximation in P via Short
 // Cycle Removal", STOC 2022, arXiv:2204.10465 (LaTeX source read 2026-11-22, file
-// zero_triangle.tex), attributed there to Abboud and Vassilevska Williams, FOCS 2014: "Triangle
-// detection requires $m^{4/3-o(1)}$ time, for some density regime $m=\Omega(n)$". It is about
+// zero_triangle.tex), attributed there to Abboud and Vassilevska Williams, FOCS 2014:
+// "Triangle detection requires $m^{4/3-o(1)}$ time, for some density regime $m=\Omega(n)$"
+// (this m^(4/3) form is the 2022 statement; the 2014 conjecture asks m^(1+δ)). It is about
 // whether SOME triple is a triangle (an OR of ORs); (R1) decides whether EVERY edge has a
 // common neighbor (an AND of ORs), and no reduction from triangle detection to that is known
-// to me or found in the searches below. Nor does whether ANY join is refused help: some join
-// is refused if and only if some function has two parameters in one connected component of
-// the graph of all joins. Proof: a refusal of (x, y) needs parameters p, q of one function in
-// the classes of x and y, and every class lies in one component, as does the edge (x, y);
-// conversely, if no join is refused, every join merges, the final classes are the components,
-// and a class never holds two parameters of one function. That test is O(n α(n)) by a plain
-// union-find, so the bit carries no triangle-detection hardness. The all-edges form
-// (AE-Sparse-Triangle: for each edge, whether it is in a triangle), which Vassilevska Williams
-// and Xu (FOCS 2020) show needs m^(4/3 - o(1)) under 3SUM or APSP (cited in the same file;
-// Fischer, Künnemann and Redzic, arXiv:2312.14593, extend that line), would need every answer,
-// and here the first query join that merges pollutes the later ones: after C_u and C_v merge,
-// a join (h_u, h_w) asks whether N(u) ∪ N(v) meets N(w). Per-query copies of the classes would
-// cost the sum of the squared degrees, up to Θ(m^1.5), which loses the bound.
+// to me or found in the searches below. Its complement, "some edge lies in no triangle", the
+// property ∃x ∃y ∀z (E(x, y) ∧ ¬(E(x, z) ∧ E(y, z))), is placed by Bringmann, Fischer and
+// Künnemann, "A fine-grained analogue of Schaefer's theorem in P: dichotomy of
+// ∃^k∀-quantified first-order graph properties", CCC 2019, doi:10.4230/LIPIcs.CCC.2019.31,
+// Theorem 7 and Lemma 22, among those solved in O(m^(2ω/(ω+1))), with no lower bound given
+// (from the Claude and Gemini seats of the cross-review above, not re-read here). Nor does
+// whether ANY join is refused help: under the exact rule some join is refused if and only if
+// some function has two parameters in one component of the graph of all joins (a refusal of
+// (x, y) needs parameters of one function in the classes of x and y, and each class lies in
+// one component, as does the edge (x, y); conversely, if no join is refused, every join merges
+// or finds its ends in one class, the final classes are the components, and a class never
+// holds two parameters of one function). That test is O(n α(n)); it is step (1), the marks.
+// The all-edges form, AE-Sparse-Triangle (for each edge, whether it lies in a triangle), would
+// need every answer: Vassilevska Williams and Xu, FOCS 2020, arXiv:2007.09318, Corollary
+// `cor:exact-to-sparse` (file exact_to_mono.tex, lines 321 to 327, per the Claude seat), reduce
+// to it by reading each edge's answer, recovering its triangle bit by bit. Their bound
+// m^(4/3 - o(1)) under 3SUM or APSP no longer stands: Alman and Vassilevska Williams,
+// arXiv:2610.06783 (October 2026), file 01-intro.tex: "The APSP and 3SUM hypotheses are
+// therefore refuted" (confirmed from the source by the orchestrator, 2026-11-22); balanced
+// AE-Sparse-Triangle is left as a hypothesis of its own (their Section 6). And here the first
+// query join that merges pollutes the later ones: after C_u and C_v merge, the query join of
+// an edge {u, w} asks whether N(u) ∪ N(v) meets N(w). Copies of the two classes for each query
+// would cost the sum over the edges of the two degrees, the sum of the squared degrees, Θ(m²)
+// on a star, which loses the bound.
 // (R3) What meeting the limit would take. 10.5 at 8 times n means an exponent at most
-// log 10.5 / log 8 = 1.131. By (R1), an O(n^1.131) `unite` decides "every edge lies in a
-// triangle" in O(m^1.131). The best method I know for that is the high/low degree split of
+// log 10.5 / log 8 = 1.1308. By (R1), an O(n^1.1308) exact rule decides "every edge lies in a
+// triangle" in O(m^1.1308). The best method I know for that is the high/low degree split of
 // Alon, Yuster and Zwick, "Finding and counting given length cycles", Algorithmica 17 (1997),
 // doi:10.1007/BF02523189 (from memory, not re-read): with degree threshold D, an edge with a
 // low endpoint is checked by scanning that endpoint's neighbors, O(m D); a common neighbor c of
 // low degree is found by listing the pairs of c's neighbors, O(m D); among the at most 2m / D
 // high vertices one Boolean matrix product, O((m / D)^ω); D = m^((ω - 1) / (ω + 1)) gives
-// O(m^(2ω / (ω + 1))), m^1.41 for ω = 2.371 and m^(4/3) even for ω = 2. So any method under
+// O(m^(2ω / (ω + 1))), m^1.41 for ω = 2.371 and m^(4/3) even for ω = 2. So an exact rule under
 // the limit would decide this question below m^(4/3), faster than every known method by a
 // polynomial factor, also for ω = 2: not proved impossible, and not known.
-// Earlier reading kept: the 3SUM bound for offline set disjointness, N^(4/3 - o(1))
-// (Kopelowitz, Pettie and Porat, "Higher Lower Bounds from the 3SUM Conjecture", SODA 2016,
-// arXiv:1407.6756, Theorem `set_disjoint_improved` with gamma = 1/2), needs every answer, as
-// AE-Sparse-Triangle does (R2); a reduction from SETH would refute NSETH, since both answers
-// have certificates of near-linear size (Carmosino et al., ITCS 2016,
-// doi:10.1145/2840728.2840746, Theorem 2). Read in the LOAD-join-disjoint study,
-// b22-research3, 2026-11-22. Searches of 2026-11-22 (allpapers, paperclip arXiv and
-// abstracts): "sparse triangle hypothesis", "Triangle Collection matching triangles", "every
-// edge in a triangle" and union-find with disjoint classes found no bound for the single-bit
-// AND-of-ORs form (arXiv:2509.11448, "Triangle-Covered Graphs", is about adding edges, not
-// this). So the general bound is open, with (R3) as the evidence that the limit is out of
-// reach (COMPLEXITY.md row LOAD-join-disjoint; the author's options are in QUESTIONS).
-// Trigger: a call joining one parameter to
-// the classes of two parameters of a third function, the classes holding many functions of
-// two or more parameters. Test `tests::refused_joins_between_two_large_classes_scale`
-// (repeated refusals between two classes, the case remembered) and
-// `tests::the_classes_are_those_of_a_join_refused_by_looking` (the answers of the plain
-// union). COMPLEXITY.md rows LOAD-affine-join and LOAD-join-disjoint. A complete solution
-// would need a count per pair of classes sharing a function, which a function of k parameters
-// starts at k(k - 1)/2 pairs.
+// A structure for the exact rule: Kopelowitz, Pettie and Porat, "Dynamic Set Intersection"
+// (WADS 2015, arXiv:1407.6755, read 2026-11-22 in the XR-algos review), Corollary
+// `cor:emptiness_structure_linear` in the section "Dynamic Emptiness Queries with Time/Space
+// Tradeoff": "using O(N) space where each update costs O(sqrt N) expected time, and each
+// emptiness query costs O(sqrt N) expected time", n^1.5 over n joins, no better in order than
+// the scan. Their 3SUM bound for offline set disjointness, N^(4/3 - o(1)) ("Higher Lower Bounds
+// from the 3SUM Conjecture", SODA 2016, arXiv:1407.6756, Theorem `set_disjoint_improved` with
+// gamma = 1/2), needs every answer, as AE-Sparse-Triangle does, and rests on 3SUM; a reduction
+// from SETH would refute NSETH, since both answers have certificates of near-linear size
+// (Carmosino et al., ITCS 2016, doi:10.1145/2840728.2840746, Theorem 2). Searches of 2026-11-22
+// (allpapers, paperclip arXiv and abstracts): "sparse triangle hypothesis", "Triangle
+// Collection matching triangles", "every edge in a triangle" and union-find with disjoint
+// classes found no bound for the single-bit AND-of-ORs form (arXiv:2509.11448,
+// "Triangle-Covered Graphs", is about adding edges, not this). COMPLEXITY.md rows
+// LOAD-affine-join and LOAD-join-disjoint.
 fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
     let nodes = first.last().copied().unwrap_or(0);
     let owner = |v: usize| first.partition_point(|&f| f <= v) - 1;
-    // The root is chosen here, by the number of functions, since the functions move with it.
-    // Halving, each root chosen by this code (it reads the root as the class's name): O(log_(2+m/n)
-    // n) amortized a step for m operations on n elements, Tarjan and van Leeuwen 1984
-    // (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
+    // (1) The components of the graph of all joins, and the marked ones: a stamp per component,
+    // the last function of two or more parameters met in it; meeting it again marks it.
+    let mut whole = zed_graph::UnionFind::new(
+        nodes,
+        zed_graph::Compression::Halving,
+        zed_graph::Linking::Rank,
+    );
+    for &(a, b) in joins {
+        whole.union(a, b);
+    }
+    let mut stamp = vec![usize::MAX; nodes];
+    let mut marked = vec![false; nodes];
+    for k in 0..first.len().saturating_sub(1) {
+        if first[k + 1] - first[k] < 2 {
+            continue;
+        }
+        for v in first[k]..first[k + 1] {
+            let c = whole.find(v);
+            marked[c] |= stamp[c] == k;
+            stamp[c] = k;
+        }
+    }
+    let hot: Vec<bool> = (0..nodes).map(|v| marked[whole.find(v)]).collect();
+    // (2) The root is chosen here, by the number of functions, since the functions move with
+    // it. Halving, each root chosen by this code (it reads the root as the class's name):
+    // O(log_(2+m/n) n) amortized a step for m operations on n elements, Tarjan and van Leeuwen
+    // 1984 (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
     let mut parent = zed_graph::UnionFind::new(
         nodes,
         zed_graph::Compression::Halving,
         zed_graph::Linking::Rank,
     );
-    // Each class's functions of two or more parameters, and its number of functions (each
-    // parameter of a class is of another function). A function of one parameter is never
-    // shared by two classes, so it is left out of the sets looked through; the count keeps
-    // it, since the root is chosen by the count (item LOAD-join-disjoint).
+    // Each class's functions of two or more parameters, kept in marked components only, and
+    // its number of functions (each parameter of a class is of another function).
     let mut funs: Vec<HashSet<usize>> = (0..nodes)
-        .map(|v| match first[owner(v) + 1] - first[owner(v)] {
-            1 => HashSet::new(),
-            _ => HashSet::from([owner(v)]),
-        })
+        .map(
+            |v| match hot[v] && first[owner(v) + 1] - first[owner(v)] > 1 {
+                true => HashSet::from([owner(v)]),
+                false => HashSet::new(),
+            },
+        )
         .collect();
     let mut size = vec![1usize; nodes];
-    let mut refused: Vec<HashSet<usize>> = vec![HashSet::new(); nodes];
     let mut joined = vec![false; nodes];
     for &(a, b) in joins {
         let (ra, rb) = (parent.find(a), parent.find(b));
-        if ra == rb || refused[ra].contains(&rb) {
+        if ra == rb {
             continue;
+        }
+        // Rule B' in a marked component (`a` and `b` lie in one component).
+        if hot[a] {
+            let (fewer, more) = match funs[ra].len() <= funs[rb].len() {
+                true => (ra, rb),
+                false => (rb, ra),
+            };
+            let merges = match funs[fewer].len() {
+                0 => true,
+                1 => funs[fewer].iter().all(|g| !funs[more].contains(g)),
+                _ => false,
+            };
+            if !merges {
+                continue;
+            }
         }
         let (big, small) = match size[ra] >= size[rb] {
             true => (ra, rb),
             false => (rb, ra),
         };
-        let (fewer, more) = match funs[ra].len() <= funs[rb].len() {
-            true => (ra, rb),
-            false => (rb, ra),
-        };
-        if funs[rb].contains(&owner(a))
-            || funs[ra].contains(&owner(b))
-            || funs[fewer].iter().any(|x| funs[more].contains(x))
-        {
-            refused[ra].insert(rb);
-            refused[rb].insert(ra);
-            continue;
-        }
         parent.union_into(big, small);
         size[big] += size[small];
         if funs[small].len() > funs[big].len() {
@@ -5156,11 +5204,6 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
         }
         let f = std::mem::take(&mut funs[small]);
         funs[big].extend(f);
-        for r in std::mem::take(&mut refused[small]) {
-            refused[r].remove(&small);
-            refused[r].insert(big);
-            refused[big].insert(r);
-        }
         joined[big] = true;
     }
     let root = (0..nodes).map(|v| parent.find(v)).collect();
@@ -18656,40 +18699,277 @@ mod tests {
         fast
     }
 
-    /// [`unite`] gives the classes of the union that looks for a shared function at each join,
-    /// root for root, over random functions of 0 to 4 parameters and random joins, among them
-    /// two parameters of one function and joins repeated.
+    /// Whether each parameter lies in a marked component of [`unite`]: one of the graph of all
+    /// the joins in which some function has two parameters, found by looking at every pair.
+    fn marked_by_looking(first: &[usize], joins: &[(usize, usize)]) -> Vec<bool> {
+        fn find(parent: &[usize], mut v: usize) -> usize {
+            while parent[v] != v {
+                v = parent[v];
+            }
+            v
+        }
+        let nodes = *first.last().unwrap();
+        let mut comp: Vec<usize> = (0..nodes).collect();
+        for &(a, b) in joins {
+            let (x, y) = (find(&comp, a), find(&comp, b));
+            comp[x] = y;
+        }
+        let mut marked = vec![false; nodes];
+        for k in 0..first.len() - 1 {
+            for p in first[k]..first[k + 1] {
+                for q in p + 1..first[k + 1] {
+                    if find(&comp, p) == find(&comp, q) {
+                        marked[find(&comp, p)] = true;
+                    }
+                }
+            }
+        }
+        (0..nodes).map(|v| marked[find(&comp, v)]).collect()
+    }
+
+    /// The rule of [`unite`] written plainly: the joins in their order, each class's members
+    /// in a list; in a marked component ([`marked_by_looking`]) a join is refused when the two
+    /// classes' sets of functions of two or more parameters meet, or each holds two or more;
+    /// the root is that of the class of more members, the first on a tie.
+    fn unite_by_rule(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
+        fn find(parent: &[usize], mut v: usize) -> usize {
+            while parent[v] != v {
+                v = parent[v];
+            }
+            v
+        }
+        let nodes = *first.last().unwrap();
+        let owner = |v: usize| first.partition_point(|&f| f <= v) - 1;
+        let marked = marked_by_looking(first, joins);
+        let mut parent: Vec<usize> = (0..nodes).collect();
+        let mut members: Vec<Vec<usize>> = (0..nodes).map(|v| vec![v]).collect();
+        let mut joined = vec![false; nodes];
+        for &(a, b) in joins {
+            let (ra, rb) = (find(&parent, a), find(&parent, b));
+            if ra == rb {
+                continue;
+            }
+            let multi = |r: usize| -> HashSet<usize> {
+                (members[r].iter().map(|&p| owner(p)))
+                    .filter(|&k| first[k + 1] - first[k] > 1)
+                    .collect()
+            };
+            let (fa, fb) = (multi(ra), multi(rb));
+            if marked[a] && (fa.len().min(fb.len()) >= 2 || !fa.is_disjoint(&fb)) {
+                continue;
+            }
+            let (big, small) = match members[ra].len() >= members[rb].len() {
+                true => (ra, rb),
+                false => (rb, ra),
+            };
+            parent[small] = big;
+            let m = std::mem::take(&mut members[small]);
+            members[big].extend(m);
+            joined[big] = true;
+        }
+        let root = (0..nodes).map(|v| find(&parent, v)).collect();
+        (root, joined)
+    }
+
+    /// Random functions of 0 to 4 parameters and random joins among their parameters, two
+    /// parameters of one function and joins repeated among them: `first` and the joins.
+    fn random_joins(rng: &mut Rng) -> (Vec<usize>, Vec<(usize, usize)>) {
+        let mut first = vec![0];
+        for _ in 0..1 + rng.below(12) {
+            first.push(first.last().unwrap() + rng.below(5));
+        }
+        let nodes = *first.last().unwrap();
+        let joins = match nodes {
+            0 => Vec::new(),
+            _ => (0..rng.below(3 * nodes + 1))
+                .map(|_| (rng.below(nodes), rng.below(nodes)))
+                .collect(),
+        };
+        (first, joins)
+    }
+
+    /// Each class of [`unite`] holds at most one parameter of a function.
+    fn assert_sound(first: &[usize], joins: &[(usize, usize)], root: &[usize]) {
+        for k in 0..first.len() - 1 {
+            let roots: HashSet<usize> = (first[k]..first[k + 1]).map(|v| root[v]).collect();
+            assert_eq!(
+                roots.len(),
+                first[k + 1] - first[k],
+                "two parameters of function {k} in one class: {first:?} {joins:?}"
+            );
+        }
+    }
+
+    /// On every parameter of an unmarked component ([`marked_by_looking`]) [`unite`] gives the
+    /// classes of the union that looks for a shared function at each join, root for root, over
+    /// random functions of 0 to 4 parameters and random joins, among them two parameters of one
+    /// function and joins repeated; every class is sound.
     #[test]
     fn the_classes_are_those_of_a_join_refused_by_looking() {
         let (mut rng, _) = Rng::fresh("the_classes_are_those_of_a_join_refused_by_looking");
-        let mut refused = 0;
+        let (mut refused, mut unmarked, mut differ) = (0, 0, 0);
         for _ in 0..2000 {
-            let mut first = vec![0];
-            for _ in 0..1 + rng.below(12) {
-                first.push(first.last().unwrap() + rng.below(5));
-            }
-            let nodes = *first.last().unwrap();
-            if nodes == 0 {
+            let (first, joins) = random_joins(&mut rng);
+            if first.last() == Some(&0) {
                 continue;
             }
-            let joins: Vec<(usize, usize)> = (0..rng.below(3 * nodes + 1))
-                .map(|_| (rng.below(nodes), rng.below(nodes)))
-                .collect();
             let (root, joined) = unite(&first, &joins);
             let looked = unite_by_looking(&first, &joins);
-            assert_eq!(
-                (&root, &joined),
-                (&looked.0, &looked.1),
-                "functions from {first:?}, joins {joins:?}"
-            );
-            // Each class holds at most one parameter of a function.
-            for k in 0..first.len() - 1 {
-                let roots: HashSet<usize> = (first[k]..first[k + 1]).map(|v| root[v]).collect();
-                assert_eq!(roots.len(), first[k + 1] - first[k], "{first:?} {joins:?}");
+            let marked = marked_by_looking(&first, &joins);
+            for v in (0..root.len()).filter(|&v| !marked[v]) {
+                assert_eq!(
+                    (root[v], joined[root[v]]),
+                    (looked.0[v], looked.1[looked.0[v]]),
+                    "parameter {v}: functions from {first:?}, joins {joins:?}"
+                );
+                unmarked += 1;
             }
+            assert_sound(&first, &joins, &root);
+            differ += usize::from(root != looked.0);
             refused += joins.iter().filter(|&&(a, b)| root[a] != root[b]).count();
         }
-        println!("{refused} joins refused");
+        println!("{refused} joins refused, {unmarked} parameters unmarked, {differ} draws apart");
+    }
+
+    /// [`unite`] gives the classes of its rule written plainly ([`unite_by_rule`]), root for
+    /// root, and each class holds at most one parameter of a function, over random functions
+    /// and joins; then over draws biased to marked components with classes of several functions
+    /// of two or more parameters, the case where the rule refuses a join the exact one makes.
+    #[test]
+    fn a_class_never_holds_two_parameters_of_one_function() {
+        let (mut rng, _) = Rng::fresh("a_class_never_holds_two_parameters_of_one_function");
+        let (mut draws, mut apart) = (0, 0);
+        for round in 0..4000 {
+            let (first, joins) = match round % 2 {
+                0 => random_joins(&mut rng),
+                // Functions of 2 to 4 parameters, more joins than parameters.
+                _ => {
+                    let mut first = vec![0];
+                    for _ in 0..2 + rng.below(8) {
+                        first.push(first.last().unwrap() + 2 + rng.below(3));
+                    }
+                    let nodes = *first.last().unwrap();
+                    let joins = (0..nodes + rng.below(2 * nodes))
+                        .map(|_| (rng.below(nodes), rng.below(nodes)))
+                        .collect();
+                    (first, joins)
+                }
+            };
+            if first.last() == Some(&0) {
+                continue;
+            }
+            let (root, joined) = unite(&first, &joins);
+            assert_eq!(
+                (root.clone(), joined),
+                unite_by_rule(&first, &joins),
+                "functions from {first:?}, joins {joins:?}"
+            );
+            assert_sound(&first, &joins, &root);
+            draws += 1;
+            apart += usize::from(root != unite_by_looking(&first, &joins).0);
+        }
+        // The biased draws must reach the case the rule exists for.
+        assert!(
+            apart > 0,
+            "no draw where the rule and the exact classes differ"
+        );
+        println!("{draws} draws, {apart} with classes other than the exact ones");
+    }
+
+    /// The joins of the XR-algos review's (Codex, round 1) case against the exact rule of
+    /// [`unite`]: `2k` heads, `k` functions of `k` parameters joined to the first `k` heads
+    /// and `k` more to the other `k`, a witness function of `2k` parameters joined to every
+    /// head, then each of the first `k` heads joined to each of the other `k`, every join
+    /// refused for the witness.
+    fn opposed_multi_owner_classes(k: usize) -> (Vec<usize>, Vec<(usize, usize)>) {
+        let mut first: Vec<usize> = (0..=2 * k).collect();
+        let mut joins = Vec::new();
+        for side in 0..2 {
+            for _ in 0..k {
+                let start = *first.last().expect("starts with 0");
+                first.push(start + k);
+                joins.extend((0..k).map(|i| (side * k + i, start + i)));
+            }
+        }
+        let witness = *first.last().expect("starts with 0");
+        first.push(witness + 2 * k);
+        joins.extend((0..2 * k).map(|i| (i, witness + i)));
+        for i in 0..k {
+            joins.extend((k..2 * k).map(|j| (i, j)));
+        }
+        (first, joins)
+    }
+
+    /// The shape of `bench::shared_function_joins` with every chain function of two parameters, the
+    /// second joined into one companion chain (from the XR-algos review, Gemini, round 1,
+    /// adversary 2A): `k` chains of `k` functions, a function of `k` parameters joined to each
+    /// chain's head, and each two heads joined.
+    fn chains_of_two_parameter_functions(k: usize) -> (Vec<usize>, Vec<(usize, usize)>) {
+        let mut first = vec![0];
+        let mut add = |p: usize| {
+            let at = *first.last().expect("starts with 0");
+            first.push(at + p);
+            at
+        };
+        let mut joins = Vec::new();
+        let mut heads = Vec::new();
+        let mut companion = add(1);
+        for _ in 0..k {
+            let mut prev = None;
+            for _ in 0..k {
+                let p = add(2);
+                match prev {
+                    None => heads.push(p),
+                    Some(q) => joins.push((q, p)),
+                }
+                joins.push((companion, p + 1));
+                companion = p + 1;
+                prev = Some(p);
+            }
+        }
+        let h = add(k);
+        joins.extend(heads.iter().enumerate().map(|(i, &c)| (h + i, c)));
+        for i in 0..k {
+            for j in (i + 1)..k {
+                joins.push((heads[i], heads[j]));
+            }
+        }
+        (first, joins)
+    }
+
+    /// The two fixtures of the benchmarks
+    /// `bench::many_multi_owner_functions_can_refuse_the_same_cross_pairs_scale` and
+    /// `bench::joins_refused_for_a_shared_function_over_chains_of_two_parameter_functions_scale`
+    /// at small sizes: [`unite`] follows its rule ([`unite_by_rule`]) and is sound; on the
+    /// first the classes are the exact ones (every cross join is refused for the witness either
+    /// way), and on the second the count of classes is printed beside the exact one.
+    #[test]
+    fn the_multi_owner_fixtures_follow_the_rule() {
+        for k in [1, 2, 3, 6] {
+            let (first, joins) = opposed_multi_owner_classes(k);
+            let (root, joined) = unite(&first, &joins);
+            assert_eq!(
+                (root.clone(), joined.clone()),
+                unite_by_rule(&first, &joins),
+                "k = {k}"
+            );
+            assert_sound(&first, &joins, &root);
+            assert_eq!((root, joined), unite_by_looking(&first, &joins), "k = {k}");
+            let (first, joins) = chains_of_two_parameter_functions(k);
+            let (root, joined) = unite(&first, &joins);
+            assert_eq!(
+                (root.clone(), joined),
+                unite_by_rule(&first, &joins),
+                "k = {k}"
+            );
+            assert_sound(&first, &joins, &root);
+            let classes = |r: &[usize]| r.iter().enumerate().filter(|&(v, &x)| v == x).count();
+            println!(
+                "chains, k = {k}: {} classes, {} exact",
+                classes(&root),
+                classes(&unite_by_looking(&first, &joins).0)
+            );
+        }
     }
 
     #[test]

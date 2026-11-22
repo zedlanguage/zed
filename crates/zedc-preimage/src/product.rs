@@ -6131,6 +6131,48 @@ fn chain_below(q: &[Int], p: &[Int]) -> bool {
     q.len() == p.len() && q.iter().zip(p).all(|(a, b)| a <= b)
 }
 
+/// The parts of one chain key that [`Block::fired_chains`] holds back for the least part of a
+/// sector query ([`Block::wake_uncertified_subset`], [`Scope::enqueue_uncert_in_case`]), and
+/// the least end over them at each place, so that [`HeldBack::certified_by`] reads in O(e) for
+/// e places whether one part's ends lie at or below all of theirs. A set, so that adding r
+/// parts costs O(r log m) for m held, not a sort of all m.
+#[derive(Clone, Debug, Default)]
+struct HeldBack {
+    parts: BTreeSet<PartAt>,
+    /// The least end at each place over `parts`; empty when `parts` is, or when two parts had
+    /// different numbers of places (never for one key, whose places are its atoms' ends,
+    /// [`chain_shape`]; kept so that such parts are certified by no part, as by
+    /// [`chain_below`], which compares only ends of one length).
+    least: Vec<Int>,
+}
+
+impl HeldBack {
+    /// Holds back `at`, whose ends are `ends`. O(e + log m).
+    fn hold(&mut self, ends: &[Int], at: PartAt) {
+        if self.parts.is_empty() {
+            self.least = ends.to_vec();
+        } else if self.least.len() == ends.len() {
+            for (l, e) in self.least.iter_mut().zip(ends) {
+                if e < l {
+                    *l = e.clone();
+                }
+            }
+        } else {
+            self.least.clear();
+        }
+        self.parts.insert(at);
+    }
+
+    /// Whether a part with ends `ends` lies at or below every part held back in every place
+    /// ([`chain_below`]), so that, found idle, it certifies them all. Proof: `ends` lies at or
+    /// below each held part's ends in every place exactly when it lies at or below their
+    /// least at each place, which is `least` (kept exact by [`HeldBack::hold`], and the parts
+    /// are only added to, never removed one by one). O(e).
+    fn certified_by(&self, ends: &[Int]) -> bool {
+        self.parts.is_empty() || (!self.least.is_empty() && chain_below(ends, &self.least))
+    }
+}
+
 /// The key of a disjunction under the direction certificate ([`Block::cone_certified`]): its
 /// names, sorted, and for each direction of [`cone_dirs`] over them whether some arm grows
 /// along it ([`cone_shape`]). Parts with one key are certified or refused together.
@@ -6491,7 +6533,7 @@ struct Block {
     /// whole chain, `Some(rest)` for only the remaining uncertified parts of a sector query);
     /// expanded in [`Scope::project_block`] only when that least part is neither idle before nor
     /// idle after its projection.
-    fired_chains: BTreeMap<Arc<Vec<ChainAtom>>, Option<Vec<PartAt>>>,
+    fired_chains: BTreeMap<Arc<Vec<ChainAtom>>, Option<HeldBack>>,
     /// Case-changed constraint groups ([`Block::reframe`]), woken in [`Scope::block`].
     case_groups: BTreeSet<BTreeSet<Factor>>,
     /// The entries of [`Block::bounds`] the two-name rule of [`Block::reframe`] projected for
@@ -7361,40 +7403,56 @@ impl Block {
         below.then(|| at.clone())
     }
 
-    /// The parts that `fired_chains[k]` (`subset`) held back and that a part `at` of chain key
-    /// `k`, with ends `ends`, found idle does not certify, or `None` when it certifies them all.
-    /// It certifies a part whose ends lie at or above its own ([`chain_below`]): it implies that
-    /// part, so the integer witnesses of its idleness are that part's too (as in
-    /// [`Scope::idle_by_chain`]). The least part of the chain certifies them all; another part
-    /// of it, dequeued first because some other wake made it due, may not: the parts left stay
-    /// held back for the part that woke them. `subset` `None` holds back every part of the key.
-    /// O(e log k) for e places when `at` is as low as [`Block::chain_least`]'s ends; otherwise
-    /// O(m e) for the m parts held back.
-    fn chain_left_by_idle(
+    /// Whether a part of chain key `k` with ends `ends`, found idle, certifies every part that
+    /// `fired_chains[k]` (`held`) holds back, so that the entry can go; `held` `None` holds back
+    /// every part of the key. It certifies a part whose ends lie at or above its own
+    /// ([`chain_below`]): it implies that part, so the integer witnesses of its idleness are
+    /// that part's too (as in [`Scope::idle_by_chain`]). For `None` the least end at each place
+    /// is read from `chain_ends` (O(e log k) for e places), for `Some` from
+    /// [`HeldBack::certified_by`] (O(e)).
+    ///
+    /// When it does not certify them all, the entry stays as it was, the parts it would certify
+    /// included, held back for the part that woke them. Proof that this loses no precision
+    /// against certifying them: a part left held is either certified later, when an idle part
+    /// lies below all held parts (as these parts lie above `ends`, the same verdict), or
+    /// queued with the rest when a part of the key is found not idle after its projection
+    /// ([`Scope::project_block`]), and then projected or certified on its own; or it stays
+    /// held to the end of the run, as a certified part would. So the parts projected are those
+    /// of before or more, each of them implied by an idle part only in the cases where before
+    /// they were dropped. Only in that queued case can the work differ, by one dequeue for
+    /// each such part, once per entry, as the queue holds a part at most once (`queued`).
+    // Complexity tradeoff: naive version (PERF-l139-chain-left), the parts held back filtered
+    // by each call, keeping those not at or above `ends`: O(m e) a call for m held parts, and,
+    // since every later call scans the kept parts again, O(D m e) for D idle dequeues of parts
+    // of one key while its entry lives, Θ(c^2) for a key of c parts in a run: a key with no
+    // least part (e >= 2), whose every part [`Block::wake_case_groups`] pushes, with a subset
+    // that [`Block::wake_uncertified_subset`] holds back; parts with ends (i, 2c - i) dequeued
+    // in turn each certify only the held parts (c + j, c + j) with j >= c - i (row
+    // PROOF-chain-left-held-back-bench, b22-research4, 2026-11-22;
+    // `tests::bench::held_back_parts_are_certified_in_constant_time_a_call` measures this
+    // sequence on the held sets). Used: certify all or none, O(e) a call (O(e log k) for
+    // `None`), so O(D e log k) over the run; the entry's parts are a set, O(r log m) to add r
+    // parts. Tradeoff: a part that a non-least idle part would certify, while another held
+    // part lies below it, is queued if a later part of the key is found not idle, the extra
+    // dequeue of the proof above; no l01_39 test reaches that (counted for the earlier version:
+    // 0 of 766). An exact report of the parts at or above `ends` would need a dominance
+    // structure over e places with deletion (a priority search tree for e = 2), not worth it
+    // for a case no test reaches.
+    fn certifies_held(
         &self,
         k: &Arc<Vec<ChainAtom>>,
-        at: &PartAt,
         ends: &[Int],
-        subset: Option<Vec<PartAt>>,
-    ) -> Option<Vec<PartAt>> {
-        let ends_of = |j: &PartAt| self.parts.get(j).and_then(|p| p.chain.as_ref());
-        let left: Vec<PartAt> = match subset {
-            None => {
-                if (self.chain_least(k).as_ref().and_then(ends_of))
-                    .is_some_and(|(_, least)| chain_below(ends, least))
-                {
-                    return None;
-                }
-                (self.chains.get(k).into_iter().flatten())
-                    .filter(|(e, j)| j != at && !chain_below(ends, e))
-                    .map(|(_, j)| j.clone())
-                    .collect()
-            }
-            Some(rest) => (rest.into_iter())
-                .filter(|j| j != at && ends_of(j).is_none_or(|(_, e)| !chain_below(ends, e)))
-                .collect(),
-        };
-        (!left.is_empty()).then_some(left)
+        held: Option<&HeldBack>,
+    ) -> bool {
+        match held {
+            // A key with no parts left holds nothing back.
+            None => self.chain_ends.get(k).is_none_or(|places| {
+                places.len() == ends.len()
+                    && (ends.iter().zip(places))
+                        .all(|(e, place)| place.get_min().is_none_or(|(m, _)| e <= m))
+            }),
+            Some(h) => h.certified_by(ends),
+        }
     }
     /// Returns only the parts of `recession[rkey]` that neither the recession-direction
     /// certificate ([`Block::recession_cone_uncertified`]) nor the bounded-box face certificate
@@ -7949,18 +8007,15 @@ impl Block {
                 .all(|(e, _)| chain_below(&members[0].0, e));
             if below_all {
                 let least = members[0].1.clone();
-                let rest: Vec<PartAt> = members.into_iter().skip(1).map(|(_, at)| at).collect();
                 self.fired.insert(least.clone());
-                match self.fired_chains.entry(ck) {
-                    std::collections::btree_map::Entry::Vacant(v) => {
-                        v.insert(Some(rest));
-                    }
-                    std::collections::btree_map::Entry::Occupied(mut o) => {
-                        if let Some(existing) = o.get_mut() {
-                            existing.extend(rest);
-                            existing.sort();
-                            existing.dedup_by(|a, b| a.0 == b.0 && a.1.cmp(&b.1).is_eq());
-                        }
+                // An entry `None` already holds back every part of the key.
+                if let Some(held) = self
+                    .fired_chains
+                    .entry(ck)
+                    .or_insert_with(|| Some(HeldBack::default()))
+                {
+                    for (ends, at) in members.into_iter().skip(1) {
+                        held.hold(&ends, at);
                     }
                 }
                 due.push(least);
@@ -9218,7 +9273,8 @@ impl Block {
                 // that a projection of Q changes nothing is one for P too, whatever certificate
                 // gives it (`idle`, the half-line or the puncture certificate). (1) Q certified
                 // idle before its projection: P is idle too, and `Scope::project_block` drops
-                // only the parts at or above Q's ends ([`Block::chain_left_by_idle`]). (2) Q not
+                // the parts held back only when all lie at or above Q's ends
+                // ([`Block::certifies_held`]). (2) Q not
                 // idle after its projection: every part held back is queued. (3) Q managed (a
                 // stair or ray aggregate): `managed` needs `aggregable`, which holds only when
                 // no part of the block has role `Other` (`Role::of`). `Stair` and `Upper` are
@@ -16507,7 +16563,7 @@ impl Scope {
     // the loop's start, and M = 3N + 1.
     // (a) A chain push (a part of chain key `k` found not idle after its projection pushes the
     // rest of its chain) removes the entry `fired_chains[k]` and puts none back; the idle
-    // branches remove it and put back at most one (`chain_left_by_idle`), pushing nothing.
+    // branches remove it or leave it as it was (`certifies_held`), pushing nothing.
     // In the loop an entry is created only by `enqueue_chain_in_case`, at a move of a name
     // other than the leaf (it is called only below the leaf's `continue`). So the chain pushes
     // are at most F0 + 3 Σ_n C(n) batches, `C(n)` the chain keys a move of `n` reaches, each of
@@ -16846,13 +16902,14 @@ impl Scope {
                 && (self.part_halfline_idle(&b, part, &mut halfline_ctx)
                     || self.idle_by_chain(&b, &i, part, &mut certified, &mut certified_chains))
             {
-                // Idle, it certifies the held-back parts of its chain at or above its ends; the
-                // others stay held back ([`Block::chain_left_by_idle`]).
+                // Idle, it certifies the held-back parts of its chain when its ends lie at or
+                // below all of theirs; otherwise they all stay held back
+                // ([`Block::certifies_held`], which proves that this loses no precision).
                 if let Some((k, ends)) = &part.chain
-                    && let Some(subset) = b.fired_chains.remove(k)
-                    && let Some(left) = b.chain_left_by_idle(k, &i, ends, subset)
+                    && let Some(held) = b.fired_chains.get(k)
+                    && b.certifies_held(k, ends, held.as_ref())
                 {
-                    b.fired_chains.insert(k.clone(), Some(left));
+                    b.fired_chains.remove(k);
                 }
                 continue;
             }
@@ -16886,16 +16943,19 @@ impl Scope {
             // subsumption (`Q` implies `P`) certifies every higher member without queueing it;
             // when a sector query reported only a subset (`Some(rest)`), expand only `rest`.
             // The part here need not be the least: another wake can make a higher part due
-            // and dequeue it first. Idle, it certifies only the parts at or above its ends
-            // ([`Block::chain_left_by_idle`]); the others stay held back for the least part.
-            // Before (l139b), it dropped them, a loss of precision only, since each such part
-            // is implied by the least part, which was projected too; no test input of l01_39
-            // reached it (counted, temporary probe: 0 in 766 tests).
+            // and dequeue it first. Idle, it certifies the parts held back only when its ends
+            // lie at or below all of theirs; otherwise all stay held back for the least part
+            // ([`Block::certifies_held`]). Before (l139b), it dropped them, a loss of
+            // precision only, since each such part is implied by the least part, which was
+            // projected too; no test input of l01_39 reached it (counted, temporary probe: 0
+            // in 766 tests).
             if let Some((k, c_ends)) = &part.chain
                 && let Some(subset) = b.fired_chains.remove(k)
             {
+                // The held parts are distinct (a set), so at most one is this part, and one of
+                // the first two is another exactly when one is: O(1), not a scan of all m.
                 let has_other = match &subset {
-                    Some(rest) => rest.iter().any(|j| j != &i),
+                    Some(rest) => rest.parts.iter().take(2).any(|j| j != &i),
                     None => b.chains.get(k).is_some_and(|m| m.len() > 1),
                 };
                 // Complexity tradeoff: naive version, `idle` (an elimination, about 0.38M
@@ -16924,13 +16984,13 @@ impl Scope {
                     certified.insert(i.clone(), now_idle);
                     if now_idle {
                         certified_chains.insert(k.clone(), c_ends.clone());
-                        if let Some(left) = b.chain_left_by_idle(k, &i, c_ends, subset) {
-                            b.fired_chains.insert(k.clone(), Some(left));
+                        if !b.certifies_held(k, c_ends, subset.as_ref()) {
+                            b.fired_chains.insert(k.clone(), subset);
                         }
                     } else {
                         match subset {
                             Some(rest) => {
-                                for j in rest {
+                                for j in rest.parts {
                                     if j != i && queued.insert(j.clone()) {
                                         work.push_back(j);
                                     }
@@ -17382,17 +17442,12 @@ impl Scope {
                         }
                     }
                 } else {
-                    let rest: Vec<PartAt> = members.into_iter().skip(1).map(|(_, j)| j).collect();
-                    match b.fired_chains.entry(ck) {
-                        std::collections::btree_map::Entry::Vacant(v) => {
-                            v.insert(Some(rest));
-                        }
-                        std::collections::btree_map::Entry::Occupied(mut o) => {
-                            if let Some(existing) = o.get_mut() {
-                                existing.extend(rest);
-                                existing.sort();
-                                existing.dedup_by(|x, y| x.0 == y.0 && x.1.cmp(&y.1).is_eq());
-                            }
+                    // An entry `None` already holds back every part of the key.
+                    if let Some(held) =
+                        (b.fired_chains.entry(ck)).or_insert_with(|| Some(HeldBack::default()))
+                    {
+                        for (ends, j) in members.into_iter().skip(1) {
+                            held.hold(&ends, j);
                         }
                     }
                     if queued.insert(least_at.clone()) {
@@ -29727,6 +29782,59 @@ mod tests {
             );
         }
         (asked, joins)
+    }
+
+    /// A part with ends `ends`, numbered `n` so that parts differ.
+    fn held_part(n: i64) -> PartAt {
+        let x = Lin::atom(Atom::Sym("x".into()));
+        (
+            false,
+            Arc::new(Formula::Con(Con::ge(&x, &Lin::constant(n)))),
+        )
+    }
+
+    /// [`HeldBack::certified_by`] answers as the scan it replaces (row
+    /// PROOF-chain-left-held-back-bench): whether `ends` lie at or below the ends of every part
+    /// held back ([`chain_below`]), for every set of at most three parts with ends in
+    /// {0, 1, 2}^e, e = 1, 2, and every query in that box; and no part certifies parts of
+    /// different numbers of places, as `chain_below` compares only ends of one length.
+    #[test]
+    fn held_back_parts_are_certified_as_by_the_scan() {
+        for e in 1..=2u32 {
+            let points: Vec<Vec<Int>> = (0..3i64.pow(e))
+                .map(|c| (0..e).map(|p| Int::from((c / 3i64.pow(p)) % 3)).collect())
+                .collect();
+            let n = points.len();
+            let mut sets: Vec<Vec<usize>> = vec![vec![]];
+            for a in 0..n {
+                sets.push(vec![a]);
+                for b in a..n {
+                    sets.push(vec![a, b]);
+                    for c in b..n {
+                        sets.push(vec![a, b, c]);
+                    }
+                }
+            }
+            for set in &sets {
+                let mut held = HeldBack::default();
+                for &a in set {
+                    held.hold(&points[a], held_part(a as i64));
+                }
+                for q in &points {
+                    let scan = set.iter().all(|&a| chain_below(q, &points[a]));
+                    assert_eq!(
+                        held.certified_by(q),
+                        scan,
+                        "e {e}, held {set:?}, query {q:?}"
+                    );
+                }
+            }
+        }
+        let mut mixed = HeldBack::default();
+        mixed.hold(&[Int::from(1), Int::from(1)], held_part(0));
+        mixed.hold(&[Int::from(1)], held_part(1));
+        assert!(!mixed.certified_by(&[Int::from(0), Int::from(0)]));
+        assert!(!mixed.certified_by(&[Int::from(0)]));
     }
 }
 

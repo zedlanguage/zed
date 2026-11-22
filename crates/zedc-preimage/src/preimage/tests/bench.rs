@@ -192,6 +192,50 @@ fn joins_refused_between_the_parameters_of_one_wide_function_scale() {
     );
 }
 
+/// The joins of [`opposed_multi_owner_classes`] at `k` = 64 and 181, about `2k²` parameters
+/// (8.0 times). The exact rule looked through a class of `k + 1` functions at each of the `k²`
+/// cross refusals, `n^1.5` (Codex, XR-algos round 1: 16.5 times); [`unite`]'s rule refuses each
+/// in O(1), since both classes hold two or more functions of two or more parameters.
+#[test]
+fn many_multi_owner_functions_can_refuse_the_same_cross_pairs_scale() {
+    let (small, large) = (
+        opposed_multi_owner_classes(64),
+        opposed_multi_owner_classes(181),
+    );
+    crate::scaling::compare(
+        "multi-owner classes, k = 64 and 181",
+        1,
+        || {
+            std::hint::black_box(unite(&small.0, &small.1));
+        },
+        || {
+            std::hint::black_box(unite(&large.0, &large.1));
+        },
+    );
+}
+
+/// The joins of [`chains_of_two_parameter_functions`] at `k` = 120 and 340, about `2k²`
+/// parameters (8.0 times). The exact rule took 15.2 times the instructions (Gemini, XR-algos
+/// round 1, adversary 2A, on b65fc8f5f, 2026-11-22): each of the `k(k - 1)/2` joins of two
+/// heads looked through a class of `k + 1` functions.
+#[test]
+fn joins_refused_for_a_shared_function_over_chains_of_two_parameter_functions_scale() {
+    let (small, large) = (
+        chains_of_two_parameter_functions(120),
+        chains_of_two_parameter_functions(340),
+    );
+    crate::scaling::compare(
+        "k chains of k two-parameter functions sharing one function, k = 120 and 340",
+        1,
+        || {
+            std::hint::black_box(unite(&small.0, &small.1));
+        },
+        || {
+            std::hint::black_box(unite(&large.0, &large.1));
+        },
+    );
+}
+
 /// [`Gen::chain`] makes a chain of `n` `if`s in work of order `n`: each level reads the
 /// one term below it, shared, so neither the work nor the term doubles at a level.
 #[test]
