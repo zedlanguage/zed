@@ -358,7 +358,7 @@ fn a_file_an_include_names_is_reached_not_read() {
     ]);
     assert_eq!(g.included, ["a.rs:2"]);
     assert_eq!(g.undeclared, 2, "{:?}", g.files);
-    assert!(g.files.contains(&"a/list.rs".to_string()), "{:?}", g.files);
+    assert!(g.files.iter().any(|f| f == "a/list.rs"), "{:?}", g.files);
     assert!(edges(&g).is_empty(), "{:?}", edges(&g));
 }
 
