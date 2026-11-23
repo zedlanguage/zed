@@ -111,11 +111,16 @@ fn a_derivation_step_shows_the_negative_literal_as_written() {
         out.contains("  [2] 2:7: this literal, -3, is -3\n"),
         "{out}"
     );
+    // The literal that keeps the `+` from `int` is named, as in a body (MSG-f32-body-top-agree).
+    assert!(
+        out.contains("  [4] 2:12: the literal 1.5 takes f32 | f64 | rat\n"),
+        "{out}"
+    );
     // The line is shown once, under its first step; the literal's underline is labeled [2].
     assert!(
         out.contains(
             "      2 | y = f(-3 + 1.5);
-        |     ^^^^^^^^^^^ [4]
+        |     ^^^^^^^^^^^ [5]
         |       ^^ [2]
 "
         ),
