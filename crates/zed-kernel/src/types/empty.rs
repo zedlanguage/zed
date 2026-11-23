@@ -4657,9 +4657,7 @@ impl HeightWalk<'_> {
     /// Numbers `node`, met for the first time.
     fn visit(&mut self, node: HeightNode) -> usize {
         let n = self.nodes.len();
-        let cs: Vec<HeightNode> = (Heights::height_children(&node).into_iter())
-            .filter(|c| !self.heights.has_bounds(c))
-            .collect();
+        let cs = self.heights.height_children(&node);
         self.looped.push(cs.contains(&node));
         self.number.insert(node.clone(), n);
         self.nodes.push(node);
@@ -4752,13 +4750,6 @@ impl Heights {
         }
     }
 
-    fn has_bounds(&self, node: &HeightNode) -> bool {
-        match node {
-            HeightNode::Type(t) => self.bounds.contains_key(t),
-            HeightNode::Payloads(n) => self.payload_bounds.contains_key(&n.id()),
-        }
-    }
-
     /// A lower bound on the height ([`Search::value_height`]) of every value of `root`, `u64::MAX`
     /// when `root` has none: the height of the shortest derivation of `root` in the grammar whose
     /// rules are, for each type, a scalar, a bare atom, a struct or a closure it may hold (height
@@ -4794,6 +4785,18 @@ impl Heights {
     // Naive alternatives: iterating all `p.atoms.payloads()` per type costs `Theta(n^2 log n)`
     // time and `Theta(n^2)` bytes on `r11_payload_name_prefixes_must_scale`; iterating the
     // equations to a fixpoint from 0 has no bound on rounds when a cycle derives nothing.
+    // Complexity tradeoff (PERF-refusals-old-size): the rows of a tuple part are read by
+    // `Part::atoms`, each diagram node once, and a row whose components are all settled is
+    // read in place, its value the least of such rows pushed once; a row is kept as a rule only
+    // when a component is not settled yet. Proof that this settles the same heights: a rule
+    // with no child waiting is ready with its `base` at once, and of the ready values of one
+    // node the heap pops the least first and drops the others (`height[n]` is set), so pushing
+    // the least alone changes nothing; a row read twice (on two nodes) is a second copy of a
+    // rule, and the least of equal values is the same. Naive version: every distinct row
+    // (`distinct_atoms`, a table of all rows) made a rule of copied components and a heap entry:
+    // 395M instructions of `least_height_node` at `fork_by` 512 against 18.4M at 64, 21 times
+    // for 8 times the size, as the parts read there hold 141,822 rows in all against 3,390 at
+    // 64 (about n parts of n / 2 + 1 rows, a list type's payload for each class of the fork).
     #[cfg(test)]
     fn least_height(&mut self, t: &Type) -> u64 {
         self.least_height_node(&HeightNode::Type(t.clone()))
@@ -4850,14 +4853,27 @@ impl Heights {
                         if f.is_leaf() == Some(false) {
                             continue;
                         }
-                        if f.eval3(&|_| Some(false)) == Some(false) {
-                            children.extend(
-                                f.distinct_atoms().iter().map(|r| {
-                                    (1, r.iter().cloned().map(HeightNode::Type).collect())
-                                }),
-                            );
-                        } else {
+                        if f.eval3(&|_| Some(false)) != Some(false) {
                             ready.push((1, n));
+                            continue;
+                        }
+                        // A row whose components are all settled is a rule ready at once, of
+                        // one more than their highest; of these only the least can settle
+                        // `n`, so it alone is pushed. The others become rules.
+                        let mut least = u64::MAX;
+                        f.atoms(&mut |r| {
+                            let settled = r.iter().try_fold(1u64, |m, c| {
+                                (self.least.get(c)).map(|&h| m.max(h.saturating_add(1)))
+                            });
+                            match settled {
+                                Some(h) => least = least.min(h),
+                                None => children
+                                    .push((1, r.iter().cloned().map(HeightNode::Type).collect())),
+                            }
+                            true
+                        });
+                        if least != u64::MAX {
+                            ready.push((least, n));
                         }
                     }
                 }
@@ -4929,32 +4945,53 @@ impl Heights {
 
     /// The nodes whose values' heights bound those of `node`'s values: for a `Type`, its shared
     /// [`super::atoms::PayloadNode`] root (if any) and each component of each tuple type of each
-    /// tuple part; for a `PayloadNode`, its payload type and its left and right subtrees.
+    /// tuple part; for a `PayloadNode`, its payload type and its left and right subtrees; of
+    /// these, the ones not bounded yet.
     // Complexity tradeoff (R11-C3): reading `p.atoms.payloads()` flat per type cost
     // `Theta(n^2 log n)` time and `Theta(n^2)` bytes on `r11_payload_name_prefixes_must_scale`.
     // Stepping through the persistent `PayloadNode` tree gives `O(1)` children per node and
     // visits each shared tree node once across all prefix types (`O(n log n)`).
-    fn height_children(node: &HeightNode) -> Vec<HeightNode> {
+    // The rows are read by `Part::atoms`, each diagram node once, and a component already
+    // bounded is passed over before it is copied, so a type whose components are all bounded
+    // costs one lookup a component and no copy. A row on two nodes gives its components twice,
+    // which the walk reads as one (`HeightWalk::next` finds the node numbered).
+    // Complexity tradeoff: `distinct_atoms` drops the repeated rows but hashes every row into a
+    // table first, and every component was copied before the filter: 77M and 70M instructions
+    // of `visit` at `fork_by` 512 (PERF-refusals-old-size), whose parts hold 141,822 rows in
+    // all, read again by `least_height_node`.
+    fn height_children(&self, node: &HeightNode) -> Vec<HeightNode> {
         let mut out: Vec<HeightNode> = Vec::new();
+        let ty = |out: &mut Vec<HeightNode>, c: &Type| {
+            if !self.bounds.contains_key(c) {
+                out.push(HeightNode::Type(c.clone()));
+            }
+        };
+        let payloads = |out: &mut Vec<HeightNode>,
+                        u: &std::sync::Arc<super::atoms::PayloadNode>| {
+            if !self.payload_bounds.contains_key(&u.id()) {
+                out.push(HeightNode::Payloads(u.clone()));
+            }
+        };
         match node {
             HeightNode::Type(t) => {
                 let p = t.p();
                 if let Some(pr) = p.atoms.payload_dag() {
-                    out.push(HeightNode::Payloads(pr.clone()));
+                    payloads(&mut out, pr);
                 }
                 for f in p.tuples.lens.values() {
-                    for row in f.distinct_atoms() {
-                        out.extend(row.iter().cloned().map(HeightNode::Type));
-                    }
+                    f.atoms(&mut |row| {
+                        row.iter().for_each(|c| ty(&mut out, c));
+                        true
+                    });
                 }
             }
             HeightNode::Payloads(u) => {
-                out.push(HeightNode::Type(u.payload().clone()));
+                ty(&mut out, u.payload());
                 if let Some(l) = u.left() {
-                    out.push(HeightNode::Payloads(l.clone()));
+                    payloads(&mut out, l);
                 }
                 if let Some(r) = u.right() {
-                    out.push(HeightNode::Payloads(r.clone()));
+                    payloads(&mut out, r);
                 }
             }
         }
@@ -5210,27 +5247,26 @@ impl Heights {
         };
         match f.view() {
             Ok(b) => {
-                let list = b.list();
                 let mut refused = top;
-                let mut alive = true;
-                'blocks: for (value, lits) in &list.blocks {
-                    for (a, taken) in lits {
-                        if *value {
-                            if !*taken {
-                                join(&refused);
-                                continue;
-                            }
-                            let mut v = refused.clone();
-                            if meet(&mut v, a, &self.bounds) {
-                                join(&v);
-                            }
-                        } else if !*taken && !meet(&mut refused, a, &self.bounds) {
-                            alive = false;
-                            break 'blocks;
+                // One vector for every taken literal's meet, refilled from `refused`.
+                let mut v = Vec::with_capacity(len);
+                let tail = b.each_literal(&mut |value, a, taken| {
+                    if value {
+                        if !taken {
+                            join(&refused);
+                            return true;
                         }
+                        v.clear();
+                        v.extend_from_slice(&refused);
+                        if meet(&mut v, a, &self.bounds) {
+                            join(&v);
+                        }
+                        true
+                    } else {
+                        taken || meet(&mut refused, a, &self.bounds)
                     }
-                }
-                if alive && list.tail {
+                });
+                if tail == Some(true) {
                     join(&refused);
                 }
             }

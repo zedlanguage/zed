@@ -2503,6 +2503,13 @@ impl<A: Literal> Part<A> {
 
     /// Each distinct atom once, in the order first met. One atom can stand on several nodes,
     /// and a caller that tests or splits on each atom must meet it once.
+    // The digest is the atom's `name_digest`, not its name-free `digest` (PERF-refusals-old-size,
+    // 2026-11-23): copies of one form under other names, such as the rows `(tuple L_1 P0_1)` and
+    // `(tuple L_3 P0_3)` of `fork_by` (l01_23 refusals bench), share the name-free digest and are
+    // distinct atoms, so every part listing them filled one ordered bucket of deep `Row::cmp`
+    // comparisons (460 M of 552 M instructions at n = 512, b22-kernelb5's callgrind). Equal atoms
+    // have equal name digests outside `hash::blind` (the proof at `Hash for Row`, types.rs, and
+    // at `Hash for Type`), so the filing stays exact; inside it the name-free digest is kept.
     // Complexity tradeoff: the atoms met are filed by digest. A digest met with one atom keeps
     // that atom alone, so an atom whose digest no other atom has costs O(1) expected; a digest
     // met with a second distinct atom keeps an ordered set of its atoms, so a class of k atoms
@@ -2532,7 +2539,13 @@ impl<A: Literal> Part<A> {
         let mut by_digest: DigestMap<u64, Bucket<'_, A>> = DigestMap::default();
         let mut atoms = Vec::new();
         self.atoms(&mut |a| {
-            let new = match by_digest.entry(a.digest()) {
+            // While `hash::blind` runs, the order leaves names out (`named_cmp`), so renamed
+            // copies are equal and only the name-free digest files them alike.
+            let key = match super::hash::names_blind() {
+                true => a.digest(),
+                false => a.name_digest(),
+            };
+            let new = match by_digest.entry(key) {
                 Entry::Vacant(e) => {
                     e.insert(Bucket::One(a));
                     true
@@ -4366,6 +4379,27 @@ mod list {
                 Bdd::Leaf(_) => None,
                 Bdd::List(c, _) => Some(c.first()),
             }
+        }
+
+        /// The literals of [`Bdd::list`] in its order, each with its block's value, without
+        /// building the list: `f(value, atom, taken)` for each literal until `f` returns
+        /// `false`; then `None`, else `Some` of the tail ([`Bdd::default`]).
+        // Complexity tradeoff: O(the literals) steps and O(log of the blocks and of each block)
+        // words of stack, where `list` copies every literal into vectors (PERF-refusals-old-size:
+        // 20.9M instructions of `list` and 53M of copying and dropping them at `fork_by` 512,
+        // 4,097 lists read once each by `Heights::part_heights`).
+        pub(in crate::types) fn each_literal(
+            &self,
+            f: &mut impl FnMut(bool, &A, bool) -> bool,
+        ) -> Option<bool> {
+            for (v, c) in self.cells() {
+                for (a, taken) in set::iter(Some(&c.block)) {
+                    if !f(v, a, *taken) {
+                        return None;
+                    }
+                }
+            }
+            Some(self.default())
         }
 
         /// The decision list in its one form (module comment).

@@ -129,13 +129,36 @@ fn pairs_less_many_excluded_pairs_are_decided_in_their_size() {
     // GROUP-order-fork-cuts-together: the type is Empty at every n of 2 or more (see
     // `pairs_less_many_excluded_pairs_are_empty`), and the fork is now held by the union of its
     // cuts, so the bench times the decision.
+    // PERF-refusals-old-size: the verdict alone is timed, the type built outside the run
+    // (`check_order_fresh`); b22-kernel7 measured 11.79 times the instructions from 64 to 512.
+    // b22-kernel8 (2026-11-23, callgrind on l41): the heights walk read each tuple part's rows
+    // three times through tables and copies (`Heights::least_height_node`, `height_children`,
+    // `part_heights`), 805M of the 2,720M instructions at 512, 18.9 times its 42.6M at 64; read
+    // in place it is 412M and 31.9M, and the verdict 223.8M and 2,333.6M, 10.43 times. This
+    // bench at 64 and 512 (zed_icount on l41): 10.75 times the instructions (207.8M and
+    // 2,234M) and 9.28 the bytes, against 13.47 and 11.3 on d587af551, so it stays at its
+    // old size 8. Not at the 1 s size the bench file asks for: by time on l41 the
+    // verdict takes 0.33, 0.78, 2.06, 6.32 and 22.0 s at n 256 to 4096, 28 times from 512 to
+    // 4096, and 79 MB to 1.32 GB. What grows: about n list types are made, one for each class
+    // of the split on the first component (`Searching::split_classes`), whose payload part
+    // `(int, L) & (int, P_k for the k of one parity but j) & !(int, P_j)` has about n / 2 rows,
+    // n^2 / 4 rows in all (3,390 rows read at 64, 141,822 at 512, traced in
+    // `least_height_node`); not proved, the likely cause is that a row `(l - only_k, parity_k)`
+    // meets the class of every `only_i` with `i != k`, so every piece keeps about n rows.
     big(|| {
         let tag = AtomicUsize::new(0);
-        scaling::check("Fork held by its cuts, by n excluded pairs", 8, |n| {
-            Type::forget_emptiness();
-            let tag = format!("_rsfb{}", tag.fetch_add(1, Relaxed));
-            assert_eq!(fork_by(n, &tag).verdict(), Verdict::Empty, "at {n}");
-        })
+        let make = |n: usize, _| fork_by(n, &format!("_rsfb{}", tag.fetch_add(1, Relaxed)));
+        scaling::check_order_fresh(
+            "Fork held by its cuts, by n excluded pairs",
+            8,
+            1,
+            make,
+            |n, t: Type| {
+                Type::forget_emptiness();
+                assert_eq!(t.verdict(), Verdict::Empty, "at {n}");
+                t
+            },
+        );
     });
 }
 

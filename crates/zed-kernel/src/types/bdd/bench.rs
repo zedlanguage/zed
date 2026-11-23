@@ -846,6 +846,12 @@ fn distinct_atoms_of_one_digest_scales() {
     let n = 1 << 11;
     let unions = scaling::inputs(n, |m| {
         let rows = super::set::tests::rows_of_one_digest(m);
+        // `distinct_atoms` files rows by `name_digest` (PERF-refusals-old-size): the rows must
+        // tie there too, or this would measure no tie.
+        assert!(
+            rows.iter()
+                .all(|r| r.name_digest() == rows[0].name_digest())
+        );
         let mut level: Vec<Part<Row>> = rows.into_iter().map(Part::literal).collect();
         while level.len() > 1 {
             let mut next = Vec::with_capacity(level.len().div_ceil(2));

@@ -68,59 +68,95 @@ fn the_forest_of_atoms_of_wide_and_small_integers_scales() {
 /// 10.5 only from n = 777 (COMPLEXITY.md, the scaling limit), so the sizes are 1024 and 8192:
 /// at 128 and 1024 the tied variant measured 11.50 times the instructions (callgrind:
 /// `BigInt::cmp` 12.05 times, against 8 ln 2048 / ln 256 = 11.0 for the bucket), 8.28 untied.
+/// The operation count that bounds the tied ratio at 1024 by 10.18 is at `decide_counted`
+/// (escape.rs, PROOF-escape-tied-log-only); `the_big_heads_family_reads_its_cells_in_its_size`
+/// checks the cell count it starts from.
 #[test]
 fn the_escape_decision_on_lists_of_big_integers_scales() {
     use crate::scaling;
     use crate::types::Type;
-    use crate::types::rec::{Def, Expr as RecExpr, Group};
 
     let n = 1024;
     for tied in [false, true] {
-        let types = scaling::inputs(n, |m| {
-            let step: BigInt = match tied {
-                true => (BigInt::from(1u8) << 61u32) - 1u8,
-                false => BigInt::from(1u8),
-            };
-            let base: BigInt = BigInt::from(1u8) << 64u32;
-            let big = |k: usize| {
-                Type::lit(&Value::int(&base + &step * (k as u64 + 1))).expect("a literal")
-            };
-            let anchor = big(m + 2);
-            let nil = || RecExpr::Type(Type::atom("nil"));
-            let cons = |h: RecExpr, next: RecExpr| RecExpr::Atom("cons".into(), vec![h, next]);
-            let mut defs = vec![Def {
-                name: "Ints".into(),
-                params: vec![],
-                body: RecExpr::Union(vec![
-                    nil(),
-                    cons(RecExpr::Type(Type::int()), RecExpr::Ref(0, vec![])),
-                ]),
-            }];
-            for e in 1..=m {
-                let head = &Type::int() - &if e == 1 { anchor.clone() } else { big(e) };
-                defs.push(Def {
-                    name: format!("Avoid{e}"),
-                    params: vec![],
-                    body: cons(RecExpr::Type(head), RecExpr::Ref(e - 1, vec![])),
-                });
-            }
-            let mut list = nil();
-            for j in (1..=m).rev() {
-                list = cons(RecExpr::Type(&big(j) | &anchor), list);
-            }
-            defs.push(Def {
-                name: "Heads".into(),
-                params: vec![],
-                body: list,
-            });
-            let ts = Group::new(defs).expect("a group").instance(vec![]);
-            let avoided = (2..=m).fold(Type::empty(), |u, d| &u | &ts[d]);
-            &ts[m + 1] - &avoided
-        });
+        let types = scaling::inputs(n, |m| big_heads(m, tied));
         let what = format!("the escape decision on lists of big integers (tied: {tied}), by heads");
         scaling::check(&what, n, |m| {
             Type::forget_emptiness();
             assert!(!types[&m].is_empty());
         });
+    }
+}
+
+/// The family of [`the_escape_decision_on_lists_of_big_integers_scales`] at `m` cons cells:
+/// `Heads \ (Avoid_2 | ... | Avoid_m)`, heads `b_j = 2^64 + j s` with `s = 2^61 - 1` when
+/// `tied` (one residue mod `2^61 - 1`, so one hash) and `s = 1` otherwise, and `anchor = b_(m+1)`.
+fn big_heads(m: usize, tied: bool) -> crate::types::Type {
+    use crate::types::Type;
+    use crate::types::rec::{Def, Expr as RecExpr, Group};
+
+    let step: BigInt = match tied {
+        true => (BigInt::from(1u8) << 61u32) - 1u8,
+        false => BigInt::from(1u8),
+    };
+    let base: BigInt = BigInt::from(1u8) << 64u32;
+    let big = |k: usize| Type::lit(&Value::int(&base + &step * (k as u64 + 1))).expect("a literal");
+    let anchor = big(m + 2);
+    let nil = || RecExpr::Type(Type::atom("nil"));
+    let cons = |h: RecExpr, next: RecExpr| RecExpr::Atom("cons".into(), vec![h, next]);
+    let mut defs = vec![Def {
+        name: "Ints".into(),
+        params: vec![],
+        body: RecExpr::Union(vec![
+            nil(),
+            cons(RecExpr::Type(Type::int()), RecExpr::Ref(0, vec![])),
+        ]),
+    }];
+    for e in 1..=m {
+        let head = &Type::int() - &if e == 1 { anchor.clone() } else { big(e) };
+        defs.push(Def {
+            name: format!("Avoid{e}"),
+            params: vec![],
+            body: cons(RecExpr::Type(head), RecExpr::Ref(e - 1, vec![])),
+        });
+    }
+    let mut list = nil();
+    for j in (1..=m).rev() {
+        list = cons(RecExpr::Type(&big(j) | &anchor), list);
+    }
+    defs.push(Def {
+        name: "Heads".into(),
+        params: vec![],
+        body: list,
+    });
+    let ts = Group::new(defs).expect("a group").instance(vec![]);
+    let avoided = (2..=m).fold(Type::empty(), |u, d| &u | &ts[d]);
+    &ts[m + 1] - &avoided
+}
+
+/// PROOF-escape-tied-log-only: the first step of the count at `decide_counted`. The escape
+/// decision decides the family (the search is not reached), and the cells it reads, tied or not,
+/// are the same number, linear in `m`: refused row `e` (`Avoid_e`) meets `Heads` in the atom
+/// `{anchor}` at place `e` and, when `e` is odd, in `{b_j}` at place `j = (e + 1) / 2`, so
+/// `(m - 1) + (m - 1) / 2` cells, none empty. The count holds from `m = 12`: a sweep of every m
+/// from 2 to 160, tied and untied (b22-kernel8, 2026-11-23), found it at 2, 3 and each m from 12
+/// to 160, and not at each m from 4 to 11, where a window prices the pair listing's method A
+/// cheaper and A reads empty cells too ((6, 2) at 4, (19, 9) at 8, (22, 7) at 11). So the sizes
+/// are the first two from 12, two between, and the bench's 1024. A pin of the proof's premise.
+#[test]
+fn the_big_heads_family_reads_its_cells_in_its_size() {
+    for m in [12usize, 13, 64, 160, 1024] {
+        let counts: Vec<(usize, usize)> = [false, true]
+            .into_iter()
+            .map(|tied| {
+                let t = big_heads(m, tied);
+                assert!(
+                    matches!(super::decide(&t), Some(super::ChainPlan::Inhabited { .. })),
+                    "m = {m}, tied: {tied}"
+                );
+                super::cell_counts(&t)
+            })
+            .collect();
+        assert_eq!(counts[0], counts[1], "m = {m}: tied and untied read alike");
+        assert_eq!(counts[0], ((m - 1) + (m - 1) / 2, 0), "m = {m}");
     }
 }

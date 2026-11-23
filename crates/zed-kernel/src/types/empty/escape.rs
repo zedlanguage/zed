@@ -643,6 +643,78 @@ pub(super) fn cell_counts(t: &Type) -> (usize, usize) {
     counts
 }
 
+// The operation count of the tied family (PROOF-escape-tied-log-only, 2026-11-23). The bench
+// `the_escape_decision_on_lists_of_big_integers_scales` (escape/bench.rs) decides
+// `Heads \ (Avoid_2 | ... | Avoid_m)`, place `j` of `Heads` holding `p_j = {b_j, anchor}`, and
+// `Avoid_e` refusing `b_(e-k+1)` at place `k < e` and `anchor` at place `e`. Tied, every `b_j` is
+// one residue mod `2^61 - 1`, so `Hash for Value` writes one word for all of them and every type
+// `{b_j, anchor}` and `int \ {b_e}` has one `name_digest`. Claim: the work is at most
+// `a m + b m log2 m` operations of `O(1)` cost, tied or not; untied, `b` is 0 on steps 1, 2, 3
+// and 5. Then the ratio at `8m` is at most `8 log2(8m) / log2 m`, 10.4 at `m = 1024` (the sizes
+// of the bench, 10.5 the limit). The steps:
+//  1. Rows. `list_atoms`, `link_pairs`, `forced` and `distinct_atoms` give one taken row and
+//     `m - 1` refused ones; `Nodes::ints` and `Nodes::node` file each row's head and each node of
+//     the `m + 1` tails (`Heads`, `Avoid_1 .. Avoid_m`, `Ints`, `nil`) once, `O(m)` lookups in the
+//     `ByType` maps `heads` and `of`. Tied, the about `2m` head types are one bucket of a
+//     `TiedMap`, an ordered map: at most `log2(2m) + O(1)` comparisons a lookup (a B-tree of
+//     at most 11 keys a node compares at most 11 keys at each of its `log_6` levels, a constant
+//     times `log2`). A comparison of two tied `Ints` reads `(cof, hash)` and then at most two
+//     values each, each `BigInt::cmp` of two words: `O(1)`.
+//  2. `Ancestors::new` and the positive chain `pl`: one step a node, `O(m)`; `Ints::meet` of sets
+//     of at most two values is `O(1)`.
+//  3. Cells (`cells_windows`). Refused row `e` meets `Heads` in `{anchor}` at place `e` (the
+//     escape from `Avoid_e`), and, when `e` is odd, in `{b_j}` at place `j = (e + 1) / 2` (where
+//     `b_(e-j+1) = b_j`); every other place `k < e` meets `p_k` in all of `p_k`, no atom. So
+//     `(m - 1) + (m - 1) / 2` cells, a unit clause for each even `e` and a clause of two for each
+//     odd `e`; `the_big_heads_family_reads_its_cells_in_its_size` checks this count at m = 12,
+//     13, 64, 160 and 1024, tied and untied, none empty, and that `decide` answers. It holds at
+//     every m from 12 to 160 and at 2 and 3, and fails at each m from 4 to 11, where a window of
+//     the pair listing prices method A cheaper and A reads empty cells too (19 cells, 9 empty, at
+//     m = 8); swept by b22-kernel8, 2026-11-23. Each cell costs `O(1)` set operations and at
+//     most two lookups in the tied interners of the place sets (`intern`), of the values
+//     (`vid`) and of `p1_cache` (keyed by `int \ {b_e}`, `m - 1` tied keys): `O(m log m)` tied,
+//     `O(m)` untied.
+//  4. U1 and U2, to the fixed point. U1 groups clauses by `(place, atom set, other place)`; the
+//     keys hold places, distinct for every clause here, so no group of two forms and no bucket
+//     ties beyond `O(1)` keys. U2's first pass narrows each even place `e` to `{anchor}`; a pass
+//     that narrows place `j` to `{anchor}` empties the atom `{b_j}` of the clause of `e = 2j - 1`,
+//     which becomes the unit `(e, {anchor})` for the next pass. So place `e` is narrowed at pass
+//     `P(e) = P((e + 1) / 2) + 1` for odd `e`, `P(e) = 1` for even `e`; with `j - 1 = (e - 1) / 2`
+//     this is `P(e) = v2(e - 1) + 1` (`v2` the exponent of 2; `e = 3`: 2, `e = 5`: 3, `e = 7`: 2),
+//     at most `log2 m + 1` passes, and after pass `k` only the clauses of `e` with
+//     `2^k | e - 1` are left, about `m / 2^k`. A pass costs `O(1)` hashed steps a clause it
+//     reads, so `O(m)` over all passes (geometric), plus `O(m)` a pass for a step that read all
+//     `l0 = m` places, `O(m log m)` in the worst case, still within the claim.
+//  5. The 2-SAT ladder and the witness: the clauses left are `O(m)` (none here after U2), the
+//     interner `ids` is keyed by `(place, Ints)`, places distinct, so `O(m)`; Aspvall, Plass and
+//     Tarjan's 2-SAT is linear (cited at `TwoSat::solve`).
+//  6. Before all these, `find_prefix_chains` (empty.rs), which `Searching::prefix_chains` runs
+//     before `decide`, returns `None` on this family after `O(m)` lookups, and `decide` then
+//     answers. Its reads, in order: `list_atoms`, `link_pairs` and `forced` give the taken row
+//     `(p_1, Heads_2)` and the `m - 1` refused rows `(int \ {b_e}, Avoid_(e-1))`, `O(m)` (the
+//     first block of the list, or the settings of an expression sorted once, `O(m log m)`).
+//     Its first loop asks `Search::cycle` of the one taken tail, `Heads_2`. `find_cycle` from
+//     `Heads_j` takes one step (item `p_j`, next `Heads_(j+1)`) and at the second meets the
+//     item `p_(j+1)`, not `p_j` (the heads are distinct types), so it files `Heads_j` as on no
+//     cycle and stops: two `list_step`s (each a part of one row, `O(1)`), a `seen` map of at
+//     most two keys, and at most three lookups in `cycles`; from `Heads_m` the next type is
+//     `nil`, whose `list_step` is `None` (a bare atom and no link), and both are filed. No
+//     carrier is found, so the second loop walks the one taken tail, `Heads_2, ..., Heads_m,
+//     nil`: at each type one insert into `vis`, one `cycle` (the `find_cycle` above, or a filed
+//     answer) and one `list_step`, `m` types in all, and it ends at `nil`. Then
+//     `let c = carrier_cycle?` returns `None`. So `O(m)` lookups in the `ByType` map `cycles`
+//     and the `TypeSet` `vis`, keyed by the tails `Heads_j` and `nil`, whose `name_digest`s
+//     differ (a tail's folds those of the tails after it, so a tail of `k` cells is not tied
+//     with one of `k' != k` cells unless by a 64-bit collision): each lookup `O(1)` expected,
+//     tied or not. No term above `m log m` (`forced`), and no extra term for the ties. Checked
+//     (b22-kernel8, 2026-11-23, callgrind of `is_empty` on the tied family, debug build,
+//     inclusive instructions): `find_prefix_chains` 28.7M at m = 1024 and 230.1M at 8192, 8.01
+//     times, linear; `decide` is reached from `prefix_chains` at both sizes, so the sweep
+//     returned `None`; the whole decision 782M and 7,859M, 10.05 times.
+// Not counted here: the building of the type in the bench (outside the measurement). The untied
+// variant, the same work with distinct hashes, measured 8.50 (PERF-escape-big-heads-scaling), and
+// the steps above are the only ones whose maps a tie reaches. Measured: 10.13 tied at 1024 and
+// 8192 (b22-kernel6, instructions), against the 10.4 above.
 fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
     // Atoms of finitely many names only, no bare atom, one link atom whose payload is pairs
     // alone: the list readers shared with `list_step` (DRY-misc-A5).
