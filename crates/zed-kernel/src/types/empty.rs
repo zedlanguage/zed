@@ -6679,7 +6679,8 @@ impl<'m> Searching<'m> {
             // `n / 2` rows built `n / 2` differences `⋃ P_j - P_k` of `n / 2` rows each, order
             // `n^2` (`fork_by` 512 read 141,822 rows in the heights walk, 3,390 at 64; filed by
             // digest, 2,576 and 336, and the verdict 8.28 times the instructions from 1024 to
-            // 8192, test `refusals::bench::pairs_less_many_excluded_pairs_are_decided_in_their_size`
+            // 8192, test
+            // `refusals::bench::pairs_less_many_excluded_pairs_are_decided_in_their_size`
             // of `l01_23_groups_and_refusals`, 33.93 times before). Given
             // up: copies of one name-free digest are compared in full under `blind`, linear in
             // their size, once per row.

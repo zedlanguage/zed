@@ -165,9 +165,10 @@ fn pairs_less_many_excluded_pairs_are_decided_in_their_size() {
     // n 16, 64 and 512). With the cells filed by the name-free digest under `blind`, as the
     // search's `Ids` already decide such copies once, the rows read are 96, 336 and 2,576.
     // This bench, n 1024 and 8192 (zed_icount on v5e2): 2,119.3M and 17,550.1M instructions,
-    // 8.28 times (bytes 8.10 times; 1x 2.8 s by clock under the counter, 0.50 s without it), against
-    // 5,771.2M and 195,819.5M, 33.93 times, on 8cab79ec6 (red run kept). By clock without the
-    // counter the verdict takes 0.12, 0.24, 0.50, 1.07, 2.26 and 4.74 s at n 256 to 8192.
+    // 8.28 times (bytes 8.10 times; 1x 2.8 s by clock under the counter, 0.50 s without it),
+    // against 5,771.2M and 195,819.5M, 33.93 times, on 8cab79ec6 (red run kept). By clock
+    // without the counter the verdict takes 0.12, 0.24, 0.50, 1.07, 2.26 and 4.74 s at n 256 to
+    // 8192.
     big(|| {
         let tag = AtomicUsize::new(0);
         let make = |n: usize, _| fork_by(n, &format!("_rsfb{}", tag.fetch_add(1, Relaxed)));
@@ -373,8 +374,9 @@ fn refining_a_box_follows_no_fork_in_its_size() {
     // PERF-refusals-old-size (b22-kernel9, 2026-11-23, zed_icount on v5e2): each check passes at
     // n 128 (1x about 0.93G instructions): 9.47 and 9.53 times the instructions from 128 to 1024
     // for the two verdicts, 9.47 for `is_empty`, and the same on 8cab79ec6 (9.46, 9.50, 9.44),
-    // so the work since the finding above had already brought it into its size. Split into one `#[test]` per check, since the three
-    // took 33 s together, past the 20 s a test piece may take; each takes about 12 s.
+    // so the work since the finding above had already brought it into its size. Split into one
+    // `#[test]` per check, since the three took 33 s together, past the 20 s a test piece may
+    // take; each takes about 12 s.
     refined_pairs_verdict_scales(false);
     // The refusal at n 1 with the end family's one place left out is checked in
     // `refining_a_box_of_pairs_is_refused_at_the_end_family_fork` of refusals.rs
