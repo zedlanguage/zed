@@ -87,7 +87,7 @@
 //! Driscoll, Sarnak, Sleator and Tarjan, "Making data structures persistent", JCSS 38, 1989,
 //! doi:10.1016/0022-0000(89)90034-2, cited in this crate's `lib.rs`, References), so
 //! that a branch shares the unchanged subtrees of both arms. A shift or a negation relabels the
-//! tree through a lazy tag on its nodes, and a positive quotient (`a = q*c + r`,
+//! tree through a tag on the edge to its root (`Edge`), and a positive quotient (`a = q*c + r`,
 //! `tree_division`) maps it in one O(p) pass over its p pieces; a remainder met while the state
 //! is already periodic in an incompatible modulus lists the excluded residues in each period that
 //! meets the remainder's image (`State1d::modulo_bounded`), at most `m/old + 1` pieces per
@@ -2332,7 +2332,7 @@ impl Res {
 }
 
 /// A unit-slope bijection `v -> (if self.0 { -v } else { v }) + self.1` on integer values.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct ValTag(bool, Num);
 
 impl ValTag {
@@ -4922,8 +4922,9 @@ impl<'t> Tx<'t> {
     // `Arc`/`Rc` fields, O(1). Each `clip_values` is one `tree_restrict` on a tree of O(1)
     // nodes, labels copied by their `Arc` roots. `Reflect` is a tag, O(1); every node a tag
     // reaches has passed a clip, so its key and the key it was made with lie in [-M, M + 8],
-    // and its `lazy` maps one to the other, an offset within 2 (M + 8) (the node [20, inf) that
-    // `minmax` makes has `lazy` the identity and is clipped at B_{j-1} before any tag). `minmax`
+    // and the tag on its edge ([`Edge`]) maps one to the other, an offset within 2 (M + 8) (the
+    // node [20, inf) that `minmax` makes has the identity tag and is clipped at B_{j-1} before
+    // any tag). `minmax`
     // is a `tree_restrict`, a `val_at` and a join of trees on disjoint ranges, O(1), no label
     // work. The one step that grows is the union at S_j of A_j's else part (one node [-2, 2],
     // label {j + 1}) with B_j: whichever path `tree_union` takes (disjoint ranges, no label
@@ -5134,10 +5135,105 @@ impl<'t> Tx<'t> {
 }
 
 // ---- Input-labelled inverse intervals -----------------------------------------
-type Tree = Option<Arc<PartitionNode>>;
+type Tree = Option<Edge>;
 type Slice1d = (End, End, IntervalSet);
 
 type Contents = IntervalSet;
+
+/// A subtree of the inverse tree and the tag on the edge that leads to it: the values of the
+/// subtree are those stored in its nodes mapped by `tag` (PERF-ref-abs-gap-under-9, step 1 of
+/// cross-review XR-ROOTS-REF META2 D15).
+///
+/// Complexity tradeoff. Before, a node held a pending tag `lazy` for its two children, and
+/// reading a child (`tree_push`) applied that tag to it at once: a child shared with another
+/// tree (after `abs`, every node of the positive half has two parents, proved in round 2 of
+/// XR-ROOTS-REF by all three seats) was copied by `Arc::make_mut`, so every node visited on a
+/// path copied both of its children, two allocations a level. With the tag on the edge,
+/// `tree_apply` composes two tags, O(1), and `tree_push` composes the node's tag with each
+/// child's, O(1), allocating nothing: a walk down a path allocates only the nodes it rebuilds.
+/// Measured on l41, 2026-11-23 (`bench::ref_memo::normal_abs_gap_scales`, per link at 1024
+/// and 8192 links): 500.2k and 597.7k instructions and 88.7k and 108.5k bytes before, 490.4k
+/// and 584.9k instructions and 81.6k and 99.3k bytes after, the ratio 9.560 to 9.542
+/// (instructions) and 9.786 to 9.736 (bytes). The rise per doubling of n fell only 3% (32.5k
+/// to 31.5k instructions), so the child copies were not most of it. Counted per link in the
+/// same build (temporary counters, not kept): node allocations 44, 66, 85, 103 at 16, 128,
+/// 1024, 8192 links, a rise of about 6 per doubling; `tree_restrict` calls about 7 more per
+/// doubling and `tree_union` calls about 4; the label meets (2) and the visits of
+/// `tree_restrict_input` (8) do not grow. So the rest of the n log n term is the paths that
+/// `tree_restrict`, `tree_union` and `tree_join` rebuild.
+/// The node's keys, `min_lo`, `max_hi` and cuts stay in its own coordinates; every read maps
+/// them through the edge's tag ([`Edge::key`], [`Edge::min_lo`], [`Edge::max_hi`],
+/// [`edge_boundaries`]), one addition or subtraction an end. The input labels (`data`, `span`)
+/// and the height do not depend on the values, so they are read as stored.
+///
+/// Why the values are the same as with the pending tags (by induction on the tree): a tag is a
+/// bijection `v -> s + v` or `v -> s - v` and `ValTag::compose(a, b)` is `a` after `b`. Before,
+/// the values of a child were `lazy` applied to the child's own values, and the tags met on
+/// the way from the root composed outermost first (`tag.compose(&n.lazy)` in `tree_apply`);
+/// now the same composition is made on the edge, in the same order, so each stored key is
+/// mapped by the same bijection. A reflecting tag reverses the order of values, so the child
+/// read as the left one is the stored right one (`Edge::children`), as the swap in the old
+/// `tree_apply` did. Test: the 483 replayed answers in
+/// `ref_memo::every_family_keeps_main_s_answers_through_the_inverse_tree_changes` and the
+/// answers of every family against the interpreter in `ref_memo`; they cannot catch an error
+/// on a shape none of the families builds.
+#[derive(Clone)]
+struct Edge {
+    node: Arc<PartitionNode>,
+    tag: ValTag,
+}
+impl Edge {
+    /// The edge to `node` with the identity tag.
+    fn of(node: Arc<PartitionNode>) -> Self {
+        Self {
+            node,
+            tag: ValTag::id(),
+        }
+    }
+    /// The node's piece of values, mapped through the edge's tag.
+    fn key(&self) -> (End, End) {
+        self.tag.map_range(&self.node.lo, &self.node.hi)
+    }
+    /// The least value of the subtree: the image of the stored least, or of the stored
+    /// greatest under a reflection.
+    fn min_lo(&self) -> End {
+        if self.tag.0 {
+            self.tag.map_end(&self.node.max_hi)
+        } else {
+            self.tag.map_end(&self.node.min_lo)
+        }
+    }
+    /// The greatest value of the subtree; the mirror of [`Edge::min_lo`].
+    fn max_hi(&self) -> End {
+        if self.tag.0 {
+            self.tag.map_end(&self.node.min_lo)
+        } else {
+            self.tag.map_end(&self.node.max_hi)
+        }
+    }
+    fn height(&self) -> usize {
+        self.node.height
+    }
+    fn span(&self) -> &(End, End) {
+        &self.node.span
+    }
+    /// The children in value order, each under this edge's tag composed with its own: O(1),
+    /// two tag compositions and two reference counts, no allocation.
+    fn children(&self) -> (Tree, Tree) {
+        let down = |c: &Tree| {
+            c.as_ref().map(|c| Edge {
+                node: c.node.clone(),
+                tag: self.tag.compose(&c.tag),
+            })
+        };
+        let (l, r) = (down(&self.node.left), down(&self.node.right));
+        if self.tag.0 { (r, l) } else { (l, r) }
+    }
+    /// Whether the two are one tree: the same node under the same tag.
+    fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.node, &other.node) && self.tag == other.tag
+    }
+}
 
 #[derive(Clone)]
 struct PartitionNode {
@@ -5147,19 +5243,13 @@ struct PartitionNode {
     max_hi: End,
     span: (End, End),
     /// The cuts of the subtree, in the node's coordinates: made by [`node_boundaries`] when
-    /// `tree_round` first reads them, then kept through tags (`tree_apply`) and scaling
-    /// (`tree_division`) like the keys.
+    /// `tree_round` first reads them, then kept through scaling (`tree_division`) like the keys;
+    /// a reader maps them through the edge's tag ([`edge_boundaries`]).
     boundaries: OnceLock<Boundaries>,
     height: usize,
     data: Contents,
-    lazy: ValTag,
     left: Tree,
     right: Tree,
-}
-impl PartitionNode {
-    fn key(&self) -> (End, End) {
-        (self.lo.clone(), self.hi.clone())
-    }
 }
 #[derive(Clone)]
 struct Boundaries {
@@ -5218,9 +5308,9 @@ impl Boundaries {
 /// joined them at every node built, two gcds a node, on chains with no `Round` at all.
 ///
 /// Proof that `tree_round` reads the same answer as with the cuts joined at every build:
-/// 1. Both describe the same set of points P: the keys of the subtree, each child's mapped
-///    through `n.lazy` (`apply`), since `tree_apply` maps a node's own key at once and its
-///    children's only through the tag it composes into `lazy`. Tags are shifts `x + s` and
+/// 1. Both describe the same set of points P: the keys of the subtree in `n`'s coordinates,
+///    each child's mapped through the tag on its edge (`apply`), since a key is stored in its
+///    own node's coordinates and every edge maps a child's into its parent's. Tags are shifts `x + s` and
 ///    reflections `s + 1 - x`, scaling (`tree_division`) is `x * c`; each maps `lo` and
 ///    `hi + 1` to the mapped key's `lo` and `hi + 1`, so mapping the cuts maps P.
 /// 2. `join` keeps step = gcd of all differences of P, whatever the order and grouping of the
@@ -5246,12 +5336,41 @@ fn node_boundaries(n: &PartitionNode) -> &Boundaries {
     n.boundaries.get_or_init(|| {
         let mut b = Boundaries::key(&n.lo, &n.hi);
         for c in [&n.left, &n.right].into_iter().flatten() {
-            let mut cb = node_boundaries(c).clone();
-            cb.apply(&n.lazy);
-            b = b.join(&cb);
+            b = b.join(&edge_boundaries(c));
         }
         b
     })
+}
+/// The cuts of the subtree at `e` in its parent's coordinates: the node's, mapped through the
+/// edge's tag, O(1) once the node's are made.
+fn edge_boundaries(e: &Edge) -> Boundaries {
+    let mut b = node_boundaries(&e.node).clone();
+    b.apply(&e.tag);
+    b
+}
+/// The node at the end of `e` with the edge's tag applied to its own keys and cuts and
+/// composed into its children's edges, so that it reads with the identity tag: the step
+/// `tree_round` and `tree_division` take before they rewrite a node in place. O(1), and one
+/// node copy when the node is shared (`Arc::make_mut`); a walk of the whole tree by those two
+/// copies each shared node once, as the pending tags did.
+fn edge_node(e: Edge) -> Arc<PartitionNode> {
+    let Edge { node: mut arc, tag } = e;
+    if tag.is_id() {
+        return arc;
+    }
+    let n = Arc::make_mut(&mut arc);
+    if let Some(b) = n.boundaries.get_mut() {
+        b.apply(&tag);
+    }
+    (n.lo, n.hi) = tag.map_range(&n.lo, &n.hi);
+    (n.min_lo, n.max_hi) = tag.map_range(&n.min_lo, &n.max_hi);
+    if tag.0 {
+        std::mem::swap(&mut n.left, &mut n.right);
+    }
+    for c in [&mut n.left, &mut n.right].into_iter().flatten() {
+        c.tag = tag.compose(&c.tag);
+    }
+    arc
 }
 fn ceil_grid(e: &End, m: &Num) -> End {
     match e {
@@ -5267,8 +5386,7 @@ fn tree_round(tree: Tree, m: &Num) -> Tree {
     // Reuse uniquely owned nodes; shared branches still copy on write. This
     // preserves the same grid inverse and reduces measured round-down byte R
     // from 9.70 to 9.50 (16..128), without changing the asymptotic traversal.
-    let n = tree.as_ref()?;
-    let boundaries = node_boundaries(n);
+    let boundaries = edge_boundaries(tree.as_ref()?);
     if boundaries.step.rem_euclid(m).is_zero() {
         let residue = boundaries
             .anchor
@@ -5277,11 +5395,11 @@ fn tree_round(tree: Tree, m: &Num) -> Tree {
         let shift = (-&residue).rem_euclid(m);
         return tree_apply(tree, &ValTag(false, shift));
     }
-    let mut arc = tree?;
+    let mut arc = edge_node(tree?);
     let n = Arc::make_mut(&mut arc);
     let data = n.data.clone();
-    let mut left = tree_round(tree_apply(n.left.take(), &n.lazy), m);
-    let mut right = tree_round(tree_apply(n.right.take(), &n.lazy), m);
+    let mut left = tree_round(n.left.take(), m);
+    let mut right = tree_round(n.right.take(), m);
     let (mut lo, mut hi) = (ceil_grid(&n.lo, m), ceil_grid(&n.hi.succ(), m).pred());
     if lo > hi {
         return tree_join_merged(left, right);
@@ -5309,7 +5427,7 @@ fn tree_round(tree: Tree, m: &Num) -> Tree {
     }
     if tree_height(&left).abs_diff(tree_height(&right)) <= 1 {
         *n = tree_parts((lo, hi), data, left, right);
-        Some(arc)
+        Some(Edge::of(arc))
     } else {
         tree_node((lo, hi), data, left, right)
     }
@@ -5319,15 +5437,15 @@ fn tree_round(tree: Tree, m: &Num) -> Tree {
 /// `tree_round` reads the two edges of each subtree it builds; the heights of the subtrees of a
 /// balanced tree of p nodes add up to O(p), so those reads cost O(p) in all.
 fn tree_edge(t: &Tree, last: bool) -> Option<((End, End), &Contents)> {
-    let mut tag = ValTag::id();
-    let mut n = t.as_ref()?;
+    let e = t.as_ref()?;
+    let (mut tag, mut n) = (e.tag.clone(), &*e.node);
     loop {
         // A reflecting tag reverses the order, so the edge is then in the other child.
         let next = if last ^ tag.0 { &n.right } else { &n.left };
         match next {
             Some(c) => {
-                tag = tag.compose(&n.lazy);
-                n = c;
+                tag = tag.compose(&c.tag);
+                n = &c.node;
             }
             None => return Some((tag.map_range(&n.lo, &n.hi), &n.data)),
         }
@@ -5357,7 +5475,7 @@ impl State1d {
 }
 
 fn tree_height(t: &Tree) -> usize {
-    t.as_ref().map_or(0, |n| n.height)
+    t.as_ref().map_or(0, Edge::height)
 }
 /// The pairs of neighbors of `t` whose values touch (one ends at v, the next starts at v + 1)
 /// and whose input labels are equal: two nodes where one would do. O(p) node visits plus the
@@ -5373,8 +5491,9 @@ fn tree_seams(t: &Tree) -> usize {
 /// The nodes of `t`, O(p) for p nodes; the recursion is as deep as the AVL height, O(log p).
 #[cfg(feature = "counts")]
 fn tree_nodes(t: &Tree) -> usize {
-    t.as_ref()
-        .map_or(0, |n| 1 + tree_nodes(&n.left) + tree_nodes(&n.right))
+    t.as_ref().map_or(0, |e| {
+        1 + tree_nodes(&e.node.left) + tree_nodes(&e.node.right)
+    })
 }
 // A positive Euclidean quotient has ordered, disjoint inverse intervals. Map the
 // existing balanced tree in place structurally instead of collecting it and
@@ -5383,7 +5502,7 @@ fn tree_nodes(t: &Tree) -> usize {
 // With ownership reuse, measured normal_div_chain byte R is 8.22 (was 12.03)
 // and allocation R 7.79 (was 12.07), at 16..128 links.
 fn tree_division(t: Tree, c: &Num) -> Tree {
-    let mut arc = t?;
+    let mut arc = edge_node(t?);
     let n = Arc::make_mut(&mut arc);
     let lower = |e: &End| match e {
         Fin(v) => Fin(v * c),
@@ -5393,9 +5512,8 @@ fn tree_division(t: Tree, c: &Num) -> Tree {
         Fin(v) => Fin(&(&(v + &Num::ONE) * c) - &Num::ONE),
         e => e.clone(),
     };
-    n.left = tree_division(tree_apply(n.left.take(), &n.lazy), c);
-    n.right = tree_division(tree_apply(n.right.take(), &n.lazy), c);
-    n.lazy = ValTag::id();
+    n.left = tree_division(n.left.take(), c);
+    n.right = tree_division(n.right.take(), c);
     n.lo = lower(&n.lo);
     n.hi = upper(&n.hi);
     n.min_lo = lower(&n.min_lo);
@@ -5404,7 +5522,7 @@ fn tree_division(t: Tree, c: &Num) -> Tree {
         b.anchor = b.anchor.as_ref().map(|a| a * c);
         b.step = &b.step * c;
     }
-    Some(arc)
+    Some(Edge::of(arc))
 }
 fn tree_parts((lo, hi): (End, End), data: Contents, left: Tree, right: Tree) -> PartitionNode {
     #[cfg(feature = "counts")]
@@ -5412,54 +5530,42 @@ fn tree_parts((lo, hi): (End, End), data: Contents, left: Tree, right: Tree) -> 
     let (xlo, xhi) = data.bounds().expect("nonempty input labels");
     let (mut xlo, mut xhi) = (xlo.clone(), xhi.clone());
     for n in [&left, &right].into_iter().flatten() {
-        xlo = xlo.min(n.span.0.clone());
-        xhi = xhi.max(n.span.1.clone());
+        xlo = xlo.min(n.span().0.clone());
+        xhi = xhi.max(n.span().1.clone());
     }
     PartitionNode {
         boundaries: OnceLock::new(),
-        min_lo: left
-            .as_ref()
-            .map_or_else(|| lo.clone(), |n| n.min_lo.clone()),
-        max_hi: right
-            .as_ref()
-            .map_or_else(|| hi.clone(), |n| n.max_hi.clone()),
+        min_lo: left.as_ref().map_or_else(|| lo.clone(), Edge::min_lo),
+        max_hi: right.as_ref().map_or_else(|| hi.clone(), Edge::max_hi),
         lo,
         hi,
         span: (xlo, xhi),
         height: 1 + tree_height(&left).max(tree_height(&right)),
         data,
-        lazy: ValTag::id(),
         left,
         right,
     }
 }
 fn tree_raw(key: (End, End), data: Contents, left: Tree, right: Tree) -> Tree {
-    Some(Arc::new(tree_parts(key, data, left, right)))
+    Some(Edge::of(Arc::new(tree_parts(key, data, left, right))))
 }
+/// `tree` with `tag` applied to its values: one tag composition on the root's edge, O(1),
+/// no allocation and no copy of a shared node ([`Edge`]).
 fn tree_apply(tree: Tree, tag: &ValTag) -> Tree {
     if tag.is_id() {
         return tree;
     }
-    let mut arc = tree?;
-    let n = Arc::make_mut(&mut arc);
-    if let Some(b) = n.boundaries.get_mut() {
-        b.apply(tag);
-    }
-    (n.lo, n.hi) = tag.map_range(&n.lo, &n.hi);
-    (n.min_lo, n.max_hi) = tag.map_range(&n.min_lo, &n.max_hi);
-    if tag.0 {
-        std::mem::swap(&mut n.left, &mut n.right);
-    }
-    n.lazy = tag.compose(&n.lazy);
-    Some(arc)
+    let e = tree?;
+    Some(Edge {
+        tag: tag.compose(&e.tag),
+        node: e.node,
+    })
 }
-fn tree_push(n: &PartitionNode) -> (Contents, Tree, Tree) {
-    let data = n.data.clone();
-    (
-        data,
-        tree_apply(n.left.clone(), &n.lazy),
-        tree_apply(n.right.clone(), &n.lazy),
-    )
+/// The label of the node at `n` and its two children in value order, each under its tag
+/// composed with `n`'s ([`Edge::children`]): O(1), the label cloned by its root.
+fn tree_push(n: &Edge) -> (Contents, Tree, Tree) {
+    let (left, right) = n.children();
+    (n.node.data.clone(), left, right)
 }
 fn tree_balance(key: (End, End), data: Contents, left: Tree, right: Tree) -> Tree {
     if tree_height(&left) > tree_height(&right) + 1 {
@@ -5534,7 +5640,7 @@ fn tree_single(lo: End, hi: End, data: Contents) -> Tree {
 fn tree_join(a: Tree, b: Tree) -> Tree {
     match (a, b) {
         (None, t) | (t, None) => t,
-        (Some(a), Some(b)) if a.height >= b.height => {
+        (Some(a), Some(b)) if a.height() >= b.height() => {
             let (b, key, data) = tree_split_first(&b);
             tree_node(key, data, Some(a), b)
         }
@@ -5547,7 +5653,7 @@ fn tree_join(a: Tree, b: Tree) -> Tree {
 /// The tree at `n` without its first piece, and that piece. Each level puts back a left child
 /// at most one shorter than before beside its right child, a height difference of at most 2,
 /// so `tree_node` does O(1) work a level: O(h) in all, h the AVL height of `n`.
-fn tree_split_first(n: &PartitionNode) -> (Tree, (End, End), Contents) {
+fn tree_split_first(n: &Edge) -> (Tree, (End, End), Contents) {
     let (data, left, right) = tree_push(n);
     match left {
         None => (right, n.key(), data),
@@ -5558,7 +5664,7 @@ fn tree_split_first(n: &PartitionNode) -> (Tree, (End, End), Contents) {
     }
 }
 /// The tree at `n` without its last piece, and that piece; the mirror of [`tree_split_first`].
-fn tree_split_last(n: &PartitionNode) -> (Tree, (End, End), Contents) {
+fn tree_split_last(n: &Edge) -> (Tree, (End, End), Contents) {
     let (data, left, right) = tree_push(n);
     match right {
         None => (left, n.key(), data),
@@ -5576,26 +5682,21 @@ fn strictly_above(hi: &End) -> Option<(End, End)> {
 }
 fn tree_restrict(tree: &Tree, lo: &End, hi: &End) -> Tree {
     let n = tree.as_ref()?;
-    if lo > hi || hi < &n.min_lo || lo > &n.max_hi {
+    let (min, max) = (n.min_lo(), n.max_hi());
+    if lo > hi || hi < &min || lo > &max {
         return None;
     }
-    if lo <= &n.min_lo && &n.max_hi <= hi {
+    if lo <= &min && &max <= hi {
         return tree.clone();
     }
+    let (nlo, nhi) = n.key();
     let (data, left, right) = tree_push(n);
-    let l = (lo < &n.lo).then(|| tree_restrict(&left, lo, hi)).flatten();
-    let r = (hi > &n.hi)
-        .then(|| tree_restrict(&right, lo, hi))
-        .flatten();
-    if hi < &n.lo || lo > &n.hi {
+    let l = (lo < &nlo).then(|| tree_restrict(&left, lo, hi)).flatten();
+    let r = (hi > &nhi).then(|| tree_restrict(&right, lo, hi)).flatten();
+    if hi < &nlo || lo > &nhi {
         return tree_join(l, r);
     }
-    tree_node(
-        (lo.clone().max(n.lo.clone()), hi.clone().min(n.hi.clone())),
-        data,
-        l,
-        r,
-    )
+    tree_node((lo.clone().max(nlo), hi.clone().min(nhi)), data, l, r)
 }
 fn tree_restrict_set(t: &Tree, s: &IntervalSet) -> Tree {
     s.pieces()
@@ -5608,56 +5709,56 @@ fn tree_collect(t: &Tree, out: &mut Vec<(End, End, Contents)>) {
 // instead of pushing it into copies of shared children (`tree_push`), allocates
 // only the output: O(p) time, no node copies. Measured in R3_SEAT.md Q2.
 fn tree_collect_at(t: &Tree, tag: &ValTag, out: &mut Vec<(End, End, Contents)>) {
-    let Some(n) = t else { return };
-    let inner = tag.compose(&n.lazy);
+    let Some(e) = t else { return };
+    let (tag, n) = (tag.compose(&e.tag), &e.node);
     let (l, r) = if tag.0 {
         (&n.right, &n.left)
     } else {
         (&n.left, &n.right)
     };
-    tree_collect_at(l, &inner, out);
+    tree_collect_at(l, &tag, out);
     let (lo, hi) = tag.map_range(&n.lo, &n.hi);
     out.push((lo, hi, n.data.clone()));
-    tree_collect_at(r, &inner, out);
+    tree_collect_at(r, &tag, out);
 }
 fn tree_union(a: Tree, b: Tree) -> Tree {
     let (a, b) = match (a, b) {
         (None, t) | (t, None) => return t,
         (Some(a), Some(b)) => (a, b),
     };
-    if Arc::ptr_eq(&a, &b) {
+    if a.same(&b) {
         return Some(a);
     }
     // Equal cuts need no splitting, temporary interval tree or collection pass.
     // Merge corresponding subtrees directly; this preserves the AVL ordering.
-    if a.lo == b.lo && a.hi == b.hi {
+    let (akey, bkey) = (a.key(), b.key());
+    if akey == bkey {
         let (ad, al, ar) = tree_push(&a);
         let (bd, bl, br) = tree_push(&b);
-        return tree_node(
-            a.key(),
-            ad.join(&bd),
-            tree_union(al, bl),
-            tree_union(ar, br),
-        );
+        return tree_node(akey, ad.join(&bd), tree_union(al, bl), tree_union(ar, br));
     }
-    if a.max_hi < b.min_lo {
+    if a.max_hi() < b.min_lo() {
         return tree_join(Some(a), Some(b));
     }
-    if b.max_hi < a.min_lo {
+    if b.max_hi() < a.min_lo() {
         return tree_join(Some(b), Some(a));
     }
-    let (a, b) = if a.height >= b.height { (a, b) } else { (b, a) };
+    let (a, b, (alo, ahi)) = if a.height() >= b.height() {
+        (a, b, akey)
+    } else {
+        (b, a, bkey)
+    };
     let (ad, al, ar) = tree_push(&a);
     let b = Some(b);
-    let bl = strictly_below(&a.lo).and_then(|(l, h)| tree_restrict(&b, &l, &h));
-    let br = strictly_above(&a.hi).and_then(|(l, h)| tree_restrict(&b, &l, &h));
+    let bl = strictly_below(&alo).and_then(|(l, h)| tree_restrict(&b, &l, &h));
+    let br = strictly_above(&ahi).and_then(|(l, h)| tree_restrict(&b, &l, &h));
     let (nl, nr) = (tree_union(al, bl), tree_union(ar, br));
-    let Some(mid) = tree_restrict(&b, &a.lo, &a.hi) else {
-        return tree_node(a.key(), ad, nl, nr);
+    let Some(mid) = tree_restrict(&b, &alo, &ahi) else {
+        return tree_node((alo, ahi), ad, nl, nr);
     };
     let mut parts = Vec::new();
     tree_collect(&Some(mid), &mut parts);
-    let (mut out, mut cur) = (None, a.lo.clone());
+    let (mut out, mut cur) = (None, alo);
     for (lo, hi, data) in parts {
         if cur < lo {
             out = tree_join(out, tree_single(cur, lo.pred(), ad.clone()));
@@ -5668,25 +5769,26 @@ fn tree_union(a: Tree, b: Tree) -> Tree {
         }
         cur = hi.succ();
     }
-    if cur <= a.hi {
-        out = tree_join(out, tree_single(cur, a.hi.clone(), ad));
+    if cur <= ahi {
+        out = tree_join(out, tree_single(cur, ahi, ad));
     }
     tree_join(tree_join(nl, out), nr)
 }
 fn tree_restrict_input(t: &Tree, mask: &IntervalSet) -> Tree {
     let n = t.as_ref()?;
     let (lo, hi) = mask.bounds()?;
-    if hi < &n.span.0 || lo > &n.span.1 {
+    let span = n.span();
+    if hi < &span.0 || lo > &span.1 {
         return None;
     }
     // One logarithmic interval lookup replaces two temporary sets at each tree
     // node. A connected span is covered iff its first intersecting piece covers
     // both ends; it is disjoint iff that piece starts after the span.
-    let (ml, mh) = mask.piece_at_or_above(&n.span.0)?;
-    if ml <= &n.span.0 && &n.span.1 <= mh {
+    let (ml, mh) = mask.piece_at_or_above(&span.0)?;
+    if ml <= &span.0 && &span.1 <= mh {
         return t.clone();
     }
-    if ml > &n.span.1 {
+    if ml > &span.1 {
         return None;
     }
     let (data, l, r) = tree_push(n);
@@ -5730,11 +5832,12 @@ fn val_from_iter(it: &mut impl Iterator<Item = (End, End, IntervalSet)>, len: us
 fn val_at(t: &Tree, v: &End) -> IntervalSet {
     let mut t = t.clone();
     while let Some(n) = t {
-        if v >= &n.lo && v <= &n.hi {
-            return n.data.clone();
+        let (lo, hi) = n.key();
+        if v >= &lo && v <= &hi {
+            return n.node.data.clone();
         }
-        let (_, l, r) = tree_push(&n);
-        t = if v < &n.lo { l } else { r };
+        let (l, r) = n.children();
+        t = if v < &lo { l } else { r };
     }
     IntervalSet::empty()
 }
@@ -5743,14 +5846,14 @@ fn val_at(t: &Tree, v: &End) -> IntervalSet {
 // and is skipped; a visited node lists only its label pieces inside its value
 // interval (one O(log p) seek), so no temporary sets or node copies are built.
 fn val_diagonal(t: &Tree, tag: &ValTag, out: &mut Vec<(End, End)>) {
-    let Some(n) = t else { return };
+    let Some(e) = t else { return };
+    let (tag, n) = (tag.compose(&e.tag), &e.node);
     let (min, max) = tag.map_range(&n.min_lo, &n.max_hi);
     if max < n.span.0 || min > n.span.1 {
         return;
     }
-    let inner = tag.compose(&n.lazy);
-    val_diagonal(&n.left, &inner, out);
-    val_diagonal(&n.right, &inner, out);
+    val_diagonal(&n.left, &tag, out);
+    val_diagonal(&n.right, &tag, out);
     let (lo, hi) = tag.map_range(&n.lo, &n.hi);
     for (a, b) in n.data.pieces_from(&lo).take_while(|(a, _)| *a <= hi) {
         out.push((a.clone().max(lo.clone()), b.clone().min(hi.clone())));
@@ -5879,7 +5982,7 @@ impl State1d {
         let neg = ValTag::neg();
         let pos = tree_restrict(&st.excl, &End::of(0), &PosInf);
         st.excl = match &pos {
-            Some(p) if p.min_lo == End::of(0) => {
+            Some(p) if p.min_lo() == End::of(0) => {
                 let (rest, (_, hi), data) = tree_split_first(p);
                 let below = tree_apply(rest.clone(), &neg);
                 tree_node((neg.map_end(&hi), hi), data, below, rest)
@@ -6909,7 +7012,7 @@ struct Parts1d {
     live: IntervalSet,
     cover: IntervalSet,
     inexact: IntervalSet,
-    parts: Vec<(Arc<PartitionNode>, Option<IntervalSet>)>,
+    parts: Vec<(Edge, Option<IntervalSet>)>,
 }
 
 impl Parts1d {
@@ -6942,11 +7045,12 @@ impl Parts1d {
                 let m = m
                     .as_ref()
                     .map_or_else(|| (**cover).clone(), |m| m.meet(cover));
-                let (ml, mh) = m.piece_at_or_above(&t.span.0)?;
-                if ml > &t.span.1 {
+                let span = t.span();
+                let (ml, mh) = m.piece_at_or_above(&span.0)?;
+                if ml > &span.1 {
                     return None;
                 }
-                let held = ml <= &t.span.0 && &t.span.1 <= mh;
+                let held = ml <= &span.0 && &span.1 <= mh;
                 Some((t.clone(), (!held).then_some(m)))
             })
             .collect();
@@ -6998,7 +7102,7 @@ impl Parts1d {
 }
 
 /// The tree of the pairs of `parts`, each tree restricted to its mask, united.
-fn settle_parts(parts: Vec<(Arc<PartitionNode>, Option<IntervalSet>)>) -> Tree {
+fn settle_parts(parts: Vec<(Edge, Option<IntervalSet>)>) -> Tree {
     parts.into_iter().fold(None, |out, (t, m)| {
         let t = Some(t);
         tree_union(

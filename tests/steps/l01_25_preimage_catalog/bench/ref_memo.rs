@@ -92,7 +92,8 @@ scaling_tests! {
     // the limit at no smaller n (10.67 at 16, 10.4 is first met at 1024). With a/b = r it is
     // 8 (r + 13) / (r + 10) at 1024: 9.56 for r = 5.4 and 9.79 for r = 3.5, the measured 9.56
     // and 9.79; 9 needs r >= 14. The family widens its domain past 1000 links so that every
-    // guard still cuts it.
+    // guard still cuts it. With the tags on the edges (`Edge` in `preimage_ref`, 2026-11-23,
+    // l41): 9.560 to 9.542 in instructions and 9.786 to 9.736 in bytes, r 5.38 to 5.56.
     normal_abs_gap_scales: "normal_abs_gap" at 1024;
     normal_add_base_scales: "normal_add_base" at 16;
     normal_div_chain_scales: "normal_div_chain" at 16;
