@@ -226,3 +226,91 @@ fn an_atom_a_face_clause_alone_reads_is_not_read_beside_it() {
     assert_eq!(want.holds, Ok(true));
     assert_eq!(e.defined_with(&control, &def, &iface), want, "{control}");
 }
+
+/// The pair `x == m * q{n} + q{n+1}`, `0 <= q{n+1} <= m - 1`.
+fn division_pair(m: i64, n: u32) -> Formula {
+    let q = |n: u32| Lin::atom(Atom::Aux(n));
+    Formula::and(vec![
+        Formula::Con(Con::eq(&sym("x"), &q(n).times(m).plus(&q(n + 1)))),
+        ge(q(n + 1), Lin::constant(0)),
+        ge(Lin::constant(m - 1), q(n + 1)),
+    ])
+}
+
+/// Asks each of `links` in turn of one `Extending`, the caller reading `x` of each kept part,
+/// and checks each answer against the one `decide` gives the link with `defs`; returns those
+/// answers.
+fn links_answer_as_the_whole(defs: &[Formula], links: &[Formula]) -> Vec<Answers> {
+    let def = |n: u32| defs[n as usize / 2].clone();
+    let iface = |g: &Formula| matches!(g, Formula::And(_)).then(|| vec![Atom::Sym("x".into())]);
+    let with_defs = |f: Formula| Formula::and(defs.iter().cloned().chain([f]).collect());
+    let mut e = Extending::new();
+    let mut out = Vec::new();
+    for f in links {
+        let want = Answers {
+            holds: decide(&with_defs(f.clone())),
+            fails: decide(&with_defs(Formula::negate(f.clone()))),
+        };
+        assert_eq!(e.defined_with(f, &def, &iface), want, "{f}");
+        out.push(want);
+    }
+    out
+}
+
+/// XR-sound-extend-face-local-atoms round 1, L1: a quotient two disjunctions of one disjunct
+/// share is kept inside that disjunct (`split`), while the other disjunct holds whatever its
+/// value is. Over `x == 3 * q0 + q1`: `D1 = x >= 0 && (q1 == 0 || x <= -1) && (q1 == 1 || x >=
+/// 51)`, `D2 = q0 >= 0 && q1 == 2`, the part `(D1 || D2) && 2 <= x <= 9`, which holds at
+/// x in {2, 5, 8} by `D2` alone, and the whole `part && q1 == 0`, which holds nowhere. With
+/// `D1` and `D2` in both orders.
+#[test]
+fn a_quotient_kept_inside_one_disjunct_is_not_read_beside_the_face() {
+    let (x, q, k) = (sym("x"), |n: u32| Lin::atom(Atom::Aux(n)), Lin::constant);
+    let eq = |a: Lin, b: Lin| Formula::Con(Con::eq(&a, &b));
+    let d1 = Formula::and(vec![
+        ge(x.clone(), k(0)),
+        Formula::or(vec![eq(q(1), k(0)), ge(k(-1), x.clone())]),
+        Formula::or(vec![eq(q(1), k(1)), ge(x.clone(), k(51))]),
+    ]);
+    let d2 = Formula::and(vec![ge(q(0), k(0)), eq(q(1), k(2))]);
+    for ds in [vec![d1.clone(), d2.clone()], vec![d2, d1]] {
+        let part = Formula::and(vec![
+            Formula::or(ds),
+            ge(x.clone(), k(2)),
+            ge(k(9), x.clone()),
+        ]);
+        let whole = extend(&part, vec![eq(q(1), k(0))]);
+        let got = links_answer_as_the_whole(&[division_pair(3, 0)], &[part, whole]);
+        assert_eq!(
+            (got[1].holds.clone(), got[1].fails.clone()),
+            (Ok(false), Ok(true))
+        );
+    }
+}
+
+/// XR-sound-extend-face-local-atoms round 1, L2: the point a link stores, found through its
+/// part's face, may give the quotient the face's clause alone reads a value its definition does
+/// not give at that point, and the next link reads that point. Over `x == 2 * q0 + q1` and `x ==
+/// 4 * q2 + q3`, `q = (q1 != 1 || q3 == 1) && 2 <= x <= 9`, `p1 = q && x >= 9` (x = 9),
+/// `p2 = p1 && q0 <= 2`, which holds nowhere since `9 div 2` is 4; and the mirror, `q` over
+/// `9 <= x <= 17`, `p1 = q && x <= 9`, so that either end the solver picks is met.
+#[test]
+fn a_point_stored_through_a_face_is_not_read_at_a_quotient_the_face_projects_out() {
+    let (x, q, k) = (sym("x"), |n: u32| Lin::atom(Atom::Aux(n)), Lin::constant);
+    let eq = |a: Lin, b: Lin| Formula::Con(Con::eq(&a, &b));
+    let defs = [division_pair(2, 0), division_pair(4, 2)];
+    for (lo, hi, link) in [(2, 9, ge(x.clone(), k(9))), (9, 17, ge(k(9), x.clone()))] {
+        let part = Formula::and(vec![
+            Formula::or(vec![Formula::negate(eq(q(1), k(1))), eq(q(3), k(1))]),
+            ge(x.clone(), k(lo)),
+            ge(k(hi), x.clone()),
+        ]);
+        let p1 = extend(&part, vec![link]);
+        let p2 = extend(&p1, vec![ge(k(2), q(0))]);
+        let got = links_answer_as_the_whole(&defs, &[part, p1, p2]);
+        assert_eq!(
+            (got[2].holds.clone(), got[2].fails.clone()),
+            (Ok(false), Ok(true))
+        );
+    }
+}

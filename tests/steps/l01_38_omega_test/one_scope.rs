@@ -826,6 +826,80 @@ fn random_chain(rng: &mut zed_tests::instances::Rng) -> String {
     src
 }
 
+// XR-sound-extend-face-local-atoms round 1, the reviewers' Zed forms, one test each.
+const XR_Q: &str = "q(x: int) = (x mod 2 != 1 || x mod 4 == 1) && x > 1 && x < 10;\n";
+const XR_D1: &str = "(x >= 0 && (x mod 3 == 0 || x < 0) && (x mod 3 == 1 || x > 50))";
+const XR_D2: &str = "(x mod 3 == 2 && x div 3 >= 0)";
+
+/// L1: a quotient two clauses of one disjunct share; `p1` holds nowhere.
+fn xr_l1(a: &str, b: &str) {
+    answers_are_those_of_the_whole(&format!(
+        "q(x: int) = ({a} || {b}) && x > 1 && x < 10;\np1(x: int) = q(x: x) && x mod 3 == 0;\n"
+    ));
+}
+
+#[test]
+fn xr_face_l1() {
+    xr_l1(XR_D1, XR_D2);
+}
+
+#[test]
+fn xr_face_l1_swapped() {
+    xr_l1(XR_D2, XR_D1);
+}
+
+/// L2: a link reading the quotient a face clause alone reads, after a link whose point was
+/// found through the face; `p2` holds nowhere.
+fn xr_l2(lo: i64, hi: i64, link: &str) {
+    answers_are_those_of_the_whole(&format!(
+        "q(x: int) = (x mod 2 != 1 || x mod 4 == 1) && x > {lo} && x < {hi};\n\
+         p1(x: int) = q(x: x) && {link};\np2(x: int) = p1(x: x) && x div 2 < 3;\n"
+    ));
+}
+
+#[test]
+fn xr_face_l2() {
+    xr_l2(1, 10, "x > 8");
+}
+
+#[test]
+fn xr_face_l2_mirror() {
+    xr_l2(8, 18, "x < 10");
+}
+
+#[test]
+fn xr_face_f1_through_met() {
+    answers_are_those_of_the_whole(&format!(
+        "{XR_Q}p0(x: int) = x > 10 && x < 17;\np1(x: int) = q(x: x) && p0(x: x + 2);\n\
+         p2(x: int) = p1(x: x) && x div 2 < 3;\n"
+    ));
+}
+
+#[test]
+fn xr_face_f2_nested_or() {
+    answers_are_those_of_the_whole(
+        "q(x: int) = (((x mod 2 == 1 || x > 5) && (x mod 2 == 0 || x < 4)) || x == 9) && x > 1 \
+         && x < 10;\np1(x: int) = q(x: x) && x == 9 && x mod 2 == 0;\n",
+    );
+}
+
+#[test]
+fn xr_face_f3_unclaimed_call() {
+    answers_are_those_of_the_whole(&format!(
+        "{XR_Q}r(x: int, y: int) = q(x: x) && x > 8;\n\
+         s(x: int) = r(x: x, y: x div 2) && x div 2 < 3;\n"
+    ));
+}
+
+/// F3 again: the quotient is passed as `y` and read through it inside the callee; `s` holds
+/// nowhere, since `9 div 2` is 4.
+#[test]
+fn xr_face_f3_a_quotient_passed_and_read() {
+    answers_are_those_of_the_whole(&format!(
+        "{XR_Q}r(x: int, y: int) = q(x: x) && x > 8 && y < 3;\ns(x: int) = r(x: x, y: x div 2);\n"
+    ));
+}
+
 #[test]
 fn each_answer_of_a_chain_read_through_faces_is_the_answer_of_the_relation_whole() {
     // LOAD-call-summary: chains whose links extend the point of a small callee beside the
