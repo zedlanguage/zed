@@ -42,8 +42,16 @@ fn roots_scale_in_the_degree_and_in_the_bits() {
     //   32,768     77            61          96          376
     //
     // Each of the four wide searches, of the cubic and of its derivative, for either sign,
-    // takes about log2 n Newton steps, so `O(M(n) log n)`. Only 256 bits is under the limit, a
-    // run under 1 ms; a search at doubling precision is open with the row.
+    // takes about log2 n Newton steps, so `O(M(n) log n)`. Each now takes the guess of a
+    // search at doubling precision and three evaluations at full precision after its cuts
+    // (plan row ROOTS-doubling-newton, `zed_kernel::poly::roots::doubling`), so `O(M(n))`
+    // past the cuts. From 1,024 to 4,096 bits no exact method is under the limit: the products
+    // there are of 16 to 256 words, where the cheapest measured product is num-bigint's long
+    // multiplication or Karatsuba's method, 27 to 64 times the work at 8 times the words, and
+    // the kernel's transform costs more below `MUL_LEAF`, 400 words (`zed_kernel::num::fast`).
+    // So, as `a_dense_product_scales` (COMPLEXITY.md), the order is timed where both sizes run
+    // on the transform, in `roots_scale_in_the_bits_where_products_are_transforms` (plan row
+    // DECISION-roots-bench-regime), and here at 256 bits, a run under 1 ms.
     let cubics = scaling::inputs(256, |bits| of_bits(bits as u64).0);
     scaling::check_order(
         "the integer roots of a cubic whose roots have n bits",
@@ -51,6 +59,108 @@ fn roots_scale_in_the_degree_and_in_the_bits() {
         1,
         |n| {
             integer_roots(&cubics[&n], None, None);
+        },
+    );
+}
+
+/// A cubic of three seeded random roots of `bits` bits each, the top bit set and the signs
+/// drawn: dense coefficients, where those of [`of_bits`] are sparse in their bits, so that no
+/// shortcut on the fixture's powers of 2 passes alone (cross-review XR-ROOTS-REF round 1, C1).
+fn dense_cubic(bits: u64) -> Sparse {
+    let mut rng = zed_tests::seed::Rng::new(0x6375_6269 ^ bits);
+    let rs: Vec<BigInt> = (0..3)
+        .map(|_| {
+            let digits = (0..bits / 32).map(|_| rng.next_u64() as u32).collect();
+            let r =
+                BigInt::from(num_bigint::BigUint::new(digits)) | (BigInt::from(1u8) << (bits - 1));
+            match rng.below_u64(2) {
+                0 => r,
+                _ => -r,
+            }
+        })
+        .collect();
+    expanded(&rs)
+}
+
+/// `c x^3 - c r^3` with `c` and `r` seeded random numbers of `bits` bits each: the binomial,
+/// whose root is the cube root of the kernel's quotient (plan row ROOTS-binomial-div).
+fn dense_binomial(bits: u64) -> Sparse {
+    let mut rng = zed_tests::seed::Rng::new(0x6269_6e6f ^ bits);
+    let mut wide = || {
+        let digits = (0..bits / 32).map(|_| rng.next_u64() as u32).collect();
+        BigInt::from(num_bigint::BigUint::new(digits)) | (BigInt::from(1u8) << (bits - 1))
+    };
+    let (c, r) = (wide(), wide());
+    let c0 = -(&c * &r * &r * &r);
+    Sparse::new([(0, c0), (3, c)])
+}
+
+/// The bits of the roots at size n of the benches
+/// `roots_scale_in_the_bits_where_products_are_transforms`, `dense_roots_scale_in_the_bits` and
+/// `a_binomial_root_scales_in_the_bits`, timed at n and 8n:
+/// 262,144 and 2,097,152 bits, 4,096 and 32,768 words, where both sizes take the same method
+/// for every product and quotient at full precision (plan rows ROOTS-doubling-newton and
+/// DECISION-roots-bench-regime, after the precedent of `a_dense_product_scales`, timed at 8,192
+/// and 65,536 words; why 1,024 to 4,096 bits cannot pass at
+/// `roots_scale_in_the_degree_and_in_the_bits`). Every product of the search at full precision
+/// is of factors past `MUL_LEAF`, 400 words, so the kernel's transform, `O(n log n)`. The
+/// quotients go to num-bigint's division, Burnikel and Ziegler's, whose work grows 2.87 times
+/// per doubling, up to the crossovers of `zed_kernel::num::fast` (`DIV_LEAF`, `DIV_COST`;
+/// measured 2026-11-12): 3192 words for `2w` by `w`, the shape of the carry bounds
+/// (`bounds`, a coefficient of `2n` bits by a point of `n`), and 919 words for a quotient of a
+/// quarter of the divisor's words, the shape of a Newton step at the top level of `doubling`;
+/// past them, to the division by a reciprocal, `O(M(n))`. At 131,072 bits, 2048 words, both
+/// shapes were below their crossovers and at 1,048,576 past them, so the pair measured the
+/// change of method, not the order: 11.20 times the instructions at 8n, the quotients 8.40
+/// times and the rest 4.55 times from 131,072 to 524,288 bits (runs h5-req24 and h5-req26).
+/// The search at doubling precision makes the whole `O(M(n))` past the cuts, and the cuts are
+/// `O(log n)` evaluations of `O(M(n))` each at powers of 2. The lower levels of `doubling`
+/// divide numbers of half the bits of the level above, so some are below the crossovers at
+/// every size: from 262,144 to 1,048,576 bits the division by a reciprocal went from 3 calls
+/// to 10, 7.70 times its work, but 2.31 times per call, and the whole 4.52 times (run
+/// h5-req27, callgrind). Measured at these sizes (h5-req27): 9.445, 9.065 and 9.026 times the
+/// instructions at 8n for the three benches, 3.0 s, 7.6 s and 1.6 s a piece; with the search
+/// at doubling precision turned off in the production build, the first takes 10.588 and fails.
+const TRANSFORM_BITS: usize = 262_144;
+
+/// The integer roots of the cubic of [`of_bits`], whose roots have [`TRANSFORM_BITS`] and 8
+/// times as many bits: the sizes and why, there.
+#[test]
+fn roots_scale_in_the_bits_where_products_are_transforms() {
+    scaling::check_inputs(
+        "the integer roots of a cubic whose roots have n bits",
+        TRANSFORM_BITS,
+        |bits| of_bits(bits as u64).0,
+        |f| {
+            integer_roots(f, None, None);
+        },
+    );
+}
+
+/// The integer roots of the dense cubic of [`dense_cubic`], at the sizes of
+/// [`TRANSFORM_BITS`].
+#[test]
+fn dense_roots_scale_in_the_bits() {
+    scaling::check_inputs(
+        "the integer roots of a dense cubic of three random roots of n bits",
+        TRANSFORM_BITS,
+        |bits| dense_cubic(bits as u64),
+        |f| {
+            integer_roots(f, None, None);
+        },
+    );
+}
+
+/// The integer root of the binomial of [`dense_binomial`], at the sizes of
+/// [`TRANSFORM_BITS`].
+#[test]
+fn a_binomial_root_scales_in_the_bits() {
+    scaling::check_inputs(
+        "the integer root of c x^3 - c r^3, c and r of n bits",
+        TRANSFORM_BITS,
+        |bits| dense_binomial(bits as u64),
+        |f| {
+            integer_roots(f, None, None);
         },
     );
 }
