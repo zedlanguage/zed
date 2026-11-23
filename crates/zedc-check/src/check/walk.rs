@@ -29584,7 +29584,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut left =
             match self.r10_try_admit(what, sig, arrow, args, partial, &mut binds, &defer, span) {
                 Some(l) => l,
-                None => self.replay(what, sig.needs.as_slice(), &mut binds, &sig.bounds, defer, span),
+                None => self.replay(
+                    what,
+                    sig.needs.as_slice(),
+                    &mut binds,
+                    &sig.bounds,
+                    defer,
+                    span,
+                ),
             };
         let frame = self.call_frames.pop();
         // Each bounded variable's binding is within its bound, and of one carrier, or of

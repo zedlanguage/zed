@@ -5,10 +5,10 @@
 //! (`span;`), as an expression (`x = span;`), as a type (`f(x: span) = 0;`), as a parameter
 //! (`f(span) = 0;`), as a type's suffix (`f(x: int span) = 0;`) and range
 //! (`f(x: int[span]) = 0;`), and as a pattern (`f(v) = match v { span -> 0 };`). A span no
-//! reading of which parses at the ring of its step is listed, with the lowest ring above it at which one does, as allowed when the
-//! sentence holding it names a later layer or step (`L5`, `step L5.2`), or says the form is
-//! refused or is an error there, and as not allowed otherwise: a step that uses a form of a
-//! later layer in its own work.
+//! reading of which parses at the ring of its step is listed, with the lowest ring above it at
+//! which one does, as allowed when the sentence holding it names a later layer or step (`L5`,
+//! `step L5.2`), or says the form is refused or is an error there, and as not allowed
+//! otherwise: a step that uses a form of a later layer in its own work.
 //!
 //! What the tool does not see, reported with its counts: spans that parse in no reading
 //! (prose in backticks, elided code, grammar rule names), the S and M0 steps (the scaffolding,
@@ -18,8 +18,8 @@
 //!
 //! Cost: each span is lexed once per reading and parsed at most once per ring and reading
 //! (twice per reading unless it is listed), with `TOP` rings and eight readings fixed, so the
-//! whole run is O(total length of the spans)
-//! besides one pass over DESIGN.md to find them; the parser is a packrat parser, linear in its
+//! whole run is O(total length of the spans) besides one pass over DESIGN.md to find them; the
+//! parser is a packrat parser, linear in its
 //! input (Ford 2002, "Packrat parsing: simple, powerful, lazy, linear time", ICFP,
 //! doi:10.1145/581478.581483; the claim that this parser memoizes every rule is from memory of
 //! crates/zedc-syntax/src/parse, not checked here). On DESIGN.md of 2026-11-23 (11353 spans)
@@ -111,7 +111,10 @@ fn ring(spec: &Spec, span: &str, layer: u32) -> Option<u32> {
     if toks.is_empty() {
         return None;
     }
-    let reads = |k| toks.iter().any(|t| parse(syn, lexical, t, k, "Unit").is_ok());
+    let reads = |k| {
+        toks.iter()
+            .any(|t| parse(syn, lexical, t, k, "Unit").is_ok())
+    };
     if layer >= TOP || reads(layer) {
         return Some(0);
     }
@@ -238,7 +241,14 @@ pub fn report(spec: &Spec, out: &mut String) -> Outcome {
     let mut bad = 0;
     for l in &a.listed {
         let how = if l.allowed { "allowed" } else { "NOT ALLOWED" };
-        say!(out, "{} (L{}) `{}` needs L{}: {how}", l.step, l.layer, l.span, l.ring);
+        say!(
+            out,
+            "{} (L{}) `{}` needs L{}: {how}",
+            l.step,
+            l.layer,
+            l.span,
+            l.ring
+        );
         bad += usize::from(!l.allowed);
     }
     say!(

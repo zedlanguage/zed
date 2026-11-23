@@ -20,11 +20,11 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use zed_kernel::print::level;
+use zed_tests::is_not_yet;
+use zed_tests::step_helpers::l01_13_formatter::shape;
 use zedc::format::format;
 use zedc::lex::Tok;
 use zedc::parse::{Grammar, grammar, marked_rule};
-use zed_tests::is_not_yet;
-use zed_tests::step_helpers::l01_13_formatter::shape;
 
 use super::build;
 
@@ -76,7 +76,9 @@ fn the_levels_are_the_layering_of_the_grammar() {
         let reached = reach(g, rule(at));
         for (a, form) in LEVELS {
             if reached.contains(&rule(form)) != (a >= b) {
-                wrong.push(format!("{form} (level {a}) where {at} (level {b}) is expected"));
+                wrong.push(format!(
+                    "{form} (level {a}) where {at} (level {b}) is expected"
+                ));
             }
         }
     }
@@ -88,13 +90,58 @@ fn the_levels_are_the_layering_of_the_grammar() {
 /// `else`, a lambda, each suffix, `with`, `><`, an infix call, on each side, and a `for`, at
 /// its source (a head) and in its body.
 const FORMS: &[&str] = &[
-    "for y in @ { y }", "for y in s { @ }",
-    "@ || b", "a || @", "@ && b", "a && @", "@ == b", "a == @", "@ != b", "a != @", "@ < b",
-    "a < @", "@ <= b", "a <= @", "@ > b", "a > @", "@ >= b", "a >= @", "@ + b", "a + @",
-    "@ - b", "a - @", "@ ++ b", "a ++ @", "@ * b", "a * @", "@ / b", "a / @", "@ div b",
-    "a div @", "@ mod b", "a mod @", "@ ^ b", "a ^ @", "-@", "!@", "@ is int", "@ in s",
-    "a in @", "@..<b", "a..<@", "@ else b", "a else @", "y -> @", "@.c", "@(1)", "@[0]",
-    "@*.c", "@ with { c = 1 }", "@ >< max", "@ ~g~ b", "a ~g~ @",
+    "for y in @ { y }",
+    "for y in s { @ }",
+    "@ || b",
+    "a || @",
+    "@ && b",
+    "a && @",
+    "@ == b",
+    "a == @",
+    "@ != b",
+    "a != @",
+    "@ < b",
+    "a < @",
+    "@ <= b",
+    "a <= @",
+    "@ > b",
+    "a > @",
+    "@ >= b",
+    "a >= @",
+    "@ + b",
+    "a + @",
+    "@ - b",
+    "a - @",
+    "@ ++ b",
+    "a ++ @",
+    "@ * b",
+    "a * @",
+    "@ / b",
+    "a / @",
+    "@ div b",
+    "a div @",
+    "@ mod b",
+    "a mod @",
+    "@ ^ b",
+    "a ^ @",
+    "-@",
+    "!@",
+    "@ is int",
+    "@ in s",
+    "a in @",
+    "@..<b",
+    "a..<@",
+    "@ else b",
+    "a else @",
+    "y -> @",
+    "@.c",
+    "@(1)",
+    "@[0]",
+    "@*.c",
+    "@ with { c = 1 }",
+    "@ >< max",
+    "@ ~g~ b",
+    "a ~g~ @",
 ];
 
 /// The pairs of positions of `text` that hold a pair of grouping parentheses: a `(` that does
@@ -108,8 +155,8 @@ fn grouping(text: &str) -> Vec<(usize, usize)> {
     for (i, t) in tokens.iter().enumerate() {
         match &t.tok {
             Tok::Op("(") => {
-                let called = i > 0
-                    && matches!(&tokens[i - 1].tok, Tok::Name(_) | Tok::Op(")" | "]" | "."));
+                let called =
+                    i > 0 && matches!(&tokens[i - 1].tok, Tok::Name(_) | Tok::Op(")" | "]" | "."));
                 open.push((t.span.start, !called));
             }
             Tok::Op(",") => {
@@ -146,10 +193,14 @@ fn misformatted(name: &str, text: &str) -> Vec<String> {
     };
     let want = shape(&stmts);
     if shape(&stmts2) != want {
-        return vec![format!("{name}: formats to text that builds to other statements")];
+        return vec![format!(
+            "{name}: formats to text that builds to other statements"
+        )];
     }
     if format(&out, &tokens2, &stmts2) != out {
-        return vec![format!("{name}: formats to text that does not format to itself")];
+        return vec![format!(
+            "{name}: formats to text that does not format to itself"
+        )];
     }
     let mut wrong = Vec::new();
     for (a, b) in grouping(&out) {
@@ -196,7 +247,12 @@ fn each_operator_pair_is_parenthesized_exactly_where_the_grammar_needs_it() {
             }
         }
     }
-    assert!(wrong.is_empty(), "{} wrong:\n{}", wrong.len(), wrong.join("\n"));
+    assert!(
+        wrong.is_empty(),
+        "{} wrong:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
     assert_eq!((checked, later), (FORMS.len() * FORMS.len(), 0));
 }
 

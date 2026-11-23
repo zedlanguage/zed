@@ -1683,7 +1683,8 @@ impl<'a> Formatter<'a> {
                 // block, a one-entry map; crates/zedc-syntax/src/ast/body.rs), so the lambda
                 // that is a block's value is grouped: `for y in s { (y -> x) }`.
                 StmtKind::Return(es)
-                    if bare && matches!(&es[..], [l] if matches!(l.kind, ExprKind::Lambda { .. })) =>
+                    if bare
+                        && matches!(&es[..], [l] if matches!(l.kind, ExprKind::Lambda { .. })) =>
                 {
                     stack.push(Job::Expr {
                         e: &es[0],

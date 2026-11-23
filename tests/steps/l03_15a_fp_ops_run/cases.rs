@@ -1409,14 +1409,22 @@ fn a_written_list_type_is_checked() {
             "",
             &[],
         );
-        assert_eq!((out.status, out.stdout.as_str()), (0, "1\n"), "{bound}: {}", out.stderr);
+        assert_eq!(
+            (out.status, out.stdout.as_str()),
+            (0, "1\n"),
+            "{bound}: {}",
+            out.stderr
+        );
     }
     // A list anywhere else in a bound has no sound reading without a list type in the kernel
     // (see `lists_within` in crates/zedc-types/src/kernel_type.rs), so it is still refused,
     // never passed unchecked.
-    for (i, bound) in ["([#a], int) .. ([#a | #b], int)", "(int ->? int) .. ([int] | String)"]
-        .into_iter()
-        .enumerate()
+    for (i, bound) in [
+        "([#a], int) .. ([#a | #b], int)",
+        "(int ->? int) .. ([int] | String)",
+    ]
+    .into_iter()
+    .enumerate()
     {
         let out = run(
             &format!("fp_ops/list_in_a_bound_refused_{i}"),

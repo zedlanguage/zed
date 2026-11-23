@@ -5128,8 +5128,9 @@ impl Needs {
     /// The needs, as a list of its own: moved out where no other signature shares them, else
     /// copied.
     pub fn into_vec(self) -> Vec<Need> {
-        self.0
-            .map_or_else(Vec::new, |l| Arc::try_unwrap(l).unwrap_or_else(|l| (*l).clone()))
+        self.0.map_or_else(Vec::new, |l| {
+            Arc::try_unwrap(l).unwrap_or_else(|l| (*l).clone())
+        })
     }
 
     /// The needs where this was the last signature to hold them, for a drop that frees what
@@ -5138,10 +5139,7 @@ impl Needs {
     /// last in one atomic step, so two holders dropped at once never both take them, nor
     /// both leave them.
     fn take_last(&mut self) -> Vec<Need> {
-        self.0
-            .take()
-            .and_then(Arc::into_inner)
-            .unwrap_or_default()
+        self.0.take().and_then(Arc::into_inner).unwrap_or_default()
     }
 }
 
@@ -22436,7 +22434,10 @@ impl Sig {
     /// included.
     pub fn decoded_needs_and_own(&self) -> (Cow<'_, [Need]>, Cow<'_, BTreeSet<Arc<str>>>) {
         if !self.has_fwd_needs() {
-            return (Cow::Borrowed(self.needs.as_slice()), Cow::Borrowed(&self.own));
+            return (
+                Cow::Borrowed(self.needs.as_slice()),
+                Cow::Borrowed(&self.own),
+            );
         }
         let mut needs_out = Vec::new();
         let mut own_out = self.own.clone();

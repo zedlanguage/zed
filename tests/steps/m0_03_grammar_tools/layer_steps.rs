@@ -30,7 +30,11 @@ pub(crate) fn audits_steps(spec: &Spec, section: &str, m: usize) {
     let a = steps::audit(spec, section);
     assert_eq!(a.listed.len(), m, "{a:?}");
     assert!(a.listed.iter().all(|l| l.allowed), "{a:?}");
-    assert_eq!((a.spans, a.unread, a.other_steps), (2 * m + 1, 0, 1), "{a:?}");
+    assert_eq!(
+        (a.spans, a.unread, a.other_steps),
+        (2 * m + 1, 0, 1),
+        "{a:?}"
+    );
 }
 
 #[test]
@@ -49,7 +53,10 @@ fn spec(name: &str, body: &str) -> Dir {
 
 #[test]
 fn a_later_form_in_an_l1_step_is_listed_and_fails_the_run() {
-    let dir = spec("steps_listed", &steps_section(2, "Then `x in 0..=255` is read."));
+    let dir = spec(
+        "steps_listed",
+        &steps_section(2, "Then `x in 0..=255` is read."),
+    );
     let s = Spec::open(&dir.root()).expect("the spec reads");
     let a = steps::audit(&s, &std::fs::read_to_string(&s.design).expect("DESIGN.md"));
     let listed: Vec<_> = a
@@ -76,7 +83,10 @@ fn a_later_form_in_an_l1_step_is_listed_and_fails_the_run() {
         out.contains("L1.2 (L1) `x in 0..=255` needs L") && out.contains("NOT ALLOWED"),
         "{out}"
     );
-    assert!(out.contains("6 spans in the steps of a layer, 3 listed, 1 not allowed"), "{out}");
+    assert!(
+        out.contains("6 spans in the steps of a layer, 3 listed, 1 not allowed"),
+        "{out}"
+    );
 }
 
 #[test]
