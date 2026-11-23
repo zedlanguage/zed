@@ -219,6 +219,7 @@ const CHAIN: usize = 50_000;
 /// directions. Each of these steps took time linear in the depth: 28 ms to build 16,000
 /// levels, 40 ms for the verdict, microseconds for each comparison, since the chain is built
 /// equal to its shallow composition (2026-11-22, five depths from 1000 to 16,000 run at once).
+/// The whole test took 343 ms on an 8-thread VM (2026-11-22).
 #[test]
 fn a_chain_of_the_five_operations_50_000_levels_deep_is_the_shallow_composition() {
     timed(&format!("a chain of {CHAIN} levels"), || {
@@ -239,8 +240,14 @@ fn a_chain_of_the_five_operations_50_000_levels_deep_is_the_shallow_composition(
 // at 50,000 levels the whole test took 600 s. Pure tuple and pure morphism types compare within
 // the ratio limit (`comparing_deep_tuple_types_scales_with_depth`,
 // `comparing_deep_morphism_types_scales_with_depth`); a morphism of a pair does not. The
-// simulation fails at the top (`Simulation::rows`: the two morphism parts differ), so the time
-// is in building `a - b` or in its `is_empty`. No ratio is checked here until it is fixed.
+// simulation fails at the top (`Simulation::rows`: the two morphism parts differ), and the
+// time is in `is_empty` of `a - b`: a probe (not committed) nested `a` and `b` 200, 400, 800
+// and 1600 deep around `0` and `1` and timed the two steps apart. Building `a - b` took 13 to
+// 85 µs at every depth. Deciding it took 10.4, 19.7, 39.7 and 76.4 ms for `{int: t}` and 9.6,
+// 18.3, 36.0 and 77.5 ms for `(t, 1)`, linear, but 0.24, 0.90, 3.27 and 11.28 s for
+// `{int: (t,)}` and 0.25, 0.94, 3.21 and 11.92 s for `{int: (t, 1)}`, about 3.6 times a
+// doubling: the search is quadratic where a morphism's value is a tuple. Not yet located
+// within the search (no profiler on the VM). No ratio is checked here until it is fixed.
 const UNEQUAL: usize = 4000;
 
 /// The chain `UNEQUAL` levels deep is not under the shallow composition around another bottom,
@@ -251,48 +258,4 @@ fn a_chain_of_the_five_operations_4000_levels_deep_is_not_under_another_bottoms(
         let t = chain(UNEQUAL, lit(0));
         assert!(!t.subtype(&shallow(UNEQUAL, lit(1))));
     });
-}
-
-/// TEMPORARY PROBE (2026-11-22, to be removed): where the time of comparing a morphism of a
-/// pair goes, at four depths of nesting, building `a - b` and deciding it timed apart.
-fn probe(what: &str, level: fn(Type) -> Type) {
-    for n in [200, 400, 800, 1600] {
-        zed_tests::deep::on_small_stack(|| {
-            let nest = |b: Type| (0..n).fold(b, |t, _| level(t));
-            let (a, b) = (nest(lit(0)), nest(lit(1)));
-            let start = std::time::Instant::now();
-            let d = &a - &b;
-            let built = start.elapsed();
-            let start = std::time::Instant::now();
-            assert!(!d.is_empty());
-            eprintln!(
-                "{what} {n} deep: a - b built in {built:.2?}, decided in {:.2?}",
-                start.elapsed()
-            );
-        });
-    }
-}
-
-#[test]
-fn probe_morphisms_of_pairs() {
-    probe("{int: (t, 1)}", |t| {
-        Type::exact(Type::int(), Type::tuple(vec![t, lit(1)]))
-    });
-}
-
-#[test]
-fn probe_morphisms_of_one_tuples() {
-    probe("{int: (t,)}", |t| {
-        Type::exact(Type::int(), Type::tuple(vec![t]))
-    });
-}
-
-#[test]
-fn probe_morphisms() {
-    probe("{int: t}", |t| Type::exact(Type::int(), t));
-}
-
-#[test]
-fn probe_pairs() {
-    probe("(t, 1)", |t| Type::tuple(vec![t, lit(1)]));
 }
