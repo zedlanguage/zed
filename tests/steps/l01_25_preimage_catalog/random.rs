@@ -248,11 +248,16 @@ fn run_with(seed: u64, cases: usize, test: bool, calls: bool) -> Tally {
     tally
 }
 
+/// 1000 terms, so that at least 5 take the enumeration of a listed set. Until
+/// PREIMAGE-mod-defined, 250 terms gave 6 enumerated (233 exact without); that change makes
+/// `div` and `mod` read where both are defined exact without enumeration, and 250 terms gave 2
+/// (240 exact without), 1000 terms 10 (947), 0.66 s on a 2-core VM (2026-11-22). The bounds
+/// on the other two counts are scaled with the terms, 4 times those for 250.
 #[test]
 fn integer_preimages_are_sound_and_exact_where_claimed() {
-    let t = run(25, 250, false);
+    let t = run(25, 1000, false);
     assert!(
-        t.exact_unenumerated >= 60 && t.enumerated >= 5 && t.nonempty >= 100,
+        t.exact_unenumerated >= 240 && t.enumerated >= 5 && t.nonempty >= 400,
         "{t:?}"
     );
 }
