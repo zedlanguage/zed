@@ -1694,7 +1694,7 @@ impl Type {
     pub fn subtype(&self, other: &Type) -> bool {
         // Unions of one-tuples compare by their components ([`one_tuple_column`]), as in
         // `subtype_verdict`.
-        if let (Some(a), Some(b)) = (one_tuple_column(self), one_tuple_column(other)) {
+        if let Some((a, b)) = one_tuple_columns(self, other) {
             match a.subtype_verdict(&b) {
                 Verdict::Empty => return true,
                 Verdict::Inhabited => return false,
@@ -1714,7 +1714,7 @@ impl Type {
     /// and `the_recorded_cases_are_decided_by_the_simulation` in `l01_23_subtyping::oracle`;
     /// COMPLEXITY.md K37).
     pub fn subtype_verdict(&self, other: &Type) -> Verdict {
-        if let (Some(a), Some(b)) = (one_tuple_column(self), one_tuple_column(other)) {
+        if let Some((a, b)) = one_tuple_columns(self, other) {
             // `(a,) <: (b,)` exactly when `a <: b`: a one-tuple `(v,)` is in `(a,)` exactly when
             // `v` is in `a`, and a value `v` of `a` outside `b` gives `(v,)` of `self` outside
             // `other`. A refusal keeps the route below, so no verdict made before is lost.
@@ -1752,6 +1752,31 @@ impl Type {
 /// union of their components, `Type::union_all`. Given up: a union whose part is not a plain
 /// union of rows (a negation, a meet, another length beside 1) goes the long way, as before.
 fn one_tuple_column(t: &Type) -> Option<Type> {
+    let p = one_tuple_part(t)?;
+    let rows = p.union_rows()?;
+    Some(Type::union_all(rows.into_iter().map(|r| r[0].clone())))
+}
+
+/// The columns of [`one_tuple_column`] of `a` and of `b`, when both have one. The shape of `b`
+/// is checked before `a`'s rows are read, and `b`'s rows are read only when `a` has a column,
+/// so a pair in which one side is not a union of one-tuples reads the rows of one side at most.
+// Complexity tradeoff (CHECK-subtype-one-tuple-bench-other-crates, COMPLEXITY.md K142): with both
+// columns built eagerly, each `subtype` call walked both sides' rows before either could fail;
+// measured on hm5 under DynamoRIO (2026-11-22) against 3659850ed with the column route taken
+// out, every one of the 96 instruction-counted benchmarks of zedc_types, zedc_lattice and
+// l01_23_subtyping kept its ratio, and the exclusive-or benches of 26,524 instructions cost 3.0%
+// more, two of about 30 G 0.9% more. Building the second column only when the first exists
+// halves that walk at most: with it they cost 1.6% and 0.6% more, every other within 0.2%; a
+// pre-check that would decide without the walk (an exclusive or among the rows) needs the
+// same walk, as `Part::union_rows` finds it only by reaching it.
+fn one_tuple_columns(a: &Type, b: &Type) -> Option<(Type, Type)> {
+    one_tuple_part(b)?;
+    let a = one_tuple_column(a)?;
+    Some((a, one_tuple_column(b)?))
+}
+
+/// The part of length 1 of `t` when `t` holds tuples of length 1 and nothing else.
+fn one_tuple_part(t: &Type) -> Option<&Part<Row>> {
     let Node::Parts(p, _) = &*t.0 else {
         return None;
     };
@@ -1764,8 +1789,7 @@ fn one_tuple_column(t: &Type) -> Option<Type> {
     let (true, Some((1, part)), None) = (bare, lens.next(), lens.next()) else {
         return None;
     };
-    let rows = part.union_rows()?;
-    Some(Type::union_all(rows.into_iter().map(|r| r[0].clone())))
+    Some(part)
 }
 
 /// A proof of `a <: b` for unions of tuple types written without negation, with no box split:
