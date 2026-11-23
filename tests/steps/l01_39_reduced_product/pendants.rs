@@ -14,6 +14,7 @@ use zed_tests::instances::Rng;
 use zed_tests::step_helpers::l01_38_presburger::solver_alone;
 use zedc::store::cell::Premises;
 use zedc::store::interval::{End, IntervalSet, Num};
+use zedc::store::lattice::{Congruence, Lattice};
 use zedc::store::presburger::{self, Atom, Con, Formula, Lin, Shared};
 use zedc::store::product::Scope;
 
@@ -1315,14 +1316,36 @@ fn brute(
 type Bruted = (String, String, String);
 
 /// The projection by pendants of the part, each name met with its box, or `None` where the
-/// route is not taken.
+/// route is not taken. A name answered with a class (a pendant `c·x + ...` with `|c| > 1`)
+/// is shown as its values listed where the set met with the box is finite, as
+/// `presburger::project_each` lists them, else as its ranges and then its class.
 fn hung(s: &Scope, f: &Formula) -> Option<BTreeMap<String, String>> {
     let out = s.project_by_pendants(f)?;
     Some(
         out.into_iter()
-            .map(|(n, x)| (n.to_string(), show(&s.get(&n).ints().meet(&x))))
+            .map(|(n, x, class)| {
+                (
+                    n.to_string(),
+                    shown_classed(&s.get(&n).ints().meet(&x), class),
+                )
+            })
             .collect(),
     )
+}
+
+/// `set` in `class`, shown as [`hung`] shows it.
+fn shown_classed(set: &IntervalSet, class: Congruence) -> String {
+    let finite = set.is_empty()
+        || set
+            .pieces()
+            .all(|(l, h)| matches!((l, h), (End::Fin(_), End::Fin(_))));
+    if class == Congruence::top() {
+        show(set)
+    } else if finite {
+        show(&presburger::Classed::new(set.clone(), class).met())
+    } else {
+        format!("{} {class}", show(set))
+    }
 }
 
 /// What [`hung`] leaves each name the part mentions: its answer, or for a name it does not
@@ -1581,7 +1604,10 @@ fn hub_terms(r: &mut Rng) -> BTreeMap<String, i64> {
 
 /// A random part over hubs `a`, `b`, `c` and `z0`..`z{nz-1}`: pendants of the `z` on sums
 /// of hubs, constraints on the hubs, differences of two `z`, and up to two disjunctions.
-fn random_part(r: &mut Rng, nz: usize) -> Vec<Item> {
+/// With `wide`, a `z` in a pendant has a coefficient from `±1, ±2, ±3` (design B of
+/// ST-eqs-rest-exact, R1_CLAUDE T1), else `±1`; either way one draw, so the parts of the
+/// seeds fixed in the tests are those they were.
+fn random_part(r: &mut Rng, nz: usize, wide: bool) -> Vec<Item> {
     let mut items = Vec::new();
     for _ in 0..3 + r.below(8) {
         let z = format!("z{}", r.below(nz));
@@ -1589,7 +1615,12 @@ fn random_part(r: &mut Rng, nz: usize) -> Vec<Item> {
         let mut terms = hub_terms(r);
         items.push(match r.below(9) {
             0..=3 => {
-                terms.insert(z, [1, -1][r.below(2)]);
+                let k = if wide {
+                    [1, -1, 2, -2, 3, -3][r.below(6)]
+                } else {
+                    [1, -1][r.below(2)]
+                };
+                terms.insert(z, k);
                 Item::Con(Cmp {
                     terms,
                     constant: c,
@@ -1637,8 +1668,10 @@ fn random_part(r: &mut Rng, nz: usize) -> Vec<Item> {
     items
 }
 
-/// Random boxes for the hubs and the `z`, some unbounded and some of a hub with a hole.
-fn random_boxes(r: &mut Rng, nz: usize) -> BTreeMap<String, Vec<Piece>> {
+/// Random boxes for the hubs and the `z`, some unbounded and some with a hole: of a hub
+/// only, or with `wide` of a `z` too (design C of ST-eqs-rest-exact, R1_CLAUDE T1). Without
+/// `wide` a `z` draws nothing for a hole, so the seeds fixed in the tests keep their parts.
+fn random_boxes(r: &mut Rng, nz: usize, wide: bool) -> BTreeMap<String, Vec<Piece>> {
     let names = ["a", "b", "c"]
         .map(String::from)
         .into_iter()
@@ -1648,7 +1681,9 @@ fn random_boxes(r: &mut Rng, nz: usize) -> BTreeMap<String, Vec<Piece>> {
             let lo = (r.below(3) != 0).then(|| r.int(-10, 4));
             let hi = (r.below(3) != 0).then(|| lo.unwrap_or(-10) + r.int(0, 20));
             let pieces = match (lo, hi) {
-                (Some(l), Some(h)) if !n.starts_with('z') && h - l >= 4 && r.below(6) == 0 => {
+                (Some(l), Some(h))
+                    if (wide || !n.starts_with('z')) && h - l >= 4 && r.below(6) == 0 =>
+                {
                     let m = l + 1 + r.below((h - l - 2) as usize) as i64;
                     vec![(Some(l), Some(m)), (Some(m + 2), Some(h))]
                 }
@@ -1696,10 +1731,63 @@ fn whole(s: &Scope, f: &Formula) -> Option<BTreeMap<String, String>> {
 /// Each must be the exact set (author P197), so the test fails on any name where the two
 /// differ, naming the precision of each answer ([`compared`]), and prints the counts.
 /// Seed 0x7e4d at 400 parts took 1.6 s.
+///
+/// The parts are drawn `wide` ([`random_part`], [`random_boxes`]), and the test fails unless
+/// the route is taken by parts of each of the three kinds ST-eqs-rest-exact admits
+/// ([`RouteKinds`]): two disjunctions or more (design D), a pendant whose name has a hole
+/// (design C) and a pendant whose coefficient is not one or minus one (design B). Before
+/// ST-eqs-rest-exact each of the three counts was 0 (R1_CLAUDE T1).
 #[test]
 fn the_projections_by_pendants_and_of_the_whole_part_are_sound() {
     let (r, seed) = Rng::fresh("the projection by pendants");
-    pendants_against_whole(r, seed);
+    let kinds = pendants_against_whole_drawn(r, seed, true);
+    assert!(
+        kinds.disjunctions > 0 && kinds.holed > 0 && kinds.coefficient > 0,
+        "seed {seed}: the route was not taken by a part of each kind: {kinds:?}"
+    );
+}
+
+/// The parts that took the route by pendants, counted by kind: with two disjunctions or
+/// more among their conjuncts (each `Item::Or` and `Item::Ne`), with a pendant whose name's
+/// box has a hole, and with a pendant whose coefficient is not one or minus one. A pendant here
+/// is a `z` named in one conjunct alone, a constraint on hubs, as `Scope::pendant` finds
+/// them; the scope may fold or reorder a part, so the counts are those of the parts as drawn.
+#[derive(Clone, Copy, Debug, Default)]
+struct RouteKinds {
+    disjunctions: usize,
+    holed: usize,
+    coefficient: usize,
+}
+
+impl RouteKinds {
+    /// Counts the part `items` within `bs`, which took the route.
+    fn count(&mut self, items: &[Item], bs: &BTreeMap<String, Vec<Piece>>) {
+        let ors = (items.iter())
+            .filter(|i| matches!(i, Item::Or(_) | Item::Ne(_)))
+            .count();
+        let names = |i: &Item| -> Vec<String> {
+            match i {
+                Item::Con(c) | Item::Ne(c) => c.terms.keys().cloned().collect(),
+                Item::Or(arms) => (arms.iter().flatten())
+                    .flat_map(|c| c.terms.keys().cloned())
+                    .collect(),
+            }
+        };
+        let once = |z: &String| items.iter().filter(|i| names(i).contains(z)).count() == 1;
+        let pendants: Vec<(&String, i64)> = (items.iter())
+            .filter_map(|i| match i {
+                Item::Con(c) => Some(c),
+                _ => None,
+            })
+            .flat_map(|c| {
+                let zs: Vec<_> = c.terms.iter().filter(|(n, _)| n.starts_with('z')).collect();
+                (zs.len() == 1 && once(zs[0].0)).then(|| (zs[0].0, *zs[0].1))
+            })
+            .collect();
+        self.disjunctions += usize::from(ors >= 2);
+        self.holed += usize::from(pendants.iter().any(|(z, _)| bs[*z].len() > 1));
+        self.coefficient += usize::from(pendants.iter().any(|(_, k)| k.abs() > 1));
+    }
 }
 
 /// Whether the answer for one name is the exact set of its values, a sound set wider than
@@ -1844,16 +1932,24 @@ fn compare_part(
 /// was compared, [`built_compared_part`] is, so the comparison is never skipped. Prints the
 /// count of names that differ by the precision of each answer, which is empty when the test
 /// passes.
-fn pendants_against_whole(mut r: Rng, seed: u64) {
+fn pendants_against_whole(r: Rng, seed: u64) {
+    pendants_against_whole_drawn(r, seed, false);
+}
+
+/// [`pendants_against_whole`] on parts drawn `wide` or not ([`drawn_case`]), with the
+/// parts that took the route counted by kind.
+fn pendants_against_whole_drawn(mut r: Rng, seed: u64, wide: bool) -> RouteKinds {
     let (mut same, mut taken, mut compared_on) = (0, 0, 0);
     let mut kinds: BTreeMap<(Precision, Precision), usize> = BTreeMap::new();
+    let mut route = RouteKinds::default();
     let mut wrong = Vec::new();
     for part in 1..=PENDANT_PARTS {
-        let (items, bs) = next_case(&mut r, false);
+        let (items, bs) = drawn_case(&mut r, false, wide);
         let Some(answer) = compare_part(&items, &bs, &mut kinds) else {
             continue;
         };
         taken += 1;
+        route.count(&items, &bs);
         let Some(fault) = answer else { continue };
         compared_on += 1;
         if fault.is_empty() {
@@ -1864,7 +1960,8 @@ fn pendants_against_whole(mut r: Rng, seed: u64) {
     }
     eprintln!(
         "{PENDANT_PARTS} parts, the route taken on {taken}, compared on {compared_on}, the \
-         same on {same}; names that differ (by pendants, whole): {kinds:?}"
+         same on {same}; names that differ (by pendants, whole): {kinds:?}; the route taken \
+         by kind {route:?}"
     );
     if compared_on == 0 {
         let (items, bs) = built_compared_part();
@@ -1881,6 +1978,7 @@ fn pendants_against_whole(mut r: Rng, seed: u64) {
         wrong.len(),
         wrong.join("\n")
     );
+    route
 }
 
 /// The part built for [`pendants_against_whole`] takes the route by pendants, the whole part
@@ -3003,12 +3101,18 @@ fn the_oracle_decides_the_end_57_of_seed_490() {
 
 /// The next random part of `r` and its boxes, as [`refused_names_in`] draws them.
 fn next_case(r: &mut Rng, double: bool) -> (Vec<Item>, BTreeMap<String, Vec<Piece>>) {
+    drawn_case(r, double, false)
+}
+
+/// The next random part of `r` and its boxes, with `wide` coefficients and holes
+/// ([`random_part`], [`random_boxes`]).
+fn drawn_case(r: &mut Rng, double: bool, wide: bool) -> (Vec<Item>, BTreeMap<String, Vec<Piece>>) {
     let nz = 2 + r.below(5);
-    let mut items = random_part(r, nz);
+    let mut items = random_part(r, nz, wide);
     if double {
-        items.extend(random_part(r, nz));
+        items.extend(random_part(r, nz, wide));
     }
-    let bs = random_boxes(r, nz);
+    let bs = random_boxes(r, nz, wide);
     (items, bs)
 }
 
@@ -3209,8 +3313,8 @@ fn random_rewrites(seed: u64, cases: usize) -> Vec<Rewrites> {
     (0..cases)
         .map(|case| {
             let nz = 2 + r.below(5);
-            let items = random_part(&mut r, nz);
-            let bs = random_boxes(&mut r, nz);
+            let items = random_part(&mut r, nz, false);
+            let bs = random_boxes(&mut r, nz, false);
             let mut rewrites: Vec<Formula> = [false, false, true, true]
                 .into_iter()
                 .map(|split| rewritten(&mut r, &items, split))
@@ -4247,3 +4351,263 @@ fn the_omega_oracle_agrees_with_enumeration() {
         "seed {seed}: only {inexact} cases with coefficients of magnitude 2+"
     );
 }
+
+/// The parts of the cross-review XR-st-eqs-rest (round 1) on which a hull, a wrong residue or
+/// a truncating division would answer wrongly, each checked to take the route by pendants
+/// (ST-eqs-rest-exact) and to give the exact sets written here, which the projection of the
+/// whole part gives too. Each set was worked by hand from the part, as noted at each row, and
+/// matches the brute force of the reviewer's program (Gemini's `verify_pendants.rs`, Codex's
+/// R1_CODEX.md C and D). Before ST-eqs-rest-exact none took the route: B needs a coefficient
+/// other than one, C a hole in the pendant's name, D two disjunctions.
+const REVIEWED_PARTS: [(&str, &str, &str, &str); 11] = [
+    (
+        // a + b = 3 z0 + 1 with a + b in [-16, 16]: z0 in [-5, 5], 11 values, a + b in the class
+        // 1 mod 3 (the residue -σk mod |c| with σ = -1, k = 1; the residue -k gives 2 mod 3,
+        // which has none of them).
+        // The second conjunct, true of the boxes, mentions `a` and `b`, so that `z0` is the one
+        // name of the pendant no other conjunct mentions (a part of one constraint has no
+        // pendant: each of its names is one).
+        "B-1",
+        "a=[-8,8] b=[-8,8] z0=[-10,10]",
+        "3 * z0 - a - b + 1 == 0 && a + b <= 16",
+        "a=[-8,8] b=[-8,8] z0=[-5,5]",
+    ),
+    (
+        // a + b in {0, 6}, the multiples of 6 in [0, 6] (CRT of 0 mod 2 and 0 mod 3): z0 in
+        // {0, 3}, z1 in {0, 2}, a = b in {0, 3}. Rounding the hull [0, 6] in to each class
+        // alone gives z0 in [0, 3].
+        "B-2",
+        "a=[0,3] b=[0,3] z0=[-10,10] z1=[-10,10]",
+        "2 * z0 == a + b && 3 * z1 == a + b",
+        "a=[0,0 3,3] b=[0,0 3,3] z0=[0,0 3,3] z1=[0,0 2,2]",
+    ),
+    (
+        // -2 z0 - 3 >= 0 with a + b = 0: z0 <= -3/2, so z0 <= -2 (floor); the truncating
+        // -3 / 2 = -1 would give -1. Gemini's part had the form `a`, of one name, which the
+        // route leaves to the whole projection, so the form here is `a + b`.
+        "B-3",
+        "a=[0,0] b=[0,0] z0=[-10,10]",
+        "a + b - 2 * z0 - 3 >= 0 && a + b <= 0",
+        "a=[0,0] b=[0,0] z0=[-10,-2]",
+    ),
+    (
+        // a + b = 2 z0 and a + b = 2 z1 + 1: no common class, so no point and each name empty.
+        "B-crt",
+        "a=[0,3] b=[0,3] z0=[-10,10] z1=[-10,10]",
+        "a + b == 2 * z0 && a + b == 2 * z1 + 1",
+        "a=[] b=[] z0=[] z1=[]",
+    ),
+    (
+        // a + b in {0, 1} (one of them 0), and z0 = a + b is not 1, so a = b = z0 = 0. A
+        // hull per disjunct keeps a and b in [0, 1].
+        "C-1",
+        "a=[0,1] b=[0,1] z0=[-5,0 2,5]",
+        "(a <= 0 || b <= 0) && a + b == z0",
+        "a=[0,0] b=[0,0] z0=[0,0]",
+    ),
+    (
+        // (a, b) in {(0, 0), (0, 1), (1, 1)} by the disjunction, and z1 = a - b is not -1, so
+        // (a, b) in {(0, 0), (1, 1)}: z0 = a + b in {0, 2}. A hull gives z0 in [0, 2].
+        "C-2",
+        "a=[0,1] b=[0,1] z0=[-5,5] z1=[-5,-2 0,5]",
+        "(a <= 0 || b >= 1) && a + b == z0 && a - b == z1",
+        "a=[0,1] b=[0,1] z0=[0,0 2,2] z1=[0,0]",
+    ),
+    (
+        // a = b in [0, 2], x = a + b in {0, 2, 4}, all in the box [0, 2] and {4}; the hull of
+        // the first arm of the box, [0, 2], would add 1 (Codex's C).
+        "Codex C",
+        "a=[0,2] b=[0,2] z0=[0,2 4,4]",
+        "a == b && a + b == z0",
+        "a=[0,2] b=[0,2] z0=[0,0 2,2 4,4]",
+    ),
+    (
+        // (a, b) in {(0, 0), (1, 1)}: z0 = a + b in {0, 2}; the hull of the disjuncts, [0, 2].
+        "D-1",
+        "a=[0,1] b=[0,1] z0=[-5,5]",
+        "(a <= 0 || b >= 1) && (a >= 1 || b <= 0) && a + b == z0",
+        "a=[0,1] b=[0,1] z0=[0,0 2,2]",
+    ),
+    (
+        // D-1 with a + b <= 1: (a, b) = (0, 0), so a + b - z0 >= 0 is z0 <= 0. Hulls give a +
+        // b in [0, 1] and z0 <= 1.
+        "D-2",
+        "a=[0,1] b=[0,1] z0=[-5,5]",
+        "(a <= 0 || b >= 1) && (a >= 1 || b <= 0) && a + b <= 1 && a + b - z0 >= 0",
+        "a=[0,0] b=[0,0] z0=[-5,0]",
+    ),
+    (
+        // w = a + b in [0, 3]; the two clauses say w != 1 or b is both 0 and 1, so w != 1:
+        // (a, b) in {(0, 0), (2, 0), (1, 1), (2, 1)}, z0 = w in {0, 2, 3}. Each clause alone
+        // allows w = 1 (Codex's D).
+        "Codex D",
+        "a=[0,2] b=[0,1] z0=[-10,10]",
+        "(a + b <= 0 || a + b >= 2 || b <= 0) && (a + b <= 0 || a + b >= 2 || b >= 1) \
+         && a + b == z0",
+        "a=[0,2] b=[0,1] z0=[0,0 2,3]",
+    ),
+    (
+        // Three disjunctions and a holed hub: (a, b) in {(0, 0), (1, 1)} by D-1, and c = 2
+        // only with a = 1, so (a, b, c) in {(0, 0, 0), (1, 1, 0), (1, 1, 2)}: z0 = a + b + c
+        // in {0, 2, 4}.
+        "D-3",
+        "a=[0,1] b=[0,1] c=[0,0 2,2] z0=[-10,10]",
+        "(a <= 0 || b >= 1) && (a >= 1 || b <= 0) && (c <= 0 || a >= 1) && a + b + c == z0",
+        "a=[0,1] b=[0,1] c=[0,0 2,2] z0=[0,0 2,2 4,4]",
+    ),
+];
+
+/// Each part of [`REVIEWED_PARTS`] takes the route by pendants and gives its exact sets, as
+/// the projection of the whole part does.
+#[test]
+fn the_parts_of_the_review_are_projected_exactly_by_pendants() {
+    let mut wrong = Vec::new();
+    for (row, bx, part, want) in REVIEWED_PARTS {
+        let s = scope(&boxes(bx));
+        let f = formula(&parse(part));
+        let want: BTreeMap<String, String> = (bracketed(want).into_iter())
+            .map(|(n, x)| (n, format!("[{x}]")))
+            .collect();
+        let got = kept(&s, &f);
+        if got.as_ref() != Some(&want) {
+            wrong.push(format!(
+                "{row}: {part}\n  by pendants {got:?}\n  want        {want:?}"
+            ));
+        }
+        let all = whole(&s, &f);
+        // Where the projection of the whole part with its boxes refuses (B-crt) and every
+        // name is wanted empty, the projection of the part alone is asked: empty there, it is
+        // empty with the boxes too, a subset.
+        let empty = want.values().all(|x| x == "[]");
+        let syms: Vec<Atom> = f.atoms().into_iter().collect();
+        let empty_alone = || {
+            presburger::project_each(&f, &syms).is_ok_and(|(each, skipped)| {
+                skipped.is_empty() && each.iter().all(|x| x.as_ref().is_ok_and(|x| x.is_empty()))
+            })
+        };
+        if all.as_ref() != Some(&want) && !(all.is_none() && empty && empty_alone()) {
+            wrong.push(format!("{row}: {part}\n  whole {all:?}\n  want  {want:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// A form with a class over a wide or unbounded range is answered by pendants as ranges and
+/// a class, never listed value by value (Gemini's B (h)): `2 * z0 == a + b` over
+/// `[0, 10^8]` gives `z0` the range `[0, 10^8]`, every integer; with `b` 0, `a` and `z1 == a`
+/// are the even values of `[0, 2 * 10^8]`, a range and a class, 10^8 + 1 values not listed.
+#[test]
+fn a_form_with_a_class_over_a_wide_range_is_not_listed() {
+    let wide = |set: &str, class: &str| (set.to_string(), class.to_string());
+    for (bx, part, want) in [
+        (
+            "a=[0,100000000] b=[0,100000000] z0=[-inf,inf]",
+            "2 * z0 == a + b && a + b <= 200000000",
+            vec![
+                ("a", wide("[0,100000000]", "any")),
+                ("b", wide("[0,100000000]", "any")),
+                ("z0", wide("[0,100000000]", "any")),
+            ],
+        ),
+        (
+            "a=[0,200000000] b=[0,0] z0=[-inf,inf] z1=[-inf,inf]",
+            "2 * z0 == a + b && z1 == a + b",
+            vec![
+                ("a", wide("[0,200000000]", "0 mod 2")),
+                ("b", wide("[0,0]", "any")),
+                ("z0", wide("[0,100000000]", "any")),
+                ("z1", wide("[0,200000000]", "0 mod 2")),
+            ],
+        ),
+    ] {
+        let s = scope(&boxes(bx));
+        let f = formula(&parse(part));
+        let out = s.project_by_pendants(&f).expect("the route taken");
+        let got: BTreeMap<String, (String, String)> = (out.into_iter())
+            .map(|(n, x, class)| {
+                let x = s.get(&n).ints().meet(&x);
+                (n.to_string(), (show(&x), format!("{class}")))
+            })
+            .collect();
+        let want: BTreeMap<String, (String, String)> =
+            want.into_iter().map(|(n, x)| (n.to_string(), x)).collect();
+        assert_eq!(got, want, "{part}");
+    }
+}
+
+/// Each family of the benchmarks of ST-eqs-rest-exact (`bench.rs`) at `k = 3`, assumed into
+/// its scope: each name ends with the exact set and class worked by hand from its part, with
+/// `W` the values of `a + b`:
+/// - B, `a + b - 2 zi == 2i`: `W` the even values of `[0, 150000]`, `zi = W / 2 - i`;
+/// - B mixed, `c = 2, 3, 2`: `W` the multiples of 6 there (0 mod 2 and 0 mod 3), `z0 = W / 2`
+///   (0 mod 3), `z1 = W / 3 - 1` (odd), `z2 = W / 2 - 2` (1 mod 3); and `b` misses 1, 2, 3
+///   and 7, each of which, at most 7, asks `a < 3` and finds no such `a` with `a + b` a
+///   multiple of 6 (`b = 4` with `a = 2`, `b = 5` with `a = 1`, `b = 6` with `a = 0`);
+/// - C spaced, `zi != 3` and `a + b - zi == 2i`: `W` misses 3, 5 and 7, `zi = W - 2i`;
+/// - D, `(a <= 2 || b >= 8) && (a > 11 || b < 5)`: `a` in `[0, 2]` with `b` in `[0, 4]`, or `a`
+///   in `[12, 100000]` with `b` in `[8, 100000]`, so `W` is `[0, 6]` and `[20, 150000]`, `zi =
+///   W - i`.
+#[test]
+fn the_benchmark_families_are_exact_at_a_small_size() {
+    let any = "any";
+    let rows: [(&str, bench::Family, [(&str, &str, &str); 5]); 4] = [
+        (
+            "B",
+            bench::b_even(3),
+            [
+                ("a", "[0,100000]", any),
+                ("b", "[0,100000]", any),
+                ("z0", "[0,75000]", any),
+                ("z1", "[-1,74999]", any),
+                ("z2", "[-2,74998]", any),
+            ],
+        ),
+        (
+            "B mixed",
+            bench::b_mixed(3),
+            [
+                ("a", "[0,100000]", any),
+                ("b", "[0,0 4,6 8,100000]", any),
+                ("z0", "[0,75000]", "0 mod 3"),
+                ("z1", "[-1,49999]", "1 mod 2"),
+                ("z2", "[-2,74998]", "1 mod 3"),
+            ],
+        ),
+        (
+            "C spaced",
+            bench::c_spaced(3),
+            [
+                ("a", "[0,100000]", any),
+                ("b", "[0,100000]", any),
+                ("z0", "[0,2 4,4 6,6 8,150000]", any),
+                ("z1", "[-2,0 2,2 4,4 6,149998]", any),
+                ("z2", "[-4,-2 0,0 2,2 4,149996]", any),
+            ],
+        ),
+        (
+            "D",
+            bench::d_two(3),
+            [
+                ("a", "[0,2 12,100000]", any),
+                ("b", "[0,4 8,100000]", any),
+                ("z0", "[0,6 20,150000]", any),
+                ("z1", "[-1,5 19,149999]", any),
+                ("z2", "[-2,4 18,149998]", any),
+            ],
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (row, (s, t), want) in rows {
+        let s = s.assume(&t, true, &Premises::new());
+        for (n, set, class) in want {
+            let p = s.get(n);
+            let got = (show(p.ints()), format!("{}", p.cell.congruence.element));
+            if got != (set.to_string(), class.to_string()) {
+                wrong.push(format!("{row} {n}: {got:?}, want {set} {class}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+mod bench;

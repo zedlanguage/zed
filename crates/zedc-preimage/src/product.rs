@@ -17777,11 +17777,12 @@ impl Scope {
             // congruences ([`Scope::framed`]). The pendants route
             // ([`Scope::project_by_pendants`]) gives `None`, and so the whole route, wherever
             // the projection of the rest refuses; otherwise the rest's sets are exact by the
-            // same module, and each pendant's `x`, one interval with no class and mentioned by
-            // no other conjunct, takes `Pendant::takes` of its form's exact set: for `==` the
-            // exact affine image (`affine`, a coefficient of one or minus one), for `>=` the
-            // exact half-line, and its meet with `x`'s one interval is exactly the `x` values
-            // some point gives. Test:
+            // same module, and each pendant's `x`, with no class and mentioned by no other
+            // conjunct, takes `Pendant::takes` of its form's exact set: for `==` the exact
+            // image of the form's members in the meet of its classes, divided by `x`'s
+            // coefficient, with its class, for `>=` the exact half-line (steps (1) to (4) at
+            // `project_by_pendants`), and its meet with `x`'s integers is exactly the `x`
+            // values some point gives. Test:
             // `l01_39_reduced_product::pendants::seed_12035647242373093243_part_52_is_exact_both_ways`
             // and the pendants-against-whole tests of that module.
             //
@@ -18682,42 +18683,76 @@ impl Scope {
     /// below, or the projection of what is left refuses a question, and today's projection of
     /// the whole part is to be asked.
     ///
-    /// A pendant is a top-level constraint `s·x + σ·F + k == 0`, or `>= 0`, of names alone,
-    /// where `x`, of coefficient `s` one or minus one, is mentioned by no other top-level
-    /// conjunct of `part` and holds one interval with no class, and `F`, the form, is a linear
-    /// term of two names or more with its first coefficient positive (`σ` one or minus one).
-    /// The pendants of each form are replaced by one new name `w == F` with `w` in the values
-    /// of the form at which each of them has a value of its `x` (`Pendant::allows`); the rest
-    /// of `part`, with these, is projected as today, and each `x` takes the values its
-    /// constraint gives from those of `w` (`Pendant::takes`). Eliminating `x` this way is
-    /// exact: in each disjunct, `x` ranges over the image of the form's values under its
-    /// constraint, so its hull is the image of the form's hull.
+    /// Each name's answer is its ranges and a class (`x == m * k + r`), which the caller meets
+    /// into the name's interval and congruence; the class is every integer but for the `x` of
+    /// a pendant whose coefficient, or a pendant beside it on the same form, has a magnitude
+    /// past one.
     ///
-    /// The route is taken by structure alone: `part` has a pendant, every other top-level
-    /// conjunct is a constraint, a negated constraint, or a disjunction of constraints and
-    /// conjunctions of constraints, and the disjunctions, counting `!(t == 0)` and each name
-    /// other than a pendant's `x` whose integers are more than one interval, number at most
-    /// one, so that the projection is the hull in each disjunct, and the hull of the image is
-    /// the image of the hull. With fewer names, the integer solver refuses fewer questions
-    /// (Growth, Tie) than on the whole part. Where it refuses none on either, the answers are
-    /// the same only where the whole part is projected exactly: a whole part with no plan for
-    /// the join of row sums gets the solver's hull in each disjunct, which loses a parity an
-    /// equality forces (seed 8090022510343574640, part 46, of `pendants_against_whole`:
-    /// `2 * b + 2 * c + z0 == 3`, `z0` odd by pendants, all of `[-23, -9]` whole), a wrong
-    /// answer until PRES-project-exact-solver (FAIL-whole-projection-parity-seed).
-    // Complexity tradeoff: a part with two disjunctions or more, or whose would-be pendants
-    // have a coefficient other than one or minus one at `x`, or an `x` with holes or a class,
-    // is projected whole, at O(k) names per question: for k such constraints added one at a
-    // time to one part, O(k^3) in all. Eliminating `x` there is not exact by an image of
-    // hulls: with two disjunctions the projection is not the hull in each disjunct, and a
-    // coefficient other than one or minus one, or holes or a class at `x`, give an image of
-    // the form with gaps, not an interval. A form of one name, `x - a >= k` and the like, a
-    // difference constraint, is left to the whole projection too, which keeps the parts of
-    // difference constraints on their present route; its elimination would be exact. Test
-    // `l01_39_reduced_product::pendants`, COMPLEXITY.md S43. A complete solution would project
-    // each combination of disjuncts with the pendants eliminated, exponential in the number
-    // of disjunctions.
-    pub fn project_by_pendants(&self, part: &Formula) -> Option<Vec<(Arc<str>, IntervalSet)>> {
+    /// A pendant is a top-level constraint `c·x + σ·F + k == 0`, or `>= 0`, of names alone,
+    /// where `x`, of any coefficient `c` other than 0, is mentioned by no other top-level
+    /// conjunct of `part` and has no class (holes allowed), and `F`, the form, is a linear term
+    /// of two names or more with its first coefficient positive (`σ` one or minus one). The
+    /// pendants of each form are replaced by one new name `w == F` with `w` in `D`, the values
+    /// of the form at which each of them has a value of its `x` (`Pendant::allows`): ranges,
+    /// asked as `member(w, D)` so that every hole of each `x` reaches the question, and for
+    /// `==` the class `-σ·k` modulo `|c|`, the classes of a form met by the Chinese remainder
+    /// theorem (`Congruence::meet`) and asked as `w == M * t + r` with `t` a new name that is
+    /// not projected onto. The rest of `part`, with these, is projected exactly
+    /// (`presburger::project_each_classed`), and each `x` takes the values its constraint
+    /// gives from those of `w` (`Pendant::takes`).
+    ///
+    /// Proof that this is the projection of `part` onto each name (R1 of XR-st-eqs-rest,
+    /// Claude's Q1, checked there by enumeration: 16 configurations by 20000 seeds, up to three
+    /// disjunctions, holes, `|c|` up to 3, no mismatch). Let `part = rest ∧ P1 ∧ … ∧ Pm`, each
+    /// `Pj` a pendant on `xj`, and `Q = rest ∧ w == F ∧ w ∈ D`, `D = ∩j allows_j(Xj)` for `Xj`
+    /// the integers of `xj`. (1) A point of `part` gives a point of `Q`: take `w = F`; each `Pj`
+    /// holds at its `xj` in `Xj`, so `F` is in `allows_j(Xj)` by the definition of `allows`, and
+    /// `w` is in `D`. (2) A point of `Q` extends to a point of `part`: for each `j`, `w` is in
+    /// `allows_j(Xj)`, so some `xj` in `Xj` satisfies `Pj`; the `xj` are distinct names in no
+    /// other conjunct, so each is chosen alone and the choices do not interact. (3) So
+    /// `proj_n(part) = proj_n(Q)` for every name `n` of `rest`, and for `w`. (4)
+    /// `proj_xj(part) = takes_j(proj_w(Q)) ∩ Xj`, since `xj` depends on the point only through
+    /// `w`; the caller meets the answer with `Xj`. No step reads the shape of `rest`: the
+    /// number of its disjunctions plays no part, since `project_each` answers each set exactly
+    /// or refuses since the cover landed (PRES-cover-wire, a815d0f05, 2026-11-17); the limit of
+    /// one disjunction came in 35b954861 (2026-11-07), while the projection gave a hull in each
+    /// disjunct, and only `unbounded_unit`, whose proof reads `rest` as one disjunction at most,
+    /// keeps it. A refused question, or a disjunction left out, gives `None`, and the whole part
+    /// is asked.
+    ///
+    /// With fewer names, the integer solver refuses fewer questions (Growth, Tie) than on the
+    /// whole part. Where it refuses none on either, the answers are the same only where the
+    /// whole part is projected exactly: a whole part with no plan for the join of row sums gets
+    /// the solver's hull in each disjunct, which loses a parity an equality forces (seed
+    /// 8090022510343574640, part 46, of `pendants_against_whole`: `2 * b + 2 * c + z0 == 3`,
+    /// `z0` odd by pendants, all of `[-23, -9]` whole), a wrong answer until
+    /// PRES-project-exact-solver (FAIL-whole-projection-parity-seed).
+    // Complexity tradeoff: one question of the rest and one name a form, in place of the k
+    // names of k pendants: for d disjunctions in `rest` the question costs what the solver
+    // pays for it, at worst exponential in d (integer feasibility is NP-hard already with no
+    // disjunction; the cover splits on each disjunct it needs), and it does not grow with the
+    // number of pendants. The work this route adds is O(k) to collect the pendants and O(p)
+    // per pendant for the image of its `x` of p pieces, plus one class meet per pendant of a
+    // form, O(log M) for the moduli. The k additions of pendants one at a time to one part
+    // still cost Ω(k) per call (each call reads every conjunct again), Θ(k^2) in all
+    // (ST-eqs-rest-cost). An `x` with a class, and a form of one name, `x - a >= k` and the
+    // like, a difference constraint, are left to the whole projection, which keeps the parts
+    // of difference constraints on their present route; the elimination would be exact there
+    // too. Tests: `l01_39_reduced_product::pendants`, COMPLEXITY.md S43.
+    pub fn project_by_pendants(
+        &self,
+        part: &Formula,
+    ) -> Option<Vec<(Arc<str>, IntervalSet, Congruence)>> {
+        match self.pendant_route(part)? {
+            PendantRoute::Answered(out) => Some(out),
+            PendantRoute::Asked(q) => self.pendants_answered(q),
+        }
+    }
+
+    /// The first half of [`Scope::project_by_pendants`]: its answer where no question is
+    /// needed, or the question it asks.
+    fn pendant_route(&self, part: &Formula) -> Option<PendantRoute> {
+        let top = Congruence::top;
         let tops = distinct_conjuncts(part);
         if tops.contains(&Formula::bottom()) {
             // A conjunct is `false` (`2t == 1`), so `part` has no point and each name is empty.
@@ -18729,12 +18764,12 @@ impl Scope {
             if names.is_empty() {
                 return None;
             }
-            return Some(
+            return Some(PendantRoute::Answered(
                 names
                     .into_iter()
-                    .map(|n| (n, IntervalSet::empty()))
+                    .map(|n| (n, IntervalSet::empty(), top()))
                     .collect(),
-            );
+            ));
         }
         let mut count: BTreeMap<Arc<str>, usize> = BTreeMap::new();
         for t in &tops {
@@ -18766,10 +18801,11 @@ impl Scope {
             }
             disjunctions += usize::from(pieces > 1);
         }
-        if disjunctions > 1 {
-            return None;
-        }
+        // The count of disjunctions limits only `unbounded_unit`, whose proof reads `rest` as
+        // one disjunction at most (its steps (1) to (4)); the route below is exact for any
+        // number (the steps at `project_by_pendants`).
         if allow_multi
+            && disjunctions <= 1
             && let [p] = &hung[..]
             && let Some(out) = self.unbounded_unit(p, &rest)
         {
@@ -18788,14 +18824,16 @@ impl Scope {
                 // (which `one_disjunction` admits); it now reads a negated constraint so too,
                 // test `conjunctions_keep_an_arm_of_negated_constraints`, red before, green
                 // after.
-                return Some(
+                return Some(PendantRoute::Answered(
                     count
                         .into_keys()
-                        .map(|n| (n, IntervalSet::empty()))
+                        .map(|n| (n, IntervalSet::empty(), top()))
                         .collect(),
-                );
+                ));
             }
-            return Some(out);
+            return Some(PendantRoute::Answered(
+                out.into_iter().map(|(n, x)| (n, x, top())).collect(),
+            ));
         }
         // Each form, with a new name for it and the values at which each of its pendants has
         // a value of its `x`. A name begins with `#` here, which no program writes. The form
@@ -18805,47 +18843,117 @@ impl Scope {
         // exact join of row sums (`presburger::project_each`) to the hulls of the solver,
         // where the whole part, whose names have boxes, keeps a parity or a hole
         // (FAIL-pendants-route-parity).
-        let mut forms: BTreeMap<Lin, (Atom, IntervalSet)> = BTreeMap::new();
+        // Each form's class is the meet of its pendants' classes (`-σ·k` modulo `|c|` for each
+        // `==`, every integer for `>=`), by the Chinese remainder theorem: for classes `r`
+        // modulo `m` and `s` modulo `n`, none where `gcd(m, n)` does not divide `s - r`, else one
+        // class modulo `lcm(m, n)` (`Congruence::meet`, Granger 1989, Corollary 3.3, cited at
+        // zedc-lattice `Congruence`).
+        let mut forms: BTreeMap<Lin, (Atom, IntervalSet, Congruence)> = BTreeMap::new();
         for p in &hung {
             let i = forms.len();
-            let (_, d) = forms
-                .entry(p.form.clone())
-                .or_insert_with(|| (Atom::Sym(format!("#w{i}").into()), self.form_hull(&p.form)));
-            *d = d.meet(&p.allows(self.get(&p.x).ints()));
+            let (_, d, class) = forms.entry(p.form.clone()).or_insert_with(|| {
+                let w = Atom::Sym(format!("#w{i}").into());
+                (w, self.form_hull(&p.form), top())
+            });
+            let (allowed, by) = p.allows(self.get(&p.x).ints());
+            *d = d.meet(&allowed);
+            *class = class.meet(&by);
+        }
+        if forms.values().any(|(_, _, c)| *c == Congruence::Bottom) {
+            // Two pendants of one form ask classes with no common member: no value of the
+            // form has an `x` for each, so `part` has no point and each name is empty.
+            return Some(PendantRoute::Answered(
+                count
+                    .into_keys()
+                    .map(|n| (n, IntervalSet::empty(), top()))
+                    .collect(),
+            ));
         }
         let mut left = rest;
-        for (f, (w, d)) in &forms {
+        for (f, (w, d, _)) in &forms {
             left.push(Formula::Con(Con::eq(f, &Lin::atom(w.clone()))));
             left.push(presburger::member(w, d));
         }
         let (whole, syms) = self.framed(&Formula::and(left));
-        let mut out: Vec<(Arc<str>, IntervalSet)> = Vec::new();
+        // Each form's class, as `framed` writes a name's: `w == M * t + r` with `t` free, or
+        // `w == r` for one value. Added after `framed`, so `t` is not among the names it
+        // projects onto (Gemini's F2 of XR-st-eqs-rest): a projection onto `t` would be work
+        // for no answer, and a refusal of it would refuse the route.
+        let mut rows = vec![whole];
+        for (i, (w, _, class)) in forms.values().enumerate() {
+            let Congruence::Class { modulus, residue } = class else {
+                unreachable!("a form with no class has returned above")
+            };
+            let at = Lin::constant(Int::from(residue));
+            if modulus.is_zero() {
+                rows.push(Formula::Con(Con::eq(&Lin::atom(w.clone()), &at)));
+            } else if *modulus > Num::ONE {
+                let t = Lin::atom(Atom::Sym(format!("#t{i}").into()));
+                let rhs = t.times(Int::from(modulus)).plus(&at);
+                rows.push(Formula::Con(Con::eq(&Lin::atom(w.clone()), &rhs)));
+            }
+        }
+        let whole = Formula::and(rows);
         if matches!(&whole, Formula::Or(v) if v.is_empty()) {
             // The pendants of a form allow no common value of it, or what is left has no
             // point: neither has `part`, and each of its names is empty. The conjunction is
             // `false` then, with no name left in it to project onto.
-            for n in count.into_keys() {
-                out.push((n, IntervalSet::empty()));
-            }
-            return Some(out);
+            return Some(PendantRoute::Answered(
+                count
+                    .into_keys()
+                    .map(|n| (n, IntervalSet::empty(), top()))
+                    .collect(),
+            ));
         }
-        let (each, skipped) = presburger::project_each(&whole, &syms).ok()?;
-        if !skipped.is_empty() {
+        Some(PendantRoute::Asked(PendantQuestion {
+            whole,
+            syms,
+            count,
+            hung,
+            forms: forms
+                .into_iter()
+                .map(|(f, (w, _, c))| (f, (w, c)))
+                .collect(),
+        }))
+    }
+
+    /// The second half of [`Scope::project_by_pendants`]: its question asked, and each name's
+    /// answer read from it, `None` where a set or a disjunct is refused.
+    fn pendants_answered(
+        &self,
+        q: PendantQuestion,
+    ) -> Option<Vec<(Arc<str>, IntervalSet, Congruence)>> {
+        let PendantQuestion {
+            whole,
+            syms,
+            count,
+            hung,
+            forms,
+        } = q;
+        // Classed, so that no class is listed value by value (`Classed::met`, O(v) for v
+        // values): neither that of `w` nor one a name of `rest` takes from it (`a` even in
+        // `[0, 10^8]` from `2 * z == a`), which goes out as its ranges and its class.
+        let each = presburger::project_each_classed(&whole, &syms).ok()?;
+        if !each.causes.is_empty() {
             return None;
         }
-        let mut forms_at: BTreeMap<&Atom, IntervalSet> = BTreeMap::new();
-        for (a, x) in syms.iter().zip(each) {
+        let mut out = Vec::new();
+        let mut forms_at: BTreeMap<&Atom, presburger::Classed> = BTreeMap::new();
+        for (a, x) in syms.iter().zip(each.sets) {
             let x = x.ok()?;
             match a {
                 Atom::Sym(n) if n.starts_with('#') => {
                     forms_at.insert(a, x);
                 }
-                Atom::Sym(n) if count.contains_key(n) => out.push((n.clone(), x)),
+                Atom::Sym(n) if count.contains_key(n) => out.push((n.clone(), x.ranges, x.class)),
                 _ => {}
             }
         }
         for p in &hung {
-            out.push((p.x.clone(), p.takes(&forms_at[&forms[&p.form].0])));
+            let (w, class) = &forms[&p.form];
+            let at = &forms_at[w];
+            let (set, class) = p.takes(&at.ranges, &at.class.meet(class));
+            out.push((p.x.clone(), set, class));
         }
         Some(out)
     }
@@ -18908,8 +19016,10 @@ impl Scope {
     }
 
     /// `t` as a pendant of a part whose names have the counts `count`: a constraint of names
-    /// alone, one of which, `x`, of coefficient one or minus one, no other conjunct mentions,
-    /// with two names or more besides, and `x` of one interval and no class.
+    /// alone, one of which, `x`, of any coefficient other than 0, no other conjunct mentions,
+    /// with two names or more besides, and `x` with no class (holes allowed). Where several
+    /// names of `t` occur in no other conjunct, `x` is the one free half-line among them, of
+    /// coefficient one or minus one.
     fn pendant(
         &self,
         t: &Formula,
@@ -18939,7 +19049,7 @@ impl Scope {
         // This measured ratio gain is not an asymptotic complexity claim.
         // Proof that the chosen `x` is a pendant as the single route needs: `x` occurs in no
         // other conjunct (`count == 1`), has coefficient 1 or -1, one interval and no class
-        // (`gapped` below), and the row is `>= 0` with x's interval unbounded on the side
+        // (checked in the loop below), and the row is `>= 0` with x's interval unbounded on the side
         // that raises the row, so a value of `x` meets the row for every value of the form.
         // The other names of count 1 stay in the form, each of coefficient 1 or -1 and one
         // interval with no class (checked here); a sum of such terms takes every integer
@@ -18974,14 +19084,11 @@ impl Scope {
         } else {
             lone?
         };
-        let s: i8 = if *k == Int::ONE {
-            1
-        } else if *k == -&Int::ONE {
-            -1
-        } else {
-            return None;
-        };
-        if c.lin.terms.len() < 3 || gapped(&self.get(x)) {
+        // `x` may have holes, never a class: each holed `x` reaches the question on the form
+        // as the image of its pieces, `member(w, D)`, never as a hull (R1 of XR-st-eqs-rest:
+        // Claude's control N3, the hull of `D`, gave 414 mismatches in 20000 seeds); a class
+        // at `x` is left to the whole projection, since `allows` reads `x`'s ranges alone.
+        if c.lin.terms.len() < 3 || classed(&self.get(x)) {
             return None;
         }
         let mut form: BTreeMap<Atom, Int> = c
@@ -19001,7 +19108,7 @@ impl Scope {
         };
         Some(Pendant {
             x: x.clone(),
-            s,
+            c: Num::from(k),
             sigma,
             k: Num::from(&c.lin.constant),
             eq: c.rel == Rel::Eq,
@@ -19105,10 +19212,13 @@ impl Scope {
         super::preimage::counts::PARTS_PROJECTED
             .set(super::preimage::counts::PARTS_PROJECTED.get() + 1);
         if let Some(out) = self.project_by_pendants(part) {
-            for (n, x) in out {
+            for (n, x, class) in out {
                 if let Some(p) = self.names.get_mut(&n) {
                     let prem = p.premises();
                     p.meet_ints(x, &prem);
+                    if class != Congruence::top() {
+                        p.cell.congruence.meet(&class, &prem);
+                    }
                 }
             }
             return;
@@ -21601,15 +21711,75 @@ fn gapped(p: &Product) -> bool {
     !(plain && ints.len() == 1)
 }
 
-/// A pendant of a part ([`Scope::project_by_pendants`]): `s·x + σ·w + k == 0`, or `>= 0`, for `w`
-/// its form, a linear term of the other names with its first coefficient positive.
+/// A pendant of a part ([`Scope::project_by_pendants`]): `c·x + σ·w + k == 0`, or `>= 0`, for `w`
+/// its form, a linear term of the other names with its first coefficient positive, and `c` the
+/// coefficient of `x`, not 0.
 struct Pendant {
     x: Arc<str>,
-    s: i8,
+    c: Num,
     sigma: i8,
     k: Num,
     eq: bool,
     form: Lin,
+}
+
+/// Where [`Scope::project_by_pendants`] stands after reading a part: answered with no
+/// question, or with the question to ask.
+enum PendantRoute {
+    Answered(Vec<(Arc<str>, IntervalSet, Congruence)>),
+    Asked(PendantQuestion),
+}
+
+/// The question [`Scope::project_by_pendants`] asks: the rest of the part with a name for
+/// each form, framed, the names to project onto (never the class's free name `#t`), and
+/// what reading the answers needs.
+struct PendantQuestion {
+    whole: Formula,
+    syms: Vec<Atom>,
+    count: BTreeMap<Arc<str>, usize>,
+    hung: Vec<Pendant>,
+    /// Each form's name and the meet of its pendants' classes.
+    forms: BTreeMap<Lin, (Atom, Congruence)>,
+}
+
+/// `a·e`, for `a` not 0: an infinite end turned around where `a < 0`.
+fn times_end(e: &End, a: &Num) -> End {
+    let e = if a.signum() < 0 { -e } else { e.clone() };
+    match e {
+        End::Fin(v) => End::Fin(&v * &a.abs()),
+        e => e,
+    }
+}
+
+/// `{a·v + b : v in set}` as ranges, for `a` not 0: each piece `[l, h]` to the range from
+/// `a·l + b` to `a·h + b`. For `|a| = 1` that is the image itself; for `|a| > 1` the image is
+/// the integers of these ranges that are `b` modulo `|a|`, since `a·v + b` for `v` in `[l, h]`
+/// runs over exactly the members of that class between the two ends, and the ranges of two
+/// pieces, at least two apart, stay apart (the class is the caller's, [`Pendant::allows`]).
+fn affine(set: &IntervalSet, a: &Num, b: &Num) -> IntervalSet {
+    set.lift1(|(lo, hi)| {
+        let (lo, hi) = if a.signum() > 0 { (lo, hi) } else { (hi, lo) };
+        vec![(shift(&times_end(lo, a), b), shift(&times_end(hi, a), b))]
+    })
+}
+
+/// The members of `set`, of finite ends or not, in `class` ([`IntervalSet::in_class`] for a
+/// modulus past 1): each piece's ends moved inward to members of the class, pieces left with
+/// none dropped. For one value (modulus 0) that value where `set` holds it, and for no class
+/// (the bottom) nothing.
+fn rounded_in(set: &IntervalSet, class: &Congruence) -> IntervalSet {
+    match class {
+        Congruence::Bottom => IntervalSet::empty(),
+        Congruence::Class { modulus, residue } if modulus.is_zero() => {
+            if set.contains_end(&End::Fin(residue.clone())) {
+                IntervalSet::point(residue.clone())
+            } else {
+                IntervalSet::empty()
+            }
+        }
+        Congruence::Class { modulus, .. } if *modulus == Num::ONE => set.clone(),
+        Congruence::Class { modulus, residue } => set.in_class(modulus, residue),
+    }
 }
 
 /// `e + v`.
@@ -21620,62 +21790,107 @@ fn shift(e: &End, v: &Num) -> End {
     }
 }
 
-/// `{a·v + b : v in set}` for `a` one or minus one.
-fn affine(set: &IntervalSet, a: i8, b: &Num) -> IntervalSet {
-    set.lift1(|(lo, hi)| {
-        if a > 0 {
-            vec![(shift(lo, b), shift(hi, b))]
-        } else {
-            vec![(shift(&-hi, b), shift(&-lo, b))]
-        }
-    })
+/// `e / c` for `c` not 0 and a finite `e` a multiple of `c`: an infinite end turned around
+/// where `c < 0`.
+fn exact_div_end(e: &End, c: &Num) -> End {
+    match e {
+        End::Fin(v) => End::Fin(v.div_floor(c)),
+        e if c.signum() < 0 => -e,
+        e => e.clone(),
+    }
 }
 
 impl Pendant {
-    /// The values of the form at which some value of `x` in `ints`, one interval, holds.
-    fn allows(&self, ints: &IntervalSet) -> IntervalSet {
+    /// The values of the form at which some value of `x` in `ints` holds, as ranges and a
+    /// class: the values are the integers of the ranges in the class.
+    ///
+    /// For `==`: `σ·w == -k - c·x`, so `w == -σ·k - σ·c·x`, the image of `ints` under
+    /// `v ↦ -σ·c·v - σ·k` ([`affine`]): ranges whose members `-σ·k` modulo `|c|` are the image,
+    /// whatever the holes of `ints` (each piece maps to the members of the class between the
+    /// images of its ends). The residue is `(-σ·k) mod |c|`; `-k` alone is wrong where
+    /// `σ = -1` (R1 of XR-st-eqs-rest, all three seats; Gemini's B-1, `3x - w + 1 == 0`, gives
+    /// `w ≡ 1 mod 3`).
+    ///
+    /// For `>=`: `σ·w >= -k - c·x` for some `x` in `ints` exactly where
+    /// `σ·w >= -k - max(c·x)`, the maximum at an end of `ints` (`c·hi` for `c > 0`, `c·lo` for
+    /// `c < 0`), so a half-line and every class; holes of `ints` change no end.
+    fn allows(&self, ints: &IntervalSet) -> (IntervalSet, Congruence) {
         let Some((lo, hi)) = ints.bounds() else {
-            return IntervalSet::empty();
+            return (IntervalSet::empty(), Congruence::top());
         };
+        let sigma = Num::from(self.sigma as i64);
         if self.eq {
-            // σ·w == -k - s·x.
-            return affine(
-                ints,
-                -self.sigma * self.s,
-                &-&(&Num::from(self.sigma as i64) * &self.k),
-            );
+            let b = -&(&sigma * &self.k);
+            let class = Congruence::new(self.c.abs(), b.clone());
+            return (affine(ints, &-&(&sigma * &self.c), &b), class);
         }
-        // σ·w >= -k - s·x for some x: σ·w >= -k - max(s·x).
-        let most = if self.s > 0 { hi.clone() } else { -lo };
+        let most = if self.c.signum() > 0 {
+            times_end(hi, &self.c)
+        } else {
+            times_end(lo, &self.c)
+        };
         let bound = shift(&-&most, &-&self.k);
-        if self.sigma > 0 {
+        let set = if self.sigma > 0 {
             IntervalSet::range(bound, End::PosInf)
         } else {
             IntervalSet::range(End::NegInf, -&bound)
-        }
+        };
+        (set, Congruence::top())
     }
 
-    /// The values of `x` at which some value of the form in `f` holds.
-    fn takes(&self, f: &IntervalSet) -> IntervalSet {
+    /// The values of `x` at which some value of the form in `f` and in `class` holds, as
+    /// ranges and a class. For `==`, `class` lies in the class of [`Pendant::allows`]
+    /// (`-σ·k` modulo `|c|`), as the caller's meet of every pendant's class of the form does.
+    ///
+    /// For `==`, steps: (1) `f` is rounded inward to `class`, each piece's ends moved to the
+    /// nearest members and pieces with none dropped, which keeps exactly the members of `f` in
+    /// `class` ([`rounded_in`]); (2) each member `w`, `-σ·k` modulo `|c|`, makes `-k - σ·w` a
+    /// multiple of `c`, so `x = (-k - σ·w) / c` divides exactly, and the ends of each piece map
+    /// to the ends of its image; (3) along a piece `w` steps by `M`, the modulus of `class`, so
+    /// `x` steps by `M / |c|`, an integer since `|c|` divides `M`, and every image lies in one
+    /// class `x(r) mod M / |c|` for `r` the residue of `class`. Rounding the ends of the hull
+    /// alone, per pendant, is unsound: with `2·x1 == a + b` and `3·x2 == a + b` over
+    /// `a, b` in `0..=3` the form takes `{0, 6}`, not `{0, 2, 3, 4, 6}` (Gemini's B-2), which
+    /// is why `class` is the meet of the classes first (the Chinese remainder theorem,
+    /// `Congruence::meet`).
+    ///
+    /// For `>=`: `c·x >= -k - σ·w` for some `w` in `f` exactly where `c·x >= B`, with
+    /// `B = -k - max(σ·w)`; so `x >= ceil(B / c)` for `c > 0` and `x <= floor(B / c)` for
+    /// `c < 0`, the mathematical floor and ceiling (`Num::div_floor`): Rust's `/` rounds toward
+    /// 0, which gives `x <= -1` for `-2·x - 3 >= 0` where `x <= -2` (Gemini's B-3).
+    fn takes(&self, f: &IntervalSet, class: &Congruence) -> (IntervalSet, Congruence) {
+        let f = rounded_in(f, class);
+        let sigma = Num::from(self.sigma as i64);
         if self.eq {
-            // x == -s·σ·w - s·k.
-            return affine(
-                f,
-                -self.s * self.sigma,
-                &-&(&Num::from(self.s as i64) * &self.k),
-            );
+            let Congruence::Class { modulus, residue } = class else {
+                return (IntervalSet::empty(), Congruence::top());
+            };
+            let at = |w: &End| exact_div_end(&shift(&-&times_end(w, &sigma), &-&self.k), &self.c);
+            let up = (self.c.signum() > 0) != (self.sigma > 0);
+            let set = f.lift1(|(lo, hi)| {
+                if up {
+                    vec![(at(lo), at(hi))]
+                } else {
+                    vec![(at(hi), at(lo))]
+                }
+            });
+            let End::Fin(r) = at(&End::Fin(residue.clone())) else {
+                unreachable!("a finite end maps to a finite end")
+            };
+            return (set, Congruence::new(modulus.div_floor(&self.c.abs()), r));
         }
         let Some((lo, hi)) = f.bounds() else {
-            return IntervalSet::empty();
+            return (IntervalSet::empty(), Congruence::top());
         };
-        // s·x >= -k - σ·w for some w: s·x >= -k - max(σ·w).
         let most = if self.sigma > 0 { hi.clone() } else { -lo };
-        let bound = shift(&-&most, &-&self.k);
-        if self.s > 0 {
-            IntervalSet::range(bound, End::PosInf)
-        } else {
-            IntervalSet::range(End::NegInf, -&bound)
-        }
+        let set = match shift(&-&most, &-&self.k) {
+            End::Fin(b) if self.c.signum() > 0 => {
+                IntervalSet::range(End::Fin(-&(-&b).div_floor(&self.c)), End::PosInf)
+            }
+            End::Fin(b) => IntervalSet::range(End::NegInf, End::Fin(b.div_floor(&self.c))),
+            _ => IntervalSet::top(),
+        };
+        (set, Congruence::top())
     }
 }
 
@@ -27632,7 +27847,7 @@ impl Scope {
         p: &Pendant,
         rest: &[Formula],
     ) -> Option<Vec<(Arc<str>, IntervalSet)>> {
-        if p.s != 1
+        if p.c != Num::ONE
             || p.sigma != -1
             || p.eq
             || !matches!(self.get(&p.x).ints().bounds()?.1, End::PosInf)
@@ -28463,6 +28678,87 @@ mod tests {
                 "k = {k}: filtered"
             );
         }
+    }
+
+    /// The question [`Scope::project_by_pendants`] asks for pendants with a coefficient other
+    /// than one (`2 * x == a + b`, `3 * y == a + b`) holds the form's class as the row
+    /// `#w0 == 6 * #t0 + 0`, and `#t0` is not among the names it projects onto (Gemini's F2 of
+    /// XR-st-eqs-rest): a projection onto it would be work for no answer, and its refusal
+    /// would refuse the route. `#w0` is among them, and the answer reads `x` and `y` from it:
+    /// `a + b` in `{0, 6}` over `a, b` in `[0, 3]`, so `x` in `{0, 3}`, `y` in `{0, 2}`.
+    #[test]
+    fn the_class_of_a_form_is_asked_with_a_name_not_projected_onto() {
+        use zed_kernel::term::build::{lit, prim, var};
+        let lin = |terms: &[(&str, i64)], k: i64| {
+            terms.iter().fold(Lin::constant(k), |l, (n, c)| {
+                l.plus(&Lin::atom(Atom::Sym((*n).into())).times(*c))
+            })
+        };
+        let p = Premises::new();
+        let mut s = Scope::new(
+            ["a", "b", "x", "y"].map(|n| (Arc::<str>::from(n), Product::of_type(Type::int()))),
+        );
+        for h in ["a", "b"] {
+            s = s
+                .assume(&prim(Prim::Ge, vec![var(h), lit(0)]), true, &p)
+                .assume(&prim(Prim::Le, vec![var(h), lit(3)]), true, &p);
+        }
+        let part = Formula::and(vec![
+            Formula::Con(Con::eq(
+                &lin(&[("x", 2)], 0),
+                &lin(&[("a", 1), ("b", 1)], 0),
+            )),
+            Formula::Con(Con::eq(
+                &lin(&[("y", 3)], 0),
+                &lin(&[("a", 1), ("b", 1)], 0),
+            )),
+        ]);
+        let Some(PendantRoute::Asked(q)) = s.pendant_route(&part) else {
+            panic!("the question is asked")
+        };
+        let names: Vec<String> = q.syms.iter().map(|a| format!("{a}")).collect();
+        assert!(
+            q.syms
+                .iter()
+                .all(|a| !matches!(a, Atom::Sym(n) if n.starts_with("#t"))),
+            "{names:?}"
+        );
+        assert!(
+            q.syms
+                .iter()
+                .any(|a| matches!(a, Atom::Sym(n) if &**n == "#w0")),
+            "{names:?}"
+        );
+        assert!(
+            q.whole
+                .atoms()
+                .iter()
+                .any(|a| matches!(a, Atom::Sym(n) if &**n == "#t0")),
+            "the row of the class is in the question: {}",
+            q.whole
+        );
+        let got: BTreeMap<String, String> = (s.project_by_pendants(&part).expect("taken"))
+            .into_iter()
+            .map(|(n, x, class)| (n.to_string(), format!("{x:?} {class}")))
+            .collect();
+        let fin = |v: i64| End::Fin(Num::from(&BigInt::from(v)));
+        let pts = |a: i64, b: i64| {
+            IntervalSet::range(fin(a), fin(a)).join(&IntervalSet::range(fin(b), fin(b)))
+        };
+        let classed = |a: i64, b: i64| {
+            let c = Congruence::new(b - a, a);
+            format!("{:?} {c}", IntervalSet::range(fin(a), fin(b)))
+        };
+        let x = got["x"].clone();
+        let y = got["y"].clone();
+        assert!(
+            x == classed(0, 3) || x == format!("{:?} any", pts(0, 3)),
+            "x: {x}"
+        );
+        assert!(
+            y == classed(0, 2) || y == format!("{:?} any", pts(0, 2)),
+            "y: {y}"
+        );
     }
 
     /// The hull [`Scope::form_hull`] gives the form of a pendant (FAIL-pendants-route-parity):
