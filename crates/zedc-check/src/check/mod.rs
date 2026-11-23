@@ -7286,7 +7286,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the facts of every type holding that signature have `unwritten_class`, and so the facts
     /// of all the types. Where they lack it, every class variable met anywhere in `t` is in
     /// `t`'s `classes`, so `U` and `B` bind alike every variable `t` holds (the generic
-    /// `scale` of the bench lists its own `$0`, which its arrow writes). The replacement reads its bindings only by such a
+    /// `scale` of the bench lists its own `$0`, which its arrow writes). The replacement reads
+    /// its bindings only by such a
     /// variable (`Replacer::bound`, `holds`, the variables a signature hides, `sig_of`) and in
     /// the decoding of compact forwards (`Replacer::must_decode`), which also reads the
     /// variables the bindings put in place (`targets`). (2) Where no function holds a compact
