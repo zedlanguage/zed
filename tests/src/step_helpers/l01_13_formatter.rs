@@ -14,7 +14,7 @@ pub fn build(text: &str) -> Result<(Vec<Token>, Vec<Stmt>), String> {
 }
 
 /// `stmts` without their spans, which formatting moves.
-fn shape(stmts: &[Stmt]) -> String {
+pub fn shape(stmts: &[Stmt]) -> String {
     let debug = format!("{stmts:?}");
     let mut out = String::new();
     let mut rest = &debug[..];

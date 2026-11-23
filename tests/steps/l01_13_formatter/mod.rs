@@ -11,6 +11,7 @@ mod grammar_cases;
 mod head_cases;
 mod layout;
 mod main_header;
+mod minimal;
 mod positions;
 mod prelude;
 mod scaling;

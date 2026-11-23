@@ -86,7 +86,10 @@ fn level(e: &Expr) -> u8 {
         | ExprKind::Index(..)
         | ExprKind::Member { .. }
         | ExprKind::Spread { .. }
-        | ExprKind::Read { .. } => POSTFIX,
+        | ExprKind::Read { .. } => match on_tail(e) {
+            true => REDUCE,
+            false => POSTFIX,
+        },
         ExprKind::Int { .. }
         | ExprKind::Float { .. }
         | ExprKind::Rat(_)
@@ -104,11 +107,44 @@ fn level(e: &Expr) -> u8 {
         | ExprKind::Array(_)
         | ExprKind::Set(_)
         | ExprKind::Map(_)
-        // A `loop` has no head, so like a block it takes a suffix as written: `loop { … }.v`.
-        | ExprKind::Loop { .. } => PRIMARY,
-        // A `for` is a primary of the grammar, but its body block ends it, so as the operand of
-        // an operator it is written in parentheses: `(for x in xs { x }).orderedValues`.
-        ExprKind::For { .. } => ELSE,
+        // A `loop` and a `for` are primaries of the grammar (`Primary = … | ~For | ~Loop`), so
+        // like a block they take a suffix as written: `loop { … }.v`, `for x in xs { x }.sum`
+        // (author P191: parentheses only where the grammar needs them). Only a head, whose `{`
+        // opens the branch, groups a `for` (`head_unsafe`).
+        | ExprKind::Loop { .. }
+        | ExprKind::For { .. } => PRIMARY,
+    }
+}
+
+/// The receiver of `e` when `e` is written as a suffix after it, `.name`, `?.name`, `[i]`,
+/// `(args)`, `*.name` or `::name`; `None` for any other expression, an infix call among them.
+fn receiver(e: &Expr) -> Option<&Expr> {
+    match &e.kind {
+        ExprKind::Call { callee, .. } if infix_call(e).is_none() => Some(callee),
+        ExprKind::Index(of, _)
+        | ExprKind::Member { of, .. }
+        | ExprKind::Spread { of, .. }
+        | ExprKind::Read { of, .. } => Some(of),
+        _ => None,
+    }
+}
+
+/// Whether `e` is a chain of suffixes on a `with { … }` or a remap. The grammar writes their
+/// suffixes bare, `ReduceTail = … | 'as' '(' InPattern ')' Suffix* | 'into' '(' … ')' Suffix*
+/// | 'with' '{' … '}' Suffix*` (sec:grammar), so `x with { c = 1 }.c` and
+/// `m into (v -> k).len` need no parentheses, and the chain is a `Reduce`, at `REDUCE`, where
+/// any other chain of suffixes is at `POSTFIX`. O(length of the chain), called once at the top
+/// of a chain: `Job::Postfix` writes a receiver that is itself a chain without asking its level.
+fn on_tail(e: &Expr) -> bool {
+    let mut e = e;
+    loop {
+        match &e.kind {
+            ExprKind::With { .. } | ExprKind::Remap { .. } => return true,
+            _ => match receiver(e) {
+                Some(of) => e = of,
+                None => return false,
+            },
+        }
     }
 }
 
@@ -143,12 +179,18 @@ fn infix_left(a: &Expr) -> u8 {
 
 /// The level the right operand `b` of an infix call is written at. A prefix `-` or `!` there has
 /// one reading, `p ~scale~ -1`, unless its operand is written bare with `^`, `p ~f~ -k^2`, which
-/// also reads `(p ~f~ -k)^2`; a prefix on a prefix is written `-(-x)`, grouped. Any other operand
+/// also reads `(p ~f~ -k)^2`; a prefix on a prefix is written bare, `p ~f~ - -x`. Any other operand
 /// looser than a postfix chain is grouped (DESIGN.md tier 6).
 fn infix_right(b: &Expr) -> u8 {
-    match &b.kind {
-        ExprKind::Unary(_, x) if !matches!(x.kind, ExprKind::Binary(BinaryOp::Pow, ..)) => PREFIX,
-        _ => POSTFIX,
+    // The operand under every prefix, which decides: `p ~f~ - -k^2` reads two ways as well.
+    let mut x = b;
+    while let ExprKind::Unary(_, y) = &x.kind {
+        x = y;
+    }
+    match x.kind {
+        _ if std::ptr::eq(x, b) => POSTFIX,
+        ExprKind::Binary(BinaryOp::Pow, ..) => POSTFIX,
+        _ => PREFIX,
     }
 }
 
@@ -201,8 +243,8 @@ pub fn code_as_head(text: &str) -> Cow<'_, str> {
 pub fn code_as_receiver(text: &str) -> Cow<'_, str> {
     code_where(text, |e| match e.kind {
         ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Rat(_) => false,
-        ExprKind::Remap { .. } => true,
-        _ => level(e) >= POSTFIX,
+        ExprKind::Remap { .. } | ExprKind::With { .. } => true,
+        _ => receiver(e).is_some() || level(e) >= POSTFIX,
     })
 }
 
@@ -261,13 +303,15 @@ fn starts_with_block(mut e: &Expr) -> bool {
 }
 
 /// Whether `e`, as an `if` condition or a `for` source or guard, holds a block outside any
-/// bracket, which the grammar's `HEAD` forbids there, since the head's `{` opens the branch;
-/// a `for` there is also written in parentheses, which the grammar allows without them.
+/// bracket, which the grammar's `HEAD` forbids there, since the head's `{` opens the branch.
 fn head_unsafe(e: &Expr) -> bool {
     let mut stack = vec![e];
     while let Some(e) = stack.pop() {
         match &e.kind {
-            ExprKind::Block(_) | ExprKind::For { .. } | ExprKind::Loop { .. } => return true,
+            ExprKind::Block(_) | ExprKind::Loop { .. } => return true,
+            // A `for` ends with its own block, and its own source and guard are heads, so it
+            // stands bare in a head: `for y in for x in s { x } { y }` (author P191).
+            ExprKind::For { .. } => {}
             ExprKind::Else { of, default, .. } => stack.extend([&**of, &**default]),
             ExprKind::Binary(_, a, b)
             | ExprKind::In { of: a, set: b, .. }
@@ -642,8 +686,11 @@ impl<'a> Formatter<'a> {
                     stack.push(put(")"));
                     self.raw(of, ind, stack);
                 }
-                // A remap's tail takes suffixes as written: `m into (v -> k).len`.
-                ExprKind::Remap { .. } => self.raw(of, ind, stack),
+                // A remap's tail and a `with { … }` take suffixes as written,
+                // `m into (v -> k).len`, `x with { c = 1 }.c` (`on_tail`), and a chain of
+                // suffixes takes one more.
+                ExprKind::Remap { .. } | ExprKind::With { .. } => self.raw(of, ind, stack),
+                _ if receiver(of).is_some() => self.raw(of, ind, stack),
                 _ => stack.push(Job::Expr {
                     e: of,
                     min: POSTFIX,
@@ -1330,16 +1377,17 @@ impl<'a> Formatter<'a> {
             ExprKind::Bool(b) => self.put(b.to_string()),
             ExprKind::Atom(a) => self.put(format!("#{a}")),
             ExprKind::Name(n) => self.put(n.as_str()),
-            ExprKind::Unary(op, x) => match x.kind {
-                ExprKind::Unary(..) => {
-                    self.put(format!("{op}("));
-                    then![stack; Job::Raw { e: x, ind }, put(")")];
+            // `Prefix = ('-' | '!') Prefix`, so a prefix on a prefix needs no parentheses
+            // (author P191). The same operator twice is written with a space, `- -x`, `! !b`:
+            // `--x` and `!!b` would read as C's decrement and JavaScript's cast to a boolean,
+            // which Zed does not have (author P292, no pitfalls of other languages).
+            ExprKind::Unary(op, x) => {
+                self.put(op.as_str());
+                if matches!(&x.kind, ExprKind::Unary(o, _) if o == op) {
+                    self.put(" ");
                 }
-                _ => {
-                    self.put(op.as_str());
-                    stack.push(at(x, PREFIX));
-                }
-            },
+                stack.push(at(x, PREFIX));
+            }
             ExprKind::Binary(op, a, b) => {
                 let (lmin, rmin) = operand_levels(*op);
                 // `^` is written with no spaces, as in mathematics: `0..=2^48`, `x * 2^k`.
@@ -1630,11 +1678,25 @@ impl<'a> Formatter<'a> {
             self.pieces.push(Cow::Borrowed(""));
             let breaks = self.breaks;
             stack.push(Job::BlockEnd { mark, breaks, ind });
-            stack.push(Job::Stmt {
-                s,
-                ind: ind + 1,
-                bare,
-            });
+            match &s.kind {
+                // A brace whose one content is a bare lambda is refused as two readings (a
+                // block, a one-entry map; crates/zedc-syntax/src/ast/body.rs), so the lambda
+                // that is a block's value is grouped: `for y in s { (y -> x) }`.
+                StmtKind::Return(es)
+                    if bare && matches!(&es[..], [l] if matches!(l.kind, ExprKind::Lambda { .. })) =>
+                {
+                    stack.push(Job::Expr {
+                        e: &es[0],
+                        min: ELSE,
+                        ind: ind + 1,
+                    })
+                }
+                _ => stack.push(Job::Stmt {
+                    s,
+                    ind: ind + 1,
+                    bare,
+                }),
+            }
             return;
         }
         if stmts.is_empty() && !self.has_comment(e.span) {
