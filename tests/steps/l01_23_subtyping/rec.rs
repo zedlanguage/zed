@@ -208,21 +208,20 @@ fn other_rejections() {
         def("B", &[], or(vec![r(0, vec![]), ty(Type::int())])),
     ];
     assert!(msg(mutual).contains("`A` is not contractive"));
-    // Under a complement, to the right of `\`, and in a guarantee whose value type mentions the
-    // group without holding the guarantee as written (`U -> U` is admitted,
-    // GROUP-admit-precision).
+    // Under a complement and to the right of `\`. A guarantee whose value type mentions the
+    // group is admitted when that value type is inhabited wherever the guarantee is, as
+    // `type U = (U) -> (int, U)` (GROUP-admit-precision, DESIGN sec. recursive groups, spec
+    // 17f8cbc); it was rejected "in the guarantee of `U -> (int, U)`" before.
     let under_not = atom("a", vec![Expr::Not(Box::new(n()))]);
     assert!(msg(vec![def("N", &[], under_not)]).contains("under a complement"));
     let diff = Expr::Diff(Box::new(ty(Type::int())), Box::new(atom("b", vec![n()])));
     assert!(msg(vec![def("N", &[], diff)]).contains("to the right of `\\`"));
-    assert!(
-        msg(vec![def(
-            "U",
-            &[],
-            Expr::exact(n(), Expr::Tuple(vec![ty(Type::int()), n()]))
-        )])
-        .contains("in the guarantee of `U -> (int, U)`")
+    let u = def(
+        "U",
+        &[],
+        Expr::exact(n(), Expr::Tuple(vec![ty(Type::int()), n()])),
     );
+    assert!(Group::new(vec![u]).is_ok());
     // A value type that a parameter can make empty: `type F(A) = (F(A)) -> A`, and one that a
     // larger argument shrinks, `(H(A)) -> (int \ A)`.
     let p = || Expr::Param(0);
