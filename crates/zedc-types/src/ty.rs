@@ -4346,7 +4346,7 @@ pub struct Sig {
     /// `++` and `zip` make of such families. `None` where its arrows and [`Sig::dense`] say all
     /// that is known of its keys. The empty family is `int[0..=-1]`, so that equal key sets are
     /// equal values. Its arrows stay `int ->? V`, and it prints as `int[a..=b] -> V`
-    /// ([`Sig::exact_keys`], row RANGE-keys-in-printed-type; DESIGN.md sec:type_language: `[T]`
+    /// (`Sig::exact_keys`, row RANGE-keys-in-printed-type; DESIGN.md sec:type_language: `[T]`
     /// is `int[0..<n] -> T`), which the reader of printed types takes back to the same keys
     /// and arrow (until that row it printed `int ->? V`, and the keys were lost on reading
     /// back); `zip` and `++` read these keys as they read the listed

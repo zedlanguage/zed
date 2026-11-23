@@ -181,7 +181,7 @@ pub const PREFERRED: f64 = 9.0;
 /// The margin of a limit on processor time or cycles, which change with load, kept for the
 /// probes that hold their own ratio of processor time to it (l01_38's `pncx_probe`). The
 /// scaling checks of this file no longer use it: they hold every meter to the limit itself
-/// (FAIL-scaling-check-passes-over-limit, 2026-11-23; see [`compare_measured`]). A linear loop
+/// (FAIL-scaling-check-passes-over-limit, 2026-11-23; see `compare_measured`). A linear loop
 /// run at 10^5 and 8 × 10^5 passes took 5.6 to 8.8 times the processor time, the fastest of five
 /// each, and a quadratic one 33 to 82 times for 64 (2026-11-07, load 20 to 25).
 pub const TIME_ALLOWANCE: f64 = 2.0;

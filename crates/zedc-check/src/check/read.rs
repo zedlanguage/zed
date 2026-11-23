@@ -481,7 +481,7 @@ impl Seen {
 struct Written<'a> {
     by_name: HashMap<Arc<str>, &'a str>,
     /// The int each leaf written as an int literal stands for, by its name: the ends of a
-    /// range `int[a..=b]`, which [`keyed_families`] reads.
+    /// range `int[a..=b]`, which `key_range` reads.
     ints: HashMap<Arc<str>, Value>,
 }
 
