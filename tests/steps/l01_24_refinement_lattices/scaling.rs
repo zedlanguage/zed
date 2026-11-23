@@ -589,6 +589,48 @@ fn one_piece_updates_and_queries_agree_with_membership() {
 /// Small instance of `bench::bounds_on_many_symbols_scale`: the join of two sets of `k` bounds
 /// on `k` symbols, one shifted by 1, keeps a lower and an upper bound for each symbol and holds
 /// both sides; their meet lies under both.
+/// The set `{0}` joined n times with a one-point set below its first piece, two below it at
+/// even steps (a new piece) and one below it at odd steps (touching, so the first piece
+/// grows): the workload of `bench::joins_below_a_set_scale`.
+fn joins_below(n: usize) -> IntervalSet {
+    let mut grown = IntervalSet::single(0);
+    for i in 0..n {
+        let first = grown
+            .first()
+            .and_then(|p| p.0.to_i64())
+            .expect("a finite first end");
+        let v = first - if i % 2 == 0 { 2 } else { 1 };
+        grown = IntervalSet::single(v).join(&grown);
+    }
+    grown
+}
+
+/// Small instance of `bench::joins_below_a_set_scale`: after n joins below, the set is the
+/// pairs `{-3k, -3k + 1}` (k from 1) and `{0}`, the lowest pair the single point `-3k + 1`
+/// when n is odd.
+#[test]
+fn joins_below_a_set_keep_their_members() {
+    for n in [0usize, 1, 2, 3, 7, 40] {
+        let grown = joins_below(n);
+        let want: Vec<i64> = (0..n)
+            .scan(0i64, |f, i| {
+                *f -= if i % 2 == 0 { 2 } else { 1 };
+                Some(*f)
+            })
+            .chain([0])
+            .collect();
+        let lo = want.iter().min().copied().unwrap_or(0);
+        for x in lo - 3..=3 {
+            assert_eq!(
+                grown.contains(x),
+                want.contains(&x),
+                "{grown} at {x}, n = {n}"
+            );
+        }
+        assert_eq!(grown.len(), n.div_ceil(2) + 1, "{grown}");
+    }
+}
+
 #[test]
 fn a_join_of_bounds_on_distinct_symbols_keeps_one_per_symbol() {
     use zedc::store::affine::Side;

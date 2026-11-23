@@ -196,6 +196,25 @@ fn interval_set_operations_scale() {
     );
 }
 
+/// A set grown at its front by p joins of a one-piece set wholly below it, every other one
+/// touching its first piece (PERF-ref-abs-gap-under-9, zedc-lattice `below_then`): each join
+/// is one `O(log p)` path, so the p of them cost `O(p log p)` (`union` has the same bound with
+/// four splits a level). Expected ratio from 40,000 to 320,000: 8 · log 320000 / log 40000 =
+/// 8 · 18.29 / 15.29 = 9.57, above the preferred 9 for any p log p work at these sizes and under
+/// the limit 10.5. Measured on hm2 (2026-11-23): 9.782 in instructions.
+#[test]
+fn joins_below_a_set_scale() {
+    scaling::check_order(
+        "p joins of a piece below a set of p pieces",
+        40_000,
+        1,
+        |n| {
+            let grown = joins_below(n);
+            assert_eq!(grown.len(), n.div_ceil(2) + 1);
+        },
+    );
+}
+
 #[test]
 fn bounds_on_many_symbols_scale() {
     use zedc::store::lattice::Lattice;

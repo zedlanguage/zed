@@ -494,6 +494,57 @@ fn concat(l: Link, r: Link) -> Link {
     }
 }
 
+/// The union of `lo` and `hi` when both are non-empty and every piece of `lo` lies below every
+/// piece of `hi` (`lo`'s last end below `hi`'s first), `None` otherwise (PERF-ref-abs-gap-under-9:
+/// the input labels the inverse tree of `zedc-preimage` joins are of this kind in
+/// `normal_abs_gap`, five a link, and there [`union`]'s four splits were over half of the
+/// growth with n; the profile is in preimage_ref.rs at `Edge`).
+///
+/// Complexity tradeoff: the test reads the two roots' kept `last` and `first`, `O(1)`, so a
+/// pair that fails it costs [`union`] as before plus one comparison. A pair that passes costs
+/// one [`concat`] (one `split_first` and one `join`), or, when the two touch, one `split_last`,
+/// one `split_first` and one `join`: `O(log n)` each, against `union`'s four `split`s and two
+/// recursive unions. The bound is the same; the constant is about a quarter.
+///
+/// Proof that the result is the union as [`union`] builds it, the sorted list of maximal
+/// pieces with at least one integer missing between neighbors (the tree's invariant, see
+/// [`run_between`]). Let `a` be `lo.last` and `b` be `hi.first`, with `a < b`.
+/// 1. Every piece of `lo` ends at or below `a` and every piece of `hi` starts at or above `b`,
+///    so the pieces of `lo` then those of `hi` are in order, and no piece of one overlaps a
+///    piece of the other.
+/// 2. Inside `lo` and inside `hi` neighbors already have a gap. The only new neighbors are
+///    `lo`'s last piece `(l, a)` and `hi`'s first `(b, h)`.
+/// 3. If `b > a + 1` (`b.at_most_succ(a)` false), an integer is missing between them, so the
+///    joined list is maximal as it stands, and [`concat`] keeps the order and the pieces.
+/// 4. If `b = a + 1` (the only other case, as `a < b`), the two touch, and the maximal list
+///    has `(l, h)` in their place; `(l, h)` lies above every other piece of `lo` and below
+///    every other piece of `hi` with a gap on each side, by step 2, so `join` keeps the
+///    invariant.
+/// 5. `a` is finite in both cases: an upper end `+inf` has nothing above it, so `a < b` fails;
+///    `succ` of a finite end is `a + 1`.
+/// Test: `ordered_joins_agree_with_the_generic_union` (below, above, touching, overlapping and
+/// empty sets, each against `union` and `check_tree`), and its negative control, which joins
+/// overlapping sets the same way without the test and finds wrong unions.
+fn below_then(lo: &Link, hi: &Link) -> Option<Link> {
+    let (Some(l), Some(h)) = (lo, hi) else {
+        return None;
+    };
+    (l.last < h.first).then(|| concat_ordered(lo.clone(), hi.clone()))
+}
+
+/// `lo`'s pieces then `hi`'s, the touching end pieces made one, for `lo`'s last end below
+/// `hi`'s first: [`below_then`] after its test, which the negative control leaves out.
+fn concat_ordered(lo: Link, hi: Link) -> Link {
+    match (lo, hi) {
+        (Some(l), Some(h)) if h.first.at_most_succ(&l.last) => {
+            let (rest_l, ((a, _), _)) = split_last(l);
+            let (((_, b), _), rest_h) = split_first(h);
+            Some(join(rest_l, keyed((a, b)), rest_h))
+        }
+        (lo, hi) => concat(lo, hi),
+    }
+}
+
 /// A piece with its hash.
 fn keyed(piece: (End, End)) -> Keyed {
     let h = piece_hash(&piece);
@@ -1031,8 +1082,14 @@ impl IntervalSet {
     }
 
     /// The union. A set that holds the other is returned shared. `O(m log(n/m + 1))` for
-    /// `m <= n` pieces, by `union`.
+    /// `m <= n` pieces, by `union`; two sets one wholly below the other in `O(log n)` by
+    /// [`below_then`], with one path walked where `union` walks four.
     pub fn join(&self, other: &Self) -> Self {
+        if let Some(root) =
+            below_then(&self.root, &other.root).or_else(|| below_then(&other.root, &self.root))
+        {
+            return IntervalSet { root };
+        }
         let (small, big) = self.by_size(other);
         if small.is_subset(big) {
             return big.clone();
@@ -2215,6 +2272,71 @@ mod tests {
         for (rounds, most, w) in [(1000, 6, 12), (40, 60, 200)] {
             operations_agree(&mut rng, rounds, most, w);
         }
+    }
+
+    /// `join` of two sets one wholly below the other (`below_then`, PERF-ref-abs-gap-under-9)
+    /// gives what the generic `union` gives, as a valid tree, both ways round: pairs cut apart
+    /// with a gap, touching at the cut, with a member at the cut on one side only, overlapping,
+    /// and with an empty side. Negative control: the concatenation without the test, on the
+    /// overlapping pairs, gives a wrong union for some of them.
+    #[test]
+    fn ordered_joins_agree_with_the_generic_union() {
+        let (mut rng, seed) = Rng::fresh("ordered_joins_agree_with_the_generic_union");
+        let w = 40;
+        let (mut ordered, mut touching, mut overlapping, mut wrong) = (0, 0, 0, 0);
+        for _ in 0..4000 {
+            let (a, b) = (random_set(&mut rng, 8, w), random_set(&mut rng, 8, w));
+            let c = rng.int(-w, w);
+            let (lo, hi) = match rng.below(4) {
+                // Cut apart at `c`: at or below it and from `c + d` up, `d` 1 (touching when both
+                // hold their end of the cut), 2 or 3.
+                0..=2 => {
+                    let d = rng.int(1, 3);
+                    (
+                        a.meet(&IntervalSet::range(NegInf, End::of(c))),
+                        b.meet(&IntervalSet::range(End::of(c + d), PosInf)),
+                    )
+                }
+                _ => (a, b),
+            };
+            let want = IntervalSet {
+                root: union(lo.root.clone(), hi.root.clone()),
+            };
+            let m = members(&want, w);
+            for got in [lo.join(&hi), hi.join(&lo)] {
+                agrees(&got, &m, w);
+                assert_eq!(got, want, "{lo} join {hi}, ZED_TEST_SEED={seed}");
+            }
+            let is_below = match (&lo.root, &hi.root) {
+                (Some(l), Some(h)) => l.last < h.first,
+                _ => false,
+            };
+            assert_eq!(below_then(&lo.root, &hi.root).is_some(), is_below);
+            match (&lo.root, &hi.root) {
+                (Some(l), Some(h)) if is_below => {
+                    ordered += 1;
+                    touching += usize::from(l.last.succ() == h.first);
+                }
+                (Some(_), Some(_)) => {
+                    overlapping += 1;
+                    let forced = IntervalSet {
+                        root: concat_ordered(lo.root.clone(), hi.root.clone()),
+                    };
+                    let forced: Vec<_> = forced.pieces().cloned().collect();
+                    wrong += usize::from(forced != want.pieces().cloned().collect::<Vec<_>>());
+                }
+                _ => {}
+            }
+        }
+        // Each kind is drawn often enough to count, and the control fails.
+        assert!(
+            ordered > 1000 && touching > 50 && overlapping > 500,
+            "{ordered} {touching} {overlapping}"
+        );
+        assert!(
+            wrong > overlapping / 2,
+            "the control found {wrong} of {overlapping} wrong"
+        );
     }
 
     /// `in_class` gives what moving each piece's ends inward and building the set again gives,
