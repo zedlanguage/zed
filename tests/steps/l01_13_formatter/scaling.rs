@@ -33,6 +33,13 @@ pub(super) fn mixed(n: usize) -> String {
         .collect()
 }
 
+/// `f(x) = x with { c = 1 }.c.c…;`, `n` suffixes after a `with` written bare
+/// (PRINT-expr-parens-minimal): the formatter finds that the chain stands on a `with` by a walk
+/// down its receivers.
+pub(super) fn suffixed(n: usize) -> String {
+    format!("f(x) = x with {{ c = 1 }}{};\n", ".c".repeat(n))
+}
+
 /// Formats `unit`, which must be accepted, and gives the text written.
 pub(super) fn formats(unit: &str) -> String {
     zedc::format::format_source(unit.as_bytes()).unwrap()
@@ -52,7 +59,9 @@ fn each_benchmark_unit_is_formatted_at_small_sizes() {
         formats(&commented(n));
         formats(&moved(n));
         rejects(&mixed(n));
+        formats(&suffixed(n));
     }
+    assert_eq!(formats(&suffixed(2)), suffixed(2));
     assert_eq!(
         formats(&nested(1)),
         "f(c) = if c {\n  if c {\n    a = 1;\n    a\n  } else { 0 }\n} else { 0 };\n"

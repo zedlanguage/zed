@@ -3,7 +3,7 @@
 
 use zed_tests::scaling;
 
-use crate::scaling::{commented, formats, mixed, moved, nested, rejects};
+use crate::scaling::{commented, formats, mixed, moved, nested, rejects, suffixed};
 
 #[test]
 fn nested_one_statement_blocks_scale() {
@@ -31,6 +31,17 @@ fn moved_comments_with_blank_lines_scale() {
     // comment and its statement, so the scans cover disjoint ranges.
     let units = scaling::inputs(500, moved);
     scaling::check_order("moved comments with blank lines, by count", 500, 1, |n| {
+        formats(&units[&n]);
+    });
+}
+
+#[test]
+fn a_chain_of_suffixes_after_with_scales() {
+    // `level` walks a chain's receivers to find a `with` under it (`on_tail`), O(chain); the
+    // formatter asks it once for the whole chain and writes each receiver that is itself a
+    // chain as it stands, so the walk is not repeated at each suffix.
+    let units = scaling::inputs(500, suffixed);
+    scaling::check_order("suffixes after `with`, by count", 500, 1, |n| {
         formats(&units[&n]);
     });
 }
