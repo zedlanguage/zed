@@ -122,6 +122,24 @@ pub(crate) fn write_bytes(out: &mut Line, n: u64) {
 /// The processor-time limit, as its message's first words write it; the process's processor
 /// time when the run started, in nanoseconds; and whether the limit has stopped the run. Set
 /// by [`cpu`].
+//
+// The orderings, argued at the code since loom has no model of a signal handler or a timer
+// (TEST-rt-weakmem, author P379). (1) `CPU_PASSED.swap` lets exactly one `SIGXCPU` through,
+// whatever thread each arrives on: a swap is one indivisible read-modify-write, so of the swaps
+// in its modification order only the first reads `false` (C++20 [atomics.order] 10), which holds
+// for any ordering; SeqCst is kept, at no cost on a path taken once. (2) `CPU_START` is stored,
+// relaxed, by `cpu` before `timer_settime` and `setrlimit` start what can send `SIGXCPU`, and
+// read, relaxed, by `on_cpu` on whichever thread the kernel delivers the signal to. The store is
+// ordered before the read through the kernel only: the program orders the store before those
+// calls (the compiler cannot move a store to a static past a call into code it cannot see), the
+// system call that arms the timer ends with a release of the kernel's lock on the timer (its
+// unlock), and the delivery of the signal to another thread takes the signal lock of the
+// process with an acquire before that thread runs its handler; a release orders every earlier
+// store of its thread, the relaxed one included (Linux kernel memory model, as remembered, not
+// checked against a source tree here). A wrong read could only be the initial 0, which makes the
+// message name the process's whole processor time in place of the run's: a message, never the
+// stop itself, which comes from the signal. `CPU_LIMIT` is a `OnceLock`, set before the timer
+// is armed and read with the acquire of `OnceLock::get`.
 static CPU_LIMIT: OnceLock<String> = OnceLock::new();
 static CPU_START: AtomicU64 = AtomicU64::new(0);
 static CPU_PASSED: AtomicBool = AtomicBool::new(false);
@@ -289,6 +307,14 @@ fn sleep_until(at: Duration) {
 }
 
 /// The memory limit in bytes, for the handlers' messages; 0 where none is set.
+//
+// Relaxed suffices (TEST-rt-weakmem): `memory` stores it once, before `setrlimit` sets the limit
+// whose refusals reach `on_abort`, and before any stack under the limit is made: `enforce` runs
+// before the run starts (`zedc::run`, after `Running::start`; `zed_native::exe`, after the
+// decode), so a thread that works for the run is spawned after the store or handed its work
+// through a channel or lock after it, and either orders the store before all that work. A read
+// in `on_abort` or `memory_limit` is in such work; a read of the initial 0 would change only the
+// bytes a message names, never whether the run stops.
 static MEMORY_LIMIT: AtomicU64 = AtomicU64::new(0);
 
 /// Whether a panic has begun in the process under a memory limit, set by the panic hook that

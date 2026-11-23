@@ -24,7 +24,7 @@
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Once, OnceLock};
 
 use crate::limits::{fault_exit, install, memory_limit, write_bytes};
@@ -173,7 +173,7 @@ impl Drop for Stack {
     fn drop(&mut self) {
         // The handler of faults no longer reads the stack as one of its own.
         if let Some((grows, _)) = &self.grows {
-            grows.high.store(0, Ordering::Relaxed);
+            grows.unmapped();
         }
         #[expect(unsafe_code, reason = "unmapping is a libc call")]
         // SAFETY: `base` and `len` are the mapping `new` made, unmapped only here, and no code
@@ -196,22 +196,21 @@ const GROW: usize = 256 << 10;
 /// The bytes of the stack the handler of faults runs on, apart from the run's stack.
 const ALT: usize = 64 << 10;
 
-/// A stack under a memory limit, as the handler of faults ([`on_fault`]) reads it: the guard
-/// page is `[low - page, low)`, the stack `[low, high)`, and `[writable, high)` may be written.
-/// Each record is leaked and stays in [`GROWING`] for the process's life, `high` 0 once its stack
-/// is unmapped, so the handler reads it with no lock and never a freed record; there is one
-/// for each stack made under a limit, one a run.
-#[derive(Debug)]
-struct Grows {
-    low: AtomicUsize,
-    high: AtomicUsize,
-    writable: AtomicUsize,
-    page: usize,
-    next: AtomicPtr<Grows>,
+/// The records of the stacks under a memory limit and their list, with std's atomics; the loom
+/// tests build the same file with loom's (its head comment).
+mod growing {
+    use std::ptr;
+    use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+
+    include!("stack/growing.rs");
+
+    /// The records of the stacks made under a memory limit, newest first.
+    pub(super) static GROWING: Growing = Growing {
+        head: AtomicPtr::new(ptr::null_mut()),
+    };
 }
 
-/// The records of the stacks made under a memory limit, newest first.
-static GROWING: AtomicPtr<Grows> = AtomicPtr::new(ptr::null_mut());
+use growing::{GROWING, Grows};
 
 /// The action for `SIGSEGV` before [`on_fault`] was installed, which a fault outside every
 /// stack under a limit is passed to.
@@ -305,26 +304,8 @@ impl Stack {
             installed.inspect_err(|_| {
                 libc::munmap(alt, ALT);
             })?;
-            let grows: &'static Grows = Box::leak(Box::new(Grows {
-                low: AtomicUsize::new(low),
-                high: AtomicUsize::new(high),
-                writable: AtomicUsize::new(writable),
-                page,
-                next: AtomicPtr::new(ptr::null_mut()),
-            }));
-            let mut head = GROWING.load(Ordering::Acquire);
-            loop {
-                grows.next.store(head, Ordering::Relaxed);
-                match GROWING.compare_exchange_weak(
-                    head,
-                    ptr::from_ref(grows).cast_mut(),
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                ) {
-                    Ok(_) => break,
-                    Err(h) => head = h,
-                }
-            }
+            let grows: &'static Grows = Box::leak(Box::new(Grows::new(low, high, writable, page)));
+            GROWING.push(grows);
             s.grows = Some((grows, Alt(alt)));
             Ok(s)
         }
@@ -439,31 +420,22 @@ fn serve(signal: libc::c_int, info: *mut libc::siginfo_t, context: *mut libc::c_
     // uses. Each operation is async-signal-safe: the proof at `on_fault`.
     unsafe {
         let at = (*info).si_addr() as usize;
-        let mut g = GROWING.load(Ordering::Acquire);
-        while let Some(r) = g.as_ref() {
-            g = r.next.load(Ordering::Acquire);
-            let (low, high) = (
-                r.low.load(Ordering::Relaxed),
-                r.high.load(Ordering::Relaxed),
-            );
-            if high == 0 || at < low - r.page || at >= high {
-                continue;
-            }
+        // A fault on a page already writable is not the stack's growth: it goes to the action
+        // before this one, as a fault in no stack does.
+        if let Some((r, low, high)) = GROWING.find(at) {
             let writable = r.writable.load(Ordering::Relaxed);
-            if at >= writable {
-                // A fault on a page already writable is not the stack's growth.
-                break;
+            if at < writable {
+                if at < low {
+                    stack_stop(high - writable, None);
+                }
+                let to = writable - (writable - at).div_ceil(GROW) * GROW;
+                let to = to.max(low);
+                if mprotect_raw(to, writable - to, libc::PROT_READ | libc::PROT_WRITE) != 0 {
+                    stack_stop(high - writable, Some(writable - to));
+                }
+                r.writable.store(to, Ordering::Relaxed);
+                return;
             }
-            if at < low {
-                stack_stop(high - writable, None);
-            }
-            let to = writable - (writable - at).div_ceil(GROW) * GROW;
-            let to = to.max(low);
-            if mprotect_raw(to, writable - to, libc::PROT_READ | libc::PROT_WRITE) != 0 {
-                stack_stop(high - writable, Some(writable - to));
-            }
-            r.writable.store(to, Ordering::Relaxed);
-            return;
         }
         match BEFORE.get() {
             Some(b)
@@ -625,6 +597,9 @@ mod bench;
 
 #[cfg(test)]
 mod completeness;
+
+#[cfg(test)]
+mod weakmem;
 
 #[cfg(test)]
 mod tests {

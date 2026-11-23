@@ -40,8 +40,10 @@ features = ["counts"]
 
 # The shared scaling checks (tests/src/scaling.rs) of the benchmarks in `stack/bench.rs`: they
 # count instructions with perf-event2 and bytes with zed-alloc-count, read clocks with rustix
-# and the room left on the stack with stacker.
+# and the room left on the stack with stacker. loom model-checks the lock-free list of stacks under
+# a memory limit (src/stack/weakmem.rs).
 [dev-dependencies]
+loom.workspace = true
 rustix.workspace = true
 stacker.workspace = true
 zed-alloc-count.workspace = true
