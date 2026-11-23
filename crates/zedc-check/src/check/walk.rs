@@ -20916,8 +20916,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(r) = r else {
                 // (a2): the unknown, which waits on no class. Read as no value, as an open
                 // class is, so that a value whose rest fails is still refused.
-                cut.insert(v.clone(), Ty::empty());
-                continue;
+                #[cfg(feature = "push-vars-sweep")]
+                panic!("PUSH-VARS-SWEEP: a push reached (a2) with the variable {v}");
+                #[allow(unreachable_code)]
+                {
+                    cut.insert(v.clone(), Ty::empty());
+                    continue;
+                }
             };
             let c = &self.classes[r];
             let own = c

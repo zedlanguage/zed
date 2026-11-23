@@ -61,6 +61,10 @@ printed-types = ["zedc-types/printed-types"]
 # TEST-random-sweep-off): the specific fixes off, the end-of-walk check off. Off in a release
 # build; zedc's feature `obligation-test-modes` turns it on for the step tests.
 obligation-test-modes = []
+# A panic in the arm (a2) of `Ck::push_vars` (check/walk.rs), for a sweep of the tests that looks
+# for a push reaching it (PROOF-push-vars-a2-complete). Off in every build; a sweep removes the
+# `#[cfg]` line before the panic in a copy of the checkout, so that every build of that copy has it.
+push-vars-sweep = []
 
 # A dylib's file name does not change with its features, so `cargo test -p zedc-check` builds this
 # crate and zedc-types with the feature the workspace build gives them (the step tests turn on
