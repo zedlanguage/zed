@@ -390,9 +390,20 @@ vm_side() {
     rc=$?
   fi
   if [ -s "$w/share-short" ]; then
-    local rs
+    local rs ex=()
+    # --only matches a piece's group as well as its name, so ^short-zed_kernel$, the piece of the
+    # tests not run alone, selected every piece of the group short-zed_kernel, those of other
+    # shares too, and the check of the pieces sent failed the share: "reported but not sent"
+    # (b22-tests7's merge check, v5e2, 2026-11-23). --except matches the piece's name alone, so
+    # it names the short-addresses pieces of the other shares.
+    awk 'NR == FNR { s[$1] = 1; next } $1 ~ /^short-/ && !($1 in s) { print $1 }' \
+      "$w/share-short" "$w/list/latest/pieces" >"$w/short-other" ||
+      { echo "vm_side: listing the other shares' short-addresses pieces failed"; return 2; }
+    [ ! -s "$w/short-other" ] ||
+      ex=(--except "$(sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' "$w/short-other" | paste -sd'|')")
     bash "$w/run_tests.sh" --logs "$w/run-short" "${a[@]}" \
-      --only "$(sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' "$w/share-short" | paste -sd'|')" "$cores" >>"$w/r1.out" 2>&1
+      --only "$(sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' "$w/share-short" | paste -sd'|')" \
+      "${ex[@]}" "$cores" >>"$w/r1.out" 2>&1
     rs=$?
     [ "$rc" != 0 ] || rc=$rs
   fi

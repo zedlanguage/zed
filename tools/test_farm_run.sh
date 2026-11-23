@@ -85,13 +85,20 @@ if [ -z "$pieces" ]; then
   fi
   names="p1 p2 p3 p4 p5 p6 p7"
   [ -z "$short_steps" ] || names+=" short-g1"
-  # short-zed_kernel runs on the VMs since TEST-short-zed_kernel-split, as a short piece.
+  # short-zed_kernel runs on the VMs since TEST-short-zed_kernel-split, as a short piece; with
+  # STUB_SHORT_SPLIT, as two: the piece of the tests not run alone, named after its group, and
+  # the piece of a test run alone, short-zed_kernel::t1.
   [ -z "$short_libs" ] || names+=" short-zed_kernel"
+  [ -z "$short_libs" ] || [ -z "${STUB_SHORT_SPLIT:-}" ] || names+=" short-zed_kernel::t1"
   [ -z "$full" ] || names+=" full-a full-b full-c"
   : >"$d/pieces"
   : >"$d/chosen"
   for n in $names; do
-    [ -z "$only" ] || [[ $n =~ $only ]] || continue
+    # --only matches a piece's group as well as its name, as run_tests.sh's selected() does, so
+    # ^short-zed_kernel$ selects short-zed_kernel::t1 too.
+    g=grp-$n
+    [[ $n != short-zed_kernel* ]] || g=short-zed_kernel
+    [ -z "$only" ] || [[ $n =~ $only || $g =~ $only ]] || continue
     [ -z "$except" ] || [[ ! $n =~ $except ]] || continue
     # A short-addresses piece builds only at the build root, here with its clone's upper layer on
     # a tmpfs (FARM-short-pieces-on-vm-tmpfs).
@@ -105,7 +112,7 @@ if [ -z "$pieces" ]; then
         { echo "SHORT BUILD: build/short-clone cannot be renamed"; exit 1; }
     fi
     echo "$n dir bin-$n" >>"$d/pieces"
-    echo "grp-$n step-$n $n" >>"$d/chosen"
+    echo "$g step-$n $n" >>"$d/chosen"
   done
   if [ ! -s "$d/pieces" ]; then echo "NO PIECE MATCHES --only '$only'"; exit 1; fi
   if [ -n "$list" ]; then echo "listed $(wc -l <"$d/pieces")"; exit 0; fi
@@ -305,6 +312,11 @@ notrun all ""
 # Tests (FARM-short-pieces-on-vm-tmpfs): short-g1 ran on a VM (the stub checked its build root
 # and tmpfs), by name in a run of its own, as --pieces refuses it.
 has all '^stub: --pieces refuses' 0
+# The pieces short-zed_kernel and short-zed_kernel::t1 go to shares 1 and 2. --only
+# '^short-zed_kernel$' matches the group of both, so share 1 ran t1 too, and the share failed:
+# "reported but not sent" (b22-tests7's merge check on v5e2, 2026-11-23). Each runs once.
+STUB_SHORT_SPLIT=1 case_ short-split 0 "pieces: 10, failed: 0" "$all short-zed_kernel::t1" -- --owner t --vms 2
+has short-split 'reported but not sent' 0
 STUB_HAS_PODMAN=1 case_ full 0 "pieces: 11, failed: 0" "$all full-a full-c" -- --owner t --vms 2 --full
 notrun full "full-b"
 # Tests (FARM-local-only-pieces-on-vm): full-c needs podman, so each share fetches the deps first,
