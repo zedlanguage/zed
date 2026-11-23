@@ -1139,11 +1139,12 @@ fn reads_of_exact_keys_at_bounded_keys_check_in_linear_time() {
 }
 
 /// Plan row ZIP-count-facts: checking a `main` of n statements, the i-th
-/// `x{i} = x{i-1}.map(v -> v)` and a write of `x0.zip(x{i}).count`, with `x0` the lines of
-/// `m.stdin`, is linear in n. A port's keys are known to no type, so each zip finds that
-/// `x{i}` has `x0`'s keys by following the chain of `map`s, which the memo of each name's
+/// `x{i} = x{i-1}.map(v -> v)` and a line `c{i}` of `x0.zip(x{i}).count`, with `x0` the
+/// lines of `m.stdin`, is linear in n. A port's keys are known to no type, so each zip finds
+/// that `x{i}` has `x0`'s keys by following the chain of `map`s, which the memo of each name's
 /// keyspace walks once in all (`Ck::keyspace`); walking it again at each zip would check the
-/// unit in O(n²).
+/// unit in O(n²). The lines are pushed once, as one family (row FAIL-push-twice-old-benches:
+/// a push per statement is two pushes to one port in one run, refused by DESIGN step L1.19).
 #[test]
 fn zips_along_a_chain_of_maps_check_in_linear_time() {
     const N_UNIT: usize = 300;
@@ -1151,13 +1152,15 @@ fn zips_along_a_chain_of_maps_check_in_linear_time() {
         let body: String = (1..k)
             .map(|i| {
                 format!(
-                    "  x{i} = x{}.map(v -> v);\n  m.stdout <- \"${{x0.zip(x{i}).count}}\";\n",
+                    "  x{i} = x{}.map(v -> v);\n  c{i} = \"${{x0.zip(x{i}).count}}\";\n",
                     i - 1
                 )
             })
             .collect();
+        let lines: Vec<String> = (1..k).map(|i| format!("c{i}")).collect();
         checked(&format!(
-            "main(m: MainArgs) {{\n  x0 = m.stdin;\n{body}}}\n"
+            "main(m: MainArgs) {{\n  x0 = m.stdin;\n{body}  m.stdout <- [{}];\n}}\n",
+            lines.join(", ")
         ))
     });
     scaling::check(

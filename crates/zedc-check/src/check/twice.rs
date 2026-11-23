@@ -318,17 +318,23 @@ impl<'a> Walk<'_, 'a> {
                 .filter(|c| !c.contains('\n'))
                 .map_or_else(String::new, |c| format!(" `{c}`"))
         };
+        // Without the source text, or with a push that spans lines, a push has no quote; the
+        // sentence then names neither push ("by and then by" was printed before, row
+        // FAIL-push-twice-old-benches), and the first push's note and the error's own place
+        // show both (test `two_pushes_checked_without_the_source_text_are_named_by_their_places`
+        // in the l01_19 ports tests).
         let pushes = if first == at {
             format!(
                 "more than once in one run: the push{} lies in a loop",
                 code(at)
             )
         } else {
-            format!(
-                "twice in one run: by{} and then by{}",
-                code(first),
-                code(at)
-            )
+            match (code(first), code(at)) {
+                (a, b) if !a.is_empty() && !b.is_empty() => {
+                    format!("twice in one run: by{a} and then by{b}")
+                }
+                _ => "twice in one run".to_string(),
+            }
         };
         self.errors.push((
             at,

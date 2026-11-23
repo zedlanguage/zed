@@ -806,30 +806,36 @@ pub(super) fn helpers_giving_their_atom(n: usize) -> String {
     src
 }
 
-/// `n` helpers, each pushing its untyped parameter to a port, and `main` calling each with a
-/// string (the benchmark `bench::bubble::many_pushes_of_untyped_parameters_scale`).
+/// `n` helpers, each pushing its untyped parameter to a port, and a function `q` of `n` ports
+/// calling each with a string and a port of its own (the benchmark
+/// `bench::bubble::many_pushes_of_untyped_parameters_scale`). Each port is pushed once: `main`
+/// calling every helper with `m.stdout` pushes to it `n` times in one run, which DESIGN step
+/// L1.19 refuses (row FAIL-push-twice-old-benches). `q` is not called; its body is checked,
+/// and each call in it meets its helper's need.
 pub(super) fn helpers_pushing_their_parameter(n: usize) -> String {
     let mut src: String = (0..n)
         .map(|i| format!("p{i}(x, out: Lines) {{ out <- x; }}\n"))
         .collect();
-    src.push_str("main(m: MainArgs) {\n");
+    let ports: Vec<String> = (0..n).map(|i| format!("o{i}: Lines")).collect();
+    src.push_str(&format!("q({}) {{\n", ports.join(", ")));
     for i in 0..n {
-        src.push_str(&format!("  p{i}(x: \"{i}\", out: m.stdout);\n"));
+        src.push_str(&format!("  p{i}(x: \"{i}\", out: o{i});\n"));
     }
     src.push_str("}\n");
     src
 }
 
-/// One helper pushing each of its `n` untyped parameters to a port, called once (the
-/// benchmark `bench::bubble::a_body_pushing_many_untyped_parameters_scales`).
+/// One helper pushing each of its `n` untyped parameters to a port of its own, called once,
+/// from a function `q` that is not called and gives it `n` ports of its own (the benchmark
+/// `bench::bubble::a_body_pushing_many_untyped_parameters_scales`; one port pushed `n` times
+/// is refused by DESIGN step L1.19, row FAIL-push-twice-old-benches).
 pub(super) fn body_pushing_parameters(n: usize) -> String {
-    let params: String = (0..n).map(|i| format!("x{i}, ")).collect();
-    let pushes: String = (0..n).map(|i| format!("  out <- x{i};\n")).collect();
-    let args: String = (0..n).map(|i| format!("x{i}: \"{i}\", ")).collect();
-    format!(
-        "p({params}out: Lines) {{\n{pushes}}}\n\
-         main(m: MainArgs) {{\n  p({args}out: m.stdout);\n}}\n"
-    )
+    let list = |f: &dyn Fn(usize) -> String| (0..n).map(f).collect::<Vec<_>>().join(", ");
+    let params = list(&|i| format!("x{i}, out{i}: Lines"));
+    let pushes: String = (0..n).map(|i| format!("  out{i} <- x{i};\n")).collect();
+    let ports = list(&|i| format!("o{i}: Lines"));
+    let args = list(&|i| format!("x{i}: \"{i}\", out{i}: o{i}"));
+    format!("p({params}) {{\n{pushes}}}\nq({ports}) {{\n  p({args});\n}}\n")
 }
 
 /// One helper pushing a family of its `n` untyped parameters and `x0.upper`, called once: the
@@ -971,14 +977,16 @@ pub(super) fn uncalled_inner_push_of_parameters(n: usize) -> String {
 }
 
 /// `h` of `n` parameters, each pushed where a test against its own type variable `Ti`,
-/// written nowhere else, holds (the benchmark
-/// `bench::bubble::pushes_narrowed_by_tests_against_type_variables_scale`).
+/// written nowhere else, holds, to a port `out{i}` of its own (the benchmark
+/// `bench::bubble::pushes_narrowed_by_tests_against_type_variables_scale`; `n` such `if`s
+/// pushing to one port may push to it `n` times in one run, which DESIGN step L1.19 refuses,
+/// row FAIL-push-twice-old-benches).
 pub(super) fn pushes_narrowed_by_type_variables(n: usize) -> String {
-    let params: String = (0..n).map(|i| format!("x{i}, ")).collect();
+    let params: Vec<String> = (0..n).map(|i| format!("x{i}, out{i}: Lines")).collect();
     let tests: String = (0..n)
-        .map(|i| format!("  if x{i} is T{i} {{ out <- x{i}; }};\n"))
+        .map(|i| format!("  if x{i} is T{i} {{ out{i} <- x{i}; }};\n"))
         .collect();
-    format!("h({params}out: Lines) {{\n{tests}}}\n")
+    format!("h({}) {{\n{tests}}}\n", params.join(", "))
 }
 
 /// `text`'s errors from elaboration, which checks it first; none if it elaborates.

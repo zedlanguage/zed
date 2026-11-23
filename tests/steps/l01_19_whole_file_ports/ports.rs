@@ -193,6 +193,31 @@ fn a_statement_that_writes_nothing_names_the_call_and_the_repairs() {
     );
 }
 
+/// Row FAIL-push-twice-old-benches: a checker given no source text (as the benchmarks' helpers
+/// call it) cannot quote the two pushes, so the headline says "twice in one run" and leaves
+/// the pushes to the note at the first one and to the error's own place. Before, the sentence
+/// kept its words for the quotes, "twice in one run: by and then by".
+#[test]
+fn two_pushes_checked_without_the_source_text_are_named_by_their_places() {
+    let text = "main(m: MainArgs) {\n  m.stdout <- \"a\";\n  m.stdout <- \"b\";\n}\n";
+    let (stmts, res) = resolved(text);
+    let info = check_text(&stmts, &res, None);
+    assert_eq!(info.errors.len(), 1, "{:?}", info.errors);
+    let e = &info.errors[0];
+    assert_eq!(
+        e.message,
+        "`m.stdout` may be pushed to twice in one run, and a port takes one push per run, \
+         which holds everything it writes."
+    );
+    assert_eq!(&text[e.span.start..e.span.end], "m.stdout <- \"b\";");
+    let first = &e.notes[0];
+    assert_eq!(&*first.text, "the first push to `m.stdout`");
+    assert_eq!(
+        &text[first.span.start..first.span.end],
+        "m.stdout <- \"a\";"
+    );
+}
+
 /// The errors the checker gives `main`'s body `body`, after the helper `say` of L1.19 and a
 /// `k` read from the arguments: each its message, the statement it is reported at, and the
 /// text each note is placed at.
