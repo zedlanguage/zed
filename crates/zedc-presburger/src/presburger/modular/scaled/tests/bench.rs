@@ -79,8 +79,8 @@ fn constant_sums_beside_a_dense_sum_scale() {
 /// [`solve_modular_or_scaled`] on [`bench_many_sums`] with 3 rows in 2 blocks and `j = n` and
 /// `8n` sums modulo 2 (XR-presburger4 round 2 P3, Codex and Gemini): the size of the group of
 /// tuples, `2^j`, built one radix at a time, was Θ(j²) bit work (62.25 times from 2,000 to
-/// 16,000 on Gemini's extraction), above the path's own linear work with so few rows; built by
-/// [`sumset`]'s `product_of`, O(M(j) log j).
+/// 16,000 on Gemini's extraction), above the path's own linear work with so few rows; the estimate
+/// of the costs now holds it in a saturating machine word, O(j) (round 3 P3).
 #[test]
 fn many_sums_over_few_rows_scale() {
     let inputs = scaling::inputs(N_FEW_ROWS, |n| bench_many_sums(2, n, false).2);
@@ -192,3 +192,78 @@ const N_SUM: usize = 2_000;
 
 /// The size of [`scaled_remainders_scale_in_the_modulus`].
 const N_MODULUS: usize = 20_000;
+
+/// Runs `solve_modular_or_scaled` on `f` under a question's meter with no limit, asserts its
+/// answer with `ok`, and that [`sumset`] was selected, so that no other path that answers first
+/// can hide the path's work (XR-presburger4 round 3, Codex).
+fn by_sumset(f: &Formula, ok: impl Fn(&Option<Option<Model>>) -> bool) {
+    let before = sumset::SELECTED.with(std::cell::Cell::get);
+    let got = metered(u64::MAX, || solve_modular_or_scaled(f, false)).expect("no limit");
+    assert!(ok(&got), "{got:?}");
+    assert!(sumset::SELECTED.with(std::cell::Cell::get) > before);
+}
+
+/// The rows of [`missing_residue`] in the benchmarks: primes above `8 N_MISSING`, so each row's
+/// remainder takes every residue modulo `M` at both sizes.
+const MISSING_ROWS: [i64; 3] = [3_203, 3_209, 3_217];
+
+/// [`missing_residue`] with every row capped, at `M = n` and `8n` (XR-presburger4 round 3 P1,
+/// Claude): `R` and `W_b` of the second block have `M - 1` tuples each, Θ(M²) pairs on
+/// bf91c3aef; by the product of polynomials ([`zed_kernel::num::mul_uint`], transforms above 512
+/// words, so both sizes take the same method: `L = 2 M - 1` is 799 and 6,399 words), O(M log M).
+#[test]
+fn a_sum_missing_one_residue_scale() {
+    let inputs = scaling::inputs(N_MISSING, |n| {
+        missing_residue(MISSING_ROWS, n as i64, [true; 3], &[0])
+    });
+    scaling::check_order("a sum modulo M missing a residue", N_MISSING, 1, |n| {
+        by_sumset(&inputs[&n], |got| matches!(got, Some(Some(_))))
+    });
+}
+
+/// [`missing_residue`] with the sums `E` and `E + 1` and no row capped, at `M = n` and `8n`
+/// (XR-presburger4 round 3, Gemini's break A): the two sums share one coordinate, whose `W_b` is
+/// the whole group, so the work is linear in `M`; held as two coordinates, Θ(M²) pairs.
+#[test]
+fn two_sums_of_one_direction_scale() {
+    let inputs = scaling::inputs(N_MISSING, |n| {
+        missing_residue(MISSING_ROWS, n as i64, [false; 3], &[0, 1])
+    });
+    scaling::check_order("two sums of one direction modulo M", N_MISSING, 1, |n| {
+        by_sumset(&inputs[&n], |got| matches!(got, Some(Some(_))))
+    });
+}
+
+/// [`moved_by_x_alone`] at `k = n` and `8n` (XR-presburger4 round 3 P2, Gemini): `k` sums moved
+/// by `t_0` alone share one class coordinate, so each block copies O(1) words a tuple, and the
+/// work is linear in `k`; held as `k` coordinates, Θ(k²).
+#[test]
+fn sums_moved_by_x_alone_scale() {
+    let inputs = scaling::inputs(N_BY_X, moved_by_x_alone);
+    scaling::check_order("k sums moved by x alone", N_BY_X, 1, |n| {
+        by_sumset(&inputs[&n], |got| matches!(got, Some(None)))
+    });
+}
+
+/// [`fixed_literals`] at `k = m = n` and `8n` (XR-presburger4 round 3 P2, Codex): the literals on
+/// the `k` fixed sums are read once, so the clause read at each of the `m` tuples is one literal;
+/// read at every tuple, Θ(m k).
+#[test]
+fn fixed_literals_beside_a_live_sum_scale() {
+    let inputs = scaling::inputs(N_MISSING, |n| {
+        fixed_literals([MISSING_ROWS[0], MISSING_ROWS[1]], n, n as i64)
+    });
+    scaling::check_order(
+        "k fixed literals beside a sum modulo m",
+        N_MISSING,
+        1,
+        |n| by_sumset(&inputs[&n], |got| matches!(got, Some(Some(_)))),
+    );
+}
+
+/// The size of [`a_sum_missing_one_residue_scale`], [`two_sums_of_one_direction_scale`] and
+/// [`fixed_literals_beside_a_live_sum_scale`].
+const N_MISSING: usize = 400;
+
+/// The size of [`sums_moved_by_x_alone_scale`].
+const N_BY_X: usize = 100;
