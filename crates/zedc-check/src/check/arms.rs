@@ -1303,22 +1303,10 @@ fn joined(
 
 /// The kernel primitive of the operator `o` of the text, for the operators a test is read by.
 pub(super) fn prim_of(o: BinaryOp) -> Option<Prim> {
-    Some(match o {
-        BinaryOp::Add => Prim::Add,
-        BinaryOp::Sub => Prim::Sub,
-        BinaryOp::Mul => Prim::Mul,
-        BinaryOp::IntDiv => Prim::IntDiv,
-        BinaryOp::Mod => Prim::Mod,
-        BinaryOp::Eq => Prim::Eq,
-        BinaryOp::Ne => Prim::Ne,
-        BinaryOp::Lt => Prim::Lt,
-        BinaryOp::Le => Prim::Le,
-        BinaryOp::Gt => Prim::Gt,
-        BinaryOp::Ge => Prim::Ge,
-        BinaryOp::And => Prim::And,
-        BinaryOp::Or => Prim::Or,
-        BinaryOp::Div | BinaryOp::Pow | BinaryOp::Concat => return None,
-    })
+    match o {
+        BinaryOp::Div | BinaryOp::Pow | BinaryOp::Concat => None,
+        _ => Some(o.prim()),
+    }
 }
 
 /// The name of binder `id` in the scope: its text and its number, so two binders of one name

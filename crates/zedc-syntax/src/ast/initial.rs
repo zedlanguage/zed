@@ -584,6 +584,33 @@ struct DotCall<'e> {
     collide: Option<Several<'e>>,
 }
 
+impl<'e> DotCall<'e> {
+    /// The `.` call `e` of `method`, whose receiver `of` is the variable `name` or a path into
+    /// it; a member read and a call with arguments are both built here (row DRY-ast-walkers,
+    /// REPORT-dryA5 row 24).
+    fn new(
+        e: &Expr,
+        of: &Expr,
+        name: &'e str,
+        method: &'e str,
+        branch: Option<Branch>,
+        stmt: Option<&'e Stmt>,
+        dropped: bool,
+    ) -> Self {
+        DotCall {
+            name,
+            method,
+            span: e.span,
+            of_end: of.span.end,
+            bare: matches!(of.kind, ExprKind::Name(_)),
+            branch,
+            stmt,
+            dropped,
+            collide: None,
+        }
+    }
+}
+
 /// The repair of a [`DotCall`] whose method writes the next receiver: the call as written,
 /// `c.bump(3)`; the call written with `*.`, `c*.bump(3)`; and the text the repair replaces, the
 /// whole statement when the call is one's whole value, with what replaces it (`_ = c*.bump(3);`
@@ -1770,17 +1797,15 @@ fn every_path<'e>(
                         if counted.get(&e.span) == Some(&name) {
                             own = Must::Names(HashSet::from([name]));
                         }
-                        dots.push(DotCall {
+                        dots.push(DotCall::new(
+                            e,
+                            of,
                             name,
                             method,
-                            span: e.span,
-                            of_end: of.span.end,
-                            bare: matches!(of.kind, ExprKind::Name(_)),
-                            branch: ctx.branch,
-                            stmt: whole.get(&e.span).copied(),
-                            dropped: gone,
-                            collide: None,
-                        });
+                            ctx.branch,
+                            whole.get(&e.span).copied(),
+                            gone,
+                        ));
                         dot_write(&mut writes, e, of, name, ctx, &mut kids);
                     }
                     ExprKind::Member { of: a, .. } => {
@@ -1872,17 +1897,15 @@ fn every_path<'e>(
                                 if counted.get(&e.span) == Some(&name) {
                                     own = Must::Names(HashSet::from([name]));
                                 }
-                                dots.push(DotCall {
+                                dots.push(DotCall::new(
+                                    e,
+                                    of,
                                     name,
                                     method,
-                                    span: e.span,
-                                    of_end: of.span.end,
-                                    bare: matches!(of.kind, ExprKind::Name(_)),
-                                    branch: ctx.branch,
-                                    stmt: whole.get(&e.span).copied(),
-                                    dropped: gone,
-                                    collide: None,
-                                });
+                                    ctx.branch,
+                                    whole.get(&e.span).copied(),
+                                    gone,
+                                ));
                                 dot_write(&mut writes, e, of, name, ctx, &mut kids);
                             }
                             _ => kids.push(Task::Expr(callee, chain, Role::Always)),

@@ -799,14 +799,7 @@ impl<'a> Elab<'a> {
     }
 
     fn start_scope(&mut self, m: &mut M<'a>, stmts: &'a [Stmt], top: bool) {
-        let mut export = None;
-        let mut items: Vec<&'a Stmt> = Vec::new();
-        for s in stmts {
-            match &s.kind {
-                StmtKind::Return(es) => export = Some(&es[..]),
-                _ => items.push(s.bare()),
-            }
-        }
+        let (items, export) = Stmt::split_export(stmts);
         let mut order = match self.t.order(&items) {
             Ok(order) => order,
             Err(cycles) => {
@@ -2508,10 +2501,7 @@ impl<'a> Elab<'a> {
         let mut depth = plan.order.len();
         for &j in plan.order[plan.kept..].iter().rev() {
             let op = match plan.folds[&j] {
-                BinaryOp::Add => Prim::Add,
-                BinaryOp::Mul => Prim::Mul,
-                BinaryOp::And => Prim::And,
-                BinaryOp::Or => Prim::Or,
+                o @ (BinaryOp::Add | BinaryOp::Mul | BinaryOp::And | BinaryOp::Or) => o.prim(),
                 // The checker rejects a fold by any other operator, at its error.
                 _ => return None,
             };
@@ -3535,20 +3525,7 @@ impl<'a> Elab<'a> {
         let p = match *op {
             BinaryOp::Or => return Some(self.wrap_mark(if_(a, t(true), b), bool_mark(true))),
             BinaryOp::And => return Some(self.wrap_mark(if_(a, b, t(false)), bool_mark(false))),
-            BinaryOp::Eq => Prim::Eq,
-            BinaryOp::Ne => Prim::Ne,
-            BinaryOp::Lt => Prim::Lt,
-            BinaryOp::Le => Prim::Le,
-            BinaryOp::Gt => Prim::Gt,
-            BinaryOp::Ge => Prim::Ge,
-            BinaryOp::Add => Prim::Add,
-            BinaryOp::Sub => Prim::Sub,
-            BinaryOp::Mul => Prim::Mul,
-            BinaryOp::Div => Prim::Div,
-            BinaryOp::IntDiv => Prim::IntDiv,
-            BinaryOp::Mod => Prim::Mod,
-            BinaryOp::Pow => Prim::Pow,
-            BinaryOp::Concat => Prim::Concat,
+            op => op.prim(),
         };
         let mut args = vec![a, b];
         if let Some(marks) = &mut self.marks

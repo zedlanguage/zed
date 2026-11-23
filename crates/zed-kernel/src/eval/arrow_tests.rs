@@ -12,100 +12,7 @@ use crate::term::{Prim, ScalarArrow, ScalarType};
 use crate::value::{KernelError, Value};
 
 /// Every primitive, by [`Prim::code`]; the test checks the codes are `0 ..< 89`, each once.
-const ALL: [Prim; 89] = {
-    use Prim::*;
-    [
-        Add,
-        Sub,
-        Mul,
-        Div,
-        IntDiv,
-        Mod,
-        Neg,
-        Eq,
-        Ne,
-        Lt,
-        Le,
-        Gt,
-        Ge,
-        And,
-        Or,
-        Not,
-        Min,
-        Max,
-        Get,
-        Count,
-        Union,
-        Path,
-        PathKey,
-        PathLen,
-        Tuple,
-        TupleGet,
-        Concat,
-        Pow,
-        Atom,
-        Show,
-        CastInt,
-        CastRat,
-        CastF64,
-        Abs,
-        Len,
-        Lower,
-        Upper,
-        Trim,
-        Sum,
-        BitAnd,
-        BitOr,
-        BitXor,
-        BitNot,
-        Shl,
-        Shr,
-        PopCount,
-        LeadingZeros,
-        TrailingZeros,
-        Rotl,
-        Rotr,
-        F64Bits,
-        CodePoint,
-        Scalar,
-        Utf8,
-        FromUtf8,
-        MulHi,
-        BitReverse,
-        ByteSwap,
-        Pdep,
-        Pext,
-        FunnelShl,
-        FunnelShr,
-        At,
-        CastF32,
-        Sqrt,
-        Fma,
-        Entries,
-        Has,
-        Range,
-        FirstEntry,
-        LastEntry,
-        EntryAfter,
-        EntryBefore,
-        First,
-        Last,
-        Split,
-        Lines,
-        Join,
-        RangeFrom,
-        ListConcat,
-        Place,
-        CallNamed,
-        Round,
-        RoundTiesAway,
-        Floor,
-        Ceil,
-        Trunc,
-        AwayFromZero,
-        FloatMod,
-    ]
-};
+const ALL: [Prim; 89] = Prim::ALL;
 
 const TYPES: [ScalarType; 6] = [
     ScalarType::Bool,
@@ -194,10 +101,13 @@ fn disagreements(arrows_of: impl Fn(Prim) -> Option<&'static [ScalarArrow]>) -> 
     found
 }
 
+/// [`Prim::ALL`] lists each primitive once, at the position of its code, which the ZIR binary
+/// form relies on to number primitives by their codes. Not caught here: a new primitive given
+/// the next code, 89, and left out of the list; the lists of `l01_15_kernel_terms::complete`
+/// and `m0_07_canonicalization::prim_codes`, written apart, do not catch it either.
 #[test]
-fn every_primitive_is_listed_once() {
-    let mut codes: Vec<u64> = ALL.iter().map(|p| p.code()).collect();
-    codes.sort_unstable();
+fn every_primitive_is_listed_once_in_code_order() {
+    let codes: Vec<u64> = ALL.iter().map(|p| p.code()).collect();
     assert_eq!(codes, (0..ALL.len() as u64).collect::<Vec<_>>());
 }
 

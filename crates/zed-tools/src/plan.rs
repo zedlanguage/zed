@@ -492,6 +492,15 @@ pub fn fix_plan(text: &str) -> Result<Fixed, String> {
     })
 }
 
+/// The plan file a tool reads: the path given on its command line, else the implementation's
+/// [`crate::cite::PLAN`]. `plan` and `conflicts` both take it (row DRY-ast-walkers,
+/// REPORT-dryA5 row 25).
+pub fn plan_path(given: Option<&String>) -> String {
+    given
+        .cloned()
+        .unwrap_or_else(|| format!("{}/{}", impl_root(), crate::cite::PLAN))
+}
+
 /// Runs the tool.
 pub fn run(args: &[String], out: &mut String) -> Outcome {
     let usage = "usage: plan [--fix] [PLAN_DAG.md]";
@@ -500,14 +509,7 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
     if rest.len() > 1 || rest.first().is_some_and(|a| a.starts_with("--")) {
         return Err(usage.into());
     }
-    let default;
-    let path = match rest.first() {
-        Some(p) => p.as_str(),
-        None => {
-            default = format!("{}/docs/plan_dag.md", impl_root());
-            &default
-        }
-    };
+    let path = &plan_path(rest.first());
     let text = read_text(path)?;
     if !fixing {
         let (ok, counts) = check_counts(&text, out)?;

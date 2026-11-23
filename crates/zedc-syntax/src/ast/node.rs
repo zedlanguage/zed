@@ -553,6 +553,22 @@ impl Stmt {
             _ => self,
         }
     }
+
+    /// A scope's statements split into its declarations, each read through [`Stmt::bare`] and
+    /// in source order, and the values of its `return`, if it has one (the last one, should the
+    /// parser ever give two). The checker and elaboration both begin a scope with this split
+    /// (row DRY-ast-walkers, REPORT-dryA5 row 17).
+    pub fn split_export(stmts: &[Stmt]) -> (Vec<&Stmt>, Option<&[Expr]>) {
+        let mut export = None;
+        let mut items = Vec::new();
+        for s in stmts {
+            match &s.kind {
+                StmtKind::Return(es) => export = Some(&es[..]),
+                _ => items.push(s.bare()),
+            }
+        }
+        (items, export)
+    }
 }
 
 /// The kinds of statement.

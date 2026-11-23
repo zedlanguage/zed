@@ -285,11 +285,110 @@ impl Prim {
         }
     }
 
+    /// Every primitive, in the order of [`Prim::code`]: `ALL[i].code() == i` for each `i`
+    /// (test `every_primitive_is_listed_once_in_code_order`). The one list of them (row
+    /// DRY-ast-walkers, REPORT-dryA5 row 11): the ZIR binary form numbers primitives by it
+    /// (`zedc::zir::text::PRIMS` is this list), and the kernel's arrow tests walk it.
+    pub const ALL: [Prim; 89] = {
+        use Prim::*;
+        [
+            Add,
+            Sub,
+            Mul,
+            Div,
+            IntDiv,
+            Mod,
+            Neg,
+            Eq,
+            Ne,
+            Lt,
+            Le,
+            Gt,
+            Ge,
+            And,
+            Or,
+            Not,
+            Min,
+            Max,
+            Get,
+            Count,
+            Union,
+            Path,
+            PathKey,
+            PathLen,
+            Tuple,
+            TupleGet,
+            Concat,
+            Pow,
+            Atom,
+            Show,
+            CastInt,
+            CastRat,
+            CastF64,
+            Abs,
+            Len,
+            Lower,
+            Upper,
+            Trim,
+            Sum,
+            BitAnd,
+            BitOr,
+            BitXor,
+            BitNot,
+            Shl,
+            Shr,
+            PopCount,
+            LeadingZeros,
+            TrailingZeros,
+            Rotl,
+            Rotr,
+            F64Bits,
+            CodePoint,
+            Scalar,
+            Utf8,
+            FromUtf8,
+            MulHi,
+            BitReverse,
+            ByteSwap,
+            Pdep,
+            Pext,
+            FunnelShl,
+            FunnelShr,
+            At,
+            CastF32,
+            Sqrt,
+            Fma,
+            Entries,
+            Has,
+            Range,
+            FirstEntry,
+            LastEntry,
+            EntryAfter,
+            EntryBefore,
+            First,
+            Last,
+            Split,
+            Lines,
+            Join,
+            RangeFrom,
+            ListConcat,
+            Place,
+            CallNamed,
+            Round,
+            RoundTiesAway,
+            Floor,
+            Ceil,
+            Trunc,
+            AwayFromZero,
+            FloatMod,
+        ]
+    };
+
     /// The fixed number of the primitive, by which the canonical serialization writes it.
     /// Each number is assigned here and never changes, so that renaming a variant, reordering
     /// the enum, or adding a primitive leaves every other primitive's number, and with it every
     /// canonical address, as it was; a new primitive takes the next unused number. The numbers
-    /// are the positions of the ZIR binary form's list, `zedc::zir::text::PRIMS`.
+    /// are the positions of [`Prim::ALL`], which the ZIR binary form writes.
     pub fn code(self) -> u64 {
         use Prim::*;
         match self {

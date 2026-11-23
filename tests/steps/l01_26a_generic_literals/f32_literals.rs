@@ -131,3 +131,47 @@ fn a_rat_literal_where_f32_and_f64_are_taken_is_offered_its_decimal_once() {
     assert!(errors[0].contains("Try `g(1.0f64)` instead."), "{errors:?}");
     assert_eq!(errors[0].matches("g(1.0").count(), 1, "{errors:?}");
 }
+
+/// Row CHECK-rat-forms-f32-other-messages: the `f32` form of `rat_forms` (row
+/// LIT-formats-rat-suffix-beside-f32) reaches every message that offers a rat literal's other
+/// forms, not only `+`. Run before and after that change on 25 programs, these four messages
+/// changed, each from no offer to the one checked here, and nothing else did: an ordering
+/// comparison, a product, and a positional and a named argument of an `f32` parameter. A rat
+/// literal no `f32` holds exactly, `0.1r` or `16777217r` (2^24 + 1), is still offered nothing,
+/// and `==` and `!=` beside an `f32` keep their "always `false`" and "always `true`" messages.
+#[test]
+fn a_rat_literal_at_every_f32_use_is_offered_the_literal_without_its_suffix() {
+    let no_f64 = ["f64`"];
+    for (src, repair) in [
+        (
+            "f(x: f32) = x < 1r;\n",
+            "Try `f(x: f32) = x < 1.0` instead.",
+        ),
+        (
+            "f(x: f32) = x * 2.5r;\n",
+            "Try `f(x: f32) = x * 2.5` instead.",
+        ),
+        (
+            "g(positional x: f32) = x;\ny = g(0.5_0r);\n",
+            "Try `g(0.5_0)` instead.",
+        ),
+        (
+            "g(x: f32) = x;\ny = g(x: 1_000r);\n",
+            "Try `g(x: 1_000.0)` instead.",
+        ),
+    ] {
+        rejected(src, &[repair], &no_f64);
+    }
+    // Not exactly an `f32`: no offer, as before.
+    for src in [
+        "g(x: f32) = x;\ny = g(x: 0.1r);\n",
+        "f(x: f32) = x - 16777217r;\n",
+    ] {
+        rejected(src, &[], &["Try"]);
+    }
+    rejected(
+        "f(x: f32) = x == 0.5r;\n",
+        &["is always `false`. Try `false` instead."],
+        &[],
+    );
+}

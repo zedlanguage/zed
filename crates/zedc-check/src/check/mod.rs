@@ -97,7 +97,7 @@ use ty::{
     LevelWord, MapWord, NameItem, NameRun, Names, Narrow, Need, NeedKind, NodeId, OTHER,
     ParamRange, Pat, PathStep, PathSteps, Piece, PowerUse, Reducer, Renamings, RunMark, RunRenames,
     SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms,
-    carriers_text, class_id, errs, fresh_name, mask_text, rename_apart,
+    carriers_text, class_id, errs, fresh_name, mask_text, rename_apart, single_carrier,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -6543,7 +6543,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let ty = match numeric {
             Some(c) => Ty::carrier(c),
             None if mask == EVERY => Ty::var(format!("${r}").into()),
-            None if mask & OTHER == 0 && mask.count_ones() == 1 => {
+            None if single_carrier(mask) => {
                 Ty::carrier(Carrier::of_mask(mask).next().expect("one carrier"))
             }
             None => Ty::var(format!("${r}").into()),
@@ -13760,22 +13760,10 @@ fn int_exponent(b: &Expr) -> bool {
 /// The kernel's operation for the operator `op` where [`folded`] folds it: the arithmetic
 /// operators and the comparisons.
 fn binary_prim(op: BinaryOp) -> Option<Prim> {
-    Some(match op {
-        BinaryOp::Add => Prim::Add,
-        BinaryOp::Sub => Prim::Sub,
-        BinaryOp::Mul => Prim::Mul,
-        BinaryOp::Div => Prim::Div,
-        BinaryOp::Pow => Prim::Pow,
-        BinaryOp::Eq => Prim::Eq,
-        BinaryOp::Ne => Prim::Ne,
-        BinaryOp::Lt => Prim::Lt,
-        BinaryOp::Le => Prim::Le,
-        BinaryOp::Gt => Prim::Gt,
-        BinaryOp::Ge => Prim::Ge,
-        BinaryOp::Or | BinaryOp::And | BinaryOp::Concat | BinaryOp::IntDiv | BinaryOp::Mod => {
-            return None;
-        }
-    })
+    match op {
+        BinaryOp::Or | BinaryOp::And | BinaryOp::Concat | BinaryOp::IntDiv | BinaryOp::Mod => None,
+        _ => Some(op.prim()),
+    }
 }
 
 /// The most memory, in bits, one step of a constant fold may ask for ([`kernel_folded`]):
@@ -15733,27 +15721,7 @@ fn prim_arrows(p: Prim) -> Vec<Arrow> {
 /// `==` and `!=` are checked by [`Ck::equal`]; their arrows say only what they make.
 fn op_sig(op: Operator) -> Sig {
     let (n, p) = match op {
-        Operator::Binary(op) => (
-            2,
-            match op {
-                BinaryOp::Add => Prim::Add,
-                BinaryOp::Sub => Prim::Sub,
-                BinaryOp::Mul => Prim::Mul,
-                BinaryOp::Div => Prim::Div,
-                BinaryOp::IntDiv => Prim::IntDiv,
-                BinaryOp::Mod => Prim::Mod,
-                BinaryOp::Pow => Prim::Pow,
-                BinaryOp::Concat => Prim::Concat,
-                BinaryOp::Eq => Prim::Eq,
-                BinaryOp::Ne => Prim::Ne,
-                BinaryOp::Lt => Prim::Lt,
-                BinaryOp::Le => Prim::Le,
-                BinaryOp::Gt => Prim::Gt,
-                BinaryOp::Ge => Prim::Ge,
-                BinaryOp::And => Prim::And,
-                BinaryOp::Or => Prim::Or,
-            },
-        ),
+        Operator::Binary(op) => (2, op.prim()),
         Operator::Unary(UnaryOp::Not) => (1, Prim::Not),
         Operator::Unary(UnaryOp::Neg) => (1, Prim::Neg),
     };

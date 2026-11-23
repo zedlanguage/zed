@@ -11,7 +11,7 @@ use std::sync::Arc;
 use zed_alloc_count::live;
 use zed_kernel::term::{Pattern as KPattern, Shared};
 use zed_kernel::{Evaluator, Term};
-use zedc::ast::{Expr, ExprKind, IndexKey, RangeEnd, Stmt, StmtKind, StrPart};
+use zedc::ast::{Blocks, Expr, ExprKind, Stmt, expr_kids, stmts_exprs};
 use zedc::zir::Region;
 use zedc::zir::lower::lower;
 use zedc::zir::memory::plan;
@@ -132,183 +132,22 @@ pub fn record(text: &str) -> Result<Record, String> {
 
 /// The expressions and statements of `stmts`, counted with a work list, so a tree of any depth
 /// is counted on the heap. The children are those `zedc::ast`'s drop walks; an expression in a
-/// pattern or a type is part of that pattern or type and not counted.
+/// pattern or a type is part of that pattern or type and not counted. The children are listed
+/// by `zedc::ast`'s own walkers, [`stmts_exprs`] and [`expr_kids`], which a test there holds to
+/// the drop walk; this file kept a copy of both until row DRY-ast-walkers. A statement a `local`
+/// or an annotation wraps is part of its wrapper and not counted again, as before.
 pub fn ast_nodes(stmts: &[Stmt]) -> usize {
-    let mut n = 0;
+    let mut n = stmts.len();
     let mut exprs: Vec<&Expr> = Vec::new();
-    let mut work: Vec<&StmtKind> = Vec::new();
-    for s in stmts {
+    stmts_exprs(stmts, &mut |e| exprs.push(e));
+    while let Some(e) = exprs.pop() {
         n += 1;
-        stmt_kids(&s.kind, &mut exprs, &mut work);
+        if let ExprKind::Block(ss) = &e.kind {
+            n += ss.len();
+        }
+        expr_kids(&e.kind, Blocks::Enter, &mut |x| exprs.push(x));
     }
-    loop {
-        if let Some(k) = work.pop() {
-            stmt_kids(k, &mut exprs, &mut work);
-        } else if let Some(e) = exprs.pop() {
-            n += 1;
-            expr_kids(&e.kind, &mut exprs, &mut work, &mut n);
-        } else {
-            return n;
-        }
-    }
-}
-
-/// Pushes the expressions directly in `kind` to `out`, and its statements to `work`, counting
-/// each statement in `n` (an expression is counted when it is popped).
-fn expr_kids<'a>(
-    kind: &'a ExprKind,
-    out: &mut Vec<&'a Expr>,
-    work: &mut Vec<&'a StmtKind>,
-    n: &mut usize,
-) {
-    match kind {
-        ExprKind::Int { .. }
-        | ExprKind::Float { .. }
-        | ExprKind::Rat(_)
-        | ExprKind::Bool(_)
-        | ExprKind::Atom(_)
-        | ExprKind::Name(_)
-        | ExprKind::This
-        | ExprKind::Section(..) => {}
-        ExprKind::Str(parts) => out.extend(parts.iter().filter_map(|p| match p {
-            StrPart::Hole(e) => Some(e),
-            StrPart::Text(_) => None,
-        })),
-        ExprKind::Unary(_, a)
-        | ExprKind::Is { of: a, .. }
-        | ExprKind::Member { of: a, .. }
-        | ExprKind::Read { of: a, .. }
-        | ExprKind::Loop { body: a, .. }
-        | ExprKind::Spread { of: a, .. } => out.push(a),
-        ExprKind::SortKey { key, .. } => out.extend(key.as_deref()),
-        ExprKind::Binary(_, a, b)
-        | ExprKind::Index(a, b)
-        | ExprKind::In { of: a, set: b, .. }
-        | ExprKind::Reduce { of: a, op: b }
-        | ExprKind::Else {
-            of: a, default: b, ..
-        } => out.extend([&**a, &**b]),
-        ExprKind::Call {
-            callee,
-            positional,
-            named,
-            ..
-        } => {
-            out.push(callee);
-            out.extend(positional);
-            out.extend(named.iter().map(|(_, e)| e));
-        }
-        ExprKind::Tuple(es) | ExprKind::Array(es) | ExprKind::Set(es) => out.extend(es),
-        ExprKind::Map(entries) => out.extend(entries.iter().flat_map(|(k, v)| [k, v])),
-        ExprKind::Remap { of, levels, .. } => {
-            out.push(of);
-            for l in levels.iter().flatten() {
-                out.extend(l.key.iter().chain(&l.reduce));
-            }
-        }
-        ExprKind::Range(from, to) => {
-            out.push(from);
-            match to {
-                RangeEnd::Below(b) | RangeEnd::Through(b) => out.push(b),
-                RangeEnd::Open => {}
-            }
-        }
-        ExprKind::For {
-            source,
-            guard,
-            body,
-            ..
-        } => {
-            out.push(source);
-            out.extend(guard.as_deref());
-            out.push(body);
-        }
-        ExprKind::Lambda { params, body } => {
-            out.extend(params.iter().filter_map(|p| p.default.as_ref()));
-            out.push(body);
-        }
-        ExprKind::Block(stmts) => {
-            *n += stmts.len();
-            work.extend(stmts.iter().map(|s| &s.kind));
-        }
-        ExprKind::Match { of, arms } => {
-            out.push(of);
-            for a in arms {
-                out.extend(a.guard.as_ref());
-                out.push(&a.body);
-            }
-        }
-        ExprKind::Record(fields) => out.extend(fields.iter().map(|(_, e)| e)),
-        ExprKind::With { of, updates } => {
-            out.push(of);
-            out.extend(updates.iter().map(|u| &u.value));
-        }
-        ExprKind::If {
-            cond,
-            then,
-            otherwise,
-        } => out.extend([&**cond, &**then, &**otherwise]),
-    }
-}
-
-/// Pushes the expressions directly in the statement `kind` to `out`, and a statement it wraps
-/// to `work`; a wrapped statement is part of its wrapper and not counted again.
-fn stmt_kids<'a>(kind: &'a StmtKind, out: &mut Vec<&'a Expr>, work: &mut Vec<&'a StmtKind>) {
-    match kind {
-        StmtKind::Initial(i) => {
-            keys(&i.keys, out);
-            out.push(&i.value);
-        }
-        StmtKind::Bind { value, .. }
-        | StmtKind::Push { value, .. }
-        | StmtKind::While(value)
-        | StmtKind::Until(value)
-        | StmtKind::Expr(value) => out.push(value),
-        StmtKind::IndexedDef(d) => {
-            keys(&d.keys, out);
-            out.push(&d.value);
-            for b in &d.boundary {
-                keys(&b.keys, out);
-                out.push(&b.value);
-            }
-        }
-        StmtKind::Local(decl) => work.push(&decl.kind),
-        StmtKind::Return(es) => out.extend(es),
-        StmtKind::Function(f) => function_kids(f, out),
-        StmtKind::Method(m) => function_kids(&m.function, out),
-        StmtKind::Struct(s) => out.extend(s.fields.iter().filter_map(|f| match f {
-            zedc::ast::Field::Typed { default, .. } => default.as_ref(),
-            zedc::ast::Field::Import { .. } => None,
-        })),
-        StmtKind::Type(_) | StmtKind::Import(_) | StmtKind::Break => {}
-        StmtKind::Annotated { annots, decl } => {
-            for a in annots {
-                out.extend(&a.positional);
-                out.extend(a.named.iter().map(|(_, e)| e));
-            }
-            work.push(&decl.kind);
-        }
-        StmtKind::UnitAnnot(a) => {
-            out.extend(&a.positional);
-            out.extend(a.named.iter().map(|(_, e)| e));
-        }
-    }
-}
-
-/// Pushes the expressions directly in the function `f` to `out`: its defaults, its body, the
-/// rows of its tables and the values its tables' clauses give their ports.
-fn function_kids<'a>(f: &'a zedc::ast::Function, out: &mut Vec<&'a Expr>) {
-    out.extend(f.params.iter().filter_map(|p| p.default.as_ref()));
-    out.push(&f.body);
-    out.extend(f.tests.iter().flat_map(|(a, b)| [a, b]));
-    out.extend(f.given.iter().flat_map(|t| &t.ports).map(|p| &p.value));
-}
-
-fn keys<'a>(keys: &'a [IndexKey], out: &mut Vec<&'a Expr>) {
-    out.extend(keys.iter().map(|k| match k {
-        IndexKey::In { set, .. } => set,
-        IndexKey::At(e) => e,
-    }));
+    n
 }
 
 /// The distinct kernel terms of `unit`: those of its definitions and its tests. A shared term

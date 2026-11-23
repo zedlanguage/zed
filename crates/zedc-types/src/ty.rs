@@ -7761,6 +7761,12 @@ impl Carrier {
 /// function, an atom.
 pub const OTHER: u8 = 1 << 6;
 
+/// Whether the mask `m` holds the values of exactly one carrier and nothing else: one bit set,
+/// and that bit not [`OTHER`] (row DRY-ast-walkers, REPORT-dryA5 row 26).
+pub fn single_carrier(m: u8) -> bool {
+    m.count_ones() == 1 && m & OTHER == 0
+}
+
 /// The mask of every value.
 pub const EVERY: u8 = (1 << 7) - 1;
 
@@ -17505,7 +17511,7 @@ impl Cx<'_> {
         // comparison binding nothing holds, so it did not fit `(h: (x: int) -> int) -> int`,
         // its only instance. A bound of several carriers, or with values of no carrier, is
         // read as before. Cost: a test of the mask per own variable.
-        let one = |m: u8| m.count_ones() == 1 && m & OTHER == 0;
+        let one = single_carrier;
         for v in &q.own {
             match q.bounds.get(v) {
                 Some(&m) if q.held.contains(v) && !one(m) => {
@@ -18566,7 +18572,7 @@ fn rest_bound(s: &Sig, mut b: Binds, c: &Comparing<'_, '_>) -> Binds {
         }
     }
     for (v, &m) in &s.bounds {
-        if b.get(v).is_none() && m.count_ones() == 1 && m & OTHER == 0 {
+        if b.get(v).is_none() && single_carrier(m) {
             b.insert(v.clone(), Ty::of_mask(m));
         }
     }

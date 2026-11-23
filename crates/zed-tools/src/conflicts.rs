@@ -21,9 +21,9 @@
 //! The tool first runs the `plan` check on the table and stops if it fails, since a wrong level
 //! would put an item in the wrong place.
 
-use crate::plan::{CROSS, SAME, check_plan, rows};
+use crate::plan::{CROSS, SAME, check_plan, plan_path, rows};
 use crate::text::read_text;
-use crate::{Outcome, impl_root, say};
+use crate::{Outcome, say};
 
 /// The files every step touches (the paragraph "Files every step touches" of the plan), left
 /// out of the comparison since every pair would match.
@@ -286,14 +286,7 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
                 .into(),
         );
     }
-    let default;
-    let path = match args.first() {
-        Some(p) => p.as_str(),
-        None => {
-            default = format!("{}/docs/plan_dag.md", impl_root());
-            &default
-        }
-    };
+    let path = &plan_path(args.first());
     let text = read_text(path)?;
     let mut problems = String::new();
     if !check_plan(&text, &mut problems)? {
