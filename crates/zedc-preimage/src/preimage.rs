@@ -5024,22 +5024,26 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 /// `tests::the_classes_are_those_of_a_join_refused_by_looking` (the exact classes on every
 /// unmarked component).
 ///
-/// Time, every step, deterministic, for f functions (`first` has f + 1 entries), n parameters
-/// and j joins. (1) j unions and 2n finds, linking by rank with halving: O(n + j α(j + n, n))
+/// Worst-case total time, deterministic, for f functions (`first` has f + 1 entries), n
+/// parameters and j joins (log(2 + n) is written log n below, so that n = 0 and 1 cost O(1)).
+/// (1) j unions and 2n finds, linking by rank with halving: O(n + (n + j) α(n + j, n))
 /// (Tarjan and van Leeuwen 1984, doi:10.1145/62.2160, Theorem 3: "The set union algorithm with
 /// either linking by rank or linking by size and either compression, splitting, or halving
-/// runs in O(n + mα(m + n, n)) time", quoted and checked in zed-graph's union_find.rs). The
-/// marks: one pass over the f functions, O(f), and over the parameters of those of two or more,
-/// O(n) finds, counted above. (2) Filling `one`: the same walk by each function's interval
+/// runs in O(n + mα(m + n, n)) time", quoted and checked in zed-graph's union_find.rs; m, the
+/// number of finds, is at most 2j + 2n here, which gives the bound directly). The marks: one
+/// pass over the f functions, O(f), and over the parameters of those of two or more, O(n)
+/// finds, counted above. (2) Filling `one`: the same walk by each function's interval
 /// `first[k]..first[k + 1]`, O(f + n), with no search for a parameter's function. Each join:
-/// two finds and at most one union, linking by size with halving, O(n + j α(j + n, n)) in all
-/// by the same Theorem 3 (`union_roots` with `Keep::Rule` links by size), two set sizes read in
-/// O(1), and at most one look-up `contains` in a `BTreeSet` of at most n entries, O(log n).
-/// Each merge moves at most one function: a merge in a marked component needs `fewer`'s set to
-/// hold at most one function, `more`'s set moves to the kept root by a swap of two vectors'
-/// entries, O(1), and the one function is inserted, O(log n) (or a set of two is built). There
-/// are at most n - 1 merges, so O(n log n) for them. In total O(f + n log n + j log n), within
-/// O(f + (n + j) log n), with no hashing and no expected bound.
+/// two finds and at most one union, linking by size with halving, 2j + n finds in all, so
+/// O(n + (n + j) α(n + j, n)) by the same Theorem 3 (`union_roots` with `Keep::Rule` links by
+/// size), two set sizes read in O(1), and at most one look-up `contains` in a `BTreeSet` of at
+/// most n entries, O(log n). Each merge moves at most one function: a merge in a marked
+/// component needs `fewer`'s set to hold at most one function, `more`'s set moves to the kept
+/// root by a swap of two vectors' entries, O(1), and the one function is inserted, O(log n) (or
+/// a set of two is built). There are at most n - 1 merges, so O(n log n) for them. In total
+/// O(f + n log n + j log n), within O(f + (n + j) log(2 + n)); `unite` itself does no hashing
+/// and has no expected bound (its caller [`identity_classes`] uses `HashMap` and `HashSet`, an
+/// expected cost, row CLASSES-identity-hash).
 // Complexity tradeoff: the exact rule (refuse exactly when the classes share a function) is
 // what LOAD-affine-join built and LOAD-join-disjoint measured at Θ(n^1.5) on the fixtures
 // `tests::bench::many_multi_owner_functions_can_refuse_the_same_cross_pairs_scale` and
@@ -5081,9 +5085,9 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // (p(c, u), x_u) of two classes of one parameter keeps p(c, u)). Checked by the Codex and Gemini
 // seats of cross-review XR-join-disjoint round 1 (2026-11-22) on every graph of up to 6
 // vertices against a copy of the exact rule.
-// (R2) No published conditional bound carries over through (R1). The Triangle Conjecture as
-// stated by Abboud, Bringmann, Khoury and Zamir, "Hardness of Approximation in P via Short
-// Cycle Removal", STOC 2022, arXiv:2204.10465 (LaTeX source read 2026-11-22, file
+// (R2) The conditional bounds discussed here do not carry over through (R1). The Triangle
+// Conjecture as stated by Abboud, Bringmann, Khoury and Zamir, "Hardness of Approximation in
+// P via Short Cycle Removal", STOC 2022, arXiv:2204.10465 (LaTeX source read 2026-11-22, file
 // zero_triangle.tex), attributed there to Abboud and Vassilevska Williams, FOCS 2014:
 // "Triangle detection requires $m^{4/3-o(1)}$ time, for some density regime $m=\Omega(n)$"
 // (this m^(4/3) form is the 2022 statement; the 2014 conjecture asks m^(1+δ−o(1)) expected
@@ -5101,8 +5105,8 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // (x, y) needs parameters of one function in the classes of x and y, and each class lies in
 // one component, as does the edge (x, y); conversely, if no join is refused, every join merges
 // or finds its ends in one class, the final classes are the components, and a class never
-// holds two parameters of one function). That test is O(f + n + j α(j + n, n)), O(n α(n)) when
-// j = O(n) and f = O(n); it is step (1), the marks.
+// holds two parameters of one function). That test is O(f + n + (n + j) α(n + j, n)), O(n α(n))
+// when j = O(n) and f = O(n); it is step (1), the marks.
 // The all-edges form, AE-Sparse-Triangle (for each edge, whether it lies in a triangle), would
 // need every answer: Vassilevska Williams and Xu, FOCS 2020, arXiv:2007.09318, Corollary
 // `cor:exact-to-sparse` (file exact_to_mono.tex, lines 321 to 327, per the Claude seat),
@@ -5125,9 +5129,10 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // low endpoint is checked by scanning that endpoint's neighbors, O(m D); a common neighbor c of
 // low degree is found by listing the pairs of c's neighbors, O(m D); among the at most 2m / D
 // high vertices one Boolean matrix product, O((m / D)^ω); D = m^((ω - 1) / (ω + 1)) gives
-// O(m^(2ω / (ω + 1))), m^1.41 for ω = 2.371 and m^(4/3) even for ω = 2. So an exact rule under
-// the limit would decide this question below m^(4/3), faster than the upper bound above by a
-// polynomial factor, also for ω = 2: not proved impossible, and not known.
+// O(m^(2ω / (ω + 1))), m^1.41 for ω = 2.371 and m^(4/3) even for ω = 2. An exact rule with the
+// pure-power exponent above would decide this question below m^(4/3), faster than the
+// displayed upper bound by a polynomial factor, also for ω = 2: not proved impossible, and not
+// known. The fixed-size ratio alone gives no such asymptotic bound.
 // A structure for the exact rule: Kopelowitz, Pettie and Porat, "Dynamic Set Intersection"
 // (WADS 2015, arXiv:1407.6755, read 2026-11-22 in the XR-algos review), Corollary
 // `cor:emptiness_structure_linear` in the section "Dynamic Emptiness Queries with Time/Space
@@ -5226,11 +5231,12 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
         }
         if g != NONE {
             step(1);
+            // `more`'s set is not empty here: count(more) >= count(fewer) = 1 when g is not NONE,
+            // so the set at `big` either has two or more functions or is one inline function.
             if !many[big].is_empty() {
                 many[big].insert(g);
-            } else if one[big] == NONE {
-                one[big] = g;
             } else {
+                debug_assert_ne!(one[big], NONE);
                 many[big] = BTreeSet::from([std::mem::replace(&mut one[big], NONE), g]);
             }
         }
@@ -5241,11 +5247,13 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
     (root, joined)
 }
 
-/// The steps of [`unite`] on this thread, counted for its benchmarks: each find of either
-/// union-find (a union counted as its two finds) and each look-up or insertion in a class's set
-/// of functions, so a test can hold the count of a run with no timer. A find costs O(α(n))
-/// amortized and a set operation O(log n), so the count is the number of operations, not their
-/// cost; the instruction ratio measures the cost. Outside tests `add` does nothing.
+/// The steps of [`unite`] on this thread, counted for its benchmarks: find calls of either
+/// union-find (a union counted as its two finds), `contains` calls, and the updates of a merge
+/// whose `fewer` class has a function, so a test can hold the count of a run with no timer.
+/// These omit the scans of the function offsets (O(f), also over functions of fewer than two
+/// parameters), the work inside a find or a set operation (O(α(n)) amortized and O(log n)),
+/// and allocations: the count is the number of operations, not their cost, and the instruction
+/// ratio measures the cost. Outside tests `add` does nothing.
 mod unite_steps {
     #[cfg(test)]
     thread_local! {
