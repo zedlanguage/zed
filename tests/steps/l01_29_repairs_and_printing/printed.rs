@@ -114,7 +114,7 @@ fn stated_sig(s: &Sig, scope: &Arc<HashSet<Arc<str>>>) -> Arc<Sig> {
         }
         p.default = None;
     }
-    s.needs.clear();
+    s.needs = Default::default();
     s.own.clear();
     s.data = false;
     s.dense = zedc::check::ty::Dense::No;

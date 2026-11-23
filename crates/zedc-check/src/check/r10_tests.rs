@@ -576,7 +576,8 @@ fn r10_m66_neg_keep_map_lambda_and_decode_generalize() {
         }
     }
     assert_ne!(
-        e_h1.needs, decoded_broken,
+        e_h1.needs.as_slice(),
+        decoded_broken.as_slice(),
         "Control A: decoding without clearing Map.lambda must disagree with E on lambda n=2"
     );
 
@@ -1064,9 +1065,9 @@ fn r10_m31_split_memo_keeps_a_child_shared_with_a_queued_sibling() {
         },
         ..direct.clone()
     };
-    let signature = |needs| {
+    let signature = |needs: Vec<Need>| {
         let mut sig = Sig::one(vec![], vec![], Ty::empty());
-        sig.needs = needs;
+        sig.needs = needs.into();
         Arc::new(sig)
     };
     let leaf = signature(vec![direct.clone()]);
@@ -1502,7 +1503,7 @@ fn r10_exit_replaced_by_an_outer_variable_keeps_the_flat_digest() {
     let compare = |compact: &Sig| {
         let mut flat = compact.clone();
         let (needs, own) = compact.decoded_needs_and_own();
-        flat.needs = needs.into_owned();
+        flat.needs = needs.into_owned().into();
         flat.own = own.into_owned();
         flat.facts = Default::default();
         assert_eq!(compact, &flat, "compact and flat must be equal");
@@ -1599,7 +1600,7 @@ fn r10_exit_replaced_in_a_callee_keeps_the_flat_digest() {
 
     let mut flat = parent.clone();
     let (needs, own) = parent.decoded_needs_and_own();
-    flat.needs = needs.into_owned();
+    flat.needs = needs.into_owned().into();
     flat.own = own.into_owned();
     flat.facts = Default::default();
     assert_eq!(parent, flat, "compact and flat must be equal");
@@ -2427,7 +2428,7 @@ fn landing4_cached_digest_must_follow_need_span() {
     let compare = |compact: &Sig| {
         let mut flat = compact.clone();
         let (needs, own) = compact.decoded_needs_and_own();
-        flat.needs = needs.into_owned();
+        flat.needs = needs.into_owned().into();
         flat.own = own.into_owned();
         assert_eq!(compact, &flat);
         (compact.digest(), flat.digest())
@@ -2481,7 +2482,7 @@ fn landing4_compound_first_appearance() {
     }
     let mut flat = compact.clone();
     let (needs, own) = compact.decoded_needs_and_own();
-    flat.needs = needs.into_owned();
+    flat.needs = needs.into_owned().into();
     flat.own = own.into_owned();
 
     let NeedKind::Fwd(fwd) = &compact.needs[0].kind else {
@@ -2572,7 +2573,7 @@ fn landing4_public_replace_reaches_hidden_results() {
         .unwrap();
     let mut flat = Sig::clone(compact);
     let (needs, own) = compact.decoded_needs_and_own();
-    flat.needs = needs.into_owned();
+    flat.needs = needs.into_owned().into();
     flat.own = own.into_owned();
     assert_eq!(**compact, flat);
     assert!(!compact.own.contains(&hidden));
@@ -2706,7 +2707,7 @@ fn landing4_direct_result_replaced_in_a_callee_keeps_the_flat_digest() {
     parent.facts = Default::default();
     let mut flat = parent.clone();
     let (needs, own) = parent.decoded_needs_and_own();
-    flat.needs = needs.into_owned();
+    flat.needs = needs.into_owned().into();
     flat.own = own.into_owned();
     flat.facts = Default::default();
     assert_eq!(parent, flat);

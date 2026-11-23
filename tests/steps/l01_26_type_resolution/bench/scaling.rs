@@ -704,7 +704,7 @@ fn shapes_of_variables(
         dense: zedc::check::ty::Dense::No,
         keys: None,
         word: None,
-        needs: Vec::new(),
+        needs: Default::default(),
         own: (vs.iter())
             .map(|v| v.vars.first().cloned().unwrap())
             .collect(),
@@ -861,7 +861,7 @@ fn exact_arrows(arrows: Vec<(Vec<Ty>, Ty)>) -> zedc::check::ty::Sig {
         dense: zedc::check::ty::Dense::No,
         keys: None,
         word: None,
-        needs: Vec::new(),
+        needs: Default::default(),
         own: Default::default(),
         held: Default::default(),
         named: 0,

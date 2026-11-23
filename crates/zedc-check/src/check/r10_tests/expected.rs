@@ -44,7 +44,7 @@ use crate::check::{Info, RemapPlan};
 pub(super) fn flat_of(s: &Sig) -> Sig {
     let mut flat = s.clone();
     let (needs, own) = s.decoded_needs_and_own();
-    flat.needs = needs.into_owned();
+    flat.needs = needs.into_owned().into();
     flat.own = own.into_owned();
     flat.facts = Default::default();
     flat

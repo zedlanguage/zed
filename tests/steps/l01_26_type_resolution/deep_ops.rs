@@ -416,7 +416,7 @@ fn a_signature_writes_each_need_as_the_derived_debug_of_the_need_writes_it() {
         })
         .collect();
     let mut s = sig(z(), z());
-    s.needs = needs.clone();
+    s.needs = needs.clone().into();
     let text = format!("{s:?}");
     let each: Vec<String> = needs.iter().map(|n| format!("{n:?}")).collect();
     let written = format!(", needs: [{}], own: ", each.join(", "));

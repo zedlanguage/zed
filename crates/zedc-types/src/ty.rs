@@ -1994,7 +1994,7 @@ impl Sig {
             tys.extend(a.params);
             tys.push(a.result);
         }
-        for mut n in std::mem::take(&mut self.needs) {
+        for mut n in self.needs.take_last() {
             if let NeedKind::Fwd(fwd) = &mut n.kind {
                 let placeholder = Arc::clone(fwd);
                 n.kind = NeedKind::Entries;
@@ -3270,7 +3270,7 @@ impl<'b> Replacer<'b> {
     fn decoded(&mut self, s: &Sig) -> Arc<Sig> {
         let (needs, own) = s.decoded_needs_and_own();
         let mut flat = s.clone();
-        flat.needs = needs.into_owned();
+        flat.needs = needs.into_owned().into();
         flat.own = own.into_owned();
         flat.facts = Facts::default();
         let flat = Arc::new(flat);
@@ -3368,7 +3368,7 @@ impl<'b> Replacer<'b> {
             dense: s.dense,
             keys: s.keys.clone(),
             word: s.word.clone(),
-            needs,
+            needs: needs.into(),
             own,
             held,
             named: s.named,
@@ -3819,7 +3819,7 @@ impl<F: FnMut(&Arc<Sig>) -> Arc<Sig>> Rebuild for HeldFns<F> {
             dense: s.dense,
             keys: s.keys.clone(),
             word: s.word.clone(),
-            needs,
+            needs: needs.into(),
             own: s.own.clone(),
             held: s.held.clone(),
             named: s.named,
@@ -3918,7 +3918,7 @@ impl Absorb {
             dense: s.dense,
             keys: s.keys.clone(),
             word: s.word.clone(),
-            needs,
+            needs: needs.into(),
             own: s.own.clone(),
             held: BTreeSet::new(),
             named: s.named,
@@ -4222,7 +4222,7 @@ impl Rebuild for Settle<'_> {
         if self.must_decode(s) {
             let (needs, own) = s.decoded_needs_and_own();
             let mut flat = Sig::clone(s);
-            flat.needs = needs.into_owned();
+            flat.needs = needs.into_owned().into();
             flat.own = own.into_owned();
             let flat = Arc::new(flat);
             self.kept.push(flat.clone());
@@ -4249,7 +4249,7 @@ impl Rebuild for Settle<'_> {
             dense: s.dense,
             keys: s.keys.clone(),
             word: s.word.clone(),
-            needs,
+            needs: needs.into(),
             own: s.own.iter().filter(open).cloned().collect(),
             held: s.held.iter().filter(open).cloned().collect(),
             named: s.named,
@@ -4345,7 +4345,8 @@ pub struct Sig {
     pub word: Option<Arc<str>>,
     /// What the body needs of the values of its type variables, in the order the body met
     /// the uses: each call checks them again with the variables bound (DESIGN.md rule 4).
-    pub needs: Vec<Need>,
+    /// Shared with the signatures copied from this one ([`Needs`]).
+    pub needs: Needs,
     /// Its own type variables, which it binds: a call binds them anew, and a substitution
     /// of the variables of a type that holds it leaves them alone. The others are those of
     /// the functions around it.
@@ -5066,6 +5067,158 @@ pub struct Need {
     /// a rejection at a call names each line on the way to the use (plan row
     /// DIAG-call-chain-full); empty for a need the body makes itself.
     pub via: CallPath,
+}
+
+/// What the body of a function needs of the values of its type variables ([`Sig::needs`]), in
+/// the order the body met the uses: a list of [`Need`]s, read and changed only through the
+/// methods below (FAIL-map-chain-d1-needs-type, step 1 of FAIL-map-chain-deferred-build, author
+/// P329), so that a later step may change how the list is kept, as a compact forward
+/// ([`NeedKind::Fwd`]) beside the needs of the function's own body, without touching the code
+/// that reads it.
+///
+/// Complexity tradeoff: the list is shared by every signature made from another by a copy, so
+/// a copy (a callee's signature copied into an instance, a settled signature cloned) is O(1)
+/// in place of O(n) in its needs; a change to a shared list copies it first, O(n), as a
+/// `Vec` clone did at the copy before. The empty list, most signatures' (rule 4 makes needs
+/// only for uses of a variable's value), is `None` and allocates nothing.
+#[derive(Clone, Default, Eq)]
+pub struct Needs(Option<Arc<Vec<Need>>>);
+
+impl Needs {
+    /// No needs.
+    pub fn new() -> Self {
+        Needs(None)
+    }
+
+    /// The needs, in order.
+    pub fn as_slice(&self) -> &[Need] {
+        self.0.as_deref().map_or(&[], Vec::as_slice)
+    }
+
+    /// The needs, in order.
+    pub fn iter(&self) -> std::slice::Iter<'_, Need> {
+        self.as_slice().iter()
+    }
+
+    /// How many needs there are.
+    pub fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    /// Whether there are none.
+    pub fn is_empty(&self) -> bool {
+        self.as_slice().is_empty()
+    }
+
+    /// The `i`th need, if there is one.
+    pub fn get(&self, i: usize) -> Option<&Need> {
+        self.as_slice().get(i)
+    }
+
+    /// The list, to change: copied first where another signature shares it.
+    fn list_mut(&mut self) -> &mut Vec<Need> {
+        Arc::make_mut(self.0.get_or_insert_with(Default::default))
+    }
+
+    /// Adds `n` at the end.
+    pub fn push(&mut self, n: Need) {
+        self.list_mut().push(n);
+    }
+
+    /// The needs, as a list of its own: moved out where no other signature shares them, else
+    /// copied.
+    pub fn into_vec(self) -> Vec<Need> {
+        self.0
+            .map_or_else(Vec::new, |l| Arc::try_unwrap(l).unwrap_or_else(|l| (*l).clone()))
+    }
+
+    /// The needs where this was the last signature to hold them, for a drop that frees what
+    /// they hold on a stack of its own ([`Sig::take_parts`]); none where another signature
+    /// still holds them, which then frees them. `Arc::into_inner` decides which holder is the
+    /// last in one atomic step, so two holders dropped at once never both take them, nor
+    /// both leave them.
+    fn take_last(&mut self) -> Vec<Need> {
+        self.0
+            .take()
+            .and_then(Arc::into_inner)
+            .unwrap_or_default()
+    }
+}
+
+impl PartialEq for Needs {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl std::hash::Hash for Needs {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.as_slice().hash(h);
+    }
+}
+
+impl std::fmt::Debug for Needs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl From<Vec<Need>> for Needs {
+    fn from(list: Vec<Need>) -> Self {
+        if list.is_empty() {
+            Needs(None)
+        } else {
+            Needs(Some(Arc::new(list)))
+        }
+    }
+}
+
+impl FromIterator<Need> for Needs {
+    fn from_iter<I: IntoIterator<Item = Need>>(items: I) -> Self {
+        Vec::from_iter(items).into()
+    }
+}
+
+impl Extend<Need> for Needs {
+    fn extend<I: IntoIterator<Item = Need>>(&mut self, items: I) {
+        let mut items = items.into_iter().peekable();
+        if items.peek().is_some() {
+            self.list_mut().extend(items);
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a Needs {
+    type Item = &'a Need;
+    type IntoIter = std::slice::Iter<'a, Need>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Needs {
+    type Item = &'a mut Need;
+    type IntoIter = std::slice::IterMut<'a, Need>;
+    /// The needs, to change: copied first where another signature shares them.
+    fn into_iter(self) -> Self::IntoIter {
+        match &mut self.0 {
+            None => [].iter_mut(),
+            Some(l) => Arc::make_mut(l).iter_mut(),
+        }
+    }
+}
+
+impl std::ops::Index<usize> for Needs {
+    type Output = Need;
+    fn index(&self, i: usize) -> &Need {
+        &self.as_slice()[i]
+    }
+}
+
+impl std::ops::IndexMut<usize> for Needs {
+    fn index_mut(&mut self, i: usize) -> &mut Need {
+        &mut self.list_mut()[i]
+    }
 }
 
 /// The calls that passed a need on ([`Need::via`]): each link is a function's need, at the use
@@ -19367,7 +19520,7 @@ fn arrow_text(s: &Sig, a: &Arrow, names: &[(Arc<str>, Arc<str>)]) -> String {
         dense: s.dense,
         keys: s.keys.clone(),
         word: None,
-        needs: Vec::new(),
+        needs: Needs::new(),
         own: vs
             .order
             .iter()
@@ -22267,7 +22420,7 @@ impl Sig {
     /// Returns decoded flat needs as a `Cow<[Need]>` (borrowing `&self.needs` in O(1) when flat).
     pub fn decoded_needs_cow(&self) -> Cow<'_, [Need]> {
         if !self.has_fwd_needs() {
-            return Cow::Borrowed(&self.needs);
+            return Cow::Borrowed(self.needs.as_slice());
         }
         let mut out = Vec::new();
         for n in &self.needs {
@@ -22283,7 +22436,7 @@ impl Sig {
     /// included.
     pub fn decoded_needs_and_own(&self) -> (Cow<'_, [Need]>, Cow<'_, BTreeSet<Arc<str>>>) {
         if !self.has_fwd_needs() {
-            return (Cow::Borrowed(&self.needs), Cow::Borrowed(&self.own));
+            return (Cow::Borrowed(self.needs.as_slice()), Cow::Borrowed(&self.own));
         }
         let mut needs_out = Vec::new();
         let mut own_out = self.own.clone();
@@ -22918,7 +23071,7 @@ impl Sig {
                     }
                     if decode {
                         let mut flat = s.clone();
-                        flat.needs = s.decoded_needs_cow().into_owned();
+                        flat.needs = s.decoded_needs_cow().into_owned().into();
                         flat.facts = Facts::default();
                         stack.push(Item::Sig(flats.put(flat), true));
                         continue;
@@ -22986,7 +23139,7 @@ impl Sig {
             dense: Dense::No,
             keys: None,
             word: None,
-            needs: Vec::new(),
+            needs: Needs::new(),
             own: BTreeSet::new(),
             held: BTreeSet::new(),
             named: 0,
@@ -23017,7 +23170,7 @@ impl Sig {
         if self.has_fwd_needs() {
             let (needs, own) = self.decoded_needs_and_own();
             let (needs, own) = (needs.into_owned(), own.into_owned());
-            self.needs = needs;
+            self.needs = needs.into();
             self.own = own;
         }
         let (q_needs, q_own) = q.decoded_needs_and_own();
@@ -26751,7 +26904,7 @@ mod tests {
             dense: Dense::No,
             keys: None,
             word: None,
-            needs: Vec::new(),
+            needs: Needs::new(),
             own: ["T".into(), "B".into()].into_iter().collect(),
             held: BTreeSet::new(),
             named: 0,
@@ -30015,7 +30168,7 @@ mod tests {
             for d in (0..n).rev() {
                 let mut s = Sig::one(vec![], vec![int()], result);
                 if d == at {
-                    s.needs = vec![need()];
+                    s.needs = vec![need()].into();
                 }
                 let s = Arc::new(s);
                 result = Ty::func(s.clone());

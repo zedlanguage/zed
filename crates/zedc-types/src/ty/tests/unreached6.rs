@@ -266,7 +266,8 @@ fn a_row_shared_in_the_arrows_and_the_needs_hashes_as_rows_built_apart() {
             span: Span { start: 0, end: 1 },
             alike: Arc::from([]),
             via: CallPath::default(),
-        }];
+        }]
+        .into();
         s.note_held();
         s
     };
@@ -387,7 +388,7 @@ fn a_function_held_inside_another_hashes_by_its_summary_as_walked_in_place() {
     };
     let with_need = |leaf: &str| {
         let mut s = one_of(int(), int());
-        s.needs = vec![need(var("T"), index(var(leaf)), None)];
+        s.needs = vec![need(var("T"), index(var(leaf)), None)].into();
         s.note_held();
         fty(s)
     };
@@ -427,7 +428,8 @@ fn a_function_held_inside_another_hashes_by_its_summary_as_walked_in_place() {
             s.needs = vec![
                 need(var("T"), index(int()), Some(var("R"))),
                 need(var("T"), index(t.clone()), None),
-            ];
+            ]
+            .into();
             s.note_held();
             let summed = encode_sig_stream(&s, R_BASE, false);
             assert_eq!(summed.0, encode_sig_stream(&s, R_BASE, true).0, "{at}");
@@ -504,7 +506,8 @@ fn functions_nested_each_holding_every_outer_variable_hash_as_walked_in_place() 
                 s.needs = vec![
                     need(var("T"), index(int()), Some(var("R"))),
                     need(var("T"), index(t.clone()), None),
-                ];
+                ]
+                .into();
                 s.note_held();
                 let summed = encode_sig_stream(&s, R_BASE, false).0;
                 assert_eq!(summed, encode_sig_stream(&s, R_BASE, true).0, "{at}");
@@ -576,7 +579,8 @@ fn signature_hashes_are_the_numbers_they_were_before_the_shared_arithmetic() {
             s.needs = vec![
                 need(var("T"), index(int()), Some(var("R"))),
                 need(var("T"), index(t), None),
-            ];
+            ]
+            .into();
             s.note_held();
             got.push(encode_sig_stream(&s, R_BASE, false).0);
         }
@@ -694,7 +698,8 @@ fn a_path_hashes_alike_by_its_kept_tokens_and_one_step_at_a_time() {
             span: Span { start: 3, end: 17 },
             alike: Arc::from([]),
             via: CallPath::default(),
-        }];
+        }]
+        .into();
         s.note_held();
         let summed = encode_sig_stream(&s, R_BASE, false).0;
         assert_eq!(summed, encode_sig_stream(&s, R_BASE, true).0, "{l} steps");
@@ -795,7 +800,8 @@ fn level_in_arrow_and_need(inner: Ty, open: bool) -> Ty {
         span: Span { start: 0, end: 1 },
         alike: Arc::from([]),
         via: CallPath::default(),
-    }];
+    }]
+    .into();
     s.note_held();
     fty(s)
 }

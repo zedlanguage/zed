@@ -7456,7 +7456,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut cur = if child_changed {
             let mut copy = (**s).clone();
             copy.arrows = new_arrows;
-            copy.needs = new_needs;
+            copy.needs = new_needs.into();
             copy.facts = Default::default();
             Arc::new(copy)
         } else {
@@ -7544,7 +7544,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => promoted_needs.push(n.clone()),
             }
         }
-        decoded_sig.needs = promoted_needs;
+        decoded_sig.needs = promoted_needs.into();
         decoded_sig.own = promoted_own;
         decoded_sig.facts = Default::default();
         Arc::new(decoded_sig)
@@ -7766,7 +7766,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         if changed {
             let mut copy = (**callee).clone();
-            copy.needs = new_needs;
+            copy.needs = new_needs.into();
             copy.facts = Default::default();
             Arc::new(copy)
         } else {
@@ -8189,7 +8189,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return (s.clone(), false);
         }
         let mut copy = (**s).clone();
-        copy.needs = new_needs;
+        copy.needs = new_needs.into();
         copy.facts = Default::default();
         (Arc::new(copy), true)
     }
@@ -9853,7 +9853,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 dense: sig.dense,
                 keys: sig.keys.clone(),
                 word: None,
-                needs: Vec::new(),
+                needs: Default::default(),
                 own: sig.own.clone(),
                 held: sig.held.clone(),
                 named: sig.named,
@@ -15734,7 +15734,7 @@ fn op_sig(op: Operator) -> Sig {
         dense: Dense::No,
         keys: None,
         word: None,
-        needs: Vec::new(),
+        needs: Default::default(),
         own: BTreeSet::new(),
         held: BTreeSet::new(),
         named: 0,
@@ -15797,7 +15797,7 @@ fn word_sig(w: &str) -> Arc<Sig> {
         dense: Dense::No,
         keys: None,
         word: Some(w.into()),
-        needs: Vec::new(),
+        needs: Default::default(),
         own: BTreeSet::new(),
         held: BTreeSet::new(),
         named: 0,
@@ -15888,7 +15888,7 @@ fn bit_sig(w: &str, p: Prim) -> Arc<Sig> {
         dense: Dense::No,
         keys: None,
         word: Some(w.into()),
-        needs: Vec::new(),
+        needs: Default::default(),
         own: BTreeSet::new(),
         held: BTreeSet::new(),
         named: 0,
@@ -17217,7 +17217,7 @@ fn port(key: Carrier, io: bool) -> Ty {
         },
         keys: None,
         word: None,
-        needs: Vec::new(),
+        needs: Default::default(),
         own: BTreeSet::new(),
         held: BTreeSet::new(),
         named: 0,
@@ -18451,7 +18451,7 @@ impl<'a> Denote<'a> {
         sig.own.extend(open.free);
         sig.bounds = open.bounds;
         sig.held = open.held;
-        sig.needs = open.needs;
+        sig.needs = open.needs.into();
         Ty::func(Arc::new(sig))
     }
 

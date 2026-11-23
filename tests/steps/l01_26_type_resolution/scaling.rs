@@ -506,7 +506,7 @@ pub(super) fn functions_holding_one(
             dense: zedc::check::ty::Dense::No,
             keys: None,
             word: None,
-            needs: Vec::new(),
+            needs: Default::default(),
             named: 0,
             hull: None,
             facts: Facts::default(),

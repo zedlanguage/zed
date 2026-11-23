@@ -376,7 +376,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 *a = a.remade(params, |_| entry.clone());
             }
             s.word = None;
-            s.needs = Vec::new();
+            s.needs = Default::default();
             s.note_held();
             families = families.union(&Ty::func(Arc::new(s)));
         }
@@ -443,7 +443,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             s.dense = Dense::No;
             s.keys = None;
             s.word = None;
-            s.needs = Vec::new();
+            s.needs = Default::default();
             s.note_held();
             runs = runs.union(&Ty::func(Arc::new(s)));
         }
