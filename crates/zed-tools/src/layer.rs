@@ -627,8 +627,15 @@ pub fn report(spec: &Spec, verbose: bool, files: &[&str], out: &mut String) -> O
 
 /// Runs the tool.
 pub fn run(args: &[String], out: &mut String) -> Outcome {
-    let spec = Spec::open(arg(args, 0, "layer SPEC_DIR [-v] PROGRAM.zed ...")?)?;
+    let spec = Spec::open(arg(
+        args,
+        0,
+        "layer SPEC_DIR [-v] PROGRAM.zed ... | layer SPEC_DIR steps",
+    )?)?;
     let rest = &args[1..];
+    if rest.len() == 1 && rest[0] == "steps" {
+        return steps::report(&spec, out);
+    }
     let files: Vec<&str> = rest
         .iter()
         .map(String::as_str)
@@ -636,6 +643,8 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
         .collect();
     report(&spec, rest.iter().any(|a| a == "-v"), &files, out)
 }
+
+pub mod steps;
 
 #[cfg(test)]
 mod completeness;

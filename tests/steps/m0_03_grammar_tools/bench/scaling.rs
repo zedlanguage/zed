@@ -163,6 +163,19 @@ fn the_fuzz_first_pass_scales_with_the_number_of_programs() {
     check("fuzz first pass", N, |m| first_pass_accepts(&opened, m));
 }
 
+/// `layer steps` at `n` and `8n` L1 steps of two spans each, one of them listed and allowed:
+/// O(total span length), each span read at a fixed number of rings and readings.
+#[test]
+fn the_steps_audit_scales_with_the_number_of_steps() {
+    let dir = spec_dir("scale_layer_steps", &design(""), "");
+    let spec = Spec::open(&dir.root()).expect("the spec reads");
+    let n = 100;
+    let sized = inputs(n, |m| crate::layer_steps::steps_section(m, ""));
+    check("layer steps, by steps", n, |m| {
+        crate::layer_steps::audits_steps(&spec, &sized[&m], m);
+    });
+}
+
 #[test]
 fn progress_scales_with_the_length_of_the_plan() {
     let (n, plans) = (2000, [progress_plan(2000), progress_plan(16000)]);
