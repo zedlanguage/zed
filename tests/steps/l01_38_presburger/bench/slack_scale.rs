@@ -408,22 +408,38 @@ fn sat_half_project_each_scales_past_512() {
 /// Negative control for the scaling checks above: `build_many_linked`, whose `project_each` by
 /// the solver alone is not near linear (175M and 4,963M instructions at 64 and 512 in round 6,
 /// over 60 s at 4,096), fails the same limit on instructions (its bytes grow 13.9 times, too
-/// near the limit of 13.2 of 2026-11-13 to test). If this test stops panicking, the solver has
+/// near the limit of 13.2 of 2026-11-13 to test). If the check stops failing, the solver has
 /// become near linear on this family, or the check has stopped measuring. (Claude round 6.)
+///
+/// On a machine that counts no instructions the test measures nothing, as
+/// `l01_38_omega_test`'s `decide_on_unit_rows_costs_a_constant_times_the_search` does: a meter of
+/// processor time allows `scaling::TIME_ALLOWANCE` times the limit, 21, and under the load of a
+/// run of all of l01_38 at 8 test threads on a Colab VM the ratio measured was 14.97 (2026-11-23),
+/// so the check passed and this test, then `#[should_panic]`, failed in 7 of 10 such runs
+/// (b22-presburgerb3).
 #[test]
-#[should_panic(expected = "times the work")]
 fn many_linked_rows_project_each_fails_the_order_check() {
+    if !scaling::Meter::new().unit().starts_with("instructions") {
+        return;
+    }
     let k = 64;
     let y0 = [sym("y0")];
     let (s, l) = (build_many_linked(k), build_many_linked(scaling::FACTOR * k));
     // The solver alone, set on the thread each run is measured on: the join of row sums (module
     // `row_sums`) makes this family near linear, as
     // `many_linked_rows_project_each_scales_with_the_method` checks.
-    scaling::check_instructions_only("project_each: many linked rows", k, 1, |m| {
-        ROW_SUMS_OFF.with(|o| o.set(true));
-        drop(project_each_solver(if m == k { &s } else { &l }, &y0));
-        ROW_SUMS_OFF.with(|o| o.set(false));
+    let check = std::panic::AssertUnwindSafe(|| {
+        scaling::check_instructions_only("project_each: many linked rows", k, 1, |m| {
+            ROW_SUMS_OFF.with(|o| o.set(true));
+            drop(project_each_solver(if m == k { &s } else { &l }, &y0));
+            ROW_SUMS_OFF.with(|o| o.set(false));
+        })
     });
+    let payload = std::panic::catch_unwind(check).expect_err("the solver alone fails the check");
+    let message = (payload.downcast_ref::<String>().map(String::as_str))
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or_default();
+    assert!(message.contains("times the work"), "{message}");
 }
 
 /// The same family with the join of row sums (module `row_sums`): the first row forces

@@ -21110,10 +21110,9 @@ const SOLVER: meter::Solver = meter::Solver {
 /// projection, which reads every atom so, and asks its points in the same reading, so a
 /// projection holds every value with a point read through the factors and may hold more, as
 /// it did before PRES-model-products. Asked through [`satisfiable`], which reads products
-/// through their factors, the cover took a refusal ([`Refusal::Products`]) for a point and
-/// refused the projection of `0 <= x <= 2 && 0 <= y <= 5 && x <= x * y && (x * y >= 3 || x
-/// >= 7)` (test `l01_38_omega_test::names::
-/// a_point_and_a_projection_of_a_renamed_formula_are_over_the_names_as_written`).
+/// through their factors, the cover passed on a refusal ([`Refusal::Products`]) of one of its
+/// questions and refused the projection of the formula of test
+/// `l01_38_omega_test::names::a_point_and_a_projection_of_a_renamed_formula_are_over_the_names_as_written`.
 fn satisfiable_as_atoms(f: &Formula) -> Result<Option<Model>, Refusal> {
     satisfiable_solved(&signed(f, Signs::Free))
 }

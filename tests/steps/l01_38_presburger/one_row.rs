@@ -252,7 +252,11 @@ fn a_formula_with_a_product_atom_is_left_to_the_solver() {
     // and no product is fixed, so the divisor cover does not apply: the answer is the stated
     // refusal `Refusal::Products`, never the old `true`. (A cover by each value of a bounded
     // factor would answer it, at a cost of the factor's width; not made.) The projection
-    // reads the products as variables of their own, a relaxation, and still gives the box.
+    // reads the products as variables of their own, a relaxation: its set holds every value
+    // of `x` with a point, here none, and may hold more. It gave the box `2..=3` before
+    // PRES-model-products and gives `2..=2` since, as a product with a fixed factor is now
+    // read through it in some of its steps (`x == 3` leaves `2 * y == 13`); both are sets
+    // over the empty projection, so the test asks only for a part of the box.
     let (x, y) = (sym("x"), sym("y"));
     let p = Atom::product_of(Factor::Sym(Arc::from("x")), Factor::Sym(Arc::from("y")));
     let f = Formula::and(
@@ -265,7 +269,8 @@ fn a_formula_with_a_product_atom_is_left_to_the_solver() {
     );
     assert_eq!(decide(&f), Err(zedc::store::presburger::Refusal::Products));
     let (each, _) = project_each(&f, std::slice::from_ref(&x)).unwrap();
-    assert_eq!(each[0], Ok(range(2, 3)));
+    let set = each[0].as_ref().unwrap();
+    assert!(set.is_subset(&range(2, 3)), "{set:?}");
 }
 
 #[test]

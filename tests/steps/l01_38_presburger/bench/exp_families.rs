@@ -1,7 +1,7 @@
 //! The benchmarks of `exp_families.rs` (TEST-bench-move-l0138), run by
-//! `tools/run_tests.sh --bench`. Each runs at the sizes `k`, `2k`, `4k` and `8k`, its `k` chosen so
-//! that the four take about 10 s (author P169); the work at `8k` is held to that at `k` by
-//! [`doubling`].
+//! `tools/run_tests.sh --bench`. Each held by [`doubling`] runs at the sizes `k` and `8k`, the work
+//! at `8k` held to that at `k`; its `k` was chosen when it ran `k`, `2k`, `4k` and `8k` twice
+//! each, so that those took about 10 s (author P169).
 
 use crate::exp_families::*;
 
@@ -10,37 +10,34 @@ const fn doubles(n: usize) -> [usize; 4] {
     [n, 2 * n, 4 * n, 8 * n]
 }
 
-/// A test that `op` on `family` costs work of order `k^power` from `k` to `8k` ([`doubling`]),
-/// the least of `runs` runs at each size.
+/// A test that `op` on `family` costs work of order `k^power` from `k` to `8k` ([`doubling`]).
 macro_rules! costs {
-    ($(#[$attr:meta])* $name:ident, $family:ident, $on:expr, $op:expr, $k:expr, $power:expr, $runs:expr) => {
+    ($(#[$attr:meta])* $name:ident, $family:ident, $on:expr, $op:expr, $k:expr, $power:expr) => {
         #[test]
         $(#[$attr])*
         fn $name() {
             let what = format!("{}, {}", stringify!($family), $op);
-            doubling(&what, &doubles($k), $power, |k| {
-                least($runs, $family, $op, $on, k)
-            });
+            doubling(&what, ($k, $power), |k| vec![$family(k)], $op, $on);
         }
     };
 }
 
 // The linear paths (COMPLEXITY.md S5, S31b, PRES-below-key, PRES-nest-empty).
-costs!(shared_nest_decide, shared_nest, "z", 'd', 3200, 1, 2);
-costs!(shared_nest_satisfiable, shared_nest, "z", 's', 2300, 1, 2);
-costs!(shared_nest_answers, shared_nest, "z", 'a', 1700, 1, 2);
-costs!(shared_sums_decide, shared_sums, "x0", 'd', 110, 1, 2);
-costs!(shared_sums_satisfiable, shared_sums, "x0", 's', 140, 1, 2);
-costs!(shared_sums_project_each, shared_sums, "x0", 'p', 16, 1, 2);
-costs!(shared_sums_answers, shared_sums, "x0", 'a', 60, 1, 2);
+costs!(shared_nest_decide, shared_nest, "z", 'd', 3200, 1);
+costs!(shared_nest_satisfiable, shared_nest, "z", 's', 2300, 1);
+costs!(shared_nest_answers, shared_nest, "z", 'a', 1700, 1);
+costs!(shared_sums_decide, shared_sums, "x0", 'd', 110, 1);
+costs!(shared_sums_satisfiable, shared_sums, "x0", 's', 140, 1);
+costs!(shared_sums_project_each, shared_sums, "x0", 'p', 16, 1);
+costs!(shared_sums_answers, shared_sums, "x0", 'a', 60, 1);
 // dark_chain (PRES-dark-chain-forced-bits): its point has Θ(k²) bits, x[i] near (3/2)^i. Before,
 // `decide` and `answers` fixed every x[i] at the bounds of x0 (the rounds of `Trial::holds`), so
 // they paid the bits of a point they do not return: 13.93 and 11.05 times at 8n from k = 4800
 // and 4600 (2026-11-21, load 21). Without the point, `forced` now eliminates the chain from its
 // top (`Graph::eliminate`) and fixes nothing.
-costs!(dark_chain_decide, dark_chain, "x0", 'd', 4800, 1, 2);
-costs!(dark_chain_project_each, dark_chain, "x0", 'p', 260, 1, 2);
-costs!(dark_chain_answers, dark_chain, "x0", 'a', 4600, 1, 2);
+costs!(dark_chain_decide, dark_chain, "x0", 'd', 4800, 1);
+costs!(dark_chain_project_each, dark_chain, "x0", 'p', 260, 1);
+costs!(dark_chain_answers, dark_chain, "x0", 'a', 4600, 1);
 
 /// `satisfiable` on dark_chain returns its point, Θ(k²) bits, so its cost is held per bit of the
 /// formula and the point ([`output_sensitive`]): 13.90 times the instructions at 8n from
@@ -79,32 +76,24 @@ fn dark_chain_satisfiable() {
 // 340 and 360 at load 38 (2026-11-20), and `answers` passed its limit of 23 s at load 36, so
 // their sizes are halved; the work grows 2.0 to 2.1 times a doubling, so the ratio is the same
 // from either start.
-costs!(skew_block_decide, skew_block, "a0", 'd', 275, 1, 2);
-costs!(skew_block_satisfiable, skew_block, "a0", 's', 370, 1, 2);
-costs!(skew_block_project_each, skew_block, "a0", 'p', 170, 1, 2);
-costs!(skew_block_answers, skew_block, "a0", 'a', 180, 1, 2);
-costs!(nest_point_decide, nest_point, "x0", 'd', 2500, 1, 2);
-costs!(nest_point_satisfiable, nest_point, "x0", 's', 2600, 1, 2);
-costs!(nest_point_answers, nest_point, "x0", 'a', 1900, 1, 2);
-costs!(nest_empty_decide, nest_empty, "x0", 'd', 2800, 1, 2);
-costs!(nest_empty_satisfiable, nest_empty, "x0", 's', 3400, 1, 2);
-costs!(nest_empty_project_each, nest_empty, "x0", 'p', 16, 1, 2);
-costs!(nest_empty_answers, nest_empty, "x0", 'a', 2000, 1, 2);
+costs!(skew_block_decide, skew_block, "a0", 'd', 275, 1);
+costs!(skew_block_satisfiable, skew_block, "a0", 's', 370, 1);
+costs!(skew_block_project_each, skew_block, "a0", 'p', 170, 1);
+costs!(skew_block_answers, skew_block, "a0", 'a', 180, 1);
+costs!(nest_point_decide, nest_point, "x0", 'd', 2500, 1);
+costs!(nest_point_satisfiable, nest_point, "x0", 's', 2600, 1);
+costs!(nest_point_answers, nest_point, "x0", 'a', 1900, 1);
+costs!(nest_empty_decide, nest_empty, "x0", 'd', 2800, 1);
+costs!(nest_empty_satisfiable, nest_empty, "x0", 's', 3400, 1);
+costs!(nest_empty_project_each, nest_empty, "x0", 'p', 16, 1);
+costs!(nest_empty_answers, nest_empty, "x0", 'a', 2000, 1);
 // `project_each` on a deeper nest (FAIL-nest-empty-project-each-scaling): each level of the nest
 // read the atoms of every level below it in `forest_domains`, Θ(k²) in all. At k = 16 to 128 that
 // cost was 10.24 times at 8n under tools/run_tests.sh and 11.38 times run directly; at 128 to
 // 1024 it was 17.89 times under tools/run_tests.sh, 8.13 after the fix (COMPLEXITY.md
 // PRES-exp-families). From k = 570 it was 35.2 times (2026-11-14); with each kernel equation in
 // one sign (PRES-below-key-sign) it is 8.15 times (2026-11-21, PRES-growth-exp-families).
-costs!(
-    nest_empty_project_each_deep,
-    nest_empty,
-    "x0",
-    'p',
-    570,
-    1,
-    2
-);
+costs!(nest_empty_project_each_deep, nest_empty, "x0", 'p', 570, 1);
 
 // `project_each` on a deeper shared_sums (PRES-growth-exp-families): 38.3 times at 8n from
 // k = 590 (2026-11-14), each doubling 3.1 to 3.6 times. With each kernel equation in one sign
@@ -117,8 +106,7 @@ costs!(
     "x0",
     'p',
     460,
-    1,
-    2
+    1
 );
 
 // Subset sum is held to order k log k, one run each (k^3 log k before PRES-overlap-fast). The
@@ -126,9 +114,9 @@ costs!(
 // rate 2048): decided in 0.48M instructions at k = 20 and 3.11M at 160 (6.5 times), where the
 // solver alone refuses (114M at k = 20, 1.12G at 160; QUESTIONS.md A87); `answers` costs 5.8M
 // and 48.5M (8.3 times).
-costs!(subset_sum_decide, subset_sum, "y0", 'd', 200, 1, 1);
-costs!(subset_sum_satisfiable, subset_sum, "y0", 's', 200, 1, 1);
-costs!(subset_sum_answers, subset_sum, "y0", 'a', 200, 1, 1);
+costs!(subset_sum_decide, subset_sum, "y0", 'd', 200, 1);
+costs!(subset_sum_satisfiable, subset_sum, "y0", 's', 200, 1);
+costs!(subset_sum_answers, subset_sum, "y0", 'a', 200, 1);
 // `project_each`: the method answers first (0.28M at 16, 1.68M at 128, 6.0 times), where the
 // solver answered first before (54.8M at 16, 594M at 128). The weights are distinct at every
 // size ([`subset_sum_untied`]): those of [`subset_sum`] repeat from i = 496, so k = 200 and 400
@@ -142,7 +130,6 @@ costs!(
     "y0",
     'p',
     200,
-    1,
     1
 );
 
@@ -158,7 +145,7 @@ macro_rules! window_costs {
         #[test]
         fn $name() {
             let what = format!("windows of {}, {} rows each, {}", $width, $per, $op);
-            doubling(&what, &doubles($n), 1, |n| seeds($width, $per, $op, n));
+            doubling(&what, ($n, 1), |n| seeds($width, $per, n), $op, "x0");
         }
     };
 }

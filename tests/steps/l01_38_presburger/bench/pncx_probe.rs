@@ -82,10 +82,20 @@ fn pncx_fibonacci_crt_scale() {
             "FIBCRT {n} question {} gcd {} ratio {ratio:.2}",
             question.units, gcd.units
         );
+        // On processor time the limit is `TIME_ALLOWANCE` times 10, as the scaling checks allow
+        // it: in a run of all of l01_38 at 8 test threads on a Colab VM, which counts no
+        // instructions, one run in 5 measured 10.07 at F(80001) (b22-presburgerb3, 2026-11-23),
+        // against 5.8 in instructions.
+        let limit = if meter.unit().starts_with("instructions") {
+            10.0
+        } else {
+            10.0 * zed_tests::scaling::TIME_ALLOWANCE
+        };
         assert!(
-            ratio <= 10.0,
-            "F({}): the question is {ratio:.2} gcds",
-            n + 1
+            ratio <= limit,
+            "F({}): the question is {ratio:.2} gcds, over {limit} {}",
+            n + 1,
+            meter.unit()
         );
     }
 }

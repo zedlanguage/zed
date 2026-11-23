@@ -713,46 +713,52 @@ pub(super) fn least(
         .expect("a run")
 }
 
-/// The work of `op` on the window systems of seeds 0..20 at size `n`, added up.
-pub(super) fn seeds(width: usize, per: usize, op: char, n: usize) -> Work {
-    let built: Vec<Formula> = (0..20).map(|s| windows(n, s, width, per)).collect();
-    (built.iter().map(|f| work(op, f, "x0"))).fold(Work { units: 0, bytes: 0 }, |a, w| Work {
-        units: a.units + w.units,
-        bytes: a.bytes + w.bytes,
-    })
+/// The window systems of seeds 0..20 at size `n`.
+pub(super) fn seeds(width: usize, per: usize, n: usize) -> Vec<Formula> {
+    (0..20).map(|s| windows(n, s, width, per)).collect()
 }
 
-/// Measures `cost` at each size, printing the exponent of each doubling, and holds the
-/// instructions and the bytes at the last size, 8 times the first, to those at the first by
-/// [`scaling::hold`]: under [`scaling::limit`]`(power)`.
-pub(super) fn doubling(what: &str, sizes: &[usize], power: u32, cost: impl Fn(usize) -> Work) {
-    let (first, last) = (sizes[0], sizes[sizes.len() - 1]);
-    assert_eq!(
-        last,
-        scaling::FACTOR * first,
-        "{what}: the sizes run from n to 8n"
+/// Holds the work and the bytes of `op` on the formulas `make(8n)` to those on `make(n)`, under
+/// [`scaling::limit`]`(power)`, by [`scaling::check_order_fresh`]: each run on formulas built
+/// anew, outside what is measured, and on a thread of its own, so that every memo starts empty.
+///
+/// Why (FAIL-l01_38-exp-families-dark-chain-answers, 2026-11-22): this measured each of the sizes
+/// n, 2n, 4n and 8n by a [`Meter`] of its own and held the two ends by [`scaling::hold`], with the
+/// measure named "instructions" whatever the meter counted. Where no instructions are counted (a
+/// Colab VM has no hardware counter, and DynamoRIO restarts a test only when it runs alone), the
+/// meter reads processor time, which the load of the other tests changes; `hold` takes one
+/// measurement of each size and allows no more than the limit, where the harness takes the least
+/// of [`scaling::TIME_RUNS`] runs, up to [`scaling::TRIES`] times, and allows
+/// [`scaling::TIME_ALLOWANCE`] times the limit for processor time. `dark_chain_answers` passed 20
+/// runs of 20 alone (DynamoRIO, 8.89 times the instructions), and in 5 runs of all of l01_38 at 8
+/// test threads every run failed 7 to 15 of these benchmarks, it among them, at 11.69 to 13.31
+/// times the "instructions", which were nanoseconds of processor time. `check_order_fresh` names
+/// the measure the meter reads and keeps the harness's rules for it.
+///
+/// Complexity tradeoff: on a count of instructions each size runs once (author A160), so a test
+/// runs n and 8n, 9 times the work at n, where it ran n, 2n, 4n and 8n twice each, 30 times; on
+/// processor time it runs each size [`scaling::TIME_RUNS`] times or more, 45 times the work at n
+/// or more. The ratios of 2n and 4n are no longer printed.
+pub(super) fn doubling(
+    what: &str,
+    (n, power): (usize, u32),
+    make: impl Fn(usize) -> Vec<Formula> + Sync,
+    op: char,
+    on: &str,
+) {
+    let what = format!("{what} (COMPLEXITY.md PRES-exp-families)");
+    scaling::check_order_fresh(
+        &what,
+        n,
+        power,
+        |k, _| make(k),
+        |_, formulas: Vec<Formula>| {
+            for f in &formulas {
+                scaling::on_a_thread(STACK, || entry(op, f, on));
+            }
+            formulas
+        },
     );
-    let start = cost(first);
-    println!("{what}, k = {first}: {} instructions", start.units);
-    let mut before = start;
-    for pair in sizes.windows(2) {
-        let (small, large) = (pair[0], pair[1]);
-        let now = cost(large);
-        let (units, bytes) = (
-            now.units as f64 / before.units as f64,
-            now.bytes as f64 / before.bytes as f64,
-        );
-        println!(
-            "{what}, k = {large}: {} instructions, {units:.2} times, exponent {:.2}; {bytes:.2} \
-             times the bytes",
-            now.units,
-            units.log2() / (large as f64 / small as f64).log2()
-        );
-        before = now;
-    }
-    let what = format!("{what}: k = {first} and {last} (COMPLEXITY.md PRES-exp-families)");
-    scaling::hold(&what, "instructions", start.units, before.units, power);
-    scaling::hold(&what, "bytes", start.bytes, before.bytes, power);
 }
 
 /// The size in bits of `f` and of the point `satisfiable` gives it: 8 bits for each byte of `f`
