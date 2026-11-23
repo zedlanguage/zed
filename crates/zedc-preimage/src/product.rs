@@ -19049,8 +19049,8 @@ impl Scope {
         // This measured ratio gain is not an asymptotic complexity claim.
         // Proof that the chosen `x` is a pendant as the single route needs: `x` occurs in no
         // other conjunct (`count == 1`), has coefficient 1 or -1, one interval and no class
-        // (checked in the loop below), and the row is `>= 0` with x's interval unbounded on the side
-        // that raises the row, so a value of `x` meets the row for every value of the form.
+        // (checked in the loop below), and the row is `>= 0` with x's interval unbounded on the
+        // side that raises the row, so a value of `x` meets the row for every value of the form.
         // The other names of count 1 stay in the form, each of coefficient 1 or -1 and one
         // interval with no class (checked here); a sum of such terms takes every integer
         // between the sums of its ends (a sum of integer intervals with unit coefficients is
