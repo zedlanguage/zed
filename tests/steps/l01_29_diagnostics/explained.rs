@@ -119,6 +119,81 @@ fn each_rejection_explains_itself_and_offers_its_repairs() {
     }
 }
 
+/// A call through a parameter, misfit by the function its argument gives, is reported by
+/// elaboration at the call in the body as well as by the checker at the call that passes the
+/// function; elaboration's error carries the misfit's repairs too (row MSG-value-call-code,
+/// part (b)), the ones a value with no declaration takes. Before, it had no repair at all.
+#[test]
+fn a_misfit_reported_in_the_body_through_a_parameter_offers_its_repairs() {
+    let cases = [
+        (
+            "g(f) = f(y: 1);\na = g(f: x -> x);\n",
+            "1:13: this argument is passed by the name `y`, and `T -> T` has no parameter",
+            vec![
+                "repair: remove this argument",
+                "repair: declare a named function in place of this value, as `f(y: …) = …;`",
+            ],
+        ),
+        (
+            "g(f) = f(1, 2);\na = g(f: x -> x);\n",
+            "1:13: this argument is one more than `T -> T` takes",
+            vec!["repair: remove this argument"],
+        ),
+        (
+            "g(f) = f(1);\nk(x) = x;\na = g(f: k);\n",
+            "1:10: this argument is passed by position, and the parameter it reaches, `x` of \
+             `(x: T) -> T`",
+            vec!["repair: pass `x` by name, as `x: …`"],
+        ),
+    ];
+    for (src, message, repairs) in cases {
+        let out = rejected(&zed_tests::step_helpers::l01_29_diagnostics::with_main(src));
+        // The error that starts with `message`, through the line before the next error.
+        let at = out.find(message).unwrap_or_else(|| panic!("{src}\n{out}"));
+        let rest = &out[at..];
+        let end = (rest.match_indices('\n'))
+            .map(|(i, _)| i + 1)
+            .find(|&i| rest[i..].starts_with(|c: char| !c.is_whitespace()))
+            .unwrap_or(rest.len());
+        let error = &rest[..end];
+        for r in repairs {
+            assert!(error.contains(r), "{src}\n{r}\n{out}");
+        }
+    }
+}
+
+/// Two literals of two suffixes share no carrier, and the refusal names the carrier of the
+/// other operand, not `int`, which no operand has (row REPAIR-grouped-refusal-message, part
+/// (b); DESIGN.md sec:diagnostics, row "Two numeric values with no common carrier": "`1.0` for
+/// `1.0f64` beside an `f32`"). Before, each program below said "The suffix makes the literal
+/// `0.5f64` an `f64`, never `int`.", the `rat` one too, and offered no fix.
+#[test]
+fn two_literals_of_two_suffixes_are_refused_at_a_carrier_one_of_them_has() {
+    let out = rejected("f() = 0.5f64 + 0.25f32;\n");
+    assert!(
+        out.starts_with(
+            "1:7: The suffix makes the literal `0.5f64` an `f64`, never `f32`. Try \
+             `f() = 0.5 + 0.25f32` instead.\n"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("  fixes, each checked here:\n    f() = 0.5 + 0.25f32;"),
+        "{out}"
+    );
+    for src in [
+        "f(x: int) = x * (0.5f64 + 0.25f32);\n",
+        "f(x: rat) = x * (0.5f64 + 0.25f32);\n",
+    ] {
+        let out = rejected(src);
+        assert!(
+            out.starts_with("1:18: The suffix makes the literal `0.5f64` an `f64`, never `f32`."),
+            "{src}\n{out}"
+        );
+        assert!(!out.contains("never `int`"), "{src}\n{out}");
+    }
+}
+
 /// A lambda has no declaration, so the repairs of passing it an argument by name are the ones
 /// that need none: pass it by position, or declare a named function.
 #[test]

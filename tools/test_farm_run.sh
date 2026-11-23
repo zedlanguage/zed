@@ -232,9 +232,12 @@ while IFS= read -r raw; do
   # (column 6 dylib-retry; FARM-merge-check-first-row-rc).
   [ -z "${FAKE_RETRY_ROW:-}" ] || printf '%s\t1\t0\t1\t1\tdylib-retry\n' "$raw" >>"$out/summary.tsv"
   # FAKE_RETRY_FIRST: line 1 has a failed try before it, as job.sh writes a try it runs again
-  # (a `!` line that met a mix of dylib and rlib builds, or a test line out of memory).
-  [ "${FAKE_RETRY_FIRST:-}" != 1 ] || [ "$k" != 1 ] ||
+  # (a `!` line that met a mix of dylib and rlib builds, or a test line out of memory). With
+  # FAKE_FINAL_RC, the try that counts exits with that code (FARM-share-exit1-pieces-pass).
+  if [ "${FAKE_RETRY_FIRST:-}" = 1 ] && [ "$k" = 1 ]; then
     printf '%s\t1\t0\t1\t1\tdylib-retry\n' "$raw" >>"$out/summary.tsv"
+    rc=${FAKE_FINAL_RC:-$rc}
+  fi
   printf '%s\t%s\t0\t1\t1\n' "$raw" "$rc" >>"$out/summary.tsv"
   [ "$rc" = 0 ] || all=1
 done <"$tests"
@@ -482,6 +485,10 @@ o=$ws/case-$n-cmd-retried.out
 [ "$(command grep -a -c -x 'farm: command 1 rc=0: echo "cwd $PWD"' "$o")" = 1 ] && [ "$(command grep -c '^acquire' "$colab/log")" = 1 ] ||
   { fail=$((fail + 1)); echo "FAIL cmd-retried: line 1 not passed, or not on the first attempt ($o)"; }
 FAKE_RETRY_FIRST=1 case_ share-retried 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2
+# The control (FARM-share-exit1-pieces-pass): a share whose pieces all passed, whose try that
+# counts, after the retried one, exits 1, still fails (retry-row-fail fails a piece as well;
+# cmd-retry-row-fail is the same control for --commands).
+FAKE_RETRY_FIRST=1 FAKE_FINAL_RC=1 case_ share-retried-fail 1 "pieces: 9, failed: 0" "$all" -- --owner t --vms 1
 # Usage errors: exit 2, nothing made, no VM acquired.
 for bad in "--owner '' --vms 1" "--owner t --vms 5" "--owner t --vms 0" "--owner 't x' --vms 1" "--owner t --vms 1 --jobs 0" \
   "--owner t --vms 1 --terms /nonexistent" "--owner t --vms 1 --trace rel" "--owner t --vms 1 --zrun /bin/true" \

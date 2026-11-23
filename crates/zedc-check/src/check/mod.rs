@@ -180,7 +180,7 @@ pub enum Coercion {
 /// What a call names, for the repairs of a [`Misfit`]: a declared function, a prelude word, or
 /// a value of function type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum CalledKind {
+pub enum CalledKind {
     /// A function the program declares, whose declaration a repair may edit.
     Declared,
     /// A prelude word, as `bitReverse`, called by its name, with no declaration to edit.
@@ -351,7 +351,7 @@ impl Misfit<'_> {
     /// edit; a prelude word, which has no declaration to edit, called by its name; or a value,
     /// such as a lambda, which has no declaration either, and whose `who` is its type, so no
     /// entry writes it as code.
-    pub(crate) fn menu(self, who: &str, called: CalledKind) -> Vec<String> {
+    pub fn menu(self, who: &str, called: CalledKind) -> Vec<String> {
         // How a code form names the function called: its name, or `f` for a value.
         let (f, where_f) = match called {
             CalledKind::Declared | CalledKind::Word => (who, ""),

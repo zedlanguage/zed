@@ -1488,6 +1488,14 @@ fn flat_map_on_a_generic_parameter_demands_a_list_of_each_entry() {
         out.stdout,
         out.stderr
     );
+    // The message names what the function gives, the sums' carrier, not the entries `1 | 2`
+    // the replay's class still holds (plan row MSG-generic-lambda-result-literal-type, (b)).
+    assert!(
+        out.stderr.contains("and this function gives int")
+            && !out.stderr.contains("this function gives 1 | 2"),
+        "{}",
+        out.stderr
+    );
     // A function that gives a list is taken, and the lists are the inner level.
     let src = "h(x) = x.flatMap(e -> [e, e]);\n\
                main(m: MainArgs) {\n  m.stdout <- \"${h(x: [1, 2])}\";\n}\n";

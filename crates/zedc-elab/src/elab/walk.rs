@@ -19,7 +19,7 @@ use zed_kernel::types::Type as KType;
 use zed_kernel::{Pattern as KPattern, Prim, Rat, Shared, Term, Value};
 
 use zedc_base::rejection::not_yet;
-use zedc_check::check::{self, Fit, Misfit};
+use zedc_check::check::{self, CalledKind, Fit, Misfit};
 use zedc_resolve::resolve::topo::topo;
 use zedc_resolve::resolve::{Ref, open_stream, prelude_layer};
 use zedc_stage::defs::Test;
@@ -443,6 +443,16 @@ impl<'a> Callee<'a> {
         match *self {
             Callee::Value(_, sig) => (&sig.params[j].name, sig.params[j].positional),
             Callee::Declared(_, f) => (&f.params[j].name, f.params[j].positional),
+        }
+    }
+
+    /// What the call names, for the repairs of a misfit: a prelude word, a value, or a declared
+    /// function, as the checker's `unfit` tells them apart.
+    fn called(&self) -> CalledKind {
+        match self {
+            Callee::Value(_, sig) if sig.word.is_some() => CalledKind::Word,
+            Callee::Value(..) => CalledKind::Value,
+            Callee::Declared(..) => CalledKind::Declared,
         }
     }
 
@@ -1921,7 +1931,7 @@ impl<'a> Elab<'a> {
         if let Some(r) = receiver {
             if n == 0 {
                 let who = callee.who();
-                let t = self.misfit(call.span, Misfit::NoReceiver, &who);
+                let t = self.misfit(call.span, Misfit::NoReceiver, &who, callee.called());
                 m.give(t);
                 return;
             }
@@ -1987,10 +1997,10 @@ impl<'a> Elab<'a> {
         if let Some(a) = ff.call.positional.get(ff.pi) {
             let t = if ff.next >= n {
                 let who = ff.callee.who();
-                self.misfit(a.span, Misfit::TooMany(n), &who)
+                self.misfit(a.span, Misfit::TooMany(n), &who, ff.callee.called())
             } else if let (name, false) = ff.callee.param(ff.next) {
                 let who = ff.callee.who();
-                self.misfit(a.span, Misfit::Named(name), &who)
+                self.misfit(a.span, Misfit::Named(name), &who, ff.callee.called())
             } else {
                 self.note_slot(&ff.callee, ff.next, a);
                 ff.pending = ff.next;
@@ -2011,15 +2021,15 @@ impl<'a> Elab<'a> {
             let t = match at.get(name.as_str()).copied() {
                 None => {
                     let who = ff.callee.who();
-                    self.misfit(a.span, Misfit::NoParam(name), &who)
+                    self.misfit(a.span, Misfit::NoParam(name), &who, ff.callee.called())
                 }
                 Some(j) if ff.callee.param(j).1 => {
                     let who = ff.callee.who();
-                    self.misfit(a.span, Misfit::Positional(name), &who)
+                    self.misfit(a.span, Misfit::Positional(name), &who, ff.callee.called())
                 }
                 Some(j) if ff.slots[j].is_some() => {
                     let who = ff.callee.who();
-                    self.misfit(a.span, Misfit::Supplied(name), &who)
+                    self.misfit(a.span, Misfit::Supplied(name), &who, ff.callee.called())
                 }
                 Some(j) => {
                     self.note_slot(&ff.callee, j, a);
@@ -2041,8 +2051,9 @@ impl<'a> Elab<'a> {
         let span = ff.call.span;
         if ff.call.curry {
             if let Some(&j) = ff.missing.iter().find(|&&j| ff.callee.param(j).1) {
-                // Elaboration reports the message alone, which names the parameter only; the
-                // checker's menu writes the arguments before it.
+                // Elaboration has no code of the arguments at hand, so its menu writes `…` for
+                // the arguments before the parameter; the checker's menu writes their code, and
+                // its copy is the one kept where both report.
                 let misfit = Misfit::CurriedPositional {
                     name: ff.callee.param(j).0,
                     at: j,
@@ -2050,13 +2061,13 @@ impl<'a> Elab<'a> {
                     after: j + 1 < n,
                 };
                 let who = ff.callee.who();
-                let t = self.misfit(span, misfit, &who);
+                let t = self.misfit(span, misfit, &who, ff.callee.called());
                 m.give(t);
                 return;
             }
             if ff.missing.is_empty() {
                 let who = ff.callee.who();
-                let t = self.misfit(span, Misfit::NothingLeftOut, &who);
+                let t = self.misfit(span, Misfit::NothingLeftOut, &who, ff.callee.called());
                 m.give(t);
                 return;
             }
@@ -2165,6 +2176,7 @@ impl<'a> Elab<'a> {
                     ff.call.span,
                     Misfit::Missing(&p.name, j, p.positional),
                     &sig.who(),
+                    ff.callee.called(),
                 ),
             };
             m.give(t);
@@ -2202,6 +2214,7 @@ impl<'a> Elab<'a> {
                     ff.call.span,
                     Misfit::Missing(&f.params[j].name, j, f.params[j].positional),
                     fname,
+                    CalledKind::Declared,
                 );
             }
         }

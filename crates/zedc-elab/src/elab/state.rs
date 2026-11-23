@@ -9,11 +9,11 @@ use zed_kernel::types::Type as KType;
 use zed_kernel::{Pattern as KPattern, Prim, Shared, Term, Value};
 
 use zedc_base::rejection::Row;
-use zedc_check::check::{Info, Misfit, Witness};
+use zedc_check::check::{CalledKind, Info, Misfit, Witness};
 use zedc_resolve::resolve::tables::Tables;
 use zedc_resolve::resolve::{Kind, Ref, prelude_layer};
 use zedc_stage::defs::Test;
-use zedc_syntax::ast::{Error, Expr, ExprKind, Pattern, Stmt, Type};
+use zedc_syntax::ast::{Error, Expr, ExprKind, Note, Pattern, Stmt, Type};
 use zedc_syntax::lex::Span;
 use zedc_types::kernel_type::kernel_type;
 use zedc_types::ty::Carrier;
@@ -207,9 +207,32 @@ impl<'a> Elab<'a> {
     }
 
     /// The error of a call's argument that does not fill a parameter of `who`, as the checker
-    /// reports it too.
-    pub(super) fn misfit<T>(&mut self, span: Span, misfit: Misfit, who: &str) -> Option<T> {
-        self.error_in(misfit.row(), span, misfit.message(who))
+    /// reports it too, with the checker's menu ([`Misfit::menu`]) as its `repair:` notes, so
+    /// that a misfit elaboration alone reports, as a call through a parameter in the body of
+    /// the function whose argument fills it, carries its repairs (row MSG-value-call-code).
+    /// Where the checker reports the same misfit, the merge in `finish` keeps the checker's
+    /// copy, since the two agree on span, message, menu and row.
+    pub(super) fn misfit<T>(
+        &mut self,
+        span: Span,
+        misfit: Misfit,
+        who: &str,
+        called: CalledKind,
+    ) -> Option<T> {
+        let notes = (misfit.menu(who, called).into_iter())
+            .map(|text| Note {
+                span,
+                text: text.into(),
+            })
+            .collect();
+        self.errors.push(Error {
+            menu: String::new(),
+            row: misfit.row(),
+            span,
+            message: misfit.message(who),
+            notes,
+        });
+        None
     }
 
     pub(super) fn error_in<T>(

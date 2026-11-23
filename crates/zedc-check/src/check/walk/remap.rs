@@ -1285,9 +1285,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `K -> rank -> V`"; sec:verification's `R.flatMap(s -> choices.map(c -> step(s, c)))`
     /// maps over a list). A family with other keys is rejected, `map` being the word that keeps
     /// them.
+    ///
+    /// With `replayed`, `t` is the replay of a generic body's `flatMap` at a call
+    /// (`NeedKind::Map`), whose function's result there may be the class of its entry: in
+    /// `h(x) = x.flatMap(e -> e + 1)` the sum `e + 1` follows the class of `e`, which the call
+    /// `h(x: [1, 2])` binds to `1 | 2`, the entries, not the sums `2 | 3`. The values are
+    /// then not known, only their carriers, so the message names those, "this function gives
+    /// int" (MSG-generic-lambda-result-literal-type).
     // Complexity tradeoff: one pass over the result type of `map_end`, O(arrows); no second
-    // check of `f`.
-    pub(super) fn flat_map_end(&mut self, t: Ty, at: Span) -> Ty {
+    // check of `f`. The carriers are built only for the message, once, O(size of the type).
+    pub(super) fn flat_map_end(&mut self, t: Ty, at: Span, replayed: bool) -> Ty {
         for p in t.pieces() {
             let Piece::Fn(sig) = p else { continue };
             if !sig.data {
@@ -1301,7 +1308,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     || matches!(q, Piece::Dyn | Piece::Var(_))
             });
             if !families {
-                let shown = self.text(&entries);
+                let shown = match replayed {
+                    true => self.text(&entries.carriers()),
+                    false => self.text(&entries),
+                };
                 self.error_offering(
                     at,
                     format!(

@@ -1433,7 +1433,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let f = m.take_arg();
                 let at = f.at.unwrap_or(span);
                 let t = self.map_end(&x, f, span, MapWord::FlatMap, kept, None);
-                let t = self.flat_map_end(t, at);
+                let t = self.flat_map_end(t, at, false);
                 m.ty(t);
             }
             Frame::FoldInit(x, f, span, right) => {
@@ -16713,7 +16713,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // `flatMap` demands a list of each entry, as where it is written on a known
                 // family (FLATMAP-generic-demand).
                 match word {
-                    MapWord::FlatMap => self.flat_map_end(t, span),
+                    MapWord::FlatMap => self.flat_map_end(t, span, true),
                     MapWord::Map | MapWord::Where => t,
                 }
             }
@@ -33129,12 +33129,33 @@ impl<'t, 'a> Ck<'t, 'a> {
                             _ => 2,
                         })
                 };
+                // An arrow whose carrier some operand has, a literal by its suffix or a value
+                // by its type, is preferred: of `0.5f64 + 0.25f32` the message is the `f64`
+                // arrow's, which refuses `0.25f32` beside the `f64` operand, not the `int`
+                // arrow's, which names `int`, a carrier no operand has (row
+                // REPAIR-grouped-refusal-message, DESIGN.md sec:diagnostics, row "Two numeric
+                // values with no common carrier": both operands, each with its carrier).
+                // Complexity tradeoff: O(a) per refused arrow for its a arguments, as the
+                // adoptions above cost.
+                let held =
+                    (arrow.params.iter().find_map(|p| p.numeric_carrier())).is_some_and(|c| {
+                        (args.iter().flatten()).any(|a| match &a.lit {
+                            Some(l) => !l.bare && lit_carrier(&l.value) == c,
+                            None => {
+                                a.parts.is_none()
+                                    && a.branches.is_none()
+                                    && !a.ty.is_empty()
+                                    && a.ty.subtype(&Ty::carrier(c))
+                            }
+                        })
+                    });
+                let key = |held: bool, s: Span| (!held, rank(s));
                 if ok
                     && adopt_error
                         .as_ref()
-                        .is_none_or(|(t, _)| rank(e.0) < rank(*t))
+                        .is_none_or(|(t, _, h)| key(held, e.0) < key(*h, *t))
                 {
-                    adopt_error = Some(e);
+                    adopt_error = Some((e.0, e.1, held));
                 }
                 continue;
             }
@@ -33177,7 +33198,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let p = &sig.arrows[0].params[i];
                 return Err(self.rejected_at(what, args, piece.as_ref().map(|q| (i, q, p))));
             }
-            if let Some((s, m)) = adopt_error {
+            if let Some((s, m, _)) = adopt_error {
                 self.lit_refused.push((s, m));
                 return Ok(None);
             }
