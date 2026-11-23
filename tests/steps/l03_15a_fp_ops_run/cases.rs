@@ -1372,21 +1372,68 @@ fn a_written_list_type_is_checked() {
         "{}",
         out.stderr
     );
-    // The kernel has no list type, so the check that a bound's guarantee is within its
-    // permission cannot read one: a list type there is refused, never passed unchecked (this
-    // guarantee is not within its permission).
-    let src = "g(f: ([#a | #c] .. [#a | #b] -> int)) = 1;\n\
-               main(m: MainArgs) {\n  m.stdout <- \"${g(f: x -> 1)}\";\n}\n";
-    let out = run("fp_ops/list_type_written_in_a_bound", src, "", &[]);
-    assert!(
-        out.status != 0
-            && out.stderr.contains(
-                "a list type `[T]` inside a function type `L .. U -> V` is part of the Zed \
-                 language but is not supported by this version of zedc"
-            ),
-        "{}",
-        out.stderr
-    );
+    // A bound whose two sides are lists is checked through their element types
+    // (LIST-in-bound-check): `[#a | #c]` holds the list `[#c]`, which `[#a | #b]` does not.
+    let not_within = "every function the guarantee `L`, left of `..`, describes must also be \
+                      allowed by the permission `U`, right of `..`, and in this one the \
+                      guarantee allows functions the permission does not";
+    let program = |bound: &str| {
+        format!(
+            "g(f: ({bound} -> int)) = 1;\n\
+             main(m: MainArgs) {{\n  m.stdout <- \"${{g(f: x -> 1)}}\";\n}}\n"
+        )
+    };
+    for (i, bound) in ["[#a | #c] .. [#a | #b]", "[[#a | #c]] .. [[#a | #b]]"]
+        .into_iter()
+        .enumerate()
+    {
+        let out = run(
+            &format!("fp_ops/list_bound_not_within_{i}"),
+            &program(bound),
+            "",
+            &[],
+        );
+        assert!(
+            out.status != 0 && out.stderr.contains(not_within),
+            "{bound}: {}",
+            out.stderr
+        );
+    }
+    for (i, bound) in ["[#a] .. [#a | #b]", "[[#a]] .. [[#a | #b]]"]
+        .into_iter()
+        .enumerate()
+    {
+        let out = run(
+            &format!("fp_ops/list_bound_within_{i}"),
+            &program(bound),
+            "",
+            &[],
+        );
+        assert_eq!((out.status, out.stdout.as_str()), (0, "1\n"), "{bound}: {}", out.stderr);
+    }
+    // A list anywhere else in a bound has no sound reading without a list type in the kernel
+    // (see `lists_within` in crates/zedc-types/src/kernel_type.rs), so it is still refused,
+    // never passed unchecked.
+    for (i, bound) in ["([#a], int) .. ([#a | #b], int)", "(int ->? int) .. ([int] | String)"]
+        .into_iter()
+        .enumerate()
+    {
+        let out = run(
+            &format!("fp_ops/list_in_a_bound_refused_{i}"),
+            &program(bound),
+            "",
+            &[],
+        );
+        assert!(
+            out.status != 0
+                && out.stderr.contains(
+                    "a list type `[T]` inside a function type `L .. U -> V` is part of the Zed \
+                     language but is not supported by this version of zedc"
+                ),
+            "{bound}: {}",
+            out.stderr
+        );
+    }
 }
 
 /// The function given to `flatMap` is named as given to `flatMap`, not `map`, and the repair

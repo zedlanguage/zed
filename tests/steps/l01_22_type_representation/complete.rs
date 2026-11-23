@@ -213,6 +213,9 @@ fn is_rejects_a_list_type_and_a_bound_holding_one() {
             "(int .. [int] -> int)",
             vec![format!("{bound} [[int]]"), format!("{list} [[int]]")],
         ),
+        // Two lists are compared through their element types (LIST-in-bound-check), and the
+        // test is refused once, at the first list.
+        ("([int] .. [int] -> int)", vec![format!("{list} [[int]]")]),
     ] {
         assert_eq!(
             elab(&format!("f(x) = x is {written};")).unwrap_err(),

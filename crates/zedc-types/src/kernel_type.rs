@@ -58,23 +58,14 @@ fn kernel_form(
         // denotes it by would make `f is [int]` hold for a function `f` that is no list, since
         // the kernel's arrow does not say that a list is data (LIST-type-written). Without a
         // type for it, the check that a bound's guarantee is within its permission cannot run,
-        // so a list type inside `L .. U -> V` is refused there rather than passed unchecked.
+        // so a list type inside `L .. U -> V` is refused there rather than passed unchecked;
+        // a bound whose two sides are lists is checked through their element types
+        // ([`lists_within`]).
         TypeKind::Array(_) => {
             if let Some(bounds) = bounds {
-                bounds.push((
-                    t.span,
-                    "a list type `[T]` inside a function type `L .. U -> V` is part of the Zed \
-                     language but is not supported by this version of zedc. Write the \
-                     function type without `..`, as `(…) -> …`"
-                        .to_string(),
-                ));
+                bounds.push((t.span, LIST_IN_BOUND.to_string()));
             }
-            ports.push((
-                t.span,
-                "a test against a list type `[T]` is part of the Zed language but is not \
-                 supported by this version of zedc. Write the program without it"
-                    .to_string(),
-            ));
+            ports.push((t.span, LIST_TEST.to_string()));
             return None;
         }
         // The kernel has no type with a range, and reading one as its base would make
@@ -163,40 +154,106 @@ fn kernel_form(
             };
             keys.into_iter().rev().fold(result, |v, k| level(k, v))
         }
-        TypeKind::Bounded { .. } => {
+        TypeKind::Bounded { lower, upper, .. } => {
+            if let (TypeKind::Array(a), TypeKind::Array(b)) = (&lower.kind, &upper.kind) {
+                // `type_parts` gave the result alone. The whole type has no kernel type, as a
+                // list has none, so a test against it is refused as one against a list is.
+                if let Some(bounds) = bounds {
+                    let refused = lists_within(a, b, ports, bounds);
+                    bounds.extend(refused.map(|why| (t.span, why)));
+                }
+                ports.push((lower.span, LIST_TEST.to_string()));
+                return None;
+            }
             let [l, u, v] = <[Option<KType>; 3]>::try_from(parts).expect("three parts");
             let (l, u) = (l?, u?);
             if let Some(bounds) = bounds
-                && !l.subtype(&u)
+                && let Some(why) = not_within(&l, &u)
             {
-                // A refused check is not a proved failure, so it is not stated as one. The
-                // headline ends with the repair, and the reason stands in a note after it.
-                let (found, because) = match l.subtype_verdict(&u) {
-                    zed_kernel::types::Verdict::Refused(r) => (
-                        "and the checker could not decide whether this one's guarantee is \
-                         within its permission, so it is not proved wrong"
-                            .to_string(),
-                        crate::ty::undecided_because(&r.message()),
-                    ),
-                    _ => (
-                        "and in this one the guarantee allows functions the permission does not"
-                            .to_string(),
-                        String::new(),
-                    ),
-                };
-                bounds.push((
-                    t.span,
-                    format!(
-                        "in a function type `L .. U -> V`, every function the guarantee `L`, left \
-                         of `..`, describes must also be allowed by the permission `U`, right of \
-                         `..`, {found}. To repair it, narrow the type left of `..`, or widen the \
-                         type right of it.{because}"
-                    ),
-                ));
+                bounds.push((t.span, why));
             }
             KType::morphism(l, u, v?)
         }
     })
+}
+
+/// The refusal of a test against a list type, which has no kernel type.
+const LIST_TEST: &str = "a test against a list type `[T]` is part of the Zed language but is \
+                         not supported by this version of zedc. Write the program without it";
+
+/// The refusal of a list type inside `L .. U -> V` that is not the whole of both sides.
+const LIST_IN_BOUND: &str = "a list type `[T]` inside a function type `L .. U -> V` is part of \
+                             the Zed language but is not supported by this version of zedc. \
+                             Write the function type without `..`, as `(…) -> …`";
+
+/// The error for a bound whose guarantee `l` is not proved within its permission `u`, or
+/// `None` where it is.
+fn not_within(l: &KType, u: &KType) -> Option<String> {
+    if l.subtype(u) {
+        return None;
+    }
+    // A refused check is not a proved failure, so it is not stated as one. The headline ends
+    // with the repair, and the reason stands in a note after it.
+    let (found, because) = match l.subtype_verdict(u) {
+        zed_kernel::types::Verdict::Refused(r) => (
+            "and the checker could not decide whether this one's guarantee is within its \
+             permission, so it is not proved wrong",
+            crate::ty::undecided_because(&r.message()),
+        ),
+        _ => (
+            "and in this one the guarantee allows functions the permission does not",
+            String::new(),
+        ),
+    };
+    Some(format!(
+        "in a function type `L .. U -> V`, every function the guarantee `L`, left of `..`, \
+         describes must also be allowed by the permission `U`, right of `..`, {found}. To \
+         repair it, narrow the type left of `..`, or widen the type right of it.{because}"
+    ))
+}
+
+/// The error for the bound `[a] .. [b] -> V`, or `None` where every list of `[a]` is a list of
+/// `[b]` (LIST-in-bound-check). The kernel has no list type, so the two are compared through
+/// their element types, by this lemma, for any types `A` and `B` and `Lists(T)` the lists
+/// whose elements are each of type `T`, of any length:
+///
+/// `Lists(A) ⊆ Lists(B)` if and only if `A ⊆ B`.
+///
+/// Proof. If `A ⊆ B`, each element of a list of `Lists(A)` is of `A`, so of `B`, and the list
+/// is of `Lists(B)`. If not, some `x` is of `A` and not of `B`; the list `[x]` of one element
+/// is of `Lists(A)`, and it is not of `Lists(B)`, as its element is not of `B`. ∎
+///
+/// Applied while both element types are lists again (`[[a]] .. [[b]]`), the lemma reduces the
+/// question to the innermost element types, which are compared as kernel types with the
+/// check of any other bound ([`not_within`]); their bounds, if they hold any, are checked by
+/// that elaboration. A list anywhere else in either side still has no kernel type and is
+/// refused, as before (`LIST_IN_BOUND`): reading `[T]` as the family `int ->? T`, or as an
+/// atom with a payload, is unsound there. Counterexamples: as a family, with `L = int ->? int`
+/// and `U = (int ->? int) \ [int]`, the difference reads as empty and the check refuses,
+/// rightly, by luck, but with `L = int ->? int` and `U = [int] | String` it accepts, though the
+/// family `{5: 1}` is no list; as an atom `#list(T)`, `U = (int ->? int) \ [int]` reads as `int
+/// ->? int`, so `L = int ->? int` is accepted though the list `[1]` is of `L` and not of `U`,
+/// and `[#a | #b] .. [#a] | [#b]` is accepted though `[#a, #b]` is of neither list. A sound
+/// reading of a list inside a union, difference or tuple needs a list type in the kernel.
+///
+/// O(depth of the lists written) besides the elaboration of the two element types.
+fn lists_within(
+    mut a: &Type,
+    mut b: &Type,
+    ports: &mut Vec<(Span, String)>,
+    bounds: &mut Vec<(Span, String)>,
+) -> Option<String> {
+    while let (TypeKind::Array(x), TypeKind::Array(y)) = (&a.kind, &b.kind) {
+        (a, b) = (&**x, &**y);
+    }
+    let l = kernel_type(a, ports, Some(bounds));
+    let u = kernel_type(b, ports, Some(bounds));
+    match (l, u) {
+        (Some(l), Some(u)) => not_within(&l, &u),
+        // The element type that has none was refused where it was read (a list in it, or a
+        // name of a port).
+        _ => None,
+    }
 }
 
 /// A type expression being elaborated by [`kernel_type`]: its parts and the types of those done.
@@ -229,7 +286,12 @@ fn type_parts(t: &Type) -> Vec<&Type> {
             lower,
             upper,
             result,
-        } => vec![lower, upper, result],
+        } => match (&lower.kind, &upper.kind) {
+            // Two lists are compared element type with element type in `kernel_form`
+            // ([`lists_within`]): neither has a kernel type.
+            (TypeKind::Array(_), TypeKind::Array(_)) => vec![result],
+            _ => vec![lower, upper, result],
+        },
         TypeKind::Name(_)
         | TypeKind::Atom(_)
         | TypeKind::Every(_)
