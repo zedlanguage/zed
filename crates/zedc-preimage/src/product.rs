@@ -6134,42 +6134,90 @@ fn chain_below(q: &[Int], p: &[Int]) -> bool {
 /// The parts of one chain key that [`Block::fired_chains`] holds back for the least part of a
 /// sector query ([`Block::wake_uncertified_subset`], [`Scope::enqueue_uncert_in_case`]), and
 /// the least end over them at each place, so that [`HeldBack::certified_by`] reads in O(e) for
-/// e places whether one part's ends lie at or below all of theirs. A set, so that adding r
-/// parts costs O(r log m) for m held, not a sort of all m.
+/// e places whether one part's ends lie at or below all of theirs.
+///
+/// The parts are queued in the order the code before row PROOF-chain-left-held-back-bench
+/// (c6b20f8ba) queued its list: the first batch held in the order given (the callers sort it
+/// by ends), and, once a second batch comes, all parts in `PartAt` order (that code extended
+/// its list, sorted it and removed repeats). The first batch is kept as a list, and a second
+/// moves it into a set, so that adding r parts costs O(r log m) for m held, not a sort of all
+/// m; each part moves into the set at most once. The parts are distinct: a batch is distinct
+/// (both callers sort and deduplicate the parts they group by key), and the set keeps one of
+/// each.
 #[derive(Clone, Debug, Default)]
 struct HeldBack {
-    parts: BTreeSet<PartAt>,
-    /// The least end at each place over `parts`; empty when `parts` is, or when two parts had
-    /// different numbers of places (never for one key, whose places are its atoms' ends,
-    /// [`chain_shape`]; kept so that such parts are certified by no part, as by
-    /// [`chain_below`], which compares only ends of one length).
+    /// The first batch, in the order held; empty once `later` is not.
+    first: Vec<PartAt>,
+    /// Every part held, once a second batch came.
+    later: BTreeSet<PartAt>,
+    /// The least end at each place over the parts held, when `mixed` is false.
     least: Vec<Int>,
+    /// Whether two parts held had different numbers of places (never for one key, whose places
+    /// are its atoms' ends, [`chain_shape`]; kept so that such parts are certified by no part,
+    /// as by [`chain_below`], which compares only ends of one length). A flag apart from
+    /// `least`, since an empty `least` also stands for parts of no place, which a part of no
+    /// place certifies.
+    mixed: bool,
 }
 
 impl HeldBack {
-    /// Holds back `at`, whose ends are `ends`. O(e + log m).
-    fn hold(&mut self, ends: &[Int], at: PartAt) {
-        if self.parts.is_empty() {
-            self.least = ends.to_vec();
-        } else if self.least.len() == ends.len() {
-            for (l, e) in self.least.iter_mut().zip(ends) {
-                if e < l {
-                    *l = e.clone();
-                }
-            }
-        } else {
-            self.least.clear();
+    /// Holds back each part of `batch`, given with its ends; the parts are distinct and not
+    /// held already. O(r e) for r parts of e places, and O((r + r0) log m) when a second
+    /// batch moves the r0 parts of the first into the set.
+    fn hold(&mut self, batch: impl IntoIterator<Item = (Vec<Int>, PartAt)>) {
+        let started = self.len() > 0;
+        if started && !self.first.is_empty() {
+            self.later.extend(self.first.drain(..));
         }
-        self.parts.insert(at);
+        for (ends, at) in batch {
+            if self.len() == 0 {
+                self.least = ends;
+            } else if !self.mixed && self.least.len() == ends.len() {
+                for (l, e) in self.least.iter_mut().zip(ends) {
+                    if e < *l {
+                        *l = e;
+                    }
+                }
+            } else {
+                self.mixed = true;
+            }
+            if started {
+                self.later.insert(at);
+            } else {
+                self.first.push(at);
+            }
+        }
+    }
+
+    /// The number of parts held. O(1).
+    fn len(&self) -> usize {
+        self.first.len() + self.later.len()
+    }
+
+    /// Whether a part other than `i` is held. O(1) for the first batch, O(log m) once the parts
+    /// are in the set (its first element), since the parts are distinct.
+    fn has_other(&self, i: &PartAt) -> bool {
+        match self.len() {
+            0 => false,
+            1 => self.first.first().or(self.later.first()) != Some(i),
+            _ => true,
+        }
+    }
+
+    /// The parts held, in the order they are queued.
+    fn into_parts(self) -> impl Iterator<Item = PartAt> {
+        self.first.into_iter().chain(self.later)
     }
 
     /// Whether a part with ends `ends` lies at or below every part held back in every place
     /// ([`chain_below`]), so that, found idle, it certifies them all. Proof: `ends` lies at or
-    /// below each held part's ends in every place exactly when it lies at or below their
-    /// least at each place, which is `least` (kept exact by [`HeldBack::hold`], and the parts
-    /// are only added to, never removed one by one). O(e).
+    /// below each held part's ends in every place exactly when it has their number of places
+    /// and lies at or below their least at each place, which is `least` when `mixed` is false
+    /// (kept exact by [`HeldBack::hold`], and the parts are only added to, never removed one
+    /// by one); when `mixed` is true, two held parts differ in their number of places, and
+    /// `ends` cannot have both. O(e).
     fn certified_by(&self, ends: &[Int]) -> bool {
-        self.parts.is_empty() || (!self.least.is_empty() && chain_below(ends, &self.least))
+        self.len() == 0 || (!self.mixed && chain_below(ends, &self.least))
     }
 }
 
@@ -7412,15 +7460,20 @@ impl Block {
     /// [`HeldBack::certified_by`] (O(e)).
     ///
     /// When it does not certify them all, the entry stays as it was, the parts it would certify
-    /// included, held back for the part that woke them. Proof that this loses no precision
-    /// against certifying them: a part left held is either certified later, when an idle part
-    /// lies below all held parts (as these parts lie above `ends`, the same verdict), or
-    /// queued with the rest when a part of the key is found not idle after its projection
-    /// ([`Scope::project_block`]), and then projected or certified on its own; or it stays
-    /// held to the end of the run, as a certified part would. So the parts projected are those
-    /// of before or more, each of them implied by an idle part only in the cases where before
-    /// they were dropped. Only in that queued case can the work differ, by one dequeue for
-    /// each such part, once per entry, as the queue holds a part at most once (`queued`).
+    /// included, held back for the part that woke them. What is proved against the code before
+    /// (c6b20f8ba, which kept the parts not at or above `ends`): on the same held parts, this
+    /// certifies them all exactly when that code did (cross-review XR-join-disjoint round 2,
+    /// Codex and Gemini seats; Gemini's exhaustive check found no pair where they differ, 1,194
+    /// pairs), and the parts are queued in that code's order ([`HeldBack`]). In the partial
+    /// case, where some but not all held parts lie at or above `ends`, this keeps parts that
+    /// code dropped: if a later part of the key is found not idle, they are queued again, and
+    /// a later dequeue of a part of the key sees another part held ([`HeldBack::has_other`])
+    /// and calls [`Scope::idle`] once more. Whether that changes an answer is not proved. On
+    /// the l01_39 tests the partial case did not occur: a temporary probe (hm2, 2026-11-22)
+    /// counted 54,137 calls in `l01_39_scope_relations` and 15,042 in
+    /// `l01_39_reduced_product`, one of them not certifying all, none partial.
+    /// Each entry is used up once: the branch of [`Scope::project_block`] that queues its parts
+    /// has removed `fired_chains[k]` and does not put it back.
     // Complexity tradeoff: naive version (PERF-l139-chain-left), the parts held back filtered
     // by each call, keeping those not at or above `ends`: O(m e) a call for m held parts, and,
     // since every later call scans the kept parts again, O(D m e) for D idle dequeues of parts
@@ -7435,9 +7488,9 @@ impl Block {
     // parts. Tradeoff: a part that a non-least idle part would certify, while another held
     // part lies below it, is queued if a later part of the key is found not idle, the extra
     // dequeue of the proof above; no l01_39 test reaches that (counted for the earlier version:
-    // 0 of 766). An exact report of the parts at or above `ends` would need a dominance
-    // structure over e places with deletion (a priority search tree for e = 2), not worth it
-    // for a case no test reaches.
+    // 0 of 766; for this one: 0 of 69,179, see above). An exact report of the parts at or above
+    // `ends` would need a dominance structure over e places with deletion (a priority search
+    // tree for e = 2), not worth it for a case no test reaches.
     fn certifies_held(
         &self,
         k: &Arc<Vec<ChainAtom>>,
@@ -8014,9 +8067,7 @@ impl Block {
                     .entry(ck)
                     .or_insert_with(|| Some(HeldBack::default()))
                 {
-                    for (ends, at) in members.into_iter().skip(1) {
-                        held.hold(&ends, at);
-                    }
+                    held.hold(members.into_iter().skip(1));
                 }
                 due.push(least);
             } else {
@@ -16952,10 +17003,10 @@ impl Scope {
             if let Some((k, c_ends)) = &part.chain
                 && let Some(subset) = b.fired_chains.remove(k)
             {
-                // The held parts are distinct (a set), so at most one is this part, and one of
-                // the first two is another exactly when one is: O(1), not a scan of all m.
+                // The held parts are distinct, so another is held exactly when two are, or one
+                // that is not this part ([`HeldBack::has_other`]), not a scan of all m.
                 let has_other = match &subset {
-                    Some(rest) => rest.parts.iter().take(2).any(|j| j != &i),
+                    Some(rest) => rest.has_other(&i),
                     None => b.chains.get(k).is_some_and(|m| m.len() > 1),
                 };
                 // Complexity tradeoff: naive version, `idle` (an elimination, about 0.38M
@@ -16990,7 +17041,7 @@ impl Scope {
                     } else {
                         match subset {
                             Some(rest) => {
-                                for j in rest.parts {
+                                for j in rest.into_parts() {
                                     if j != i && queued.insert(j.clone()) {
                                         work.push_back(j);
                                     }
@@ -17446,9 +17497,7 @@ impl Scope {
                     if let Some(held) =
                         (b.fired_chains.entry(ck)).or_insert_with(|| Some(HeldBack::default()))
                     {
-                        for (ends, j) in members.into_iter().skip(1) {
-                            held.hold(&ends, j);
-                        }
+                        held.hold(members.into_iter().skip(1));
                     }
                     if queued.insert(least_at.clone()) {
                         work.push_back(least_at);
@@ -29784,7 +29833,8 @@ mod tests {
         (asked, joins)
     }
 
-    /// A part with ends `ends`, numbered `n` so that parts differ.
+    /// A part numbered `n`, so that parts differ (the tests give its ends to
+    /// [`HeldBack::hold`] beside it).
     fn held_part(n: i64) -> PartAt {
         let x = Lin::atom(Atom::Sym("x".into()));
         (
@@ -29796,8 +29846,10 @@ mod tests {
     /// [`HeldBack::certified_by`] answers as the scan it replaces (row
     /// PROOF-chain-left-held-back-bench): whether `ends` lie at or below the ends of every part
     /// held back ([`chain_below`]), for every set of at most three parts with ends in
-    /// {0, 1, 2}^e, e = 1, 2, and every query in that box; and no part certifies parts of
-    /// different numbers of places, as `chain_below` compares only ends of one length.
+    /// {0, 1, 2}^e, e = 1, 2, and every query in that box, each set held one part a batch and
+    /// in one batch; no part certifies parts of different numbers of places, as `chain_below`
+    /// compares only ends of one length; and a part of no place certifies parts of no place
+    /// (cross-review XR-join-disjoint round 2: an empty `least` stood for both).
     #[test]
     fn held_back_parts_are_certified_as_by_the_scan() {
         for e in 1..=2u32 {
@@ -29818,23 +29870,68 @@ mod tests {
             for set in &sets {
                 let mut held = HeldBack::default();
                 for &a in set {
-                    held.hold(&points[a], held_part(a as i64));
+                    held.hold([(points[a].clone(), held_part(a as i64))]);
                 }
+                let mut at_once = HeldBack::default();
+                let mut distinct = set.clone();
+                distinct.dedup();
+                at_once.hold(
+                    distinct
+                        .iter()
+                        .map(|&a| (points[a].clone(), held_part(a as i64))),
+                );
                 for q in &points {
                     let scan = set.iter().all(|&a| chain_below(q, &points[a]));
-                    assert_eq!(
-                        held.certified_by(q),
-                        scan,
-                        "e {e}, held {set:?}, query {q:?}"
-                    );
+                    for (how, h) in [("one a batch", &held), ("one batch", &at_once)] {
+                        assert_eq!(
+                            h.certified_by(q),
+                            scan,
+                            "e {e}, held {set:?} {how}, query {q:?}"
+                        );
+                    }
                 }
             }
         }
         let mut mixed = HeldBack::default();
-        mixed.hold(&[Int::from(1), Int::from(1)], held_part(0));
-        mixed.hold(&[Int::from(1)], held_part(1));
+        mixed.hold([(vec![Int::from(1), Int::from(1)], held_part(0))]);
+        mixed.hold([(vec![Int::from(1)], held_part(1))]);
         assert!(!mixed.certified_by(&[Int::from(0), Int::from(0)]));
         assert!(!mixed.certified_by(&[Int::from(0)]));
+        // Parts of no place: the scan certifies them by a part of no place, and by no other.
+        let mut none = HeldBack::default();
+        none.hold([(vec![], held_part(0)), (vec![], held_part(1))]);
+        assert!(none.certified_by(&[]));
+        assert!(!none.certified_by(&[Int::from(0)]));
+    }
+
+    /// [`HeldBack`] queues its parts in the order of the code before it (c6b20f8ba): a first
+    /// batch in the order held, and, after a second batch, all parts in `PartAt` order, each
+    /// once; and [`HeldBack::has_other`] answers as a scan.
+    #[test]
+    fn held_back_parts_are_queued_in_the_order_of_before() {
+        let ends = |n: i64| vec![Int::from(n)];
+        let mut held = HeldBack::default();
+        held.hold([3, 1, 2].map(|n| (ends(n), held_part(n))));
+        let order: Vec<PartAt> = held.clone().into_parts().collect();
+        assert_eq!(order, [3, 1, 2].map(held_part));
+        held.hold([5, 0].map(|n| (ends(n), held_part(n))));
+        let mut sorted: Vec<PartAt> = [3, 1, 2, 5, 0].map(held_part).into();
+        sorted.sort();
+        assert_eq!(held.clone().into_parts().collect::<Vec<_>>(), sorted);
+        for parts in [vec![], vec![0], vec![0, 1]] {
+            for second in [false, true] {
+                let mut h = HeldBack::default();
+                h.hold(parts.iter().map(|&n| (ends(n), held_part(n))));
+                if second {
+                    // An empty second batch moves the first into the set.
+                    h.hold(std::iter::empty());
+                }
+                for i in [0, 1, 2].map(held_part) {
+                    let scan = parts.iter().any(|&n| held_part(n) != i);
+                    assert_eq!(h.has_other(&i), scan, "{parts:?}, {second}, {i:?}");
+                }
+            }
+        }
     }
 }
 

@@ -4988,11 +4988,13 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 ///
 /// Method. (1) A plain union of all the joins gives the connected components of the graph of
 /// joins; a component is marked when it holds two parameters of one function. (2) The joins are
-/// made again in their order, union by the number of functions in a class (`size`). In an
-/// unmarked component every join merges. In a marked component each class's root holds the set
-/// of its functions of two or more parameters (`funs`); with `fewer` the class whose set is
-/// smaller and `more` the other, the join merges when `fewer`'s set is empty, or holds one
-/// function that `more`'s set does not, and is refused when `fewer`'s set holds two or more.
+/// made again in their order, linking by size (the class of more parameters keeps its root, the
+/// first join end's on a tie; each parameter of a class is of another function, so this is the
+/// number of functions). In an unmarked component every join merges. In a marked component
+/// each class's root holds the set of its functions of two or more parameters (`one` when it
+/// holds one, `many` when two or more); with `fewer` the class whose set is smaller and `more`
+/// the other, the join merges when `fewer`'s set is empty, or holds one function that `more`'s
+/// set does not, and is refused when `fewer`'s set holds two or more.
 ///
 /// Proof that a class never holds two parameters of one function, by induction over the joins.
 /// At the start each class is one parameter. A function of one parameter lies in one class
@@ -5009,27 +5011,35 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 /// two classes in it ever share a function (each function has at most one parameter in it), so
 /// the exact rule also merges every join whose ends lie in two classes; the root is chosen by
 /// the same count with the same tie (the exact rule's set of all functions has the length
-/// `size`), and the joins of other components never touch these classes. In a marked component
-/// the classes can differ from the exact rule's, coarser or finer (cross-review
-/// XR-join-disjoint, Codex seat, round 1: a refusal here can let a later join merge that the
-/// exact rule refuses). Any classes are sound, since the class atoms are never bound
-/// ([`identity_classes`]); a refusal only loses sharing. Tests:
+/// number of parameters), and the joins of other components never touch these classes. In a
+/// marked component the final partition can be finer than the exact rule's or not comparable
+/// with it, never coarser: if a join merged two parameters that end in two different exact
+/// classes, the exact rule refused it, so those two classes hold two parameters of one
+/// function, which no class here can hold (cross-review XR-join-disjoint, Codex seat, round 2).
+/// A refusal can lose sharing at that join and allow different sharing later (Codex seat, round
+/// 1: a later join can merge that the exact rule refuses). Any classes are sound, since the
+/// class atoms are never bound ([`identity_classes`]). Tests:
 /// `tests::a_class_never_holds_two_parameters_of_one_function` (soundness, exactness on unmarked
 /// components, and the rule, against brute force, over random functions and joins) and
 /// `tests::the_classes_are_those_of_a_join_refused_by_looking` (the exact classes on every
 /// unmarked component).
 ///
-/// Time, every step, for n parameters and j joins: (1) is j unions by rank with halving and
-/// 2n finds, O(n + j α(j + n, n)) (Tarjan and van Leeuwen 1984, doi:10.1145/62.2160, Theorem 3,
-/// quoted in zed-graph's union_find.rs), and the marks one pass over the
-/// functions' parameters with a stamp per component (the last function whose parameter was found
-/// in it), part of those finds; (2) each join is two finds (roots kept by the caller with
-/// halving, O(log_(2+j/n) n) amortized, Theorem 6 there), a comparison of two lengths and at
-/// most one look-up in a hash set, O(1) expected, and each merge moves the smaller set into
-/// the larger (they are swapped first when the kept root's set is the smaller), so an entry
-/// moves only into a set at least as large, the
-/// set holding it at least doubles at each move, and it moves at most log2 n times: O(n log n)
-/// moves in all. In total O((n + j) log n), expected for the hash sets.
+/// Time, every step, deterministic, for f functions (`first` has f + 1 entries), n parameters
+/// and j joins. (1) j unions and 2n finds, linking by rank with halving: O(n + j α(j + n, n))
+/// (Tarjan and van Leeuwen 1984, doi:10.1145/62.2160, Theorem 3: "The set union algorithm with
+/// either linking by rank or linking by size and either compression, splitting, or halving
+/// runs in O(n + mα(m + n, n)) time", quoted and checked in zed-graph's union_find.rs). The
+/// marks: one pass over the f functions, O(f), and over the parameters of those of two or more,
+/// O(n) finds, counted above. (2) Filling `one`: the same walk by each function's interval
+/// `first[k]..first[k + 1]`, O(f + n), with no search for a parameter's function. Each join:
+/// two finds and at most one union, linking by size with halving, O(n + j α(j + n, n)) in all
+/// by the same Theorem 3 (`union_roots` with `Keep::Rule` links by size), two set sizes read in
+/// O(1), and at most one look-up `contains` in a `BTreeSet` of at most n entries, O(log n).
+/// Each merge moves at most one function: a merge in a marked component needs `fewer`'s set to
+/// hold at most one function, `more`'s set moves to the kept root by a swap of two vectors'
+/// entries, O(1), and the one function is inserted, O(log n) (or a set of two is built). There
+/// are at most n - 1 merges, so O(n log n) for them. In total O(f + n log n + j log n), within
+/// O(f + (n + j) log n), with no hashing and no expected bound.
 // Complexity tradeoff: the exact rule (refuse exactly when the classes share a function) is
 // what LOAD-affine-join built and LOAD-join-disjoint measured at Θ(n^1.5) on the fixtures
 // `tests::bench::many_multi_owner_functions_can_refuse_the_same_cross_pairs_scale` and
@@ -5040,7 +5050,8 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // a join when both classes hold two or more functions of two or more parameters; the lost
 // sharing on the l01 tests is in COMPLEXITY.md row LOAD-join-disjoint. Why not the exact rule
 // in near-linear time: (R1) to (R3) below show that it would decide, below m^(4/3), whether
-// every edge of a sparse graph lies in a triangle, which no known method does.
+// every edge of a sparse graph lies in a triangle, for which the searches listed at the end
+// found no method (finding none is not a proof that none exists).
 // (R1) Reduction. Given a graph G = (V, E) with m edges and no isolated vertex (an isolated
 // vertex changes no answer, so it is dropped: |V| <= 2m; an empty edge list answers true),
 // write, in this text order: for each vertex u the leaf H_u(x_u) = x_u > 0; for each vertex c
@@ -5049,10 +5060,12 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // Q_uv(t_uv) = H_u(x_u: t_uv) && H_v(x_v: t_uv). Definitions come each after those they use
 // (zedc-stage defs.rs, `Unit::defs`; Kahn's order, ties by text index, zedc-resolve topo.rs),
 // so the order is the text's, and `identity_classes` takes the joins of one caller at a time,
-// caller first: the building joins (p(c, u), x_u), then for each proxy (t_uv, x_u) and the
-// query join (t_uv, x_v). A call of a function of one parameter makes exactly one join
-// (`identity_classes`; parameter names must be distinct across functions, since `by_param`
-// drops a name bound twice). Size: |V| + 3m parameters, 4m joins, so n = O(m). Under the exact
+// caller first: the building joins (p(c, u), x_u), then for each proxy the join of the proxy
+// parameter t_uv to one endpoint's x, then to the other's, the query join (named below as
+// (t_uv, x_u) and then (t_uv, x_v); which endpoint comes first changes nothing). A call of a
+// function of one parameter makes exactly one join (`identity_classes`; parameter names must
+// be distinct across functions, since `by_param` drops a name bound twice).
+// Size: |V| + 3m parameters, 4m joins, so n = O(m). Under the exact
 // rule a building join never refuses: the class of x_u holds x_u and parameters p(c, u) for
 // distinct c, so of distinct functions, and p(c, u) is alone. After them the class C_u of x_u
 // holds f_c exactly for the c adjacent to u. A join (t_uv, x_u) always merges (t_uv is alone,
@@ -5073,9 +5086,10 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // Cycle Removal", STOC 2022, arXiv:2204.10465 (LaTeX source read 2026-11-22, file
 // zero_triangle.tex), attributed there to Abboud and Vassilevska Williams, FOCS 2014:
 // "Triangle detection requires $m^{4/3-o(1)}$ time, for some density regime $m=\Omega(n)$"
-// (this m^(4/3) form is the 2022 statement; the 2014 conjecture asks m^(1+δ)). It is about
-// whether SOME triple is a triangle (an OR of ORs); (R1) decides whether EVERY edge has a
-// common neighbor (an AND of ORs), and no reduction from triangle detection to that is known
+// (this m^(4/3) form is the 2022 statement; the 2014 conjecture asks m^(1+δ−o(1)) expected
+// time for some δ > 0, arXiv:1402.0054, file conjecs.tex line 83, per the cross-review). It is
+// about whether SOME triple is a triangle (an OR of ORs); (R1) decides whether EVERY edge has
+// a common neighbor (an AND of ORs), and no reduction from triangle detection to that is known
 // to me or found in the searches below. Its complement, "some edge lies in no triangle", the
 // property ∃x ∃y ∀z (E(x, y) ∧ ¬(E(x, z) ∧ E(y, z))), is placed by Bringmann, Fischer and
 // Künnemann, "A fine-grained analogue of Schaefer's theorem in P: dichotomy of
@@ -5087,12 +5101,13 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // (x, y) needs parameters of one function in the classes of x and y, and each class lies in
 // one component, as does the edge (x, y); conversely, if no join is refused, every join merges
 // or finds its ends in one class, the final classes are the components, and a class never
-// holds two parameters of one function). That test is O(n α(n)); it is step (1), the marks.
+// holds two parameters of one function). That test is O(f + n + j α(j + n, n)), O(n α(n)) when
+// j = O(n) and f = O(n); it is step (1), the marks.
 // The all-edges form, AE-Sparse-Triangle (for each edge, whether it lies in a triangle), would
 // need every answer: Vassilevska Williams and Xu, FOCS 2020, arXiv:2007.09318, Corollary
-// `cor:exact-to-sparse` (file exact_to_mono.tex, lines 321 to 327, per the Claude seat), reduce
-// to it by reading each edge's answer, recovering its triangle bit by bit. Their bound
-// m^(4/3 - o(1)) under 3SUM or APSP no longer stands: Alman and Vassilevska Williams,
+// `cor:exact-to-sparse` (file exact_to_mono.tex, lines 321 to 327, per the Claude seat),
+// reduces Exact Triangle to several all-edges instances whose outputs are per-edge bits. Their
+// bound m^(4/3 - o(1)) under 3SUM or APSP no longer stands: Alman and Vassilevska Williams,
 // arXiv:2610.06783 (October 2026), file 01-intro.tex: "The APSP and 3SUM hypotheses are
 // therefore refuted" (confirmed from the source by the orchestrator, 2026-11-22); balanced
 // AE-Sparse-Triangle is left as a hypothesis of its own (their Section 6). And here the first
@@ -5100,16 +5115,18 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // an edge {u, w} asks whether N(u) ∪ N(v) meets N(w). Copies of the two classes for each query
 // would cost the sum over the edges of the two degrees, the sum of the squared degrees, Θ(m²)
 // on a star, which loses the bound.
-// (R3) What meeting the limit would take. 10.5 at 8 times n means an exponent at most
-// log 10.5 / log 8 = 1.1308. By (R1), an O(n^1.1308) exact rule decides "every edge lies in a
-// triangle" in O(m^1.1308). The best method I know for that is the high/low degree split of
-// Alon, Yuster and Zwick, "Finding and counting given length cycles", Algorithmica 17 (1997),
+// (R3) What meeting the limit would take. For a cost that is a pure power c n^e, 10.5 at 8
+// times n means an exponent at most log 10.5 / log 8 = 1.1308 (a cost with lower-order terms
+// can pass at one pair of sizes with a larger leading exponent). By (R1), an O(n^1.1308) exact
+// rule decides "every edge lies in a triangle" in O(m^1.1308). The best method I know for that
+// is the high/low degree split of Alon, Yuster and Zwick, "Finding and counting given length
+// cycles", Algorithmica 17 (1997),
 // doi:10.1007/BF02523189 (from memory, not re-read): with degree threshold D, an edge with a
 // low endpoint is checked by scanning that endpoint's neighbors, O(m D); a common neighbor c of
 // low degree is found by listing the pairs of c's neighbors, O(m D); among the at most 2m / D
 // high vertices one Boolean matrix product, O((m / D)^ω); D = m^((ω - 1) / (ω + 1)) gives
 // O(m^(2ω / (ω + 1))), m^1.41 for ω = 2.371 and m^(4/3) even for ω = 2. So an exact rule under
-// the limit would decide this question below m^(4/3), faster than every known method by a
+// the limit would decide this question below m^(4/3), faster than the upper bound above by a
 // polynomial factor, also for ω = 2: not proved impossible, and not known.
 // A structure for the exact rule: Kopelowitz, Pettie and Porat, "Dynamic Set Intersection"
 // (WADS 2015, arXiv:1407.6755, read 2026-11-22 in the XR-algos review), Corollary
@@ -5123,12 +5140,13 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // (Carmosino et al., ITCS 2016, doi:10.1145/2840728.2840746, Theorem 2). Searches of 2026-11-22
 // (allpapers, paperclip arXiv and abstracts): "sparse triangle hypothesis", "Triangle
 // Collection matching triangles", "every edge in a triangle" and union-find with disjoint
-// classes found no bound for the single-bit AND-of-ORs form (arXiv:2509.11448,
-// "Triangle-Covered Graphs", is about adding edges, not this). COMPLEXITY.md rows
+// classes found no method and no lower bound for the single-bit AND-of-ORs form
+// (arXiv:2509.11448, "Triangle-Covered Graphs", is about adding edges, not this); finding none
+// is not a proof that none exists. COMPLEXITY.md rows
 // LOAD-affine-join and LOAD-join-disjoint.
 fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
     let nodes = first.last().copied().unwrap_or(0);
-    let owner = |v: usize| first.partition_point(|&f| f <= v) - 1;
+    let wide = |k: usize| first[k + 1] - first[k] >= 2;
     // (1) The components of the graph of all joins, and the marked ones: a stamp per component,
     // the last function of two or more parameters met in it; meeting it again marks it.
     let mut whole = zed_graph::UnionFind::new(
@@ -5141,10 +5159,7 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
     }
     let mut stamp = vec![usize::MAX; nodes];
     let mut marked = vec![false; nodes];
-    for k in 0..first.len().saturating_sub(1) {
-        if first[k + 1] - first[k] < 2 {
-            continue;
-        }
+    for k in (0..first.len().saturating_sub(1)).filter(|&k| wide(k)) {
         for v in first[k]..first[k + 1] {
             let c = whole.find(v);
             marked[c] |= stamp[c] == k;
@@ -5152,58 +5167,61 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
         }
     }
     let hot: Vec<bool> = (0..nodes).map(|v| marked[whole.find(v)]).collect();
-    // (2) The root is chosen here, by the number of functions, since the functions move with
-    // it. Halving, each root chosen by this code (it reads the root as the class's name):
-    // O(log_(2+m/n) n) amortized a step for m operations on n elements, Tarjan and van Leeuwen
-    // 1984 (doi:10.1145/62.2160), Theorem 6; rank linking would move the root.
-    let mut parent = zed_graph::UnionFind::new(
+    // (2) Linking by size, the larger class's root staying, `ra` on a tie (the root is the
+    // class's name, and its functions are kept at it).
+    let mut parent = zed_graph::UnionFind::<(), ()>::new(
         nodes,
         zed_graph::Compression::Halving,
-        zed_graph::Linking::Rank,
+        zed_graph::Linking::Size,
     );
-    // Each class's functions of two or more parameters, kept in marked components only, and
-    // its number of functions (each parameter of a class is of another function).
-    let mut funs: Vec<HashSet<usize>> = (0..nodes)
-        .map(
-            |v| match hot[v] && first[owner(v) + 1] - first[owner(v)] > 1 {
-                true => HashSet::from([owner(v)]),
-                false => HashSet::new(),
-            },
-        )
-        .collect();
-    let mut size = vec![1usize; nodes];
+    // Each root's functions of two or more parameters, kept in marked components only: `one`
+    // the function when the class holds exactly one (`NONE` otherwise), `many` the set when it
+    // holds two or more (empty otherwise; an empty `BTreeSet` allocates nothing). Filled by
+    // each function's interval of parameters.
+    const NONE: usize = usize::MAX;
+    let mut one = vec![NONE; nodes];
+    let mut many: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); nodes];
+    for k in (0..first.len().saturating_sub(1)).filter(|&k| wide(k)) {
+        for v in (first[k]..first[k + 1]).filter(|&v| hot[v]) {
+            one[v] = k;
+        }
+    }
+    let count = |one: &[usize], many: &[BTreeSet<usize>], r: usize| match many[r].len() {
+        0 => usize::from(one[r] != NONE),
+        len => len,
+    };
     let mut joined = vec![false; nodes];
     for &(a, b) in joins {
         let (ra, rb) = (parent.find(a), parent.find(b));
         if ra == rb {
             continue;
         }
-        // Rule B' in a marked component (`a` and `b` lie in one component).
-        if hot[a] {
-            let (fewer, more) = match funs[ra].len() <= funs[rb].len() {
-                true => (ra, rb),
-                false => (rb, ra),
-            };
-            let merges = match funs[fewer].len() {
-                0 => true,
-                1 => funs[fewer].iter().all(|g| !funs[more].contains(g)),
-                _ => false,
-            };
-            if !merges {
-                continue;
-            }
-        }
-        let (big, small) = match size[ra] >= size[rb] {
+        // Rule B'. In an unmarked component both sets are empty and the join merges.
+        let (fewer, more) = match count(&one, &many, ra) <= count(&one, &many, rb) {
             true => (ra, rb),
             false => (rb, ra),
         };
-        parent.union_into(big, small);
-        size[big] += size[small];
-        if funs[small].len() > funs[big].len() {
-            funs.swap(small, big);
+        // `fewer`'s set: empty, the one function `g`, or two or more (refused).
+        let g = one[fewer];
+        if !many[fewer].is_empty() || (g != NONE && (one[more] == g || many[more].contains(&g))) {
+            continue;
         }
-        let f = std::mem::take(&mut funs[small]);
-        funs[big].extend(f);
+        let big = parent.union_roots(ra, rb, (), zed_graph::Keep::Rule, |_, _, _| {});
+        // The merged set at `big`: `more`'s set with `g` added, so at most one function moves.
+        one[fewer] = NONE;
+        if more != big {
+            one[big] = std::mem::replace(&mut one[more], NONE);
+            many.swap(big, more);
+        }
+        if g != NONE {
+            if !many[big].is_empty() {
+                many[big].insert(g);
+            } else if one[big] == NONE {
+                one[big] = g;
+            } else {
+                many[big] = BTreeSet::from([std::mem::replace(&mut one[big], NONE), g]);
+            }
+        }
         joined[big] = true;
     }
     let root = (0..nodes).map(|v| parent.find(v)).collect();
@@ -18350,8 +18368,8 @@ mod tests {
         summaries_read_again(7776978274844439420);
     }
 
-    /// The classes of [`unite`] without its remembered refusals and its look-up of the caller
-    /// and callee: each join looks through the smaller class's functions.
+    /// The exact rule: each join looks through the smaller class's functions and is refused
+    /// when the two classes share one.
     fn unite_by_looking(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
         fn find(parent: &mut [usize], mut v: usize) -> usize {
             while parent[v] != v {
@@ -18828,7 +18846,43 @@ mod tests {
             differ += usize::from(root != looked.0);
             refused += joins.iter().filter(|&&(a, b)| root[a] != root[b]).count();
         }
+        assert!(unmarked > 0, "no unmarked parameter was drawn");
         println!("{refused} joins refused, {unmarked} parameters unmarked, {differ} draws apart");
+    }
+
+    /// Deterministic cases of [`unite`], with explicit roots: a function of two parameters
+    /// after functions of none; functions of no parameter and no join; and four joins on four
+    /// functions of two parameters where rule B' and the exact rule differ (cross-review
+    /// XR-join-disjoint, Codex seat, round 2).
+    #[test]
+    fn unite_on_built_cases() {
+        // Two empty functions, then one of two parameters with no join, then a join of its
+        // two parameters, refused.
+        assert_eq!(unite(&[0, 0, 0, 2], &[]), (vec![0, 1], vec![false; 2]));
+        assert_eq!(
+            unite(&[0, 0, 0, 2], &[(0, 1)]),
+            (vec![0, 1], vec![false; 2])
+        );
+        // No parameter at all.
+        assert_eq!(unite(&[0, 0, 0], &[]), (vec![], vec![]));
+        // Functions {0, 1}, {2, 3}, {4, 5}, {6, 7}. (0, 2) and (4, 6) merge; (0, 4) is refused,
+        // since both classes hold two functions of two parameters; (0, 5) merges, since 5's
+        // class holds one function, which {0, 2}'s lacks. The exact rule merges (0, 4), the
+        // classes sharing no function, and then refuses (0, 5) for {4, 5}.
+        let first = [0, 2, 4, 6, 8];
+        let joins = [(0, 2), (4, 6), (0, 4), (0, 5)];
+        let mut joined = vec![false; 8];
+        joined[0] = true;
+        joined[4] = true;
+        assert_eq!(
+            unite(&first, &joins),
+            (vec![0, 1, 0, 3, 4, 0, 4, 7], joined.clone())
+        );
+        // `joined` is read only at roots; 4 was a root when (4, 6) merged.
+        assert_eq!(
+            unite_by_looking(&first, &joins),
+            (vec![0, 1, 0, 3, 0, 5, 0, 7], joined)
+        );
     }
 
     /// [`unite`] gives the classes of its rule written plainly ([`unite_by_rule`]), root for
