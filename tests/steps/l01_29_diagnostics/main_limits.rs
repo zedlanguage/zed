@@ -296,3 +296,54 @@ fn a_time_in_range_whose_sides_are_too_large_to_build_is_rounded_up() {
         Some(std::time::Duration::from_nanos(1_787_578_938))
     );
 }
+
+/// Plan row CONST-default-memory-limit (DESIGN.md sec:checking_in_zed, "The default memory
+/// limit", zed 21e7335; headline as reworded in zed c79c154): without `@limits(memory: …)` before `main`, an operation the operands
+/// prove to build 1 GiB or more is rejected at compile time, whether or not its branch is taken;
+/// a declared limit at least the build accepts it, in any unit of information.
+/// `(2^64 + 13) ^ (2^27)` has at least `2^27 * 64 + 1` bits, 2^30 bytes and one bit, so its
+/// headline rounds up to 1 GiB; `(2^64 + 13) ^ (2^20)` has at least 8 MiB.
+#[test]
+fn without_a_memory_limit_a_build_of_1_gib_or_more_is_rejected() {
+    let main = |limit: &str, body: &str| {
+        format!("{limit}main(m: MainArgs) {{\n    b = 2^64 + 13;\n    {body}\n}}\n")
+    };
+    let push = "m.stdout <- String(b ^ (2^27));";
+    let out = rejected(&main("", push));
+    assert!(
+        out.contains(
+            "Number too large for the default memory limit: `b ^ (2^27)` needs at least 1 GiB; \
+             without `@limits(memory: …)` before `main`, no operation may make a value of 1 GiB \
+             or more"
+        ),
+        "{out}"
+    );
+    // The repair is a limit before `main`, the least power of two that holds the build.
+    assert!(out.contains("@limits(memory: 2^31)"), "{out}");
+    assert_eq!(built(&main("@limits(memory: 2^31)\n", push)), None);
+    // In a branch that is not taken, the same.
+    let branch = "m.stdout <- if m.args.len() > 9 { String(b ^ (2^27)) } else { \"\" };";
+    let out = rejected(&main("", branch));
+    assert!(out.contains("the default memory limit"), "{out}");
+    // A declared limit at least the build accepts it, and one below the build rejects it.
+    // Written in bytes: zedc does not take `with units("GiB")` before step L12, which gives
+    // `2 with units("GiB")` and `4 with units("GB")` here.
+    for limit in [
+        "@limits(memory: 2147483648)\n",
+        "@limits(memory: 4000000000)\n",
+    ] {
+        assert_eq!(built(&main(limit, push)), None, "{limit}");
+    }
+    let out = rejected(&main("@limits(memory: 2^30)\n", push));
+    assert!(out.contains("the memory limit of `main`"), "{out}");
+    // Below 1 GiB the default accepts: 8 MiB, and the most a 65-bit base allows,
+    // `2^26 * 64 + 1` bits, 512 MiB and one bit.
+    for power in ["b ^ (2^20)", "b ^ (2^26)"] {
+        let body = format!("m.stdout <- String({power});");
+        assert_eq!(built(&main("", &body)), None, "{power}");
+    }
+    // A size that depends on the input is left to the run, which the default does not limit.
+    let input = "k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n    \
+                 m.stdout <- if k >= 0 { String(b ^ (2^k)) } else { \"\" };";
+    assert_eq!(built(&main("", input)), None);
+}

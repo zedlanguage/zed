@@ -32,6 +32,31 @@ mod remap;
 use fp_ops::Quantifier;
 use zedc_resolve::resolve::STRING_CALLS;
 
+/// The memory bound of `main` below the address space that a number's build is judged
+/// against ([`Ck::powers_over_main_limit`]).
+#[derive(Clone, Copy)]
+enum MainMemory {
+    /// `@limits(memory: b)` before `main`: `b` bytes, the `@limits` and the argument of
+    /// `memory:`. A build of more than `b` bytes is rejected.
+    Declared(u128, Span, Span),
+    /// No memory limit declared, with the span of `main`'s declaration: a build of 1 GiB
+    /// (2^30 bytes) or more is rejected, at compile time only (DESIGN.md sec:checking_in_zed,
+    /// "The default memory limit", zed 21e7335).
+    Default(Span),
+}
+
+impl MainMemory {
+    /// The most bits a build may have. A build of `n` bits takes `⌈n / 8⌉` bytes, the size the
+    /// headline names, so under the default it is rejected exactly when `⌈n / 8⌉ >= 2^30`, that
+    /// is when `n > 8 (2^30 - 1)`: the default is a declared limit of `2^30 - 1` bytes.
+    fn room_bits(self) -> u128 {
+        match self {
+            MainMemory::Declared(b, ..) => b * 8,
+            MainMemory::Default(_) => ((1 << 30) - 1) * 8,
+        }
+    }
+}
+
 /// Checks a resolved unit.
 pub fn check(unit: &[Stmt], res: &Resolution) -> Info {
     check_text(unit, res, None)
@@ -17815,11 +17840,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of the target"): `8 * b` bits against the least bit length the walk found, one
     /// comparison of numbers below 2^67 per power. Called after [`Self::main_limits`], since a
     /// limit's argument may name a binding the walk reads.
+    ///
+    /// Where `main` declares no memory limit, the bound is the default (DESIGN.md
+    /// sec:checking_in_zed, "The default memory limit", zed 21e7335; plan row
+    /// CONST-default-memory-limit): an operation proved to build 1 GiB or more is rejected, at
+    /// compile time only. A unit without `main` has no run to bound, and is judged against the
+    /// address space alone.
     pub(super) fn powers_over_main_limit(&mut self) {
-        let Some((b, ..)) = self.main_memory else {
-            return;
+        let bound = match self.main_memory {
+            Some((b, at, arg)) => MainMemory::Declared(b, at, arg),
+            None => match self.main_decl() {
+                Some(at) => MainMemory::Default(at),
+                None => return,
+            },
         };
-        let room = Num::from(i128::try_from(b * 8).expect("at most 2^67"));
+        let main_limit = Some(bound);
+        let room = Num::from(i128::try_from(bound.room_bits()).expect("at most 2^67"));
         // Every operation past the limit, as `(start, end)`: an operation is reported only
         // where no operation inside it is past the limit too, so `String(x * x)` with `x * x`
         // past the limit is reported at `x * x` alone, the one cause.
@@ -17827,7 +17863,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         for p in std::mem::take(&mut self.wide_powers).into_values() {
             if p.bits > room {
                 over.insert((p.span.start, p.span.end));
-                self.power_too_large(&p, self.main_memory);
+                self.power_too_large(&p, main_limit);
             }
         }
         // A product is judged as at the address space ([`Self::too_large_product`]): an
@@ -17836,7 +17872,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if p.r.size() > room {
                 over.insert((p.span.start, p.span.end));
                 if p.x.size() <= room && p.y.size() <= room {
-                    self.product_too_large(&p, self.main_memory);
+                    self.product_too_large(&p, main_limit);
                 }
             }
         }
@@ -17854,7 +17890,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let inner = over.range((s, 0)..(s, e)).next().is_some()
                 || over.range((s + 1, 0)..(e, 0)).next().is_some();
             if !inner {
-                self.build_too_large(&w, self.main_memory);
+                self.build_too_large(&w, main_limit);
             }
         }
     }
@@ -17863,8 +17899,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// memory limit of `main` written at `at`: "Number too large for the memory limit of
     /// `main`: `b ^ (2^20)` needs at least 8 MiB; `@limits(memory: 1048576)`". The bytes are
     /// rounded up, so that a size a few bits over the limit is not written as the limit.
-    fn main_limit_headline(&self, code: &str, bits: &Num, at: Span) -> String {
+    /// Without a declared limit: "Number too large for the default memory limit: `b ^ (2^27)`
+    /// needs at least 1 GiB; without `@limits(memory: …)` before `main`, no operation may make
+    /// a value of 1 GiB or more." (DESIGN.md sec:diagnostics, zed c79c154).
+    fn main_limit_headline(&self, code: &str, bits: &Num, m: MainMemory) -> String {
         let bytes = (bits + &Num::from(7i64)).div_floor(&Num::from(8i64));
+        let at = match m {
+            MainMemory::Declared(_, at, _) => at,
+            MainMemory::Default(_) => {
+                return format!(
+                    "Number too large for the default memory limit: `{code}` needs at least {}; \
+                     without `@limits(memory: …)` before `main`, no operation may make a value \
+                     of 1 GiB or more",
+                    bytes_text_of(&bytes)
+                );
+            }
+        };
         let limits = self.code(Some(at)).unwrap_or("@limits");
         format!(
             "Number too large for the memory limit of `main`: `{code}` needs at least {}; \
@@ -17873,12 +17923,26 @@ impl<'t, 'a> Ck<'t, 'a> {
         )
     }
 
+    /// The span of the declaration of the unit's `main`, after its annotations: where the
+    /// repair of the default memory limit writes `@limits(memory: m)`. O(top-level statements).
+    fn main_decl(&self) -> Option<Span> {
+        self.unit.iter().find_map(|s| {
+            let decl = match &s.kind {
+                StmtKind::Annotated { decl, .. } => decl.bare(),
+                _ => s,
+            };
+            matches!(&decl.kind, StmtKind::Function(f) if f.main.is_some()).then_some(decl.span)
+        })
+    }
+
     /// The repair of a number of at least `bits` bits past the memory limit of `main`, its
     /// `@limits` at `at` and the argument of `memory:` at `arg`: the limit raised to the least
     /// power of two that holds the size, `2^j` bytes before step L12 gives
     /// `with units("MiB")` (DESIGN.md sec:diagnostics, row "Number too large for any memory of
     /// the target").
-    fn main_limit_fix(&self, bits: &Num, at: Span, arg: Span) -> Option<Rewrite> {
+    /// Without a declared limit, the repair writes `@limits(memory: 2^j)` on a line of its own
+    /// before `main`.
+    fn main_limit_fix(&self, bits: &Num, m: MainMemory) -> Option<Rewrite> {
         // The `expect` holds: the three callers pass a size the walk kept within the address
         // space, at most 2^67 bits (a power, product or build past it is rejected where it is
         // found and never enters `wide_powers`, `wide_products` or `wide_builds`), so it
@@ -17893,6 +17957,24 @@ impl<'t, 'a> Ck<'t, 'a> {
             .expect("below 2^64 bytes");
         let j = need.ceil_log2();
         let with = format!("2^{j}");
+        let holds = bytes_text_of(&Num::pow2(&Num::from(i64::from(j))));
+        let (at, arg) = match m {
+            MainMemory::Declared(_, at, arg) => (at, arg),
+            MainMemory::Default(main) => {
+                let line = format!("@limits(memory: {with})");
+                return Rewrite::new(
+                    &[(
+                        Span {
+                            start: main.start,
+                            end: main.start,
+                        },
+                        &format_args!("{line}\n"),
+                    )],
+                    &format_args!("lets the run hold {holds}"),
+                    &line,
+                );
+            }
+        };
         let alone = match self.code(Some(at)) {
             Some(code) => format!(
                 "{}{with}{}",
@@ -17901,7 +17983,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             ),
             None => format!("@limits(memory: {with})"),
         };
-        let holds = bytes_text_of(&Num::pow2(&Num::from(i64::from(j))));
         Rewrite::new(
             &[(arg, &with)],
             &format_args!("lets the run hold {holds}"),
@@ -17909,15 +17990,24 @@ impl<'t, 'a> Ck<'t, 'a> {
         )
     }
 
-    /// The note of the memory limit of `main`, `b` bytes, written at `at`.
-    fn main_limit_note(b: u128, at: Span) -> Note {
-        Note {
-            span: at,
-            text: format!(
-                "the memory limit of `main` lets the run hold {}",
-                bytes_text_of(&Num::from(i128::try_from(b).expect("at most 2^64")))
-            )
-            .into(),
+    /// The note of the memory limit of `main`: `b` bytes written at `at`, or the default at
+    /// `main`'s declaration.
+    fn main_limit_note(&self, m: MainMemory) -> Note {
+        match m {
+            MainMemory::Declared(b, at, _) => Note {
+                span: at,
+                text: format!(
+                    "the memory limit of `main` lets the run hold {}",
+                    bytes_text_of(&Num::from(i128::try_from(b).expect("at most 2^64")))
+                )
+                .into(),
+            },
+            MainMemory::Default(main) => Note {
+                span: main,
+                text: "`main` declares no memory limit, so an operation the text proves to \
+                       build 1 GiB or more is rejected; the run itself is not limited"
+                    .into(),
+            },
         }
     }
 
@@ -17925,7 +18015,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the memory limit of `main` in bytes, its `@limits` and the argument of `memory:`, than
     /// that limit: the message, the derivation of the least size, and the repairs, a smaller
     /// exponent and, for the limit, a larger limit.
-    fn power_too_large(&mut self, p: &WidePower<'a>, main_limit: Option<(u128, Span, Span)>) {
+    fn power_too_large(&mut self, p: &WidePower<'a>, main_limit: Option<MainMemory>) {
         let WidePower {
             a,
             e,
@@ -17941,12 +18031,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             proof: _,
         } = *p;
         let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
-        let room_bits = main_limit.map_or(space_bits, |(b, ..)| b * 8);
+        let room_bits = main_limit.map_or(space_bits, MainMemory::room_bits);
         let power = self.code(Some(span)).unwrap_or("this power");
         let base_code = self.code(Some(a.span)).unwrap_or("the base");
         let exponent_code = self.code(Some(e.span)).unwrap_or("the exponent");
         let message = match main_limit {
-            Some((_, at, _)) => self.main_limit_headline(power, bits, at),
+            Some(m) => self.main_limit_headline(power, bits, m),
             None => self.too_large_headline(power, bits),
         };
         // Where each operand comes from, the literal or the declaration, and its least size.
@@ -18013,17 +18103,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             )
             .into(),
         });
-        if let Some((b, at, _)) = main_limit {
-            notes.push(Self::main_limit_note(b, at));
+        if let Some(m) = main_limit {
+            notes.push(self.main_limit_note(m));
         }
         notes.push(Note {
             span,
             text: match main_limit {
-                Some(_) => {
+                Some(MainMemory::Declared(..)) => {
                     "or read the exponent from the input: the run then stops at the \
                             memory limit of `main` if the result passes it"
                 }
-                None => {
+                _ => {
                     "or read the exponent from the input: the run then stops if no memory \
                          holds the result"
                 }
@@ -18066,8 +18156,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 &alone,
             ));
         }
-        if let Some((_, at, arg)) = main_limit {
-            fixes.push(self.main_limit_fix(bits, at, arg));
+        if let Some(m) = main_limit {
+            fixes.push(self.main_limit_fix(bits, m));
         }
         self.reject(
             Some(Row::NumberOverAddressSpace),
@@ -18189,7 +18279,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `main_limit`, the memory limit of `main` in bytes, its `@limits` and the argument of
     /// `memory:`, than that limit: the message, the derivation of the least size, and, for the
     /// limit, a larger limit.
-    fn product_too_large(&mut self, p: &WideProduct<'a>, main_limit: Option<(u128, Span, Span)>) {
+    fn product_too_large(&mut self, p: &WideProduct<'a>, main_limit: Option<MainMemory>) {
         let WideProduct {
             op,
             a,
@@ -18204,7 +18294,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             _ => "this quotient",
         });
         let message = match main_limit {
-            Some((_, at, _)) => self.main_limit_headline(code, &r.size(), at),
+            Some(m) => self.main_limit_headline(code, &r.size(), m),
             None => self.too_large_headline(code, &r.size()),
         };
         // Where each operand comes from, the literal, the power or the declaration, and its
@@ -18240,17 +18330,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             span,
             text: format!("so `{code}` has {}: {factors}", built_text(r)).into(),
         });
-        if let Some((b, at, _)) = main_limit {
-            notes.push(Self::main_limit_note(b, at));
+        if let Some(m) = main_limit {
+            notes.push(self.main_limit_note(m));
         }
         notes.push(Note {
             span,
             text: match main_limit {
-                Some(_) => {
+                Some(MainMemory::Declared(..)) => {
                     "or read a factor from the input: the run then stops at the memory limit \
                      of `main` if the result passes it"
                 }
-                None => {
+                _ => {
                     "or read a factor from the input: the run then stops if no memory holds \
                      the result"
                 }
@@ -18263,7 +18353,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             text: format!("or delete `{code}` if its result is not used").into(),
         });
         let fixes = match main_limit {
-            Some((_, at, arg)) => vec![self.main_limit_fix(&r.size(), at, arg)],
+            Some(m) => vec![self.main_limit_fix(&r.size(), m)],
             None => Vec::new(),
         };
         self.reject(
@@ -18372,10 +18462,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Rejects the operation `w`, which builds more than the target's address space, or, with
     /// `main_limit`, the memory limit of `main` in bytes, its `@limits` and the argument of
     /// `memory:`, than that limit: the message, why the operation builds, and the repairs.
-    fn build_too_large(&mut self, w: &WideBuild, main_limit: Option<(u128, Span, Span)>) {
+    fn build_too_large(&mut self, w: &WideBuild, main_limit: Option<MainMemory>) {
         let code = self.code(Some(w.span)).unwrap_or("this operation");
         let message = match main_limit {
-            Some((_, at, _)) => self.main_limit_headline(code, &w.bits, at),
+            Some(m) => self.main_limit_headline(code, &w.bits, m),
             None => self.too_large_headline(code, &w.bits),
         };
         // Why the operation builds, in the words of DESIGN's list.
@@ -18412,17 +18502,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             )
             .into(),
         });
-        if let Some((b, at, _)) = main_limit {
-            notes.push(Self::main_limit_note(b, at));
+        if let Some(m) = main_limit {
+            notes.push(self.main_limit_note(m));
         }
         notes.push(Note {
             span: w.span,
             text: match main_limit {
-                Some(_) => {
+                Some(MainMemory::Declared(..)) => {
                     "or read an operand from the input: the run then stops at the memory limit \
                      of `main` if the result passes it"
                 }
-                None => {
+                _ => {
                     "or read an operand from the input: the run then stops if no memory holds \
                      what it writes out"
                 }
@@ -18435,7 +18525,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             text: format!("or delete `{code}` if its result is not used").into(),
         });
         let fixes = match main_limit {
-            Some((_, at, arg)) => vec![self.main_limit_fix(&w.bits, at, arg)],
+            Some(m) => vec![self.main_limit_fix(&w.bits, m)],
             None => Vec::new(),
         };
         self.reject(

@@ -93,7 +93,7 @@ use super::super::{Lits, Parts, Row, Type};
 use super::shared::{
     ByType, ChainHint, ChainPlan, Digests, TwoSat, link_pairs, list_atoms, list_step,
 };
-use crate::digest::Digest;
+use crate::digest::{Digest, TiedInterner, TiedMap};
 use crate::value::Value;
 
 /// A set of integers: `vals` when not `cof`, else the integers less `vals`.
@@ -119,6 +119,26 @@ impl PartialEq for Ints {
 }
 
 impl Eq for Ints {}
+
+/// By `cof`, the hash, then the values, so that a [`crate::digest::TiedMap`] can keep sets of
+/// one hash in order (PERF-typeset-tied-digest). It agrees with `==`: `hash` is a function of
+/// `cof` and the values ([`Ints::new`]), so sets equal by `==` compare `Equal`, and sets that
+/// compare `Equal` have equal `cof` and values, so are equal by `==`.
+impl Ord for Ints {
+    fn cmp(&self, o: &Ints) -> std::cmp::Ordering {
+        let head = (self.cof, self.hash).cmp(&(o.cof, o.hash));
+        if head.is_ne() || Rc::ptr_eq(&self.vals, &o.vals) {
+            return head;
+        }
+        self.vals.cmp(&o.vals)
+    }
+}
+
+impl PartialOrd for Ints {
+    fn partial_cmp(&self, o: &Ints) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
 
 impl Hash for Ints {
     #[inline]
@@ -741,7 +761,9 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
      -> Option<ChainPlan> {
         let mut hints: Vec<(Row, ChainHint)> = Vec::new();
         let mut roots: Vec<Root> = Vec::new();
-        let mut p1_cache: HashMap<Ints, Option<Option<Ints>>, Digests> = HashMap::default();
+        // Sets of big integers can tie in `Hash for Value` (residues mod 2^61 - 1), so the maps
+        // keyed by `Ints` keep the sets of one hash in order (`TiedMap`, PERF-typeset-tied-digest).
+        let mut p1_cache: TiedMap<Ints, Option<Option<Ints>>> = TiedMap::new();
         for (k, &(ref h0, s)) in neg.iter().enumerate() {
             let row = refused[k].clone();
             let hs = nodes[s].ht;
@@ -868,8 +890,11 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                     let mut drop_mask = vec![false; clauses_work.len()];
                     let mut merged_new: Vec<Vec<(usize, Ints)>> = Vec::new();
                     {
-                        let mut groups: HashMap<(usize, &Ints, usize), Vec<usize>, Digests> =
-                            HashMap::default();
+                        // The groups in the order first met (`TiedInterner`): their keys can tie
+                        // (PERF-typeset-tied-digest), and the order is the same in every run.
+                        let mut group_of: TiedInterner<(usize, &Ints, usize)> =
+                            TiedInterner::default();
+                        let mut members: Vec<Vec<usize>> = Vec::new();
                         for (idx, atoms) in clauses_work.iter().enumerate() {
                             if atoms.len() == 2 {
                                 // Invariant (I): `more[i]` is `Some` only while clause `i` holds
@@ -891,13 +916,15 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                                 } else {
                                     (&atoms[1], atoms[0].0)
                                 };
-                                groups
-                                    .entry((fixed.0, &fixed.1, other))
-                                    .or_default()
-                                    .push(idx);
+                                let g = group_of.intern((fixed.0, &fixed.1, other));
+                                if g == members.len() {
+                                    members.push(Vec::new());
+                                }
+                                members[g].push(idx);
                             }
                         }
-                        for ((jf, af, jo), idxs) in groups {
+                        let keys = group_of.into_values();
+                        for (&(jf, af, jo), idxs) in keys.iter().zip(members) {
                             if idxs.len() < 2 {
                                 continue;
                             }
@@ -1037,7 +1064,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         let wide = strengthened;
 
         // The atoms, one variable each, and their forest at each place.
-        let mut ids: Interner<(usize, Ints), Digests> = Interner::default();
+        let mut ids: TiedInterner<(usize, Ints)> = TiedInterner::default();
         let mut clause: Vec<[usize; 2]> = Vec::with_capacity(clauses_work.len());
         for atoms in &clauses_work {
             let mut two = [0; 2];
@@ -1211,7 +1238,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         let next_sep = if nodes[cur].carrier
             && let Some(c) = &h_car
         {
-            let mut sep_cache: HashMap<Ints, bool, Digests> = HashMap::default();
+            let mut sep_cache: TiedMap<Ints, bool> = TiedMap::new();
             let mut dp = vec![usize::MAX; nodes.len()];
             for v in 0..nodes.len() {
                 if let Some(nx) = nodes[v].next {
@@ -1548,7 +1575,8 @@ struct Summary {
 
 /// Ids for equal sets: the id of each item, and one copy of each distinct set.
 fn intern<'a>(items: impl Iterator<Item = &'a Ints>) -> (Vec<u32>, Vec<Ints>) {
-    let mut sets: Interner<&Ints, Digests> = Interner::default();
+    // Sets of big integers can tie in `Hash for Value` (PERF-typeset-tied-digest).
+    let mut sets: TiedInterner<&Ints> = TiedInterner::default();
     let ids = items
         .map(|x| to_u32_below(sets.intern(x), NONE, "distinct sets"))
         .collect();
@@ -1816,7 +1844,10 @@ fn cells_windows(
         .copied()
         .filter(|&v| !nodes[v].head.cof)
         .collect();
-    let mut vid: Interner<&Value, Digests> = Interner::default();
+    // `Hash for Value` writes a big integer as its residues mod 2^61 - 1 (value.rs), so
+    // `2^64 + k (2^61 - 1)` tie for every `k`: the values of one hash are kept in order
+    // (`TiedInterner`, PERF-typeset-tied-digest), `O(log b)` comparisons for `b` tied values.
+    let mut vid: TiedInterner<&Value> = TiedInterner::default();
     let mut pvt: Vec<Option<Vec<usize>>> = vec![None; ptypes.len()];
     for &t in &ta[2..=l0] {
         let t = t as usize;

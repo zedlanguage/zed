@@ -100,7 +100,16 @@ pub struct TiedMap<K, V, H = ByHash> {
     slots: DigestMap<u64, Slot<K, V>>,
     len: usize,
     hash: std::marker::PhantomData<H>,
+    /// Test hook: the bits of each slot's hash the map keys by. A unit test sets it to 0, so that
+    /// every key shares one slot and the arms for a slot of two keys or more (`Slot::Many`) run
+    /// in the normal build, where two keys of one hash are rare.
+    #[cfg(test)]
+    mask: u64,
 }
+
+/// A set of keys whose hashes a program can make tie: a [`TiedMap`] to `()`, with the methods
+/// of a `HashSet`.
+pub struct TiedSet<K, H = ByHash>(TiedMap<K, (), H>);
 
 /// The hash a [`TiedMap`] files a key by: equal for keys equal by `Ord`.
 pub trait KeyHash<K> {
@@ -126,11 +135,67 @@ enum Slot<K, V> {
 
 impl<K, V, H> Default for TiedMap<K, V, H> {
     fn default() -> Self {
+        TiedMap::new()
+    }
+}
+
+impl<K, V, H> TiedMap<K, V, H> {
+    /// An empty map; `const`, for a thread-local's initializer.
+    pub const fn new() -> Self {
         TiedMap {
-            slots: DigestMap::default(),
+            slots: HashMap::with_hasher(BuildHasherDefault::new()),
             len: 0,
             hash: std::marker::PhantomData,
+            #[cfg(test)]
+            mask: !0,
         }
+    }
+
+    /// A map that keys by the bits `mask` of each slot's hash (test hook, see `mask`).
+    #[cfg(test)]
+    pub(crate) const fn with_mask(mask: u64) -> Self {
+        let mut m = TiedMap::new();
+        m.mask = mask;
+        m
+    }
+
+    /// The number of slots whose keys tie (`Slot::Many`), for tests.
+    #[cfg(test)]
+    pub(crate) fn tied_slots(&self) -> usize {
+        let many = |s: &&Slot<K, V>| matches!(s, Slot::Many(_));
+        self.slots.values().filter(many).count()
+    }
+
+    /// The number of slots, for tests: none once the last key is out.
+    #[cfg(test)]
+    pub(crate) fn slot_count(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Takes every key out.
+    pub fn clear(&mut self) {
+        self.slots.clear();
+        self.len = 0;
+    }
+}
+
+impl<K: Ord, V, H: KeyHash<K>> TiedMap<K, V, H> {
+    /// Keeps the keys for which `keep` holds, given each key and its value.
+    pub fn retain(&mut self, mut keep: impl FnMut(&K, &mut V) -> bool) {
+        let mut len = 0;
+        self.slots.retain(|_, slot| match slot {
+            Slot::One(k, v) => {
+                let kept = keep(k, v);
+                len += usize::from(kept);
+                kept
+            }
+            Slot::Many(m) => {
+                m.retain(|k, v| keep(k, v));
+                len += m.len();
+                !m.is_empty()
+            }
+        });
+        self.len = len;
     }
 }
 
@@ -140,8 +205,16 @@ impl<K: Ord, V, H: KeyHash<K>> TiedMap<K, V, H> {
     /// sequence of an unseeded table (the flooding of [`DigestMap`]'s rule, KERNEL-bytype-
     /// flooding); with the seed, distinct hashes spread, and equal ones meet in one slot, where
     /// their order tells them apart.
-    fn slot(k: &K) -> u64 {
-        text_hash(&H::hash(k))
+    pub(crate) fn slot(&self, k: &K) -> u64 {
+        let h = text_hash(&H::hash(k));
+        #[cfg(test)]
+        let h = h & self.mask;
+        h
+    }
+
+    /// The place of `k`, filled or not, to fill with [`TiedEntry`]'s methods.
+    pub fn entry(&mut self, k: K) -> TiedEntry<'_, K, V, H> {
+        TiedEntry { map: self, key: k }
     }
 
     /// The number of keys.
@@ -156,7 +229,7 @@ impl<K: Ord, V, H: KeyHash<K>> TiedMap<K, V, H> {
 
     /// The value of `k`.
     pub fn get(&self, k: &K) -> Option<&V> {
-        match self.slots.get(&Self::slot(k))? {
+        match self.slots.get(&self.slot(k))? {
             Slot::One(key, v) => (key == k).then_some(v),
             Slot::Many(m) => m.get(k),
         }
@@ -164,7 +237,8 @@ impl<K: Ord, V, H: KeyHash<K>> TiedMap<K, V, H> {
 
     /// The value of `k`, to change.
     pub fn get_mut(&mut self, k: &K) -> Option<&mut V> {
-        match self.slots.get_mut(&Self::slot(k))? {
+        let h = self.slot(k);
+        match self.slots.get_mut(&h)? {
             Slot::One(key, v) => (&*key == k).then_some(v),
             Slot::Many(m) => m.get_mut(k),
         }
@@ -193,7 +267,8 @@ impl<K: Ord, V, H: KeyHash<K>> TiedMap<K, V, H> {
     /// The value of `k`, made by `make` when `k` is not a key; `make` runs at most once.
     fn at(&mut self, k: K, make: &mut dyn FnMut() -> V) -> &mut V {
         use std::collections::hash_map::Entry;
-        let slot = match self.slots.entry(Self::slot(&k)) {
+        let h = self.slot(&k);
+        let slot = match self.slots.entry(h) {
             Entry::Vacant(e) => {
                 self.len += 1;
                 return match e.insert(Slot::One(k, make())) {
@@ -230,7 +305,7 @@ impl<K: Ord, V, H: KeyHash<K>> TiedMap<K, V, H> {
 
     /// Takes `k` out, giving back the key that was stored and its value.
     pub fn remove_entry(&mut self, k: &K) -> Option<(K, V)> {
-        let h = Self::slot(k);
+        let h = self.slot(k);
         let slot = self.slots.get_mut(&h)?;
         let kv = match slot {
             Slot::One(key, _) if &*key != k => return None,
@@ -272,6 +347,202 @@ impl<K: Ord, V, H: KeyHash<K>> std::ops::Index<&K> for TiedMap<K, V, H> {
     type Output = V;
     fn index(&self, k: &K) -> &V {
         self.get(k).expect("a key of the map")
+    }
+}
+
+impl<K: Ord, V, H: KeyHash<K>> Extend<(K, V)> for TiedMap<K, V, H> {
+    fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, items: I) {
+        for (k, v) in items {
+            self.insert(k, v);
+        }
+    }
+}
+
+impl<K: Ord, V, H: KeyHash<K>> FromIterator<(K, V)> for TiedMap<K, V, H> {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(items: I) -> Self {
+        let mut m = TiedMap::new();
+        m.extend(items);
+        m
+    }
+}
+
+impl<K, H> Default for TiedSet<K, H> {
+    fn default() -> Self {
+        TiedSet::new()
+    }
+}
+
+impl<K, H> TiedSet<K, H> {
+    /// An empty set; `const`, for a thread-local's initializer.
+    pub const fn new() -> Self {
+        TiedSet(TiedMap::new())
+    }
+
+    /// The number of keys.
+    pub fn len(&self) -> usize {
+        self.0.len
+    }
+
+    /// Whether the set holds no key.
+    pub fn is_empty(&self) -> bool {
+        self.0.len == 0
+    }
+}
+
+/// Ids `0, 1, ...` for keys whose hashes a program can make tie, in the order the keys are first
+/// met, so the ids are the same in every run though the [`TiedMap`] behind them is seeded. It is
+/// `zed_collections::intern::Interner` with the keys of one hash kept in their order: a key tied
+/// with `b` others costs `O(log b)` comparisons, not `O(b)` (PERF-typeset-tied-digest).
+pub struct TiedInterner<K, H = ByHash> {
+    ids: TiedMap<K, usize, H>,
+    keys: Vec<K>,
+}
+
+impl<K, H> Default for TiedInterner<K, H> {
+    fn default() -> Self {
+        TiedInterner {
+            ids: TiedMap::new(),
+            keys: Vec::new(),
+        }
+    }
+}
+
+impl<K: Ord + Clone, H: KeyHash<K>> TiedInterner<K, H> {
+    /// The id of `k`, the next unused one when `k` is met for the first time.
+    pub fn intern(&mut self, k: K) -> usize {
+        // Two searches for a key met the first time, one for every later meeting: one search
+        // through `get_or_insert_with` would need a clone of `k` for `keys` before it knows
+        // whether `k` is new, and a clone of a big integer or a type allocates on every hit.
+        if let Some(&i) = self.ids.get(&k) {
+            return i;
+        }
+        let i = self.keys.len();
+        self.keys.push(k.clone());
+        self.ids.insert(k, i);
+        i
+    }
+
+    /// The id of `k`, if it has one.
+    pub fn id(&self, k: &K) -> Option<usize> {
+        self.ids.get(k).copied()
+    }
+}
+
+impl<K, H> TiedInterner<K, H> {
+    /// The number of ids given.
+    pub fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    /// Whether no id was given.
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+
+    /// The keys, by id.
+    pub fn values(&self) -> &[K] {
+        &self.keys
+    }
+
+    /// The keys, by id, taken out.
+    pub fn into_values(self) -> Vec<K> {
+        self.keys
+    }
+}
+
+/// The keys and values, taken out, in the order of [`TiedMap::iter`].
+impl<K, V, H> IntoIterator for TiedMap<K, V, H> {
+    type Item = (K, V);
+    type IntoIter = TiedIntoIter<K, V>;
+    fn into_iter(self) -> TiedIntoIter<K, V> {
+        TiedIntoIter {
+            slots: self.slots.into_values(),
+            tied: None,
+        }
+    }
+}
+
+/// The keys and values of a [`TiedMap`], taken out.
+pub struct TiedIntoIter<K, V> {
+    slots: std::collections::hash_map::IntoValues<u64, Slot<K, V>>,
+    /// The rest of the slot of tied keys being taken out.
+    tied: Option<std::collections::btree_map::IntoIter<K, V>>,
+}
+
+impl<K, V> Iterator for TiedIntoIter<K, V> {
+    type Item = (K, V);
+    fn next(&mut self) -> Option<(K, V)> {
+        loop {
+            if let Some(kv) = self.tied.as_mut().and_then(Iterator::next) {
+                return Some(kv);
+            }
+            match self.slots.next()? {
+                Slot::One(k, v) => return Some((k, v)),
+                Slot::Many(m) => self.tied = Some(m.into_iter()),
+            }
+        }
+    }
+}
+
+impl<K: Ord, H: KeyHash<K>> TiedSet<K, H> {
+    /// Puts `k` in, giving whether it was not there.
+    pub fn insert(&mut self, k: K) -> bool {
+        self.0.insert(k, ()).is_none()
+    }
+
+    /// Whether `k` is in the set.
+    pub fn contains(&self, k: &K) -> bool {
+        self.0.contains_key(k)
+    }
+
+    /// Takes `k` out, giving whether it was there.
+    pub fn remove(&mut self, k: &K) -> bool {
+        self.0.remove(k).is_some()
+    }
+
+    /// The keys, in an order that changes from run to run ([`TiedMap::iter`]).
+    pub fn iter(&self) -> impl Iterator<Item = &K> {
+        self.0.iter().map(|(k, _)| k)
+    }
+}
+
+impl<K: Ord, H: KeyHash<K>> Extend<K> for TiedSet<K, H> {
+    fn extend<I: IntoIterator<Item = K>>(&mut self, items: I) {
+        self.0.extend(items.into_iter().map(|k| (k, ())));
+    }
+}
+
+impl<K: Ord, H: KeyHash<K>> FromIterator<K> for TiedSet<K, H> {
+    fn from_iter<I: IntoIterator<Item = K>>(items: I) -> Self {
+        let mut s = TiedSet::new();
+        s.extend(items);
+        s
+    }
+}
+
+/// The place of a key in a [`TiedMap`], filled or not.
+pub struct TiedEntry<'a, K, V, H> {
+    map: &'a mut TiedMap<K, V, H>,
+    key: K,
+}
+
+impl<'a, K: Ord, V, H: KeyHash<K>> TiedEntry<'a, K, V, H> {
+    /// The key's value, put there by `f` when the key is not in the map.
+    pub fn or_insert_with(self, f: impl FnOnce() -> V) -> &'a mut V {
+        self.map.get_or_insert_with(self.key, f)
+    }
+
+    /// The key's value, `v` when the key is not in the map.
+    pub fn or_insert(self, v: V) -> &'a mut V {
+        self.or_insert_with(|| v)
+    }
+
+    /// The key's value, the default when the key is not in the map.
+    pub fn or_default(self) -> &'a mut V
+    where
+        V: Default,
+    {
+        self.or_insert_with(V::default)
     }
 }
 

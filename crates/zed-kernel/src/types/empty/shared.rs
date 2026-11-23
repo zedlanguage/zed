@@ -3,13 +3,12 @@
 //! file below all three so that no import cycle runs between the files (ZED_PORT_GAPS gap 10,
 //! test S.1f); the procedures over them stay where they were.
 
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
 
 use super::super::bdd::Part;
 use super::super::{Lits, Parts, Row, Type};
-use crate::digest::{Digest, text_hash};
+use crate::digest::{Digest, KeyHash, TiedMap, TiedSet};
 
 /// The hasher of the maps and sets keyed by types: a type hashes as its digest, made once when it
 /// is built, so a lookup reads one node of the type, where a search of a `BTreeMap` compared the
@@ -17,201 +16,45 @@ use crate::digest::{Digest, text_hash};
 /// Equal digests are told apart by `Eq`, which compares contents.
 pub(super) type Digests = BuildHasherDefault<Digest>;
 
-/// A map keyed by retained types, bucketed by their cached presentation hash.
+/// A map keyed by retained types, bucketed by their cached presentation hash: a
+/// [`TiedMap`] by [`ByName`], so one routine keeps every type-keyed map
+/// (PERF-typeset-tied-digest).
 // Complexity tradeoff: a primary fingerprint is shared by renamed copies of one form;
 // using it for table identity gave b-way collisions and repeated structural comparisons.
 // The presentation hash separates those copies in expected O(1); genuine hash collisions
 // retain one inline key or a BTreeMap, O(log b) comparisons, each checking real contents.
-pub(super) struct ByType<V> {
-    map: HashMap<u64, Tied<V>, Digests>,
-    /// Test hook: the bits of each digest the map keys by. A unit test sets it to 0, so that
-    /// every key shares one digest and the arms for a digest of two keys or more
-    /// (`Tied::Many`) run in the normal build, where two types of one digest are not found.
-    #[cfg(test)]
-    mask: u64,
-}
+pub(super) type ByType<V> = TiedMap<Type, V, ByName>;
 
-/// The keys of one digest in a [`ByType`], with their values.
-enum Tied<V> {
-    One(Type, V),
-    Many(BTreeMap<Type, V>),
-}
+/// A set of retained types, filed as a [`ByType`]. A `HashSet` by [`Digests`] compared a type
+/// with every type of its digest, `O(b)` for `b` tied types (PERF-typeset-tied-digest).
+pub(super) type TypeSet = TiedSet<Type, ByName>;
 
-impl<V> Default for ByType<V> {
-    fn default() -> Self {
-        ByType::new()
-    }
-}
+/// Files a type by its presentation digest, `name_digest`, equal for types equal under `==`
+/// (the proof at `Hash for Type`, types.rs).
+///
+/// The slot a [`TiedMap`] files it in is that digest hashed by the process's seeded text hash
+/// ([`crate::digest::text_hash`]), not the digest itself (row KERNEL-bytype-flooding).
+///
+/// Why the seed. A type can hold the program's literal values, and its digest is built by
+/// unseeded [`crate::digest::step`]s, each of which can be inverted in its argument (the
+/// module comment of `types::bdd::set` says so), so a program could choose literals whose
+/// types take digests that an unseeded table ([`Digests`]) sends to one probe sequence: each
+/// lookup would then walk all of them, `O(n)` and `O(n^2)` over a run (hash flooding; the rule
+/// at [`crate::digest::DigestMap`]: keys of a `Digest` map are never chosen by the program).
+/// With the seed the program does not know, distinct digests spread as foldhash spreads its
+/// keys. Digests a program makes equal still meet in one slot, where the map tells them apart
+/// by an ordered map, `O(log b)` comparisons for `b` keys of one digest, so equal digests cost
+/// a log factor, not a walk. A name digest is folded from the parts of the type alone
+/// (`types.rs`, `name_digest`), so equal types have equal digests and still meet in one slot.
+/// The order of the table follows the run's seed; no caller reads it: the map is only looked
+/// up, and `retain`, its one walk, keeps or drops each entry by its own key and value alone.
+/// Test: `the_key_is_the_seeded_hash_of_the_digest` checks the key; the tied families of
+/// `types::bdd::set::tests::rows_of_one_digest` make digests tie through the kernel API.
+pub(super) struct ByName;
 
-impl<V> ByType<V> {
-    pub(super) const fn new() -> Self {
-        ByType {
-            map: HashMap::with_hasher(Digests::new()),
-            #[cfg(test)]
-            mask: !0,
-        }
-    }
-
-    /// A map that keys by the bits `mask` of each digest (test hook, see `mask`).
-    #[cfg(test)]
-    const fn with_mask(mask: u64) -> Self {
-        ByType {
-            map: HashMap::with_hasher(Digests::new()),
-            mask,
-        }
-    }
-
-    /// The digest `t` is keyed by: its presentation digest hashed by the process's seeded text
-    /// hash ([`text_hash`]), not the digest itself (row KERNEL-bytype-flooding).
-    ///
-    /// Why the seed. A type can hold the program's literal values, and its digest is built by
-    /// unseeded [`crate::digest::step`]s, each of which can be inverted in its argument (the
-    /// module comment of `types::bdd::set` says so), so a program could choose literals whose
-    /// types take digests that the map's own hash ([`Digests`], also unseeded) sends to one
-    /// probe sequence of the table: each lookup would then walk all of them, `O(n)` and
-    /// `O(n^2)` over a run (hash flooding; the rule at [`crate::digest::DigestMap`]: keys of a
-    /// `Digest` map are never chosen by the program). With the seed the program does not know,
-    /// distinct digests spread as foldhash spreads its keys. Digests a program makes equal
-    /// still meet in one entry, where [`Tied::Many`] tells them apart by an ordered map,
-    /// `O(log b)` comparisons for `b` keys of one digest, so equal digests cost a log factor,
-    /// not a walk. A name digest is folded from the parts of the type alone (`types.rs`,
-    /// `name_digest`), so equal types have equal digests and still meet in one entry. The order
-    /// of the table now follows the run's seed; no caller reads it: the map is only looked up,
-    /// and `retain`, its one walk, keeps or drops each entry by its own key and value alone.
-    /// Test: `the_key_is_the_seeded_hash_of_the_digest` checks the key; no test builds a
-    /// program whose digests collide, which needs inverting the digest steps.
-    fn digest(&self, t: &Type) -> u64 {
-        let d = text_hash(&t.name_digest());
-        #[cfg(test)]
-        let d = d & self.mask;
-        d
-    }
-
-    pub(super) fn get(&self, t: &Type) -> Option<&V> {
-        match self.map.get(&self.digest(t))? {
-            Tied::One(k, v) => (k == t).then_some(v),
-            Tied::Many(m) => m.get(t),
-        }
-    }
-
-    pub(super) fn get_mut(&mut self, t: &Type) -> Option<&mut V> {
-        let d = self.digest(t);
-        match self.map.get_mut(&d)? {
-            Tied::One(k, v) => (*k == *t).then_some(v),
-            Tied::Many(m) => m.get_mut(t),
-        }
-    }
-
-    pub(super) fn contains_key(&self, t: &Type) -> bool {
-        self.get(t).is_some()
-    }
-
-    pub(super) fn insert(&mut self, t: Type, v: V) -> Option<V> {
-        let mut v = Some(v);
-        let slot = self
-            .entry(t)
-            .or_insert_with(|| v.take().expect("one value"));
-        v.map(|v| std::mem::replace(slot, v))
-    }
-
-    pub(super) fn remove(&mut self, t: &Type) -> Option<V> {
-        let d = self.digest(t);
-        let tied = self.map.get_mut(&d)?;
-        let (got, empty) = match tied {
-            Tied::One(k, _) if *k != *t => return None,
-            Tied::One(..) => (None, true),
-            Tied::Many(m) => {
-                let v = m.remove(t);
-                (v, m.is_empty())
-            }
-        };
-        if !empty {
-            return got;
-        }
-        match self.map.remove(&d) {
-            Some(Tied::One(_, v)) => Some(v),
-            _ => got,
-        }
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.map.clear();
-    }
-
-    pub(super) fn retain(&mut self, mut keep: impl FnMut(&Type, &mut V) -> bool) {
-        self.map.retain(|_, tied| match tied {
-            Tied::One(k, v) => keep(k, v),
-            Tied::Many(m) => {
-                m.retain(|k, v| keep(k, v));
-                !m.is_empty()
-            }
-        });
-    }
-
-    pub(super) fn entry(&mut self, t: Type) -> TypeEntry<'_, V> {
-        TypeEntry { map: self, key: t }
-    }
-}
-
-impl<V> std::ops::Index<&Type> for ByType<V> {
-    type Output = V;
-    fn index(&self, t: &Type) -> &V {
-        self.get(t).expect("a key of the map")
-    }
-}
-
-impl<V> Extend<(Type, V)> for ByType<V> {
-    fn extend<I: IntoIterator<Item = (Type, V)>>(&mut self, items: I) {
-        for (t, v) in items {
-            self.insert(t, v);
-        }
-    }
-}
-
-/// The place of a key in a [`ByType`], filled or not.
-pub(super) struct TypeEntry<'a, V> {
-    map: &'a mut ByType<V>,
-    key: Type,
-}
-
-impl<'a, V> TypeEntry<'a, V> {
-    pub(super) fn or_insert_with(self, f: impl FnOnce() -> V) -> &'a mut V {
-        let d = self.map.digest(&self.key);
-        let tied = match self.map.map.entry(d) {
-            Entry::Vacant(e) => {
-                let Tied::One(_, v) = e.insert(Tied::One(self.key, f())) else {
-                    unreachable!("just put in")
-                };
-                return v;
-            }
-            Entry::Occupied(e) => e.into_mut(),
-        };
-        if let Tied::One(k, _) = tied
-            && *k != self.key
-        {
-            let Tied::One(k, v) = std::mem::replace(tied, Tied::Many(BTreeMap::new())) else {
-                unreachable!("matched above")
-            };
-            let Tied::Many(m) = tied else {
-                unreachable!("just put in")
-            };
-            m.insert(k, v);
-        }
-        match tied {
-            Tied::One(_, v) => v,
-            Tied::Many(m) => m.entry(self.key).or_insert_with(f),
-        }
-    }
-
-    pub(super) fn or_insert(self, v: V) -> &'a mut V {
-        self.or_insert_with(|| v)
-    }
-
-    pub(super) fn or_default(self) -> &'a mut V
-    where
-        V: Default,
-    {
-        self.or_insert_with(V::default)
+impl KeyHash<Type> for ByName {
+    fn hash(t: &Type) -> u64 {
+        t.name_digest()
     }
 }
 
@@ -520,7 +363,7 @@ pub(super) fn follow<K, S>(
 
 #[cfg(test)]
 mod tests {
-    use super::{ByType, PathEnd, StepShape, Tied, follow, step_shape};
+    use super::{ByType, PathEnd, StepShape, follow, step_shape};
     use crate::types::{Type, Universe};
     use crate::value::Value;
     use std::collections::BTreeMap;
@@ -617,7 +460,7 @@ mod tests {
         for i in 0..600 {
             let t = Type::atom(&format!("k{i}"));
             assert_eq!(
-                m.digest(&t),
+                m.slot(&t),
                 crate::digest::text_hash(&t.name_digest()),
                 "{t}"
             );
@@ -702,11 +545,12 @@ mod tests {
         let keys: Vec<Type> = (0..600).map(|i| Type::atom(&format!("k{i}"))).collect();
         let mut by_digest: BTreeMap<u64, usize> = BTreeMap::new();
         for k in &keys {
-            *by_digest.entry(m.digest(k)).or_default() += 1;
+            *by_digest.entry(m.slot(k)).or_default() += 1;
         }
         let shared = by_digest.values().filter(|n| **n >= 2).count();
         let mut model: BTreeMap<Type, u32> = BTreeMap::new();
         let agree = |m: &ByType<u32>, model: &BTreeMap<Type, u32>| {
+            assert_eq!(m.len(), model.len(), "the count of keys");
             for k in &keys {
                 assert_eq!(m.get(k), model.get(k), "{k}");
                 assert_eq!(m.contains_key(k), model.contains_key(k), "{k}");
@@ -717,11 +561,8 @@ mod tests {
             assert_eq!(*m.entry(k.clone()).or_insert_with(|| v), v);
             model.insert(k.clone(), v);
         }
-        let tied = m
-            .map
-            .values()
-            .filter(|t| matches!(t, Tied::Many(_)))
-            .count();
+        let tied = m.tied_slots();
+        assert_eq!(m.len(), keys.len());
         assert_eq!(tied, shared, "tied digests against digests two keys share");
         // An entry of a key present keeps its value.
         for k in keys.iter().step_by(7) {
@@ -753,13 +594,14 @@ mod tests {
             assert_eq!(m.remove(k), model.remove(k), "{k}");
         }
         agree(&m, &model);
-        assert!(m.map.is_empty(), "a digest left with no key");
+        assert_eq!(m.slot_count(), 0, "a digest left with no key");
         for (i, k) in keys.iter().enumerate().take(40) {
             m.insert(k.clone(), u32::try_from(i).expect("40 keys"));
         }
         // A `retain` that keeps no key of a digest drops the digest.
         m.retain(|_, _| false);
-        assert!(m.map.is_empty(), "a digest left with no key");
+        assert_eq!(m.slot_count(), 0, "a digest left with no key");
+        assert!(m.is_empty());
         for (i, k) in keys.iter().enumerate().take(40) {
             m.insert(k.clone(), u32::try_from(i).expect("40 keys"));
         }

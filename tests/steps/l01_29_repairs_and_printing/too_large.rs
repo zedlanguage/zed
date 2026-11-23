@@ -10,8 +10,24 @@ use zedc::run::load_for;
 
 /// The program `src` built for Linux x86_64: its rendered diagnostics, or `None` when it
 /// compiles.
+///
+/// These tests are of the bound of the address space, 2^64 bytes. Since zed 21e7335 (plan row
+/// CONST-default-memory-limit) a `main` without `@limits(memory: …)` also rejects a build of
+/// 1 GiB or more, so a program here that declares no limit is given the largest one,
+/// `@limits(memory: 2^64)`, which leaves the address space as the only bound, as it was when
+/// these tests were written. It is written on `main`'s line so that every line and column the
+/// tests expect stays as it was. The default limit is tested in
+/// `l01_29_diagnostics::main_limits::without_a_memory_limit_a_build_of_1_gib_or_more_is_rejected`.
 fn built(src: &str) -> Option<String> {
     let build = Build::default().for_target("x86_64-linux");
+    let src = match src.contains("@limits") {
+        true => src.to_owned(),
+        false => src.replacen(
+            "main(m: MainArgs)",
+            "@limits(memory: 2^64) main(m: MainArgs)",
+            1,
+        ),
+    };
     load_for(src.as_bytes(), &build).err()
 }
 

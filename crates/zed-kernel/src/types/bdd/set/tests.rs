@@ -693,6 +693,122 @@ fn a_tied_map_of_rows_of_one_digest_compares_each_row_a_few_times() {
     }
 }
 
+/// A key whose comparisons are counted in `COUNTED`.
+#[derive(Clone)]
+struct Counted<T>(T);
+
+thread_local!(static COUNTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) });
+
+impl<T: Ord> Ord for Counted<T> {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        COUNTED.with(|c| c.set(c.get() + 1));
+        self.0.cmp(&o.0)
+    }
+}
+
+impl<T: Ord> PartialOrd for Counted<T> {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+
+impl<T: Ord> PartialEq for Counted<T> {
+    fn eq(&self, o: &Self) -> bool {
+        self.cmp(o).is_eq()
+    }
+}
+
+impl<T: Ord> Eq for Counted<T> {}
+
+impl<T: std::hash::Hash> std::hash::Hash for Counted<T> {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.0.hash(h)
+    }
+}
+
+/// The sets and ids that PERF-typeset-tied-digest moved from a `HashSet` by `Digest` and
+/// `zed_collections::intern::Interner` onto [`crate::digest::TiedMap`] (`types/empty.rs`
+/// `TypeSet`, `empty/escape.rs` `vid` and `intern`) compare each of `n` keys with `O(log n)`
+/// others, whether or not the keys share a hash: tuple types of the rows of one digest
+/// ([`rows_of_one_digest`]), and the big integers `2^64 + k (2^61 - 1)`, which `Hash for Value`
+/// writes as one residue mod `2^61 - 1`. The structures they replaced are run on the same keys
+/// as the red case: at n 4096 they compare a tied key with every key of its hash, at least
+/// `n (n - 1) / 2` comparisons in all. A B-tree search compares about `2 log2 b` keys on
+/// average, since it searches each node it passes linearly (`(2B - 1) ⌈log_B b⌉` in the worst
+/// case, std's `B = 6`). The set searches three times a key (inserted, then asked for and
+/// inserted again); the interner four times, since `TiedInterner::intern` searches again to
+/// insert a key met for the first time, which spares a clone of the key on every later meeting.
+/// So the bound is four searches, `8 n log2 n` = 393,216 at n 4096. Measured on a Colab VM at
+/// n 4096: 204,511 comparisons for the tied tuple types and 369,885 for the tied integers.
+#[test]
+fn tied_sets_and_ids_compare_each_key_a_few_times() {
+    use crate::digest::{Digest, TiedInterner, TiedSet};
+    use crate::value::Value;
+    use num_bigint::BigInt;
+    use std::collections::HashSet;
+    use std::hash::BuildHasherDefault;
+    use zed_collections::intern::Interner;
+    let n: usize = 4096;
+    let bound = 8 * n * n.ilog2() as usize;
+    let quadratic = n * (n - 1) / 2;
+    let count = |run: &mut dyn FnMut()| {
+        COUNTED.with(|c| c.set(0));
+        run();
+        COUNTED.with(std::cell::Cell::get)
+    };
+    let tuple = |r: &Row| Type::tuple(r.iter().cloned().collect());
+    let apart: Vec<Type> = (0..n).map(|a| Type::tuple(vec![int(a), int(a)])).collect();
+    let tied: Vec<Type> = rows_of_one_digest(n).iter().map(tuple).collect();
+    for (family, types) in [("apart", apart), ("tied", tied)] {
+        let keys: Vec<Counted<Type>> = types.into_iter().map(Counted).collect();
+        let mut set: TiedSet<Counted<Type>> = TiedSet::new();
+        let cmps = count(&mut || {
+            for k in &keys {
+                assert!(set.insert(k.clone()), "{family}: a new type");
+            }
+            for k in &keys {
+                assert!(set.contains(k) && !set.insert(k.clone()), "{family}");
+            }
+        });
+        assert_eq!(set.len(), n);
+        assert!(cmps <= bound, "{family}: {n} types, {cmps} comparisons");
+        let mut old: HashSet<Counted<Type>, BuildHasherDefault<Digest>> = HashSet::default();
+        let old_cmps = count(&mut || keys.iter().for_each(|k| _ = old.insert(k.clone())));
+        assert_eq!(old.len(), n);
+        if family == "tied" && !crate::address::SHORT {
+            assert!(old_cmps >= quadratic, "the old set: {old_cmps} comparisons");
+        }
+        for k in &keys {
+            assert!(set.remove(k) && !set.contains(k), "{family}");
+        }
+        assert!(set.is_empty(), "{family}");
+    }
+    let base = BigInt::from(1u8) << 64u32;
+    let mersenne = (BigInt::from(1u8) << 61u32) - 1u8;
+    for (family, step) in [("apart", BigInt::from(1u8)), ("tied", mersenne)] {
+        let keys: Vec<Counted<Value>> = (0..n)
+            .map(|k| Counted(Value::int(&base + &step * k)))
+            .collect();
+        let mut ids: TiedInterner<&Counted<Value>> = TiedInterner::default();
+        let cmps = count(&mut || {
+            for (i, k) in keys.iter().enumerate() {
+                assert_eq!(ids.intern(k), i, "{family}: ids in the order first met");
+            }
+            for (i, k) in keys.iter().enumerate() {
+                assert_eq!((ids.intern(k), ids.id(&k)), (i, Some(i)), "{family}");
+            }
+        });
+        assert_eq!(ids.len(), n);
+        assert!(cmps <= bound, "{family}: {n} integers, {cmps} comparisons");
+        let mut old: Interner<&Counted<Value>, BuildHasherDefault<Digest>> = Interner::default();
+        let old_cmps = count(&mut || keys.iter().for_each(|k| _ = old.intern(k)));
+        assert_eq!(old.len(), n);
+        if family == "tied" {
+            assert!(old_cmps >= quadratic, "the old ids: {old_cmps} comparisons");
+        }
+    }
+}
+
 /// The sites of PERF-row-hash-tied-digest reached through the public kernel API with `n` rows of
 /// one digest (Gemini, cross-review XR-xor-shape-rounds-4-6 round 5, R5-Q5; its probe asserted
 /// the quadratic ratios, these assert the bound the fix meets). Each was checked red on main

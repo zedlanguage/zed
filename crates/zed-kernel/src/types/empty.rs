@@ -91,7 +91,7 @@ use crate::digest::{DigestMap, DigestSet, KeyHash, TiedMap};
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
 use shared::{
-    ByType, ChainHint, ChainPlan, Digests, Literal2, PathEnd, StepShape, TwoSat, follow,
+    ByType, ChainHint, ChainPlan, Digests, Literal2, PathEnd, StepShape, TwoSat, TypeSet, follow,
     link_pairs, list_atoms, list_step, only_atoms, step_shape,
 };
 
@@ -193,8 +193,6 @@ impl Blames {
     }
 }
 
-/// A set of types, hashed by their digests.
-type TypeSet = HashSet<Type, Digests>;
 /// The reads and blame a proof resting on a fork added for the type being decided, taken out
 /// by [`Searching::take_fork`] and put back by [`Searching::restore_fork`].
 type ForkSave = (Vec<usize>, Vec<(usize, Refusal)>);
@@ -238,12 +236,12 @@ thread_local! {
         const { RefCell::new(ByType::new()) };
     /// The members of the groups whose verdicts are being decided ([`group_verdicts`]): a search
     /// decides such a member itself, where it reads the verdict of any other member.
-    static DECIDING: RefCell<TypeSet> = const { RefCell::new(TypeSet::with_hasher(Digests::new())) };
+    static DECIDING: RefCell<TypeSet> = const { RefCell::new(TypeSet::new()) };
     /// The groups ([`Type::group`]) whose own searches for emptiness are under way
     /// ([`group_emptiness`]).
     static EMPTYING: RefCell<HashSet<u64>> = RefCell::new(HashSet::new());
     /// The closure types ([`owned`]) whose own searches are under way ([`own_search`]).
-    static UNDER_WAY: RefCell<TypeSet> = const { RefCell::new(TypeSet::with_hasher(Digests::new())) };
+    static UNDER_WAY: RefCell<TypeSet> = const { RefCell::new(TypeSet::new()) };
     /// The groups ([`EMPTYING`]) and closure types ([`UNDER_WAY`]) under way that the current
     /// own search, or one inside it, met ([`own_emptiness`]). Set aside at the start of each own
     /// search and put back, with what the search added, at its end ([`own_search`],
@@ -2204,7 +2202,7 @@ struct Search {
     /// made of them.
     expanded: DigestMap<usize, usize>,
     /// Whether a value is in a type, by the class of the value ([`Search::class`]) and the type.
-    members: HashMap<(usize, Type), Option<bool>, Digests>,
+    members: TiedMap<(usize, Type), Option<bool>>,
     /// The height of each value shown whose height is known ([`Search::value_height`]).
     heights: DigestMap<usize, Option<u64>>,
     /// Per tuple part a tuple of plain values was tested against ([`makeable`]), its
@@ -4697,10 +4695,10 @@ impl zed_graph::Walk for HeightWalk<'_> {
 #[derive(Default)]
 struct Heights {
     /// The least height of a value of each type asked about ([`Heights::least_height_node`]).
-    least: HashMap<Type, u64, Digests>,
+    least: ByType<u64>,
     /// The least and greatest height of a value of each type asked about, `None` for a type
     /// shown to have no value ([`Heights::height_bounds`]).
-    bounds: HashMap<Type, Option<(u64, u64)>, Digests>,
+    bounds: ByType<Option<(u64, u64)>>,
     /// Cached least height and `(lo, hi)` bounds per shared [`super::atoms::PayloadNode::id`],
     /// so `n` prefix unions sharing persistent payload trees are bounded in `O(n log n)`.
     payload_least: DigestMap<u64, u64>,
@@ -5186,23 +5184,21 @@ impl Heights {
     // listing each clause's tuple types apart would cost the square of the blocks.
     fn part_heights(&mut self, len: usize, f: &Part<Row>) -> Option<Vec<(u64, u64)>> {
         let top = vec![(0, u64::MAX); len];
-        let meet = |m: &mut Vec<(u64, u64)>,
-                    row: &Row,
-                    bounds: &HashMap<Type, Option<(u64, u64)>, Digests>|
-         -> bool {
-            for (j, c) in row.iter().enumerate() {
-                match bounds[c] {
-                    Some((lo, hi)) => {
-                        m[j] = (m[j].0.max(lo), m[j].1.min(hi));
-                        if m[j].0 > m[j].1 {
-                            return false;
+        let meet =
+            |m: &mut Vec<(u64, u64)>, row: &Row, bounds: &ByType<Option<(u64, u64)>>| -> bool {
+                for (j, c) in row.iter().enumerate() {
+                    match bounds[c] {
+                        Some((lo, hi)) => {
+                            m[j] = (m[j].0.max(lo), m[j].1.min(hi));
+                            if m[j].0 > m[j].1 {
+                                return false;
+                            }
                         }
+                        None => return false,
                     }
-                    None => return false,
                 }
-            }
-            true
-        };
+                true
+            };
         let mut hull: Option<Vec<(u64, u64)>> = None;
         let mut join = |v: &[(u64, u64)]| match &mut hull {
             None => hull = Some(v.to_vec()),
@@ -9227,8 +9223,7 @@ impl<'m> Searching<'m> {
         for car in &carriers {
             node_of.insert(car.clone(), 0);
         }
-        let mut canon_node: HashMap<(bool, Type, Option<Type>, usize), usize, Digests> =
-            HashMap::default();
+        let mut canon_node: TiedMap<(bool, Type, Option<Type>, usize), usize> = TiedMap::new();
 
         let mut walk = |start: &Type, nodes: &mut Vec<ChainNode>| -> Option<usize> {
             // The path from `start` to a type with a node or a carrier; a cycle of steps that
@@ -9432,8 +9427,7 @@ impl<'m> Searching<'m> {
         let mut pos_group_of: [ByType<usize>; 2] = [ByType::new(), ByType::new()];
         let mut neg_groups: Vec<ChainGroup> = Vec::new();
         let mut active_neg: Vec<usize> = Vec::new();
-        let mut neg_group_of: HashMap<(bool, Type, Option<Type>), usize, Digests> =
-            HashMap::default();
+        let mut neg_group_of: TiedMap<(bool, Type, Option<Type>), usize> = TiedMap::new();
 
         let activate_pos = |u: usize,
                             target_step: usize,
@@ -9479,52 +9473,51 @@ impl<'m> Searching<'m> {
             }
         };
 
-        let activate_neg =
-            |v: usize,
-             target_step: usize,
-             nodes: &[ChainNode],
-             neg_seen_u: &mut [usize],
-             neg_depth1: &mut [Vec<usize>],
-             neg_group_of: &mut HashMap<(bool, Type, Option<Type>), usize, Digests>,
-             neg_groups: &mut Vec<ChainGroup>,
-             active_neg: &mut Vec<usize>,
-             neg_jumps_at: &mut [Vec<(usize, usize)>]| {
-                if neg_seen_u[v] == target_step {
-                    return;
-                }
-                neg_seen_u[v] = target_step;
-                if nodes[v].depth == 1 {
-                    neg_depth1[target_step].push(v);
-                } else {
-                    let key = (
-                        nodes[v].has_stop,
-                        nodes[v].head.clone(),
-                        nodes[v].emit.clone(),
-                    );
-                    let g_idx = *neg_group_of.entry(key).or_insert_with(|| {
-                        let id = neg_groups.len();
-                        neg_groups.push(ChainGroup {
-                            has_stop: nodes[v].has_stop,
-                            head: nodes[v].head.clone(),
-                            emit: nodes[v].emit.clone(),
-                            active: 0,
-                            listed: false,
-                            jumping_next: 0,
-                            jumping_stop_next: false,
-                            jump_target: None,
-                            multi_target: false,
-                        });
-                        id
+        let activate_neg = |v: usize,
+                            target_step: usize,
+                            nodes: &[ChainNode],
+                            neg_seen_u: &mut [usize],
+                            neg_depth1: &mut [Vec<usize>],
+                            neg_group_of: &mut TiedMap<(bool, Type, Option<Type>), usize>,
+                            neg_groups: &mut Vec<ChainGroup>,
+                            active_neg: &mut Vec<usize>,
+                            neg_jumps_at: &mut [Vec<(usize, usize)>]| {
+            if neg_seen_u[v] == target_step {
+                return;
+            }
+            neg_seen_u[v] = target_step;
+            if nodes[v].depth == 1 {
+                neg_depth1[target_step].push(v);
+            } else {
+                let key = (
+                    nodes[v].has_stop,
+                    nodes[v].head.clone(),
+                    nodes[v].emit.clone(),
+                );
+                let g_idx = *neg_group_of.entry(key).or_insert_with(|| {
+                    let id = neg_groups.len();
+                    neg_groups.push(ChainGroup {
+                        has_stop: nodes[v].has_stop,
+                        head: nodes[v].head.clone(),
+                        emit: nodes[v].emit.clone(),
+                        active: 0,
+                        listed: false,
+                        jumping_next: 0,
+                        jumping_stop_next: false,
+                        jump_target: None,
+                        multi_target: false,
                     });
-                    if !neg_groups[g_idx].listed {
-                        neg_groups[g_idx].listed = true;
-                        active_neg.push(g_idx);
-                    }
-                    neg_groups[g_idx].active += 1;
-                    neg_jumps_at[target_step + nodes[v].run]
-                        .push((g_idx, nodes[v].jump.expect("depth >= 2 has jump")));
+                    id
+                });
+                if !neg_groups[g_idx].listed {
+                    neg_groups[g_idx].listed = true;
+                    active_neg.push(g_idx);
                 }
-            };
+                neg_groups[g_idx].active += 1;
+                neg_jumps_at[target_step + nodes[v].run]
+                    .push((g_idx, nodes[v].jump.expect("depth >= 2 has jump")));
+            }
+        };
 
         for (_, idx) in &pos_rows {
             if let Some(u) = *idx {
