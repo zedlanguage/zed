@@ -452,7 +452,7 @@ fn a_part_held_twice_at_each_level_gives_a_message_of_linear_length() {
             &sets,
         ),
     ] {
-        let units: BTreeMap<usize, Resolved> = [50, scaling::FACTOR * 50]
+        let units: BTreeMap<usize, Resolved> = [800, scaling::FACTOR * 800]
             .into_iter()
             .map(|n| (n, Resolved::new(&make(n))))
             .collect();
@@ -464,9 +464,9 @@ fn a_part_held_twice_at_each_level_gives_a_message_of_linear_length() {
                 .map(|e| e.message.len() + e.menu.len())
                 .sum()
         };
-        let (small, large) = (bytes(50), bytes(scaling::FACTOR * 50));
+        let (small, large) = (bytes(800), bytes(scaling::FACTOR * 800));
         scaling::hold_linear(what, "message bytes", small as u64, large as u64);
-        scaling::check_order(what, 50, 1, |n| {
+        scaling::check_order(what, 800, 1, |n| {
             bytes(n);
         });
     }

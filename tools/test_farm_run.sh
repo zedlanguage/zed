@@ -142,6 +142,16 @@ done <"$pieces"
 if [ -n "${STUB_LOWER_LOAD:-}" ] && [ "$jobs" != 1 ]; then
   (sleep 2 && echo '0.10 0.10 0.10 1/100 1' >"$STUB_LOWER_LOAD") >/dev/null 2>&1 &
 fi
+# A benchmark run's `bench` lines, as run_tests.sh prints them after its summary: `instr=` when
+# the run counted instructions, `work=` with STUB_BENCH_WORK, as a run in processor time says.
+if [ -n "$bench" ]; then
+  echo "bench lines ($d/bench.log):"
+  key=instr
+  [ -z "${STUB_BENCH_WORK:-}" ] || key=work
+  while read -r name rest; do
+    echo "bench $name n=20 ns=1/8 $key=100/800 bytes=10/80 ratio=8.00"
+  done <"$pieces"
+fi
 echo "pieces: $n, failed: $f"
 [ "$f" = 0 ]
 STUB
@@ -195,6 +205,8 @@ mkdir -p "$out/src" "$out/out" || exit 2
 ( cd "$wt" && git ls-files -z -co --exclude-standard | tar --null -T - -cf - ) | tar xf - -C "$out/src" || exit 2
 [ "${FAKE_SETUP_FULL_FAIL:-}" != 1 ] ||
   echo "run.sh: the setup of the full tests' tools failed (setup.log)" >"$out/out/setup-full.log"
+[ "${FAKE_ICOUNT_FAIL:-}" != 1 ] ||
+  echo "run.sh: building zed_icount failed (setup.log); benchmarks measure processor time" >"$out/out/icount.log"
 # Each line in order, as run.sh runs them: out/<k>.log and a line of summary.tsv each (a share's
 # job has one line, a --commands job one per command).
 k=0 all=0
@@ -359,7 +371,18 @@ has short-fail-and-timeout '^farm: stopped by its limit under load, passed alone
 has short-fail-and-timeout '^short-g1 rc=1 ' 1
 STUB_FLAKY='^p4$' case_ bench-rerun 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2 --bench
 command grep -q -c '^farm: first run: p4 rc=1' "$ws/case-$n-bench-rerun.out" || { fail=$((fail + 1)); echo "FAIL bench-rerun: no first-run line"; }
+# Tests (FARM-icount-fallback-silent): benchmarks measured in processor time fail the run, though
+# every piece passed, with a line naming each share's VM and the cause: the job's out/icount.log
+# (zed_icount's build failed), or `work=` bench lines (a checkout older than tools/icount). The
+# case above, whose lines say `instr=` and which has no icount.log, passes with no such line.
+has bench-rerun '^farm: benchmarks measured processor time' 0
 STUB_FAIL='^p5$' case_ bench-fail 1 "pieces: 9, failed: 1" "$all" -- --owner t --vms 2 --bench
+FAKE_ICOUNT_FAIL=1 case_ bench-icount-fail 1 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2 --bench
+has bench-icount-fail '^farm: benchmarks measured processor time, not instructions, on hm[0-9]+ \(share [12] of 2\): run\.sh: building zed_icount failed \(setup\.log\); benchmarks measure processor time$' 2
+STUB_BENCH_WORK=1 case_ bench-work 1 "pieces: 9, failed: 0" "$all" -- --owner t --vms 1 --bench
+has bench-work '^farm: benchmarks measured processor time, not instructions, on hm1 \(share 1 of 1\): 9 bench lines say work=, not instr=$' 1
+# A test run (no --bench) does not look: its pieces print no bench line.
+FAKE_ICOUNT_FAIL=1 case_ test-icount-fail 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 1
 # Tests (FARM-share-load-timeouts): a piece stopped by its limit under the share's load runs once
 # more alone; passing alone it is reported passed, its first line kept with the prefix, and named.
 STUB_TIMEOUT='^p4$' case_ timeout-rerun 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2

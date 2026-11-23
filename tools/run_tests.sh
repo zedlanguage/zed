@@ -1276,7 +1276,8 @@ split="
 # b22-checkrest8, 2026-11-22). Each of its 183 tests alone on hm1 (tools/time_tests.sh, load 1.2
 # to 1.6): the 30 below took 133 s together, 1.0 to 7.8 s each (the slowest
 # landing6_battery_top), and the other 153 took 6.0 s together. Each of the 30 is now a piece
-# (FAIL-four-pieces-over-20s-alone-on-main).
+# (FAIL-four-pieces-over-20s-alone-on-main). b22-tests7 found the same 30 on l43 (12 cores,
+# 2026-11-22, FAIL-zedc-check-lib-timeout): whole, the piece took 22.8 s with 12 threads.
 alone="
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_1
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_2

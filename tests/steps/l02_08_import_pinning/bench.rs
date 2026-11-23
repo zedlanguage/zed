@@ -57,7 +57,7 @@ fn a_function_of_many_parameters_is_pinned_in_linear_time() {
 fn a_parameter_of_many_nested_function_types_is_pinned_in_linear_time() {
     linear(
         "pinning a parameter of many nested function types",
-        40,
+        800,
         nested_fn_types,
     );
 }
@@ -70,7 +70,7 @@ fn a_parameter_of_many_nested_function_types_is_pinned_in_linear_time() {
 fn a_type_shared_by_many_definitions_is_pinned_in_linear_time() {
     linear(
         "pinning definitions each holding the one before twice",
-        40,
+        800,
         doubled_types,
     );
 }

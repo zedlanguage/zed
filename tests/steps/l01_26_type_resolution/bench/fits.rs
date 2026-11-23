@@ -336,7 +336,7 @@ fn shapes_of_two_bound_variables_scale() {
 #[test]
 fn k_joined_components_split_across_eight_shapes_scales() {
     let what = "n rows of 6 joined components split across eight shapes each";
-    let n = 10;
+    let n = 800;
     let sigs: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
         .into_iter()
         .map(|n| (n, k_joined_rows(n, 6, &[3, 4, 5], false)))

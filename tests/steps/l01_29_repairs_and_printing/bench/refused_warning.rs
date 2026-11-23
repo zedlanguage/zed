@@ -10,7 +10,7 @@ use crate::refused_warning::{
 /// placing them all is within n log n.
 #[test]
 fn many_placed_refusals_scale() {
-    let n = 40;
+    let n = 800;
     let files = scaling::inputs(n, |m| {
         unit("scale", &format!("placed{m}.zed"), &many_placed_refusals(m))
     });
@@ -25,7 +25,7 @@ fn many_placed_refusals_scale() {
 /// together are within n log n. The files are written before the timing.
 #[test]
 fn many_refusals_scale() {
-    let n = 40;
+    let n = 800;
     let files = scaling::inputs(n, |m| unit("scale", &format!("{m}.zed"), &many_refusals(m)));
     scaling::check("zedc test on a unit of n refused questions", n, |m| {
         refusals(&files[&m], m);

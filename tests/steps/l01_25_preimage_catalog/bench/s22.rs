@@ -298,7 +298,7 @@ fn chain_cross_dead_scales_at_64() {
 #[test]
 fn many_remainders_scales() {
     on_big_stack(|| {
-        let n = 32;
+        let n = 800;
         let (a, b) = (many_remainders(n), many_remainders(n * scaling::FACTOR));
         scaling::check("the preimage of the chain of k remainders", n, |k| {
             let (t, ds, d) = if k == n { &a } else { &b };
@@ -318,12 +318,12 @@ fn remainders_read_by_each_class_keep_the_transfer_first_scales() {
     on_big_stack(|| {
         let ds = i_in(0, 1000);
         let d = Demand::Bool(true);
-        let n = 8;
+        let n = 800;
         let (a, b) = (min_remainders(n), min_remainders(n * scaling::FACTOR));
         scaling::check("the preimage of the min chain of k remainders", n, |k| {
             preimage(if k == n { &a } else { &b }, &ds, &d);
         });
-        let n = 16;
+        let n = 800;
         let (a, b) = (no_remainder_of(n), no_remainder_of(n * scaling::FACTOR));
         scaling::check("the preimage of k remainders excluded", n, |k| {
             preimage(if k == n { &a } else { &b }, &ds, &d);
@@ -355,12 +355,12 @@ fn remainders_over_many_periods_scale() {
         let families = [
             (
                 "the min chain of k remainders",
-                8,
+                800,
                 min_remainders as fn(usize) -> Term,
             ),
-            ("k tests above k remainders", 16, above_remainders),
-            ("k remainders excluded", 4, no_remainder_of),
-            ("k remainders below i mod 1024 == 0", 4, zero_excluded),
+            ("k tests above k remainders", 800, above_remainders),
+            ("k remainders excluded", 800, no_remainder_of),
+            ("k remainders below i mod 1024 == 0", 800, zero_excluded),
         ];
         for (what, n, family) in families {
             let (a, b) = (family(n), family(n * scaling::FACTOR));
@@ -384,7 +384,7 @@ fn remainder_reads_outside_a_split_scale() {
             "a test of the chain",
             "remainders of two inputs",
         ] {
-            let n = 8;
+            let n = 800;
             let terms = scaling::inputs(n, |k| {
                 remainder_shape(shape, moved_remainder_chain(1, k, "x", 3))
             });
@@ -406,7 +406,7 @@ fn remainder_chains_in_the_linear_stage_scale() {
     on_big_stack(|| {
         let (ds, d) = (xy_in(100000), Demand::Bool(true));
         for (shape, at) in [("c <= 2 && y mod 2 == 0", 3), ("c <= 2 && x mod 2 == 0", 4)] {
-            let n = 5;
+            let n = 800;
             let terms = scaling::inputs(n, |k| {
                 counted_shapes(counted_remainder_chain(k, 3))[at].clone()
             });
@@ -424,7 +424,7 @@ fn remainder_chains_in_the_linear_stage_scale() {
 fn remainder_cases_cut_at_their_neighbors_scale() {
     on_big_stack(|| {
         let (ds, d) = (xy_in(100000), Demand::Bool(true));
-        let n = 8;
+        let n = 800;
         let terms = scaling::inputs(n, |k| below_three_and_even_y(spread_remainder_chain(k)));
         scaling::check("cases of a spread remainder chain", n, |k| {
             preimage(&terms[&k], &ds, &d);
@@ -439,7 +439,7 @@ fn remainder_cases_cut_at_their_neighbors_scale() {
 fn remainder_cases_sliced_by_a_test_scale() {
     on_big_stack(|| {
         let (ds, d) = (xy_in(100000), Demand::Bool(true));
-        let n = 8;
+        let n = 800;
         let terms = scaling::inputs(n, |k| below_three_and_even_y(select_remainder_chain(k)));
         scaling::check("cases of a sliced remainder chain", n, |k| {
             preimage(&terms[&k], &ds, &d);
@@ -457,7 +457,7 @@ fn remainder_cases_sliced_by_a_test_scale() {
 fn forward_sets_of_a_chain_share_the_holes_scale() {
     on_big_stack(|| {
         let d = Demand::Bool(true);
-        let n = 8;
+        let n = 800;
         let made = |k: usize| {
             let t = counted_shapes(spread_remainder_chain(k))[1].clone();
             let ds = x_with_holes(64 * k);

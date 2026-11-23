@@ -473,7 +473,7 @@ fn placing_p_named_arguments_in_the_function_called_scales() {
         );
         with_prelude(elab(&src).unwrap().get("a").unwrap())
     };
-    let n = 40;
+    let n = 800;
     let inputs = scaling::inputs(n, make);
     scaling::check(what, n, |m| {
         assert_eq!(kernel(&inputs[&m]).map(|v| v.to_string()), Ok("1".into()));
@@ -506,7 +506,7 @@ fn a_curried_call_placing_p_named_arguments_scales() {
         );
         with_prelude(elab(&src).unwrap().get("a").unwrap())
     };
-    let n = 40;
+    let n = 800;
     let inputs = scaling::inputs(n, make);
     scaling::check(what, n, |m| {
         assert_eq!(kernel(&inputs[&m]).map(|v| v.to_string()), Ok("1".into()));
@@ -573,7 +573,7 @@ fn placing_p_named_arguments_in_native_code_scales() {
         );
         with_prelude(elab(&src).unwrap().get("a").unwrap())
     };
-    let n = 40;
+    let n = 800;
     let inputs = scaling::inputs(n, make);
     scaling::check(what, n, |m| {
         let o = native(&inputs[&m]).unwrap();
@@ -624,7 +624,7 @@ fn a_placed_call_costs_about_a_direct_call_in_native_code() {
 #[test]
 fn a_repeated_placed_call_of_p_named_arguments_in_native_code_scales() {
     use zed_tests::step_helpers::l01_36_cranelift::native;
-    let n = 40;
+    let n = 800;
     let inputs = scaling::inputs(n, |p| placed_or_direct(p, true, 14));
     scaling::check(
         "16384 calls of p named arguments placed by the function called through one list, in \

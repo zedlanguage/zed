@@ -18,7 +18,7 @@ fn the_recorder_scales_with_its_rows() {
 #[test]
 fn a_report_scales_with_the_definitions() {
     // The texts are built before any run is counted.
-    let n = 40;
+    let n = 800;
     let (small, large) = (definitions(n), definitions(FACTOR * n));
     check("a reported test of n definitions", n, |m| {
         reports(if m == n { &small } else { &large }, m);

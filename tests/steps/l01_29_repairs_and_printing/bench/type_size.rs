@@ -22,14 +22,14 @@ fn scales(what: &str, n: usize, make: fn(usize) -> String) {
 
 #[test]
 fn rejecting_a_tuple_doubled_n_times_writes_a_text_linear_in_n() {
-    scales("rejecting a tuple doubled n times", 40, doubling);
+    scales("rejecting a tuple doubled n times", 800, doubling);
 }
 
 #[test]
 fn rejecting_a_comparison_of_tuples_doubled_n_times_writes_a_text_linear_in_n() {
     scales(
         "rejecting a comparison of tuples doubled n times",
-        40,
+        800,
         compared,
     );
 }
@@ -38,7 +38,7 @@ fn rejecting_a_comparison_of_tuples_doubled_n_times_writes_a_text_linear_in_n() 
 fn rejecting_a_chain_of_n_names_each_holding_the_one_before_writes_a_text_linear_in_n() {
     scales(
         "rejecting a chain of n names each holding the one before",
-        40,
+        800,
         growing,
     );
 }
@@ -49,7 +49,7 @@ fn rejecting_a_chain_of_n_names_of_one_type_writes_a_text_linear_in_n() {
     // whole at each link, n × m in all (COMPLEXITY.md row MSG-derive-same-chain).
     scales(
         "rejecting a chain of n names of one type of five components",
-        40,
+        800,
         |n| same(n, 5),
     );
 }
@@ -68,7 +68,7 @@ fn works(what: &str, n: usize, make: fn(usize) -> String) {
 fn rejecting_a_comparison_of_a_tuple_doubled_n_times_with_1_does_work_linear_in_n() {
     works(
         "rejecting a comparison of a tuple doubled n times with 1",
-        40,
+        800,
         |n| compared_with_1(doubling(n)),
     );
 }
@@ -77,7 +77,7 @@ fn rejecting_a_comparison_of_a_tuple_doubled_n_times_with_1_does_work_linear_in_
 fn rejecting_a_comparison_of_tuples_doubled_n_times_does_work_linear_in_n() {
     works(
         "rejecting a comparison of tuples doubled n times",
-        40,
+        800,
         compared,
     );
 }
@@ -87,7 +87,7 @@ fn rejecting_a_comparison_of_a_chain_of_n_names_each_holding_the_one_before_with
  {
     works(
         "rejecting a comparison of a chain of n names each holding the one before with 1",
-        40,
+        800,
         |n| compared_with_1(growing(n)),
     );
 }
@@ -100,7 +100,7 @@ fn rejecting_a_comparison_of_a_chain_of_n_names_each_holding_the_one_before_with
 fn rejecting_a_tuple_doubled_n_times_with_1_added_does_work_linear_in_n() {
     works(
         "rejecting a tuple doubled n times with 1 added",
-        40,
+        800,
         doubling,
     );
 }
@@ -109,7 +109,7 @@ fn rejecting_a_tuple_doubled_n_times_with_1_added_does_work_linear_in_n() {
 fn rejecting_a_chain_of_n_names_each_holding_the_one_before_with_1_added_does_work_linear_in_n() {
     works(
         "rejecting a chain of n names each holding the one before with 1 added",
-        40,
+        800,
         growing,
     );
 }
@@ -118,7 +118,7 @@ fn rejecting_a_chain_of_n_names_each_holding_the_one_before_with_1_added_does_wo
 fn rejecting_a_chain_of_n_names_each_holding_a_union_writes_a_text_linear_in_n() {
     scales(
         "rejecting a chain of n names each holding a union",
-        40,
+        800,
         unions,
     );
 }
@@ -127,7 +127,7 @@ fn rejecting_a_chain_of_n_names_each_holding_a_union_writes_a_text_linear_in_n()
 fn rejecting_a_chain_of_n_names_each_holding_a_union_does_work_linear_in_n() {
     works(
         "rejecting a chain of n names each holding a union",
-        40,
+        800,
         unions,
     );
 }
@@ -136,7 +136,7 @@ fn rejecting_a_chain_of_n_names_each_holding_a_union_does_work_linear_in_n() {
 fn rejecting_a_chain_of_n_names_each_holding_a_union_of_its_own_does_work_linear_in_n() {
     works(
         "rejecting a chain of n names each holding a union of its own",
-        40,
+        800,
         unions_each_its_own,
     );
 }
@@ -145,7 +145,7 @@ fn rejecting_a_chain_of_n_names_each_holding_a_union_of_its_own_does_work_linear
 fn rejecting_a_chain_of_n_names_each_using_a_union_once_and_twice_does_work_linear_in_n() {
     works(
         "rejecting a chain of n names each using a union once and twice",
-        40,
+        800,
         unions_inside,
     );
 }
@@ -154,7 +154,7 @@ fn rejecting_a_chain_of_n_names_each_using_a_union_once_and_twice_does_work_line
 fn rejecting_a_chain_naming_one_more_union_of_a_part_at_each_link_writes_a_text_linear_in_n() {
     scales(
         "rejecting a chain naming one more union of a part at each link",
-        40,
+        800,
         unions_named_one_by_one,
     );
 }
@@ -163,7 +163,7 @@ fn rejecting_a_chain_naming_one_more_union_of_a_part_at_each_link_writes_a_text_
 fn rejecting_a_chain_naming_one_more_union_of_a_part_at_each_link_does_work_linear_in_n() {
     works(
         "rejecting a chain naming one more union of a part at each link",
-        40,
+        800,
         unions_named_one_by_one,
     );
 }

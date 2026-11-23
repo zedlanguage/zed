@@ -59,7 +59,7 @@ fn a_step_id_before_builds_is_not_a_kind_of_build() {
     let steps = fixture(
         "Run once step L1.24 builds the interval lattice.\nStep L1.36b builds the note, \
          L10.4d builds it, M0.3 builds the table and L1.29d-package builds the package.\n\
-         The compilers of step S.5 build it; with row S.2-forms builds an `Ast`; L4 builds.\n",
+         The compilers of step S.5 build it; with row S.2-forms builds a `Zir`; L4 builds.\n",
     );
     assert_eq!(undefined(&steps), Vec::<String>::new());
     let bad = fixture("A 1.24 build, a release build, e.g. build, a L1x.2 build.\n");

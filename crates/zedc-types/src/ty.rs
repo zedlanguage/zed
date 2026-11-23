@@ -3467,7 +3467,7 @@ impl Rebuild for Replacer<'_> {
         let before = r.0.wasted.fetch_add(work, Relaxed);
         let after = before.saturating_add(work);
         if after.leading_zeros() < before.leading_zeros()
-            && let Some(e) = row_vars(r, after)
+            && let Some(e) = row_vars(r, after.saturating_mul(2))
         {
             let _ = r.0.vars.set(e);
         }

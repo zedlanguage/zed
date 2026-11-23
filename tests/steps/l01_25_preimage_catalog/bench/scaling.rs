@@ -21,17 +21,17 @@ fn the_transfer_scales() {
             preimage(&terms[&k], ds, &Demand::Bool(true));
         });
     };
-    run("a chain of `let`s, each name read twice", 6, doubling);
-    run("branches nested in guard position", 6, guards);
-    run("a conjunction of tests", 8, conjunction);
+    run("a chain of `let`s, each name read twice", 800, doubling);
+    run("branches nested in guard position", 800, guards);
+    run("a conjunction of tests", 800, conjunction);
     run(
         "functions each calling the one before twice, alike",
-        6,
+        800,
         calls_alike,
     );
     run(
         "functions each calling the one before twice, apart",
-        6,
+        800,
         calls_apart,
     );
 }
@@ -74,10 +74,14 @@ fn the_linear_translation_of_calls_scales() {
     let ds = doms(&[("i", Some(0), Some(50)), ("j", Some(-50), Some(50))]);
     let ds = &ds;
     for d in [0, 1] {
-        let terms = scaling::inputs(6, |k| sums(k, d));
-        scaling::check("sums of calls, each calling the one before twice", 6, |k| {
-            preimage(&terms[&k], ds, &Demand::Bool(true));
-        });
+        let terms = scaling::inputs(800, |k| sums(k, d));
+        scaling::check(
+            "sums of calls, each calling the one before twice",
+            800,
+            |k| {
+                preimage(&terms[&k], ds, &Demand::Bool(true));
+            },
+        );
     }
 }
 
@@ -87,7 +91,7 @@ fn the_linear_translation_of_calls_scales() {
 /// stack, since the transfer keeps its frames on the heap (PRE-stack-explicit); the terms are
 /// built before the timing.
 fn long(what: &'static str, make: fn(usize) -> Term, ds: fn(usize) -> Domains) {
-    long_at(what, 48, make, ds)
+    long_at(what, 800, make, ds)
 }
 
 /// [`long`] at sizes `n` and `8n`.
@@ -326,13 +330,13 @@ fn long_shared_values_preimage() {
 fn long_shared_arms_under_recursion() {
     long_at(
         "`if`s under recursion whose arms are one shared term",
-        32,
+        800,
         shared_arms_under_recursion,
         one,
     );
     long_relations(
         "`if`s under recursion whose arms are one shared term",
-        32,
+        800,
         shared_arms_under_recursion,
     );
 }

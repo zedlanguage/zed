@@ -429,7 +429,7 @@ fn sub_of_shared_payloads_with_a_variable_a_level_takes_linear_time() {
     let x = || ty::Ty::set(zed_kernel::types::Type::atom("x"));
     linear(
         "sub of shared payloads n deep, a new variable at each level",
-        50,
+        800,
         |k| {
             (
                 level_payloads(k, |_| x(), z()),

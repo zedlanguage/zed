@@ -68,7 +68,8 @@
 #    DynamoRIO's client zed_icount, which job.sh's VM setup builds and names in ZED_METER_DRRUN and
 #    ZED_METER_ICOUNT (BENCH-vm-no-instruction-counter; tests/src/scaling.rs). Where that build
 #    failed (the job's out/icount.log says so), they fall back on the task clock, which is
-#    noisier. A benchmark that fails is run once more on the same VM at once, alone; that
+#    noisier and held to twice the limit; such a run prints `farm: benchmarks measured processor
+#    time, not instructions, on <VM> ...` and exits 1 (FARM-icount-fallback-silent). A benchmark that fails is run once more on the same VM at once, alone; that
 #    second run's line is the verdict, and the first run's failed line is kept prefixed
 #    `farm: first run: `, which no reader of summary lines takes for one.
 #  - Tests: a test piece stopped by its limit (not one that failed otherwise) is run once more in
@@ -680,6 +681,22 @@ if [ -n "$run_vm" ]; then
       # pieces passed: a piece whose tool is missing may skip, not fail.
       if [ -n "$full" ] && [ -f "$d/job/out/setup-full.log" ]; then
         share_failed "share $k of $n on ${vm_last[$k]}: $(join_lines <"$d/job/out/setup-full.log"); $d/job/setup.log"
+      fi
+      # Benchmarks measured in processor time fail the run (FARM-icount-fallback-silent). Without
+      # zed_icount (its build failed: job.sh's run.sh writes out/icount.log; or the checkout
+      # predates tools/icount: no log, but each `bench` line says `work=` where a count says
+      # `instr=`, tests/src/scaling_tests.rs), a benchmark falls back on processor time, whose
+      # ratio scaling::compare_measured holds to LIMIT x TIME_ALLOWANCE = 21, not 10.5; such a run
+      # passed silently (l01_38 twin_chains_of_absolute_values_scale at 11.94, b22-msgtypes4).
+      if [ "$kind" = bench ]; then
+        why=
+        [ ! -f "$d/job/out/icount.log" ] || why=$(join_lines <"$d/job/out/icount.log")
+        c=$(awk '$1 == "bench" && / work=/' "$log" | wc -l)
+        [ "$c" = 0 ] || why+="${why:+; }$c bench lines say work=, not instr="
+        if [ -n "$why" ]; then
+          echo "farm: benchmarks measured processor time, not instructions, on ${vm_last[$k]} (share $k of $n): $why" >>"$out/report"
+          [ "$rc_all" != 0 ] || rc_all=1
+        fi
       fi
     fi
     if [ -n "$trace" ] && [ -d "$d/job/out/trace-$k" ]; then
