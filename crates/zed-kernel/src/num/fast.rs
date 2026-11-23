@@ -2102,9 +2102,16 @@ pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     // The quotient has at most `k` bits.
     let k = m - n + 1;
     // Complexity tradeoff: a timed crossover with identical results, nothing given up. A
-    // divisor or quotient of at most `DIV_LEAF` bits goes to num-bigint's division, which costs
-    // at most `DIV_LEAF` bits times the dividend's, O(n), and was measured faster there. Past
-    // the leaf, num-bigint's division is still taken where its computed cost
+    // divisor of at most `DIV_LEAF` bits goes to num-bigint's division, Knuth's algorithm D,
+    // which costs at most `DIV_LEAF` bits times the dividend's, O(n), and was measured faster
+    // there. A quotient of at most `DIV_LEAF` bits by a wider divisor goes to
+    // [`div_rem_short_quotient`], O(n): num-bigint 0.4.8 does not take algorithm D there but
+    // Burnikel and Ziegler's division, by the counts of words alone (a dividend over 128 words
+    // and a divisor over 64, `div_rem_core`, src/biguint/division.rs:343-346, read 2026-11-22),
+    // whose recursion copies the divisor's halves at each level (:274-287), so its bytes grew
+    // 10.7 times at 8n on `bench::a_short_quotient_of_a_wide_number_scales` (4,096 to 32,768
+    // words, a quotient of 33 words; plan row KERNEL-bz-short-quotient). Past the leaf,
+    // num-bigint's division is still taken where its computed cost
     // (`num_bigint_div_cost`, fitted to its measured work) is at most the cheaper of the other
     // two methods' (`past_leaf_cost`), as `mul` takes num-bigint's product by `TOOM_COST`.
     // num-bigint 0.4.8 divides by Knuth's algorithm D (The Art of Computer Programming, vol. 2,
@@ -2123,10 +2130,45 @@ pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     // `tests::wide_quotients_agree_with_num_bigint`; the growth above it by
     // `dividing_a_wide_number_scales` (COMPLEXITY.md K30, "Crossovers"; ZED_PORT_GAPS.md,
     // "Entries from KERNEL-div-newton").
+    if n > DIV_LEAF && k <= DIV_LEAF {
+        return div_rem_short_quotient(a, b);
+    }
     if n.min(k) <= DIV_LEAF || num_bigint_divides(words(a) - words(b) + 1, b) {
         return a.div_rem(b);
     }
     div_rem_past_leaf(a, b)
+}
+
+/// [`div_rem`] of a quotient of at most `DIV_LEAF` bits by a divisor of more: the quotient
+/// from the top bits alone, then one product to correct it. With `k = bits(a) - bits(b) + 1`,
+/// `t = max(0, bits(b) - k - 64)`, `a' = floor(a / 2^t)`, `b' = floor(b / 2^t)` and `q' =
+/// floor(a' / b')`, the quotient `q = floor(a / b)` is `q'` or `q' - 1`.
+///
+/// Proof. Where `t = 0`, `q' = q`. Else `b'` has `k + 64` bits, `b' >= 2^(k + 63)`, and `q <
+/// 2^k` gives `a < 2^k b < 2^k (b' + 1) 2^t`, so `a' < 2^k (b' + 1)`. Below: `a >= a' 2^t`
+/// and `b < (b' + 1) 2^t`, so `a / b > a' / (b' + 1) = a' / b' - a' / (b' (b' + 1)) > a' / b' -
+/// 2^k / b' >= a' / b' - 2^-63 > q' - 1`, and `q >= q' - 1`. Above: `a < (a' + 1) 2^t` and
+/// `b >= b' 2^t`, so `a / b < (a' + 1) / b' <= q' + 1`, as `a' <= q' b' + b' - 1`, and `q <=
+/// q'`. So `q' b > a` exactly where `q = q' - 1`.
+///
+/// Complexity tradeoff: num-bigint's division (Burnikel and Ziegler's past 64 words of
+/// divisor, see [`div_rem`]) copies the divisor at each level of its recursion. Here the
+/// division is of numbers of at most `2 DIV_LEAF + 65` bits, a constant, and the rest is one
+/// product of at most `DIV_LEAF` bits by `n`, `O(n)` word products, and a subtraction: O(n)
+/// work and bytes for `n` bits. The same leading-digit estimate as Knuth's algorithm D (The
+/// Art of Computer Programming, vol. 2, 4.3.1), taken with 64 guard bits so that one
+/// correction is enough. Tested by `tests::a_short_quotient_is_corrected_once` and
+/// `tests::quotients_agree_with_num_bigint`; scaling by
+/// `bench::a_short_quotient_of_a_wide_number_scales`.
+fn div_rem_short_quotient(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
+    let k = a.bits() - b.bits() + 1;
+    let t = b.bits().saturating_sub(k + 64);
+    let q = (a >> t).div_rem(&(b >> t)).0;
+    let p = mul(&q, b);
+    match p > *a {
+        true => (q - 1u32, a + b - p),
+        false => (q, a - p),
+    }
 }
 
 /// Whether num-bigint's division of a quotient of `qw` words by `b`, past [`DIV_LEAF`], costs at
@@ -5196,6 +5238,69 @@ mod tests {
                 let want = (Integer::div_floor(a, m), Integer::mod_floor(a, m));
                 assert_eq!((div_floor(a, m), mod_floor(a, m)), want, "{a} by {m}");
             }
+        }
+    }
+
+    /// Plan row KERNEL-bz-short-quotient: [`div_rem_short_quotient`]'s estimate from the top
+    /// bits is one too high where the divisor's dropped bits are all ones, and one correction
+    /// gives num-bigint's quotient. `b = b' 2^t + 2^t - 1` and `a = q0 b' 2^t`, with `b'` of
+    /// `j + 64` bits and `q0` of `j`, so that `a' b'` is under `2^(j + bits(b') - 1)` and the
+    /// function's shift is this `t`: `a' / b' = q0` exactly, and `a < q0 b`, so the quotient is
+    /// `q0 - 1`. Each case has `b` of more than [`DIV_LEAF`] bits and a quotient of at most
+    /// `DIV_LEAF`, the sizes [`div_rem`] sends to the function, which is also called directly.
+    /// Then `q0 b + b - 1`, with quotient `q0`, which needs no correction. Negative
+    /// control: the correction taken out (`(q, a - p)` alone) panics on the first case.
+    #[test]
+    fn a_short_quotient_is_corrected_once() {
+        let one = BigUint::one();
+        for (j, t, seed) in [
+            (2u64, 4100u64, 61u64),
+            (64, 4000, 67),
+            (1000, 7000, 71),
+            (4096, 64, 73),
+        ] {
+            let h = j + 64;
+            // Each factor is under 1.25 times its top bit, so the product is under 2^(j + h - 1).
+            let low = |bits: u64, seed| {
+                bits.checked_sub(3).map_or(BigUint::zero(), |b| {
+                    random(seed, h.div_ceil(64) as usize) % (&one << b)
+                })
+            };
+            let q0 = (&one << (j - 1)) + low(j, seed);
+            let top = (&one << (h - 1)) + low(h, seed + 1);
+            let b = (&top << t) + (&one << t) - 1u32;
+            let a = (&q0 * &top) << t;
+            assert_eq!(
+                b.bits() - (a.bits() - b.bits() + 1) - 64,
+                t,
+                "{j} bits: the shift"
+            );
+            assert!(
+                a.bits() - b.bits() < DIV_LEAF && b.bits() > DIV_LEAF,
+                "{j} bits: div_rem takes div_rem_short_quotient"
+            );
+            assert_eq!(
+                (&a >> t) / (&b >> t),
+                q0,
+                "{j} bits: the estimate is one too high"
+            );
+            assert_eq!(
+                div_rem_short_quotient(&a, &b),
+                (&q0 - 1u32, &a + &b - &q0 * &b),
+                "{j} bits, by the function itself"
+            );
+            assert_eq!(
+                div_rem(&a, &b),
+                (&q0 - 1u32, &a + &b - &q0 * &b),
+                "{j} bits"
+            );
+            assert_eq!(div_rem(&a, &b), a.div_rem(&b), "{j} bits");
+            let c = &q0 * &b + &b - 1u32;
+            assert_eq!(
+                div_rem(&c, &b),
+                (q0.clone(), &b - 1u32),
+                "{j} bits, no correction"
+            );
         }
     }
 
