@@ -199,6 +199,15 @@ type ForkSave = (Vec<usize>, Vec<(usize, Refusal)>);
 
 thread_local! {
     static MEMO: RefCell<ByType<bool>> = const { RefCell::new(ByType::new()) };
+    /// How many times on this thread [`Searching::rep`] built a type again at once because a
+    /// type its failed build read as missing got a value before that build ended (its `again`
+    /// branch). Read by tests through [`Type::rebuilds_at_once`], so that they show their
+    /// systems reach the branch (REP-retry-again-test); no test reached it before.
+    static REBUILDS_AT_ONCE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many builds [`Searching::rep`] started on this thread, one for each type it sought
+    /// a value for with no kept answer. Read by tests through [`Type::rep_builds`], which count
+    /// the work a search does where its verdicts cannot show a change (REP-retry-again-test).
+    static REP_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// For each member of a group decided by [`group_emptiness`]: `Some(b)`, whether the
     /// group's own search proved it empty, when no fork or split refused that search; `None`
     /// when one did. A function of the group alone, so of the member (proof at
@@ -1514,6 +1523,19 @@ impl Type {
     #[doc(hidden)]
     pub fn escape_cell_counts(&self) -> (usize, usize) {
         escape::cell_counts(self)
+    }
+
+    /// For tests: how many times a search on this thread built a type again at once because a
+    /// type it read as missing got a value during its build (`Searching::rep`).
+    #[doc(hidden)]
+    pub fn rebuilds_at_once() -> usize {
+        REBUILDS_AT_ONCE.with(|c| c.get())
+    }
+
+    /// For tests: how many builds of a value a search on this thread started (`Searching::rep`).
+    #[doc(hidden)]
+    pub fn rep_builds() -> usize {
+        REP_BUILDS.with(|c| c.get())
     }
 
     /// The prefix-chain sweep's verdict alone, for tests against an independent oracle.
@@ -11240,6 +11262,7 @@ impl<'m> Searching<'m> {
         let t = t.clone();
         self.stack.call(move || async move {
             let (mark, resting, outer) = {
+                REP_BUILDS.with(|c| c.set(c.get() + 1));
                 let mut s = self.s();
                 s.reps.insert(t.clone(), None);
                 s.past_failures.remove(&t);
@@ -11333,7 +11356,17 @@ impl<'m> Searching<'m> {
                 }
             };
             match again {
-                Some(true) => return self.rep(&t).await,
+                // The build again gives a value in every case the tests reach (1,000 of 1,000
+                // on hm2, 2026-11-23); returning the failure instead gives the same verdicts and
+                // witnesses there, since `t`'s entry is gone and a later read builds it again,
+                // but costs more builds: 3,358 against 3,018 for each undecided system with
+                // `X = (W) | (C)` in the test
+                // `group_oracle::failed_builds_read_through_a_second_type_are_built_again_at_once`,
+                // which counts them (REP-retry-again-test).
+                Some(true) => {
+                    REBUILDS_AT_ONCE.with(|c| c.set(c.get() + 1));
+                    return self.rep(&t).await;
+                }
                 Some(false) => return r,
                 None => {}
             }

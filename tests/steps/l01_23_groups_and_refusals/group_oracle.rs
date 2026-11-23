@@ -4930,3 +4930,172 @@ fn a_morphism_with_a_recursive_key_is_read_by_the_flat_difference_decider() {
 fn x14_6_220_agrees_across_orders() {
     verdicts_agree_across_orders("x14_6_", |g| claude_of(g, 6), &[220], (true, true));
 }
+
+// ---------------------------------------------------------------------------------------------
+// A failed build sought again at once (REP-retry-again-test)
+// ---------------------------------------------------------------------------------------------
+
+/// The verdicts of `sys` written in every `step`-th order of its definitions ([`permutations`]),
+/// both as written and [`undecided`]: each against the pool's, and the same when asked one after
+/// another up and down with the results kept. Returns, for each of the two, how many times the
+/// verdicts asked alone built a type again at once because a type its failed build read as
+/// missing got a value before that build ended (`Searching::rep`, read through
+/// `Type::rebuilds_at_once`), and how many builds they started in all (`Type::rep_builds`).
+fn rebuilt_at_once(sys: &[E], step: usize, tag: &str) -> ([usize; 2], [usize; 2]) {
+    let (mut hits, mut builds) = ([0; 2], [0; 2]);
+    for (vi, sys) in [sys.to_vec(), undecided(sys.to_vec())].iter().enumerate() {
+        let tr = truth(sys, CAP);
+        for (k, order) in permutations(sys.len()).iter().enumerate().step_by(step) {
+            let m = moved(sys, order);
+            let ts = kernel(&m, &format!("{tag}v{vi}p{k}"));
+            let (h0, b0) = (Type::rebuilds_at_once(), Type::rep_builds());
+            let got = alone(&ts);
+            hits[vi] += Type::rebuilds_at_once() - h0;
+            builds[vi] += Type::rep_builds() - b0;
+            for (j, v) in got.iter().enumerate() {
+                let at = || format!("{tag}: R{j} of {}", show_system(&m));
+                // Definition j of `m` is definition order[j] of `sys` ([`moved`]).
+                match (&tr.seen[order[j]], v) {
+                    (Seen::Member(w), Some(Verdict::Empty)) => {
+                        panic!("{}: Empty, but holds {w}", at())
+                    }
+                    (Seen::None, Some(Verdict::Inhabited)) if tr.exhaustive => {
+                        panic!("{}: Inhabited, but the pool shows no value", at())
+                    }
+                    _ => {}
+                }
+            }
+            let up: Vec<usize> = (0..m.len()).collect();
+            let down: Vec<usize> = (0..m.len()).rev().collect();
+            for o in [up, down] {
+                let at = || format!("{tag}: asked in the order {o:?} of {}", show_system(&m));
+                assert_eq!(in_order(&ts, &o), got, "{}", at());
+            }
+        }
+    }
+    (hits, builds)
+}
+
+/// `X = (T) | (C)` and `T = (X) | (C, Z)` with `C = int -> c` and `Z = z`, the arms of each
+/// union in both orders: four systems.
+fn again_family_a(c: E, z: E) -> Vec<Vec<E>> {
+    let mut systems = Vec::new();
+    for swap_x in [false, true] {
+        for swap_t in [false, true] {
+            let mut x = vec![tup(vec![E::Ref(1)]), tup(vec![E::Ref(2)])];
+            let mut t = vec![tup(vec![E::Ref(0)]), tup(vec![E::Ref(2), E::Ref(3)])];
+            if swap_x {
+                x.reverse();
+            }
+            if swap_t {
+                t.reverse();
+            }
+            systems.push(vec![
+                E::Union(x),
+                E::Union(t),
+                exact(E::Int, c.clone()),
+                z.clone(),
+            ]);
+        }
+    }
+    systems
+}
+
+/// In every order of the definitions of
+///
+/// ```text
+/// R0 = (R1) | (R2); R1 = (R0) | (R2, R3); R2 = int -> (R0); R3 = (R3)
+/// ```
+///
+/// and of the three with the arms of `R0` or `R1` the other way round, the build of `R1` fails
+/// while `R0`, which it read as missing, gets a value through the closure `R2`, taken to have a
+/// value while `(R0)` is sought: `Searching::rep` builds `R1` again at once (its `again`
+/// branch), once in each order of the definitions as written, never when undecided (measured
+/// on hm2, 2026-11-23). No test reached that branch
+/// before (REP-retry-again-test). With `R2 = int -> R0` the closure gives nothing, and with
+/// `R3` empty the build of `R1` reads no type that gets a value: neither reaches the branch,
+/// the negative controls of the count.
+#[test]
+fn a_failed_build_whose_read_type_got_a_value_through_a_closure_is_built_again_at_once() {
+    let hits: Vec<[usize; 2]> = again_family_a(tup(vec![E::Ref(0)]), tup(vec![E::Ref(3)]))
+        .iter()
+        .enumerate()
+        .map(|(i, sys)| rebuilt_at_once(sys, 1, &format!("againA{i}")).0)
+        .collect();
+    assert_eq!(
+        hits,
+        vec![[24, 0]; 4],
+        "builds again at once, as written and undecided"
+    );
+    for (name, c, z) in [
+        ("againAplain", E::Ref(0), tup(vec![E::Ref(3)])),
+        ("againAempty", tup(vec![E::Ref(0)]), E::Empty),
+    ] {
+        for (i, sys) in again_family_a(c, z).iter().enumerate() {
+            let at = format!("{name}{i}: {}", show_system(sys));
+            assert_eq!(
+                rebuilt_at_once(sys, 1, &format!("{name}{i}")).0,
+                [0, 0],
+                "{at}"
+            );
+        }
+    }
+}
+
+/// `X = (T) | (C)` or `X = (W) | (C)`, `T = (X) | (C, Z)`, `C = int -> (X)`, `Z = (Z)`,
+/// `W = (T)` and `Q = (X, W)`, the arms of `X` and of `T` in both orders: eight systems, in
+/// every fifteenth order of their six definitions, as written and undecided. The build of `T`
+/// or of `W` fails while `X` gets a value through `C`, so each is built again at once
+/// (REP-retry-again-test): with `X = (T) | (C)` when decided as written, with `X = (W) | (C)`
+/// when undecided.
+#[test]
+fn failed_builds_read_through_a_second_type_are_built_again_at_once() {
+    let (mut hits, mut builds) = (Vec::new(), Vec::new());
+    for swap_x in [false, true] {
+        for swap_t in [false, true] {
+            for through_w in [false, true] {
+                let first = tup(vec![E::Ref(if through_w { 4 } else { 1 })]);
+                let mut x = vec![first, tup(vec![E::Ref(2)])];
+                let mut t = vec![tup(vec![E::Ref(0)]), tup(vec![E::Ref(2), E::Ref(3)])];
+                if swap_x {
+                    x.reverse();
+                }
+                if swap_t {
+                    t.reverse();
+                }
+                let sys = vec![
+                    E::Union(x),
+                    E::Union(t),
+                    exact(E::Int, tup(vec![E::Ref(0)])),
+                    tup(vec![E::Ref(3)]),
+                    tup(vec![E::Ref(1)]),
+                    tup(vec![E::Ref(0), E::Ref(4)]),
+                ];
+                let (h, b) = rebuilt_at_once(&sys, 15, &format!("againB{}", hits.len()));
+                hits.push(h);
+                builds.push(b);
+            }
+        }
+    }
+    let expected: Vec<[usize; 2]> = (0..8)
+        .map(|i| if i % 2 == 0 { [90, 0] } else { [0, 60] })
+        .collect();
+    assert_eq!(
+        hits, expected,
+        "builds again at once, as written and undecided"
+    );
+    // The builds again give the same verdicts and witnesses as returning the failure and
+    // letting a later read build the type (`Some(true) => return r` in `Searching::rep`), but
+    // fewer builds: an undecided system with `X = (W) | (C)` starts 3,358 with that change
+    // (measured on hm2, 2026-11-23), so this count is what tells the two apart.
+    let expected: Vec<[usize; 2]> = (0..8)
+        .map(|i| {
+            if i % 2 == 0 {
+                [1667, 2249]
+            } else {
+                [1486, 3018]
+            }
+        })
+        .collect();
+    assert_eq!(builds, expected, "builds, as written and undecided");
+}
