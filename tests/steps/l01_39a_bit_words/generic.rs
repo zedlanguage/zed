@@ -121,6 +121,25 @@ fn a_chain_of_wrappers_names_every_call_in_order() {
     assert!(first < second && second < last, "{out}");
 }
 
+/// A part of a parameter passed on is named by its path (MSG-passed-on-part-text-eager: the
+/// words are built from the parts when the message prints, no longer when the need is
+/// recorded; the text is the one origin/main 44db7abf4 printed).
+#[test]
+fn a_part_passed_on_names_its_path_in_the_parameter() {
+    let out = rejected(
+        "h(positional p) {\n  a, b = p;\n  c, d = a;\n  return 2^d;\n}\n\
+         g(positional q) = h(q);\nr = g(((1, -3), 0));\n",
+    );
+    assert!(
+        out.starts_with("7:5: `g` takes `q[0][1]` in int[0..]: `g(((1, -3 : int), 0))`.\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("6:21: `q` is passed on as `p[0][1]` of `h` here\n"),
+        "{out}"
+    );
+}
+
 #[test]
 fn f_of_3_gives_8_and_f_of_2_point_0_gives_4_point_0() {
     // The bare base `2` takes the carrier of `n` (L1.26a): an int at `f(3)`, an f64 at

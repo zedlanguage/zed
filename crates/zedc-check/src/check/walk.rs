@@ -7271,7 +7271,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             if self.trying {
                 continue;
             }
-            self.lit_open.remove(&e.span);
+            if self.lit_open.remove(&e.span) {
+                self.lit_settled.insert(e.span);
+            }
             if let Some((kept @ Some(_), _)) = self.seen.get_mut(&e.span) {
                 *kept = Some(Ty::carrier(c));
             }
@@ -20371,14 +20373,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// parameter: the need of `domain` at the use `use_at`, with the link of this call before
     /// the calls `via` that passed it on (CHK-need-bound, CHK-pow-component-bound).
     // Complexity tradeoff: the path is kept as it came, O(1) (`PathSteps` shares its steps),
-    // but the link's text names the part `p`, so it is O(length of `p`) long and made at once;
-    // for `d` needs on the parts at each level of a parameter nested `d` deep, the texts are
-    // Θ(d²) long in all, and this is the one term of that order left in the check of a
-    // parameter's parts (PERF-keyed-part-path-d-squared: of the d² term of a fit
-    // a + b·d + c·d² to callgrind counts of `maps_in_tuples(d, true)` at d = 128, 256 and 512,
-    // 94 M instructions at 512, 51 M are this text). A text made only when an error is
-    // printed would take `Via`'s text, digest (`r10_hash::hash_via_chain`) and equality from
-    // its parts instead of its words (row MSG-passed-on-part-text-eager).
+    // and so is the link's text, as its parts ([`ViaText::PassedOn`]), written only when an
+    // error prints it. Made at once, the text named the part `p`, O(length of `p`) long, so
+    // `d` needs on the parts at each level of a parameter nested `d` deep made Θ(d²) text in
+    // all (PERF-keyed-part-path-d-squared: of the d² term of a fit a + b·d + c·d² to callgrind
+    // counts of `maps_in_tuples(d, true)` at d = 128, 256 and 512, 94 M instructions at 512,
+    // 51 M were this text; row MSG-passed-on-part-text-eager).
     #[allow(clippy::too_many_arguments)]
     fn part_passed_on(
         &mut self,
@@ -20386,21 +20386,23 @@ impl<'t, 'a> Ck<'t, 'a> {
         path: PathSteps,
         e: &'a Expr,
         at: Span,
-        p: &dyn fmt::Display,
+        p: &PartName<'_>,
         what: &str,
         domain: &IntDomain,
         via: &Option<Arc<Via>>,
         use_at: Span,
     ) {
-        let name = match &e.kind {
-            ExprKind::Name(name) => name.to_string(),
-            _ => self.code(Some(e.span)).unwrap_or("this value").to_string(),
+        let name: Arc<str> = match &e.kind {
+            ExprKind::Name(name) => name.as_str().into(),
+            _ => self.code(Some(e.span)).unwrap_or("this value").into(),
         };
-        let link = Via::new(
-            at,
-            format!("`{name}` is passed on as `{p}` of {what} here").into(),
-            via.clone(),
-        );
+        let text = ViaText::PassedOn {
+            name,
+            param: p.name.into(),
+            path: p.path.clone(),
+            what: what.into(),
+        };
+        let link = Via::new(at, text, via.clone());
         let need = Need {
             on: Ty::empty(),
             kind: NeedKind::InDomain {
@@ -20465,7 +20467,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         param: usize,
         a: &Arg<'a>,
         path: &PathSteps,
-        p: &dyn fmt::Display,
+        p: &PartName<'_>,
         what: &str,
         domain: &IntDomain,
         via: &Option<Arc<Via>>,
@@ -21253,7 +21255,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 while let Some(l) = v {
                     chain.push(Note {
                         span: l.at,
-                        text: l.text.clone(),
+                        text: l.text.words(),
                     });
                     v = l.next.as_deref();
                 }
@@ -21318,7 +21320,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             let a = if path.is_empty() {
                 a
             } else {
-                match self.part_of(&mut walk, *param, a, path, &p, what, domain, via, n.span) {
+                match self.part_of(
+                    &mut walk, *param, a, path, &named, what, domain, via, n.span,
+                ) {
                     PartOf::Arg(arg) => {
                         part = arg;
                         &part
@@ -21391,7 +21395,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 match self.open_place(e) {
                     Some(_) if self.trying => {}
                     Some((id, pre)) => {
-                        self.part_passed_on(id, pre, e, at, &p, what, domain, via, n.span);
+                        self.part_passed_on(id, pre, e, at, &named, what, domain, via, n.span);
                     }
                     None => self.no_int_vars(&a.ty, &passed, at),
                 }
@@ -21487,7 +21491,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn keys_at(
         &mut self,
         what: &str,
-        p: &dyn fmt::Display,
+        p: &PartName<'_>,
         domain: &IntDomain,
         k: &Arc<KeyUse>,
         a: Option<&Arg<'a>>,
@@ -21522,7 +21526,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             while let Some(l) = v {
                 chain.push(Note {
                     span: l.at,
-                    text: l.text.clone(),
+                    text: l.text.words(),
                 });
                 v = l.next.as_deref();
             }
@@ -21593,12 +21597,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             && let Some(id) = self.open_param(e)
         {
             if !self.trying {
-                let name = self.code(Some(e.span)).unwrap_or("this value").to_string();
-                let link = Via::new(
-                    a.at.unwrap_or(e.span),
-                    format!("`{name}` is passed on as `{p}` of {what} here").into(),
-                    use_at.1.clone(),
-                );
+                let text = ViaText::PassedOn {
+                    name: self.code(Some(e.span)).unwrap_or("this value").into(),
+                    param: p.name.into(),
+                    path: p.path.clone(),
+                    what: what.into(),
+                };
+                let link = Via::new(a.at.unwrap_or(e.span), text, use_at.1.clone());
                 let need = Need {
                     on: Ty::empty(),
                     kind: NeedKind::InDomain {

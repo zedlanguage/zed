@@ -194,6 +194,49 @@ fn two_literals_of_two_suffixes_are_refused_at_a_carrier_one_of_them_has() {
     }
 }
 
+/// Several literals of one application refused together give one grouped headline with a step
+/// for each (REPAIR-grouped-refusal-message (a)). Where every argument is a literal, no repair
+/// of another argument is tried, so the message offers none and does not say that each one
+/// tried was rejected (walk.rs `Ck::repairs` passes over literal arguments, and
+/// `Ck::repairs_tried` stays as it was). Read with a debug print of `none_kept`,
+/// `repairs_tried` and `trying` at the grouped refusal (b22-checkwalk10, 2026-11-23): on these
+/// three programs and on six other probes of two refused literals, `none_kept` was never
+/// true, so the counter changes no grouped message found; four of the probes reach the
+/// refusal only inside a repair's trial (`trying`), where nothing is printed.
+#[test]
+fn literals_refused_together_give_one_headline_and_no_repair_tried() {
+    for (src, head, n) in [
+        (
+            "k(a: int, b: int) = a; f() = k(a: 0.5f64, b: 0.25f32);\n",
+            "1:35: 2 arguments of `k` are literals at carriers they cannot take.\n",
+            [35, 46],
+        ),
+        (
+            "k(x: int, a: int, b: int) = x; f(x: int) = k(x: x, a: 0.5f64, b: 0.25f32);\n",
+            "1:55: 2 arguments of `k` are literals at carriers they cannot take.\n",
+            [55, 66],
+        ),
+        (
+            "f() = 0.5f64 div 0.25f32;\n",
+            "1:7: 2 operands of `div` are literals at carriers they cannot take.\n",
+            [7, 18],
+        ),
+    ] {
+        let out = zed_tests::step_helpers::l01_29_diagnostics::rejected_with_main(src);
+        assert!(out.starts_with(head), "{src}\n{out}");
+        let lits = [("0.5f64", "f64"), ("0.25f32", "f32")];
+        for (i, (col, (lit, suffix))) in n.into_iter().zip(lits).enumerate() {
+            let step = format!(
+                "  [{}] 1:{col}: The suffix makes the literal `{lit}` an `{suffix}`, never `int`",
+                i + 1
+            );
+            assert!(out.lines().any(|l| l == step), "{src}\n{out}");
+        }
+        assert!(!out.contains("fixes"), "{src}\n{out}");
+        assert!(!out.contains("No fix is offered"), "{src}\n{out}");
+    }
+}
+
 /// A lambda has no declaration, so the repairs of passing it an argument by name are the ones
 /// that need none: pass it by position, or declare a named function.
 #[test]

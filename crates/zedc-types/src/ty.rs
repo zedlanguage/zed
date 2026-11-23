@@ -5360,7 +5360,7 @@ impl CallPath {
                 while let Some(next) = cur.next.as_deref() {
                     cur = next;
                 }
-                Some(cur.text.clone())
+                Some(cur.text.words())
             }
         }
     }
@@ -5387,7 +5387,7 @@ impl CallPath {
                         cur = v.next.as_deref();
                     }
                     for v in rev.into_iter().rev() {
-                        f(v.at, &v.text);
+                        f(v.at, &v.text.words());
                     }
                     if let Some(t) = tail.as_deref() {
                         stack.push(t);
@@ -6284,7 +6284,7 @@ impl FwdNeed {
                                 // One shared `Via` link for all leaves in `child`, O(1).
                                 let child_prefix = Some(Arc::new(Via::new(
                                     item.span,
-                                    what_note.clone(),
+                                    what_note.clone().into(),
                                     prefix_rev.clone(),
                                 )));
                                 tasks.push(Task::EnterSig {
@@ -6799,16 +6799,116 @@ pub struct Via {
     /// The call.
     pub at: Span,
     /// The call, in words, as an error states it.
-    pub text: Arc<str>,
+    pub text: ViaText,
     /// The call before it.
     pub next: Option<Arc<Via>>,
     /// Whole-chain `M54` digest, filled in O(1) per link.
     pub chain_hash: std::sync::OnceLock<u64>,
 }
 
+/// The words of a [`Via`] link: made at once, or kept as their parts and written only when an
+/// error prints them ([`Self::words`]).
+///
+/// Complexity tradeoff (MSG-passed-on-part-text-eager): the words of a part passed on name the
+/// part, `p[0][1]…`, O(length of its path) long, and `d` needs on the parts at each level of a
+/// parameter nested `d` deep made Θ(d²) text in all when made at once. Kept as parts, a link
+/// costs O(1) to make ([`PathSteps`] shares its steps), to hash (`r10_hash::hash_via_chain`
+/// reads [`PathSteps::r10_part`]) and to compare where the paths are one allocation; two equal
+/// paths in different allocations compare in O(l), as two texts did.
+///
+/// Equality and the digest read the parts, so two links are equal exactly when their parts
+/// are. Every link that says "is passed on as" is made as [`Self::PassedOn`], so a `Words`
+/// link never equals one. Equal parts give equal words; equal words give equal parts but for
+/// a step written `[k]` that is [`PathStep::Part`] in one path and [`PathStep::Index`] in the
+/// other (a callee that reads one part of its parameter both by destructuring and by `[k]`).
+/// Two needs whose links differ only so are now kept apart where their words merged them:
+/// each is checked, with the same verdict, and an error may name the same call twice.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ViaText {
+    /// Words made at once.
+    Words(Arc<str>),
+    /// "`name` is passed on as `param[k]…` of what here": the value written `name` passed as
+    /// the part at `path` of the parameter `param` of the call of `what`, each step of `path`
+    /// written `[k]`.
+    PassedOn {
+        /// The value passed on, as the program writes it.
+        name: Arc<str>,
+        /// The parameter whose part it is passed as.
+        param: Arc<str>,
+        /// The part's path in the parameter.
+        path: PathSteps,
+        /// The function called, in words.
+        what: Arc<str>,
+    },
+}
+
+impl ViaText {
+    /// The words. O(1) for [`Self::Words`]; O(length of the words) for [`Self::PassedOn`],
+    /// made on each call, which only an error's notes make.
+    pub fn words(&self) -> Arc<str> {
+        match self {
+            ViaText::Words(w) => w.clone(),
+            passed => passed.to_string().into(),
+        }
+    }
+}
+
+impl fmt::Display for ViaText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ViaText::Words(w) => f.write_str(w),
+            ViaText::PassedOn {
+                name,
+                param,
+                path,
+                what,
+            } => {
+                write!(f, "`{name}` is passed on as `{param}")?;
+                for s in path.to_vec() {
+                    let (PathStep::Part { i: k, .. } | PathStep::Index(k)) = s;
+                    write!(f, "[{k}]")?;
+                }
+                write!(f, "` of {what} here")
+            }
+        }
+    }
+}
+
+impl std::hash::Hash for ViaText {
+    /// `Words` hash as their text did; `PassedOn` reads its parts, the path in O(1).
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        match self {
+            ViaText::Words(w) => w.hash(h),
+            ViaText::PassedOn {
+                name,
+                param,
+                path,
+                what,
+            } => {
+                name.hash(h);
+                param.hash(h);
+                std::hash::Hash::hash(path, h);
+                what.hash(h);
+            }
+        }
+    }
+}
+
+impl From<Arc<str>> for ViaText {
+    fn from(w: Arc<str>) -> ViaText {
+        ViaText::Words(w)
+    }
+}
+
+impl From<&str> for ViaText {
+    fn from(w: &str) -> ViaText {
+        ViaText::Words(w.into())
+    }
+}
+
 impl Via {
     /// Constructs a `Via` link and pre-computes its whole-chain `M54` digest in O(1).
-    pub fn new(at: Span, text: Arc<str>, next: Option<Arc<Via>>) -> Self {
+    pub fn new(at: Span, text: ViaText, next: Option<Arc<Via>>) -> Self {
         let v = Via {
             at,
             text,
@@ -31527,7 +31627,23 @@ pub mod r10_hash {
             1u8.hash(&mut h);
             v.at.start.hash(&mut h);
             v.at.end.hash(&mut h);
-            v.text.hash(&mut h);
+            // The path by its `M54` part, not its `Hash`, which is seeded once a run.
+            match &v.text {
+                ViaText::Words(w) => w.hash(&mut h),
+                ViaText::PassedOn {
+                    name,
+                    param,
+                    path,
+                    what,
+                } => {
+                    2u8.hash(&mut h);
+                    name.hash(&mut h);
+                    param.hash(&mut h);
+                    let r = path.r10_part();
+                    (r.val, r.pow, path.len()).hash(&mut h);
+                    what.hash(&mut h);
+                }
+            }
             match v.next.as_deref() {
                 Some(nv) => {
                     let nh = *nv.chain_hash.get().expect("tail hashed first");

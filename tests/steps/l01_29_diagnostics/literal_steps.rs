@@ -63,6 +63,43 @@ fn a_division_of_divisions_of_literals_names_no_type_for_them() {
     assert!(!out.contains("gives f64"), "{out}");
 }
 
+/// A `/` of literals alone that holds a decimal never meets `int`, and at the top level its
+/// steps are the ones a function body gives (MSG-f32-body-top-agree): `1e40 / 1e10` passed
+/// beside an `f32` gives `f64 | rat`, and `1e40`, which no `f32` holds, is the literal that
+/// narrows it. Before, the top level said "`/` has no arrow at `int`" and gave no reason, and
+/// where an outer call gave the `/` its `f64` after the refusal, as in the row's program
+/// `add(x: add(x: 1e40 / 1e10, y: 1.0f32), y: 1)`, it said "this `/` gives f64".
+#[test]
+fn a_division_of_literals_with_a_decimal_has_the_same_steps_at_the_top_level_as_in_a_body() {
+    for call in [
+        "add(x: 1e40 / 1e10, y: 1.0f32)",
+        "add(x: add(x: 1e40 / 1e10, y: 1.0f32), y: 1)",
+    ] {
+        let messages = ["y = ", "g() = "].map(|head| {
+            zed_tests::step_helpers::l01_29_diagnostics::rejected_with_main(&format!(
+                "add(x, y) = x + y;\n{head}{call};\n"
+            ))
+        });
+        let [top, body] = messages.each_ref().map(|out| {
+            let mut s = steps(out);
+            s.sort_unstable();
+            s
+        });
+        let headline =
+            "`add` does not take (f64 | rat, 1.0f32): no arrow of `add` takes these types.";
+        for out in &messages {
+            assert!(
+                out.lines().next().is_some_and(|l| l.ends_with(headline)),
+                "{out}"
+            );
+            assert!(!out.contains("no arrow at `int`"), "{out}");
+            assert!(out.contains("this `/` gives f64 | rat\n"), "{out}");
+            assert!(out.contains(": the literal 1e40 takes f64 | rat"), "{out}");
+        }
+        assert_eq!(top, body, "{}\n{}", messages[0], messages[1]);
+    }
+}
+
 #[test]
 fn divisions_of_literals_nested_two_deep_name_no_type_for_any_of_them() {
     let out = rejected("y = ((1 / 2) / (3 / 4)) / (5 / 6);\n");

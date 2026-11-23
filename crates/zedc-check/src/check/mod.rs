@@ -97,7 +97,7 @@ use ty::{
     Around, Arrow, Binds, CallPath, Carrier, DataUse, Dense, EVERY, FoldForm, IntDomain, KeyUse,
     LevelWord, MapWord, NameItem, NameRun, Names, Narrow, Need, NeedKind, NodeId, OTHER,
     ParamRange, Pat, PathStep, PathSteps, Piece, PowerUse, Reducer, Renamings, RunMark, RunRenames,
-    SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms,
+    SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, ViaText, Width, WrittenRange, atoms,
     carriers_text, class_id, errs, fresh_name, mask_text, rename_apart, single_carrier,
 };
 
@@ -2467,6 +2467,12 @@ struct Ck<'t, 'a> {
     /// ([`Ck::derive_into`]). An operation that takes a carrier leaves the set
     /// ([`Ck::lit_takes`]).
     lit_open: HashSet<Span>,
+    /// The operations that left [`Ck::lit_open`] when they took a carrier ([`Ck::lit_takes`],
+    /// outside a trial). A refusal of a call that one of them is an argument of was met while
+    /// it was still open, as in `add(x: add(x: 1e40 / 1e10, y: 1.0f32), y: 1)`, where the outer
+    /// call gives the `/` its `f64` before the inner refusal's steps are built, so a step names
+    /// the carriers it had then (MSG-f32-body-top-agree, [`Ck::derive_work`]).
+    lit_settled: HashSet<Span>,
     /// The operations of [`Ck::lit_ops`] that nothing gives a carrier, so each is an `int`
     /// where its type is `int`: the whole value of a binding, as `1 + 2` in `s = 1 + 2;`, an
     /// operand of an operator whose other operand has no numeric carrier, as `1 + 2` in
@@ -3489,6 +3495,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             lit_ops: HashSet::new(),
             lit_reads: Vec::new(),
             lit_open: HashSet::new(),
+            lit_settled: HashSet::new(),
             lit_uncarried: HashSet::new(),
             kept_ops: HashMap::new(),
             follow_class: HashMap::new(),
@@ -4583,6 +4590,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         // The type of each tuple written out built so far ([`Ck::tuple_seen`]).
         let mut tuples = HashMap::new();
+        // The reasons of literals that narrow an operation on literals alone, given after the
+        // other steps, where a body gives its classes' reasons (MSG-f32-body-top-agree).
+        let mut late: Vec<Note> = Vec::new();
         let mut stack: Vec<Work> = start.into_iter().rev().collect();
         let note = |span: Span, text: String| {
             Work::Show(Note {
@@ -4770,17 +4780,61 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let uncarried = (ty == "int" && self.lit_uncarried.contains(&span))
                         .then(|| verb_of(e))
                         .flatten();
+                    // An operation on literals alone that holds a decimal is shown as a body
+                    // shows its class: by the carriers its literals may all take, each literal
+                    // that narrows them with its reason (MSG-f32-body-top-agree; before, at the
+                    // top level it said "`/` has no arrow at `int`", which a decimal never
+                    // meets, and gave no reason). One that took a carrier after the refusal
+                    // these steps explain is shown as it was then ([`Ck::lit_settled`]).
+                    let open = self.lit_open.contains(&span) || self.lit_settled.contains(&span);
+                    let decimal = match open {
+                        true => open_decimal_carriers(e, self.t.text),
+                        false => None,
+                    };
+                    // The carriers are the ones the headline prints for it
+                    // ([`Self::open_carriers`]); a literal that narrows the others' carriers
+                    // gets the reason a body's class gives it, after the other steps, as there.
+                    let open_ty = decimal.as_ref().and_then(|_| {
+                        let open: Vec<Ty> = [Carrier::F64, Carrier::Rat]
+                            .into_iter()
+                            .filter(|&c| folded(e, c).is_some())
+                            .map(Ty::carrier)
+                            .collect();
+                        (!open.is_empty()).then(|| Ty::union_all(&open))
+                    });
+                    if let Some((m, lits)) = &decimal {
+                        let any = lits.iter().fold(0, |p, l| p | lit_mask(l, true));
+                        for l in lits.iter().filter(|l| lit_mask(l, true) == *m && *m != any) {
+                            let why = format_args!(
+                                "the literal {} takes {}",
+                                l.written(),
+                                ty::mask_text(*m)
+                            );
+                            late.push(Note {
+                                span: l.span,
+                                text: quoting(&why, || "this literal narrows it".into()).into(),
+                            });
+                        }
+                    }
                     let text = match (&e.kind, self.lit_open.contains(&span)) {
+                        _ if let Some(t) = &open_ty => format!("{what} gives {t}"),
                         (_, false) if let Some(verb) = uncarried => format!(
                             "{what} {verb} integer literals alone, so it is a literal too; \
                              nothing here gives it a carrier, so it is an `int`"
                         ),
                         (_, false) if untyped => format!("{what} has no type yet"),
                         (_, false) => format!("{what} {verb} {ty}"),
-                        (ExprKind::Binary(BinaryOp::Div, ..), true) => format!(
-                            "{what} is an operation on literals alone, so it is a literal too \
+                        // Only a `/` of integer literals alone meets `int` at all: one that
+                        // holds a decimal, as `1e40 / 1e10`, never takes `int`, so that
+                        // reason is not its own (MSG-f32-body-top-agree).
+                        (ExprKind::Binary(BinaryOp::Div, ..), true)
+                            if open_lits(e).is_some_and(|o| !o.decimal) =>
+                        {
+                            format!(
+                                "{what} is an operation on literals alone, so it is a literal too \
                              and takes the carrier of what it meets; `/` has no arrow at `int`"
-                        ),
+                            )
+                        }
                         (_, true) => format!(
                             "{what} is an operation on literals alone, so it is a literal too \
                              and takes the carrier of what it meets"
@@ -4840,6 +4894,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 o = origin.then.as_deref();
             }
             stack.extend(next.into_iter().rev());
+        }
+        for n in late {
+            if shown.insert(n.clone()) {
+                out.push(n);
+            }
         }
     }
 
@@ -6458,10 +6517,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// hold it exactly: `9007199254740993` removes `f64`.
     fn join(&mut self, k: usize, l: &Lit, follower: bool) -> bool {
         if !follower {
-            let m = Carrier::ALL
-                .into_iter()
-                .filter(|&c| adoptable(l, c) && (!l.generic || fits(l, c)))
-                .fold(0, |m, c| m | c.bit());
+            let m = lit_mask(l, l.generic);
             // The literal's own carriers do not ask the class for one.
             if !self.restrict_asking(
                 k,
@@ -12398,6 +12454,44 @@ fn fits(l: &Lit, c: Carrier) -> bool {
 fn adoptable(l: &Lit, c: Carrier) -> bool {
     let own = lit_carrier(&l.value);
     c.numeric() && (c == own || l.bare && !(own == Carrier::F64 && c == Carrier::Int))
+}
+
+/// The carriers the literal `l` may take, as a mask: those it may adopt ([`adoptable`]), and
+/// of those, with `exact`, only the ones that hold it exactly ([`fits`]). Where it joins a
+/// class ([`Ck::join`]), `exact` is whether the literal is generic.
+fn lit_mask(l: &Lit, exact: bool) -> u8 {
+    Carrier::ALL
+        .into_iter()
+        .filter(|&c| adoptable(l, c) && (!exact || fits(l, c)))
+        .fold(0, |m, c| m | c.bit())
+}
+
+/// The carriers an operation on bare literals alone that holds a decimal may take, as a mask,
+/// the meet of the carriers that hold each of its literals exactly ([`lit_mask`] with
+/// `exact`), with those literals, read with the program's text `src`; `None` for another
+/// expression or one of integer literals alone. In a function body the literals are generic
+/// and their class ([`Ck::lits_take`]) meets the same masks, so a step built from this names
+/// the carriers the body's class names (MSG-f32-body-top-agree): `1e40`, which no `f32` holds,
+/// takes `f64 | rat` in both. O(|e|).
+fn open_decimal_carriers(e: &Expr, src: Option<&str>) -> Option<(u8, Vec<Lit>)> {
+    if !open_lits(e)?.decimal {
+        return None;
+    }
+    let mut lits = Vec::new();
+    let mut todo = vec![e];
+    while let Some(x) = todo.pop() {
+        if let Some(l) = literal(x, src) {
+            lits.push(l);
+            continue;
+        }
+        match &x.kind {
+            ExprKind::Binary(_, a, b) => todo.extend([&**b, &**a]),
+            ExprKind::Unary(_, a) => todo.push(a),
+            _ => {}
+        }
+    }
+    let m = lits.iter().fold(u8::MAX, |m, l| m & lit_mask(l, true));
+    Some((m, lits))
 }
 
 /// The literal `l` where a value of one of the types `want` is expected: the carrier it
