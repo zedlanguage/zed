@@ -8,6 +8,18 @@ use crate::scaling;
 use crate::seed::Rng;
 mod bench;
 
+/// P4-A (XR-presburger4 round 4, Codex and Gemini): [`sumset::poly_cost`] at a radix of 2^63,
+/// whose `2 r - 1` passes a word, says the product cannot be held (`None`) instead of
+/// overflowing. Red before the multiply was checked: "attempt to multiply with overflow".
+/// Beside it, radices 2^62 and 2 (each `2 r - 1` fits, their product `L` does not: `None`) and
+/// two small radices (`L = 3 · 5 = 15`, cost `2 L (1 + d) + G d = 30 · 3 + 6 · 2 = 102`).
+#[test]
+fn poly_cost_of_a_radix_past_half_a_word() {
+    assert_eq!(sumset::poly_cost(&[1 << 63], &[0]), None);
+    assert_eq!(sumset::poly_cost(&[1 << 62, 2], &[0, 1]), None);
+    assert_eq!(sumset::poly_cost(&[2, 3], &[0, 1]), Some(102));
+}
+
 fn sym(s: &str) -> Lin {
     Lin::atom(Atom::Sym(s.into()))
 }
@@ -1848,6 +1860,116 @@ fn fixed_literals_are_read_once() {
     assert!(
         large <= 9 * small,
         "units {small} at m = 100, {large} at 800"
+    );
+}
+
+/// XR-presburger4 round 4 P4-C (Codex): [`constant_sums`] without a point is answered at the
+/// literal on its last fixed sum, read as false before the costs; the walk of the formula and
+/// its copy, which ran, are charged, at least one unit a constraint. Red before: 0 units.
+#[test]
+fn an_early_answer_charges_the_walk_of_the_formula() {
+    let (_, _, f) = constant_sums(50, false);
+    let mut n = 0u64;
+    f.walk(&mut |_| n += 1);
+    let before = sumset::ANSWERED.with(std::cell::Cell::get);
+    let (got, used, _) = sumset_units(&f);
+    assert!(sumset::ANSWERED.with(std::cell::Cell::get) > before && got == Some(None));
+    assert!(used >= n, "{used} units for {n} constraints");
+}
+
+/// Gemini's family P-A (XR-presburger4 round 4, B-P1): rows over the first `2k` odd primes; the
+/// sum `sum_{i<k} q_i` modulo 2 with `== 1`, which `x = 0` fails; and `k` sums
+/// `2 q_0 + q_{k+j}` modulo 2 beside the top-level literals `r_{k+j} == 0`. The period
+/// `2 prod p` passes a word from `k = 8`, so [`sum_residues`] declines and [`sumset`] is taken.
+fn rows_of_one_remainder(k: usize) -> (Vec<Div>, Vec<Sum>, Formula) {
+    let divs =
+        unit_rows((zed_numtheory::first_primes(2 * k + 1).into_iter().skip(1)).map(|p| p as i64));
+    let mut sums = vec![Sum {
+        parts: (0..k).map(|i| (2 * i + 1, 1)).collect(),
+        k: 0,
+        m: 2,
+        rem: true,
+    }];
+    sums.extend((0..k).map(|j| Sum {
+        parts: vec![(1, 2), (2 * (k + j) + 1, 1)],
+        k: 0,
+        m: 2,
+        rem: true,
+    }));
+    let n = divs.len();
+    let mut lits = vec![Formula::Con(Con::eq(&r(n), &Lin::constant(1)))];
+    lits.extend((0..k).map(|j| Formula::Con(Con::eq(&r(k + j), &Lin::constant(0)))));
+    let f = formula(&divs, Formula::and(lits), sum_formulas(&divs, &sums));
+    (divs, sums, f)
+}
+
+/// [`rows_of_one_remainder`] (META4 order 8): the answers against enumeration at `k` = 1 and 2;
+/// at `k = 15` the real entry, [`solve_modular_or_scaled`] under a question's meter with no
+/// limit, takes [`sumset`] (Gemini conjectured it; checked here); and the units grow as `k`,
+/// at most 9 times from 15 to 120. Each row of one allowed remainder goes into `B_j`, so the
+/// `k` sums are moved by `t_0` alone and share the class coordinate; held as `k` coordinates,
+/// each of the `k` blocks of the first rows copied all of them, Θ(k²).
+#[test]
+fn rows_of_one_remainder_leave_the_coordinates() {
+    for k in 1..=2 {
+        let (divs, sums, f) = rows_of_one_remainder(k);
+        let period: i64 = 2 * divs.iter().map(|d| d.m).product::<i64>();
+        let want =
+            (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
+        let (got, _, selected) = sumset_units(&f);
+        assert!(
+            selected && got.as_ref().map(Option::is_some) == Some(want),
+            "k = {k}: {got:?}, want {want}\n{f}"
+        );
+    }
+    let f = rows_of_one_remainder(15).2;
+    let before = sumset::SELECTED.with(std::cell::Cell::get);
+    let got = metered(u64::MAX, || solve_modular_or_scaled(&f, false));
+    let selected = sumset::SELECTED.with(std::cell::Cell::get) > before;
+    assert!(selected && matches!(got, Ok(Some(Some(_)))), "{got:?}, selected {selected}");
+    let units = |k: usize| units_with_a_point(&rows_of_one_remainder(k).2, &format!("k = {k}"));
+    let (small, large) = (units(15), units(120));
+    assert!(
+        large <= 9 * small,
+        "units {small} at k = 15, {large} at 120"
+    );
+}
+
+/// Codex's family (XR-presburger4 round 4 NB-P2): rows over `rows`, `k` sums
+/// `r_0 + r_1 + j` modulo `m`, `j` in `0..k`, all of one direction (one coordinate), and the
+/// literals `s_0 == 0` and `s_1 == 0`, which no point meets. The other `k - 2` remainders are
+/// read by no literal.
+fn unread_remainders(rows: [i64; 2], k: usize, m: i64) -> Formula {
+    let divs = unit_rows(rows);
+    let sums: Vec<Sum> = (0..k)
+        .map(|j| Sum {
+            parts: vec![(2, 1), (4, 1)],
+            k: j as i64,
+            m,
+            rem: true,
+        })
+        .collect();
+    let lits = Formula::and(vec![
+        Formula::Con(Con::eq(&r(2), &Lin::constant(0))),
+        Formula::Con(Con::eq(&r(3), &Lin::constant(0))),
+    ]);
+    formula(&divs, lits, sum_formulas(&divs, &sums))
+}
+
+/// [`unread_remainders`] at `k = m` = 15 and 120 (META4 order 9): no point, and the units grow
+/// as `m`, at most 9 times; with every remainder filled at each of the `m` tuples, Θ(k m).
+#[test]
+fn remainders_no_literal_reads_are_not_filled() {
+    let units = |m: i64| {
+        let f = unread_remainders([809, 811], m as usize, m);
+        let (got, used, selected) = sumset_units(&f);
+        assert!(selected && got == Some(None), "m = {m}: {got:?}\n{f}");
+        used
+    };
+    let (small, large) = (units(15), units(120));
+    assert!(
+        large <= 9 * small,
+        "units {small} at m = 15, {large} at 120"
     );
 }
 

@@ -66,15 +66,43 @@ fn sums_over_many_moduli_two_scale() {
 /// [`solve_modular_or_scaled`] on [`constant_sums`] with `k = n` and `8n` (XR-presburger4 round
 /// 2 P2, Codex): `k` sums that are 0 at every `x` beside one sum over all the rows. Each pair of
 /// tuples added all `k + 1` coordinates, Θ(k²) word additions over the `k + 1` blocks; with the
-/// constant coordinates read once and left out of the tuples, linear in `k`.
+/// constant coordinates read once and left out of the tuples, linear in `k`. With a point, so
+/// that [`sumset`] is reached and selected (META4 order 10, Codex: without one the literal on the
+/// last fixed sum is read as false before the costs, and the path's work was never timed).
 #[test]
 fn constant_sums_beside_a_dense_sum_scale() {
-    let inputs = scaling::inputs(N_CONSTANT, |n| constant_sums(n, false).2);
+    let inputs = scaling::inputs(N_CONSTANT, |n| constant_sums(n, true).2);
     scaling::check_order("k constant sums beside a dense sum", N_CONSTANT, 1, |n| {
-        let got = metered(u64::MAX, || solve_modular_or_scaled(&inputs[&n], false));
-        assert!(matches!(got, Ok(Some(None))))
+        by_sumset(&inputs[&n], |got| matches!(got, Some(Some(_))))
     });
 }
+
+/// [`rows_of_one_remainder`] at `k = n` and `8n` (XR-presburger4 round 4, Gemini's P-A; META4
+/// order 8): each row of one allowed remainder goes into `B_j`, so the `k` sums share the class
+/// coordinate and each block copies O(1) words a tuple; held as `k` coordinates, Θ(k²).
+#[test]
+fn rows_of_one_remainder_scale() {
+    let inputs = scaling::inputs(N_ONE_REMAINDER, |n| rows_of_one_remainder(n).2);
+    scaling::check_order("k rows of one remainder", N_ONE_REMAINDER, 1, |n| {
+        by_sumset(&inputs[&n], |got| matches!(got, Some(Some(_))))
+    });
+}
+
+/// [`unread_remainders`] at `k = m = n` and `8n` (XR-presburger4 round 4 NB-P2; META4 order 9):
+/// only the two remainders the literals read are filled at each of the `m` tuples; filled all,
+/// Θ(k m).
+#[test]
+fn remainders_no_literal_reads_scale() {
+    let inputs = scaling::inputs(N_ONE_REMAINDER, |n| {
+        unread_remainders([MISSING_ROWS[0], MISSING_ROWS[1]], n, n as i64)
+    });
+    scaling::check_order("k unread remainders modulo m", N_ONE_REMAINDER, 1, |n| {
+        by_sumset(&inputs[&n], |got| matches!(got, Some(None)))
+    });
+}
+
+/// The size of [`rows_of_one_remainder_scale`] and [`remainders_no_literal_reads_scale`].
+const N_ONE_REMAINDER: usize = 15;
 
 /// [`solve_modular_or_scaled`] on [`bench_many_sums`] with 3 rows in 2 blocks and `j = n` and
 /// `8n` sums modulo 2 (XR-presburger4 round 2 P3, Codex and Gemini): the size of the group of
@@ -209,8 +237,8 @@ const MISSING_ROWS: [i64; 3] = [3_203, 3_209, 3_217];
 
 /// [`missing_residue`] with every row capped, at `M = n` and `8n` (XR-presburger4 round 3 P1,
 /// Claude): `R` and `W_b` of the second block have `M - 1` tuples each, Θ(M²) pairs on
-/// bf91c3aef; by the product of polynomials ([`zed_kernel::num::mul_uint`], transforms above 512
-/// words, so both sizes take the same method: `L = 2 M - 1` is 799 and 6,399 words), O(M log M).
+/// bf91c3aef; by the product of polynomials ([`zed_kernel::num::mul_uint`], transforms above
+/// `MUL_LEAF` = 400 words, so both sizes take the same method: `L = 2 M - 1` is 799 and 6,399 words), O(M log M).
 #[test]
 fn a_sum_missing_one_residue_scale() {
     let inputs = scaling::inputs(N_MISSING, |n| {

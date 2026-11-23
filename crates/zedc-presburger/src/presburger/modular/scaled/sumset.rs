@@ -85,14 +85,31 @@
 //! `Z_{M_1} x ... x Z_{M_J}`. For one sum (`J = 1`, the cyclic group `Z_m`), and for several
 //! sums whose moduli are pairwise coprime (the product group is then cyclic), the n-fold sumset
 //! `A_1 + ... + A_n` of arbitrary sets is the problem of Bringmann and Nakos, "Fast n-fold
-//! Boolean Convolution via Additive Combinatorics" (ICALP 2021, arXiv:2105.03968), solved in
-//! almost linear time in the input plus output size; it generalizes modular subset sum
+//! Boolean Convolution via Additive Combinatorics" (ICALP 2021, arXiv:2105.03968), solved for
+//! input plus output size `k` "by a randomized Las Vegas algorithm in O(k · polylog(mk))
+//! expected time, or by a deterministic algorithm in k · 2^{O(sqrt(log k · log log m))} time"
+//! (`introduction.tex` lines 97-98; line 84 states the same bounds in words: "a randomized Las
+//! Vegas algorithm running in expected time O(k · polylog m), and a deterministic algorithm
+//! running in time k · m^{o(1)}"), so neither bound is linear (META4 LIT4-B, Codex); it
+//! generalizes modular subset sum
 //! (Axiotis et al., arXiv:2008.10577; Cardinal and Iacono, arXiv:2008.08417; Le and Le,
 //! arXiv:2609.30992), where each set is `{0, a_i}`. Neither gives the reduction of the sums of
 //! quotients to that sumset (Lemma C and the theorem above), and neither covers the product of
 //! several cyclic groups with arbitrary blocks. One step `R + W_b` is computed here by the
-//! textbook reduction of a sumset to a product of polynomials with 0/1 coefficients (Kronecker
-//! substitution, as in Cardinal and Iacono, Section 2), where that costs less than the pairs.
+//! reduction of a sumset to a product of polynomials with 0/1 coefficients, where that costs
+//! less than the pairs. Source: Bringmann and Nakos (above), Section 1, "Boolean Convolution
+//! and Sumset Computation": sumset computation of `A, B ⊆ Z_m` "corresponds to Boolean
+//! convolution with wraparound" (line 14), and the next paragraph's heading is "Standard
+//! Convolution and Polynomial Multiplication" (line 17), whose `C[k] = sum_i A[i] · B[k-i]` is
+//! the coefficient of `z^k` in the product of the polynomials `sum A[i] z^i` and `sum B[i] z^i`
+//! (arXiv source `introduction.tex`, read 2026-11-23 in the copy fetched for XR-presburger4
+//! round 4, `r4/codex/sources/fetched/verification/source/Bringmann2021fast`; an earlier
+//! version of this comment quoted "This problem is equivalent to polynomial multiplication",
+//! which that source does not hold). The packing of several coordinates into one
+//! integer exponent is proved at [`poly_cost`] and its callers; it is not taken from a paper.
+//! (Until XR-presburger4 META4 order 6, this sentence credited the reduction to Cardinal and
+//! Iacono, Section 2, which describes a dynamic string algorithm, not this reduction: Codex,
+//! round 4, LIT4-B.) Tests: `tests::sumset_decisions_match_enumeration`.
 //! Simultaneous incongruences (Garey and Johnson, problem AN2, NP-complete) is a reason the guard
 //! declines a literal on `x`'s residues: such a literal can couple blocks, and then the tuples of
 //! coordinates do not separate; the guard declines every such literal, coupling or not.
@@ -197,7 +214,8 @@ fn word_or_max(v: &Int) -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-/// `(a + b) mod r` for `a, b < r`, without overflow at any word `r`.
+/// `(a + b) mod r` for `a, b <= r`, without overflow at any word `r`: the way back passes
+/// `b = r - v`, which is `r` when `v = 0` (XR-presburger4 round 4 P4-D, Codex).
 fn add_mod(a: usize, b: usize, r: usize) -> usize {
     ((a as u128 + b as u128) % r as u128) as usize
 }
@@ -238,8 +256,8 @@ fn charge(steps: u64) -> bool {
 //   them when `R_c` or `W_b` is all of them (O(G C)); the pairs (O(|R_c| |W_b| d_b log)); or the
 //   product of the two polynomials with 0/1 coefficients by Kronecker substitution (below),
 //   O(L log L + L d_b) for `L = prod (2 r - 1) <= 2^d_b G` words, by
-//   [`zed_kernel::num::mul_uint`] (O(n log n) by transforms above 512 words); each tuple of
-//   `R_{b+1}` is then written, O(C);
+//   [`zed_kernel::num::mul_uint`] (O(n log n) by transforms above `MUL_LEAF = 400` words);
+//   each tuple of `R_{b+1}` is then written, O(C);
 // - the literals, O(R_last (J + |lits|) + |f|), with the literals on fixed sums read once.
 // The step counts charged to the meter are these without the log factors. A model keeps the set
 // before each block, O(sum_b R_b C) words, and pays O(|W_b| C log) a block to find the way back
@@ -253,7 +271,8 @@ fn charge(steps: u64) -> bool {
 // `R` whole, O(R_b C), even when it moves one coordinate; with `k` such blocks and `C` about `k`
 // coordinates that is Θ(k²) for one tuple reached; tuples kept by their moved coordinates only
 // would remove it. Bringmann and Nakos (above) compute an n-fold sumset in a cyclic group in
-// almost linear time in input plus output; the product of polynomials here is the step of one
+// O(k polylog(mk)) expected time (Las Vegas) or k 2^{O(sqrt(log k log log m))} deterministic
+// time, `k` the input plus output size; the product of polynomials here is the step of one
 // pair of sets. The choice between the two paths compares a bound on this path's steps (the
 // loops above, `R_b` bounded by `min(S, R_{b-1} |W|)` for `S` the product of the radices) with
 // [`sum_residues`]'s residue count, both exact answers, so no answer depends on it; it keeps
@@ -300,8 +319,18 @@ pub(super) fn solve_by_sums(
         }
         let a = c.lin.terms.keys().next().expect("one term");
         if let Some(&i) = r_of.get(a) {
+            // O(1) a literal (XR-presburger4 round 4 P4-D, Codex's MISSED-ERROR: excluded
+            // residues one at a time on one row would make each meet copy the runs left, Θ(L²)
+            // for L literals). Proof that it cannot happen: `allowed[i]` starts as one interval;
+            // `remainder_values` gives at most one, as a literal is `Rel::Ge` (a half-line) or
+            // `Rel::Eq` (a point), and `Rel` has no `!=`; the meet of two intervals is at most
+            // one interval. So `allowed[i]` holds at most one interval after every literal, by
+            // induction, and each meet reads at most two. A residue excluded is an `Or` of two
+            // literals, not at the top level, and a literal on a row's remainder below the top
+            // level makes the path decline (`ok` below).
             let mine = remainder_values(c, &rows[i].m);
             allowed[i] = res_intersect(&allowed[i], &mine);
+            debug_assert!(allowed[i].len() <= 1);
             at_top.insert(c);
         }
     }
@@ -316,6 +345,13 @@ pub(super) fn solve_by_sums(
     });
     if !ok {
         return None;
+    }
+    // The walk of `f` just made, `n_all` constraints, charged before any answer below
+    // (XR-presburger4 round 4 P4-C, Codex: it and the copy by `map_cons` were charged only with
+    // the literals at the end, which the early answers skipped). Test
+    // `an_early_answer_charges_the_walk_of_the_formula`.
+    if !charge(n_all) {
+        return Some(None);
     }
 
     // Lemma C's coefficients, per sum, reduced modulo its modulus; a `u_ji` that is 0 there is
@@ -346,6 +382,21 @@ pub(super) fn solve_by_sums(
                 }
             }
         }
+        // A row whose remainder has one allowed value `c` (a top-level literal `r_i == c`, or no
+        // remainder, `c = 0`) adds `u_ji c` to `E_j` at every point, so it goes into `B_j` and
+        // leaves `u_j` (XR-presburger4 round 4 B-P1, Gemini's P-A; META4 order 8). The row stays
+        // in its block, whose walk still requires `r_i = c`, and moves no coordinate of this
+        // sum: a sum left with no `u_ji` is moved by `t_0` alone or fixed, not a coordinate of
+        // its own. Before, P-A's `k` sums `2 q_0 + q_{k+j}` modulo 2, with `r_{k+j} == 0`, were
+        // `k` coordinates, and each of the `k` blocks of the other rows copied all of them,
+        // Θ(k²). Test `rows_of_one_remainder_leave_the_coordinates`.
+        ui.retain(|&i, v| match &allowed[i][..] {
+            [(lo, hi)] if lo == hi => {
+                b = &b + &(&*v * lo);
+                false
+            }
+            _ => true,
+        });
         a_j.push(a.mod_floor(mj));
         b_j.push(b.mod_floor(mj));
         let mut ui: Vec<(usize, Int)> = (ui.into_iter())
@@ -389,6 +440,11 @@ pub(super) fn solve_by_sums(
             Formula::Con(c.clone())
         }
     });
+    // The copy of `f` by `map_cons`, `n_all` constraints, charged before any answer below, as
+    // the walk of `f` is above (P4-C).
+    if !charge(n_all) {
+        return Some(None);
+    }
     if matches!(&lits, Formula::Or(gs) if gs.is_empty()) {
         answered();
         return Some(None);
@@ -472,6 +528,14 @@ pub(super) fn solve_by_sums(
         let lam = word(&lam).expect("below a word modulus");
         places.push((j, Place::Moved { c, lam, b, m: mj }));
     }
+    // The places read at each tuple: a sum with no remainder (its value must be 0) and a sum
+    // whose remainder a literal reads. A remainder no literal reads is never looked at, so
+    // filling it at every tuple was `|R| k` steps for `k` such sums beside `M` tuples, Θ(k M)
+    // (XR-presburger4 round 4 NB-P2; META4 order 9). One walk of the literals, O(n_lits)
+    // hashes. Test `remainders_no_literal_reads_are_not_filled`.
+    let mut read: HashSet<&Atom> = HashSet::new();
+    lits.walk(&mut |c| read.extend(c.lin.terms.keys()));
+    places.retain(|(j, _)| sums[*j].r.as_ref().is_none_or(|r| read.contains(r)));
     let n_moved = radix.len();
     // The class coordinate's radix is the number of joint values, at most `M`, known after the
     // start below; `M` bounds it in the cost.
@@ -769,12 +833,8 @@ pub(super) fn solve_by_sums(
 
     // The literals on the sums' remainders, read at each reached tuple: a word per live sum and
     // each literal at each tuple, the literals once, and the walk of `f` that built them.
-    if !charge(literal_cost(
-        reach.len() as u64,
-        places.len(),
-        n_lits,
-        n_all,
-    )) {
+    // The walk of `f` and its copy were charged where they ran (P4-C), so `n_all` is 0 here.
+    if !charge(literal_cost(reach.len() as u64, places.len(), n_lits, 0)) {
         return Some(None);
     }
     let mut values = Model::new();
@@ -905,12 +965,15 @@ fn sumset_by_pairs(a: &[Tuple], b: &[Tuple], radii: &[usize]) -> Vec<Tuple> {
 /// product, as the other charges leave out the log factors of the maps (see [`charge`]): the two
 /// polynomials of `L = prod (2 r - 1)` words written, the `2 L` words of the product read, each
 /// decoded in `d` digits, and the `G` values of the group, `d` words each; `None` when `2 L` does
-/// not fit a word.
-fn poly_cost(radix: &[usize], mv: &[usize]) -> Option<u64> {
+/// not fit a word. Every multiply that can pass a word is checked: `2 r - 1` itself passes one
+/// for `r >= 2^63` (XR-presburger4 round 4, P4-A, Codex and Gemini), and then `None`, as the
+/// product it would size cannot be held. Test `tests::poly_cost_of_a_radix_past_half_a_word`.
+pub(super) fn poly_cost(radix: &[usize], mv: &[usize]) -> Option<u64> {
     let mut l = 1u64;
     let mut g = 1u64;
     for &c in mv {
-        l = l.checked_mul(2 * radix[c] as u64 - 1)?;
+        let digits = (radix[c] as u64).checked_mul(2)?.checked_sub(1)?;
+        l = l.checked_mul(digits)?;
         g = g.saturating_mul(radix[c] as u64);
     }
     usize::try_from(l.checked_mul(2)?).ok()?;
@@ -928,7 +991,8 @@ fn poly_cost(radix: &[usize], mv: &[usize]) -> Option<u64> {
 /// `0..2 r_p - 1`, so `e` has the digits `x_p + y_p` in the mixed radix `2 r_p - 1`, and distinct
 /// digit tuples give distinct powers. So a coefficient is nonzero exactly when its digits are
 /// `x + y` for some pair, and `x + y` modulo `radii` is each digit folded modulo `r_p`. QED.
-/// [`zed_kernel::num::mul_uint`] multiplies by transforms in O(n log n) above 512 words.
+/// [`zed_kernel::num::mul_uint`] multiplies by transforms in O(n log n) above `MUL_LEAF = 400`
+/// words (zed-kernel `num/fast.rs`, the build that is not a test).
 fn sumset_by_product(a: &[Tuple], b: &[Tuple], radii: &[usize]) -> Vec<Tuple> {
     let mut strides = Vec::with_capacity(radii.len());
     let mut l = 1usize;
@@ -974,7 +1038,8 @@ fn sumset_by_product(a: &[Tuple], b: &[Tuple], radii: &[usize]) -> Vec<Tuple> {
 }
 
 /// The values [`solve_by_sums`] walks for block `b`'s `W_b`, and their cost in steps, in
-/// saturating words: for a block of one row `i`, `min(m_b, n_i M)` values of its remainder, a
+/// saturating words: for a block of one row `i`, `min(m_b, sum over its intervals of
+/// min(hi - lo + 1, M))` values of its remainder, a
 /// word for each coordinate the row moves (at least 1), and one step for each of its `n_i`
 /// intervals; for a block of several rows, every `t` in `0..m_b`, each row's remainder tested
 /// against its `n_i` intervals and added to the coordinates it moves, and the row itself.
@@ -987,7 +1052,12 @@ fn walk_of(
     let m_b = word_or_max(&b.m);
     if let [i] = b.rows[..] {
         let n_i = allowed[i].len() as u64;
-        let v = m_b.min(n_i.saturating_mul(m));
+        // The walk steps at most `min(hi - lo + 1, M)` times in each interval (XR-presburger4
+        // round 4 TASTE, Claude P-6: `n_i M` overcharged short intervals).
+        let v = (allowed[i].iter())
+            .map(|(lo, hi)| word_or_max(&(&(hi - lo) + &Int::ONE)).min(m))
+            .fold(0u64, u64::saturating_add)
+            .min(m_b);
         let walk = (v.saturating_mul(by_row[i].len().max(1) as u64)).saturating_add(n_i);
         (v, walk)
     } else {
