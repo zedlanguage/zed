@@ -32,6 +32,10 @@
 # A pointer memo's key hashes and compares the address of the `Arc` it holds and nothing else
 # (zed-collections src/by_address.rs, `ByAddress`): no change inside the value can move its
 # hash or equality, whatever the value holds.
+# A number whose decimal exponent is kept in its digits keeps beside them the same number with
+# the exponent in binary, filled on first use (zed-kernel src/num.rs, `Ten::bin`): equality,
+# order and hash read the digits, or that binary form, which the digits alone fix, so filling
+# it changes none of them.
 ignore-interior-mutability = [
   "zed_kernel::types::Type",
   "zed_kernel::text::Text",
@@ -46,4 +50,5 @@ ignore-interior-mutability = [
   "zedc_presburger::presburger::formula::Shared",
   "zedc_preimage::address::Address",
   "zed_collections::by_address::ByAddress",
+  "zed_kernel::num::Ten",
 ]

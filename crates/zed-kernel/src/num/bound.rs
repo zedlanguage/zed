@@ -323,6 +323,98 @@ fn start(n: &Product<'_>, d: &Product<'_>) -> u64 {
     64 + n.exp_bits().max(d.exp_bits())
 }
 
+/// `x + |x| 2^-40 + 2^-40`: above `x` by more than the rounding of the one `f64` operation that
+/// gave `x`, when that operation's inputs were bounds of the same direction, so a chain of
+/// operations each followed by `up` stays an upper bound. A relative error of `2^-53` and an
+/// absolute one of a few ulps are far inside `2^-40`.
+fn up(x: f64) -> f64 {
+    x + x.abs() * 2f64.powi(-40) + 2f64.powi(-40)
+}
+
+/// An upper bound on `ln x` for `x >= 1`: `x < (m + 1) 2^s` for its leading 64 bits `m`
+/// ([`leading`]), and `ln(m + 1) - ln m <= 1/m <= 2^-63` when `s > 0`, where `m >= 2^63`;
+/// `x = m` when `s = 0`.
+fn ln_up(x: &BigUint) -> f64 {
+    let (m, s) = leading(x);
+    up(up(m.ln()) + up(s as f64 * std::f64::consts::LN_2))
+}
+
+/// A precision `P` in bits with `|ln n - ln d| >= 2^-P`, from Laurent's lower bound on a
+/// linear form in two logarithms, when each of `n` and `d` is one power `a^b` with `a > 1` and
+/// one of the two `a` is a listed atom; `None` otherwise, or when `P` passes `2^62`.
+///
+/// The bound (M. Laurent, "Linear forms in two logarithms and interpolation determinants II",
+/// Acta Arith. 133(4) (2008) 325-348, doi:10.4064/aa133-4-3; DESIGN.md sec:domains, "Kept
+/// powers"). p. 327: "Consider the linear form Λ = b2 log α2 − b1 log α1 , where b1 and b2 are
+/// positive integers", with `D = [Q(α1, α2) : Q]/[R(α1, α2) : R]`; p. 328: "b0 = b1/(D log A2) +
+/// b2/(D log A1), where A1 and A2 are real numbers > 1 such that log Ai ≥ max{h(αi),
+/// |log αi|/D, 1/D}", and "Corollary 2. Suppose moreover that the numbers α1, α2, log α1, log α2
+/// are real and positive. Then log |Λ| ≥ −C2 D4 (max{log b0 + 0.38, m/D, 1})2 log A1 log A2
+/// for each pair (m, C2(m)) from Table 1", whose last column is `m = 30`, `C2 = 17.9`; Corollary
+/// 1, which Corollary 2 extends, asks that "α1 and α2 are multiplicatively independent".
+///
+/// Proof that it applies. Take `α1 = a_d`, `b1 = b_d`, `α2 = a_n`, `b2 = b_n`, so `Λ = ln n -
+/// ln d` with `b1, b2` positive integers. The `α` are integers above 1, so real and positive
+/// with positive logarithms, and `D = 1 / 1 = 1`. Independence: the caller (`Rat`'s
+/// `magnitude_order`) passes coefficients coprime to every listed atom and listed atoms that
+/// are pairwise coprime, so with one `a` listed the two `a` are coprime; then `a_1^x = a_2^y`
+/// with `x, y` not both 0 is impossible, since `x, y > 0` puts a prime of `a_1` into `a_2`, and
+/// one of them 0 makes a number above 1 equal 1. The height of an integer `a > 1` is `ln a`,
+/// so any `ln A_i >= max(ln a_i, 1)` meets the condition, and the bound holds for every such
+/// choice; this takes `ln A_i` as the upper bound [`ln_up`] of `ln a_i`, at least 1. A larger
+/// `b0` only weakens the bound (it is increasing in `log b0`), so `ln b0` is bounded above by
+/// `ln 2 + max(ln b1 - ln ln A2, ln b2 - ln ln A1)`, since `x + y <= 2 max(x, y)`, which stays
+/// in `f64` range for exponents of any width. Then `|Λ| >= e^-C = 2^-(C / ln 2)` with `C =
+/// 17.9 max(ln b0 + 0.38, 30)^2 ln A1 ln A2`, and `P` is `C / ln 2` rounded up, every step of
+/// it rounded up by [`up`] (17.9 itself is below its `f64`, which `up` covers).
+///
+/// For `3^(2^40)` against `2^e`, `e < 2^41`: `ln b0 + 0.38` is about 29.4, under 30, and `C /
+/// ln 2 = 17.9 * 900 * ln 3 / ln 2 = 25533.8`, so `P = 25534`, the 25,534 bits of DESIGN.md.
+pub(super) fn laurent_bits(n: &Product<'_>, d: &Product<'_>) -> Option<u64> {
+    // `(ln_up a, b, listed)` for a product that is one power `a^b`, `a > 1`.
+    fn single(x: &Product<'_>) -> Option<(f64, BigUint, bool)> {
+        match (x.coef.is_one(), &x.pows[..]) {
+            (true, [(p, e)]) => Some((ln_up(&BigUint::from(*p)), e.clone(), true)),
+            (false, []) => Some((ln_up(&x.coef), BigUint::one(), false)),
+            _ => None,
+        }
+    }
+    let (ln_a2, b2, listed2) = single(n)?;
+    let (ln_a1, b1, listed1) = single(d)?;
+    if !(listed1 || listed2) {
+        return None;
+    }
+    let (ln_big_a1, ln_big_a2) = (ln_a1.max(1.0), ln_a2.max(1.0));
+    // Lower bounds on `ln ln A_i`, which is at least 0.
+    let ln_ln_down = |x: f64| (x.ln() * (1.0 - 2f64.powi(-40)) - 2f64.powi(-40)).max(0.0);
+    let ln_b0 = up(std::f64::consts::LN_2
+        + up(up(ln_up(&b1) - ln_ln_down(ln_big_a2)).max(up(ln_up(&b2) - ln_ln_down(ln_big_a1)))));
+    let s = up(ln_b0 + 0.38).max(30.0);
+    let c = up(up(up(up(17.9) * up(s * s)) * ln_big_a1) * ln_big_a2);
+    let p = up(c / std::f64::consts::LN_2).ceil();
+    (p < 2f64.powi(62)).then_some(p as u64)
+}
+
+/// A precision `k` at which the rounds of [`cmp`] must tell `n` and `d` apart, when
+/// [`laurent_bits`] gives `P`: `P + eb + 8`, `eb` the widest exponent in bits, at least 1.
+///
+/// Proof. A rounding to `k` bits ([`Bound::of`], [`Bound::round`]) keeps `m >= 2^(k - 1)` units
+/// of `2^drop` and moves the value `v` by less than one unit, so by less than `δ v` with `δ =
+/// 2^(1 - k)`; in logarithms by at most `ln(1 + δ) <= δ` up and `-ln(1 - δ) <= 2δ` down, so
+/// `2^(2 - k)` either way. A power `p^e` by squaring from 1 rounds twice a step at most, so its
+/// error in logarithms after step `j` is `E_j <= 2 E_(j-1) + 2^(3 - k)`, `E_0 = 0`, hence
+/// `E_t <= 2^(3 - k) (2^t - 1) < 2^(4 - k) e` for `t` the bits of `e`; the coefficient adds one
+/// rounding and the product of the two one more. So each side's bound is within `2^(3 - k) (1 +
+/// 2e) <= 2^(5 + eb - k)` of the side in logarithms, up and down alike, and its interval
+/// `[low, high]` has `ln(high / low) <= 2^(6 + eb - k)`. When neither `low_n > high_d` nor
+/// `high_n < low_d`, the two intervals meet, so `|ln n - ln d| <= ln(high_n / low_n) +
+/// ln(high_d / low_d) <= 2^(7 + eb - k)`, which at `k >= P + eb + 8` is below `2^-P <= |ln n -
+/// ln d|`, a contradiction. A power of 2 is bounded exactly and only tightens this.
+fn cap(n: &Product<'_>, d: &Product<'_>) -> Option<u64> {
+    let eb = n.exp_bits().max(d.exp_bits()).max(1);
+    laurent_bits(n, d).map(|p| p + eb + 8)
+}
+
 /// The order of two positive products. The system is asked for the memory of each precision
 /// before it is tried, `8k` bits for what a round holds at once (four `k`-bit bounds and the
 /// `2k`-bit product of two, with room to spare), and for the two products in full before they
@@ -331,6 +423,11 @@ fn start(n: &Product<'_>, d: &Product<'_>) -> u64 {
 /// precision, or a build, past the free memory is refused and not built, where the build with
 /// no ask aborted the process (NUM-huge-div).
 pub(super) fn cmp(n: &Product<'_>, d: &Product<'_>) -> Result<Ordering, TooLarge> {
+    cmp_at(n, d).map(|(o, _)| o)
+}
+
+/// [`cmp`], with the last precision a round of bounds tried, 0 when none ran.
+fn cmp_at(n: &Product<'_>, d: &Product<'_>) -> Result<(Ordering, u64), TooLarge> {
     // Complexity tradeoff (LIT-power-values): the order is tried first from the bit lengths in
     // exact integer arithmetic ([`by_bit_length`]), then from `log2` of each side in `f64` with
     // a proved error bound ([`by_logs`]), each O(terms) word operations for exponents of a
@@ -340,10 +437,11 @@ pub(super) fn cmp(n: &Product<'_>, d: &Product<'_>) -> Result<Ordering, TooLarge
     // the bounds. The f64 check was the author's addition (2026-11-13); the alternative of the
     // bounds alone was already free of the digits, at O(log^2 e) word operations.
     if let Some(o) = by_bit_length(n, d).or_else(|| by_logs(n, d, 1.0)) {
-        return Ok(o);
+        return Ok((o, 0));
     }
     let cost = n.bits() + d.bits();
     let mut k = start(n, d);
+    let cap = cap(n, d);
     loop {
         // Complexity tradeoff: two products that agree in their first `k` bits are told apart
         // by doubling `k`, and once `k` reaches the size of the products themselves they are
@@ -351,25 +449,32 @@ pub(super) fn cmp(n: &Product<'_>, d: &Product<'_>) -> Result<Ordering, TooLarge
         // materializing comparison this replaces; no input is refused. Bounds stop separating
         // only when the two numbers agree in about `k` leading bits, as `2^a 5^b` and
         // `3^c 7^d` with `a log 2 + b log 5` close to `c log 3 + d log 7`. Tested by
-        // `close_products_compare_exactly` (COMPLEXITY.md K30). A complete solution would bound
-        // `|log N - log D|` from below by Baker's theorem on linear forms in logarithms and
-        // stop at the precision it names, which is polynomial in the exponents' bits.
+        // `close_products_compare_exactly` (COMPLEXITY.md K30). For two atoms the build
+        // is reached only when it costs less than twice [`cap`]: Laurent's bound on a linear
+        // form in two logarithms names a precision,
+        // [`cap`], at which the bounds must part, polynomial in the bits of the exponents
+        // (25,534 bits plus the exponents' width for `3^(2^40)` against any `2^e`, `e < 2^41`).
+        // For three or more, Matveev's bound was not read and is not relied on (DESIGN.md
+        // sec:domains, "Kept powers").
         // Complexity tradeoff: each ask is one allocation of the size asked, given and freed
         // at once (`room`), O(1) beside the round or the build it comes before, which costs
         // at least its size; the alternative of asking only under a `Watch` left an unwatched
         // comparison to abort the process on a precision or a build the system cannot give.
         if BigUint::from(k) >= cost {
             room(cost.clone(), cost)?;
-            return Ok(n.materialize()?.cmp(&d.materialize()?));
+            return Ok((n.materialize()?.cmp(&d.materialize()?), k));
         }
+        // Two atoms: a round past the cap was reached from one below it, which by [`cap`]
+        // told the two apart, so no round runs at twice the cap or more.
+        debug_assert!(cap.is_none_or(|c| k == start(n, d) || k < 2 * c));
         room(BigUint::from(k) << 1u32, BigUint::from(k) << 3u32)?;
         let (nl, nu) = (n.bound(k, false), n.bound(k, true));
         let (dl, du) = (d.bound(k, false), d.bound(k, true));
         if nl.cmp(&du) == Ordering::Greater {
-            return Ok(Ordering::Greater);
+            return Ok((Ordering::Greater, k));
         }
         if nu.cmp(&dl) == Ordering::Less {
-            return Ok(Ordering::Less);
+            return Ok((Ordering::Less, k));
         }
         k *= 2;
     }
@@ -596,6 +701,79 @@ mod tests {
             (BigUint::from(p) * BigUint::from(10u32).pow(40u32)).cmp(&(BigUint::from(q) * log2_3));
         assert_eq!(cmp(&a, &b), Ok(expected));
         assert_eq!(cmp(&b, &a), Ok(expected.reverse()));
+    }
+
+    /// [`laurent_bits`] at the example of DESIGN.md: `3^(2^40)` against `2^e`, `e < 2^41`, is
+    /// `17.9 * 900 * ln 3 / ln 2 = 25533.8` rounded up. The plateau of `max(ln b0 + 0.38, 30)`
+    /// ends between `e = 2^41` (`ln b0 + 0.38` about 29.4, rounded up) and `e = 2^43` (about
+    /// 30.6), where the bound grows. A side that is not one power, or two sides neither of which
+    /// is a listed atom, have no bound.
+    #[test]
+    fn the_laurent_bound_of_two_atoms() {
+        let three = power(3, 1 << 40);
+        for e in [1u64, 1 << 20, (1 << 41) - 1] {
+            assert_eq!(laurent_bits(&three, &power(2, e)), Some(25534), "e = {e}");
+            assert_eq!(laurent_bits(&power(2, e), &three), Some(25534), "e = {e}");
+        }
+        let far = laurent_bits(&three, &power(2, 1 << 43)).expect("two atoms");
+        assert!(far > 25534, "{far}");
+        // `5` as a coefficient, against the listed atom 3.
+        let five = product(BigUint::from(5u32), &[]);
+        assert!(laurent_bits(&five, &three).is_some());
+        assert_eq!(
+            laurent_bits(&five, &product(BigUint::from(7u32), &[])),
+            None
+        );
+        assert_eq!(
+            laurent_bits(&product(BigUint::from(5u32), &[(3, 2)]), &three),
+            None
+        );
+        assert_eq!(
+            laurent_bits(&product(BigUint::one(), &[(2, 1), (5, 1)]), &three),
+            None
+        );
+    }
+
+    /// The pair nearest in `log2` among `2^p` and `3^q` with `q < 2^40`, from the last
+    /// convergent `p/q` with `q < 2^40` of the continued fraction of `log2 3` to 40 digits, the
+    /// hardest such pair for the bounds: `|q log2 3 - p| < 1/q`, so the ratio of the two is
+    /// within about `2^-39` of 1. The order is checked against the 40 digits in integers, whose
+    /// error, below `q` units of `10^-40`, the test checks is under the distance itself; the last
+    /// precision tried is below twice [`cap`], which the debug assertion in [`cmp_at`] also
+    /// checks at every round.
+    #[test]
+    fn the_nearest_pair_below_2_to_the_40_parts_under_the_cap() {
+        let ten40 = BigUint::from(10u32).pow(40u32);
+        let log2_3 =
+            BigUint::parse_bytes(b"15849625007211561814537389439478165087598", 10).expect("digits");
+        // Convergents `h/k` of `log2_3 / 10^40` by Euclid's algorithm.
+        let (mut x, mut y) = (log2_3.clone(), ten40.clone());
+        let (mut h0, mut h1) = (BigUint::zero(), BigUint::one());
+        let (mut k0, mut k1) = (BigUint::one(), BigUint::zero());
+        let (mut p, mut q) = (0u64, 0u64);
+        while !y.is_zero() {
+            let (a, r) = x.div_rem(&y);
+            let h = &a * &h1 + &h0;
+            let k = &a * &k1 + &k0;
+            if k >= BigUint::from(1u64 << 40) {
+                break;
+            }
+            (p, q) = (h.to_u64().expect("a word"), k.to_u64().expect("a word"));
+            (h0, h1, k0, k1, x, y) = (h1, h, k1, k, y, r);
+        }
+        assert_eq!((p, q), (1_193_652_440_098, 753_110_839_881));
+        let (a, b) = (power(2, p), power(3, q));
+        let gap = (BigInt::from(BigUint::from(p) * &ten40)
+            - BigInt::from(BigUint::from(q) * &log2_3))
+        .magnitude()
+        .clone();
+        assert!(gap > BigUint::from(q), "the 40 digits decide the order");
+        let expected = (BigUint::from(p) * &ten40).cmp(&(BigUint::from(q) * &log2_3));
+        let (order, k) = cmp_at(&a, &b).expect("bounds of a few hundred bits");
+        assert_eq!(order, expected);
+        assert_eq!(cmp_at(&b, &a).map(|(o, _)| o), Ok(expected.reverse()));
+        let cap = cap(&a, &b).expect("two atoms");
+        assert!(k > 0 && k < 2 * cap, "precision {k}, cap {cap}");
     }
 
     /// `3^1000 + 1` and `3^1000 - 1` against `3^1000`: the f64 check leaves both, which agree

@@ -353,7 +353,7 @@ rows! {
     LawProofCycle => "Laws whose proofs depend on each other in a cycle",
     RunTimeReadsHint => "Run-time value that depends on a hint-kind fact or an `f::residual` read",
     GenericCallAtBuiltType => "Call of a generic definition at a type its body builds",
-    ReadOfComputedValue => "Read of `::source` or `::shape` on a computed value",
+    ReadOfComputedValue => "Read of `::source`, `::zir` or `::shape` on a computed value",
     NoArrowAtCarrier => "Operator with no arrow at its operands' carrier",
     ModOnFloat => "`mod` on a float",
     UnitsDiffer => "Units that differ where an operation requires equal ones",

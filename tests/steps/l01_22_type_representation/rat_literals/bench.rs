@@ -23,7 +23,8 @@ fn a_rat_literal_costs_its_exponent_and_not_its_digits() {
 #[test]
 fn a_rat_literal_costs_the_length_of_its_text() {
     // The exponent written with `n` and `8n` digits: no form of the value could be built.
-    // TEST-bench-move-l0123 (author P169): left at its old size, 200 digits, for a finding.
+    // TEST-bench-move-l0123 (author P169): it was left at its old size, 200 digits, for the
+    // finding below.
     // Measured 2026-11-14 at load about 30: at 200 digits ns=464421/579104, instructions ratio
     // 1.74, bytes 1.90 (1x is 0.46 ms, far under 0.5 s); at 2,000 digits instructions 6.78,
     // bytes 7.22; at 20,000 digits instructions 15.48, bytes 11.7, and at 200,000 digits
@@ -35,7 +36,12 @@ fn a_rat_literal_costs_the_length_of_its_text() {
     // in decimal, each O(n log^2 n), the order of RADIX-nlog2-10_5, which passes 10.5 only from
     // about 1.6 million digits. Left at 200 digits until the exponent is kept as its decimal
     // text or the conversion is faster (PERF-rat-literal-text-length).
-    let digits = [200usize, 1600];
+    // b22-kept1, 2026-11-23, with the exponent kept in decimal digits (`num::dec`, DESIGN step
+    // L1.17b; nothing converts, as `check_program` asserts): on main at 20,000 and 160,000
+    // digits processor time 10.29 times and bytes 10.9 (over the limit); after, 5.75 and 7.5.
+    // Raised to its 1 s size, 4 and 32 million digits: 1x 0.85 s, processor time 8.73 times,
+    // bytes 8.4, peak resident memory 0.9 GB (Colab hm2).
+    let digits = [4_000_000usize, 32_000_000];
     let ns = digits.map(|d| format!("1{}", "0".repeat(d - 1)));
     let texts = programs(&ns);
     check(
@@ -46,4 +52,7 @@ fn a_rat_literal_costs_the_length_of_its_text() {
             check_program(&texts[&i], &ns[i]);
         },
     );
+    // The negative control at the old size of 160,000 digits, where its conversion takes some
+    // tens of milliseconds: at 32 million it would take far longer than the benchmark.
+    check_control(&format!("1{}", "0".repeat(159_999)));
 }

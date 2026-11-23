@@ -18,6 +18,7 @@
 
 mod bound;
 pub mod coprime;
+pub mod dec;
 mod digit_text;
 mod fast;
 pub mod float_mod;
@@ -29,6 +30,7 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::fmt;
+use std::sync::OnceLock;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
 
@@ -39,6 +41,7 @@ use zed_collections::sorted::sorted_get;
 
 use crate::machine_int::BitLen;
 use bound::{Format, Product};
+use dec::Dec;
 #[doc(hidden)]
 pub use fast::crossover;
 use fast::{LEAF_DIGITS, built, read_digits_by};
@@ -123,11 +126,33 @@ pub enum Rounding {
 /// An exact number `num/den * prod p^e`: `num/den` reduced with `den` positive, the primes
 /// `p` distinct and in increasing order, each `e` nonzero, and `num` and `den` divisible by
 /// none of the `p`. Zero has no powers.
-#[derive(Clone, Debug)]
+///
+/// A value read from a decimal literal whose exponent does not fit an `i64`, such as `1eNr`
+/// with `N` of thousands of digits, holds that exponent as its decimal digits in `ten`: the
+/// value is then `num/den * prod p^e * 10^t` (see `Ten`).
+#[derive(Clone)]
 pub struct Rat {
     num: BigInt,
     den: BigInt,
     pows: Box<[(u64, BigInt)]>,
+    ten: Option<Box<Ten>>,
+}
+
+/// The factor `10^t` of a [`Rat`], `t` held as its decimal digits (DESIGN.md sec:domains,
+/// "Kept powers", and step L1.17b; plan rows KEPT-power-form and PERF-rat-literal-text-length).
+/// The `Rat` holding it keeps these invariants: `t` does not fit an `i64` (a smaller one is
+/// folded into the exponents of 2 and 5, at no conversion of note); 2 and 5 divide neither
+/// `num` nor `den`; and the exponents of 2 and 5 in `pows` are positive with at most one of the
+/// two listed, so the common power of ten of the value is all in `t`. The operations of
+/// [`Rat::decimal`], [`Rat::literal_text`], equality, order, [`Rat::mul`], [`Rat::div`],
+/// [`Rat::pow`] by an exponent of one word, [`Rat::neg`], [`Rat::residues`] and
+/// [`Rat::integer_residues`] work on the digits of `t` in O(n); every other operation works on
+/// `bin`, the same value with `t` converted to binary and folded into the exponents of 2 and
+/// 5, made once at O(n log^2 n) and kept (the conversion [`dec::conversions`] counts).
+#[derive(Clone, Debug)]
+struct Ten {
+    t: Dec,
+    bin: OnceLock<Rat>,
 }
 
 impl Rat {
@@ -152,7 +177,86 @@ impl Rat {
             num,
             den,
             pows: Box::default(),
+            ten: None,
         }
+    }
+
+    /// It with the decimal exponent `t` of its [`Ten`] converted to binary and folded into the
+    /// exponents of 2 and 5: itself when it holds none, else the form made at the first call,
+    /// at O(n log^2 n) on the `n` digits of `t`, and kept. Every operation that does not read
+    /// the digits works on this.
+    fn bin(&self) -> &Rat {
+        match &self.ten {
+            None => self,
+            Some(ten) => ten.bin.get_or_init(|| {
+                let t = ten.t.to_bigint();
+                self.rest().times_ten(&t)
+            }),
+        }
+    }
+
+    /// It without its factor `10^t`: a copy of the coefficients and powers.
+    fn rest(&self) -> Rat {
+        Rat {
+            num: self.num.clone(),
+            den: self.den.clone(),
+            pows: self.pows.clone(),
+            ten: None,
+        }
+    }
+
+    /// It times `10^k`, `k` in binary; it holds no [`Ten`]. The exponents of 2 and 5 gain `k`,
+    /// listed if they were not, and [`Rat::extract`] moves any 2 or 5 of the coefficients
+    /// into them, so the result is in normal form.
+    fn times_ten(&self, k: &BigInt) -> Rat {
+        debug_assert!(self.ten.is_none());
+        if self.is_zero() {
+            return self.clone();
+        }
+        let mut pows = self.pows.to_vec();
+        for p in [2u64, 5] {
+            match pows.binary_search_by_key(&p, |(q, _)| *q) {
+                Ok(i) => pows[i].1 += k,
+                Err(i) => pows.insert(i, (p, k.clone())),
+            }
+        }
+        Rat::extract(self.num.clone(), self.den.clone(), pows)
+    }
+
+    /// `rest * 10^t`, `rest` holding no [`Ten`] and nonzero: a [`Ten`] of `t` when it stays
+    /// beyond an `i64` once the common power of ten of `rest` is moved into it, else the
+    /// binary form. Its cost is that of `rest` and O(n) on the digits of `t`, unless the
+    /// common power of ten of `rest` is itself beyond an `i64`, where `t` is converted (a value
+    /// that only a binary computation, never a literal, makes).
+    fn with_ten(rest: Rat, t: Dec) -> Rat {
+        debug_assert!(rest.ten.is_none() && !rest.is_zero());
+        if let Some(k) = t.to_i64() {
+            return rest.times_ten(&BigInt::from(k));
+        }
+        // 2 and 5 moved out of the coefficients into the exponents.
+        let rest = rest.times_ten(&BigInt::zero());
+        let exp = |p: u64| sorted_get(&rest.pows, &p).cloned().unwrap_or_default();
+        let m = exp(2).min(exp(5));
+        let Some(k) = m.to_i64() else {
+            return rest.times_ten(&t.to_bigint());
+        };
+        let t = t.add_i64(k);
+        let rest = rest.times_ten(&-m);
+        if let Some(k) = t.to_i64() {
+            return rest.times_ten(&BigInt::from(k));
+        }
+        Rat {
+            ten: Some(Box::new(Ten {
+                t,
+                bin: OnceLock::new(),
+            })),
+            ..rest
+        }
+    }
+
+    /// The decimal exponent `t` of its [`Ten`], when it holds one.
+    fn t(&self) -> Option<&Dec> {
+        self.ten.as_ref().map(|ten| &ten.t)
     }
 
     /// The integer `n` as a rational.
@@ -192,6 +296,7 @@ impl Rat {
             num,
             den,
             pows: out.into_boxed_slice(),
+            ten: None,
         }
     }
 
@@ -248,6 +353,16 @@ impl Rat {
         let shift = u64::try_from(frac.len()).expect("a text's length fits in 64 bits");
         Ok(match exp {
             None => Rat::over_ten_to(mantissa, shift),
+            // An exponent of more than 18 digits stays in its digits (`Ten`), so this costs
+            // O(n) on them where reading them into binary costs O(n log^2 n). Zero has no
+            // powers.
+            Some((s, e)) if e.len() > 18 && !mantissa.is_zero() => {
+                let t = Dec::read(s == Sign::Minus, e);
+                // `shift` is a text's length, so it fits an `i64` (lengths are below
+                // `isize::MAX`).
+                let shift = i64::try_from(shift).expect("a text's length fits an i64");
+                Rat::with_ten(Rat::int(mantissa), t.add_i64(-shift))
+            }
             Some((s, e)) => {
                 let e = BigInt::from_biguint(s, read_digits(e)) - shift;
                 Rat::extract(mantissa, BigInt::one(), vec![(2, e.clone()), (5, e)])
@@ -282,7 +397,8 @@ impl Rat {
     /// The integer it is as a coefficient and its prime powers, `coeff * prod p^e`, each `e`
     /// positive. It must be an integer.
     pub fn integer_factors(&self) -> (&BigInt, &[(u64, BigInt)]) {
-        (&self.num, &self.pows)
+        let b = self.bin();
+        (&b.num, &b.pows)
     }
 
     /// The form it is kept in, `num/den * prod p^e`: `num/den` reduced with `den` positive,
@@ -290,7 +406,9 @@ impl Rat {
     /// dividing `num` or `den`. Equal numbers can be kept in different forms (`1e3r` holds
     /// `2^3 5^3`, the `1000r` written out holds none); [`Rat::from_kept`] reads this form back.
     pub fn kept(&self) -> (&BigInt, &BigInt, &[(u64, BigInt)]) {
-        (&self.num, &self.den, &self.pows)
+        // A `Ten` is given in binary (`Rat::bin`), the form this names.
+        let b = self.bin();
+        (&b.num, &b.den, &b.pows)
     }
 
     /// The number kept as `num/den * prod pows`, when the parts are in the form [`Rat::kept`]
@@ -328,22 +446,30 @@ impl Rat {
             num,
             den,
             pows: pows.into_boxed_slice(),
+            ten: None,
         })
     }
 
     /// Whether it is an integer.
     pub fn is_integer(&self) -> bool {
-        self.den.is_one() && self.pows.iter().all(|(_, e)| !e.is_negative())
+        // With a `Ten`, the exponents of 2 and 5 in `pows` are positive and one of them is
+        // absent, so the value's exponent of that prime is `t`: an integer needs `t >= 0`.
+        self.t().is_none_or(|t| !t.is_negative())
+            && self.den.is_one()
+            && self.pows.iter().all(|(_, e)| !e.is_negative())
     }
 
     /// Whether it holds no prime powers: a plain reduced rational.
     fn is_plain(&self) -> bool {
-        self.pows.is_empty()
+        self.pows.is_empty() && self.ten.is_none()
     }
 
     /// The integer it is, built, or [`TooLarge`] when the system refuses the memory for it.
     /// It must be an integer.
     pub fn to_integer(&self) -> Result<BigInt, TooLarge> {
+        if self.ten.is_some() {
+            return self.bin().to_integer();
+        }
         // Complexity tradeoff: the memory asked for is eight times the integer's width, a
         // measured bound, not a proved one, on building it power by power (each power by
         // squaring with `num::fast::mul`, and the running product by it): the peak heap was at
@@ -368,6 +494,9 @@ impl Rat {
     /// The integer it is, built, with no check of its size but the exponents' ([`built`]). It
     /// must be an integer.
     fn integer_built(&self) -> Result<BigInt, TooLarge> {
+        if self.ten.is_some() {
+            return self.bin().integer_built();
+        }
         let pows: Vec<(u64, BigUint)> = self
             .pows
             .iter()
@@ -379,7 +508,9 @@ impl Rat {
     /// Whether the integer it is is even: a positive power of 2, or an even coefficient. It
     /// must be an integer.
     pub fn is_even(&self) -> bool {
-        self.num.is_even()
+        // A `Ten` of an integer has `t >= 2^63`, a positive power of 2.
+        self.ten.is_some()
+            || self.num.is_even()
             || self
                 .pows
                 .first()
@@ -395,6 +526,9 @@ impl Rat {
     // setop::cofinite_integer_points_keep_large_powers_symbolic.
     pub(crate) fn twice_integer(&self) -> Rat {
         debug_assert!(self.is_integer());
+        if self.ten.is_some() {
+            return self.bin().twice_integer();
+        }
         let mut twice = self.clone();
         if let Some((2, e)) = twice.pows.first_mut() {
             *e += 1;
@@ -406,6 +540,10 @@ impl Rat {
 
     /// The integer it is, built, unless it is surely beyond 64 bits. It must be an integer.
     pub(crate) fn small_integer(&self) -> Option<BigInt> {
+        // A `Ten` of an integer is at least `10^(2^63)`.
+        if self.ten.is_some() {
+            return None;
+        }
         // `|n| >= 2^(bits(n) - 1)` and `p^e >= 2^((bits(p) - 1) e)`, so past this bound the
         // value is beyond `2^63`; within it, it has at most about 128 bits.
         let mut low = BigInt::from(self.num.bits()) - 1;
@@ -423,6 +561,9 @@ impl Rat {
     /// for any memory to hold the digits (`built`). The memory is not asked for here; a
     /// caller that writes a wide number asks first with [`Rat::text_room`].
     pub fn numer_text(&self) -> Result<String, TooLarge> {
+        if self.ten.is_some() {
+            return self.bin().numer_text();
+        }
         let sign = if self.is_negative() { "-" } else { "" };
         let pows = self
             .pows
@@ -445,6 +586,9 @@ impl Rat {
     /// to build or write them names, a lower bound, where [`Rat::text_size`] bounds them from
     /// above for the memory asked (row CONST-least-refusal-size).
     fn least_size(&self) -> BigUint {
+        if self.ten.is_some() {
+            return self.bin().least_size();
+        }
         let side = |coef: &BigInt, sign: Sign| {
             let pows = self.pows.iter().filter(move |(_, e)| e.sign() == sign);
             least_bits(coef, pows.map(|(p, e)| (*p, e.magnitude())))
@@ -473,6 +617,9 @@ impl Rat {
     /// What writing its digits builds: the number, of at most the first many bits, and its
     /// digits, numerator's and denominator's, at most the second many bytes.
     pub fn text_size(&self) -> (BigUint, BigUint) {
+        if self.ten.is_some() {
+            return self.bin().text_size();
+        }
         let side = |coef: &BigInt, sign: Sign| {
             let pows = self.pows.iter().filter(move |(_, e)| e.sign() == sign);
             width(coef, pows.map(|(p, e)| (*p, e.magnitude())))
@@ -488,6 +635,9 @@ impl Rat {
     /// asking for memory; this bounds it from below, for a claim that writing the text needs
     /// at least this much (the checker's, sec:checking_in_zed).
     pub fn text_least(&self) -> BigUint {
+        if self.ten.is_some() {
+            return self.bin().text_least();
+        }
         let side = |coef: &BigInt, sign: Sign| {
             let pows = self.pows.iter().filter(move |(_, e)| e.sign() == sign);
             least_log2(coef, pows.map(|(p, e)| (*p, e.magnitude())))
@@ -503,6 +653,9 @@ impl Rat {
 
     /// The denominator's digits, or [`TooLarge`] as for [`Rat::numer_text`].
     pub fn denom_text(&self) -> Result<String, TooLarge> {
+        if self.ten.is_some() {
+            return self.bin().denom_text();
+        }
         let pows = self
             .pows
             .iter()
@@ -519,6 +672,9 @@ impl Rat {
     /// only after the system gives the memory for it; [`TooLarge`] names that memory when it
     /// refuses.
     pub fn built_parts(&self) -> Result<(Cow<'_, BigUint>, Cow<'_, BigUint>), TooLarge> {
+        if self.ten.is_some() {
+            return self.bin().built_parts();
+        }
         if !self.is_plain() {
             // Complexity tradeoff: the memory asked for is eight times the width of the two
             // sides together, the factor `to_integer` asks for the same build (powers by
@@ -562,18 +718,43 @@ impl Rat {
     /// same whatever powers a form lists; each `p^e` is reduced by Fermat's little theorem,
     /// so the cost is the size of the coefficients and exponents, never of the value.
     pub fn residues(&self) -> (bool, u64, u64) {
+        let t = self.t();
+        // With a `Ten`, 2 and 5 are read below with it.
+        let ten_prime = |p: u64| t.is_some() && (p == 2 || p == 5);
         let side = |coef: &BigInt, sign: Sign| {
             let mut r = rem_big_u64(coef.magnitude(), MERSENNE_61);
-            for (p, e) in self.pows.iter().filter(|(_, e)| e.sign() == sign) {
+            for (p, e) in self
+                .pows
+                .iter()
+                .filter(|(p, e)| e.sign() == sign && !ten_prime(*p))
+            {
                 r = m61::mul(r, m61::pow(*p, e.magnitude()));
             }
             r
         };
-        (
-            self.is_negative(),
-            side(&self.num, Sign::Plus),
-            side(&self.den, Sign::Minus),
-        )
+        let (mut n, mut d) = (side(&self.num, Sign::Plus), side(&self.den, Sign::Minus));
+        if let Some(t) = t {
+            // The value's exponent of `p` in {2, 5} is `t + e_p`, `e_p >= 0` its exponent in
+            // `pows` (zero when absent); `|t| >= 2^63`. For `t > 0` it is positive and `p^(t +
+            // e_p)` lies in `N`. For `t < 0` and `e_p < 2^63` it is negative and `p^(|t| - e_p)`
+            // lies in `D`; a wider `e_p`, which no literal makes, is read from the binary form.
+            // Each power is reduced modulo `M` by Fermat's little theorem, `p` coprime to `M`,
+            // with `|t| mod (M - 1)` read from its digits in O(n) ([`Dec::rem_u64`]).
+            let q = MERSENNE_61 - 1;
+            let k = t.rem_u64(q);
+            for p in [2u64, 5] {
+                let e = sorted_get(&self.pows, &p).cloned().unwrap_or_default();
+                if t.is_negative() && e.to_i64().is_none() {
+                    return self.bin().residues();
+                }
+                let e = rem_big_u64(e.magnitude(), q);
+                match t.is_negative() {
+                    false => n = m61::mul(n, m61::pow_word(p, (k + e) % q)),
+                    true => d = m61::mul(d, m61::pow_word(p, (k + q - e) % q)),
+                }
+            }
+        }
+        (self.is_negative(), n, d)
     }
 
     /// The integer's residues `n mod M` and `n mod (M - 1)`, each in `0 .. modulus`, for
@@ -587,6 +768,12 @@ impl Rat {
         let mut e = rem_big_u64(self.num.magnitude(), q);
         for (p, k) in self.pows.iter() {
             e = mul_mod(e, pow_mod_big(*p, k.magnitude(), q), q);
+        }
+        // A `Ten` of an integer has `t > 0`; `M - 1` is even, so 2 has no inverse modulo it and
+        // Fermat does not apply: `10^t` is reduced by a power over the decimal digits of `t`,
+        // O(n) ([`Dec::pow_mod`]), times the `p^e_p` of `pows` above.
+        if let Some(t) = self.t() {
+            e = mul_mod(e, t.pow_mod(10, q), q);
         }
         match negative {
             true => ((MERSENNE_61 - n) % MERSENNE_61, (q - e) % q),
@@ -605,6 +792,22 @@ impl Rat {
             return "0r".to_string();
         }
         let sign = if self.is_negative() { "-" } else { "" };
+        // With a `Ten`, `10^t` is the value's whole power of ten (`Ten`'s invariants), so the
+        // literal is `m e t` with `m` the rest, an integer when `den` is 1 (the exponents in
+        // `pows` of a `Ten` are positive for 2 and 5); `t` is written from its digits, O(n).
+        if let Some(t) = self.t() {
+            if !self.den.is_one() || self.pows.iter().any(|(_, e)| e.is_negative()) {
+                return self.to_string();
+            }
+            let pows: Vec<(u64, BigUint)> = (self.pows.iter())
+                .map(|(p, e)| (*p, e.magnitude().clone()))
+                .collect();
+            let Ok(m) = built(&pows) else {
+                return self.to_string();
+            };
+            let m = fast::to_decimal(&fast::mul(self.num.magnitude(), m.magnitude()));
+            return format!("{sign}{m}e{t}r");
+        }
         // The signed exponents of 2 and 5 in the value, and the coefficients without them.
         let (mut num, mut den) = (self.num.abs(), self.den.clone());
         let [two, five] = [2, 5].map(|p| match sorted_get(&self.pows, &p) {
@@ -678,6 +881,9 @@ impl Rat {
     /// digits. A value held as plain digits, such as the sum `3^200000 + 1`, prints its digits
     /// (DESIGN.md L1.26a).
     pub fn integer_text(&self) -> String {
+        if self.ten.is_some() {
+            return self.bin().integer_text();
+        }
         debug_assert!(self.is_integer());
         let sign = if self.is_negative() { "-" } else { "" };
         if self.is_plain() {
@@ -705,6 +911,9 @@ impl Rat {
     /// its digits leaves room for the form to be shorter, so it costs O(the text), as does
     /// every other base here. It must be an integer with powers.
     fn power_text(&self) -> String {
+        if self.ten.is_some() {
+            return self.bin().power_text();
+        }
         // A prime to the first power is written in the coefficient, so `5*3^200000` prints
         // alike whether the 5 was kept as a prime or as digits.
         let firsts = self.pows.iter().filter(|(_, e)| e.is_one());
@@ -777,6 +986,9 @@ impl Rat {
     /// where moving a shared prime out of a coefficient is refused, as in the sum itself.
     /// Complexity: O(primes kept), plus the copy of the coefficients that alignment makes.
     pub fn sum_least(&self, b: &Rat) -> Result<BigUint, TooLarge> {
+        if self.ten.is_some() || b.ten.is_some() {
+            return self.bin().sum_least(b.bin());
+        }
         if self.is_plain() && b.is_plain() {
             let [na, da, nb, db] = [&self.num, &self.den, &b.num, &b.den].map(|x| x.bits());
             return Ok(BigUint::from(match self.den.is_one() && b.den.is_one() {
@@ -804,6 +1016,12 @@ impl Rat {
 
     /// `a + b`, or `a - b` when `minus`.
     fn sum(&self, b: &Rat, minus: bool) -> Result<Rat, TooLarge> {
+        // Complexity tradeoff: a sum with a `Ten` converts its exponent, O(n log^2 n), where a
+        // sum of two whose exponents differ by a word could stay in digits; a sum is built in
+        // full beyond its shared powers anyway (DESIGN.md "Kept powers", *Sums*).
+        if self.ten.is_some() || b.ten.is_some() {
+            return self.bin().sum(b.bin(), minus);
+        }
         let signed = |x: BigInt, y: BigInt| match minus {
             true => x - y,
             false => x + y,
@@ -913,6 +1131,15 @@ impl Rat {
     /// coefficients and their reduction, asked before anything is built. The kept powers add
     /// their exponents and are not built.
     pub fn mul(&self, b: &Rat) -> Result<Rat, TooLarge> {
+        if self.ten.is_some() || b.ten.is_some() {
+            if self.is_zero() || b.is_zero() {
+                return Ok(Rat::int(BigInt::zero()));
+            }
+            // `r_a 10^t_a * r_b 10^t_b = (r_a r_b) 10^(t_a + t_b)`, the exponents added by their
+            // digits, O(n).
+            let t = Rat::ten_sum(self, b, false);
+            return Ok(Rat::with_ten(self.rest().mul(&b.rest())?, t));
+        }
         if self.is_plain() && b.is_plain() && self.den.is_one() && b.den.is_one() {
             // Complexity tradeoff: the memory asked for a product of two integers is eight
             // times the product's width, a measured bound, not a proved one, on `num::fast::mul`
@@ -937,7 +1164,29 @@ impl Rat {
         if b.is_zero() {
             return Ok(None);
         }
+        if self.ten.is_some() || b.ten.is_some() {
+            if self.is_zero() {
+                return Ok(Some(Rat::int(BigInt::zero())));
+            }
+            // As in `Rat::mul`, with the exponents subtracted.
+            let t = Rat::ten_sum(self, b, true);
+            let rest = self.rest().div(&b.rest())?;
+            // Unreachable: `b` is not zero, so neither is its rest.
+            let rest = rest.expect("a nonzero divisor");
+            return Ok(Some(Rat::with_ten(rest, t)));
+        }
         self.scaled(&b.den, &b.num, &b.pows, |x, y| x - y).map(Some)
+    }
+
+    /// `t_a + t_b`, or `t_a - t_b` when `minus`, of the decimal exponents of two numbers' `Ten`s,
+    /// zero for one with none. O(n).
+    fn ten_sum(a: &Rat, b: &Rat, minus: bool) -> Dec {
+        let zero = Dec::from_i128(0);
+        let (ta, tb) = (a.t().unwrap_or(&zero), b.t().unwrap_or(&zero));
+        match minus {
+            true => ta.sub(tb),
+            false => ta.add(tb),
+        }
     }
 
     /// `num * up / (den * down) * prod p^e`, the exponent of each prime `f` of this one's and
@@ -950,6 +1199,10 @@ impl Rat {
         pows: &[(u64, BigInt)],
         f: impl Fn(&BigInt, &BigInt) -> BigInt,
     ) -> Result<Rat, TooLarge> {
+        debug_assert!(
+            self.ten.is_none(),
+            "`Rat::mul` and `Rat::div` take a `Ten` apart"
+        );
         // Complexity tradeoff: the memory asked for is sixteen times the sum of the four
         // coefficients' widths, a measured bound, not a proved one, on the two products, their
         // reduction by the gcd (a Burnikel-Ziegler remainder of the wider by the narrower,
@@ -977,10 +1230,18 @@ impl Rat {
 
     /// `-a`.
     pub fn neg(&self) -> Rat {
+        // A `Ten` is copied with its digits, O(n); its binary form, which holds the sign, is
+        // made again when needed.
         Rat {
             num: -&self.num,
             den: self.den.clone(),
             pows: self.pows.clone(),
+            ten: (self.t()).map(|t| {
+                Box::new(Ten {
+                    t: t.clone(),
+                    bin: OnceLock::new(),
+                })
+            }),
         }
     }
 
@@ -1028,6 +1289,14 @@ impl Rat {
         }
         if self.is_zero() {
             return Ok(self.clone());
+        }
+        if let Some(t) = self.t() {
+            // `(r 10^t)^e = r^e 10^(t e)`: for `e` of one word, `t e` by its digits, O(n)
+            // (DESIGN.md step L1.17b, `(1eNr)^3`); a wider `e` needs `t` in binary.
+            return match e.to_u64() {
+                Some(k) => Ok(Rat::with_ten(self.rest().pow(e)?, t.mul_u64(k))),
+                None => self.bin().pow(e),
+            };
         }
         let parts = [self.num.magnitude(), self.den.magnitude()];
         // Complexity tradeoff: the memory asked for is eight times the width of the built
@@ -1113,6 +1382,7 @@ impl Rat {
             num,
             den,
             pows: pows.into_boxed_slice(),
+            ten: None,
         })
     }
 
@@ -1152,7 +1422,12 @@ impl Rat {
     /// `1 / a` of a nonzero `a`: the numerator and denominator swapped, the sign kept on the
     /// numerator, and every exponent negated. It moves what it holds and builds nothing.
     fn recip(self) -> Rat {
-        let Rat { num, den, mut pows } = self;
+        let Rat {
+            num,
+            den,
+            mut pows,
+            ten,
+        } = self;
         for (_, e) in pows.iter_mut() {
             *e = -std::mem::take(e);
         }
@@ -1160,7 +1435,18 @@ impl Rat {
             true => (-den, -num),
             false => (den, num),
         };
-        Rat { num, den, pows }
+        let rest = Rat {
+            num,
+            den,
+            pows,
+            ten: None,
+        };
+        // `10^-t`: the exponents of 2 and 5 are now negative, so `with_ten` moves their
+        // common part into the negated `t`, O(n).
+        match ten {
+            None => rest,
+            Some(ten) => Rat::with_ten(rest, ten.t.neg()),
+        }
     }
 
     /// The Euclidean remainder of two integers, in `0 ..< |m|`; `m` is not zero. An exact
@@ -1169,6 +1455,9 @@ impl Rat {
     /// 7` builds no large number. [`TooLarge`] when the divisor is built, or the two are
     /// compared to more bits than the system gives memory for.
     pub fn rem_euclid(&self, m: &Rat) -> Result<Rat, TooLarge> {
+        if self.ten.is_some() || m.ten.is_some() {
+            return self.bin().rem_euclid(m.bin());
+        }
         if self.is_plain() && m.is_plain() {
             let r = rem(self.num.magnitude(), m.num.magnitude())?;
             return euclid(r, self.is_negative(), m.num.magnitude());
@@ -1185,6 +1474,9 @@ impl Rat {
     /// The Euclidean remainder by an `m` that does not divide this integer, found by building
     /// `m`.
     fn rem_built(&self, m: &Rat) -> Result<Rat, TooLarge> {
+        if self.ten.is_some() || m.ten.is_some() {
+            return self.bin().rem_built(m.bin());
+        }
         // Complexity tradeoff: a remainder that is neither `0` nor the dividend itself is
         // found by building the divisor `m`, at a cost proportional to `m`'s size, which bounds
         // the remainder's; `3 ^ 10 ^ 9 mod 2 ^ 10 ^ 9` builds `2^(10^9)`, while
@@ -1225,6 +1517,9 @@ impl Rat {
     /// other builds the remainder, by the rule of [`Rat::rem_euclid`], and the dividend's part
     /// above the powers it shares with the remainder, by the rule of [`Rat::add`].
     pub fn div_euclid(&self, m: &Rat) -> Result<Rat, TooLarge> {
+        if self.ten.is_some() || m.ten.is_some() {
+            return self.bin().div_euclid(m.bin());
+        }
         if self.is_plain() && m.is_plain() {
             // Complexity tradeoff: the memory asked for is the quotient's width for a divisor
             // of one word, which num-bigint divides into a single copy of the dividend; for a
@@ -1296,6 +1591,9 @@ impl Rat {
     /// coefficient divides this one's ([`rem`]). [`TooLarge`] when aligning copies a
     /// coefficient, or the remainder needs more memory, than the system gives.
     fn divides_by(&self, m: &Rat) -> Result<bool, TooLarge> {
+        if self.ten.is_some() || m.ten.is_some() {
+            return self.bin().divides_by(m.bin());
+        }
         if self.is_zero() {
             return Ok(true);
         }
@@ -1312,6 +1610,9 @@ impl Rat {
     /// 10.9 times the coefficients' width, for products of 512 to 2^14 words reduced by
     /// factors of 66 words to their own length.
     fn exact_div(&self, m: &Rat) -> Result<Rat, TooLarge> {
+        if self.ten.is_some() || m.ten.is_some() {
+            return self.bin().exact_div(m.bin());
+        }
         // Unreachable: `Rat::div` returns `None` only for a zero divisor, and an `m` that
         // divides is not zero; every caller passes a nonzero `m` (`div_euclid` requires it).
         Ok(self.div(m)?.expect("the divisor is not zero"))
@@ -1321,6 +1622,9 @@ impl Rat {
     /// of them divides a coefficient, the coefficients are copied and divided; when `check`,
     /// [`TooLarge`] first if the system refuses the memory for that.
     fn aligned(&self, others: &[(u64, BigInt)], check: bool) -> Result<Cow<'_, Rat>, TooLarge> {
+        if self.ten.is_some() {
+            return self.bin().aligned(others, check);
+        }
         let listed = |p: u64| sorted_get(&self.pows, &p).is_some();
         let divides = |p: u64| divides(self.num.magnitude(), p) || divides(self.den.magnitude(), p);
         let new: Vec<u64> = others
@@ -1358,6 +1662,9 @@ impl Rat {
 
     /// `|self|` as the quotient of two products of positive powers.
     fn split<'a>(&'a self) -> (Product<'a>, Product<'a>) {
+        if self.ten.is_some() {
+            return self.bin().split();
+        }
         let side = |coef: &'a BigInt, sign: Sign| Product {
             coef: Cow::Borrowed(coef.magnitude()),
             pows: self
@@ -1373,6 +1680,9 @@ impl Rat {
     /// The nearest number of the format, ties to even, as its sign, significand and the
     /// exponent of its leading place; `None` for zero.
     fn project(&self, f: &Format) -> Result<Option<(bool, u64, i64)>, LiteralRounding> {
+        if self.ten.is_some() {
+            return self.bin().project(f);
+        }
         if self.is_zero() {
             return Ok(None);
         }
@@ -1405,6 +1715,9 @@ impl Rat {
     /// quotient's size. Scaling test:
     /// `l01_18_scalar_interpreter::bench::rounding::rounding_wide_rationals_scales`.
     pub fn round_whole(&self, rule: Rounding) -> Result<Rat, TooLarge> {
+        if self.ten.is_some() {
+            return self.bin().round_whole(rule);
+        }
         if self.is_integer() {
             return Ok(self.clone());
         }
@@ -2254,6 +2567,20 @@ impl Rat {
     /// the coefficients it multiplies, of the size of values already held, are not asked for;
     /// the bounds and the build of two powers ([`bound::cmp`]) always are.
     fn order(&self, other: &Rat, check: bool) -> Result<Ordering, TooLarge> {
+        if self.ten.is_some() || other.ten.is_some() {
+            let sign = self.num.sign().cmp(&other.num.sign());
+            if sign != Ordering::Equal {
+                return Ok(sign);
+            }
+            return match Rat::ten_pair(self, other) {
+                Tens::Binary(a, b) => a.order(&b, check),
+                Tens::Apart(o) => Ok(match self.is_negative() {
+                    true => o.reverse(),
+                    false => o,
+                }),
+                Tens::Convert => self.bin().order(other.bin(), check),
+            };
+        }
         if self.is_plain() && other.is_plain() && self.den.is_one() && other.den.is_one() {
             return Ok(self.num.cmp(&other.num));
         }
@@ -2271,6 +2598,9 @@ impl Rat {
     /// The order of `|self|` and `|other|`, read from the coefficients' magnitudes with no
     /// copy of either; when `check`, [`TooLarge`] as for [`Rat::try_cmp`].
     fn magnitude_order(&self, other: &Rat, check: bool) -> Result<Ordering, TooLarge> {
+        if self.ten.is_some() || other.ten.is_some() {
+            return self.bin().magnitude_order(other.bin(), check);
+        }
         if self.is_zero() || other.is_zero() {
             return Ok(other.is_zero().cmp(&self.is_zero()));
         }
@@ -2314,8 +2644,64 @@ impl Rat {
     /// An order on the normal forms, for a pair whose order by value was refused: total, and
     /// building nothing, but not the order by value.
     fn form_cmp(&self, other: &Rat) -> Ordering {
-        (&self.num, &self.den, &self.pows).cmp(&(&other.num, &other.den, &other.pows))
+        let (a, b) = (self.bin(), other.bin());
+        (&a.num, &a.den, &a.pows).cmp(&(&b.num, &b.den, &b.pows))
     }
+
+    /// At least `|log2 |x||` for the value `x` of its coefficients and powers (its `Ten` left
+    /// out): the bits of `num` and `den`, and `|e| (floor(log2 p) + 1)` for each power, since
+    /// `p < 2^(floor(log2 p) + 1)`. O(the count of words of the exponents).
+    fn log2_span(&self) -> BigInt {
+        let mut s = BigInt::from(self.num.bits() + self.den.bits());
+        for (p, e) in self.pows.iter() {
+            s += e.abs() * (p.ilog2() + 1);
+        }
+        s
+    }
+
+    /// Two nonzero numbers of one sign, at least one holding a [`Ten`], made comparable without
+    /// converting a decimal exponent where that can be done. Write each as `r * 10^t`, `t` zero
+    /// for one with no `Ten`, and `d = t_a - t_b`, by digits in O(n).
+    ///
+    /// When `d` fits an `i64`, `10^min(t_a, t_b)` is a common positive factor, so dividing it
+    /// out keeps the order and the equality: the two become `r_a * 10^d` and `r_b`, or `r_a`
+    /// and `r_b * 10^-d`, in binary, built at the cost of their coefficients ([`Tens::Binary`]).
+    ///
+    /// When `d` does not fit, `|d| >= 2^63`, and `log2 |a| - log2 |b| = d log2 10 + log2 |r_a|
+    /// - log2 |r_b|`. With `s = log2_span(r_a) + log2_span(r_b)`, `|log2 |r_a| - log2 |r_b|| <= s`,
+    /// and `|d| log2 10 > 3 * 2^63 > s` when `s < 2^63`; then the difference has the sign of
+    /// `d`, so `|a| > |b|` exactly when `d > 0`, and the two are not equal ([`Tens::Apart`]).
+    /// Otherwise, which only a value with an exponent beyond 2^63 made by binary operations
+    /// meets, both are converted ([`Tens::Convert`]).
+    fn ten_pair(a: &Rat, b: &Rat) -> Tens {
+        let zero = Dec::from_i128(0);
+        let (ta, tb) = (a.t().unwrap_or(&zero), b.t().unwrap_or(&zero));
+        let d = ta.sub(tb);
+        let (ra, rb) = (a.rest(), b.rest());
+        if let Some(k) = d.to_i64() {
+            return match k >= 0 {
+                true => Tens::Binary(ra.times_ten(&BigInt::from(k)), rb),
+                false => Tens::Binary(ra, rb.times_ten(&-BigInt::from(k))),
+            };
+        }
+        match ra.log2_span() + rb.log2_span() < BigInt::from(i64::MAX) {
+            true => Tens::Apart(match d.is_negative() {
+                true => Ordering::Less,
+                false => Ordering::Greater,
+            }),
+            false => Tens::Convert,
+        }
+    }
+}
+
+/// How [`Rat::ten_pair`] compares two numbers, at least one holding a [`Ten`].
+enum Tens {
+    /// The two with their common power of ten divided out, in binary.
+    Binary(Rat, Rat),
+    /// Their magnitudes differ, in this order, by more than any form of their rests spans.
+    Apart(Ordering),
+    /// Neither applies: compare the binary forms.
+    Convert,
 }
 
 /// Equal exactly when the values are. Both sides are aligned to every prime either lists, and
@@ -2325,6 +2711,16 @@ impl Rat {
 /// recorded for `refused` and the two are compared by their normal forms, as [`Ord`] does.
 impl PartialEq for Rat {
     fn eq(&self, other: &Self) -> bool {
+        if self.ten.is_some() || other.ten.is_some() {
+            if self.num.sign() != other.num.sign() {
+                return false;
+            }
+            return match Rat::ten_pair(self, other) {
+                Tens::Binary(a, b) => a == b,
+                Tens::Apart(_) => false,
+                Tens::Convert => self.bin() == other.bin(),
+            };
+        }
         if self.is_plain() && other.is_plain() {
             return self.num == other.num && self.den == other.den;
         }
@@ -2370,6 +2766,23 @@ impl PartialOrd for Rat {
     }
 }
 
+/// The fields, as a derived `Debug` writes them, with `ten` written only when it holds a
+/// decimal exponent: a value with none writes `Rat { num: 1, den: 1, pows: [] }`, the text it
+/// had before `ten` was added. Checker texts hold this (the R10 tests hash D's `Info` text
+/// against `expected.out`), so a `ten: None` in every value would change every recorded hash.
+impl fmt::Debug for Rat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut s = f.debug_struct("Rat");
+        s.field("num", &self.num)
+            .field("den", &self.den)
+            .field("pows", &self.pows);
+        if let Some(ten) = &self.ten {
+            s.field("ten", ten);
+        }
+        s.finish()
+    }
+}
+
 /// Written as its literal: `3r`, `-1r/3r`; or, when the system refuses the memory for the
 /// digits (`Rat::digits_or_powers`), as each side's powers cast, `rat(2^K)` or
 /// `rat(1)/rat(3^K)`.
@@ -2407,6 +2820,9 @@ impl Rat {
     /// machine's free memory; the messages that name a number print its type's text
     /// ([`Rat::integer_text`]) and not this, so they do not.
     fn digits_or_powers(&self) -> Result<(String, String), (String, String)> {
+        if self.ten.is_some() {
+            return self.bin().digits_or_powers();
+        }
         let room = match self.is_plain() {
             true => Ok(()),
             false => self.text_room(),
@@ -2421,6 +2837,7 @@ impl Rat {
                     num: num.clone(),
                     den: BigInt::one(),
                     pows: pows.collect(),
+                    ten: None,
                 }
                 .integer_text()
             };
@@ -3063,5 +3480,152 @@ mod tests {
         assert_eq!(m61::pow(3, &BigUint::from(m - 1)), 1);
         assert_eq!(m61::pow(3, &(BigUint::from(m - 1) << 70u32)), 1);
         assert_eq!(m61::pow(m, &BigUint::from(5u8)), 0);
+    }
+}
+
+/// A decimal exponent kept in its digits (`Ten`, plan rows KEPT-power-form and
+/// PERF-rat-literal-text-length): each operation that reads the digits gives what the binary
+/// form gives, and the ones a literal's checking uses convert nothing.
+#[cfg(test)]
+mod ten {
+    use super::*;
+
+    fn dec(text: &str) -> Rat {
+        Rat::decimal(text)
+            .expect("a short literal is given its memory")
+            .expect("a decimal literal")
+    }
+
+    /// The same value in binary, made from the digits.
+    fn binary(x: &Rat) -> Rat {
+        x.bin().clone()
+    }
+
+    /// 22 digits, beyond an `i64`, so each literal below holds a `Ten`.
+    const W: &str = "1000000000000000000000";
+    const W1: &str = "1000000000000000000001";
+
+    fn values() -> Vec<Rat> {
+        let texts = [
+            format!("1e{W}"),
+            format!("10e{W}"),
+            format!("1.0e{W}"),
+            format!("1e{W1}"),
+            format!("1e-{W}"),
+            format!("-25e{W}"),
+            format!("3.5e{W}"),
+            format!("-7e-{W1}"),
+            format!("0.008e{W}"),
+            format!("12e-{W}"),
+        ];
+        texts.iter().map(|t| dec(t)).collect()
+    }
+
+    #[test]
+    fn a_long_written_exponent_is_kept_in_its_digits() {
+        let before = dec::conversions();
+        for x in values() {
+            assert!(x.ten.is_some(), "{x:?}");
+        }
+        // 19 digits that fit an `i64` and 18 digits are binary as before.
+        assert!(dec("1e9223372036854775807").ten.is_none());
+        assert!(dec("1e100000000000000000").ten.is_none());
+        assert!(dec("0e1000000000000000000000").is_zero());
+        assert_eq!(dec::conversions(), before);
+    }
+
+    /// A value with no `Ten` writes the `Debug` text it had before `ten` was added, which the
+    /// R10 tests' recorded hashes hold; one with a `Ten` writes it.
+    #[test]
+    fn debug_writes_ten_only_when_held() {
+        assert_eq!(
+            format!("{:?}", dec("1")),
+            "Rat { num: 1, den: 1, pows: [] }"
+        );
+        let near = format!("{:?}", dec("-1.5e300"));
+        assert!(!near.contains("ten"), "{near}");
+        let far = format!("{:?}", dec(&format!("1e{W}")));
+        assert!(
+            far.contains("ten: Ten { t: Dec(1000000000000000000000)"),
+            "{far}"
+        );
+    }
+
+    #[test]
+    fn equality_order_and_residues_agree_with_the_binary_form() {
+        let xs = values();
+        let bs: Vec<Rat> = xs.iter().map(binary).collect();
+        for (x, bx) in xs.iter().zip(&bs) {
+            assert!(bx.ten.is_none());
+            assert_eq!(x.residues(), bx.residues(), "{x:?}");
+            assert_eq!(x.literal_text(), bx.literal_text(), "{x:?}");
+            assert_eq!(x.is_integer(), bx.is_integer(), "{x:?}");
+            if x.is_integer() {
+                assert_eq!(x.integer_residues(), bx.integer_residues(), "{x:?}");
+                assert_eq!(x.is_even(), bx.is_even(), "{x:?}");
+            }
+            assert!(x == bx && bx == x, "{x:?}");
+            for (y, by) in xs.iter().zip(&bs) {
+                assert_eq!(x == y, bx == by, "{x:?} == {y:?}");
+                assert_eq!(x.cmp(y), bx.cmp(by), "{x:?} cmp {y:?}");
+                assert_eq!(x.cmp(by), bx.cmp(by), "{x:?} cmp binary {y:?}");
+                let p = x.mul(y).expect("small coefficients");
+                let bp = bx.mul(by).expect("small coefficients");
+                assert!(p == bp, "{x:?} * {y:?}");
+                assert_eq!(p.residues(), bp.residues(), "{x:?} * {y:?}");
+                let q = x.div(y).expect("small").expect("nonzero");
+                let bq = bx.div(by).expect("small").expect("nonzero");
+                assert!(q == bq, "{x:?} / {y:?}");
+                assert_eq!(q.literal_text(), bq.literal_text(), "{x:?} / {y:?}");
+            }
+            for k in [1u32, 2, 3, 10] {
+                let p = x.pow(&BigUint::from(k)).expect("small coefficients");
+                let bp = bx.pow(&BigUint::from(k)).expect("small coefficients");
+                assert!(p == bp, "{x:?} ^ {k}");
+                assert_eq!(p.literal_text(), bp.literal_text(), "{x:?} ^ {k}");
+            }
+            let r = x
+                .pow_int(&Rat::int(BigInt::from(-1)))
+                .expect("small")
+                .expect("nonzero");
+            assert!(
+                r.mul(x).expect("small") == Rat::int(BigInt::one()),
+                "1 / {x:?}"
+            );
+            assert!(x.neg() == bx.neg() && x.abs() == bx.abs(), "{x:?}");
+            // Each is past either end of `f64` and `f32`.
+            assert_eq!(x.to_f64(), bx.to_f64(), "{x:?}");
+            assert_eq!(x.to_f32(), bx.to_f32(), "{x:?}");
+            let far = if x.t().is_some_and(Dec::is_negative) {
+                LiteralRounding::Zero
+            } else {
+                LiteralRounding::Infinite
+            };
+            assert_eq!(x.to_f64(), Err(far), "{x:?}");
+        }
+    }
+
+    #[test]
+    fn the_operations_of_a_literal_convert_nothing() {
+        let (one, ten, one0, small) = (
+            dec(&format!("1e{W}")),
+            dec(&format!("10e{W}")),
+            dec(&format!("1.0e{W}")),
+            dec(&format!("1e-{W}")),
+        );
+        let before = dec::conversions();
+        assert!(one < ten && one == one0 && small < one && one != small);
+        assert_eq!(one.literal_text(), format!("1e{W}r"));
+        assert_eq!(ten.literal_text(), format!("1e{W1}r"));
+        assert_eq!(small.literal_text(), format!("1e-{W}r"));
+        assert_eq!(one.residues(), one0.residues());
+        let cube = one.pow(&BigUint::from(3u8)).expect("nothing built");
+        assert_eq!(cube.literal_text(), "1e3000000000000000000000r");
+        assert!(one.mul(&small).expect("small") == Rat::int(BigInt::one()));
+        assert_eq!(dec::conversions(), before);
+        // A product of two wide exponents needs one in binary: `(1eWr)^(1eWr)` converts, and
+        // its power of 2 is refused its memory.
+        assert!(one.pow_int(&one).is_err());
+        assert!(dec::conversions() > before);
     }
 }

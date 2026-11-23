@@ -21,6 +21,7 @@ mod function_in_family;
 mod function_in_payload_run;
 mod function_in_tuple;
 mod in_place;
+mod kept_powers;
 pub(crate) mod memory_check;
 mod numbers;
 mod order;

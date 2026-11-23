@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use num_bigint::BigInt;
+use zed_kernel::num::dec::{Dec, conversions};
 use zed_kernel::types::Type;
 use zed_kernel::{Rat, Value};
 use zed_tests::instances::Rng;
@@ -227,17 +228,46 @@ fn programs(sizes: &[String]) -> HashMap<usize, String> {
         .collect()
 }
 
+/// Checks [`programs`]'s text for the exponent `n`. An exponent too wide for a word is kept in
+/// its decimal digits (KEPT-power-form), so the check converts none to binary.
 fn check_program(text: &str, n: &str) {
+    let before = conversions();
     let (info, _) = info(text);
     assert!(info.errors.is_empty(), "{:?}", info.errors);
     assert_eq!(info.tops["x"].to_string(), format!("1e{n}r"));
     assert_eq!(info.tops["small"].to_string(), format!("1e-{n}r"));
+    // The checker gives `x ^ 3` the type `rat`; the evaluator computes it, here as a run would.
+    let Value::Rat(one) = dec(&format!("1e{n}")) else {
+        unreachable!("a rat literal")
+    };
+    let cube = one.pow(&3u32.into()).expect("nothing built");
+    let three_n = Dec::read(false, n).mul_u64(3);
+    assert_eq!(lit(&Value::rat(cube)).to_string(), format!("1e{three_n}r"));
     let x = lit(&dec(&format!("1e{n}")));
     let z = lit(&dec(&format!("1.0e{n}")));
     let y = lit(&dec(&format!("10e{n}")));
     assert_eq!(z, x);
     assert!(z.subtype(&(x.clone() | y.clone())));
     assert_eq!((x | y).to_string().len(), 2 * n.len() + 11);
+    assert_eq!(
+        conversions(),
+        before,
+        "a literal of exponent {n} converted it to binary"
+    );
+}
+
+/// The negative control of [`check_program`]: `(1eNr)^(1eNr)` multiplies two wide exponents,
+/// which needs one of them in binary, so it converts, and the power is too large to build.
+fn check_control(n: &str) {
+    let before = conversions();
+    let Value::Rat(x) = dec(&format!("1e{n}")) else {
+        unreachable!("a rat literal")
+    };
+    assert!(x.pow_int(&x).is_err(), "(1e{n}r)^(1e{n}r) was built");
+    assert!(
+        conversions() > before,
+        "(1e{n}r)^(1e{n}r) converted nothing"
+    );
 }
 
 /// Small instance of `bench::a_rat_literal_costs_its_exponent_and_not_its_digits` and
@@ -251,6 +281,7 @@ fn literals_of_a_large_exponent_are_checked_compared_and_printed() {
     for (i, n) in ns.iter().enumerate() {
         check_program(&texts[&i], n);
     }
+    check_control(&ns[1]);
 }
 
 /// A literal type hashes a `rat` by its residues modulo `2^61 - 1`, but compares, orders and
