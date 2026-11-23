@@ -893,6 +893,126 @@ fn list_types_print_in_brackets_and_read_back_in_every_position() {
     }
 }
 
+/// The keys of the one family `t` is, as `Sig::keys` holds them.
+fn keys_of(t: &Ty) -> Option<String> {
+    let Some(s) = t.fns.only() else {
+        panic!("{t} is not one function type")
+    };
+    s.keys.as_ref().map(|k| k.text.to_string())
+}
+
+/// Row RANGE-keys-in-printed-type: a family whose keys the type knows exactly, as the
+/// checker types a range of literal ends (`2 ..= 4`, row RANGE-literal-keys), prints them,
+/// `int[2..=4] -> int` (DESIGN.md sec:type_language: `[T]` is `int[0..<n] -> T`), not
+/// `int ->? int`, which loses them; and the text reads back to the family with the same keys
+/// in every position, a fixed-width alias's range printing as its name. A family of the
+/// ranks with known keys prints its keys, which say more than `[V]`; one with no keys keeps
+/// `[V]`, and a range on the key of a partial map is still refused by the reader.
+#[test]
+fn a_family_with_its_keys_prints_them_and_reads_back() {
+    for (text, shown, keys) in [
+        ("int[2..=4] -> int", "int[2..=4] -> int", Some("int[2..=4]")),
+        (
+            "int[0..=2] -> String",
+            "int[0..=2] -> String",
+            Some("int[0..=2]"),
+        ),
+        (
+            "int[-3..=-1] -> int",
+            "int[-3..=-1] -> int",
+            Some("int[-3..=-1]"),
+        ),
+        (
+            "int[0..=-1] -> int",
+            "int[0..=-1] -> int",
+            Some("int[0..=-1]"),
+        ),
+        ("int[0..=255] -> bool", "u8 -> bool", Some("u8")),
+        ("i8 -> bool", "i8 -> bool", Some("i8")),
+        // 2^70 and 2^70 + 1: ends past 64 bits, written in decimal as the printer writes them.
+        (
+            "int[1180591620717411303424..=1180591620717411303425] -> int",
+            "int[1180591620717411303424..=1180591620717411303425] -> int",
+            Some("int[1180591620717411303424..=1180591620717411303425]"),
+        ),
+        ("[int]", "[int]", None),
+        ("int ->? int", "int ->? int", None),
+    ] {
+        let t = back(text);
+        assert_eq!(t.to_string(), shown, "{text}");
+        assert_eq!(mismatch(&t, shown), None, "{text}");
+        assert_eq!(keys_of(&t).as_deref(), keys, "{text}");
+    }
+    // A range on the key of a partial arrow is a parameter's written range, which the kernel
+    // has no type for; the reader refuses it, as it did before the row.
+    let why = parse_type("int[2..=4] ->? int").expect_err("a range on a `->?` key");
+    assert!(why.contains("holds a range type"), "{why}");
+    // In other positions: a tuple component, a union member, a value and a parameter.
+    for (text, shown) in [
+        ("(int[2..=4] -> int, bool)", "(int[2..=4] -> int, bool)"),
+        (
+            "String | (int[2..=4] -> int)",
+            "String | (int[2..=4] -> int)",
+        ),
+        ("int ->? (int[2..=4] -> int)", "int ->? int[2..=4] -> int"),
+        ("(int[2..=4] -> int) -> int", "(int[2..=4] -> int) -> int"),
+        ("[int[2..=4] -> int]", "[int[2..=4] -> int]"),
+    ] {
+        let t = back(text);
+        assert_eq!(t.to_string(), shown, "{text}");
+        assert_eq!(mismatch(&t, shown), None, "{text}");
+    }
+}
+
+/// Row RANGE-keys-in-printed-type: the note that says what a range of literal ends is prints
+/// its keys, `int[2..=4] -> int`, and every type the check prints reads back to itself. Before
+/// the row the note said `int ->? int`.
+#[test]
+fn a_note_prints_the_keys_of_a_range() {
+    let text = "main(m: MainArgs) {\n  r = (2 ..= 4) + 1;\n  m.stdout <- \"${r}\";\n}\n";
+    let (seen, out) = printed_by(text);
+    assert!(out.contains("int[2..=4] -> int"), "{out}");
+    assert!(!out.contains("int ->? int"), "{out}");
+    for (t, shown) in seen.into_iter().filter(|(t, _)| !unsolved(t)) {
+        assert_eq!(mismatch(&t, &shown), None, "{shown}");
+    }
+}
+
+/// A tuple of `n` families with their keys exactly, `int[i..=i + 2] -> int` for each `i < n`,
+/// as the printer writes it.
+pub(super) fn keyed_families(n: usize) -> String {
+    let parts: Vec<String> = (0..n)
+        .map(|i| format!("int[{i}..={}] -> int", i + 2))
+        .collect();
+    match n {
+        1 => format!("({},)", parts[0]),
+        _ => format!("({})", parts.join(", ")),
+    }
+}
+
+/// [`keyed_families`]`(n)` reads back to a tuple of `n` families, each with its keys, which
+/// prints as the text again.
+pub(super) fn keyed_families_read_back(text: &str, n: usize) {
+    let t = back(text);
+    let Some(row) = t.tuples.only() else {
+        panic!("{text} is not one tuple")
+    };
+    assert_eq!(row.len(), n);
+    let last = row.iter().last().expect("a component");
+    assert_eq!(
+        keys_of(last).as_deref(),
+        Some(format!("int[{}..={}]", n - 1, n + 1).as_str())
+    );
+    assert_eq!(t.to_string(), text);
+}
+
+#[test]
+fn a_tuple_of_families_with_their_keys_reads_back() {
+    for n in [1, 2, 5] {
+        keyed_families_read_back(&keyed_families(n), n);
+    }
+}
+
 /// A function type with a bounds clause needs no parentheses where a comma follows it: as a
 /// tuple component, the one component of `(T,)`, a parameter, positional or named, or a
 /// payload. After a comma a bounds clause goes on only with `Name in`, and no list item is a

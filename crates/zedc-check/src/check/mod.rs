@@ -5820,7 +5820,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     // gave a second message, on the arrows. Test:
     // `l01_22_type_representation::kinds::a_difference_that_takes_away_a_type_variable_is_refused`.
     pub(super) fn written(&mut self, t: &Type, fresh: bool) -> Ty {
-        let (ty, inexact) = denoted_inexact(t, &Binds::new(), &HashSet::new());
+        let (ty, inexact) = denoted_inexact(t, &Binds::new(), &HashSet::new(), HashMap::new());
         let any_var = inexact.iter().any(|i| matches!(i.cause, Loss::Var(_)));
         for Inexact {
             span,
@@ -17907,12 +17907,18 @@ pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
 /// variables). A printed type writes such a name for a variable that stands in two places or
 /// more (UNDERSCORE-print), which only `parse_type` reads back.
 pub fn denoted_free(t: &Type, leaves: &Binds, free: &HashSet<Arc<str>>) -> Ty {
-    denoted_inexact(t, leaves, free).0
+    denoted_inexact(t, leaves, free, HashMap::new()).0
 }
 
 /// [`denoted_free`], with the span and printed text of each difference in `t` whose value holds
-/// more than the difference ([`Ty::diff_exact`]).
-fn denoted_inexact(t: &Type, leaves: &Binds, free: &HashSet<Arc<str>>) -> (Ty, Vec<Inexact>) {
+/// more than the difference ([`Ty::diff_exact`]). Each function type whose span `keyed` holds
+/// is a family with those keys exactly ([`Denote::keyed`]).
+fn denoted_inexact(
+    t: &Type,
+    leaves: &Binds,
+    free: &HashSet<Arc<str>>,
+    keyed: HashMap<Span, WrittenRange>,
+) -> (Ty, Vec<Inexact>) {
     let mut d = Denote {
         leaves,
         free,
@@ -17920,6 +17926,7 @@ fn denoted_inexact(t: &Type, leaves: &Binds, free: &HashSet<Arc<str>>) -> (Ty, V
         open: Vec::new(),
         empty: None,
         inexact: Vec::new(),
+        keyed,
     };
     let ty = d.ty(t);
     (ty, d.inexact)
@@ -17951,6 +17958,7 @@ fn emptied(t: &Type, out: &mut Vec<Note>) {
         open: Vec::new(),
         empty: Some(HashSet::new()),
         inexact: Vec::new(),
+        keyed: HashMap::new(),
     };
     d.ty(t);
     let empty = d.empty.unwrap_or_default();
@@ -18159,6 +18167,10 @@ struct Denote<'a> {
     /// than `a & !b` ([`Ty::diff_exact`]), which [`Ck::written`] refuses
     /// (FAIL-ty-diff-function-rows).
     inexact: Vec<Inexact>,
+    /// The function types read as families with their keys exactly, by span: a printed type
+    /// `int[a..=b] -> V` (row RANGE-keys-in-printed-type), which `read::parse_type` finds.
+    /// Empty for a type a program writes.
+    keyed: HashMap<Span, WrittenRange>,
 }
 
 /// A difference `a \ b` whose value holds more than `a & !b` ([`Denote::inexact`]).
@@ -18469,6 +18481,23 @@ impl<'a> Denote<'a> {
             } => {
                 let result = vals.pop().expect("a function type's result is denoted");
                 let tys = vals.split_off(vals.len() - params.len());
+                // The family `int[a..=b] -> V` with its keys exactly, as the printer writes it
+                // ([`Sig::keys`]): the partial arrow `int ->? V`, since a key outside the range
+                // misses, with the keys kept beside it, as the checker types the range
+                // `a ..= b` (`Ck::range_ty`'s keys; a low end of 0 makes them the ranks).
+                if let Some(k) = self.keyed.get(&t.span).cloned() {
+                    let arrow = Arrow::partial_of(vec![Ty::carrier(Carrier::Int)], result);
+                    let mut f = self.sig_of(positional(1), vec![arrow]);
+                    let s = f.fns.pop().expect("a function type denotes one signature");
+                    let mut s = Sig::unwrap_to_change(s);
+                    s.data = true;
+                    s.dense = match k.low {
+                        Some(Value::Int(0)) => Dense::Ranks,
+                        _ => Dense::Interval,
+                    };
+                    s.keys = Some(k);
+                    return Ty::func(Arc::new(s));
+                }
                 let names = params
                     .iter()
                     .map(|p| SParam {

@@ -178,9 +178,12 @@ pub const LIMIT: f64 = 10.5;
 /// that passes from it up to [`LIMIT`] prints a note naming the test.
 pub const PREFERRED: f64 = 9.0;
 
-/// How many times the limit a meter of processor time or cycles allows: those change with load.
-/// A linear loop run at 10^5 and 8 × 10^5 passes took 5.6 to 8.8 times the processor time, the
-/// fastest of five each, and a quadratic one 33 to 82 times for 64 (2026-11-07, load 20 to 25).
+/// The margin of a limit on processor time or cycles, which change with load, kept for the
+/// probes that hold their own ratio of processor time to it (l01_38's `pncx_probe`). The
+/// scaling checks of this file no longer use it: they hold every meter to the limit itself
+/// (FAIL-scaling-check-passes-over-limit, 2026-11-23; see [`compare_measured`]). A linear loop
+/// run at 10^5 and 8 × 10^5 passes took 5.6 to 8.8 times the processor time, the fastest of five
+/// each, and a quadratic one 33 to 82 times for 64 (2026-11-07, load 20 to 25).
 pub const TIME_ALLOWANCE: f64 = 2.0;
 
 /// `8^(power − 1)`: the ratio at 8n of work of order `n^power` to work of order n, by which
@@ -293,7 +296,10 @@ pub const TRIES: usize = 3;
 /// | `work(n, 1, 100_000)`, n = 100 | 4.93, 6.71, 9.47 (1.9 times) | 5.98, 6.53, 8.58 |
 /// | `linear_bytes(n)`, n = 1,000,000 | 5.83, 8.08, 11.20 (1.9 times) | 6.13, 8.17, 10.99 |
 ///
-/// No ratio of either kind passed 21 ([`LIMIT`] × [`TIME_ALLOWANCE`]). The fastest of five
+/// No ratio of either kind passed 21 ([`LIMIT`] × [`TIME_ALLOWANCE`], the limit on processor
+/// time until FAIL-scaling-check-passes-over-limit; it is now [`LIMIT`] itself, so the 10.99 of
+/// `linear_bytes` fails its measurement, and the check passes only if a later one of the [`TRIES`]
+/// is under the limit). The fastest of five
 /// cuts the top of the spread (9.00 to 6.48 on the shortest method), which is what keeps a
 /// linear method clear of the limit when load rises; a single run of `work(n, 2, 20)` at 100
 /// and 800, quadratic but short, measured 11.19 to 35.40, under 21 in 87 of 120 runs, so time
@@ -602,16 +608,6 @@ impl Meter {
             (1, 1)
         } else {
             (TIME_RUNS, TRIES)
-        }
-    }
-
-    /// How many times the limit of a check this meter allows: [`TIME_ALLOWANCE`] for processor time
-    /// and cycles, which change with load, and 1 for instructions.
-    fn allowance(&self) -> f64 {
-        if self.instructions {
-            1.0
-        } else {
-            TIME_ALLOWANCE
         }
     }
 
@@ -1235,9 +1231,11 @@ fn check_by_dyn(
 /// Panics when `large`, the run at size 8n, does [`limit`]`(power)` times the work of `small`,
 /// the run at size n, or more, or allocates that many times its bytes or more, or allocates none
 /// on its thread; for a test whose input is not made from n by one function, as [`check`]'s is.
-/// `what` names the pass and its two sizes. The limit is of instructions: a meter of processor
-/// time or cycles allows [`TIME_ALLOWANCE`] times the work, and the bytes are held to the limit
-/// itself. A test that counts its own measure, not instructions, holds it by [`hold`].
+/// `what` names the pass and its two sizes. The work and the bytes are held to the limit itself
+/// on every meter; a meter of processor time or cycles measures up to [`TRIES`] times and passes
+/// on the first measurement under the limit (FAIL-scaling-check-passes-over-limit; until then it
+/// allowed [`TIME_ALLOWANCE`] times the work). A test that counts its own measure, not
+/// instructions, holds it by [`hold`].
 pub fn compare(what: &str, power: u32, small: impl Fn() + Sync, large: impl Fn() + Sync) {
     compare_by(
         &mut Meter::new(),
@@ -1773,7 +1771,22 @@ fn compare_measured(
                 "{what}: allocated {small_bytes} and {large_bytes} bytes, {bytes:.1} times the bytes; {why}"
             );
         }
-        if !over(ratio, limit * meter.allowance()) {
+        // A measurement passes only under the limit itself, on every meter
+        // (FAIL-scaling-check-passes-over-limit). Until then processor time and cycles passed
+        // up to [`TIME_ALLOWANCE`] times the limit, 21, while this line and [`note_if_near`]
+        // printed the limit as 10.50 and called the ratio "under the limit": s_01f's
+        // `untyped_calls_scale_with_the_number_of_files`, run by a name filter on a Colab VM
+        // with no counter of instructions (b22-small10, 2026-11-23), printed "passed" at 10.54.
+        // The load that moves processor time is met by the [`TRIES`] measurements, each the
+        // fastest of [`TIME_RUNS`] runs of each size, of which one under the limit passes: the
+        // fastest of five of a linear method measured at most 10.99 (`linear_bytes`, table at
+        // [`TIME_RUNS`]), so a linear method can fail all three under heavy load. That cost is
+        // taken: a check that cannot tell 10.5 from 21 does not hold the author's limit, and a
+        // check run where instructions are counted (a benchmark under tools/run_tests.sh, or
+        // any test run alone with `--exact` under `ZED_METER_DRRUN`) never takes this path.
+        // Tested by scaling_tests.rs `a_ratio_over_the_limit_fails_on_every_meter`, red before
+        // this change on a meter of processor time.
+        if !over(ratio, limit) {
             let held = match measures {
                 Measures::Both => "",
                 Measures::WorkOnly => ", not held to the limit",
@@ -1785,7 +1798,7 @@ fn compare_measured(
             };
             // Shown by libtest's --show-output or --nocapture: a pass near the limit is seen.
             eprintln!(
-                "{what}: passed: took {} and {} {}, {ratio:.1} times the work; allocated \
+                "{what}: passed: took {} and {} {}, {ratio:.2} times the work; allocated \
                  {small_bytes} and {large_bytes} bytes, {bytes:.1} times the bytes{held}; \
                  the limit is {limit:.2}{earlier}",
                 small.units,
@@ -1798,17 +1811,12 @@ fn compare_measured(
             return;
         }
         seen.push(format!(
-            "{} and {}, {ratio:.1} times the work",
+            "{} and {}, {ratio:.2} times the work",
             small.units, large.units
         ));
     }
-    let allowed = if meter.instructions {
-        String::new()
-    } else {
-        format!(", times {TIME_ALLOWANCE} for a count that changes with load")
-    };
     panic!(
-        "{what}: took {} in {}; {why}{allowed}",
+        "{what}: took {} in {}; {why}",
         seen.join("; then "),
         meter.unit()
     );

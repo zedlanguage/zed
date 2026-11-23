@@ -413,7 +413,9 @@ fn sat_half_project_each_scales_past_512() {
 ///
 /// On a machine that counts no instructions the test measures nothing, as
 /// `l01_38_omega_test`'s `decide_on_unit_rows_costs_a_constant_times_the_search` does: a meter of
-/// processor time allows `scaling::TIME_ALLOWANCE` times the limit, 21, and under the load of a
+/// processor time allowed `scaling::TIME_ALLOWANCE` times the limit, 21, until
+/// FAIL-scaling-check-passes-over-limit (2026-11-23; it now allows the limit itself, but a
+/// ratio of processor time under load still need not fail here), and under the load of a
 /// run of all of l01_38 at 8 test threads on a Colab VM the ratio measured was 14.97 (2026-11-23),
 /// so the check passed and this test, then `#[should_panic]`, failed in 7 of 10 such runs
 /// (b22-presburgerb3).

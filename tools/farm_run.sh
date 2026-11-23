@@ -704,8 +704,10 @@ if [ -n "$run_vm" ]; then
       # zed_icount (its build failed: job.sh's run.sh writes out/icount.log; or the checkout
       # predates tools/icount: no log, but each `bench` line says `work=` where a count says
       # `instr=`, tests/src/scaling_tests.rs), a benchmark falls back on processor time, whose
-      # ratio scaling::compare_measured holds to LIMIT x TIME_ALLOWANCE = 21, not 10.5; such a run
-      # passed silently (l01_38 twin_chains_of_absolute_values_scale at 11.94, b22-msgtypes4).
+      # ratio scaling::compare_measured held to LIMIT x TIME_ALLOWANCE = 21, not 10.5, until
+      # FAIL-scaling-check-passes-over-limit; such a run passed silently (l01_38
+      # twin_chains_of_absolute_values_scale at 11.94, b22-msgtypes4). A ratio of processor time
+      # is still not a count of instructions, so the run still fails here.
       if [ "$kind" = bench ]; then
         why=
         [ ! -f "$d/job/out/icount.log" ] || why=$(join_lines <"$d/job/out/icount.log")

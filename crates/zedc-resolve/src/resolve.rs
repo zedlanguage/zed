@@ -4375,6 +4375,28 @@ impl Resolver<'_> {
                 todo.push(Task::Ty(b));
                 todo.push(Task::Ty(a));
             }
+            // A family with its keys exactly, as the checker prints one, `int[2..=4] -> V` or
+            // `u8 -> V` (row RANGE-keys-in-printed-type): read back, its key is a range whose
+            // ends are leaves of the printed type, ints the reader holds (zedc-check's
+            // `read::key_range`), not names to find, so only the type ranged over is resolved.
+            // A program's type of this form is resolved as any other arrow below, its range
+            // refused there.
+            TypeKind::Arrow {
+                params,
+                partial: false,
+                result,
+            } if self.printed.is_some()
+                && let [p] = &params[..]
+                && p.name.is_none()
+                && let Some(key) = self.printed_key(&p.ty) =>
+            {
+                self.arrows.push(t.span);
+                todo.push(Task::ArrowEnd);
+                todo.push(Task::Ty(result));
+                if let Some(of) = key {
+                    todo.push(Task::Ty(of));
+                }
+            }
             TypeKind::Arrow { params, result, .. } => {
                 self.arrows.push(t.span);
                 todo.push(Task::ArrowEnd);
@@ -4428,6 +4450,33 @@ impl Resolver<'_> {
                 self.later(t.span, RANGE_ELSEWHERE);
                 self.range(of, low, high, todo);
             }
+        }
+    }
+
+    /// The key `key` of a printed family with its keys exactly, `int[a..=b]` with each end a
+    /// leaf of the printed type, or a fixed-width alias (row RANGE-keys-in-printed-type):
+    /// `Some(Some(int))`, the type ranged over, for the range, and `Some(None)` for the alias,
+    /// recorded as the prelude's; `None` for any other key. O(1).
+    fn printed_key<'a>(&mut self, key: &'a Type) -> Option<Option<&'a Type>> {
+        let leaf = |e: &Option<Box<Expr>>| {
+            matches!(e.as_deref(), Some(Expr { kind: ExprKind::Name(n), .. })
+                if self.printed.as_ref().is_some_and(|l| l.contains(n.as_str())))
+        };
+        match &key.kind {
+            TypeKind::Range {
+                of,
+                low,
+                high: RangeEnd::Through(high),
+            } if matches!(&of.kind, TypeKind::Name(n) if n == "int") && leaf(low) && leaf(high) => {
+                Some(Some(of))
+            }
+            TypeKind::Name(n) if self.fixed_width_alias(n) => {
+                self.out
+                    .uses
+                    .insert(key.span, Ref::Prelude(n.as_str().into()));
+                Some(None)
+            }
+            _ => None,
         }
     }
 

@@ -16,9 +16,10 @@ use zed_collections::by_address::ByAddress;
 use zed_kernel::num::{TooLarge, literal_f64};
 use zed_kernel::{Rat, Value};
 
-use super::ty::{Binds, NodeId, Row, Shape, Sig, Ty};
+use super::ty::{Binds, NodeId, Row, Shape, Sig, Ty, WrittenRange};
 use super::{Inexact, Loss, carrier_mask, denoted_inexact};
-use zedc_syntax::ast::{self, Type, TypeKind};
+use zedc_lattice::interval::Num;
+use zedc_syntax::ast::{self, Expr, ExprKind, RangeEnd, Type, TypeKind};
 use zedc_syntax::lex::{self, Part, Tok};
 use zedc_syntax::parse::{self, TOP};
 
@@ -166,6 +167,7 @@ fn read_part(
         .map_err(|e| format!("`{text}`: {}", written.back(&e.to_string())))?;
     // A later layer's form, found with an explicit stack, and the variables bounded.
     let mut bounded = Vec::new();
+    let mut keyed = HashMap::new();
     let mut stack = vec![&t];
     while let Some(t) = stack.pop() {
         match &t.kind {
@@ -202,6 +204,20 @@ fn read_part(
             }
             TypeKind::AtomApply(_, ps) => stack.extend(ps.iter().map(|p| &p.ty)),
             TypeKind::Diff(a, b) => stack.extend([&**a, &**b]),
+            // A family with its keys exactly, `int[2..=4] -> V` or `u8 -> V`, as the printer
+            // writes one (`Sig::keys`, row RANGE-keys-in-printed-type): its key, a range, is
+            // read here and not walked; the arrow is denoted as that family (`Denote::keyed`).
+            TypeKind::Arrow {
+                params,
+                partial: false,
+                result,
+            } if let [p] = &params[..]
+                && p.name.is_none()
+                && let Some(k) = key_range(&p.ty, &written, binds) =>
+            {
+                keyed.insert(t.span, k);
+                stack.push(result);
+            }
             TypeKind::Arrow { params, result, .. } => {
                 stack.extend(params.iter().map(|p| &p.ty));
                 stack.push(result);
@@ -255,7 +271,7 @@ fn read_part(
     // reads back as `#a(x: int)`, l01_22
     // `kinds::the_difference_of_payloads_of_one_atom_takes_the_payloads`),
     // and a difference that takes part of a variable is held by `left_of`.
-    let (ty, inexact) = denoted_inexact(&t, binds, &free);
+    let (ty, inexact) = denoted_inexact(&t, binds, &free, keyed);
     if let Some(Inexact { span, printed, .. }) = inexact
         .into_iter()
         .find(|i| matches!(i.cause, Loss::Unknown))
@@ -464,6 +480,9 @@ impl Seen {
 #[derive(Default)]
 struct Written<'a> {
     by_name: HashMap<Arc<str>, &'a str>,
+    /// The int each leaf written as an int literal stands for, by its name: the ends of a
+    /// range `int[a..=b]`, which [`keyed_families`] reads.
+    ints: HashMap<Arc<str>, Value>,
 }
 
 impl Written<'_> {
@@ -501,6 +520,35 @@ impl Written<'_> {
     }
 }
 
+/// The keys of a family whose key `key` the printer wrote as a range with both ends
+/// (`Sig::keys`, row RANGE-keys-in-printed-type): `int[a..=b]`, its ends int literals, which
+/// [`leaves`] made names of and `written` keeps the ints of, or a fixed-width alias, `u8`,
+/// that no definition names, which `WrittenRange::new` prints for exactly its range. `None`
+/// for any other key, which the walk then reads as before (a range elsewhere is refused). The
+/// printer writes no `..<` here, nor an open end, as `WrittenRange::new` of two ends writes
+/// `..=`. O(1) and O(digits) for the alias's ends.
+fn key_range(key: &Type, written: &Written, binds: &Binds) -> Option<WrittenRange> {
+    let (low, high) = match &key.kind {
+        TypeKind::Name(n) if !binds.contains_key(n.as_str()) => {
+            let (lo, hi) = zedc_syntax::fixed_width::range(n)?;
+            (Value::from(&Num::from(lo)), Value::from(&Num::from(hi)))
+        }
+        TypeKind::Range {
+            of,
+            low: Some(low),
+            high: RangeEnd::Through(Some(high)),
+        } if matches!(&of.kind, TypeKind::Name(n) if n == "int") => {
+            let int = |e: &Expr| match &e.kind {
+                ExprKind::Name(n) => written.ints.get(n.as_str()).cloned(),
+                _ => None,
+            };
+            (int(low)?, int(high)?)
+        }
+        _ => return None,
+    };
+    Some(WrittenRange::new(Some(low), Some(high)))
+}
+
 /// The start of the name [`leaves`] gives each leaf, followed by its number in `binds`.
 const LEAF: &str = "Leaf";
 
@@ -522,19 +570,25 @@ fn leaves<'h>(
     while i < tokens.len() {
         let (start, tok) = (tokens[i].span.start, &tokens[i].tok);
         let next = tokens.get(i + 1).map(|t| &t.tok);
+        let mut int_leaf = None;
+        let mut an_int = |v: Value, used: usize| {
+            let ty = Ty::lit(&v);
+            int_leaf = Some(v);
+            (ty, used)
+        };
         let (ty, used) = match (tok, next) {
             (Tok::Op("-") | Tok::Int { .. }, _)
                 if let Some((v, used)) = power_product(text, &tokens[i..])? =>
             {
-                (Ty::lit(&v), used)
+                an_int(v, used)
             }
             (Tok::Wildcard, _) => (Ty::dynamic(), 1),
             (Tok::Op("!"), Some(Tok::Wildcard)) => (Ty::empty(), 2),
             (Tok::Op("!"), _) => return Err(format!("`{text}`: `!` stands before no `_`")),
             (Tok::Op("-"), Some(Tok::Int { radix, digits })) => {
-                (Ty::lit(&int(*radix, digits, true, text)?), 2)
+                an_int(int(*radix, digits, true, text)?, 2)
             }
-            (Tok::Int { radix, digits }, _) => (Ty::lit(&int(*radix, digits, false, text)?), 1),
+            (Tok::Int { radix, digits }, _) => an_int(int(*radix, digits, false, text)?, 1),
             (Tok::Float { digits: s, .. }, _) => (
                 Ty::lit(&Value::float(
                     literal_f64(s)
@@ -576,6 +630,9 @@ fn leaves<'h>(
         out.push_str(&name);
         from = tokens[i + used - 1].span.end;
         written.by_name.insert(name.clone(), &head[start..from]);
+        if let Some(v) = int_leaf {
+            written.ints.insert(name.clone(), v);
+        }
         found.insert(name.clone());
         binds.insert(name, ty);
         i += used;

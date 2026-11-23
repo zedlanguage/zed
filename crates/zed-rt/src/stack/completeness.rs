@@ -208,30 +208,47 @@ fn a_limited_address_space_refuses_the_reservation_under_a_memory_limit() {
     let Some(out) = in_child(
         "stack::completeness::a_limited_address_space_refuses_the_reservation_under_a_memory_limit",
         || {
+            // The limit on the address space is chosen by the test from this process and this
+            // machine (FAIL-stack-completeness-memory-assertion): what the process has mapped
+            // once the memory limit is set, plus half of memory and swap. Until 2026-11-23 it
+            // was a fixed 8 GiB, and the test asserted the machine had more than 16 GiB, so it
+            // failed on a Colab std VM (12 GB of memory, no swap).
+            // Why the reservation is refused under it, on every machine: under the memory
+            // limit of 1 TiB, `Stack::new` reserves `bytes` = `reach` = min(1 TiB, memory and
+            // swap), rounded up to a page, plus a guard page (`Stack::limited`). The limit is
+            // set from `reach`, not from memory and swap, since on a machine above 2 TiB half
+            // of memory and swap is more than the 1 TiB reserved; so `bytes` >= `reach` >
+            // `reach / 2` on every machine. The mapping would bring the address space to
+            // `mapped + bytes + page > mapped + reach / 2`, the limit, so `mmap` refuses it with
+            // ENOMEM (setrlimit(2): RLIMIT_AS bounds the whole address space, the PROT_NONE and
+            // MAP_NORESERVE mapping included). Why the rest of the test fits: after the refused
+            // mapping it only formats the message, a few pages, against `reach / 2` of room
+            // (more than 1 GiB on any machine that builds zed). Run on a Colab l4 VM (52 GB);
+            // the test before this one failed on a std VM (12 GB), where memory and swap are
+            // below 16 GiB (row FAIL-stack-completeness-memory-assertion).
+            crate::limits::enforce(&memory(1 << 40)).unwrap();
             #[expect(unsafe_code, reason = "sysinfo, sysconf and setrlimit are libc calls")]
             // SAFETY: sysinfo writes the zeroed struct owned here; the others only read or set
             // a limit of this child process.
-            let (machine, page) = unsafe {
+            let (reach, page) = unsafe {
                 let mut info: libc::sysinfo = std::mem::zeroed();
                 assert_eq!(libc::sysinfo(&mut info), 0);
+                let machine = (info.totalram + info.totalswap) * u64::from(info.mem_unit);
+                let page = libc::sysconf(libc::_SC_PAGESIZE) as u64;
+                // The first field of statm is the size of the address space in pages (proc(5)).
+                let statm = std::fs::read_to_string("/proc/self/statm").unwrap();
+                let mapped = statm.split(' ').next().unwrap().parse::<u64>().unwrap() * page;
+                let reach = machine.min(1 << 40);
                 let r = libc::rlimit {
-                    rlim_cur: 8 << 30,
-                    rlim_max: 8 << 30,
+                    rlim_cur: mapped + reach / 2,
+                    rlim_max: mapped + reach / 2,
                 };
-                crate::limits::enforce(&memory(1 << 40)).unwrap();
                 assert_eq!(libc::setrlimit(libc::RLIMIT_AS, &r), 0);
-                (
-                    (info.totalram + info.totalswap) * u64::from(info.mem_unit),
-                    libc::sysconf(libc::_SC_PAGESIZE) as u64,
-                )
+                (reach, page)
             };
-            assert!(
-                machine > 16 << 30,
-                "the test needs more than 16 GiB of memory and swap"
-            );
             // A stack as large as the machine, the limit being larger, is refused.
             let e = Stack::new().unwrap_err();
-            let bytes = machine.div_ceil(page) * page;
+            let bytes = reach.div_ceil(page) * page;
             assert_eq!(
                 e,
                 reserve(bytes as usize, &io::Error::from_raw_os_error(libc::ENOMEM))

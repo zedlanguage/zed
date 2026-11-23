@@ -4345,9 +4345,11 @@ pub struct Sig {
     /// `a ..= b` whose two ends the checker's read of the text fixes, as `0 ..< 3`, and what
     /// `++` and `zip` make of such families. `None` where its arrows and [`Sig::dense`] say all
     /// that is known of its keys. The empty family is `int[0..=-1]`, so that equal key sets are
-    /// equal values. Its arrows stay `int ->? V` and print so, since no type text the parser
-    /// takes in that place says the keys are an interval (DESIGN.md sec:type_language, the
-    /// `m[k]` row, `lst : int[a..<b]`); `zip` and `++` read these keys as they read the listed
+    /// equal values. Its arrows stay `int ->? V`, and it prints as `int[a..=b] -> V`
+    /// ([`Sig::exact_keys`], row RANGE-keys-in-printed-type; DESIGN.md sec:type_language: `[T]`
+    /// is `int[0..<n] -> T`), which the reader of printed types takes back to the same keys
+    /// and arrow (until that row it printed `int ->? V`, and the keys were lost on reading
+    /// back); `zip` and `++` read these keys as they read the listed
     /// keys of an array display. A family with keys fits where one with the same keys or with
     /// none is wanted, and not where other keys are ([`fits_sig`]).
     ///
@@ -24894,6 +24896,9 @@ enum Morphism<'a> {
         key: &'a Ty,
         range: Option<&'a ParamRange>,
         arrow: &'a Arrow,
+        /// The keys exactly ([`Sig::keys`]), where the family has them: then it is written
+        /// `int[a..=b] -> V`, not `int ->? V` (row RANGE-keys-in-printed-type).
+        keys: Option<&'a WrittenRange>,
     },
     /// `L .. U -> V`: the guarantee, the permission and the value type.
     Bounded {
@@ -24908,7 +24913,26 @@ impl<'a> Morphism<'a> {
     /// so that `((int, int)) ->? V` is not read as two parameters.
     fn parts(&self, parts: &mut Vec<Print<'a>>) {
         match *self {
-            Morphism::Partial { key, range, arrow } => {
+            // A family whose keys are exactly the ints `a` through `b` is written with them as
+            // an exact arrow, `int[2..=4] -> V` (DESIGN.md sec:type_language: `[T]` is
+            // `int[0..<n] -> T`, its lookup at a key within the range `T`), which the reader
+            // of printed types takes back to the same family (`read::parse_type` in
+            // zedc-check). Its lookup at a key outside the range misses, as for any family;
+            // the value type is written as after `->?` ([`Sig::value_part`]), since the arrow
+            // within the range answers it with no miss. Two ints of text, O(log(b - a))
+            // digits, not the O(b - a) keys an array display lists (see [`Sig::keys`]).
+            Morphism::Partial {
+                arrow,
+                keys: Some(k),
+                ..
+            } => parts.extend([
+                Print::Text(&k.text),
+                Print::Text(" -> "),
+                Sig::value_part(arrow),
+            ]),
+            Morphism::Partial {
+                key, range, arrow, ..
+            } => {
                 ParamRange::parts(range, key, PrintAt::Key, parts);
                 parts.extend([Print::Text(" ->? "), Sig::value_part(arrow)]);
             }
@@ -25638,8 +25662,25 @@ impl Sig {
                     if several {
                         parts.push(Print::Text("("));
                     }
-                    ParamRange::parts(self.params[0].range.as_ref(), key, PrintAt::Key, parts);
-                    parts.extend(result(a));
+                    // A family with its keys known, of a built signature whose positional
+                    // parameter has a name (`x0`), is written as [`Morphism::Partial`] writes
+                    // one whose parameter has none: `int[2..=4] -> V`.
+                    match self.exact_keys(a).filter(|_| !several) {
+                        Some(k) => parts.extend([
+                            Print::Text(&k.text),
+                            Print::Text(" -> "),
+                            Sig::value_part(a),
+                        ]),
+                        None => {
+                            ParamRange::parts(
+                                self.params[0].range.as_ref(),
+                                key,
+                                PrintAt::Key,
+                                parts,
+                            );
+                            parts.extend(result(a));
+                        }
+                    }
                     if several {
                         parts.push(Print::Text(")"));
                     }
@@ -25689,10 +25730,31 @@ impl Sig {
         let bare = p.positional && p.range.is_none();
         (ranks
             && bare
+            && self.exact_keys(a).is_none()
             && a.partial
             && a.params[0] == Ty::carrier(Carrier::Int)
             && Sig::writes_value(a))
         .then_some(a)
+    }
+
+    /// The keys of the family exactly ([`Sig::keys`]), where it is written with them as
+    /// `int[a..=b] -> V` (row RANGE-keys-in-printed-type): a family whose one arrow `a`, of one
+    /// positional parameter with no range written on it, is the partial `int ->? V`, so that
+    /// the reader of printed types makes the same family of the text. A family of the ranks
+    /// with known keys is written so too, not `[V]`, which says less: `0 ..< 3` is
+    /// `int[0..=2] -> int`. O(1).
+    fn exact_keys(&self, a: &Arrow) -> Option<&WrittenRange> {
+        let [p] = &self.params[..] else {
+            return None;
+        };
+        let k = self.keys.as_ref()?;
+        (self.data
+            && p.positional
+            && p.range.is_none()
+            && a.partial
+            && a.params[..] == [Ty::carrier(Carrier::Int)]
+            && Sig::writes_value(a))
+        .then_some(k)
     }
 
     /// Whether `->?` can write the partial arrow `a`: its lookup holds the `#notFound` of a miss
@@ -25777,6 +25839,7 @@ impl Sig {
                 key: &a.params[0],
                 range: p.range.as_ref(),
                 arrow: a,
+                keys: self.exact_keys(a),
             }),
             [a, b] => {
                 let (lower, upper) = (&a.params[0], &b.params[0]);

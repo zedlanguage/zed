@@ -2024,7 +2024,8 @@ mod r6_row_order_tests {
     /// instructions, but on a meter of processor time (a VM with no counter of instructions) one
     /// run with no allowance, where [`scaling::compare`] takes the least of
     /// [`scaling::TIME_RUNS`] runs, up to [`scaling::TRIES`] times, under
-    /// [`scaling::TIME_ALLOWANCE`] times the limit (the ratios measured are in that row of
+    /// [`scaling::TIME_ALLOWANCE`] times the limit, the limit itself since
+    /// FAIL-scaling-check-passes-over-limit (the ratios measured are in that row of
     /// docs/plan_dag.md). `PDCX_RED` times the scan of every atom instead, O(K) a row, the
     /// negative control, which fails.
     #[test]

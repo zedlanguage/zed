@@ -107,3 +107,17 @@ fn printing_key_unions_that_keep_their_clauses_nested_scales() {
         assert_eq!(printed.matches(" for ").count(), size, "{printed}");
     });
 }
+
+/// Reading back a tuple of `n` families with their keys exactly and printing it again (row
+/// RANGE-keys-in-printed-type): each key is two int leaves read in O(digits) and each family
+/// is denoted and printed in O(1) besides, so the work is linear in the text.
+#[test]
+fn reading_back_families_with_their_keys_scales() {
+    let n = 4000;
+    let inputs = scaling::inputs(n, keyed_families);
+    scaling::check(
+        "reading back a tuple of n families with their keys",
+        n,
+        |size| keyed_families_read_back(&inputs[&size], size),
+    );
+}

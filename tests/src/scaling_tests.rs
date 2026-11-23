@@ -62,9 +62,10 @@ fn work_of_the_order_given_passes() {
 /// above, since processor time, the meter of a machine with no counter of instructions (Colab
 /// VMs), cannot tell one power from the next at the sizes of a unit test: `work(n, 2, 2)` at 100
 /// and 800, 64 times the work, took 5.2 times the time on hm5 (2026-11-22), the start of the
-/// run's thread, about 0.22 ms, being most of the run at 100, and over 21 ([`LIMIT`] ×
-/// [`TIME_ALLOWANCE`]) a ratio of the fastest of five runs can fall to 0.34 of the work's (see
-/// [`TIME_RUNS`]). Cubic work at power 1 is 512 times the work for a limit of 21 there, and
+/// run's thread, about 0.22 ms, being most of the run at 100, and over the limit a ratio of the
+/// fastest of five runs can fall to 0.34 of the work's (see
+/// [`TIME_RUNS`]). Cubic work at power 1 is 512 times the work for a limit of 10.5 there (21
+/// until FAIL-scaling-check-passes-over-limit), and
 /// `work(n, 3, 500)` runs 500,000 passes at 10, about 0.4 ms, so the ratio stays over 100 at
 /// 0.34 of the work's. One power above, at power 2, is held on a counter only the run moves,
 /// as a count of instructions and as one of processor time (TEST-scaling-lib-no-counter: until
@@ -150,7 +151,7 @@ fn work_a_quarter_power_above_n_log_n_fails() {
             quarter,
         )
     });
-    assert!(message.contains("13.5 times the work"), "{message}");
+    assert!(message.contains("13.45 times the work"), "{message}");
 }
 
 /// The limit is 10.5 at 8n for work of order n, times `8^(k − 1)` for order `n^k`. Work of
@@ -1272,7 +1273,7 @@ fn a_meter_measures_by_any_counter_it_is_given() {
     });
     assert!(
         message.contains(
-            "quadratic passes: sizes 1000 and 8000: took 1000000 and 64000000, 64.0 times the \
+            "quadratic passes: sizes 1000 and 8000: took 1000000 and 64000000, 64.00 times the \
              work in passes"
         ),
         "{message}"
@@ -1308,11 +1309,11 @@ fn compare_counted(
 }
 
 /// A meter of a count that changes with load, processor time or cycles, here given a counter
-/// that does not. A comparison under the limit times [`TIME_ALLOWANCE`] stops after its first
-/// measurement, the fastest of [`TIME_RUNS`] runs of each size; one over it in its first
-/// measurement only is measured again and passes; one over it in every measurement takes all
-/// [`TRIES`], the runs [`Meter::runs`] gives, and fails naming the allowance. On a machine
-/// with an instruction counter no other test takes these paths.
+/// that does not. A comparison under the limit stops after its first measurement, the fastest
+/// of [`TIME_RUNS`] runs of each size; one over it in its first measurement only is measured
+/// again and passes; one over it in every measurement takes all [`TRIES`], the runs
+/// [`Meter::runs`] gives, and fails. On a machine with an instruction counter no other test
+/// takes these paths.
 #[test]
 fn a_meter_of_a_count_that_changes_with_load_measures_up_to_three_times() {
     static PASSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1341,15 +1342,46 @@ fn a_meter_of_a_count_that_changes_with_load_measures_up_to_three_times() {
     let message = message.expect("64 times fails");
     assert!(
         message.contains(
-            "took 1000 and 64000, 64.0 times the work; then 1000 and 64000, 64.0 times the \
-             work; then 1000 and 64000, 64.0 times the work in ns"
+            "took 1000 and 64000, 64.00 times the work; then 1000 and 64000, 64.00 times the \
+             work; then 1000 and 64000, 64.00 times the work in ns"
         ),
         "{message}"
     );
-    assert!(
-        message.contains(", times 2 for a count that changes with load"),
-        "{message}"
-    );
+}
+
+/// A ratio at the limit or over it fails on every meter, and one just under it passes
+/// (FAIL-scaling-check-passes-over-limit). Until then a meter of processor time or cycles
+/// passed up to 21, `LIMIT` × `TIME_ALLOWANCE`, and printed "the limit is 10.50": s_01f's
+/// `untyped_calls_scale_with_the_number_of_files` printed "passed" at 10.54 on a Colab VM
+/// (b22-small10, 2026-11-23). The counter here is one only the runs move, so the ratios are
+/// exact: 10540 against 1000 is 10.54, and 10490 against 1000 is 10.49, the negative control.
+/// On a meter of processor time 10.54 is measured all [`TRIES`] times before it fails.
+#[test]
+fn a_ratio_over_the_limit_fails_on_every_meter() {
+    static PASSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    for instructions in [false, true] {
+        let mut meter = Meter {
+            read: Box::new(|| PASSES.load(std::sync::atomic::Ordering::Relaxed)),
+            unit: "ns",
+            instructions,
+            fresh: false,
+        };
+        let (message, _, _) = compare_counted(&mut meter, &PASSES, |_| 1000, |_| 10_490);
+        assert_eq!(message, None, "10.49 on instructions: {instructions}");
+        for over in [10_500, 10_540] {
+            let (message, smalls, larges) =
+                compare_counted(&mut meter, &PASSES, |_| 1000, |_| over);
+            let message = message.unwrap_or_else(|| {
+                panic!("{over} against 1000 passed on instructions: {instructions}")
+            });
+            let ratio = format!("{:.2}", over as f64 / 1000.0);
+            assert!(
+                message.contains(&format!("1000 and {over}, {ratio} times the work")),
+                "{message}"
+            );
+            assert_eq!((smalls, larges), meter.runs());
+        }
+    }
 }
 
 /// On a count of instructions a check runs each size once, n first, and measures once
@@ -1371,7 +1403,7 @@ fn a_count_of_instructions_runs_each_size_once() {
     assert_eq!((smalls, larges), (1, 1));
     let message = message.expect("64 times fails");
     assert!(
-        message.contains("counted passes: took 1000 and 64000, 64.0 times the work in passes"),
+        message.contains("counted passes: took 1000 and 64000, 64.00 times the work in passes"),
         "{message}"
     );
 }
@@ -1491,7 +1523,7 @@ fn the_first_run_of_each_size_is_measured_against_the_other() {
     assert_eq!((smalls, larges), (1, 1));
     let message = message.expect("10.56 times fails");
     assert!(
-        message.contains("took 1250 and 13200, 10.6 times the work in passes"),
+        message.contains("took 1250 and 13200, 10.56 times the work in passes"),
         "{message}"
     );
 }
@@ -1526,7 +1558,7 @@ fn a_comparison_to_a_given_limit_passes_at_the_limit_and_fails_over_it() {
     let message = given(&mut meter, 3001).expect_err("over the limit");
     assert_eq!(
         message,
-        "two methods: took 1000 and 3001, 3.0 times the work in passes; the second method is \
+        "two methods: took 1000 and 3001, 3.00 times the work in passes; the second method is \
          at most 3 times the first"
     );
 }

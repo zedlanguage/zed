@@ -729,7 +729,8 @@ pub(super) fn seeds(width: usize, per: usize, n: usize) -> Vec<Formula> {
 /// meter reads processor time, which the load of the other tests changes; `hold` takes one
 /// measurement of each size and allows no more than the limit, where the harness takes the least
 /// of [`scaling::TIME_RUNS`] runs, up to [`scaling::TRIES`] times, and allows
-/// [`scaling::TIME_ALLOWANCE`] times the limit for processor time. `dark_chain_answers` passed 20
+/// [`scaling::TIME_ALLOWANCE`] times the limit for processor time (the limit itself since
+/// FAIL-scaling-check-passes-over-limit, 2026-11-23). `dark_chain_answers` passed 20
 /// runs of 20 alone (DynamoRIO, 8.89 times the instructions), and in 5 runs of all of l01_38 at 8
 /// test threads every run failed 7 to 15 of these benchmarks, it among them, at 11.69 to 13.31
 /// times the "instructions", which were nanoseconds of processor time. `check_order_fresh` names
