@@ -147,14 +147,16 @@ fn dense_binomial(bits: u64) -> Sparse {
 /// wider than its divisor is on `transform_cost(2 bw)`, which has no such step; putting it on
 /// the points of its level instead takes num-bigint wrongly at 5920 by 1480, 1.565 times the
 /// less work, so it is open in plan row PERF-div-wide-reciprocal-step. That call takes more
-/// work at n, so it lowers the ratio, by the share of the bench measured at
-/// [`roots_scale_in_the_bits_where_products_are_transforms`]. So 262,144 bits is the regime,
-/// and the pair 131,072 to 1,048,576 is a crossing: at 131,072 every quotient of 1,024 words or
-/// more but one takes num-bigint, and at 1,048,576 the eight largest kinds take the reciprocal,
-/// so that pair measures the change of method, not the order: 12.974 times the instructions at 8n
+/// work at n, so it lowers the ratio: its extra, 2,879,253 instructions, is 0.233% of the
+/// 1,236,272,468 of [`roots_scale_in_the_bits_where_products_are_transforms`] at n, whose ratio
+/// would be 9.471 without it, not 9.449 (the run below). So 262,144 bits is the regime, and the
+/// pair 131,072 to 1,048,576 is a crossing: at 131,072 every quotient of 1,024 words or more
+/// but one takes num-bigint, and at 1,048,576 the eight largest kinds take the reciprocal, so
+/// that pair measures the change of method, not the order: 12.974 times the instructions at 8n
 /// with the old search (h5-req23), then 11.197 after the Newton step at doubling precision
 /// (h5-req26), the quotients 8.40 times and the rest 4.55 times from 131,072 to 524,288 bits
-/// (Callgrind, h5-req26).
+/// (Callgrind, h5-req26); with this tree (XR-ROOTS-REF round 2, D3; v5e3, 2026-11-23), 11.221,
+/// 9.325 and 11.328 for the three benches, so the first and third fail there for that reason.
 ///
 /// The search at doubling precision makes the whole `O(M(n))` past the cuts, and the cuts are
 /// `O(log n)` evaluations at powers of 2, each `O(n)`: at `x = 2^m` every product of the
@@ -168,9 +170,10 @@ fn dense_binomial(bits: u64) -> Sparse {
 /// reciprocal went from 3 calls to 10, 7.70 times its work, but 2.31 times per call, and the
 /// whole 4.52 times (run h5-req27, callgrind); that each doubling of n adds about one more
 /// call per doubling level is inferred from the levels' sizes, not measured per level.
-/// Measured at these sizes (h5-req27): 9.445, 9.065 and 9.026 times the instructions at 8n
-/// for the three benches, 3.0 s, 7.6 s and 1.6 s a piece; with the search at doubling
-/// precision turned off in the production build, the first takes 10.588 and fails.
+/// Measured at these sizes: 9.449, 9.092 and 9.233 times the instructions at 8n for the three
+/// benches, 2.8 s, 7.5 s and 1.5 s a piece (XR-ROOTS-REF round 2, D3; v5e3, 2026-11-23;
+/// 9.445, 9.065 and 9.026 before, h5-req27); with the search at doubling precision turned off
+/// in the production build, the first takes 10.588 and fails (h5-req27).
 const TRANSFORM_BITS: usize = 262_144;
 
 /// The integer roots of the cubic of [`of_bits`], whose roots have [`TRANSFORM_BITS`] and 8
