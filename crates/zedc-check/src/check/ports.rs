@@ -33,7 +33,7 @@ pub struct Ports {
     /// port", DESIGN.md sec:ports, "What a push may name").
     pub not_ports: Vec<(Span, String, Vec<Note>)>,
     /// The text of the argument of each call of a declared function that fills a parameter,
-    /// by the text of the call and the parameter's binder ([`super::twice`]).
+    /// by the text of the call and the parameter's binder (read by the module `twice`).
     pub args: HashMap<(Span, usize), Span>,
 }
 
