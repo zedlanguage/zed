@@ -4549,8 +4549,10 @@ fn a_form_with_a_class_over_a_wide_range_is_not_listed() {
 ///   W - i`.
 #[test]
 fn the_benchmark_families_are_exact_at_a_small_size() {
+    // Each name with the set and the class it is given.
+    type Want<'a> = [(&'a str, &'a str, &'a str); 5];
     let any = "any";
-    let rows: [(&str, bench::Family, [(&str, &str, &str); 5]); 4] = [
+    let rows: [(&str, bench::Family, Want); 4] = [
         (
             "B",
             bench::b_even(3),
