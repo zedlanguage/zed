@@ -383,6 +383,7 @@ const TOOM_POWER: f64 = 0.465;
 /// them and 242 for one of 256 times them, so the leaf on the narrower of the two alone cannot
 /// sit at every crossover;
 /// [`DIV_COST`] sets them, and this leaf only spares the cost computation on small divisions.
+/// Measured again on 2026-11-23 (see [`DIV_COST`]): 3090, 861, 1480, 417 and 366 words.
 const DIV_LEAF: u64 = 64 * 64;
 
 /// The cost of num-bigint's division past [`DIV_LEAF`], per unit of [`num_bigint_div_cost`], in
@@ -395,6 +396,29 @@ const DIV_LEAF: u64 = 64 * 64;
 /// at 9.1, where the fit holds. With [`DIV_LEAF`] alone num-bigint's division did up to 3.4
 /// times the work of the other methods. The quotient does not depend on it; infinite in the
 /// unit tests, so that the other methods are reached past the leaf.
+///
+/// A scaling test whose two sizes fall on either side of this switch may read more than the
+/// reciprocal's own growth without a fault of the order: where the switch sits at the
+/// measured crossover, the work at `n` is the less of the two methods', so the ratio at 8n is
+/// at least `reciprocal(8n) / reciprocal(n)` and larger only because the small size took the
+/// faster method. That holds only where the switch is at the crossover. Measured again in
+/// instructions on 2026-11-23 (`crossover div-leaf`, under DynamoRIO's `zed_icount` on a Colab
+/// VM, run h5-req30 on commit 25e53c9b5), num-bigint does less work up to 3090 words for `2w`
+/// by `w`, 861 for a quotient of a quarter of the divisor's words, 1898 for twice, 1480 for
+/// four times, 417 for sixteen times and 366 for 256 times them. Alone they ask for 11.73 to
+/// 11.84, 11.41 to 11.47, 9.07 to 9.22, 9.04 to 9.19, 8.99 to 9.12 and 9.06 to 9.21. At 9.1
+/// the four shapes of a quotient wider than the divisor sit at their crossovers, but the
+/// build takes num-bigint for `2w` by `w` at 2048, 2896 and 5793 words (the reciprocal at
+/// 4096 and from 8192), up to 1.329 times the less work, and for a quarter at 1448 words,
+/// 1.123 times. Over the six together the least worst is 1.142, from 9.95 to 10.80. One
+/// constant cannot fit both groups, so the shape terms of [`num_bigint_div_units`] are what
+/// is off, and their refit is pending a decision. Where this matters:
+/// `l01_39_reduced_product::roots::bench`, whose quotients are of both shapes (`TRANSFORM_BITS`
+/// there), read 12.974 times the instructions at 8n from 131,072 to 1,048,576 bits with the
+/// old search (h5-req23) and 11.197 after the Newton step at doubling precision (h5-req26),
+/// with the quotients 8.40 times and the rest 4.55 times from 131,072 to 524,288 bits
+/// (Callgrind, h5-req26), since both shapes were below their crossovers at n and past them at
+/// 8n.
 #[cfg(not(test))]
 const DIV_COST: f64 = 9.1;
 #[cfg(test)]
