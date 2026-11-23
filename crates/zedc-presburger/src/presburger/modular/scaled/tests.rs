@@ -1047,10 +1047,21 @@ fn with_sumset_always(body: impl FnOnce()) -> (usize, usize) {
     };
     sumset::ALWAYS.with(|a| a.set(true));
     let before = counts();
-    body();
+    metered(u64::MAX, body).expect("no limit");
     sumset::ALWAYS.with(|a| a.set(false));
     let after = counts();
     (after.0 - before.0, after.1 - before.1)
+}
+
+/// `run` under a question's meter of `limit` units ([`meter::Work::metered`]), as the cover runs
+/// its questions: [`sumset`] runs only under one.
+fn metered<T>(limit: u64, run: impl FnOnce() -> T) -> Result<T, crate::presburger::Refusal> {
+    let mut work = crate::presburger::meter::Work {
+        used: 0,
+        limit,
+        solver: crate::presburger::SOLVER,
+    };
+    work.metered(run)
 }
 
 /// Rows over pairwise coprime moduli (two rows may share one, a block of two rows), sums of
@@ -1247,7 +1258,8 @@ fn sumset_leaves_a_product_remainder_to_the_fallback() {
 
     let (taken, _) = with_sumset_always(|| {
         for want_model in [false, true] {
-            assert!(!matches!(solve(&f, want_model), Some(None)), "{f}");
+            assert!(solve(&f, want_model).is_none(), "{f}");
+            assert!(solve_modular_or_scaled(&f, want_model).is_none(), "{f}");
         }
         assert!(
             !matches!(crate::presburger::decide(&f), Ok(false)),
@@ -1262,7 +1274,8 @@ fn sumset_leaves_a_product_remainder_to_the_fallback() {
 }
 
 /// The rows `x == p_i q_i + r_i` for the first `k` odd primes and one more row
-/// `2 x == 3 q + r` (a block of two rows of modulus 3), and `j` sums `E + c`, `c` in `0..j`,
+/// `2 x == 3 q + r` (a block of two rows of modulus 3: `k + 1` rows in `k` blocks), and `j` sums
+/// `E + c`, `c` in `0..j`,
 /// each modulo 2, `E` the sum of all the quotients, with the literals `(E + c) mod 2 == c mod 2`,
 /// the last one flipped without `point`. The sums' tuples number `S = 2^j`, but only the two
 /// tuples of `E mod 2` are reached (META1 A3 of XR-presburger4, Codex's 20 rows and 40 sums).
@@ -1315,7 +1328,8 @@ fn sumset_holds_only_the_tuples_reached() {
         sumset::MOST_HELD.with(|h| h.set(0));
         let before = sumset::ANSWERED.with(std::cell::Cell::get);
         for want_model in [false, true] {
-            match solve_modular_or_scaled(&f, want_model) {
+            let got = metered(u64::MAX, || solve_modular_or_scaled(&f, want_model));
+            match got.expect("no limit") {
                 Some(Some(m)) => assert!(point && (!want_model || f.holds(&m)), "{f}"),
                 Some(None) => assert!(!point, "point {point}: no point found\n{f}"),
                 None => panic!("point {point}: declined\n{f}"),
@@ -1337,7 +1351,8 @@ fn sumset_holds_only_the_tuples_reached() {
             let want =
                 (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
             assert_eq!(want, point, "k = {k}, j = {j}");
-            check(&f, want, &format!("k = {k}, j = {j}, point {point}"));
+            let what = format!("k = {k}, j = {j}, point {point}");
+            metered(u64::MAX, || check(&f, want, &what)).expect("no limit");
         }
     }
 }
@@ -1444,6 +1459,303 @@ fn sumset_shapes_match_enumeration() {
     );
 }
 
+/// The rows `x == p_i q_i + r_i`, one for each modulus in `moduli`.
+fn unit_rows(moduli: impl IntoIterator<Item = i64>) -> Vec<Div> {
+    (moduli.into_iter())
+        .map(|m| Div {
+            t: 0,
+            a: 1,
+            k: 0,
+            m,
+            fixed: None,
+        })
+        .collect()
+}
+
+/// [`solve`] without a model, [`sumset`] taken whatever the costs, under a question's meter with
+/// no limit: the answer, the units charged, and whether [`sumset`] was selected.
+fn sumset_units(f: &Formula) -> (Option<Option<Model>>, u64, bool) {
+    sumset::ALWAYS.with(|a| a.set(true));
+    let before = sumset::SELECTED.with(std::cell::Cell::get);
+    let mut work = crate::presburger::meter::Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: crate::presburger::SOLVER,
+    };
+    let got = work.metered(|| solve(f, false)).expect("no limit");
+    sumset::ALWAYS.with(|a| a.set(false));
+    let selected = sumset::SELECTED.with(std::cell::Cell::get) > before;
+    (got, work.used, selected)
+}
+
+/// Claude's family (XR-presburger4 round 2 F1): rows over the first `j` odd primes and `j` sums
+/// `sum_i q_i + q_c` modulo 2, `c` in `0..j`, each with the literal `== want`. The sums' tuples
+/// reached number `2^j`: each sum is `sum_{i != c} q_i` modulo 2, and the `q_i mod 2` take every
+/// combination of values. With `want = 1` and `j` even, the points have every `q_i` odd, and
+/// `x = 0` is none, so the zero witness of [`solve_modular`] does not answer `f` (job 37 on
+/// round 3: at `want = 0` it answered before the path was reached).
+fn every_tuple_reached(j: usize, want: i64) -> Formula {
+    let divs =
+        unit_rows((zed_numtheory::first_primes(j + 1).into_iter().skip(1)).map(|p| p as i64));
+    let sums: Vec<Sum> = (0..j)
+        .map(|c| Sum {
+            parts: (0..j)
+                .map(|i| (2 * i + 1, if i == c { 2 } else { 1 }))
+                .collect(),
+            k: 0,
+            m: 2,
+            rem: true,
+        })
+        .collect();
+    let lits = (0..j)
+        .map(|c| Formula::Con(Con::eq(&r(j + c), &Lin::constant(want))))
+        .collect();
+    formula(&divs, Formula::and(lits), sum_formulas(&divs, &sums))
+}
+
+/// XR-presburger4 round 2 F1: on Claude's family at `j = 20` the path reached 1,048,576 tuples
+/// with no meter running (0.79 s on an extraction), where [`sum_residues`] declines at once (the
+/// period does not fit a word), since [`sumset`]'s charges count nothing with no meter. With no
+/// meter the path must decline, as the other paths do; under a question's meter at the solver's
+/// limit the question must be refused, not run to the end. The scaled path [`solve`] is asked,
+/// not [`solve_modular_or_scaled`], whose modular solver can answer first; `f` has a point
+/// (every `q_i` odd), so an answer of a later path with no meter must be one.
+#[test]
+fn the_sumset_path_runs_only_under_a_meter() {
+    let f = every_tuple_reached(20, 1);
+    let selected = sumset::SELECTED.with(std::cell::Cell::get);
+    let got = solve(&f, false);
+    assert!(matches!(got, None | Some(Some(_))), "{got:?}\n{f}");
+    assert_eq!(
+        sumset::SELECTED.with(std::cell::Cell::get),
+        selected,
+        "selected with no meter"
+    );
+    let got = metered(crate::presburger::meter::EXACT_LIMIT, || solve(&f, false));
+    assert!(
+        matches!(got, Err(crate::presburger::Refusal::Questions)),
+        "{got:?}"
+    );
+    assert!(
+        sumset::SELECTED.with(std::cell::Cell::get) > selected,
+        "not selected under a meter"
+    );
+}
+
+/// XR-presburger4 round 2, Gemini: on a spent meter [`sumset`] answers "no point" at once and the
+/// question is refused; in a run that checks the modular answers of "no point"
+/// ([`crate::presburger::with_modular_empty_checked`]) that answer was asked again of the path
+/// without the modular solver, on the spent meter, and recorded as agreed, wrong or refused.
+/// It must not be asked again.
+#[test]
+fn an_answer_on_a_spent_meter_is_not_checked() {
+    let f = every_tuple_reached(8, 1);
+    let selected = sumset::SELECTED.with(std::cell::Cell::get);
+    let mut check = None;
+    let got = metered(crate::presburger::meter::PIECE * 4, || {
+        let (out, c) = crate::presburger::with_modular_empty_checked(|| {
+            crate::presburger::modular_answer(&f, false)
+        });
+        check = Some(c);
+        out
+    });
+    let reached = sumset::SELECTED.with(std::cell::Cell::get) > selected;
+    assert!(
+        reached && matches!(got, Err(crate::presburger::Refusal::Questions)),
+        "{got:?}, path reached {reached}"
+    );
+    let check = check.expect("run");
+    assert!(
+        check.agreed == 0 && check.wrong.is_empty() && check.refused.is_empty(),
+        "{check:?}"
+    );
+}
+
+/// The steps [`sumset`] charges, counted exactly on three small formulas, each with the literal
+/// `r_s == 0` on one sum `s` (XR-presburger4 round 2 P2, Gemini F6: deleting every charge passed
+/// every test). Each count is the sum of the charges at the sites, in pieces of
+/// [`meter::PIECE`] units, so a charge removed or changed fails here. `J = 1` coordinate in all
+/// three, and 3 literals on the sums' remainders (`r_s == 0` and the bounds `0 <= r_s <= m - 1`
+/// that [`formula`] writes; the rows' bounds are top-level row literals, read once). Each sum is
+/// written `m q + r` modulo `m`, which is `r mod m` with `A = 0` and `u = 1` (Lemma C): written
+/// `r` alone, the sum's equation has two atoms and is read as a row on `r`, which [`solve`]
+/// declines before [`sumset`] (job 37 on round 3: "not selected").
+/// - `x == 5 q + r`, `s = r mod 2`: the start `M J = 2`; the walk of the row's remainder
+///   `min(5, 1 * 2) J + 1 = 3`; `W` is the whole group `{0, 1}`, so the tuples of `R` are read,
+///   `1 J`, and the sum written, `1 * 2 * J`; the literals at the 2 tuples,
+///   `2 (J + 3) + 3 = 11`. 19 pieces.
+/// - `x == 5 q + r` with `r <= 1`, `s = r mod 4`: the start `4`; the walk `4 + 1`; `W` = `{0, 1}`
+///   is not the whole group of 4, so the pairs `1 * 2 * J = 2`; the literals `11`. 22 pieces.
+/// - `x == 5 q + r` and `2 x == 5 q' + r'` (one block), `s = r mod 2`: the start `2`; the block,
+///   `5 ((1 + J + 1) + (1 + J + 1)) = 30`; `W` the whole group, `1 + 2`; the literals `11`.
+///   46 pieces.
+#[test]
+fn sumset_charges_each_step() {
+    let s = |m: i64, rem_of: usize| Sum {
+        parts: vec![(2 * rem_of + 1, m), (2 * rem_of + 2, 1)],
+        k: 0,
+        m,
+        rem: true,
+    };
+    let two = [
+        unit_rows([5]),
+        vec![Div {
+            t: 0,
+            a: 2,
+            k: 0,
+            m: 5,
+            fixed: None,
+        }],
+    ]
+    .concat();
+    // A case: its name, rows, top-level literals, sum and pieces charged.
+    type Case = (&'static str, Vec<Div>, Vec<Formula>, Sum, u64);
+    let cases: [Case; 3] = [
+        ("whole group", unit_rows([5]), vec![], s(2, 0), 19),
+        (
+            "pairs",
+            unit_rows([5]),
+            vec![Formula::Con(Con::ge(&Lin::constant(1), &r(0)))],
+            s(4, 0),
+            22,
+        ),
+        ("a block of two rows", two, vec![], s(2, 0), 46),
+    ];
+    for (what, divs, mut lits, sum, pieces) in cases {
+        let sums = [sum];
+        lits.push(Formula::Con(Con::eq(&r(divs.len()), &Lin::constant(0))));
+        let f = formula(&divs, Formula::and(lits), sum_formulas(&divs, &sums));
+        let (got, used, selected) = sumset_units(&f);
+        assert!(selected, "{what}: not selected\n{f}");
+        assert_eq!(got, Some(Some(Model::new())), "{what}\n{f}");
+        assert_eq!(
+            used,
+            pieces * crate::presburger::meter::PIECE,
+            "{what}\n{f}"
+        );
+    }
+}
+
+/// XR-presburger4 round 2 P1 (Codex): three rows over 809, 811 and 821 and one sum
+/// `r_0 + r_1 + r_2` modulo `M`. Each row's `W_b` is the whole group `Z_M`, and the pairs of `R`
+/// and `W_b` numbered `M^2` where `R + W_b` has `M` tuples (63.72 times at 8M on Codex's
+/// extraction). Written directly, the units charged grow as `M`: about 8 times from `M = 100` to
+/// 800.
+#[test]
+fn a_sum_with_a_whole_group_costs_its_tuples() {
+    let units = |m: i64| {
+        let divs = unit_rows([809, 811, 821]);
+        let sums = [Sum {
+            parts: vec![(2, 1), (4, 1), (6, 1)],
+            k: 0,
+            m,
+            rem: true,
+        }];
+        let lit = Formula::Con(Con::eq(&r(3), &Lin::constant(m - 1)));
+        let f = formula(&divs, lit, sum_formulas(&divs, &sums));
+        let (got, used, selected) = sumset_units(&f);
+        assert!(
+            selected && got == Some(Some(Model::new())),
+            "M = {m}: {got:?}\n{f}"
+        );
+        used
+    };
+    let (small, large) = (units(100), units(800));
+    assert!(
+        large <= 9 * small,
+        "units {small} at M = 100, {large} at 800"
+    );
+}
+
+/// Codex's family (XR-presburger4 round 2 P2): rows over the first `k + 1` odd primes, one sum
+/// `sum_i q_i` modulo 2 with `== 1`, and `k` sums `2 r_i + 2 r_{i+1}` modulo 2, each `0` at every
+/// `x`, the last with `== 1` without `point`.
+fn constant_sums(k: usize, point: bool) -> (Vec<Div>, Vec<Sum>, Formula) {
+    let divs =
+        unit_rows((zed_numtheory::first_primes(k + 2).into_iter().skip(1)).map(|p| p as i64));
+    let mut sums = vec![Sum {
+        parts: (0..=k).map(|i| (2 * i + 1, 1)).collect(),
+        k: 0,
+        m: 2,
+        rem: true,
+    }];
+    sums.extend((0..k).map(|i| Sum {
+        parts: vec![(2 * i + 2, 2), (2 * i + 4, 2)],
+        k: 0,
+        m: 2,
+        rem: true,
+    }));
+    let n = divs.len();
+    let mut lits = vec![Formula::Con(Con::eq(&r(n), &Lin::constant(1)))];
+    lits.push(Formula::Con(Con::eq(
+        &r(n + k),
+        &Lin::constant(i64::from(!point)),
+    )));
+    let f = formula(&divs, Formula::and(lits), sum_formulas(&divs, &sums));
+    (divs, sums, f)
+}
+
+/// XR-presburger4 round 2 P2 (Codex): a coordinate that no `x` moves is read once and left out of
+/// the tuples. Against enumeration at small `k`, and with no meter, as above, the path declines.
+/// Codex's two further fixtures: a sum with no remainder that is never divisible
+/// (`2 r + 2 q + 1` modulo 2), its only false requirement; and a row whose one remainder
+/// (`5 x + 1 == 5 q + r`, `r = 1`) the top-level literal `r >= 2` leaves out, the only empty
+/// block, beside a constant sum `2 q + 2 r` modulo 2.
+#[test]
+fn constant_sums_are_read_once() {
+    for k in 1..=3 {
+        for point in [false, true] {
+            let (divs, sums, f) = constant_sums(k, point);
+            let period: i64 = 2 * divs.iter().map(|d| d.m).product::<i64>();
+            let want =
+                (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
+            assert_eq!(want, point, "k = {k}");
+            let (got, _, selected) = sumset_units(&f);
+            assert!(selected, "k = {k}: not selected\n{f}");
+            assert_eq!(got.map(|m| m.is_some()), Some(want), "k = {k}\n{f}");
+        }
+    }
+    let divs = unit_rows([5]);
+    let sums = [Sum {
+        parts: vec![(2, 2), (1, 2)],
+        k: 1,
+        m: 2,
+        rem: false,
+    }];
+    let f = formula(&divs, Formula::top(), sum_formulas(&divs, &sums));
+    // Answered when the constant sums are read, before the costs choose the path, so counted in
+    // `ANSWERED` and not in `SELECTED`.
+    let before = sumset::ANSWERED.with(std::cell::Cell::get);
+    let (got, _, _) = sumset_units(&f);
+    let answered = sumset::ANSWERED.with(std::cell::Cell::get) > before;
+    assert!(
+        answered && got == Some(None),
+        "never divisible: {got:?}, answered by the path {answered}\n{f}"
+    );
+    let divs = vec![Div {
+        t: 0,
+        a: 5,
+        k: 1,
+        m: 5,
+        fixed: None,
+    }];
+    // `2 q + 2 r` modulo 2, not `2 r` alone: a one-part sum is read as a row on `r`, a nested
+    // row, which [`solve`] declines before either path (job 39 on round 3: `None`).
+    let sums = [Sum {
+        parts: vec![(1, 2), (2, 2)],
+        k: 0,
+        m: 2,
+        rem: true,
+    }];
+    let lits = Formula::Con(Con::ge(&r(0), &Lin::constant(2)));
+    let f = formula(&divs, lits, sum_formulas(&divs, &sums));
+    let (got, _, selected) = sumset_units(&f);
+    assert!(
+        selected && got == Some(None),
+        "empty block: {got:?}, selected {selected}\n{f}"
+    );
+}
+
 /// The rows `x == p_i q_i + r_i` for the first `k` odd primes, and the sums
 /// `E = sum_i q_i` and `E + 1`, each modulo 2, with `E mod 2 == 0` and, with `point`,
 /// `(E + 1) mod 2 == 1`, else `== 0`. Without `point` there is no point, so every reachable
@@ -1481,7 +1793,7 @@ fn bench_coprime_sums(k: usize, point: bool) -> (Vec<Div>, Vec<Sum>, Formula) {
 }
 
 /// The small instances of `bench::sums_over_many_coprime_moduli_scale`, against enumeration,
-/// with the costs choosing the path as they do in the benchmark.
+/// with the costs choosing the path as they do in the benchmark (under a meter with no limit).
 #[test]
 fn the_coprime_sums_benchmark_has_its_answers_at_small_sizes() {
     for k in 2..=5 {
@@ -1491,7 +1803,8 @@ fn the_coprime_sums_benchmark_has_its_answers_at_small_sizes() {
             let want =
                 (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
             assert_eq!(want, point, "k = {k}");
-            check_answered(&f, want, &format!("k = {k}, point {point}"));
+            let what = format!("k = {k}, point {point}");
+            metered(u64::MAX, || check_answered(&f, want, &what)).expect("no limit");
         }
     }
 }

@@ -605,6 +605,12 @@ fn decide_named(f: &Formula) -> Result<bool, Refusal> {
 
 /// [`decide_named`] with no sweep after a refusal.
 fn decide_named_once(f: &Formula) -> Result<bool, Refusal> {
+    // As at [`satisfiable_named_once`]: a spent question is refused with no retry (XR-presburger4
+    // round 2, Gemini: [`modular_answer`]'s check asks this again after an answer on a spent
+    // meter).
+    if meter::spent() {
+        return Err(Refusal::Questions);
+    }
     if let Some(found) = modular_answer(f, false) {
         return Ok(found.is_some());
     }
@@ -1466,7 +1472,10 @@ fn modular_answer(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         return None;
     }
     let found = modular::scaled::sweep::solve_modular_scaled_or_swept(f, want_model)?;
-    if found.is_none() && MODULAR_CHECK.with(|c| c.borrow().is_some()) {
+    // "No point" on a spent meter is not an answer to check: the question is refused
+    // (`meter::Work::metered`), and asked again it would be read as a wrong answer
+    // (XR-presburger4 round 2, Gemini).
+    if found.is_none() && !meter::spent() && MODULAR_CHECK.with(|c| c.borrow().is_some()) {
         // The check is off while the path without the modular solver is asked, and on again
         // when `On` is dropped, also when that path is left by an unwind.
         struct On;

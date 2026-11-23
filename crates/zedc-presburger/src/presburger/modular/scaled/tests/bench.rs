@@ -37,33 +37,64 @@ fn sums_of_quotients_scale() {
 /// (PRES-sum-of-quotients-period-product, part 1): the residues of `x` the sums' literals
 /// become number `2 prod_i p_i`, exponential in `k` ([`sum_residues`], which declines once
 /// that passes a word, and then the formula went unanswered); decided over the 4 tuples of
-/// the sums' remainders ([`sumset`]), the work is linear in `k`.
+/// the sums' remainders ([`sumset`]), the work is linear in `k`. Under a question's meter with
+/// no limit, as [`sumset`] runs only under one.
 #[test]
 fn sums_over_many_coprime_moduli_scale() {
     let inputs = scaling::inputs(N_COPRIME, |n| bench_coprime_sums(n, false).2);
     scaling::check_order("two sums over k coprime moduli", N_COPRIME, 1, |n| {
-        assert!(matches!(
-            solve_modular_or_scaled(&inputs[&n], false),
-            Some(None)
-        ))
+        let got = metered(u64::MAX, || solve_modular_or_scaled(&inputs[&n], false));
+        assert!(matches!(got, Ok(Some(None))))
     });
 }
 
-/// [`solve_modular_or_scaled`] on [`bench_many_sums`] with 20 rows over the first odd primes,
-/// a block of two rows of modulus 3, and `j = n` and `8n` sums modulo 2 with no common point
-/// (META1 A3 of XR-presburger4): the sums' tuples number `2^j`, but [`sumset`] holds only the
-/// two reached, so the work is O(j) a block, linear in `j`, where a table of all the tuples
-/// would be exponential in `j`.
+/// [`solve_modular_or_scaled`] on [`bench_many_sums`] with 21 rows in 20 blocks (the first 20
+/// odd primes, and a second row of modulus 3 in the block of 3) and `j = n` and `8n` sums
+/// modulo 2 with no common point (META1 A3 of XR-presburger4): the sums' tuples number `2^j`,
+/// but [`sumset`] holds only the two reached, so the work is O(j) a block, linear in `j`, where
+/// a table of all the tuples would be exponential in `j`. Under a question's meter with no
+/// limit.
 #[test]
 fn sums_over_many_moduli_two_scale() {
     let inputs = scaling::inputs(N_TWO, |n| bench_many_sums(20, n, false).2);
-    scaling::check_order("j sums modulo 2 over 20 rows", N_TWO, 1, |n| {
-        assert!(matches!(
-            solve_modular_or_scaled(&inputs[&n], false),
-            Some(None)
-        ))
+    scaling::check_order("j sums modulo 2 over 21 rows", N_TWO, 1, |n| {
+        let got = metered(u64::MAX, || solve_modular_or_scaled(&inputs[&n], false));
+        assert!(matches!(got, Ok(Some(None))))
     });
 }
+
+/// [`solve_modular_or_scaled`] on [`constant_sums`] with `k = n` and `8n` (XR-presburger4 round
+/// 2 P2, Codex): `k` sums that are 0 at every `x` beside one sum over all the rows. Each pair of
+/// tuples added all `k + 1` coordinates, Θ(k²) word additions over the `k + 1` blocks; with the
+/// constant coordinates read once and left out of the tuples, linear in `k`.
+#[test]
+fn constant_sums_beside_a_dense_sum_scale() {
+    let inputs = scaling::inputs(N_CONSTANT, |n| constant_sums(n, false).2);
+    scaling::check_order("k constant sums beside a dense sum", N_CONSTANT, 1, |n| {
+        let got = metered(u64::MAX, || solve_modular_or_scaled(&inputs[&n], false));
+        assert!(matches!(got, Ok(Some(None))))
+    });
+}
+
+/// [`solve_modular_or_scaled`] on [`bench_many_sums`] with 3 rows in 2 blocks and `j = n` and
+/// `8n` sums modulo 2 (XR-presburger4 round 2 P3, Codex and Gemini): the size of the group of
+/// tuples, `2^j`, built one radix at a time, was Θ(j²) bit work (62.25 times from 2,000 to
+/// 16,000 on Gemini's extraction), above the path's own linear work with so few rows; built by
+/// [`sumset`]'s `product_of`, O(M(j) log j).
+#[test]
+fn many_sums_over_few_rows_scale() {
+    let inputs = scaling::inputs(N_FEW_ROWS, |n| bench_many_sums(2, n, false).2);
+    scaling::check_order("j sums modulo 2 over 3 rows", N_FEW_ROWS, 1, |n| {
+        let got = metered(u64::MAX, || solve_modular_or_scaled(&inputs[&n], false));
+        assert!(matches!(got, Ok(Some(None))))
+    });
+}
+
+/// The size of [`many_sums_over_few_rows_scale`].
+const N_FEW_ROWS: usize = 2_000;
+
+/// The size of [`constant_sums_beside_a_dense_sum_scale`].
+const N_CONSTANT: usize = 400;
 
 /// The size of [`sums_over_many_moduli_two_scale`].
 const N_TWO: usize = 100;
