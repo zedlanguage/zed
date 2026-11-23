@@ -1036,14 +1036,21 @@ fn chain_of_quotients(depth: usize) -> (Vec<Div>, Formula) {
     (divs, f)
 }
 
-/// Runs `body` with [`sumset`] taken whatever the costs, and returns how many formulas it
-/// answered.
-fn with_sumset_always(body: impl FnOnce()) -> usize {
+/// Runs `body` with [`sumset`] taken whatever the costs, and returns how many formulas it was
+/// selected for ([`sumset::SELECTED`]) and how many it answered ([`sumset::ANSWERED`]).
+fn with_sumset_always(body: impl FnOnce()) -> (usize, usize) {
+    let counts = || {
+        (
+            sumset::SELECTED.with(std::cell::Cell::get),
+            sumset::ANSWERED.with(std::cell::Cell::get),
+        )
+    };
     sumset::ALWAYS.with(|a| a.set(true));
-    let before = sumset::TAKEN.with(std::cell::Cell::get);
+    let before = counts();
     body();
     sumset::ALWAYS.with(|a| a.set(false));
-    sumset::TAKEN.with(std::cell::Cell::get) - before
+    let after = counts();
+    (after.0 - before.0, after.1 - before.1)
 }
 
 /// Rows over pairwise coprime moduli (two rows may share one, a block of two rows), sums of
@@ -1100,7 +1107,7 @@ fn sumset_decisions_match_enumeration() {
         let want = (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
         let what = format!("seed {seed} case {case} {divs:?} {sums:?}");
         // `solve` itself, then the entries above it ([`check`]).
-        let n = with_sumset_always(|| {
+        let (_, n) = with_sumset_always(|| {
             for want_model in [true, false] {
                 if let Some(got) = solve(&f, want_model) {
                     assert_eq!(got.is_some(), want, "{what}: solve\n{f}");
@@ -1186,7 +1193,7 @@ fn the_sumset_path_takes_the_coprime_sums() {
         let period: i64 = 6 * divs.iter().map(|d| d.m).product::<i64>();
         let want = (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
         let mut got = None;
-        let taken = with_sumset_always(|| got = solve(&f, false).map(|m| m.is_some()));
+        let (taken, _) = with_sumset_always(|| got = solve(&f, false).map(|m| m.is_some()));
         assert_eq!(taken > 0, takes, "{what}: taken {taken}\n{f}");
         assert!(
             got.is_none_or(|g| g == want),
@@ -1201,6 +1208,240 @@ fn the_sumset_path_takes_the_coprime_sums() {
             "{what}: {got:?}, want {want}\n{f}"
         );
     }
+}
+
+/// A sum whose remainder is a product atom `P = a * b` (META1 A1 of XR-presburger4, Codex's
+/// example): `q_0 + q_1 == 2 q_2 + P` with `P == 1` has a point (`x = 3`, `a = b = 1`), but the
+/// tuples of [`sumset`] give `P` a value only as an atom, and [`Formula::holds`] reads a product
+/// through its factors, absent here, so it read `P` as 0 at every tuple and answered "no point".
+/// The path must leave the formula to the others, and [`solve`] and
+/// [`decide`](crate::presburger::decide) must find the point.
+#[test]
+fn sumset_leaves_a_product_remainder_to_the_fallback() {
+    use crate::presburger::formula::Factor;
+
+    let divs = [3, 5].map(|m| Div {
+        t: 0,
+        a: 1,
+        k: 0,
+        m,
+        fixed: None,
+    });
+    let product = Lin::atom(Atom::Product(
+        Factor::Sym("a".into()),
+        Factor::Sym("b".into()),
+    ));
+    let f = formula(
+        &divs,
+        Formula::Con(Con::eq(&product, &Lin::constant(1))),
+        vec![Formula::Con(Con::eq(
+            &q(0).plus(&q(1)),
+            &q(2).times(2).plus(&product),
+        ))],
+    );
+    let mut witness = point(&divs, 3).expect("both divisions have a point");
+    witness.insert(Atom::Sym("a".into()), Int::ONE);
+    witness.insert(Atom::Sym("b".into()), Int::ONE);
+    witness.insert(q_atom(2), Int::ZERO);
+    assert!(f.holds(&witness));
+
+    let (taken, _) = with_sumset_always(|| {
+        for want_model in [false, true] {
+            assert!(!matches!(solve(&f, want_model), Some(None)), "{f}");
+        }
+        assert!(
+            !matches!(crate::presburger::decide(&f), Ok(false)),
+            "decide\n{f}"
+        );
+    });
+    assert_eq!(taken, 0, "{f}");
+    assert!(
+        !matches!(crate::presburger::decide(&f), Ok(false)),
+        "decide\n{f}"
+    );
+}
+
+/// The rows `x == p_i q_i + r_i` for the first `k` odd primes and one more row
+/// `2 x == 3 q + r` (a block of two rows of modulus 3), and `j` sums `E + c`, `c` in `0..j`,
+/// each modulo 2, `E` the sum of all the quotients, with the literals `(E + c) mod 2 == c mod 2`,
+/// the last one flipped without `point`. The sums' tuples number `S = 2^j`, but only the two
+/// tuples of `E mod 2` are reached (META1 A3 of XR-presburger4, Codex's 20 rows and 40 sums).
+fn bench_many_sums(k: usize, j: usize, point: bool) -> (Vec<Div>, Vec<Sum>, Formula) {
+    let mut divs: Vec<Div> = zed_numtheory::first_primes(k + 1)
+        .into_iter()
+        .skip(1)
+        .map(|p| Div {
+            t: 0,
+            a: 1,
+            k: 0,
+            m: p as i64,
+            fixed: None,
+        })
+        .collect();
+    divs.push(Div {
+        t: 0,
+        a: 2,
+        k: 0,
+        m: 3,
+        fixed: None,
+    });
+    let sums: Vec<Sum> = (0..j as i64)
+        .map(|c| Sum {
+            parts: (0..divs.len()).map(|i| (2 * i + 1, 1)).collect(),
+            k: c,
+            m: 2,
+            rem: true,
+        })
+        .collect();
+    let lits = (0..j)
+        .map(|c| {
+            let want = (c % 2) as i64;
+            let want = if c + 1 == j && !point { 1 - want } else { want };
+            Formula::Con(Con::eq(&r(divs.len() + c), &Lin::constant(want)))
+        })
+        .collect();
+    let f = formula(&divs, Formula::and(lits), sum_formulas(&divs, &sums));
+    (divs, sums, f)
+}
+
+/// META1 A3 of XR-presburger4: 20 rows and 40 sums modulo 2 have `2^40` tuples of the sums'
+/// remainders, two of them reached. The path held a table of all `2^40` (16 TiB of slots), which
+/// the allocator refused, and the formula went unanswered; it must hold only the tuples
+/// reached ([`sumset::MOST_HELD`]) and answer, with the costs choosing the path as they do.
+#[test]
+fn sumset_holds_only_the_tuples_reached() {
+    for point in [false, true] {
+        let (_, _, f) = bench_many_sums(20, 40, point);
+        sumset::MOST_HELD.with(|h| h.set(0));
+        let before = sumset::ANSWERED.with(std::cell::Cell::get);
+        for want_model in [false, true] {
+            match solve_modular_or_scaled(&f, want_model) {
+                Some(Some(m)) => assert!(point && (!want_model || f.holds(&m)), "{f}"),
+                Some(None) => assert!(!point, "point {point}: no point found\n{f}"),
+                None => panic!("point {point}: declined\n{f}"),
+            }
+        }
+        assert_eq!(
+            sumset::ANSWERED.with(std::cell::Cell::get) - before,
+            2,
+            "point {point}"
+        );
+        let most = sumset::MOST_HELD.with(std::cell::Cell::get);
+        assert!(most <= 2, "point {point}: {most} tuples held at once");
+    }
+    // Small sizes against enumeration: `x` over one period, the sums' lcm 2 times the rows'.
+    for (k, j) in [(2, 2), (2, 5), (3, 3)] {
+        for point in [false, true] {
+            let (divs, sums, f) = bench_many_sums(k, j, point);
+            let period: i64 = 2 * divs.iter().map(|d| d.m).product::<i64>();
+            let want =
+                (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
+            assert_eq!(want, point, "k = {k}, j = {j}");
+            check(&f, want, &format!("k = {k}, j = {j}, point {point}"));
+        }
+    }
+}
+
+/// The shapes [`sumset`] must also decide (META1 B6 of XR-presburger4), against enumeration and
+/// taken on every formula in its scope: sum moduli that are not powers of 2 and need not divide
+/// each other (2, 3, 4, 5, 9), sums with no remainder, several literals on one row's remainder,
+/// a row whose `x` coefficient is a multiple of its modulus (`m / g = 1`, one remainder at
+/// every `x`), and literals that leave a row no remainder (an empty block, whose `R + W_b` is
+/// empty at once).
+#[test]
+fn sumset_shapes_match_enumeration() {
+    let (mut rng, seed) = Rng::fresh("sumset_shapes_match_enumeration");
+    crate::presburger::CHECK_LOSSLESS.with(|c| c.set(true));
+    let mut answered = [0usize; 2];
+    let (mut taken, mut empty_blocks, mut no_rem, mut whole) = (0, 0, 0, 0);
+    for case in 0..200 {
+        let mut moduli: Vec<i64> = vec![7, 11, 13];
+        rng.shuffle(&mut moduli);
+        let mut divs: Vec<Div> = Vec::new();
+        for &m in &moduli[..1 + rng.below(2)] {
+            for _ in 0..1 + usize::from(rng.below(4) == 0) {
+                let a = if rng.below(6) == 0 {
+                    m * rng.int(1, 2)
+                } else {
+                    rng.int(1, 2 * m)
+                };
+                divs.push(Div {
+                    t: 0,
+                    a: if rng.coin() { a } else { -a },
+                    k: rng.int(-12, 12),
+                    m,
+                    fixed: None,
+                });
+            }
+        }
+        let sums: Vec<Sum> = random_sums(&mut rng, &divs)
+            .into_iter()
+            .map(|s| Sum {
+                m: rng.pick(&[2, 3, 4, 5, 9]),
+                ..s
+            })
+            .collect();
+        let mut lits = vec![random_sum_literals(&mut rng, &divs, &sums, 2)];
+        let mut empty = false;
+        for (i, d) in divs.iter_mut().enumerate() {
+            if rng.below(8) == 0 {
+                // No remainder for the row's block: with `x`'s coefficient a multiple of `m` the
+                // row has the one remainder `k mod m` at every `x`, and the literal leaves it
+                // out. (Contradictory bounds on `r` never reach [`sumset`]: [`read_shape`] reads
+                // no row whose remainder bounds are empty.) `random_sums` does not read `a`.
+                d.a = d.m * if rng.coin() { 1 } else { -1 };
+                let v = d.k.rem_euclid(d.m);
+                lits.push(Formula::Con(if v > 0 {
+                    Con::ge(&Lin::constant(v - 1), &r(i))
+                } else {
+                    Con::ge(&r(i), &Lin::constant(1))
+                }));
+                empty = true;
+                continue;
+            }
+            for _ in 0..rng.below(3) {
+                let c = Lin::constant(rng.int(0, d.m - 1));
+                lits.push(Formula::Con(if rng.coin() {
+                    Con::ge(&r(i), &c)
+                } else {
+                    Con::ge(&c, &r(i))
+                }));
+            }
+        }
+        let f = formula(&divs, Formula::and(lits), sum_formulas(&divs, &sums));
+        let lcm = sums.iter().fold(1, |l, s| l / num_gcd(l, s.m) * s.m);
+        let period: i64 = lcm * divs.iter().map(|d| d.m).product::<i64>();
+        let want = (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
+        let what = format!("seed {seed} case {case} {divs:?} {sums:?}");
+        let (_, n) = with_sumset_always(|| {
+            for want_model in [true, false] {
+                if let Some(got) = solve(&f, want_model) {
+                    assert_eq!(got.is_some(), want, "{what}: solve\n{f}");
+                    if let Some(m) = got.filter(|_| want_model) {
+                        assert!(f.holds(&m), "{what}: point {m:?} of\n{f}");
+                    }
+                }
+            }
+            check(&f, want, &what);
+        });
+        if n > 0 {
+            taken += 1;
+            empty_blocks += usize::from(empty);
+            no_rem += usize::from(sums.iter().any(|s| !s.rem));
+            whole += usize::from(divs.iter().any(|d| d.a % d.m == 0));
+        }
+        answered[usize::from(want)] += 1;
+    }
+    assert!(
+        answered[0] > 20
+            && answered[1] > 20
+            && taken > 120
+            && empty_blocks > 5
+            && no_rem > 5
+            && whole > 5,
+        "seed {seed}: answers {answered:?}, taken {taken}, empty blocks {empty_blocks}, \
+         sums with no remainder {no_rem}, m / g = 1 {whole}"
+    );
 }
 
 /// The rows `x == p_i q_i + r_i` for the first `k` odd primes, and the sums

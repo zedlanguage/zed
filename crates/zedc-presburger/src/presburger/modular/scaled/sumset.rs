@@ -3,8 +3,8 @@
 //!
 //! [`sum_residues`] writes the residues of `x` modulo `m L`, `L` the lcm of the moduli a sum
 //! reads, so a sum over `k` coprime moduli costs their product, exponential in `k`. Here the
-//! formula is decided over the tuples of the sums' remainders, whose number does not grow with
-//! `k`.
+//! formula is decided over the tuples of the sums' remainders that some `x` reaches, whose number
+//! does not grow with `k` when the sums are fixed.
 //!
 //! Lemma C (a sum splits by the Chinese remainder theorem). Let a sum ([`SumRow`]) of modulus
 //! `M_j` read rows ([`DefRow`]) `i` on `x`: `rho_i = (a_i x + k_i) mod m_i` and
@@ -26,10 +26,11 @@
 //! to `M`, the map `x mod (M prod_b m_b) -> (x mod M, x mod m_1, ...)` is a bijection (the
 //! Chinese remainder theorem), so the coordinates take every tuple of values together.
 //!
-//! Theorem. Let `f` have [`super::solve`]'s shape, with these coprime moduli, every constraint
-//! naming `x` a row or a sum, and every literal on a row's remainder at the top level. Then `f`
-//! has a point exactly when some tuple `s` in the set `R` built below satisfies the literals on
-//! the sums' remainders (with `E_j mod M_j = s_j`, and `s_j = 0` for a sum with no remainder).
+//! Theorem (for the class below: no product atom, coprime moduli, every literal on `x` a row or
+//! a sum, every literal on a row's remainder at the top level). Let `f` have [`super::solve`]'s
+//! shape and lie in that class. Then `f` has a point exactly when some tuple `s` in the set `R`
+//! built below satisfies the literals on the sums' remainders (with `E_j mod M_j = s_j`, and
+//! `s_j = 0` for a sum with no remainder).
 //! `R` starts as `{(A_j t_0 + B_j mod M_j)_j : 0 <= t_0 < M}`; each block `b` replaces it by the
 //! sums `R + W_b` (coordinatewise, modulo each `M_j`), where `W_b` is the set of
 //! `(sum_{i in b} u_ji rho_i(t) mod M_j)_j` over the `t` in `0..m_b` at which every row of `b`
@@ -41,25 +42,46 @@
 //! ([`def_row`], [`SumRow`]), so each sum's remainder is `E_j mod M_j`). (2) Conversely, a tuple
 //! in `R` comes from some `t_0` and allowed `t_b`; by the bijection some `x` has exactly these
 //! coordinates, and at that `x` with every part defined from it ([`point_with_sums`]) each row,
-//! each sum and each row's literal holds, and the sums' literals hold as they do at the tuple.
-//! The Boolean structure over the sums' literals is evaluated as it stands. QED.
-//! A point is rebuilt by keeping, for each tuple, the `t` that first reached it, and the
+//! each sum and each row's literal holds, and the sums' literals hold as they do at the tuple:
+//! they name only the sums' remainders, which are atoms here (no product atom, whose value
+//! [`Formula::holds`] reads through its factors), so reading them at the tuple's values is
+//! reading them at the point. The Boolean structure over the sums' literals is evaluated as it
+//! stands. QED.
+//! A point is rebuilt by keeping, for each tuple, the step that first reached it, and the
 //! Chinese remainder theorem ([`combine_crt_tree`]) on the `t`s; it is checked with
 //! [`Formula::holds`].
 //!
-//! Literature. The search for this row (allpapers: paperclip semantic search over arXiv with
-//! 183 results, Gemini grounded search; 2026-11-22) found no method for residues of a sum of
-//! floor quotients of one variable over many moduli. The nearest work is modular subset sum
-//! (Axiotis et al.; Cardinal and Iacono; Le and Le, arXiv:2609.30992, "Deterministic
-//! Linear-Time Modular Subset Sum"), whose state is also a residue modulo the target's modulus;
-//! here each block offers a set of residues rather than one item, which the step `R + W_b`
-//! handles. Simultaneous incongruences (Garey and Johnson, problem AN2, NP-complete) is why the
-//! formula is declined when a literal on `x`'s residues couples blocks: then the tuples of
-//! coordinates do not separate.
+//! What the path declines (`None`, the other paths then decide `f`): a formula naming a product
+//! atom, declined before this path by [`super::solve`] (META1 A1 of XR-presburger4, whose
+//! comment gives the reason); a literal that names `x` and is not a row or a sum (every
+//! literal on `x`'s value or residue); a literal on a row's remainder under a disjunction or a
+//! negation, or with a second term; moduli (of the blocks and of `M`) that share a prime; a
+//! modulus of a sum, the lcm `M`, or the modulus of a block of several rows that does not fit a
+//! machine word; and every formula whose bound on this path's steps (below) is above the steps
+//! of [`sum_residues`].
+//!
+//! Literature. The searches recorded for this row (allpapers: paperclip semantic search over
+//! arXiv with 183 results, Gemini grounded search; 2026-11-22) found no method for residues of a
+//! sum of floor quotients of one variable over many moduli; this says only that those searches
+//! found none. The step `R + W_b` is the sumset of two sets in the group
+//! `Z_{M_1} x ... x Z_{M_J}`. For one sum (`J = 1`, the cyclic group `Z_m`) the n-fold sumset
+//! `A_1 + ... + A_n` of arbitrary sets is the problem of Bringmann and Nakos, "Fast n-fold
+//! Boolean Convolution via Additive Combinatorics" (ICALP 2021, arXiv:2105.03968), solved in
+//! almost linear time in the input plus output size; it generalizes modular subset sum
+//! (Axiotis et al., arXiv:2008.10577; Cardinal and Iacono, arXiv:2008.08417; Le and Le,
+//! arXiv:2609.30992), where each set is `{0, a_i}`. Neither gives the reduction of the sums of
+//! quotients to that sumset (Lemma C and the theorem above), and neither covers the product of
+//! several cyclic groups with arbitrary blocks. Simultaneous incongruences (Garey and Johnson,
+//! problem AN2, NP-complete) is a reason the guard declines a literal on `x`'s residues: such a
+//! literal can couple blocks, and then the tuples of coordinates do not separate; the guard
+//! declines every such literal, coupling or not.
 //!
 //! Tests: `tests::sumset_decisions_match_enumeration`,
-//! `tests::the_sumset_path_takes_the_coprime_sums`, and the benchmark
-//! `bench::sums_over_many_coprime_moduli_scale`.
+//! `tests::the_sumset_path_takes_the_coprime_sums`,
+//! `tests::sumset_leaves_a_product_remainder_to_the_fallback`,
+//! `tests::sumset_holds_only_the_tuples_reached`, `tests::sumset_shapes_match_enumeration`, and
+//! the benchmarks `bench::sums_over_many_coprime_moduli_scale` and
+//! `bench::sums_over_many_moduli_two_scale`.
 
 use super::*;
 
@@ -68,8 +90,13 @@ thread_local! {
     /// Tests only: take this path whatever the costs, so the random tests reach it on every
     /// formula in its scope.
     pub(super) static ALWAYS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tests only: the number of formulas this path was selected for on this thread (it passed
+    /// the scope checks and the cost comparison); a selected formula may still be declined.
+    pub(super) static SELECTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Tests only: the number of formulas this path answered on this thread.
-    pub(super) static TAKEN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static ANSWERED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Tests only: the most tuples one set of tuples (`R` or `W_b`) held, on this thread.
+    pub(super) static MOST_HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The rows of one modulus `m`, as indices into the rows; their remainders are functions of
@@ -78,6 +105,13 @@ struct Block {
     m: Int,
     rows: Vec<usize>,
 }
+
+/// A tuple of remainders, one per sum.
+type Tuple = Vec<usize>;
+
+/// A block's way back, kept only for a model: the step that first reached each tuple of the
+/// block's `R`, as (index of the tuple before, index into `W_b`), and each tuple's `t` of `W_b`.
+type Back = (Vec<(usize, usize)>, Vec<Int>);
 
 /// The primes of `n`, or `None` when `n` does not fit a machine word. `n >= 1`.
 fn primes_of(n: &Int) -> Option<Vec<u64>> {
@@ -95,40 +129,48 @@ fn word(v: &Int) -> Option<usize> {
     usize::try_from(v.to_i128()?).ok()
 }
 
-/// `n` copies of `v`, or `None` when the allocator refuses the room (the formula is then
-/// declined, as [`sum_residues`] declines one whose residues cannot be counted in a word).
-fn filled<T: Clone>(n: usize, v: T) -> Option<Vec<T>> {
-    let mut out = Vec::new();
-    out.try_reserve_exact(n).ok()?;
-    out.resize(n, v);
-    Some(out)
+/// `(a + b) mod r` for `a, b < r`, without overflow at any word `r`.
+fn add_mod(a: usize, b: usize, r: usize) -> usize {
+    ((a as u128 + b as u128) % r as u128) as usize
 }
 
-/// The tuple `s` (one remainder per sum) written as one number in the mixed radix `radix`.
-fn encode(s: &[usize], radix: &[usize]) -> usize {
-    s.iter().zip(radix).fold(0, |acc, (v, r)| acc * r + v)
+/// Charges `steps` steps of this path to the meter of the cover's question running, if any
+/// (`meter::charge_pieces`, one piece a step), and returns whether the meter has room left.
+/// A step is one value of `t_0`, one value of a block's `t` or of its row's remainder, one pair
+/// of a reached tuple and a block's tuple, or one reached tuple read against the literals.
+/// Not measured at this site: a step adds `J` words and looks a tuple up in an ordered map, about
+/// the work of a piece of `exact::residues` (made, compared, joined) for the small `J` of the
+/// inputs measured, so it is charged one piece; unproved that it bounds the step's CPU time for
+/// large `J`.
+fn charge(steps: &Int) -> bool {
+    let steps = steps.to_i128().and_then(|s| u64::try_from(s).ok());
+    crate::presburger::meter::charge_pieces(steps.unwrap_or(u64::MAX)).is_ok()
 }
 
-fn decode(mut code: usize, radix: &[usize], out: &mut [usize]) {
-    for (o, r) in out.iter_mut().zip(radix).rev() {
-        *o = code % r;
-        code /= r;
-    }
-}
-
-/// [`super::solve`]'s answer by the theorem above, or `None` when `f` lies outside its scope or
-/// when the residues of `x` cost less ([`sum_residues`]), so that path keeps those formulas.
+/// [`super::solve`]'s answer by the theorem above, or `None` when `f` lies outside its scope
+/// (see the list above) or when the residues of `x` cost less ([`sum_residues`]), so that path
+/// keeps those formulas. On a meter spent by its charges it answers "no point" at once, as the
+/// solver's searches do; the question is then refused (`meter::Work::metered`).
 // Complexity tradeoff: naive version, [`sum_residues`]: O(M_j L_j) residues of `x` per sum, the
-// product of the moduli for coprime moduli, exponential in their number `k`. Used: with
-// `S = prod_j M_j` tuples and `J` sums, O(M J) for the start, O(min(m_b, (n_b + 1) M)) values
-// for a block of one row with `n_b` runs of allowed remainders (the values of `rho` modulo `M`
-// repeat after `M` steps of the coset) or O(m_b) for a block of several rows, O(S |W_b| J) for
-// each step `R + W_b`, and O(S |f|) to read the literals at the tuples: linear in `k` for fixed
-// sums, measured by `bench::sums_over_many_coprime_moduli_scale`. The coprimality check factors
-// each modulus (`zed_numtheory::factor`, a bounded cost per word) and keeps a set of the primes
-// seen, O(k) where checking every pair would be O(k^2). The choice between the two paths
-// compares their step counts as written above, both exact, so no answer depends on it; it keeps
-// [`sum_residues`] where the sums' moduli are large and the rows few.
+// product of the moduli for coprime moduli, exponential in their number `k`. Used: the tuples
+// reached, held sparsely in ordered maps. With `J` sums, `n_i` intervals of allowed remainders
+// for row `i` and `R_b` the tuples reached before block `b`: O(M J log R_0) for the start
+// (`R_0 <= min(M, S)`, `S = prod_j M_j`); for a block of one row, O(J min(m_b, n_b M)) values of
+// its remainder (each run of allowed remainders is walked until `M` steps, since the tuple
+// depends on the remainder modulo `M`); for a block of several rows,
+// O(m_b sum_{i in b} (n_i + J)); O(R_b |W_b| J log R_{b+1}) for each step `R + W_b`; and
+// O(R_last (J + |f|)) to read the literals at the tuples. A model keeps one step per tuple and
+// block, O(sum_b R_b) words, and pays the Chinese remainder theorem on the blocks' `t`s. Linear in
+// `k` for fixed sums, measured by `bench::sums_over_many_coprime_moduli_scale`, and the tuples
+// held follow the tuples reached, not `S` (`bench::sums_over_many_moduli_two_scale`). Each set
+// `R_b + W_b` is the naive pairwise sumset; Bringmann and Nakos (above) compute an n-fold sumset
+// in a cyclic group in almost linear time in input plus output, a gain only when `R_b |W_b|` is
+// far above `R_{b+1}`, which the measured inputs do not reach. The choice between the two paths
+// compares a bound on this path's steps (the loops above, `R_b` bounded by `min(S, R_{b-1} W)`)
+// with [`sum_residues`]'s residue count, both exact answers, so no answer depends on it; it keeps
+// [`sum_residues`] where the sums' moduli are large and the rows few. The coprimality check
+// factors each modulus (`zed_numtheory::factor`, a bounded cost per word) and keeps a set of the
+// primes seen, O(k) where checking every pair would be O(k^2).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn solve_by_sums(
     f: &Formula,
@@ -166,10 +208,12 @@ pub(super) fn solve_by_sums(
         }
     }
     let mut ok = true;
+    let mut n_lits = 0usize;
     f.walk(&mut |c| {
         if skip.contains(c) || at_top.contains(c) {
             return;
         }
+        n_lits += 1;
         ok &= c.lin.terms.len() == 1 && c.lin.terms.keys().all(|a| sum_r.contains_key(a));
     });
     if !ok {
@@ -194,14 +238,13 @@ pub(super) fn solve_by_sums(
         .map(|(m, rows)| Block { m, rows })
         .collect();
     for b in &blocks {
-        // A block of several rows is walked over `0..m_b`, so `m_b` must fit a word; a row with
-        // `a = 0` reads no `x` and has no `t` to solve for.
+        // A block of several rows is walked over `0..m_b`, so `m_b` must fit a word. Every row
+        // reads `x`: a term is stored only with a nonzero coefficient, and `def_row` reads `a`
+        // as `x`'s coefficient.
         if b.rows.len() > 1 {
             word(&b.m)?;
         }
-        if b.rows.iter().any(|&i| rows[i].a.is_zero()) {
-            return None;
-        }
+        debug_assert!(b.rows.iter().all(|&i| !rows[i].a.is_zero()));
         for p in primes_of(&b.m)? {
             if !seen.insert(p) {
                 return None;
@@ -209,24 +252,30 @@ pub(super) fn solve_by_sums(
         }
     }
 
-    // The cost of each path (see the tradeoff above).
+    // The cost of each path (see the tradeoff above): a bound on the steps of the loops below.
     let radix: Vec<usize> = sums.iter().map(|s| word(&s.m)).collect::<Option<_>>()?;
     let mut s_int = Int::ONE;
     for sum in sums {
         s_int = &s_int * &sum.m;
     }
-    let states = word(&s_int)?;
     let n_sums = Int::from(sums.len());
+    let mut reached = lcm_m.clone().min(s_int.clone());
     let mut new_cost = &lcm_m * &n_sums;
     for b in &blocks {
-        let c = if let [i] = b.rows[..] {
-            let runs = Int::from(allowed[i].len() + 1);
-            b.m.clone().min(&runs * &lcm_m)
+        // The values the loops below walk for `W_b`, and their cost.
+        let (values, walk) = if let [i] = b.rows[..] {
+            let v = b.m.clone().min(&Int::from(allowed[i].len()) * &lcm_m);
+            let walk = &v * &n_sums;
+            (v, walk)
         } else {
-            &b.m * &Int::from(b.rows.len())
+            let per: usize = b.rows.iter().map(|&i| allowed[i].len() + sums.len()).sum();
+            (b.m.clone(), &b.m * &Int::from(per))
         };
-        new_cost = &new_cost + &(&c + &(&(&s_int * &c.clone().min(s_int.clone())) * &n_sums));
+        let pairs = &reached * &values.min(s_int.clone());
+        new_cost = &new_cost + &(&walk + &(&pairs * &n_sums));
+        reached = pairs.min(s_int.clone());
     }
+    new_cost = &new_cost + &(&reached * &Int::from(sums.len() + n_lits));
     // The lcm only grows, so the sum is read only until it passes `new_cost`: the lcm of all the
     // rows' moduli, a number of about `k` words built one gcd at a time, would cost O(k^2) word
     // steps (measured: 10.17 times the instructions at 8k in the benchmark below with it).
@@ -252,7 +301,9 @@ pub(super) fn solve_by_sums(
         return None;
     }
     #[cfg(test)]
-    TAKEN.with(|t| t.set(t.get() + 1));
+    SELECTED.with(|t| t.set(t.get() + 1));
+    #[cfg(test)]
+    let held = |n: usize| MOST_HELD.with(|h| h.set(h.get().max(n)));
 
     // Lemma C's coefficients, per sum.
     let mut a_j: Vec<Int> = Vec::new();
@@ -284,51 +335,53 @@ pub(super) fn solve_by_sums(
         b_j.push(b.mod_floor(mj));
         u.push(ui.into_iter().map(|(i, v)| (i, v.mod_floor(mj))).collect());
     }
-    // The contribution of row `i` at remainder `rho` to each sum, as a tuple.
+    // The contribution of row `i` at remainder `rho` to each sum, added to a tuple.
     let delta = |i: usize, rho: &Int, out: &mut [usize]| {
         for (j, o) in out.iter_mut().enumerate() {
             if let Some(c) = u[j].get(&i) {
                 let v = (c * rho).mod_floor(&sums[j].m);
-                *o = (*o + word(&v).expect("below a word modulus")) % radix[j];
+                *o = add_mod(*o, word(&v).expect("below a word modulus"), radix[j]);
             }
         }
     };
 
     // The start set: `t_0` over `0..M`, keeping the first `t_0` of each tuple.
-    let mut first: Vec<Option<usize>> = filled(states, None)?;
-    let mut tuple = vec![0usize; sums.len()];
-    for t0 in 0..big_m {
-        for (j, o) in tuple.iter_mut().enumerate() {
-            let v = (&(&a_j[j] * &Int::from(t0)) + &b_j[j]).mod_floor(&sums[j].m);
-            *o = word(&v).expect("below a word modulus");
-        }
-        let code = encode(&tuple, &radix);
-        if first[code].is_none() {
-            first[code] = Some(t0);
-        }
+    if !charge(&lcm_m) {
+        return Some(None);
     }
-    let mut reach: Vec<bool> = first.iter().map(Option::is_some).collect();
-    // For each block, the tuple each new tuple came from and the `t` it took there.
-    let mut back: Vec<Vec<Option<(usize, Int)>>> = Vec::new();
+    let mut first: BTreeMap<Tuple, usize> = BTreeMap::new();
+    for t0 in 0..big_m {
+        let tuple: Tuple = (0..sums.len())
+            .map(|j| {
+                let v = (&(&a_j[j] * &Int::from(t0)) + &b_j[j]).mod_floor(&sums[j].m);
+                word(&v).expect("below a word modulus")
+            })
+            .collect();
+        first.entry(tuple).or_insert(t0);
+    }
+    let (mut reach, t0s): (Vec<Tuple>, Vec<usize>) = first.into_iter().unzip();
+    #[cfg(test)]
+    held(reach.len());
+    // For each block, its way back ([`Back`]).
+    let mut back: Vec<Back> = Vec::new();
     for b in &blocks {
         // `W_b`: each tuple once, with its first `t`.
-        let mut w_seen: HashSet<usize> = HashSet::new();
-        let mut w: Vec<(Vec<usize>, Int)> = Vec::new();
-        let mut add = |t: Int, d: Vec<usize>| {
-            if w_seen.insert(encode(&d, &radix)) {
-                w.push((d, t));
-            }
-        };
+        let mut w: BTreeMap<Tuple, Int> = BTreeMap::new();
         if let [i] = b.rows[..] {
             // `rho = (a t + k) mod m` takes exactly the values `= k (mod g)`, `g = gcd(a, m)`,
             // each at the `t` with `(a / g) t = (rho - k) / g (mod m / g)`; the tuple depends on
             // `rho mod M`, and `g` divides `m`, coprime to `M`, so `M` steps of `g` from any
-            // `rho` pass every residue modulo `M`.
+            // `rho` pass every residue modulo `M`. With `m / g = 1` every `t` gives `rho = k`,
+            // and `t = 0` is taken.
             let row = &rows[i];
             let g = row.a.gcd(&b.m);
             let n = b.m.div_floor(&g);
             let inv = inverse_mod(&row.a.div_floor(&g), &n).expect("coprime after the gcd");
             let k0 = row.k.mod_floor(&g);
+            let steps = b.m.clone().min(&Int::from(allowed[i].len()) * &lcm_m);
+            if !charge(&steps) {
+                return Some(None);
+            }
             for (lo, hi) in &allowed[i] {
                 let mut rho = lo + &(&k0 - lo).mod_floor(&g);
                 let mut steps = 0usize;
@@ -336,12 +389,15 @@ pub(super) fn solve_by_sums(
                     let mut d = vec![0usize; sums.len()];
                     delta(i, &rho, &mut d);
                     let t = (&(&rho - &row.k).div_floor(&g) * &inv).mod_floor(&n);
-                    add(t, d);
+                    w.entry(d).or_insert(t);
                     rho = &rho + &g;
                     steps += 1;
                 }
             }
         } else {
+            if !charge(&b.m) {
+                return Some(None);
+            }
             for t in 0..word(&b.m).expect("checked to fit a word above") {
                 let t = Int::from(t);
                 let mut d = vec![0usize; sums.len()];
@@ -353,35 +409,47 @@ pub(super) fn solve_by_sums(
                     delta(i, &rho, &mut d);
                 }
                 if fits {
-                    add(t, d);
+                    w.entry(d).or_insert(t);
                 }
             }
         }
-        let mut next = filled(states, false)?;
-        let mut from: Vec<Option<(usize, Int)>> =
-            filled(if want_model { states } else { 0 }, None)?;
-        let mut cur = vec![0usize; sums.len()];
+        // No allowed `t` in this block: `R + W_b` is empty, and so is every later one.
+        if w.is_empty() {
+            #[cfg(test)]
+            ANSWERED.with(|t| t.set(t.get() + 1));
+            return Some(None);
+        }
+        let (w, w_t): (Vec<Tuple>, Vec<Int>) = w.into_iter().unzip();
+        #[cfg(test)]
+        held(w.len());
+        if !charge(&(&Int::from(reach.len()) * &Int::from(w.len()))) {
+            return Some(None);
+        }
+        let mut next: BTreeMap<Tuple, (usize, usize)> = BTreeMap::new();
         let mut sum_t = vec![0usize; sums.len()];
-        for (code, _) in reach.iter().enumerate().filter(|(_, r)| **r) {
-            decode(code, &radix, &mut cur);
-            for (d, t) in &w {
-                for (((s, c), d), r) in sum_t.iter_mut().zip(&cur).zip(d).zip(&radix) {
-                    *s = (c + d) % r;
+        for (pi, cur) in reach.iter().enumerate() {
+            for (wi, d) in w.iter().enumerate() {
+                for (((s, c), d), r) in sum_t.iter_mut().zip(cur).zip(d).zip(&radix) {
+                    *s = add_mod(*c, *d, *r);
                 }
-                let to = encode(&sum_t, &radix);
-                if !next[to] {
-                    next[to] = true;
-                    if want_model {
-                        from[to] = Some((code, t.clone()));
-                    }
+                if !next.contains_key(&sum_t) {
+                    next.insert(sum_t.clone(), (pi, wi));
                 }
             }
         }
-        reach = next;
-        back.push(from);
+        let (r, steps): (Vec<Tuple>, Vec<(usize, usize)>) = next.into_iter().unzip();
+        reach = r;
+        #[cfg(test)]
+        held(reach.len());
+        if want_model {
+            back.push((steps, w_t));
+        }
     }
 
     // The literals on the sums' remainders, read at each reached tuple.
+    if !charge(&Int::from(reach.len())) {
+        return Some(None);
+    }
     let lits = f.map_cons(&|c| {
         if skip.contains(c) || at_top.contains(c) {
             Formula::top()
@@ -390,40 +458,36 @@ pub(super) fn solve_by_sums(
         }
     });
     let mut values = Model::new();
-    let mut found: Option<usize> = None;
-    for (code, _) in reach.iter().enumerate().filter(|(_, r)| **r) {
-        decode(code, &radix, &mut tuple);
+    let found = reach.iter().position(|tuple| {
         if sums
             .iter()
-            .zip(&tuple)
+            .zip(tuple)
             .any(|(sum, v)| sum.r.is_none() && *v != 0)
         {
-            continue;
+            return false;
         }
-        for (sum, v) in sums.iter().zip(&tuple) {
+        for (sum, v) in sums.iter().zip(tuple) {
             if let Some(r) = &sum.r {
                 values.insert(r.clone(), Int::from(*v));
             }
         }
-        if lits.holds(&values) {
-            found = Some(code);
-            break;
-        }
-    }
-    let Some(mut code) = found else {
+        lits.holds(&values)
+    });
+    #[cfg(test)]
+    ANSWERED.with(|t| t.set(t.get() + 1));
+    let Some(mut at) = found else {
         return Some(None);
     };
     if !want_model {
         return Some(Some(Model::new()));
     }
     let mut pairs: Vec<(Int, Int)> = Vec::new();
-    for (b, from) in blocks.iter().zip(&back).rev() {
-        let (prev, t) = from[code].clone().expect("a reached tuple has its step");
-        pairs.push((t, b.m.clone()));
-        code = prev;
+    for (b, (steps, w_t)) in blocks.iter().zip(&back).rev() {
+        let (prev, wi) = steps[at];
+        pairs.push((w_t[wi].clone(), b.m.clone()));
+        at = prev;
     }
-    let t0 = first[code].expect("a start tuple has its t_0");
-    pairs.push((Int::from(t0), lcm_m.clone()));
+    pairs.push((Int::from(t0s[at]), lcm_m.clone()));
     let (x_value, _) = combine_crt_tree(pairs)?;
     let model = point_with_sums(rows, sums, x, &x_value);
     // By (2) of the theorem this is a point of `f`; a failure here is a defect of this module,

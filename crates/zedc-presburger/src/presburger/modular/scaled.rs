@@ -732,6 +732,20 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     if shapes.is_empty() {
         return None;
     }
+    // A product atom is declined (META1 A1 of XR-presburger4). This path gives each quotient
+    // and remainder a value as an atom ([`point_at`], [`point_with_sums`], the tuples of
+    // [`sumset`]), but [`Formula::holds`] reads a product through its factors (`Lin::eval`, an
+    // absent factor being 0), so a product quotient or remainder is read as 0: the sumset path
+    // answered "no point" to a formula with a point, and the residues of `x` rebuilt a point
+    // that fails `f`. Every atom of a formula in scope is `x` (never a product, [`orient`]), a
+    // row's quotient or remainder, or a sum's (the checks below), so this declines exactly the
+    // formulas in scope with a product part. O(|f|). Test:
+    // `tests::sumset_leaves_a_product_remainder_to_the_fallback`.
+    let mut product = false;
+    f.walk(&mut |c| product |= c.lin.terms.keys().any(|a| matches!(a, Atom::Product(..))));
+    if product {
+        return None;
+    }
     let mut r_of: HashMap<Atom, usize> = HashMap::new();
     for (i, shape) in shapes.iter().enumerate() {
         if let Some(r) = &shape.r

@@ -49,6 +49,25 @@ fn sums_over_many_coprime_moduli_scale() {
     });
 }
 
+/// [`solve_modular_or_scaled`] on [`bench_many_sums`] with 20 rows over the first odd primes,
+/// a block of two rows of modulus 3, and `j = n` and `8n` sums modulo 2 with no common point
+/// (META1 A3 of XR-presburger4): the sums' tuples number `2^j`, but [`sumset`] holds only the
+/// two reached, so the work is O(j) a block, linear in `j`, where a table of all the tuples
+/// would be exponential in `j`.
+#[test]
+fn sums_over_many_moduli_two_scale() {
+    let inputs = scaling::inputs(N_TWO, |n| bench_many_sums(20, n, false).2);
+    scaling::check_order("j sums modulo 2 over 20 rows", N_TWO, 1, |n| {
+        assert!(matches!(
+            solve_modular_or_scaled(&inputs[&n], false),
+            Some(None)
+        ))
+    });
+}
+
+/// The size of [`sums_over_many_moduli_two_scale`].
+const N_TWO: usize = 100;
+
 /// The size of [`sums_over_many_coprime_moduli_scale`].
 const N_COPRIME: usize = 200;
 
