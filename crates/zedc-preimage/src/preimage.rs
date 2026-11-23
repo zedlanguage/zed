@@ -258,7 +258,7 @@ pub fn preimage_listed(
 }
 
 /// [`preimage_listed`] for the reduced product's narrowing of a scope by a written test,
-/// which keeps the points where the test fails ([`Tx::fails_kept`]): a constraint that fails
+/// which keeps the points where the test fails (`Tx::fails_kept`): a constraint that fails
 /// at a root of an obligation's equation does not rule the root out (DESIGN.md
 /// sec:diagnostics). It gives what [`preimage_listed`] gives but for `a div b` and `a mod b`
 /// under a demand holding all or none of their values, which it projects (PREIMAGE-mod-defined).
