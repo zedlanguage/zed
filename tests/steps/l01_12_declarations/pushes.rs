@@ -53,7 +53,8 @@ fn fronts(cases: &[(&str, &str)]) {
 #[test]
 fn a_push_to_a_port_an_accumulator_or_a_next_generation_is_not_refused() {
     fronts(&[
-        (&main_with("m.stdout <- \"a\";"), "accepted"),
+        // One push to `m.stdout`: `main_with` adds its own, and two are rejected (step L1.19).
+        ("main(m: MainArgs) {\n  m.stdout <- \"a\";\n}\n", "accepted"),
         (&main_with("m.stderr <- \"a\";"), "accepted"),
         (
             "say(positional s, out: Lines) { out <- s; }\n\

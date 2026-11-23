@@ -46,12 +46,14 @@ fn a_definition_computed_from_build_stage_names_is_build_stage_and_built() {
 #[test]
 fn the_constants_partial_evaluation_computes_are_built_and_write_as_the_program_does() {
     // DESIGN.md sec:staging: a constant is a result of partial evaluation, so a power past
-    // every fixed width, a NaN and an infinity are computed by `mix` as any other value.
+    // every fixed width, a NaN and an infinity are computed by `mix` as any other value. The
+    // three are written by one push, since a port takes one push per wave (step L1.19).
     let src = "big = 2 ^ 64;\nnan = f64(#NaN);\nninf = -f64(#inf);\n\
                main(m: MainArgs) {\n  \
-               m.stdout <- String(big);\n  \
-               m.stdout <- String(nan) else #NaN -> \"not a number\";\n  \
-               m.stdout <- String(ninf) else #inf -> \"minus infinity\";\n}\n";
+               a = String(big);\n  \
+               b = String(nan) else #NaN -> \"not a number\";\n  \
+               c = String(ninf) else #inf -> \"minus infinity\";\n  \
+               m.stdout <- \"${a} ${b} ${c}\";\n}\n";
     let (p, s, report) = staged(src);
     for name in ["big", "nan", "ninf"] {
         assert!(
@@ -62,6 +64,10 @@ fn the_constants_partial_evaluation_computes_are_built_and_write_as_the_program_
     }
     assert_eq!(term(&s, "big"), "18446744073709551616");
     assert!(report.left.is_empty(), "{:?}", report.left);
+    assert_eq!(
+        out(&s, ""),
+        "18446744073709551616 not a number minus infinity\n"
+    );
     assert_eq!(out(&s, ""), out(&p, ""));
 }
 
