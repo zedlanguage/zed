@@ -31,6 +31,9 @@ macro_rules! rows {
 
 rows! {
     Collision => "Collision",
+    // No diagnostic uses this row yet: step L4.5 emits it (row DIAG-computed-key-display wrote it,
+    // from QUESTIONS A86).
+    DisplayKeysNotDistinct => "Display with computed keys not proved distinct",
     UnliftedCarrier => "Unlifted carrier",
     MissingAlgebraicObligation => "Missing algebraic obligation",
     UndischargeableEnsure => "Undischargeable `@ensure`",
@@ -71,6 +74,9 @@ rows! {
     OpenRangeEveryEntry => "A read of a range with no upper end that takes every entry",
     BelowProofGrade =>
         "Obligation below proof grade",
+    // No diagnostic uses this row yet: step L6.12b emits it, a note under `BelowProofGrade` (row
+    // DIAG-arms-cost wrote it, from QUESTIONS A71).
+    ArmsOneKey => "Call left an atom at a node reached with other arguments",
     // No diagnostic uses the next two rows yet: step L18.2a emits them.
     CostAboveClaim => "Work above its cost claim",
     CostUnbounded => "Unbounded work under a cost claim",
@@ -93,6 +99,8 @@ rows! {
     MemoArenaAroundNothing => "Memo arena around no `@memoized` code",
     // No diagnostic uses this row yet: plan rows L18.2a and L18.2f emit it.
     FusedNotMet => "Plan assertion `@fused` not met",
+    // No diagnostic uses this row yet: step L18.2a emits it (row DIAG-noalloc-row wrote it).
+    NoallocNotMet => "Plan assertion `@noalloc` not met",
     NonExhaustiveMatch => "Non-exhaustive `match`",
     UnreachableArm => "Unreachable `match` arm",
     BareOperatorPattern => "Pattern built with an operator, written bare",

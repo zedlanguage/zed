@@ -4,17 +4,16 @@
 //! DESIGN.md with a menu is compiled where zedc can produce it, and its message is compared
 //! with DESIGN's: the first sentence word for word, and the order of the parts.
 //!
-//! The menus of `q = (1 + 2) / (3 + 4)` and `y = half(x: 1)` are compared too, fix by fix,
-//! without the fixes that declare the binding's type (`q: rat = ...`, `y: f64 = ...`), which
-//! zedc does not yet offer for `y = half(x: 1)` ([`menu`]).
+//! The menus of `q = (1 + 2) / (3 + 4)`, `y = half(x: 1)` and `t = (1 / 2, 3 / 4)` are
+//! compared too, fix by fix, without the fixes that declare the binding's type (`q: rat = ...`,
+//! `y: f64 = ...`), which zedc does not offer yet ([`menu`]; plan row LIT-declared-fix-call-arg).
 //!
-//! No example is compared whole yet. Every one differs from DESIGN in the form of its steps:
-//! DESIGN writes `1. the literal (1:21)` with the source line under each step, and zedc writes
-//! `[1] 1:21: ...` with each source line shown once for all the steps on it, as DESIGN's own
-//! rule for a source line shared by several steps says; the step texts differ too (DESIGN's
-//! "the division", "its left operand"). LIT-menu-match-design left this open for
-//! QUESTIONS.md. The fixes of `twice` also differ in their wording and in which are offered
-//! (DESIGN offers `twice(x: f64)`, `twice(x: rat)` and `twice(x)`). The example at a declared
+//! No example is compared whole yet. DESIGN writes its examples in zedc's layout (step L1.29,
+//! plan row LIT-menu-design-gaps), but the step texts differ (DESIGN's "the division", "its
+//! left operand"; zedc's "this literal, 1, is 1"), as do some sites (DESIGN puts the message of
+//! `q` at the `/`, 1:13, zedc at 1:5), and the fixes of `twice` differ in their wording and in
+//! which are offered (DESIGN offers `twice(x: f64)`, `twice(x: rat)` and `twice(x)`); plan row
+//! LIT-menu-zedc-gaps holds these. The example at a declared
 //! type, `x: f64 = 9007199254740993;`, is not compared at all: zedc does not compile a
 //! top-level binding with a declared type yet. Nor are the five messages of sec:level_names
 //! (layers L7 and L8): zedc does not compile a `names` facet or a named slice yet. The example
@@ -133,7 +132,7 @@ fn menu(text: &str) -> Vec<(&str, &str)> {
 /// the line ([`program_of`]); whether zedc compiles it yet; and whether its menu is compared
 /// ([`menu`]). Each line is read from the spec's fences, in place.
 #[cfg(feature = "spec")]
-const PROGRAMS: [(&str, &[&str], bool, bool); 10] = [
+const PROGRAMS: [(&str, &[&str], bool, bool); 11] = [
     (
         "twice(x: int) = x * 2.0;",
         &["twice(x: int) = x * 2.0;"],
@@ -190,15 +189,20 @@ const PROGRAMS: [(&str, &[&str], bool, bool); 10] = [
     // The cast of sec:facets that no `int` equals (spec 7d1cf81), its menu the six rounding
     // functions (plan row CAST-round-whole).
     ("k = int(7r/2r);", &["k = int(7r/2r);"], true, true),
+    // Two parts of one value rejected in one message, one fix line for each carrier (plan row
+    // MSG-grouped-wording, QUESTIONS A95).
+    ("t = (1 / 2, 3 / 4);", &["t = (1 / 2, 3 / 4);"], true, true),
 ];
 
-/// The source lines the steps of `example` show: its lines indented by seven spaces.
+/// The source lines the steps of `example` show, each written `      L | text` in the layout of
+/// step L1.29, with `L` its line number; the underline rows under them, `        | ^^^`, have
+/// no number and are not source lines.
 #[cfg(feature = "spec")]
 fn shown(example: &str) -> impl Iterator<Item = &str> {
-    example
-        .lines()
-        .filter_map(|l| l.strip_prefix("       "))
-        .filter(|l| !l.starts_with(' '))
+    example.lines().filter_map(|l| {
+        let (number, text) = l.trim_start().split_once(" | ")?;
+        (!number.is_empty() && number.bytes().all(|b| b.is_ascii_digit())).then_some(text)
+    })
 }
 
 /// The program whose lines `pieces` name, each the first source line that holds its piece:
