@@ -5446,16 +5446,53 @@ fn tree_single(lo: End, hi: End, data: Contents) -> Tree {
         tree_node((lo, hi), data, None, None)
     }
 }
+/// The tree of `a`'s pieces followed by `b`'s (every value of `a` below every value of `b`).
+///
+/// This is `join2` of Blelloch, Ferizovic and Sun, "Just Join for Parallel Ordered Sets",
+/// SPAA 2016, doi:10.1145/2935764.2935768, arXiv:1602.02120 (which takes out the last key of
+/// the left tree): take out the first piece of `b` when `a` is at least as tall, else the last
+/// piece of `a`, so the shorter tree loses it, and put it back as the middle key of `join`
+/// (`tree_node`), which walks down the taller tree only until the heights match,
+/// O(|h_a - h_b| + 1). Taking out a first or last piece is O(h) with O(1) work a level
+/// ([`tree_split_first`]), so the whole join is O(log p) node copies (REF-abs-split-join). Before, the join walked down the right spine of `a` and the
+/// left spine of `b` in turn to the leaves, calling `tree_node` at each level with heights that
+/// could differ by more than 2, so each level could walk again. Test: the answers of every
+/// family in `ref_memo::every_family_keeps_main_s_answers_through_the_inverse_tree_changes`,
+/// and `bench::ref_memo::normal_abs_gap_scales`.
 fn tree_join(a: Tree, b: Tree) -> Tree {
     match (a, b) {
         (None, t) | (t, None) => t,
         (Some(a), Some(b)) if a.height >= b.height => {
-            let (ad, al, ar) = tree_push(&a);
-            tree_node(a.key(), ad, al, tree_join(ar, Some(b)))
+            let (b, key, data) = tree_split_first(&b);
+            tree_node(key, data, Some(a), b)
         }
         (Some(a), Some(b)) => {
-            let (bd, bl, br) = tree_push(&b);
-            tree_node(b.key(), bd, tree_join(Some(a), bl), br)
+            let (a, key, data) = tree_split_last(&a);
+            tree_node(key, data, a, Some(b))
+        }
+    }
+}
+/// The tree at `n` without its first piece, and that piece. Each level puts back a left child
+/// at most one shorter than before beside its right child, a height difference of at most 2,
+/// so `tree_node` does O(1) work a level: O(h) in all, h the AVL height of `n`.
+fn tree_split_first(n: &PartitionNode) -> (Tree, (End, End), Contents) {
+    let (data, left, right) = tree_push(n);
+    match left {
+        None => (right, n.key(), data),
+        Some(l) => {
+            let (l, key, first) = tree_split_first(&l);
+            (tree_node(n.key(), data, l, right), key, first)
+        }
+    }
+}
+/// The tree at `n` without its last piece, and that piece; the mirror of [`tree_split_first`].
+fn tree_split_last(n: &PartitionNode) -> (Tree, (End, End), Contents) {
+    let (data, left, right) = tree_push(n);
+    match right {
+        None => (left, n.key(), data),
+        Some(r) => {
+            let (r, key, last) = tree_split_last(&r);
+            (tree_node(n.key(), data, left, r), key, last)
         }
     }
 }
@@ -5756,10 +5793,27 @@ impl State1d {
         // so the remaining inverse tree can use value order throughout.
         self.apply_tag(&ValTag::reflect(c as i128))
     }
+    /// The inverse of `abs`: the label of `u` is the label of `|u|`, so the tree is the pieces
+    /// at or above 0 (P), their reflection `-P` below, and the piece at 0, `[0, h]`, made one
+    /// piece `[-h, h]`: `join(-(P without it), [-h, h], P without it)` (REF-abs-split-join).
+    /// Each part is in value order below the next, so `tree_join` and `tree_node` (`join` of
+    /// Blelloch, Ferizovic and Sun 2016) put them together in O(log p), against the
+    /// `tree_union` of P and -P before, which walked both and cut `[0, h]` and `[-h, 0]` into
+    /// `[-h, -1]`, `[0, 0]`, `[1, h]`, three pieces with one label (REF-merge-equal-labels:
+    /// `ref_memo::abs_leaves_no_touching_pieces_with_one_label`). The reflection is a tag on
+    /// the root, O(1), and shares P's nodes.
     fn abs(self) -> Self {
         let mut st = self;
+        let neg = ValTag::neg();
         let pos = tree_restrict(&st.excl, &End::of(0), &PosInf);
-        st.excl = tree_union(pos.clone(), tree_apply(pos, &ValTag::neg()));
+        st.excl = match &pos {
+            Some(p) if p.min_lo == End::of(0) => {
+                let (rest, (_, hi), data) = tree_split_first(p);
+                let below = tree_apply(rest.clone(), &neg);
+                tree_node((neg.map_end(&hi), hi), data, below, rest)
+            }
+            _ => tree_join(tree_apply(pos.clone(), &neg), pos),
+        };
         st
     }
     fn minmax(self, p: Prim, c: i64) -> Self {
