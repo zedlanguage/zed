@@ -2145,20 +2145,15 @@ fn many_runs_wide_skip_src(n: usize) -> String {
     s
 }
 
-/// Step 1 of the closed-sibling repair: `generalize` names each internal run of a forward in
-/// one step against the signature's skip set. Reading the whole skip set at each run made n
-/// runs against n skipped names cost O(n^2); the set is now sorted once per signature.
+/// Step 1 of the closed-sibling repair at small n: n internal runs named against n skipped
+/// names check with no error. Its scaling test is
+/// `bench::r10_generalize_runs_against_a_wide_skip_set_scale`.
 #[test]
-fn r10_generalize_runs_against_a_wide_skip_set_scale() {
-    let inputs = crate::scaling::inputs(400, many_runs_wide_skip_src);
-    crate::scaling::check(
-        "generalize naming n internal runs against n skipped names",
-        400,
-        |n| {
-            let (d, _) = run_with_cfg(&inputs[&n], R10Config::default());
-            assert!(d.errors.is_empty(), "errors {:?}", d.errors);
-        },
-    );
+fn r10_generalize_runs_against_a_wide_skip_set() {
+    for n in 1..=8 {
+        let (d, _) = run_with_cfg(&many_runs_wide_skip_src(n), R10Config::default());
+        assert!(d.errors.is_empty(), "n = {n}: errors {:?}", d.errors);
+    }
 }
 
 /// Landing review round 2, Opus L2-C1 and Neon L2-B2: two closed lambdas inside one function,
@@ -2268,22 +2263,6 @@ fn r10_chain2_siblings_name_as_e_does() {
             );
         }
     }
-}
-
-/// Step 4 of the closed-sibling repair: naming n sibling forwards' runs apart against a skip
-/// set of n names cuts each run only where it meets a name given before, so the whole costs
-/// O(n log n), not one name at a time per run.
-#[test]
-fn r10_chain2_siblings_wide_skip_set_scale() {
-    let inputs = crate::scaling::inputs(200, chain2_siblings_src);
-    crate::scaling::check(
-        "finishing n sibling chain-2 forwards against n skipped names",
-        200,
-        |n| {
-            let (d, _) = run_with_cfg(&inputs[&n], R10Config::default());
-            assert!(d.errors.is_empty(), "errors {:?}", d.errors);
-        },
-    );
 }
 
 /// Landing review round 2, Opus C2: a function that holds a forward call and returns a lambda
@@ -4559,5 +4538,6 @@ fn chain_e1_held_names_are_renamed_compared_and_listed_as_e_does() {
     );
 }
 
+mod bench;
 mod expected;
 mod landing6_battery;
