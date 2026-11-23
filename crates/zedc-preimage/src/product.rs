@@ -14083,10 +14083,10 @@ impl Scope {
         // Complexity tradeoff: naive version, the preimage of the test taken as for any other
         // test, which lists each value of the class in the name's interval as a range of its
         // own ([`guard_preimage_listed`]'s split by remainders), O(v) for v values, and the
-        // name then held as v ranges, read by every later part that frames it as v disjuncts: O(k v)
-        // for k tests (`xst::s4::bench::holes_cut_one_at_a_time_scale`). Used: the congruence
-        // alone, O(1), and the interval keeps one range (PRES-interval-strided-piece, stage
-        // 2). A test of more names, of a name read through a summary, or of a name bound by a
+        // name then held as v ranges, read by every later part that frames it as v disjuncts:
+        // O(k v) for k tests (`xst::s4::bench::holes_cut_one_at_a_time_scale`). Used: the
+        // congruence alone, O(1), and the interval keeps one range (PRES-interval-strided-piece,
+        // stage 2). A test of more names, of a name read through a summary, or of a name bound by a
         // term (whose term is read backward from the values listed), takes the preimage as
         // before, O(v) a test.
         if let Some((x, met)) = &class_of

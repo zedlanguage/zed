@@ -4395,7 +4395,8 @@ impl<'t> Tx<'t> {
             // values and not others, the projection below answers, not exact.
             // PREIMAGE-mod-defined, as `preimage::Walk::where_defined` (which the reduced
             // product's narrowing does not take; this reference transfer is not used there).
-            // Test: `l01_25_preimage_catalog::exact_oracle::a_quotient_read_where_it_is_defined_is_exact`.
+            // Test:
+            // `l01_25_preimage_catalog::exact_oracle::a_quotient_read_where_it_is_defined_is_exact`.
             (IntDiv | Mod, _, None)
                 if dd.is_empty() && self.fwd(t, env).ints.meet(z).is_empty() =>
             {
