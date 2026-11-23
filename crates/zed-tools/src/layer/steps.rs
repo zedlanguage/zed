@@ -107,10 +107,10 @@ fn step_of(line: &str) -> Option<(&str, Option<u32>)> {
 /// when some reading parses at the ring `layer` of its step, the test of the row; else
 /// `Some(r)`, the lowest ring above `layer` at which some reading parses. Most spans stop at
 /// the first reading that parses at `layer`, with one more parse of it at the full ring; the
-/// rings above `layer` are tried only for a span that fails at `layer`. A grammar of ordered choice need not be monotone in
-/// its rings (an alternative a ring adds can take input a later alternative would have read,
-/// which `ring::ring_of` reports as a tree that changes), so the span is read at its step's
-/// ring itself rather than compared with its lowest ring.
+/// rings above `layer` are tried only for a span that fails at `layer`. A grammar of ordered
+/// choice need not be monotone in its rings (an alternative a ring adds can take input a later
+/// alternative would have read, which `ring::ring_of` reports as a tree that changes), so the
+/// span is read at its step's ring itself rather than compared with its lowest ring.
 fn ring(spec: &Spec, span: &str, layer: u32) -> Option<u32> {
     let span = span.replace('…', "elided");
     let readings = [

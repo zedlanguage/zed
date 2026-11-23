@@ -28,13 +28,14 @@
 //      (`a_record_pushed_on_one_thread_reads_whole_on_another`). The other three acquires (the
 //      first load of `push`, a failed exchange, `Records::next`) are more than G1 needs: with
 //      all three `Relaxed` and the two above kept, every test passes, the walk through a newer
-//      record pushed on another thread included (`a_record_reached_through_a_newer_one_reads_whole`;
-//      negative control run once, 2026-11-23, b22-small10, not committed). They are kept as
-//      written: on x86-64 an acquire load is the same instruction as a relaxed one, and no
-//      measurement asks for the change. Each record's fields and `next` are thus seen as `push`
-//      wrote them, so the walk from any head it reads reaches every record older than that
-//      head, each once: `next` pointers only point to older records, so the walk never meets a
-//      record twice and ends at the null of the first record. Test:
+//      record pushed on another thread included
+//      (`a_record_reached_through_a_newer_one_reads_whole`; negative control run once,
+//      2026-11-23, b22-small10, not committed). They are kept as written: on x86-64 an acquire
+//      load is the same instruction as a relaxed one, and no measurement asks for the change.
+//      Each record's fields and `next` are thus seen as `push` wrote them, so the walk from any
+//      head it reads reaches every record older than that head, each once: `next` pointers
+//      only point to older records, so the walk never meets a record twice and ends at the null
+//      of the first record. Test:
 //      `two_pushes_at_once_are_each_reached_once`, `three_pushes_at_once_are_each_reached_once`,
 //      `a_walk_beside_a_push_sees_a_whole_list`, and the two named above.
 // (G2) No record is lost by two pushes at once: a compare-and-exchange is one indivisible
