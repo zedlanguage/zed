@@ -6516,6 +6516,10 @@ enum Shape {
     Spine(Spine),
 }
 
+/// Per kinds, in [`RowIndex::by_kinds`]: the open rows' values (`None` where the kinds leave
+/// a row unknown), and whether every one is known.
+type KindsDecided = (Vec<Option<bool>>, bool);
+
 /// A row of a [`RowIndex`] that a tuple with no key of it may be in.
 struct Open {
     /// Per column, the column type and the types below it by depth, made as deep as a class
@@ -6572,7 +6576,7 @@ struct RowIndex {
     // read again by each check, a walk of the `k` open rows, so listing a meet of `c` types
     // given by their complements, each one open row, took order `c²` (12.2 times the
     // instructions from 1024 to 8192 types, the walk 337 M of the 1,262 M at 8192).
-    by_kinds: HashMap<Vec<Option<Chain>>, (Vec<Option<bool>>, bool)>,
+    by_kinds: HashMap<Vec<Option<Chain>>, KindsDecided>,
     /// The table [`RowIndex::holds`] reads the chains with; [`RowIndex::holds_in`] is given one.
     chains: Chains,
     /// Per class, the open rows' values on a tuple of it with no key of theirs, and the part
