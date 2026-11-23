@@ -367,11 +367,11 @@ fn many_divisions_beside_decimals_are_rejected_once() {
     // Small instances of the benchmarks of `bench::lit_branches`: the branches rejected alone
     // are rejected at the first `1` once; in one branch, a fix of that literal checks, since
     // it gives the branch's class its carrier; at `x: f64` each `if` takes it, with no error.
-    // In a sum of `if`s the `rat` fix is not offered, since it does not check:
-    // `(if c { 1r / 2 } else { 1.5 })` is `rat | f64` (DESIGN.md step L1.26a, "where one branch
-    // is a literal and the other has a carrier, the literal branch is fixed as it would be
-    // alone"), which `+` does not take beside the next `if`; the `f64` fix checks (row
-    // MSG-branch-sum-fix-unchecked).
+    // In a sum of `if`s the message offers the `f64` fix, which checks (row
+    // MSG-branch-sum-fix-unchecked). The `rat` fix checks too, though it is not offered:
+    // `(if c { 1r / 2 } else { 1.5 })` is `1.5 | rat`, and the literals of the `if`s beside it
+    // are read at the one carrier `rat` it holds, so the sum is a `rat` (row
+    // MSG-branch-fix-beside-carrier-if; before it, `+` refused the next `if`, 2 errors).
     let def = summed_ifs(3, None);
     let src = format!("{def}\ny = g(true);\n");
     let [rat, f64] = ["1r / 2", "1.0f64 / 2"].map(|f| def.replacen("1 / 2", f, 1));
@@ -382,7 +382,9 @@ fn many_divisions_beside_decimals_are_rejected_once() {
         f64.trim_end_matches(';')
     );
     assert_eq!(type_errors(&src), [only_f64]);
-    assert_eq!(type_errors(&src.replace(&def, &rat)).len(), 2);
+    let fixed = src.replace(&def, &rat);
+    assert_eq!(type_errors(&fixed), Vec::<String>::new());
+    assert_eq!(sig(&fixed, "g"), "bool -> rat");
     assert_eq!(type_errors(&src.replace(&def, &f64)), Vec::<String>::new());
     division_rejected_at_its_one(&wide_branch(3), "y = g(true);\n");
     let src = format!("{}\ny = g(true, 2.0f64);\n", summed_ifs(3, Some("f64")));
@@ -407,5 +409,24 @@ fn each_fix_offered_for_a_sum_of_ifs_checks() {
     for fix in fixes {
         let fixed = src.replacen(src.lines().next().unwrap(), fix, 1);
         assert_eq!(type_errors(&fixed), Vec::<String>::new(), "{fixed}");
+    }
+}
+
+#[test]
+fn a_fix_beside_an_if_of_another_carrier_checks() {
+    // DESIGN.md step L1.26b: "each fix its message offers is applied in turn, and the file then
+    // checks" (row MSG-branch-fix-beside-carrier-if). The left `if`, of type `rat | 3`, is read
+    // at `rat`, the one carrier it holds whole, and the right one's `1 / 2` takes `rat` from
+    // it, as beside `x: rat` or `1r`: the file checks, with no fix to offer. Filed with one
+    // error expected (the `1`, offering `1r / 2` and a `1.0f64 / 2` that `+` refuses beside
+    // `rat`); on be40c9639 it gave that error and a refusal of `+` too. The operands swapped
+    // check the same.
+    for def in [
+        "g(positional c: bool) = (if c { 1r / 2 } else { 3 }) + (if c { 1 / 2 } else { 3 });",
+        "g(positional c: bool) = (if c { 1 / 2 } else { 3 }) + (if c { 1r / 2 } else { 3 });",
+    ] {
+        let src = format!("{def}\ny = g(true);\n");
+        let errors = type_errors(&src);
+        assert!(errors.is_empty(), "{def}: {errors:?}");
     }
 }

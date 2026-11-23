@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use zed_tests::deep::resolved;
-use zed_tests::scaling::{check, check_order, inputs};
+use zed_tests::scaling::{check, check_inputs, check_order, inputs};
 use zedc::check::walk::check_text;
 use zedc::rejection::Row;
 
@@ -48,10 +48,13 @@ fn a_record_of_many_reads_is_written_and_read_back_in_linear_time() {
 /// Small instance: `scaling::a_wave_reading_distinct_paths_records_each`.
 #[test]
 fn a_wave_reading_many_distinct_paths_scales() {
+    // `check_inputs` builds only the size this process runs: under DynamoRIO (`instr=`), building
+    // both sizes and running at n took the first phase past its 20 s limit on a Colab VM
+    // (PERF-l01_19-port-benches-over-limit).
     let n = 6_000;
-    let programs = inputs(n, scaling::distinct_paths);
-    check("a wave reading n paths", n, |m| {
-        scaling::records_each_path(&programs[&m], m);
+    let make = |m| (scaling::distinct_paths(m), m);
+    check_inputs("a wave reading n paths", n, make, |(program, m)| {
+        scaling::records_each_path(program, *m);
     });
 }
 
@@ -132,20 +135,29 @@ fn reads_of_main_files_outside_main_load_in_linear_time() {
 /// `ports::a_chain_of_helpers_passing_a_port_writes_once`.
 #[test]
 fn a_chain_of_helpers_passing_a_port_scales() {
+    // `check_inputs` builds only the size this process runs, and the program at n is checked
+    // whole only where it is built: under DynamoRIO (`instr=`), building both sizes and the
+    // whole check took the first phase past its 20 s limit on a Colab VM
+    // (PERF-l01_19-port-benches-over-limit).
     let n = 8_000;
-    let units = inputs(n, |m| {
+    let make = |m| {
         let text = ports::helper_chain(m);
         let (stmts, res) = resolved(&text);
-        (text, stmts, res)
-    });
-    // The program is accepted, as a whole.
-    let (text, stmts, res) = &units[&n];
-    let info = check_text(stmts, res, Some(text));
-    assert!(info.errors.is_empty(), "{:?}", info.errors);
-    check("finding the output ports of n helpers", n, |m| {
-        let (text, stmts, res) = &units[&m];
-        ports::finds_the_ports(text, stmts, res, m);
-    });
+        if m == n {
+            // The program is accepted, as a whole.
+            let info = check_text(&stmts, &res, Some(&text));
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        }
+        (text, stmts, res, m)
+    };
+    check_inputs(
+        "finding the output ports of n helpers",
+        n,
+        make,
+        |(text, stmts, res, m)| {
+            ports::finds_the_ports(text, stmts, res, *m);
+        },
+    );
 }
 
 /// A chain of n helpers whose bodies are expression statements is checked in linear time:
