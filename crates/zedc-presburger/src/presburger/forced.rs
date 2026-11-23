@@ -152,10 +152,7 @@ pub(super) fn forced(f: &Formula, point: bool) -> Forced<'_> {
         return Forced::Empty;
     }
     match g.parts[0].value.get() {
-        Some(true) if point => match through_factors(f, g.point()) {
-            Some(m) => Forced::Point(m),
-            None => Forced::Undecided(g.facts(f)),
-        },
+        Some(true) if point => Forced::Point(g.point()),
         Some(true) => Forced::Holds,
         _ => {
             let facts = g.facts(f);
@@ -174,32 +171,11 @@ pub(super) fn forced(f: &Formula, point: bool) -> Forced<'_> {
             let mut trial = Trial::of(g);
             match (trial.holds().0 == Some(true), point) {
                 (false, _) => Forced::Undecided(facts),
-                (true, true) => match through_factors(f, trial.point()) {
-                    Some(m) => Forced::Point(m),
-                    None => Forced::Undecided(facts),
-                },
+                (true, true) => Forced::Point(trial.point()),
                 (true, false) => Forced::Holds,
             }
         }
     }
-}
-
-/// The point `m` the propagation reached, if it is a point of `f` with each product atom read
-/// as the product of its factors (PRES-model-products); `None` when it is one only with the
-/// products read as variables of their own. The propagation reads a product as a variable of
-/// its own: in `x * y >= 1 && x == 0` it fixes `x` at 0 and the round at the bounds sets
-/// `x * y` to 1. Such a point is not returned; the formula goes on undecided, with the facts
-/// the propagation proved, and [`super::reduced`] reads each product with a fixed factor
-/// through it (there `x * y` is `0 * y`, and `0 >= 1` fails). `m` holds every atom of `f`
-/// ([`Graph::point`]), so a formula with a product has a product key in `m`, and one with
-/// none costs only the walk of the keys of `m`, O(a) for its `a` atoms. Without `point`
-/// asked ([`Forced::Holds`]), `decide` asks for a point itself where `f` has a product
-/// (`super::decide`).
-fn through_factors(f: &Formula, m: Model) -> Option<Model> {
-    if !m.keys().any(|a| matches!(a, Atom::Product(..))) {
-        return Some(m);
-    }
-    super::products_agree(f, &super::product_atoms(f), m)
 }
 
 /// Whether [`forced`] answers `f`, of top-level conjuncts `conjuncts` (`Formula::conjunct_list`),

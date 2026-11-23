@@ -18,9 +18,9 @@ pub(super) struct Def {
 
 impl Def {
     /// The definition `f`, `None` where no summary is made of it: one that defines no variable it
-    /// reads. A product of variables is an atom of the rows, kept beside its factors
-    /// ([`decide`](super::super::decide) reads it through them, PRES-model-products), and the
-    /// definitions of its factors are inputs. Time of `f`.
+    /// reads. A product of variables is read as an atom of its own, as the solver reads it
+    /// ([`decide`](super::super::decide)), and the definitions of its factors as inputs. Time of
+    /// `f`.
     pub(super) fn of(f: Formula, def: &dyn Fn(u32) -> Formula) -> Option<Def> {
         let id = Id::any(&f);
         let reads = reads(&f);

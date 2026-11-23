@@ -246,17 +246,7 @@ fn a_formula_with_a_product_atom_is_left_to_the_solver() {
     // The solver reads a product atom as a variable of its own (PRES-product-parity), and
     // propagation reads it through its factors; such a formula is not read here, so its answer
     // stays the solver's. Read linearly, `p == x + y + 10` has a point with `x` anywhere in
-    // its box. Read through the factors (PRES-model-products) it has no point: `x * y` is 4,
-    // 6 or 9 and `x + y + 10` is 14 to 16. The search's point disagrees, no slice of
-    // `presburger::product_slices` (`x` at the point's value, 1 or -1, then `y`) has a point,
-    // and no product is fixed, so the divisor cover does not apply: the answer is the stated
-    // refusal `Refusal::Products`, never the old `true`. (A cover by each value of a bounded
-    // factor would answer it, at a cost of the factor's width; not made.) The projection
-    // reads the products as variables of their own, a relaxation: its set holds every value
-    // of `x` with a point, here none, and may hold more. It gave the box `2..=3` before
-    // PRES-model-products and gives `2..=2` since, as a product with a fixed factor is now
-    // read through it in some of its steps (`x == 3` leaves `2 * y == 13`); both are sets
-    // over the empty projection, so the test asks only for a part of the box.
+    // its box.
     let (x, y) = (sym("x"), sym("y"));
     let p = Atom::product_of(Factor::Sym(Arc::from("x")), Factor::Sym(Arc::from("y")));
     let f = Formula::and(
@@ -267,10 +257,9 @@ fn a_formula_with_a_product_atom_is_left_to_the_solver() {
         ]
         .concat(),
     );
-    assert_eq!(decide(&f), Err(zedc::store::presburger::Refusal::Products));
+    assert_eq!(decide(&f), Ok(true));
     let (each, _) = project_each(&f, std::slice::from_ref(&x)).unwrap();
-    let set = each[0].as_ref().unwrap();
-    assert!(set.is_subset(&range(2, 3)), "{set:?}");
+    assert_eq!(each[0], Ok(range(2, 3)));
 }
 
 #[test]
