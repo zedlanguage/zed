@@ -883,7 +883,7 @@ impl Rat {
     /// digits. A value held as plain digits, such as the sum `3^200000 + 1`, prints its digits
     /// (DESIGN.md L1.26a).
     ///
-    /// The coefficient is first reduced by [`Rat::coefficient_reduced`], so a product such as
+    /// The coefficient is first reduced by `Rat::coefficient_reduced`, so a product such as
     /// `4294967296 * 4294967296`, held as digits, prints `2^64` as `2 ^ 64` does (DESIGN.md
     /// sec:diagnostics, "Types in a message"; plan row KEPT-power-form-print).
     pub fn integer_text(&self) -> String {
@@ -901,7 +901,7 @@ impl Rat {
     /// into its kept powers, for its text ([`Rat::integer_text`]); `None` when they find none.
     /// The methods, on the coefficient `c`: its trailing zeros, `c = 2^v o` with `o` odd; then,
     /// for `o < 2^44`, `zed_numtheory::factor`, which factors it completely; for a wider `o`, its
-    /// least root `o = r^m` ([`least_root`]), and, when `m > 1`, `r` factored when `r < 2^44` or
+    /// least root `o = r^m` ([`fn@least_root`]), and, when `m > 1`, `r` factored when `r < 2^44` or
     /// kept as one prime when it is a prime word (`zed_numtheory::is_prime`, deterministic on
     /// every word). A wider `o` that is no power of such an `r` is kept whole, and prints as
     /// digits. Arithmetic never calls this: products and quotients keep their coefficients as
@@ -915,7 +915,7 @@ impl Rat {
     ///
     /// Complexity tradeoff: for `n` the bits of `c`, the trailing zeros and the shift cost
     /// O(n); `factor` below 2^44 is O(1), a constant proved at `zed_numtheory::factor`; the least
-    /// root is O(M(n) log n), proved at [`least_root`]; `is_prime` on a word is O(1) (12 bases of
+    /// root is O(M(n) log n), proved at [`fn@least_root`]; `is_prime` on a word is O(1) (12 bases of
     /// Miller-Rabin, proved at `zed_numtheory::is_prime`). The text writes `c` or what is left of
     /// it as decimal digits in either form, which costs O(M(n) log n) (`num::fast::to_decimal`,
     /// a divide-and-conquer conversion), so the reduction costs at most a constant times the
