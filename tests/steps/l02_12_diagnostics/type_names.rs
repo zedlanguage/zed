@@ -533,18 +533,15 @@ fn a_type_variable_only_inside_function_types_is_bound_by_a_function_argument() 
     );
 }
 
-/// Row FAIL-typevar-named-fn-message: a function whose parameter is named, passed where the
-/// instance of a type variable's function type passes by position, gets the reason and the
-/// repair a plain function type gives.
+/// Rows FAIL-typevar-named-fn-message and MSG-inner-lambda-unnamed-param-arrow: a function
+/// whose one parameter is named fits the instance `int -> int` of a type variable's function
+/// type, as it fits a plain `(int) -> int`. DESIGN.md sec:values_morphisms: "A function with
+/// the one parameter `x: T` therefore fits both `(T) -> R` and `(x: T) -> R`". The row first
+/// pinned a refusal here, written before that rule held for one parameter.
 #[test]
-fn a_named_parameter_at_a_type_variable_s_function_type_gets_the_parameter_message() {
-    rejects(
-        &format!("{MAP2}\ninc(v: int) = v + 1;\nmain() = {{ _ = map2(xs: 3, f: inc); 0 }};\n"),
-        &[
-            "the parameters of `inc` (v) do not fit `int -> int`",
-            "repair: pass a lambda, `(v) -> inc(v: v)`",
-        ],
-    );
+fn a_named_one_parameter_function_fits_a_type_variable_s_function_type() {
+    let named = format!("{MAP2}\ninc(v: int) = v + 1;");
+    assert_eq!(writes(&named, r#""${map2(xs: 3, f: inc)}""#), "4\n");
 }
 
 /// Row FAIL-typevar-fn-only-binding: a lambda with written parameter types binds the variable
