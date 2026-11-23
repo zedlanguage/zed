@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, Weak};
 
 use super::unfold::{ENVS, Show, eval, thread};
-use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, covers, free, same};
+use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, free, holds, same};
 use crate::digest::{Digest, KeyHash, TiedMap};
 use crate::types::{Type, Verdict, bytes, defs, mix};
 use zed_graph::{IdSource, on_cycle};
@@ -458,9 +458,9 @@ impl Group {
                 Shape::Morphism(l, u, v) => {
                     if l.recursive {
                         let m = text(e);
-                        // A value type that holds the guarantee as written (`covers`) leaves
+                        // A value type inhabited wherever the guarantee is (`holds`) leaves
                         // `l -> v` inhabited whatever `l` is, so it cannot flip.
-                        let flaw = match covers(v, l) {
+                        let flaw = match holds(l, v, |x| self.value_flaw(x).is_none()) {
                             true => None,
                             false => self.value_flaw(v),
                         };

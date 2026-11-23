@@ -661,10 +661,10 @@ fn sweep(name: &str, seeds: impl IntoIterator<Item = u64>, max_false: Option<usi
 const SWEPT: u64 = 50_000;
 
 /// The false rejections among the groups of seeds 0..25,000.
-const FALSE_IN_FIRST_HALF: usize = 14_137;
+const FALSE_IN_FIRST_HALF: usize = 14_093;
 
 /// The false rejections among the groups of seeds 25,000..50,000.
-const FALSE_IN_SECOND_HALF: usize = 14_208;
+const FALSE_IN_SECOND_HALF: usize = 14_158;
 
 /// The seeds one run draws.
 const DRAWN: usize = 3_000;
@@ -725,7 +725,7 @@ fn a_fixed_draw_of_seeds_gives_its_counts() {
             t.unsound,
             t.false_rejections
         ),
-        (3000, 475, 833, 0, 1692),
+        (3000, 480, 833, 0, 1687),
         "{t:?}"
     );
 }

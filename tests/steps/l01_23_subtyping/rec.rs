@@ -724,22 +724,26 @@ fn a_group_writes_its_trees_for_debugging() {
 /// precedence needs them. An arrow's key is a `TypeNot` (`TypeNot '->' Arrow`, author P222), so
 /// `U -> (int, U)` holds no pair and a union key keeps one, `(U | int) -> (int, U)`; a tuple
 /// key keeps one, `((U, int)) -> (int, U)`, since `Arrow` tries `ArrowParams` first and
-/// `(U, int) -> (int, U)` reads as two parameters. The value type `(int, U)` mentions the group
-/// without holding the guarantee as written, so each is refused (`U -> U` is admitted, plan row
-/// GROUP-admit-precision).
+/// `(U, int) -> (int, W)` reads as two parameters. The value type `(int, W)` mentions the group
+/// and need not be inhabited where the guarantee is (`W = (int, W)` is empty), so each is
+/// refused (`U -> U` and `U -> (int, U)` are admitted, plan row GROUP-admit-precision).
 #[test]
 fn a_group_message_parenthesizes_an_arrow_key_only_where_needed() {
     let n = || r(0, vec![]);
+    let w = || r(1, vec![]);
     for (key, text) in [
-        (n(), "U -> (int, U)"),
-        (or(vec![n(), ty(Type::int())]), "(U | int) -> (int, U)"),
+        (n(), "U -> (int, W)"),
+        (or(vec![n(), ty(Type::int())]), "(U | int) -> (int, W)"),
         (
             Expr::Tuple(vec![n(), ty(Type::int())]),
-            "((U, int)) -> (int, U)",
+            "((U, int)) -> (int, W)",
         ),
     ] {
-        let value = Expr::Tuple(vec![ty(Type::int()), n()]);
-        let message = rejected(vec![def("U", &[], Expr::exact(key, value))]);
+        let value = Expr::Tuple(vec![ty(Type::int()), w()]);
+        let message = rejected(vec![
+            def("U", &[], Expr::exact(key, value)),
+            def("W", &[], Expr::Tuple(vec![ty(Type::int()), w()])),
+        ]);
         assert!(
             message.contains(&format!("in the guarantee of `{text}`")),
             "{message}"

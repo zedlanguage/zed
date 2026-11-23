@@ -18915,9 +18915,10 @@ impl<'a> Made<'a> {
 /// group, is shown inhabited whatever the group's members are; `verdict` reads a closed part.
 /// `false` leaves the part to the search. Proof, case by case, using that a morphism type
 /// holds a value exactly when `l <: u` and `l` is empty or `val` is inhabited:
-/// - `l` and `u` written alike (`rec::same`), so `l <: u`, and `val` holds `l` as written
-///   (`rec::covers`, proved there), so `l` nonempty makes `val` nonempty: `type U = (U) -> U`;
-/// - `l` and `u` written alike and `val` closed and inhabited: the group's own case;
+/// - `l` and `u` written alike (`rec::same`), so `l <: u`, and `val` inhabited wherever `l` is
+///   (`rec::holds`, proved there; it holds when `val` holds `l` as written, `rec::covers`, and
+///   when `val` names no definition and is inhabited, the group's own case):
+///   `type U = (U) -> U` and `type U = (U) -> (int, U)`;
 /// - `l` closed and empty: the empty morphism is a value, whatever `u` and `val` are.
 ///
 /// Before plan row GROUP-admit-precision the second case was read without `l <: u`, so
@@ -18930,8 +18931,7 @@ fn recursive_bounds_inhabited(
     val: &Arc<rec::Node>,
     mut verdict: impl FnMut(&Arc<rec::Node>) -> Verdict,
 ) -> bool {
-    let same = rec::same(l, u)
-        && (rec::covers(val, l) || (!val.recursive && verdict(val) == Verdict::Inhabited));
+    let same = rec::same(l, u) && rec::holds(l, val, |x| verdict(x) == Verdict::Inhabited);
     same || (!l.recursive && verdict(l) == Verdict::Empty)
 }
 

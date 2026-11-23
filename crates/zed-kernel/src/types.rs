@@ -7942,8 +7942,9 @@ pub mod rec {
     //! - *of the form the admission check accepts*: no recursive occurrence stands under a
     //!   complement, to the right of `\`, or in the guarantee of a morphism type whose value type
     //!   may be empty or mentions the group, since `type T = (T) -> (#a & #b)` is inhabited exactly
-    //!   when it is empty, unless the value type holds the guarantee as written (`covers`:
-    //!   `type U = (U) -> U` holds the identity on `U`, plan row GROUP-admit-precision); nor in
+    //!   when it is empty, unless the value type is inhabited wherever the guarantee is
+    //!   (`holds`: `type U = (U) -> U` holds the identity on `U`, and `type U = (U) -> (int, U)`
+    //!   a morphism pairing its argument with an integer, plan row GROUP-admit-precision); nor in
     //!   the guarantee of a morphism type whose guarantee and permission differ, or that stands
     //!   under `&`, `\`, a complement or differing domain bounds, directly or through a
     //!   definition named there (cross-review X14: `W = (W) -> int` is accepted,
@@ -8683,6 +8684,121 @@ pub mod rec {
         let mut held: std::collections::HashSet<u32> = arms(v).into_iter().collect();
         held.insert(v.class);
         arms(l).iter().all(|c| held.contains(c))
+    }
+
+    /// Whether the value type `v` of a morphism type is inhabited at every argument and every
+    /// value of the group's members at which its guarantee `l` is; then `l -> v` holds a value
+    /// whatever they are, as with [`covers`], which this extends (plan row
+    /// GROUP-admit-precision). `closed` says whether a part that names no definition is
+    /// inhabited at every argument. `type U = (U) -> (int, U)` is the case [`covers`] misses:
+    /// a value of `U` gives one of `(int, U)`.
+    ///
+    /// Proof. Write `inh(x)` for "x is inhabited" at fixed arguments and members.
+    /// 1. The parts `l` forces (`forced`): each of `x` in a tuple or an atom's payload `x`
+    ///    (an atom is its name with a tuple of its payload), each `x` of a meet `x & y`, and
+    ///    `x` in `x \ y`, are supertypes of a value's part or hold the value, so
+    ///    `inh(parent) ⇒ inh(x)`; by induction `inh(arm) ⇒ inh(x)` for every `x` reached from
+    ///    an arm of `l` through these. `inh(l)` makes some arm inhabited, so `inh(l) ⇒ inh(x)`
+    ///    for `x` reached from every arm, and for `l` itself. Two nodes of one class are
+    ///    written alike and denote one type ([`same`]), so the classes stand for the parts.
+    /// 2. `v` holds (`inh(l) ⇒ inh(v)`) when its class is forced; or it names no definition
+    ///    and `closed` says it is inhabited; or it is a union with an arm that holds; or a tuple
+    ///    or atom each of whose parts holds (`inh` of a tuple is the meet of its parts'); or a
+    ///    morphism type `a -> c` with guarantee and permission written alike, `a` naming no
+    ///    definition and `c` holding, since a constant morphism into `c` is a value of it.
+    ///
+    /// Sufficient, not necessary: `inh(l) ⇒ inh(v)` for formulas with meets of recursive types
+    /// is as hard as the monotonicity it stands for (coNP-complete, COMPLEXITY.md K27).
+    ///
+    /// Cost: one walk of `l` and one of `v`, O(|l| + |v|) expected with one hash set, plus
+    /// `closed` on disjoint parts of `v`. The walks stop at a morphism type whose guarantee names
+    /// a definition, which the admission check reads on its own, so each node is read by the
+    /// walks of at most one enclosing morphism type: O(size of the bodies) over a group. Both
+    /// walks keep their own stacks, so any depth is read on a small stack (COMPLEXITY.md K39).
+    pub(in crate::types) fn holds(
+        l: &Node,
+        v: &Arc<Node>,
+        mut closed: impl FnMut(&Arc<Node>) -> bool,
+    ) -> bool {
+        use std::collections::HashSet;
+        if covers(v, l) {
+            return true;
+        }
+        let forced = |arm: &Node| -> HashSet<u32> {
+            let (mut out, mut todo) = (HashSet::new(), vec![arm]);
+            while let Some(x) = todo.pop() {
+                if !out.insert(x.class) {
+                    continue;
+                }
+                match &x.e {
+                    Shape::Tuple(xs) | Shape::Atom(_, xs) | Shape::And(xs) => {
+                        todo.extend(xs.iter().map(|x| &**x));
+                    }
+                    Shape::Diff(a, _) => todo.push(a),
+                    _ => {}
+                }
+            }
+            out
+        };
+        let mut need = match &l.e {
+            Shape::Union(xs) if !xs.is_empty() => {
+                let mut need = forced(&xs[0]);
+                for x in &xs[1..] {
+                    let more = forced(x);
+                    need.retain(|c| more.contains(c));
+                }
+                need
+            }
+            _ => forced(l),
+        };
+        need.insert(l.class);
+        // The parts of `v` read, in pre-order, each with its parent's index and its value so
+        // far: `Any` a union (false until an arm holds), `All` a tuple, an atom or a morphism's
+        // value (true until a part fails), `Leaf` decided.
+        enum Op {
+            Any,
+            All,
+            Leaf,
+        }
+        let mut nodes: Vec<(usize, Op, bool)> = Vec::new();
+        let mut todo: Vec<(&Arc<Node>, usize)> = vec![(v, 0)];
+        while let Some((x, parent)) = todo.pop() {
+            let me = nodes.len();
+            let op = if need.contains(&x.class) {
+                (Op::Leaf, true)
+            } else if !x.recursive {
+                (Op::Leaf, closed(x))
+            } else {
+                match &x.e {
+                    Shape::Union(xs) => {
+                        todo.extend(xs.iter().map(|x| (x, me)));
+                        (Op::Any, false)
+                    }
+                    Shape::Tuple(xs) | Shape::Atom(_, xs) => {
+                        todo.extend(xs.iter().map(|x| (x, me)));
+                        (Op::All, true)
+                    }
+                    Shape::Morphism(a, b, c) if same(a, b) && !a.recursive => {
+                        todo.push((c, me));
+                        (Op::All, true)
+                    }
+                    _ => (Op::Leaf, false),
+                }
+            };
+            nodes.push((parent, op.0, op.1));
+        }
+        // A part's index is above its parent's, so reading down from the last settles every
+        // part before its parent.
+        for i in (1..nodes.len()).rev() {
+            let (parent, _, value) = nodes[i];
+            let p = &mut nodes[parent];
+            match p.1 {
+                Op::Any => p.2 |= value,
+                Op::All => p.2 &= value,
+                Op::Leaf => unreachable!("a decided part has no parts read"),
+            }
+        }
+        nodes[0].2
     }
 
     /// What an expression is evaluated in: the arguments, and the group's types at them.

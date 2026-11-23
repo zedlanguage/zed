@@ -155,7 +155,41 @@ fn a_value_type_holding_the_guarantee_is_accepted() {
     );
     assert!(accepted(vec![m(r(0), r(0), union(vec![r(0), int()]))]));
     assert!(!accepted(vec![m(l(), l(), r(0))]));
-    assert!(!accepted(vec![m(r(0), r(0), pair(int(), r(0)))]));
+}
+
+/// A value type inhabited wherever the guarantee is leaves the morphism type inhabited too
+/// (`rec::holds`, plan row GROUP-admit-precision): a value of `U` gives one of `(int, U)`, of
+/// `int -> U` (a constant morphism) and of `U | #b`, and a value of `(U, int)` gives one of `U`.
+/// Each such group is accepted and its member inhabited. A value type that needs a part the
+/// guarantee does not give is still refused: in `U -> (int, W)` with `W = (int, W)` empty, `U`
+/// holds a value exactly when it holds none.
+#[test]
+fn a_value_type_inhabited_wherever_the_guarantee_is_accepted() {
+    let b = || Expr::Type(Type::atom("b"));
+    let bodies = [
+        m(r(0), r(0), pair(int(), r(0))),
+        m(r(0), r(0), m(int(), int(), r(0))),
+        m(
+            r(0),
+            r(0),
+            pair(union(vec![r(0), b()]), atom("c", vec![r(0)])),
+        ),
+        m(pair(r(0), int()), pair(r(0), int()), r(0)),
+    ];
+    for body in bodies {
+        assert!(accepted(vec![body.clone()]), "{body:?}");
+        assert_eq!(verdict_of(body), Verdict::Inhabited);
+    }
+    assert!(!accepted(vec![
+        m(r(0), r(0), pair(int(), r(1))),
+        pair(int(), r(1))
+    ]));
+    assert!(!accepted(vec![m(r(0), r(0), pair(int(), not(r(0))))]));
+    assert!(!accepted(vec![m(
+        union(vec![r(0), int()]),
+        union(vec![r(0), int()]),
+        pair(int(), r(0))
+    )]));
 }
 
 /// A permission that mentions the group below a closed guarantee: `R = (int .. R -> int)`
@@ -256,11 +290,16 @@ fn arms() -> Vec<(&'static str, String, String)> {
         ),
         (
             "value type mentions the group",
-            refusal(&["U"], &[], vec![m(r(0), r(0), pair(int(), r(0)))]),
+            // `W` is empty, so `U` holds a value exactly when it holds none: it flips.
+            refusal(
+                &["U", "W"],
+                &[],
+                vec![m(r(0), r(0), pair(int(), r(1))), pair(int(), r(1))],
+            ),
             outside(
                 "U",
-                "a recursive occurrence stands in the guarantee of `U -> (int, U)`, whose \
-                 value type `(int, U)` mentions the group",
+                "a recursive occurrence stands in the guarantee of `U -> (int, W)`, whose \
+                 value type `(int, W)` mentions the group",
             ),
         ),
         (
