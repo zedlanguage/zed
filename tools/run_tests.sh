@@ -1181,6 +1181,10 @@ fi
 # given divisions took 29 to 39 s alone at load 40 to 48. A piece per test of the two modules
 # was no faster: in alternate runs at load 39 to 49 the module pieces took 24 and 28 s, the
 # piece per test 34 and 32 s at most (2026-11-13, TESTS-l01_26a-split).
+# l01_39_scope_relations xst ran past its limit of 20 s alone at load 5 once the tests of
+# S4-interval-boxes joined it (s4_holed, s4_names, s4_model: 61, 232 and 103 s in a debug build
+# at load 2, against 576 s for all of xst). Each module of xst is a piece, and each test of the
+# three S4 modules (2026-11-22, S4-interval-boxes).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_groups_and_refusals l01_23_groups_and_refusals::r6_reduction
@@ -1219,6 +1223,8 @@ split="
   l01_39_reduced_product::exact
   l01_39_reduced_product::exact::constraints_reduced_one_at_a_time_decide_as_all_at_once
   l01_39_scope_relations::families
+  l01_39_scope_relations::xst l01_39_scope_relations::xst::s4_holed
+  l01_39_scope_relations::xst::s4_names l01_39_scope_relations::xst::s4_model
   l01_39a_bit_words l01_39a_bit_words::scaling
   l25_08_mutate l25_08_mutate::scaling
   m0_12_refusal_census m0_12_refusal_census::seeds
