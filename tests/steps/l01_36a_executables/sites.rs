@@ -141,25 +141,28 @@ fn a_rational_power_too_large_is_named_as_written_with_its_size() {
 /// `2^(2^64) * b` is a value, `b` times a kept power of 2, but its decimal text, about
 /// `0.30 · 2^64` digits, is larger than any memory: `String` of it is named as written, with
 /// the size of the text. The text, at least 4.8 EiB, is within the address space, so the run
-/// refuses it; since zed 21e7335 (plan row CONST-default-memory-limit) a `main` without
-/// `@limits(memory: …)` rejects a build of 1 GiB or more at compile time, so `main` declares the
-/// largest limit, the address space, on its own line so that each line and column stays.
+/// refuses it. Since zed 21e7335 (plan row CONST-default-memory-limit) a `main` without
+/// `@limits(memory: …)` rejects at compile time a build the text proves to be 1 GiB or more,
+/// and a declared limit changes the run's message to "Memory limit of `main` passed", so the
+/// exponent is read as `2^64` plus the input, as in [`input_power`], which the checker cannot
+/// size; the run, given no input, prints the same `2^(2^64) * b`.
 #[test]
 fn a_string_too_large_is_named_as_written_with_its_size() {
-    let src = "@limits(memory: 2^64) main(m: MainArgs) {\n    b = 2^64 + 13;\n    \
-               m.stdout <- String(2^(2^64) * b);\n}\n";
+    let src = "main(m: MainArgs) {\n    b = 2^64 + 13;\n    \
+               e = 2^64 + (int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0);\n    \
+               m.stdout <- if e >= 0 { String(2^e * b) } else { \"\" };\n}\n";
     stops(
         "huge_string",
         src,
         3,
         "",
         &format!(
-            "FILE:3:17: Text too large for memory: `String(2^(2^64) * b)` would write about \
-             5.6 × 10^18 digits (4.8 EiB){}.\n  [1] 3:17: the run stopped here\n      \
-             3 |     m.stdout <- String(2^(2^64) * b);\n        \
-               |                 ^^^^^^^^^^^^^^^^^^^^\n{}",
+            "FILE:4:29: Text too large for memory: `String(2^e * b)` would write about \
+             5.6 × 10^18 digits (4.8 EiB){}.\n  [1] 4:29: the run stopped here\n      \
+             4 |     m.stdout <- if e >= 0 {{ String(2^e * b) }} else {{ \"\" }};\n        \
+               |                             ^^^^^^^^^^^^^^^\n{}",
             beyond_machine(),
-            out_of_memory_repairs("3:17")
+            out_of_memory_repairs("4:29")
         ),
     );
 }

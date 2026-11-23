@@ -346,4 +346,11 @@ fn without_a_memory_limit_a_build_of_1_gib_or_more_is_rejected() {
     let input = "k = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n    \
                  m.stdout <- if k >= 0 { String(b ^ (2^k)) } else { \"\" };";
     assert_eq!(built(&main("", input)), None);
+    // The program of 8376989a7, whose run asked for about 51 GB: `3 ^ (2 ^ 40)` has a base of
+    // 64 bits or fewer, so it is kept as a power and builds nothing, and a comparison builds
+    // only where the two numbers agree to within their width, which an `x` read from the input
+    // does not prove (DESIGN.md sec:checking_in_zed). So the default limit does not reject it.
+    let compare = "x = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0;\n    \
+                   m.stdout <- String(x < 3 ^ (2 ^ 40));";
+    assert_eq!(built(&main("", compare)), None);
 }
