@@ -63,6 +63,9 @@ rows! {
     // No diagnostic uses this row yet: plan row SCHED-eval-before-check emits it, from a
     // `zedc::store::schedule::Refusal`.
     NeededToCheckItsOwnComputation => "Compile-time value needed to check its own computation",
+    // No diagnostic uses this row yet: plan row PE-what-to-evaluate emits it, when a check needs
+    // a value the rules of DESIGN "What partial evaluation evaluates" leave to run time.
+    LeftToRunTime => "Compile-time value left to run time",
     QuantifierNotFinite => "Quantifier in a law over a domain that is not finite",
     // `Resolver::unending` (zedc-resolve), plan row RANGE-open-walk.
     OpenRangeEveryEntry => "A read of a range with no upper end that takes every entry",
