@@ -193,7 +193,7 @@ fn bidi_controls_are_errors_in_comments_and_in_string_text() {
             // As an error of the source it names its row, says why, and offers the repair.
             let e = zedc::ast::Error::from(lex(&text).unwrap_err());
             assert_eq!(e.row, Some(Row::BidiControlInText), "{text:?}");
-            let notes: Vec<&str> = e.notes.iter().map(|n| n.text.as_str()).collect();
+            let notes: Vec<&str> = e.notes.iter().map(|n| &*n.text).collect();
             assert_eq!(notes.len(), 2, "{text:?}: {notes:?}");
             assert!(
                 notes[0].contains("changes the order in which an editor shows the text"),

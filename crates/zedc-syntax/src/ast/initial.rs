@@ -673,7 +673,7 @@ fn dot_repair(fixes: &[Fix], carry: Option<(&str, &str)>) -> Note {
     parts.extend(carry.map(|(code, written)| format!("`{code}` in place of `{written}`")));
     Note {
         span: fixes[0].span,
-        text: format!("repair: {}", and_list(&parts)),
+        text: format!("repair: {}", and_list(&parts)).into(),
     }
 }
 
@@ -2323,7 +2323,7 @@ impl Builder<'_, '_> {
         };
         notes.push(Note {
             span: s.span,
-            text: repair,
+            text: repair.into(),
         });
         Error {
             row: Some(Row::InitialOutsideLoop),
@@ -2382,7 +2382,7 @@ impl Builder<'_, '_> {
             ),
             notes: vec![Note {
                 span: s.span,
-                text: repair,
+                text: repair.into(),
             }],
         }
     }
@@ -2594,11 +2594,12 @@ impl Builder<'_, '_> {
                          `{name}[t-1]`, which at step 0 is the entry `{name}[-1]`; the `initial` \
                          statement without keys gives that entry, so `with {CARRY_FORWARD}` \
                          stands on it"
-                    ),
+                    )
+                    .into(),
                 },
                 Note {
                     span: s.span,
-                    text: format!("repair: `{code}`, {why}"),
+                    text: format!("repair: `{code}`, {why}").into(),
                 },
             ],
         }
@@ -2749,7 +2750,8 @@ impl Builder<'_, '_> {
                         "the `{n}` of `{} …` hides the `{n}` of `{far} …`, so the write names \
                          only the nearer one; the repair names it `{new}`",
                         self.text_of(sq.head).trim_end()
-                    ),
+                    )
+                    .into(),
                 });
                 new_of.insert((qi, n), new);
             }
@@ -2823,14 +2825,15 @@ impl Builder<'_, '_> {
         let mut notes = vec![
             Note {
                 span: w.span,
-                text: self.several_text(s, scopes, write, false),
+                text: self.several_text(s, scopes, write, false).into(),
             },
             Note {
                 span: sc.shown,
                 text: format!(
                     "a step writes `{target}` at most once, even where the values agree, with or \
                      without `with {CARRY_FORWARD}`"
-                ),
+                )
+                .into(),
             },
         ];
         let keyed = self.keyed(w, scopes, &used, &mut taken, Vec::new());
@@ -2872,7 +2875,8 @@ impl Builder<'_, '_> {
                 text: format!(
                     "repair: `{first}` before the {what} writes `{target}` once on a step, and \
                      each key reads the result"
-                ),
+                )
+                .into(),
             });
         }
         if let Some(k) = &keyed {
@@ -2884,7 +2888,8 @@ impl Builder<'_, '_> {
                     "repair: `{}` writes one entry of `{name}` for each key of {keys}, when \
                      `{name}` has an entry for each",
                     k.entry
-                ),
+                )
+                .into(),
             });
         }
         Error {
@@ -2956,7 +2961,8 @@ impl Builder<'_, '_> {
                  defined on every frame, so each step updates it on every path; `with \
                  {CARRY_FORWARD}` on its `initial` statement keeps its value on a step that does \
                  not update it"
-            ),
+            )
+            .into(),
         }];
         for u in updates {
             let call = self.text_of(u.span);
@@ -2966,11 +2972,12 @@ impl Builder<'_, '_> {
                 text: format!(
                     "`{call}` updates `{name}` only on the paths through {}",
                     b.what.part()
-                ),
+                )
+                .into(),
             });
             notes.push(Note {
                 span: b.span,
-                text: format!("the {} that `{call}` stands in", b.what.name()),
+                text: format!("the {} that `{call}` stands in", b.what.name()).into(),
             });
         }
         notes.extend(self.dot_notes(name, &fixes));
@@ -3007,7 +3014,13 @@ impl Builder<'_, '_> {
                     "repair: `{code}` in place of `{tw}`, so a step that does not update \
                      `{name}` keeps its value"
                 );
-                (code, Note { span: t.span, text })
+                (
+                    code,
+                    Note {
+                        span: t.span,
+                        text: text.into(),
+                    },
+                )
             }
             None => {
                 let code = format!("initial {name} = … with {CARRY_FORWARD};");
@@ -3016,7 +3029,13 @@ impl Builder<'_, '_> {
                      `{name}` before step 0 in place of `…`, so a step that does not update \
                      `{name}` keeps its value"
                 );
-                (code, Note { span: at, text })
+                (
+                    code,
+                    Note {
+                        span: at,
+                        text: text.into(),
+                    },
+                )
             }
         };
         notes.push(note);
@@ -3026,7 +3045,8 @@ impl Builder<'_, '_> {
                 "repair: update `{name}` on every path, with the update written where the branch \
                  is chosen and `{name}` itself on the paths that leave it as it is: `{name}' = if \
                  … {{ … }} else {{ {name} }};`"
-            ),
+            )
+            .into(),
         });
         Error {
             row: Some(Row::NotEveryPath),
@@ -3057,13 +3077,14 @@ impl Builder<'_, '_> {
             notes: vec![
                 Note {
                     span: at,
-                    text: format!("the loop, which updates `{name}`"),
+                    text: format!("the loop, which updates `{name}`").into(),
                 },
                 Note {
                     span: s.span,
                     text: format!(
                         "repair: `initial {written}`, the entry given once, before the first step"
-                    ),
+                    )
+                    .into(),
                 },
             ],
         }
@@ -3091,7 +3112,7 @@ impl Builder<'_, '_> {
         let fixes = self.dot_fixes(name, step, stmts);
         let mut notes = vec![Note {
             span: at,
-            text: format!("the loop, none of whose statements updates `{name}`"),
+            text: format!("the loop, none of whose statements updates `{name}`").into(),
         }];
         notes.extend(self.dot_notes(name, &fixes));
         // The repair by the `.` calls: the calls written with `*.`, and when they leave some path
@@ -3116,7 +3137,8 @@ impl Builder<'_, '_> {
                     text: format!(
                         "the `initial` statement of `{name}`, which gives it a value before step \
                          0 only"
-                    ),
+                    )
+                    .into(),
                 },
             );
             notes.push(dot_repair(
@@ -3159,14 +3181,16 @@ impl Builder<'_, '_> {
             span: s.span,
             text: format!(
                 "repair: add the update the loop is meant to make, `{name}' = …;`, to its body"
-            ),
+            )
+            .into(),
         });
         notes.push(Note {
             span: at,
             text: format!(
                 "repair: `{name} = {value};` written before the loop, and `{written}` deleted, for \
                  a value that does not change"
-            ),
+            )
+            .into(),
         });
         Error {
             row: Some(Row::InitialNotUpdated),
@@ -3270,7 +3294,7 @@ impl Builder<'_, '_> {
                     let used = used.get_or_insert_with(|| self.names_around(step.node));
                     let mut notes = vec![Note {
                         span: d.span,
-                        text: self.several_text(c, scopes, &star, true),
+                        text: self.several_text(c, scopes, &star, true).into(),
                     }];
                     let hoist = self.hoist_before(c, scopes).and_then(|st| {
                         let then = |cut: Span, with: &str| {
@@ -3372,7 +3396,8 @@ impl Builder<'_, '_> {
                     "`{}` does not update `{name}`: a `.` call never updates its receiver, and \
                      `{}` does{paths}",
                     f.call, f.star
-                ),
+                )
+                .into(),
             });
             out.extend(f.notes.iter().cloned());
         }
@@ -3403,7 +3428,7 @@ impl Builder<'_, '_> {
         let mut notes = vec![
             Note {
                 span,
-                text: format!("the read of `{n}`, {what}"),
+                text: format!("the read of `{n}`, {what}").into(),
             },
             Note {
                 span: at,
@@ -3414,7 +3439,8 @@ impl Builder<'_, '_> {
                 text: format!(
                     "repair: compute the start value before the loop, `{name}0 = …;` above it, \
                      and write `initial {name} = {name}0;`"
-                ),
+                )
+                .into(),
             },
         ];
         // The start value of the variable read, when an `initial` statement of this body gives
@@ -3435,7 +3461,8 @@ impl Builder<'_, '_> {
                     "repair: `{}{value}{v}{rest}`, the start value of `{base}` written in place \
                      of `{n}`",
                     &self.text[s.span.start..i.value.span.start]
-                ),
+                )
+                .into(),
             });
         }
         Error {
@@ -3710,11 +3737,11 @@ impl Builder<'_, '_> {
         let mut notes = vec![
             Note {
                 span: a.span,
-                text: format!("the first site, which gives {}", self.gives(a, name)),
+                text: format!("the first site, which gives {}", self.gives(a, name)).into(),
             },
             Note {
                 span: b.span,
-                text: format!("the second site, which gives {}", self.gives(b, name)),
+                text: format!("the second site, which gives {}", self.gives(b, name)).into(),
             },
         ];
         // Where the statement deleted carries `name` forward and the one kept has no keys, the
@@ -3737,7 +3764,8 @@ impl Builder<'_, '_> {
                 "repair: keep the first, {}, and {}",
                 kept(a, b),
                 self.drop_name(b, name, "this one")
-            ),
+            )
+            .into(),
         });
         notes.push(Note {
             span: a.span,
@@ -3745,13 +3773,14 @@ impl Builder<'_, '_> {
                 "repair: keep the second, {}, and {}",
                 kept(b, a),
                 self.drop_name(a, name, "this one")
-            ),
+            )
+            .into(),
         });
         for (e, other, s) in [(eb, ea, b), (ea, eb, a)] {
             if let Some(text) = self.narrowed(e, other, s) {
                 notes.push(Note {
                     span: s.span,
-                    text: format!("repair: {text}"),
+                    text: format!("repair: {text}").into(),
                 });
             }
         }

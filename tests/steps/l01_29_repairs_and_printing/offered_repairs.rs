@@ -106,7 +106,7 @@ fn repaired(src: &str) -> Vec<(String, String)> {
                 continue;
             };
             let fixed = format!("{}{text}{}", &src[..note.span.start], &src[note.span.end..]);
-            out.push((fixed, note.text.clone()));
+            out.push((fixed, note.text.to_string()));
         }
         // Each fix of the menu is the corrected source line, then four spaces or more, then
         // what the program holds; it replaces the source line most like it.
@@ -439,7 +439,7 @@ fn a_call_that_refuses_a_literal_and_another_argument_is_one_error() {
         let e = &i.errors[0];
         assert!(e.message.starts_with(head), "{src}\n{}", e.message);
         let steps: Vec<&str> = (e.notes.iter())
-            .map(|n| n.text.as_str())
+            .map(|n| &*n.text)
             .filter(|t| t.starts_with("The suffix makes the literal"))
             .collect();
         let want: Vec<String> = (lits.iter())

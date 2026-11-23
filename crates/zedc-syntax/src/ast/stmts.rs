@@ -881,7 +881,7 @@ impl Builder<'_, '_> {
                         _ => {
                             let repair = |f: &str| Note {
                                 span,
-                                text: format!("repair: `main::{f} = …`"),
+                                text: format!("repair: `main::{f} = …`").into(),
                             };
                             return Err(Error {
                                 row: None,
@@ -906,7 +906,8 @@ impl Builder<'_, '_> {
                         span: twice,
                         text: format!(
                             "`{port}` is first given here; repair: remove one of the two"
-                        ),
+                        )
+                        .into(),
                     }],
                 });
             }
@@ -944,7 +945,7 @@ impl Builder<'_, '_> {
                 },
                 Note {
                     span: facet,
-                    text: format!("repair: remove the facet, `{header}`"),
+                    text: format!("repair: remove the facet, `{header}`").into(),
                 },
                 Note {
                     span: facet,
@@ -952,7 +953,8 @@ impl Builder<'_, '_> {
                         "repair: write the facet on `main`, `main(m: MainArgs) -> int with \
                          handles(#sigint)`, which reads `m.signals` and passes the entries to \
                          `{name}`"
-                    ),
+                    )
+                    .into(),
                 },
             ],
         }
@@ -1150,7 +1152,7 @@ impl Builder<'_, '_> {
             notes: (notes.iter())
                 .map(|text| Note {
                     span,
-                    text: text.clone(),
+                    text: text.clone().into(),
                 })
                 .collect(),
         };

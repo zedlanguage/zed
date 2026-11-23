@@ -84,7 +84,7 @@ fn an_argument_named_twice_is_an_error_at_the_second() {
     let [first] = &err.notes[..] else {
         panic!("one note: {:?}", err.notes)
     };
-    assert_eq!(first.text, "the first argument named `w`");
+    assert_eq!(&*first.text, "the first argument named `w`");
     assert_eq!(first.span.start, 5);
 }
 

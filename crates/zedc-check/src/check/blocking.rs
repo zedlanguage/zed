@@ -975,7 +975,7 @@ pub fn marked_errors(
             };
             notes.push(Note {
                 span: at,
-                text: says,
+                text: says.into(),
             });
             shown.insert(g, at);
             let Cause::Calls { callee, .. } = cause else {
@@ -988,7 +988,8 @@ pub fn marked_errors(
                     text: format!(
                         "{} is marked `@nonblocking` too, and its own error shows how it can block",
                         name(g)
-                    ),
+                    )
+                    .into(),
                 });
                 break;
             }
@@ -998,7 +999,8 @@ pub fn marked_errors(
                     text: format!(
                         "{} can block: another error shows the rest of the path from here",
                         name(g)
-                    ),
+                    )
+                    .into(),
                 });
                 break;
             }
@@ -1008,7 +1010,7 @@ pub fn marked_errors(
         }
         notes.push(Note {
             span: annot,
-            text: format!("repair: remove `@nonblocking` before {}", name(f)),
+            text: format!("repair: remove `@nonblocking` before {}", name(f)).into(),
         });
         notes.push(Note {
             span: annot,
@@ -1016,7 +1018,8 @@ pub fn marked_errors(
                 "repair: move the blocking operation to a caller of {}, and pass in what it \
                  reads or gives",
                 name(f)
-            ),
+            )
+            .into(),
         });
         out.push((
             annot,

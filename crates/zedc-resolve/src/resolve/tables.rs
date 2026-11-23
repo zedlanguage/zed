@@ -748,7 +748,7 @@ impl<'a> Tables<'a> {
                 };
                 notes.push(Note {
                     span: shown(e),
-                    text: format!("{who} {verb} {whom} here"),
+                    text: format!("{who} {verb} {whom} here").into(),
                 });
             }
         }
@@ -773,7 +773,7 @@ impl<'a> Tables<'a> {
             });
             notes.push(Note {
                 span: at,
-                text: self.step_repair(items[start], cycle.len() == 1),
+                text: self.step_repair(items[start], cycle.len() == 1).into(),
             });
             // A value read where another binder of the same name was meant.
             let mut renamed: HashSet<&str> = HashSet::new();
@@ -791,7 +791,8 @@ impl<'a> Tables<'a> {
                             text: format!(
                                 "repair: to read the `{name}` defined here, give the `{name}` \
                                  that reads its own value another name"
-                            ),
+                            )
+                            .into(),
                         });
                     }
                 }
@@ -803,7 +804,8 @@ impl<'a> Tables<'a> {
                     "repair: to define a recursive function, write {each}{first} as a function \
                      with a parameter. Recursion is part of the Zed language but is not \
                      supported by this version of zedc."
-                ),
+                )
+                .into(),
             });
             CycleReport {
                 span: at,

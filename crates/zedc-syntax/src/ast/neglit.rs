@@ -67,26 +67,28 @@ impl Builder<'_, '_> {
             notes: vec![
                 Note {
                     span: lit,
-                    text: format!("the chain starts at the numeric literal `{num}`"),
+                    text: format!("the chain starts at the numeric literal `{num}`").into(),
                 },
                 Note {
                     span: chain,
                     text: format!(
                         "the postfix chain `{chain_text}` binds tighter than a prefix `-` \
                          (precedence tiers 1 and 3)"
-                    ),
+                    )
+                    .into(),
                 },
                 Note {
                     span: whole,
-                    text: format!("so the `-` applies to the whole chain: `{last}`{w_last}"),
+                    text: format!("so the `-` applies to the whole chain: `{last}`{w_last}").into(),
                 },
                 Note {
                     span: whole,
-                    text: format!("repair: `{first}`, the chain started at `-{num}`{w_first}"),
+                    text: format!("repair: `{first}`, the chain started at `-{num}`{w_first}")
+                        .into(),
                 },
                 Note {
                     span: whole,
-                    text: format!("repair: `{last}`, the meaning as written{w_last}"),
+                    text: format!("repair: `{last}`, the meaning as written{w_last}").into(),
                 },
             ],
         })

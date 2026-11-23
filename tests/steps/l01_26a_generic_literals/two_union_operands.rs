@@ -157,7 +157,7 @@ fn whole_parts_of_two_carriers_are_named_in_the_headline() {
     );
     assert!(
         (errors[0].notes.iter())
-            .any(|n| n.text == "repair: write `rat(n)`; the checker accepts that"),
+            .any(|n| &*n.text == "repair: write `rat(n)`; the checker accepts that"),
         "{:?}",
         errors[0].notes
     );

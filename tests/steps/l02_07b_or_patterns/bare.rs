@@ -20,7 +20,7 @@ fn refused(src: &str, pattern: &str, what: &str, repair: &str) {
         format!("`{pattern}` is {what}; write it in parentheses. Try `{repair}` instead."),
         "{src}"
     );
-    let notes: Vec<&str> = e.notes.iter().map(|n| n.text.as_str()).collect();
+    let notes: Vec<&str> = e.notes.iter().map(|n| &*n.text).collect();
     assert!(
         notes.contains(&format!("repair: `{repair}`").as_str()),
         "{src}: {notes:?}"
@@ -201,7 +201,7 @@ fn an_or_pattern_of_other_patterns_after_else_is_refused_with_the_match_it_stand
             ),
             "{src}"
         );
-        let notes: Vec<&str> = e.notes.iter().map(|n| n.text.as_str()).collect();
+        let notes: Vec<&str> = e.notes.iter().map(|n| &*n.text).collect();
         assert!(
             notes.contains(&format!("repair: `{repair}`").as_str()),
             "{src}: {notes:?}"

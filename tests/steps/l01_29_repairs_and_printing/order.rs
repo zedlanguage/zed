@@ -246,7 +246,13 @@ impl Permuted {
             steps: d
                 .steps
                 .iter()
-                .map(|s| (self.place(&lines, s.line, s.col), s.text.clone(), s.width))
+                .map(|s| {
+                    (
+                        self.place(&lines, s.line, s.col),
+                        s.text.to_string(),
+                        s.width,
+                    )
+                })
                 .collect(),
         };
         let mut db = Db::new();

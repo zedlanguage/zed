@@ -295,7 +295,7 @@ impl Builder<'_, '_> {
                         notes: vec![
                             Note {
                                 span: named.span,
-                                text: format!("the first named parameter, `{}`", named.name),
+                                text: format!("the first named parameter, `{}`", named.name).into(),
                             },
                             Note {
                                 span: decl,
@@ -307,7 +307,8 @@ impl Builder<'_, '_> {
                                     "repair: declare `{}` before `{}`, the positional parameters \
                                      first",
                                     p.name, named.name
-                                ),
+                                )
+                                .into(),
                             },
                         ],
                     });

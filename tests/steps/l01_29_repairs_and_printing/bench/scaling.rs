@@ -130,6 +130,17 @@ fn the_carried_fixes_of_many_arguments_scale() {
 }
 
 #[test]
+fn the_fixes_of_many_arguments_not_checked_apart_scale() {
+    let n = 200;
+    let srcs = scaling::inputs(n, carried_fixes_not_apart);
+    scaling::check(
+        "checking the fixes of a call of n arguments at parameters not checked apart",
+        n,
+        |k| the_fixes_of_arguments_not_apart(&srcs[&k], k),
+    );
+}
+
+#[test]
 fn many_unfixed_decimal_arguments_scale() {
     let n = 3900;
     let srcs = scaling::inputs(n, unfixed_decimal_arguments);

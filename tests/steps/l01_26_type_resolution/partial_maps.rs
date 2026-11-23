@@ -826,7 +826,7 @@ fn a_read_outside_the_keys_names_the_map_type_with_a_stored_not_found() {
             "repair: declare the map with the wider keys `{declared}`, and handle `#notFound` \
              where the key is missing"
         );
-        let notes: Vec<&str> = errors[0].notes.iter().map(|n| n.text.as_str()).collect();
+        let notes: Vec<&str> = errors[0].notes.iter().map(|n| &*n.text).collect();
         assert!(notes.contains(&repair.as_str()), "{src}: {notes:#?}");
     }
 }

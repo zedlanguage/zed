@@ -567,7 +567,7 @@ impl<'a, 's> Builder<'a, 's> {
             notes: (repair.into_iter())
                 .map(|r| Note {
                     span,
-                    text: format!("repair: {r}"),
+                    text: format!("repair: {r}").into(),
                 })
                 .collect(),
         };
@@ -958,7 +958,7 @@ impl<'a, 's> Builder<'a, 's> {
                 ),
                 notes: vec![Note {
                     span: first,
-                    text: format!("the first {what} `{name}`"),
+                    text: format!("the first {what} `{name}`").into(),
                 }],
             });
         }
@@ -995,7 +995,7 @@ impl<'a, 's> Builder<'a, 's> {
                     notes: vec![
                         Note {
                             span: at,
-                            text: format!("the first named argument, `{word}`"),
+                            text: format!("the first named argument, `{word}`").into(),
                         },
                         Note {
                             span: call,
@@ -1006,7 +1006,8 @@ impl<'a, 's> Builder<'a, 's> {
                             text: format!(
                                 "repair: pass this argument before `{word}`, the positional \
                                  arguments first"
-                            ),
+                            )
+                            .into(),
                         },
                     ],
                 });
@@ -1050,7 +1051,7 @@ impl<'a, 's> Builder<'a, 's> {
                     ),
                     notes: vec![Note {
                         span: *first,
-                        text: format!("the first argument named `{word}`"),
+                        text: format!("the first argument named `{word}`").into(),
                     }],
                 });
             }
@@ -1172,7 +1173,10 @@ fn signals_without_handles(text: &str, m: &str, span: Span, main: &MainBody) -> 
         true => format!("{header} with handles(#sigint)"),
         false => format!("{header} -> int with handles(#sigint)"),
     };
-    let note = |span: Span, text: String| Note { span, text };
+    let note = |span: Span, text: String| Note {
+        span,
+        text: text.into(),
+    };
     Error {
         row: Some(Row::SignalsReadWithoutHandles),
         menu: String::new(),

@@ -370,7 +370,7 @@ impl Pins {
                     ),
                     notes: vec![Note {
                         span: at,
-                        text: format!("the {kind} `{key}` is first pinned here"),
+                        text: format!("the {kind} `{key}` is first pinned here").into(),
                     }],
                 });
                 continue;

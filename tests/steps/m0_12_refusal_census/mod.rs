@@ -52,11 +52,7 @@ fn refusals(origin: &str, text: &str, out: &mut String) {
         }
         let mut reason = d.message.clone();
         if kinds::of(&d.message).is_empty() {
-            let parts = d
-                .steps
-                .iter()
-                .map(|s| s.text.as_str())
-                .chain([d.menu.as_str()]);
+            let parts = d.steps.iter().map(|s| &*s.text).chain([d.menu.as_str()]);
             for part in parts.filter(|p| !kinds::of(p).is_empty()) {
                 reason.push_str(" | ");
                 reason.push_str(part);

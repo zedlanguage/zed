@@ -196,7 +196,8 @@ fn every_construct_with_paths_is_checked() {
         assert!(
             e.notes
                 .iter()
-                .any(|n| n.text == format!("`c*.a` updates `c` only on the paths through {part}")),
+                .any(|n| n.text
+                    == format!("`c*.a` updates `c` only on the paths through {part}").into()),
             "{src}: {e:?}"
         );
         accepted(&t_loop(&["initial c = 0 with carryForward;", update]));
@@ -442,9 +443,8 @@ fn an_update_of_an_entry_counts() {
         assert_eq!(e.row, Some(Row::NotEveryPath), "{src}: {e:?}");
         assert_eq!(&src[e.span.start..e.span.end], at, "{src}");
         assert!(
-            e.notes.iter().any(
-                |n| n.text == format!("`{at}` updates `grid` only on the paths through {part}")
-            ),
+            e.notes.iter().any(|n| n.text
+                == format!("`{at}` updates `grid` only on the paths through {part}").into()),
             "{src}: {e:?}"
         );
         accepted(&t_loop(&["initial grid = 0 with carryForward;", update]));
@@ -501,7 +501,8 @@ fn an_update_of_a_field_counts() {
         assert!(
             e.notes
                 .iter()
-                .any(|n| n.text == format!("`{at}` updates `p` only on the paths through {part}")),
+                .any(|n| n.text
+                    == format!("`{at}` updates `p` only on the paths through {part}").into()),
             "{src}: {e:?}"
         );
         accepted(&t_loop(&["initial p = 0 with carryForward;", update]));

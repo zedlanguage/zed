@@ -131,11 +131,11 @@ pub fn ports(t: &Tables<'_>) -> Ports {
                     vec![
                         Note {
                             span: p.span,
-                            text: format!("the parameter `{name}`"),
+                            text: format!("the parameter `{name}`").into(),
                         },
                         Note {
                             span: p.span,
-                            text: format!("repair: `{name}: Lines`"),
+                            text: format!("repair: `{name}: Lines`").into(),
                         },
                     ],
                 ))
@@ -244,7 +244,8 @@ pub fn ports(t: &Tables<'_>) -> Ports {
                             span: first_push.get(&a.param).copied().unwrap_or(a.span),
                             text: format!(
                                 "`{p}` is an output port of `{callee}`, pushed to and never read"
-                            ),
+                            )
+                            .into(),
                         },
                         Note {
                             span: a.span,
@@ -270,7 +271,8 @@ pub fn ports(t: &Tables<'_>) -> Ports {
                             text: format!(
                                 "`{callee}` never pushes to `{p}`, as `{p} <- lines;`, so `{p}` \
                                  is a value it reads"
-                            ),
+                            )
+                            .into(),
                         },
                         Note {
                             span: a.span,
@@ -278,7 +280,8 @@ pub fn ports(t: &Tables<'_>) -> Ports {
                                 "repair: push to `{p}` in `{callee}`, as `{p} <- lines;`, or \
                                  pass `{callee}` the lines to write and push them to `{name}` \
                                  here"
-                            ),
+                            )
+                            .into(),
                         },
                     ],
                 ));
@@ -311,7 +314,7 @@ pub fn ports(t: &Tables<'_>) -> Ports {
             let notes = match first_push.get(&b) {
                 Some(&at) => vec![Note {
                     span: at,
-                    text: format!("`{name}` is pushed to here"),
+                    text: format!("`{name}` is pushed to here").into(),
                 }],
                 None => Vec::new(),
             };
@@ -321,7 +324,8 @@ pub fn ports(t: &Tables<'_>) -> Ports {
                 text: format!(
                     "repair: push to `{name}`, as `{name} <- lines;`, or pass it whole to a \
                      parameter that is pushed to"
-                ),
+                )
+                .into(),
             });
             // The builder's guidance for a read of an output of `main`, which it rejects
             // wherever the read is not a whole argument.
@@ -332,7 +336,8 @@ pub fn ports(t: &Tables<'_>) -> Ports {
                         "repair: to read the program's input, read `{m}.stdin`, `{m}.args` or \
                          `{m}.env`; to use lines this program computes, read them from the \
                          binding that holds them before it pushes them"
-                    ),
+                    )
+                    .into(),
                 });
             }
             errors.push((
@@ -354,7 +359,7 @@ pub fn ports(t: &Tables<'_>) -> Ports {
                 ),
                 vec![Note {
                     span,
-                    text: format!("repair: call it, as `{name}(…, {p}: m.stdout)`"),
+                    text: format!("repair: call it, as `{name}(…, {p}: m.stdout)`").into(),
                 }],
             ));
         }
@@ -393,7 +398,8 @@ pub fn ports(t: &Tables<'_>) -> Ports {
                     span: row.span,
                     text: format!(
                         "repair: test a function that computes the lines `{name}` pushes"
-                    ),
+                    )
+                    .into(),
                 }],
             ));
         }

@@ -617,7 +617,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut notes = self.derive(&[at]);
         notes.push(Note {
             span: call.unwrap_or(at),
-            text: repair,
+            text: repair.into(),
         });
         self.error_with(at, message, notes);
     }
@@ -998,7 +998,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             ),
             None => "this separator is always the empty string".to_string(),
         };
-        let mut notes = vec![Note { span: at, text }];
+        let mut notes = vec![Note {
+            span: at,
+            text: text.into(),
+        }];
         notes.extend(self.derive(&[at]));
         let menu = rewrites.into_iter().chain([
             "repair: write `#emptySeparator` in place of this call, where the failure is \
@@ -1008,7 +1011,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                  be reached"
                 .to_string(),
         ]);
-        notes.extend(menu.map(|text| Note { span, text }));
+        notes.extend(menu.map(|text| Note {
+            span,
+            text: text.into(),
+        }));
         self.rejects_with(
             Row::AlwaysFails,
             span,
@@ -2245,14 +2251,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut notes = self.derive(&[span]);
         notes.push(Note {
             span: zip,
-            text: format!("`{p}` and `{q}` are zipped here"),
+            text: format!("`{p}` and `{q}` are zipped here").into(),
         });
         let repair = format!(
             "repair: pass values with the same keys, as `{x}` and `{x}.map(f)`, or pair the \
              ranks both lists hold inside `{}`",
             f.name
         );
-        notes.push(Note { span, text: repair });
+        notes.push(Note {
+            span,
+            text: repair.into(),
+        });
         self.error_with(span, message, notes);
     }
 

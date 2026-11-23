@@ -236,7 +236,7 @@ fn initial_is_a_reserved_word() {
         (e.row, e.message.as_str(), e.span.start),
         (Some(Row::SyntaxError), "Syntax error at `_`.", 8)
     );
-    assert_eq!(e.notes[0].text, "expected a name");
+    assert_eq!(e.notes[0].text, "expected a name".into());
 }
 
 /// The forms `with initial` and a `with` clause on a statement of a loop are gone.

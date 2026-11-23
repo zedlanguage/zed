@@ -653,7 +653,7 @@ impl<'a, 's> Builder<'a, 's> {
                     ),
                     notes: vec![Note {
                         span: first,
-                        text: format!("the first update of `{path}`"),
+                        text: format!("the first update of `{path}`").into(),
                     }],
                 });
             }
@@ -838,7 +838,7 @@ impl<'a, 's> Builder<'a, 's> {
                 ),
                 notes: vec![Note {
                     span: self.span(first),
-                    text: format!("the first entry, a {that}"),
+                    text: format!("the first entry, a {that}").into(),
                 }],
             });
         }
@@ -972,22 +972,22 @@ impl From<crate::lex::Error> for Error {
             crate::lex::ErrorKind::TextDirection { c, repair, .. } => {
                 let mut notes = vec![Note {
                     span: e.span,
-                    text: crate::lex::text_direction_note(*c),
+                    text: crate::lex::text_direction_note(*c).into(),
                 }];
                 notes.extend(repair.iter().map(|r| Note {
                     span: e.span,
-                    text: format!("repair: `{r}`"),
+                    text: format!("repair: `{r}`").into(),
                 }));
                 (notes, Some(Row::BidiControlInText))
             }
             crate::lex::ErrorKind::LeadingZero { decimal, octal, .. } => {
                 let mut notes = vec![Note {
                     span: e.span,
-                    text: crate::lex::LEADING_ZERO_NOTE.to_string(),
+                    text: crate::lex::LEADING_ZERO_NOTE.to_string().into(),
                 }];
                 notes.extend(std::iter::once(decimal).chain(octal).map(|r| Note {
                     span: e.span,
-                    text: format!("repair: `{r}`"),
+                    text: format!("repair: `{r}`").into(),
                 }));
                 (notes, Some(Row::LeadingZero))
             }
@@ -1033,17 +1033,15 @@ impl Error {
             }
             let mut notes = vec![Note {
                 span: e.span,
-                text: message,
+                text: message.into(),
             }];
-            notes.extend(
-                e.recovery
-                    .notes
-                    .into_iter()
-                    .map(|(span, text)| Note { span, text }),
-            );
+            notes.extend(e.recovery.notes.into_iter().map(|(span, text)| Note {
+                span,
+                text: text.into(),
+            }));
             notes.extend(repairs.into_iter().map(|(span, r)| Note {
                 span,
-                text: format!("repair: `{r}`"),
+                text: format!("repair: `{r}`").into(),
             }));
             return Error {
                 menu: String::new(),
@@ -1060,7 +1058,10 @@ impl Error {
             notes: c
                 .notes
                 .into_iter()
-                .map(|(span, text)| Note { span, text })
+                .map(|(span, text)| Note {
+                    span,
+                    text: text.into(),
+                })
                 .collect(),
             row: c.row,
         }

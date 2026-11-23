@@ -22,7 +22,7 @@ fn errors(src: &str) -> Vec<(Option<Row>, String, Vec<String>)> {
             (
                 e.row,
                 e.message,
-                e.notes.into_iter().map(|n| n.text).collect(),
+                e.notes.into_iter().map(|n| n.text.to_string()).collect(),
             )
         })
         .collect()

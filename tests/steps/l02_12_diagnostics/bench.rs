@@ -152,7 +152,7 @@ fn the_nearest_names_of_n_misspelled_types_among_n_types_scale() {
         assert_eq!(unknown.len(), n);
         assert_eq!(
             unknown[n - 1].notes[0].text,
-            format!("repair: `Type{}`", n - 1)
+            format!("repair: `Type{}`", n - 1).into()
         );
     });
 }

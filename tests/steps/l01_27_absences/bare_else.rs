@@ -510,7 +510,7 @@ fn a_bare_else_in_a_lambda_checked_at_two_arrows_is_refused_once_with_the_union_
     // The first note gives the operand's type at the intersection, the union; then each arrow's
     // type with its derivation, sorted by the type, each note once.
     let heads: Vec<&str> = (e12[0].notes.iter())
-        .map(|n| n.text.as_str())
+        .map(|n| &*n.text)
         .filter(|t| t.starts_with("`(s(p, true) + q + r) : ") || t.starts_with("at an arrow"))
         .collect();
     assert_eq!(

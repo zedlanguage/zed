@@ -249,7 +249,7 @@ pub fn manifest(text: &str) -> Result<Manifest, Vec<Error>> {
                 ),
                 notes: vec![Note {
                     span: first,
-                    text: format!("`{name}` is first bound here"),
+                    text: format!("`{name}` is first bound here").into(),
                 }],
             });
             continue;

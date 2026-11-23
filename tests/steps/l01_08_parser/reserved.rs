@@ -64,7 +64,7 @@ fn refused(src: &str, word: &str, at: usize, message: &str, repair: &str) {
     assert_eq!(e.message, message, "{src}");
     assert_eq!(&src[e.span.start..e.span.end], word, "{src}");
     assert_eq!(e.span.start, at, "{src}");
-    let notes: Vec<&str> = e.notes.iter().map(|n| n.text.as_str()).collect();
+    let notes: Vec<&str> = e.notes.iter().map(|n| &*n.text).collect();
     assert_eq!(notes, notes_of(word, what(word), repair), "{src}");
     for n in &e.notes {
         assert_eq!(n.span, e.span, "{src}");
@@ -279,7 +279,7 @@ fn every_keyword_has_its_message() {
             "{src}"
         );
         assert_eq!(e.span.start, 0, "{src}");
-        let notes: Vec<&str> = e.notes.iter().map(|n| n.text.as_str()).collect();
+        let notes: Vec<&str> = e.notes.iter().map(|n| &*n.text).collect();
         assert_eq!(
             notes,
             notes_of(word, what, &format!("repair: `{like} = 1;`")),

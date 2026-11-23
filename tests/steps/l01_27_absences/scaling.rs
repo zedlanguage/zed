@@ -137,7 +137,10 @@ pub(super) fn the_branches_check(u: &Ready, errors_expected: usize) {
     let found = errors(u);
     assert_eq!(found.len(), errors_expected, "{found:?}");
     if let Some(e) = found.first() {
-        assert_eq!(e.notes[0].text, "the loose failure #notFound enters here");
+        assert_eq!(
+            e.notes[0].text,
+            "the loose failure #notFound enters here".into()
+        );
     }
 }
 

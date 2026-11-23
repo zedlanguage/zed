@@ -28,7 +28,7 @@ fn refused(src: &str, written: &str, repaired: Option<&str>) {
         notes.push(format!("repair: `{r}`"));
     }
     assert_eq!(e.message, message, "{src}");
-    let got: Vec<&str> = e.notes.iter().map(|n| n.text.as_str()).collect();
+    let got: Vec<&str> = e.notes.iter().map(|n| &*n.text).collect();
     assert_eq!(got, notes, "{src}");
     if let Some(r) = repaired {
         let fixed = src.replacen(written, r, 1);

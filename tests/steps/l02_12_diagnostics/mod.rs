@@ -115,7 +115,7 @@ fn diagnostic(message: &str, source: &str, col: usize, width: usize) -> Diagnost
         steps: vec![Step {
             line: 1,
             col,
-            text: format!("step {ESC}[2J"),
+            text: format!("step {ESC}[2J").into(),
             source: source.into(),
             width,
         }],
@@ -152,7 +152,7 @@ fn every_text_of_a_diagnostic_prints_escaped_and_the_diagnostic_keeps_its_text()
     // source has it.
     assert_eq!(d.message, format!("message {ESC}[2J"));
     assert_eq!(&*d.steps[0].source, "x = \"a\rb\u{0}c\" ++ y;");
-    assert_eq!(d.steps[0].text, format!("step {ESC}[2J"));
+    assert_eq!(d.steps[0].text, format!("step {ESC}[2J").into());
 }
 
 #[test]

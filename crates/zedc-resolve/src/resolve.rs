@@ -1323,7 +1323,7 @@ impl Resolver<'_> {
                 let mut notes = vec![
                     Note {
                         span: first.span,
-                        text: note,
+                        text: note.into(),
                     },
                     Note {
                         span,
@@ -1411,7 +1411,7 @@ impl Resolver<'_> {
                     notes: vec![
                         Note {
                             span: self.out.binders[first].span,
-                            text: format!("the binding of `{name}` the import would hide"),
+                            text: format!("the binding of `{name}` the import would hide").into(),
                         },
                         Note {
                             span: self.out.binders[first].span,
@@ -1543,7 +1543,8 @@ impl Resolver<'_> {
                 text: format!(
                     "this import brings `{name}` in from the unit `{}`",
                     self.out.imports[&i]
-                ),
+                )
+                .into(),
             })
             .into();
         self.errors.push(Error {
@@ -1654,18 +1655,18 @@ impl Resolver<'_> {
             let mut notes = vec![
                 Note {
                     span: used,
-                    text: rule,
+                    text: rule.into(),
                 },
                 Note {
                     span: used,
-                    text: format!("`{name}` is used here, above its definition"),
+                    text: format!("`{name}` is used here, above its definition").into(),
                 },
                 Note {
                     span: d,
                     text: if block {
-                        format!("the definition of `{name}`, below its first use")
+                        format!("the definition of `{name}`, below its first use").into()
                     } else {
-                        format!("the {what} `{name}`, below its first use")
+                        format!("the {what} `{name}`, below its first use").into()
                     },
                 },
             ];
@@ -1726,7 +1727,10 @@ impl Resolver<'_> {
                              default or type uses it"
                         ),
                     };
-                    notes.push(Note { span: d, text });
+                    notes.push(Note {
+                        span: d,
+                        text: text.into(),
+                    });
                 }
                 // Functions that call each other: at the top level they may name each other in
                 // any order. Offered when neither reads a value of the block, and the top level
@@ -1754,7 +1758,10 @@ impl Resolver<'_> {
                              any order"
                         ),
                     };
-                    notes.push(Note { span: d, text });
+                    notes.push(Note {
+                        span: d,
+                        text: text.into(),
+                    });
                 }
             }
             errors.push(Error {
@@ -1943,7 +1950,7 @@ impl Resolver<'_> {
             message,
             notes: vec![Note {
                 span: import,
-                text: format!("the import of the unit `{unit}`"),
+                text: format!("the import of the unit `{unit}`").into(),
             }],
         });
         None
@@ -2033,7 +2040,7 @@ impl Resolver<'_> {
                 };
                 Note {
                     span,
-                    text: format!("repair: `{text}`"),
+                    text: format!("repair: `{text}`").into(),
                 }
             })
             .collect();
@@ -2621,9 +2628,12 @@ impl Resolver<'_> {
                 notes: vec![
                     Note {
                         span: import,
-                        text: format!("the import of the unit `{unit}`"),
+                        text: format!("the import of the unit `{unit}`").into(),
                     },
-                    Note { span, text: repair },
+                    Note {
+                        span,
+                        text: repair.into(),
+                    },
                 ],
             });
         }
@@ -3091,7 +3101,7 @@ impl Resolver<'_> {
         };
         let repair = Note {
             span: a.span,
-            text: repair,
+            text: repair.into(),
         };
         self.errors.push(Error {
             row: Some(Row::BlockingWritten),
@@ -3322,13 +3332,14 @@ impl Resolver<'_> {
                     text: format!(
                         "`{name}` is a value the program computes, and a test gives a port its \
                          value, never a value of Zed code"
-                    ),
+                    )
+                    .into(),
                 });
             }
             match f.main {
                 Some(_) => notes.extend(["stdin", "args", "env", "files"].map(|m| Note {
                     span: *span,
-                    text: format!("repair: `main::{m} = …`"),
+                    text: format!("repair: `main::{m} = …`").into(),
                 })),
                 None => notes.extend(
                     [
@@ -3336,7 +3347,10 @@ impl Resolver<'_> {
                             .to_string(),
                         format!("repair: `test {{ … }}`, the table without `{name} = …`"),
                     ]
-                    .map(|text| Note { span: *span, text }),
+                    .map(|text| Note {
+                        span: *span,
+                        text: text.into(),
+                    }),
                 ),
             }
             self.errors.push(Error {
@@ -3433,7 +3447,7 @@ impl Resolver<'_> {
                 Some((written, set)) if !set.contains(x) => {
                     notes.push(Note {
                         span: at,
-                        text: format!("the struct `{receiver}`, which has no field `{x}`"),
+                        text: format!("the struct `{receiver}`, which has no field `{x}`").into(),
                     });
                     match &written[..] {
                         [] => format!("`{receiver}` has no fields"),
@@ -3462,7 +3476,7 @@ impl Resolver<'_> {
             .unwrap_or("…");
         notes.push(Note {
             span,
-            text: format!("repair: `{x} = {value};`"),
+            text: format!("repair: `{x} = {value};`").into(),
         });
         self.errors.push(Error {
             row: Some(Row::GenerationPushNotReceiverField),
@@ -3570,7 +3584,8 @@ impl Resolver<'_> {
                     text: format!(
                         "repair: write the arm out once for each alternative: `{}`",
                         arms.collect::<Vec<_>>().join(", ")
-                    ),
+                    )
+                    .into(),
                 });
             }
             // The first alternative's name in each, where each binds one name and the rest of
@@ -3601,7 +3616,8 @@ impl Resolver<'_> {
                     span: o.span,
                     text: format!(
                         "repair: bind the same name in each alternative: `{head}{pattern}{tail}`"
-                    ),
+                    )
+                    .into(),
                 });
             }
         }
@@ -3640,11 +3656,11 @@ impl Resolver<'_> {
             notes: vec![
                 Note {
                     span: site,
-                    text: format!("{binder} `{name}`, which binds `{name}` in this scope"),
+                    text: format!("{binder} `{name}`, which binds `{name}` in this scope").into(),
                 },
                 Note {
                     span: at,
-                    text: repair,
+                    text: repair.into(),
                 },
             ],
         });
@@ -4300,7 +4316,7 @@ impl Resolver<'_> {
                             ),
                             notes: vec![Note {
                                 span: outer.span,
-                                text: format!("the first bound of `{}`", b.name),
+                                text: format!("the first bound of `{}`", b.name).into(),
                             }],
                         });
                         continue;
@@ -4476,7 +4492,7 @@ impl Resolver<'_> {
                 let binder = b.kind.binder();
                 let note = Note {
                     span: b.span,
-                    text: format!("{binder} `{n}`, which binds `{n}` here"),
+                    text: format!("{binder} `{n}`, which binds `{n}` here").into(),
                 };
                 return self.errors.push(Error {
                     row: None,
@@ -4632,7 +4648,7 @@ impl Resolver<'_> {
         let mut notes: Vec<Note> = first
             .map(|(s, _)| Note {
                 span: s,
-                text: format!("the first use of `{n}`"),
+                text: format!("the first use of `{n}`").into(),
             })
             .into_iter()
             .collect();
@@ -4758,7 +4774,8 @@ impl Resolver<'_> {
             text: format!(
                 "a capital letter alone, or followed only by digits, as `{base}`, names a type \
                  variable wherever it is written, so it cannot name {binder}"
-            ),
+            )
+            .into(),
         }];
         let lower = own.to_ascii_lowercase();
         match kind {
@@ -4767,7 +4784,8 @@ impl Resolver<'_> {
                 text: format!(
                     "repair: give {binder} a longer name, one that is not a capital letter \
                      alone or followed only by digits"
-                ),
+                )
+                .into(),
             }),
             // DESIGN.md gives no menu for a module; the qualifier is renamed with `as`.
             Kind::Unit => notes.push(Note {
@@ -4778,13 +4796,14 @@ impl Resolver<'_> {
             }),
             _ if self.find(&lower).is_none() => notes.push(Note {
                 span: site,
-                text: format!("repair: `{}`", self.renamed(own, &lower, at, site)),
+                text: format!("repair: `{}`", self.renamed(own, &lower, at, site)).into(),
             }),
             _ => notes.push(Note {
                 span: at,
                 text: format!(
                     "repair: rename {binder}; `{lower}` already names something in scope"
-                ),
+                )
+                .into(),
             }),
         }
         self.errors.push(Error {
@@ -4826,7 +4845,7 @@ impl Resolver<'_> {
         if let Some(near) = self.nearest(n) {
             notes.push(Note {
                 span,
-                text: format!("repair: `{near}`"),
+                text: format!("repair: `{near}`").into(),
             });
         }
         self.errors.push(Error {
@@ -5042,7 +5061,10 @@ pub fn undefined(name: &str) -> String {
 /// read of one of its fields: `m` holds ports, and a port is read or pushed to through its
 /// field. A short headline, the rule in the notes (DESIGN.md sec:diagnostics).
 fn main_param_alone(m: &str, span: Span) -> Error {
-    let note = |text: String| Note { span, text };
+    let note = |text: String| Note {
+        span,
+        text: text.into(),
+    };
     Error {
         row: None,
         menu: String::new(),
@@ -5326,7 +5348,7 @@ fn near_in_spelling(written: &str, name: &str) -> bool {
 fn field_type_var(n: &str, span: Span, near: Option<String>) -> Error {
     let near = near.map(|near| Note {
         span,
-        text: format!("{REPAIR}{near}`"),
+        text: format!("{REPAIR}{near}`").into(),
     });
     Error {
         row: Some(Row::StructFieldTypeVariable),
@@ -5343,7 +5365,8 @@ fn field_type_var(n: &str, span: Span, near: Option<String>) -> Error {
                     "a capital letter alone, or followed only by digits, as `{n}`, names a type \
                      variable; a struct's field may name only the struct's own type parameters, \
                      which are not supported by this version of zedc"
-                ),
+                )
+                .into(),
             },
             Note {
                 span,
@@ -5412,7 +5435,8 @@ fn written_once(n: &str, first: Span, param: Option<(&str, Span, bool)>) -> Erro
             "a capital letter alone, or followed only by digits, as `{n}`, names a type \
              variable, which stands for one type at each place it is written; written once, \
              `{n}` asks nothing that no type at all would ask"
-        ),
+        )
+        .into(),
     }];
     // DESIGN.md's menu is the site written `_`, which this zedc refuses until step L10. A
     // parameter with no type is inferred as one written `_` is, so for a parameter whose whole
@@ -5424,7 +5448,7 @@ fn written_once(n: &str, first: Span, param: Option<(&str, Span, bool)>) -> Erro
     notes.push(match param {
         Some((name, at, default)) => Note {
             span: at,
-            text: format!("repair: `{name}{}`", if default { " = …" } else { "" }),
+            text: format!("repair: `{name}{}`", if default { " = …" } else { "" }).into(),
         },
         None => Note {
             span: first,
@@ -5432,7 +5456,8 @@ fn written_once(n: &str, first: Span, param: Option<(&str, Span, bool)>) -> Erro
                 "`_` in place of `{n}` is part of the Zed language but is not supported by \
                  this version of zedc; name the type, or write `{n}` where the body or \
                  another parameter has the same type"
-            ),
+            )
+            .into(),
         },
     });
     Error {

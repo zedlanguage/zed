@@ -1553,7 +1553,7 @@ fn a_narrower_range_domain_says_so_in_the_carrier_form() {
     let (info, _) = super::info(two);
     assert!(
         (info.errors[0].notes.iter())
-            .any(|n| n.text == "repair: declare `sub(a: int, b: int)`, which takes what `(b: int, a: int) -> int` passes"),
+            .any(|n| n.text == "repair: declare `sub(a: int, b: int)`, which takes what `(b: int, a: int) -> int` passes".into()),
         "{:?}",
         info.errors[0].notes
     );

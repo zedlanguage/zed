@@ -10,20 +10,24 @@
 //!
 //! Used by the forward memo of zedc-check `finish` (`fwd_memo`), whose keys were callees of
 //! signatures made for one call and dropped after it, and by the signatures met in zedc-check
-//! `read.rs` (`Seen::sigs`), which held each key's `Arc` by hand.
+//! `read.rs` (`Seen::sigs`), which held each key's `Arc` by hand; with `T = str`, by the
+//! passes over shared note texts of zedc-check `Ck::check_text` (`SharedNotes`) and by the
+//! steps met in zedc `front::Quoted` (MSG-declared-step-per-error-checker).
 
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 /// The address of an `Arc`, as a key, with the `Arc` held so the address names its value for
-/// as long as the key lives. Equal and hashed by address only.
-pub struct ByAddress<T> {
+/// as long as the key lives. Equal and hashed by address only. `T` may be unsized, as `str`:
+/// the address is then a wide pointer, compared and hashed with its length, which is the
+/// length of the one value at that address while the key holds it.
+pub struct ByAddress<T: ?Sized> {
     at: *const T,
     held: Arc<T>,
 }
 
-impl<T> ByAddress<T> {
+impl<T: ?Sized> ByAddress<T> {
     /// The key of `a`, holding a clone of it.
     pub fn new(a: &Arc<T>) -> Self {
         ByAddress {
@@ -38,22 +42,22 @@ impl<T> ByAddress<T> {
     }
 }
 
-impl<T> PartialEq for ByAddress<T> {
+impl<T: ?Sized> PartialEq for ByAddress<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.at == other.at
+        std::ptr::eq(self.at, other.at)
     }
 }
 
-impl<T> Eq for ByAddress<T> {}
+impl<T: ?Sized> Eq for ByAddress<T> {}
 
-impl<T> Hash for ByAddress<T> {
+impl<T: ?Sized> Hash for ByAddress<T> {
     fn hash<H: Hasher>(&self, h: &mut H) {
         // The same hash as the bare address, as `Borrow` requires.
         self.at.hash(h);
     }
 }
 
-impl<T> Borrow<*const T> for ByAddress<T> {
+impl<T: ?Sized> Borrow<*const T> for ByAddress<T> {
     fn borrow(&self) -> &*const T {
         &self.at
     }

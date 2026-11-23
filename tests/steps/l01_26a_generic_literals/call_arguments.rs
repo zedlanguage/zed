@@ -249,3 +249,23 @@ fn a_derivation_gives_the_carrier_for_every_literal_class_and_through_a_chain_of
         assert!(!out.contains(&format!("gives {arg}")), "{arg}: {out}");
     }
 }
+
+/// `1 / 0` passed at a generic parameter outside every function is rejected as it is in a
+/// body: nothing gives its integer literals a carrier. Its own values, at the float formats
+/// alone, made its class read as asked for floats alone, so it took `f64` with no error and
+/// both calls below gave none (row CHECK-div-zero-in-call-arg-silent).
+#[test]
+fn a_division_by_zero_at_a_generic_parameter_is_rejected_outside_a_function_too() {
+    let add = "add(x, y) = x + y;\n";
+    for call in ["add(x: 1 / 0, y: 1)", "add(x: add(x: 1 / 0, y: 1), y: 1)"] {
+        for line in [format!("z = {call};\n"), format!("f() = {call};\n")] {
+            let src = format!("{add}{line}");
+            let errors = type_errors(&src);
+            assert_eq!(errors.len(), 1, "{src}{errors:#?}");
+            assert!(
+                errors[0].starts_with("Nothing gives the literal `1` a carrier."),
+                "{src}{errors:#?}"
+            );
+        }
+    }
+}

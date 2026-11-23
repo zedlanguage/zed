@@ -993,6 +993,108 @@ fn an_operation_on_literals_in_a_nested_call_follows_the_class() {
     assert_eq!(bad, Vec::<String>::new());
 }
 
+/// A rejection kept from a nest of top-level calls carries the steps of every call it lay in.
+/// The `1 / 2` of `first(p: (1, 1 / 2))` is in a tuple component that no use reaches, so its
+/// class is not asked and nothing gives the `1` a carrier. Its rejection is parked while the
+/// calls of `add` around it, at a parameter of bounded type variable, keep the class open
+/// (`Ck::lit_park`, `Ck::top_nested_written`), and only the outermost call settles the class
+/// and keeps the rejection (`Ck::resolve_top_parts`). The steps of the calls passed while it
+/// was parked, `first`'s declaration, were lost before (row b22-checkwalk4, the first weak
+/// point of handoff-b22-checkwalk3): it gave only `add`'s, where the same call alone gives
+/// `first`'s. Each of the two fixes is still offered and checked as written.
+#[test]
+fn a_rejection_kept_from_nested_calls_has_the_steps_of_each_call() {
+    use zed_tests::step_helpers::l01_26_type_resolution::info;
+    let pre = "add(x, y) = x + y;\nfirst(p) = p[0];\n";
+    let first = "`first` is declared here with no type written for `p` or its result; the type \
+                 the checker found for `first` is `(p: _) -> _`";
+    let add = "`add` is declared here with no type written for `x`, `y` or its result; the type \
+               the checker found for `add` is `(x: T, y: T) -> T for T in int | f32 | f64 | rat`";
+    let mut e = "first(p: (1, 1 / 2))".to_string();
+    for depth in 0..4 {
+        let line = format!("z = {e};");
+        let src = format!("{pre}{line}\n");
+        let (i, _) = info(&src);
+        assert_eq!(i.errors.len(), 1, "{src}");
+        let notes: Vec<&str> = i.errors[0].notes.iter().map(|n| &*n.text).collect();
+        let want: Vec<&str> = match depth {
+            0 => vec![first],
+            _ => vec![first, add],
+        };
+        assert_eq!(notes, want, "{src}");
+        let menu = &i.errors[0].menu;
+        for fix in ["1r / 2", "1.0f64 / 2"] {
+            let fixed = line.replacen("1 / 2", fix, 1);
+            assert!(menu.contains(&fixed), "{src}: {menu}");
+        }
+        assert!(menu.contains("fixes, each checked here:"), "{src}: {menu}");
+        e = format!("add(x: {e}, y: 1)");
+    }
+}
+
+/// The same rejection in a function body, as the function's value or in a block, carries the
+/// steps it carries at the top level (row MSG-body-notes-match-top). There the end of the
+/// function gives the class its type, after every call around the literal ended, and the
+/// steps of those calls were lost: `f() = first(p: (1, 1 / 2));` gave none, where
+/// `z = first(p: (1, 1 / 2));` gives the step on `first`'s declaration. `id`, generic in its
+/// parameter, is read alike. Red before the fix: every body and block case.
+#[test]
+fn a_rejection_in_a_body_has_the_steps_of_each_call_as_at_the_top_level() {
+    use zed_tests::step_helpers::l01_26_type_resolution::info;
+    let pre = "add(x, y) = x + y;\nfirst(p) = p[0];\nid(x) = x;\n";
+    let mut bad = Vec::new();
+    for inner in ["first(p: (1, 1 / 2))", "id(x: 1 / 2)"] {
+        let mut e = inner.to_string();
+        for _ in 0..3 {
+            let lines = [
+                format!("z = {e};"),
+                format!("f() = {e};"),
+                format!("f() = {{ z = {e}; z }};"),
+            ];
+            let found: Vec<(Vec<String>, String)> = (lines.iter())
+                .map(|line| {
+                    let (i, _) = info(&format!("{pre}{line}\n"));
+                    assert_eq!(i.errors.len(), 1, "{line}: {:#?}", i.errors);
+                    let notes = (i.errors[0].notes.iter()).map(|n| n.text.to_string());
+                    (notes.collect(), i.errors[0].menu.clone())
+                })
+                .collect();
+            for (line, (notes, menu)) in lines.iter().zip(&found).skip(1) {
+                if *notes != found[0].0 {
+                    bad.push(format!(
+                        "{line}: {notes:#?} at the top level {:#?}",
+                        found[0].0
+                    ));
+                }
+                let fixed = line.replacen("1 / 2", "1r / 2", 1);
+                if !menu.contains(&fixed) {
+                    bad.push(format!("{line}: no fix {fixed} in {menu}"));
+                }
+            }
+            e = format!("add(x: {e}, y: 1)");
+        }
+    }
+    assert_eq!(bad, Vec::<String>::new());
+    let src = body_call_notes(3);
+    let (i, _) = info(&src);
+    let notes: Vec<usize> = (i.errors.iter()).map(|e| e.notes.len()).collect();
+    assert_eq!(notes, [2, 1], "{src}");
+}
+
+/// Two bodies, each rejecting the `1` of `first(p: (1, 1 / 2))`: in one it is nested in `n`
+/// calls of `add`, and in the other it stands beside `n` calls of `id`. Each rejection gets
+/// the steps of the calls it lies in, `first`'s and `add`'s, once each (row
+/// MSG-body-notes-match-top).
+pub(super) fn body_call_notes(n: usize) -> String {
+    let nest = (0..n).fold(String::from("first(p: (1, 1 / 2))"), |e, _| {
+        format!("add(x: {e}, y: 1)")
+    });
+    let ids: String = (0..n).map(|i| format!(", id(x: {i})")).collect();
+    format!(
+        "add(x, y) = x + y;\nfirst(p) = p[0];\nid(x) = x;\nf() = {nest};\ng() = (first(p: (1, 1 / 2)){ids});\n"
+    )
+}
+
 /// `add(x, y) = x + y;`, `n` top-level bindings of a call nested in a call, the inner one given
 /// `1 / 2` and the outer one a decimal, and one binding of a call nested `n` deep, each level
 /// given `1 / 2` beside the call below and only the outermost a decimal: each operation takes

@@ -902,6 +902,12 @@ pub fn record_messages() {
     LIFTED.set(Some(Vec::new()));
 }
 
+/// Whether [`record_messages`] is on for this thread: then each call of [`lift_holding`] is
+/// kept, so a caller that would reuse a result instead of calling it again calls it.
+pub fn recording_messages() -> bool {
+    LIFTED.with_borrow(Option::is_some)
+}
+
 /// The messages kept since [`record_messages`], in the order written; keeping stops.
 pub fn take_messages() -> Vec<Lifted> {
     LIFTED.take().unwrap_or_default()

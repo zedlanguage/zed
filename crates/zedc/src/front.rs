@@ -8,6 +8,7 @@ use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use zed_collections::by_address::ByAddress;
 use zed_graph::MinHeap;
 use zed_kernel::{Shared, Term};
 
@@ -67,8 +68,9 @@ pub struct Step {
     pub line: usize,
     /// The column, counted in characters.
     pub col: usize,
-    /// What holds there.
-    pub text: String,
+    /// What holds there, shared with the note it was made from (`ast::Note::text`), so that a
+    /// step many diagnostics give is one copy (MSG-declared-step-per-error-checker).
+    pub text: Arc<str>,
     /// The source line, one copy shared by every step on it.
     pub source: Arc<str>,
     /// How many characters of the source line the step covers, at least 1.
@@ -102,8 +104,14 @@ impl std::fmt::Display for Diagnostic {
 pub struct Quoted {
     /// The lines shown, each by its number.
     lines: HashSet<usize>,
-    /// The steps of declarations given in full, each by its line, column and text.
-    declared: HashSet<(usize, usize, String)>,
+    /// Each step text met so far, by its address, and, for the step of a declaration whose
+    /// type the checker found, the number of its text in `texts` and its short form.
+    met: HashMap<ByAddress<str>, Option<(usize, Arc<str>)>>,
+    /// The texts of the steps of declarations met, each with its number, so that equal texts
+    /// at different addresses share one number.
+    texts: HashMap<Arc<str>, usize>,
+    /// The steps of declarations given in full, each by its line, column and text's number.
+    declared: HashSet<(usize, usize, usize)>,
 }
 
 impl Quoted {
@@ -129,14 +137,31 @@ impl Quoted {
     // them; the listing then prints it in full once per place and text, and each later one in
     // O(name) bytes, so it prints O(p + n) for the n errors. A diagnostic with a step to
     // shorten is copied once, O(its size).
+    //
+    // Complexity tradeoff: the checker gives the n errors one shared copy of that step
+    // (`ast::Note::text` is an `Arc<str>`, MSG-declared-step-per-error-checker), and scanning
+    // and hashing the text once per error would cost O(n·p) again. So each text is read once
+    // per address: `met` keeps, by the address of the shared text, whether it is a declared
+    // step, its number and its short form, in O(1) for each later step with that text. Equal
+    // texts at different addresses (from two checks) still share one number through `texts`,
+    // at O(p) once per address. The key holds each text ([`ByAddress`]), so an address is not
+    // reused while its entry stands. Cost: two maps of one entry per distinct text address in
+    // the listing.
     pub fn show(&mut self, d: &Diagnostic) -> String {
         let mut again = None;
         for (i, s) in d.steps.iter().enumerate() {
-            let Some(short) = crate::check::declared_again(&s.text) else {
+            let step = self.met.entry(ByAddress::new(&s.text)).or_insert_with(|| {
+                crate::check::declared_again(&s.text).map(|short| {
+                    let next = self.texts.len();
+                    let k = *self.texts.entry(Arc::clone(&s.text)).or_insert(next);
+                    (k, Arc::from(short))
+                })
+            });
+            let Some((k, short)) = step else {
                 continue;
             };
-            if !self.declared.insert((s.line, s.col, s.text.clone())) {
-                again.get_or_insert_with(|| d.clone()).steps[i].text = short;
+            if !self.declared.insert((s.line, s.col, *k)) {
+                again.get_or_insert_with(|| d.clone()).steps[i].text = Arc::clone(short);
             }
         }
         let d = again.as_ref().unwrap_or(d);
@@ -1428,7 +1453,7 @@ pub fn linear_questions(
                         };
                         let repairs = why.repairs(&written).into_iter().map(|text| ast::Note {
                             span: f.body.span,
-                            text,
+                            text: text.into(),
                         });
                         // A cause that ends in a sentence of its own, such as a repair, keeps
                         // its full stop, and the message adds none.
@@ -1446,7 +1471,7 @@ pub fn linear_questions(
                             ),
                             notes: std::iter::once(ast::Note {
                                 span: f.body.span,
-                                text: format!("the constraints: {constraints}"),
+                                text: format!("the constraints: {constraints}").into(),
                             })
                             .chain(repairs)
                             .collect(),

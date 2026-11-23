@@ -39,7 +39,7 @@ fn offered(src: &str) -> Vec<String> {
     (errors.iter())
         .flat_map(|e| &e.notes)
         .filter(|n| n.text.starts_with("repair: "))
-        .map(|n| n.text.clone())
+        .map(|n| n.text.to_string())
         .collect()
 }
 

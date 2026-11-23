@@ -32,7 +32,7 @@ fn the_error_of_the_source_carries_the_row_the_note_and_each_repair() {
     ] {
         let e = zedc::ast::Error::from(lex(text).unwrap_err());
         assert_eq!(e.row, Some(Row::LeadingZero), "{text:?}");
-        let notes: Vec<&str> = e.notes.iter().map(|n| n.text.as_str()).collect();
+        let notes: Vec<&str> = e.notes.iter().map(|n| &*n.text).collect();
         let mut expected = vec![NOTE.to_string()];
         expected.extend(repairs.iter().map(|r| format!("repair: `{r}`")));
         assert_eq!(notes, expected, "{text:?}");

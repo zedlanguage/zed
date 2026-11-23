@@ -294,7 +294,7 @@ fn error(span: Span, message: String, repair: Option<String>) -> ast::Error {
         notes: repair
             .map(|text| Note {
                 span,
-                text: format!("repair: {text}"),
+                text: format!("repair: {text}").into(),
             })
             .into_iter()
             .collect(),

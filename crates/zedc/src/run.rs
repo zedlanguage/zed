@@ -1829,7 +1829,10 @@ pub fn placed(
         span,
         message: why,
         notes: std::iter::once(stopped)
-            .chain(repairs.into_iter().map(|text| ast::Note { span, text }))
+            .chain(repairs.into_iter().map(|text| ast::Note {
+                span,
+                text: text.into(),
+            }))
             .collect(),
         menu: String::new(),
         row: None,

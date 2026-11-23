@@ -172,7 +172,7 @@ fn a_statement_that_writes_nothing_names_the_call_and_the_repairs() {
     assert_eq!(e.row, Some(zedc::rejection::Row::WritesNothing));
     assert_eq!(&text[e.span.start..e.span.end], "f(1);");
     let notes: Vec<(&str, &str)> = (e.notes.iter())
-        .map(|n| (n.text.as_str(), &text[n.span.start..n.span.end]))
+        .map(|n| (&*n.text, &text[n.span.start..n.span.end]))
         .collect();
     assert_eq!(
         notes,

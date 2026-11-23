@@ -113,7 +113,7 @@ impl Builder<'_, '_> {
             ),
             notes: vec![Note {
                 span,
-                text: format!("repair: `{x} = {value};`"),
+                text: format!("repair: `{x} = {value};`").into(),
             }],
         })
     }
@@ -173,7 +173,7 @@ impl Builder<'_, '_> {
             };
             notes.push(Note {
                 span: self.span(s),
-                text: format!("`{}` is {text}", short(self.span(s))),
+                text: format!("`{}` is {text}", short(self.span(s))).into(),
             });
         }
         let headline = match (stop, around) {
@@ -182,18 +182,20 @@ impl Builder<'_, '_> {
                     span: self.span(l),
                     text: format!(
                         "the loop around {what}, which a `break;` ends only from the loop's own body"
-                    ),
+                    ).into(),
                 });
                 notes.push(Note {
                     span,
                     text: format!(
                         "repair: return a result that the loop's body tests, as `done = {call}; \
                          if done {{ break; }};`"
-                    ),
+                    )
+                    .into(),
                 });
                 notes.push(Note {
                     span,
-                    text: format!("repair: move the `break;` out of {what}, into the loop's body"),
+                    text: format!("repair: move the `break;` out of {what}, into the loop's body")
+                        .into(),
                 });
                 format!(
                     "Invalid use of `break;` in {what}: it ends only a loop whose own body holds it."
@@ -202,7 +204,8 @@ impl Builder<'_, '_> {
             (Some(_), None) => {
                 notes.push(Note {
                     span,
-                    text: format!("repair: `return e;`, which ends {what} with the value `e`"),
+                    text: format!("repair: `return e;`, which ends {what} with the value `e`")
+                        .into(),
                 });
                 format!(
                     "Invalid use of `break;` outside a loop: {what} has no `loop` or `for` around it."

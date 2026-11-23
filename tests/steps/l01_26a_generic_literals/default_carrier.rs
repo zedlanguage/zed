@@ -53,7 +53,7 @@ fn a_default_of_another_type_names_each_member_once_in_its_repair() {
         // The headline, the menu and each note.
         let texts = [e.message.as_str(), e.menu.as_str()]
             .into_iter()
-            .chain(e.notes.iter().map(|n| n.text.as_str()));
+            .chain(e.notes.iter().map(|n| &*n.text));
         let unions: Vec<&str> = texts
             .flat_map(|t| t.split("as `x: ").skip(1))
             .map(|r| r.split_once('`').unwrap_or_else(|| panic!("{e:#?}")).0)

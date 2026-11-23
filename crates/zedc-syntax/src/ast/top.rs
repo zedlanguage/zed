@@ -105,7 +105,10 @@ impl Builder<'_, '_> {
                 "Statement at the top level of the unit. Move it into the body of `main`.".into()
             }
         };
-        let note = |text: String| Note { span, text };
+        let note = |text: String| Note {
+            span,
+            text: text.into(),
+        };
         let mut notes = vec![note(WHY.into())];
         if let Some(t) = self
             .kids(d)

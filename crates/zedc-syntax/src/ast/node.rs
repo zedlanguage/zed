@@ -472,12 +472,45 @@ pub struct Error {
 }
 
 /// One step of a derivation: a place in the source and what holds there.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// The text is shared (MSG-declared-step-per-error-checker): one step can be given by many
+/// errors, such as the step that quotes the declaration of a function of p parameters, which
+/// each of the n rejected arguments of one call gives. With a `String` each error held a copy,
+/// Θ(n·p) bytes and time to copy and to hash; with an `Arc<str>` a copy is a count increment,
+/// O(1), and the n errors hold O(n + p) bytes. Equality first compares the pointers (std's
+/// `ArcEqIdent` for `T: Eq`, library/alloc/src/sync.rs, read 2026-11-22: `ptr::eq(..) || **self
+/// == **other`), so two copies of one step compare in O(1); hashing is bounded too, see the
+/// `Hash` impl below. Test: l01_29 bench `the_fixes_of_many_arguments_not_checked_apart_scale`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Note {
     /// Where.
     pub span: Span,
     /// What holds there.
-    pub text: String,
+    pub text: Arc<str>,
+}
+
+impl std::hash::Hash for Note {
+    /// Hashes the span, the text's length and at most its first and last `EDGE` bytes, O(1)
+    /// for a text of any length, so a set of notes that holds one O(p)-long step given by n
+    /// errors costs O(n), not O(n·p), to fill and to search.
+    ///
+    /// Proof that it agrees with `Eq` (`a == b` implies `hash(a) == hash(b)`): equal notes have
+    /// equal spans and equal texts, hence equal lengths and equal bytes at every place, so each
+    /// value hashed is equal. The cost of hashing fewer bytes: two notes at one span with texts
+    /// of one length that differ only between their first and last `EDGE` bytes collide, and
+    /// the set compares their texts in full, O(length) per such pair; each set holds the notes
+    /// of one error, which are distinct steps of one derivation.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // 32 bytes: longer than the words a step begins and ends with, which tell most steps at
+        // one span apart (`` `f` is declared ``, ``repair: ``, a quoted type's last part); any
+        // value keeps the proof above, and only the collision rate depends on it.
+        const EDGE: usize = 32;
+        let b = self.text.as_bytes();
+        self.span.hash(state);
+        b.len().hash(state);
+        b[..b.len().min(EDGE)].hash(state);
+        b[b.len().saturating_sub(EDGE)..].hash(state);
+    }
 }
 
 impl Error {

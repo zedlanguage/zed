@@ -486,7 +486,10 @@ fn refused_warning(span: Span, r: &Refused, kept: &Kept) -> Error {
         span,
         message: w.message,
         notes: (w.steps.into_iter())
-            .map(|text| Note { span, text })
+            .map(|text| Note {
+                span,
+                text: text.into(),
+            })
             .collect(),
         menu: String::new(),
         row: None,
@@ -1484,11 +1487,28 @@ const DECLARE: &str = "\u{FDD8}";
 /// wrote [`DECLARE`], to declare them at the top level; elsewhere [`DECLARE`] is dropped. A
 /// message with no part written twice is as it was.
 fn lay_out(message: &mut String, notes: &mut [Note], menu: &mut String) {
+    lay_out_with(message, notes, menu, &|_| false);
+}
+
+/// [`lay_out`], with `taken` asked of each name the layout would choose, as
+/// `defs::lift_holding` asks it.
+fn lay_out_with(
+    message: &mut String,
+    notes: &mut [Note],
+    menu: &mut String,
+    taken: &dyn Fn(&str) -> bool,
+) {
+    let mut own: Vec<String> = notes.iter().map(|n| n.text.to_string()).collect();
     let mut texts: Vec<&mut String> = std::iter::once(&mut *message)
-        .chain(notes.iter_mut().map(|n| &mut n.text))
+        .chain(own.iter_mut())
         .chain(std::iter::once(menu))
         .collect();
-    let (lifted, holding) = defs::lift_holding(&mut texts, true, &|_| false);
+    let (lifted, holding) = defs::lift_holding(&mut texts, true, taken);
+    for (n, text) in notes.iter_mut().zip(own) {
+        if *text != *n.text {
+            n.text = text.into();
+        }
+    }
     // Whether each note names a definition: the texts are the message, the notes, the menu.
     let code: Vec<bool> = holding[1..=notes.len()].to_vec();
     let these = match lifted.len() {
@@ -1500,10 +1520,141 @@ fn lay_out(message: &mut String, notes: &mut [Note], menu: &mut String) {
             let declare = format!(
                 ", with {these} written first at the top level of the file, before the function"
             );
-            n.text = n.text.replace(DECLARE, if code { &declare } else { "" });
+            n.text = n
+                .text
+                .replace(DECLARE, if code { &declare } else { "" })
+                .into();
         }
     }
     defs::under(message, &lifted);
+}
+
+/// Whether `text` holds a mark that [`lay_out`] reads: a reference, a variable or [`DECLARE`],
+/// all in U+FDD0..=U+FDDF (module `defs` of the kernel). [`lay_out`] leaves a text with none
+/// as it is, though its words are names the others' names skip.
+fn holds_lay_out_mark(text: &str) -> bool {
+    text.contains(|c| ('\u{FDD0}'..='\u{FDDF}').contains(&c))
+}
+
+/// What [`lay_out`] makes of a message whose one marked text is the note `text`
+/// ([`holds_lay_out_mark`]), found once with every other text empty: the note as laid out,
+/// what is written under the message, and each name it chose for a variable or a part.
+struct LaidAlone {
+    text: Arc<str>,
+    under: String,
+    chosen: HashSet<String>,
+}
+
+/// The passes of [`walk::check_text`] over the notes of its errors, kept by the address of
+/// each note's text, so that one note many errors share is read once
+/// (MSG-declared-step-per-error-checker).
+#[derive(Default)]
+struct SharedNotes {
+    /// Each text as found, and the text after `ProgramTexts::hide` and `Ck::named`.
+    named: HashMap<ByAddress<str>, Arc<str>>,
+    /// Each named text, and whether it holds a mark.
+    marked: HashMap<ByAddress<str>, bool>,
+    /// Each named text that is the one marked text of a message, and its layout alone. Made
+    /// only for such a text: a note laid out alone writes in full every part it reaches, so
+    /// laying out alone each of the n steps of a chain of names, each holding the part before,
+    /// costs Θ(n²) where the message's layout, which shares the parts, costs O(n) (bench
+    /// l01_29 `bench::type_size`, 20 to 35 times the bytes at 8n when every marked note was
+    /// laid out alone).
+    laid: HashMap<ByAddress<str>, LaidAlone>,
+    /// Each laid-out text, and the text after `ProgramTexts::restore`.
+    restored: HashMap<ByAddress<str>, Arc<str>>,
+}
+
+/// [`lay_out`] for a message whose notes [`SharedNotes`] keeps. When the one text that holds a
+/// mark is a note, and no other text writes a word that its layout alone chose as a name, the
+/// note and what goes under the message are that layout's, at the cost of reading the other
+/// texts' words; otherwise this is [`lay_out`].
+///
+/// Proof that the reuse gives what [`lay_out`] gives. [`lay_out`] calls
+/// `defs::lift_holding` with `taken` always false, and the layout alone calls it with
+/// `taken` false too, recording each word it is asked about. (1) Names. Each name is chosen
+/// by `fresh_name`, which takes the first of a fixed sequence of candidates, from a counter
+/// on, that the predicate `words.contains(w) || taken(w)` refuses; `taken` is asked only of
+/// a candidate `words` does not hold, and answers false, so the words recorded are exactly
+/// the names chosen. With the other texts, `words` gains their words W (for `Part` names,
+/// their words that start with `Part`, a subset). By induction over the calls in order: a
+/// candidate refused alone is refused with W too, and the candidate chosen alone is not in
+/// W, by the condition checked, so it is chosen again, and the counter moves the same. (2)
+/// The rest. A text with no mark is left as it is by `name_all_vars`, `spell` and the
+/// [`DECLARE`] pass, adds no reference to count (`refs`), and is not opened as a headline
+/// (the message holds no mark); `first_named` reads only the texts holding a mark, here the
+/// note alone, and its step numbers are compared only with that note's own number, so they
+/// order the same at any place. So the note's text, the definitions, and `holding` for the
+/// note are the same, and `defs::under` only appends to the message.
+///
+/// Complexity tradeoff: a call of n arguments each with its own error gives each the step of
+/// the declaration it calls, O(p) long for p parameters, and laying it out in each error was
+/// Θ(n·p) (bench l01_29 `the_fixes_of_many_arguments_not_checked_apart_scale`). Here it is
+/// laid out once, and each error reads its own texts' words, O(their size), to check that the
+/// layout holds. Not covered: a message with two marked texts, as a step and a message that
+/// both write types, is laid out as before, since there the texts' parts and names interact.
+fn lay_out_shared(
+    message: &mut String,
+    notes: &mut [Note],
+    menu: &mut String,
+    s: &mut SharedNotes,
+) {
+    let recording = defs::recording_messages();
+    let marked: Vec<bool> = (notes.iter())
+        .map(|n| {
+            *(s.marked)
+                .entry(ByAddress::new(&n.text))
+                .or_insert_with(|| holds_lay_out_mark(&n.text))
+        })
+        .collect();
+    let one = match marked.iter().filter(|&&m| m).count() {
+        1 if !recording && !holds_lay_out_mark(message) && !holds_lay_out_mark(menu) => {
+            marked.iter().position(|&m| m)
+        }
+        _ => None,
+    };
+    let alone = one.and_then(|i| {
+        let text = &notes[i].text;
+        let laid: &LaidAlone = (s.laid)
+            .entry(ByAddress::new(text))
+            .or_insert_with(|| lay_out_alone(text));
+        let others = (notes.iter().enumerate())
+            .filter(|&(j, _)| j != i)
+            .map(|(_, n)| &*n.text)
+            .chain([message.as_str(), menu.as_str()]);
+        let clash = others
+            .flat_map(|t| t.split(|c: char| !(c.is_alphanumeric() || c == '_')))
+            .any(|w| laid.chosen.contains(w));
+        (!clash).then_some((i, laid))
+    });
+    match alone {
+        Some((i, laid)) => {
+            notes[i].text = Arc::clone(&laid.text);
+            message.push_str(&laid.under);
+        }
+        None => lay_out(message, notes, menu),
+    }
+}
+
+/// The layout of `text` as the one note of a message with an empty sentence and menu
+/// ([`LaidAlone`]).
+fn lay_out_alone(text: &Arc<str>) -> LaidAlone {
+    let chosen = std::cell::RefCell::new(HashSet::new());
+    let (mut message, mut menu) = (String::new(), String::new());
+    let mut notes = [Note {
+        span: Span { start: 0, end: 0 },
+        text: Arc::clone(text),
+    }];
+    lay_out_with(&mut message, &mut notes, &mut menu, &|w| {
+        chosen.borrow_mut().insert(w.to_string());
+        false
+    });
+    let [note] = notes;
+    LaidAlone {
+        text: note.text,
+        under: message,
+        chosen: chosen.into_inner(),
+    }
 }
 
 /// The texts of the program that [`Ck::named`] and [`lay_out`] would read as their own: each
@@ -1605,15 +1756,6 @@ impl<'t> ProgramTexts<'t> {
         }
     }
 
-    /// Runs `f` on the message, each note and the menu of `e`.
-    fn each(&self, e: &mut Error, f: fn(&Self, &mut String)) {
-        f(self, &mut e.message);
-        for n in &mut e.notes {
-            f(self, &mut n.text);
-        }
-        f(self, &mut e.menu);
-    }
-
     /// `s` with each piece in it swapped for its placeholder, the longest at each place.
     fn hide(&self, s: &mut String) {
         if self.pieces.is_empty() {
@@ -1693,7 +1835,7 @@ impl Reason {
         };
         Note {
             span: self.span,
-            text,
+            text: text.into(),
         }
     }
 }
@@ -2468,6 +2610,19 @@ struct Ck<'t, 'a> {
     call_spans: Option<Rc<[Option<Span>]>>,
     /// The [`Found::id`] the next error gets.
     next_found: usize,
+    /// The notes of the calls that passed parked errors by ([`Self::also_notes`]), in the
+    /// order the calls ended, each with the ids of the errors it passed, `lo..hi`; an error
+    /// [`Ck::lit_park`] keeps gets those whose range holds its id. Emptied when no error is
+    /// parked.
+    parked_notes: Vec<(usize, usize, Rc<[Note]>)>,
+    /// The calls of declared functions walked in a function or lambda since the walk was last
+    /// outside every one, in the order they ended ([`walk::Frame::CallAlso`]): each with its span,
+    /// the span of the function's declaration, the function, its signature at the call and
+    /// [`Self::next_found`] when it ended. An error
+    /// found later inside one of them, which the function's end finds as it gives a class of
+    /// literals its type ([`Self::resolve`]), gets the call's steps there
+    /// ([`Self::late_call_notes`]), as an error found inside the call gets them as it ends.
+    body_calls: Vec<(Span, Span, usize, Arc<Sig>, usize)>,
     /// How many times errors were removed ([`Self::errors_cut`]).
     cut_seq: u64,
     /// The removals of errors, each as its number in [`Self::cut_seq`] and the smallest
@@ -3317,6 +3472,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             narrow_names: HashSet::new(),
             call_spans: None,
             next_found: 0,
+            parked_notes: Vec::new(),
+            body_calls: Vec::new(),
             cut_seq: 0,
             cuts: Vec::new(),
             opened: false,
@@ -4014,7 +4171,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         menu: impl IntoIterator<Item = String>,
     ) {
         let mut notes = self.derive(&[span]);
-        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        notes.extend(menu.into_iter().map(|text| Note {
+            span,
+            text: text.into(),
+        }));
         self.rejects_with(row, span, message, notes);
     }
 
@@ -4027,7 +4187,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         menu: impl IntoIterator<Item = String>,
     ) {
         let mut notes = self.derive(&[span]);
-        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        notes.extend(menu.into_iter().map(|text| Note {
+            span,
+            text: text.into(),
+        }));
         self.error_with(span, message, notes);
     }
 
@@ -4222,7 +4385,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let name = &self.t.res.binders[*id].name;
                 let mut notes = vec![Note {
                     span,
-                    text: format!("`{name}` holds the function here"),
+                    text: format!("`{name}` holds the function here").into(),
                 }];
                 let mut from = Vec::new();
                 let mut o = self.whence.get(id).map(|o| &**o);
@@ -4230,7 +4393,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if let Some(f) = origin.from {
                         notes.push(Note {
                             span: origin.span,
-                            text: format!("`{name}` is defined here"),
+                            text: format!("`{name}` is defined here").into(),
                         });
                         from.push(f);
                     }
@@ -4245,7 +4408,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             .filter(|p| may_hold(p))
             .map(|p| p.span)
             .collect();
-        Some((vec![Note { span, text }], on))
+        Some((
+            vec![Note {
+                span,
+                text: text.into(),
+            }],
+            on,
+        ))
     }
 
     /// Whether the tuple written out `e`, which keeps no type of its own ([`Seen`]), holds a
@@ -4351,7 +4520,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The type of each tuple written out built so far ([`Ck::tuple_seen`]).
         let mut tuples = HashMap::new();
         let mut stack: Vec<Work> = start.into_iter().rev().collect();
-        let note = |span: Span, text: String| Work::Show(Note { span, text });
+        let note = |span: Span, text: String| {
+            Work::Show(Note {
+                span,
+                text: text.into(),
+            })
+        };
         // The receiver of each class of a lambda parameter given entries, by the class's root
         // now ([`Ck::with_entries`]). Complexity tradeoff: O(E) for E such classes, once per
         // derivation, which only an error writes; finding the roots at each note would be
@@ -4994,7 +5168,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 format_type(b),
                 path(),
                 format_type(w)
-            ),
+            )
+            .into(),
         })
     }
 
@@ -5403,7 +5578,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             "repair: handle each failure with a `match` on the value".to_string(),
             "repair: bind the value to a name, and use the name".to_string(),
         ];
-        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        notes.extend(menu.into_iter().map(|text| Note {
+            span,
+            text: text.into(),
+        }));
         self.rejects_with(
             Row::WritesNothing,
             span,
@@ -5460,7 +5638,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                         "the loose failure {} enters here",
                         self.with_payloads(span, new)
                     );
-                    out.push(Note { span: site, text });
+                    out.push(Note {
+                        span: site,
+                        text: text.into(),
+                    });
                 }
             }
             let parts: Vec<(Span, KType)> = match src {
@@ -5499,7 +5680,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 "the loose failure {} enters here",
                 self.with_payloads(root, left)
             );
-            out.push(Note { span: root, text });
+            out.push(Note {
+                span: root,
+                text: text.into(),
+            });
         }
         out
     }
@@ -6156,14 +6340,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             let mut notes = vec![
                 Note {
                     span: made,
-                    text: format!("the loose failure {k} enters here, {when}"),
+                    text: format!("the loose failure {k} enters here, {when}").into(),
                 },
                 Note {
                     span,
-                    text: format!("the call `{call}`"),
+                    text: format!("the call `{call}`").into(),
                 },
             ];
-            notes.extend(repairs.into_iter().map(|text| Note { span: s.at, text }));
+            notes.extend(repairs.into_iter().map(|text| Note {
+                span: s.at,
+                text: text.into(),
+            }));
             self.error_with(s.at, message, notes);
         }
     }
@@ -8282,7 +8469,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (span, r) in looped {
             let w = r.warning(&Kept::default());
             let notes = (w.steps.into_iter())
-                .map(|text| Note { span, text })
+                .map(|text| Note {
+                    span,
+                    text: text.into(),
+                })
                 .collect();
             self.reject(
                 Some(Row::LoopedAlternatives),
@@ -8315,15 +8505,49 @@ impl<'t, 'a> Ck<'t, 'a> {
             (false, Some(text)) => ProgramTexts::new(text),
             _ => ProgramTexts::new(""),
         };
+        // Complexity tradeoff: a note many errors share, as the step of a declaration whose
+        // type the checker found, O(p) long for p parameters, given by each of n errors at a
+        // call, is hidden, named, laid out and restored once, not once per error, which was
+        // Θ(n·p) ([`SharedNotes`], [`lay_out_shared`]). Cost: one map entry per distinct note
+        // text in each pass, each holding its text.
+        let mut shared = SharedNotes::default();
         for (e, _) in errors.iter_mut().zip(as_written).filter(|(_, w)| !w) {
-            own.each(e, ProgramTexts::hide);
-            e.message = self.named(&e.message);
-            for n in &mut e.notes {
-                n.text = self.named(&n.text);
+            for t in [&mut e.message, &mut e.menu] {
+                own.hide(t);
+                *t = self.named(t);
             }
-            e.menu = self.named(&e.menu);
-            lay_out(&mut e.message, &mut e.notes, &mut e.menu);
-            own.each(e, ProgramTexts::restore);
+            for n in &mut e.notes {
+                let named = shared
+                    .named
+                    .entry(ByAddress::new(&n.text))
+                    .or_insert_with(|| {
+                        let mut t = n.text.to_string();
+                        own.hide(&mut t);
+                        let t = self.named(&t);
+                        match *t == *n.text {
+                            true => Arc::clone(&n.text),
+                            false => t.into(),
+                        }
+                    });
+                n.text = Arc::clone(named);
+            }
+            lay_out_shared(&mut e.message, &mut e.notes, &mut e.menu, &mut shared);
+            own.restore(&mut e.message);
+            own.restore(&mut e.menu);
+            for n in &mut e.notes {
+                let restored = shared
+                    .restored
+                    .entry(ByAddress::new(&n.text))
+                    .or_insert_with(|| {
+                        let mut t = n.text.to_string();
+                        own.restore(&mut t);
+                        match *t == *n.text {
+                            true => Arc::clone(&n.text),
+                            false => t.into(),
+                        }
+                    });
+                n.text = Arc::clone(restored);
+            }
         }
         self.info.errors = errors;
         self.info.warnings = (std::mem::take(&mut self.refused_at).into_iter())
@@ -9475,7 +9699,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let work = (args.iter().flatten()).filter_map(|a| match (&a.lit, a.at) {
             (Some(l), Some(at)) => Some(DeriveWork::Show(Note {
                 span: at,
-                text: literal_note(l.written(), self.text(&a.ty)),
+                text: literal_note(l.written(), self.text(&a.ty)).into(),
             })),
             (None, Some(at)) => Some(DeriveWork::Derive(at)),
             _ => None,
@@ -9506,7 +9730,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             out.push(Note {
                 span,
-                text: format!("{what} takes {}", self.sig_text(&one)),
+                text: format!("{what} takes {}", self.sig_text(&one)).into(),
             });
         }
         out
@@ -9520,7 +9744,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             built(1);
             vec![Note {
                 span,
-                text: text(ck),
+                text: text(ck).into(),
             }]
         });
     }
@@ -9546,8 +9770,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let notes = notes(self);
         // A parked error is skipped: its class drops it where its operation takes a carrier,
-        // and only then is the error kept, without the notes of the calls it lay in while
-        // parked ([`Ck::lit_park`]).
+        // and only where it does not is the error kept, then given the notes of the calls it
+        // lay in while parked, which are logged here for it ([`Ck::parked_notes`],
+        // [`Ck::lit_park`]).
         // Complexity tradeoff: naive version, every error from `from` on given the notes,
         // which built a set of each error's notes at every call around it: one call nested
         // n deep, each level given an operation on literals alone that the walk rejects until
@@ -9555,23 +9780,105 @@ impl<'t, 'a> Ck<'t, 'a> {
         // cost Θ(n²) notes and sets (14.7 times the instructions at 8n; 8.0 with parked errors
         // skipped). Used: a parked error costs one test of its flag at each call around it,
         // O(n · depth) flag tests and no notes, a few instructions each; making the calls'
-        // notes only when an error is printed would take that out too (the work row
-        // MSG-declared-step-per-error-checker proposes). Test:
+        // notes only when an error is printed would take that out too (row
+        // MSG-declared-step-per-error-checker shared each note's text instead, so a note
+        // given to many errors is one copy). Test:
         // `l01_26a_generic_literals::bench::top_body_agree::operations_in_nested_calls_scale`.
+        let mut passed = false;
         for e in &mut self.errors[from..] {
             if e.parked {
+                passed = true;
                 continue;
             }
-            let have: HashSet<&Note> = e.notes.iter().collect();
-            let new: Vec<Note> = (notes.iter())
-                .filter(|n| !have.contains(n))
-                .cloned()
-                .collect();
-            // A witness goes before the menu, which ends the notes.
-            let menu = (e.notes.iter())
-                .position(|n| n.text.starts_with("repair: "))
-                .unwrap_or(e.notes.len());
-            e.notes.splice(menu..menu, new);
+            e.add_notes(&notes);
+        }
+        // Complexity tradeoff: one entry per call that passed a parked error, O(1) beside the
+        // notes it made; a kept error reads the entries made since it was found, the calls
+        // that ended after it, until the outermost call keeps it. Giving each parked error
+        // the notes at once and taking them back where its class drops it would cost the
+        // Θ(n²) notes this skip avoids.
+        if passed {
+            self.parked_notes
+                .push((self.errors[from].id, self.next_found, notes.into()));
+        }
+    }
+
+    /// The steps a call of the declared function `id`, declared at `o`, adds to an error
+    /// found inside it: its declaration with the type `sig` the checker found for it, then
+    /// the parts each of its written parameter types takes away ([`Self::declared_emptied`]).
+    fn call_notes(&self, id: usize, o: Span, sig: &Sig) -> Vec<Note> {
+        built(1);
+        let mut notes = vec![Note {
+            span: o,
+            text: self.declared_step(id, sig).into(),
+        }];
+        self.declared_emptied(id, &mut notes);
+        notes
+    }
+
+    /// Gives each error found inside a call of [`Self::body_calls`] after the call ended the
+    /// call's steps ([`Self::call_notes`]), innermost call first, as
+    /// [`walk::Frame::CallAlso`] gives them to an error found inside the call; then empties the
+    /// list. Run as the walk leaves
+    /// the outermost function or lambda: the end of a function gives its classes of literals
+    /// their types and rejects those nothing gives one, so `f() = first(p: (1, 1 / 2));`
+    /// rejects its `1` after the call of `first` ended, and the rejection lacked the step on
+    /// `first`'s declaration that `z = first(p: (1, 1 / 2));` gives (row
+    /// MSG-body-notes-match-top).
+    ///
+    /// Complexity tradeoff: naive, each error tested against each call, O(e·c) for `e`
+    /// errors and `c` calls, quadratic for a body of many calls each holding a rejection.
+    /// Used: spans of the syntax tree nest or are apart, so the calls and errors are sorted
+    /// by start, longest first, and swept with a stack of the calls that hold the current
+    /// place, O((c + e) log(c + e)), plus the notes added; each call's notes are made once,
+    /// only for a call some error lies in.
+    fn late_call_notes(&mut self) {
+        let mut calls = std::mem::take(&mut self.body_calls);
+        let Some(lo) = calls.iter().map(|c| c.4).min() else {
+            return;
+        };
+        if self.trying {
+            return;
+        }
+        // Ids rise in the order errors are found, so those found after the first call ended
+        // are a suffix.
+        let first = self.errors.partition_point(|e| e.id < lo);
+        let mut found: Vec<usize> = (first..self.errors.len())
+            .filter(|&i| !self.errors[i].parked)
+            .collect();
+        if found.is_empty() {
+            return;
+        }
+        let key = |s: Span| (s.start, std::cmp::Reverse(s.end));
+        calls.sort_by_key(|c| key(c.0));
+        found.sort_by_key(|&i| key(self.errors[i].span));
+        let holds = |o: Span, s: Span| o.start <= s.start && s.end <= o.end;
+        let mut made: Vec<Option<Rc<[Note]>>> = vec![None; calls.len()];
+        let (mut open, mut next) = (Vec::new(), 0);
+        for i in found {
+            let (s, id) = (self.errors[i].span, self.errors[i].id);
+            while let Some(c) = calls.get(next).filter(|c| c.0.start <= s.start) {
+                while open
+                    .last()
+                    .is_some_and(|&k: &usize| !holds(calls[k].0, c.0))
+                {
+                    open.pop();
+                }
+                open.push(next);
+                next += 1;
+            }
+            while open.last().is_some_and(|&k| !holds(calls[k].0, s)) {
+                open.pop();
+            }
+            for &k in open.iter().rev() {
+                let (_, o, f, sig, ended) = &calls[k];
+                if *ended > id {
+                    continue;
+                }
+                let notes =
+                    (made[k].get_or_insert_with(|| self.call_notes(*f, *o, sig).into())).clone();
+                self.errors[i].add_notes(&notes);
+            }
         }
     }
 
@@ -12347,11 +12654,26 @@ struct Found {
     /// Whether it is the rejection an operation on literals alone wrote as it was walked
     /// outside every function, while the class that operation joined is open
     /// ([`Ck::lit_park`]): the class settles it, dropping it where the operation takes a
-    /// carrier, so the calls around it add no notes to it ([`Ck::also_notes`]).
+    /// carrier, so the calls around it add no notes to it ([`Ck::also_notes`]); where it is
+    /// kept, it takes the notes they logged for it then ([`Ck::parked_notes`]).
     parked: bool,
 }
 
 impl Found {
+    /// Adds each of `notes` the error lacks, in order, before its menu (the notes that start
+    /// `repair: `, which end the notes), in `O(m + k)` for its `m` notes and the `k` added.
+    fn add_notes(&mut self, notes: &[Note]) {
+        let have: HashSet<&Note> = self.notes.iter().collect();
+        let new: Vec<Note> = (notes.iter())
+            .filter(|n| !have.contains(n))
+            .cloned()
+            .collect();
+        let menu = (self.notes.iter())
+            .position(|n| n.text.starts_with("repair: "))
+            .unwrap_or(self.notes.len());
+        self.notes.splice(menu..menu, new);
+    }
+
     /// The error with its message and menu written against `source`, the unit's text
     /// ([`Msg::written`]). A note that writes a repair, one that starts `repair:`, offers a
     /// fix too, so the message does not say that none is offered.
@@ -12599,7 +12921,7 @@ fn grouped(head: String, parts: Vec<(Span, Msg)>) -> (Msg, Vec<Note>) {
         }
         notes.push(Note {
             span: at,
-            text: m.text,
+            text: m.text.into(),
         });
     }
     // The edits in the order of the text, as a corrected line writes them ([`Rewrite::line`]).
@@ -17543,7 +17865,7 @@ fn explain_empty(t: &Type, found: impl Fn(&Type) -> bool, out: &mut Vec<Note>) {
         };
         stack.push(Work::Say(Note {
             span: t.span,
-            text: format!("{why}, so it is `Never`"),
+            text: format!("{why}, so it is `Never`").into(),
         }));
         stack.extend(
             (causes.into_iter().rev())
@@ -18748,7 +19070,12 @@ mod tests {
         let mut out = Vec::new();
         explain(&t, &mut out);
         (out.into_iter())
-            .map(|n| (text[n.span.start..n.span.end].to_string(), n.text))
+            .map(|n| {
+                (
+                    text[n.span.start..n.span.end].to_string(),
+                    n.text.to_string(),
+                )
+            })
             .collect()
     }
 
@@ -18928,7 +19255,10 @@ mod tests {
                 .map(|f| {
                     let mut e = f.written(t.text);
                     lay_out(&mut e.message, &mut e.notes, &mut e.menu);
-                    (e.message, e.notes.into_iter().map(|n| n.text).collect())
+                    (
+                        e.message,
+                        e.notes.into_iter().map(|n| n.text.to_string()).collect(),
+                    )
                 })
                 .collect::<Vec<(String, Vec<String>)>>()
         };

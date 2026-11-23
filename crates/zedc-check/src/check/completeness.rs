@@ -24,7 +24,10 @@ fn messages(ck: Ck<'_, '_>, text: Option<&str>) -> Vec<(String, Vec<String>)> {
         .map(|f| {
             let mut e = f.written(text);
             lay_out(&mut e.message, &mut e.notes, &mut e.menu);
-            (e.message, e.notes.into_iter().map(|n| n.text).collect())
+            (
+                e.message,
+                e.notes.into_iter().map(|n| n.text.to_string()).collect(),
+            )
         })
         .collect()
 }
@@ -193,7 +196,12 @@ fn why_found(text: &str, found: &[&str]) -> Vec<(String, String)> {
         &mut out,
     );
     (out.into_iter())
-        .map(|n| (text[n.span.start..n.span.end].to_string(), n.text))
+        .map(|n| {
+            (
+                text[n.span.start..n.span.end].to_string(),
+                n.text.to_string(),
+            )
+        })
         .collect()
 }
 

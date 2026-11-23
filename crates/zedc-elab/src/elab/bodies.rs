@@ -26,7 +26,9 @@ fn refusal(site: Span, what: &str) -> Error {
         message: not_yet(what),
         notes: vec![Note {
             span: site,
-            text: "repair: write the function once for each of these types".to_string(),
+            text: "repair: write the function once for each of these types"
+                .to_string()
+                .into(),
         }],
     }
 }
@@ -196,7 +198,7 @@ impl<'a> Elab<'a> {
         let mut notes: Vec<Note> = (d.sites.iter())
             .map(|&s| Note {
                 span: s,
-                text: format!("`{h}` runs this fold: {}", self.info.split_folds[&s]),
+                text: format!("`{h}` runs this fold: {}", self.info.split_folds[&s]).into(),
             })
             .collect();
         notes.push(Note {
@@ -204,7 +206,8 @@ impl<'a> Elab<'a> {
             text: format!(
                 "repair: call `{h}` where it is used, as `{call}`, or write `{h}` once for each \
                  of these types"
-            ),
+            )
+            .into(),
         });
         Error {
             menu: String::new(),

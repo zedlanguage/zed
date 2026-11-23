@@ -1622,7 +1622,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                             span: cond.span,
                             text: "repair: compare the value, so that the condition is a `bool`, \
                                    as `if x == 0 { … }` or `if x is int { … }`"
-                                .to_string(),
+                                .to_string()
+                                .into(),
                         });
                         self.error_with(
                             cond.span,
@@ -2014,17 +2015,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let refused = (self.errors.get(from..))
                         .is_some_and(|es| es.iter().any(|e| e.span == span));
                     self.also_notes(from, |ck| {
-                        built(1);
-                        let mut notes = vec![Note {
-                            span: o,
-                            text: ck.declared_step(id, &sig),
-                        }];
-                        ck.declared_emptied(id, &mut notes);
+                        let mut notes = ck.call_notes(id, o, &sig);
                         if refused {
                             ck.subtracted_args(id, positional, named, &mut notes);
                         }
                         notes
                     });
+                    if self.level > 0 && !self.trying {
+                        (self.body_calls).push((span, o, id, sig, self.next_found));
+                    }
                 }
                 m.ty(out);
             }
@@ -2532,7 +2531,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Row::WritesNothing,
                 s.span,
                 format!("Statement has no effect: `{shown}` writes to no port, and its value is dropped."),
-                notes.into_iter().map(|text| Note { span: tail.span, text }).collect(),
+                notes.into_iter().map(|text| Note { span: tail.span, text: text.into() }).collect(),
             );
             return;
         }
@@ -2557,13 +2556,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut notes = vec![
             Note {
                 span: value.span,
-                text: format!("repair: drop the result in writing, as `{dropped}`"),
+                text: format!("repair: drop the result in writing, as `{dropped}`").into(),
             },
             Note {
                 span: value.span,
                 text: format!(
                     "repair: bind the result to a name, and use the name, as `… = {shown};`"
-                ),
+                )
+                .into(),
             },
         ];
         if !v.loose().is_empty() {
@@ -3893,7 +3893,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 "{what} is {dt}, not {t}: a default is a value of its parameter's \
                                  type{why}"
                             ),
-                            menu.into_iter().map(|n| n.text),
+                            menu.into_iter().map(|n| n.text.to_string()),
                         );
                     }
                 }
@@ -4450,7 +4450,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let mut notes = vec![Note {
             span: at_f,
-            text: format!("`flatMap` keeps each list its function gives as one entry, {given}"),
+            text: format!("`flatMap` keeps each list its function gives as one entry, {given}")
+                .into(),
         }];
         // The repair writes `map`, so it is offered for `map` alone.
         if let Some((p, body)) = one.filter(|_| word == MapWord::Map)
@@ -4458,7 +4459,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             notes.push(Note {
                 span: at_f,
-                text: format!("repair: write `{r}`"),
+                text: format!("repair: write `{r}`").into(),
             });
         }
         self.errors[at].notes.extend(notes);
@@ -7401,6 +7402,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (n, t) in &now {
             self.check_on(n, t, n.span, None);
         }
+        // With no entry open, no error is parked, and no logged note has an error to go to.
+        if self.top_parts.is_empty() {
+            self.parked_notes.clear();
+        }
         unmet
     }
 
@@ -7524,13 +7529,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                         takes.push(c);
                     }
                 }
+                // Float formats alone take `f64` where the bound `m` leaves them alone, a use
+                // that fixes the formats; where the operations' own values leave them, as `1 /
+                // 0`, which has a value at `f32` and `f64` alone, nothing fixes a carrier and
+                // the rejection stands, as in a body (row CHECK-div-zero-in-call-arg-silent:
+                // `z = add(x: 1 / 0, y: 1)` took `f64` with no error).
+                let bound: Vec<Carrier> = Carrier::of_mask(m).filter(|c| c.numeric()).collect();
+                let floats = floats_take_f64(&bound) && takes.contains(&Carrier::F64);
                 match takes[..] {
                     [] => return None,
                     _ if ints && takes.contains(&Carrier::Int) => return None,
                     [c] => c,
-                    _ if floats_take_f64(&takes) || unfixed_takes_f64(&takes, decimal) => {
-                        Carrier::F64
-                    }
+                    _ if floats || unfixed_takes_f64(&takes, decimal) => Carrier::F64,
                     _ => return None,
                 }
             }
@@ -7709,6 +7719,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         while let Some(e) = todo.pop() {
             if let Some(r) = self.lit_written.get(&e.span) {
                 for f in self.errors.get_mut(r.clone()).into_iter().flatten() {
+                    if !on && f.parked {
+                        // Kept: it takes the notes of the calls it lay in, as the error of
+                        // any argument does, in the order those calls ended. The ranges end
+                        // at `next_found` as it was, which only grows, so those that hold
+                        // `f.id` are among a suffix of the log.
+                        let i = (self.parked_notes).partition_point(|&(_, hi, _)| hi <= f.id);
+                        for (lo, _, notes) in &self.parked_notes[i..] {
+                            if *lo <= f.id {
+                                f.add_notes(notes);
+                            }
+                        }
+                    }
                     f.parked = on;
                 }
             }
@@ -9104,7 +9126,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let mut notes = self.derive(&[rule.span]);
             notes.extend(menu.into_iter().map(|text| Note {
                 span: rule.span,
-                text,
+                text: text.into(),
             }));
             self.rejects_with(Row::WrongForm, rule.span, message, notes);
             m.k(Frame::Fail(None));
@@ -9615,11 +9637,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let head = several.then(|| Note {
                     span: of.span,
                     text: match &operand {
-                        Some(c) => format!("at an arrow of the intersection, `{c} : {shown}`"),
+                        Some(c) => {
+                            format!("at an arrow of the intersection, `{c} : {shown}`").into()
+                        }
                         None => format!(
                             "at an arrow of the intersection, the value before `else` has type \
                              `{shown}`"
-                        ),
+                        )
+                        .into(),
                     },
                 });
                 for n in head.into_iter().chain(notes) {
@@ -9643,8 +9668,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut notes = vec![Note {
             span: of.span,
             text: match &operand {
-                Some(c) => format!("`{c} : {shown}`"),
-                None => format!("the value before `else` has type `{shown}`"),
+                Some(c) => format!("`{c} : {shown}`").into(),
+                None => format!("the value before `else` has type `{shown}`").into(),
             },
         }];
         notes.extend(derived);
@@ -9686,7 +9711,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                         text: format!(
                             "repair: name the atoms the `else` takes, {}",
                             super::else_chain(&names, "d").trim_start()
-                        ),
+                        )
+                        .into(),
                     });
                 } else {
                     let d = tail.map(|(_, d)| d);
@@ -9710,7 +9736,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.show(&Ty::set(but))
                     ),
                 };
-                notes.push(Note { span: whole, text });
+                notes.push(Note {
+                    span: whole,
+                    text: text.into(),
+                });
             }
         }
         let mut m = Msg::new(text, fixes);
@@ -9749,12 +9778,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             text: format!(
                 "the value has type `{shown}`, which holds no loose atom, so the `else` never \
                  takes one"
-            ),
+            )
+            .into(),
         });
         let (Some(c), Some(d)) = (self.operand_text(Some(of.span)), d) else {
             notes.push(Note {
                 span: whole,
-                text: "repair: delete the `else` and its default".to_string(),
+                text: "repair: delete the `else` and its default"
+                    .to_string()
+                    .into(),
             });
             return;
         };
@@ -9792,7 +9824,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     text: "a float division gives NaN or infinity, not an atom, so no `else` \
                            takes the result of dividing by zero; the test of the divisor takes \
                            that case, and a NaN or infinite operand still gives NaN or infinity"
-                        .to_string(),
+                        .to_string()
+                        .into(),
                 });
             }
         }
@@ -9840,18 +9873,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                         true => format!(
                             "an int cast takes a number only where the checker proves it \
                              whole; {arg} is not whole"
-                        ),
+                        )
+                        .into(),
                         false => format!(
                             "an int cast takes a number only where the checker proves it \
                              whole; {arg} is {value}"
-                        ),
+                        )
+                        .into(),
                     }
                 }
                 None => format!(
                     "an int cast takes a number only where the checker proves it whole; \
                      `{arg}` is {}, which may hold a value that is not whole",
                     self.show(&Ty::set(x.ty.set.clone()))
-                ),
+                )
+                .into(),
             },
         }];
         if self.trying {
@@ -9865,7 +9901,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 text: format!(
                     "repair: test at run time, `r: f64 = trunc({arg}); if {arg}.isFinite && \
                      {arg} == r {{ int({arg}) }} else {{ … }}`"
-                ),
+                )
+                .into(),
             });
         }
         let bound = self.bound_names.get(&span).copied();
@@ -11031,10 +11068,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             for (at, misfit) in misfits {
                 let message = misfit.message(&who);
-                let menu = misfit
-                    .menu(&who, called)
-                    .into_iter()
-                    .map(|text| Note { span: at, text });
+                let menu = misfit.menu(&who, called).into_iter().map(|text| Note {
+                    span: at,
+                    text: text.into(),
+                });
                 match misfit.row() {
                     Some(row) => self.rejects_with(row, at, message, menu.collect()),
                     None => self.error_with(at, message, menu.collect()),
@@ -12083,7 +12120,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         for &(leaf, _) in &leaves {
             notes.push(Note {
                 span: leaf.span,
-                text: "this branch answers `#notFound`".to_string(),
+                text: "this branch answers `#notFound`".into(),
             });
         }
         notes.push(Note {
@@ -12093,7 +12130,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                  miss of `->?` does not cover it: a map is a memoized function, and the same \
                  value held as a table or as code has the same keys; `{ty}` lets a key be \
                  absent, and then its value is `{v}`"
-            ),
+            )
+            .into(),
         });
         let display = source.and_then(|t| {
             let [p] = s.params else { return None };
@@ -12118,7 +12156,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 "repair: give the keys present as a display, as `{}`, or as a family with a \
                  guard, as `for k in ks where p(k) {{ f(k) }}`",
                 display.as_deref().unwrap_or("{ \"a\" -> 1 }")
-            ),
+            )
+            .into(),
         });
         notes.push(Note {
             span: s.span,
@@ -12127,7 +12166,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                  only called, `{}`",
                 with(&partial),
                 with(&exact)
-            ),
+            )
+            .into(),
         });
         let message = format!("`{slot}` holds only `{v}` values, and {shown} answers `#notFound`");
         let fix = display
@@ -12693,7 +12733,10 @@ impl<'a> Ck<'_, 'a> {
         // A question refused behind the value is named before the derivation, as at `^`.
         let mut notes = self.refused_notes(e);
         self.derive_into(&[e.span], &mut notes);
-        notes.extend(menu.into_iter().map(|text| Note { span: e.span, text }));
+        notes.extend(menu.into_iter().map(|text| Note {
+            span: e.span,
+            text: text.into(),
+        }));
         self.error_with(e.span, message, notes);
     }
 
@@ -13037,8 +13080,8 @@ impl<'a> Ck<'_, 'a> {
             .map(|(span, outcome, case)| Note {
                 span,
                 text: match case {
-                    false => format!("this test is {outcome} here"),
-                    true => format!("this test is {outcome} in one case here"),
+                    false => format!("this test is {outcome} here").into(),
+                    true => format!("this test is {outcome} in one case here").into(),
                 },
             })
             .collect()
@@ -13187,7 +13230,10 @@ impl<'a> Ck<'_, 'a> {
         let mut notes = Vec::new();
         for (r, kept) in s.refused_on(names.iter().map(|(n, _)| &**n)) {
             let span = self.asked_at(r, e.span);
-            notes.extend((r.derivation(kept).into_iter()).map(|text| Note { span, text }));
+            notes.extend((r.derivation(kept).into_iter()).map(|text| Note {
+                span,
+                text: text.into(),
+            }));
         }
         notes
     }
@@ -13338,7 +13384,8 @@ impl<'a> Ck<'_, 'a> {
                     "the division fails with `#divByZero` where `{divisor} == 0`; its integer \
                      roots in the range the tests leave `{name}` are the only values of `{name}` \
                      that reach it, and `{name} = {root}` is one"
-                ),
+                )
+                .into(),
             },
             Note {
                 span: b.span,
@@ -13346,7 +13393,8 @@ impl<'a> Ck<'_, 'a> {
                     "the tests around the division include `{constraint}`, evaluated at \
                      `{name} = {root}` to see whether that root reaches the division; it gives \
                      `{gave}`, which is neither `true` nor `false`, so it does not say"
-                ),
+                )
+                .into(),
             },
         ];
         notes.extend(self.derive(&[b.span]));
@@ -13361,7 +13409,10 @@ impl<'a> Ck<'_, 'a> {
                  with each value it takes"
             ),
         ];
-        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        notes.extend(menu.into_iter().map(|text| Note {
+            span,
+            text: text.into(),
+        }));
         self.rejects_with(Row::RootConstraintFails, span, message, notes);
     }
 
@@ -14963,6 +15014,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             *b = Vars::default();
         }
         self.close_type_vars(level);
+        if level == 1 {
+            self.late_call_notes();
+        }
         self.level -= 1;
         Arc::new(sig)
     }
@@ -16138,7 +16192,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 _ => "the value comes from here".to_string(),
             };
             built(1);
-            out.push(Note { span: v.from, text });
+            out.push(Note {
+                span: v.from,
+                text: text.into(),
+            });
         }
         if let Some(u) = Self::use_class(n) {
             for r in self.merges_between(v.class, u) {
@@ -16151,7 +16208,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                             span: r.span,
                             text: format!(
                                 "the default `{name} = {d}` gives `{name}` the type of `{d}`"
-                            ),
+                            )
+                            .into(),
                         }
                     }
                     _ => r.note(),
@@ -16797,7 +16855,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             path.for_each_note(|span, text| {
                 notes.push(Note {
                     span,
-                    text: text.to_string(),
+                    text: text.to_string().into(),
                 });
             });
             built(notes.len() as u64);
@@ -17858,7 +17916,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             text: format!(
                 "the memory limit of `main` lets the run hold {}",
                 bytes_text_of(&Num::from(i128::try_from(b).expect("at most 2^64")))
-            ),
+            )
+            .into(),
         }
     }
 
@@ -17924,7 +17983,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .join("; ");
         notes.push(Note {
             span: self.fixed_at(a),
-            text: base_is,
+            text: base_is.into(),
         });
         notes.extend(self.base_origins(a));
         let k_text = number_text(k);
@@ -17934,7 +17993,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         notes.push(Note {
             span: self.fixed_at(e),
-            text: exponent_is,
+            text: exponent_is.into(),
         });
         let each = (widths.iter().zip(part_names))
             .filter_map(|(l, name)| {
@@ -17951,7 +18010,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             text: format!(
                 "so `{power}` has at least {each}: |k| * ⌊log₂ |{var}|⌋ + 1 at the least \
                  |{var}| and |k|"
-            ),
+            )
+            .into(),
         });
         if let Some((b, at, _)) = main_limit {
             notes.push(Self::main_limit_note(b, at));
@@ -17968,11 +18028,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                          holds the result"
                 }
             }
-            .to_string(),
+            .to_string()
+            .into(),
         });
         notes.push(Note {
             span,
-            text: format!("or delete `{power}` if its result is not used"),
+            text: format!("or delete `{power}` if its result is not used").into(),
         });
         // The repair: the largest exponent `2^j` whose power fits, `2^j * F + built` bits at
         // most the bound, 2^67 or `8 * b`, as `b ^ (2^60)` for a base of 65 bits; none where
@@ -18153,7 +18214,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let o_code = self.code(Some(o.span)).unwrap_or(name);
             notes.push(Note {
                 span: self.fixed_at(o),
-                text: format!("`{o_code}` has {}", built_text(w)),
+                text: format!("`{o_code}` has {}", built_text(w)).into(),
             });
         }
         // The formula, in the letters of DESIGN's `x * y`.
@@ -18177,7 +18238,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         notes.push(Note {
             span,
-            text: format!("so `{code}` has {}: {factors}", built_text(r)),
+            text: format!("so `{code}` has {}: {factors}", built_text(r)).into(),
         });
         if let Some((b, at, _)) = main_limit {
             notes.push(Self::main_limit_note(b, at));
@@ -18194,11 +18255,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                      the result"
                 }
             }
-            .to_string(),
+            .to_string()
+            .into(),
         });
         notes.push(Note {
             span,
-            text: format!("or delete `{code}` if its result is not used"),
+            text: format!("or delete `{code}` if its result is not used").into(),
         });
         let fixes = match main_limit {
             Some((_, at, arg)) => vec![self.main_limit_fix(&r.size(), at, arg)],
@@ -18347,7 +18409,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             text: format!(
                 "`{code}` asks for at least {} bits: {why}",
                 number_text(&w.bits)
-            ),
+            )
+            .into(),
         });
         if let Some((b, at, _)) = main_limit {
             notes.push(Self::main_limit_note(b, at));
@@ -18364,11 +18427,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                      what it writes out"
                 }
             }
-            .to_string(),
+            .to_string()
+            .into(),
         });
         notes.push(Note {
             span: w.span,
-            text: format!("or delete `{code}` if its result is not used"),
+            text: format!("or delete `{code}` if its result is not used").into(),
         });
         let fixes = match main_limit {
             Some((_, at, arg)) => vec![self.main_limit_fix(&w.bits, at, arg)],
@@ -18422,7 +18486,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let code = self.code(Some(v.span)).unwrap_or("its value");
             notes.push(Note {
                 span: self.t.res.binders[b[0]].span,
-                text: format!("`{n}` is bound here to `{code}`"),
+                text: format!("`{n}` is bound here to `{code}`").into(),
             });
             x = v;
         }
@@ -18991,7 +19055,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `note` says, may be `shown`: the exponent the `^` shows, or else `shown`, then the
     /// steps of the exponent's derivation, or else of the value at `span`, and the repairs.
     fn power_error(&mut self, p: &PowerUse, shown: &str, note: String, span: Span) {
-        let mut notes = vec![Note { span, text: note }];
+        let mut notes = vec![Note {
+            span,
+            text: note.into(),
+        }];
         match p.exponent {
             Some(_) => notes.extend(p.steps.iter().cloned()),
             None => self.derive_into(&[span], &mut notes),
@@ -19031,7 +19098,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (r, swap) in self.power_repairs(p) {
             let note = Note {
                 span,
-                text: repair_note(&r),
+                text: repair_note(&r).into(),
             };
             match swap.map(|s| self.power_swapped(p, s)) {
                 Some(Some(None)) => {
@@ -19839,7 +19906,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// whose values are all ints, so the repair declares `int` each parameter it is computed from.
     fn domain_error(&mut self, d: &IntDomain, shown: &str, why: String, span: Span) {
         let mut notes = self.derive(&[span]);
-        notes.push(Note { span, text: why });
+        notes.push(Note {
+            span,
+            text: why.into(),
+        });
         let code = self.code(Some(span));
         let within = Within::of(d);
         let first = code.map(|c| {
@@ -19853,7 +19923,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         });
         let pass = format!("repair: pass as `{}` a value in {}", d.name, domain_text(d));
         let menu = (first.iter().map(repair_note)).chain([pass]);
-        notes.extend(menu.map(|text| Note { span, text }));
+        notes.extend(menu.map(|text| Note {
+            span,
+            text: text.into(),
+        }));
         let piece = format!("{} : {shown}", code.unwrap_or("…"));
         self.error_with(span, domain_message(&d.what, &piece, first.as_ref()), notes);
     }
@@ -20506,13 +20579,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 while let Some(l) = v {
                     chain.push(Note {
                         span: l.at,
-                        text: l.text.to_string(),
+                        text: l.text.clone(),
                     });
                     v = l.next.as_deref();
                 }
                 chain.push(Note {
                     span: n.span,
-                    text: format!("{} here", domain.what),
+                    text: format!("{} here", domain.what).into(),
                 });
                 chain
             };
@@ -20548,7 +20621,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                             format!("repair: give `{p}` a default in {dom}"),
                         ]
                         .into_iter()
-                        .map(|text| Note { span, text }),
+                        .map(|text| Note {
+                            span,
+                            text: text.into(),
+                        }),
                     );
                     self.error_with(span, message, notes);
                 }
@@ -20612,7 +20688,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     };
                     let mut notes = vec![Note {
                         span: f.at,
-                        text: format!("`{code}` reaches {what} as `{p}`"),
+                        text: format!("`{code}` reaches {what} as `{p}`").into(),
                     }];
                     notes.extend(chain());
                     notes.push(outside(domain, span));
@@ -20655,7 +20731,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let shown = &r.shown;
             let mut notes = vec![Note {
                 span: at,
-                text: format!("`{p}` is this argument, {shown}"),
+                text: format!("`{p}` is this argument, {shown}").into(),
             }];
             if r.narrowed {
                 notes.extend(self.deciding_notes(e));
@@ -20772,13 +20848,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             while let Some(l) = v {
                 chain.push(Note {
                     span: l.at,
-                    text: l.text.to_string(),
+                    text: l.text.clone(),
                 });
                 v = l.next.as_deref();
             }
             chain.push(Note {
                 span: use_at.0,
-                text: domain.what.to_string(),
+                text: (&*domain.what).into(),
             });
             chain
         };
@@ -20787,7 +20863,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let mut notes = chain();
                 notes.push(Note {
                     span,
-                    text: format!("repair: pass `{p}` in this call"),
+                    text: format!("repair: pass `{p}` in this call").into(),
                 });
                 let m = format!(
                     "{}: this call leaves out `{p}`, which takes its default, whose keys the \
@@ -20830,7 +20906,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let mut notes = chain();
             notes.push(Note {
                 span: self.t.res.binders[id].span,
-                text: format!("`{code}` is declared here, and {}", wider.join(", and ")),
+                text: format!("`{code}` is declared here, and {}", wider.join(", and ")).into(),
             });
             let m = format!(
                 "{}, and `{code}` is declared with keys that may lie outside",
@@ -20949,16 +21025,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut notes = chain();
         notes.push(Note {
             span: at,
-            text: format!("`{code}` reaches {what} as `{p}`, and {why}"),
+            text: format!("`{code}` reaches {what} as `{p}`, and {why}").into(),
         });
         notes.push(Note {
             span: at,
             text: match k.ranges.is_empty() {
-                true => format!("repair: pass a family as `{p}`"),
+                true => format!("repair: pass a family as `{p}`").into(),
                 false if k.family.is_some() => {
-                    format!("repair: pass a family with {}", ranges())
+                    format!("repair: pass a family with {}", ranges()).into()
                 }
-                false => format!("repair: pass a map with {}", ranges()),
+                false => format!("repair: pass a map with {}", ranges()).into(),
             },
         });
         self.error_with(at, format!("{}: `{code}` may not be one", takes()), notes);
@@ -21140,7 +21216,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // A function held at any depth is reported here, at the use that needs data, with the
         // derivation of the function through the tuples, atoms and names that hold it
         // ([`Ck::derive_held`]).
-        let note = |text: String| Note { span, text };
+        let note = |text: String| Note {
+            span,
+            text: text.into(),
+        };
         if let Some(s) = t.unchecked_function() {
             // Spelled as the value is, so a value that is the function itself has no note.
             let s = self.text(&self.shown(&Ty::func(s.clone())));
@@ -21813,7 +21892,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             false => format!("{} with {}", typed(0), typed(1)),
         };
         let mut notes = self.derive(&sides.ats.into_iter().flatten().collect::<Vec<_>>());
-        let mut step = |text: String| notes.push(Note { span, text });
+        let mut step = |text: String| {
+            notes.push(Note {
+                span,
+                text: text.into(),
+            })
+        };
         if let Some((&last, inner)) = path.split_last() {
             step(format!(
                 "{what} compares two tuples component by component, as far as the shorter goes"
@@ -22249,7 +22333,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let shown = &r.shown;
         let mut notes = vec![Note {
             span: at,
-            text: format!("`m` is this modulus, {shown}"),
+            text: format!("`m` is this modulus, {shown}").into(),
         }];
         if r.narrowed {
             notes.extend(self.deciding_notes(e));
@@ -22358,7 +22442,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let shown = &r.shown;
             let mut notes = vec![Note {
                 span: at,
-                text: format!("`{name}` is this operand, {shown}"),
+                text: format!("`{name}` is this operand, {shown}").into(),
             }];
             if r.narrowed {
                 notes.extend(self.deciding_notes(e));
@@ -22370,7 +22454,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 text: format!(
                     "`{w}` reads `{name}` as binary digits, and an int below 0 has no finite \
                      row of them"
-                ),
+                )
+                .into(),
             });
             // No test is offered where the checks that follow would still refuse what it
             // keeps: an operand bounded by a width not shown to be at least 0, and a width
@@ -22386,7 +22471,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let rewrite =
                     (width_within.as_ref()).and_then(|wi| self.width_rewrite(span, at, wi));
                 repairs.splice(first.is_some() as usize..first.is_some() as usize, {
-                    (rewrite.iter().map(repair_note)).map(|text| Note { span, text })
+                    (rewrite.iter().map(repair_note)).map(|text| Note {
+                        span,
+                        text: text.into(),
+                    })
                 });
                 first = first.or(rewrite);
             }
@@ -22424,7 +22512,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             let mut notes = vec![Note {
                 span: at,
-                text: format!("`{name}` is this operand, of no declared type"),
+                text: format!("`{name}` is this operand, of no declared type").into(),
             }];
             self.derive_into(&[at], &mut notes);
             let checks = match i == last {
@@ -22437,7 +22525,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     "`{w}` checks {checks} against `width`, and the checker does not follow a \
                      check between two operands back to each caller, so the type of `{name}` \
                      is needed here"
-                ),
+                )
+                .into(),
             });
             let (shown_within, testable) = within_of(i);
             let code = self.code(Some(at)).filter(|_| testable);
@@ -22448,7 +22537,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // A test narrows only a name whose values are all ints.
             if let (Some((test, tail)), Some(c)) = (&mut first, code) {
                 *tail = format!(", with each parameter in `{}` declared `int`", unparen(c));
-                repairs[0].text = repair_note(&(test.clone(), tail.clone()));
+                repairs[0].text = repair_note(&(test.clone(), tail.clone())).into();
             }
             notes.extend(repairs);
             let takes = format!("`{w}` takes `{name}` {}", shown_within.takes());
@@ -22465,12 +22554,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             let sw = rw.shown.as_str();
             let mut notes = vec![Note {
                 span: aw,
-                text: format!("`width` is this operand, {sw}"),
+                text: format!("`width` is this operand, {sw}").into(),
             }];
             self.derive_into(&[aw], &mut notes);
             notes.push(Note {
                 span,
-                text: format!("`{w}` works on whole bytes"),
+                text: format!("`{w}` works on whole bytes").into(),
             });
             let within = width_within.unwrap_or(Within::Bytes(vec![8, 16, 32, 64]));
             let arg = self.code(Some(aw)).map(|c| (c, self.tested(we).is_some()));
@@ -22481,7 +22570,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             let rewrite = self.width_rewrite(span, aw, &within);
             let at = first.is_some() as usize;
             repairs.splice(at..at, {
-                (rewrite.iter().map(repair_note)).map(|text| Note { span, text })
+                (rewrite.iter().map(repair_note)).map(|text| Note {
+                    span,
+                    text: text.into(),
+                })
             });
             notes.extend(repairs);
             let takes = format!("`{w}` takes `width` {}", within.takes());
@@ -22632,17 +22724,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         let takes = format!("`{w}` takes `width` {}", within.takes());
         let mut notes = vec![Note {
             span: at,
-            text: format!("`{code}` gives the function called here, of `width`"),
+            text: format!("`{code}` gives the function called here, of `width`").into(),
         }];
         if least.is_none() {
             notes.push(Note {
                 span: at,
-                text: format!("the checker cannot show that the operands of `{code}` fit a width"),
+                text: format!("the checker cannot show that the operands of `{code}` fit a width")
+                    .into(),
             });
         }
         notes.push(Note {
             span,
-            text: format!("repair: pass as `width` {}", within.value()),
+            text: format!("repair: pass as `width` {}", within.value()).into(),
         });
         let piece = format!("width : {shown}");
         self.error_with(span, domain_message(&takes, &piece, None), notes);
@@ -22669,11 +22762,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut notes = vec![
             Note {
                 span: ax,
-                text: format!("`{name}` is this operand, {sx}"),
+                text: format!("`{name}` is this operand, {sx}").into(),
             },
             Note {
                 span: aw,
-                text: format!("`width` is this operand, {sw}"),
+                text: format!("`width` is this operand, {sw}").into(),
             },
         ];
         self.derive_into(&[ax, aw], &mut notes);
@@ -22703,7 +22796,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             at,
             Note {
                 span,
-                text: width_note,
+                text: width_note.into(),
             },
         );
         notes.extend(repairs);
@@ -24727,7 +24820,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         );
         let note = Note {
             span,
-            text: format!("repair: pass `{lambda}`, which calls `{name}` on what `{et}` passes"),
+            text: format!("repair: pass `{lambda}`, which calls `{name}` on what `{et}` passes")
+                .into(),
         };
         let at = call
             .filter(|c| c.start <= span.start && span.end <= c.end)
@@ -25128,7 +25222,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let text = format!("repair: write `{count}`, the number of entries of `{code}`");
                 let holds = format_args!("counts the entries of `{code}`");
                 literals.push(Repaired {
-                    note: Note { span, text },
+                    note: Note {
+                        span,
+                        text: text.into(),
+                    },
                     got: None,
                     fix: Rewrite::new(&[(span, &count)], &holds, &count),
                 });
@@ -25187,7 +25284,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 Rewrite::new(&[(*at, &l)], &holds, &l)
                             });
                             literals.push(Repaired {
-                                note: Note { span: *at, text },
+                                note: Note {
+                                    span: *at,
+                                    text: text.into(),
+                                },
                                 got,
                                 fix,
                             });
@@ -25242,7 +25342,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                         );
                         let holds = format_args!("the literal is then the {w} {}", lit.text);
                         literals.push(Repaired {
-                            note: Note { span: *at, text },
+                            note: Note {
+                                span: *at,
+                                text: text.into(),
+                            },
                             got,
                             fix: Rewrite::new(&[(*at, &lit.text)], &holds, &lit.text),
                         });
@@ -25267,7 +25370,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // literal too.
                     let to = if literal { &mut literals } else { &mut out };
                     to.push(Repaired {
-                        note: Note { span: *at, text },
+                        note: Note {
+                            span: *at,
+                            text: text.into(),
+                        },
                         got,
                         fix,
                     });
@@ -25317,7 +25423,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         Some(Repaired {
             note: Note {
                 span: at,
-                text: note,
+                text: note.into(),
             },
             got,
             fix: Rewrite::new(&[(at, &text)], &holds, &text),
@@ -25406,7 +25512,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => format!("repair: cast both operands to `{w}`; the checker accepts that"),
             };
             out.push(Repaired {
-                note: Note { span, text },
+                note: Note {
+                    span,
+                    text: text.into(),
+                },
                 got,
                 fix,
             });
@@ -25722,8 +25831,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// since BENCH-fixes-checked-wide-not-apart, is one whose result holds those variables,
     /// as `f(p0, …) = [p0, …]` (`the_fixes_of_many_arguments_not_apart` in l01_29
     /// scaling.rs: 48.5 times the instructions at 8 times the arguments before, 29.0 after,
-    /// and 8.0 with the step of `f`'s declaration, which each of the n errors gives in full,
-    /// cut to a constant; that step is row MSG-declared-step-per-error-checker). Still
+    /// and 8.0 since the step of `f`'s declaration, which each of the n errors gives, is
+    /// shared and laid out once, row MSG-declared-step-per-error-checker). Still
     /// quadratic: a call whose parameters share a type variable or hold one inside another
     /// type, or has bounds, needs or several arrows, is checked once per argument carrying a
     /// fix, and so is one whose alike classes are many ([`alike_fixes`]).
@@ -26285,8 +26394,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
             Offer::Note(at, text) => {
-                e.notes.retain(|n| n.span != *at || n.text != *text);
-                (e.m.noted).retain(|r| r.note.span != *at || r.note.text != *text);
+                e.notes.retain(|n| n.span != *at || *n.text != **text);
+                (e.m.noted).retain(|r| r.note.span != *at || *r.note.text != **text);
                 e.m.dropped |=
                     e.m.fixes.is_empty() && !e.notes.iter().any(|n| n.text.starts_with("repair:"));
             }
@@ -26464,7 +26573,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut notes = self.derive(&[at]);
         notes.push(Note {
             span: lit.span,
-            text: literal_note(lit.written(), lit_ty(&lit.value, lit.neg())),
+            text: literal_note(lit.written(), lit_ty(&lit.value, lit.neg())).into(),
         });
         let held = match self.class_of_ty(&v.ty) {
             Some(r) if self.classes[r].mask & OTHER == 0 => Ty::of_mask(self.classes[r].mask),
@@ -26508,7 +26617,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
                     None => format!("repair: wrap this in `{w}(…)`; the checker accepts that"),
                 };
-                notes.push(Note { span: at, text });
+                notes.push(Note {
+                    span: at,
+                    text: text.into(),
+                });
                 // The comparison rewritten with the cast, `rat(n) == 1.5`, where the operand
                 // is a name; the headline ends with the first.
                 // A name in parentheses, `(n)`, is cast as `rat(n)` ([`Self::cast_edits`]).
@@ -26590,7 +26702,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                             let notes = [l, m]
                                 .map(|l| Note {
                                     span: l.span,
-                                    text: literal_note(l.written(), lit_ty(&l.value, l.neg())),
+                                    text: literal_note(l.written(), lit_ty(&l.value, l.neg()))
+                                        .into(),
                                 })
                                 .to_vec();
                             let sites = vec![l.site, m.site];
@@ -26979,11 +27092,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let repairs = groups.iter().flat_map(|(rs, _)| rs.iter());
         notes.extend(repairs.map(|&r| Note {
             span,
-            text: format!("repair: write {}", fmt::from_fn(|f| form(f, r))),
+            text: format!("repair: write {}", fmt::from_fn(|f| form(f, r))).into(),
         }));
         if answer {
             let text = format!("repair: write {}", fmt::from_fn(in_place));
-            notes.push(Note { span, text });
+            notes.push(Note {
+                span,
+                text: text.into(),
+            });
         }
         self.rejects_with(row, span, message, notes);
     }
@@ -27030,7 +27146,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// or a repair is being tried.
     fn note_offered(&mut self, note: &Note, got: Option<(Ty, Vec<Span>)>) {
         if let (false, Some((ty, needs))) = (self.trying, got) {
-            self.pend(Offer::Note(note.span, note.text.clone()), needs, ty);
+            self.pend(Offer::Note(note.span, note.text.to_string()), needs, ty);
         }
     }
 
@@ -27097,9 +27213,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// scaling.rs, `f(p0, …) = [p0, …]` with each argument `k * 0.5`, 200 to 1600
     /// arguments): the trials here stay within the limit, since the menus are the literal
     /// ones and the fixes carried to the call are checked one class at a time
-    /// ([`alike_fixes`]); the run as a whole is 29.0 times the instructions, from the step of `f`'s
-    /// declaration given in full in each error (row MSG-declared-step-per-error-checker), and
-    /// 8.0 times with that step cut to a constant.
+    /// ([`alike_fixes`]); the run as a whole was 29.0 times the instructions, from the step of
+    /// `f`'s declaration copied and laid out in each error, and is 8.0 times since that step is
+    /// shared (row MSG-declared-step-per-error-checker).
     pub(super) fn fixes_checked(&mut self, span: Span, m: &mut Msg) {
         let Some(w) = self.written.clone() else {
             return;
@@ -27596,7 +27712,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 refused.sort_by_key(|(s, _)| (s.start, s.end));
                 let also: Vec<Span> = refused.iter().map(|(s, _)| *s).collect();
                 let mut notes: Vec<Note> = (refused.into_iter())
-                    .map(|(span, m)| Note { span, text: m.text })
+                    .map(|(span, m)| Note {
+                        span,
+                        text: m.text.into(),
+                    })
                     .collect();
                 notes.extend(self.applied(what.text(), sig, &args, span));
                 let mut seen: HashSet<Note> = notes.iter().cloned().collect();
@@ -27653,7 +27772,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 {
                     let n = &self.t.res.binders[*id].name;
                     let text = format!("repair: change the type of `{n}` so that {what} takes it");
-                    notes.push(Note { span: *at, text });
+                    notes.push(Note {
+                        span: *at,
+                        text: text.into(),
+                    });
                 }
                 let call = match what {
                     Label::SumPlus(call) => call,
@@ -27765,7 +27887,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if takes {
             let note = Note {
                 span,
-                text: format!("repair: write `{fixed}`; the checker accepts that"),
+                text: format!("repair: write `{fixed}`; the checker accepts that").into(),
             };
             let holds = format!("{fixed} is in [0.0, {ms})");
             if let Some(fix) = Rewrite::new(&[(span, &fixed)], &holds, &fixed) {
@@ -27783,7 +27905,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 text: format!(
                     "the remainder of a float is `{fixed}`, for a modulus shown finite and \
                      greater than `0.0`"
-                ),
+                )
+                .into(),
             });
         }
         notes.push(Note {
@@ -27791,7 +27914,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             text: format!(
                 "on `rat`, the exact residue is `rat({xs}) - {rat_m} * rat(floor(rat({xs}) / \
                  {rat_m}))`, where `{xs}` is proved finite"
-            ),
+            )
+            .into(),
         });
         self.reject(Some(Row::ModOnFloat), span, Msg::noted(text, noted), notes);
         true
@@ -29622,6 +29746,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 "_" => "these components have no type yet".to_string(),
                                 _ => format!("these components add up to {shown}"),
                             };
+                            let text = text.into();
                             self.lead_note(from, Note { span: w, text });
                         }
                         (at, acc, written, total) = (at.min(i), Arg::of(ty), site, true);
@@ -29713,7 +29838,7 @@ fn default_repairs(name: &str, got: &str, want: &str, both: &str, span: Span) ->
         ),
     ]
     .into_iter()
-    .map(|text| Note { span, text })
+    .map(|text| Note { span, text: text.into() })
     .collect()
 }
 
@@ -30241,7 +30366,10 @@ fn outside(d: &IntDomain, span: Span) -> Note {
         "a value outside {} would reach a use that does not take it",
         domain_text(d)
     );
-    Note { span, text }
+    Note {
+        span,
+        text: text.into(),
+    }
 }
 
 /// A call's code as written, and its code before and after one argument.
@@ -30493,7 +30621,10 @@ fn passed_repairs(
     };
     let notes = (test.iter().map(repair_note))
         .chain([pass])
-        .map(|text| Note { span, text })
+        .map(|text| Note {
+            span,
+            text: text.into(),
+        })
         .collect();
     (test, notes)
 }
@@ -30880,7 +31011,7 @@ impl<'a> Ck<'_, 'a> {
         };
         notes.push(Note {
             span: b.span,
-            text: "this divisor is always 0".to_string(),
+            text: "this divisor is always 0".to_string().into(),
         });
         notes.extend(self.derive(&[b.span]));
         let menu = [
@@ -30894,7 +31025,10 @@ impl<'a> Ck<'_, 'a> {
              be reached"
                 .to_string(),
         ];
-        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        notes.extend(menu.into_iter().map(|text| Note {
+            span,
+            text: text.into(),
+        }));
         self.rejects_with(
             Row::AlwaysFails,
             span,
@@ -30952,7 +31086,7 @@ impl<'a> Ck<'_, 'a> {
         };
         let mut notes = vec![Note {
             span: at,
-            text: format!("`m` is this modulus, {shown}"),
+            text: format!("`m` is this modulus, {shown}").into(),
         }];
         self.derive_into(&[at], &mut notes);
         notes.push(Note {
@@ -30971,7 +31105,8 @@ impl<'a> Ck<'_, 'a> {
                 text: format!(
                     "repair: write the modulus as a literal, such as `{repair}`: this version of \
                      zedc shows a modulus in range only from its literal"
-                ),
+                )
+                .into(),
             });
             notes.push(Note {
                 span,
@@ -31112,7 +31247,7 @@ impl<'a> Ck<'_, 'a> {
         };
         let mut notes = vec![Note {
             span: at,
-            text: format!("`{w}` cannot convert this operand"),
+            text: format!("`{w}` cannot convert this operand").into(),
         }];
         notes.extend(self.derive(&[at]));
         let menu = [
@@ -31126,7 +31261,10 @@ impl<'a> Ck<'_, 'a> {
              reached"
                 .to_string(),
         ];
-        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        notes.extend(menu.into_iter().map(|text| Note {
+            span,
+            text: text.into(),
+        }));
         self.rejects_with(
             Row::AlwaysFails,
             span,
@@ -31173,7 +31311,7 @@ impl<'a> Ck<'_, 'a> {
         let at = x.at.unwrap_or(span);
         let mut notes = vec![Note {
             span: of,
-            text: format!("this map has the keys `{keys_text}`, which hold no `{key}`"),
+            text: format!("this map has the keys `{keys_text}`, which hold no `{key}`").into(),
         }];
         notes.extend(self.derive(&[at, of]));
         let mut menu = vec![format!("repair: read the map with a key in `{keys_text}`")];
@@ -31217,7 +31355,10 @@ impl<'a> Ck<'_, 'a> {
              reached"
                 .to_string(),
         );
-        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        notes.extend(menu.into_iter().map(|text| Note {
+            span,
+            text: text.into(),
+        }));
         self.rejects_with(
             Row::KeyOutsideBound,
             span,
@@ -31699,7 +31840,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             .fold(0, |m, c| m | c.bit());
         let k = self.class();
         self.classes[k].generic = true;
-        let joined = self.restrict_asking(k, mask, what, span, false)
+        // The mask is the operation's own values, not a use, so it marks no use as asking
+        // for the float formats or `rat` alone ([`Ck::restrict_asking`]). Were it marked,
+        // `1 / 0`, which has a value at `f32` and `f64` alone, would take `f64` with no
+        // rejection as integer literals beside a float-only use do ([`floats_take_f64`]),
+        // and `z = add(x: 1 / 0, y: 1)` would be accepted where `f() = add(x: 1 / 0, y: 1)`
+        // is rejected (row CHECK-div-zero-in-call-arg-silent). The class is new, so neither
+        // flag held before.
+        let restricted = self.restrict_asking(k, mask, what, span, false);
+        let r = self.find(k);
+        (self.classes[r].floats, self.classes[r].rat) = (false, false);
+        let joined = restricted
             && op_lits(e, self.t.text)
                 .iter()
                 .all(|l| self.join(k, &l.joining(), l.exponent));
@@ -33420,8 +33571,8 @@ fn with_key_range_at(t: &Ty, path: &[PathStep], rs: &[(Option<usize>, WrittenRan
 /// times the instructions at 8 times the arguments, 200 to 1600). Here one pass groups the fixes by
 /// the two types, O(the types' sizes) to hash each, and each class costs two renamings of
 /// `R`, so the call is checked once per class: 29.0 times at the same sizes, the rest being
-/// the step of `f`'s declaration that each of the n errors gives in full (8.0 times with
-/// that step cut to a constant; row MSG-declared-step-per-error-checker). Still quadratic:
+/// the step of `f`'s declaration that each of the n errors gave in full (8.0 times since
+/// that step is shared; row MSG-declared-step-per-error-checker). Still quadratic:
 /// arguments of n distinct types, or a result that tells them apart, as the tuple `(p0, …)`
 /// does, are n classes; there the n types the call takes differ, each of size up to the
 /// call's, and no bound below that is proved.

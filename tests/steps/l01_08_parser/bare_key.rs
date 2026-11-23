@@ -20,7 +20,7 @@ fn refused(src: &str, at: usize, message: &str, notes: &[&str]) {
         matches!(&src[e.span.start..e.span.end], "|" | "&" | "\\"),
         "{src}"
     );
-    let got: Vec<&str> = e.notes.iter().map(|n| n.text.as_str()).collect();
+    let got: Vec<&str> = e.notes.iter().map(|n| &*n.text).collect();
     assert_eq!(&got[1..], notes, "{src}");
     for n in &e.notes {
         assert_eq!(n.span, e.span, "{src}");
@@ -47,7 +47,7 @@ fn a_bare_union_key_is_refused_with_both_readings() {
             "repair: `int | (#a -> int)`, with the key `#a`",
         ],
     );
-    let why = &refusal(src).notes[0].text;
+    let why = &*refusal(src).notes[0].text;
     assert_eq!(
         why,
         "a union as a key is written in parentheses, which say whether `|` or `->` groups first"
@@ -199,7 +199,7 @@ fn a_bare_key_is_found_after_many_definitions_and_in_long_types() {
         assert_eq!(e.row, Some(Row::BareKey), "{src}");
         let atoms: String = (0..n).map(|i| format!(" | #a{i}")).collect();
         assert_eq!(
-            e.notes[1].text,
+            *e.notes[1].text,
             format!("repair: `(int{atoms}) -> int`, with the key `int{atoms}`"),
             "{src}"
         );

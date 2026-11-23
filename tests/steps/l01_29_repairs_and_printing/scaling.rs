@@ -375,9 +375,10 @@ fn the_carried_fixes_of_many_arguments_print_linear_output() {
 /// (crates/zedc-check/src/check/walk.rs) takes it; `params_met_apart` does, and its fixes are
 /// checked one class at a time (`alike_fixes`). Each of the `n` arguments `k * 0.5` is its own
 /// error with two fixes, `rat(k) * 0.5` and `f64(k) * 0.5`, each checked as written
-/// (`Ck::fixes_checked`). Its bench at 200 and 1600 arguments is 29.0 times the instructions
-/// (48.5 before `alike_fixes`), from the step of `f`'s declaration that each error gives in
-/// full, and waits for row MSG-declared-step-per-error-checker.
+/// (`Ck::fixes_checked`). Its bench at 200 and 1600 arguments
+/// (`the_fixes_of_many_arguments_not_checked_apart_scale`) is 8.0 times the instructions: 48.5
+/// before `alike_fixes`, 29.0 after, while the step of `f`'s declaration that each error gives
+/// was copied, laid out and quoted once per error (row MSG-declared-step-per-error-checker).
 pub(super) fn carried_fixes_not_apart(n: usize) -> String {
     let ps: Vec<String> = (0..n).map(|i| format!("positional p{i}")).collect();
     let body: Vec<String> = (0..n).map(|i| format!("p{i}")).collect();

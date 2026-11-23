@@ -2,7 +2,7 @@ use zed_tests::scaling;
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
 use super::super::top_body_agree::{
-    comparisons, display_ops, generic_ops, nested_call_ops, nested_int_exponents,
+    body_call_notes, comparisons, display_ops, generic_ops, nested_call_ops, nested_int_exponents,
     nested_powers_by_an_inexact_divisor, powers, tuple_component_ops,
 };
 
@@ -171,5 +171,29 @@ fn operations_in_nested_calls_scale() {
         scaling::check("checking n operations in nested calls", n, |m| {
             type_errors(&srcs[usize::from(m != n)]);
         });
+    });
+}
+
+/// A body rejecting a literal nested in `n` calls, and one rejecting it beside `n` calls: the
+/// calls a body walked are kept and, as the walk leaves the function, swept once against the
+/// errors found after them (`Ck::late_call_notes` in zedc-check), O((c + e) log(c + e)) for
+/// `c` calls and `e` errors beside the notes added, where testing each error against each
+/// call is O(e·c) (row MSG-body-notes-match-top).
+///
+/// Besides its ratio: the two rejections. Small instance:
+/// `top_body_agree::a_rejection_in_a_body_has_the_steps_of_each_call_as_at_the_top_level`.
+#[test]
+fn steps_of_calls_around_a_body_rejection_scale() {
+    scaling::on_a_thread(1 << 29, || {
+        let n = 300;
+        let srcs = [body_call_notes(n), body_call_notes(scaling::FACTOR * n)];
+        assert_eq!(type_errors(&srcs[0]).len(), 2);
+        scaling::check(
+            "checking bodies rejecting a literal in or beside n calls",
+            n,
+            |m| {
+                type_errors(&srcs[usize::from(m != n)]);
+            },
+        );
     });
 }

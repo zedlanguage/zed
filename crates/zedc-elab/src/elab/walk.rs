@@ -2769,7 +2769,8 @@ impl<'a> Elab<'a> {
                                 "`.{name}` after a literal calls the function `{name}` with the \
                                  literal as its first argument, since a literal has no fields, \
                                  and no function `{name}` is in scope"
-                            ),
+                            )
+                            .into(),
                         }],
                     });
                     m.give(None);
@@ -3420,7 +3421,8 @@ impl<'a> Elab<'a> {
                                         text: format!(
                                             "`{}` is declared here with no parameters",
                                             f.name
-                                        ),
+                                        )
+                                        .into(),
                                     }],
                                 });
                                 None

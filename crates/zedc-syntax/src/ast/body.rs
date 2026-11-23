@@ -102,11 +102,12 @@ impl Builder<'_, '_> {
             span: tok_span(node.start - 1),
             text: format!(
                 "the brace follows {position}, so it is a block whatever it contains (sec:lexical)"
-            ),
+            )
+            .into(),
         };
         let display = |kind: &str| Note {
             span: brace,
-            text: format!("repair: `({written})`, the {kind} display in parentheses"),
+            text: format!("repair: `({written})`, the {kind} display in parentheses").into(),
         };
         let (message, notes) = match reading {
             Reading::Lambda => (
@@ -122,14 +123,16 @@ impl Builder<'_, '_> {
                         text: format!(
                             "`{contents}` reads as a map entry `key -> value`; in a block it \
                              is a lambda, and the block's value"
-                        ),
+                        )
+                        .into(),
                     },
                     display("map"),
                     Note {
                         span: brace,
                         text: format!(
                             "repair: `{{ ({contents}) }}`, the block whose value is the lambda"
-                        ),
+                        )
+                        .into(),
                     },
                 ],
             ),
@@ -162,7 +165,7 @@ impl Builder<'_, '_> {
                     };
                     Note {
                         span: range_span(first_start, first_end),
-                        text: format!("`{entry}` is {what}, not an expression"),
+                        text: format!("`{entry}` is {what}, not an expression").into(),
                     }
                 };
                 let block = if *record || *map {
@@ -188,7 +191,7 @@ impl Builder<'_, '_> {
                         display(kind),
                         Note {
                             span: brace,
-                            text: block,
+                            text: block.into(),
                         },
                     ],
                 )

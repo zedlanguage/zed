@@ -86,7 +86,7 @@ fn each_kind_of_display_gets_its_repair() {
             || !has_repair
             || !has_display
         {
-            let notes: Vec<&str> = e.notes.iter().map(|n| n.text.as_str()).collect();
+            let notes: Vec<&str> = e.notes.iter().map(|n| &*n.text).collect();
             wrong.push(format!("{text}\n  {}\n  {notes:?}", e.message));
         }
     }
@@ -101,7 +101,7 @@ fn the_part_that_reads_as_a_display_is_named() {
     assert!(
         e.notes
             .iter()
-            .any(|n| n.text == "`x: 1` is a record field, `name: value`, not an expression"),
+            .any(|n| n.text == "`x: 1` is a record field, `name: value`, not an expression".into()),
         "{:?}",
         e.notes
     );
@@ -109,7 +109,7 @@ fn the_part_that_reads_as_a_display_is_named() {
     assert!(
         e.notes
             .iter()
-            .any(|n| n.text == "`1 -> 2` is a map entry, `key -> value`, not an expression"),
+            .any(|n| n.text == "`1 -> 2` is a map entry, `key -> value`, not an expression".into()),
         "{:?}",
         e.notes
     );

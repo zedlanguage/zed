@@ -207,15 +207,16 @@ impl Builder<'_, '_> {
                     text: format!(
                         "the two readings give different calls: `{first}` is `{first_call}`, \
                          and `{second}` is `{second_call}`"
-                    ),
+                    )
+                    .into(),
                 },
                 Note {
                     span: call,
-                    text: format!("repair: `{first}`"),
+                    text: format!("repair: `{first}`").into(),
                 },
                 Note {
                     span: call,
-                    text: format!("repair: `{second}`"),
+                    text: format!("repair: `{second}`").into(),
                 },
             ],
         }
@@ -242,7 +243,7 @@ impl Builder<'_, '_> {
                 },
                 Note {
                     span: at,
-                    text: format!("repair: `{repair}`"),
+                    text: format!("repair: `{repair}`").into(),
                 },
             ],
         }

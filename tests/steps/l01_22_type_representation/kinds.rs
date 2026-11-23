@@ -438,7 +438,11 @@ const DATA: &str = "data is a value that holds no function at any depth";
 fn data_notes(text: &str) -> Vec<String> {
     let (i, _) = zed_tests::step_helpers::l01_26_type_resolution::info(text);
     assert_eq!(i.errors.len(), 1, "{text}: {:?}", i.errors);
-    i.errors[0].notes.iter().map(|n| n.text.clone()).collect()
+    i.errors[0]
+        .notes
+        .iter()
+        .map(|n| n.text.to_string())
+        .collect()
 }
 
 #[test]
@@ -1986,7 +1990,7 @@ fn errors_with_steps(text: &str) -> Vec<(String, Vec<String>)> {
         .map(|e| {
             (
                 e.message.clone(),
-                e.notes.iter().map(|n| n.text.clone()).collect(),
+                e.notes.iter().map(|n| n.text.to_string()).collect(),
             )
         })
         .collect()

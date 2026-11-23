@@ -670,14 +670,15 @@ impl<'t, 'a> Walk<'t, 'a> {
         };
         let mut notes = vec![Note {
             span: n.e.span,
-            text: gives,
+            text: gives.into(),
         }];
         self.derivation(&operands, values, seen, &mut notes);
         notes.push(Note {
             span: n.e.span,
             text: "repair: if wrapping arithmetic is meant, reduce the value with \
                    `mod 2^k`, k at most 128"
-                .to_string(),
+                .to_string()
+                .into(),
         });
         Error {
             menu: String::new(),
@@ -715,7 +716,7 @@ impl<'t, 'a> Walk<'t, 'a> {
                 (Kind::Name(Some(id)), ExprKind::Name(name)) => {
                     notes.push(Note {
                         span: n.e.span,
-                        text: format!("`{name}` is {d} here"),
+                        text: format!("`{name}` is {d} here").into(),
                     });
                     if let Some(&r) = self.binds.get(&id)
                         && seen[r as usize] != mark
@@ -723,7 +724,7 @@ impl<'t, 'a> Walk<'t, 'a> {
                         let at = &self.nodes[r as usize];
                         notes.push(Note {
                             span: at.e.span,
-                            text: format!("`{name}` is defined as this expression, {d}"),
+                            text: format!("`{name}` is defined as this expression, {d}").into(),
                         });
                         stack.push(r);
                     }
@@ -736,7 +737,7 @@ impl<'t, 'a> Walk<'t, 'a> {
             };
             notes.push(Note {
                 span: n.e.span,
-                text,
+                text: text.into(),
             });
             stack.extend(self.deps(j).rev());
         }
