@@ -2556,6 +2556,12 @@ struct Ck<'t, 'a> {
     /// check is code of `walk.rs`, which imports this file, and a call from here would make
     /// the two files import each other.
     check_fixes: fn(&mut Ck<'t, 'a>, Span, &mut Msg),
+    /// What refuses the uses of class `r` that take a tuple apart, index it or call it, once a
+    /// restriction leaves the class carriers alone ([`Self::restrict_asking`]): the walk's
+    /// [`Ck::refuse_taken_uses`], which refuses each as the use itself does. Given as a value for
+    /// the reason [`Self::check_fixes`] is: it is code of `walk.rs`, and a call from here
+    /// would make the two files import each other (s_01f_import_graph).
+    refuse_taken: fn(&mut Ck<'t, 'a>, usize, Vec<Need>),
     /// The fixes kept for rejections in the constructs being checked whose checks as written
     /// added errors only inside other arguments ([`Pending`]), settled when the construct's
     /// check ends ([`Ck::pending_settled`]).
@@ -3421,8 +3427,13 @@ struct Open {
 
 impl<'t, 'a> Ck<'t, 'a> {
     /// A check with the binder tables `t`, whose rejections' fixes `check_fixes` checks as
-    /// written ([`Self::check_fixes`]).
-    fn new(t: &'t Tables<'a>, check_fixes: fn(&mut Self, Span, &mut Msg)) -> Self {
+    /// written ([`Self::check_fixes`]), and whose uses left with carriers alone `refuse_taken`
+    /// refuses ([`Self::refuse_taken`]).
+    fn new(
+        t: &'t Tables<'a>,
+        check_fixes: fn(&mut Self, Span, &mut Msg),
+        refuse_taken: fn(&mut Self, usize, Vec<Need>),
+    ) -> Self {
         let mut ck = Ck {
             t,
             env: HashMap::new(),
@@ -3463,6 +3474,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             unnarrowed: HashMap::new(),
             written: None,
             check_fixes,
+            refuse_taken,
             pending_fixes: Vec::new(),
             carried: HashMap::new(),
             bound_carried: HashMap::new(),
@@ -6101,24 +6113,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 })
                 .map(|(_, u)| u.clone())
                 .collect();
-            let p = Piece::Var(format!("${r}").into());
-            for u in taken {
-                match &u.kind {
-                    NeedKind::Destructure { n, .. } => self.not_a_tuple(&p, *n, u.span),
-                    NeedKind::Component { key, .. } => {
-                        let t = self.show(&p.ty());
-                        self.not_indexable_noted(&key.to_string(), &t, u.span, false);
-                    }
-                    NeedKind::Index { .. } => {
-                        let shown = self.show(&p.ty());
-                        self.not_applicable_noted(&shown, u.span, false);
-                    }
-                    NeedKind::Call { what, .. } => {
-                        let shown = self.show(&p.ty());
-                        self.not_a_function_noted(what, &shown, u.span, false);
-                    }
-                    _ => {}
-                }
+            if !taken.is_empty() {
+                (self.refuse_taken)(self, r, taken);
             }
         }
         true
@@ -18570,7 +18566,7 @@ mod tests {
     /// These tests record no construct ([`Ck::written`]), and with none recorded
     /// [`Ck::fixes_checked`], which `walk.rs` defines, keeps them as they are too.
     fn checker<'t, 'a>(t: &'t Tables<'a>) -> Ck<'t, 'a> {
-        Ck::new(t, |_, _, _| {})
+        Ck::new(t, |_, _, _| {}, |_, _, _| {})
     }
 
     fn span(start: usize) -> Span {

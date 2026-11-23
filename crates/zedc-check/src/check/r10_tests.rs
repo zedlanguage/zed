@@ -1079,7 +1079,7 @@ fn r10_m31_split_memo_keeps_a_child_shared_with_a_queued_sibling() {
             no_split_memo,
             ..R10Config::default()
         });
-        let mut ck = Ck::new(&tables, |_, _, _| {});
+        let mut ck = Ck::new(&tables, |_, _, _| {}, |_, _, _| {});
         ck.info.sigs.insert(0, root.clone());
         ck.info.sigs.insert(1, branch.clone());
         ck.info.split_folds.insert(span, "split".into());

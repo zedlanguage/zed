@@ -8,7 +8,7 @@ use std::time::Duration;
 use super::*;
 
 fn checker<'t, 'a>(t: &'t Tables<'a>) -> Ck<'t, 'a> {
-    Ck::new(t, |_, _, _| {})
+    Ck::new(t, |_, _, _| {}, |_, _, _| {})
 }
 
 fn span(start: usize) -> Span {

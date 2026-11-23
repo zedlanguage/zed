@@ -92,7 +92,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
             .map(|b| b.name.as_str())
             .chain(t.res.type_vars.iter().map(String::as_str)),
     );
-    let mut ck = Ck::new(t, Ck::fixes_checked);
+    let mut ck = Ck::new(t, Ck::fixes_checked, Ck::refuse_taken_uses);
     ck.unit = unit;
     // A misused output port stops the check, as the builder's rejection of a read of `m.stdout`
     // stops the build: the walk would read the port as the value of its type, and its errors,
@@ -157,7 +157,7 @@ pub fn check_given(unit: &[Stmt], res: &Resolution, text: &str, given: Ty) -> In
     let id = (res.binders.iter())
         .position(|b| b.span == first.span)
         .expect("the first statement binds a name");
-    let mut ck = Ck::new(&t, Ck::fixes_checked);
+    let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
     ck.env.insert(id, given);
     ck.bounds();
     ck.walk(rest);
@@ -176,7 +176,7 @@ pub fn operator(op: Operator, args: &[Ty]) -> (Ty, Vec<String>) {
     let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
     let t = Tables::new(&[], &res);
     let _defs = defs::collect();
-    let mut ck = Ck::new(&t, Ck::fixes_checked);
+    let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
     let args = args.iter().map(|a| Some(Arg::of(a.clone()))).collect();
     let demand = match op {
         Operator::Binary(BinaryOp::And | BinaryOp::Or) => Demand::First,
@@ -27628,6 +27628,34 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.next_fix += 1;
     }
 
+    /// Refuses each use of `taken`, a use of class `r` that takes a tuple apart, indexes it or
+    /// calls it, which a restriction has just left with carriers alone
+    /// ([`Ck::restrict_asking`], which calls this through [`Ck::refuse_taken`]), with the
+    /// message the use itself gives when the restriction comes first ([`Ck::component`],
+    /// [`Ck::at_index`], [`Ck::at_key`], [`Ck::call_value_step`]; row
+    /// CHECK-destructure-order). O(1) per use beside the message.
+    pub(super) fn refuse_taken_uses(&mut self, r: usize, taken: Vec<Need>) {
+        let p = Piece::Var(format!("${r}").into());
+        for u in taken {
+            match &u.kind {
+                NeedKind::Destructure { n, .. } => self.not_a_tuple(&p, *n, u.span),
+                NeedKind::Component { key, .. } => {
+                    let t = self.show(&p.ty());
+                    self.not_indexable_noted(&key.to_string(), &t, u.span, false);
+                }
+                NeedKind::Index { .. } => {
+                    let shown = self.show(&p.ty());
+                    self.not_applicable_noted(&shown, u.span, false);
+                }
+                NeedKind::Call { what, .. } => {
+                    let shown = self.show(&p.ty());
+                    self.not_a_function_noted(what, &shown, u.span, false);
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// `m`'s fixes, for a rejection at `span`, each checked as written: where the rejection
     /// lies in the construct being checked ([`Self::written`]) and a fix rewrites its
     /// arguments alone, the construct is checked again with the arguments the fix writes, and
@@ -32264,7 +32292,7 @@ impl Operands {
     pub fn adoptions(&self) -> usize {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
         let (lit, parts) = (
             literal(&self.e, None),
             parts(&self.e, None, &HashMap::new()),
@@ -34281,7 +34309,7 @@ mod tests {
     fn join_narrowed_joins_a_chain_whatever_the_order_of_its_roots() {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
         let at = Span { start: 1, end: 2 };
         let (k0, k2, k1, k3) = (ck.class(), ck.class(), ck.class(), ck.class());
         ck.classes[k3].mask = Carrier::Int.bit();
@@ -34313,7 +34341,7 @@ mod tests {
     fn push_carrier_groups_follows_the_class_writes_that_stand() {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
         let at = Span { start: 1, end: 2 };
         let (x, y, z) = (ck.class(), ck.class(), ck.class());
         let mut unseen: HashMap<usize, Vec<usize>> =
@@ -34353,7 +34381,7 @@ mod tests {
     fn outer_errors_at_inner(cut: bool) -> usize {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
         let int = Ty::carrier(Carrier::Int);
         let f = Ty::func(Arc::new(Sig::one(
             crate::check::positional(1),
@@ -34446,7 +34474,7 @@ mod tests {
         let e = two_level_remap();
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
         let k = ck.class();
         let var = Ty::var(format!("${k}").into());
         let at = Span { start: 1, end: 2 };
@@ -34470,7 +34498,7 @@ mod tests {
         let e = two_level_remap();
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
         let k = ck.class();
         let var = Ty::var(format!("${k}").into());
         let int = Ty::carrier(Carrier::Int);
@@ -34509,7 +34537,7 @@ mod tests {
     fn a_trial_undone_after_the_memo_entered_a_row_leaves_no_memo() {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
         let k = ck.class();
         let row = Ty::tuple(vec![
             Ty::var(format!("${k}").into()),
@@ -34574,7 +34602,7 @@ mod tests {
     fn a_failed_trial_leaves_the_class_forest_as_before() {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
         let (a, b, c) = (ck.class(), ck.class(), ck.class());
         assert!(ck.merge(a, b, "a test", Span { start: 1, end: 2 }));
         let before = forest(&ck);
@@ -34613,7 +34641,7 @@ mod tests {
     fn a_lambda_recorded_in_a_trial_is_undone_with_it() {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
         let sig = Arc::new(one_param_sig(Ty::empty()));
         let (kept, tried) = (Span { start: 0, end: 9 }, Span { start: 20, end: 29 });
         let saved = ck.mark();
@@ -34669,7 +34697,7 @@ mod tests {
     fn a_row_found_clean_is_walked_again_after_its_level_ends() {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
         ck.level += 1;
         ck.r10_open_level(ck.level);
         let k = ck.class();
@@ -34887,7 +34915,7 @@ mod tests {
     fn a_function_end_inside_a_trial_is_undone_with_it() {
         let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
         let t = Tables::new(&[], &res);
-        let mut ck = Ck::new(&t, Ck::fixes_checked);
+        let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
         ck.level += 1;
         ck.r10_open_level(ck.level);
         let k = ck.class();
@@ -34935,7 +34963,7 @@ mod tests {
         let five = Ty::lit(&Value::int(5.into()));
         let string = Ty::carrier(Carrier::Str);
         let errors = |ty: &Ty| {
-            let mut ck = Ck::new(&t, Ck::fixes_checked);
+            let mut ck = Ck::new(&t, Ck::fixes_checked, Ck::refuse_taken_uses);
             ck.pushed(ty, "out", at, true);
             (ck.errors.iter())
                 .map(|e| e.m.text.clone())
