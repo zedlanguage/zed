@@ -8818,8 +8818,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                     BinaryOp::Mod => Some(Prim::Mod),
                     _ => binary_prim(op),
                 };
-                if !over_space && let (Some(a), Some(p)) = (x.expr, p) {
-                    self.too_large_build(p, &[a, b], span);
+                if let (Some(a), Some(p)) = (x.expr, p) {
+                    match over_space {
+                        // Past the address space it is not sized again, but a repair of a power
+                        // inside it is checked with it.
+                        true => self.note_build_parent(p, &[a, b], span),
+                        false => self.too_large_build(p, &[a, b], span),
+                    }
                 }
                 let zero = if divides {
                     self.zero_divisor(op, &x, &y, b)
@@ -18146,32 +18151,43 @@ impl<'t, 'a> Ck<'t, 'a> {
             .filter(|(_, p)| p.r.proof.is_some())
             .map(|(s, _)| *s)
             .collect();
-        if powers.is_empty() && products.is_empty() {
-            return;
+        if !(powers.is_empty() && products.is_empty()) {
+            let holds = self.roots.settle();
+            let held = |p: Option<coprime::ProofId>| p.is_none_or(|p| holds[p as usize]);
+            let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
+            for s in powers {
+                let p = (self.wide_powers.remove(&s)).expect("a span read from wide_powers above");
+                if !held(p.proof) {
+                    continue;
+                }
+                match p.bits > room {
+                    true => self.power_too_large(&p, None),
+                    false => _ = self.wide_powers.insert(s, p),
+                }
+            }
+            for s in products {
+                let p =
+                    (self.wide_products.remove(&s)).expect("a span read from wide_products above");
+                if !held(p.r.proof) {
+                    continue;
+                }
+                match p.r.size() > room {
+                    true => {
+                        let derived = self.derive(&[p.span]);
+                        self.space_products.push((p, derived));
+                    }
+                    false => _ = self.wide_products.insert(s, p),
+                }
+            }
         }
-        let holds = self.roots.settle();
-        let held = |p: Option<coprime::ProofId>| p.is_none_or(|p| holds[p as usize]);
-        let room = Num::pow2(&Num::from(i64::from(ADDRESS_BYTES_LOG2 + 3)));
-        for s in powers {
-            let p = (self.wide_powers.remove(&s)).expect("a span read from wide_powers above");
-            if !held(p.proof) {
-                continue;
-            }
-            match p.bits > room {
-                true => self.power_too_large(&p, None),
-                false => _ = self.wide_powers.insert(s, p),
-            }
+        // The products past the address space, with the operations around each now known,
+        // each repaired by a smaller power operand where one fits ([`Self::product_too_large`]).
+        let powers = std::mem::take(&mut self.wide_powers);
+        for (p, derived) in std::mem::take(&mut self.space_products) {
+            self.product_too_large(&p, derived, &powers, None);
         }
-        for s in products {
-            let p = (self.wide_products.remove(&s)).expect("a span read from wide_products above");
-            if !held(p.r.proof) {
-                continue;
-            }
-            match p.r.size() > room {
-                true => self.product_too_large(&p, None),
-                false => _ = self.wide_products.insert(s, p),
-            }
-        }
+        let added = std::mem::replace(&mut self.wide_powers, powers);
+        self.wide_powers.extend(added);
     }
 
     /// The powers [`Self::too_large_power`] found within the address space, rejected where
@@ -18200,10 +18216,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         // where no operation inside it is past the limit too, so `String(x * x)` with `x * x`
         // past the limit is reported at `x * x` alone, the one cause.
         let mut over: BTreeSet<(usize, usize)> = BTreeSet::new();
-        for p in std::mem::take(&mut self.wide_powers).into_values() {
+        let powers = std::mem::take(&mut self.wide_powers);
+        for p in powers.values() {
             if p.bits > room {
                 over.insert((p.span.start, p.span.end));
-                self.power_too_large(&p, main_limit);
+                self.power_too_large(p, main_limit);
             }
         }
         // A product is judged as at the address space ([`Self::too_large_product`]): an
@@ -18212,7 +18229,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             if p.r.size() > room {
                 over.insert((p.span.start, p.span.end));
                 if p.x.size() <= room && p.y.size() <= room {
-                    self.product_too_large(&p, main_limit);
+                    let derived = self.derive(&[p.span]);
+                    self.product_too_large(&p, derived, &powers, main_limit);
                 }
             }
         }
@@ -18468,11 +18486,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The repair: the largest exponent `2^j` whose power fits, `2^j * F + built` bits at
         // most the bound, 2^67 or `8 * b`, as `b ^ (2^60)` for a base of 65 bits; none where
         // only an exponent of 1 does, as for a base past half the bound, since `x ^ 1` is the
-        // base itself.
+        // base itself. The operations around the power are sized too, as `String` of it, and
+        // `j` lowered until they fit ([`Self::shrunk_power_fits`]).
         let mut fixes = Vec::new();
         let most = room_bits.saturating_sub(u128::from(built)) / floor_log;
-        if most > 1 {
-            let j = most.ilog2();
+        let fitting = (most > 1).then(|| most.ilog2()).and_then(|top| {
+            (1..=top).rev().find(|&j| {
+                let least = (1u128 << j) * floor_log;
+                self.shrunk_power_fits(a, span, j, negative, least, room_bits)
+            })
+        });
+        if let Some(j) = fitting {
             let with = match negative {
                 true => format!("-(2^{j})"),
                 false => format!("(2^{j})"),
@@ -18608,7 +18632,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let over_space = p.r.size() > room;
         if over_space {
-            self.product_too_large(&p, None);
+            self.product_past_space(p);
         } else if !self.trying {
             self.wide_products.entry(span).or_insert(p);
         }
@@ -18617,9 +18641,17 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Rejects the product or quotient `p`, larger than the target's address space, or, with
     /// `main_limit`, the memory limit of `main` in bytes, its `@limits` and the argument of
-    /// `memory:`, than that limit: the message, the derivation of the least size, and, for the
-    /// limit, a larger limit.
-    fn product_too_large(&mut self, p: &WideProduct<'a>, main_limit: Option<MainMemory>) {
+    /// `memory:`, than that limit: the message, the derivation of the least size, the larger
+    /// operand made smaller where it is one of the powers `powers` ([`Self::product_operand_fix`])
+    /// and, for the limit, a larger limit. `derived` is the derivation of the product's type,
+    /// [`Self::derive`] at its span, taken where the product was met.
+    fn product_too_large(
+        &mut self,
+        p: &WideProduct<'a>,
+        derived: Vec<Note>,
+        powers: &BTreeMap<Span, WidePower<'a>>,
+        main_limit: Option<MainMemory>,
+    ) {
         let WideProduct {
             op,
             a,
@@ -18639,7 +18671,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         // Where each operand comes from, the literal, the power or the declaration, and its
         // least size.
-        let mut notes = self.derive(&[span]);
+        let mut notes = derived;
         for (o, w, name) in [(a, x, "the left operand"), (b, y, "the right operand")] {
             let o_code = self.code(Some(o.span)).unwrap_or(name);
             notes.push(Note {
@@ -18692,16 +18724,90 @@ impl<'t, 'a> Ck<'t, 'a> {
             span,
             text: format!("or delete `{code}` if its result is not used").into(),
         });
-        let fixes = match main_limit {
-            Some(m) => vec![self.main_limit_fix(&r.size(), m)],
-            None => Vec::new(),
-        };
+        let mut fixes = vec![self.product_operand_fix(p, powers, main_limit)];
+        if let Some(m) = main_limit {
+            fixes.push(self.main_limit_fix(&r.size(), m));
+        }
         self.reject(
             Some(Row::NumberOverAddressSpace),
             span,
             Msg::new(message, fixes),
             notes,
         );
+    }
+
+    /// Rejects the product or quotient `p`, past the address space, once the walk is over
+    /// ([`Self::judge_proved`]), when the operations around it are known. A repair tried
+    /// fails at once, as before, with no repair of its own.
+    fn product_past_space(&mut self, p: WideProduct<'a>) {
+        let derived = self.derive(&[p.span]);
+        match self.trying {
+            true => self.product_too_large(&p, derived, &BTreeMap::new(), None),
+            false => self.space_products.push((p, derived)),
+        }
+    }
+
+    /// The repair of the product or quotient `p` past the bound, the address space or the
+    /// memory limit of `main`, by its larger operand made smaller (DESIGN.md sec:diagnostics,
+    /// "Number too large for any memory of the target": "an operand made smaller, written as
+    /// the rewritten line"; plan row CONST-too-large-products-fix): where that operand is a
+    /// power the walk sized (`powers`, by span), its exponent lowered to the largest `±2^j`
+    /// with which the result fits, checked with the operations around the power as the
+    /// power's own repair is ([`Self::shrunk_power_fits`]). `None` where the operand is no
+    /// such power, or where no exponent above 1 fits.
+    ///
+    /// Each part of the result has at least `La + Lb - 1` bits for parts of `La` and `Lb` bits
+    /// ([`Self::too_large_product`]); the power's parts have at most `2^j * F + 1 + built`
+    /// bits in all for `F` the sum of `⌊log₂⌋` of its base's parts, so the result fits where
+    /// `2^j * F + 1 + built` and the other operand's least bits `Lo` fit the bound together.
+    /// That is a bound from above on the least size the rejection reads, so a repair offered
+    /// is one that rejection accepts.
+    fn product_operand_fix(
+        &mut self,
+        p: &WideProduct<'a>,
+        powers: &BTreeMap<Span, WidePower<'a>>,
+        main_limit: Option<MainMemory>,
+    ) -> Option<Rewrite> {
+        let (big, other) = match p.x.size() >= p.y.size() {
+            true => (p.a, &p.y),
+            false => (p.b, &p.x),
+        };
+        let w = powers.get(&big.span)?;
+        let (a, e, span, floor_log, built, negative) =
+            (w.a, w.e, w.span, w.floor_log, w.built, w.negative);
+        let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
+        let room_bits = main_limit.map_or(space_bits, MainMemory::room_bits);
+        let other_bits = other
+            .size()
+            .to_i128()
+            .and_then(|b| u128::try_from(b).ok())?;
+        let most = room_bits
+            .checked_sub(other_bits)?
+            .checked_sub(u128::from(built) + 1)?
+            / floor_log;
+        let top = (most > 1).then(|| most.ilog2())?;
+        let j = (1..=top).rev().find(|&j| {
+            let least = (1u128 << j) * floor_log;
+            self.shrunk_power_fits(a, span, j, negative, least, room_bits)
+        })?;
+        let with = match negative {
+            true => format!("-(2^{j})"),
+            false => format!("(2^{j})"),
+        };
+        // The least the result then has: `La + Lb - 1` with `La` at least `2^j * F + 1`.
+        let fits = (1u128 << j) * floor_log + other_bits;
+        let fits = bytes_text_of(&Num::from(i128::try_from(fits / 8).expect("below 2^68")));
+        let code = self.code(Some(p.span))?;
+        let alone = format!(
+            "{}{with}{}",
+            &code[..e.span.start - p.span.start],
+            &code[e.span.end - p.span.start..],
+        );
+        Rewrite::new(
+            &[(e.span, &with)],
+            &format_args!("needs at least {fits}"),
+            &alone,
+        )
     }
 
     /// The operation `p` at `span` on the operands `args`, rejected where the text fixes them
@@ -18738,6 +18844,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// has a part wider than 64 bits is not run, since its result is the build and the kernel
     /// would compute it up to the bound for no verdict.
     fn too_large_build(&mut self, p: Prim, args: &[&'a Expr], span: Span) {
+        self.note_build_parent(p, args, span);
         // A number the checker already folded at `span` is measured as it stands; `String`
         // gives a text, so its operand is read instead.
         let folded = match p {
@@ -18797,6 +18904,136 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             self.wide_builds.entry(span).or_insert(w);
         }
+    }
+
+    /// Keeps the operation `p` at `span` on the operands `args` as the one that builds from the
+    /// value of each operand, for [`Self::shrunk_power_fits`]. The walk's, not a trial's.
+    fn note_build_parent(&mut self, p: Prim, args: &[&'a Expr], span: Span) {
+        if self.trying {
+            return;
+        }
+        for a in args {
+            self.build_parents
+                .entry(a.span)
+                .or_insert_with(|| BuildParent {
+                    p,
+                    args: args.to_vec(),
+                    span,
+                });
+        }
+    }
+
+    /// Whether the power at `span` of the base `a`, its exponent rewritten by a repair to
+    /// `±2^j` (`negative`), fits `room_bits` in each operation around it that builds from its
+    /// value, as the rejection sizes them (row CONST-repair-build-trial): `String(b ^ (2^16))`
+    /// prints about 1.26 million digits, past a limit of 1 MiB that the power's 512 KiB fits.
+    /// `least` is a lower bound of `⌊log₂⌋` of the power's magnitude, `2^j * ⌊log₂ |x|⌋`.
+    ///
+    /// Each operation is sized by [`kernel_build`] on the values the text fixes, the power
+    /// folded with the new exponent ([`kernel_folded`]), as [`Self::too_large_build`] sizes it.
+    /// Where the power does not fold, past the fold bound or with a base the text does not
+    /// fix, a `String` of it is sized from `least` as [`Rat::text_least`] sizes a text, at
+    /// least `⌊least * log₁₀ 2⌋ + 1` digits a byte each, and a power of it by a positive
+    /// exponent the text fixes, `k`, from `k * least`. An operation sized neither way, as a sum
+    /// with an operand the text does not fix, is not judged, and the repair is kept, as before
+    /// this check.
+    //
+    // Complexity tradeoff: the naive method checks the program with the repair written in,
+    // a second check of the whole unit for each exponent tried. Used: the operations around
+    // the power only, kept by operand span during the walk (`Self::note_build_parent`), each
+    // sized by one kernel operation under the fold bound, at most the cost of the fold the
+    // walk does at that span; a fold past the bound is refused before it allocates.
+    fn shrunk_power_fits(
+        &mut self,
+        a: &'a Expr,
+        span: Span,
+        j: u32,
+        negative: bool,
+        least: u128,
+        room_bits: u128,
+    ) -> bool {
+        let room = BigUint::from(room_bits);
+        let mut value = i64::try_from(1u128 << j).ok().and_then(|k| {
+            let k = if negative { -k } else { k };
+            prim_folded(Prim::Pow, vec![self.fixed_value(a)?, Value::Int(k)])
+        });
+        let mut least = Some(least);
+        let mut at = span;
+        while let Some(up) = self.build_parents.get(&at).cloned() {
+            let mut vals = Vec::with_capacity(up.args.len());
+            for x in &up.args {
+                vals.push(match x.span == at {
+                    true => value.clone(),
+                    false => self.fixed_value(x),
+                });
+            }
+            let mut vals: Option<Vec<Value>> = vals.into_iter().collect();
+            // The run reads both operands of `/`, and an `int` beside a `rat`, at `rat`.
+            if let Some(v) = &vals
+                && (up.p == Prim::Div || v.iter().any(|v| matches!(v, Value::Rat(_))))
+            {
+                vals = v.iter().cloned().map(at_rat).collect();
+            }
+            // The power is the base of `up` at `up.args[0]`, raised to the positive `int` `k`.
+            let raised = match (up.p, &up.args[..]) {
+                (Prim::Pow, [b, e]) if b.span == at => match self.fixed_value(e) {
+                    Some(Value::Int(k)) if k > 0 => Some(k.unsigned_abs()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let bits = match (&vals, up.p, least) {
+                (Some(v), ..) => kernel_build(up.p, v.clone()),
+                (None, Prim::Show, Some(l)) => {
+                    // `log₁₀ 2 > 1233 / 4096`, as [`Rat::text_least`] reads it.
+                    Some(BigUint::from(((l.saturating_mul(1233)) >> 12) + 1) << 3u32)
+                }
+                (None, Prim::Pow, Some(l)) => match raised {
+                    Some(k) => Some(BigUint::from(l) * k),
+                    None => return true,
+                },
+                // A part of a product or quotient is a product of a part of each operand: at
+                // least `(l + 1) + Lo - 1` bits for the other operand's least bits `Lo`
+                // ([`Self::too_large_product`]), and `l + Lo - 1` its `⌊log₂⌋`. A gcd the
+                // kernel cancels could make it smaller, so the bound may refuse an exponent
+                // that fits; a smaller one is then offered, which fits too.
+                (None, Prim::Mul | Prim::Div, Some(l)) => {
+                    let other = (up.args.iter()).find(|x| x.span != at).copied();
+                    let lo = other
+                        .map(|x| self.least_built(x).size())
+                        .and_then(|b| b.to_i128())
+                        .and_then(|b| u128::try_from(b).ok());
+                    let Some(lo) = lo else { return true };
+                    let bits = l.saturating_add(lo);
+                    if bits > room_bits {
+                        return false;
+                    }
+                    least = Some(bits.saturating_sub(1));
+                    value = None;
+                    at = up.span;
+                    continue;
+                }
+                _ => return true,
+            };
+            if bits.is_some_and(|b| b > room) {
+                return false;
+            }
+            if matches!(up.p, Prim::Show | Prim::CastF64 | Prim::CastF32) {
+                return true;
+            }
+            least = match (raised, least) {
+                (Some(k), Some(l)) => l.checked_mul(u128::from(k)),
+                _ => None,
+            };
+            value = vals
+                .and_then(|v| prim_folded(up.p, v))
+                .filter(|v| matches!(v, Value::Int(_) | Value::Big(_) | Value::Rat(_)));
+            if value.is_none() && least.is_none() {
+                return true;
+            }
+            at = up.span;
+        }
+        true
     }
 
     /// Rejects the operation `w`, which builds more than the target's address space, or, with

@@ -88,6 +88,42 @@ fn a_power_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
     assert_eq!(built(&src.replace("2^20", "2^16")), None);
 }
 
+/// Row CONST-repair-build-trial: the smaller power a repair offers is checked with the builds
+/// around it. Printed, `b ^ (2^16)` needs about 1.2 MiB of digits under the 1 MiB limit, so the
+/// repair offers `2^15`, whose power needs 256 KiB and whose digits about 616 KiB, and the
+/// program with that repair compiles.
+#[test]
+fn a_smaller_power_offered_is_checked_with_the_print_around_it() {
+    let src = "@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
+               m.stdout <- String(b ^ (2^20));\n}\n";
+    let out = rejected(src);
+    assert!(
+        out.starts_with(
+            "4:24: Number too large for the memory limit of `main`: `b ^ (2^20)` needs at least \
+             8 MiB; `@limits(memory: 1048576)`. Try `m.stdout <- String(b ^ (2^15))` instead."
+        ),
+        "{out}"
+    );
+    assert!(!out.contains("2^16"), "{out}");
+    assert_eq!(built(&src.replace("2^20", "2^15")), None);
+    assert!(built(&src.replace("2^20", "2^16")).is_some());
+    // A power of the power: `(b ^ (2^16)) ^ 2` needs 1 MiB, so the inner repair is `2^15`.
+    let src = "@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
+               m.stdout <- String((b ^ (2^20)) ^ 2 > 0);\n}\n";
+    let out = rejected(src);
+    assert!(
+        out.starts_with(
+            "4:24: Number too large for the memory limit of `main`: `(b ^ (2^20))` needs at \
+             least 8 MiB; `@limits(memory: 1048576)`. Try `m.stdout <- String((b ^ (2^15)) ^ 2 > 0)` \
+             instead."
+        ),
+        "{out}"
+    );
+    assert!(!out.contains("2^16"), "{out}");
+    assert_eq!(built(&src.replace("2^20", "2^15")), None);
+    assert!(built(&src.replace("2^20", "2^16")).is_some());
+}
+
 #[test]
 fn a_product_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
     // Plan row CONST-too-large-products-unproved (d): `x` has `2^22 + 1` bits, 512 KiB, within
@@ -123,6 +159,37 @@ fn a_product_past_the_memory_limit_is_rejected_and_one_within_it_compiles() {
     // product is compared, not printed: printing `x * b` writes about 1.2 MiB of digits.
     assert_eq!(built(&src.replace("@limits(memory: 1048576)\n", "")), None);
     assert_eq!(built(&src.replace("x * x", "x * b")), None);
+}
+
+/// Row CONST-too-large-products-fix: a product past the limit whose larger operand is a power
+/// the walk sized is repaired by that power's exponent lowered, as the power's own repair is.
+/// Each factor `b ^ (2^16)` has `2^22 + 1` bits, so the product has at least `2^23 + 1`, past
+/// 1 MiB; with `2^15` in the first, at least `2^21 + 2^22 + 1` bits, 768 KiB.
+#[test]
+fn a_product_past_the_memory_limit_offers_a_smaller_power_operand() {
+    let src = "@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n    \
+               m.stdout <- String((b ^ (2^16)) * (b ^ (2^16)) > 0);\n}\n";
+    let out = rejected(src);
+    assert!(
+        out.starts_with(
+            "4:24: Number too large for the memory limit of `main`: `(b ^ (2^16)) * (b ^ \
+             (2^16))` needs at least 1 MiB; `@limits(memory: 1048576)`. Try `m.stdout <- \
+             String((b ^ (2^15)) * (b ^ (2^16)) > 0)` instead."
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("needs at least 768 KiB\n") && out.contains("@limits(memory: 2^21)"),
+        "{out}"
+    );
+    assert_eq!(
+        built(&src.replacen("2^16", "2^15", 1)),
+        None,
+        "{}",
+        src.replacen("2^16", "2^15", 1)
+    );
+    // An operand that is no power, as a name bound to one, has no such repair
+    // (a_product_past_the_memory_limit_is_rejected_and_one_within_it_compiles).
 }
 
 #[test]

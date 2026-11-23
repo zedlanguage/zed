@@ -362,6 +362,22 @@ fn a_product_past_the_address_space_is_rejected_with_its_least_size() {
   [4] 3:24: or read a factor from the input: the run then stops if no memory holds the result
   [5] 3:24: or delete `(b ^ (2^60)) * (b ^ (2^60))` if its result is not used"#
     );
+    // Row CONST-too-large-products-fix: no smaller first power is offered above, since the
+    // second `*` with the third factor of `2^66 + 1` bits passes the address space whatever
+    // the first power is. A product compared, not printed, is repaired by the first power
+    // lowered to `2^59`, `2^65 + 2^66 + 1` bits, 12 EiB, and the repaired program compiles.
+    let src = pushed("(b ^ (2^60)) * (b ^ (2^60)) > 0");
+    let out = rejected(&src);
+    assert!(
+        out.starts_with(
+            "3:24: Number too large for any memory of the target: `(b ^ (2^60)) * (b ^ (2^60))` \
+             needs more than 16 EiB; Linux x86_64 addresses 16 EiB. Try `m.stdout <- \
+             String((b ^ (2^59)) * (b ^ (2^60)) > 0)` instead."
+        ),
+        "{out}"
+    );
+    assert!(out.ends_with("> 0);    needs at least 12 EiB"), "{out}");
+    assert_eq!(built(&src.replacen("2^60", "2^59", 1)), None);
 }
 
 #[test]

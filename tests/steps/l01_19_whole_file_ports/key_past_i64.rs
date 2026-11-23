@@ -75,6 +75,51 @@ fn keys_beside_the_64_bit_boundary() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// Row CHECK-big-literal-key-paths: the other reads at a literal key, a list, a range and the
+/// second level of a key path, treat a key past 64 bits as they treat `2^63 - 1`, the largest
+/// key of 64 bits and as far outside: each is rejected at compile time, as a read that can
+/// never find its key, with the same headline but for the key. The audit of the checker found
+/// `Frame::Index1` the one read that took a literal key apart by `Value::Int` (walk.rs); the
+/// others read the key's type, which holds a key past 64 bits as it holds any.
+#[test]
+fn other_reads_at_a_key_past_64_bits_are_as_at_the_largest_64_bit_key() {
+    let reads = [
+        ("list", "[10, 20][K]"),
+        ("range", "(0 ..< 3)[K]"),
+        ("level2", "[[1], [2]][0][K]"),
+    ];
+    let mut wrong = Vec::new();
+    for (name, read) in reads {
+        // The exit status, the output, and the headline after the file name with the key
+        // written `K`: the underlines below it are as long as the key.
+        let run = |k: &str, tag: &str| {
+            let src = format!(
+                "main(m: MainArgs) {{\n  m.stdout <- String({} else #outOfBounds -> -1);\n}}\n",
+                read.replace('K', k)
+            );
+            let out = run_bytes(&format!("big_key_{name}_{tag}"), &src, b"", &[]);
+            let head = out.stderr.lines().next().unwrap_or("");
+            let head = head.split_once("prog.zed:").map_or(head, |(_, h)| h);
+            (out.status, out.stdout, head.replace(k, "K"))
+        };
+        let max = run("9223372036854775807", "max");
+        if max.0 != 1 || !max.1.is_empty() || !max.2.contains("can never find its key") {
+            wrong.push(format!("{name}: 2^63 - 1 gives {max:?}"));
+        }
+        for k in [
+            "9223372036854775808",
+            "18446744073709551616",
+            "99999999999999999999999",
+        ] {
+            let got = run(k, &k.len().to_string());
+            if got != max {
+                wrong.push(format!("{name}: {k} gives {got:?}, 2^63 - 1 {max:?}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 /// A tuple has no component at a literal index past 64 bits, which the checker rejects as it
 /// rejects any index past the last component.
 #[test]

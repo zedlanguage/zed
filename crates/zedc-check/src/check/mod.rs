@@ -551,6 +551,16 @@ struct WideBuild {
     bits: Num,
 }
 
+/// An operation `p` at `span` on the operands `args` that builds from their values, kept by
+/// the span of each operand (`Ck::note_build_parent`), so that a repair that shrinks a power
+/// is checked with the builds around it (`Ck::shrunk_power_fits`, row CONST-repair-build-trial).
+#[derive(Clone)]
+struct BuildParent<'a> {
+    p: Prim,
+    args: Vec<&'a Expr>,
+    span: Span,
+}
+
 /// A product or quotient `a * b` or `a / b` at `span` whose least size the text proves
 /// ([`Built`]): what it proves of each operand, `x` and `y`, and of the result, `r`. Found by
 /// `Ck::too_large_product`.
@@ -2716,9 +2726,19 @@ struct Ck<'t, 'a> {
     /// by span, with what the walk found of each at its site, judged as [`Self::wide_powers`]
     /// are.
     wide_products: BTreeMap<Span, WideProduct<'a>>,
+    /// The products and quotients proved past the address space, rejected once the walk is
+    /// over (`Ck::judge_proved`), when the operations around each are known, so that the
+    /// repair of a smaller power operand is checked with them (row
+    /// CONST-too-large-products-fix), each with the derivation of its type as the walk wrote
+    /// it where the product was met, which the message keeps.
+    space_products: Vec<(WideProduct<'a>, Vec<Note>)>,
     /// The other operations that build a number in full within the address space, by span
     /// (`Ck::too_large_build`), judged as [`Self::wide_powers`] are.
     wide_builds: BTreeMap<Span, WideBuild>,
+    /// The operation that builds from each operand's value, by the operand's span
+    /// (`Ck::note_build_parent`), read by the repair of a power past the memory limit of
+    /// `main`.
+    build_parents: HashMap<Span, BuildParent<'a>>,
     /// The classes; class `k` is the type variable `$k`. Those an admitted forward reserves
     /// are made only when it is forced (`M62`, [`probe::Classes`]).
     classes: probe::Classes<Class>,
@@ -3527,7 +3547,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             main_memory: None,
             wide_powers: BTreeMap::new(),
             wide_products: BTreeMap::new(),
+            space_products: Vec::new(),
             wide_builds: BTreeMap::new(),
+            build_parents: HashMap::new(),
             classes: Default::default(),
             data_checked: HashSet::new(),
             merge_checked: HashMap::new(),
