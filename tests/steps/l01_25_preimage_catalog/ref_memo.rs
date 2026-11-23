@@ -694,6 +694,23 @@ pub(super) fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
             let wide = 1_000_000.max(1000 * (n as i64 + 1));
             vec![(t, i_in(-wide, wide), gap())]
         }
+        // The chain of `normal_abs_gap` under demands its links cut, so that its answers differ
+        // with n: the eight answers of `normal_abs_gap` are one box (REF-replay-controls,
+        // XR-ROOTS-REF D14). Past `1000 (k - 1)` the value is `S - i`, `S` the sum of the
+        // first `k - 1` constants, so the first case's box ends at `1000 n + 500 + S` and the
+        // second's crosses the guard of link n.
+        "normal_abs_gap_cut" => {
+            let g = |j| prim(Prim::Le, var("i"), int(1000 * j));
+            let t = chain(n, var("i"), g, |j, t| sub_c(j % 5 + 4, abs(t)));
+            let m = 1000 * n as i64;
+            let ints = |ps| Demand::Ints(IntervalSet::from_pieces(ps));
+            let low = ints(vec![
+                (End::of(-m - 500), End::of(-3)),
+                (End::of(3), End::PosInf),
+            ]);
+            let cross = ints(vec![(End::of(-m - 500), End::of(-m + 500))]);
+            [low, cross].map(|d| (t.clone(), mega(), d)).into()
+        }
         "normal_min_gap" => {
             let t = steps(n, |j, t| sub_c(j % 5 + 4, prim(Prim::Min, t, int(20))));
             vec![(t, mega(), gap())]
@@ -966,7 +983,7 @@ const UNTIMED_FAMILIES: [&str; 0] = [];
 fn every_family_the_benchmarks_time_is_answered_soundly_at_small_sizes() {
     for name in FAMILIES
         .iter()
-        .chain(&["random_chains"])
+        .chain(&["random_chains", "normal_abs_gap_cut"])
         .chain(&UNTIMED_FAMILIES)
     {
         // `output_grid` demands four odd values, so it needs 8 links.
@@ -1021,10 +1038,15 @@ const ANSWERS: &str = include_str!("ref_memo_answers.txt");
 /// demanded values fit.
 const ANSWER_SIZES: [usize; 8] = [1, 2, 3, 4, 5, 8, 16, 33];
 
-/// The families whose answers [`answer_table`] records: every timed one, `random_chains`, and two
-/// DAGs that mix `Round` and `Abs`.
+/// The families whose answers [`answer_table`] records: every timed one, `random_chains`, two
+/// DAGs that mix `Round` and `Abs`, and `normal_abs_gap_cut`, whose answers differ with n.
 fn answer_families() -> impl Iterator<Item = &'static str> {
-    (FAMILIES.iter().copied()).chain(["random_chains", "round_abs_mixed", "round_abs_one_link"])
+    (FAMILIES.iter().copied()).chain([
+        "random_chains",
+        "round_abs_mixed",
+        "round_abs_one_link",
+        "normal_abs_gap_cut",
+    ])
 }
 
 /// One line per family of [`answer_families`], size of [`ANSWER_SIZES`] and case: the family,
@@ -1138,6 +1160,36 @@ fn abs_and_round_leave_no_touching_pieces_with_one_label() {
                 "{name} at {n}: touching pairs with one label {seams:?}, most nodes {nodes:?}"
             );
             assert_eq!(seams, Some(0), "{name} at {n}");
+        }
+    }
+}
+
+/// REF-replay-controls: the inverse of `abs` keeps the label of the piece at 0, `[0, h]`, when
+/// it is the only piece at or above 0 (`State1d::abs`). No family of the replay reaches that
+/// tree with a label that changes an answer, so the control that drops the label there (Codex,
+/// XR-ROOTS-REF round 2, Q6) passed the replay; these terms are checked against a scan of the
+/// whole box by the interpreter ([`agrees_with_scan`]): `|i - c|`, `|i|` under a guard, and
+/// chains of `abs` links, over `i` in `[0, 12]`, `[-12, 12]` and `[-12, 0]`.
+#[test]
+fn abs_keeps_the_label_of_a_tree_whose_only_piece_covers_zero() {
+    let guarded = |c: i64| {
+        Term::If(
+            Shared::new(prim(Prim::Le, var("i"), int(c))),
+            Shared::new(abs(var("i"))),
+            Shared::new(sub_c(c, var("i"))),
+        )
+    };
+    let mut terms = vec![abs(var("i")), guarded(0), guarded(4)];
+    terms.extend((-3..=3).map(|c| abs(sub_c(c, var("i")))));
+    terms.extend((1..=4).map(|n| steps(n, |j, t| abs(sub_c(j, t)))));
+    for (lo, hi) in [(0, 12), (-12, 12), (-12, 0)] {
+        let ds = over(&[("i", IntervalSet::of(lo, hi)), ("m", IntervalSet::of(0, 0))]);
+        for t in &terms {
+            for (a, b) in [(0, 0), (0, 5), (3, 5), (2, 20)] {
+                let d = Demand::Ints(IntervalSet::of(a, b));
+                let what = format!("{t:?} over [{lo}, {hi}] in [{a}, {b}]");
+                agrees_with_scan(&what, t, &ds, &d, false);
+            }
         }
     }
 }
