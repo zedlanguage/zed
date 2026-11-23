@@ -2,7 +2,7 @@
 //! (`presburger::extend`, LOAD-chain-share): each answer is the one `decide` gives the whole,
 //! and a chain of n extensions is decided in time of its links.
 
-use zedc::store::presburger::extend::{Answers, Extending};
+use zedc::store::presburger::extend::{Answers, Extending, counts};
 use zedc::store::presburger::{Atom, Con, Formula, Lin, decide};
 
 pub(super) fn sym(name: &str) -> Lin {
@@ -92,25 +92,166 @@ fn each_answer_is_the_one_the_whole_has() {
     }
 }
 
-#[test]
-fn a_chain_whose_points_move_is_decided_whole() {
-    // f{i} = f{i-1} && x + i * y >= 1000 i: the point found for f{i-1} is below the new
-    // constraint, so each f{i} is decided whole, and each answer is still the one the whole has
-    // (the Complexity tradeoff at `Extending::defined`).
+/// The links `f{i} = f{i-1} && x + i * y >= 1000 i` over `x >= y + 1, y >= 0`, `1..=n`.
+pub(super) fn a_moving_chain(n: usize) -> Vec<Formula> {
     let mut f = Formula::and(vec![
         ge(sym("x"), sym("y").plus(&Lin::constant(1))),
         ge(sym("y"), Lin::constant(0)),
     ]);
+    let mut out = Vec::with_capacity(n);
+    for i in 1..=n as i64 {
+        let row = ge(sym("x").plus(&sym("y").times(i)), Lin::constant(1000 * i));
+        f = extend(&f, vec![row]);
+        out.push(f.clone());
+    }
+    out
+}
+
+/// The links `f{i} = f{i-1} && y >= 2 i x - i²` over `y >= 0`, `1..=n`: each row is the
+/// tangent of `y = x²` at `x = i`, so each bounds the region, and every row is kept. META1 A1
+/// writes this chain `i x + y >= i²`, but those rows meet in a region bounded by the first and
+/// the last alone: for a fixed `x`, `i² - i x` is convex in `i`, so its largest value over
+/// `1..=n` is at `i = 1` or `i = n`. The tangents keep the intent, every row a bound.
+pub(super) fn a_tangent_chain(n: usize) -> Vec<Formula> {
+    let mut f = Formula::and(vec![
+        ge(sym("y"), Lin::constant(0)),
+        ge(Lin::constant(1_000_000), sym("x")),
+    ]);
+    let mut out = Vec::with_capacity(n);
+    for i in 1..=n as i64 {
+        let row = ge(sym("y").plus(&Lin::constant(i * i)), sym("x").times(2 * i));
+        f = extend(&f, vec![row]);
+        out.push(f.clone());
+    }
+    out
+}
+
+#[test]
+fn a_chain_whose_points_move_keeps_few_rows() {
+    // The point found for f{i-1} is below the new row, so no point extends, and each f{i} was
+    // decided whole, 56.9 times slower at 400 links than at 50 (LOAD-chain-move). Each is now
+    // decided from the rows that bound its region over Q, at most 3 at every link, and each
+    // answer is still the one the whole has. The base rows are `x >= y + 1, y >= 0`.
     let mut e = Extending::new();
-    for i in 1..=40i64 {
-        f = extend(
-            &f,
-            vec![ge(
-                sym("x").plus(&sym("y").times(i)),
-                Lin::constant(1000 * i),
-            )],
+    for (i, f) in a_moving_chain(40).iter().enumerate() {
+        counts::take();
+        let got = e.answers(f);
+        let c = counts::take();
+        assert_eq!(got, decided(f), "{f}");
+        assert_eq!(
+            c[counts::PLANE],
+            1,
+            "link {}: decided from its region",
+            i + 1
         );
-        assert_eq!(e.answers(&f), decided(&f), "{f}");
+        assert!(
+            c[counts::PLANE_ROWS] <= 3,
+            "link {}: {} rows kept",
+            i + 1,
+            c[counts::PLANE_ROWS]
+        );
+        assert_eq!(c[counts::WHOLE], 0, "link {}: nothing decided whole", i + 1);
+    }
+}
+
+#[test]
+fn a_tangent_chain_keeps_every_row() {
+    // Every row of the tangent chain bounds its region, so every row is kept: n at link n.
+    let mut e = Extending::new();
+    for (i, f) in a_tangent_chain(30).iter().enumerate() {
+        counts::take();
+        let got = e.answers(f);
+        let c = counts::take();
+        assert_eq!(got, decided(f), "{f}");
+        if c[counts::PLANE] == 1 {
+            // The tangents so far, `y >= 0` (the tangent at 0) and `x <= 1000000`.
+            assert_eq!(c[counts::PLANE_ROWS], i as u64 + 3, "link {}", i + 1);
+        }
+    }
+}
+
+#[test]
+fn each_region_over_two_symbols_is_decided_as_its_rows() {
+    // LOAD-chain-move, META1 A1/A2 corner cases: each answer is the one `decide` gives the
+    // whole, at every link, where the region is decided from its kept rows and where it
+    // is not (a row `==`, an `Aux`, a region with no interior).
+    let (x, y, k) = (sym("x"), sym("y"), Lin::constant);
+    let b = |lo: i64, hi: i64| {
+        Formula::and(vec![
+            ge(x.clone(), k(lo)),
+            ge(k(hi), x.clone()),
+            ge(y.clone(), k(lo)),
+            ge(k(hi), y.clone()),
+        ])
+    };
+    let lin = |a: i64, c: i64| x.times(a).plus(&y.times(c));
+    let q = Lin::atom(Atom::Aux(0));
+    let eq = |a: Lin, c: Lin| Formula::Con(Con::eq(&a, &c));
+    let quadrant = Formula::and(vec![ge(x.clone(), k(0)), ge(y.clone(), k(0))]);
+    let chains: Vec<(&str, Formula, Vec<Vec<Formula>>)> = vec![
+        // The triangle (0,0), (2,0), (0,2): three lattice lines meet it (META1 error 4).
+        (
+            "triangle",
+            quadrant.clone(),
+            vec![vec![ge(k(2), lin(1, 1))], vec![ge(lin(1, 1), k(1))]],
+        ),
+        // 2x + 2y >= 1 on [0,3]²: no integer point on the row (META1 error 3).
+        (
+            "2x+2y",
+            b(0, 3),
+            vec![vec![ge(lin(2, 2), k(1))], vec![ge(k(1), lin(2, 2))]],
+        ),
+        // 3x + 5y >= 7 on [0,2]².
+        (
+            "3x+5y",
+            b(0, 2),
+            vec![vec![ge(lin(3, 5), k(7))], vec![ge(k(8), lin(3, 5))]],
+        ),
+        // A cut that empties the region, one that keeps every row, one that keeps one.
+        ("empties", b(0, 3), vec![vec![ge(x.clone(), k(10))]]),
+        ("keeps all", b(0, 3), vec![vec![ge(lin(1, 1), k(1))]]),
+        (
+            "keeps one",
+            quadrant.clone(),
+            vec![vec![ge(x.clone(), k(5))], vec![ge(x.clone(), k(7))]],
+        ),
+        // An unbounded region.
+        (
+            "unbounded",
+            Formula::and(vec![ge(x.clone(), y.clone()), ge(y.clone(), k(-4))]),
+            vec![vec![ge(y.clone(), k(3))], vec![ge(lin(1, -2), k(-50))]],
+        ),
+        // A row `==`, and a row over an `Aux` such as `x mod 3`'s quotient: decided whole.
+        (
+            "eq",
+            b(0, 9),
+            vec![vec![eq(x.clone(), y.times(2))], vec![ge(x.clone(), k(3))]],
+        ),
+        (
+            "aux",
+            b(0, 9),
+            vec![vec![ge(x.clone(), q.times(3))], vec![ge(x.clone(), k(3))]],
+        ),
+        // A row of no atom, false, and a third atom.
+        ("constant", b(0, 9), vec![vec![ge(k(0), k(1))]]),
+        ("third", b(0, 9), vec![vec![ge(sym("z"), x.clone())]]),
+    ];
+    for (name, base, links) in chains {
+        let mut e = Extending::new();
+        let mut f = base;
+        assert_eq!(e.answers(&f), decided(&f), "{name}: {f}");
+        for rows in links {
+            f = extend(&f, rows);
+            assert_eq!(e.answers(&f), decided(&f), "{name}: {f}");
+        }
+    }
+    // One conjunction extended by two callers, each with its own region.
+    let mut e = Extending::new();
+    let f1 = extend(&quadrant, vec![ge(x.clone(), k(5))]);
+    let f2 = extend(&quadrant, vec![ge(k(-1), y.clone())]);
+    let f3 = extend(&f1, vec![ge(k(4), x.clone())]);
+    for f in [&quadrant, &f1, &f2, &f3, &f1] {
+        assert_eq!(e.answers(f), decided(f), "{f}");
     }
 }
 

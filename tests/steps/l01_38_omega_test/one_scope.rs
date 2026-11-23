@@ -891,6 +891,31 @@ fn xr_face_f3_unclaimed_call() {
     ));
 }
 
+/// R2-C-zed (XR-sound-extend-face-local-atoms round 2, Claude's form): two calls of `r`, so
+/// that neither claims it and the quotient passed as `y` reaches the interface of the call.
+/// `s` holds nowhere: `x > 8` and `x div 2 < 3` conflict. Red on 1ff1aed1a (`s` answered
+/// true there), green now; the same holds for the form below.
+#[test]
+fn xr_face_f3_two_calls_of_one_callee() {
+    answers_are_those_of_the_whole(
+        "q(x: int) = (x mod 2 != 1 || x mod 4 == 1) && x > 1 && x < 10;\n\
+         r(x: int, y: int) = q(x: x) && x > 8;\n\
+         s(x: int) = r(x: x, y: 1) && r(x: x, y: x div 2) && x div 2 < 3;\n",
+    );
+}
+
+/// R2-C-zed (round 2, Gemini's form): `c` claims `r` first, so `s`'s call reads it through
+/// its formula and records `x div 2` in the interface.
+#[test]
+fn xr_face_f3_a_callee_claimed_elsewhere() {
+    answers_are_those_of_the_whole(
+        "q(x: int) = (x mod 2 != 1 || x mod 4 == 1) && x > 1 && x < 10;\n\
+         r(x: int, y: int) = q(x: x) && x > 8;\n\
+         c(z: int) = r(x: z + 1, y: z + 2);\n\
+         s(x: int) = r(x: x, y: x div 2) && x div 2 < 3;\n",
+    );
+}
+
 /// F3 again: the quotient is passed as `y` and read through it inside the callee; `s` holds
 /// nowhere, since `9 div 2` is 4.
 #[test]
@@ -2815,6 +2840,243 @@ pub(super) fn a_chain_calling_an_integer_function(n: usize) -> String {
     src
 }
 
+/// The work counts of the linear questions of `unit(n)`, each divided by the `n` links, at 50,
+/// 100, 200 and 400 links, printed: the counts of `presburger::extend::counts`, then the
+/// questions asked again whole after a refusal and their atoms (`front::ASKED_AGAIN`), then
+/// the definitions the translation made, the values of calls among them and those values'
+/// bindings (`preimage::DEFINITIONS_MADE`). A count that grows about 8 times a link from 50 to
+/// 400 links names a step that reads the chain again at each link (LOAD-defined-with).
+fn work_by_link(what: &str, unit: fn(usize) -> String, sizes: &[usize]) -> Vec<(usize, Vec<f64>)> {
+    use zedc::store::presburger::extend::counts;
+    let mut rows = Vec::new();
+    for &n in sizes {
+        let src = unit(n);
+        let (stmts, tokens, unit) = (
+            zed_tests::deep::statements(&src),
+            zedc::lex::lex_fence(&src).unwrap(),
+            elab(&src).unwrap(),
+        );
+        counts::take();
+        zedc::front::ASKED_AGAIN.with(|c| c.set((0, 0)));
+        zedc::store::preimage::DEFINITIONS_MADE.with(|c| c.set((0, 0, 0)));
+        let start = std::time::Instant::now();
+        let refused = zedc::front::linear_questions(&src, &tokens, &stmts, &unit);
+        let secs = start.elapsed().as_secs_f64();
+        let (again, again_atoms) = zedc::front::ASKED_AGAIN.with(|c| c.get());
+        let (defs, values, pairs) = zedc::store::preimage::DEFINITIONS_MADE.with(|c| c.get());
+        let row: Vec<f64> = (counts::take().into_iter())
+            .chain([again, again_atoms, defs, values, pairs])
+            .map(|c| c as f64 / n as f64)
+            .collect();
+        eprintln!(
+            "{what}: n {n}, {secs:.3} s, {} refused, per link {row:.1?}",
+            refused.len()
+        );
+        rows.push((n, row));
+    }
+    rows
+}
+
+#[test]
+fn the_work_of_each_link_of_a_chain_calling_an_integer_function_is_counted() {
+    // LOAD-defined-with, item A4 of its cross-review: which count grows with the chain.
+    use zedc::store::presburger::extend::counts;
+    let rows = work_by_link(
+        "a chain calling an integer function",
+        a_chain_calling_an_integer_function,
+        &[50, 100, 200, 400],
+    );
+    assert_eq!(rows.len(), 4);
+    // The rows the summaries make (MADE_ROWS) and those `lean` reads (LEAN_ROWS), per link,
+    // are flat from 50 to 400 links: measured 5.9 → 6.0 and 35.1 → 35.9 with the rows of a
+    // summary collapsed onto its key's atoms (`Summaries::make`), and before it 103.1 → 203.0
+    // and 13941 → 54541 from 50 to 100 links, growing with the chain. The factor 1.5 allows
+    // the first links' smaller pieces; a count read again at each link grows 8 times here.
+    let (first, last) = (&rows[0].1, &rows[3].1);
+    for (name, i) in [
+        ("MADE_ROWS", counts::MADE_ROWS),
+        ("LEAN_ROWS", counts::LEAN_ROWS),
+    ] {
+        assert!(
+            last[i] <= 1.5 * first[i].max(1.0),
+            "{name} per link grows from {} at 50 links to {} at 400",
+            first[i],
+            last[i]
+        );
+    }
+}
+
+/// [`a_chain_calling_an_integer_function`] with the call's argument `arg` (over `x`), the
+/// remainder of link `j` that of `x + shift(j)`, and `h{n-1}` bounded by `limit`: the
+/// cross-review's variants of LOAD-defined-with (its Gemini seat).
+fn an_integer_function_chain_variant(
+    n: usize,
+    arg: &str,
+    shift: fn(usize) -> usize,
+    limit: usize,
+) -> String {
+    let mut src = format!("h0(x: int) = (x + {}) mod 3;\n", shift(0));
+    for j in 1..n {
+        src.push_str(&format!(
+            "h{j}(x: int) = h{}(x: x) + (x + {}) mod 3;\n",
+            j - 1,
+            shift(j)
+        ));
+    }
+    src.push_str("p0(x: int) = x > 0;\n");
+    for i in 1..n {
+        src.push_str(&format!(
+            "p{i}(x: int) = h{}(x: {arg}) < {limit} && p{}(x: x + 1) && x < {};\n",
+            n - 1,
+            i - 1,
+            1000 * i
+        ));
+    }
+    src
+}
+
+#[test]
+fn the_answers_of_a_chain_calling_an_integer_function_are_those_reading_bodies() {
+    // LOAD-defined-with: the summaries of `h{j}` read the equal atoms and divisions of its
+    // links as one (`presburger::extend::collapsed`); each answer is still the one read with
+    // the bodies, and the one decided whole.
+    for m in [1, 2, 6, 30] {
+        answers_are_those_reading_bodies(&a_chain_calling_an_integer_function(m));
+    }
+}
+
+#[test]
+fn the_answers_of_a_chain_of_fifty_links_calling_an_integer_function_are_decided() {
+    // LOAD-defined-with: every link of the 50-link chain, against the reading of the bodies and
+    // the whole decision.
+    answers_are_those_reading_bodies(&a_chain_calling_an_integer_function(50));
+}
+
+#[test]
+fn the_answers_of_variants_of_a_chain_calling_an_integer_function_are_those_reading_bodies() {
+    // LOAD-defined-with, the Gemini seat's variants: the call at `x + 1` and at `2 * x`, a
+    // different remainder at each link (`(x + j) mod 3`, so no two divisions are one), and the
+    // bound `h{n-1} < 2n`, which `x mod 3 == 2` breaks (with `n` remainders of 2 summed), so
+    // that the tests from link 1 on hold only where `x mod 3 != 2`.
+    let same = |_: usize| 0;
+    let own = |j: usize| j;
+    for m in [1, 2, 6, 12] {
+        for src in [
+            an_integer_function_chain_variant(m, "x + 1", same, 3 * m),
+            an_integer_function_chain_variant(m, "2 * x", same, 3 * m),
+            an_integer_function_chain_variant(m, "x", own, 3 * m),
+            an_integer_function_chain_variant(m, "x", same, 2 * m),
+            an_integer_function_chain_variant(m, "x + 1", own, 2 * m),
+        ] {
+            answers_are_those_reading_bodies(&src);
+        }
+    }
+}
+
+/// `p{i}(x) = h{n-1}(x: x) && p{i-1}(x: x + 1) && x < 1000 i` beside the chain `h{j}(x) =
+/// h{j-1}(x: x) && x != gap·j` of `n` links: case 1 of LOAD-call-disj for `gap` 1, its holes
+/// spread for `gap` 2.
+fn a_chain_calling_a_callee_with_holes_every(n: usize, gap: usize) -> String {
+    let mut src = String::from("h0(x: int) = x != 0;\n");
+    for j in 1..n {
+        src.push_str(&format!(
+            "h{j}(x: int) = h{}(x: x) && x != {};\n",
+            j - 1,
+            gap * j
+        ));
+    }
+    src.push_str("p0(x: int) = x > 0;\n");
+    for i in 1..n {
+        src.push_str(&format!(
+            "p{i}(x: int) = h{}(x: x) && p{}(x: x + 1) && x < {};\n",
+            n - 1,
+            i - 1,
+            1000 * i
+        ));
+    }
+    src
+}
+
+/// [`a_chain_calling_a_callee_with_holes_every`] with holes at consecutive values.
+pub(super) fn a_chain_calling_a_callee_with_holes(n: usize) -> String {
+    a_chain_calling_a_callee_with_holes_every(n, 1)
+}
+
+/// [`a_chain_calling_a_callee_with_holes_every`] with holes at every second value.
+pub(super) fn a_chain_calling_a_callee_with_spread_holes(n: usize) -> String {
+    a_chain_calling_a_callee_with_holes_every(n, 2)
+}
+
+#[test]
+fn the_answers_of_calls_of_a_callee_that_chooses_are_those_reading_bodies() {
+    // LOAD-call-disj (design A3 of its cross-review): a call that does not hold the claim of a
+    // callee that chooses writes the callee's choices over its kept symbols beside the rows
+    // of its projection ([`preimage::projected`]); each answer is the one read with the
+    // bodies, and the one decided whole where that decides.
+    for m in [1, 2, 6, 30] {
+        answers_are_those_reading_bodies(&a_chain_calling_a_callee_with_holes(m));
+        answers_are_those_reading_bodies(&a_chain_calling_a_callee_with_spread_holes(m));
+    }
+    for src in [
+        // Two calls with different arguments, one of them past every hole.
+        "h0(x: int) = x != 0;\nh1(x: int) = h0(x: x) && x != 1;\n\
+         h2(x: int) = h1(x: x) && x != 2 && x != 7;\n\
+         p0(x: int) = h2(x: x) && x >= 0 && x < 9;\n\
+         p1(x: int) = h2(x: x) && h2(x: x + 3) && x >= 0 && x < 5;\n\
+         p2(x: int) = h2(x: x + 5) && h2(x: 2 * x) && x > 0 - 4 && x < 4;",
+        // One argument for two parameters, and two arguments for them.
+        "w(x: int, y: int) = x != y + 1 && (x == 0 || y != 2);\n\
+         a0(a: int) = w(x: a, y: a + 3) && a > 0 - 3 && a < 3;\n\
+         a1(a: int) = w(x: a, y: a) && a > 0 - 3 && a < 3;\n\
+         a2(a: int) = w(x: a, y: a - 1) && a > 0 - 3 && a < 3;",
+        // The cross-review's R(x, x) against R(x, x + 1) (Codex seat): a key of the set of
+        // atoms would read both calls as one.
+        "r(a: int, b: int) = a == b || a == 0;\n\
+         f0(x: int) = r(a: x + 7, b: x + 8) && x > 3;\n\
+         f1(x: int) = r(a: x, b: x) && x > 3;\n\
+         f2(x: int) = r(a: x, b: x + 1) && x > 3;",
+        // A callee that is one constraint over a remainder, called twice.
+        "q(x: int) = x mod 3 == 1;\n\
+         s0(x: int) = q(x: x) && x > 0 && x < 9;\n\
+         s1(x: int) = q(x: x + 1) && q(x: x) && x > 0 && x < 9;",
+        // A call compared as a test, whose reading as an integer is undone first.
+        "h0(x: int) = x != 0;\nh1(x: int) = h0(x: x) && x != 1;\n\
+         t0(x: int) = h1(x: x) && x > 0 - 3 && x < 3;\n\
+         t1(x: int) = (h1(x: x + 1) == (x > 1)) && h1(x: x) && x > 0 - 3 && x < 3;",
+        // Choices over `abs` and `min`, which read auxiliary variables: read again.
+        "g0(x: int) = abs(x - 2) != 1;\ng1(x: int) = g0(x: x) && min(x, 5) != 3;\n\
+         u0(x: int) = g1(x: x) && x > 0 - 6 && x < 9;\n\
+         u1(x: int) = g1(x: x + 1) && x > 0 - 6 && x < 9;",
+    ] {
+        answers_are_those_reading_bodies(src);
+    }
+}
+
+#[test]
+fn a_callee_that_chooses_is_projected_once_for_its_key() {
+    // LOAD-call-disj: one projection for each callee and key ([`Walk::projection`], keyed by
+    // the canonical body, lambda and ordered key in `Memo::projections`), whatever the number
+    // of calls: `h{n-1}` is claimed by `p1`'s call and projected once for the others; inside
+    // it each `h{j-1}` is claimed by `h{j}`'s call, so no other callee is projected, and the
+    // holes of the links, on the bound atoms, are written through the bindings
+    // (`holes_through_bindings`). Before that, each link's projection was refused and each call
+    // read the body again: n projections made, Θ(n²) reads (measured 10 at 10 links).
+    // `Scoped::relation` keeps the table from one body to the next.
+    for n in [10, 40] {
+        let src = a_chain_calling_a_callee_with_holes(n);
+        let (stmts, tokens, unit) = (
+            zed_tests::deep::statements(&src),
+            zedc::lex::lex_fence(&src).unwrap(),
+            elab(&src).unwrap(),
+        );
+        zedc::store::preimage::PROJECTIONS_MADE.with(|c| c.set(0));
+        let refused = zedc::front::linear_questions(&src, &tokens, &stmts, &unit);
+        let made = zedc::store::preimage::PROJECTIONS_MADE.with(|c| c.get());
+        assert!(refused.is_empty(), "{refused:?}");
+        assert_eq!(made, 1, "{n} links: {made} projections made");
+    }
+}
+
 /// The chains `g{i}` of largest values and `p{i}` of guarded increments of `m` links, both
 /// over `x`, and tests `t{i}` reading link `i` of each.
 pub(super) fn two_chains_sharing_an_input(m: usize) -> String {
@@ -3123,12 +3385,22 @@ fn answers_are_those_reading_bodies(src: &str) {
             let a = ext.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
             let b = ext_again.defined_with(&s, &|n| again.def(n), &|g| again.interface(g));
             let w = scoped.written(&r);
-            assert_eq!(
-                a,
-                b,
-                "`{name}` in\n{src}\n{w}\nwith the bodies:\n{}",
-                again.written(&s)
-            );
+            // A decided answer is accepted where the reference is refused: a call that writes
+            // its callee's projection (an integer function's value, LOAD-defined-with; a
+            // callee's choices, LOAD-call-disj) leaves the decision fewer atoms than the body
+            // read again, so it may decide where the reference is refused (Growth, Shadows).
+            // Such an answer is checked against the whole decision below where that decides.
+            // Every other pair must be equal, refusals too.
+            for (got, want) in [(&a.holds, &b.holds), (&a.fails, &b.fails)] {
+                if want.is_ok() || got.is_err() {
+                    assert_eq!(
+                        got,
+                        want,
+                        "`{name}` in\n{src}\n{w}\nwith the bodies:\n{}",
+                        again.written(&s)
+                    );
+                }
+            }
             for (got, f) in [
                 (&a.holds, expected.body.clone()),
                 (&a.fails, Formula::negate(expected.body.clone())),

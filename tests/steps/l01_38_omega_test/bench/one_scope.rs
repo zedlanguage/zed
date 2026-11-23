@@ -673,13 +673,41 @@ fn the_relations_of_a_chain_calling_an_integer_function_scale() {
     // function's cone again, O(n) a call (0.062, 0.238, 1.082 s for the relations at 50, 100,
     // 200 links; 50 → 400: 60.2 times the bytes, 88.2 MB → 5.31 GB; measured once). Its
     // value is now written once over its argument's pairs and, at a call, at the argument: 8.1
-    // times (13.6 MB → 111 MB). Only the relations are timed: deciding these
-    // questions (`Extending::defined_with`) grows faster than n log n with the remainders
-    // along the chain (10.7 s at 400 links), which item LOAD-call-relation returns.
+    // times (13.6 MB → 111 MB).
     unit_relations_scale(
         "the relations of a chain calling an integer function",
         510,
         a_chain_calling_an_integer_function,
+    );
+    // The questions too (LOAD-defined-with): each piece of the summary of `h{j}` kept every
+    // link's `x@j` and `x@j mod 3` below it, Θ(j) rows and Θ(j²) row tests of `lean`, until
+    // `Summaries::make` read the equal atoms and the equal divisions as one
+    // (`presburger::extend::collapsed`). Before: 10.7 s at 400 links, about 60 times the time
+    // at 50.
+    questions_scale_unit(
+        "the linear questions of a chain calling an integer function",
+        50,
+        a_chain_calling_an_integer_function,
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_calling_a_callee_with_holes_scale() {
+    // `p{i}(x) = h{n-1}(x: x) && p{i-1}(x: x + 1) && x < 1000 i` beside `h{j}(x) = h{j-1}(x:
+    // x) && x != j` (LOAD-call-disj, case 1 of its cross-review): each call but the claiming
+    // one read the callee's body again, Θ(n) a call, since its projection refused every
+    // choice (relations 0.051 s at 50 links, 4.41 s at 400, measured once), and then since
+    // the holes of each link lay on its callee's bound atom (50.2 times the instructions,
+    // 50 → 400, colab 2026-11-23). The callee's holes are now written through the bindings
+    // (`preimage::holes_through_bindings`) and merged into one clause beside its projection,
+    // written at each call in O(1): 8.143. The same with `x != 2j`
+    // (`a_chain_calling_a_callee_with_spread_holes`) is 60.7: the holes do not merge, each
+    // call writes n clauses and `Extending` reads them at each link (CLOSURE_ATOMS about n²
+    // in all); it waits for the shared call node, row LOAD-call-disj-spread.
+    questions_scale_unit(
+        "the linear questions of a chain calling a callee with holes",
+        50,
+        a_chain_calling_a_callee_with_holes,
     );
 }
 

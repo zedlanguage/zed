@@ -35,6 +35,21 @@ fn a_chain_of_extensions_is_decided_in_time_of_its_links() {
 }
 
 #[test]
+fn a_chain_whose_points_move_is_decided_in_time_of_its_links() {
+    // LOAD-chain-move: each link of the moving chain is decided from the at most 3 rows that
+    // bound its region over Q ([`a_moving_chain`]); decided whole it grew 56.9 times from 50 to
+    // 400 links.
+    let chains = zed_tests::scaling::inputs(50, a_moving_chain);
+    zed_tests::scaling::check("the answers of a chain whose points move", 50, |n| {
+        let mut e = Extending::new();
+        for f in &chains[&n] {
+            let a = e.answers(f);
+            assert_eq!((a.holds, a.fails), (Ok(true), Ok(true)));
+        }
+    });
+}
+
+#[test]
 fn bindings_put_in_place_scale() {
     // The substitution reads each top-level constraint once and resolves each atom through a
     // union of classes with its path compressed: time of the formula times a logarithm.

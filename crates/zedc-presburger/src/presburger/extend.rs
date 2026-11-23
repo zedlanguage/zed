@@ -46,6 +46,7 @@ use zedc_int::int::Int;
 mod def;
 mod holes;
 mod images;
+mod plane;
 mod residues;
 use def::{Def, free, reads};
 use holes::{Holes, hole_of};
@@ -60,6 +61,53 @@ pub struct Answers {
     pub holds: Result<bool, Refusal>,
     /// Whether its negation holds somewhere.
     pub fails: Result<bool, Refusal>,
+}
+
+/// Work counts of [`Extending`] on this thread, read by tests and benchmarks to find which
+/// step of a question grows with a chain (LOAD-defined-with): each is a count the same on
+/// every run, one thread-local add at its site.
+pub mod counts {
+    use std::cell::Cell;
+
+    /// Atoms read by `Extending::closure`: those of the parts after the largest, of
+    /// the conjunction's own atoms and of the definitions it reaches.
+    pub const CLOSURE_ATOMS: usize = 0;
+    /// Atoms looked up by `apart`, the smaller side of each test.
+    pub const APART_ATOMS: usize = 1;
+    /// Definitions `Extending::fill` reads with a part it fills (`reached`).
+    pub const FILL_REACHED: usize = 2;
+    /// Definitions read by every `reached_by`, `fill`'s among them.
+    pub const REACHED: usize = 3;
+    /// Rows of the summaries `Summaries::make` makes.
+    pub const MADE_ROWS: usize = 4;
+    /// Rows read by `lean`: each row tested reads the others once.
+    pub const LEAN_ROWS: usize = 5;
+    /// Questions decided whole with every definition they reach (`holds_whole`,
+    /// `fails_whole`, `decide_defined` when no summary answers).
+    pub const WHOLE: usize = 6;
+    /// Atoms of the formulas decided whole, their definitions included.
+    pub const WHOLE_ATOMS: usize = 7;
+    /// Conjunctions decided from the rows that bound their region over Q (`plane::Plane`,
+    /// LOAD-chain-move).
+    pub const PLANE: usize = 8;
+    /// Rows kept by those regions, summed over the conjunctions decided from them.
+    pub const PLANE_ROWS: usize = 9;
+    /// The number of counts.
+    pub const N: usize = 10;
+
+    thread_local! {
+        static COUNTS: [Cell<u64>; N] = const { [const { Cell::new(0) }; N] };
+    }
+
+    /// Adds `n` to the count `i`.
+    pub(crate) fn add(i: usize, n: usize) {
+        COUNTS.with(|c| c[i].set(c[i].get() + n as u64));
+    }
+
+    /// The counts on this thread, each set back to 0.
+    pub fn take() -> [u64; N] {
+        COUNTS.with(|c| std::array::from_fn(|i| c[i].replace(0)))
+    }
 }
 
 /// A point, shared: adding the values of a part's new atoms to its kept part's point costs
@@ -78,7 +126,8 @@ pub type Interface<'a> = &'a dyn Fn(&Formula) -> Option<Vec<Atom>>;
 /// definitions hold when it holds and the solver gave one. The point gives a value to every
 /// atom of the conjunction and of its definitions, so that a part added beside it, with
 /// atoms of its own, is met by giving values to those alone; but a point found with a kept
-/// part read through its face ([`Face`]) gives none to the atoms the face projects out, which a
+/// part read through its face ([`Face`]) gives none to the atoms the face projects out, nor to
+/// the atoms of its holes outside its own (XR-sound-extend-face-local-atoms round 2), which a
 /// question that reads one may not use ([`given`]).
 struct Known {
     answers: Answers,
@@ -96,6 +145,9 @@ struct Known {
     /// ([`Extending::fill`]), so that separate questions over one chain do not each read
     /// every definition they reach.
     later: bool,
+    /// Its region over Q, kept as the rows that bound it, when it is a conjunction of rows
+    /// `>=` over at most two symbols with an interior ([`plane::Plane`], LOAD-chain-move).
+    plane: Option<plane::Plane>,
 }
 
 /// A kept conjunction and the definitions it reaches, projected exactly onto the atoms its
@@ -194,7 +246,7 @@ impl Extending {
     }
 
     /// [`given`], skipped in the negative control of the `fails` branches' tests.
-    fn given(&self, closure: &Atoms, m: &Point, f: &Formula) -> bool {
+    fn given_checked(&self, closure: &Atoms, m: &Point, f: &Formula) -> bool {
         #[cfg(test)]
         if self.unguarded {
             return true;
@@ -307,11 +359,17 @@ impl Extending {
         // equal ids naming one part. The wrap is made once for each constraint and kept,
         // so every `def(n)` of it, in this call and later ones, gives the same part and the
         // same key, and a quotient and remainder that share a definition keep sharing it.
-        // O(1) expected time for each `def(n)` of a constraint, nothing for a compound one.
+        // O(|c|) for each `def(n)` of a constraint `c` (hashing it), as producing it costs;
+        // nothing for a compound one.
         let bare = std::cell::RefCell::new(std::mem::take(&mut self.bare));
         let compound = |n: u32| {
             let d = def(n);
             let Formula::Con(c) = &d else { return d };
+            // Looked up first, so that the constraint is copied only when it is new
+            // (R2-bare-clone).
+            if let Some(w) = bare.borrow().get(c) {
+                return w.clone();
+            }
             (bare.borrow_mut().entry(c.clone()))
                 .or_insert_with(|| Formula::And(Shared::new(vec![d.clone()])))
                 .clone()
@@ -384,6 +442,20 @@ impl Extending {
         // printed before.
         let others = kids.iter().enumerate().filter(|&(i, _)| i != at);
         let rest = Formula::and(others.map(|(_, h)| h.clone()).collect());
+        // The region over Q of the whole, when the part has one and every other part is a row
+        // `>=` over its two symbols: the part's region cut by those rows, O(its kept rows) a
+        // row ([`plane::Plane`]). Anything else, an `Aux` among them, takes the paths below
+        // (LOAD-chain-move, META1 A1: the check is explicit).
+        let region = (part.plane.as_ref()).and_then(|p| {
+            let cons: Option<Vec<&Con>> = (kids.iter().enumerate())
+                .filter(|&(i, _)| i != at)
+                .map(|(_, h)| match h {
+                    Formula::Con(c) => Some(c),
+                    _ => None,
+                })
+                .collect();
+            p.with(cons?)
+        });
         // The definitions the other parts reach past the auxiliary variables the part's point
         // gives a value: those it gives hold there with their own definitions, so a point that
         // extends it needs values for the new ones alone, and a link whose new constraint reads
@@ -486,6 +558,30 @@ impl Extending {
         }
         // No kept part's point extends: a point of the parts read through their faces, nothing
         // fixed, or the faces holding nowhere ([`Faces::free`]), before the whole is decided.
+        // A conjunction of rows over two symbols is decided from the rows that bound its region
+        // over Q, which have the same integer points as all of its rows: at most 3 a link on the
+        // chain `x + i y >= 1000 i` over `x >= y + 1, y >= 0`, whose whole decision grew 56.9
+        // times from 50 to 400 links (LOAD-chain-move; tests
+        // `l01_38_omega_test::extend::a_chain_whose_points_move_keeps_few_rows`, bench
+        // `l01_38_omega_test::bench::extend::a_chain_whose_points_move_is_decided_in_time_of_its_links`).
+        // Complexity tradeoff: a chain whose every row bounds the region keeps all of them
+        // (the tangents `y >= 2 i x - i^2` of `y = x^2`), Θ(n) a link, 38.3 times from 50 to
+        // 400 links (row LOAD-chain-move-tangent); see [`plane`].
+        if holds.is_none()
+            && let Some(r) = &region
+        {
+            counts::add(counts::PLANE, 1);
+            counts::add(counts::PLANE_ROWS, r.rows().count());
+            let (b, p) = found(&plane::formula(r));
+            // An axis no kept row reads is free in the region, so any value serves: 0.
+            let p = p.map(|mut p| {
+                for a in r.axes() {
+                    p.entry(a.clone()).or_default();
+                }
+                p
+            });
+            holds = Some((b, p));
+        }
         if holds.is_none() {
             self.faces.make(&self.known, kids.iter(), def, iface);
             holds = self.faces.free(&self.known, kids, def);
@@ -515,12 +611,12 @@ impl Extending {
             // (SOUND-extend-fails-partial-point-given; XR-sound-extend-face-local-atoms
             // round 1, F4; test
             // `presburger::extend::tests::xr_face_local_atoms_f4b_fails_without_given`).
-            // A `decide` that finds no point needs no such check: an atom the point leaves out
-            // is free in the question, so no point there means none at any of its values.
+            // A `decide` that finds no point needs no such check: the definitions of `f` are a
+            // subset of the question's, so no point of `f` means no point of the question.
             Ok(true) => {
                 let extended = (part.miss.as_ref()).and_then(|m| {
                     let f = with(&reached_past(&rest, def, m), Formula::top());
-                    self.given(&part.closure, m, &f)
+                    self.given_checked(&part.closure, m, &f)
                         .then(|| met(m, &f).ok().flatten())
                         .flatten()
                 });
@@ -537,7 +633,7 @@ impl Extending {
                     let f = new(&not, m);
                     match decide(&f) {
                         Ok(false) => Some((false, None)),
-                        _ if self.given(&part.closure, m, &f) => {
+                        _ if self.given_checked(&part.closure, m, &f) => {
                             met(m, &f).ok().flatten().map(|p| (true, Some(p)))
                         }
                         _ => None,
@@ -560,6 +656,7 @@ impl Extending {
             size: part.size + rest.atoms().len(),
             closure: Atoms::new(),
             later: false,
+            plane: region,
         }
     }
 
@@ -596,6 +693,7 @@ impl Extending {
             );
             let closure = self.closure(&g, def);
             let all = reached(&g, def);
+            counts::add(counts::FILL_REACHED, all.len());
             let found = |f: Formula| point(&with(&all, f)).ok().flatten();
             let at = holds.then(|| found(g.clone())).flatten();
             let miss = fails.then(|| found(Formula::negate(g.clone()))).flatten();
@@ -610,8 +708,14 @@ impl Extending {
 
     /// The atoms of the conjunction `g`, whose kept parts are known, and of the definitions it
     /// reaches: its largest kept part's, with the others' added, the atoms of its other parts,
-    /// and those of the definitions they reach past these. O(log n) for each atom added, so a
-    /// chain of n links costs O(n log n) in all, each link's own atoms added once.
+    /// and those of the definitions they reach past these. Time: O(log n) for each atom the loop
+    /// reads, and it reads every atom of each kept part after the largest, whether or not the
+    /// largest holds it already (LOAD-closure-doc). So a chain whose conjunctions keep one part
+    /// each costs O(n log n) in all, each link's own atoms added once; a conjunction keeping two
+    /// parts of k atoms each costs O(k log n) at that link, and a chain where each link keeps two
+    /// parts that both grow with the chain costs O(n² log n). The counter `CLOSURE_ATOMS`
+    /// ([`counts`]) measures it: flat per link on a chain calling an integer function
+    /// (`one_scope::the_work_of_each_link_of_a_chain_calling_an_integer_function_is_counted`).
     fn closure(&self, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Atoms {
         let mut parts: Vec<&Atoms> = Vec::new();
         let mut own: Vec<Atom> = Vec::new();
@@ -626,10 +730,12 @@ impl Extending {
         parts.sort_by_key(|s| std::cmp::Reverse(s.len()));
         let mut out = parts.first().map(|&s| s.clone()).unwrap_or_default();
         for s in parts.iter().skip(1) {
+            counts::add(counts::CLOSURE_ATOMS, s.len());
             out.extend(s.iter().cloned());
         }
         let mut seen: HashSet<u32> = HashSet::new();
         let mut todo: Vec<u32> = own.iter().flat_map(Atom::auxes).collect();
+        counts::add(counts::CLOSURE_ATOMS, own.len());
         out.extend(own);
         while let Some(n) = todo.pop() {
             if !seen.insert(n) || parts_hold(&parts, n) {
@@ -637,6 +743,7 @@ impl Extending {
             }
             let d = def(n);
             let atoms = d.atoms();
+            counts::add(counts::CLOSURE_ATOMS, atoms.len());
             todo.extend(atoms.iter().flat_map(Atom::auxes));
             out.extend(atoms);
         }
@@ -969,12 +1076,15 @@ impl Faces {
             .collect();
         // The atoms of the faces' rows and clauses that the faces project out, as the quotient a
         // clause alone reads: the solver gives each a value at a point of the question, but not
-        // one its part holds at, since its definition is not read (`past`).
+        // one its part holds at, since its definition is not read (`past`). The atoms of its
+        // holes too, so that no atom a face reads is left out of the invariant whatever the
+        // holes hold (XR-sound-extend-face-local-atoms round 2, R2-holes).
         let gone = (faced.iter())
             .flat_map(|(_, face)| {
                 (face.rows.iter())
                     .flat_map(|c| c.lin.terms.keys().cloned())
                     .chain(face.clauses.iter().flat_map(Formula::atoms))
+                    .chain(face.holes.keys().cloned())
                     .filter(|a| !face.atoms.contains(a))
             })
             .collect();
@@ -1537,6 +1647,11 @@ fn project(items: Vec<Formula>, keep: &mut HashSet<Atom>, inside: &mut HashSet<A
                         steps.push(Step::Split(items, true));
                     }
                 }
+                // `nested` passed on, though no split of an `Again` group adds an atom to `keep`:
+                // its items are those of the group, which `split` formed after substituting into
+                // them; each atom two of them read, one a disjunction, went into `keep` then;
+                // their equalities are gone, and `same_divisions` sets only atoms outside `keep`,
+                // which has grown. So the reads of the items shrink and nothing is shared anew.
                 Group::Again(items) => steps.push(Step::Split(items, nested)),
             }
         }
@@ -1582,34 +1697,7 @@ fn split(
         .collect();
     let (classes, also) = unit_classes(&rows, &read, keep);
     drop(read);
-    let sub = |rows: Vec<Con>, to: &HashMap<Atom, Lin>| -> Vec<Con> {
-        (rows.into_iter())
-            .map(|c| Con {
-                lin: substituted(&c.lin, to),
-                rel: c.rel,
-            })
-            .collect()
-    };
-    if !classes.is_empty() {
-        rows = sub(rows, &classes);
-    }
-    let divisions = same_divisions(&rows, keep);
-    if !divisions.is_empty() {
-        rows = sub(rows, &divisions);
-    }
-    // A row the substitutions leave with no atom holds, or no row holds.
-    let mut empty = false;
-    rows.retain(|c| match c.lin.terms.is_empty() {
-        false => true,
-        true => {
-            let k = &c.lin.constant;
-            empty |= !(k.is_zero() || (c.rel == Rel::Ge && k.is_positive()));
-            false
-        }
-    });
-    if empty {
-        return None;
-    }
+    let (rows, divisions) = collapsed(rows, &classes, keep)?;
     for to in [&classes, &also, &divisions] {
         if !to.is_empty() {
             let put = |c: &Con| {
@@ -1719,6 +1807,47 @@ fn split(
     let plain = shadow(&plain, &|a| keep.contains(a), true)?;
     own.extend(paired(plain).into_iter().map(Formula::Con));
     Some((own, left))
+}
+
+/// `rows` with each atom `classes` sets ([`unit_classes`]) replaced by what it equals, then each
+/// quotient and remainder another division of the same term sets ([`same_divisions`], over
+/// `keep`), and the rows left with no atom dropped; and the map of the divisions. `None` when
+/// such a row does not hold. Exact for the projection of `rows` onto the atoms left: each atom
+/// replaced equals what replaces it at every point of `rows` (the proofs at the two maps), so the
+/// rows substituted hold exactly at the points of `rows` with those atoms dropped. Used by
+/// [`split`] and [`Summaries::make`]. Time of the rows, and of the union-find of
+/// [`unit_classes`] the caller ran.
+fn collapsed(
+    mut rows: Vec<Con>,
+    classes: &HashMap<Atom, Lin>,
+    keep: &HashSet<Atom>,
+) -> Option<(Vec<Con>, HashMap<Atom, Lin>)> {
+    let sub = |rows: Vec<Con>, to: &HashMap<Atom, Lin>| -> Vec<Con> {
+        (rows.into_iter())
+            .map(|c| Con {
+                lin: substituted(&c.lin, to),
+                rel: c.rel,
+            })
+            .collect()
+    };
+    if !classes.is_empty() {
+        rows = sub(rows, classes);
+    }
+    let divisions = same_divisions(&rows, keep);
+    if !divisions.is_empty() {
+        rows = sub(rows, &divisions);
+    }
+    // A row the substitutions leave with no atom holds, or no row holds.
+    let mut empty = false;
+    rows.retain(|c| match c.lin.terms.is_empty() {
+        false => true,
+        true => {
+            let k = &c.lin.constant;
+            empty |= !(k.is_zero() || (c.rel == Rel::Ge && k.is_positive()));
+            false
+        }
+    });
+    (!empty).then_some((rows, divisions))
 }
 
 /// The quotients and remainders of the divisions among `rows` that another division of the same
@@ -1896,6 +2025,7 @@ fn hidden(k: &Known, face: &Face, a: &Atom) -> bool {
 /// Whether no atom of `atoms` is one the face of the part `k` projects out: the smaller side
 /// read, each atom looked up in the other.
 fn apart(atoms: &Atoms, k: &Known, face: &Face) -> bool {
+    counts::add(counts::APART_ATOMS, atoms.len().min(k.closure.len()));
     match atoms.len() <= k.closure.len() {
         true => !atoms.iter().any(|a| hidden(k, face, a)),
         false => !(k.closure.iter())
@@ -1979,6 +2109,7 @@ fn reached_by(
         todo.extend(d.atoms().iter().flat_map(Atom::auxes));
         out.push(d);
     }
+    counts::add(counts::REACHED, out.len());
     out
 }
 
@@ -2198,7 +2329,15 @@ fn holds_whole(
     g: &Formula,
     def: &dyn Fn(u32) -> Formula,
 ) -> (Result<bool, Refusal>, Option<Point>) {
-    found(&with(&reached(g, def), g.clone()))
+    found(&counted(with(&reached(g, def), g.clone())))
+}
+
+/// `f`, a question decided whole with the definitions it reaches, counted
+/// ([`counts::WHOLE`]): O(its atoms), against the O(its atoms) and more of deciding it.
+fn counted(f: Formula) -> Formula {
+    counts::add(counts::WHOLE, 1);
+    counts::add(counts::WHOLE_ATOMS, f.atoms().len());
+    f
 }
 
 /// Whether `f` holds somewhere, with a point when it does and the solver gives one, every atom
@@ -2581,7 +2720,10 @@ fn fails_whole(
 ) -> (Result<bool, Refusal>, Option<Point>) {
     let not = Formula::negate(g.clone());
     match decide_defined(sums, not.clone(), def) {
-        Ok(true) => (Ok(true), point(&with(&reached(g, def), not)).ok().flatten()),
+        Ok(true) => (
+            Ok(true),
+            point(&counted(with(&reached(g, def), not))).ok().flatten(),
+        ),
         other => (other, None),
     }
 }
@@ -2600,6 +2742,7 @@ fn whole(sums: &mut Summaries, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Kno
         size: g.atoms().len(),
         closure: Atoms::new(),
         later: true,
+        plane: plane::Plane::of(g),
     }
 }
 
@@ -2624,7 +2767,7 @@ fn decide_defined(
     {
         return Ok(b);
     }
-    decided(&with(&reached(&f, def), f))
+    decided(&counted(with(&reached(&f, def), f)))
 }
 
 /// A one-sided eventual bound along the common input ray: `Some(false)` is a finite
@@ -3261,6 +3404,7 @@ impl Summaries {
             return Made::Done(None, None);
         };
         let key: HashSet<&Atom> = k.1.iter().collect();
+        let key_atoms: HashSet<Atom> = k.1.iter().cloned().collect();
         // A variable of a definition that reads symbols alone (`q2` of `x div 3`): a function of
         // the inputs, as a symbol is, and one of a fixed set, so one left is kept as a symbol.
         let leaf = |a: &Atom| match a {
@@ -3284,6 +3428,22 @@ impl Summaries {
         for c in &all {
             for p in below_pieces {
                 let mut rows0: Vec<Con> = c.iter().chain(p).cloned().collect();
+                zed_collections::sorted::sort_dedup(&mut rows0);
+                // The atoms two-term equalities make equal (the argument `x@j` of each link of
+                // a chain bound to the next link's) and the divisions of one term by one
+                // modulus are first read as one ([`collapsed`]), so the piece keeps one atom
+                // and one division for them, not one for each link below (LOAD-defined-with,
+                // the fix of the cross-review's Gemini seat, its "Fix B"). Without it a chain
+                // `h{j}(x) = h{j-1}(x: x) + x mod 3` kept every link's `x@j` and `x@j mod 3`
+                // once wide, so link j's piece held Θ(j) rows and [`lean`] Θ(j²) row tests,
+                // Θ(n³) over the chain: the linear questions took 0.137 s at 8 links and
+                // 57.2 s at 64 (418 times; dev profile, measured once), the
+                // [`counts::LEAN_ROWS`] per link 446 → 22621. Exact: the atoms replaced are
+                // outside the key, so the projection onto the key is the same.
+                let (classes, _) = unit_classes(&rows0, &HashSet::new(), &key_atoms);
+                let Some((mut rows0, _)) = collapsed(rows0, &classes, &key_atoms) else {
+                    continue;
+                };
                 zed_collections::sorted::sort_dedup(&mut rows0);
                 let mut work: Vec<(Vec<Con>, bool)> = vec![(rows0, false)];
                 'piece: while let Some((rows, mut wide)) = work.pop() {
@@ -3433,6 +3593,7 @@ impl Summaries {
         } else {
             None
         };
+        counts::add(counts::MADE_ROWS, pieces.iter().map(Vec::len).sum());
         Made::Done(
             Some(Summary {
                 pieces: pieces.into_iter().collect(),
@@ -4757,6 +4918,7 @@ fn lean(rows: Vec<Con>) -> Vec<Con> {
             i += 1;
             continue;
         }
+        counts::add(counts::LEAN_ROWS, rows.len());
         let mut others: Vec<Con> = (rows.iter().enumerate())
             .filter(|&(j, _)| j != i)
             .map(|(_, c)| c.clone())
@@ -8663,6 +8825,44 @@ mod tests {
             let p2 = xextend(&p1, vec![xge(k(2), xq(0))]);
             cases.push((name, vec![xpair(2, 0), xpair(4, 2)], vec![part, p1, p2]));
         }
+        // R2-met-test (round 2, Gemini R2-2): two kept parts, the smaller's point at x = 9, so
+        // the point is met through `Faces::met` with `j != at`; without `unread` there, the
+        // quotient the face projects out keeps the solver's value and p2 is answered wrong.
+        {
+            let part = Formula::and(vec![
+                Formula::or(vec![Formula::negate(xeq(xq(1), k(1))), xeq(xq(3), k(1))]),
+                xge(x.clone(), k(2)),
+                xge(k(9), x.clone()),
+            ]);
+            let p0 = Formula::and(vec![xge(x.clone(), k(9)), xge(k(15), x.clone())]);
+            let p1 = Formula::and_keeping(vec![part.clone(), p0.clone()], |_| true);
+            let p2 = xextend(&p1, vec![xge(k(2), xq(0))]);
+            cases.push((
+                "met",
+                vec![xpair(2, 0), xpair(4, 2)],
+                vec![part, p0, p1, p2],
+            ));
+        }
+        // R2-A-test (round 2, Claude A-test): the shared quotient q0 of two disjunctions inside
+        // a disjunct, `((q0 >= 1 || y >= 1) && (q0 <= 3 || y <= 0)) || x >= 20`, q0 outside the
+        // interface. The disjunct's own split puts q0 in `keep` and `inside`. Passing `nested`
+        // false for `Group::Again` leaves this test green (run 2026-11-23): no split of an
+        // `Again` group adds an atom to `keep` (the proof at `project`), so no test can tell.
+        {
+            let y = xs("y");
+            let inner = Formula::and(vec![
+                Formula::or(vec![xge(xq(0), k(1)), xge(y.clone(), k(1))]),
+                Formula::or(vec![xge(k(3), xq(0)), xge(k(0), y.clone())]),
+            ]);
+            let part = Formula::and(vec![
+                Formula::or(vec![inner, xge(x.clone(), k(20))]),
+                xge(x.clone(), k(0)),
+                xge(k(30), x.clone()),
+            ]);
+            let p1 = xextend(&part, vec![xge(x.clone(), k(9))]);
+            let p2 = xextend(&p1, vec![xge(k(2), xq(0))]);
+            cases.push(("nested", vec![xpair(2, 0)], vec![part, p1, p2]));
+        }
         let mut failures = Vec::new();
         for (name, defs, links) in &cases {
             let def = |n: u32| defs[n as usize / 2].clone();
@@ -8853,6 +9053,29 @@ mod tests {
         }
         failures.extend(xbad_points(&e, &def));
         assert!(failures.is_empty(), "{}", failures.join("\n"));
+        // R2-bare-test (XR-sound-extend-face-local-atoms round 2): each wrap is made once and
+        // kept across calls, one for each constraint, whatever names it: a wrap made fresh on
+        // each call, or not kept in `bare` after the call, leaves `bare` without it; one keyed
+        // by the name gives two wraps for one constraint.
+        let con = |d: &Formula| match d {
+            Formula::Con(c) => c.clone(),
+            _ => unreachable!("each definition here is one constraint"),
+        };
+        let ids: Vec<Id> = defs.iter().map(|d| Id::any(&e.bare[&con(d)])).collect();
+        let later = Formula::and(vec![xge(xq(1), k(4)), xge(k(8), xq(0))]);
+        let _ = e.defined(&later, &def);
+        assert_eq!(e.bare.len(), defs.len());
+        let again: Vec<Id> = defs.iter().map(|d| Id::any(&e.bare[&con(d)])).collect();
+        assert_eq!(ids, again);
+        let mut one = Extending::new();
+        let same = |_: u32| defs[0].clone();
+        let both = Formula::and(vec![xge(xq(0), k(1)), xge(k(5), xq(1))]);
+        let _ = one.defined(&both, &same);
+        assert_eq!(
+            one.bare.len(),
+            1,
+            "one constraint under two names has one wrap"
+        );
     }
 
     /// The positive control: a face keeps a quotient two top-level clauses share, and drops one

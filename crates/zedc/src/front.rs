@@ -1232,6 +1232,13 @@ fn one_line(written: &str) -> String {
     out
 }
 
+thread_local! {
+    /// The questions [`linear_questions`] asked again over the written relation after
+    /// `Extending::defined_with` refused one, and the atoms of the relations so asked, on this
+    /// thread: read by tests (LOAD-defined-with).
+    pub static ASKED_AGAIN: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+
 /// The linear questions of the unit (step L1.38): for each function other than `main` whose
 /// body the linear-relation domain states over its parameters, whether the body can hold and
 /// whether it can fail. A question the solver refuses is a rejection at the function, with
@@ -1368,6 +1375,8 @@ pub fn linear_questions(
                 if answers.holds.is_err() || answers.fails.is_err() {
                     let w = scoped.written(&r);
                     let with = |f| presburger::Formula::and(vec![w.defined(), f]);
+                    let size = with(w.body.clone()).atoms().len() as u64;
+                    ASKED_AGAIN.with(|c| c.set((c.get().0 + 1, c.get().1 + size)));
                     answers.holds = presburger::decide(&with(w.body.clone()));
                     answers.fails =
                         presburger::decide(&with(presburger::Formula::negate(w.body.clone())));

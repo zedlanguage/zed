@@ -1250,6 +1250,17 @@ pub struct TouchedPaths {
 }
 
 thread_local! {
+    /// The definitions of auxiliary variables the translation has made on this thread, those
+    /// of them that are the value of a call (`What::Value`), and the bindings those hold:
+    /// read by tests (LOAD-defined-with).
+    pub static DEFINITIONS_MADE: std::cell::Cell<(u64, u64, u64)> =
+        const { std::cell::Cell::new((0, 0, 0)) };
+    /// The projections of callees' relations made on this thread ([`Walk::projection`]):
+    /// read by tests, one for each callee and key (LOAD-call-disj).
+    pub static PROJECTIONS_MADE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+thread_local! {
     static TOUCHED: std::cell::Cell<TouchedPaths> = const {
         std::cell::Cell::new(TouchedPaths {
             half_line: 0,
@@ -3158,6 +3169,14 @@ impl Tr {
 
     fn aux(&mut self, what: What, def: Formula) -> presburger::Atom {
         let n = to_u32(self.defs.len(), "definitions");
+        let (value, pairs) = match &what {
+            What::Value(_, pairs) => (1, pairs.len() as u64),
+            _ => (0, 0),
+        };
+        DEFINITIONS_MADE.with(|c| {
+            let (d, v, p) = c.get();
+            c.set((d + 1, v + value, p + pairs))
+        });
         self.defs.push((n, what, def));
         presburger::Atom::Aux(n)
     }
@@ -4379,6 +4398,10 @@ fn call_key_end(
 #[derive(Clone)]
 struct Projection {
     rows: Arc<[Con]>,
+    /// The callee's choices (disjunctions and negations), each over kept symbols alone, as
+    /// they are, and its holes `x != c` over one kept symbol merged into one clause for each
+    /// run of consecutive values ([`merged_holes`], LOAD-call-disj).
+    clauses: Arc<[Formula]>,
     /// For an integer function, its value term over the same atoms ([`value_projected`]).
     value: Option<Lin>,
     /// Each quotient the rows read, by its number (its remainder numbered after it): its
@@ -4388,6 +4411,185 @@ struct Projection {
     /// first), and its divisor, a constant other than 0. So [`Tr::instance`], which writes a
     /// pair's dividend before the pair, ends.
     pairs: Arc<HashMap<u32, (Lin, Int)>>,
+}
+
+/// The parts of the conjunction `f`: its constraints, a negated inequality written as the
+/// inequality opposite it, into `cons`; each hole `k·x + c != 0` over one symbol `x` into
+/// `holes` as the value `x` may not take (none where `k` does not divide `c`, since `x` never
+/// takes it); each other negation and each disjunction, as it is, into `clauses`. A part
+/// shared in several places is read once (its id). Time of the distinct parts, times the log
+/// of the holes (LOAD-call-disj).
+fn conjuncts(
+    f: &Formula,
+    cons: &mut Vec<Con>,
+    holes: &mut BTreeMap<Arc<str>, BTreeSet<Int>>,
+    clauses: &mut Vec<Formula>,
+) {
+    use presburger::{Atom, Id, Rel};
+    let mut seen: HashSet<Id> = HashSet::new();
+    let mut stack = vec![f];
+    while let Some(g) = stack.pop() {
+        if !matches!(g, Formula::Con(_)) && !seen.insert(Id::any(g)) {
+            continue;
+        }
+        match g {
+            Formula::Con(c) => cons.push(c.clone()),
+            // Reversed, so that the parts are read in their order and written as before.
+            Formula::And(gs) => stack.extend(gs.iter().rev()),
+            Formula::Not(n) => match &**n {
+                // `!(l >= 0)` is `-l - 1 >= 0`.
+                Formula::Con(c) if c.rel == Rel::Ge => {
+                    cons.push(Con::ge(&Lin::constant(-1), &c.lin))
+                }
+                Formula::Con(c) => {
+                    let mut terms = c.lin.terms.iter();
+                    match (terms.next(), terms.next()) {
+                        (Some((Atom::Sym(s), k)), None) => {
+                            let c0 = &c.lin.constant;
+                            if c0.mod_floor(k).is_zero() {
+                                let v = -&c0.div_floor(k);
+                                holes.entry(s.clone()).or_default().insert(v);
+                            }
+                        }
+                        // `!(c0 == 0)`: false where `c0` is 0, else true.
+                        (None, _) if c.lin.constant.is_zero() => {
+                            cons.push(Con::ge(&Lin::constant(-1), &Lin::constant(0)))
+                        }
+                        (None, _) => {}
+                        _ => clauses.push(g.clone()),
+                    }
+                }
+                _ => clauses.push(g.clone()),
+            },
+            Formula::Or(_) => clauses.push(g.clone()),
+        }
+    }
+}
+
+/// The holes of each symbol ([`conjuncts`]) as clauses, one for each run of consecutive
+/// values `lo..=hi`: `x <= lo - 1 || x >= hi + 1`, the form `presburger::extend` reads as a
+/// hole. A chain `h{j}(x) = h{j-1}(x: x) && x != j` of n links leaves one clause, not n.
+/// A run of one value is written `!(x == lo)`, as the source writes it, so a call of a callee
+/// with one hole gives the relation reading its body gives (test
+/// `l01_38_omega_test::one_scope::
+/// a_relation_read_under_the_unit_scope_is_the_relation_of_the_closed_body`, its `u5`).
+/// Time of the holes.
+fn merged_holes(holes: &BTreeMap<Arc<str>, BTreeSet<Int>>) -> Vec<Formula> {
+    use presburger::{Atom, Shared};
+    let mut out = Vec::new();
+    for (s, vs) in holes {
+        let y = Lin::atom(Atom::Sym(s.clone()));
+        let mut runs: Vec<(Int, Int)> = Vec::new();
+        for v in vs {
+            match runs.last_mut() {
+                Some((_, hi)) if &(&*hi + &Int::ONE) == v => *hi = v.clone(),
+                _ => runs.push((v.clone(), v.clone())),
+            }
+        }
+        out.extend(runs.into_iter().map(|(lo, hi)| {
+            if lo == hi {
+                let at = Formula::Con(Con::eq(&y, &Lin::constant(lo)));
+                return Formula::Not(Shared::new(at));
+            }
+            let below = Con::ge(&Lin::constant(&lo - &Int::ONE), &y);
+            let above = Con::ge(&y, &Lin::constant(&hi + &Int::ONE));
+            Formula::Or(Shared::new(vec![Formula::Con(below), Formula::Con(above)]))
+        }));
+    }
+    out
+}
+
+/// The holes of `holes` ([`conjuncts`]) with each bound symbol written as what it is bound to
+/// (`binds`, the bindings of the claimed calls [`projected`] reached), so that every hole reads
+/// kept symbols alone: a chain `h{j}(x) = h{j-1}(x: x) && x != j` reaches the hole of each
+/// link on the canonical atom of its callee, bound to the caller's. A hole `s != v` with `s`
+/// written `t`: where `t` is `k·x + d` over one kept symbol, the hole `x != (v - d)/k` where `k`
+/// divides `v - d` and none otherwise; where `t` is a constant, nothing where `t != v` and the
+/// row `-1 >= 0` where `t == v` (the relation is empty); otherwise the clause `!(t == v)` into
+/// `clauses`. `None` when a binding reads an atom that is neither kept nor bound (an auxiliary
+/// variable or a product), or the bindings reach a symbol again.
+/// Proof of exactness: each binding `c := a` is the row `c == a` of its definition, which is in
+/// the rows [`projected`] gathers (its step 1). Writing `c` replaces each bound symbol of `a`
+/// by its own written term, which equals it at every point of those rows (by induction on the
+/// order written), so `written(c) == c` there, and `s != v` holds exactly where `t != v` does;
+/// the three cases state `t != v`.
+/// Cost: each bound symbol is written once (a memo, and a set of the symbols open on the stack
+/// to find a cycle), in time of its term's atoms times the size of the terms it reads; then
+/// O(log) for each hole. Test: `l01_38_omega_test::one_scope::
+/// a_callee_that_chooses_is_projected_once_for_its_key` and the holes benches of
+/// `l01_38_omega_test::bench::one_scope`.
+fn holes_through_bindings(
+    holes: BTreeMap<Arc<str>, BTreeSet<Int>>,
+    binds: &HashMap<Arc<str>, &Lin>,
+    keep: &dyn Fn(&presburger::Atom) -> bool,
+    clauses: &mut Vec<Formula>,
+    rows: &mut Vec<Con>,
+) -> Option<BTreeMap<Arc<str>, BTreeSet<Int>>> {
+    use presburger::{Atom, Shared};
+    let mut written: HashMap<Arc<str>, Lin> = HashMap::new();
+    let mut out: BTreeMap<Arc<str>, BTreeSet<Int>> = BTreeMap::new();
+    for (s, vs) in holes {
+        if !binds.contains_key(&s) {
+            out.entry(s).or_default().extend(vs);
+            continue;
+        }
+        // The term of `s`, its bound symbols written first (an explicit stack, depth-first).
+        let mut stack = vec![(s.clone(), false)];
+        let mut open: HashSet<Arc<str>> = HashSet::new();
+        while let Some((c, ready)) = stack.pop() {
+            if written.contains_key(&c) {
+                continue;
+            }
+            let a = binds[&c];
+            if !ready {
+                if !open.insert(c.clone()) {
+                    return None;
+                }
+                stack.push((c, true));
+                for atom in a.terms.keys() {
+                    match atom {
+                        Atom::Sym(d) if binds.contains_key(d) => stack.push((d.clone(), false)),
+                        atom if keep(atom) => {}
+                        _ => return None,
+                    }
+                }
+                continue;
+            }
+            let mut l = Lin::constant(a.constant.clone());
+            for (atom, k) in &a.terms {
+                match atom {
+                    Atom::Sym(d) if binds.contains_key(d) => {
+                        l.plus_assign(&written[d].times(k.clone()))
+                    }
+                    _ => l.plus_assign(&Lin::atom(atom.clone()).times(k.clone())),
+                }
+            }
+            written.insert(c, l);
+        }
+        let t = &written[&s];
+        let mut terms = t.terms.iter();
+        match (terms.next(), terms.next()) {
+            (None, _) => {
+                if vs.contains(&t.constant) {
+                    rows.push(Con::ge(&Lin::constant(-1), &Lin::constant(0)));
+                }
+            }
+            (Some((Atom::Sym(x), k)), None) => {
+                for v in vs {
+                    let d = &v - &t.constant;
+                    if d.mod_floor(k).is_zero() {
+                        out.entry(x.clone()).or_default().insert(d.div_floor(k));
+                    }
+                }
+            }
+            _ => {
+                clauses.extend(vs.into_iter().map(|v| {
+                    Formula::Not(Shared::new(Formula::Con(Con::eq(t, &Lin::constant(v)))))
+                }))
+            }
+        }
+    }
+    Some(out)
 }
 
 /// The relation `r` of a callee over the canonical atoms of the canonical key `key`
@@ -4401,8 +4603,12 @@ struct Projection {
 /// congruence), the quotients and remainders by constants are kept, over the bound atoms
 /// written as what they are bound to ([`Normal`]), and their own definitions' rows dropped,
 /// since the pairs [`Tr::instance`] makes at a call hold them there (LOAD-call-relation).
-/// Each definition is read once (a visited set over the numbers). `None` when `r` or a
-/// definition chooses (a disjunction or a negation), an atom is a product or an auxiliary
+/// Each definition is read once (a visited set over the numbers). Where `r` or a definition
+/// chooses (a disjunction or a negation), each choice that reads kept symbols alone is kept as
+/// it is beside the rows ([`Projection::clauses`]), and the holes `x != c` over one symbol are
+/// merged into one clause for each run of consecutive values ([`merged_holes`],
+/// LOAD-call-disj). `None` when a choice reads another atom, the tests' reference reads the
+/// bodies ([`Scoped::reading_bodies`]) and `r` chooses, an atom is a product or an auxiliary
 /// variable without a definition, a binding binds an atom of `key`, or an atom other than a
 /// kept pair stays ([`presburger::eliminated`]).
 ///
@@ -4429,6 +4635,30 @@ struct Projection {
 // before. Test
 // `l01_38_omega_test::one_scope::the_questions_of_a_chain_with_a_second_call_of_a_large_callee_scale`;
 // COMPLEXITY.md row LOAD-affine-cone.
+//
+// Choices (LOAD-call-disj, design A3 of the cross-review XR-LOAD-chain-move-call-disj-defined-
+// with, META1). Naive version: return `None` at any choice, so a callee with a hole `x != j` in
+// each of its n links is read again at each of the n calls, Θ(n²) (0.051 s at 50 links, 4.41 s
+// at 400). Rejected: each disjunct by shadow, which is the disjunctive normal form, 2^n
+// disjuncts for n holes. Used: a choice C whose atoms are kept symbols x is kept as it is, and
+// the rest projected. Proof of exactness: write the relation as C(x) ∧ R(x, y), y the atoms
+// eliminated. Since C does not read y, (∃y. C(x) ∧ R(x, y)) ⇔ C(x) ∧ (∃y. R(x, y)), and the
+// second conjunct is the projection made of the rows (steps 1-5 below hold for it unchanged).
+// A choice that reads another atom makes the result `None`, as before, except a hole on a
+// bound symbol, which is written through its binding first ([`holes_through_bindings`]; before
+// that, every link of a chain of holes past the first was `None`, and each call read the
+// callee's body again, Θ(n²) reads for n links). Writing at a call
+// substitutes each canonical atom of x by its argument in C, as in the rows ([`at_arguments`],
+// which is exact for symbols). Holes: `k·x + c != 0` excludes the one value `-c/k` where k
+// divides c and no value otherwise; the set of values excluded is the union of runs of
+// consecutive integers, and `x ∉ [lo, hi]` is `x <= lo - 1 || x >= hi + 1`. Cost: the
+// projection is made once per callee and key, O(rows + holes·log holes); a call writes
+// O(rows + clauses). A chain of holes at consecutive values leaves one clause; holes at
+// spread values (`x != 2j`) leave one clause each, Θ(holes) at each call. Tests in
+// `l01_38_omega_test::one_scope`:
+// `the_answers_of_calls_of_a_callee_that_chooses_are_those_reading_bodies`,
+// `a_callee_that_chooses_is_projected_once_for_its_key`, and the benches
+// `the_questions_of_a_chain_calling_a_callee_with_holes_scale` and its twin with spread holes.
 fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
     use presburger::Atom;
     let own: HashSet<&Arc<str>> = (key.iter().flat_map(|l| l.terms.keys()))
@@ -4438,12 +4668,16 @@ fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
         })
         .collect();
     let (mut rows, mut bound, mut seen) = (Vec::new(), HashSet::new(), HashSet::new());
+    // The argument each bound symbol is bound to, from the same definitions as `bound`.
+    let mut binds: HashMap<Arc<str>, &Lin> = HashMap::new();
+    // The values each symbol may not take (`x != j`), and the other choices (LOAD-call-disj).
+    let mut holes: BTreeMap<Arc<str>, BTreeSet<Int>> = BTreeMap::new();
+    let mut clauses: Vec<Formula> = Vec::new();
     let mut todo = vec![r];
     while let Some(f) = todo.pop() {
-        if f.chooses() {
-            return None;
-        }
-        for c in f.cons() {
+        let mut cons: Vec<Con> = Vec::new();
+        conjuncts(f, &mut cons, &mut holes, &mut clauses);
+        for c in &cons {
             for a in c.lin.terms.keys() {
                 match a {
                     Atom::Product(..) => return None,
@@ -4466,6 +4700,7 @@ fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
                         }
                         if let What::Bind(pairs) | What::Value(_, pairs) = what {
                             bound.extend(pairs.iter().map(|(c, _)| c.clone()));
+                            binds.extend(pairs.iter().map(|(c, a)| (c.clone(), a)));
                         }
                         todo.push(def);
                     }
@@ -4479,9 +4714,22 @@ fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
         return None;
     }
     let keep = |a: &Atom| matches!(a, Atom::Sym(s) if !bound.contains(s));
+    // The choices, kept as they are: each must read kept symbols alone (proof below).
+    if !clauses.is_empty() || !holes.is_empty() {
+        // The tests' reference reads the body again at the call ([`Scoped::reading_bodies`]).
+        if tr.bodies
+            || (clauses.iter().flat_map(|g| g.cons())).any(|c| c.lin.terms.keys().any(|a| !keep(a)))
+        {
+            return None;
+        }
+        let holes = holes_through_bindings(holes, &binds, &keep, &mut clauses, &mut rows)?;
+        clauses.extend(merged_holes(&holes));
+    }
+    let clauses: Arc<[Formula]> = clauses.into();
     if let Some(out) = presburger::eliminated(&rows, &keep) {
         return Some(Projection {
             rows: out.into(),
+            clauses,
             value: None,
             pairs: Arc::default(),
         });
@@ -4598,6 +4846,7 @@ fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
     let rows: Vec<Con> = rows.into_iter().filter(|c| !defined.contains(c)).collect();
     Some(Projection {
         rows: rows.into(),
+        clauses,
         value: None,
         pairs: normal.pairs(),
     })
@@ -4658,6 +4907,7 @@ fn value_projected(tr: &Tr, l: &Lin, key: &[Lin]) -> Option<Projection> {
     let value = normal.lin(l)?;
     Some(Projection {
         rows: Arc::default(),
+        clauses: Arc::default(),
         value: Some(value),
         pairs: normal.pairs(),
     })
@@ -11354,6 +11604,7 @@ impl<'m, 't> Walk<'m, 't> {
             move || async move {
                 let r = self.canonical_formula(t, ps, (body, lam), args, key.clone());
                 let r = r.await?;
+                PROJECTIONS_MADE.with(|c| c.set(c.get() + 1));
                 self.tr(|tr| projected(tr, &r, &key))
             },
         )
@@ -11462,8 +11713,9 @@ impl<'m, 't> Walk<'m, 't> {
     // eliminated, written at its arguments; where no such projection is made, a call of it with
     // other arguments reads its body again, and the calls in it whose arguments then differ
     // from their callees' claimed ones, so a function called with k argument lists is read k
-    // times, O(k times its cone): a callee that chooses (a disjunction or a negation: `x != j`
-    // in each link), a product, a quotient by a term, or an auxiliary variable of no definition.
+    // times, O(k times its cone): a callee with a choice over an atom other than a kept symbol
+    // (choices over kept symbols are kept beside the rows, LOAD-call-disj, [`projected`]), a
+    // product, a quotient by a term, or an auxiliary variable of no definition.
     // Where it is made, the rows left are one for each linear form over the kept atoms, the
     // tighter kept: O(1) for one parameter and a chain whose links share one pair (`x mod 4 ==
     // 1` in each link), and up to the cone's for two or more parameters or many pairs, written
@@ -11472,8 +11724,9 @@ impl<'m, 't> Walk<'m, 't> {
     // choice over the integers keeps each clause, O(the cone) at each call, the same as the
     // body. Trigger: one function with a large cone of such constraints called with another
     // argument list by each link of a chain, as `h(x: x)` in `p{i}(x) = h(x: x) && p{i-1}(x: x
-    // + 1)` with `h` a chain of n links `h{j}(x) = h{j-1}(x: x) && x != j`: relations 0.051 s
-    // at 50 links, 4.41 s at 400 (measured once). Congruences are kept: test
+    // + 1)` with `h` a chain of n links `h{j}(x) = h{j-1}(x: x) && x mod 3 != j`: before
+    // LOAD-call-disj the same chain with `x != j` took 0.051 s at 50 links and 4.41 s at 400
+    // (measured once). Congruences are kept: test
     // `l01_38_omega_test::one_scope::
     // the_questions_of_a_chain_calling_a_callee_that_keeps_a_congruence_scale`, deferred to plan
     // row PRES-scaling-10_5 in wt/scratch/deferred-tests/PRES-scaling-10_5.rs. COMPLEXITY.md
@@ -11531,7 +11784,21 @@ impl<'m, 't> Walk<'m, 't> {
                             })
                             .collect::<Option<Vec<_>>>()
                     });
-                    if let Some(parts) = at {
+                    if let Some(rows) = at {
+                        // Each choice reads kept symbols alone ([`projected`]), so it is
+                        // written at the arguments by substitution, O(its size) (LOAD-call-disj).
+                        let written = |c: &Con| {
+                            let lin = at_arguments(&c.lin, &key, &k.1)
+                                .expect("a projection's choices read symbols alone");
+                            Formula::Con(Con { lin, rel: c.rel })
+                        };
+                        // The choices first, as the relation of a body puts its condition of
+                        // definedness before the body (`Scoped::relation`), so a call of a
+                        // callee whose one choice is that condition gives the shape reading its
+                        // body gives.
+                        let mut parts: Vec<Formula> =
+                            p.clauses.iter().map(|g| g.map_cons(&written)).collect();
+                        parts.extend(rows);
                         let f = Formula::and(parts);
                         self.tr(|tr| tr.bound(&f, &k.1));
                         return Some(f);
@@ -11548,12 +11815,12 @@ impl<'m, 't> Walk<'m, 't> {
         f
     }
 
-    /// [`Walk::formula_called`] for an integer function: when the call may be claimed and its
-    /// callee's canonical term holds no product, the variable `v` of the binding, defined by
-    /// `v == ` that term; when another call holds the claim, the term written over the
-    /// canonical atoms and the quotients and remainders by constants of their terms
-    /// ([`Walk::value_projection`]), made once and written at the arguments ([`Tr::instance`],
-    /// LOAD-call-relation); otherwise the callee's body read with each parameter bound to its
+    /// [`Walk::formula_called`] for an integer function whose callee's canonical term holds no
+    /// product: the term written over the canonical atoms and the quotients and remainders by
+    /// constants of their terms ([`Walk::value_projection`]), made once and written at the
+    /// arguments ([`Tr::instance`], LOAD-call-relation, LOAD-defined-with); when it has no
+    /// projection and the call may be claimed, the variable `v` of the binding, defined by
+    /// `v == ` that term; otherwise the callee's body read with each parameter bound to its
     /// argument ([`Walk::lin_call`]). A product in the term is left to the substitution, since
     /// [`Scoped::written`] writes `v` as the term, and a product of `v` would be a product of
     /// products.
@@ -11621,28 +11888,34 @@ impl<'m, 't> Walk<'m, 't> {
             if let Some(l) = l
                 && !l.terms.keys().any(|a| matches!(a, Atom::Product(..)))
             {
+                // The callee's term over its canonical atoms ([`Walk::value_projection`]),
+                // made once, written at the arguments, its quotients and remainders by
+                // constants the pairs of its dividends so written ([`Tr::instance`]), O(the
+                // term and its pairs), before the claim: a claimed call is bound to a new
+                // `What::Value` definition, and a chain whose link i calls link i - 1 then
+                // holds i such definitions and their division pairs, which
+                // `presburger::extend` fills at every later link, Θ(n²) along the chain
+                // (LOAD-defined-with, Fix A of XR-LOAD-chain-move-call-disj-defined-with
+                // META1 A4, the Gemini seat's; 25.1 ms at 50 links to 210.7 ms at 400 for
+                // the questions, 8.4 at 8x, against 14.55 with the claim first). Only a term
+                // with no projection is claimed. The tests' reference reads the body again
+                // ([`Scoped::reading_bodies`]).
+                if !self.tr(|tr| tr.bodies) {
+                    let p = self.value_projection(t, ps, (body, lam), args, env, key.clone());
+                    if let Some(p) = p.await
+                        && let Some(v) = &p.value
+                    {
+                        let to = arguments_of(&key, &k.1);
+                        let mut done = HashMap::new();
+                        if let Some(s) =
+                            self.tr(|tr| tr.instance(v, &to, Some(&p.pairs), &mut done))
+                        {
+                            return Some(s);
+                        }
+                    }
+                }
                 if let Some(v) = self.binding((body, lam), &k.1, &key, Some(l.clone())) {
                     return Some(Lin::atom(Atom::Aux(v)));
-                }
-                // Another call holds the claim: the callee's term over its canonical atoms
-                // ([`Walk::value_projection`]), made once, written at the arguments, its
-                // quotients and remainders by constants the pairs of its dividends so written
-                // ([`Tr::instance`]), O(the term and its pairs).
-                // The tests' reference reads the body again ([`Scoped::reading_bodies`]).
-                if self.tr(|tr| tr.bodies) {
-                    return self
-                        .lin_call(t, ps, (body, lam), args, env, bound_terms(&k))
-                        .await;
-                }
-                let p = self.value_projection(t, ps, (body, lam), args, env, key.clone());
-                if let Some(p) = p.await
-                    && let Some(v) = &p.value
-                {
-                    let to = arguments_of(&key, &k.1);
-                    let mut done = HashMap::new();
-                    if let Some(s) = self.tr(|tr| tr.instance(v, &to, Some(&p.pairs), &mut done)) {
-                        return Some(s);
-                    }
                 }
             }
         }
