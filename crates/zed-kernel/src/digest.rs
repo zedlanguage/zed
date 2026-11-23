@@ -138,6 +138,10 @@ impl<K: std::hash::Hash> KeyHash<K> for ByHash {
 /// one allocation and one indirection per tied hash, which only a tie pays.
 enum Slot<K, V> {
     One(K, V),
+    #[expect(
+        clippy::box_collection,
+        reason = "boxed so that a slot without a tie is as wide as its key and value"
+    )]
     Many(Box<std::collections::BTreeMap<K, V>>),
 }
 
