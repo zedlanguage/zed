@@ -131,9 +131,12 @@ pub(super) fn nested(n: usize) -> Vec<(&'static str, Term)> {
         .collect()
 }
 
+/// A term's name and its builder, which takes the depth.
+pub(super) type Nested = (&'static str, fn(usize) -> Term);
+
 /// The terms of [`nested`], each with its builder, so that a benchmark of one term builds that
 /// term alone (`bench::deep::copying_comparing_and_printing_scale_with_size`).
-pub(super) const NESTED: [(&str, fn(usize) -> Term); 4] = [
+pub(super) const NESTED: [Nested; 4] = [
     ("nested lambdas", |n| {
         (0..n).fold(var("x"), |b, _| Term::Lam(vec!["y".into()], sh(b)))
     }),
