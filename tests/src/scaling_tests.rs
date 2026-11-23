@@ -295,12 +295,26 @@ fn with_no_counter_a_test_stops_with_its_own_error() {
 /// Fails where a copy or fill runs as a `rep` instruction a hardware counter sees as one:
 /// there, a quadratic copy would pass [`check`]. The sizes run from past the 4 KiB at which
 /// glibc starts `rep` on most CPUs to past the 12 MiB at which it starts on some.
+///
+/// A meter of processor time sees a `rep` copy's work whatever its length, so there the
+/// 64 KiB size, whose copy runs 15 to 23 µs, is left out: measured on a Colab VM with no
+/// hardware counter (l43, 12 cores, 2026-11-23, b22-tests7), its least of the runs was 2.6 to 4
+/// times that of 8 times the length under load, below the 4 asserted, as `work(n, 1, 10_000)`
+/// in the processor-time table of `scaling.rs` (least 2.74 under load): runs of tens of µs
+/// are within the clock's and the scheduler's noise. 0 of 45 runs failed there (20 idle, 20 and
+/// 5 alone under 24 busy loops); misc8 saw the failure at load 28 (FAIL-copies-and-fills-meter-
+/// under-load). The 1 MiB and 16 MiB sizes run 0.2 ms and more.
 #[test]
 fn copies_and_fills_count_by_their_length() {
     let mut meter = Meter::new();
     let from = vec![1u8; 128 << 20];
     let to = std::cell::RefCell::new(vec![2u8; 128 << 20]);
-    for len in [64 << 10, 1 << 20, 16 << 20] {
+    let sizes: &[usize] = if meter.instructions {
+        &[64 << 10, 1 << 20, 16 << 20]
+    } else {
+        &[1 << 20, 16 << 20]
+    };
+    for &len in sizes {
         let copy = |len| to.borrow_mut()[..len].copy_from_slice(black_box(&from[..len]));
         let fill = |len: usize| to.borrow_mut()[..len].fill(black_box(3));
         for (what, f) in [("copy", &copy as &dyn Fn(usize)), ("fill", &fill)] {

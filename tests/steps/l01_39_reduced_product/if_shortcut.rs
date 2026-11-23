@@ -252,6 +252,54 @@ fn one_pass_and_transfer_agree_at_seed_108049985492391682() {
     blocks_agree(Rng::new(108_049_985_492_391_682), 108_049_985_492_391_682);
 }
 
+/// Seed 16483970003272068920 of [`one_pass_and_transfer_agree_on_random_blocks`]: at block 9,
+/// arm 10, the one pass gave `x` the ints `[4..]` and the transfer `[5..]`, the block of
+/// [`a_peeled_body_with_no_summary_is_read_whole`]
+/// (FAIL-if-shortcut-seed-16483970003272068920).
+#[test]
+fn one_pass_and_transfer_agree_at_seed_16483970003272068920() {
+    blocks_agree(
+        Rng::new(16_483_970_003_272_068_920),
+        16_483_970_003_272_068_920,
+    );
+}
+
+/// The block of seed 16483970003272068920, cut down:
+/// `z52 = { z48 = -3; if (z48 mod 2) >= x { 1 } else { 2 } }; if (z52 - -3) <= x && (0 + x) != y
+/// { 0 } else { 2 }`. The one pass peels `z52`; its body, which reads `z48` through `z48`'s
+/// summary, had none, so the test read `z52` as `[1..=2]` and gave `x` the ints `[4..]` where it
+/// holds; the transfer reads the whole block, `1` for `x <= 1` and `2` above, and gives `[5..]`.
+#[test]
+fn a_peeled_body_with_no_summary_is_read_whole() {
+    let p = |op, a, b| prim(op, vec![a, b]);
+    let t = let_(
+        "z52",
+        let_(
+            "z48",
+            int(-3),
+            if_(
+                p(Prim::Ge, p(Prim::Mod, var("z48"), int(2)), var("x")),
+                int(1),
+                int(2),
+            ),
+        ),
+        if_(
+            p(
+                Prim::And,
+                p(Prim::Le, p(Prim::Sub, var("z52"), int(-3)), var("x")),
+                p(Prim::Ne, p(Prim::Add, int(0), var("x")), var("y")),
+            ),
+            int(0),
+            int(2),
+        ),
+    );
+    let scope = ints(&["x".into(), "y".into()]);
+    let one = arms_and_value(&t, &scope);
+    if let Some(d) = difference(&one, &arms_and_value_by_transfer(&t, &scope)) {
+        panic!("the one pass and the transfer differ on\n{t}\n{d}");
+    }
+}
+
 /// The block of seed 13376472606931704830 and its neighbors: `z103` bound to
 /// `if (-2 == z102) { 1 } else { 2 }` for `z102` each of `min(x, x)`, `max(x, x)`, `min(x, 3)`,
 /// `min(x, y)`, `x + 0` and `x * 1`, then a test of `x` against `-2 - z103`. The one pass and

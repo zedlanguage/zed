@@ -1188,6 +1188,12 @@ fi
 # S4-interval-boxes joined it (s4_holed, s4_names, s4_model: 61, 232 and 103 s in a debug build
 # at load 2, against 576 s for all of xst). Each module of xst is a piece, and each test of the
 # three S4 modules (2026-11-22, S4-interval-boxes).
+# l08_02_remaps ran past its limit of 29 s at load 11.5 (30.1 s, b22-misc8's merge check,
+# 2026-11-23). Without benchmarks it took 7.1 s whole at 8 threads on l43 at load 0, and its 227
+# tests one by one 41.4 s: empty 12.0 s (77 tests), rules 8.0 s (54), recursion 7.7 s (7, of
+# which the chain of 8000 maps on a 2 MiB stack is 6.8 s), kernel 5.5 s (39), collisions 4.8 s,
+# moves 1.8 s, three_way 0.8 s, kept 0.8 s. Each module is a piece
+# (FAIL-l08-02-remaps-piece-past-20s, b22-tests7).
 split="
   l01_08_parser l01_16_elaboration l01_16_elaboration::scaling
   l01_23_groups_and_refusals l01_23_groups_and_refusals::r6_reduction
@@ -1232,6 +1238,7 @@ split="
   l01_39a_bit_words l01_39a_bit_words::scaling
   l25_08_mutate l25_08_mutate::scaling
   m0_12_refusal_census m0_12_refusal_census::seeds
+  l08_02_remaps
 "
 # Tests of a crate's unit-test binary named here, as <binary name without its hash>::<test>,
 # run as a piece of their own (`--exact`), and the binary's other tests as one piece that skips
@@ -1272,6 +1279,12 @@ split="
 # private quotients 5.2 and 3.9 s, the test of every split of the moduli 2.5 s and the 25 tests of
 # every writing at one seed 2.0 to 4.3 s each (65 s together). Each is now a piece, which leaves
 # the other piece 81 s of wall time spread over its threads (TEST-presburger-unit-piece-probe-order).
+# zed_kernel's piece took 22.4 s at load 13.9 on l43 against its limit of 20 s (seen by kept1,
+# checkwalk5 and misc7 on main; FAIL-zed-kernel-unit-piece-past-20s). Each of its 731 tests alone
+# there at load 10.6 to 12.2 (tools/time_tests.sh, 2026-11-23): 119.6 s together, 17.8 s of it in
+# the two random tests of the boolean equation solver above and 44.5 s in the six below (14.0,
+# 7.8, 7.4, 6.0, 4.9 and 4.4 s); the other 723 take 57.3 s together. Each of the six is a piece,
+# and no other test's name holds one of their names.
 # zedc_check's piece stopped at its limit alone (rc=124, 20059 ms, on hm1, 8 cores, load 4.0,
 # b22-checkrest8, 2026-11-22). Each of its 183 tests alone on hm1 (tools/time_tests.sh, load 1.2
 # to 1.6): the 30 below took 133 s together, 1.0 to 7.8 s each (the slowest
@@ -1298,6 +1311,12 @@ alone="
   zedc_preimage::product::tests::projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot_part_4
   zed_kernel::types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random
   zed_kernel::types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random_second_half
+  zed_kernel::poly::tests::one_decide_spends_at_most_four_budgets
+  zed_kernel::types::bdd::set::tests::tied_sets_and_ids_compare_each_key_a_few_times
+  zed_kernel::poly::roots::tests::the_search_is_bounded_on_families_that_defeat_the_cuts
+  zed_kernel::eval::binder_tests::reads_lies_between_the_tree_walk_and_the_shared_bound_on_deeply_shared_terms
+  zed_kernel::types::bdd::tests::a_chain_joined_at_once_is_the_chain_joined_literal_by_literal
+  zed_kernel::types::empty::tests::random_types_agree_with_membership_on_a_finite_set_of_values
   zedc_presburger::presburger::row_sums::tests::the_polygons_of_the_route_are_never_more_than_the_join_spends
   zedc_presburger::presburger::sweep_against_pick_tests::the_unbounded_row_sweep_marks_the_arms_pick_by_finds
   zedc_presburger::presburger::exact::tests::random_formulas_at_seed_10413658062665981385

@@ -2340,7 +2340,8 @@ fn rebuild_held(w: &mut impl Rebuild, s: &Arc<Sig>) -> Arc<Sig> {
 ///
 /// A row whose components all come back as they were ([`same_nodes`]) is given back itself,
 /// not a copy with a new number. The walk counts its steps (one a part popped, one a variable
-/// of a type made), and tells `w` ([`Rebuild::wasted`]) of each row it gave back itself that
+/// of a type made or given back whole by [`Rebuild::known_ty`], the units [`row_vars`] counts
+/// in), and tells `w` ([`Rebuild::wasted`]) of each row it gave back itself that
 /// no row around it in this walk was also given back itself, with the steps spent inside it:
 /// each step is told once at most, to the outermost such row that holds it, so the work told
 /// in all is at most the steps of the walk. Those rows are found by their entry counts: rows
@@ -2362,7 +2363,11 @@ fn rebuild<'a>(w: &mut impl Rebuild, mut stack: Vec<Step<'a>>, out: &mut Rebuilt
         steps += 1;
         match step {
             Step::Ty(t) => match w.known_ty(t) {
-                Some(done) => out.tys.push(done),
+                Some(done) => {
+                    // [`Replacer::known_ty`] looked up each of its variables.
+                    steps += t.vars.len() as u64;
+                    out.tys.push(done);
+                }
                 None => {
                     let rows = t.tuples.iter().map(Step::Row);
                     let fns = t.fns.iter().map(Step::Held);
@@ -3422,8 +3427,19 @@ impl Rebuild for Replacer<'_> {
     /// The rule is that of renting skis until the rent paid reaches their price (Karlin,
     /// Manasse, Rudolph and Sleator, "Competitive snoopy caching", Algorithmica 3, 1988,
     /// doi:10.1007/BF01762111): the set's cost is not known before it is made, so it is tried
-    /// with a budget of the work told so far each time that work passes a power of two, and
-    /// given up past the budget. Checked 2026-11-22: the reference's title, authors, journal,
+    /// with a budget of twice the work told so far each time that work passes a power of two,
+    /// and given up past the budget. Twice, not once, and in the same units: where one walk
+    /// tells about what the set costs, the first try is on the edge, and the rows a walk skips
+    /// (those whose bits miss the bound variable's bit, which depends on where names hash) make
+    /// it succeed under some seeds and fail under others, at one size and not the other; a
+    /// failed first try costs one more walk and the try, twice the work and bytes of the run.
+    /// The names part of the benchmark below took 1.63 times the instructions at 8n under
+    /// `ZED_TEXT_SEED=1` as under 2 (ratio 13.82 against 8.81, l43, 2026-11-23,
+    /// FAIL-replacing-variables-bytes-11_5). Twice the budget alone moved the edge but did not
+    /// remove it (seed 6: 17.94, bytes 15.30), as the walk counted a type of one variable it
+    /// gave back whole as one step and `row_vars` as two; the walk now counts its variables too
+    /// ([`rebuild`]), so a first try succeeds once half the row's steps were told.
+    /// Checked 2026-11-22: the reference's title, authors, journal,
     /// volume (pages 79 to 119) and date by Crossref; its full text could not be fetched, so
     /// no quote is given, and the bound below is proved here without it. Departure: the paper
     /// buys at a known price; here the price is found by trying, which the doubling budgets
@@ -3431,14 +3447,17 @@ impl Rebuild for Replacer<'_> {
     ///
     /// Proof of the bound: a try is made at a total `T_i` whose bit length `b_i` is larger than
     /// that of every earlier total, so the `b_i` are distinct and `T_i < 2^(b_i)`; the budgets
-    /// sum to less than `2^(b_last + 1) <= 4 T_last`, as `T_last >= 2^(b_last - 1)`. Each step
+    /// `2 T_i` sum to less than `2 * 2^(b_last + 1) <= 8 T_last`, as `T_last >= 2^(b_last - 1)`.
+    /// Each step
     /// of a walk is told for at most one row ([`rebuild`] tells only the unchanged rows that no
     /// unchanged row around them holds), so `T_last` of all rows together is at most the steps
-    /// of the walks, and the tries cost at most four times those steps, times a `log`: `spent` in
-    /// [`row_vars`] counts a merge of two sets at the size of the smaller, which a treap
-    /// union costs times a `log`. A try succeeds once its
-    /// budget reaches the set's cost, so a row walked again and again makes its set after at
-    /// most twice that cost in walks; it then costs the bound keys or its set, whichever is
+    /// of the walks, and the tries cost at most eight times those steps, times a `log`: `spent`
+    /// in [`row_vars`] counts a merge of two sets at the size of the smaller, which a treap
+    /// union costs times a `log`. A try succeeds once its budget `2 T_i` reaches the set's cost
+    /// `C`, which it does at the first power of two `2^b >= C / 2`, so `2^b < C` (or `C <= 2`);
+    /// the told work there is less than `2^b` plus one walk, so a row walked again and again
+    /// makes its set after less than its cost plus one walk in walks; it then costs the bound
+    /// keys or its set, whichever is
     /// smaller, at each replacement, in place of a walk of it. That the set answers as the bits
     /// would: it holds every variable the bits are made from ([`VarBits::ty`]: the Ty's
     /// variables, its functions' facts, its rows' and payload shapes'), so a replacement that

@@ -3027,6 +3027,21 @@ impl Lazy {
                     *free = None;
                     continue;
                 }
+                // A peeled body with no summary is given up for the whole block, which may have
+                // one: `{ z48 = -3; if (z48 mod 2) >= x { 1 } else { 2 } }` has the summary of the
+                // transfer, which reads `z48` as the literal it binds, while its body, reading
+                // `z48` through `z48`'s summary, had none, so a test of the block read it as
+                // `[1..=2]` (row FAIL-if-shortcut-seed-16483970003272068920, b22-tests7
+                // 2026-11-23: `x` in `[4..]` against the transfer's `[5..]`). Giving the peel up
+                // returns to the summary of the whole term, as before item PA-walk-read-all, and
+                // costs a second summary only where the first is `None`.
+                // Test: `l01_39_reduced_product::if_shortcut::
+                // a_peeled_body_with_no_summary_is_read_whole`.
+                if peeled.is_some() && held.is_none() {
+                    *peeled = None;
+                    *free = None;
+                    continue;
+                }
                 *m = Making::Made(held);
                 todo.pop();
             } else {
