@@ -298,8 +298,9 @@ fn a_time_in_range_whose_sides_are_too_large_to_build_is_rounded_up() {
 }
 
 /// Plan row CONST-default-memory-limit (DESIGN.md sec:checking_in_zed, "The default memory
-/// limit", zed 21e7335; headline as reworded in zed c79c154): without `@limits(memory: …)` before `main`, an operation the operands
-/// prove to build 1 GiB or more is rejected at compile time, whether or not its branch is taken;
+/// limit", zed 21e7335; headline as reworded in zed c79c154): without `@limits(memory: …)`
+/// before `main`, an operation the operands prove to build 1 GiB or more is rejected at compile
+/// time, whether or not its branch is taken;
 /// a declared limit at least the build accepts it, in any unit of information.
 /// `(2^64 + 13) ^ (2^27)` has at least `2^27 * 64 + 1` bits, 2^30 bytes and one bit, so its
 /// headline rounds up to 1 GiB; `(2^64 + 13) ^ (2^20)` has at least 8 MiB.
