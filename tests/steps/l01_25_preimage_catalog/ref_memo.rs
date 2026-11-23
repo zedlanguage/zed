@@ -1106,24 +1106,25 @@ fn only_a_chain_with_a_round_takes_gcds_for_the_cuts() {
 /// and its reflection `[-h, 0]` into `[-h, -1]`, `[0, 0]`, `[1, h]` with one label, two pairs of
 /// touching pieces where one piece does. Summed over the `If` steps, normal_abs_gap at 16 links
 /// had 104 such pairs with main's `abs` (2437d9d67) and has none now that `abs` builds
-/// `[-h, h]` (`State1d::abs`); pathological_abs has none either way. The families without
-/// `abs` (normal_round_down, normal_min_gap, random_chains) have none. A `Round` can still leave
-/// one: round_abs_mixed has 1 pair at 16 links, from a step other than `abs`, in a tree of at
-/// most 4 nodes, so the counts of the two families that mix `abs` and `Round` are printed and
-/// not held (`tree_round` merges nothing, row REF-merge-equal-labels). The most nodes at an `If` step are printed for the record.
+/// `[-h, h]` (`State1d::abs`). A `Round` (`(t / k) * k`) widens each piece to whole grid cells
+/// and drops a piece with no grid point, so two pieces with one label can come to touch: with
+/// the new `abs` and no merge in `tree_round`, round_abs_mixed had 1 such pair at 16 links
+/// (4b3c2ee8d); `tree_round` now makes them one piece. Held at 0 on every family listed, the
+/// two that mix `abs` and `Round` included; the most nodes at an `If` step are printed for the
+/// record.
 #[test]
-fn abs_leaves_no_touching_pieces_with_one_label() {
+fn abs_and_round_leave_no_touching_pieces_with_one_label() {
     use zedc::store::preimage::counts::{
         count_if_tree_nodes, count_if_tree_seams, if_tree_nodes, if_tree_seams,
     };
-    for (name, held) in [
-        ("normal_abs_gap", true),
-        ("pathological_abs", true),
-        ("normal_round_down", true),
-        ("normal_min_gap", true),
-        ("random_chains", true),
-        ("round_abs_mixed", false),
-        ("round_abs_one_link", false),
+    for name in [
+        "normal_abs_gap",
+        "pathological_abs",
+        "normal_round_down",
+        "normal_min_gap",
+        "random_chains",
+        "round_abs_mixed",
+        "round_abs_one_link",
     ] {
         for n in [16, 64] {
             count_if_tree_seams();
@@ -1136,10 +1137,7 @@ fn abs_leaves_no_touching_pieces_with_one_label() {
             println!(
                 "{name} at {n}: touching pairs with one label {seams:?}, most nodes {nodes:?}"
             );
-            assert!(seams.is_some(), "{name} at {n}: not counted");
-            if held {
-                assert_eq!(seams, Some(0), "{name} at {n}");
-            }
+            assert_eq!(seams, Some(0), "{name} at {n}");
         }
     }
 }

@@ -5277,17 +5277,73 @@ fn tree_round(tree: Tree, m: &Num) -> Tree {
     let mut arc = tree?;
     let n = Arc::make_mut(&mut arc);
     let data = n.data.clone();
-    let left = tree_round(tree_apply(n.left.take(), &n.lazy), m);
-    let right = tree_round(tree_apply(n.right.take(), &n.lazy), m);
-    let (lo, hi) = (ceil_grid(&n.lo, m), ceil_grid(&n.hi.succ(), m).pred());
+    let mut left = tree_round(tree_apply(n.left.take(), &n.lazy), m);
+    let mut right = tree_round(tree_apply(n.right.take(), &n.lazy), m);
+    let (mut lo, mut hi) = (ceil_grid(&n.lo, m), ceil_grid(&n.hi.succ(), m).pred());
     if lo > hi {
-        tree_join(left, right)
-    } else if tree_height(&left).abs_diff(tree_height(&right)) <= 1 {
+        return tree_join_merged(left, right);
+    }
+    // Rounding widens each piece to whole grid cells and drops a piece with no grid point, so
+    // two pieces with one label that had a gap or a dropped piece between them can come to
+    // touch (REF-merge-equal-labels). By induction no such pair made by rounding is left inside
+    // either rounded subtree, so the only new pairs are this piece with the last piece of `left`
+    // and the first of `right`: two O(h) edge reads (`tree_edge`, O(p) over the whole tree),
+    // a label comparison only where the values touch, and an O(h) removal for each pair merged.
+    // Test: `ref_memo::abs_and_round_leave_no_touching_pieces_with_one_label`.
+    let before = tree_edge(&left, true)
+        .filter(|(key, label)| key.1.succ() == lo && **label == data)
+        .map(|(key, _)| key.0);
+    if let Some(start) = before {
+        lo = start;
+        left = tree_split_last(left.as_ref().expect("a last piece")).0;
+    }
+    let after = tree_edge(&right, false)
+        .filter(|(key, label)| hi.succ() == key.0 && **label == data)
+        .map(|(key, _)| key.1);
+    if let Some(end) = after {
+        hi = end;
+        right = tree_split_first(right.as_ref().expect("a first piece")).0;
+    }
+    if tree_height(&left).abs_diff(tree_height(&right)) <= 1 {
         *n = tree_parts((lo, hi), data, left, right);
         Some(arc)
     } else {
         tree_node((lo, hi), data, left, right)
     }
+}
+/// The first piece of `t` (`last` false) or its last, with its label, read through the tags on
+/// the way down as `tree_collect_at` does, copying nothing: O(h), h the AVL height of `t`.
+/// `tree_round` reads the two edges of each subtree it builds; the heights of the subtrees of a
+/// balanced tree of p nodes add up to O(p), so those reads cost O(p) in all.
+fn tree_edge(t: &Tree, last: bool) -> Option<((End, End), &Contents)> {
+    let mut tag = ValTag::id();
+    let mut n = t.as_ref()?;
+    loop {
+        // A reflecting tag reverses the order, so the edge is then in the other child.
+        let next = if last ^ tag.0 { &n.right } else { &n.left };
+        match next {
+            Some(c) => {
+                tag = tag.compose(&n.lazy);
+                n = c;
+            }
+            None => return Some((tag.map_range(&n.lo, &n.hi), &n.data)),
+        }
+    }
+}
+/// `tree_join` of two rounded trees, `left` below `right`, that makes the last piece of `left`
+/// and the first of `right` one piece when they touch and have one label (REF-merge-equal-labels):
+/// O(log p) for the two edges, the two removals and the join.
+fn tree_join_merged(left: Tree, right: Tree) -> Tree {
+    let touch = match (tree_edge(&left, true), tree_edge(&right, false)) {
+        (Some((a, la)), Some((b, lb))) if a.1.succ() == b.0 && la == lb => Some((a.0, b.1)),
+        _ => None,
+    };
+    let Some(key) = touch else {
+        return tree_join(left, right);
+    };
+    let (left, _, data) = tree_split_last(left.as_ref().expect("a last piece"));
+    let (right, _, _) = tree_split_first(right.as_ref().expect("a first piece"));
+    tree_node(key, data, left, right)
 }
 impl State1d {
     fn round(self, c: i64) -> Self {
@@ -5812,7 +5868,7 @@ impl State1d {
     /// Blelloch, Ferizovic and Sun 2016) put them together in O(log p), against the
     /// `tree_union` of P and -P before, which walked both and cut `[0, h]` and `[-h, 0]` into
     /// `[-h, -1]`, `[0, 0]`, `[1, h]`, three pieces with one label (REF-merge-equal-labels:
-    /// `ref_memo::abs_leaves_no_touching_pieces_with_one_label`). The reflection is a tag on
+    /// `ref_memo::abs_and_round_leave_no_touching_pieces_with_one_label`). The reflection is a tag on
     /// the root, O(1), and shares P's nodes.
     fn abs(self) -> Self {
         let mut st = self;
