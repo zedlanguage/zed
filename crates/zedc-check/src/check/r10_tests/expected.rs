@@ -297,7 +297,15 @@ pub(super) fn info_text(info: &Info) -> String {
     field(&mut out, "errors", items(errors));
     field(&mut out, "reported_literals", items(reported_literals));
     field(&mut out, "warnings", items(warnings));
-    field(&mut out, "blocking", entries(blocking, |v| debug(v)));
+    // `Cause::Calls::via` (row PORT-block-name) came after E: it is the argument a blocking
+    // call writes for the callee's port, read only for the message's wording. A call that
+    // writes none prints as E's text did; a `Some` still prints, so E's output still differs
+    // from D's wherever D names a port E did not have.
+    field(
+        &mut out,
+        "blocking",
+        entries(blocking, |v| debug(v).replace(", via: None", "")),
+    );
     field(&mut out, "limits", vec![debug(limits)]);
     let parts = names.texts.iter().map(|(n, t)| format!("{n} = {t}"));
     field(&mut out, "parts", parts.collect());
