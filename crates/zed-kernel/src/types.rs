@@ -8033,6 +8033,24 @@ pub mod rec {
                 list.iter().chain(boxes.into_iter().flatten())
             }
 
+            /// Whether the two hold the same besides their parts below, and as many of those:
+            /// the equality test of `ByShape` in module `group`, cheaper than its order.
+            pub(super) fn same_head(&self, other: &Shape) -> bool {
+                match (self, other) {
+                    (Shape::Param(i), Shape::Param(j)) => i == j,
+                    (Shape::Ref(i, xs), Shape::Ref(j, ys)) => i == j && xs.len() == ys.len(),
+                    (Shape::Type(s), Shape::Type(t)) => s == t,
+                    (Shape::Union(xs), Shape::Union(ys))
+                    | (Shape::And(xs), Shape::And(ys))
+                    | (Shape::Tuple(xs), Shape::Tuple(ys)) => xs.len() == ys.len(),
+                    (Shape::Atom(m, xs), Shape::Atom(n, ys)) => m == n && xs.len() == ys.len(),
+                    (Shape::Not(_), Shape::Not(_))
+                    | (Shape::Diff(..), Shape::Diff(..))
+                    | (Shape::Morphism(..), Shape::Morphism(..)) => true,
+                    _ => false,
+                }
+            }
+
             fn open(&self, f: &mut fmt::Formatter<'_>) -> Result<&'static str, fmt::Error> {
                 Ok(match self {
                     Shape::Param(i) => {

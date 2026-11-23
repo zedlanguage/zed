@@ -128,9 +128,17 @@ impl<K: std::hash::Hash> KeyHash<K> for ByHash {
 
 /// The keys of one hash in a [`TiedMap`]: one, nearly always, or an ordered map once a second
 /// key ties with it.
+///
+/// The ordered map is boxed so that a slot is no wider than its one key and value (plus the
+/// tag): unboxed, a `BTreeMap` (3 words) set the width of every slot of a map of small keys,
+/// and the table of slots holds one per key whether or not any key ties (test
+/// `digest::tests::a_slot_is_as_wide_as_one_key_and_value`). Measured on the bench "checking a body of unions" (l01_23 `deep_rec`),
+/// whose `Numbering::first` files every node: PERF-row-hash-tied-digest (58e5bf7db) took its
+/// bytes from 1,964 M to 2,099 M at 8n (PERF-check-body-of-unions-5.7pct-main). The box costs
+/// one allocation and one indirection per tied hash, which only a tie pays.
 enum Slot<K, V> {
     One(K, V),
-    Many(std::collections::BTreeMap<K, V>),
+    Many(Box<std::collections::BTreeMap<K, V>>),
 }
 
 impl<K, V, H> Default for TiedMap<K, V, H> {
@@ -749,6 +757,19 @@ mod tests {
         let mut d = Digest::default();
         f(&mut d);
         d.finish()
+    }
+
+    /// A [`TiedMap`] slot is at most one word wider than its key and value, for the keys of
+    /// `Numbering::first` (a handle and a class number) and of the maps of types (one handle):
+    /// the ordered map of a tie is boxed (PERF-check-body-of-unions-5.7pct-main). Unboxed, the
+    /// map's three words made the first slot 32 bytes against a pair of 16, and this fails.
+    #[test]
+    fn a_slot_is_as_wide_as_one_key_and_value() {
+        use std::mem::size_of;
+        use std::sync::Arc;
+        let word = size_of::<usize>();
+        assert!(size_of::<Slot<Arc<u8>, u32>>() <= size_of::<(Arc<u8>, u32)>() + word);
+        assert!(size_of::<Slot<Arc<u8>, usize>>() <= size_of::<(Arc<u8>, usize)>() + word);
     }
 
     /// An integer of any width is one word, and bytes are words of eight, the last padded with

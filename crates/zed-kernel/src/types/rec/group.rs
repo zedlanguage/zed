@@ -94,9 +94,23 @@ impl PartialOrd for ByShape {
     }
 }
 
+/// Equal exactly when [`Ord`] gives `Equal`, by a shorter test: `TiedMap` asks only this of the
+/// one node of a hash, which is each lookup of `Numbering::first` but a tie. Proof of agreement:
+/// `same_head` holds iff the heads are equal (kind, index of a parameter or definition, atom
+/// name), the held types are equal, and the children are as many; the kind fixes how many
+/// children a `Not`, `Diff` or `Morphism` has. Given as many children, the zip compares every
+/// pair of classes, so the conjunction is the equality of `key()` and of the class sequences,
+/// the order's two parts. Taking `self.cmp(o).is_eq()` built the key tuples and compared two
+/// chained iterators in order for every node built: the bench "checking a body of unions" at 8n
+/// took 14,197 M instructions with it and 13,854 M with this test (PERF-check-body-of-unions-
+/// 5.7pct-main).
 impl PartialEq for ByShape {
     fn eq(&self, o: &Self) -> bool {
-        self.cmp(o).is_eq()
+        let (a, b) = (&*self.0, &*o.0);
+        a.recursive == b.recursive
+            && a.open == b.open
+            && a.e.same_head(&b.e)
+            && a.e.kids().zip(b.e.kids()).all(|(x, y)| x.class == y.class)
     }
 }
 
@@ -182,17 +196,21 @@ impl Node {
             // in their order ([`ByShape`], `TiedMap`): a probe sequence over them compared a
             // node with every node of its hash, `n^2` comparisons for `n` tied types
             // (PERF-row-hash-tied-digest).
-            let probe = ByShape(node);
-            let found = numbering.first.get(&probe).copied();
-            match found {
-                Some(class) => {
-                    node = probe.0;
-                    Arc::get_mut(&mut node).expect("a node just made").class = class;
-                }
-                None => {
-                    node = probe.0.clone();
-                    numbering.first.insert(probe, at);
-                }
+            // One probe of the map per node: `get` and then `insert` on a miss hashed and
+            // looked up the slot twice for every new node, part of the +5.7% instructions of
+            // checking a deep body of unions after 58e5bf7db (PERF-check-body-of-unions-5.7pct-
+            // main; the rest is `ByShape`'s equality). The map holds a second handle of `node` only when it is new:
+            // `at` is the number just taken, held by no key yet, so the class is `at` exactly
+            // when this call put the key there; otherwise the key passed in is dropped inside
+            // the call (`TiedMap::at` drops a key equal to one it holds), `node` has one
+            // handle again and its class can be set in place.
+            let class = *numbering
+                .first
+                .get_or_insert_with(ByShape(node.clone()), || at);
+            if class != at {
+                Arc::get_mut(&mut node)
+                    .expect("the map kept no handle of a node it held")
+                    .class = class;
             }
             done.push(node);
         }
