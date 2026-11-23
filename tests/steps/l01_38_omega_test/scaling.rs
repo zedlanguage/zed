@@ -218,21 +218,19 @@ pub(super) fn pugh_pairs(n: usize) -> Formula {
     Formula::and(r)
 }
 
-/// Times `decide` on the formulas of `make` at `n` and 8n, built first, each first checked to
-/// give `answer`.
+/// Times `decide` on the formulas of `make` at `n` and 8n, each checked to give `answer`. Each
+/// formula is built before the timing and only at the sizes this process runs
+/// (`scaling::check_inputs`), and each is decided once, in its timed run: before
+/// (FAIL-one-scope-scaling-past-60s), both were built and decided in both processes of a test
+/// run alone, so the process at `n` also decided the formula at 8n.
 pub(super) fn decides(
     what: &str,
     n: usize,
     answer: Result<bool, Refusal>,
     make: impl Fn(usize) -> Formula,
 ) {
-    let (small, large) = (make(n), make(scaling::FACTOR * n));
-    for f in [&small, &large] {
+    scaling::check_inputs(what, n, make, |f| {
         assert_eq!(decide(f), answer, "{what}");
-    }
-    scaling::check(what, n, |m| {
-        let f = if m == n { &small } else { &large };
-        let _ = std::hint::black_box(decide(f));
     });
 }
 

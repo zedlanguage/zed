@@ -368,26 +368,39 @@ fn chain_source((first, link): Links, m: usize) -> String {
 /// Times the linear questions of the unit of `links` at m = `n` and 8n ([`chain_source`]), on
 /// units elaborated before the timing; no question is refused.
 pub(super) fn questions_scale(what: &str, n: usize, links: Links) {
-    let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|m| {
-            let src = chain_source(links, m);
+    questions_scale_order(what, n, 1, |m| chain_source(links, m));
+}
+
+/// The statements, tokens and elaborated unit of `src`, and `src`: the input of
+/// [`questions_scale_order`]'s runs.
+type Questions = (Vec<zedc::ast::Stmt>, Vec<zedc::lex::Token>, Unit, String);
+
+/// Times the linear questions of the units `source(n)` and `source(8n)`, held to work of order
+/// `n^power`; no question is refused. Each unit is lexed, parsed and elaborated before the
+/// timing, and only at the sizes this process runs
+/// ([`zed_tests::scaling::check_order_inputs`]): the run at 8n is in a process of its own, and
+/// building both units in both processes cost each benchmark two elaborations it never read,
+/// one of them at 8n (FAIL-one-scope-scaling-past-60s). The runs measured are the same as when
+/// both units were built in each process.
+fn questions_scale_order(what: &str, n: usize, power: u32, source: impl Fn(usize) -> String) {
+    zed_tests::scaling::check_order_inputs(
+        what,
+        n,
+        power,
+        |m| -> Questions {
+            let src = source(m);
             (
-                m,
-                (
-                    zed_tests::deep::statements(&src),
-                    zedc::lex::lex_fence(&src).unwrap(),
-                    elab(&src).unwrap(),
-                    src,
-                ),
+                zed_tests::deep::statements(&src),
+                zedc::lex::lex_fence(&src).unwrap(),
+                elab(&src).unwrap(),
+                src,
             )
-        })
-        .collect();
-    zed_tests::scaling::check(what, n, |m| {
-        let (stmts, tokens, unit, src) = &units[&m];
-        let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
-        assert!(refused.is_empty(), "{refused:?}");
-    });
+        },
+        |(stmts, tokens, unit, src)| {
+            let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
+            assert!(refused.is_empty(), "{refused:?}");
+        },
+    );
 }
 
 #[test]
@@ -1351,30 +1364,14 @@ pub(super) fn separate_tests_over_inputs_scale(
         .map(|v| format!("{v}: {v}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|m| {
-            let mut src = format!("h0({params}) = {};\n", inputs[0]);
-            for i in 1..m {
-                let h = |k: usize| format!("h{k}({args})");
-                src += &format!("h{i}({params}) = {};\n", step.replace('H', &h(i - 1)));
-                src += &format!("t{i}({params}) = {};\n", test.replace('H', &h(i)));
-            }
-            (
-                m,
-                (
-                    zed_tests::deep::statements(&src),
-                    zedc::lex::lex_fence(&src).unwrap(),
-                    elab(&src).unwrap(),
-                    src,
-                ),
-            )
-        })
-        .collect();
-    zed_tests::scaling::check_order(what, n, power, |m| {
-        let (stmts, tokens, unit, src) = &units[&m];
-        let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
-        assert!(refused.is_empty(), "{refused:?}");
+    questions_scale_order(what, n, power, |m| {
+        let mut src = format!("h0({params}) = {};\n", inputs[0]);
+        for i in 1..m {
+            let h = |k: usize| format!("h{k}({args})");
+            src += &format!("h{i}({params}) = {};\n", step.replace('H', &h(i - 1)));
+            src += &format!("t{i}({params}) = {};\n", test.replace('H', &h(i)));
+        }
+        src
     });
 }
 
@@ -2176,13 +2173,13 @@ fn summaries_of_max_min_div_chains_of_two_inputs_give_the_values_of_the_chains()
 /// questions are decided whole because each link's constraints exclude the point found for
 /// the link it calls (`presburger::extend`, COMPLEXITY.md row LOAD-chain-share).
 pub(super) fn relations_scale(what: &str, n: usize, links: Links) {
-    let units: std::collections::BTreeMap<usize, Unit> = [n, n * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|m| (m, elab(&chain_source(links, m)).unwrap()))
-        .collect();
-    zed_tests::scaling::check(what, n, |m| {
-        assert_every_relation_read(&units[&m], |_| true)
-    });
+    // Each unit built only at the sizes this process runs, as in [`questions_scale_order`].
+    zed_tests::scaling::check_inputs(
+        what,
+        n,
+        |m| elab(&chain_source(links, m)).unwrap(),
+        |unit| assert_every_relation_read(unit, |_| true),
+    );
 }
 
 /// The relation of each function of `unit` whose name `wanted` takes, translated alone under
@@ -2388,38 +2385,19 @@ pub(super) fn random_units_read_through_projections(
 /// `unit(8n)`, elaborated before the timing: their integer functions are read through their
 /// calls.
 pub(super) fn unit_relations_scale(what: &str, n: usize, unit: fn(usize) -> String) {
-    let units: std::collections::BTreeMap<usize, Unit> = [n, n * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|m| (m, elab(&unit(m)).unwrap()))
-        .collect();
-    zed_tests::scaling::check(what, n, |m| {
-        assert_every_relation_read(&units[&m], |name| name.starts_with('p'))
-    });
+    // Each unit built only at the sizes this process runs, as in [`questions_scale_order`].
+    zed_tests::scaling::check_inputs(
+        what,
+        n,
+        |m| elab(&unit(m)).unwrap(),
+        |unit| assert_every_relation_read(unit, |name| name.starts_with('p')),
+    );
 }
 
 /// Times the linear questions of the units `unit(n)` and `unit(8n)`, elaborated before the
-/// timing; none is refused.
+/// timing; none is refused ([`questions_scale_order`]).
 pub(super) fn questions_scale_unit(what: &str, n: usize, unit: fn(usize) -> String) {
-    let units: std::collections::BTreeMap<usize, _> = [n, n * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|m| {
-            let src = unit(m);
-            (
-                m,
-                (
-                    zed_tests::deep::statements(&src),
-                    zedc::lex::lex_fence(&src).unwrap(),
-                    elab(&src).unwrap(),
-                    src,
-                ),
-            )
-        })
-        .collect();
-    zed_tests::scaling::check(what, n, |m| {
-        let (stmts, tokens, unit, src) = &units[&m];
-        let refused = zedc::front::linear_questions(src, tokens, stmts, unit);
-        assert!(refused.is_empty(), "{refused:?}");
-    });
+    questions_scale_order(what, n, 1, unit);
 }
 
 /// No linear question of `src` is refused: the check the benchmarks of [`questions_scale_unit`]

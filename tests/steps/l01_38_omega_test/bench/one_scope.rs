@@ -772,129 +772,221 @@ fn the_questions_of_a_chain_of_holes_beside_one_modulus_scale() {
     );
 }
 
-#[test]
-fn the_questions_of_a_chain_of_remainders_scale() {
-    // LOAD-mod-chain. The chain of the task holds nowhere from link 3 on; its face kept the
-    // residues of the link below as one-sided rows, read one at a time, so each link was
-    // decided whole and refused (Shadows), and asked again whole: 5.5 s at 100 links, 21.9 s
-    // at 200 (debug, measured once). Now the face of link 3 is read empty, and each later
-    // link holds nowhere from the link below: 0.063 s at 100 links, 0.23 s at 400.
-    questions_scale_unit("a chain of remainders by 3", 200, mod3_chain);
-    questions_scale_unit("a chain of remainders by 5", 200, mod5_chain);
-    questions_scale_unit("a chain of remainders by 7 moved by 2", 200, mod7_chain);
-    questions_scale_unit(
-        "a chain of remainders moved by the modulus",
-        200,
-        kept_residue_chain,
-    );
+// The benchmarks of a family of chains are one test each, in a module named as the test that
+// held them all before (FAIL-one-scope-scaling-past-60s): one test with k checks ran each check's
+// run at 8n in a process of its own (`zed_tests::scaling::compare_by`), which replayed the runs
+// at n of the checks before it, so the test cost k + 1 starts of the binary under DynamoRIO on a
+// VM and about k²/2 replayed runs, and 11 such tests passed 60 s there (colab-16, hm4). One test a
+// check runs each check's two sizes, and only those, under the limits of its own phases. The
+// filter of the old name still selects the whole family.
+
+/// LOAD-mod-chain. The chain of the task holds nowhere from link 3 on; its face kept the
+/// residues of the link below as one-sided rows, read one at a time, so each link was decided
+/// whole and refused (Shadows), and asked again whole: 5.5 s at 100 links, 21.9 s at 200 (debug,
+/// measured once). Now the face of link 3 is read empty, and each later link holds nowhere from
+/// the link below: 0.063 s at 100 links, 0.23 s at 400.
+mod the_questions_of_a_chain_of_remainders_scale {
+    use super::*;
+
+    #[test]
+    fn by_3() {
+        questions_scale_unit("a chain of remainders by 3", 200, mod3_chain);
+    }
+
+    #[test]
+    fn by_5() {
+        questions_scale_unit("a chain of remainders by 5", 200, mod5_chain);
+    }
+
+    #[test]
+    fn by_7_moved_by_2() {
+        questions_scale_unit("a chain of remainders by 7 moved by 2", 200, mod7_chain);
+    }
+
+    #[test]
+    fn moved_by_the_modulus() {
+        questions_scale_unit(
+            "a chain of remainders moved by the modulus",
+            200,
+            kept_residue_chain,
+        );
+    }
 }
 
-#[test]
-fn the_questions_of_a_chain_of_residue_maps_scale() {
-    // I49. Each link moves h by an amount set by h mod M, with two exceptional residues or an
-    // affine default 3 r + 1 on the remainder r; its image is the integers whose residue is
-    // not missing, the missing residues kept in the frame of the composed default maps.
-    // Before, the graph path split on residues: two guards 3.08e9 instructions at 10 links,
-    // 5.14e10 at 40 (exponent 2.0); the affine default 1.17e9 at 5 links (exponent 4.5).
-    // Now 2.0e7 and 8.4e7 for two guards, 1.4e8 at 80 links for the affine default.
-    questions_scale_unit("a chain of two exceptional residues", 43, two_guards_chain);
-    questions_scale_unit(
-        "a chain of an affine default with an exception",
-        43,
-        affine_default_chain,
-    );
+/// I49. Each link moves h by an amount set by h mod M, with two exceptional residues or an
+/// affine default 3 r + 1 on the remainder r; its image is the integers whose residue is not
+/// missing, the missing residues kept in the frame of the composed default maps. Before, the
+/// graph path split on residues: two guards 3.08e9 instructions at 10 links, 5.14e10 at 40
+/// (exponent 2.0); the affine default 1.17e9 at 5 links (exponent 4.5). Now 2.0e7 and 8.4e7 for
+/// two guards, 1.4e8 at 80 links for the affine default.
+mod the_questions_of_a_chain_of_residue_maps_scale {
+    use super::*;
+
+    #[test]
+    fn two_exceptional_residues() {
+        questions_scale_unit("a chain of two exceptional residues", 43, two_guards_chain);
+    }
+
+    #[test]
+    fn an_affine_default_with_an_exception() {
+        questions_scale_unit(
+            "a chain of an affine default with an exception",
+            43,
+            affine_default_chain,
+        );
+    }
+
     // LOAD-max-div-unsolved: a default multiplier that shares a factor with M. The residues
     // are the coset c + d Z with the missing ones kept by position, and the residues outside
     // it kept apart; each step whose multiplier is no unit on the coset shrinks it by that
     // factor, at most log2 M times. Before, the graph path: 1.2e11 instructions at 80 links
     // for the doubling chain.
-    questions_scale_unit("a chain doubling the residue by 1000", 43, doubling_chain);
-    questions_scale_unit(
-        "a chain of a default doubling the residue by 2^40",
-        43,
-        power_of_two_default_chain,
-    );
+    #[test]
+    fn doubling_the_residue_by_1000() {
+        questions_scale_unit("a chain doubling the residue by 1000", 43, doubling_chain);
+    }
+
+    #[test]
+    fn a_default_doubling_the_residue_by_2_to_the_40() {
+        questions_scale_unit(
+            "a chain of a default doubling the residue by 2^40",
+            43,
+            power_of_two_default_chain,
+        );
+    }
+
     // The residues outside the coset are keyed by M split into coprime blocks; a step maps
     // one by one only those not yet equal to the coset's point on a block where its
     // multiplier is no unit, each at most log2 M times. Before (346407a9f), every residue
     // outside the coset was mapped at every step whose multiplier is no unit mod M: 1.95e8
     // and 2.55e9 instructions at 160 and 1280 links, 13.1 times. Now 1.94e8 and 1.72e9, 8.9
     // times. 160 links, not 40, since the first 24 links build the coset.
-    questions_scale_unit(
-        "a chain of a default unit on the coset only, by 2^10 3^10 5^10",
-        360,
-        nonunit_persist_chain,
-    );
+    #[test]
+    fn a_default_unit_on_the_coset_only() {
+        questions_scale_unit(
+            "a chain of a default unit on the coset only, by 2^10 3^10 5^10",
+            360,
+            nonunit_persist_chain,
+        );
+    }
 }
 
-#[test]
-fn the_questions_of_a_chain_of_residue_intervals_scale() {
-    // LOAD-max-div-unsolved: steps that move h by a constant on each interval of h mod M. The
-    // image is a union of intervals of residues, kept in a persistent tree whose subtrees
-    // move by a constant in O(1), so a link costs its pieces' cuts and the runs its union
-    // merges, not the size of the image.
-    questions_scale_unit("a chain of two intervals, by 10^18 + 9", 37, gap_chain);
-    questions_scale_unit(
-        "a chain of two wide intervals, by 2^31 - 1",
-        37,
-        gap_wide_chain,
-    );
-    questions_scale_unit(
-        "a chain of nested cuts, by 2^31 - 1",
-        37,
-        cuts_reversed_chain,
-    );
-    questions_scale_unit(
-        "two alternating steps of cuts, by 2^31 - 1",
-        37,
-        two_cut_steps_chain,
-    );
-    questions_scale_unit(
-        "three steps of overlapping cuts, by 2^31 - 1",
-        37,
-        overlap_chain,
-    );
+/// LOAD-max-div-unsolved: steps that move h by a constant on each interval of h mod M. The image
+/// is a union of intervals of residues, kept in a persistent tree whose subtrees move by a
+/// constant in O(1), so a link costs its pieces' cuts and the runs its union merges, not the
+/// size of the image.
+mod the_questions_of_a_chain_of_residue_intervals_scale {
+    use super::*;
+
+    #[test]
+    fn two_intervals() {
+        questions_scale_unit("a chain of two intervals, by 10^18 + 9", 37, gap_chain);
+    }
+
+    #[test]
+    fn two_wide_intervals() {
+        questions_scale_unit(
+            "a chain of two wide intervals, by 2^31 - 1",
+            37,
+            gap_wide_chain,
+        );
+    }
+
+    #[test]
+    fn nested_cuts() {
+        questions_scale_unit(
+            "a chain of nested cuts, by 2^31 - 1",
+            37,
+            cuts_reversed_chain,
+        );
+    }
+
+    #[test]
+    fn two_alternating_steps_of_cuts() {
+        questions_scale_unit(
+            "two alternating steps of cuts, by 2^31 - 1",
+            37,
+            two_cut_steps_chain,
+        );
+    }
+
+    #[test]
+    fn three_steps_of_overlapping_cuts() {
+        questions_scale_unit(
+            "three steps of overlapping cuts, by 2^31 - 1",
+            37,
+            overlap_chain,
+        );
+    }
+
     // Steps with offsets near M, whose shifted parts overlap across most of the residues.
-    questions_scale_unit(
-        "two steps of wide overlaps, by 10^12 + 39",
-        37,
-        overlap0_chain,
-    );
-    questions_scale_unit(
-        "three steps of wide overlaps, by 10^12 + 39",
-        37,
-        overlap6_chain,
-    );
-    questions_scale_unit(
-        "three steps of wide overlaps, by 10^18 + 9",
-        37,
-        overlap19_chain,
-    );
+    #[test]
+    fn two_steps_of_wide_overlaps() {
+        questions_scale_unit(
+            "two steps of wide overlaps, by 10^12 + 39",
+            37,
+            overlap0_chain,
+        );
+    }
+
+    #[test]
+    fn three_steps_of_wide_overlaps() {
+        questions_scale_unit(
+            "three steps of wide overlaps, by 10^12 + 39",
+            37,
+            overlap6_chain,
+        );
+    }
+
+    #[test]
+    fn three_steps_of_wide_overlaps_by_10_to_the_18_plus_9() {
+        questions_scale_unit(
+            "three steps of wide overlaps, by 10^18 + 9",
+            37,
+            overlap19_chain,
+        );
+    }
 }
 
-#[test]
-fn the_questions_of_a_chain_of_residue_intervals_with_no_period_scale() {
-    // LOAD-max-div-unsolved: chains whose steps never repeat with a period, or repeat only
-    // after a different first step, or switch between two steps every five links. Main
-    // before the interval tree, which listed the whole image at each change of period, took
-    // 11.3 times the work at 100 and 800 links on the small moves and 14.1 times the bytes on
-    // the switching chain, over the limit of 12.77 of 2026-11-12.
-    questions_scale_unit("random cuts and moves, by 2^31 - 1", 220, random_cuts_chain);
-    questions_scale_unit(
-        "random cuts and moves of 0 to 6, by 2^31 - 1",
-        220,
-        random_small_moves_chain,
-    );
-    questions_scale_unit(
-        "a step switching every five links, by 10^12 + 39",
-        220,
-        switching_chain,
-    );
-    questions_scale_unit(
-        "a first step apart from the rest, by 10^12 + 39",
-        220,
-        first_step_apart_chain,
-    );
+/// LOAD-max-div-unsolved: chains whose steps never repeat with a period, or repeat only after a
+/// different first step, or switch between two steps every five links. Main before the interval
+/// tree, which listed the whole image at each change of period, took 11.3 times the work at 100
+/// and 800 links on the small moves and 14.1 times the bytes on the switching chain, over the
+/// limit of 12.77 of 2026-11-12.
+mod the_questions_of_a_chain_of_residue_intervals_with_no_period_scale {
+    use super::*;
+
+    #[test]
+    fn random_cuts_and_moves() {
+        questions_scale_unit("random cuts and moves, by 2^31 - 1", 220, random_cuts_chain);
+    }
+
+    #[test]
+    fn random_cuts_and_small_moves() {
+        questions_scale_unit(
+            "random cuts and moves of 0 to 6, by 2^31 - 1",
+            220,
+            random_small_moves_chain,
+        );
+    }
+
+    #[test]
+    fn a_step_switching_every_five_links() {
+        questions_scale_unit(
+            "a step switching every five links, by 10^12 + 39",
+            220,
+            switching_chain,
+        );
+    }
+
+    #[test]
+    fn a_first_step_apart_from_the_rest() {
+        questions_scale_unit(
+            "a first step apart from the rest, by 10^12 + 39",
+            220,
+            first_step_apart_chain,
+        );
+    }
 }
 
 #[test]
@@ -911,42 +1003,66 @@ fn questions_over_two_branches_of_one_prefix_scale() {
     );
 }
 
-#[test]
-fn scalar_images_of_periodic_chains_scale() {
-    questions_scale_unit(
-        "scalar image of guarded increments",
-        400,
-        guarded_increments,
-    );
-    questions_scale_unit(
-        "scalar lattice image of a remainder sum",
-        400,
-        remainder_sums,
-    );
+mod scalar_images_of_periodic_chains_scale {
+    use super::*;
+
+    #[test]
+    fn guarded_increments() {
+        questions_scale_unit(
+            "scalar image of guarded increments",
+            400,
+            super::guarded_increments,
+        );
+    }
+
+    #[test]
+    fn remainder_sums() {
+        questions_scale_unit(
+            "scalar lattice image of a remainder sum",
+            400,
+            super::remainder_sums,
+        );
+    }
 }
 
-#[test]
-fn period_orbits_with_a_kept_input_remainder_scale() {
-    questions_scale_unit(
-        "guarded increment orbit with kept input residue",
-        160,
-        guarded_increments_keeping_the_input_residue,
-    );
-    questions_scale_unit(
-        "remainder-sum orbit with kept input residue",
-        160,
-        remainder_sums_keeping_the_input_residue,
-    );
-    questions_scale_unit(
-        "guarded increment orbit with previous link residue",
-        160,
-        guarded_increments_keeping_the_previous_residue,
-    );
-    questions_scale_unit(
-        "remainder-sum orbit with previous link residue",
-        160,
-        remainder_sums_keeping_the_previous_residue,
-    );
+mod period_orbits_with_a_kept_input_remainder_scale {
+    use super::*;
+
+    #[test]
+    fn guarded_increments_keeping_the_input_residue() {
+        questions_scale_unit(
+            "guarded increment orbit with kept input residue",
+            160,
+            super::guarded_increments_keeping_the_input_residue,
+        );
+    }
+
+    #[test]
+    fn remainder_sums_keeping_the_input_residue() {
+        questions_scale_unit(
+            "remainder-sum orbit with kept input residue",
+            160,
+            super::remainder_sums_keeping_the_input_residue,
+        );
+    }
+
+    #[test]
+    fn guarded_increments_keeping_the_previous_residue() {
+        questions_scale_unit(
+            "guarded increment orbit with previous link residue",
+            160,
+            super::guarded_increments_keeping_the_previous_residue,
+        );
+    }
+
+    #[test]
+    fn remainder_sums_keeping_the_previous_residue() {
+        questions_scale_unit(
+            "remainder-sum orbit with previous link residue",
+            160,
+            super::remainder_sums_keeping_the_previous_residue,
+        );
+    }
 }
 
 #[test]
@@ -970,20 +1086,13 @@ fn the_questions_of_a_chain_over_a_short_window_of_many_moduli_scale() {
     // moduli 2 to 9; the coprime path of `modular` left them undecided, and the general path
     // took 4 to 15 s on each and refused. `modular::sweep_bounded` decides each over one
     // period's pieces, sorted once.
-    const N: usize = 40;
-    let units: std::collections::BTreeMap<usize, _> = [N, N * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|n| {
-            let src = short_window_chain(n);
-            (
-                n,
-                zed_tests::step_helpers::l01_16_elaboration::elab(&src).unwrap(),
-            )
-        })
-        .collect();
-    zed_tests::scaling::check("a chain over a short window of many moduli", N, |n| {
-        assert_eq!(extending_refusals(&units[&n]), 0);
-    });
+    // Each input built only at the sizes this process runs (`scaling::check_inputs`).
+    zed_tests::scaling::check_inputs(
+        "a chain over a short window of many moduli",
+        40,
+        |n| zed_tests::step_helpers::l01_16_elaboration::elab(&short_window_chain(n)).unwrap(),
+        |unit| assert_eq!(extending_refusals(unit), 0),
+    );
 }
 
 #[test]
@@ -1017,13 +1126,18 @@ fn clauses_sharing_one_residue_condition_scale() {
     // PNCX-modular, R4 (I3.12): the bounds of the clauses that share one residue condition are
     // intersected as one, by sorting the pieces of their complements, so this costs order
     // `n log n`; intersecting them one after another cost order `n^2`.
-    let formulas: std::collections::BTreeMap<usize, _> =
-        [21500, 21500 * zed_tests::scaling::FACTOR]
-            .into_iter()
-            .map(|n| (n, clauses_sharing_one_residue_condition(n)))
-            .collect();
-    zed_tests::scaling::check("clauses sharing one residue condition", 21500, |n| {
-        assert_eq!(zedc::store::presburger::decide(&formulas[&n]), Ok(true));
+    decides_scale(
+        "clauses sharing one residue condition",
+        21500,
+        clauses_sharing_one_residue_condition,
+    );
+}
+
+/// Times `decide` of the formulas `formula(n)` and `formula(8n)`, each true; each formula built
+/// before the timing and only at the sizes this process runs (`scaling::check_inputs`).
+fn decides_scale(what: &str, n: usize, formula: fn(usize) -> zedc::store::presburger::Formula) {
+    zed_tests::scaling::check_inputs(what, n, formula, |f| {
+        assert_eq!(zedc::store::presburger::decide(f), Ok(true));
     });
 }
 
@@ -1032,13 +1146,11 @@ fn a_disjunction_of_many_moduli_scales() {
     // PNCX-modular, R4 (R4-CLAUDE-2): the clauses over the coprime base are built with each
     // literal merged into the clause built so far, not into a copy of it, so a clause of `n`
     // literals costs order `n`; copying cost order `n^2`.
-    let formulas: std::collections::BTreeMap<usize, _> = [4900, 4900 * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|n| (n, a_disjunction_of_many_moduli(n)))
-        .collect();
-    zed_tests::scaling::check("a disjunction of many moduli", 4900, |n| {
-        assert_eq!(zedc::store::presburger::decide(&formulas[&n]), Ok(true));
-    });
+    decides_scale(
+        "a disjunction of many moduli",
+        4900,
+        a_disjunction_of_many_moduli,
+    );
 }
 
 #[test]
@@ -1048,13 +1160,11 @@ fn the_fails_questions_of_pairs_scale() {
     // decided it one negated clause at a time; round 5 removed that split (it cost O(k |C|)
     // elsewhere, R5-CLAUDE-5), and the zero witness and the batched remainder check of
     // `solve_modular_whole` answer it now, near-linearly.
-    let formulas: std::collections::BTreeMap<usize, _> = [8000, 8000 * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|n| (n, the_fails_question_of_pairs(n)))
-        .collect();
-    zed_tests::scaling::check("the fails questions of pairs", 8000, |n| {
-        assert_eq!(zedc::store::presburger::decide(&formulas[&n]), Ok(true));
-    });
+    decides_scale(
+        "the fails questions of pairs",
+        8000,
+        the_fails_question_of_pairs,
+    );
 }
 
 #[test]

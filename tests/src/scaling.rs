@@ -907,6 +907,17 @@ pub fn check_inputs<T: Sync>(
     make: impl Fn(usize) -> T,
     run: impl Fn(&T) + Sync,
 ) {
+    check_order_inputs(what, n, 1, make, run)
+}
+
+/// [`check_inputs`] for work of order `n^power`, as [`check_order`] is [`check`] for it.
+pub fn check_order_inputs<T: Sync>(
+    what: &str,
+    n: usize,
+    power: u32,
+    make: impl Fn(usize) -> T,
+    run: impl Fn(&T) + Sync,
+) {
     let mut meter = Meter::new();
     let fresh = meter.fresh && meter.repeats() == (1, 1);
     let (at_n, at_8n) = sizes_run_here(fresh);
@@ -921,7 +932,7 @@ pub fn check_inputs<T: Sync>(
             )
         })
     }
-    check_by(&mut meter, Measures::Both, what, n, 1, |k| {
+    check_by(&mut meter, Measures::Both, what, n, power, |k| {
         run(if k == n {
             input(&small, what, n)
         } else {

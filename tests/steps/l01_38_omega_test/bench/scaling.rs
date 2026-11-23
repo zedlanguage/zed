@@ -192,15 +192,26 @@ fn the_point_of_an_expander_of_differences_scales() {
     });
 }
 
-#[test]
-fn splinters_of_splinters_scale() {
-    decides("copies split twice", 94, Ok(true), split_twice_copies);
-    decides(
-        "a chain into a block split twice",
-        1600,
-        Ok(true),
-        split_twice_in_a_chain,
-    );
+// One test a check (FAIL-one-scope-scaling-past-60s): the second check's run at 8n replayed the
+// first check's run at n in its own process, and the two passed 60 s on a VM (colab-16, hm4).
+// The filter of the old name still selects both.
+mod splinters_of_splinters_scale {
+    use super::*;
+
+    #[test]
+    fn copies_split_twice() {
+        decides("copies split twice", 94, Ok(true), split_twice_copies);
+    }
+
+    #[test]
+    fn a_chain_into_a_block_split_twice() {
+        decides(
+            "a chain into a block split twice",
+            1600,
+            Ok(true),
+            split_twice_in_a_chain,
+        );
+    }
 }
 
 /// k bounds `ai >= 0` added one at a time, each to a copy of the conjunction before, beside one
