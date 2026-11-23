@@ -8776,7 +8776,11 @@ mod tests {
     /// route by which `Faces::free` itself stores such a point needs the part's kept part to
     /// have no point (a refusal in [`Extending::fill`]); no Zed form was found that reaches it
     /// (tried: the `xr_face_*` forms of `l01_38_omega_test::one_scope`, whose parts' points
-    /// are found whole). Red before the guard, green after.
+    /// are found whole, and, 2026-11-23 on main without the guard, four forms in which a part
+    /// that never fails, a call of `(x mod 2 != 1 || x mod 4 == 1) && x > 1 && x < 10` or a
+    /// wider one, is read beside a condition on the callee's `x div 2`, e.g.
+    /// `p1(x) = q(x: x) || x <= 1 || x >= 10; s(x) = p1(x: x) && !(x div 2 == 3 && x mod 2 == 1)`:
+    /// all answered as the relation whole). Red before the guard, green after.
     #[test]
     fn xr_face_local_atoms_f4b_fails_without_given() {
         let failures = xf4_case(false, false);
