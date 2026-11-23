@@ -264,6 +264,18 @@ fn one_pass_and_transfer_agree_at_seed_16483970003272068920() {
     );
 }
 
+/// Seed 2973454876123146566 of [`one_pass_and_transfer_agree_on_random_blocks`]: on main
+/// 6f8d50039, at block 18, arm 7 (`!(z107 < x)` false), with `z107` in `[1..=2]` and the relation
+/// `x >= z107 + 1`, one side gave `x` the ints `[2..]` and the other `[3..]`; it agrees after main
+/// 585e5f0ec (FAIL-if-shortcut-seed-2973454876123146566).
+#[test]
+fn one_pass_and_transfer_agree_at_seed_2973454876123146566() {
+    blocks_agree(
+        Rng::new(2_973_454_876_123_146_566),
+        2_973_454_876_123_146_566,
+    );
+}
+
 /// The block of seed 16483970003272068920, cut down:
 /// `z52 = { z48 = -3; if (z48 mod 2) >= x { 1 } else { 2 } }; if (z52 - -3) <= x && (0 + x) != y
 /// { 0 } else { 2 }`. The one pass peels `z52`; its body, which reads `z48` through `z48`'s
