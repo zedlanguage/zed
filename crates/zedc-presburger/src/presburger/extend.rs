@@ -105,10 +105,11 @@ struct Known {
 /// reads none of its other atoms. Rows of atoms none of the caller's reads are dropped, since
 /// the conjunction holds and so they hold somewhere apart. A conjunction with a disjunction
 /// keeps it as a clause (LOAD-disj-residue): `rows` and `clauses` together are the projection
-/// ([`projected`]), each clause a disjunction, and `atoms` holds the atoms of the clauses too:
-/// a quotient a clause alone reads, and an atom two disjunctions share, which is kept and not
-/// projected out ([`project`]); a clause that says what another says is kept once
-/// ([`Face::of`]).
+/// ([`projected`]), each clause a disjunction, and `atoms` holds the atoms of the clauses that
+/// are kept, as an atom two disjunctions share, which is kept and not projected out
+/// ([`project`]), but not a quotient a clause alone reads outside them, which is bound inside
+/// its clause and so counts as projected out ([`Face::of`]); a clause that says what another
+/// says is kept once.
 struct Face {
     rows: Vec<Con>,
     clauses: Vec<Formula>,
@@ -976,10 +977,25 @@ impl Face {
             })
             .collect();
         let clauses = rays_once(clauses);
+        // The atoms the face is exact on: those of its rows and holes, and those of its
+        // clauses that `keep` holds. An atom a clause alone reads outside `keep` (a quotient,
+        // as `q0` in `x == 4 * q2 + 1 || x == 2 * q0` from `q = (x mod 2 != 1 || x mod 4 == 1)
+        // && ...`) is bound inside its clause: the clause holds when one disjunct does, whatever
+        // the value of an atom only the other reads, so the face gives it no value the part
+        // holds at, and a question that reads it beside the face must see it projected out
+        // ([`hidden`], [`apart`]). Counted here, it let `p1(x) = q(x: x) && x > 8 && x div 2 <
+        // 3`, whose own `x div 2` is that `q0`, hold at `x = 9` with `q0 = 0`, where `9 div 2`
+        // is 4 (SOUND-extend-face-local-atoms; test
+        // `l01_38_omega_test::extend::an_atom_a_face_clause_alone_reads_is_not_read_beside_it`).
+        let local: HashSet<Atom> = (clauses.iter())
+            .flat_map(Formula::atoms)
+            .filter(|a| !keep.contains(a))
+            .collect();
         let atoms = (rows.iter())
             .flat_map(|c| c.lin.terms.keys().cloned())
             .chain(clauses.iter().flat_map(Formula::atoms))
             .chain(holes.keys().cloned())
+            .filter(|a| !local.contains(a))
             .collect();
         Face {
             rows,

@@ -336,6 +336,35 @@ fn each_answer_through_a_projected_callee_is_the_interpreters_on_a_box() {
     }
 }
 
+/// A callee whose face keeps the clause `x == 4 * q2 + 1 || x == 2 * q0` (from `x mod 2 != 1
+/// || x mod 4 == 1`, its remainders projected out), where `q0` is `x div 2` and that clause
+/// alone reads it, and a caller that reads `x div 2`, the same quotient, beside the call
+/// (SOUND-extend-face-local-atoms). `q && x > 8` holds at `x = 9` alone, where `x div 2` is 4,
+/// so `p1` holds nowhere; the face's `q0` is bound inside its clause, which holds at `x = 9` by
+/// its first disjunct, and read beside the face it let `p1` hold at `x = 9` with `q0 = 0`.
+/// The second unit reaches the same point through a second callee's face; the third, over
+/// `x div 4`, is the control that answered right before the fix. Reduced from the random
+/// program of seed 0x7c9_0018, which gave the wrong answer when a call's value was read
+/// through its projection first (b22-load2).
+const FACE_CLAUSE_QUOTIENT: &[&str] = &[
+    "q(x: int) = (x mod 2 != 1 || x mod 4 == 1) && x > 1 && x < 10;\n\
+     p1(x: int) = q(x: x) && x > 8 && x div 2 < 3;\n",
+    "q(x: int) = (x mod 2 != 1 || x mod 4 == 1) && x > 1 && x < 10;\n\
+     p0(x: int) = x > 10 && x < 17;\n\
+     p1(x: int) = q(x: x) && p0(x: x + 2) && x div 2 < 3;\n",
+    "q(x: int) = (x mod 2 != 1 || x mod 4 == 1) && x > 1 && x < 10;\n\
+     p1(x: int) = q(x: x) && x > 8 && x div 4 < 2;\n",
+];
+
+#[test]
+fn a_quotient_a_callees_face_clause_alone_reads_is_the_interpreters_beside_the_call() {
+    for (i, src) in FACE_CLAUSE_QUOTIENT.iter().enumerate() {
+        answers_are_the_interpreters(src, &format!("unit {i}"));
+    }
+    // The random program the first unit was reduced from.
+    random_units_are_the_interpreters(0x7c9_0018, 1);
+}
+
 #[test]
 fn each_answer_of_a_random_unit_through_projected_callees_is_the_interpreters_on_a_box() {
     // Four programs, at the seeds that follow a new seed each run; ZED_TEST_SEED with the

@@ -170,3 +170,59 @@ fn bindings_put_in_place_leave_one_atom_and_one_division() {
         assert_eq!(decide(&g), decide(&f), "{f}");
     }
 }
+
+/// A kept part whose face holds a clause over a quotient that clause alone reads, and a
+/// constraint beside the part over that quotient (SOUND-extend-face-local-atoms). The part is
+/// `q(x) = (x mod 2 != 1 || x mod 4 == 1) && x >= 2 && x <= 9` over the pairs `x == 2 * q0 +
+/// q1` and `x == 4 * q2 + q3`, whose face keeps the clause `x == 4 * q2 + 1 || x == 2 * q0`;
+/// the whole is `q && x >= 9 && q0 <= 2`, which holds nowhere: `x` is 9 and `9 div 2` is 4.
+/// The face's `q0` is bound inside its clause (the clause holds by its first disjunct at
+/// `x = 9`, whatever `q0` is), so it is not read beside the face, and the answer is the one
+/// the whole has with its definitions. Before the fix the face counted `q0` as one of its
+/// atoms, and the point `x = 9, q0 = 0` of the faces answered `true`.
+#[test]
+fn an_atom_a_face_clause_alone_reads_is_not_read_beside_it() {
+    let x = sym("x");
+    let q = |n: u32| Lin::atom(Atom::Aux(n));
+    let k = Lin::constant;
+    let eq = |a: Lin, b: Lin| Formula::Con(Con::eq(&a, &b));
+    let pair = |m: i64, n: u32| {
+        Formula::and(vec![
+            eq(x.clone(), q(n).times(m).plus(&q(n + 1))),
+            ge(q(n + 1), k(0)),
+            ge(k(m - 1), q(n + 1)),
+        ])
+    };
+    let defs = [pair(2, 0), pair(4, 2)];
+    let def = |n: u32| defs[n as usize / 2].clone();
+    let part = Formula::and(vec![
+        Formula::or(vec![Formula::negate(eq(q(1), k(1))), eq(q(3), k(1))]),
+        ge(x.clone(), k(2)),
+        ge(k(9), x.clone()),
+    ]);
+    let whole = extend(&part, vec![ge(x.clone(), k(9)), ge(k(2), q(0))]);
+    // Only the part is a call, and its caller reads `x`.
+    let iface = |g: &Formula| matches!(g, Formula::And(_)).then(|| vec![Atom::Sym("x".into())]);
+    let with_defs = |f: Formula| Formula::and(vec![defs[0].clone(), defs[1].clone(), f]);
+    let want = Answers {
+        holds: decide(&with_defs(whole.clone())),
+        fails: decide(&with_defs(Formula::negate(whole.clone()))),
+    };
+    assert_eq!(
+        (want.holds.clone(), want.fails.clone()),
+        (Ok(false), Ok(true))
+    );
+    let mut e = Extending::new();
+    // The part asked first, as a unit asks its callee before its caller, and the whole after.
+    e.defined_with(&part, &def, &iface);
+    assert_eq!(e.defined_with(&whole, &def, &iface), want, "{whole}");
+    // The control: `x div 4 <= 2` beside the part, which holds at `x = 9`, so the fix does not
+    // turn a true answer false.
+    let control = extend(&part, vec![ge(x.clone(), k(9)), ge(k(2), q(2))]);
+    let want = Answers {
+        holds: decide(&with_defs(control.clone())),
+        fails: decide(&with_defs(Formula::negate(control.clone()))),
+    };
+    assert_eq!(want.holds, Ok(true));
+    assert_eq!(e.defined_with(&control, &def, &iface), want, "{control}");
+}
