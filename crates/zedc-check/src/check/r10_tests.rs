@@ -155,6 +155,7 @@ fn info_eq_full(label: &str, e: &Info, d: &Info) -> Result<(), String> {
         quotients: _,
         ints: _,
         follows: _,
+        follows_own: _,
         witness: _,
         dense: _,
         brackets: _,
@@ -236,6 +237,9 @@ fn info_eq_full(label: &str, e: &Info, d: &Info) -> Result<(), String> {
     }
     if e.follows != d.follows {
         return Err(format!("{label}: follows mismatch"));
+    }
+    if e.follows_own != d.follows_own {
+        return Err(format!("{label}: follows_own mismatch"));
     }
     if e.witness != d.witness {
         return Err(format!("{label}: witness mismatch"));

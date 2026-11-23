@@ -64,7 +64,7 @@
 //! size of the unit. A derivation visits each node at most once per warning, so the output is
 //! linear in its own size.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use num_bigint::BigUint;
 use zed_collections::index::to_u32;
@@ -171,6 +171,8 @@ struct Walk<'t, 'a> {
     adopt: &'t HashMap<Span, Value>,
     /// The literals that take, at run time, the carrier of a type variable (step L1.26a).
     follows: &'t HashMap<Span, Vec<(Carrier, Value)>>,
+    /// The literals of `follows` that a call reaches at their own value ([`Info::follows_own`]).
+    own: &'t HashSet<Span>,
     nodes: Vec<Node<'a>>,
     labels: HashMap<u32, Label<'a>>,
     /// The value node of each binder bound by `=` to one name.
@@ -190,6 +192,7 @@ pub fn warnings(t: &Tables, unit: &[Stmt], info: &Info) -> Vec<Error> {
         t,
         adopt: &info.adopt,
         follows: &info.follows,
+        own: &info.follows_own,
         nodes: Vec::new(),
         labels: HashMap::new(),
         binds: HashMap::new(),
@@ -491,12 +494,14 @@ impl<'t, 'a> Walk<'t, 'a> {
     }
 
     /// The value of the integer literal `e`, negated when `neg`, if the checker leaves it an
-    /// `int` and it is in the word.
+    /// `int` and it is in the word. A literal that follows a type variable is read at its own
+    /// value only where a call reaches the instance of the body where it keeps that value
+    /// ([`Info::follows_own`]): there its operations are the `int` ones the typed body has.
     fn literal(&self, e: &Expr, neg: bool) -> Option<i64> {
         let ExprKind::Int { radix, digits, .. } = &e.kind else {
             return None;
         };
-        if self.follows.contains_key(&e.span) {
+        if self.follows.contains_key(&e.span) && !self.own.contains(&e.span) {
             return None;
         }
         if let Some(v) = self.adopt.get(&e.span)

@@ -29668,6 +29668,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             {
                 return fail(self);
             }
+            // The carriers this call gives the variable, for the widening pass
+            // ([`Ck::own_follows`]): O(1) a bounded variable, which the loop visits anyway.
+            if !self.trying
+                && let Some(k) = class_id(v)
+            {
+                self.instances.push((k, class, kinds));
+            }
             binds.insert(v.clone(), whole);
         }
         binds.retain(|v, _| !self.is_class(v));

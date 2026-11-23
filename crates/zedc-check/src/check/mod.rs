@@ -627,6 +627,12 @@ pub struct Info {
     /// class's carrier"), as does the operator of a generic literal; at any other value the
     /// literal keeps its own.
     pub follows: HashMap<Span, Vec<(Carrier, Value)>>,
+    /// Each literal of [`Self::follows`] that keeps its own value at a carrier a call gives its
+    /// class (at a carrier its entry lists no value for, as `int` for the `2` of `g(positional
+    /// x) = x + 2` called as `g(1)`): the instance of the body where it is its own `int` is
+    /// reached, and the widening pass reads it there (DESIGN.md sec:domains; plan row
+    /// WIDEN-generic-literal-op-int-instance). [`Ck::own_follows`] finds them.
+    pub follows_own: HashSet<Span>,
     /// Each generic literal of [`Self::follows`] that has no other operand to take its carrier
     /// from, by its span: a call's argument, an `if` branch, an operand of an operator whose
     /// other operand is generic too (L1.26a). Its value is a parameter of the literal's class
@@ -2460,6 +2466,14 @@ struct Ck<'t, 'a> {
     /// `walk.rs`), so an entry a repair's trial or an earlier check of the function wrote is
     /// replaced before it is read again.
     kept_ops: HashMap<Span, usize>,
+    /// The class each literal of [`Info::follows`] joined, by the literal's span, as
+    /// [`Ck::resolve`] made the class a type variable; read by [`Ck::own_follows`].
+    follow_class: HashMap<Span, usize>,
+    /// For each call of a function with a bounded type variable, outside a trial: the class
+    /// the variable names, the class of the caller the binding holds if any, and the carriers
+    /// it holds outside any class ([`Ck::own_follows`] reads them; plan row
+    /// WIDEN-generic-literal-op-int-instance).
+    instances: Vec<(usize, Option<usize>, u8)>,
     /// The errors that each operation of [`Ck::lit_ops`] at the top level wrote as it was
     /// walked, by its span, as a range of indices into the errors: a `/` of integer literals
     /// is rejected there, as `7 / 2`, since no arrow of `/` takes `int`, and so is a negative
@@ -3451,6 +3465,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             lit_open: HashSet::new(),
             lit_uncarried: HashSet::new(),
             kept_ops: HashMap::new(),
+            follow_class: HashMap::new(),
+            instances: Vec::new(),
             lit_written: HashMap::new(),
             lit_order: Vec::new(),
             lit_dropped: BTreeMap::new(),
@@ -6562,6 +6578,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 for (l, _) in lits.iter().filter(|(l, follows)| *follows || l.generic) {
                     let values = follow_values(l, mask);
                     if !values.is_empty() {
+                        if !self.trying {
+                            self.follow_class.insert(l.span, r);
+                        }
                         self.put(Undo::Follows(l.span, Some(values)));
                         if l.witness {
                             let w = witness(l).expect("a witnessed literal's binder");
@@ -8249,6 +8268,98 @@ impl<'t, 'a> Ck<'t, 'a> {
         Arc::new(copy)
     }
 
+    /// Fills [`Info::follows_own`]: each literal of [`Info::follows`] whose class some call
+    /// gives a carrier at which the literal keeps its own value, one its entry lists no value
+    /// for. In `g(positional x) = x + (2^100 - 2^100 + 3)` each literal follows `x`; `y = g(2)`
+    /// gives `x` the carrier `int`, where the literals are their own `int`s and `2^100` crosses
+    /// the word, so the widening pass warns there as it does for `g(positional x: int)`; with
+    /// `g(2.0)` alone they are `f64`s and it does not (DESIGN.md sec:domains: the warning is
+    /// raised at an integer operation, and this instance has none).
+    ///
+    /// The carriers a class reaches: those the calls give its variable outside any class
+    /// ([`Ck::instances`]), its own carrier where it resolved to one, every number its mask
+    /// holds where it resolved to no type variable and no carrier, and, through each class of
+    /// a caller that a call binds the variable to (`h(positional z) = g(z)`), the carriers
+    /// that class reaches in turn.
+    ///
+    /// Proof that the set is every carrier a run can give the literal's class: the body of a
+    /// generic function runs at the carrier its parameter's value has, and that value comes
+    /// from a call. A call outside a class gives the carriers `kinds` records; a call that
+    /// passes a class of its caller gives that class's carriers, which are its carrier where
+    /// it has one, or, where it is the caller's own type variable, those the caller's calls
+    /// give it, by the same argument one function up. A class left with neither is counted at
+    /// every number of its mask, which holds each carrier it may take. So the set may be too
+    /// large (a trial's call is not recorded, and a class resolved to no carrier is counted
+    /// at its whole mask), which can add a warning, but never misses a carrier a run gives.
+    /// The callers form no cycle, as recursion is refused before the check
+    /// (`zedc-resolve/src/resolve/tables.rs`, "recursion is not supported"); `seen` stops a
+    /// walk all the same (P207).
+    // Complexity tradeoff: one pass over the recorded calls, O(c), and one walk of the classes
+    // the follows classes reach backward through callers, each class done once and stored
+    // (`reach`), O(c + k) for k classes. The naive way, a search back from each literal's
+    // class, costs O(l·c) on a chain of l generic functions each calling the one before.
+    fn own_follows(&mut self) {
+        if self.follow_class.is_empty() {
+            return;
+        }
+        let mut direct: HashMap<usize, u8> = HashMap::new();
+        let mut callers: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (k, class, kinds) in std::mem::take(&mut self.instances) {
+            let r = self.find(k);
+            *direct.entry(r).or_insert(0) |= kinds & Carrier::NUMBER_BITS;
+            if let Some(c) = class {
+                let c = self.find(c);
+                callers.entry(r).or_default().push(c);
+            }
+        }
+        let own = |ck: &Self, r: usize| -> u8 {
+            let c = &ck.classes[r];
+            let at = match c.resolved.as_ref() {
+                Some(t) if t.as_var().is_some() => 0,
+                Some(t) => match t.numeric_carrier() {
+                    Some(n) => n.bit(),
+                    None => c.mask,
+                },
+                None => c.mask,
+            };
+            (direct.get(&r).copied().unwrap_or(0) | at) & Carrier::NUMBER_BITS
+        };
+        // Post-order over the callers, with an explicit stack: a class is stored once all the
+        // classes it is fed by are.
+        let mut reach: HashMap<usize, u8> = HashMap::new();
+        let mut seen: HashSet<usize> = HashSet::new();
+        let roots: Vec<usize> = self.follow_class.values().map(|&r| self.find(r)).collect();
+        for root in roots {
+            let mut stack = vec![(root, false)];
+            while let Some((r, done)) = stack.pop() {
+                if done {
+                    let fed = (callers.get(&r).into_iter().flatten())
+                        .fold(0, |m, c| m | reach.get(c).copied().unwrap_or(0));
+                    reach.insert(r, own(self, r) | fed);
+                    continue;
+                }
+                if !seen.insert(r) {
+                    continue;
+                }
+                stack.push((r, true));
+                for &c in callers.get(&r).into_iter().flatten() {
+                    if !seen.contains(&c) {
+                        stack.push((c, false));
+                    }
+                }
+            }
+        }
+        for (span, r) in std::mem::take(&mut self.follow_class) {
+            let Some(values) = self.info.follows.get(&span) else {
+                continue;
+            };
+            let listed = values.iter().fold(0, |m, (c, _)| m | c.bit());
+            if reach.get(&self.find(r)).copied().unwrap_or(0) & !listed != 0 {
+                self.info.follows_own.insert(span);
+            }
+        }
+    }
+
     /// Puts each class's type in place of its variable in what the checker found. Each
     /// signature is settled first ([`Sig::settle`]): the signatures of calls through values
     /// share the functions they hold, as `g(0)(1)…(n)` does, and are settled once each, not
@@ -8261,6 +8372,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// which imports this file, and a call from here would make the two files an import
     /// cycle (tests/steps/s_01f_import_graph).
     fn finish(&mut self) {
+        self.own_follows();
         // Each fold takes the identity of its one carrier. A fold of a generic function
         // checked at two carriers where any of them has an identity cannot elaborate to one
         // fold: that fold cannot give `-inf` at `f64` and `#empty` at `int`, and an empty

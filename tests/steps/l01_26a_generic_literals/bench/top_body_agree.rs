@@ -2,8 +2,8 @@ use zed_tests::scaling;
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
 use super::super::top_body_agree::{
-    body_call_notes, comparisons, display_ops, generic_ops, nested_call_ops, nested_int_exponents,
-    nested_powers_by_an_inexact_divisor, powers, tuple_component_ops,
+    body_call_notes, comparisons, display_ops, generic_literal_chain, generic_ops, nested_call_ops,
+    nested_int_exponents, nested_powers_by_an_inexact_divisor, powers, tuple_component_ops,
 };
 
 /// `n` top-level calls, each giving an operation on literals alone to a generic parameter or
@@ -98,6 +98,28 @@ fn nested_powers_by_an_inexact_divisor_are_rejected_in_linear_time() {
                 type_errors(&srcs[usize::from(m != n)]);
             },
         );
+    });
+}
+
+/// A chain of `n` generic functions each adding a literal, called once at `int`: the carriers
+/// the call gives reach each literal's class back through the callers in one walk of the
+/// chain, each class done once (`Ck::own_follows`), O(n); a search back from each literal's
+/// class alone is O(n^2) on this chain (row WIDEN-generic-literal-op-int-instance).
+///
+/// Besides its ratio: no error. Small instance:
+/// `top_body_agree::a_chain_of_generic_functions_checks_at_int`.
+#[test]
+fn a_chain_of_generic_literals_scales() {
+    scaling::on_a_thread(1 << 29, || {
+        let n = 300;
+        let srcs = [
+            generic_literal_chain(n),
+            generic_literal_chain(scaling::FACTOR * n),
+        ];
+        assert_eq!(type_errors(&srcs[0]), Vec::<String>::new());
+        scaling::check("checking a chain of n generic literals", n, |m| {
+            type_errors(&srcs[usize::from(m != n)]);
+        });
     });
 }
 

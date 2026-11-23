@@ -692,6 +692,60 @@ fn a_literal_base_takes_no_f32_through_f32_power_int() {
     }
 }
 
+#[test]
+fn a_generic_body_warns_where_its_int_instance_crosses_the_word() {
+    // DESIGN.md sec:domains: the widening warning is raised "at each integer operation ...
+    // whose operands each have a domain within 128 bits while its result's domain is not".
+    // The generic `g(positional x) = x + (2^100 - 2^100 + 3)` elaborates, at a call with an
+    // `int`, to the `int` term of the typed `g(positional x: int) = …`, so it warns as the
+    // typed one does; called only at `f64`, its `int` arm is reached by no call and nothing
+    // computes `2^100`, so it warns not at all (row WIDEN-generic-literal-op-int-instance; the
+    // last case is the f32 case of `a_literal_base_takes_no_f32_through_f32_power_int`). A
+    // call at `int` and one at `f64` warn once per operation, as one call does.
+    let main = "main(args: MainArgs) -> int = { args.stdout <- \"${y}\"; 0 };\n";
+    let warned = |tag: &str, src: &str| {
+        let out = run(tag, src, "", &[]);
+        assert_eq!(out.status, 0, "{src}\n{}", out.stderr);
+        out.stderr.matches("widens past a machine word").count()
+    };
+    for body in ["x + (2^100 - 2^100 + 3)", "x ^ (2^100 - 2^100 + 3)"] {
+        let typed = format!("g(positional x: int) = {body};\ny = g(2);\n{main}");
+        assert_eq!(warned("widen_generic_typed", &typed), 2, "{typed}");
+        for (calls, want) in [
+            ("y = g(2);\n", 2),
+            ("y = g(2.0);\n", 0),
+            ("z = g(2.0);\ny = g(2);\n", 2),
+            // Through a generic caller: the carrier `h`'s call gives `z` reaches `g`'s `x`.
+            ("h(positional z) = g(z);\ny = h(2);\n", 2),
+            ("h(positional z) = g(z);\ny = h(2.0);\n", 0),
+        ] {
+            let generic = format!("g(positional x) = {body};\n{calls}{main}");
+            assert_eq!(warned("widen_generic_free", &generic), want, "{generic}");
+        }
+    }
+}
+
+/// A chain of `n` generic functions, each adding a literal to what the one before gives,
+/// `g1(positional z) = g0(z) + 1;`, from `g0(positional x) = x + 1;`, and one call of the last
+/// at `int`: each literal follows its function's parameter, and the carrier the call gives
+/// reaches every one of them back through the chain (`Ck::own_follows` in
+/// crates/zedc-check/src/check/mod.rs).
+pub(super) fn generic_literal_chain(n: usize) -> String {
+    let mut s = String::from("g0(positional x) = x + 1;\n");
+    for i in 1..=n {
+        s.push_str(&format!("g{i}(positional z) = g{}(z) + 1;\n", i - 1));
+    }
+    s.push_str(&format!("y = g{n}(2);\n"));
+    s
+}
+
+#[test]
+fn a_chain_of_generic_functions_checks_at_int() {
+    // The small instance of `bench::top_body_agree::a_chain_of_generic_literals_scales`.
+    let src = generic_literal_chain(4);
+    assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+}
+
 /// A top-level binding of `n` nested powers of integer literals, which an `f64` form rewrites
 /// all of, beside a divisor no exact `f64`, which it leaves:
 /// `y = 1^(1^(…^(1+1)…)) / 3 + 1 / 9007199254740993;`, rejected with the `rat` form alone.

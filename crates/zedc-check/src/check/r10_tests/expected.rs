@@ -220,6 +220,7 @@ pub(super) fn info_text(info: &Info) -> String {
         quotients,
         ints,
         follows,
+        follows_own,
         witness,
         dense,
         brackets,
@@ -280,6 +281,10 @@ pub(super) fn info_text(info: &Info) -> String {
     field(&mut out, "quotients", entries(quotients, |v| debug(v)));
     field(&mut out, "ints", entries(ints, |v| debug(v)));
     field(&mut out, "follows", entries(follows, |v| debug(v)));
+    // `follows_own` (row WIDEN-generic-literal-op-int-instance) came after E and is not
+    // printed, so E's text stands: it is read only by the widening pass, whose result is the
+    // `warnings` field below, and two runs of D are compared on it in `info_eq_full`.
+    let _ = follows_own;
     field(&mut out, "witness", entries(witness, |v| debug(v)));
     field(&mut out, "dense", entries(dense, |v| debug(v)));
     field(&mut out, "brackets", entries(brackets, |v| debug(v)));
