@@ -131,7 +131,7 @@ fn a_possibly_missing_component_is_disposed_of_before_a_port() {
     assert!(
         out.stderr.contains(
             "`m.stdout <- \"${t[i]}\" : String | #outOfBounds`. Try \
-             `m.stdout <- (\"${t[i]}\") else #outOfBounds -> \"\";` instead."
+             `m.stdout <- \"${t[i]}\" else #outOfBounds -> \"\";` instead."
         ),
         "{}",
         out.stderr

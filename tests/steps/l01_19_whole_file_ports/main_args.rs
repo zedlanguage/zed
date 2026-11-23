@@ -85,7 +85,9 @@ fn a_status_not_proved_to_be_a_byte_is_rejected_with_the_menu() {
     assert_eq!(out.status, 1);
     for repair in [
         "code = int(m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\"); if code < 0 { 0 } else if code > 255 { 255 } else { code }",
-        "(int(m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\")) mod 256",
+        // A call binds tighter than `mod`, so it takes no parentheses there (author rule P191;
+        // plan row PRINT-repair-parens-minimal).
+        "as `int(m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") mod 256`",
         "code = int(m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\"); if code >= 0 && code <= 255 { code } else { 1 }",
     ] {
         assert!(out.stderr.contains(repair), "{repair}: {}", out.stderr);

@@ -2851,8 +2851,11 @@ struct Ck<'t, 'a> {
     /// it (`Ck::need`): the second `top(q)` of `(top(q), m.map(r -> top(q)))` records no need
     /// of its own, so a check of the fold passes through the first only. Every check of the
     /// first is one of the second, as both are the one need of one class, so
-    /// [`Ck::finish`] gives the second each entry of the first in [`Info::fold_reads`].
-    same_use: Vec<(Span, Span)>,
+    /// [`Ck::finish`] gives the second each entry of the first in [`Info::fold_reads`]. Keyed
+    /// by the use that recorded the need, each later use in the order met with the kind of
+    /// the need it repeated, so a use refused after the fact ([`Ck::refuse_taken`]) refuses
+    /// its repeats of that kind too (row CHECK-destructure-order-repeats).
+    same_use: HashMap<Span, Vec<(Span, std::mem::Discriminant<NeedKind>)>>,
     /// Each call in the text whose call need met one its class had recorded for another call
     /// with arguments alike, with that call (`Ck::need`): `g(x: v)` twice in one body, or once
     /// in a body and once in a function it calls with `g`. The need is checked once, and its
@@ -3531,7 +3534,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             need_chain: Vec::new(),
             passing_on: Vec::new(),
             fold_uses: HashSet::new(),
-            same_use: Vec::new(),
+            same_use: HashMap::new(),
             alike_calls: Vec::new(),
             alike_sites: HashMap::new(),
             alike_log: Vec::new(),
@@ -8393,10 +8396,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // the uses that repeat a need, O(s), each repeat taking the entries of the use it
         // repeats: O(u + e + s + r) for r entries added.
         let split = &self.info.split_folds;
-        let mut repeats: HashMap<Span, Vec<Span>> = HashMap::new();
-        for (later, first) in std::mem::take(&mut self.same_use) {
-            repeats.entry(first).or_default().push(later);
-        }
+        let repeats = std::mem::take(&mut self.same_use);
         let mut reads = HashSet::new();
         for (call, site, u) in std::mem::take(&mut self.fold_uses) {
             if !split.contains_key(&site) {
@@ -8407,7 +8407,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let alike = (later_folds.get(&site).into_iter().flatten())
                 .map(|&l| (l, if u == site { l } else { u }));
             for (site, u) in std::iter::once((site, u)).chain(alike) {
-                for &later in repeats.get(&u).into_iter().flatten() {
+                for &(later, _) in repeats.get(&u).into_iter().flatten() {
                     reads.insert((call, site, later));
                 }
                 reads.insert((call, site, u));
@@ -9219,7 +9219,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                             .to_string(),
                     });
                     repairs.push(format!("({v}{chain})"));
-                    repairs.push(format!("match {v} {{ {} }}", arms.join(", ")));
+                    repairs.push(format!(
+                        "match {} {{ {} }}",
+                        zedc_syntax::format::code_as_head(c),
+                        arms.join(", ")
+                    ));
                 }
                 // A family of every atom but some cannot be listed.
                 None => notes.push(format!(
@@ -15984,16 +15988,13 @@ fn else_chain_of(k: &KType, d: &str) -> String {
     }
 }
 
-/// The code `c` as the operand of an `else`: as written where it is a name, a call or an
-/// access, else in parentheses, so that the `else` applies to all of it.
+/// The code `c` as the operand of an `else`, in parentheses only where the grammar needs them
+/// there (author rule P191; plan row PRINT-repair-parens-minimal): `a + b else 0` takes the
+/// `else` over all of `a + b`, since every operator binds tighter than `else`, and only a
+/// lambda needs them, `(x -> x) else 0`. Before, any code but a name, a call or an access was
+/// grouped, `(a + b) else 0`. O(length of `c`).
 fn else_operand(c: &str) -> String {
-    match c
-        .chars()
-        .all(|ch| ch.is_alphanumeric() || "_.:[]()".contains(ch))
-    {
-        true => c.to_string(),
-        false => format!("({c})"),
-    }
+    zedc_syntax::format::code_at_level(c, zed_kernel::print::level::ELSE).into_owned()
 }
 
 /// The ints of the range `r`, as an interval: `int[1..=9]` is `[1..=9]` (DESIGN.md L1.24).

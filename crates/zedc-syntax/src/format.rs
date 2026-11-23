@@ -174,6 +174,66 @@ pub fn operand_needs_parens(e: &Expr, op: BinaryOp, right: bool) -> bool {
     level(e) < if right { r } else { l }
 }
 
+/// The code `text`, one expression, as written at a place of the grammar that takes an
+/// expression of level `min` or tighter (the levels of `zed_kernel::print::level`): as it is
+/// where the formatter would write it bare there, else in parentheses (author rule P191:
+/// parentheses only where precedence needs them). For a repair that writes code the program
+/// gave into a new place, as `a + b` before an `else`, which needs none (`a + b else 0`), or
+/// before a `.`, which does (`(a + b).abs`). Text already in one pair of parentheses is kept
+/// as it is ([`lex::in_parens`]), and text that does not read as one expression is grouped,
+/// which keeps its meaning. O(length of `text`): one lex and one parse.
+pub fn code_at_level(text: &str, min: u8) -> Cow<'_, str> {
+    code_where(text, |e| level(e) >= min)
+}
+
+/// The code `text` as the head of a `match`, `if` or `for`, which the formatter writes at
+/// `ELSE` and in parentheses where it holds a block outside any bracket, whose `{` would open
+/// the branch (the grammar's `HEAD`): `match a + b { … }`, `match (x -> x) { … }`. O(length
+/// of `text`).
+pub fn code_as_head(text: &str) -> Cow<'_, str> {
+    code_where(text, |e| level(e) >= ELSE && !head_unsafe(e))
+}
+
+/// The code `text` before a suffix, `.name`, `[i]` or `(args)`, as the formatter writes it
+/// there (`Job::Postfix`): a number literal in parentheses, whose `.` would read as part of it
+/// (`(2).abs`), a remap as written, anything else at `POSTFIX`: `xs.where(f)` and `"ab"` as
+/// they are, `(a + b)` grouped. O(length of `text`).
+pub fn code_as_receiver(text: &str) -> Cow<'_, str> {
+    code_where(text, |e| match e.kind {
+        ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Rat(_) => false,
+        ExprKind::Remap { .. } => true,
+        _ => level(e) >= POSTFIX,
+    })
+}
+
+/// `text` as it is where it is in one pair of parentheses or parses as one expression that
+/// `bare` takes, else in parentheses; empty text as it is. Text with a line comment is grouped,
+/// as before: the comment would take in what a repair writes after it, `xs // c else 0`, and
+/// no form on one line keeps both (a repair's code is one line). O(length of `text`) and the
+/// cost of `bare`.
+fn code_where(text: &str, bare: impl Fn(&Expr) -> bool) -> Cow<'_, str> {
+    let bare = text.trim().is_empty()
+        || lex::lex(text).ok().is_some_and(|tokens| {
+            let line = |c: &Span| text[c.start..c.end].starts_with("//");
+            !lex::comments(text, &tokens).iter().any(line)
+                && (lex::in_parens(text)
+                    || crate::parse::parse(text, &tokens, "Expr", crate::parse::TOP)
+                        .ok()
+                        .and_then(|tree| crate::ast::build(text, &tokens, &tree).ok())
+                        .is_some_and(|e| bare(&e)))
+        });
+    match bare {
+        true => Cow::Borrowed(text),
+        false => Cow::Owned(format!("({text})")),
+    }
+}
+
+/// [`code_at_level`] at the operand of `op` on the left (`right` false) or on the right.
+pub fn code_as_operand(text: &str, op: BinaryOp, right: bool) -> Cow<'_, str> {
+    let (l, r) = operand_levels(op);
+    code_at_level(text, if right { r } else { l })
+}
+
 /// Whether `e`'s text starts with a block or a record display, which a lambda's body or an
 /// `else` default that is not itself a block may not.
 fn starts_with_block(mut e: &Expr) -> bool {
@@ -1731,5 +1791,57 @@ fn type_level(t: &Type) -> u8 {
         TypeKind::Union(_) | TypeKind::Diff(..) => 2,
         TypeKind::And(_) => 3,
         _ => 6,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Code given to a repair is grouped only where the formatter would group it there
+    /// (row PRINT-repair-parens-minimal): before an `else`, only a lambda; as the left operand
+    /// of `mod`, only what binds looser than `*`; text already grouped, or not one
+    /// expression, is kept or grouped as it reads.
+    #[test]
+    fn code_is_grouped_only_where_its_place_needs_it() {
+        for (c, min, want) in [
+            ("x", ELSE, "x"),
+            ("a + b", ELSE, "a + b"),
+            ("a || b", ELSE, "a || b"),
+            ("xs.first", ELSE, "xs.first"),
+            ("a else b", ELSE, "a else b"),
+            ("x -> x", ELSE, "(x -> x)"),
+            ("(a + b)", POSTFIX, "(a + b)"),
+            ("a + b", POSTFIX, "(a + b)"),
+            ("f(x)", POSTFIX, "f(x)"),
+            ("a b c )", ELSE, "(a b c ))"),
+            ("xs /* c */", ELSE, "xs /* c */"),
+            ("xs // c", ELSE, "(xs // c)"),
+            ("a b", ELSE, "(a b)"),
+            ("", ELSE, ""),
+        ] {
+            assert_eq!(code_at_level(c, min), want, "{c} at {min}");
+        }
+        for (c, want) in [
+            ("a * b", "a * b"),
+            ("-a", "-a"),
+            ("a + b", "(a + b)"),
+            ("a mod b", "a mod b"),
+            ("a == b", "(a == b)"),
+        ] {
+            assert_eq!(code_as_operand(c, BinaryOp::Mod, false), want, "{c}");
+        }
+        // On the right of `mod`, which is left-associative, an equal level is grouped.
+        assert_eq!(code_as_operand("a * b", BinaryOp::Mod, true), "(a * b)");
+        // A head of a `match` also groups a block outside brackets, whose `{` would open
+        // the arms.
+        for (c, want) in [
+            ("a + b", "a + b"),
+            ("x -> x", "(x -> x)"),
+            ("{ x = 1; x } + 1", "({ x = 1; x } + 1)"),
+            ("f({ x = 1; x })", "f({ x = 1; x })"),
+        ] {
+            assert_eq!(code_as_head(c), want, "{c}");
+        }
     }
 }

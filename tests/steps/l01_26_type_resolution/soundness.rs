@@ -975,6 +975,40 @@ fn a_parameter_taken_apart_and_used_as_a_number_is_refused_in_either_order() {
     }
 }
 
+/// Equal destructurings of one parameter used as a number give one error each, whatever the
+/// written order (DESIGN.md sec:premise; row CHECK-destructure-order-repeats). A later use
+/// equal to a recorded one records no need of its own, so before, with the arithmetic
+/// written last, only the first destructuring was refused, and with it written first each
+/// was. Two and three equal destructurings, each placed before, between and after the
+/// arithmetic.
+#[test]
+fn equal_destructurings_are_each_refused_in_every_order() {
+    let headline = "Cannot take `p : int | f32 | f64 | rat` apart into 2 names: it is not a \
+                    tuple of 2. [p]";
+    for k in [2, 3] {
+        let mut lists = Vec::new();
+        for at in 0..=k {
+            let mut uses = ["a, b = p;", "c, d = p;", "e, g = p;"][..k].to_vec();
+            uses.insert(at, "y = p + 1;");
+            let mut e = destructure_errors(&uses);
+            e.sort();
+            assert_eq!(e.len(), k, "{uses:?}: {e:?}");
+            assert!(e.iter().all(|m| m.starts_with(headline)), "{uses:?}: {e:?}");
+            lists.push((uses, e));
+        }
+        for (uses, e) in &lists[1..] {
+            assert_eq!(e, &lists[0].1, "{uses:?} against {:?}", lists[0].0);
+        }
+    }
+    // An index and a call repeated, each refused at every place in either order.
+    for [c, d] in [["c = p[0];", "d = p[0];"], ["c = p(1);", "d = p(1);"]] {
+        let first = destructure_errors(&[c, d, "y = p + 1;"]);
+        let second = destructure_errors(&["y = p + 1;", c, d]);
+        assert_eq!(first.len(), 2, "{first:?}");
+        assert_eq!(first, second, "{c}");
+    }
+}
+
 /// The `stdout` expression that is `"int"` or `"other"` as the value of `call` is an `int` or
 /// not. The `is` test takes a value of any type, so only the uses in the functions called can
 /// reject the program.

@@ -117,7 +117,7 @@ fn a_map_parameter_keeps_not_found_and_a_generic_read_misses_as_its_argument() {
         type_errors(&src("#notFound")),
         ["A `Lines` port takes a `String` or a family of strings: \
              `m.stdout <- \"${viaMap} | ${viaPick}\" : String | #outOfBounds`. \
-             Try `m.stdout <- (\"${viaMap} | ${viaPick}\") else #outOfBounds -> \"\";` instead. \
+             Try `m.stdout <- \"${viaMap} | ${viaPick}\" else #outOfBounds -> \"\";` instead. \
              [\"${viaMap} | ${viaPick}\"]"]
     );
 }

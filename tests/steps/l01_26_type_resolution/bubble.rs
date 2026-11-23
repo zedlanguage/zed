@@ -20,23 +20,20 @@ fn prints(name: &str, src: &str, want: &str) {
 }
 
 /// `src` is rejected once, at the write `m.stdout <- value`, whose value may be `#outOfBounds`.
+/// The repair writes `value` before its `else` as it is: zedc-check's `else_operand` groups a
+/// value only where the `else` would otherwise take a part of it (author rule P191, plan row
+/// PRINT-repair-parens-minimal), and a call, a read or a string with displays needs no
+/// parentheses there.
 fn rejected_at_write(src: &str, value: &str) {
-    rejected_at_write_as(src, value, value);
+    rejected_at_write_of(src, value, "String");
 }
 
-/// [`rejected_at_write`], where the repair writes `value` as `operand` before its `else`: the
-/// repair puts a value in parentheses unless it is made only of letters, digits and `_.:[]()`
-/// (zedc-check's `else_operand`), needed or not.
-fn rejected_at_write_as(src: &str, value: &str, operand: &str) {
-    rejected_at_write_of(src, value, operand, "String");
-}
-
-/// [`rejected_at_write_as`], where the value is `ty | #outOfBounds`.
-fn rejected_at_write_of(src: &str, value: &str, operand: &str, ty: &str) {
+/// [`rejected_at_write`], where the value is `ty | #outOfBounds`.
+fn rejected_at_write_of(src: &str, value: &str, ty: &str) {
     let expected = format!(
         "A `Lines` port takes a `String` or a family of strings: \
          `m.stdout <- {value} : {ty} | #outOfBounds`. \
-         Try `m.stdout <- {operand} else #outOfBounds -> \"\";` instead. [{value}]"
+         Try `m.stdout <- {value} else #outOfBounds -> \"\";` instead. [{value}]"
     );
     assert_eq!(type_errors(src), [expected], "{src}");
 }
@@ -160,7 +157,7 @@ fn the_a10_program_prints_no_argument_twice() {
 
 #[test]
 fn the_a10_program_without_its_out_of_bounds_else_is_rejected_at_the_write() {
-    rejected_at_write_as(&a10(false), "\"${a}|${b}\"", "(\"${a}|${b}\")");
+    rejected_at_write(&a10(false), "\"${a}|${b}\"");
 }
 
 #[test]
@@ -175,11 +172,10 @@ fn the_miss_atom_of_a_read_through_a_parameter_is_the_bound_arguments() {
     );
     // `else #notFound` handles an atom this read never gives, so its `#outOfBounds` reaches the
     // write (r/need_nf, the negative control).
-    rejected_at_write_as(
+    rejected_at_write(
         "h(args) = args[0] else #notFound -> \"x\";\n\
          main(m: MainArgs) {\n  m.stdout <- h(args: m.args);\n}\n",
         "h(args: m.args)",
-        "(h(args: m.args))",
     );
 }
 
@@ -435,12 +431,7 @@ fn an_atom_a_body_handles_does_not_reach_the_call() {
     let main = "main(m: MainArgs) {\n  m.stdout <- h(args: m.args);\n}\n";
     for (name, handled, unhandled, want, ty) in HANDLED_IN_BODY {
         prints(name, &format!("{handled}{main}"), want);
-        rejected_at_write_of(
-            &format!("{unhandled}{main}"),
-            "h(args: m.args)",
-            "(h(args: m.args))",
-            ty,
-        );
+        rejected_at_write_of(&format!("{unhandled}{main}"), "h(args: m.args)", ty);
     }
 }
 
@@ -454,7 +445,7 @@ fn an_atom_a_body_handles_does_not_reach_a_call_two_levels_out() {
         )
     };
     prints("bubble_body_else_two", &src("#outOfBounds"), "x?\n");
-    rejected_at_write_as(&src("#notFound"), "g(args: m.args)", "(g(args: m.args))");
+    rejected_at_write(&src("#notFound"), "g(args: m.args)");
 }
 
 #[test]
@@ -471,7 +462,7 @@ fn an_atom_one_reader_handles_and_another_passes_on_reaches_the_call() {
         &src(" else #outOfBounds -> \"none\""),
         "none\n",
     );
-    rejected_at_write_as(&src(""), "h(args: m.args)", "(h(args: m.args))");
+    rejected_at_write(&src(""), "h(args: m.args)");
 }
 
 #[test]
@@ -768,11 +759,7 @@ fn a_body_s_else_whose_atom_pattern_has_parts_passes_the_atom_on() {
              main(m: MainArgs) {{\n  m.stdout <- h(args: m.args);\n}}\n"
         )
     };
-    rejected_at_write_as(
-        &src("#outOfBounds()"),
-        "h(args: m.args)",
-        "(h(args: m.args))",
-    );
+    rejected_at_write(&src("#outOfBounds()"), "h(args: m.args)");
     prints("bubble_else_bare_pattern", &src("#outOfBounds"), "none\n");
 }
 
@@ -792,12 +779,7 @@ fn an_atom_a_body_holds_in_a_display_reaches_the_caller_as_data() {
         &src("[args[0]]", " else #outOfBounds -> \"none\""),
         "none\n",
     );
-    rejected_at_write_of(
-        &src("[args[0]]", ""),
-        "h(args: m.args)[0]",
-        "(h(args: m.args)[0])",
-        "String",
-    );
+    rejected_at_write_of(&src("[args[0]]", ""), "h(args: m.args)[0]", "String");
     prints(
         "bubble_display_repaired",
         &src(

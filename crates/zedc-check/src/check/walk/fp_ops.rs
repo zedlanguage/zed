@@ -25,43 +25,14 @@ pub(in crate::check) fn joins_as_list(sig: &Sig) -> bool {
             || (sig.keys.as_ref()).is_some_and(|k| written_ints(k).is_empty()))
 }
 
-/// The source text `c` of an operand, put in parentheses unless `.count` or `[i]` can follow
-/// it as written: every character outside brackets is part of a name or a `.`, as in `xs`,
-/// `m.lines`, `xs.where(f)`, `[1, 2]` or `(0 ..< 3)`, with no space or comment there. Brackets
-/// are counted on the tokens, as [`zedc_syntax::lex::in_parens`] counts them, so one in a
-/// string or a comment is not counted: the count on the characters kept before row
-/// DRY-text-shared took `f("(") + 1` for plain and wrote `f("(") + 1.count`. Text that does
-/// not lex is put in parentheses, which is at worst a pair more. O(length of `c`).
+/// The source text `c` of an operand before `.count` or `[i]`, in parentheses only where the
+/// grammar needs them there, as the formatter writes it ([`zedc_syntax::format::code_as_receiver`];
+/// author rule P191, plan row PRINT-repair-parens-minimal): `xs`, `xs.where(f)`, `"ab"` and
+/// `#a` as written, `a + b` and `2` grouped. Before, the test on the characters outside brackets
+/// grouped any token but a name or a `.`, so `"ab"` and `#a`, which need none. Text with a
+/// comment or that does not read as one expression is grouped. O(length of `c`).
 fn postfix_operand(c: &str) -> String {
-    let plain = lex(c).is_ok_and(|tokens| {
-        // `at`: where the text outside brackets goes on, the end of the last token there.
-        let (mut depth, mut at) = (0usize, 0);
-        for t in &tokens {
-            if depth == 0 && t.span.start != at {
-                return false;
-            }
-            match t.tok {
-                Tok::Op("(" | "[" | "{") => depth += 1,
-                Tok::Op(")" | "]" | "}") if depth == 0 => return false,
-                Tok::Op(")" | "]" | "}") => depth -= 1,
-                _ if depth == 0 => {
-                    let ok = |ch: char| ch.is_alphanumeric() || matches!(ch, '_' | '\'' | '.');
-                    if !c[t.span.start..t.span.end].chars().all(ok) {
-                        return false;
-                    }
-                }
-                _ => {}
-            }
-            if depth == 0 {
-                at = t.span.end;
-            }
-        }
-        at == c.len()
-    });
-    match plain {
-        true => c.to_string(),
-        false => format!("({c})"),
-    }
+    zedc_syntax::format::code_as_receiver(c).into_owned()
 }
 
 /// The operand `e`, written `c`, before a `.` or `::`: a string literal as written, whose
@@ -2426,12 +2397,13 @@ enum Recorded {
 mod tests {
     use super::postfix_operand;
 
-    /// `postfix_operand` puts an operand in parentheses unless a postfix can follow it as
-    /// written; a bracket in a string or a comment is not counted (row DRY-text-shared; the
-    /// cases with one were wrong on the count on characters, `f("(") + 1` the way that changed
-    /// what the repair means).
+    /// `postfix_operand` puts an operand in parentheses only where a postfix cannot follow it
+    /// as written (row PRINT-repair-parens-minimal: `"ab"` and `#a` take none, a number
+    /// literal does); a bracket in a string or a comment is not counted (row DRY-text-shared;
+    /// the cases with one were wrong on the count on characters, `f("(") + 1` the way that
+    /// changed what the repair means).
     #[test]
-    fn an_operand_takes_parentheses_unless_its_tokens_outside_brackets_are_a_path() {
+    fn an_operand_takes_parentheses_only_where_a_postfix_cannot_follow_it() {
         for (c, want) in [
             ("xs", "xs"),
             ("m.lines", "m.lines"),
@@ -2445,9 +2417,11 @@ mod tests {
             ("a + b", "(a + b)"),
             ("f(\"(\") + 1", "(f(\"(\") + 1)"),
             ("xs // c", "(xs // c)"),
-            ("xs /* c */", "(xs /* c */)"),
-            ("\"ab\"", "(\"ab\")"),
-            ("#a", "(#a)"),
+            ("xs /* c */", "xs /* c */"),
+            ("\"ab\"", "\"ab\""),
+            ("#a", "#a"),
+            ("2", "(2)"),
+            ("-x", "(-x)"),
             ("x)", "(x))"),
             // Fragments that do not lex.
             ("f(\"a)", "(f(\"a))"),

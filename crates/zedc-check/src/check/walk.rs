@@ -9058,7 +9058,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `z = 0r; if r != z { x / r }`, so the test is read as `r != 0r` and narrows `r` (row
     /// NARROW-rat-gaps; before, `z` was a name the scope held no value of, and the division
     /// kept `#divByZero`). A name bound to a literal with no suffix, as `z` in `z = 0;
-    /// r != z`, is not at `rat` and is not read here (row NARROW-rat-int-name).
+    /// r != z`, is not at `rat` and is not read here: [`Self::term_for`] reads its `int` value
+    /// at `rat` where it is compared with an operand at `rat` (row NARROW-rat-int-name).
     ///
     /// Complexity tradeoff: the naive read follows the chain of names to its binder on each
     /// read, O(chain) per read and O(n²) for n tests on a chain `z2 = z1; z3 = z2; …` of n
@@ -12981,14 +12982,21 @@ impl<'a> Ck<'_, 'a> {
              exit status, a number from 0 to 255: this zedc does not show that `{code}` is in \
              that range"
         );
-        // A name or a literal is written as it is; anything else in parentheses, and bound to
-        // a name before a test that reads it more than once. The clamp is written as an `if`
+        // A name or a literal is written as it is; anything else is bound to a name before a
+        // test that reads it more than once. The clamp is written as an `if`
         // chain, since this zedc does not compile `.clamp` yet (DESIGN.md sec:ports offers
         // `code.clamp(0, 255)`).
         let simple = code.chars().all(|c| c.is_alphanumeric() || c == '_');
+        // The operand of `mod` is in parentheses only where the grammar needs them there
+        // (author rule P191; plan row PRINT-repair-parens-minimal): `a * b mod 256`, but
+        // `(a + b) mod 256`.
         let (operand, bind, name) = match simple {
             true => (code.to_string(), String::new(), code),
-            false => (format!("({code})"), format!("code = {code}; "), "code"),
+            false => (
+                zedc_syntax::format::code_as_operand(code, BinaryOp::Mod, false).into_owned(),
+                format!("code = {code}; "),
+                "code",
+            ),
         };
         let menu = [
             format!(
@@ -14524,6 +14532,9 @@ impl<'a> Ck<'_, 'a> {
         // Each part, whether it waits on its operands, whether it is on the spine, and the
         // parts translated before its operands.
         let mut stack = vec![(e, false, reading != Reading::Operand, parts.mark())];
+        // The names compared with an operand at `rat`, each read at `rat` where the text
+        // shows its value at `int` (row NARROW-rat-int-name).
+        let mut at_rat: HashSet<Span> = HashSet::new();
         while let Some((x, ready, spine, m)) = stack.pop() {
             macro_rules! opaque {
                 () => {{
@@ -14664,8 +14675,20 @@ impl<'a> Ck<'_, 'a> {
             // `int` `0`, the test would empty `r`'s type where it holds and drop that arm, and
             // with it the `#divByZero` of `x / r + 1r` there (NARROW-ne-rat-divisor). The
             // operands of such an `x` are not visited.
+            //
+            // A name whose value the text shows at `int`, compared with an operand at `rat`,
+            // is read as that value at `rat`: `z` in `z = 0; r != z` with `r: rat` is `0r`,
+            // as `0` in `r != 0` is, so the test narrows `r` (row NARROW-rat-int-name). The
+            // comparison is exact: DESIGN.md (the order of values, "Numbers compare by value,
+            // exactly, across `int`, `rat`, and NaN-free floats") compares an `int` and a
+            // `rat` by their rational values, and an integer read as a `rat` keeps its value,
+            // so `r != z` and `r != 0r` hold on the same runs.
             if let Some(v) = self.known(x).value {
                 let t = match self.carrier_here(x, true) {
+                    None | Some(Carrier::Int) if at_rat.contains(&x.span) => match v.as_rat() {
+                        Some(r) => Term::Lit(Value::rat(r.into_owned())),
+                        None => opaque!(),
+                    },
                     None | Some(Carrier::Int) => Term::Lit(v),
                     Some(Carrier::Rat) => match self.rat_fact(x) {
                         Some(RatFact::Value(v)) => Term::Lit(v),
@@ -14701,6 +14724,25 @@ impl<'a> Ck<'_, 'a> {
                     stack.push((a, false, spine, none));
                 }
                 ExprKind::Binary(o, a, b) if prim_of(*o).is_some() => {
+                    // A name compared with an operand at `rat` (row NARROW-rat-int-name).
+                    // O(1) per operand: `carrier_here` without `deep` reads the type kept.
+                    if matches!(
+                        o,
+                        BinaryOp::Eq
+                            | BinaryOp::Ne
+                            | BinaryOp::Lt
+                            | BinaryOp::Le
+                            | BinaryOp::Gt
+                            | BinaryOp::Ge
+                    ) {
+                        for (n, other) in [(a, b), (b, a)] {
+                            if matches!(n.kind, ExprKind::Name(_))
+                                && self.carrier_here(other, false) == Some(Carrier::Rat)
+                            {
+                                at_rat.insert(n.span);
+                            }
+                        }
+                    }
                     // A divisor is not narrowed by a test of the quotient or the remainder.
                     let divisor = matches!(o, BinaryOp::IntDiv | BinaryOp::Mod);
                     stack.push((x, true, spine, none));
@@ -16204,7 +16246,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.narrow_names.remove(&first);
             }
             if !self.trying && first != span {
-                self.same_use.push((span, first));
+                let kind = std::mem::discriminant(&key.0);
+                self.same_use.entry(first).or_default().push((span, kind));
             }
             if let (Some(later), Some(at)) = (site, at)
                 && later != at
@@ -23585,7 +23628,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 Piece::Var(_) if self.carriers_only(&p) => {
                     let shown = self.show(&p.ty());
-                    self.not_applicable(&shown, span);
+                    self.not_applicable(&shown, of, span);
                 }
                 Piece::Var(_) if let Some(k) = self.class_of(&p) => {
                     let kind = NeedKind::Index {
@@ -23601,7 +23644,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 p if p.is_atoms() => {}
                 p => {
                     let shown = self.text(&p.ty());
-                    self.not_applicable(&shown, span);
+                    self.not_applicable(&shown, of, span);
                 }
             }
         }
@@ -23612,18 +23655,36 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The error of `v[x]` at `span`, `x` no literal, of a value of the type shown as `shown`,
-    /// which is no tuple and no function.
-    fn not_applicable(&mut self, shown: &str, span: Span) {
-        self.not_applicable_noted(shown, span, true);
+    /// which is no tuple and no function; `of` is the span of `v` as written.
+    fn not_applicable(&mut self, shown: &str, of: Option<Span>, span: Span) {
+        self.not_applicable_noted(shown, of, span, true);
     }
 
     /// [`Self::not_applicable`], with the derivation of the bracket's value only where
-    /// `derive` holds, as [`Self::not_a_function_noted`] writes a call's.
-    pub(super) fn not_applicable_noted(&mut self, shown: &str, span: Span, derive: bool) {
-        let message = format!(
-            "this value is {shown}, not a function: this call applies it to an argument, and a \
-             value of type {shown} cannot be applied"
-        );
+    /// `derive` holds, as [`Self::not_a_function_noted`] writes a call's. The value is named as
+    /// the program wrote it where that code is on one line, `` `t[1]` is 2 ``, as a call of a
+    /// name names the name (DESIGN.md sec:diagnostics, the headline in code form; plan row
+    /// MSG-value-call-code), else as "this value".
+    pub(super) fn not_applicable_noted(
+        &mut self,
+        shown: &str,
+        of: Option<Span>,
+        span: Span,
+        derive: bool,
+    ) {
+        let code = (self.code(of))
+            .filter(|c| !c.contains('\n'))
+            .map(|c| format!("`{c}`"));
+        let message = match code {
+            Some(c) => format!(
+                "{c} is {shown}, not a function: this call applies {c} to an argument, and a \
+                 value of type {shown} cannot be applied"
+            ),
+            None => format!(
+                "this value is {shown}, not a function: this call applies it to an argument, \
+                 and a value of type {shown} cannot be applied"
+            ),
+        };
         let menu =
             "repair: call a function here, or drop the argument list after the value".to_string();
         match derive {
@@ -27641,25 +27702,45 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ([`Ck::restrict_asking`], which calls this through [`Ck::refuse_taken`]), with the
     /// message the use itself gives when the restriction comes first ([`Ck::component`],
     /// [`Ck::at_index`], [`Ck::at_key`], [`Ck::call_value_step`]; row
-    /// CHECK-destructure-order). O(1) per use beside the message.
+    /// CHECK-destructure-order).
+    ///
+    /// Each later use equal to one of `taken`, which recorded no need of its own
+    /// ([`Ck::same_use`]), is refused too, with the same message at its own span: where the
+    /// restriction comes first, [`Ck::component`] and its siblings refuse each such use where
+    /// it is checked, so both written orders give one error per use (DESIGN.md sec:premise;
+    /// row CHECK-destructure-order-repeats). The later uses of one kind are deduplicated by
+    /// span: a destructuring into n names records n needs at one span, each repeated by a
+    /// later destructuring at its one span.
+    ///
+    /// O(1) per use and per repeat beside the message, plus O(m log m) to sort the m repeats
+    /// of a use.
     pub(super) fn refuse_taken_uses(&mut self, r: usize, taken: Vec<Need>) {
         let p = Piece::Var(format!("${r}").into());
         for u in taken {
-            match &u.kind {
-                NeedKind::Destructure { n, .. } => self.not_a_tuple(&p, *n, u.span),
-                NeedKind::Component { key, .. } => {
-                    let t = self.show(&p.ty());
-                    self.not_indexable_noted(&key.to_string(), &t, u.span, false);
+            let kind = std::mem::discriminant(&u.kind);
+            let mut spans: Vec<Span> = (self.same_use.get(&u.span).into_iter().flatten())
+                .filter(|&&(_, k)| k == kind)
+                .map(|&(s, _)| s)
+                .collect();
+            spans.sort_unstable();
+            spans.dedup();
+            for span in std::iter::once(u.span).chain(spans) {
+                match &u.kind {
+                    NeedKind::Destructure { n, .. } => self.not_a_tuple(&p, *n, span),
+                    NeedKind::Component { key, .. } => {
+                        let t = self.show(&p.ty());
+                        self.not_indexable_noted(&key.to_string(), &t, span, false);
+                    }
+                    NeedKind::Index { .. } => {
+                        let shown = self.show(&p.ty());
+                        self.not_applicable_noted(&shown, None, span, false);
+                    }
+                    NeedKind::Call { what, .. } => {
+                        let shown = self.show(&p.ty());
+                        self.not_a_function_noted(what, &shown, span, false);
+                    }
+                    _ => {}
                 }
-                NeedKind::Index { .. } => {
-                    let shown = self.show(&p.ty());
-                    self.not_applicable_noted(&shown, u.span, false);
-                }
-                NeedKind::Call { what, .. } => {
-                    let shown = self.show(&p.ty());
-                    self.not_a_function_noted(what, &shown, u.span, false);
-                }
-                _ => {}
             }
         }
     }

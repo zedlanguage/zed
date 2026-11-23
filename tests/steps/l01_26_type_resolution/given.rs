@@ -74,7 +74,7 @@ fn a_test_that_leaves_the_atom_is_still_rejected() {
     // `main` does not handle: the write is rejected.
     let expected = "A `Lines` port takes a `String` or a family of strings: \
                     `m.stdout <- \"${a}|${b}\" : String | #outOfBounds`. \
-                    Try `m.stdout <- (\"${a}|${b}\") else #outOfBounds -> \"\";` instead. [\"${a}|${b}\"]";
+                    Try `m.stdout <- \"${a}|${b}\" else #outOfBounds -> \"\";` instead. [\"${a}|${b}\"]";
     for helper in [
         "r(fs, args, k) = fs[args[k] else #ioError -> \"\"];",
         "r(fs, args, k) { p = args[k]; return if p is #ioError { \"\" } else { fs[p] }; }",

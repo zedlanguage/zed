@@ -318,6 +318,10 @@ fn the_tests_that_leave_a_rat_divisor_only_zero_make_its_division_always_fail() 
         "{ z = 0r; return if r != z { x / r } else { 0r }; }",
         "{ z = 0r; return if z == r { 0r } else { x / r }; }",
         "{ z = 0r; w = z; return if r != w { x / r } else { 0r }; }",
+        // Row NARROW-rat-int-name: a name bound to the `int` 0 narrows as `0` does.
+        "{ z = 0; return if r != z { x / r } else { 0r }; }",
+        "{ z = 0; return if z == r { 0r } else { x / r }; }",
+        "{ z = 0; w = z; return if r != w { x / r } else { 0r }; }",
     ] {
         let text = format!("f(x: rat, r: rat) = {body};\n");
         assert_eq!(sig(&text, "f"), "(x: rat, r: rat) -> rat", "{body}");
@@ -331,6 +335,7 @@ fn the_tests_that_leave_a_rat_divisor_only_zero_make_its_division_always_fail() 
         "if r == 0 { x / r + 1r } else { 0r }",
         "if r == 0 && x == 0 { x / r + 1r } else { 0r }",
         "{ z = 0r; return if r == z { x / r } else { 0r }; }",
+        "{ z = 0; return if r == z { x / r } else { 0r }; }",
     ] {
         let text = format!("f(x: rat, r: rat) = {body};\n");
         let errors = type_errors(&text);

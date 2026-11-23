@@ -62,6 +62,14 @@ fn each_rejection_explains_itself_and_offers_its_repairs() {
              of type int cannot be applied.",
             vec!["repair: call a function here, or write `n` without the parentheses"],
         ),
+        // A read `v[x]` names the value as written, as a call `n(1)` does (plan row
+        // MSG-value-call-code); before, it was "this value".
+        (
+            reading("  m.stdout <- String(n[n]);"),
+            "3:22: `n` is int, not a function: this call applies `n` to an argument, and a value \
+             of type int cannot be applied.",
+            vec!["repair: call a function here, or drop the argument list after the value"],
+        ),
         (
             format!(
                 "inc(positional x: int) = x + 1;\n{}",
