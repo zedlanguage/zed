@@ -9058,8 +9058,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `z = 0r; if r != z { x / r }`, so the test is read as `r != 0r` and narrows `r` (row
     /// NARROW-rat-gaps; before, `z` was a name the scope held no value of, and the division
     /// kept `#divByZero`). A name bound to a literal with no suffix, as `z` in `z = 0;
-    /// r != z`, is not at `rat` and is not read here: [`Self::term_for`] reads its `int` value
-    /// at `rat` where it is compared with an operand at `rat` (row NARROW-rat-int-name).
+    /// r != z`, is not at `rat` and is not read here; `r != z` is refused, as no value is both
+    /// a `rat` and an `int`. A chain may pass through a cast `rat(a)` ([`Self::rat_cast_arg`]),
+    /// whose value is `a`'s at `rat`: `w` in `z = 0; w = rat(z); r != w` is `0r` (row
+    /// NARROW-rat-int-name).
     ///
     /// Complexity tradeoff: the naive read follows the chain of names to its binder on each
     /// read, O(chain) per read and O(n²) for n tests on a chain `z2 = z1; z3 = z2; …` of n
@@ -9086,18 +9088,62 @@ impl<'t, 'a> Ck<'t, 'a> {
                         None => break None,
                     }
                 }
-                _ => {
-                    break match self.rat_fact(at) {
-                        Some(RatFact::Value(v)) => Some(v),
-                        _ => None,
-                    };
-                }
+                _ => match self.rat_cast_arg(at) {
+                    Some(a) => at = a,
+                    None => {
+                        break match self.rat_fact(at) {
+                            Some(RatFact::Value(v)) => Some(v),
+                            _ => None,
+                        };
+                    }
+                },
             }
         };
         for s in chain {
             self.rat_bound_names.insert(s, value.clone());
         }
         value
+    }
+
+    /// The argument `a` of `e` where `e` is the cast `rat(a)`: a call of the prelude word `rat`
+    /// with one positional argument and nothing else, the form [`is_cast_of_literal`] reads.
+    /// O(1).
+    fn rat_cast_arg(&self, e: &'a Expr) -> Option<&'a Expr> {
+        let ExprKind::Call {
+            callee,
+            positional,
+            named,
+            curry: false,
+            ..
+        } = &e.kind
+        else {
+            return None;
+        };
+        let [a] = positional.as_slice() else {
+            return None;
+        };
+        (matches!(&callee.kind, ExprKind::Name(w) if w == "rat")
+            && matches!(self.t.res.uses.get(&callee.span), Some(Ref::Prelude(_)))
+            && named.is_empty())
+        .then_some(a)
+    }
+
+    /// The value of the cast `rat(a)` ([`Self::rat_cast_arg`]) where the text shows `a`'s
+    /// value: `a`'s value read at `rat`, `0r` for `rat(0)` and for `rat(z)` after `z = 0`
+    /// ([`Ck::known`]), or a `rat` literal or name bound to one ([`Self::rat_literal`],
+    /// [`Self::rat_bound`]). Proof that the value is right: DESIGN.md (sec:domains, "Casts are
+    /// domain proofs") gives an atom from `T(x)` only for `x` outside `T`'s range or not a
+    /// member of `T`; `rat` has no bounds, and every integer n is the rational n/1, a member,
+    /// so `rat(n)` is n/1, the `Rat` [`Value::as_rat`] reads; a `rat` is cast to itself. A
+    /// text or a float argument gives `None`: `as_rat` reads neither, and `rat("x")` or
+    /// `rat(nan)` gives an atom.
+    /// O(1) besides the reads it makes (row NARROW-rat-int-name).
+    fn rat_cast(&mut self, e: &'a Expr) -> Option<Value> {
+        let a = self.rat_cast_arg(e)?;
+        if let Some(v) = self.known(a).value {
+            return v.as_rat().map(|r| Value::rat(r.into_owned()));
+        }
+        self.rat_literal(a).or_else(|| self.rat_bound(a))
     }
 
     fn call(
@@ -14532,9 +14578,6 @@ impl<'a> Ck<'_, 'a> {
         // Each part, whether it waits on its operands, whether it is on the spine, and the
         // parts translated before its operands.
         let mut stack = vec![(e, false, reading != Reading::Operand, parts.mark())];
-        // The names compared with an operand at `rat`, each read at `rat` where the text
-        // shows its value at `int` (row NARROW-rat-int-name).
-        let mut at_rat: HashSet<Span> = HashSet::new();
         while let Some((x, ready, spine, m)) = stack.pop() {
             macro_rules! opaque {
                 () => {{
@@ -14676,19 +14719,17 @@ impl<'a> Ck<'_, 'a> {
             // with it the `#divByZero` of `x / r + 1r` there (NARROW-ne-rat-divisor). The
             // operands of such an `x` are not visited.
             //
-            // A name whose value the text shows at `int`, compared with an operand at `rat`,
-            // is read as that value at `rat`: `z` in `z = 0; r != z` with `r: rat` is `0r`,
-            // as `0` in `r != 0` is, so the test narrows `r` (row NARROW-rat-int-name). The
-            // comparison is exact: DESIGN.md (the order of values, "Numbers compare by value,
-            // exactly, across `int`, `rat`, and NaN-free floats") compares an `int` and a
-            // `rat` by their rational values, and an integer read as a `rat` keeps its value,
-            // so `r != z` and `r != 0r` hold on the same runs.
+            // A cast `rat(a)` of a value the text shows is that value at `rat`
+            // ([`Self::rat_cast`]): `rat(z)` in `z = 0; r != rat(z)`, the repair the checker
+            // offers for `r != z`, is `0r` as `0r` in `r != 0r` is, so the test narrows `r`
+            // (row NARROW-rat-int-name). Read before [`Ck::known`], which gives the call no
+            // `rat` value [`Self::rat_fact`] reads.
+            if let Some(v) = self.rat_cast(x) {
+                done.push(Term::Lit(v));
+                continue;
+            }
             if let Some(v) = self.known(x).value {
                 let t = match self.carrier_here(x, true) {
-                    None | Some(Carrier::Int) if at_rat.contains(&x.span) => match v.as_rat() {
-                        Some(r) => Term::Lit(Value::rat(r.into_owned())),
-                        None => opaque!(),
-                    },
                     None | Some(Carrier::Int) => Term::Lit(v),
                     Some(Carrier::Rat) => match self.rat_fact(x) {
                         Some(RatFact::Value(v)) => Term::Lit(v),
@@ -14724,25 +14765,6 @@ impl<'a> Ck<'_, 'a> {
                     stack.push((a, false, spine, none));
                 }
                 ExprKind::Binary(o, a, b) if prim_of(*o).is_some() => {
-                    // A name compared with an operand at `rat` (row NARROW-rat-int-name).
-                    // O(1) per operand: `carrier_here` without `deep` reads the type kept.
-                    if matches!(
-                        o,
-                        BinaryOp::Eq
-                            | BinaryOp::Ne
-                            | BinaryOp::Lt
-                            | BinaryOp::Le
-                            | BinaryOp::Gt
-                            | BinaryOp::Ge
-                    ) {
-                        for (n, other) in [(a, b), (b, a)] {
-                            if matches!(n.kind, ExprKind::Name(_))
-                                && self.carrier_here(other, false) == Some(Carrier::Rat)
-                            {
-                                at_rat.insert(n.span);
-                            }
-                        }
-                    }
                     // A divisor is not narrowed by a test of the quotient or the remainder.
                     let divisor = matches!(o, BinaryOp::IntDiv | BinaryOp::Mod);
                     stack.push((x, true, spine, none));

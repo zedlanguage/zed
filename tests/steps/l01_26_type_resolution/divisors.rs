@@ -318,14 +318,25 @@ fn the_tests_that_leave_a_rat_divisor_only_zero_make_its_division_always_fail() 
         "{ z = 0r; return if r != z { x / r } else { 0r }; }",
         "{ z = 0r; return if z == r { 0r } else { x / r }; }",
         "{ z = 0r; w = z; return if r != w { x / r } else { 0r }; }",
-        // Row NARROW-rat-int-name: a name bound to the `int` 0 narrows as `0` does.
-        "{ z = 0; return if r != z { x / r } else { 0r }; }",
-        "{ z = 0; return if z == r { 0r } else { x / r }; }",
-        "{ z = 0; w = z; return if r != w { x / r } else { 0r }; }",
+        // Row NARROW-rat-int-name: `r != z` with `z = 0` is refused, as no value is both a
+        // `rat` and an `int`, and its repair `r != rat(z)` narrows as `r != 0r` does.
+        "if r != rat(0) { x / r } else { 0r }",
+        "{ z = 0; return if r != rat(z) { x / r } else { 0r }; }",
+        "{ z = 0; return if rat(z) == r { 0r } else { x / r }; }",
+        "{ z = 0; w = rat(z); return if r != w { x / r } else { 0r }; }",
+        "{ z = 0r; return if r != rat(z) { x / r } else { 0r }; }",
     ] {
         let text = format!("f(x: rat, r: rat) = {body};\n");
         assert_eq!(sig(&text, "f"), "(x: rat, r: rat) -> rat", "{body}");
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{body}");
     }
+    // The comparison the cast repairs stays refused, and names the cast.
+    let text = "f(x: rat, r: rat) = { z = 0; return if r != z { x / r } else { 0r }; };\n";
+    let errors = type_errors(text);
+    assert!(
+        errors.len() == 1 && errors[0].contains("Try `r != rat(z)`"),
+        "{errors:?}"
+    );
     // `-r != 1r` takes only `-1r` out of `r`, which may still be `0r`.
     let text = "f(x: rat, r: rat) = if -r != 1r { x / r } else { 0r };\n";
     assert_eq!(sig(text, "f"), "(x: rat, r: rat) -> rat | #divByZero");
@@ -335,7 +346,7 @@ fn the_tests_that_leave_a_rat_divisor_only_zero_make_its_division_always_fail() 
         "if r == 0 { x / r + 1r } else { 0r }",
         "if r == 0 && x == 0 { x / r + 1r } else { 0r }",
         "{ z = 0r; return if r == z { x / r } else { 0r }; }",
-        "{ z = 0; return if r == z { x / r } else { 0r }; }",
+        "{ z = 0; return if r == rat(z) { x / r } else { 0r }; }",
     ] {
         let text = format!("f(x: rat, r: rat) = {body};\n");
         let errors = type_errors(&text);
