@@ -68,12 +68,27 @@ fn a_residues_refusal_is_reached_in_the_size_of_the_classes() {
     // (16.9M and 140.1M instructions, 1x 9.2 ms); n 16 passes, 10.1 times (68.0M and 685.7M);
     // n 32 fails, 11.9 times (141.2M and 1682.5M instructions, 14.8M and 147.6M bytes); n 64
     // fails, 15.2 times (302.8M and 4598.6M instructions; bytes 11.9 times).
-    refusal_scales(
-        "Residues, by n copies of the classes",
-        4,
-        Refusal::Residues,
-        erdos_cover_repeated,
-    );
+    // PERF-refusals-old-size (b22-kernel9, 2026-11-23, zed_icount on v5e2): the verdict alone is
+    // now timed, each type built outside the run (`check_order_fresh`), so the bench runs at the
+    // 1 s size the file asks for: n 128 and 1024 take 353.2M and 2,929.3M instructions, 8.29
+    // times (bytes 8.0 times, 1x 0.56 s). The same on 8cab79ec6 (8.293), so the verdict was in
+    // its size there too; what grew faster than n log n was the build.
+    big(|| {
+        let tag = AtomicUsize::new(0);
+        let make =
+            |n: usize, _| erdos_cover_repeated(n, &format!("_rsr{}", tag.fetch_add(1, Relaxed)));
+        scaling::check_order_fresh(
+            "Residues, by n copies of the classes",
+            128,
+            1,
+            make,
+            |n, t: Type| {
+                Type::forget_emptiness();
+                assert_eq!(t.verdict(), Verdict::Refused(Refusal::Residues), "at {n}");
+                t
+            },
+        );
+    });
 }
 
 #[test]
@@ -139,18 +154,26 @@ fn pairs_less_many_excluded_pairs_are_decided_in_their_size() {
     // 2,234M) and 9.28 the bytes, against 13.47 and 11.3 on d587af551, so it stays at its
     // old size 8. Not at the 1 s size the bench file asks for: by time on l41 the
     // verdict takes 0.33, 0.78, 2.06, 6.32 and 22.0 s at n 256 to 4096, 28 times from 512 to
-    // 4096, and 79 MB to 1.32 GB. What grows: about n list types are made, one for each class
-    // of the split on the first component (`Searching::split_classes`), whose payload part
-    // `(int, L) & (int, P_k for the k of one parity but j) & !(int, P_j)` has about n / 2 rows,
-    // n^2 / 4 rows in all (3,390 rows read at 64, 141,822 at 512, traced in
-    // `least_height_node`); not proved, the likely cause is that a row `(l - only_k, parity_k)`
-    // meets the class of every `only_i` with `i != k`, so every piece keeps about n rows.
+    // 4096, and 79 MB to 1.32 GB. Inferred then: about n list types are made, one for each class
+    // of the split on the first component (`Searching::split_classes`).
+    // b22-kernel9 (2026-11-23, counters printed on v5e2) refuted that: `split_classes` runs once,
+    // with 2 classes of n / 2 rows. The n types of about n / 2 rows each,
+    // `(int, L) & (int, P_j) & !(int, P_k)` over every j of one parity for one k, came from
+    // `retest` in `Searching::region`, which kept one cell per presentation of a component's
+    // type: the n copies, equal but for their definition names, were n cells, each tested
+    // with `empty_fork` (height walks 178, 706 and 5,634, rows read 462, 3,390 and 141,822, at
+    // n 16, 64 and 512). With the cells filed by the name-free digest under `blind`, as the
+    // search's `Ids` already decide such copies once, the rows read are 96, 336 and 2,576.
+    // This bench, n 1024 and 8192 (zed_icount on v5e2): 2,119.3M and 17,550.1M instructions,
+    // 8.28 times (bytes 8.10 times; 1x 2.8 s by clock under the counter, 0.50 s without it), against
+    // 5,771.2M and 195,819.5M, 33.93 times, on 8cab79ec6 (red run kept). By clock without the
+    // counter the verdict takes 0.12, 0.24, 0.50, 1.07, 2.26 and 4.74 s at n 256 to 8192.
     big(|| {
         let tag = AtomicUsize::new(0);
         let make = |n: usize, _| fork_by(n, &format!("_rsfb{}", tag.fetch_add(1, Relaxed)));
         scaling::check_order_fresh(
             "Fork held by its cuts, by n excluded pairs",
-            8,
+            1024,
             1,
             make,
             |n, t: Type| {
@@ -346,28 +369,51 @@ fn refining_a_box_follows_no_fork_in_its_size() {
     // times at 8, 16 and 32, 12.7 times at 64 (292.9M and 3724.7M). `is_empty`: 7.3, 8.6 and 10.4
     // times at 8, 16 and 32, 13.1 times at 64 (269.6M and 3519.9M). A size probe of one verdict
     // took 281M instructions at n 64 and 3595M at 512, 12.8 times.
-    for skip in [false, true] {
-        big(move || {
-            let tag = AtomicUsize::new(0);
-            scaling::check("Fork, refining pairs by the end family", 8, |n| {
-                Type::forget_emptiness();
-                let tag = format!("_rf{skip}{}", tag.fetch_add(1, Relaxed));
-                let t = refined_pairs(n, skip, &tag);
-                assert_eq!(t.verdict(), Verdict::Refused(Refusal::Fork), "at {n}");
-            });
+    //
+    // PERF-refusals-old-size (b22-kernel9, 2026-11-23, zed_icount on v5e2): each check passes at
+    // n 128 (1x about 0.93G instructions): 9.47 and 9.53 times the instructions from 128 to 1024
+    // for the two verdicts, 9.47 for `is_empty`, and the same on 8cab79ec6 (9.46, 9.50, 9.44),
+    // so the work since the finding above had already brought it into its size. Split into one `#[test]` per check, since the three
+    // took 33 s together, past the 20 s a test piece may take; each takes about 12 s.
+    refined_pairs_verdict_scales(false);
+    // The refusal at n 1 with the end family's one place left out is checked in
+    // `refining_a_box_of_pairs_is_refused_at_the_end_family_fork` of refusals.rs
+    // (TEST-bench-move-l0123, author P169).
+}
+
+/// The verdict check of `refining_a_box_follows_no_fork_in_its_size`, with or without the
+/// skip of `refined_pairs`.
+fn refined_pairs_verdict_scales(skip: bool) {
+    big(move || {
+        let tag = AtomicUsize::new(0);
+        scaling::check("Fork, refining pairs by the end family", 128, |n| {
+            Type::forget_emptiness();
+            let tag = format!("_rf{skip}{}", tag.fetch_add(1, Relaxed));
+            let t = refined_pairs(n, skip, &tag);
+            assert_eq!(t.verdict(), Verdict::Refused(Refusal::Fork), "at {n}");
         });
-    }
+    });
+}
+
+#[test]
+fn refining_a_box_follows_no_fork_in_its_size_with_the_skip() {
+    // The check with the skip of `refining_a_box_follows_no_fork_in_its_size`; its comment has
+    // the measurements.
+    refined_pairs_verdict_scales(true);
+}
+
+#[test]
+fn refining_a_box_follows_no_fork_in_its_size_by_emptiness() {
+    // The `is_empty` check of `refining_a_box_follows_no_fork_in_its_size`; its comment has the
+    // measurements.
     big(|| {
         let tag = AtomicUsize::new(0);
-        scaling::check("emptiness, refining pairs by the end family", 8, |n| {
+        scaling::check("emptiness, refining pairs by the end family", 128, |n| {
             Type::forget_emptiness();
             let tag = format!("_rfe{}", tag.fetch_add(1, Relaxed));
             assert!(!refined_pairs(n, false, &tag).is_empty(), "at {n}");
         });
     });
-    // The refusal at n 1 with the end family's one place left out is checked in
-    // `refining_a_box_of_pairs_is_refused_at_the_end_family_fork` of refusals.rs
-    // (TEST-bench-move-l0123, author P169).
 }
 
 // The cases of `a_union_of_lists_by_the_place_of_a_one_from_the_front_is_decided_in_its_size`,
@@ -1398,8 +1444,12 @@ fn a_tuple_with_an_empty_component_is_empty_in_either_order() {
     // n 32 passes, 8.8 times (122.7M and 1082.8M); n 64 passes, 9.9 times (247.0M and 2446.9M);
     // n 128 fails, 11.9 times (507.9M and 6027.6M; bytes 12.4 times). A size probe of one verdict
     // took 2.07G instructions at n 512 and 14.96G at 2048, 7.2 times for 4 times n.
+    // PERF-refusals-old-size (b22-kernel9, 2026-11-23, zed_icount on v5e2): n 1024 and 8192
+    // take 883.8M and 7,023.8M instructions, 7.95 times (bytes 7.93; 1x 1.4 s by clock under the
+    // counter); 7.82 at 256; 7.96 on 8cab79ec6, so the work since the finding above had already
+    // brought it into its size.
     big(|| {
-        scaling::check("Empty, n forked components and an empty one", 8, |n| {
+        scaling::check("Empty, n forked components and an empty one", 1024, |n| {
             Type::forget_emptiness();
             let mut parts: Vec<Type> = (0..n as i64).map(fork_empty_at).collect();
             parts.push(pair_meet_empty());
@@ -1421,7 +1471,12 @@ fn a_chain_of_forks_before_an_empty_component_scales() {
     // A size probe of one verdict and one `is_empty` on the forks-first order took 3.97G
     // instructions at n 512 and 29.3G at 2048, 7.4 times for 4 times n; the order with the empty
     // component first took 172M and 597M, 3.5 times.
-    let n = 8;
+    // PERF-refusals-old-size (b22-kernel9, 2026-11-23, zed_icount on v5e2): n 512 and 4096 take
+    // 35.5M and 197.5M instructions, 5.57 times (bytes 5.06; 1x 0.49 s by clock under the
+    // counter; 5.71 on 8cab79ec6, so the work since the finding above had already fixed it);
+    // 8192 and 65536 take 383.8M and 3,014.8M, 7.86 times, but building the inputs makes that
+    // test 114 s long, so n stays 512, where the test takes 9 s.
+    let n = 512;
     let inputs = scaling::inputs(n, |k| {
         let mut parts: Vec<Type> = (0..k as i64).map(fork_empty_at).collect();
         parts.push(pair_meet_empty());
@@ -1455,11 +1510,16 @@ fn a_chain_of_forks_nested_before_an_empty_component_is_empty_in_its_size() {
     // n 32 passes, 10.3 times (94.6M and 974.3M); n 64 fails, 12.8 times (195.3M and 2494.8M;
     // the first runs' bytes 10.9 times). A size probe of one verdict took 2.61G instructions at
     // n 512 and 23.7G at 2048, 9.1 times for 4 times n.
+    // PERF-refusals-old-size (b22-kernel9, 2026-11-23, zed_icount on v5e2): n 512 and 4096 take
+    // 8.2M and 24.4M instructions, 2.96 times (1x 0.34 s by clock under the counter; 2.97 on
+    // 8cab79ec6, so the work since the finding above had already fixed it); 4096 and 32768
+    // take 24.4M and 153.8M, 6.30 times, but building the inputs makes that test 58 s long, so
+    // n stays 512, where the test takes 9 s.
     big(|| {
-        let inputs = scaling::inputs(8, forks_nested_before_empty);
+        let inputs = scaling::inputs(512, forks_nested_before_empty);
         scaling::check_order(
             "Empty, n forks nested before an empty component",
-            8,
+            512,
             1,
             |n| {
                 Type::forget_emptiness();

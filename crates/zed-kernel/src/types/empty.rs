@@ -4796,7 +4796,8 @@ impl Heights {
     // (`distinct_atoms`, a table of all rows) made a rule of copied components and a heap entry:
     // 395M instructions of `least_height_node` at `fork_by` 512 against 18.4M at 64, 21 times
     // for 8 times the size, as the parts read there hold 141,822 rows in all against 3,390 at
-    // 64 (about n parts of n / 2 + 1 rows, a list type's payload for each class of the fork).
+    // 64 (about n parts of n / 2 + 1 rows, one for each presentation of a renamed component
+    // type in `Searching::region`, before its cells were filed by the name-free digest).
     #[cfg(test)]
     fn least_height(&mut self, t: &Type) -> u64 {
         self.least_height_node(&HeightNode::Type(t.clone()))
@@ -6667,16 +6668,33 @@ impl<'m> Searching<'m> {
         for j in 0..n {
             // Tied types share a hash, so the types of one hash are kept in their order
             // (`TiedMap`, PERF-row-hash-tied-digest).
-            let mut found: TiedMap<&Type, usize> = TiedMap::default();
+            // Complexity tradeoff (PERF-refusals-old-size): the types of a component are filed
+            // by the name-free digest and compared under [`blind`], so renamed copies of one
+            // type are one cell, tested once, as the search's [`Ids`] decides them once. Why
+            // it is exact: a cell's tests (`retest`, `narrow_tuples`) ask whether the box meets
+            // or holds the cell's type, a question of its values alone, and two types equal
+            // under `blind` differ only in definition names, which no rule of the search reads
+            // (`Ids`), so they have the same values and the same answers. Naive version: a cell
+            // per presentation, so `n / 2` renamed copies `P_k` against a box `⋃ P_j` of
+            // `n / 2` rows built `n / 2` differences `⋃ P_j - P_k` of `n / 2` rows each, order
+            // `n^2` (`fork_by` 512 read 141,822 rows in the heights walk, 3,390 at 64; filed by
+            // digest, 2,576 and 336, and the verdict 8.28 times the instructions from 1024 to
+            // 8192, test `refusals::bench::pairs_less_many_excluded_pairs_are_decided_in_their_size`
+            // of `l01_23_groups_and_refusals`, 33.93 times before). Given
+            // up: copies of one name-free digest are compared in full under `blind`, linear in
+            // their size, once per row.
+            let mut found: TiedMap<Type, usize, NameFree> = TiedMap::default();
             for (k, a) in atoms.iter().enumerate() {
                 let cells = &mut g.cells[j];
-                let c = *found.get_or_insert_with(&a[j], || {
-                    cells.push(Cell {
-                        ty: a[j].clone(),
-                        rows: Vec::new(),
-                        open: true,
-                    });
-                    cells.len() - 1
+                let c = *blind(|| {
+                    found.get_or_insert_with(a[j].clone(), || {
+                        cells.push(Cell {
+                            ty: a[j].clone(),
+                            rows: Vec::new(),
+                            open: true,
+                        });
+                        cells.len() - 1
+                    })
                 });
                 cells[c].rows.push(k);
                 g.cell_of[k * n + j] = c;
