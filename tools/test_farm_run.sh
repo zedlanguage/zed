@@ -228,6 +228,9 @@ while IFS= read -r raw; do
     ( cd "$out/src" && FARM_VM_JOB=$out bash -c "${line#!}" ) >"$out/out/$k.log" 2>&1
     rc=$?
   fi
+  # FAKE_RETRY_ROW: a failed first attempt run again, as job.sh writes it before the final row
+  # (column 6 dylib-retry; FARM-merge-check-first-row-rc).
+  [ -z "${FAKE_RETRY_ROW:-}" ] || printf '%s\t1\t0\t1\t1\tdylib-retry\n' "$raw" >>"$out/summary.tsv"
   # FAKE_RETRY_FIRST: line 1 has a failed try before it, as job.sh writes a try it runs again
   # (a `!` line that met a mix of dylib and rlib builds, or a test line out of memory).
   [ "${FAKE_RETRY_FIRST:-}" != 1 ] || [ "$k" != 1 ] ||
@@ -460,6 +463,15 @@ case_ cmd-fail 1 "farm: command 3 rc=0: echo third" "" -- --owner t --vms 1 --co
 o=$ws/case-$n-cmd-fail.out
 [ "$(command grep -a -c -x 'farm: command 2 rc=3: exit 3' "$o")" = 1 ] && [ "$(command grep -a -c -x 'first' "$o")" = 1 ] ||
   { fail=$((fail + 1)); echo "FAIL cmd-fail: line 2's exit 3 or line 1's log not printed ($o)"; }
+# A line job.sh ran again after a dylib retry (FARM-merge-check-first-row-rc): summary.tsv has the
+# retry row, exit 1, before the final row, and only the final row is the line's exit. Before the
+# fix a share read row 1 and failed with every piece passed, and --commands counted both rows.
+FAKE_RETRY_ROW=1 case_ retry-row 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2
+FAKE_RETRY_ROW=1 STUB_FAIL='^p3$' case_ retry-row-fail 1 "pieces: 9, failed: 1" "$all" -- --owner t --vms 2
+FAKE_RETRY_ROW=1 case_ cmd-retry-row 0 "farm: command 2 rc=0: echo \"out \${FARM_OUT:-unset}\"; ls \"\$FARM_OUT\" >/dev/null" "" -- --owner t --vms 1 --commands "$ws/cmd-pass"
+[ "$(command grep -c '^acquire' "$colab/log")" = 1 ] || { fail=$((fail + 1)); echo "FAIL cmd-retry-row: not one attempt"; }
+FAKE_RETRY_ROW=1 case_ cmd-retry-row-fail 1 "farm: command 3 rc=0: echo third" "" -- --owner t --vms 1 --commands "$ws/cmd-fail"
+has cmd-retry-row-fail '^farm: command 2 rc=3: exit 3$' 1
 FAKE_DIE_ALWAYS=1 case_ cmd-die 129 "farm: FAILED: the commands could not be run after 3 attempts" "" -- --owner t --vms 1 --commands "$ws/cmd-pass"
 [ "$(command grep -c '^acquire' "$colab/log")" = 3 ] || { fail=$((fail + 1)); echo "FAIL cmd-die: not 3 attempts"; }
 FAKE_DIE_FIRST=1 case_ cmd-died-once 0 "farm: command 2 rc=0: echo \"out \${FARM_OUT:-unset}\"; ls \"\$FARM_OUT\" >/dev/null" "" -- --owner t --vms 1 --commands "$ws/cmd-pass"
