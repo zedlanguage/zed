@@ -34,6 +34,7 @@ mod ground;
 mod ids;
 mod ladder;
 mod linked_nest;
+mod memo;
 mod mod_symbol;
 mod near;
 mod nest_empty;

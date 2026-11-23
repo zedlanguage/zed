@@ -20679,28 +20679,63 @@ pub fn project_each(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 /// exact projection has that form, the values not listed; [`EachClassed::met`] gives the sets
 /// of [`project_each`]. The memo keeps these answers, for both.
 pub fn project_each_classed(f: &Formula, syms: &[Atom]) -> Result<EachClassed, Refusal> {
-    if memo_off() || PROJECTIONS.with(|m| m.borrow().is_none()) {
+    let Some(store) = open_store() else {
         return project_each_asked(f, syms);
-    }
+    };
     let key = (f.clone(), syms.to_vec());
-    if let Some(answer) = PROJECTIONS.with(|m| m.borrow().as_ref()?.get(&key).cloned()) {
+    if let Some(answer) = store.lock().asked.get(&key).cloned() {
         return answer;
     }
     let answer = project_each_asked(f, syms);
-    PROJECTIONS.with(|m| {
-        if let Some(m) = m.borrow_mut().as_mut() {
-            m.insert(key, answer.clone());
-        }
-    });
+    store.lock().asked.insert(key, answer.clone());
     answer
 }
 
-/// The answers of [`project_each`], by formula and symbols.
-type Projections = TextMap<(Formula, Vec<Atom>), Result<EachClassed, Refusal>>;
+/// The answers kept while a [`ProjectionMemo`] is open: by the formula and symbols as asked
+/// ([`project_each_classed`]), and by the formula and symbols renamed by their structure, with
+/// whether the cover was asked ([`project_each_with`]), which two questions that differ only
+/// in their names share.
+#[derive(Default)]
+struct Memo {
+    asked: TextMap<(Formula, Vec<Atom>), Result<EachClassed, Refusal>>,
+    renamed: TextMap<(Formula, Vec<Atom>, bool), Result<EachClassed, Refusal>>,
+}
+
+/// A store of the answers of [`project_each`], shared by its copies, which a
+/// [`ProjectionMemo`] opened with it ([`ProjectionMemo::open_in`]) reads and fills: a caller
+/// that asks questions over a longer time than one call, such as the scopes of the reduced
+/// product, keeps one, so that a question asked again in that time, or asked under other
+/// names, is answered once.
+#[derive(Clone, Default)]
+pub struct ProjectionStore(Arc<std::sync::Mutex<Memo>>);
+
+impl ProjectionStore {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Memo> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl fmt::Debug for ProjectionStore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("..")
+    }
+}
 
 thread_local! {
-    /// The answers of [`project_each`] while a [`ProjectionMemo`] is open.
-    static PROJECTIONS: RefCell<Option<Projections>> = const { RefCell::new(None) };
+    /// The store of the [`ProjectionMemo`] open on this thread.
+    static PROJECTIONS: RefCell<Option<ProjectionStore>> = const { RefCell::new(None) };
+}
+
+/// The store of the open [`ProjectionMemo`], `None` when none is open or a flag that changes
+/// the path of a question is set ([`memo_off`]). The store is cloned out, so no borrow is held
+/// while a question is asked, which may ask others.
+fn open_store() -> Option<ProjectionStore> {
+    if memo_off() {
+        return None;
+    }
+    PROJECTIONS.with(|m| m.borrow().clone())
 }
 
 /// Keeps the answers of [`project_each`] from its opening to its drop; one opened inside
@@ -20708,11 +20743,16 @@ thread_local! {
 pub struct ProjectionMemo(bool);
 
 impl ProjectionMemo {
-    /// Opens the memo, unless one is open already.
+    /// Opens the memo with a new store, unless one is open already.
     pub fn open() -> ProjectionMemo {
+        ProjectionMemo::open_in(&ProjectionStore::default())
+    }
+
+    /// Opens the memo with `store`, unless one is open already, whose store is then kept.
+    pub fn open_in(store: &ProjectionStore) -> ProjectionMemo {
         ProjectionMemo(PROJECTIONS.with(|m| {
             let mut m = m.borrow_mut();
-            m.is_none() && m.replace(Default::default()).is_none()
+            m.is_none() && m.replace(store.clone()).is_none()
         }))
     }
 }
@@ -20742,10 +20782,11 @@ fn memo_off() -> bool {
         || meter::EXACT_LIMIT_SET.with(|c| c.get().is_some())
 }
 
-/// [`project_each`] with no memo: the solver's answer made exact by the cover of module
-/// `exact` ([`project_each_exact`]).
+/// [`project_each`] with no memo of the question as asked: the solver's answer made exact by
+/// the cover of module `exact` ([`project_each_exact`]), kept by its renamed question while a
+/// memo is open ([`project_each_with`]).
 fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<EachClassed, Refusal> {
-    project_each_with(f, syms, true)
+    project_each_with(f, syms, true, open_store().as_ref())
 }
 
 /// [`project_each`] made exact by the cover of module `exact` (Monniaux's model-guided
@@ -20753,13 +20794,13 @@ fn project_each_asked(f: &Formula, syms: &[Atom]) -> Result<EachClassed, Refusal
 /// projection, or refused past the cover's work limit (`meter::EXACT_LIMIT`). With no memo;
 /// the cover's own tests and benchmarks call it.
 pub fn project_each_exact(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
-    project_each_with(f, syms, true).map(|e| e.met())
+    project_each_with(f, syms, true, None).map(|e| e.met())
 }
 
 /// The solver's answer alone, with no cover and no memo: each set holds every value of its
 /// symbol with a point, and may hold more. For the benchmarks that time what the cover adds.
 pub fn project_each_solver(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
-    project_each_with(f, syms, false).map(|e| e.met())
+    project_each_with(f, syms, false, None).map(|e| e.met())
 }
 
 /// The steps of the solver the cover asks, handed to it with each call ([`meter::Solver`]):
@@ -20814,7 +20855,35 @@ const SOLVER: meter::Solver = meter::Solver {
 // the solver refuses with each equation in the sign of [`equation`]. Test:
 // `l01_39_reduced_product::pendants::refused_parts_projected_exactly_by_pendants_fourth_quarter_rest`.
 // COMPLEXITY.md row PROJECT-each-canon.
-fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClassed, Refusal> {
+//
+// With `store`, the answer to the renamed question is kept by the renamed formula, the renamed
+// symbols and `cover`, and a question renamed to one asked before is answered as then, written
+// back over its own names. Complexity tradeoff (FAIL-points-asked-after-disjunction-timeout):
+// naive version, each renamed question asked anew, though the memo of [`project_each_classed`]
+// keeps answers by the formula as asked, which two questions differing only in their names do
+// not share: `l01_39_scope_relations::lazy::bench::points_asked_after_a_disjunction_scale`
+// asks the projection of `x_i <= 0 || (x_i >= 10 && y_i == 5)` with `y_i - 3·z_i` bounded
+// once in each of its k groups, a question that renames to one formula in every group
+// (b22-preimage9: one hash for the formula `project_each_written` read in each group), and
+// `project_each_as_named` took 60% of the instructions of
+// `points_asked_after_a_disjunction_are_answered` (callgrind, 2.27e9 at k = 64). Used: one
+// lookup a renamed question, O(1) expected beside the hash of the renamed formula, which
+// the renaming has made anyway, and its answer copied back by name, O(s) for `s` symbols.
+// Tradeoffs: memory for each distinct renamed question until the store is dropped; the
+// renaming, the propagation and `cover_input` are still paid by each question. Correctness:
+// the proof above that the answer is a function of the renamed formula and symbols (and of
+// `cover`, which is in the key), under the same assumption as [`project_each_classed`]'s memo
+// that nothing else read changes it, with the flags of [`memo_off`] excluded by
+// [`open_store`]; the refusals and causes are kept in the renamed names and written back by
+// this question's renaming, as without the store. [`project_each_exact`] and
+// [`project_each_solver`] pass no store, as before. Test:
+// `l01_38_presburger::memo::a_question_under_other_names_is_answered_from_the_memo`.
+fn project_each_with(
+    f: &Formula,
+    syms: &[Atom],
+    cover: bool,
+    store: Option<&ProjectionStore>,
+) -> Result<EachClassed, Refusal> {
     // A formula the propagation shows empty has no point under any naming, and the propagation
     // reaches one state in every order (`forced`'s module doc; `trial::Trial::holds` proves
     // it), so its answer needs no renaming. Complexity tradeoff: naive version, the renaming
@@ -20871,7 +20940,20 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClas
     match renamed {
         Some(r) => {
             let there = r.there_all(syms);
-            project_each_as_named(&r.f, &there, cover)
+            let asked = || project_each_as_named(&r.f, &there, cover);
+            let answer = match store {
+                None => asked(),
+                Some(store) => {
+                    let key = (r.f.clone(), there.clone(), cover);
+                    let kept = store.lock().renamed.get(&key).cloned();
+                    kept.unwrap_or_else(|| {
+                        let answer = asked();
+                        store.lock().renamed.insert(key, answer.clone());
+                        answer
+                    })
+                }
+            };
+            answer
                 .map(|e| EachClassed {
                     sets: (e.sets.into_iter())
                         .map(|s| s.map_err(|e| r.back_refusal(e)))

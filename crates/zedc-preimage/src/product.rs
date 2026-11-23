@@ -2054,6 +2054,8 @@ pub struct Scope {
     /// A point of the difference constraints of the trees of blocks whose bounds come from
     /// shortest paths ([`Scope::shortest`]), kept as their conjuncts come.
     potential: Potential,
+    /// The projections this scope and the scopes made from it have asked ([`Projections`]).
+    projections: Projections,
     /// Whether a move of a hub leaves its stars' leaves to be settled when read
     /// ([`Scope::lazy`]).
     lazy: bool,
@@ -2829,7 +2831,7 @@ impl Lazy {
         let same = |at: &imbl::OrdMap<Arc<str>, Product>, orders: &Orders, v: &Arc<str>| {
             at.get(v) == outer.names.get(v) && orders.get(v) == outer.orders.get(v)
         };
-        let view = inner.view();
+        let (view, was) = (inner.view(), outer.view());
         for n in free {
             let held = view.summary(n);
             if n == name {
@@ -2843,6 +2845,14 @@ impl Lazy {
                 continue;
             }
             if !same(&inner.names, &inner.orders, n) {
+                return false;
+            }
+            // `n` must be read the same way in both: through its summary in both, or as an
+            // input in both. `n = y + 1` holds outside `let y = 5 in n + y` and not inside,
+            // where `y` is another binding, so the peeled body is a function of `n` and the
+            // whole term one of `y`; each is right, but a test narrows `n` one way and `y`
+            // the other (row PROOF-pa-peel-summary).
+            if held.is_some() != was.summary(n).is_some() {
                 return false;
             }
             if let Some(h) = held
@@ -2881,19 +2891,65 @@ impl Lazy {
     /// summarized as `b` in the scope `inner` the walk bound `y` in, just after binding it,
     /// with `y` read through its own summary. The order proof above still holds: `inner`
     /// holds the bindings of the outer scope and `y`'s, whose `Lazy` was made while `e` was
-    /// walked, before `e`'s binding, so every summary waited on is still older. Value, sketch:
-    /// `let_summary` reads a `let` inside a residual by binding `y` to `e'` in the residual's
-    /// lexical scope, so `b`'s value is the same function of the inputs whether `y` is
-    /// expanded there or read through a summary of `e'` over the same inputs at the same
-    /// integers and orders. [`Lazy::peel_agrees`] checks exactly that sameness (each name `b`
-    /// reads, and each input of the summaries it reads them through, has the same product and
-    /// order in `inner` as in the outer scope; `y`'s summary holds and was made at the outer
-    /// products), and on failure the whole of `e` is summarized as before. Departures: the
-    /// representation differs (edges to `y`'s summary instead of `e'` inlined), so the regions
-    /// and bounds a test reads may be cut at other points, and a summary may exist one way
-    /// and not the other; this is not proved equal, only checked by test (proof row
-    /// PROOF-pa-peel-summary). Cost: each level summarizes its own body once, beside the
-    /// `O(m)` check for its `m` names. Tests: the comparison of the one pass, which peels,
+    /// walked, before `e`'s binding, so every summary waited on is still older.
+    ///
+    /// Value (row PROOF-pa-peel-summary). Claim: when a peeled summary `P` is kept (the check
+    /// [`Lazy::peel_agrees`] passed and `P` reads at most one input), `P` and the summary `W`
+    /// the transfer makes of the whole `e` in `outer` (the scope of `e`'s binding) read the
+    /// same input (or `W` none, where its terms cancel), and take the same value at every
+    /// point of `outer`'s box where both have one. Write `V` for the names of `free(b)` other than `y`.
+    /// 1. How `W` reads a name. `let_summary(e, ..)` in `outer` matches no arm of its loop on
+    ///    `Term::Let`, so `e` goes to `rest` and is read by `Tx::pa`, whose `pa_at` on
+    ///    `Node::Let` reads `b` with `y` bound to `e'` in its environment. In `b`, an
+    ///    occurrence of `y` is that binding, read as `pa(e')`; an occurrence of `n` in `V` is
+    ///    the input `n` (`tx.cx.has`) when `outer`'s `inputs_and_lets` made it one, or else
+    ///    `LetPa::force` of its summary, which `inputs_and_lets` gives only when that summary
+    ///    holds in `outer` ([`View::summary`]).
+    /// 2. How `P` reads a name. `summarize_free(b, free(b))` in `inner` reads `y` through its
+    ///    summary `S_y` (the check fails when `y` has none that holds in `inner`), and `n` in
+    ///    `V` as an input or through its summary, by `inner`'s `inputs_and_lets`.
+    /// 3. Each `n` in `V` is read the same way. The check asks that `n`'s summary hold in
+    ///    `inner` exactly when it holds in `outer`, and that `n`'s product and order be the
+    ///    same in both, so `n` is an input over the same integers in both or read through the
+    ///    same summary (the binding of `n` is one `Lazy`: `inner` is `outer` with `y` bound,
+    ///    and `n != y`). Without the first half this step failed: `n = y + 1` holds outside
+    ///    `let y = 5 in n + y` and not inside, where `y` is another binding, so `P` was a
+    ///    function of `n` and `W` of `y`, and a test narrowed `n` to 2 one way and `y` to 1
+    ///    the other (`l01_39_reduced_product::if_shortcut::
+    ///    a_peeled_block_reading_a_name_over_the_shadowed_input_agrees_with_the_transfer`, red
+    ///    before the check). The inputs of a summary read this way have, by the check's last
+    ///    clause, the same products and orders in both scopes.
+    /// 4. `y` is read as the same function. `S_y` is `let_summary(e', ..)` made in the scope
+    ///    of `y`'s binding, whose products and orders at `S_y`'s inputs the check finds equal
+    ///    to `outer`'s; `pa(e')` in step 1 is the transfer's reading of the same term over the
+    ///    same inputs at the same integers. Both are exact functions of the inputs on the box
+    ///    (a `Pa` is a value of the term at every point where it has one; `Walk::pa`), so they
+    ///    agree wherever both have a value.
+    /// 5. The value. By steps 3 and 4, every leaf of `b` (a literal, `y`, or a name of `V`)
+    ///    is the same function of the inputs in both readings. `P` combines them by
+    ///    `let_summary`'s loop (sums, differences, negation and products by a literal, exact)
+    ///    and `Tx::pa` on the rest; `W` by `Tx::pa` on all of `b`, whose `pa_prim` adds by
+    ///    `Pa::plus`, exact for two summaries of one input. `P` reads at most one input, so
+    ///    every term `P` adds reads that input or none, and `LetPa::force` forms `P` as one
+    ///    `Pa` (`Sep::add_pa`, `Pa::plus`, exact): one value at each point, that of `b` at the
+    ///    leaves' values, which is also `W`'s there. So `P` and `W` agree where both have a
+    ///    value. Their inputs are among those of the leaves, which steps 3 and 4 make the
+    ///    same: `P` reads the one input of its terms; `W` reads it too, or none where its
+    ///    terms cancel (`y - y`), when `W` is a constant `P` equals at every point.
+    ///
+    /// Not proved: (a) whether a summary exists, and where it has a value, both ways. A term of
+    /// `b` that `Tx::pa` reads through a test of `y` (`Walk::pa_if`, which keeps a summary only
+    /// when the backward transfer of the guard is exact) reads `y` through `e'` in `W` and
+    /// through `S_y` in `P`, and whether those two backward reads are exact is not shown to
+    /// be the same; likewise the constant a box gives a term (`Walk::constant`). (b) The bounds
+    /// a test reads from a [`Pa::Piecewise`] (`pa_bounds`, `Tag::vals`) may depend on where its
+    /// pieces are cut, which the two ways may cut differently. Where `P` exists and `W` does
+    /// not, the peeled summary narrows more, soundly, since `P` is a value of `b` at each point.
+    /// Tests of (a): the `if`, `min` and `max` bodies of the test named in step 3 and of
+    /// `..::a_peeled_block_agrees_with_the_whole_block_on_awkward_bodies`.
+    ///
+    /// Cost: each level summarizes its own body once, beside the `O(m)` check for its `m`
+    /// names, now two summary reads a name. Tests: the comparison of the one pass, which peels,
     /// with `arms_and_value_by_transfer`, which does not (`Run::peel`), on random blocks and
     /// on the forms of `nest`, forms 5 and 6 those that peel
     /// (`l01_39_reduced_product::if_shortcut::one_pass_and_transfer_agree_on_deep_nests`), a
@@ -3126,6 +3182,27 @@ impl PartialEq for Emptied {
 }
 
 impl fmt::Debug for Emptied {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("..")
+    }
+}
+
+/// The answers of the projections a scope asks, shared by the scopes made from it (its tests,
+/// arms and joins), so that a projection asked again, or asked of a block that differs only in
+/// its names, as the blocks of `k` groups of one shape do, is answered once
+/// ([`presburger::ProjectionStore`], FAIL-points-asked-after-disjunction-timeout): a cache,
+/// equal in every scope. Each answer is a function of its question
+/// ([`presburger::project_each`]), so a shared answer is the answer asked anew.
+#[derive(Clone, Default)]
+struct Projections(presburger::ProjectionStore);
+
+impl PartialEq for Projections {
+    fn eq(&self, _: &Projections) -> bool {
+        true
+    }
+}
+
+impl fmt::Debug for Projections {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("..")
     }
@@ -9936,6 +10013,7 @@ impl Scope {
             reduced: Reduced::default(),
             seen: Seen::default(),
             potential: Potential::default(),
+            projections: Projections::default(),
             lazy: false,
             in_case: false,
             spent: imbl::OrdSet::new(),
@@ -12041,6 +12119,7 @@ impl Scope {
             seen,
             // It goes with this side's last projection, as `seen` does.
             potential: self.potential.clone(),
+            projections: self.projections.clone(),
             lazy: self.lazy || other.lazy,
             in_case: self.in_case && other.in_case,
             // A root a constraint failed at on either side is reported.
@@ -19038,7 +19117,10 @@ impl Scope {
         // A refused projection keeps the bounds the box stage gives the rows (DESIGN step
         // L1.38), and is reported with them: each name of the scope that `part` mentions, or
         // for a projection onto one name refused alone, that name.
-        let got = presburger::project_each_boxed(&whole, &syms);
+        let got = {
+            let _memo = presburger::ProjectionMemo::open_in(&self.projections.0);
+            presburger::project_each_boxed(&whole, &syms)
+        };
         let boxed = |s: &Scope, only: Option<usize>| -> Kept {
             let each = syms.iter().zip(&got.each).enumerate();
             let sets = each.filter_map(|(i, (a, (x, _)))| match a {

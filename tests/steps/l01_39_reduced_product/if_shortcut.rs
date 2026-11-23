@@ -813,3 +813,122 @@ fn a_peeled_block_summed_over_two_inputs_agrees_with_the_transfer() {
         }
     }
 }
+
+/// A peeled block `let y = .. in b` whose body reads a name `n` whose summary reads the input
+/// `y` that the block shadows agrees with the transfer (row PROOF-pa-peel-summary). Inside the
+/// block `y` is another binding, so `n`'s summary does not hold there and the peeled body was a
+/// function of `n` alone, while the whole block is one of the input `y`: in the first case the
+/// test narrowed `n` to 2 one way and `y` to 1 the other. Red before `Lazy::peel_agrees` asked
+/// that each name be read through its summary in both scopes or in neither (the first, third and
+/// fourth cases). The other cases read a name through a summary over one input inside a
+/// `min`, a `max`, a sum of the name with itself, which the whole block reads as one term, and
+/// the guard of an `if`, which the whole block reads through the bound term and the peeled
+/// body through the name's summary (the steps of the proof at `Lazy::get` not proved).
+#[test]
+fn a_peeled_block_reading_a_name_over_the_shadowed_input_agrees_with_the_transfer() {
+    let p = |op, a, b| prim(op, vec![a, b]);
+    let y = || var("y");
+    let read =
+        |n: Term, blk: Term, test: Term| let_("n", n, let_("z", blk, if_(test, int(1), int(2))));
+    let z = || var("z");
+    let cases = [
+        (
+            "n = y + 1, z = (y = 5; n + y), z == 7",
+            read(
+                p(Prim::Add, y(), int(1)),
+                let_("y", int(5), p(Prim::Add, var("n"), y())),
+                p(Prim::Eq, z(), int(7)),
+            ),
+        ),
+        (
+            "n = 2 * y, z = (y = 1; n - y), z mod 4 == 1",
+            read(
+                p(Prim::Mul, int(2), y()),
+                let_("y", int(1), p(Prim::Sub, var("n"), y())),
+                p(Prim::Eq, p(Prim::Mod, z(), int(4)), int(1)),
+            ),
+        ),
+        (
+            "n = if y > 3 { 10 } else { 20 }, z = (y = 5; n + y), z == 15",
+            read(
+                if_(p(Prim::Gt, y(), int(3)), int(10), int(20)),
+                let_("y", int(5), p(Prim::Add, var("n"), y())),
+                p(Prim::Eq, z(), int(15)),
+            ),
+        ),
+        (
+            "n = y + 1, z = (y = 5; n + y), y == 1 && z == 7",
+            read(
+                p(Prim::Add, y(), int(1)),
+                let_("y", int(5), p(Prim::Add, var("n"), y())),
+                p(
+                    Prim::And,
+                    p(Prim::Eq, y(), int(1)),
+                    p(Prim::Eq, z(), int(7)),
+                ),
+            ),
+        ),
+    ];
+    let x = || var("x");
+    let t = || var("t");
+    let zero_y = || p(Prim::Add, x(), p(Prim::Mul, int(0), y()));
+    let more = [
+        (
+            "z = (t = x + 0 * y; min(t, 3)), z == 2",
+            let_(
+                "z",
+                let_("t", zero_y(), p(Prim::Min, t(), int(3))),
+                if_(p(Prim::Eq, z(), int(2)), int(1), int(2)),
+            ),
+        ),
+        (
+            "z = (t = x + 0 * y; max(t, -t)), z == 2",
+            let_(
+                "z",
+                let_("t", zero_y(), p(Prim::Max, t(), prim(Prim::Neg, vec![t()]))),
+                if_(p(Prim::Eq, z(), int(2)), int(1), int(2)),
+            ),
+        ),
+        (
+            "z = (t = x + 0 * y; t + t), z == 3",
+            let_(
+                "z",
+                let_("t", zero_y(), p(Prim::Add, t(), t())),
+                if_(p(Prim::Eq, z(), int(3)), int(1), int(2)),
+            ),
+        ),
+        (
+            "z = (t = if x > 0 { 5 } else { 1 }; if t > 3 { 10 } else { 20 }), z == 10",
+            let_(
+                "z",
+                let_(
+                    "t",
+                    if_(p(Prim::Gt, x(), int(0)), int(5), int(1)),
+                    if_(p(Prim::Gt, t(), int(3)), int(10), int(20)),
+                ),
+                if_(p(Prim::Eq, z(), int(10)), int(1), int(2)),
+            ),
+        ),
+        (
+            "z = (t = 2 * x; if t > 3 { 10 } else { t }), z == 2",
+            let_(
+                "z",
+                let_(
+                    "t",
+                    p(Prim::Mul, int(2), x()),
+                    if_(p(Prim::Gt, t(), int(3)), int(10), t()),
+                ),
+                if_(p(Prim::Eq, z(), int(2)), int(1), int(2)),
+            ),
+        ),
+    ];
+    let scope = ints(&["x".into(), "y".into()]);
+    let mut bad = Vec::new();
+    for (what, t) in cases.into_iter().chain(more) {
+        let one = arms_and_value(&t, &scope);
+        if let Some(diff) = difference(&one, &arms_and_value_by_transfer(&t, &scope)) {
+            bad.push(format!("{what}, {t}: {diff}"));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
