@@ -502,7 +502,7 @@ fn concat(l: Link, r: Link) -> Link {
 ///
 /// Complexity tradeoff: the test reads the two roots' kept `last` and `first`, `O(1)`, so a
 /// pair that fails it costs [`union`] as before plus one comparison. A pair that passes costs
-/// one [`concat`] (one `split_first` and one `join`), or, when the two touch, one `split_last`,
+/// one [`concat()`] (one `split_first` and one `join`), or, when the two touch, one `split_last`,
 /// one `split_first` and one `join`: `O(log n)` each, against `union`'s four `split`s and two
 /// recursive unions. The bound is the same; the constant is about a quarter.
 ///
@@ -515,7 +515,7 @@ fn concat(l: Link, r: Link) -> Link {
 /// 2. Inside `lo` and inside `hi` neighbors already have a gap. The only new neighbors are
 ///    `lo`'s last piece `(l, a)` and `hi`'s first `(b, h)`.
 /// 3. If `b > a + 1` (`b.at_most_succ(a)` false), an integer is missing between them, so the
-///    joined list is maximal as it stands, and [`concat`] keeps the order and the pieces.
+///    joined list is maximal as it stands, and [`concat()`] keeps the order and the pieces.
 /// 4. If `b = a + 1` (the only other case, as `a < b`), the two touch, and the maximal list
 ///    has `(l, h)` in their place; `(l, h)` lies above every other piece of `lo` and below
 ///    every other piece of `hi` with a gap on each side, by step 2, so `join` keeps the
