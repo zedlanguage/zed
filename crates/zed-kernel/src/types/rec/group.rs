@@ -102,8 +102,8 @@ impl PartialOrd for ByShape {
 /// pair of classes, so the conjunction is the equality of `key()` and of the class sequences,
 /// the order's two parts. Taking `self.cmp(o).is_eq()` built the key tuples and compared two
 /// chained iterators in order for every node built: the bench "checking a body of unions" at 8n
-/// took 14,197 M instructions with it and 13,854 M with this test (PERF-check-body-of-unions-
-/// 5.7pct-main).
+/// took 14,197 M instructions with it and 13,854 M with this test
+/// (PERF-check-body-of-unions-5.7pct-main).
 impl PartialEq for ByShape {
     fn eq(&self, o: &Self) -> bool {
         let (a, b) = (&*self.0, &*o.0);
@@ -198,12 +198,13 @@ impl Node {
             // (PERF-row-hash-tied-digest).
             // One probe of the map per node: `get` and then `insert` on a miss hashed and
             // looked up the slot twice for every new node, part of the +5.7% instructions of
-            // checking a deep body of unions after 58e5bf7db (PERF-check-body-of-unions-5.7pct-
-            // main; the rest is `ByShape`'s equality). The map holds a second handle of `node` only when it is new:
-            // `at` is the number just taken, held by no key yet, so the class is `at` exactly
-            // when this call put the key there; otherwise the key passed in is dropped inside
-            // the call (`TiedMap::at` drops a key equal to one it holds), `node` has one
-            // handle again and its class can be set in place.
+            // checking a deep body of unions after 58e5bf7db
+            // (PERF-check-body-of-unions-5.7pct-main; the rest is `ByShape`'s equality). The
+            // map holds a second handle of `node` only when it is new: `at` is the number just
+            // taken, held by no key yet, so the class is `at` exactly when this call put the
+            // key there; otherwise the key passed in is dropped inside the call (`TiedMap::at`
+            // drops a key equal to one it holds), `node` has one handle again and its class
+            // can be set in place.
             let class = *numbering
                 .first
                 .get_or_insert_with(ByShape(node.clone()), || at);

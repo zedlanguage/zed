@@ -132,10 +132,11 @@ impl<K: std::hash::Hash> KeyHash<K> for ByHash {
 /// The ordered map is boxed so that a slot is no wider than its one key and value (plus the
 /// tag): unboxed, a `BTreeMap` (3 words) set the width of every slot of a map of small keys,
 /// and the table of slots holds one per key whether or not any key ties (test
-/// `digest::tests::a_slot_is_as_wide_as_one_key_and_value`). Measured on the bench "checking a body of unions" (l01_23 `deep_rec`),
-/// whose `Numbering::first` files every node: PERF-row-hash-tied-digest (58e5bf7db) took its
-/// bytes from 1,964 M to 2,099 M at 8n (PERF-check-body-of-unions-5.7pct-main). The box costs
-/// one allocation and one indirection per tied hash, which only a tie pays.
+/// `digest::tests::a_slot_is_as_wide_as_one_key_and_value`). Measured on the bench "checking a
+/// body of unions" (l01_23 `deep_rec`), whose `Numbering::first` files every node:
+/// PERF-row-hash-tied-digest (58e5bf7db) took its bytes from 1,964 M to 2,099 M at 8n
+/// (PERF-check-body-of-unions-5.7pct-main). The box costs one allocation and one indirection
+/// per tied hash, which only a tie pays.
 enum Slot<K, V> {
     One(K, V),
     #[expect(
