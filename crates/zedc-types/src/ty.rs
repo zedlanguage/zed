@@ -11841,15 +11841,36 @@ impl<'m, 's> Comparing<'m, 's> {
     /// this costs a second entry for each answer true, O(1) to make (a persistent map is
     /// copied by its root).
     fn keep(&self, key: Compared, ok: bool, b: &Binds) {
-        // Assumption, not proved (ASSUME-documented): the comparison `key` met again under `b`, the
-        // binding its true answer gave, gives `(true, b)` again, so the second entry may be read
-        // with no comparison. The argument in the doc above covers pieces bound through `accepts`
-        // at `Site::In`. It is not shown for the `Site::Other` fallback, which binds the first
-        // bindable variable without calling `admits`, so under `b` that variable may hold a piece
-        // its bound or ceiling would refuse. Evidence:
+        // Claim (ASSUME-documented; proved, given (F2) at `accepts` and the claim at
+        // `Cx::compared` that the key holds every input the comparison reads): the comparison
+        // `key` met again under `b`, the binding its true answer gave, gives `(true, b)` again,
+        // so the second entry may be read with no comparison. If false, a recalled `true` stands
+        // where the comparison would give false: unsound.
+        // Proof. The doc above covers pieces bound through `accepts` at `Site::In`. For the
+        // `Site::Other` fallback, which binds the first bindable variable without `admits`
+        // (row PROOF-sweep-zedc-types, b22-small11, 2026-11-23):
+        // (1) `admits(w)` (in `accepts`) never turns a refusal into an admit as `w`'s binding
+        //     grows. Its ceiling test reads `p` and the ceiling only. With `w` bound to
+        //     nothing it tests `piece_within(p, m)`, or `mw & !m == 0` for `p = Var(x)` with a
+        //     mask `mw`; bound to something that is not one variable with a mask, it tests
+        //     `piece_within(p, m)`, and refuses every `Var(x)` with a mask ((F1) at `accepts`:
+        //     no carrier); bound to one variable `x0` with a mask, it admits only `Var(x0)`
+        //     (`mask_carrier` is `None` by (F1)). Each test past the empty binding admits a
+        //     subset of what the empty one admits, and the bound and ceiling are part of `b`.
+        // (2) The first comparison reached the fallback at a binding within `b` ((F2): bindings
+        //     only grow), where no variable of `t` admitted `p`; by (1), none admits it under
+        //     `b`, whose binding of each variable holds that one.
+        // (3) So the fallback runs again on the same `t.vars` (the same node) and the same
+        //     bindable set, and picks the same first variable `v`, which `b` already binds to
+        //     a type holding `p`; `Binds::unite` of a piece already held is the same type
+        //     (`Ty::union` drops a piece it holds), so `b` comes back unchanged. Dropping the
+        //     search's pins there (`search.bound`) changes no binding. By induction over the
+        //     pieces in their order, every choice repeats and the answer is `(true, b)`.
+        // What this rests on: the bindable set reads `cx.bind_none` (in the key, `as_is`),
+        // `cx.rigid` and `cx.fns`, which the key does not hold; that they are the same where
+        // the entry is read is the claim at `Cx::compared`. Evidence:
         // `deep_ops::shared_payloads_with_a_variable_a_level_bind_each_once` (n from 1 to 6),
-        // `an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt`, benchmark 8.00x. If
-        // false, a recalled `true` stands where the comparison would give false: unsound.
+        // `an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt`, benchmark 8.00x.
         let mut cx = self.cx.borrow_mut();
         if cx.unchosen.is_none() {
             if ok {
