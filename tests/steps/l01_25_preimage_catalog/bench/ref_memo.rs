@@ -1,5 +1,6 @@
-//! The scaling half of `ref_memo.rs` (plan item PERF-ref-memo-quadratic): each of the 48
-//! families of the item's benchmark, the one-input shapes of PROOF-preimage-ref-chain-cost,
+//! The scaling half of `ref_memo.rs` (plan item PERF-ref-memo-quadratic): 55 families (the 53
+//! of `ref_memo::FAMILIES`, `random_chains` and `nested_moduli_eq_4096_at_6`): the families of
+//! the item's benchmark, the one-input shapes of PROOF-preimage-ref-chain-cost,
 //! the two-input threshold chains of PERF-ref-memo-multi-input, and the two-input chains of
 //! remainders of PERF-ref-memo-moduli-tables (also over the modulus),
 //! at n and 8n, held to the plan's limit

@@ -8,14 +8,14 @@
 //!   the points near every end of the input, of main's box and of the new one, and in
 //!   [-60, 60]. The other 182,327 calls give main's answer unchanged; the dump is 126 MB, so
 //!   that replay was run once, outside the tests (COMPLEXITY.md C56);
-//! - the scaling, in `bench::ref_memo`: each of the 48 families of the item's benchmark at n
-//!   and 8n, held to the plan's limit (`scaling::LIMIT`) in instructions and bytes, with no
-//!   wider limit for any family; each answer grows at most 8 times (`output_grid` demands four
-//!   values, 4n pieces).
-//!   The work of writing out a larger answer is held at one n by
+//! - the scaling, in `bench::ref_memo`: each of the 55 families (the 53 of [`FAMILIES`],
+//!   `random_chains` and `nested_moduli_eq_4096_at_6`) at n and 8n, held to the plan's limit
+//!   (`scaling::LIMIT`) in instructions and bytes, with no wider limit for any family; each
+//!   answer grows at most 8 times (`output_grid` demands four values, 4n pieces). None is
+//!   ignored. The work of writing out a larger answer is held at one n by
 //!   `output_grid_work_grows_with_its_answer`, and `nested_moduli_eq_4096` with its costly
-//!   constants next to the root at every n is ignored with its plan row,
-//!   REF-nested-moduli-state.
+//!   constants next to the root at every n by `nested_moduli_eq_4096_at_6_scales`
+//!   (REF-nested-moduli-state).
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;

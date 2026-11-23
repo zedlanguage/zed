@@ -134,17 +134,19 @@
 //! restrictions waiting (`Parts1d`, REF-nested-moduli-state) 12.07 and 8.12, against
 //! state growth (label pieces reaching the chain's input) of 12.1 and 8.84. Measured
 //! T(8n)/T(n), the
-//! larger of the instruction and byte ratios, over the 48 families of the scaling tests
-//! (`l01_25_preimage_catalog::ref_memo`, load about 37 on 32 cores): at most 10.6
-//! (`normal_abs_gap` at 16 links, the log term of the path copies of the persistent inverse
-//! tree; timed at 1024 links its test measures 9.67, row REF-normal-abs-gap), 9.0 to
-//! 10.4 on six more (`normal_min_gap`, `normal_round_down`,
-//! `pathological_abs`, `normal_holey_guards`, `normal_mod_chain`, `normal_div_chain`), under 9 on
-//! the rest; `output_grid` (four values demanded, 4n pieces) 8.0 from 64 to 512 links, and with
-//! 64 and 512 values demanded at 1024 links (8 times the pieces) 5.0 times the instructions and
-//! 5.7 times the bytes; `nested_moduli_eq_4096` 4.7 from 160 to 1280 links, multiples of 10 so
-//! that both put the same constants next to the root. Main exceeds 13 on 24 of the 38 families it
-//! finishes within 60 s (17.8 to 2,965), and 10 do not finish within 60 s. Main's answer dump
+//! larger of the instruction and byte ratios, over the 55 families of the scaling tests (the
+//! 53 of `l01_25_preimage_catalog::ref_memo::FAMILIES`, `random_chains` and
+//! `nested_moduli_eq_4096_at_6`; `bench::ref_memo`, 2026-11-22, after REF-abs-split-join):
+//! at most 9.79 (`normal_abs_gap` at 1024 links, bytes; the log term of the path copies of the
+//! persistent inverse tree, row PERF-ref-abs-gap-under-9), 9.0 to 9.6 on four more
+//! (`normal_min_gap` 9.53, `normal_holey_guards` 9.33, `normal_round_down` 9.02,
+//! `normal_mod_chain` 9.01), under 9 on the other 50 (at most 8.78, `nested_moduli_eq` from
+//! 128 to 1024 links); `output_grid` (four values demanded, 4n pieces) 8.05 from 64 to 512
+//! links, and with 64 and 512 values demanded at 1024 links (8 times the pieces) 5.11 times the
+//! instructions and 5.66 times the bytes; `nested_moduli_eq_4096` 6.91 from 160 to 1280 links,
+//! multiples of 10 so that both put the same constants next to the root. On the 48 families
+//! the item started with, main exceeds 13 on 24 of the 38 it finishes within 60 s (17.8 to
+//! 2,965), and 10 do not finish within 60 s. Main's answer dump
 //! (182,747 calls): 182,327 the same, 420 finer, none coarser or unsound. Size against main:
 //! 2,547 lines added and 117 removed, this section included.
 //!
