@@ -7269,9 +7269,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// and one renaming of all of them ([`Ty::replace_all`], [`Ty::renamed_all`]), whose memos
     /// make each shared row once: `O(distinct rows)`, the cost of one walk of each (7.86 at 8n,
     /// 30.8 s to 0.17 s at n = 4000; l01_26 bench
-    /// `a_generic_function_put_in_a_tuple_by_n_bindings_is_one_error_in_linear_time`). Checked
-    /// once, not committed: the answers equal those of the walks of each type, compared in every
-    /// program of l01_26, l01_26a, l01_29, l01_16 and zedc-check's own tests. Tradeoffs: none;
+    /// `a_generic_function_put_in_a_tuple_by_n_bindings_is_one_error_in_linear_time`). Checked:
+    /// in a debug build, in every program, the answers for the first [`TOPS_CHECKED`] top
+    /// values by name are compared with those of the walks of each type
+    /// ([`Self::check_tops_each`]), so in every test of l01_26, l01_26a, l01_29, l01_16 and
+    /// zedc-check's own tests. Tradeoffs: none;
     /// a program the proof below does not cover takes the walks of each type, as before.
     ///
     /// Proof that the answers are those of the walks of each type alone. [`Self::solving`] and
@@ -7308,7 +7310,39 @@ impl<'t, 'a> Ck<'t, 'a> {
             true => Ty::renamed_all(&solved, &self.names(facts.classes)),
             false => solved.iter().map(|t| self.shown(t)).collect(),
         };
+        #[cfg(debug_assertions)]
+        self.check_tops_each(&keys, &tys, &shown);
         keys.into_iter().zip(shown).collect()
+    }
+
+    /// The check of [`Self::shown_tops`] (debug builds, TEST-generic-shown-tops-equal): makes
+    /// the types of the first [`TOPS_CHECKED`] top values by name by walks of their own, as
+    /// before `shown_tops`, and asserts that each equals the one made with the others.
+    ///
+    /// Complexity tradeoff: naive version, every type walked alone, the `O(n^2)` work
+    /// `shown_tops` saves, which would make each scaling test of a program with many top values
+    /// quadratic in a debug build; and a limit on the number of types, which would check a
+    /// program at n and not at 8n and so lower the ratio a scaling test measures. Used: at most
+    /// `TOPS_CHECKED` walks, each of one type, so at most `TOPS_CHECKED` times the work of
+    /// `shown_tops`'s own walk, at every size, plus `O(k)` to choose them among `k` names.
+    /// Tradeoffs: a program with more top values is checked on the first `TOPS_CHECKED` only.
+    #[cfg(debug_assertions)]
+    fn check_tops_each(&self, keys: &[String], tys: &[Ty], shown: &[Ty]) {
+        let mut first: Vec<usize> = (0..keys.len()).collect();
+        if first.len() > TOPS_CHECKED {
+            first.select_nth_unstable_by_key(TOPS_CHECKED, |&i| &keys[i]);
+            first.truncate(TOPS_CHECKED);
+        }
+        for i in first {
+            let one = self.shown(&self.solved(&tys[i]));
+            assert!(
+                one == shown[i],
+                "the type of top value `{}` made with the others differs from the one made \
+                 alone: {:?} against {one:?}",
+                keys[i],
+                shown[i]
+            );
+        }
     }
 
     /// Decodes `NeedKind::Fwd` in `s` (and in the nested functions `s` holds) ONLY when
@@ -17563,6 +17597,12 @@ impl Ck<'_, '_> {
     }
 }
 
+/// How many top values' types [`Ck::check_tops_each`] makes alone in a debug build. Chosen,
+/// not measured: 8 covers every top value of most test programs, and keeps the check within 8
+/// times the work of the walk it checks, at every size.
+#[cfg(debug_assertions)]
+const TOPS_CHECKED: usize = 8;
+
 /// The check of the memo of rows that hold only lasting classes ([`Ck::clean`]), compiled only
 /// in a debug build and run only when the environment variable `ZEDC_CHECK_CLEAN` names a
 /// file: each [`Ck::unbound`] then also walks the whole type without the memo
@@ -18635,6 +18675,56 @@ mod tests {
         sig.data = true;
         sig.arrows[0].result = lookup;
         sig
+    }
+
+    /// TEST-generic-shown-tops-equal: [`Ck::shown_tops`] gives each top value the type the walks
+    /// of that type alone give, where a signature lists a class variable `$k` that no type of
+    /// it writes ([`VarFacts::unwritten_class`]) and another top value writes `$k`, solved to
+    /// `int`: the walk of all the types binds `$k` and the walk of the signature alone does not.
+    /// No program of the tests of l01_26, l01_26a, l01_29, l01_16 or this crate gives a top value
+    /// such a signature (probe of 2026-11-23), so the signatures are built here: `$k` bounded
+    /// only, bounded and own, and bounded, own and held by a parameter that does not write it.
+    #[test]
+    fn top_values_shown_together_equal_those_shown_alone_where_a_signature_lists_an_unwritten_class()
+     {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let tables = Tables::new(&[], &res);
+        let mut ck = checker(&tables);
+        let k = ck.class();
+        ck.classes[k].resolved = Some(Ty::carrier(Carrier::Int));
+        let v: Arc<str> = format!("${k}").into();
+        let int = Ty::carrier(Carrier::Int);
+        let classes = Carrier::Int.bit() | Carrier::F64.bit();
+        let listing = |own: bool, held: bool| {
+            let mut s = Sig::one_partial(positional(1), vec![int.clone()], int.clone());
+            s.bounds.insert(v.clone(), classes);
+            if own {
+                s.own.insert(v.clone());
+            }
+            if held {
+                s.held.insert(v.clone());
+            }
+            Ty::func(Arc::new(s))
+        };
+        for (own, held) in [(false, false), (true, false), (true, true)] {
+            let tops: HashMap<String, Ty> = [
+                ("f".to_owned(), listing(own, held)),
+                ("w".to_owned(), Ty::var(v.clone())),
+            ]
+            .into_iter()
+            .collect();
+            let tys: Vec<Ty> = tops.values().cloned().collect();
+            assert!(
+                Ty::var_facts_all(&tys).unwritten_class,
+                "own {own}, held {held}: the signature lists a class no type writes"
+            );
+            let shown = ck.shown_tops(tops.clone());
+            for (name, t) in &tops {
+                let alone = ck.shown(&ck.solved(t));
+                assert_eq!(shown[name], alone, "own {own}, held {held}: `{name}`");
+            }
+            assert_eq!(shown["w"], int, "own {own}, held {held}: `w` is solved");
+        }
     }
 
     /// Whether the float format of `p` significand bits, least exponent `least` (of the least
