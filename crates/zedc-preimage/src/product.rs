@@ -2945,6 +2945,30 @@ impl Lazy {
                     continue;
                 }
                 let held = s.view().summarize_free(term, names);
+                // A peeled summary over two inputs or more is one the whole term cannot have,
+                // so the whole is summarized instead
+                // (row FAIL-if-shortcut-seed-13376472606931704830). Proof: `let_summary` of a `let` term puts the term in
+                // `rest` (no arm of its loop matches `Term::Let`), and `rest` is read by
+                // `Tx::pa`, whose value is one `Pa` (`Pa::Const`, `Linear` or `Piecewise`, each
+                // over at most one `var`): a `Var` bound outside is read as
+                // `LetPa::force`, also one `Pa`. So the summary of `e` has `parts` empty and
+                // one term in its sum, and its `vars` (built in `LetPa::new` from the parts
+                // and the sum's keys) has at most one input; a summary over more differs from
+                // it. Reading a name through such a summary inverts each term of its sum by
+                // the hull of the others' bounds (`Tx::invert_sep`), which fills the holes in
+                // their values: `{ z = { w = 3; y - (if -2 <= x { 6 } else { 1 }) };
+                // if y mod 4 == z .. }` kept `y = 5` in the true arm, where `z` is `-1` or `4`,
+                // and the whole term, which has no summary, reads `z` exactly. The check costs
+                // nothing beyond the summary made; a peel given up costs the whole term's
+                // summary, as before item PA-walk-read-all, and only where the body sums
+                // values of two inputs or more, which no peeled form of `nest` does.
+                // Test: `l01_39_reduced_product::if_shortcut::
+                // a_peeled_block_summed_over_two_inputs_agrees_with_the_transfer`.
+                if peeled.is_some() && held.as_ref().is_some_and(|h| h.summary.vars().len() > 1) {
+                    *peeled = None;
+                    *free = None;
+                    continue;
+                }
                 *m = Making::Made(held);
                 todo.pop();
             } else {

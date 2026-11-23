@@ -245,6 +245,13 @@ fn one_pass_and_transfer_agree_at_seed_13376472606931704830() {
     );
 }
 
+/// Seed 108049985492391682 of [`one_pass_and_transfer_agree_on_random_blocks`]
+/// (FAIL-if-shortcut-seed-13376472606931704830, its second seed).
+#[test]
+fn one_pass_and_transfer_agree_at_seed_108049985492391682() {
+    blocks_agree(Rng::new(108_049_985_492_391_682), 108_049_985_492_391_682);
+}
+
 /// The block of seed 13376472606931704830 and its neighbors: `z103` bound to
 /// `if (-2 == z102) { 1 } else { 2 }` for `z102` each of `min(x, x)`, `max(x, x)`, `min(x, 3)`,
 /// `min(x, y)`, `x + 0` and `x * 1`, then a test of `x` against `-2 - z103`. The one pass and
@@ -739,3 +746,70 @@ fn a_chain_of_bindings_is_walked_and_dropped() {
 }
 
 mod bench;
+
+/// The block of seed 108049985492391682, reduced: `z111` bound to the block
+/// `{ z109 = 3; y - if (-2 <= x) { 6 } else { 1 } }`, then a test of `y mod 4 == z111`. The one
+/// pass peels the block and summarizes its body over `x` and `y`, a summary the whole block
+/// cannot have (one input at most, proof at `Lazy::get` in `product.rs`); reading `z111`
+/// through it inverted `y - s` by the hull `[1, 6]` of `s`, which kept `y = 5` (`z111` is `-1`
+/// or `4` there, and `5 mod 4` is `1`). Before the fix, on main: `y` in `[1..=9]` in the true
+/// arm against the transfer's `[1..=4, 6..=9]`. The neighbors bind `z109` to an `if`, to `y`, or
+/// read the block through another block, and one subtracts a literal, which peels over `y`
+/// alone and must keep the peel's answer.
+#[test]
+fn a_peeled_block_summed_over_two_inputs_agrees_with_the_transfer() {
+    let p = |op, a, b| prim(op, vec![a, b]);
+    let (x, y) = (|| var("x"), || var("y"));
+    let sel = || if_(p(Prim::Le, int(-2), x()), int(6), int(1));
+    let z109 = |t: Term, b: Term| let_("z109", if_(t, int(3), int(3)), b);
+    let yle6 = || p(Prim::Le, y(), int(6));
+    let blk = || let_("z110", y(), var("z110"));
+    let read = |b: Term| {
+        let_(
+            "z111",
+            b,
+            if_(
+                p(Prim::Eq, p(Prim::Mod, y(), int(4)), var("z111")),
+                int(1),
+                int(2),
+            ),
+        )
+    };
+    let cases = [
+        (
+            "the reduced block",
+            read(let_("z109", int(3), p(Prim::Sub, y(), sel()))),
+        ),
+        (
+            "the seed's block",
+            read(z109(yle6(), p(Prim::Sub, blk(), sel()))),
+        ),
+        (
+            "`z109` an `if` on `y`",
+            read(z109(yle6(), p(Prim::Sub, y(), sel()))),
+        ),
+        (
+            "`z109` an `if` on `x`",
+            read(z109(p(Prim::Le, x(), int(6)), p(Prim::Sub, y(), sel()))),
+        ),
+        (
+            "`y` read through a block",
+            read(let_("z109", int(3), p(Prim::Sub, blk(), sel()))),
+        ),
+        (
+            "`z109` bound to `y`",
+            read(let_("z109", y(), p(Prim::Sub, y(), sel()))),
+        ),
+        (
+            "a literal subtracted",
+            read(z109(yle6(), p(Prim::Sub, y(), int(6)))),
+        ),
+    ];
+    let scope = ints(&["x".into(), "y".into()]);
+    for (what, t) in cases {
+        let one = arms_and_value(&t, &scope);
+        if let Some(diff) = difference(&one, &arms_and_value_by_transfer(&t, &scope)) {
+            panic!("{what}, {t}: {diff}");
+        }
+    }
+}
