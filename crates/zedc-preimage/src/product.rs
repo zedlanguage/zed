@@ -2897,7 +2897,8 @@ impl Lazy {
     /// [`Lazy::peel_agrees`] passed and `P` reads at most one input), `P` and the summary `W`
     /// the transfer makes of the whole `e` in `outer` (the scope of `e`'s binding) read the
     /// same input (or `W` none, where its terms cancel), and take the same value at every
-    /// point of `outer`'s box where both have one. Write `V` for the names of `free(b)` other than `y`.
+    /// point of `outer`'s box where both have one. Write `V` for the names of `free(b)` other
+    /// than `y`.
     /// 1. How `W` reads a name. `let_summary(e, ..)` in `outer` matches no arm of its loop on
     ///    `Term::Let`, so `e` goes to `rest` and is read by `Tx::pa`, whose `pa_at` on
     ///    `Node::Let` reads `b` with `y` bound to `e'` in its environment. In `b`, an
