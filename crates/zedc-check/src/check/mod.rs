@@ -7256,6 +7256,61 @@ impl<'t, 'a> Ck<'t, 'a> {
         t.renamed(&self.names(t.var_facts().classes))
     }
 
+    /// Each of the types of the top values `tops` [`Self::solved`] and then [`Self::shown`],
+    /// the same types, made by one walk for all of them where that gives the same answer.
+    ///
+    /// Complexity tradeoff (GENERIC-nested-quadratic): naive version, as before, each type
+    /// solved and shown by walks of its own: the types of `t{i} = (t{i-1}, 1)` share their rows,
+    /// one deeper each, and each walk entered every row of its type, `O(n^2)` for `n` bindings
+    /// (78 times the work at 8n with `scale` generic, where its classes reach the bottom row;
+    /// probe of 2026-11-22, not committed: 40.0M of the Replacer's steps and 48.0M of
+    /// `VarFacts::tys`'s at n = 4000, all under this map). Used: the facts of all the types by
+    /// one walk ([`Ty::var_facts_all`]), the bindings of all their classes, and one replacement
+    /// and one renaming of all of them ([`Ty::replace_all`], [`Ty::renamed_all`]), whose memos
+    /// make each shared row once: `O(distinct rows)`, the cost of one walk of each (7.86 at 8n,
+    /// 30.8 s to 0.17 s at n = 4000; l01_26 bench
+    /// `a_generic_function_put_in_a_tuple_by_n_bindings_is_one_error_in_linear_time`). Checked
+    /// once, not committed: the answers equal those of the walks of each type, compared in every
+    /// program of l01_26, l01_26a, l01_29, l01_16 and zedc-check's own tests. Tradeoffs: none;
+    /// a program the proof below does not cover takes the walks of each type, as before.
+    ///
+    /// Proof that the answers are those of the walks of each type alone. [`Self::solving`] and
+    /// [`Self::names`] bind each variable by itself, so the bindings `U` made for all the types
+    /// agree with the bindings `B` made for one type `t` on every variable both bind, and `U`
+    /// binds besides only class variables not in `t`'s facts' `classes`. (1) A class variable
+    /// met in `t` is in `t`'s `classes` or `names`; it is in `names` alone only where a
+    /// signature in `t` lists it (own, bounded or held, or a forward's held or outer name,
+    /// which `VarFacts::of` adds to `names`) and no type of that signature writes it, and then
+    /// the facts of every type holding that signature have `unwritten_class`, and so the facts
+    /// of all the types. Where they lack it, every class variable met anywhere in `t` is in
+    /// `t`'s `classes`, so `U` and `B` bind alike every variable `t` holds (the generic
+    /// `scale` of the bench lists its own `$0`, which its arrow writes). The replacement reads its bindings only by such a
+    /// variable (`Replacer::bound`, `holds`, the variables a signature hides, `sig_of`) and in
+    /// the decoding of compact forwards (`Replacer::must_decode`), which also reads the
+    /// variables the bindings put in place (`targets`). (2) Where no function holds a compact
+    /// forward with internal results or held names (the facts' `internal` and `fwd_names`),
+    /// `must_decode_fwd` decodes only where a binding of a held outer variable or a held
+    /// class does, and those are among the facts' `names` (not classes, by (1)) or `classes`,
+    /// so bound alike; and [`Self::shown`] decodes none. The rows `U` rebuilds and `B` keeps
+    /// whole bind none of their variables, so are made equal. The same holds for the renaming
+    /// of the solved types with their facts. Otherwise each type is walked alone, as before.
+    fn shown_tops(&self, tops: HashMap<String, Ty>) -> HashMap<String, Ty> {
+        let alike = |f: &VarFacts| !f.internal && f.fwd_names.is_empty() && !f.unwritten_class;
+        let (keys, tys): (Vec<String>, Vec<Ty>) = tops.into_iter().unzip();
+        let facts = Ty::var_facts_all(&tys);
+        if !alike(&facts) {
+            let each = tys.iter().map(|t| self.shown(&self.solved(t)));
+            return keys.into_iter().zip(each).collect();
+        }
+        let solved = Ty::replace_all(&tys, &self.solving(&facts.classes));
+        let facts = Ty::var_facts_all(&solved);
+        let shown = match alike(&facts) {
+            true => Ty::renamed_all(&solved, &self.names(facts.classes)),
+            false => solved.iter().map(|t| self.shown(t)).collect(),
+        };
+        keys.into_iter().zip(shown).collect()
+    }
+
     /// Decodes `NeedKind::Fwd` in `s` (and in the nested functions `s` holds) ONLY when
     /// `s` holds an outer variable (`!s.holds_only_own_variables()`) alongside `NeedKind::Fwd`.
     /// Never decodes on top-level chain functions `h_i` (`O(1)` per link).
@@ -8490,10 +8545,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .map(|(k, s)| (k, self.finished_arc_with(&s, &mut made, &mut fwd_memo)))
             .collect();
         let tops = std::mem::take(&mut self.info.tops);
-        self.info.tops = tops
-            .into_iter()
-            .map(|(k, t)| (k, self.shown(&self.solved(&t))))
-            .collect();
+        self.info.tops = self.shown_tops(tops);
         self.copy_alike_keys();
         // A test whose `||` alternatives limit each other's ranges in a loop is rejected, not
         // warned of (DESIGN.md L1.39): one error at each such test, for its `true` outcome

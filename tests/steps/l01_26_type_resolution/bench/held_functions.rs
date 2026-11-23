@@ -223,7 +223,10 @@ fn a_function_in_many_nested_tuples_is_one_error_in_linear_time() {
 /// its parameter (`x * 2`, a bare literal taking the carrier of `x`): each binding `t{i} =
 /// (t{i-1}, 1)` instantiates the generic type of the binding before it, one tuple deeper, and
 /// generalizes it again. Copying each instantiation made the bindings cost `O(n^2)` in all
-/// (61.1 times the instructions at 8n, GENERIC-nested-quadratic, b22-misc3 2026-11-22).
+/// (61.1 times the instructions at 8n, GENERIC-nested-quadratic, b22-misc3 2026-11-22). Then
+/// the types of the top values, solved and shown each by walks of its own, entered every row
+/// below theirs, `O(n^2)` again (78.3 at 8n); `Ck::shown_tops` makes them by one walk (7.86,
+/// b22-misc8 2026-11-22).
 #[test]
 fn a_generic_function_put_in_a_tuple_by_n_bindings_is_one_error_in_linear_time() {
     let text = |n: usize| {

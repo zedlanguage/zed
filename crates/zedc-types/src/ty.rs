@@ -4604,6 +4604,14 @@ pub struct VarFacts {
     /// `Ck::finished_with` decodes it (`k(positional x) = y -> (x, y)` in `m.map(k)`, whose
     /// lambda reads `x`). ORed as `binds` is, O(h) for the h held names of each forward.
     pub fwd_unfinished: bool,
+    /// Whether a signature of the nest lists a class variable `$k` (own, bounded or held, or
+    /// a held name or outer variable of a forward it keeps) that no type of it writes, so
+    /// that `names` has it and `classes` lacks it. Where none does, every class variable of
+    /// `names` is in `classes`, of these facts and of those of each type that holds the
+    /// signature, whose `classes` take the signature's (`held`). ORed as `binds` is; O(log v)
+    /// for each variable a signature lists, beside the insert `add_to` makes for it.
+    /// `Ck::shown_tops` (zedc-check) reads it (GENERIC-nested-quadratic).
+    pub unwritten_class: bool,
 }
 
 impl VarFacts {
@@ -4666,6 +4674,15 @@ impl VarFacts {
                 }
             }
         }
+        // After every class is added: a listed class variable written nowhere in `s`.
+        let unwritten = |v: &Arc<str>| class_id(v).is_some() && !g.classes.contains(&**v);
+        let mut any = s.bounds.keys().chain(&s.own).chain(&s.held).any(unwritten);
+        for n in &s.needs {
+            if let NeedKind::Fwd(fwd) = &n.kind {
+                any |= fwd.held_names.iter().chain(&fwd.held_outer).any(unwritten);
+            }
+        }
+        g.unwritten_class |= any;
         g.free = g.free.max(s.named);
         while g.names.contains(&*var_name(g.free)) {
             g.free += 1;
@@ -4776,6 +4793,7 @@ impl VarFacts {
         self.binds |= f.binds;
         self.internal |= f.internal;
         self.fwd_unfinished |= f.fwd_unfinished;
+        self.unwritten_class |= f.unwritten_class;
     }
 
     /// Adds the variable `v` to its classes (`class`) or to its names, unless this walk has
@@ -16122,6 +16140,33 @@ impl Ty {
         let mut f = VarFacts::default();
         f.tys([self], &mut Added::default());
         f
+    }
+
+    /// Every variable in the types `tys` at any depth, as [`Self::var_facts`] gives those of
+    /// one, by one walk: a row or payload shape the types share is entered once for all of
+    /// them, not once for each type that holds it (GENERIC-nested-quadratic).
+    pub fn var_facts_all<'a>(tys: impl IntoIterator<Item = &'a Ty>) -> VarFacts {
+        let mut f = VarFacts::default();
+        f.tys(tys, &mut Added::default());
+        f
+    }
+
+    /// [`Self::replace`] of each of the types `tys` by the one walk: a row, payload shape or
+    /// function the types share is replaced once for all of them and the results share what
+    /// it was replaced by (GENERIC-nested-quadratic).
+    pub fn replace_all<'a>(tys: impl IntoIterator<Item = &'a Ty>, binds: &Binds) -> Vec<Ty> {
+        match binds.is_empty() {
+            true => tys.into_iter().cloned().collect(),
+            false => rebuild_tys(&mut Replacer::new(binds, Mode::Replace), tys),
+        }
+    }
+
+    /// [`Self::renamed`] of each of the types `tys` by one walk, as [`Self::replace_all`].
+    pub fn renamed_all<'a>(tys: impl IntoIterator<Item = &'a Ty>, names: &Binds) -> Vec<Ty> {
+        match names.is_empty() {
+            true => tys.into_iter().cloned().collect(),
+            false => rebuild_tys(&mut Replacer::new(names, Mode::Rename), tys),
+        }
     }
 
     /// Whether it holds a variable at any depth, inside functions and payloads too: at the cost
