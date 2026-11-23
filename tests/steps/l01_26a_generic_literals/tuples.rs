@@ -400,3 +400,47 @@ fn the_division_of_a_wide_tuple_is_one_rejection_naming_its_component() {
         assert!(call || e.contains("y[3] is 0.5\n"), "{e}");
     }
 }
+
+/// LIT-decimal-body: inside a function body that no use fixes, a `/` of integer literals alone
+/// is rejected with its menu, whether it is the result, a component of the result or a
+/// binding of a block, and each fix is accepted; a decimal there takes `f64` (DESIGN.md step
+/// L1.26b, author decision 2026-11-12), as it does at the top level
+/// (`an_unfixed_decimal_in_a_compound_value_takes_f64`).
+#[test]
+fn a_division_or_a_decimal_in_a_function_body_that_no_use_fixes() {
+    let literal = |line: &str| {
+        pairs(&[
+            (
+                &line.replacen("1 / 2", "1r / 2", 1),
+                "the literal is then exactly 1, a rat",
+            ),
+            (
+                &line.replacen("1 / 2", "1.0f64 / 2", 1),
+                "the literal is then the f64 1.0",
+            ),
+        ])
+    };
+    for line in ["g() = 1 / 2;", "g(positional c: bool) = (1 / 2, c);"] {
+        assert_eq!(checked(&format!("{line}\n")), literal(line), "{line}");
+    }
+    assert_eq!(
+        checked("g() = { q = 1 / 2; q };\n"),
+        pairs(&[
+            ("g() = { q = 1r / 2; q };", "q is 1r/2r"),
+            ("g() = { q = 1.0 / 2; q };", "q is 0.5"),
+            ("g() = { q = f64(1) / 2; q };", "q is 0.5"),
+        ])
+    );
+    let cases = [
+        ("g() = 0.5;\ny = g();\n", "0.5"),
+        (
+            "g(positional c: bool) = (0.5, c);\ny = g(true);\n",
+            "(0.5, true)",
+        ),
+        ("g() = { q = 0.5; q };\ny = g();\n", "0.5"),
+    ];
+    for (src, v) in cases {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+        assert_eq!(value(src, "y"), v, "{src}");
+    }
+}
