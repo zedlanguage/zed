@@ -522,6 +522,7 @@ fn concat(l: Link, r: Link) -> Link {
 ///    invariant.
 /// 5. `a` is finite in both cases: an upper end `+inf` has nothing above it, so `a < b` fails;
 ///    `succ` of a finite end is `a + 1`.
+///
 /// Test: `ordered_joins_agree_with_the_generic_union` (below, above, touching, overlapping and
 /// empty sets, each against `union` and `check_tree`), and its negative control, which joins
 /// overlapping sets the same way without the test and finds wrong unions.
@@ -1083,7 +1084,7 @@ impl IntervalSet {
 
     /// The union. A set that holds the other is returned shared. `O(m log(n/m + 1))` for
     /// `m <= n` pieces, by `union`; two sets one wholly below the other in `O(log n)` by
-    /// [`below_then`], with one path walked where `union` walks four.
+    /// `below_then`, with one path walked where `union` walks four.
     pub fn join(&self, other: &Self) -> Self {
         if let Some(root) =
             below_then(&self.root, &other.root).or_else(|| below_then(&other.root, &self.root))
