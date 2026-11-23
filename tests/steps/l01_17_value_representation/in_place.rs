@@ -377,8 +377,9 @@ fn an_exact_quotient_of_a_wide_number_is_refused_when_memory_is_short() {
         .unwrap();
     let t = bin(Prim::IntDiv, lit(Value::integer(amount)), num(3));
     lower_limit();
-    // Coefficients of `n + 2`, 1, 2 and 1 bits.
-    assert_eq!(too_large(&t, "div"), BigUint::from(WIDE + 6) << 4u32);
+    // Coefficients of `n + 2`, 1, 1 and 1 bits: the divisor 3, a word, is factored into `3^1`
+    // (KEPT-power-form, `Rat::words_factored`).
+    assert_eq!(too_large(&t, "div"), BigUint::from(WIDE + 5) << 4u32);
 }
 
 /// Comparing a wide amount with a price written as a rational, `wide < 0.5`, or negating it
