@@ -493,7 +493,7 @@ Type@14 ::: [T; n: _, c: 3] ::: ([ T ; (n : _) , (c : 3) ])
 Type@14 ::: [T; n + m] ::: ([ T ; (n + m) ])
 Type@14 ::: [T;] ::: ERROR
 Expr@11 ::: ((x: rat) -> x + 1)::source ::: ((( (( (x : rat) ) -> (x + 1)) )) (:: source))
-Expr@11 ::: (() -> f(3))::ast ::: ((( (( ) -> (f (( 3 )))) )) (:: ast))
+Expr@11 ::: (() -> f(3))::zir ::: ((( (( ) -> (f (( 3 )))) )) (:: zir))
 Expr@14 ::: v with layout(r, c) ::: (v (with (layout ( (r , c) ))))
 Expr@14 ::: v with layout(r,) ::: (v (with (layout ( (r ,) ))))
 Expr ::: fs[p] with retry(2, backoff: #exp(d, max: m)) ::: ((fs ([ p ])) (with (retry ( (2 , (backoff : (#exp (( (d , (max : m)) ))))) ))))

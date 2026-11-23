@@ -351,7 +351,7 @@ rows! {
         "Exported definition whose signature cannot be inferred without its call sites",
     LawBodyNotBool => "Law whose body is not exactly `bool`",
     LawProofCycle => "Laws whose proofs depend on each other in a cycle",
-    RunTimeReadsHint => "Run-time value that depends on a hint-kind fact or an `f::ast` read",
+    RunTimeReadsHint => "Run-time value that depends on a hint-kind fact or an `f::residual` read",
     GenericCallAtBuiltType => "Call of a generic definition at a type its body builds",
     ReadOfComputedValue => "Read of `::source` or `::shape` on a computed value",
     NoArrowAtCarrier => "Operator with no arrow at its operands' carrier",

@@ -317,7 +317,7 @@ fn table(design: &str) -> Vec<Row> {
 fn the_resolver_holds_every_word_and_type_of_the_table() {
     let rows = table(zed_tests::spec::design());
     assert!(rows.len() > 20, "the table has {} rows", rows.len());
-    // The first layer a name is listed at is its layer: `Ast` returns at L11 with members.
+    // The first layer a name is listed at is its layer: `ZirKind` returns at L11 with members.
     let mut words: BTreeMap<String, u32> = BTreeMap::new();
     let mut types: BTreeMap<String, u32> = BTreeMap::new();
     let mut listed: BTreeMap<String, u32> = BTreeMap::new();

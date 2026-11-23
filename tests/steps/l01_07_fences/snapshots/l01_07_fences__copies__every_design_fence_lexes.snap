@@ -471,11 +471,11 @@ expression: "tokens_by_key(&fences::design())"
   8 | | #union ( name : Utf8String | #none , members : [ Type ] )
   9 | | #morphism ( guarantee : Type , permission : Type , value : Type )
  10 | | #function ( params : [ Param ] , result : Type )
- 11 | | #refined ( base : Type , predicate : Ast )
+ 11 | | #refined ( base : Type , predicate : Zir )
  12 | | #negation ( of : Type )
  13 | | #intersection ( parts : [ Type ] ) ;
- 14 | «struct» Field { key : _ , name : Utf8String , valueType : Type , default : Ast | #none , facets : [ Ast ] }
- 15 | «struct» Param { name : Utf8String | #none , kind : #positional | #named , valueType : Type , default : Ast | #none }
+ 14 | «struct» Field { key : _ , name : Utf8String , valueType : Type , default : Zir | #none , facets : [ Zir ] }
+ 15 | «struct» Param { name : Utf8String | #none , kind : #positional | #named , valueType : Type , default : Zir | #none }
 == DESIGN.md [sec:introspection] 2 L11
   1 | encode ( «positional» v : T ) -> Utf8String = «match» T :: shape {
   2 | #struct ( fields : ) -> str["{"] ++ ( fields . map ( f -> quote ( f . name ) ++ str[": "] ++ encode ( v [ f . key ] ) ) >< ( ( a , b ) -> a ++ str[", "] ++ b ) «else» #empty -> str[] ) ++ str["}"] ,
@@ -500,11 +500,11 @@ expression: "tokens_by_key(&fences::design())"
   1 | «type» Proof = #eval
   2 | | #domain
   3 | | #rewrite ( rule : LawId , at : Path , bindings : Bindings )
-  4 | | #chain ( steps : [ Proof ] , claims : [ Ast ] )
-  5 | | #cases ( on : Ast , arms : Member -> Proof )
+  4 | | #chain ( steps : [ Proof ] , claims : [ Zir ] )
+  5 | | #cases ( on : Zir , arms : Member -> Proof )
   6 | | #induction ( on : Binder , base : Proof , step : Proof )
-  7 | | #use ( rule : LawId , args : [ Ast ] )
-  8 | | #implies ( assume : Ast , then : Proof )
+  7 | | #use ( rule : LawId , args : [ Zir ] )
+  8 | | #implies ( assume : Zir , then : Proof )
   9 | | #reflect ( sound : LawId )
  10 | | #assume ( why : Utf8String ) ;
 == DESIGN.md [sec:checking_in_zed] 1 L1
@@ -560,14 +560,14 @@ expression: "tokens_by_key(&fences::design())"
  27 | lattice : Lattice ( E ) ,
  28 | holds : ( ( E , V ) -> bool ) | #none where ( holds «is» #none ) == ( kind != #evidence ) = #none ,
  29 | transfer : ( _ , ( E , ) | ( E , E ) ) -> E ,
- 30 | abstract : ( ( Ast , Ast , ( Ast ) -> E ) -> E ) | #none = #none ,
+ 30 | abstract : ( ( Zir , Zir , ( Zir ) -> E ) -> E ) | #none = #none ,
  31 | project : ( _ , ( E , E ) | ( E , E , E ) , int [ 0₍10₎ ..= 2₍10₎ ] ) -> E = ( op , es , i ) -> «match» es {
  32 | ( a , _ ) -> «if» i == 1₍10₎ { transfer ( op , ( a , ) ) } «else» { lattice . top } ,
  33 | ( a , b , _ ) -> «if» i == 2₍10₎ { transfer ( op , ( a , b ) ) } «else» { lattice . top } ,
  34 | } ,
  35 | shares : ( E ) -> #constant ( V ) | #none = e -> #none ,
- 36 | show : ( ( E , Ast ) -> Ast ) | #none = #none ,
- 37 | reject : ( ( E , E , Ast ) -> Rejection ( _ ) ) | #none = #none ,
+ 36 | show : ( ( E , Zir ) -> Zir ) | #none = #none ,
+ 37 | reject : ( ( E , E , Zir ) -> Rejection ( _ ) ) | #none = #none ,
  38 | printedForm : #annotation | #with = #with ,
  39 | typeChange : ( Type ) -> Type = t -> t ,
  40 | removable : bool = «false» ,
@@ -617,9 +617,9 @@ expression: "tokens_by_key(&fences::design())"
  85 | } ,
  86 | }
  88 | «struct» Rejection ( «positional» W ) {
- 89 | site : Ast ,
+ 89 | site : Zir ,
  90 | witness : W ,
- 91 | menu : [ Ast ] ,
+ 91 | menu : [ Zir ] ,
  92 | }
 == DESIGN.md [sec:checking_in_zed] 3 L12
   1 | «type» Parity = #even | #odd | #either ;
