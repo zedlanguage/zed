@@ -280,7 +280,8 @@
 //! unit tests compare at every leaf setting. What depends on measurement and is to be measured
 //! again on the Zed code: the leaves [`MUL_LEAF`], [`DIV_LEAF`], [`RECIP_LEAF`], [`GCD_LEAF`],
 //! [`PRINT_HANDOFF`], [`PRINT_WHOLE`] and the cost constants [`TOOM_COST`], [`DIV_COST`],
-//! [`TRANSFORM_COST`], [`WRAP_COST`], [`SPARSE_WORD`], [`SPARSE_STEP`], [`CACHED_COST`];
+//! [`TRANSFORM_COST`], [`WRAP_COST`], [`SPARSE_WORD`], [`SPARSE_RUN`], [`SPARSE_STEP`],
+//! [`CACHED_COST`];
 //! the benchmark `crossover all` (crate zed-benches) measures each against its crossover.
 //! [`HALF_LEAF`] and [`PRINT_LEAF`] are derived, not measured. The Rust constructs that need
 //! a Zed form are listed in ZED_PORT_GAPS.md, sections "Entries from NUM-subquad", "Entries from
@@ -534,8 +535,28 @@ const WRAP_COST: f64 = 10.0;
 /// `crossover div-rows`) with [`SPARSE_STEP`] at 20: long division and the reciprocal cross at
 /// 240 words, which 1.68 to 1.72 puts at the crossover, so 1.7. Kept at 1.7 when
 /// [`SPARSE_STEP`] was fitted (2026-11-22, below): `div-rows` alone then puts it at 1.32 to
-/// 1.34, but that pair does 1.33 times the less work on the sparse divisors.
-const SPARSE_WORD: f64 = 1.7;
+/// 1.34, but that pair does 1.33 times the less work on the sparse divisors. Refitted with
+/// [`SPARSE_RUN`] (DIV-crossover-model, 2026-11-23): the dense divisors of `crossover div-rows`
+/// (one run) cross at 374 to 378 words, where [`newton_cost`] is 598 a quotient word, so
+/// `SPARSE_STEP + 378 SPARSE_WORD + SPARSE_RUN = 598` with the step at 45: 1.46. The timings
+/// agree: 3.2 ns a word of a dense divisor of 1024 words, 8.5 ns a nonzero word of a sparse one.
+const SPARSE_WORD: f64 = 1.46;
+/// The cost of a run of consecutive nonzero words of the divisor in a step of
+/// [`sparse_div_rem`], besides its words, in the units of [`TRANSFORM_COST`]: where a run
+/// ends, the carry is subtracted by `sub_at` and the next word read from a scattered index, so
+/// a divisor whose nonzero words lie apart costs more per word than a dense one (8.5 ns
+/// against 3.2 ns on 2026-11-23). Without this term no pair ([`SPARSE_WORD`], [`SPARSE_STEP`])
+/// met both kinds (MEASURE-sparse-step-fit). Fitted (DIV-crossover-model, 2026-11-23, std
+/// Colab VM, processor time) from the crossovers of `crossover div-sparse 1024` at 126 nonzero
+/// words (a run each), [`newton_cost`] 487 a quotient word, and `div-sparse 1024 16` at 40,
+/// 185.5 a quotient word: `SPARSE_WORD + SPARSE_RUN = (487 - 185.5) / (126 - 40) = 3.51`, so
+/// 3.51 - 1.46 = 2.05, and `SPARSE_STEP = 185.5 - 40 × 3.51 = 45`. The model then puts the
+/// crossover of `div-sparse 2048` at 139 nonzero words (measured 126 to 128, where the two
+/// methods' times differ by 0.5%) and of `div-sparse 256` at 100 (measured between 64 and
+/// 128). Over the quotient's words the reciprocal measured 112, 128 and 135 times a sparse word
+/// at 256, 1024 and 2048 words, and [`newton_cost`] gives 396, 487 and 532 units: one ratio,
+/// 3.5 to 3.9, so `newton_cost` needs no change.
+const SPARSE_RUN: f64 = 2.05;
 /// The cost of a step of [`sparse_div_rem`] besides its words, in the units of
 /// [`TRANSFORM_COST`] ([`SPARSE_WORD`]). It was 20 from the 2026-11-05 timings (NUM-subquad).
 /// Fitted on 2026-11-22 (MEASURE-sparse-step-fit) by `crossover div-sparse w`, `2w - 1` by `w`
@@ -553,8 +574,11 @@ const SPARSE_WORD: f64 = 1.7;
 /// long division or the reciprocal in [`div_rem_past_leaf`], num-bigint or
 /// [`div_rem_past_leaf`] in [`num_bigint_divides`], and the blocks or not in
 /// [`rem_takes_blocks`]; so a wrong value costs time and never an answer. `crossover div-leaf`
-/// and `rem-leaf` gave the same counts with 20 and with 100.
-const SPARSE_STEP: f64 = 100.0;
+/// and `rem-leaf` gave the same counts with 20 and with 100. Refitted to 45 with
+/// [`SPARSE_RUN`] (DIV-crossover-model, 2026-11-23, see there): the per-word cost that grew
+/// with the width was the runs' cost, which a step constant could only average. The timings
+/// agree: 73 to 100 ns a step besides its words, against 8.5 ns a sparse word.
+const SPARSE_STEP: f64 = 45.0;
 
 /// The number of 64-bit words of `x`.
 fn words(x: &BigUint) -> usize {
@@ -1220,6 +1244,19 @@ fn transform_plan(short: usize, long: usize) -> (f64, usize) {
 /// The nonzero 64-bit words of `x`.
 fn nonzero_words(x: &BigUint) -> usize {
     x.iter_u64_digits().filter(|&d| d != 0).count()
+}
+
+/// The nonzero 64-bit words of `x` and the runs of consecutive ones they form, the shape
+/// [`sparse_div_cost`] reads. O(words(x)), as [`nonzero_words`].
+fn nonzero_runs(x: &BigUint) -> (usize, usize) {
+    let (mut nonzero, mut runs, mut last) = (0, 0, false);
+    for d in x.iter_u64_digits() {
+        let here = d != 0;
+        nonzero += usize::from(here);
+        runs += usize::from(here && !last);
+        last = here;
+    }
+    (nonzero, runs)
 }
 
 /// `a * b`. When the narrower factor has at most `MUL_LEAF` (400) words, by num-bigint's
@@ -2096,14 +2133,13 @@ pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
 /// most [`past_leaf_cost`].
 fn num_bigint_divides(qw: usize, b: &BigUint) -> bool {
     let bw = words(b);
-    num_bigint_div_cost(qw, bw) <= past_leaf_cost(qw, bw, nonzero_words(b))
+    num_bigint_div_cost(qw, bw) <= past_leaf_cost(qw, b)
 }
 
-/// The cost of [`div_rem_past_leaf`] for a quotient of `qw` words by a divisor of `bw` words,
-/// `nonzero` of them nonzero: the cheaper of long division over the nonzero words and the
-/// division by a reciprocal.
-fn past_leaf_cost(qw: usize, bw: usize, nonzero: usize) -> f64 {
-    sparse_div_cost(qw, nonzero).min(newton_cost(qw, bw))
+/// The cost of [`div_rem_past_leaf`] for a quotient of `qw` words by the divisor `b`: the
+/// cheaper of long division over the nonzero words and the division by a reciprocal.
+fn past_leaf_cost(qw: usize, b: &BigUint) -> f64 {
+    sparse_div_cost(qw, b).min(newton_cost(qw, words(b)))
 }
 
 /// [`div_rem`] above [`DIV_LEAF`], for `a >= b`: the cheaper of long division over the
@@ -2115,7 +2151,7 @@ fn div_rem_past_leaf(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     // computed costs is taken, with no size constant, and both give the same result. Tested
     // by `a_sparse_division_scales` and `quotients_agree_with_num_bigint` (COMPLEXITY.md K30).
     let (aw, bw) = (words(a), words(b));
-    if sparse_div_cost(aw - bw + 1, nonzero_words(b)) <= newton_cost(aw - bw + 1, bw) {
+    if sparse_div_cost(aw - bw + 1, b) <= newton_cost(aw - bw + 1, bw) {
         return sparse_div_rem(a, b);
     }
     div_rem_by_reciprocal(a, b)
@@ -2178,7 +2214,7 @@ fn rem_takes_blocks(a: &BigUint, b: &BigUint) -> bool {
     }
     let (qw, bw) = (words(a) - words(b) + 1, words(b));
     let blocks = newton_cost(qw, bw);
-    blocks < num_bigint_div_cost(qw, bw) && blocks < sparse_div_cost(qw, nonzero_words(b))
+    blocks < num_bigint_div_cost(qw, bw) && blocks < sparse_div_cost(qw, b)
 }
 
 /// [`div_rem`] of a quotient wider than the divisor `b`: `a` is read from the top in blocks of
@@ -2189,10 +2225,12 @@ fn div_rem_blocks(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     Divisor::new(Cow::Borrowed(b), a.bits()).div_rem(a)
 }
 
-/// The cost of [`sparse_div_rem`] of a quotient of `qw` words by a divisor with `nonzero`
-/// nonzero words, by [`SPARSE_WORD`] and [`SPARSE_STEP`] (where each comes from).
-fn sparse_div_cost(qw: usize, nonzero: usize) -> f64 {
-    (qw as f64 + 1.0) * (SPARSE_WORD * nonzero as f64 + SPARSE_STEP)
+/// The cost of [`sparse_div_rem`] of a quotient of `qw` words by the divisor `b`, by its
+/// nonzero words and their runs ([`nonzero_runs`]): [`SPARSE_WORD`] a nonzero word,
+/// [`SPARSE_RUN`] a run and [`SPARSE_STEP`] a step (where each comes from). O(words(b)).
+fn sparse_div_cost(qw: usize, b: &BigUint) -> f64 {
+    let (nonzero, runs) = nonzero_runs(b);
+    (qw as f64 + 1.0) * (SPARSE_WORD * nonzero as f64 + SPARSE_RUN * runs as f64 + SPARSE_STEP)
 }
 
 /// The cost of [`div_rem`] by a reciprocal of a quotient of `qw` words by a divisor of `bw`,
@@ -3617,7 +3655,7 @@ fn divisor_way(d: &BigUint, a_bits: u64) -> Way {
     if n <= DIV_LEAF || num_bigint_divides(qw, d) {
         return Way::Leaf;
     }
-    if sparse_div_cost(qw, nonzero_words(d)) <= newton_cost(qw, len) {
+    if sparse_div_cost(qw, d) <= newton_cost(qw, len) {
         return Way::Sparse;
     }
     let (linear, cyclic) = level_points(n, n);
@@ -4598,6 +4636,8 @@ pub mod crossover {
     pub const SPARSE_WORD: f64 = super::SPARSE_WORD;
     /// `super::SPARSE_STEP` as built.
     pub const SPARSE_STEP: f64 = super::SPARSE_STEP;
+    /// `super::SPARSE_RUN` as built.
+    pub const SPARSE_RUN: f64 = super::SPARSE_RUN;
     /// `super::CACHED_COST` as built.
     pub const CACHED_COST: f64 = super::CACHED_COST;
 
@@ -4689,8 +4729,7 @@ pub mod crossover {
     /// `a / b`, rather than the reciprocal; `a >= b > 0`.
     pub fn div_by_rows(a: &BigUint, b: &BigUint) -> bool {
         let (aw, bw) = (super::words(a), super::words(b));
-        super::sparse_div_cost(aw - bw + 1, super::nonzero_words(b))
-            <= super::newton_cost(aw - bw + 1, bw)
+        super::sparse_div_cost(aw - bw + 1, b) <= super::newton_cost(aw - bw + 1, bw)
     }
 
     /// Whether `super::div_rem` takes num-bigint's division for `a / b`; `a >= b > 0`.
@@ -4708,7 +4747,7 @@ pub mod crossover {
         }
         let (aw, bw) = (super::words(a), super::words(b));
         let qw = aw - bw + 1;
-        let past = super::past_leaf_cost(qw, bw, super::nonzero_words(b));
+        let past = super::past_leaf_cost(qw, b);
         Some(past / super::num_bigint_div_units(qw, bw))
     }
 
@@ -4748,18 +4787,22 @@ pub mod crossover {
         let (aw, bw) = (super::words(a), super::words(b));
         let q = (aw - bw + 1) as f64;
         let newton = super::newton_cost(aw - bw + 1, bw);
-        Some((newton / (q + 1.0) - super::SPARSE_STEP) / super::nonzero_words(b) as f64)
+        let (k, runs) = super::nonzero_runs(b);
+        let rest = super::SPARSE_STEP + super::SPARSE_RUN * runs as f64;
+        Some((newton / (q + 1.0) - rest) / k as f64)
     }
 
     /// The value of `super::SPARSE_STEP` at which [`div_rem_past_leaf`] changes method for
-    /// `a / b`, with `super::SPARSE_WORD` as built: long division at or below it, the
-    /// reciprocal above; `a >= b > 0`. From `sparse_div_cost(q, k) <= newton_cost`, that is
-    /// `(q + 1) (SPARSE_WORD k + SPARSE_STEP) <= newton`, solved for `SPARSE_STEP`.
+    /// `a / b`, with `super::SPARSE_WORD` and `super::SPARSE_RUN` as built: long division at
+    /// or below it, the reciprocal above; `a >= b > 0`. From `sparse_div_cost(q, b) <=
+    /// newton_cost`, that is `(q + 1) (SPARSE_WORD k + SPARSE_RUN r + SPARSE_STEP) <= newton`
+    /// for `k` nonzero words in `r` runs, solved for `SPARSE_STEP`.
     pub fn step_flip(a: &BigUint, b: &BigUint) -> Option<f64> {
         let (aw, bw) = (super::words(a), super::words(b));
         let q = (aw - bw + 1) as f64;
         let newton = super::newton_cost(aw - bw + 1, bw);
-        Some(newton / (q + 1.0) - super::SPARSE_WORD * super::nonzero_words(b) as f64)
+        let (k, runs) = super::nonzero_runs(b);
+        Some(newton / (q + 1.0) - super::SPARSE_WORD * k as f64 - super::SPARSE_RUN * runs as f64)
     }
 
     /// A factor whose spectra are kept for products with numbers of at most `other` words
@@ -4987,6 +5030,33 @@ mod tests {
         w.resize(words, 0);
         w[words - 1] |= 1;
         from_words(w)
+    }
+
+    /// 200 nonzero words of a divisor of 1024, by a quotient of 1024 words: in one run long
+    /// division is cheaper, spread one apart the reciprocal is, as `crossover div-sparse 1024`
+    /// measured (DIV-crossover-model: 181 spread words took 0.68 times long division's time by
+    /// the reciprocal; dense words cost 3.2 ns each against 8.5 ns spread). Until SPARSE_RUN
+    /// both took long division.
+    #[test]
+    fn runs_of_nonzero_words_decide_long_division_or_the_reciprocal() {
+        let (w, k) = (1024usize, 200usize);
+        let divisor = |at: &dyn Fn(usize) -> usize| {
+            let mut words = vec![0u64; w];
+            for i in 0..k {
+                words[at(i)] = (0x9e37_79b9_7f4a_7c15 ^ i as u64) | 1;
+            }
+            words[w - 1] |= 1 << 63;
+            from_words(words)
+        };
+        let run = divisor(&|i| w - k + i);
+        let spread = divisor(&|i| i * (w - 1) / (k - 1));
+        assert_eq!(nonzero_runs(&run), (k, 1));
+        assert_eq!(nonzero_runs(&spread), (k, k));
+        assert_eq!(nonzero_runs(&BigUint::from(0b1011u32)), (1, 1));
+        assert_eq!(nonzero_runs(&((BigUint::one() << 128u32) + 1u32)), (2, 2));
+        let reciprocal = newton_cost(w, w);
+        assert!(sparse_div_cost(w, &run) < reciprocal, "one run");
+        assert!(sparse_div_cost(w, &spread) > reciprocal, "spread");
     }
 
     #[test]

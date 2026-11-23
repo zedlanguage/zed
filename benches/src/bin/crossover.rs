@@ -24,8 +24,8 @@
 //! - `div-rows`: `SPARSE_WORD` and `SPARSE_STEP`, long division over the divisor's nonzero
 //!   words against the division by a reciprocal, `2w - 1` by `w` dense words; `div-rows step`
 //!   fits `SPARSE_STEP` on the same divisors.
-//! - `div-sparse [w [q]]`: `SPARSE_STEP`, the same two methods on `(q + 1) w - 1` by `w` words
-//!   of which `k` are nonzero, from 2 (the kept power `2^(64w - 1) + 1`) to `w`; for `q` above
+//! - `div-sparse [w [q]]`: `SPARSE_STEP` with `SPARSE_RUN`, the same two methods on
+//!   `(q + 1) w - 1` by `w` words of which `k` are nonzero, spread evenly, from 2 (the kept power `2^(64w - 1) + 1`) to `w`; for `q` above
 //!   1 the reciprocal at every block (256, 1024 and 2048 with `q` = 1, and `1024 16`, in `all`).
 //! - `recip`: `RECIP_LEAF`, a reciprocal of `p` bits started from num-bigint's division at `p`
 //!   bits against one Newton step from there (the leaf at `p` against at `p - 1`).
@@ -567,7 +567,11 @@ fn div_sparse(args: &[String]) -> ExitCode {
             1 => format!("div-sparse {w}"),
             _ => format!("div-sparse {w} {q}"),
         },
-        &format!("SPARSE_STEP, SPARSE_WORD {}", x::SPARSE_WORD),
+        &format!(
+            "SPARSE_STEP, SPARSE_WORD {}, SPARSE_RUN {}",
+            x::SPARSE_WORD,
+            x::SPARSE_RUN
+        ),
         &ladder(2, w, 2),
         TOLERANCE,
     );
