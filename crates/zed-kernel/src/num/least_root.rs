@@ -18,10 +18,10 @@ use crate::num::{mul_uint, pow_uint, sqrt_rem_uint, trees};
 /// whether it is one (num-bigint's `sqrt`, taken here until PERF-wide-odd-base-ratio-9, is
 /// above O(M(n)), so this bound did not hold: 34.5 times the time for 8 times the bits at
 /// 13.3M bits); then each odd prime `p` below the bits of `b` is tried as the index of
-/// a root ([`OddPart::root`]), and tried again after it succeeds. A root found for a larger
+/// a root (`OddPart::root`), and tried again after it succeeds. A root found for a larger
 /// prime is no power of a smaller one, since `b` would then have been. An index whose root
 /// fits in a word costs `O(log p)` word operations; a wider one is first tested by residues
-/// ([`OddPart::passes`], all from one remainder tree), and one that passes costs a 2-adic root
+/// (`OddPart::passes`, all from one remainder tree), and one that passes costs a 2-adic root
 /// of `bits / p` bits. So the cost is at most `O(M(n) log n)` for `n` the bits of `b` and `M(n)`
 /// the cost of a product of `n` bits, whatever the exponent `b` is raised to, and near `M(n)`
 /// when the residues reject most indices; a found root, or an index that passes the filters
