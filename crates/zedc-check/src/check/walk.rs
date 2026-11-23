@@ -7282,7 +7282,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .map(|w| Note {
                 span: e.span,
                 // Only `rat` finds a zero division ([`Self::lit_zero_divisions`]).
-                text: format!("`{w}` meets a `rat`, so it is a `rat`"),
+                text: format!("`{w}` meets a `rat`, so it is a `rat`").into(),
             });
         for x in zeros {
             let ExprKind::Binary(BinaryOp::Div, a, b) = &x.kind else {
