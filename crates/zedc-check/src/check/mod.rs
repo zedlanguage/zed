@@ -631,7 +631,7 @@ pub struct Info {
     /// class (at a carrier its entry lists no value for, as `int` for the `2` of `g(positional
     /// x) = x + 2` called as `g(1)`): the instance of the body where it is its own `int` is
     /// reached, and the widening pass reads it there (DESIGN.md sec:domains; plan row
-    /// WIDEN-generic-literal-op-int-instance). [`Ck::own_follows`] finds them.
+    /// WIDEN-generic-literal-op-int-instance). `Ck::own_follows` finds them.
     pub follows_own: HashSet<Span>,
     /// Each generic literal of [`Self::follows`] that has no other operand to take its carrier
     /// from, by its span: a call's argument, an `if` branch, an operand of an operator whose
