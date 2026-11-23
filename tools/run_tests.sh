@@ -1272,6 +1272,11 @@ split="
 # private quotients 5.2 and 3.9 s, the test of every split of the moduli 2.5 s and the 25 tests of
 # every writing at one seed 2.0 to 4.3 s each (65 s together). Each is now a piece, which leaves
 # the other piece 81 s of wall time spread over its threads (TEST-presburger-unit-piece-probe-order).
+# zedc_check's piece stopped at its limit alone (rc=124, 20059 ms, on hm1, 8 cores, load 4.0,
+# b22-checkrest8, 2026-11-22). Each of its 183 tests alone on hm1 (tools/time_tests.sh, load 1.2
+# to 1.6): the 30 below took 133 s together, 1.0 to 7.8 s each (the slowest
+# landing6_battery_top), and the other 153 took 6.0 s together. Each of the 30 is now a piece
+# (FAIL-four-pieces-over-20s-alone-on-main).
 alone="
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_1
   zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_2
@@ -1303,6 +1308,36 @@ alone="
   zedc_presburger::presburger::exact::tests::read_once_formulas_project_to_the_values_of_their_points
   zedc_presburger::presburger::exact::tests::every_writing_of_a_formula_gets_one_answer
   zedc_presburger::presburger::probe_order::probe_leaves_the_same_parts_in_every_order
+  zedc_check::check::r10_tests::landing5_chain_decode_grid
+  zedc_check::check::r10_tests::landing6_battery::landing6_battery_held
+  zedc_check::check::r10_tests::landing6_battery::landing6_battery_held_holding
+  zedc_check::check::r10_tests::landing6_battery::landing6_battery_top
+  zedc_check::check::r10_tests::landing6_battery::landing6_battery_top_nested
+  zedc_check::check::r10_tests::landing6_battery::landing6_battery_top_shared
+  zedc_check::check::r10_tests::landing8_first_seen_decodes_functions_nested_deep_on_a_small_stack
+  zedc_check::check::r10_tests::r10_chain2_siblings_wide_skip_set_scale
+  zedc_check::check::r10_tests::r10_forward_sweep_of_leaves_depths_and_siblings_agrees_with_e
+  zedc_check::check::r10_tests::r10_generalize_runs_against_a_wide_skip_set_scale
+  zedc_check::check::r10_tests::r10_m62_op_counts_per_link_f_and_lambda
+  zedc_check::check::r10_tests::r10_m66_chains_f_2_to_60
+  zedc_check::check::r10_tests::r10_m66_chains_f_61_to_79
+  zedc_check::check::r10_tests::r10_m66_chains_f_80_to_92
+  zedc_check::check::r10_tests::r10_m66_chains_f_93_to_100
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_2_to_36
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_37_to_47
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_48_to_53
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_54_to_58
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_59_to_65
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_66_to_71
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_72_to_76
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_77_to_80
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_81_to_84
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_85_to_87
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_88_to_90
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_91_to_93
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_94_to_96
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_97_to_98
+  zedc_check::check::r10_tests::r10_m66_chains_lambda_99_to_100
   zedc_presburger::presburger::modular::r4_tests::private_quotients_match_enumeration_and_the_model_path
   zedc_presburger::presburger::modular::r4_tests::private_quotients_match_concrete_models_on_small_systems
   zedc_presburger::presburger::modular::r7_tests::every_split_of_the_moduli_decides_a_regime_as_testing_each_point_does

@@ -237,13 +237,13 @@ impl Ports {
             match ev.world.log(name) {
                 [] => {}
                 [v] => writes.push((name.clone(), join_lines(name, v)?)),
+                // The checker rejects two pushes to one port that may both run in one run
+                // (step L1.19, `zedc_check::check::twice`), so a run that pushes twice is a
+                // bug in zedc's count, stopped here rather than written in some order.
                 pushes => {
                     return Err(format!(
-                        "`{name}` was pushed to {} times in this run, and it takes one push per \
-                         run, which holds everything it writes. Gather \
-                         the lines into one family of strings and push it once, as `{name} <- \
-                         lines;`, where `lines` holds one entry per line; a push in a branch \
-                         that does not run does not count.",
+                        "`{name}` was pushed to {} times in this run, which the checker should \
+                         have rejected: a bug in zedc.",
                         pushes.len()
                     ));
                 }

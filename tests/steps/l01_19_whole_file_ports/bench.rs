@@ -166,6 +166,24 @@ fn a_chain_of_expression_statements_is_checked_in_linear_time() {
     });
 }
 
+/// A function of n output ports, each pushed in an `if` of its own, then one pushed again, is
+/// checked in O(n log n) time: the branches share one map of the ports pushed, the
+/// longer one's changes kept (`check::twice`); copied at each `if`, it took O(n^2). The whole
+/// check is timed. Small instance: `ports::many_ports_each_pushed_in_an_if_are_counted`.
+#[test]
+fn many_ports_each_pushed_in_an_if_are_counted_in_n_log_n_time() {
+    let n = 3_000;
+    let units = inputs(n, |m| {
+        let text = ports::wide_ports(m, true);
+        let (stmts, res) = resolved(&text);
+        (text, stmts, res)
+    });
+    check_order("checking n ports each pushed in an if", n, 1, |m| {
+        let (text, stmts, res) = &units[&m];
+        ports::counts_the_wide_ports(text, stmts, res, m, true);
+    });
+}
+
 /// Small instance: `sharing::a_wave_and_its_replay_share_the_input`.
 #[test]
 fn a_wave_over_n_lines_and_its_replay_share_the_input_and_scale() {

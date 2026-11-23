@@ -32,6 +32,9 @@ pub struct Ports {
     /// Each push to a name that is not a port, as `errors` (row "Push to a name that is not a
     /// port", DESIGN.md sec:ports, "What a push may name").
     pub not_ports: Vec<(Span, String, Vec<Note>)>,
+    /// The text of the argument of each call of a declared function that fills a parameter,
+    /// by the text of the call and the parameter's binder ([`super::twice`]).
+    pub args: HashMap<(Span, usize), Span>,
 }
 
 /// What an argument of a call of a declared function fills.
@@ -405,11 +408,13 @@ pub fn ports(t: &Tables<'_>) -> Ports {
         }
     }
     let writers = outs.into_keys().collect();
+    let args = args.iter().map(|a| ((a.call, a.param), a.span)).collect();
     Ports {
         params,
         writers,
         errors,
         not_ports,
+        args,
     }
 }
 

@@ -137,13 +137,23 @@ fn a_run_within_its_processor_time_runs_and_one_past_it_stops_with_status_3() {
 
 #[test]
 fn a_run_within_its_deadline_runs_and_one_past_it_stops_with_status_3() {
-    let (file, exe) = program("timeout", &power_program("@timeout(1r/2r)", 3));
+    // The deadline is wall-clock time from the process's start (`zed_rt::limits::deadline`),
+    // so for `zedc run` it also covers reading and checking the file, and on a loaded machine
+    // that alone can pass 0.5 s: at load 129 on 24 cores the run of `3 ^ 10` was stopped with
+    // status 3 (plan row FAIL-limits-binary-deadline-under-load, 2026-11-22). The language
+    // defines `@timeout` in seconds, so the test cannot count steps instead; it bounds the
+    // within-deadline run instead. Its deadline is 60 s, the `timeout 60` each child runs
+    // under, so the deadline can stop that run only where `timeout` stops it too (status 124
+    // or 3, a failure either way), and load can no longer fail it alone. The past-deadline run
+    // keeps the 0.5 s deadline and checks the same status and message as before.
+    let (file, exe) = program("timeout_far", &power_program("@timeout(60)", 3));
     for (engine, got) in ["zedc run", "executable"]
         .iter()
         .zip(both(&file, &exe, "10"))
     {
         assert_eq!(got, (Some(0), "59049\n".into(), String::new()), "{engine}");
     }
+    let (file, exe) = program("timeout", &power_program("@timeout(1r/2r)", 3));
     for (engine, got) in ["zedc run", "executable"]
         .iter()
         .zip(both(&file, &exe, "100000000"))

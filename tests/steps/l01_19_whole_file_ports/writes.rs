@@ -56,24 +56,71 @@ fn an_error_stops_the_wave_before_anything_is_written() {
     assert_eq!(out.stdout, "");
 }
 
+/// The headline `zedc run` writes for `src`, which it rejects before running: the first line
+/// of standard error from the place on, `3:3: …`.
+fn rejected_twice(name: &str, src: &str) -> String {
+    let out = run(name, src, "", &[]);
+    assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{}", out.stderr);
+    let first = out.stderr.lines().next().unwrap_or_default();
+    first
+        .split_once(".zed:")
+        .map_or(first, |(_, m)| m)
+        .to_string()
+}
+
+/// DESIGN.md step L1.19: "two pushes to one port that may both run in one wave are rejected at
+/// compile time, at the second push", counted along each path of `main`'s body, a block adding
+/// and an `if` or `match` taking its largest branch (plan row PORT-push-twice-static). Before,
+/// zedc ran the program and stopped it at the end of the wave, "`m.stdout` was pushed to 2
+/// times in this run".
 #[test]
 fn a_port_pushed_twice_in_one_wave_is_an_error() {
+    let after = ", and a port takes one push per run, which holds everything it writes.";
     let src = "main(m: MainArgs) {\n  m.stdout <- \"one\";\n  m.stdout <- \"two\";\n}\n";
-    let out = run("twice", src, "", &[]);
-    assert_eq!(out.status, 1);
     assert_eq!(
-        out.stderr,
-        "`m.stdout` was pushed to 2 times in this run, and it takes one push per run, which holds \
-         everything it writes. Gather the lines into one family of strings and push it once, as \
-         `m.stdout <- lines;`, where `lines` holds one entry per line; a push in a branch that \
-         does not run does not count.\n"
+        rejected_twice("twice", src),
+        format!(
+            "3:3: `m.stdout` may be pushed to twice in one run: by `m.stdout <- \"one\";` and \
+             then by `m.stdout <- \"two\";`{after}"
+        )
     );
-    assert_eq!(out.stdout, "", "nothing is written");
+    // The notes name the first push and offer the step's two repairs.
+    let notes = run("twice_notes", src, "", &[]).stderr;
+    for note in [
+        "2:3: the first push to `m.stdout`",
+        "3:3: repair: gather the lines into one family of strings and push it once, as \
+         `m.stdout <- lines;`",
+        "3:3: repair: one `if` or `match` whose branches each push once",
+    ] {
+        assert!(notes.contains(note), "{note:?} not in {notes:?}");
+    }
+    // Two `if` statements whose conditions exclude each other are counted as two.
+    let src = "main(m: MainArgs) {\n  \
+               c = (m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\") == \"a\";\n  \
+               if c { m.stdout <- \"A\"; };\n  if !c { m.stdout <- \"B\"; };\n}\n";
+    assert!(
+        rejected_twice("two_ifs", src).starts_with(
+            "4:11: `m.stdout` may be pushed to twice in one run: by `m.stdout <- \"A\";` and then \
+             by `m.stdout <- \"B\";`"
+        ),
+        "{src}"
+    );
     // Two push sites on different branches are fine: one of them runs.
     let src = "main(m: MainArgs) {\n  \
                done = if m.stdin[0] == \"yes\" {\n    m.stdout <- \"accepted\";\n    1\n  } \
                else {\n    m.stdout <- \"declined\";\n    0\n  };\n}\n";
     assert_eq!(run("branches", src, "no\n", &[]).stdout, "declined\n");
+    // So is one push to each of two ports after them. (`match` and loops are refused before
+    // the check by this zedc, so their arms and bodies are not tried here.)
+    let src = "main(m: MainArgs) {\n  \
+               w = m.stdin[0] else #ioError -> \"\" else #outOfBounds -> \"\";\n  \
+               done = if w == \"a\" { m.stdout <- \"A\"; 1 } else { m.stdout <- \"other\"; 0 };\n  \
+               m.stderr <- \"seen\";\n}\n";
+    let out = run("two_ports", src, "b\n", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "other\n", "seen\n")
+    );
 }
 
 /// `2 ^ 2 ^ 100` is a value, kept as a power of 2, but adding `n` must build its `2^100`
@@ -84,7 +131,7 @@ fn a_port_pushed_twice_in_one_wave_is_an_error() {
 #[test]
 fn a_number_too_large_to_build_stops_the_run() {
     let src = "main(m: MainArgs) {\n  n = int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 1;\n  \
-               m.stdout <- \"start\";\n  m.stdout <- String(2^2^100 + n);\n}\n";
+               m.stderr <- \"start\";\n  m.stdout <- String(2^2^100 + n);\n}\n";
     let out = run("too_large", src, "", &[]);
     // Running out of memory is a fault of the run, status 3 (MAIN-limits; DESIGN.md sec:ports).
     assert_eq!(out.status, 3, "{}", out.stderr);

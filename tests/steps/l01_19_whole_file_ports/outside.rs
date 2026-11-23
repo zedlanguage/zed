@@ -26,10 +26,12 @@ fn a_function_other_than_main_reads_main_files() {
         (out.status, out.stdout.as_str(), out.stderr.as_str()),
         (0, "hi\n", "[-]\n")
     );
-    // `main` opens the port once, whether its body reads it, a helper does, or both.
+    // `main` opens the port once, whether its body reads it, a helper does, or both. The read
+    // goes into the one push to `m.stdout`: a second push to a port is rejected (DESIGN.md
+    // step L1.19).
     let both = src.replace(
         "  m.stdout <- size(",
-        "  fs = main::files;\n  m.stderr <- fs[\"x\"] else #ioError -> \"\" else #notFound -> \"\";\n  m.stdout <- size(",
+        "  fs = main::files;\n  x = fs[\"x\"] else #ioError -> \"\" else #notFound -> \"\";\n  m.stdout <- x ++ size(",
     );
     let program = load(both.as_bytes()).unwrap();
     let files: Vec<_> = (program.inputs().iter())

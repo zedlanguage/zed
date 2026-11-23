@@ -400,7 +400,7 @@ fn a_block_that_writes_on_one_branch_only_is_refused_at_the_silent_branch() {
                 else { if j > 2 { 0 } else { say(\"x\", out: m.stdout) } } };";
     assert_eq!(statement_errors(body), silent(body, "0"));
     // A write before the `if` does not make its silent branch write.
-    let body = "{ say(\"a\", out: m.stdout); if k > 1 { say(\"x\", out: m.stdout) } else { 0 } };";
+    let body = "{ say(\"a\", out: m.stderr); if k > 1 { say(\"x\", out: m.stdout) } else { 0 } };";
     assert_eq!(statement_errors(body), silent(body, "0"));
     // The same through `zedc run`: refused, placed at the statement.
     let src = with_say(
@@ -583,21 +583,52 @@ fn a_push_to_a_name_that_is_no_port_is_rejected() {
     );
 }
 
-/// The port is still pushed once per run: a helper's push and `main`'s to one port are two.
+/// The port is still pushed once per run: a helper's push and `main`'s to one port are two,
+/// rejected at the second when the program is checked (DESIGN.md step L1.19, "a call of a
+/// function with an output port parameter counts the pushes the function's body makes to that
+/// parameter"; plan row PORT-push-twice-static). Before, the run stopped, "`m.stdout` was
+/// pushed to 2 times in this run". A helper that pushes in each branch of an `if`, called once,
+/// pushes once; called twice, twice; and a helper that pushes twice is rejected in its body.
 #[test]
 fn a_port_given_to_a_helper_is_still_pushed_once() {
-    let out = run(
-        "twice_through_a_helper",
-        &with_say("_ = say(\"a\", out: m.stdout);\n  m.stdout <- \"b\";"),
-        "",
-        &[],
+    let after = ", and a port takes one push per run, which holds everything it writes.";
+    assert_eq!(
+        rejected(
+            "twice_through_a_helper",
+            &with_say("_ = say(\"a\", out: m.stdout);\n  m.stdout <- \"b\";"),
+        ),
+        format!(
+            "5:3: `m.stdout` may be pushed to twice in one run: by `say(\"a\", out: m.stdout)` \
+             and then by `m.stdout <- \"b\";`{after}"
+        )
     );
-    assert_eq!((out.status, out.stdout.as_str()), (1, ""));
-    assert!(
-        out.stderr
-            .starts_with("`m.stdout` was pushed to 2 times in this run"),
+    let either = "pick(positional c: bool, out: Lines) {\n  if c { out <- \"y\"; } else { out <- \
+                  \"n\"; };\n}\n\nmain(m: MainArgs) {\n  ";
+    let once = format!("{either}_ = pick(true, out: m.stdout);\n}}\n");
+    let out = run("helper_branches_once", &once, "", &[]);
+    assert_eq!(
+        (out.status, out.stdout.as_str()),
+        (0, "y\n"),
         "{}",
         out.stderr
+    );
+    let twice =
+        format!("{either}_ = pick(true, out: m.stdout);\n  _ = pick(false, out: m.stdout);\n}}\n");
+    assert!(
+        rejected("helper_branches_twice", &twice).starts_with(
+            "7:7: `m.stdout` may be pushed to twice in one run: by `pick(true, out: m.stdout)` \
+             and then by `pick(false, out: m.stdout)`"
+        ),
+        "{twice}"
+    );
+    let inside = "both(out: Lines) {\n  out <- \"a\";\n  out <- \"b\";\n}\n\nmain(m: MainArgs) \
+                  {\n  _ = both(out: m.stdout);\n}\n";
+    assert_eq!(
+        rejected("helper_pushes_twice", inside),
+        format!(
+            "3:3: `out` may be pushed to twice in one run: by `out <- \"a\";` and then by `out \
+             <- \"b\";`{after}"
+        )
     );
 }
 
@@ -633,6 +664,60 @@ pub(super) fn statement_chain(n: usize) -> String {
         n - 1
     ));
     text
+}
+
+/// A function of `n` output port parameters, each pushed in an `if` of its own, and with
+/// `twice`, the last pushed again after them; `main` calls nothing.
+pub(super) fn wide_ports(n: usize, twice: bool) -> String {
+    let params: Vec<String> = (0..n).map(|i| format!("o{i}: Lines")).collect();
+    let mut text = format!("w(positional c: bool, {}) {{\n", params.join(", "));
+    for i in 0..n {
+        text.push_str(&format!("  if c {{ o{i} <- \"a\"; }};\n"));
+    }
+    if twice {
+        text.push_str(&format!("  o{} <- \"b\";\n", n - 1));
+    }
+    text.push_str("}\n\nmain(m: MainArgs) {\n  m.stdout <- \"x\";\n}\n");
+    text
+}
+
+/// Checks a [`wide_ports`] of `n`: accepted, or with `twice` one error, at the last push.
+pub(super) fn counts_the_wide_ports(
+    text: &str,
+    stmts: &[zedc::ast::Stmt],
+    res: &zedc::resolve::Resolution,
+    n: usize,
+    twice: bool,
+) {
+    let info = check_text(stmts, res, Some(text));
+    let errors: Vec<&str> = (info.errors.iter())
+        .map(|e| e.message.as_str())
+        .filter(|m| m.contains("may be pushed"))
+        .collect();
+    let want = if twice {
+        vec![format!("`o{}` may be pushed to twice in one run", n - 1)]
+    } else {
+        Vec::new()
+    };
+    assert_eq!(errors.len(), want.len(), "{:?}", info.errors);
+    for (e, w) in errors.iter().zip(&want) {
+        assert!(e.starts_with(w.as_str()), "{e}");
+    }
+    if !twice {
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    }
+}
+
+/// Many ports each pushed in an `if` are counted once each, and a push again after them is
+/// found (`bench::many_ports_each_pushed_in_an_if_are_counted_in_n_log_n_time` at a small
+/// size).
+#[test]
+fn many_ports_each_pushed_in_an_if_are_counted() {
+    for twice in [false, true] {
+        let text = wide_ports(4, twice);
+        let (stmts, res) = resolved(&text);
+        counts_the_wide_ports(&text, &stmts, &res, 4, twice);
+    }
 }
 
 /// Checks a [`statement_chain`] of `n`: each of its `n` expression statements writes, so it is

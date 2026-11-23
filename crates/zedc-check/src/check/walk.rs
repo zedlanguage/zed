@@ -99,11 +99,20 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     // a port given to `len` among them, would offer repairs that read the port.
     let ports = super::ports::ports(t);
     let stop = !ports.errors.is_empty() || !ports.not_ports.is_empty();
+    // Two pushes to one port that may both run in one run (step L1.19), counted only where the
+    // ports are used rightly, since the count reads which parameters are ports.
+    let twice = match stop {
+        false => super::twice::twice(t, &ports),
+        true => Vec::new(),
+    };
     for (span, message, notes) in ports.errors {
         ck.error_with(span, message, notes);
     }
     for (span, message, notes) in ports.not_ports {
         ck.rejects_with(Row::PushToNameNotPort, span, message, notes);
+    }
+    for (span, message, notes) in twice {
+        ck.error_with(span, message, notes);
     }
     ck.port_params = ports.params;
     ck.port_writers = ports.writers;
