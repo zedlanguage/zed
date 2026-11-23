@@ -4918,3 +4918,15 @@ fn a_morphism_with_a_recursive_key_is_read_by_the_flat_difference_decider() {
         assert!(!t.is_empty(), "R{i} of {}", show_system(&sys));
     }
 }
+
+/// The X14 group of six definitions of seed 220 gives the same verdicts in every order tried
+/// (REP-refusals-rest part 4). `Search::retry` seeks a kept failure again once a type it read
+/// gets a value. With the retry off (its loop over `waiting` skipped), the order
+/// `[3, 5, 1, 4, 2, 0]` with the tuples reversed gives its `R0 = (R4, R3)` Refused(Group), where
+/// the definitions as written find every member inhabited. Of the 2,850 X14 seeds
+/// `x14_groups_agree_across_orders` draws from (4 members 0 to 1999, 5 members 0 to 599, 6
+/// members 0 to 249), this is the only one that differs with the retry off (hm2, 2026-11-23).
+#[test]
+fn x14_6_220_agrees_across_orders() {
+    verdicts_agree_across_orders("x14_6_", |g| claude_of(g, 6), &[220], (true, true));
+}
