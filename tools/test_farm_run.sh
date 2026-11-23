@@ -228,6 +228,10 @@ while IFS= read -r raw; do
     ( cd "$out/src" && FARM_VM_JOB=$out bash -c "${line#!}" ) >"$out/out/$k.log" 2>&1
     rc=$?
   fi
+  # FAKE_RETRY_FIRST: line 1 has a failed try before it, as job.sh writes a try it runs again
+  # (a `!` line that met a mix of dylib and rlib builds, or a test line out of memory).
+  [ "${FAKE_RETRY_FIRST:-}" != 1 ] || [ "$k" != 1 ] ||
+    printf '%s\t1\t0\t1\t1\tdylib-retry\n' "$raw" >>"$out/summary.tsv"
   printf '%s\t%s\t0\t1\t1\n' "$raw" "$rc" >>"$out/summary.tsv"
   [ "$rc" = 0 ] || all=1
 done <"$tests"
@@ -459,6 +463,13 @@ o=$ws/case-$n-cmd-fail.out
 FAKE_DIE_ALWAYS=1 case_ cmd-die 129 "farm: FAILED: the commands could not be run after 3 attempts" "" -- --owner t --vms 1 --commands "$ws/cmd-pass"
 [ "$(command grep -c '^acquire' "$colab/log")" = 3 ] || { fail=$((fail + 1)); echo "FAIL cmd-die: not 3 attempts"; }
 FAKE_DIE_FIRST=1 case_ cmd-died-once 0 "farm: command 2 rc=0: echo \"out \${FARM_OUT:-unset}\"; ls \"\$FARM_OUT\" >/dev/null" "" -- --owner t --vms 1 --commands "$ws/cmd-pass"
+# A line job.sh ran again (a row marked dylib-retry before the row that counts) is one line that
+# passed, on the first attempt (b22-tests7's merge check, clippy on v5e2, 2026-11-23).
+FAKE_RETRY_FIRST=1 case_ cmd-retried 0 "farm: command 2 rc=0: echo \"out \${FARM_OUT:-unset}\"; ls \"\$FARM_OUT\" >/dev/null" "" -- --owner t --vms 1 --commands "$ws/cmd-pass"
+o=$ws/case-$n-cmd-retried.out
+[ "$(command grep -a -c -x 'farm: command 1 rc=0: echo "cwd $PWD"' "$o")" = 1 ] && [ "$(command grep -c '^acquire' "$colab/log")" = 1 ] ||
+  { fail=$((fail + 1)); echo "FAIL cmd-retried: line 1 not passed, or not on the first attempt ($o)"; }
+FAKE_RETRY_FIRST=1 case_ share-retried 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2
 # Usage errors: exit 2, nothing made, no VM acquired.
 for bad in "--owner '' --vms 1" "--owner t --vms 5" "--owner t --vms 0" "--owner 't x' --vms 1" "--owner t --vms 1 --jobs 0" \
   "--owner t --vms 1 --terms /nonexistent" "--owner t --vms 1 --trace rel" "--owner t --vms 1 --zrun /bin/true" \

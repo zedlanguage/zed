@@ -551,6 +551,13 @@ share_failed() {
   echo "farm: FAILED: $*" >>"$out/report"
   [ "$rc_all" != 0 ] || rc_all=1
 }
+# final_rows <summary.tsv>: the rows of a job's summary.tsv that hold a line's exit, one a line in
+# order. job.sh writes a row with a sixth field (dylib-retry, oom-retry) for a try it runs again,
+# before the row of the try that counts, so those rows are left out: a clippy line that failed on
+# a mix of dylib and rlib builds and passed again with prefer-dynamic on v5e2 gave two rows for one
+# line, and farm_run read that as a job not run to its end, twice (b22-tests7's merge check,
+# 2026-11-23).
+final_rows() { awk -F '\t' '$2 ~ /^[0-9]+$/ && $6 == ""' "$1" 2>/dev/null; }
 # --commands: the file's lines, each a `!` line of one job.sh job on one VM (vm_cmd), run in order;
 # a job that did not run to its end (job.sh exit other than 0 or 1, or a line with no exit in
 # summary.tsv) is run again on another VM, up to 3 attempts, as a share is. Prints each line's log
@@ -574,10 +581,10 @@ if [ -n "$commands" ]; then
     jrc=$?
     kids=()
     release_all
-    if [[ $jrc =~ ^[01]$ ]] && [ "$(awk -F '\t' '$2 ~ /^[0-9]+$/' "$d/job/summary.tsv" 2>/dev/null | wc -l)" = ${#cl[@]} ]; then
+    if [[ $jrc =~ ^[01]$ ]] && [ "$(final_rows "$d/job/summary.tsv" | wc -l)" = ${#cl[@]} ]; then
       for i in "${!cl[@]}"; do
         k=$((i + 1))
-        r=$(awk -F '\t' -v k="$k" 'NR == k { print $2 }' "$d/job/summary.tsv")
+        r=$(final_rows "$d/job/summary.tsv" | awk -F '\t' -v k="$k" 'NR == k { print $2 }')
         command grep -a -v '@' "$d/job/out/$k.log" 2>/dev/null
         echo "farm: command $k rc=$r: ${cl[$i]}"
         [ "$r" = 0 ] || rc_all=1
@@ -634,7 +641,7 @@ if [ -n "$run_vm" ]; then
       d=$out/vm$k-${tries[$k]}
       jrc=$(cat "$d/job.rc" 2>/dev/null)
       log=$d/job/out/1.log
-      lrc=$(awk -F '\t' 'NR == 1 { print $2 }' "$d/job/summary.tsv" 2>/dev/null)
+      lrc=$(final_rows "$d/job/summary.tsv" | awk -F '\t' 'NR == 1 { print $2 }')
       if [[ ! $jrc =~ ^[01]$ ]] || [ ! -f "$log" ] || [[ ! $lrc =~ ^[0-9]+$ ]]; then
         why=$(job_why "$d/job.out")
         echo "farm: share $k of $n on ${vm_last[$k]} did not run to its end (job.sh exit ${jrc:-none})${why:+: $why}; $d/job.out"
