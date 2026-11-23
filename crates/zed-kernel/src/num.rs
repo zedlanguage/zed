@@ -885,105 +885,27 @@ impl Rat {
     /// digits. A value held as plain digits, such as the sum `3^200000 + 1`, prints its digits
     /// (DESIGN.md L1.26a).
     ///
-    /// The coefficient is first reduced by `Rat::coefficient_reduced`, so a product such as
-    /// `4294967296 * 4294967296`, held as digits, prints `2^64` as `2 ^ 64` does (DESIGN.md
-    /// sec:diagnostics, "Types in a message"; plan row KEPT-power-form-print).
+    /// The powers are read from the value by `Rat::text_atoms`, not from the way it is held, so
+    /// a product such as `4294967296 * 4294967296`, held as digits, prints `2^64` as `2 ^ 64`
+    /// does (DESIGN.md sec:diagnostics, "Types in a message"; plan row KEPT-power-form-print),
+    /// and `q * 3^50` prints one text whether `3^50` is kept or the product is digits (plan row
+    /// KEPT-print-value-canonical).
     pub fn integer_text(&self) -> String {
         if self.ten.is_some() {
             return self.bin().integer_text();
         }
         debug_assert!(self.is_integer());
-        match self.coefficient_reduced() {
-            Some(reduced) => reduced.held_text(),
-            None => self.held_text(),
+        if self.num.is_zero() {
+            return "0".to_string();
         }
-    }
-
-    /// The same integer with the primes of its coefficient that four fixed methods find moved
-    /// into its kept powers, for its text ([`Rat::integer_text`]); `None` when they find none.
-    /// The methods, on the coefficient `c`: its trailing zeros, `c = 2^v o` with `o` odd; then,
-    /// for `o < 2^44`, `zed_numtheory::factor`, which factors it completely; for a wider `o`, its
-    /// least root `o = r^m` ([`fn@least_root`]), and, when `m > 1`, `r` factored when `r < 2^44` or
-    /// kept as one prime when it is a prime word (`zed_numtheory::is_prime`, deterministic on
-    /// every word). A wider `o` that is no power of such an `r` is kept whole, and prints as
-    /// digits. Arithmetic never calls this: products and quotients keep their coefficients as
-    /// they are, so `*` costs no factoring (decision of 2026-11-23, plan row
-    /// KEPT-power-form-print).
-    ///
-    /// Proof that the form stays normal (the listed primes divide neither coefficient): each
-    /// moved prime divides `c`, so it was not listed, and each is moved with its full
-    /// multiplicity (all of `2^v`; all of `o` when factored; all of `o = r^m` when `r` is
-    /// factored or is a prime), so it divides no coefficient left.
-    ///
-    /// Complexity tradeoff: for `n` the bits of `c`, the trailing zeros and the shift cost
-    /// O(n); `factor` below 2^44 is O(1), a constant proved at `zed_numtheory::factor`; the least
-    /// root is O(M(n) log n), proved at [`fn@least_root`]; `is_prime` on a word is O(1) (12
-    /// bases of Miller-Rabin, proved at `zed_numtheory::is_prime`). The text writes `c` or what
-    /// is left of it as decimal digits in either form, which costs O(M(n) log n)
-    /// (`num::fast::to_decimal`,
-    /// a divide-and-conquer conversion), so the reduction costs at most a constant times the
-    /// text it chooses between, and only a printed number pays it. Methods with no proved bound
-    /// are not used: Pollard's rho on a word above 2^44 is unproved and cost about 0.85 ms on a
-    /// product of two primes near 2^31 (measured 2026-11-23 on Colab when `Rat::mul` factored
-    /// words, against 61 ns for the product), so such a word prints as digits. Gap: the text
-    /// depends on the value and the powers already held, not on the value alone. A wide
-    /// coefficient held beside a power, `q * 3^50`, prints `q*3^50`, while the same value held as
-    /// digits prints them, since `q * 3^50` is no perfect power and has no word's size; making
-    /// the two agree would need the digits factored, which no proved method does.
-    fn coefficient_reduced(&self) -> Option<Rat> {
-        let c = self.num.magnitude();
-        if c.bits() <= 1 {
-            return None;
-        }
-        let v = c.trailing_zeros().expect("c is above 1");
-        let o = c >> v;
-        let mut moved: Vec<(u64, BigInt)> = Vec::new();
-        if v > 0 {
-            moved.push((2, BigInt::from(v)));
-        }
-        let factored = |w: u64, m: &BigInt| -> Vec<(u64, BigInt)> {
-            (factor(w).into_iter())
-                .map(|(p, k)| (p, BigInt::from(k) * m))
-                .collect()
-        };
-        let rest = match o.to_u64().filter(|w| *w < 1 << 44) {
-            Some(w) => {
-                moved.extend(factored(w, &BigInt::one()));
-                BigUint::one()
-            }
-            None => {
-                let (r, m) = least_root(o.clone());
-                match r.to_u64() {
-                    Some(w) if !m.is_one() && w < 1 << 44 => {
-                        moved.extend(factored(w, &BigInt::from(m)));
-                        BigUint::one()
-                    }
-                    Some(w) if !m.is_one() && is_prime(w) => {
-                        moved.push((w, BigInt::from(m)));
-                        BigUint::one()
-                    }
-                    _ => o,
-                }
-            }
-        };
-        if moved.is_empty() {
-            return None;
-        }
-        Some(Rat {
-            num: BigInt::from_biguint(self.num.sign(), rest),
-            den: self.den.clone(),
-            pows: merge(&self.pows, &moved, |x, y| x + y).into_boxed_slice(),
-            ten: None,
-        })
-    }
-
-    /// [`Rat::integer_text`] of the form as it is held.
-    fn held_text(&self) -> String {
         let sign = if self.is_negative() { "-" } else { "" };
-        if self.is_plain() {
-            return format!("{sign}{}", fast::to_decimal(self.num.magnitude()));
+        let atoms = self.text_atoms();
+        if atoms.iter().all(|(_, e)| e.is_one()) {
+            // Every atom is written in the coefficient, which is then the value: its digits.
+            let c = (atoms.iter()).fold(BigUint::one(), |c, (b, _)| fast::mul(&c, b));
+            return format!("{sign}{}", fast::to_decimal(&c));
         }
-        let power = self.power_text();
+        let power = powers_text(&atoms);
         // Unreachable: `Rat::pow` returns `TooLarge` only for a numerator or denominator wider
         // than 64 bits, and 10 is factored into `2^L * 5^L`, so nothing is asked or built.
         let ten = Rat::int(BigInt::from(10))
@@ -998,67 +920,102 @@ impl Rat {
         digits.unwrap_or_else(|| format!("{sign}{power}"))
     }
 
-    /// The integer's coefficient and powers as `c*b^e*…`, without the sign: the primes that
-    /// share an exponent multiplied into one base, largest exponent first, or, where shorter,
-    /// every prime under the gcd `g` of the exponents, `(prod p^(e/g))^g`, which writes
-    /// `12^100000` and not `2^200000*3^100000`. That base is built only when a lower bound on
-    /// its digits leaves room for the form to be shorter, so it costs O(the text), as does
-    /// every other base here. It must be an integer with powers.
-    fn power_text(&self) -> String {
-        if self.ten.is_some() {
-            return self.bin().power_text();
+    /// The atoms `(b, e)` of `|self|` that its text writes as `b^e` ([`powers_text`]), sorted by
+    /// base, their product `|self|`: a function of the value alone, not of the way it is held
+    /// (plan row KEPT-print-value-canonical), but for the gap below. It must be a nonzero
+    /// integer, held in binary. The steps, for `V = |self| = c * prod p^e`, `c` the coefficient:
+    ///
+    /// 1. Each prime `t` of [`TEXT_PRIMES`] with its power `v_t(V)`: from `c` by
+    ///    [`valuation`] when `t` divides it, else the listed exponent (zero when unlisted).
+    /// 2. What is left, `R = V / prod t^(v_t(V))`, as its least root `R = r^m`, `r` no perfect
+    ///    power, computed without building `R`: `c'`, the `c` of step 1 divided by its primes of
+    ///    the set, is `s^k` by [`fn@least_root`] (`s = 1`, `k = 0` when `c' = 1`); then
+    ///    `m = gcd(k, e_p)` over the listed primes `p` outside the set, and
+    ///    `r = s^(k/m) * prod p^(e_p/m)`, built.
+    /// 3. `r` factored by `zed_numtheory::factor` when `r < 2^44`, each prime with `m` times its
+    ///    power; else `(r, m)`, a prime word or a wider number this cannot factor. An atom with
+    ///    exponent 1 is written in the coefficient.
+    ///
+    /// Proof that the atoms are a function of `V` (when `r` is built): step 1 reads `v_t(V)`
+    /// exactly, since a listed prime divides no coefficient (the form's invariant), so `t` is in
+    /// `c` or listed, not both, and [`valuation`] takes all of it from `c`; so `R` is a function
+    /// of `V`. Every integer `R > 1` is `r^m` for one `r` that is no perfect power and one `m`,
+    /// the gcd of the exponents of its primes (write `R = prod q^(a_q)`; `R = y^j` exactly when
+    /// `j` divides every `a_q`). Step 2 finds that pair: `s` is no perfect power, so the gcd of
+    /// its primes' exponents is 1 and that of `c' = s^k` is `k`; the listed `p` divide neither
+    /// `c` nor so `s`; so the exponents of `R` are `k a_q` for the primes `q` of `s` and `e_p`
+    /// for the listed `p`, with gcd `gcd(k gcd(a_q), e_p) = gcd(k, e_p) = m` (`gcd(0, x) = x`
+    /// covers `c' = 1`), and `R^(1/m) = s^(k/m) prod p^(e_p/m)` (`m` divides `k` and each `e_p`).
+    /// Step 3 is a function of `(r, m)`, and factoring is unique. So the text, a function of the
+    /// sorted atoms and of `|V|` against powers of ten, is one per value.
+    ///
+    /// Gap (not proved away): when the system refuses the memory to build `r`, the atoms are read
+    /// from the held form instead (`(s, k)` and the listed primes outside the set, each with its
+    /// exponent), which can differ between two holds of one value. Since `r <= V`, no form of
+    /// such a value holds it as digits; two holds differ only in a prime with exponent above 1,
+    /// outside the set, that one keeps in `c` and the other lists.
+    ///
+    /// Complexity tradeoff: for `n` the bits of `c`, step 1 costs one remainder by a word per
+    /// group of the set's primes whose product fits a word ([`text_prime_groups`], 6 groups),
+    /// O(n) each, and a [`valuation`] for each prime of the set that divides, O(M(n)) and at
+    /// most O(n log^2 n) each (proved there); [`fn@least_root`] costs O(M(n) log n) (proved there);
+    /// `factor` below 2^44 is O(1), a constant proved at `zed_numtheory::factor`. The build of `r`
+    /// asks the system for its memory first ([`Rat::text_room`]) and costs O(M(b) log b) for `b`
+    /// its bits ([`built`] and [`fast::mul_int`]). When `r >= 2^44` its digits are in the text, as
+    /// coefficient or base, at O(M(b) log b) ([`fast::to_decimal`]), so the build costs at most a
+    /// constant times the text it serves; when `r < 2^44`, `b < 44`. So the whole is at most a
+    /// constant times the cost of the digits of `c` and of the text written, and only a printed
+    /// number pays it; arithmetic never calls it, so `*` costs no factoring (decision of
+    /// 2026-11-23, plan row KEPT-power-form-print). The one before, at origin/main 80c93acf5,
+    /// reduced the coefficient alone and wrote the listed powers as held: no build of `r`, but
+    /// `q * 3^50` with `q` a wide prime printed `q*3^50` held with `3^50` and its digits held as
+    /// digits. The price of this one: a value that lists a prime outside the set beside a
+    /// coefficient that makes `R` no perfect power, such as `q * 1009^50`, prints its digits
+    /// where the held form printed `q*1009^50`, since its digits held as digits have no prime
+    /// that a method of proved cost finds. Methods with no proved bound are not used: Pollard's
+    /// rho on a word above 2^44 is unproved and cost about 0.85 ms on a product of two primes near
+    /// 2^31 (measured 2026-11-23 on Colab when `Rat::mul` factored words, against 61 ns for the
+    /// product), so such a word prints as digits.
+    fn text_atoms(&self) -> Vec<(BigUint, BigInt)> {
+        debug_assert!(self.ten.is_none() && !self.num.is_zero());
+        let mut atoms: Vec<(BigUint, BigInt)> = Vec::new();
+        let mut c = self.num.magnitude().clone();
+        for t in text_primes_dividing(&c) {
+            let (v, rest) = valuation(BigInt::from(c), t);
+            c = rest.into_parts().1;
+            atoms.push((BigUint::from(t), BigInt::from(v)));
         }
-        // A prime to the first power is written in the coefficient, so `5*3^200000` prints
-        // alike whether the 5 was kept as a prime or as digits.
-        let firsts = self.pows.iter().filter(|(_, e)| e.is_one());
-        let coef = firsts.fold(self.num.magnitude().clone(), |c, (p, _)| c * *p);
-        let mut by_exp: Vec<(&BigInt, u64)> = (self.pows.iter())
-            .filter(|(_, e)| !e.is_one())
-            .map(|(p, e)| (e, *p))
-            .collect();
-        by_exp.sort_unstable_by(|a, b| b.0.cmp(a.0).then(a.1.cmp(&b.1)));
-        let mut groups: Vec<String> = by_exp
-            .chunk_by(|a, b| a.0 == b.0)
-            .map(|run| {
-                let base = run.iter().fold(BigUint::one(), |b, (_, p)| b * *p);
-                format!("{}^{}", fast::to_decimal(&base), run[0].0)
-            })
-            .collect();
-        let powers = groups.len();
-        if !coef.is_one() || groups.is_empty() {
-            groups.insert(0, fast::to_decimal(&coef));
+        let mut others: Vec<(u64, BigInt)> = Vec::new();
+        for (p, e) in self.pows.iter() {
+            match TEXT_PRIMES.binary_search(p).is_ok() {
+                true => atoms.push((BigUint::from(*p), e.clone())),
+                false => others.push((*p, e.clone())),
+            }
         }
-        let head = match coef.is_one() {
-            true => String::new(),
-            false => format!("{}*", groups[0]),
+        let (s, k) = match c.is_one() {
+            true => (c, BigUint::zero()),
+            false => least_root(c),
         };
-        let grouped = groups.join("*");
-        let g = self.pows.iter().fold(BigInt::zero(), |g, (_, e)| g.gcd(e));
-        if powers < 2 || g.is_one() {
-            return grouped;
+        let m = (others.iter()).fold(BigInt::from(k.clone()), |g, (_, e)| g.gcd(e));
+        if !m.is_zero() {
+            // `m` divides `k`, a bit count of `c`, so `k / m` fits a word.
+            let km = (&k / m.magnitude()).to_u64().expect("below the bits of c");
+            let root = Rat {
+                num: BigInt::from(fast::pow(&s, km)),
+                den: BigInt::one(),
+                pows: (others.iter()).map(|(p, e)| (*p, e / &m)).collect(),
+                ten: None,
+            };
+            match root.text_room().and_then(|()| root.integer_built()) {
+                Ok(r) => push_root(&mut atoms, r.magnitude(), &m),
+                Err(_) => {
+                    push_root(&mut atoms, &s, &BigInt::from(k));
+                    atoms.extend(others.into_iter().map(|(p, e)| (BigUint::from(p), e)));
+                }
+            }
         }
-        let reduced: Vec<(u64, BigUint)> = (self.pows.iter())
-            .map(|(p, e)| (*p, (e / &g).magnitude().clone()))
-            .collect();
-        // `base >= 2^low`, so its digits are at least `low log10 2 > 0.30102 low`.
-        let low: BigUint = (reduced.iter())
-            .map(|(p, e)| e * u64::from(p.ilog2()))
-            .sum();
-        let g_text = g.to_string();
-        let least = BigUint::from(head.len() + 1 + g_text.len()) + low * 30102u32 / 100_000u32;
-        if least >= BigUint::from(grouped.len()) {
-            return grouped;
-        }
-        // The base's digits are fewer than the grouped text's, so its exponents are small and
-        // it is never refused.
-        let Ok(base) = built(&reduced) else {
-            return grouped;
-        };
-        let gcd_form = format!("{head}{}^{g_text}", fast::to_decimal(base.magnitude()));
-        match gcd_form.len() < grouped.len() {
-            true => gcd_form,
-            false => grouped,
-        }
+        atoms.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        atoms
     }
 
     /// `a + b`, or [`TooLarge`] when the system refuses the memory for the part of the
@@ -2251,6 +2208,13 @@ fn valuation(n: BigInt, p: u64) -> (u64, BigInt) {
 /// way up divide `n`, of `N` bits, by powers of `s_i = 2^(i+1) log2 p` bits, `(N / s_i) M(s_i)`
 /// each, so O(N log^2 v) in all: O(N) for a power `v` of a few factors, as most decimals have,
 /// and O(M(N) log N) = O(N log^2 N) at most, the order of reading the digits.
+///
+/// With no cap, once the next power `P_(i+1)` passes [`WHOLE_TEST_BITS`], the tests from it on
+/// are made from the top instead ([`valuation_from_the_top`]): the powers are squared up to the
+/// last `P_T` of at most `N` bits, and `r_T = |n| mod P_T`, then `r_k = r_(k+1) mod P_k` for `k`
+/// down from `T`, which is `|n| mod P_k` since `P_k` divides `P_(k+1)`. The `P_k` that divide
+/// `n` are those below the least `k` with `r_k` not zero, as in the tests on the way up, so `J`
+/// and `x` are the same.
 fn valuation_upto(n: BigInt, p: u64, cap: u64) -> (u64, BigInt) {
     if n.is_zero() || cap == 0 {
         return (0, n);
@@ -2274,10 +2238,14 @@ fn valuation_upto(n: BigInt, p: u64, cap: u64) -> (u64, BigInt) {
     let mut x = loop {
         let i = powers.len() - 1;
         let next = fast::mul(&powers[i], &powers[i]);
-        let x = match next.bits() > n.bits() {
-            true => n.magnitude().clone(),
-            false => fast::div_rem(n.magnitude(), &next).1,
-        };
+        if next.bits() > n.bits() {
+            break n.magnitude().clone();
+        }
+        if cap == u64::MAX && next.bits() > WHOLE_TEST_BITS {
+            powers.push(next);
+            break valuation_from_the_top(n.magnitude(), &mut powers);
+        }
+        let x = fast::div_rem(n.magnitude(), &next).1;
         if !x.is_zero() || i + 1 >= 64 || 2u64 << i > cap {
             break x;
         }
@@ -2317,6 +2285,72 @@ fn valuation_upto(n: BigInt, p: u64, cap: u64) -> (u64, BigInt) {
     (v, fast::div_floor(&n, &BigInt::from(pv)))
 }
 
+/// The width in bits past which [`valuation_upto`] stops dividing the whole of `n` by each
+/// power on the way up and takes the remainders from the top ([`valuation_from_the_top`]).
+///
+/// Complexity tradeoff: the tests on the way up cost `(N / s) M(s)` time each for a power of
+/// `s` bits, below the O(M(N)) of the powers and remainders from the top, so they are kept
+/// while the power is narrow, where most valuations end (one factor of 5 in a decimal); but
+/// the bytes a test allocates grow faster than `N` once the divisor passes the division's
+/// leaf: dividing `q 3^262144` (415,550 bits, `q = 2^61 - 1`) by `3^(2^i)` allocated at most
+/// 4 times the dividend's bytes for divisors up to 3,247 bits, and 22 to 53 times them from
+/// 6,493 bits up, against 0.45 to 4.5 times at 51,998 bits (2026-11-23, Colab, the
+/// test of `zed_alloc_count::allocated` per step), so the text of `q * 3^n` allocated 18.6
+/// times the bytes at `8n` (`the_text_of_a_prime_word_times_a_power_held_as_digits_scales`).
+/// From the top, each remainder is of a number below the square of its divisor, and the
+/// widths halve, so the method's own memory is O(N); but the remainder by the widest power
+/// and the divisions by it and by `p^v` have short quotients, which `fast::div_rem` sends to
+/// num-bigint, whose Burnikel-Ziegler recursion copies the divisor's halves (plan row
+/// KERNEL-bz-short-quotient), so the valuation of `q 3^v` still allocated 10.9 times the
+/// bytes from `v = 2^15` to `2^18` (1,094,432 and 11,947,280), against 18.2 on the way up;
+/// not proved O(N) until that row is done. 4096 bits, 64 words, is the division's leaf
+/// `fast::DIV_LEAF` and lies between the two measured groups. Both ways find the same `J` and
+/// `x` (the proof at [`valuation_upto`]); tested by
+/// `valuations_from_the_top_agree_with_the_tests_on_the_way_up`.
+const WHOLE_TEST_BITS: u64 = 64 * 64;
+
+/// For [`valuation_upto`]: `powers` holds `P_0 .. P_k` with `P_i = p^(2^i)`, each `P_i` for
+/// `i < k` dividing `n` and `P_k` of at most the bits of `n`. The powers are squared on to the
+/// last `P_T` of at most the bits of `n`; then the remainders `r_T = n mod P_T` and
+/// `r_j = r_(j+1) mod P_j` for `j` from `T - 1` down to `k`, each `n mod P_j` since `P_j`
+/// divides `P_(j+1)`, stop at the first zero. `P_j` divides `n` exactly when `r_j` is zero,
+/// and if `P_j` divides `n` so does each `P_i` below it, so the `P_j` that divide `n` are
+/// those below the least `j` with `r_j` not zero, the last one found. `powers` is cut to the
+/// powers that divide `n`, `P_0 .. P_J`, and the result is `x = n mod P_(J+1)`, not zero; when
+/// every `r_j` is zero, `J = T` and `x` is `n`, which is below `P_(T+1)`, wider than `n`.
+///
+/// Cost: the squarings O(M(N)) and the remainders, each of a number below the square of its
+/// divisor, O(M(N)) as the widths halve, for `n` of `N` bits.
+fn valuation_from_the_top(n: &BigUint, powers: &mut Vec<BigUint>) -> BigUint {
+    let k = powers.len() - 1;
+    loop {
+        // Unreachable: `powers` is not empty.
+        let last = powers.last().expect("P_0 at least");
+        let next = fast::mul(last, last);
+        // `p^(2^64)` has more than 2^64 bits, so the 64 powers bound no `n` held in memory.
+        if next.bits() > n.bits() || powers.len() >= 64 {
+            break;
+        }
+        powers.push(next);
+    }
+    let t = powers.len() - 1;
+    let mut r = fast::rem(n, &powers[t]);
+    if r.is_zero() {
+        return n.clone();
+    }
+    let mut j = t;
+    while j > k {
+        let below = fast::rem(&r, &powers[j - 1]);
+        if below.is_zero() {
+            break;
+        }
+        (r, j) = (below, j - 1);
+    }
+    // `r` is `r_j`, not zero, and `r_(j-1)` is zero or `j` is `k`: `P_0 .. P_(j-1)` divide `n`.
+    powers.truncate(j);
+    r
+}
+
 /// The prime powers of two numbers merged by prime, `f` combining the exponents of a prime
 /// both hold, a missing exponent being zero; zero exponents are left out.
 fn merge(
@@ -2328,6 +2362,116 @@ fn merge(
         .map(|(p, x, y)| (p, f(&x, &y)))
         .filter(|(_, e)| !e.is_zero())
         .collect()
+}
+
+/// The primes below 2^8, which [`Rat::text_atoms`] takes out of a value before its least root.
+///
+/// Magic constant: any fixed set keeps the text a function of the value (the proof at
+/// [`Rat::text_atoms`] holds for every set), so this is no size switch; it sets which kept primes
+/// a value held as digits is found to hold beside a coefficient that is no perfect power, as
+/// `q * 3^50` is. Each group of primes whose product fits a word costs one O(n) remainder of
+/// the coefficient, so the 54 primes below 2^8 cost 6; the primes below 2^16 would cost about
+/// 1,640 (6,542 primes of 16 bits or fewer, 4 to a word), for the few values that hold a prime
+/// between 2^8 and 2^16 to a power beside such a coefficient. Checked by
+/// `tests::the_text_primes_are_the_primes_below_256_in_six_words`.
+const TEXT_PRIMES: [u64; 54] = [
+    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
+    101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193,
+    197, 199, 211, 223, 227, 229, 233, 239, 241, 251,
+];
+
+/// [`TEXT_PRIMES`] in runs, in order, each run as long as its product stays below 2^64.
+fn text_prime_groups() -> Vec<&'static [u64]> {
+    let mut groups = Vec::new();
+    let (mut start, mut product) = (0, 1u64);
+    for (i, &t) in TEXT_PRIMES.iter().enumerate() {
+        match product.checked_mul(t) {
+            Some(x) => product = x,
+            None => {
+                groups.push(&TEXT_PRIMES[start..i]);
+                (start, product) = (i, t);
+            }
+        }
+    }
+    groups.push(&TEXT_PRIMES[start..]);
+    groups
+}
+
+/// The primes of [`TEXT_PRIMES`] that divide `c`, in order: one remainder `x = c mod P` by a
+/// word for the product `P` of each group, then `t | c` exactly when `t | x`, since `t | P`.
+fn text_primes_dividing(c: &BigUint) -> Vec<u64> {
+    let mut hits = Vec::new();
+    for run in text_prime_groups() {
+        let x = rem_big_u64(c, run.iter().product());
+        hits.extend(run.iter().filter(|&&t| x.is_multiple_of(t)));
+    }
+    hits
+}
+
+/// The atoms of `r^m` for [`Rat::text_atoms`]: none for `r = 1`; for `r < 2^44` the primes of
+/// `r` (`zed_numtheory::factor`), each with `m` times its power; else `(r, m)`.
+fn push_root(atoms: &mut Vec<(BigUint, BigInt)>, r: &BigUint, m: &BigInt) {
+    match r.to_u64() {
+        Some(1) => {}
+        Some(w) if w < 1 << 44 => atoms
+            .extend((factor(w).into_iter()).map(|(p, a)| (BigUint::from(p), BigInt::from(a) * m))),
+        _ => atoms.push((r.clone(), m.clone())),
+    }
+}
+
+/// The atoms of an integer ([`Rat::text_atoms`]) as `c*b^e*…`, without the sign: the atoms of
+/// exponent 1 multiplied into the coefficient `c`, written first, so `5*3^200000` prints alike
+/// whether the 5 was kept as a prime or as digits; then the bases that share an exponent
+/// multiplied into one, largest exponent first; or, where shorter, those bases under the gcd
+/// `g` of their exponents, `c*(prod b^(e/g))^g`, which writes `12^100000` and not
+/// `2^200000*3^100000`. That base is built only when a lower bound on its digits leaves room
+/// for the form to be shorter, so it costs O(the text), as does every other base here. At
+/// least one atom has an exponent above 1.
+fn powers_text(atoms: &[(BigUint, BigInt)]) -> String {
+    let coef = (atoms.iter().filter(|(_, e)| e.is_one()))
+        .fold(BigUint::one(), |c, (b, _)| fast::mul(&c, b));
+    let mut by_exp: Vec<(&BigInt, &BigUint)> = (atoms.iter())
+        .filter(|(_, e)| !e.is_one())
+        .map(|(b, e)| (e, b))
+        .collect();
+    by_exp.sort_unstable_by(|a, b| b.0.cmp(a.0).then(a.1.cmp(b.1)));
+    let groups: Vec<String> = by_exp
+        .chunk_by(|a, b| a.0 == b.0)
+        .map(|run| {
+            let base = (run.iter()).fold(BigUint::one(), |b, (_, p)| fast::mul(&b, p));
+            format!("{}^{}", fast::to_decimal(&base), run[0].0)
+        })
+        .collect();
+    let head = match coef.is_one() {
+        true => String::new(),
+        false => format!("{}*", fast::to_decimal(&coef)),
+    };
+    let grouped = format!("{head}{}", groups.join("*"));
+    let g = (by_exp.iter()).fold(BigInt::zero(), |g, (e, _)| g.gcd(e));
+    if groups.len() < 2 || g.is_one() {
+        return grouped;
+    }
+    let reduced: Vec<(&BigUint, BigUint)> = (by_exp.iter())
+        .map(|(e, b)| (*b, (*e / &g).magnitude().clone()))
+        .collect();
+    // `base >= 2^low`, so its digits are at least `low log10 2 > 0.30102 low`.
+    let low: BigUint = (reduced.iter()).map(|(b, e)| e * (b.bits() - 1)).sum();
+    let g_text = g.to_string();
+    let least = BigUint::from(head.len() + 1 + g_text.len()) + low * 30102u32 / 100_000u32;
+    if least >= BigUint::from(grouped.len()) {
+        return grouped;
+    }
+    // The base's digits are fewer than the grouped text's characters, and each `e / g` is at
+    // most the base's bits, so each fits a word.
+    let base = reduced.iter().fold(BigUint::one(), |acc, (b, e)| {
+        let e = e.to_u64().expect("below the grouped text's length");
+        fast::mul(&acc, &fast::pow(b, e))
+    });
+    let gcd_form = format!("{head}{}^{g_text}", fast::to_decimal(&base));
+    match gcd_form.len() < grouped.len() {
+        true => gcd_form,
+        false => grouped,
+    }
 }
 
 /// Each prime of either list with its two exponents, zero where a list lacks it.
@@ -3396,6 +3540,91 @@ mod tests {
                 assert_eq!(BigUint::from(rem_big_u64(x, m)), x % m, "{x} mod {m}");
             }
         }
+    }
+
+    /// `valuation` against division by `p` one at a time, on `c p^v` for powers `v` either side
+    /// of the step from the tests on the way up to those from the top (`WHOLE_TEST_BITS`, at
+    /// `v` of 2048 to 4096 for `p = 3`), cofactors `c` that `p` divides and does not, and with
+    /// a cap, which keeps the tests on the way up; and the bytes it allocates for `q 3^v`
+    /// against those of the tests on the way up.
+    #[test]
+    fn valuations_from_the_top_agree_with_the_tests_on_the_way_up() {
+        fn by_one(mut n: BigInt, p: u64) -> (u64, BigInt) {
+            let mut v = 0;
+            while (&n % p).is_zero() {
+                n /= p;
+                v += 1;
+            }
+            (v, n)
+        }
+        let m61 = (1u64 << 61) - 1;
+        let wide: BigInt = (BigInt::one() << 300u32) + 7;
+        for p in [3u64, 5, 1009, m61] {
+            for v in [
+                0u32, 1, 2, 1000, 2047, 2048, 2049, 4095, 4096, 5000, 8191, 8192,
+            ] {
+                if p == m61 && v > 1000 {
+                    continue;
+                }
+                for c in [
+                    BigInt::one(),
+                    BigInt::from(-2),
+                    BigInt::from(p + 1),
+                    BigInt::from(p) * (p + 1),
+                    wide.clone(),
+                    BigInt::from(7).pow(3000u32),
+                ] {
+                    let n = c * BigInt::from(p).pow(v);
+                    let want = by_one(n.clone(), p);
+                    assert_eq!(valuation(n.clone(), p), want, "p {p}, v {v}");
+                    for cap in [0u64, 1, 2047, 2048, 4097] {
+                        let (k, rest) = valuation_upto(n.clone(), p, cap);
+                        let k_want = want.0.min(cap);
+                        assert_eq!(k, k_want, "p {p}, v {v}, cap {cap}");
+                        assert_eq!(rest * BigInt::from(p).pow(k as u32), n);
+                    }
+                }
+            }
+        }
+        // The step it guards, against the tests on the way up on the same input (a cap of
+        // `u64::MAX - 1` keeps them): `q 3^(2^18)`, `q = 2^61 - 1`, 415,550 bits, took
+        // 11,947,280 bytes from the top and 21,410,592 on the way up (2026-11-23, Colab);
+        // allocation counts are deterministic. Not held to 10.5 from `v` to `8v`: from `2^15`
+        // to `2^18` it grows 10.9 times (1,094,432 to 11,947,280), all of it in divisions with
+        // a short quotient (`r_T = n mod P_T` 10.4 times, the division of `n` by `P_T` and by
+        // `p^v` 11.9 times each), which `fast::div_rem` sends to num-bigint, whose
+        // Burnikel-Ziegler recursion copies the divisor's halves however short the quotient:
+        // plan row KERNEL-bz-short-quotient, which owns that fix in num/fast.rs. The whole
+        // text of such a number is held to 10.5 by
+        // `bench::kept_powers::the_text_of_a_prime_word_times_a_power_held_as_digits_scales`
+        // (9.8 times the bytes).
+        let n = BigInt::from(m61) * BigInt::from(3).pow(1u32 << 18);
+        let bytes = [u64::MAX, u64::MAX - 1].map(|cap| {
+            let before = zed_alloc_count::allocated();
+            let (k, _) = valuation_upto(n.clone(), 3, cap);
+            assert_eq!(k, 1 << 18);
+            zed_alloc_count::allocated() - before
+        });
+        assert!(bytes[0] * 3 < bytes[1] * 2, "{bytes:?}");
+    }
+
+    #[test]
+    fn the_text_primes_are_the_primes_below_256_in_six_words() {
+        let primes: Vec<u64> = (2..256).filter(|&n| is_prime(n)).collect();
+        assert_eq!(TEXT_PRIMES.to_vec(), primes);
+        let groups = text_prime_groups();
+        assert_eq!(groups.len(), 6);
+        assert_eq!(groups.concat(), primes);
+        // Each run's product fits a word, and would not with the first prime of the next run.
+        for (i, run) in groups.iter().enumerate() {
+            let product = run.iter().try_fold(1u64, |a, &t| a.checked_mul(t));
+            assert!(product.is_some(), "{run:?}");
+            if let (Some(p), Some(next)) = (product, groups.get(i + 1)) {
+                assert!(p.checked_mul(next[0]).is_none(), "{run:?}");
+            }
+        }
+        let c = BigUint::from(3u32 * 251 * 7);
+        assert_eq!(text_primes_dividing(&c), vec![3, 7, 251]);
     }
 
     #[test]

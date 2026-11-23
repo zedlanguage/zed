@@ -6,6 +6,7 @@
 mod asks;
 mod fields;
 mod in_place;
+mod kept_powers;
 mod memory_check;
 mod powers;
 mod products;

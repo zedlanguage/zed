@@ -776,6 +776,47 @@ mod tests {
         assert!(k > 0 && k < 2 * cap, "precision {k}, cap {cap}");
     }
 
+    /// DESIGN.md step L1.17b: for each convergent `p/q` of the continued fraction of `log2 3`
+    /// with `p` below 2^24, `2^p` against `3^q` gives the order of the built numbers, at a
+    /// precision no larger than Laurent's bound for the pair ([`laurent_bits`]). The convergents
+    /// come from `log2 3` to 40 digits by Euclid's algorithm, as in the test above; the largest
+    /// with `p < 2^24` is `301994/190537`, the next `16785921/10590737`, so each built number has
+    /// at most 301,994 bits. A precision of 0 is an order the bit lengths or the f64 check gave.
+    #[test]
+    fn each_convergent_of_log2_3_below_2_to_the_24_orders_as_the_built_numbers() {
+        let ten40 = BigUint::from(10u32).pow(40u32);
+        let log2_3 =
+            BigUint::parse_bytes(b"15849625007211561814537389439478165087598", 10).expect("digits");
+        let (mut x, mut y) = (log2_3, ten40);
+        let (mut h0, mut h1) = (BigUint::zero(), BigUint::one());
+        let (mut k0, mut k1) = (BigUint::one(), BigUint::zero());
+        let mut pairs = Vec::new();
+        while !y.is_zero() {
+            let (a, r) = x.div_rem(&y);
+            let h = &a * &h1 + &h0;
+            let k = &a * &k1 + &k0;
+            if h >= BigUint::from(1u64 << 24) {
+                break;
+            }
+            pairs.push((h.to_u64().expect("a word"), k.to_u64().expect("a word")));
+            (h0, h1, k0, k1, x, y) = (h1, h, k1, k, y, r);
+        }
+        assert_eq!(pairs.last(), Some(&(301_994, 190_537)));
+        assert!(pairs.len() >= 12, "{pairs:?}");
+        for &(p, q) in &pairs {
+            let (a, b) = (power(2, p), power(3, q));
+            let built = (BigUint::one() << p).cmp(&BigUint::from(3u32).pow(q));
+            let (order, k) = cmp_at(&a, &b).expect("numbers of at most 301,994 bits");
+            assert_eq!(order, built, "2^{p} against 3^{q}");
+            assert_eq!(cmp(&b, &a), Ok(built.reverse()), "3^{q} against 2^{p}");
+            let laurent = laurent_bits(&a, &b).expect("two atoms");
+            assert!(
+                k <= laurent,
+                "2^{p} against 3^{q}: precision {k}, Laurent {laurent}"
+            );
+        }
+    }
+
     /// `3^1000 + 1` and `3^1000 - 1` against `3^1000`: the f64 check leaves both, which agree
     /// with `3^1000` in about 1585 bits, and the bounds reach the products' size and build them.
     /// The negative control: with no margin (`slack` 0) the f64 check gives one verdict for
