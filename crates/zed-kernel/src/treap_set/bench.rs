@@ -82,14 +82,16 @@ const RUNS: usize = 200;
 /// per unit at most `limit(0)` times, the limit itself. The units are counted here, on the
 /// sets `make` builds, which are the same in every process of one `ZED_TREAP_SEED`.
 ///
-/// Each size is measured as [`crate::scaling::check_order_fresh`] measures it: in a process of
-/// its own where the test binary runs other tests. FAIL-treap-subset-bench-spread (2026-11-23,
-/// Colab std2, 2 cores): each bench run alone under DynamoRIO's count gave one ratio per seed on
-/// every run (seed 0: joined cuts 1.25, removals 0.95, middle half 0.91), and alone on the
-/// hardware counter about the same (1.26 to 1.30); measured inside the whole `--lib` run, by 8
-/// test threads on 2 cores, seed 0's joined cuts measured 1.38 (1094 and 1511 instructions per
-/// unit), and the middle half moved from 0.50 to 1.10 between runs of the bench file. The
-/// sets are the same in both, so what moved was the count, not the work.
+/// Each size is measured as [`crate::scaling::check_order_fresh`] measures it: on a count of
+/// instructions, in a process of its own where the test binary runs other tests; on processor
+/// time, the fastest of several runs, each on sets built for it, under the allowance `scaling`
+/// gives a count that changes with load. FAIL-treap-subset-bench-spread (2026-11-23, Colab std2,
+/// 2 cores, no hardware counter): each bench run alone under DynamoRIO's count gave one ratio per
+/// seed on every run (seed 0: joined cuts 1.25, removals 0.95, middle half 0.91); on processor
+/// time, which the whole `--lib` run measures there, seed 0's joined cuts measured 1.38 (1094
+/// and 1511 ns per unit) and the middle half moved from 0.50 to 1.10 between runs, with no
+/// allowance for load, as `scaling::hold` gives none. The sets are the same in every run, so
+/// what moved was the measure, not the work.
 fn hold_per_unit(
     what: &str,
     measure: &str,
@@ -116,10 +118,16 @@ fn hold_per_unit(
         crate::scaling::Bound::Given(allowed, &why),
         (to_size(small), to_size(large)),
         &|k, _| make(i64::try_from(k).expect("a size of the bench")),
+        // The sets are returned, so that `fresh_inputs_by` holds them and drops them after the
+        // measurement: dropped here, the `O(k)` free of each set was measured with the test
+        // (b22-kernel6, 2026-11-23, Colab std2 on processor time: the middle half then measured
+        // 6.35 times at 2^14 and 2^17, where the sets of 8 times the keys take 8 times as long
+        // to free).
         &|_, (a, b): (TreapSet<i64>, TreapSet<i64>)| {
             for _ in 0..RUNS {
                 assert!(std::hint::black_box(&a).is_subset(&b));
             }
+            (a, b)
         },
     );
 }
