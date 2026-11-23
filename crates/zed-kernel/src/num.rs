@@ -45,6 +45,8 @@ use bound::{Format, Product};
 use dec::Dec;
 #[doc(hidden)]
 pub use fast::crossover;
+#[cfg(feature = "method-counts")]
+pub use fast::method_counts;
 use fast::{LEAF_DIGITS, built, read_digits_by};
 pub use fast::{
     PRINT_HANDOFF, PRINT_WHOLE, mul as mul_uint, mul_int, pow as pow_uint, to_decimal,

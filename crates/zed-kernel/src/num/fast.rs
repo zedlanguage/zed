@@ -371,8 +371,10 @@ const TOOM_COST: f64 = f64::INFINITY;
 /// 24,576 words.
 const TOOM_POWER: f64 = 0.465;
 
-/// The bits at or below which the divisor, or the quotient, goes to num-bigint's division,
-/// which then costs at most this many bits times the dividend's; above, [`DIV_COST`] decides.
+/// The bits at or below which the divisor goes to num-bigint's division, which then costs at
+/// most this many bits times the dividend's, and at or below which a quotient by a wider
+/// divisor goes to [`div_rem_short_quotient`], O(n) (plan row KERNEL-bz-short-quotient; before
+/// it such a quotient went to num-bigint too); above both, [`DIV_COST`] decides.
 /// The result does not depend on it. Not measured when it was set. On 2026-11-06 at load 1,
 /// the Newton division then used took 1.13 times num-bigint's time at `w` = 64, 1.00 at 96,
 /// 2.03 at 1024, 3.84 at 2048 and 2.60 at 8192 words, for `2w` by `w`. The division by
@@ -384,7 +386,8 @@ const TOOM_POWER: f64 = 0.465;
 /// them and 242 for one of 256 times them, so the leaf on the narrower of the two alone cannot
 /// sit at every crossover;
 /// [`DIV_COST`] sets them, and this leaf only spares the cost computation on small divisions.
-/// Measured again on 2026-11-23 (see [`DIV_COST`]): 3090, 861, 1480, 417 and 366 words.
+/// Measured again on 2026-11-23 (see [`DIV_COST`]): 3090, 861, 1480, 417 and 366 words; with
+/// the reciprocal's cost on its [`Level`]'s points, 1779, 807, 1480, 417 and 366.
 const DIV_LEAF: u64 = 64 * 64;
 
 /// The cost of num-bigint's division past [`DIV_LEAF`], per unit of [`num_bigint_div_cost`], in
@@ -400,9 +403,12 @@ const DIV_LEAF: u64 = 64 * 64;
 ///
 /// A scaling test whose two sizes fall on either side of this switch may read more than the
 /// reciprocal's own growth without a fault of the order: where the switch sits at the
-/// measured crossover, the work at `n` is the less of the two methods', so the ratio at 8n is
-/// at least `reciprocal(8n) / reciprocal(n)` and larger only because the small size took the
-/// faster method. That holds only where the switch is at the crossover. Measured again in
+/// measured crossover, the work at `n` is the less of the two methods', `min(L(n), R(n))`
+/// for num-bigint's `L` and the reciprocal's `R`, and at 8n past it is `R(8n)`, so the ratio
+/// is `R(8n) / min(L(n), R(n)) >= R(8n) / R(n)`, larger only because the small size took the
+/// faster method. That holds only where the switch is at the crossover, and the excess is the
+/// switch's alone only where `R(8n) <= L(8n)`, so that the large size took the faster method
+/// too: else part of it is the switch's error at 8n. Measured again in
 /// instructions on 2026-11-23 (`crossover div-leaf`, under DynamoRIO's `zed_icount` on a Colab
 /// VM, run h5-req30 on commit 25e53c9b5), num-bigint does less work up to 3090 words for `2w`
 /// by `w`, 861 for a quotient of a quarter of the divisor's words, 1898 for twice, 1480 for
@@ -412,8 +418,20 @@ const DIV_LEAF: u64 = 64 * 64;
 /// build takes num-bigint for `2w` by `w` at 2048, 2896 and 5793 words (the reciprocal at
 /// 4096 and from 8192), up to 1.329 times the less work, and for a quarter at 1448 words,
 /// 1.123 times. Over the six together the least worst is 1.142, from 9.95 to 10.80. One
-/// constant cannot fit both groups, so the shape terms of [`num_bigint_div_units`] are what
-/// is off, and their refit is pending a decision. Where this matters:
+/// constant cannot fit both groups, so the shape terms of [`num_bigint_div_units`] were what
+/// was off: refit as [`DIV_NARROW`] and [`DIV_SAME`] (plan row
+/// PERF-div-narrow-quotient-factor, cross-review XR-ROOTS-REF round 2, D8), and the
+/// reciprocal's cost of a quotient at most as wide as the divisor put on the points of its
+/// [`Level`] ([`newton_cost`]), whose doubling past a power of two [`transform_cost`] did not
+/// show. Measured with both on 2026-11-23 (`crossover div-leaf`, zed_icount, v5e3): the
+/// crossovers are 1779 words for `2w - 1` by `w` (`1 1`, where num-bigint does less work
+/// again from 2049 to 2773 words, the reciprocal's points having doubled, and the reciprocal
+/// from 2803), 807 for a quarter, 1898, 1480, 417 and 366 for two, four, sixteen and 256
+/// times; at 9.1 the build takes the method that does less work at every size of the six,
+/// except 1760 words of `1 1` (1.0025 times the less) and 2803 to 2834 words of `1 1` (up
+/// to 1.0228 times), and at 2048, 2049, 2896, 4096 and 5793 words with a quotient of 1 word
+/// less, 1 more and 2 more than the divisor. Before, at 2049 words of `1 1` it took the
+/// reciprocal at 1.527 times num-bigint's work. Where this matters:
 /// `l01_39_reduced_product::roots::bench`, whose quotients are of both shapes (`TRANSFORM_BITS`
 /// there), read 12.974 times the instructions at 8n from 131,072 to 1,048,576 bits with the
 /// old search (h5-req23) and 11.197 after the Newton step at doubling precision (h5-req26),
@@ -421,9 +439,13 @@ const DIV_LEAF: u64 = 64 * 64;
 /// (Callgrind, h5-req26), since both shapes were below their crossovers at n and past them at
 /// 8n.
 #[cfg(not(test))]
-const DIV_COST: f64 = 9.1;
+const DIV_COST: f64 = DIV_COST_FIT;
 #[cfg(test)]
 const DIV_COST: f64 = f64::INFINITY;
+
+/// [`DIV_COST`] as fitted and built, which the unit tests of the switch read, since their
+/// [`DIV_COST`] is infinite.
+const DIV_COST_FIT: f64 = 9.1;
 
 /// The exponent of num-bigint's division of `2w` by `w` words in `w`, measured: its work in
 /// instructions grows 2.88, 2.90, 2.83 and 2.79 times for each doubling of `w` from 1024 to
@@ -433,8 +455,32 @@ const DIV_POWER: f64 = 1.52;
 /// The cost of each word of the divisor beyond the quotient's width in num-bigint's division of
 /// a narrow quotient, per `q^(DIV_POWER - 1)` for a quotient of `q` words, over that of a
 /// quotient word beyond the divisor's width per `n^(DIV_POWER - 1)`: measured, 0.45 for a
-/// quotient of a quarter of the divisor at 512 to 4096 words (2026-11-12).
-const DIV_NARROW: f64 = 0.45;
+/// quotient of a quarter of the divisor at 512 to 4096 words (2026-11-12). Refit to 0.427 with
+/// [`DIV_SAME`] (plan row PERF-div-narrow-quotient-factor, cross-review XR-ROOTS-REF round 2,
+/// D8): the quarter's crossover of 2026-11-23, 861 words of quotient, asked for 11.41 to
+/// 11.47 at the old form, 1.2538 to 1.2604 times 9.1 (middle 1.2571). Its units are `q^0.52
+/// (q + DIV_NARROW 3q)`, so with the factor `DIV_SAME (1 + 3 DIV_NARROW) = 1.2571 (1 + 3
+/// 0.45)`, `DIV_NARROW = 0.4271`. Kept with [`DIV_SAME`] 1.44: the quarter's crossover
+/// is then 807 words, and at 9.1 the build takes the method that does less work at every size.
+const DIV_NARROW: f64 = 0.427;
+
+/// The factor on [`num_bigint_div_units`] for a quotient of at most one word more than the
+/// divisor (`qw <= bw + 1`), where [`div_rem`] counts a quotient's words as `words(a) -
+/// words(b) + 1`: a `2w` by `w` dividend of `2w` words has a quotient of `w + 1`, one of `2w
+/// - 1` (`crossover div-leaf 1 1`) one of `w`. First 1.295, fitted to the crossover of `1 1`
+/// of 2026-11-23 against [`newton_cost`] on [`transform_cost`]. Refit to 1.44 with
+/// [`newton_cost`] on the points of its [`Level`] (plan row PERF-div-narrow-quotient-factor,
+/// cross-review XR-ROOTS-REF round 2, D8), over 66 measured divisions of a quotient of at
+/// most `bw + 1` words (`crossover div-leaf 1 1` and `1 4`, and `1 1` with 1 word less and 1
+/// and 2 more at 2048, 2049, 2896, 4096 and 5793 words; zed_icount, 2026-11-23): from 1.4231
+/// to 1.4571 times 9.1 the most work any of them does is the least, 1.030 times the less of
+/// the two methods' (at a quotient of 2049 by 2048 words); 1.44 is near the middle. Measured
+/// at 1.44 (see [`DIV_COST`]), the most is 1.0228, at 2834 words of `1 1`. The four
+/// shapes of a quotient of two or more times the divisor keep the factor 1, where 9.1 alone
+/// fits them. The step the factor makes at `qw = bw + 2` is the fit's: there num-bigint does
+/// less work at all five sizes, and the build takes it. The cost only chooses a method, never
+/// the quotient.
+const DIV_SAME: f64 = 1.44;
 
 /// The bits at or below which a reciprocal is found by num-bigint's division. It was 32 words,
 /// not measured. Measured on 2026-11-12 (CROSSOVER-bench, `crossover recip`, load 41 to 48):
@@ -1289,7 +1335,19 @@ fn nonzero_runs(x: &BigUint) -> (usize, usize) {
 /// transforms modulo three primes joined by the Chinese remainder theorem, O(n log n). Every
 /// method gives the same product; only the time depends on the choice.
 pub fn mul(a: &BigUint, b: &BigUint) -> BigUint {
-    match mul_method(a, b) {
+    let method = mul_method(a, b);
+    #[cfg(feature = "method-counts")]
+    method_counts::note(
+        "mul",
+        a,
+        b,
+        match method {
+            MulBy::NumBigint => "num-bigint",
+            MulBy::Rows => "rows",
+            MulBy::Pieces(_) => "transform",
+        },
+    );
+    match method {
         MulBy::NumBigint => a * b,
         MulBy::Rows => sparse_mul(a, b),
         MulBy::Pieces(piece) => pieces_mul(a, b, piece),
@@ -2111,8 +2169,9 @@ pub fn pow(b: &BigUint, mut e: u64) -> BigUint {
 // ------------------------------------------------------------------------------------------
 // Division
 
-/// `(a / b, a mod b)` for `b` not zero. A narrow divisor or quotient goes to num-bigint, and a
-/// quotient wider than the divisor goes block by block ([`div_rem_blocks`]). Otherwise the
+/// `(a / b, a mod b)` for `b` not zero. A narrow divisor goes to num-bigint, a narrow quotient
+/// by a wider divisor to [`div_rem_short_quotient`], and a quotient wider than the divisor
+/// goes block by block ([`div_rem_blocks`]). Otherwise the
 /// quotient, of `k` bits, is estimated from the reciprocal of the divisor's top `k` bits, at
 /// most a few off, and the remainder, found by a cyclic product ([`Level::div_rem`]), corrects
 /// it. O(M(n)): about four squarings of the quotient's width (4.0 at 4096 to 65,536 words,
@@ -2155,12 +2214,63 @@ pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     // `dividing_a_wide_number_scales` (COMPLEXITY.md K30, "Crossovers"; ZED_PORT_GAPS.md,
     // "Entries from KERNEL-div-newton").
     if n > DIV_LEAF && k <= DIV_LEAF {
+        #[cfg(feature = "method-counts")]
+        method_counts::note("div", a, b, "short quotient");
         return div_rem_short_quotient(a, b);
     }
     if n.min(k) <= DIV_LEAF || num_bigint_divides(words(a) - words(b) + 1, b) {
+        #[cfg(feature = "method-counts")]
+        method_counts::note(
+            "div",
+            a,
+            b,
+            ["num-bigint", "leaf"][usize::from(n.min(k) <= DIV_LEAF)],
+        );
         return a.div_rem(b);
     }
+    #[cfg(feature = "method-counts")]
+    {
+        let qw = words(a) - words(b) + 1;
+        let sparse = sparse_div_cost(qw, b) <= newton_cost(qw, words(b));
+        method_counts::note("div", a, b, ["reciprocal", "sparse"][usize::from(sparse)]);
+    }
     div_rem_past_leaf(a, b)
+}
+
+/// The calls of [`div_rem`] and [`mul`] by method and by the operands' words, under the
+/// feature `method-counts` only, for the table of each level's backend at
+/// `l01_39_reduced_product::roots::bench` (plan row DECISION-roots-bench-regime, cross-review
+/// XR-ROOTS-REF round 2, D7). A feature and not `cfg(test)`: the benches are integration
+/// tests, built against the library without `cfg(test)`, whose constants (`DIV_COST`
+/// infinite) would pick other methods.
+#[cfg(feature = "method-counts")]
+pub mod method_counts {
+    use num_bigint::BigUint;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+
+    /// `(operation, method, words of the quotient or of the shorter factor, words of the
+    /// divisor or of the longer factor)` to calls.
+    pub type Counts = BTreeMap<(&'static str, &'static str, usize, usize), u64>;
+
+    thread_local! {
+        static COUNTS: RefCell<Counts> = const { RefCell::new(BTreeMap::new()) };
+    }
+
+    /// Counts one call of `op` on `a` and `b` by `method`.
+    pub(super) fn note(op: &'static str, a: &BigUint, b: &BigUint, method: &'static str) {
+        let (aw, bw) = (super::words(a), super::words(b));
+        let key = match op {
+            "div" => (op, method, aw - bw + 1, bw),
+            _ => (op, method, aw.min(bw), aw.max(bw)),
+        };
+        COUNTS.with(|c| *c.borrow_mut().entry(key).or_insert(0) += 1);
+    }
+
+    /// The counts since the last call, which empties them.
+    pub fn take() -> Counts {
+        COUNTS.with(|c| std::mem::take(&mut *c.borrow_mut()))
+    }
 }
 
 /// [`div_rem`] of a quotient of at most `DIV_LEAF` bits by a divisor of more: the quotient
@@ -2312,18 +2422,36 @@ fn sparse_div_cost(qw: usize, b: &BigUint) -> f64 {
 /// `(q + 1) bw` words, then took num-bigint's
 /// division up to 2048 words of divisor for `q = 2` where the blocks did 0.632 times its work
 /// from 1898 words (DRY-numeric-shared-rest, 2026-11-20).
+///
+/// A quotient at most as wide as the divisor costs its products on the points of its
+/// [`Level`] ([`level_points`]): the power of two at or above `2 qw` words for the estimate
+/// and at or above about `bw` for the remainder, which never wrap their top coefficients as
+/// [`transform_cost`] may. With [`transform_cost`] the cost of `2049` by `2049` words read
+/// about that of `2048` by `2048`, and the build took the reciprocal there at 1.527 times
+/// num-bigint's work (29,147,467 against 19,087,323 instructions; `crossover div-leaf 1 1 0
+/// 2048,2049,2896,4096,5793`, zed_icount, 2026-11-23, plan row
+/// PERF-div-narrow-quotient-factor, cross-review XR-ROOTS-REF round 2, D8): the reciprocal's
+/// work steps up by 1.77 from 2048 to 2049 words, the Level's points doubling. The wider
+/// quotients' branch keeps [`transform_cost`], to which their four shapes fit at 9.1.
 fn newton_cost(qw: usize, bw: usize) -> f64 {
+    let level = |coeffs: usize| TRANSFORM_COST * points_cost(coeffs.next_power_of_two()) as f64;
     match qw > bw {
         true => ((qw - 1).div_ceil(bw) as f64 + 3.0) * transform_cost(2 * bw),
-        false => 8.0 * transform_cost(2 * qw) / 3.0 + transform_cost(bw),
+        false => 8.0 * level(2 * qw) / 3.0 + level(bw),
     }
 }
 
 /// num-bigint's cost of a division of a quotient of `qw` words by a divisor of `bw`, in the
 /// units of [`TRANSFORM_COST`]: `DIV_COST s^DIV_POWER` for the narrower `s` of the two, and
 /// for each word of the wider beyond it `DIV_COST s^(DIV_POWER - 1)`, times [`DIV_NARROW`]
-/// when the divisor is the wider. A quotient wider than the divisor so costs `qw / bw`
-/// divisions of `2 bw` by `bw` words, as num-bigint divides it.
+/// when the divisor is the wider. A quotient wider than the divisor so costs as `qw / bw`
+/// divisions of `2 bw` by `bw` words would. That is a fit to num-bigint's measured work, not
+/// its method: num-bigint 0.4.8, for a dividend over 128 words and a divisor over 64
+/// (`div_rem_core`, src/biguint/division.rs:343-346, read 2026-11-23), divides by Burnikel
+/// and Ziegler's recursion at one power-of-two level, `L = 2^floor(log2 aw)` words for a
+/// dividend of `aw`, doubled where the divisor has more than `L` (:328-331): the dividend as
+/// two digits of `L` words over the divisor as one, each digit halved down to 64 words. Its
+/// work so steps where `aw` crosses a power of two, which this form does not model.
 fn num_bigint_div_cost(qw: usize, bw: usize) -> f64 {
     DIV_COST * num_bigint_div_units(qw, bw)
 }
@@ -2336,7 +2464,11 @@ fn num_bigint_div_units(qw: usize, bw: usize) -> f64 {
         true => q - b,
         false => DIV_NARROW * (b - q),
     };
-    s.powf(DIV_POWER - 1.0) * (s + wider)
+    let same = match qw <= bw + 1 {
+        true => DIV_SAME,
+        false => 1.0,
+    };
+    same * s.powf(DIV_POWER - 1.0) * (s + wider)
 }
 
 /// `(a / b, a mod b)` by long division (Knuth's algorithm D) over the nonzero words of `b`,
@@ -5429,6 +5561,40 @@ mod tests {
     /// [`div_rem`] and [`Divisor`] next to the powers of two of their transforms' points, for
     /// random, edge and long-carry operands, with quotients as wide as the divisor and
     /// narrower.
+    /// The switch of [`DIV_COST_FIT`] takes the method that did less work in instructions for a
+    /// quotient of as many words as the divisor (`crossover div-leaf 1 1 0
+    /// 2048,2049,2896,4096,5793`, zed_icount, 2026-11-23; plan row
+    /// PERF-div-narrow-quotient-factor): the reciprocal at 2048 words (0.881 times num-bigint's
+    /// work), num-bigint at 2049 (the reciprocal 1.527 times, its points doubling) and at 1024
+    /// (1.183 times), the reciprocal at 2896, 4096 and 5793 (0.955, 0.635 and 0.705 times).
+    /// With [`newton_cost`] on [`transform_cost`] and [`DIV_SAME`] 1.295 the build took the
+    /// reciprocal at 2049 and num-bigint at 2896.
+    #[test]
+    fn the_division_switch_takes_the_cheaper_method_at_a_square_quotient() {
+        for (w, by_num_bigint) in [
+            (1024, true),
+            (2048, false),
+            (2049, true),
+            (2896, false),
+            (4096, false),
+            (5793, false),
+        ] {
+            let top = |n: usize| BigUint::one() << (64 * n - 1);
+            let (a, b) = (
+                random(w as u64, 2 * w - 1) | top(2 * w - 1),
+                random(!(w as u64), w) | top(w),
+            );
+            let qw = words(&a) - words(&b) + 1;
+            assert_eq!(qw, w);
+            let flip = past_leaf_cost(qw, &b) / num_bigint_div_units(qw, w);
+            assert_eq!(
+                DIV_COST_FIT <= flip,
+                by_num_bigint,
+                "{w} words: flip {flip}"
+            );
+        }
+    }
+
     #[test]
     fn wide_quotients_agree_with_num_bigint() {
         let base = crate::seed::seed("wide_quotients_agree_with_num_bigint");

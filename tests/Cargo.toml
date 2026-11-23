@@ -317,6 +317,10 @@ full = []
 spec = []
 # The build whose content addresses collide, for the tests of step L1.37a.
 short-addresses = ["zedc/short-addresses", "zed-kernel/short-addresses"]
+# The table of each division's and product's method in the roots benches
+# (`zed_kernel::num::fast::method_counts`; test
+# `l01_39_reduced_product::roots::bench::the_methods_of_each_size`).
+method-counts = ["zed-kernel/method-counts"]
 
 [dependencies]
 zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref", "obligation-test-modes"] }

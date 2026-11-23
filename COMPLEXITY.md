@@ -1194,6 +1194,7 @@ its fit, exit status 0.
 | `TOOM_COST` (the same three, with `WRAP_COST` 10 and `MUL_LEAF` 400, 2026-11-22) | 5.8 | 6.34 to 7.81, 6.80 up, 6.33 to 6.42 | 7.0 | 1.038 at 431 to 512 (`mul 4`) | 1.0003 |
 | `DIV_LEAF` alone (`div-leaf 1 1`, `1 4`, `4 1`, `16 1`, `256 1`) | 64 words | 3192, 919, 899, 417, 242 by shape | 64 words and `DIV_COST` | 3.38 (`1 4`) | 1.0146 |
 | `DIV_COST` (the five `div-leaf` together) | none | 9.06 to 9.22 | 9.1 | | 1.0146 |
+| `DIV_SAME` with `newton_cost` on the points of its `Level` (`div-leaf 1 1`, `1 4`, `2 1`, `4 1`, `16 1`, `256 1`, and `1 1` with 1 word less and 1 and 2 more at 2048, 2049, 2896, 4096 and 5793 words; PERF-div-narrow-quotient-factor, 2026-11-23) | 1.295, `newton_cost` on `transform_cost` | 1779, 807, 1898, 1480, 417, 366 words; `DIV_SAME` 1.4231 to 1.4571 at 9.1 | 1.44 | 1.527 at 2049 (`1 1`) | 1.0001 |
 | `RECIP_LEAF` (`recip`) | 32 words | 417 | 416 | 1.82 | 1.0187 |
 | `GCD_LEAF` (`gcd-leaf`) | 512 words | 300; 311 on the C library's heap | 299; 310 since PERF-crossover-heap (below) | 1.25; 1.0111 at 304 | 1.0049; 1.0026 |
 | `LIFT_BITS` = 64 `MUL_LEAF` bits (`lift-gcd`, `lift-bezout`; sizes are the inputs' words) | 32,768 bits | 1798 words | 29,376 bits, lifting from 1878 words | held | 1.0022 |

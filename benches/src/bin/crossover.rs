@@ -16,9 +16,11 @@
 //!   balanced product by transforms on `n / 2` points with the top words' product subtracted
 //!   against on all `n`, dense random factors of `n / 4` to `n / 2` words (4096 and 8192 in
 //!   `all`).
-//! - `div-leaf [q d]`: `DIV_LEAF` and `DIV_COST`, num-bigint's division against the division
-//!   past the leaf, `(q + d) w - 1` by `d w` dense words, a quotient of about `q w` (`1 1`,
-//!   `1 4`, `4 1`, `16 1` and `256 1` in `all`).
+//! - `div-leaf [q d [extra [w,w,...]]]`: `DIV_LEAF` and `DIV_COST`, num-bigint's division
+//!   against the division past the leaf, `(q + d) w - 1 + extra` by `d w` dense words, a
+//!   quotient of about `q w` (`1 1`, `1 4`, `4 1`, `16 1` and `256 1` in `all`); for `1 1`,
+//!   `extra` 1 and 2 give a quotient of `w + 1` and `w + 2` words, the last that `DIV_SAME`
+//!   takes and the first past it. The sizes are the listed `w`, else the ladder.
 //! - `rem-leaf [q]`: `DIV_LEAF` and `DIV_COST` in `rem`, num-bigint's `%` against the blocks
 //!   of one `Divisor`, `(q + 1) w` by `w` dense words (16 and 256 in `all`).
 //! - `div-rows`: `SPARSE_WORD` and `SPARSE_STEP`, long division over the divisor's nonzero
@@ -362,15 +364,28 @@ fn division_shape(args: &[String]) -> (usize, usize) {
     (q, d)
 }
 
+/// `div-leaf [q d [extra [w,w,...]]]`: with `extra`, the dividend has `extra` words more, so
+/// that `1 1 1` and `1 1 2` straddle `qw = bw + 1` of `DIV_SAME` by a word (`1 1` alone has
+/// `qw = bw`), and with the list, only those sizes `w` (plan row
+/// PERF-div-narrow-quotient-factor).
 fn div_leaf(args: &[String]) -> ExitCode {
     let (q, d) = division_shape(args);
-    let note = move |w: usize| format!(" ({} by {})", (q + d) * w - 1, d * w);
+    let extra: isize = args.get(2).map_or(0, |s| s.parse().expect("extra words"));
+    let listed: Option<Vec<usize>> = args
+        .get(3)
+        .map(|s| s.split(',').map(|w| w.parse().expect("a size")).collect());
+    let aw = move |w: usize| {
+        ((q + d) * w - 1)
+            .checked_add_signed(extra)
+            .expect("a dividend")
+    };
+    let note = move |w: usize| format!(" ({} by {})", aw(w), d * w);
     let inputs = move |w: usize| {
         let mut rng = Rng::new(w as u64);
         let b = random(&mut rng, d * w);
-        let a = random(&mut rng, (q + d) * w - 1);
+        let a = random(&mut rng, aw(w));
         let ones = |n: usize| (BigUint::from(1u32) << (64 * n)) - 1u32;
-        vec![(a, b), (ones((q + d) * w - 1), ones(d * w))]
+        vec![(a, b), (ones(aw(w)), ones(d * w))]
     };
     let bench = Crossover {
         unit: "words",
@@ -399,9 +414,9 @@ fn div_leaf(args: &[String]) -> ExitCode {
     };
     let verdict = bench.report(
         &mut Meter::new(),
-        &format!("div-leaf {q} {d}"),
+        &format!("div-leaf {q} {d} {extra}"),
         &format!("DIV_LEAF {} bits, DIV_COST", x::DIV_LEAF),
-        &ladder(16, to, 2),
+        &listed.unwrap_or_else(|| ladder(16, to, 2)),
         TOLERANCE,
     );
     status(verdict.holds())

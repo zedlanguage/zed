@@ -13,6 +13,10 @@ workspace = true
 # Truncates every content address and digest to a few bits, so that distinct values collide
 # (step L1.37a; see src/address.rs). Off in a release build.
 short-addresses = []
+# Counts the calls of `num::fast::div_rem` and `num::fast::mul` by method and operand words
+# (`num::fast::method_counts`), for the table at `l01_39_reduced_product::roots::bench`. Off
+# in every other build.
+method-counts = []
 
 # Also a dylib, so that a build with `-C prefer-dynamic` (the local zrun builds) links each test
 # binary against one shared copy instead of a static copy per binary.

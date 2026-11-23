@@ -106,9 +106,10 @@ scaling_tests! {
     // no growth in the rise, which a term c n per link would double), the path copies of the
     // persistent labels, whose largest has n / 2 pieces (`counts::inverse_most`). At 16 the
     // ratio of such work is 8 (a + 7b) / (a + 4b), over 10.5 when a < 5.6 b: it read 10.40 to
-    // 10.73 as a fell; at 1024 the ratio is at most 8 log(8n) / log n = 10.4 for any a (P300),
-    // and reads 9.45 by the per-link bytes above. Byte counts do not depend on load. Proof of
-    // the log factor: row PROOF-min-gap-log-per-link.
+    // 10.73 as a fell; at 1024 the ratio 8 (a + 13b) / (a + 10b) is at most 8 log(8n) / log n
+    // = 10.4 for any a, b >= 0 with a + b > 0 (P300; it falls from 10.4 at a = 0 toward 8 as a
+    // grows), and reads 9.45 by the per-link bytes above. Byte counts do not depend on load.
+    // Proof of the log factor: row PROOF-min-gap-log-per-link.
     normal_min_gap_scales: "normal_min_gap" at 1024;
     normal_mixed_moduli_scales: "normal_mixed_moduli" at 16;
     normal_mod_chain_scales: "normal_mod_chain" at 16;
