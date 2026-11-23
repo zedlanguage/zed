@@ -712,6 +712,20 @@ fn the_questions_of_a_chain_calling_a_callee_with_holes_scale() {
 }
 
 #[test]
+fn the_questions_of_a_chain_calling_a_callee_with_spread_holes_scale() {
+    // The same with `x != 2j` (LOAD-call-disj-spread): the holes do not merge, so each call
+    // writes the n clauses and `Extending` decides each link from them, Θ(n) a call and Θ(n²)
+    // in all (60.7 times the instructions, 50 → 400, colab 2026-11-23). Red until the shared
+    // call node of META1 A3 (XR-LOAD-chain-move-call-disj-defined-with) is built; the test
+    // above, with the holes merged, is its control (8.143 with the same code).
+    questions_scale_unit(
+        "the linear questions of a chain calling a callee with spread holes",
+        50,
+        a_chain_calling_a_callee_with_spread_holes,
+    );
+}
+
+#[test]
 fn the_questions_of_a_chain_moving_a_hole_scale() {
     // LOAD-bound-holes: the drifting chain beside `q(x) = (x < 10 || x > 20) && 0 < x <
     // 1000000`. Each link moves the hole `10..=20` by 3 and keeps it, so the face of the
