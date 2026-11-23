@@ -556,6 +556,11 @@ fi
 # first mount on an empty file in the tmpfs. The piece then starts its binary again. Before the
 # copy that new process ended as kernel25's did: exit 127, "error while loading shared
 # libraries: lib...-<hash>.so: cannot open shared object file".
+# run_tests.sh makes the copy only under zrun (make_run_copy), not on a Colab VM. With no copy,
+# the deps folder is left as it is: emptying it tests nothing that exists there, and a binary
+# built with -C prefer-dynamic (job.sh's dylib retry) then failed with exit 127 for want of
+# libzed_rt.so (b22-tests7, v5e2, 2026-11-23), while one with static std passed for want of
+# nothing. The part then checks only that the piece starts its binary again and passes.
 if want copy; then
 logs=build/test-run-tests-copy
 mkdir -p "$logs"
@@ -566,19 +571,28 @@ ZED_TEST_RUN_COPY_TURNS=$turns unshare --mount tools/run_tests.sh --logs "$logs"
 a=$!
 while [ -d "/proc/$a" ] && [ ! -e "$turns/ready" ]; do sleep 0.05; done
 left=none
+copied=yes
 if [ -e "$turns/ready" ]; then
   bin=$(awk 'NR == 1 { print $3 }' "$(last_run)/pieces")
   deps=${bin%/*}
-  mkdir "$turns/deps"
-  nsenter --target "$a" --mount bash -c 'mount --bind "$1" "$2" && mount -t tmpfs tmpfs "$1" &&
-    : >"$3" && mount --bind "$2/${3##*/}" "$3"' _ "$deps" "$turns/deps" "$bin" &&
-    left=$(nsenter --target "$a" --mount ls -A "$deps")
+  if [ ! -d "$(last_run)/cargo" ]; then
+    copied=no
+  else
+    mkdir "$turns/deps"
+    nsenter --target "$a" --mount bash -c 'mount --bind "$1" "$2" && mount -t tmpfs tmpfs "$1" &&
+      : >"$3" && mount --bind "$2/${3##*/}" "$3"' _ "$deps" "$turns/deps" "$bin" &&
+      left=$(nsenter --target "$a" --mount ls -A "$deps")
+  fi
 fi
 : >"$turns/go"
 wait "$a"
 rc=$?
-check "in the run's namespace the build's deps folder holds the test binary alone while the piece waits" \
-  "${bin##*/}" "$left"
+if [ $copied = yes ]; then
+  check "in the run's namespace the build's deps folder holds the test binary alone while the piece waits" \
+    "${bin##*/}" "$left"
+else
+  echo "copy: the run made no copy of the build (not under zrun); its deps folder is left as it is"
+fi
 check "the piece starts its binary again and passes" "0" "$rc"
 [ "$rc" = 0 ] || cat "$logs.out"
 check "the run deletes its copy of the build" "" "$(ls -d "$(last_run)/cargo" 2>/dev/null)"
