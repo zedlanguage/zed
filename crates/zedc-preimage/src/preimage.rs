@@ -13467,6 +13467,19 @@ pub mod counts {
         pub(crate) static NEGATIVE_CYCLES: Cell<[u64; 2]> = const { Cell::new([0, 0]) };
         pub(crate) static INVERSE_MOST: Cell<[u64; 2]> = const { Cell::new([0, 0]) };
         pub(crate) static IF_TREE_NODES: Cell<Option<u64>> = const { Cell::new(None) };
+        pub(crate) static BOUNDARY_GCDS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// The gcds taken on this thread for the cuts of the trees of excluded values
+    /// (`Boundaries::join` in `preimage_ref`, which only `tree_round` reads) since the last call,
+    /// and resets the count to 0 (REF-boundaries-gate).
+    pub fn boundary_gcds() -> u64 {
+        BOUNDARY_GCDS.replace(0)
+    }
+
+    /// Adds `n` to [`boundary_gcds`].
+    pub(crate) fn note_boundary_gcds(n: u64) {
+        BOUNDARY_GCDS.set(BOUNDARY_GCDS.get() + n);
     }
 
     /// Starts recording, on this thread, the most nodes in the tree of excluded values of an

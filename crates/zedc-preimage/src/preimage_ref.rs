@@ -152,6 +152,7 @@
 //! [`exact_preimage`]: crate::preimage_ref::exact_preimage
 //! [`witness`]: crate::preimage_ref::witness
 
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
@@ -5142,7 +5143,10 @@ struct PartitionNode {
     min_lo: End,
     max_hi: End,
     span: (End, End),
-    boundaries: Boundaries,
+    /// The cuts of the subtree, in the node's coordinates: made by [`node_boundaries`] when
+    /// `tree_round` first reads them, then kept through tags (`tree_apply`) and scaling
+    /// (`tree_division`) like the keys.
+    boundaries: OnceCell<Boundaries>,
     height: usize,
     data: Contents,
     lazy: ValTag,
@@ -5185,7 +5189,11 @@ impl Boundaries {
             (None, _) => other.clone(),
             (_, None) => self.clone(),
             (Some(a), Some(b)) => Self {
-                anchor: Some(a.clone()),
+                anchor: Some({
+                    #[cfg(feature = "counts")]
+                    crate::preimage::counts::note_boundary_gcds(2);
+                    a.clone()
+                }),
                 step: self.step.gcd(&other.step).gcd(&(a - b)),
             },
         }
@@ -5199,6 +5207,47 @@ impl Boundaries {
             });
         }
     }
+}
+/// The cuts of the subtree at `n`, in `n`'s coordinates: every finite `lo` and `hi + 1` of its
+/// nodes, as an anchor (one of them) and a step (the gcd of their differences). Only
+/// `tree_round` reads them, so they are made here on its first read and kept in the node
+/// (REF-boundaries-gate); a node built and never rounded takes no gcd. Before, `tree_parts`
+/// joined them at every node built, two gcds a node, on chains with no `Round` at all.
+///
+/// Proof that `tree_round` reads the same answer as with the cuts joined at every build:
+/// 1. Both describe the same set of points P: the keys of the subtree, each child's mapped
+///    through `n.lazy` (`apply`), since `tree_apply` maps a node's own key at once and its
+///    children's only through the tag it composes into `lazy`. Tags are shifts `x + s` and
+///    reflections `s + 1 - x`, scaling (`tree_division`) is `x * c`; each maps `lo` and
+///    `hi + 1` to the mapped key's `lo` and `hi + 1`, so mapping the cuts maps P.
+/// 2. `join` keeps step = gcd of all differences of P, whatever the order and grouping of the
+///    joins: gcd(step_a, step_b, a - b) for a in A, b in B is the gcd of the differences
+///    within A, within B, and between them (each difference between them is a - b plus a
+///    combination of the steps). Shifts and reflections keep every |difference|, and scaling
+///    by c multiplies each by c, as `apply` and `tree_division` do to the step.
+/// 3. The anchor is some point of P, which may differ between the two orders; `tree_round`
+///    reads it only when m divides the step, that is, when all of P is one residue mod m,
+///    and then reads only `anchor mod m`, the same for every point of P.
+/// 4. A node keeps its cuts once made, and `tree_parts` makes every changed node anew, so a
+///    kept value is never that of an older subtree.
+///
+/// Complexity tradeoff: each node instance computes its cuts at most once, from its children's
+/// kept cuts, two gcds and a tag; a node copied by `Arc::make_mut` before the first read
+/// computes them in each copy that is read. So `tree_round` costs at most what the joins at
+/// every build cost before (each node `tree_parts` built joined them once), and nothing on a
+/// chain that never rounds. Recursion is as deep as the AVL height, O(log p). Test:
+/// `ref_memo::only_a_chain_with_a_round_takes_gcds_for_the_cuts`, and the answers of every
+/// family against main's in `ref_memo::every_family_keeps_main_s_answers_through_the_inverse_tree_changes`.
+fn node_boundaries(n: &PartitionNode) -> &Boundaries {
+    n.boundaries.get_or_init(|| {
+        let mut b = Boundaries::key(&n.lo, &n.hi);
+        for c in [&n.left, &n.right].into_iter().flatten() {
+            let mut cb = node_boundaries(c).clone();
+            cb.apply(&n.lazy);
+            b = b.join(&cb);
+        }
+        b
+    })
 }
 fn ceil_grid(e: &End, m: &Num) -> End {
     match e {
@@ -5215,9 +5264,9 @@ fn tree_round(tree: Tree, m: &Num) -> Tree {
     // preserves the same grid inverse and reduces measured round-down byte R
     // from 9.70 to 9.50 (16..128), without changing the asymptotic traversal.
     let n = tree.as_ref()?;
-    if n.boundaries.step.rem_euclid(m).is_zero() {
-        let residue = n
-            .boundaries
+    let boundaries = node_boundaries(n);
+    if boundaries.step.rem_euclid(m).is_zero() {
+        let residue = boundaries
             .anchor
             .as_ref()
             .map_or(Num::ZERO, |a| a.rem_euclid(m));
@@ -5280,8 +5329,10 @@ fn tree_division(t: Tree, c: &Num) -> Tree {
     n.hi = upper(&n.hi);
     n.min_lo = lower(&n.min_lo);
     n.max_hi = upper(&n.max_hi);
-    n.boundaries.anchor = n.boundaries.anchor.as_ref().map(|a| a * c);
-    n.boundaries.step = &n.boundaries.step * c;
+    if let Some(b) = n.boundaries.get_mut() {
+        b.anchor = b.anchor.as_ref().map(|a| a * c);
+        b.step = &b.step * c;
+    }
     Some(arc)
 }
 fn tree_parts((lo, hi): (End, End), data: Contents, left: Tree, right: Tree) -> PartitionNode {
@@ -5293,12 +5344,8 @@ fn tree_parts((lo, hi): (End, End), data: Contents, left: Tree, right: Tree) -> 
         xlo = xlo.min(n.span.0.clone());
         xhi = xhi.max(n.span.1.clone());
     }
-    let mut boundaries = Boundaries::key(&lo, &hi);
-    for n in [&left, &right].into_iter().flatten() {
-        boundaries = boundaries.join(&n.boundaries);
-    }
     PartitionNode {
-        boundaries,
+        boundaries: OnceCell::new(),
         min_lo: left
             .as_ref()
             .map_or_else(|| lo.clone(), |n| n.min_lo.clone()),
@@ -5324,7 +5371,9 @@ fn tree_apply(tree: Tree, tag: &ValTag) -> Tree {
     }
     let mut arc = tree?;
     let n = Arc::make_mut(&mut arc);
-    n.boundaries.apply(tag);
+    if let Some(b) = n.boundaries.get_mut() {
+        b.apply(tag);
+    }
     (n.lo, n.hi) = tag.map_range(&n.lo, &n.hi);
     (n.min_lo, n.max_hi) = tag.map_range(&n.min_lo, &n.max_hi);
     if tag.0 {
