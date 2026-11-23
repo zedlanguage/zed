@@ -130,7 +130,7 @@ macro_rules! deep_forms {
 deep_forms! {
     deep_parentheses parens "1", "f(c) = 1;\n";
     a_long_sum sum "(+ (+ a a) b)", "f(c) = a + a + b;\n";
-    deep_prefix_operators negations "(! (! ok))", "f(c) = !(!ok);\n";
+    deep_prefix_operators negations "(! (! ok))", "f(c) = ! !ok;\n";
     deep_powers powers "(^ 2 (^ 2 2))", "f(c) = 2^2^2;\n";
     deep_lambdas lambdas "(fn (x) (fn (x) x))", "f(c) = x -> x -> x;\n";
     deep_calls calls "(call f (call f 1))", "f(c) = f(f(1));\n";

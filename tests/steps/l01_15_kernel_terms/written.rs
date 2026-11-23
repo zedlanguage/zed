@@ -148,9 +148,17 @@ fn operands_are_parenthesized_only_where_precedence_needs_it() {
         ),
         (
             prim(Prim::Neg, vec![prim(Prim::Neg, vec![a.clone()])]),
-            "-(-a)",
+            "- -a",
         ),
-        (prim(Prim::Neg, vec![lit(-3)]), "-(-3)"),
+        (
+            prim(Prim::Not, vec![prim(Prim::Not, vec![a.clone()])]),
+            "! !a",
+        ),
+        (
+            prim(Prim::Neg, vec![prim(Prim::Not, vec![a.clone()])]),
+            "-!a",
+        ),
+        (prim(Prim::Neg, vec![lit(-3)]), "- -3"),
         (p(Prim::Sub, a.clone(), lit(-3)), "a - -3"),
         (
             p(Prim::Lt, p(Prim::Lt, a.clone(), b.clone()), c.clone()),

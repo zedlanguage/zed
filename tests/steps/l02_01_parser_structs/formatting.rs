@@ -47,7 +47,7 @@ fn a_display_in_body_position_keeps_its_parentheses() {
 
 #[test]
 fn with_is_parenthesized_by_its_level() {
-    check("n = p with {x=3}.norm;\n", "n = (p with { x = 3 }).norm;\n");
+    check("n = p with {x=3}.norm;\n", "n = p with { x = 3 }.norm;\n");
     check("s = (a + b) with {x=1};\n", "s = a + b with { x = 1 };\n");
     check("t = (a < b) with {x=1};\n", "t = (a < b) with { x = 1 };\n");
     check("u = -(p with {x=1});\n", "u = -(p with { x = 1 });\n");

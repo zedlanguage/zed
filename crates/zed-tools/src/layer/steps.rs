@@ -27,11 +27,27 @@
 
 use zedc::parse::TOP;
 
-use super::spans;
 use crate::spec::Spec;
 use crate::syntax::{lex, parse};
 use crate::text::read_text;
 use crate::{Outcome, say};
+
+/// The non-empty backtick spans of `s`, for this audit and for the table of words (`super`).
+pub(crate) fn spans(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = s;
+    while let Some(a) = rest.find('`') {
+        let after = &rest[a + 1..];
+        let Some(b) = after.find('`') else { break };
+        if b == 0 {
+            rest = after;
+        } else {
+            out.push(&after[..b]);
+            rest = &after[b + 1..];
+        }
+    }
+    out
+}
 
 /// A span listed: its step, the step's layer, the span, its ring and whether its sentence
 /// allows it.

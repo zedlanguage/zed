@@ -15,10 +15,12 @@ use crate::progress::{plan, step_name};
 use crate::{Outcome, arg, impl_root, say};
 
 /// Files whose citations are test data, not citations of the spec: the tests of the fence keys
-/// and of this tool write labels and steps that no DESIGN.md defines.
+/// and of this tool and of `layer SPEC_DIR steps` write labels and steps that no DESIGN.md
+/// defines.
 pub const FIXTURES: &[&str] = &[
     "tests/steps/l01_07_fences/keys.rs",
     "tests/steps/m0_03_grammar_tools/cite.rs",
+    "tests/steps/m0_03_grammar_tools/layer_steps.rs",
 ];
 
 /// Whether `path` is a graph saved from dagview's hub, which dagview's tests read as test data:

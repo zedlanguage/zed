@@ -52,6 +52,8 @@ use crate::spec::Spec;
 use crate::syntax::{Tokens, Tree, lex, then_end};
 use crate::text::{base_name, left, read_text, repr, right, strip};
 use crate::{Outcome, arg, say};
+// In `steps`, which reads them too, so that the two files do not import each other.
+use steps::spans;
 
 /// The target values DESIGN sec:layers lists ("a target value (`#cpu`, `#wasm`, `#gpu`, `#cluster`,
 /// `#mcu`) is one only as the argument of `target(…)` or of `@require`'s `target:`"): elsewhere
@@ -69,23 +71,6 @@ fn prose_words(layer: u32) -> &'static [&'static str] {
 
 /// Backtick spans that need types to tell apart, so are not counted.
 const UNCOUNTED: [&str; 2] = [".fold", "abs"];
-
-/// The non-empty backtick spans of `s`.
-pub(crate) fn spans(s: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut rest = s;
-    while let Some(a) = rest.find('`') {
-        let after = &rest[a + 1..];
-        let Some(b) = after.find('`') else { break };
-        if b == 0 {
-            rest = after;
-        } else {
-            out.push(&after[..b]);
-            rest = &after[b + 1..];
-        }
-    }
-    out
-}
 
 /// Whether `w` is a plain ASCII word.
 fn is_word(w: &str) -> bool {

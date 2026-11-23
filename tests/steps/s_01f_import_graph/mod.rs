@@ -345,6 +345,23 @@ fn a_module_a_path_attribute_places_is_not_read() {
     assert!(edges(&g).is_empty(), "{:?}", edges(&g));
 }
 
+/// `zed-rt` reads `stack/growing.rs` this way, once with std's atomics and once with loom's:
+/// the file is reached, by a path relative to the file of the call, and not read.
+#[test]
+fn a_file_an_include_names_is_reached_not_read() {
+    let g = graph(&[
+        ("lib.rs", "mod a;\n"),
+        ("a.rs", "mod std_list {\n    include!(\"a/list.rs\");\n}\n"),
+        ("a/b.rs", "mod loom_list {\n    include!(\"list.rs\");\n}\n"),
+        ("a/list.rs", "use crate::a::nothing;\npub struct List;\n"),
+        ("c.rs", "include!(\"../outside.rs\");\n"),
+    ]);
+    assert_eq!(g.included, ["a.rs:2"]);
+    assert_eq!(g.undeclared, 2, "{:?}", g.files);
+    assert!(g.files.contains(&"a/list.rs".to_string()), "{:?}", g.files);
+    assert!(edges(&g).is_empty(), "{:?}", edges(&g));
+}
+
 #[test]
 fn a_missing_module_file_is_an_error() {
     let files = vec![("lib.rs".to_string(), "mod gone;\n".to_string())];

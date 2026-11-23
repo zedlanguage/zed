@@ -29,7 +29,7 @@ fn printed_back_infix() {
         ("-(p ~f~ v)", "-(p ~f~ v)"),
         ("(-p) ~f~ v", "(-p) ~f~ v"),
         ("p ~f~ (-1)", "p ~f~ -1"),
-        ("p ~f~ -(-b)", "p ~f~ -(-b)"),
+        ("p ~f~ -(-b)", "p ~f~ - -b"),
         ("p ~f~ (-k^2)", "p ~f~ (-k^2)"),
         ("(2^3) ~f~ 1", "(2^3) ~f~ 1"),
         ("2^(3 ~f~ 1)", "2^(3 ~f~ 1)"),
@@ -102,11 +102,6 @@ fn round_trip_and_minimal_parentheses() {
             // A number before `.` keeps its parentheses, so that `(1).len` does not read as a
             // decimal (format.rs, the operand of a call, index or member).
             if p[o + 1..c].bytes().all(|b| b.is_ascii_digit()) && p[c + 1..].starts_with('.') {
-                continue;
-            }
-            // A prefix on a prefix is grouped, `-(-x)`, so the two signs do not run together
-            // (format.rs, `infix_right`, and the same rule outside infix calls).
-            if p[..o].ends_with(['-', '!']) && p[o + 1..].starts_with(['-', '!']) {
                 continue;
             }
             let fewer = format!("{}{}{}", &p[..o], &p[o + 1..c], &p[c + 1..]);

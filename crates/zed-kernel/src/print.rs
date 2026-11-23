@@ -88,7 +88,7 @@ pub fn pretty_in(t: &Term, width: usize, resolves: Resolves<'_>) -> String {
 /// `if c { false } else { b }` and `if c { a } else { true }` are written `!c && b` and
 /// `!c || a`, which mean the same; and an operator's operands are parenthesized only where
 /// the grammar's precedence needs it (P191, module [`level`]): `x - y >= 1 || x >= 0`,
-/// `a - (b - c)`, `-(-x)`, `(-x)^2`. Otherwise the text is that of [`pretty_in`] on one line,
+/// `a - (b - c)`, `- -x`, `(-x)^2`. Otherwise the text is that of [`pretty_in`] on one line,
 /// and costs the same.
 pub fn written(t: &Term, name: fn(&str) -> &str, resolves: Resolves<'_>) -> String {
     let local = defs::local();
@@ -426,6 +426,27 @@ impl<'a> Pieces<'a> {
         self
     }
 
+    /// The prefix operator `p` (`Neg` or `Not`) and its operand `x`. `Prefix = ('-' | '!')
+    /// Prefix` (sec:grammar), so in [`written`]'s text a prefix on a prefix needs no
+    /// parentheses (P191), and the same operator twice is written with a space, `- -x`,
+    /// `! !b`, as the source formatter writes it (`zedc-syntax` `format`): `--x` and `!!b`
+    /// would read as C's decrement and JavaScript's cast to a boolean (P292). A negative
+    /// literal under `-` is the same case, `- -3`.
+    fn prefix(&mut self, p: Prim, x: &'a Term) -> &mut Self {
+        self.text(p.written());
+        if self.minimal() {
+            let twice = match x {
+                Term::Prim(q, args) => *q == p && args.len() == 1,
+                Term::Lit(_) => p == Prim::Neg && written_level(x) == level::PREFIX,
+                _ => false,
+            };
+            if twice {
+                self.text(" ");
+            }
+        }
+        self.at(x, level::PREFIX)
+    }
+
     /// Whether the text is [`written`]'s, which writes minimal parentheses.
     fn minimal(&self) -> bool {
         self.1.is_some()
@@ -582,13 +603,8 @@ impl<'a> Pieces<'a> {
                 self.end();
             }
             // `-x` and `!x`: the operator before its operand (sec:grammar, Prefix).
-            // In [`written`]'s text the operand is at least a power, so a prefix on a prefix
-            // is written `-(-x)`, as the formatter writes it.
             Term::Prim(p @ (Prim::Neg | Prim::Not), args) if args.len() == 1 => {
-                self.cat()
-                    .text(p.written())
-                    .at(&args[0], level::POWER)
-                    .end();
+                self.cat().prefix(*p, &args[0]).end();
             }
             // `t[0]` and `f[k]`: the key in brackets after its receiver (sec:grammar, IndexSuffix).
             // A chain `t[0][1]` is one `Cat` of its receiver and its indices, gathered by a loop,
@@ -669,7 +685,7 @@ impl<'a> Pieces<'a> {
                 let (l, r) = level::operands(level::binary(op).expect("an infix operator"));
                 self.cat();
                 match not {
-                    true => self.cat().text("!").at(c, level::POWER).end(),
+                    true => self.cat().prefix(Prim::Not, c).end(),
                     false => self.at(c, l),
                 };
                 self.text(sep).at(rhs, r).end();

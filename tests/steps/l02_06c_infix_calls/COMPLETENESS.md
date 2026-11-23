@@ -23,6 +23,6 @@ each (l01_13_formatter, l01_21_test_runner).
 | A qualified name rejected with the call written out | `rejections.rs::a_qualified_name` | |
 | A reserved word between the tildes | | In l01_02_lexer: the lexer rejects it. |
 | Printed back infix with minimal parentheses | `printing.rs::printed_back_infix` | |
-| Random expressions: the round trip keeps the tree, each printed pair of parentheses is needed | `printing.rs::round_trip_and_minimal_parentheses` | `(1).len` and `-(-x)` keep parentheses the tree does not need, by the printer's rules outside infix calls. |
+| Random expressions: the round trip keeps the tree, each printed pair of parentheses is needed | `printing.rs::round_trip_and_minimal_parentheses` | `(1).len` keeps parentheses the tree does not need, so that `1.len` does not read as a decimal. |
 | A chain of n calls, accepted and rejected; 4,000 deep on a test thread | `scaling.rs` | The ratio at n and 8n is in `bench/scaling.rs` (P178). |
 | Point and Vec operands, methods as infix functions | | Structs and methods are steps L2.4 to L2.6, not built yet; an infix call's meaning does not depend on the operand types. |

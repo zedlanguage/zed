@@ -128,6 +128,11 @@ pub struct Graph {
     /// The `mod name;` declarations a `#[path]` attribute places, which are not read, each as
     /// `file:line`.
     pub placed: Vec<String>,
+    /// The `include!("…")` calls that name a file of the crate, each as `file:line`. The file
+    /// is in the graph, but its text is not read: it holds no `use` of its own that leads to
+    /// another file here (`zed-rt`'s `stack/growing.rs`, read with std's atomics and with
+    /// loom's), and its items count as those of the module around the call.
+    pub included: Vec<String>,
     /// The calls whose receiver's type was not found that import a file: one with a method of
     /// that name written apart from its type, whose type's file the caller imports by a path or
     /// a typed call.
@@ -215,6 +220,13 @@ fn report(dir: &str, graph: &Graph, cycles: &[Vec<usize>], out: &mut String) {
             out,
             "modules a #[path] attribute places, not read: {}",
             graph.placed.join(", ")
+        );
+    }
+    if !graph.included.is_empty() {
+        say!(
+            out,
+            "files an include! names, not read: {}",
+            graph.included.join(", ")
         );
     }
     if graph.unknown_calls > 0 {
@@ -491,6 +503,10 @@ struct Builder<'a> {
     reached: Vec<bool>,
     /// The `mod name;` declarations a `#[path]` attribute places, as `file:line`.
     placed: Vec<String>,
+    /// The `include!` calls that name a file of the crate, as `file:line`, and those files;
+    /// once every file is read, the files reached only by those calls, sorted.
+    included: Vec<String>,
+    included_files: Vec<usize>,
     /// For each file: its tokens, the matching brackets, what its braces open, and its module.
     toks: Vec<Vec<(Tok<'a>, usize)>>,
     mates: Vec<Vec<usize>>,
@@ -506,6 +522,25 @@ struct Builder<'a> {
 
 /// A file to read: the file, and its parent module and name there, or none for a crate root.
 type Todo<'a> = (usize, Option<(usize, &'a str)>);
+
+/// The path `p` relative to the directory `dir` of the crate's sources, with `.` and `..`
+/// taken out, or none when it leaves the sources or is absolute. O(|dir| + |p|).
+fn joined(dir: &str, p: &str) -> Option<String> {
+    if p.starts_with('/') {
+        return None;
+    }
+    let mut parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+    for s in p.split('/') {
+        match s {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            _ => parts.push(s),
+        }
+    }
+    Some(parts.join("/"))
+}
 
 /// Fields, each with the tokens of its type.
 type Fields<'a> = Vec<(Field<'a>, (usize, usize))>;
@@ -874,6 +909,8 @@ impl<'a> Builder<'a> {
             paths: Vec::new(),
             reached: vec![false; n],
             placed: Vec::new(),
+            included: Vec::new(),
+            included_files: Vec::new(),
             toks: vec![Vec::new(); n],
             mates: vec![Vec::new(); n],
             opens: vec![HashMap::new(); n],
@@ -901,6 +938,15 @@ impl<'a> Builder<'a> {
                 b.read(file, parent, &mut todo)?;
             }
         }
+        // A file an `include!` names is reached, not read; one a `mod` declaration reaches as
+        // well was read above, whatever the order of the two.
+        let mut included = std::mem::take(&mut b.included_files);
+        included.retain(|&f| !b.reached[f]);
+        zed_collections::sorted::sort_dedup(&mut included);
+        for &f in &included {
+            b.reached[f] = true;
+        }
+        b.included_files = included;
         Ok(b)
     }
 
@@ -1014,6 +1060,27 @@ impl<'a> Builder<'a> {
                     ) =>
                 {
                     i = self.use_tree(&toks, i, here);
+                }
+                // `include!("p")`, `p` relative to this file's directory (the Rust reference,
+                // "Macros by example", `include`): the file is reached, not read.
+                Tok::Ident("include")
+                    if (next(1), next(2), next(3))
+                        == (Some(Tok::Bang), Some(Tok::LParen), Some(Tok::Str)) =>
+                {
+                    let named = text
+                        .lines()
+                        .nth(line - 1)
+                        .and_then(|l| l.split_once("include!(\""))
+                        .and_then(|(_, rest)| rest.split_once('"'))
+                        .map(|(p, _)| p);
+                    let here_dir = path.rsplit_once('/').map_or("", |(d, _)| d);
+                    if let Some(f) = named
+                        .and_then(|p| joined(here_dir, p))
+                        .and_then(|p| self.by_path.get(p.as_str()).copied())
+                    {
+                        self.included.push(format!("{path}:{line}"));
+                        self.included_files.push(f);
+                    }
                 }
                 Tok::Ident("mod") => {
                     let (Some(Tok::Ident(name)), Some(after)) = (next(1), next(2)) else {
@@ -1799,7 +1866,8 @@ impl<'a> Builder<'a> {
         }
         let mut untyped = Vec::new();
         for file in 0..self.files.len() {
-            if !self.reached[file] {
+            // A file reached only by an `include!` was not read, so it has no module to walk.
+            if !self.reached[file] || self.included_files.binary_search(&file).is_ok() {
                 continue;
             }
             let mut walk = Walk::new(&self, &done, (&split, &loose, &span), file);
@@ -1848,6 +1916,7 @@ impl<'a> Builder<'a> {
         Ok(Graph {
             undeclared: self.files.len() - files.len(),
             placed: self.placed,
+            included: self.included,
             files,
             imports,
             unknown_calls: unknown,
