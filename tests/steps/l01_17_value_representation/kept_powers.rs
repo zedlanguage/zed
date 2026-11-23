@@ -40,47 +40,46 @@ fn equal_products_of_powers_are_equal_and_hash_alike() {
     assert_eq!(square.residues(), product.residues());
 }
 
-/// A product or quotient is held in the kept form whatever its operands were written as
-/// (sec:domains, "Kept powers"; sec:diagnostics, "Types in a message"): a coefficient of one
-/// word is factored, so `4294967296 * 4294967296` is held as `2^64`, as `2 ^ 64` is.
+/// An integer prints alike whichever way it was built (sec:diagnostics, "Types in a message";
+/// plan row KEPT-power-form-print): `Rat::integer_text` reduces the coefficient with methods
+/// of proved cost, so `4294967296 * 4294967296`, held as digits, prints `2^64`, as `2 ^ 64` and
+/// the literal do. Arithmetic factors nothing: the product keeps its digits.
 #[test]
-fn a_product_of_words_is_held_as_powers() {
+fn an_integer_prints_alike_however_it_was_built() {
     let w = int(1 << 32);
     let square = w.mul(&w).unwrap();
-    assert_eq!(
-        square.kept(),
-        (
-            &BigInt::from(1),
-            &BigInt::from(1),
-            &[(2, BigInt::from(64))][..]
-        )
-    );
-    assert!(square == pow(2, 64));
-    assert_eq!(square.integer_text(), "2^64");
+    let literal = Rat::int("18446744073709551616".parse::<BigInt>().unwrap());
+    // Negative control: the product is held as digits, no prime moved into its powers.
+    assert!(square.kept().2.is_empty(), "{:?}", square.kept());
+    assert!(!pow(2, 64).kept().2.is_empty());
+    for built in [&square, &pow(2, 64), &literal] {
+        assert!(*built == pow(2, 64));
+        assert_eq!(built.integer_text(), "2^64");
+    }
     // The sign stays on the numerator; `-6 * 2^62` is `-(3 * 2^63)`.
     let neg = int(-6).mul(&int(1 << 62)).unwrap();
-    let three = [(2, BigInt::from(63)), (3, BigInt::from(1))];
-    assert_eq!(
-        neg.kept(),
-        (&BigInt::from(-1), &BigInt::from(1), &three[..])
-    );
     assert_eq!(neg.integer_text(), "-3*2^63");
-    // A quotient: `2^40 / 12` is `2^38 * 3^-1`, a denominator of one word factored too.
-    let q = int(1 << 40).div(&int(12)).unwrap().unwrap();
-    let pows = [(2, BigInt::from(38)), (3, BigInt::from(-1))];
-    assert_eq!(q.kept(), (&BigInt::from(1), &BigInt::from(1), &pows[..]));
-    assert!(q == Rat::new(BigInt::from(1u64 << 38), BigInt::from(3)).unwrap());
-    // A wide coefficient is kept whole; the word's primes are moved out of it where they
-    // divide it: `(3 * 2^70 + 3) * 6` is `(2^70 + 1) * 2 * 3^2`.
-    let left: BigInt = (BigInt::from(1) << 70u32) + 1;
-    let wide: BigInt = BigInt::from(3) * &left;
-    let p = Rat::int(wide.clone()).mul(&int(6)).unwrap();
-    let two_nine = [(2, BigInt::from(1)), (3, BigInt::from(2))];
-    assert_eq!(p.kept(), (&left, &BigInt::from(1), &two_nine[..]));
-    assert!(p == Rat::int(wide * 6));
-    // 0 and 1 are not factored, and a product by 0 is 0.
-    assert!(int(0).mul(&int(1 << 40)).unwrap().is_zero());
-    assert!(int(1).mul(&pow(3, K)).unwrap() == pow(3, K));
+    // A power of a wide odd base that is a prime word: `(2^61 - 1)^3`, by the least root.
+    let m61 = (1i64 << 61) - 1;
+    let cube = int(m61).mul(&int(m61)).unwrap().mul(&int(m61)).unwrap();
+    assert_eq!(cube.integer_text(), "2305843009213693951^3");
+    assert_eq!(pow(m61, 3).integer_text(), cube.integer_text());
+    // A word that is the product of two primes above 2^31 has no prime that a method of proved
+    // cost finds: it prints its digits.
+    let (p, q) = (2147483659u64, 2147483693u64);
+    assert!(zed_numtheory::is_prime(p) && zed_numtheory::is_prime(q));
+    let hard = Rat::int(BigInt::from(p))
+        .mul(&Rat::int(BigInt::from(q)))
+        .unwrap();
+    assert_eq!(hard.integer_text(), (p as u128 * q as u128).to_string());
+    // 0, 1 and -1 print as they are; a word prints its digits where they are shorter, and the
+    // power where it is, as the kept power does.
+    assert_eq!(int(0).integer_text(), "0");
+    assert_eq!(int(1).integer_text(), "1");
+    assert_eq!(int(-1).integer_text(), "-1");
+    assert_eq!(int(1000).integer_text(), "1000");
+    assert_eq!(int(1 << 40).integer_text(), "2^40");
+    assert_eq!(pow(2, 40).integer_text(), "2^40");
 }
 
 #[test]

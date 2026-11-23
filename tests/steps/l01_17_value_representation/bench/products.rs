@@ -50,31 +50,55 @@ fn hard_words(count: usize) -> Vec<u64> {
 }
 
 /// The products of `n` and `8n` pairs of words, each word the product of two primes near 2^31:
-/// a product of two words is held in the kept form, each word factored (plan row
-/// KEPT-power-form, `Rat::words_factored`), in O(1) a product, so the work is O(n). It prints
-/// the time of one product, factored, against the product built as digits, which is the
-/// constant factor the kept form costs here.
+/// `Rat::mul` factors nothing (plan row KEPT-power-form-print: the primes are found when the
+/// value is printed), so a product costs what the product built as digits costs, up to the
+/// constant of the kept form's bookkeeping, held below the scaling limit of 10.5, and the work
+/// is O(n). When `Rat::mul` factored each word by Pollard's rho, one product cost 854,433 ns
+/// against 61 ns built (2026-11-23, Colab).
 #[test]
-fn a_product_of_two_words_is_factored_in_constant_time() {
-    let n = 1usize << 9;
+fn a_product_of_two_words_costs_what_a_built_product_costs() {
+    let n = 1usize << 12;
     let words = hard_words(2 * 8 * n);
     let rats: Vec<Rat> = words.iter().map(|w| Rat::int(BigInt::from(*w))).collect();
     let products = |m: usize| {
         for pair in rats[..2 * m].chunks(2) {
             let p = pair[0].mul(&pair[1]).expect("memory is given");
-            assert_eq!(p.kept().2.len(), 4, "four primes");
+            assert!(p.kept().2.is_empty(), "no prime is moved by a product");
         }
     };
-    let (kept, ()) = zed_tests::scaling::least_cpu_ns(3, || products(n));
-    let (built, ()) = zed_tests::scaling::least_cpu_ns(3, || {
+    let (kept, ()) = zed_tests::scaling::least_cpu_ns(5, || products(n));
+    let (built, ()) = zed_tests::scaling::least_cpu_ns(5, || {
         for pair in words[..2 * n].chunks(2) {
             std::hint::black_box(BigInt::from(pair[0]) * BigInt::from(pair[1]));
         }
     });
     eprintln!(
-        "a product of two hard words: {} ns kept, {} ns built",
+        "a product of two hard words: {} ns by Rat::mul, {} ns built",
         kept / n as u128,
         built / n as u128
     );
+    assert!(
+        kept * 2 < built * 21,
+        "Rat::mul {kept} ns against {built} ns built, for {n} products"
+    );
     check_order("products of n and 8n pairs of hard words", n, 1, products);
+}
+
+/// The text of `n` and `8n` products of two hard words ([`hard_words`]), each held as digits:
+/// `Rat::integer_text` reduces each coefficient with methods of proved cost (trailing zeros,
+/// a least root, `factor` below 2^44), which find no prime here, so each prints its digits,
+/// and the work is O(n), a constant per word (plan row KEPT-power-form-print).
+#[test]
+fn the_text_of_a_product_of_two_words_costs_order_n() {
+    let n = 1usize << 11;
+    let words = hard_words(2 * 8 * n);
+    let products: Vec<Rat> = (words.chunks(2))
+        .map(|w| Rat::int(BigInt::from(w[0]) * BigInt::from(w[1])))
+        .collect();
+    check_order("the text of n and 8n products of hard words", n, 1, |m| {
+        for p in &products[..m] {
+            let text = p.integer_text();
+            assert!(text.bytes().all(|b| b.is_ascii_digit()), "{text}");
+        }
+    });
 }

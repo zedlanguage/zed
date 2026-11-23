@@ -1,0 +1,501 @@
+//! The least root of an integer, `b == r ^ m` with `r` no perfect power, and the residues of a
+//! number modulo many words by one remainder tree. Moved here from zedc-int (`int.rs`) on
+//! 2026-11-23 so that the kernel's printer of integers ([`crate::Rat::integer_text`], plan row
+//! KEPT-power-form-print) and zedc-int's kept integers share one routine.
+
+use num_bigint::BigUint;
+use num_traits::{One, Zero};
+use zed_numtheory::{
+    inverse_mod_2_64, is_prime, odd_primes_below, odd_root_mod_2_64, pow_mod, pow_mod_2_64,
+    rem_big_u64,
+};
+
+use crate::bits::BitLen;
+use crate::num::{mul_uint, pow_uint, sqrt_rem_uint, trees};
+
+/// `(r, m)` with `b == r ^ m` and `r` not a perfect power, for `b >= 2`. Square roots are taken
+/// while `b` is a square, each by the kernel's [`sqrt_rem_uint`], O(M(n)), which also says
+/// whether it is one (num-bigint's `sqrt`, taken here until PERF-wide-odd-base-ratio-9, is
+/// above O(M(n)), so this bound did not hold: 34.5 times the time for 8 times the bits at
+/// 13.3M bits); then each odd prime `p` below the bits of `b` is tried as the index of
+/// a root ([`OddPart::root`]), and tried again after it succeeds. A root found for a larger
+/// prime is no power of a smaller one, since `b` would then have been. An index whose root
+/// fits in a word costs `O(log p)` word operations; a wider one is first tested by residues
+/// ([`OddPart::passes`], all from one remainder tree), and one that passes costs a 2-adic root
+/// of `bits / p` bits. So the cost is at most `O(M(n) log n)` for `n` the bits of `b` and `M(n)`
+/// the cost of a product of `n` bits, whatever the exponent `b` is raised to, and near `M(n)`
+/// when the residues reject most indices; a found root, or an index that passes the filters
+/// there without being one, adds one `p`-th power.
+// Complexity tradeoff: naive version, each prime index `p` tried by a full 2-adic Newton root
+// of `bits / p` bits on allocated big integers, with the inverse of the derivative recomputed
+// at each step: one root of cost about M(n) per index, O(n / log n) indices. Used: a root of
+// at most 64 bits is found and checked in one word with nothing allocated; a wider one is
+// tried only when the odd part is a `p`-th power residue modulo the small primes `q < 1024`
+// with `p | q - 1` (residues from one remainder tree per base), and its Newton root carries
+// the inverse from step to step. Tradeoffs: the remainder tree is built once per base as soon
+// as one wide root is looked for, even when few indices reach it; the filters are a necessary
+// condition only, so an index that passes them still costs its root. Results unchanged (unit tests
+// against trial roots). Test
+// `l01_24_refinement_lattices::scaling::the_cube_of_a_wide_end_scales_with_its_bits`; COMPLEXITY.md
+// row S46.
+pub fn least_root(mut b: BigUint) -> (BigUint, BigUint) {
+    let mut m = BigUint::from(1u32);
+    // r >= 2, so r ^ p has at least p + 1 bits.
+    while b.bits() > 2 {
+        // O(M(n)) by the kernel's square root, where num-bigint's `sqrt` took 19.2 s at 13.3M
+        // bits, 34.5 times its time at 1.66M (item PERF-wide-odd-base-ratio-9).
+        let (r, rem) = sqrt_rem_uint(&b);
+        if !rem.is_zero() {
+            break;
+        }
+        b = r;
+        m *= 2u32;
+    }
+    let prime = odd_primes_below(b.bits());
+    let mut odd = OddPart::of(&b);
+    let mut p = 3u64;
+    while p < b.bits() {
+        if prime[(p / 2) as usize]
+            && let Some(r) = odd.root(p)
+        {
+            b = r;
+            m *= p;
+            odd = OddPart::of(&b);
+        } else {
+            p += 2;
+        }
+    }
+    (b, m)
+}
+
+/// The primes by which [`OddPart::root`] checks a candidate root `r` cheaply before it computes
+/// the full power `r^p`: `2^64 - 59 = 18446744073709551557`, `2^63 - 25 = 9223372036854775783`
+/// and `2^62 - 57 = 4611686018427387847`, the largest primes below `2^64`, `2^63` and `2^62`
+/// (test `the_root_check_primes_are_the_largest_below_their_powers_of_two`).
+///
+/// The check: [`OddPart::of`] keeps `o mod q` for each `q`, and a candidate passes when
+/// `(r mod q)^p mod q` equals it for all three. A candidate that fails at one `q` is not the
+/// root, since `r^p = o` gives `r^p = o (mod q)`; so the check only rejects, and rejects
+/// correctly. A candidate that passes is still decided by the full power `r^p == o`, so the
+/// answer is exact whatever these primes are; the check only saves the full power, O(M(n) log p)
+/// for `n` the bits of `o`, against O(log p) word products per prime.
+///
+/// Why these values: a wrong candidate passes at `q` exactly when `q` divides `r^p - o`, which
+/// is not zero. For a candidate that is not built to fool the check, that happens about once in
+/// `q` tries, so the larger `q`, the better; a word-sized `q` keeps `o mod q`, `r mod q` and the
+/// products of [`pow_mod`] in `u64` and `u128` arithmetic. Why three: each prime costs O(log p)
+/// word products, small beside the full power, and three make a wasted full power rarer
+/// (about `2^-64 · 2^-63 · 2^-62 = 2^-189` by the estimate above, where one prime gives about
+/// `2^-64`). No proof bounds
+/// how often a wrong candidate passes; none is needed, since a pass never decides alone.
+const ROOT_CHECK_PRIMES: [u64; 3] = [
+    18_446_744_073_709_551_557,
+    9_223_372_036_854_775_783,
+    4_611_686_018_427_387_847,
+];
+
+/// The bound below the odd primes `q` by which [`OddPart::root`] rejects an index `p` dividing
+/// `q - 1` before it looks for a root wider than one word: if `o == r ^ p` then
+/// `o ^ ((q - 1) / p) == 1` modulo `q` unless `q` divides `o`, and a number that is no `p`-th
+/// power passes one such `q` with chance about `1 / p`, since the `p`-th powers are one in `p`
+/// of the units modulo `q`. No prime below it is 1 modulo an index above `FILTER_BOUND / 2`.
+/// Proof: the indices are odd primes `p` ([`OddPart::filter`]); a prime `q` that is 1 modulo
+/// `p` is `q = k * p + 1` with `k >= 1`, and `q` is odd (`q = 2` would need `p = 1`), so
+/// `k * p` is even, and as `p` is odd, `k` is even, `k >= 2`; then `q >= 2 * p + 1`, which for
+/// `p > 512` exceeds 1025. So each index wider than a word also gets the least prime that is
+/// 1 modulo it ([`Filter`]): without it such an index would meet no prime of the filter.
+/// Test: `least_roots_agree_with_trial_and_with_powers_of_large_bases`, at the exponents 521
+/// and 1042 = 2 * 521, where the index 521 passes or fails by its `Filter::wide` prime alone;
+/// fixed exponents, it cannot catch a wrong residue at an index it does not reach.
+/// The bound sets cost only, never the answer: a rejection is proved by the residue argument
+/// above, and an index that passes is decided by [`OddPart::root`]. 1024 gives the 171 odd
+/// primes below it, whose residues come from one remainder tree; the code records no
+/// measurement behind this value.
+const FILTER_BOUND: u64 = 1024;
+
+/// The residues of `o` by which [`OddPart::passes`] rejects an index: `(q, o mod q)` for each
+/// odd prime `q` below [`FILTER_BOUND`], and `(p, q, o mod q)` for each index `p` whose root is
+/// wider than one word, in increasing order of `p`, with `q` the least prime that is 1 modulo
+/// `p`.
+struct Filter {
+    small: Vec<(u64, u64)>,
+    wide: Vec<(u64, u64, u64)>,
+}
+
+/// `b = 2^v * o` with `o` odd, `o` modulo each of [`ROOT_CHECK_PRIMES`], and, once a root wider
+/// than one word is looked for, the residues of `o` in a [`Filter`].
+struct OddPart {
+    v: u64,
+    o: BigUint,
+    residues: [u64; 3],
+    filter: std::cell::OnceCell<Filter>,
+}
+
+impl OddPart {
+    fn of(b: &BigUint) -> OddPart {
+        let v = b.trailing_zeros().expect("a base is at least 2");
+        let o = b >> v;
+        // `o mod q` for the cheap root check ([`ROOT_CHECK_PRIMES`]).
+        let residues = ROOT_CHECK_PRIMES.map(|q| rem_big_u64(&o, q));
+        OddPart {
+            v,
+            o,
+            residues,
+            filter: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// The [`Filter`] of `o`. The indices wider than a word are the odd primes `p` with
+    /// `64 * p < n`, for `n` the bits of `o`, and the least prime `q = k * p + 1` is found by
+    /// trying `k = 2, 4, ...`, about `ln q` tries ([`is_prime`]: Miller-Rabin with bases that
+    /// decide every 64-bit number, Miller 1976, doi:10.1016/S0022-0000(76)80043-8, and Rabin
+    /// 1980, doi:10.1016/0022-314X(80)90084-0; the full comment is in zed-numtheory `factor.rs`,
+    /// at its head and fn `is_prime`). All the residues come from
+    /// one remainder tree ([`remainders`]): the primes, multiplied into words, are `O(n / 64)`
+    /// bits together, so the tree costs `O(M(n) log n)`, where one division of `o` per word cost
+    /// `O(n)` per index and `O(n^2 / log n)` in all.
+    fn filter(&self) -> &Filter {
+        self.filter.get_or_init(|| {
+            let prime = odd_primes_below(FILTER_BOUND);
+            let small = (1..FILTER_BOUND / 2)
+                .filter(|&i| prime[i as usize])
+                .map(|i| 2 * i + 1);
+            let n = self.o.bits();
+            let index = odd_primes_below(n.div_ceil(64));
+            let wide: Vec<(u64, u64)> = (1..index.len() as u64)
+                .filter(|&i| index[i as usize])
+                .map(|i| {
+                    let p = 2 * i + 1;
+                    let q = (1u64..)
+                        .map(|k| 2 * k * p + 1)
+                        .find(|&q| is_prime(q))
+                        .expect("a prime in each progression");
+                    (p, q)
+                })
+                .collect();
+            let qs: Vec<u64> = small.chain(wide.iter().map(|&(_, q)| q)).collect();
+            // The primes multiplied into words: `ends[w]` is one past the last prime of word `w`.
+            let (mut ms, mut ends) = (Vec::new(), Vec::new());
+            let mut end = 0;
+            while end < qs.len() {
+                let mut m = 1u64;
+                while let Some(next) = qs.get(end).and_then(|&q| m.checked_mul(q)) {
+                    m = next;
+                    end += 1;
+                }
+                ms.push(m);
+                ends.push(end);
+            }
+            let mut rq = Vec::with_capacity(qs.len());
+            for (end, om) in ends.into_iter().zip(remainders(&self.o, &ms)) {
+                rq.extend(qs[rq.len()..end].iter().map(|&q| om % q));
+            }
+            let cut = qs.len() - wide.len();
+            Filter {
+                small: qs[..cut].iter().zip(&rq).map(|(&q, &r)| (q, r)).collect(),
+                wide: wide
+                    .iter()
+                    .zip(&rq[cut..])
+                    .map(|(&(p, q), &r)| (p, q, r))
+                    .collect(),
+            }
+        })
+    }
+
+    /// Whether `o` is a `p`-th power residue modulo each prime of the [`Filter`] that is 1
+    /// modulo `p` and does not divide `o`, as it is when `o` is a `p`-th power.
+    fn passes(&self, p: u64) -> bool {
+        let residue = |q: u64, oq: u64| oq == 0 || pow_mod(oq, (q - 1) / p, q) == 1;
+        let filter = self.filter();
+        filter
+            .small
+            .iter()
+            .all(|&(q, oq)| !(q - 1).is_multiple_of(p) || residue(q, oq))
+            && match filter.wide.binary_search_by_key(&p, |&(p, _, _)| p) {
+                Ok(i) => {
+                    let (_, q, oq) = filter.wide[i];
+                    residue(q, oq)
+                }
+                Err(_) => true,
+            }
+    }
+
+    /// The `r` with `r ^ p == 2^v * o`, for an odd prime `p`, when there is one. Such an `r`
+    /// is `2^(v / p)` times the odd `p`-th root of `o`, which is below `2^s` for `s` the bits of
+    /// `o` over `p`, rounded up, and so is the one odd `p`-th root of `o` modulo `2^s`
+    /// ([`odd_root_mod_pow2`]). That candidate is checked by its bit count and modulo
+    /// [`ROOT_CHECK_PRIMES`], in time of order its own bits, and only then by its `p`-th power,
+    /// which decides.
+    fn root(&self, p: u64) -> Option<BigUint> {
+        if !self.v.is_multiple_of(p) {
+            return None;
+        }
+        let shift = self.v / p;
+        if self.o.is_one() {
+            return Some(BigUint::from(1u32) << shift);
+        }
+        let n = self.o.bits();
+        let s = n.div_ceil(p);
+        if s <= 64 {
+            // A root of at most 64 bits, as for every index above the bits over 64, is found
+            // and filtered in one word, with nothing allocated: the root modulo `2^64` cut to
+            // `s` bits is the one modulo `2^s`.
+            let low = self.o.iter_u64_digits().next().expect("o is odd");
+            let r = odd_root_mod_2_64(low, p) & (u64::MAX >> (64 - s));
+            let rb = u64::from(r.bit_len());
+            if n <= p * (rb - 1) || n > p * rb {
+                return None;
+            }
+            // The cheap check modulo three primes, which only rejects; the full power below
+            // decides ([`ROOT_CHECK_PRIMES`]).
+            let agree = ROOT_CHECK_PRIMES
+                .iter()
+                .zip(&self.residues)
+                .all(|(&q, &oq)| pow_mod(r % q, p, q) == oq);
+            let r = BigUint::from(r);
+            return (agree && pow_uint(&r, p) == self.o).then(|| r << shift);
+        }
+        if !self.passes(p) {
+            return None;
+        }
+        let r = odd_root_mod_pow2(&self.o, p, s);
+        // r ^ p has more than p * (bits(r) - 1) bits and at most p * bits(r).
+        let rb = r.bits();
+        if n <= p * (rb - 1) || n > p * rb {
+            return None;
+        }
+        // The cheap check modulo three primes, which only rejects; the full power below decides
+        // ([`ROOT_CHECK_PRIMES`]).
+        let agree = ROOT_CHECK_PRIMES
+            .iter()
+            .zip(&self.residues)
+            .all(|(&q, &oq)| pow_mod(rem_big_u64(&r, q), p, q) == oq);
+        (agree && pow_uint(&r, p) == self.o).then(|| r << shift)
+    }
+}
+
+/// `x mod m` for each `m` of `ms`, every `m` above 0, by the kernel's product and remainder
+/// trees ([`crate::num::trees`]): the `ms` are multiplied in pairs up to one product `P`,
+/// `x` is reduced modulo `P` once, and each remainder modulo the two products below it. For
+/// `B` the bits of `P` the cost is that of the one division and O(M(B) log k) for `k` moduli,
+/// where one division of `x` a modulus costs O(bits of `x`) each.
+//
+// Source: D. J. Bernstein, "Fast multiplication and its applications", in Algorithmic Number
+// Theory, MSRI Publications 44, Cambridge University Press, 2008, pp. 325-384,
+// https://cr.yp.to/lineartime/multapps-20080515.pdf. Section 12 (product tree) and section 18
+// (remainder tree): "The root of the remainder tree is h mod f1 f2 ... ft. If t ≤ 1 then
+// that's the complete tree. If t ≥ 2 then the left subtree is the remainder tree of h,
+// f1, ..., fs, and the right subtree is the remainder tree of h, fs+1, ..., ft" (18.2); 18.3
+// gives O(n (lg n)^2 lg lg n) operations over the FFT, an O(M(n) log n) bound. Departures:
+// integers rather than polynomials (the integer case of 18.6 and 18.7), and the kernel pairs
+// the leaves in order rather than splitting at s = ⌈t/2⌉, which keeps the depth ⌈lg t⌉.
+// Checked 2026-11-20 against the author's copy. Tests:
+// `tests::a_remainder_tree_gives_each_remainder`, every tree shape of 0 to 9 word moduli
+// against one division each, and the kernel's `the_remainders_agree_with_one_division_a_leaf`;
+// neither measures the cost.
+pub fn remainders(x: &BigUint, ms: &[u64]) -> Vec<u64> {
+    let leaves: Vec<BigUint> = ms.iter().map(|&m| BigUint::from(m)).collect();
+    let levels = trees::product_tree(&leaves);
+    (trees::remainders(x, &leaves, &levels).iter())
+        .map(|r| u64::try_from(r).expect("below a word"))
+        .collect()
+}
+
+/// The odd `x < 2^k` with `x ^ p == o` modulo `2^k`, for `o` odd, `p` an odd prime and
+/// `k >= 1`. Since `p` is odd, `x -> x ^ p` permutes the odd residues modulo `2^k`, so there is
+/// exactly one. Newton's method over the 2-adic integers finds it: `p * x ^ (p - 1)` is odd, so
+/// each step doubles the bits that are right. The first 64 bits come from
+/// [`odd_root_mod_2_64`], with the inverse of the derivative there, in one word; from there the
+/// inverse of the derivative is carried from step to step and refined by one Newton step of
+/// its own, so the cost is `O(M(k) log p)`, with `M(k)` that of a product of `k` bits, and a
+/// root of `k` bits takes `log2(k / 64)` steps on numbers wider than a word, not `log2 k`.
+fn odd_root_mod_pow2(o: &BigUint, p: u64, k: u64) -> BigUint {
+    let low = o.iter_u64_digits().next().expect("o is odd");
+    let word = odd_root_mod_2_64(low, p);
+    if k <= 64 {
+        return BigUint::from(word & (u64::MAX >> (64 - k)));
+    }
+    let mut x = BigUint::from(word);
+    // The inverse of the derivative at `x`, right modulo 2^64.
+    let mut z = BigUint::from(inverse_mod_2_64(pow_mod_2_64(word, p - 1).wrapping_mul(p)));
+    let mut j = 64;
+    while j < k {
+        j = (2 * j).min(k);
+        let unit = BigUint::from(1u32) << j;
+        let mask = &unit - 1u32;
+        let y = pow_mod_pow2(&x, p - 1, &mask);
+        // x ^ p - o, and the derivative p * x ^ (p - 1), modulo 2^j.
+        let f = (mul_uint(&y, &x) + &unit - (o & &mask)) & &mask;
+        let d = (y * p) & &mask;
+        // `x` changed only above the bits that were right at the last step, so `z`, the
+        // inverse of the last derivative to half of those bits, is that of this one too; one
+        // step `z * (2 - d * z)` doubles them, past the `j - j / 2` bits the update reads.
+        z = mul_uint(&z, &((&unit + 2u32 - (mul_uint(&d, &z) & &mask)) & &mask)) & &mask;
+        let step = mul_uint(&f, &z) & &mask;
+        x = (x + unit - step) & mask;
+    }
+    x
+}
+
+/// `x ^ e` modulo `mask + 1`, a power of 2.
+fn pow_mod_pow2(x: &BigUint, e: u64, mask: &BigUint) -> BigUint {
+    let mut out = BigUint::from(1u32);
+    for i in (0..e.bit_len()).rev() {
+        out = mul_uint(&out, &out) & mask;
+        if e >> i & 1 == 1 {
+            out = mul_uint(&out, x) & mask;
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The least root by trying every index from the largest down, written out.
+    fn least_root_by_trial(b: u64) -> (u64, u64) {
+        (2..64)
+            .rev()
+            .find_map(|m: u32| {
+                let r = (b as f64).powf(1.0 / f64::from(m)).round() as u64;
+                (r.max(2) - 1..=r + 1)
+                    .find(|&r| r >= 2 && r.checked_pow(m) == Some(b))
+                    .map(|r| (r, u64::from(m)))
+            })
+            .unwrap_or((b, 1))
+    }
+
+    #[test]
+    fn least_roots_agree_with_trial_and_with_powers_of_large_bases() {
+        for b in 2..50_000u64 {
+            let (r, m) = least_root(BigUint::from(b));
+            assert_eq!((r, m), {
+                let (r, m) = least_root_by_trial(b);
+                (BigUint::from(r), BigUint::from(m))
+            });
+        }
+        // Powers of bases that are no powers, odd, even and with odd parts, to prime and
+        // composite exponents, and their neighbors, which are no powers. No prime below
+        // FILTER_BOUND is 1 modulo an index above 511, so for 521 and 1042 = 2 * 521 a root
+        // wider than a word passes or fails by the one `Filter::wide` prime alone
+        // (TEST-l0123-leftovers); the bases of a few bits find theirs in one word.
+        let mersenne = (BigUint::from(1u32) << 127u32) - 1u32;
+        let bases = [
+            mersenne.clone(),
+            &mersenne << 5u32,
+            &mersenne * 6u32,
+            BigUint::from(6u32),
+            BigUint::from(10u32).pow(40u32) + 3u32,
+        ];
+        for r in &bases {
+            for m in [2u32, 3, 5, 6, 7, 12, 31, 97, 210, 521, 1042] {
+                let b = r.pow(m);
+                assert_eq!(least_root(b.clone()), (r.clone(), BigUint::from(m)));
+                for d in [1u32, 2] {
+                    let near = &b + d;
+                    assert_eq!(least_root(near.clone()), (near, BigUint::from(1u32)));
+                }
+            }
+        }
+        // A power of 2 alone, whatever its exponent.
+        assert_eq!(
+            least_root(BigUint::from(1u32) << 4099u32),
+            (BigUint::from(2u32), BigUint::from(4099u32))
+        );
+    }
+
+    #[test]
+    fn a_root_in_one_word_is_the_root_by_big_numbers() {
+        let (mut rng, _) = crate::seed::Rng::fresh("a_root_in_one_word_is_the_root_by_big_numbers");
+        for p in [3u64, 5, 7, 11, 13, 31, 61, 127, 509, 4093, 65_521] {
+            for _ in 0..200 {
+                let o = rng.next_u64() | 1;
+                let word = odd_root_mod_2_64(o, p);
+                for k in [1u64, 2, 17, 63, 64] {
+                    let mask = u64::MAX >> (64 - k);
+                    let big = odd_root_mod_pow2(&BigUint::from(o), p, k);
+                    assert_eq!(BigUint::from(word & mask), big, "o = {o}, p = {p}, k = {k}");
+                    // The one odd root below 2^k.
+                    let m = BigUint::from(1u32) << k;
+                    assert!(big.bit(0) && big < m, "o = {o}, p = {p}, k = {k}");
+                    assert_eq!(big.modpow(&BigUint::from(p), &m), BigUint::from(o) % &m);
+                }
+            }
+        }
+        // Wider roots, by the same test.
+        for (p, k) in [(3u64, 65u64), (3, 1000), (5, 4097), (31, 300), (509, 129)] {
+            for seed in 0..20u32 {
+                let o = (BigUint::from(3u32).pow(2000 + seed) << 1u32) + 1u32;
+                let r = odd_root_mod_pow2(&o, p, k);
+                let m = BigUint::from(1u32) << k;
+                assert!(r.bit(0) && r < m, "p = {p}, k = {k}");
+                assert_eq!(r.modpow(&BigUint::from(p), &m), &o % &m, "p = {p}, k = {k}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_remainder_tree_gives_each_remainder() {
+        let x = BigUint::from(3u32).pow(5000u32) + 12_345u32;
+        // Lengths 0 to 9 take every shape of tree, with products moved up at odd lengths.
+        let all: Vec<u64> = (0..9u64).map(|i| u64::MAX - 58 - 2 * i).collect();
+        for len in 0..=all.len() {
+            let ms = &all[..len];
+            let want: Vec<u64> = ms
+                .iter()
+                .map(|&m| u64::try_from(&x % m).expect("below m"))
+                .collect();
+            assert_eq!(remainders(&x, ms), want, "{len} moduli");
+        }
+        // A number below the product of the moduli.
+        assert_eq!(remainders(&BigUint::from(5u32), &[7, 11, 13]), [5, 5, 5]);
+    }
+
+    /// The remainder tree past the kernel's switches: 2,001 word moduli (a product of about 2,000
+    /// words, an odd count so nodes are carried), `x` of 7/8 of its width less and more a bit
+    /// (the exact descent and the scaled tree) and at its full width, whose scaled tree hands
+    /// over to the exact descent at the kernel's `SCALED_TO_EXACT_WORDS` (128 words); each
+    /// against one division a modulus.
+    #[test]
+    fn a_remainder_tree_past_the_scaled_switch_gives_each_remainder() {
+        let ms: Vec<u64> = (0..2001u64).map(|i| u64::MAX - 2 * i).collect();
+        let p = ms.iter().fold(BigUint::from(1u32), |p, &m| p * m);
+        let n = p.bits();
+        for w in [7 * n / 8 - 1, 7 * n / 8 + 1, n] {
+            let x = (&p >> (n - w)) - 12_345u32;
+            let want: Vec<u64> = ms
+                .iter()
+                .map(|&m| u64::try_from(&x % m).expect("below m"))
+                .collect();
+            assert_eq!(remainders(&x, &ms), want, "x of {w} of {n} bits");
+        }
+    }
+
+    #[test]
+    fn each_index_wider_than_a_word_has_its_least_prime() {
+        let o = BigUint::from(3u32).pow(3000u32);
+        let odd = OddPart::of(&o);
+        let filter = odd.filter();
+        // 3000 * log2(3) is 4755 bits: the indices wider than a word are the odd primes to 73.
+        let ps: Vec<u64> = filter.wide.iter().map(|&(p, _, _)| p).collect();
+        assert_eq!(
+            ps,
+            [
+                3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73
+            ]
+        );
+        for &(p, q, oq) in &filter.wide {
+            assert!(is_prime(q) && (q - 1).is_multiple_of(p), "p = {p}, q = {q}");
+            assert!(
+                (1..q / p).all(|k| !is_prime(k * p + 1)),
+                "{q} is the least prime 1 modulo {p}"
+            );
+            assert_eq!(BigUint::from(oq), &o % q, "p = {p}");
+        }
+        // 3 ^ 3000 is a 3rd and a 5th power, so it passes both indices.
+        for p in [3u64, 5] {
+            assert!(odd.passes(p), "p = {p}");
+        }
+    }
+}

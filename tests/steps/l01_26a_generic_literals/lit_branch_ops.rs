@@ -151,8 +151,9 @@ fn an_operation_holding_a_power_keeps_its_value_in_an_if() {
     let decimal = "g(positional c: bool) = if c { 2 ^ 3 } else { 1.5 };\n";
     assert_eq!(sig(decimal, "g"), "bool -> 1.5 | 8");
     // A value beyond 64 bits prints its digits or, where shorter, the power that makes it; the
-    // product is held in the kept form as the power is, so it prints alike (DESIGN.md
-    // sec:diagnostics, "Types in a message"; plan row KEPT-power-form).
+    // product, built as digits, is reduced to its primes when printed, so it prints as the
+    // power does (DESIGN.md sec:diagnostics, "Types in a message"; plan row
+    // KEPT-power-form-print, `Rat::integer_text`).
     let large = "g(positional c: bool) = if c { 4294967296 * 4294967296 } else { 1 };\n";
     let power = "g(positional c: bool) = if c { 2 ^ 64 } else { 1 };\n";
     assert_eq!(sig(power, "g"), "bool -> 1 | 2^64");

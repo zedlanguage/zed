@@ -65,13 +65,12 @@ fn cases(s: u64) -> Vec<(Term, &'static str, BigUint)> {
             "*",
             BigUint::from(2 * (s + 1)) << 3u32,
         ),
-        // `(2^s + 1)/3` (`2^s + 1` is 2 modulo 3 for an even `s`) times `1/3`: each denominator
-        // 3, a word, is factored into `3^-1` (KEPT-power-form, `Rat::words_factored`), so
-        // `s + 1`, 1, 1 and 1 bits.
+        // `(2^s + 1)/3` (`2^s + 1` is 2 modulo 3 for an even `s`) times `1/3`: `s + 1`, 2, 1
+        // and 2 bits.
         (
             bin(Prim::Mul, ratio(above(s), 3), ratio(BigInt::one(), 3)),
             "*",
-            BigUint::from(s + 4) << 4u32,
+            BigUint::from(s + 6) << 4u32,
         ),
         // `2^s + 1` times `2^64` kept, a `Big` (a power in the 64-bit range is an `Int`): `s + 1`,
         // 1, 1 and 1 bits.
@@ -80,11 +79,11 @@ fn cases(s: u64) -> Vec<(Term, &'static str, BigUint)> {
             "*",
             BigUint::from(s + 4) << 4u32,
         ),
-        // `(2^s + 1) / 3`, the divisor 3 factored into `3^1`: `s + 1`, 1, 1 and 1 bits.
+        // `(2^s + 1) / 3`: `s + 1`, 1, 1 and 2 bits.
         (
             bin(Prim::Div, ratio(above(s), 1), ratio(BigInt::from(3), 1)),
             "/",
-            BigUint::from(s + 4) << 4u32,
+            BigUint::from(s + 5) << 4u32,
         ),
         // `(2^s + 1) shl 5` is `(2^s + 1) * 2^5`, the power kept.
         (

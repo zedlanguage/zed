@@ -23,6 +23,7 @@ mod digit_text;
 mod fast;
 pub mod float_mod;
 mod float_text;
+mod least_root;
 mod room;
 pub mod trees;
 
@@ -51,6 +52,7 @@ pub use fast::{
 };
 pub(crate) use fast::{mul_cost, squares_by_transform};
 pub use float_text::{FloatFormat, read_f32_ieee, read_f64_ieee, read_float, show_f32, show_f64};
+pub use least_root::{least_root, remainders};
 pub use room::{
     LiteralRounding, TooLarge, about, bits_of_digits, bytes_of, bytes_text, digits_of_bits,
     fixed_room, machine_memory, memory_clause, room,
@@ -880,11 +882,100 @@ impl Rat {
     /// gives `2^3` and `2 * 2 * 2` different texts; the one before, digits always, cost the
     /// digits. A value held as plain digits, such as the sum `3^200000 + 1`, prints its digits
     /// (DESIGN.md L1.26a).
+    ///
+    /// The coefficient is first reduced by [`Rat::coefficient_reduced`], so a product such as
+    /// `4294967296 * 4294967296`, held as digits, prints `2^64` as `2 ^ 64` does (DESIGN.md
+    /// sec:diagnostics, "Types in a message"; plan row KEPT-power-form-print).
     pub fn integer_text(&self) -> String {
         if self.ten.is_some() {
             return self.bin().integer_text();
         }
         debug_assert!(self.is_integer());
+        match self.coefficient_reduced() {
+            Some(reduced) => reduced.held_text(),
+            None => self.held_text(),
+        }
+    }
+
+    /// The same integer with the primes of its coefficient that four fixed methods find moved
+    /// into its kept powers, for its text ([`Rat::integer_text`]); `None` when they find none.
+    /// The methods, on the coefficient `c`: its trailing zeros, `c = 2^v o` with `o` odd; then,
+    /// for `o < 2^44`, `zed_numtheory::factor`, which factors it completely; for a wider `o`, its
+    /// least root `o = r^m` ([`least_root`]), and, when `m > 1`, `r` factored when `r < 2^44` or
+    /// kept as one prime when it is a prime word (`zed_numtheory::is_prime`, deterministic on
+    /// every word). A wider `o` that is no power of such an `r` is kept whole, and prints as
+    /// digits. Arithmetic never calls this: products and quotients keep their coefficients as
+    /// they are, so `*` costs no factoring (decision of 2026-11-23, plan row
+    /// KEPT-power-form-print).
+    ///
+    /// Proof that the form stays normal (the listed primes divide neither coefficient): each
+    /// moved prime divides `c`, so it was not listed, and each is moved with its full
+    /// multiplicity (all of `2^v`; all of `o` when factored; all of `o = r^m` when `r` is
+    /// factored or is a prime), so it divides no coefficient left.
+    ///
+    /// Complexity tradeoff: for `n` the bits of `c`, the trailing zeros and the shift cost
+    /// O(n); `factor` below 2^44 is O(1), a constant proved at `zed_numtheory::factor`; the least
+    /// root is O(M(n) log n), proved at [`least_root`]; `is_prime` on a word is O(1) (12 bases of
+    /// Miller-Rabin, proved at `zed_numtheory::is_prime`). The text writes `c` or what is left of
+    /// it as decimal digits in either form, which costs O(M(n) log n) (`num::fast::to_decimal`,
+    /// a divide-and-conquer conversion), so the reduction costs at most a constant times the
+    /// text it chooses between, and only a printed number pays it. Methods with no proved bound
+    /// are not used: Pollard's rho on a word above 2^44 is unproved and cost about 0.85 ms on a
+    /// product of two primes near 2^31 (measured 2026-11-23 on Colab when `Rat::mul` factored
+    /// words, against 61 ns for the product), so such a word prints as digits. Gap: the text
+    /// depends on the value and the powers already held, not on the value alone. A wide
+    /// coefficient held beside a power, `q * 3^50`, prints `q*3^50`, while the same value held as
+    /// digits prints them, since `q * 3^50` is no perfect power and has no word's size; making
+    /// the two agree would need the digits factored, which no proved method does.
+    fn coefficient_reduced(&self) -> Option<Rat> {
+        let c = self.num.magnitude();
+        if c.bits() <= 1 {
+            return None;
+        }
+        let v = c.trailing_zeros().expect("c is above 1");
+        let o = c >> v;
+        let mut moved: Vec<(u64, BigInt)> = Vec::new();
+        if v > 0 {
+            moved.push((2, BigInt::from(v)));
+        }
+        let factored = |w: u64, m: &BigInt| -> Vec<(u64, BigInt)> {
+            (factor(w).into_iter())
+                .map(|(p, k)| (p, BigInt::from(k) * m))
+                .collect()
+        };
+        let rest = match o.to_u64().filter(|w| *w < 1 << 44) {
+            Some(w) => {
+                moved.extend(factored(w, &BigInt::one()));
+                BigUint::one()
+            }
+            None => {
+                let (r, m) = least_root(o.clone());
+                match r.to_u64() {
+                    Some(w) if !m.is_one() && w < 1 << 44 => {
+                        moved.extend(factored(w, &BigInt::from(m)));
+                        BigUint::one()
+                    }
+                    Some(w) if !m.is_one() && is_prime(w) => {
+                        moved.push((w, BigInt::from(m)));
+                        BigUint::one()
+                    }
+                    _ => o,
+                }
+            }
+        };
+        if moved.is_empty() {
+            return None;
+        }
+        Some(Rat {
+            num: BigInt::from_biguint(self.num.sign(), rest),
+            den: self.den.clone(),
+            pows: merge(&self.pows, &moved, |x, y| x + y).into_boxed_slice(),
+            ten: None,
+        })
+    }
+
+    /// [`Rat::integer_text`] of the form as it is held.
+    fn held_text(&self) -> String {
         let sign = if self.is_negative() { "-" } else { "" };
         if self.is_plain() {
             return format!("{sign}{}", fast::to_decimal(self.num.magnitude()));
@@ -1140,14 +1231,7 @@ impl Rat {
             let t = Rat::ten_sum(self, b, false);
             return Ok(Rat::with_ten(self.rest().mul(&b.rest())?, t));
         }
-        // A product is held in the kept form whatever its operands were written as (DESIGN.md
-        // sec:domains, "Kept powers", and sec:diagnostics, "Types in a message"): a coefficient
-        // of one word is factored into primes, so `4294967296 * 4294967296` is `2^64` as the
-        // power `2 ^ 64` is, and prints so.
-        let (fa, fb) = (self.words_factored(), b.words_factored());
-        let (a, b) = (fa.as_ref().unwrap_or(self), fb.as_ref().unwrap_or(b));
-        if a.is_plain() && b.is_plain() && a.den.is_one() && b.den.is_one() {
-            let (a, b) = (&a.num, &b.num);
+        if self.is_plain() && b.is_plain() && self.den.is_one() && b.den.is_one() {
             // Complexity tradeoff: the memory asked for a product of two integers is eight
             // times the product's width, a measured bound, not a proved one, on `num::fast::mul`
             // (num-bigint's Toom-3 or the three residue lists of the transform, held at once):
@@ -1159,54 +1243,11 @@ impl Rat {
             // (COMPLEXITY.md K30).
             // A complete solution would be a multiplication whose scratch is allocated once,
             // its size known by construction.
-            let size = BigUint::from(a.bits() + b.bits());
+            let size = BigUint::from(self.num.bits() + b.num.bits());
             room(size.clone(), size << 3u32)?;
-            return Ok(Rat::int(fast::mul_int(a, b)));
+            return Ok(Rat::int(fast::mul_int(&self.num, &b.num)));
         }
-        a.scaled(&b.num, &b.den, &b.pows, |x, y| x + y)
-    }
-
-    /// The same value with each of its coefficients, numerator and denominator, that is one
-    /// word and above 1 factored into prime powers (`zed_numtheory::factor`), the sign left on
-    /// the numerator; `None` when it holds a [`Ten`] or no such coefficient, so nothing is
-    /// copied. The listed primes divide neither coefficient, so the new primes are not listed
-    /// and the form stays normal.
-    ///
-    /// Complexity tradeoff: factoring a word is O(1), a constant proved below 2^44 at
-    /// `zed_numtheory::factor`, and about the cost of Pollard's rho, O(p^(1/2)) products for
-    /// the second largest prime `p` of the word, above it: some tens of microseconds for a
-    /// product of two primes near 2^32, where the product of two words alone is some tens of
-    /// nanoseconds. Measured by `l01_17_value_representation::bench::products::a_product_of_two_words_is_factored_in_constant_time`.
-    /// The alternative, a product built as digits, prints `18446744073709551616` for `2^64`
-    /// and gives `2 ^ 64` and `4294967296 * 4294967296` two forms, which DESIGN.md replaces
-    /// (plan row KEPT-power-form). A wider coefficient is not factored: it is kept as it is,
-    /// and the primes listed beside it are moved out of it ([`Rat::extract`]).
-    fn words_factored(&self) -> Option<Rat> {
-        if self.ten.is_some() {
-            return None;
-        }
-        let word = |c: &BigInt| c.magnitude().to_u64().filter(|w| *w > 1);
-        let (n, d) = (word(&self.num), word(&self.den));
-        if n.is_none() && d.is_none() {
-            return None;
-        }
-        let mut pows = self.pows.to_vec();
-        for (w, sign) in [(n, 1i8), (d, -1)] {
-            for (p, k) in w.into_iter().flat_map(factor) {
-                pows.push((p, BigInt::from(k) * sign));
-            }
-        }
-        pows.sort_unstable_by_key(|(p, _)| *p);
-        let one = |c: &BigInt, f: Option<u64>| match f {
-            Some(_) => BigInt::one() * c.signum(),
-            None => c.clone(),
-        };
-        Some(Rat {
-            num: one(&self.num, n),
-            den: one(&self.den, d),
-            pows: pows.into_boxed_slice(),
-            ten: None,
-        })
+        self.scaled(&b.num, &b.den, &b.pows, |x, y| x + y)
     }
 
     /// `a / b`, by the rule of [`Rat::mul`]; `Ok(None)` when `b` is zero.
@@ -1225,10 +1266,7 @@ impl Rat {
             let rest = rest.expect("a nonzero divisor");
             return Ok(Some(Rat::with_ten(rest, t)));
         }
-        // As in `Rat::mul`, a coefficient of one word is factored.
-        let (fa, fb) = (self.words_factored(), b.words_factored());
-        let (a, b) = (fa.as_ref().unwrap_or(self), fb.as_ref().unwrap_or(b));
-        a.scaled(&b.den, &b.num, &b.pows, |x, y| x - y).map(Some)
+        self.scaled(&b.den, &b.num, &b.pows, |x, y| x - y).map(Some)
     }
 
     /// `t_a + t_b`, or `t_a - t_b` when `minus`, of the decimal exponents of two numbers' `Ten`s,
@@ -1911,7 +1949,7 @@ pub fn rem_uint(a: &BigUint, b: &BigUint) -> BigUint {
 ///
 /// Complexity tradeoff: num-bigint's `sqrt` is Newton's iteration on num-bigint's division
 /// and Toom-3 product, both above O(M(n)): 0.56 s at 1,661,955 bits and 19.2 s at 13,295,631
-/// (34.5 times for 8 times the bits; `least_root` in zedc-int, item
+/// (34.5 times for 8 times the bits; `least_root`, then in zedc-int, item
 /// PERF-wide-odd-base-ratio-9, 2026-11-20, load 41). Here level `j` divides `2k_j` by
 /// `k_j + 1` bits and squares `k_j` bits, `k_j` about `n / 2^(j+2)`, so the sum is a constant
 /// times the top level: O(M(n)) with the kernel's O(n log n) product and division (bench
