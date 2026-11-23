@@ -3059,6 +3059,13 @@ fn the_answers_of_calls_of_a_callee_that_chooses_are_those_reading_bodies() {
          f0(x: int) = r(a: x + 7, b: x + 8) && x > 3;\n\
          f1(x: int) = r(a: x, b: x) && x > 3;\n\
          f2(x: int) = r(a: x, b: x + 1) && x > 3;",
+        // Mutant M9 (LOAD-call-disj-spread, colab-19): a key of two argument forms that read the
+        // same atoms, `x + y, y` and `y, x + y`. A key of the set of atoms read gives both calls
+        // one projection; `m0` holds (`x + y > y` is `x > 0`) and `m1` does not (`y > x + y` is
+        // `x < 0`), so the shared one gives one of them the wrong answer.
+        "r(a: int, b: int) = a > b || a == 0 - 100;\n\
+         m0(x: int, y: int) = r(a: x + y, b: y) && x > 3 && y > 0 && y < 4;\n\
+         m1(x: int, y: int) = r(a: y, b: x + y) && x > 3 && y > 0 && y < 4;",
         // A callee that is one constraint over a remainder, called twice.
         "q(x: int) = x mod 3 == 1;\n\
          s0(x: int) = q(x: x) && x > 0 && x < 9;\n\
