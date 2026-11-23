@@ -54,7 +54,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use num_bigint::{BigInt, BigUint};
+use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Signed, Zero};
 
@@ -610,17 +610,18 @@ fn scaled(q: &[(u64, BigInt)], x: &BigInt, s: u64) -> BigInt {
 /// the search it may start, 11 passes; a search step is three [`scaled`] and at most three
 /// [`sign_at`], 12; a step of [`doubling`] in a search is two [`scaled`] of numbers of fewer
 /// bits, 2, and the step from its guess one [`scaled`] at full precision, one at fewer bits
-/// and two [`sign_at`], 8, each counted as a unit (plan row ROOTS-doubling-newton). One of the chain's evaluations at a stretch's end ([`chain_ends`],
-/// [`eval`]) is one pass of O(t) products, so a unit costs a constant number of them, not one:
-/// measured 9.3 to 18.0 of them per unit (`poly::roots::bench`, plan row
-/// BENCH-over-nlogn-prediction item 16, 2026-11-20), on the flat cubic and the cluster of four
-/// roots at `c = 2^16` to `2^1024`, where the budget's units cost 6.4 to 10.2 times the chain's
-/// whole run. The chain then costs what [`chain_roots`] proves, O(t^3) evaluations of numbers
-/// of at most `t (B + 1)(B + 2)` bits. So the whole is at most a constant factor times that
-/// (measured, the phase before the switch and the chain, 7.4 to 11.2 times the chain alone),
-/// polynomial in `t` and `B`. Before item 16 this comment said a unit costs no more than one
-/// end evaluation and the whole about twice the chain, which the measurement refutes. Both
-/// methods are exact, so the roots do not depend on which answers.
+/// and two [`sign_at`], 8, each counted as a unit (plan row ROOTS-doubling-newton). One of the
+/// chain's evaluations at a stretch's end ([`chain_ends`], [`eval`]) is one pass of O(t)
+/// products, so a unit costs a constant number of them, not one: measured 9.3 to 18.0 of them
+/// per unit (`poly::roots::bench`, plan row BENCH-over-nlogn-prediction item 16, 2026-11-20),
+/// on the flat cubic and the cluster of four roots at `c = 2^16` to `2^1024`, where the
+/// budget's units cost 6.4 to 10.2 times the chain's whole run. The chain then costs what
+/// [`chain_roots`] proves, O(t^3) evaluations of numbers of at most `t (B + 1)(B + 2)` bits.
+/// So the whole is at most a constant factor times that (measured, the phase before the switch
+/// and the chain, 7.4 to 11.2 times the chain alone), polynomial in `t` and `B`. Before item
+/// 16 this comment said a unit costs no more than one end evaluation and the whole about twice
+/// the chain, which the measurement refutes. Both methods are exact, so the roots do not
+/// depend on which answers.
 ///
 /// Complexity tradeoff of the switch: the chain alone is O(t^3) evaluations, 80.5 times the
 /// work at 8 times the terms for `t` terms with a root at 4, where the branch and bound is
@@ -736,13 +737,13 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
 /// steps. A bisection is not followed by another: on an odd width `2k + 1` its right half has
 /// `k + 1 > (2k + 1) / 2`, and before plan row ROOTS-bisect-flag that kept the flag set for
 /// runs of bisections in place of Newton steps (test
-/// `a_bisection_is_followed_by_a_newton_step`). Before those steps, while `hi > 4 lo`, the bracket is cut at
-/// the power of 2 whose exponent is the mean of its ends' bits, so a root far below the end
-/// Newton's method starts from is reached in O(log B) steps for ends of B bits. Once the cuts
-/// end, [`doubling`] gives a guess from the top bits of the bracket at doubling precision, and
-/// one Newton step from it at full precision and its neighbor close the bracket; the steps
-/// above go on from the bracket left where they do not (plan row ROOTS-doubling-newton; test
-/// `a_search_evaluates_at_full_precision_at_most_three_times`).
+/// `a_bisection_is_followed_by_a_newton_step`). Before those steps, while `hi > 4 lo`, the
+/// bracket is cut at the power of 2 whose exponent is the mean of its ends' bits, so a root
+/// far below the end Newton's method starts from is reached in O(log B) steps for ends of B
+/// bits. Once the cuts end, [`doubling`] gives a guess from the top bits of the bracket at
+/// doubling precision, and one Newton step from it at full precision and its neighbor close
+/// the bracket; the steps above go on from the bracket left where they do not (plan row
+/// ROOTS-doubling-newton; test `a_search_evaluates_at_full_precision_at_most_three_times`).
 ///
 /// Complexity tradeoff. Naive: Newton's step from `p(x)` and `p'(x)` written out, numbers of
 /// up to `D bits(x)` bits for degree `D`, and O(t) products of them per step. Here the step
@@ -775,6 +776,8 @@ fn search(
     }
     let s = 2 * hi.bits();
     let mut bisect = false;
+    #[cfg(test)]
+    tests::RUN.with(|n| n.set(0));
     let mut tried = false;
     #[cfg(test)]
     let mut wide = false;
@@ -805,30 +808,27 @@ fn search(
             // Each call of the step is a unit: two [`scaled`] at reduced precision, under the
             // 12 passes at full precision of a unit ([`positive_roots`]).
             let mut calls = 0u64;
-            let zero = BigInt::zero();
             let start: BigInt = (&lo + &hi) >> 1u32;
             let guess = doubling_on()
                 .then(|| {
                     doubling(&lo, &hi, &start, below, |e, y| {
                         calls += 1;
-                        let s_e = 2 * ((&hi >> e) + 1u32).bits();
-                        let fy = scaled(&truncated(p, e), y, s_e);
-                        let dy = scaled(&truncated(slope, e), y, s_e);
-                        let g = (!dy.is_zero()).then(|| y - div_floor_int(&mul_int(y, &fy), &dy));
-                        (fy.cmp(&zero), g)
+                        search_level(p, slope, &hi, e, y)
                     })
                 })
                 .flatten();
             *steps += calls;
             if let Some((e, y)) = guess {
                 // Newton's step from `x0 = 2^e y` at full precision, `Phi` of `x0` exact to the
-                // floor as in the loop below and `Psi` from the level of `e`, `2^(s - s_e)
-                // Psi_e(y)` (`s_e` the scale of that level), then `g` and its neighbor toward
-                // the root by [`sign_at`]: one [`scaled`] at full precision, one at the level's,
-                // and two signs, 8 passes, the loop pass's one unit.
+                // floor as in the loop below and `Psi` from the level of `e`, `2^(s - s_e + f)
+                // Psi_e(y)` (`s_e` the scale of that level and `f` its [`lead_shift`], as the
+                // level's slope stands `f` bits low), then `g` and its neighbor toward the root
+                // by [`sign_at`]: one [`scaled`] at full precision, one at the level's, and two
+                // signs, 8 passes, the loop pass's one unit.
                 let x0 = &y << e;
                 let s_e = 2 * ((&hi >> e) + 1u32).bits();
-                let d = scaled(&truncated(slope, e), &y, s_e) << (s - s_e);
+                let f = lead_shift(p, hi.bits() - e);
+                let d = scaled(&truncated(slope, e, f), &y, s_e) << (s - s_e + f);
                 #[cfg(test)]
                 full_eval(wide);
                 let fx = scaled(p, &x0, s);
@@ -899,6 +899,8 @@ fn search(
                 _ => hi = x,
             }
         }
+        #[cfg(test)]
+        tests::note_step(bisect, &width, &(&hi - &lo));
         bisect = !bisect && (&hi - &lo) * 2 > width;
     }
     None
@@ -949,24 +951,137 @@ const DOUBLING_BASE: u64 = 64;
 /// answer.
 const DOUBLING_GUARD: u64 = 8;
 
-/// `q` at the precision `2^e`: each coefficient `c_i` of `x^i` cut to `floor(c_i / 2^((D -
-/// i) e))`, `D` the greatest exponent, so that `q_e(y)`, with `y` the top bits of `x = 2^e y`,
-/// is `q(x) / 2^(D e)` less under one unit for each term, times `y^i`: the coefficient of
-/// `x^i` stands `(D - i) e` bits lower in `q_e` than in `q`, and only its top bits remain. A
-/// shift past the bits of `c_i` (or past `u64`) leaves `0`, or `-1` for `c_i < 0`. O(t)
-/// shifts.
-fn truncated(q: &[(u64, BigInt)], e: u64) -> Vec<(u64, BigInt)> {
+/// `q` at the precision `2^e`, all of it `f` bits lower: each coefficient `c_i` of `x^i` cut
+/// to `floor(c_i / 2^((D - i) e + f))`, `D` the greatest exponent, so that `q_e(y)`, with `y`
+/// the top bits of `x = 2^e y`, is `q(x) / 2^(D e + f)` less under one unit for each term,
+/// times `y^i`: the coefficient of `x^i` stands `(D - i) e + f` bits lower in `q_e` than in
+/// `q`, and only its top bits remain. A shift past the bits of `c_i` (or past `u64`) leaves
+/// `0`, or `-1` for `c_i < 0`. O(t) shifts. The common shift `f` is [`lead_shift`]: without it
+/// the leading coefficient is never cut, so a leading coefficient of `L` bits keeps all of
+/// them at every level of [`doubling`], and a level of `k` bits costs `M(L + D k)` in place of
+/// `M((D + 1) k)` (plan row ROOTS-doubling-newton, cross-review XR-ROOTS-REF round 2, D4).
+fn truncated(q: &[(u64, BigInt)], e: u64, f: u64) -> Vec<(u64, BigInt)> {
     let d = q.last().map_or(0, |(d, _)| *d);
-    (q.iter())
+    let out: Vec<(u64, BigInt)> = (q.iter())
         .map(|(i, c)| {
-            let c = match (d - i).checked_mul(e) {
+            let c = match (d - i).checked_mul(e).and_then(|s| s.checked_add(f)) {
                 Some(s) if s < c.bits() => c >> s,
                 _ if c.is_negative() => -BigInt::one(),
                 _ => BigInt::zero(),
             };
             (*i, c)
         })
-        .collect()
+        .collect();
+    #[cfg(test)]
+    tests::note_level(
+        e,
+        out.iter().map(|(_, c)| c.bits()).max().unwrap_or(0),
+        out.last().map_or(0, |(_, c)| c.bits()),
+    );
+    out
+}
+
+/// The common shift of [`truncated`] at the level of [`doubling`] whose points have `k` bits:
+/// the bits of `q`'s leading coefficient past `k`, or 0. Then the leading coefficient keeps
+/// at most `k` bits, and a coefficient `c_i` of at most `bits(c_D) + (D - i) bits(hi) + g`
+/// bits (as for `c_D` times a polynomial whose roots are under `hi`, `g` the bits of the
+/// binomial factors) keeps at most `(D - i + 1) k + g`, `k = bits(hi) - e`: the shift is
+/// `(D - i) e + bits(c_D) - k`. So the level's numbers are of `O(k)` bits, and the levels,
+/// whose `k` sum to under `bits(hi)` plus 18 a level (`k_(j + 1) <= k_j / 2 + 9`), cost
+/// `O(M(n))` together whatever the leading coefficient (test
+/// `a_wide_leading_coefficient_is_cut_at_each_level`).
+fn lead_shift(q: &[(u64, BigInt)], k: u64) -> u64 {
+    #[cfg(test)]
+    if !tests::LEAD_SHIFT.with(std::cell::Cell::get) {
+        return 0;
+    }
+    q.last().map_or(0, |(_, c)| c.bits()).saturating_sub(k)
+}
+
+/// The sign of a value whose true value `v` is at least `w`, the one computed, and below `w +
+/// 2^error_bits`: positive where `w > 0`, as `v >= w`; negative where `w <= -2^error_bits`,
+/// as `v < w + 2^error_bits <= 0`; else none, the sign not certified. [`doubling`]'s first
+/// level moves an end only on a sign certified so (plan row ROOTS-doubling-newton, D5).
+fn certified_sign(w: &BigInt, error_bits: u64) -> Option<Ordering> {
+    match w.sign() {
+        Sign::Plus => Some(Ordering::Greater),
+        Sign::Minus if w.bits() > error_bits => Some(Ordering::Less),
+        _ => None,
+    }
+}
+
+/// A step of [`doubling`] for [`search`]: at `x = 2^e y`, the sign of `p` and Newton's guess,
+/// in units of `2^e`, from `Phi_e = scaled(p_e, y, s_e)` and `Psi_e = scaled(slope_e, y, s_e)`,
+/// `p_e` and `slope_e` [`truncated`] at `e` with the shift [`lead_shift`] `f` of `p`, and `s_e
+/// = 2 bits(hi / 2^e + 1)`. Two [`scaled`] at the level's precision.
+///
+/// Proof that the sign is certified (by [`certified_sign`]). Write `T = 2^s_e p(x) / (2^(D e
+/// + f) y^D)`, the real number `Phi_e` stands for, of the sign of `p(x)`. Each cut coefficient
+/// is `floor(c_i / 2^((D - i) e + f))`, at most 1 below `c_i / 2^((D - i) e + f)`, and stands
+/// in `Phi_e` times `2^s_e y^(i - D)`; each floor of [`scaled`] loses under 1 and is divided
+/// by `y` at least once per later term; every loss is downward. So `T - 2^s_e (lead +
+/// 1/(y - 1)) - y/(y - 1) < Phi_e <= T`, `lead` 1 where `f > 0` (the leading coefficient cut)
+/// and 0 where `f = 0` (`c_D` kept whole), as `sum over j >= 1 of y^-j = 1/(y - 1)`. For `y >=
+/// 3`, `2^s_e / (y - 1) <= 2^(s_e - bits(y) + 2)` (as `y - 1 >= 2^(bits(y) - 2)`) and `y/(y -
+/// 1) <= 2`; `y < 2^(s_e / 2)` gives `s_e - bits(y) + 2 >= 2`, so the error is under
+/// `2^(s_e - bits(y) + 3)` where `f = 0`, and under `2^s_e + 2^(s_e - 1) + 2 <= 2^(s_e + 1)`
+/// where `f > 0`. Below 3 no sign is given.
+fn search_level(
+    p: &[(u64, BigInt)],
+    slope: &[(u64, BigInt)],
+    hi: &BigInt,
+    e: u64,
+    y: &BigInt,
+) -> (Option<Ordering>, Option<BigInt>) {
+    let s_e = 2 * ((hi >> e) + 1u32).bits();
+    let f = lead_shift(p, hi.bits() - e);
+    let fy = scaled(&truncated(p, e, f), y, s_e);
+    let dy = scaled(&truncated(slope, e, f), y, s_e);
+    let g = (!dy.is_zero()).then(|| y - div_floor_int(&mul_int(y, &fy), &dy));
+    let error_bits = match f {
+        0 => (s_e + 3).saturating_sub(y.bits()),
+        _ => s_e + 1,
+    };
+    let sign = (*y >= BigInt::from(3)).then(|| certified_sign(&fy, error_bits));
+    (sign.flatten(), g)
+}
+
+/// A step of [`doubling`] for [`chain_search`]: at `x = 2^e y`, the sign of `q` and Newton's
+/// guess, in units of `2^e`, from `q_e(y)` and `q'_e(y)` ([`eval`] of [`truncated`] at `e`
+/// with the shift [`lead_shift`] `f` of `q`). Two [`eval`] at the level's precision.
+///
+/// Newton's step `floor((y q'(y) - q(y)) / q'(y))`, written as `y + floor(-q(y) / q'(y))`,
+/// equal as `y` is an integer: the quotient is the step's correction, about half the level's
+/// bits on its first step and a few bits on its second, not all of `y`'s, so the division is
+/// of a short quotient ([`crate::num::div_floor_int`] takes the top bits and one product below
+/// `DIV_LEAF` bits of quotient) and no product `y q'(y)` is formed. At 524,288 bits these
+/// divisions were 583 million of 3,340 million instructions and grew 4.50 times from 262,144
+/// (h5-req24).
+///
+/// Proof that the sign is certified (by [`certified_sign`]). `q_e(y) = sum of c'_i y^i` with
+/// each `c'_i` at most 1 below `c_i / 2^((D - i) e + f)`, so for `y >= 2` the true `q(x) /
+/// 2^(D e + f)` exceeds `q_e(y)` by under `sum over i <= D' of y^i = (y^(D' + 1) - 1) / (y -
+/// 1) < 2 y^D' < 2^(1 + D' bits(y))`, where `D' = D - 1` if `f = 0` (the leading coefficient
+/// kept whole) and `D' = D` if not. Below 2 no sign is given.
+fn chain_level(
+    q: &[(u64, BigInt)],
+    slope: &[(u64, BigInt)],
+    hi: &BigInt,
+    e: u64,
+    y: &BigInt,
+) -> (Option<Ordering>, Option<BigInt>) {
+    let f = lead_shift(q, hi.bits() - e);
+    let qy = eval(&truncated(q, e, f), y);
+    let dy = eval(&truncated(slope, e, f), y);
+    let g = (!dy.is_zero()).then(|| y + div_floor_int(&-&qy, &dy));
+    let degree = q.last().map_or(0, |(d, _)| *d);
+    let top = match f {
+        0 => degree.saturating_sub(1),
+        _ => degree,
+    };
+    let error_bits = top.saturating_mul(y.bits()).saturating_add(1);
+    let sign = (*y >= BigInt::from(2)).then(|| certified_sign(&qy, error_bits));
+    (sign.flatten(), g)
 }
 
 /// Newton's guess at doubling precision for the root of a monotone function on `lo..=hi`,
@@ -989,12 +1104,16 @@ fn truncated(q: &[(u64, BigInt)], e: u64) -> Vec<(u64, BigInt)> {
 /// real number, is in `lo..=hi`, as the signs at `lo` and `hi` are exact and opposite (by
 /// [`chain_search`] and [`search`], which call this). At level `e` the bracket is
 /// `floor(lo / 2^e)..=floor(hi / 2^e) + 1`, and `floor(lo / 2^e) <= lo / 2^e <= r / 2^e <= hi /
-/// 2^e < floor(hi / 2^e) + 1`. The signs and the guesses at reduced precision are not exact:
-/// the first level's search may leave the root's cell where a sign is wrong near the root, and
-/// a guess may be poor. So the result is a guess alone: the caller tests it and its neighbor at
-/// full precision, by exact signs, and on a miss goes on with its own full-precision search
-/// from the bracket those exact signs left. The answer is decided at full precision, so it is
-/// the one the full-precision search alone gives.
+/// 2^e < floor(hi / 2^e) + 1`. The first level moves an end only on a sign the step certifies
+/// (by [`certified_sign`], from the bound on the cut's error at [`search_level`] and
+/// [`chain_level`]), so its bracket keeps the root, and it stops at the first sign it cannot
+/// certify; before plan row ROOTS-doubling-newton's round 2 (D5) it took the raw sign of the
+/// cut polynomial, which near the root can be the wrong one, and the end moved past the root
+/// (test `doubling_keeps_the_root_where_a_cut_sign_is_wrong`). A guess may still be poor, and
+/// the later levels take no sign. So the result is a guess alone: the caller tests it and its
+/// neighbor at full precision, by exact signs, and on a miss goes on with its own
+/// full-precision search from the bracket those exact signs left. The answer is decided at
+/// full precision, so it is the one the full-precision search alone gives.
 ///
 /// Complexity tradeoff. Naive: each Newton step at full precision, numbers of the full bits at
 /// every step, about `log2 bits(hi)` steps from a start within a factor 4 of the root (the cuts
@@ -1003,17 +1122,21 @@ fn truncated(q: &[(u64, BigInt)], e: u64) -> Vec<(u64, BigInt)> {
 /// arXiv:1004.4710, version 0.5.1, section 4.8.4, p. 176, read 2026-11-22: "when using
 /// Newton's method or evaluating power series, many of the computations can be performed with
 /// reduced precision, which saves a log n factor"; section 4.2 for the quadratic convergence
-/// that makes each level's two steps enough) the level of `k` bits costs `O(M(k n / bits(hi)))`
-/// and the bits of the levels sum to under twice `bits(hi)` plus the guards, so the whole is
-/// `O(M(n))`, and the caller adds three evaluations at full precision. Exact, as said above.
+/// that makes each level's two steps enough) the level of `k` bits costs `O(t M(D k + g))`,
+/// its numbers cut to `O(D k + g)` bits by [`truncated`] with the common shift [`lead_shift`]
+/// (`g` the bits of the binomial factors, as there), and the bits of the levels sum to under
+/// `bits(hi)` plus 18 a level, so the whole is `O(M(n))`, and the caller adds three
+/// evaluations at full precision. Exact, as said above.
 fn doubling(
     lo: &BigInt,
     hi: &BigInt,
     start: &BigInt,
     below: Ordering,
-    mut step: impl FnMut(u64, &BigInt) -> (Ordering, Option<BigInt>),
+    mut step: impl FnMut(u64, &BigInt) -> (Option<Ordering>, Option<BigInt>),
 ) -> Option<(u64, BigInt)> {
     let bits = hi.bits();
+    #[cfg(test)]
+    tests::LEVELS.with(|v| v.borrow_mut().push((bits, BTreeMap::new())));
     let mut levels = vec![bits];
     while let Some(&k) = levels.last().filter(|&&k| k > DOUBLING_BASE) {
         levels.push(k.div_ceil(2) + DOUBLING_GUARD);
@@ -1033,9 +1156,9 @@ fn doubling(
         let width = &hy - &ly;
         let (sign, guess) = step(e, &y);
         match sign {
-            Ordering::Equal => break,
-            s if s == below => ly = ly.max(y.clone()),
-            _ => hy = hy.min(y.clone()),
+            None | Some(Ordering::Equal) => break,
+            Some(s) if s == below => ly = ly.max(y.clone()),
+            Some(_) => hy = hy.min(y.clone()),
         }
         let halved = (&hy - &ly) * 2 <= width;
         (y, newton) = match guess.filter(|g| (halved || !newton) && &ly < g && g < &hy) {
@@ -1043,6 +1166,8 @@ fn doubling(
             None => ((&ly + &hy) >> 1u32, false),
         };
     }
+    #[cfg(test)]
+    tests::LEVEL_ONE.with(|b| *b.borrow_mut() = Some((e, ly.clone(), hy.clone())));
     for &k in &levels[1..] {
         let next = bits - k;
         y <<= e - next;
@@ -1239,6 +1364,8 @@ fn chain_search(
         .map(|(e, c)| (e - 1, c * BigInt::from(*e)))
         .collect();
     let mut bisect = false;
+    #[cfg(test)]
+    tests::RUN.with(|n| n.set(0));
     let mut tried = false;
     #[cfg(test)]
     let mut wide = false;
@@ -1280,27 +1407,15 @@ fn chain_search(
             let guess = doubling_on()
                 .then(|| {
                     doubling(&lo, &hi, start, flo.cmp(&zero), |e, y| {
-                        let qy = eval(&truncated(q, e), y);
-                        let dy = eval(&truncated(&slope, e), y);
-                        // Newton's step `floor((y q'(y) - q(y)) / q'(y))`, written as `y +
-                        // floor(-q(y) / q'(y))`, equal as `y` is an integer: the quotient is
-                        // the step's correction, about half the level's bits on its first
-                        // step and a few bits on its second, not all of `y`'s, so the
-                        // division is of a short quotient ([`crate::num::div_floor_int`]
-                        // takes the top bits and one product below `DIV_LEAF` bits of
-                        // quotient) and no product `y q'(y)` is formed. At 524,288 bits these
-                        // divisions were 583 million of 3,340 million instructions and grew
-                        // 4.50 times from 262,144 (h5-req24).
-                        let g = (!dy.is_zero()).then(|| y + div_floor_int(&-&qy, &dy));
-                        (qy.cmp(&zero), g)
+                        chain_level(q, &slope, &hi, e, y)
                     })
                 })
                 .flatten();
             if let Some((e, y)) = guess {
                 // Newton's step from `x0 = 2^e y` at full precision, `q(x0)` exact (and its
                 // sign kept, as at any probe) and `q'(x0)` from the level of `e`, as
-                // `2^((D - 1) e) q'_e(y)`, then `g` and its neighbor toward the root: three
-                // evaluations of `q` at full precision.
+                // `2^((D - 1) e + f) q'_e(y)` (`f` the level's [`lead_shift`]), then `g` and its
+                // neighbor toward the root: three evaluations of `q` at full precision.
                 let x0 = &y << e;
                 if lo < x0 && x0 < hi {
                     #[cfg(test)]
@@ -1309,8 +1424,10 @@ fn chain_search(
                     if fx.is_zero() {
                         return x0;
                     }
-                    let d = eval(&truncated(&slope, e), &y);
-                    let shift = slope.last().and_then(|(m, _)| m.checked_mul(e));
+                    let f = lead_shift(q, hi.bits() - e);
+                    let d = eval(&truncated(&slope, e, f), &y);
+                    let shift = (slope.last())
+                        .and_then(|(m, _)| m.checked_mul(e).and_then(|m| m.checked_add(f)));
                     let g = shift.filter(|_| !d.is_zero()).map(|m| {
                         let (n, d) = match d.is_negative() {
                             true => (-&fx, -d),
@@ -1397,6 +1514,8 @@ fn chain_search(
                 (hi, fhi) = (x, fx);
             }
         }
+        #[cfg(test)]
+        tests::note_step(bisect, &width, &(&hi - &lo));
         bisect = !bisect && (&hi - &lo) * 2 > width;
     }
     lo
@@ -1455,6 +1574,51 @@ mod tests {
         pub(super) static SEARCHES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         pub(super) static FULL_EVALS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         pub(super) static FALLBACKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        /// Whether [`lead_shift`] gives its shift on this thread; off, it gives 0, the cut
+        /// before plan row ROOTS-doubling-newton's round 2 (D4), for the negative control.
+        pub(super) static LEAD_SHIFT: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+        /// For each call of [`doubling`] on this thread, the bits of its `hi`, and for each
+        /// precision `e` of [`truncated`] after it, the most bits of a cut coefficient and of a
+        /// cut leading coefficient.
+        pub(super) static LEVELS: std::cell::RefCell<Vec<(u64, BTreeMap<u64, (u64, u64)>)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+        /// The precision and the bracket the first level of [`doubling`] ended with, last.
+        pub(super) static LEVEL_ONE: std::cell::RefCell<Option<(u64, BigInt, BigInt)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    thread_local! {
+        /// The bisections in a row of the current search on this thread, the most in a row
+        /// of any search since the last reset, and the bisections on an odd width `2 k + 1`
+        /// that kept the right half, of `k + 1` ([`note_step`]).
+        pub(super) static RUN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        pub(super) static MOST_IN_A_ROW: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        pub(super) static ODD_RIGHT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Records a step of [`search`] or [`chain_search`] on a bracket of `width` that left one
+    /// of `left`, a bisection where `bisected`.
+    pub(super) fn note_step(bisected: bool, width: &BigInt, left: &BigInt) {
+        let run = match bisected {
+            true => RUN.with(|n| n.get()) + 1,
+            false => 0,
+        };
+        RUN.with(|n| n.set(run));
+        MOST_IN_A_ROW.with(|n| n.set(n.get().max(run)));
+        if bisected && width.is_odd() && left * 2u32 == width + 1u32 {
+            ODD_RIGHT.with(|n| n.set(n.get() + 1));
+        }
+    }
+
+    /// Records, for [`LEVELS`], a cut at the precision `e` whose widest coefficient has
+    /// `widest` bits and whose leading coefficient has `lead`.
+    pub(super) fn note_level(e: u64, widest: u64, lead: u64) {
+        LEVELS.with(|v| {
+            if let Some((_, m)) = v.borrow_mut().last_mut() {
+                let w = m.entry(e).or_insert((0, 0));
+                *w = (w.0.max(widest), w.1.max(lead));
+            }
+        });
     }
 
     /// A cubic of three roots of `bits` bits each, the top bit set and the others and the
@@ -1482,37 +1646,257 @@ mod tests {
     /// three evaluations at full precision after them (plan row ROOTS-doubling-newton): the
     /// guess of [`doubling`] is within 1 of the root, so its three probes close the bracket
     /// and the full-precision search never runs, on the cubic of [`of_bits`] and on a dense
-    /// cubic of three seeded random roots ([`dense_cubic`]), at 256, 2,048 and 8,192 bits.
-    /// Negative control: with [`doubling`] off (`DOUBLING` false), the full-precision search
-    /// alone takes about `log2 bits` Newton steps of four or more evaluations each, and the
-    /// assertions fail.
+    /// cubic of three seeded random roots ([`dense_cubic`]), and on that cubic times a
+    /// leading coefficient of as many bits ([`times_wide`], the fixture of D4 in cross-review
+    /// XR-ROOTS-REF round 2), at 256, 2,048 and 8,192 bits. Negative control, run here: with
+    /// [`doubling`] off (`DOUBLING` false), the full-precision search alone takes about `log2
+    /// bits` Newton steps of four or more evaluations each, and each case has more than three
+    /// evaluations at full precision per search or a fallback.
     #[test]
     fn a_search_evaluates_at_full_precision_at_most_three_times() {
-        DOUBLING.with(|d| d.set(true));
         let mut rng = crate::seed::Rng::new(0x726f_6f74);
         for bits in [256u64, 2048, 8192] {
+            let (dense, roots) = dense_cubic(&mut rng, bits);
+            let wide = times_wide(&mut rng, &dense, bits);
             for (name, (f, rs)) in [
                 ("of_bits", of_bits(bits)),
-                ("dense_cubic", dense_cubic(&mut rng, bits)),
+                ("dense_cubic", (dense, roots.clone())),
+                ("non_monic", (wide, roots)),
             ] {
-                for counter in [&SEARCHES, &FULL_EVALS, &FALLBACKS] {
-                    counter.with(|n| n.set(0));
+                for on in [true, false] {
+                    DOUBLING.with(|d| d.set(on));
+                    for counter in [&SEARCHES, &FULL_EVALS, &FALLBACKS] {
+                        counter.with(|n| n.set(0));
+                    }
+                    assert_eq!(integer_roots(&f, None, None), Roots::Listed(rs.clone()));
+                    let [searches, full, fallbacks] =
+                        [&SEARCHES, &FULL_EVALS, &FALLBACKS].map(|c| c.with(|n| n.get()));
+                    println!(
+                        "{name}({bits}), doubling {on}: {searches} searches, {full} evaluations \
+                         at full precision, {fallbacks} fallbacks"
+                    );
+                    assert!(searches > 0, "{name}({bits}): no search");
+                    assert_eq!(
+                        full <= 3 * searches && fallbacks == 0,
+                        on,
+                        "{name}({bits}), doubling {on}: {full} evaluations at full precision \
+                         and {fallbacks} fallbacks over {searches} searches"
+                    );
                 }
-                assert_eq!(integer_roots(&f, None, None), Roots::Listed(rs));
-                let [searches, full, fallbacks] =
-                    [&SEARCHES, &FULL_EVALS, &FALLBACKS].map(|c| c.with(|n| n.get()));
-                println!(
-                    "{name}({bits}): {searches} searches, {full} evaluations at full precision, \
-                     {fallbacks} fallbacks"
-                );
-                assert!(searches > 0, "{name}({bits}): no search");
-                assert!(
-                    full <= 3 * searches && fallbacks == 0,
-                    "{name}({bits}): {full} evaluations at full precision and {fallbacks} \
-                     fallbacks over {searches} searches"
-                );
             }
         }
+        DOUBLING.with(|d| d.set(true));
+    }
+
+    /// Codex's family of cross-review XR-ROOTS-REF round 2 (D6), `(2x - A)^3 + (2x - A)` on
+    /// `R - H..=R + H` with `R = 2^n + 2^(n/4)`, `H = 2^(n/8)`, `A = 2R + 1`, through the public
+    /// entry, and a variant that reaches the case it aims at. Plan row ROOTS-fallback-worst-case.
+    ///
+    /// Codex's family is not reached. Its real root is `A/2 = R + 1/2`, the root of its second
+    /// derivative, `24 (2x - A)`, too. The branch and bound cannot prove the slope one-signed
+    /// on a cell around `R` before its budget (`chain_ends`), so the chain runs
+    /// (`chain_roots`): the cell of `q''` is `R` (its search is the one Newton step counted),
+    /// `q'`, `2 (3 (2x - A)^2 + 1) > 0`, adds none, and `q` itself is negative on `..=R` and
+    /// positive on `R + 1..`, so neither stretch beside the cell has a sign change and no
+    /// search of `q` runs.
+    ///
+    /// The variant `(x - R)^3 - S^3`, `S = 2^(n/16)`, root `R + S`, is reached. Its cluster
+    /// of three roots `R + S w^k` (`w^3 = 1`) sits at the end `R` of the stretch the chain
+    /// searches (the cell of `q''` and `q'`), so `q` is flat near that end and steep near the
+    /// other: Newton's step from the end of the smaller value, `R` (`q'(R) = 0`), leaves the
+    /// bracket, and each step is a bisection after a Newton step that fails, one bit of the
+    /// bracket for two full-precision steps, `n/8 - n/16` bits: `n/16 + 1` Newton steps and
+    /// `n/16` bisections, measured here (2026-11-23), each an evaluation of `n`-bit numbers,
+    /// `O(n M(n))` in all, with or without [`doubling`]: no reduced level can certify a sign in
+    /// the bracket, as `q` is about `S^3`, `3n/16` bits, there and its terms `3n` bits, and the
+    /// truncation error of a level is `2^((D - 1) n + e)` (`chain_level`). The bisection after
+    /// a weak Newton step already shrinks the bracket by a constant factor every two steps (the
+    /// fix D6 names); it is not enough, as the bracket has `Theta(n)` bits to lose. What fixes it
+    /// is open (the row): a cut at the cluster's end `R + 2^m`, `m` halving between the bits of
+    /// `S` and of `H` as the cuts at powers of 2 halve between the ends' bits, reaches the root's
+    /// scale in `O(log n)` steps, inferred, not built; Abbott, "Quadratic interval refinement
+    /// for real roots" (ACM Communications in Computer Algebra 48, 2014,
+    /// doi:10.1145/2644288.2644291) and Sagraloff, "When Newton meets Descartes" (ISSAC 2012,
+    /// doi:10.1145/2442829.2442872, Newton steps with a guess of the cluster's size) are the
+    /// published methods for such clusters (titles checked on Crossref 2026-11-23; their bounds
+    /// not yet read against this search).
+    #[test]
+    fn a_cluster_at_an_end_of_a_chain_stretch_takes_a_step_per_bit() {
+        let one = BigInt::one();
+        for n in [256u64, 1024, 4096] {
+            let r = (&one << n) + (&one << (n / 4));
+            let h = &one << (n / 8);
+            let a = &r * 2u32 + 1u32;
+            let codex = Sparse::new([
+                (3, BigInt::from(8)),
+                (2, -12 * &a),
+                (1, 6 * &a * &a + 2u32),
+                (0, -(&a * &a * &a + &a)),
+            ]);
+            let s = &one << (n / 16);
+            let cubed = &s * &s * &s;
+            let variant = Sparse::new([
+                (3, one.clone()),
+                (2, -3 * &r),
+                (1, 3 * &r * &r),
+                (0, -(&r * &r * &r + &cubed)),
+            ]);
+            for (name, f, rs) in [
+                ("codex", &codex, vec![]),
+                ("variant", &variant, vec![&r + &s]),
+            ] {
+                for on in [true, false] {
+                    DOUBLING.with(|d| d.set(on));
+                    for c in [
+                        &NEWTON_STEPS,
+                        &BISECTIONS,
+                        &FULL_EVALS,
+                        &FALLBACKS,
+                        &SEARCHES,
+                        &CHAINED,
+                        &UNITS,
+                    ] {
+                        c.with(|n| n.set(0));
+                    }
+                    let (l, u) = (&r - &h, &r + &h);
+                    assert_eq!(
+                        integer_roots(f, Some(&l), Some(&u)),
+                        Roots::Listed(rs.clone()),
+                        "{name}({n})"
+                    );
+                    let [nw, bi, fe, fb, se, ch, un] = [
+                        &NEWTON_STEPS,
+                        &BISECTIONS,
+                        &FULL_EVALS,
+                        &FALLBACKS,
+                        &SEARCHES,
+                        &CHAINED,
+                        &UNITS,
+                    ]
+                    .map(|c| c.with(|n| n.get()));
+                    println!(
+                        "{name}({n}) doubling {on}: {nw} Newton steps, {bi} bisections, {fe} \
+                         evaluations at full precision, {fb} fallbacks, {se} searches, {ch} \
+                         chained, {un} units"
+                    );
+                    let m = n / 16;
+                    let expected = match name {
+                        "codex" => [1, 0, 3, 1, 1, 1, 15],
+                        _ => [m + 1, m, 3 * m + 2, 2, 2, 1, 15],
+                    };
+                    assert_eq!([nw, bi, fe, fb, se, ch, un], expected, "{name}({n}), {on}");
+                }
+            }
+        }
+        DOUBLING.with(|d| d.set(true));
+    }
+
+    /// `f` times a positive number of `bits` bits, the top bit set and the others drawn from
+    /// `rng`: a polynomial of the same roots whose leading coefficient has `bits` bits more.
+    fn times_wide(rng: &mut crate::seed::Rng, f: &Sparse, bits: u64) -> Sparse {
+        let words = bits.div_ceil(32);
+        let digits = (0..words).map(|_| rng.next_u64() as u32).collect();
+        let c = (BigInt::from(num_bigint::BigUint::new(digits)) >> (32 * words - bits))
+            | (BigInt::one() << (bits - 1));
+        Sparse::new(f.terms().iter().map(|(i, a)| (*i, a * &c)))
+    }
+
+    /// Plan row ROOTS-doubling-newton, D4 of cross-review XR-ROOTS-REF round 2: on a dense
+    /// cubic of roots of 8,192 bits times a number of 8,192 bits, the leading coefficient cut
+    /// at each level of [`doubling`] has at most the level's bits, by the common shift
+    /// [`lead_shift`]: summed over the levels of each search, it is at most `2 bits(hi)` plus
+    /// 64 a level, and the widest cut coefficient, at most `(D + 1) k + g` bits a level of
+    /// `k` bits (proof at [`lead_shift`]), sums to at most 4 times that for this cubic.
+    /// Negative control, run here: with the shift off (`LEAD_SHIFT` false, the cut before
+    /// D4) the leading coefficient keeps its 8,192 extra bits at every level, and some search
+    /// is over the bounds. The roots are exact both ways.
+    #[test]
+    fn a_wide_leading_coefficient_is_cut_at_each_level() {
+        let mut rng = crate::seed::Rng::new(0x6c65_6164);
+        let bits = 8192u64;
+        let (f, rs) = dense_cubic(&mut rng, bits);
+        let f = times_wide(&mut rng, &f, bits);
+        for shift in [true, false] {
+            LEAD_SHIFT.with(|s| s.set(shift));
+            LEVELS.with(|v| v.borrow_mut().clear());
+            assert_eq!(integer_roots(&f, None, None), Roots::Listed(rs.clone()));
+            let runs = LEVELS.with(|v| v.borrow().clone());
+            let mut over = Vec::new();
+            for (hb, m) in runs
+                .iter()
+                .filter(|(hb, m)| *hb > DOUBLING_BASE && !m.is_empty())
+            {
+                let levels = m.len() as u64;
+                let lead: u64 = m.values().map(|w| w.1).sum();
+                let widest: u64 = m.values().map(|w| w.0).sum();
+                let bound = 2 * hb + 64 * levels;
+                println!(
+                    "shift {shift}: bits(hi) {hb}, {levels} levels, leading {lead}, widest \
+                     {widest}, bound {bound}"
+                );
+                if lead > bound || widest > 4 * bound {
+                    over.push(*hb);
+                }
+            }
+            assert!(runs.iter().any(|(hb, _)| *hb > DOUBLING_BASE), "no search");
+            assert_eq!(
+                over.is_empty(),
+                shift,
+                "shift {shift}: over the bounds at {over:?}"
+            );
+        }
+        LEAD_SHIFT.with(|s| s.set(true));
+    }
+
+    /// Plan row ROOTS-doubling-newton, D5 of cross-review XR-ROOTS-REF round 2 (Codex's case):
+    /// the first level of [`doubling`] moves an end only on a certified sign. `q = (x - 2)(x -
+    /// (z - 1))`, `z = 2^65`, on `z - 4 S..=z + 4 S`, `S = 2^25`, has its one level at `e =
+    /// 25`, where the cut polynomial at `y = z / 2^25 = 2^40` is negative by [`eval`] (`-2^40 +
+    /// 2^16 - 1`) and by [`scaled`] while `q(z) = 2^65 - 2` is positive: the raw sign would set
+    /// the lower end to `2^40`, `2^65` in full, past the root `z - 1`. The bracket the level
+    /// ends with holds the root on both paths ([`chain_level`], [`search_level`]), and both
+    /// searches find it. Negative control: the raw sign (`Some(qy.cmp(&zero))` in place of
+    /// [`certified_sign`] in both functions) fails the bracket assertions.
+    #[test]
+    fn doubling_keeps_the_root_where_a_cut_sign_is_wrong() {
+        let s = BigInt::one() << 25u32;
+        let z = BigInt::one() << 65u32;
+        let root = &z - 1u32;
+        let (lo, hi) = (&z - 4u32 * &s, &z + 4u32 * &s);
+        let f = from_big_roots(&[BigInt::from(2), root.clone()]);
+        let q = f.terms();
+        let derivative: Vec<(u64, BigInt)> = (q.iter())
+            .filter(|(e, _)| *e > 0)
+            .map(|(e, c)| (e - 1, c * BigInt::from(*e)))
+            .collect();
+        let times_x: Vec<(u64, BigInt)> = (q.iter())
+            .filter(|(e, _)| *e > 0)
+            .map(|(e, c)| (*e, c * BigInt::from(*e)))
+            .collect();
+        assert!(eval(q, &z).is_positive());
+        let y = &z >> 25u32;
+        let s_e = 2 * ((&hi >> 25u32) + 1u32).bits();
+        assert!(eval(&truncated(q, 25, 0), &y).is_negative());
+        assert!(scaled(&truncated(q, 25, 0), &y, s_e).is_negative());
+        for path in ["chain_level", "search_level"] {
+            LEVEL_ONE.with(|b| *b.borrow_mut() = None);
+            let guess = doubling(&lo, &hi, &z, Ordering::Less, |e, y| match path {
+                "chain_level" => chain_level(q, &derivative, &hi, e, y),
+                _ => search_level(q, &times_x, &hi, e, y),
+            });
+            let (e, ly, hy) = LEVEL_ONE
+                .with(|b| b.borrow().clone())
+                .expect("a first level");
+            println!("{path}: e {e}, bracket {ly}..={hy}, guess {guess:?}");
+            assert_eq!(e, 25, "{path}");
+            assert!(
+                (&ly << e) <= root && root <= (&hy << e),
+                "{path}: {ly}..={hy}"
+            );
+        }
+        let (flo, fhi) = (eval(q, &lo), eval(q, &hi));
+        assert_eq!(chain_search(q, lo.clone(), hi.clone(), flo, fhi), root);
+        assert_eq!(search(q, &times_x, None, lo, hi, &mut 0), Some(root));
     }
 
     /// The roots of dense cubics of three random roots are found exactly, from 65 to 1,024
@@ -1546,28 +1930,54 @@ mod tests {
     }
 
     /// A bisection is followed by a Newton step (plan row ROOTS-bisect-flag): on the cubic of
-    /// [`of_bits`] at 2,048 bits the five searches of the chain take at most one bisection per
-    /// Newton step, and the count of bisections is the one measured here. Before the row a
-    /// bisection on an odd width `2k + 1` whose root lay in the right half, of `k + 1`, set the
-    /// flag again, so bisections ran on in place of Newton steps. The guess of [`doubling`] is
-    /// turned off, as with it the searches take no step at full precision to count (plan row
+    /// [`of_bits`] at 2,048 bits and on dense cubics of 1,024 and 4,096 bits, every search of
+    /// `search` and `chain_search` takes no two bisections in a row (`MOST_IN_A_ROW`, counted
+    /// per search at both sites), at most one bisection per Newton step, and exactly the
+    /// counts measured here (2026-11-23): 36, 42 and 58 bisections, of which 16, 13 and 15 were
+    /// on an odd width `2k + 1` that kept the right half, of `k + 1` (`ODD_RIGHT`). Before the
+    /// row such a bisection set the flag again, `(&hi - &lo) * 2 > width` being true of `k + 1`,
+    /// so bisections ran on in place of Newton steps. The guess of [`doubling`] is turned off,
+    /// as with it the searches take almost no step at full precision to count (plan row
     /// ROOTS-doubling-newton). Negative control: the old line, `bisect = (&hi - &lo) * 2 >
-    /// width`, at both sites fails both assertions.
+    /// width`, at both sites fails the count and the run of bisections.
     #[test]
     fn a_bisection_is_followed_by_a_newton_step() {
-        let (f, rs) = of_bits(2048);
-        NEWTON_STEPS.with(|n| n.set(0));
-        BISECTIONS.with(|n| n.set(0));
+        let mut rng = crate::seed::Rng::new(0x6269_7365);
+        let cases = [
+            ("of_bits(2048)", of_bits(2048)),
+            ("dense_cubic(1024)", dense_cubic(&mut rng, 1024)),
+            ("dense_cubic(4096)", dense_cubic(&mut rng, 4096)),
+        ];
         DOUBLING.with(|d| d.set(false));
-        let roots = integer_roots(&f, None, None);
+        let mut counts = Vec::new();
+        for (name, (f, rs)) in cases {
+            for c in [&NEWTON_STEPS, &BISECTIONS, &MOST_IN_A_ROW, &ODD_RIGHT] {
+                c.with(|n| n.set(0));
+            }
+            assert_eq!(integer_roots(&f, None, None), Roots::Listed(rs), "{name}");
+            let [newton, bisections, most, odd] =
+                [&NEWTON_STEPS, &BISECTIONS, &MOST_IN_A_ROW, &ODD_RIGHT]
+                    .map(|c| c.with(|n| n.get()));
+            println!(
+                "{name}: {newton} Newton steps, {bisections} bisections, at most {most} in a \
+                 row, {odd} on an odd width that kept the right half"
+            );
+            assert!(
+                bisections <= newton,
+                "{name}: {bisections} bisections, {newton} Newton steps"
+            );
+            assert!(most <= 1, "{name}: {most} bisections in a row");
+            counts.push((bisections, odd));
+        }
         DOUBLING.with(|d| d.set(true));
-        assert_eq!(roots, Roots::Listed(rs));
-        let newton = NEWTON_STEPS.with(|n| n.get());
-        let bisections = BISECTIONS.with(|n| n.get());
-        println!("of_bits(2048): {newton} Newton steps, {bisections} bisections");
+        assert_eq!(
+            counts,
+            [(36, 16), (42, 13), (58, 15)],
+            "the bisections measured"
+        );
         assert!(
-            bisections <= newton,
-            "{bisections} bisections, {newton} Newton steps"
+            counts.iter().any(|&(_, odd)| odd > 0),
+            "no bisection on an odd width kept its right half"
         );
     }
 
@@ -1950,8 +2360,12 @@ mod tests {
     /// magnitudes with the signs apart (plan row ROOTS-binomial-div): each sign of `c0` and `c1`,
     /// quotients that are not exact (`7 / 2`, where a truncated quotient is 3 and a floored one
     /// is -4 or 3 by the signs), equal signs, whose quotient is negative, and a dense `c1 x^3 -
-    /// c1 r^3` of 4,000-bit `c1` and 1,000-bit `r`, past the crossover of the kernel's division.
-    /// Negative control: dropping the test of the signs gives `x^3 + 8` the root 2 as well.
+    /// c1 r^3` of 8,192-bit `c1` and 4,096-bit `r`, divisor and quotient both past `DIV_LEAF`
+    /// bits, so that the kernel's division runs and not num-bigint's below the leaf
+    /// (`crate::num::fast::div_rem`), with `c1 r^3 + 1` among its neighbors, whose quotient
+    /// `r^3` is a cube and whose remainder is 1. Negative controls: dropping the test of the
+    /// signs gives `x^3 + 8` the root 2 as well; dropping the test of the remainder gives
+    /// `c1 x^3 - (c1 r^3 + 1)` the root `r`.
     #[test]
     fn a_binomial_quotient_has_its_signs_and_its_remainder() {
         assert_eq!(roots(&poly(&[(5, -2), (0, 64)]), -50, 50), [2]);
@@ -1978,13 +2392,14 @@ mod tests {
             let digits = (0..bits / 32).map(|_| rng.next_u64() as u32).collect();
             BigInt::from(BigUint::new(digits)) | (BigInt::one() << (bits - 1))
         };
-        let (c1, r) = (wide(4000), wide(1000));
+        let (c1, r) = (wide(8192), wide(4096));
         let c0 = -(&c1 * &r * &r * &r);
         for (c1, c0, want) in [
             (c1.clone(), c0.clone(), vec![r.clone()]),
             (-&c1, -&c0, vec![r.clone()]),
             (c1.clone(), -&c0, vec![-&r]),
             (c1.clone(), &c0 + 1, vec![]),
+            (c1.clone(), &c0 - 1, vec![]),
             (c1.clone(), &c0 - &c1, vec![]),
         ] {
             let f = Sparse::new([(0, c0), (3, c1)]);
