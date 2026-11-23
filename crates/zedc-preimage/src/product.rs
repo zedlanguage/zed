@@ -2947,8 +2947,9 @@ impl Lazy {
                 let held = s.view().summarize_free(term, names);
                 // A peeled summary over two inputs or more is one the whole term cannot have,
                 // so the whole is summarized instead
-                // (row FAIL-if-shortcut-seed-13376472606931704830). Proof: `let_summary` of a `let` term puts the term in
-                // `rest` (no arm of its loop matches `Term::Let`), and `rest` is read by
+                // (row FAIL-if-shortcut-seed-13376472606931704830). Proof: `let_summary` of a
+                // `let` term puts the term in `rest` (no arm of its loop matches `Term::Let`),
+                // and `rest` is read by
                 // `Tx::pa`, whose value is one `Pa` (`Pa::Const`, `Linear` or `Piecewise`, each
                 // over at most one `var`): a `Var` bound outside is read as
                 // `LetPa::force`, also one `Pa`. So the summary of `e` has `parts` empty and
