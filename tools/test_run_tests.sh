@@ -89,7 +89,10 @@ if want list || want select || want table; then
     exit 1
   fi
   rc=$?
-  [ "$rc" = 0 ] || { echo "FAILED: --list exit $rc"; exit 1; }
+  # The end of the run's output says why, e.g. a build error; job.sh retries a line after a
+  # `cargo clean` only when its log shows the stale-target error "cannot satisfy dependencies so"
+  # (std1 2026-11-22, where this printed nothing but the line below).
+  [ "$rc" = 0 ] || { printf '%s\n' "$all" | tail -40; echo "FAILED: --list exit $rc"; exit 1; }
   pieces=$(cat "$(last_run)/pieces")
 fi
 # The names of the pieces whose binary (third field), without its hash, is one of the groups $@.
@@ -333,9 +336,11 @@ check "--skip-other-kind still stops a run whose group has no piece of either ki
   "$rc $out"
 check "--short-groups names the groups with a short-addresses piece" \
   "l01_37a_short_addresses l01_37_oracle zed_kernel" "$(run --short-groups | paste -sd' ')"
+# Besides it, the group zed_kernel has a piece short-zed_kernel::<test> for each test run alone
+# (short_alone in tools/run_tests.sh, TEST-short-zed_kernel-split), which the part short checks.
 check "each group --short-groups names has its piece short-<group>" \
   "$(run --short-groups | sed 's/^/short-/' | sort)" \
-  "$(selected "^($(run --short-groups | sed 's/^/short-/' | paste -sd'|'))\$")"
+  "$(selected "^($(run --short-groups | sed 's/^/short-/' | paste -sd'|'))\$" | command grep -a -v '^short-zed_kernel::')"
 fi
 # --except <ERE> leaves out each selected piece it matches, by the name a run prints or that name
 # with the binary's hash taken off (TOOL-main-watch-start-green: main-watch does not start a

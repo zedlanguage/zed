@@ -206,9 +206,25 @@ vm_ns() {
     CARGO_TARGET_DIR=$PWD/build/cargo exec bash "$0" "$@"' "$0" "$PWD" "$R" "$tgt" _ "$@"
 }
 
+# vm_pkg <package> <log dir>: installs the Ubuntu package of that name on the VM when its command
+# of the same name is missing, the log in <log dir>/<package>-install.log. A VM's package lists
+# may be missing or stale: a failed install updates them and tries once more.
+vm_pkg() {
+  command -v "$1" >/dev/null && return 0
+  apt-get install -y -qq "$1" >"$2/$1-install.log" 2>&1 ||
+    { apt-get update -qq && apt-get install -y -qq "$1"; } >>"$2/$1-install.log" 2>&1 ||
+    { echo "vm_side: $1 could not be installed"; return 2; }
+}
+
 # vm_cmd <command, base64>: runs one command of --commands on the VM with bash, in the build root
 # of the short-addresses pieces (vm_ns), with FARM_OUT the job's out/ directory, which job.sh
-# brings back. Exit as the command's.
+# brings back, and with the tools a share has (vm_side): gawk first as awk, and strace, which
+# tools/test_run_tests.sh trace needs (its three --trace cases found no reads on hm3 without them,
+# 2026-11-22). The spec is also linked as /home/luke/Work/zed, beside an ancestor of the build root
+# as on this machine, when no such directory is there: tests/src/spec.rs finds the spec beside the
+# checkout or an ancestor when ZED_SPEC_DIR is unset, which test_run_tests trace's case "the spec
+# beside" checks (it found nothing on std1, the spec being only at ZED_SPEC_DIR, 2026-11-22).
+# Exit as the command's.
 vm_cmd() {
   set -u -o pipefail
   local R=${FARM_VM_BUILD_ROOT:-/home/luke/Work/wt/.build-root} J=${FARM_VM_JOB:-/content/job} c
@@ -219,8 +235,13 @@ vm_cmd() {
     return
   fi
   c=$(printf %s "${1-}" | base64 -d) && [ -n "$c" ] || { echo "vm_side: the command is not base64"; return 2; }
-  mkdir -p "$J/out" || { echo "vm_side: mkdir of $J/out failed"; return 2; }
-  FARM_OUT=$J/out bash -c "$c"
+  mkdir -p "$J/out" "$J/cmd/bin" || { echo "vm_side: mkdir of $J/out or $J/cmd/bin failed"; return 2; }
+  vm_pkg gawk "$J/cmd" && vm_pkg strace "$J/cmd" || return 2
+  ln -sfn "$(command -v gawk)" "$J/cmd/bin/awk" || { echo "vm_side: linking gawk as awk failed"; return 2; }
+  if [ ! -e /home/luke/Work/zed ] && [ -f "${ZED_SPEC_DIR-}/DESIGN.md" ]; then
+    ln -s "$ZED_SPEC_DIR" /home/luke/Work/zed || { echo "vm_side: linking the spec as /home/luke/Work/zed failed"; return 2; }
+  fi
+  PATH=$J/cmd/bin:$PATH FARM_OUT=$J/out bash -c "$c"
 }
 
 # vm_side <k> <n> <kind> <full 0|1> <skip-other 0|1> <list 0|1> <trace 0|1> <only> <except>
@@ -267,11 +288,7 @@ vm_side() {
   # tools/run_tests.sh is written for GNU awk (match() with an array, in the parse of --trace's
   # strace output); a Colab VM's awk is mawk, which refused that program and left every .reads file
   # empty (end-to-end run of 2026-11-22). gawk is installed once per VM and put first as awk.
-  if ! command -v gawk >/dev/null; then
-    apt-get install -y -qq gawk >"$w/gawk-install.log" 2>&1 ||
-      { apt-get update -qq && apt-get install -y -qq gawk; } >>"$w/gawk-install.log" 2>&1 ||
-      { echo "vm_side: gawk could not be installed"; return 2; }
-  fi
+  vm_pkg gawk "$w" || return 2
   ln -sfn "$(command -v gawk)" "$w/bin/awk" || { echo "vm_side: linking gawk as awk failed"; return 2; }
   # The folders of tests/full here whose needs name podman (s00_01_tools and s09_release) read
   # what tools/fetch_test_deps.sh fetches and builds: the sysroots, the pinned rustc, alpine and
@@ -352,10 +369,7 @@ vm_side() {
   echo "farm: share $k of $n: $(wc -l <"$w/share") of $(wc -l <"$w/list/latest/pieces") pieces"
   [ -s "$w/share" ] || return 0
   if [ "$trace" = 1 ]; then
-    # A VM's package lists may be missing or stale: a failed install updates them and tries once more.
-    command -v strace >/dev/null || apt-get install -y -qq strace >"$w/strace-install.log" 2>&1 ||
-      { apt-get update -qq && apt-get install -y -qq strace; } >>"$w/strace-install.log" 2>&1 ||
-      { echo "vm_side: strace could not be installed"; return 2; }
+    vm_pkg strace "$w" || return 2
     mkdir -p "$J/out/trace-$k" || { echo "vm_side: mkdir of $J/out/trace-$k failed"; return 2; }
     awk 'NR == FNR { p[$1] = 1; next } $3 in p { print $3, $1, $2 }' "$w/share" "$w/list/latest/chosen" \
       >"$J/out/trace-$k/groups"
@@ -454,7 +468,7 @@ vm_side() {
 }
 vm_script=$out/vm_side.sh
 {
-  declare -f vm_ns vm_cmd vm_side
+  declare -f vm_pkg vm_ns vm_cmd vm_side
   # A share's arguments start with its number; a command's with `cmd`.
   echo 'if [ "${1-}" = cmd ]; then shift; vm_cmd "$@"; else vm_side "$@"; fi'
 } >"$vm_script" || die "cannot write $vm_script"
