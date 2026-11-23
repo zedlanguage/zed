@@ -406,3 +406,29 @@ fn divisions_and_gcds_by_one_word_scale() {
         },
     );
 }
+
+/// Plan row KERNEL-bz-short-quotient: [`div_rem_uint`] of a number of `n + 32` words by one of
+/// `n` words, a quotient of at most 33 words, under `DIV_LEAF`, by `fast::div_rem_short_quotient`.
+/// It went to num-bigint's division, which past 128 words in the dividend and 64 in the
+/// divisor takes Burnikel and Ziegler's recursive division by those counts alone, whatever the
+/// quotient's width (num-bigint 0.4.8, `div_rem_core`, src/biguint/division.rs:343-346), and
+/// whose recursion copies the halves of the divisor at each level (:274-287): at 4,096 and
+/// 32,768 words it allocated 1,167,976 and 12,481,320 bytes, 10.7 times, over the limit, in
+/// 2,633,137 and 23,655,300 instructions, 8.98 times (2026-11-22, run h5-req15). By
+/// `div_rem_short_quotient`: 152,664 and 1,206,360 bytes, 7.90 times, in 1,771,613 and
+/// 14,166,260 instructions, 8.00 times (2026-11-22, run h5-req21).
+#[test]
+fn a_short_quotient_of_a_wide_number_scales() {
+    let n = 1 << 12;
+    let numbers = crate::scaling::inputs(n, |m| (bench_number(m + 32, 17), bench_number(m, 19)));
+    crate::scaling::check_order(
+        "a number of n + 32 words div and mod one of n words",
+        n,
+        1,
+        |m| {
+            let (a, b) = &numbers[&m];
+            let (q, r) = div_rem_uint(a, b);
+            assert!(q.bits() > 64 * 31 && &r < b);
+        },
+    );
+}
