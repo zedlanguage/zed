@@ -2942,7 +2942,7 @@ impl Lazy {
     /// when the backward transfer of the guard is exact) reads `y` through `e'` in `W` and
     /// through `S_y` in `P`, and whether those two backward reads are exact is not shown to
     /// be the same; likewise the constant a box gives a term (`Walk::constant`). (b) The bounds
-    /// a test reads from a [`Pa::Piecewise`] (`pa_bounds`, `Tag::vals`) may depend on where its
+    /// a test reads from a `Pa::Piecewise` (`pa_bounds`, `Tag::vals`) may depend on where its
     /// pieces are cut, which the two ways may cut differently. Where `P` exists and `W` does
     /// not, the peeled summary narrows more, soundly, since `P` is a value of `b` at each point.
     /// Tests of (a): the `if`, `min` and `max` bodies of the test named in step 3 and of
