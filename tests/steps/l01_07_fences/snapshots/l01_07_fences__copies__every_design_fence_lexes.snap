@@ -89,11 +89,11 @@ expression: "tokens_by_key(&fences::design())"
   7 | k = int ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) «else» #invalid -> 0₍10₎ ;
   8 | m . stdout <- String ( «if» k >= 0₍10₎ { 2r ^ ( 2₍10₎ ^ k ) } «else» { 0r } ) ;
   9 | }
- 12 | @limits ( memory : 1₍10₎ «with» units ( str["MiB"] ) )
- 13 | main ( m : MainArgs ) {
- 14 | b = 2₍10₎ ^ 64₍10₎ + 13₍10₎ ;
- 15 | m . stdout <- String ( b ^ ( 2₍10₎ ^ 20₍10₎ ) ) ;
- 16 | }
+ 13 | @limits ( memory : 1₍10₎ «with» units ( str["MiB"] ) )
+ 14 | main ( m : MainArgs ) {
+ 15 | b = 2₍10₎ ^ 64₍10₎ + 13₍10₎ ;
+ 16 | m . stdout <- String ( b ^ ( 2₍10₎ ^ 20₍10₎ ) ) ;
+ 17 | }
 == DESIGN.md [sec:ports] 5 L7
   3 | main ( m : MainArgs ) -> int «with» handles ( #sigint ) {
   4 | stopped = m . signals [ 0₍10₎ ] == #sigint ;
@@ -283,19 +283,19 @@ expression: "tokens_by_key(&fences::design())"
   3 | intervalsFromParity = Reduction ( of : intervals , reads : [ parity ] ,
   4 | reduce : ( e , s ) -> «if» s . of ( parity ) == #even { e . roundInwardToEven } «else» { e } ) ;
 == DESIGN.md [sec:constraints] 3 L6
-  1 | «type» Bound = int | Ast | #unbounded ;
+  1 | «type» Bound = int | Zir | #unbounded ;
   2 | «struct» Interval { min : Bound , max : Bound }
   3 | «struct» Congruence { modulus : int [ 0₍10₎ .. ] , residue : int }
   4 | «struct» FloatClass { min : f64 , max : f64 , nonNaN : bool , width : #f16 | #bf16 | #f32 | #f64 }
   5 | «struct» Constraints ( «positional» V ) {
-  6 | subject : Ast ,
+  6 | subject : Zir ,
   7 | interval : Interval | [ Interval ] | #none ,
   8 | congruence : Congruence | #none ,
   9 | values : [ V ] | #unknown ,
  10 | length : Interval | #none ,
  11 | floats : FloatClass | #none ,
- 12 | relations : [ Ast ] ,
- 13 | written : [ Ast ] ,
+ 12 | relations : [ Zir ] ,
+ 13 | written : [ Zir ] ,
  14 | }
 == DESIGN.md [sec:units] 1 L2
   2 | «struct» Money { «local» cents : int [ 0₍10₎ .. ] }
@@ -484,12 +484,12 @@ expression: "tokens_by_key(&fences::design())"
   5 | _ -> Utf8String ( v ) ,
   6 | } ;
 == DESIGN.md [sec:symbolic] 1 L22
-  1 | p = ( ( x : rat ) -> ( x + 1r ) ^ 2₍10₎ ) :: source ;
+  1 | p = ( ( x : rat ) -> ( x + 1r ) ^ 2₍10₎ ) :: zir ;
   2 | e = expand ( p ) ;
   3 | d = derivative ( p ) ;
   4 | i = integral ( p ) ;
 == DESIGN.md [sec:symbolic] 2 L33
-  1 | loss = ( ( w : [ f64 ] ) -> w . map ( x -> x * x ) >< ( + ) ) :: source ;
+  1 | loss = ( ( w : [ f64 ] ) -> w . map ( x -> x * x ) >< ( + ) ) :: zir ;
   2 | g = gradient ( loss ) ;
   3 | h = hvp ( loss ) ;
 == DESIGN.md [sec:verification] 1 L15
@@ -508,29 +508,36 @@ expression: "tokens_by_key(&fences::design())"
   9 | | #reflect ( sound : LawId )
  10 | | #assume ( why : Utf8String ) ;
 == DESIGN.md [sec:checking_in_zed] 1 L1
-  2 | main ( m : MainArgs ) {
-  3 | b = 2₍10₎ ^ 64₍10₎ + 13₍10₎ ;
-  4 | m . stdout <- String ( b ^ ( 2₍10₎ ^ 64₍10₎ ) ) ;
-  5 | }
-  8 | main ( m : MainArgs ) {
-  9 | k = int ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) «else» #invalid -> 0₍10₎ ;
- 10 | m . stdout <- «if» k > 5₍10₎ { String ( ( 2₍10₎ ^ 64₍10₎ + 13₍10₎ ) ^ ( 2₍10₎ ^ 64₍10₎ ) ) } «else» { str["few"] } ;
- 11 | }
- 14 | main ( m : MainArgs ) {
- 15 | x = 2₍10₎ ^ ( 2₍10₎ ^ 70₍10₎ ) ;
- 16 | m . stdout <- String ( x > 0₍10₎ ) ;
- 17 | }
- 20 | main ( m : MainArgs ) {
- 21 | x = 2₍10₎ ^ ( 2₍10₎ ^ 70₍10₎ ) ;
- 22 | m . stdout <- String ( x ) ;
- 23 | }
- 29 | grow ( k : int ) {
- 30 | «return» «if» k >= 0₍10₎ { 2r ^ ( 2₍10₎ ^ k ) } «else» { 0r } ;
+  3 | main ( m : MainArgs ) {
+  4 | b = 2₍10₎ ^ 64₍10₎ + 13₍10₎ ;
+  5 | m . stdout <- String ( b ^ ( 2₍10₎ ^ 64₍10₎ ) ) ;
+  6 | }
+  9 | main ( m : MainArgs ) {
+ 10 | k = int ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) «else» #invalid -> 0₍10₎ ;
+ 11 | m . stdout <- «if» k > 5₍10₎ { String ( ( 2₍10₎ ^ 64₍10₎ + 13₍10₎ ) ^ ( 2₍10₎ ^ 64₍10₎ ) ) } «else» { str["few"] } ;
+ 12 | }
+ 15 | main ( m : MainArgs ) {
+ 16 | x = 2₍10₎ ^ ( 2₍10₎ ^ 70₍10₎ ) ;
+ 17 | m . stdout <- String ( x > 0₍10₎ ) ;
+ 18 | }
+ 21 | main ( m : MainArgs ) {
+ 22 | x = 2₍10₎ ^ ( 2₍10₎ ^ 70₍10₎ ) ;
+ 23 | m . stdout <- String ( x ) ;
+ 24 | }
+ 28 | main ( m : MainArgs ) {
+ 29 | x = int ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) «else» #invalid -> 0₍10₎ ;
+ 30 | m . stdout <- String ( x < 3₍10₎ ^ ( 2₍10₎ ^ 40₍10₎ ) ) ;
  31 | }
- 32 | main ( m : MainArgs ) {
- 33 | k = int ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) «else» #invalid -> 0₍10₎ ;
- 34 | m . stdout <- String ( grow ( k : k ) ) ;
- 35 | }
+ 35 | main ( m : MainArgs ) {
+ 36 | m . stdout <- String ( 3₍10₎ ^ ( 2₍10₎ ^ 40₍10₎ ) ) ;
+ 37 | }
+ 43 | grow ( k : int ) {
+ 44 | «return» «if» k >= 0₍10₎ { 2r ^ ( 2₍10₎ ^ k ) } «else» { 0r } ;
+ 45 | }
+ 46 | main ( m : MainArgs ) {
+ 47 | k = int ( m . args [ 0₍10₎ ] «else» #outOfBounds -> str[] ) «else» #invalid -> 0₍10₎ ;
+ 48 | m . stdout <- String ( grow ( k : k ) ) ;
+ 49 | }
 == DESIGN.md [sec:checking_in_zed] 2 L12
   1 | «struct» Lattice ( «positional» E ) {
   2 | le : ( E , E ) -> bool ,
