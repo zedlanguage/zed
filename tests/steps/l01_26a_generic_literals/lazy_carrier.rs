@@ -300,6 +300,29 @@ fn a_division_of_literal_powers_in_a_body_is_rejected_and_not_read_at_f64() {
     assert_eq!(at("2 ^ (1 + 1)"), "4");
 }
 
+/// Row LIT-menu-rat-tower: at the top level the menu of a quotient of literal powers whose
+/// exponent is itself a power offers the exact `rat` fix first, its value kept unbuilt as a
+/// power, then the `f64` ones, whose value is `inf`. Before, it offered the `f64` fix alone.
+#[test]
+fn a_quotient_of_a_literal_power_tower_is_offered_the_rat_fix_first() {
+    assert_eq!(
+        checked("y = 2^2^100 / 3;\n"),
+        pairs(&[
+            ("y = 2r^2^100 / 3;", "y is 2r^2^100 / 3"),
+            ("y = 2.0^2.0^100 / 3;", "y is inf"),
+            ("y = f64(2)^f64(2)^100 / 3;", "y is inf"),
+        ])
+    );
+    assert_eq!(
+        checked("y = 2^(2^62) / 3;\n"),
+        pairs(&[
+            ("y = 2r^(2^62) / 3;", "y is 2r^(2^62) / 3"),
+            ("y = 2.0^(2.0^62) / 3;", "y is inf"),
+            ("y = f64(2)^(f64(2)^62) / 3;", "y is inf"),
+        ])
+    );
+}
+
 /// Item NUM-huge-div: at `rat` a power is kept as its prime's exponent, so the quotient of two
 /// powers of `2r` whose exponents are past any memory is divided in that form and is exact:
 /// `2r`. A power of a base that is no zero is no zero whatever its `int` exponent, so a `/` by

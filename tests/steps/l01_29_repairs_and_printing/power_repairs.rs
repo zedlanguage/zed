@@ -302,6 +302,49 @@ fn a_repair_of_a_bound_value_is_checked_at_every_use() {
     }
 }
 
+/// Programs of one rejected power in a branch of an `if`, each with the repairs it offers,
+/// checked where the `if`'s value is used (REPAIR-through-branch): a fix of the branch's value
+/// gives the `if` its type joined with the other branch's, which the construct around it must
+/// take. Before, `2r^k` was offered in each of the first three and rejected once written in,
+/// as `rat + int`.
+const THROUGH_BRANCH: [(&str, &[&str]); 5] = [
+    (
+        "q(n: int, k: int) = (if n > 0 { 2^k } else { n }) + n;\n",
+        &["if k >= 0 { 2^k } else { … }"],
+    ),
+    // Through a name bound to the power and a name bound to the `if`.
+    (
+        "q(n: int, k: int) {\n  y = 2^k;\n  z = if n > 0 { y } else { n };\n  return z + n;\n}\n",
+        &["if k >= 0 { 2^k } else { … }"],
+    ),
+    // Through an `else if` chain, the power in the `else` branch.
+    (
+        "q(n: int, k: int) = (if n > 0 { n } else if n < -5 { 2^k } else { 0 }) + n;\n",
+        &["if k >= 0 { 2^k } else { … }"],
+    ),
+    // A block that binds the power to a name and gives the name.
+    (
+        "q(n: int, k: int) = (if n > 0 { j = 2^k; j } else { n }) + n;\n",
+        &["if k >= 0 { 2^k } else { … }"],
+    ),
+    // The `if`'s value used outside every construct: the rat repair stays.
+    (
+        "q(n: int, k: int) = if n > 0 { 2^k } else { n };\n",
+        &["2r^k", "if k >= 0 { 2^k } else { … }"],
+    ),
+];
+
+#[test]
+fn a_repair_in_a_branch_is_checked_where_the_if_is_used() {
+    for (src, want) in THROUGH_BRANCH {
+        let out = rejected(src);
+        assert_eq!(repairs(&out), want, "{src}\n{out}");
+        for r in want {
+            checks(&repaired(src, "2^k", r));
+        }
+    }
+}
+
 /// Programs of one int power to a negative literal bound to a name in a body, written as
 /// `2^-1` once in the program, each with the repairs it offers: those a power outside every
 /// function offers, `c = 2^-3` above, less those a use of the name does not take

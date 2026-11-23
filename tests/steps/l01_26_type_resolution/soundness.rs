@@ -882,6 +882,99 @@ fn a_destructured_parameter_takes_only_a_tuple_of_its_length() {
     assert_eq!(runs(PAIR, r#""${f((1, "x"))}""#, ""), "1\n");
 }
 
+/// The errors of `f(p)` whose body is the statements `uses` in this order and then
+/// `return 0;`: each headline with the code it points at, then each note with the code it
+/// points at.
+fn destructure_errors(uses: &[&str]) -> Vec<String> {
+    let text = format!("f(p) {{\n  {}\n  return 0;\n}}\n", uses.join("\n  "));
+    let at = |s: zedc::lex::Span| &text[s.start..s.end];
+    let (info, _) = zed_tests::step_helpers::l01_26_type_resolution::info(&text);
+    (info.errors.iter())
+        .map(|e| {
+            let notes: Vec<String> = (e.notes.iter())
+                .map(|n| format!("{} [{}]", n.text, at(n.span)))
+                .collect();
+            format!("{} [{}] {}", e.message, at(e.span), notes.join("; "))
+        })
+        .collect()
+}
+
+/// The written order of a parameter's uses fixes nothing (DESIGN.md sec:premise; row
+/// CHECK-destructure-order): a parameter taken apart into a pair and used as a number is
+/// refused in either order, with one error that names both uses, the destructuring in its
+/// headline and the arithmetic's literal in a note. Before, `a, b = p; y = p + 1;` was
+/// accepted: the class lost its tuples after the destructuring's need was recorded, and
+/// nothing checked the need again. With three uses, each of the six orders gives that one
+/// error, its note naming the literal of the arithmetic written first, which removed the
+/// tuples.
+#[test]
+fn a_parameter_taken_apart_and_used_as_a_number_is_refused_in_either_order() {
+    let headline = "Cannot take `p : int | f32 | f64 | rat` apart into 2 names: it is not a \
+                    tuple of 2. [p]";
+    let first = destructure_errors(&["a, b = p;", "y = p + 1;"]);
+    let second = destructure_errors(&["y = p + 1;", "a, b = p;"]);
+    assert_eq!(first, second);
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert!(first[0].starts_with(headline), "{first:?}");
+    assert!(
+        first[0].contains("the literal 1 takes int | f32 | f64 | rat [1]"),
+        "{first:?}"
+    );
+    let uses = ["a, b = p;", "y = p + 1;", "z = p * 2;"];
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let written = order.map(|i| uses[i]);
+        let e = destructure_errors(&written);
+        assert_eq!(e.len(), 1, "{written:?}: {e:?}");
+        assert!(e[0].starts_with(headline), "{written:?}: {e:?}");
+        let arithmetic = match written.iter().position(|u| u.contains('+')) {
+            Some(i) if written[..i].iter().any(|u| u.contains('*')) => {
+                "the literal 2 takes int | f32 | f64 | rat [2]"
+            }
+            _ => "the literal 1 takes int | f32 | f64 | rat [1]",
+        };
+        assert!(e[0].contains(arithmetic), "{written:?}: {e:?}");
+    }
+    // An index and a call of a value used as a number are refused in either order too, each
+    // with the message it has where the arithmetic comes first.
+    for (taken, headline) in [
+        (
+            "c = p[0];",
+            "`[0]` takes a tuple, not int | f32 | f64 | rat: an index picks a component of a \
+             tuple or an entry of a family, and int | f32 | f64 | rat has neither. [p[0]]",
+        ),
+        (
+            "c = p(1);",
+            "`p` is int | f32 | f64 | rat, not a function: this call applies `p` to arguments, \
+             and a value of type int | f32 | f64 | rat cannot be applied. [p(1)]",
+        ),
+    ] {
+        let first = destructure_errors(&[taken, "y = p + 1;"]);
+        let second = destructure_errors(&["y = p + 1;", taken]);
+        assert_eq!(first, second, "{taken}");
+        assert_eq!(first.len(), 1, "{first:?}");
+        assert!(first[0].starts_with(headline), "{first:?}");
+    }
+    // Controls, accepted in either order: `p` held in a tuple, an index of `p` used as a
+    // number, and a tuple compared whole.
+    for uses in [
+        ["a, b = p;", "y = (p, 1);"],
+        ["y = p[0] + 1;", "a, b = p;"],
+        ["a, b = p;", "y = p == (1, 2);"],
+    ] {
+        let mut back = uses;
+        back.reverse();
+        assert_eq!(destructure_errors(&uses), Vec::<String>::new(), "{uses:?}");
+        assert_eq!(destructure_errors(&back), Vec::<String>::new(), "{back:?}");
+    }
+}
+
 /// The `stdout` expression that is `"int"` or `"other"` as the value of `call` is an `int` or
 /// not. The `is` test takes a value of any type, so only the uses in the functions called can
 /// reject the program.

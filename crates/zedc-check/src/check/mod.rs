@@ -3051,6 +3051,9 @@ struct Ck<'t, 'a> {
     /// operands are literals and such operations, by its span ([`Ck::rat_folded`]): its value,
     /// or for a power only that it is no zero; read off the text alone, so kept after a trial.
     rat_folds: HashMap<Span, RatFact>,
+    /// The value at `rat` of each name read through its binders to a literal or a fold, by the
+    /// name's span ([`Ck::rat_bound`]), or none; read off the text alone, so kept after a trial.
+    rat_bound_names: HashMap<Span, Option<Value>>,
     /// The classes [`Self::generic_parts`] made outside every function, for [`Self::apply`] to
     /// give their types once the application has met them ([`Self::resolve_top_parts`]); for
     /// the class of an operation on literals alone ([`Part::Op`]), the operation, which
@@ -3563,6 +3566,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             entry_params: HashMap::new(),
             entry_classes: HashMap::new(),
             rat_folds: HashMap::new(),
+            rat_bound_names: HashMap::new(),
             top_parts: Vec::new(),
             top_nested: false,
             top_open: Vec::new(),
@@ -6069,6 +6073,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         self.touch(r);
         let c = &mut self.classes[r];
+        let lost_other = c.mask & OTHER != 0 && m & OTHER == 0;
         c.mask = m;
         c.asked |= asks;
         c.reasons.push(Reason {
@@ -6077,6 +6082,45 @@ impl<'t, 'a> Ck<'t, 'a> {
             takes: Some(mask),
         });
         self.log_class(r, r);
+        // A class that takes a tuple apart, is indexed or is called, and then loses every value
+        // but carriers, is refused here at each such use, as [`Ck::component`],
+        // [`Ck::at_index`], [`Ck::at_key`] and [`Ck::call_value_step`] refuse it when the
+        // restriction comes first, with the same message: written order fixes nothing
+        // (DESIGN.md sec:premise; row CHECK-destructure-order). Before, `a, b = p; return p +
+        // 1;` was accepted and the other order refused. A later use equal to a recorded one
+        // records no need of its own (`Ck::same_use`), so it is reported only where the
+        // restriction comes first. Complexity: `OTHER` leaves a class at most once, so the
+        // scan of its uses is O(uses) once per class, O(needs) in all.
+        if lost_other {
+            let taken: Vec<Need> = (self.classes[r].uses.iter())
+                .filter(|(_, u)| match u.kind {
+                    NeedKind::Destructure { i, .. } => i == 0,
+                    NeedKind::Component { .. } | NeedKind::Index { .. } => true,
+                    NeedKind::Call { .. } => true,
+                    _ => false,
+                })
+                .map(|(_, u)| u.clone())
+                .collect();
+            let p = Piece::Var(format!("${r}").into());
+            for u in taken {
+                match &u.kind {
+                    NeedKind::Destructure { n, .. } => self.not_a_tuple(&p, *n, u.span),
+                    NeedKind::Component { key, .. } => {
+                        let t = self.show(&p.ty());
+                        self.not_indexable_noted(&key.to_string(), &t, u.span, false);
+                    }
+                    NeedKind::Index { .. } => {
+                        let shown = self.show(&p.ty());
+                        self.not_applicable_noted(&shown, u.span, false);
+                    }
+                    NeedKind::Call { what, .. } => {
+                        let shown = self.show(&p.ty());
+                        self.not_a_function_noted(what, &shown, u.span, false);
+                    }
+                    _ => {}
+                }
+            }
+        }
         true
     }
 

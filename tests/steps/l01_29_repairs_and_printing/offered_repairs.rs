@@ -326,6 +326,26 @@ fn a_cast_beside_a_decimal_that_checks_is_kept() {
     assert!(got.contains("repair: write `rat(n)`"), "{got}");
 }
 
+/// A power whose base may be an `int` and whose exponent is a binding of a large `int`:
+/// `gr(true) ^ k` at `k = 3000000000000`, a line the grid of
+/// `every_offered_repair_checks_as_written` reaches only under some seeds (one in 16, seed
+/// 4810900068814570342). Each repair it offers checks as written; `int(k)` was offered and
+/// then rejected as written, "Int power with an exponent that may be negative"
+/// (REPAIR-int-cast-power-as-written).
+#[test]
+fn every_repair_of_a_power_by_a_large_int_binding_checks_as_written() {
+    let src = format!("{PRELUDE}y = gr(true) ^ k;\n");
+    let fixes = repaired(&src);
+    let mut failed = Vec::new();
+    for (fixed, repair) in &fixes {
+        let errors = type_errors(fixed);
+        if !errors.is_empty() {
+            failed.push(format!("{repair}\n  -> {}", errors.join("\n     ")));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
 /// A call with several literal arguments rejected: one message for them all, whose fix
 /// rewrites each of them at once (MSG-many-arguments-output).
 #[test]

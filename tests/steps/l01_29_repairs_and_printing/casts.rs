@@ -1014,6 +1014,35 @@ fn a_text_ordered_with_a_literal_of_its_value_is_offered_the_number_the_text_rea
 }
 
 #[test]
+fn a_text_ordered_with_a_number_is_offered_its_value_once() {
+    // Row REPAIR-text-cast-menu-check. The text holds one value, and the repair writes it once,
+    // as the first literal of the menu's order (`int`, `rat`, `f64`) that checks against the
+    // other operand: DESIGN.md sec:diagnostics, "`2 < "8"` is offered `2 < 8` alone". Before,
+    // `"8" < 0x08` was offered `8`, `8r` and `8.0`, three spellings of the one value 8. Each
+    // case is the comparison and the one repair.
+    for (expr, want) in [
+        ("2 < \"8\"", "2 < 8"),
+        ("\"8\" < 8", "8 < 8"),
+        ("\"8\" <= 0x08", "8 <= 0x08"),
+        ("\"2.5\" < 2.5", "2.5r < 2.5"),
+        ("\"0.5\" < 5e-1", "0.5r < 5e-1"),
+    ] {
+        let out = rejected(&program(&format!("f() {{ c = {expr}; return c; }}")));
+        let headline = out.lines().next().expect("a headline");
+        assert!(
+            headline.ends_with(&format!(" Try `{want}` instead.")),
+            "{expr}\n{out}"
+        );
+        assert_eq!(
+            out.matches("the checker accepts that").count(),
+            1,
+            "{expr}\n{out}"
+        );
+        checks(&program(&format!("f() {{ c = {want}; return c; }}")));
+    }
+}
+
+#[test]
 fn a_literal_of_many_digits_ordered_with_a_text_is_offered_as_text() {
     // 30 digits pass the 64 and 128 bits of a machine word.
     for d in [1, 30] {

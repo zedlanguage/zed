@@ -250,7 +250,8 @@ fn every_test_that_rules_zero_out_narrows_a_rat_divisor() {
 
 /// Where the test leaves `0r` to the divisor, `#divByZero` stays, at `rat` as at `int`: a test
 /// against another value, a test of another name, a disjunction one side of which holds zero,
-/// a comparison `0r` passes, the arm where `r` is zero, and a division outside the arm.
+/// a comparison `0r` passes, the arm where `r` may be zero, and a division outside the arm. The
+/// arm where `r` is only zero always fails (`the_tests_that_leave_a_rat_divisor_only_zero_...`).
 #[test]
 fn a_test_that_leaves_zero_keeps_div_by_zero_at_rat() {
     for body in [
@@ -261,7 +262,7 @@ fn a_test_that_leaves_zero_keeps_div_by_zero_at_rat() {
         "if r <= 1r/2r { x / r } else { 0r }",
         "if r > -1r && r < 1r { x / r } else { 0r }",
         "if r > 0r { 0r } else { x / r }",
-        "if r == 0r { x / r } else { 0r }",
+        "if r == 0r || x == 0r { x / r } else { 0r }",
         "if r != 0r && x != 0r { 0r } else { x / r }",
         "(if r != 0r { 1r } else { 2r }) + x / r",
         "{ y = if r != 0r { 1r } else { 0r }; y + x / r }",
@@ -278,13 +279,14 @@ fn a_test_that_leaves_zero_keeps_div_by_zero_at_rat() {
 /// A literal with no suffix compared with a `rat` or an `f64` takes that carrier, and the arm
 /// where the test holds is reached: `f(x: 1r, r: 0r)` runs `x / r + 1r`. Read as the `int` the
 /// literal would be alone, the test emptied `r` in that arm, which was dropped with its
-/// `#divByZero`, and `f` was `(x: rat, r: rat) -> 0r` (NARROW-ne-rat-divisor).
+/// `#divByZero`, and `f` was `(x: rat, r: rat) -> 0r` (NARROW-ne-rat-divisor). Where the test
+/// leaves `r` only `0r` the arm is reached too, and its division always fails
+/// (`the_tests_that_leave_a_rat_divisor_only_zero_make_its_division_always_fail`).
 #[test]
 fn a_test_against_a_literal_with_no_suffix_keeps_the_arm_where_it_holds() {
     for body in [
-        "if r == 0 { x / r + 1r } else { 0r }",
-        "if r == 1 + 1 { x / (r - 2) } else { 0r }",
-        "if r == 0 && x == 0 { x / r + 1r } else { 0r }",
+        "if r == 0 || x == 0 { x / r + 1r } else { 0r }",
+        "if r == 1 + 1 || x == 0 { x / (r - 2) } else { 0r }",
     ] {
         let text = format!("f(x: rat, r: rat) = {body};\n");
         assert_eq!(
@@ -295,10 +297,52 @@ fn a_test_against_a_literal_with_no_suffix_keeps_the_arm_where_it_holds() {
     }
     let text = "f(x: f64, r: f64) = if r == 0 { x / r + 1.0 } else { 0.0 };\n";
     assert_eq!(sig(text, "f"), "(x: f64, r: f64) -> f64");
-    let run = "f(x: rat, r: rat) = if r == 0 { x / r + 1r } else { 0r };\n\
+    let run = "f(x: rat, r: rat) = if r == 0 || x == 0 { x / r + 1r } else { 0r };\n\
                a = f(x: 1r, r: 0r) else #divByZero -> 5r;\nb = f(x: 1r, r: 2r) else #divByZero -> 5r;\n";
     assert_eq!(value(run, "a"), "5r");
     assert_eq!(value(run, "b"), "0r");
+}
+
+/// Row NARROW-rat-gaps: a test on `-r` and a test against a name bound to `0r` narrow a `rat`
+/// divisor as `r != 0r` does, and where the tests leave the divisor only `0r` its division
+/// always fails, as an `int` one does under `if d == 0` (DESIGN.md sec:failure, "Operation that
+/// always fails"). Before, each of the first list kept `#divByZero`, and each of the second
+/// was accepted with it.
+#[test]
+fn the_tests_that_leave_a_rat_divisor_only_zero_make_its_division_always_fail() {
+    for body in [
+        "if -r != 0r { x / r } else { 0r }",
+        "if 0r != -r { x / r } else { 0r }",
+        "if -r == 0r { 0r } else { x / r }",
+        "if -r != -0r { x / r } else { 0r }",
+        "{ z = 0r; return if r != z { x / r } else { 0r }; }",
+        "{ z = 0r; return if z == r { 0r } else { x / r }; }",
+        "{ z = 0r; w = z; return if r != w { x / r } else { 0r }; }",
+    ] {
+        let text = format!("f(x: rat, r: rat) = {body};\n");
+        assert_eq!(sig(&text, "f"), "(x: rat, r: rat) -> rat", "{body}");
+    }
+    // `-r != 1r` takes only `-1r` out of `r`, which may still be `0r`.
+    let text = "f(x: rat, r: rat) = if -r != 1r { x / r } else { 0r };\n";
+    assert_eq!(sig(text, "f"), "(x: rat, r: rat) -> rat | #divByZero");
+    for body in [
+        "if r == 0r { x / r } else { 0r }",
+        "if -r == 0r { x / r } else { 0r }",
+        "if r == 0 { x / r + 1r } else { 0r }",
+        "if r == 0 && x == 0 { x / r + 1r } else { 0r }",
+        "{ z = 0r; return if r == z { x / r } else { 0r }; }",
+    ] {
+        let text = format!("f(x: rat, r: rat) = {body};\n");
+        let errors = type_errors(&text);
+        assert_eq!(errors.len(), 1, "{body}: {errors:?}");
+        assert!(
+            errors[0].starts_with(
+                "`/` here always fails with `#divByZero`: the tests around it leave its \
+                 divisor only the value 0"
+            ),
+            "{body}: {errors:?}"
+        );
+    }
 }
 
 /// Through `zedc run`: the quotient under `d != 0` has no loose failure for `_` to drop, and
@@ -384,8 +428,25 @@ pub(super) fn chained_rat_tests(n: usize) -> String {
     s
 }
 
+/// `f(x, r)` with a chain of n names `z1 = z0; z2 = z1; …` from `z0 = 0r`, and n chained
+/// tests, the i-th `r != zi` with a division by `r` in its arm: each test reads its name
+/// through i binders to `0r` (row NARROW-rat-gaps, `Ck::rat_bound`).
+pub(super) fn chained_named_zero_tests(n: usize) -> String {
+    let mut s = String::from("f(x: rat, r: rat) = { z0 = 0r; a0 = x; ");
+    for i in 1..=n {
+        let p = i - 1;
+        s += &format!("z{i} = z{p}; a{i} = if r != z{i} {{ a{p} / r }} else {{ a{p} }}; ");
+    }
+    s += &format!("a{n} }};\n");
+    s
+}
+
 #[test]
 fn chained_tests_each_with_a_division_in_its_arm_add_no_div_by_zero() {
+    assert_eq!(
+        sig(&chained_named_zero_tests(3), "f"),
+        "(x: rat, r: rat) -> rat"
+    );
     // A small instance of the benchmarks
     // `bench::divisors::chained_tests_and_divisions_check_in_linear_time` and
     // `bench::divisors::chained_rat_tests_and_divisions_check_in_linear_time`.

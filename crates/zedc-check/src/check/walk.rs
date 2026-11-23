@@ -372,6 +372,8 @@ pub(super) enum Frame<'a> {
     Else2(&'a Expr, Ty),
     If1(&'a Expr),
     If2 {
+        /// The span of the `if`, to which its branches' carried fixes go ([`Ck::carried`]).
+        span: Span,
         then: &'a Expr,
         otherwise: &'a Expr,
         out: Ty,
@@ -382,6 +384,7 @@ pub(super) enum Frame<'a> {
         dead: (bool, bool),
     },
     If3 {
+        span: Span,
         then: &'a Expr,
         otherwise: &'a Expr,
         out: Ty,
@@ -1662,6 +1665,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
                 m.k(Frame::If2 {
+                    span: e.span,
                     then,
                     otherwise,
                     out,
@@ -1672,6 +1676,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.under(m, &yes, holds, then);
             }
             Frame::If2 {
+                span,
                 then,
                 otherwise,
                 out,
@@ -1681,6 +1686,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             } => {
                 let a = m.take_ty();
                 m.k(Frame::If3 {
+                    span,
                     then,
                     otherwise,
                     out,
@@ -1691,6 +1697,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.under(m, &no, nodes.2, otherwise);
             }
             Frame::If3 {
+                span,
                 then,
                 otherwise,
                 out,
@@ -1740,13 +1747,24 @@ impl<'t, 'a> Ck<'t, 'a> {
                         takes: EVERY,
                     });
                 }
+                let carried = self.branch_carried([(then, &a, dead.0), (otherwise, &b, dead.1)]);
                 let t = match dead {
                     (true, true) => Ty::empty(),
                     (true, false) => b,
                     (false, true) => a,
                     (false, false) => self.branches(then, &a, otherwise, &b),
                 };
-                m.ty(out.union(&t));
+                let t = out.union(&t);
+                self.carried.remove(&span);
+                let mut up = HashMap::new();
+                for (c, other) in carried {
+                    let ty = out.union(&c.ty.union(&other));
+                    if ty != t {
+                        carry_joined(&mut up, ty, c.fixes);
+                    }
+                }
+                self.carried_up(span, up);
+                m.ty(t);
             }
             Frame::Widen(saved) => {
                 let r = m.take();
@@ -9033,6 +9051,53 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// The `rat` value of the name `e` at `rat`, read through the `name = value` binders it is
+    /// bound by ([`Ck::bound_value`], the binders [`Ck::known`] reads, whose value is the same
+    /// on every run) to a value [`Self::rat_fact`] reads: `0r` for `z` in
+    /// `z = 0r; if r != z { x / r }`, so the test is read as `r != 0r` and narrows `r` (row
+    /// NARROW-rat-gaps; before, `z` was a name the scope held no value of, and the division
+    /// kept `#divByZero`). A name bound to a literal with no suffix, as `z` in `z = 0;
+    /// r != z`, is not at `rat` and is not read here (row NARROW-rat-int-name).
+    ///
+    /// Complexity tradeoff: the naive read follows the chain of names to its binder on each
+    /// read, O(chain) per read and O(n²) for n tests on a chain `z2 = z1; z3 = z2; …` of n
+    /// names. Used: each name's value is kept by span ([`Ck::rat_bound_names`]), set for every
+    /// name on the chain when it is first followed, so each name is followed once, O(1)
+    /// amortized per read. The chain ends: binders are checked in dependency order, so no name
+    /// is bound through itself (the same order [`Ck::memo_post`] relies on).
+    fn rat_bound(&mut self, e: &'a Expr) -> Option<Value> {
+        if !matches!(e.kind, ExprKind::Name(_)) || self.carrier_here(e, false) != Some(Carrier::Rat)
+        {
+            return None;
+        }
+        let mut chain = Vec::new();
+        let mut at = e;
+        let value = loop {
+            if let Some(v) = self.rat_bound_names.get(&at.span) {
+                break v.clone();
+            }
+            match at.kind {
+                ExprKind::Name(_) => {
+                    chain.push(at.span);
+                    match self.bound_value(at) {
+                        Some(b) => at = b,
+                        None => break None,
+                    }
+                }
+                _ => {
+                    break match self.rat_fact(at) {
+                        Some(RatFact::Value(v)) => Some(v),
+                        _ => None,
+                    };
+                }
+            }
+        };
+        for s in chain {
+            self.rat_bound_names.insert(s, value.clone());
+        }
+        value
+    }
+
     fn call(
         &mut self,
         m: &mut M<'a>,
@@ -10788,19 +10853,28 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The error of a call at `span` of `w`, a value of the type shown as `shown` that is not
     /// a function.
     fn not_a_function(&mut self, w: &str, shown: &str, span: Span) {
+        self.not_a_function_noted(w, shown, span, true);
+    }
+
+    /// [`Self::not_a_function`], with the derivation of the call's value only where `derive`
+    /// holds. A call whose need is refused when its value's class later loses the functions
+    /// ([`Ck::restrict_asking`], CHECK-destructure-order) has no value yet, so its derivation
+    /// would only say so; it is written as the call refused in the other order is, with the
+    /// repair alone.
+    pub(super) fn not_a_function_noted(&mut self, w: &str, shown: &str, span: Span, derive: bool) {
         let w = callee(w);
-        let menu = [format!(
+        let menu = format!(
             "repair: call a function here, or write {w} without the parentheses of the call if \
              its value is meant"
-        )];
-        self.error_offering(
-            span,
-            format!(
-                "{w} is {shown}, not a function: this call applies {w} to arguments, and a \
-                 value of type {shown} cannot be applied"
-            ),
-            menu,
         );
+        let message = format!(
+            "{w} is {shown}, not a function: this call applies {w} to arguments, and a value of \
+             type {shown} cannot be applied"
+        );
+        match derive {
+            true => self.error_offering(span, message, [menu]),
+            false => self.error_with(span, message, vec![Note { span, text: menu }]),
+        }
     }
 
     /// A call of a function of signature `sig`; `declared` when it is the declared function
@@ -14594,7 +14668,7 @@ impl<'a> Ck<'_, 'a> {
                 done.push(t);
                 continue;
             }
-            if let Some(v) = self.rat_literal(x) {
+            if let Some(v) = self.rat_literal(x).or_else(|| self.rat_bound(x)) {
                 done.push(Term::Lit(v));
                 continue;
             }
@@ -14908,8 +14982,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// The error of destructuring at `span` into `n` names a value of the piece `p`, which
-    /// is no tuple of `n`.
-    fn not_a_tuple(&mut self, p: &Piece, n: usize, span: Span) {
+    /// is no tuple of `n`. Where `p` is a class that a use left with carriers alone, a note
+    /// names that use, so the message names both uses whichever is written first
+    /// ([`Ck::restrict_asking`] reports the destructuring when the use comes after it; row
+    /// CHECK-destructure-order).
+    pub(super) fn not_a_tuple(&mut self, p: &Piece, n: usize, span: Span) {
+        // The use that removed `OTHER`: a restriction pushes a reason only where it removes a
+        // carrier, so the class holds at most one reason per carrier bit, and this scan is
+        // O(1) in the program's size.
+        let use_note = self.class_of(p).and_then(|k| {
+            let c = &self.classes[k];
+            let r = c
+                .reasons
+                .iter()
+                .find(|r| r.takes.is_some_and(|m| m & OTHER == 0));
+            r.map(Reason::note)
+        });
         let menu = [
             format!("repair: give this binding a tuple of {n} components"),
             "repair: bind the value to one name, as `t = …;`, and take it apart only where a \
@@ -14925,7 +15013,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 "Cannot take a value of {shown} apart into {n} names: it is not a tuple of {n}"
             ),
         };
-        self.error_offering(span, message, menu);
+        let mut notes = self.derive(&[span]);
+        notes.extend(use_note);
+        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        self.error_with(span, message, notes);
     }
 
     /// Whether `p` is a variable of a class of carriers alone, as the literal `3` of `(1, 3)`
@@ -14940,8 +15031,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         // `at_index` and `at_key` use this test; `call_value_step` tests `OTHER` itself; an
         // ordering need calls `restrict` to `OTHER`; a payload need comes only from an `else`
         // pattern, a test no carrier passes; the other need kinds take carriers. A class that
-        // loses `OTHER` after its need is recorded relies on each call replaying the need on the
-        // bound argument (`a, b = p; return p + 1;` is accepted and cannot be called). Evidence:
+        // loses `OTHER` after its need is recorded is refused there for a destructuring
+        // ([`Ck::restrict_asking`], CHECK-destructure-order); for an index, a key or a call it
+        // relies on each call replaying the need on the bound argument. Evidence:
         // the three tests in `l01_26_type_resolution/soundness.rs` added with this test, and
         // 476 of 481 random seeds (the 5 others fail from an unrelated fault in the test).
         // If false, a program that takes apart, indexes or calls a number is accepted: unsound.
@@ -19097,7 +19189,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // value of its type alone, here any int, where `e` may have had no int at all and so an
         // empty interval, which is at least 0; reading that passed `gr(true) ^ int(k)`, a
         // repair the program then refused (row FAIL-int-power-repair-may-be-negative, test
-        // l01_29 offered_repairs::a_cast_exponent_that_may_be_negative_is_no_repair).
+        // l01_29 offered_repairs::a_cast_exponent_that_may_be_negative_is_no_repair). The same
+        // read made `int(k)` for `k = 3000000000000` look at least 0, offered and then refused
+        // once written in (row REPAIR-int-cast-power-as-written, test l01_29 offered_repairs
+        // `every_repair_of_a_power_by_a_large_int_binding_checks_as_written`).
         let written = n.expr.is_some_and(|x| std::ptr::eq(x, e));
         let (ints, narrowed) = match written {
             true => self.ints_here(e),
@@ -19339,8 +19434,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// statement of n rejected powers O(n²); the construct's check costs its own operands'
     /// types alone, which are already known. A repair of a value bound to a name is checked
     /// at each use of the name too ([`Self::carried_bound`], [`Self::carried_use`]), O(fixes)
-    /// per use. Not seen: a use through the value of an `if` or a block, as
-    /// `(if n > 0 { 2^k } else { n }) + n`, which carries no fix up (REPAIR-through-branch).
+    /// per use. A fix in a branch of an `if` is carried to the `if`, joined with the other
+    /// branch's type, as `(if n > 0 { 2^k } else { n }) + n` gives `+` a `rat | int`
+    /// ([`Self::branch_carried`], REPAIR-through-branch).
     fn power_rejects(
         &mut self,
         p: &PowerUse,
@@ -23507,17 +23603,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The error of `v[x]` at `span`, `x` no literal, of a value of the type shown as `shown`,
     /// which is no tuple and no function.
     fn not_applicable(&mut self, shown: &str, span: Span) {
-        self.error_offering(
-            span,
-            format!(
-                "this value is {shown}, not a function: this call applies it to an argument, \
-                 and a value of type {shown} cannot be applied"
-            ),
-            [
-                "repair: call a function here, or drop the argument list after the value"
-                    .to_string(),
-            ],
+        self.not_applicable_noted(shown, span, true);
+    }
+
+    /// [`Self::not_applicable`], with the derivation of the bracket's value only where
+    /// `derive` holds, as [`Self::not_a_function_noted`] writes a call's.
+    pub(super) fn not_applicable_noted(&mut self, shown: &str, span: Span, derive: bool) {
+        let message = format!(
+            "this value is {shown}, not a function: this call applies it to an argument, and a \
+             value of type {shown} cannot be applied"
         );
+        let menu =
+            "repair: call a function here, or drop the argument list after the value".to_string();
+        match derive {
+            true => self.error_offering(span, message, [menu]),
+            false => self.error_with(span, message, vec![Note { span, text: menu }]),
+        }
     }
 
     /// `v[i]` with the literal `x`, `i` if it is a component number: a tuple's component, or
@@ -23680,16 +23781,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The error of `v[x]` at `span`, `x` the literal shown as `shown`, of a value of the type
     /// shown as `t`, which is no tuple and no family.
     fn not_indexable(&mut self, shown: &str, t: &str, span: Span) {
-        self.error_offering(
-            span,
-            format!(
-                "`[{shown}]` takes a tuple, not {t}: an index picks a component of a tuple or an \
-                 entry of a family, and {t} has neither"
-            ),
-            [format!(
-                "repair: index a tuple or a family, or drop `[{shown}]`"
-            )],
-        )
+        self.not_indexable_noted(shown, t, span, true);
+    }
+
+    /// [`Self::not_indexable`], with the derivation of the bracket's value only where
+    /// `derive` holds, as [`Self::not_a_function_noted`] writes a call's.
+    pub(super) fn not_indexable_noted(&mut self, shown: &str, t: &str, span: Span, derive: bool) {
+        let message = format!(
+            "`[{shown}]` takes a tuple, not {t}: an index picks a component of a tuple or an \
+             entry of a family, and {t} has neither"
+        );
+        let menu = format!("repair: index a tuple or a family, or drop `[{shown}]`");
+        match derive {
+            true => self.error_offering(span, message, [menu]),
+            false => self.error_with(span, message, vec![Note { span, text: menu }]),
+        }
     }
 
     /// Whether the bracket `v[k]` written at `span` has one meaning, recorded in
@@ -25603,7 +25709,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                             got,
                             fix: Rewrite::new(&[(*at, &lit.text)], &holds, &lit.text),
                         });
-                        continue;
+                        // The literal writes the text's one value, so the first word whose
+                        // literal checks, in the order `int`, `rat`, `f64`, is the repair
+                        // alone: `"8" < 8` is offered `8 < 8`, not also `8r < 8` and
+                        // `8.0 < 8`, the same value spelled at other carriers (DESIGN.md
+                        // sec:diagnostics: "`2 < "8"` is offered `2 < 8` alone"; row
+                        // REPAIR-text-cast-menu-check). Complexity tradeoff: none; it skips
+                        // the trials of the later words, at most two.
+                        break;
                     }
                     let text = match name {
                         Some(n) => format!("repair: write `{w}({n})`; the checker accepts that"),
@@ -26652,6 +26765,40 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         Vec::new()
+    }
+
+    /// The fixes carried into the value of each live branch of an `if` ([`Self::carried`]),
+    /// each `(branch, its type, whether it is unreachable)`, with the type of the other
+    /// branch, which the `if` joins with the type a fix gives its own: the `2r^k` of `(if n > 0
+    /// { 2^k } else { n }) + n` gives the `if` the type `rat | int`, which the `+` must take
+    /// (row REPAIR-through-branch). A branch's value is the branch, or the value of a block
+    /// that only binds names and returns it ([`block_value`]), as `{ y }` or `{ q = k - 5;
+    /// 2^q }`. The fixes of an unreachable branch are taken and carried nowhere: the `if`'s
+    /// value never holds that branch's.
+    ///
+    /// Complexity tradeoff: O(fixes) per branch, each moved once. The naive way, checking the
+    /// statement again with each fix written into the branch, costs the statement per fix.
+    fn branch_carried(&mut self, branches: [(&Expr, &Ty, bool); 2]) -> Vec<(Carry, Ty)> {
+        let mut out = Vec::new();
+        for (i, (e, _, dead)) in branches.iter().enumerate() {
+            let v = match &e.kind {
+                ExprKind::Block(_) => block_value(e),
+                _ => Some(*e),
+            };
+            let Some(cs) = v.and_then(|v| self.carried.remove(&v.span)) else {
+                continue;
+            };
+            let (_, other, other_dead) = branches[1 - i];
+            if !dead {
+                let other = if other_dead {
+                    Ty::empty()
+                } else {
+                    other.clone()
+                };
+                out.extend(cs.into_iter().map(|c| (c, other.clone())));
+            }
+        }
+        out
     }
 
     /// The fixes `up` by the type they give the construct at `span`, carried to the construct
@@ -31150,6 +31297,19 @@ impl<'a> Ck<'_, 'a> {
                 if ints == IntervalSet::single(0) {
                     return Some(if narrowed { Zero::Tests } else { Zero::Folded });
                 }
+            }
+            // A `rat` divisor is read by its product in the arm's scope, as
+            // [`Self::may_be_here`] reads it to drop `#divByZero`: where the tests leave it
+            // the one value `0r`, as `r` in the arm of `if r == 0r`, the division always
+            // fails, as an int divisor's does under `if d == 0` (row NARROW-rat-gaps).
+            // Complexity tradeoff: one read of the arm's scope, the read the division already
+            // took to ask whether `0r` may be here, and none outside every arm.
+            if value.subtype(&Ty::carrier(Carrier::Rat))
+                && self.arms.here() != 0
+                && self.known(b).value.is_none()
+                && self.read_in_scope(b).0.value() == Some(&Value::rat(Rat::int(0.into())))
+            {
+                return Some(Zero::Tests);
             }
         }
         self.cancels(b)

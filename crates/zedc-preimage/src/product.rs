@@ -14060,6 +14060,22 @@ impl Scope {
                             changed.push(x.clone());
                         }
                     }
+                    // `-x == c` holds exactly where `x == -c` does, `-` being its own inverse
+                    // on `rat`, which is exact: `-r != 0r` takes `0r` out of `r` as `r != 0r`
+                    // does (row NARROW-rat-gaps). An `int` `x` is read through its interval
+                    // below, which already inverts `-`. Complexity tradeoff: one negation of
+                    // the literal, O(its digits), against no narrowing at all.
+                    (Term::Prim(Prim::Neg, n), Term::Lit(v @ Value::Rat(_)))
+                        if (equal || !convex) && n.len() == 1 =>
+                    {
+                        if let Term::Var(x) = &n[0]
+                            && let Some(r) = v.as_rat()
+                            && let Some(p) = self.names.get_mut(x)
+                            && equality(p, &Value::rat(r.neg()), equal, prem)
+                        {
+                            changed.push(x.clone());
+                        }
+                    }
                     (Term::Prim(Prim::Mod, m), Term::Lit(r)) if equal => {
                         if let [Term::Var(x), Term::Lit(c)] = &m[..]
                             && let (Some(r), Some(c)) = (Num::of_integer(r), Num::of_integer(c))
