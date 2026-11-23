@@ -900,6 +900,28 @@ fn xr_face_f3_a_quotient_passed_and_read() {
     ));
 }
 
+/// SOUND-extend-bare-definition: an `if` whose guard folds to `true` defines its value by one
+/// row, a bare constraint, which the summaries' `Id::any` stopped at (a panic on main before
+/// the fix in `Extending::defined_with`).
+#[test]
+fn a_definition_of_one_row_from_a_constant_guard_is_read() {
+    answers_are_those_of_the_whole("t(x: int) = (if 1 < 2 { x } else { 0 }) == 5;\n");
+}
+
+/// The same with the guard `true`.
+#[test]
+fn a_definition_of_one_row_from_a_true_guard_is_read() {
+    answers_are_those_of_the_whole("t(x: int) = (if true { x } else { 0 }) == 5;\n");
+}
+
+/// The same through a call, so that the definition is read beside the caller's conditions.
+#[test]
+fn a_definition_of_one_row_read_through_a_call_is_read() {
+    answers_are_those_of_the_whole(
+        "q(x: int) = (if 1 < 2 { x } else { 0 }) == 5;\ns(x: int) = q(x: x) && x > 2;\n",
+    );
+}
+
 #[test]
 fn each_answer_of_a_chain_read_through_faces_is_the_answer_of_the_relation_whole() {
     // LOAD-call-summary: chains whose links extend the point of a small callee beside the

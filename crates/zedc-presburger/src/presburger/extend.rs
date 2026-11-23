@@ -126,6 +126,13 @@ pub struct Extending {
     known: HashMap<Id, Known>,
     sums: Summaries,
     faces: Faces,
+    /// The conjunction of one row made once for each definition that is one constraint
+    /// ([`Extending::defined_with`], SOUND-extend-bare-definition).
+    bare: HashMap<Con, Formula>,
+    /// Tests only: the `fails` branches skip the [`given`] check, the negative control of
+    /// `xr_face_local_atoms_f4b_fails_without_given` and `..._f4c_miss_without_given`.
+    #[cfg(test)]
+    unguarded: bool,
 }
 
 /// The definitions a definition reaches, projected exactly ([`Summary`]): by the definition (the
@@ -184,6 +191,15 @@ impl Extending {
     /// An empty memory.
     pub fn new() -> Extending {
         Extending::default()
+    }
+
+    /// [`given`], skipped in the negative control of the `fails` branches' tests.
+    fn given(&self, closure: &Atoms, m: &Point, f: &Formula) -> bool {
+        #[cfg(test)]
+        if self.unguarded {
+            return true;
+        }
+        given(closure, m, f)
     }
 
     /// [`Extending::defined`] of a formula with no auxiliary variable, or whose auxiliary
@@ -279,6 +295,28 @@ impl Extending {
         def: &dyn Fn(u32) -> Formula,
         iface: Interface,
     ) -> Answers {
+        // A definition that is one constraint is read as the conjunction of that one row.
+        // The summaries and faces key each definition by its part (`Id::any`, as in `Def::of`
+        // and `ScalarImages::ensure`), and a constraint has no part: `Formula::and` of one
+        // element gives the element itself, so the translator gives a bare constraint for
+        // `(if 1 < 2 { x } else { 0 }) == 5`, whose guard folds to true, and `Id::any` stopped
+        // at its `unreachable!` (SOUND-extend-bare-definition; tests
+        // `l01_38_omega_test::one_scope::a_definition_of_one_row_*`). Wrapping, not a key of
+        // a constraint by its own value: a key by value would make `Id` an identity for
+        // compound parts and a value for constraints, and every map keyed by `Id` relies on
+        // equal ids naming one part. The wrap is made once for each constraint and kept,
+        // so every `def(n)` of it, in this call and later ones, gives the same part and the
+        // same key, and a quotient and remainder that share a definition keep sharing it.
+        // O(1) expected time for each `def(n)` of a constraint, nothing for a compound one.
+        let bare = std::cell::RefCell::new(std::mem::take(&mut self.bare));
+        let compound = |n: u32| {
+            let d = def(n);
+            let Formula::Con(c) = &d else { return d };
+            (bare.borrow_mut().entry(c.clone()))
+                .or_insert_with(|| Formula::And(Shared::new(vec![d.clone()])))
+                .clone()
+        };
+        let def: &dyn Fn(u32) -> Formula = &compound;
         // The kept conjunctions under `f` not yet known, each decided after every one it holds
         // (LOAD-chain-affine: `q(x: x) && p(x: x + 1)` holds two), so that the largest is kept:
         // an explicit stack, since the conjunctions nest as deep as the chain of calls. The
@@ -304,13 +342,15 @@ impl Extending {
             todo.extend(kids.into_iter().rev().map(|h| (h, false)));
         }
 
-        match f {
+        let answers = match f {
             Formula::And(_) => self.known[&Id::any(f)].answers.clone(),
             _ => Answers {
                 holds: decide_defined(&mut self.sums, f.clone(), def),
                 fails: decide_defined(&mut self.sums, Formula::negate(f.clone()), def),
             },
-        }
+        };
+        self.bare = bare.into_inner();
+        answers
     }
 
     /// The answers of the conjunction `g`, from those of its kept part when it has one: the
@@ -467,10 +507,21 @@ impl Extending {
             // each binding gives the part's atoms one value at any point of the whole's own
             // atoms, and the part's definitions hold there for some value of their variables.
             // Otherwise it is decided whole.
+            // A point of the part may give no value to an atom the part reads (a point found
+            // through a face, `Faces::free`, [`unread`]); meeting it there would take the
+            // solver's value of that atom, which the part's definitions need not hold at, so
+            // each point is met only where it gives every atom of the part the question reads
+            // ([`given`]), and the question is decided with the definitions otherwise
+            // (SOUND-extend-fails-partial-point-given; XR-sound-extend-face-local-atoms
+            // round 1, F4; test
+            // `presburger::extend::tests::xr_face_local_atoms_f4b_fails_without_given`).
+            // A `decide` that finds no point needs no such check: an atom the point leaves out
+            // is free in the question, so no point there means none at any of its values.
             Ok(true) => {
                 let extended = (part.miss.as_ref()).and_then(|m| {
-                    met(m, &with(&reached_past(&rest, def, m), Formula::top()))
-                        .ok()
+                    let f = with(&reached_past(&rest, def, m), Formula::top());
+                    self.given(&part.closure, m, &f)
+                        .then(|| met(m, &f).ok().flatten())
                         .flatten()
                 });
                 match extended {
@@ -486,7 +537,10 @@ impl Extending {
                     let f = new(&not, m);
                     match decide(&f) {
                         Ok(false) => Some((false, None)),
-                        _ => met(m, &f).ok().flatten().map(|p| (true, Some(p))),
+                        _ if self.given(&part.closure, m, &f) => {
+                            met(m, &f).ok().flatten().map(|p| (true, Some(p)))
+                        }
+                        _ => None,
                     }
                 });
                 match short {
@@ -8658,6 +8712,142 @@ mod tests {
         }
         failures.extend(xbad_points(&e, &def));
         assert_eq!(xwant(&defs, &whole).holds, Ok(false));
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// `q0 == x`, `q1 == q0 + 1`, each a definition of one row kept as a conjunction, and
+    /// `sub = q1 >= q0 && q0 >= x`, which holds everywhere with them and which `Formula` does
+    /// not fold.
+    fn xf4_defs() -> ([Formula; 2], Formula) {
+        let (x, k) = (xs("x"), Lin::constant);
+        let one = |f: Formula| Formula::And(Shared::new(vec![f]));
+        let defs = [
+            one(xeq(xq(0), x.clone())),
+            one(xeq(xq(1), xq(0).plus(&k(1)))),
+        ];
+        (defs, Formula::and(vec![xge(xq(1), xq(0)), xge(xq(0), x)]))
+    }
+
+    /// Decides `parts` in order, sets the stored point (`miss` false) or point of negation
+    /// (`miss` true) of the last to `{q1: 6}`, the shape [`Faces::free`] stores for a part
+    /// whose face keeps `q1` alone, then decides `whole`; the failures against [`xwant`] and
+    /// [`xbad_points`].
+    /// `unguarded` skips the [`given`] check (the negative control).
+    fn xf4_run(
+        defs: &[Formula],
+        parts: &[&Formula],
+        whole: &Formula,
+        miss: bool,
+        unguarded: bool,
+    ) -> Vec<String> {
+        let def = |n: u32| defs[n as usize].clone();
+        let mut e = Extending::new();
+        e.unguarded = unguarded;
+        let mut failures = Vec::new();
+        for f in parts {
+            let got = e.defined(f, &def);
+            let want = xwant(defs, f);
+            if got != want {
+                failures.push(format!("{f}: got {got:?}, want {want:?}"));
+            }
+        }
+        let at = Some(Point::new().update(Atom::Aux(1), Int::from(6)));
+        let last = parts.last().expect("a part");
+        if let Some(kp) = e.known.get_mut(&Id::any(last)) {
+            match miss {
+                false => kp.point = at,
+                true => kp.miss = at,
+            }
+        }
+        let got = e.defined(whole, &def);
+        let want = xwant(defs, whole);
+        if got != want {
+            failures.push(format!("{whole}: got {got:?}, want {want:?}"));
+        }
+        failures.extend(xbad_points(&e, &def));
+        failures
+    }
+
+    /// F4 (SOUND-extend-fails-partial-point-given): the `fails` branch for a part that never
+    /// fails met the part's point with no [`given`] check. `part = sub && q1 >= x` never fails
+    /// with the definitions ([`xf4_defs`]); the whole adds `!(q1 == 6 && q0 == 3)`, which never
+    /// fails either. With the part's point `{q1: 6}`, which gives `q0` no value, `met` took a
+    /// `q0` that breaks `q1 == q0 + 1` and answered that the whole fails. Branch-level: the
+    /// route by which `Faces::free` itself stores such a point needs the part's kept part to
+    /// have no point (a refusal in [`Extending::fill`]); no Zed form was found that reaches it
+    /// (tried: the `xr_face_*` forms of `l01_38_omega_test::one_scope`, whose parts' points
+    /// are found whole). Red before the guard, green after.
+    #[test]
+    fn xr_face_local_atoms_f4b_fails_without_given() {
+        let failures = xf4_case(false, false);
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// The other `fails` branch, a part that fails somewhere (`part = sub && x <= 5`), with
+    /// the part's point of negation `{q1: 6}`: the definitions the whole's other parts reach
+    /// past it are met there only where it gives each atom of the part they read a value, or
+    /// the miss stored would give `q0` a value that breaks `q1 == q0 + 1`
+    /// (SOUND-extend-fails-partial-point-given).
+    #[test]
+    fn xr_face_local_atoms_f4c_miss_without_given() {
+        let failures = xf4_case(true, false);
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// The negative control of the two above: with the [`given`] check skipped, each fails.
+    #[test]
+    fn xr_face_local_atoms_f4_cases_fail_unguarded() {
+        for fails_somewhere in [false, true] {
+            assert!(
+                !xf4_case(fails_somewhere, true).is_empty(),
+                "case {fails_somewhere}: no failure with the check skipped"
+            );
+        }
+    }
+
+    /// The case of F4 ([`xr_face_local_atoms_f4b_fails_without_given`], `fails_somewhere`
+    /// false) or its mirror ([`xr_face_local_atoms_f4c_miss_without_given`], true): its
+    /// failures, with the [`given`] check skipped when `unguarded`.
+    fn xf4_case(fails_somewhere: bool, unguarded: bool) -> Vec<String> {
+        let (defs, sub) = xf4_defs();
+        let (x, k) = (xs("x"), Lin::constant);
+        let row = match fails_somewhere {
+            false => xge(xq(1), x),
+            true => xge(k(5), x),
+        };
+        let part = xextend(&sub, vec![row]);
+        let whole = xextend(
+            &part,
+            vec![Formula::negate(Formula::and(vec![
+                xeq(xq(1), k(6)),
+                xeq(xq(0), k(3)),
+            ]))],
+        );
+        xf4_run(&defs, &[&sub, &part], &whole, fails_somewhere, unguarded)
+    }
+
+    /// Definitions that are one constraint each, as `Formula::and` of one row gives them, are
+    /// read as the conjunctions of their row (SOUND-extend-bare-definition): before, the
+    /// summaries' `Id::any` of such a definition stopped at its `unreachable!`.
+    #[test]
+    fn a_definition_of_one_row_is_read_as_its_conjunction() {
+        let (x, k) = (xs("x"), Lin::constant);
+        let defs = [xeq(xq(0), x.clone()), xeq(xq(1), xq(0).plus(&k(1)))];
+        let def = |n: u32| defs[n as usize].clone();
+        let sub = Formula::and(vec![xge(xq(1), xq(0)), xge(xq(0), x.clone())]);
+        let part = xextend(&sub, vec![xge(k(5), x.clone())]);
+        let whole = xextend(&part, vec![xge(xq(1), k(3))]);
+        let lone = Formula::and(vec![xge(xq(1), k(3)), xge(k(9), xq(0))]);
+        let mut e = Extending::new();
+        let mut failures = Vec::new();
+        for f in [&sub, &part, &whole, &lone, &whole] {
+            let got = e.defined(f, &def);
+            let want = xwant(&defs, f);
+            if got != want {
+                failures.push(format!("{f}: got {got:?}, want {want:?}"));
+            }
+        }
+        failures.extend(xbad_points(&e, &def));
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
