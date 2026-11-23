@@ -40,6 +40,49 @@ fn equal_products_of_powers_are_equal_and_hash_alike() {
     assert_eq!(square.residues(), product.residues());
 }
 
+/// A product or quotient is held in the kept form whatever its operands were written as
+/// (sec:domains, "Kept powers"; sec:diagnostics, "Types in a message"): a coefficient of one
+/// word is factored, so `4294967296 * 4294967296` is held as `2^64`, as `2 ^ 64` is.
+#[test]
+fn a_product_of_words_is_held_as_powers() {
+    let w = int(1 << 32);
+    let square = w.mul(&w).unwrap();
+    assert_eq!(
+        square.kept(),
+        (
+            &BigInt::from(1),
+            &BigInt::from(1),
+            &[(2, BigInt::from(64))][..]
+        )
+    );
+    assert!(square == pow(2, 64));
+    assert_eq!(square.integer_text(), "2^64");
+    // The sign stays on the numerator; `-6 * 2^62` is `-(3 * 2^63)`.
+    let neg = int(-6).mul(&int(1 << 62)).unwrap();
+    let three = [(2, BigInt::from(63)), (3, BigInt::from(1))];
+    assert_eq!(
+        neg.kept(),
+        (&BigInt::from(-1), &BigInt::from(1), &three[..])
+    );
+    assert_eq!(neg.integer_text(), "-3*2^63");
+    // A quotient: `2^40 / 12` is `2^38 * 3^-1`, a denominator of one word factored too.
+    let q = int(1 << 40).div(&int(12)).unwrap().unwrap();
+    let pows = [(2, BigInt::from(38)), (3, BigInt::from(-1))];
+    assert_eq!(q.kept(), (&BigInt::from(1), &BigInt::from(1), &pows[..]));
+    assert!(q == Rat::new(BigInt::from(1u64 << 38), BigInt::from(3)).unwrap());
+    // A wide coefficient is kept whole; the word's primes are moved out of it where they
+    // divide it: `(3 * 2^70 + 3) * 6` is `(2^70 + 1) * 2 * 3^2`.
+    let wide = BigInt::from(3) * ((BigInt::from(1) << 70u32) + 1);
+    let p = Rat::int(wide.clone()).mul(&int(6)).unwrap();
+    let left = (BigInt::from(1) << 70u32) + 1;
+    let two_nine = [(2, BigInt::from(1)), (3, BigInt::from(2))];
+    assert_eq!(p.kept(), (&left, &BigInt::from(1), &two_nine[..]));
+    assert!(p == Rat::int(wide * 6));
+    // 0 and 1 are not factored, and a product by 0 is 0.
+    assert!(int(0).mul(&int(1 << 40)).unwrap().is_zero());
+    assert!(int(1).mul(&pow(3, K)).unwrap() == pow(3, K));
+}
+
 #[test]
 fn powers_far_apart_order_with_no_build() {
     let ((lt, gt), live) = zed_alloc_count::live(|| {

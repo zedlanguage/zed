@@ -37,3 +37,44 @@ fn a_product_or_quotient_by_a_word_costs_order_n() {
         },
     );
 }
+
+/// Words that are each the product of two primes near 2^31, the hardest words for Pollard's
+/// rho, `count` of them: `p_(2i) p_(2i+1)` over the primes from `2^31` up, so no two words
+/// share a prime.
+fn hard_words(count: usize) -> Vec<u64> {
+    let primes: Vec<u64> = (1u64 << 31..)
+        .filter(|&p| zed_numtheory::is_prime(p))
+        .take(2 * count)
+        .collect();
+    primes.chunks(2).map(|w| w[0] * w[1]).collect()
+}
+
+/// The products of `n` and `8n` pairs of words, each word the product of two primes near 2^31:
+/// a product of two words is held in the kept form, each word factored (plan row
+/// KEPT-power-form, `Rat::words_factored`), in O(1) a product, so the work is O(n). It prints
+/// the time of one product, factored, against the product built as digits, which is the
+/// constant factor the kept form costs here.
+#[test]
+fn a_product_of_two_words_is_factored_in_constant_time() {
+    let n = 1usize << 9;
+    let words = hard_words(2 * 8 * n);
+    let rats: Vec<Rat> = words.iter().map(|w| Rat::int(BigInt::from(*w))).collect();
+    let products = |m: usize| {
+        for pair in rats[..2 * m].chunks(2) {
+            let p = pair[0].mul(&pair[1]).expect("memory is given");
+            assert_eq!(p.kept().2.len(), 4, "four primes");
+        }
+    };
+    let (kept, ()) = zed_tests::scaling::least_cpu_ns(3, || products(n));
+    let (built, ()) = zed_tests::scaling::least_cpu_ns(3, || {
+        for pair in words[..2 * n].chunks(2) {
+            std::hint::black_box(BigInt::from(pair[0]) * BigInt::from(pair[1]));
+        }
+    });
+    eprintln!(
+        "a product of two hard words: {} ns kept, {} ns built",
+        kept / n as u128,
+        built / n as u128
+    );
+    check_order("products of n and 8n pairs of hard words", n, 1, products);
+}
