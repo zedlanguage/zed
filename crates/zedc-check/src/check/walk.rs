@@ -5328,13 +5328,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             match p {
                 Piece::Fn(sig) if sig.data => values = values.union(&super::family_values(&sig)),
                 Piece::Dyn => self.any(word, span),
-                // As at `levels_of`: the program may write no type parameter. Not reached by a
-                // test: a variable's level returns above.
-                Piece::Var(_) => {
-                    let what = format!("{word} on a value whose type is generic here");
-                    self.error(span, zedc_base::rejection::not_yet(&what));
-                    return Ty::empty();
-                }
+                // No path reaches this arm (TEST-generic-operand-messages-reached). Proof:
+                // 1. `Ty::pieces_lazily` (zedc-types ty.rs) makes a `Piece::Var` only from
+                //    `x.vars`, one per variable, and no other piece is a `Piece::Var`.
+                // 2. Where `x.vars` is not empty, the `if` above returns before this loop.
+                // 3. So here `x.vars` is empty, and by 1 no piece of `x` is a `Piece::Var`.
+                // Before, this arm gave "folds on a value whose type is generic here", which
+                // no test reached and, by the proof, no program can.
+                Piece::Var(_) => unreachable!("`fold_dir_end` returned above for every variable"),
                 p if p.is_atoms() => {}
                 p => {
                     let t = self.text(&p.ty());
@@ -10873,7 +10874,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         );
         match derive {
             true => self.error_offering(span, message, [menu]),
-            false => self.error_with(span, message, vec![Note { span, text: menu }]),
+            false => self.error_with(
+                span,
+                message,
+                vec![Note {
+                    span,
+                    text: menu.into(),
+                }],
+            ),
         }
     }
 
@@ -15015,7 +15023,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let mut notes = self.derive(&[span]);
         notes.extend(use_note);
-        notes.extend(menu.into_iter().map(|text| Note { span, text }));
+        notes.extend(menu.into_iter().map(|text| Note {
+            span,
+            text: text.into(),
+        }));
         self.error_with(span, message, notes);
     }
 
@@ -23617,7 +23628,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             "repair: call a function here, or drop the argument list after the value".to_string();
         match derive {
             true => self.error_offering(span, message, [menu]),
-            false => self.error_with(span, message, vec![Note { span, text: menu }]),
+            false => self.error_with(
+                span,
+                message,
+                vec![Note {
+                    span,
+                    text: menu.into(),
+                }],
+            ),
         }
     }
 
@@ -23794,7 +23812,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let menu = format!("repair: index a tuple or a family, or drop `[{shown}]`");
         match derive {
             true => self.error_offering(span, message, [menu]),
-            false => self.error_with(span, message, vec![Note { span, text: menu }]),
+            false => self.error_with(
+                span,
+                message,
+                vec![Note {
+                    span,
+                    text: menu.into(),
+                }],
+            ),
         }
     }
 

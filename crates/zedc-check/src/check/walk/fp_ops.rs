@@ -164,10 +164,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of `x`. A loose atom `x` may be passes through, and is not listed; `_` is reported as at
     /// `map`; any other value is rejected with `example`, the word on a family, as the repair.
     /// A class never reaches here: walk.rs's `Ck::level_word` takes the variables of `x` out
-    /// first, each as a need ([`NeedKind::Level`]) or as the type it is resolved to; the
-    /// `Piece::Var` arm stays for a caller that did not, as `concat(xs)` in a function whose
-    /// parameter `xs` has no written type, and names the operand at `operand` by its code where
-    /// it is on one line. `None` after an error.
+    /// first, each as a need ([`NeedKind::Level`]) or as the type it is resolved to, and
+    /// `strings_parts` passes its operand with the variables taken out. The `Piece::Var` arm
+    /// stays for `zip_end`, which passes a variable for which `class_root` gives no class (plan
+    /// row TEST-generic-operand-messages-reached: no test reaches it yet), and names the operand
+    /// at `operand` by its code where it is on one line. `None` after an error.
     pub(super) fn levels_of(
         &mut self,
         x: &Ty,
@@ -1333,11 +1334,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                         return Ty::empty();
                     }
                     Piece::Dyn => self.any(word, span),
-                    // The variables were taken out above; the arm stays for completeness.
-                    Piece::Var(_) => {
-                        self.generic_operand(a, span);
-                        return Ty::empty();
-                    }
+                    // No path reaches this arm (TEST-generic-operand-messages-reached). Proof:
+                    // 1. `Ty::pieces_lazily` (zedc-types ty.rs) makes a `Piece::Var` only from
+                    //    `a.ty.vars`, and no other piece is a `Piece::Var`.
+                    // 2. The loop over both operands above returns whenever `x.ty.vars` or
+                    //    `y.ty.vars` is not empty, so here both are empty.
+                    // 3. So by 1 no piece of `a`, which is `x` or `y`, is a `Piece::Var`.
+                    Piece::Var(_) => unreachable!("`list_concat_end` returned above for variables"),
                     p if p.is_atoms() => {}
                     p => {
                         let t = self.text(&p.ty());

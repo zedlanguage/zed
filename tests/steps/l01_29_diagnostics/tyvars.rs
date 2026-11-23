@@ -456,3 +456,61 @@ fn a_found_type_binds_only_the_variables_it_uses() {
         for_vars_used(&found);
     }
 }
+
+/// Plan row TEST-generic-operand-messages-reached: `++`, `concat`, `split`, `zip`, `count`,
+/// `foldl` and `chunkBy` on an operand whose type is generic (a parameter with no written
+/// type, the result of a generic function, a branch joined with one) are each checked through
+/// the operand's class, at the call, and accepted. None of these reaches a "whose type is
+/// generic here" refusal, nor the arms of `fold_dir_end` (walk.rs) and `list_concat_end`
+/// (fp_ops.rs) that are `unreachable!` with their proofs.
+#[test]
+fn words_on_a_generic_operand_are_checked_through_its_class() {
+    use zed_tests::step_helpers::l01_29_diagnostics::{accepted_with_main, rejected_with_main};
+    let mut refused = String::new();
+    for text in [
+        "f(positional xs) = concat(xs);\ny = f([\"a\"]);\n",
+        "f(positional xs) = xs ++ [1];\ny = f([1]);\n",
+        "f(positional xs) = xs.count;\ny = f([1]);\n",
+        "f(positional xs, positional ys) = xs.zip(ys);\ny = f([1], [2]);\n",
+        "f(positional xs) = xs.foldl(0, (a, b) -> a);\ny = f([1]);\n",
+        "f(positional g) = concat(g(1));\n",
+        "f(positional g) = g(1) ++ [1];\n",
+        "f(positional g) = g(1).count;\n",
+        "f(positional g) = g(1).foldl(0, (a, b) -> a);\n",
+        "f(positional xs) = xs.map(x -> concat(x));\ny = f([[\"a\"]]);\n",
+        "f(positional xs) = xs.map(x -> x ++ [1]);\ny = f([[1]]);\n",
+        "f(positional xs) = xs.map(x -> x.count);\ny = f([[1]]);\n",
+        "f(positional xs) = { g(positional a) = a ++ [1]; return g(xs); };\ny = f([1]);\n",
+        "f(positional xs) = { g(positional a) = concat(a); return g(xs); };\ny = f([\"a\"]);\n",
+        "f(positional xs) = { g(positional a) = a; return g(xs) ++ [1]; };\ny = f([1]);\n",
+        "f(positional xs) = { g(positional a) = a; return concat(g(xs)); };\ny = f([\"a\"]);\n",
+        "f(positional xs) = (if xs.count > 0 { xs } else { [7] }).foldl(0, (a, b) -> a);\n",
+        "f(positional xs) = (if xs.count > 0 { xs } else { [7] }) ++ [1];\n",
+        "f(positional xs) = concat(if xs.count > 0 { xs } else { [\"a\"] });\n",
+        "f(positional xs) = xs.split(\",\");\ny = f(\"a,b\");\n",
+        "f(positional xs) = xs.chunkBy(x -> x);\ny = f([1]);\n",
+        "f(positional g) = (x -> g(x) ++ [1]);\n",
+        "f(positional xs, positional g) = xs.map(x -> g(x) ++ [1]);\n",
+        "f(positional xs, positional g) = xs.map(x -> concat(g(x)));\n",
+        "f(positional xs, positional g) = xs.map(x -> g(x).foldl(0, (a, b) -> a));\n",
+        "f(positional xs, positional ys) = concat([xs, ys]);\n",
+        "f(positional x) = [x] ++ x;\n",
+        "id = x -> x;\ny = id([1]) ++ [1];\n",
+        "id = x -> x;\ny = concat(id([\"a\"]));\n",
+        "id = x -> x;\ny = id([1]).count;\n",
+        "id = x -> x;\ny = id([1]).foldl(0, (a, b) -> a);\n",
+        "id = x -> x;\ny = id(\"a,b\").split(\",\");\n",
+        "f(positional xs) = { id = x -> x; return id(xs) ++ [1]; };\ny = f([1]);\n",
+        "f(positional xs) = { id = x -> x; return concat(id(xs)); };\ny = f([\"a\"]);\n",
+        "p = (x -> x, 1);\ny = p[0]([1]) ++ [1];\n",
+        "p = (x -> x, 1);\ny = concat(p[0]([\"a\"]));\n",
+        "f(positional h) = h([1]) ++ [1];\ny = f(x -> x);\n",
+        "f(positional h) = concat(h([\"a\"]));\ny = f(x -> x);\n",
+        "f(positional h) = h([1]).count;\ny = f(x -> x);\n",
+    ] {
+        if !accepted_with_main(text) {
+            refused.push_str(&format!("{text:?} gave {}\n", rejected_with_main(text)));
+        }
+    }
+    assert!(refused.is_empty(), "refused:\n{refused}");
+}
