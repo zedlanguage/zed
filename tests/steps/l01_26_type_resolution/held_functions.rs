@@ -679,9 +679,9 @@ fn a_returned_generic_function_fits_a_function_result_by_its_needs() {
         type_errors(
             "w(positional k) = 2 ^ k;\nf(x: int) = w;\nh(g: (x: int) -> ((k: int) -> int)) = 1;\ny = h(g: f);\n"
         ),
-        [
-            "`f` is `(x: int) -> (T -> T for T in int | f32 | f64)`, not `(x: int) -> (k: int) -> int`: it is passed where a function of that type is expected, and its own type does not fit that one. [f]"
-        ]
+        // `positional k` fits the named `(k: int)` (DESIGN.md sec:values_morphisms; row
+        // MSG-inner-lambda-unnamed-param-arrow), so the refusal is the need itself.
+        ["the function `f` returns takes `k` in int[0..]: `k : int`. [f]"]
     );
 }
 
