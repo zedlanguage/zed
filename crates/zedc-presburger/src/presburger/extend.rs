@@ -607,6 +607,10 @@ struct Faces {
     by: HashMap<Id, Option<Face>>,
 }
 
+/// What [`Faces::read`] gives: the question, the holes of the faces read, and the atoms those
+/// faces project out.
+type Read<'s> = (Formula, Vec<(&'s Atom, &'s Holes)>, HashSet<Atom>);
+
 impl Faces {
     /// The faces of the kept parts among `roots` and of the kept parts under them, each made
     /// once, after those of its own kept parts: an explicit stack, since the parts nest as deep
@@ -861,7 +865,7 @@ impl Faces {
         j: Option<usize>,
         m: &Point,
         def: &dyn Fn(u32) -> Formula,
-    ) -> Option<(Formula, Vec<(&'s Atom, &'s Holes)>, HashSet<Atom>)> {
+    ) -> Option<Read<'s>> {
         let mut faced: Vec<(&Known, &Face)> = Vec::new();
         let mut whole: Vec<&Known> = j.map(|j| &known[&Id::any(&kids[j])]).into_iter().collect();
         let mut rows: Vec<Formula> = Vec::new();
