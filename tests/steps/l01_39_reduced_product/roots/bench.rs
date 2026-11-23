@@ -98,29 +98,48 @@ fn dense_binomial(bits: u64) -> Sparse {
 /// The bits of the roots at size n of the benches
 /// `roots_scale_in_the_bits_where_products_are_transforms`, `dense_roots_scale_in_the_bits` and
 /// `a_binomial_root_scales_in_the_bits`, timed at n and 8n:
-/// 262,144 and 2,097,152 bits, 4,096 and 32,768 words, where both sizes take the same method
-/// for every product and quotient at full precision (plan rows ROOTS-doubling-newton and
+/// 262,144 and 2,097,152 bits, 4,096 and 32,768 words, past the measured crossovers of every
+/// product and of the quotients at full precision (plan rows ROOTS-doubling-newton and
 /// DECISION-roots-bench-regime, after the precedent of `a_dense_product_scales`, timed at 8,192
 /// and 65,536 words; why 1,024 to 4,096 bits cannot pass at
 /// `roots_scale_in_the_degree_and_in_the_bits`). Every product of the search at full precision
 /// is of factors past `MUL_LEAF`, 400 words, so the kernel's transform, `O(n log n)`. The
 /// quotients go to num-bigint's division, Burnikel and Ziegler's, whose work grows 2.87 times
-/// per doubling, up to the crossovers of `zed_kernel::num::fast` (`DIV_LEAF`, `DIV_COST`;
-/// measured 2026-11-12): 3192 words for `2w` by `w`, the shape of the carry bounds
-/// (`bounds`, a coefficient of `2n` bits by a point of `n`), and 919 words for a quotient of a
-/// quarter of the divisor's words, the shape of a Newton step at the top level of `doubling`;
-/// past them, to the division by a reciprocal, `O(M(n))`. At 131,072 bits, 2048 words, both
-/// shapes were below their crossovers and at 1,048,576 past them, so the pair measured the
-/// change of method, not the order: 11.20 times the instructions at 8n, the quotients 8.40
-/// times and the rest 4.55 times from 131,072 to 524,288 bits (runs h5-req24 and h5-req26).
+/// per doubling, up to the switch of `zed_kernel::num::fast` (`DIV_LEAF`, `DIV_COST`), and
+/// past it to the division by a reciprocal, `O(M(n))`.
+///
+/// Why a ratio taken across that switch is not a fault of the order: where the switch sits at
+/// the measured crossover, the work at `n` is the less of the two methods', so the ratio at 8n
+/// is at least the reciprocal's own, `reciprocal(8n) / reciprocal(n)`, and larger only because
+/// the small size took the faster method. That holds only where the switch is at the
+/// crossover. Measured in instructions (`crossover div-leaf`, DynamoRIO's `zed_icount`, run
+/// h5-req30 on snapshot 25e53c9b5, 2026-11-23): for `2w` by `w`, the shape of the carry bounds
+/// (`bounds`, a coefficient of `2n` bits by a point of `n`), num-bigint does less work up to
+/// 3090 words (3192 on 2026-11-12), but `DIV_COST` as built (9.1) takes it at 2048, 2896 and
+/// 5793 words and the reciprocal at 4096 and from 8192, up to 1.329 times the less work (at
+/// 5793); for a quotient of a quarter of the divisor's words, the shape of a Newton step at
+/// the top level of `doubling`, the crossover is 861 words of quotient (919 on 2026-11-12) and
+/// the build takes num-bigint at 1448 (a divisor of 5792 words), 1.123 times the less work, and
+/// the reciprocal at a divisor of 4096 words. So `2w` by `w` at `w` = 4,096 words, n here,
+/// takes the reciprocal, as at 32,768 words, 8n; a divisor of a few words more than 4,096 is
+/// inferred, not measured, to take num-bigint at n, as at 5793 words, and which divisors of
+/// each level of the search have which width was not measured. At 131,072 bits, 2048 words,
+/// both shapes were below their crossovers and at 1,048,576 past them, so that pair measured
+/// the change of method, not the order: 12.974 times the instructions at 8n with the old
+/// search (h5-req23), then 11.197 after the Newton step at doubling precision (h5-req26), the
+/// quotients 8.40 times and the rest 4.55 times from 131,072 to 524,288 bits (Callgrind,
+/// h5-req26).
+///
 /// The search at doubling precision makes the whole `O(M(n))` past the cuts, and the cuts are
 /// `O(log n)` evaluations of `O(M(n))` each at powers of 2. The lower levels of `doubling`
 /// divide numbers of half the bits of the level above, so some are below the crossovers at
 /// every size: from 262,144 to 1,048,576 bits the division by a reciprocal went from 3 calls
 /// to 10, 7.70 times its work, but 2.31 times per call, and the whole 4.52 times (run
-/// h5-req27, callgrind). Measured at these sizes (h5-req27): 9.445, 9.065 and 9.026 times the
-/// instructions at 8n for the three benches, 3.0 s, 7.6 s and 1.6 s a piece; with the search
-/// at doubling precision turned off in the production build, the first takes 10.588 and fails.
+/// h5-req27, callgrind); that each doubling of n adds about one more call per doubling level
+/// is inferred from the levels' sizes, not measured per level. Measured at these sizes
+/// (h5-req27): 9.445, 9.065 and 9.026 times the instructions at 8n for the three benches,
+/// 3.0 s, 7.6 s and 1.6 s a piece; with the search at doubling precision turned off in the
+/// production build, the first takes 10.588 and fails.
 const TRANSFORM_BITS: usize = 262_144;
 
 /// The integer roots of the cubic of [`of_bits`], whose roots have [`TRANSFORM_BITS`] and 8
