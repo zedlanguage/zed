@@ -65,7 +65,7 @@ fn the_forest_of_atoms_of_wide_and_small_integers_scales() {
 /// `int \ {b_e}` all tie in `name_digest`, so the `ByType` maps of `Nodes` keep them in one
 /// ordered bucket of about 2m types (`TiedMap`, PERF-typeset-tied-digest), `O(log m)`
 /// comparisons of keys of two values for each of the O(m) lookups. An n log n ratio meets
-/// 10.5 only from n = 777 (DESIGN sec:plan), so the sizes are 1024 and 8192: at 128 and 1024
+/// 10.5 only from n = 777 (COMPLEXITY.md, the scaling limit), so the sizes are 1024 and 8192: at 128 and 1024
 /// the tied variant measured 11.50 times the instructions (callgrind: `BigInt::cmp` 12.05
 /// times, against 8 ln 2048 / ln 256 = 11.0 for the bucket), 8.28 untied.
 #[test]
