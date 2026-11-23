@@ -7854,10 +7854,12 @@ fn r11_tagged_payloads(n: usize) -> Type {
 #[test]
 fn r11_front_end_keeps_wide_integer_literals() {
     use zed_tests::step_helpers::l01_26_type_resolution::info;
-    for digits in [
-        "9223372036854775807",
-        "9223372036854775808",
-        "18446744073709551616",
+    // (digits, printed): a power prints as its power, shorter than its digits
+    // (`Rat::integer_text`, KEPT-power-form-print); 2^63 - 1 is no power and prints as digits.
+    for (digits, printed) in [
+        ("9223372036854775807", "9223372036854775807"),
+        ("9223372036854775808", "2^63"),
+        ("18446744073709551616", "2^64"),
     ] {
         let text = format!("x = {digits};\ny = (x, x);\n");
         let (i, _) = info(&text);
@@ -7865,8 +7867,15 @@ fn r11_front_end_keeps_wide_integer_literals() {
         let got = i.tops["x"].to_string();
         eprintln!("front literal {digits}: {got}");
         assert_ne!(got, "Never");
+        assert_eq!(got, printed, "{digits}");
         let read = zedc::check::read::parse_type(digits).unwrap();
-        assert_eq!(read.to_string(), digits);
+        assert_eq!(read.to_string(), printed);
+        // The printed text reads back as the same type.
+        assert_eq!(
+            zedc::check::read::parse_type(printed).unwrap(),
+            read,
+            "{printed}"
+        );
         // A nearby value must remain a different printed singleton.
         assert_ne!(read.to_string(), "0");
     }
@@ -7905,7 +7914,8 @@ fn r11_wide_literals_agree_in_a_batch_and_separate_files() {
             batch.tops[&name].to_string(),
             single.tops[&name].to_string()
         );
-        assert_eq!(single.tops[&name].to_string(), *n);
+        // 2^63 and 2^64 print as their powers (`Rat::integer_text`, KEPT-power-form-print).
+        assert_eq!(single.tops[&name].to_string(), ["2^63", "2^64"][i]);
     }
 }
 

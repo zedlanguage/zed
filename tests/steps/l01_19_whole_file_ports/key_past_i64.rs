@@ -79,14 +79,20 @@ fn keys_beside_the_64_bit_boundary() {
 /// rejects any index past the last component.
 #[test]
 fn a_tuple_index_past_64_bits_is_rejected() {
-    for k in ["2", "9223372036854775808", "99999999999999999999999"] {
+    // (index written, index printed): 2^63 prints as its power, shorter than its digits
+    // (`Rat::integer_text`, KEPT-power-form-print); 10^23 - 1 = 9 * R23 is no power.
+    for (k, printed) in [
+        ("2", "2"),
+        ("9223372036854775808", "2^63"),
+        ("99999999999999999999999", "99999999999999999999999"),
+    ] {
         let src = format!("x = (1, 2)[{k}];\n");
         let err = elab(&src)
             .err()
             .unwrap_or_else(|| panic!("{src}: accepted"));
         assert!(
             err.iter()
-                .any(|e| e.contains(&format!("has no component {k}"))),
+                .any(|e| e.contains(&format!("has no component {printed}"))),
             "{src}: {err:?}"
         );
     }

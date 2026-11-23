@@ -50,7 +50,8 @@ use std::borrow::{Borrow, Cow};
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
 
-use super::{fast, mul_uint, rem_uint};
+use super::fast::rem as rem_uint;
+use super::{fast, mul_uint};
 
 /// The levels of the product tree of `leaves` above the leaves themselves: the products of
 /// pairs of leaves first, then of pairs of those, up to the one product of all, a node with no

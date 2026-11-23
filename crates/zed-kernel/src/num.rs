@@ -52,7 +52,7 @@ pub use fast::{
 };
 pub(crate) use fast::{mul_cost, squares_by_transform};
 pub use float_text::{FloatFormat, read_f32_ieee, read_f64_ieee, read_float, show_f32, show_f64};
-pub use least_root::{least_root, remainders};
+pub use least_root::{least_root, remainders, sqrt_rem_uint};
 pub use room::{
     LiteralRounding, TooLarge, about, bits_of_digits, bytes_of, bytes_text, digits_of_bits,
     fixed_room, machine_memory, memory_clause, room,
@@ -915,8 +915,8 @@ impl Rat {
     ///
     /// Complexity tradeoff: for `n` the bits of `c`, the trailing zeros and the shift cost
     /// O(n); `factor` below 2^44 is O(1), a constant proved at `zed_numtheory::factor`; the least
-    /// root is O(M(n) log n), proved at [`fn@least_root`]; `is_prime` on a word is O(1) (12 bases of
-    /// Miller-Rabin, proved at `zed_numtheory::is_prime`). The text writes `c` or what is left of
+    /// root is O(M(n) log n), proved at [`fn@least_root`]; `is_prime` on a word is O(1) (12
+    /// bases of Miller-Rabin, proved at `zed_numtheory::is_prime`). The text writes `c` or what is left of
     /// it as decimal digits in either form, which costs O(M(n) log n) (`num::fast::to_decimal`,
     /// a divide-and-conquer conversion), so the reduction costs at most a constant times the
     /// text it chooses between, and only a printed number pays it. Methods with no proved bound
@@ -1916,82 +1916,6 @@ pub fn div_rem_uint(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
 /// would be wider than `b` (`num::fast::rem`).
 pub fn rem_uint(a: &BigUint, b: &BigUint) -> BigUint {
     fast::rem(a, b)
-}
-
-/// `(s, r)` with `s = floor(sqrt(a))` and `r = a - s^2`, so `0 <= r <= 2s`, for integers held
-/// outside a [`Rat`]: Zimmermann's Karatsuba square root (P. Zimmermann, "Karatsuba Square
-/// Root", INRIA research report RR-3805, 1999, <https://inria.hal.science/inria-00072854>; R. P.
-/// Brent and P. Zimmermann, Modern Computer Arithmetic, Cambridge University Press, 2010,
-/// section 1.5, algorithm SqrtRem), on the kernel's product and division. The algorithm, for
-/// `a` of `n` bits with `n = 0` or `3` mod 4 (else `4a` is taken, below):
-/// `k = floor((n + 1) / 4)`, `B = 2^k`, `a = a_hi B^2 + a1 B + a0` with `a1, a0 < B`;
-/// `(s', r') = sqrt_rem(a_hi)`; `(q, u) = div_rem(r' B + a1, 2s')`; `s = s' B + q`,
-/// `r = u B + a0 - q^2`; when `r < 0`, `r += 2s - 1` and `s -= 1`.
-///
-/// Proof, every step (checked by `square_roots_agree_with_num_bigint` against num-bigint's
-/// `sqrt`, at every width from 1 to 640 bits and at the remainders 0, 1, `2s - 1` and `2s`):
-/// 1. `4k` is `n` or `n + 1`, so `a_hi`, of `n - 2k` bits, that is `2k` or `2k - 1`, has
-///    `B^2 / 4 <= a_hi < B^2`; so `B / 2 <= s' < B`, and `0 <= r' <= 2s'`.
-/// 2. `s^2 + r = s'^2 B^2 + (2s'q + u) B + a0 = s'^2 B^2 + (r' B + a1) B + a0 = a`.
-/// 3. `r <= 2s`: `u <= 2s' - 1` and `a0 <= B - 1`, so `r < 2s' B <= 2s`. So `(s + 1)^2 =
-///    s^2 + 2s + 1 > a`, and `s >= floor(sqrt(a))`.
-/// 4. `r >= 1 - 2s`: `q <= (r' B + a1) / 2s' <= (2s' B + B - 1) / 2s' < B + 1`, as `s' >= B/2`,
-///    so `q <= B`; then `(q - 1)^2 < B^2 <= 2s' B`, so `q^2 <= 2s' B + 2q - 2`, and
-///    `r >= -q^2 >= 1 - 2s` (as `2s = 2s' B + 2q`). So `(s - 1)^2 = s^2 - 2s + 1 <= a`, and
-///    `s - 1 <= floor(sqrt(a)) <= s`: one correction, when `r < 0`, gives
-///    `r + 2s - 1 = a - (s - 1)^2`, at least 0 by this step.
-/// 5. For `n = 1` or `2` mod 4, `4a` has `n + 2` bits, `0` or `3` mod 4. With `S' =
-///    floor(sqrt(4a)) = floor(2 sqrt(a))`, `S = floor(S' / 2) = floor(sqrt(a))`; writing `S' =
-///    2S + e`, `e` in {0, 1}, `r' = 4a - S'^2 = 4(a - S^2) - 4Se - e`, so `a - S^2 = (r' + e(4S +
-///    1)) / 4`, with no square.
-/// 6. At most 128 bits it is `u128::isqrt`. Above, `n > 128` gives `k >= 32`, and `a_hi` has
-///    about `n / 2` bits, so the recursion ends after about `log2(n / 64)` levels.
-///
-/// Complexity tradeoff: num-bigint's `sqrt` is Newton's iteration on num-bigint's division
-/// and Toom-3 product, both above O(M(n)): 0.56 s at 1,661,955 bits and 19.2 s at 13,295,631
-/// (34.5 times for 8 times the bits; `least_root`, then in zedc-int, item
-/// PERF-wide-odd-base-ratio-9, 2026-11-20, load 41). Here level `j` divides `2k_j` by
-/// `k_j + 1` bits and squares `k_j` bits, `k_j` about `n / 2^(j+2)`, so the sum is a constant
-/// times the top level: O(M(n)) with the kernel's O(n log n) product and division (bench
-/// `num::bench::square_roots_scale`).
-pub fn sqrt_rem_uint(a: &BigUint) -> (BigUint, BigUint) {
-    let n = a.bits();
-    if n <= 128 {
-        // Step 6; `n <= 128`, so the value fits in a `u128`.
-        let v = a.to_u128().expect("at most 128 bits");
-        let s = v.isqrt();
-        return (BigUint::from(s), BigUint::from(v - s * s));
-    }
-    if matches!(n % 4, 1 | 2) {
-        // Step 5.
-        let (s2, r2) = sqrt_rem_uint(&(a << 2u32));
-        let odd = s2.bit(0);
-        let s = s2 >> 1u32;
-        let r = match odd {
-            true => (r2 + (&s << 2u32) + 1u32) >> 2u32,
-            false => r2 >> 2u32,
-        };
-        return (s, r);
-    }
-    let k = (n + 1) / 4;
-    let mask = (BigUint::one() << k) - 1u32;
-    let (s1, r1) = sqrt_rem_uint(&(a >> (2 * k)));
-    let a1 = (a >> k) & &mask;
-    let a0 = a & &mask;
-    let (q, u) = div_rem_uint(&((r1 << k) + a1), &(&s1 << 1u32));
-    let mut s = (s1 << k) + &q;
-    let t = (u << k) + a0;
-    let q2 = mul_uint(&q, &q);
-    let r = match t >= q2 {
-        true => t - q2,
-        false => {
-            // Step 4: `t - q^2 >= 1 - 2s`, so this is at least 0.
-            let r = t + (&s << 1u32) - 1u32 - q2;
-            s -= 1u32;
-            r
-        }
-    };
-    (s, r)
 }
 
 /// `(r, a - r^k)` with `r = floor(a^(1/k))`, for `k >= 1`, for integers held outside a
