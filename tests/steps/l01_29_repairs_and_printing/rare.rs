@@ -44,10 +44,11 @@ fn a_default_of_no_type_yet_is_said_to_have_none() {
 /// `[x.trim]`, is printed by its arrow, `(0 | 1) -> 1 | 2` and `0 -> String`, and not as
 /// `[1 | 2]` or `[String]`. DESIGN.md sec:diagnostics asks a printed type to be exact and to
 /// parse back; `[V]` is `int ->? V` over the ranks `0 ..< n` with `n` not known
-/// (sec:type_language), a larger type than the value's, so it would say `size` is refused a type it takes at other
-/// lengths. `Sig::list` (zedc-types) holds only where the length is not known, and there `[V]`
-/// is printed (the third program, `xs: [int]`). The shape form `[V; n]` (sec:type_language,
-/// step L14.1) is not yet read, so it cannot be printed; plan row MSG-list-value-printed-shape.
+/// (sec:type_language), a larger type than the value's, so it would say `size` is refused a
+/// type it takes at other lengths. `Sig::list` (zedc-types) holds only where the length is not
+/// known, and there `[V]` is printed (the third program, `xs: [int]`). The shape form `[V; n]`
+/// (sec:type_language, step L14.1) is not yet read, so it cannot be printed; plan row
+/// MSG-list-value-printed-shape.
 #[test]
 fn a_list_value_of_known_keys_is_printed_by_its_arrow() {
     let size = "size(ps: [String]) = ps.count;\n";
