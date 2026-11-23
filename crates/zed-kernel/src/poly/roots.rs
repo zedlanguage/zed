@@ -54,11 +54,11 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{One, Signed, Zero};
 
-use crate::num::{div_floor_int, mul_int, nth_root_rem_uint, pow_uint};
+use crate::num::{div_floor_int, div_rem_uint, mul_int, nth_root_rem_uint, pow_uint};
 use crate::term::{Prim, Term};
 use crate::value::Value;
 
@@ -648,15 +648,13 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
         // products of numbers of the bits of `c0`, against the O(t) of an interval. The root
         // and its remainder by the kernel's `nth_root_rem_uint`, O(M(n)) for a fixed `g`,
         // where num-bigint's `nth_root` is above it (item PERF-wide-odd-base-ratio-9); a zero
-        // remainder is an integer root.
-        let q = -c0 / c1;
-        let x = ((c0 % c1).is_zero() && q > BigInt::one() && *g < q.bits())
-            .then(|| {
-                nth_root_rem_uint(
-                    q.magnitude(),
-                    u32::try_from(*g).expect("under the bits of q"),
-                )
-            })
+        // remainder is an integer root. The quotient is the kernel's division of the
+        // magnitudes ([`div_rem_uint`], O(M(n)) past its crossover, where num-bigint's `/` and
+        // `%` are Knuth's or Burnikel and Ziegler's; plan row ROOTS-binomial-div), and `-c0 /
+        // c1` is above 0 only where `c0` and `c1` have opposite signs.
+        let (q, r) = div_rem_uint(c0.magnitude(), c1.magnitude());
+        let x = (r.is_zero() && c0.sign() != c1.sign() && q > BigUint::one() && *g < q.bits())
+            .then(|| nth_root_rem_uint(&q, u32::try_from(*g).expect("under the bits of q")))
             .filter(|(_, rem)| rem.is_zero())
             .map(|(x, _)| BigInt::from(x))
             .filter(|x| &a <= x && x <= &hi);
@@ -1946,6 +1944,52 @@ mod tests {
         assert_eq!(listed(integer_roots(&f, None, None)), [-2, 2]);
         let f = Sparse::new([(65, BigInt::one()), (0, -two_64)]);
         assert_eq!(listed(integer_roots(&f, None, None)), Vec::<i64>::new());
+    }
+
+    /// The quotient of a binomial `c0 + c1 x^g` is taken by the kernel's division of the
+    /// magnitudes with the signs apart (plan row ROOTS-binomial-div): each sign of `c0` and `c1`,
+    /// quotients that are not exact (`7 / 2`, where a truncated quotient is 3 and a floored one
+    /// is -4 or 3 by the signs), equal signs, whose quotient is negative, and a dense `c1 x^3 -
+    /// c1 r^3` of 4,000-bit `c1` and 1,000-bit `r`, past the crossover of the kernel's division.
+    /// Negative control: dropping the test of the signs gives `x^3 + 8` the root 2 as well.
+    #[test]
+    fn a_binomial_quotient_has_its_signs_and_its_remainder() {
+        assert_eq!(roots(&poly(&[(5, -2), (0, 64)]), -50, 50), [2]);
+        assert_eq!(roots(&poly(&[(3, -1), (0, -8)]), -50, 50), [-2]);
+        assert_eq!(roots(&poly(&[(3, 1), (0, 8)]), -50, 50), [-2]);
+        assert_eq!(roots(&poly(&[(3, 1), (0, -8)]), -50, 50), [2]);
+        for (c1, c0) in [(2, -7), (-2, 7), (2, 7), (-2, -7), (3, 3), (-3, -3)] {
+            assert_eq!(
+                roots(&poly(&[(1, c1), (0, c0)]), -50, 50),
+                match (c1, c0) {
+                    (3, 3) | (-3, -3) => vec![-1],
+                    _ => Vec::<i64>::new(),
+                },
+                "{c1} x + {c0}"
+            );
+            assert_eq!(
+                roots(&poly(&[(4, c1), (0, c0)]), -50, 50),
+                Vec::<i64>::new(),
+                "{c1} x^4 + {c0}"
+            );
+        }
+        let mut rng = crate::seed::Rng::new(0x6269_6e6f);
+        let mut wide = |bits: u64| {
+            let digits = (0..bits / 32).map(|_| rng.next_u64() as u32).collect();
+            BigInt::from(BigUint::new(digits)) | (BigInt::one() << (bits - 1))
+        };
+        let (c1, r) = (wide(4000), wide(1000));
+        let c0 = -(&c1 * &r * &r * &r);
+        for (c1, c0, want) in [
+            (c1.clone(), c0.clone(), vec![r.clone()]),
+            (-&c1, -&c0, vec![r.clone()]),
+            (c1.clone(), -&c0, vec![-&r]),
+            (c1.clone(), &c0 + 1, vec![]),
+            (c1.clone(), &c0 - &c1, vec![]),
+        ] {
+            let f = Sparse::new([(0, c0), (3, c1)]);
+            assert_eq!(integer_roots(&f, None, None), Roots::Listed(want));
+        }
     }
 
     /// Roots of 71 bits, negative, and repeated, in a polynomial of 40 terms: `(x - 2^70)
