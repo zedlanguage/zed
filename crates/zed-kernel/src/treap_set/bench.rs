@@ -76,24 +76,52 @@ fn spine(t: &Tree<i64>, left: bool) -> u64 {
 /// Tests a run makes, so that the walk and not the meter's fixed cost is measured.
 const RUNS: usize = 200;
 
-/// The instructions of `RUNS` tests `a.is_subset(b)`, each `true`, per unit of `bound`.
-fn per_unit(
-    meter: &mut crate::scaling::Meter,
-    a: &TreapSet<i64>,
-    b: &TreapSet<i64>,
-    bound: u64,
-) -> u64 {
-    let work = meter.work(|| {
-        for _ in 0..RUNS {
-            assert!(std::hint::black_box(a).is_subset(b));
-        }
+/// Holds the work of `RUNS` tests `a.is_subset(b)`, each `true`, per unit of `units`, at the
+/// sizes `small` and `large` of `make`, to the limit of power 0: the work at `large` at most
+/// `limit(0)` times the work at `small` times `units(large) / units(small)`, which is the work
+/// per unit at most `limit(0)` times, the limit itself. The units are counted here, on the
+/// sets `make` builds, which are the same in every process of one `ZED_TREAP_SEED`.
+///
+/// Each size is measured as [`crate::scaling::check_order_fresh`] measures it: in a process of
+/// its own where the test binary runs other tests. FAIL-treap-subset-bench-spread (2026-11-23,
+/// Colab std2, 2 cores): each bench run alone under DynamoRIO's count gave one ratio per seed on
+/// every run (seed 0: joined cuts 1.25, removals 0.95, middle half 0.91), and alone on the
+/// hardware counter about the same (1.26 to 1.30); measured inside the whole `--lib` run, by 8
+/// test threads on 2 cores, seed 0's joined cuts measured 1.38 (1094 and 1511 instructions per
+/// unit), and the middle half moved from 0.50 to 1.10 between runs of the bench file. The
+/// sets are the same in both, so what moved was the count, not the work.
+fn hold_per_unit(
+    what: &str,
+    measure: &str,
+    (small, large): (i64, i64),
+    make: impl Fn(i64) -> (TreapSet<i64>, TreapSet<i64>) + Sync,
+    units: impl Fn(i64, &TreapSet<i64>, &TreapSet<i64>) -> u64,
+) {
+    let [at_small, at_large] = [small, large].map(|k| {
+        let (a, b) = make(k);
+        units(k, &a, &b).max(1)
     });
-    eprintln!(
-        "bench is_subset len={} bound={bound} instr={}",
-        a.len(),
-        work.units
+    let allowed = crate::scaling::limit(0) * at_large as f64 / at_small as f64;
+    let why = format!(
+        "{measure}: {at_small} and {at_large} units, so the work per unit within {:.4} times is \
+         the work within {allowed:.4} times",
+        crate::scaling::limit(0)
     );
-    work.units / bound.max(1)
+    let to_size = |k: i64| usize::try_from(k).expect("a size of the bench");
+    crate::scaling::fresh_inputs_by(
+        &mut crate::scaling::Meter::new(),
+        crate::scaling::Measures::WorkOnly,
+        None,
+        what,
+        crate::scaling::Bound::Given(allowed, &why),
+        (to_size(small), to_size(large)),
+        &|k, _| make(i64::try_from(k).expect("a size of the bench")),
+        &|_, (a, b): (TreapSet<i64>, TreapSet<i64>)| {
+            for _ in 0..RUNS {
+                assert!(std::hint::black_box(&a).is_subset(&b));
+            }
+        },
+    );
 }
 
 #[test]
@@ -117,17 +145,12 @@ fn is_subset_scales_with_the_edits_not_the_size() {
     // 2^17 to 2^20 (617, 916 and 1263 nodes, 2026-11-21), above the 1.31 that an expected depth
     // of `2 ln k` less the 6 levels the 64 paths share gives; the instructions grew 1.44 and 1.37
     // times with them, 135, 131 and 130 per node.
-    let mut meter = crate::scaling::Meter::new();
-    let [small, large] = [1i64 << 14, 1 << 17].map(|k| {
-        let (less, all) = edited(k, 64);
-        per_unit(&mut meter, &less, &all, not_shared(&less, &all))
-    });
-    crate::scaling::hold(
+    hold_per_unit(
         "is_subset of k keys with 64 removed against the k keys, sizes 2^14 and 2^17",
-        "instructions per node of U",
-        small,
-        large,
-        0,
+        "the work per node of U",
+        (1 << 14, 1 << 17),
+        |k| edited(k, 64),
+        |_, less, all| not_shared(less, all),
     );
     // A cut to the middle half of `k` and `8k` keys against the keys: the proof's cut case. The
     // work per unit of what the proof charges, held to the limit of power 0: `U`, the depths in
@@ -136,21 +159,18 @@ fn is_subset_scales_with_the_edits_not_the_size() {
     // which bound these but do not follow them: the depth of `k / 4` went from 12 to 26 from
     // 2^14 to 2^17 while the height of `all` went from 34 to 43, and the instructions grew 1.71
     // times, 1.30 per unit of `U + h + h'` (2026-11-21).
-    let [small, large] = [1i64 << 14, 1 << 17].map(|k| {
-        let (cut, all) = middle_half(k);
-        let bound = not_shared(&cut, &all)
-            + depth(&all.root, k / 4)
-            + depth(&all.root, 3 * k / 4)
-            + spine(&cut.root, true)
-            + spine(&cut.root, false);
-        per_unit(&mut meter, &cut, &all, bound)
-    });
-    crate::scaling::hold(
+    hold_per_unit(
         "is_subset of the middle half of k keys against the k keys, sizes 2^14 and 2^17",
-        "instructions per node of U, the two depths and the two spines",
-        small,
-        large,
-        0,
+        "the work per node of U, the two depths and the two spines",
+        (1 << 14, 1 << 17),
+        middle_half,
+        |k, cut, all| {
+            not_shared(cut, all)
+                + depth(&all.root, k / 4)
+                + depth(&all.root, 3 * k / 4)
+                + spine(&cut.root, true)
+                + spine(&cut.root, false)
+        },
     );
 }
 
@@ -201,27 +221,24 @@ fn is_subset_of_joined_cuts_scales_with_the_gaps() {
     // way. The test that fails on that walk is `is_subset_work_within_its_bound` in `tests.rs`,
     // which counts the walk's units of work on gaps built with 200 such keys each.
     let g = 64;
-    let mut meter = crate::scaling::Meter::new();
-    let [small, large] = [16i64, 128].map(|l| {
-        let (joined, all) = joined_cuts(g, l);
-        let mut bound =
-            not_shared(&joined, &all) + spine(&joined.root, true) + spine(&joined.root, false);
-        for i in 0..g {
-            let (s1, s2) = (2 * i * l + l - 1, 2 * i * l + 2 * l);
-            for end in [s1, s2] {
-                bound += depth(&joined.root, end)
-                    + depth(&all.root, end)
-                    + inside_on_path(&all.root, end, s1, s2);
-            }
-        }
-        per_unit(&mut meter, &joined, &all, bound)
-    });
-    crate::scaling::hold(
+    hold_per_unit(
         "is_subset of 65 cuts of the keys joined, gaps of l keys, against the keys, l = 16 and 128",
-        "instructions per node of U, per key of a gap on its ends' paths, per depth of a gap's \
-         ends and per spine",
-        small,
-        large,
-        0,
+        "the work per node of U, per key of a gap on its ends' paths, per depth of a gap's ends \
+         and per spine",
+        (16, 128),
+        |l| joined_cuts(g, l),
+        |l, joined, all| {
+            let mut bound =
+                not_shared(joined, all) + spine(&joined.root, true) + spine(&joined.root, false);
+            for i in 0..g {
+                let (s1, s2) = (2 * i * l + l - 1, 2 * i * l + 2 * l);
+                for end in [s1, s2] {
+                    bound += depth(&joined.root, end)
+                        + depth(&all.root, end)
+                        + inside_on_path(&all.root, end, s1, s2);
+                }
+            }
+            bound
+        },
     );
 }

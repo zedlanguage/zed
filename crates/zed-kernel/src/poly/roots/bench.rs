@@ -69,6 +69,59 @@ fn end_evaluations(
     out
 }
 
+/// ROOTS-dense-cluster-constant: the branch and bound against the chain alone on dense
+/// polynomials with many integer roots, `(x - 2) … (x - 65)` and the cubic
+/// `(x - 4)(x - 5)(x - 7)`, on one machine and one meter. Prints the measurements and checks
+/// only the roots.
+///
+/// Measured 2026-11-23 (b22-kernel6, Colab std2, DynamoRIO's count): on `(x - 2) … (x - 65)`
+/// the branch and bound took 602,251,525 instructions and finished without handing over to
+/// the chain, which took 146,737,561 alone: 4.10 times. On the cubic, 158,584 against 92,440,
+/// 1.72 times, with one handover. So the gap the row names holds on one machine.
+#[test]
+fn the_branch_and_bound_against_the_chain_on_clusters_of_integer_roots() {
+    let sorted = |mut v: Vec<BigInt>| {
+        v.sort();
+        v
+    };
+    let mut meter = crate::scaling::Meter::new();
+    let roots_2_to_65: Vec<BigInt> = (2..=65).map(BigInt::from).collect();
+    let cubic: Vec<BigInt> = [4, 5, 7].map(BigInt::from).to_vec();
+    for (family, rs) in [("2..=65", roots_2_to_65), ("4, 5, 7", cubic)] {
+        let p = from_roots(&rs);
+        let a = BigInt::from(2);
+        let hi = BigInt::one()
+            + p.iter()
+                .map(|(_, c)| num_traits::Signed::abs(c))
+                .max()
+                .expect("terms");
+        let chained = super::tests::CHAINED.with(|c| c.get());
+        let bb = meter.least(
+            || {},
+            || assert_eq!(sorted(black_box(positive_roots(&p, a.clone(), None))), rs),
+        );
+        let handed = super::tests::CHAINED.with(|c| c.get()) - chained;
+        let chain = meter.least(
+            || {},
+            || {
+                assert_eq!(
+                    sorted(black_box(chain_roots(&p, a.clone(), Some(hi.clone())))),
+                    rs
+                )
+            },
+        );
+        println!(
+            "bench roots-cluster {family} t={} bb={} chain={} bb/chain={:.3} handed={handed} \
+             unit={}",
+            p.len(),
+            bb.units,
+            chain.units,
+            bb.units as f64 / chain.units as f64,
+            meter.unit(),
+        );
+    }
+}
+
 #[test]
 fn a_unit_of_the_branch_and_bound_against_an_end_of_the_chain() {
     let mut meter = crate::scaling::Meter::new();
