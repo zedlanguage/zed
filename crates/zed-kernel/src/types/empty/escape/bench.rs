@@ -54,3 +54,73 @@ fn the_forest_of_atoms_of_wide_and_small_integers_scales() {
         },
     );
 }
+
+/// PERF-escape-big-heads-scaling: the escape decision on lists whose heads are big integers,
+/// `2^64 + k` (distinct hashes) or `2^64 + k (2^61 - 1)` (one residue mod `2^61 - 1`, so one
+/// hash). `Heads \ (Avoid_2 | ... | Avoid_m)`, where `Heads` is a list of m cons cells with
+/// heads `{b_j, anchor}` and `Avoid_e = cons(int \ {b_e}, Avoid_(e-1))`. Red before the fix
+/// (`on_path` in `cells_windows`): 20.2 and 20.3 times the instructions at 8m with distinct
+/// hashes (b22-kernel5), the cons cells of `Heads` filling the pair lists of way P.
+/// With tied heads the work is O(m log m), not O(m): the head types `{b_j, anchor}` and
+/// `int \ {b_e}` all tie in `name_digest`, so the `ByType` maps of `Nodes` keep them in one
+/// ordered bucket of about 2m types (`TiedMap`, PERF-typeset-tied-digest), `O(log m)`
+/// comparisons of keys of two values for each of the O(m) lookups. An n log n ratio meets
+/// 10.5 only from n = 777 (DESIGN sec:plan), so the sizes are 1024 and 8192: at 128 and 1024
+/// the tied variant measured 11.50 times the instructions (callgrind: `BigInt::cmp` 12.05
+/// times, against 8 ln 2048 / ln 256 = 11.0 for the bucket), 8.28 untied.
+#[test]
+fn the_escape_decision_on_lists_of_big_integers_scales() {
+    use crate::scaling;
+    use crate::types::Type;
+    use crate::types::rec::{Def, Expr as RecExpr, Group};
+
+    let n = 1024;
+    for tied in [false, true] {
+        let types = scaling::inputs(n, |m| {
+            let step: BigInt = match tied {
+                true => (BigInt::from(1u8) << 61u32) - 1u8,
+                false => BigInt::from(1u8),
+            };
+            let base: BigInt = BigInt::from(1u8) << 64u32;
+            let big = |k: usize| {
+                Type::lit(&Value::int(&base + &step * (k as u64 + 1))).expect("a literal")
+            };
+            let anchor = big(m + 2);
+            let nil = || RecExpr::Type(Type::atom("nil"));
+            let cons = |h: RecExpr, next: RecExpr| RecExpr::Atom("cons".into(), vec![h, next]);
+            let mut defs = vec![Def {
+                name: "Ints".into(),
+                params: vec![],
+                body: RecExpr::Union(vec![
+                    nil(),
+                    cons(RecExpr::Type(Type::int()), RecExpr::Ref(0, vec![])),
+                ]),
+            }];
+            for e in 1..=m {
+                let head = &Type::int() - &if e == 1 { anchor.clone() } else { big(e) };
+                defs.push(Def {
+                    name: format!("Avoid{e}"),
+                    params: vec![],
+                    body: cons(RecExpr::Type(head), RecExpr::Ref(e - 1, vec![])),
+                });
+            }
+            let mut list = nil();
+            for j in (1..=m).rev() {
+                list = cons(RecExpr::Type(&big(j) | &anchor), list);
+            }
+            defs.push(Def {
+                name: "Heads".into(),
+                params: vec![],
+                body: list,
+            });
+            let ts = Group::new(defs).expect("a group").instance(vec![]);
+            let avoided = (2..=m).fold(Type::empty(), |u, d| &u | &ts[d]);
+            &ts[m + 1] - &avoided
+        });
+        let what = format!("the escape decision on lists of big integers (tied: {tied}), by heads");
+        scaling::check(&what, n, |m| {
+            Type::forget_emptiness();
+            assert!(!types[&m].is_empty());
+        });
+    }
+}

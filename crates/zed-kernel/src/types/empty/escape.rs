@@ -1836,8 +1836,26 @@ fn cells_windows(
     // for the cofinite places. `pv[j]`: the lists of place `j`. The value ids are found once for
     // each place type and each head type: found per place and per node, hashing the values took
     // 40 of the 120 ms of r6parity.65536's setup.
+    // Only the nodes on some row's path (a row's tail and the nodes it links to) go into P's
+    // lists: P gives a pair `(j, v)` only to the rows whose node `j - 2` links up is `v`, so a
+    // node off every path reaches no row, and leaving it out keeps step (ii) of the necessity
+    // proof below. Each node is marked once (a walk stops at the first node marked), O(n).
+    // Complexity tradeoff: with every cons node listed, the cons cells of the taken chain itself
+    // filled the list of each value they lack, `m - 1` nodes for each of the m places of
+    // `Heads \ (Avoid_2 | ... | Avoid_m)` (PERF-escape-big-heads-scaling), so P cost Θ(m^2), and
+    // way A, taken as cheaper, Θ(m^2) too (callgrind, debug build, m = 128 against 1024:
+    // `Blocks::summ` 60.8 times the instructions, `cells_windows` 42.4 times).
+    let mut on_path = vec![false; nodes.len()];
+    for r in roots.iter() {
+        let mut v = Some(r.s);
+        while let Some(x) = v
+            && !std::mem::replace(&mut on_path[x], true)
+        {
+            v = nodes[x].next;
+        }
+    }
     let cons: Vec<usize> = (0..nodes.len())
-        .filter(|&v| nodes[v].next.is_some())
+        .filter(|&v| nodes[v].next.is_some() && on_path[v])
         .collect();
     let fin_heads: Vec<usize> = cons
         .iter()
@@ -2151,7 +2169,8 @@ fn cells_windows(
             // (ii) Some list of `pv[j]` holds `v`. A finite `pl[j]` has a value `x` not in
             //   `v`'s head (else the cell is empty), and the list of `x` holds the cons nodes
             //   whose head lacks `x` (the doc above; every value of a finite place is interned
-            //   into `vid`); a cofinite `pl[j]` reads the list of all cons nodes.
+            //   into `vid`); a cofinite `pl[j]` reads the list of all cons nodes. The lists keep
+            //   only the nodes on some row's path (`on_path`), and `v`, linked to from `s`, is one.
             // (iii) The class filter keeps `v`: `ht(s) = ht(v) + (j - 2)`, and `r` is open, so
             //   `ht(s) mod md` is in `rs` and `want` puts `(ht(s) - (j - 2)) mod md`, the class of
             //   `v`, in `ws`, whatever the modulus. (`jmax[r] = min(l0, ht(s) + 1)`, which gives
