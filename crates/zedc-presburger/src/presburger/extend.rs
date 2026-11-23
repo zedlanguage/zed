@@ -987,6 +987,13 @@ impl Face {
         // 3`, whose own `x div 2` is that `q0`, hold at `x = 9` with `q0 = 0`, where `9 div 2`
         // is 4 (SOUND-extend-face-local-atoms; test
         // `l01_38_omega_test::extend::an_atom_a_face_clause_alone_reads_is_not_read_beside_it`).
+        // No row or hole reads such an atom: [`project`] splits its items into groups linked by
+        // the atoms outside `keep` and folds a group's rows into its one disjunction, or keeps
+        // the atoms two disjunctions share, so an atom outside `keep` lies in one group only,
+        // and holes are keyed by atoms of `keep` (the loop over `face.holes` in `Faces::face`,
+        // and `hole_of` above). Were one read by a row too, leaving it out would still be sound:
+        // `hidden` and `apart` read `atoms` only to decline a face, so a smaller set declines
+        // more often and never answers otherwise.
         let local: HashSet<Atom> = (clauses.iter())
             .flat_map(Formula::atoms)
             .filter(|a| !keep.contains(a))
