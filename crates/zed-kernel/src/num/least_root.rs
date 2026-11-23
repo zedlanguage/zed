@@ -498,4 +498,124 @@ mod tests {
             assert!(odd.passes(p), "p = {p}");
         }
     }
+
+    // The four tests below were in zedc-int's `int/completeness.rs` before `least_root` moved
+    // here (2026-11-23, KEPT-power-form-print); they read its private helpers.
+
+    /// The primes of the cheap root check are what their comment says: prime, and the largest
+    /// below `2^64`, `2^63` and `2^62`.
+    #[test]
+    fn the_root_check_primes_are_the_largest_below_their_powers_of_two() {
+        for (q, k) in ROOT_CHECK_PRIMES.into_iter().zip([64u32, 63, 62]) {
+            assert!(is_prime(q), "{q}");
+            // `2^(k-1) <= q < 2^k`, and the next prime is at least `2^k` (none below `2^64`).
+            assert_eq!(q.ilog2(), k - 1, "{q}");
+            let next = zed_numtheory::next_prime(q);
+            assert!(next.is_none_or(|n| n.ilog2() >= k), "{q}: next {next:?}");
+        }
+    }
+
+    #[test]
+    fn word_arithmetic_helpers_on_their_ends() {
+        // pow_mod_2_64, pow_mod and inverse_mod_2_64 are tested in zed-numtheory.
+        // pow_mod_pow2 against num-bigint, exponents 0, 1 and many, moduli of one bit and past
+        // a word.
+        let x = BigUint::from(3u32).pow(50u32) + 1u32;
+        for (e, k) in [
+            (0u64, 1u32),
+            (1, 1),
+            (1, 200),
+            (5, 64),
+            (17, 65),
+            (100, 300),
+        ] {
+            let unit = BigUint::from(1u32) << k;
+            let mask = &unit - 1u32;
+            assert_eq!(
+                pow_mod_pow2(&x, e, &mask),
+                x.modpow(&BigUint::from(e), &unit),
+                "x ^ {e} mod 2^{k}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_root_by_odd_part_rejects_each_way_a_candidate_fails() {
+        // (case, base, index, root)
+        let wide = BigUint::from(3u32).pow(100u32) + 2u32; // odd, no power
+        let cases: Vec<(&str, BigUint, u64, Option<BigUint>)> = vec![
+            // The power of 2 is not a multiple of the index.
+            ("2^4 * 27, index 3", BigUint::from(16u32 * 27), 3, None),
+            // The odd part is 1: the root is a power of 2.
+            (
+                "2^9, index 3",
+                BigUint::from(512u32),
+                3,
+                Some(BigUint::from(8u32)),
+            ),
+            // A one-word root, found and checked.
+            (
+                "2^3 * 7^3, index 3",
+                BigUint::from(8u32 * 343),
+                3,
+                Some(BigUint::from(14u32)),
+            ),
+            // A one-word candidate of the wrong bit count, and one off by the test primes.
+            ("7^3 + 2, index 3", BigUint::from(345u32), 3, None),
+            (
+                "3^40 + 2, index 5",
+                BigUint::from(3u32).pow(40u32) + 2u32,
+                5,
+                None,
+            ),
+            // A wide root, found; a wide odd part that is no power, refused.
+            (
+                "(3^100 + 2)^3, index 3",
+                wide.pow(3u32),
+                3,
+                Some(wide.clone()),
+            ),
+            ("(3^100 + 2)^3 + 2, index 3", wide.pow(3u32) + 2u32, 3, None),
+            ("3^100 + 2, index 3", wide.clone(), 3, None),
+        ];
+        for (case, b, p, want) in cases {
+            assert_eq!(OddPart::of(&b).root(p), want, "{case}");
+        }
+    }
+
+    #[test]
+    fn the_residue_filter_passes_powers_and_ignores_indices_it_holds_no_prime_for() {
+        // 3^(3·5·7·11·13) is a power for each of those indices, and passes each of them, wide
+        // ones included; an index past the filter's wide primes passes on the small primes
+        // alone.
+        let o = BigUint::from(3u32).pow(3 * 5 * 7 * 11 * 13);
+        let odd = OddPart::of(&o);
+        for p in [3u64, 5, 7, 11, 13] {
+            assert!(odd.passes(p), "index {p}");
+        }
+        // 521 is past the wide indices (those below 23,798 / 64 bits) and has no prime 1 modulo
+        // it below 1024, so no residue applies: it passes, though 521 does not divide 15,015.
+        // The filter is a necessary condition only; the root decides.
+        let top = odd
+            .filter()
+            .wide
+            .last()
+            .map(|&(p, _, _)| p)
+            .expect("wide indices");
+        assert!(top < 521, "the widest index {top}");
+        assert!(odd.passes(521), "index 521, no residue applies");
+        assert_eq!(odd.root(521), None, "3^15015 is no 521st power");
+        // A number that is no cube fails a small prime 1 modulo 3: 3 is not a cube modulo 7.
+        assert!(!OddPart::of(&BigUint::from(3u32)).passes(3), "3, index 3");
+        // A number with a factor of each small filter prime passes every index: every residue
+        // is 0.
+        let mut all = BigUint::from(1u32);
+        for &(q, _) in &OddPart::of(&BigUint::from(3u32)).filter().small {
+            all *= q;
+        }
+        let all = OddPart::of(&all);
+        for p in [3u64, 5, 7, 11, 13, 101] {
+            assert!(all.passes(p), "every residue 0, index {p}");
+        }
+    }
 }

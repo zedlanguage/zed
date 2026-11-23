@@ -503,10 +503,12 @@ fn an_exponent_with_a_coefficient_is_quoted_in_parentheses() {
     // TEST-exponent-literal-coefficient-parens: an exponent literal folded to a power form with
     // a coefficient, `3*2^1100`, is quoted in parentheses (walk.rs, at `contains('*')`), so
     // that the text pasted back after `^` parses as one exponent: `x ^ 3*2^1100` would read as
-    // `(x ^ 3) * 2^1100`. 3^30 = 205891132094649 by `bc`; 2^20 = 1048576.
+    // `(x ^ 3) * 2^1100`. 3^30, held as its digits 205891132094649, prints as its power (the
+    // printer finds it, `Rat::integer_text`, KEPT-power-form-print), so the form has two powers
+    // and a `*`; 2^20 = 1048576.
     for (src, lit) in [
         ("(3 * 2^1100)", "(3*2^1100)"),
-        ("(3^30 * 2^1100)", "(205891132094649*2^1100)"),
+        ("(3^30 * 2^1100)", "(2^1100*3^30)"),
         ("(3 * 2^(2^20))", "(3*2^1048576)"),
     ] {
         let text = format!("f() = 0.5f64 ^ {src};\n");

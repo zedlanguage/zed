@@ -53,13 +53,13 @@ end with an empty top level instead, tested).
 | `least_root` on powers of wide bases (odd, even, with odd parts) to prime and composite exponents and their neighbors; a power of 2 alone | `least_root::tests::least_roots_agree_with_trial_and_with_powers_of_large_bases` |
 | `least_root` on 2 and 3 (below the loop bound), 4, 8, 9, 12, 36, 72, 6^6 (square then cube root), 10^9, 2^15, 5^15 (cube then 5th root) | `least_roots_of_the_smallest_bases_and_of_mixed_powers` |
 | `odd_primes_below` for every bound 0..300 | `the_odd_prime_sieve_agrees_with_trial_division` |
-| `OddPart::root`: power of 2 not a multiple of the index; odd part 1; one-word root found; one-word candidate refused by its bits or by the test primes; wide root found; wide non-power refused | `a_root_by_odd_part_rejects_each_way_a_candidate_fails` |
+| `OddPart::root`: power of 2 not a multiple of the index; odd part 1; one-word root found; one-word candidate refused by its bits or by the test primes; wide root found; wide non-power refused | `least_root::tests::a_root_by_odd_part_rejects_each_way_a_candidate_fails` |
 | `OddPart::filter`: the wide indices and their least primes | `least_root::tests::each_index_wider_than_a_word_has_its_least_prime` |
-| `OddPart::passes`: a power passes each of its indices, wide ones included; an index past the wide list with no small prime passes (the filter is necessary only, the root refuses); a residue 0 at every prime passes; a non-cube fails | `the_residue_filter_passes_powers_and_ignores_indices_it_holds_no_prime_for` |
+| `OddPart::passes`: a power passes each of its indices, wide ones included; an index past the wide list with no small prime passes (the filter is necessary only, the root refuses); a residue 0 at every prime passes; a non-cube fails | `least_root::tests::the_residue_filter_passes_powers_and_ignores_indices_it_holds_no_prime_for` |
 | `remainders`: 0 to 9 moduli (every tree shape), a value below the product | `least_root::tests::a_remainder_tree_gives_each_remainder` |
 | `remainders`: one modulus, u64::MAX, moduli 1, value 0 | `a_remainder_tree_of_one_modulus_and_of_moduli_past_the_value` |
 | `pow_mod` (zed-numtheory): modulus 1, exponent 0, base 0, base equal to and past the modulus, the largest prime below 2^64 | zed-numtheory `tests::products_and_powers_modulo_a_word_agree_with_num_bigint` |
-| `pow_mod_pow2` at its ends (`pow_mod_2_64` and `inverse_mod_2_64` are in zed-numtheory, with their tests) | `word_arithmetic_helpers_on_their_ends` |
+| `pow_mod_pow2` at its ends (`pow_mod_2_64` and `inverse_mod_2_64` are in zed-numtheory, with their tests) | `least_root::tests::word_arithmetic_helpers_on_their_ends` |
 | `odd_root_mod_pow2` one word and wide, against zed-numtheory's `odd_root_mod_2_64` | `least_root::tests::a_root_in_one_word_is_the_root_by_big_numbers` |
 | `expand_pow`: exponent 0, base 0, base 1, base 2, wide results | `expand_pow_writes_out_each_power` |
 | zed-kernel `num::coprime::strip` (moved from this crate by PERF-coprime-base-wide-few) by a power of 2: fewer zeros than the factor has, zeros not a multiple of its exponent, rest 1 | zed-kernel `num::coprime::tests::stripping_a_power_of_2_agrees_with_dividing_once_per_factor`, `stripping_a_power_of_2_by_a_power_of_2` |

@@ -16,7 +16,7 @@ use zed_kernel::bits::BitLen;
 use zed_kernel::num::coprime::coprime_base_exponents;
 use zed_kernel::num::{
     TooLarge, div_floor_int, gcd_uint, least_root, mod_floor_int, mul_int, mul_uint,
-    nth_root_rem_uint, read_digits, remainders, room, to_decimal,
+    nth_root_rem_uint, read_digits, room, to_decimal,
 };
 use zed_numtheory::{
     bezout_i128, gcd_big_u64, gcd_u64, gcd_u128, log2_bounds, next_prime, pow_mod,
