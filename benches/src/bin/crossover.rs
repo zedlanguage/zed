@@ -25,8 +25,9 @@
 //!   words against the division by a reciprocal, `2w - 1` by `w` dense words; `div-rows step`
 //!   fits `SPARSE_STEP` on the same divisors.
 //! - `div-sparse [w [q]]`: `SPARSE_STEP` with `SPARSE_RUN`, the same two methods on
-//!   `(q + 1) w - 1` by `w` words of which `k` are nonzero, spread evenly, from 2 (the kept power `2^(64w - 1) + 1`) to `w`; for `q` above
-//!   1 the reciprocal at every block (256, 1024 and 2048 with `q` = 1, and `1024 16`, in `all`).
+//!   `(q + 1) w - 1` by `w` words of which `k` are nonzero, spread evenly, from 2 (the kept
+//!   power `2^(64w - 1) + 1`) to `w`; for `q` above 1 the reciprocal at every block (256, 1024
+//!   and 2048 with `q` = 1, and `1024 16`, in `all`).
 //! - `recip`: `RECIP_LEAF`, a reciprocal of `p` bits started from num-bigint's division at `p`
 //!   bits against one Newton step from there (the leaf at `p` against at `p - 1`).
 //! - `gcd-leaf`: `GCD_LEAF`, the gcd of two odd numbers of `w` words by Stein's gcd against one
