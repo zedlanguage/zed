@@ -366,6 +366,10 @@ fn the_remainders_take_the_cheaper_method() {
         ),
     ];
     let mut worst = (0.0f64, String::new());
+    let key = match meter.instructions {
+        true => "instr",
+        false => "work",
+    };
     for (name, leaves) in families {
         let levels = trees::product_tree(&leaves);
         let p = trees::tree_product(&leaves, &levels).into_owned();
@@ -397,7 +401,7 @@ fn the_remainders_take_the_cheaper_method() {
             }
             let ratio = got.units as f64 / best;
             eprintln!(
-                "remainders {name} at {width}: instr={}, the cheapest fixed method instr={best}, \
+                "remainders {name} at {width}: {key}={}, the cheapest fixed method {key}={best}, \
                  ratio {ratio:.3}",
                 got.units
             );
@@ -417,10 +421,20 @@ fn the_remainders_take_the_cheaper_method() {
     // power-of-2 node's products as dense), and 1.083 at 1/2 (the estimate's 38,700
     // instructions on a descent of 284,000), so 1.1 is 0.007 above the worst, three times the
     // variation, and below it the test would fail on the cost model's known error alone.
+    // Processor time, the meter of a run not started alone with `--exact` where the hardware
+    // counts no instructions (`scaling::Meter::new`), changes with load, so it is allowed
+    // `scaling::TIME_ALLOWANCE` times the limit, as every check of the harness allows it
+    // (measured: 1.736 on 512 leaves of 8 words at 7/8 in a run of the whole crate with 8
+    // threads, 1.017 in instructions).
+    let limit = match meter.instructions {
+        true => 1.1,
+        false => 1.1 * scaling::TIME_ALLOWANCE,
+    };
     assert!(
-        worst.0 <= 1.1,
-        "remainders took {:.3} times the cheapest method's instructions on {}",
+        worst.0 <= limit,
+        "remainders took {:.3} times the cheapest method's {} on {}, at most {limit}",
         worst.0,
+        meter.unit,
         worst.1
     );
 }
