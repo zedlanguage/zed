@@ -98,6 +98,36 @@ fn steps_whose_later_forms_are_all_allowed_pass() {
     assert!(out.contains("0 not allowed"), "{out}");
 }
 
+/// The spec's own steps (DESIGN.md in place): every span a step writes that needs a later
+/// layer is allowed, by a sentence that names the later layer or step or a refusal (the test
+/// of row LAYER-steps-check).
+#[cfg(feature = "spec")]
+#[test]
+fn the_specs_steps_list_only_allowed_later_forms() {
+    let root = zed_tests::spec::root();
+    let (outcome, out) = tool(layer::run, &[&root, "steps"]);
+    let bad: Vec<&str> = out.lines().filter(|l| l.contains("NOT ALLOWED")).collect();
+    assert_eq!(
+        outcome,
+        Ok(true),
+        "{} not allowed:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// A function head and a named argument written alone are read where they stand, as a
+/// declaration's head and a call's argument, so an L1 step that writes them lists neither.
+#[test]
+fn a_head_and_an_argument_are_read_in_place() {
+    let extra = "The head `h(positional z: f64)` and the argument `punct: \"?\"` are L1 forms.";
+    let dir = spec("steps_in_place", &steps_section(0, extra));
+    let s = Spec::open(&dir.root()).expect("the spec reads");
+    let a = steps::audit(&s, &std::fs::read_to_string(&s.design).expect("DESIGN.md"));
+    assert!(a.listed.iter().all(|l| l.step != "L1.0"), "{a:?}");
+    assert_eq!(a.unread, 0, "{a:?}");
+}
+
 /// Prose in backticks and fenced code: the prose is counted as unread, the fence is not read.
 #[test]
 fn spans_that_parse_in_no_reading_are_counted_and_fences_are_left_out() {

@@ -345,21 +345,40 @@ fn a_module_a_path_attribute_places_is_not_read() {
     assert!(edges(&g).is_empty(), "{:?}", edges(&g));
 }
 
-/// `zed-rt` reads `stack/growing.rs` this way, once with std's atomics and once with loom's:
-/// the file is reached, by a path relative to the file of the call, and not read.
+/// `zed-rt` reads `stack/growing.rs` this way, once with std's atomics and once with loom's.
+/// The file, named by a path relative to the file of the call, is read as part of the module
+/// around the call (IMPORT-graph-include-read): its `use` of `b` is an import of `a.rs`, cited
+/// at its own line in `a/list.rs`, and its `List` is an item of `std_list`, which `b.rs`
+/// imports, so the two files make a cycle. Before, the file was reached and not read, and the
+/// import inside it was not seen. The second call names a file read already, which is not read
+/// again (listed in `included_again`); one that leaves the sources names no file of the crate.
 #[test]
-fn a_file_an_include_names_is_reached_not_read() {
+fn a_file_an_include_names_is_read_in_the_module_of_the_call() {
     let g = graph(&[
-        ("lib.rs", "mod a;\n"),
-        ("a.rs", "mod std_list {\n    include!(\"a/list.rs\");\n}\n"),
-        ("a/b.rs", "mod loom_list {\n    include!(\"list.rs\");\n}\n"),
-        ("a/list.rs", "use crate::a::nothing;\npub struct List;\n"),
-        ("c.rs", "include!(\"../outside.rs\");\n"),
+        ("lib.rs", "mod a;\nmod b;\ninclude!(\"../outside.rs\");\n"),
+        (
+            "a.rs",
+            "mod std_list {\n    include!(\"a/list.rs\");\n}\n\
+             mod loom_list {\n    include!(\"a/list.rs\");\n}\n",
+        ),
+        ("a/list.rs", "use crate::b::B;\npub struct List(B);\n"),
+        ("b.rs", "use crate::a::std_list::List;\npub struct B;\n"),
     ]);
     assert_eq!(g.included, ["a.rs:2"]);
-    assert_eq!(g.undeclared, 2, "{:?}", g.files);
-    assert!(g.files.iter().any(|f| f == "a/list.rs"), "{:?}", g.files);
-    assert!(edges(&g).is_empty(), "{:?}", edges(&g));
+    assert_eq!(g.included_again, ["a.rs:5"]);
+    assert_eq!(g.undeclared, 0, "{:?}", g.files);
+    assert_eq!(edges(&g), ["a.rs -> b.rs", "b.rs -> a.rs"]);
+    let a = g
+        .files
+        .iter()
+        .position(|f| f == "a.rs")
+        .expect("a.rs is a file");
+    let cite = &g.imports[a][0].1;
+    assert_eq!(
+        (cite.line, cite.path.as_str(), cite.file.as_deref()),
+        (1, "crate::b::B", Some("a/list.rs"))
+    );
+    assert_eq!(cycles(&g), [["a.rs", "b.rs"]]);
 }
 
 #[test]

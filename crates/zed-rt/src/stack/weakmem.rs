@@ -19,13 +19,18 @@
 //! atomic (the head loaded, the record's `next` set, the head stored, with no exchange) makes
 //! loom fail `two_pushes_at_once_are_each_reached_once` and
 //! `three_pushes_at_once_are_each_reached_once`: two pushes that load the same head lose one
-//! record. Weakening the orderings is not caught: with the exchange's success ordering
-//! `Relaxed`, and with all three orderings of `push`, `records` and `Records::next` `Relaxed`,
-//! all four tests pass. The cause is inferred, not traced in loom's source: loom does not run
-//! a thread's operations out of order (the limitation quoted above), and every record here is
-//! written by `Grows::new` before it is pushed, through the same thread's program order. The
-//! orderings are argued at the code instead, in `growing.rs` (G1, G2); this file checks the
-//! atomicity of the list under every interleaving.
+//! record. Those four tests do not catch a weakened ordering (b22-small9: with every ordering
+//! `Relaxed` they pass), since in each a record is made on the thread that pushes it and read
+//! only after a join or by that thread. The two G1 tests (TEST-rt-weakmem-orderings) make each
+//! record inside the pushing thread and walk on another thread, so loom tracks the record's
+//! atomics from their creation and reports a read that does not happen after it (a causality
+//! violation, loom's src/rt/location.rs). Negative controls, run once each on copies of
+//! `growing.rs` and not committed (2026-11-23, b22-small10): with every ordering `Relaxed`,
+//! with the exchange's success `Relaxed` or `Acquire` (not a release), and with the head's
+//! load in `records` `Relaxed`, both G1 tests fail and the other four pass; with the success
+//! `Release`, the head's load `Acquire` and the other three orderings `Relaxed`, all six pass,
+//! as G1 in `growing.rs` argues (the release sequence of the head). G2 is carried by no
+//! ordering and is checked by the atomicity tests above.
 
 mod list {
     use loom::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
@@ -123,6 +128,45 @@ fn a_walk_beside_a_push_sees_a_whole_list() {
         for p in pushes {
             p.join().unwrap();
         }
+    });
+}
+
+/// G1, first case: a record pushed on one thread and reached from the head by a walk on another
+/// reads as `record` wrote it. Fails when the exchange of `push` is not a release (the record's
+/// writes then do not happen before the walk's reads, and loom reports a causality violation on
+/// the first field the walk reads) or when the walk's load of the head is not an acquire.
+#[test]
+fn a_record_pushed_on_one_thread_reads_whole_on_another() {
+    loom::model(|| {
+        let list = list::empty();
+        let push = thread::spawn(move || list.push(record(1)));
+        let reader = thread::spawn(move || walk(list));
+        push.join().unwrap();
+        let seen = reader.join().unwrap();
+        assert!(seen.is_empty() || seen == [1], "{seen:?}");
+    });
+}
+
+/// G1, second case: a walk that reaches record 1 through the `next` of record 2, the two pushed
+/// on different threads, reads record 1 as written. Record 1's writes happen before the walk
+/// through the release sequence of record 1's exchange: record 2's exchange is a
+/// read-modify-write of the head, so the walk's acquire of the head, reading record 2 or a
+/// later record, synchronizes with record 1's exchange too, with no acquire in `push` or in
+/// `Records::next` (the argument at G1). Fails, as the test above, when the exchange is not a
+/// release.
+#[test]
+fn a_record_reached_through_a_newer_one_reads_whole() {
+    loom::model(|| {
+        let list = list::empty();
+        let older = thread::spawn(move || list.push(record(1)));
+        let newer = thread::spawn(move || list.push(record(2)));
+        let seen = thread::spawn(move || walk(list)).join().unwrap();
+        let mut sorted = seen.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), seen.len(), "{seen:?}");
+        older.join().unwrap();
+        newer.join().unwrap();
     });
 }
 

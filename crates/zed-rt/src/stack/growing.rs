@@ -12,26 +12,38 @@
 // for two and three threads, in every interleaving and every weak-memory outcome it models):
 // (G1) A record is written in full before it is published. `push` fills the record (`new`) and
 //      stores its `next` before the compare-and-exchange that makes it the head, and that
-//      exchange is a release on success; a reader's load of the head, or of a `next`, is an
-//      acquire. A reader that reaches record r loaded a pointer to r from the head or from the
-//      `next` of a newer record r'. In the first case the load read the value of r's exchange,
-//      or of a later exchange of the head, which continues the release sequence of r's exchange
-//      since every later write of the head is a read-modify-write; so r's exchange synchronizes
-//      with the load, and every write `push` made to r happens before the reader reads it. In
-//      the second case r' was published the same way, and r's own `push` happens before r''s:
-//      r''s `push` read r as the head with an acquire (its first load, or a failed exchange),
-//      and r's `next` is written only before r's publication (C++20 [atomics.order] and
-//      [intro.races], the release-sequence and synchronizes-with rules, which Rust's atomics
-//      follow; the Rustonomicon, "Atomics"). By induction on the records the reader passed, each
-//      record's fields and its `next` are seen as `push` wrote them, so the walk from any head
-//      it reads reaches every record older than that head, each once: `next` pointers only
-//      point to older records, so the walk never meets a record twice and ends at the null of
-//      the first record. Test: `two_pushes_at_once_are_each_reached_once`,
-//      `three_pushes_at_once_are_each_reached_once`, `a_walk_beside_a_push_sees_a_whole_list`.
+//      exchange is a release on success; the reader's load of the head in `records` is an
+//      acquire. A reader that reaches record r read some record h at the head and followed
+//      `next` pointers from h down to r (h = r when it stopped at once). r's exchange comes
+//      before h's in the modification order of the head, since `next` pointers only point to
+//      records that were the head before. The load of the head read the value of h's exchange
+//      or of a later write of the head; every write of the head is a read-modify-write, so
+//      each continues the release sequence of every earlier exchange, r's included, and r's
+//      exchange synchronizes with the reader's load (C++20 [intro.races] 5, "release sequence",
+//      and 10, "synchronizes with"; [atomics.order] 2, which Rust's atomics follow, the
+//      Rustonomicon, "Atomics"). So every write `push` made to r, its `next` included, happens
+//      before the reader reads it. Two orderings carry this: the release of the exchange's
+//      success and the acquire of the head's load in `records`; with either `Relaxed` loom
+//      reports the walk's read of a record as a causality violation
+//      (`a_record_pushed_on_one_thread_reads_whole_on_another`). The other three acquires (the
+//      first load of `push`, a failed exchange, `Records::next`) are more than G1 needs: with
+//      all three `Relaxed` and the two above kept, every test passes, the walk through a newer
+//      record pushed on another thread included (`a_record_reached_through_a_newer_one_reads_whole`;
+//      negative control run once, 2026-11-23, b22-small10, not committed). They are kept as
+//      written: on x86-64 an acquire load is the same instruction as a relaxed one, and no
+//      measurement asks for the change. Each record's fields and `next` are thus seen as `push`
+//      wrote them, so the walk from any head it reads reaches every record older than that
+//      head, each once: `next` pointers only point to older records, so the walk never meets a
+//      record twice and ends at the null of the first record. Test:
+//      `two_pushes_at_once_are_each_reached_once`, `three_pushes_at_once_are_each_reached_once`,
+//      `a_walk_beside_a_push_sees_a_whole_list`, and the two named above.
 // (G2) No record is lost by two pushes at once: a compare-and-exchange is one indivisible
 //      read-modify-write whatever its ordering ([atomics.order] 10: it reads the last value in
 //      the modification order of the head), so of two pushes that read the same head one
-//      fails, reads the other's record, and tries again with it. Same tests.
+//      fails, reads the other's record, and tries again with it. Same tests. No ordering
+//      carries G2, so no test of it can fail when the orderings are weakened: with every
+//      ordering of this file `Relaxed`, the two- and three-push tests still pass, and with the
+//      push made not atomic (a load and a store) they fail (negative controls, once each).
 // (G3) A record is never freed (each is leaked), so a pointer a reader loads always points to
 //      live memory, whatever it reads of `high`.
 // What loom cannot reach: the handler runs in a signal handler, which loom has no model of;

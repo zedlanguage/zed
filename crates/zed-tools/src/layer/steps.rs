@@ -1,10 +1,12 @@
 //! `layer SPEC_DIR steps`: the layer audit of the plan's steps (author P254, row
 //! LAYER-steps-check), rerun by the tool instead of by hand. Each code span of each step of
 //! DESIGN.md sec:steps, `Lk.n. …` and the paragraphs after it up to the next step or heading,
-//! fences left out, is parsed at each ring in eight readings: as a unit, as a declaration
+//! fences left out, is parsed at each ring in eleven readings: as a unit, as a declaration
 //! (`span;`), as an expression (`x = span;`), as a type (`f(x: span) = 0;`), as a parameter
 //! (`f(span) = 0;`), as a type's suffix (`f(x: int span) = 0;`) and range
-//! (`f(x: int[span]) = 0;`), and as a pattern (`f(v) = match v { span -> 0 };`). A span no
+//! (`f(x: int[span]) = 0;`), as a pattern (`f(v) = match v { span -> 0 };`), as a function
+//! head (`span = 0;`), as an argument (`x = f(span);`) and as an annotation (`span` on
+//! `f() = 0;`). A span no
 //! reading of which parses at the ring of its step is listed, with the lowest ring above it at
 //! which one does, as allowed when the sentence holding it names a later layer or step (`L5`,
 //! `step L5.2`), or says the form is refused or is an error there, and as not allowed
@@ -17,13 +19,16 @@
 //! L3, sec:grammar), which the grammar's rings do not express.
 //!
 //! Cost: each span is lexed once per reading and parsed at most once per ring and reading
-//! (twice per reading unless it is listed), with `TOP` rings and eight readings fixed, so the
+//! (twice per reading unless it is listed), with `TOP` rings and eleven readings fixed, so the
 //! whole run is O(total length of the spans) besides one pass over DESIGN.md to find them; the
 //! parser is a packrat parser, linear in its
 //! input (Ford 2002, "Packrat parsing: simple, powerful, lazy, linear time", ICFP,
 //! doi:10.1145/581478.581483; the claim that this parser memoizes every rule is from memory of
 //! crates/zedc-syntax/src/parse, not checked here). On DESIGN.md of 2026-11-23 (11353 spans)
-//! the audit in the optimized test profile took under 11 s on a Colab VM, test start included.
+//! the audit in the optimized test profile took under 11 s on a Colab VM, test start included,
+//! with eight readings each parsed at the full ring first; with eleven, it took 25 s that way
+//! and 8.2 s with a span stopping at its first reading that parses at its step's ring
+//! (b22-small10).
 
 use zedc::parse::TOP;
 
@@ -98,11 +103,11 @@ fn step_of(line: &str) -> Option<(&str, Option<u32>)> {
     }
 }
 
-/// `None` when `span` parses in none of the eight readings at the full ring; else `Some(0)`
+/// `None` when `span` parses in none of the eleven readings at the full ring; else `Some(0)`
 /// when some reading parses at the ring `layer` of its step, the test of the row; else
-/// `Some(r)`, the lowest ring above `layer` at which some reading parses. Most spans take one
-/// parse per reading at the full ring and one at `layer`; the rings above `layer` are tried
-/// only for a span that fails at `layer`. A grammar of ordered choice need not be monotone in
+/// `Some(r)`, the lowest ring above `layer` at which some reading parses. Most spans stop at
+/// the first reading that parses at `layer`, with one more parse of it at the full ring; the
+/// rings above `layer` are tried only for a span that fails at `layer`. A grammar of ordered choice need not be monotone in
 /// its rings (an alternative a ring adds can take input a later alternative would have read,
 /// which `ring::ring_of` reports as a tree that changes), so the span is read at its step's
 /// ring itself rather than compared with its lowest ring.
@@ -117,24 +122,35 @@ fn ring(spec: &Spec, span: &str, layer: u32) -> Option<u32> {
         format!("f(x: {span}) = 0;"),
         format!("f({span}) = 0;"),
         format!("f(v) = match v {{ {span} -> 0 }};"),
+        // The three places prose writes a fragment of a declaration or a call (row
+        // LAYER-steps-check): a function head, `h(positional z: f64)`, read as the head of a
+        // declaration; a named argument, `punct: "?"`, read as the argument of a call; and an
+        // annotation written alone, `@invariant`, read on a declaration. Each wraps the span
+        // in a context the grammar of the span's own ring has, so a reading parses at a ring
+        // only when the span is a form of that ring in that place: a span of a later form
+        // still fails every reading at its step's ring, and is listed as before.
+        format!("{span} = 0;"),
+        format!("x = f({span});"),
+        format!("{span}\nf() = 0;"),
     ];
     let (syn, lexical) = (&spec.syntactic, &spec.lexical);
-    let toks: Vec<_> = readings
+    let at = |t: &_, k| parse(syn, lexical, t, k, "Unit").is_ok();
+    let lexed: Vec<_> = readings
         .iter()
         .filter_map(|r| lex(lexical, r).ok())
-        .filter(|t| parse(syn, lexical, t, TOP, "Unit").is_ok())
         .collect();
+    // `Some(0)` exactly when some reading parses at the full ring and at the step's ring, as
+    // below; tried first, reading by reading, so a span of its step's ring (most spans) stops
+    // at the first reading that parses, two parses, instead of parsing every reading at the
+    // full ring first (the readings are many, eleven, and most spans read in the first few).
+    if lexed.iter().any(|t| at(t, layer.min(TOP)) && at(t, TOP)) {
+        return Some(0);
+    }
+    let toks: Vec<_> = lexed.into_iter().filter(|t| at(t, TOP)).collect();
     if toks.is_empty() {
         return None;
     }
-    let reads = |k| {
-        toks.iter()
-            .any(|t| parse(syn, lexical, t, k, "Unit").is_ok())
-    };
-    if layer >= TOP || reads(layer) {
-        return Some(0);
-    }
-    (layer + 1..=TOP).find(|&k| reads(k))
+    (layer + 1..=TOP).find(|&k| toks.iter().any(|t| at(t, k)))
 }
 
 /// Whether `sentence` names a layer or step above `layer` (`L5`, `L5.2`), or says that what it

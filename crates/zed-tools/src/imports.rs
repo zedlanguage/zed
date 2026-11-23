@@ -114,6 +114,9 @@ pub struct Cite {
     pub line: usize,
     /// The path, its segments joined by `::`.
     pub path: String,
+    /// The file the line is in when it is not the importing file: a file an `include!` reads
+    /// into the importing file's module.
+    pub file: Option<String>,
 }
 
 /// The import graph: the files the crate roots reach and the imports between them.
@@ -128,11 +131,21 @@ pub struct Graph {
     /// The `mod name;` declarations a `#[path]` attribute places, which are not read, each as
     /// `file:line`.
     pub placed: Vec<String>,
-    /// The `include!("…")` calls that name a file of the crate, each as `file:line`. The file
-    /// is in the graph, but its text is not read: it holds no `use` of its own that leads to
-    /// another file here (`zed-rt`'s `stack/growing.rs`, read with std's atomics and with
-    /// loom's), and its items count as those of the module around the call.
+    /// The `include!("…")` calls that name a file of the crate and read it, each as
+    /// `file:line`. As Rust splices the file's text in at the call (the Rust reference,
+    /// "Macros by example", `include`), the file is read as part of the module around the call:
+    /// its items are that module's, its paths resolve from there, and its imports are those of
+    /// the calling file, each cited at its own line with [`Cite::file`] naming the file. The
+    /// file itself is in `files` with no imports of its own (IMPORT-graph-include-read).
     pub included: Vec<String>,
+    /// The `include!` calls that name a file read already, by an earlier `include!` or a `mod`
+    /// declaration, each as `file:line`. The file is not read again: the tool keeps one reading
+    /// of each file (its tokens, and the modules they open), so the second module's items from
+    /// that text are missing. `zed-rt`'s `stack/growing.rs`, read with std's atomics in
+    /// `stack.rs` and with loom's in the test module `stack/weakmem.rs`, is the case here. A file
+    /// an `include!` reads before a `mod` declaration names it is read as included only, and is
+    /// not listed.
+    pub included_again: Vec<String>,
     /// The calls whose receiver's type was not found that import a file: one with a method of
     /// that name written apart from its type, whose type's file the caller imports by a path or
     /// a typed call.
@@ -225,8 +238,15 @@ fn report(dir: &str, graph: &Graph, cycles: &[Vec<usize>], out: &mut String) {
     if !graph.included.is_empty() {
         say!(
             out,
-            "files an include! names, not read: {}",
+            "include! calls read into the module of the call: {}",
             graph.included.join(", ")
+        );
+    }
+    if !graph.included_again.is_empty() {
+        say!(
+            out,
+            "include! calls of a file read already, not read again: {}",
+            graph.included_again.join(", ")
         );
     }
     if graph.unknown_calls > 0 {
@@ -357,16 +377,19 @@ struct Module<'a> {
     block: bool,
 }
 
-/// A `use` declaration's leaf: the path it names, in the module it is written in.
+/// A `use` declaration's leaf: the path it names, in the module it is written in, and the file
+/// (the module's own, or a file an `include!` read into it).
 struct Binding<'a> {
+    file: usize,
     module: usize,
     segs: Vec<&'a str>,
     glob: bool,
     line: usize,
 }
 
-/// A path written in code, in the module it is written in.
+/// A path written in code, in the module it is written in, and the file, as for [`Binding`].
 struct Path<'a> {
+    file: usize,
     module: usize,
     segs: Vec<&'a str>,
     line: usize,
@@ -503,10 +526,11 @@ struct Builder<'a> {
     reached: Vec<bool>,
     /// The `mod name;` declarations a `#[path]` attribute places, as `file:line`.
     placed: Vec<String>,
-    /// The `include!` calls that name a file of the crate, as `file:line`, and those files;
-    /// once every file is read, the files reached only by those calls, sorted.
+    /// The `include!` calls that read a file, and those that name a file read already, as
+    /// `file:line`; and for each file, the module an `include!` read it into, if one did.
     included: Vec<String>,
-    included_files: Vec<usize>,
+    included_again: Vec<String>,
+    included_in: Vec<Option<usize>>,
     /// For each file: its tokens, the matching brackets, what its braces open, and its module.
     toks: Vec<Vec<(Tok<'a>, usize)>>,
     mates: Vec<Vec<usize>>,
@@ -910,7 +934,8 @@ impl<'a> Builder<'a> {
             reached: vec![false; n],
             placed: Vec::new(),
             included: Vec::new(),
-            included_files: Vec::new(),
+            included_again: Vec::new(),
+            included_in: vec![None; n],
             toks: vec![Vec::new(); n],
             mates: vec![Vec::new(); n],
             opens: vec![HashMap::new(); n],
@@ -935,27 +960,22 @@ impl<'a> Builder<'a> {
         while let Some((file, parent)) = todo.pop() {
             if !b.reached[file] {
                 b.reached[file] = true;
-                b.read(file, parent, &mut todo)?;
+                b.read(file, parent, None, &mut todo)?;
             }
         }
-        // A file an `include!` names is reached, not read; one a `mod` declaration reaches as
-        // well was read above, whatever the order of the two.
-        let mut included = std::mem::take(&mut b.included_files);
-        included.retain(|&f| !b.reached[f]);
-        zed_collections::sorted::sort_dedup(&mut included);
-        for &f in &included {
-            b.reached[f] = true;
-        }
-        b.included_files = included;
         Ok(b)
     }
 
-    /// Reads `file` as a module under `parent` (a crate root when `None`), and queues the files
-    /// its `mod name;` declarations name.
+    /// Reads `file` as a module under `parent` (a crate root when `None`), or, when `into` is
+    /// a module, as text spliced into that module by an `include!`; and queues the files its
+    /// `mod name;` declarations name. An `include!` of a file not read yet reads it at once,
+    /// so the depth of the recursion is that of the nested `include!` calls, each file read
+    /// once.
     fn read(
         &mut self,
         file: usize,
         parent: Option<(usize, &'a str)>,
+        into: Option<usize>,
         todo: &mut Vec<Todo<'a>>,
     ) -> Result<(), String> {
         let files = self.files;
@@ -968,8 +988,11 @@ impl<'a> Builder<'a> {
         } else {
             stem
         };
-        let top = self.module(file, parent.map(|p| p.0), dir.to_string());
-        if let Some((p, name)) = parent {
+        let top = match into {
+            Some(m) => m,
+            None => self.module(file, parent.map(|p| p.0), dir.to_string()),
+        };
+        if let (Some((p, name)), None) = (parent, into) {
             self.modules[p].children.insert(name, top);
         }
         let toks = lex(text);
@@ -1059,10 +1082,11 @@ impl<'a> Builder<'a> {
                         Some(Tok::Ident(_) | Tok::Sep | Tok::Open | Tok::Star)
                     ) =>
                 {
-                    i = self.use_tree(&toks, i, here);
+                    i = self.use_tree(&toks, i, (file, here));
                 }
                 // `include!("p")`, `p` relative to this file's directory (the Rust reference,
-                // "Macros by example", `include`): the file is reached, not read.
+                // "Macros by example", `include`): the file's text is read here, into the
+                // module `here`, as Rust splices it in; a file read already is not read again.
                 Tok::Ident("include")
                     if (next(1), next(2), next(3))
                         == (Some(Tok::Bang), Some(Tok::LParen), Some(Tok::Str)) =>
@@ -1078,8 +1102,14 @@ impl<'a> Builder<'a> {
                         .and_then(|p| joined(here_dir, p))
                         .and_then(|p| self.by_path.get(p.as_str()).copied())
                     {
-                        self.included.push(format!("{path}:{line}"));
-                        self.included_files.push(f);
+                        if self.reached[f] {
+                            self.included_again.push(format!("{path}:{line}"));
+                        } else {
+                            self.included.push(format!("{path}:{line}"));
+                            self.reached[f] = true;
+                            self.included_in[f] = Some(here);
+                            self.read(f, None, Some(here), todo)?;
+                        }
                     }
                 }
                 Tok::Ident("mod") => {
@@ -1219,6 +1249,7 @@ impl<'a> Builder<'a> {
                         i += 2;
                     }
                     self.paths.push(Path {
+                        file,
                         module: here,
                         segs,
                         line: last,
@@ -1446,7 +1477,12 @@ impl<'a> Builder<'a> {
 
     /// Reads the tree of a `use` declaration from `i`, just after the keyword, into bindings of
     /// `module`, and gives the position after its `;`. The tree's braces are kept on a stack.
-    fn use_tree(&mut self, toks: &[(Tok<'a>, usize)], mut i: usize, module: usize) -> usize {
+    fn use_tree(
+        &mut self,
+        toks: &[(Tok<'a>, usize)],
+        mut i: usize,
+        (file, module): (usize, usize),
+    ) -> usize {
         // `use ::name` names another crate: its tokens are read past and bind nothing here.
         let outside = tok(toks, i) == Some(Tok::Sep);
         let mut path: Vec<&'a str> = Vec::new();
@@ -1473,7 +1509,7 @@ impl<'a> Builder<'a> {
                 }
                 Tok::Comma | Tok::Close | Tok::Semi => {
                     if pending && !outside {
-                        self.bind(module, &path, alias, glob, line);
+                        self.bind((file, module), &path, alias, glob, line);
                     }
                     (alias, glob, pending) = (None, false, false);
                     if t == Tok::Close {
@@ -1490,11 +1526,11 @@ impl<'a> Builder<'a> {
         i
     }
 
-    /// Records the leaf `path` of a `use` tree in `module`, bound to `alias` or its last segment
-    /// unless it is a glob or bound to `_`.
+    /// Records the leaf `path` of a `use` tree in `module`, written in `file`, bound to `alias`
+    /// or its last segment unless it is a glob or bound to `_`.
     fn bind(
         &mut self,
-        module: usize,
+        (file, module): (usize, usize),
         path: &[&'a str],
         alias: Option<&'a str>,
         glob: bool,
@@ -1512,6 +1548,7 @@ impl<'a> Builder<'a> {
             self.modules[module].bound.entry(name).or_insert(id);
         }
         self.bindings.push(Binding {
+            file,
             module,
             segs,
             glob,
@@ -1808,9 +1845,20 @@ impl<'a> Builder<'a> {
                 stack.pop();
             }
         }
-        let mut found = Found::default();
+        // The file each file's text counts as part of: the file around the `include!` that read
+        // it (followed out through nested calls, each file read once, so the chain ends), or
+        // the file itself.
+        let owner: Vec<usize> = (0..self.files.len())
+            .map(|mut f| {
+                while let Some(m) = self.included_in[f] {
+                    f = self.modules[m].file;
+                }
+                f
+            })
+            .collect();
+        let mut found = Found(HashMap::new(), owner);
         for (x, binding) in self.bindings.iter().enumerate() {
-            let from = self.modules[binding.module].file;
+            let from = binding.file;
             let to = match done[x] {
                 Some(Res::Item(m, _)) => self.modules[m].file,
                 Some(Res::Module(m)) if binding.glob => self.modules[m].file,
@@ -1821,7 +1869,7 @@ impl<'a> Builder<'a> {
         for path in &self.paths {
             // Every binding is resolved by now, so the path resolves to its end.
             if let (Res::Item(m, _), _) = self.resolve(path.module, &path.segs, &done) {
-                let from = self.modules[path.module].file;
+                let from = path.file;
                 found.add(from, self.modules[m].file, path.line, || {
                     path.segs.join("::")
                 });
@@ -1839,10 +1887,11 @@ impl<'a> Builder<'a> {
                     let file = self.fns[f].imp.map_or(def.file, |m| self.impls[m].file);
                     if file != def.file {
                         split.entry(name).or_default().push((file, open[f]));
-                        apart
-                            .entry((name, def.file))
-                            .or_default()
-                            .push((file, open[f]));
+                    }
+                    // `apart` is between the files the texts count as part of, as `found` is.
+                    let (file, home) = (found.1[file], found.1[def.file]);
+                    if file != home {
+                        apart.entry((name, home)).or_default().push((file, open[f]));
                     }
                 }
             }
@@ -1866,8 +1915,7 @@ impl<'a> Builder<'a> {
         }
         let mut untyped = Vec::new();
         for file in 0..self.files.len() {
-            // A file reached only by an `include!` was not read, so it has no module to walk.
-            if !self.reached[file] || self.included_files.binary_search(&file).is_ok() {
+            if !self.reached[file] {
                 continue;
             }
             let mut walk = Walk::new(&self, &done, (&split, &loose, &span), file);
@@ -1902,7 +1950,10 @@ impl<'a> Builder<'a> {
             }
         }
         let mut imports: Vec<Vec<(usize, Cite)>> = vec![Vec::new(); files.len()];
-        for ((from, to), cite) in found.0 {
+        for ((from, to), (at, mut cite)) in found.0 {
+            if at != from {
+                cite.file = Some(self.files[at].0.clone());
+            }
             imports[number[from]].push((number[to], cite));
         }
         for list in &mut imports {
@@ -1917,6 +1968,7 @@ impl<'a> Builder<'a> {
             undeclared: self.files.len() - files.len(),
             placed: self.placed,
             included: self.included,
+            included_again: self.included_again,
             files,
             imports,
             unknown_calls: unknown,
@@ -2104,11 +2156,10 @@ fn untyped_imports<'a>(
     for &(from, to) in found.0.keys() {
         out_of[from].push(to);
     }
-    let inline = |m: usize| {
-        modules[m]
-            .parent
-            .is_some_and(|p| modules[p].file == modules[m].file)
-    };
+    // Files as `found` counts them, a file an `include!` read as the file around the call.
+    let owner = &found.1;
+    let file_of = |m: usize| owner[modules[m].file];
+    let inline = |m: usize| modules[m].parent.is_some_and(|p| file_of(p) == file_of(m));
     // The number of each file's own module in the module tree.
     let mut top = vec![usize::MAX; files];
     for (m, module) in modules.iter().enumerate() {
@@ -2123,7 +2174,7 @@ fn untyped_imports<'a>(
         for &(f, o) in &kept {
             if inline(o) {
                 inside
-                    .entry((name, d, modules[o].file))
+                    .entry((name, d, file_of(o)))
                     .or_default()
                     .push((f, o));
             }
@@ -2145,12 +2196,14 @@ fn untyped_imports<'a>(
     let mut types = Vec::new();
     let mut ranges = Vec::new();
     for group in &mut groups {
+        // `c`, the file the calls are written in, is cited; `oc` is the file it counts as.
         let (c, _, name, _) = untyped[group[0]];
+        let oc = owner[c];
         types.clear();
         let homes = homes.get(name).map_or(&[][..], Vec::as_slice);
-        if out_of[c].len() < homes.len() {
+        if out_of[oc].len() < homes.len() {
             types.extend(
-                out_of[c]
+                out_of[oc]
                     .iter()
                     .copied()
                     .filter(|&d| apart.contains_key(&(name, d))),
@@ -2160,7 +2213,7 @@ fn untyped_imports<'a>(
                 homes
                     .iter()
                     .copied()
-                    .filter(|&d| found.0.contains_key(&(c, d))),
+                    .filter(|&d| found.0.contains_key(&(oc, d))),
             );
         }
         if types.is_empty() {
@@ -2176,16 +2229,16 @@ fn untyped_imports<'a>(
         let mut least: Option<RangeMin> = None;
         ranges.clear();
         for &d in &types {
-            for here in opens[&(name, d)].around(top[c]) {
-                for &f in here.iter().filter(|&&f| f != c) {
+            for here in opens[&(name, d)].around(top[oc]) {
+                for &f in here.iter().filter(|&&f| f != oc) {
                     drawn.push((first, c, f, first_line, name));
                     every = true;
                 }
             }
-            let Some(within) = inside.get(&(name, d, c)) else {
+            let Some(within) = inside.get(&(name, d, oc)) else {
                 continue;
             };
-            for &(f, o) in within.iter().filter(|&&(f, _)| f != c) {
+            for &(f, o) in within.iter().filter(|&&(f, _)| f != oc) {
                 let (s, e) = span[o];
                 let lo = group.partition_point(|&i| untyped[i].1 < s);
                 let hi = group.partition_point(|&i| untyped[i].1 < e);
@@ -2331,19 +2384,33 @@ fn covered(ranges: &mut [(usize, usize)]) -> usize {
 /// Names bound together, each with its type.
 type Binds<'a> = Vec<(&'a str, Ty)>;
 
-/// The imports found, each pair of files with the first place it is written.
-#[derive(Default)]
-struct Found(HashMap<(usize, usize), Cite>);
+/// The imports found, each pair of files with the first place it is written and the file that
+/// place is in; and the file each file's text counts as part of (`finish`'s `owner`).
+struct Found(HashMap<(usize, usize), (usize, Cite)>, Vec<usize>);
 
 impl Found {
-    fn add(&mut self, from: usize, to: usize, line: usize, path: impl FnOnce() -> String) {
+    /// Adds the import of `to` written at `line` of `at`, between the files `at` and `to`
+    /// count as part of; an import of a file by itself is none. Of two places, the first is
+    /// kept: one in the importing file's own text before one in a file it includes, then the
+    /// lower line.
+    fn add(&mut self, at: usize, to: usize, line: usize, path: impl FnOnce() -> String) {
+        let (from, to) = (self.1[at], self.1[to]);
         if from == to {
             return;
         }
-        let earlier = self.0.get(&(from, to)).is_some_and(|c| c.line <= line);
+        let key = (at != from, line);
+        let earlier = self
+            .0
+            .get(&(from, to))
+            .is_some_and(|(a, c)| (*a != from, c.line) <= key);
         if !earlier {
             let path = path();
-            self.0.insert((from, to), Cite { line, path });
+            let cite = Cite {
+                line,
+                path,
+                file: None,
+            };
+            self.0.insert((from, to), (at, cite));
         }
     }
 }
@@ -2406,11 +2473,13 @@ impl<'b, 'a> Walk<'b, 'a> {
         file: usize,
     ) -> Walk<'b, 'a> {
         let (toks, mate) = (&b.toks[file][..], &b.mates[file][..]);
-        let top = b
-            .modules
-            .iter()
-            .position(|m| m.file == file)
-            .expect("a file read is a module");
+        // A file an `include!` read is walked from the module around the call.
+        let top = b.included_in[file].unwrap_or_else(|| {
+            b.modules
+                .iter()
+                .position(|m| m.file == file)
+                .expect("a file read is a module")
+        });
         Walk {
             b,
             done,
