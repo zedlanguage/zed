@@ -5035,6 +5035,7 @@ impl<'t> Tx<'t> {
             #[cfg(feature = "counts")]
             if matches!(step.kind, StepKind::If(..)) {
                 crate::preimage::counts::note_if_tree_nodes(|| tree_nodes(&st.excl));
+                crate::preimage::counts::note_if_tree_seams(|| tree_seams(&st.excl));
             }
             let top = unbranched.contains(&u);
             let mut child = |c, next| {
@@ -5298,6 +5299,17 @@ impl State1d {
 
 fn tree_height(t: &Tree) -> usize {
     t.as_ref().map_or(0, |n| n.height)
+}
+/// The pairs of neighbors of `t` whose values touch (one ends at v, the next starts at v + 1)
+/// and whose input labels are equal: two nodes where one would do. O(p) node visits plus the
+/// label comparisons.
+#[cfg(feature = "counts")]
+fn tree_seams(t: &Tree) -> usize {
+    let mut v = Vec::new();
+    tree_collect(t, &mut v);
+    v.windows(2)
+        .filter(|w| w[0].1.succ() == w[1].0 && w[0].2 == w[1].2)
+        .count()
 }
 /// The nodes of `t`, O(p) for p nodes; the recursion is as deep as the AVL height, O(log p).
 #[cfg(feature = "counts")]

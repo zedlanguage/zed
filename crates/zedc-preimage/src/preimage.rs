@@ -13468,6 +13468,27 @@ pub mod counts {
         pub(crate) static INVERSE_MOST: Cell<[u64; 2]> = const { Cell::new([0, 0]) };
         pub(crate) static IF_TREE_NODES: Cell<Option<u64>> = const { Cell::new(None) };
         pub(crate) static BOUNDARY_GCDS: Cell<u64> = const { Cell::new(0) };
+        pub(crate) static IF_TREE_SEAMS: Cell<Option<u64>> = const { Cell::new(None) };
+    }
+
+    /// Starts adding up, on this thread, the pairs of neighbors with touching values and equal
+    /// input labels in the tree of excluded values at each `If` step of
+    /// `preimage_ref::Tx::inverse_states` (REF-merge-equal-labels).
+    pub fn count_if_tree_seams() {
+        IF_TREE_SEAMS.set(Some(0));
+    }
+
+    /// The pairs added up since [`count_if_tree_seams`] (`None` when it was not called), and
+    /// stops adding.
+    pub fn if_tree_seams() -> Option<u64> {
+        IF_TREE_SEAMS.replace(None)
+    }
+
+    /// Adds `count()` to [`if_tree_seams`] while adding up; does not call `count` otherwise.
+    pub(crate) fn note_if_tree_seams(count: impl FnOnce() -> usize) {
+        if let Some(sum) = IF_TREE_SEAMS.get() {
+            IF_TREE_SEAMS.set(Some(sum + count() as u64));
+        }
     }
 
     /// The gcds taken on this thread for the cuts of the trees of excluded values

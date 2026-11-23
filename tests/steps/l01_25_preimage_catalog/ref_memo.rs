@@ -1102,6 +1102,48 @@ fn only_a_chain_with_a_round_takes_gcds_for_the_cuts() {
     }
 }
 
+/// REF-merge-equal-labels (XR-ROOTS-REF A8): the inverse of `abs` made the piece at 0, `[0, h]`,
+/// and its reflection `[-h, 0]` into `[-h, -1]`, `[0, 0]`, `[1, h]` with one label, two pairs of
+/// touching pieces where one piece does. Summed over the `If` steps, normal_abs_gap at 16 links
+/// had 104 such pairs with main's `abs` (2437d9d67) and has none now that `abs` builds
+/// `[-h, h]` (`State1d::abs`); pathological_abs has none either way. The families without
+/// `abs` (normal_round_down, normal_min_gap, random_chains) have none. A `Round` can still leave
+/// one: round_abs_mixed has 1 pair at 16 links, from a step other than `abs`, in a tree of at
+/// most 4 nodes, so the counts of the two families that mix `abs` and `Round` are printed and
+/// not held (`tree_round` merges nothing, row REF-merge-equal-labels). The most nodes at an `If` step are printed for the record.
+#[test]
+fn abs_leaves_no_touching_pieces_with_one_label() {
+    use zedc::store::preimage::counts::{
+        count_if_tree_nodes, count_if_tree_seams, if_tree_nodes, if_tree_seams,
+    };
+    for (name, held) in [
+        ("normal_abs_gap", true),
+        ("pathological_abs", true),
+        ("normal_round_down", true),
+        ("normal_min_gap", true),
+        ("random_chains", true),
+        ("round_abs_mixed", false),
+        ("round_abs_one_link", false),
+    ] {
+        for n in [16, 64] {
+            count_if_tree_seams();
+            count_if_tree_nodes();
+            for (t, ds, d) in family(name, n) {
+                preimage(&t, &ds, &d);
+            }
+            let nodes = if_tree_nodes();
+            let seams = if_tree_seams();
+            println!(
+                "{name} at {n}: touching pairs with one label {seams:?}, most nodes {nodes:?}"
+            );
+            assert!(seams.is_some(), "{name} at {n}: not counted");
+            if held {
+                assert_eq!(seams, Some(0), "{name} at {n}");
+            }
+        }
+    }
+}
+
 /// FAIL-ref-memo-stale-entries: a relation translated partway through a run (here by
 /// `independent_reflections`, after `difference_guard` has translated the guard's difference
 /// and given up) must not reuse translation entries numbered by another translation. On main
