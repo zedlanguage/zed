@@ -54,8 +54,12 @@ fn dividing_a_wide_number_scales() {
     // and 63.8 times with long division forced in place of the reciprocal (2026-11-09, load 18).
     // Measured 2026-11-14 at a load of about 35, six benchmarks at once: about 2.1 µs a
     // word, 1x 0.14 s, 1.0 GB at 8n. At 2^17 words, 1x 0.33 s, the first run at 8n allocated
-    // 11.9 times the bytes of the first at n, over the limit of 10.5, so n stays at 2^16.
-    let n = 1 << 16;
+    // 11.9 times the bytes of the first at n, over the limit of 10.5: the first block of each
+    // division went to num-bigint's Burnikel-Ziegler division, whose bytes a word were 32 at
+    // 2^17 and 464 at 2^20 (PERF-div-bytes-2p17, `zed_kernel::num::fast` `Divisor::blocks`).
+    // With that block by long division (b22-kernelb5, 2026-11-22, v5e3): 8.85 times the
+    // instructions at 2^16 and 9.12 at 2^17 (bytes 7.96), 1x 0.44 s, so n is 2^17.
+    let n = 1 << 17;
     let numbers = inputs(n, |m| (int(random(2 * m, 3)), int(random(m, 4))));
     check("a number of 2n words div and mod one of n words", n, |m| {
         let (a, d) = &numbers[&m];

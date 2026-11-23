@@ -362,31 +362,34 @@ fn listing_an_exclusive_or_of_columns_of_two_tuple_lengths_scales() {
     );
 }
 
-/// Size (TEST-bench-move-l0123, author P169): left at n 64, its old size, because the ratio
-/// fails at larger sizes; 1x 0.8 ms at load 18.60. Instructions from c to 8c: 9.45
-/// times from 64 (measured at the old size), 12.67 from 1024 and 26.89 from 8192 (1,041M to
-/// 28,001M instructions, while bytes grew 8.4 times), over the limit 10.5.
+/// Size (TEST-bench-move-l0123, author P169): left at n 64 because the ratio failed above it:
+/// 12.67 times the instructions from 1024 and 26.89 from 8192, 12.22 from 1024 again on
+/// 2026-11-22. Each tuple's check walked the open rows again to see whether its kinds decide
+/// them all (PERF-listing-complement-meets, `zed_kernel::types` `RowIndex::holds_in`), order
+/// `c²`. With that kept per kinds (b22-kernelb5, 2026-11-22, v5e3): 9.01 from 1024, 8.76 from
+/// 8192 and 8.83 from 32768, so n is 4096.
 #[test]
 fn listing_a_meet_of_tuple_types_given_by_their_complements_scales() {
     listing_a_shape(
         2,
         "listing a meet of tuple types given by their complements, by count",
         1,
-        64,
+        4096,
     );
 }
 
-/// Size (TEST-bench-move-l0123, author P169): left at n 64, its old size, because the ratio
-/// fails at larger sizes; 1x 1.0 ms at load 18.60. Instructions from c to 8c: 9.14
-/// times from 64 (measured at the old size), 12.31 from 1024 and 19.24 from 4096 (450M to
-/// 8,656M instructions, while bytes grew 8.4 times), over the limit 10.5.
+/// Size (TEST-bench-move-l0123, author P169): left at n 64 because the ratio failed above it:
+/// 12.31 times the instructions from 1024 and 19.24 from 4096, 11.74 from 1024 again on
+/// 2026-11-22; the same cause as the test above (PERF-listing-complement-meets). Fixed
+/// (b22-kernelb5, 2026-11-22, v5e3): 8.92 from 1024, 8.81 from 8192 and 8.77 from 32768, so n
+/// is 4096.
 #[test]
 fn listing_a_meet_of_pairs_with_a_complement_first_scales() {
     listing_a_shape(
         4,
         "listing a meet of pairs with a complement first, by count",
         1,
-        64,
+        4096,
     );
 }
 

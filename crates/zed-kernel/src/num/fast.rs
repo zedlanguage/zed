@@ -2240,9 +2240,10 @@ fn sparse_div_cost(qw: usize, b: &BigUint) -> f64 {
 /// ([`div_rem_blocks`]) builds that once, about three products of the divisor's width, and
 /// then costs about one product for each block, its two factors' transforms kept. A quotient of
 /// `qw` words has a dividend of `aw = qw + bw - 1`, which [`Divisor::blocks`] reads as a first
-/// block of at most `bw` words, by num-bigint, then `(aw - bw) / bw = (qw - 1) / bw` blocks,
-/// rounded up. Not `qw / bw` rounded up, one block more where `qw` is 1 more than a multiple
-/// of `bw`: `crossover rem-leaf`, a dividend of `(q + 1) bw` words, then took num-bigint's
+/// block of at most `bw` words, by long division in O(bw), then
+/// `(aw - bw) / bw = (qw - 1) / bw` blocks, rounded up. Not `qw / bw` rounded up, one block
+/// more where `qw` is 1 more than a multiple of `bw`: `crossover rem-leaf`, a dividend of
+/// `(q + 1) bw` words, then took num-bigint's
 /// division up to 2048 words of divisor for `q = 2` where the blocks did 0.632 times its work
 /// from 1898 words (DRY-numeric-shared-rest, 2026-11-20).
 fn newton_cost(qw: usize, bw: usize) -> f64 {
@@ -3724,15 +3725,39 @@ impl<'a> Divisor<'a> {
             0 => len.min(left),
             k => k,
         };
-        // The first block has at most `len` words, so its quotient is below `2^64` and
-        // num-bigint's long division finds it with O(n) word products, where the reciprocal
-        // would cost a product; every later step has a quotient as wide as `d`.
+        // The first block has at most `len` words, so its quotient is below `2^64` and long
+        // division ([`sparse_div_rem_words`], Knuth's algorithm D over `d`'s nonzero words)
+        // finds it in one step of O(n) word products, where the reciprocal would cost a
+        // product; every later step has a quotient as wide as `d`. Fewer than `len - 1` words
+        // are below `d`, the quotient 0, as in `Divisor::step`.
+        //
+        // Complexity tradeoff (PERF-div-bytes-2p17): this block went to num-bigint's division,
+        // taken here for long division. num-bigint 0.4.8 divides by Burnikel and Ziegler's
+        // recursive division once the dividend has more than 128 words and the divisor more
+        // than 64 (`div_rem_core`, `BURNIKEL_ZIEGLER_THRESHOLD`), whatever the quotient's
+        // width, so a one-word quotient cost its full recursion: Toom-3 products, O(n^1.465),
+        // and 368 to 496 bytes allocated a word of `d` at 2^16, 2^19 and 2^20 words, against 32
+        // at 2^17, where the seed's block fell below `d` and num-bigint returned at once
+        // (b22-kernelb5, the bytes of each phase of one division, 2026-11-22). That made `dividing_a_wide_number_
+        // scales` allocate 11.9 times the bytes from 2^17 to 2^20 words. Long division costs
+        // O(n) time and about 6n words of memory (the shifted divisor, its nonzero places, the
+        // window and the remainder), with the same quotient and remainder; tested by
+        // `tests::wide_quotients_agree_with_num_bigint` and
+        // `tests::a_divisors_first_block_divides_in_linear_bytes`. A divisor of one word
+        // (long division needs two) divides its one-word block by num-bigint's O(1) word
+        // division (`tests::the_cost_of_the_blocks_counts_the_blocks_read` at `bw` 1).
         let mut x: Vec<u64> = digits.by_ref().rev().take(take).collect();
         x.reverse();
         left -= take;
-        let (q, r) = from_words(x).div_rem(&*self.d);
-        put(left, &q.to_u64_digits());
-        let mut r = r.to_u64_digits();
+        let (q, mut r) = if x.len() + 1 < len {
+            (Vec::new(), x)
+        } else if len < 2 {
+            let (q, r) = from_words(x).div_rem(&*self.d);
+            (q.to_u64_digits(), r.to_u64_digits())
+        } else {
+            sparse_div_rem_words(x.into_iter(), &self.d)
+        };
+        put(left, &q);
         let mut x: Vec<u64> = Vec::with_capacity(2 * len);
         while left > 0 {
             // `x = r 2^(64 len) + block`, the block's words read from the top.
@@ -5312,6 +5337,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The first block [`Divisor::blocks`] reads, of as many words as `d`, divides by long
+    /// division in O(n) bytes whether it is below `d` or not (PERF-div-bytes-2p17): a block at
+    /// or above `d` allocates at most a word more for each word of `d` than one below it. It
+    /// went to num-bigint, whose recursive division (past 64 words of divisor) allocated
+    /// about 46 words for each word of `d` where the block was not below `d`, and returned at
+    /// once where it was, so the bytes of `dividing_a_wide_number_scales` depended on the
+    /// seed's top words.
+    #[test]
+    fn a_divisors_first_block_divides_in_linear_bytes() {
+        let len = 1024;
+        let top_word = (BigUint::one() << (64 * len)) - (BigUint::one() << (64 * (len - 1)));
+        let d = random(4, len) | (BigUint::one() << (64 * len - 1));
+        // Dividends of `len` words, so `blocks` reads the first block only.
+        let above = &random(5, len) | &top_word;
+        let below = &d >> 1u32;
+        assert!(above > d && below < d && words(&below) == len);
+        let div = Divisor::new(Cow::Borrowed(&d), 64 * len as u64);
+        let bytes = |a: &BigUint| {
+            let start = zed_alloc_count::allocated();
+            let (q, r) = div.div_rem(a);
+            let used = zed_alloc_count::allocated() - start;
+            assert_eq!((q, r), a.div_rem(&d), "{} words by {len}", words(a));
+            used
+        };
+        let (b_below, b_above) = (bytes(&below), bytes(&above));
+        assert!(
+            b_above <= b_below + 8 * len as u64,
+            "a first block above d allocated {b_above} bytes, below it {b_below}, at {len} words"
+        );
     }
 
     /// [`matrix_product`] equals num-bigint's products, by shared transforms (above
