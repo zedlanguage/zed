@@ -72,9 +72,9 @@ fn a_product_of_words_is_held_as_powers() {
     assert!(q == Rat::new(BigInt::from(1u64 << 38), BigInt::from(3)).unwrap());
     // A wide coefficient is kept whole; the word's primes are moved out of it where they
     // divide it: `(3 * 2^70 + 3) * 6` is `(2^70 + 1) * 2 * 3^2`.
-    let wide = BigInt::from(3) * ((BigInt::from(1) << 70u32) + 1);
+    let left: BigInt = (BigInt::from(1) << 70u32) + 1;
+    let wide: BigInt = BigInt::from(3) * &left;
     let p = Rat::int(wide.clone()).mul(&int(6)).unwrap();
-    let left = (BigInt::from(1) << 70u32) + 1;
     let two_nine = [(2, BigInt::from(1)), (3, BigInt::from(2))];
     assert_eq!(p.kept(), (&left, &BigInt::from(1), &two_nine[..]));
     assert!(p == Rat::int(wide * 6));
