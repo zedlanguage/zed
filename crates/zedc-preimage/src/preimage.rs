@@ -5145,6 +5145,7 @@ fn identity_classes(tx: &Tx, lams: &[(Name, Tid)]) -> HashMap<(Tid, usize), Arc<
 // is not a proof that none exists. COMPLEXITY.md rows
 // LOAD-affine-join and LOAD-join-disjoint.
 fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
+    let step = unite_steps::add;
     let nodes = first.last().copied().unwrap_or(0);
     let wide = |k: usize| first[k + 1] - first[k] >= 2;
     // (1) The components of the graph of all joins, and the marked ones: a stamp per component,
@@ -5155,17 +5156,20 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
         zed_graph::Linking::Rank,
     );
     for &(a, b) in joins {
+        step(2);
         whole.union(a, b);
     }
     let mut stamp = vec![usize::MAX; nodes];
     let mut marked = vec![false; nodes];
     for k in (0..first.len().saturating_sub(1)).filter(|&k| wide(k)) {
         for v in first[k]..first[k + 1] {
+            step(1);
             let c = whole.find(v);
             marked[c] |= stamp[c] == k;
             stamp[c] = k;
         }
     }
+    step(nodes as u64);
     let hot: Vec<bool> = (0..nodes).map(|v| marked[whole.find(v)]).collect();
     // (2) Linking by size, the larger class's root staying, `ra` on a tie (the root is the
     // class's name, and its functions are kept at it).
@@ -5192,6 +5196,7 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
     };
     let mut joined = vec![false; nodes];
     for &(a, b) in joins {
+        step(2);
         let (ra, rb) = (parent.find(a), parent.find(b));
         if ra == rb {
             continue;
@@ -5203,7 +5208,13 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
         };
         // `fewer`'s set: empty, the one function `g`, or two or more (refused).
         let g = one[fewer];
-        if !many[fewer].is_empty() || (g != NONE && (one[more] == g || many[more].contains(&g))) {
+        let shared = |one: &[usize], many: &[BTreeSet<usize>]| {
+            one[more] == g || {
+                step(1);
+                many[more].contains(&g)
+            }
+        };
+        if !many[fewer].is_empty() || (g != NONE && shared(&one, &many)) {
             continue;
         }
         let big = parent.union_roots(ra, rb, (), zed_graph::Keep::Rule, |_, _, _| {});
@@ -5214,6 +5225,7 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
             many.swap(big, more);
         }
         if g != NONE {
+            step(1);
             if !many[big].is_empty() {
                 many[big].insert(g);
             } else if one[big] == NONE {
@@ -5224,8 +5236,37 @@ fn unite(first: &[usize], joins: &[(usize, usize)]) -> (Vec<usize>, Vec<bool>) {
         }
         joined[big] = true;
     }
+    step(nodes as u64);
     let root = (0..nodes).map(|v| parent.find(v)).collect();
     (root, joined)
+}
+
+/// The steps of [`unite`] on this thread, counted for its benchmarks: each find of either
+/// union-find (a union counted as its two finds) and each look-up or insertion in a class's set
+/// of functions, so a test can hold the count of a run with no timer. A find costs O(α(n))
+/// amortized and a set operation O(log n), so the count is the number of operations, not their
+/// cost; the instruction ratio measures the cost. Outside tests `add` does nothing.
+mod unite_steps {
+    #[cfg(test)]
+    thread_local! {
+        static STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Adds `k` steps.
+    #[cfg(test)]
+    pub(super) fn add(k: u64) {
+        STEPS.with(|c| c.set(c.get() + k));
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    pub(super) fn add(_: u64) {}
+
+    /// The steps on this thread since the last call, which resets them.
+    #[cfg(test)]
+    pub(super) fn take() -> u64 {
+        STEPS.replace(0)
+    }
 }
 
 /// The term `l`, over the canonical atoms of the canonical key `key` ([`Walk::claimable`]),

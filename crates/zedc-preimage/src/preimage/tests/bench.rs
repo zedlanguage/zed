@@ -182,6 +182,23 @@ fn joins_refused_between_the_parameters_of_one_wide_function_scale() {
     let (roots, joined) = unite(&small.0, &small.1);
     assert!(roots.into_iter().eq(0..small.0[1]));
     assert_eq!(joined, vec![false; small.0[1]]);
+    // The steps of `unite` (`unite_steps`), held without a timer: 7n - 4 here (two finds a
+    // join in each pass, a find a parameter in the marks and in `hot`, a find a node at the
+    // end, no set look-up since each refusal sees the function inline), 8.00 times at 8n
+    // (cross-review XR-join-disjoint round 2, where processor time spread from 6.3 to 20.0).
+    let steps = |(first, joins): &([usize; 2], Vec<(usize, usize)>)| {
+        unite_steps::take();
+        std::hint::black_box(unite(first, joins));
+        unite_steps::take()
+    };
+    let (at_n, at_8n) = (steps(&small), steps(&large));
+    assert_eq!((at_n, at_8n), (7 * 50_000 - 4, 7 * 400_000 - 4));
+    crate::scaling::hold_linear(
+        "one function of n parameters, n - 1 refused joins, n = 50,000 and 400,000",
+        "steps of unite",
+        at_n,
+        at_8n,
+    );
     crate::scaling::compare(
         "one function of n parameters, n - 1 refused joins, n = 50,000 and 400,000",
         1,
