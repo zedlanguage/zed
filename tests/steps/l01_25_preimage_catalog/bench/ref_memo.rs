@@ -78,17 +78,20 @@ scaling_tests! {
     nested_moduli_mod7_scales: "nested_moduli_mod7" at 2;
     // At 1024 (REF-normal-abs-gap), as `normal_min_gap` below: the answer is 2 pieces at every n,
     // and the first run costs a + b log2 n per link, the path copies of the persistent inverse
-    // tree (`tree_restrict`, `tree_union`, `tree_join` in `preimage_ref`), whose pieces grow
-    // with the n guards. abs restricts the tree to values >= 0 and unions it with its mirror;
-    // the two overlap only at 0, so the union descends one spine and splits once, O(log n);
-    // the reflection is a lazy tag, O(1). Measured 2026-11-22 (instructions and bytes per
-    // link, by n: 4, 16, 128, 512, 1024, 4096, 8192): 247k, 342k, 454k, 563k, 607k, 690k,
-    // 733k instructions and 41k, 53k, 70k, 85k, 92k, 105k, 112k bytes, a rise per doubling
-    // of about 43k and 6.7k from 512 on that does not grow, so the work is n log n, not
-    // n log^2 n. At 16 the ratio is then 8 (a + 7b) / (a + 4b), measured 10.63 (instructions)
-    // and 10.65 (bytes), over 10.5; at 64 it is 10.44; at 1024 the ratio of such work is at
-    // most 8 log(8n) / log n = 10.4 for any a (P300), measured 9.67. The family widens its
-    // domain past 1000 links so that every guard still cuts it.
+    // tree (`tree_restrict`, `tree_join`, `tree_node` in `preimage_ref`), whose pieces grow
+    // with the n guards. abs restricts the tree to values >= 0, takes out the piece at 0 and
+    // joins the mirror of the rest, that piece made symmetric, and the rest, O(log n)
+    // (REF-abs-split-join); the reflection is a lazy tag, O(1). Measured 2026-11-22 on
+    // 04b952b6f (instructions and bytes per link, by n: 512, 1024, 4096, 8192): 467k, 499k,
+    // 564k, 596k instructions and 81k, 88k, 101k, 107k bytes, a rise per doubling of about 32k
+    // and 6.5k that does not grow, so the work is n log n, not n log^2 n. The least-squares fit
+    // a + b log2 n gives a/b = 5.4 (instructions) and 3.5 (bytes). From n to 8n the ratio of
+    // such work is 8 (a + b (log2 n + 3)) / (a + b log2 n), which for a, b >= 0 and a + b > 0 is
+    // at most 8 (log2 n + 3) / log2 n, reached at a = 0: 10.4 at n = 1024 (P300), and below
+    // the limit at no smaller n (10.67 at 16, 10.4 is first met at 1024). With a/b = r it is
+    // 8 (r + 13) / (r + 10) at 1024: 9.56 for r = 5.4 and 9.79 for r = 3.5, the measured 9.56
+    // and 9.79; 9 needs r >= 14. The family widens its domain past 1000 links so that every
+    // guard still cuts it.
     normal_abs_gap_scales: "normal_abs_gap" at 1024;
     normal_add_base_scales: "normal_add_base" at 16;
     normal_div_chain_scales: "normal_div_chain" at 16;
