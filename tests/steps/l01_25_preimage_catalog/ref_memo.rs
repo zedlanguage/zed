@@ -349,7 +349,9 @@ fn lines(fixture: &str) -> impl Iterator<Item = &str> {
 }
 
 /// The 226 distinct calls of main's dump (420 with repeats) whose answer the new transfer
-/// changes: each kept or made finer. 91 are made exact, 107 narrower and still inexact (90
+/// changes: each kept or made finer. 94 are made exact, 104 narrower and still inexact (91
+/// and 107 until PREIMAGE-mod-defined, whose `div` and `mod` read where both are defined are
+/// exact, one more call made exact in parts 0, 1 and 3 each; 90
 /// and 108 until FAIL-project-each-coarser-seed, whose join of a disjunction left with one
 /// disjunct makes one more call exact, all its inputs checked at its points; 85 and 113 until
 /// FAIL-presburger-propagation-seed, whose merge of atoms defined alike lets
@@ -383,8 +385,8 @@ fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer_0() {
         0,
         Kept {
             same: 5,
-            narrower: 27,
-            made_exact: 25,
+            narrower: 26,
+            made_exact: 26,
         },
     );
 }
@@ -395,8 +397,8 @@ fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer_1() {
         1,
         Kept {
             same: 6,
-            narrower: 30,
-            made_exact: 21,
+            narrower: 29,
+            made_exact: 22,
         },
     );
 }
@@ -419,8 +421,8 @@ fn the_changed_answers_of_main_s_dump_are_kept_or_made_finer_3() {
         3,
         Kept {
             same: 6,
-            narrower: 27,
-            made_exact: 23,
+            narrower: 26,
+            made_exact: 24,
         },
     );
 }

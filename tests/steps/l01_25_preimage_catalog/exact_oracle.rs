@@ -321,6 +321,11 @@ fn mixed(seed: u64, cases: usize) -> Run {
 // the transfer's box of `(-3 * if (6 != 1) { 4 } else { x }) != (4 mod (-6 * 0))` under true,
 // every `x`, now exact: the left side is -12 and the right `#divByZero`, so the two differ at
 // every point. The interpreter refutes no box.
+//
+// Since PREIMAGE-mod-defined, whose transfer reads `a div b` and `a mod b` asked for a set that
+// holds every value they take as exact where both are defined (every `a`, and `b` not 0),
+// EXACT_OF_TWO_RUNS rose 916 -> 936 (20 boxes), as b22-misc4 measured with the same
+// transfer, with no disagreement with the interpreter.
 
 /// The first two runs of `s22.rs` (500 mixed terms, the second with tests), with their count
 /// of exact preimages pinned, so that a change in precision shows.
@@ -330,7 +335,7 @@ fn s22_random_terms_match_the_interpreter() {
 }
 
 /// The count of exact preimages of [`s22_random_terms_match_the_interpreter`].
-const EXACT_OF_TWO_RUNS: usize = 916;
+const EXACT_OF_TWO_RUNS: usize = 936;
 
 /// Mixed terms from a new seed each run, every other case a test and every third term reading
 /// through calls.

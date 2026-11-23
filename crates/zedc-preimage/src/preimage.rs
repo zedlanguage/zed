@@ -8745,8 +8745,8 @@ impl<'m, 't> Walk<'m, 't> {
             return None;
         }
         let nonzero = IntervalSet::top().minus(&IntervalSet::of(0, 0));
-        let ra = self.back(a, env, ints(IntervalSet::top())).await;
-        let rb = self.back(b, env, ints(nonzero)).await;
+        let ra = self.back(a, env, Demand::Ints(IntervalSet::top())).await;
+        let rb = self.back(b, env, Demand::Ints(nonzero)).await;
         Some(self.meet(ra, rb))
     }
 
