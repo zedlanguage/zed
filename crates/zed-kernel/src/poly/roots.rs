@@ -1015,15 +1015,15 @@ fn certified_sign(w: &BigInt, error_bits: u64) -> Option<Ordering> {
 /// `p_e` and `slope_e` [`truncated`] at `e` with the shift [`lead_shift`] `f` of `p`, and `s_e
 /// = 2 bits(hi / 2^e + 1)`. Two [`scaled`] at the level's precision.
 ///
-/// Proof that the sign is certified (by [`certified_sign`]). Write `T = 2^s_e p(x) / (2^(D e
-/// + f) y^D)`, the real number `Phi_e` stands for, of the sign of `p(x)`. Each cut coefficient
+/// Proof that the sign is certified (by [`certified_sign`]). Write `T = 2^s_e p(x) / (2^(f +
+/// D e) y^D)`, the real number `Phi_e` stands for, of the sign of `p(x)`. Each cut coefficient
 /// is `floor(c_i / 2^((D - i) e + f))`, at most 1 below `c_i / 2^((D - i) e + f)`, and stands
 /// in `Phi_e` times `2^s_e y^(i - D)`; each floor of [`scaled`] loses under 1 and is divided
 /// by `y` at least once per later term; every loss is downward. So `T - 2^s_e (lead +
 /// 1/(y - 1)) - y/(y - 1) < Phi_e <= T`, `lead` 1 where `f > 0` (the leading coefficient cut)
 /// and 0 where `f = 0` (`c_D` kept whole), as `sum over j >= 1 of y^-j = 1/(y - 1)`. For `y >=
-/// 3`, `2^s_e / (y - 1) <= 2^(s_e - bits(y) + 2)` (as `y - 1 >= 2^(bits(y) - 2)`) and `y/(y -
-/// 1) <= 2`; `y < 2^(s_e / 2)` gives `s_e - bits(y) + 2 >= 2`, so the error is under
+/// 3`, `2^s_e / (y - 1) <= 2^(s_e - bits(y) + 2)` (as `y - 1 >= 2^(bits(y) - 2)`) and `y/(y - 1)
+/// <= 2`; `y < 2^(s_e / 2)` gives `s_e - bits(y) + 2 >= 2`, so the error is under
 /// `2^(s_e - bits(y) + 3)` where `f = 0`, and under `2^s_e + 2^(s_e - 1) + 2 <= 2^(s_e + 1)`
 /// where `f > 0`. Below 3 no sign is given.
 fn search_level(
@@ -1552,6 +1552,11 @@ mod bench;
 mod tests {
     use super::*;
 
+    /// For each call of [`doubling`], the bits of its `hi` and, for each precision `e` of
+    /// [`truncated`] after it, the most bits of a cut coefficient and of a cut leading
+    /// coefficient ([`LEVELS`]).
+    pub(super) type Levels = Vec<(u64, BTreeMap<u64, (u64, u64)>)>;
+
     thread_local! {
         /// How many times [`positive_roots`] has handed over to [`chain_roots`] on this thread.
         pub(super) static CHAINED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -1580,7 +1585,7 @@ mod tests {
         /// For each call of [`doubling`] on this thread, the bits of its `hi`, and for each
         /// precision `e` of [`truncated`] after it, the most bits of a cut coefficient and of a
         /// cut leading coefficient.
-        pub(super) static LEVELS: std::cell::RefCell<Vec<(u64, BTreeMap<u64, (u64, u64)>)>> =
+        pub(super) static LEVELS: std::cell::RefCell<Levels> =
             const { std::cell::RefCell::new(Vec::new()) };
         /// The precision and the bracket the first level of [`doubling`] ended with, last.
         pub(super) static LEVEL_ONE: std::cell::RefCell<Option<(u64, BigInt, BigInt)>> =

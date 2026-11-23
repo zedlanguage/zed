@@ -466,8 +466,8 @@ const DIV_NARROW: f64 = 0.427;
 
 /// The factor on [`num_bigint_div_units`] for a quotient of at most one word more than the
 /// divisor (`qw <= bw + 1`), where [`div_rem`] counts a quotient's words as `words(a) -
-/// words(b) + 1`: a `2w` by `w` dividend of `2w` words has a quotient of `w + 1`, one of `2w
-/// - 1` (`crossover div-leaf 1 1`) one of `w`. First 1.295, fitted to the crossover of `1 1`
+/// words(b) + 1`: a `2w` by `w` dividend of `2w` words has a quotient of `w + 1`, one of
+/// `2w - 1` (`crossover div-leaf 1 1`) one of `w`. First 1.295, fitted to the crossover of `1 1`
 /// of 2026-11-23 against [`newton_cost`] on [`transform_cost`]. Refit to 1.44 with
 /// [`newton_cost`] on the points of its [`Level`] (plan row PERF-div-narrow-quotient-factor,
 /// cross-review XR-ROOTS-REF round 2, D8), over 66 measured divisions of a quotient of at
