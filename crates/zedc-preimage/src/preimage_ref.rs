@@ -5310,8 +5310,8 @@ impl Boundaries {
 /// Proof that `tree_round` reads the same answer as with the cuts joined at every build:
 /// 1. Both describe the same set of points P: the keys of the subtree in `n`'s coordinates,
 ///    each child's mapped through the tag on its edge (`apply`), since a key is stored in its
-///    own node's coordinates and every edge maps a child's into its parent's. Tags are shifts `x + s` and
-///    reflections `s + 1 - x`, scaling (`tree_division`) is `x * c`; each maps `lo` and
+///    own node's coordinates and every edge maps a child's into its parent's. Tags are shifts
+///    `x + s` and reflections `s + 1 - x`, scaling (`tree_division`) is `x * c`; each maps `lo` and
 ///    `hi + 1` to the mapped key's `lo` and `hi + 1`, so mapping the cuts maps P.
 /// 2. `join` keeps step = gcd of all differences of P, whatever the order and grouping of the
 ///    joins: gcd(step_a, step_b, a - b) for a in A, b in B is the gcd of the differences
