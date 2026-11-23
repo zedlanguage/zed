@@ -172,7 +172,7 @@ fn a_run_within_its_deadline_runs_and_one_past_it_stops_with_status_3() {
 
 #[test]
 fn a_number_too_large_for_memory_stops_the_run_with_status_3() {
-    // No limit: `(2^64 + 13) ^ (2^64)` needs 130 EiB, past the 2^64 bits a number may have.
+    // No limit: `(2^64 + 13) ^ (2^64)` needs 128 EiB, past the 2^64 bits a number may have.
     // Before MAIN-limits the run stopped with status 1, as a `#bug` does.
     let (file, exe) = program("too_large", &power_program("", (1 << 64) + 13));
     for (engine, (code, out, err)) in

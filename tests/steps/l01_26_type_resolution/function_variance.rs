@@ -61,6 +61,73 @@ fn a_partial_slot_takes_a_narrower_domain() {
     );
 }
 
+/// A function of one parameter fits a function type of one parameter of the other kind, and
+/// misfits only by that parameter's name (DESIGN.md sec:diagnostics, rows "Argument in the
+/// wrong form" and "Function whose parameter kinds do not fit the expected function type": "so
+/// `xs.map(half)` fits"). A lambda passed through `pass`, whose parameter has no written type,
+/// is checked with no expected type, so its parameter is positional (DESIGN.md, the row of
+/// `positional`), and it reaches `apply`'s `(x: int | f64) ->? int` as `int -> int`, which fits
+/// there as the declared `small` does (plan row MSG-inner-lambda-unnamed-param-arrow). Each was
+/// refused, "`apply` does not take int -> int, only (x: int | f64) ->? int", although `pass(x:
+/// small)` ran. `x -> small(x: x)` is `int -> int` there, so the call with 2.5 misses: 6.
+#[test]
+fn a_one_parameter_function_fits_a_slot_of_the_other_kind() {
+    let pre = "small(x: int) = x + 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\npass(x) = apply(f: x);\n";
+    runs_to(&format!("{pre}a = pass(x: x -> small(x: x));\n"), "a", "6");
+    runs_to(&format!("{pre}a = pass(x: x -> 1);\n"), "a", "1");
+    runs_to(
+        &format!("{pre}a = pass(x: (x: int | f64) -> 2);\n"),
+        "a",
+        "2",
+    );
+    runs_to(
+        &format!("{pre}pos(positional x: int | f64) = 3;\na = apply(f: pos);\n"),
+        "a",
+        "3",
+    );
+    // The row's program: at an intersection of arrows the inner lambda's slot is rebuilt at
+    // each arrow, a limitation of this zedc, said once, not one refusal for each arrow.
+    let both = format!(
+        "{pre}small4(x: f64) = 2;\n\
+         both(h: ((g: (x: int) -> int) -> int) & ((g: (x: f64) -> int) -> int)) = \
+         h(g: small) + h(g: small4);\na = both(h: g -> pass(x: x -> g(x: x)));\n"
+    );
+    let errors = type_errors(&both);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("at each arrow"), "{errors:?}");
+    // At a type of several functions, which the comparison files by parameter list.
+    accepted(
+        "pos(positional x: int) = 1;\nap(f: ((x: int) -> int) | ((y: String) -> String)) = 0;\nr = ap(f: pos);\n",
+    );
+    accepted(
+        "nm(x: int) = 1;\nap(f: (int -> int) | ((y: String) -> String)) = 0;\nr = ap(f: nm);\n",
+    );
+}
+
+/// Corners of [`a_one_parameter_function_fits_a_slot_of_the_other_kind`]: two named parameters
+/// of different names misfit, as `handler: s -> s` misfits where the type names `key`; and
+/// with two parameters the kinds must agree.
+#[test]
+fn a_one_parameter_function_misfits_by_its_name() {
+    rejected(
+        "other(y: int | f64) = 1;\napply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\na = apply(f: other);\n",
+    );
+    rejected(
+        "nm(y: int) = 1;\nap(f: ((x: int) -> int) | ((z: String) -> String)) = 0;\nr = ap(f: nm);\n",
+    );
+    rejected(
+        "two(positional a: int, positional b: int) = 1;\nap(f: (a: int, b: int) -> int) = f(a: 1, b: 2);\nr = ap(f: two);\n",
+    );
+    // `positional` does not change the type's name: `pos(positional x: int)` has the type
+    // `(x: int) -> int` (DESIGN.md sec:values_morphisms), which does not fit `(y: int) -> int`,
+    // directly, at a union, or as a lambda passed on with no expected type.
+    rejected("pos(positional x: int) = 1;\nap(f: (y: int) -> int) = f(y: 1);\nr = ap(f: pos);\n");
+    rejected(
+        "pos(positional x: int) = 1;\nap(f: ((y: int) -> int) | ((z: String) -> String)) = 0;\nr = ap(f: pos);\n",
+    );
+    rejected("ap(f: (y: int) -> int) = f(y: 1);\npass(x) = ap(f: x);\nr = pass(x: x -> 1);\n");
+}
+
 /// The value of `name` in `src`, from the reference evaluator and from native code, which
 /// agree.
 fn runs_to(src: &str, name: &str, want: &str) {

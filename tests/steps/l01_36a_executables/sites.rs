@@ -100,7 +100,10 @@ fn input_power(base: &str) -> String {
 /// `64 · 2^64 + 1` bits or more, is named as the program writes it, with its size in digits
 /// and bytes and the machine's memory. Before, the message named only `^` and a raw count of
 /// 22 digits of the memory the evaluator asked for, eight times the number's size. The size
-/// in bytes is from 65 bits per factor (plan row MSG-too-large-figure).
+/// is the least the power has, `64 · 2^64 + 1` bits, 128 EiB, as the compile-time message
+/// says; the number has `64 · 2^64 + 19` bits (`2^64 · log2(1 + 13 / 2^64)` is about
+/// `13 / ln 2`, 18.8), so the figure is its own. Before, 65 bits a factor gave 130 EiB (plan
+/// row MSG-too-large-figure).
 #[test]
 fn a_power_too_large_is_named_as_written_with_its_size() {
     stops(
@@ -110,7 +113,7 @@ fn a_power_too_large_is_named_as_written_with_its_size() {
         "",
         &format!(
             "FILE:4:36: Number too large for memory: `b ^ k` needs a number of about \
-             3.6 × 10^20 digits (130 EiB){}.\n  [1] 4:36: the run stopped here\n      \
+             3.6 × 10^20 digits (128 EiB){}.\n  [1] 4:36: the run stopped here\n      \
              4 |     m.stdout <- if k >= 0 {{ String(b ^ k) }} else {{ \"\" }};\n        \
                |                                    ^^^^^\n{}",
             beyond_machine(),
@@ -129,7 +132,7 @@ fn a_rational_power_too_large_is_named_as_written_with_its_size() {
         "",
         &format!(
             "FILE:4:36: Number too large for memory: `rat(b) ^ k` needs a number of about \
-             3.6 × 10^20 digits (130 EiB){}.\n  [1] 4:36: the run stopped here\n      \
+             3.6 × 10^20 digits (128 EiB){}.\n  [1] 4:36: the run stopped here\n      \
              4 |     m.stdout <- if k >= 0 {{ String(rat(b) ^ k) }} else {{ \"\" }};\n        \
                |                                    ^^^^^^^^^^\n{}",
             beyond_machine(),

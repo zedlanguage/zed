@@ -3914,14 +3914,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let both = self.show(&t.union(&dt));
                         let dt = self.text(&dt);
                         notes.extend(default_repairs(&p.name, &dt, &shown, &both, d.span));
-                        self.error_with(
-                            d.span,
-                            format!(
-                                "{what} is {dt}, not {shown}: a default is a value of its \
-                                 parameter's type"
-                            ),
-                            notes,
-                        );
+                        self.error_with(d.span, default_headline(&what, &dt, &shown, ""), notes);
                     }
                 }
                 None => {
@@ -3933,10 +3926,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         let menu = default_repairs(&p.name, &dt, &t, &both, d.span);
                         self.error_offering(
                             d.span,
-                            format!(
-                                "{what} is {dt}, not {t}: a default is a value of its parameter's \
-                                 type{why}"
-                            ),
+                            default_headline(&what, &dt, &t, &why),
                             menu.into_iter().map(|n| n.text.to_string()),
                         );
                     }
@@ -17509,15 +17499,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         if q.arrows.iter().any(|a| a.partial) && s.arrows.len() != 1 {
             return None;
         }
-        // The index in `s` of each parameter of `q`, named alike and passed alike.
-        let at: HashMap<&str, (usize, bool)> = (s.params.iter().enumerate())
-            .map(|(i, p)| (&*p.name, (i, p.positional)))
-            .collect();
+        // The index in `s` of each parameter of `q`, named alike and passed alike; or, each of
+        // one parameter, differing in no name, that one ([`Sig::one_param_fits`]: `x -> 1`,
+        // positional with no expected type, fits `(x: int | f64) ->? int`).
         let mut place = Vec::with_capacity(q.params.len());
-        for p in &q.params {
-            match at.get(&*p.name) {
-                Some(&(i, positional)) if positional == p.positional => place.push(i),
-                _ => return None,
+        if s.one_param_fits(q) {
+            place.push(0);
+        } else {
+            let at: HashMap<&str, (usize, bool)> = (s.params.iter().enumerate())
+                .map(|(i, p)| (&*p.name, (i, p.positional)))
+                .collect();
+            for p in &q.params {
+                match at.get(&*p.name) {
+                    Some(&(i, positional)) if positional == p.positional => place.push(i),
+                    _ => return None,
+                }
             }
         }
         let fit = WaitingFit {
@@ -30520,17 +30516,39 @@ fn empty_families_beside_tuples(x: &Ty) -> Option<Ty> {
 
 /// The repairs of a default of type `got` for the parameter `name` of type `want`, each placed
 /// at the default, `span`; `both` is the text of their union, `want | got`, each operand
-/// parenthesized where it needs to be.
+/// parenthesized where it needs to be. A default of no type yet (`got` is `_`, see
+/// [`default_headline`]) has no type to widen `name` by: `h: _` is not a type a program can
+/// declare there, so only the first repair is offered (plan row MSG-default-unknown-type).
 fn default_repairs(name: &str, got: &str, want: &str, both: &str, span: Span) -> Vec<Note> {
-    [
-        format!("repair: write a default of type {want}"),
-        format!(
+    let mut texts = vec![format!("repair: write a default of type {want}")];
+    if got != "_" {
+        texts.push(format!(
             "repair: declare `{name}` with a type that holds {got} as well, as `{name}: {both}`{DECLARE}"
+        ));
+    }
+    (texts.into_iter())
+        .map(|text| Note {
+            span,
+            text: text.into(),
+        })
+        .collect()
+}
+
+/// The headline of a default of type `got` refused at its parameter's type `want`; `what` is
+/// "the default of `h`". A type shown as `_` is a value no use has given a type yet, as a
+/// parameter `g` of no written type read as the default `h: (int) -> int = g`: `_` would read
+/// as the type of every value, so the headline says the default has no type yet, as the note
+/// on `g` does (plan rows MSG-default-unknown-type, MSG-untyped-note-placeholder).
+fn default_headline(what: &str, got: &str, want: &str, why: &str) -> String {
+    match got {
+        "_" => format!(
+            "{what} has no type yet here, and a default is a value of its parameter's type, \
+             {want}{why}"
         ),
-    ]
-    .into_iter()
-    .map(|text| Note { span, text: text.into() })
-    .collect()
+        _ => format!(
+            "{what} is {got}, not {want}: a default is a value of its parameter's type{why}"
+        ),
+    }
 }
 
 /// The least multiple of 8 at or above `bits >= 0`: the width in whole bytes that holds `bits`
@@ -33928,6 +33946,11 @@ fn results(s: &Sig) -> Ty {
 /// parameters (the search `fit_declared` made before); used, one hash map of `e`'s named
 /// parameters, O(p) expected.
 fn order_by_names(s: &Sig, e: &Sig) -> Option<Vec<usize>> {
+    // One parameter each, differing in no name: it takes its argument either way
+    // ([`Sig::one_param_fits`], DESIGN.md sec:diagnostics: "so `xs.map(half)` fits").
+    if s.one_param_fits(e) {
+        return Some(vec![0]);
+    }
     let pos = |s: &Sig| s.params.iter().filter(|p| p.positional).count();
     if pos(s) != pos(e) || s.params.len() != e.params.len() {
         return None;

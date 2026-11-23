@@ -711,6 +711,40 @@ fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() 
     );
 }
 
+/// DIAG-too-large-with-type-error, point (1): a power past the address space inside a
+/// division by the literal 0 is reported with the other errors of the unit, not hidden by
+/// them: `zedc run` prints the `Lines` rejection of `#divByZero`, the "Number too large for any
+/// memory of the target" rejection of `rat(b) ^ (2^64)` with its checked fix, and the division
+/// that always fails, in the order of their places.
+#[test]
+fn zedc_run_reports_a_power_too_large_beside_the_type_errors_around_it() {
+    let f = file(
+        "wide_div.zed",
+        "main(m: MainArgs) {\n  b = 2^64 + 13;\n  m.stdout <- String(rat(b) ^ (2^64) / 0);\n}\n",
+    );
+    let out = rejection("run", &f);
+    let path = format!("{}:", f.display());
+    let heads: Vec<&str> = (out.lines())
+        .filter(|l| !l.starts_with(' '))
+        .map(|l| l.strip_prefix(path.as_str()).unwrap_or(l))
+        .collect();
+    assert_eq!(heads.len(), 3, "{out}");
+    assert!(
+        heads[0].starts_with("3:15: A `Lines` port takes a `String`"),
+        "{out}"
+    );
+    assert!(
+        heads[1].starts_with(
+            "3:22: Number too large for any memory of the target: `rat(b) ^ (2^64)` needs at least 128 EiB"
+        ),
+        "{out}"
+    );
+    assert!(
+        heads[2].starts_with("3:22: `/` here always fails with `#divByZero`"),
+        "{out}"
+    );
+}
+
 /// QUESTIONS A100 (answered B, 2026-11-13), DESIGN sec:checking_in_zed and the sec:diagnostics
 /// row "Number too large for any memory of the target": `rat(b) ^ (2^64)` with
 /// `b = 2^64 + 13` builds a numerator of at least `2^64 * 64 + 1` bits, 128 EiB, past the

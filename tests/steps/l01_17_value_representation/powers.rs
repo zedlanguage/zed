@@ -393,29 +393,33 @@ fn a_power_of_a_wide_base_is_built() {
 
 /// A base wider than 64 bits raised to an exponent of `2^64` or more is refused for the memory
 /// its power asks, a byte for each bit of the wide parts times the exponent, and is never built:
-/// a numerator, a denominator or both wide, of either sign, with or without kept powers.
+/// a numerator, a denominator or both wide, of either sign, with or without kept powers. The
+/// size named is the least the power has, `e * (L - 1) + 1` bits for each wide part of `L` bits
+/// (plan row MSG-too-large-figure): 65 and 71 bits here.
 #[test]
 fn a_power_of_a_wide_base_to_an_exponent_beyond_64_bits_is_refused() {
     let wide: BigInt = (BigInt::from(1) << 64) + 13;
     let narrow = BigInt::from(3);
     let bases = [
-        (Rat::int(wide.clone()), 65u32),
-        (Rat::int(-wide.clone()), 65),
-        (Rat::new(narrow.clone(), wide.clone()).unwrap(), 65),
+        (Rat::int(wide.clone()), vec![65u32]),
+        (Rat::int(-wide.clone()), vec![65]),
+        (Rat::new(narrow.clone(), wide.clone()).unwrap(), vec![65]),
         (
             Rat::new(-wide.clone(), (BigInt::from(1) << 70) + 1).unwrap(),
-            136,
+            vec![65, 71],
         ),
-        (Rat::int(wide).mul(&two_to(-100)).unwrap(), 65),
+        (Rat::int(wide).mul(&two_to(-100)).unwrap(), vec![65]),
     ];
     let one = BigUint::from(1u32);
     for e in [&one << 64u32, (&one << 64u32) + 1u32, &one << 200u32] {
-        for (base, bits) in &bases {
+        for (base, parts) in &bases {
+            let bits: u32 = parts.iter().sum();
+            let least: BigUint = parts.iter().map(|l| BigUint::from(l - 1) * &e + 1u32).sum();
             assert_eq!(
                 base.pow(&e),
                 Err(TooLarge {
-                    size: BigUint::from(*bits) * &e,
-                    ask: (BigUint::from(*bits) * &e) << 3u32
+                    size: least,
+                    ask: (BigUint::from(bits) * &e) << 3u32
                 }),
                 "{base:?} ^ {e}"
             );

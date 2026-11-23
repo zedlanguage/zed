@@ -17191,13 +17191,16 @@ async fn accepts<'m>(
             Piece::Fn(s) => {
                 let index = Rc::clone(search.fns.get_or_insert_with(|| Rc::new(FnIndex::new(t))));
                 let mut ok = false;
-                if let Some(list) = index.list(s) {
+                let lists = index.fit_lists(s);
+                if !lists.is_empty() {
                     let ds = Domains::of(s, &mut Approx::default());
-                    for j in list.tried(&ds, Domains::keyed(s, &ds)) {
-                        let q = &list.fns[j].0;
-                        if c.fits(s.clone(), Env::new(), q.clone(), Env::new()).await {
-                            ok = true;
-                            break;
+                    'lists: for list in lists {
+                        for j in list.tried(&ds, Domains::keyed(s, &ds)) {
+                            let q = &list.fns[j].0;
+                            if c.fits(s.clone(), Env::new(), q.clone(), Env::new()).await {
+                                ok = true;
+                                break 'lists;
+                            }
                         }
                     }
                 }
@@ -17484,10 +17487,11 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
         return false;
     }
     let same_params = s.params.len() == q.params.len()
-        && s.params
-            .iter()
-            .zip(&q.params)
-            .all(|(a, b)| a.positional == b.positional && (a.positional || a.name == b.name));
+        && (s.one_param_fits(q)
+            || s.params
+                .iter()
+                .zip(&q.params)
+                .all(|(a, b)| a.positional == b.positional && (a.positional || a.name == b.name)));
     if !same_params {
         return false;
     }
@@ -20551,6 +20555,22 @@ impl FnIndex {
     fn list(&self, s: &Sig) -> Option<&FnList> {
         self.lists.get(&s.param_list())
     }
+
+    /// The lists of the functions `s` may fit: its own parameter list's, and for `s` of one
+    /// parameter the list of one parameter of the other kind it fits ([`Sig::one_param_fits`]):
+    /// named as its own parameter for `s` positional, positional for `s` named. At most two
+    /// lookups.
+    fn fit_lists(&self, s: &Sig) -> Vec<&FnList> {
+        let own = s.param_list();
+        let other = match &s.params[..] {
+            [p] if p.positional => Some(vec![(false, Some(p.name.clone()))]),
+            [_] => Some(vec![(true, None)]),
+            _ => None,
+        };
+        (self.lists.get(&own).into_iter())
+            .chain(other.and_then(|k| self.lists.get(&k)))
+            .collect()
+    }
 }
 
 impl FnList {
@@ -23304,6 +23324,26 @@ impl Sig {
             .filter(|(_, p)| (one || !p.positional) && written(&p.name))
             .map(|(i, p)| (i as u32, p.name.clone()))
             .collect()
+    }
+
+    /// Whether it, of one parameter, fits `other`, of one parameter of the other kind: `other`'s
+    /// is positional, or is named as its own is. A function of one parameter takes its argument
+    /// either way, `half(3)` or `half(x: 3)`, so (DESIGN.md sec:values_morphisms) "a function
+    /// with the one parameter `x: T` therefore fits both `(T) -> R` and `(x: T) -> R`, since it
+    /// accepts every call either permits, and not `(y: T) -> R`", with or without `positional`
+    /// in its declaration; and a lambda with no expected type has a positional parameter and
+    /// "its type is `(x: T) -> T`" (sec:diagnostics, row "Function whose parameter kinds do not
+    /// fit the expected function type": a function of one parameter "misfits only by that
+    /// parameter's name, so `xs.map(half)` fits"). So `x -> 1`, passed on through a parameter of
+    /// no written type, fits `(x: int | f64) ->? int` (plan row
+    /// MSG-inner-lambda-unnamed-param-arrow). A type `(int) -> int` names no parameter and
+    /// permits only `f(3)`, so it does not fit `(x: int) -> int`: its parameter's name is no
+    /// written name ([`Self::callable_names`]). The same kind is the general rule's. O(1).
+    pub fn one_param_fits(&self, other: &Sig) -> bool {
+        match (&self.params[..], &other.params[..]) {
+            ([a], [b]) if a.positional != b.positional => b.positional || a.name == b.name,
+            _ => false,
+        }
     }
 
     /// Whether it has the same parameter names and kinds as `other`.

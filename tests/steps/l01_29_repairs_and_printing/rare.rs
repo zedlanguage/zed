@@ -4,6 +4,85 @@
 
 use super::rejected;
 
+#[test]
+fn a_default_of_no_type_yet_is_said_to_have_none() {
+    // Plan row MSG-default-unknown-type: `g`, a parameter of no written type, has no type yet
+    // where `k`'s default reads it. The headline said "the default of `h` is _", and a repair
+    // offered `h: _`; `_` reads as the type of every value. The headline now says the default
+    // has no type yet, as the note on `g` does, and offers no type to widen `h` by.
+    let program = |ret: &str| {
+        format!(
+            "f(positional g) {{\n  k(h: (int) -> int = g) = h(2);\n  return {ret};\n}}\n\
+             main(m: MainArgs) {{\n  m.stdout <- \"${{f(x -> x + 1)}}\";\n}}\n"
+        )
+    };
+    for ret in ["k()", "0"] {
+        assert_eq!(
+            shown(&program(ret)),
+            r#"2:23: the default of `h` has no type yet here, and a default is a value of its parameter's type, int -> int.
+  [1] 2:23: `g` has no type yet here
+      2 |   k(h: (int) -> int = g) = h(2);
+        |                       ^
+  [2] 1:3: `g` has no declared type; its uses give it no type yet
+      1 | f(positional g) {
+        |   ^^^^^^^^^^^^
+  [3] 2:23: repair: write a default of type int -> int"#
+        );
+    }
+    // A default whose type is known is shown by it, as before.
+    let known = shown(
+        "k(h: (int) -> int = g) = h(2);\ng(positional x) = \"s\";\n\
+         main(m: MainArgs) {\n  m.stdout <- \"${k()}\";\n}\n",
+    );
+    assert!(
+        known.starts_with("1:21: `g` is `_ -> \"s\"`, not `int -> int`"),
+        "{known}"
+    );
+}
+
+/// MSG-list-value-printed-by-arrows: a list value whose keys the type knows, as `[1, 2]` and
+/// `[x.trim]`, is printed by its arrow, `(0 | 1) -> 1 | 2` and `0 -> String`, and not as
+/// `[1 | 2]` or `[String]`. DESIGN.md sec:diagnostics asks a printed type to be exact and to
+/// parse back; `[V]` is `int ->? V` over the ranks `0 ..< n` with `n` not known (sec:type_language),
+/// a larger type than the value's, so it would say `size` is refused a type it takes at other
+/// lengths. `Sig::list` (zedc-types) holds only where the length is not known, and there `[V]`
+/// is printed (the third program, `xs: [int]`). The shape form `[V; n]` (sec:type_language,
+/// step L14.1) is not yet read, so it cannot be printed; plan row MSG-list-value-printed-shape.
+#[test]
+fn a_list_value_of_known_keys_is_printed_by_its_arrow() {
+    let size = "size(ps: [String]) = ps.count;\n";
+    let known = shown(&format!(
+        "{size}main(m: MainArgs) {{\n  m.stdout <- \"${{size(ps: [1, 2])}}\";\n}}\n"
+    ));
+    assert!(
+        known.starts_with(
+            "3:18: `size` does not take ((0 | 1) -> 1 | 2): no arrow of `size` takes these types.\n  [1] 3:27: this expression is (0 | 1) -> 1 | 2\n"
+        ),
+        "{known}"
+    );
+    assert!(
+        known.contains("`size` takes (ps: [String]) -> int"),
+        "{known}"
+    );
+    let lambda =
+        shown("main(m: MainArgs) {\n  m.stdout <- \"${[1, 2].flatMap(x -> [x.trim])}\";\n}\n");
+    assert!(
+        lambda.starts_with(
+            "2:18: the function given to `flatMap` does not take (1 | 2): no arrow of the function given to `flatMap` takes these types.\n  [1] 2:18: the function given to `flatMap` takes String -> 0 -> String\n"
+        ),
+        "{lambda}"
+    );
+    let unknown = shown(&format!(
+        "{size}f(xs: [int]) = size(ps: xs);\nmain(m: MainArgs) {{\n  m.stdout <- \"${{f(xs: [1])}}\";\n}}\n"
+    ));
+    assert!(
+        unknown.starts_with(
+            "2:16: `size` does not take ([int]): no arrow of `size` takes these types.\n  [1] 2:25: `xs` is [int] here\n"
+        ),
+        "{unknown}"
+    );
+}
+
 /// The rejection of `src`, without the line end after its last line.
 fn shown(src: &str) -> String {
     rejected(src).trim_end().to_string()

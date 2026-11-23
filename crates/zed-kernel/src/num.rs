@@ -1402,14 +1402,21 @@ impl Rat {
         // aborts. Tested by
         // `a_power_of_a_wide_base_is_refused_when_memory_is_short` (COMPLEXITY.md K30). A
         // complete solution would ask each allocation of the power for its own memory.
-        let wide: u64 = self.built_widths().into_iter().flatten().sum();
-        // The refusal of the wide parts' powers: their size in bits, the width times `e`, and the
-        // memory asked, eight times it; asked of `room` here, and returned below when `e` is too
-        // wide to raise a part to.
+        let widths = self.built_widths();
+        let wide: u64 = widths.into_iter().flatten().sum();
+        // The refusal of the wide parts' powers: their size in bits, and the memory asked,
+        // eight times the width times `e`; asked of `room` here, and returned below when `e` is
+        // too wide to raise a part to. The size is the least the powers have, `e * (L - 1) + 1`
+        // bits for each part of `L` bits ([`Rat::built_widths`]), as a message reads it as what
+        // the step needs (`least_bits`, row CONST-least-refusal-size); the width times `e`, an
+        // upper bound, took 65 bits a factor for `(2^64 + 13) ^ (2^64)` and named 130 EiB where
+        // the number has `64 * 2^64 + 19` bits, 128 EiB (plan row MSG-too-large-figure).
         let refusal = || {
-            let size = BigUint::from(wide) * e;
+            let size = (widths.into_iter().flatten())
+                .map(|l| BigUint::from(l - 1) * e + 1u32)
+                .sum();
             TooLarge {
-                ask: &size << 3u32,
+                ask: (BigUint::from(wide) * e) << 3u32,
                 size,
             }
         };
