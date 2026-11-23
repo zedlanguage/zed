@@ -1564,7 +1564,11 @@ fn an_answer_on_a_spent_meter_is_not_checked() {
     let f = every_tuple_reached(8, 1);
     let selected = sumset::SELECTED.with(std::cell::Cell::get);
     let mut check = None;
-    let got = metered(crate::presburger::meter::PIECE * 4, || {
+    // The walk of `f` and its copy, `n` constraints each, are charged before [`sumset`] is
+    // selected (P4-C); 4 pieces more let it be selected and spend the meter after.
+    let mut n = 0u64;
+    f.walk(&mut |_| n += 1);
+    let got = metered(crate::presburger::meter::PIECE * (2 * n + 4), || {
         let (out, c) = crate::presburger::with_modular_empty_checked(|| {
             crate::presburger::modular_answer(&f, false)
         });
@@ -1587,27 +1591,30 @@ fn an_answer_on_a_spent_meter_is_not_checked() {
 /// `r_s == 0` on one sum `s` (XR-presburger4 round 2 P2, Gemini F6: deleting every charge passed
 /// every test). Each count is the sum of the charges at the sites, in pieces of
 /// [`meter::PIECE`] units, so a charge removed or changed fails here. One coordinate in all
-/// three, moved by the row of modulus 5 (the second row of the third case moves none), and 3
-/// literals on the sums' remainders (`r_s == 0` and the bounds `0 <= r_s <= m - 1` that
-/// [`formula`] writes; the rows' bounds are top-level row literals, read once). Each sum is
+/// three, moved by the row of modulus 5 (the second row of the third case moves none), and 1
+/// literal on the sums' remainders, `r_s == 0`: the bounds `0 <= r_s <= m - 1` that
+/// [`formula`] writes hold at every remainder and are read once, as true (META4 order 9); the
+/// rows' bounds are top-level row literals, read once. Each sum is
 /// written `m q + r` modulo `m`, which is `r mod m` with `A = 0` and `u = 1` (Lemma C): written
 /// `r` alone, the sum's equation has two atoms and is read as a row on `r`, which [`solve`]
-/// declines before [`sumset`] (job 37 on round 3: "not selected"). The literals cost a word for
-/// the one live sum and the 3 literals at each of the 2 tuples reached, the 3 literals once, and
-/// the walk of `f`'s `n` constraints: `2 (1 + 3) + 3 + n = 11 + n`.
-/// - `x == 5 q + r`, `s = r mod 2`: the start `M = 2`; the walk of the row's remainder
+/// declines before [`sumset`] (job 37 on round 3: "not selected"). The walk of `f`'s `n`
+/// constraints and its copy by `map_cons` cost `2 n` (P4-C); the literals a word for the one
+/// live sum and the literal at each of the 2 tuples reached, and the literal once:
+/// `2 (1 + 1) + 1 = 5`.
+/// - `x == 5 q + r`, `s = r mod 2`: the walk and copy with `n = 7` (3 for the row, 3 for the
+///   sum, the literal), 14; the start `M = 2`; the walk of the row's remainder
 ///   `min(5, 1 * 2) * 1 + 1 = 3`; `R = {0}` read, 1; `W = {0, 1}` is the whole group, 2; the
-///   2 tuples written, 2; the literals with `n = 7` (3 for the row, 3 for the sum, the
-///   literal), 18. 28 pieces.
-/// - `x == 5 q + r` with `r <= 1`, `s = r mod 4`: the start 4; the walk `min(5, 4) + 1 = 5`;
-///   `R` read, 1; `W = {0, 1}` is not the whole group of 4, so the pairs `1 * 2 * 1 = 2`
-///   (the product of polynomials, `2 * 7 * 2 + 4 = 32`, costs more); the 2 tuples written, 2;
-///   the literals with `n = 7`, as [`Formula::and`] keeps one constraint per left-hand side
-///   and the literal `1 >= r` replaces the row's bound `r <= 4`, 18. 32 pieces.
-/// - `x == 5 q + r` and `2 x == 5 q' + r'` (one block), `s = r mod 2`: the start 2; the block's
-///   `t` over `0..5`, each row its interval, its coordinates and itself,
-///   `5 ((1 + 1 + 1) + (1 + 0 + 1)) = 25`; `R` read, 1; `W` the whole group, 2; written, 2; the
-///   literals with `n = 10`, 21. 53 pieces.
+///   2 tuples written, 2; the literals, 5. 29 pieces.
+/// - `x == 5 q + r` with `r <= 1`, `s = r mod 4`: the walk and copy with `n = 7`, as
+///   [`Formula::and`] keeps one constraint per left-hand side and the literal `1 >= r` replaces
+///   the row's bound `r <= 4`, 14; the start 4; the walk of the row's one interval `0..=1`,
+///   `min(2, 4) * 1 + 1 = 3` (`walk_of`); `R` read, 1; `W = {0, 1}` is not the whole group of
+///   4, so the pairs `1 * 2 * 1 = 2` (the product of polynomials, `2 * 7 * 2 + 4 = 32`, costs
+///   more); the 2 tuples written, 2; the literals, 5. 31 pieces.
+/// - `x == 5 q + r` and `2 x == 5 q' + r'` (one block), `s = r mod 2`: the walk and copy with
+///   `n = 10`, 20; the start 2; the block's `t` over `0..5`, each row its interval, its
+///   coordinates and itself, `5 ((1 + 1 + 1) + (1 + 0 + 1)) = 25`; `R` read, 1; `W` the whole
+///   group, 2; written, 2; the literals, 5. 57 pieces.
 #[test]
 fn sumset_charges_each_step() {
     let s = |m: i64, rem_of: usize| Sum {
@@ -1630,15 +1637,15 @@ fn sumset_charges_each_step() {
     // A case: its name, rows, top-level literals, sum and pieces charged.
     type Case = (&'static str, Vec<Div>, Vec<Formula>, Sum, u64);
     let cases: [Case; 3] = [
-        ("whole group", unit_rows([5]), vec![], s(2, 0), 28),
+        ("whole group", unit_rows([5]), vec![], s(2, 0), 29),
         (
             "pairs",
             unit_rows([5]),
             vec![Formula::Con(Con::ge(&Lin::constant(1), &r(0)))],
             s(4, 0),
-            32,
+            31,
         ),
-        ("a block of two rows", two, vec![], s(2, 0), 53),
+        ("a block of two rows", two, vec![], s(2, 0), 57),
     ];
     for (what, divs, mut lits, sum, pieces) in cases {
         let sums = [sum];
@@ -1903,7 +1910,9 @@ fn rows_of_one_remainder(k: usize) -> (Vec<Div>, Vec<Sum>, Formula) {
     (divs, sums, f)
 }
 
-/// [`rows_of_one_remainder`] (META4 order 8): the answers against enumeration at `k` = 1 and 2;
+/// [`rows_of_one_remainder`] (META4 order 8): the answers against enumeration at `k` = 2 and 3
+/// (at `k = 1` the first sum `q_0 == 2 q + r` has three terms and reads as a row on `q_0`, a
+/// chain, which [`solve`] declines before [`sumset`]);
 /// at `k = 15` the real entry, [`solve_modular_or_scaled`] under a question's meter with no
 /// limit, takes [`sumset`] (Gemini conjectured it; checked here); and the units grow as `k`,
 /// at most 9 times from 15 to 120. Each row of one allowed remainder goes into `B_j`, so the
@@ -1911,22 +1920,24 @@ fn rows_of_one_remainder(k: usize) -> (Vec<Div>, Vec<Sum>, Formula) {
 /// each of the `k` blocks of the first rows copied all of them, Θ(k²).
 #[test]
 fn rows_of_one_remainder_leave_the_coordinates() {
-    for k in 1..=2 {
+    for k in 2..=3 {
         let (divs, sums, f) = rows_of_one_remainder(k);
         let period: i64 = 2 * divs.iter().map(|d| d.m).product::<i64>();
-        let want =
-            (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
+        let want = (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
         let (got, _, selected) = sumset_units(&f);
         assert!(
             selected && got.as_ref().map(Option::is_some) == Some(want),
-            "k = {k}: {got:?}, want {want}\n{f}"
+            "k = {k}: {got:?}, want {want}, selected {selected}\n{f}"
         );
     }
     let f = rows_of_one_remainder(15).2;
     let before = sumset::SELECTED.with(std::cell::Cell::get);
     let got = metered(u64::MAX, || solve_modular_or_scaled(&f, false));
     let selected = sumset::SELECTED.with(std::cell::Cell::get) > before;
-    assert!(selected && matches!(got, Ok(Some(Some(_)))), "{got:?}, selected {selected}");
+    assert!(
+        selected && matches!(got, Ok(Some(Some(_)))),
+        "{got:?}, selected {selected}"
+    );
     let units = |k: usize| units_with_a_point(&rows_of_one_remainder(k).2, &format!("k = {k}"));
     let (small, large) = (units(15), units(120));
     assert!(
@@ -1971,6 +1982,71 @@ fn remainders_no_literal_reads_are_not_filled() {
         large <= 9 * small,
         "units {small} at m = 15, {large} at 120"
     );
+}
+
+/// Codex's CRT family (XR-presburger4 round 4 P4-D; META4 order 10): rows over the first `k` odd
+/// primes with the top-level literals `r_i == p_i - 1`, so every point has `x = -1` modulo each
+/// `p_i` and the least nonnegative one, `prod p_i - 1`, has Θ(k log k) bits, as has each of the
+/// `k` quotients; and the sum `sum_i q_i` modulo 2, which routes the formula to [`sumset`].
+fn crt_rows(k: usize) -> Formula {
+    let primes: Vec<i64> = (zed_numtheory::first_primes(k + 1).into_iter().skip(1))
+        .map(|p| p as i64)
+        .collect();
+    let divs = unit_rows(primes.iter().copied());
+    let sums = [Sum {
+        parts: (0..k).map(|i| (2 * i + 1, 1)).collect(),
+        k: 0,
+        m: 2,
+        rem: true,
+    }];
+    let lits = (primes.iter().enumerate())
+        .map(|(i, &p)| Formula::Con(Con::eq(&r(i), &Lin::constant(p - 1))))
+        .collect();
+    formula(&divs, Formula::and(lits), sum_formulas(&divs, &sums))
+}
+
+/// The control Codex asked for on [`crt_rows`] (META4 order 10): the decision and the model at
+/// `k` = 15 and 120, both by [`sumset`] under a meter with no limit. The decision must say
+/// "a point" and the model must be one, with `x = -1` modulo every row's modulus; the units of
+/// each, and the bits of `x`, are printed. The units count the way back a word per coordinate
+/// of each block's step (one coordinate: every row has one allowed remainder and is folded into
+/// `B_j`), not the Chinese remaindering nor the `k` quotients of Θ(k log k) bits each
+/// ([`point_with_sums`]), which the module comment states outside the word estimate. Job j4c
+/// of b22-presburger6: decision 2,528 and model 2,768 units at `k = 15` (`x` of 64 bits),
+/// 19,312 and 21,232 at 120 (923 bits): the model costs 1.10 times the decision at both
+/// sizes, and each grows 7.6 times from 15 to 120.
+#[test]
+fn crt_family_model_against_decision() {
+    for k in [15usize, 120] {
+        let f = crt_rows(k);
+        let (decided, used_d, selected) = sumset_units(&f);
+        assert!(
+            selected && matches!(decided, Some(Some(_))),
+            "k = {k}: {decided:?}"
+        );
+        sumset::ALWAYS.with(|a| a.set(true));
+        let mut work = crate::presburger::meter::Work {
+            used: 0,
+            limit: u64::MAX,
+            solver: crate::presburger::SOLVER,
+        };
+        let got = work.metered(|| solve(&f, true)).expect("no limit");
+        sumset::ALWAYS.with(|a| a.set(false));
+        let Some(Some(model)) = got else {
+            panic!("k = {k}: no model, {got:?}");
+        };
+        assert!(f.holds(&model), "k = {k}: the model fails f");
+        let x = &model[&Atom::Sym("x".into())];
+        for p in zed_numtheory::first_primes(k + 1).into_iter().skip(1) {
+            let p = Int::from(p as i64);
+            assert_eq!(x.mod_floor(&p), &p - &Int::ONE, "k = {k}");
+        }
+        eprintln!(
+            "crt k = {k}: decision {used_d} units, model {} units, x of {} bits",
+            work.used,
+            x.bits()
+        );
+    }
 }
 
 /// Codex's fixture (XR-presburger4 round 3 P2, fixed radix): rows over 809 and 811, the live sum

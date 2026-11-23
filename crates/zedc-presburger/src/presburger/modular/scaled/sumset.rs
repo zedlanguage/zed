@@ -427,9 +427,35 @@ pub(super) fn solve_by_sums(
     // once here, as true or false (XR-presburger4 round 3 P2, Codex: it was read again at every
     // tuple); [`Formula::and`] and [`Formula::or`] drop or absorb the constants. The literals on
     // rows' remainders at the top level hold wherever the tuple's `t`s are allowed.
+    // A literal on one sum's remainder that every value `0..M_j` meets (the bounds
+    // `0 <= r_j <= M_j - 1` written with each sum) or none meets is read once here, as true or
+    // false: the remainder at a tuple is always in `0..M_j` (a value modulo `M_j`, and
+    // [`read_sum`] admits a sum only with those bounds at the top level). Kept, the bounds read
+    // every sum's remainder, so the filter of the places below kept all `k` sums and the
+    // literals at each of the `M` tuples were Θ(k M) (XR-presburger4 round 4 NB-P2, META4
+    // order 9: 15,456 -> 726,096 units at k = m = 15 -> 120 with only the filter). O(1) words a
+    // literal ([`remainder_values`] meets one interval with `0..M_j`).
+    let constant = |c: &Con| -> Option<bool> {
+        let [a] = &c.lin.terms.keys().collect::<Vec<_>>()[..] else {
+            return None;
+        };
+        let m = &sums[*sum_r.get(*a)?].m;
+        let vals = remainder_values(c, m);
+        if vals.is_empty() {
+            Some(false)
+        } else {
+            (vals[..] == [(Int::ZERO, m - &Int::ONE)]).then_some(true)
+        }
+    };
     let lits = f.map_cons(&|c| {
         if skip.contains(c) || at_top.contains(c) {
             Formula::top()
+        } else if let Some(holds) = constant(c) {
+            if holds {
+                Formula::top()
+            } else {
+                Formula::bottom()
+            }
         } else if (c.lin.terms.keys()).all(|a| fixed.contains_key(a)) {
             if Formula::Con(c.clone()).holds(&fixed) {
                 Formula::top()

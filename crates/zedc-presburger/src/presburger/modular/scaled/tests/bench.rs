@@ -77,32 +77,17 @@ fn constant_sums_beside_a_dense_sum_scale() {
     });
 }
 
-/// [`rows_of_one_remainder`] at `k = n` and `8n` (XR-presburger4 round 4, Gemini's P-A; META4
-/// order 8): each row of one allowed remainder goes into `B_j`, so the `k` sums share the class
-/// coordinate and each block copies O(1) words a tuple; held as `k` coordinates, Θ(k²).
-#[test]
-fn rows_of_one_remainder_scale() {
-    let inputs = scaling::inputs(N_ONE_REMAINDER, |n| rows_of_one_remainder(n).2);
-    scaling::check_order("k rows of one remainder", N_ONE_REMAINDER, 1, |n| {
-        by_sumset(&inputs[&n], |got| matches!(got, Some(Some(_))))
-    });
-}
-
-/// [`unread_remainders`] at `k = m = n` and `8n` (XR-presburger4 round 4 NB-P2; META4 order 9):
-/// only the two remainders the literals read are filled at each of the `m` tuples; filled all,
-/// Θ(k m).
-#[test]
-fn remainders_no_literal_reads_scale() {
-    let inputs = scaling::inputs(N_ONE_REMAINDER, |n| {
-        unread_remainders([MISSING_ROWS[0], MISSING_ROWS[1]], n, n as i64)
-    });
-    scaling::check_order("k unread remainders modulo m", N_ONE_REMAINDER, 1, |n| {
-        by_sumset(&inputs[&n], |got| matches!(got, Some(None)))
-    });
-}
-
-/// The size of [`rows_of_one_remainder_scale`] and [`remainders_no_literal_reads_scale`].
-const N_ONE_REMAINDER: usize = 15;
+// Gemini's P-A ([`rows_of_one_remainder`]) and Codex's unread remainders
+// ([`unread_remainders`]) have no wall-time benchmark here (META4 order 2 of b22-presburger6):
+// timed at `k = 15` and 120 both passed with the fixes off (job j1 of b22-presburger5's lists),
+// as the Θ(k²) or Θ(k m) term is a few thousand steps beside the build of the formula. The unit
+// counts of `rows_of_one_remainder_leave_the_coordinates` and
+// `remainders_no_literal_reads_are_not_filled` read the path's own charges, a word per
+// coordinate copied and per place filled, at the same sizes with limit 9, and fail with the
+// fixes off (jobs j5c and j6c of b22-presburger6: the first, with rows of one allowed value
+// not folded into `B_j`, 38,912 -> 1,922,192 units, 49.4 times; the second, with the
+// constant literals not folded, 15,456 -> 726,096 units, 47 times, as on 42ec4cc36, where the
+// bounds `0 <= r_j <= m - 1` still made every remainder read).
 
 /// [`solve_modular_or_scaled`] on [`bench_many_sums`] with 3 rows in 2 blocks and `j = n` and
 /// `8n` sums modulo 2 (XR-presburger4 round 2 P3, Codex and Gemini): the size of the group of
