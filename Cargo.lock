@@ -1252,6 +1252,7 @@ dependencies = [
 name = "zed-benches"
 version = "0.0.0"
 dependencies = [
+ "log",
  "num-bigint",
  "num-integer",
  "object 0.40.0",
@@ -1283,6 +1284,7 @@ dependencies = [
  "foldhash",
  "hashbrown 0.17.1",
  "indexmap",
+ "log",
  "perf-event2",
  "rustc-hash",
  "rustix",
@@ -1366,6 +1368,7 @@ dependencies = [
  "cranelift-native",
  "cranelift-object",
  "libc",
+ "log",
  "object 0.40.0",
  "perf-event2",
  "rustc-hash",
@@ -1405,6 +1408,7 @@ dependencies = [
  "perf-event2",
  "psm",
  "rustix",
+ "smallvec",
  "stacker",
  "zed-alloc-count",
  "zed-kernel",
@@ -1420,6 +1424,7 @@ dependencies = [
  "cranelift-codegen",
  "cranelift-reader",
  "insta",
+ "log",
  "num-bigint",
  "num-integer",
  "num-traits",

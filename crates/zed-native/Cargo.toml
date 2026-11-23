@@ -162,3 +162,8 @@ target-lexicon = { version = "0.13.5", features = ["std"] }
 # so the workspace build got [default,std] from here and zed-clif alone [std], and merge_check
 # refused every branch that changed a manifest.
 rustc-hash = { version = "2.1.3", default-features = false, features = ["std"] }
+# And log, under cranelift-codegen, with `alloc` and `std`, which loom's tracing-subscriber
+# (zed-rt's tests, TEST-rt-weakmem) gives it in the workspace build; without this line this
+# package alone got log [ ] and merge_check step 0a refused the branch. zed-clif, zed-tests and
+# zed-benches carry the same line.
+log = { version = "0.4.34", features = ["alloc", "std"] }

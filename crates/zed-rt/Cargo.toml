@@ -48,6 +48,10 @@ rustix.workspace = true
 stacker.workspace = true
 zed-alloc-count.workspace = true
 zed-meter-settings.workspace = true
+# smallvec, under loom's tracing-subscriber, with `union`, which cranelift-codegen gives it in
+# the workspace build, so that `cargo test -p zed-rt` builds it as that build does (merge_check
+# step 0a; without this line zed-rt alone got smallvec [ ]).
+smallvec = { version = "1.16.4", features = ["union"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 perf-event2.workspace = true
