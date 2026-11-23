@@ -751,197 +751,210 @@ mod row_hash_sites {
             .collect()
     }
 
-    /// `(int, int) \ (r_1 | ... | r_n)` for tied rows is decided in `O(n log n)`
-    /// (empty.rs `Region::index`).
-    #[test]
-    fn the_difference_from_a_union_of_tied_rows_scales() {
-        let n = 64;
-        for tied in [false, true] {
+    /// The measurements at two sizes are benchmarks, run apart with `--bench`: under load they
+    /// took 12 s to 80 s each and stopped the zed_kernel unit piece at its 20 s limit
+    /// (TEST-bench-split, FAIL-zed-kernel-unit-piece-past-20s).
+    mod bench {
+        use super::*;
+
+        /// `(int, int) \ (r_1 | ... | r_n)` for tied rows is decided in `O(n log n)`
+        /// (empty.rs `Region::index`).
+        #[test]
+        fn the_difference_from_a_union_of_tied_rows_scales() {
+            let n = 64;
+            for tied in [false, true] {
+                let diffs = scaling::inputs(n, |m| {
+                    let top = Type::tuple(vec![Type::int(), Type::int()]);
+                    &top - &Type::union_all(tuples(m, tied))
+                });
+                let what =
+                    format!("the emptiness of a pair less a union of rows (tied: {tied}), by rows");
+                scaling::check(&what, n, |m| {
+                    Type::forget_emptiness();
+                    assert!(!diffs[&m].is_empty());
+                });
+            }
+        }
+
+        /// The same for one-tuples of tied tuples (empty.rs `found`): the control only. The tied
+        /// half took 43.5 times the instructions at 8n (n 1024), and waits for
+        /// PERF-set-tied-digest-depth in wt/scratch/deferred-tests/PERF-set-tied-digest-depth.rs.
+        #[test]
+        fn the_difference_from_a_union_of_tied_one_tuples_scales() {
+            let n = 1024;
             let diffs = scaling::inputs(n, |m| {
-                let top = Type::tuple(vec![Type::int(), Type::int()]);
-                &top - &Type::union_all(tuples(m, tied))
+                let top = Type::tuple(vec![Type::tuple(vec![Type::int(), Type::int()])]);
+                let u = Type::union_all(tuples(m, false).into_iter().map(|t| Type::tuple(vec![t])));
+                &top - &u
             });
             let what =
-                format!("the emptiness of a pair less a union of rows (tied: {tied}), by rows");
-            scaling::check(&what, n, |m| {
+                "the emptiness of a one-tuple less a union of one-tuples (tied: false), by rows";
+            scaling::check(what, n, |m| {
                 Type::forget_emptiness();
                 assert!(!diffs[&m].is_empty());
             });
         }
-    }
 
-    /// The same for one-tuples of tied tuples (empty.rs `found`): the control only. The tied half
-    /// took 43.5 times the instructions at 8n (n 1024), and waits for PERF-set-tied-digest-depth
-    /// in wt/scratch/deferred-tests/PERF-set-tied-digest-depth.rs.
-    #[test]
-    fn the_difference_from_a_union_of_tied_one_tuples_scales() {
-        let n = 1024;
-        let diffs = scaling::inputs(n, |m| {
-            let top = Type::tuple(vec![Type::tuple(vec![Type::int(), Type::int()])]);
-            let u = Type::union_all(tuples(m, false).into_iter().map(|t| Type::tuple(vec![t])));
-            &top - &u
-        });
-        let what = "the emptiness of a one-tuple less a union of one-tuples (tied: false), by rows";
-        scaling::check(what, n, |m| {
-            Type::forget_emptiness();
-            assert!(!diffs[&m].is_empty());
-        });
-    }
-
-    /// Printing a tuple of `n` renamed recursive types (print.rs `Printer.index`).
-    #[test]
-    fn printing_a_tuple_of_renamed_definitions_scales() {
-        let n = 64;
-        for tied in [false, true] {
-            let tups = scaling::inputs(n, |m| Type::tuple(recs(m, tied)));
-            let what =
-                format!("the surface of a tuple of definitions (tied: {tied}), by definitions");
-            scaling::check(&what, n, |m| {
-                std::hint::black_box(tups[&m].surface());
-            });
-        }
-    }
-
-    /// The forced atoms of a conjunction that holds `n` tied rows (bdd.rs `Part::forced`).
-    #[test]
-    fn the_forced_atoms_of_a_conjunction_of_tied_rows_scale() {
-        let n = 64;
-        for tied in [false, true] {
-            let parts = scaling::inputs(n, |m| {
-                let top = Type::tuple(vec![Type::int(), Type::int()]);
-                let tys = tuples(m + 20, tied);
-                let mut acc = &tys[0] | &tys[1];
-                for k in 1..10 {
-                    acc = &acc & &(&tys[2 * k] | &tys[2 * k + 1]);
-                }
-                for t in &tys[20..] {
-                    acc = &acc & &(&top - t);
-                }
-                let part = acc.p().tuples.lens[&2].clone();
-                assert!(matches!(part, crate::types::bdd::Part::Expr(_)));
-                part
-            });
-            let what = format!("the forced atoms of a conjunction of rows (tied: {tied}), by rows");
-            scaling::check(&what, n, |m| {
-                assert!(parts[&m].forced().1.len() >= m);
-            });
-        }
-    }
-
-    /// A definition whose body is a union of `n` tied tuple types (group.rs `Numbering::first`).
-    #[test]
-    fn a_definition_over_tied_types_scales() {
-        let n = 4096;
-        for tied in [false, true] {
-            let arms = scaling::inputs(n, |m| tuples(m, tied));
-            let what = format!("a definition whose body unites types (tied: {tied}), by types");
-            scaling::check(&what, n, |m| {
-                let body = arms[&m]
-                    .iter()
-                    .cloned()
-                    .map(RecExpr::Type)
-                    .chain([RecExpr::Tuple(vec![
-                        RecExpr::Type(int(0)),
-                        RecExpr::Ref(0, vec![]),
-                    ])])
-                    .collect();
-                let def = Def {
-                    name: "Tied".into(),
-                    params: vec![],
-                    body: RecExpr::Union(body),
-                };
-                std::hint::black_box(Group::new(vec![def]).expect("a group"));
-            });
-        }
-    }
-
-    /// One instance of a generic definition at each of `n` tied types (group.rs
-    /// `ThreadInstances`).
-    #[test]
-    fn instances_at_tied_types_scale() {
-        let n = 4096;
-        for tied in [false, true] {
-            let args = scaling::inputs(n, |m| tuples(m, tied));
-            let what = format!("instances of one definition at types (tied: {tied}), by types");
-            scaling::check(&what, n, |m| {
-                let def = Def {
-                    name: "Chain".into(),
-                    params: vec!["T".into()],
-                    body: RecExpr::Union(vec![
-                        RecExpr::Tuple(vec![]),
-                        RecExpr::Tuple(vec![
-                            RecExpr::Param(0),
-                            RecExpr::Ref(0, vec![RecExpr::Param(0)]),
-                        ]),
-                    ]),
-                };
-                let g = Group::new(vec![def]).expect("a group");
-                let kept: Vec<Type> = args[&m]
-                    .iter()
-                    .map(|t| g.instance(vec![t.clone()]).remove(0))
-                    .collect();
-                std::hint::black_box(kept);
-            });
-        }
-    }
-
-    /// The emptiness of a union of `n` empty recursive types `T_i = (r_i, T_i)`, whose blind
-    /// digests are equal when the rows `r_i` tie (empty.rs `Ids`, keyed by `hash::blind`).
-    #[test]
-    fn the_emptiness_of_a_union_of_tied_recursive_types_scales() {
-        let n = 4096;
-        for tied in [false, true] {
-            let unions = scaling::inputs(n, |m| {
-                let recs = tuples(m, tied).into_iter().enumerate().map(|(i, t)| {
-                    let def = Def {
-                        name: format!("Endless{i}"),
-                        params: vec![],
-                        body: RecExpr::Tuple(vec![RecExpr::Type(t), RecExpr::Ref(0, vec![])]),
-                    };
-                    Group::new(vec![def])
-                        .expect("a group")
-                        .instance(vec![])
-                        .remove(0)
+        /// Printing a tuple of `n` renamed recursive types (print.rs `Printer.index`).
+        #[test]
+        fn printing_a_tuple_of_renamed_definitions_scales() {
+            let n = 64;
+            for tied in [false, true] {
+                let tups = scaling::inputs(n, |m| Type::tuple(recs(m, tied)));
+                let what =
+                    format!("the surface of a tuple of definitions (tied: {tied}), by definitions");
+                scaling::check(&what, n, |m| {
+                    std::hint::black_box(tups[&m].surface());
                 });
-                Type::union_all(recs)
-            });
-            let what =
-                format!("the emptiness of a union of recursive types (tied: {tied}), by types");
-            scaling::check(&what, n, |m| {
-                Type::forget_emptiness();
-                assert!(unions[&m].is_empty());
-            });
+            }
         }
-    }
 
-    /// `n` distinct one-definition groups whose group digests are equal when their rows tie
-    /// (group.rs `GROUPS`).
-    #[test]
-    fn groups_of_one_digest_scale() {
-        let n = 4096;
-        for tied in [false, true] {
-            let defs = scaling::inputs(n, |m| {
-                tuples(m, tied)
-                    .into_iter()
-                    .map(|t| Def {
-                        name: "Same".into(),
+        /// The forced atoms of a conjunction that holds `n` tied rows (bdd.rs `Part::forced`).
+        #[test]
+        fn the_forced_atoms_of_a_conjunction_of_tied_rows_scale() {
+            let n = 64;
+            for tied in [false, true] {
+                let parts = scaling::inputs(n, |m| {
+                    let top = Type::tuple(vec![Type::int(), Type::int()]);
+                    let tys = tuples(m + 20, tied);
+                    let mut acc = &tys[0] | &tys[1];
+                    for k in 1..10 {
+                        acc = &acc & &(&tys[2 * k] | &tys[2 * k + 1]);
+                    }
+                    for t in &tys[20..] {
+                        acc = &acc & &(&top - t);
+                    }
+                    let part = acc.p().tuples.lens[&2].clone();
+                    assert!(matches!(part, crate::types::bdd::Part::Expr(_)));
+                    part
+                });
+                let what =
+                    format!("the forced atoms of a conjunction of rows (tied: {tied}), by rows");
+                scaling::check(&what, n, |m| {
+                    assert!(parts[&m].forced().1.len() >= m);
+                });
+            }
+        }
+
+        /// A definition whose body is a union of `n` tied tuple types (group.rs
+        /// `Numbering::first`).
+        #[test]
+        fn a_definition_over_tied_types_scales() {
+            let n = 4096;
+            for tied in [false, true] {
+                let arms = scaling::inputs(n, |m| tuples(m, tied));
+                let what = format!("a definition whose body unites types (tied: {tied}), by types");
+                scaling::check(&what, n, |m| {
+                    let body = arms[&m]
+                        .iter()
+                        .cloned()
+                        .map(RecExpr::Type)
+                        .chain([RecExpr::Tuple(vec![
+                            RecExpr::Type(int(0)),
+                            RecExpr::Ref(0, vec![]),
+                        ])])
+                        .collect();
+                    let def = Def {
+                        name: "Tied".into(),
                         params: vec![],
+                        body: RecExpr::Union(body),
+                    };
+                    std::hint::black_box(Group::new(vec![def]).expect("a group"));
+                });
+            }
+        }
+
+        /// One instance of a generic definition at each of `n` tied types (group.rs
+        /// `ThreadInstances`).
+        #[test]
+        fn instances_at_tied_types_scale() {
+            let n = 4096;
+            for tied in [false, true] {
+                let args = scaling::inputs(n, |m| tuples(m, tied));
+                let what = format!("instances of one definition at types (tied: {tied}), by types");
+                scaling::check(&what, n, |m| {
+                    let def = Def {
+                        name: "Chain".into(),
+                        params: vec!["T".into()],
                         body: RecExpr::Union(vec![
-                            RecExpr::Type(t),
-                            RecExpr::Tuple(vec![RecExpr::Type(int(0)), RecExpr::Ref(0, vec![])]),
+                            RecExpr::Tuple(vec![]),
+                            RecExpr::Tuple(vec![
+                                RecExpr::Param(0),
+                                RecExpr::Ref(0, vec![RecExpr::Param(0)]),
+                            ]),
                         ]),
-                    })
-                    .collect::<Vec<_>>()
-            });
-            let what = format!("groups of one definition each (tied: {tied}), by groups");
-            scaling::check(&what, n, |m| {
-                let kept: Vec<Group> = defs[&m]
-                    .iter()
-                    .cloned()
-                    .map(|d| Group::new(vec![d]).expect("a group"))
-                    .collect();
-                assert_eq!(kept.len(), m);
-            });
+                    };
+                    let g = Group::new(vec![def]).expect("a group");
+                    let kept: Vec<Type> = args[&m]
+                        .iter()
+                        .map(|t| g.instance(vec![t.clone()]).remove(0))
+                        .collect();
+                    std::hint::black_box(kept);
+                });
+            }
+        }
+
+        /// The emptiness of a union of `n` empty recursive types `T_i = (r_i, T_i)`, whose blind
+        /// digests are equal when the rows `r_i` tie (empty.rs `Ids`, keyed by `hash::blind`).
+        #[test]
+        fn the_emptiness_of_a_union_of_tied_recursive_types_scales() {
+            let n = 4096;
+            for tied in [false, true] {
+                let unions = scaling::inputs(n, |m| {
+                    let recs = tuples(m, tied).into_iter().enumerate().map(|(i, t)| {
+                        let def = Def {
+                            name: format!("Endless{i}"),
+                            params: vec![],
+                            body: RecExpr::Tuple(vec![RecExpr::Type(t), RecExpr::Ref(0, vec![])]),
+                        };
+                        Group::new(vec![def])
+                            .expect("a group")
+                            .instance(vec![])
+                            .remove(0)
+                    });
+                    Type::union_all(recs)
+                });
+                let what =
+                    format!("the emptiness of a union of recursive types (tied: {tied}), by types");
+                scaling::check(&what, n, |m| {
+                    Type::forget_emptiness();
+                    assert!(unions[&m].is_empty());
+                });
+            }
+        }
+
+        /// `n` distinct one-definition groups whose group digests are equal when their rows tie
+        /// (group.rs `GROUPS`).
+        #[test]
+        fn groups_of_one_digest_scale() {
+            let n = 4096;
+            for tied in [false, true] {
+                let defs = scaling::inputs(n, |m| {
+                    tuples(m, tied)
+                        .into_iter()
+                        .map(|t| Def {
+                            name: "Same".into(),
+                            params: vec![],
+                            body: RecExpr::Union(vec![
+                                RecExpr::Type(t),
+                                RecExpr::Tuple(vec![
+                                    RecExpr::Type(int(0)),
+                                    RecExpr::Ref(0, vec![]),
+                                ]),
+                            ]),
+                        })
+                        .collect::<Vec<_>>()
+                });
+                let what = format!("groups of one definition each (tied: {tied}), by groups");
+                scaling::check(&what, n, |m| {
+                    let kept: Vec<Group> = defs[&m]
+                        .iter()
+                        .cloned()
+                        .map(|d| Group::new(vec![d]).expect("a group"))
+                        .collect();
+                    assert_eq!(kept.len(), m);
+                });
+            }
         }
     }
 
