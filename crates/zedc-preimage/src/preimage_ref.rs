@@ -154,12 +154,12 @@
 //! [`exact_preimage`]: crate::preimage_ref::exact_preimage
 //! [`witness`]: crate::preimage_ref::witness
 
-use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use zed_collections::index::to_u32;
 use zed_kernel::{Prim, Shared, Term, Value, eval};
@@ -5149,7 +5149,7 @@ struct PartitionNode {
     /// The cuts of the subtree, in the node's coordinates: made by [`node_boundaries`] when
     /// `tree_round` first reads them, then kept through tags (`tree_apply`) and scaling
     /// (`tree_division`) like the keys.
-    boundaries: OnceCell<Boundaries>,
+    boundaries: OnceLock<Boundaries>,
     height: usize,
     data: Contents,
     lazy: ValTag,
@@ -5415,7 +5415,7 @@ fn tree_parts((lo, hi): (End, End), data: Contents, left: Tree, right: Tree) -> 
         xhi = xhi.max(n.span.1.clone());
     }
     PartitionNode {
-        boundaries: OnceCell::new(),
+        boundaries: OnceLock::new(),
         min_lo: left
             .as_ref()
             .map_or_else(|| lo.clone(), |n| n.min_lo.clone()),
