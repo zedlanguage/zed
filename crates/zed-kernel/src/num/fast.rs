@@ -3738,10 +3738,11 @@ impl<'a> Divisor<'a> {
         // width, so a one-word quotient cost its full recursion: Toom-3 products, O(n^1.465),
         // and 368 to 496 bytes allocated a word of `d` at 2^16, 2^19 and 2^20 words, against 32
         // at 2^17, where the seed's block fell below `d` and num-bigint returned at once
-        // (b22-kernelb5, the bytes of each phase of one division, 2026-11-22). That made `dividing_a_wide_number_
-        // scales` allocate 11.9 times the bytes from 2^17 to 2^20 words. Long division costs
-        // O(n) time and about 6n words of memory (the shifted divisor, its nonzero places, the
-        // window and the remainder), with the same quotient and remainder; tested by
+        // (b22-kernelb5, the bytes of each phase of one division, 2026-11-22). That made
+        // `dividing_a_wide_number_scales` allocate 11.9 times the bytes from 2^17 to 2^20
+        // words. Long division costs O(n) time and about 6n words of memory (the shifted
+        // divisor, its nonzero places, the window and the remainder), with the same quotient
+        // and remainder; tested by
         // `tests::wide_quotients_agree_with_num_bigint` and
         // `tests::a_divisors_first_block_divides_in_linear_bytes`. A divisor of one word
         // (long division needs two) divides its one-word block by num-bigint's O(1) word
