@@ -1938,21 +1938,50 @@ pub(super) fn scaled_node_precision(
     guard: u64,
     cap: u64,
 ) -> (u64, bool) {
+    let (f, ntt, _) = scaled_node_plan(v, a, b, guard, cap);
+    (f, ntt)
+}
+
+/// [`scaled_node_precision`] with the cost of the step it chooses, in the units of
+/// [`TRANSFORM_COST`] (one word product): the cheaper of the shared transform and the two
+/// products, for [`trees::remainders`]'s choice of method node by node. O(log) in the widths.
+///
+/// [`trees::remainders`]: super::trees::remainders
+pub(super) fn scaled_node_plan(
+    v: &BigUint,
+    a: &BigUint,
+    b: &BigUint,
+    guard: u64,
+    cap: u64,
+) -> (u64, bool, f64) {
     let tight = v.bits() + guard;
     let fw = usize::try_from(tight.div_ceil(64)).expect("words fit in memory");
     let m = fw.next_power_of_two();
     let ntt_bits = 64u64.saturating_mul(m as u64);
     let wa = words(a);
     let wb = words(b);
+    let mul_both = mul_cost(fw, wa) + mul_cost(fw, wb);
     let can_ntt = m <= (1 << 50) && ntt_bits <= cap && wa.min(wb) > 0;
     if can_ntt {
         let ntt_cost = (TRANSFORM_COST + CACHED_COST) * points_cost(m) as f64;
-        let mul_both = mul_cost(fw, wa) + mul_cost(fw, wb);
         if ntt_cost < mul_both {
-            return (ntt_bits, true);
+            return (ntt_bits, true, ntt_cost);
         }
     }
-    (tight, false)
+    (tight, false, mul_both)
+}
+
+/// The cost of [`scaled_root`] for `u` of `uw` words over `p` of `pw` words at precision `f`,
+/// in the units of [`TRANSFORM_COST`]: num-bigint's division of `u 2^f` by `p` at or below
+/// [`RECIP_LEAF`], a word product for each quotient word and divisor word; else
+/// [`approx_reciprocal`], about 5/3 of a product of `f` bits (as [`newton_cost`] counts it),
+/// and its product by `u`. O(log) in the widths.
+pub(super) fn scaled_root_cost(uw: usize, pw: usize, f: u64) -> f64 {
+    let fw = usize::try_from(f.div_ceil(64)).expect("words fit in memory");
+    match f <= RECIP_LEAF {
+        true => (uw + fw).saturating_sub(pw).max(1) as f64 * pw as f64,
+        false => 5.0 * mul_cost(fw, fw) / 3.0 + mul_cost(uw, fw),
+    }
 }
 
 /// Rounded bit-window extraction: given `y` (whose low `f` bits are `Y = y mod 2^f`), returns
@@ -2369,6 +2398,34 @@ pub(crate) fn rem(a: &BigUint, b: &BigUint) -> BigUint {
         return Divisor::new(Cow::Borrowed(b), a.bits()).rem(a);
     }
     div_rem(a, b).1
+}
+
+/// The cost [`rem`] is estimated to take for a dividend of `aw` 64-bit words by `b`, in the
+/// units of [`TRANSFORM_COST`] (one word product), for [`trees::remainders`]'s choice of method
+/// node by node: 1 (a comparison) for a dividend narrower than `b`; num-bigint's long division,
+/// a word product for each quotient word and divisor word, where [`rem`] and [`div_rem`] take it
+/// whatever its cost (a divisor or a quotient of at most [`DIV_LEAF`] bits); otherwise the least
+/// of num-bigint's computed cost, [`past_leaf_cost`] and, for a quotient wider than `b`, the
+/// blocks' [`newton_cost`], the costs `rem` chooses by. O(words(b)) past the leaf, for the
+/// nonzero words [`sparse_div_cost`] counts; O(1) below it.
+///
+/// [`trees::remainders`]: super::trees::remainders
+pub(super) fn rem_cost(aw: usize, b: &BigUint) -> f64 {
+    let bw = words(b);
+    if aw < bw {
+        return 1.0;
+    }
+    let qw = aw - bw + 1;
+    if b.bits() <= DIV_LEAF || 64 * qw as u64 <= DIV_LEAF {
+        return qw as f64 * bw as f64;
+    }
+    let blocks = match qw > bw {
+        true => newton_cost(qw, bw),
+        false => f64::INFINITY,
+    };
+    num_bigint_div_cost(qw, bw)
+        .min(past_leaf_cost(qw, b))
+        .min(blocks)
 }
 
 /// Whether [`rem`] reads `a` in blocks through one [`Divisor`]: exactly where [`div_rem`]

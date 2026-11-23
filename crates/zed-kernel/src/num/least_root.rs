@@ -532,8 +532,8 @@ mod tests {
 
     /// The remainder tree past the kernel's switches: 2,001 word moduli (a product of about 2,000
     /// words, an odd count so nodes are carried), `x` of 7/8 of its width less and more a bit
-    /// (the exact descent and the scaled tree) and at its full width, whose scaled tree hands
-    /// over to the exact descent at the kernel's `SCALED_TO_EXACT_WORDS` (128 words); each
+    /// and at its full width, where the kernel's `remainders` chooses between the exact descent
+    /// and the scaled tree, which turns to the exact descent at a level its costs choose; each
     /// against one division a modulus.
     #[test]
     fn a_remainder_tree_past_the_scaled_switch_gives_each_remainder() {

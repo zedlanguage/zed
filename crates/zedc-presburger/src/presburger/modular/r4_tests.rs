@@ -963,8 +963,9 @@ fn the_crt_tree_solves_its_congruences() {
         }
     }
     // The first 3,001 odd primes (distinct primes, so coprime): a product of about 600 words,
-    // so the kernel's cofactor tree runs its scaled remainder tree above 128 words and the
-    // exact descent below (`SCALED_TO_EXACT_WORDS`), with carried nodes at odd levels.
+    // so the kernel's cofactor tree runs its scaled remainder tree near the root and the exact
+    // descent below, at the level its costs choose (`trees::remainders`), with carried nodes at
+    // odd levels.
     let ms: Vec<Int> = (3u64..)
         .step_by(2)
         .filter(|&p| zed_numtheory::is_prime(p))

@@ -147,70 +147,163 @@ pub fn remainders<L: Borrow<BigUint>>(
     if top.is_zero() || p.is_one() {
         return vec![BigUint::zero(); leaves.len()];
     }
-    // Two exact methods, switched at their measured crossover. The scaled tree works at every
-    // node's full width `bits(v) + guard` whatever the width of `top`; the exact descent
-    // `x mod v = (x mod u) mod v` costs a comparison at each node wider than its parent's
-    // remainder and a division whose quotient has the width of the difference below it. With
-    // `top` short the scaled tree is far the dearer: moduli 2, 4, .., 2^k with `x < 2^(k + 1)`
-    // (`pncx_power_propagation_scale`, k about 12,649) are O(M(k) k) by the descent and
-    // O(M(k^2) log k) by the scaled tree, which did not finish in 60 s. Measured by
-    // `the_remainders_crossover_axis` (2026-11-21, load 70, instructions, `w` the width of `top`
-    // as a fraction of `bits(P)`): 1024 odd word leaves, descent against scaled tree, 22.6 M
-    // against 24.0 M at 3/4 and 26.1 M against 24.0 M at 7/8; 32 odd leaves of 64 words, 53.7 M
-    // against 53.6 M at 3/4 and 61.6 M against 53.7 M at 7/8; on 2, 4, .., 2^200 the descent is
-    // the cheaper at every width (1.7 M against 7.2 M at 1/1). So the scaled tree from 7/8 on.
-    // The cofactors' `S mod P` (`cofactors_mod_leaves`) is about the width of `P` and takes it.
-    // Those runs are zed-kernel's own tests, built with the test constants (`MUL_LEAF` 48, no
-    // Toom-3). Measured again 2026-11-21 (load 31) the same, and in zedc-presburger, where
-    // zed-kernel has its real constants (load 10 to 22, the scaled side with its switch to the
-    // descent at `SCALED_TO_EXACT_WORDS`): 1024 odd word leaves, descent against scaled, 12.9 M
-    // against 19.3 M at 7/8 and 14.0 M against 18.9 M at 1/1; 32 leaves of 64 words 31.8 M
-    // against 37.4 M at 7/8 and 35.2 M against 33.5 M at 1/1; 32 leaves of 512 words 733 M
-    // against 529 M at 7/8 and 573 M against 526 M already at 1/2; 2, .., 2^200 the descent the
-    // cheaper below 1/1, a tie at 1/1; the CRT cofactor sum over 2,048 odd primes (`x` at
-    // 1/1) 8.13 M against 7.60 M. So with the real constants no switch by the width of `x`
-    // alone is right for all of these: it depends on the widths of the nodes as well, and
-    // 7/8 stays until a switch from both methods' costs node by node is measured
-    // (PERF-remainders-switch-by-cost).
-    // Tests: `the_remainders_of_a_short_x_take_the_exact_descent`, and the axis above.
-    if 8 * top.bits() < 7 * p.bits() {
-        return descend(top, leaves, levels);
+    // Two exact methods, chosen by their costs computed node by node ([`cheaper_method`]). The
+    // scaled tree works at every node's full width `bits(v) + guard` whatever the width of
+    // `top`; the exact descent `x mod v = (x mod u) mod v` costs a comparison at each node wider
+    // than its parent's remainder and a division whose quotient has the width of the difference
+    // below it. With `top` short the scaled tree is far the dearer: moduli 2, 4, .., 2^k with
+    // `x < 2^(k + 1)` (`pncx_power_propagation_scale`, k about 12,649) are O(M(k) k) by the
+    // descent and O(M(k^2) log k) by the scaled tree, which did not finish in 60 s. The switch
+    // before was on the width of `top` alone, the scaled tree from 7/8 of `bits(P)`, measured
+    // with the test build's constants; with the real ones (zedc-presburger, 2026-11-21) no
+    // width of `top` alone suited every family: 1,024 word leaves took the scaled tree at 7/8
+    // for 19.3 M instructions against the descent's 12.9 M, and 32 leaves of 512 words the
+    // descent at 1/2 for 573 M against 526 M (PERF-remainders-switch-by-cost). Measurements of
+    // the cost switch: zedc-presburger's `the_remainders_take_the_cheaper_method` (in
+    // `presburger::modular::r4_tests::bench`) and COMPLEXITY.md, "PERF-remainders-switch-by-cost".
+    // Complexity tradeoff: the costs take one pass over the nodes, O(1) a node at or below
+    // `DIV_LEAF` bits and O(words) above it, so O(B) for `B` words over all nodes, against the
+    // O(M(B) log k) of either method; a switch by the width of `top` alone is O(1) but takes the
+    // dearer method by up to 1.5 times on the families above.
+    // Tests: `the_remainders_of_a_short_x_take_the_exact_descent`,
+    // `the_scaled_tree_turns_to_the_descent_at_any_levels`, and the bench above.
+    let guard = guard_bits(levels.len());
+    match cheaper_method(&top, &p, leaves, levels, guard) {
+        None => descend(top, leaves, levels),
+        Some(t) => scaled_descend_by(&top, &p, leaves, levels, |c| c + 1 == t),
     }
-    scaled_descend(&top, &p, leaves, levels)
 }
 
-/// The width in words at or below which [`scaled_descend`] leaves the scaled tree for the exact
-/// descent: at the first level (from the root down) whose nodes are all at most this wide, each
-/// node's scaled value becomes its exact remainder and [`descend_from`] finishes below it.
-/// Measured by `presburger::modular::r4_tests::bench::the_scaled_to_exact_switch_axis`
-/// (zedc-presburger, so that zed-kernel is built with its own multiplication constants rather
-/// than the test build's `MUL_LEAF` 48; 2026-11-21, load 15 to 19, instructions, `x` about the
-/// width of `P`), widths 0 (scaled tree alone) to all (descent alone): the CRT cofactor sum over
-/// the first 2,048 / 16,384 / 131,072 odd primes 9.27 M / 147.3 M / 2,375 M scaled alone, 7.60 M
-/// / 131.2 M / 2,267 M at 128 words, 8.13 M / 190.4 M / 4,707 M by the descent alone; 4,096 word
-/// leaves 117.8 M, 100.9 M, 168.0 M; 512 leaves of 8 words 94.9 M, 92.3 M, 161.6 M; 256 leaves
-/// of 64 words 417.2 M, 416.3 M, 1,037.9 M; 32 leaves of 512 words 473.7 M at every width up to
-/// 512 (no level that narrow above them), 941.6 M by the descent; 2, 4, .., 2^200 1.59 M,
-/// 1.69 M, 2.13 M (the one family where 128 is not the best, 16 words gave 1.51 M). 64 words
-/// was within 3% of 128 on every family and lost on seven of nine; 256 and above cost more on
-/// every family with nodes that narrow.
-const SCALED_TO_EXACT_WORDS: u64 = 128;
+/// The guard bits of the scaled tree over `depth` levels above the leaves: the least `g` with
+/// `2^g >= 8 l` for `l = depth + 1` levels counting the root as 1 and the leaves as `l`, so
+/// that for every node `v >= 2`, `2^(bits(v) + g) > v 2^g >= 8 l v`, as Theorems 2.1 and 2.2
+/// ask.
+fn guard_bits(depth: usize) -> u64 {
+    let l = (depth + 1) as u64;
+    let guard = (8 * l).next_power_of_two().trailing_zeros() as u64;
+    debug_assert!(1u64 << guard >= 8 * l);
+    guard
+}
 
-/// `top mod m` for each leaf `m` by the scaled remainder tree (module comment) down to nodes of
-/// [`SCALED_TO_EXACT_WORDS`] words, then the exact descent, for at least two leaves, `p` their
-/// product above 1 and `top` in `(0, p)`.
-fn scaled_descend<L: Borrow<BigUint>>(
+/// The method [`remainders`] takes, from both methods' costs estimated node by node: `None` for
+/// the exact descent from `top`, else the level `t` at which the scaled tree turns to the exact
+/// descent (0 for the leaves, `c + 1` for `levels[c]`; the root is level `levels.len()`).
+///
+/// The costs are in word products ([`fast::rem_cost`], [`fast::scaled_node_plan`],
+/// [`fast::mul_cost`], [`fast::scaled_root_cost`]). The exact descent from `top` costs its
+/// divisions, each remainder as wide as the narrower of the node and the remainder above it, so
+/// that a short `top` costs a comparison at each node wider than it. A turn at level `t` costs
+/// the scaled root ([`fast::scaled_root`]), a step of the scaled tree at each level above `t`,
+/// the recovery of level `t`'s scaled values as exact remainders (a product by each node), and
+/// the exact descent below, each node's remainder as wide as the node (`exact[t]`). Only the
+/// first turn from the root matters, so these `levels.len() + 2` totals are every method, and
+/// the least is taken. The steps are summed from the root down and only grow, so the search
+/// stops once they reach the least total so far: the steps' products, the dearest of the costs
+/// to estimate (a power in [`fast::mul_cost`]), are then estimated only at the levels near the
+/// root, which have the fewest nodes, when the descent wins. Measured: estimating every level
+/// cost up to 800 instructions a node, 2.0 times the descent's work on 2, 4, .., 2^200.
+fn cheaper_method<L: Borrow<BigUint>>(
     top: &BigUint,
     p: &BigUint,
     leaves: &[L],
     levels: &[Vec<BigUint>],
-) -> Vec<BigUint> {
-    scaled_descend_switch(top, p, leaves, levels, SCALED_TO_EXACT_WORDS)
+    guard: u64,
+) -> Option<usize> {
+    let depth = levels.len();
+    let len = |t: usize| match t {
+        0 => leaves.len(),
+        _ => levels[t - 1].len(),
+    };
+    let node = |t: usize, j: usize| -> &BigUint {
+        match t {
+            0 => leaves[j].borrow(),
+            _ => &levels[t - 1][j],
+        }
+    };
+    let words = |x: &BigUint| x.bits().div_ceil(64) as usize;
+    // The recovery `round(v S_v / 2^f)` at each node `v >= 2` of level `t`.
+    let recover = |t: usize| -> f64 {
+        (0..len(t))
+            .map(|j| node(t, j))
+            .filter(|v| v.bits() >= 2)
+            .map(|v| fast::mul_cost(words(v), words(v) + 1))
+            .sum()
+    };
+    // One step of the scaled tree from the nodes of level `t` to their children; a carried
+    // node, or a child 1, is no product.
+    let step = |t: usize| -> f64 {
+        (0..len(t))
+            .filter(|j| 2 * j + 1 < len(t - 1))
+            .map(|j| (node(t, j), node(t - 1, 2 * j), node(t - 1, 2 * j + 1)))
+            .filter(|(_, a, b)| a.bits() >= 2 && b.bits() >= 2)
+            .map(|(v, a, b)| fast::scaled_node_plan(v, a, b, guard, u64::MAX).2)
+            .sum()
+    };
+    let mut widths = vec![words(top)];
+    let mut best = 0.0;
+    for t in (0..depth).rev() {
+        widths = match t {
+            0 => descent_level(leaves.iter().map(Borrow::borrow), &widths, &mut best),
+            _ => descent_level(levels[t - 1].iter(), &widths, &mut best),
+        };
+    }
+    let (a, b) = (node(depth - 1, 0), node(depth - 1, 1));
+    let f = match a.bits() >= 2 && b.bits() >= 2 {
+        true => fast::scaled_node_plan(p, a, b, guard, u64::MAX).0,
+        false => p.bits() + guard,
+    };
+    // `scaled`: the scaled tree's cost from the root down to the scaled values of level `t`,
+    // which only grows as `t` falls, so no lower turn is cheaper once it reaches `best`; when the
+    // root alone does, the descent's costs below full-width remainders are not needed.
+    let mut scaled = fast::scaled_root_cost(words(top), words(p), f);
+    if scaled >= best {
+        return None;
+    }
+    let mut exact = vec![0.0; depth + 1];
+    for t in 1..=depth {
+        exact[t] = exact[t - 1]
+            + (0..len(t - 1))
+                .map(|j| fast::rem_cost(words(node(t, j / 2)), node(t - 1, j)))
+                .sum::<f64>();
+    }
+    let mut choice = None;
+    for t in (0..=depth).rev() {
+        if scaled >= best {
+            break;
+        }
+        let here = scaled + recover(t) + exact[t];
+        if here < best {
+            (best, choice) = (here, Some(t));
+        }
+        if t > 0 {
+            scaled += step(t);
+        }
+    }
+    choice
 }
 
-/// `scaled_descend` with its switch to the exact descent at levels whose nodes are all at most
-/// `switch_words` words (0: the scaled tree to the leaves), public for the benchmark of both
-/// sides of `SCALED_TO_EXACT_WORDS` in a crate that builds zed-kernel with its own constants.
+/// One level of [`cheaper_method`]'s estimate of the exact descent from `top`: adds to `cost`
+/// the division of each node's parent's remainder, of `widths[j / 2]` words, by node `j`, and
+/// gives the widths of the level's remainders, each the narrower of the node and its parent's.
+fn descent_level<'a>(
+    nodes: impl Iterator<Item = &'a BigUint>,
+    widths: &[usize],
+    cost: &mut f64,
+) -> Vec<usize> {
+    nodes
+        .enumerate()
+        .map(|(j, v)| {
+            let rw = widths[j / 2];
+            *cost += fast::rem_cost(rw, v);
+            rw.min(v.bits().div_ceil(64) as usize)
+        })
+        .collect()
+}
+
+/// `scaled_descend_by` with its turn to the exact descent at the first level whose nodes are all
+/// at most `switch_words` words (0: the scaled tree to the leaves; past every node: the exact
+/// descent from the scaled root), public for the benchmarks of the fixed switches against
+/// [`remainders`]'s in a crate that builds zed-kernel with its own constants.
 #[doc(hidden)]
 pub fn scaled_descend_switch<L: Borrow<BigUint>>(
     top: &BigUint,
@@ -219,13 +312,23 @@ pub fn scaled_descend_switch<L: Borrow<BigUint>>(
     levels: &[Vec<BigUint>],
     switch_words: u64,
 ) -> Vec<BigUint> {
+    scaled_descend_by(top, p, leaves, levels, |c| {
+        levels[c].iter().all(|v| v.bits() <= 64 * switch_words)
+    })
+}
+
+/// `top mod m` for each leaf `m` by the scaled remainder tree (module comment), turning to the
+/// exact descent at the first level `levels[c]`, from the root down, for which `turn(c)` holds,
+/// for at least two leaves, `p` their product above 1 and `top` in `(0, p)`.
+fn scaled_descend_by<L: Borrow<BigUint>>(
+    top: &BigUint,
+    p: &BigUint,
+    leaves: &[L],
+    levels: &[Vec<BigUint>],
+    turn: impl Fn(usize) -> bool,
+) -> Vec<BigUint> {
     let _hold = fast::hold_roots();
-    // Number of levels counting root as 1 and leaves as `l = levels.len() + 1`.
-    // Guard bits `g` satisfy `2^g >= 8 * l`, so for every node `v >= 2`,
-    // `2^(bits(v) + g) > v * 2^g >= 8 * l * v`, fulfilling Theorems 2.1 and 2.2.
-    let l = (levels.len() + 1) as u64;
-    let guard = (8 * l).next_power_of_two().trailing_zeros() as u64;
-    debug_assert!(1u64 << guard >= 8 * l);
+    let guard = guard_bits(levels.len());
 
     // Helper: child slice at level index `child_lvl` (`0` = leaves, `d + 1` = `levels[d]`).
     let child_len = |child_lvl: usize| -> usize {
@@ -273,17 +376,13 @@ pub fn scaled_descend_switch<L: Borrow<BigUint>>(
         // 0, is `u mod v` exactly: the leaf recovery's argument at an inner node (`v = 1`
         // nodes hold `(0, 0)` and give 0). Below, each node's remainder is its parent's
         // remainder mod the node, which is `u mod v` since `v` divides its parent. A level is
-        // taken whole, so every node of the level must be narrow (one wide node keeps the
-        // scaled tree for the level). Measurements: [`SCALED_TO_EXACT_WORDS`]. Tests:
-        // `the_scaled_tree_switches_to_the_descent_at_any_level`.
-        // Complexity tradeoff: the levels below the switch cost what the exact descent costs on
-        // nodes of at most `SCALED_TO_EXACT_WORDS` words, num-bigint's divisions, cheaper there
-        // than the scaled steps' products with their guard bits; the order O(M(B) log k) is
-        // unchanged, as the descent on nodes of bounded width costs O(B) a level.
-        if levels[child_lvl]
-            .iter()
-            .all(|v| v.bits() <= 64 * switch_words)
-        {
+        // taken whole. The proof holds at any level, whatever `turn` chooses. Tests:
+        // `the_scaled_tree_switches_to_the_descent_at_any_level` and
+        // `the_scaled_tree_turns_to_the_descent_at_any_levels`.
+        // Complexity tradeoff: [`remainders`] turns where the exact descent's divisions below
+        // cost less than the scaled steps' products with their guard bits ([`cheaper_method`]).
+        // Either is O(M(B)) a level for `B` bits a level, so the order O(M(B) log k) holds.
+        if turn(child_lvl) {
             let rems = (vals.into_iter().zip(&levels[child_lvl]))
                 .map(|((s, e, _), v)| fast::scaled_leaf_rem(v, &s, e))
                 .collect();
@@ -663,12 +762,53 @@ mod tests {
         }
     }
 
-    /// The switch in [`remainders`] between the exact descent and the scaled tree, on both
-    /// sides: for `x` of `w` bits under `P` (the top `w` bits of `P`), `w` from `1/64` of
+    /// [`scaled_descend_by`] with every set of turns over the levels of trees of 2 to 33 leaves
+    /// (a turn at a level below the first is never reached, so every first turn and none), and
+    /// [`remainders`]'s own choice ([`cheaper_method`]), against one division a leaf: odd counts
+    /// (carried nodes), leaves 1, and leaves of 1 to 91 words, with `x` the top 1/64, 1/2, 7/8
+    /// and all of `P`'s bits.
+    #[test]
+    fn the_scaled_tree_turns_to_the_descent_at_any_levels() {
+        let mut rng = crate::seed::Rng::new(crate::seed::seed("scaled_turns"));
+        let mut odd = |words: usize| -> BigUint {
+            let digits: Vec<u32> = (0..2 * words).map(|_| rng.next_u64() as u32).collect();
+            BigUint::new(digits) | BigUint::one() | (BigUint::one() << (64 * words - 1))
+        };
+        for k in [2usize, 3, 5, 8, 13, 33] {
+            let mut leaves: Vec<BigUint> = (0..k).map(|i| odd(1 + 30 * (i % 4))).collect();
+            if k > 3 {
+                leaves[1] = big(1);
+            }
+            let levels = product_tree(&leaves);
+            let p = tree_product(&leaves, &levels).into_owned();
+            let n = p.bits();
+            for (num, den) in [(1, 64), (1, 2), (7, 8), (1, 1)] {
+                let x = &p >> (n - (n * num / den).max(1));
+                let x = if x == p { &x - big(1) } else { x };
+                let want: Vec<BigUint> = leaves.iter().map(|m| &x % m).collect();
+                assert_eq!(
+                    remainders(&x, &leaves, &levels),
+                    want,
+                    "{k} leaves {num}/{den}"
+                );
+                if x.is_zero() {
+                    continue;
+                }
+                for first in 0..=levels.len() {
+                    let got = scaled_descend_by(&x, &p, &leaves, &levels, |c| c + 1 == first);
+                    assert_eq!(got, want, "{k} leaves {num}/{den}, turn at level {first}");
+                }
+            }
+        }
+    }
+
+    /// The exact descent, the scaled tree down to nodes of 128 words and [`remainders`]'s choice
+    /// between them: for `x` of `w` bits under `P` (the top `w` bits of `P`), `w` from `1/64` of
     /// `bits(P)` to all of it, on three families of leaves (1024 odd words; 2, 4, .., 2^200;
     /// 32 odd leaves of 64 words, past the transform width at the top levels). Prints the
-    /// instructions and bytes of each method and holds their answers equal. The measurements
-    /// and the switch they give are in the comment at the switch in [`remainders`].
+    /// instructions and bytes of each and holds their answers equal. Built with the test
+    /// constants; the real ones are measured by zedc-presburger's
+    /// `the_remainders_take_the_cheaper_method`.
     #[test]
     fn the_remainders_crossover_axis() {
         let mut meter = crate::scaling::Meter::new();
@@ -704,13 +844,16 @@ mod tests {
                 let w = (n * num / den).max(1);
                 let x = &p >> (n - w);
                 let x = if x == p { &x - big(1) } else { x };
-                let (mut exact, mut scaled) = (Vec::new(), Vec::new());
+                let (mut exact, mut scaled, mut chosen) = (Vec::new(), Vec::new(), Vec::new());
                 let e = meter.work(|| exact = descend(x.clone(), &leaves, &levels));
-                let s = meter.work(|| scaled = scaled_descend(&x, &p, &leaves, &levels));
+                let s =
+                    meter.work(|| scaled = scaled_descend_switch(&x, &p, &leaves, &levels, 128));
+                let c = meter.work(|| chosen = remainders(&x, &leaves, &levels));
                 assert_eq!(exact, scaled, "{name} w {w}");
+                assert_eq!(exact, chosen, "{name} w {w}");
                 eprintln!(
-                    "remainders crossover {name} bits(P) {n} w {num}/{den}: exact {} instr {} bytes; scaled {} instr {} bytes",
-                    e.units, e.bytes, s.units, s.bytes
+                    "remainders crossover {name} bits(P) {n} w {num}/{den}: exact {} instr {} bytes; scaled {} instr {} bytes; remainders {} instr {} bytes",
+                    e.units, e.bytes, s.units, s.bytes, c.units, c.bytes
                 );
             }
         }
