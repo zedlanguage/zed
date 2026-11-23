@@ -84,30 +84,24 @@ fn a_product_is_bounded_only_through_the_premises_on_its_factors() {
         "ok(y, w, x, h) = 0 <= y * w;",
     );
     assert!(matches!(e, Entailment::Proved(_)), "{e}");
-    // With no premise on `w`, nothing bounds `h * w - w * y`: the linear reading fails at a
-    // point whose product atoms are not the products, so the goal is not proved, and not
-    // refuted either (it is false at `w = -1`, which rung 2 does not search for).
+    // With no premise on `w`, nothing bounds `h * w - w * y`, and the goal is false at
+    // `w = -1`. Until PRES-model-products the search read each product as a variable of its
+    // own and gave a point whose product atoms were not the products, so the goal was not
+    // proved and not refuted (this test pinned `NotProved` at such a point). The search now
+    // reads the products through their factors ([`satisfiable`]), and the point it gives is a
+    // countermodel, for example `h = -1, w = -1, y = -2`: `y * w = 2 > 1 = h * w`.
     let e = rung2(
         "ok(y: int, w: int, x: int, h: int) = y <= h;",
         "ok(y, w, x, h) = y * w <= h * w;",
     );
-    // Any such point will do, so the point is checked, not its text: the premise holds, the
-    // goal read linearly fails, and some product atom is not the product.
-    let Entailment::NotProved(m) = &e else {
+    // Any countermodel will do, so it is checked, not its text: the premise holds, the goal
+    // fails, read with the products of the values.
+    let Entailment::Refuted(m) = &e else {
         panic!("{e}")
     };
     let v = |s: &str| m.get(&Atom::Sym(s.into())).cloned().unwrap_or(Int::ZERO);
-    let p = |a: &str, b: &str| {
-        m.get(&Atom::product(&a.into(), &b.into()))
-            .cloned()
-            .unwrap_or(Int::ZERO)
-    };
     assert!(v("y") <= v("h"), "{e}");
-    assert!(p("w", "y") > p("h", "w"), "{e}");
-    assert!(
-        p("w", "y") != &v("w") * &v("y") || p("h", "w") != &v("h") * &v("w"),
-        "{e}"
-    );
+    assert!(&v("y") * &v("w") > &v("h") * &v("w"), "{e}");
 }
 
 #[test]

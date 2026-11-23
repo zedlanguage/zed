@@ -1512,12 +1512,19 @@ fn case_1185() -> Formula {
 
 #[test]
 fn factors_defined_alike_are_merged_when_a_tied_decision_is_left_unsettled() {
-    // Each copy's point is checked by evaluation: the solver's point, with each product read
-    // as an atom of its own, gives each constraint its value.
+    // Each copy's point is checked by evaluation. Block `i` fixes `x{i} == y{i} == -2 - i`,
+    // so its product is `(2 + i)^2`, and its third part needs that product even
+    // (`2 * q2 == p`): block 1 has `9`, so every formula of two blocks or more has no point.
+    // Until PRES-model-products the solver read each product as an atom of its own, free of
+    // its factors, and each `n` had a point (this test pinned `true` for each); read through
+    // the factors only `n == 1` has one.
     for n in 1..=4 {
         let f = tied_factor_blocks(n);
-        assert_eq!(decide(&f).ok(), Some(true), "{f}");
-        let p = satisfiable(&f).expect("answered").expect("a point");
+        assert_eq!(decide(&f).ok(), Some(n == 1), "{f}");
+        let Some(p) = satisfiable(&f).expect("answered") else {
+            assert!(n >= 2, "{f}");
+            continue;
+        };
         for i in 0..n {
             let at = |a: Atom| p.get(&a).cloned().unwrap_or(Int::ZERO);
             let (x, y): (Arc<str>, Arc<str>) = (format!("x{i}").into(), format!("y{i}").into());

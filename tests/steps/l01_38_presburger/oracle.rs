@@ -132,6 +132,7 @@ fn run_on(
             Err(Refusal::Work | Refusal::Questions | Refusal::Repeats) => {
                 panic!("a point refused for a cause only a projection has: {f}")
             }
+            Err(Refusal::Products) => panic!("a system with no product refused for one: {f}"),
         }
         assert_eq!(
             decide(&f),

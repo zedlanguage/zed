@@ -957,10 +957,21 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     let x_value = point.get(&x).cloned().unwrap_or(Int::ZERO);
     let model = point_with_sums(&rows, &sums, &x, &x_value);
     // By (2) of the proof this is a point of `f`; a failure here is a defect of this module,
-    // and declining leaves `f` to the general path.
+    // and declining leaves `f` to the general path. The proof reads each atom as a variable of
+    // its own, a product `x * x` included (as the solver does, PRES-product-parity), while
+    // `Formula::holds` reads a product through its factors (PRES-model-products): a point of
+    // the proof's reading, `x == 0, x * x == 3` of `x + x * x == 3`, may fail there, and is
+    // declined, not a defect. Test: `l01_38_omega_test::one_scope::
+    // summaries_of_definitions_give_the_answers_of_the_definitions_part_2`.
     let holds = f.holds(&model);
     debug_assert!(
-        holds,
+        holds || {
+            let mut product = false;
+            f.walk(&mut |c| {
+                product |= (c.lin.terms.keys()).any(|a| matches!(a, Atom::Product(..)));
+            });
+            product
+        },
         "the point rebuilt from x = {x_value} is not one of\n{f}"
     );
     holds.then_some(Some(model))

@@ -3158,13 +3158,29 @@ impl Summaries {
                             key.contains(a) || more.contains(a) || (wide && syms.contains(a))
                         };
                         // A product outside the key (`x * q` of `q = h div x`, the next link
-                        // reading `x` and `q` alone) is eliminated as a variable is, losing its
-                        // tie to its factors. That is exact for [`decide`], which reads a product
-                        // as an atom of its own, free of its factors (`x * y == 7 && x == 2 &&
-                        // y == 3` holds), so the whole question has the same answer
-                        // ([`decide_defined`]). Test: presburger::tests
-                        // `decide_reads_a_product_as_an_atom_of_its_own`; a solver that read
-                        // products more tightly would need the product kept here.
+                        // reading `x` and `q` alone), or one kept with a factor outside it,
+                        // would be eliminated as a variable is, losing its tie to its factors.
+                        // [`decide`] reads a product through its factors (PRES-model-products:
+                        // `x * y == 7 && x == 2 && y == 3` does not hold), so such a summary is
+                        // only a relaxation, with every point of the definition and maybe more,
+                        // and a question it answers true may be false whole. So no summary is
+                        // made (after the wide key, which keeps more atoms, is tried), and
+                        // [`decide_defined`] decides the question whole, exactly, as for any
+                        // projection not made. A product kept with both factors keeps its tie:
+                        // the question decided with the summary reads it through them. Test:
+                        // `l01_38_omega_test::one_scope::summaries_of_definitions_give_the_answers_of_the_definitions_part_*`
+                        // (`h0(x) div x`, whose summary answered true where the whole is false).
+                        let loose = |a: &Atom| match a {
+                            Atom::Product(x, y) => !keep(a) || !keep(&x.atom()) || !keep(&y.atom()),
+                            _ => false,
+                        };
+                        if rows.iter().any(|c| c.lin.terms.keys().any(loose)) {
+                            if wide {
+                                return Made::Done(None, None);
+                            }
+                            wide = true;
+                            continue;
+                        }
                         let elim = |a: &Atom| !keep(a);
                         let Some(mut out) = shadow_whole(&by_pairs(rows.clone(), &elim), &keep)
                         else {
@@ -3733,8 +3749,10 @@ impl Summaries {
         };
         let mut out: BTreeSet<Atom> = atoms
             .filter(|a| match a {
-                // A product the cone may hold, one whose factors it may hold: the solver reads
-                // it as an atom of its own, so a summary keeps it as it keeps a variable.
+                // A product the cone may hold, one whose factors it may hold: kept with both
+                // factors, so that the question decided with the summary still reads it through
+                // them (PRES-model-products; a summary that would lose the tie is not made,
+                // [`Summaries::make`]).
                 Atom::Product(f, g) => kept(&f.atom()) && kept(&g.atom()),
                 a => kept(a),
             })

@@ -228,8 +228,24 @@ fn reduced(facts: &Facts) -> Option<Formula> {
     if facts.known.is_empty() {
         return None;
     }
+    // A product with a fixed factor is the other factor times that value, and a product of two
+    // fixed factors their product (PRES-model-products): `x * y >= 1 && x == 0` is `0 >= 1`,
+    // where the solver, which reads a product as an atom of its own (PRES-product-parity),
+    // found the point `x == 0, x * y == 1`. Proof that nothing is lost: with `x == v` a fact,
+    // every point of the formula has `x == v`, so at every point where each product is the
+    // product of its factors, `x * y == v * y`; replacing the one by the other in a row keeps
+    // those points. Beside the rows, the equation `x * y == v * y` (or `x * y == u * v` when
+    // both factors are fixed) keeps the product an atom of the formula, so a point the solver
+    // finds still gives it a value, and that value is the product of its factors. A product
+    // whose factors are both free is still read as an atom of its own, and the point found is
+    // checked at the public entries ([`products_agree`]). Cost: two lookups per product atom
+    // of each row, O(log k) each, and one equation per product replaced, sorted as the fixed
+    // atoms are.
+    let products: RefCell<BTreeSet<Atom>> = RefCell::default();
     let replaced = facts.formula.map_cons(&|c| {
-        if !c.lin.terms.keys().any(|a| facts.known.contains_key(a)) {
+        if !(c.lin.terms.keys())
+            .any(|a| facts.known.contains_key(a) || by_factor(facts, a).is_some())
+        {
             return Formula::Con(c.clone());
         }
         let mut lin = Lin {
@@ -237,13 +253,28 @@ fn reduced(facts: &Facts) -> Option<Formula> {
             constant: c.lin.constant.clone(),
         };
         for (a, k) in &c.lin.terms {
-            match facts.known.get(a) {
-                Some(v) => lin.constant = &lin.constant + &(k * v),
-                None => {
-                    lin.terms.insert(a.clone(), k.clone());
+            // A product whose own value is a fact too (`x * y == 6 && x == 2`) is replaced by
+            // that value in the row, and still gets its equation beside the rows
+            // (`x * y == 2 * y`), which with the fact's equation fixes the other factor; without
+            // it the solver put `y` anywhere and the point's product disagreed.
+            let product = by_factor(facts, a);
+            if product.is_some() {
+                products.borrow_mut().insert(a.clone());
+            }
+            match (facts.known.get(a), product) {
+                (Some(v), _) => lin.constant = &lin.constant + &(k * v),
+                (None, Some((v, None))) => lin.constant = &lin.constant + &(k * &v),
+                (None, Some((v, Some(b)))) => {
+                    let t = lin.terms.entry(b).or_insert(Int::ZERO);
+                    *t = &*t + &(k * &v);
+                }
+                (None, None) => {
+                    let t = lin.terms.entry(a.clone()).or_insert(Int::ZERO);
+                    *t = &*t + k;
                 }
             }
         }
+        lin.terms.retain(|_, k| !k.is_zero());
         if !lin.terms.is_empty() {
             return Formula::Con(Con { lin, rel: c.rel });
         }
@@ -261,9 +292,42 @@ fn reduced(facts: &Facts) -> Option<Formula> {
     fixed.sort_unstable();
     let equations = (fixed.into_iter())
         .map(|(a, v)| Formula::Con(Con::eq(&Lin::atom(a.clone()), &Lin::constant(v.clone()))));
+    let products = products.into_inner().into_iter().map(|p| {
+        let value = match by_factor(facts, &p) {
+            Some((v, None)) => Lin::constant(v),
+            Some((v, Some(b))) => Lin::atom(b).times(v),
+            None => unreachable!("a product is recorded only when a factor is fixed"),
+        };
+        Formula::Con(Con::eq(&Lin::atom(p), &value))
+    });
     Some(Formula::and(
-        std::iter::once(replaced).chain(equations).collect(),
+        std::iter::once(replaced)
+            .chain(equations)
+            .chain(products)
+            .collect(),
     ))
+}
+
+/// For a product atom `a` with a factor fixed in `facts`, its value as the fixed value `v`
+/// times the other factor, `(v, Some(other))`, or as the product `v` of two fixed factors,
+/// `(v, None)` ([`reduced`], PRES-model-products). `None` for any other atom.
+fn by_factor(facts: &Facts, a: &Atom) -> Option<(Int, Option<Atom>)> {
+    let Atom::Product(x, y) = a else { return None };
+    let (x, y) = (x.atom(), y.atom());
+    match (facts.known.get(&x), facts.known.get(&y)) {
+        (Some(u), Some(v)) => Some((u * v, None)),
+        (Some(u), None) => Some((u.clone(), Some(y))),
+        (None, Some(v)) => Some((v.clone(), Some(x))),
+        (None, None) => None,
+    }
+}
+
+/// Whether `facts` fix a factor of a product of `f`, so that [`reduced`] reads that product
+/// through the factor. O(n) for the walk of `f` ([`product_atoms`]).
+fn fixes_a_factor(f: &Formula, facts: &Facts) -> bool {
+    product_atoms(f)
+        .iter()
+        .any(|a| by_factor(facts, a).is_some())
 }
 
 /// Whether `f` holds somewhere, and where. A formula whose forced equations fix its atoms one
@@ -278,23 +342,259 @@ fn reduced(facts: &Facts) -> Option<Formula> {
 /// atom of a disjunction that `absorb` removed where zero lies between its bounds (`repair`), an
 /// atom of a disjunct the search did not take, and an atom of a disjunct it took because its rows
 /// hold with that atom read as zero (`pick`). A caller that needs a value for every atom gives
-/// those left out zero (`l01_38_omega_test::model_keys`). A product is read as an atom of its
-/// own, as everywhere in the solver, so its value in the point need not be the product of its
-/// factors' values: the point satisfies `f` with each product read as a variable of its own
-/// (PRES-product-parity), and [`Formula::holds`], which reads a product through its factors, may
-/// reject it (PRES-model-products).
+/// those left out zero (`l01_38_omega_test::model_keys`). The solver reads a product as an
+/// atom of its own (PRES-product-parity); the point returned gives each product of `f` the
+/// product of its factors' values and holds as [`Formula::holds`] reads it, through the
+/// factors, and where the point found does not, the answer is [`Refusal::Products`]
+/// (PRES-model-products, [`products_agree`]). A fixed factor makes its products linear before
+/// the search ([`reduced`]).
 /// The solver is given `f` with each atom propagation fixed replaced by its value; a formula it
 /// refuses so is asked again as written (PRES-small-point).
 /// Like [`decide`], it first writes `f` one way (`signed` with `Signs::Free`), so that how
 /// a row or an equation is written cannot change the answer (FAIL-rewrite-growth-both).
 pub fn satisfiable(f: &Formula) -> Result<Option<Model>, Refusal> {
-    let f = &signed(f, Signs::Free);
-    if let Some(g) = factored(f)
-        && let Ok(m) = satisfiable_written(&g)
-    {
-        return Ok(m);
+    satisfiable_signed(&signed(f, Signs::Free))
+}
+
+/// [`satisfiable`] of `f` written one way (`signed`), its point read with each product the
+/// product of its factors.
+///
+/// The search ([`satisfiable_solved`]) reads each product `x * y` as a variable of its own
+/// (PRES-product-parity), a reading with more points than the reading through the factors:
+/// each point of `f` read through the factors is a point read with the products as variables
+/// of their own, its products at their factors' products. So `None` from the search is exact.
+/// A point found is returned when it holds read through the factors ([`products_agree`]).
+/// When it does not, `f` is asked again in slices: `f` with one factor of each product fixed
+/// by an equation ([`product_slices`]). In a slice every product has a fixed factor, which
+/// the propagation proves (`forced`), so [`reduced`] reads each product through that factor:
+/// every product is linear there, and the slice's answer is exact for the slice. A point of
+/// a slice is a point of `f` (the slice is `f` and more), and it is checked as the first
+/// point was. Where no slice gives a point and propagation fixes a product whose factors it
+/// leaves free, `f` is split by the values that factor can take ([`divisor_cover`]): those
+/// slices hold every point of `f`, so their answers together are exact. Otherwise the answer
+/// is [`Refusal::Products`]: no slice may have a point while `f` still has one with other
+/// values of the fixed factors.
+// Complexity tradeoff: the reading through the factors is not decidable in general. A
+// product of two atoms names a quadratic monomial, and every system of polynomial equations
+// over the integers can be written as a system of equations of degree at most two by naming
+// each product of two terms with a new variable (`z == x * y`); Matiyasevich's theorem
+// (Y. Matiyasevich, "Enumerable sets are Diophantine", Soviet Math. Doklady 11 (1970)
+// 354-358, from memory, not checked against the text) shows that no algorithm decides
+// whether such a system has an integer solution. So some formulas with products whose
+// factors are free must be refused. What is given up: a formula whose point the search finds
+// with products that disagree, and none of whose at most six slices (each factor at its
+// value in that point, at 1 and at -1, the first factor of each product and then the
+// second) has a point, and no product whose value propagation fixes ([`divisor_cover`]), gets
+// [`Refusal::Products`], though it may have a point elsewhere
+// (`l01_38_presburger::one_row::a_formula_with_a_product_atom_is_left_to_the_solver`).
+// Naive version: the search's point as found, which answered `x * y >= 1 && x == 0` with the
+// point `{x: 0, x * y: 1}` (wrong). Cost: a formula with no product costs one walk, O(n), to
+// see it has none; a formula whose first point agrees costs one evaluation, O(n); one whose
+// point disagrees costs up to six more searches, each of a formula of size n + p for its p
+// products. Tests: `l01_38_presburger::product_parity` (the counts of
+// `points_returned_hold`, `a_point_whose_product_disagrees_with_free_factors_is_not_returned`).
+fn satisfiable_signed(f: &Formula) -> Result<Option<Model>, Refusal> {
+    let Some(m) = satisfiable_solved(f)? else {
+        return Ok(None);
+    };
+    let products = product_atoms(f);
+    if products.is_empty() {
+        return Ok(Some(m));
     }
-    satisfiable_written(f)
+    if let Some(m) = products_agree(f, &products, m.clone()) {
+        return Ok(Some(m));
+    }
+    let with = |slice: Vec<Formula>| {
+        signed(
+            &Formula::and(std::iter::once(f.clone()).chain(slice).collect()),
+            Signs::Free,
+        )
+    };
+    for slice in product_slices(&products, &m) {
+        if let Ok(Some(p)) = satisfiable_solved(&with(slice))
+            && let Some(p) = products_agree(f, &products, p)
+        {
+            return Ok(Some(p));
+        }
+    }
+    // Every point of `f` lies in one slice of the cover, so the slices' answers together are
+    // `f`'s: a point of one is a point of `f`, and none in all of them is none in `f`.
+    let Some(cover) = divisor_cover(f, &products) else {
+        return Err(Refusal::Products);
+    };
+    let mut refused = false;
+    for slice in cover {
+        match satisfiable_signed(&with(slice)) {
+            // A point of a slice holds the slice read through the factors, so it holds `f`;
+            // it is checked again all the same, and one that failed would count as refused.
+            Ok(Some(p)) => match products_agree(f, &products, p) {
+                Some(p) => return Ok(Some(p)),
+                None => refused = true,
+            },
+            Ok(None) => {}
+            Err(_) => refused = true,
+        }
+    }
+    if refused {
+        Err(Refusal::Products)
+    } else {
+        Ok(None)
+    }
+}
+
+/// Slices of `f` that together hold all its points, when propagation fixes a product of `f`
+/// whose factors it leaves free: with `x * y` fixed at `c`, each slice fixes the factor `x`,
+/// at each divisor of `c` and its negation when `c` is not zero (`x * y == c` needs `x` to
+/// divide `c`), and at zero, then `y` at zero, when `c` is zero (`x * y == 0` needs one of
+/// them zero). `None` when no product is fixed so, or when `|c|` does not fit in 128 bits.
+/// Proof that the slices hold every point: at a point of `f` the product is `c` and is the
+/// product of the factors' values, so `x` there is one of the values listed, and the point
+/// lies in that slice. Each slice fixes a factor of that product, which propagation then
+/// proves, so a slice asked again ([`satisfiable_signed`]) picks another product, if any:
+/// the recursion is at most as deep as `f` has products.
+// Complexity tradeoff: the slices are `2 d(|c|)` for `d` the number of divisors, each one more
+// search, and slices of slices multiply, so a formula whose `p` products are each fixed at a
+// constant with many divisors costs the product of their divisor counts. That is the size of
+// the case split the reading through the factors asks for: each slice is a different set of
+// points. The factoring is `zed_numtheory::factor_u128`, whose cost its own comment gives
+// (`split_u128`); `|c|` of 2^127 has a divisor past `i128`, and gets `None`.
+// Naive version: no cover, so `x * y == 1 && x <= -2` was refused (the solver read `x * y` as
+// a variable of its own and found a point, and the slices of [`product_slices`] have none);
+// with the cover it is empty, exactly. Test:
+// `l01_38_presburger::product_parity::a_free_factor_does_not_make_the_product_zero_inside_the_search`.
+fn divisor_cover(f: &Formula, products: &BTreeSet<Atom>) -> Option<Vec<Vec<Formula>>> {
+    let Forced::Undecided(facts) = forced::forced(f, true) else {
+        return None;
+    };
+    let (p, c) = products.iter().find_map(|p| {
+        let c = facts.known.get(p)?;
+        by_factor(&facts, p).is_none().then_some((p, c))
+    })?;
+    let Atom::Product(x, y) = p else {
+        unreachable!("product_atoms lists products")
+    };
+    let (x, y) = (x.atom(), y.atom());
+    let fix = |z: &Atom, v: Int| {
+        vec![Formula::Con(Con::eq(
+            &Lin::atom(z.clone()),
+            &Lin::constant(v),
+        ))]
+    };
+    if c.is_zero() {
+        return Some(vec![fix(&x, Int::ZERO), fix(&y, Int::ZERO)]);
+    }
+    let n = c.to_i128()?.unsigned_abs();
+    let mut divisors: Vec<u128> = vec![1];
+    for (prime, power) in zed_numtheory::factor_u128(n) {
+        let mut more = Vec::new();
+        for d in &divisors {
+            let mut q = *d;
+            for _ in 0..power {
+                q *= prime;
+                more.push(q);
+            }
+        }
+        divisors.extend(more);
+    }
+    divisors.sort_unstable();
+    let mut out = Vec::new();
+    for d in divisors {
+        let d = Int::from(i128::try_from(d).ok()?);
+        out.push(fix(&x, -&d));
+        out.push(fix(&x, d));
+    }
+    Some(out)
+}
+
+/// [`satisfiable`] of `f`, written one way, as the search reads it, each product a variable
+/// of its own: of the factored form ([`factored`]) where that answers, else as written.
+fn satisfiable_solved(f: &Formula) -> Result<Option<Model>, Refusal> {
+    match factored(f).map(|g| satisfiable_written(&g)) {
+        Some(Ok(m)) => Ok(m),
+        _ => satisfiable_written(f),
+    }
+}
+
+/// The slices [`satisfiable_signed`] asks of a formula whose `products` are those listed,
+/// after the point `m` gave a product a value its factors do not: each a list of equations
+/// `z == v` that fix one factor of every product. Six choices, each slice once: for the first
+/// factor of each product in their order, and then for the second, the value `v` is that of
+/// `m` (zero where `m` has none), then 1, then -1; a product one of whose factors an earlier
+/// product's choice already fixed gets no equation of its own. Why these: `m` holds every
+/// row with the products as variables of their own, so a factor at its value in `m` keeps
+/// the rows on it, and the product's value is then the other factor times that value; 1 and
+/// -1 let the other factor take the product's value itself, or its negation. O(s p log p)
+/// for `p` products and `s` slices.
+fn product_slices(products: &BTreeSet<Atom>, m: &Model) -> Vec<Vec<Formula>> {
+    let mut slices: Vec<BTreeMap<Atom, Int>> = Vec::new();
+    for second in [false, true] {
+        for value in 0..3 {
+            let mut fixed: BTreeMap<Atom, Int> = BTreeMap::new();
+            for p in products {
+                let Atom::Product(x, y) = p else {
+                    unreachable!("product_atoms lists products")
+                };
+                let (x, y) = (x.atom(), y.atom());
+                if fixed.contains_key(&x) || fixed.contains_key(&y) {
+                    continue;
+                }
+                let z = if second { y } else { x };
+                let v = match value {
+                    0 => m.get(&z).cloned().unwrap_or(Int::ZERO),
+                    1 => Int::ONE,
+                    _ => Int::from(-1i64),
+                };
+                fixed.insert(z, v);
+            }
+            if !slices.contains(&fixed) {
+                slices.push(fixed);
+            }
+        }
+    }
+    (slices.into_iter())
+        .map(|fixed| {
+            (fixed.into_iter())
+                .map(|(z, v)| Formula::Con(Con::eq(&Lin::atom(z), &Lin::constant(v))))
+                .collect()
+        })
+        .collect()
+}
+
+/// The product atoms of `f`, each once. O(n) for `n` the distinct parts of `f`
+/// ([`Formula::walk`]), plus O(p log p) for its `p` products.
+fn product_atoms(f: &Formula) -> BTreeSet<Atom> {
+    let mut out = BTreeSet::new();
+    f.walk(&mut |c| {
+        for a in c.lin.terms.keys() {
+            if matches!(a, Atom::Product(..)) {
+                out.insert(a.clone());
+            }
+        }
+    });
+    out
+}
+
+/// The point `m` of `f`, found with each product atom read as a variable of its own, with
+/// each of `products`, the product atoms of `f` ([`product_atoms`]), given the product of its
+/// factors' values (an absent factor zero), if `f` holds there as [`Formula::holds`] reads
+/// it, through the factors; otherwise `None` (PRES-model-products: the answers are exact, so
+/// a point whose products disagree with their factors is never returned). Proof that a point
+/// returned is a point of `f` read through the factors: every product of `f` is set to the
+/// product of its factors' values, and `f.holds` reads each product so. A point whose
+/// products disagree may still hold once they are set so (`x * x >= 0` at `x * x == -1`), so
+/// the check is of `f` at the corrected point, not of the products as found. Cost: O(p log
+/// p) for the `p` products, and one evaluation of `f`, with each shared part read once
+/// ([`Formula::holds`]).
+fn products_agree(f: &Formula, products: &BTreeSet<Atom>, mut m: Model) -> Option<Model> {
+    for p in products {
+        let Atom::Product(x, y) = p else {
+            unreachable!("product_atoms lists products")
+        };
+        let at = |a: &Factor| m.get(&a.atom()).cloned().unwrap_or(Int::ZERO);
+        let v = &at(x) * &at(y);
+        m.insert(p.clone(), v);
+    }
+    f.holds(&m).then_some(m)
 }
 
 fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
@@ -311,11 +611,13 @@ fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
         Forced::Point(m) => Ok(Some(m)),
         Forced::Holds => unreachable!("a point is asked for"),
         Forced::Undecided(facts) => {
-            let solver = || match reduced(&facts) {
+            let cell = OnceCell::new();
+            let reduced_once = || cell.get_or_init(|| reduced(&facts)).as_ref();
+            let solver = || match reduced_once() {
                 None => or_old(|| satisfiable_named(f)),
                 // Complexity tradeoff: as at `decide`, a refusal with the facts asks again as
                 // written.
-                Some(g) => match or_old(|| satisfiable_named(&g)) {
+                Some(g) => match or_old(|| satisfiable_named(g)) {
                     Ok(m) => Ok(m.map(|mut m| {
                         facts.fill(&mut m);
                         m
@@ -332,16 +634,28 @@ fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
             // different point from the old public entry. Arbitrary-precision arithmetic
             // retains its bit cost. Test:
             // one_row::a_box_and_an_extreme_row_build_their_models_in_near_linear_work.
-            let conjuncts = f.conjunct_list();
+            // With a factor of a product fixed, these paths read the formula with that product
+            // read through the factor ([`reduced`], PRES-model-products), and their point gets
+            // the fixed atoms, as the solver's does.
+            let through = fixes_a_factor(f, &facts).then(reduced_once).flatten();
+            let filled = |m: Option<Model>| {
+                m.map(|mut m| {
+                    if through.is_some() {
+                        facts.fill(&mut m);
+                    }
+                    m
+                })
+            };
+            let conjuncts = through.unwrap_or(f).conjunct_list();
             if let Some(b) = one_row::OneRow::of(&conjuncts) {
                 if !b.exists() {
                     return Ok(None);
                 }
-                return Ok(b.point());
+                return Ok(filled(b.point()));
             }
             match row_sums::read(&conjuncts) {
                 Ok(row_domains::Settled::Empty) => Ok(None),
-                Ok(row_domains::Settled::Point(m)) => Ok(Some(m)),
+                Ok(row_domains::Settled::Point(m)) => Ok(filled(Some(m))),
                 Err(Some(rows)) => row_sums::point(rows, solver),
                 Err(None) => solver(),
             }
@@ -532,18 +846,31 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// writing again.
 /// One writing does not answer every question another does: the census has one condition the
 /// chosen sign refuses for Shadows that its writing as given answered (PRES-solve-equation-sign).
+///
+/// A product atom `x * y` is read as the product of its factors (PRES-model-products): the
+/// solver reads it as a variable of its own, which allows more points, so its `false` is
+/// exact, and its `true` is checked by finding a point ([`satisfiable`]) whose products agree
+/// with their factors ([`products_agree`]); where none is found, the answer is a refusal,
+/// [`Refusal::Products`].
+// Complexity tradeoff: a formula with a product that holds is asked twice, once by `decide`
+// and once for its point, so it costs up to the cost of `satisfiable` more; a formula with no
+// product costs one walk more, O(n), to see that it has none. Naive version: `true` as the
+// solver reads it, which answered `x * y >= 1 && x == 0` with `true`; no cheaper exact check
+// is known, since the product reading of a formula with free factors is not linear.
 pub fn decide(f: &Formula) -> Result<bool, Refusal> {
     let f = &signed(f, Signs::Free);
     // The formula with each shared part taken out of the disjunctions that hold it in every
     // disjunct ([`factored`]) holds at the same points, so its answer is the answer; the
     // formula as written is asked where it is refused, so a refusal names the formula as
     // written.
-    if let Some(g) = factored(f)
-        && let Ok(b) = decide_written(&g)
-    {
-        return Ok(b);
+    let holds = match factored(f).map(|g| decide_written(&g)) {
+        Some(Ok(b)) => b,
+        _ => decide_written(f)?,
+    };
+    if !holds || product_atoms(f).is_empty() {
+        return Ok(holds);
     }
-    decide_written(f)
+    satisfiable_signed(f).map(|m| m.is_some())
 }
 
 /// [`decide`] of `f` as it is written, with no part taken out of its disjunctions.
@@ -552,7 +879,12 @@ fn decide_written(f: &Formula) -> Result<bool, Refusal> {
         Forced::Empty => Ok(false),
         Forced::Point(_) | Forced::Holds => Ok(true),
         Forced::Undecided(facts) => {
-            let conjuncts = f.conjunct_list();
+            let cell = OnceCell::new();
+            let reduced_once = || cell.get_or_init(|| reduced(&facts)).as_ref();
+            // As at [`satisfiable_written`]: with a factor of a product fixed, the fast paths
+            // read the formula with that product read through the factor (PRES-model-products).
+            let through = fixes_a_factor(f, &facts).then(reduced_once).flatten();
+            let conjuncts = through.unwrap_or(f).conjunct_list();
             if let Some(b) = one_row::OneRow::of(&conjuncts) {
                 return Ok(b.exists());
             }
@@ -562,7 +894,7 @@ fn decide_written(f: &Formula) -> Result<bool, Refusal> {
                 Ok(s) => return Ok(matches!(s, row_domains::Settled::Point(_))),
                 Err(rows) => rows,
             };
-            let solver = || match reduced(&facts) {
+            let solver = || match reduced_once() {
                 None => or_old(|| decide_named(f)),
                 // Complexity tradeoff: a formula the solver refuses with the facts is asked
                 // again as written, so it costs up to twice what it cost before, and no answer
@@ -576,7 +908,7 @@ fn decide_written(f: &Formula) -> Result<bool, Refusal> {
                 // replaced rows told two factors of a product apart. Leaving such factors as
                 // written gave no refusals but 0.83, since fewer formulas kept any fact.
                 // COMPLEXITY.md row PRES-small-point.
-                Some(g) => or_old(|| decide_named(&g)).or_else(|_| or_old(|| decide_named(f))),
+                Some(g) => or_old(|| decide_named(g)).or_else(|_| or_old(|| decide_named(f))),
             };
             // Rows over atoms confined to finite unions of ranges: the exact join of their
             // sums (module `row_sums`), the solver where the join stops at its work limit.
@@ -2562,7 +2894,8 @@ impl Renamed {
             | Refusal::Disjuncts
             | Refusal::Work
             | Refusal::Questions
-            | Refusal::Repeats => e,
+            | Refusal::Repeats
+            | Refusal::Products => e,
         }
     }
 }
@@ -20766,11 +21099,24 @@ pub fn project_each_solver(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> 
 /// the cover does not name this module, which calls it, so the two do not import each other
 /// (rows MAIN-red-pugh-land and PRES-cover-wire, `s_01f_import_graph`).
 const SOLVER: meter::Solver = meter::Solver {
-    satisfiable,
+    satisfiable: satisfiable_as_atoms,
     eliminated_counted,
     eliminated_whole,
     point_of,
 };
+
+/// [`satisfiable`] with each product atom read as a variable of its own, as the search reads
+/// it (PRES-product-parity): the cover of module `exact` projects each implicant with Pugh's
+/// projection, which reads every atom so, and asks its points in the same reading, so a
+/// projection holds every value with a point read through the factors and may hold more, as
+/// it did before PRES-model-products. Asked through [`satisfiable`], which reads products
+/// through their factors, the cover took a refusal ([`Refusal::Products`]) for a point and
+/// refused the projection of `0 <= x <= 2 && 0 <= y <= 5 && x <= x * y && (x * y >= 3 || x
+/// >= 7)` (test `l01_38_omega_test::names::
+/// a_point_and_a_projection_of_a_renamed_formula_are_over_the_names_as_written`).
+fn satisfiable_as_atoms(f: &Formula) -> Result<Option<Model>, Refusal> {
+    satisfiable_solved(&signed(f, Signs::Free))
+}
 
 /// [`project_each_asked`], with the cover of module `exact` where `cover` holds, and the
 /// solver's answer alone where it does not ([`project_each_solver`]).
@@ -28308,7 +28654,16 @@ fn linear_reading(
         premise,
         Formula::negate(goal.body.clone()),
     ]);
-    let Some(m) = satisfiable(&f)? else {
+    // Read through the factors ([`satisfiable`], PRES-model-products), a point is a
+    // countermodel and none is a proof. Where that reading finds neither
+    // ([`Refusal::Products`]), the reading with each product a variable of its own, which has
+    // every point of the other and maybe more, still gives a proof when it has no point, and
+    // otherwise its point, where the verdict below is `NotProved` and the next tier is tried.
+    let found = match satisfiable(&f) {
+        Err(Refusal::Products) => satisfiable_solved(&signed(&f, Signs::Free)),
+        found => found,
+    };
+    let Some(m) = found? else {
         return Ok(Entailment::Proved(ps));
     };
     // A countermodel of the linear reading is a countermodel when the premises hold and the
@@ -33879,7 +34234,9 @@ mod forced_against_solver {
     fn factors_stay_apart_when_two_products_would_become_one() {
         // With `y` replaced by `x`, `y * y` would become `x * x`: the solver reads both as
         // atoms of their own, so the two made one would add `x * x == y * y`, which `f`
-        // does not have.
+        // does not have. With both factors fixed, each product is read through them
+        // (PRES-model-products): `x * x == y * y == 4`, so the disjunction fails and `f` has
+        // no point.
         let (x, y) = (Arc::from("x"), Arc::from("y"));
         let xx = Lin::atom(Atom::product(&x, &x));
         let yy = Lin::atom(Atom::product(&y, &y));
@@ -33891,7 +34248,8 @@ mod forced_against_solver {
             ge(&xy, &k(0)),
         ]);
         assert!(twins_merged(&f, &[], true).is_none(), "{f}");
-        assert_ne!(decide(&f).ok(), Some(false), "{f}");
+        assert_eq!(decide(&f), Ok(false), "{f}");
+        assert_eq!(satisfiable(&f), Ok(None), "{f}");
     }
 
     /// Twin quotient and remainder definitions, `i == 3*q0 + q1 && 0 <= q1 <= 2` written twice
@@ -33918,10 +34276,23 @@ mod forced_against_solver {
     }
 
     /// What the whole solver says of `f`: the point it finds, or `None` when it finds none, and
-    /// whether `f` holds somewhere; `None` when it refuses.
+    /// whether `f` holds somewhere; `None` when it refuses, or when it finds a point whose
+    /// products disagree with their factors. The whole solver reads a product as a variable of
+    /// its own; since PRES-model-products [`satisfiable`] and [`decide`] read it through its
+    /// factors. The two agree where the whole solver finds no point (it has more points) and
+    /// where its point's products are its factors' products; elsewhere its answer is not the
+    /// answer of `f`, as with `x * y == 2 * q0 + 3 && x == -1 && y == 2`, true read so and
+    /// false through the factors (`-2` is odd), and such a formula is checked as one the solver
+    /// refuses: each point given is evaluated.
     fn slow(f: &Formula) -> Option<(Option<Model>, bool)> {
         let m = or_old(|| satisfiable_named(f)).ok()?;
         let d = or_old(|| decide_named(f)).ok()?;
+        if let Some(p) = &m
+            && !product_atoms(f).is_empty()
+            && !f.holds(p)
+        {
+            return None;
+        }
         Some((m, d))
     }
 
@@ -34202,7 +34573,8 @@ mod forced_against_solver {
     /// Answers of [`agrees`] the random tests must meet, each with a formula built to give it,
     /// taken from [`corner_cases_agree_with_the_solver`] and [`bounds_agree_with_the_solver`]
     /// (checked alone by [`each_formula_built_for_an_answer_gives_it`]): two values for one
-    /// variable (0); a product fixed by an equation (1); a disjunction with two live operands
+    /// variable (0); a product fixed by an equation with both its factors (1; with one factor
+    /// fixed it was, until PRES-model-products, whose answer is 8 since); a disjunction with two live operands
     /// (3); `z` forced to 1 at the bounds of `x`, a point other than the solver's (6). An
     /// answer the random formulas did not give is given by its built formula, and no number of
     /// formulas is relied on (PROOF-test-coverage-constructive).
@@ -34212,7 +34584,11 @@ mod forced_against_solver {
         }),
         (1, || {
             let p = Lin::atom(Atom::product(&Arc::from("x"), &Arc::from("y")));
-            Formula::and(vec![eq(&p, &k(6)), eq(&sym("x"), &k(2))])
+            Formula::and(vec![
+                eq(&p, &k(6)),
+                eq(&sym("x"), &k(2)),
+                eq(&sym("y"), &k(3)),
+            ])
         }),
         (3, || {
             Formula::and(vec![
@@ -34252,12 +34628,16 @@ mod forced_against_solver {
         }
     }
 
-    /// [`decide`] reads a product as an atom of its own, free of its factors' values: each of
-    /// these holds for it, though none has an integer point with `x * y` read as a product.
-    /// The summaries of `extend.rs` (`Summaries::make`) rest on this when they eliminate a
-    /// product outside the key as they eliminate a variable: exact for this reading only.
+    /// [`decide`] reads a product through its factors (PRES-model-products): none of these has
+    /// an integer point with `x * y` read as a product, and each is false. Until then it read a
+    /// product as an atom of its own, free of its factors' values, and each was true (this test
+    /// pinned that, as `decide_reads_a_product_as_an_atom_of_its_own`). The fourth, with both
+    /// factors free, is answered by the cover of [`divisor_cover`]: `x * y == 0` needs `x == 0`
+    /// or `y == 0`, and each contradicts its bound. The summaries of `extend.rs`
+    /// (`Summaries::make`) no longer eliminate a product, which was exact for the old reading
+    /// only.
     #[test]
-    fn decide_reads_a_product_as_an_atom_of_its_own() {
+    fn decide_reads_a_product_through_its_factors() {
         let p = Lin::atom(Atom::product(&Arc::from("x"), &Arc::from("y")));
         let fs = [
             Formula::and(vec![eq(&p, &k(3)), eq(&sym("x"), &k(0))]),
@@ -34275,7 +34655,8 @@ mod forced_against_solver {
             ]),
         ];
         for f in fs {
-            assert_eq!(decide(&f), Ok(true), "{f}");
+            assert_eq!(decide(&f), Ok(false), "{f}");
+            assert_eq!(satisfiable(&f), Ok(None), "{f}");
         }
     }
 
@@ -34296,8 +34677,12 @@ mod forced_against_solver {
                 Formula::and(vec![eq(&q(0).times(2), &sym("x")), eq(&sym("x"), &k(3))]),
                 0,
             ),
-            // A product is an atom of its own: an equation fixes it, not its factors.
-            (Formula::and(vec![eq(&p, &k(6)), eq(&sym("x"), &k(2))]), 1),
+            // An equation fixes a product, and with one factor fixed the other too
+            // (PRES-model-products): `y == 3`. The whole solver reads the product as an atom of
+            // its own and gives `y == 0`, which is no point read through the factors, so its
+            // answer is not the reference (`slow`), and the formula is checked as one it
+            // refuses, answered with the facts (8; it was 1, the solver's point, until then).
+            (Formula::and(vec![eq(&p, &k(6)), eq(&sym("x"), &k(2))]), 8),
             // and its factors' values do not give it one: the solver reads it as free. Its bound
             // does, at which propagation tries it (PRES-small-point).
             (

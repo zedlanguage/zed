@@ -160,6 +160,7 @@ fn cause(r: &Refusal) -> String {
         Refusal::Work => "Work",
         Refusal::Questions => "Questions",
         Refusal::Repeats => "Repeats",
+        Refusal::Products => "Products",
     }
     .to_string()
 }

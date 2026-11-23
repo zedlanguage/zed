@@ -58,6 +58,12 @@ pub enum Refusal {
     /// The values of a variable have gaps that repeat without end (`x == 2 * y` with `y`
     /// unbounded gives the even numbers), which a set of ranges cannot hold (module `exact`).
     Repeats,
+    /// The formula has a product atom `x * y`, which the solver reads as a variable of its own
+    /// (PRES-product-parity), and the point found, with each product given the product of its
+    /// factors' values, is no point of the formula: no point was found where every product
+    /// equals the product of its factors (PRES-model-products; the answers are exact, so the
+    /// point read with the products as variables of their own is not returned).
+    Products,
 }
 
 /// The variables of a [`Refusal::Tie`], and the rows they share, written over the variables
@@ -331,6 +337,14 @@ impl fmt::Display for Closed<'_> {
                 "to find exactly which values each variable can take, the checker writes them \
                  as ranges. Here the values have gaps that repeat without end, as the even \
                  numbers do, which no list of ranges can hold."
+            ),
+            Refusal::Products => write!(
+                f,
+                "to find whole numbers that meet these conditions, the checker reads each \
+                 product of two variables, as `x * y`, as a number of its own. The values it \
+                 found give a product a value other than the product of its two factors' \
+                 values, and it found no values where every product equals the product of its \
+                 factors."
             ),
             Refusal::Unordered(t) => write!(
                 f,
