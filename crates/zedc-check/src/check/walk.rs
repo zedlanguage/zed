@@ -25616,7 +25616,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 });
             }
             if let Some(forms) = written {
+                // The literals offered so far: the `f64` and `f32` forms write the same
+                // decimal, `1.0`, so where both carriers are taken it is offered once. At
+                // most three forms, so a list.
+                let mut offered: Vec<Option<String>> = Vec::new();
                 for (ty, lit, text) in forms {
+                    if offered.contains(&lit) {
+                        continue;
+                    }
                     // The form is offered for its own carrier: `1` for `1r` where an `int` is
                     // taken, not where an `f64` is, which `1.0` is offered for, though `1`
                     // checks there too.
@@ -25647,6 +25654,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                             (Some(s), text)
                         });
                     let carrier = ty.numeric_carrier();
+                    offered.push(lit.clone());
                     for (lit, text) in std::iter::once((lit, text)).chain(suffixed) {
                         // The literal as the repair writes it, where the checker reads it alone.
                         let was = self.t.text.and_then(|s| s.get(at.start..at.end));

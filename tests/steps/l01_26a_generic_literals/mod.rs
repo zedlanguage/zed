@@ -20,6 +20,7 @@ mod cast_of_union;
 mod cast_rat_int;
 mod default_carrier;
 mod design_menus;
+mod f32_literals;
 mod features;
 mod fixes;
 mod if_carrier_branch;

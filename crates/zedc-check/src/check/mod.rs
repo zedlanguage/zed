@@ -12116,7 +12116,11 @@ fn lit_carrier(v: &Value) -> Carrier {
 /// ([`menu`]) when it cannot take `c`, being a decimal at `int` or written with a suffix, or is
 /// not exactly a `c`.
 fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, Msg> {
-    if let Some(m) = past(l, c) {
+    // At `f32` the range is found by the read of the digits below, which is the costly part, so
+    // [`past`] is asked only at `f64`, where it reads a field.
+    if c == Carrier::F64
+        && let Some(m) = past(l, c)
+    {
         return Err(m);
     }
     if lit_carrier(&l.value) == c || !c.numeric() {
@@ -12131,6 +12135,11 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, Msg> {
     if c == Carrier::F32 && is_decimal(&l.value) {
         return match literal_f32(lit_digits(l)) {
             Some(Ok(x)) => Ok(Some(Value::float32(x))),
+            Some(Err(r)) if l.bare => Err(Msg::from(float_range(
+                l.spelling(),
+                Some(FloatFormat::F32),
+                &r,
+            ))),
             _ => Err(menu(l, &[c])),
         };
     }
@@ -12156,10 +12165,37 @@ fn adopt(l: &Lit, c: Carrier) -> Result<Option<Value>, Msg> {
 }
 
 /// The rejection of the decimal `l` at `c` when `c` is `f64` and `l` rounds there to infinity
-/// or, being nonzero, to zero ([`Lit::past_f64`]); `None` otherwise.
+/// or, being nonzero, to zero ([`Lit::past_f64`]), or `c` is `f32` and `l`, written without a
+/// suffix, rounds so there ([`past_f32`]); `None` otherwise.
 fn past(l: &Lit, c: Carrier) -> Option<Msg> {
-    let r = l.past_f64.as_ref().filter(|_| c == Carrier::F64)?;
-    Some(Msg::from(float_range(l.spelling(), None, r)))
+    match c {
+        Carrier::F64 => {
+            let r = l.past_f64.as_ref()?;
+            Some(Msg::from(float_range(l.spelling(), None, r)))
+        }
+        Carrier::F32 => past_f32(l).map(Msg::from),
+        _ => None,
+    }
+}
+
+/// The rejection of the decimal `l`, written without a suffix, at `f32` when its digits round
+/// there to infinity, as `1e39` does, or, being nonzero, to zero, as `1e-50` does: the range of
+/// the format is the reason, as for `1e39f32` (DESIGN.md L1.26b: a decimal literal is read once,
+/// straight into the carrier its use fixes, and one outside the range of that format is
+/// rejected for its range). A decimal is a value of `f32` wherever its digits round to a finite
+/// nonzero `f32` or are zero, so the rejection "A decimal literal is never an `f32`" that
+/// [`menu`] gave before was false (rows LIT-formats-decimal-past-f32-param of LIT-formats; test
+/// `l01_26a_generic_literals::f32_literals`). `None` for a literal with a suffix, an integer
+/// literal, or a decimal `f32` takes.
+// Complexity tradeoff: the digits are read to `f32` once more, O(n log^2 n) in their number as
+// in [`adopt`]'s own read; that read is kept separate because this one runs only on a literal
+// already rejected, where [`menu`] needs the reason and [`adopt`] has returned.
+fn past_f32(l: &Lit) -> Option<String> {
+    if !l.bare || !is_decimal(&l.value) {
+        return None;
+    }
+    let r = literal_f32(lit_digits(l))?.err()?;
+    Some(float_range(l.spelling(), Some(FloatFormat::F32), &r))
 }
 
 /// Why the decimal written `s`, with the suffix `forced` or none, is no value of the format
@@ -15391,7 +15427,11 @@ fn leaves_with(
 /// The literals of the other carriers that are exactly the number of `e` when `e` is a `rat`
 /// literal, `k` or `-k` with `k` written `1r` or `0.5r`, each with its type and the repair
 /// that writes it and the literal it writes, in the order of [`menu`]: the `f64` literal,
-/// `1.0` or `0.5`, where the number is an `f64` exactly, then the `int` literal, `1`, where it
+/// `1.0` or `0.5`, where the number is an `f64` exactly, then the same decimal at `f32` where
+/// the number is an `f32` exactly, since a decimal without a suffix takes the carrier its use
+/// fixes (step L1.26b), so `x + 1r` with `x: f32` is offered `x + 1.0` as `x: f64` is (plan
+/// row LIT-formats-rat-suffix-beside-f32; the suffix `f64` that [`with_carrier`] writes would
+/// be wrong there), then the `int` literal, `1`, where it
 /// is written without a point; `None` when `e` is no `rat` literal. A repair writes the
 /// literal's digits as `src`, the program's text, writes them, `1_000.0` for `1_000r`, where it is
 /// known. A literal has no length limit, so a repair that quotes it is written in memory asked for
@@ -15412,6 +15452,7 @@ fn rat_forms(e: &Expr, src: Option<&str>) -> Option<Vec<(Ty, Option<String>, Str
     let mut out = Vec::new();
     for (prim, carrier, suffix) in [
         (Prim::CastF64, Carrier::F64, if point { "" } else { ".0" }),
+        (Prim::CastF32, Carrier::F32, if point { "" } else { ".0" }),
         (Prim::CastInt, Carrier::Int, ""),
     ] {
         if carrier == Carrier::Int && point {
