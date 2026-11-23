@@ -5240,7 +5240,8 @@ impl Boundaries {
 /// every build cost before (each node `tree_parts` built joined them once), and nothing on a
 /// chain that never rounds. Recursion is as deep as the AVL height, O(log p). Test:
 /// `ref_memo::only_a_chain_with_a_round_takes_gcds_for_the_cuts`, and the answers of every
-/// family against main's in `ref_memo::every_family_keeps_main_s_answers_through_the_inverse_tree_changes`.
+/// family against main's in
+/// `ref_memo::every_family_keeps_main_s_answers_through_the_inverse_tree_changes`.
 fn node_boundaries(n: &PartitionNode) -> &Boundaries {
     n.boundaries.get_or_init(|| {
         let mut b = Boundaries::key(&n.lo, &n.hi);
@@ -5524,7 +5525,8 @@ fn tree_single(lo: End, hi: End, data: Contents) -> Tree {
 /// piece of `a`, so the shorter tree loses it, and put it back as the middle key of `join`
 /// (`tree_node`), which walks down the taller tree only until the heights match,
 /// O(|h_a - h_b| + 1). Taking out a first or last piece is O(h) with O(1) work a level
-/// ([`tree_split_first`]), so the whole join is O(log p) node copies (REF-abs-split-join). Before, the join walked down the right spine of `a` and the
+/// ([`tree_split_first`]), so the whole join is O(log p) node copies (REF-abs-split-join).
+/// Before, the join walked down the right spine of `a` and the
 /// left spine of `b` in turn to the leaves, calling `tree_node` at each level with heights that
 /// could differ by more than 2, so each level could walk again. Test: the answers of every
 /// family in `ref_memo::every_family_keeps_main_s_answers_through_the_inverse_tree_changes`,
@@ -5870,8 +5872,8 @@ impl State1d {
     /// Blelloch, Ferizovic and Sun 2016) put them together in O(log p), against the
     /// `tree_union` of P and -P before, which walked both and cut `[0, h]` and `[-h, 0]` into
     /// `[-h, -1]`, `[0, 0]`, `[1, h]`, three pieces with one label (REF-merge-equal-labels:
-    /// `ref_memo::abs_and_round_leave_no_touching_pieces_with_one_label`). The reflection is a tag on
-    /// the root, O(1), and shares P's nodes.
+    /// `ref_memo::abs_and_round_leave_no_touching_pieces_with_one_label`). The reflection is a
+    /// tag on the root, O(1), and shares P's nodes.
     fn abs(self) -> Self {
         let mut st = self;
         let neg = ValTag::neg();
