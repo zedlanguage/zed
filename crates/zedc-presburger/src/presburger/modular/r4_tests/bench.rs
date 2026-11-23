@@ -406,6 +406,17 @@ fn the_remainders_take_the_cheaper_method() {
             }
         }
     }
+    // The limit 1.1, from the variation measured on v5e2 (DynamoRIO, 2026-11-23,
+    // PERF-remainders-switch-by-cost): at one seed every count repeats to the instruction
+    // (3 runs at seed 777), so the meter adds nothing. Across 5 fresh seeds and seed 777 the
+    // random families' counts move with the input (32 leaves of 512 words at 1/2: 503.1 M to
+    // 525.7 M for the cheapest fixed method, 4.5 %), but `remainders` moves with it, and no
+    // family's ratio moved by more than 0.002; the deterministic powers of 2 moved by at most 4
+    // instructions. The worst ratio measured is 1.092 to 1.093 (2, 4, .., 2^200 at 1/1, where
+    // the descent is chosen and a turn at level 2 is 5 % cheaper: the cost model counts a
+    // power-of-2 node's products as dense), and 1.083 at 1/2 (the estimate's 38,700
+    // instructions on a descent of 284,000), so 1.1 is 0.007 above the worst, three times the
+    // variation, and below it the test would fail on the cost model's known error alone.
     assert!(
         worst.0 <= 1.1,
         "remainders took {:.3} times the cheapest method's instructions on {}",

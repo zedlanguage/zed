@@ -200,8 +200,13 @@ fn guard_bits(depth: usize) -> u64 {
 /// the least is taken. The steps are summed from the root down and only grow, so the search
 /// stops once they reach the least total so far: the steps' products, the dearest of the costs
 /// to estimate (a power in [`fast::mul_cost`]), are then estimated only at the levels near the
-/// root, which have the fewest nodes, when the descent wins. Measured: estimating every level
-/// cost up to 800 instructions a node, 2.0 times the descent's work on 2, 4, .., 2^200.
+/// root, which have the fewest nodes, when the descent wins. Measured (DynamoRIO, seed 777,
+/// 2026-11-23): estimating every level cost up to 800 instructions a node, 2.0 times the
+/// descent's work on 2, 4, .., 2^200; the descent's estimate alone ([`descent_cost`]) cost
+/// 53,800 instructions there at 1/2 (callgrind: 72% of [`fast::rem_cost`]'s share in
+/// `newton_cost`, and the per-node loop most of the rest), and 38,700 since `newton_cost` is
+/// skipped below its floor and the widths are kept in one array, against the 284,000 of the
+/// descent itself.
 fn cheaper_method<L: Borrow<BigUint>>(
     top: &BigUint,
     p: &BigUint,
@@ -239,14 +244,7 @@ fn cheaper_method<L: Borrow<BigUint>>(
             .map(|(v, a, b)| fast::scaled_node_plan(v, a, b, guard, u64::MAX).2)
             .sum()
     };
-    let mut widths = vec![words(top)];
-    let mut best = 0.0;
-    for t in (0..depth).rev() {
-        widths = match t {
-            0 => descent_level(leaves.iter().map(Borrow::borrow), &widths, &mut best),
-            _ => descent_level(levels[t - 1].iter(), &widths, &mut best),
-        };
-    }
+    let mut best = descent_cost(words(top), leaves, levels);
     let (a, b) = (node(depth - 1, 0), node(depth - 1, 1));
     let f = match a.bits() >= 2 && b.bits() >= 2 {
         true => fast::scaled_node_plan(p, a, b, guard, u64::MAX).0,
@@ -282,22 +280,34 @@ fn cheaper_method<L: Borrow<BigUint>>(
     choice
 }
 
-/// One level of [`cheaper_method`]'s estimate of the exact descent from `top`: adds to `cost`
-/// the division of each node's parent's remainder, of `widths[j / 2]` words, by node `j`, and
-/// gives the widths of the level's remainders, each the narrower of the node and its parent's.
-fn descent_level<'a>(
-    nodes: impl Iterator<Item = &'a BigUint>,
-    widths: &[usize],
-    cost: &mut f64,
-) -> Vec<usize> {
-    nodes
-        .enumerate()
-        .map(|(j, v)| {
+/// [`cheaper_method`]'s estimate of the exact descent from a `top` of `tw` words: at each node
+/// `j` of each level, the division of its parent's remainder, of `widths[j / 2]` words, by the
+/// node, whose remainder is as wide as the narrower of the two. O(n) in the nodes, with one
+/// buffer of widths for every level: a level is read from its last node down and each width is
+/// written over its node's own index, which no node to its left reads, since node `j`'s parent
+/// index `j / 2` is at most `j` and is `j` only for `j = 0`, read before it is written. Measured
+/// (callgrind, 2026-11-23, on 2, 4, .., 2^200 with `x` at half of the product): a new vector of
+/// widths for each level, through iterator adapters, took 87 instructions a node.
+fn descent_cost<L: Borrow<BigUint>>(tw: usize, leaves: &[L], levels: &[Vec<BigUint>]) -> f64 {
+    fn level<L: Borrow<BigUint>>(nodes: &[L], widths: &mut [usize]) -> f64 {
+        let mut sum = 0.0;
+        for (j, v) in nodes.iter().enumerate().rev() {
+            let v = v.borrow();
             let rw = widths[j / 2];
-            *cost += fast::rem_cost(rw, v);
-            rw.min(v.bits().div_ceil(64) as usize)
-        })
-        .collect()
+            sum += fast::rem_cost(rw, v);
+            widths[j] = rw.min(v.bits().div_ceil(64) as usize);
+        }
+        sum
+    }
+    let mut widths = vec![tw; leaves.len()];
+    let mut cost = 0.0;
+    for t in (0..levels.len()).rev() {
+        cost += match t {
+            0 => level(leaves, &mut widths),
+            _ => level(&levels[t - 1], &mut widths),
+        };
+    }
+    cost
 }
 
 /// `scaled_descend_by` with its turn to the exact descent at the first level whose nodes are all
