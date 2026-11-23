@@ -916,8 +916,9 @@ impl Rat {
     /// Complexity tradeoff: for `n` the bits of `c`, the trailing zeros and the shift cost
     /// O(n); `factor` below 2^44 is O(1), a constant proved at `zed_numtheory::factor`; the least
     /// root is O(M(n) log n), proved at [`fn@least_root`]; `is_prime` on a word is O(1) (12
-    /// bases of Miller-Rabin, proved at `zed_numtheory::is_prime`). The text writes `c` or what is left of
-    /// it as decimal digits in either form, which costs O(M(n) log n) (`num::fast::to_decimal`,
+    /// bases of Miller-Rabin, proved at `zed_numtheory::is_prime`). The text writes `c` or what
+    /// is left of it as decimal digits in either form, which costs O(M(n) log n)
+    /// (`num::fast::to_decimal`,
     /// a divide-and-conquer conversion), so the reduction costs at most a constant times the
     /// text it chooses between, and only a printed number pays it. Methods with no proved bound
     /// are not used: Pollard's rho on a word above 2^44 is unproved and cost about 0.85 ms on a
