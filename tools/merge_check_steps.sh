@@ -69,7 +69,15 @@ if [ -n "$rtself" ]; then
       rt_part select && rt_part table && rt_part except && rt_part benches
       wait
     }) &
-    for p in fresh copy concurrent trace nobus warm; do rt_part "$p" & done
+    # fresh, copy, trace and nobus each start cargo several times, and cargo lets one process at a
+    # time hold its package cache: started at once, they waited on each other ("Blocking waiting
+    # for file lock on package cache") and all four were killed at 60 s, in b22-small15's two
+    # checks and b22-tests9's two on 2026-11-24 (hm3, load under 2). One after another on hm3 they
+    # took 85 (with a rebuild), 23, 45 and 41 s, with no wait on the lock in the last three. So
+    # they run in one chain beside list's, each part still under its own limit, and the chain
+    # goes on past a failed part, so each part's verdict is read.
+    (for p in fresh copy trace nobus; do rt_part "$p"; done) &
+    for p in concurrent warm; do rt_part "$p" & done
     wait
   ) &
   rtpids+=($!)
