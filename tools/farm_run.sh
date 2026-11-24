@@ -231,12 +231,17 @@ again_of() {
   fi
 }
 
-# norm_names: the piece names on stdin, one a line, with a library's build hash taken out
-# (zed_collections-1dab6a5c96f278d8::bench::x as zed_collections::bench::x; 16 hex digits, cargo's
-# -C metadata, as main-watch's lists of 2026-11-24 show). The VMs of one run build the same
-# files, but a share's later job may run on another VM, and the shares are dealt by position for
-# just this reason (see "The shares" above): its names are matched without the hash.
-norm_names() { sed -E 's/^([A-Za-z0-9_]+)-[0-9a-f]{16}(::|$)/\1\2/'; }
+# pos_of <share>: each piece name on stdin (field 1) as its line number in the share's list
+# <share> (one name a line, first field), or as ?<name> when the list lacks it. A share's later
+# job may run on another VM, where a library's pieces may be named with another build hash
+# (zed_collections-1dab6a5c96f278d8::bench::x), but every VM lists the same pieces in the same
+# order (see "The shares" above), so a piece is matched across jobs by its position. Not by its
+# name with the hash taken out: one share may hold two binaries of one library, which differ only
+# in the hash (zed_alloc_count-16436e2e94c33de6 and zed_alloc_count-e34fa5d310b2160f, b22-tests8's
+# merge check of 2026-11-24, which that matching failed as one piece reported twice).
+pos_of() { awk 'FILENAME == ARGV[1] { p[$1] = FNR; next } { print (($1 in p) ? p[$1] : "?" $1) }' "$1" -; }
+# names_at <share>: back from pos_of's output on stdin to the names of the list <share>.
+names_at() { awk 'FILENAME == ARGV[1] { p[FNR] = $1; next } { print (($1 in p) ? p[$1] : substr($1, 2)) }' "$1" -; }
 
 # vm_cmd <command, base64> [<doc changes>]: runs one command of --commands on the VM with bash, in the build root
 # of the short-addresses pieces (vm_ns), with FARM_OUT the job's out/ directory, which job.sh
@@ -278,7 +283,8 @@ vm_cmd() {
 #   <vm full folders, space-separated> <short 0|1> <doc checked by> <doc changes, as vm_cmd's>
 #   [<settled> <alone>]: runs on the VM in the checkout's root (job.sh's
 # `!` line); see the Design above. Exit as run_tests.sh's run of the share. <settled> and <alone>
-# (gzipped base64 of names one a line, as norm_names prints them; empty for a share's first job)
+# (gzipped base64 of positions in the share, one a line, as pos_of prints them; empty for a
+# share's first job)
 # are the pieces of the share that an earlier job of it, stopped at its hour, settled or left to
 # run alone (see "A share past the job's hour" below): the first are not run, the second only
 # alone, as a failed first run is.
@@ -424,14 +430,14 @@ vm_side() {
   # name (--only), in a run that mounts the clone again over this namespace's tmpfs, whose upper
   # layer holds the list call's build of them, so it builds nothing again.
   # A later job of the share runs only what the earlier ones left: settled pieces not at all, the
-  # pieces to run alone only alone ($w/alone-run, below). The names are matched as norm_names
-  # prints them, since the job may run on another VM than the one that settled them.
+  # pieces to run alone only alone ($w/alone-run, below). They are matched by position in the
+  # share (pos_of), since the job may run on another VM than the one that settled them.
   cp "$w/share" "$w/share-run" && : >"$w/alone-run" || { echo "vm_side: copying the share failed"; return 2; }
   if [ -n "$settled_b64$alone_b64" ]; then
     { printf %s "$settled_b64" | base64 -d | gunzip >"$w/settled"; } 2>/dev/null &&
       { printf %s "$alone_b64" | base64 -d | gunzip >"$w/alone"; } 2>/dev/null ||
       { echo "vm_side: the settled or alone names are not gzipped base64"; return 2; }
-    cut -d ' ' -f 1 "$w/share" | norm_names | paste -d ' ' - "$w/share" >"$w/share-norm" &&
+    awk '{ print FNR, $0 }' "$w/share" >"$w/share-norm" &&
       awk 'FILENAME == ARGV[1] { s[$1] = 1; next } FILENAME == ARGV[2] { l[$1] = 1; next }
         !($1 in s) && !($1 in l) { sub(/^[^ ]+ /, ""); print }' "$w/settled" "$w/alone" "$w/share-norm" >"$w/share-run" &&
       awk 'FILENAME == ARGV[1] { l[$1] = 1; next } $1 in l && $2 !~ /^short-/ { sub(/^[^ ]+ /, ""); print }' \
@@ -545,7 +551,7 @@ vm_side() {
 }
 vm_script=$out/vm_side.sh
 {
-  declare -f vm_pkg vm_ns vm_cmd vm_side again_of norm_names
+  declare -f vm_pkg vm_ns vm_cmd vm_side again_of
   # A share's arguments start with its number; a command's with `cmd`.
   echo 'if [ "${1-}" = cmd ]; then shift; vm_cmd "$@"; else vm_side "$@"; fi'
 } >"$vm_script" || die "cannot write $vm_script"
@@ -694,16 +700,16 @@ if [ -n "$run_vm" ]; then
   # which main-watch read as a crashed runner. A share's lines now reach out/ as each piece ends
   # (vm_side's farm-r1 and farm-r2), and a share whose line ended with 124 is run again in a new
   # job, which leaves out the pieces the stopped jobs settled: hour_settle keeps their summary
-  # lines in $out/vm<k>.kept, their names in $out/vm<k>.settled, and in $out/vm<k>.alone the
-  # names of those whose first run failed so that they run once more alone (again_of) and had not
+  # lines in $out/vm<k>.kept, their positions in the share (pos_of) in $out/vm<k>.settled, and in
+  # $out/vm<k>.alone the positions of those whose first run failed so that they run once more alone (again_of) and had not
   # yet. A job adds a settled piece or a piece to run alone, or the share is lost as before (exit
   # 129): so a share ends after at most twice its pieces' count of jobs, with no limit chosen
   # here, and the hour of a line is the only limit, as before. A resumed job builds again (on the
   # same VM, incrementally); its attempts past the hour are not failures (fails, not tries,
   # counts those, up to 3).
   hour_settle() {
-    local k=$1 d=$2 s=$out/vm$1 r1=$2/job/out/farm-r1 r2=$2/job/out/farm-r2 b0 a0
-    [ -f "$r1" ] && [ -f "$r2" ] && touch "$s.kept" "$s.settled" "$s.alone" || return 1
+    local k=$1 d=$2 s=$out/vm$1 r1=$2/job/out/farm-r1 r2=$2/job/out/farm-r2 sh=$2/job/out/farm-share b0 a0
+    [ -f "$r1" ] && [ -f "$r2" ] && [ -f "$sh" ] && touch "$s.kept" "$s.settled" "$s.alone" || return 1
     b0=$(wc -l <"$s.settled")
     a0=$(sort -u "$s.settled" "$s.alone" | wc -l)
     again_of "$kind" <"$r1" | sort -u >"$s.f1" &&
@@ -712,8 +718,8 @@ if [ -n "$run_vm" ]; then
         "$s.f1" "$r1" >>"$s.kept" &&
       awk '$2 ~ /^rc=[0-9]+$/' "$r2" >>"$s.kept" &&
       { awk 'FILENAME == ARGV[1] { f[$1] = 1; next } $2 ~ /^rc=[0-9]+$/ && !($1 in f) { print $1 }' "$s.f1" "$r1"
-        cat "$s.v2"; } | norm_names | sort -u - "$s.settled" >"$s.settled-new" &&
-      { norm_names <"$s.f1"; cat "$s.alone"; } | sort -u | comm -23 - "$s.settled-new" >"$s.alone-new" &&
+        cat "$s.v2"; } | pos_of "$sh" | sort -u - "$s.settled" >"$s.settled-new" &&
+      { pos_of "$sh" <"$s.f1"; cat "$s.alone"; } | sort -u | comm -23 - "$s.settled-new" >"$s.alone-new" &&
       cat "$s.settled-new" >"$s.settled" && cat "$s.alone-new" >"$s.alone" || return 1
     [ "$(wc -l <"$s.settled")" -gt "$b0" ] || [ "$(sort -u "$s.settled" "$s.alone" | wc -l)" -gt "$a0" ]
   }
@@ -822,12 +828,13 @@ if [ -n "$run_vm" ]; then
       elif [ ! -f "$sent" ]; then
         share_failed "share $k of $n on ${vm_last[$k]} listed its pieces but sent back no list of them ($sent)"
       else
-        # With the pieces settled by its jobs stopped at the hour, by name without the build hash,
-        # since those may have run on other VMs (norm_names).
-        ran=$(cat "$out/vm$k.kept" "$log" 2>/dev/null | awk '/^farm: / { next } $2 ~ /^rc=[0-9]+$/ { print $1 }' | norm_names | sort)
-        miss=$(comm -23 <(norm_names <"$sent" | sort -u) <(sort -u <<<"$ran"))
-        twice=$(uniq -d <<<"$ran")
-        extra=$(comm -13 <(norm_names <"$sent" | sort -u) <(sort -u <<<"$ran"))
+        # With the pieces settled by its jobs stopped at the hour, by position in the share, since
+        # those may have run on other VMs (pos_of); named again from this job's list.
+        ran=$({ cat "$out/vm$k.settled" 2>/dev/null
+          awk '/^farm: / { next } $2 ~ /^rc=[0-9]+$/ { print $1 }' "$log" | pos_of "$sent"; } | sort)
+        miss=$(comm -23 <(seq 1 "$(wc -l <"$sent")" | sort -u) <(sort -u <<<"$ran") | names_at "$sent")
+        twice=$(uniq -d <<<"$ran" | names_at "$sent")
+        extra=$(comm -13 <(seq 1 "$(wc -l <"$sent")" | sort -u) <(sort -u <<<"$ran") | names_at "$sent")
         why=
         [ -z "$miss" ] || why+="; not reported: $(names "$miss")"
         [ -z "$twice" ] || why+="; reported more than once: $(names "$twice")"
