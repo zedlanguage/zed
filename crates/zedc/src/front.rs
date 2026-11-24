@@ -100,7 +100,7 @@ impl std::fmt::Display for Diagnostic {
 /// point to the one above ([`crate::check::declared_again`], MSG-call-signature-per-message);
 /// one whose type differs is given in full. A later diagnostic with two steps or more in a row
 /// that an earlier one gives in the same order gives the first of them, says the next ones are
-/// as in that error, and leaves them out ([`Quoted::shared_runs`]). A diagnostic shown first,
+/// as in that error, and leaves them out (`Quoted::shared_runs`). A diagnostic shown first,
 /// or alone, prints as `Display` prints it.
 #[derive(Default)]
 pub struct Quoted {
