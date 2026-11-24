@@ -1152,6 +1152,21 @@ fn one_decide_spends_at_most_four_budgets() {
 }
 
 #[test]
+fn the_content_is_the_gcd_of_the_magnitudes_and_stops_at_1() {
+    let c = |xs: &[BigInt]| content(xs.iter());
+    let b = |s: &str| s.parse::<BigInt>().expect("an integer");
+    assert_eq!(c(&[]), BigInt::from(0));
+    assert_eq!(c(&[b("-4")]), BigInt::from(4));
+    assert_eq!(c(&[b("6"), b("-10")]), BigInt::from(2));
+    // Wide coefficients with a wide common factor `2^70 * 3^50`.
+    let f = BigInt::from(2).pow(70u32) * BigInt::from(3).pow(50u32);
+    assert_eq!(c(&[&f * 5, -&f * 7, &f * 35]), f.clone());
+    // Negative control: one coefficient prime to the rest gives 1, whatever follows it.
+    assert_eq!(c(&[&f * 5, b("7"), &f * 7]), BigInt::from(1));
+    assert_ne!(c(&[&f * 5, &f * 7]), BigInt::from(1));
+}
+
+#[test]
 fn a_wide_power_of_a_wide_power_of_2_is_refused_at_the_inner_power() {
     // `folded_bases` expands the outer power's base `2 ^ E`, so `Poly::pow`'s wide branch
     // runs with base 2 and answers 1, a wrong value; `too_wide` refuses at the inner power,

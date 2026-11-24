@@ -275,16 +275,16 @@ fn rejecting_many_powers_past_the_memory_limit() {
 /// in a `String` and a comparison, as in
 /// [`a_product_past_the_memory_limit_offers_a_smaller_power_operand`].
 pub(super) fn products(n: usize) -> String {
-    // Each operand is about 266 to 287 kbit (`65 * (2^12 + i)` bits for `i` below 320), within
-    // the 64 KiB limit, and each product about 532 kbit, past it. With `2^16` and a limit of 1 MiB
-    // each line folded two 4.2 Mbit powers and their 8.4 Mbit product, and the repair's trial
-    // multiplied again: 98% of the run was the kernel's transform multiplication (perf, DWARF,
+    // Each operand has about `64 * 2^16` bits, 4.2 Mbit, within the 1 MiB limit, and each
+    // product about 8.4 Mbit, past it. The repair's trial sizes each shrunk product from its
+    // operands' bit lengths instead of multiplying them (PERF-product-limit-built-to-measure);
+    // before, 98% of the run was the kernel's transform multiplication (perf, DWARF,
     // b22-checkrest12, 2026-11-24), about 130 ms a line, which held the benchmark at n = 4
-    // (PERF-products-bench-native-cost).
-    let mut s = String::from("@limits(memory: 65536)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n");
+    // (PERF-products-bench-native-cost) until the operands were cut to `2^12`.
+    let mut s = String::from("@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n");
     for i in 0..n {
         s.push_str(&format!(
-            "    m.stdout <- String((b ^ (2^12)) * (b ^ (2^12 + {i})) > 0);\n"
+            "    m.stdout <- String((b ^ (2^16)) * (b ^ (2^16 + {i})) > 0);\n"
         ));
     }
     s + "}\n"
@@ -292,7 +292,7 @@ pub(super) fn products(n: usize) -> String {
 
 /// Each of the `n` products of [`products`]`(n)` is rejected with a smaller power operand
 /// offered. Each repair is sized against the operations above the power, a fixed number per
-/// product here, each a multiplication or comparison of numbers of at most about 532 kbit.
+/// product here, each a multiplication or comparison of numbers of at most about 8.4 Mbit.
 pub(super) fn products_past_the_memory_limit_rejected(src: &str, n: usize) {
     let out = rejected(src);
     assert_eq!(
@@ -312,6 +312,54 @@ pub(super) fn products_past_the_memory_limit_rejected(src: &str, n: usize) {
 fn rejecting_many_products_past_the_memory_limit() {
     for n in [1, 3] {
         products_past_the_memory_limit_rejected(&products(n), n);
+    }
+}
+
+/// The exponent of the first power in the repair offered for `expr` in `main` under a memory
+/// limit of `limit` bytes, `b = 2^64 + 13`: `K` of "Try `m.stdout <- String((b ^ (2^K))`".
+fn product_repair(limit: u32, expr: &str) -> String {
+    let src = format!(
+        "@limits(memory: {limit})\nmain(m: MainArgs) {{\n    b = 2^64 + 13;\n    \
+         m.stdout <- String({expr});\n}}\n"
+    );
+    let out = rejected(&src);
+    let k = out
+        .split("Try `m.stdout <- String(")
+        .nth(1)
+        .and_then(|t| t.split("b ^ (2^").nth(1))
+        .and_then(|t| t.split(')').next())
+        .unwrap_or_else(|| panic!("no repair offered:\n{src}\n{out}"));
+    k.to_string()
+}
+
+/// Row PERF-product-limit-built-to-measure: the repair of a product of two powers sizes the
+/// product from its operands' bit lengths where only an order with a machine-word `int` reads
+/// it, and builds it otherwise. Both give the same repair: each case below is compared with
+/// the same product read through `+ 0`, which the size from the operands does not cover, so
+/// the product is built and measured. `b ^ (2^11) * b ^ (2^12)` has `64 * 6144 + 1 = 393217`
+/// bits, one past the room of 49152 bytes and within that of 49153, so the two limits offer
+/// `2^10` and `2^11`, the product's size deciding each by one bit. Negative control: the same
+/// reads at the two limits are offered different repairs, so a least size one bit too small
+/// (`a + b - 2`) would offer `2^11` at 49152 and fail; and `> 2^64 + 13` and `== 0`, which the
+/// size from the operands does not cover, are built on both sides and must agree with the rest.
+#[test]
+fn a_product_sized_from_its_operands_gives_the_repair_building_gives() {
+    let p = "(b ^ (2^12)) * (b ^ (2^12))";
+    for (limit, k) in [(49152, "10"), (49153, "11")] {
+        for read in [
+            format!("{p} > 0"),
+            format!("{p} < 7"),
+            format!("{p} >= -1"),
+            format!("{p} <= 0"),
+            format!("0 < {p}"),
+            format!("{p} > 2^64 + 13"),
+            format!("{p} == 0"),
+        ] {
+            let sized = product_repair(limit, &read);
+            let built = product_repair(limit, &read.replacen(p, &format!("{p} + 0"), 1));
+            assert_eq!(sized, built, "limit {limit}: {read}");
+            assert_eq!(sized, k, "limit {limit}: {read}");
+        }
     }
 }
 

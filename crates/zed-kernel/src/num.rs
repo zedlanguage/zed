@@ -1331,6 +1331,13 @@ impl Rat {
         })
     }
 
+    /// The bit length of its magnitude where it is a plain integer, held as one built number
+    /// with no kept prime powers and no decimal exponent: the form [`Rat::mul`] multiplies
+    /// directly, giving a plain integer again. `None` otherwise.
+    pub fn plain_integer_bits(&self) -> Option<u64> {
+        (self.is_plain() && self.den.is_one()).then(|| self.num.bits())
+    }
+
     /// `a^e`. Powers of primes multiply their exponents, and a numerator or denominator that
     /// fits in 64 bits is factored into primes, so `10 ^ 10 ^ 9` is `2^(10^9) * 5^(10^9)`.
     /// [`TooLarge`] when a wider part's power is built and the system refuses the memory.
@@ -3096,6 +3103,67 @@ mod tests {
     /// `b^k` for a small base, kept as exponents.
     pub(super) fn power(b: u64, k: u64) -> Rat {
         Rat::int(BigInt::from(b)).pow(&BigUint::from(k)).unwrap()
+    }
+
+    /// Row PERF-product-limit-built-to-measure: the size the checker computes of a product of
+    /// two plain integers of `a` and `b` bits ([`Rat::plain_integer_bits`]), `a + b - 1` or
+    /// `a + b` bits, is the size of the product [`Rat::mul`] builds: one plain integer, its
+    /// numerator that wide ([`Rat::built_widths`]). The cases: both ends of each width (each
+    /// end of the range reached), mixed signs, unequal widths, and powers of `2^64 + 13`, the
+    /// base of the l01_29 products. Negative control: a product of kept prime powers has no
+    /// plain bits, and its built size is not that range, so the computation must not apply.
+    #[test]
+    fn a_product_of_plain_integers_has_the_size_its_operands_give() {
+        let wide = Rat::int(BigInt::from(u64::MAX) + 14u32);
+        let mut cases: Vec<(Rat, Rat)> = Vec::new();
+        for (a, b) in [
+            (65, 65),
+            (65, 200),
+            (128, 129),
+            (1000, 4097),
+            (64 * 5 + 1, 3),
+        ] {
+            let low = |n: u64| BigInt::one() << (n - 1);
+            let high = |n: u64| (BigInt::one() << n) - 1u32;
+            for (x, y) in [
+                (low(a), low(b)),
+                (high(a), high(b)),
+                (low(a), high(b)),
+                (-high(a), low(b)),
+                (-high(a), -high(b)),
+            ] {
+                cases.push((Rat::int(x), Rat::int(y)));
+            }
+        }
+        for (j, k) in [(1, 1), (2, 7), (12, 12), (12, 13)] {
+            let p = |e: u64| wide.pow(&BigUint::from(e)).unwrap();
+            cases.push((p(j), p(k)));
+        }
+        let (mut at_low, mut at_high) = (false, false);
+        for (x, y) in &cases {
+            let (Some(a), Some(b)) = (x.plain_integer_bits(), y.plain_integer_bits()) else {
+                panic!("{x} or {y} is not a plain integer");
+            };
+            let product = x.mul(y).unwrap();
+            let built = match product.built_widths() {
+                [Some(n), None] => n,
+                w => panic!("{x} * {y} is not one built integer: {w:?}"),
+            };
+            assert_eq!(product.plain_integer_bits(), Some(built), "{x} * {y}");
+            assert!(
+                built == a + b - 1 || built == a + b,
+                "{x} * {y}: {built} bits"
+            );
+            at_low |= built == a + b - 1;
+            at_high |= built == a + b;
+        }
+        assert!(at_low && at_high, "each end of the range is reached");
+        let (x, y) = (power(2, 300), power(3, 300));
+        assert_eq!(
+            (x.plain_integer_bits(), y.plain_integer_bits()),
+            (None, None)
+        );
+        assert_eq!(x.mul(&y).unwrap().built_widths(), [None, None]);
     }
 
     /// [`sqrt_rem_uint`] against num-bigint's `sqrt`: random values of every width from 1 to

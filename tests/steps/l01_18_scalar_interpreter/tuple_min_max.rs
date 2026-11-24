@@ -96,6 +96,35 @@ fn tuples_min_and_max_cannot_order_are_refused() {
     );
 }
 
+/// TEST-minmax-struct-menu-compiles: `min` and `max` refuse two strings, two structs and two
+/// records, with the menu `if a <= b { a } else { b }` for `min` and `if a >= b { a } else
+/// { b }` for `max` (DESIGN.md sec:reduction, item 5). Each repair checks and gives the operand
+/// the natural order (sec:order) picks; the negative control is the call of the word itself,
+/// refused on the same operands with that repair offered. Structs and records are not tested:
+/// this zedc refuses a struct declaration and a record display before the check ("a struct
+/// declaration is part of the Zed language but is not supported by this version of zedc", and
+/// the same of "a record display"); their cases join this test when they compile.
+#[test]
+fn the_repair_offered_for_min_and_max_of_strings_checks() {
+    let cases = [("\"pear\"", "\"apple\""), ("\"b\" ++ \"a\"", "\"a\"")];
+    for (a, b) in cases {
+        let at = |x: &str| value(&format!("a = {a};\nb = {b};\nx = {x};\n"), "x");
+        // In each case `b` is below `a`.
+        assert_eq!(at("if a <= b { a } else { b }"), at("b"), "{a} {b}");
+        assert_eq!(at("if a >= b { a } else { b }"), at("a"), "{a} {b}");
+        assert_ne!(at("a"), at("b"), "{a} {b}");
+        for (word, op) in [("min", "<="), ("max", ">=")] {
+            let e = errors(&format!("a = {a};\nb = {b};\nx = {word}(a, b);\n"));
+            let repair = format!("if a {op} b {{ a }} else {{ b }}");
+            assert!(
+                e.iter()
+                    .any(|m| m.contains(&format!("`{word}` does not take")) && m.contains(&repair)),
+                "{word} {a} {b}: {e:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn an_operator_of_the_same_signature_does_not_take_tuples() {
     // `+`, `-` and `*` have the arrows of `min` and `max`; only a call of the word itself

@@ -267,6 +267,7 @@ fn is_binder(rule: &str) -> bool {
             | "GItem"
             | "IsPat"
             | "NamePat"
+            | "ListPat"
             | "TypeParam"
             | "ArrowParams"
             | "RecordType"

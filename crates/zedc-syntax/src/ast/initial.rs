@@ -125,7 +125,7 @@ fn pattern_names<'e>(p: &'e Pattern, out: &mut impl Extend<&'e str>) {
                 out.extend([n.as_str()]);
             }
             Pattern::Is { name, .. } => out.extend(name.as_deref()),
-            Pattern::Struct { fields, .. } => {
+            Pattern::Struct { fields, .. } | Pattern::Record(fields, _) => {
                 for (f, p) in fields {
                     match p {
                         Some(p) => stack.push(p),
@@ -134,6 +134,10 @@ fn pattern_names<'e>(p: &'e Pattern, out: &mut impl Extend<&'e str>) {
                         }
                     }
                 }
+            }
+            Pattern::List { items, rest, .. } => {
+                stack.extend(items);
+                out.extend(rest.as_ref().map(|(r, _)| r.as_str()));
             }
             Pattern::Atom { fields, items, .. } => {
                 stack.extend(items.iter().flatten());

@@ -1245,6 +1245,21 @@ pub enum Pattern {
     Wild(Span),
     /// `(p, q, …)`, a tuple's components matched by position.
     Tuple(Vec<Pattern>, Span),
+    /// `[p, q]` or `[p, ..rest]`, a list pattern (DESIGN.md step L2.7c, QUESTIONS A131): an
+    /// array of exactly the written length, or with a rest name of at least that length, its
+    /// entries at keys 0 to n-1 matched by position.
+    List {
+        /// The entry patterns, in written order.
+        items: Vec<Pattern>,
+        /// The name `rest` of `..rest`, bound to the entries after the written ones rekeyed
+        /// from 0, with its text; `None` when no rest is written.
+        rest: Option<(String, Span)>,
+        /// Its text.
+        span: Span,
+    },
+    /// `{x: p, y:}`, a record pattern (DESIGN.md step L2.7c, QUESTIONS A133): the fields written
+    /// matched by name, others left open (a record type is open); `y:` binds the field to `y`.
+    Record(Vec<(String, Option<Pattern>)>, Span),
     /// `#name`, `#name(f: p, g:)` or `#name(p, q)`.
     Atom {
         /// The atom, without its `#`.
@@ -1294,11 +1309,13 @@ impl Pattern {
             Pattern::Struct { span, .. }
             | Pattern::Atom { span, .. }
             | Pattern::Is { span, .. }
+            | Pattern::List { span, .. }
             | Pattern::Range { span, .. } => *span,
             Pattern::Lit(e) => e.span,
             Pattern::Name(_, span)
             | Pattern::Wild(span)
             | Pattern::Tuple(_, span)
+            | Pattern::Record(_, span)
             | Pattern::Or(_, span) => *span,
         }
     }

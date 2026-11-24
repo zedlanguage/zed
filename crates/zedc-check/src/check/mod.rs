@@ -2756,6 +2756,11 @@ struct Ck<'t, 'a> {
     /// (`Ck::note_build_parent`), read by the repair of a power past the memory limit of
     /// `main`.
     build_parents: HashMap<Span, BuildParent<'a>>,
+    /// The powers a repair of a power past the memory limit of `main` folds, by base value and
+    /// exponent (`Ck::shrunk_power_fits`): each repair tries the exponents `2^j` from the top
+    /// down, and lines with one base try the same ones, so each is folded once per check
+    /// (FAIL-powers-bench-43s).
+    shrunk_powers: HashMap<(Value, i64), Option<Value>>,
     /// The classes; class `k` is the type variable `$k`. Those an admitted forward reserves
     /// are made only when it is forced (`M62`, [`probe::Classes`]).
     classes: probe::Classes<Class>,
@@ -3568,6 +3573,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             space_products: Vec::new(),
             wide_builds: BTreeMap::new(),
             build_parents: HashMap::new(),
+            shrunk_powers: HashMap::new(),
             classes: Default::default(),
             data_checked: HashSet::new(),
             merge_checked: HashMap::new(),

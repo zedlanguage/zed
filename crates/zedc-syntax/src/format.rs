@@ -1023,6 +1023,20 @@ impl<'a> Formatter<'a> {
                 self.put(format!("{name}("));
                 then![stack; Job::FieldPats(fields), put(")")];
             }
+            // `[a, b]`, `[a, ..rest]` and `[..rest]` (DESIGN.md step L2.7c).
+            Pattern::List { items, rest, .. } => {
+                self.put("[");
+                let close = match rest {
+                    Some((r, _)) if items.is_empty() => format!("..{r}]"),
+                    Some((r, _)) => format!(", ..{r}]"),
+                    None => "]".to_string(),
+                };
+                then![stack; Job::Patterns(items, ", "), put(close)];
+            }
+            Pattern::Record(fields, _) => {
+                self.put("{");
+                then![stack; Job::FieldPats(fields), put("}")];
+            }
             Pattern::Atom {
                 name,
                 fields,

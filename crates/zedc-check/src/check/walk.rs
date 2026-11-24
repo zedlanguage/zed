@@ -8874,6 +8874,26 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let mixed = [Ty::carrier(Carrier::F32), Ty::carrier(Carrier::Int)];
                     sig.arrows.retain(|a| a.params != mixed);
                 }
+                // An exponent that is an operation on integer literals alone beside an `f32`
+                // base keeps both carriers of its class, `int | f32`, since `^` takes `f32 ^
+                // int` and `f32 ^ f32`; beside an `f64` base the class takes `f64` alone. Its
+                // steps are shown by the exponent's value as beside an `f64` base, "this `^`
+                // gives 2^64", not by the class's carriers ([`Ck::derive`] reads
+                // [`Ck::int_exponents`]; row DIAG-too-large-with-type-error, point (2), test
+                // l01_29 commands_binary
+                // `zedc_run_prints_the_value_of_an_exponent_beside_an_f32_base_as_beside_an_f64_one`).
+                // One read of the exponent, kept by operation ([`Self::int_exponent_at`]).
+                if op == BinaryOp::Pow
+                    && y.lit.is_none()
+                    && !(&x.ty.set & &KType::f32()).is_empty()
+                    && let Some(k) = self.class_of_ty(&y.ty)
+                    && {
+                        let c = &self.classes[self.find(k)];
+                        c.generic && c.mask & Carrier::Int.bit() != 0
+                    }
+                {
+                    self.int_exponent_at(b);
+                }
                 let a = x.expr;
                 let r = self.apply(
                     Label::Operator(Operator::Binary(op)),
@@ -19001,7 +19021,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         let room = BigUint::from(room_bits);
         let mut value = i64::try_from(1u128 << j).ok().and_then(|k| {
             let k = if negative { -k } else { k };
-            prim_folded(Prim::Pow, vec![self.fixed_value(a)?, Value::Int(k)])
+            let base = self.fixed_value(a)?;
+            let key = (base, k);
+            if let Some(v) = self.shrunk_powers.get(&key) {
+                return v.clone();
+            }
+            let v = prim_folded(Prim::Pow, vec![key.0.clone(), Value::Int(k)]);
+            self.shrunk_powers.insert(key, v.clone());
+            v
         });
         let mut least = Some(least);
         let mut at = span;
@@ -19028,6 +19055,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 },
                 _ => None,
             };
+            if let Some(fits) = self.product_sized(&up, vals.as_deref(), room_bits) {
+                return fits;
+            }
             let bits = match (&vals, up.p, least) {
                 (Some(v), ..) => kernel_build(up.p, v.clone()),
                 (None, Prim::Show, Some(l)) => {
@@ -19080,6 +19110,76 @@ impl<'t, 'a> Ck<'t, 'a> {
             at = up.span;
         }
         true
+    }
+
+    /// For [`Self::shrunk_power_fits`]: whether the product `up` of the operand values `vals`,
+    /// and what reads it, fit `room_bits`, decided from the operands' bit lengths without
+    /// multiplying; `None` where those do not decide it, and the product is then built and
+    /// measured as before (row PERF-product-limit-built-to-measure).
+    ///
+    /// The case decided: `up` is a `*` of two `int`s each held as a plain integer
+    /// ([`Rat::plain_integer_bits`]) wider than 64 bits, of `a` and `b` bits. Claim: the
+    /// product has `a + b - 1` or `a + b` bits, and what [`kernel_build`] measures of it is
+    /// that bit length. Proof: `2^(a-1) <= |x| < 2^a` and `2^(b-1) <= |y| < 2^b`, so
+    /// `2^(a+b-2) <= |x y| < 2^(a+b)`. The kernel multiplies two plain integers into a plain
+    /// integer (`Rat::mul`, its first branch for two plain integers, which builds `Rat::int` of
+    /// the product of the numerators), whose numerator is wider than 64 bits and whose
+    /// denominator is 1, so `built_bits` is the numerator's bit length; and where the
+    /// multiplication passes [`FOLD_ASK_BITS`] the kernel refuses it naming `a + b`, the size
+    /// it asks first. So:
+    /// - `a + b - 1 > room_bits`: every size the walk would measure is past the room, and the
+    ///   answer is `false`, as building it would give.
+    /// - `a + b <= room_bits`: the product fits at its own step whatever its exact length.
+    ///   What remains is what reads it. Nothing: the answer is `true`, as the loop ends there.
+    ///   An order `<`, `<=`, `>` or `>=` with an operand the text fixes as an `Int` (a value in
+    ///   a machine word): the kernel decides it by the product's sign alone, since a `Big` is
+    ///   never in the 64-bit range (`zed_kernel::value::number_cmp`, reached through
+    ///   `surface_order` and `Value::scalar_cmp` for two values of one kind), so it builds
+    ///   nothing, `kernel_build` sizes nothing, its `bool` carries no number up, and the loop
+    ///   answers `true`. Anything else reads the product's digits, so it is built.
+    /// - `a + b - 1 = room_bits`: the length decides it, so it is built.
+    ///
+    /// Tests: `l01_29_diagnostics::main_limits`
+    /// `a_product_sized_from_its_operands_gives_the_repair_building_gives` compares each case
+    /// with the answer of the product built (and a negative control with a `+` above the
+    /// product, which is built); the cost by
+    /// `bench::main_limits::rejecting_many_products_past_the_memory_limit_scales`. They cannot
+    /// catch a kernel change to the form `Rat::mul` gives two plain integers.
+    //
+    // Complexity tradeoff: the naive method, as before this row, multiplies the two numbers,
+    // O(M(n)) by the kernel's transform multiplication for `n`-bit operands, about a third of
+    // the time of the products bench at operands of 4.2 Mbit (PERF-products-bench-native-cost),
+    // only to read the bit length. Used: two bit lengths and one read of what is above, O(1).
+    fn product_sized(
+        &mut self,
+        up: &BuildParent<'a>,
+        vals: Option<&[Value]>,
+        room_bits: u128,
+    ) -> Option<bool> {
+        let (Prim::Mul, Some([Value::Big(x), Value::Big(y)])) = (up.p, vals) else {
+            return None;
+        };
+        let wide = |r: &Rat| r.plain_integer_bits().filter(|&b| b > 64).map(u128::from);
+        let most = wide(x)? + wide(y)?;
+        if most - 1 > room_bits {
+            return Some(false);
+        }
+        if most > room_bits {
+            return None;
+        }
+        let Some(above) = self.build_parents.get(&up.span).cloned() else {
+            return Some(true);
+        };
+        let order = matches!(above.p, Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge);
+        let [l, r] = above.args[..] else {
+            return None;
+        };
+        let other = match l.span == up.span {
+            true => r,
+            false => l,
+        };
+        let word = matches!(self.fixed_value(other), Some(Value::Int(_)));
+        (order && word).then_some(true)
     }
 
     /// Rejects the operation `w`, which builds more than the target's address space, or, with
@@ -28518,6 +28618,47 @@ impl<'t, 'a> Ck<'t, 'a> {
             let written = [x.parts.clone(), y.parts.clone()];
             let t = self.min_max_tuples(what.text(), sig, &x.ty, &y.ty, written.clone(), span);
             return (out.union(&t), Vec::new());
+        }
+        // `min` and `max` refuse two strings, which `<=` and `>=` order (DESIGN.md
+        // sec:reduction, item 5): the repair is the selection written with them, `if a <= b {
+        // a } else { b }` for `min` and `>=` for `max`, the operands as the program writes them
+        // (row TEST-minmax-struct-menu-compiles; tests l01_18 tuple_min_max
+        // `the_repair_offered_for_min_and_max_of_strings_checks` and words.rs). Two structs or
+        // two records are not reached: this zedc refuses a struct declaration and a record
+        // display before the check. On the error path only: one lex and parse of each
+        // operand's code.
+        if let [Some(x), Some(y)] = args.as_slice()
+            && let Some(w @ ("min" | "max")) = sig.word.as_deref()
+            && [x, y].iter().all(|a| {
+                a.ty.vars.is_empty() && !a.ty.is_empty() && a.ty.subtype(&Ty::carrier(Carrier::Str))
+            })
+            && let (Some(cx), Some(cy)) = (self.operand_text(x.at), self.operand_text(y.at))
+        {
+            let op = if w == "min" { "<=" } else { ">=" };
+            let bop = if w == "min" {
+                BinaryOp::Le
+            } else {
+                BinaryOp::Ge
+            };
+            let test = format!(
+                "{} {op} {}",
+                zedc_syntax::format::code_as_operand(&cx, bop, false),
+                zedc_syntax::format::code_as_operand(&cy, bop, true)
+            );
+            let test = zedc_syntax::format::code_as_head(&test);
+            let who = match what.text() {
+                t if t == format!("`{w}`") => t.to_string(),
+                t => format!("{t}, which is `{w}`,"),
+            };
+            self.error_with(
+                span,
+                format!(
+                    "{who} does not take two strings, only two numbers or two tuples. Try `if \
+                     {test} {{ {cx} }} else {{ {cy} }}` instead."
+                ),
+                Vec::new(),
+            );
+            return (out, Vec::new());
         }
         if self.level == 0 && matches!(sig.word.as_deref(), Some("min" | "max")) {
             self.min_max_lit_ops(sig, &mut args);
