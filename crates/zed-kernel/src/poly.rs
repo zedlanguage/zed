@@ -2412,8 +2412,9 @@ impl<K: Key> Poly<K> {
     /// Steps of that bound: `Poly::mul` passes `budget` at most [`Plan::support_bound`],
     /// `cheaper / SUPPORT_COST`, `cheaper` the smaller of the dense and the sparse estimates in
     /// the units of `num::mul_cost`. Every round adds its cost to `spent` and returns `None`
-    /// past `budget` before its work (`sumset`, `coefficients`), as do the two checks here
-    /// before the sampling and the first round; so the counted work is at most `budget`,
+    /// past `budget` before its work (`sumset`, `coefficients`), as do the estimate's folds
+    /// (`SupportSetup::estimate`) and the check here before the first round; so the counted
+    /// work is at most `budget`,
     /// besides one round's candidate counting (`CANDIDATES` times the open indices), added just
     /// before a check. A unit counted here is estimated at [`SUPPORT_COST`] units of
     /// `num::mul_cost`, so the support product's estimated time is at most about `cheaper`'s;
@@ -2428,12 +2429,8 @@ impl<K: Key> Poly<K> {
         spent: &mut f64,
     ) -> Option<Vec<(K, BigInt)>> {
         let s = self.support_setup(o, plan)?;
-        if s.sampling() + s.cost((s.terms - 1) as f64) >= budget {
-            return None;
-        }
         let mut rng = s.seed();
-        let estimate = s.estimate(&mut rng);
-        *spent = s.sampling();
+        let estimate = s.estimate(&mut rng, spent, budget)?;
         if *spent + s.cost(estimate) >= budget {
             return None;
         }
@@ -2467,13 +2464,14 @@ impl<K: Key> Poly<K> {
         )
     }
 
-    /// The support product's units before its rounds: the sampling and the rounds at the
-    /// sampled estimate of the support's size, as [`Poly::support_mul`] weighs them against its
+    /// The support product's units before its rounds: the estimate's folds and the rounds at
+    /// the estimated size of the support, as [`Poly::support_mul`] weighs them against its
     /// budget. `None` where the support product cannot run (its words do not fit a `usize`).
     fn support_units(&self, o: &Poly<K>, plan: &Plan) -> Option<f64> {
         let s = self.support_setup(o, plan)?;
-        let estimate = s.estimate(&mut s.seed());
-        Some(s.sampling() + s.cost(estimate))
+        let mut spent = 0.0;
+        let estimate = s.estimate(&mut s.seed(), &mut spent, f64::INFINITY)?;
+        Some(spent + s.cost(estimate))
     }
 
     /// The indices of `self` and `o` reduced by the step and moved to 0, and the sizes the
@@ -2713,10 +2711,6 @@ fn pairs_charge(pairs: f64, square: bool, pair: f64) -> f64 {
     pairs * (PAIR + CHOICE_UNIT * (square_pair + pair))
 }
 
-/// The pairs drawn to estimate the size of a product's support ([`Poly::support_mul`]): the
-/// estimate only chooses a method, so its error costs time, never a wrong term.
-const SAMPLES: u32 = 32;
-
 /// What the support product ([`Poly::support_mul`]) reads its two sides as
 /// ([`Poly::support_setup`]).
 struct SupportSetup {
@@ -2737,16 +2731,49 @@ struct SupportSetup {
 }
 
 impl SupportSetup {
-    /// The units of the sampled estimate: [`SAMPLES`] merges of both sides.
-    fn sampling(&self) -> f64 {
-        SAMPLES as f64 * self.terms as f64
+    /// The expected units of the rounds for a support of `s` indices: [`sumset`]'s rounds and
+    /// then [`coefficients`]', each at the prime it draws for the indices left, until fewer than
+    /// one is expected to be left (POLY-support-cost-ranking: in place of two rounds of each
+    /// kind at a prime near `1.5 s`). `O(log s)`.
+    ///
+    /// The model: `u` indices left on `p` slots, each on a slot drawn uniformly, leave an index
+    /// alone on its slot with probability `(1 - 1/p)^(u - 1)`, about `e^(-a)` at `a = u / p`, and
+    /// the slots holding two or more number about `p (1 - e^(-a) (1 + a))` (the Poisson law of
+    /// a slot's count; the same urn model as [`SupportSetup::estimate`]). A round takes the
+    /// indices alone, so `u e^(-a)` of them, and leaves `u (1 - e^(-a))`. [`sumset`]'s first
+    /// prime is drawn from `[lambda, 2 lambda)` with `lambda = s`, so near `1.5 s` on average,
+    /// and each later one from twice its open slots on, near three times them. [`coefficients`]
+    /// draws [`CANDIDATES`] primes from `[2u / 3, 4u / 3)` and takes the one with the most lone
+    /// indices for its size, `(u / p) e^(-u / p)`, highest at `p = u`, so near `u`, where a round
+    /// takes `1 / e` of the indices left; each round also counts the candidates, `CANDIDATES u`.
+    /// Both sequences fall geometrically, by about `0.49` and `0.63` a round, so their units sum
+    /// to about 2 and 2.7 times their first rounds' and the loops run `O(log s)` times. A round
+    /// at a prime that leaves no index alone is not in the model (the rounds then end by
+    /// doubling the prime, as [`sumset`] says).
+    fn cost(&self, s: f64) -> f64 {
+        let mut units = 0.0;
+        let (mut u, mut p) = (s, 1.5 * s.max(2.0));
+        while u >= 1.0 {
+            units += sumset_round(p, self.sub, self.terms);
+            let a = u / p;
+            let open = p * (1.0 - (-a).exp() * (1.0 + a));
+            u *= 1.0 - (-a).exp();
+            p = 1.5 * (2.0 * open).max(2.0);
+        }
+        let mut u = s;
+        while u >= 1.0 {
+            let p = u.max(2.0);
+            units += f64::from(CANDIDATES) * u + coefficient_round(p, self.slot, self.folds);
+            u *= 1.0 - (-u / p).exp();
+        }
+        units
     }
 
-    /// The units of the rounds for a support of `s` indices: about two rounds of each kind at
-    /// a prime near `1.5 s`.
-    fn cost(&self, s: f64) -> f64 {
-        let p = 1.5 * s;
-        2.0 * (sumset_round(p, self.sub, self.terms) + coefficient_round(p, self.slot, self.folds))
+    /// The 32-bit words of a slot of [`SupportSetup::estimate`]'s folds: a slot of the product
+    /// of the two sides' folded counts is the number of pairs on it, at most `t1 t2`.
+    fn count_width(&self) -> usize {
+        let pairs = self.ra.len() as u128 * self.rb.len() as u128;
+        (pairs.bit_len() as usize).div_ceil(32).max(1)
     }
 
     /// The first state of the draws, from the sides' reduced indices, so the work is the same
@@ -2758,26 +2785,103 @@ impl SupportSetup {
         h.finish()
     }
 
-    /// The estimated size of the support, at least `terms - 1`, advancing `rng`.
+    /// The estimated size of the support, at least `terms - 1`, advancing `rng`, with the units
+    /// of its folds added to `spent`; `None` once `spent`, or `spent` and the rounds' units at
+    /// the fewest indices the folds have shown, pass `budget`.
+    ///
+    /// Each try draws a prime `q` and counts `Z`, the residues modulo `q` of the support
+    /// ([`occupied`]): one fold product of the two sides' counts, `O(q log q)`. `Z <= s`, as each
+    /// residue is that of some index of the support. Where `Z <= q / 2` the estimate is linear
+    /// counting's: `s` indices dropped on `q` slots at random leave about `q e^(-s / q)` empty,
+    /// so `s` is about `-q ln(1 - Z / q)`, between `Z` and `2 ln 2 Z`, `1.39 Z`, at that load.
+    /// Otherwise the next prime is drawn from `2 q` on, so the primes at least double, and `Z`
+    /// bounds the support from below, so the try stops as soon as even that many indices cost
+    /// the rounds past `budget`.
+    ///
+    /// Source: K.-Y. Whang, B. T. Vander-Zanden and H. M. Taylor, "A linear-time probabilistic
+    /// counting algorithm for database applications", ACM Trans. Database Syst. 15(2), 1990,
+    /// pp. 208-229, doi:10.1145/78922.78925 (checked 2026-11-24): "Our technique, called linear
+    /// counting, is based on hashing"; its Fig. 1 takes `V_n = U_n / m`, the fraction of the
+    /// `m` bits left 0, and estimates `n = -m ln V_n`. A. Arnold and D. S. Roche,
+    /// "Output-sensitive algorithms for sumset and sparse polynomial multiplication", ISSAC
+    /// 2015, pp. 29-36, doi:10.1145/2755996.2756653, arXiv:1501.05296, section "Estimating
+    /// Sumset Output Size" (checked 2026-11-24), bound the sumset by the terms of a fold
+    /// `H_1 = F_1 G_1` modulo `x^p - 1`, doubling a guess "whenever the test rejects".
+    /// Departure: the folds here are the sides' counts, so a slot is the number of pairs on it
+    /// and none cancels, and the count of nonzero slots is read as linear counting's.
     ///
     /// Complexity tradeoff: the support's size `s` is not known before the sumset is found,
     /// and the sumset of sides whose pairs are all distinct costs more than the sparse product
-    /// of the same sides. A mean of `1 / count` over `SAMPLES` pairs drawn at random, `count`
-    /// the number of pairs on the drawn pair's index, estimates `s / (t1 t2)` in
-    /// `O(SAMPLES (t1 + t2))`, so such a product goes to the sparse one at once.
-    fn estimate(&self, rng: &mut u64) -> f64 {
-        let (ta, tb) = (self.ra.len(), self.rb.len());
-        let mut inverse = 0.0;
-        for _ in 0..SAMPLES {
-            *rng = step(*rng, 1);
-            let i = (*rng % ta as u64) as usize;
-            *rng = step(*rng, 2);
-            let j = (*rng % tb as u64) as usize;
-            inverse += 1.0 / pairs_at(&self.ra, &self.rb, self.ra[i] + self.rb[j]) as f64;
+    /// of the same sides. The mean of `1 / count` over 32 pairs drawn at random, `count` the
+    /// number of pairs on the drawn pair's index, which this replaces, cost only `O(32 (t1 +
+    /// t2))`, but each draw lies in `[0, 1]` with mean `s / (t1 t2)`, so its relative standard
+    /// deviation reaches `(t1 t2 / (32 s))^(1/2)`, 1.9 at the square of `(x + y)^350 + x`,
+    /// whose estimated units were 3.3 times the units its rounds spent at 16 words
+    /// (`crossover poly-support-units 16`, b22-kernel14, 2026-11-24; POLY-support-cost-ranking).
+    /// The folds here cost more but bounded: a fold at `q` near `2 s`, `width` words a slot, is
+    /// about `4 / 27` of the first sumset round, at a prime near `1.5 s` with `9 sub >= 9 width`
+    /// words a slot, and the folds before it at most as much again, as their primes double;
+    /// and the count's error falls as `s^(-1/2)` when the residues fall as at random.
+    fn estimate(&self, rng: &mut u64, spent: &mut f64, budget: f64) -> Option<f64> {
+        let width = self.count_width();
+        let mut least = (self.terms - 1) as f64;
+        let mut lambda = self.terms as u64;
+        loop {
+            if *spent + self.cost(least) >= budget {
+                return None;
+            }
+            let q = draw_prime(lambda, rng);
+            *spent += count_round(q as f64, width, self.terms);
+            if *spent >= budget {
+                return None;
+            }
+            let z = occupied(&self.ra, &self.rb, q, width)?;
+            least = least.max(z as f64);
+            if 2 * z <= q {
+                let q = q as f64;
+                return Some((-q * (1.0 - z as f64 / q).ln()).max(least));
+            }
+            lambda = 2 * q;
         }
-        let pairs = ta as f64 * tb as f64;
-        (pairs * inverse / SAMPLES as f64).max((self.terms - 1) as f64)
     }
+}
+
+/// The cost of a fold of [`SupportSetup::estimate`] at a prime `q`, with `width` words a slot
+/// and `terms` terms in both sides, as [`sumset_round`]'s.
+fn count_round(q: f64, width: usize, terms: usize) -> f64 {
+    ntt_cost(2.0 * q * width as f64) + terms as f64
+}
+
+/// The number of residues modulo `q` of the sums `a + b`, `a` in `ra` and `b` in `rb`: each
+/// side's count of indices on each slot `i mod q`, `width` words a slot, the two multiplied
+/// densely, and the slots `r` and `r + q` of the product read as one. `None` where `q` slots
+/// do not fit a `usize`.
+///
+/// Proof that the count is exact. A slot of a side's fold counts at most `t` indices of it,
+/// and a slot `j` of the product is `sum_(u + v = j) A_u B_v`, the number of pairs `(a, b)`
+/// with `a mod q = u`, `b mod q = v` and `u + v = j`, at most `t1 t2 < 2^(32 width)` by
+/// [`SupportSetup::count_width`]; so no slot carries into the next, as in [`sumset`]'s proof
+/// (1) and (2), and the product's base-`2^(32 width)` digits are those counts. They are sums of
+/// counts, never negative, so a slot is nonzero exactly when a pair lies on it. As `u, v < q`,
+/// `j = u + v < 2q - 1`, and `j mod q = (a + b) mod q`; so the residue `r` holds a sum exactly
+/// when slot `r` or `r + q` is nonzero.
+fn occupied(ra: &[u128], rb: &[u128], q: u64, width: usize) -> Option<u64> {
+    let n = usize::try_from(q).ok()?;
+    let fold = |r: &[u128]| {
+        let mut w = vec![0u32; n * width];
+        for &a in r {
+            add_into(&mut w[(a % u128::from(q)) as usize * width..], &[1]);
+        }
+        BigUint::new(w)
+    };
+    let product = mul_uint(&fold(ra), &fold(rb)).to_u32_digits();
+    let nonzero = |j: usize| {
+        let from = (j * width).min(product.len());
+        product[from..(from + width).min(product.len())]
+            .iter()
+            .any(|&d| d != 0)
+    };
+    Some((0..n).filter(|&r| nonzero(r) || nonzero(r + n)).count() as u64)
 }
 
 /// The primes tried for each round of [`coefficients`], the one that leaves the most indices alone
@@ -2821,24 +2925,6 @@ fn sumset_round(p: f64, sub: usize, terms: usize) -> f64 {
 /// words in both sides' coefficients.
 fn coefficient_round(p: f64, slot: usize, folds: f64) -> f64 {
     ntt_cost(2.0 * p * slot as f64) + folds
-}
-
-/// The number of pairs of `a` in `ra` and `b` in `rb`, both increasing, with `a + b == s`: one
-/// merge of the two lists, `O(t1 + t2)`.
-fn pairs_at(ra: &[u128], rb: &[u128], s: u128) -> u64 {
-    let (mut i, mut j, mut n) = (0, rb.len(), 0);
-    while i < ra.len() && j > 0 {
-        match (ra[i] + rb[j - 1]).cmp(&s) {
-            std::cmp::Ordering::Less => i += 1,
-            std::cmp::Ordering::Greater => j -= 1,
-            std::cmp::Ordering::Equal => {
-                n += 1;
-                i += 1;
-                j -= 1;
-            }
-        }
-    }
-    n
 }
 
 /// The first prime at or past a point of `[lambda, 2 lambda)` drawn from `rng`, which advances.
@@ -3301,8 +3387,8 @@ pub mod crossover {
     }
 
     /// For `a * b` by the support product: the units its choice estimates
-    /// (`Poly::support_units`), the units its rounds spend with no bound on them (the sampling
-    /// included, as `Poly::support_mul` counts them), and the terms of the product, against
+    /// (`Poly::support_units`), the units its rounds spend with no bound on them (the estimate's
+    /// folds included, as `Poly::support_mul` counts them), and the terms of the product, against
     /// which the estimate of the support's size can be read. `None` where it cannot run or its
     /// rounds do not finish. For POLY-support-cost-ranking: whether the estimate misses the
     /// rounds' units or the cost of a unit.

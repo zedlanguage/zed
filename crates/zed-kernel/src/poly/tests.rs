@@ -850,11 +850,49 @@ fn the_product_takes_the_support_product_where_it_is_cheaper() {
         Some(a.sparse_mul(&a, true))
     );
     assert!(spent < budget, "{spent} of {budget}");
-    // Sides whose pairs are all distinct go to the sparse product: the sampled estimate says so.
+    // Sides whose pairs are all distinct go to the sparse product: the estimate's folds say so.
     let b = sum_at((0..64u128).map(|i| (i * i * i * 1009 + i, 1)));
     let plan = b.plan(&b).expect("packed keys");
     let budget = plan.support_bound();
     assert_eq!(b.support_mul(&b, &plan, budget, &mut 0.0), None);
+}
+
+#[test]
+fn the_support_units_follow_the_support_size() {
+    // The squares of `crossover poly-support-units`, `(x + y)^k + x` in one packed index, `k`
+    // from 256 to 512 and the five `k` POLY-support-cost-ranking measured: the units the
+    // choice estimates against the units of the rounds at the support's true size. The mean of
+    // 32 sampled `1 / count`, which the folds' count replaced, gave 3.3 times the units spent
+    // at `k = 350` and 16 words (b22-kernel14), its relative deviation near 1.9 there.
+    let mut ks: Vec<u128> = (0..16)
+        .map(|i| (256.0 * 2f64.powf(f64::from(i) / 16.0)) as u128)
+        .collect();
+    ks.extend([304, 332, 350, 354, 362, 512]);
+    for k in ks {
+        let r = 2 * k + 1;
+        let terms: std::collections::BTreeMap<u128, BigInt> = (0..=k)
+            .map(|i| (i + (k - i) * r, BigInt::from(i + 1)))
+            .chain(std::iter::once((1, BigInt::from(k + 2))))
+            .collect();
+        let a = Poly {
+            den: BigInt::one(),
+            terms: terms.into_iter().collect(),
+        };
+        let plan = a.plan(&a).expect("packed keys");
+        let size = a.sparse_mul(&a, true).len() as f64;
+        let s = a
+            .support_setup(&a, &plan)
+            .expect("the support product runs");
+        let units = a
+            .support_units(&a, &plan)
+            .expect("the support product runs");
+        let ratio = units / s.cost(size);
+        assert!(
+            (1.0 / 1.25..=1.25).contains(&ratio),
+            "k = {k}: {units} units estimated against {} at the support's {size} indices, {ratio}",
+            s.cost(size)
+        );
+    }
 }
 
 /// The work the expansion of `term == 0` counts with no limit, and that identity's size.
