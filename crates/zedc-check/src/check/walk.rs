@@ -19077,29 +19077,47 @@ impl<'t, 'a> Ck<'t, 'a> {
                     return None;
                 }
                 let (x, y) = (at_rat(x)?, at_rat(y)?);
-                // A sum that builds a part wider than every part its operands hold built is
-                // not folded: its value is unknown, as before powers were folded, and what it
-                // builds is sized ([`Self::too_large_build`], `sum_build`) and not built.
+                // A sum that writes out a kept power or a wide atom is not folded: its value is
+                // unknown, as before powers were folded, and what it builds is sized
+                // ([`Self::too_large_build`], `sum_build`) and not built.
+                //
+                // Which sums those are, from sizes alone. Let `P` be the bit lengths of the
+                // plain parts `num` and `den` of both operands added (`Rat::kept`, the parts
+                // apart from the prime powers and wide atoms). Proof that a sum of operands
+                // with no kept powers or atoms builds at most `2P + 1` bits: (1) the operands
+                // are `p/q` and `r/s`; (2) the sum is `(p s ± r q) / (q s)`, reduced or not;
+                // (3) `bits(p s) <= bits p + bits s` and `bits(r q) <= bits r + bits q`, each
+                // at most `P`, so `bits(p s ± r q) <= P + 1`; (4) `bits(q s) <= bits q +
+                // bits s <= P`; (5) the two together build at most `2P + 1`. So a sized build
+                // past both `2P + 1` and the 64 bits of a word, which `Rat` keeps unbuilt
+                // (`sum_build` gives `None` within it), writes out a kept power or an atom:
+                // `3r^k + 1r`, where `P` is 4 and the build is `k log2 3` bits. The converse
+                // does not hold, and need not: a sum whose kept part is small enough to stay
+                // within `2P + 1` is folded, at a cost within twice the operands' plain parts.
                 //
                 // Complexity tradeoff: since a fixed `rat ^ int` is folded as kept powers,
                 // folding `3r^k + 1r` would build the digits of `3^k`, O(M(k)) in the check,
                 // for no verdict (`bench::scaling::operations_on_literals_typed_by_their_value_
                 // check_in_linear_time_a_power_divisor`, l01_26a, order 0). Sizing the sum
-                // costs O(primes kept) (`Rat::sum_least`). A sum no wider than an operand it
-                // reads is still folded, so a chain of `+` and `*` on built numbers keeps its
-                // value, at the cost of the run's own operations. The rule is structural, the
-                // sizes of the sum and of its operands, and sets no constant beyond the 64
-                // bits of a word, which `Rat` keeps unbuilt (KEPT-ast-normal-form keeps such a
-                // sum as an expression instead).
+                // costs O(primes kept) (`Rat::sum_least`). Every sum of plain parts is still
+                // folded, `rat(b) + 1 / 3` with `b = 2^64 + 13` included (`too_large::
+                // a_rat_base_is_read_through_names_and_operations`), so a chain of `+` and `*`
+                // on built numbers keeps its value, at the cost of the run's own operations.
+                // The constants 2 and 1 are those of the proof, and 64 is the word `Rat` keeps
+                // unbuilt (KEPT-ast-normal-form keeps such a sum as an expression instead).
                 if let (BinaryOp::Add | BinaryOp::Sub, Value::Rat(a), Value::Rat(b)) = (op, &x, &y)
                     && let Some(bits) = sum_build(a, b)
-                    && [&**a, &**b]
-                        .into_iter()
-                        .filter_map(built_bits)
-                        .max()
-                        .is_none_or(|held| bits > held)
                 {
-                    return None;
+                    let plain: u64 = [&**a, &**b]
+                        .into_iter()
+                        .map(|r| {
+                            let (num, den, _) = r.kept();
+                            num.bits() + den.bits()
+                        })
+                        .sum();
+                    if bits > BigUint::from(2 * plain + 1) {
+                        return None;
+                    }
                 }
                 prim_folded(binary_prim(*op)?, vec![x, y])
             }
