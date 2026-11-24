@@ -6189,3 +6189,62 @@ fn two_disjunctions_past_the_allowance_decline_before_forming_pairs() {
     .expect("answered with no limit");
     assert_eq!(set.met(), IntervalSet::of(-99, 99));
 }
+
+/// Gap G of the proof at `cells_cover` (row LIMITS-exact-join-remove): a stride's residue
+/// question finds a point inside a piece kept from a tail, out of the gap and not in `found`.
+/// `f` is `s >= 0 && s == 2·y` or `40 <= s <= 100 && s == 4·z`: the values of `s` are the even
+/// integers from 0 up. The cover starts with two points, as it does where the covers of the
+/// part's symbols before `s` found them (`exact_each` keeps a part's points for its later
+/// symbols): `s = 0` on the first disjunct, whose cell has holes and no end (a tail from 1 up,
+/// residue 0 modulo 2), and `s = 40` on the second, whose cell is the stride 40, 44, ..., 100.
+/// The tail's question (an odd value from 1 up) finds no point, so the piece from 1 up is kept
+/// and leaves the gap. The stride's `have` was read from `found` alone, residue 0 modulo 4, so
+/// its question asked residues 1 to 3 and found an even value such as 42, inside the kept
+/// piece: not read (not in the gap), the stride pushed back with the same `have`, and the same
+/// question asked again until the work limit (`Err(Questions)`, red on fccab4727).
+/// With the kept pieces' values read into `have` (residues 0 and 2), the question of 1 and 3
+/// finds none and the cover ends: the even integers from 0 up are held by `[0, +inf)`, given
+/// with the cause (`true`, [`ended`]). Catches the loop of gap G; cannot catch a kept piece's
+/// residues read too wide (that would drop a piece with points, which `outside` never sees
+/// here since the gap has no piece in the stride's span).
+#[test]
+fn a_strides_question_that_finds_a_point_in_a_kept_piece_ends() {
+    let f = Formula::or(vec![
+        Formula::and(vec![ge(&[("s", 1)], 0), eq(&[("s", 1), ("y", -2)], 0)]),
+        Formula::and(vec![
+            ge(&[("s", 1)], -40),
+            ge(&[("s", -1)], 100),
+            eq(&[("s", 1), ("z", -4)], 0),
+        ]),
+    ]);
+    let point = |s: i64, y: i64, z: i64| -> Model {
+        [(a("s"), s), (a("y"), y), (a("z"), z)]
+            .into_iter()
+            .map(|(k, v)| (k, Int::from(v)))
+            .collect()
+    };
+    let mut points = vec![point(0, 0, 0), point(40, 0, 10)];
+    let h = IntervalSet::range(fin(&Int::from(-10)), End::PosInf);
+    let mut work = Work {
+        used: 0,
+        limit: EXACT_LIMIT,
+        solver: SOLVER,
+    };
+    let got = cells_cover(
+        &f,
+        &a("s"),
+        &h,
+        constraints(&f),
+        &HashSet::new(),
+        &mut points,
+        &mut PartCache::default(),
+        &mut work,
+    );
+    println!("{got:?}, work {} of {}", work.used, work.limit);
+    let (set, cause) = got.expect("the cover ends");
+    assert_eq!(
+        set,
+        Classed::plain(IntervalSet::range(fin(&Int::from(0)), End::PosInf))
+    );
+    assert!(cause, "a kept piece gives the cause");
+}
