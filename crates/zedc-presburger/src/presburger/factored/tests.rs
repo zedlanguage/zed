@@ -1028,26 +1028,34 @@ pub(super) fn star(k: usize) -> Star {
 
 /// On [`star`], stage A' keeps no pair, and its work grows within the limit at 8 times k, from
 /// k = 1000 (n log n meets 10.5 only from n = 777); the control, the k² pairs the old
-/// `products` listed, grows 64 times.
+/// `products` listed, grows 64 times. Pass 1's list is recorded only with `log`, whose record
+/// of step 0 expands every pair (k² of them: 64 million at k = 8000, past the test's 20 s on
+/// the VM), so the list is checked with `log` at k = 50 and the work is measured without it.
+/// The control counts the pairs from the lengths of the lists instead of building them.
 #[test]
 fn no_pair_of_the_star_is_listed_and_the_work_scales() {
+    let (rows, on, wanted, partners) = star(50);
+    let rows: Vec<&Lin> = rows.iter().collect();
+    let p = Prob::of(&rows, &on, &wanted, &partners);
+    let log = Opts {
+        log: true,
+        ..Opts::default()
+    };
+    let out = solve(&p, log);
+    assert_eq!(out.left, [], "k=50: every pair holds a free atom alone");
+    assert_eq!(out.listed, [], "k=50: pass 1 lists no pair");
     let mut work = [0u64; 2];
     let mut listed = [0usize; 2];
     for (i, k) in [1000, 8000].into_iter().enumerate() {
         let (rows, on, wanted, partners) = star(k);
         let rows: Vec<&Lin> = rows.iter().collect();
         let p = Prob::of(&rows, &on, &wanted, &partners);
-        let out = solve(
-            &p,
-            Opts {
-                log: true,
-                ..Opts::default()
-            },
-        );
+        let out = solve(&p, Opts::default());
         assert_eq!(out.left, [], "k={k}: every pair holds a free atom alone");
-        assert_eq!(out.listed, [], "k={k}: pass 1 lists no pair");
         work[i] = out.pass1 + out.worklist + out.single;
-        listed[i] = all_pairs(&p).len();
+        listed[i] = (p.bic.iter())
+            .map(|&(a, b)| p.lists[a].len() * p.lists[b].len())
+            .sum();
     }
     let r = work[1] as f64 / work[0] as f64;
     let c = listed[1] as f64 / listed[0] as f64;
