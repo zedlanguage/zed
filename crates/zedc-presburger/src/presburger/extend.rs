@@ -835,7 +835,8 @@ impl Faces {
                     let id = Id::any(h);
                     parts.push((known.get(&id)?, self.by.get(&id)?.as_ref()?));
                 }
-                Formula::Not(_) | Formula::Or(_) => ors.push(h.clone()),
+                // A call node is a conjunction of clauses kept whole (LOAD-call-disj-spread).
+                Formula::Not(_) | Formula::Or(_) | Formula::Holes(_) => ors.push(h.clone()),
             }
         }
         // The definitions its own constraints reach past its kept parts, whose own are in
@@ -1499,6 +1500,7 @@ fn joined(f: &Formula) -> HashSet<Atom> {
                 }
                 read
             }
+            Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
         },
     );
     out
@@ -1538,6 +1540,7 @@ fn clause_key(f: &Formula, lone: &dyn Fn(&Atom) -> bool) -> Formula {
                     false => Formula::Or(Shared::new(kids)),
                 }
             }
+            Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
         },
     )
 }
@@ -1563,7 +1566,7 @@ fn projected(
             Formula::Con(ref c) => rows.push(c.clone()),
             Formula::And(_) => todo.extend(h.into_parts().expect("a conjunction")),
             Formula::Or(ref gs) if gs.is_empty() => return None,
-            Formula::Or(_) | Formula::Not(_) => clauses.push(h),
+            Formula::Or(_) | Formula::Not(_) | Formula::Holes(_) => clauses.push(h),
         }
     }
     Some((rows, clauses))
@@ -1680,7 +1683,9 @@ fn split(
             Formula::Con(ref c) => rows.push(c.clone()),
             Formula::And(_) => flat.extend(f.into_parts().expect("a conjunction")),
             Formula::Or(ref gs) if gs.is_empty() => return None,
-            Formula::Or(_) => ors.push(f),
+            // A call node is kept whole beside the disjunctions; `map_cons` below writes its
+            // clauses where a binding is put into them (LOAD-call-disj-spread).
+            Formula::Or(_) | Formula::Holes(_) => ors.push(f),
             Formula::Not(_) => flat.push(nnf(&f, true)),
         }
     }
@@ -2006,7 +2011,7 @@ fn constraints(d: &Formula) -> Option<Vec<&Con>> {
                 _ => None,
             })
             .collect(),
-        Formula::Not(_) | Formula::Or(_) => None,
+        Formula::Not(_) | Formula::Or(_) | Formula::Holes(_) => None,
     }
 }
 
@@ -6205,6 +6210,9 @@ fn cases(f: &Formula) -> Option<Vec<Vec<Con>>> {
             }
             Some(out)
         }
+        // A call node of n holes has 2^n cases, the spread the node is kept to avoid
+        // (LOAD-call-disj-spread), so it has none here, as a negation of a disjunction has none.
+        Formula::Holes(_) => None,
     }
 }
 

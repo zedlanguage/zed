@@ -100,6 +100,7 @@ impl Formula {
     /// A shared part reached again with a context it was folded with takes its result from
     /// then, so `up` is called once for each distinct part and context. `up` is handed the
     /// parts of the formula itself, so its results may borrow them ([`super::Numbered::of`]).
+    /// A call node (`Formula::Holes`) is folded as its clauses, so `up` is never handed one.
     pub(super) fn fold<'a, C: Copy + Eq + Hash, R: Clone>(
         &'a self,
         ctx: C,
@@ -119,12 +120,19 @@ impl Formula {
         if let Formula::Con(_) = self {
             return up(self, ctx, Vec::new());
         }
+        // The generic route for a call node (META3 H7): it is folded as its clauses
+        // (`BoundHoles::lowered`, written once a node and counted), so `up` never meets one. A
+        // node held at many places is folded once a context, keyed by its own id.
+        let root = match self {
+            Formula::Holes(b) => b.lowered(),
+            Formula::Con(_) | Formula::Not(_) | Formula::And(_) | Formula::Or(_) => self,
+        };
         let mut seen: HashMap<(Id, C), R> = HashMap::new();
         let mut results: Vec<R> = Vec::new();
         let mut stack = vec![Frame {
-            node: self,
+            node: root,
             ctx,
-            left: self.kids().iter(),
+            left: root.kids().iter(),
             start: 0,
             id: None,
         }];
@@ -141,6 +149,10 @@ impl Formula {
                             None => Some(Id::any(g)),
                         },
                         None => None,
+                    };
+                    let g = match g {
+                        Formula::Holes(b) => b.lowered(),
+                        Formula::Con(_) | Formula::Not(_) | Formula::And(_) | Formula::Or(_) => g,
                     };
                     stack.push(Frame {
                         node: g,
@@ -174,8 +186,10 @@ impl Formula {
     /// disjunction up to its first part that holds, so a part decided early is not walked
     /// through. A shared part is read once.
     pub(super) fn holds_as(&self, vs: &Model) -> bool {
-        if let Formula::Con(c) = self {
-            return c.holds(vs);
+        match self {
+            Formula::Con(c) => return c.holds(vs),
+            Formula::Holes(b) => return b.holds(vs),
+            Formula::Not(_) | Formula::And(_) | Formula::Or(_) => {}
         }
         let mut seen: HashMap<Id, bool> = HashMap::new();
         // The nodes being read, each with the parts left and its key when shared, and the
@@ -188,7 +202,7 @@ impl Formula {
                     Formula::And(_) => !v,
                     Formula::Or(_) => v,
                     Formula::Not(_) => true,
-                    Formula::Con(_) => unreachable!("a constraint has no parts"),
+                    Formula::Con(_) | Formula::Holes(_) => unreachable!("a leaf has no parts"),
                 };
                 if decided {
                     let v = if matches!(node, Formula::Not(_)) {
@@ -205,6 +219,9 @@ impl Formula {
             }
             match left.next() {
                 Some(Formula::Con(c)) => value = Some(c.holds(vs)),
+                // Membership of the term's value, O(t + log n) (META3 H7: the call node read
+                // as itself, not as its clauses).
+                Some(Formula::Holes(b)) => value = Some(b.holds(vs)),
                 Some(g) => match Id::of(g) {
                     Some(id) => match seen.get(&id) {
                         Some(&v) => value = Some(v),
@@ -233,6 +250,13 @@ impl Formula {
         while let Some(top) = stack.last_mut() {
             match top.next() {
                 Some(Formula::Con(c)) => f(c),
+                // The generic route: the node's clauses, written once a node and counted
+                // (`BoundHoles::lowered`, META3 H7), read at the node's first place alone.
+                Some(g @ Formula::Holes(b)) => {
+                    if Id::of(g).is_none_or(|id| seen.insert(id)) {
+                        stack.push(slice::from_ref(b.lowered()).iter());
+                    }
+                }
                 Some(g) => {
                     if Id::of(g).is_none_or(|id| seen.insert(id)) {
                         stack.push(g.kids().iter());
@@ -272,7 +296,8 @@ impl Formula {
         let mut stack = vec![self];
         while let Some(g) = stack.pop() {
             match g {
-                Formula::Or(_) | Formula::Not(_) => return true,
+                // A call node is a conjunction of disjunctions, one a hole, and has a hole.
+                Formula::Or(_) | Formula::Not(_) | Formula::Holes(_) => return true,
                 Formula::Con(_) | Formula::And(_) => {
                     if Id::of(g).is_none_or(|id| seen.insert(id)) {
                         stack.extend(g.kids())
@@ -291,7 +316,7 @@ impl Formula {
                 Some(v) => mem::take(v),
                 None => gs.to_vec(),
             }),
-            Formula::Con(_) | Formula::Not(_) => None,
+            Formula::Con(_) | Formula::Not(_) | Formula::Holes(_) => None,
         }
     }
 
@@ -303,14 +328,16 @@ impl Formula {
                 Some(h) => mem::replace(h, hole()),
                 None => (**g).clone(),
             }),
-            Formula::Con(_) | Formula::And(_) | Formula::Or(_) => None,
+            Formula::Con(_) | Formula::And(_) | Formula::Or(_) | Formula::Holes(_) => None,
         }
     }
 
     /// The parts directly under `self`, moved to `out` when no other holder shares them.
     fn take_kids(&mut self, out: &mut Vec<Formula>) {
         match self {
-            Formula::Con(_) => {}
+            // A call node's written clauses, when made, are a formula of their own, dropped
+            // with the node by this same drop.
+            Formula::Con(_) | Formula::Holes(_) => {}
             Formula::Not(g) => {
                 if let Some(h) = Shared::get_mut(g) {
                     out.push(mem::replace(h, hole()));
@@ -328,6 +355,9 @@ impl Formula {
     fn cmp_node(&self, other: &Formula) -> Ordering {
         match (self, other) {
             (Formula::Con(a), Formula::Con(b)) => a.cmp(b),
+            // By content, one node compared with itself at once (META3 H5).
+            (Formula::Holes(a), Formula::Holes(b)) if Shared::same(a, b) => Ordering::Equal,
+            (Formula::Holes(a), Formula::Holes(b)) => a.cmp_content(b),
             _ => self.rank().cmp(&other.rank()),
         }
     }
@@ -339,6 +369,7 @@ impl Formula {
             (Formula::And(a), Formula::And(b)) | (Formula::Or(a), Formula::Or(b)) => {
                 Shared::same(a, b)
             }
+            (Formula::Holes(a), Formula::Holes(b)) => Shared::same(a, b),
             _ => false,
         }
     }
@@ -366,6 +397,7 @@ impl Clone for Formula {
             Formula::Not(g) => Formula::Not(g.clone()),
             Formula::And(gs) => Formula::And(gs.clone()),
             Formula::Or(gs) => Formula::Or(gs.clone()),
+            Formula::Holes(b) => Formula::Holes(b.clone()),
         }
     }
 }
@@ -642,11 +674,20 @@ impl Eq for Formula {}
 const BASE: u64 = 0x9e37_79b9_7f4a_7c15;
 
 impl Formula {
+    /// Whether the node is a leaf, hashed from its own content at each call: a constraint or a
+    /// call node, whose set keeps its key.
+    fn is_leaf(&self) -> bool {
+        match self {
+            Formula::Con(_) | Formula::Holes(_) => true,
+            Formula::Not(_) | Formula::And(_) | Formula::Or(_) => false,
+        }
+    }
+
     /// The hash kept for this compound node when it is of its own variant, or the one this
     /// call found when another variant's hash is kept in its parts (`spill`).
     fn known(&self, spill: &HashMap<Id, Sig>) -> Option<Sig> {
         let kept = match self {
-            Formula::Con(_) => return None,
+            Formula::Con(_) | Formula::Holes(_) => return None,
             Formula::Not(g) => Shared::sig(g, self.rank()),
             Formula::And(gs) | Formula::Or(gs) => Shared::sig(gs, self.rank()),
         };
@@ -657,7 +698,7 @@ impl Formula {
     /// node of another variant that holds them too.
     fn keep(&self, sig: Sig, spill: &mut HashMap<Id, Sig>) {
         let kept = match self {
-            Formula::Con(_) => unreachable!("a constraint keeps no hash"),
+            Formula::Con(_) | Formula::Holes(_) => unreachable!("a leaf keeps no hash"),
             Formula::Not(g) => Shared::keep_sig(g, sig),
             Formula::And(gs) | Formula::Or(gs) => Shared::keep_sig(gs, sig),
         };
@@ -678,6 +719,8 @@ impl Formula {
         let (mut seq, mut pow) = (0u64, 1u64);
         match self {
             Formula::Con(c) => c.hash(&mut h),
+            // The set's key, found once with the set, and the term: O(t) (META3 H5).
+            Formula::Holes(b) => b.hash_content(&mut h),
             Formula::Not(_) => {
                 for p in parts {
                     h.write_u64(p.n);
@@ -711,7 +754,7 @@ impl Formula {
     /// number and their edges. A constraint's hash is found at each call, in time linear in
     /// its size.
     pub(super) fn sig(&self) -> Sig {
-        if let Formula::Con(_) = self {
+        if self.is_leaf() {
             return self.sig_of(std::iter::empty());
         }
         let spill: HashMap<Id, Sig> = HashMap::new();
@@ -723,9 +766,9 @@ impl Formula {
 
     /// [`Formula::sig`] of a compound node whose hash is not kept.
     fn sig_walk(&self, mut spill: HashMap<Id, Sig>) -> Sig {
-        let part = |k: &Formula, spill: &HashMap<Id, Sig>| match k {
-            Formula::Con(_) => k.sig_of(std::iter::empty()),
-            _ => k
+        let part = |k: &Formula, spill: &HashMap<Id, Sig>| match k.is_leaf() {
+            true => k.sig_of(std::iter::empty()),
+            false => k
                 .known(spill)
                 .expect("each compound part is hashed before its parent"),
         };
@@ -733,8 +776,8 @@ impl Formula {
         let mut stack: Vec<(&Formula, usize)> = vec![(self, 0)];
         while let Some((g, from)) = stack.last_mut() {
             let kids = g.kids();
-            let next = (kids[*from..].iter())
-                .position(|k| !matches!(k, Formula::Con(_)) && k.known(&spill).is_none());
+            let next =
+                (kids[*from..].iter()).position(|k| !k.is_leaf() && k.known(&spill).is_none());
             if let Some(i) = next {
                 // That part is hashed before this node is read again.
                 *from += i + 1;
@@ -825,6 +868,9 @@ fn show(root: &Formula, debug: bool, name: Names) -> String {
                 Formula::Con(c) => {
                     let _ = write!(out, "Con({c:?})");
                 }
+                Formula::Holes(b) => {
+                    let _ = write!(out, "Holes({:?}, {:?})", b.set().runs(), b.term());
+                }
                 Formula::Not(h) => {
                     out.push_str("Not(");
                     stack.extend([Piece::Text(")"), Piece::Formula(h)]);
@@ -851,10 +897,14 @@ fn show(root: &Formula, debug: bool, name: Names) -> String {
             Formula::Con(c) => {
                 let _ = write!(out, "{}", ConWritten(c, name));
             }
+            // Written as its clauses, so that the text is a formula of the language (printed
+            // types are syntax): one clause a hole, a disjunction for one hole and a
+            // conjunction for more. Its parent puts the parentheses.
+            Formula::Holes(b) => stack.push(Piece::Formula(b.lowered())),
             Formula::Not(h) => {
                 out.push('!');
                 match &**h {
-                    Formula::Con(_) | Formula::And(_) | Formula::Or(_) => {
+                    Formula::Con(_) | Formula::And(_) | Formula::Or(_) | Formula::Holes(_) => {
                         out.push('(');
                         stack.extend([Piece::Text(")"), Piece::Formula(h)]);
                     }
@@ -875,8 +925,12 @@ fn show(root: &Formula, debug: bool, name: Names) -> String {
                 let kids: Vec<&Formula> = Flat::of(g).collect();
                 for (i, h) in kids.into_iter().enumerate().rev() {
                     // A conjunction or disjunction of two or more parts is in parentheses.
-                    let wrap = matches!(h, Formula::And(_) | Formula::Or(_))
-                        && Flat::of(h).nth(1).is_some();
+                    let wrap = match h {
+                        Formula::And(_) | Formula::Or(_) => Flat::of(h).nth(1).is_some(),
+                        // Written as a disjunction for one hole, a conjunction for more.
+                        Formula::Holes(b) => (b.set().runs().len() == 1) == (sep == " && "),
+                        Formula::Con(_) | Formula::Not(_) => false,
+                    };
                     if wrap {
                         stack.push(Piece::Text(")"));
                     }
@@ -936,6 +990,8 @@ impl Formula {
                     let text = ConWritten(c, name).to_string();
                     out.extend(super::names_in(&text).into_iter().map(String::from));
                 }
+                // The names of its clauses are the term's; read once, at its first clause.
+                Formula::Holes(b) => stack.extend(b.lowered().kids().first()),
                 Formula::Not(h) => stack.push(h),
                 Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
             }

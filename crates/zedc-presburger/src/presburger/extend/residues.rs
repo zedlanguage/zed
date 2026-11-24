@@ -385,6 +385,13 @@ pub(super) fn read(f: &Formula, holes: &[(&Atom, &Holes)]) -> Reading {
             Formula::Con(c) => rows.push(c),
             Formula::Or(ds) if ds.is_empty() => return Reading::Empty,
             Formula::Or(_) | Formula::Not(_) => clauses.push(g),
+            // A call node's clauses, written once a node and counted
+            // ([`BoundHoles::lowered`](super::super::BoundHoles)): one run is one clause, more
+            // runs a conjunction of them. Each is then a hole of `hole_of` as before.
+            Formula::Holes(b) => match b.lowered() {
+                l @ Formula::Or(_) => clauses.push(l),
+                l => clauses.extend(l.kids()),
+            },
         }
     }
     let none: HashSet<Atom> = HashSet::new();

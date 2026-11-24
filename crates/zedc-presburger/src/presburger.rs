@@ -126,6 +126,8 @@ pub mod exact;
 pub mod extend;
 mod forced;
 mod formula;
+#[cfg(test)]
+mod holes_node_tests;
 mod joining;
 mod local;
 mod meter;
@@ -151,7 +153,7 @@ mod two_var_tests;
 mod values;
 
 use forced::{Facts, Forced};
-pub use formula::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
+pub use formula::{Atom, BoundHoles, Con, Factor, Formula, HoleSet, Id, Lin, Model, Rel, Shared};
 use formula::{Ends, one_bound};
 #[cfg(feature = "two-at-a-time")]
 pub use joining::TWO_AT_A_TIME;
@@ -1610,6 +1612,7 @@ fn signed(f: &Formula, how: Signs) -> Formula {
                 None if c.rel == Rel::Eq => equation(c, negated, how),
                 None => None,
             },
+            Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
             Formula::And(gs) => {
                 // Each `t >= 0` whose `-t >= 0` is a part too, both as reduced, as the
                 // equation, in its place, so that the parts keep their places
@@ -2714,6 +2717,9 @@ impl<'a> Numbered<'a> {
                         Formula::Not(_) => 0,
                         Formula::And(_) => 1,
                         Formula::Con(_) | Formula::Or(_) => 2,
+                        Formula::Holes(_) => {
+                            unreachable!("`fold` reads a call node as its clauses")
+                        }
                     };
                     parts.sort_unstable();
                     if let Some(&n) = s.keys.get(&(kind, parts.clone())) {
@@ -2723,6 +2729,7 @@ impl<'a> Numbered<'a> {
                     s.keys.insert((kind, parts), n);
                     n
                 }
+                Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
             },
         );
         s.root = root;
@@ -14343,7 +14350,10 @@ impl Parts {
                         stack.extend(g.into_parts().expect("a conjunction").into_iter().rev())
                     }
                     Formula::Or(_) => todo.push(g),
-                    Formula::Not(_) => unreachable!("a formula in negation normal form"),
+                    // `nnf` writes a call node as its clauses.
+                    Formula::Not(_) | Formula::Holes(_) => {
+                        unreachable!("a formula in negation normal form")
+                    }
                 }
             }
             todo.reverse();
@@ -14742,6 +14752,9 @@ fn nnf(f: &Formula, sign: bool) -> Formula {
                     } else {
                         Formula::or(vec![Formula::Con(Con::ge(&c.lin, &one)), neg])
                     }
+                }
+                (Formula::Holes(_), _) => {
+                    unreachable!("`fold` reads a call node as its clauses")
                 }
             };
             // A node held elsewhere is a part passed through whole, already sorted.
@@ -21337,6 +21350,7 @@ fn canonical_parts(f: &Formula) -> Formula {
                     Formula::And(_) => Formula::And(Shared::new(parts)),
                     Formula::Or(_) => Formula::Or(Shared::new(parts)),
                     Formula::Con(_) => unreachable!("returned above"),
+                    Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
                 })
                 .clone()
         },
@@ -21610,6 +21624,8 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
                 }
                 deferred_or = Some((gs, pos));
             }
+            // The generic route: a call node is read as its clauses (META3 H7).
+            Formula::Holes(b) => stack.push((b.lowered(), pos)),
         }
     }
     if base_atoms.len() > base_eqs + 2 {
@@ -22064,6 +22080,10 @@ fn factored(f: &Formula) -> Option<Formula> {
             Formula::Con(_) => unreachable!("a constraint is not pushed"),
             Formula::Or(_) => {
                 done.insert((id, even), factored_or(g, &links, even));
+            }
+            // A call node is a leaf of the spine, left as it is (LOAD-call-disj-spread).
+            Formula::Holes(_) => {
+                done.insert((id, even), None);
             }
             Formula::Not(_) | Formula::And(_) => {
                 stack.push((g, true, even));
@@ -22613,6 +22633,7 @@ fn numbered(c: &Formula, x: &Atom, y: Option<&Atom>, number: &HashMap<Atom, Atom
             let mut out = match g {
                 Formula::Con(c) => return Formula::Con(con_renamed(c, &to)),
                 Formula::Not(_) | Formula::And(_) | Formula::Or(_) => g.rebuild(parts),
+                Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
             };
             if let Formula::And(gs) | Formula::Or(gs) = &mut out
                 && let Some(gs) = Shared::change(gs)
@@ -22719,6 +22740,7 @@ fn functional(f: &Formula) -> impl Fn(&Formula) -> Rc<BTreeSet<Atom>> {
                     None => Rc::new(BTreeSet::new()),
                 },
                 Formula::Or(_) => Rc::new(BTreeSet::new()),
+                Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
             };
             sets.insert(Id::any(g), out.clone());
             out
@@ -22726,7 +22748,9 @@ fn functional(f: &Formula) -> impl Fn(&Formula) -> Rc<BTreeSet<Atom>> {
     );
     move |c: &Formula| match c {
         Formula::Con(c) => of_con(c),
-        _ => sets[&Id::any(c)].clone(),
+        // `fold` read a call node as its clauses, under the clauses' key.
+        Formula::Holes(b) => sets[&Id::any(b.lowered())].clone(),
+        Formula::Not(_) | Formula::And(_) | Formula::Or(_) => sets[&Id::any(c)].clone(),
     }
 }
 
@@ -22755,7 +22779,7 @@ fn guard_atoms(a: &Formula, b: &Formula) -> Option<BTreeSet<Atom>> {
                     negated.insert(c);
                 }
             }
-            Formula::And(_) | Formula::Or(_) => {}
+            Formula::And(_) | Formula::Or(_) | Formula::Holes(_) => {}
         }
     }
     let mut out: Option<BTreeSet<Atom>> = None;
@@ -23067,6 +23091,8 @@ pub fn row_box(f: &Formula, syms: &[Atom]) -> Vec<IntervalSet> {
             Formula::And(cs) => stack.extend(cs.iter()),
             Formula::Or(ds) if ds.is_empty() => return empty(),
             Formula::Or(ds) => ors.push(&ds[..]),
+            // The generic route: a call node is read as its clauses (META3 H7).
+            Formula::Holes(b) => stack.push(b.lowered()),
             Formula::Not(_) => {}
             Formula::Con(c) => {
                 let mut a: Vec<Term> = (c.lin.terms.iter())
@@ -31101,6 +31127,7 @@ pub(super) mod tests {
                 "or[{}]",
                 gs.iter().map(built).collect::<Vec<_>>().join(", ")
             ),
+            Formula::Holes(_) => format!("holes({f})"),
         }
     }
 
@@ -31154,6 +31181,7 @@ pub(super) mod tests {
             Formula::And(_) => "a conjunction",
             Formula::Or(gs) if gs.is_empty() => "false",
             Formula::Or(_) => "a disjunction",
+            Formula::Holes(_) => "a call node",
         }
     }
 
@@ -34419,6 +34447,7 @@ mod forced_against_solver {
             Formula::Not(g) => !holds_at(g, p, seen),
             Formula::And(gs) => gs.iter().all(|g| holds_at(g, p, seen)),
             Formula::Or(gs) => gs.iter().any(|g| holds_at(g, p, seen)),
+            Formula::Holes(b) => b.holds(p),
         };
         if let Some(id) = id {
             seen.insert(id, v);
@@ -34978,6 +35007,7 @@ mod forced_against_solver {
             Formula::Not(g) => Formula::negate(rewritten(g, name, rng)),
             Formula::And(gs) => Formula::and(each(gs, name, rng)),
             Formula::Or(gs) => Formula::or(each(gs, name, rng)),
+            Formula::Holes(_) => rewritten(f.opened(), name, rng),
         }
     }
 

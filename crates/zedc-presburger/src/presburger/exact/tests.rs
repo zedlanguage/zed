@@ -628,6 +628,7 @@ fn renamed(f: &Formula) -> Formula {
         Formula::Not(g) => Formula::Not(Shared::new(renamed(g))),
         Formula::And(gs) => Formula::And(Shared::new(each(gs))),
         Formula::Or(gs) => Formula::Or(Shared::new(each(gs))),
+        Formula::Holes(_) => renamed(f.opened()),
     }
 }
 
@@ -1279,6 +1280,8 @@ fn shuffled(f: &Formula, rng: &mut Rng) -> Formula {
         Formula::Not(g) => Formula::Not(Shared::new(turned(std::slice::from_ref(&**g)).remove(0))),
         Formula::And(gs) => Formula::And(Shared::new(turned(gs))),
         Formula::Or(gs) => Formula::Or(Shared::new(turned(gs))),
+        // A call node is a leaf: it holds no part.
+        Formula::Holes(_) => f.clone(),
     }
 }
 

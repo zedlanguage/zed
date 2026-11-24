@@ -222,7 +222,7 @@ fn may_start(conjuncts: &Conjuncts) -> bool {
             Formula::Con(c) if c.rel == Rel::Eq && c.lin.terms.len() == 1 => return true,
             Formula::Con(c) => ends.extend(one_bound(c)),
             Formula::Or(ds) if ds.len() <= 1 => return true,
-            Formula::Or(_) | Formula::And(_) | Formula::Not(_) => {}
+            Formula::Or(_) | Formula::And(_) | Formula::Not(_) | Formula::Holes(_) => {}
         }
     }
     if ends.len() < 2 {
@@ -256,6 +256,9 @@ impl<'f> Graph<'f> {
     /// with each part that has its value already (a constraint of no variable, an empty
     /// conjunction or disjunction) queued.
     fn of(f: &'f Formula) -> Graph<'f> {
+        // A call node is read as its clauses, here and at each operand below (the generic
+        // route, META3 H7), so `add` never meets one.
+        let f = f.opened();
         // A first walk counts the parts, operands and terms, so each list is allocated once.
         let (mut parts, mut kids, mut terms) = (0, 0, 0);
         let mut seen: DigestMap<Id, u32> = DigestMap::default();
@@ -266,6 +269,7 @@ impl<'f> Graph<'f> {
                 terms += c.lin.terms.len();
             }
             for k in h.kids() {
+                let k = k.opened();
                 kids += 1;
                 if Id::of(k).is_none_or(|id| seen.insert(id, 0).is_none()) {
                     stack.push((k, 0));
@@ -288,6 +292,7 @@ impl<'f> Graph<'f> {
         while let Some((h, n)) = stack.pop() {
             let start = to_u32(g.kid_list.len(), "child links");
             for k in h.kids() {
+                let k = k.opened();
                 let shared = Id::of(k);
                 let i = match shared.and_then(|id| seen.get(&id)) {
                     Some(&i) => i,
@@ -318,6 +323,7 @@ impl<'f> Graph<'f> {
             Formula::And(_) => Kind::And,
             Formula::Or(_) => Kind::Or,
             Formula::Not(_) => Kind::Not,
+            Formula::Holes(_) => unreachable!("`Graph::of` opens a call node"),
             Formula::Con(c) => {
                 for (a, k) in &c.lin.terms {
                     let v = self.number(a);

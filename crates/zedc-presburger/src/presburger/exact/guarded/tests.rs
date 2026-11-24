@@ -22,6 +22,7 @@ fn pins_recursive(
             con_pins(c, neg, vals)
         }
         Formula::Not(g) => pins_recursive(g, !neg, vals, memo, work)?,
+        Formula::Holes(_) => pins_recursive(f.opened(), neg, vals, memo, work)?,
         Formula::And(gs) | Formula::Or(gs) => {
             let meet = matches!(f, Formula::And(_)) != neg;
             let mut out = if meet {

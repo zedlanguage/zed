@@ -45,7 +45,9 @@ pub(super) fn chain(d: usize, and: bool, pad: &mut dyn FnMut()) -> (Formula, Vec
 fn address_order(rules: &[Formula]) -> Vec<usize> {
     let at = |f: &Formula| match f {
         Formula::And(gs) | Formula::Or(gs) => &**gs as *const Vec<Formula> as usize,
-        Formula::Con(_) | Formula::Not(_) => unreachable!("a rule is a conjunction or disjunction"),
+        Formula::Con(_) | Formula::Not(_) | Formula::Holes(_) => {
+            unreachable!("a rule is a conjunction or disjunction")
+        }
     };
     let mut order: Vec<usize> = (0..rules.len()).collect();
     order.sort_by_key(|&i| at(&rules[i]));

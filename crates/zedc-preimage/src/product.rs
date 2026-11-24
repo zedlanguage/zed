@@ -22393,6 +22393,8 @@ fn leaf_sign(g: &Formula, leaf: &Atom) -> Option<bool> {
     while let Some(f) = stack.pop() {
         match f {
             Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
+            // The generic route: a call node is read as its clauses (META3 H7).
+            Formula::Holes(_) => stack.push(f.opened()),
             Formula::Con(c) => {
                 if let Some(k) = c.lin.terms.get(leaf) {
                     let below = k.is_positive();
@@ -27281,6 +27283,8 @@ fn conjunctions(
             }
         }
         Formula::Not(g) => conjunctions(g, !value, atoms, get, out),
+        // The generic route: a call node is read as its clauses (META3 H7).
+        Formula::Holes(_) => conjunctions(f.opened(), value, atoms, get, out),
         Formula::And(gs) | Formula::Or(gs) if matches!(f, Formula::And(_)) == value => {
             let k = atoms.len();
             let mut rest = vec![];
@@ -27429,6 +27433,8 @@ fn fixed(f: &Formula, value: bool, get: &impl Fn(&str) -> Product) -> bool {
             }
         }
         Formula::Not(g) => fixed(g, !value, get),
+        // The generic route: a call node is read as its clauses (META3 H7).
+        Formula::Holes(_) => fixed(f.opened(), value, get),
         Formula::And(gs) if value => gs.iter().all(|g| fixed(g, value, get)),
         Formula::Or(gs) if !value => gs.iter().all(|g| fixed(g, value, get)),
         Formula::And(gs) | Formula::Or(gs) => gs.iter().any(|g| fixed(g, value, get)),
@@ -29037,6 +29043,7 @@ mod tests {
                     }
                 }
                 Formula::Not(g) => !eval(g, v),
+                Formula::Holes(_) => eval(f.opened(), v),
                 Formula::And(gs) => gs.iter().all(|g| eval(g, v)),
                 Formula::Or(gs) => gs.iter().any(|g| eval(g, v)),
             }

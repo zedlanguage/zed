@@ -1165,7 +1165,9 @@ fn under_line(p: &Int, q: &Int, n: &Int) -> Vec<P> {
 /// by O(1) splits and joins, O(log k) each. The dimension check (META3 H1) runs only when at
 /// most two old positions are kept (`collapse`): three kept vertices of a convex polygon are not
 /// collinear, so H stays two-dimensional, and the area stays positive with them; then H has at
-/// most three old sides besides the q new ones, read in O(q + 1).
+/// most four old sides besides the q new ones (two each side of the cut on an unbounded path,
+/// the window above; META3 H4, R3 Claude item 4: allowing one a side gave 38 zero-area
+/// Polygons in its check, two matched the check without the size test), read in O(q + 1).
 fn assemble(pre: Tree, post: Tree, c: &Row, closed: bool, collapse: bool) -> Option<Hull> {
     let (ep, eq) = if closed {
         (last(&pre).cloned(), first(&pre).cloned())

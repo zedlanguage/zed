@@ -361,6 +361,7 @@ fn t_set(f: &Formula, part: &HashMap<&Atom, Part>, at: &[(Int, Int)], made: &mut
                 Formula::Or(_) => parts
                     .into_iter()
                     .fold(Vec::new(), |acc, p| intervals::union(&acc, &p)),
+                Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
             };
             *made += 1 + out.len() as u128;
             out
@@ -579,6 +580,7 @@ fn holds_at(f: &Formula, part: &HashMap<&Atom, Part>, at: &[(Int, Int)]) -> bool
             Formula::Not(_) => !parts[0],
             Formula::And(_) => parts.iter().all(|&p| p),
             Formula::Or(_) => parts.iter().any(|&p| p),
+            Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
         },
     )
 }

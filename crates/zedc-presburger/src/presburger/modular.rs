@@ -964,7 +964,8 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             Formula::And(_) => unreachable!("conjunct_list flattens every conjunction"),
             Formula::Con(c) => top_cons.push(c),
             Formula::Or(ds) if ds.is_empty() => return Some(None),
-            Formula::Or(_) | Formula::Not(_) => {
+            // A call node is a clause here; the fold of step 6 reads it as its clauses.
+            Formula::Or(_) | Formula::Not(_) | Formula::Holes(_) => {
                 if seen_top.insert(Id::any(g)) {
                     top_clauses.push(g);
                 }
@@ -1490,6 +1491,7 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                         fold_or(nodes)
                     }
                 }
+                Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
             },
         );
 
@@ -6217,6 +6219,7 @@ impl ScalarWitness<'_> {
                 Formula::And(_) => values.into_iter().all(|v| v),
                 Formula::Or(_) => values.into_iter().any(|v| v),
                 Formula::Not(_) => !values[0],
+                Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
             },
         )
     }

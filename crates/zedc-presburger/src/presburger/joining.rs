@@ -230,6 +230,7 @@ impl Formula {
             true,
             |g, pos| pos != matches!(g, Formula::Not(_)),
             |g, pos, parts| match g {
+                Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
                 Formula::Con(c) => {
                     let mentions = c.lin.terms.keys().any(|a| match a {
                         Atom::Sym(n) => n == sym,
@@ -254,6 +255,7 @@ impl Formula {
             |_, ()| (),
             |g, (), parts| match g {
                 Formula::Con(c) => f(c),
+                Formula::Holes(_) => unreachable!("`fold` reads a call node as its clauses"),
                 Formula::Not(_) | Formula::And(_) | Formula::Or(_) => g.rebuild(parts),
             },
         )
@@ -266,6 +268,7 @@ impl Formula {
     pub(super) fn rebuild(&self, mut parts: Vec<Formula>) -> Formula {
         match self {
             Formula::Con(c) => Formula::Con(c.clone()),
+            Formula::Holes(_) => self.clone(),
             Formula::Not(_) => Formula::negate(parts.pop().expect("one part")),
             Formula::And(_) => Formula::and_keeping(parts, |i| self.kept(i)),
             Formula::Or(_) => Formula::or_keeping(parts, |i| self.kept(i)),
@@ -278,7 +281,7 @@ impl Formula {
         match self {
             Formula::And(gs) => matches!(gs[i], Formula::And(_)),
             Formula::Or(gs) => matches!(gs[i], Formula::Or(_)),
-            Formula::Con(_) | Formula::Not(_) => false,
+            Formula::Con(_) | Formula::Not(_) | Formula::Holes(_) => false,
         }
     }
 
@@ -380,7 +383,8 @@ impl Joining {
         let (own, empty) = match &f {
             Formula::And(gs) => (self.and, gs.is_empty()),
             Formula::Or(gs) => (!self.and, gs.is_empty()),
-            Formula::Con(_) | Formula::Not(_) => (false, false),
+            // A call node is one operand, kept whole (LOAD-call-disj-spread).
+            Formula::Con(_) | Formula::Not(_) | Formula::Holes(_) => (false, false),
         };
         match (own, empty) {
             (true, true) => {}

@@ -2069,11 +2069,14 @@ impl FormulaNumbers {
                 Formula::Con(_) => &[],
                 Formula::Not(h) => std::slice::from_ref(&**h),
                 Formula::And(hs) | Formula::Or(hs) => hs,
+                Formula::Holes(_) => unreachable!("a call node is opened where it is read"),
             }
         }
         let mut todo = vec![(f, false)];
         let mut out: Vec<u32> = Vec::new();
         while let Some((g, ready)) = todo.pop() {
+            // A call node is numbered as its clauses (the generic route, META3 H7).
+            let g = g.opened();
             let id = (!matches!(g, Formula::Con(_))).then(|| presburger::Id::any(g));
             if !ready {
                 if let Some(&n) = id.and_then(|id| self.by_id.get(&id)) {
@@ -2090,6 +2093,7 @@ impl FormulaNumbers {
                 Formula::Not(_) => Shape::Not(ns[0]),
                 Formula::And(_) => Shape::And(ns),
                 Formula::Or(_) => Shape::Or(ns),
+                Formula::Holes(_) => unreachable!("a call node is opened where it is read"),
             };
             let next = to_u32(self.by_shape.len(), "shapes");
             let n = match self.by_shape.entry(shape) {
@@ -4676,7 +4680,8 @@ fn conjuncts(
                 }
                 _ => clauses.push(g.clone()),
             },
-            Formula::Or(_) => clauses.push(g.clone()),
+            // A call node is a clause kept whole, as a disjunction is.
+            Formula::Or(_) | Formula::Holes(_) => clauses.push(g.clone()),
         }
     }
 }
@@ -17740,6 +17745,7 @@ mod tests {
             Formula::Not(g) => format!("!{}", built(g)),
             Formula::And(gs) => format!("and[{}]", parts(gs)),
             Formula::Or(gs) => format!("or[{}]", parts(gs)),
+            Formula::Holes(_) => format!("holes({f})"),
         }
     }
 
@@ -17747,7 +17753,8 @@ mod tests {
     /// disjunction.
     fn kept(f: &Formula) -> bool {
         match f {
-            Formula::Con(_) => false,
+            // A call node is a leaf: it holds no part.
+            Formula::Con(_) | Formula::Holes(_) => false,
             Formula::Not(g) => kept(g),
             Formula::And(gs) => gs.iter().any(|g| matches!(g, Formula::And(_)) || kept(g)),
             Formula::Or(gs) => gs.iter().any(|g| matches!(g, Formula::Or(_)) || kept(g)),

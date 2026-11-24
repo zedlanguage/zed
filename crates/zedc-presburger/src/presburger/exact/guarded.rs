@@ -606,6 +606,7 @@ fn pins(
     let mut up: Option<IntervalSet> = None;
     loop {
         if let Some((g, neg)) = down.take() {
+            let g = g.opened();
             let key = Id::of(g).map(|k| (k, neg));
             if let Some(set) = key.as_ref().and_then(|k| memo.get(k)) {
                 up = Some(set.clone());
@@ -638,6 +639,7 @@ fn pins(
             Formula::Not(g) => std::slice::from_ref(&**g),
             Formula::And(gs) | Formula::Or(gs) => gs,
             Formula::Con(_) => unreachable!("a constraint is read where it is met"),
+            Formula::Holes(_) => unreachable!("a call node is opened where it is met"),
         };
         if let Some(x) = up.take() {
             if matches!(top.f, Formula::Not(_)) {

@@ -189,6 +189,8 @@ fn written_out(f: &Formula) -> Formula {
         Formula::Not(g) => Formula::Not(Shared::new(written_out(g))),
         Formula::And(gs) => Formula::And(Shared::new(gs.iter().map(written_out).collect())),
         Formula::Or(gs) => Formula::Or(Shared::new(gs.iter().map(written_out).collect())),
+        // A call node is a leaf: it holds no part.
+        Formula::Holes(_) => f.clone(),
     }
 }
 

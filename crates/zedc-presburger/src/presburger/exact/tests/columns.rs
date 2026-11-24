@@ -253,6 +253,8 @@ fn unshared(f: &Formula) -> Formula {
         Formula::Not(h) => Formula::Not(Shared::new(unshared(h))),
         Formula::And(gs) => Formula::And(Shared::new(gs.iter().map(unshared).collect())),
         Formula::Or(gs) => Formula::Or(Shared::new(gs.iter().map(unshared).collect())),
+        // A call node is a leaf: it holds no part.
+        Formula::Holes(_) => f.clone(),
     }
 }
 

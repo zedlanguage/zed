@@ -1013,6 +1013,8 @@ fn quick_search(
                             break 'run Some(Conflict::of(&[at]));
                         }
                     }
+                    // The generic route: a call node is read as its clauses (META3 H7).
+                    Formula::Holes(b) => todo = push(&todo, (b.lowered(), pos, at)),
                 }
                 // The branch's own rows count too: `read` takes them only where the branch is
                 // cut or ends, and `f` is a DAG walked as a tree, so one branch can take rows
@@ -2174,6 +2176,7 @@ fn direct_noting(
             Formula::Con(_) => {}
             Formula::Not(h) => stack.push(h),
             Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
+            Formula::Holes(b) => stack.push(b.lowered()),
         }
     }
     // Whether no step so far read `s` (below).
@@ -2218,6 +2221,7 @@ fn direct_noting(
                             stack.push(Go::Join(g, pos));
                             stack.extend(gs.iter().rev().map(|h| Go::Read(h, pos)));
                         }
+                        Formula::Holes(b) => stack.push(Go::Read(b.lowered(), pos)),
                     }
                 }
                 Go::Join(g, pos) => {
@@ -2463,6 +2467,7 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                         stack.push(Go::Join(and, gs.len()));
                         stack.extend(gs.iter().rev().map(|h| Go::Read(h, pos)));
                     }
+                    Formula::Holes(b) => stack.push(Go::Read(b.lowered(), pos)),
                 }
             }
             Go::Join(and, len) => {
@@ -5252,9 +5257,11 @@ fn along(
     let join = |f: &Formula, parts: Vec<IntervalSet>| match f {
         Formula::Not(_) => IntervalSet::top().minus(&parts[0]),
         Formula::And(_) => parts.iter().fold(IntervalSet::top(), |acc, p| acc.meet(p)),
-        _ => parts
+        Formula::Or(_) => parts
             .iter()
             .fold(IntervalSet::empty(), |acc, p| acc.join(p)),
+        // `fold` reads a constraint with `con` and a call node as its clauses.
+        Formula::Con(_) | Formula::Holes(_) => unreachable!("a join of a compound part"),
     };
     fold(f, Id::of, memo, con, join)
 }
@@ -5295,6 +5302,7 @@ fn fold<T: Clone>(
                         stack.push(Step::Join(g));
                         stack.extend(gs.iter().rev().map(Step::Read));
                     }
+                    Formula::Holes(b) => stack.push(Step::Read(b.lowered())),
                 }
             }
             Step::Join(g) => {
@@ -5362,6 +5370,8 @@ fn implicant(
                     stack.push((h, want));
                 }
             }
+            // A call node is `want` where its clauses are (META3 H7).
+            Formula::Holes(b) => stack.push((b.lowered(), want)),
         }
     }
     true
@@ -5385,7 +5395,9 @@ fn holds_as(f: &Formula, m: &Model, memo: &mut HashMap<Id, bool>) -> bool {
     let join = |g: &Formula, parts: Vec<bool>| match g {
         Formula::Not(_) => !parts[0],
         Formula::And(_) => parts.iter().all(|&b| b),
-        _ => parts.iter().any(|&b| b),
+        Formula::Or(_) => parts.iter().any(|&b| b),
+        // `fold` reads a constraint with its own function and a call node as its clauses.
+        Formula::Con(_) | Formula::Holes(_) => unreachable!("a join of a compound part"),
     };
     fold(f, key, memo, |c| holds_at(c, &value(&c.lin, m)), join)
 }

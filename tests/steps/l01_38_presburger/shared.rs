@@ -53,6 +53,8 @@ fn written_out(f: &Formula) -> Formula {
         Formula::Not(g) => not(written_out(g)),
         Formula::And(gs) => and(gs.iter().map(written_out).collect()),
         Formula::Or(gs) => or(gs.iter().map(written_out).collect()),
+        // A call node is a leaf: it holds no part.
+        Formula::Holes(_) => f.clone(),
     }
 }
 
@@ -293,6 +295,7 @@ pub(super) fn flat(f: &Formula) -> Vec<Con> {
             Formula::Con(c) => out.push(c.clone()),
             Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter().rev()),
             Formula::Not(_) => unreachable!("a chain holds no negation"),
+            Formula::Holes(_) => stack.push(g.opened()),
         }
     }
     out
@@ -397,6 +400,7 @@ pub(super) fn written(f: &Formula) -> Written {
             parts(gs, false, &mut out);
             Written::Or(out)
         }
+        Formula::Holes(_) => written(f.opened()),
     }
 }
 

@@ -46,8 +46,14 @@ pub const HULL_NODES: usize = 15;
 /// them; META3 H2), whether or not a summary answers the question, which [`WHOLE`] does
 /// not count.
 pub const BASE_SOLVED: usize = 16;
+/// Call nodes (`Formula::Holes`) written out as clauses for a reader with no route of its own
+/// (`BoundHoles::lowered`, once a node; META3 H7: each fallback counted).
+pub const HOLES_LOWERED: usize = 17;
+/// The clauses those writings made, one a run (the clause emissions of design-b22-load5.md
+/// section 2, G9).
+pub const HOLES_CLAUSES: usize = 18;
 /// The number of counts.
-pub const N: usize = 17;
+pub const N: usize = 19;
 
 thread_local! {
     static COUNTS: [Cell<u64>; N] = const { [const { Cell::new(0) }; N] };

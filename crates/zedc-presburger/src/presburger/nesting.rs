@@ -66,10 +66,14 @@ pub(super) fn nesting<'a>(f: &'a Formula, joins: &'a [Con]) -> (Vec<&'a Con>, Ve
         id: Option<Id>,
     }
     let mut stack: Vec<Frame<'a>> = Vec::new();
+    // A call node is read as its clauses, at the root and below (the generic route, META3
+    // H7): as one part with no parts, its term's atoms would be read nowhere.
+    let f = f.opened();
     match f {
         Formula::Con(c) => {
             row(c);
         }
+        Formula::Holes(_) => unreachable!("an opened formula is no call node"),
         Formula::Not(_) | Formula::And(_) | Formula::Or(_) => stack.push(Frame {
             node: f,
             left: f.kids().iter(),
@@ -82,6 +86,7 @@ pub(super) fn nesting<'a>(f: &'a Formula, joins: &'a [Con]) -> (Vec<&'a Con>, Ve
             Some(Formula::Con(c)) => top.parts.push(Part::Row(row(c))),
             Some(g) => {
                 let id = Id::of(g);
+                let g = g.opened();
                 match id.and_then(|id| shared.get(&id)) {
                     Some(&p) => top.parts.push(p),
                     None => stack.push(Frame {

@@ -63,6 +63,7 @@ fn holds(f: &Formula, m: &Model) -> bool {
         Formula::Not(g) => !holds(g, m),
         Formula::And(gs) => gs.iter().all(|g| holds(g, m)),
         Formula::Or(gs) => gs.iter().any(|g| holds(g, m)),
+        Formula::Holes(_) => holds(f.opened(), m),
     }
 }
 

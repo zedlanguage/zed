@@ -1410,6 +1410,7 @@ pub(super) fn each_constraint<'a>(f: &'a Formula, mut at: impl FnMut(&'a Con)) {
             Formula::Con(c) => at(c),
             Formula::Not(h) => stack.push(h),
             Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
+            Formula::Holes(b) => stack.push(b.lowered()),
         }
     }
 }

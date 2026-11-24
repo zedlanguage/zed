@@ -125,6 +125,182 @@ pub enum Formula {
     And(Shared<Vec<Formula>>),
     /// Disjunction; empty is `false`.
     Or(Shared<Vec<Formula>>),
+    /// The call node: "the term lies in no hole of the set" ([`BoundHoles`]), one leaf for
+    /// what was a clause for each hole.
+    Holes(Shared<BoundHoles>),
+}
+
+/// The holes of a callee (LOAD-call-disj-spread, the call node: the values it excludes), as
+/// maximal disjoint runs of integers in increasing order, built once and shared by every call
+/// that reads it ([`BoundHoles`]). Immutable, so its id ([`Shared`]) names one content for good.
+// Complexity tradeoff (design-b22-load5.md section 2, META3 H5 of XR-load-call-node): the design
+// names the persistent treap of `extend::holes` as the payload. A payload is never cut after it
+// is built, so a sorted array of runs is used instead: membership, successor and predecessor by
+// binary search in O(log n) worst case, where the treap is O(log n) expected, with no
+// priorities to seed, and the build from runs already merged is O(n) (O(n log n) from any
+// order). The face's own holes, which are cut link by link, stay in the treap.
+pub struct HoleSet {
+    /// The runs `(lo, hi)`, `lo <= hi`, each at least 2 below the next (touching runs merge).
+    runs: Vec<(Int, Int)>,
+    /// A fixed hash of the runs, found once: two sets of equal runs have equal keys in every
+    /// run of the compiler, so order and hash do not depend on which set was built first
+    /// (META3 H5, Codex B3: order by a deterministic content key, identity only as the fast
+    /// path).
+    key: u64,
+}
+
+impl HoleSet {
+    /// The set of the integers in the closed intervals `runs`, given in any order and possibly
+    /// overlapping or touching. O(n log n) for n intervals; intervals with `lo > hi` are empty.
+    pub fn of(mut runs: Vec<(Int, Int)>) -> Shared<HoleSet> {
+        runs.retain(|(lo, hi)| lo <= hi);
+        runs.sort();
+        let mut out: Vec<(Int, Int)> = Vec::with_capacity(runs.len());
+        for (lo, hi) in runs {
+            match out.last_mut() {
+                Some(prev) if lo <= &prev.1 + &Int::ONE => prev.1 = prev.1.clone().max(hi),
+                _ => out.push((lo, hi)),
+            }
+        }
+        let mut h = zed_kernel::digest::fixed_hasher();
+        for (lo, hi) in &out {
+            std::hash::Hash::hash(lo, &mut h);
+            std::hash::Hash::hash(hi, &mut h);
+        }
+        let key = std::hash::Hasher::finish(&h);
+        Shared::new(HoleSet { runs: out, key })
+    }
+
+    /// The runs, in increasing order.
+    pub fn runs(&self) -> &[(Int, Int)] {
+        &self.runs
+    }
+
+    /// The run holding `v`, or `None` when `v` lies in no hole. O(log n) by binary search: the
+    /// runs are sorted and disjoint, so the first run whose upper end is at least `v` is the
+    /// only one that can hold it.
+    pub fn run_of(&self, v: &Int) -> Option<&(Int, Int)> {
+        let i = self.runs.partition_point(|(_, hi)| hi < v);
+        self.runs.get(i).filter(|(lo, _)| lo <= v)
+    }
+
+    /// The order of two sets by content: the key, then the runs, so equal content compares
+    /// equal whatever was built first. O(1) when the keys differ, O(n) when they tie.
+    fn cmp_content(&self, other: &HoleSet) -> std::cmp::Ordering {
+        self.key
+            .cmp(&other.key)
+            .then_with(|| self.runs.cmp(&other.runs))
+    }
+}
+
+/// A call of a callee with holes ([`HoleSet`]) through the binding `y = term`: it holds where
+/// the term's value lies in no run (design-b22-load5.md section 2, E1: `Holes::holds` is true
+/// inside a hole, so the node is its complement). The set is shared and never rewritten; a
+/// substitution changes the term alone and makes a new node with a new id, and a copy of the
+/// formula shares the node and its id (META3 H5).
+pub struct BoundHoles {
+    set: Shared<HoleSet>,
+    term: Lin,
+    /// The node written as one clause a run, `term <= lo - 1 || term >= hi + 1`, made the first
+    /// time a reader with no route of its own for the node asks for it, and counted then
+    /// (`extend::counts::HOLES_LOWERED`, `HOLES_CLAUSES`).
+    lowered: OnceLock<Formula>,
+}
+
+impl BoundHoles {
+    /// The set of holes.
+    pub fn set(&self) -> &Shared<HoleSet> {
+        &self.set
+    }
+
+    /// The term the holes are read at.
+    pub fn term(&self) -> &Lin {
+        &self.term
+    }
+
+    /// Whether the node holds at `values`, each atom absent from them zero and each product
+    /// read as the product of its factors' values ([`Lin::eval`]). O(t + log n), t the term's
+    /// size.
+    pub(super) fn holds(&self, values: &Model) -> bool {
+        self.set.run_of(&self.term.eval(values)).is_none()
+    }
+
+    /// The node written as a conjunction of one clause a run, the generic decision of the node
+    /// for a reader with no route of its own (META3 H7: the fallback, counted). Made once a
+    /// node, in O(n) for n runs.
+    pub(super) fn lowered(&self) -> &Formula {
+        self.lowered.get_or_init(|| {
+            super::extend::counts::add(super::extend::counts::HOLES_LOWERED, 1);
+            super::extend::counts::add(super::extend::counts::HOLES_CLAUSES, self.set.runs.len());
+            let mut clauses: Vec<Formula> = (self.set.runs.iter())
+                .map(|(lo, hi)| {
+                    let below = Con::ge(&Lin::constant(lo - &Int::ONE), &self.term);
+                    let above = Con::ge(&self.term, &Lin::constant(hi + &Int::ONE));
+                    Formula::Or(Shared::new(vec![Formula::Con(below), Formula::Con(above)]))
+                })
+                .collect();
+            // One hole is its clause alone (`Formula::outside` makes no node without a hole).
+            match clauses.len() {
+                1 => clauses.pop().expect("one clause"),
+                _ => Formula::And(Shared::new(clauses)),
+            }
+        })
+    }
+
+    /// The order of two nodes: the sets by content ([`HoleSet::cmp_content`]), then the terms.
+    /// Two nodes of one set are compared by their terms alone.
+    pub(super) fn cmp_content(&self, other: &BoundHoles) -> std::cmp::Ordering {
+        let sets = match Shared::same(&self.set, &other.set) {
+            true => std::cmp::Ordering::Equal,
+            false => self.set.cmp_content(&other.set),
+        };
+        sets.then_with(|| self.term.cmp(&other.term))
+    }
+
+    /// Writes the node's content to `h`: the set's key and the term, so that nodes equal under
+    /// [`BoundHoles::cmp_content`] write the same.
+    pub(super) fn hash_content(&self, h: &mut impl std::hash::Hasher) {
+        h.write_u64(self.set.key);
+        std::hash::Hash::hash(&self.term, h);
+    }
+}
+
+impl Formula {
+    /// "`term` lies in no hole of `set`", the call node (META3 H5). A set with no holes gives
+    /// `true`. A term with no atom is one value, so the node is decided here by one membership
+    /// test (design section 2, G8: a constant argument folds to the complement of membership;
+    /// META3 H6: on a fixed value the node holds exactly when the value is no member). O(t +
+    /// log n).
+    // `true` and `false` are written as `joining`'s `top` and `bottom` write them, since this
+    // file is below `joining` (no import cycle, s_01f_import_graph).
+    pub fn outside(set: &Shared<HoleSet>, term: Lin) -> Formula {
+        let top = || Formula::And(Shared::new(Vec::new()));
+        if set.runs.is_empty() {
+            return top();
+        }
+        if term.terms.is_empty() {
+            return match set.run_of(&term.constant) {
+                Some(_) => Formula::Or(Shared::new(Vec::new())),
+                None => top(),
+            };
+        }
+        Formula::Holes(Shared::new(BoundHoles {
+            set: set.clone(),
+            term,
+            lowered: OnceLock::new(),
+        }))
+    }
+
+    /// The formula itself, or for a call node its clauses ([`BoundHoles::lowered`], written
+    /// once a node and counted): the generic route of a walker that reads a formula down to its
+    /// constraints (META3 H7). A node's clauses hold no node, so one step suffices. O(1) after
+    /// the node's first lowering, which is O(runs).
+    pub fn opened(&self) -> &Formula {
+        match self {
+            Formula::Holes(b) => b.lowered(),
+            Formula::Con(_) | Formula::Not(_) | Formula::And(_) | Formula::Or(_) => self,
+        }
+    }
 }
 
 /// The parts of a compound node of a [`Formula`], shared: a copy is a reference count. They
@@ -238,6 +414,7 @@ impl Id {
             Formula::Con(_) => unreachable!("a key names a compound part"),
             Formula::Not(g) => Id(g.0.id),
             Formula::And(gs) | Formula::Or(gs) => Id(gs.0.id),
+            Formula::Holes(b) => Id(b.0.id),
         }
     }
 
@@ -289,6 +466,9 @@ impl Formula {
             Formula::Con(_) => &[],
             Formula::Not(g) => slice::from_ref(&**g),
             Formula::And(gs) | Formula::Or(gs) => gs,
+            // A leaf: its clauses are no parts of it, and a pass reads them only through its
+            // own arm for the node (`BoundHoles::lowered`).
+            Formula::Holes(_) => &[],
         }
     }
 
@@ -298,6 +478,7 @@ impl Formula {
             Formula::Con(_) => false,
             Formula::Not(g) => Shared::strong_count(g) > 1,
             Formula::And(gs) | Formula::Or(gs) => Shared::strong_count(gs) > 1,
+            Formula::Holes(b) => Shared::strong_count(b) > 1,
         }
     }
 
@@ -308,6 +489,7 @@ impl Formula {
             Formula::Not(_) => 1,
             Formula::And(_) => 2,
             Formula::Or(_) => 3,
+            Formula::Holes(_) => 4,
         }
     }
 

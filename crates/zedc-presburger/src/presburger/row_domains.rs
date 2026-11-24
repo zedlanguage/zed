@@ -168,7 +168,7 @@ pub(super) fn range(arm: &Formula) -> Option<(Atom, Int, Int)> {
     let parts: &[Formula] = match arm {
         Formula::Con(_) => std::slice::from_ref(arm),
         Formula::And(gs) => gs,
-        Formula::Or(_) | Formula::Not(_) => return None,
+        Formula::Or(_) | Formula::Not(_) | Formula::Holes(_) => return None,
     };
     let (mut lo, mut hi): (Option<Int>, Option<Int>) = (None, None);
     let mut atom: Option<&Atom> = None;

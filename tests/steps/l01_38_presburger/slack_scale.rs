@@ -177,6 +177,7 @@ fn collect_atoms(f: &Formula, out: &mut BTreeSet<Atom>) {
             }
         }
         Formula::Not(inner) => collect_atoms(inner, out),
+        Formula::Holes(_) => collect_atoms(f.opened(), out),
         Formula::And(fs) | Formula::Or(fs) => {
             for sub in fs.iter() {
                 collect_atoms(sub, out);
@@ -201,6 +202,7 @@ fn rename_formula(f: &Formula, map: &BTreeMap<Atom, Atom>) -> Formula {
         Formula::Not(inner) => Formula::Not(Shared::new(rename_formula(inner, map))),
         Formula::And(fs) => Formula::and(fs.iter().map(|s| rename_formula(s, map)).collect()),
         Formula::Or(fs) => Formula::or(fs.iter().map(|s| rename_formula(s, map)).collect()),
+        Formula::Holes(_) => rename_formula(f.opened(), map),
     }
 }
 
