@@ -576,20 +576,41 @@ fn functions(n: usize) -> String {
         .collect()
 }
 
+/// The names `f0` to `fn` that `functions(n)` defines and calls.
+fn function_names(n: usize) -> Vec<String> {
+    (0..=n).map(|i| format!("f{i}")).collect()
+}
+
+/// `n` functions generate `n` bodies, the last calling `fn`.
+fn generates_each_function(text: &str, names: &[String], n: usize) {
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let f = generate_x86(text, &names).expect("compiles");
+    assert_eq!(f.len(), n);
+    assert_eq!(f[n - 1].relocations[0].symbol, format!("f{n}"));
+}
+
+/// The answers of `bench::generation_scales_with_the_number_of_functions` at small sizes
+/// (BENCH-meters-outside-bench).
 #[test]
-fn generation_scales_with_the_number_of_functions() {
-    // Parsing and compiling are per function, and every function here is the same size, so the
-    // work is of order n in the number of functions. Each run makes and releases its target,
-    // a cost that does not grow with n.
-    let texts = scaling::inputs(40, |n| {
-        let names: Vec<String> = (0..=n).map(|i| format!("f{i}")).collect();
-        (functions(n), names)
-    });
-    scaling::check("zed_clif_generate of n functions", 40, |n| {
-        let (text, names) = &texts[&n];
-        let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        let f = generate_x86(text, &names).expect("compiles");
-        assert_eq!(f.len(), n);
-        assert_eq!(f[n - 1].relocations[0].symbol, format!("f{n}"));
-    });
+fn generation_gives_each_function_at_small_sizes() {
+    for n in [1, 2, 8] {
+        generates_each_function(&functions(n), &function_names(n), n);
+    }
+}
+
+/// The benchmark of generation, run by `tools/run_tests.sh --bench`.
+mod bench {
+    use super::*;
+
+    #[test]
+    fn generation_scales_with_the_number_of_functions() {
+        // Parsing and compiling are per function, and every function here is the same size,
+        // so the work is of order n in the number of functions. Each run makes and releases
+        // its target, a cost that does not grow with n.
+        let texts = scaling::inputs(40, |n| (functions(n), function_names(n)));
+        scaling::check("zed_clif_generate of n functions", 40, |n| {
+            let (text, names) = &texts[&n];
+            generates_each_function(text, names, n);
+        });
+    }
 }
