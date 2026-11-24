@@ -22008,7 +22008,7 @@ fn refused(each: &Each) -> bool {
 }
 
 thread_local! {
-    /// Whether [`factored`] takes no part out, so that [`project_each`] and [`decide`] ask
+    /// Whether [`factored()`] takes no part out, so that [`project_each`] and [`decide`] ask
     /// every formula as it is written: for the tests that compare the two (ST-formula-sibling).
     pub static UNFACTORED: Cell<bool> = const { Cell::new(false) };
     /// Test control: [`project_each`] asks each question under the names given, not renamed by
@@ -22100,7 +22100,7 @@ fn factored(f: &Formula) -> Option<Formula> {
 }
 
 /// The disjunction `g` with the compound parts every disjunct holds as conjuncts taken out
-/// ([`factored`]), or `None` when there are none, when one is linked to the rest of a disjunct,
+/// ([`factored()`]), or `None` when there are none, when one is linked to the rest of a disjunct,
 /// or, under an even number of negations (`even`), when the rests hold at every point.
 fn factored_or(g: &Formula, links: &AtomLinks, even: bool) -> Option<Formula> {
     let ds = g.kids();
@@ -22175,7 +22175,7 @@ fn factored_or(g: &Formula, links: &AtomLinks, even: bool) -> Option<Formula> {
     }))
 }
 
-/// The atoms of a formula grouped by the constraints that link them ([`factored`]), an atom
+/// The atoms of a formula grouped by the constraints that link them ([`factored()`]), an atom
 /// of a product linked with its factors; a group is found in near-constant time.
 struct AtomLinks {
     ids: HashMap<Atom, usize>,
@@ -28697,7 +28697,7 @@ enum Tier {
 /// (`l01_38_presburger::ladder::a_product_atom_cancels_through_the_products_of_another_pair`;
 /// the rule of C2-pairs-long-row left the second out, as `d` is foreign to `c`, and lost the
 /// proof). Which products to leave out is decided from the factor rows without expanding the
-/// products, at the cost [`factored`] states; each product kept then costs
+/// products, at the cost [`mod@factored`] states; each product kept then costs
 /// O(|a| × |b| × log) for its rows `a` and `b`.
 ///
 /// Complexity tradeoff: a product of two variables is an opaque atom, bounded only by these
