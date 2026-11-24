@@ -812,3 +812,31 @@ fn tuples_held_by_members_of_a_shape_union_are_found_in_linear_time() {
         assert!(held.subtype(&shapes));
     });
 }
+
+#[test]
+fn the_steps_of_differences_take_linear_time_in_their_number() {
+    // MSG-diff-nested-arg-step: the walk visits each written component once, writes a path
+    // only for a step taken, and drops the outer steps in one pass, where comparing each pair
+    // of steps took time quadratic in their number. Small instances:
+    // `the_steps_of_differences_side_by_side_and_nested_each_get_a_step`.
+    scaling::check(
+        "the steps of differences side by side, by number",
+        40,
+        |n| {
+            assert_eq!(steps_side_by_side(n), n);
+        },
+    );
+    scaling::check("the steps of differences nested, by depth", 40, |n| {
+        assert_eq!(steps_nested(n), n);
+    });
+}
+
+#[test]
+fn a_refused_call_on_a_deeply_nested_display_takes_linear_time_in_its_depth() {
+    // PERF-deep-tuple-call-refusal; small instance: `a_refused_call_on_a_nested_display_is_one_error`.
+    scaling::check(
+        "a refused call on a nested display, by depth",
+        40,
+        refuse_deep_call,
+    );
+}

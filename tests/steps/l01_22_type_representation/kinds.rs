@@ -2278,7 +2278,7 @@ fn nested_difference(n: usize) -> String {
 }
 
 #[test]
-fn the_steps_of_differences_side_by_side_take_linear_time_in_their_number() {
+fn the_steps_of_differences_side_by_side_and_nested_each_get_a_step() {
     // MSG-diff-nested-arg-step: the walk visits each written component once, writes a path
     // only for a step taken, and drops the outer steps in one pass, where comparing each pair
     // of steps took time quadratic in their number. `n` differences side by side in one tuple
@@ -2292,84 +2292,78 @@ fn the_steps_of_differences_side_by_side_take_linear_time_in_their_number() {
         errs.iter().flat_map(|e| &e.1).any(|s| s.ends_with(&step)),
         "{errs:#?}"
     );
-    let side_by_side = |n: usize| {
-        format!(
-            "f(p: ({}int)) = p;\ng() = f(p: ({}1));\n",
-            "(..) \\ (int, int), ".repeat(n),
-            "(2, 3), ".repeat(n)
-        )
-    };
-    let count = |n: usize| {
-        let errs = errors_with_steps(&side_by_side(n));
-        assert_eq!(errs.len(), 1);
-        errs[0]
-            .1
-            .iter()
-            .filter(|s| s.contains("takes away"))
-            .count()
-    };
-    assert_eq!(count(3), 3);
-    scaling::check(
-        "the steps of differences side by side, by number",
-        40,
-        |n| {
-            assert_eq!(count(n), n);
-        },
+    assert_eq!(steps_side_by_side(3), 3);
+    assert_eq!(steps_nested(3), 3);
+    // The scaling checks are `bench::the_steps_of_differences_take_linear_time_in_their_number`
+    // (BENCH-meters-outside-bench: here 8 tests run at a time, and the meter falls back to
+    // processor time).
+}
+
+/// The number of steps about a part taken away in the one error of a call with `n` differences
+/// side by side in one tuple, each taking a component away.
+fn steps_side_by_side(n: usize) -> usize {
+    let text = format!(
+        "f(p: ({}int)) = p;\ng() = f(p: ({}1));\n",
+        "(..) \\ (int, int), ".repeat(n),
+        "(2, 3), ".repeat(n)
     );
-    // A difference at each of `n` depths, `((..) \ (int, int), ((..) \ (int, int), … int))`:
-    // each step's path is as long as its depth, and each pair of steps shares that prefix.
-    // Side by side, the steps' paths are short, so comparing each pair of the `k` steps, the
-    // walk before b22-msgtypes, stayed within the limit up to k = 1000 (9.5 times at 8n,
-    // measured at f36f5888e), each step's own check costing far more than a comparison.
-    // Nested, the run measured 25.0 times the bytes at 8n at f36f5888e and at 964ae4d8c,
-    // from the derivation building the type of each nested display at every level
-    // (PERF-deep-tuple-call-refusal), which the depth test below measures alone.
-    let comb = |n: usize| {
-        format!(
-            "f(p: {}int{}) = p;\ng() = f(p: {}1{});\n",
-            "((..) \\ (int, int), ".repeat(n),
-            ")".repeat(n),
-            "((2, 3), ".repeat(n),
-            ")".repeat(n)
-        )
-    };
-    let nested = |n: usize| {
-        let errs = errors_with_steps(&comb(n));
-        assert_eq!(errs.len(), 1);
-        errs[0]
-            .1
-            .iter()
-            .filter(|s| s.contains("takes away"))
-            .count()
-    };
-    assert_eq!(nested(3), 3);
-    scaling::check("the steps of differences nested, by depth", 40, |n| {
-        assert_eq!(nested(n), n);
-    });
+    let errs = errors_with_steps(&text);
+    assert_eq!(errs.len(), 1);
+    errs[0]
+        .1
+        .iter()
+        .filter(|s| s.contains("takes away"))
+        .count()
+}
+
+/// The same with a difference at each of `n` depths, `((..) \ (int, int), ((..) \ (int, int),
+/// … int))`: each step's path is as long as its depth, and each pair of steps shares that
+/// prefix. Side by side, the steps' paths are short, so comparing each pair of the `k` steps,
+/// the walk before b22-msgtypes, stayed within the limit up to k = 1000 (9.5 times at 8n,
+/// measured at f36f5888e), each step's own check costing far more than a comparison. Nested,
+/// the run measured 25.0 times the bytes at 8n at f36f5888e and at 964ae4d8c, from the
+/// derivation building the type of each nested display at every level
+/// (PERF-deep-tuple-call-refusal), which [`refuse_deep_call`] measures alone.
+fn steps_nested(n: usize) -> usize {
+    let text = format!(
+        "f(p: {}int{}) = p;\ng() = f(p: {}1{});\n",
+        "((..) \\ (int, int), ".repeat(n),
+        ")".repeat(n),
+        "((2, 3), ".repeat(n),
+        ")".repeat(n)
+    );
+    let errs = errors_with_steps(&text);
+    assert_eq!(errs.len(), 1);
+    errs[0]
+        .1
+        .iter()
+        .filter(|s| s.contains("takes away"))
+        .count()
+}
+
+/// Checks that a call on a display `n` tuples deep is refused with one error.
+/// PERF-deep-tuple-call-refusal: the derivation of a refused call asks for the type of each
+/// tuple written out in the argument, and built each one from its parts at any depth, so a
+/// display `n` tuples deep cost time and memory quadratic in `n` (3.3e9 instructions in the
+/// check stage at n = 400, 3.5 times those at 200); each tuple is now built once.
+fn refuse_deep_call(n: usize) {
+    let text = format!(
+        "f(p: {}(int, bool){}) = p;\ng() = f(p: {}(2, 3){});\n",
+        "(int, ".repeat(n),
+        ")".repeat(n),
+        "(1, ".repeat(n),
+        ")".repeat(n)
+    );
+    let errs = errors_with_steps(&text);
+    assert_eq!(errs.len(), 1, "{errs:#?}");
+    assert!(errs[0].0.contains("does not take"), "{errs:#?}");
 }
 
 #[test]
-fn a_refused_call_on_a_deeply_nested_display_takes_linear_time_in_its_depth() {
-    // PERF-deep-tuple-call-refusal: the derivation of a refused call asks for the type of each
-    // tuple written out in the argument, and built each one from its parts at any depth, so a
-    // display `n` tuples deep cost time and memory quadratic in `n` (3.3e9 instructions in the
-    // check stage at n = 400, 3.5 times those at 200); each tuple is now built once.
-    let deep = |n: usize| {
-        format!(
-            "f(p: {}(int, bool){}) = p;\ng() = f(p: {}(2, 3){});\n",
-            "(int, ".repeat(n),
-            ")".repeat(n),
-            "(1, ".repeat(n),
-            ")".repeat(n)
-        )
-    };
-    let refused = |n: usize| {
-        let errs = errors_with_steps(&deep(n));
-        assert_eq!(errs.len(), 1, "{errs:#?}");
-        assert!(errs[0].0.contains("does not take"), "{errs:#?}");
-    };
-    refused(3);
-    scaling::check("a refused call on a nested display, by depth", 40, refused);
+fn a_refused_call_on_a_nested_display_is_one_error() {
+    // The scaling check is
+    // `bench::a_refused_call_on_a_deeply_nested_display_takes_linear_time_in_its_depth`.
+    refuse_deep_call(3);
 }
 
 #[test]

@@ -5010,7 +5010,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     // each tuple is built once from its components' kept types, `O(width)` by [`Ty::tuple`]
     // ([`Row::new`] reads only its components' outer levels), `O(s)` over every ask.
     // Tradeoff: one `Ty` (an `Arc`) kept per tuple built, for the lifetime of one message.
-    // Test: `l01_22_type_representation::kinds::
+    // Test: `l01_22_type_representation::kinds::bench::
     // a_refused_call_on_a_deeply_nested_display_takes_linear_time_in_its_depth`.
     fn tuple_seen(&self, e: &Expr, memo: &mut HashMap<Span, Ty>) -> Option<Ty> {
         let ExprKind::Tuple(items) = &e.kind else {

@@ -242,8 +242,11 @@ impl Quoted {
             };
             let (headline, theirs) = &self.shown[e];
             let mut m = 1;
+            // A repair is never left out: the reader acts on it at each error (l02_03 `units`,
+            // `main::files` in a unit with its own `main`).
             while i + m < d.steps.len()
                 && j + m < theirs.len()
+                && !d.steps[i + m].text.starts_with("repair:")
                 && same(&d.steps[i + m], &theirs[j + m])
             {
                 m += 1;

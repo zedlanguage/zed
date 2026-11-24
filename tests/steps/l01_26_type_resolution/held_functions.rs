@@ -275,9 +275,10 @@ fn scale_and_data(at: &str) -> [String; 3] {
 }
 
 /// The number of notes the one error of [`in_one_expression`] has: [`holds_scale`], one for
-/// the name, one for its definition, one for each tuple, and [`scale_and_data`].
-pub(super) fn notes_in_one_expression(n: usize) -> usize {
-    n + 6
+/// the name, one for its definition, one for the tuples, which names the function's place by a
+/// path (`.0.0.0`; row MSG-shared-print), and [`scale_and_data`].
+pub(super) fn notes_in_one_expression(_: usize) -> usize {
+    7
 }
 
 /// The number of notes the one error of [`in_named_steps`] has: [`holds_scale`], three for
@@ -296,14 +297,13 @@ pub(super) fn notes_in_calls(_: usize) -> usize {
 fn a_function_in_nested_tuples_is_one_error_with_the_path_to_it() {
     // A small instance of the benchmark
     // `bench::held_functions::a_function_in_many_nested_tuples_is_one_error_in_linear_time`.
-    // Each tuple and name the function passes through to the `==` is a step with no type
-    // printed, so the notes grow with the program and not with the types of its steps.
+    // Each name the function passes through to the `==` is a step with no type printed, so the
+    // notes grow with the program and not with the types of its steps; tuples written one inside
+    // another are one step, naming the function's place by a path (row MSG-shared-print).
     let mut expected: Vec<String> = [
         "[t] `t` holds the function here",
         "[(((scale, 1), 1), 1)] `t` is defined here",
-        "[(((scale, 1), 1), 1)] this tuple holds the function",
-        "[((scale, 1), 1)] this tuple holds the function",
-        "[(scale, 1)] this tuple holds the function",
+        "[(((scale, 1), 1), 1)] this tuple holds the function at `.0.0.0`",
     ]
     .map(String::from)
     .into();
@@ -359,8 +359,7 @@ fn a_part_with_no_function_is_left_out_of_the_path() {
     let mut expected: Vec<String> = [
         "[t] `t` holds the function here",
         "[((1, 2), (scale, 3))] `t` is defined here",
-        "[((1, 2), (scale, 3))] this tuple holds the function",
-        "[(scale, 3)] this tuple holds the function",
+        "[((1, 2), (scale, 3))] this tuple holds the function at `.1.0`",
     ]
     .map(String::from)
     .into();
