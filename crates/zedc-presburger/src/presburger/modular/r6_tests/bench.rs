@@ -248,7 +248,7 @@ fn fibonacci_pair(n: usize) -> (Int, Int) {
 /// With products of O(n log n) that is n log² n, whose ratio at 8n is `8 (ln 8n / ln n)²`:
 /// 12.5 at n = 4096 and 12.7 at n = 2,843 bits. At these widths the products are Karatsuba
 /// (zed-kernel `karatsuba_mul`, which allocates only the product), so the measured ratios are
-/// near that prediction: 13.62 in instructions and 11.61 in bytes (b22-presburger10, 2026-11-24,
+/// near that prediction: 13.635 in instructions and 11.48 in bytes (b22-presburger10, 2026-11-24,
 /// v5e VM). With num-bigint's own products, which allocate at each level, the bytes grew 15.28
 /// times (PERF-bezout-bytes). The test catches a step to a worse order, not the constant:
 /// Euclid's quadratic extended gcd (`Int::euclid_bezout`) on the same pairs measured 11.7x in
