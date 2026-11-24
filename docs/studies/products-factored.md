@@ -237,7 +237,11 @@ written only for a row with several partners. Tests: the verdicts of both forms 
 fewer goals (`the_shared_form_gives_the_verdicts_of_the_direct_form`); the written sizes of
 closed_rL at r = L = 6 and 17 are 504 and 10404 against the direct 1332 and 83810, growth
 20.64 against 62.92 at 8.03 times the input (`the_written_size_of_closed_rl_scales`; both are
-output, exception 2).
+output, exception 2). Both tests take rows no two of which are parallel: `written` keeps one
+copy of equal constraints, so parallel rows write less than the formulas (333 and 378 at
+r = L = 6 with coefficients `1 + ((i + l) % 3)`). On the verdict test `satisfiable` refuses
+some goals (12 to 21 of 48 over eight seeds; r = L = 3 refused outright), which count as no
+verdict; the test asks 96 goals and allows at most half refused.
 
 *Size.* E_R is at most the uncollected affine term count of the expanded rows,
 Σ(|a||b| + aff + 1) ≤ W_full, and W_full ≤ 4·W_R when |a|, |b| ≥ 1 (a constant-only factor is
@@ -340,7 +344,11 @@ a cost, not a refusal, with its bound, reason and a scaling test at that bound, 
    the reduction and its proof are in the module doc of `factored.rs`, "The exact peel and its
    lower bound"; tests `the_peel_decides_orthogonal_vectors` and
    `the_peel_on_orthogonal_vectors_follows_its_listed_incidences`]. On wlgrow the peel drops no
-   pair, so its 47.20 is the growth of the output W_R (`the_peel_on_wlgrow_is_bounded_by_its_output`).
+   pair, so its 47.20 is the growth of the output W_R (`the_peel_on_wlgrow_is_bounded_by_its_output`;
+   in instructions, the whole solver at l = 10 and 17, k + W_R 7.02 times, grows 6.00 times,
+   bench `bench_factored_peel_on_wlgrow`). The reduction needs a gadget of two pairs that
+   leaves the frames no sign: without it frame+ flips each (A_i, B_i) and u = 1 drops every
+   pair whatever the vectors.
    Phase 1b's triangle inference stays withdrawn. Tests on the superlinear peel
    (R3-6): `nocount` (count rules off): peel 63.15, peel/W_listed 2.638 → 2.627, ratio 1.00 ≤
    1.31; `p4open`: peel 50.52; `wlgrow`: peel 47.20.

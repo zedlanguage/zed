@@ -1055,6 +1055,12 @@ fn the_peel_on_wlgrow_is_bounded_by_its_output() {
 /// (P, Q) and each (A_i, B_i). Mentioned: s_i * z_v for v_i = 0, and t_i with each variable of
 /// A_i. Every atom w_u * z_v is free; (A_i, B_i) holds it iff
 /// u_i = v_i = 1, so it is held by (P, Q) alone iff u and v are orthogonal.
+///
+/// Last, the two pairs (E1, F1) and (E2, F2) that keep the sign predicates from dropping
+/// anything (module doc of `factored`, "The exact peel and its lower bound", the paragraph on
+/// the whole solver): E1 = −Σ every variable above, E2 = w_0 − Σ the others, F1 = f_1, F2 = f_2,
+/// every atom of these two pairs mentioned. They are the last four rows; no rule drops them,
+/// since they hold no free atom.
 fn build_ov(us: &[Vec<bool>], vs: &[Vec<bool>]) -> Prob {
     let (n, d) = (us.len(), us[0].len());
     let mut rows: Vec<Vec<(usize, i64)>> = vec![
@@ -1083,8 +1089,27 @@ fn build_ov(us: &[Vec<bool>], vs: &[Vec<bool>]) -> Prob {
         rows.push(b);
         bic.push((vec![rows.len() - 2], vec![rows.len() - 1]));
     }
+    let nv = 2 * n + 2 * d;
+    for (j, first) in [(0, -1), (1, 1)] {
+        let f = nv + j;
+        let e: Vec<(usize, i64)> = (0..nv)
+            .map(|x| (x, if x == 0 { first } else { -1 }))
+            .collect();
+        ment.extend((0..nv).map(|x| (x, f)));
+        rows.push(e);
+        rows.push(vec![(f, 1)]);
+        bic.push((vec![rows.len() - 2], vec![rows.len() - 1]));
+    }
     let consts = vec![0; rows.len()];
-    prob(&rows, &consts, &bic, &ment, 2 * n + 2 * d)
+    prob(&rows, &consts, &bic, &ment, nv + 2)
+}
+
+/// The pairs of `build_ov`'s problem `p` other than its two last, (E1, F1) and (E2, F2).
+fn ov_pairs(p: &Prob, pairs: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let first = p.rows.len() - 4;
+    (pairs.iter().copied())
+        .filter(|&(a, b)| a < first && b < first)
+        .collect()
 }
 
 /// Random vectors with a share `ones` / 8 of ones, and whether two are orthogonal.
@@ -1118,13 +1143,18 @@ fn the_peel_decides_orthogonal_vectors() {
         let (us, vs, orth) = random_ov(&mut rng, n, d, ones);
         let p = build_ov(&us, &vs);
         let out = solve(&p, Opts::default());
-        let every = all_pairs(&p);
+        let left = ov_pairs(&p, &out.left);
+        let every = ov_pairs(&p, &all_pairs(&p));
+        assert_eq!(
+            out.left.len() - left.len(),
+            2,
+            "seed {seed}: (E1, F1) and (E2, F2) stay"
+        );
         if orth {
             yes += 1;
             assert!(
-                out.left.is_empty(),
-                "seed {seed}: n={n} d={d}: an orthogonal pair, yet {:?} left",
-                out.left
+                left.is_empty(),
+                "seed {seed}: n={n} d={d}: an orthogonal pair, yet {left:?} left"
             );
             let ctrl = solve(
                 &p,
@@ -1137,7 +1167,7 @@ fn the_peel_decides_orthogonal_vectors() {
         } else {
             no += 1;
             assert_eq!(
-                out.left, every,
+                left, every,
                 "seed {seed}: n={n} d={d}: no orthogonal pair, yet a pair went"
             );
         }
@@ -1178,14 +1208,18 @@ fn the_peel_on_orthogonal_vectors_follows_its_listed_incidences() {
         assert!(orth, "the planted pair is orthogonal");
         let p = build_ov(&us, &vs);
         let out = solve(&p, Opts::default());
-        let w = incidences(&p, &all_pairs(&p));
+        let w = incidences(&p, &ov_pairs(&p, &all_pairs(&p)));
+        let left = ov_pairs(&p, &out.left);
         println!(
             "n={n} size={} single={} W_listed={w} left={}",
             size(&p),
             out.single,
-            out.left.len()
+            left.len()
         );
-        assert!(out.left.is_empty(), "the output is empty");
+        assert!(
+            left.is_empty(),
+            "the output is empty but for (E1, F1) and (E2, F2)"
+        );
         per[j] = out.single * 1000 / w;
         at[j] = [size(&p), out.single];
     }
@@ -1239,26 +1273,43 @@ fn written_size(cons: &[Con]) -> usize {
 }
 
 /// PRES-products-shared-output: the shared form of [`super::written`] gives the verdicts of
-/// the direct form on closed_rL (r = L = 3, random nonzero coefficients, zero constants) and
-/// moment_curve (m = 4, constants i + 2), for goals over the product atoms: each a product row with a constant
-/// added (-1, 0 or 1), a nonnegative sum of two with one, or a random row. On these the shared
-/// form is the smaller and is written (auxiliary variables added). Control: the shared form
-/// without its s equations proves fewer goals.
+/// the direct form on closed_rL (r = 4, L = 2, random nonzero coefficients, zero constants) and
+/// moment_curve (m = 4, two variables a side, coefficients 1 and i + 1, constants i + 2), for
+/// goals over the product atoms: each a product row with a constant added (-1, 0 or 1), a
+/// nonnegative sum of two with one, or a random row. On these the shared form is the smaller
+/// and is written (auxiliary variables added). A goal on which `satisfiable` refuses either
+/// form (its elimination would grow: r = L = 3 refused, run of 2026-11-24 on l43) gives no
+/// verdict and is counted apart, never as a difference; at least half the goals must be
+/// decided. Control: the shared form without its s equations proves fewer goals.
 #[test]
 fn the_shared_form_gives_the_verdicts_of_the_direct_form() {
     let (mut rng, seed) = Rng::fresh("the_shared_form_gives_the_verdicts_of_the_direct_form");
     let mut families = Vec::new();
     for _ in 0..3 {
-        let mut c = |_: usize, _: usize| [-3, -2, -1, 1, 2, 3][rng.below(6)];
+        // No two rows of a side parallel: `written` keeps one copy of equal constraints, so
+        // parallel rows would make the direct form smaller than its count.
+        let mut tab: Vec<[i64; 2]> = Vec::new();
+        while tab.len() < 8 {
+            let v = [0, 1].map(|_| [-3, -2, -1, 1, 2, 3][rng.below(6)]);
+            let side = (tab.len() / 4) * 4;
+            if tab[side..].iter().all(|u| u[0] * v[1] != u[1] * v[0]) {
+                tab.push(v);
+            }
+        }
+        let mut at = 0;
+        let mut c = |_: usize, _: usize| {
+            at += 1;
+            tab[(at - 1) / 2][(at - 1) % 2]
+        };
         let mut k = |_: usize| 0;
-        let (rows, pairs) = two_sides(3, &["x0", "x1", "x2"], &["y0", "y1", "y2"], &mut c, &mut k);
+        let (rows, pairs) = two_sides(4, &["x0", "x1"], &["y0", "y1"], &mut c, &mut k);
         families.push(("closed_rL", rows, pairs));
     }
     let mut c = |i: usize, l: usize| (i as i64 + 1).pow(l as u32);
     let mut k = |i: usize| i as i64 + 2;
-    let (rows, pairs) = two_sides(4, &["x", "z", "w"], &["y", "t", "u"], &mut c, &mut k);
+    let (rows, pairs) = two_sides(4, &["x", "z"], &["y", "t"], &mut c, &mut k);
     families.push(("moment_curve", rows, pairs));
-    let (mut proved, mut differ, mut asked) = (0, 0, 0);
+    let (mut proved, mut differ, mut asked, mut refused) = (0, 0, 0, 0);
     for (name, rows, pairs) in &families {
         let refs: Vec<&Lin> = rows.iter().collect();
         let (direct, n0) = super::written(&refs, pairs, 100, super::Form::Direct);
@@ -1280,7 +1331,9 @@ fn the_shared_form_gives_the_verdicts_of_the_direct_form() {
             .map(|&(a, b)| rows[a].product(&rows[b]).expect("linear rows"))
             .collect();
         let atoms: Vec<&Atom> = (products.iter()).flat_map(|p| p.terms.keys()).collect();
-        for _ in 0..12 {
+        // 24 goals a family: 12 refused 12 to 21 of 48 over eight seeds (l43, 2026-11-24), too
+        // near the half allowed; at 96 the half is about four standard deviations away.
+        for _ in 0..24 {
             let mut goal = match rng.below(3) {
                 0 => products[rng.below(products.len())].clone(),
                 1 => products[rng.below(products.len())]
@@ -1299,29 +1352,39 @@ fn the_shared_form_gives_the_verdicts_of_the_direct_form() {
             goal.plus_assign(&Lin::constant(rng.int(-1, 1)));
             // Not goal >= 0, over the integers: -goal - 1 >= 0.
             let not_goal = goal.times(-1).minus(&Lin::constant(1));
-            let verdict = |cons: &[Con]| -> bool {
+            // Proved (no integer point of the rows, the constraints and not goal), or None
+            // when `satisfiable` refuses.
+            let verdict = |cons: &[Con]| -> Option<bool> {
                 let fs: Vec<Formula> = (rows.iter().cloned().map(ge))
                     .chain(cons.iter().cloned().map(Formula::Con))
                     .chain([ge(not_goal.clone())])
                     .collect();
-                let m = satisfiable(&Formula::And(Shared::new(fs)));
-                m.unwrap_or_else(|r| panic!("seed {seed}: {name}: refused: {r}"))
-                    .is_none()
+                satisfiable(&Formula::And(Shared::new(fs)))
+                    .ok()
+                    .map(|m| m.is_none())
             };
-            let d = verdict(&direct);
+            asked += 1;
+            let (Some(d), Some(s)) = (verdict(&direct), verdict(&shared)) else {
+                refused += 1;
+                continue;
+            };
             assert_eq!(
-                d,
-                verdict(&shared),
+                d, s,
                 "seed {seed}: {name}: goal {goal:?}: the two forms differ"
             );
-            asked += 1;
             proved += usize::from(d);
-            differ += usize::from(d != verdict(&no_eq));
+            differ += usize::from(verdict(&no_eq).is_some_and(|c| c != d));
         }
     }
-    println!("seed {seed}: {asked} goals, {proved} proved; the control differs on {differ}");
+    println!(
+        "seed {seed}: {asked} goals, {refused} refused, {proved} proved; the control differs on {differ}"
+    );
     assert!(
-        proved > 0 && proved < asked,
+        2 * refused <= asked,
+        "seed {seed}: {refused} of {asked} goals refused"
+    );
+    assert!(
+        proved > 0 && proved < asked - refused,
         "seed {seed}: both verdicts occur"
     );
     assert!(
@@ -1330,12 +1393,14 @@ fn the_shared_form_gives_the_verdicts_of_the_direct_form() {
     );
 }
 
-/// PRES-products-shared-output: the written size of closed_rL (zero constants, coefficients
-/// 1 to 3) in each form, r = L from 6 to 17 (the input 2rL grows 8.03 times). The shared size
-/// is the design's E_R = rL² + rL + r²L + r² (sec. 4: 504 and 10404), the direct one
-/// r²(L² + 1). Both are output, the r² rows of R (exception 2); the shared form grows 20.64
-/// times against the direct form's 62.92. Held: the shared size grows less than the direct
-/// size, and the sizes are those of the formulas.
+/// PRES-products-shared-output: the written size of closed_rL (zero constants, row i with
+/// coefficient 2 on its i-th variable and 1 on the rest, so no two rows are parallel) in each
+/// form, r = L from 6 to 17 (the input 2rL grows 8.03 times). `written` keeps one copy of
+/// equal constraints, so parallel rows would write fewer: coefficients `1 + ((i + l) % 3)`
+/// made rows i and i + 3 equal and gave 333 and 378 at r = L = 6 (run of 2026-11-24 on l43).
+/// The shared size is the design's E_R = rL² + rL + r²L + r² (sec. 4: 504 and 10404), the
+/// direct one r²(L² + 1). Both are output, the r² rows of R (exception 2). Held: the sizes are
+/// those of the formulas, and the shared size grows less than the direct size.
 #[test]
 fn the_written_size_of_closed_rl_scales() {
     let mut sizes = [[0usize; 2]; 2];
@@ -1347,7 +1412,7 @@ fn the_written_size_of_closed_rl_scales() {
             names[..r].iter().map(|n| &n[..]).collect(),
             names[r..].iter().map(|n| &n[..]).collect(),
         );
-        let mut c = |i: usize, l: usize| 1 + ((i + l) % 3) as i64;
+        let mut c = |i: usize, l: usize| 1 + i64::from(i == l);
         let mut k = |_: usize| 0;
         let (rows, pairs) = two_sides(r, &xs, &ys, &mut c, &mut k);
         let refs: Vec<&Lin> = rows.iter().collect();

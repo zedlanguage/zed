@@ -60,24 +60,37 @@
 //! `tests::build_ov`, O(nd)): variables w_u, z_v, s_i, t_i; rows P = Σ w_u + Σ s_i, Q = Σ z_v,
 //! and for each dimension i with some v_b,i = 1, A_i = −Σ_{u_a,i = 1} w_a − s_i and B_i =
 //! −Σ_{v_b,i = 1} z_b − t_i; products (P, Q) and each (A_i, B_i); mentioned atoms s_i * z_b for
-//! v_b,i = 0 and t_i with each variable of A_i. So N = O(nd).
+//! v_b,i = 0 and t_i with each variable of A_i. Then a gadget for the sign predicates (see
+//! below): with x_0..x_{m−1} these m = 2n + 2d variables (x_0 the first), new variables f_1,
+//! f_2, rows E_1 = −x_0 − Σ_{k≥1} x_k, E_2 = x_0 − Σ_{k≥1} x_k, F_j = f_j, products (E_j, F_j),
+//! and every x_k * f_j mentioned. So N = O(nd).
 //! 1. No atom cancels: the two rows of each pair share no variable, so each incidence `x * y`,
 //!    x in a, y in b, has the coefficient a_x b_y ≠ 0.
 //! 2. The free atoms of (A_i, B_i) are w_a * z_b with u_a,i = v_b,i = 1, and s_i * z_b with
 //!    v_b,i = 1; (P, Q) holds each of them too. So while (P, Q) is live, no atom of an (A_i,
-//!    B_i) has a single holder.
+//!    B_i) has a single holder. The atoms of (E_j, F_j) are all mentioned, so these two pairs
+//!    hold no free atom: they give no atom a holder and are never dropped (Theorem D needs
+//!    c_r(u) > 0 on a dropped pair, and c_r is 0 on a pair with no free atom).
 //! 3. (P, Q) alone holds w_a * z_b iff no i has u_a,i = v_b,i = 1, i.e. u_a · v_b = 0; its
 //!    atoms s_i * z_b are held by (A_i, B_i) too, or mentioned.
 //! 4. With an orthogonal pair, (P, Q) goes; then each s_i * z_b (v_b,i = 1, which exists for
-//!    every i with a pair) has the single holder (A_i, B_i), so every pair goes: W_R = 0.
-//!    Without one, by 2 and 3 no atom has a single holder and the rule drops nothing.
-//! 5. An algorithm of time C (N^{2−ε} + W_R), stopped after C N^{2−ε} steps, then decides OV:
-//!    stopped means no orthogonal pair (W_R = 0 otherwise); finished, (P, Q) is left iff there
-//!    is none. That is time O((nd)^{2−ε}), n^{2−ε} polylog n at d = c log n, which OVH rules
-//!    out (OVH follows from the strong exponential time hypothesis: Williams, "A new algorithm
-//!    for optimal 2-constraint satisfaction and its implications", Theor. Comput. Sci. 348(2-3),
-//!    2005, DOI 10.1016/j.tcs.2005.09.023, title and DOI checked with allpapers-locate
-//!    2026-11-24; the full text was not read). ∎
+//!    every i with a pair) has the single holder (A_i, B_i), so every pair but the two of the
+//!    gadget goes: W_R is that of the gadget, 2m, which is known. Without one, by 2 and 3 no
+//!    atom has a single holder and the rule drops nothing.
+//! 5. An algorithm of time C (N^{2−ε} + W_R), stopped after C (N^{2−ε} + 2m) steps, then
+//!    decides OV: stopped means no orthogonal pair (W_R = 2m otherwise); finished, (P, Q) is
+//!    left iff there is none. That is time O((nd)^{2−ε}), n^{2−ε} polylog n at d = c log n,
+//!    which OVH rules out. OVH, that OV with d = c log n takes n^{2−o(1)} time, follows from
+//!    the strong exponential time hypothesis by Williams' split of the variables: "If the
+//!    cooperative subset query problem with d = |U| and k = max{|D1|, |D2|} is solvable in
+//!    Õ(f(d)k^{2−ǫ}) time, then CNF-SAT is in Õ(f(m)2^{(1−ǫ/2)n}) time" (Theorem 5.1), and "the
+//!    cooperative subset query problem is equivalent to the following linear algebra problem
+//!    ... Orthogonal Vectors Problem: Given two lists L1 and L2 of m-bit vectors with |Li| ≤ N
+//!    for i ∈ {1, 2}, is there u ∈ L1 and v ∈ L2 such that ⟨u, v⟩ = 0?" (sec. 5.1). Williams,
+//!    "A new algorithm for optimal 2-constraint satisfaction and its implications", Theor.
+//!    Comput. Sci. 348(2-3):357-365, 2005, DOI 10.1016/j.tcs.2005.09.023; quoted from the
+//!    author's final version, people.csail.mit.edu/rrw/2-csp-final.pdf, read 2026-11-24
+//!    (the publisher's copy was not reachable). ∎
 //!
 //! Prior work (literature search of 2026-11-24, P324: paperclip semantic search and Gemini
 //! web search on decremental unique coverage, peeling of degree-1 vertices and OV-hard set
@@ -93,11 +106,26 @@
 //! 2026-11-24).
 //!
 //! For the whole solver the sign predicates must drop nothing either when there is no
-//! orthogonal pair. Under glob every w_a, z_b and s_i has both signs (+ in P or Q, − in A_i or
-//! B_i), and t_i, signed, has only mentioned atoms, so no Def set pair holds a free incidence
-//! [proved]; under the frames this is not proved, and the test
-//! `tests::the_peel_decides_orthogonal_vectors` checks it with the whole solver on random
-//! instances (both answers occur), with the control `no_peel`. The peel costs O(W_listed) =
+//! orthogonal pair; the count rules P2, P3 and P4 are cases of the single-holder rule, so they
+//! drop only what it drops. The gadget is there for the frames: without it, frame+ flips the
+//! component of each (A_i, B_i), a product equal to (−A_i)(−B_i), every variable then has
+//! coefficient +1 in all its holders, and u = 1 drops every pair, whatever the vectors (found
+//! by the test below, 2026-11-24). With it [proved]:
+//! - glob: each w_a, z_b, s_i has both signs (+ in P or Q, − in A_i, B_i or E_j); t_i and f_j
+//!   have one sign but only mentioned atoms. A drop under a predicate needs an incidence w * z,
+//!   both signed and free (step 3), so none.
+//! - frames: the components {E_1, F_1} and {E_2, F_2} are trees, so not left out under
+//!   frame−, and distinct. In H the cycle comp(E_1), x_0, comp(E_2), x_k, comp(E_1), k ≥ 1, has
+//!   edge parities 1, 0, 1, 1 (the flips of each component count twice and cancel): odd, so
+//!   its block is unbalanced (Harary 1953, cited at [`frame`]) and every x_k is in Z0 (x_0 by
+//!   the cycle through x_1; m ≥ 2). The parts are then the pieces of H − Z0, joined only by
+//!   f_1 or f_2, each inside one gadget component, so comp(E_1) and comp(E_2) are in different
+//!   parts. Every x_k has a holder in each (E_1 and E_2 hold every x_k), so `sig_frame` sees
+//!   two parts and gives no sign; f_j has only mentioned atoms.
+//!
+//! The test `tests::the_peel_decides_orthogonal_vectors` runs the whole solver on random
+//! instances (both answers occur): the gadget's two pairs are always left, and the rest are all
+//! dropped iff there is an orthogonal pair, else all left; control `no_peel`. The peel costs O(W_listed) =
 //! O(n² d) on this family, so it is within a factor d = O(log n) of the bound (test
 //! `tests::the_peel_on_orthogonal_vectors_follows_its_listed_incidences`, the output empty).
 //! Exception 3 of A225 therefore stands with this reason: the peel is O(W_R + W_drop), and no

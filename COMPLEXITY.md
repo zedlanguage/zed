@@ -1613,12 +1613,35 @@ the benches):
 | bench `bench_entails_on_the_star` (`entails` on the star) | k 1,000 to 8,000 | 8.77 | instructions; origin/main 35de293df: 430.99 at k 100 to 800 (5.1e8 to 2.2e11 instructions), and k = 1,000 ran past 60 s |
 | wlgrow (`the_pass1_and_worklist_of_wlgrow_scale`) | size 7.00 | pass 1 9.18, worklist 7.31 | the peel 47.20: exception 3, the test's control |
 | wlgrow_g (`the_worklist_of_wlgrow_g_scales`) | size 6.97 | pass 1 9.09, worklist 34.00 | fails 10.5: exception 4; the peel 43.12 |
+| bench `bench_factored_peel_on_wlgrow` (the whole solver, peel included) | l 10 to 17: k + W_R 14,641 to 102,715 (7.02) | 6.00 | instructions (20,909,117 to 125,512,119); no pair dropped at l = 10, 17, 28; control l 10 to 28 (input 7.00): 31.56 times the processor time |
+| closed_rL written size (`the_written_size_of_closed_rl_scales`) | r = L 6 to 17 (input 8.03) | shared 20.64, direct 62.92 | output (exception 2): shared E_R 504 to 10,404, direct 1,332 to 83,810 |
 
 Exception 3 (design sec. 4 item 3): the exact peel after the worklist (rules P2 to P4, single
 holders) is O(W_listed), the incidences of the pairs still listed; it grows 47.20 times on
 wlgrow and 43.12 on wlgrow_g. It is no worse than the code it replaces, which listed and tested
-every pair, but it is above 10.5; filed as PERF-factored-peel-wlisted. The failing wlgrow_g test
-is row FAIL-factored-wlgrow-g-worklist.
+every pair. Row PERF-factored-peel-wlisted (b22-factored3, 2026-11-24) closed it with two
+results, both at the code (factored.rs module doc, "The exact peel and its lower bound"):
+
+- W_listed = W_R + W_drop, where W_R is the incidences of the pairs left, which `products`
+  writes term by term, so W_R is output. On wlgrow the peel drops no pair (the pairs left equal
+  those left without the peel: 100 at l = 10, 784 at l = 28), so W_listed = W_R (13,200 and
+  682,080) and the 47.20 times is the growth of the output. Per unit of input and output
+  (k + W_R) the counted steps are 1,025 and 1,024 per 1,000 (ratio 1.00, test
+  `the_peel_on_wlgrow_is_bounded_by_its_output`); the bench `bench_factored_peel_on_wlgrow`
+  holds the whole solver at l = 10 and 17 (k + W_R about 8 times) in instructions: see the
+  table row below.
+- W_drop cannot be brought under the input's order: orthogonal vectors (n vectors a side,
+  dimension d) reduces to the single-holder fixpoint with N = O(nd), the pairs left empty
+  but for two gadget pairs iff an orthogonal pair exists, so no method finds the fixpoint in
+  O(N^{2−ε} + W_R) unless the orthogonal vectors hypothesis fails (Williams, Theor. Comput.
+  Sci. 348, 2005, DOI 10.1016/j.tcs.2005.09.023, Theorem 5.1 and sec. 5.1, quoted at the code).
+  The whole solver decides OV this way on random instances (`the_peel_decides_orthogonal_vectors`),
+  and the peel follows W_listed there (ratio 0.93 per listed incidence, n 64 to 512,
+  `the_peel_on_orthogonal_vectors_follows_its_listed_incidences`): within a factor d = O(log n)
+  of the bound.
+
+So exception 3 stands, with this reason: the peel is O(k + W_R + W_drop), W_R is output, and
+W_drop is OV-hard. The failing wlgrow_g test is row FAIL-factored-wlgrow-g-worklist.
 Its step 5, the joint fixpoint over the open listed pairs, keeps the best method
 found: delta rechecks memoized per pair of exact set ids (a hash-consed trie), which test only
 the incidences new since a pair's last test. Its cost is O(k log k + W_listed'), where
