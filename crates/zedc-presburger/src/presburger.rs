@@ -28609,9 +28609,13 @@ fn linear_reading(
         premise,
         Formula::negate(goal.body.clone()),
     ]);
-    let Some(m) = satisfiable(&f)? else {
+    let Some(mut m) = satisfiable(&f)? else {
         return Ok(Entailment::Proved(ps));
     };
+    // The variables of the shared form of the products ([`factored::written`]) are no atoms
+    // of the question, so the point reported leaves them out.
+    let fresh = first_free_aux(premises, goal);
+    m.retain(|a, _| !matches!(a, Atom::Aux(n) if *n >= fresh));
     // A countermodel of the linear reading is a countermodel when the premises hold and the
     // goal fails with each product read as a product.
     let real = Formula::and(vec![
@@ -29007,18 +29011,42 @@ fn products(
         zed_collections::sorted::sort_dedup(ps);
     }
     // The pairs of rows on the two factors of each product that stage A' keeps
-    // ([`factored::kept_pairs`]), found without listing every pair.
+    // ([`factored::kept_pairs`]), found without listing every pair, written each in the
+    // smaller of the direct and the shared form ([`factored::written`]).
     let rows: Vec<&Lin> = table.iter().map(|r| &**r).collect();
-    let mut out = BTreeSet::new();
-    for (a, b) in factored::kept_pairs(&rows, &on, &wanted, &partners) {
-        if let Some(p) = rows[a].product(rows[b]) {
-            out.insert(Con {
-                lin: p,
-                rel: Rel::Ge,
-            });
+    let kept = factored::kept_pairs(&rows, &on, &wanted, &partners);
+    let fresh = first_free_aux(premises, goal);
+    let (out, _) = factored::written(&rows, &kept, fresh, factored::Form::Smaller);
+    Ok((out.into_iter().map(Formula::Con).collect(), loose))
+}
+
+/// The first auxiliary number above every one `premises` and `goal` use, in their bodies,
+/// definitions and `bitAnd` variables, as a variable or as a factor of a product: the variables
+/// [`factored::written`] adds are numbered from it, and [`linear_reading`] leaves them out of a
+/// point it reports. O(size of the two relations × log).
+fn first_free_aux(premises: &Relation, goal: &Relation) -> u32 {
+    let mut first = 0;
+    for r in [premises, goal] {
+        for f in [&r.body, &r.defined()] {
+            for a in f.atoms() {
+                first = a.auxes().map(|n| n + 1).fold(first, u32::max);
+            }
+        }
+        for n in r
+            .defs
+            .iter()
+            .map(|d| d.0)
+            .chain(r.bit_ands.iter().map(|b| b.0))
+        {
+            first = first.max(n + 1);
+        }
+        for (_, x, y) in &r.bit_ands {
+            for a in x.terms.keys().chain(y.terms.keys()) {
+                first = a.auxes().map(|n| n + 1).fold(first, u32::max);
+            }
         }
     }
-    Ok((out.into_iter().map(Formula::Con).collect(), loose))
+    first
 }
 
 // The searches over unary disjunctions coupled by wide rows (PRES-disj-cost-xr), on the row

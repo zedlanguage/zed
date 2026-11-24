@@ -43,12 +43,71 @@
 //! listed under A225 in COMPLEXITY.md). Boolean matrix multiplication reduces to step 5 (design
 //! sec. 5.3, test `tests::the_residual_of_the_bmm_reduction_is_the_zeros_of_a_f`), so no
 //! combinatorial algorithm for step 5 beats n^3 / polylog unless that does.
+//!
+//! **The exact peel and its lower bound** (row PERF-factored-peel-wlisted, b22-factored3,
+//! 2026-11-24). The peel lists the free atoms of each pair the count rules leave, W_listed =
+//! Σ |a||b| over them, which is W_R + W_drop: the pairs left, whose products `products` then
+//! writes term by term (O(|a| × |b| × log) each, presburger.rs), so W_R is output; and the pairs
+//! the peel drops. On wlgrow the peel drops no pair, so its 47.20 times at 8n is the growth of
+//! the output (test `tests::the_peel_on_wlgrow_is_bounded_by_its_output`). W_drop cannot be
+//! brought under the input's order:
+//!
+//! *Claim.* Unless the orthogonal vectors hypothesis (OVH) fails, no algorithm finds the pairs the
+//! single-holder rule leaves (its fixpoint, which the peel computes) in time O(N^{2−ε} + W_R)
+//! for any ε > 0, N the input size (rows, side lists, mentioned atoms).
+//!
+//! *Proof.* OV: given u_1..u_n, v_1..v_n in {0,1}^d, is some u_a · v_b = 0? Build (test helper
+//! `tests::build_ov`, O(nd)): variables w_u, z_v, s_i, t_i; rows P = Σ w_u + Σ s_i, Q = Σ z_v,
+//! and for each dimension i with some v_b,i = 1, A_i = −Σ_{u_a,i = 1} w_a − s_i and B_i =
+//! −Σ_{v_b,i = 1} z_b − t_i; products (P, Q) and each (A_i, B_i); mentioned atoms s_i * z_b for
+//! v_b,i = 0 and t_i with each variable of A_i. So N = O(nd).
+//! 1. No atom cancels: the two rows of each pair share no variable, so each incidence `x * y`,
+//!    x in a, y in b, has the coefficient a_x b_y ≠ 0.
+//! 2. The free atoms of (A_i, B_i) are w_a * z_b with u_a,i = v_b,i = 1, and s_i * z_b with
+//!    v_b,i = 1; (P, Q) holds each of them too. So while (P, Q) is live, no atom of an (A_i,
+//!    B_i) has a single holder.
+//! 3. (P, Q) alone holds w_a * z_b iff no i has u_a,i = v_b,i = 1, i.e. u_a · v_b = 0; its
+//!    atoms s_i * z_b are held by (A_i, B_i) too, or mentioned.
+//! 4. With an orthogonal pair, (P, Q) goes; then each s_i * z_b (v_b,i = 1, which exists for
+//!    every i with a pair) has the single holder (A_i, B_i), so every pair goes: W_R = 0.
+//!    Without one, by 2 and 3 no atom has a single holder and the rule drops nothing.
+//! 5. An algorithm of time C (N^{2−ε} + W_R), stopped after C N^{2−ε} steps, then decides OV:
+//!    stopped means no orthogonal pair (W_R = 0 otherwise); finished, (P, Q) is left iff there
+//!    is none. That is time O((nd)^{2−ε}), n^{2−ε} polylog n at d = c log n, which OVH rules
+//!    out (OVH follows from the strong exponential time hypothesis: Williams, "A new algorithm
+//!    for optimal 2-constraint satisfaction and its implications", Theor. Comput. Sci. 348(2-3),
+//!    2005, DOI 10.1016/j.tcs.2005.09.023, title and DOI checked with allpapers-locate
+//!    2026-11-24; the full text was not read). ∎
+//!
+//! Prior work (literature search of 2026-11-24, P324: paperclip semantic search and Gemini
+//! web search on decremental unique coverage, peeling of degree-1 vertices and OV-hard set
+//! questions; logs kept in the agent's scratch directory): the peeling methods found (the
+//! peeling decoder of erasure codes, 2-cores of random hypergraphs, invertible Bloom lookup
+//! tables) all take the hypergraph explicitly and run in time linear in its incidences, which
+//! here is O(W_listed), what the peel costs. No method was found for an implicit hypergraph
+//! whose edges are products. The nearest result has the same shape as the claim above: an
+//! exact minimum degree ordering, computed over an implicit (fill) graph, needs O(n m^{1−ε})
+//! time unless SETH fails, "This fine-grained reduction goes through the orthogonal vectors
+//! problem" (Cummings, Fahrbach and Fatehpuria, "A Fast Minimum Degree Algorithm and Matching
+//! Lower Bound", SODA 2021, DOI 10.1137/1.9781611976465.45, abstract read through paperclip
+//! 2026-11-24).
+//!
+//! For the whole solver the sign predicates must drop nothing either when there is no
+//! orthogonal pair. Under glob every w_a, z_b and s_i has both signs (+ in P or Q, − in A_i or
+//! B_i), and t_i, signed, has only mentioned atoms, so no Def set pair holds a free incidence
+//! [proved]; under the frames this is not proved, and the test
+//! `tests::the_peel_decides_orthogonal_vectors` checks it with the whole solver on random
+//! instances (both answers occur), with the control `no_peel`. The peel costs O(W_listed) =
+//! O(n² d) on this family, so it is within a factor d = O(log n) of the bound (test
+//! `tests::the_peel_on_orthogonal_vectors_follows_its_listed_incidences`, the output empty).
+//! Exception 3 of A225 therefore stands with this reason: the peel is O(W_R + W_drop), and no
+//! method makes it O(N^{2−ε} + W_R) unless OVH fails.
 
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 
 use zedc_int::int::Int;
 
-use super::formula::{Factor, Lin};
+use super::formula::{Atom, Con, Factor, Lin, Rel};
 
 #[cfg(test)]
 mod tests;
@@ -94,6 +153,135 @@ pub(super) fn kept_pairs(
     partners: &HashMap<Factor, Vec<Factor>>,
 ) -> Vec<(usize, usize)> {
     solve(&Prob::of(rows, on, wanted, partners), Opts::default()).left
+}
+
+/// How [`written`] writes the pairs of a row: the smaller of the two forms, or always direct
+/// (the reference the tests compare with).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Form {
+    Smaller,
+    Direct,
+}
+
+/// The constraints [`super::products`] writes for the pairs `kept` of `rows` (each `(a, b)`
+/// once), in the form of docs/studies/products-factored.md sec. 4 (row
+/// PRES-products-shared-output, b22-factored3, 2026-11-24), and the number of auxiliary
+/// variables it adds, numbered from `fresh` up. Every row is linear (its atoms factors), as
+/// [`kept_pairs`] requires.
+///
+/// For each pair, `a` is its row with fewer terms, ties by content (`Lin`'s order: the sorted
+/// terms, then the constant), so the choice depends on the rows alone. For each such `a`, with
+/// partners b (the other rows of its pairs), |a| its terms and a_0 its constant:
+/// - **direct**: each product `a × b ≥ 0` expanded, size Σ_b (|a||b| + aff(a, b) + 1),
+///   aff(a, b) = [b_0 ≠ 0]·|a| + [a_0 ≠ 0]·|b|;
+/// - **shared** (|a| ≥ 2): one variable s_{a,z} = Σ_{w∈a} a_w (w * z) per atom z of N(a), the
+///   union of the partners' terms, as the equation s − Σ_w a_w (w * z) = 0 (|a| + 1 terms), and
+///   each product as a_0 b_0 + a_0 Σ_z b_z z + b_0 Σ_w a_w w + Σ_z b_z s_{a,z} ≥ 0, size
+///   |N(a)|·(|a| + 1) + Σ_b (|b| + aff(a, b) + 1).
+///
+/// The shared form is written when its size is strictly smaller (a rule on the written size,
+/// with no constant); with one partner it never is (it is larger by 2|b|).
+///
+/// *Exactness* [proved]: expanding, a × b = a_0 b_0 + a_0 Σ_z b_z z + b_0 Σ_w a_w w +
+/// Σ_z b_z Σ_w a_w (w * z), and the last sum is Σ_z b_z s_{a,z} wherever the equations hold.
+/// Each s is fixed by its equation, an integer combination of integer atoms, so every point of
+/// the direct system extends to exactly one point of the shared one (an integer one), and every
+/// point of the shared one restricted to the old atoms is a point of the direct one. The s
+/// atoms are new (numbered above every auxiliary variable of the premises, goal and
+/// definitions, [`super::first_free_aux`]), so no other constraint reads them, and the two
+/// systems are satisfiable together with the same formulas exactly when either is. A product
+/// atom `w * z` is the same atom however its factors are ordered (`Atom::product_of`), so a
+/// row sharing atoms with its partner (`(x + y)(x − y)`) is written the same way in both.
+/// Test: `tests::the_shared_form_gives_the_verdicts_of_the_direct_form` (closed_rL and
+/// moment_curve, both forms through `satisfiable`).
+///
+/// Cost: O(Σ_a (|N(a)| |a| + Σ_b (|a| + |b|)) × log) when the shared form is written, and the
+/// direct form's O(Σ |a||b| × log) otherwise, each no more than the direct form; the sizes are
+/// counted from term counts alone, O(Σ_a (Σ_b |b| + |N(a)| log)). Test:
+/// `tests::the_written_size_of_closed_rl_scales` (sizes at n and 8n against the direct form).
+pub(super) fn written(
+    rows: &[&Lin],
+    kept: &[(usize, usize)],
+    fresh: u32,
+    form: Form,
+) -> (Vec<Con>, u32) {
+    // The pairs of each row a, a's partners b in the order of `kept`, the rows a by content.
+    let mut of: BTreeMap<(&Lin, usize), Vec<usize>> = BTreeMap::new();
+    for &(i, j) in kept {
+        let (a, b) = if (rows[i].terms.len(), rows[i]) <= (rows[j].terms.len(), rows[j]) {
+            (i, j)
+        } else {
+            (j, i)
+        };
+        of.entry((rows[a], a)).or_default().push(b);
+    }
+    let mut out = BTreeSet::new();
+    let mut next = fresh;
+    for ((a, _), bs) in of {
+        let la = a.terms.len();
+        let a0 = !a.constant.is_zero();
+        let aff =
+            |b: &Lin| usize::from(!b.constant.is_zero()) * la + usize::from(a0) * b.terms.len();
+        let direct: usize = bs
+            .iter()
+            .map(|&b| la * rows[b].terms.len() + aff(rows[b]) + 1)
+            .sum();
+        let n: BTreeSet<&Atom> = bs.iter().flat_map(|&b| rows[b].terms.keys()).collect();
+        let shared: usize = n.len() * (la + 1)
+            + bs.iter()
+                .map(|&b| rows[b].terms.len() + aff(rows[b]) + 1)
+                .sum::<usize>();
+        if form == Form::Direct || la < 2 || shared >= direct {
+            for &b in &bs {
+                if let Some(p) = a.product(rows[b]) {
+                    out.insert(Con {
+                        lin: p,
+                        rel: Rel::Ge,
+                    });
+                }
+            }
+            continue;
+        }
+        let factor = |x: &Atom| Factor::of(x).expect("a factor row is linear");
+        let mut s: BTreeMap<&Atom, Atom> = BTreeMap::new();
+        for z in n {
+            let v = Atom::Aux(next);
+            next += 1;
+            let mut eq = Lin::atom(v.clone());
+            for (w, c) in &a.terms {
+                eq.plus_assign(&Lin::atom(Atom::product_of(factor(w), factor(z))).times(-c));
+            }
+            out.insert(Con {
+                lin: eq,
+                rel: Rel::Eq,
+            });
+            s.insert(z, v);
+        }
+        let lin_a = Lin {
+            terms: a.terms.clone(),
+            constant: Int::ZERO,
+        };
+        for &b in &bs {
+            let b = rows[b];
+            let mut row = Lin::constant(&a.constant * &b.constant);
+            row.plus_assign(
+                &Lin {
+                    terms: b.terms.clone(),
+                    constant: Int::ZERO,
+                }
+                .times(a.constant.clone()),
+            );
+            row.plus_assign(&lin_a.times(b.constant.clone()));
+            for (z, c) in &b.terms {
+                row.plus_assign(&Lin::atom(s[z].clone()).times(c.clone()));
+            }
+            out.insert(Con {
+                lin: row,
+                rel: Rel::Ge,
+            });
+        }
+    }
+    (out.into_iter().collect(), next - fresh)
 }
 
 impl Prob {
@@ -175,6 +363,8 @@ struct Opts {
     no_strip: bool,
     /// Pass 1's group test: 0 by the cost estimates, 1 the walk, 2 the complement method.
     method: u8,
+    /// Mutant (weaker, still sound): no exact single-holder peel after the count rules.
+    no_peel: bool,
     /// Record each drop (for the replay in the tests) and the listed pairs.
     log: bool,
 }
@@ -1913,7 +2103,7 @@ impl<'a> Joint<'a> {
                 self.p2(r);
             } else if let Some(v) = self.vqueue.pop_front() {
                 self.p4(v);
-            } else if !self.expanded {
+            } else if !self.expanded && !self.o.no_peel {
                 self.expand();
             } else if let Some(t) = self.aq.pop() {
                 self.peel_atom(t);
