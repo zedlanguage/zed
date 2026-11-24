@@ -250,10 +250,10 @@ fn string(data: &[u8]) -> Option<(&str, &[u8])> {
     Some((std::str::from_utf8(text).ok()?, rest))
 }
 
-/// The section of an executable `zedc build` writes that holds the program as data ([`data`]),
+/// The section of an executable `zedc build` writes that holds the program as data (`data`),
 /// and nothing else: the data is the only thing the build puts in it, and a linker joins
 /// sections of one name from its inputs, of which only the build's object file has one. A
-/// section of its own name, so that [`check`] finds the data by that name, also in a stripped
+/// section of its own name, so that `check` finds the data by that name, also in a stripped
 /// executable, which has lost its symbol table and so the symbol `zed_program`, as
 /// [`crate::link::build_id`] finds the build of the runtime.
 pub const PROGRAM_SECTION: &str = ".zed_program";
@@ -309,7 +309,7 @@ fn check_data(data: &[u8]) -> Result<(), String> {
     (p.plan.recheck(p.graph.graph())).map_err(|why| format!("{NOT_ITS_PLAN} ({why})"))
 }
 
-/// `zedc check-exe` with the words `args` after `check-exe`: runs [`check`] on the one file
+/// `zedc check-exe` with the words `args` after `check-exe`: runs `check` on the one file
 /// they name and gives the exit status, 0 when the check passes (and nothing is printed), 1
 /// when it refuses the file, with the reason written to `stderr`, and 2 when `args` is not one
 /// word.
