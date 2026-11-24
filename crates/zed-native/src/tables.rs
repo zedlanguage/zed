@@ -551,19 +551,25 @@ impl Tables {
             ))
         })?;
         let l = &self.lambdas[li];
-        let mut error = None;
-        if l.params + 1 == node.inputs.len() {
-            for i in 0..l.params {
-                if ni.modes[1 + i] == Mode::Borrowed && l.modes[i] == Mode::Owned {
-                    error = Some(format!(
-                        "{}: argument {i} is passed borrowed to `{}`, which consumes it",
-                        self.path(id),
-                        plan.path(want)
-                    ));
-                    break;
-                }
-            }
+        // A callee of another arity is left to the runtime's call, which checks the arity
+        // (`hooks.rs`, `t.lambdas[callee].params != arity`): the direct call passes the node's
+        // inputs as the body's parameters, and reads the node's mode of each parameter
+        // (`codegen.rs` `apply`, `ni.modes[1 + i]`), which would index past the node's inputs
+        // for a lambda of more parameters. A carried plan whose callee was damaged to another
+        // lambda can name one (plan row EXE-plan-carried; test
+        // `l01_36a_executables::plan_carried::a_callee_of_another_arity_makes_no_direct_call`).
+        if l.params + 1 != node.inputs.len() {
+            return Ok(());
         }
+        let error = (0..l.params)
+            .find(|&i| ni.modes[1 + i] == Mode::Borrowed && l.modes[i] == Mode::Owned)
+            .map(|i| {
+                format!(
+                    "{}: argument {i} is passed borrowed to `{}`, which consumes it",
+                    self.path(id),
+                    plan.path(want)
+                )
+            });
         self.nodes[id].callee = Some(li);
         self.nodes[id].error = error;
         Ok(())

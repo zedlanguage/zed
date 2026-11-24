@@ -152,54 +152,15 @@ pub(super) fn keys<A: Atom>(t: &Tree<A>) -> Vec<Key<A>> {
 
 /// The set of `keys`, in any order, each once: sorted, then its shape found over their indices
 /// as a Cartesian tree by priority made with one stack, and each node made once over its
-/// children, `O(k log k)` for the sort and `O(k)` after it. The construction is that of
-/// `bdd::set::from_sorted`, whose comment cites and quotes its sources (Vuillemin, CACM 1980,
-/// for the tree; Gabow, Bentley and Tarjan, STOC 1984, section 3, for the stack); this comment
-/// cited Vuillemin for the stack before. Tested by `settings::tests`, against ordered sets.
+/// children, `O(k log k)` for the sort and `O(k)` after it. The construction is
+/// `zed_collections::cartesian::build` (DRY-persistent-structures), shared with
+/// `bdd::set::from_sorted`; its module comment cites and quotes its sources (Vuillemin, CACM
+/// 1980, for the tree; Gabow, Bentley and Tarjan, STOC 1984, section 3, for the stack) and
+/// proves it. Tested by `settings::tests`, against ordered sets.
 pub(super) fn from_keys<A: Atom>(mut keys: Vec<Key<A>>) -> Tree<A> {
     zed_collections::sorted::sort_dedup(&mut keys);
-    const NONE: usize = usize::MAX;
-    let n = keys.len();
     let prios: Vec<u64> = keys.iter().map(priority).collect();
-    let (mut left, mut right) = (vec![NONE; n], vec![NONE; n]);
-    // The right spine of the tree of the keys so far, root first.
-    let mut spine: Vec<usize> = Vec::new();
-    for i in 0..n {
-        let mut passed = NONE;
-        while let Some(&top) = spine.last() {
-            if (prios[top], &keys[top]) < (prios[i], &keys[i]) {
-                passed = top;
-                spine.pop();
-            } else {
-                break;
-            }
-        }
-        left[i] = passed;
-        if let Some(&top) = spine.last() {
-            right[top] = i;
-        }
-        spine.push(i);
-    }
-    let root = *spine.first()?;
-    let mut keys: Vec<Option<Key<A>>> = keys.into_iter().map(Some).collect();
-    let mut made: Vec<Tree<A>> = vec![None; n];
-    let mut todo = vec![(root, false)];
-    while let Some((i, ready)) = todo.pop() {
-        if ready {
-            let l = (left[i] != NONE).then(|| made[left[i]].take()).flatten();
-            let r = (right[i] != NONE).then(|| made[right[i]].take()).flatten();
-            let key = keys[i].take().expect("each key made once");
-            made[i] = Some(node_at(prios[i], key, l, r));
-            continue;
-        }
-        todo.push((i, true));
-        for c in [right[i], left[i]] {
-            if c != NONE {
-                todo.push((c, false));
-            }
-        }
-    }
-    made[root].take()
+    zed_collections::cartesian::build(keys, &prios, |i, key, l, r| node_at(prios[i], key, l, r))
 }
 
 /// The settings of `t` before `key` and those after it, and whether `key` is in `t`: one walk

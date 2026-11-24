@@ -964,6 +964,53 @@ fn a_family_with_its_keys_prints_them_and_reads_back() {
     }
 }
 
+/// Row PRINT-positional-range-ambiguous (decided by the orchestrator, 2026-11-24, from DESIGN.md
+/// sec:values_morphisms): a function of a positional range parameter,
+/// `f(positional x: int[2..=4]) = x`, and the family of exactly those keys,
+/// `{2 -> 10, 3 -> 20, 4 -> 30}`, both print `int[2..=4] -> int`. That is correct and not an
+/// ambiguity: the table of sec:values_morphisms says "a map is a memoized function and a
+/// function is an intensional map", and "**Application is indexing.** `f(x)` and `f[x]` are one
+/// mechanism, lookup", so both are values of the one morphism type `int[2..=4] -> int`. What
+/// step L1.29 needs is that the printed text reads back to a type the checker holds equal to
+/// the type printed: each is a subtype of the other, in both directions, for the function and
+/// for the family; and that each value is accepted where the read-back type is required.
+#[test]
+fn a_function_of_a_range_and_the_family_of_its_keys_print_alike_and_read_back_equal() {
+    const DECLS: &str = "f(positional x: int[2..=4]) = x;\nm = {2 -> 10, 3 -> 20, 4 -> 30};\n";
+    const MAIN: &str = "main(a: MainArgs) {\n  a.stdout <- \"a\";\n}\n";
+    for name in ["f", "m"] {
+        // A value of the wrong type makes the check print the type of `name`.
+        let (types, out) = printed_by(&format!("{DECLS}y: String = {name};\n{MAIN}"));
+        let shown: Vec<&Ty> = (types.iter())
+            .filter(|(_, text)| text == "int[2..=4] -> int")
+            .map(|(t, _)| t)
+            .collect();
+        assert!(
+            !shown.is_empty(),
+            "`{name}` printed none as `int[2..=4] -> int`: {:?}\n{out}",
+            types.iter().map(|(_, s)| s).collect::<Vec<_>>()
+        );
+        let read = back("int[2..=4] -> int");
+        for t in shown {
+            assert!(
+                t.subtype(&read),
+                "`{name}`: {t:?} is not within its read-back type"
+            );
+            assert!(
+                read.subtype(t),
+                "`{name}`: its read-back type is not within {t:?}"
+            );
+        }
+    }
+    // Each value is accepted where the read-back type is required, as a parameter's type and
+    // as a binding's.
+    let uses = "g(h: int[2..=4] -> int) = h(3);\na = g(f);\nb = g(m);\n\
+                c: int[2..=4] -> int = f;\nd: int[2..=4] -> int = m;\n";
+    if let Err(e) = zedc::run::load(format!("{DECLS}{uses}{MAIN}").as_bytes()) {
+        panic!("{e}");
+    }
+}
+
 /// Row RANGE-keys-in-printed-type: the note that says what a range of literal ends is prints
 /// its keys, `int[2..=4] -> int`, and every type the check prints reads back to itself. Before
 /// the row the note said `int ->? int`.

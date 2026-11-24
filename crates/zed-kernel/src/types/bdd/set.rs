@@ -320,25 +320,12 @@ fn split<A: Atom>(t: Option<&Arc<Set<A>>>, key: &Key<A>) -> (Tree<A>, Tree<A>) {
 /// The set of `keys`, sorted with no atom twice, built bottom up: the shape is found first
 /// over their indices, a Cartesian tree by priority made with one stack in `O(k)`, and each
 /// node is then made once, over children already made, in post-order. Priorities decide the
-/// shape, so it is the set that adding the literals one at a time makes.
-///
-/// Sources. The Cartesian tree: J. Vuillemin, "A unifying look at data structures", CACM
-/// 23(4), 229-239, 1980, doi:10.1145/358841.358852, section 3.1: the root is the point of
-/// least `y`, its left and right subtrees the Cartesian trees of the points left and right of
-/// it in `x` (here `x` is the key and the root is the highest priority). The construction in
-/// `O(k)`: H. N. Gabow, J. L. Bentley and R. E. Tarjan, "Scaling and related techniques for
-/// geometry problems", STOC 1984, 135-143, doi:10.1145/800057.808675, section 3: "Ti is
-/// derived from Ti-1 by ascending along the rightmost path of Ti-1 until xl, the first node
-/// larger than xi, is found; the right subtree of xl is made into the left subtree of xi, and
-/// xi is made the right child of xl. The total time to construct Tn = T is O(n), since a node
-/// leaves the rightmost path immediately after it is traversed." Here `spine` is that
-/// rightmost path, `passed` the right subtree of the node stopped at, and priorities are
-/// compared with the key as tie-break, as `above` compares them for [`insert`]. This
-/// comment cited Vuillemin for
-/// the one-stack construction before; his paper defines the tree and gives insertion, cut and
-/// concatenation, not this construction. Checked 2026-11-19: both texts read (Vuillemin from
-/// an OCR text layer), both DOIs and page ranges confirmed with Crossref. Tested by
-/// `set::tests::the_set_built_bottom_up_is_the_one_made_a_literal_at_a_time`.
+/// shape, so it is the set that adding the literals one at a time makes. The build is
+/// `zed_collections::cartesian::build` (DRY-persistent-structures), whose module comment
+/// cites and quotes its sources (Vuillemin, CACM 1980, for the tree; Gabow, Bentley and
+/// Tarjan, STOC 1984, section 3, for the one-stack construction) and proves it; priorities
+/// are compared with the key as tie-break there, as `above` compares them for [`insert`].
+/// Tested by `set::tests::the_set_built_bottom_up_is_the_one_made_a_literal_at_a_time`.
 // Complexity tradeoff (PERF-equal-functions-forms-ratio): `k` nodes made, each looked up once in
 // the table, `O(k)` after the sort; adding the literals one at a time makes `O(k log k)`, and
 // joining sets of them in pairs ([`union_if_agree`]) remakes each merged set's nodes at each of
@@ -348,49 +335,8 @@ pub(super) fn from_sorted<A: Atom>(keys: Vec<Key<A>>) -> Tree<A> {
         keys.windows(2).all(|w| w[0].0 < w[1].0),
         "sorted, no atom twice"
     );
-    const NONE: usize = usize::MAX;
-    let n = keys.len();
     let prios: Vec<u64> = keys.iter().map(priority).collect();
-    let (mut left, mut right) = (vec![NONE; n], vec![NONE; n]);
-    // The right spine of the tree of the keys so far, root first: a key above the bottom of
-    // the spine takes what it passes as its left subtree and hangs from what it stops at.
-    let mut spine: Vec<usize> = Vec::new();
-    for i in 0..n {
-        let mut passed = NONE;
-        while let Some(&top) = spine.last() {
-            if (prios[top], &keys[top]) < (prios[i], &keys[i]) {
-                passed = top;
-                spine.pop();
-            } else {
-                break;
-            }
-        }
-        left[i] = passed;
-        if let Some(&top) = spine.last() {
-            right[top] = i;
-        }
-        spine.push(i);
-    }
-    let root = *spine.first()?;
-    let mut keys: Vec<Option<Key<A>>> = keys.into_iter().map(Some).collect();
-    let mut made: Vec<Tree<A>> = vec![None; n];
-    let mut todo = vec![(root, false)];
-    while let Some((i, ready)) = todo.pop() {
-        if ready {
-            let l = (left[i] != NONE).then(|| made[left[i]].take()).flatten();
-            let r = (right[i] != NONE).then(|| made[right[i]].take()).flatten();
-            let key = keys[i].take().expect("each key made once");
-            made[i] = Some(make_at(prios[i], key, l, r));
-            continue;
-        }
-        todo.push((i, true));
-        for c in [right[i], left[i]] {
-            if c != NONE {
-                todo.push((c, false));
-            }
-        }
-    }
-    made[root].take()
+    zed_collections::cartesian::build(keys, &prios, |i, key, l, r| make_at(prios[i], key, l, r))
 }
 
 /// The set with the nodes of `path` rebuilt over `node`, the last of `path` its parent; each

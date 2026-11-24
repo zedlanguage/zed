@@ -13,7 +13,7 @@ use crate::held::Held;
 use crate::intern::Interner;
 use crate::scaling;
 use crate::search::{first_true, gallop};
-use crate::{intervals, sorted};
+use crate::{cartesian, intervals, sorted};
 
 /// The size of every benchmark here, run again at `8 * N`.
 const N: usize = 100_000;
@@ -233,4 +233,30 @@ fn puts_and_interning_take_n_log_n_at_most() {
         }
         assert!(t.len() < m);
     });
+}
+
+/// The Cartesian tree of n keys by random priorities, and by rising ones (a path n deep).
+/// Small instances: `cartesian::tests::the_build_is_the_recursive_definition` and
+/// `cartesian::tests::corners_and_deep_paths`.
+#[test]
+fn a_cartesian_build_takes_linear_time() {
+    let inputs = built(|m| {
+        let keys: Vec<u64> = (0..m as u64).collect();
+        let random: Vec<u64> = (0..m).map(spread).collect();
+        (keys, random)
+    });
+    for rising in [false, true] {
+        let what = match rising {
+            false => "the Cartesian tree of n keys by random priorities",
+            true => "the Cartesian tree of n keys by rising priorities",
+        };
+        scaling::check(what, N, |m| {
+            let (keys, random) = &inputs[&m];
+            let prios = if rising { keys } else { random };
+            let made = cartesian::build(keys.clone(), prios, |_, _, l: Option<usize>, r| {
+                1 + l.unwrap_or(0) + r.unwrap_or(0)
+            });
+            assert_eq!(made, Some(m));
+        });
+    }
 }

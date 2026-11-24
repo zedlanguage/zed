@@ -194,7 +194,8 @@ pub fn ir(g: &Legalized, plan: &Plan) -> Result<String, String> {
 /// address `address` (steps L1.36a and L1.19b): [`object()`]'s code for `g` legalized, the
 /// program as data, and a C `main` that passes both, with the command line, to the runtime
 /// library's start. The data holds `g` as lowered, since ZIR's binary form does not record which
-/// nodes legalization swapped; the start legalizes and plans it again, as this does. The data
+/// nodes legalization swapped; the start legalizes it again, as this does, and reads the memory
+/// plan this made, which the data holds too (plan row EXE-plan-carried). The data
 /// holds too `source`, the name of the program's file and its text, and `sites`, the site of
 /// each node of `g` (plan row RT-sites), so that a run-time error prints its site as `zedc run`
 /// prints it.
@@ -208,9 +209,11 @@ pub fn executable_object(
     source: (Option<&str>, &str),
     sites: &[Option<zed_kernel::sites::Span>],
 ) -> Result<Vec<u8>, String> {
-    let data = exe::data(fuse, address, ports, limits, source, sites, &g)?;
-    let g = legalize(g);
-    let plan = plan(g.graph(), fuse);
+    // The data holds `g` as lowered and the plan of `g` legalized, which the code is made from.
+    let legal = legalize(g.clone());
+    let plan = plan(legal.graph(), fuse);
+    let data = exe::data(&plan, address, ports, limits, source, sites, &g)?;
+    let g = legal;
     let (t, plans) = Tables::new(&g, &plan)?;
     let mut m = object_module()?;
     let f = codegen::define(&mut m, &t, &plans, None)?;

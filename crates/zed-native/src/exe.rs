@@ -2,13 +2,16 @@
 //! code, the program as data, and a C `main` that passes both, with its own command line, to
 //! [`zed_main`] in the runtime library.
 //!
-//! The data is the plan's `fuse` flag, the program's content address, which a record names
-//! (step L1.19b), `main`'s ports as [`Ports::to_text`] writes them, the limits written before
-//! `main` as [`MainLimits::to_text`] writes them, and the graph as lowered in ZIR's binary form;
-//! and for the run-time errors' sites (plan row RT-sites), the name of the source file, its text
-//! and the site of each node of the graph. The runtime decodes the graph, legalizes it and plans
-//! it again, which gives the tables the code was generated from, node for node, and the nodes
-//! legalization swapped: the code passes node numbers, and the hooks read the tables by them.
+//! The data is the program's content address, which a record names (step L1.19b), `main`'s
+//! ports as [`Ports::to_text`] writes them, the limits written before `main` as
+//! [`MainLimits::to_text`] writes them; for the run-time errors' sites (plan row RT-sites), the
+//! name of the source file, its text and the site of each node of the graph; the memory plan the
+//! code was made from ([`Plan::to_bytes`]); and the graph as lowered in ZIR's binary form. The
+//! runtime decodes the graph and legalizes it, which gives the nodes legalization swapped, and
+//! reads the plan, checked against the legalized graph ([`Plan::from_bytes`]), instead of
+//! planning again (plan row EXE-plan-carried; DESIGN.md sec:kernel, "Facts carried, and the
+//! stripped form"): with them, the tables the code was generated from, node for node, since the
+//! code passes node numbers and the hooks read the tables by them.
 
 use std::ffi::{CStr, OsString, c_char, c_int};
 use std::io::Write as _;
@@ -24,7 +27,7 @@ use zedc::address::ContentAddress;
 use zedc::run::Ports;
 use zedc::zir::Region;
 use zedc::zir::legalize::{Legalized, legalized_sites};
-use zedc::zir::memory::{Plan, plan};
+use zedc::zir::memory::Plan;
 
 use zed_kernel::limits::MainLimits;
 use zed_kernel::sites::Span;
@@ -98,13 +101,15 @@ fn kept_lines(text: &str, sites: &[Option<Span>]) -> (String, Vec<Option<Span>>)
     (out, moved)
 }
 
-/// The bytes of the data: `fuse` as one byte, the program's content address as its 32 bytes,
+/// The bytes of the data: the program's content address as its 32 bytes,
 /// the length of the ports' text as 8 bytes, little end first, the text; the limits' text
 /// the same way; the source file's name
 /// (empty for none) and the lines of the source text the sites touch ([`kept_lines`]), each the
 /// same way; the number of sites in 8 bytes and each site as its start and end in 8 bytes each,
 /// both [`u64::MAX`] for a node with none, by node number in `graph`, as
-/// [`lower_sited`](zedc::zir::lower::lower_sited) numbers them;
+/// [`lower_sited`](zedc::zir::lower::lower_sited) numbers them; `plan`, the memory plan of
+/// `graph` legalized, which carries `fuse`, as [`Plan::to_bytes`] writes it, after its length
+/// in 8 bytes;
 /// then the graph in its stripped binary form ([`zedc::zir::strip`]), which keeps what running
 /// needs and none of the facts kept for checking: the executable runs the program and is not
 /// re-checked, and stripping keeps the node numbers the sites use. An error when the system
@@ -118,7 +123,7 @@ fn kept_lines(text: &str, sites: &[Option<Span>]) -> (String, Vec<Option<Span>>)
 // (DWARF 5, section 6.2), since the graph beside them takes O(n) bytes already. Test:
 // `exe::tests::the_data_reads_back`, `l01_36a_executables::sites`.
 pub(crate) fn data(
-    fuse: bool,
+    plan: &Plan,
     address: ContentAddress,
     ports: &Ports,
     limits: &MainLimits,
@@ -139,14 +144,15 @@ pub(crate) fn data(
             e.memory()
         )
     })?;
-    let len = 1
-        + 32
-        + 8 * 5
+    let plan = plan.to_bytes();
+    let len = 32
+        + 8 * 6
         + text.len()
         + limits.len()
         + file.len()
         + source.len()
         + 16 * sites.len()
+        + plan.len()
         + zir.len();
     let mut out = Vec::new();
     out.try_reserve_exact(len).map_err(|_| {
@@ -157,7 +163,6 @@ pub(crate) fn data(
             zed_kernel::num::TooLarge::of_bytes(len).memory()
         )
     })?;
-    out.push(u8::from(fuse));
     out.extend_from_slice(&address.0);
     out.extend_from_slice(&(text.len() as u64).to_le_bytes());
     out.extend_from_slice(text.as_bytes());
@@ -171,6 +176,8 @@ pub(crate) fn data(
         out.extend_from_slice(&start.to_le_bytes());
         out.extend_from_slice(&end.to_le_bytes());
     }
+    out.extend_from_slice(&(plan.len() as u64).to_le_bytes());
+    out.extend_from_slice(&plan);
     out.extend_from_slice(&zir);
     Ok(out)
 }
@@ -184,8 +191,7 @@ impl Program {
     /// The program `data` holds, as [`data`] writes it, legalized for this back end.
     fn decode(data: &[u8]) -> Result<Program, String> {
         let bad = || DAMAGED.to_string();
-        let (&fuse, rest) = data.split_first().ok_or_else(bad)?;
-        let (address, rest) = rest.split_first_chunk::<32>().ok_or_else(bad)?;
+        let (address, rest) = data.split_first_chunk::<32>().ok_or_else(bad)?;
         let address = ContentAddress(*address);
         let (text, rest) = string(rest).ok_or_else(bad)?;
         let ports = Ports::from_text(text)?;
@@ -206,12 +212,16 @@ impl Program {
             zir = rest;
             sites.push((start != usize::MAX).then_some(Span { start, end }));
         }
+        let (n, rest) = number(zir).ok_or_else(bad)?;
+        let (plan, zir) = rest.split_at_checked(n).ok_or_else(bad)?;
         // The data holds the stripped form; a full one would run the same.
         let (graph, _) =
             zedc::zir::binary::decode_form(zir).map_err(|e| format!("{DAMAGED} ({e})"))?;
         let sites = legalized_sites(&graph, crate::legal::EXPANSIONS, &sites);
         let graph = crate::legal::legalize(graph);
-        let plan = plan(graph.graph(), fuse != 0);
+        // The plan the code was made from, read and not worked out again; its counts and
+        // indices are checked against the graph, and `Plan::recheck` plans again to compare.
+        let plan = Plan::from_bytes(plan, graph.graph()).map_err(|e| format!("{DAMAGED} ({e})"))?;
         Ok(Program {
             ports,
             limits,
@@ -452,8 +462,14 @@ mod tests {
             cpu: Some(std::time::Duration::from_millis(500)),
             ..MainLimits::default()
         };
-        let bytes = data(true, address, &ports, &limits, source, &[site], &graph).unwrap();
+        let plan_of = |g: &Region, fuse| {
+            zedc::zir::memory::plan(crate::legal::legalize(g.clone()).graph(), fuse)
+        };
+        let plan = plan_of(&graph, true);
+        let bytes = data(&plan, address, &ports, &limits, source, &[site], &graph).unwrap();
         let p = Program::decode(&bytes).unwrap();
+        // The plan is read, not worked out again, and is the one the build made.
+        assert_eq!(p.plan, plan);
         assert_eq!(p.limits, limits);
         assert_eq!((p.file.as_deref(), p.text.as_str()), source);
         assert_eq!(p.sites, [site]);
@@ -465,8 +481,29 @@ mod tests {
         assert_eq!(p.graph.swapped(), built.swapped());
         assert!(p.graph.swapped().contains(0));
         assert!(p.plan.fuse);
+        // The plan of another graph, `"a" > "b" > "c"`, is refused against this one.
+        let other = zedc::zir::lower::lower(&zed_kernel::term::build::prim(
+            Prim::Gt,
+            vec![
+                zed_kernel::term::build::prim(Prim::Gt, vec![lit("a"), lit("b")]),
+                lit("c"),
+            ],
+        ))
+        .unwrap();
+        let wrong = data(
+            &plan_of(&other, true),
+            address,
+            &ports,
+            &limits,
+            source,
+            &[site],
+            &graph,
+        );
+        let refused = Program::decode(&wrong.unwrap()).err().unwrap();
+        assert!(refused.starts_with(DAMAGED), "{refused}");
+        assert!(refused.contains("of the memory plan"), "{refused}");
         let bytes = data(
-            false,
+            &plan_of(&graph, false),
             address,
             &ports,
             &MainLimits::default(),
@@ -479,10 +516,12 @@ mod tests {
         assert!(!p.plan.fuse);
         assert!(p.limits.is_none());
         assert_eq!((p.file, p.text.as_str(), p.sites), (None, "", vec![None]));
-        // Cut in the flag, the address, the length, at the text and in it, and in the length of
-        // the limits.
-        let limits_at = 1 + 32 + 8 + ports.to_text().len();
-        for cut in [0, 1, 5, 37, 41, 44, limits_at + 3] {
+        // Cut in the address, the length, at the text and in it, in the length of the limits,
+        // and in the graph, at the end, whose message names the byte.
+        let limits_at = 32 + 8 + ports.to_text().len();
+        let cut = Program::decode(&bytes[..bytes.len() - 1]).err().unwrap();
+        assert!(cut.starts_with(DAMAGED), "{cut}");
+        for cut in [0, 1, 5, 31, 36, 40, 43, limits_at + 3] {
             assert_eq!(
                 Program::decode(&bytes[..cut]).err().as_deref(),
                 Some(DAMAGED),

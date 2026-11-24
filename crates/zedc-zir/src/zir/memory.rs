@@ -63,6 +63,8 @@ use zed_kernel::text::prose::counted;
 use zed_kernel::value::{Fields, HeldEntry, HeldFamily, SharedParts, Value};
 use zed_kernel::{Evaluator, KernelError};
 
+mod carried;
+
 use super::legalize::{Expansion, Expansions};
 use super::lower::raise_with;
 use super::{Node, Op, Region, RegionKind, Src, binds};

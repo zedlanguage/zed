@@ -123,3 +123,70 @@ fn loading_with_sites_scales() {
         assert!(p.sites().len() >= m);
     });
 }
+
+/// Reading a stored memory plan is linear in its size (plan row EXE-plan-carried): each byte
+/// read once and each index checked against a length of the graph. Small instance:
+/// `plan_carried::the_stored_plan_is_the_plan_worked_out_again_on_the_corpus`.
+#[test]
+fn reading_the_stored_plan_scales() {
+    let n = 5_000;
+    let stored = scaling::inputs(n, |m| {
+        let p = zedc::run::load(chain(m, "    ").as_bytes()).unwrap();
+        let g = zed_native::legalize(zedc::zir::lower::lower(&p.term()).unwrap());
+        let bytes = zedc::zir::memory::plan(g.graph(), true).to_bytes();
+        (g, bytes)
+    });
+    scaling::check("reading the stored plan of n joins", n, |m| {
+        let (g, bytes) = &stored[&m];
+        let p = zedc::zir::memory::Plan::from_bytes(bytes, g.graph()).unwrap();
+        assert!(p.regions.iter().map(|r| r.nodes.len()).sum::<usize>() >= m);
+    });
+}
+
+/// The start of an executable on the corpus, before EXE-plan-carried (decode the graph,
+/// legalize it and plan it) and after (decode, legalize and read the stored plan): the work of
+/// each, summed over the 115 graphs, printed, and the start now does less.
+#[test]
+fn the_start_reads_the_plan_in_less_work_than_planning() {
+    use super::plan_carried::corpus;
+    use zedc::zir::memory::{Plan, plan};
+    let stored: Vec<(Vec<u8>, Vec<u8>)> = (corpus().iter())
+        .map(|g| {
+            let zir = zedc::zir::strip::encode_stripped(g).unwrap();
+            let p = plan(zed_native::legalize(g.clone()).graph(), true);
+            (zir, p.to_bytes())
+        })
+        .collect();
+    let decode = |zir: &[u8]| zed_native::legalize(zedc::zir::binary::decode_form(zir).unwrap().0);
+    let mut meter = scaling::Meter::new();
+    let before = meter.least(
+        || {},
+        || {
+            for (zir, _) in &stored {
+                let g = decode(zir);
+                std::hint::black_box(plan(g.graph(), true));
+            }
+        },
+    );
+    let after = meter.least(
+        || {},
+        || {
+            for (zir, p) in &stored {
+                let g = decode(zir);
+                std::hint::black_box(Plan::from_bytes(p, g.graph()).unwrap());
+            }
+        },
+    );
+    let unit = meter.unit();
+    let ratio = before.units as f64 / after.units as f64;
+    println!(
+        "start on the corpus: planning {unit}={}, reading the plan {unit}={}, ratio {ratio:.2}",
+        before.units, after.units
+    );
+    assert!(
+        after.units < before.units,
+        "{} {}",
+        before.units,
+        after.units
+    );
+}

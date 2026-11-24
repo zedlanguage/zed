@@ -25,6 +25,9 @@
 //!
 //! [`intern`]: dense ids for distinct values, and the values back by id.
 //!
+//! [`cartesian`]: the Cartesian tree of items in key order by priority, each node made once over
+//! its children, in `O(n)`.
+//!
 //! [`by_address`]: a map key that is the address of an `Arc` and holds it, so no address in a
 //! memo is freed and given to another value while the memo lives.
 
@@ -33,6 +36,7 @@
 extern crate zed_numtheory as _;
 
 pub mod by_address;
+pub mod cartesian;
 pub mod fenwick;
 pub mod held;
 pub mod index;
