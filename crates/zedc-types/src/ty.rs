@@ -17548,10 +17548,10 @@ async fn accepts<'m>(
     // an outer comparison holds a name a nested `fits_in` made and forgot: an outer binding is
     // written only by `unite` of pieces of the nodes the outer comparison reads and by the
     // replacements, which hold no other names ((F2)), and those nodes hold no such name ((2)
-    // of the proof at `Cx::compared`); a nested `fits_in` writes no outer binding. (F4) `piece_within(p, m)`
-    // reads `p` alone, and the union of a binding with `p` keeps `p` a piece up to a merge of
-    // pieces of no carrier, where the test asks only `m & OTHER`: so a piece refused alone is
-    // refused in every binding that holds it.
+    // of the proof at `Cx::compared`); a nested `fits_in` writes no outer binding. (F4)
+    // `piece_within(p, m)` reads `p` alone, and the union of a binding with `p` keeps `p` a
+    // piece up to a merge of pieces of no carrier, where the test asks only `m & OTHER`: so a
+    // piece refused alone is refused in every binding that holds it.
     // Proof, by the branch of `admits` that refuses. (1) `v` bound to nothing, `p = Var(w)`
     // with mask `mw`, refused as `mw & !m != 0`: a final binding of `Var(w)` alone fails the
     // same test in `bounds_hold`; one of more pieces is read piece by piece, and

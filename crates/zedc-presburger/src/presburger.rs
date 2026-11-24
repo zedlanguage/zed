@@ -1441,7 +1441,8 @@ thread_local! {
     static OLD_PATH: Cell<bool> = const { Cell::new(false) };
     static REVERSED: Cell<bool> = const { Cell::new(false) };
     /// Whether [`swept_after_refusal`] gives no answer, for the test that finds the formulas the
-    /// solver refuses (`scaled::tests::a_formula_the_general_path_refuses_is_swept_past_the_switchover`).
+    /// solver refuses
+    /// (`scaled::tests::a_formula_the_general_path_refuses_is_swept_past_the_switchover`).
     #[cfg(test)]
     static NO_SWEEP_AFTER_REFUSAL: Cell<bool> = const { Cell::new(false) };
 }

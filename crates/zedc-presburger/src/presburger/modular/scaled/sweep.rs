@@ -44,8 +44,8 @@
 //! `E = M k0 + sum c_qi sigma_i k_i (M / m_i)` and `R_i = M c_ri - c_qi sigma_i (M / m_i)`, and
 //! `r_i = (a_i x + k_i) mod m_i` lies in `[0, m_i - 1]` for every row, whether or not the formula
 //! names it ([`x_form`]). Multiplying by `M > 0` keeps the sign and zero-ness. QED.
-//! So `h` lies in `[lo, hi]`, `lo = sum_{R_i < 0} R_i (m_i - 1)`, `hi = sum_{R_i > 0} R_i (m_i - 1)`,
-//! and with `A = -E - hi` and `B = -E - lo - [c is >=]`:
+//! So `h` lies in `[lo, hi]`, `lo = sum_{R_i < 0} R_i (m_i - 1)`,
+//! `hi = sum_{R_i > 0} R_i (m_i - 1)`, and with `A = -E - hi` and `B = -E - lo - [c is >=]`:
 //! - `G x < A` makes `c` false (`G x + E + h <= G x + E + hi < 0`);
 //! - `G x > B` makes it true (`>= 0`: `G x + E + h >= G x + E + lo > -1`), or false for `==`
 //!   (`> 0`, as `B = -E - lo` there);
@@ -151,8 +151,8 @@ pub(crate) fn solve_modular_scaled_or_swept(
     solve_modular_or_scaled(f, want_model).or_else(|| solve(f, want_model))
 }
 
-/// [`solve_by`] up to [`PERIOD_SWEEP_AFTER_REFUSAL_UNITS`] units, for a formula the general path has refused
-/// (the checker's `decide_named` and `satisfiable_named` in `presburger.rs`): past
+/// [`solve_by`] up to [`PERIOD_SWEEP_AFTER_REFUSAL_UNITS`] units, for a formula the general path
+/// has refused (the checker's `decide_named` and `satisfiable_named` in `presburger.rs`): past
 /// [`PERIOD_SWEEP_SWITCHOVER`] the general path is asked first, as it is the faster on most such
 /// formulas (measured at [`PERIOD_SWEEP_SWITCHOVER`]), and this sweep answers what it refuses.
 /// Test: `tests::a_formula_the_general_path_refuses_is_swept_past_the_switchover`.

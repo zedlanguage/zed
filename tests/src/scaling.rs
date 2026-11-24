@@ -182,9 +182,9 @@ pub const PREFERRED: f64 = 9.0;
 /// 2026-11-23, kept for the measurements written against it. Nothing holds a ratio to it now:
 /// the scaling checks of this file hold every meter to the limit itself
 /// (FAIL-scaling-check-passes-over-limit; see `compare_measured`), and so does l01_38's
-/// `pncx_fibonacci_crt_scale`, the last probe that used it (FAIL-pncx-probe-allowance). A linear loop
-/// run at 10^5 and 8 × 10^5 passes took 5.6 to 8.8 times the processor time, the fastest of five
-/// each, and a quadratic one 33 to 82 times for 64 (2026-11-07, load 20 to 25).
+/// `pncx_fibonacci_crt_scale`, the last probe that used it (FAIL-pncx-probe-allowance). A linear
+/// loop run at 10^5 and 8 × 10^5 passes took 5.6 to 8.8 times the processor time, the fastest of
+/// five each, and a quadratic one 33 to 82 times for 64 (2026-11-07, load 20 to 25).
 pub const TIME_ALLOWANCE: f64 = 2.0;
 
 /// `8^(power − 1)`: the ratio at 8n of work of order `n^power` to work of order n, by which
