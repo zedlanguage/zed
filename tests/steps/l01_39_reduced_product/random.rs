@@ -160,25 +160,42 @@ fn every_value_that_reaches_an_arm_is_in_its_scope() {
 /// which reads its integer sets as `Classed`) are the same, printed, with the plain-set
 /// shortcut of `Classed::new` taken and not taken (`zedc_lattice::classed::plain_shortcut`,
 /// VERIFY-classed-wider-class-callers): 1 000 shapes. The shapes that took the shortcut are
-/// counted and printed; the assertion asks for one, since no draw is built to reach it.
+/// counted and printed; the assertion asks for one, since no draw is built to reach it. The
+/// shapes are drawn on `THREADS` threads, each from its own generator seeded `seed + t` (the
+/// switch is per thread), since one thread took 16 s, near a piece's limit under load.
 #[test]
 fn arm_scopes_are_the_same_with_and_without_the_plain_shortcut() {
     use zedc_lattice::classed::plain_shortcut;
-    let (mut rng, seed) = Rng::fresh("arm_scopes_are_the_same_with_and_without_the_plain_shortcut");
-    let (cases, mut took) = (1000, 0);
-    for case in 0..cases {
-        let s = Shape::random(&mut rng);
-        let (with, without, count) = plain_shortcut::both(|| {
-            let arms = s.arms();
-            arms.iter()
-                .map(|a| format!("{} {} {}", a.guard, a.outcome, a.scope))
-                .collect::<Vec<_>>()
-        });
-        assert_eq!(with, without, "seed {seed}, case {case}: {s:?}");
-        if count > 0 {
-            took += 1;
-        }
-    }
+    const THREADS: u64 = 4;
+    let (_, seed) = Rng::fresh("arm_scopes_are_the_same_with_and_without_the_plain_shortcut");
+    let cases = 1000;
+    let took: usize = std::thread::scope(|sc| {
+        let runs: Vec<_> = (0..THREADS)
+            .map(|t| {
+                sc.spawn(move || {
+                    let mut rng = Rng::new(seed.wrapping_add(t));
+                    let mut took = 0;
+                    for case in 0..cases / THREADS as usize {
+                        let s = Shape::random(&mut rng);
+                        let (with, without, count) = plain_shortcut::both(|| {
+                            let arms = s.arms();
+                            arms.iter()
+                                .map(|a| format!("{} {} {}", a.guard, a.outcome, a.scope))
+                                .collect::<Vec<_>>()
+                        });
+                        assert_eq!(with, without, "seed {seed}, thread {t}, case {case}: {s:?}");
+                        if count > 0 {
+                            took += 1;
+                        }
+                    }
+                    took
+                })
+            })
+            .collect();
+        runs.into_iter()
+            .map(|r| r.join().expect("a thread panicked"))
+            .sum()
+    });
     println!("seed {seed}: {took} of {cases} took the shortcut");
     assert!(took > 0, "seed {seed}: no case took the shortcut");
 }
