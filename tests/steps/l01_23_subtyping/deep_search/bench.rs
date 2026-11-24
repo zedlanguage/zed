@@ -101,6 +101,19 @@ fn comparing_deep_morphism_types_scales_with_depth() {
     scales("morphisms", morphisms, 4000, Measure::Comparing);
 }
 
+/// A morphism whose value is a one-tuple of the next morphism type (KERNEL-empty-morphism-tuple-
+/// quadratic, b22-ref4, 2026-11-24): `is_empty` of the difference built each closure type's
+/// value again in the own search of every closure type above it, O(n^2) (0.07, 0.27, 0.96 and
+/// 3.95 s at 100, 200, 400 and 800 levels on a Colab VM; callgrind 101.5e6 and 347.8e6
+/// instructions at 50 and 100). Now each closure type's own answer is read
+/// (`Searching::returnable`): 14, 27, 55, 116 and 456 ms at 100, 200, 400, 800 and 3200 levels,
+/// and 66.2e6 and 524.8e6 instructions at 100 and 800, 7.93 times (callgrind, Colab VM,
+/// 2026-11-24).
+#[test]
+fn comparing_deep_morphism_tuple_types_scales_with_depth() {
+    scales("morphism tuples", morphism_tuples, 500, Measure::Comparing);
+}
+
 // The seven tests below were regular tests of `deep_search.rs`, moved here as they were
 // (TEST-bench-move-l0123, author P178: a test that needs an unusual depth is a benchmark);
 // each has a small instance there, at depth `DEPTH` on the default test thread, of the same
@@ -231,29 +244,20 @@ fn a_chain_of_the_five_operations_50_000_levels_deep_is_the_shallow_composition(
     });
 }
 
-/// The levels of [`a_chain_of_the_five_operations_4000_levels_deep_is_not_under_another_bottoms`]:
-/// 800 morphisms and 800 pairs in turn, past the depth at which a search by recursion
-/// overflowed a 2 MiB stack.
-// FINDING (2026-11-22, not yet fixed): the comparison below takes time quadratic in the depth.
-// At 1000, 2000, 4000, 8000 and 16,000 levels of `chain` it took 0.25 s, 0.99 s, 3.18 s,
-// 11.80 s and 48.20 s, about 4 times a doubling (five depths run at once on an 8-thread VM);
-// at 50,000 levels the whole test took 600 s. Pure tuple and pure morphism types compare within
-// the ratio limit (`comparing_deep_tuple_types_scales_with_depth`,
-// `comparing_deep_morphism_types_scales_with_depth`); a morphism of a pair does not. The
-// simulation fails at the top (`Simulation::rows`: the two morphism parts differ), and the
-// time is in `is_empty` of `a - b`: a probe (not committed) nested `a` and `b` 200, 400, 800
-// and 1600 deep around `0` and `1` and timed the two steps apart. Building `a - b` took 13 to
-// 85 µs at every depth. Deciding it took 10.4, 19.7, 39.7 and 76.4 ms for `{int: t}` and 9.6,
-// 18.3, 36.0 and 77.5 ms for `(t, 1)`, linear, but 0.24, 0.90, 3.27 and 11.28 s for
-// `{int: (t,)}` and 0.25, 0.94, 3.21 and 11.92 s for `{int: (t, 1)}`, about 3.6 times a
-// doubling: the search is quadratic where a morphism's value is a tuple. Not yet located
-// within the search (no profiler on the VM). No ratio is checked here until it is fixed.
-const UNEQUAL: usize = 4000;
+/// The levels of [`a_chain_of_the_five_operations_50_000_levels_deep_is_not_under_another_bottoms`]:
+/// 10,000 morphisms and 10,000 pairs in turn, the depth of [`CHAIN`].
+// The comparison took time quadratic in the depth until KERNEL-empty-morphism-tuple-quadratic
+// (b22-ref4, 2026-11-24): 0.25 s, 0.99 s, 3.18 s, 11.80 s and 48.20 s at 1000 to 16,000 levels
+// of `chain`, and 600 s at 50,000 (2026-11-22), so this test ran 4000 levels. The time was in
+// `is_empty` of `a - b` where a morphism's value is a tuple of the next morphism type: the
+// own search of each closure type built the chain below it again (`Searching::returnable`).
+// The ratio is checked by `comparing_deep_morphism_tuple_types_scales_with_depth`.
+const UNEQUAL: usize = CHAIN;
 
 /// The chain `UNEQUAL` levels deep is not under the shallow composition around another bottom,
 /// on a 2 MiB stack.
 #[test]
-fn a_chain_of_the_five_operations_4000_levels_deep_is_not_under_another_bottoms() {
+fn a_chain_of_the_five_operations_50_000_levels_deep_is_not_under_another_bottoms() {
     timed(&format!("a chain of {UNEQUAL} levels compared"), || {
         let t = chain(UNEQUAL, lit(0));
         assert!(!t.subtype(&shallow(UNEQUAL, lit(1))));

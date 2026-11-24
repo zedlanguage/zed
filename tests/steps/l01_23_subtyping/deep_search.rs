@@ -25,6 +25,13 @@ fn morphisms(n: usize, bottom: Type) -> Type {
     (0..n).fold(bottom, |t, _| Type::exact(Type::int(), t))
 }
 
+/// A type nested `n` deep in the values of morphisms that are tuples, `{int: (..,)}`.
+fn morphism_tuples(n: usize, bottom: Type) -> Type {
+    (0..n).fold(bottom, |t, _| {
+        Type::exact(Type::int(), Type::tuple(vec![t]))
+    })
+}
+
 /// The depth of the types of the regular tests: each search goes down and back up through
 /// many levels of each shape, on the default test thread. The same checks at 10,000 levels,
 /// past the depth at which a search by recursion overflowed a 2 MiB stack, are in `bench`
@@ -79,6 +86,13 @@ fn a_nested_morphism_type_is_not_under_one_that_differs_at_the_bottom() {
 #[test]
 fn a_nested_morphism_type_is_under_one_wider_at_the_bottom() {
     compares(morphisms, Type::int(), true);
+}
+
+/// A small instance of `bench::comparing_deep_morphism_tuple_types_scales_with_depth`.
+#[test]
+fn a_nested_morphism_tuple_type_is_compared_by_its_bottom() {
+    compares(morphism_tuples, lit(1), false);
+    compares(morphism_tuples, Type::int(), true);
 }
 
 /// Atoms, nested `DEPTH` deep, compared both ways: a small instance of the comparison of

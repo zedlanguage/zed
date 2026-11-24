@@ -11480,6 +11480,55 @@ impl<'m> Searching<'m> {
                 return true;
             }
         }
+        // A tuple type whose part of some length is a union of rows has a value when one row
+        // has a value in each component: that tuple is in the row, so in the union. A component
+        // whose own search found a value is read as above, and the others are built.
+        // Complexity tradeoff: building a value of `v` itself, when `v` is a tuple of closure
+        // types (`{int: (t,)}`, the value type a one-tuple of the next closure type), builds the
+        // closure below, whose value type is again such a tuple, and so on to the bottom: each
+        // own search of a chain of k such closure types walked the chain below it, O(k^2) in all
+        // (callgrind: 101.5e6 and 347.8e6 instructions at k = 50 and 100, 2026-11-24, b22-ref4;
+        // KERNEL-empty-morphism-tuple-quadratic). Used: the components' own answers, O(1)
+        // expected time each, and a value built for each other component, so each type of the
+        // chain is searched once, O(k) (66.2e6 and 524.8e6 instructions at k = 100 and 800,
+        // 7.93 times, callgrind on the same VM). Only a row with a component answered by its own search
+        // is tried; when none tried succeeds, `v` is built as before, so the extra cost is at
+        // most one build of each such row's other components, which the build of `v` repeats
+        // from the values kept. Proof: a tuple of a value of each component of a row lies in
+        // that row, and the part is the union of its rows (`union_rows`), so the tuple is a
+        // value of `v`; a component's own answer is a function of it alone (the claim at
+        // `own_emptiness`). Tests:
+        // `deep_search::bench::comparing_deep_morphism_tuple_types_scales_with_depth` (the
+        // ratio) and `deep_search::a_nested_morphism_tuple_type_is_compared_by_its_bottom`.
+        let rows: Vec<Row> = {
+            let p = v.p();
+            (p.tuples.lens.values())
+                .filter_map(Part::union_rows)
+                .flatten()
+                .collect()
+        };
+        for row in &rows {
+            let known: Vec<bool> = row
+                .iter()
+                .map(|c| {
+                    let own = self.s().reads_own(c);
+                    own && own_emptiness(c) == Some(false)
+                })
+                .collect();
+            if !known.contains(&true) {
+                continue;
+            }
+            let mut all = true;
+            for (c, k) in row.iter().zip(&known) {
+                if !k && self.rep(c).await.is_none() {
+                    all = false;
+                    break;
+                }
+            }
+            if all {
+                return true;
+            }
+        }
         self.rep(v).await.is_some()
     }
 
@@ -11848,13 +11897,41 @@ impl<'m> Searching<'m> {
             // A morphism type in no value of the part (`refused`, as in `R2 \ R0`) is dropped,
             // and the rows are read from what is left, `kept`; they are used only when every
             // value of `kept` is apart from every type dropped, which one emptiness check
-            // proves (the `no_key` check after the rows). Proof that a closure of a row is then
-            // a value of the part:
-            // the closure is in `kept`, as each row's closure is when nothing is refused (the
-            // three cases below); it is in no type dropped, since `kept & (d1 | ... | dk)` is
-            // empty; and the part is `kept` with each `di` read as `false` (`restrict`), so it
-            // holds the closure. `no_key` proves the emptiness for good in this search (its
-            // proof), so a closure kept is never in a type dropped. Before (REP-refusals-rest
+            // proves (the `no_key` check after the rows). Proof that a closure `c` of a row is
+            // then a value of the part `p` (PROOF-find-rep-no-key-meet, b22-ref4, 2026-11-24).
+            // Write `D = {d1, ..., dk}` for the types dropped, and `s(a)` for whether `c` is in
+            // the morphism type `a`; `c` is in a part `q` exactly when `q` is true at `s`.
+            // Step 1, `restrict` drops only the atoms of `D`: its argument answers `Some(false)`
+            // for an atom of `D` and `None` for every other atom, so only literals over `D`
+            // change. In a list (`Bdd::restrict`) a literal `(d, false)` of `d` in `D` is
+            // satisfied, and the list is cut at its block with that block's value; a literal
+            // `(d, true)` is unsatisfied and removed; every other literal stays. That is the
+            // list's evaluation with `d` false, so for every `s`,
+            // `kept(s) = p(s with each di false)`; an expression is rebuilt from its operands'
+            // restrictions by the same connectives (`Part::restrict`), so the same holds by
+            // induction on it. Tested exhaustively over 6 atoms on random lists and expressions
+            // (`bdd::tests::three_valued_operations_keep_the_assignments`).
+            // Step 2, `c` is in `kept` (each case of `meets` below): with `union_rows`, `kept`
+            // is the union of the rows, and `c` is in its row; with types taken and a union
+            // left, `c` is in every type taken and in its arm, so `s` agrees with the types
+            // taken read as `true`, and `kept` at `s` is `rest` at `s`, the union holding the
+            // arm; in the case `whole`, every atom of `kept` is taken and `c` is in their meet,
+            // so `s` is `true` on every atom of `kept`, and `c` is in `kept` exactly when
+            // `kept` is true with every atom `true`, which `holds_all` checks. A part that holds
+            // no assignment but is no leaf (as `e & !e`, which only `settle` reduces) has every
+            // atom taken by three-valued logic, or, once restricted, none: without that check
+            // the meet of its atoms, or of none (`(empty) -> top`), was shown for an empty part
+            // (`empty::tests::a_morphism_part_with_no_assignment_has_no_closure`).
+            // Step 3, `c` is in no type of `D`: `no_key(kept & (d1 | ... | dk))` holds only when
+            // that meet is proved empty for good in this search (`no_key`'s proof), and `c` is
+            // in `kept` (step 2), so `s(di)` is false for each `i`.
+            // Step 4: by step 3, `s` equals `s` with each `di` false, so by step 1
+            // `p(s) = kept(s)`, which is true by step 2; `c` is in `p`. Only steps 2 and 3 use
+            // the rows' cases and the check; no step uses which atoms `forced` names, so a
+            // wrong `refused` could lose a closure (the check fails) but not show a wrong one.
+            // Mutant: with the `no_key` check skipped, the closure of `(int) -> int` is shown
+            // for the empty `((int) -> int) \ ((int) -> top)`
+            // (`empty::tests::a_closure_in_a_type_dropped_is_not_shown`). Before (REP-refusals-rest
             // point (1), b22-ref3, 2026-11-23) a part with a type refused built no closure, and
             // the layered groups of `group_oracle` whose value is a closure returning a pair of
             // itself and a difference of definitions, `R3 = (int) -> (R3, (R2 \ R0))`, were
@@ -11880,6 +11957,9 @@ impl<'m> Searching<'m> {
             // The keys of the types taken that every row of a meet with a union shares.
             let mut shared: Vec<Type> = Vec::new();
             let mut meets: Vec<(Morphism, Vec<Type>)> = match (whole, kept.union_rows()) {
+                // `holds_all` of step 2 above: `kept` with every atom `true`, one evaluation of
+                // its nodes, the order of `forced` just run.
+                (true, _) if kept.eval3(&|_| Some(true)) != Some(true) => Vec::new(),
                 (true, _) => vec![(
                     match taken.split_first() {
                         Some((a, rest)) => rest.iter().fold(a.clone(), |r, b| {

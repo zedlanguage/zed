@@ -4240,3 +4240,39 @@ fn a_list_added_twice_changes_no_class() {
     }
     assert!(joined_some && apart_some, "pairs joined and apart");
 }
+
+/// A morphism part that is no leaf and holds no closure, `e & !e` with
+/// `e = ((int) -> int) | ((bool) -> int)`, unsettled: `find_rep` builds no closure for it
+/// (PROOF-find-rep-no-key-meet). Both atoms are refused by three-valued logic (each taken
+/// makes `!e` false), so `kept`, the part with both read as `false`, is the empty leaf; with
+/// no atom left, every atom of `kept` was taken, and before the check that `kept` holds the
+/// closure of its meet, the meet of no type, `(empty) -> top`, was shown, and checked apart
+/// from the types dropped against the empty `kept`, which it is.
+#[test]
+fn a_morphism_part_with_no_assignment_has_no_closure() {
+    let to_int = |k: Type| Morphism::new(k.clone(), k, Type::int());
+    let none = Part::none_of_two(to_int(Type::int()), to_int(Type::bool()));
+    assert!(none.is_leaf().is_none(), "{none:?}");
+    let t = Type::with(|q| q.morphisms = none);
+    assert_eq!(Search::default().rep(&t), None);
+    assert_ne!(t.verdict(), Verdict::Inhabited);
+}
+
+/// `((int) -> int) \ ((int) -> top)`: every closure of the first type is one of the second, so
+/// the difference is empty. Its part is `a & !b`; `b` is refused and dropped, `kept` is `a`,
+/// and the closure of `a` is in `b`. `find_rep` shows it only after `no_key(a & b)`, which
+/// fails here, so no closure is shown (PROOF-find-rep-no-key-meet, step 3; the mutant that
+/// skips that check shows the closure of `a`).
+#[test]
+fn a_closure_in_a_type_dropped_is_not_shown() {
+    let to = |v: Type| Type::morphism(Type::int(), Type::int(), v);
+    let t = &to(Type::int()) - &to(Type::top());
+    assert_eq!(
+        t.p().morphisms.distinct_atoms().len(),
+        2,
+        "{:?}",
+        t.p().morphisms
+    );
+    assert_eq!(Search::default().rep(&t), None);
+    assert_ne!(t.verdict(), Verdict::Inhabited);
+}

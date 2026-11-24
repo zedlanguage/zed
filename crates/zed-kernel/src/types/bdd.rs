@@ -904,6 +904,15 @@ impl<A: Literal> Part<A> {
         Part::Bdd(Bdd::literal(a))
     }
 
+    /// `e & !e` with `e = a | b`, kept as an expression: a part that is no leaf and holds no
+    /// assignment, as the parts `settle` reduces to the empty leaf. For tests of code that reads
+    /// a part without settling it.
+    #[cfg(test)]
+    pub(super) fn none_of_two(a: A, b: A) -> Part<A> {
+        let e = Part::connect(Op::Or, Part::literal(a), Part::literal(b));
+        Part::connect(Op::And, e.clone(), Part::not_expr(e))
+    }
+
     /// The atom `a` when the part is the one [`Part::literal`] makes of `a`, in O(1): a list of
     /// one block holding `(a, true)`, of first value `true` (`Bdd::literal_key`). Both are read
     /// here, not taken from the list's one form, so the answer is the same as comparing the
