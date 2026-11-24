@@ -30,7 +30,11 @@ fn a_generic_remap_binds_the_row_at_every_depth_of_call() {
         "a = g({ 0 -> 5 });\nx = g({ 0 -> { 1 -> 2 } });\n",
         "x = g({ 0 -> { 1 -> 2 } });\na = g({ 0 -> 5 });\n",
     ] {
-        assert_eq!(value(&format!("{f}{calls}"), "x"), "{0 -> {1 -> 2}}", "{calls}");
+        assert_eq!(
+            value(&format!("{f}{calls}"), "x"),
+            "{0 -> {1 -> 2}}",
+            "{calls}"
+        );
     }
     let src = format!("{f}x = [{{ 0 -> 5 }}, {{ 0 -> {{ 1 -> 2 }} }}].map(g);\n");
     assert_eq!(value(&src, "x"), "{0 -> {0 -> 5}, 1 -> {0 -> {1 -> 2}}}");

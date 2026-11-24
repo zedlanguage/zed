@@ -23268,6 +23268,9 @@ struct Disjunct {
     d: Rc<Parts>,
     roots: Vec<usize>,
     ks: Vec<usize>,
+    /// The symbols it was offered before those its disjunction's hulls already cover were
+    /// dropped from `ks`: the next disjunct is offered these.
+    wanted: Vec<usize>,
     sub: Vec<Atom>,
     pre: Option<Result<Option<Parts>, Refusal>>,
 }
@@ -23807,6 +23810,48 @@ impl Level {
             None if self.tree_handled[j] => Vec::new(),
             None => self.g.touched(atoms, &roots),
         };
+        // Complexity tradeoff (PERF-pendants-dnf-hull-sides): naive version, each disjunct asked
+        // for every symbol it touches, two hull sides a symbol: 1098 sides for one
+        // `project_each_boxed` of seed 393 case 13 of `l01_39_reduced_product::pendants`, most
+        // for symbols whose hull the disjuncts read before had already covered. Used: a symbol
+        // `k` is not asked of this disjunct where the union `u` of the hulls the disjunction's
+        // satisfiable disjuncts gave it so far holds the level's hull `o` of `k`, both ends of
+        // `o` finite, and the disjunct has no disjunctions of its own or the level has one
+        // disjunction: 840 sides there, the same answer. The answer is unchanged, step by step:
+        // (1) [`Level::close_disjunction`] sets `o` to `o ∩ U`, `U` the union over all the
+        // satisfiable disjuncts, when every one of them gave `k` a hull; `U ⊇ u ⊇ o`, so that
+        // meet is `o`, and where some disjunct gave none (not asked, refused, or not touching
+        // `k`) the meet is skipped and `o` stays: `o` either way. (2) A refusal of the disjunct
+        // as a whole is still found, since it is still asked whether it has a point (with no
+        // symbol, as [`ask_disjunct`] asks), and `sat` counts it as before. (3) The hulls a
+        // disjunct gives are read again only by `seen`: by [`summarize`], only for a disjunct
+        // with disjunctions, and as `open` candidates of [`Level::close`], only for an infinite
+        // end of a hull, while `o` has none and only narrows from here; with one disjunction
+        // `seen` is not kept. (4) The next disjunct is offered the symbols before this drop
+        // (`Disjunct::wanted`), so one with disjunctions is still asked for `k`. What changes is
+        // only `skipped`: the causes of a refusal of `k` by this disjunct, which no longer
+        // happens, are not reported. Cost: one `is_subset` of two interval sets for each
+        // symbol, linear in their pieces. Not done: asking only the side of `k` where `u` falls
+        // short of `o` (the other side is not needed), which needs the sides passed down to the
+        // level below; row PERF-pendants-dnf-hull-one-side. Tests:
+        // `l01_39_reduced_product::pendants::seed_393_case_13_asks_fewer_hull_sides` and the
+        // benchmark `pendants::bench::hull_sides_of_a_disjunction_grow_linearly_in_its_disjuncts`.
+        let wanted = ks.clone();
+        let ks: Vec<usize> = if self.ors.len() == 1 || d.ors.is_empty() {
+            let (acc, out) = (&reading.acc, &self.out);
+            ks.into_iter()
+                .filter(|k| {
+                    !matches!(
+                        (acc.get(k), &out[*k]),
+                        (Some((Some(u), _)), Ok(o))
+                            if matches!(o.bounds(), Some((End::Fin(_), End::Fin(_))))
+                                && o.is_subset(u)
+                    )
+                })
+                .collect()
+        } else {
+            ks
+        };
         let sub: Vec<Atom> = ks.iter().map(|&k| self.g.syms[k].clone()).collect();
         // A disjunct asked for no symbol is only asked whether it has a point, as [`decide`]
         // asks it; with `sets` it was asked above.
@@ -23825,6 +23870,7 @@ impl Level {
             d,
             roots,
             ks,
+            wanted,
             sub,
             pre,
         };
@@ -23954,7 +24000,7 @@ impl Level {
             reading.found_here.push((r.d, kept));
         }
         if !self.sets {
-            reading.wanted = Some(r.ks);
+            reading.wanted = Some(r.wanted);
         }
     }
 

@@ -243,3 +243,62 @@ fn a_part_of_pendants_is_projected_in_linear_time_for_one_two_and_three_disjunct
         );
     }
 }
+
+/// One disjunction of `k` disjuncts over the names `x0` .. `x{m-1}`, each in `[0, 100]` and
+/// linked in one group by `x{i} + x{i+1} <= 150` (PERF-pendants-dnf-hull-sides): disjunct `j`
+/// is `x0 + x{m-1} >= j && x0 <= x{m-1} + j`, which leaves every name its whole box, so once
+/// one disjunct is read no name needs asking of the others.
+fn one_wide_disjunction(m: usize, k: usize) -> (Scope, Formula, Vec<Atom>) {
+    let last = m - 1;
+    let mut text: Vec<String> = (0..last)
+        .map(|i| format!("x{i} + x{} <= 150", i + 1))
+        .collect();
+    let arms: Vec<String> = (0..k)
+        .map(|j| format!("x0 + x{last} >= {j} && x0 <= x{last} + {j}"))
+        .collect();
+    text.push(format!("({})", arms.join(" || ")));
+    let items = parse(&text.join(" && "));
+    let bs = (0..m)
+        .map(|i| (format!("x{i}"), vec![(Some(0), Some(100))]))
+        .collect();
+    (scope(&bs), formula(&items), item_names(&items))
+}
+
+/// The hull sides asked by one `project_each_boxed` of [`one_wide_disjunction`] with `k`
+/// names and `k` disjuncts, at `k` and `8k`, held linear, and the time of one with six names
+/// and `k` disjuncts. Each disjunct asked for every name of its group was `2 k^2` sides with
+/// `k` names, Theta(k^2) (128 and 8192 on main, 64 times); a name is now asked only of the
+/// disjuncts read before the union of their hulls holds the name's hull
+/// (`Level::start_disjunct`), so the first disjunct is asked for each name and the rest for
+/// none. Every name keeps its box, none refused. The time is held with the names fixed: with
+/// `k` names each disjunct is also settled with its base group of `k` rows, Theta(k^2) work
+/// apart from the sides (39.2 times the instructions at 8k, first run), row
+/// PERF-disjunct-base-group-each.
+#[test]
+fn hull_sides_of_a_disjunction_grow_linearly_in_its_disjuncts() {
+    let sides = |k: usize| {
+        let (s, f, syms) = one_wide_disjunction(k, k);
+        presburger::hull_sides_asked();
+        let got = boxed_names(&s, &f, &syms);
+        let sides = presburger::hull_sides_asked();
+        let whole = IntervalSet::range(End::Fin(Num::from(0)), End::Fin(Num::from(100)));
+        for (n, (set, refused)) in &got {
+            assert!(set == &whole && !refused, "k = {k}: {n} {set:?} {refused}");
+        }
+        sides
+    };
+    scaling::hold_linear(
+        "one disjunction of k disjuncts over k linked names: hull sides at 8 and 64",
+        "hull sides",
+        sides(8),
+        sides(64),
+    );
+    scaling::check_inputs(
+        "one disjunction of k disjuncts over 6 linked names, project_each_boxed",
+        8,
+        |k| one_wide_disjunction(6, k),
+        |(s, f, syms)| {
+            boxed_names(s, f, syms);
+        },
+    );
+}

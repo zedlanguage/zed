@@ -4288,6 +4288,25 @@ fn a_joined_conjunction_gets_one_answer_for_every_naming() {
     check_refused_case(18417449267567745209, 5, true, (1, 1, 1));
 }
 
+/// Case 13 of seed 393, each part two joined (PERF-pendants-dnf-hull-sides): seven
+/// disjunctions over six names, whose disjuncts mostly give a name a hull inside the union the
+/// disjuncts read before gave it. One `project_each_boxed` asked 1098 hull sides, 2.3 s of the
+/// 25.2 s of its seed; a name whose union already holds its hull is no longer asked of the
+/// disjuncts after (`Level::start_disjunct`), 840 sides, with the same sets. Every writing
+/// still gives every name its brute-force set, none refused.
+#[test]
+fn seed_393_case_13_asks_fewer_hull_sides() {
+    let (items, bs) = random_case(393, 13, true);
+    presburger::hull_sides_asked();
+    boxed_names(&scope(&bs), &formula(&items), &item_names(&items));
+    let sides = presburger::hull_sides_asked();
+    assert!(
+        sides <= 840,
+        "{sides} hull sides, more than the 840 asked since PERF-pendants-dnf-hull-sides"
+    );
+    check_refused_case(393, 13, true, (0, 0, 0));
+}
+
 /// [`omega`], the oracle every test above relies on, against enumeration: random systems of up
 /// to 5 rows and 1 equation on 3 variables, coefficients in `-4..=4`, each variable boxed to
 /// `-5..=5` so enumeration is exact. Coefficients of magnitude above 1 on both sides of a
