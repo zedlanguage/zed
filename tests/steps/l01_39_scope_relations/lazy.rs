@@ -1191,7 +1191,9 @@ fn a_group_on_one_name_of_a_disjunction_assumed_after_it_bounds_its_points() {
 /// The first two give `y` the classes 0 and 3 modulo 6, which join to 0 modulo 3, and `x` the
 /// classes 0 and 1 modulo 3, which join to every integer; `x = 2` (and 5, 8) is in no case,
 /// and with `y` in 0 modulo 3 neither of the first two cases' relations meets it. The answer
-/// is `x` in `{0, 1, 3, 4, 6, 7, 9}` or `20..=29`, eager and lazy.
+/// is `x` in `{0, 1, 3, 4, 6, 7, 9}` or `20..=29`, eager and lazy, read as the product's
+/// integers (`Product::classed`: its interval, its class and the union of the cases' classes
+/// its join keeps, row LIMITS-classed-listing-per-set).
 #[test]
 fn three_cases_whose_classes_join_wide_keep_only_their_values() {
     let ge = |a: Term, k: i64| prim(Prim::Ge, a, int(k));
@@ -1216,8 +1218,89 @@ fn three_cases_whose_classes_join_wide_keep_only_their_values() {
         let s = ints(&names(&["x", "y"]));
         let s = if lazy { s.lazy() } else { s };
         let s = s.assume(&test, true, &p);
-        let x = s.settled(&Arc::from("x")).ints().clone();
+        let x = s.settled(&Arc::from("x")).classed();
         assert_eq!(x, want, "lazy {lazy}");
+    }
+}
+
+/// `x` after the three cases of [`three_cases_whose_classes_join_wide_past_the_old_listing_limit`]
+/// at `r`, eager or lazy, each case assumed in an arm of its own and the arms' scopes joined
+/// (`Scope::join`), the join LIMITS-classed-listing-per-set changes. Not one disjunction: the
+/// exact cover gives the union of a disjunction's cases of different classes listed
+/// (zedc-lattice `Classed::join_all`, O(v) for v values) on origin/main and here alike, a cost
+/// of its own (row PERF-cover-union-of-classes-listed).
+fn three_cases_at(r: i64, lazy: bool) -> zedc::store::product::Product {
+    let ge = |a: Term, k: i64| prim(Prim::Ge, a, int(k));
+    let le = |a: Term, k: i64| prim(Prim::Le, a, int(k));
+    let eq = |a: Term, b: Term| prim(Prim::Eq, a, b);
+    let modulo = |r: i64| eq(prim(Prim::Mod, var("x"), int(3)), int(r));
+    let lin = |a: i64, b: i64| prim(Prim::Add, prim(Prim::Mul, int(a), var("x")), int(b));
+    let range = |lo: i64, hi: i64| and(ge(var("x"), lo), le(var("x"), hi));
+    let cases = [
+        and(range(0, 3 * r), and(modulo(0), eq(var("y"), lin(2, 0)))),
+        and(range(0, 3 * r), and(modulo(1), eq(var("y"), lin(2, 1)))),
+        and(range(5 * r, 5 * r + 9), eq(var("y"), lin(3, 1))),
+    ];
+    let s = ints(&names(&["x", "y"]));
+    let s = if lazy { s.lazy() } else { s };
+    let p = Premises::new();
+    (cases.iter().map(|c| s.assume(c, true, &p)))
+        .reduce(|a, b| a.join(&b))
+        .expect("three cases")
+        .settled(&Arc::from("x"))
+}
+
+/// [`three_cases_whose_classes_join_wide_keep_only_their_values`] with the first two cases on
+/// `0 <= x <= 3·r` and the third on `5·r <= x <= 5·r + 9`, at `r` = 10^3 and 10^6: the cases'
+/// classes 0 and 1 modulo 3 hold 2·r + 2 values, each case in an arm of its own and the arms
+/// joined ([`three_cases_at`]). Each value of `x` asked is in the answer exactly where it is in
+/// a case (`Product::contains`), eager and lazy. At r = 10^6 each arm's values are past the
+/// limit at which a set is listed (`presburger::listed_within_limit`, about 134,800 values), so
+/// each arm keeps its ranges and class, and `x`'s interval keeps two ranges (a listed answer
+/// has one for each of the 2·r + 2 values). Red before green, by reading origin/main at
+/// 7351ba062 (not run there): the join of the arms' classes 0 and 1 modulo 3 was every integer
+/// there, so `x = 2` was held. At r = 10^3 the arms are listed, the answer is exact on both
+/// sides, the negative control.
+#[test]
+fn three_cases_whose_classes_join_wide_past_the_old_listing_limit() {
+    for r in [1_000i64, 1_000_000] {
+        let held = |v: i64| {
+            ((0..=3 * r).contains(&v) && v.rem_euclid(3) != 2) || (5 * r..=5 * r + 9).contains(&v)
+        };
+        let asked = [
+            -1,
+            0,
+            1,
+            2,
+            3,
+            3 * r - 2,
+            3 * r - 1,
+            3 * r,
+            3 * r + 1,
+            4 * r,
+            5 * r - 1,
+            5 * r,
+            5 * r + 4,
+            5 * r + 9,
+            5 * r + 10,
+        ];
+        for lazy in [false, true] {
+            let x = three_cases_at(r, lazy);
+            if r > 1_000 {
+                assert!(
+                    x.ints().len() <= 2,
+                    "r {r}, lazy {lazy}: x's ranges {}",
+                    x.ints()
+                );
+            }
+            for v in asked {
+                assert_eq!(
+                    x.contains(&Value::Int(v)),
+                    held(v),
+                    "r {r}, lazy {lazy}, x = {v}: {x:?}"
+                );
+            }
+        }
     }
 }
 

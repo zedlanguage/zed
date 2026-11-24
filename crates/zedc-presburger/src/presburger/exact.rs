@@ -83,7 +83,7 @@ use super::{Atom, Classed, Con, Each, EachClassed, Factor, Formula, Lin, Model, 
 mod classes;
 mod guarded;
 mod projection;
-use classes::ClassUnion;
+use classes::{Charged, ClassUnion};
 pub use projection::{METHOD, Method};
 use projection::{Strided, Tail, bounded, each_constraint, fin, holds_at, value};
 

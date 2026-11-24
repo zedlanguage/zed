@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use zedc_lattice::interval::End;
+
 use super::*;
 
 /// The values in `-W..=W` that the tests read; every set drawn lies well inside.
@@ -61,24 +63,19 @@ fn classed_values(c: &Classed) -> BTreeSet<i64> {
         .collect()
 }
 
-/// The checks that hold of every union: each set nonempty, no two of one class, `at` true,
-/// `met` and `into_classed` the same values as `contains`, `into_classed` the one form of
-/// those values (as `Classed::plain` of the listed set gives), and `ranges` holding them all.
+/// The checks that hold of every union: each set nonempty, no two of one class, `met` and
+/// `into_classed` the same values as `contains`, `into_classed` the one form of those values
+/// (as `Classed::plain` of the listed set gives), and `ranges` holding them all. (That the
+/// union's index of its classes is in step is checked in zedc-lattice `class_union::tests`.)
 fn well_formed(u: &ClassUnion, what: &str) {
     let mut classes = BTreeSet::new();
-    for (i, s) in u.sets.iter().enumerate() {
+    for s in u.sets() {
         assert!(!s.is_empty(), "{what}: an empty set kept");
         assert!(
             classes.insert(format!("{:?}", s.class)),
             "{what}: two sets of one class"
         );
-        assert_eq!(u.at.get(&s.class), Some(&i), "{what}: `at` out of step");
     }
-    assert_eq!(
-        u.at.len(),
-        u.sets.len(),
-        "{what}: `at` holds a class no set has"
-    );
     let got = values(u);
     let met = u.met(&mut no_limit()).expect("no limit");
     let listed: BTreeSet<i64> = (-W..=W)
@@ -128,7 +125,7 @@ fn class_unions_agree_with_the_sets_of_their_values() {
             .filter(|v| (lo..=hi).contains(v))
             .collect();
         assert_eq!(values(&m), inside, "{}", what("meet_range"));
-        if let (Some(x), Some(y)) = (a.sets.first(), b.sets.first()) {
+        if let (Some(x), Some(y)) = (a.sets().first(), b.sets().first()) {
             let mut c = ClassUnion::empty();
             for s in cut(x, y, &mut no_limit()).expect("no limit") {
                 c.add(s);
@@ -145,7 +142,7 @@ fn class_unions_agree_with_the_sets_of_their_values() {
                 what("first")
             );
             assert!(
-                a.sets
+                a.sets()
                     .iter()
                     .any(|s| s.class == class && s.ranges.contains_end(&hi))
             );

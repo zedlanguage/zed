@@ -11,112 +11,31 @@
 //! [`Classed`] for each class, O(p) pieces for p ranges, whatever the number of values; the
 //! difference of two classes is one class, or `l/m - 1` classes modulo `l` (the lcm of the
 //! moduli, `m` the one cut), or listed where listing makes fewer pieces ([`cut`]).
+//!
+//! The union itself is zedc-lattice's `ClassUnion` (moved there by row
+//! LIMITS-classed-listing-per-set, for the reduced product's joins); the operations that charge
+//! the cover's meter are here, as [`Charged`].
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
-use zedc_lattice::interval::{End, IntervalSet, Num};
+use zedc_lattice::interval::{IntervalSet, Num};
 use zedc_lattice::lattice::{Congruence, Lattice};
 
 use super::super::meter::{LISTED, PIECE, Work};
 use super::super::{Classed, Refusal};
 
-/// The union of `sets`.
-#[derive(Clone, Debug)]
-pub(super) struct ClassUnion {
-    /// Each set nonempty and in the one form of [`Classed::new`], no two with the same class,
-    /// in an order made by the joins alone (so that nothing hangs on a hash order).
-    sets: Vec<Classed>,
-    /// The place in `sets` of each class.
-    at: HashMap<Congruence, usize>,
+pub(super) use zedc_lattice::class_union::ClassUnion;
+
+/// The operations of a [`ClassUnion`] that charge the cover's [`Work`] meter, and are refused
+/// at its limit.
+pub(super) trait Charged: Sized {
+    /// The values of `self` not in `other`, exact (see the `impl`).
+    fn minus(&self, other: &Self, work: &mut Work) -> Result<Self, Refusal>;
+    /// The union as ranges alone, each value of a strided set listed (see the `impl`).
+    fn met(&self, work: &mut Work) -> Result<IntervalSet, Refusal>;
 }
 
-impl ClassUnion {
-    /// No value.
-    pub(super) fn empty() -> ClassUnion {
-        ClassUnion {
-            sets: Vec::new(),
-            at: HashMap::new(),
-        }
-    }
-
-    /// The values of `set`, read in the one form of [`Classed`] (which finds its class).
-    pub(super) fn plain(set: IntervalSet) -> ClassUnion {
-        let mut u = ClassUnion::empty();
-        u.add(Classed::plain(set));
-        u
-    }
-
-    /// The values of `set`.
-    pub(super) fn of(set: Classed) -> ClassUnion {
-        let mut u = ClassUnion::empty();
-        u.add(set);
-        u
-    }
-
-    /// The sets, each with its class.
-    pub(super) fn sets(&self) -> &[Classed] {
-        &self.sets
-    }
-
-    /// `set` joined. Two sets of one class are made one ([`Classed::new`] of the union of their
-    /// ranges); that may give the set a class another set has, which is then joined in turn.
-    /// Each join leaves one set fewer, so this ends. Each class found in O(1) expected (`at`),
-    /// each join O(p log p) for p ranges.
-    pub(super) fn add(&mut self, mut set: Classed) {
-        while !set.is_empty() {
-            let Some(&i) = self.at.get(&set.class) else {
-                self.at.insert(set.class.clone(), self.sets.len());
-                self.sets.push(set);
-                return;
-            };
-            let old = self.sets.swap_remove(i);
-            self.at.remove(&old.class);
-            if let Some(moved) = self.sets.get(i) {
-                self.at.insert(moved.class.clone(), i);
-            }
-            set = Classed::new(old.ranges.join(&set.ranges), set.class);
-        }
-    }
-
-    /// Whether the union has no value: every set is nonempty.
-    pub(super) fn is_empty(&self) -> bool {
-        self.sets.is_empty()
-    }
-
-    /// Whether `v` is a value of the union.
-    pub(super) fn contains(&self, v: &End) -> bool {
-        (self.sets.iter()).any(|s| {
-            s.ranges.contains_end(v)
-                && match v {
-                    End::Fin(n) => s.class.contains(n),
-                    _ => true,
-                }
-        })
-    }
-
-    /// The number of ranges of all the sets.
-    pub(super) fn len(&self) -> usize {
-        self.sets.iter().map(|s| s.ranges.len()).sum()
-    }
-
-    /// The union of the two.
-    pub(super) fn join(&self, other: &ClassUnion) -> ClassUnion {
-        let mut u = self.clone();
-        for s in &other.sets {
-            u.add(s.clone());
-        }
-        u
-    }
-
-    /// The values within `range`: each set's ranges met with it, in its own class.
-    pub(super) fn meet_range(&self, range: &IntervalSet) -> ClassUnion {
-        let mut u = ClassUnion::empty();
-        for s in &self.sets {
-            u.add(Classed::new(s.ranges.meet(range), s.class.clone()));
-        }
-        u
-    }
-
+impl Charged for ClassUnion {
     /// The values of `self` not in `other`, exact: each set of `self` cut by each set of
     /// `other` in turn ([`cut`]), `A \ (B1 ∪ B2) = (A \ B1) \ B2`. The ranges each round leaves
     /// are charged [`PIECE`] units each to `work`, and [`cut`] charges its own classes and
@@ -147,7 +66,7 @@ impl ClassUnion {
     // O(D + Σ min(c_{m'}, m'/g)) lookups for D moduli held, `c_{m'}` classes of modulus `m'`,
     // plus the cuts themselves; the m - 1 classes above each meet one, O(m log m) in all. Each
     // round charges the ranges it made, not every range left.
-    pub(super) fn minus(&self, other: &ClassUnion, work: &mut Work) -> Result<ClassUnion, Refusal> {
+    fn minus(&self, other: &ClassUnion, work: &mut Work) -> Result<ClassUnion, Refusal> {
         if other.is_empty() {
             return Ok(self.clone());
         }
@@ -161,10 +80,10 @@ impl ClassUnion {
             let at = left.entry(modulus.clone()).or_default();
             at.entry(residue.clone()).or_default().push(s);
         };
-        for s in &self.sets {
+        for s in self.sets() {
             keep(&mut left, s.clone());
         }
-        for b in &other.sets {
+        for b in other.sets() {
             let Congruence::Class {
                 modulus: mb,
                 residue: rb,
@@ -224,24 +143,6 @@ impl ClassUnion {
         Ok(u)
     }
 
-    /// The range with the least lower end of any set, with that set's class: the piece a
-    /// question of the cover asks next.
-    pub(super) fn first(&self) -> Option<((End, End), Congruence)> {
-        (self.sets.iter())
-            .filter_map(|s| s.ranges.first().map(|p| (p.clone(), s.class.clone())))
-            .min_by(|a, b| a.0.0.cmp(&b.0.0))
-    }
-
-    /// The ranges of the sets as one set, every member of each set's class within them dropped
-    /// or not: the hull of each range, `self` within it.
-    pub(super) fn ranges(&self) -> IntervalSet {
-        IntervalSet::from_pieces(
-            (self.sets.iter())
-                .flat_map(|s| s.ranges.pieces().cloned())
-                .collect(),
-        )
-    }
-
     /// The union as ranges alone, each value of a strided set a range of its own
     /// ([`Classed::met`]), O(v) for v values: each such value charged [`LISTED`] units of
     /// `work` before any is listed ([`Classed::count`], O(p) for p ranges), the rate
@@ -253,23 +154,17 @@ impl ClassUnion {
     /// `l01_25_preimage_catalog::entries`, `i mod 10 == 3` on `[0, 10^9]`, 2026-11-23); with
     /// it, the cover is refused at the limit
     /// and the answer is necessary only, as before the classes were kept.
-    pub(super) fn met(&self, work: &mut Work) -> Result<IntervalSet, Refusal> {
-        for s in &self.sets {
+    fn met(&self, work: &mut Work) -> Result<IntervalSet, Refusal> {
+        for s in self.sets() {
             if s.strided().is_some() {
                 work.charge(LISTED.saturating_mul(s.count()))?;
             }
         }
         Ok(IntervalSet::from_pieces(
-            (self.sets.iter())
+            (self.sets().iter())
                 .flat_map(|s| s.met().into_pieces())
                 .collect(),
         ))
-    }
-
-    /// The union in the one form of [`Classed`] ([`Classed::join_all`], which lists only the
-    /// sets of a class other than the union's).
-    pub(super) fn into_classed(self) -> Classed {
-        Classed::join_all(self.sets)
     }
 }
 
@@ -289,7 +184,7 @@ impl ClassUnion {
 ///
 /// The classes made are charged [`PIECE`] units each to `work`, and the values listed
 /// [`LISTED`] each, before either is made, so that a cut too large for the meter is refused
-/// before its work is done ([`ClassUnion::minus`]).
+/// before its work is done ([`Charged::minus`]).
 pub(super) fn cut(a: &Classed, b: &Classed, work: &mut Work) -> Result<Vec<Classed>, Refusal> {
     let inside = a.ranges.meet(&b.ranges);
     let met = a.class.meet(&b.class);

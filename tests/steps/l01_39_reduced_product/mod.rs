@@ -18,6 +18,7 @@
 #![recursion_limit = "256"]
 
 mod arm_test_through_call;
+mod class_unions;
 mod completeness;
 mod controls;
 mod deep_let;

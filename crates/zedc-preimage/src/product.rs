@@ -111,6 +111,7 @@ use zed_collections::search::first_true;
 use zedc_int::int::{Int, IntRange, meet_range, row_bound, row_range};
 use zedc_lattice::affine::Bounds;
 use zedc_lattice::cell::{Cell, Entry, Premise, Premises};
+use zedc_lattice::class_union::ClassUnion;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::landmarks::Landmarks;
 use zedc_lattice::lattice::{Congruence, FiniteSet, Lattice};
@@ -196,6 +197,11 @@ pub struct ProductDomains {
     settled: Settled,
     /// An interval and a set of integers proved, at a reduction, to hold the same integers.
     listed: IntsListed,
+    /// The integers as a union of sets each met with its own class, made where cases of
+    /// different classes were joined ([`Product::join`]): the product's integers are then
+    /// those of the interval, the congruence and this union together. `None` where the
+    /// interval and the congruence alone hold them.
+    classes: Option<Arc<ClassUnion>>,
 }
 
 /// An interval `i0` and a set `v0` of 64-bit integers that [`Product::reduce_domains`] proved
@@ -376,6 +382,7 @@ impl Product {
             time: Entry::new(Time::Run),
             settled: Settled::default(),
             listed: IntsListed::default(),
+            classes: None,
         }))
     }
 
@@ -416,6 +423,7 @@ impl Product {
             time: Entry::new(Time::Build),
             settled: Settled::default(),
             listed: IntsListed::default(),
+            classes: None,
         }))
     }
 
@@ -464,7 +472,24 @@ impl Product {
     /// given, a superset of the integers both domains hold, as a reader of [`Product::ints`]
     /// alone sees them. O(p log p) for p ranges
     /// (`Classed::new`).
+    ///
+    /// Where cases of different classes were joined (`ProductDomains::classes`), the set is
+    /// that union met with `ints` and the class, exact: one `Classed` of several classes lists
+    /// the sets whose class is not the union's ([`Classed::join_all`](zedc_lattice::classed::Classed::join_all)),
+    /// O(v) for their v values, which the joins themselves never do (row
+    /// LIMITS-classed-listing-per-set).
     pub fn classed_in(&self, ints: &IntervalSet) -> zedc_lattice::classed::Classed {
+        let own = self.own_classed(ints);
+        match &self.classes {
+            None => own,
+            Some(u) => u.meet_classed(&own).into_classed(),
+        }
+    }
+
+    /// `ints` met with the congruence's class as one `Classed`, or `ints` alone where the
+    /// class is not every integer and `ints` has an infinite end (see [`Product::classed_in`]),
+    /// with the second value whether that set is exactly `ints ∩ class`. O(p log p).
+    fn own_classed_exact(&self, ints: &IntervalSet) -> (zedc_lattice::classed::Classed, bool) {
         use zedc_lattice::classed::Classed;
         let finite = || {
             ints.bounds()
@@ -472,10 +497,40 @@ impl Product {
         };
         match &self.cell.congruence.element {
             Congruence::Class { modulus, .. } if *modulus != Num::ONE && !finite() => {
-                Classed::plain(ints.clone())
+                (Classed::plain(ints.clone()), false)
             }
-            c => Classed::new(ints.clone(), c.clone()),
+            c => (Classed::new(ints.clone(), c.clone()), true),
         }
+    }
+
+    /// [`Product::own_classed_exact`]'s set.
+    fn own_classed(&self, ints: &IntervalSet) -> zedc_lattice::classed::Classed {
+        self.own_classed_exact(ints).0
+    }
+
+    /// The integers of the product as a union of sets each in its class, exact, for a join
+    /// ([`Product::join`]): the interval met with the class, met with the union where one is
+    /// kept. `None` where they are no such union: the class is not every integer and the
+    /// interval has an infinite end (a `Classed` keeps such a class only with finite ranges).
+    /// O(k p log p) for k sets of p ranges.
+    fn int_union(&self) -> Option<ClassUnion> {
+        let (own, exact) = self.own_classed_exact(self.ints());
+        if !exact {
+            return None;
+        }
+        Some(match &self.classes {
+            None => ClassUnion::of(own),
+            Some(u) => u.meet_classed(&own),
+        })
+    }
+
+    /// Whether the integer `n` is one of the product's integers: in the interval, the class and
+    /// the union of classes where one is kept. O(log p + k log p) for k sets of p ranges.
+    pub fn holds_int(&self, n: &Num) -> bool {
+        let v = End::Fin(n.clone());
+        self.cell.congruence.element.contains(n)
+            && self.ints().contains_end(&v)
+            && self.classes.as_ref().is_none_or(|u| u.contains(&v))
     }
 
     /// The one value, when the finite set holds exactly one.
@@ -489,9 +544,7 @@ impl Product {
     /// Whether `v` is a value of this element: of its type, in its finite set, and an integer
     /// in its interval and its congruence.
     pub fn contains(&self, v: &Value) -> bool {
-        let ints = Num::of_integer(v).is_none_or(|n| {
-            self.cell.congruence.element.contains(&n) && self.ints().contains_end(&End::Fin(n))
-        });
+        let ints = Num::of_integer(v).is_none_or(|n| self.holds_int(&n));
         let finite = match &self.cell.finite.element {
             FiniteSet::Top => true,
             FiniteSet::Set(s) => s.contains(v),
@@ -523,13 +576,62 @@ impl Product {
     }
 
     /// Joins `other` into `self`; whether anything changed.
+    ///
+    /// The integers: each domain is joined as before, and where the two sides' integers are
+    /// sets of different classes, or either keeps a union of classes, that union is kept
+    /// (`ProductDomains::classes`), so that the join holds exactly the integers of the two
+    /// sides (row LIMITS-classed-listing-per-set). Proof: each side's integers are exactly
+    /// [`Product::int_union`] of it (its interval met with its class, met with its union where
+    /// it keeps one, the invariant of `classes`), so their union `U` is exactly the integers of
+    /// either side; each domain's join holds each side's domain, so the joined interval met
+    /// with the joined class holds `U`, and met with `U` is `U`. Where the two sides keep no
+    /// union and share one class `C`, `(I ∩ C) ∪ (J ∩ C) = (I ∪ J) ∩ C`, so the joined interval
+    /// and class hold the union already and none is made. Where a side's integers are no such
+    /// union (an infinite interval with a class other than every integer), none is kept, and
+    /// the domains' join holds the union as before. The union is dropped where it is one set
+    /// equal to the joined interval met with the joined class, which then hold it alone.
+    // Complexity tradeoff: naive version (before this row), the domains joined alone: the
+    // interval joined and the classes joined to their gcd, which loses the holes of the two
+    // classes, `{0, 3, 6, 9}` and `{1, 4}` joined to every integer of `[0, 9]`; the strided
+    // sets were listed beforehand to keep them, O(v) for v values, within a limit of about
+    // 134,800 values (`presburger::listed_within_limit`), past which the holes were lost. Used:
+    // the union of the k classes, O(k p log p) for p ranges ([`ClassUnion::join`],
+    // `Classed::new`), whatever the number of values, and O(1) more where the sides share a
+    // class and keep no union. Tests: `l01_39_scope_relations::lazy`,
+    // `three_cases_whose_classes_join_wide_keep_only_their_values` and its variant past the
+    // old limit; the random check against brute force in
+    // `l01_39_reduced_product::class_unions`.
     pub fn join(&mut self, other: &Product) -> bool {
-        [
+        let unite = self.classes.is_some()
+            || other.classes.is_some()
+            || self.cell.congruence.element != other.cell.congruence.element;
+        let union = match unite {
+            false => None,
+            true => self
+                .int_union()
+                .zip(other.int_union())
+                .map(|(a, b)| a.join(&b)),
+        };
+        let changed = [
             self.cell.join(&other.cell),
             self.ty.join(&other.ty),
             self.time.join(&other.time),
         ]
-        .contains(&true)
+        .contains(&true);
+        let union = union.filter(|u| match u.sets() {
+            [] => false,
+            [one] => {
+                let (own, exact) = self.own_classed_exact(self.ints());
+                !exact || *one != own
+            }
+            _ => true,
+        });
+        let union = union.map(Arc::new);
+        if union == self.classes {
+            return changed;
+        }
+        self.classes = union;
+        true
     }
 
     /// The product with each entry's premises without those of `drop` ([`Premises::without`]),
@@ -563,11 +665,20 @@ impl Product {
     }
 
     /// Widens `self` by `other` at the component head `head`; whether anything changed.
+    ///
+    /// A union of classes (`ProductDomains::classes`) is dropped: widening must reach a fixed
+    /// point in finitely many steps, which the domains' widenings do, and a union joined
+    /// again at each step need not; without it the domains hold a superset of the integers.
     pub fn widen(&mut self, other: &Product, head: &FactAddress, marks: &Landmarks) -> bool {
+        let dropped = self.classes.is_some();
+        if dropped {
+            self.classes = None;
+        }
         [
             self.cell.widen(&other.cell, head, marks),
             self.ty.widen(&other.ty, head, marks),
             self.time.widen(&other.time, head, marks),
+            dropped,
         ]
         .contains(&true)
     }
