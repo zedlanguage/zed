@@ -14827,9 +14827,10 @@ impl<'a> Ck<'_, 'a> {
     /// 7.418 at d = 32 and 256 on c95bec442, where the row was filed, and 8.479 on this branch
     /// (`arm_test_through_call::bench::a_test_of_a_sum_of_summarized_names_scales`,
     /// b22-checkwalk10, 2026-11-24). Prior work: a per-function summary in abstract
-    /// interpretation reads a callee once for all its call sites (Sharir and Pnueli, "Two approaches to interprocedural
-    /// data flow analysis", in S. S. Muchnick and N. D. Jones (eds.), *Program Flow Analysis:
-    /// Theory and Applications*, Prentice-Hall, 1981, the functional approach; a book chapter
+    /// interpretation reads a callee once for all its call sites (Sharir and Pnueli, "Two
+    /// approaches to interprocedural data flow analysis", in S. S. Muchnick and N. D. Jones
+    /// (eds.), *Program Flow Analysis: Theory and Applications*, Prentice-Hall, 1981, the
+    /// functional approach; a book chapter
     /// with no DOI, not found on Crossref. The chapter was not found; read 2026-11-21 instead
     /// is the technical report it grew from, same title, NYU Courant Institute, Computer
     /// Science Department, Report No. 002, September 1978, a scan: the introduction says the
