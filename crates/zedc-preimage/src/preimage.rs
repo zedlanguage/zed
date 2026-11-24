@@ -4693,9 +4693,16 @@ fn conjuncts(
 /// with one hole gives the relation reading its body gives (test
 /// `l01_38_omega_test::one_scope::
 /// a_relation_read_under_the_unit_scope_is_the_relation_of_the_closed_body`, its `u5`).
-/// Time of the holes.
+/// A symbol with two runs or more is written as one call node, `outside(runs, x)`
+/// ([`Formula::outside`], LOAD-call-disj-spread, META3 H7 of XR-load-call-node), not as one
+/// clause a run: the node holds exactly where `x` lies in no run, which is the conjunction of
+/// the clauses, and each call writes it at its argument with the one set shared
+/// (`Walk::formula_called`), so a reader that keeps a tree a set
+/// (`presburger::extend::Faces`) builds it once for the callee, and a chain of calls reads it in
+/// O(1) a link where it read the n clauses, Θ(n) a link and Θ(n²) for the chain.
+/// Time of the holes, O(n log n) for n holes.
 fn merged_holes(holes: &BTreeMap<Arc<str>, BTreeSet<Int>>) -> Vec<Formula> {
-    use presburger::{Atom, Shared};
+    use presburger::{Atom, HoleSet, Shared};
     let mut out = Vec::new();
     for (s, vs) in holes {
         let y = Lin::atom(Atom::Sym(s.clone()));
@@ -4705,6 +4712,10 @@ fn merged_holes(holes: &BTreeMap<Arc<str>, BTreeSet<Int>>) -> Vec<Formula> {
                 Some((_, hi)) if &(&*hi + &Int::ONE) == v => *hi = v.clone(),
                 _ => runs.push((v.clone(), v.clone())),
             }
+        }
+        if runs.len() >= 2 {
+            out.push(Formula::outside(&HoleSet::of(runs), y));
+            continue;
         }
         out.extend(runs.into_iter().map(|(lo, hi)| {
             if lo == hi {
@@ -4745,7 +4756,7 @@ fn holes_through_bindings(
     clauses: &mut Vec<Formula>,
     rows: &mut Vec<Con>,
 ) -> Option<BTreeMap<Arc<str>, BTreeSet<Int>>> {
-    use presburger::{Atom, Shared};
+    use presburger::{Atom, HoleSet, Shared};
     let mut written: HashMap<Arc<str>, Lin> = HashMap::new();
     let mut out: BTreeMap<Arc<str>, BTreeSet<Int>> = BTreeMap::new();
     for (s, vs) in holes {
@@ -4801,6 +4812,11 @@ fn holes_through_bindings(
                         out.entry(x.clone()).or_default().insert(d.div_floor(k));
                     }
                 }
+            }
+            // Two values or more: one call node over the term (META3 H7), not one clause a value.
+            _ if vs.len() >= 2 => {
+                let runs = vs.into_iter().map(|v| (v.clone(), v)).collect();
+                clauses.push(Formula::outside(&HoleSet::of(runs), t.clone()))
             }
             _ => {
                 clauses.extend(vs.into_iter().map(|v| {
@@ -4937,9 +4953,15 @@ fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
     // The choices, kept as they are: each must read kept symbols alone (proof below).
     if !clauses.is_empty() || !holes.is_empty() {
         // The tests' reference reads the body again at the call ([`Scoped::reading_bodies`]).
-        if tr.bodies
-            || (clauses.iter().flat_map(|g| g.cons())).any(|c| c.lin.terms.keys().any(|a| !keep(a)))
-        {
+        // A call node reads the atoms of its term alone, read there, not through its clauses.
+        let reads_other = |g: &Formula| match g {
+            Formula::Holes(b) => b.term().terms.keys().any(|a| !keep(a)),
+            _ => g
+                .cons()
+                .iter()
+                .any(|c| c.lin.terms.keys().any(|a| !keep(a))),
+        };
+        if tr.bodies || clauses.iter().any(reads_other) {
             return None;
         }
         let holes = holes_through_bindings(holes, &binds, &keep, &mut clauses, &mut rows)?;
@@ -12016,8 +12038,20 @@ impl<'m, 't> Walk<'m, 't> {
                         // definedness before the body (`Scoped::relation`), so a call of a
                         // callee whose one choice is that condition gives the shape reading its
                         // body gives.
-                        let mut parts: Vec<Formula> =
-                            p.clauses.iter().map(|g| g.map_cons(&written)).collect();
+                        // A call node is written as a node of the same hole set at its term
+                        // written, so each call of the callee shares one set, and a reader that
+                        // keeps one tree for each set (`extend::Faces`) makes it once for the
+                        // callee, not once a call (LOAD-call-disj-spread, META3 H7).
+                        let mut parts: Vec<Formula> = (p.clauses.iter())
+                            .map(|g| match g {
+                                Formula::Holes(b) => {
+                                    let term = at_arguments(b.term(), &key, &k.1)
+                                        .expect("a projection's choices read symbols alone");
+                                    Formula::outside(b.set(), term)
+                                }
+                                _ => g.map_cons(&written),
+                            })
+                            .collect();
                         parts.extend(rows);
                         let f = Formula::and(parts);
                         self.tr(|tr| tr.bound(&f, &k.1));

@@ -714,12 +714,34 @@ fn the_questions_of_a_chain_calling_a_callee_with_holes_scale() {
 #[test]
 fn the_questions_of_a_chain_calling_a_callee_with_spread_holes_scale() {
     // The same with `x != 2j` (LOAD-call-disj-spread): the holes do not merge, so each call
-    // writes the n clauses and `Extending` decides each link from them, Θ(n) a call and Θ(n²)
-    // in all (60.7 times the instructions, 50 → 400, colab 2026-11-23). Red until the shared
-    // call node of META1 A3 (XR-LOAD-chain-move-call-disj-defined-with) is built; the test
-    // above, with the holes merged, is its control (8.143 with the same code). At 1000 -> 8000
+    // wrote the n clauses and `Extending` decided each link from them, Θ(n) a call and Θ(n²)
+    // in all (60.7 times the instructions, 50 → 400, colab 2026-11-23). The callee's holes are
+    // now one call node (`preimage::holes_through_bindings`, `Formula::outside`), written at
+    // each call through the node's own set (`at_arguments` on its term), and read at each
+    // link as itself (META3 H7): 25 → 200 took 16.9 ms → 112 ms, 6.66 times (colab v5e4,
+    // 2026-11-24). The test above, with the holes merged, is its control. At 1000 -> 8000
     // (META2 G11 of XR-load-call-node: the call node built through `preimage` and asked with
     // `front`'s interface, where the n log n model ratio is 10.41).
+    //
+    // First the route, at 200 links: the node is read as itself at each link (`HOLES_ROUTED`
+    // at least n), and written as its clauses at most once, its n clauses in all
+    // (`HOLES_LOWERED` at most 1, `HOLES_CLAUSES` at most n). Not 0 as on `Extending` alone:
+    // one question of the unit is decided by the solver over the node (the generic route of
+    // H7, made once a node), which is O(n) once and not a link.
+    let n = 200;
+    let src = a_chain_calling_a_callee_with_spread_holes(n);
+    let (stmts, tokens, unit) = (
+        zed_tests::deep::statements(&src),
+        zedc::lex::lex_fence(&src).expect("lexed"),
+        zed_tests::step_helpers::l01_16_elaboration::elab_total_mod(&src).expect("elaborated"),
+    );
+    counts::take();
+    let refused = zedc::front::linear_questions(&src, &tokens, &stmts, &unit);
+    let c = counts::take();
+    assert!(refused.is_empty(), "{refused:?}");
+    assert!(c[counts::HOLES_ROUTED] >= n as u64, "{c:?}");
+    assert!(c[counts::HOLES_LOWERED] <= 1, "{c:?}");
+    assert!(c[counts::HOLES_CLAUSES] <= n as u64, "{c:?}");
     questions_scale_unit(
         "the linear questions of a chain calling a callee with spread holes",
         1000,
@@ -727,24 +749,39 @@ fn the_questions_of_a_chain_calling_a_callee_with_spread_holes_scale() {
     );
 }
 
+/// How [`a_chain_extending_one_hole_set`] writes its holes.
+#[derive(Clone, Copy)]
+enum HoleForm {
+    /// The n single values `x != 2 j`, one call node (`Formula::outside`, LOAD-call-disj-spread);
+    /// read as n clauses `!(x == 2 j)` under the mutant `counts::HOLE_ROUTE_OFF`.
+    Node,
+    /// The one run `0..=2 n`, written `x <= 0 - 1 || x >= 2 n + 1`.
+    Run,
+}
+
 /// The links `f{i} = f{i-1} && holes && x >= 2 i`, `1..=n`, over `x >= 0`, where `holes` is one
-/// conjunction built once and kept as a part of every link, as a call writes its callee's holes
-/// (`preimage::merged_holes`): with `spread`, the n single values `x != 2 j` for `j` in `0..n`,
-/// so the point of link i moves to `2 i + 1`; else the one run `0..=2 n`, written
-/// `x <= 0 - 1 || x >= 2 n + 1`, so the point stays at `2 n + 1`.
-fn a_chain_extending_one_hole_set(n: usize, spread: bool) -> Vec<zedc::store::presburger::Formula> {
-    use zedc::store::presburger::{Atom, Con, Formula, Lin};
+/// formula built once and kept as a part of every link, as a call writes its callee's holes
+/// (`preimage::merged_holes`): with [`HoleForm::Node`] the n single
+/// values `x != 2 j` for `j` in `0..n`, so the point of link i moves to `2 i + 1`; with
+/// [`HoleForm::Run`] the one run `0..=2 n`, so the point stays at `2 n + 1`.
+fn a_chain_extending_one_hole_set(
+    n: usize,
+    form: HoleForm,
+) -> Vec<zedc::store::presburger::Formula> {
+    use zedc::store::presburger::{Atom, Con, Formula, HoleSet, Lin};
+    use zedc_int::int::Int;
     let x = Lin::atom(Atom::Sym("x".into()));
     let k = Lin::constant;
     let ge = |a: &Lin, b: &Lin| Formula::Con(Con::ge(a, b));
     let n = n as i64;
-    let holes = match spread {
-        true => Formula::and(
-            (0..n)
-                .map(|j| Formula::negate(Formula::Con(Con::eq(&x, &k(2 * j)))))
-                .collect(),
-        ),
-        false => Formula::or(vec![ge(&k(-1), &x), ge(&x, &k(2 * n + 1))]),
+    let holes = match form {
+        HoleForm::Node => {
+            let runs = (0..n)
+                .map(|j| (Int::from(2 * j), Int::from(2 * j)))
+                .collect();
+            Formula::outside(&HoleSet::of(runs), x.clone())
+        }
+        HoleForm::Run => Formula::or(vec![ge(&k(-1), &x), ge(&x, &k(2 * n + 1))]),
     };
     let mut f = Formula::and(vec![ge(&x, &k(0)), ge(&k(1_000_000), &x)]);
     let mut out = Vec::with_capacity(n as usize);
@@ -760,34 +797,128 @@ fn a_call_node_is_extended_in_time_of_its_links() {
     // LOAD-call-disj-spread, META2 G11 of XR-load-call-node: the call node measured on
     // `Extending` alone, at 1000 -> 8000, where the n log n model ratio `8 ln(8n) / ln(n)` is
     // 10.41. One hole set is built once, in the form `preimage::merged_holes` writes for
-    // spread holes (`!(x == v)` for each value), and kept as a part of every link; each link
+    // spread holes (one call node), and kept as a part of every link; each link
     // moves the point past one more hole. The links are asked with an interface giving `x`,
     // as `front` asks a call's relation (`preimage::Scoped::interface`), so a link reads its
     // kept parts through their faces (`Faces::face`, which returns at once without one).
-    // Today each link reads the n clauses of the holes, Θ(n²) for the chain: red on the
-    // branch (56.886 at 40 -> 320 without the interface, 2026-11-24), not for main while red.
-    // With the call node (design /home/luke/Work/wt/design-b22-load5.md section 2) a link
-    // costs one successor query, O(log n), with zero clause expansions; the counter of E6 is
-    // to be asserted here when it exists. Its control is the test below. The same chain
-    // written in Zed, through `preimage`, is
-    // `the_questions_of_a_chain_calling_a_callee_with_spread_holes_scale`.
-    use zedc::store::presburger::{Atom, Formula};
-    let chains = zed_tests::scaling::inputs(1000, |n| a_chain_extending_one_hole_set(n, true));
+    // Written as n clauses, each link read them, Θ(n²) for the chain (56.886 at 40 -> 320
+    // without the interface, past 600 s at 1000, 2026-11-24). The holes are now one call node
+    // (`Formula::outside`, design /home/luke/Work/wt/design-b22-load5.md section 2), read as
+    // itself (the leaf route, META3 H7): its atoms are its term's (`Formula::atoms`), it holds
+    // at a point by one membership test, O(log n) (`BoundHoles::holds`), and a link whose new
+    // bound moves past its part's point is settled by that bound alone (`met`), so no link
+    // reaches a face. Asserted: the chain holds one leaf, each link reads it on the route
+    // (`HOLES_ROUTED` at least n), and no node is written as clauses (`HOLES_LOWERED` 0). Its
+    // negative control is `a_call_node_read_as_its_clauses_fails_the_order_check`; its
+    // control with one run is the test after it. The same chain written in Zed, through
+    // `preimage`, is `the_questions_of_a_chain_calling_a_callee_with_spread_holes_scale`.
+    let chains =
+        zed_tests::scaling::inputs(1000, |n| a_chain_extending_one_hole_set(n, HoleForm::Node));
+    for chain in chains.values() {
+        assert_eq!(
+            leaves(chain.last().expect("a link")),
+            1,
+            "one call node, shared"
+        );
+    }
     zed_tests::scaling::check("the answers of a chain extending one hole set", 1000, |n| {
-        let mut e = zedc::store::presburger::extend::Extending::new();
-        let x = || Some(vec![Atom::Sym("x".into())]);
-        for f in &chains[&n] {
-            let a = e.defined_with(f, &|_| Formula::top(), &|_| x());
-            assert_eq!((a.holds, a.fails), (Ok(true), Ok(true)));
-        }
+        let c = answer_chain_through_faces(&chains[&n]);
+        assert_eq!(
+            c[counts::HOLES_LOWERED],
+            0,
+            "no node written as clauses: {c:?}"
+        );
+        assert!(
+            c[counts::HOLES_ROUTED] >= n as u64,
+            "each link on the route: {c:?}"
+        );
     });
+}
+
+use zedc::store::presburger::extend::counts;
+
+/// The call nodes of `f`, each shared one once (by its id).
+fn leaves(f: &zedc::store::presburger::Formula) -> usize {
+    use zedc::store::presburger::{Formula, Id};
+    let (mut seen, mut stack, mut n) = (std::collections::HashSet::new(), vec![f], 0);
+    while let Some(g) = stack.pop() {
+        if matches!(g, Formula::Con(_)) || !seen.insert(Id::any(g)) {
+            continue;
+        }
+        match g {
+            Formula::Holes(_) => n += 1,
+            Formula::Not(h) => stack.push(h),
+            Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
+            Formula::Con(_) => {}
+        }
+    }
+    n
+}
+
+/// Each link of `chain` asked with an interface giving `x`, as `front` asks a call's relation,
+/// each answer checked (the links hold, and fail somewhere); the counts of `Extending` over
+/// the chain.
+fn answer_chain_through_faces(chain: &[zedc::store::presburger::Formula]) -> [u64; counts::N] {
+    use zedc::store::presburger::{Atom, Formula};
+    counts::take();
+    let mut e = zedc::store::presburger::extend::Extending::new();
+    let x = || Some(vec![Atom::Sym("x".into())]);
+    for f in chain {
+        let a = e.defined_with(f, &|_| Formula::top(), &|_| x());
+        assert_eq!((a.holds, a.fails), (Ok(true), Ok(true)));
+    }
+    counts::take()
+}
+
+/// `check` at 40 -> 320 with the mutant `off` set, which must fail it: a negative control of
+/// `a_call_node_is_extended_in_time_of_its_links` (META3 H7, design-b22-load5.md section 2: the
+/// mutants must fail). Measured by instructions only, since a ratio of processor time under
+/// load need not fail (see `l01_38_presburger::bench::slack_scale::
+/// many_linked_rows_project_each_fails_the_order_check`). The mutant is Θ(n²) for the chain,
+/// each link walking the node's n clauses, about 56 times at 8 times the links (48.4 measured,
+/// 2026-11-24, before the leaf route), against the limit 10.5.
+fn fails_with_mutant(off: &'static std::thread::LocalKey<std::cell::Cell<bool>>, what: &str) {
+    if !zed_tests::scaling::Meter::new()
+        .unit()
+        .starts_with("instructions")
+    {
+        return;
+    }
+    let chains =
+        zed_tests::scaling::inputs(40, |n| a_chain_extending_one_hole_set(n, HoleForm::Node));
+    let check = std::panic::AssertUnwindSafe(|| {
+        zed_tests::scaling::check_instructions_only(what, 40, 1, |n| {
+            off.with(|o| o.set(true));
+            answer_chain_through_faces(&chains[&n]);
+            off.with(|o| o.set(false));
+        })
+    });
+    let payload = std::panic::catch_unwind(check).expect_err("the mutant fails the check");
+    let text = (payload.downcast_ref::<String>().cloned())
+        .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+        .unwrap_or_default();
+    assert!(
+        !text.contains("(Ok(true), Ok(true))"),
+        "a wrong answer, not the order: {text}"
+    );
+}
+
+#[test]
+fn a_call_node_read_as_its_clauses_fails_the_order_check() {
+    // The first mutant: the hole route off (`counts::HOLE_ROUTE_OFF`), each node read as its n
+    // clauses, as before the route.
+    fails_with_mutant(
+        &counts::HOLE_ROUTE_OFF,
+        "a chain extending one node, read as clauses",
+    );
 }
 
 #[test]
 fn a_call_node_of_one_run_is_extended_in_time_of_its_links() {
     // The control of the bench above: the same chain with its holes merged into one run, one
     // clause, as `a_chain_calling_a_callee_with_holes` merges them, so each link costs O(1).
-    let chains = zed_tests::scaling::inputs(1000, |n| a_chain_extending_one_hole_set(n, false));
+    let chains =
+        zed_tests::scaling::inputs(1000, |n| a_chain_extending_one_hole_set(n, HoleForm::Run));
     zed_tests::scaling::check("the answers of a chain extending one run", 1000, |n| {
         let mut e = zedc::store::presburger::extend::Extending::new();
         for f in &chains[&n] {
