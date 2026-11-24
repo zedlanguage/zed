@@ -8696,6 +8696,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                     past_f64: None,
                 });
             }
+            // On a base of unknown value the exponent keeps its class, which no use may fix to
+            // one carrier: in `f64(b) ^ (2^64)` both `f64 ^ int` and `f64 ^ f64` take it (plan
+            // row POW-domains), and its step printed the class, `int | f64`. Its value is kept
+            // for the steps alone, which then show it, "this `^` gives 2^64", as they do above
+            // (l01_29 `commands_binary::zedc_run_prints_the_type_of_an_operation_on_wide_
+            // literals_not_its_literals`, b22-checkwalk10, 2026-11-24); its type is unchanged.
+            // The same O(1) per node as above.
+            if op == BinaryOp::Pow
+                && !known_base
+                && self.level > 0
+                && y.lit.is_none()
+                && let Some(k) = self.class_of_ty(&y.ty)
+                && self.classes[self.find(k)].generic
+            {
+                _ = self.int_exponent_at(b);
+            }
             // Two generic operands, as in `1 + 2`, make a class of their own inside a
             // function: generic, it takes the carrier of what it meets, the first operand
             // taking it from a parameter of the class and the second following the first; it
@@ -14804,11 +14820,14 @@ impl<'a> Ck<'_, 'a> {
     /// at equal arguments cost the body once, O(k) in all as measured
     /// (`arm_test_through_call::bench::tests_calling_one_deep_callee_scale`: 8.07 times the
     /// instructions at 8 times `k`, where reading the body in each test took 54.0 times). An `if`
-    /// with none inside it is kept in place, since a test of a sum of `d` names, each with its
-    /// summary, costs O(d²) (CHECK-sum-of-summarized-names), where a sum of `d` such `if`s
-    /// costs O(d log d) (`follow::bench::nested_sums_of_one_input_scale`, "a sum of d
-    /// ramps"). Prior work: a per-function summary in abstract interpretation reads a callee
-    /// once for all its call sites (Sharir and Pnueli, "Two approaches to interprocedural
+    /// with none inside it is kept in place, and a sum of `d` such `if`s costs O(d log d)
+    /// (`follow::bench::nested_sums_of_one_input_scale`, "a sum of d ramps"). A test of a sum
+    /// of `d` names, each with its summary, was filed as O(d²) (CHECK-sum-of-summarized-names,
+    /// 46 times at 8 times `d`), but `d` names bound to `if`s in the program measure O(d):
+    /// 7.418 at d = 32 and 256 on c95bec442, where the row was filed, and 8.479 on this branch
+    /// (`arm_test_through_call::bench::a_test_of_a_sum_of_summarized_names_scales`,
+    /// b22-checkwalk10, 2026-11-24). Prior work: a per-function summary in abstract
+    /// interpretation reads a callee once for all its call sites (Sharir and Pnueli, "Two approaches to interprocedural
     /// data flow analysis", in S. S. Muchnick and N. D. Jones (eds.), *Program Flow Analysis:
     /// Theory and Applications*, Prentice-Hall, 1981, the functional approach; a book chapter
     /// with no DOI, not found on Crossref. The chapter was not found; read 2026-11-21 instead
@@ -14860,8 +14879,9 @@ impl<'a> Ck<'_, 'a> {
                         let t = Term::If(Shared::new(c), Shared::new(a), Shared::new(b));
                         // An `if` with no `if` inside it, and no name bound to an `if` or a
                         // call, is kept in place: a test of a sum of `d` such `if`s is read as
-                        // one sum, O(d log d), where `d` names, each with its summary, cost
-                        // O(d²) (CHECK-sum-of-summarized-names). An `if` with one inside it is
+                        // one sum, O(d log d). The O(d²) filed for `d` names, each with its
+                        // summary (CHECK-sum-of-summarized-names), was not reproduced: such
+                        // names measure O(d) ([`Self::term_for`]). An `if` with one inside it is
                         // a name of its own, so that `d` nested in each other's tests cost
                         // O(d) and not O(d²).
                         match defined || parts.ifs == m[4] {
