@@ -27,8 +27,9 @@ fn narrowing_by_many_refused_tests_scales() {
 
 /// The check of [`narrowing_by_many_refused_tests_scales`] is mostly the solver's work, about
 /// 26M instructions per refused test since PERF-refused-assume (42M before it, 11M when it was
-/// written, 2026-11-03; about 30% fewer since `linear_order`, b22-tests9, 2026-11-24; `one_refused_test_costs_at_most_a_fixed_number_of_instructions` below
-/// holds it under a limit), so the refusals' own cost is measured alone: keeping `k` refusals,
+/// written, 2026-11-03; about 30% fewer since `linear_order`, b22-tests9, 2026-11-24;
+/// `one_refused_test_costs_at_most_a_fixed_number_of_instructions` below holds it under a
+/// limit), so the refusals' own cost is measured alone: keeping `k` refusals,
 /// each once, in a scope costs near linear in `k`.
 #[test]
 fn keeping_many_refusals_scales() {
