@@ -21473,21 +21473,26 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
 /// Cost, every step. Names: `d` arms, `r` rows of one arm with `base`, `e` of them equations,
 /// `a` atoms in them, `w` the widest narrow strip `project_convex` sweeps and `M` the largest
 /// absolute coefficient or constant of the rows it reads.
-/// 1. The two loops at the end call `project_arm` once per arm and symbol: `d·|syms|` calls.
-/// 2. In `project_arm`, more than `e + 2` atoms is refused, so `a <= e + 2` after that test.
+/// 1. The two loops at the end call `reduce` once per arm with no symbol kept, then again with
+///    a symbol kept for each symbol not read off that (the comment at the loops), and
+///    `project_rows` at most once per symbol and arm read and once per fallback: at most
+///    `d·(|syms| + 1)` calls of each. The bound below counts `d·|syms|` (`|syms| >= 1`).
+/// 2. In `reduce`, more than `e + 2` atoms is refused, so `a <= e + 2` after that test.
 /// 3. Each elimination empties one equation row (`mem::take`, or the single-atom case sets it
 ///    empty), and empty rows are skipped after, so there are at most `e` eliminations; the
 ///    atom `x` it removes leaves every row, and the terms it puts back come from that row with
 ///    `x` filtered out, so no eliminated atom returns.
-/// 4. Each pass of the `loop` eliminates at least once or ends it: at most `e + 1` passes of
-///    `e` rows each, `O(e²)`; one elimination rewrites at most `r` rows of at most `a` terms,
-///    each a map update of `O(log a)`: `O(e·r·a·log a)` for all of them.
+/// 4. The work list starts with the `e` equations, and an equation goes back on it only when
+///    an elimination rewrote it (at most once per elimination, `queued`), so it is read at
+///    most `e + e·e` times, `O(e²)`, each read choosing a pivot among its at most `a` terms;
+///    one elimination rewrites only the rows that hold its atom (`holds`), at most `r` rows of
+///    at most `a` terms, each a map update of `O(log a)`: `O(e·r·a·log a)` for all of them.
 /// 5. The rows after are at most `2r` (an equation becomes two); building them and `rem` is
 ///    `O(r·a)`. `project_convex` on `m <= 2r` rows costs `O(m log m + m·log w·log M)`: the
 ///    envelopes, then per narrow strip two bisections of `O(log w)` floor sums of `O(log M)`
 ///    steps each (its doc at twovar.rs, `project_convex`); `point` costs no more.
 /// 6. Summing 4 and 5 per call and multiplying by the `d·|syms|` calls of 1 gives the bound
-///    above (`r log r` is `m log m` with `m <= 2r`; `O(e²)` is inside `e·r` since `e <= r`;
+///    above (`r log r` is `m log m` with `m <= 2r`; the `O(e²)` reads of `a` terms each are inside `e·r·a` since `e <= r`;
 ///    `O(r·a)` is inside `e·r·a·log a` when `e >= 1`, and `a <= 2` when `e = 0`; `log a`
 ///    stands for `max(1, log a)`). The earlier bound here,
 ///    `O(d·|syms|·(m log m + log M))`, charged one count for the whole sweep (found by
@@ -21496,11 +21501,11 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
 /// The bound above counts operations on `Int`; an operation is not `O(1)`, since a substitution
 /// adds `f·v` with `f = -m·a` and so can lengthen a coefficient. The size of the numbers is
 /// bounded as follows (PROOF-two-var-domains-int-growth), with `H >= 2` the largest absolute
-/// coefficient or constant of the rows `project_arm` is given (`base` and `arm`; the rows of
+/// coefficient or constant of the rows `reduce` is given (`base` and `arm`; the rows of
 /// `neg_ge` and `neg_eq_arms` add at most 1 to a constant of the formula) and `B = log2 H`.
 ///
 /// Claim: every coefficient and constant of every row during and after the eliminations of one
-/// `project_arm` call has absolute value at most `(k+1)^((k+1)/2) · H^(k+1)`, where `k <= e` is
+/// `reduce` call has absolute value at most `(k+1)^((k+1)/2) · H^(k+1)`, where `k <= e` is
 /// the number of eliminations made so far; so at most `L = (e+1)·(B + log2(e+1)/2)` bits.
 /// Proof, every step:
 /// 1. Write the rows as the integer matrix `R` with one row per constraint and one column per
@@ -21540,7 +21545,11 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
 /// eliminations cost `O(d·|syms|·e·r·a·log a·L²)` bit operations. The rows given to
 /// `project_convex` carry numbers of at most `L + 1` bits, so its `log M` is at most `L + 1`;
 /// the size of the numbers inside its floor sums is that function's own bound (twovar.rs).
-/// No test reads the numbers inside `project_arm`; the proof rests on steps 1 to 5 alone.
+/// No test reads the numbers inside `reduce`; the proof rests on steps 1 to 5 alone. The forms
+/// `±y + c` read off the pivots (the comment at the loops) are sums over a pivot's row of a
+/// coefficient times an earlier form's constant; by Cramer's rule on the `k` pivot rows, as in
+/// step 4, the final `c` is a ratio of minors of `R` and has at most `L + 1` bits, and a
+/// partial sum of `T` terms at most `2(L + 1) + log2 T` (inferred, not checked by a test).
 fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
     if syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         return None;
@@ -21733,10 +21742,18 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
     // Deduplicate requested symbols so repeated symbols are projected once.
     let unique_syms: BTreeSet<&Atom> = syms.iter().collect();
 
-    // Project one conjunction `rows` onto `sym`, returning `None` if it cannot reduce to <= 2
-    // atoms or has a holed strip.
-    let project_arm = |base: &[Con], arm: &[Con], sym: &Atom| -> Option<IntervalSet> {
-        type Row = (BTreeMap<Atom, Int>, Int);
+    // Reduce one conjunction `base && arm` by its unit equalities (and single-atom
+    // equalities), never solving one for `keep`, to rows over at most two atoms; `None` if more
+    // remain. The pivots are the atoms solved for, in order, each with the row it equals
+    // (terms over the atoms present when it was solved, and a constant).
+    type Row = (BTreeMap<Atom, Int>, Int);
+    enum Reduced {
+        /// The conjunction has no integer point.
+        Empty,
+        /// Rows `t·x + k >= 0` over the atoms `rem` (at most two), and the pivots.
+        Rows(Vec<Row>, Vec<Atom>, Vec<(Atom, Row)>),
+    }
+    let reduce = |base: &[Con], arm: &[Con], keep: Option<&Atom>| -> Option<Reduced> {
         // Charged like the solver it stands in for: each row read, each row rewritten by a
         // substitution (its terms), and the rows `twovar` reads; past the limit this step
         // answers nothing and the solver, on the same spent meter, refuses.
@@ -21761,7 +21778,7 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
                 ge.push(row);
             }
         }
-        // Eliminate unit equalities (and single-atom equalities) on atoms other than `sym`.
+        // Eliminate unit equalities (and single-atom equalities) on atoms other than `keep`.
         // Complexity tradeoff (XR-l139-neon-r4, found by AUDIT-kept-rows, b22-research3): naive
         // version, passes over every equality until one changes nothing, each substitution
         // reading every row: O(e·r) rows read for e equalities and r rows even when each atom
@@ -21783,23 +21800,25 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
         }
         let mut queued = vec![true; ne];
         let mut work: std::collections::VecDeque<usize> = (0..ne).collect();
+        let mut pivots: Vec<(Atom, Row)> = Vec::new();
         while let Some(i) = work.pop_front() {
             queued[i] = false;
             if eq[i].0.is_empty() {
                 if !eq[i].1.is_zero() {
-                    return Some(IntervalSet::empty());
+                    return Some(Reduced::Empty);
                 }
                 continue;
             }
-            // A single-atom equality `a*x + k == 0` with `x != sym` gives `x` its value; else
-            // a term of `x != sym` with a unit coefficient is solved for.
+            // A single-atom equality `a*x + k == 0` with `x != keep` gives `x` its value; else
+            // a term of `x != keep` with a unit coefficient is solved for.
             let single = eq[i].0.len() == 1;
+            let free = |x: &Atom| keep != Some(x);
             let pick = if single {
                 let (x, a) = eq[i].0.iter().next().expect("one term");
-                (x != sym).then(|| (x.clone(), a.clone()))
+                free(x).then(|| (x.clone(), a.clone()))
             } else {
                 (eq[i].0.iter())
-                    .find(|(x, a)| *x != sym && a.abs() == Int::ONE)
+                    .find(|(x, a)| free(x) && a.abs() == Int::ONE)
                     .map(|(x, a)| (x.clone(), a.clone()))
             };
             let Some((x, a)) = pick else {
@@ -21808,13 +21827,27 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
             let val = if single {
                 let k = &eq[i].1;
                 if !k.mod_floor(&a).is_zero() {
-                    return Some(IntervalSet::empty());
+                    return Some(Reduced::Empty);
                 }
                 Some(-&k.div_floor(&a))
             } else {
                 None
             };
             let (t, k) = std::mem::take(&mut eq[i]);
+            // `a x + sum_(y != x) t_y y + k == 0` with `a = ±1` gives `x = -a (sum t_y y + k)`
+            // (`1 / a = a`); a single-atom equality gives `x = val`.
+            pivots.push(match &val {
+                Some(v) => (x.clone(), (BTreeMap::new(), v.clone())),
+                None => (
+                    x.clone(),
+                    (
+                        (t.iter().filter(|(y, _)| **y != x))
+                            .map(|(y, v)| (y.clone(), -&(&a * v)))
+                            .collect(),
+                        -&(&a * &k),
+                    ),
+                ),
+            });
             for y in t.keys() {
                 if let Some(set) = holds.get_mut(y) {
                     set.remove(&i);
@@ -21853,7 +21886,7 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
         for (t, k) in ge {
             if t.is_empty() {
                 if k.is_negative() {
-                    return Some(IntervalSet::empty());
+                    return Some(Reduced::Empty);
                 }
                 continue;
             }
@@ -21862,7 +21895,7 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
         for (t, k) in eq {
             if t.is_empty() {
                 if !k.is_zero() {
-                    return Some(IntervalSet::empty());
+                    return Some(Reduced::Empty);
                 }
                 continue;
             }
@@ -21870,27 +21903,33 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
             rows.push((neg, -&k));
             rows.push((t, k));
         }
-        let mut rem: Vec<&Atom> = Vec::new();
+        let mut rem: Vec<Atom> = Vec::new();
         for (t, _) in &rows {
             for a in t.keys() {
-                if !rem.contains(&a) {
-                    rem.push(a);
+                if !rem.contains(a) {
+                    rem.push(a.clone());
                     if rem.len() > 2 {
                         return None;
                     }
                 }
             }
         }
+        Some(Reduced::Rows(rows, rem, pivots))
+    };
+
+    // The projection onto `sym` of rows over the atoms `rem` (at most two) that `reduce` left:
+    // `None` where the strip is holed.
+    let project_rows = |rows: &[Row], rem: &[Atom], sym: &Atom| -> Option<IntervalSet> {
         if rem.is_empty() {
             return Some(IntervalSet::top());
         }
-        let sym_pos = rem.iter().position(|a| *a == sym);
+        let sym_pos = rem.iter().position(|a| a == sym);
         if let Some(pos) = sym_pos {
             let other_idx = (rem.len() == 2).then_some(1);
             let terms: Vec<(Vec<Term>, &Int)> = rows
                 .iter()
                 .map(|(t, k)| {
-                    let at = |a: &Atom| usize::from(a != rem[pos]);
+                    let at = |a: &Atom| usize::from(*a != rem[pos]);
                     (t.iter().map(|(a, v)| (at(a), v.clone())).collect(), k)
                 })
                 .collect();
@@ -21914,7 +21953,7 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
         } else {
             // `sym` does not appear in the remaining rows; decide feasibility on the <= 2
             // remaining atoms.
-            let first = rem[0];
+            let first = &rem[0];
             let second = (rem.len() == 2).then_some(1);
             let terms: Vec<(Vec<Term>, &Int)> = rows
                 .iter()
@@ -21937,9 +21976,116 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
         .iter()
         .map(|&s| (s, IntervalSet::empty()))
         .collect();
+    // The set of `±x + c` for each member `x` of `set`.
+    let moved = |set: &IntervalSet, neg: bool, c: &Int| -> IntervalSet {
+        let c = Num::from(c);
+        let set = if neg { set.neg() } else { set.clone() };
+        let add = |e: &End| match e {
+            End::Fin(v) => End::Fin(v + &c),
+            other => other.clone(),
+        };
+        set.lift1(|(lo, hi)| vec![(add(lo), add(hi))])
+    };
+    // Complexity tradeoff (PERF-twovar-elim-per-arm): naive version, one elimination for each
+    // arm and each symbol asked (`reduce` with that symbol kept, then `project_rows`),
+    // O(s·e log e) for `s` symbols and `e` equalities: O(e² log e) on the chain of
+    // `two_var_tests::bench::a_chain_of_unit_equalities_with_every_symbol_asked_scales`, where
+    // every symbol is asked. Used: one elimination for each arm with no symbol kept, each
+    // symbol then read off it, and the old elimination only for a symbol that cannot be read.
+    // Proof that a read symbol gets the old answer:
+    // 1. Each pivot `x` is solved from `a x + sum t_y y + k == 0` with `a = ±1` as
+    //    `x = -a (sum t_y y + k)` (`1 / a = a`), or from `a x + k == 0` with `a | k` as
+    //    `x = -k / a`; either way an integer `x` for any integers `y`, so the integer points of
+    //    `base && arm` are, one to one, the integer points of the reduced rows (over the atoms
+    //    that are not pivots, the ones in no row free), each with its pivots set by their rows.
+    // 2. A pivot's row reads only atoms solved after it or never (a substitution removes its
+    //    atom from every row then held, and the pivot's row was one), so back-substituting in
+    //    reverse order writes each pivot as an affine form over the atoms that are not pivots.
+    // 3. By 1, the projection onto an atom `y` that is not a pivot is the projection of the
+    //    reduced rows onto `y` (all integers where `y` is free and the rows have a point), and
+    //    the projection onto a pivot whose form is `±y + c` is that set negated if `-` and
+    //    moved by `c`; one whose form is a constant `c` takes `{c}` if the rows have a point.
+    // 4. Both answers are exact, so where the old elimination answered, the answers are equal;
+    //    any other form, a holed strip, or a `reduce` that leaves more than two atoms falls
+    //    back to the old elimination for that symbol, so nothing answered before is refused.
+    // Cost: one elimination per arm, O(e log e) on the chain as the comment at the elimination
+    // states, the back-substitution O(T log a) for the T terms of the pivots' rows, and one
+    // `project_rows` per atom read (cached), so the chain costs O(e log e) with every symbol
+    // asked.
     for arm in &arm_list {
+        let reduced = match reduce(&base, arm, None) {
+            Some(Reduced::Empty) => continue,
+            Some(Reduced::Rows(rows, rem, pivots)) => Some((rows, rem, pivots)),
+            None => None,
+        };
+        // Each pivot's form over the atoms that are not pivots, `(Some((y, neg)), c)` for
+        // `±y + c` and `(None, c)` for `c`; `None` for any other form (step 2).
+        let mut forms: HashMap<Atom, Option<(Option<(Atom, bool)>, Int)>> = HashMap::new();
+        if let Some((_, _, pivots)) = &reduced {
+            for (x, (t, k)) in pivots.iter().rev() {
+                let mut sum: BTreeMap<Atom, Int> = BTreeMap::new();
+                let mut c = k.clone();
+                let mut read = true;
+                for (y, v) in t {
+                    let (z, m) = match forms.get(y) {
+                        Some(None) => {
+                            read = false;
+                            break;
+                        }
+                        Some(Some((at, cy))) => {
+                            c = &c + &(v * cy);
+                            let Some((z, neg)) = at else {
+                                continue;
+                            };
+                            (z, if *neg { -v } else { v.clone() })
+                        }
+                        None => (y, v.clone()),
+                    };
+                    let e = sum.entry(z.clone()).or_insert(Int::ZERO);
+                    *e = &*e + &m;
+                }
+                let mut left = sum.into_iter().filter(|(_, v)| !v.is_zero());
+                let form = match (read, left.next(), left.next()) {
+                    (true, None, _) => Some((None, c)),
+                    (true, Some((y, v)), None) if v.abs() == Int::ONE => {
+                        Some((Some((y, v.is_negative())), c))
+                    }
+                    _ => None,
+                };
+                forms.insert(x.clone(), form);
+            }
+        }
+        // `project_rows` onto each atom of `rem` read, and onto the atoms outside it (keyed
+        // `None`, all alike: all integers or nothing).
+        let mut read: HashMap<Option<Atom>, Option<IntervalSet>> = HashMap::new();
         for &s in &unique_syms {
-            let set = project_arm(&base, arm, s)?;
+            let fast = reduced.as_ref().and_then(|(rows, rem, _)| {
+                let mut on = |y: &Atom| {
+                    let key = rem.contains(y).then(|| y.clone());
+                    (read.entry(key))
+                        .or_insert_with(|| project_rows(rows, rem, y))
+                        .clone()
+                };
+                match forms.get(s) {
+                    None => on(s),
+                    Some(None) => None,
+                    Some(Some((None, c))) => on(s).map(|d| {
+                        if d.is_empty() {
+                            d
+                        } else {
+                            IntervalSet::point(Num::from(c))
+                        }
+                    }),
+                    Some(Some((Some((y, neg)), c))) => on(y).map(|d| moved(&d, *neg, c)),
+                }
+            });
+            let set = match fast {
+                Some(set) => set,
+                None => match reduce(&base, arm, Some(s))? {
+                    Reduced::Empty => IntervalSet::empty(),
+                    Reduced::Rows(rows, rem, _) => project_rows(&rows, &rem, s)?,
+                },
+            };
             let entry = doms.get_mut(s).expect("symbol present");
             *entry = entry.join(&set);
         }

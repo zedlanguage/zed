@@ -24,5 +24,29 @@ fn a_chain_of_unit_equalities_scales() {
     );
 }
 
+/// [`two_var_domains`] on [`chain`] with `e` equalities and every one of its `e + 1` symbols
+/// asked, at `e` and `8e` (row PERF-twovar-elim-per-arm: the elimination ran once per arm and
+/// symbol, O(s e log e) for `s` symbols). `x_i` takes `e - i..=e - i + 100`.
+#[test]
+fn a_chain_of_unit_equalities_with_every_symbol_asked_scales() {
+    let inputs = scaling::inputs(N_EVERY, |e| chain(e, false));
+    scaling::check(
+        "a chain of unit equalities, every symbol asked",
+        N_EVERY,
+        |e| {
+            let syms: Vec<Atom> = (0..=e).map(xa).collect();
+            let (each, _) = two_var_domains(&inputs[&e], &syms).expect("two_var_domains answers");
+            for (i, got) in each.iter().enumerate() {
+                let want =
+                    IntervalSet::range(End::of((e - i) as i64), End::of((e - i) as i64 + 100));
+                assert_eq!(got.as_ref().expect("a domain"), &want, "x{i}");
+            }
+        },
+    );
+}
+
+/// The size of [`a_chain_of_unit_equalities_with_every_symbol_asked_scales`].
+const N_EVERY: usize = 125;
+
 /// The size of [`a_chain_of_unit_equalities_scales`].
 const N_CHAIN: usize = 2_000;
