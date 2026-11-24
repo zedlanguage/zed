@@ -783,3 +783,69 @@ fn a_remap_two_levels_below_a_known_level() {
                { 0 -> { 0 -> { 0 -> 3 } } }];\n";
     same(src, "x", "want");
 }
+
+// ---- The names a generic remap reads besides its source ----
+
+#[test]
+fn a_remap_of_a_parameter_checks_the_function_its_leaf_or_key_calls() {
+    // Row FAIL-remap-need-free-names-unbound: the remap of a generic function's parameter is
+    // checked at each call as a need, and `f`, which its key or leaf reads, is the function
+    // the call passes, not the body's own unknown `f`. Before the fix both were accepted and
+    // the run stopped with "a bug in zedc ... `+` applied to `String`, `int`".
+    let words = "main(m: MainArgs) {\n  words = [\"The\", \"cat\", \"the\"];\n";
+    let group2 = "group2(positional m, positional f) = m as (k -> v) into (f(v) -> k -> v);\n";
+    let src =
+        format!("{group2}{words}  c = group2(words, w -> w + 1);\n  m.stdout <- \"${{c}}\";\n}}\n");
+    rejected(&src, &["does not take"]);
+    let map2 = "map2(positional m, positional f) = m as (k -> v) into (k -> f(v));\n";
+    let src =
+        format!("{map2}{words}  c = map2(words, w -> w + 1);\n  m.stdout <- \"${{c}}\";\n}}\n");
+    rejected(&src, &["does not take"]);
+}
+
+#[test]
+fn a_remap_of_a_parameter_checks_its_function_where_the_remap_is_nested_or_passed_on() {
+    // Row FAIL-remap-need-free-names-unbound, the other places a remap's need is made: inside
+    // a lambda of `map`, as the leaf of a remap each entry of a list makes, and through a
+    // function that passes its parameter on to one that remaps it. Each was accepted before
+    // the fix and the run stopped with "a bug in zedc".
+    let words = "main(m: MainArgs) {\n  words = [\"The\", \"cat\", \"the\"];\n";
+    let rows = "main(m: MainArgs) {\n  words = [[\"a\"], [\"b\"]];\n";
+    let map2 = "map2(positional m, positional f) = m as (k -> v) into (k -> f(v));\n";
+    let defs = [
+        (
+            "rm3(positional m, positional f) = [1].map(i -> m as (k -> v) into (k -> f(v)));\n",
+            words,
+            "rm3",
+        ),
+        (
+            "ap5(positional x, positional f) = x.map(y -> y as (k -> v) into (k -> f(v)));\n",
+            rows,
+            "ap5",
+        ),
+        (
+            "pass(positional m, positional f) = map2(m, f);\n",
+            words,
+            "pass",
+        ),
+    ];
+    for (def, main, g) in defs {
+        let src = format!(
+            "{def}{map2}{main}  c = {g}(words, w -> w + 1);\n  m.stdout <- \"${{c}}\";\n}}\n"
+        );
+        rejected(&src, &["does not take"]);
+    }
+}
+
+#[test]
+fn a_remap_of_a_parameter_by_a_function_that_takes_its_values_is_accepted() {
+    // Negative control for the two tests above: where the function passed takes the values,
+    // the remap written in the program gives what the built-in word gives.
+    let src = "words = [\"The\", \"cat\", \"the\"];\n\
+               group2(positional m, positional f) = m as (k -> v) into (f(v) -> k -> v);\n\
+               map2(positional m, positional f) = m as (k -> v) into (k -> f(v));\n\
+               a = group2(words, w -> w.lower);\nb = words.group(w -> w.lower);\n\
+               c = map2(words, w -> w ++ \"s\");\nd = words.map(w -> w ++ \"s\");\n";
+    same(src, "a", "b");
+    same(src, "c", "d");
+}

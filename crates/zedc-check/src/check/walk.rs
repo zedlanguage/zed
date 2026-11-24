@@ -5107,15 +5107,75 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The remap `e` taken as a need by class `r`, of a source of type `src`, which holds the
     /// class's root variable `$r` in the place of the class.
+    ///
+    /// The need also records the type each name bound outside the remap that its levels read
+    /// has here ([`Self::remap_free_names`]), as `f` of `m as (k -> v) into (k -> f(v))`; the
+    /// check of the need reads each at that type, bound as the call binds it (the proof is at
+    /// the `NeedKind::Remap` arm of `meet`). A name with no type here is left out and read in
+    /// the scope where the need is checked, as every name was before the fix.
+    // Complexity tradeoff: the names are found once per remap (cached by span) and their
+    // types copied once per need made, O(names + their types' size), the cost of writing the
+    // types into the need that the check of the need then reads.
     fn remap_need(&mut self, e: &'a Expr, r: usize, src: Ty) -> Ty {
         self.remap_exprs.insert(e.span, e);
         let rank = self.remap_rank(e, &src);
+        let names = self.remap_free_names(e);
+        let free = (names.iter())
+            .filter_map(|&id| self.env.get(&id).map(|t| (id, t.clone())))
+            .collect();
         let kind = NeedKind::Remap {
             at: e.span,
             src,
             rank,
+            free,
         };
         self.need(r, kind, true, e.span)
+    }
+
+    /// The names the levels of the remap `e` (its key and leaf expressions and their folds)
+    /// read, at any depth, that are bound outside `e` and are not declared functions, as
+    /// binder ids, sorted, each once. A binder of `e`'s own `as` pattern, or of a lambda or
+    /// block inside it, has its span inside `e`, and its type is set by the walk of the
+    /// remap from its source; a declared function's type is its signature, the same at every
+    /// call. Every other name keeps the type its scope gave it, which the need must carry.
+    // Complexity tradeoff: one walk of the levels, O(s log s) for s nodes (the sort), once
+    // per remap: the result is kept by span in `remap_free`, as the remap's text does not
+    // change.
+    fn remap_free_names(&mut self, e: &Expr) -> Arc<[usize]> {
+        if let Some(names) = self.remap_free.get(&e.span) {
+            return names.clone();
+        }
+        let mut ids = Vec::new();
+        let mut stack = Vec::new();
+        if let ExprKind::Remap {
+            levels: Some(levels),
+            ..
+        } = &e.kind
+        {
+            for l in levels {
+                stack.extend(l.key.iter());
+                stack.extend(l.reduce.iter());
+            }
+        }
+        while let Some(x) = stack.pop() {
+            if let (ExprKind::Name(_), Some(Ref::Bound(b))) =
+                (&x.kind, self.t.res.uses.get(&x.span))
+            {
+                ids.extend(b.iter().copied().filter(|&id| {
+                    let at = self.t.res.binders[id].span;
+                    !self.t.funcs.contains_key(&id)
+                        && !(e.span.start <= at.start && at.end <= e.span.end)
+                }));
+            }
+            zedc_syntax::ast::expr_kids(&x.kind, zedc_syntax::ast::Blocks::Enter, &mut |k| {
+                stack.push(k)
+            });
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        let names: Arc<[usize]> = ids.into();
+        self.remap_free.insert(e.span, names.clone());
+        names
     }
 
     /// The source type of the remap need `n`, whose source type is `src`, checked on `on`:
@@ -5148,7 +5208,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     // the source again in `meet`; O(the size of the source + its key levels) once more per
     // check of a remap need, the cost of the walk `remap_pending` makes on it anyway.
     fn remap_goes_on(&mut self, n: &Need, t: &Ty) -> bool {
-        let NeedKind::Remap { at, src, rank } = &n.kind else {
+        let NeedKind::Remap { at, src, rank, .. } = &n.kind else {
             return true;
         };
         // A remap need is recorded only by `remap_need`, which first records its remap.
@@ -17018,9 +17078,49 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.strings_from = self.strings_sources(word, tys, span);
                 self.strings_end(word, args, span, Self::need)
             }
-            NeedKind::Remap { at, src, .. } => {
+            NeedKind::Remap { at, src, free, .. } => {
+                // Why the check of the need is the check of the remap at the call's types
+                // (FAIL-remap-need-free-names-unbound). The need stands for the walk of the
+                // remap's levels (`remap_alone`) that its body could not make, its source's
+                // class being unknown there. That walk reads three kinds of names:
+                // (1) a binder of the remap's own `as` pattern, or of a lambda or block inside
+                //     it: its type is set during the walk, from `src`;
+                // (2) a declared function: its type is its signature, the same at every call;
+                // (3) any other name, bound outside the remap (`remap_free_names`): its type is
+                //     what its scope gave it where the remap is, `env[id]` when `remap_need`
+                //     made the need, which `free` records as `(id, type)`.
+                // So the inputs of the walk are `src` and the types of (3), and nothing else of
+                // the scope. Where a signature takes the need, `Need::map_tys` renames every
+                // type `Need::tys` lists, `src` and the types of `free` alike, by one renaming;
+                // here each is bound by one binding, `binds` with the need's own variable at
+                // `on` (`remap_src`). Hence every input is the body's type under the call's
+                // substitution, which is what a walk of the body at the call's argument types
+                // reads at the remap: the walk below goes through the same steps. Before the
+                // fix (3) read `env` as the walk last left it: the body's own types, as the
+                // class `$f` of a parameter `f`, which no call binds, so `f(v)` recorded its
+                // call on `$f` and the lambda passed for `f` was never checked against `v`.
+                // A name of (3) with no type where the need was made is left out of `free` and
+                // read in the scope, as before. `env` is restored after the walk, each entry to
+                // what it held (or removed if it held none), so the check of a need changes no
+                // type of the scope it is checked in. A need made during the walk below (a
+                // nested remap's) reads `env` while it holds the bound types, so it records
+                // those, which is the same substitution applied once: correct and final.
+                // Complexity tradeoff: O(names + their types' size) per check of the need, the
+                // binding `remap_src` makes of `src`, once more for each name.
                 let src = self.remap_src(n, src, &on, binds);
-                self.remap_met(*at, &src)
+                let mut was = Vec::with_capacity(free.len());
+                for (id, t) in free {
+                    let t = self.remap_src(n, t, &on, binds);
+                    was.push((*id, self.env.insert(*id, t)));
+                }
+                let out = self.remap_met(*at, &src);
+                for (id, w) in was.into_iter().rev() {
+                    match w {
+                        Some(w) => self.env.insert(id, w),
+                        None => self.env.remove(&id),
+                    };
+                }
+                out
             }
             NeedKind::Reduce(op, site, form) => self.fold_level(*op, &on, span, *site, *form),
             NeedKind::Fold {
@@ -35479,6 +35579,7 @@ mod tests {
                 at: e.span,
                 src,
                 rank: (1, 1),
+                free: Vec::new(),
             },
             result: None,
             span: e.span,

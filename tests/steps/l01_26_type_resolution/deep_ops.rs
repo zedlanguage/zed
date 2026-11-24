@@ -375,6 +375,7 @@ fn a_signature_writes_each_need_as_the_derived_debug_of_the_need_writes_it() {
             at: at(6),
             src: y(),
             rank: (1, 2),
+            free: vec![(3, z())],
         },
         NeedKind::Fold {
             tys: vec![y(), z()],

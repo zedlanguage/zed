@@ -2954,6 +2954,10 @@ struct Ck<'t, 'a> {
     /// ([`Ck::new`] takes one program's tables, and no signature or need comes from
     /// elsewhere), so the span names one remap of that program.
     remap_exprs: HashMap<Span, &'a Expr>,
+    /// The names each remap of `remap_exprs` reads that are bound outside it, by its span,
+    /// as binder ids, sorted, each once ([`Ck::remap_free_names`]). A pure function of the
+    /// remap's text and the name resolution, so never undone by a trial.
+    remap_free: HashMap<Span, Arc<[usize]>>,
     /// Each fold `m >< op` checked outside a trial, by its span: the carriers of the entries
     /// it was checked at, each once, with the identity of `op` there, if it has one; no
     /// carrier for entries of no known type, as those of `[]`, which fold to `#empty`. A fold in
@@ -3607,6 +3611,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             alike_keys: Vec::new(),
             escapes: HashSet::new(),
             remap_exprs: HashMap::new(),
+            remap_free: HashMap::new(),
             folds: BTreeMap::new(),
             refused: Vec::new(),
             need_passed: Vec::new(),
