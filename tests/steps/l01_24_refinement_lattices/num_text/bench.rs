@@ -51,3 +51,45 @@ fn writing_a_wide_end_scales() {
         assert!(!ends[&m].to_string().is_empty());
     });
 }
+
+/// The fixed cost of writing an ordinary end: one of 1 and one of 8 words, held to the limit of
+/// 10.5 every scaling test meets. A test of the cost of printing an ordinary number, not of the
+/// order of the method: at these sizes the cost of a call (the `Num` text's checks, the
+/// `String`, num-bigint's setup) is most of the work.
+///
+/// Plan row PRINT-below-whole-13, author's answer A of A224 (QUESTIONS.md, 2026-11-24, in the
+/// spec repository's history at 7b55771): "Do A, because there isn't a better algorithm but
+/// widening the test limit is not great. You should have some smaller tests though". So the
+/// order test below `PRINT_WHOLE` (`writing_an_end_below_print_whole_scales`, 520 and 4153
+/// words) stays deferred in wt/scratch/deferred-tests/PRINT-below-whole-13.rs with its limit
+/// not widened, and this test is added. Measured with num-bigint 0.4.8 `to_string`, best of 5,
+/// time at 8w over time at w (2026-11-24, in that answer): 1 -> 8 words 5.85, 2 -> 16 10.35,
+/// 4 -> 32 28.1, 8 -> 64 28.4, 16 -> 128 28.6, 32 -> 256 16.4, 65 -> 520 19.1, 128 -> 1024 20.6,
+/// 260 -> 2080 22.5, 519 -> 4152 23.3. From 4 to 256 words num-bigint divides by schoolbook and
+/// grows 16 to 29 times, so only the pair 1 -> 8 is a test under 10.5 with a margin (2 -> 16
+/// read 10.35). Each run writes `COPIES` ends, so that the meter's own fixed cost per run is a
+/// small part of what it counts; the ratio of the two sizes does not depend on the count.
+/// Measured 2026-11-24 on a Colab hm VM, counted by DynamoRIO (zed_icount): 3.73 times the
+/// instructions (1.95 M and 7.27 M) and 9.36 times the bytes (59,848 and 560,032: the text of
+/// an end grows with its digits, about 20 and 155 a number, and its `String` with it).
+///
+/// What it catches: a printing whose cost per call grows faster than about `n^1.13` from 1 to 8
+/// words (`8^1.13 = 10.5`), such as a quadratic digit-by-digit division (about 60 times here),
+/// or a fixed cost that is a power of the words. What it cannot catch: a slow order above 8
+/// words, which `writing_a_wide_end_scales` and `writing_a_long_decimal_end_scales` hold above
+/// `PRINT_WHOLE` and the deferred test would hold below it.
+#[test]
+fn the_fixed_cost_of_writing_an_end_of_one_and_of_eight_words_scales() {
+    const COPIES: usize = 1000;
+    let ends = scaling::inputs(1, |m| {
+        let mut rng = Rng::new(m as u64);
+        (0..COPIES)
+            .map(|_| Num::from(wide(&mut rng, m)))
+            .collect::<Vec<_>>()
+    });
+    scaling::check("writing 1000 decimal ends of n words", 1, |m| {
+        for end in &ends[&m] {
+            assert!(!end.to_string().is_empty());
+        }
+    });
+}

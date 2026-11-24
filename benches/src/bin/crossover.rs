@@ -1729,7 +1729,18 @@ fn all(_: &[String]) -> ExitCode {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // With `--exact`, where `ZED_METER_DRRUN` and `ZED_METER_ICOUNT` name DynamoRIO and its
+    // client (Colab's job.sh sets both) and the hardware does not count instructions, the run
+    // starts again under the client, so that its meter counts instructions, not processor time,
+    // which varied 1.8 times between two Colab machines on the same fit (POLY-square-1024-wide:
+    // `poly-square 1024 square 4` fitted 122 on a v5e VM and 211 to 226 on an hm3). The meter
+    // does not do it here itself: it starts again only in a test binary run with one test named.
+    // Elsewhere the call returns and the run measures as before.
+    zed_meter_settings::start_under_dynamorio();
+    let args: Vec<String> = std::env::args()
+        .skip(1)
+        .filter(|a| a != "--exact")
+        .collect();
     let rest = args.get(1..).unwrap_or(&[]);
     let name = args.first().map_or("", String::as_str);
     if name == "all" {
@@ -1746,7 +1757,7 @@ fn main() -> ExitCode {
         None => {
             let names: Vec<&str> = BENCHES.iter().map(|(n, _, _)| *n).collect();
             eprintln!(
-                "usage: crossover all | print-never-slower [digits...] | factor-bits | {}",
+                "usage: crossover (all | print-never-slower [digits...] | factor-bits | {}) [--exact]",
                 names.join(" | ")
             );
             ExitCode::FAILURE

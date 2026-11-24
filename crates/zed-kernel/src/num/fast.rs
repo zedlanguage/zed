@@ -550,6 +550,14 @@ pub const PRINT_HANDOFF: usize = 1;
 /// 0.87 at 8192 words, 0.70 at 16,384 and 0.43 at 65,536 (2026-11-12, load 36 to 51;
 /// COMPLEXITY.md K81). It allocates fewer bytes from 2048 words on. The digits do not depend
 /// on it.
+///
+/// Below it the printing grows faster than the limit of 10.5 at 8 times the words: num-bigint
+/// measured 23.3 times from 519 to 4152 words and 16 to 29 times from 4 to 256 words, and no
+/// radix conversion below `O(M(n) log n)` is known (plan row PRINT-below-whole-13, which holds
+/// the literature read). The author's answer A to A224 (2026-11-24) keeps that order test
+/// deferred with its limit not widened, and adds a test of the fixed cost at 1 and 8 words,
+/// where num-bigint measured 5.85: l01_24 `num_text::bench::
+/// the_fixed_cost_of_writing_an_end_of_one_and_of_eight_words_scales`.
 #[cfg(not(test))]
 pub const PRINT_WHOLE: usize = 7845;
 /// One in the unit tests, so that every number reaches the split.

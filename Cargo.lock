@@ -1261,6 +1261,7 @@ dependencies = [
  "zed-alloc-count",
  "zed-corpus-ref",
  "zed-kernel",
+ "zed-meter-settings",
  "zed-numtheory",
  "zed-tests",
  "zedc",
