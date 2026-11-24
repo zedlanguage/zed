@@ -1766,9 +1766,12 @@ fn the_pendant_run_whose_gap_of_classes_grew_without_a_charge_ends() {
 /// cover's gap of classes was charged (row VERIFY-classed-charge-refusals; probe of
 /// 2026-11-24 over seeds 1 to 240, wide and not, both commits on one VM): `(wide, seed, part,
 /// whole, route)`, `whole` where the whole part's projection gave every set with no refusal,
-/// `route` where the route by pendants answered. b7ab00a78 refused each with
-/// `Refusal::Questions` (`ClassUnion::minus` charged every range the gap kept on each value
-/// found), and three of the route's parts gave `None`.
+/// `route` where the route by pendants answered. b7ab00a78 refused the whole parts
+/// (`Refusal::Questions`, seed 149 `Refusal::Growth`), for two causes in zedc-presburger
+/// `exact.rs`: `shared_cells` dropped every class of a symbol's cell, so the symbol went to
+/// its own cover (seeds 185, 229), and `cells_cover` asked a gap's inferred class (two values
+/// left, `70 mod 96` over `[-26, 70]` on seed 30) as one question with the class's modulus,
+/// over a million units where each value alone took 2,500 (seeds 30, 115, 149).
 #[test]
 fn parts_answered_before_the_classed_charges_are_answered() {
     let cases: [(bool, u64, usize, bool, bool); 9] = [

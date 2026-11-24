@@ -1258,6 +1258,9 @@ fn cells_cover(
     // part or progression are not listed (PERF-exact-strided-unlisted, [`ClassUnion`]).
     let mut found = ClassUnion::empty();
     let mut gap = ClassUnion::plain(h.clone());
+    // The ranges of `h` and of the cells taken from the gap so far, less the values asked one
+    // at a time: the bound on those questions (below, at `gap.first()`).
+    let mut spare = h.len() as u64;
     // The kept pieces so far, so that each new one is taken disjoint from them ([`ended`]).
     let mut kept_at = IntervalSet::empty();
     let within = h.hull();
@@ -1359,6 +1362,7 @@ fn cells_cover(
                 // count read in O(1).
                 work.charge(PIECE.saturating_mul(c.len() as u64 + 1))?;
                 gap = gap.minus(&c, work)?;
+                spare = spare.saturating_add(c.len() as u64);
                 found = found.join(&c);
                 strides.extend(more);
             }
@@ -1504,6 +1508,49 @@ fn cells_cover(
         // with no point there is taken out whole.
         let Some((piece, class)) = gap.first() else {
             return ended(found, kept, work);
+        };
+        // A piece of a class `r mod m`, `m >= 2`, whose values number no more than `spare` is
+        // asked one value at a time, its first (an end of a range in the one form of `Classed`
+        // is a member), with no class; else with its class. Both give the same answer (a
+        // point in the piece's class, or none, for the value or for the class), so only the
+        // cost changes. Why: the class question adds `#t` with coefficient `m`, and the
+        // solver's cost grows with it; such a class can be made by `Classed::new`, which gives
+        // any set its class: the two values left of seed 30's `c`, -26 and 70, were the class
+        // `70 mod 96`, asked in one question that cost 1,066,625 units and was refused at the
+        // limit, where 06fbc3477 asked each value alone at 2,500 units
+        // (`l01_39_reduced_product::pendants::parts_answered_before_the_classed_charges_are_answered`).
+        //
+        // Bound on the questions of one value. `spare` starts at the number of ranges of `h`,
+        // grows by the ranges of each cell taken from the gap (`c.len()`, each charged
+        // [`PIECE`] above), and falls by one for each such question. So over the cover these
+        // questions number at most the ranges of `h` and of the cells read, each of which was
+        // charged: O(w / PIECE) for the cover's work w, whatever `m` is. A piece with more
+        // values than `spare` is asked with its class, one question. The values left one by one
+        // between ranges the cover read (the case above) are never more than `spare` allows:
+        // each range taken from a plain set splits at most one range of it in two, so the gap's
+        // ranges, and so the values a class made of single values holds, number at most the
+        // ranges of `h` and of the cells taken, less the values asked one at a time since.
+        //
+        // Complexity tradeoff: naive version (b7ab00a78), every piece with its class, one
+        // question a piece, of cost growing with `m`; the other naive version, every value
+        // alone (06fbc3477), O(v) questions for v values, which a long stride makes many; a
+        // first cut of this fix compared the values with `m`, up to `m` questions for an `m`
+        // the input gives, pseudo-polynomial. Used: one question a value within `spare`, at
+        // most the ranges already read and charged, else one question for the class.
+        let (piece, class) = match &class {
+            Congruence::Class { modulus, .. }
+                if *modulus > Num::ONE
+                    && Classed::new(
+                        IntervalSet::range(piece.0.clone(), piece.1.clone()),
+                        class.clone(),
+                    )
+                    .count()
+                        <= spare =>
+            {
+                spare -= 1;
+                ((piece.0.clone(), piece.0), Congruence::top())
+            }
+            _ => (piece, class),
         };
         // With no point found and the gap every value, the question is `f` alone, which does
         // not read `s`; a later symbol of the part reaching it at the same work gets its
@@ -3099,18 +3146,40 @@ fn shared_cells(
         // point, so `read == points.len() >= 1`. The parts of the cell with holes and its strides
         // are dropped: the ranges `c` alone are values of `s` with a point, as in `cells_cover`,
         // and what they leave is asked or left to the symbol's own cover. The cell's classes
-        // (PERF-exact-strided-unlisted) are dropped too, for the same reason: a subset of the
-        // cell is still values of `s` with a point, so the answer is unchanged.
+        // (PERF-exact-strided-unlisted) past the room below are dropped too, for the same
+        // reason: a subset of the cell is still values of `s` with a point, so the answer is
+        // unchanged.
         // Complexity tradeoff: naive version (the first cut of this row), each class listed
         // here, each value charged [`LISTED`], O(v) for v values: the hub of
         // `l01_38_presburger::strided` with `a`, `b` and `w` asked read 5.9M units in 1.6 s at
         // box bound 10^5, and `w` alone 3.5M in 11 ms, its cover keeping the class unlisted.
-        // Used: the plain sets of the cell alone, O(p) for p ranges; `s` then asks its one
-        // question and, with its gap open, goes to its own cover ([`cells_cover`]), which holds
-        // the class as one set.
+        // Used: the plain sets of the cell, O(p) for p ranges, and its classes listed while
+        // their values number at most `size` in all; a class past that is dropped, and `s` then
+        // asks its one question and, with its gap open, goes to its own cover ([`cells_cover`]),
+        // which holds the class as one set. Dropping every class (the cut of b7ab00a78) sent
+        // symbols whose classes are small to their own covers, and there seeds 185 and 229 of
+        // `l01_39_reduced_product::pendants::parts_answered_before_the_classed_charges_are_
+        // answered` were refused where 06fbc3477, which listed them, answered
+        // (VERIFY-classed-charge-refusals).
+        // Bound: the values listed for `s` are at most `size`, each one range of `c` charged
+        // [`PIECE`] below, so the listing adds at most `PIECE·size` to the `size` units this
+        // symbol reads anyway: O(size) a symbol, O(k·size) over the k symbols, the bound of the
+        // note above the loop, with no term in the classes' moduli or lengths. `count` reads the
+        // ranges of each set once, O(p) for p ranges, before any value is listed.
         let (c, _, _) = cell(f, &points[read - 1], s, &HashSet::new(), &h.hull(), work)?;
+        let mut room = size;
         let c = (c.sets().iter())
-            .filter(|set| set.strided().is_none())
+            .filter(|set| {
+                if set.strided().is_none() {
+                    return true;
+                }
+                let n = set.count();
+                let fits = n <= room;
+                if fits {
+                    room -= n;
+                }
+                fits
+            })
             .fold(IntervalSet::empty(), |all, set| all.join(&set.met()));
         work.exempt(|w| {
             w.read(size)?;
