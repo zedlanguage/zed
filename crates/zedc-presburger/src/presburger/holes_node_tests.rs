@@ -235,3 +235,31 @@ fn a_node_is_shown_as_its_clauses() {
         "{text}"
     );
 }
+
+#[test]
+fn nodes_beside_a_part_read_twice_are_compared_by_content() {
+    // The order of two formulas reads the rest of a level by its parse (`deep::canon`) once a
+    // shared part is met a second time. The parse read every call node as one symbol, so two
+    // conjunctions that differ only in their nodes compared equal (wildcard-arm audit,
+    // b22-load10 step 0). `p`, `q` and `r` are three equal conjunctions built apart, each
+    // shared: the pair (p, q) is entered, and the pair (p, r) meets `p` again.
+    let part = || {
+        Formula::And(Shared::new(vec![
+            Formula::Con(Con::ge(&y("x"), &k(0))),
+            Formula::Con(Con::ge(&y("z"), &k(0))),
+        ]))
+    };
+    let (p, q, r) = (part(), part(), part());
+    let ha = Formula::outside(&set(&[(0, 3)]), y("x"));
+    let hb = Formula::outside(&set(&[(5, 9)]), y("x"));
+    let a = Formula::And(Shared::new(vec![p.clone(), p.clone(), ha.clone()]));
+    let b = Formula::And(Shared::new(vec![q.clone(), r.clone(), hb.clone()]));
+    assert_eq!(a.cmp(&b), ha.cmp(&hb), "{a:?} against {b:?}");
+    assert_eq!(b.cmp(&a), hb.cmp(&ha));
+    assert_ne!(a, b);
+    // Equal nodes built apart still compare equal on that path.
+    let hc = Formula::outside(&set(&[(0, 3)]), y("x"));
+    let c = Formula::And(Shared::new(vec![q.clone(), r.clone(), hc]));
+    assert_eq!(a.cmp(&c), std::cmp::Ordering::Equal);
+    assert_eq!(a, c);
+}
