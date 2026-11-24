@@ -63,10 +63,7 @@ fn bench_sweep(n: usize) -> Formula {
 fn the_period_sweep_scales_in_the_constraints() {
     let inputs = scaling::inputs(N_SWEEP, bench_sweep);
     let run = |n: usize| {
-        assert_eq!(
-            sweep::solve_modular_scaled_or_swept(&inputs[&n], false),
-            Some(None)
-        );
+        assert_eq!(sweep::solve_after_refusal(&inputs[&n], false), Some(None));
     };
     scaling::check("the period sweep over n constraints", N_SWEEP, run);
     let mut meter = scaling::Meter::new();
@@ -85,8 +82,39 @@ fn the_period_sweep_scales_in_the_constraints() {
     );
 }
 
+/// The runs on [`bench_runs`] at `n` and `8n` constraints: O(P n) for the fixed count `P` of
+/// points, so linear in `n`. Negative control: the run at `8n` done eight times, as a method
+/// that read every constraint once per constraint would cost, is over the limit.
+#[test]
+fn the_runs_scale_in_the_constraints() {
+    let inputs = scaling::inputs(N_RUNS, bench_runs);
+    let run = |n: usize| assert_eq!(sweep::solve_after_refusal(&inputs[&n], false), Some(None));
+    scaling::check("the runs over n constraints", N_RUNS, run);
+    let mut meter = scaling::Meter::new();
+    let small = meter.work(|| run(N_RUNS)).units;
+    let large = meter
+        .work(|| {
+            for _ in 0..8 {
+                run(8 * N_RUNS);
+            }
+        })
+        .units;
+    let ratio = large as f64 / small as f64;
+    assert!(
+        ratio >= scaling::limit(1),
+        "the negative control passed: {small} and {large} instructions, {ratio:.2} times"
+    );
+}
+
+/// The size of [`the_runs_scale_in_the_constraints`]: at `8n` the count of units, about
+/// `(window + 202) (8n + 13)`, stays under `PERIOD_SWEEP_AFTER_REFUSAL_UNITS`, the bound of
+/// `sweep::solve_after_refusal`, which the benchmark calls (past `PERIOD_SWEEP_SWITCHOVER` at
+/// `8n`).
+const N_RUNS: usize = 50;
+
 /// The size of [`the_period_sweep_scales_in_the_constraints`]: at `8n` the sweep's count of
-/// units (about `2 * 20 * 8n`) stays under `SWEEP_SWITCHOVER` (400,000).
+/// units (about `2 * 20 * 8n`) stays under `PERIOD_SWEEP_AFTER_REFUSAL_UNITS`, the bound of
+/// `sweep::solve_after_refusal`, which the benchmark calls.
 const N_SWEEP: usize = 1_000;
 
 /// The size of [`sums_of_quotients_scale`].

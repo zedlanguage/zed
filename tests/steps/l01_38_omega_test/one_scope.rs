@@ -327,6 +327,52 @@ fn a_relation_read_under_the_unit_scope_is_the_relation_of_the_closed_body() {
     assert!(none >= 1, "{none} outside");
 }
 
+/// The two questions of these units that the refusal census (m0_12, programs_14 and
+/// programs_15) lost as `Growth` refusals when the period sweep answered them
+/// (FAIL-omega-pairs-4972743790605253739, 60267344b), each against its answer by hand.
+/// `two`: `h(x + 2) - h(x)` is `(x + 2) div 3 - x div 3`, in {0, 1}, plus
+/// `(x + 2) mod 5 - x mod 5`, in {2, -3}, so it is one of 2, 3, -3, -2 and never 0: `two`
+/// holds nowhere (checked also by enumerating -3000..3000, beyond its period 15).
+/// `p2` holds at `x = 10`, where `v2(8) = v1(9) + 3 = 4 + 3 = 7` and `p1(11)` holds
+/// (`v2(11) = v1(12) + 1 = 7 < 9`, `p0(12)`), and fails at `x = 0`; enumerating -1000..1000
+/// finds 10 alone (PRES-period-sweep-no-budget, b22-presburger8).
+#[test]
+fn the_answers_the_period_sweep_gave_the_census_are_those_by_hand() {
+    use zedc::store::presburger::extend::Extending;
+    use zedc::store::presburger::{Formula, decide};
+    let units = [
+        (UNITS[0], "two", false),
+        (
+            "v0(x: int) = x mod 3;\nv1(x: int) = v0(x: x) + x div 2;\nv2(x: int) = v1(x: x + 1) + x mod 5;\n\
+             p0(x: int) = x > 0;\np1(x: int) = v2(x: x) < 9 && p0(x: x + 1) && x < 40;\n\
+             p2(x: int) = v2(x: x - 2) == 7 && p1(x: x + 1) && x < 30;",
+            "p2",
+            true,
+        ),
+    ];
+    for (src, name, holds) in units {
+        let unit = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        let lets = lets(&unit);
+        let fs = functions(&unit);
+        let &(_, ps, body) = fs.iter().find(|f| f.0 == name).expect("the function");
+        let mut scoped = Scoped::new(&lets);
+        // The callees first, as the unit's order reads them.
+        for &(_, qs, b) in fs.iter().take_while(|f| f.0 != name) {
+            let _ = scoped.relation(b, qs, qs, true);
+        }
+        let r = scoped.relation(body, ps, ps, true).expect("a relation");
+        let mut a = Extending::new().defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+        if a.holds.is_err() || a.fails.is_err() {
+            let w = scoped.written(&r);
+            let with = |f| Formula::and(vec![w.defined(), f]);
+            a.holds = decide(&with(w.body.clone()));
+            a.fails = decide(&with(Formula::negate(w.body.clone())));
+        }
+        assert_eq!(a.holds, Ok(holds), "`{name}` holds somewhere, in\n{src}");
+        assert_eq!(a.fails, Ok(true), "`{name}` fails somewhere, in\n{src}");
+    }
+}
+
 #[test]
 fn the_scope_holds_what_the_bodies_found_of_it_alone() {
     // `p{i}(x) = p{i-1}(x: x) && x > i`: each body reads the i bodies before it, each in a

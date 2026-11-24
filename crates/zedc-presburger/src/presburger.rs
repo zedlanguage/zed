@@ -349,8 +349,14 @@ fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
     }
 }
 
-/// [`satisfiable`] on one path ([`or_old`]).
+/// [`satisfiable`] on one path ([`or_old`]); where the solver refuses `f`, the period sweep past
+/// its switchover ([`swept_after_refusal`]), as at [`decide_named`].
 fn satisfiable_named(f: &Formula) -> Result<Option<Model>, Refusal> {
+    satisfiable_named_once(f).or_else(|e| swept_after_refusal(f, true).ok_or(e))
+}
+
+/// [`satisfiable_named`] with no sweep after a refusal.
+fn satisfiable_named_once(f: &Formula) -> Result<Option<Model>, Refusal> {
     // As at [`satisfiable_written`]: a spent question is refused with no retry.
     if meter::spent() {
         return Err(Refusal::Questions);
@@ -588,8 +594,17 @@ fn decide_written(f: &Formula) -> Result<bool, Refusal> {
     }
 }
 
-/// [`decide`] on one path ([`or_old`]).
+/// [`decide`] on one path ([`or_old`]); where the solver refuses `f`, the period sweep past its
+/// switchover ([`swept_after_refusal`]). Here, not in [`decide`], so that a part of a formula
+/// the solver asks on its own (a disjunct, a component) is swept too, as it was when the sweep
+/// ran first up to `SWEEP_SWITCHOVER` (PRES-period-sweep-no-budget).
 fn decide_named(f: &Formula) -> Result<bool, Refusal> {
+    decide_named_once(f)
+        .or_else(|e| swept_after_refusal(f, false).map_or(Err(e), |m| Ok(m.is_some())))
+}
+
+/// [`decide_named`] with no sweep after a refusal.
+fn decide_named_once(f: &Formula) -> Result<bool, Refusal> {
     if let Some(found) = modular_answer(f, false) {
         return Ok(found.is_some());
     }
@@ -1425,6 +1440,10 @@ impl Drop for SetFor {
 thread_local! {
     static OLD_PATH: Cell<bool> = const { Cell::new(false) };
     static REVERSED: Cell<bool> = const { Cell::new(false) };
+    /// Whether [`swept_after_refusal`] gives no answer, for the test that finds the formulas the
+    /// solver refuses (`scaled::tests::a_formula_the_general_path_refuses_is_swept_past_the_switchover`).
+    #[cfg(test)]
+    static NO_SWEEP_AFTER_REFUSAL: Cell<bool> = const { Cell::new(false) };
 }
 
 /// `run` with no check of the empty answers, inside a run under [`with_modular_empty_checked`].
@@ -1471,6 +1490,22 @@ fn modular_answer(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         });
     }
     Some(found)
+}
+
+/// [`modular::scaled::sweep::solve_after_refusal`]'s answer to `f`, which [`decide_named`] and
+/// [`satisfiable_named`] ask where the solver refused `f` (PRES-period-sweep-no-budget): the period
+/// sweep past its switchover, where the solver answers most formulas faster, up to its limit.
+/// `None` where it gives none, or in a run under [`with_modular_empty_checked`] while the
+/// modular solvers are switched off. Cost: nothing where the solver answers.
+fn swept_after_refusal(f: &Formula, want_model: bool) -> Option<Option<Model>> {
+    if MODULAR_CHECK.with(|c| c.borrow().as_ref().is_some_and(|c| c.off)) {
+        return None;
+    }
+    #[cfg(test)]
+    if NO_SWEEP_AFTER_REFUSAL.with(Cell::get) {
+        return None;
+    }
+    modular::scaled::sweep::solve_after_refusal(f, want_model)
 }
 
 /// The record of a run under [`with_modular_empty_checked`]: of the answers of
