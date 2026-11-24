@@ -13,7 +13,7 @@ use crate::held::Held;
 use crate::intern::Interner;
 use crate::scaling;
 use crate::search::{first_true, gallop};
-use crate::{cartesian, intervals, sorted};
+use crate::{cartesian, intervals, sorted, spelling};
 
 /// The size of every benchmark here, run again at `8 * N`.
 const N: usize = 100_000;
@@ -259,4 +259,56 @@ fn a_cartesian_build_takes_linear_time() {
             assert_eq!(made, Some(m));
         });
     }
+}
+
+/// `m / 16` names of 6 letters and `m / 16` written names, each name visible from its own place
+/// to the end and every other written name one slip from a name, plus one name of `m / 8`
+/// letters and a written name with two of its letters swapped: about `m` characters in all.
+/// Small instances: `spelling::tests::the_index_agrees_with_a_check_of_each_pair`.
+#[test]
+fn the_spelling_index_takes_n_log_n() {
+    let word = |i: usize, len: usize| -> String {
+        (0..len)
+            .map(|j| char::from(b'a' + (spread(i * 7 + j) % 26) as u8))
+            .collect()
+    };
+    let inputs = built(|m| {
+        let k = m / 16;
+        let mut names: Vec<(String, std::ops::Range<usize>)> =
+            (0..k).map(|i| (word(i, 6), i..k + 1)).collect();
+        let mut written: Vec<(String, usize)> = (0..k)
+            .map(|j| {
+                let w = if j % 2 == 0 {
+                    // The name at j / 2 with its third letter replaced.
+                    let mut w: Vec<char> = names[j / 2].0.chars().collect();
+                    w[2] = if w[2] == 'z' { 'y' } else { 'z' };
+                    w.into_iter().collect()
+                } else {
+                    word(k + j, 7)
+                };
+                (w, j)
+            })
+            .collect();
+        let long = word(2 * k, m / 8);
+        let mut swapped: Vec<char> = long.chars().collect();
+        let at = (0..swapped.len() - 1)
+            .find(|&i| swapped[i] != swapped[i + 1])
+            .expect("the long name has two different adjacent letters");
+        swapped.swap(at, at + 1);
+        names.push((long, 0..k + 1));
+        written.push((swapped.into_iter().collect(), k));
+        (names, written)
+    });
+    scaling::check("the spelling index of about n characters", N, |m| {
+        let (names, written) = &inputs[&m];
+        let names: Vec<(&str, std::ops::Range<usize>)> =
+            names.iter().map(|(n, r)| (n.as_str(), r.clone())).collect();
+        let written: Vec<(&str, usize)> = written.iter().map(|(w, a)| (w.as_str(), *a)).collect();
+        let got = spelling::nearest(&names, &written);
+        assert!(got.iter().filter(|g| g.is_some()).count() >= m / 32);
+        assert_eq!(
+            got.last(),
+            Some(&Some(names.last().expect("the long name").0))
+        );
+    });
 }

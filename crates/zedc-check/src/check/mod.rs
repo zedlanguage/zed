@@ -967,6 +967,10 @@ struct Pending {
     offer: Offer,
     needs: Vec<Span>,
     ty: Ty,
+    /// Whether a `Lines` push of the value this fix's type is carried up to checks it
+    /// ([`Ck::push_carried`]): set for the fixes of a cast ([`Ck::int_not_whole`]), whose
+    /// type is the one the fixed program gives.
+    at_push: bool,
 }
 
 /// A fit of a function of `s` where one of `q` is expected, by `what` at `span`, put off

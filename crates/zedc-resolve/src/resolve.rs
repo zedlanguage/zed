@@ -31,6 +31,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use imbl::Vector;
+use zed_collections::spelling::{fold, near_in_spelling};
 use zed_kernel::text::prose::{and_list, ordinal, plural};
 
 use zedc_base::address::ContentAddress;
@@ -5430,14 +5431,6 @@ impl SpellingIndex {
     }
 }
 
-/// `s` with ASCII letters lowercased and underscores dropped.
-fn fold(s: &str) -> String {
-    (s.chars())
-        .filter(|&c| c != '_')
-        .map(|c| c.to_ascii_lowercase())
-        .collect()
-}
-
 /// `s` itself, then `s` with each of its characters deleted in turn.
 fn deletions(s: &str) -> impl Iterator<Item = String> + '_ {
     std::iter::once(s.to_string()).chain(s.char_indices().map(|(i, c)| {
@@ -5446,42 +5439,6 @@ fn deletions(s: &str) -> impl Iterator<Item = String> + '_ {
         d.push_str(&s[i + c.len_utf8()..]);
         d
     }))
-}
-
-/// Whether `written` and `name` are near in spelling (DESIGN.md sec:diagnostics, "Nearest in
-/// spelling"): they differ by one slip, one character inserted, deleted or replaced or two
-/// adjacent characters swapped, or they are equal once ASCII letters are lowercased and
-/// underscores dropped. Equal names are not near. O(|written| + |name|) time.
-fn near_in_spelling(written: &str, name: &str) -> bool {
-    let a: Vec<char> = written.chars().collect();
-    let b: Vec<char> = name.chars().collect();
-    if a == b {
-        return false;
-    }
-    if fold(written) == fold(name) {
-        return true;
-    }
-    // The first and the last place where the two differ, from each end.
-    let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
-    let tail = (a.iter().rev().zip(b.iter().rev()))
-        .take_while(|(x, y)| x == y)
-        .count();
-    let (short, long) = if a.len() <= b.len() {
-        (&a, &b)
-    } else {
-        (&b, &a)
-    };
-    match long.len() - short.len() {
-        // One character inserted or deleted: the shorter is the longer with one dropped.
-        1 => head + tail >= short.len(),
-        // One replaced, or two adjacent swapped.
-        0 => {
-            let n = a.len();
-            head + tail + 1 == n
-                || (head + tail + 2 == n && a[head] == b[head + 1] && a[head + 1] == b[head])
-        }
-        _ => false,
-    }
 }
 
 /// The row "Type variable in a `struct` field that is not one of the struct's declared type

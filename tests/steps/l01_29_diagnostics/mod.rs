@@ -40,6 +40,7 @@ mod quoted;
 mod recursion;
 mod shared_parts;
 mod shared_print;
+mod spelling_index;
 mod sum_plus;
 mod syntax_recovery;
 mod too_large_literal;

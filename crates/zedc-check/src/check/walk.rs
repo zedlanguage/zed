@@ -2026,7 +2026,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     _ => false,
                 };
                 if param || self.lines_out.contains(port) {
-                    self.pushed(&t, port, value.span, self.main_pushes.contains(&s.span));
+                    let bubbles = self.main_pushes.contains(&s.span);
+                    self.push_carried(port, value.span, bubbles);
+                    self.pushed(&t, port, value.span, bubbles);
                 }
             }
             Frame::InferGiven(s) => self.infer_given(m, s),
@@ -10522,6 +10524,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             ("awayFromZero", Prim::AwayFromZero, "", ", away from zero"),
         ];
         let mut fixes = Vec::with_capacity(rules.len());
+        let mut pending = Vec::with_capacity(rules.len());
         for (word, p, ties, why) in rules {
             let Some(ty) = self.tried(|ck| ck.word_applied(word, x.clone(), span)) else {
                 continue;
@@ -10540,7 +10543,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(n) => format!("{n} is {value}"),
                 None => format!("{fixed} is {value}"),
             };
-            fixes.push(Rewrite::new(&[(span, &fixed)], &holds, &fixed));
+            let fix = Rewrite::new(&[(span, &fixed)], &holds, &fixed);
+            // The fix rewrites the whole cast, so its type, as `int | #NaN | #overflow` for
+            // `round`, is checked where the cast is used: it is pending for this rejection and
+            // carried up ([`Self::pending_settled`]), and dropped where the use refuses it, as
+            // the `Lines` port refuses a loose atom ([`Self::push_carried`]; plan row
+            // MSG-cast-no-carrier-first).
+            if let Some(f) = &fix {
+                pending.push((f.edits.clone(), ty));
+            }
+            fixes.push(fix);
+        }
+        // Pended after every trial, so that each is pending for the rejection found next.
+        for (edits, ty) in pending {
+            self.pend(Offer::Edits(edits), Vec::new(), ty);
+            if let Some(p) = self.pending_fixes.last_mut() {
+                p.at_push = true;
+            }
         }
         let mut m = Msg::new(text, fixes);
         m.call = Some(span);
@@ -20552,6 +20571,41 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// Settles the fixes carried up to the value pushed at `span` ([`Self::carried`]): each
+    /// type they give the value is pushed in a trial, and the fixes of a type the port refuses
+    /// are dropped from their rejections' menus, as `round(1.5 + 1)` for `int(1.5 + 1)` in
+    /// `m.stdout <- String(int(1.5 + 1));`, whose `int | #NaN | #overflow` makes a loose atom
+    /// the `Lines` port refuses (plan row MSG-cast-no-carrier-first). The fixes of a type the
+    /// port takes are kept. Nothing while a fix is tried, which carries nothing.
+    ///
+    /// Only the fixes marked [`Pending::at_push`], those of a cast ([`Self::int_not_whole`]),
+    /// are checked here. Other fixes carry the type a trial of the construct gives by its
+    /// signature, which can hold an atom the fixed program does not give: `2r^(n - 5)` for
+    /// `2^(n - 5)` carries `rat | #divByZero`, though the base written is not zero and
+    /// `m.stdout <- String(2r^(n - 5));` checks; a push would refuse that atom and drop a fix
+    /// that works (test `l01_29_diagnostics::explained::each_rejection_explains_itself_and_offers_its_repairs`).
+    ///
+    /// Complexity tradeoff: one trial push per type carried, each O(the value's type) as
+    /// [`Self::pushed`] is; the fixes of one type are checked together, as at a construct
+    /// ([`Self::pending_settled`]). Checking the statement again with each fix written in
+    /// would cost the statement per fix.
+    fn push_carried(&mut self, port: &str, span: Span, bubbles: bool) {
+        if self.trying {
+            return;
+        }
+        for c in self.carried.remove(&span).into_iter().flatten() {
+            if !c.fixes.list.iter().any(|p| p.at_push) {
+                continue;
+            }
+            let (_, found) = self.trial(|ck| ck.pushed(&c.ty, port, span, bubbles));
+            if !found.is_some_and(|f| f.is_empty()) {
+                (c.fixes.list.iter())
+                    .filter(|p| p.at_push)
+                    .for_each(|p| self.fix_dropped(p));
+            }
+        }
+    }
+
     /// Checks that a value of `t` may be pushed to a `Lines` port (L1.19): a `String` or a
     /// family of strings. A failure is disposed of before it reaches a port (sec:failure). A
     /// family writes its stored entries, so the `#notFound` of a key it lacks is not pushed;
@@ -27959,6 +28013,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             offer,
             needs,
             ty,
+            at_push: false,
         });
         self.next_fix += 1;
     }

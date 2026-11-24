@@ -30,6 +30,9 @@
 //!
 //! [`by_address`]: a map key that is the address of an `Arc` and holds it, so no address in a
 //! memo is freed and given to another value while the memo lives.
+//!
+//! [`spelling`]: the spelling index of step L1.29e, the name near in spelling to each written
+//! name of a unit and visible at its site, for all of them together in `O(n log n)`.
 
 // Loaded for its num-bigint only (see Cargo.toml): nothing here names it, and a crate never named
 // is never loaded, so this dylib would carry its own copy of num-bigint beside zed-numtheory's.
@@ -45,6 +48,7 @@ pub mod intervals;
 pub mod min_add;
 pub mod search;
 pub mod sorted;
+pub mod spelling;
 
 /// The scaling test of the rule of low complexity, shared with the step tests.
 #[cfg(test)]

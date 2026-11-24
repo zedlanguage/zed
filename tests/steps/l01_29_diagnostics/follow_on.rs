@@ -68,9 +68,10 @@ fn an_error_beside_a_rejected_member_call_is_still_reported() {
 /// cause of `f64(1 / 2)` is the literal, and each fix offered checks. The cause of
 /// `int(1.5 + 1)` is the value 2.5, not the literal: every carrier `1.5` could take leaves 2.5,
 /// which no `int` equals. Its note shows the class of `1.5 + 1`, not `Never`, and its run-time
-/// repair groups the operand before `.isFinite`. Its fixes, `round(1.5 + 1)` and the rest, are
-/// tried at the call alone and give `int | #NaN | #overflow`, which the port refuses: that
-/// part of the row is open.
+/// repair groups the operand before `.isFinite`. Its fixes, `round(1.5 + 1)` and the rest,
+/// give `int | #NaN | #overflow`, which the port refuses, so they are checked at the push and
+/// dropped there (`Ck::push_carried`), as for `int(1.5f64 + 1)`: no fix offered fails to
+/// check.
 #[test]
 fn a_cast_of_a_literal_with_no_carrier_reports_the_cause_first() {
     for (cast, cause) in [
@@ -79,6 +80,7 @@ fn a_cast_of_a_literal_with_no_carrier_reports_the_cause_first() {
             "Nothing gives the literal `1` a carrier.",
         ),
         ("String(int(1.5 + 1))", "No `int` equals the value"),
+        ("String(int(1.5f64 + 1))", "No `int` equals the value"),
     ] {
         let src = format!("main(m: MainArgs) {{\n    m.stdout <- {cast};\n}}\n");
         let out = rejected(&src);
@@ -87,21 +89,29 @@ fn a_cast_of_a_literal_with_no_carrier_reports_the_cause_first() {
         assert!(!out.contains("else \"\""), "{out}");
         assert!(!out.contains("Never"), "{out}");
         assert!(!out.contains("1.5 + 1.isFinite"), "{out}");
-        if cast.contains("int(") {
+        if cast.contains("int(1.5 + 1)") {
             assert!(out.contains("(1.5 + 1).isFinite"), "{out}");
-            continue;
         }
         let fixes: Vec<&str> = (out.lines())
             .skip_while(|l| !l.trim_start().starts_with("fixes, each checked here"))
             .skip(1)
             .filter_map(|l| l.strip_prefix("    ")?.split("    ").next())
             .collect();
-        assert!(!fixes.is_empty(), "{out}");
+        assert!(!fixes.is_empty() || cast.contains("int("), "{out}");
         for fix in fixes {
             let fixed = format!("main(m: MainArgs) {{\n    {}\n}}\n", fix.trim_end());
             assert!(accepted_with_main(&fixed), "{fixed}\n{out}");
         }
     }
+}
+
+/// Negative control of the drop at the push: a cast whose value no port takes keeps the fixes
+/// that give `int | #NaN | #overflow` (plan row MSG-cast-no-carrier-first).
+#[test]
+fn a_cast_not_pushed_keeps_its_rounding_fixes() {
+    let out = rejected("f() = int(1.5 + 1);\n");
+    assert!(out.contains("No `int` equals the value"), "{out}");
+    assert!(out.contains("round(1.5 + 1)"), "{out}");
 }
 
 #[test]
