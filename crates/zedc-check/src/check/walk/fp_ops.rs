@@ -137,9 +137,20 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// A class never reaches here: walk.rs's `Ck::level_word` takes the variables of `x` out
     /// first, each as a need ([`NeedKind::Level`]) or as the type it is resolved to, and
     /// `strings_parts` passes its operand with the variables taken out. The `Piece::Var` arm
-    /// stays for `zip_end`, which passes a variable for which `class_root` gives no class (plan
-    /// row TEST-generic-operand-messages-reached: no test reaches it yet), and names the operand
-    /// at `operand` by its code where it is on one line. `None` after an error.
+    /// stays for `zip_end`, which passes a variable for which `class_root` gives no class, and
+    /// names the operand at `operand` by its code where it is on one line. `None` after an
+    /// error.
+    ///
+    /// No program is known to reach this arm, the variable arm of `strings_classes` or
+    /// `generic_operand` (plan row TEST-generic-operand-messages-reached). A build in which the
+    /// three panic, as the feature `generic-operand-sweep` makes them, ran the test pieces of
+    /// every step group and of zedc_check (`tools/run_tests.sh`, 3237 pieces, 2026-11-24, on
+    /// 65df19b3c) and the 40 programs of l01_29 `tyvars.rs`, and none panicked; 17 pieces ran
+    /// past their time limit on the 2-core machine and are not covered (listed at walk.rs
+    /// `push_vars`). That is a search, not a proof: `class_root` gives `None` for a name that
+    /// is no class id, a class in a closed internal range of r10 or a class resolved to its
+    /// own variable, and that none of these is an operand's variable where the three read it
+    /// is NOT PROVED. So the three stay, each a refusal with its message, never a run.
     pub(super) fn levels_of(
         &mut self,
         x: &Ty,
@@ -654,6 +665,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     generic.get_or_insert(r);
                     continue;
                 }
+                // Reached by no known program; the search for one is at `levels_of`.
                 #[cfg(feature = "generic-operand-sweep")]
                 panic!("GENERIC-OPERAND-SWEEP: strings_classes reached with the variable {v}");
                 #[allow(unreachable_code)]
@@ -1423,6 +1435,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// so the operand's type is called generic. The error stands at the operand, where it has
     /// one, whose derivation says what it is, as a lambda's parameter given each entry of a
     /// family is (plan row MSG-concat-generic-lambda-param-no-note); else at the `++`, `span`.
+    /// Reached by no known program; the search for one is at `levels_of`.
     fn generic_operand(&mut self, a: &Arg<'a>, span: Span) {
         #[cfg(feature = "generic-operand-sweep")]
         panic!(

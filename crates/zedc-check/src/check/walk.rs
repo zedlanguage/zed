@@ -12343,12 +12343,46 @@ impl<'t, 'a> Ck<'t, 'a> {
             let arrow = &s.e.arrows[s.a];
             if !s.entered {
                 s.entered = true;
+                // The lambda's own type variables (row PROOF-push-vars-a2-complete): a type
+                // variable that a parameter is written as alone, `s` in
+                // `(positional s: T, positional u: T) -> s ++ u`, and that no function around
+                // names, is bound at this arrow to the join of the types the arrow passes at
+                // the parameters written so; every written type of the lambda's parameters
+                // then reads it as that type. DESIGN.md sec:type_resolution, rule 4: `T` is a
+                // type variable, one type at each place it is written, and a lambda fits an
+                // arrow where it takes every value the arrow passes (contravariance), so the
+                // join is the least type that `T` may stand for here. Before, `written(a,
+                // false)` left `T` a variable of no class, read as `_`: the lambda was refused
+                // ("the lambda's parameter `s` is _, and `(String, String) -> String` passes
+                // String"), and a push of `s` in its body reached the arm (a2) of
+                // [`Self::push_vars`] (found by the sweep of the row, 2026-11-24). Soundness
+                // does not rest on the choice: each parameter is still checked to take what
+                // the arrow passes (`subtype` below), and the body is checked with the bound
+                // types. A variable written only inside another type, `(positional s: [T])`,
+                // gets no binding here and is refused as before.
+                // Complexity tradeoff: one more read of each written type, O(|a|), and one
+                // union per parameter written as a variable, O(p·|t|) an arrow; no
+                // unification of written types against the arrow's. Benchmark
+                // `bench::bubble::lambdas_of_their_own_type_variable_scale`: 7.93 times the
+                // instructions at 8n (n = 100, zed_icount, 2026-11-24).
+                let mut own = Binds::new();
+                for (j, o) in s.order.iter().enumerate() {
+                    let Some(a) = o.and_then(|i| s.params[i].ty.as_ref()) else {
+                        continue;
+                    };
+                    let a = self.written(a, false);
+                    if let Some(v) = a.as_var().filter(|v| !self.is_class(v)) {
+                        let t = &arrow.params[j];
+                        let u = own.get(v).map_or_else(|| t.clone(), |u| u.union(t));
+                        own.insert(v.clone(), u);
+                    }
+                }
                 for (j, o) in s.order.iter().enumerate() {
                     if let Some(i) = o {
                         let p = &s.params[*i];
                         let mut t = arrow.params[j].clone();
                         if let Some(a) = &p.ty {
-                            let a = self.written(a, false);
+                            let a = self.written(a, false).replace(&own);
                             if !self.subtype(&t, &a) {
                                 let why = t.refused(&a);
                                 let (ta, tt) = (self.text(&a), self.text(&t));
@@ -21006,23 +21040,73 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   at the outer end (test
     ///   `bubble::a_push_in_an_inner_function_of_a_class_around_and_its_own_parameter_is_checked`).
     /// - A push written in the body ([`Self::pushed`] from the statement): the value's type
-    ///   is the type of an expression of the body being checked. Not proved: that such a type
-    ///   holds only classes, the level rule of `generalize` (a class of an ended inner level
-    ///   is named only if no class of a level around was joined to it, and an inner function
-    ///   is seen around it only through its signature, instantiated with new classes). One
-    ///   route was found and closed (chk5, 2026-11-20): a test `x is T` against a type
-    ///   variable written nowhere else read `T` with no class made (`written(ty, false)` at
-    ///   `Frame::CondIs`), so `x` narrowed to `old & T` held a variable of no class, and
-    ///   `h(x, out: Lines) { if x is T { out <- x; }; }` reached this arm; `T` is now a class
-    ///   of the function (`fresh: true`), and the push waits on it (test
-    ///   `bubble::a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it`, benchmark
-    ///   `bench::bubble::pushes_narrowed_by_tests_against_type_variables_scale`). Other
-    ///   probe programs of row PROOF-push-vars-other-route found none that reaches this arm:
-    ///   locals bound to lambdas and to functions defined after, calls of functions defined
-    ///   later, functions passed to and returned by calls (`two(later)(x)`), `map` with a
-    ///   named function, inner functions with their own port parameter, and pushes in lambdas
-    ///   of a class around; recursion, a declared type on a local and a struct's type
-    ///   parameters are refused before the check in this version.
+    ///   is the type of an expression of the body being checked. The argument, step by step
+    ///   (row PROOF-push-vars-a2-complete, 2026-11-24):
+    ///   1. A variable in a type the checker builds comes from one of these sources: (i) a
+    ///      new class `$k` ([`Self::class`]); (ii) a written type read by [`Self::written`],
+    ///      which reads a name the scope binds as its class, a name it does not bind as a new
+    ///      class with `fresh: true`, and as the bare name, a variable of no class, with
+    ///      `fresh: false`; (iii) the names a function's classes get when its level ends
+    ///      (`names`, the renames of `generalize`), the `written <param>` names of
+    ///      `written_param_names`, the tagged results of `r10_decode_fwd_needs`, the
+    ///      variables of a declared signature (`Denote`), and the closed variables of a
+    ///      range; all of (iii) are written into signatures (`Sig`) only.
+    ///   2. (i) is a class while its level is open, and a push in a body is checked while
+    ///      the level of that body is open; so (i) never reaches this arm from a body.
+    ///   3. (ii) with `fresh: true` makes a class (step 2). The calls with `fresh: false`,
+    ///      audited by name:
+    ///      - [`Self::written_params`]: its result is kept only when it holds no variable
+    ///        (`vs.order.is_empty()`), so no variable leaves it.
+    ///      - [`Self::written_take`]: its result goes only into a `subtype` test, which
+    ///        returns a bool; no type leaves it.
+    ///      - [`Self::fit_step`], the lambda fitted to an arrow: its result is the type of
+    ///        the lambda's parameter in the body (`self.env.insert`). A parameter written as
+    ///        a bare variable `T` of no class is bound to the join of what the arrow passes
+    ///        there, so no variable of no class leaves it in that form (the route the sweep
+    ///        of the row found; test
+    ///        `bubble::a_lambda_s_own_type_variable_takes_what_the_arrow_passes`). A variable
+    ///        written inside another type, `(positional s: [T])`, keeps `T` with no class,
+    ///        and a push of `s` reaches this arm: NOT PROVED to be harmless, so it is
+    ///        refused here as [`PushVars::Unfollowed`] (same test, program `inside`; the
+    ///        lambda is also refused, since `[String]` is not a subtype of `[_]`).
+    ///      - `Frame::CondIs` was such a call until chk5 (2026-11-20): `x is T` with `T`
+    ///        written nowhere else read `T` with no class, and
+    ///        `h(x, out: Lines) { if x is T { out <- x; }; }` reached this arm; it reads
+    ///        with `fresh: true` now (test
+    ///        `bubble::a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it`,
+    ///        benchmark `bench::bubble::pushes_narrowed_by_tests_against_type_variables_scale`).
+    ///   4. (iii) reaches a body only through a signature, at a call of the function or a
+    ///      use of it as a value. NOT PROVED for every expression: that each such use
+    ///      replaces the signature's variables by classes of the caller's level
+    ///      ([`Self::instantiated`] binds those an argument fixes; the rest are left to the
+    ///      application) and that a named root of an ended inner level is never seen around
+    ///      it but through its signature (the level rule of `generalize`). One use is known
+    ///      to leave one, and is refused here as [`PushVars::Unfollowed`]: a local lambda
+    ///      whose body tests its parameter against a type variable,
+    ///      `f = (positional v) -> if v is T { v } else { "b" }; out <- f(x);`, gives a
+    ///      result holding a class of the lambda's ended level (`$2`), which is no class
+    ///      when the push reads it (test
+    ///      `bubble::a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it`, which
+    ///      expects that refusal; elaboration refuses the test against `T` as well).
+    ///   5. So from a body, this arm is reached by the form named NOT PROVED in step 3, by
+    ///      the lambda of step 4 and, if any, by another form of step 4; each is refused,
+    ///      never left to the run.
+    ///   Evidence for step 4, which is a search and not a proof: a build in which this arm
+    ///   always panics, as the feature `push-vars-sweep` makes it, ran the test pieces of
+    ///   every step group and of zedc_check (`tools/run_tests.sh`, 3237 pieces; 2026-11-24,
+    ///   on 65df19b3c with the fit-step change above) and the probes of the
+    ///   rows PROOF-push-vars-other-route and PROOF-push-vars-a2-complete: locals bound to
+    ///   lambdas and to functions defined after, calls of functions defined later,
+    ///   functions passed to and returned by calls (`two(later)(x)`), `map` with a named
+    ///   function, inner functions with their own port parameter, pushes in lambdas of a
+    ///   class around, and lambdas whose parameters are written `T`, `[T]` or `T` twice.
+    ///   The one piece that reached this arm was the lambda of step 4. Not covered: 17
+    ///   pieces that ran past their time limit on the 2-core machine (l01_17, l01_23,
+    ///   l01_36b, l01_39 `s4_model` and `families`, m0_12 `seeds`). Recursion, a declared
+    ///   type on a local and a struct's type parameters are refused before the check in
+    ///   this version. Negative control: with `Frame::CondIs` read with `fresh: false`,
+    ///   the same build panics in this arm on `if x is T { out <- x; }` and on
+    ///   `out <- if x is T { x } else { "b" }`, and not where the signature binds `T`.
     ///
     /// So the verdict relies on no claim about such a variable (standing rule: refuse what
     /// is not proved): it is read as no value; the push is
