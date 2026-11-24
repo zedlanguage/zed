@@ -219,16 +219,18 @@ fn read_open(name: &str) -> String {
 fn a_name_defined_as_an_operation_on_literals_that_met_no_carrier_is_read_with_no_type() {
     // The spec's `q`, read once more: `q` was rejected, and the type the checker kept for it,
     // `Never`, is not one the program gives it, so no step names it.
+    // The steps of the definition are those of the error at 1:5, so the second error gives the
+    // first of them and names that error (row MSG-shared-print).
     let out = rejected("q = (1 + 2) / (3 + 4);\nz = q * \"a\";\n");
-    let (d, plus) = (open_div(), open("+"));
+    let d = open_div();
     let second = out.split_once("\n2:5: ").expect("a second rejection").1;
     assert_eq!(
         steps(second)[..4],
         [
             &*read_open("q"),
             "`q` is defined as this expression",
-            &d,
-            &plus,
+            &format!("{d}; the next 6 steps are as in the error at 1:5 above"),
+            "this expression is \"a\"",
         ],
         "{out}"
     );
@@ -241,7 +243,11 @@ fn a_name_defined_as_an_operation_on_literals_that_met_no_carrier_is_read_with_n
     let second = out.split_once("\n2:5: ").expect("a second rejection").1;
     assert_eq!(
         steps(second)[..3],
-        [&*read_open("q"), "`q` is defined as this expression", &d],
+        [
+            &*read_open("q"),
+            "`q` is defined as this expression",
+            &format!("{d}; the next 2 steps are as in the error at 1:5 above"),
+        ],
         "{out}"
     );
     assert!(
