@@ -833,7 +833,8 @@ fn the_steps_of_differences_take_linear_time_in_their_number() {
 
 #[test]
 fn a_refused_call_on_a_deeply_nested_display_takes_linear_time_in_its_depth() {
-    // PERF-deep-tuple-call-refusal; small instance: `a_refused_call_on_a_nested_display_is_one_error`.
+    // PERF-deep-tuple-call-refusal; small instance:
+    // `a_refused_call_on_a_nested_display_is_one_error`.
     scaling::check(
         "a refused call on a nested display, by depth",
         40,
