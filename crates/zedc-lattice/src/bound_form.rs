@@ -1083,7 +1083,7 @@ fn lex(m1: &Mono, m2: &Mono) -> Ordering {
     m1.cmp(m2)
 }
 
-/// The order of the printer: [`lex`], with the constant monomial (no symbol) last.
+/// The order of the printer: `lex`, with the constant monomial (no symbol) last.
 pub fn order(m1: &Mono, m2: &Mono) -> Ordering {
     match (m1.has_symbol(), m2.has_symbol()) {
         (false, true) => Ordering::Less,
@@ -1104,10 +1104,10 @@ pub fn dominated(m1: &Mono, m2: &Mono) -> bool {
             .all(|&t| cmp_coord(&a, &b, None, Some(t)) != Ordering::Greater)
 }
 
-/// The monomials no other one dominates (each once), by [`lex`] from the largest down.
+/// The monomials no other one dominates (each once), by `lex` from the largest down.
 ///
-/// Method: sorted by [`lex`] descending, a monomial is dominated only by one before it (a
-/// dominating one is above it in [`lex`]). With at most two coordinates in the whole set, one
+/// Method: sorted by `lex` descending, a monomial is dominated only by one before it (a
+/// dominating one is above it in `lex`). With at most two coordinates in the whole set, one
 /// before it dominates exactly when its second coordinate is at most the greatest second
 /// coordinate seen so far (the first is at least its own, by the sort), so one pass after the
 /// sort decides each: O(t log t) comparisons, the maxima-of-a-point-set sweep (Kung, Luccio
