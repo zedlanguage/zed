@@ -21747,6 +21747,9 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
     // remain. The pivots are the atoms solved for, in order, each with the row it equals
     // (terms over the atoms present when it was solved, and a constant).
     type Row = (BTreeMap<Atom, Int>, Int);
+    // A pivot's form over the atoms that are not pivots: `(Some((y, neg)), c)` for `±y + c`,
+    // `(None, c)` for `c`.
+    type Form = (Option<(Atom, bool)>, Int);
     enum Reduced {
         /// The conjunction has no integer point.
         Empty,
@@ -22020,7 +22023,7 @@ fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
         };
         // Each pivot's form over the atoms that are not pivots, `(Some((y, neg)), c)` for
         // `±y + c` and `(None, c)` for `c`; `None` for any other form (step 2).
-        let mut forms: HashMap<Atom, Option<(Option<(Atom, bool)>, Int)>> = HashMap::new();
+        let mut forms: HashMap<Atom, Option<Form>> = HashMap::new();
         if let Some((_, _, pivots)) = &reduced {
             for (x, (t, k)) in pivots.iter().rev() {
                 let mut sum: BTreeMap<Atom, Int> = BTreeMap::new();
