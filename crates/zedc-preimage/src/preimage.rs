@@ -387,6 +387,9 @@ pub fn guard_preimage_listed(
     if let Some(p) = order_with_literal(term, inputs, demand) {
         return p;
     }
+    if let Some(p) = linear_order(term, inputs, listed, demand, true) {
+        return p;
+    }
     let mut tx = Tx::new();
     tx.fails_kept = true;
     let root = tx.terms.add(term);
@@ -396,6 +399,8 @@ pub fn guard_preimage_listed(
 /// The work of [`preimage`] and [`preimage_listed`].
 fn preimage_of(term: &Term, inputs: &Domains, listed: &Listed, demand: &Demand) -> Preimage {
     if let Some(p) = order_with_literal(term, inputs, demand) {
+        p
+    } else if let Some(p) = linear_order(term, inputs, listed, demand, false) {
         p
     } else {
         let mut tx = Tx::new();
@@ -431,6 +436,117 @@ fn order_with_literal(term: &Term, inputs: &Domains, demand: &Demand) -> Option<
         relation: None,
         refusal: None,
     })
+}
+
+/// The preimage of the outcome `demand` under `term` when the term orders two linear integer
+/// terms of its inputs (`4 * x - 12 * w + 11 >= 0`, [`linear_in`]), no domain empty: the
+/// linear stage's answer for one inequality ([`one_inequality`]) over the box `inputs`, then
+/// the listing of [`enumerate`] when that is not exact, as [`preimage_in`] gives. `None` for
+/// any other term or demand, or when [`ONE_INEQUALITY_OFF`], `EXACT_OFF` or
+/// [`LINEAR_ORDER_OFF`] is set. `fails_kept` is the caller's [`Tx::fails_kept`].
+///
+/// Proof that this is [`preimage_in`]'s answer. The term holds no remainder, so the splits by
+/// remainders answer nothing exact and keep no class; the backward run's box `B` holds every
+/// point of `inputs` that meets the outcome (its soundness), and `B` is within `inputs`. So the
+/// points of `B` that meet the one inequality `t >= 0` are those of `inputs`, and the
+/// projection onto each input, which [`one_inequality`] gives exactly (its proof, part (2)),
+/// is the same over `B` as over `inputs`; whether every point of that narrowed box meets the
+/// body depends on the narrowed box alone (part (3)). Where the backward or the forward run
+/// finds the answer exact without the linear stage, every point of its box meets the outcome,
+/// so that box is the set of points meeting it, a product of the projections, which is again
+/// what [`one_inequality`] gives, exact. The relation kept when the answer is not exact is
+/// the linear stage's, from the same [`Tx::formula`] of the same term; [`enumerate`] then
+/// runs on the same box. Checked over random tests against the general path, every field of
+/// the [`Preimage`]: `tests::a_linear_order_has_the_preimage_of_the_general_path`.
+// Complexity tradeoff: naive version, the general path ([`preimage_in`]): the split by
+// remainders tried, the backward and the forward runs over the term, the split again, then
+// the linear stage, which reads the one inequality from the ends of the domains. For the
+// rows of a refused 4-name test the runs before the linear stage were about 18% of an assume
+// (perf on hm4, 2026-11-24, `narrowing_by_many_refused_tests_scales`,
+// FAIL-bench-refused-join-past-limit). Used: the term's form is read once, O(s) for a term of
+// `s` nodes, then the linear stage alone: O(s + m) for `m` inputs. Trigger: any other term
+// (a remainder, a product of names, a call, a name not among the inputs) or an empty domain
+// takes the general path as before.
+fn linear_order(
+    term: &Term,
+    inputs: &Domains,
+    listed: &Listed,
+    demand: &Demand,
+    fails_kept: bool,
+) -> Option<Preimage> {
+    if LINEAR_ORDER_OFF.get()
+        || ONE_INEQUALITY_OFF.get()
+        || presburger::exact::EXACT_OFF.get()
+        || is_empty(inputs)
+    {
+        return None;
+    }
+    let Demand::Bool(outcome) = demand else {
+        return None;
+    };
+    let Term::Prim(Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge, a) = term else {
+        return None;
+    };
+    if a.len() != 2 || !a.iter().all(|t| linear_in(t, inputs)) {
+        return None;
+    }
+    let mut tx = Tx::new();
+    tx.fails_kept = fails_kept;
+    let root = tx.terms.add(term);
+    tx.start(inputs, Marks::default());
+    let mut tr = Tr::new(false);
+    tr.by_class = true;
+    let f = tx.formula(&mut tr, root, ROOT)?;
+    let body = if *outcome { f } else { Formula::negate(f) };
+    let (defs, bit_ands) = (tr.written(0), tr.bit_ands(0));
+    if !defs.is_empty() || !bit_ands.is_empty() {
+        return None;
+    }
+    let (dom, exact) = one_inequality(&body, inputs)?;
+    ONE_INEQUALITY.set(ONE_INEQUALITY.get() + 1);
+    let mut r = Whole { dom, exact };
+    let mut relation = (!exact).then_some(Relation {
+        body,
+        defs,
+        bit_ands,
+    });
+    let mut enumerated = false;
+    if !r.exact
+        && let Some(e) = enumerate(term, &r.dom, listed, demand)
+    {
+        r = e;
+        enumerated = true;
+        if r.exact {
+            relation = None;
+        }
+    }
+    Some(Preimage {
+        domains: Boxes::plain(r.dom),
+        exact: r.exact,
+        enumerated,
+        stops: Vec::new(),
+        relation,
+        refusal: None,
+    })
+}
+
+/// Whether `t` is a linear integer term of the names of `inputs`: a name among them, an
+/// integer literal, a sum, difference or negation of such terms, or one times an integer
+/// literal. O(s) for a term of `s` nodes.
+fn linear_in(t: &Term, inputs: &Domains) -> bool {
+    match t {
+        Term::Var(x) => inputs.contains_key(x),
+        Term::Lit(Value::Int(_)) => true,
+        Term::Prim(Prim::Add | Prim::Sub, a) => {
+            a.len() == 2 && a.iter().all(|t| linear_in(t, inputs))
+        }
+        Term::Prim(Prim::Neg, a) => a.len() == 1 && linear_in(&a[0], inputs),
+        Term::Prim(Prim::Mul, a) => match a.as_slice() {
+            [Term::Lit(Value::Int(_)), t] | [t, Term::Lit(Value::Int(_))] => linear_in(t, inputs),
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 /// For a test `x op k` or `k op x` of a name `x` against an integer literal `k` by an order
@@ -2894,6 +3010,9 @@ thread_local! {
     /// Set by a test to make [`linear`] ask the solver for one inequality as for any body, so
     /// that the two answers can be compared.
     pub(crate) static ONE_INEQUALITY_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set by a test to make an order of linear terms take the general path ([`preimage_in`])
+    /// rather than [`linear_order`], so that the two answers can be compared.
+    pub(crate) static LINEAR_ORDER_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The bodies [`linear`] answered by [`one_inequality`] on this thread since
     /// [`one_inequality_reads`] last read it.
     static ONE_INEQUALITY: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -19210,6 +19329,74 @@ mod tests {
         }
         println!("{read} read from the ends, {exact} exact, {empty} empty in the linear stage");
         assert!(read > 1000, "only {read} of 3000 read from the ends");
+        assert!(exact > 100 && empty > 100, "{exact} exact, {empty} empty");
+    }
+
+    /// An order of two linear terms read by [`linear_order`] has the preimage of the general
+    /// path ([`preimage_in`], [`LINEAR_ORDER_OFF`]), every field the same, through
+    /// [`preimage`] and [`guard_preimage_listed`]: random sums of one to four names (each
+    /// coefficient in `-12..=12` but 0, written as a name, its negation or a product with the
+    /// literal on either side), differences, a literal on either side of each order, the four
+    /// orders, random sets of one to three pieces with some ends infinite, a name of the box
+    /// the test does not read, and both outcomes.
+    #[test]
+    fn a_linear_order_has_the_preimage_of_the_general_path() {
+        let (mut rng, _) = Rng::fresh("a_linear_order_has_the_preimage_of_the_general_path");
+        let names: Vec<Arc<str>> = ["x", "y", "z", "w", "u"].iter().map(|&n| n.into()).collect();
+        let ops = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge];
+        let (mut read, mut exact, mut empty) = (0, 0, 0);
+        for _ in 0..3000 {
+            let mut side = |rng: &mut Rng, from: usize, to: usize| -> Term {
+                let mut sum = Term::Lit(Value::Int(rng.below(61) as i64 - 30));
+                for x in &names[from..to] {
+                    let a = rng.below(25) as i64 - 12;
+                    let a = if a == 0 { 1 } else { a };
+                    let v = Term::Var(x.clone());
+                    let t = match (a, rng.below(3)) {
+                        (1, _) => v,
+                        (-1, 0) => Term::Prim(Prim::Neg, vec![v]),
+                        (_, 1) => Term::Prim(Prim::Mul, vec![v, Term::Lit(Value::Int(a))]),
+                        _ => Term::Prim(Prim::Mul, vec![Term::Lit(Value::Int(a)), v]),
+                    };
+                    let op = if rng.below(3) == 0 {
+                        Prim::Sub
+                    } else {
+                        Prim::Add
+                    };
+                    sum = Term::Prim(op, vec![sum, t]);
+                }
+                sum
+            };
+            let m = 1 + rng.below(4);
+            let cut = rng.below(m + 1);
+            let (l, r) = (side(&mut rng, 0, cut), side(&mut rng, cut, m));
+            let term = Term::Prim(ops[rng.below(4)], vec![l, r]);
+            let inputs: Domains = (names.iter())
+                .map(|n| (n.clone(), random_domain(&mut rng)))
+                .collect();
+            let demand = Demand::Bool(rng.below(2) == 0);
+            for guard in [false, true] {
+                let ask = || {
+                    if guard {
+                        guard_preimage_listed(&term, &inputs, NONE_LISTED, &demand)
+                    } else {
+                        preimage(&term, &inputs, &demand)
+                    }
+                };
+                one_inequality_reads();
+                let fast = ask();
+                let taken = one_inequality_reads();
+                LINEAR_ORDER_OFF.set(true);
+                let slow = ask();
+                LINEAR_ORDER_OFF.set(false);
+                assert_eq!(fast, slow, "{term} at {demand:?} over {inputs:?}, guard {guard}");
+                read += usize::from(taken > 0);
+                exact += usize::from(taken > 0 && fast.exact);
+                empty += usize::from(taken > 0 && fast.domains.0.values().any(Classed::is_empty));
+            }
+        }
+        println!("{read} read by linear_order, {exact} exact, {empty} empty");
+        assert!(read > 4000, "only {read} of 6000 read by linear_order");
         assert!(exact > 100 && empty > 100, "{exact} exact, {empty} empty");
     }
 

@@ -25,8 +25,7 @@ fn a_dense_product_of_n_terms_commuted() {
 
 #[test]
 fn a_sum_of_n_names_times_a_sum() {
-    let ins = scaling::inputs(500, linear);
-    scaling::check("(x0 + ... + xn) * (y + z)", 500, |n| proved(&ins[&n]));
+    scaling::check_inputs("(x0 + ... + xn) * (y + z)", 1000, linear, proved);
 }
 
 #[test]

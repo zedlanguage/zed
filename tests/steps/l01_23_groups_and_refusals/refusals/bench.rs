@@ -98,7 +98,7 @@ fn a_tuple_split_refusal_is_reached_in_the_size_of_the_boxes() {
     // load 34.07.
     refusal_scales(
         "TupleSplit, by n box covers",
-        384,
+        1000,
         Refusal::TupleSplit,
         |n, _| box_covers(n),
     );
@@ -193,7 +193,7 @@ fn a_fork_emptied_by_one_list_type_is_decided_in_its_size() {
     // cuts, so the box is empty without a decision per list type.
     big(|| {
         let tag = AtomicUsize::new(0);
-        scaling::check("Fork emptied by one list type", 64, |n| {
+        scaling::check("Fork emptied by one list type", 1000, |n| {
             Type::forget_emptiness();
             let tag = format!("_f1b{}", tag.fetch_add(1, Relaxed));
             let t = one_list_type_empties_a_fork(n, true, &tag);
@@ -207,7 +207,7 @@ fn a_fork_no_list_type_empties_is_decided_in_its_size() {
     // The same without the lists of integers taken out: Inhabited, by `(#a, [1, 2])` (K35b).
     big(|| {
         let tag = AtomicUsize::new(0);
-        scaling::check("Fork no list type empties", 64, |n| {
+        scaling::check("Fork no list type empties", 1000, |n| {
             Type::forget_emptiness();
             let tag = format!("_f1n{}", tag.fetch_add(1, Relaxed));
             let t = one_list_type_empties_a_fork(n, false, &tag);
@@ -270,7 +270,7 @@ fn a_pair_type_met_with_forked_differences_is_empty_in_its_size() {
     // K136 at the fork.
     verdict_scales(
         "Empty, by a pair type met with a union of differences",
-        512,
+        1000,
         Verdict::Empty,
         forked_differences_met_with_pairs,
     );
@@ -388,6 +388,8 @@ fn refining_a_box_follows_no_fork_in_its_size() {
 fn refined_pairs_verdict_scales(skip: bool) {
     big(move || {
         let tag = AtomicUsize::new(0);
+        // n stays 128 (SCALE-small-n-rest, b22-tests9): at 1000 the phase at 8n passed its
+        // limit of 10.5 times the run at n, 124 s (job j4 on hm4, 2026-11-24, rc 124).
         scaling::check("Fork, refining pairs by the end family", 128, |n| {
             Type::forget_emptiness();
             let tag = format!("_rf{skip}{}", tag.fetch_add(1, Relaxed));
@@ -410,6 +412,8 @@ fn refining_a_box_follows_no_fork_in_its_size_by_emptiness() {
     // measurements.
     big(|| {
         let tag = AtomicUsize::new(0);
+        // n stays 128, as in `refined_pairs_verdict_scales`: at 1000 the phase at 8n passed
+        // its limit of 124 s (job j4 on hm4, 2026-11-24).
         scaling::check("emptiness, refining pairs by the end family", 128, |n| {
             Type::forget_emptiness();
             let tag = format!("_rfe{}", tag.fetch_add(1, Relaxed));
@@ -1486,21 +1490,22 @@ fn a_chain_of_forks_before_an_empty_component_scales() {
     // 35.5M and 197.5M instructions, 5.57 times (bytes 5.06; 1x 0.49 s by clock under the
     // counter; 5.71 on 8cab79ec6, so the work since the finding above had already fixed it);
     // 8192 and 65536 take 383.8M and 3,014.8M, 7.86 times, but building the inputs makes that
-    // test 114 s long, so n stays 512, where the test takes 9 s.
-    let n = 512;
-    let inputs = scaling::inputs(n, |k| {
+    // test 114 s long (both sizes built before the first run), so n stayed 512 until then.
+    // SCALE-small-n-rest (b22-tests9): n 1000, the inputs built by `check_inputs` only at the
+    // sizes each process runs.
+    let make = |k: usize| {
         let mut parts: Vec<Type> = (0..k as i64).map(fork_empty_at).collect();
         parts.push(pair_meet_empty());
         let last = Type::tuple(parts.clone());
         parts.reverse();
         [last, Type::tuple(parts)]
-    });
-    scaling::check_order(
+    };
+    scaling::check_inputs(
         "second blame search over distinct forked components",
-        n,
-        1,
-        |k| {
-            for t in &inputs[&k] {
+        1000,
+        make,
+        |types| {
+            for t in types {
                 Type::forget_emptiness();
                 assert_eq!(t.verdict(), Verdict::Empty);
                 Type::forget_emptiness();
@@ -1524,17 +1529,17 @@ fn a_chain_of_forks_nested_before_an_empty_component_is_empty_in_its_size() {
     // PERF-refusals-old-size (b22-kernel9, 2026-11-23, zed_icount on v5e2): n 512 and 4096 take
     // 8.2M and 24.4M instructions, 2.96 times (1x 0.34 s by clock under the counter; 2.97 on
     // 8cab79ec6, so the work since the finding above had already fixed it); 4096 and 32768
-    // take 24.4M and 153.8M, 6.30 times, but building the inputs makes that test 58 s long, so
-    // n stays 512, where the test takes 9 s.
+    // take 24.4M and 153.8M, 6.30 times, but building the inputs makes that test 58 s long
+    // (both sizes built before the first run), so n stayed 512 until then.
     big(|| {
-        let inputs = scaling::inputs(512, forks_nested_before_empty);
-        scaling::check_order(
+        // SCALE-small-n-rest (b22-tests9): n 1000, the inputs built by `check_inputs`.
+        scaling::check_inputs(
             "Empty, n forks nested before an empty component",
-            512,
-            1,
-            |n| {
+            1000,
+            forks_nested_before_empty,
+            |t| {
                 Type::forget_emptiness();
-                assert_eq!(inputs[&n].verdict(), Verdict::Empty, "at {n}");
+                assert_eq!(t.verdict(), Verdict::Empty);
             },
         );
     });
@@ -1735,10 +1740,9 @@ fn diagonal(n: usize) -> (Type, Type) {
 #[test]
 fn diagonal_rows_less_rows_sharing_an_atom_are_empty_in_their_size() {
     big(|| {
-        let pairs = scaling::inputs(32, diagonal);
-        scaling::check("n diagonal rows less n rows sharing an atom", 32, |n| {
+        let what = "n diagonal rows less n rows sharing an atom";
+        scaling::check_inputs(what, 1000, diagonal, |(x, u)| {
             Type::forget_emptiness();
-            let (x, u) = &pairs[&n];
             assert!((x - u).is_empty());
         });
     });
@@ -1765,13 +1769,12 @@ fn diagonal_rows_less_rows_failing_on_the_last_region_scale() {
     // BENCH-region-split-late-failure: the split by regions narrows every region and then
     // drops all of that work when the last one fails, and the old steps run.
     big(|| {
-        let pairs = scaling::inputs(32, diagonal_last_fails);
-        scaling::check(
+        scaling::check_inputs(
             "n diagonal rows less n rows sharing an atom, the last region not empty",
-            32,
-            |n| {
+            1000,
+            diagonal_last_fails,
+            |(x, u)| {
                 Type::forget_emptiness();
-                let (x, u) = &pairs[&n];
                 assert!(!(x - u).is_empty());
             },
         );
@@ -1831,14 +1834,10 @@ fn front_bare_name_after_payload_prefixes_must_scale() {
 #[test]
 fn r11_payload_name_prefixes_must_scale() {
     big(|| {
-        let a = r11_payload_name_prefixes(128);
-        let b = r11_payload_name_prefixes(1024);
-        scaling::check("shared payload-bearing name prefixes", 128, |n| {
+        let what = "shared payload-bearing name prefixes";
+        scaling::check_inputs(what, 1000, r11_payload_name_prefixes, |t| {
             Type::forget_emptiness();
-            assert_eq!(
-                (if n == 128 { &a } else { &b }).verdict(),
-                Verdict::Inhabited
-            );
+            assert_eq!(t.verdict(), Verdict::Inhabited);
         });
     });
 }
@@ -1921,7 +1920,7 @@ fn many_forks_of_plain_unions_without_values_are_refused_in_their_size() {
 /// `q2n+` (`36.1x`).
 #[test]
 fn xr_r2_bench_escape_single_bucket_scales_n_log_n() {
-    let n = 512usize;
+    let n = 1000usize;
     // One input held at a time, built before its run (MEM-l0126-40gb).
     let make = |k: usize, i: usize| {
         let size = if k == n { "s" } else { "l" };
@@ -1950,14 +1949,13 @@ fn xr_r2_bench_escape_single_bucket_scales_n_log_n() {
 /// `xr_r2_escape_bucket_is_decided_inhabited`.
 #[test]
 fn xr_r2_bench_escape_bucket_scales() {
-    let inputs = scaling::inputs(64, |m| xr_bucket(m, &format!("b{m}")));
-    scaling::check_order(
+    scaling::check_inputs(
         "Q2(f) escape shared-anchor bucket (chain_verdict)",
-        64,
-        1,
-        |m| {
+        1000,
+        |m| xr_bucket(m, &format!("b{m}")),
+        |t| {
             Type::forget_emptiness();
-            assert_eq!(inputs[&m].chain_verdict(), Some(Verdict::Inhabited));
+            assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
         },
     );
 }
@@ -1981,14 +1979,13 @@ fn xr_bucket_small_anchor(n: usize, tag: &str) -> Type {
 /// (TEST-refusals-two-size-to-bench).
 #[test]
 fn xr_r2_bench_escape_bucket_small_anchor_scales() {
-    let inputs = scaling::inputs(16, |m| xr_bucket_small_anchor(m, &format!("s{m}")));
-    scaling::check_order(
+    scaling::check_inputs(
         "XR2 escape bucket, anchor of size 1 (chain_verdict)",
-        16,
-        1,
-        |m| {
+        1000,
+        |m| xr_bucket_small_anchor(m, &format!("s{m}")),
+        |t| {
             Type::forget_emptiness();
-            assert_eq!(inputs[&m].chain_verdict(), Some(Verdict::Inhabited));
+            assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
         },
     );
 }
@@ -1997,10 +1994,10 @@ fn xr_r2_bench_escape_bucket_small_anchor_scales() {
 /// the answer at widths 3 and 6 (BENCH-meters-outside-bench).
 #[test]
 fn xr_r2_bench_wide_chain_scales() {
-    let inputs = scaling::inputs(8, |w| xr_wide_chain(w, false, &format!("b{w}")));
-    scaling::check_order("XR2 wide chain, width n, one box", 8, 1, |w| {
+    let make = |w: usize| xr_wide_chain(w, false, &format!("b{w}"));
+    scaling::check_inputs("XR2 wide chain, width n, one box", 1000, make, |t| {
         Type::forget_emptiness();
-        assert_eq!(inputs[&w].verdict(), Verdict::Inhabited);
+        assert_eq!(t.verdict(), Verdict::Inhabited);
     });
 }
 

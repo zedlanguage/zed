@@ -92,7 +92,7 @@ fn refused_guarded_divisions_scale_linearly() {
 
 #[test]
 fn classifying_and_counting_scale_linearly() {
-    let texts = zed_tests::scaling::inputs(200, |n| {
+    let texts = zed_tests::scaling::inputs(1000, |n| {
         (0..n)
             .map(|i| {
                 let k = &kinds::KINDS[i % kinds::KINDS.len()];
@@ -103,7 +103,7 @@ fn classifying_and_counting_scale_linearly() {
             })
             .collect::<Vec<String>>()
     });
-    zed_tests::scaling::check("census of n diagnostics", 200, |n| {
+    zed_tests::scaling::check("census of n diagnostics", 1000, |n| {
         let mut out = String::new();
         for (i, t) in texts[&n].iter().enumerate() {
             line(

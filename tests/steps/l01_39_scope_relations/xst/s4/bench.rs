@@ -14,13 +14,11 @@ fn a_cycle_of_differences_with_one_bound_is_exact_in_near_linear_time() {
             assert!(!s.get(x).contains(&Value::Int(11)), "n = {n}: {x}");
         }
     }
-    let inputs = scaling::inputs(512, cyclic_base);
-    scaling::check_order(
+    scaling::check_inputs(
         "a cyclic base of n differences, one conjunction",
-        512,
-        1,
-        |m| {
-            let (ns, all) = &inputs[&m];
+        1000,
+        cyclic_base,
+        |(ns, all)| {
             drop(ints(ns).assume(all, true, &Premises::new()));
         },
     );
@@ -133,9 +131,8 @@ fn a_chain_raise_narrows_in_near_linear_time() {
 /// (ST-walk-orders: on main 16 to 37 at 8n, each `x0 >= j + 1` raising every `x_i` in turn).
 #[test]
 fn a_chain_raise_given_at_once_narrows_in_near_linear_time() {
-    let inputs = scaling::inputs(512, chain_raise);
-    scaling::check_order("chain raise, AtOnce, k tests", 512, 1, |m| {
-        drop(inputs[&m].narrowed(How::AtOnce));
+    scaling::check_inputs("chain raise, AtOnce, k tests", 1000, chain_raise, |s| {
+        drop(s.narrowed(How::AtOnce));
     });
 }
 
@@ -145,9 +142,8 @@ fn a_chain_raise_given_at_once_narrows_in_near_linear_time() {
 /// block naming `x0` was projected, O(k) blocks at each of k tests).
 #[test]
 fn a_chain_raise_in_reverse_narrows_in_near_linear_time() {
-    let inputs = scaling::inputs(256, chain_raise);
-    scaling::check_order("chain raise, Backward, k tests", 256, 1, |m| {
-        drop(inputs[&m].narrowed(How::Backward));
+    scaling::check_inputs("chain raise, Backward, k tests", 777, chain_raise, |s| {
+        drop(s.narrowed(How::Backward));
     });
 }
 
@@ -186,18 +182,17 @@ fn split_class_last_scales() {
     for i in 0..5 {
         assert_eq!(kept(&s, &format!("y{i}"), -21, 21), low, "y{i}: {s}");
     }
-    let inputs = scaling::inputs(128, class_cases);
-    scaling::check_order("class cases, Backward, k tests", 128, 1, |m| {
-        drop(inputs[&m].narrowed(How::Backward));
+    scaling::check_inputs("class cases, Backward, k tests", 777, class_cases, |s| {
+        drop(s.narrowed(How::Backward));
     });
 }
 
 /// [`class_cases_moved`] one at a time: near linear time.
 #[test]
 fn split_moved_often_scales() {
-    let inputs = scaling::inputs(256, class_cases_moved);
-    scaling::check_order("class cases moved, Forward, k tests", 256, 1, |m| {
-        drop(inputs[&m].narrowed(How::Forward));
+    let what = "class cases moved, Forward, k tests";
+    scaling::check_inputs(what, 777, class_cases_moved, |s| {
+        drop(s.narrowed(How::Forward));
     });
 }
 

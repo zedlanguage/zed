@@ -594,9 +594,13 @@ fn chains_and_their_cycles_have_their_answers() {
 fn chain_answers(what: &str, close: impl Fn(usize) -> Option<i64> + Sync, empty: bool) {
     chain_answers_at(what, &close, empty, &[8, 64]);
     for how in HOWS {
-        let inputs = scaling::inputs(512, |n| chain(n, close(n)));
-        scaling::check_order(&format!("{what}, {how:?}, n names"), 512, 1, |m| {
-            drop(inputs[&m].narrowed(how));
+        // The chains are built by `check_inputs`, only at the sizes each process runs
+        // (FAIL-bench-pieces-past-limit-on-main, b22-tests9: with both built before each
+        // check, the pieces of the cycles of weight 0 and 1 stopped at a phase past 20 s, 54
+        // and 62 s, job j4 on hm4).
+        let what = format!("{what}, {how:?}, n names");
+        scaling::check_inputs(&what, 512, |n| chain(n, close(n)), |c| {
+            drop(c.narrowed(how));
         });
     }
 }

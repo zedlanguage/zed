@@ -27,7 +27,7 @@ fn narrowing_by_many_refused_tests_scales() {
 
 /// The check of [`narrowing_by_many_refused_tests_scales`] is mostly the solver's work, about
 /// 26M instructions per refused test since PERF-refused-assume (42M before it, 11M when it was
-/// written, 2026-11-03; `one_refused_test_costs_at_most_a_fixed_number_of_instructions` below
+/// written, 2026-11-03; about 30% fewer since `linear_order`, b22-tests9, 2026-11-24; `one_refused_test_costs_at_most_a_fixed_number_of_instructions` below
 /// holds it under a limit), so the refusals' own cost is measured alone: keeping `k` refusals,
 /// each once, in a scope costs near linear in `k`.
 #[test]
@@ -106,13 +106,17 @@ fn finding_the_refusals_on_many_names_scales() {
 /// built the arms at 2048 again, by 2046 assumes, after replaying the first check's input at
 /// 256, and wrote no line in 20 s (job f16 on v5e1, FAIL-bench-refused-join-past-limit). The
 /// sum of two costs grows near linearly only when each does, so a quadratic part of either
-/// still fails the check, once it is large next to the rest at 8n. The piece still stops on a
-/// VM: the one process for 8n, started 6.5 s into the piece, writes no line in 20 s, its
-/// set-up being the 2046 assumes under DynamoRIO (job f33 on hm3, load 3; open). Timed apart
-/// (b22-tests8 job f37 on l41, load 3.2): building the arms takes 5.9 s at 256 and 20.4 s at
-/// 2048 under DynamoRIO, 0.8 s and 7.3 s without it, and the join and its warnings 0.15 s and
-/// 0.19 s under it; an assume costs 3.3 ms at k 64 and 3.5 ms at k 512 without DynamoRIO (job
-/// f41 on l42), so the build is linear and only its constant, under DynamoRIO, passes the 20 s.
+/// still fails the check, once it is large next to the rest at 8n. The piece then still
+/// stopped on a VM: the one process for 8n wrote no line in 20 s, its set-up being the 2046
+/// assumes under DynamoRIO (job f33 on hm3, load 3). Timed apart (b22-tests8 job f37 on l41,
+/// load 3.2): building the arms took 5.9 s at 256 and 20.4 s at 2048 under DynamoRIO, 0.8 s and
+/// 7.3 s without it, and the join and its warnings 0.15 s and 0.19 s under it; an assume cost
+/// 3.3 ms at k 64 and 3.5 ms at k 512 without DynamoRIO (job f41 on l42), so the build is
+/// linear and only its constant, under DynamoRIO, passed the 20 s. The assume now reads each
+/// row's 4-name order by the linear stage alone (zedc-preimage `linear_order`, b22-tests9),
+/// about 30% fewer instructions (`narrowing_by_many_refused_tests_scales` at 1024: 11.03G to
+/// 7.88G), and the piece passes: rc 0 in 21.4 s at load 5.6, ratio 6.93 (job j6 on hm4,
+/// 2026-11-24, FAIL-bench-refused-join-past-limit).
 #[test]
 fn the_join_of_arms_with_many_refused_tests_and_its_warnings_scale() {
     use zed_tests::scaling;
