@@ -125,9 +125,31 @@ fn an_f32_to_an_int_power_is_an_f32() {
     assert_eq!(x("(-1.0f32) ^ whole(9007199254740994)"), "1.0f32");
     assert_eq!(x("(-1.0f32) ^ whole(-9007199254740993)"), "-1.0f32");
     // A decimal literal base does not take `f32` through `f32 ^ int`. DESIGN.md L1.17 makes
-    // `0.5 ^ n` with `n : int` an `f64` alone; zedc has no arrow `f64 ^ int` yet and gives the
-    // exact `rat` (row POW-domains, item 4).
+    // `0.5 ^ n` with `n : int` an `f64` alone; zedc's literal classes do not yet follow an
+    // exponent that is no literal, so the base meets no `f64 ^ int` and gives the exact `rat`
+    // (row POW-domains, item 4).
     assert_eq!(x("0.5 ^ whole(-2)"), "4r");
+}
+
+/// `f64 ^ int`, `(F, int) -> F` at `f64` (plan row POW-domains, item 4): the power of the
+/// exponent as an `f64`, with no atom, so a zero to a negative power is the IEEE infinity of
+/// the zero's sign at an odd exponent (item 3, author P361), and an exponent past 2^53 keeps its
+/// parity, as at `f32`. Before the arrow each of these was refused, "`^` does not take (f64,
+/// int)". The value agrees with `f64 ^ f64` where the exponent is an `f64` exactly.
+#[test]
+fn an_f64_to_an_int_power_is_an_f64() {
+    assert_eq!(x("(-2.0f64) ^ whole(3)"), "-8.0");
+    assert_eq!(x("2.0f64 ^ whole(-2)"), "0.25");
+    assert_eq!(x("String(0.0f64 ^ whole(-1))"), "\"inf\"");
+    assert_eq!(x("String((-0.0f64) ^ whole(-1))"), "\"-inf\"");
+    assert_eq!(x("String((-0.0f64) ^ whole(-2))"), "\"inf\"");
+    assert_eq!(x("(-1.0f64) ^ whole(9007199254740993)"), "-1.0");
+    assert_eq!(x("(-1.0f64) ^ whole(9007199254740994)"), "1.0");
+    assert_eq!(x("(-1.0f64) ^ whole(-9007199254740993)"), "-1.0");
+    assert_eq!(x("1.1f64 ^ whole(7)"), x("1.1f64 ^ 7.0f64"));
+    let src = "h(positional x: f64, positional k: int) = x ^ k;\ny = h(0.0, -1);\nz = h(3.0, 4);\n";
+    assert_eq!(value(src, "z"), "81.0");
+    assert_eq!(value(&format!("{src}w = String(y);\n"), "w"), "\"inf\"");
 }
 
 /// An integer exponent of a generic power keeps its `int` where its base is an `f32`, so the

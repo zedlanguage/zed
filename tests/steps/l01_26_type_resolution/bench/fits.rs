@@ -336,14 +336,39 @@ fn shapes_of_two_bound_variables_scale() {
 #[test]
 fn k_joined_components_split_across_eight_shapes_scales() {
     let what = "n rows of 6 joined components split across eight shapes each";
-    let n = 800;
-    let sigs: BTreeMap<usize, _> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|n| (n, k_joined_rows(n, 6, &[3, 4, 5], false)))
-        .collect();
-    scaling::check_order(what, n, 1, |n| {
-        let [s, written, joined] = &sigs[&n];
-        assert!(fits_sig(s, written), "{what} at {n}: written out");
-        assert!(fits_sig(s, joined), "{what} at {n}: joined");
-    });
+    scaling::check_inputs(
+        what,
+        800,
+        |n| k_joined_rows(n, 6, &[3, 4, 5], false),
+        |[s, written, joined]| {
+            assert!(fits_sig(s, written), "{what}: written out");
+            assert!(fits_sig(s, joined), "{what}: joined");
+        },
+    );
+}
+
+/// A tuple of n components, each `int | f64`, within the bare variable `T`, which it binds:
+/// `T` has no tuple shape of the length, so no row a split makes is held, and
+/// [`Comparing::row_in`] (ty.rs) answers no at once, before `accepts` binds `T`
+/// (PERF-fold-projection-fast-path). Before, the row was split at a joined component again
+/// and again, n splits each building a row of n components, Θ(n²): 264 ms at 256 components
+/// and 1.07 s at 512 inside the check of `l03_02_map_run::bench::a_rotated_tuple_accumulator_
+/// checks_in_linear_time`. Besides its ratio: `T` is bound to the tuple at each size. Small
+/// instances: `fits::a_joined_tuple_within_a_variable_binds_it`.
+#[test]
+fn a_joined_tuple_within_a_variable_scales() {
+    use zedc::check::ty::Binds;
+    let what = "a tuple of n components of two carriers each within a variable";
+    let num = Ty::carrier(Carrier::Int).union(&Ty::carrier(Carrier::F64));
+    let t = Ty::var("T".into());
+    scaling::check_inputs(
+        what,
+        200,
+        |n| Ty::tuple(vec![num.clone(); n]),
+        |row| {
+            let mut b = Binds::new();
+            assert!(row.sub(&t, &mut b), "{what}");
+            assert_eq!(b, Binds::from([("T".into(), row.clone())]), "{what}");
+        },
+    );
 }

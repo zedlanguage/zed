@@ -3,6 +3,7 @@
 //! which builds their inputs and checks each at a small size, as it does every check they make
 //! besides the ratio.
 
+mod f32;
 mod float_mod;
 mod literals;
 mod prim_names;

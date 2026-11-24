@@ -4316,6 +4316,25 @@ pub fn held_family_got<N: HeldFamilyAt>(
     })
 }
 
+/// The integer `n`, the exponent of a float to an `int` power, as the `f64` the power takes:
+/// `n` itself within ±2^53, where every integer is an `f64`, and past it ±2^53 or ±(2^53 - 1),
+/// whichever has the parity of `n`, so that a negative base keeps the sign of the exact power.
+/// O(1) within ±2^53, else O(size of `n`) for its sign and parity.
+fn float_exponent(n: &Value) -> f64 {
+    match n {
+        Value::Int(n) if n.unsigned_abs() <= 1 << 53 => *n as f64,
+        _ => {
+            let n = n.as_integer().expect("an integer");
+            let m = if n.is_even() {
+                2f64.powi(53)
+            } else {
+                2f64.powi(53) - 1.0
+            };
+            if n.is_negative() { -m } else { m }
+        }
+    }
+}
+
 /// [`prim_data`] for a primitive other than `Tuple` and `Path`, which keeps none of `vals`.
 fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
     use Value::{Bool, Float, Float32, Int, Str};
@@ -4471,28 +4490,29 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
                 a.powf(b)
             })
         }
-        // `f32 ^ int`, the one operator arrow between two carriers (DESIGN.md L1.18): the power
-        // is taken in `f64` and rounded once to `f32`. An exponent beyond ±2^53 is read as the
-        // nearest `f64` of its parity, which keeps the sign of a negative base; every base but
-        // ±1 then overflows or underflows in `f64` as it would at the exact exponent.
+        // A float to an `int` power, `(F, int) -> F` (DESIGN.md L1.18 for `f32`; plan row
+        // POW-domains for `f64`): the power is taken in `f64`, and at `f32` rounded once to
+        // `f32`. An exponent beyond ±2^53 is read as the nearest `f64` of its parity, which
+        // keeps the sign of a negative base; every base but ±1 then overflows or underflows in
+        // `f64` as it would at the exact exponent. Within ±2^53 the exponent is exactly an
+        // `f64`, so `x ^ n` at `f64` is `x ^ f64(n)`, Rust's `powf` as in the arm above, and
+        // `0.0 ^ -1` is the infinity, `-0.0 ^ -1` the negative one (tests
+        // `l01_18_scalar_interpreter::f32::an_f64_to_an_int_power_is_an_f64` and
+        // `zed_kernel` `eval::arrow_tests::float_to_an_int_power`).
+        (Prim::Pow, [Float(a), b]) if b.number_kind() == Some(0) => {
+            let a = a.get();
+            Value::float(if a.is_nan() {
+                f64::NAN
+            } else {
+                a.powf(float_exponent(b))
+            })
+        }
         (Prim::Pow, [Float32(a), b]) if b.number_kind() == Some(0) => {
             let a = a.get();
-            let e = match b {
-                Int(n) if n.unsigned_abs() <= 1 << 53 => *n as f64,
-                _ => {
-                    let n = b.as_integer().expect("an integer");
-                    let m = if n.is_even() {
-                        2f64.powi(53)
-                    } else {
-                        2f64.powi(53) - 1.0
-                    };
-                    if n.is_negative() { -m } else { m }
-                }
-            };
             Value::float32(if a.is_nan() {
                 f32::NAN
             } else {
-                f64::from(a).powf(e) as f32
+                f64::from(a).powf(float_exponent(b)) as f32
             })
         }
         (Prim::Eq, [a, b]) => Bool(a.surface_eq(b)),

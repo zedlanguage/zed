@@ -659,6 +659,42 @@ fn a_tuple_accumulator_settling_in_three_rounds_checks_in_linear_time() {
     );
 }
 
+/// `zedc run` of `[1, 2, 3].foldl((1.5, 0, ..., 0), (a, x) -> (a[1], ..., a[n - 1], a[0]))`
+/// with n parts (row PERF-fold-projection-fast-path): the rounds took n + 1 applications of
+/// the function, Θ(n²); `fold_projections` reads the rotation's one cycle and the checker
+/// applies the function twice, so the check is linear in n. The run takes 3 steps of n parts.
+/// Its small instances are `folds::a_rotated_tuple_accumulator_settles_and_runs_at_any_width`.
+#[test]
+fn a_rotated_tuple_accumulator_checks_in_linear_time() {
+    let srcs: HashMap<usize, _> = scaling::inputs(N_SWAP, |k| {
+        let start: Vec<&str> = (0..k).map(|i| if i == 0 { "1.5" } else { "0" }).collect();
+        let parts: Vec<String> = (0..k).map(|i| format!("a[{}]", (i + 1) % k)).collect();
+        program(
+            &format!("rotate_{k}"),
+            &format!(
+                "${{[1, 2, 3].foldl(({}), (a, x) -> ({}))}}",
+                start.join(", "),
+                parts.join(", ")
+            ),
+        )
+    });
+    // Three left rotations move the 1.5 from index 0 to index -3 mod k.
+    let want = |k: usize| {
+        let at = (3 * (k - 1)) % k;
+        let parts: Vec<&str> = (0..k).map(|i| if i == at { "1.5" } else { "0" }).collect();
+        format!("({})\n", parts.join(", "))
+    };
+    let run = |k: usize| {
+        let ran = interpreter(&srcs[&k], &[], &[]);
+        assert_eq!((ran.stderr.as_str(), ran.stdout), ("", want(k)));
+    };
+    scaling::check(
+        "`zedc run` of a fold that rotates a tuple of n parts",
+        N_SWAP,
+        run,
+    );
+}
+
 /// `where(f -> f(0) >= 0)`, which calls each function.
 #[test]
 fn where_over_a_display_of_functions_runs_in_linear_time() {

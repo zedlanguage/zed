@@ -785,6 +785,45 @@ fn a_joined_one_element_tuple_fits_split_shapes_for_every_bound() {
     }
 }
 
+/// A tuple whose components each join two carriers, `(int | f64, ..., int | f64)`, is within a
+/// type with no tuple shape of its length only through a variable, which it binds to itself,
+/// as a tuple of one carrier at each place does (PERF-fold-projection-fast-path: such a type
+/// is found to hold no split of the row by one lookup, not by splitting it). Controls: beside
+/// a tuple of another length the same; with no variable it is refused; a joined row within
+/// shapes of its length that hold it only together is still split across them, and refused
+/// where they do not.
+#[test]
+fn a_joined_tuple_within_a_variable_binds_it() {
+    use zedc::check::ty::{Binds, Carrier, Ty};
+    let (int, f64) = (Ty::carrier(Carrier::Int), Ty::carrier(Carrier::F64));
+    let num = int.union(&f64);
+    let t = Ty::var("T".into());
+    for n in 1..=4 {
+        let row = Ty::tuple(vec![num.clone(); n]);
+        let bound = Binds::from([("T".into(), row.clone())]);
+        let mut b = Binds::new();
+        assert!(row.sub(&t, &mut b), "{n} components");
+        assert_eq!(b, bound, "{n} components");
+        let longer = Ty::tuple(vec![int.clone(); n + 1]);
+        let mut b = Binds::new();
+        assert!(row.sub(&t.union(&longer), &mut b), "{n} components");
+        assert_eq!(b, bound, "{n} components, beside a longer tuple");
+        assert!(!row.sub(&longer, &mut Binds::new()), "{n} components");
+    }
+    let pair = |a: &Ty, b: &Ty| Ty::tuple(vec![a.clone(), b.clone()]);
+    let joined = pair(&num, &num);
+    let four = [&int, &f64]
+        .into_iter()
+        .flat_map(|a| [&int, &f64].map(|b| pair(a, b)))
+        .reduce(|x, y| x.union(&y))
+        .expect("four shapes");
+    assert!(joined.sub(&four, &mut Binds::new()));
+    let three = pair(&int, &int)
+        .union(&pair(&int, &f64))
+        .union(&pair(&f64, &int));
+    assert!(!joined.sub(&three, &mut Binds::new()));
+}
+
 /// The signature `(x0: param) -> result` whose own variables are `{p}0` to `{p}{count - 1}`, each
 /// bounded by `bound` if given.
 pub(super) fn own_sig(
