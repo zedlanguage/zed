@@ -3,6 +3,34 @@
 
 use crate::classed::check_class_unlisted;
 use zed_tests::scaling;
+use zedc::store::classed::Classed;
+use zedc::store::interval::{End, IntervalSet};
+
+/// `n` calls of `Classed::plain` on one set of `n` pieces of two values each cost O(n)
+/// together, not O(n) a call: a plain set whose members lie in no wider class is kept as given
+/// (FAIL-l01-39-bytes-arm-callee-if-shortcut, where a walk built a box of such a set at each of
+/// `k` levels). The set is made before the timing; each call's `Classed` is kept, so the bytes
+/// are those of `n` of them.
+#[test]
+fn n_plain_sets_of_n_pieces_scale() {
+    scaling::check_inputs(
+        "n calls of Classed::plain on a set of n pieces",
+        1024,
+        |n| {
+            IntervalSet::from_pieces(
+                (0..n as i64)
+                    .map(|i| (End::of(3 * i), End::of(3 * i + 1)))
+                    .collect(),
+            )
+        },
+        |set| {
+            let kept: Vec<Classed> = (0..set.len())
+                .map(|_| Classed::plain(set.clone()))
+                .collect();
+            assert_eq!(kept.len(), set.len());
+        },
+    );
+}
 
 /// The preimage of `i mod 10 == 3` over `[0, n]` at n = 1,000,000 and 8,000,000: the formula
 /// is the same size at both, the class holds 10^5 values at n and 8 * 10^5 at 8n, and the work
