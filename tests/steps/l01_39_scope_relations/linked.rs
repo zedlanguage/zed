@@ -3236,3 +3236,13 @@ fn holes_of_seed_25_agree_with_the_projection_from_scratch() {
     holes_in_trees(25, false, 6);
     holes_in_trees(25, true, 6);
 }
+
+/// Seed 90 of [`holes_in_a_tree_of_differences_give_the_projection_from_scratch`], case 2 step
+/// 11: with x3 >= x0 + 2, x1 <= x0 - 1, x2 <= x1 + 2, x2 - 1 <= x3 <= x2 + 2 and
+/// x0 != x2 + 1 held, `x0 != -3` leaves x3 = -1 with no point (it needs x0 = -4, x1 = -5,
+/// x2 = -4 and then x3 <= -2), so x3 is {-2} and [1..=5] (FAIL-linked-holes-seed-90; held
+/// [-2..=-1] and [1..=5] while the scope's projection gave each disjunct its hull).
+#[test]
+fn holes_in_the_trees_of_seed_90_give_the_projection_from_scratch() {
+    holes_in_trees(90, false, HOLE_TREES);
+}
