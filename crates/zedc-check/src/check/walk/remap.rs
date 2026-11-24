@@ -1359,6 +1359,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     // Complexity tradeoff: the type is built from the union of the family's arrows, O(arrows),
     // as `map` does; the outer level's guarantee, the classes `f(m[k])` known statically, is
     // not computed (empty), which the bound table allows ("else empty").
+    // `call` is not `span`: in `meet` the need's span is where the class's type flowed in, so
+    // it is `None` there ([`Info::boxed_groups`]).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn group_end(
         &mut self,
         x: &Ty,
