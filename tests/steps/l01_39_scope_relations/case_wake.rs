@@ -455,14 +455,14 @@ fn run(aim: Aim, what: &str) {
     assert!(ran.moved > 0 && ran.asked > 0, "{ran:?}");
 }
 
-/// The attack on `aim` at the one seed `seed`, for the two attacks whose fresh seeds still meet
-/// faults of the plain reduction that main had before the case wake: the holes attack fails on 23
-/// of seeds 2 to 1001 (FAIL-scope-equation-odd-points: a name that an equation or a stride makes
-/// odd or even is held as its hull), the three-name attack on 2 (FAIL-scope-three-names-one-row).
-/// Each failing seed fails the same way without the case wake. With a fresh seed each run these
-/// two tests would fail about one run in 40, so here they run at a seed that passes, and the
-/// fresh-seed runs wait with those rows (/home/luke/Work/wt/failing-tests); when the rows are
-/// fixed, these two tests go back to `run`.
+/// The attack on `aim` at the one seed `seed`: for the seeds that met a fault, and for the
+/// three-name attack, whose fresh seeds still meet one. It fails on 7 of seeds 2 to 1001 (45,
+/// 131, 228, 644, 656, 729, 905; b22-mainfail1, origin/main 0b5ab70d9, 2026-11-24), each held
+/// wider than from scratch (FAIL-scope-three-names-seeds), so with a fresh seed each run that
+/// test would fail about one run in 140; it runs at a seed that passes until that row is fixed,
+/// then goes back to `run`. The holes attack, which failed on 23 of seeds 2 to 1001 until the
+/// exact cover was on the checker's projection path (FAIL-scope-equation-odd-points, closed by
+/// PRES-cover-wire), passes on all 1000 and runs on a fresh seed again.
 fn run_at(aim: Aim, seed: u64) {
     let ran = attack(aim, seed, SCOPES);
     eprintln!("{aim:?} seed {seed}: {ran:?}");
@@ -502,7 +502,17 @@ fn tests_on_punctured_lines_give_the_projection_from_scratch() {
 
 #[test]
 fn tests_beside_holes_and_classes_give_the_projection_from_scratch() {
-    run_at(Aim::Holes, 2);
+    run(Aim::Holes, "case wake: holes and classes");
+}
+
+/// Seed 459 of the holes attack, whose parity comes from rows of coefficients 3 and -3 and not
+/// from an equation (x held [4, 4] and [6, 20], from scratch the even values 4 to 20), and seed
+/// 906, which failed only with the exact cover switched in (FAIL-scope-equation-odd-points,
+/// which asks for 459 to be checked apart).
+#[test]
+fn tests_beside_holes_and_classes_give_the_projection_from_scratch_at_seeds_459_and_906() {
+    run_at(Aim::Holes, 459);
+    run_at(Aim::Holes, 906);
 }
 
 #[test]
@@ -1089,4 +1099,133 @@ fn a_new_part_on_a_name_with_a_hole_projects_the_whole_block() {
         "a keeps 1: {:?}",
         got.get("a").ints()
     );
+}
+
+/// The held projection after a test against the projection from scratch, for `left` alone,
+/// `right` alone and `left || right`, on the scope built by `history` over the names `ns`.
+/// Each arm is first asked alone, outside any case, so a failure tells a fault of the plain
+/// reduction (an arm alone already differs) from one of the case wake (only the two cases
+/// together differ).
+fn held_equals_scratch(ns: &[&str], history: &[Term], left: Term, right: Term) {
+    let p = Premises::new();
+    let ns: Vec<Arc<str>> = ns.iter().map(|&n| n.into()).collect();
+    let mut s = ints(&ns);
+    for t in history {
+        s = s.assume(t, true, &p);
+    }
+    let scratch = |t: &Term| {
+        let mut fresh = s.clone();
+        fresh.forget_projections();
+        let mut want = fresh.assume(t, true, &p);
+        want.forget_projections();
+        want.reduce();
+        intervals(&want, &ns)
+    };
+    let mut before = s.clone();
+    before.forget_projections();
+    before.reduce();
+    assert_eq!(
+        intervals(&s, &ns),
+        intervals(&before, &ns),
+        "before the test"
+    );
+    for arm in [&left, &right] {
+        assert_eq!(
+            intervals(&s.assume(arm, true, &p), &ns),
+            scratch(arm),
+            "{arm:?} alone"
+        );
+    }
+    let test = prim(Prim::Or, left, right);
+    assert_eq!(
+        intervals(&s.assume(&test, true, &p), &ns),
+        scratch(&test),
+        "the disjunction"
+    );
+}
+
+fn ge(t: Term, c: i64) -> Term {
+    prim(Prim::Ge, t, int(c))
+}
+
+fn or(a: Term, b: Term) -> Term {
+    prim(Prim::Or, a, b)
+}
+
+/// A name bound to another by an equation `x == 2 * a + 1` keeps its odd values after a
+/// disjunction (seed 11 of Sol's round-3 holes attack, XR-case-group-wake;
+/// FAIL-scope-equation-odd-points): from scratch x is -5, -3 and -1 after `-3x >= 2`, while the
+/// scope's projection, which gave each disjunct its hull, held [-5..=-3] and -1.
+#[test]
+fn an_odd_name_through_an_equation_keeps_its_points_after_a_disjunction() {
+    let history = [
+        ge(var("x"), -5),
+        prim(Prim::Le, var("y"), int(9)),
+        ge(lin(&[(2, "y")]), -3),
+        prim(Prim::Ne, var("y"), int(2)),
+        prim(
+            Prim::Eq,
+            var("x"),
+            prim(Prim::Add, lin(&[(2, "a")]), int(1)),
+        ),
+        or(
+            ge(lin(&[(3, "x"), (1, "y")]), -3),
+            ge(lin(&[(1, "x"), (1, "y")]), -3),
+        ),
+        or(ge(lin(&[(1, "x"), (2, "y")]), 2), ge(lin(&[(3, "x")]), -3)),
+        or(ge(lin(&[(2, "y")]), 0), ge(lin(&[(-1, "x")]), -4)),
+        or(ge(lin(&[(-2, "x")]), 1), ge(lin(&[(3, "x"), (3, "y")]), 1)),
+    ];
+    let left = ge(lin(&[(-3, "x")]), 2);
+    let right = ge(lin(&[(-2, "a"), (-1, "x")]), 5);
+    held_equals_scratch(&["a", "x", "y"], &history, left, right);
+}
+
+/// The minimized history of
+/// [`an_odd_name_through_an_equation_keeps_its_points_after_a_disjunction`] (scope-seeds,
+/// 2026-11-16): `y <= 9`, `x == 2a + 1`, `x + 2y >= 2 || 3x >= -3`, then
+/// `-3x >= 2`: from scratch the odd values -15 to -1 (held [-15..=-3] and -1 before the fix).
+#[test]
+fn an_odd_name_through_an_equation_keeps_its_points_minimized() {
+    let history = [
+        prim(Prim::Le, var("y"), int(9)),
+        prim(
+            Prim::Eq,
+            var("x"),
+            prim(Prim::Add, lin(&[(2, "a")]), int(1)),
+        ),
+        or(ge(lin(&[(1, "x"), (2, "y")]), 2), ge(lin(&[(3, "x")]), -3)),
+    ];
+    let left = ge(lin(&[(-3, "x")]), 2);
+    let right = ge(lin(&[(-2, "a"), (-1, "x")]), 5);
+    held_equals_scratch(&["a", "x", "y"], &history, left, right);
+}
+
+/// Seed 49 of Sol's random test on three names (XR-case-group-wake;
+/// FAIL-scope-three-names-one-row): after `3y - w >= 3`, from scratch a is (-inf, -3] and
+/// [2, 3], while the scope's projection, which gave each disjunct its hull, held (-inf, -2] and
+/// [2, 3].
+#[test]
+fn three_names_after_two_case_histories_give_the_projection_from_scratch() {
+    let history = [
+        ge(var("w"), -1),
+        prim(Prim::Le, var("w"), int(0)),
+        prim(Prim::Le, var("a"), lin(&[(1, "x"), (1, "y")])),
+        or(
+            ge(lin(&[(-2, "x"), (-1, "y"), (1, "w")]), 1),
+            ge(lin(&[(-2, "x"), (-1, "y"), (2, "w")]), -4),
+        ),
+        or(
+            ge(lin(&[(3, "x"), (-3, "y"), (2, "w")]), -4),
+            ge(lin(&[(2, "x"), (-2, "y"), (2, "w")]), -3),
+        ),
+        or(
+            ge(lin(&[(2, "x"), (-2, "y"), (-2, "w")]), -2),
+            ge(lin(&[(2, "x"), (1, "y")]), 4),
+        ),
+        or(ge(lin(&[(-2, "a"), (-2, "w")]), 5), ge(lin(&[(2, "a")]), 3)),
+    ];
+    let left = ge(lin(&[(3, "y"), (-1, "w")]), 3);
+    let right = ge(lin(&[(-2, "x"), (-3, "w"), (3, "a")]), 5);
+    held_equals_scratch(&["a", "w", "x", "y"], &history, left, right);
 }

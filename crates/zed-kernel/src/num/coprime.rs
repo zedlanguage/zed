@@ -77,7 +77,8 @@ use std::borrow::{Borrow, Cow};
 use num_bigint::BigUint;
 use num_traits::{One, ToPrimitive, Zero};
 
-use super::{div_rem_uint, gcd_uint, mul_uint, rem_uint, trees};
+use super::fast::{div_rem as div_rem_uint, gcd_uint, rem as rem_uint};
+use super::{mul_uint, trees};
 
 /// The natural coprime base of some positive integers and each one written over it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

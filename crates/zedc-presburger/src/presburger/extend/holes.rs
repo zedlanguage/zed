@@ -281,6 +281,7 @@ impl Holes {
             true => (self, other),
             false => (other, self),
         };
+        super::counts::add(super::counts::HOLES_MERGED_RUNS, small.len());
         for (lo, hi) in small.intervals() {
             big.cut(&lo, &hi);
         }

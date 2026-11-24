@@ -1069,6 +1069,26 @@ impl Printer<'_> {
                 || t.holds_no_type()
                 || (ms.iter()).any(|m| m.guarantee == *t || m.permission == *t || m.value == *t)
         };
+        // A meet whose value is empty and whose lower bound holds a value is empty, and is
+        // written `Never` (FAIL-kernel-print-seed-8999424735008423254: the meet of `_ ->? ()`
+        // and `rat .. rat -> rat` was written `rat -> Never`, which the checker reads as a type
+        // that holds a function, while the kernel and DESIGN.md hold it empty). Proof: a
+        // function `f` of the meet has `lower ⊆ dom f` (proof at [`Printer::folded`]); `lower`
+        // holds a value `x`, so `f(x)` is defined and lies in `value`, which holds no value; so
+        // no such `f` exists. This is the rule of DESIGN.md sec:type_language, "Relation to
+        // semantic subtyping", point (1): "`t -> V` is empty here when `t` is inhabited and `V`
+        // is empty", and of module `empty` ("A morphism type with an empty value type holds
+        // nothing"). Only the verdicts `Empty` of the value and `Inhabited` of the lower bound
+        // (a value built and checked) are taken: a refused verdict claims nothing, and an
+        // empty lower bound leaves the function of empty domain, which `Never ->? Never` holds.
+        // Complexity tradeoff: two kernel verdicts per meet printed, beside the comparison of
+        // the bounds below; each verdict is kept for the thread, so a type asked again costs
+        // O(1). Naive version: none; without them the text names a different type.
+        if matches!(value.verdict(), Verdict::Empty)
+            && matches!(lower.verdict(), Verdict::Inhabited)
+        {
+            return Some(Text::word("Never", Class::Prim));
+        }
         // Where the upper bound is also within the lower, the two are one set (the verdict
         // `Empty` puts the lower within the upper), so the arrow may be written with either as
         // both bounds, and is written with one a literal names. The upper bound is often a

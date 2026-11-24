@@ -83,6 +83,44 @@ fn the_printed_type_of_a_passed_parameter_is_what_calls_accept() {
     }
 }
 
+/// Row FAIL-atom-into-arrow-param-not-passed-out: a loose atom passed for a parameter whose
+/// every use is an argument at a function type passes by the call, as at a function whose
+/// parameter is written with that type (rule 6 of sec:type_resolution), and the call gives it.
+/// Red before: "`t0` does not take #a, only f64 -> f64" at `g`'s call, while `h` accepted.
+/// An atom the printed type holds still enters, and a parameter that stands twice, which
+/// prints as a type variable, still lets every atom in (the controls in l01_27 loose.rs).
+#[test]
+fn an_atom_passes_by_a_parameter_passed_into_a_function_type() {
+    for ty in ["f64 -> f64", "int ->? int", "(int) -> int"] {
+        let defs =
+            format!("t0(n: {ty}) = 1;\ng(x, c: bool) = (if c {{ t0(n: x) }} else {{ 0 }});\n");
+        let call = format!("{defs}a = g(x: #a, c: true);\n");
+        assert_eq!(type_errors(&call), Vec::<String>::new(), "{call}");
+        let typed = format!("h(y: {ty}) = 1;\na = h(y: #a);\n");
+        assert_eq!(type_errors(&typed), Vec::<String>::new(), "{typed}");
+    }
+    // Two uses at two function types: the meet holds no atom, so the atom passes by.
+    let two = "t0(n: f64 -> f64) = 1;\nt1(n: int -> int) = 2;\ng(x) = t0(n: x) + t1(n: x);\n";
+    assert_eq!(
+        type_errors(&format!("{two}a = g(x: #a);\n")),
+        Vec::<String>::new()
+    );
+    // A use at a type that holds the atom takes it: it enters and is no error.
+    let holds = "t0(n: f64 | String | #a) = 1;\ng(x) = t0(n: x);\n";
+    assert_eq!(
+        type_errors(&format!("{holds}a = g(x: #a);\n")),
+        Vec::<String>::new()
+    );
+    // A parameter that also stands in the result is a type variable: the atom enters and the
+    // use refuses it, as before.
+    let twice = "t0(n: f64 -> f64) = 1;\ng(x) = (t0(n: x), x);\n";
+    let errors = type_errors(&format!("{twice}a = g(x: #a);\n"));
+    assert!(
+        errors.iter().any(|e| e.contains("`t0` does not take #a")),
+        "{errors:?}"
+    );
+}
+
 /// The closed types a random use passes `x` into.
 const CLOSED: &[&str] = &[
     "int",
@@ -161,15 +199,9 @@ fn random_printed_parameter_types_are_what_calls_accept() {
             "{typed}: the printed type {ty} does not check"
         );
         for v in ARGS {
-            // A loose atom passed on into a parameter of an arrow type is refused at `g`,
-            // "`t0` does not take #a, only f64 -> f64", while `h(y: f64 -> f64)` lets it pass
-            // out of the call; that difference is in how an atom passes out of an argument, not
-            // in the printed type, and is row FAIL-atom-into-arrow-param-not-passed-out.
-            // The printed type of `x` may be the meet of arrows (`Never` for two that differ),
-            // so the skip looks at the parameters `x` is passed to, not at the printed type.
-            if v.starts_with('#') && defs.contains("->") {
-                continue;
-            }
+            // A loose atom passed on into a parameter of an arrow type passes by `g`'s call as
+            // by `h`'s (row FAIL-atom-into-arrow-param-not-passed-out, which removed the skip
+            // of atoms at arrow types here).
             let g_errors = type_errors(&format!("{defs}a = g(x: {v}, c: true);\n"));
             let by_g = g_errors.is_empty();
             let h_errors = type_errors(&format!("{typed}a = h(y: {v});\n"));

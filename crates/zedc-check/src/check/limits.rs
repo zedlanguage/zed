@@ -37,7 +37,7 @@ pub(super) fn target_text(target: &str) -> String {
 /// The base-2 logarithm of the bytes every target zedc builds for addresses: each is a 64-bit
 /// architecture (`zedc::build::TARGETS`: x86_64, aarch64 and riscv64), whose pointers count
 /// 2^64 bytes, 16 EiB. A result larger than this is held by no memory of the target, whatever
-/// the machine that builds it ([`Ck::too_large_power`]), and it is the largest memory limit of
+/// the machine that builds it ([`Ck::too_large_product`]), and it is the largest memory limit of
 /// `main` ([`Ck::bytes_limit`]; DESIGN.md sec:ports).
 pub(super) const ADDRESS_BYTES_LOG2: u32 = 64;
 

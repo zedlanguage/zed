@@ -1804,25 +1804,71 @@ fn a_fresh_child_ends_when_its_parent_is_killed() {
         // with no line break, so the line is found wherever it starts.
         .find_map(|line| line.split_once("zed-orphan-child ")?.1.trim().parse().ok())
         .expect("the parent names its child");
+    // The fields of /proc/<pid>/stat after the name, which is in parentheses and may hold
+    // spaces, so they are read after the last `)`: field 3 (the state) is the first, field 9
+    // (the flags) the seventh, field 22 (the start time, in clock ticks after boot) the 20th.
+    let fields = || {
+        let stat = std::fs::read_to_string(format!("/proc/{child}/stat")).ok()?;
+        let rest = stat.rsplit(')').next()?;
+        Some(rest.split_whitespace().map(str::to_owned).collect::<Vec<_>>())
+    };
+    // Read while the parent lives, so the child is alive (it sleeps for 60 s) and the start time
+    // is its own: a pid and its start time name one process, where the pid alone could name a
+    // later process given the same pid.
+    let born = fields().expect("the child is alive before its parent is killed")[19].clone();
     parent.kill().unwrap();
     parent.wait().unwrap();
-    // Alive: its /proc entry is there and it is not a zombie (state `Z`), which has ended and
-    // waits only to be reaped. Field 3 of /proc/<pid>/stat is the state; the name before it is
-    // in parentheses and may hold spaces, so the state is read after the last `)`.
-    let alive = || {
-        std::fs::read_to_string(format!("/proc/{child}/stat")).is_ok_and(|stat| {
-            stat.rsplit(')')
-                .next()
-                .is_some_and(|rest| !rest.trim_start().starts_with('Z'))
+    // Alive: the same process (pid and start time) is there, not a zombie (state `Z`, ended and
+    // waiting only to be reaped), not exiting (flag PF_EXITING, 0x4, set by the kernel's
+    // `do_exit` before it frees the process's memory, after which it cannot run again), and with
+    // no SIGKILL pending (bit 8 of `SigPnd` or `ShdPnd` in /proc/<pid>/status), which no process
+    // can block or catch. `parent.wait()` returns after the parent was reaped, and the kernel
+    // sends the parent-death signal before that (in `exit_notify`, through
+    // `forget_original_parent`), so once the signal was sent the child is not alive by this
+    // test even before it is scheduled to act on it. Under load the end of a process that was
+    // sent SIGKILL (being scheduled, then `exit_mm`) can take seconds; the test asks whether the
+    // signal was sent, so that time no longer counts (FAIL-fresh-child-killed-parent-under-load).
+    let killed = || {
+        let status = std::fs::read_to_string(format!("/proc/{child}/status")).unwrap_or_default();
+        status.lines().any(|l| {
+            let mask = (l.strip_prefix("SigPnd:").or_else(|| l.strip_prefix("ShdPnd:")))
+                .and_then(|m| u64::from_str_radix(m.trim(), 16).ok());
+            mask.is_some_and(|m| m & (1 << 8) != 0)
         })
+    };
+    let alive = || {
+        fields().is_some_and(|f| {
+            let exiting = f[6].parse::<u64>().is_ok_and(|flags| flags & 0x4 != 0);
+            f[19] == born && !f[0].starts_with('Z') && !exiting
+        }) && !killed()
     };
     let start = std::time::Instant::now();
     while alive() && start.elapsed() < Duration::from_secs(5) {
         std::thread::sleep(Duration::from_millis(20));
     }
     if alive() {
+        // What the child was doing, read before it is killed (FAIL-fresh-child-killed-parent-
+        // under-load): its state and the kernel function it waits in, its parent, and the
+        // signals pending on it (bit 8 of `SigPnd`/`ShdPnd`, SIGKILL = 9, set when the
+        // parent-death signal was sent but the child has not yet left the kernel).
+        let read = |f: &str| std::fs::read_to_string(format!("/proc/{child}/{f}"));
+        let stat = read("stat").unwrap_or_default();
+        let wchan = read("wchan").unwrap_or_default();
+        let status = read("status").unwrap_or_default();
+        let fields: Vec<&str> = (status.lines())
+            .filter(|l| {
+                ["State:", "PPid:", "SigPnd:", "ShdPnd:"]
+                    .iter()
+                    .any(|k| l.starts_with(k))
+            })
+            .collect();
         let pid = rustix::process::Pid::from_raw(child).expect("a pid above 0");
         let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
-        panic!("the child {child} of a killed parent was still running 5 s later");
+        panic!(
+            "the child {child} of a killed parent was still running 5 s later: stat `{}`, \
+             wchan `{wchan}`, {}",
+            stat.trim(),
+            fields.join(", ")
+        );
     }
 }

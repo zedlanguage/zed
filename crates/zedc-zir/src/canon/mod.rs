@@ -668,7 +668,7 @@ mod tests {
         // value with two addresses: a share missed, never two values given one address.
         fn kept(v: &Value) -> bool {
             match v {
-                Value::Big(r) | Value::Rat(r) => !r.kept().2.is_empty(),
+                Value::Big(r) | Value::Rat(r) => !r.kept().2.is_empty() || !r.wide().is_empty(),
                 Value::Tuple(xs) => xs.as_slice().iter().any(kept),
                 _ => false,
             }

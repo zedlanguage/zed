@@ -157,21 +157,21 @@ fn printing_a_deep_function_type_scales() {
     // into the whole cost O(n^2) for n nested function types.
     // On the test thread's stack: `Denote::ty` (zedc-check) recursed on the nesting of a
     // written type and overflowed 2 MiB here; it keeps its own stack (TY-write-stack).
-    let inputs: std::collections::HashMap<usize, _> = [25_600, 204_800]
-        .into_iter()
-        .map(|n| {
-            let (info, names) = info(&nested(n));
-            let (_, s) = info
-                .sigs
-                .iter()
-                .find(|(id, _)| names[**id] == "h")
-                .expect("h");
-            (n, s.clone())
-        })
-        .collect();
-    assert!(inputs[&25_600].to_string().ends_with(" -> 0"));
-    zed_tests::scaling::check("printing n nested function types", 25_600, |n| {
-        assert!(!inputs[&n].to_string().is_empty());
+    // `check_inputs` builds each signature only in the process that prints it: the set-up
+    // (checking the program, 7 s at 204,800 on hm3) cost more than the printing timed
+    // (FAIL-bench-deep-print-near-limit).
+    let sig = |n: usize| {
+        let (info, names) = info(&nested(n));
+        let (_, s) = info
+            .sigs
+            .iter()
+            .find(|(id, _)| names[**id] == "h")
+            .expect("h");
+        s.clone()
+    };
+    assert!(sig(3).to_string().ends_with(" -> 0"));
+    zed_tests::scaling::check_inputs("printing n nested function types", 25_600, sig, |s| {
+        assert!(s.to_string().ends_with(" -> 0"))
     });
 }
 

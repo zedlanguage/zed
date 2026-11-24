@@ -169,8 +169,9 @@ fn a_failure_after_a_write_writes_the_same_on_both_engines() {
 
 #[test]
 fn a_fault_after_a_write_writes_the_same_on_both_engines() {
-    // A fault, status 3: `b ^ k`, a number of more than 2^70 bits, its exponent from the
-    // arguments, so the checker cannot fold it.
+    // A fault, status 3: the text of `b ^ k`, a number of more than 2^70 bits, its exponent
+    // from the arguments, so the checker cannot fold it. The power itself is kept and builds
+    // nothing (KEPT-power-form), so the run stops at the `String`.
     let rest = "    b = 2^64 + 13;\n    k = 2^64 + (int(m.args[0] else #outOfBounds -> \"\") else #invalid -> 0);\n    \
                 m.stderr <- if k >= 0 { String(b ^ k) } else { \"\" };\n";
     let p = program("fault", &writes_then(rest));
@@ -178,7 +179,7 @@ fn a_fault_after_a_write_writes_the_same_on_both_engines() {
         "fault",
         &p,
         both(&p, Stdio::piped),
-        (Some(3), "", "Number too large for memory: `b ^ k`"),
+        (Some(3), "", "Text too large for memory: `String(b ^ k)`"),
     );
 }
 

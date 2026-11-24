@@ -1654,3 +1654,39 @@ fn a_bound_meeting_function_types_of_two_domain_bounds_reads_back_as_printed() {
     );
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+/// The kernel printer's round trip on the draw of seed 8999424735008423254
+/// (FAIL-kernel-print-seed-8999424735008423254): the meet of `_ ->? ()` and
+/// `rat .. (rat & (rat | int)) -> rat`, beside `String` on both sides. A function of both
+/// takes every `rat` and gives a value of `rat & ()`, which holds none, so the meet holds no
+/// function (DESIGN.md sec:type_language, "Relation to semantic subtyping", point (1): "`t ->
+/// V` is empty here when `t` is inhabited and `V` is empty"), and the type is `String`. Before
+/// the fix the kernel printed the meet as `rat -> Never`, `String | (rat -> Never)`, which the
+/// checker reads as holding a function, so the text read back as another type. Control: the
+/// kernel holds the type built here within `String`, so the printer, not the kernel's meet,
+/// was wrong.
+#[test]
+fn a_meet_of_arrows_whose_values_share_none_prints_as_no_function() {
+    let left = &KType::partial(KType::top(), KType::tuple(vec![])) | &KType::string();
+    let rat_int = &KType::rat() | &KType::int();
+    let right = &(&KType::exact(KType::rat(), KType::rat())
+        & &KType::partial(rat_int, KType::rat()))
+        | &KType::string();
+    let t = &left & &right;
+    assert!((&t - &KType::string()).is_empty());
+    // The text the seed drew for the type built above, as `kernel_generated` writes it; the
+    // seed reproduces the draw itself: ZED_TEST_SEED=8999424735008423254 on the random test
+    // above.
+    let text =
+        "(((_) ->? (())) | (String)) & (((rat) .. ((rat) & ((rat) | (int))) -> (rat)) | (String))";
+    let printed = t.surface();
+    assert!(printed.exact && printed.defs.is_empty(), "{}", printed.root);
+    assert!(!printed.root.contains("->"), "{}", printed.root);
+    let mut wrong = Vec::new();
+    assert!(
+        !kernel_read_back(text, &printed.root, &mut wrong),
+        "{}",
+        printed.root
+    );
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

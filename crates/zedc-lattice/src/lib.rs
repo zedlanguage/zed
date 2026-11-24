@@ -5,6 +5,7 @@
 //! (`schedule`). `zedc` re-exports each module at its old path (`zedc::store::interval`, ...).
 
 pub mod affine;
+pub mod bound_form;
 pub mod cell;
 pub mod classed;
 pub mod float;

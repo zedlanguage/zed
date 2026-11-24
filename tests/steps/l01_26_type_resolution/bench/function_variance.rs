@@ -190,6 +190,46 @@ fn functions_passed_by_defaults_else_and_generic_values_to_partial_slots_scale()
     });
 }
 
+/// n functions passed to a partial slot from inside an argument of a generic body
+/// (PLACE-value-inside-arg): as a component and an entry of the argument, each passed by the
+/// body to a generic function passed as a value (a field is not tested: this zedc refuses
+/// struct declarations and record displays as unsupported; PLACE-value-inside-arg-field). The
+/// place of each is three lookups and one shared step (`CallFrame::place`,
+/// `CallFrame::component`, `CallFrame::entries`), each call replays its callee's needs once,
+/// and each place rebuilt is one coercion at one span, so checking and elaborating the whole
+/// is linear. Besides its ratio: the program elaborates at each size. Small instances:
+/// `function_variance::a_component_of_an_argument_...` and
+/// `an_entry_of_an_argument_passed_on_to_a_partial_slot_misses_outside_the_domain`.
+#[test]
+fn functions_inside_arguments_passed_to_partial_slots_scale() {
+    let what = "n functions passed on from a component and an entry of an argument";
+    let make = |n: usize| {
+        let mut src = String::from(
+            "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 0;\npass(x) = apply(f: x);\n\
+             rc(g, p) = g(x: p[1]);\nre(g, m) = g(x: m[0]);\n",
+        );
+        for i in 0..n {
+            src.push_str(&format!(
+                "s{i}(x: int) = x + {i};\nc{i} = rc(g: pass, p: ({i}, s{i}));\n\
+                 e{i} = re(g: pass, m: [s{i}]) else #notFound -> 0;\n"
+            ));
+        }
+        src
+    };
+    let n = 200;
+    let inputs = scaling::inputs(n, make);
+    scaling::check(what, n, |m| {
+        let u = elab(&inputs[&m]).unwrap_or_else(|e| panic!("{what} at {m}: {e:?}"));
+        let last = m - 1;
+        assert!(
+            ["c", "e"]
+                .iter()
+                .all(|k| u.get(&format!("{k}{last}")).is_some()),
+            "{what} at {m}"
+        );
+    });
+}
+
 /// n functions passed to a partial slot as entries of a family that lies in an argument
 /// (FAIL-partial-slot-generic-family-entry, FAIL-partial-slot-generic-lambda-map): read by key
 /// in a generic body, passed on by a lambda of `map` on a written list, and by a lambda of

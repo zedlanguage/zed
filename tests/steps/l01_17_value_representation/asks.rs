@@ -120,22 +120,28 @@ fn a_sum_of_kept_powers_is_refused_when_memory_is_short() {
     }
 }
 
-/// `(2^s - 1)^7` asks a byte for each bit of the base times the exponent: at `s = 2^22`,
-/// 28 MiB, refused; the old ask of 3.5 MiB was given and the power rose to about six times it.
+/// `(2^s - 1)^7` builds no power: the base's wide part is kept as an atom with its exponent
+/// (DESIGN.md step L1.17b), after the base is split into small primes and a least root, for
+/// which four bytes a bit are asked (`Rat::pow`, `SPLIT_ASK_BITS_A_BIT`). At `s = 2^18` that
+/// is 1 MiB, given, and the power is kept; at `s = 2^23` it is 32 MiB, refused with that ask.
+/// The first version asked nothing and aborted the child at `s = 2^22` (a request of 256 KiB
+/// failed in the least root, 2026-11-23, Colab std); before wide atoms the power was built and
+/// refused at `7 s` bits.
 #[test]
-fn a_power_of_a_wide_base_is_refused_when_memory_is_short() {
-    if !in_child("a_power_of_a_wide_base_is_refused_when_memory_is_short") {
+fn a_power_of_a_wide_base_is_kept_or_refused_when_memory_is_short() {
+    if !in_child("a_power_of_a_wide_base_is_kept_or_refused_when_memory_is_short") {
         return;
     }
-    let all = [1u64 << 22, 1 << 25].map(|s| (s, below(s)));
+    let (small, large) = (1u64 << 18, 1u64 << 23);
+    let (x, y) = (below(small), below(large));
     lower_limit_by(SHORT);
-    for (s, x) in &all {
-        assert_eq!(
-            asked(x.pow(&BigUint::from(7u32))),
-            BigUint::from(7 * s),
-            "s = {s}"
-        );
-    }
+    let p = x.pow(&BigUint::from(7u32)).expect("the ask is given");
+    assert!(!p.wide().is_empty());
+    let a_bit = zed_kernel::num::SPLIT_ASK_BITS_A_BIT / 8;
+    assert_eq!(
+        asked(y.pow(&BigUint::from(7u32))),
+        BigUint::from(a_bit * large)
+    );
 }
 
 /// The memory, in bytes, `String` of `2^s + 1` asks: a byte for each of its `s + 2` bits

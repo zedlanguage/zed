@@ -172,8 +172,11 @@ fn a_run_within_its_deadline_runs_and_one_past_it_stops_with_status_3() {
 
 #[test]
 fn a_number_too_large_for_memory_stops_the_run_with_status_3() {
-    // No limit: `(2^64 + 13) ^ (2^64)` needs 128 EiB, past the 2^64 bits a number may have.
-    // Before MAIN-limits the run stopped with status 1, as a `#bug` does.
+    // No limit: `(2^64 + 13) ^ (2^64)` is kept as the atom `2^64 + 13` with the exponent
+    // `2^64` and builds nothing (KEPT-power-form, DESIGN.md step L1.17b); its text, about
+    // 3.6 × 10^20 digits, 308 EiB, is past any memory, so the run stops at the `String`.
+    // Before KEPT-power-form it stopped at the power, which needed 128 EiB; before MAIN-limits
+    // with status 1, as a `#bug` does.
     let (file, exe) = program("too_large", &power_program("", (1 << 64) + 13));
     for (engine, (code, out, err)) in
         ["zedc run", "executable"]
@@ -182,7 +185,10 @@ fn a_number_too_large_for_memory_stops_the_run_with_status_3() {
     {
         assert_eq!((code, out.as_str()), (Some(3), ""), "{engine}: {err}");
         assert!(
-            err.contains(": Number too large for memory: `18446744073709551629 ^ k` needs"),
+            err.contains(
+                ": Text too large for memory: `String(if k >= 0 { 18446744073709551629 ^ k } \
+                 else { 0 })` would write about 3.6 × 10^20 digits (308 EiB)"
+            ),
             "{engine}: {err}"
         );
     }
