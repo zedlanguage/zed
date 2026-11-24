@@ -4146,10 +4146,7 @@ enum Shortest {
 enum Ends {
     /// It projected the tree, as [`Scope::shortest`] does.
     Done(Shortest),
-    /// It refused the tree, whose names, these, then had their gaps raised to their holes, so
-    /// shortest paths project it.
-    Paths(Vec<Arc<str>>),
-    /// A name has a class, or it refused the tree: the tree is projected block by block.
+    /// A name has a class: the tree is projected block by block.
     Blockwise,
 }
 
@@ -9744,25 +9741,6 @@ fn merged(
 pub enum Cause {
     /// The integer solver refused it.
     Solver(presburger::Refusal),
-    /// The ends of names with holes are not found exactly: the difference constraints join
-    /// `names` names, both ways, in more than one cycle, and more than two of them, `holed`,
-    /// have holes (item ST-holes-moves). It depends on the constraints and on which names
-    /// have holes alone.
-    Holes {
-        /// The names with holes, as written, in order.
-        ///
-        /// Complexity tradeoff: naive version, a `Vec`, which [`Scope::refuse`] copies once for
-        /// each name the constraint mentions (`index_refused`), O(k²) time and memory for a
-        /// refused tree of `k` names all with holes: 11.9 times the bytes from 1,200 to 9,600
-        /// names (`linked::bench::a_tree_of_blocks_with_holes_projected_from_scratch_takes_
-        /// time_near_its_size`, row BENCH-scope-project-due-blocks). Used: shared behind an
-        /// `Arc`, so each copy is O(1) and the list is held once, O(k). Tradeoff: none; the
-        /// order and equality of [`Refused`] are the list's, as before. COMPLEXITY.md row
-        /// BENCH-scope-project-due-blocks.
-        holed: Arc<[Arc<str>]>,
-        /// The number of names the constraints join.
-        names: usize,
-    },
     /// The test's `||` alternatives limit each other's ranges in a loop, which the checker
     /// would have to run a number of times that grows with the ranges (DESIGN.md step L1.39,
     /// the class of S4): the checker rejects the test, with this message, instead of warning.
@@ -9900,29 +9878,6 @@ impl Refused {
             Cause::Solver(r) => r,
             Cause::Looped(l) => {
                 return (l.headline.clone(), l.steps.clone(), vec![l.repair.clone()]);
-            }
-            Cause::Holes { holed, names } => {
-                let holed: Vec<String> = holed.iter().map(|n| format!("`{n}`")).collect();
-                return (
-                    "Cannot find exactly the least and greatest values the conditions here \
-                     allow"
-                        .to_string(),
-                    vec![
-                        format!("the constraints `{c}` hold in the scope"),
-                        format!(
-                            "they join their {names} names both ways in more than one cycle, \
-                             and {} of them have holes: {}; the ends of such names are found \
-                             exactly when at most two of them have holes",
-                            holed.len(),
-                            holed.join(", ")
-                        ),
-                        format!(
-                            "the names of the constraints are narrowed one block at a time, and \
-                             their ends may be wider than the constraints make them; {SOUND}"
-                        ),
-                    ],
-                    Vec::new(),
-                );
             }
         };
         // A refused projection or test keeps sets for its variables, and its cause ends by
@@ -15504,8 +15459,12 @@ impl Scope {
             // past the one the potential holds with, as when a test leaves a hole in it
             // ([`Scope::raise`]). A raise that fails leaves its name past its gap, so its tree
             // is projected by the ends of its names, which do not read the gaps, whatever the
-            // other raises do: the tree's raises stop there, and are made only if the ends
-            // refuse the tree ([`Scope::by_holes`]). Otherwise `k` holes in one test on a cycle
+            // other raises do: the tree's raises stop there ([`Scope::by_holes`]). These are the
+            // raises of the fresh seeds, made once here before any projection; the retry of the
+            // raises after ends that refused the tree went with that refusal (ST-band-quintic,
+            // wt/b22-band1 3c61f4108), and the ends now refuse no tree of differences. Whether
+            // this batch reads the same as the ends would from cached potentials is not proved.
+            // Otherwise `k` holes in one test on a cycle
             // of `k` names with no slack each lowered the potential round the cycle before
             // failing, Θ(k²).
             // Proof that this case is now O(k log k) a test: a raise works on a copy of the
@@ -15580,11 +15539,6 @@ impl Scope {
         // block by block, in this projection.
         let mut solved: BTreeSet<BlockId> = BTreeSet::new();
         let mut blockwise: BTreeSet<BlockId> = BTreeSet::new();
-        // The trees whose ends were refused and whose gaps were then raised, to be projected by
-        // shortest paths, with their names, whose record in the relation is brought up to date
-        // after the worklist, which reads the relation ([`Scope::sync_gap`]).
-        let mut paths: BTreeSet<BlockId> = BTreeSet::new();
-        let mut raised: Vec<Arc<str>> = Vec::new();
         while let Some(b) = work.pop_front() {
             queued.remove(&b);
             let from = cause.remove(&b).unwrap_or_default();
@@ -15600,19 +15554,24 @@ impl Scope {
             // names ([`Scope::by_holes`]), once, and again for each move that reaches it from
             // another tree. Otherwise, or when neither can be done, block by block as below.
             //
-            // Complexity tradeoff: a tree with a class in a name, or one whose ends the method
-            // refuses (holes in three names or more of a part that its constraints join both
-            // ways in more than one cycle, [`holes`]), is projected block by block, from the
-            // blocks due, with the whole tree projected at an echo. Why: shortest paths over
-            // the names' hulls are then not the projection (`x, z` in `[w, w + 1]`,
-            // `x <= z <= x + 1`, `x != 5`, `z != 6` leave out `w = 5`), and no exact method in
-            // O(N log N) is known for such parts; the holes of one name then leave holes in the
-            // others. Trigger: tests that each leave a hole in another name of such a part,
-            // with `if`s joined between them: the band `10 <= x_i - x_(i+1) <= 11`,
-            // `x_i != 10 (k - i) + 5` and rungs `x_i - x_(i+2) >= 20` read 138 M, 4,115 M and
-            // 110,524 M instructions at k = 5, 10 and 20, as on the code before ST-holes-moves.
-            // The ends solve the whole tree at each projection that reaches it, in O(N log N)
-            // for its `N` names, conjuncts and pieces, and tests that leave a hole in one more
+            // Complexity tradeoff: a tree with a class in a name is projected block by block,
+            // from the blocks due, with the whole tree projected at an echo. A tree whose ends
+            // are found ([`Scope::by_holes`], exact for every tree of differences since
+            // ST-band-quintic D1) still has each block due projected, for the values between
+            // the ends: shortest paths over the names' hulls are not the projection (`x, z` in
+            // `[w, w + 1]`, `x <= z <= x + 1`, `x != 5`, `z != 6` leave out `w = 5`), and the
+            // ends alone are not either (`xst::holes::two_cycles_through_three_names_with_
+            // holes_have_exact_sets`: values inside the ends with no point).
+            // The ends solve the whole tree at each projection that reaches it, in
+            // O((h + 1) N log N) for its `N` names, conjuncts and pieces and `h` holes in names
+            // on parts of more than one cycle (`holes::Run::snaps`, bound P3 of
+            // XR-st-band-quintic), plus, where the potential does not hold, the cost of the
+            // label correction of the hull, and the due block is then projected in full. On the
+            // band of `linked::band_holes_run` the members visited and the inputs solved grow
+            // as O(k) per fact, O(k²) over `k` facts (measured: 59.2 and 63.7 with chords at 16
+            // to 128, COUNTS-band1.md and COUNTS-band2.md; the counts are measured growth, not a
+            // proof of the total Presburger work per fact); the incremental ends
+            // (ST-band-quintic D2) are not built yet. Tests that leave a hole in one more
             // name of a tree each, one at a time, also raise the potential of the names below
             // it ([`Scope::raise`]): `k` such tests on a tree of `k` names cost O(k² log k), as
             // the chain and the grid of `linked` measure, and so do `k` holes in one test on a
@@ -15622,13 +15581,12 @@ impl Scope {
                 !every && !blocks.is_apart(b) && !fallen.contains_key(&t) && !holed.contains(&t);
             let ends = !blocks.is_apart(b)
                 && !blockwise.contains(&t)
-                && !paths.contains(&t)
                 && blocks
                     .gaps(t)
                     .is_some_and(|k| k > 0 || fallen.contains_key(&t) || holed.contains(&t));
             let mut kept = false;
             if ends && !(solved.contains(&t) && from.is_empty()) {
-                match self.by_holes(&relation, t, b, shortest) {
+                match self.by_holes(&relation, t, b) {
                     Ends::Done(Shortest::Moved(ns)) => {
                         solved.insert(t);
                         if !self.lazy {
@@ -15654,10 +15612,6 @@ impl Scope {
                         self.relation = relation;
                         return;
                     }
-                    Ends::Paths(ns) => {
-                        paths.insert(t);
-                        raised.extend(ns);
-                    }
                     Ends::Blockwise => {
                         blockwise.insert(t);
                     }
@@ -15671,7 +15625,7 @@ impl Scope {
                 // own projection once, as for a tree off the ends.
                 kept = true;
             }
-            if !kept && shortest && (blocks.gaps(t) == Some(0) || paths.contains(&t)) {
+            if !kept && shortest && blocks.gaps(t) == Some(0) {
                 let mut at = fresh.remove(&t).unwrap_or_default();
                 at.names.extend(from.iter().cloned());
                 at.changed.extend(from.iter().cloned());
@@ -15799,9 +15753,6 @@ impl Scope {
                 whole_trees.insert(blocks.tree(b));
             }
         }
-        for n in &raised {
-            self.sync_gap(&mut relation, n);
-        }
         for (t, b) in fallen {
             if let Some(b) = b {
                 self.reseed(&mut relation, t, b);
@@ -15817,16 +15768,13 @@ impl Scope {
     /// integers. The ends are exact; the values between them are exact for a name on no cycle
     /// of constraints with a name with holes, and may have no point otherwise.
     ///
-    /// When the method refuses the tree and `paths` is set, the gap of each of its names is
-    /// raised to its holes ([`Scope::raise`]); when every raise holds, shortest paths project
-    /// the tree exactly ([`Ends::Paths`]), as they did before the projection skipped the
-    /// raises ([`Scope::project`]). Otherwise the refusal is recorded as a warning of its own
-    /// ([`Cause::Holes`]), and the tree is projected block by block, as when a name has a
-    /// class.
+    /// No tree is refused (ST-band-quintic D1): a part with holes in three names or more on more
+    /// than one cycle is solved by snap-Dijkstra ([`holes`], `Run::snaps`).
     ///
-    /// In O(N log N) for the tree's names, conjuncts and the pieces of its names' integers, as
-    /// [`holes`]: the conjuncts are found by a search from the block's names with a visited set.
-    /// A refused tree's raises cost as [`Scope::raise`] states.
+    /// In O((h + 1) N log N) for the tree's names, conjuncts and the pieces of its names'
+    /// integers `N` and the holes `h` of its parts of more than one cycle with three holed
+    /// names or more, as [`holes`] (`Run::snaps`, bound P3): the conjuncts are found by a
+    /// search from the block's names with a visited set.
     ///
     /// Proof of the ends: the graph holds every conjunct of tree `t` (the search takes each
     /// conjunct of `t` at a name it reached, and `t` is connected through its names), each a
@@ -15854,7 +15802,7 @@ impl Scope {
     /// O(N log N) of [`holes`] holds only where the potential holds at each component of more
     /// than one cycle; elsewhere its label correcting is O(n m) (its `Run::hull` tradeoff, as
     /// after `Scope::reseed`; [`holes::solve`] says so).
-    fn by_holes(&mut self, relation: &Conjuncts, t: BlockId, b: BlockId, paths: bool) -> Ends {
+    fn by_holes(&mut self, relation: &Conjuncts, t: BlockId, b: BlockId) -> Ends {
         let blocks = relation.blocks();
         // The one caller, [`Scope::project`], calls this only when `blocks.gaps(t)` is `Some`:
         // `t` is a tree of the forest, each of whose conjuncts has [`conjuncts::edges`]. The
@@ -15892,17 +15840,13 @@ impl Scope {
         let mut lo: Vec<Option<Int>> = vec![None; names.len()];
         let mut hi: Vec<Option<Int>> = vec![None; names.len()];
         let mut edges: Vec<(usize, usize, Int)> = Vec::new();
-        let mut of: Vec<&Arc<Formula>> = Vec::new();
         for g in &tree {
             let Some((e, back)) = conjuncts::edges(g) else {
                 return Ends::Blockwise;
             };
             for e in std::iter::once(e).chain(back) {
                 match (e.from.as_ref().and_then(at), e.to.as_ref().and_then(at)) {
-                    (Some(u), Some(v)) => {
-                        edges.push((u, v, e.weight));
-                        of.push(g);
-                    }
+                    (Some(u), Some(v)) => edges.push((u, v, e.weight)),
                     // `x_v <= w`.
                     (None, Some(v)) => {
                         if hi[v].as_ref().is_none_or(|h| e.weight < *h) {
@@ -15949,43 +15893,6 @@ impl Scope {
         };
         match holes::solve(&graph) {
             holes::Outcome::Empty => Ends::Done(Shortest::Bottom(names[0].clone())),
-            holes::Outcome::Refused { names: part, holed } => {
-                // A raise that fails leaves its name past its gap, and the tree off shortest
-                // paths whatever the others do, so the raises stop there.
-                if paths && self.raise_all(relation, t, &names) {
-                    return Ends::Paths(names);
-                }
-                // The constraints between the names of the part, as written.
-                let inside: BTreeSet<usize> = part.iter().copied().collect();
-                let gs: BTreeSet<&Arc<Formula>> = graph
-                    .edges
-                    .iter()
-                    .zip(&of)
-                    .filter(|((u, v, _), _)| inside.contains(u) && inside.contains(v))
-                    .map(|(_, g)| *g)
-                    .collect();
-                let between = Formula::and(gs.into_iter().map(|g| (**g).clone()).collect());
-                let constraint: Arc<str> = between.written(written_name).into();
-                let on = mentioned_by(&between, syms_of(&between));
-                let mut holed: Vec<Arc<str>> = holed
-                    .iter()
-                    .map(|&i| written_name(&names[i]).into())
-                    .collect();
-                holed.sort_unstable();
-                self.refuse(
-                    Refused {
-                        constraint,
-                        asked: Asked::Projection,
-                        cause: Cause::Holes {
-                            holed: holed.into(),
-                            names: part.len(),
-                        },
-                    },
-                    Kept::default(),
-                    &on,
-                );
-                Ends::Blockwise
-            }
             holes::Outcome::Kept(sets) => {
                 let mut moved = Vec::new();
                 // Complexity tradeoff: naive version, each name's product written through
@@ -30287,10 +30194,7 @@ mod tests {
         let r = Refused {
             constraint: Arc::from("n * n >= 1"),
             asked: Asked::Projection,
-            cause: Cause::Holes {
-                holed: Arc::from([n.clone()]),
-                names: 1,
-            },
+            cause: Cause::Solver(presburger::Refusal::Growth),
         };
         s.refuse(r.clone(), Kept::default(), std::slice::from_ref(&n));
         assert_eq!(s.refused_on(["n"]).len(), 1);

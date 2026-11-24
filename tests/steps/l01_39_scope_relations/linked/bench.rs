@@ -424,6 +424,72 @@ fn holes_piled_in_the_names_of_a_chain_take_quadratic_time() {
     });
 }
 
+/// The band of ST-band-quintic ([`band_holes_run`]): its ends found by snap-Dijkstra
+/// (`Scope::by_holes`, `holes::Run::snaps`) and each block due projected for the values between
+/// them (D3). Red controls: 45.6 at 16 to 128 on a54e9543a (instructions, measured 2026-11-23;
+/// refused, narrowed by the hulls, inexact) and 60.4 on main ca8d53547 (64.7 with chords; block
+/// by block, measured 2026-11-23); before ST-band-quintic, block by block at k = 5, 10 and 20,
+/// 138 M, 4,115 M and 110,524 M instructions, about k^5 (COMPLEXITY.md S25).
+#[test]
+fn a_band_with_holes_and_joined_rungs_takes_near_linear_time() {
+    let p = Premises::new();
+    scaling::check("a band with holes and joined rungs", 16, |k| {
+        std::hint::black_box(band_holes_run(k, &p));
+    });
+}
+
+/// The band with its rungs as plain conjuncts and chords `x_i - x_(i+3) >= 30`
+/// ([`band_chords_run`], XR-st-band-quintic D6). Its chords are implied by the steps; a chord
+/// that is not is tested in `linked` against enumeration (row XR-st-band-quintic-rtscc).
+#[test]
+fn a_band_with_chords_takes_near_linear_time() {
+    let p = Premises::new();
+    scaling::check("a band with holes, rungs and chords", 16, |k| {
+        std::hint::black_box(band_chords_run(k, &p));
+    });
+}
+
+/// The moving top ([`moving_top_run`], `w = k / 4` holes): each hole moves the greatest value
+/// of all `k + 1` names, so the ends change about `k² / 4` times and the work is of order 2 by
+/// its output (about 64 at 8 times the size), not held to the near-linear limit (XR-st-band-
+/// quintic D6: the lower bound is the output, not a refusal).
+#[test]
+fn a_moving_top_takes_time_of_order_its_end_changes() {
+    let p = Premises::new();
+    scaling::check_order("a moving top, by the length of its chain", 16, 2, |k| {
+        std::hint::black_box(moving_top_run(k, k / 4, &p));
+    });
+}
+
+/// The moving top with three holes inside the chain ([`holed_moving_top_run`]), so that its
+/// ends go through `Scope::by_holes` (XR-st-band-quintic r2, Gemini finding 2); of order 2 by
+/// its output, as [`a_moving_top_takes_time_of_order_its_end_changes`].
+#[test]
+fn a_holed_moving_top_takes_time_of_order_its_end_changes() {
+    let p = Premises::new();
+    scaling::check_order(
+        "a holed moving top, by the length of its chain",
+        16,
+        2,
+        |k| {
+            std::hint::black_box(holed_moving_top_run(k, k / 4, &p));
+        },
+    );
+}
+
+/// Holes inside `x_0` that move no other name ([`interior_holes_run`], `w = k / 4` holes;
+/// XR-st-band-quintic r2, Claude finding 2): the output is the `w` holes, so a method that
+/// reads the whole chain at each hole costs about `k w` and fails the near-linear limit. Model
+/// of method (T): 8.00 at 8 times the size, and 57.15 for the re-reading control (computed in
+/// the cross-review's model, r2/claude/model/full.rs).
+#[test]
+fn interior_holes_take_near_linear_time() {
+    let p = Premises::new();
+    scaling::check("holes inside the first name of a chain", 16, |k| {
+        std::hint::black_box(interior_holes_run(k, k / 4, &p));
+    });
+}
+
 /// Holes in every name of a grid of difference constraints: each hole moves about `m - 1`
 /// names of the potential, so `m^3`, `n^1.5` in the `n = m^2` names (order 3 in `m`). Open as
 /// item ST-holes-moves (COMPLEXITY.md S25): the names a hole moves are those within its shift
@@ -504,12 +570,11 @@ fn disjunctions_over_four_names_take_time_near_their_number() {
 /// A binary tree of `k` names, each `x_i` tied to its parent `x_((i-1)/2)` by
 /// `1 <= x_i - x_p <= 3`, one block each, which shares its parent's name with the block above
 /// it; every name a hole one above its least value. `Scope::by_holes` is asked for the ends
-/// once, over the whole tree, and refuses (more than two of the joined names have holes), with
-/// one refusal that names all `k` names; each block is then projected once
-/// (`Scope::project`, item FAIL-linked-scratch-misses-hole). The work stays near the number of
-/// blocks (row BENCH-scope-project-due-blocks): the refusal's list of holed names was copied
-/// once for each name it is filed under, Theta(k²) bytes, 11.9 times the bytes at 8 times
-/// the names, until the list was shared (`Cause::Holes`).
+/// once, over the whole tree; each block is then projected once (`Scope::project`, item
+/// FAIL-linked-scratch-misses-hole). The work stays near the number of blocks (row
+/// BENCH-scope-project-due-blocks). (Before ST-band-quintic D1 the tree was refused, and the
+/// refusal's list of holed names, copied once for each name it was filed under, cost
+/// Theta(k²) bytes until it was shared.)
 #[test]
 fn a_tree_of_blocks_with_holes_projected_from_scratch_takes_time_near_its_size() {
     let p = Premises::new();

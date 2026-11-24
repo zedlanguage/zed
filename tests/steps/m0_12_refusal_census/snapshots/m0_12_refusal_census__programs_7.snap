@@ -3,7 +3,6 @@ source: tests/steps/m0_12_refusal_census/mod.rs
 expression: programs_piece(7)
 ---
 Growth: 642
-Holes: 2
 
 l01_29_diagnostics#28859ee2	2:165	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_29_diagnostics#28859ee2	4:12	warning	Growth	Cannot find exactly which values meet the conditions here.
@@ -647,5 +646,3 @@ l01_29_diagnostics#28859ee2	324:8509	warning	Growth	Cannot find exactly which va
 l01_29_diagnostics#28859ee2	324:8521	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_29_diagnostics#28859ee2	324:8533	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_38_presburger::checker::a_question_refused_through_a_call_by_a_map_of_its_parameters_names_its_parameters#263621dc	1:1	rejected	Growth	zedc could not decide whether the condition of `ok`, written `4 * (2 * x) - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * (2 * x) - 10 * y - 11 * z - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y - z + 31 >= 0`, can be true for whole-number values of `x`, `y`, `z`, `w`, which it works out for every test function: to find whole numbers that meet these conditions, the checker removes one variable at a time, putting in place of the conditions on it conditions on the variables left. Here four variables or more are left, and removing any one of them would leave more conditions than there are now, so the work could grow without end. The checker stopped there, with no values found and none ruled out.
-l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#f46fb061	1:200	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
-l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#f46fb061	1:210	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.

@@ -11,7 +11,7 @@ use zed_tests::instances::Rng;
 use zed_tests::scaling;
 use zedc::store::cell::Premises;
 use zedc::store::conjuncts::{Blocks, Conjuncts, edges, names};
-use zedc::store::interval::End;
+use zedc::store::interval::{End, IntervalSet};
 use zedc::store::presburger::{Atom, Con, Factor, Formula, Lin, Rel, Shared};
 use zedc::store::product::{Product, Scope};
 
@@ -2400,6 +2400,370 @@ fn piled_holes_run(k: usize, p: &Premises) -> Scope {
             s.assume(t, true, p)
         }
     })
+}
+
+/// The band of ST-band-quintic at size `k`: names `x_0..=x_k`, `x_i` in `10 (k - i) ..= 10 (k -
+/// i) + 9` and `10 <= x_i - x_(i+1) <= 11`, then for each `i < k - 1` a hole
+/// `x_i != 10 (k - i) + 5` that holds and a rung `x_i - x_(i+2) >= 20` as an `if` whose arms
+/// join. The path alone, each step `10 <= x_i - x_(i+1) <= 11` two opposite edges, already joins
+/// its names both ways in more than one directed cycle (one directed cycle per step: one
+/// strongly connected component of the graph of edges), and the holes pile up in three names or
+/// more, so the ends are found by snap-Dijkstra (`holes::Run::snaps`). Scope's blocks are the
+/// biconnected components of the graph of conjuncts and names, not these: on the path alone each
+/// name between two steps cuts it, and the rungs `x_i - x_(i+2)`, when kept, merge the blocks
+/// into one that grows with `k`.
+fn band_holes_run(k: usize, p: &Premises) -> Scope {
+    let n = named(k + 1, "x");
+    let base = |i: usize| (10 * (k - i)) as i64;
+    let s = (0..=k).fold(ints(&n), |s, i| {
+        s.assume(&prim(Prim::Ge, var(&n[i]), int(base(i))), true, p)
+            .assume(&prim(Prim::Le, var(&n[i]), int(base(i) + 9)), true, p)
+    });
+    let s = (0..k).fold(s, |s, i| {
+        s.assume(&ge(&n[i], &n[i + 1], 10), true, p)
+            .assume(&ge(&n[i + 1], &n[i], -11), true, p)
+    });
+    (0..k - 1).fold(s, |s, i| {
+        let s = s.assume(&prim(Prim::Ne, var(&n[i]), int(base(i) + 5)), true, p);
+        let t = ge(&n[i], &n[i + 2], 20);
+        let mut j = s
+            .assume_case(&t, true, p)
+            .join(&s.assume_case(&t, false, p));
+        j.reduce();
+        j
+    })
+}
+
+/// The band of [`band_holes_run`] with its rungs `x_i - x_(i+2) >= 20` assumed as plain
+/// conjuncts, not joined, and chords `x_i - x_(i+3) >= 30` (XR-st-band-quintic r1, Claude Q3):
+/// both are implied by the steps, so each name keeps the band's closed form.
+fn band_chords_run(k: usize, p: &Premises) -> Scope {
+    let n = named(k + 1, "x");
+    let base = |i: usize| (10 * (k - i)) as i64;
+    let s = (0..=k).fold(ints(&n), |s, i| {
+        s.assume(&prim(Prim::Ge, var(&n[i]), int(base(i))), true, p)
+            .assume(&prim(Prim::Le, var(&n[i]), int(base(i) + 9)), true, p)
+    });
+    let s = (0..k).fold(s, |s, i| {
+        s.assume(&ge(&n[i], &n[i + 1], 10), true, p)
+            .assume(&ge(&n[i + 1], &n[i], -11), true, p)
+    });
+    (0..k - 1).fold(s, |s, i| {
+        let s = s
+            .assume(&prim(Prim::Ne, var(&n[i]), int(base(i) + 5)), true, p)
+            .assume(&ge(&n[i], &n[i + 2], 20), true, p);
+        if i + 3 <= k {
+            s.assume(&ge(&n[i], &n[i + 3], 30), true, p)
+        } else {
+            s
+        }
+    })
+}
+
+/// A chain whose top moves at each fact (XR-st-band-quintic r1, Claude's `moving_top`): names
+/// `x_0..=x_k`, `x_i` in `[b_i, b_i + W - 1]` with `b_i = W (k - i)`, `W = w + 10`, and
+/// `W <= x_i - x_(i+1) <= W + 1`, then `w` holes taken off the top of `x_0` one at a time, each
+/// of which lowers the greatest value of every name. The ends change `w (k + 1)` times in all,
+/// so any exact method does that much work: the output bounds the cost from below.
+fn moving_top_run(k: usize, w: usize, p: &Premises) -> Scope {
+    let width = (w + 10) as i64;
+    let s = top_chain(k, width, p);
+    let n = named(k + 1, "x");
+    (0..w as i64).fold(s, |s, j| {
+        s.assume(
+            &prim(Prim::Ne, var(&n[0]), int(width * k as i64 + width - 1 - j)),
+            true,
+            p,
+        )
+    })
+}
+
+/// [`moving_top_run`] with three holes inside the chain first, `x_i != b_i + 1` for `i < 3`
+/// (`k >= 2`), so that its names are holed and the ends are found by `Scope::by_holes` rather
+/// than by shortest paths alone (XR-st-band-quintic r2, Gemini finding 2). Each of the three
+/// holes stays at its own name: a value `b_i + c` of a neighbor is met at offset `c` or `c + 1`
+/// of `x_i`, one of which is not 1 while the top is at least 3.
+fn holed_moving_top_run(k: usize, w: usize, p: &Premises) -> Scope {
+    let width = (w + 10) as i64;
+    let n = named(k + 1, "x");
+    let s = (0..3).fold(top_chain(k, width, p), |s, i| {
+        s.assume(
+            &prim(Prim::Ne, var(&n[i]), int(width * (k - i) as i64 + 1)),
+            true,
+            p,
+        )
+    });
+    (0..w as i64).fold(s, |s, j| {
+        s.assume(
+            &prim(Prim::Ne, var(&n[0]), int(width * k as i64 + width - 1 - j)),
+            true,
+            p,
+        )
+    })
+}
+
+/// Holes inside `x_0` that move no other name (XR-st-band-quintic r2, Claude finding 2): the
+/// chain of [`top_chain`] at width `2 w + 10`, then `x_0 != b_0 + 1 + 2 j` for `j < w`. Each
+/// value `b_i + c` of `x_1` is met at offset `c` or `c + 1` of `x_0`, one of them even and so
+/// never a hole, so the other names keep their whole ranges: the output is the `w` holes, and
+/// a method that reads the whole chain at each hole costs about `k w`.
+fn interior_holes_run(k: usize, w: usize, p: &Premises) -> Scope {
+    let width = (2 * w + 10) as i64;
+    let n = named(k + 1, "x");
+    (0..w as i64).fold(top_chain(k, width, p), |s, j| {
+        s.assume(
+            &prim(Prim::Ne, var(&n[0]), int(width * k as i64 + 1 + 2 * j)),
+            true,
+            p,
+        )
+    })
+}
+
+/// Names `x_0..=x_k`, `x_i` in `[b_i, b_i + width - 1]` with `b_i = width (k - i)`, and
+/// `width <= x_i - x_(i+1) <= width + 1`: the chain of [`moving_top_run`],
+/// [`holed_moving_top_run`] and [`interior_holes_run`].
+fn top_chain(k: usize, width: i64, p: &Premises) -> Scope {
+    let n = named(k + 1, "x");
+    let base = |i: usize| width * (k - i) as i64;
+    let s = (0..=k).fold(ints(&n), |s, i| {
+        s.assume(&prim(Prim::Ge, var(&n[i]), int(base(i))), true, p)
+            .assume(
+                &prim(Prim::Le, var(&n[i]), int(base(i) + width - 1)),
+                true,
+                p,
+            )
+    });
+    (0..k).fold(s, |s, i| {
+        s.assume(&ge(&n[i], &n[i + 1], width), true, p).assume(
+            &ge(&n[i + 1], &n[i], -width - 1),
+            true,
+            p,
+        )
+    })
+}
+
+/// The closed form of the band of [`band_holes_run`] at name `i`: `[b, b + 9]` less `b + 5` for
+/// `i < k - 1`, `[b, b + 9]` otherwise, `b = 10 (k - i)`.
+fn band_closed_form(k: usize, i: usize) -> IntervalSet {
+    let b = (10 * (k - i)) as i64;
+    let all = IntervalSet::of(b, b + 9);
+    if i < k - 1 {
+        all.minus(&IntervalSet::single(b + 5))
+    } else {
+        all
+    }
+}
+
+/// The band with chords keeps the band's closed form
+/// ([`a_band_with_holes_and_joined_rungs_is_exact`]), and the moving top lowers every name's
+/// greatest value by one per hole: after `j` holes each name `x_i` is exactly
+/// `[b, b + width - 1 - j]`, `b = width (k - i)`, `width = j + 10` (all names at one offset
+/// `c` from their bases meet every step, and the step `x_i - x_(i+1) >= width` carries the top
+/// of `x_0` down the chain); with the three holes of [`holed_moving_top_run`] the same less
+/// `b + 1` for `i < 3`. Interior holes ([`interior_holes_run`]) leave `x_0` less its holes and
+/// every other name whole. The whole set is compared, so a lost value inside it fails too
+/// (XR-st-band-quintic r2, D4).
+#[test]
+fn a_band_with_chords_and_a_moving_top_are_exact() {
+    let p = Premises::new();
+    for k in [5, 10] {
+        let s = band_chords_run(k, &p);
+        let n = named(k + 1, "x");
+        for (i, x) in n.iter().enumerate() {
+            let ints = s.get(x).ints().clone();
+            assert_eq!(ints, band_closed_form(k, i), "chords: {x} at k = {k}");
+        }
+        let w = 4;
+        for j in 0..=w {
+            // The width of the runs with `j` holes ([`moving_top_run`]).
+            let width = (j + 10) as i64;
+            let s = moving_top_run(k, j, &p);
+            let holed = holed_moving_top_run(k, j, &p);
+            for (i, x) in n.iter().enumerate() {
+                let b = width * (k - i) as i64;
+                let want = IntervalSet::of(b, b + width - 1 - j as i64);
+                let ints = s.get(x).ints().clone();
+                assert_eq!(ints, want, "moving top: {x} at k = {k} after {j} holes");
+                let want = if i < 3 {
+                    want.minus(&IntervalSet::single(b + 1))
+                } else {
+                    want
+                };
+                let ints = holed.get(x).ints().clone();
+                assert_eq!(
+                    ints, want,
+                    "holed moving top: {x} at k = {k} after {j} holes"
+                );
+            }
+        }
+        let width = (2 * w + 10) as i64;
+        let s = interior_holes_run(k, w, &p);
+        for (i, x) in n.iter().enumerate() {
+            let b = width * (k - i) as i64;
+            let holes = (0..w as i64).map(|j| IntervalSet::single(b + 1 + 2 * j));
+            let want = if i == 0 {
+                holes.fold(IntervalSet::of(b, b + width - 1), |a, h| a.minus(&h))
+            } else {
+                IntervalSet::of(b, b + width - 1)
+            };
+            assert_eq!(
+                s.get(x).ints().clone(),
+                want,
+                "interior holes: {x} at k = {k}"
+            );
+        }
+    }
+}
+
+/// The sets of each name of `x_0..=x_k` by enumeration: `x_i` in `dom[i]`, each step
+/// `lo <= x_i - x_(i+1) <= hi`, and each `(i, j, lo, hi)` of `spans` holding
+/// `lo <= x_i - x_j <= hi`. Names are chosen from `x_0` down, the step bounding each next name to
+/// `hi - lo + 1` values, so the search is `|dom[0]| (hi - lo + 1)^k` leaves at most.
+fn chain_sets_by_enumeration(
+    dom: &[IntervalSet],
+    step: (i64, i64),
+    spans: &[(usize, usize, i64, i64)],
+) -> Vec<IntervalSet> {
+    fn go(
+        dom: &[IntervalSet],
+        step: (i64, i64),
+        spans: &[(usize, usize, i64, i64)],
+        at: &mut Vec<i64>,
+        out: &mut Vec<BTreeSet<i64>>,
+    ) {
+        let i = at.len();
+        if i == dom.len() {
+            if spans
+                .iter()
+                .all(|&(a, b, lo, hi)| (lo..=hi).contains(&(at[a] - at[b])))
+            {
+                for (o, &v) in out.iter_mut().zip(at.iter()) {
+                    o.insert(v);
+                }
+            }
+            return;
+        }
+        let (lo, hi) = match i {
+            0 => {
+                let (Some((lo, _)), Some((_, hi))) = (dom[0].first(), dom[0].last()) else {
+                    return;
+                };
+                (lo.to_i64().expect("finite"), hi.to_i64().expect("finite"))
+            }
+            _ => (at[i - 1] - step.1, at[i - 1] - step.0),
+        };
+        for v in lo..=hi {
+            if dom[i].contains(v) {
+                at.push(v);
+                go(dom, step, spans, at, out);
+                at.pop();
+            }
+        }
+    }
+    let mut out = vec![BTreeSet::new(); dom.len()];
+    go(dom, step, spans, &mut Vec::new(), &mut out);
+    out.iter()
+        .map(|vs| {
+            vs.iter().fold(IntervalSet::empty(), |s, &v| {
+                s.join(&IntervalSet::single(v))
+            })
+        })
+        .collect()
+}
+
+/// A chord that is not implied: the band of [`band_holes_run`] with its rungs as plain
+/// conjuncts and, for each `i`, `x_i - x_(i+3) >= 31` or, in a second run, `<= 30`, where the
+/// steps alone give `[30, 33]`. Write `x_i = b_i + c_i`, `b_i = 10 (k - i)`: the steps keep
+/// `c_i - c_(i+1)` in `[0, 1]`. Each chord cuts values the steps keep: `>= 31` needs
+/// `c_i >= c_(i+3) + 1`, so `x_i = b_i` goes; `<= 30` needs `c_i = c_(i+1) = .. = c_(i+3)`, so
+/// the hole of `x_i` at `c = 5` reaches `x_(i+3)`, which for `i + 3 >= k - 1` has no hole of its
+/// own. A scope that drops the chord, or keeps only its hull, fails against the sets by
+/// enumeration, and the test checks that the chords do cut (XR-st-band-quintic r2, D4, Codex
+/// finding 7; such chords make the graph of edges a band of strongly connected parts, row
+/// XR-st-band-quintic-rtscc).
+#[test]
+fn a_band_with_chords_not_implied_keeps_the_sets_of_enumeration() {
+    let p = Premises::new();
+    for k in [3, 4] {
+        for at_least in [true, false] {
+            let n = named(k + 1, "x");
+            let base = |i: usize| (10 * (k - i)) as i64;
+            let mut s = ints(&n);
+            let mut dom: Vec<IntervalSet> = Vec::new();
+            for (i, name) in n.iter().enumerate() {
+                s = s
+                    .assume(&prim(Prim::Ge, var(name), int(base(i))), true, &p)
+                    .assume(&prim(Prim::Le, var(name), int(base(i) + 9)), true, &p);
+                dom.push(IntervalSet::of(base(i), base(i) + 9));
+            }
+            for i in 0..k {
+                s = s.assume(&ge(&n[i], &n[i + 1], 10), true, &p).assume(
+                    &ge(&n[i + 1], &n[i], -11),
+                    true,
+                    &p,
+                );
+            }
+            let mut spans: Vec<(usize, usize, i64, i64)> = Vec::new();
+            for i in 0..k - 1 {
+                s = s
+                    .assume(&prim(Prim::Ne, var(&n[i]), int(base(i) + 5)), true, &p)
+                    .assume(&ge(&n[i], &n[i + 2], 20), true, &p);
+                dom[i] = dom[i].minus(&IntervalSet::single(base(i) + 5));
+                spans.push((i, i + 2, 20, i64::MAX / 4));
+            }
+            for i in 0..k.saturating_sub(2) {
+                let (chord, span) = if at_least {
+                    (ge(&n[i], &n[i + 3], 31), (i, i + 3, 31, i64::MAX / 4))
+                } else {
+                    (ge(&n[i + 3], &n[i], -30), (i, i + 3, i64::MIN / 4, 30))
+                };
+                s = s.assume(&chord, true, &p);
+                spans.push(span);
+            }
+            let want = chain_sets_by_enumeration(&dom, (10, 11), &spans);
+            let plain: Vec<IntervalSet> =
+                chain_sets_by_enumeration(&dom, (10, 11), &spans[..k - 1]);
+            assert_ne!(
+                want, plain,
+                "the chords at k = {k} cut no value: not a test of them"
+            );
+            for (i, x) in n.iter().enumerate() {
+                let ints = s.get(x).ints().clone();
+                assert_eq!(ints, want[i], "{x} at k = {k}, chords >= 31: {at_least}");
+            }
+        }
+    }
+}
+
+/// The band of [`band_holes_run`] at `k = 5`, 10 and 20: no refusal, and each name keeps
+/// exactly its values in the closed form `x_i = [b, b + 9]` less `b + 5` for `i < k - 1`,
+/// `[b, b + 9]` otherwise, `b = 10 (k - i)`. Proof (cross-review XR-st-band-quintic r1, Claude
+/// Q3): `x_i = 10 (k - i) + c` with one constant `c != 5` meets every step and rung, so each
+/// value but `b + 5` is reached; for `c = 5` at a name `x_j` with no hole (`j >= k - 1`), the
+/// names before it take `c = 6`, each step falling by at most 1 so each difference stays in
+/// `[10, 11]`, and each rung holds as two steps sum to 20 or more. A hull narrowing also passes
+/// the sets (Claude's negative control); the refusal check is what fails before D1
+/// (a54e9543a). `bench::a_band_with_holes_and_joined_rungs_takes_near_linear_time` measures its
+/// cost.
+#[test]
+fn a_band_with_holes_and_joined_rungs_is_exact() {
+    for k in [5, 10, 20] {
+        check_band_holes(k);
+    }
+}
+
+fn check_band_holes(k: usize) {
+    let p = Premises::new();
+    let s = band_holes_run(k, &p);
+    let n = named(k + 1, "x");
+    assert!(
+        s.refused_on(n.iter().map(|x| &**x)).is_empty(),
+        "a refusal on the band at k = {k}"
+    );
+    for (i, x) in n.iter().enumerate() {
+        let ints = s.get(x).ints().clone();
+        assert_eq!(ints, band_closed_form(k, i), "{x} at k = {k}");
+    }
 }
 
 /// An `m` by `m` grid of names, each in its own ten values, each greater than the names right of

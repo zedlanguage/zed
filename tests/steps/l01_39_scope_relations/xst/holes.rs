@@ -937,15 +937,35 @@ fn a_chain_of_two_collective_examples_has_exact_sets() {
 /// test asked for a refusal (META4 result 1 refuses a component that is not one simple cycle
 /// with three names with holes); the scope now gives every name's exact set, in every
 /// rotation and as one conjunction, which P197 allows in place of a refusal
-/// (HOLES-exact-between).
+/// (HOLES-exact-between). Three negative controls the oracle ([`Inst::exact`]) must tell from
+/// the answer (XR-st-band-quintic r2 D4, Codex finding 6): the hulls alone, the unary domains
+/// only (the ranges less the holes, every edge dropped), and every fact but the last edge. The
+/// last edge is `x <= z + 1`, which no other edge implies (without it `z = 4, y = 5, x = 6`
+/// is a point); `x <= y + 1`, last in an earlier order, follows from `x <= z + 1` and
+/// `z <= y`, so dropping it left the sets as they were and that control could not fail.
 #[test]
 fn two_cycles_through_three_names_with_holes_have_exact_sets() {
     let inst = Inst {
         range: vec![(0, 6); 3],
         out: vec![vec![5], vec![4], vec![3]],
-        edges: vec![(1, 2, 0), (0, 1, 0), (2, 0, 1), (0, 2, 0), (1, 0, 1)],
+        edges: vec![(1, 2, 0), (0, 1, 0), (0, 2, 0), (1, 0, 1), (2, 0, 1)],
     };
     let want = inst.exact();
+    assert_ne!(inst.hull(), want, "negative control: the hulls");
+    let unary = Inst {
+        edges: vec![],
+        ..inst.clone()
+    };
+    assert_ne!(unary.exact(), want, "negative control: unary domains only");
+    let all_but_last = Inst {
+        edges: inst.edges[..inst.edges.len() - 1].to_vec(),
+        ..inst.clone()
+    };
+    assert_ne!(
+        all_but_last.exact(),
+        want,
+        "negative control: every fact but the last edge"
+    );
     let k = inst.tests().1.len();
     let mut runs: Vec<(String, zedc::store::product::Scope)> = rotations(k)
         .into_iter()
@@ -955,6 +975,71 @@ fn two_cycles_through_three_names_with_holes_have_exact_sets() {
     for (order, s) in runs {
         assert_eq!(inst.values(&s), want, "order {order}");
     }
+}
+
+/// The order-specific control of XR-st-band-quintic r2 (Codex finding 6): `x0, x1` in `0..=2`,
+/// first `x0 != 1`, then `x1 == x0` as the last facts. A scope that applies the earlier facts
+/// and drops the last edge keeps 1 in `x1`; the exact set is {0, 2}, in order and at once.
+#[test]
+fn a_hole_carried_by_the_last_edge_reaches_its_neighbor() {
+    let inst = Inst {
+        range: vec![(0, 2); 2],
+        out: vec![vec![1], vec![]],
+        edges: vec![(0, 1, 0), (1, 0, 0)],
+    };
+    let want = inst.exact();
+    assert_eq!(want, vec![vec![0, 2], vec![0, 2]], "the enumeration");
+    let all_but_last = Inst {
+        edges: inst.edges[..1].to_vec(),
+        ..inst.clone()
+    };
+    assert_ne!(
+        all_but_last.exact(),
+        want,
+        "negative control: the last edge dropped"
+    );
+    let order: Vec<usize> = (0..inst.tests().1.len()).collect();
+    assert_eq!(inst.values(&inst.in_order(&order)), want, "in order");
+    assert_eq!(inst.values(&inst.at_once()), want, "at once");
+}
+
+/// Three holed names on cycles whose snaps move all three greatest values below the hull
+/// (XR-st-band-quintic r2, Gemini finding 4): `x0` in `0..=7` less 6, `x1` in `0..=6` less 5,
+/// `x2` in `0..=5` less 4, with `x2 <= x1 <= x0 <= x2 + 1` and `x0 <= x1 + 1`. Without the
+/// holes the greatest values are (6, 6, 5); with them (4, 4, 3): `x2 = 5` needs `x0 = 5` and so
+/// `x1 = 5`, a hole. A method that keeps the hull's ends fails here, as does one that drops the
+/// edges (the control "unary domains only").
+#[test]
+fn three_holes_on_cycles_move_all_three_greatest_values() {
+    let inst = Inst {
+        range: vec![(0, 7), (0, 6), (0, 5)],
+        out: vec![vec![6], vec![5], vec![4]],
+        edges: vec![(1, 2, 0), (0, 1, 0), (2, 0, 1), (1, 0, 1)],
+    };
+    let want = inst.exact();
+    let upto = |g: i64| (0..=g).collect::<Vec<i64>>();
+    assert_eq!(want, vec![upto(4), upto(4), upto(3)], "the enumeration");
+    let hull = Inst {
+        out: vec![vec![]; 3],
+        ..inst.clone()
+    }
+    .exact();
+    for (i, (h, e)) in hull.iter().zip(&want).enumerate() {
+        assert!(
+            e.last() < h.last(),
+            "control: x{i} keeps its greatest value of the hull"
+        );
+    }
+    let unary = Inst {
+        edges: vec![],
+        ..inst.clone()
+    };
+    assert_ne!(unary.exact(), want, "control: unary domains only");
+    let order: Vec<usize> = (0..inst.tests().1.len()).collect();
+    assert_eq!(inst.values(&inst.in_order(&order)), want, "in order");
+    let rev: Vec<usize> = order.iter().rev().copied().collect();
+    assert_eq!(inst.values(&inst.in_order(&rev)), want, "in reverse order");
+    assert_eq!(inst.values(&inst.at_once()), want, "at once");
 }
 
 mod bench;

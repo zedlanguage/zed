@@ -1,8 +1,10 @@
 //! The ends of names under difference constraints whose names have holes (item ST-holes-moves,
 //! cross-review xst round 4, result 1): each name's least and greatest value over the integer
-//! points of the constraints, exactly, in O(N log N) in the names, edges and pieces `N` where
-//! the potential given holds at each component of more than one cycle, and O(n m) at worst
-//! on such a component where it does not ([`solve`]).
+//! points of the constraints, exactly, in O((h + 1) N log N) in the names, edges and pieces `N`
+//! and the holes `h` of the components of more than one cycle with three holed names or more
+//! ([`Run::snaps`], bound P3), O(N log N) on every other component, where the potential given
+//! holds at each component of more than one cycle, and O(n m) at worst on such a component
+//! where it does not ([`solve`]).
 //!
 //! The constraints are edges `x_v <= x_u + w` between names, each name in a union of intervals.
 //! The greatest point is found by the strongly connected components of the edges, in
@@ -19,7 +21,9 @@
 //! - a component of more cycles with at most two names with holes is contracted onto those
 //!   names by shortest paths through the others (CT), which leaves a cycle of two names, or one
 //!   name, solved as above;
-//! - any other component is refused, by the graph and which names have holes alone.
+//! - any other component, from its greatest point over the names' hulls, by Dijkstra that
+//!   takes each name down to its integers as it goes (snap-Dijkstra, [`Run::snaps`]), in
+//!   O((h + 1)(n + m) log n) for its `h` holes.
 //!
 //! The least point is the greatest of the system negated. Every point lies between the two,
 //! and each name takes its least and greatest values at them, so its values are its integers
@@ -70,20 +74,14 @@ pub(crate) enum Outcome {
     Kept(Vec<Pieces>),
     /// No point.
     Empty,
-    /// A component of two names or more with holes in `holed` of them that is not one cycle
-    /// and has three or more, as indices of the names it holds.
-    Refused {
-        /// Every name of the component.
-        names: Vec<usize>,
-        /// Its names with holes.
-        holed: Vec<usize>,
-    },
 }
 
 /// Each name's integers between its least and greatest values over the points of `g`, or why
-/// there are none or the method refuses.
+/// there are none.
 ///
-/// Cost: O(N log N) for the names, edges and pieces `N` where `g.potential` holds at every
+/// Cost: O(N log N) for the names, edges and pieces `N`, and O((h + 1) N log N) on a
+/// component of more than one cycle with holes in three names or more and `h` holes
+/// ([`Run::snaps`], bound P3), where `g.potential` holds at every
 /// edge of each component of more than one cycle, which [`Run::hull`] then searches by
 /// Dijkstra on the reduced weights; at a component where it does not (a name with no
 /// potential, or one an edge breaks), `hull` uses label correcting, O(n m) at worst for the
@@ -151,23 +149,9 @@ pub(crate) fn solve(g: &Graph) -> Outcome {
         return Outcome::Empty;
     };
     let wide = &inf * &Int::from(4i64);
-    // A refusal of merged names, given back as the names of `g` merged into them.
-    let refused = |names: &[usize], holed: &[usize]| {
-        let pick = |set: &[usize]| -> Vec<usize> {
-            let set: std::collections::BTreeSet<usize> = set.iter().copied().collect();
-            (0..g.dom.len())
-                .filter(|v| set.contains(&m.of[*v].0))
-                .collect()
-        };
-        Outcome::Refused {
-            names: pick(names),
-            holed: pick(holed),
-        }
-    };
     let hi = match greatest(&m.dom, &m.edges, &m.potential, &wide) {
         Ok(u) => u,
         Err(Stop::Empty) => return Outcome::Empty,
-        Err(Stop::Refused(names, holed)) => return refused(&names, &holed),
     };
     // The negated system: `-x` in the negated integers, each edge reversed. Proof that its
     // greatest point, negated, is the least point: `y = -x` maps the points one to one, as
@@ -191,12 +175,6 @@ pub(crate) fn solve(g: &Graph) -> Outcome {
     let lo: Vec<Int> = match greatest(&neg_dom, &neg_edges, &neg_potential, &wide) {
         Ok(u) => u.iter().map(|x| -x).collect(),
         Err(Stop::Empty) => return Outcome::Empty,
-        // Never taken. The components and the names with holes are those of the system, which
-        // [`greatest`] answered above, so no component has three names with holes or more;
-        // and a refusal from [`Run::paths`] cannot come after [`Run::hull`] (proof there): a
-        // negated potential that fails at an edge sends `hull` to label correcting, not to a
-        // refusal. Kept as a pass-on rather than an `Empty` (commit e275c5f0b).
-        Err(Stop::Refused(names, holed)) => return refused(&names, &holed),
     };
     let Some(dom) = tie_cycles(m.dom, &m.edges, &hi) else {
         return Outcome::Empty;
@@ -412,11 +390,9 @@ fn tie_cycles(
     Some(dom)
 }
 
-/// Why [`greatest`] stopped: no point, or a component refused, its names and those of them
-/// with holes.
+/// Why [`greatest`] stopped: no point.
 enum Stop {
     Empty,
-    Refused(Vec<usize>, Vec<usize>),
 }
 
 /// The greatest point of a merged system, by its components in topological order. `wide` is
@@ -570,27 +546,19 @@ impl Run<'_> {
             }
             return Ok(());
         }
-        // Complexity tradeoff: a component of more than one cycle with holes in three names or
-        // more is refused, and the caller narrows it as before this method. What is given up:
-        // the exact ends of its names by this method. Why: the snaps of three names or more
-        // on two cycles or more interact, and no method in O(N log N) is known for them
-        // (cross-review xst, rounds 1 to 4: snapping to a fixed point can take a lap per
-        // value of a range, and contraction onto the names with holes leaves a system of
-        // three names or more with cycles). Trigger: the graph and which names have holes, not
-        // the values: a theta graph, two cycles sharing a path, with a hole in a name of each
-        // part. Test:
-        // `l01_39_scope_relations::holes::holes_on_three_names_of_two_cycles_are_refused`.
-        // COMPLEXITY.md row S25. A complete solution is an exact method for the snaps on a
-        // component with any cycles, or a proof that none is near linear.
-        // Naive version: snapping to a fixed point, a lap per value of a range, so time in the
-        // widths of the ranges, exponential in their bits; used: the refusal, read from the count
-        // of names with holes before any snapping.
-        if holed.len() > 2 {
-            return Err(Stop::Refused(names.to_vec(), holed));
-        }
         self.hull(c, names)?;
         if holed.is_empty() {
             return Ok(());
+        }
+        // A component of more than one cycle with holes in three names or more: snapping by
+        // Dijkstra from the greatest point over the hulls ([`Run::snaps`], item ST-band-quintic,
+        // cross-review XR-st-band-quintic round 1, decision D1). Before it such a component was
+        // refused, on the claim that snapping to a fixed point takes a lap per value of a range;
+        // that claim is false, since with no negative cycle each hole is crossed by at most one
+        // snap (the bound P3 at [`Run::snaps`]). Test:
+        // `l01_39_scope_relations::holes::holes_on_three_names_of_two_cycles_are_exact`.
+        if holed.len() > 2 {
+            return self.snaps(c, names, &holed);
         }
         // Contraction onto the names with holes (CT): the caps reach each of them through the
         // names without holes, and each reaches the other through those names alone.
@@ -652,6 +620,106 @@ impl Run<'_> {
                 return Err(Stop::Empty);
             }
             self.u[v] = x;
+        }
+        Ok(())
+    }
+
+    /// The greatest point of component `c`, `names`, with holes in `holed`, after [`Run::hull`]
+    /// set `u` to the greatest point over the names' hulls and the potential to `u`: each name
+    /// with holes is taken down to its integers, and then names are popped in order of their
+    /// value less their potential, each edge out of a name popped lowering its head to the
+    /// greatest integer of the head at or below the tail's value plus the weight (snap-Dijkstra,
+    /// cross-review XR-st-band-quintic round 1, report R1_CLAUDE.md, P2 and P3; decision D1).
+    ///
+    /// Proof that the result is the greatest point, Empty exact (P2). Write `F(x)_z` for the
+    /// greatest integer of `z` at or below `min(x_z, x_v + w)` over the edges `v -> z` of `c`.
+    /// `F` is monotone and never raises a value. Every point `y` of the component under the
+    /// caps has `y <= u` (`hull`), and if `y <= x` then `y_z <= y_v + w <= x_v + w` and `y_z`
+    /// is an integer of `z`, so `y_z <= F(x)_z`: each step below keeps `x` at or above every
+    /// point, and a snap that finds no integer (`snap_down` is `None`) shows there is none.
+    /// When the queue is empty every name was popped after its last fall (each fall queues
+    /// it), so every edge out of it holds at its final value; an edge out of a name never
+    /// lowered holds since `x_z <= u_z <= u_v + w` (the potential `u` holds at every edge of
+    /// `c`). Each value is an integer of its name: those with holes were snapped first, the
+    /// others are one piece containing `u`. So `x` is a point, and at or above every point:
+    /// the greatest.
+    ///
+    /// Proof of the cost (P3). The potential `p = u` holds at every edge of `c`, so each
+    /// reduced weight `w + p_v - p_z` is 0 or more, and an edge gives `z` the key `x_v + w -
+    /// p_z >= key_v`. So between two snaps that take a name below the value an edge gave it,
+    /// the keys popped never fall and each name is popped at most once, as in Dijkstra. A snap
+    /// takes a name from a value in or above a hole to below that hole; values only fall, so
+    /// that name never comes back above that hole, and each hole is crossed by at most one
+    /// snap: `S <= h` for the `h` holes of the component. A phase ends at each snap that does
+    /// change a value, whether or not it takes it below the last key popped; within a phase
+    /// each name has at most one pop at its current label, ties included, as
+    /// `Dijkstra::lower` (zed-graph heap.rs:225) queues a name again only when its label falls
+    /// and `Dijkstra::pop` skips the entries whose label has fallen since, each such stale
+    /// entry charged to the `lower` that made it. So the pops at their label are at most
+    /// `(S + 1) n`, and each scans every edge out of its name, those to other components
+    /// included (skipped at `comp_of`), and finds its snap in the pieces of the head
+    /// (`snap_down`). With `m_out` those edges and `N_c = n + m_out + P_c` for the `P_c` pieces of
+    /// the names, the cost after [`Run::hull`] is O((S + 1) (n + m_out) log(N_c + 1)), S <= h:
+    /// near linear when `h` is bounded, and in the holes, not in the widths of the ranges, in
+    /// general; over a pass, the sum with the pass's `N` in the logarithm. The standalone
+    /// two-holed `laps` model of R1_CLAUDE.md (two names with a hole at every third value
+    /// joined by a path of length `len`) reaches the pop bound of this kernel, `(len + 1)(S +
+    /// 1)` pops; the same system in the compiler goes through the contraction of
+    /// [`Run::component`] instead, so this is the kernel's bound, not one the whole dispatch is
+    /// shown to reach. Comin and Rizzi bound their algorithm for the same problem by the
+    /// disjuncts in the same way: "there are at most $d_{\C_{\TTWO}}$ iterations" (R. Comin and
+    /// R. Rizzi, "On Restricted Disjunctive Temporal Problems: Faster Algorithms and
+    /// Tractability Frontier", arXiv:1805.02183, source rdtp_main.tex, line 928; read
+    /// 2026-11-23 through allpapers); after the first closure their algorithm runs one reduced
+    /// Dijkstra with weights 0 or more per T2 time point (rdtp_main.tex:916-930), "a faster
+    /// (quadratic time) algorithm for RDTPs having only {T1,T2}-constraints"
+    /// (rdtp_main.tex:289), where this one runs one search per snap.
+    /// Test: `tests::small_systems_agree_with_enumeration` (three holed names on two cycles),
+    /// `l01_39_scope_relations::holes::holes_on_three_names_of_two_cycles_are_exact`.
+    fn snaps(&mut self, c: usize, names: &[usize], holed: &[usize]) -> Result<(), Stop> {
+        let p = |s: &Run, v: usize| s.potential[v].clone().unwrap_or(Int::ZERO);
+        // The proof of the cost (P3) rests on the potential holding at every edge of `c`, each
+        // reduced weight `w + p_v - p_z` 0 or more (XR-st-band-quintic r2, Gemini finding 7).
+        debug_assert!(
+            names.iter().all(|&v| self.potential[v].is_some()
+                && self.out[v]
+                    .iter()
+                    .filter(|(z, _)| self.comp_of[*z] == c)
+                    .all(|(z, w)| &(w + &p(self, v)) - &p(self, *z) >= Int::ZERO)),
+            "snaps: the potential fails at an edge of the component"
+        );
+        let mut search: Dijkstra<usize, Int, BTreeMap<usize, Int>> = Dijkstra::new(BTreeMap::new());
+        for &v in holed {
+            let x = snap_down(&self.dom[v], &self.u[v]).ok_or(Stop::Empty)?;
+            if x < self.u[v] {
+                search.lower(v, &x - &p(self, v));
+            }
+        }
+        while let Some((k, v)) = search.pop() {
+            let xv = &k + &p(self, v);
+            for i in 0..self.out[v].len() {
+                let (z, w) = &self.out[v][i];
+                let z = *z;
+                if self.comp_of[z] != c {
+                    continue;
+                }
+                let pz = p(self, z);
+                let xz = search
+                    .labels()
+                    .get(&z)
+                    .map_or_else(|| self.u[z].clone(), |l| l + &pz);
+                let t = &xv + w;
+                if t < xz {
+                    let x = snap_down(&self.dom[z], &t).ok_or(Stop::Empty)?;
+                    search.lower(z, &x - &pz);
+                }
+            }
+        }
+        let found = search.into_labels();
+        for &v in names {
+            if let Some(l) = found.get(&v) {
+                self.u[v] = l + &p(self, v);
+            }
         }
         Ok(())
     }
@@ -1129,12 +1197,14 @@ mod tests {
     }
 
     /// Random systems of up to five names in `0..=6` with holes, compared with enumeration:
-    /// the ends of every name are exact where the method answers, the values kept are a
-    /// superset of the exact ones, and no answer is empty where a point exists.
+    /// the ends of every name are exact, the values kept are a superset of the exact ones, no
+    /// answer is empty where a point exists, and every system is answered (none refused: a
+    /// component with holes in three names or more on more than one cycle goes to
+    /// [`Run::snaps`]; before ST-band-quintic D1 such systems were refused).
     #[test]
     fn small_systems_agree_with_enumeration() {
         let mut g = crate::seed::Rng::new(0x5eed);
-        let (mut answered, mut refused) = (0, 0);
+        let mut answered = 0;
         for round in 0..6000 {
             let n = 2 + g.below_u64(4) as usize;
             // Half the systems are a cycle through every name with chords, holes in at most
@@ -1193,11 +1263,10 @@ mod tests {
                         assert!(e.iter().all(|x| values.contains(x)), "{dom:?} {edges:?}");
                     }
                 }
-                (Outcome::Refused { .. }, _) => refused += 1,
                 (got, exact) => panic!("{dom:?} {edges:?}: {got:?} against {exact:?}"),
             }
         }
-        assert!(answered > 5000, "{answered} answered, {refused} refused");
+        assert_eq!(answered, 6000);
     }
 
     /// An infinite end stays infinite, and a finite one bounds through an edge.

@@ -277,17 +277,26 @@ fn a_staircase_of_holes_on_one_cycle_is_exact() {
     .check_exact();
 }
 
-/// Holes in three names of a part that the constraints join both ways in two cycles,
-/// `z <= y <= x <= z + 1` and `z <= x <= y + 1`, each test a nested `if`: no method near
-/// linear in the names is known for the ends, so the part is projected one block at a time
-/// and a warning of its own says so. The warning depends on the constraints and on which
-/// names have holes alone: other holes in the same names give the same warning. Each depth
-/// where the tests so far already join the names in two cycles warns, each warning naming its
-/// own constraints. In one `&&` the hole tests stay in the relation as conjuncts that are
-/// not differences or bounds, so the tree is projected block by block, as before this item,
-/// with no warning. The scope stays sound in every order.
+/// The part of `holes_on_three_names_of_two_cycles_are_exact`, joined both ways in two
+/// cycles, with holes in two of its names only: the ends method stays exact there (CT,
+/// ST-band-quintic keeps it), against the solutions found by brute force, in every order.
 #[test]
-fn holes_on_three_names_of_two_cycles_are_refused() {
+fn holes_on_two_names_of_two_cycles_are_exact() {
+    System {
+        names: &[("x", 0, 6, &[5]), ("y", 0, 6, &[1, 4]), ("z", 0, 6, &[])],
+        differences: &["z <= y", "y <= x", "x <= z + 1", "z <= x", "x <= y + 1"],
+    }
+    .check_exact();
+}
+
+/// Holes in three names of a part that the constraints join both ways in two cycles,
+/// `z <= y <= x <= z + 1` and `z <= x <= y + 1`, each test a nested `if` or one `&&`: the
+/// ends are found by snap-Dijkstra (`holes::Run::snaps`, ST-band-quintic D1) and the values
+/// between them by each block's projection, so every name keeps exactly the values some
+/// solution has, in every order, and no warning about the least and greatest values is given
+/// (before D1 the part was refused, narrowed by its hulls, and warned about).
+#[test]
+fn holes_on_three_names_of_two_cycles_are_exact() {
     const DIFFERENCES: &[&str] = &["z <= y", "y <= x", "x <= z + 1", "z <= x", "x <= y + 1"];
     let a = System {
         names: &[("x", 0, 6, &[5]), ("y", 0, 6, &[4]), ("z", 0, 6, &[3])],
@@ -297,44 +306,15 @@ fn holes_on_three_names_of_two_cycles_are_refused() {
         names: &[("x", 0, 6, &[2]), ("y", 0, 6, &[1, 3]), ("z", 0, 6, &[4])],
         differences: DIFFERENCES,
     };
-    let head = "warning: Cannot find exactly the least and greatest values the conditions \
-        here allow\n  \
-        [1] the constraints `";
-    let tail = "` hold in the scope\n  \
-        [2] they join their 3 names both ways in more than one cycle, and 3 of them have \
-        holes: `x`, `y`, `z`; the ends of such names are found exactly when at most two of \
-        them have holes\n  \
-        [3] the names of the constraints are narrowed one block at a time, and their ends may \
-        be wider than the constraints make them; so the checker may reject or warn \
-        about code here that is correct, and it does not accept code that is wrong";
-    let all = format!("{head}x <= y + 1 && x <= z + 1 && x >= y && x >= z && y >= z{tail}");
     for s in [a, b] {
         for (order, ws) in s.warnings() {
-            let found: Vec<&String> = ws
-                .iter()
-                .filter(|w| w.contains("the least and greatest values"))
-                .collect();
-            if order == "one conjunction" {
-                assert!(found.is_empty(), "{order}: {found:?}");
-                continue;
-            }
-            assert!(found.contains(&&all), "{order}: {ws:?}");
-            for w in found {
-                assert!(w.starts_with(head) && w.ends_with(tail), "{order}: {w}");
-            }
+            assert!(
+                !ws.iter()
+                    .any(|w| w.contains("the least and greatest values")),
+                "{order}: {ws:?}"
+            );
         }
-        for (order, src) in s.programs() {
-            let solved = s.exact(&src);
-            let kept = s.kept(&src, order != "one conjunction");
-            for (x, y) in solved.iter().zip(&kept) {
-                assert!(x.is_subset(y), "{order}: unsound in {src}");
-            }
-            if order == "one conjunction" {
-                for (x, y) in solved.iter().zip(&kept) {
-                    assert_eq!((x.first(), x.last()), (y.first(), y.last()), "{src}");
-                }
-            }
-        }
+        s.check_exact();
     }
 }
 
