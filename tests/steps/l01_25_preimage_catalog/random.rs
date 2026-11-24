@@ -236,7 +236,10 @@ fn run_with(seed: u64, cases: usize, test: bool, calls: bool) -> Tally {
         let p = preimage_listed(&term, &ds, &listed, &demand);
         assert!(p.stops.is_empty(), "{term}: {:?}", p.stops);
         for (k, v) in &p.domains {
-            assert!(v.is_subset(&ds[k]), "{term}: {k} {v} is outside its domain");
+            assert!(
+                v.met().is_subset(&ds[k]),
+                "{term}: {k} {v} is outside its domain"
+            );
         }
         if check(&term, &ds, &demand, &p, WINDOW) > 0 {
             tally.nonempty += 1;
@@ -329,7 +332,7 @@ fn a_remainder_inverts_to_its_first_and_last_periods_and_one_piece_between() {
             continue;
         }
         let rem = z.meet(&IntervalSet::range(End::of(0), End::of(m - 1)));
-        let pieces = p.domains["i"].len();
+        let pieces = p.domains["i"].met().len();
         assert!(
             p.exact || pieces <= 2 * rem.len() + 1,
             "{c} {z} over {lo}..={hi}: {pieces}"
@@ -384,7 +387,10 @@ fn run_exact(seed: u64, cases: usize, test: bool) -> ExactTally {
             |k: &Arc<str>, v: i64| classes.get(k).is_none_or(|c| c.contains(&Num::from(v)));
         let p = exact_preimage(&term, &ds, &classes, &demand);
         for (k, v) in &p.domains {
-            assert!(v.is_subset(&ds[k]), "{term}: {k} {v} is outside its domain");
+            assert!(
+                v.met().is_subset(&ds[k]),
+                "{term}: {k} {v} is outside its domain"
+            );
         }
         let all = points(&ds, &names, WINDOW);
         let inside = |pt: &[i64]| names.iter().zip(pt).all(|(n, &v)| member(n, v));
@@ -428,7 +434,7 @@ fn run_exact(seed: u64, cases: usize, test: bool) -> ExactTally {
         tally.several += (p
             .domains
             .values()
-            .filter(|s| s.bounds().is_some_and(|(a, b)| a != b))
+            .filter(|s| s.met().bounds().is_some_and(|(a, b)| a != b))
             .count()
             > 1) as usize;
         let every = in_box.iter().all(|pt| meets(&term, &names, pt, &demand));

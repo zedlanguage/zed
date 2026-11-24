@@ -165,7 +165,7 @@ fn check(case: &Case) -> Found {
                 preimage_listed(t, ds, &case.listed, &case.demand),
                 before::preimage_listed(t, ds, &case.listed, &case.demand),
             );
-            ((a.domains, a.exact), (b.domains, b.exact))
+            ((a.domains.met(), a.exact), (b.domains.met(), b.exact))
         }
         Some(cs) => {
             let cs: &Classes = cs;
@@ -173,7 +173,7 @@ fn check(case: &Case) -> Found {
                 exact_preimage(t, ds, cs, &case.demand),
                 before::exact_preimage(t, ds, cs, &case.demand),
             );
-            ((a.domains, a.exact), (b.domains, b.exact))
+            ((a.domains.met(), a.exact), (b.domains.met(), b.exact))
         }
     };
     let mut disagreements = disagreements(case, "transfer", &now.0, now.1);

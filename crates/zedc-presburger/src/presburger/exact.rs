@@ -68,7 +68,7 @@ use std::rc::Rc;
 use zed_graph::UnionFind;
 use zedc_int::int::{Int, IntRange, meet_range, range_is_empty, range_meet, row_range};
 use zedc_lattice::interval::{End, IntervalSet, Num};
-use zedc_lattice::lattice::Congruence;
+use zedc_lattice::lattice::{Congruence, Lattice};
 
 use super::absorbing;
 use super::formula::{Ends, Id};
@@ -79,8 +79,10 @@ pub use super::meter::{
 use super::meter::{PIECE, Solver, Work};
 use super::{Atom, Classed, Con, Each, EachClassed, Factor, Formula, Lin, Model, Refusal, Rel};
 
+mod classes;
 mod guarded;
 mod projection;
+use classes::ClassUnion;
 pub use projection::{METHOD, Method};
 use projection::{Strided, Tail, bounded, each_constraint, fin, holds_at, value};
 
@@ -1198,8 +1200,7 @@ fn cover(
     {
         return Ok((set, false));
     }
-    let (set, kept) = cells_cover(f, s, h, size, factors, points, cache, work)?;
-    Ok((Classed::plain(set), kept))
+    cells_cover(f, s, h, size, factors, points, cache, work)
 }
 
 /// What the covers of one part's symbols learn that does not read the symbol, kept for the
@@ -1250,9 +1251,13 @@ fn cells_cover(
     points: &mut Vec<Model>,
     cache: &mut PartCache,
     work: &mut Work,
-) -> Result<(IntervalSet, bool), Refusal> {
-    let mut found = IntervalSet::empty();
-    let mut gap = h.clone();
+) -> Result<(Classed, bool), Refusal> {
+    // The values found and the gap, each a union of classes, so that the values of a strided
+    // part or progression are not listed (PERF-exact-strided-unlisted, [`ClassUnion`]).
+    let mut found = ClassUnion::empty();
+    let mut gap = ClassUnion::plain(h.clone());
+    // The kept pieces so far, so that each new one is taken disjoint from them ([`ended`]).
+    let mut kept_at = IntervalSet::empty();
     let within = h.hull();
     let mut strides: Vec<Stride> = Vec::new();
     // The parts with holes and no end found by the cells, and the pieces with no end of their
@@ -1296,16 +1301,22 @@ fn cells_cover(
         while read < points.len() && !gap.is_empty() {
             let m = points[read].clone();
             read += 1;
-            if gap.contains_end(&fin(&value(&Lin::atom(s.clone()), &m))) {
+            if gap.contains(&fin(&value(&Lin::atom(s.clone()), &m))) {
                 work.read(size)?;
                 let (mut c, more, holed) = cell(f, &m, s, factors, &within, work)?;
                 if !holed.is_empty() {
                     // The parts with holes and no end of every cell so far, joined: where the
                     // values found fill a tail up to an end, the values left of it are listed.
                     open.extend(holed);
-                    let (filled, left) = projection::ranges(&open, work)?;
+                    let (filled, left) = projection::ranges_classed(&open, work)?;
                     c = c.join(&filled);
-                    let known = found.join(&c);
+                    // The values known as ranges alone, listed (O(v)) only where a tail is
+                    // left to cut them from, each value of a class charged first.
+                    let known = if left.is_empty() {
+                        IntervalSet::empty()
+                    } else {
+                        found.join(&c).met(work)?
+                    };
                     tails.clear();
                     let mut listed = Vec::new();
                     for t in left {
@@ -1333,7 +1344,7 @@ fn cells_cover(
                             }
                         }
                     }
-                    c = c.join(&IntervalSet::from_pieces(listed));
+                    c = c.join(&ClassUnion::plain(IntervalSet::from_pieces(listed)));
                 }
                 // The cell cut from the gap and joined to the values found, charged first,
                 // [`PIECE`] units for each of its pieces and one more.
@@ -1345,7 +1356,7 @@ fn cells_cover(
                 // `join` say, charged 16 units (1.28 µs predicted) a piece of the cell, the
                 // count read in O(1).
                 work.charge(PIECE.saturating_mul(c.len() as u64 + 1))?;
-                gap = gap.minus(&c);
+                gap = gap.minus(&c, work)?;
                 found = found.join(&c);
                 strides.extend(more);
             }
@@ -1357,7 +1368,7 @@ fn cells_cover(
         // residue no part found holds. Where there is none, the values of `s` there are those
         // residues alone, holes without end, which ranges cannot hold: refused.
         if let Some(tail) = tails.pop() {
-            if gap.meet(&tail.piece).is_empty() {
+            if gap.meet_range(&tail.piece).is_empty() {
                 continue;
             }
             let other = IntervalSet::from_pieces(
@@ -1391,16 +1402,22 @@ fn cells_cover(
                 // piece are exactly those of its residues, kept with them; the answer is then
                 // read from the exact set alone ([`ended`]), wider than exact for that cause,
                 // given with it ([`exact_each`]).
+                // The gap's values in the piece may be classes; each kept piece is a range from
+                // the least to the greatest of a run of them (`ranges`), within the tail's
+                // piece, so the statement above holds there too, and it is taken disjoint from
+                // the pieces kept before.
                 None => {
-                    let left = gap.meet(&tail.piece);
+                    let left = gap.meet_range(&tail.piece);
+                    let at = left.ranges().minus(&kept_at);
                     let have: Rc<[bool]> = tail.have.into();
-                    kept.extend(left.pieces().map(|(lo, hi)| Kept {
+                    kept.extend(at.pieces().map(|(lo, hi)| Kept {
                         lo: lo.clone(),
                         hi: hi.clone(),
                         step: tail.step.clone(),
                         have: have.clone(),
                     }));
-                    gap = gap.minus(&left);
+                    kept_at = kept_at.join(&at);
+                    gap = gap.minus(&left, work)?;
                 }
             }
             continue;
@@ -1436,7 +1453,7 @@ fn cells_cover(
                 // Every class with no value found has no point here: the pieces between the
                 // values found are dropped. With `absent` empty, every class has a value.
                 if !st.absent.is_empty() {
-                    gap = gap.minus(&outside(&gap, &st, &have, work)?);
+                    gap = gap.minus(&outside(&gap, &st, &have, work)?, work)?;
                 }
                 continue;
             };
@@ -1480,18 +1497,22 @@ fn cells_cover(
         // One piece of the gap at a time, so that each question is `f` and two bounds: asked
         // with the whole gap, a question after k cells carries the k holes they made, and k
         // cells cost O(k^2) (the even values of `x == 2 * y` in a box, `exact::tests`).
-        let Some(piece) = gap.first().cloned() else {
+        // A piece of a class other than every integer is asked with its class (`s - m·#t == r`),
+        // so that a point found is in the gap and its cell takes a value out of it, and a piece
+        // with no point there is taken out whole.
+        let Some((piece, class)) = gap.first() else {
             return ended(found, kept, work);
         };
         // With no point found and the gap every value, the question is `f` alone, which does
         // not read `s`; a later symbol of the part reaching it at the same work gets its
         // outcome from `cache` at the same charge ([`PartCache`]).
-        let whole = points.is_empty() && piece == (End::NegInf, End::PosInf);
+        let whole =
+            points.is_empty() && piece == (End::NegInf, End::PosInf) && class == Congruence::top();
         let start = work.used;
         match &cache.whole {
             Some((at, Ok(units))) if whole && *at == start => {
                 work.charge(*units)?;
-                gap = IntervalSet::empty();
+                gap = ClassUnion::empty();
                 continue;
             }
             Some((at, Err(e))) if whole && *at == start => {
@@ -1502,17 +1523,33 @@ fn cells_cover(
         }
         let piece = IntervalSet::range(piece.0, piece.1);
         let asked = (|| {
-            work.question(size + 2)?;
+            let mut q = vec![f.clone(), super::member(s, &piece)];
+            if let Congruence::Class { modulus, residue } = &class
+                && *modulus > Num::ONE
+            {
+                work.question(size + 3)?;
+                let lin = Lin {
+                    terms: [
+                        (s.clone(), Int::from(1)),
+                        (Atom::Sym("#t".into()), -&Int::from(modulus)),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    constant: -&Int::from(residue),
+                };
+                q.push(Formula::Con(Con { lin, rel: Rel::Eq }));
+            } else {
+                work.question(size + 2)?;
+            }
             EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
-            let q = Formula::and(vec![f.clone(), super::member(s, &piece)]);
-            work.ask(&q)
+            work.ask(&Formula::and(q))
         })();
         match asked {
             Ok(None) => {
                 if whole {
                     cache.whole = Some((start, Ok(work.used - start)));
                 }
-                gap = gap.minus(&piece);
+                gap = gap.minus(&ClassUnion::of(Classed::new(piece, class)), work)?;
             }
             Ok(Some(m)) => points.push(m),
             Err(e) => {
@@ -1660,13 +1697,17 @@ impl Periodic {
 // (`projection::listed`). In all O((p + k) log p + k·L) for k kept pieces and L the largest
 // lcm, where before O(q log q).
 fn ended(
-    found: IntervalSet,
+    found: ClassUnion,
     mut kept: Vec<Kept>,
     work: &mut Work,
-) -> Result<(IntervalSet, bool), Refusal> {
+) -> Result<(Classed, bool), Refusal> {
+    // `found` in the one form of [`Classed`], its classes kept (PERF-exact-strided-unlisted).
     if kept.is_empty() {
-        return Ok((found, false));
+        return Ok((found.into_classed(), false));
     }
+    // With kept pieces, the walks below read `found` as ranges: listed, O(v), as before, each
+    // value of a class charged first ([`ClassUnion::met`]).
+    let found = found.met(work)?;
     kept.sort_by(|a, b| a.lo.cmp(&b.lo));
     let up = ray_from(&found, &kept, work)?;
     let negated: Vec<Kept> = (kept.iter().rev())
@@ -1682,9 +1723,9 @@ fn ended(
         .collect();
     let down = ray_from(&found.neg(), &negated, work)?.map(|u| u.map(|u| -&u));
     let (l, u) = match (down, up) {
-        (Some(None), _) | (_, Some(None)) => return Ok((IntervalSet::top(), true)),
+        (Some(None), _) | (_, Some(None)) => return Ok((Classed::plain(IntervalSet::top()), true)),
         (Some(Some(l)), Some(Some(u))) if &l + &Int::from(1) >= u => {
-            return Ok((IntervalSet::top(), true));
+            return Ok((Classed::plain(IntervalSet::top()), true));
         }
         (l, u) => (l.flatten(), u.flatten()),
     };
@@ -1719,7 +1760,7 @@ fn ended(
             )?;
         }
     }
-    Ok((IntervalSet::from_pieces(pieces), true))
+    Ok((Classed::plain(IntervalSet::from_pieces(pieces)), true))
 }
 
 fn negated_end(e: &End) -> End {
@@ -3052,8 +3093,20 @@ fn shared_cells(
         // empty here: the step returned above where `f` has no point, and the loop above read every
         // point, so `read == points.len() >= 1`. The parts of the cell with holes and its strides
         // are dropped: the ranges `c` alone are values of `s` with a point, as in `cells_cover`,
-        // and what they leave is asked or left to the symbol's own cover.
+        // and what they leave is asked or left to the symbol's own cover. The cell's classes
+        // (PERF-exact-strided-unlisted) are dropped too, for the same reason: a subset of the
+        // cell is still values of `s` with a point, so the answer is unchanged.
+        // Complexity tradeoff: naive version (the first cut of this row), each class listed
+        // here, each value charged [`LISTED`], O(v) for v values: the hub of
+        // `l01_38_presburger::strided` with `a`, `b` and `w` asked read 5.9M units in 1.6 s at
+        // box bound 10^5, and `w` alone 3.5M in 11 ms, its cover keeping the class unlisted.
+        // Used: the plain sets of the cell alone, O(p) for p ranges; `s` then asks its one
+        // question and, with its gap open, goes to its own cover ([`cells_cover`]), which holds
+        // the class as one set.
         let (c, _, _) = cell(f, &points[read - 1], s, &HashSet::new(), &h.hull(), work)?;
+        let c = (c.sets().iter())
+            .filter(|set| set.strided().is_none())
+            .fold(IntervalSet::empty(), |all, set| all.join(&set.met()));
         work.exempt(|w| {
             w.read(size)?;
             w.charge(PIECE.saturating_mul(c.len() as u64 + 1))
@@ -3774,12 +3827,17 @@ fn block_set(
     // first value to its last, met with its class ([`Classed`]), O(p) for p parts, where every
     // part with a step shares one class; where they do not, or a part of step 1 is joined to
     // one with a step, the join lists the values ([`Classed::join`]), O(v) as before. The work
-    // charged is the same as listing's, each value [`LISTED`] and each value a piece, counted
-    // and not listed, so the same calls are refused at the limit, and every answer is the same
-    // set as before, written another way.
+    // charged is one piece a range or class kept, the work done (row DOMAINS-classed-sets).
+    // Before, each value was charged as listing charged it, `LISTED` and a piece, counted
+    // and not listed, so that the same calls were refused at the limit as when they were
+    // listed: that refused `direct` by the count of values alone, at 3,100,000 / (7 + 16),
+    // about 134,800 values (`meter::EXACT_LIMIT`), and the cover then
+    // answered by cells and questions, exact but at about 1.8 times the instructions, a step
+    // in the cost at a size of the input that no work done set
+    // (`l01_25_preimage_catalog::bench::classed::a_classed_box_is_not_listed_scales`, `i mod 10
+    // == 3` over `[0, n]`, steps between n = 1,320,000 and 1,400,000).
     let mut ranges: Vec<(End, End)> = Vec::new();
     let mut strided: Vec<Classed> = Vec::new();
-    let mut values: u64 = 0;
     for p in parts {
         if p.step == Int::from(1) {
             let lo = p.lo.as_ref().map_or(End::NegInf, fin);
@@ -3800,8 +3858,8 @@ fn block_set(
         // (`zedc-preimage` `linear`), so the stride is kept here as its range met with its class,
         // O(1) pieces: 8.5 times the work at 8n on the bench above, 0.99 on the s22 bench, and
         // the 25 cases of l01_25 `s22` refused while the stride was declined are answered
-        // (PRES-direct-stride-answer-downstream). The work charged is
-        // still that of listing each value, as below.
+        // (PRES-direct-stride-answer-downstream). The work charged is one piece a class, as
+        // below.
         let (Some(lo), Some(hi)) = (&p.lo, &p.hi) else {
             return Ok(None);
         };
@@ -3809,20 +3867,12 @@ fn block_set(
         if &first > hi {
             continue;
         }
-        // The values `first, first + step, ..., <= hi`, counted.
-        let count = (&(hi - &first).div_floor(&p.step) + &Int::from(1)).to_i128();
-        let count = count
-            .and_then(|c| u64::try_from(c).ok())
-            .unwrap_or(u64::MAX);
-        // Each value charged [`LISTED`], as `projection::listed` charges its own.
-        work.charge(super::meter::LISTED.saturating_mul(count))?;
-        values = values.saturating_add(count);
         strided.push(Classed::new(
             IntervalSet::range(fin(&first), fin(hi)),
             Congruence::new(Num::from(&p.step), Num::from(&p.res)),
         ));
     }
-    work.charge(PIECE.saturating_mul((ranges.len() as u64).saturating_add(values) + 1))?;
+    work.charge(PIECE.saturating_mul((ranges.len() + strided.len()) as u64 + 1))?;
     // One union of all, not one per class ([`Classed::join_all`]).
     let plain = Classed::plain(IntervalSet::from_pieces(ranges));
     Ok(Some(Classed::join_all(
@@ -4657,14 +4707,71 @@ struct Stride {
     absent: IntervalSet,
 }
 
+/// The residues modulo `step` of the values `lo`, `lo + m`, ..., `hi` (`hi - lo` a multiple of
+/// `m`, `m >= 2`), as points, each charged one unit of `work`.
+///
+/// Proof that this is exact: the residues of `lo + k·m` modulo `step` repeat with period
+/// `step/g` in `k` (`g = gcd(m, step)`: `k·m ≡ 0 mod step` exactly when `step/g | k`), and over
+/// one period they are every residue `≡ lo mod g` (the `step/g` values `lo + k·m`, `k <
+/// step/g`, are distinct modulo `step` and all `≡ lo mod g`, and there are `step/g` such
+/// residues). So with `step/g` values or more, those residues; else each value's own, listed.
+/// O(min(n, step/g)) for n values.
+fn class_residues(
+    lo: &Int,
+    hi: &Int,
+    m: &Int,
+    step: &Int,
+    work: &mut Work,
+) -> Result<Vec<(End, End)>, Refusal> {
+    let g = m.gcd(step);
+    let period = step.div_floor(&g);
+    let n = &(hi - lo).div_floor(m) + &Int::from(1);
+    let (first, by, count) = if n >= period {
+        (lo.mod_floor(&g), g.clone(), period)
+    } else {
+        (lo.clone(), m.clone(), n)
+    };
+    let mut out = Vec::new();
+    let mut k = Int::from(0);
+    while k < count {
+        work.charge(1)?;
+        let r = (&first + &(&by * &k)).mod_floor(step);
+        out.push((fin(&r), fin(&r)));
+        k = &k + &Int::from(1);
+    }
+    Ok(out)
+}
+
 /// The residues modulo `st.step` of the values of `found` from `st.lo` to `st.hi`, each piece
-/// read charged [`PIECE`] units of `work`; a piece as long as the step holds every residue.
-fn residues(found: &IntervalSet, st: &Stride, work: &mut Work) -> Result<IntervalSet, Refusal> {
+/// read charged [`PIECE`] units of `work`; a piece of every integer as long as the step holds
+/// every residue, a piece of a class those of [`class_residues`].
+fn residues(found: &ClassUnion, st: &Stride, work: &mut Work) -> Result<IntervalSet, Refusal> {
+    let span = IntervalSet::range(fin(&st.lo), fin(&st.hi));
     let mut have = IntervalSet::empty();
-    for (l, u) in found
-        .meet(&IntervalSet::range(fin(&st.lo), fin(&st.hi)))
-        .pieces()
-    {
+    let mut points = Vec::new();
+    let found = found.meet_range(&span);
+    for set in found.sets() {
+        let Some((m, _)) = set.strided() else {
+            continue;
+        };
+        let m = Int::from(m);
+        for (l, u) in set.ranges.pieces() {
+            work.charge(PIECE)?;
+            let (End::Fin(l), End::Fin(u)) = (l, u) else {
+                unreachable!("a class other than every integer comes with finite ranges")
+            };
+            points.extend(class_residues(
+                &Int::from(l),
+                &Int::from(u),
+                &m,
+                &st.step,
+                work,
+            )?);
+        }
+    }
+    have = have.join(&IntervalSet::from_pieces(points));
+    let plain = (found.sets().iter()).find(|s| s.strided().is_none());
+    for (l, u) in plain.map(|s| s.ranges.pieces()).into_iter().flatten() {
         work.charge(PIECE)?;
         let (End::Fin(l), End::Fin(u)) = (l, u) else {
             continue;
@@ -4690,20 +4797,47 @@ fn residues(found: &IntervalSet, st: &Stride, work: &mut Work) -> Result<Interva
     Ok(have)
 }
 
-/// The pieces of `gap` from `st.lo` to `st.hi`, each cut to that span, that are shorter than
-/// `st.step` and hold no value whose residue is in `have`; each piece read charged [`PIECE`]
-/// units.
+/// The pieces of `gap` from `st.lo` to `st.hi`, each cut to that span, that hold no value
+/// whose residue is in `have`: of every integer, those shorter than `st.step`; of a class, any
+/// ([`class_residues`]); each piece read charged [`PIECE`] units.
+///
+/// Why a piece of a class may be dropped whatever its length: this runs only where every
+/// residue not in `have` is in `st.absent`, each asked over the whole span and found with no
+/// point of `f`; a piece none of whose values has a residue in `have` has every value in such a
+/// residue, so no point. (A piece of every integer as long as the step holds every residue,
+/// so it never qualifies, and is not read.)
 fn outside(
-    gap: &IntervalSet,
+    gap: &ClassUnion,
     st: &Stride,
     have: &IntervalSet,
     work: &mut Work,
-) -> Result<IntervalSet, Refusal> {
+) -> Result<ClassUnion, Refusal> {
+    let gap = gap.meet_range(&IntervalSet::range(fin(&st.lo), fin(&st.hi)));
+    let mut dropped = ClassUnion::empty();
+    for set in gap.sets() {
+        let Some((m, _)) = set.strided() else {
+            continue;
+        };
+        let m = Int::from(m);
+        let mut out = Vec::new();
+        for (l, u) in set.ranges.pieces() {
+            work.charge(PIECE)?;
+            let (End::Fin(a), End::Fin(b)) = (l, u) else {
+                unreachable!("a class other than every integer comes with finite ranges")
+            };
+            let rs = class_residues(&Int::from(a), &Int::from(b), &m, &st.step, work)?;
+            if rs.iter().all(|(r, _)| !have.contains_end(r)) {
+                out.push((l.clone(), u.clone()));
+            }
+        }
+        dropped.add(Classed::new(
+            IntervalSet::from_pieces(out),
+            set.class.clone(),
+        ));
+    }
     let mut out = Vec::new();
-    for (l, u) in gap
-        .meet(&IntervalSet::range(fin(&st.lo), fin(&st.hi)))
-        .pieces()
-    {
+    let plain = (gap.sets().iter()).find(|s| s.strided().is_none());
+    for (l, u) in plain.map(|s| s.ranges.pieces()).into_iter().flatten() {
         work.charge(PIECE)?;
         let (End::Fin(ln), End::Fin(un)) = (l, u) else {
             continue;
@@ -4730,7 +4864,7 @@ fn outside(
             out.push((l.clone(), u.clone()));
         }
     }
-    Ok(IntervalSet::from_pieces(out))
+    Ok(dropped.join(&ClassUnion::plain(IntervalSet::from_pieces(out))))
 }
 
 /// The cell of the point `m` for the symbol `s`: values of `s` in `within` (the hull of the
@@ -4747,14 +4881,17 @@ fn cell(
     factors: &HashSet<Atom>,
     within: &IntervalSet,
     work: &mut Work,
-) -> Result<(IntervalSet, Vec<Stride>, Vec<Strided>), Refusal> {
+) -> Result<(ClassUnion, Vec<Stride>, Vec<Strided>), Refusal> {
     let v = value(&Lin::atom(s.clone()), m);
     let own = IntervalSet::range(fin(&v), fin(&v));
     let mut strides = Vec::new();
     let mut holed = Vec::new();
     if matches!(s, Atom::Product(..)) || factors.contains(s) {
-        return Ok((own, strides, holed));
+        return Ok((ClassUnion::plain(own), strides, holed));
     }
+    // The values of strided parts and progressions, kept as classes, not listed
+    // (PERF-exact-strided-unlisted); `c` holds the ranges.
+    let mut classes = ClassUnion::empty();
     let one = [(s.clone(), Int::from(1))];
     let mut c = shifted(&along(f, m, &one, &mut HashMap::new()), &v);
     debug_assert!(
@@ -4770,7 +4907,7 @@ fn cell(
     // `w == 0`).
     work.read((within.len() + c.len()) as u64 + 1)?;
     if within.is_subset(&c) {
-        return Ok((c, strides, holed));
+        return Ok((ClassUnion::plain(c), strides, holed));
     }
     let mut rows = Vec::new();
     let mut truth = HashMap::new();
@@ -4796,8 +4933,8 @@ fn cell(
             } else {
                 vec![projection::liaproj(&rows, s, m, work)?]
             };
-            let (set, left) = projection::ranges(&parts, work)?;
-            c = c.join(&set);
+            let (set, left) = projection::ranges_classed(&parts, work)?;
+            classes = classes.join(&set);
             let (closed, open): (Vec<Strided>, Vec<Strided>) = (parts.into_iter())
                 .partition(|p| p.step == Int::from(1) || (p.lo.is_some() && p.hi.is_some()));
             let open = if left.is_empty() { Vec::new() } else { open };
@@ -4860,12 +4997,12 @@ fn cell(
                 work.read(constraints(f))?;
                 let steps = along(f, m, &d, &mut HashMap::new());
                 let (p, stride) = progression(&steps, &v, &d[0].1, within, work)?;
-                c = c.join(&p);
+                classes = classes.join(&p);
                 strides.extend(stride);
             }
         }
     }
-    Ok((c, strides, holed))
+    Ok((ClassUnion::plain(c).join(&classes), strides, holed))
 }
 
 /// The directions that keep an equation of `rows` that holds `s`: for each other atom `q` of
@@ -4908,8 +5045,8 @@ fn shifted(steps: &IntervalSet, v: &Int) -> IntervalSet {
     IntervalSet::from_pieces(steps.pieces().map(|(l, u)| (at(l), at(u))).collect())
 }
 
-/// The values `v + step·k` of `s` for the steps `k` of `steps`, those in `within`; each value
-/// charged one unit of `work` where `step` is not ±1 (a value apart from the next), and none
+/// The values `v + step·k` of `s` for the steps `k` of `steps`, those in `within`; each piece
+/// of steps charged one unit of `work` where `step` is not ±1 (its values one class), and none
 /// where the values of `s` would have no end (an unbounded `within`: the cover asks for them
 /// one piece at a time, and stops at the work limit).
 fn progression(
@@ -4918,9 +5055,9 @@ fn progression(
     step: &Int,
     within: &IntervalSet,
     work: &mut Work,
-) -> Result<(IntervalSet, Option<Stride>), Refusal> {
+) -> Result<(ClassUnion, Option<Stride>), Refusal> {
     let Some((lo, hi)) = within.bounds() else {
-        return Ok((IntervalSet::empty(), None));
+        return Ok((ClassUnion::empty(), None));
     };
     // The steps `k` with `lo <= v + step·k <= hi`, `step` above zero.
     let mut keep = Vec::new();
@@ -4942,23 +5079,31 @@ fn progression(
     }
     let steps = steps.meet(&bounded(&keep, &Atom::Sym("k".into())));
     if step.abs() == Int::from(1) {
-        return Ok((shifted(&steps, v), None));
+        return Ok((ClassUnion::plain(shifted(&steps, v)), None));
     }
-    let mut pieces = Vec::new();
+    // Each piece of steps `[l, u]` is the values `v + step·l, ..., v + step·u`, one range in
+    // the class of `v` modulo `|step|`.
+    // Complexity tradeoff: naive version (before PERF-exact-strided-unlisted), each value
+    // listed as a range of its own and charged one unit, O(n) for n values; used: one range a
+    // piece of steps, charged one unit, O(p log p) for p pieces (at most n, so never charged
+    // more than before).
+    let modulus = step.abs();
+    let class = Congruence::new(Num::from(&modulus), Num::from(&v.mod_floor(&modulus)));
+    let (mut ranges, mut count) = (Vec::new(), Int::from(0));
     for (l, u) in steps.pieces() {
         let (End::Fin(l), End::Fin(u)) = (l, u) else {
-            return Ok((IntervalSet::empty(), None));
+            return Ok((ClassUnion::empty(), None));
         };
-        let (mut k, u) = (Int::from(l), Int::from(u));
-        while k <= u {
-            work.charge(1)?;
-            let x = fin(&(v + &(step * &k)));
-            pieces.push((x.clone(), x));
-            k = &k + &Int::from(1);
-        }
+        work.charge(1)?;
+        let (l, u) = (Int::from(l), Int::from(u));
+        count = &count + &(&(&u - &l) + &Int::from(1));
+        let (a, b) = (v + &(step * &l), v + &(step * &u));
+        let (a, b) = if a <= b { (a, b) } else { (b, a) };
+        ranges.push((fin(&a), fin(&b)));
     }
-    let stride = match (pieces.first(), pieces.last()) {
-        (Some((End::Fin(a), _)), Some((End::Fin(b), _))) if pieces.len() >= 2 => Some(Stride {
+    let set = Classed::new(IntervalSet::from_pieces(ranges), class);
+    let stride = match set.ranges.bounds() {
+        Some((End::Fin(a), End::Fin(b))) if count >= Int::from(2) => Some(Stride {
             step: step.clone(),
             lo: Int::from(a),
             hi: Int::from(b),
@@ -4966,7 +5111,7 @@ fn progression(
         }),
         _ => None,
     };
-    Ok((IntervalSet::from_pieces(pieces), stride))
+    Ok((ClassUnion::of(set), stride))
 }
 
 /// The atoms other than `s` with a coefficient other than ±1 in an equation of `rows`: the

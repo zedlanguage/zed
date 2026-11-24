@@ -37,7 +37,7 @@ fn a_power_under_a_large_power_has_a_root_bound() {
             pre(src, &[("x", None, None)], &Demand::Bool(true))
         });
         let root = two.floor_root(r);
-        let x = &p.domains["x"];
+        let x = &p.domains["x"].met();
         let (lo, hi) = x.bounds().expect("a range");
         assert_eq!(*hi, End::Fin(root.clone()), "{src}");
         if r % 2 == 0 {

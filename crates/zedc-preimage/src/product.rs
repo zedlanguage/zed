@@ -80,6 +80,7 @@
 //!   as not used): `impl Scope`.
 
 use imbl::ordmap::DiffItem;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::fmt;
@@ -14424,11 +14425,13 @@ impl Scope {
             exact = pre.exact;
             if let Some(cause) = pre.refusal {
                 // What the refused preimage kept: its bounds on the test's variables, which
-                // hold every value at which the test has this outcome.
+                // hold every value at which the test has this outcome. A set with a class is
+                // kept listed where the cover would have listed it, else as its ranges, which
+                // hold every member of the class ([`presburger::listed_within_limit`]).
                 let kept: Kept = Arc::new(
                     (pre.domains.iter())
                         .filter(|(n, _)| self.names.contains_key(n))
-                        .map(|(n, d)| (n.clone(), d.clone()))
+                        .map(|(n, d)| (n.clone(), presburger::listed_within_limit(d).0))
                         .collect(),
                 );
                 // The names read free in the test are in scope where it is written; a name it
@@ -14492,9 +14495,24 @@ impl Scope {
                 let b = s.names.get(n).and_then(|p| p.ints().bounds());
                 b.map(|(l, h)| (l.clone(), h.clone()))
             };
-            for (n, d) in pre.domains.iter().chain(&through) {
+            // A set of the preimage that is ranges met with a class other than every integer
+            // (row DOMAINS-classed-sets) meets the name's integers with the set listed where
+            // the cover would have listed it, else with its ranges and its congruence with the
+            // class ([`presburger::listed_within_limit`]): every value at which the test has
+            // this outcome lies in each, so each meet is sound, and together they hold what
+            // the set says. A set of ranges alone is met as it is, not copied.
+            let classed = (pre.domains.iter()).map(|(n, d)| match d.strided() {
+                Some(_) => {
+                    let (ints, class) = presburger::listed_within_limit(d);
+                    (n, Cow::Owned(ints), class)
+                }
+                None => (n, Cow::Borrowed(&d.ranges), None),
+            });
+            let through = through.iter().map(|(n, d)| (n, Cow::Borrowed(d), None));
+            for (n, d, class) in classed.chain(through) {
                 let before = ends(self, n);
-                if self.meet_name(n, d, convex, prem) {
+                let classed = class.is_some_and(|c| self.meet_class(n, &c, prem));
+                if self.meet_name(n, &d, convex, prem) | classed {
                     changed.push(n.clone());
                     if one.as_ref() == Some(n)
                         && let (Some((lo0, hi0)), Some((lo, hi))) = (before, ends(self, n))
@@ -14525,6 +14543,20 @@ impl Scope {
         } else {
             p.meet_ints(d.clone(), prem)
         };
+        if met {
+            self.names.insert(n.clone(), p);
+        }
+        met
+    }
+
+    /// Meets the congruence of `n`, when in scope, with `c`; the product is put back only when
+    /// the meet changed it, as [`Scope::meet_name`] does. Gives whether it did.
+    fn meet_class(&mut self, n: &Arc<str>, c: &Congruence, prem: &Premises) -> bool {
+        let Some(p) = self.names.get(n) else {
+            return false;
+        };
+        let mut p = p.clone();
+        let met = p.cell.congruence.meet(c, prem);
         if met {
             self.names.insert(n.clone(), p);
         }
@@ -17770,7 +17802,11 @@ impl Scope {
             // Lemma E: a [`Scope::project_part`] that records no refusal meets each name `n`
             // of the part `P` with exactly `proj_n(P ∧ B)`, `B` the box of the names (their
             // integers and classes, framed). Proof, by its two routes. The whole route asks
-            // `presburger::project_each_boxed`; with no cause (`Boxed::cause` none: the whole
+            // `presburger::project_each_boxed_classed` and meets `n`'s integers with each set
+            // listed, or past the cover's limit with its ranges and `n`'s congruence with the
+            // set's class (`presburger::listed_within_limit`): either way the meets hold exactly
+            // the set (zedc-lattice `Classed`, row DOMAINS-classed-sets); with no cause
+            // (`BoxedOf::cause` none: the whole
             // question, no symbol and no disjunction refused) each set is the exact projection,
             // since module `exact` of zedc-presburger answers each set exactly or refuses the
             // symbol (doc of `presburger::project`), and the frame holds `B`, classes as
@@ -19121,7 +19157,7 @@ impl Scope {
 
     /// Meets each name `part` mentions with its projection, within every interval; where the
     /// solver refuses the projection, with the bounds the box stage gives the rows of `part`
-    /// ([`presburger::project_each_boxed`]).
+    /// ([`presburger::project_each_boxed_classed`]).
     // Complexity tradeoff: the old method invokes integer elimination for every
     // stale punctured-line part. This boundary-support certificate instead reads
     // its two-name line and the base rows, O(arms + rows), independent of the
@@ -19245,13 +19281,13 @@ impl Scope {
         // for a projection onto one name refused alone, that name.
         let got = {
             let _memo = presburger::ProjectionMemo::open_in(&self.projections.0);
-            presburger::project_each_boxed(&whole, &syms)
+            presburger::project_each_boxed_classed(&whole, &syms)
         };
         let boxed = |s: &Scope, only: Option<usize>| -> Kept {
             let each = syms.iter().zip(&got.each).enumerate();
             let sets = each.filter_map(|(i, (a, (x, _)))| match a {
                 Atom::Sym(n) if only.is_none_or(|k| k == i) && s.names.contains_key(n) => {
-                    Some((n.clone(), x.clone()))
+                    Some((n.clone(), presburger::listed_within_limit(x).0))
                 }
                 _ => None,
             });
@@ -19275,12 +19311,20 @@ impl Scope {
         for (asked, cause, kept) in refused {
             refuse(self, asked, cause, kept);
         }
+        // A set kept as ranges met with a class (row DOMAINS-classed-sets) meets the integers
+        // with the set listed where the cover would have listed it, else with its ranges and
+        // the congruence with its class ([`presburger::listed_within_limit`]), as the
+        // preimage route above does: either way the meets hold exactly the set (Lemma E).
         for (a, (x, _)) in syms.iter().zip(got.each) {
             if let Atom::Sym(n) = a
                 && let Some(p) = self.names.get_mut(n)
             {
                 let prem = p.premises();
-                p.meet_ints(x, &prem);
+                let (ints, class) = presburger::listed_within_limit(&x);
+                p.meet_ints(ints, &prem);
+                if let Some(class) = class {
+                    p.cell.congruence.meet(&class, &prem);
+                }
             }
         }
     }

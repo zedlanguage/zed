@@ -13,6 +13,6 @@ fn a_comb_of_pieces_scales() {
     scaling::check("the preimage of c - x over a demand of n pieces", n, |k| {
         let (t, ds, d) = &made[&k];
         let p = preimage(t, ds, d);
-        assert_eq!(p.domains["x"].len(), 2 * k);
+        assert_eq!(p.domains["x"].met().len(), 2 * k);
     });
 }

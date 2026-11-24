@@ -166,7 +166,7 @@ fn a_comb_of_pieces_is_kept_exactly() {
     let p = preimage(&t, &ds, &d);
     check(&t, &ds, &d, &p, (-60, 60));
     assert!(p.exact, "{}", shown(&p));
-    assert_eq!(p.domains["x"].len(), 24);
+    assert_eq!(p.domains["x"].met().len(), 24);
 }
 
 // Plan item S22b-rest: the summary of a term of one input (`Pa`) reads `c - u` as the affine

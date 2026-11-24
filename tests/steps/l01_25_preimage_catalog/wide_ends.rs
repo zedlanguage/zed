@@ -154,7 +154,7 @@ fn refuted(
 
 /// Panics when the interpreter refutes `p` at a point of [`points`].
 fn sound(t: &Term, ds: &Domains, d: &Demand, p: &Preimage, near: &[Num]) {
-    if let Some(why) = refuted(t, ds, d, &p.domains["i"], p.exact, near) {
+    if let Some(why) = refuted(t, ds, d, &p.domains["i"].met(), p.exact, near) {
         panic!("{t} over {ds:?}: {why} {}", shown(p));
     }
 }
@@ -186,7 +186,7 @@ fn compared(t: &Term, ds: &Domains, d: &Demand, near: &[Num]) -> Same {
     let (now, then) = (preimage(t, ds, d), before::preimage(t, ds, d));
     sound(t, ds, d, &now, near);
     assert!(
-        inside(&now.domains["i"], &then.domains["i"]),
+        inside(&now.domains["i"].met(), &then.domains["i"].met()),
         "{t} over {ds:?}, {d:?}: {} is not inside {:?}",
         shown(&now),
         then.domains
@@ -198,7 +198,7 @@ fn compared(t: &Term, ds: &Domains, d: &Demand, near: &[Num]) -> Same {
     );
     if format!("{now:?}") == format!("{then:?}") {
         Same::Equal
-    } else if refuted(t, ds, d, &then.domains["i"], then.exact, near).is_some() {
+    } else if refuted(t, ds, d, &then.domains["i"].met(), then.exact, near).is_some() {
         Same::RefutedBefore
     } else if now.domains["i"] != then.domains["i"] {
         Same::Narrower

@@ -1366,6 +1366,15 @@ pub const CASES: &[(&str, &str, u32, &str, &str)] = &[
     ),
     ("TupleType#2", "TupleType", 0, "(..)", "( .. )"),
     ("FieldType#0", "FieldType", 0, "(x: int)", "( x : int )"),
+    // A set of ranges met with a class, as a message prints it (DESIGN "Types in a message",
+    // row DOMAINS-classed-sets).
+    (
+        "FieldType#0",
+        "FieldType",
+        0,
+        "(x: int[3..=993] where x mod 10 == 3)",
+        "( x : int [ 3 ..= 993 ] where x mod 10 == 3 )",
+    ),
     ("GroupType#0", "GroupType", 0, "(int)", "( int )"),
     (
         "RecordType#0",

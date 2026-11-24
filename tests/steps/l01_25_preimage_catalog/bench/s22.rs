@@ -543,7 +543,7 @@ fn guarded_holes_scale() {
         for (t, ds, d) in [&a, &b] {
             let p = before::preimage(t, ds, d);
             assert!(p.exact && !p.enumerated, "{p:?}");
-            assert_eq!(first_refuted(t, ds, d, &[(&p.domains, true)]), None);
+            assert_eq!(first_refuted(t, ds, d, &[(&p.domains.met(), true)]), None);
         }
         scaling::check(
             "the transfer before of a guarded chain of `c - t` with holes",
@@ -582,7 +582,7 @@ fn constant_guarded_chains_scale() {
         for (t, ds, d) in cases.values().chain([&moving]) {
             let p = before::preimage(t, ds, d);
             assert!(p.exact && !p.enumerated, "{p:?}");
-            assert_eq!(first_refuted(t, ds, d, &[(&p.domains, true)]), None);
+            assert_eq!(first_refuted(t, ds, d, &[(&p.domains.met(), true)]), None);
         }
         scaling::check_order(
             "the transfer and linear stage before of a guarded chain of `2 - t`",

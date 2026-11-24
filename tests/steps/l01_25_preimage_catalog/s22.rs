@@ -21,7 +21,9 @@ use zed_kernel::Shared;
 
 use zed_kernel::{Prim, Term, Value};
 use zed_tests::instances::Rng;
+use zed_tests::step_helpers::l01_25_preimage_catalog::listed_debug;
 use zed_tests::step_helpers::l01_38_presburger::solver_alone;
+use zedc::store::classed::Classed;
 use zedc::store::int::Int;
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::lattice::Congruence;
@@ -61,7 +63,7 @@ fn alone_and_covered(t: &Term, ds: &Domains, d: &Demand, windows: &[(i64, i64)])
     }
     for (k, s) in &covered.domains {
         assert!(
-            s.is_subset(&alone.domains[k]),
+            s.met().is_subset(&alone.domains[k].met()),
             "{t}: the cover's {k} = {s} against the solver's {} (the cover's refusal {:?}, \
              relation {}; the solver's refusal {:?}, relation {})",
             alone.domains[k],
@@ -594,7 +596,8 @@ impl Diffs {
         // S22-exact-mislabel: ten boxes of the transfer before were marked exact while holding
         // points that fail, and were counted as boxes of `c - x` narrowed, since this was
         // checked only for the new box).
-        let boxes = [(&now.domains, now.exact), (&then.domains, then.exact)];
+        let (listed_now, listed_then) = (now.domains.met(), then.domains.met());
+        let boxes = [(&listed_now, now.exact), (&listed_then, then.exact)];
         if let Some(i) = first_refuted(t, ds, d, &boxes) {
             let (which, shown) = [("now", &new), ("before", &old)][i];
             self.cases += 1;
@@ -622,7 +625,7 @@ impl Diffs {
             && then
                 .domains
                 .iter()
-                .all(|(n, s)| s.is_subset(&now.domains[n]))
+                .all(|(n, s)| s.met().is_subset(&now.domains[n].met()))
             && (then.exact || !now.exact)
             && (now.enumerated == then.enumerated || unlisted_before)
             && format!("{:?}", now.stops) == format!("{:?}", then.stops)
@@ -658,8 +661,8 @@ impl Diffs {
                 };
                 self.wider.push(format!(
                     "{} before {}",
-                    show(&now.domains),
-                    show(&then.domains)
+                    show(&now.domains.met()),
+                    show(&then.domains.met())
                 ));
             }
             return;
@@ -679,7 +682,7 @@ impl Diffs {
             && kind(&now.refusal) == kind(&then.refusal)
             && same_relation_set(
                 ds,
-                &now.domains,
+                &now.domains.met(),
                 now.relation.as_ref(),
                 then.relation.as_ref(),
             )
@@ -707,7 +710,10 @@ impl Diffs {
             && !now.exact
             && rest!(now) == rest!(then)
             && now.domains.keys().eq(then.domains.keys())
-            && now.domains.iter().all(|(n, s)| inside(s, &then.domains[n]))
+            && now
+                .domains
+                .iter()
+                .all(|(n, s)| inside(&s.met(), &then.domains[n].met()))
         {
             self.cases += 1;
             self.narrower += 1;
@@ -728,7 +734,9 @@ impl Diffs {
             && if then.exact {
                 now.domains == then.domains
             } else {
-                now.domains.iter().all(|(n, s)| inside(s, &then.domains[n]))
+                now.domains
+                    .iter()
+                    .all(|(n, s)| inside(&s.met(), &then.domains[n].met()))
             }
         {
             self.cases += 1;
@@ -744,7 +752,10 @@ impl Diffs {
         if new != old
             && (now.exact || !then.exact)
             && now.domains.keys().eq(then.domains.keys())
-            && now.domains.iter().all(|(n, s)| inside(s, &then.domains[n]))
+            && now
+                .domains
+                .iter()
+                .all(|(n, s)| inside(&s.met(), &then.domains[n].met()))
         {
             self.cases += 1;
             self.reflected += 1;
@@ -797,7 +808,7 @@ impl Diffs {
             && now
                 .domains
                 .iter()
-                .all(|(k, s)| same_members(k, s, &then.domains[k]))
+                .all(|(k, s)| same_members(k, &s.met(), &then.domains[k].met()))
             && (now.enumerated == then.enumerated || unlisted)
             && rest(now.exact, &now.stops, &now.relation, &now.refusal)
                 == rest(then.exact, &then.stops, &then.relation, &then.refusal)
@@ -821,7 +832,7 @@ impl Diffs {
             && format!("{now:?}") != format!("{then:?}")
             && same_relation_set(
                 ds,
-                &now.domains,
+                &now.domains.met(),
                 now.relation.as_ref(),
                 then.relation.as_ref(),
             )
@@ -1366,8 +1377,8 @@ fn meeting_a_demand_with_the_hull_may_narrow_a_box_the_map2_cap_widened() {
     assert!(now.exact && then.exact);
     assert_eq!(now.domains["i"], pieces(&[(-10, -10), (1, 3), (10, 10)]));
     assert_eq!(then.domains["i"], now.domains["i"]);
-    assert!(!refuted(&t, &ds, &d, &then.domains, false));
-    assert!(!refuted(&t, &ds, &d, &now.domains, true));
+    assert!(!refuted(&t, &ds, &d, &then.domains.met(), false));
+    assert!(!refuted(&t, &ds, &d, &now.domains.met(), true));
     let mut diffs = Diffs::default();
     diffs.preimage("the narrowed case", &t, &ds, &d);
     // Both transfers are exact under the cover, so the case is no longer counted as one made
@@ -2353,10 +2364,14 @@ fn chains_on_two_inputs_keep_their_boxes(ks: &[usize]) {
                     IntervalSet::of(2 - ki, ki - 2),
                 ),
             };
-            assert_eq!((&p.domains["i"], &p.domains["m"]), (&i, &m), "{what}");
+            assert_eq!(
+                (&p.domains["i"].met(), &p.domains["m"].met()),
+                (&i, &m),
+                "{what}"
+            );
             assert!(!p.exact && p.relation.is_some(), "{what}: {p:?}");
             if k <= 13 {
-                assert!(!refuted(&t, &ds, &d, &p.domains, p.exact), "{what}");
+                assert!(!refuted(&t, &ds, &d, &p.domains.met(), p.exact), "{what}");
             }
         }
     }
@@ -2831,7 +2846,7 @@ fn remainder_reads_outside_a_split_have_their_preimages() {
             .zip(want)
         {
             let p = alone_and_covered(t, &ds, &d, &[(-15, 15), (-60, -45)]);
-            let got = (&p.domains["x"], &p.domains["y"], p.exact);
+            let got = (&p.domains["x"].met(), &p.domains["y"].met(), p.exact);
             if x.is_empty() {
                 assert!(got.0.is_empty() || got.1.is_empty(), "k={k}: {t}: {p:?}");
             } else {
@@ -3361,7 +3376,8 @@ fn refused_where_the_solver_answered(
                             refused.push((m, seed, shape, k));
                             continue;
                         }
-                        assert!(covered.domains["x"].is_subset(&alone.domains["x"]), "{t}");
+                        let (c, a) = (covered.domains["x"].met(), alone.domains["x"].met());
+                        assert!(c.is_subset(&a), "{t}");
                     }
                 }
             }
@@ -3433,7 +3449,7 @@ fn a_cover_with_one_value_of_x_dropped_fails_the_interpreter_check() {
             .find(|pt| meets(&t, &names, pt, &d))
             .expect("a point meets the demand");
         let mut wrong = p.clone();
-        let dropped = p.domains["x"].minus(&IntervalSet::single(met[x]));
+        let dropped = p.domains["x"].minus(&Classed::plain(IntervalSet::single(met[x])));
         wrong.domains.insert("x".into(), dropped);
         let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             check(&t, &ds, &d, &wrong, (-60, 60))
@@ -3716,7 +3732,9 @@ fn touched_cases() -> Vec<(String, Term, Domains, Demand)> {
 /// the modulus, span a whole period or have an infinite end, for `m = 10`, `m = -5` and `m = 7`
 /// ([`touched_cases`]), gives byte for byte the preimage that main gave at 01eb1be0, before the
 /// classes shared the domain (`touched_cases.txt`, one line per case, written by main then; each
-/// relation since prints the empty `bit_ands` list RUNG2-bit added, and nothing else changed).
+/// relation since prints the empty `bit_ands` list RUNG2-bit added, and nothing else changed;
+/// the box is printed listed, as main printed it, by `listed_debug`, since DOMAINS-classed-sets
+/// keeps a class's values as one class).
 /// For `m = 10` and for `m = -5`, each kind of answer of `touched` occurs at least once.
 #[test]
 fn split_pieces_reach_each_kind_of_touched() {
@@ -3727,7 +3745,8 @@ fn split_pieces_reach_each_kind_of_touched() {
     touched_paths();
     for ((name, t, ds, d), w) in cases.into_iter().zip(want.lines()) {
         let p = alone_and_covered(&t, &ds, &d, &[(-60, 60)]);
-        assert_eq!(format!("{name}\t{p:?}"), w, "{name}");
+        let p_listed = listed_debug(&format!("{p:?}"), &p.domains);
+        assert_eq!(format!("{name}\t{p_listed}"), w, "{name}");
         let c = touched_paths();
         let s = match name.split(' ').next() {
             Some("ten") => &mut sums[0],
@@ -3790,11 +3809,11 @@ fn a_power_zero_of_a_quotient_by_a_term_is_not_exact_where_the_divisor_is_zero()
         let now = preimage(&t, &ds, &d);
         let then = before::preimage(&t, &ds, &d);
         assert!(
-            !refuted(&t, &ds, &d, &now.domains, now.exact),
+            !refuted(&t, &ds, &d, &now.domains.met(), now.exact),
             "{t}: {now:?}"
         );
         assert!(
-            !refuted(&t, &ds, &d, &then.domains, then.exact),
+            !refuted(&t, &ds, &d, &then.domains.met(), then.exact),
             "{t} before: {then:?}"
         );
     }
@@ -3933,7 +3952,10 @@ fn holes_of_c_minus_t_at_small_sizes() {
             let (t, ds, d) = (prim(Prim::Ne, t, int(0)), i_in(-20, 20), Demand::Bool(true));
             let p = before::preimage(&t, &ds, &d);
             assert!(p.exact && !p.enumerated, "n = {n}: {p:?}");
-            assert_eq!(first_refuted(&t, &ds, &d, &[(&p.domains, true)]), None);
+            assert_eq!(
+                first_refuted(&t, &ds, &d, &[(&p.domains.met(), true)]),
+                None
+            );
         }
     }
 }
@@ -3991,7 +4013,7 @@ fn a_remainder_of_a_division_by_zero_is_exact_and_empty_unlisted() {
         let t = prim(Prim::Ne, prim(Prim::Mod, d0(), k), int(1));
         let p = preimage(&t, &ds, &Demand::Bool(false));
         assert!(p.exact && !p.enumerated, "{t}: {p:?}");
-        assert!(p.domains.values().all(IntervalSet::is_empty), "{t}: {p:?}");
+        assert!(p.domains.values().all(Classed::is_empty), "{t}: {p:?}");
     }
 }
 
@@ -4410,7 +4432,7 @@ fn an_arm_decided_on_a_part_of_the_box_keeps_the_points_of_the_interpreter() {
         ]);
         for d in [Demand::Bool(true), Demand::Bool(false)] {
             let p = preimage(&t, &part, &d);
-            let exact = p.exact && !refuted(&t, &part, &d, &p.domains, true)
+            let exact = p.exact && !refuted(&t, &part, &d, &p.domains.met(), true)
                 || relation_exact(&t, &part, &Classes::new(), &d, &p);
             assert!(exact, "x in [{lo}, {hi}], {d:?}: {p:?}");
         }
@@ -4457,7 +4479,7 @@ fn an_arm_decided_in_a_summary_keeps_the_points_of_the_interpreter() {
         for d in [Demand::Bool(true), Demand::Bool(false)] {
             let p = preimage(&t, &ds, &d);
             assert!(
-                !refuted(&t, &ds, &d, &p.domains, p.exact),
+                !refuted(&t, &ds, &d, &p.domains.met(), p.exact),
                 "k = {k}, {d:?}: {p:?}"
             );
             if p.relation.is_some() {

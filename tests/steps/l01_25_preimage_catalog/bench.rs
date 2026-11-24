@@ -3,6 +3,7 @@
 //! tests (`tools/run_tests.sh --bench`); each file's correctness tests check the same terms at
 //! small sizes.
 
+mod classed;
 mod constant_minus;
 mod deep;
 mod overflow;

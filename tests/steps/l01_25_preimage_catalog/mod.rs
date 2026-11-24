@@ -12,6 +12,7 @@
 mod arity_stop;
 mod bench;
 mod big_ends;
+mod classed;
 mod completeness;
 mod constant_minus;
 mod deep;

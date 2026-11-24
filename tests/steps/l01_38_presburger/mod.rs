@@ -48,6 +48,7 @@ mod slack_points;
 mod slack_scale;
 mod slack_unbounded;
 mod small_cost;
+mod strided;
 
 use zedc::store::preimage::relations;
 

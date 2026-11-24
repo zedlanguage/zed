@@ -168,7 +168,7 @@ use End::{Fin, NegInf, PosInf};
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::landmarks::Landmarks;
-use zedc_lattice::revision::{self, Op, Tonicity, reduce_congruence};
+use zedc_lattice::revision::{self, Op, Tonicity};
 use zedc_presburger::presburger::{self, Con, Formula, Lin, Refusal, Relation};
 use zedc_stage::stage;
 
@@ -182,11 +182,12 @@ use mod_chain::{
 // The search helpers and the types they read are those of the solver (DRY-preimage-ref-oracle):
 // this file is an independent oracle for the backward transfer, which stays a copy, and the
 // box search around it (the classes, halving, running a point) is not what it checks.
-pub use crate::preimage::{Classes, Demand, Domains, Listed, Point};
+pub use crate::preimage::{Boxes, Classes, Demand, Domains, Listed, Point};
 use crate::preimage::{
-    NONE_LISTED, Search, Whole, classes_decide, enumerate, halve, is_point, run_point,
-    within_classes,
+    NONE_LISTED, Search, Whole, classes_decide, drops_a_member, enumerate, halve, is_point,
+    run_point, within_boxes, within_classes, within_classes_boxed,
 };
+use zedc_lattice::classed::Classed;
 
 /// Why the transfer stopped.
 #[derive(Clone, PartialEq, Debug)]
@@ -247,8 +248,9 @@ impl fmt::Display for Stop {
 /// A preimage.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Preimage {
-    /// The box: every point at which the term meets the demand lies in it.
-    pub domains: Domains,
+    /// The box: every point at which the term meets the demand lies in it, each set as ranges
+    /// met with one class ([`Boxes`]).
+    pub domains: Boxes,
     /// Whether every point of the box meets the demand.
     pub exact: bool,
     /// Whether the box came from enumeration.
@@ -343,7 +345,7 @@ fn preimage_in(
     };
     if let Some((answer, relation)) = early {
         return Preimage {
-            domains: tx.whole(&answer),
+            domains: Boxes::plain(tx.whole(&answer)),
             exact: answer.exact,
             enumerated: false,
             stops: Vec::new(),
@@ -384,6 +386,9 @@ fn preimage_in(
     if r.exact {
         relation = None;
     }
+    // The class each input's set keeps beside its ranges in `r.dom`, from the linear stage's
+    // projection (row DOMAINS-classed-sets): every point of the preimage lies in it.
+    let mut strides = Default::default();
     if !r.exact
         && relation.is_none()
         && !is_empty(&r.dom)
@@ -391,6 +396,8 @@ fn preimage_in(
     {
         match found {
             Ok((dom, exact, why)) => {
+                let (dom, s) = dom.split();
+                strides = s;
                 r = Whole { dom, exact };
                 relation = (!exact).then_some(rel);
                 refusal = why;
@@ -410,7 +417,7 @@ fn preimage_in(
     }
     stops.dedup();
     Preimage {
-        domains: r.dom,
+        domains: Boxes::with(r.dom, &strides),
         exact: r.exact,
         enumerated,
         stops,
@@ -1762,7 +1769,7 @@ fn linear(
     dom: &Domains,
     demand: &Demand,
     doubt: Option<&Sets>,
-) -> Option<(Relation, Result<(Domains, bool, Option<Refusal>), Refusal>)> {
+) -> Option<(Relation, Result<(Boxes, bool, Option<Refusal>), Refusal>)> {
     // `start` empties the memo, so every translation entry read below is made with this `tr`
     // (FAIL-ref-memo-stale-entries; `Tx::relation_within`, steps 1 and 2).
     tx.start(dom, Landmarks::none());
@@ -1785,7 +1792,7 @@ fn linear(
         defs: tr.defs,
         bit_ands: Vec::new(),
     };
-    let go = || -> Result<(Domains, bool, Option<Refusal>), Refusal> {
+    let go = || -> Result<(Boxes, bool, Option<Refusal>), Refusal> {
         let mut mentioned = rel.body.atoms();
         for (_, _, f) in &rel.defs {
             mentioned.extend(f.atoms());
@@ -1803,32 +1810,37 @@ fn linear(
             .map(|k| presburger::Atom::Sym(k.clone()))
             .filter(|a| mentioned.contains(a))
             .collect();
-        if let Some(found) = doubt.and_then(|d| pinned_slice(&whole, dom, d, &mentioned)) {
-            return Ok(found);
+        if let Some((d, exact, why)) = doubt.and_then(|d| pinned_slice(&whole, dom, d, &mentioned))
+        {
+            return Ok((Boxes::plain(d), exact, why));
         }
-        let (each, skipped) = presburger::project_each(&whole, &syms)?;
+        // Each projection that is ranges met with a class keeps its class, unlisted (row
+        // DOMAINS-classed-sets), as in the solver's linear stage; the box with it is written
+        // for the question below by `within_boxes`.
+        let got = presburger::project_each_classed(&whole, &syms)?;
+        let (each, skipped) = (got.sets, got.causes);
         let mut each = each.into_iter();
-        let mut out = Domains::new();
+        let mut out = Boxes::default();
         for (k, v) in dom {
             let p = if mentioned.contains(&presburger::Atom::Sym(k.clone())) {
                 each.next()
                     .expect("one projection for each mentioned input")?
-                    .meet(v)
+                    .meet_ranges(v)
             } else {
-                v.clone()
+                Classed::plain(v.clone())
             };
             out.insert(k.clone(), p);
         }
-        if is_empty(&out) {
+        if out.values().any(Classed::is_empty) {
             let none = out
                 .keys()
                 .map(|k| (k.clone(), IntervalSet::empty()))
                 .collect();
-            return Ok((none, true, None));
+            return Ok((Boxes::plain(none), true, None));
         }
         let outside = Formula::and(vec![
             rel.defined(),
-            within(&out),
+            within_boxes(&out),
             Formula::negate(rel.body.clone()),
         ]);
         Ok(match presburger::decide(&outside) {
@@ -7681,19 +7693,24 @@ pub fn exact_preimage(
     let mut p = preimage_of(term, inputs, NONE_LISTED, demand);
     if p.exact {
         // Every point of the box meets the demand, so the classes alone narrow it.
-        p.domains = within_classes(&p.domains, classes).unwrap_or_else(|| {
-            (p.domains.keys().map(|k| (k.clone(), IntervalSet::empty()))).collect()
-        });
+        let none: Domains = (p.domains.keys())
+            .map(|k| (k.clone(), IntervalSet::empty()))
+            .collect();
+        p.domains = within_classes_boxed(std::mem::take(&mut p.domains), classes)
+            .unwrap_or_else(|| Boxes::plain(none));
         return p;
     }
     if !stage::ends(term) {
         return p;
     }
-    let Some((domains, exact)) = exact_search(term, &p.domains, classes, demand) else {
+    // As in the solver's `exact_preimage`: the search reads the ranges, and its answer is met
+    // with the classes again.
+    let (ranges, strides) = p.domains.clone().split();
+    let Some((domains, exact)) = exact_search(term, &ranges, classes, demand) else {
         return p;
     };
     Preimage {
-        domains,
+        domains: Boxes::with(domains, &strides),
         exact,
         enumerated: true,
         stops: p.stops,
@@ -7743,13 +7760,15 @@ pub fn witness(
     };
     if !stage::ends(term) {
         let r = preimage_of(term, &dom, NONE_LISTED, demand);
-        let narrowed: Domains = dom
-            .iter()
-            .map(|(k, s)| (k.clone(), s.meet(&r.domains[k])))
-            .collect();
-        return match within_classes(&narrowed, classes) {
+        // As in the solver's `witness`: each end of a set's ranges is a member of its class.
+        let narrowed = Boxes(
+            dom.iter()
+                .map(|(k, s)| (k.clone(), r.domains[k].meet_ranges(s)))
+                .collect(),
+        );
+        return match within_classes_boxed(narrowed, classes) {
             None => Some(None),
-            Some(n) if r.exact => Some(Some(lowest(&n))),
+            Some(n) if r.exact => Some(Some(lowest(&n.ranges()))),
             Some(_) => None,
         };
     }
@@ -7840,13 +7859,7 @@ fn fails_in(term: &Term, root: Domains, classes: &Classes, demand: &Demand) -> O
             continue;
         }
         let r = preimage_in(&mut tx, top, term, &b, NONE_LISTED, demand);
-        let dropped = b.iter().any(|(k, s)| {
-            let out = r.domains[k].complement_in(s);
-            match classes.get(k) {
-                Some(c) => !reduce_congruence(&out, c).0.is_empty(),
-                None => !out.is_empty(),
-            }
-        });
+        let dropped = (b.iter()).any(|(k, s)| drops_a_member(s, classes.get(k), &r.domains[k]));
         if dropped {
             return Some(true);
         }
@@ -7888,9 +7901,11 @@ fn branch(
             b
         } else {
             let r = preimage_in(&mut tx, top, term, &b, NONE_LISTED, demand);
+            // A set with a class other than every integer is listed, as in the solver's
+            // `branch`, which says why.
             let narrowed: Domains = b
                 .iter()
-                .map(|(k, s)| (k.clone(), s.meet(&r.domains[k])))
+                .map(|(k, s)| (k.clone(), r.domains[k].meet_ranges(s).met()))
                 .collect();
             let Some(n) = within_classes(&narrowed, classes) else {
                 continue;

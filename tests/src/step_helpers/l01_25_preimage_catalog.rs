@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use zed_kernel::{Shared, Term};
 use zedc::store::interval::{End, IntervalSet};
-use zedc::store::preimage::{Domains, Preimage};
+use zedc::store::preimage::{Boxes, Domains, Preimage};
 
 use super::l01_16_elaboration::{elab_total_mod, with_prelude};
 
@@ -100,9 +100,17 @@ pub fn doms(ds: &[(&str, Option<i64>, Option<i64>)]) -> Domains {
 }
 
 /// The preimage of `true`, printed: each parameter's set, then `exact` or `necessary`, then
-/// `enumerated` when it was.
+/// `enumerated` when it was. A set of ranges alone prints as `i [8..=11]`; one met with a
+/// class prints as the binding `i: int[3..=993] where i mod 10 == 3` (`Classed::type_text`,
+/// row DOMAINS-classed-sets), its values not listed, unless they print no longer listed
+/// (`Classed::printed_members`), `x [1..=1, 4..=4]`.
 pub fn shown(p: &Preimage) -> String {
-    let mut out: Vec<String> = p.domains.iter().map(|(k, v)| format!("{k} {v}")).collect();
+    let mut out: Vec<String> = (p.domains.iter())
+        .map(|(k, v)| match (v.strided(), v.printed_members()) {
+            (Some(_), None) => format!("{k}: {}", v.type_text(Some(k))),
+            _ => format!("{k} {v}"),
+        })
+        .collect();
     out.push(if p.exact { "exact" } else { "necessary" }.into());
     if p.enumerated {
         out.push("enumerated".into());
@@ -111,4 +119,12 @@ pub fn shown(p: &Preimage) -> String {
         out.push(format!("stop: {s}"));
     }
     out.join("; ")
+}
+
+/// `debug`, an answer printed by `{:?}`, with its box `boxes` printed as main printed it before
+/// row DOMAINS-classed-sets, each set as ranges alone, a class's values each a range of its own
+/// ([`Boxes::met`]): so that a table of answers written by main still compares the values.
+/// The box is the answer's first field, so its text is the first match.
+pub fn listed_debug(debug: &str, boxes: &Boxes) -> String {
+    debug.replacen(&format!("{boxes:?}"), &format!("{:?}", boxes.met()), 1)
 }

@@ -1123,8 +1123,8 @@ fn holed_tails_agree_in_every_order_and_with_enumerated_points() {
                             solver: SOLVER,
                         };
                         assert_eq!(
-                            ended(points(cut + 1), kept, &mut work),
-                            Ok((want.clone(), true)),
+                            ended(ClassUnion::plain(points(cut + 1)), kept, &mut work),
+                            Ok((Classed::plain(want.clone()), true)),
                             "cut {cut}: {f}"
                         );
                     }
@@ -1566,7 +1566,13 @@ fn counted_elimination_charges_pairs_and_refuses_when_spent() {
         solver: SOLVER,
     };
     let (c_set, _, _) = cell(&f_conj, &m, &s, &factors, &within, &mut cell_full).unwrap();
-    assert_eq!(c_set, IntervalSet::of(0, 10));
+    // Listed with a meter of its own, so `cell_full` counts `cell`'s work alone.
+    let mut listing = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    assert_eq!(c_set.met(&mut listing), Ok(IntervalSet::of(0, 10)));
     assert!(cell_full.used >= read_only + pair_work);
 
     let mut cell_tight = Work {

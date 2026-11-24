@@ -22786,11 +22786,15 @@ fn project_each_inner(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
 /// projection: where the solver refuses the question or the projection onto a symbol, the
 /// symbol keeps the bounds the box stage gives the rows of the formula ([`row_box`]), which
 /// hold every value it takes at a point of the formula.
+pub type Boxed = BoxedOf<IntervalSet>;
+
+/// [`Boxed`] with each set of the type `S`: [`IntervalSet`] for [`project_each_boxed`],
+/// [`Classed`] for [`project_each_boxed_classed`].
 #[derive(Clone, PartialEq, Debug)]
-pub struct Boxed {
+pub struct BoxedOf<S> {
     /// Each symbol's set: its projection, or where it was refused, the box stage's bounds
     /// and the cause.
-    pub each: Vec<(IntervalSet, Option<Refusal>)>,
+    pub each: Vec<(S, Option<Refusal>)>,
     /// The causes for which a disjunction was left out of the projections.
     pub skipped: Vec<Refusal>,
     /// The cause for which the whole question was refused, when it was; every symbol then
@@ -22798,7 +22802,7 @@ pub struct Boxed {
     pub whole: Option<Refusal>,
 }
 
-impl Boxed {
+impl<S> BoxedOf<S> {
     /// The first cause for which a set is wider than the projection: of the whole question,
     /// then of the first refused symbol, then of the first disjunction left out.
     pub fn cause(&self) -> Option<Refusal> {
@@ -22832,8 +22836,91 @@ impl Boxed {
 /// `l01_39_reduced_product::pendants::a_conjunction_gets_one_answer_for_every_naming`,
 /// `l01_39_reduced_product::pendants::a_joined_conjunction_gets_one_answer_for_every_naming`.
 pub fn project_each_boxed(f: &Formula, syms: &[Atom]) -> Boxed {
+    boxed_by(f, syms, project_each, |b| b)
+}
+
+/// [`project_each_boxed`] with each set kept as ranges met with one class ([`Classed`]) where
+/// the exact projection has that form ([`project_each_classed`]), no value listed; a refused
+/// symbol keeps the box stage's bounds with every integer as its class. Each set is the
+/// projection, exact, where it has no cause, as in [`project_each_boxed`]: a set of ranges
+/// alone is the same set there, and a strided one is the set [`Classed::met`] would list.
+///
+/// Complexity tradeoff (PERF-exact-strided-unlisted, DOMAINS-classed-sets): naive version,
+/// [`project_each_boxed`], whose [`project_each`] lists each value of such a set
+/// ([`Classed::met`], O(v) for v values): once the exact projection kept a stride as one class,
+/// `i mod 10 == 3` over `[0, 10^9]` came back exact and 10^8 values were listed, and
+/// `l01_25_preimage_catalog::entries::euclidean_division_and_remainder_by_a_constant_invert_exactly`
+/// ran past its 20 s limit (every gdb sample in `Classed::met`, 2026-11-23). The first fix,
+/// option (a) of PERF-exact-strided-unlisted (3480ade74), listed values while they fit in the
+/// size of `f` and gave the ranges alone past it, a sound box but not exact, which left two
+/// tests of `l01_25_preimage_catalog::s22` red. Used: the class kept, O(p) for the p ranges of
+/// the answer past the projection's own cost, whatever the number of values, and exact; no size
+/// refuses anything. Tests: `l01_38_presburger::strided::a_boxed_class_keeps_its_class_unlisted`
+/// and `l01_38_presburger::bench::strided::a_boxed_class_is_not_listed_scales`.
+pub fn project_each_boxed_classed(f: &Formula, syms: &[Atom]) -> BoxedOf<Classed> {
+    boxed_by(
+        f,
+        syms,
+        |g, s| project_each_classed(g, s).map(|e| (e.sets, e.causes)),
+        Classed::plain,
+    )
+}
+
+/// The integers a reduced product's interval domain is met with for `set`, a set of
+/// [`project_each_boxed_classed`], and the class its congruence domain is met with, if any:
+/// `set` listed ([`Classed::met`]) and no class where it has a class other than every integer
+/// and its values, at the `meter::LISTED` and `meter::PIECE` units a value the cover charged
+/// for listing one before the classes were kept (23 a value, so about 134,800 values at the
+/// default limit), fit within the cover's work limit (`meter::EXACT_LIMIT`, or the limit a
+/// test set); else its ranges and its class (none for every integer). Each holds every value
+/// of `set`, so each meet is sound, and the listed set alone, or the ranges with the class,
+/// hold exactly `set` (Lemma E of zedc-preimage `Scope::project_part`). A listed set leaves the
+/// congruence as it was, as before the classes were kept: the listed integers hold the set
+/// already, and a class met as well would change what the domains record and print (`2 mod 3`
+/// beside `[-1..=-1, 2..=2, 5..=5]`,
+/// `l01_39_scope_relations::families::audit_seed_4_keeps_its_exact_sets_with_the_cover`) and
+/// how the pendants route frames the name (`D-3` of
+/// `l01_39_reduced_product::pendants::the_parts_of_the_review_are_projected_exactly_by_pendants`).
+///
+/// Complexity tradeoff (DOMAINS-classed-sets): naive version, the ranges alone for every
+/// class, O(p) for p ranges: the interval domain then lost the holes of a small class,
+/// `{0, 10}` read as `[0, 10]`, which `l01_39_scope_relations` (`holes`, `lazy`, `linked`,
+/// `families`) and `l01_39_reduced_product` (`let_terms`, `follow`, `pendants`) read from the
+/// integers alone, and which the checker's messages print. The other naive version, every
+/// class listed, O(v) for v values, is what `project_each_boxed` gave, and lists 10^8 values
+/// for `i mod 10 == 3` over `[0, 10^9]` (the memory exhaustion of
+/// `l01_25_preimage_catalog::entries`, 2026-11-23). Used: listed at the rate and within the
+/// limit at which the cover listed each value before the classes were kept
+/// (PERF-exact-strided-unlisted), so every set the cover gave listed before is listed the same
+/// way here, at the same O(v) cost and bounded by the same limit. The cover's limit was one
+/// total for the call; this one is a set's own, so a set the cover listed (its share of that
+/// total within the limit) is listed here too, and a call lists at most the limit's values for
+/// each name it projects onto, a number the formula fixes. Past it, where the cover was
+/// refused before and the domain kept the box stage's bounds, the ranges and the class, O(p).
+/// No input is refused by this choice; it changes only the form, never the set the domains
+/// hold together.
+pub fn listed_within_limit(
+    set: &Classed,
+) -> (IntervalSet, Option<zedc_lattice::lattice::Congruence>) {
+    let limit = meter::EXACT_LIMIT_SET.get().unwrap_or(meter::EXACT_LIMIT);
+    let rate = meter::LISTED + meter::PIECE;
+    match set.strided() {
+        None => (set.ranges.clone(), None),
+        Some(_) if set.count().saturating_mul(rate) <= limit => (set.met(), None),
+        Some(_) => (set.ranges.clone(), Some(set.class.clone())),
+    }
+}
+
+/// [`project_each_boxed`] with the projections asked of `ask`, a refused symbol's box stage
+/// bounds made a set of `S` by `lift`.
+fn boxed_by<S>(
+    f: &Formula,
+    syms: &[Atom],
+    ask: impl FnOnce(&Formula, &[Atom]) -> Result<(Vec<Result<S, Refusal>>, Vec<Refusal>), Refusal>,
+    lift: impl Fn(IntervalSet) -> S,
+) -> BoxedOf<S> {
     let lean = without_box_true_disjunctions(f);
-    let (each, skipped, whole) = match project_each(lean.as_ref().unwrap_or(f), syms) {
+    let (each, skipped, whole) = match ask(lean.as_ref().unwrap_or(f), syms) {
         Ok((each, skipped)) => (each, skipped, None),
         Err(e) => (
             syms.iter().map(|_| Err(e.clone())).collect(),
@@ -22847,11 +22934,11 @@ pub fn project_each_boxed(f: &Formula, syms: &[Atom]) -> Boxed {
             Ok(s) => (s, None),
             Err(e) => {
                 let b = boxed.get_or_insert_with(|| row_box(f, syms));
-                (b[k].clone(), Some(e))
+                (lift(b[k].clone()), Some(e))
             }
         })
         .collect();
-    Boxed {
+    BoxedOf {
         each,
         skipped,
         whole,

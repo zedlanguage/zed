@@ -64,26 +64,27 @@ fn euclidean_division_and_remainder_by_a_constant_invert_exactly() {
         holds("ok(i) = i div -4 == 2;\n", &[any("i")]),
         "i [-8..=-5]; exact"
     );
-    // Within two periods, the remainder pieces of each, exactly.
+    // Within two periods, the remainder pieces of each, exactly: kept as one class, and
+    // printed listed, which is no longer than the class (`Classed::printed_members`).
     assert_eq!(
         holds("ok(i) = i mod 10 == 3;\n", &[("i", Some(0), Some(19))]),
         "i [3..=3, 13..=13]; exact"
     );
-    // Over more periods the transfer lists the first and last and merges those between; the
-    // split by remainders (S22e-wide) reads the merged middle once more, which lists its
-    // first and last, here every period, and finds every member in its class: exact.
+    // Over more periods the values are one class, its ranges trimmed to the first and last
+    // member, none listed, since the class prints shorter (before: the four values listed,
+    // `i [3..=3, 13..=13, 23..=23, 33..=33]`).
     assert_eq!(
         holds("ok(i) = i mod 10 == 3;\n", &[("i", Some(0), Some(40))]),
-        "i [3..=3, 13..=13, 23..=23, 33..=33]; exact"
+        "i: int[3..=33] where i mod 10 == 3; exact"
     );
-    // Over 10^8 periods the merged middle is read once more, which lists one more period at
-    // each end (S22e-wide); the periods between stay one piece, necessary only.
+    // Over 10^8 periods, the same one class, exact (before: one period listed at each end and
+    // the periods between one piece, necessary only).
     assert_eq!(
         holds(
             "ok(i) = i mod 10 == 3;\n",
             &[("i", Some(0), Some(1_000_000_000))]
         ),
-        "i [3..=3, 13..=13, 23..=23, 33..=999999973, 999999983..=999999983, 999999993..=999999993]; necessary"
+        "i: int[3..=999999993] where i mod 10 == 3; exact"
     );
     // With no bound on `i`, the remainders are not a finite union: necessary only.
     assert_eq!(
@@ -357,7 +358,7 @@ fn a_set_of_many_pieces_is_kept_exact() {
                && x != 15 && x != 17;\n";
     let p = pre(src, &[any("x")], &Demand::Bool(true));
     assert!(p.exact, "{}", shown(&p));
-    assert_eq!(p.domains["x"].len(), 10, "{}", shown(&p));
+    assert_eq!(p.domains["x"].met().len(), 10, "{}", shown(&p));
     check(
         &function(src).1,
         &doms(&[any("x")]),

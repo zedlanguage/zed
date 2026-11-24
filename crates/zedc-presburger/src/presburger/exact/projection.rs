@@ -42,6 +42,7 @@ use zedc_lattice::lattice::{Congruence, Lattice};
 use super::super::formula::Id;
 use super::super::meter::{EXACT_QUESTIONS, LISTED, PIECE, Work};
 use super::super::{Atom, Classed, Con, Formula, Lin, Model, Refusal, Rel};
+use super::classes::ClassUnion;
 
 /// The in-cell step for the values an implicant has without end.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -134,7 +135,25 @@ pub(super) fn pugh(
     Ok(out)
 }
 
-/// The values of the goal of [`pugh`] that no part found so far holds.
+/// The values of the goal of [`pugh`] that no part found so far holds, or more: `left` holds
+/// every such value, and may hold values a part holds where taking them would list them
+/// ([`Held::push`]).
+///
+/// Proof that a `left` wider than the values not yet held changes no part found. `left` is
+/// read in two places only: [`Held::done`], which stops the projection once it is empty, and
+/// [`Held::push`], which takes a part's values from it. Let `T` be the values of the goal no
+/// part found so far holds, and `L ⊇ T` (at the start `L = T`, the goal). (1) `done` is true
+/// only where `L` is empty, so `T` is empty too: the projection stops only where the exact
+/// `left` would have stopped it, and every part it pushes is one of the projection, so the
+/// parts found are a subset of the projection's and a superset of those the exact `left` finds
+/// (the projection is the same depth-first walk, and each step it takes with the exact `left`
+/// it takes here, `L` being empty no sooner; the charges differ, so either may be refused at
+/// the limit where the other is not, and a refusal gives no parts at all). (2) A push of part
+/// `P` makes `T' = T \ P`, and
+/// `L'` is `L \ X` for some `X ⊆ P` (`X` empty where `L` is kept): `T' = T \ P ⊆ L \ P ⊆
+/// L \ X = L'`, so `L' ⊇ T'` again. By induction `L ⊇ T` at every step. The cell (`super::cell`)
+/// reads only the parts, every one of which is a part of the projection, so its values all have
+/// points; it may get more parts than with the exact `left`, never a value without a point.
 struct Held {
     left: Classed,
 }
@@ -147,7 +166,21 @@ impl Held {
 
     /// `p` added to `out`, and its values taken from those left: a part with no holes as one
     /// range; a part with holes by its class, but only in the finite pieces of what is left
-    /// within its ends, each value taken charged [`LISTED`] and each piece read [`PIECE`].
+    /// within its ends, and only where the values left stay one class within ranges
+    /// ([`Classed::minus_unlisted`]); else `left` is kept as it is, wider than the values not
+    /// yet held, which the proof at [`Held`] allows. Each piece read and each piece taken is
+    /// charged [`PIECE`].
+    ///
+    /// Complexity tradeoff (PERF-exact-strided-unlisted): naive version (before), a part with
+    /// holes taken by [`Classed::minus`], which lists the values left where they are no one
+    /// class (the range `[0, R]` less the even values of `[0, X]`: the odd values there and
+    /// every value past `X`), and each value of the part charged [`LISTED`] and each value left
+    /// [`PIECE`] (the counts of the values, [`Classed::count`] and [`Classed::listed_len`]), so
+    /// the exact projection of a hub held to a class charged O(R) units and was refused near
+    /// R = 10^5 (`l01_38_presburger::strided`). Used: O(p log p) for the p ranges of `left`
+    /// and the part, charged [`PIECE`] for each range read and taken, and `left` kept where
+    /// taking would list; the cost of keeping it is at most the splinters the exact `left`
+    /// would have spared (a later [`Held::done`] that is false where it would be true).
     ///
     /// Complexity tradeoff: naive version, a part with holes taken from what is left by a set
     /// of its values, which has no end for a part with no end. Before
@@ -159,10 +192,8 @@ impl Held {
     /// samples in `project_classes` were here). Used: `left` kept as ranges met with one class
     /// ([`Classed`]) and the part taken by its range and class ([`Classed::minus`]), O(p log p)
     /// for p ranges where the values left stay one class (every integer less the odd values,
-    /// then less the even ones), and listed, O(v) as before, where they do not. The values
-    /// taken and the pieces read are counted, not listed ([`Classed::count`],
-    /// [`Classed::listed_len`]), so each part is charged the same work as before, and the same
-    /// projections are refused at the limit.
+    /// then less the even ones), and listed, O(v) as before, where they do not (until
+    /// PERF-exact-strided-unlisted, above).
     fn push(&mut self, p: Strided, out: &mut Vec<Strided>, work: &mut Work) -> Result<(), Refusal> {
         let lo = p.lo.as_ref().map_or(End::NegInf, fin);
         let hi = p.hi.as_ref().map_or(End::PosInf, fin);
@@ -174,11 +205,17 @@ impl Held {
         } else {
             self.left.meet(&Classed::plain(IntervalSet::range(lo, hi)))
         };
+        // Each range of `within` read once.
+        let read = PIECE.saturating_mul((within.ranges.len() as u64).saturating_add(1));
         if p.step == Int::from(1) {
-            work.charge(PIECE.saturating_mul(within.listed_len().saturating_add(1)))?;
-            self.left = self.left.minus(&within);
+            work.charge(read)?;
+            // `within` may be read in a finer class than `left` (`Classed::new` finds the
+            // class of its values), so the difference may list too.
+            if let Some(left) = self.left.minus_unlisted(&within) {
+                self.left = left;
+            }
         } else if !within.is_empty() {
-            work.charge(PIECE.saturating_mul(within.listed_len().saturating_add(1)))?;
+            work.charge(read)?;
             // The finite pieces of `within`; a piece with no end is skipped (the goal is then
             // not held by this part alone). With a class other than every integer every piece
             // is finite already. Complexity tradeoff: naive version, always collect and rebuild
@@ -196,9 +233,11 @@ impl Held {
             };
             let class = Congruence::new(Num::from(&p.step), Num::from(&p.res));
             let taken = Classed::new(finite, within.class.meet(&class));
-            // Each value taken charged [`LISTED`], as each was when listed.
-            work.charge(LISTED.saturating_mul(taken.count()))?;
-            self.left = self.left.minus(&taken);
+            // Each range taken charged [`PIECE`]; no value is listed.
+            work.charge(PIECE.saturating_mul((taken.ranges.len() as u64).saturating_add(1)))?;
+            if let Some(left) = self.left.minus_unlisted(&taken) {
+                self.left = left;
+            }
         }
         out.push(p);
         Ok(())
@@ -1021,6 +1060,26 @@ pub(super) fn ranges(
     parts: &[Strided],
     work: &mut Work,
 ) -> Result<(IntervalSet, Vec<Tail>), Refusal> {
+    let (set, _, tails) = ranges_in(parts, false, work)?;
+    Ok((set, tails))
+}
+
+/// [`ranges`] with the values of a finite piece with holes kept as classes where that makes
+/// no more sets than listing them ([`classes_in`]), so that no value is listed there.
+pub(super) fn ranges_classed(
+    parts: &[Strided],
+    work: &mut Work,
+) -> Result<(ClassUnion, Vec<Tail>), Refusal> {
+    let (set, classes, tails) = ranges_in(parts, true, work)?;
+    Ok((ClassUnion::plain(set).join(&classes), tails))
+}
+
+/// [`ranges`], with the classes of [`classes_in`] apart where `keep`, else none.
+fn ranges_in(
+    parts: &[Strided],
+    keep: bool,
+    work: &mut Work,
+) -> Result<(IntervalSet, ClassUnion, Vec<Tail>), Refusal> {
     let end_lo = |p: &Strided| p.lo.as_ref().map_or(End::NegInf, fin);
     let end_hi = |p: &Strided| p.hi.as_ref().map_or(End::PosInf, fin);
     let plain = IntervalSet::from_pieces(
@@ -1031,8 +1090,9 @@ pub(super) fn ranges(
     );
     let holed: Vec<&Strided> = parts.iter().filter(|p| p.step > Int::from(1)).collect();
     if holed.is_empty() {
-        return Ok((plain, Vec::new()));
+        return Ok((plain, ClassUnion::empty(), Vec::new()));
     }
+    let mut classes = ClassUnion::empty();
     // The line cut at every finite end of a holed part: in each segment the same parts hold.
     let mut cuts: BTreeSet<Int> = BTreeSet::new();
     for p in &holed {
@@ -1110,10 +1170,59 @@ pub(super) fn ranges(
                 });
                 continue;
             };
-            listed(&Int::from(l), &Int::from(u), &lcm, &have, work, &mut pieces)?;
+            let (l, u) = (Int::from(l), Int::from(u));
+            if keep {
+                classes_in(&l, &u, &lcm, &have, work, &mut classes, &mut pieces)?;
+            } else {
+                listed(&l, &u, &lcm, &have, work, &mut pieces)?;
+            }
         }
     }
-    Ok((IntervalSet::from_pieces(pieces), tails))
+    Ok((IntervalSet::from_pieces(pieces), classes, tails))
+}
+
+/// The values from `l` to `u` whose residue modulo `step` is marked in `have`: one class
+/// `r mod step` for each residue `r` marked, met with `[l, u]`, added to `classes`, each
+/// charged [`PIECE`], where that makes no more sets than listing; else listed ([`listed`]).
+///
+/// The choice: with `k` residues marked in `c` cyclic runs (`c >= 1`, as `have` is neither
+/// all marked nor none here: `ranges_in` lists every value where all are), the span of
+/// `n = u - l + 1` values holds `floor(n/step)` whole periods, each of which lists as at least
+/// `c` ranges (a run of marked residues inside a period is one range at most, and two runs
+/// are apart by an unmarked residue, so never one range), so listing makes at least
+/// `c·floor(n/step)` ranges. Classes are taken where `k` is at most that bound, so they never
+/// make more sets than listing. Both are exact, so only the cost changes; the choice compares
+/// the two counts, with no constant chosen.
+// Complexity tradeoff: naive version (before PERF-exact-strided-unlisted), every value
+// listed, O(n·k/step) for k residues marked; used: O(step) to read the table and O(k) classes,
+// O(k log k) to join them, whatever n.
+#[allow(clippy::too_many_arguments)]
+fn classes_in(
+    l: &Int,
+    u: &Int,
+    step: &Int,
+    have: &[bool],
+    work: &mut Work,
+    classes: &mut ClassUnion,
+    pieces: &mut Vec<(End, End)>,
+) -> Result<(), Refusal> {
+    // The table read once, one unit for each 64 residues, as `listed` reads it.
+    work.charge(have.len() as u64 / 64 + 1)?;
+    let k = have.iter().filter(|&&b| b).count();
+    let runs = (0..have.len())
+        .filter(|&r| have[r] && !have[(r + have.len() - 1) % have.len()])
+        .count();
+    let periods = (&(u - l) + &Int::from(1)).div_floor(step);
+    if Int::from(k) > &Int::from(runs) * &periods {
+        return listed(l, u, step, have, work, pieces);
+    }
+    let span = IntervalSet::range(fin(l), fin(u));
+    for (r, _) in have.iter().enumerate().filter(|(_, b)| **b) {
+        work.charge(PIECE)?;
+        let class = Congruence::new(Num::from(step), Num::from(&Int::from(r as i64)));
+        classes.add(Classed::new(span.clone(), class));
+    }
+    Ok(())
 }
 
 /// The values from `l` to `u` whose residue modulo `step` is marked in `have`, added to

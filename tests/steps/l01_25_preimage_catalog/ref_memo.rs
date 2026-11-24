@@ -23,11 +23,19 @@ use std::sync::Arc;
 use num_bigint::BigInt;
 use zed_kernel::{Prim, Shared, Term, Value, eval};
 use zed_tests::instances::Rng;
+use zed_tests::step_helpers::l01_25_preimage_catalog::listed_debug;
 use zed_tests::step_helpers::l01_38_presburger::solver_alone;
+use zedc::store::classed::Classed;
 use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::preimage_ref::{Demand, Domains, Listed, Preimage, preimage, preimage_listed};
 
 use super::s22::{bits, chain, i_in, int, over, prim, var};
+
+/// The values `p` leaves `x`, listed (a class's values each a range of their own,
+/// DOMAINS-classed-sets), or its whole domain in `ds` where `p` does not name it.
+fn listed_or_whole(p: &Preimage, ds: &Domains, x: &str) -> IntervalSet {
+    p.domains.get(x).map_or_else(|| ds[x].clone(), Classed::met)
+}
 
 // ---- Main's answers ----
 
@@ -292,8 +300,8 @@ fn check_line(line: &str, kept: &mut Kept, at_points: bool) {
     let c = call(line);
     let covered: Preimage = preimage_listed(&c.term, &c.inputs, &c.listed, &c.demand);
     let p: Preimage = solver_alone(|| preimage_listed(&c.term, &c.inputs, &c.listed, &c.demand));
-    let empty = p.domains.values().any(IntervalSet::is_empty);
-    let inside = |n: &Arc<str>, s: &IntervalSet| c.main.get(n).is_none_or(|m| s.is_subset(m));
+    let empty = p.domains.values().any(Classed::is_empty);
+    let inside = |n: &Arc<str>, s: &Classed| c.main.get(n).is_none_or(|m| s.met().is_subset(m));
     assert!(
         empty || p.domains.iter().all(|(n, s)| inside(n, s)),
         "{line}\nthe new box is not inside main's: {:?}",
@@ -305,7 +313,7 @@ fn check_line(line: &str, kept: &mut Kept, at_points: bool) {
         "{line}\nmain's relation lost"
     );
     // An exact answer lies inside every sound one, so inside main's.
-    let cover_empty = covered.domains.values().any(IntervalSet::is_empty);
+    let cover_empty = covered.domains.values().any(Classed::is_empty);
     assert!(
         !covered.exact || cover_empty || covered.domains.iter().all(|(n, s)| inside(n, s)),
         "{line}\nthe cover's exact box is not inside main's: {:?}",
@@ -314,7 +322,7 @@ fn check_line(line: &str, kept: &mut Kept, at_points: bool) {
     let names: Vec<Arc<str>> = c.inputs.keys().cloned().collect();
     for (how, p) in [("new", &p), ("cover's", &covered)] {
         let at = if at_points {
-            points(&c, &p.domains)
+            points(&c, &p.domains.met())
         } else {
             Vec::new()
         };
@@ -893,7 +901,7 @@ pub(super) fn answer_pieces(case: &(Term, Domains, Demand)) -> usize {
     preimage(t, ds, d)
         .domains
         .values()
-        .map(IntervalSet::len)
+        .map(|s| s.met().len())
         .sum()
 }
 
@@ -1051,7 +1059,8 @@ fn answer_families() -> impl Iterator<Item = &'static str> {
 
 /// One line per family of [`answer_families`], size of [`ANSWER_SIZES`] and case: the family,
 /// the size, the case, the pieces of the answer's box, whether it is exact, and the FNV-1a hash
-/// (64 bits) of the whole answer as `{:?}` prints it.
+/// (64 bits) of the whole answer as `{:?}` prints it, its box listed as main printed it
+/// (`listed_debug`, row DOMAINS-classed-sets).
 fn answer_table() -> String {
     let mut out = String::new();
     for name in answer_families() {
@@ -1061,8 +1070,8 @@ fn answer_table() -> String {
             }
             for (k, (t, ds, d)) in family(name, n).iter().enumerate() {
                 let p = preimage(t, ds, d);
-                let pieces: usize = p.domains.values().map(IntervalSet::len).sum();
-                let hash = format!("{p:?}")
+                let pieces: usize = p.domains.values().map(|s| s.met().len()).sum();
+                let hash = listed_debug(&format!("{p:?}"), &p.domains)
                     .bytes()
                     .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
                         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
@@ -1340,7 +1349,7 @@ fn threshold_chains_match_the_interpreter_on_every_point() {
         let px = set_of(box_points().filter(|&pt| pass(pt)).map(|pt| pt[0]));
         let py = set_of(box_points().filter(|&pt| pass(pt)).map(|pt| pt[1]));
         let want = |x: &str, proj: &IntervalSet| {
-            let got = p.domains.get(x).unwrap_or(&ds[x]);
+            let got = &listed_or_whole(&p, &ds, x);
             if proj.is_empty() {
                 // An empty answer may name either input empty.
                 return;
@@ -1349,7 +1358,7 @@ fn threshold_chains_match_the_interpreter_on_every_point() {
         };
         if px.is_empty() {
             assert!(
-                p.domains.values().any(IntervalSet::is_empty),
+                p.domains.values().any(Classed::is_empty),
                 "case {case}: no point meets, {t:?} on {ds:?}, {p:?}"
             );
             continue;
@@ -1407,7 +1416,7 @@ fn alt2var_m_at_one_link_removes_m_zero_exactly() {
         let p = preimage(&t, &ds, &d);
         assert!(p.exact, "{p:?}");
         assert!(p.relation.is_none(), "{p:?}");
-        assert_eq!(p.domains.get("i").unwrap_or(&ds["i"]), &ds["i"]);
+        assert_eq!(&listed_or_whole(&p, &ds, "i"), &ds["i"]);
         let want = IntervalSet::from_pieces(vec![
             (End::of(-1000), End::of(-1)),
             (End::of(1), End::of(1000)),
@@ -1434,7 +1443,11 @@ fn alternating_moduli_at_2_links_gets_its_exact_projections() {
     });
     for (t, ds, d) in family("alternating_moduli", 2) {
         let p = preimage(&t, &ds, &d);
-        assert_eq!(p.domains.get("i"), Some(&want), "{p:?}");
+        assert_eq!(
+            p.domains.get("i").map(Classed::met).as_ref(),
+            Some(&want),
+            "{p:?}"
+        );
         assert!(p.domains.get("m").is_none_or(|b| *b == ds["m"]), "{p:?}");
         assert!(!p.exact, "{p:?}");
         let names: Vec<Arc<str>> = ds.keys().cloned().collect();
@@ -1546,7 +1559,7 @@ fn scanned(t: &Term, ds: &Domains, d: &Demand) -> (IntervalSet, IntervalSet, boo
 fn agrees_with_scan(what: &str, t: &Term, ds: &Domains, d: &Demand, finest: bool) {
     let p = preimage(t, ds, d);
     let (pi, pm, all) = scanned(t, ds, d);
-    let got = |x: &str| p.domains.get(x).unwrap_or(&ds[x]).clone();
+    let got = |x: &str| listed_or_whole(&p, ds, x);
     let (gi, gm) = (got("i"), got("m"));
     if pi.is_empty() {
         assert!(!finest || gi.is_empty() || gm.is_empty(), "{what}: {p:?}");
@@ -1716,8 +1729,8 @@ fn listed_threshold_chains_are_answered_exactly() {
                     for p in [preimage_listed(&t, &ds, &listed, &d), preimage(&t, &ds, &d)] {
                         let at = format!("{name} n={n} i={is:?} m={ms:?}: {p:?}");
                         assert!(p.exact && p.relation.is_none(), "{at}");
-                        assert_eq!(p.domains.get("i").unwrap_or(&ds["i"]), &px, "{at}");
-                        assert_eq!(p.domains.get("m").unwrap_or(&ds["m"]), &py, "{at}");
+                        assert_eq!(&listed_or_whole(&p, &ds, "i"), &px, "{at}");
+                        assert_eq!(&listed_or_whole(&p, &ds, "m"), &py, "{at}");
                     }
                 }
             }
@@ -1829,7 +1842,7 @@ fn independent_chains_match_the_interpreter_on_every_point() {
         let passing: Vec<&Vec<i64>> = pts.iter().filter(|pt| pass(pt)).collect();
         if passing.is_empty() {
             assert!(
-                p.domains.values().any(IntervalSet::is_empty),
+                p.domains.values().any(Classed::is_empty),
                 "case {case}: no point meets, {t:?} on {ds:?}, {p:?}"
             );
             continue;
@@ -1838,7 +1851,7 @@ fn independent_chains_match_the_interpreter_on_every_point() {
             .map(|k| set_of(passing.iter().map(|pt| pt[k])))
             .collect();
         for (x, proj) in names.iter().zip(&projs) {
-            let got = p.domains.get(x).unwrap_or(&ds[x]);
+            let got = &listed_or_whole(&p, &ds, x);
             assert_eq!(got, proj, "case {case}, {x}: {t:?} on {ds:?}, {p:?}");
         }
         let exact = pts
@@ -1901,7 +1914,7 @@ fn subset_sum_chains_are_exact_iff_no_subset_reaches_the_demand() {
             let p = preimage(&term, &ds, &d);
             let at = format!("a={a:?} s={s}: {p:?}");
             for (x, whole) in &ds {
-                assert_eq!(p.domains.get(x).unwrap_or(whole), whole, "{at}");
+                assert_eq!(&listed_or_whole(&p, &ds, x), whole, "{at}");
             }
             assert_eq!(p.exact, !sums.contains(&s), "{at}");
         }
@@ -1959,12 +1972,12 @@ fn listed_independent_chains_are_answered_exactly() {
                     let at = format!("indep_varying n={n} {values:?}: {p:?}");
                     assert!(p.exact && p.relation.is_none(), "{at}");
                     if passing.is_empty() {
-                        assert!(p.domains.values().any(IntervalSet::is_empty), "{at}");
+                        assert!(p.domains.values().any(Classed::is_empty), "{at}");
                         continue;
                     }
                     for (k, x) in names.iter().enumerate() {
                         let proj = set_of(passing.iter().map(|pt| pt[k]));
-                        assert_eq!(p.domains.get(x).unwrap_or(&ds[x]), &proj, "{at}");
+                        assert_eq!(&listed_or_whole(&p, &ds, x), &proj, "{at}");
                     }
                 }
             }

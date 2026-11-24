@@ -78,6 +78,7 @@ use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval};
 use End::{Fin, NegInf, PosInf};
 use zed_kernel::frames::{Deep, Stack};
 use zedc_int::int::Int;
+use zedc_lattice::classed::Classed;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::landmarks::Landmarks;
 use zedc_lattice::lattice::{Congruence, Lattice};
@@ -97,6 +98,121 @@ fn decided(d: &Demand, v: &Value) -> Res {
 
 /// An interval per input name.
 pub type Domains = BTreeMap<Arc<str>, IntervalSet>;
+
+/// The class other than every integer that the exact answer keeps for an input, beside its
+/// ranges in a [`Domains`]: the set of the input is the values of its ranges in the class
+/// ([`Classed`]). An input not named has every integer as its class.
+pub(crate) type Strides = BTreeMap<Arc<str>, Congruence>;
+
+/// The box of a [`Preimage`]: for each input name, its set as ranges met with one class
+/// ([`Classed`], row DOMAINS-classed-sets), so that a set whose values are every `m`-th
+/// integer of some ranges (`i mod 10 == 3` over `[0, 10^9]`) is exact and is never listed
+/// value by value. A set with every integer as its class is its ranges, as in [`Domains`].
+///
+/// Each set is in the one form of [`Classed::new`], so two boxes of the same sets compare
+/// equal; a box compares equal to a [`Domains`] holding the same sets as ranges
+/// ([`Classed`]'s comparison with an [`IntervalSet`], no value listed).
+#[derive(Clone, PartialEq, Default)]
+pub struct Boxes(pub BTreeMap<Arc<str>, Classed>);
+
+impl Boxes {
+    /// The sets of `dom`, each with every integer as its class. O(p log p) for p ranges.
+    pub fn plain(dom: Domains) -> Boxes {
+        Boxes::with(dom, &Strides::new())
+    }
+
+    /// The sets of `dom`, each met with its class in `strides`, if any.
+    pub(crate) fn with(dom: Domains, strides: &Strides) -> Boxes {
+        Boxes(
+            (dom.into_iter())
+                .map(|(k, v)| {
+                    let class = strides.get(&k).cloned().unwrap_or_else(Congruence::top);
+                    (k, Classed::new(v, class))
+                })
+                .collect(),
+        )
+    }
+
+    /// The ranges of each set and the classes other than every integer, apart: the inverse of
+    /// [`Boxes::with`]. O(n) for n inputs; no value is listed.
+    pub(crate) fn split(self) -> (Domains, Strides) {
+        let mut strides = Strides::new();
+        let dom = (self.0.into_iter())
+            .map(|(k, c)| {
+                if c.strided().is_some() {
+                    strides.insert(k.clone(), c.class.clone());
+                }
+                (k, c.ranges)
+            })
+            .collect();
+        (dom, strides)
+    }
+
+    /// The ranges of each set, which hold every member of its class and, between two members,
+    /// the integers outside it: a box that holds this one. O(n) for n inputs.
+    pub fn ranges(&self) -> Domains {
+        (self.0.iter())
+            .map(|(k, c)| (k.clone(), c.ranges.clone()))
+            .collect()
+    }
+
+    /// Each set as ranges alone, each value of a class other than every integer listed
+    /// ([`Classed::met`]): O(v) for v values. For a reader that needs the plain sets.
+    pub fn met(&self) -> Domains {
+        (self.0.iter()).map(|(k, c)| (k.clone(), c.met())).collect()
+    }
+}
+
+impl std::ops::Deref for Boxes {
+    type Target = BTreeMap<Arc<str>, Classed>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Boxes {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<'a> IntoIterator for &'a Boxes {
+    type Item = (&'a Arc<str>, &'a Classed);
+    type IntoIter = std::collections::btree_map::Iter<'a, Arc<str>, Classed>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl IntoIterator for Boxes {
+    type Item = (Arc<str>, Classed);
+    type IntoIter = std::collections::btree_map::IntoIter<Arc<str>, Classed>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl fmt::Debug for Boxes {
+    /// As the map of its sets, so that a box of ranges alone reads as a [`Domains`] does.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl PartialEq<Domains> for Boxes {
+    /// Whether the two hold the same names with the same sets.
+    fn eq(&self, other: &Domains) -> bool {
+        self.len() == other.len()
+            && (self.iter().zip(other)).all(|((k, c), (l, s))| k == l && c == s)
+    }
+}
+
+impl PartialEq<Boxes> for Domains {
+    /// [`Boxes`]'s comparison with a [`Domains`], from the other side.
+    fn eq(&self, other: &Boxes) -> bool {
+        other == self
+    }
+}
 
 /// The input names whose domains are sets the source lists member by member
 /// ([`preimage_listed`]).
@@ -199,7 +315,7 @@ impl fmt::Display for Stop {
 #[derive(Clone, PartialEq, Debug)]
 pub struct Preimage {
     /// The box: every point at which the term meets the demand lies in it.
-    pub domains: Domains,
+    pub domains: Boxes,
     /// Whether every point of the box meets the demand.
     pub exact: bool,
     /// Whether the box came from enumeration.
@@ -308,7 +424,7 @@ fn order_with_literal(term: &Term, inputs: &Domains, demand: &Demand) -> Option<
         return None;
     }
     Some(Preimage {
-        domains: Domains::from([(x.clone(), dom.meet(&half))]),
+        domains: Boxes::plain(Domains::from([(x.clone(), dom.meet(&half))])),
         exact: true,
         enumerated: false,
         stops: Vec::new(),
@@ -557,9 +673,12 @@ fn preimage_in(
                 };
             }
             Split::Wide(dom, found) => {
-                if dom != *inputs
+                // The split over the found box reads its ranges, which hold every member of
+                // its classes.
+                let ranges = dom.ranges();
+                if ranges != *inputs
                     && let Split::Exact(exact) =
-                        split_residues(tx, root, &dom, demand, &marks, false)
+                        split_residues(tx, root, &ranges, demand, &marks, false)
                 {
                     return Preimage {
                         domains: exact,
@@ -638,13 +757,21 @@ fn preimage_in(
             r.exact = true;
         }
     }
+    // The class each input's set keeps beside its ranges in `r.dom`, from a split or a
+    // projection that found one (row DOMAINS-classed-sets): every point of the preimage lies
+    // in it, so the answer's sets are `r.dom` met with it, whatever narrows `r.dom` after.
+    let mut strides = Strides::new();
     if !r.exact
         && !is_empty(&r.dom)
         // The split over the whole box was tried above.
         && !(whole_tried && r.dom == *inputs)
     {
         match split_residues(tx, root, &r.dom, demand, &marks, false) {
-            Split::Exact(dom) => r = Whole { dom, exact: true },
+            Split::Exact(dom) => {
+                let (dom, s) = dom.split();
+                strides = s;
+                r = Whole { dom, exact: true };
+            }
             Split::Wide(dom, found) => return wide(term, dom, found, listed, demand, stops),
             Split::NotExact | Split::Deferred => {}
         }
@@ -653,10 +780,10 @@ fn preimage_in(
         && let Some((dom, found)) = early
     {
         let dom = dom.into_iter().map(|(k, v)| {
-            let v = v.meet(&r.dom[&k]);
+            let v = v.meet_ranges(&r.dom[&k]);
             (k, v)
         });
-        return wide(term, dom.collect(), found, listed, demand, stops);
+        return wide(term, Boxes(dom.collect()), found, listed, demand, stops);
     }
     let (mut relation, mut refusal) = (None, None);
     if !r.exact
@@ -665,11 +792,15 @@ fn preimage_in(
     {
         match found {
             Ok((dom, exact, why)) => {
+                let (dom, s) = dom.split();
+                strides = s;
                 r = Whole { dom, exact };
                 relation = (!exact).then_some(rel);
                 refusal = why;
             }
             Err((dom, why)) => {
+                let (dom, s) = dom.split();
+                strides = s;
                 r = Whole { dom, exact: false };
                 refusal = Some(why);
             }
@@ -686,7 +817,7 @@ fn preimage_in(
         }
     }
     Preimage {
-        domains: r.dom,
+        domains: Boxes::with(r.dom, &strides),
         exact: r.exact,
         enumerated,
         stops,
@@ -698,15 +829,17 @@ fn preimage_in(
 /// The preimage of a split by remainders over many periods ([`Split::Wide`]): its box, not
 /// exact, with the classes' relation and the refusal that left the box wider, or the box
 /// listed when it can be ([`enumerate`]). The linear stage is not run on the term
-/// ([`split_residues`] says why).
+/// ([`split_residues`] says why). The listing reads the box's ranges, which hold every
+/// member of its classes; its answer is met with those classes again.
 fn wide(
     term: &Term,
-    dom: Domains,
+    dom: Boxes,
     (rel, why): ClassRelation,
     listed: &Listed,
     demand: &Demand,
     stops: Vec<Stop>,
 ) -> Preimage {
+    let (dom, strides) = dom.split();
     let mut r = Whole { dom, exact: false };
     let mut enumerated = false;
     if let Some(e) = enumerate(term, &r.dom, listed, demand) {
@@ -714,7 +847,7 @@ fn wide(
         enumerated = true;
     }
     Preimage {
-        domains: r.dom,
+        domains: Boxes::with(r.dom, &strides),
         exact: r.exact,
         enumerated,
         stops,
@@ -728,7 +861,7 @@ fn wide(
 /// its own relation ([`linear`]), here with one pair of auxiliary variables for the split
 /// input. Where the solver refuses a projection, the input keeps the box stage's bounds
 /// ([`boxed_projections`]).
-fn project_classes(rel: &Relation, dom: &Domains) -> (Domains, Option<Refusal>) {
+fn project_classes(rel: &Relation, dom: &Domains) -> (Boxes, Option<Refusal>) {
     let within = |d: &Domains| -> Formula {
         let parts = d
             .iter()
@@ -755,20 +888,30 @@ fn project_classes(rel: &Relation, dom: &Domains) -> (Domains, Option<Refusal>) 
 /// box; the first cause for which a set is wider than the projection; and the cause for which
 /// the solver refused a projection, where it did, whose input then keeps the bounds the box
 /// stage gives the rows of `whole` (DESIGN step L1.38).
+///
+/// A projection that is ranges met with a class other than every integer (`i mod 10 == 3`
+/// over `[0, 10^9]`) keeps its class ([`presburger::project_each_boxed_classed`], row
+/// DOMAINS-classed-sets): the set is the box's ranges met with the projection's ranges, in
+/// that class, with no value listed. Exact where the projection is: a value is in it iff it
+/// is in the box and in the projection, which is what the meet of the ranges with the class
+/// says. Complexity: O(p + s) for the p ranges of the projections and s the size of `whole`,
+/// where listing a class costs O(v) for its v values (10^8 for that example). Tests:
+/// `l01_25_preimage_catalog::s22::remainder_splits_at_their_corners_keep_their_preimages`
+/// and `l01_25_preimage_catalog::bench::classed::a_classed_box_is_not_listed_scales`.
 fn boxed_projections(
     whole: &Formula,
     dom: &Domains,
     syms: &[presburger::Atom],
-) -> (Domains, Option<Refusal>, Option<Refusal>) {
-    let got = presburger::project_each_boxed(whole, syms);
+) -> (Boxes, Option<Refusal>, Option<Refusal>) {
+    let got = presburger::project_each_boxed_classed(whole, syms);
     let why = got.cause();
     let refused = (got.whole.clone()).or_else(|| got.each.iter().find_map(|(_, e)| e.clone()));
     let mut each = got.each.into_iter().zip(syms).peekable();
-    let mut out = Domains::new();
+    let mut out = Boxes::default();
     for (k, v) in dom {
         let p = match each.next_if(|(_, s)| **s == presburger::Atom::Sym(k.clone())) {
-            Some(((x, _), _)) => x.meet(v),
-            None => v.clone(),
+            Some(((x, _), _)) => x.meet_ranges(v),
+            None => Classed::plain(v.clone()),
         };
         out.insert(k.clone(), p);
     }
@@ -782,11 +925,11 @@ type ClassRelation = (Relation, Option<Refusal>);
 /// What [`split_residues`] found.
 enum Split {
     /// The preimage, exact.
-    Exact(Domains),
+    Exact(Boxes),
     /// The preimage within the box, not exact, the relation of the classes that is, and the
     /// refusal that left the box wider: a stretch where some classes keep their points and
     /// others do not spans more than two periods ([`split_classes`]).
-    Wide(Domains, ClassRelation),
+    Wide(Boxes, ClassRelation),
     /// No split applies, or it is not exact.
     NotExact,
     /// The split before the first transfer was given up for the transfer to run first
@@ -944,7 +1087,7 @@ fn split_classes(
     marks: &Marks,
     early: bool,
     deferred: &mut bool,
-) -> Option<(Domains, Option<ClassRelation>)> {
+) -> Option<(Boxes, Option<ClassRelation>)> {
     let (x, c, cuts) = tx.residue_cuts(dom)?;
     let m = c.unsigned_abs() as i128;
     let name = tx.name(x).clone();
@@ -1083,12 +1226,12 @@ fn split_classes(
     }
     let Some(rest) = rest else {
         let none = dom.keys().map(|k| (k.clone(), IntervalSet::empty()));
-        return Some((none.collect(), None));
+        return Some((Boxes::plain(none.collect()), None));
     };
     let mut rest = box_domains(&begun.cx, rest);
     rest.insert(name.clone(), IntervalSet::from_pieces(pieces));
     if !wide {
-        return Some((rest, None));
+        return Some((Boxes::plain(rest), None));
     }
     // A stretch over more than two periods holds the class's remainders in each period, a
     // piece for each; the box holds their hull, and the relation the remainders. The box is
@@ -1350,11 +1493,41 @@ fn in_class(lo: &End, hi: &End, class: &IntervalSet, m: i128) -> Option<Interval
 /// of classes, or two where the remainders wrap past `m`. `O(P log P)` for `P` pieces. The
 /// tree is Fenwick's (doi:10.1002/spe.4380240306; full comment at the head of zed-collections
 /// `fenwick.rs`).
-fn covers(out: &IntervalSet, sets: &[&IntervalSet], cuts: &[i128], m: i128) -> bool {
+///
+/// Where `out` is ranges met with a class `r' mod m'` other than every integer ([`Classed`],
+/// row DOMAINS-classed-sets), its members are not listed: a stretch of its ranges holds only
+/// the members of that class, and only the classes `j` that such a member can fall in need be
+/// marked. Proof: with `g = gcd(m, m')`, a member `x` has `x ≡ r' (mod m')`, so `x ≡ r' (mod
+/// g)`, and its remainder `x mod m = x - km` is `≡ r' (mod g)` as `g` divides `m`; so its class
+/// `j` is one whose window `cuts[j]..cuts[j + 1]` holds an integer `≡ r' (mod g)` (`reach`).
+/// The sweep marks only those classes and compares a range of classes with the number of them
+/// it holds, so a stretch counts as covered when every such class among its remainders is
+/// marked, which holds every member of the stretch in the set of its class. This is sound;
+/// it may answer not covered where a class it requires holds no member of that very stretch
+/// (a stretch shorter than `m'`), which only leaves the box not exact. With every integer as
+/// the class, `g` is 1 and every class is required, as before. `O(G + P log P)` for `G`
+/// classes; no value of `out` is listed.
+fn covers(out: &Classed, sets: &[&IntervalSet], cuts: &[i128], m: i128) -> bool {
+    let g = sets.len();
+    // The classes a member of `out` can fall in, as above.
+    let reach: Vec<bool> = match out.strided() {
+        None => vec![true; g],
+        Some((m2, r2)) => {
+            let step = Num::from(m).gcd(m2);
+            let step = step.to_i128().expect("a divisor of the modulus fits it");
+            let r = r2.rem_euclid(&Num::from(step));
+            let r = r.to_i128().expect("a remainder lies below the modulus");
+            (cuts.windows(2))
+                .map(|w| w[0] + (r - w[0]).rem_euclid(step) < w[1])
+                .collect()
+        }
+    };
     // At each end a piece starts (+1) or stops (-1): a set's, of class `Some(j)`, or `out`'s.
     let mut ends: Vec<(End, i64, Option<usize>)> = Vec::new();
-    let all = sets.iter().enumerate().map(|(j, s)| (Some(j), *s));
-    for (j, s) in all.chain([(None, out)]) {
+    let all = (sets.iter().enumerate())
+        .filter(|(j, _)| reach[*j])
+        .map(|(j, s)| (Some(j), *s));
+    for (j, s) in all.chain([(None, &out.ranges)]) {
         for (lo, hi) in s.pieces() {
             ends.push((lo.clone(), 1, j));
             if *hi != PosInf {
@@ -1365,13 +1538,16 @@ fn covers(out: &IntervalSet, sets: &[&IntervalSet], cuts: &[i128], m: i128) -> b
     // Every end at one place is applied before the stretch after it is read, so the order
     // among them does not matter.
     ends.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-    let g = sets.len();
     let mut tree = Fenwick::new(g, 0i64);
+    let mut reachable = Fenwick::new(g, 0i64);
+    for (j, _) in reach.iter().enumerate().filter(|(_, r)| **r) {
+        reachable.update(j, |n| *n += 1);
+    }
     let add = |tree: &mut Fenwick<i64>, j: usize, d: i64| tree.update(j, |n| *n += d);
-    // The number of marked classes below `j`.
+    // The number of marked (or reachable) classes below `j`.
     let below = |tree: &Fenwick<i64>, j: usize| tree.prefix(j, 0, |n, t| n + t);
     let full = |tree: &Fenwick<i64>, (a, b): (usize, usize)| {
-        below(tree, b + 1) - below(tree, a) == (b - a + 1) as i64
+        below(tree, b + 1) - below(tree, a) == below(&reachable, b + 1) - below(&reachable, a)
     };
     let class = |r: &Num| {
         let r = r.to_i128().expect("a remainder lies below the modulus");
@@ -2537,7 +2713,7 @@ fn linear(
     demand: &Demand,
 ) -> Option<(
     Relation,
-    Result<(Domains, bool, Option<Refusal>), (Domains, Refusal)>,
+    Result<(Boxes, bool, Option<Refusal>), (Boxes, Refusal)>,
 )> {
     tx.start(dom, Marks::default());
     let mut tr = Tr::new(false);
@@ -2558,7 +2734,7 @@ fn linear(
         bit_ands: tr.bit_ands(0),
     };
     let placings = tr.placings();
-    let go = || -> Result<(Domains, bool, Option<Refusal>), (Domains, Refusal)> {
+    let go = || -> Result<(Boxes, bool, Option<Refusal>), (Boxes, Refusal)> {
         let within = |d: &Domains| -> Formula {
             let parts = d
                 .iter()
@@ -2578,7 +2754,7 @@ fn linear(
             && let Some((out, exact)) = one_inequality(&rel.body, dom)
         {
             ONE_INEQUALITY.set(ONE_INEQUALITY.get() + 1);
-            return Ok((out, exact, None));
+            return Ok((Boxes::plain(out), exact, None));
         }
         // Each total definition in the part of the body that reads its variable, so that a nest
         // of disjunctions does not carry the definitions of the levels below each level
@@ -2600,12 +2776,14 @@ fn linear(
         // decided instead, one question of a formula over no input. `x >= y || x < y` read as
         // one join (`Walk::or_if`) is `true`, so its preimage of `false` has the body
         // `false`, empty and exact (FAIL-or-ifs-no-longer-exact-seed).
-        if is_empty(&out) || (syms.is_empty() && matches!(presburger::decide(&whole), Ok(false))) {
+        if out.values().any(Classed::is_empty)
+            || (syms.is_empty() && matches!(presburger::decide(&whole), Ok(false)))
+        {
             let none = out
                 .keys()
                 .map(|k| (k.clone(), IntervalSet::empty()))
                 .collect();
-            return Ok((none, true, None));
+            return Ok((Boxes::plain(none), true, None));
         }
         if let Some(cause) = refused {
             return Err((out, cause));
@@ -2631,13 +2809,20 @@ fn linear(
         // `singleton_progression` never returns. As in `framed`, under
         // `EXACT_OFF` (the solver alone) the disjunction is kept, so that the hull solver
         // splits it as before.
+        //
+        // A set that is ranges met with a class other than every integer is written in either
+        // mode as [`classed_member`] writes it, with no value listed.
         let within_out = if presburger::exact::EXACT_OFF.get() {
-            within(&out)
+            within_boxes(&out)
         } else {
             let parts = out
                 .iter()
-                .map(|(k, v)| {
+                .map(|(k, c)| {
                     let x = presburger::Atom::Sym(k.clone());
+                    if let Some(f) = classed_member(k, c) {
+                        return f;
+                    }
+                    let v = &c.ranges;
                     match singleton_progression(v) {
                         Some((lo, hi, step)) => {
                             let var = Lin::atom(x);
@@ -2669,6 +2854,36 @@ fn linear(
     };
     let found = go();
     Some((rel, found))
+}
+
+/// For a set `c` of input `k` that is ranges met with a class `r mod m` other than every
+/// integer (row DOMAINS-classed-sets): its ranges and `k == m*n + r`, `n` the fresh name `"{k}
+/// prog"`, which no program name can be, since it holds a space. No value is listed. The
+/// formula holds, for some integer `n`, at exactly the members of `c`: `k == m*n + r` for some
+/// `n` iff `m` divides `k - r`, iff `k mod m == r mod m`. So it reads as the set only where
+/// `n` is free under no negation, as a question for a point (`decide`), which is how both
+/// linear stages ask it. `None` for a set of ranges alone.
+pub(crate) fn classed_member(k: &Arc<str>, c: &Classed) -> Option<Formula> {
+    let (m, r) = c.strided()?;
+    let x = presburger::Atom::Sym(k.clone());
+    let n = Lin::atom(presburger::Atom::Sym(format!("{k} prog").into()));
+    Some(Formula::and(vec![
+        presburger::member(&x, &c.ranges),
+        Formula::Con(Con::eq(&Lin::atom(x), &n.times(m).plus(&Lin::constant(r)))),
+    ]))
+}
+
+/// The box `b` as one formula, each set as [`presburger::member`] writes its ranges, or as
+/// [`classed_member`] where it has a class other than every integer. Read as for a point only
+/// ([`classed_member`]).
+pub(crate) fn within_boxes(b: &Boxes) -> Formula {
+    let parts = (b.iter())
+        .map(|(k, c)| {
+            classed_member(k, c)
+                .unwrap_or_else(|| presburger::member(&presburger::Atom::Sym(k.clone()), &c.ranges))
+        })
+        .collect();
+    Formula::and(parts)
 }
 
 thread_local! {
@@ -16029,19 +16244,24 @@ pub fn exact_preimage(
     let mut p = preimage_of(term, inputs, NONE_LISTED, demand);
     if p.exact {
         // Every point of the box meets the demand, so the classes alone narrow it.
-        p.domains = within_classes(&p.domains, classes).unwrap_or_else(|| {
-            (p.domains.keys().map(|k| (k.clone(), IntervalSet::empty()))).collect()
-        });
+        let none: Domains = (p.domains.keys())
+            .map(|k| (k.clone(), IntervalSet::empty()))
+            .collect();
+        p.domains = within_classes_boxed(std::mem::take(&mut p.domains), classes)
+            .unwrap_or_else(|| Boxes::plain(none));
         return p;
     }
     if !stage::ends(term) {
         return p;
     }
-    let Some((domains, exact)) = exact_search(term, &p.domains, classes, demand) else {
+    // The search lists the points of the ranges; its answer is met with the classes again,
+    // which hold every point of the preimage.
+    let (ranges, strides) = p.domains.clone().split();
+    let Some((domains, exact)) = exact_search(term, &ranges, classes, demand) else {
         return p;
     };
     Preimage {
-        domains,
+        domains: Boxes::with(domains, &strides),
         exact,
         enumerated: true,
         stops: p.stops,
@@ -16094,13 +16314,16 @@ pub fn witness(
     };
     if !stage::ends(term) {
         let r = preimage_of(term, &dom, NONE_LISTED, demand);
-        let narrowed: Domains = dom
-            .iter()
-            .map(|(k, s)| (k.clone(), s.meet(&r.domains[k])))
-            .collect();
-        return match within_classes(&narrowed, classes) {
+        // Each end of a set's ranges is a member of its class (`Classed::new`), so the
+        // lowest point is a member.
+        let narrowed = Boxes(
+            dom.iter()
+                .map(|(k, s)| (k.clone(), r.domains[k].meet_ranges(s)))
+                .collect(),
+        );
+        return match within_classes_boxed(narrowed, classes) {
             None => Some(None),
-            Some(n) if r.exact => Some(Some(lowest(&n))),
+            Some(n) if r.exact => Some(Some(lowest(&n.ranges()))),
             Some(_) => None,
         };
     }
@@ -16233,13 +16456,7 @@ fn fails_in(term: &Term, root: Domains, classes: &Classes, demand: &Demand) -> O
             continue;
         }
         let r = preimage_in(&mut tx, top, term, &b, NONE_LISTED, demand);
-        let dropped = b.iter().any(|(k, s)| {
-            let out = r.domains[k].complement_in(s);
-            match classes.get(k) {
-                Some(c) => !reduce_congruence(&out, c).0.is_empty(),
-                None => !out.is_empty(),
-            }
-        });
+        let dropped = (b.iter()).any(|(k, s)| drops_a_member(s, classes.get(k), &r.domains[k]));
         if dropped {
             return Some(true);
         }
@@ -16248,6 +16465,27 @@ fn fails_in(term: &Term, root: Domains, classes: &Classes, demand: &Demand) -> O
         }
     }
     Some(false)
+}
+
+/// Whether some value of `s` in `class` (every integer when `None`) is not in `kept`, an
+/// input's set in a preimage.
+///
+/// A `kept` with a class other than every integer (row DOMAINS-classed-sets) is asked with no
+/// value listed: the values of `s` in `class`, as one [`Classed`], are within `kept` iff
+/// their meet with it equals them, since both are in the one form of [`Classed::new`] and the
+/// meet's members are those of both. A `kept` of ranges alone is read as before:
+/// [`reduce_congruence`] moves each piece's ends inward to members of the class, so its
+/// answer for `s` less `kept` is empty iff no value there is in the class, the same question.
+pub(crate) fn drops_a_member(s: &IntervalSet, class: Option<&Congruence>, kept: &Classed) -> bool {
+    if kept.strided().is_some() {
+        let x = Classed::new(s.clone(), class.cloned().unwrap_or_else(Congruence::top));
+        return x.meet(kept) != x;
+    }
+    let out = kept.ranges.complement_in(s);
+    match class {
+        Some(c) => !reduce_congruence(&out, c).0.is_empty(),
+        None => !out.is_empty(),
+    }
 }
 
 /// The value of `term` at the point `b`, each input one value; `None` when it cannot be run.
@@ -16347,9 +16585,17 @@ fn branch(
             b
         } else {
             let r = preimage_in(&mut tx, top, term, &b, NONE_LISTED, demand);
+            // Complexity tradeoff: a set with a class other than every integer (row
+            // DOMAINS-classed-sets) is listed here, O(v) for its v values, since the boxes of
+            // the search are sets of ranges. Why: the search lists the points it cannot decide
+            // in bulk, which `@exact` accepts, and a class it takes is one more such list; a
+            // set of ranges alone is met as before, as its listing. Trigger: an `@exact`
+            // declaration whose preimage is a class over many values. Test:
+            // `l01_25_preimage_catalog::exact::exact_preimages_of_ranges`. A complete solution
+            // would give [`Search`] and [`halve`] boxes of classed sets.
             let narrowed: Domains = b
                 .iter()
-                .map(|(k, s)| (k.clone(), s.meet(&r.domains[k])))
+                .map(|(k, s)| (k.clone(), r.domains[k].meet_ranges(s).met()))
                 .collect();
             let Some(n) = within_classes(&narrowed, classes) else {
                 continue;
@@ -16511,6 +16757,29 @@ pub(crate) fn within_classes(dom: &Domains, classes: &Classes) -> Option<Domains
         })
         .collect();
     (!is_empty(&d)).then_some(d)
+}
+
+/// [`within_classes`] for a [`Boxes`]: a set of ranges alone is tightened as there; a set with
+/// a class other than every integer is kept in the meet of that class with its input's class
+/// (the Chinese remainder theorem, [`Congruence::meet`]), so that each end of its ranges is a
+/// member of both. `None` when a set is then empty.
+pub(crate) fn within_classes_boxed(b: Boxes, classes: &Classes) -> Option<Boxes> {
+    let b = Boxes(
+        (b.0.into_iter())
+            .map(|(k, c)| match (classes.get(&k), c.strided()) {
+                (None, _) => (k, c),
+                (Some(cl), None) => {
+                    let s = reduce_congruence(&c.ranges, cl).0;
+                    (k, Classed::plain(s))
+                }
+                (Some(cl), Some(_)) => {
+                    let class = c.class.meet(cl);
+                    (k, Classed::new(c.ranges, class))
+                }
+            })
+            .collect(),
+    );
+    (!b.values().any(Classed::is_empty)).then_some(b)
 }
 
 /// Whether `s` is one value.
@@ -18895,7 +19164,7 @@ mod tests {
                 && let Some(Ok((dom, e, _))) = &fast
             {
                 exact += usize::from(*e);
-                empty += usize::from(is_empty(dom));
+                empty += usize::from(dom.values().any(Classed::is_empty));
             }
         }
         println!("{read} read from the ends, {exact} exact, {empty} empty in the linear stage");
@@ -19712,7 +19981,7 @@ mod tests {
             let none = preimage(&t, &domains(), &Demand::Bool(true));
             assert!(none.exact, "k = {k}: {none:?}");
             assert!(
-                none.domains.values().all(IntervalSet::is_empty),
+                none.domains.values().all(Classed::is_empty),
                 "k = {k}: {none:?}"
             );
         }

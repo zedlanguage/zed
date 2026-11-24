@@ -266,6 +266,7 @@ fn forced(t: &Term, outcome: bool, out: &mut Vec<(Term, bool)>) -> bool {
 /// product, not its term, so it is not exact; a test that calls a function is read through
 /// the call. The number of arms compared, or the first that disagrees.
 fn agree(arms: &[Arm], paths: &[Term], name: &str, value: &Term) -> Result<usize, String> {
+    use zedc::store::classed::Classed;
     use zedc::store::interval::IntervalSet;
     use zedc::store::preimage::{Demand, preimage};
     let doms = [
@@ -294,7 +295,7 @@ fn agree(arms: &[Arm], paths: &[Term], name: &str, value: &Term) -> Result<usize
             continue;
         }
         compared += 1;
-        let empty = pre.domains.values().any(IntervalSet::is_empty);
+        let empty = pre.domains.values().any(Classed::is_empty);
         if empty == a.reachable() {
             return Err(format!(
                 "path {p}: the exact preimage is {}, but the arm's scope is\n{}",

@@ -6,6 +6,7 @@
 
 pub mod affine;
 pub mod cell;
+pub mod classed;
 pub mod float;
 pub mod float_kinds;
 pub mod grade;

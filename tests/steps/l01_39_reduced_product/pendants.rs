@@ -1747,6 +1747,21 @@ fn the_projections_by_pendants_and_of_the_whole_part_are_sound() {
     );
 }
 
+/// The run of [`the_projections_by_pendants_and_of_the_whole_part_are_sound`] at seed
+/// 94081993546161772 ends, and its answers are sound. Its part 38 (`a + b + 2c <= 8`,
+/// `2a + 2b + c + 2z1 == -8`, `a + c + 3z0 == 3`, `a` in `[0, inf)`, `c` in `[-6, inf)`, ...)
+/// made the cover's gap of classes (`ClassUnion::minus` of zedc-presburger, uncharged) grow
+/// past 60 s on the branch of PERF-exact-strided-unlisted, where origin/main took 2 s; the
+/// cut is charged to the meter now, as the listed gap was.
+#[test]
+fn the_pendant_run_whose_gap_of_classes_grew_without_a_charge_ends() {
+    pendants_against_whole_drawn(
+        Rng::new(94_081_993_546_161_772),
+        94_081_993_546_161_772,
+        true,
+    );
+}
+
 /// The parts that took the route by pendants, counted by kind: with two disjunctions or
 /// more among their conjuncts (each `Item::Or` and `Item::Ne`), with a pendant whose name's
 /// box has a hole, and with a pendant whose coefficient is not one or minus one. A pendant here
