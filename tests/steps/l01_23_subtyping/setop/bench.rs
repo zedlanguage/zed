@@ -56,10 +56,15 @@ fn the_product_of_k_parity_lists_has_a_checked_singleton() {
 /// `DECIDING` with a scan of the `undecided` slice per member, order `m²` here, where every
 /// member is refused. Negative control, run once and not committed (the slice scan restored):
 /// 1,324M and 23,887M instructions at 2048 and 16384, 18.04 times, failed. With the set:
-/// 1,095M and 8,785M, 8.02 times; bytes 8.0 times. COMPLEXITY.md K141.
+/// 1,095M and 8,785M, 8.02 times; bytes 8.0 times. COMPLEXITY.md K141. Since 2026-11-23
+/// (b22-ref3) each member's arm is a list pair the search refuses, not a morphism difference,
+/// which REP-refusals-rest point (1) decides (`canonical_blame_chain`). With that arm n = 2048
+/// took 15.4 s at 1x and 130 s in all (instructions 17,465M and 139,579M, 7.99 times, v5e4),
+/// so n is now 512, where the slice scan's ratio was already 13.88: 4,363M and 34,903M
+/// instructions, 8.00 times, 35 s in all (v5e4, 2026-11-23).
 #[test]
 fn canonical_blame_settlement_scales() {
-    let n = 2048;
+    let n = 512;
     let groups = scaling::inputs(n, canonical_blame_chain);
     scaling::check_order(
         "canonical blame settlement on m refused chain members",

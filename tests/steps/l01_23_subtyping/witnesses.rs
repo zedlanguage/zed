@@ -17,7 +17,7 @@ fn lit(i: i64) -> Type {
 }
 
 /// The lists of integers whose length is `k` modulo `p`; `p = 1` is every list.
-fn period(p: usize, k: usize) -> Type {
+pub(crate) fn period(p: usize, k: usize) -> Type {
     let defs = (0..p)
         .map(|i| {
             let cons = Expr::Atom(

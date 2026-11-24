@@ -338,10 +338,32 @@ fn parity_variant_group(
     (group, at(2 * k + 2))
 }
 
+/// A chain of `m` members, each a union of an arm the search refuses and a tagged tuple of the
+/// next member, ending in an empty member: each member is inhabited by the arm alone, and the
+/// search shows no value of it, so the whole group is refused with
+/// [`Refusal::NoWitness`]. The arm is a pair of a list whose length is 5 modulo 6 and an
+/// integer, less the pairs of a list of length 3 modulo 4 or 0 modulo 3: the pairs of a list of
+/// length 1 modulo 4 are left, but the walk of a list through the union of the two list types
+/// would follow both rests, so no value is shown (`witnesses.rs`,
+/// `a_meet_of_cycles_is_shown_by_its_length`; the tradeoff in `Search::list_member`).
+///
+/// Until 2026-11-23 the arm was `{x | y: int} - ({x: int} | {y: int})`, also refused for want
+/// of a witness. REP-refusals-rest point (1) (b22-ref3) decides that arm: the two sides are
+/// apart, since a closure of the first has both keys and one of the second has one, so the
+/// difference is the first type and has a closure. With it the chain is inhabited
+/// ([`morphism_split_chain`]) and no longer measures the settlement of a refused group.
 fn canonical_blame_chain(m: usize) -> Vec<Type> {
-    let mut defs = Vec::with_capacity(m + 2);
-    let end = m + 1;
-    let split_arm = || {
+    use super::witnesses::period;
+    let pair = Type::tuple(vec![&period(2, 1) & &period(3, 2), Type::int()]);
+    let held = &period(4, 3) | &period(3, 0);
+    let arm = &pair - &Type::tuple(vec![held, Type::int()]);
+    blame_chain(m, || Expr::Type(arm.clone()))
+}
+
+/// The chain of [`canonical_blame_chain`] with the arm it had until 2026-11-23,
+/// `{x | y: int} - ({x: int} | {y: int})`, which has a closure.
+fn morphism_split_chain(m: usize) -> Vec<Type> {
+    blame_chain(m, || {
         let a = Expr::exact(
             Expr::Type(Type::atom("x") | Type::atom("y")),
             Expr::Type(Type::int()),
@@ -349,7 +371,14 @@ fn canonical_blame_chain(m: usize) -> Vec<Type> {
         let b1 = Expr::exact(Expr::Type(Type::atom("x")), Expr::Type(Type::int()));
         let b2 = Expr::exact(Expr::Type(Type::atom("y")), Expr::Type(Type::int()));
         diff(a, Expr::Union(vec![b1, b2]))
-    };
+    })
+}
+
+/// `m` members `C_i = arm | (k_i, C_{i+1})`, then `Tail = (tail, Sink)` with `Sink` the empty
+/// difference `{int: Tail} - {int: top}`.
+fn blame_chain(m: usize, split_arm: impl Fn() -> Expr) -> Vec<Type> {
+    let mut defs = Vec::with_capacity(m + 2);
+    let end = m + 1;
     for i in 0..m {
         let clean = Expr::Tuple(vec![Expr::Type(Type::atom(&format!("k{i}"))), r(i + 1)]);
         defs.push(def(&format!("C{i}"), Expr::Union(vec![split_arm(), clean])));
@@ -1014,7 +1043,7 @@ fn the_product_of_a_few_parity_lists_has_a_singleton() {
 }
 
 /// Small instance of `bench::canonical_blame_settlement_scales`: the first member of a short
-/// chain of members with a split arm is refused for want of a witness.
+/// chain of members with an arm the search refuses is refused for want of a witness.
 #[test]
 fn a_short_chain_with_split_arms_is_refused_for_want_of_a_witness() {
     for m in [1, 2, 5] {
@@ -1025,6 +1054,19 @@ fn a_short_chain_with_split_arms_is_refused_for_want_of_a_witness() {
             Verdict::Refused(Refusal::NoWitness),
             "m = {m}"
         );
+    }
+}
+
+/// The chain whose arm is `{x | y: int} - ({x: int} | {y: int})` is inhabited: the arm is the
+/// first type, which has a closure, since a closure of it has both keys and one of the second
+/// has one of them (REP-refusals-rest point (1), b22-ref3). On origin/main at 3ca4683ea it was
+/// refused with [`Refusal::NoWitness`] for each `m` here.
+#[test]
+fn a_short_chain_with_morphism_split_arms_is_inhabited() {
+    for m in [1, 2, 5] {
+        let types = morphism_split_chain(m);
+        Type::forget_emptiness();
+        assert_eq!(types[0].verdict(), Verdict::Inhabited, "m = {m}");
     }
 }
 
