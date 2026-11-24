@@ -548,7 +548,7 @@ impl Classed {
 /// again with it not taken, and compares the two answers.
 ///
 /// Why the shortcut changes no value (the claim these tests check through every caller): for
-/// modulus 1 and a set `S` that [`Classed::wider_class`] rules out, the full path reaches
+/// modulus 1 and a set `S` that `Classed::wider_class` rules out, the full path reaches
 /// `IntervalSet::from_pieces(S.into_pieces())` (the gcd `g` is 0 for one member, or 1 once a
 /// piece holds two values or two pieces' starts differ by a gcd of 1, or the first end is
 /// infinite), and that is `S` as a set: `S`'s pieces are sorted, disjoint and not adjacent
