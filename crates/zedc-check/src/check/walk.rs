@@ -28630,14 +28630,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let [Some(x), Some(y)] = args.as_slice()
             && let Some(w @ ("min" | "max")) = sig.word.as_deref()
             && [x, y].iter().all(|a| {
-                a.ty.vars.is_empty()
-                    && !a.ty.is_empty()
-                    && a.ty.subtype(&Ty::carrier(Carrier::Str))
+                a.ty.vars.is_empty() && !a.ty.is_empty() && a.ty.subtype(&Ty::carrier(Carrier::Str))
             })
             && let (Some(cx), Some(cy)) = (self.operand_text(x.at), self.operand_text(y.at))
         {
             let op = if w == "min" { "<=" } else { ">=" };
-            let bop = if w == "min" { BinaryOp::Le } else { BinaryOp::Ge };
+            let bop = if w == "min" {
+                BinaryOp::Le
+            } else {
+                BinaryOp::Ge
+            };
             let test = format!(
                 "{} {op} {}",
                 zedc_syntax::format::code_as_operand(&cx, bop, false),
