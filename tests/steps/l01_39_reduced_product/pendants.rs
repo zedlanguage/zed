@@ -1764,6 +1764,9 @@ fn a_run_that_draws_no_holed_pendant_still_takes_the_route_with_one() {
     assert_each_kind_taken(seed, pendants_against_whole_drawn(Rng::new(seed), seed, true));
 }
 
+/// The count of one kind in a [`RouteKinds`].
+type KindCount = fn(&RouteKinds) -> usize;
+
 /// For each kind of [`RouteKinds`], the row of [`REVIEWED_PARTS`] compared in place of a drawn
 /// part when no drawn part of that kind took the route: `D-1` has two disjunctions, `C-1` the
 /// pendant `a + b == z0` with `z0` in `[-5, 0]` and `[2, 5]`, `B-1` the pendant
@@ -1772,7 +1775,7 @@ fn a_run_that_draws_no_holed_pendant_still_takes_the_route_with_one() {
 /// holed kind needs a `z` box with a hole (one in 6 of the boxes with both bounds 4 or more
 /// apart, [`random_boxes`]) on a pendant that took the route, and seed 9929385727579474391 has
 /// none.
-const KIND_PARTS: [(&str, fn(&RouteKinds) -> usize); 3] = [
+const KIND_PARTS: [(&str, KindCount); 3] = [
     ("D-1", |k| k.disjunctions),
     ("C-1", |k| k.holed),
     ("B-1", |k| k.coefficient),
