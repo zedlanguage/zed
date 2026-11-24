@@ -317,7 +317,10 @@ fn the_step_controls_of_the_integer_hull_are_answered_as_their_rows() {
             vec![vec![ge(lin(3, -1), k(-4))]],
         ),
         // The corner repair (D12), Codex: the triangle (0,0), (0,1), (2,0) cut by x >= 1 is the
-        // segment [(1,0), (2,0)] (a Line), then the point (1,0), then empty.
+        // segment [(1,0), (2,0)] (a Line), then 3y >= x leaves it empty (META2 G10, Gemini
+        // Q6.1). Without the repair the hull keeps (1, 1/2), where 3y >= x holds, and answers
+        // that it holds (prototype proto-r3/hull.rs, mutant NoCuts; the last link before,
+        // y >= 1, is empty over Q as well, so it could not tell).
         (
             "corner repair",
             and(vec![
@@ -325,11 +328,7 @@ fn the_step_controls_of_the_integer_hull_are_answered_as_their_rows() {
                 ge(y.clone(), k(0)),
                 ge(k(2), lin(1, 2)),
             ]),
-            vec![
-                vec![ge(x.clone(), k(1))],
-                vec![ge(k(1), x.clone())],
-                vec![ge(y.clone(), k(1))],
-            ],
+            vec![vec![ge(x.clone(), k(1))], vec![ge(lin(-1, 3), k(0))]],
         ),
         // Case 1 with C redundant (D13): [0,1]×[0,2] and 3x + y <= 2.
         (
@@ -346,6 +345,10 @@ fn the_step_controls_of_the_integer_hull_are_answered_as_their_rows() {
         ),
         // Codex's case-2 triangle (D5): (-2,0), (-2,1), (1,2) cut by x <= 0, whose section on
         // x = 0 holds y in [4/3, 5/3] and no integer: case 1 there gives a fractional vertex.
+        // The hull is then (-2,0), (-2,1), (-1,1), and x + y >= 1 leaves it empty (META2 G10,
+        // Gemini Q6.1); a hull that skipped step 5 keeps (-1/2, 3/2), where x + y = 1, and
+        // answers that it holds (prototype proto-r3/hull.rs, mutant NoCuts). The link before,
+        // x >= 0, is empty over Q on that hull as well, so it could not tell.
         (
             "case 2 triangle",
             and(vec![
@@ -353,7 +356,7 @@ fn the_step_controls_of_the_integer_hull_are_answered_as_their_rows() {
                 ge(lin(-2, 3), k(4)),
                 ge(lin(1, -3), k(-5)),
             ]),
-            vec![vec![ge(k(0), x.clone())], vec![ge(x.clone(), k(0))]],
+            vec![vec![ge(k(0), x.clone())], vec![ge(lin(1, 1), k(1))]],
         ),
         // Unbounded (D3): every vertex cut off and not empty; no vertex cut off and not implied.
         (
@@ -376,6 +379,18 @@ fn the_step_controls_of_the_integer_hull_are_answered_as_their_rows() {
                 vec![ge(k(6), lin(1, 1))],
                 vec![ge(k(0), lin(1, 1))],
             ],
+        ),
+        // Ties (Gemini N1): a row through two vertices with min f < c < max f elsewhere, and a
+        // quadrant cut to its ray x = 0.
+        (
+            "ties: x + y >= 1 on the unit square",
+            box_(0, 1, 0, 1),
+            vec![vec![ge(lin(1, 1), k(1))]],
+        ),
+        (
+            "quadrant, x <= 0",
+            quadrant.clone(),
+            vec![vec![ge(k(0), x.clone())]],
         ),
         // The states of D4: a half-plane, a strip, a ray, a segment, a point, empty.
         (
@@ -420,20 +435,32 @@ fn the_step_controls_of_the_integer_hull_are_answered_as_their_rows() {
             assert_eq!(e.answers(&f), decided(&f), "{name}: {f}");
         }
     }
-    // Persistence (D13): two callers extend one region; the base's answers stay the same.
+    // Persistence (D13, META2 G10): three callers extend one region, the base never asked
+    // itself, so no answer of it is remembered. Each extension holds and they are pairwise
+    // disjoint, so a hull the first one cut in place (x <= 2) would make the next two (3 <= x
+    // <= 4, x >= 5) answer empty; each is compared with the whole decided, and at least two
+    // of them must be decided from the region (`counts::PLANE`), so that the hull is the one
+    // read. Then the first again and the base.
     let base = extend(&box_(0, 6, 0, 6), vec![ge(k(9), lin(1, 1))]);
     let mut e = Extending::new();
-    let before = e.answers(&base);
     let left = extend(&base, vec![ge(k(2), x.clone())]);
-    let right = extend(&base, vec![ge(x.clone(), k(5)), ge(y.clone(), k(5))]);
-    for f in [&left, &right, &base, &left] {
+    let mid = extend(&base, vec![ge(x.clone(), k(3)), ge(k(4), x.clone())]);
+    let right = extend(&base, vec![ge(x.clone(), k(5))]);
+    counts::take();
+    for f in [&left, &mid, &right] {
+        let got = e.answers(f);
+        assert_eq!(got, decided(f), "{f}");
+        assert_eq!(got.holds, Ok(true), "each caller's region holds: {f}");
+    }
+    let c = counts::take();
+    assert!(
+        c[counts::PLANE] >= 2,
+        "{} of the three callers decided from the region",
+        c[counts::PLANE]
+    );
+    for f in [&left, &base] {
         assert_eq!(e.answers(f), decided(f), "{f}");
     }
-    assert_eq!(
-        e.answers(&base),
-        before,
-        "the base after two callers extended it"
-    );
 }
 
 /// A chain of `n` calls as the scope reads it (LOAD-extend-refuses): `x{i} == x{i+1} + k`, the

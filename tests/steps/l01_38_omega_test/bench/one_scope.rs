@@ -717,10 +717,12 @@ fn the_questions_of_a_chain_calling_a_callee_with_spread_holes_scale() {
     // writes the n clauses and `Extending` decides each link from them, Θ(n) a call and Θ(n²)
     // in all (60.7 times the instructions, 50 → 400, colab 2026-11-23). Red until the shared
     // call node of META1 A3 (XR-LOAD-chain-move-call-disj-defined-with) is built; the test
-    // above, with the holes merged, is its control (8.143 with the same code).
+    // above, with the holes merged, is its control (8.143 with the same code). At 1000 -> 8000
+    // (META2 G11 of XR-load-call-node: the call node built through `preimage` and asked with
+    // `front`'s interface, where the n log n model ratio is 10.41).
     questions_scale_unit(
         "the linear questions of a chain calling a callee with spread holes",
-        50,
+        1000,
         a_chain_calling_a_callee_with_spread_holes,
     );
 }
@@ -755,23 +757,27 @@ fn a_chain_extending_one_hole_set(n: usize, spread: bool) -> Vec<zedc::store::pr
 
 #[test]
 fn a_call_node_is_extended_in_time_of_its_links() {
-    // LOAD-call-disj-spread, META1 F2 of XR-load-call-node: the call node measured on
-    // `Extending` alone, at 40 -> 320. At 1000 -> 8000 (the size where the n log n model ratio
-    // is 10.41) design A ran past 600 s (std4, 2026-11-24), and no piece may run past 60 s; at
-    // 40 the model ratio `8 ln(8n) / ln(n)` is 12.5, so design B passes here only when the
-    // fixed cost of a link outweighs its O(log n) query (its control reads 7.85 at 1000). One
-    // hole set is
-    // built once and read by every link; each link moves the point past one more hole. Today
-    // each link reads the n clauses of the holes, Θ(n²) for the chain: red on the branch,
-    // not for main while red. With the call node (design
-    // /home/luke/Work/wt/design-b22-load5.md section 2) a link costs one successor query,
-    // O(log n), with zero clause expansions; the counter of E6 is to be asserted here when it
-    // exists. Its control is the test below.
-    let chains = zed_tests::scaling::inputs(40, |n| a_chain_extending_one_hole_set(n, true));
-    zed_tests::scaling::check("the answers of a chain extending one hole set", 40, |n| {
+    // LOAD-call-disj-spread, META2 G11 of XR-load-call-node: the call node measured on
+    // `Extending` alone, at 1000 -> 8000, where the n log n model ratio `8 ln(8n) / ln(n)` is
+    // 10.41. One hole set is built once, in the form `preimage::merged_holes` writes for
+    // spread holes (`!(x == v)` for each value), and kept as a part of every link; each link
+    // moves the point past one more hole. The links are asked with an interface giving `x`,
+    // as `front` asks a call's relation (`preimage::Scoped::interface`), so a link reads its
+    // kept parts through their faces (`Faces::face`, which returns at once without one).
+    // Today each link reads the n clauses of the holes, Θ(n²) for the chain: red on the
+    // branch (56.886 at 40 -> 320 without the interface, 2026-11-24), not for main while red.
+    // With the call node (design /home/luke/Work/wt/design-b22-load5.md section 2) a link
+    // costs one successor query, O(log n), with zero clause expansions; the counter of E6 is
+    // to be asserted here when it exists. Its control is the test below. The same chain
+    // written in Zed, through `preimage`, is
+    // `the_questions_of_a_chain_calling_a_callee_with_spread_holes_scale`.
+    use zedc::store::presburger::{Atom, Formula};
+    let chains = zed_tests::scaling::inputs(1000, |n| a_chain_extending_one_hole_set(n, true));
+    zed_tests::scaling::check("the answers of a chain extending one hole set", 1000, |n| {
         let mut e = zedc::store::presburger::extend::Extending::new();
+        let x = || Some(vec![Atom::Sym("x".into())]);
         for f in &chains[&n] {
-            let a = e.answers(f);
+            let a = e.defined_with(f, &|_| Formula::top(), &|_| x());
             assert_eq!((a.holds, a.fails), (Ok(true), Ok(true)));
         }
     });
