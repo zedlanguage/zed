@@ -1467,8 +1467,8 @@ const KARATSUBA_TOP: usize = 400;
 /// takes at most `6 ceil(n / 2) + 1 + E(ceil(n / 2)) <= 6 n + 7 + 7 c(n)`; in all at most
 /// `8 n + 7 + 7 c(n)`. So every case is within `12 n + 7 c(n) <= 12 n + 8 L`. Checked by a model
 /// of the recursion (b22-presburger10, 2026-11-24, leaves of 32 and 48 words, every narrower
-/// width to 1024 and wider one to 6 times it: the largest need is 0.979 of the bound), and by the slicing in
-/// [`karatsuba_words`], which panics on a shorter scratch, in test
+/// width to 1024 and wider one to 6 times it: the largest need is 0.979 of the bound), and by
+/// the slicing in [`karatsuba_words`], which panics on a shorter scratch, in test
 /// `karatsuba_products_agree_with_num_bigint`.
 fn karatsuba_scratch(n: usize) -> usize {
     12 * n + 8 * (usize::BITS - n.leading_zeros()) as usize

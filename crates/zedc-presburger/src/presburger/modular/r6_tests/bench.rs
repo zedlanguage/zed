@@ -250,9 +250,10 @@ fn fibonacci_pair(n: usize) -> (Int, Int) {
 /// (zed-kernel `karatsuba_mul`, which allocates only the product), so the measured ratios are
 /// near that prediction: 13.62 in instructions and 11.61 in bytes (b22-presburger10, 2026-11-24,
 /// v5e VM). With num-bigint's own products, which allocate at each level, the bytes grew 15.28
-/// times (PERF-bezout-bytes). The test catches a step to a worse order, not the constant: Euclid's quadratic
-/// extended gcd (`Int::euclid_bezout`) on the same pairs measured 11.7x in instructions, under
-/// the limit, since its word steps are cheap at these widths, but 42.4x in bytes, a new
+/// times (PERF-bezout-bytes). The test catches a step to a worse order, not the constant:
+/// Euclid's quadratic extended gcd (`Int::euclid_bezout`) on the same pairs measured 11.7x in
+/// instructions, under the limit, since its word steps are cheap at these widths, but 42.4x in
+/// bytes, a new
 /// quotient and remainder at each of its n steps (b22-presburger9, 2026-11-24), so the bytes
 /// are what catch it (the negative control of COMPLEXITY.md C31b).
 #[test]
