@@ -504,3 +504,77 @@ fn a_gap_of_classes_less_its_classes_is_linear_in_them() {
         std::hint::black_box(run(m as i64));
     });
 }
+
+/// Gap G closed (row LIMITS-exact-join-remove, `cells_cover`): the cover of `s` over
+/// `(s >= 0 ∧ s == 2·y) ∨ (40 <= s <= 40 + 4·n ∧ s == 4·z)`, `h` = [-10, +inf), with the points
+/// `s = 0` and `s = 40` read first, so the piece [0, +inf) is kept with the even residues and
+/// the stride of step 4 over [40, 40 + 4·n] meets it. Its work, instructions and bytes at n and
+/// 8n grow at most linearly (the stride's values listed, O(n); `kept_residues` reads one piece
+/// of one marked residue, O(1)): within 10.5, the goal 9. Negative control: on the code before
+/// the fix (946c0c265), the cover is refused at n = 64 with `Questions` after 3,112,608 units
+/// (each question of the stride finds a point inside the kept piece, until the limit), so the
+/// `expect` below fails there and the run stops before 8n.
+#[test]
+fn a_stride_meeting_a_kept_piece_scales_linearly() {
+    let s = a("s");
+    let make = |n: i64| {
+        Formula::or(vec![
+            Formula::and(vec![ge(&[("s", 1)], 0), eq(&[("s", 1), ("y", -2)], 0)]),
+            Formula::and(vec![
+                ge(&[("s", 1)], -40),
+                ge(&[("s", -1)], 40 + 4 * n),
+                eq(&[("s", 1), ("z", -4)], 0),
+            ]),
+        ])
+    };
+    let point = |s: i64, y: i64, z: i64| -> Model {
+        [(a("s"), s), (a("y"), y), (a("z"), z)]
+            .into_iter()
+            .map(|(k, v)| (k, Int::from(v)))
+            .collect()
+    };
+    let h = IntervalSet::range(fin(&Int::from(-10)), End::PosInf);
+    let mut meter = crate::scaling::Meter::new();
+    let mut counts = Vec::new();
+    for n in [64i64, 512] {
+        let f = make(n);
+        let mut used = 0u64;
+        let w = meter.work(|| {
+            let mut points = vec![point(0, 0, 0), point(40, 0, 10)];
+            let mut work = Work {
+                used: 0,
+                limit: EXACT_LIMIT,
+                solver: SOLVER,
+            };
+            let got = cells_cover(
+                &f,
+                &s,
+                &h,
+                constraints(&f),
+                &HashSet::new(),
+                &mut points,
+                &mut PartCache::default(),
+                &mut work,
+            );
+            let (set, cause) = got.expect("the cover ends");
+            let want = IntervalSet::range(fin(&Int::from(0)), End::PosInf);
+            assert_eq!(set, Classed::plain(want));
+            assert!(cause, "a kept piece gives the cause");
+            used = work.used;
+        });
+        println!(
+            "kept_stride n={n}: work_units={used} instr={} bytes={}",
+            w.units, w.bytes
+        );
+        counts.push((used, w.units, w.bytes));
+    }
+    let ratio = |i: usize, c: &[(u64, u64, u64)]| {
+        let pick = |t: &(u64, u64, u64)| [t.0, t.1, t.2][i];
+        pick(&c[1]) as f64 / pick(&c[0]).max(1) as f64
+    };
+    let (work, instr, bytes) = (ratio(0, &counts), ratio(1, &counts), ratio(2, &counts));
+    println!("kept_stride ratios (8x n): work={work:.2}x instr={instr:.2}x bytes={bytes:.2}x");
+    assert!(work < 10.5, "work {work:.2}x per 8x n");
+    assert!(instr < 10.5, "{instr:.2}x instructions per 8x n");
+    assert!(bytes < 10.5, "{bytes:.2}x bytes per 8x n");
+}

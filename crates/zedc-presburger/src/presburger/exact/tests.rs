@@ -1009,6 +1009,48 @@ fn the_work_limit_is_met_alike_on_both_sides() {
     assert!(solver.meet(&want) == want && solver != want, "{solver}");
 }
 
+/// The case of `the_work_limit_is_met_alike_on_both_sides` with `h` unbounded, where the
+/// work limit stands whatever class 1 of the proof at `exact.rs` `cells_cover` comes to (row
+/// LIMITS-exact-join-remove): [`evens_tied`] with `x` bounded below only. Allowed exactly the
+/// work its cover takes (the fast path's left out), it answers as with the full limit and with
+/// the same work; allowed one unit less, it refuses
+/// ([`Refusal::Questions`]), so the limit, and not any fast path, decides where it stops.
+#[test]
+fn an_unbounded_cover_one_unit_short_of_its_work_is_refused() {
+    let f = Formula::and(vec![
+        Formula::or(vec![
+            eq(&[("x", 1), ("y", -2)], 0),
+            eq(&[("x", 1), ("z", -2)], 0),
+        ]),
+        ge(&[("x", 1)], 0),
+        member(&a("z"), &IntervalSet::of(0, 40)),
+        Formula::or(vec![ge(&[("y", 1), ("z", 1)], 0), ge(&[("y", -1)], -1)]),
+        Formula::or(vec![ge(&[("y", 1), ("z", 2)], 0), ge(&[("y", -1)], -1)]),
+    ]);
+    EXACT_WORK.set(0);
+    FAST_WORK.set(0);
+    let (want, causes) = project_each_exact(&f, &[a("x")]).unwrap();
+    let fast = FAST_WORK.replace(0);
+    let used = EXACT_WORK.replace(0) - fast;
+    assert!(want[0].is_ok(), "{want:?}");
+    assert!(used > 0);
+    assert!(fast > 0, "the fast path read nothing");
+    EXACT_LIMIT_SET.set(Some(used));
+    let again = project_each_exact(&f, &[a("x")]).unwrap();
+    assert_eq!((&again.0, &again.1), (&want, &causes));
+    assert_eq!(
+        EXACT_WORK.replace(0) - FAST_WORK.replace(0),
+        used,
+        "the work is not the same on a second run"
+    );
+    EXACT_LIMIT_SET.set(Some(used - 1));
+    let r = project_each_exact(&f, &[a("x")]).unwrap();
+    EXACT_LIMIT_SET.set(None);
+    EXACT_WORK.set(0);
+    FAST_WORK.set(0);
+    assert_eq!(r.0, vec![Err(Refusal::Questions)]);
+}
+
 /// An unbounded set with holes, the even values of `x == 2 * y || x == 2 * z` with no
 /// bound, is not a finite union of ranges, so no answer is exact: the cover's tail
 /// question proves the holes, and the piece holding them is kept whole, every value,
