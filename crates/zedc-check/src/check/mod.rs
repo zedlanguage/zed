@@ -3037,6 +3037,11 @@ struct Ck<'t, 'a> {
     /// its span, and whether a remap reads it (RANGE-keys, FAIL-family-from-tuple-param). The
     /// signature takes a [`KeyUse`] need on each where it has a range or a remap reads it.
     param_keys: HashMap<usize, Vec<ParamKeys>>,
+    /// The range of the one positional parameter of each exact arrow a declared function's
+    /// parameter is declared, whole or as a tuple's component, by the arrow's span,
+    /// `h: int[2..=4] -> String` ([`Ck::param_keys`]): [`Ck::written`] reads the arrow as
+    /// [`Ranged::keyed`] says (row PRINT-positional-range-ambiguous, option A).
+    arrow_keys: HashMap<Span, WrittenRange>,
     /// The paths of the entries of [`Self::param_keys`] and of the places of [`Self::places`]
     /// made so far, each kept once ([`Self::interned_push`]).
     declared_paths: std::cell::RefCell<HashSet<PathSteps>>,
@@ -3617,6 +3622,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             ranged_seen: HashSet::new(),
             param_ints: HashMap::new(),
             param_keys: HashMap::new(),
+            arrow_keys: HashMap::new(),
             declared_paths: Default::default(),
             keyed_seen: HashSet::new(),
             path_seen: HashSet::new(),
@@ -5958,7 +5964,23 @@ impl<'t, 'a> Ck<'t, 'a> {
     // gave a second message, on the arrows. Test:
     // `l01_22_type_representation::kinds::a_difference_that_takes_away_a_type_variable_is_refused`.
     pub(super) fn written(&mut self, t: &Type, fresh: bool) -> Ty {
-        let (ty, inexact) = denoted_inexact(t, &Binds::new(), &HashSet::new(), HashMap::new());
+        // The ranged arrows of a declared parameter's type, at its top or in its tuples, as
+        // `Ck::param_keys` walks it; O(the size of `t`).
+        let mut ranged = Ranged::default();
+        if !self.arrow_keys.is_empty() {
+            let mut todo = vec![t];
+            while let Some(t) = todo.pop() {
+                match &t.kind {
+                    TypeKind::Tuple(ts) => todo.extend(ts),
+                    _ => {
+                        if let Some(r) = self.arrow_keys.get(&t.span) {
+                            ranged.keyed.insert(t.span, r.clone());
+                        }
+                    }
+                }
+            }
+        }
+        let (ty, inexact) = denoted_inexact(t, &Binds::new(), &HashSet::new(), ranged);
         let any_var = inexact.iter().any(|i| matches!(i.cause, Loss::Var(_)));
         for Inexact {
             span,
@@ -16813,6 +16835,27 @@ impl<'a> Ck<'_, 'a> {
                         found.push(self.keyed_map(p, key, path));
                     }
                 }
+                // A function of one positional parameter declared a range, or a family with
+                // those keys exactly, `h: int[2..=4] -> String`, as name resolution lets
+                // through here alone (its `Task::ParamTy`): the range, read as a parameter's
+                // is, with an error where an end is not an int the text fixes.
+                TypeKind::Arrow {
+                    params,
+                    partial: false,
+                    ..
+                } => {
+                    let [key] = &params[..] else { continue };
+                    if key.name.is_some() {
+                        continue;
+                    }
+                    let r = match &key.ty.kind {
+                        TypeKind::Range { low, high, .. } => self.written_range(&p.name, low, high),
+                        _ => self.alias_range(&key.ty),
+                    };
+                    if let Some((r, _, _)) = r {
+                        self.arrow_keys.insert(t.span, r);
+                    }
+                }
                 _ => {}
             }
         }
@@ -18220,17 +18263,31 @@ pub fn denoted_with(t: &Type, leaves: &Binds) -> Ty {
 /// variables). A printed type writes such a name for a variable that stands in two places or
 /// more (UNDERSCORE-print), which only `parse_type` reads back.
 pub fn denoted_free(t: &Type, leaves: &Binds, free: &HashSet<Arc<str>>) -> Ty {
-    denoted_inexact(t, leaves, free, HashMap::new()).0
+    denoted_inexact(t, leaves, free, Ranged::default()).0
+}
+
+/// The ranges read where an arrow of a type is, by the arrow's span, which the type's own
+/// parts do not denote ([`Denote::make`]).
+#[derive(Default)]
+struct Ranged {
+    /// The key of each exact arrow of one positional parameter written as a range, as
+    /// `int[2..=4] -> V`: the arrow is the union of the family with those keys exactly and
+    /// the function of that parameter declared the range (row RANGE-keys-in-printed-type;
+    /// row PRINT-positional-range-ambiguous, option A).
+    pub keyed: HashMap<Span, WrittenRange>,
+    /// The hull of the int result of each exact arrow whose result is written as a range, as
+    /// `int -> int[1..=10]` ([`Sig::hull`], row READ-result-hull).
+    pub hulls: HashMap<Span, WrittenRange>,
 }
 
 /// [`denoted_free`], with the span and printed text of each difference in `t` whose value holds
-/// more than the difference ([`Ty::diff_exact`]). Each function type whose span `keyed` holds
-/// is a family with those keys exactly ([`Denote::keyed`]).
+/// more than the difference ([`Ty::diff_exact`]). Each arrow whose span `ranged` holds is read
+/// with its range ([`Ranged`]).
 fn denoted_inexact(
     t: &Type,
     leaves: &Binds,
     free: &HashSet<Arc<str>>,
-    keyed: HashMap<Span, WrittenRange>,
+    ranged: Ranged,
 ) -> (Ty, Vec<Inexact>) {
     let mut d = Denote {
         leaves,
@@ -18239,7 +18296,7 @@ fn denoted_inexact(
         open: Vec::new(),
         empty: None,
         inexact: Vec::new(),
-        keyed,
+        ranged,
     };
     let ty = d.ty(t);
     (ty, d.inexact)
@@ -18271,7 +18328,7 @@ fn emptied(t: &Type, out: &mut Vec<Note>) {
         open: Vec::new(),
         empty: Some(HashSet::new()),
         inexact: Vec::new(),
-        keyed: HashMap::new(),
+        ranged: Ranged::default(),
     };
     d.ty(t);
     let empty = d.empty.unwrap_or_default();
@@ -18480,10 +18537,9 @@ struct Denote<'a> {
     /// than `a & !b` ([`Ty::diff_exact`]), which [`Ck::written`] refuses
     /// (FAIL-ty-diff-function-rows).
     inexact: Vec<Inexact>,
-    /// The function types read as families with their keys exactly, by span: a printed type
-    /// `int[a..=b] -> V` (row RANGE-keys-in-printed-type), which `read::parse_type` finds.
-    /// Empty for a type a program writes.
-    keyed: HashMap<Span, WrittenRange>,
+    /// The arrows read with a range on their key or their result ([`Ranged`]), which
+    /// `read::parse_type` finds in a printed type and [`Ck::param_keys`] in a declared parameter's.
+    ranged: Ranged,
 }
 
 /// A difference `a \ b` whose value holds more than `a & !b` ([`Denote::inexact`]).
@@ -18794,22 +18850,50 @@ impl<'a> Denote<'a> {
             } => {
                 let result = vals.pop().expect("a function type's result is denoted");
                 let tys = vals.split_off(vals.len() - params.len());
-                // The family `int[a..=b] -> V` with its keys exactly, as the printer writes it
-                // ([`Sig::keys`]): the partial arrow `int ->? V`, since a key outside the range
+                // The hull of the int result of an exact arrow, `int -> int[1..=10]`
+                // ([`Sig::hull`], row READ-result-hull): the result is denoted `int`.
+                let hull = match partial {
+                    true => None,
+                    false => self.ranged.hulls.get(&t.span).cloned(),
+                };
+                // `int[a..=b] -> V`, as the printer writes both the family with its keys
+                // exactly ([`Sig::keys`], row RANGE-keys-in-printed-type) and the function of
+                // one positional parameter declared that range (row
+                // PRINT-positional-range-ambiguous, option A: DESIGN.md's one morphism type
+                // prints one text for both): the union of the two.
+                //
+                // The family is the partial arrow `int ->? V`, since a key outside the range
                 // misses, with the keys kept beside it, as the checker types the range
-                // `a ..= b` (`Ck::range_ty`'s keys; a low end of 0 makes them the ranks).
-                if let Some(k) = self.keyed.get(&t.span).cloned() {
-                    let arrow = Arrow::partial_of(vec![Ty::carrier(Carrier::Int)], result);
+                // `a ..= b` (`Ck::range_ty`'s keys; a low end of 0 makes them the ranks). The
+                // function is the exact arrow `int -> V` with the need of its parameter's
+                // declared range ([`Need::declared_range`]), as a declared function's
+                // signature holds it; that need has no source, and a signature's fit compares
+                // such needs by their ranges (`fits_in`). A result with a hull, or a key with
+                // an open end, is no family's: the checker gives a family no hull, and a
+                // family's keys are finite, so such a text is the function's alone.
+                if let Some(k) = self.ranged.keyed.get(&t.span).cloned() {
+                    let int = Ty::carrier(Carrier::Int);
+                    let arrow = Arrow::exact(vec![int.clone()], result.clone());
                     let mut f = self.sig_of(positional(1), vec![arrow]);
                     let s = f.fns.pop().expect("a function type denotes one signature");
+                    let mut func = Sig::unwrap_to_change(s.clone());
+                    func.params[0].range = Some(ParamRange::Int(k.clone()));
+                    let nowhere = Span { start: 0, end: 0 };
+                    (func.needs).push(Need::declared_range(0, "".into(), k.clone(), nowhere));
+                    func.hull = hull.clone();
+                    let func = Ty::func(Arc::new(func));
+                    if hull.is_some() || k.low.is_none() || k.high.is_none() {
+                        return func;
+                    }
                     let mut s = Sig::unwrap_to_change(s);
+                    s.arrows = vec![Arrow::partial_of(vec![int], result)];
                     s.data = true;
                     s.dense = match k.low {
                         Some(Value::Int(0)) => Dense::Ranks,
                         _ => Dense::Interval,
                     };
                     s.keys = Some(k);
-                    return Ty::func(Arc::new(s));
+                    return Ty::func(Arc::new(s)).union(&func);
                 }
                 let names = params
                     .iter()
@@ -18824,7 +18908,13 @@ impl<'a> Denote<'a> {
                     true => Arrow::partial_of(tys, result),
                     false => Arrow::exact(tys, result),
                 };
-                self.sig_of(names, vec![arrow])
+                let f = self.sig_of(names, vec![arrow]);
+                let Some(h) = hull else { return f };
+                let mut f = f;
+                let s = f.fns.pop().expect("a function type denotes one signature");
+                let mut s = Sig::unwrap_to_change(s);
+                s.hull = Some(h);
+                Ty::func(Arc::new(s))
             }
             // A morphism `L .. U -> V` answers `V` on a key of its guarantee `L`, and only
             // `V | #notFound` on a key of its permission `U` (DESIGN.md sec:type_language, lookup

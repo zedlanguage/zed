@@ -17,7 +17,7 @@ use zed_kernel::num::{TooLarge, literal_f64};
 use zed_kernel::{Rat, Value};
 
 use super::ty::{Binds, NodeId, Row, Shape, Sig, Ty, WrittenRange};
-use super::{Inexact, Loss, carrier_mask, denoted_inexact};
+use super::{Inexact, Loss, Ranged, carrier_mask, denoted_inexact};
 use zedc_lattice::interval::Num;
 use zedc_syntax::ast::{self, Expr, ExprKind, RangeEnd, Type, TypeKind};
 use zedc_syntax::lex::{self, Part, Tok};
@@ -168,6 +168,7 @@ fn read_part(
     // A later layer's form, found with an explicit stack, and the variables bounded.
     let mut bounded = Vec::new();
     let mut keyed = HashMap::new();
+    let mut hulls = HashMap::new();
     let mut stack = vec![&t];
     while let Some(t) = stack.pop() {
         match &t.kind {
@@ -181,7 +182,10 @@ fn read_part(
             TypeKind::Array(of) => stack.push(of),
             // A signature prints a parameter's range, `(x: int[1..]) -> int`, but a printed
             // type read back holds none: the kernel has no ranged type to read it as.
-            // So does a fixed-width alias, the name of a range (`u8`, step L1.12).
+            // So does a fixed-width alias, the name of a range (`u8`, step L1.12). The key of
+            // a family or of a function of one positional parameter, `int[2..=4] -> V`, and
+            // the hull of an exact arrow's int result, `int -> int[1..=10]`, are read where
+            // their arrow is, below, and not walked.
             TypeKind::Range { .. } => {
                 return Err(format!(
                     "`{text}` holds a range type, which the checker never prints as a type"
@@ -205,22 +209,33 @@ fn read_part(
             TypeKind::AtomApply(_, ps) => stack.extend(ps.iter().map(|p| &p.ty)),
             TypeKind::Diff(a, b) => stack.extend([&**a, &**b]),
             // A family with its keys exactly, `int[2..=4] -> V` or `u8 -> V`, as the printer
-            // writes one (`Sig::keys`, row RANGE-keys-in-printed-type): its key, a range, is
-            // read here and not walked; the arrow is denoted as that family (`Denote::keyed`).
+            // writes one (`Sig::keys`, row RANGE-keys-in-printed-type), and a function of one
+            // positional parameter declared that range, which prints alike (row
+            // PRINT-positional-range-ambiguous, option A): its key, a range, is read here and
+            // not walked; the arrow is denoted as the union of the two (`Denote::keyed`).
             TypeKind::Arrow {
                 params,
                 partial: false,
                 result,
             } if let [p] = &params[..]
                 && p.name.is_none()
-                && let Some(k) = key_range(&p.ty, &written, binds) =>
+                && let Some(k) = range_read(&p.ty, &written, binds, false) =>
             {
                 keyed.insert(t.span, k);
-                stack.push(result);
+                hull_or_walk(t.span, result, (&written, binds), &mut hulls, &mut stack);
             }
-            TypeKind::Arrow { params, result, .. } => {
+            TypeKind::Arrow {
+                params,
+                partial,
+                result,
+            } => {
                 stack.extend(params.iter().map(|p| &p.ty));
-                stack.push(result);
+                match partial {
+                    true => stack.push(result),
+                    false => {
+                        hull_or_walk(t.span, result, (&written, binds), &mut hulls, &mut stack)
+                    }
+                }
             }
             TypeKind::Bounded {
                 lower,
@@ -271,7 +286,7 @@ fn read_part(
     // reads back as `#a(x: int)`, l01_22
     // `kinds::the_difference_of_payloads_of_one_atom_takes_the_payloads`),
     // and a difference that takes part of a variable is held by `left_of`.
-    let (ty, inexact) = denoted_inexact(&t, binds, &free, keyed);
+    let (ty, inexact) = denoted_inexact(&t, binds, &free, Ranged { keyed, hulls });
     if let Some(Inexact { span, printed, .. }) = inexact
         .into_iter()
         .find(|i| matches!(i.cause, Loss::Unknown))
@@ -520,33 +535,65 @@ impl Written<'_> {
     }
 }
 
-/// The keys of a family whose key `key` the printer wrote as a range with both ends
-/// (`Sig::keys`, row RANGE-keys-in-printed-type): `int[a..=b]`, its ends int literals, which
-/// [`leaves`] made names of and `written` keeps the ints of, or a fixed-width alias, `u8`,
-/// that no definition names, which `WrittenRange::new` prints for exactly its range. `None`
-/// for any other key, which the walk then reads as before (a range elsewhere is refused). The
-/// printer writes no `..<` here, nor an open end, as `WrittenRange::new` of two ends writes
-/// `..=`. O(1) and O(digits) for the alias's ends.
-fn key_range(key: &Type, written: &Written, binds: &Binds) -> Option<WrittenRange> {
-    let (low, high) = match &key.kind {
+/// The range the printer wrote as `t` ([`WrittenRange::new`]): `int[a..=b]`, its ends int
+/// literals, which [`leaves`] made names of and `written` keeps the ints of, or a fixed-width
+/// alias, `u8`, that no definition names, which `WrittenRange::new` prints for exactly its
+/// range; and, where `open`, also `int[a..]`, `int[_..=b]` and `int[_..]`, an end `_` or left
+/// out being open. A key (`Sig::keys`, row RANGE-keys-in-printed-type) is read with `open`
+/// false, as the printer writes a key's two ends; the hull of a result (`Sig::hull`, row
+/// READ-result-hull) with `open` true. `None` for any other type, which the walk then reads
+/// as before (a range elsewhere is refused). The printer writes no `..<`, as
+/// `WrittenRange::new` writes `..=`. O(1) and O(digits) for the alias's ends.
+fn range_read(t: &Type, written: &Written, binds: &Binds, open: bool) -> Option<WrittenRange> {
+    // An end: `Some(None)` where it is open, `None` where it is not one the printer writes.
+    let end = |e: Option<&Expr>| -> Option<Option<Value>> {
+        let Some(e) = e else {
+            return open.then_some(None);
+        };
+        let ExprKind::Name(n) = &e.kind else {
+            return None;
+        };
+        match written.ints.get(n.as_str()) {
+            Some(v) => Some(Some(v.clone())),
+            None if open && written.by_name.get(n.as_str()) == Some(&"_") => Some(None),
+            None => None,
+        }
+    };
+    match &t.kind {
         TypeKind::Name(n) if !binds.contains_key(n.as_str()) => {
             let (lo, hi) = zedc_syntax::fixed_width::range(n)?;
-            (Value::from(&Num::from(lo)), Value::from(&Num::from(hi)))
+            let (lo, hi) = (Value::from(&Num::from(lo)), Value::from(&Num::from(hi)));
+            Some(WrittenRange::new(Some(lo), Some(hi)))
         }
-        TypeKind::Range {
-            of,
-            low: Some(low),
-            high: RangeEnd::Through(Some(high)),
-        } if matches!(&of.kind, TypeKind::Name(n) if n == "int") => {
-            let int = |e: &Expr| match &e.kind {
-                ExprKind::Name(n) => written.ints.get(n.as_str()).cloned(),
-                _ => None,
+        TypeKind::Range { of, low, high } if matches!(&of.kind, TypeKind::Name(n) if n == "int") => {
+            let high = match high {
+                RangeEnd::Through(h) => end(h.as_deref())?,
+                RangeEnd::Open if open => None,
+                _ => return None,
             };
-            (int(low)?, int(high)?)
+            let low = end(low.as_deref())?;
+            Some(WrittenRange::new(low, high))
         }
-        _ => return None,
-    };
-    Some(WrittenRange::new(Some(low), Some(high)))
+        _ => None,
+    }
+}
+
+/// Records the hull of the exact arrow at `span` whose result `result` is a range the printer
+/// writes ([`range_read`], open ends allowed, row READ-result-hull), or pushes `result` to be
+/// walked where it is not one.
+fn hull_or_walk<'t>(
+    span: zedc_syntax::lex::Span,
+    result: &'t Type,
+    (written, binds): (&Written, &Binds),
+    hulls: &mut HashMap<zedc_syntax::lex::Span, WrittenRange>,
+    stack: &mut Vec<&'t Type>,
+) {
+    match range_read(result, written, binds, true) {
+        Some(h) => {
+            hulls.insert(span, h);
+        }
+        None => stack.push(result),
+    }
 }
 
 /// The start of the name [`leaves`] gives each leaf, followed by its number in `binds`.

@@ -2189,6 +2189,27 @@ impl Resolver<'_> {
                         todo.push(Task::Ty(result));
                         todo.push(Task::KeyTy(&params[0].ty, true));
                     }
+                    // A function of one positional parameter declared a range, or a family
+                    // with those keys, `h: int[2..=4] -> V`, the one text of both (row
+                    // PRINT-positional-range-ambiguous, option A): the checker reads the
+                    // range as the declared range of the function's parameter and as the
+                    // family's keys, so it is resolved as a key is.
+                    TypeKind::Arrow {
+                        params,
+                        partial: false,
+                        result,
+                    } if matches!(&params[..], [p] if p.name.is_none())
+                        && match &params[0].ty.kind {
+                            TypeKind::Range { .. } => true,
+                            TypeKind::Name(n) => self.fixed_width_alias(n),
+                            _ => false,
+                        } =>
+                    {
+                        self.arrows.push(t.span);
+                        todo.push(Task::ArrowEnd);
+                        todo.push(Task::Ty(result));
+                        todo.push(Task::KeyTy(&params[0].ty, false));
+                    }
                     TypeKind::Tuple(ts) => todo.extend(ts.iter().rev().map(Task::ParamPart)),
                     _ => self.ty(t, &mut todo),
                 },
@@ -4406,15 +4427,19 @@ impl Resolver<'_> {
             {
                 self.arrows.push(t.span);
                 todo.push(Task::ArrowEnd);
-                todo.push(Task::Ty(result));
+                todo.extend(self.result_task(result, false));
                 if let Some(of) = key {
                     todo.push(Task::Ty(of));
                 }
             }
-            TypeKind::Arrow { params, result, .. } => {
+            TypeKind::Arrow {
+                params,
+                partial,
+                result,
+            } => {
                 self.arrows.push(t.span);
                 todo.push(Task::ArrowEnd);
-                todo.push(Task::Ty(result));
+                todo.extend(self.result_task(result, *partial));
                 todo.extend(params.iter().rev().map(|p| Task::Ty(&p.ty)));
             }
             TypeKind::Bounded {
@@ -4491,6 +4516,49 @@ impl Resolver<'_> {
                 Some(None)
             }
             _ => None,
+        }
+    }
+
+    /// The task that resolves `result`, the result of an arrow, partial where `partial`: in a
+    /// printed type, the result of an exact arrow may be the hull of its ints, `int[1..=10]`,
+    /// `int[1..]`, `int[_..=10]` or a fixed-width alias (`Sig::hull`, row READ-result-hull),
+    /// each end a leaf of the printed type or left out; only the type ranged over is resolved,
+    /// and an alias is recorded as the prelude's. Elsewhere `result` is resolved as any type,
+    /// a range there refused. O(1).
+    fn result_task<'a>(&mut self, result: &'a Type, partial: bool) -> Option<Task<'a>> {
+        if self.printed.is_none() || partial {
+            return Some(Task::Ty(result));
+        }
+        let leaf = |e: &Option<Box<Expr>>| match e.as_deref() {
+            None => true,
+            Some(Expr {
+                kind: ExprKind::Name(n),
+                ..
+            }) => self
+                .printed
+                .as_ref()
+                .is_some_and(|l| l.contains(n.as_str())),
+            Some(_) => false,
+        };
+        match &result.kind {
+            TypeKind::Range { of, low, high }
+                if matches!(&of.kind, TypeKind::Name(n) if n == "int")
+                    && leaf(low)
+                    && match high {
+                        RangeEnd::Through(h) => leaf(h),
+                        RangeEnd::Open => true,
+                        RangeEnd::Below(_) => false,
+                    } =>
+            {
+                Some(Task::Ty(of))
+            }
+            TypeKind::Name(n) if self.fixed_width_alias(n) => {
+                self.out
+                    .uses
+                    .insert(result.span, Ref::Prelude(n.as_str().into()));
+                None
+            }
+            _ => Some(Task::Ty(result)),
         }
     }
 

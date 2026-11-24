@@ -10,7 +10,10 @@ use zed_kernel::types::Type as KType;
 use zed_kernel::types::defs;
 use zed_kernel::{Rat, Value};
 use zedc::check::read::parse_type;
-use zedc::check::ty::{Carrier, EVERY, OTHER, Shape, Sig, Ty, Vars, mask_text, printed};
+use zedc::check::ty::{
+    Arrow, Binds, Carrier, EVERY, Members, OTHER, ParamRange, Shape, Sig, Ty, Vars, mask_text,
+    printed,
+};
 
 /// Each program the check reads: its place and text.
 fn programs() -> Vec<(String, String)> {
@@ -90,14 +93,22 @@ fn stated_in(t: &Ty, scope: Arc<HashSet<Arc<str>>>) -> Ty {
     t.tuples = (t.tuples.iter())
         .map(|cs| cs.iter().map(|c| stated_in(c, scope.clone())).collect())
         .collect();
-    t.fns = t.fns.iter().map(|s| stated_sig(s, &scope)).collect();
+    // Two members that state alike are one: the family and the function `int[2..=4] -> V`
+    // reads back to (row PRINT-positional-range-ambiguous) state one function.
+    let mut fns = Members::new();
+    for s in t.fns.iter().map(|s| stated_sig(s, &scope)) {
+        fns.insert_new(s);
+    }
+    t.fns = fns;
     t
 }
 
 /// [`stated`] of the signature `s` inside signatures that bound the variables `scope` by
 /// carriers: its parts by [`stated_in`].
 fn stated_sig(s: &Sig, scope: &Arc<HashSet<Arc<str>>>) -> Arc<Sig> {
-    let mut s = s.clone();
+    // Changed, so its kept hash is dropped ([`Sig::unwrap_to_change`]): a clone keeps the hash
+    // of the signature as held, and two equal signatures would then compare unequal.
+    let mut s = Sig::unwrap_to_change(Arc::new(s.clone()));
     s.bounds.retain(|_, m| *m & OTHER == 0);
     // Its own variables bounded by carriers are written by name; its other own ones are `_`.
     let scope = if s.bounds.is_empty() && s.own.iter().all(|v| !scope.contains(v)) {
@@ -116,6 +127,19 @@ fn stated_sig(s: &Sig, scope: &Arc<HashSet<Arc<str>>>) -> Arc<Sig> {
     }
     s.needs = Default::default();
     s.own.clear();
+    // A family with its keys exactly is stated as the function of one positional parameter
+    // declared that range, as both print `int[2..=4] -> V` and that text reads back to the
+    // union of the two (row PRINT-positional-range-ambiguous, option A): whether it is a
+    // family is not written, so each states the one function.
+    if let (Some(k), [a]) = (s.keys.clone(), &s.arrows[..])
+        && a.partial
+        && s.params.len() == 1
+    {
+        let exact = Arrow::exact(a.params.clone(), a.value().into_owned());
+        s.arrows = vec![exact];
+        s.params[0].range = Some(ParamRange::Int(k));
+        s.keys = None;
+    }
     s.data = false;
     s.dense = zedc::check::ty::Dense::No;
     for a in s.arrows.iter_mut() {
@@ -893,12 +917,16 @@ fn list_types_print_in_brackets_and_read_back_in_every_position() {
     }
 }
 
-/// The keys of the one family `t` is, as `Sig::keys` holds them.
+/// The keys of the one family `t` holds, as `Sig::keys` holds them. A text `int[2..=4] -> V`
+/// reads back to that family and the function of one positional parameter declared that
+/// range (row PRINT-positional-range-ambiguous, option A), which holds no keys.
 fn keys_of(t: &Ty) -> Option<String> {
-    let Some(s) = t.fns.only() else {
-        panic!("{t} is not one function type")
-    };
-    s.keys.as_ref().map(|k| k.text.to_string())
+    let fams: Vec<&Sig> = t.fns.iter().map(|s| &**s).filter(|s| s.data).collect();
+    match fams[..] {
+        [s] => s.keys.as_ref().map(|k| k.text.to_string()),
+        [] if t.fns.len() == 1 => None,
+        _ => panic!("{t} does not hold one family"),
+    }
 }
 
 /// Row RANGE-keys-in-printed-type: a family whose keys the type knows exactly, as the
@@ -1010,6 +1038,118 @@ pub(super) fn keyed_families_read_back(text: &str, n: usize) {
 fn a_tuple_of_families_with_their_keys_reads_back() {
     for n in [1, 2, 5] {
         keyed_families_read_back(&keyed_families(n), n);
+    }
+}
+
+/// Row PRINT-positional-range-ambiguous, option A: a function of one positional parameter
+/// declared a range, `f(positional x: int[2..=4])`, and a family with those keys exactly,
+/// `(2 ..= 4).map(k -> "${k}")`, print alike, `int[2..=4] -> String` (DESIGN.md's one
+/// morphism type), and the reader reads that text as the union of the two, so each value lies
+/// within the type its text reads back to and is taken by a parameter written with the text
+/// (row FAIL-declared-range-fn-into-written-arrow).
+/// A function is still not data: `.count` on one is refused (rule (2), kept). The map
+/// `{2 -> "a", 3 -> "b", 4 -> "c"}` prints by its entries, `(2 | 3 | 4) -> "a" | "b" | "c"`,
+/// so it is not the family of this text.
+#[test]
+fn a_function_of_a_positional_range_and_a_family_print_alike_and_read_back() {
+    let unit = "f(positional x: int[2..=4]) = \"${x}\";\nm = (2 ..= 4).map(k -> \"${k}\");\n";
+    let shown = "int[2..=4] -> String";
+    let r = back(shown);
+    assert_eq!(r.to_string(), shown);
+    for name in ["f", "m"] {
+        let (t, text) = noted(unit, name);
+        assert_eq!(text, shown, "{name}");
+        assert!(
+            t.sub(&r, &mut Binds::new()),
+            "{name}: {t} is not within {shown}"
+        );
+        assert_eq!(mismatch(&t, &text), None, "{name}");
+    }
+    // A parameter written with the text takes both (row
+    // FAIL-declared-range-fn-into-written-arrow: the function was refused, "no arrow of `g`
+    // takes these types", as a function with needs was fitted to one function type alone).
+    let program = |body: &str, arg: &str| {
+        format!(
+            "{unit}k(positional j: int ->? String) = j(7);\ng(positional h: {shown}) = \
+             {body};\nmain(a: MainArgs) {{\n  a.stdout <- \"${{g({arg})}}\";\n}}\n"
+        )
+    };
+    for arg in ["f", "m"] {
+        let p = program("h(3)", arg);
+        if let Err(why) = zedc::run::load(p.as_bytes()) {
+            panic!("{p}\n{why}");
+        }
+        // A call through the parameter outside the declared range is refused at the call, so
+        // `f` needs no test of its domain there (`Ck::coercion`).
+        let outside = program("h(7)", arg);
+        let why = zedc::run::load(outside.as_bytes())
+            .err()
+            .unwrap_or_default();
+        assert!(
+            why.contains("`h` takes `x0` in int[2..=4]: `h(7 : int)`")
+                && why.contains("the parameter is declared int[2..=4] here"),
+            "{outside}\n{why}"
+        );
+    }
+    // The parameter passed on to a partial slot is refused, as no test of its domain can be
+    // put on a union holding a function beside a family.
+    let onward = program("k(h)", "f");
+    let why = zedc::run::load(onward.as_bytes()).err().unwrap_or_default();
+    assert!(
+        why.contains("`h` is `int[2..=4] -> String`, passed as `int ->? String`")
+            && why.contains("no test at run time can be put on a function that sits beside"),
+        "{onward}\n{why}"
+    );
+    let count = format!("{unit}main(a: MainArgs) {{\n  a.stdout <- \"${{f.count}}\";\n}}\n");
+    assert!(zedc::run::load(count.as_bytes()).is_err(), "{count}");
+}
+
+/// Row READ-result-hull: the int result of an exact arrow printed with its hull, `int[l..=h]`,
+/// `int[l..]`, `int[_..=h]` or a fixed-width alias, reads back to an arrow with that hull
+/// ([`Sig::hull`]), which prints as the text again; and the int-valued function and family of
+/// a unit each lie within the type their text reads back to.
+#[test]
+fn an_int_result_with_its_hull_reads_back() {
+    for text in [
+        "int -> int[0..=9]",
+        "int -> int[1..]",
+        "int -> int[_..=5]",
+        "int -> u8",
+        "int[2..=4] -> int[10..=30]",
+        "(int -> int[0..=9], bool)",
+    ] {
+        let t = back(text);
+        assert_eq!(t.to_string(), text, "{text}");
+        assert_eq!(mismatch(&t, text), None, "{text}");
+    }
+    let unit = "f(positional x: int[2..=4]) = x;\nm = {2 -> 10, 3 -> 20, 4 -> 30};\n";
+    // The note prints the family by its entries, `(2 | 3 | 4) -> 10 | 20 | 30`, and the
+    // function with its hull.
+    for (name, shown) in [
+        ("f", "int[2..=4] -> int[2..=4]"),
+        ("m", "(2 | 3 | 4) -> 10 | 20 | 30"),
+    ] {
+        let (t, text) = noted(unit, name);
+        assert_eq!(text, shown, "{name}");
+        let r = back(&text);
+        assert!(
+            t.sub(&r, &mut Binds::new()),
+            "{name}: {t} is not within {text}"
+        );
+        assert_eq!(mismatch(&t, &text), None, "{name}");
+    }
+}
+
+/// The function type the check's note prints for the binding `name` of `unit` passed where a
+/// `String` is wanted, with its text.
+fn noted(unit: &str, name: &str) -> (Ty, String) {
+    let program = format!(
+        "{unit}need(positional x: String) = x;\nmain(a: MainArgs) {{\n  a.stdout <- need({name});\n}}\n"
+    );
+    let (seen, out) = printed_by(&program);
+    match seen.into_iter().find(|(_, shown)| shown.contains("->")) {
+        Some(found) => found,
+        None => panic!("no function type printed for `{name}`:\n{out}"),
     }
 }
 
