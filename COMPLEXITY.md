@@ -1626,10 +1626,21 @@ With the listed pairs L as an atom, the work of step 5 is the 4-cycle L(s,t), De
 Free(w,z), Def(t,z), whose fractional hypertree width is 2, so their method gives O(N^2) total,
 no better than W_listed'. A literature search of 2026-11-24 (allpapers: paperclip keyword
 search, which timed out on three of four queries, and Gemini grounded search) for an insert-only
-method within O(n log n) found none. Not written: a reduction
-from this query, or from OMv, to the worklist (design O8). The design lists these inputs as its
-exception 4; the prototype's test `wlgrowg` asserts 10.5 and fails (34.00), and stays failing
-until O8 is closed one way or the other.
+method within O(n log n) found none.
+
+Exception 4 of QUESTIONS A225 (decided by the orchestrator, 2026-11-24, A and D): the test
+`wlgrowg` is in the tests, is not ignored, asserts 10.5 and fails, until a method for its family
+is found. Reduction (row PRES-factored-O8-reduction, design sec. 5.3, every step there): Boolean
+matrix multiplication of n×n matrices A and F reduces to the worklist, with k = Θ(n²) and the
+pairs left exactly the zero entries of AF (prototype part `bmm`, 16 cases). So a worklist in
+O(k log k) would multiply Boolean matrices in O(n² log n), faster than any known algorithm; a
+combinatorial method needs k^{1.5−o(1)} under the combinatorial BMM conjecture (Henzinger,
+Krinninger, Nanongkai and Saranurak, STOC 2015, DOI 10.1145/2746539.2746609), and fast matrix
+multiplication gives about k^{1.19}, ratio 11.8 at 8× k. Family `bmm_free3_g`: worklist 13.38 at
+k ratio 7.00. The route from OMv fails: OMv is online ("It has to output the resulting column
+vector before it can proceed to the next round", introduction.tex line 5) and the worklist gets
+its whole input at once, where OMv is one matrix product. The reduction covers the general
+worklist, not wlgrow_g's own family, which stays open.
 
 ## Kept
 

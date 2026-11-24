@@ -9,6 +9,7 @@ Prototype: `$S/proto/factored2.rs`, which includes `factored.rs` (phase 1: oracl
 `rustc --edition=2024 -O -A dead_code factored2.rs`; `timeout 60 ./factored2 <part>`, outputs
 `$S/proto/run14-<part>.log`. 56 parts, each under 60 s; 55 exit 0 and `wlgrowg` exits 101 (the
 failing test of exception 4). run13 and run14 agree apart from `ms=` on every unchanged part.
+Parts `cone1` and `bmm` (A225 items 2 and 3) were added after run14 and log to run15-*.log.
 
 Marks: **[proved]** means a proof is in this file. **[computed]** names the prototype part and
 the line it prints. **[inferred]** names what would confirm it. **[cited]** gives the source.
@@ -343,11 +344,44 @@ a cost, not a refusal, with its bound, reason and a scaling test at that bound, 
    constant delay after linear preprocessing under the BDG07 conjecture
    (main_result_static.tex:392); under OMv, no fully dynamic method with O(N^{1/2−γ}) amortized
    update time and delay (lower_bound.tex:14-15). Berkholz, Keppeler, Schweikardt, PODS 2017
-   (arXiv 1702.06370, DOI 10.1145/3034786.3034789) [cited]: not q-hierarchical, so the OMv bound
-   applies. Insertions only: Abo Khamis, Kara, Olteanu, Suciu 2024 (arXiv 2312.09331,
-   DOI 10.1145/3695837) [cited] reach O(N^{fhw}) for full queries only (prelims.tex:35), and this
-   one projects. The reduction from this query to the worklist is not written (O8). Test
-   `wlgrowg` asserts the worklist ratio ≤ 10.5 and fails on the current code (34.00, exit 101).
+   (arXiv 1702.06370, DOI 10.1145/3034786.3034789) [cited], BKS2016_arxiv_upload.tex:952-955:
+   "unless the \OMvcon fails, there is no dynamic algorithm that enumerates $\queryphi$ with
+   arbitrary preprocessing time, and $\bigOh(n^{1-\smalleps})$ delay and update time"; this
+   query is not q-hierarchical, so the bound applies. Insertions only: Abo Khamis, Kara, Olteanu, Suciu 2024 (arXiv 2312.09331,
+   DOI 10.1145/3695837) [cited] state O(N^{fhw}) for full queries (prelims.tex:35) and extend it:
+   "To support arbitrary conjunctive queries, our algorithms need to consider free-connex tree
+   decompositions" (conclusion.tex:8). Here a bag must hold A and C, covered only by R and S, so
+   the width is 2 and the bound O(N²) [inferred], no better. Test `wlgrowg` asserts the worklist
+   ratio ≤ 10.5 and fails (34.00): A225, exception 4.
+   *Reduction from Boolean matrix multiplication (O8) [proved; test `bmm`].* Input: n×n Boolean
+   A, F. Variables w_x, y_x, z_v (x, v < n), g, r₁, r₂. One wanted product; side A holds
+   s_u = Σ_{A[u][x]=1} w_x and b_x = y_x − w_x; side B holds t_v = z_v + (−1)^v g, t₊ = r₁ + g,
+   t₋ = r₂ − g. Mentioned: w_x*z_v iff F[x][v] = 0, and every w_x*r_i. Steps:
+   (1) w_x has holders of both signs on side A (s_u, b_x) and g on side B, in one component and
+   parity, so pass 1 signs neither under glob, frame+ or frame−. (2) Every pair (b_x, t) holds
+   a free atom y_x*z_v or y_x*r_i with both factors signed, so pass 1 lists
+   none and b_x is dead when step 5 starts; w_x is then signed. (3) Each (s_u, t) holds a free
+   w_x*g with g unsigned, so pass 1 closes none. (4) Step 5: Def(s_u) = {w_x : A[u][x] = 1},
+   Def(t_v) = {z_v}, so (s_u, t_v) holds a free incidence iff ∃x A[u][x] ∧ F[x][v], that is
+   (AF)[u][v] = 1, and Theorem D drops exactly those. (5) (s_u, t₊) and (s_u, t₋) share every
+   free w_x*g, so neither is a single holder, Def(t_±) = {r_i} gives no free incidence, and both
+   stay: g never gets a sign, even when every t_v of one sign dies. (6) No other rule drops a
+   pair, so R = {(s_u, t_v) : (AF)[u][v] = 0} ∪ {(s_u, t_±)}. The test checks this equality for
+   n ∈ {24, 68}, F with 0, 3, n and 4n ones, with and without g, including dead columns of AF.
+   Size: k = Θ(n²) and AF is read off R in O(n²). So a worklist in O(k^c) multiplies Boolean
+   matrices in O(n^{2c}): c = 1 contradicts the BDG07 conjecture that BMM is not in O(n²);
+   O(k log k) beats every known BMM algorithm; a combinatorial method needs k^{1.5−o(1)} under
+   the combinatorial BMM conjecture (Henzinger et al., below, introduction.tex:17), ratio 22.6
+   at 8× k; fast matrix multiplication gives k^{ω/2}, ratio about 11.8 at ω ≈ 2.37 [ω from
+   memory, inferred]. Family `bmm_free3_g`: worklist 13.38 at k ratio 7.00 (`bmm_free3`, without
+   g, is decided by pass 1's closed check: worklist 5.41, pass 1 12.27, exception 1).
+   *Where the OMv route fails.* Henzinger, Krinninger, Nanongkai, Saranurak, STOC 2015 (arXiv
+   1511.06773, DOI 10.1145/2746539.2746609) [cited]: OMv is online, the algorithm "has to output
+   the resulting column vector before it can proceed to the next round" (introduction.tex:5).
+   The worklist gets A and F at once; offline, OMv is one matrix product, so OMv gives no bound
+   here, and the method it points to is fast matrix multiplication per round of deaths, still
+   above 10.5 by the count above. The reduction bounds the general worklist; it does not show
+   that wlgrow_g's own family is hard, so a method for that family stays open (O8).
 
 ### 5.4 A conditional lower bound for pass 1 [proved reduction]
 
@@ -482,6 +516,13 @@ Each test has a negative control that it is shown to detect.
     (rows on shared coordinate planes): fired 1088 times on `cone_plane`, 0 verdict changes, 0
     replay failures; control `cone_bad` (wrong extreme) changes 7. closed_wake, m = 32 and 256:
     4 left, E_R = 20 (1024 and 65536 without the rule); no_wake: 5 left, E_R = 23.
+    Part `cone1` (the claim of sec. 11 most likely wrong): a second product shares side A's rows
+    with another side B (shape 0), drops one cone row of side A (shape 1), or puts side A on the
+    other factor (shape 2), so a list loses rows for one product only. Fired 1068, 805 (all on
+    the reduced list) and 1017 times; 0 verdict changes and 0 replay failures; `cone_bad` changes
+    1, 2 and 2 [computed, run15-cone1.log]. A crate test of the same shapes is due in phase 2.
+14. **BMM reduction (O8), part `bmm`.** R equals the zeros of AF (plus the t_± pairs) in all 16
+    cases of sec. 5.3; `bmm_free3_g` worklist 13.38 [computed, run15-bmm.log].
 12. **Stripping and the method choice (R3-2), part `strip`.** Plain, automatic, walk-only and
     complement-only agree on 3 × 3000 tiny cases and on o2_zero, o2_distinct, ov, n0,
     n0_gemini, explicit_w2 and wlgrow; control `strip_bad` (its own side's universe) changes
@@ -496,8 +537,10 @@ Each test has a negative control that it is shown to detect.
   exact emptiness only, so it explains these families but does not bound Π from above.
 - **O3.** Whether a weaker near-linear stage followed by a larger R is better in total is open.
 - **O7.** A backend that keeps s definitions unexpanded (R2-5, for the author).
-- **O8.** Exception 4: a reduction from the non-free-connex path query (or from OMv) to the
-  worklist's fixpoint, or a method within O(n log n). Neither is written.
+- **O8.** Exception 4. The reduction from BMM is written and tested (sec. 5.3); the OMv route
+  fails because the worklist is offline. Open: a method within O(n log n) for wlgrow_g's family,
+  which the reduction does not cover; for the general worklist none exists unless BMM is in
+  O(n² log n).
 - **O9.** A grouped form of P4 (exception 3b), over Def groups as in step 4.
 - **O10.** Gemini's folded form of moment_curve, measured through Omega in phase 2.
 - **O11.** How Proved(ps) carries R's pairs without s and without expanding them (sec. 6).
@@ -523,8 +566,8 @@ Lines are of this file; the R2 map is in `$S/design-1c.md` sec. 11.
 | R3-8 | first-use definitions; rational t; Π and step-4 text match the code; sorted output; `feas_left` by content; Aux | 18-21, 73, 172-178, 211-213, 266-269, 459-462, 424-426 | met |
 
 **Not met, and why:**
-- **Exception 4 has no method within O(n log n)** (wlgrow_g 34.00); the reduction to the
-  worklist is not written (O8). Seven families are above 10.5, each under sec. 5.3.
+- **Exception 4 has no method within O(n log n)** (wlgrow_g 34.00); BMM reduces to the
+  worklist (sec. 5.3, O8). Seven families are above 10.5, each under sec. 5.3.
 - **A correction.** I first wrote that P4 was not superlinear, from a run with `no_single`, which
   switches P4 off with the peel. With `no_peel`, P2/P3/P4 grow 19.71: Gemini was right (exc. 3b).
 - wl_seq_chain 10.46 and p4_open with the peel off 9.97 pass, above the preferred 9.
