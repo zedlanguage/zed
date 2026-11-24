@@ -2429,10 +2429,11 @@ pub(super) fn rem_cost(aw: usize, b: &BigUint) -> f64 {
 /// `newton_cost(qw, words(b))`, already one of the two `past_leaf_cost` takes the least of, so
 /// they are not computed again: [`newton_cost`], through [`transform_cost`]'s choice of points,
 /// took 72% of `rem_cost`'s instructions and 41% of the whole estimate's when computed twice
-/// (callgrind, 2026-11-23, on 2, 4, .., 2^200 with `x` at half of the product). O(words(b)) for the nonzero words
-/// [`sparse_div_cost`] counts. `past_leaf_cost` is the lesser of [`sparse_div_cost`] and
-/// [`newton_cost`]; the latter is computed only when [`newton_floor`] is below both other
-/// costs, since otherwise it cannot be the least, so the least is the same.
+/// (callgrind, 2026-11-23, on 2, 4, .., 2^200 with `x` at half of the product).
+/// O(words(b)) for the nonzero words [`sparse_div_cost`] counts. `past_leaf_cost` is the lesser
+/// of [`sparse_div_cost`] and [`newton_cost`]; the latter is computed only when
+/// [`newton_floor`] is below both other costs, since otherwise it cannot be the least, so the
+/// least is the same.
 fn rem_cost_past_leaf(qw: usize, b: &BigUint) -> f64 {
     let bw = words(b);
     let cheap = num_bigint_div_cost(qw, bw).min(sparse_div_cost(qw, b));
