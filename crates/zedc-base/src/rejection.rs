@@ -89,6 +89,8 @@ rows! {
     CostKindMissing => "Cost claim with no kind of bound, or with a lower bound",
     // No diagnostic uses the next row yet: plan row L18.2g emits it.
     CostClaimTime => "Time in a cost claim",
+    // No diagnostic uses the next row yet: plan row L21.0 emits it.
+    HedgeOneEndpoint => "`hedge` on a port with one endpoint",
     // No diagnostic uses the next two rows yet: plan row COST-required emits them.
     EquivalentShape => "Equivalent switch of another shape",
     EquivalentNoInputs => "Equivalent switch below proof grade without inputs",
@@ -126,13 +128,15 @@ rows! {
     BareBoundary => "Boundary item with neither `initial` nor an index",
     WithInitialItem => "A `with initial` item",
     BareLoopEntry => "A boundary entry of a loop written without `initial`",
+    // No diagnostic uses the next row yet: plan row INITIAL-decl emits it.
+    StepReadAsEntry => "Step read written as an entry",
     InitialOutsideLoop => "An `initial` statement outside a loop, or under `local`",
     BreakOutsideLoop => "`break` outside the body of a loop or a `for`",
     InitialNotUpdated => "An `initial` statement for a name the loop does not update",
     InitialReadsLoop => "An `initial` value that reads a name of its own loop",
     TwoSentinels => "Two sentinel values for one variable",
     NotEveryPath => "A loop variable not updated on every path of a step",
-    CarryOnKeyedEntry => "`with carryForward` on a keyed boundary entry",
+    CarryOnDeeperBoundary => "`with carryForward` on a deeper boundary value",
     MutableDeclaration => "A `mutable` declaration",
     CarryWord => "A word other than `carryForward` after `with` at the end of an `initial` statement",
     OverlappingArrows =>
@@ -269,6 +273,10 @@ rows! {
     BindingInCondition => "`=` written in a condition where `==` was meant",
     NamedBeforePositional => "Named argument before a positional one",
     PositionalAfterNamed => "`positional` parameter after a named one",
+    // No diagnostic uses the next three rows yet: plan row DIAG-rows-2026-11-24 emits them.
+    DefaultedPositionalFirst => "Defaulted positional parameter before a plain one",
+    DisplayMixesEntriesAndMembers => "A display that mixes entries and members",
+    UnitItemInBlock => "A unit item inside a block",
     WrongForm => "Argument in the wrong form",
     ParameterKinds => "Function whose parameter kinds do not fit the expected function type",
     MissingArgument => "Missing argument",
@@ -327,6 +335,9 @@ rows! {
     MeaningCase => "Meaning function with a case `@decides` cannot reify",
     NonLinearQuestion =>
         "Linear question outside the polynomial fragment of the linear-relation domain",
+    // No diagnostic uses the next row yet: plan row PRES-remove-join-exact-limits emits it.
+    OverlappingDisjunctionBlocks =>
+        "Two disjunctions whose blocks overlap, in the projection of their conjunction onto one name",
     WritesNothing => "Statement that writes nothing, or drops a declared result",
     // No diagnostic uses the next row yet: plan row FFI-status emits it. The row after it is
     // emitted at a division whose divisor is 0 at a root where a constraint fails (ROOTS-listed).
@@ -398,6 +409,8 @@ rows! {
     SecretAllocationSize => "Allocation sized by a secret",
     SecretSelectionNotBranchFree => "Secret selection that cannot be made branch-free",
     CryptosafeCallNotFollowed => "Call that `@cryptosafe` cannot follow",
+    // No diagnostic uses the next row yet: step L33.1f emits it, as a warning at start-up.
+    DataIndependentTimingOff => "Data-independent timing off",
     // No diagnostic uses the next row yet: plan row FPWARN emits it.
     RoundedAtRefusingParameter => "Rounded value at a parameter that refuses it",
     NoIntEquals => "No `int` equals the value",

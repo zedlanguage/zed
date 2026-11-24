@@ -3,7 +3,7 @@
 //! variable. Each check is one of the rows of sec:diagnostics: "An `initial` statement outside
 //! a loop, or under `local`", "An `initial` statement for a name the loop does not update",
 //! "An `initial` value that reads a name of its own loop", "Two sentinel values for one
-//! variable", "`with carryForward` on a keyed boundary entry", "A loop variable not updated on
+//! variable", "`with carryForward` on a deeper boundary value", "A loop variable not updated on
 //! every path of a step", "Collision" for a write the value of an indexed definition makes once
 //! for each of several keys, and, for an entry written as a bare statement, "A boundary entry of a
 //! loop written without `initial`". The forms the parser stops at, `with x = e`, `with initial x
@@ -2560,7 +2560,7 @@ impl Builder<'_, '_> {
         Ok(())
     }
 
-    /// Row "`with carryForward` on a keyed boundary entry", for the `initial` statement `s`.
+    /// Row "`with carryForward` on a deeper boundary value", for the `initial` statement `s`.
     fn carry_on_keyed(&self, s: &Stmt, i: &Initial, stmts: &[Stmt]) -> Error {
         let written = self.text_of(s.span);
         let name = &i.names[0].0;
@@ -2602,7 +2602,7 @@ impl Builder<'_, '_> {
             ),
         };
         Error {
-            row: Some(Row::CarryOnKeyedEntry),
+            row: Some(Row::CarryOnDeeperBoundary),
             menu: String::new(),
             span: s.span,
             message: format!(

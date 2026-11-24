@@ -9,7 +9,8 @@ out = cfg?.serializeText;        // entries in parsed order: parse(serialize(x))
 
 type Ident = Utf8String matching grammar { alpha (alpha | digit)* };  // typed strings, not regexes
 // whitespace: struct grammars (phrase level) skip insignificant whitespace between elements;
-// matching grammars (token level, as here) are exact. serialize emits none — the canonical form.
+// matching grammars (token level, as here) are exact. serialize emits one space only between two
+// items whose joined text would lex differently — the canonical form.
 
 // a binary grammar (a PNG chunk): the format facets of sec:ffi on items, no whitespace skipped;
 // n is a stored field, and the type carries data.count == n
@@ -48,5 +49,5 @@ d = v * t;                         // d::units == "m"
 e = v + t;                      // ✗ Units that differ where an operation requires equal ones: m/s + s
 
 exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type
-// exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink
+// exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #untrusted taint reaches a #clean sink
 rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers

@@ -934,7 +934,7 @@ fn a_word_after_with_elsewhere_keeps_the_parser_message() {
     }
 }
 
-/// Row "`with carryForward` on a keyed boundary entry", with each repair it offers. Decision:
+/// Row "`with carryForward` on a deeper boundary value", with each repair it offers. Decision:
 /// the facet keeps the value of the step before, `x[t-1]`, which at step 0 is the entry `x[-1]`,
 /// so it stands on the statement without keys that gives that entry; on a keyed entry it would
 /// say nothing that statement does not, or carry from an entry no step reads that way.
@@ -951,7 +951,7 @@ fn with_carry_forward_on_a_keyed_entry_is_refused() {
     let at = "initial c[-1] = 0 with carryForward;";
     refused(
         &t_loop(&[at, "c' = c + 1;"]),
-        Row::CarryOnKeyedEntry,
+        Row::CarryOnDeeperBoundary,
         at,
         Some(
             "`with carryForward` on an `initial` statement with keys: `initial c[-1] = 0 with \
@@ -971,7 +971,7 @@ fn with_carry_forward_on_a_keyed_entry_is_refused() {
     let at = "initial c[-2] = 0 with carryForward;";
     refused(
         &t_loop(&[at, "c' = c + 1;"]),
-        Row::CarryOnKeyedEntry,
+        Row::CarryOnDeeperBoundary,
         at,
         Some(
             "`with carryForward` on an `initial` statement with keys: `initial c[-2] = 0 with \
@@ -992,7 +992,7 @@ fn with_carry_forward_on_a_keyed_entry_is_refused() {
     let at = "initial c[i in -3..<-1] = 0 with carryForward;";
     refused(
         &t_loop(&["initial c = 1;", at, "c' = c + 1;"]),
-        Row::CarryOnKeyedEntry,
+        Row::CarryOnDeeperBoundary,
         at,
         None,
         &[
@@ -1011,7 +1011,7 @@ fn with_carry_forward_on_a_keyed_entry_is_refused() {
     let at = "initial c[-2] = 0 with carryForward;";
     refused(
         &t_loop(&["initial c = 1 with carryForward;", at, "c' = c + 1;"]),
-        Row::CarryOnKeyedEntry,
+        Row::CarryOnDeeperBoundary,
         at,
         None,
         &[

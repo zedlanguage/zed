@@ -396,7 +396,7 @@ const NEAR_MISSES: &[NearMiss] = &[
         ),
     ),
     (
-        Row::CarryOnKeyedEntry,
+        Row::CarryOnDeeperBoundary,
         "r = loop t {\n  while t < 3;\n  p' = p + 1;\n",
         "  initial p[-1] = -1;\n};\n",
         "  initial p[-1] = -1 with carryForward;\n};\n",
@@ -707,7 +707,7 @@ const LATER: &[Row] = &[
     Row::TwoSentinels,
     Row::NotEveryPath,
     Row::Collision,
-    Row::CarryOnKeyedEntry,
+    Row::CarryOnDeeperBoundary,
     Row::MutableDeclaration,
     Row::CarryWord,
     Row::SignalsReadWithoutHandles,

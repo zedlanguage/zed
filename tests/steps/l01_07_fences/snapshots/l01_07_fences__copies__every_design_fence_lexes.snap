@@ -50,7 +50,7 @@ expression: "tokens_by_key(&fences::design())"
 == DESIGN.md [sec:failure] 2 L7
   1 | «type» Signal = #sigabrt | #sigalrm | #sigbus | #sigfpe | #sighup | #sigill | #sigint | #sigkill | #sigpipe | #sigprof | #sigquit | #sigsegv | #sigsys | #sigterm | #sigtrap | #sigusr1 | #sigusr2 | #sigvtalrm | #sigxcpu | #sigxfsz | #otherSignal ( n : int [ 1₍10₎ .. ] , name : Utf8String | #none ) ;
 == DESIGN.md [sec:ports] 1 L7
-  1 | «type» IoReason = #notFound | #notAFile | #notADirectory | #denied | #exists | #busy | #noSpace | #limit | #tooLarge | #badName | #notExecutable | #refused | #unreachable | #lost | #deviceError | #unsupported | #interrupted | #other ( code : int ) ;
+  1 | «type» IoReason = #notFound | #notAFile | #notADirectory | #denied | #exists | #busy | #noSpace | #limit | #tooLarge | #badName | #notExecutable | #refused | #unreachable | #lost | #deviceError | #unsupported | #other ( code : int ) ;
 == DESIGN.md [sec:ports] 2 L7
   2 | main ( m : MainArgs ) -> int {
   3 | fs = main :: files ;
@@ -141,24 +141,21 @@ expression: "tokens_by_key(&fences::design())"
   6 | late ( «positional» deadline : Instant ) -> bool = now ( ) . s > deadline . s
   7 | «test» «with» now = ( ) -> Instant ( s : 3600r ) { Instant ( s : 3599r ) -> «true» , Instant ( s : 3600r ) -> «false» }
 == DESIGN.md [sec:codecs] 1 L22
-  1 | «type» DecodeFailure = #badEncoding ( at : int , layer : Utf8String , why : Utf8String )
-  2 | | #syntaxError ( pos : int , expected : [ Utf8String ] , open : [ #open ( rule : Utf8String , pos : int ) ] )
-  3 | | #parseError ( pos : int , expected : [ Utf8String ] , open : [ #open ( rule : Utf8String , pos : int ) ] , msg : Utf8String ) ;
-  6 | «type» LossyCodec ( «positional» W , «positional» V ) = {
-  7 | name : Utf8String ,
-  8 | decode : ( Stream ( W | DecodeFailure ) ) -> Stream ( V | DecodeFailure ) ,
-  9 | encode : ( Stream ( V ) ) -> Stream ( W ) ,
- 10 | } ;
- 13 | «interface» Codec ( «positional» W , «positional» V ) {
- 14 | name : Utf8String ,
- 15 | decode : ( Stream ( W | DecodeFailure ) ) -> Stream ( V | DecodeFailure ) ,
- 16 | encode : ( Stream ( V ) ) -> Stream ( W ) ,
- 17 | «law» roundTrip ( vs : Stream ( V ) ) = decode ( encode ( vs ) ) == vs ,
- 18 | }
- 21 | «interface» CanonicalCodec ( «positional» W , «positional» V ) {
- 22 | «import» Codec ( W , V ) ,
- 23 | «law» canonical ( ws : Stream ( W ) , vs : Stream ( V ) ) = ( decode ( ws ) == vs ) . implies ( encode ( vs ) == ws ) ,
- 24 | }
+  2 | «type» LossyCodec ( «positional» W , «positional» V ) = {
+  3 | name : Utf8String ,
+  4 | decode : ( Stream ( W | #badEncoding ( .. ) | #syntaxError ( .. ) | #parseError ( .. ) ) ) -> Stream ( V | #badEncoding ( .. ) | #syntaxError ( .. ) | #parseError ( .. ) ) ,
+  5 | encode : ( Stream ( V ) ) -> Stream ( W ) ,
+  6 | } ;
+  9 | «interface» Codec ( «positional» W , «positional» V ) {
+ 10 | name : Utf8String ,
+ 11 | decode : ( Stream ( W | #badEncoding ( .. ) | #syntaxError ( .. ) | #parseError ( .. ) ) ) -> Stream ( V | #badEncoding ( .. ) | #syntaxError ( .. ) | #parseError ( .. ) ) ,
+ 12 | encode : ( Stream ( V ) ) -> Stream ( W ) ,
+ 13 | «law» roundTrip ( vs : Stream ( V ) ) = decode ( encode ( vs ) ) == vs ,
+ 14 | }
+ 17 | «interface» CanonicalCodec ( «positional» W , «positional» V ) {
+ 18 | «import» Codec ( W , V ) ,
+ 19 | «law» canonical ( ws : Stream ( W ) , vs : Stream ( V ) ) = ( decode ( ws ) == vs ) . implies ( encode ( vs ) == ws ) ,
+ 20 | }
 == DESIGN.md [sec:codecs] 2 L22
   1 | then ( «positional» a : Codec ( A , B ) , «positional» b : Codec ( B , C ) ) -> Codec ( A , C ) = {
   2 | name : b . name ,
@@ -1143,28 +1140,28 @@ expression: "tokens_by_key(&fences::design())"
   6 | cfg = Json . parseText ( text ) ;
   7 | out = cfg ?. serializeText ;
   9 | «type» Ident = Utf8String «matching» «grammar» { alpha ( alpha | digit ) * } ;
- 15 | «struct» Chunk «grammar» {
- 16 | n : int «with» bits ( 32₍10₎ ) «with» endian ( #big )
- 17 | kind : u8 * «with» length ( 4₍10₎ )
- 18 | data : u8 * «with» length ( n )
- 19 | crc : int «with» bits ( 32₍10₎ ) «with» endian ( #big )
- 20 | }
- 21 | chunk = Chunk . parseBytes ( input ) ;
- 23 | «struct» Message «grammar» { tag : u8 body : ( Ping | Data ) «with» tagged ( tag , 1₍10₎ , 2₍10₎ ) }
- 26 | double ( «positional» x ) = x * 2₍10₎
- 27 | «test» { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , - 3₍10₎ -> - 6₍10₎ }
- 28 | «law» doubleIsSum ( x : int ) = double ( x ) == x + x ;
- 31 | main ( m : MainArgs ) {
- 32 | m . stdout <- m . stdin . map ( l -> l . upper «else» ( #badEncoding | #ioError ) -> str[] ) ;
- 33 | }
- 36 | orders : OrderId ->? { total : rat , note : Utf8String | #none }
- 37 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
- 39 | n = orders [ id ] ?. note ;
- 44 | v = 3.0f64 «with» units ( str["m/s"] ) ;
- 45 | t = 2.0f64 «with» units ( str["s"] ) ;
- 46 | d = v * t ;
- 49 | exec : ( Db , Utf8String «with» taint ( #clean ) ) -> Rows | #sqlError
- 51 | rows = exec ( db , sanitize ( userInput ) ) ;
+ 16 | «struct» Chunk «grammar» {
+ 17 | n : int «with» bits ( 32₍10₎ ) «with» endian ( #big )
+ 18 | kind : u8 * «with» length ( 4₍10₎ )
+ 19 | data : u8 * «with» length ( n )
+ 20 | crc : int «with» bits ( 32₍10₎ ) «with» endian ( #big )
+ 21 | }
+ 22 | chunk = Chunk . parseBytes ( input ) ;
+ 24 | «struct» Message «grammar» { tag : u8 body : ( Ping | Data ) «with» tagged ( tag , 1₍10₎ , 2₍10₎ ) }
+ 27 | double ( «positional» x ) = x * 2₍10₎
+ 28 | «test» { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , - 3₍10₎ -> - 6₍10₎ }
+ 29 | «law» doubleIsSum ( x : int ) = double ( x ) == x + x ;
+ 32 | main ( m : MainArgs ) {
+ 33 | m . stdout <- m . stdin . map ( l -> l . upper «else» ( #badEncoding | #ioError ) -> str[] ) ;
+ 34 | }
+ 37 | orders : OrderId ->? { total : rat , note : Utf8String | #none }
+ 38 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
+ 40 | n = orders [ id ] ?. note ;
+ 45 | v = 3.0f64 «with» units ( str["m/s"] ) ;
+ 46 | t = 2.0f64 «with» units ( str["s"] ) ;
+ 47 | d = v * t ;
+ 50 | exec : ( Db , Utf8String «with» taint ( #clean ) ) -> Rows | #sqlError
+ 52 | rows = exec ( db , sanitize ( userInput ) ) ;
 == DESIGN.md [sec:type_notation] 1 L3
   2 | priceOf ( «positional» items , «positional» id ) = items [ id ] ?. price * ( 1₍10₎ + taxRate ) ;
 == DESIGN.md [sec:type_notation] 2 L2

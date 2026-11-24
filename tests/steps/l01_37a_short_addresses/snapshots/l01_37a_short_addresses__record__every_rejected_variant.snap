@@ -585,7 +585,7 @@ nullable-column-missing-none
         row: None,
     },
     Diagnostic {
-        line: 16,
+        line: 17,
         col: 1,
         message: "the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -593,7 +593,7 @@ nullable-column-missing-none
         row: None,
     },
     Diagnostic {
-        line: 24,
+        line: 25,
         col: 1,
         message: "the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -601,7 +601,7 @@ nullable-column-missing-none
         row: None,
     },
     Diagnostic {
-        line: 29,
+        line: 30,
         col: 1,
         message: "the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -609,7 +609,7 @@ nullable-column-missing-none
         row: None,
     },
     Diagnostic {
-        line: 37,
+        line: 38,
         col: 1,
         message: "the signature `orders: OrderId ->? { total: rat, note: Utf8String }   // ✗ …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -617,7 +617,7 @@ nullable-column-missing-none
         row: None,
     },
     Diagnostic {
-        line: 45,
+        line: 46,
         col: 12,
         message: "the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -625,7 +625,7 @@ nullable-column-missing-none
         row: None,
     },
     Diagnostic {
-        line: 46,
+        line: 47,
         col: 12,
         message: "the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -633,33 +633,33 @@ nullable-column-missing-none
         row: None,
     },
     Diagnostic {
-        line: 52,
+        line: 53,
         col: 1,
         message: "Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.",
         steps: [
             Step {
-                line: 52,
+                line: 53,
                 col: 1,
                 text: "expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'",
                 source: "rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers",
                 width: 4,
             },
             Step {
-                line: 50,
+                line: 51,
                 col: 1,
                 text: "the declaration of `exec` begins here",
                 source: "exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type",
                 width: 4,
             },
             Step {
-                line: 52,
+                line: 53,
                 col: 1,
                 text: "this line begins at the first column, so it begins the next declaration",
                 source: "rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers",
                 width: 4,
             },
             Step {
-                line: 50,
+                line: 51,
                 col: 63,
                 text: "repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`",
                 source: "exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type",
@@ -672,7 +672,7 @@ nullable-column-missing-none
         ),
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 24, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 29, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 37, col: 1, failure: Some("the mark names the row \"Stored collection whose type and schema disagree\", and the diagnostic is in no row of the rejection table: the signature `orders: OrderId ->? { total: rat, note: Utf8String }   // ✗ …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 46, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 52, col: 1, failure: Some("Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.\n  [1] 52:1: expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'\n      52 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^\n  [2] 50:1: the declaration of `exec` begins here\n      50 | exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type\n         | ^^^^ [2]                                                      ^ [4]\n  [3] 52:1: this line begins at the first column, so it begins the next declaration\n  [4] 50:63: repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`"), not_run: None }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 17, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 25, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 30, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 38, col: 1, failure: Some("the mark names the row \"Stored collection whose type and schema disagree\", and the diagnostic is in no row of the rejection table: the signature `orders: OrderId ->? { total: rat, note: Utf8String }   // ✗ …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 46, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 47, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 53, col: 1, failure: Some("Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.\n  [1] 53:1: expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'\n      53 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^\n  [2] 51:1: the declaration of `exec` begins here\n      51 | exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type\n         | ^^^^ [2]                                                      ^ [4]\n  [3] 53:1: this line begins at the first column, so it begins the next declaration\n  [4] 51:63: repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`"), not_run: None }]
 
 numeric-is-not-binary-float
   rejected: [
@@ -701,7 +701,7 @@ numeric-is-not-binary-float
         row: None,
     },
     Diagnostic {
-        line: 16,
+        line: 17,
         col: 1,
         message: "the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -709,7 +709,7 @@ numeric-is-not-binary-float
         row: None,
     },
     Diagnostic {
-        line: 24,
+        line: 25,
         col: 1,
         message: "the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -717,7 +717,7 @@ numeric-is-not-binary-float
         row: None,
     },
     Diagnostic {
-        line: 29,
+        line: 30,
         col: 1,
         message: "the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -725,7 +725,7 @@ numeric-is-not-binary-float
         row: None,
     },
     Diagnostic {
-        line: 37,
+        line: 38,
         col: 1,
         message: "the signature `orders: OrderId ->? { total: f64, note: Utf8String | #none }…` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -733,7 +733,7 @@ numeric-is-not-binary-float
         row: None,
     },
     Diagnostic {
-        line: 45,
+        line: 46,
         col: 12,
         message: "the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -741,7 +741,7 @@ numeric-is-not-binary-float
         row: None,
     },
     Diagnostic {
-        line: 46,
+        line: 47,
         col: 12,
         message: "the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -749,33 +749,33 @@ numeric-is-not-binary-float
         row: None,
     },
     Diagnostic {
-        line: 52,
+        line: 53,
         col: 1,
         message: "Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.",
         steps: [
             Step {
-                line: 52,
+                line: 53,
                 col: 1,
                 text: "expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'",
                 source: "rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers",
                 width: 4,
             },
             Step {
-                line: 50,
+                line: 51,
                 col: 1,
                 text: "the declaration of `exec` begins here",
                 source: "exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type",
                 width: 4,
             },
             Step {
-                line: 52,
+                line: 53,
                 col: 1,
                 text: "this line begins at the first column, so it begins the next declaration",
                 source: "rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers",
                 width: 4,
             },
             Step {
-                line: 50,
+                line: 51,
                 col: 63,
                 text: "repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`",
                 source: "exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type",
@@ -788,7 +788,7 @@ numeric-is-not-binary-float
         ),
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 24, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 29, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 37, col: 1, failure: Some("the mark names the row \"Stored collection whose type and schema disagree\", and the diagnostic is in no row of the rejection table: the signature `orders: OrderId ->? { total: f64, note: Utf8String | #none }…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 46, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 52, col: 1, failure: Some("Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.\n  [1] 52:1: expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'\n      52 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^\n  [2] 50:1: the declaration of `exec` begins here\n      50 | exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type\n         | ^^^^ [2]                                                      ^ [4]\n  [3] 52:1: this line begins at the first column, so it begins the next declaration\n  [4] 50:63: repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`"), not_run: None }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 17, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 25, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 30, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 38, col: 1, failure: Some("the mark names the row \"Stored collection whose type and schema disagree\", and the diagnostic is in no row of the rejection table: the signature `orders: OrderId ->? { total: f64, note: Utf8String | #none }…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 46, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 47, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 53, col: 1, failure: Some("Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.\n  [1] 53:1: expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'\n      53 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^\n  [2] 51:1: the declaration of `exec` begins here\n      51 | exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type\n         | ^^^^ [2]                                                      ^ [4]\n  [3] 53:1: this line begins at the first column, so it begins the next declaration\n  [4] 51:63: repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`"), not_run: None }]
 
 payload-built-by-position
   rejected: [
@@ -1057,7 +1057,7 @@ taint-reaches-clean-sink
         row: None,
     },
     Diagnostic {
-        line: 16,
+        line: 17,
         col: 1,
         message: "the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -1065,7 +1065,7 @@ taint-reaches-clean-sink
         row: None,
     },
     Diagnostic {
-        line: 24,
+        line: 25,
         col: 1,
         message: "the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -1073,7 +1073,7 @@ taint-reaches-clean-sink
         row: None,
     },
     Diagnostic {
-        line: 29,
+        line: 30,
         col: 1,
         message: "the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -1081,7 +1081,7 @@ taint-reaches-clean-sink
         row: None,
     },
     Diagnostic {
-        line: 37,
+        line: 38,
         col: 1,
         message: "the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -1089,7 +1089,7 @@ taint-reaches-clean-sink
         row: None,
     },
     Diagnostic {
-        line: 45,
+        line: 46,
         col: 12,
         message: "the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -1097,7 +1097,7 @@ taint-reaches-clean-sink
         row: None,
     },
     Diagnostic {
-        line: 46,
+        line: 47,
         col: 12,
         message: "the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -1105,33 +1105,33 @@ taint-reaches-clean-sink
         row: None,
     },
     Diagnostic {
-        line: 51,
+        line: 52,
         col: 1,
         message: "Syntax error at `exec`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.",
         steps: [
             Step {
-                line: 51,
+                line: 52,
                 col: 1,
                 text: "expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'",
-                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink",
+                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #untrusted taint reaches a #clean sink",
                 width: 4,
             },
             Step {
-                line: 50,
+                line: 51,
                 col: 1,
                 text: "the declaration of `exec` begins here",
                 source: "exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type",
                 width: 4,
             },
             Step {
-                line: 51,
+                line: 52,
                 col: 1,
                 text: "this line begins at the first column, so it begins the next declaration",
-                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink",
+                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #untrusted taint reaches a #clean sink",
                 width: 4,
             },
             Step {
-                line: 50,
+                line: 51,
                 col: 63,
                 text: "repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`",
                 source: "exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type",
@@ -1144,36 +1144,36 @@ taint-reaches-clean-sink
         ),
     },
     Diagnostic {
-        line: 51,
+        line: 52,
         col: 1,
         message: "Statement at the top level of the unit: `exec(db, userInput);`. Move it into the body of `main`, as in `main(m: MainArgs) { exec(db, userInput); }`.",
         steps: [
             Step {
-                line: 51,
+                line: 52,
                 col: 1,
                 text: "a unit's top level holds declarations, which take any order and run in no frame; a statement has an order and runs in a frame, so it stands in a body",
-                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink",
+                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #untrusted taint reaches a #clean sink",
                 width: 20,
             },
             Step {
-                line: 51,
+                line: 52,
                 col: 1,
                 text: "repair: `main(m: MainArgs) { exec(db, userInput); }`",
-                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink",
+                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #untrusted taint reaches a #clean sink",
                 width: 20,
             },
             Step {
-                line: 51,
+                line: 52,
                 col: 1,
                 text: "repair: `value = exec(db, userInput);`, to keep the value",
-                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink",
+                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #untrusted taint reaches a #clean sink",
                 width: 20,
             },
             Step {
-                line: 51,
+                line: 52,
                 col: 1,
                 text: "repair: delete the statement; nothing reads its value",
-                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #userInput taint reaches a #clean sink",
+                source: "exec(db, userInput);            // ✗ Taint at a sink whose parameter does not take it: #untrusted taint reaches a #clean sink",
                 width: 20,
             },
         ],
@@ -1183,7 +1183,7 @@ taint-reaches-clean-sink
         ),
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 24, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 29, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 37, col: 1, failure: Some("the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 46, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 51, col: 1, failure: Some("the mark names the row \"Taint at a sink whose parameter does not take it\", and the diagnostic is in the row \"Syntax error\": Syntax error at `exec`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead."), not_run: None }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 17, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 25, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 30, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 38, col: 1, failure: Some("the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 46, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 47, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 52, col: 1, failure: Some("the mark names the row \"Taint at a sink whose parameter does not take it\", and the diagnostic is in the row \"Syntax error\": Syntax error at `exec`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead."), not_run: None }]
 
 taint-through-concatenation
   rejected: [
@@ -1426,7 +1426,7 @@ unit-mismatch-in-sum
         row: None,
     },
     Diagnostic {
-        line: 16,
+        line: 17,
         col: 1,
         message: "the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -1434,7 +1434,7 @@ unit-mismatch-in-sum
         row: None,
     },
     Diagnostic {
-        line: 24,
+        line: 25,
         col: 1,
         message: "the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -1442,7 +1442,7 @@ unit-mismatch-in-sum
         row: None,
     },
     Diagnostic {
-        line: 29,
+        line: 30,
         col: 1,
         message: "the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -1450,7 +1450,7 @@ unit-mismatch-in-sum
         row: None,
     },
     Diagnostic {
-        line: 37,
+        line: 38,
         col: 1,
         message: "the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -1458,7 +1458,7 @@ unit-mismatch-in-sum
         row: None,
     },
     Diagnostic {
-        line: 45,
+        line: 46,
         col: 12,
         message: "the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -1466,7 +1466,7 @@ unit-mismatch-in-sum
         row: None,
     },
     Diagnostic {
-        line: 46,
+        line: 47,
         col: 12,
         message: "the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
@@ -1474,33 +1474,33 @@ unit-mismatch-in-sum
         row: None,
     },
     Diagnostic {
-        line: 52,
+        line: 53,
         col: 1,
         message: "Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.",
         steps: [
             Step {
-                line: 52,
+                line: 53,
                 col: 1,
                 text: "expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'",
                 source: "rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers",
                 width: 4,
             },
             Step {
-                line: 50,
+                line: 51,
                 col: 1,
                 text: "the declaration of `exec` begins here",
                 source: "exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type",
                 width: 4,
             },
             Step {
-                line: 52,
+                line: 53,
                 col: 1,
                 text: "this line begins at the first column, so it begins the next declaration",
                 source: "rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers",
                 width: 4,
             },
             Step {
-                line: 50,
+                line: 51,
                 col: 63,
                 text: "repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`",
                 source: "exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type",
@@ -1513,7 +1513,7 @@ unit-mismatch-in-sum
         ),
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 24, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 29, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 37, col: 1, failure: Some("the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 46, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 48, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 52, col: 1, failure: Some("Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.\n  [1] 52:1: expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'\n      52 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^\n  [2] 50:1: the declaration of `exec` begins here\n      50 | exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type\n         | ^^^^ [2]                                                      ^ [4]\n  [3] 52:1: this line begins at the first column, so it begins the next declaration\n  [4] 50:63: repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`"), not_run: None }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 17, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 25, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 30, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 38, col: 1, failure: Some("the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 46, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 47, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 49, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 53, col: 1, failure: Some("Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.\n  [1] 53:1: expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'\n      53 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^\n  [2] 51:1: the declaration of `exec` begins here\n      51 | exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type\n         | ^^^^ [2]                                                      ^ [4]\n  [3] 53:1: this line begins at the first column, so it begins the next declaration\n  [4] 51:63: repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`"), not_run: None }]
 
 units-differ-by-kind
   rejected: [
