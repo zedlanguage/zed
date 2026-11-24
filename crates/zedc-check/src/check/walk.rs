@@ -10006,8 +10006,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         });
         // Decode failures (`#badEncoding`, `#syntaxError`, `#parseError`) arrive as loose
         // atoms, no named family holding them, so a repair lists them as it lists every other
-        // loose atom. QUESTIONS A179 asks whether they are the family `DecodeFailure`, which
-        // would make them data and leave them out here; this is the one place that decides it.
+        // loose atom. The author's answer to A179 (2026-11-24): they stay loose atoms, and the
+        // family `type DecodeFailure` goes (CODEC-utf8); this is the one place that decides it.
         let loose = t.loose();
         let mut fixes = Vec::new();
         match loose.atom_names() {

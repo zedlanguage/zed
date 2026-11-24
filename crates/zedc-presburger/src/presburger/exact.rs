@@ -363,8 +363,9 @@ pub(super) fn exact_each_checked(
     // Charging the loops too would bound the call by `k·L`, but the loop of a symbol would then
     // be refused by work done before it, which `tried` excludes: run so, that test failed and
     // `s22::the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`
-    // refused one answer more (7, 3, remainders of two inputs, 2). Under A99 read for each
-    // symbol (QUESTIONS A159) such a refusal would be correct; this keeps the loop as it was.
+    // refused one answer more (7, 3, remainders of two inputs, 2). The author's answer to A159
+    // (2026-11-24) removes the cover's work limit (PRES-cover-exact-limit-scaled), so the
+    // question of charging these loops goes with it; until then this keeps the loop as it was.
     // Complexity tradeoff: before (90cac8417), each fast path had the whole limit after the
     // reading gave up, so the fast work passed what the covers alone could spend (101,700 units
     // where k·L is 48,000 in `tests::a_reading_that_gives_up_late_leaves_the_covers_only_what_
@@ -4239,7 +4240,9 @@ fn met(
 /// allowance of [`tried`] is declined once they are counted, before any is formed
 /// ([`past_what_is_left`]), and goes to the cover as before, and nothing answered before is
 /// refused for it.
-/// That quadratic case is QUESTIONS.md A171 for the author.
+/// The author's answer to A171 (2026-11-24) for that quadratic case: no work allowance; runs
+/// of constants merge into ranges, blocks disjoint on an atom stay near-linear, and the rest is
+/// refused with its own message (PRES-remove-join-exact-limits).
 ///
 /// Why no method is linear in |A| + |B| in general (counting rows and pieces, as `work` does):
 /// the answer alone can have |A| · |B| pieces. Let `A` be the blocks `t == M·2^i` (i < n) and
