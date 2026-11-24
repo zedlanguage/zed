@@ -6286,6 +6286,22 @@ mod tests {
         assert!(g.holds(&m), "the shared remainder was set to zero: {g:?}");
     }
 
+    /// `x >= 0 && outside({0..3}, x)` projected onto no atom holds (`x == 4`). A group whose one
+    /// disjunction was a call node was split into the node's parts, of which it has none, so
+    /// the group read as a disjunction of no disjuncts, `false` (wildcard-arm audit, b22-load10
+    /// step 0).
+    #[test]
+    fn a_group_whose_one_disjunction_is_a_call_node_keeps_its_points() {
+        let set = super::super::HoleSet::of(vec![(Int::from(0), Int::from(3))]);
+        let items = vec![
+            Formula::Con(con(&[(0, 1)], 0, Rel::Ge)),
+            Formula::outside(&set, Lin::atom(a(0))),
+        ];
+        let (mut keep, mut inside) = (HashSet::new(), HashSet::new());
+        let f = project(items, &mut keep, &mut inside);
+        assert!(f.holds(&Model::new()), "{f:?}");
+    }
+
     /// `k1 * a1 + k2 * a2 + ... + c` related to 0 by `rel`.
     fn con(terms: &[(u32, i64)], c: i64, rel: Rel) -> Con {
         Con {
