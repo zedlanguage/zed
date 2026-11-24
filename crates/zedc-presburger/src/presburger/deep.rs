@@ -25,7 +25,9 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 use std::slice;
 
-use super::formula::{Atom, Con, Formula, Id, Lin, Model, Names, Rel, Shared, Sig, as_is};
+use super::formula::{
+    Atom, BoundHoles, Con, Formula, Id, Lin, Model, Names, Rel, Shared, Sig, as_is,
+};
 
 mod canon;
 
@@ -188,7 +190,9 @@ impl Formula {
     pub(super) fn holds_as(&self, vs: &Model) -> bool {
         match self {
             Formula::Con(c) => return c.holds(vs),
-            Formula::Holes(b) => return b.holds(vs),
+            // Named by its type: `b.holds` reads to the import graph as `Formula::holds` of
+            // joining.rs, which calls `holds_as` here, a cycle (s_01f_import_graph).
+            Formula::Holes(b) => return BoundHoles::holds(b, vs),
             Formula::Not(_) | Formula::And(_) | Formula::Or(_) => {}
         }
         let mut seen: HashMap<Id, bool> = HashMap::new();
@@ -221,7 +225,7 @@ impl Formula {
                 Some(Formula::Con(c)) => value = Some(c.holds(vs)),
                 // Membership of the term's value, O(t + log n) (META3 H7: the call node read
                 // as itself, not as its clauses).
-                Some(Formula::Holes(b)) => value = Some(b.holds(vs)),
+                Some(Formula::Holes(b)) => value = Some(BoundHoles::holds(b, vs)),
                 Some(g) => match Id::of(g) {
                     Some(id) => match seen.get(&id) {
                         Some(&v) => value = Some(v),
