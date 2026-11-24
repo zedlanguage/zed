@@ -1683,9 +1683,14 @@ fn split(
             Formula::Con(ref c) => rows.push(c.clone()),
             Formula::And(_) => flat.extend(f.into_parts().expect("a conjunction")),
             Formula::Or(ref gs) if gs.is_empty() => return None,
-            // A call node is kept whole beside the disjunctions; `map_cons` below writes its
-            // clauses where a binding is put into them (LOAD-call-disj-spread).
-            Formula::Or(_) | Formula::Holes(_) => ors.push(f),
+            Formula::Or(_) => ors.push(f),
+            // A call node is read as its clauses, the generic route (META3 H7): kept whole, it
+            // went to the groups below as a disjunction, and a group whose one disjunction it
+            // was split into its parts, of which it has none, so the group read as `false`
+            // (wildcard-arm audit, b22-load10 step 0; test
+            // `tests::a_group_whose_one_disjunction_is_a_call_node_keeps_its_points`). O(runs)
+            // once a node (`BoundHoles::lowered`).
+            Formula::Holes(ref b) => flat.push(b.lowered().clone()),
             Formula::Not(_) => flat.push(nnf(&f, true)),
         }
     }

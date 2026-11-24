@@ -24783,6 +24783,16 @@ fn linked_conjuncts<'f>(
                     }
                 }
             }
+            // A call node has no parts: its term's atoms link it, as a constraint's do
+            // (wildcard-arm audit, b22-load10; test `holes_node_tests::a_node_links_its_
+            // conjunct_to_the_others_on_its_atoms`).
+            if let Formula::Holes(b) = g {
+                for a in b.term().terms.keys() {
+                    let e = sets.atom(a);
+                    sets.union(j, e);
+                }
+                continue;
+            }
             stack.extend(g.kids());
         }
     }
