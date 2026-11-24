@@ -1248,7 +1248,8 @@ struct PartCache {
 // point in a residue no value found holds, or takes the tail's piece out of `gap`; (c) asks a
 // stride's question for one residue class, which pushes a point in a class no value found
 // holds, or adds the class to `absent` (at most `step` of them a stride); (d) asks the first
-// piece of `gap`, which pushes a point in that piece or takes the piece out of `gap`. A point
+// piece of `gap`, or its first value when the piece is a small class (`spare`, 0add5ed68),
+// which pushes a point in what was asked or takes it out of `gap`, at least one value. A point
 // pushed by (d) has its value of `s` in `gap`, by the question. A point pushed by (b) or (c)
 // has its value outside `found` (its residue is held by no value found) and outside the pieces
 // taken out with no point, but it may lie in a piece kept by (b) (`kept_at`), which is out of
@@ -1267,8 +1268,9 @@ struct PartCache {
 // and `gap` only shrinks; `gap` starts as `h`, finitely many values, so there are finitely many
 // (a); there is one (a) for each point pushed, so finitely many points, and so finitely many
 // cells, strides and tails (each made by a cell), finitely many (b) and (c), and each (d)
-// either pushes a point or takes one of the finitely many pieces of `gap` out of it (a piece
-// count raised only by the finitely many cells).
+// either pushes a point or takes at least one of the finitely many values of `gap` out of it.
+// In class 2 below, a (d) of one value lowers `spare`, which rises only by the ranges of the
+// finitely many cells, so those (d) are finitely many too.
 // Class 2, every cell exact: `cell` returns the projection onto `s` of the rows of the
 // implicant of `f` at `m` (the branch `plain` under `Method::Pugh`, the exact elimination
 // `work.eliminate` or `eliminated_whole` returning rows, or the line along `s` holding all of
