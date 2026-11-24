@@ -271,6 +271,44 @@ fn rejecting_many_powers_past_the_memory_limit() {
     }
 }
 
+/// `main` under a limit of 1 MiB writing `n` products of two powers each past it together, each
+/// in a `String` and a comparison, as in
+/// [`a_product_past_the_memory_limit_offers_a_smaller_power_operand`].
+pub(super) fn products(n: usize) -> String {
+    let mut s = String::from("@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n");
+    for i in 0..n {
+        s.push_str(&format!(
+            "    m.stdout <- String((b ^ (2^16)) * (b ^ (2^16 + {i})) > 0);\n"
+        ));
+    }
+    s + "}\n"
+}
+
+/// Each of the `n` products of [`products`]`(n)` is rejected with a smaller power operand
+/// offered. Each repair is sized against the operations above the power, a fixed number per
+/// product here, each in O(1) words.
+pub(super) fn products_past_the_memory_limit_rejected(src: &str, n: usize) {
+    let out = rejected(src);
+    assert_eq!(
+        out.matches("Number too large for the memory limit of `main`")
+            .count(),
+        n,
+        "{out}"
+    );
+    assert_eq!(
+        out.matches("Try `m.stdout <- String((b ^ ").count(),
+        n,
+        "{out}"
+    );
+}
+
+#[test]
+fn rejecting_many_products_past_the_memory_limit() {
+    for n in [1, 3] {
+        products_past_the_memory_limit_rejected(&products(n), n);
+    }
+}
+
 /// `main` with the memory limit `memory`, which writes one string.
 fn with_memory_limit(memory: &str) -> String {
     format!("@limits(memory: {memory})\nmain(m: MainArgs) {{\n    m.stdout <- \"a\";\n}}\n")
