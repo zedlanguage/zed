@@ -387,3 +387,22 @@ fn joining_many_distinct_classes_scales_and_preserves_the_union() {
         std::hint::black_box(Classed::join_all(inputs(n)));
     });
 }
+
+/// A union whose class is that of a long run (step 2 to 32 000) costs a fixed multiple of the
+/// union of the run alone when a set of another class (step 4) and a single value come with it,
+/// not one listing of its 16 000 values; the answers are checked by
+/// `joining_classes_keeps_the_run_at_the_union_stride` (BENCH-meters-outside-bench).
+#[test]
+fn joining_classes_keeps_the_run_cheap() {
+    crate::scaling::compare_costs(
+        "the union stride keeps its long run",
+        "a constant number of ranges should be combined without listing the long run",
+        10.5,
+        || {
+            std::hint::black_box(direct_stride_union(32_000));
+        },
+        || {
+            std::hint::black_box(mixed_stride_union(32_000));
+        },
+    );
+}

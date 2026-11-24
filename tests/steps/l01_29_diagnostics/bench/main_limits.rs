@@ -10,10 +10,12 @@ use crate::main_limits::{
 
 #[test]
 fn rejecting_many_products_past_the_memory_limit_scales() {
-    // Each product costs about 130 ms (measured 2026-11-23 on a Colab VM, natively: 1.30 s at
-    // 10 products, 10.6 s at 80; not profiled), so `n` is kept small for the run to stay within
-    // a minute.
-    let n = 4;
+    // With operands of 4.2 Mbit each product cost about 130 ms (b22-checkrest10, 2026-11-23),
+    // all of it multiplication of the numbers the line fixes, and `n` was 4; `products` now
+    // builds operands 16 times smaller (PERF-products-bench-native-cost). At n = 40 the run at
+    // 8n took 6.75 s, about 21 ms a product, and the instruction ratio was 8.456 (v5e4,
+    // b22-checkrest12, 2026-11-24).
+    let n = 40;
     let srcs = scaling::inputs(n, products);
     scaling::check(
         "n products past the memory limit of main, each offering a smaller power operand",

@@ -11,9 +11,10 @@ use zedc::query::Db;
 use zedc::unit::{Memory, load, order};
 
 use crate::scaling::{
-    Graph, ambiguous_uses, chain, chain_back, chain_of_cycles, complete, cycles_of_two, dense, fan,
-    graph, imports_back, ladder, later_forms, long_cycle, memory, names, nested_fors, own_main,
-    pairs, pairs_of_units, placeholders, ring, type_name_errors, type_variables,
+    Graph, ambiguous_uses, chain, chain_back, chain_of_cycles, comment_lines, complete,
+    cycles_of_two, dense, fan, graph, imports_back, ladder, later_forms, load_alone, long_cycle,
+    memory, names, nested_fors, own_main, pairs, pairs_of_units, placeholders, ring,
+    type_name_errors, type_variables,
 };
 
 /// Checks that loading the package `make(k)` from `main` is linear in `k`, from `k` = `n`.
@@ -184,4 +185,34 @@ fn many_misspelled_type_names_resolve_in_linear_time() {
         500,
         type_name_errors,
     );
+}
+
+/// A unit of one comment costs what an empty unit costs, each read into a new database: work
+/// of order 1 against work of order 1, held to the limit of power 0 (plan row
+/// PERF-load-comment-only, which reported 200,000 instructions against 6,500; measured
+/// 2026-11-21, both cost about 700,000, and the 6,500 was of an empty text the database had
+/// parsed and checked before, `placeholders`).
+#[test]
+fn a_unit_of_comments_costs_what_an_empty_unit_costs() {
+    scaling::compare(
+        "loading an empty unit, then a unit of one comment",
+        0,
+        || load_alone(""),
+        || load_alone("// the notes of this unit\n"),
+    );
+    scaling::compare(
+        "loading an empty unit, then a unit of one block comment",
+        0,
+        || load_alone(""),
+        || load_alone("/* the notes of this unit */\n"),
+    );
+}
+
+/// A unit of `n` comment lines is loaded in time linear in `n`: the lexer passes over each
+/// comment once (`lex::comment`, O(bytes)).
+#[test]
+fn a_unit_of_comments_loads_in_linear_time() {
+    scaling::check("loading a unit of n comment lines", 2000, |n| {
+        load_alone(&comment_lines(n));
+    });
 }

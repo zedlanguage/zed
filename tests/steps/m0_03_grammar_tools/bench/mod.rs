@@ -3,6 +3,7 @@
 //! sizes by a correctness test of the module whose name each file bears.
 
 mod cite;
+mod conflicts;
 mod llp;
 mod plan;
 mod scaling;

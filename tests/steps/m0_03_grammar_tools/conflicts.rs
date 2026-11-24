@@ -3,7 +3,6 @@
 //! which items, what the tool prints and refuses, and the cost of both on a plan of many
 //! strands.
 
-use zed_tests::scaling::{check as check_scaling, inputs};
 use zed_tools::conflicts::{compute, render, run};
 
 /// A plan whose table holds `rows`, each `(level, id, title, needs, paths)`, followed by one
@@ -222,7 +221,7 @@ fn an_unknown_option_is_refused() {
 /// with the other strand of its pair (strands 2t and 2t + 1): each strand's directory gives a
 /// line across levels, and each pair of strands gives 4 pairs at one level and a line for the
 /// shared file.
-fn strands(n: usize) -> String {
+pub(super) fn strands(n: usize) -> String {
     let mut rows = Vec::new();
     for s in 0..n {
         for d in 0..4 {
@@ -245,15 +244,21 @@ fn strands(n: usize) -> String {
     plan(&refs)
 }
 
+/// What `bench::conflicts::conflicts_scale_with_the_number_of_items` checks at each size,
+/// checked at small sizes.
 #[test]
-fn conflicts_scale_with_the_number_of_items() {
-    let n = 200;
-    let texts = inputs(n, strands);
-    check_scaling("conflicts, by items", n, |m| {
-        let c = compute(&texts[&m]).expect("a plan");
-        assert_eq!((c.same.len(), c.cross.len()), (2 * m, m + m / 2));
-        assert!(!render(&c).is_empty());
-    });
+fn the_conflicts_of_many_strands_are_found_at_small_sizes() {
+    for m in [2, 4, 10] {
+        strands_conflicts_found(&strands(m), m);
+    }
+}
+
+/// The plan `text` of [`strands`]`(m)` has its `2m` pairs at one level and `m + m / 2` lines
+/// across levels, and renders.
+pub(super) fn strands_conflicts_found(text: &str, m: usize) {
+    let c = compute(text).expect("a plan");
+    assert_eq!((c.same.len(), c.cross.len()), (2 * m, m + m / 2));
+    assert!(!render(&c).is_empty());
 }
 
 #[test]

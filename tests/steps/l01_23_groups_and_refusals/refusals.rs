@@ -9710,25 +9710,8 @@ fn xr_r2_wide_chain_is_inhabited() {
     }
 }
 
-#[test]
-fn xr_r2_bench_wide_chain_scales() {
-    let inputs = scaling::inputs(8, |w| xr_wide_chain(w, false, &format!("b{w}")));
-    scaling::check_order("XR2 wide chain, width n, one box", 8, 1, |w| {
-        Type::forget_emptiness();
-        assert_eq!(inputs[&w].verdict(), Verdict::Inhabited);
-    });
-}
-
-/// Width n and n boxes: the input has n² components, so power 2 is the input size.
-#[test]
-fn xr_r2_bench_wide_chain_many_boxes_scales() {
-    let inputs = scaling::inputs(8, |w| xr_wide_chain(w, true, &format!("c{w}")));
-    scaling::check_order("XR2 wide chain, width n, n boxes", 8, 2, |w| {
-        Type::forget_emptiness();
-        assert_eq!(inputs[&w].verdict(), Verdict::Inhabited);
-    });
-}
-
+/// The answers of the nine-node list and of tuples of it; the cost of tuples of 8 and 64 of
+/// them is `bench::r10_answer_preservation_nine_node_list_regression_scales`.
 #[test]
 fn r10_answer_preservation_nine_node_list_regression() {
     big(|| {
@@ -9741,16 +9724,11 @@ fn r10_answer_preservation_nine_node_list_regression() {
             assert!(!t.contains(&r6_colour_list(&[0])));
         }
         let inner = r10_precision_case("r10precisionwidth", false);
-        let a = Type::tuple(vec![inner.clone(); 8]);
-        let b = Type::tuple(vec![inner; 64]);
-        scaling::check(
-            "preserving a prefix witness in shared list fields",
-            8,
-            |n| {
-                Type::forget_emptiness();
-                assert_eq!((if n == 8 { &a } else { &b }).verdict(), Verdict::Inhabited);
-            },
-        );
+        for k in [1, 2] {
+            Type::forget_emptiness();
+            let t = Type::tuple(vec![inner.clone(); k]);
+            assert_eq!(t.verdict(), Verdict::Inhabited, "a tuple of {k}");
+        }
     });
 }
 

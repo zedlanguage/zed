@@ -5545,39 +5545,38 @@ fn two_disjunctions_keep_strides_within_the_common_hull() {
     assert_eq!(got.met(), want, "{f}");
 }
 
+/// The values from `lo` to `hi` that are `lo` mod `step`.
+fn progression(step: i64, lo: i64, hi: i64) -> Classed {
+    Classed::new(
+        IntervalSet::of(lo, hi),
+        Congruence::new(Num::from(step), Num::from(lo)),
+    )
+}
+
+/// The run of step 2 from 0 to `end`, joined from its first two values and the rest.
+fn direct_stride_union(end: i64) -> Classed {
+    Classed::join_all([progression(2, 0, 4), progression(2, 4, end)])
+}
+
+/// The run of step 2 from 0 to `end`, joined from a set of another class (step 4), a single
+/// value and the rest.
+fn mixed_stride_union(end: i64) -> Classed {
+    Classed::join_all([
+        progression(4, 0, 4),
+        Classed::plain(IntervalSet::single(2)),
+        progression(2, 4, end),
+    ])
+}
+
 /// A union whose class is that of a long run (step 2 to 32 000) keeps the run as one range
-/// when a set of another class (step 4) and a single value come with it: the cost is a fixed
-/// multiple of the union of the run alone, not one listing of its 16 000 values.
+/// when a set of another class (step 4) and a single value come with it. Its cost, a fixed
+/// multiple of the union of the run alone, is `bench::joining_classes_keeps_the_run_cheap`.
 #[test]
 fn joining_classes_keeps_the_run_at_the_union_stride() {
-    let progression = |step, lo, hi| {
-        Classed::new(
-            IntervalSet::of(lo, hi),
-            Congruence::new(Num::from(step), Num::from(lo)),
-        )
-    };
-    let end = 32_000;
-    let want = progression(2_i64, 0, end);
-    let direct_union = || Classed::join_all([progression(2_i64, 0, 4), progression(2_i64, 4, end)]);
-    let mixed_union = || {
-        Classed::join_all([
-            progression(4_i64, 0, 4),
-            Classed::plain(IntervalSet::single(2)),
-            progression(2_i64, 4, end),
-        ])
-    };
-    assert_eq!(mixed_union(), want);
-    crate::scaling::compare_costs(
-        "the union stride keeps its long run",
-        "a constant number of ranges should be combined without listing the long run",
-        10.5,
-        || {
-            std::hint::black_box(direct_union());
-        },
-        || {
-            std::hint::black_box(mixed_union());
-        },
-    );
+    for end in [8, 32_000] {
+        assert_eq!(mixed_stride_union(end), progression(2, 0, end), "to {end}");
+        assert_eq!(direct_stride_union(end), progression(2, 0, end), "to {end}");
+    }
 }
 
 /// [`Classed::join_all`] equals the pairwise fold of [`Classed::join`] (one form, so `==`) on

@@ -275,10 +275,16 @@ fn rejecting_many_powers_past_the_memory_limit() {
 /// in a `String` and a comparison, as in
 /// [`a_product_past_the_memory_limit_offers_a_smaller_power_operand`].
 pub(super) fn products(n: usize) -> String {
-    let mut s = String::from("@limits(memory: 1048576)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n");
+    // Each operand is about 266 to 287 kbit (`65 * (2^12 + i)` bits for `i` below 320), within
+    // the 64 KiB limit, and each product about 532 kbit, past it. With `2^16` and a limit of 1 MiB
+    // each line folded two 4.2 Mbit powers and their 8.4 Mbit product, and the repair's trial
+    // multiplied again: 98% of the run was the kernel's transform multiplication (perf, DWARF,
+    // b22-checkrest12, 2026-11-24), about 130 ms a line, which held the benchmark at n = 4
+    // (PERF-products-bench-native-cost).
+    let mut s = String::from("@limits(memory: 65536)\nmain(m: MainArgs) {\n    b = 2^64 + 13;\n");
     for i in 0..n {
         s.push_str(&format!(
-            "    m.stdout <- String((b ^ (2^16)) * (b ^ (2^16 + {i})) > 0);\n"
+            "    m.stdout <- String((b ^ (2^12)) * (b ^ (2^12 + {i})) > 0);\n"
         ));
     }
     s + "}\n"
@@ -286,7 +292,7 @@ pub(super) fn products(n: usize) -> String {
 
 /// Each of the `n` products of [`products`]`(n)` is rejected with a smaller power operand
 /// offered. Each repair is sized against the operations above the power, a fixed number per
-/// product here, each in O(1) words.
+/// product here, each a multiplication or comparison of numbers of at most about 532 kbit.
 pub(super) fn products_past_the_memory_limit_rejected(src: &str, n: usize) {
     let out = rejected(src);
     assert_eq!(

@@ -636,12 +636,15 @@ fn wide_alias_chain(n: usize) -> Formula {
     f
 }
 
+/// The answers `bench::pncx_wide_affine_alias_scale` checks at 128 and 1024, at small sizes.
 #[test]
-fn pncx_wide_affine_alias_scale() {
-    let inputs = scaling::inputs(128, wide_alias_chain);
-    scaling::check_order("affine aliases with one wide written offset", 128, 1, |n| {
-        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
-    });
+fn pncx_wide_affine_alias_is_satisfiable_at_small_sizes() {
+    for n in [1, 2, 8, 16] {
+        assert!(
+            matches!(solve_modular(&wide_alias_chain(n), false), Some(Some(_))),
+            "n={n}"
+        );
+    }
 }
 
 /// Builds a chain where the single `64*n`-bit offset sits in the middle (`n/2`) AND appears first
@@ -747,10 +750,6 @@ fn pncx_wide_affine_alias_adversarial_shapes() {
         }
     }
     assert_eq!(uf.min_offsets_of(&root), expected);
-
-    // 3. Scaling check on the adversarial middle-wide-edge-first unbounded alternating-sign chain.
-    let inputs = scaling::inputs(128, wide_middle_first_chain);
-    scaling::check_order("middle wide offset placed first", 128, 1, |n| {
-        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
-    });
+    // 3. The cost of the chain at 128 and 1024 is
+    //    `bench::pncx_wide_affine_alias_adversarial_scale`.
 }

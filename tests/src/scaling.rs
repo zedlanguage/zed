@@ -382,6 +382,7 @@ pub fn per_unit_bound(
     min_units: u64,
     limit: u64,
 ) -> f64 {
+    refuse_outside_a_bench();
     let mut worst = 0f64;
     for (name, ns, units) in cases {
         assert!(
@@ -424,6 +425,69 @@ pub struct Meter {
     /// meter for a benchmark that runs with other tests where the hardware has no counter and
     /// DynamoRIO's `zed_icount` is named (see [`counts_in_new_processes`]).
     pub(crate) elsewhere: bool,
+}
+
+/// The tests that may hold a measure to a limit though their path holds no `bench::`, each with
+/// its reason; [`refuse_outside_a_bench`] stops every other one. An entry is a test's whole path
+/// in its binary, as libtest names the test's thread, or, ending in `::`, a module whose tests
+/// all may.
+const MEASURED_OUTSIDE_A_BENCH: &[&str] = &[
+    // zed-tests src/scaling_tests.rs: the tests of the comparisons themselves, run on meters of
+    // their own that count calls, which load does not change. TEST-bench-move-crates kept the
+    // small ones in the correctness pieces on purpose (see scaling_tests/bench.rs) and moved the
+    // two that time work at two sizes into `bench`.
+    "scaling_tests::",
+];
+
+/// Whether the test `test` (its thread's name) may not hold a measure to a limit: it is a test
+/// (a named thread other than libtest's `main`), its path holds no `bench::`, and no entry of
+/// [`MEASURED_OUTSIDE_A_BENCH`] names it. `bench::` anywhere in the name is what
+/// tools/run_tests.sh reads as a benchmark (`--skip bench::` matches anywhere in a name), so the
+/// two agree on every test.
+pub(crate) fn outside_a_bench(test: Option<&str>) -> bool {
+    test.is_some_and(|t| {
+        t != "main"
+            && !t.contains("bench::")
+            && !MEASURED_OUTSIDE_A_BENCH
+                .iter()
+                .any(|e| if e.ends_with("::") { t.starts_with(e) } else { t == *e })
+    })
+}
+
+/// Stops a test that holds measured work to a limit outside a `bench::` path
+/// (BENCH-meters-outside-bench): every comparison of two runs ([`check`], [`compare`],
+/// [`compare_costs`] and the others, all through [`compare_by`]) and [`per_unit_bound`].
+/// tools/run_tests.sh runs such a test in a correctness piece, 8 tests at a time and without
+/// `--exact`, where the meter counts processor time, not instructions, so a ratio can fail
+/// under load (BENCH-merge-check-processor-time); a benchmark runs alone, with `--exact`.
+///
+/// It is not called where a meter is made: a correctness test at small sizes may run a
+/// benchmark's helper, which makes a meter and prints its readings, and load cannot fail a test
+/// that holds no reading to a limit (the small-size checks of l01_23, l01_38 and others, split
+/// from their benchmarks by TEST-bench-move-l0123, author P169). Nor in [`hold`], which also holds
+/// counts that load does not change (calls, nodes, characters) in correctness tests; a test that
+/// reads a meter itself and passes the reading to [`hold`] is therefore not caught.
+///
+/// The test is read from the thread's name, as [`enter_check`] reads it: libtest names a test's
+/// thread by its path, with any number of test threads, and [`on_a_thread`] and [`alone`] pass
+/// the name on. Hence the check follows a helper into its callers: a helper that compares runs
+/// is refused when a correctness test calls it and passes when only benchmarks do (r4_tests'
+/// `against_its_crt`). What it cannot catch besides: a comparison on a thread a test starts
+/// without a name, or on libtest's `main` (a binary run with no harness, or a spawn libtest could
+/// not make), has no test name and passes; and a test that never runs is never checked. Run as a
+/// grep, the check would have to list every helper only benchmarks call; read at run time it
+/// lists only the tests of [`MEASURED_OUTSIDE_A_BENCH`].
+fn refuse_outside_a_bench() {
+    let thread = std::thread::current();
+    let test = thread.name();
+    assert!(
+        !outside_a_bench(test),
+        "{} holds measured work to a limit, but its path holds no `bench::`: tools/run_tests.sh \
+         runs it in a correctness piece, 8 tests at a time, where the meter counts processor time \
+         and load can fail it. Move the test into a module `bench` (keep any check of answers at \
+         a small size outside it) (BENCH-meters-outside-bench)",
+        test.unwrap_or_default()
+    );
 }
 
 impl Meter {
@@ -1681,6 +1745,7 @@ fn compare_by_dyn(
     large: &(dyn Fn() + Sync),
     prepare: &(dyn Fn(bool) + Sync),
 ) {
+    refuse_outside_a_bench();
     // A meter that takes the least of several runs would start a process per run.
     let fresh = meter.fresh && meter.repeats() == (1, 1);
     let Some((test, j)) = enter_check() else {

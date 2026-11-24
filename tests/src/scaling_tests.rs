@@ -37,6 +37,33 @@ fn this_binary_with_this_meter() -> std::process::Command {
     command
 }
 
+/// Which tests may hold measured work to a limit (BENCH-meters-outside-bench): one with `bench::`
+/// anywhere in its path, as tools/run_tests.sh reads a benchmark, one the list names, and a
+/// thread that is no test. m0_01 `meters::a_comparison_made_outside_a_bench_path_is_refused`
+/// checks the refusal itself, from a test outside both.
+#[test]
+fn a_measure_is_held_only_by_a_test_on_a_bench_path() {
+    for refused in [
+        "kinds::the_steps_take_linear_time",
+        "benchmarks::x",
+        "bench_x::y",
+        // The entry `scaling_tests::` names a module, not the modules whose names it begins.
+        "scaling_tests_x::y",
+    ] {
+        assert!(outside_a_bench(Some(refused)), "{refused}");
+    }
+    for allowed in [
+        "bench::kinds::the_steps_take_linear_time",
+        "exact::tests::bench::two_distributed",
+        "deep_bench::x",
+        "scaling_tests::a_reading_grows_by_the_work_between",
+        "main",
+    ] {
+        assert!(!outside_a_bench(Some(allowed)), "{allowed}");
+    }
+    assert!(!outside_a_bench(None));
+}
+
 #[test]
 fn a_reading_grows_by_the_work_between() {
     let mut m = Meter::new();

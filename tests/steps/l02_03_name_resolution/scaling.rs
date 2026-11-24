@@ -382,41 +382,28 @@ fn a_few_roots_load_each_once() {
 
 /// Loads the unit `u0` of text `text` into a new database, so nothing is reused from an
 /// earlier load.
-fn load_alone(text: &str) {
+pub(super) fn load_alone(text: &str) {
     let fs = memory(vec![("u0.zed".into(), text.into())]);
     let p = load(&mut Db::new(), &fs, &["u0"]);
     assert_eq!(mistakes(&p), Vec::<String>::new(), "{text}");
 }
 
-/// A unit of one comment costs what an empty unit costs, each read into a new database: work
-/// of order 1 against work of order 1, held to the limit of power 0 (plan row
-/// PERF-load-comment-only, which reported 200,000 instructions against 6,500; measured
-/// 2026-11-21, both cost about 700,000, and the 6,500 was of an empty text the database had
-/// parsed and checked before, `placeholders`).
+/// The units `bench::scaling::a_unit_of_comments_costs_what_an_empty_unit_costs` and
+/// `bench::scaling::a_unit_of_comments_loads_in_linear_time` load, at small sizes: each loads with
+/// no mistake.
 #[test]
-fn a_unit_of_comments_costs_what_an_empty_unit_costs() {
-    zed_tests::scaling::compare(
-        "loading an empty unit, then a unit of one comment",
-        0,
-        || load_alone(""),
-        || load_alone("// the notes of this unit\n"),
-    );
-    zed_tests::scaling::compare(
-        "loading an empty unit, then a unit of one block comment",
-        0,
-        || load_alone(""),
-        || load_alone("/* the notes of this unit */\n"),
-    );
+fn units_of_comments_load_with_no_mistake_at_small_sizes() {
+    for text in ["", "// the notes of this unit\n", "/* the notes of this unit */\n"] {
+        load_alone(text);
+    }
+    for n in [1, 3, 10] {
+        load_alone(&comment_lines(n));
+    }
 }
 
-/// A unit of `n` comment lines is loaded in time linear in `n`: the lexer passes over each
-/// comment once (`lex::comment`, O(bytes)).
-#[test]
-fn a_unit_of_comments_loads_in_linear_time() {
-    zed_tests::scaling::check("loading a unit of n comment lines", 2000, |n| {
-        let text: String = (0..n).map(|i| format!("// note {i}\n")).collect();
-        load_alone(&text);
-    });
+/// A unit of `n` comment lines.
+pub(super) fn comment_lines(n: usize) -> String {
+    (0..n).map(|i| format!("// note {i}\n")).collect()
 }
 
 /// A package with no file read, and the import graph edges [`order`] reads.

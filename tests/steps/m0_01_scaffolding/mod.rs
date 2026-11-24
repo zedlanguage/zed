@@ -10,6 +10,7 @@ mod comment_width;
 mod complexity_tables;
 mod fail_steps_name_layers;
 mod fail_steps_name_plus_sign;
+mod meters;
 mod scaling;
 
 use std::collections::BTreeSet;

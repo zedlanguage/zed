@@ -195,3 +195,24 @@ fn pncx_private_quotients_wide_primes_scale() {
         },
     );
 }
+
+/// Moved here from `r6_tests` (BENCH-meters-outside-bench); its answers at small sizes are
+/// `pncx_wide_affine_alias_is_satisfiable_at_small_sizes`.
+#[test]
+fn pncx_wide_affine_alias_scale() {
+    let inputs = scaling::inputs(128, wide_alias_chain);
+    scaling::check_order("affine aliases with one wide written offset", 128, 1, |n| {
+        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
+    });
+}
+
+/// The adversarial middle-wide-edge-first unbounded alternating-sign chain, from part 3 of
+/// `r6_tests::pncx_wide_affine_alias_adversarial_shapes`, which checks it at small sizes
+/// (BENCH-meters-outside-bench).
+#[test]
+fn pncx_wide_affine_alias_adversarial_scale() {
+    let inputs = scaling::inputs(128, wide_middle_first_chain);
+    scaling::check_order("middle wide offset placed first", 128, 1, |n| {
+        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
+    });
+}
