@@ -581,7 +581,7 @@ impl Product {
     /// sets of different classes, or either keeps a union of classes, that union is kept
     /// (`ProductDomains::classes`), so that the join holds exactly the integers of the two
     /// sides (row LIMITS-classed-listing-per-set). Proof: each side's integers are exactly
-    /// [`Product::int_union`] of it (its interval met with its class, met with its union where
+    /// `Product::int_union` of it (its interval met with its class, met with its union where
     /// it keeps one, the invariant of `classes`), so their union `U` is exactly the integers of
     /// either side; each domain's join holds each side's domain, so the joined interval met
     /// with the joined class holds `U`, and met with `U` is `U`. Where the two sides keep no
