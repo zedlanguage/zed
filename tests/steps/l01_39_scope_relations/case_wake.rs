@@ -1181,8 +1181,9 @@ fn an_odd_name_through_an_equation_keeps_its_points_after_a_disjunction() {
     held_equals_scratch(&["a", "x", "y"], &history, left, right);
 }
 
-/// The minimized history of [`an_odd_name_through_an_equation_keeps_its_points_after_a_disjunction`]
-/// (scope-seeds, 2026-11-16): `y <= 9`, `x == 2a + 1`, `x + 2y >= 2 || 3x >= -3`, then
+/// The minimized history of
+/// [`an_odd_name_through_an_equation_keeps_its_points_after_a_disjunction`] (scope-seeds,
+/// 2026-11-16): `y <= 9`, `x == 2a + 1`, `x + 2y >= 2 || 3x >= -3`, then
 /// `-3x >= 2`: from scratch the odd values -15 to -1 (held [-15..=-3] and -1 before the fix).
 #[test]
 fn an_odd_name_through_an_equation_keeps_its_points_minimized() {
