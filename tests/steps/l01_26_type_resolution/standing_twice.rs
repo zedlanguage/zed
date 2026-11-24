@@ -15,18 +15,29 @@ fn report(src: &str) -> String {
 /// `(x: int | f64) ->? int`.
 const APPLY: &str = "apply(f: (x: int | f64) ->? int) = f(x: 2.5) else #notFound -> 6;\n";
 
-/// The entry `e` of `xs` is passed at `f`, and stands in one place of the type of `k`: inside
-/// the type of `h`, the function `k` returns. It prints as the type it is passed at, not `_`.
+/// The entry `e` of `xs` at a key `i` the caller gives is passed at `f`, and stands in one
+/// place of the type of `k`: inside the type of `h`, the function `k` returns. It prints as
+/// the type it is passed at, not `_`. At the fixed key 0, `xs` is used only by lookup and
+/// prints as the map `0 -> T` (row PRINT-hidden-var), which puts `e` in a second place: it
+/// then prints `T`, which keeps the link between the entry and the result.
 #[test]
 fn a_variable_in_one_place_inside_a_held_function_prints_as_its_bound() {
+    let src = format!(
+        "{APPLY}k(xs, i) = {{\n  e = xs[i];\n  h(positional y) = (apply(f: e), e);\n  h\n}};\na = k(xs: [1], i: 0);\n"
+    );
+    let out = report(&src);
+    assert!(
+        out.contains(
+            "the type the checker found for `k` is `(xs: _, i: _) -> _ -> (int, (x: int | f64) ->? int)`"
+        ),
+        "{src}\n{out}"
+    );
     let src = format!(
         "{APPLY}k(xs) = {{\n  e = xs[0];\n  h(positional y) = (apply(f: e), e);\n  h\n}};\na = k(xs: [1]);\n"
     );
     let out = report(&src);
     assert!(
-        out.contains(
-            "the type the checker found for `k` is `(xs: _) -> _ -> (int, (x: int | f64) ->? int)`"
-        ),
+        out.contains("the type the checker found for `k` is `(xs: 0 -> T) -> _ -> (int, T)`"),
         "{src}\n{out}"
     );
 }
@@ -34,16 +45,28 @@ fn a_variable_in_one_place_inside_a_held_function_prints_as_its_bound() {
 /// `v` stands in the parameter and in the union `v | E` of the result, where `E`, the type of
 /// the entry `xs[0]`, stands in that union only and so prints `_`. That union prints `_` alone,
 /// since `_` holds every value, so `v` stands in one place of the text and prints as the type
-/// it is passed at.
+/// it is passed at. Here the key `i` is the caller's; at the fixed key 0, `xs` prints as the
+/// map `0 -> U` (row PRINT-hidden-var), so `E` prints `U`, the union `T | U` is no longer `_`,
+/// and `v` stands in two places and prints `T`.
 #[test]
 fn a_variable_whose_other_place_is_a_union_printed_blank_prints_as_its_bound() {
+    let src = format!(
+        "{APPLY}k(v, xs, i, c: bool) = (apply(f: v), if c {{ v }} else {{ xs[i] }});\na = k(v: 3, xs: [1], i: 0, c: true);\n"
+    );
+    let out = report(&src);
+    assert!(
+        out.contains(
+            "the type the checker found for `k` is `(v: (x: int | f64) ->? int, xs: _, i: _, c: bool) -> (int, _)`"
+        ),
+        "{src}\n{out}"
+    );
     let src = format!(
         "{APPLY}k(v, xs, c: bool) = (apply(f: v), if c {{ v }} else {{ xs[0] }});\na = k(v: 3, xs: [1], c: true);\n"
     );
     let out = report(&src);
     assert!(
         out.contains(
-            "the type the checker found for `k` is `(v: (x: int | f64) ->? int, xs: _, c: bool) -> (int, _)`"
+            "the type the checker found for `k` is `(v: T, xs: 0 -> U, c: bool) -> (int, T | U)`"
         ),
         "{src}\n{out}"
     );

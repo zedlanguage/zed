@@ -102,8 +102,9 @@ fn a_type_found_that_relates_nothing_through_an_unbounded_variable_prints_it_as_
         "`f` is declared here with no type written for `h` or its result; the type the checker \
          found for `f` is `_ -> 0`"
     );
-    // A parameter read only through a use: its variable stands in the use's need, not in
-    // another place of the type.
+    // A parameter read only by lookup at fixed keys: it prints as the meet of the maps of its
+    // keys, whose results the tuple it gives holds (row PRINT-hidden-var; it printed
+    // `_ -> (_, _)`).
     let step = declared_step(
         "swap(positional p) = (p[1], p[0]);\ntake(positional x: (int, int)) = x;\n\
          m(positional n: int) = take(swap((n, \"s\")));\n",
@@ -112,7 +113,7 @@ fn a_type_found_that_relates_nothing_through_an_unbounded_variable_prints_it_as_
     assert_eq!(
         step,
         "`swap` is declared here with no type written for `p` or its result; the type the \
-         checker found for `swap` is `_ -> (_, _)`"
+         checker found for `swap` is `((1 -> T) & (0 -> U)) -> (T, U)`"
     );
 }
 

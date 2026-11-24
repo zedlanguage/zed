@@ -5,9 +5,20 @@ use zed_tests::scaling;
 use zed_tests::step_helpers::l01_26_type_resolution::sig_of as sig;
 
 use crate::tyvars::{
-    a_signature_of_many_variables_printed, each_twice, many, nested, nested_signatures_printed,
-    variables_that_each_stand_twice_named,
+    a_signature_of_many_variables_printed, each_twice, lookups, lookups_printed, many, nested,
+    nested_signatures_printed, variables_that_each_stand_twice_named,
 };
+
+#[test]
+fn printing_a_parameter_of_many_lookups_scales() {
+    // PRINT-hidden-var: the n lookups of one parameter become n arrows, each found once
+    // (`Ck::lookups_as_maps`); the time is the whole rejection, checking included.
+    let n = 200;
+    let srcs = scaling::inputs(n, lookups);
+    scaling::check("printing a parameter of n lookups as a map", n, |size| {
+        lookups_printed(&srcs[&size], size);
+    });
+}
 
 #[test]
 fn printing_signatures_of_many_variables_scales() {

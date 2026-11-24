@@ -66,16 +66,119 @@ pub(super) fn writes_back(text: &str) {
 
 #[test]
 fn a_parameter_any_value_fits_is_printed_as_every_value() {
-    // The finding: `(T) -> int` was printed, and `T` is no type a program can write.
+    // The finding: `(T) -> int` was printed, and `T` is no type a program can write. Since
+    // PRINT-hidden-var a parameter used only by lookup prints as the map type of its keys in a
+    // message, `(0 -> int) -> int`, where it printed `_ -> int`.
     let shown = declared("h(positional p) = p[0] + int(1);\nm(positional n: int) = h(\"a\");\n");
-    assert_eq!(shown, "_ -> int");
+    assert_eq!(shown, "(0 -> int) -> int");
     writes_back(&shown);
     // The variable is still the signature's own, which each call binds: the need of `p[0]` is
-    // checked again at the call.
+    // checked again at the call. The signature's own text, outside a message, is unchanged.
     let s = sig("h(positional p) = p[0] + int(1);\n", "h");
     assert_eq!(s.own.len(), 1);
     assert_eq!(s.needs.len(), 1);
     assert_eq!(s.to_string(), "_ -> int");
+}
+
+// PRINT-hidden-var (DESIGN.md sec:diagnostics, "Types in a message", spec 2238e22): a printed
+// type never writes `_`, and a parameter that the body uses only by lookup at fixed keys prints as
+// the map type of those keys, since lookup is application. Before, `h(p) = p[0] + 1` printed
+// `_ -> U for U in int | f32 | f64 | rat`, which hid the link from the argument to the result.
+
+/// What the rejection of `h(true)` shows for `h`, declared with the parameter `p` and `body`.
+fn lookup_declared(param: &str, body: &str, call: &str) -> String {
+    declared(&format!(
+        "h({param}) = {body};\nm(positional n: int) = h({call});\n"
+    ))
+}
+
+#[test]
+fn a_parameter_used_only_by_lookup_prints_as_a_map() {
+    let shown = lookup_declared("positional p", "p[0] + 1", "true");
+    // The negative control: the text before this row, which writes `_`.
+    assert_ne!(shown, "_ -> U for U in int | f32 | f64 | rat");
+    assert!(!shown.contains('_'), "{shown}");
+    // The carriers are those zedc has today; DESIGN lists `bf16` and `f16` too, which wait for
+    // L1.18a (plan row LIT-menu-zedc-gaps).
+    assert_eq!(shown, "(0 -> U) -> U for U in int | f32 | f64 | rat");
+    // Step L1.29's reader reads it back as a type that prints as the same text, and a program
+    // can write it.
+    let t = parse_type(&shown).unwrap_or_else(|e| panic!("{shown}: {e}"));
+    assert_eq!(t.to_string(), shown);
+    writes_back(&shown);
+    // A named parameter keeps its name.
+    let shown = lookup_declared("p", "p[0] + 1", "p: true");
+    assert_eq!(shown, "(p: 0 -> U) -> U for U in int | f32 | f64 | rat");
+    assert_eq!(parse_type(&shown).unwrap().to_string(), shown);
+}
+
+#[test]
+fn a_parameter_looked_up_at_several_keys_prints_as_the_meet_of_their_maps() {
+    let shown = lookup_declared("positional p", "p[0] + p[1]", "true");
+    assert_eq!(
+        shown,
+        "((0 -> U) & (1 -> U)) -> U for U in int | f32 | f64 | rat"
+    );
+    assert_eq!(parse_type(&shown).unwrap().to_string(), shown);
+    // Each result of its own: each stands twice once the parameter is a map, so each is named.
+    let shown = lookup_declared("positional p", "(p[0], p[1])", "true");
+    assert!(!shown.contains('_'), "{shown}");
+    assert_eq!(parse_type(&shown).unwrap().to_string(), shown);
+    // A key looked up twice is one arrow.
+    let twice = lookup_declared("positional p", "(p[0], p[0])", "true");
+    assert_eq!(twice.matches("0 ->").count(), 1, "{twice}");
+}
+
+#[test]
+fn a_parameter_with_a_use_other_than_lookup_keeps_its_printing() {
+    // `p` stands in the result too, so it keeps a name: the map type would lose that link.
+    let shown = lookup_declared("positional p", "(p, p[0])", "true");
+    assert!(!shown.contains("0 ->"), "{shown}");
+    // `p` is also called: a call is no lookup at a fixed key.
+    let shown = lookup_declared("positional p", "(p[0], p(1))", "true");
+    assert!(!shown.contains("0 ->"), "{shown}");
+}
+
+#[test]
+fn a_lookup_parameter_keeps_the_link_of_its_result() {
+    // `(0 -> U) -> U` gives a list of `int` the result `int`, as the call did before.
+    let out =
+        rejected("h(positional p) = p[0] + 1;\ns(positional z: String) = z;\nm = s(h([1, 2]));\n");
+    assert!(out.contains("this call of `h` gives int"), "{out}");
+    assert!(
+        out.contains(
+            "the type the checker found for `h` is `(0 -> U) -> U for U in int | f32 | f64 | rat`"
+        ),
+        "{out}"
+    );
+}
+
+/// `h(positional p) = (p[0], …, p[n - 1]);`, refused at a call with an `int`.
+pub(super) fn lookups(n: usize) -> String {
+    let parts: Vec<String> = (0..n).map(|i| format!("p[{i}]")).collect();
+    format!(
+        "h(positional p) = ({});\nm(positional n: int) = h(n);\n",
+        parts.join(", ")
+    )
+}
+
+/// The rejection of [`lookups`]`(n)` shows `h` as the meet of `n` maps.
+pub(super) fn lookups_printed(src: &str, n: usize) {
+    let out = rejected(src);
+    let (_, rest) = out
+        .split_once("the type the checker found for `h` is `")
+        .unwrap_or_else(|| panic!("no declaration shown:\n{out}"));
+    let shown = &rest[..rest.find('`').expect("the end of the signature")];
+    assert_eq!(shown.matches(" -> ").count(), n + 1, "{shown}");
+    assert!(!shown.contains('_'), "{shown}");
+}
+
+/// Parameters of 1, 3 and 9 lookups (`bench::tyvars` times 200 and 1600).
+#[test]
+fn printing_a_parameter_of_many_lookups() {
+    for n in [1, 3, 9] {
+        lookups_printed(&lookups(n), n);
+    }
 }
 
 #[test]

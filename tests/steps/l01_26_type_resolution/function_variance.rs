@@ -1345,46 +1345,52 @@ fn sum_of_t_and_t_sum_alike_each_keep_their_own_error_and_value() {
 /// change: two result variables that the sharing makes one show as one (`(U, V)` became
 /// `(U, U)`; a variable seen once shows as `_`, so `(_, _)` became `(T, T)`), and no variable
 /// that the type does not hold is listed after `for` (row MSG-type-vars-printed-unused), so
-/// the bounds compared are those of the variables each text writes.
+/// the bounds compared are those of the variables each text writes. Since row
+/// PRINT-hidden-var, `t`, used only by lookup at the key 0, prints as the map of that key,
+/// `(t: 0 -> T)`, where it printed `_` (DESIGN.md sec:diagnostics, "Types in a message"), so a
+/// result that the type before showed nowhere may now show in the arrow, `(t: 0 -> U) -> (0,
+/// 0) for U in int | f64`: its bound is then one that the type before listed after `for`.
 #[test]
 fn uses_alike_keep_the_bounds_of_the_signature() {
     let shown = [
         // A bracket left free, twice.
-        ("(t[0], t[0])", "(t: _) -> (_, _)", "(t: _) -> (T, T)"),
+        ("(t[0], t[0])", "(t: _) -> (_, _)", "(t: 0 -> T) -> (T, T)"),
         // Added to 1: a variable bounded to the numbers.
         (
             "(t[0] + 1, t[0] + 1)",
             "(t: _) -> (U, V) for U in int | f32 | f64 | rat, V in int | f32 | f64 | rat",
-            "(t: _) -> (U, U) for U in int | f32 | f64 | rat",
+            "(t: 0 -> U) -> (U, U) for U in int | f32 | f64 | rat",
         ),
         // Resolved to `int` in the body.
         (
             "(fi(x: t[0]), fi(x: t[0]))",
             "(t: _) -> (int, int)",
-            "(t: _) -> (int, int)",
+            "(t: 0 -> int) -> (int, int)",
         ),
         // Resolved to `int | f64`, a type the signature does not show.
         (
             "(fu(x: t[0]), fu(x: t[0]))",
             "(t: _) -> (0, 0) for U in int | f64, V in int | f64",
-            "(t: _) -> (0, 0)",
+            "(t: 0 -> U) -> (0, 0) for U in int | f64",
         ),
+        // Two results at the key 0, one numeric: the meet of two arrows of that key.
         (
             "(t[0], t[0] + 1, t[0], t[0] + 1)",
             "(t: _) -> (_, V, _, T5) for V in int | f32 | f64 | rat, T5 in int | f32 | f64 | rat",
-            "(t: _) -> (T, V, T, V) for V in int | f32 | f64 | rat",
+            "(t: (0 -> T) & (0 -> V)) -> (T, V, T, V) for V in int | f32 | f64 | rat",
         ),
         // The four forms, twice.
         (
             "(t[0], fi(x: t[0]), fu(x: t[0]), t[0] + 1, t[0], fi(x: t[0]), fu(x: t[0]), t[0] + 1)",
             "(t: _) -> (_, int, 0, V, _, int, 0, T5) for T6 in int | f64, \
              V in int | f32 | f64 | rat, T7 in int | f64, T5 in int | f32 | f64 | rat",
-            "(t: _) -> (T, int, 0, V, T, int, 0, V) for V in int | f32 | f64 | rat",
+            "(t: (0 -> T) & (0 -> int) & (0 -> W) & (0 -> V)) -> (T, int, 0, V, T, int, 0, V) \
+             for W in int | f64, V in int | f32 | f64 | rat",
         ),
         (
             "0 + t[0] + t[0]",
             "(t: _) -> U for U in int | f32 | f64 | rat",
-            "(t: _) -> U for U in int | f32 | f64 | rat",
+            "(t: 0 -> U) -> U for U in int | f32 | f64 | rat",
         ),
         ("(t.count, t.count)", "(t: _) -> (_, _)", "(t: _) -> (T, T)"),
         // Three uses of different kinds on one bracket's result.
@@ -1392,7 +1398,7 @@ fn uses_alike_keep_the_bounds_of_the_signature() {
             "(t[0] - 1, -t[0], t[0] + 1)",
             "(t: _) -> (U, V, W) for U in int | f32 | f64 | rat, V in int | f32 | f64 | rat, \
              W in int | f32 | f64 | rat",
-            "(t: _) -> (U, U, U) for U in int | f32 | f64 | rat",
+            "(t: 0 -> U) -> (U, U, U) for U in int | f32 | f64 | rat",
         ),
     ];
     // The bounds after `for` of the variables written before it, as a set.
@@ -1407,9 +1413,20 @@ fn uses_alike_keep_the_bounds_of_the_signature() {
             .map(|(_, b)| b.to_string())
             .collect()
     };
+    // Every bound listed after `for`, whether the text before it writes its variable or not.
+    let listed = |t: &str| -> std::collections::BTreeSet<String> {
+        let Some((_, clause)) = t.split_once(" for ") else {
+            return Default::default();
+        };
+        (clause.split(", "))
+            .map(|v| v.split_once(" in ").expect("`X in B`").1.to_string())
+            .collect()
+    };
     let lead = "the type the checker found for `many` is `";
     for (body, before, now) in shown {
-        assert_eq!(bounds(before), bounds(now), "{body}");
+        // No bound written before is lost, and none shown now is new.
+        assert!(bounds(before).is_subset(&bounds(now)), "{body}");
+        assert!(bounds(now).is_subset(&listed(before)), "{body}");
         // A call each body refuses, whose notes show where `many` is declared.
         let src = format!(
             "fi(x: int) = x;\nfu(x: int | f64) = 0;\nmany(t) = {body};\n\

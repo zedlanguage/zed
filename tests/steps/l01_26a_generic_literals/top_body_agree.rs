@@ -1061,7 +1061,7 @@ fn a_rejection_kept_from_nested_calls_has_the_steps_of_each_call() {
     use zed_tests::step_helpers::l01_26_type_resolution::info;
     let pre = "add(x, y) = x + y;\nfirst(p) = p[0];\n";
     let first = "`first` is declared here with no type written for `p` or its result; the type \
-                 the checker found for `first` is `(p: _) -> _`";
+                 the checker found for `first` is `(p: 0 -> T) -> T`";
     let add = "`add` is declared here with no type written for `x`, `y` or its result; the type \
                the checker found for `add` is `(x: T, y: T) -> T for T in int | f32 | f64 | rat`";
     let mut e = "first(p: (1, 1 / 2))".to_string();
@@ -1070,7 +1070,17 @@ fn a_rejection_kept_from_nested_calls_has_the_steps_of_each_call() {
         let src = format!("{pre}{line}\n");
         let (i, _) = info(&src);
         assert_eq!(i.errors.len(), 1, "{src}");
-        let notes: Vec<&str> = i.errors[0].notes.iter().map(|n| &*n.text).collect();
+        let mut notes: Vec<String> = i.errors[0]
+            .notes
+            .iter()
+            .map(|n| n.text.to_string())
+            .collect();
+        // `first`'s result prints `T` at depth 0 and `U` inside calls of `add`, a name the
+        // checker kept (row UNDERSCORE-print-followups); before row PRINT-hidden-var it printed
+        // `_`, which hid the name. Either name is the same type.
+        if let Some(n) = notes.first_mut() {
+            *n = n.replace("(p: 0 -> U) -> U`", "(p: 0 -> T) -> T`");
+        }
         let want: Vec<&str> = match depth {
             0 => vec![first],
             _ => vec![first, add],

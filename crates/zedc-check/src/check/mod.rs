@@ -7236,6 +7236,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn sig_text_with(&self, s: &Sig, written: &[(Arc<str>, Arc<str>)]) -> String {
         let s = s.solved_with(&|v| self.stale(v));
         let mut passed: HashMap<Arc<str>, Option<Ty>> = HashMap::new();
+        // For each variable, the (key, result) of each lookup `v[k]` at a fixed key, while
+        // every use of it is one ([`Self::lookups_as_maps`]); `None` after a use of another kind.
+        let mut looked: HashMap<Arc<str>, Option<Vec<(Ty, Ty)>>> = HashMap::new();
+        let mut seen_lookups: HashSet<(Arc<str>, Ty, Ty)> = HashSet::new();
         for n in &s.needs {
             if let NeedKind::Fwd(fwd) = &n.kind {
                 // `Fwd` holds only `Entries`/`Call`/`Map` (`#3`), never `Into`: every `.on`
@@ -7244,11 +7248,29 @@ impl<'t, 'a> Ck<'t, 'a> {
                 for t in &fwd.on_vars {
                     if let Some(v) = t.as_var() {
                         passed.insert(v.clone(), None);
+                        looked.insert(v.clone(), None);
                     }
                 }
                 continue;
             }
             let Some(v) = n.on.as_var() else { continue };
+            let lookup = match (&n.kind, &n.result) {
+                (NeedKind::Component { key, .. }, Some(r)) if !key.holds_vars() => {
+                    Some((key.clone(), r.clone()))
+                }
+                _ => None,
+            };
+            let l = looked.entry(v.clone()).or_insert_with(|| Some(Vec::new()));
+            match (lookup, l.as_mut()) {
+                (Some((k, r)), Some(list)) => {
+                    // A lookup written twice, `p[0] + p[0]`, is one arrow: a set, so that n
+                    // lookups cost O(n), not the O(n^2) of a search of the list.
+                    if seen_lookups.insert((v.clone(), k.clone(), r.clone())) {
+                        list.push((k, r));
+                    }
+                }
+                _ => *l = None,
+            }
             let into = match &n.kind {
                 NeedKind::Into { ty, .. } => Some(ty),
                 _ => None,
@@ -7277,9 +7299,34 @@ impl<'t, 'a> Ck<'t, 'a> {
         around.named.extend(written.iter().cloned());
         let kept: HashSet<&Arc<str>> = around.kept.iter().map(|(v, _)| v).collect();
         passed.retain(|v, _| !kept.contains(v));
-        let twice = match passed.is_empty() {
+        looked.retain(|v, l| l.is_some() && !kept.contains(v) && !s.bounds.contains_key(v));
+        let twice = match passed.is_empty() && looked.is_empty() {
             true => HashSet::new(),
             false => s.standing_twice(),
+        };
+        let maps = Self::lookups_as_maps(looked, &twice);
+        // A map puts the result of each lookup in a second place, the key's arrow, so a result
+        // that stood once now stands twice and keeps its name: `(xs: 0 -> T) -> (int, T)`,
+        // not the bound of `T` in both places, which would drop the link. So the places are
+        // counted again on the rewritten type, once, only when a map was made.
+        let (s, twice) = match maps.is_empty() {
+            true => (s, twice),
+            false => {
+                // A variable made a map has `Component` needs only, and its map says exactly
+                // what they say (points (1) and (2) of [`Self::lookups_as_maps`]), so its needs
+                // are dropped before the replacement: kept,
+                // each of the n needs would take a copy of the n arrows, O(n^2) to replace and
+                // to walk (the bench `printing_a_parameter_of_many_lookups_scales` measured a
+                // ratio of 24.8 at 200 and 1600 lookups with them).
+                let mut s = s;
+                s.needs = (s.needs.iter())
+                    .filter(|n| !n.on.as_var().is_some_and(|v| maps.contains_key(v)))
+                    .cloned()
+                    .collect();
+                let s = s.replace(&maps);
+                let twice = s.standing_twice();
+                (s, twice)
+            }
         };
         // A variable bounded by carriers, `for V in int | f64`, takes the values of its type
         // in those carriers; a bound that lets other values in ([`OTHER`]) bounds nothing.
@@ -7297,6 +7344,58 @@ impl<'t, 'a> Ck<'t, 'a> {
             true => s.text_around(around.get()),
             false => s.replace(&binds).text_around(around.get()),
         }
+    }
+
+    /// For each variable of `looked` that stands in one place only (not in `twice`) and has a
+    /// lookup, the map type of its lookups: `k -> r` for its one lookup `v[k]` of result `r`,
+    /// and the meet `(k1 -> r1) & (k2 -> r2)` of the arrows for several keys.
+    ///
+    /// Why (DESIGN.md sec:diagnostics, "Types in a message", spec 2238e22, plan row
+    /// PRINT-hidden-var): a printed type never writes `_`, and a parameter that the body uses
+    /// only by lookup at fixed keys prints as the map type of those keys, since lookup is
+    /// application (sec:values_morphisms): `h(p) = p[0] + 1` prints `(0 -> T) -> T for T in
+    /// ...`, where it printed `_ -> U for U in ...`. The rewrite is exact, not a widening:
+    /// (1) such a variable is constrained by its `Component` needs alone (`sig_text_with` drops
+    /// a variable with a need of any other kind, a forward, a bound or a kept name); (2) a
+    /// `Component` need with key `k` and result `r` holds at a call exactly where the argument
+    /// answers at `k` with a value of `r` (check/walk.rs, the `NeedKind::Component` arm of
+    /// `Ck::replay_one`), which is what the exact arrow `k -> r` admits; (3) several needs hold
+    /// together, which is the meet of their arrows; (4) the variable stands in one place, so no
+    /// other part of the type links to it and replacing it loses no link. The result `r` now
+    /// stands in the key's place as well as where it stood before, so where it stood once
+    /// before it prints by a name too, `(0 -> T) -> T`, the link that gives `h([1, 2])` the
+    /// type `int`. A key holding a variable is not fixed, and keeps the variable's printing.
+    /// Time O(l) for the l lookups.
+    // Tests: tests/steps/l01_29_diagnostics/tyvars.rs, `a_parameter_used_only_by_lookup_prints_
+    // as_a_map` (the printed form, read back by `parse_type`, and the negative control on the
+    // old text) and `a_lookup_parameter_keeps_the_link_of_its_result` (`h([1, 2])` is `int`);
+    // tests/steps/l01_26_type_resolution/standing_twice.rs, the key-0 halves of its first two
+    // tests (a result with a bound, counted again after the rewrite: without the second count
+    // it printed its bound in both places, `(xs: 0 -> (x: Part1) ->? int) -> ...`).
+    fn lookups_as_maps(
+        looked: HashMap<Arc<str>, Option<Vec<(Ty, Ty)>>>,
+        twice: &HashSet<Arc<str>>,
+    ) -> Binds {
+        let map_of = |(k, r): (Ty, Ty)| {
+            let p = SParam {
+                name: "".into(),
+                positional: true,
+                default: None,
+                range: None,
+            };
+            Sig::one(vec![p], vec![k], r)
+        };
+        (looked.into_iter())
+            .filter(|(v, _)| !twice.contains(v))
+            .filter_map(|(v, l)| {
+                let mut l = l?.into_iter();
+                let mut sig = map_of(l.next()?);
+                for kr in l {
+                    sig.add_arrows_of(&map_of(kr));
+                }
+                Some((v, Ty::func(Arc::new(sig))))
+            })
+            .collect()
     }
 
     /// [`Ty::sub`], each solved class variable read as its type ([`Self::stale`]).
