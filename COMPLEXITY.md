@@ -1594,11 +1594,31 @@ on BAD-GOR 59.8 times the work; BAD-GOR and a fan before UTVPI-union 60.6 times 
 run once and not committed, since a control needs the old code; they were not rerun for this
 row. `bench/live3.rs` records no control counts at its tests.
 
-### PRES-products-factored-solver R3-5, the worklist of step 5 (design, not built), measured 2026-11-24
+### PRES-products-factored-solver R3-5, the worklist of step 5 (built 2026-11-24), measured 2026-11-24
 
 The solver that decides products without expanding them (row PRES-products-factored-solver,
-design `docs/studies/products-factored.md`, phase 1d after three cross-review rounds) is not in
-the crate yet. Its step 5, the joint fixpoint over the open listed pairs, keeps the best method
+design `docs/studies/products-factored.md`, phase 1d after three cross-review rounds) is
+`crates/zedc-presburger/src/presburger/factored.rs` (b22-factored2, 2026-11-24): stage A'
+replaces the listing of every pair on[x] × on[y] in `products` (the naive method: k² pairs
+listed for a factor pair with k rows a side, each then tested; the solver lists only the pairs
+pass 1 cannot settle by sign predicates, and its exact integers are `Int` where the old code
+used i128). Measured in the crate (VM runs of 2026-11-24; counted steps, and instructions for
+the benches):
+
+| Input | n to 8n | Ratio | Note |
+|---|---|---|---|
+| star: k rows `x + u_i`, k rows `y + w_j`, only `x*y` mentioned (`no_pair_of_the_star_is_listed_and_the_work_scales`) | k 1,000 to 8,000 | work 8.00 | none listed; control, every pair listed: 64.00 |
+| bench `bench_factored_star` (`kept_pairs`) | k 2,000 to 16,000 | 8.28 | instructions |
+| bench `bench_entails_on_the_star` (`entails` on the star) | k 1,000 to 8,000 | 8.77 | instructions; origin/main: see the red run below |
+| wlgrow (`the_pass1_and_worklist_of_wlgrow_scale`) | size 7.00 | pass 1 9.18, worklist 7.31 | the peel 47.20: exception 3, the test's control |
+| wlgrow_g (`the_worklist_of_wlgrow_g_scales`) | size 6.97 | pass 1 9.09, worklist 34.00 | fails 10.5: exception 4; the peel 43.12 |
+
+Exception 3 (design sec. 4 item 3): the exact peel after the worklist (rules P2 to P4, single
+holders) is O(W_listed), the incidences of the pairs still listed; it grows 47.20 times on
+wlgrow and 43.12 on wlgrow_g. It is no worse than the code it replaces, which listed and tested
+every pair, but it is above 10.5; filed as PERF-factored-peel-wlisted. The failing wlgrow_g test
+is row FAIL-factored-wlgrow-g-worklist.
+Its step 5, the joint fixpoint over the open listed pairs, keeps the best method
 found: delta rechecks memoized per pair of exact set ids (a hash-consed trie), which test only
 the incidences new since a pair's last test. Its cost is O(k log k + W_listed'), where
 W_listed' counts the incidences of the open listed pairs, which is not O(k log k) in general.
@@ -1629,7 +1649,8 @@ search, which timed out on three of four queries, and Gemini grounded search) fo
 method within O(n log n) found none.
 
 Exception 4 of QUESTIONS A225 (decided by the orchestrator, 2026-11-24, A and D): the test
-`wlgrowg` is in the tests, is not ignored, asserts 10.5 and fails, until a method for its family
+`wlgrowg` (in the crate `presburger::factored::tests::the_worklist_of_wlgrow_g_scales`, 34.00
+times) is in the tests, is not ignored, asserts 10.5 and fails, until a method for its family
 is found. Reduction (row PRES-factored-O8-reduction, design sec. 5.3, every step there): Boolean
 matrix multiplication of n×n matrices A and F reduces to the worklist, with k = Θ(n²) and the
 pairs left exactly the zero entries of AF (prototype part `bmm`, 16 cases). So a worklist in

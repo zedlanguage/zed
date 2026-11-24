@@ -124,6 +124,7 @@ mod deep;
 #[doc(hidden)]
 pub mod exact;
 pub mod extend;
+mod factored;
 mod forced;
 mod formula;
 #[cfg(test)]
@@ -134,6 +135,9 @@ mod meter;
 mod modular;
 mod nesting;
 mod one_row;
+/// The single-holder rule alone, which `products` used before the factored solver: kept as the
+/// tests' oracle (the factored solver keeps a subset of what it keeps).
+#[cfg(test)]
 mod pairs;
 #[cfg(test)]
 mod pick_wide_tests;
@@ -28678,18 +28682,22 @@ enum Tier {
 /// meets the bound, or, with no bound, when the factor has no coefficient of the sign that
 /// could stop it going that way ([`signs`]).
 ///
-/// A product is left out when it alone holds, with a nonzero coefficient, a product atom that
-/// no premise, goal or definition mentions, among the products not yet left out, to a fixpoint
-/// ([`pairs::kept`]). Such an atom is free in the linear reading: whatever point satisfies the
-/// other rows, the atom can take a value of the sign of its coefficient large enough that the
-/// product holds too, so leaving it out changes no verdict, and the products left out are
-/// justified in the reverse of the order they go. An atom can cancel between products of
+/// Which pairs of rows are multiplied is decided by the factored solver
+/// ([`factored::kept_pairs`], docs/studies/products-factored.md), which never lists every pair
+/// of rows on the two factors. It leaves out a product that an integer direction on the free
+/// product atoms (those no premise, goal or definition mentions) strictly increases while no
+/// product kept decreases (Theorem D of that module), among them a product that alone holds,
+/// with a nonzero coefficient, a free atom, to a fixpoint: whatever point satisfies the other
+/// rows, the atom can take a value of the sign of its coefficient large enough that the product
+/// holds too, so leaving it out changes no verdict. It also leaves out a product implied by
+/// those kept and the factor rows (a row equal to another up to a positive factor, a row with
+/// a weaker constant, a row inside a planar cone of others). An atom can cancel between products of
 /// different pairs of factors: `c * d` is in `(1 - a - d) * (1 + a - b + c)`, for `a * b`, and
 /// in `(-a - b - d) * (-c)`, for `b * c`, and both are kept
 /// (`l01_38_presburger::ladder::a_product_atom_cancels_through_the_products_of_another_pair`;
 /// the rule of C2-pairs-long-row left the second out, as `d` is foreign to `c`, and lost the
 /// proof). Which products to leave out is decided from the factor rows without expanding the
-/// products, at the cost [`pairs::kept`] states; each product kept then costs
+/// products, at the cost [`factored`] states; each product kept then costs
 /// O(|a| × |b| × log) for its rows `a` and `b`.
 ///
 /// Complexity tradeoff: a product of two variables is an opaque atom, bounded only by these
@@ -28988,22 +28996,12 @@ fn products(
     for ps in partners.values_mut() {
         zed_collections::sorted::sort_dedup(ps);
     }
-    // The pairs of rows on the two factors of each product, each once, and of them those the
-    // exact rule keeps ([`pairs::kept`]).
-    let mut pairs = BTreeSet::new();
-    for (x, y) in &wanted {
-        for &a in &on[x] {
-            for &b in &on[y] {
-                pairs.insert((a.min(b), a.max(b)));
-            }
-        }
-    }
-    let pairs: Vec<(usize, usize)> = pairs.into_iter().collect();
+    // The pairs of rows on the two factors of each product that stage A' keeps
+    // ([`factored::kept_pairs`]), found without listing every pair.
     let rows: Vec<&Lin> = table.iter().map(|r| &**r).collect();
-    let kept = pairs::kept(&rows, &pairs, &partners);
     let mut out = BTreeSet::new();
-    for (&(a, b), keep) in pairs.iter().zip(kept) {
-        if keep && let Some(p) = rows[a].product(rows[b]) {
+    for (a, b) in factored::kept_pairs(&rows, &on, &wanted, &partners) {
+        if let Some(p) = rows[a].product(rows[b]) {
             out.insert(Con {
                 lin: p,
                 rel: Rel::Ge,
