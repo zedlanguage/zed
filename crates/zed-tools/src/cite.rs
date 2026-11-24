@@ -128,10 +128,10 @@ pub fn check_citations(design: &str, files: &[(String, String)], out: &mut Strin
     Ok(ok)
 }
 
-/// The words that begin a note of DESIGN.md recording a renumbering of steps, such as "Renumbered
-/// on 2026-11-24 (...): this layer's steps L40.1 to L40.8 were L41.1 to L41.8". Such a note names
-/// the old ids on purpose, so the steps cited from these words to the end of the line are not
-/// checked; the steps before them on the line still are.
+/// The words that begin a note of DESIGN.md recording a renumbering of steps, such as the note of
+/// 2026-11-24 on the swap of layers 40 and 41 ("Renumbered on 2026-11-24 (...): this layer's steps
+/// ... were ..."). Such a note names the old ids on purpose, so the steps cited from these words to
+/// the end of the line are not checked; the steps before them on the line still are.
 pub const RENUMBERED: &str = "Renumbered on ";
 
 /// The part of `line` whose step ids are citations: all of it, or the part before
