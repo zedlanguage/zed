@@ -19342,11 +19342,14 @@ mod tests {
     #[test]
     fn a_linear_order_has_the_preimage_of_the_general_path() {
         let (mut rng, _) = Rng::fresh("a_linear_order_has_the_preimage_of_the_general_path");
-        let names: Vec<Arc<str>> = ["x", "y", "z", "w", "u"].iter().map(|&n| n.into()).collect();
+        let names: Vec<Arc<str>> = ["x", "y", "z", "w", "u"]
+            .iter()
+            .map(|&n| n.into())
+            .collect();
         let ops = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge];
         let (mut read, mut exact, mut empty) = (0, 0, 0);
         for _ in 0..3000 {
-            let mut side = |rng: &mut Rng, from: usize, to: usize| -> Term {
+            let side = |rng: &mut Rng, from: usize, to: usize| -> Term {
                 let mut sum = Term::Lit(Value::Int(rng.below(61) as i64 - 30));
                 for x in &names[from..to] {
                     let a = rng.below(25) as i64 - 12;
@@ -19389,7 +19392,10 @@ mod tests {
                 LINEAR_ORDER_OFF.set(true);
                 let slow = ask();
                 LINEAR_ORDER_OFF.set(false);
-                assert_eq!(fast, slow, "{term} at {demand:?} over {inputs:?}, guard {guard}");
+                assert_eq!(
+                    fast, slow,
+                    "{term} at {demand:?} over {inputs:?}, guard {guard}"
+                );
                 read += usize::from(taken > 0);
                 exact += usize::from(taken > 0 && fast.exact);
                 empty += usize::from(taken > 0 && fast.domains.0.values().any(Classed::is_empty));

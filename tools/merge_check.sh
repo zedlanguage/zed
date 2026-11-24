@@ -17,7 +17,7 @@
 #     part of tools/test_run_tests.sh, list then select then table then except then benches (all
 #     four read the table list publishes, in one log directory), short after list and beside them
 #     (list and short both mount the short-addresses clone, and a run waits while another has
-#     it), and fresh, copy, concurrent, trace and nobus beside that chain (each in a log directory of
+#     it), and fresh, copy, concurrent, trace, nobus and warm beside that chain (each in a log directory of
 #     its own), each part under max(60, the piece limit) s:
 #     the header of test_run_tests.sh gives each part 60 s, and list alone took 30 to 57 s at load
 #     36 to 76. The parts start after the build of the tests they list, which runs first with no
@@ -259,7 +259,8 @@ echo "merge check: ${#changed[@]} files changed since $(git rev-parse --short "$
 selftest= rtself= farmself=
 for f in "${changed[@]}"; do
   case $f in tools/merge_check.sh | tools/merge_check_steps.sh | tools/test_merge_check.sh | tools/run_tests.sh | tools/spec_groups.sh | tools/test_lib.sh) selftest=1 ;; esac
-  case $f in tools/run_tests.sh | tools/test_run_tests.sh | tools/test_lib.sh) rtself=1 ;; esac
+  # tools/lib.sh holds `warm`, which `tools/test_run_tests.sh warm` tests (FAIL-warm-step-drops-output).
+  case $f in tools/run_tests.sh | tools/lib.sh | tools/test_run_tests.sh | tools/test_lib.sh) rtself=1 ;; esac
   case $f in tools/farm_run.sh | tools/test_farm_run.sh) farmself=1 ;; esac
 done
 

@@ -44,7 +44,7 @@ mkdir -p "${logs%/*}" || { echo "merge check: cannot create ${logs%/*}" >&2; exi
 # parts start when it has passed. The build runs in the foreground, before step 0 starts its
 # timed parts too: run beside them, a workspace build (at load 50 on 2026-11-20) pushed
 # tools/test_merge_check.sh select, 15 to 21 s alone, past its 25 s limit.
-rtparts=(list select table except benches fresh short copy concurrent trace nobus)
+rtparts=(list select table except benches fresh short copy concurrent trace nobus warm)
 rtpids=()
 if [ -n "$rtself" ]; then
   rlog=$logs-rt
@@ -69,7 +69,7 @@ if [ -n "$rtself" ]; then
       rt_part select && rt_part table && rt_part except && rt_part benches
       wait
     }) &
-    for p in fresh copy concurrent trace nobus; do rt_part "$p" & done
+    for p in fresh copy concurrent trace nobus warm; do rt_part "$p" & done
     wait
   ) &
   rtpids+=($!)
@@ -88,7 +88,7 @@ rt_wait() {
     fi
   done
   [ -z "$bad" ] || exit 1
-  echo "merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace and nobus passed"
+  echo "merge check: tools/test_run_tests.sh list, select, table, except, benches, fresh, short, copy, concurrent, trace, nobus and warm passed"
 }
 
 # Step 0: the toy cases of merge_check.sh, each part under the limit of a piece of run_tests.sh.

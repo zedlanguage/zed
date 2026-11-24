@@ -18,7 +18,8 @@
 # a benchmark of each binary by the name the table lists; `fresh`, the
 # listings with --only afresh; `short`, the short-addresses pieces and their clone; `copy`, a
 # piece that starts its binary again after the build is gone; `concurrent`, two runs at once on
-# one log directory; `trace`; and `nobus`, three pieces run with no user bus (FARM-run-tests-systemd-run).
+# one log directory; `trace`; `nobus`, three pieces run with no user bus (FARM-run-tests-systemd-run);
+# and `warm`, the report of a piece that fails in the linking warm-up (FAIL-warm-step-drops-output).
 # select, table, except and benches are run after list, with no build of the tests between them. With no part named
 # it runs list, select, table, except, benches, fresh, short, copy and concurrent one after another.
 # Each part has a log directory of its own, under which every run of run_tests.sh writes a
@@ -28,9 +29,9 @@ fails=0
 . tools/test_lib.sh || exit 2
 part=${1:-all}
 case $part in
-  all | list | select | table | except | benches | fresh | short | copy | concurrent | trace | nobus) ;;
+  all | list | select | table | except | benches | fresh | short | copy | concurrent | trace | nobus | warm) ;;
   *)
-    echo "usage: tools/test_run_tests.sh [list | select | table | except | benches | fresh | short | copy | concurrent | trace | nobus]"
+    echo "usage: tools/test_run_tests.sh [list | select | table | except | benches | fresh | short | copy | concurrent | trace | nobus | warm]"
     exit 2
     ;;
 esac
@@ -69,6 +70,56 @@ if [ "$part" = trace ]; then
   done
   run --only '^l01_03_' --trace "$logs/trace-none" >/dev/null
   check "--trace names no spec file for l01_03" "" "$(spec_reads "$logs/trace-none")"
+  echo "checks failed: $fails"
+  [ "$fails" = 0 ]
+  exit
+fi
+# `tools/test_run_tests.sh warm` checks the linking warm-up's report of a failing piece (`warm`,
+# tools/lib.sh, FAIL-warm-step-drops-output) on fake binaries, with `capped` and `in_run_copy`
+# as plain runs: it builds and lists nothing (under 1 s). Before the fix the output of a failing
+# piece was emptied unread, and only "rc=101" was printed.
+if [ "$part" = warm ]; then
+  w=$(pwd)/$logs-warm
+  mkdir -p "$w"
+  printf '#!/bin/bash\necho "running 1 test"\necho "thread '"'"'t'"'"' panicked at a.rs:1:1:"\necho "noise"\necho "test t has been running for over 60 seconds"\necho "test result: FAILED. 0 passed; 1 failed"\nexit 101\n' >"$w/fails"
+  printf '#!/bin/bash\necho "only line"\nexit 137\n' >"$w/killed"
+  printf '#!/bin/bash\necho "test result: ok."\n' >"$w/passes"
+  chmod +x "$w/fails" "$w/killed" "$w/passes"
+  got=$(
+    root=$(pwd) out=$w slot=0
+    capped() { "$@"; }
+    in_run_copy() {
+      shift
+      exec "$@"
+    }
+    export -f in_run_copy
+    . tools/lib.sh || exit 2
+    warm fake::fails "$logs-warm" "$w/fails" --exact t
+    echo "returned $?"
+    warm fake::killed "$logs-warm" "$w/killed"
+    echo "returned $?"
+    warm fake::passes "$logs-warm" "$w/passes"
+    echo "returned $?"
+  )
+  check "a piece that fails in the warm-up prints its failure lines and keeps its output" \
+    "fake::fails warm: output kept in $w/warm-fake::fails.log
+fake::fails warm: thread 't' panicked at a.rs:1:1:
+fake::fails warm: test t has been running for over 60 seconds
+fake::fails warm: test result: FAILED. 0 passed; 1 failed
+fake::fails links made before the timed pieces: rc=101
+returned 1
+fake::killed warm: output kept in $w/warm-fake::killed.log
+fake::killed warm: only line
+fake::killed links made before the timed pieces: rc=137
+returned 1
+fake::passes links made before the timed pieces: rc=0
+returned 0" "$(printf '%s\n' "$got" | sed 's/ rc=\([0-9]*\) [0-9]*ms$/ rc=\1/')"
+  check "the kept output of a failing piece is its whole output" "running 1 test
+thread 't' panicked at a.rs:1:1:
+noise
+test t has been running for over 60 seconds
+test result: FAILED. 0 passed; 1 failed" "$(cat "$w/warm-fake::fails.log" 2>&1)"
+  check "a passing piece keeps no output" "" "$(ls "$w" | command grep -a -F 'warm-fake::passes')"
   echo "checks failed: $fails"
   [ "$fails" = 0 ]
   exit

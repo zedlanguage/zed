@@ -599,9 +599,14 @@ fn chain_answers(what: &str, close: impl Fn(usize) -> Option<i64> + Sync, empty:
         // check, the pieces of the cycles of weight 0 and 1 stopped at a phase past 20 s, 54
         // and 62 s, job j4 on hm4).
         let what = format!("{what}, {how:?}, n names");
-        scaling::check_inputs(&what, 512, |n| chain(n, close(n)), |c| {
-            drop(c.narrowed(how));
-        });
+        scaling::check_inputs(
+            &what,
+            512,
+            |n| chain(n, close(n)),
+            |c| {
+                drop(c.narrowed(how));
+            },
+        );
     }
 }
 

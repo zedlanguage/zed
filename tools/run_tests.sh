@@ -1842,18 +1842,8 @@ fi
 # from those named in <base>/runtimes, published by the last run that made the links, the selected pieces of the step folders whose sources call
 # the linker run first, with no limit, as part of the build: the links are made there, and the
 # pieces run again in the slots, where they find them kept. Their results are not counted; a
-# piece that fails there fails again in the slots and is reported there.
-warm() {
-  name=$1 dir=$2
-  shift 2
-  start=$(date +%s%N)
-  (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
-    capped bash -c 'in_run_copy "$@"' in_run_copy "$1" "$@" >"$out/warm-$slot.out" 2>&1)
-  rc=$?
-  : >"$out/warm-$slot.out"
-  echo "$name links made before the timed pieces: rc=$rc $((($(date +%s%N) - start) / 1000000))ms"
-  [ "$rc" = 0 ]
-}
+# piece that fails there and passes in the slots keeps its output and prints its cause (`warm`,
+# tools/lib.sh, FAIL-warm-step-drops-output).
 export -f warm
 deps=$(dirname "$(head -1 "$out/pieces" | cut -d ' ' -f 3)")
 runtimes=$(stat -c '%n %s %Y' "$deps"/libzed_native-*.a 2>/dev/null)
