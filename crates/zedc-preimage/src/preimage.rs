@@ -19406,6 +19406,114 @@ mod tests {
         assert!(exact > 100 && empty > 100, "{exact} exact, {empty} empty");
     }
 
+    /// The edge cases of [`linear_order`] the random test above does not draw, each through
+    /// [`preimage`] and [`guard_preimage_listed`], at both outcomes, against the general path
+    /// ([`LINEAR_ORDER_OFF`]), every field the same: an order of two literals, with no input
+    /// at all and with one input it does not read (`5 < 3`, `3 <= 3`); a name ordered against
+    /// itself (`x <= x`, `x < x`, `x - x >= 0`); one-point domains; equal bounds (`x <= 7`
+    /// over `{7}`, `x >= y` over `x, y` in `{4}`); and a box with an empty domain, which
+    /// `linear_order` leaves to the general path (the second list of cases: it must answer
+    /// none of them itself). The random test draws one to four names split between the two
+    /// sides, so never two literals alone, no name on both sides, and no empty domain
+    /// (b22-tests10, 2026-11-24). Cannot catch: a case that both paths answer wrong alike.
+    #[test]
+    fn a_linear_order_at_its_edge_cases_has_the_preimage_of_the_general_path() {
+        let mut reads = 0;
+        let v = |n: &str| Term::Var(n.into());
+        let k = |c: i64| Term::Lit(Value::Int(c));
+        let ord = |op: Prim, a: Term, b: Term| Term::Prim(op, vec![a, b]);
+        let dom = |pairs: &[(&str, IntervalSet)]| -> Domains {
+            pairs
+                .iter()
+                .map(|(n, d)| ((*n).into(), d.clone()))
+                .collect()
+        };
+        let mut both = |term: &Term, inputs: &Domains| {
+            for outcome in [false, true] {
+                let demand = Demand::Bool(outcome);
+                for guard in [false, true] {
+                    let ask = || {
+                        if guard {
+                            guard_preimage_listed(term, inputs, NONE_LISTED, &demand)
+                        } else {
+                            preimage(term, inputs, &demand)
+                        }
+                    };
+                    let fast = ask();
+                    LINEAR_ORDER_OFF.set(true);
+                    let slow = ask();
+                    LINEAR_ORDER_OFF.set(false);
+                    assert_eq!(
+                        fast, slow,
+                        "{term} at {demand:?} over {inputs:?}, guard {guard}"
+                    );
+                }
+                for fails_kept in [false, true] {
+                    let read = linear_order(term, inputs, NONE_LISTED, &demand, fails_kept);
+                    assert!(
+                        !is_empty(inputs) || read.is_none(),
+                        "{term} at {demand:?} over {inputs:?}: linear_order read a box with an \
+                         empty domain"
+                    );
+                    reads += usize::from(read.is_some());
+                }
+            }
+        };
+        let point = IntervalSet::of(7, 7);
+        let range = IntervalSet::of(-3, 9);
+        let cases = [
+            (ord(Prim::Lt, k(5), k(3)), dom(&[])),
+            (ord(Prim::Le, k(3), k(3)), dom(&[])),
+            (ord(Prim::Lt, k(5), k(3)), dom(&[("x", range.clone())])),
+            (ord(Prim::Le, k(3), k(3)), dom(&[("x", point.clone())])),
+            (ord(Prim::Le, v("x"), v("x")), dom(&[("x", range.clone())])),
+            (ord(Prim::Lt, v("x"), v("x")), dom(&[("x", range.clone())])),
+            (
+                ord(Prim::Ge, ord(Prim::Sub, v("x"), v("x")), k(0)),
+                dom(&[("x", range.clone())]),
+            ),
+            (ord(Prim::Le, v("x"), k(7)), dom(&[("x", point.clone())])),
+            (ord(Prim::Lt, v("x"), k(7)), dom(&[("x", point.clone())])),
+            (
+                ord(Prim::Ge, v("x"), v("y")),
+                dom(&[("x", IntervalSet::of(4, 4)), ("y", IntervalSet::of(4, 4))]),
+            ),
+            (
+                ord(Prim::Gt, v("x"), v("y")),
+                dom(&[("x", IntervalSet::of(4, 4)), ("y", IntervalSet::of(4, 4))]),
+            ),
+            (
+                ord(Prim::Le, v("x"), v("y")),
+                dom(&[("x", IntervalSet::of(2, 5)), ("y", IntervalSet::of(5, 9))]),
+            ),
+        ];
+        for (term, inputs) in &cases {
+            both(term, inputs);
+        }
+        let empty_cases = [
+            (
+                ord(Prim::Le, v("x"), v("y")),
+                dom(&[("x", IntervalSet::empty()), ("y", range.clone())]),
+            ),
+            (
+                ord(Prim::Lt, v("x"), k(3)),
+                dom(&[("x", range.clone()), ("y", IntervalSet::empty())]),
+            ),
+            (
+                ord(Prim::Le, k(3), k(3)),
+                dom(&[("y", IntervalSet::empty())]),
+            ),
+        ];
+        for (term, inputs) in &empty_cases {
+            both(term, inputs);
+        }
+        // Each of the 12 cases of the first list is asked 4 times (2 outcomes, 2 values of
+        // fails_kept), and none of the second is read; at least the 8 cases that order a name
+        // against a literal or another name are read by `linear_order` itself.
+        println!("{reads} of 48 read by linear_order");
+        assert!(reads >= 32, "only {reads} of 48 read by linear_order");
+    }
+
     /// An arm of a two-name disjunction, `v - n >= 5` over two ranges, is read from the ends
     /// of the domains, not by the solver (PERF-case-list-setup-constant): `v` from 0, `n` in
     /// `0..=10` give `v >= 5`, and `n <= v - 5` is not exact.
