@@ -63,20 +63,24 @@ if [ -n "$rtself" ]; then
   # waits while another has it mounted, so beside list short spent list's time (30 to 57 s) out
   # of its own 60 s (killed at 60 s at load 52 on 2026-11-20; 6 to 11 s alone). select and table
   # reuse list's table and mount no clone, as does except after table, so short runs beside them.
+  # fresh, copy, trace and nobus each start cargo several times, and cargo lets one process at a
+  # time hold its package cache: started at once beside list's chain, they waited on each other
+  # and on it ("Blocking waiting for file lock on package cache"), and fresh, copy and trace were
+  # killed at 60 s in b22-small15's two checks and b22-tests9's three on 2026-11-24 (hm3 and hm4,
+  # load under 2; on 2026-11-23 all passed beside it). One after another on hm3, with nothing
+  # beside them, they took 85 (with a rebuild), 23, 45 and 41 s, with no wait on the lock in the
+  # last three; in one chain of their own beside list's, fresh, copy and trace were still killed.
+  # So they run after list's chain, one after another, each under its own limit as before; the
+  # chain goes on past a failed part, so each part's verdict is read (FAIL-rt-parts-cargo-lock).
   (
-    (rt_part list && {
-      rt_part short &
-      rt_part select && rt_part table && rt_part except && rt_part benches
-      wait
-    }) &
-    # fresh, copy, trace and nobus each start cargo several times, and cargo lets one process at a
-    # time hold its package cache: started at once, they waited on each other ("Blocking waiting
-    # for file lock on package cache") and all four were killed at 60 s, in b22-small15's two
-    # checks and b22-tests9's two on 2026-11-24 (hm3, load under 2). One after another on hm3 they
-    # took 85 (with a rebuild), 23, 45 and 41 s, with no wait on the lock in the last three. So
-    # they run in one chain beside list's, each part still under its own limit, and the chain
-    # goes on past a failed part, so each part's verdict is read.
-    (for p in fresh copy trace nobus; do rt_part "$p"; done) &
+    (
+      rt_part list && {
+        rt_part short &
+        rt_part select && rt_part table && rt_part except && rt_part benches
+        wait
+      }
+      for p in fresh copy trace nobus; do rt_part "$p"; done
+    ) &
     for p in concurrent warm; do rt_part "$p" & done
     wait
   ) &
