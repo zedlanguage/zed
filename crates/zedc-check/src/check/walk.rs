@@ -20583,7 +20583,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// signature, which can hold an atom the fixed program does not give: `2r^(n - 5)` for
     /// `2^(n - 5)` carries `rat | #divByZero`, though the base written is not zero and
     /// `m.stdout <- String(2r^(n - 5));` checks; a push would refuse that atom and drop a fix
-    /// that works (test `l01_29_diagnostics::explained::each_rejection_explains_itself_and_offers_its_repairs`).
+    /// that works (test
+    /// `l01_29_diagnostics::explained::each_rejection_explains_itself_and_offers_its_repairs`).
     ///
     /// Complexity tradeoff: one trial push per type carried, each O(the value's type) as
     /// [`Self::pushed`] is; the fixes of one type are checked together, as at a construct
