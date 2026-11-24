@@ -34,8 +34,9 @@
 //!
 //! Tests: `tests::quotients_beside_the_variable_match_enumeration` (random formulas against
 //! enumeration over the bounds), `tests::four_pairs_with_a_sum_of_their_quotients_are_decided`,
-//! and end to end `l01_38_omega_test::one_scope::four_pairs_of_one_symbol_and_a_sum_of_their_quotients_have_a_point`
-//! and `one_scope::the_unit_of_seed_4972743790605253739_is_answered_as_its_bodies_read`.
+//! and end to end, in `l01_38_omega_test::one_scope`,
+//! `four_pairs_of_one_symbol_and_a_sum_of_their_quotients_have_a_point` and
+//! `the_unit_of_seed_4972743790605253739_is_answered_as_its_bodies_read`.
 
 use super::*;
 use zed_collections::intervals;
@@ -43,23 +44,36 @@ use zed_collections::intervals;
 /// A set of integers `t`: a normal list of closed intervals, `None` an unbounded end.
 type TSet = Vec<(Option<Int>, Option<Int>)>;
 
+/// [`solve_modular_or_scaled`]'s answer to `f`, or, when it declines, the period sweep's
+/// ([`solve`]). The sweep runs only where both earlier solvers decline, so every formula they
+/// accept is answered as before. This fallback is written here, not in `scaled.rs`, so that
+/// `scaled.rs` names nothing of this file and the two files form no import cycle (test
+/// `s_01f_import_graph`).
+pub(crate) fn solve_modular_scaled_or_swept(
+    f: &Formula,
+    want_model: bool,
+) -> Option<Option<Model>> {
+    solve_modular_or_scaled(f, want_model).or_else(|| solve(f, want_model))
+}
+
 /// Decides `f` by Lemma C, or `None` when `f` is outside its shape or the sweep would cost more
 /// than [`SWEEP_SWITCHOVER`] units. Shape: the top-level definition rows ([`read_shape`],
 /// [`orient`]) are all on one variable `x` (no row on another row's quotient), and every
 /// constraint names only `x` and the rows' quotients and remainders. It runs where
-/// [`solve_modular`] and [`super::solve`] decline ([`solve_modular_or_scaled`]).
+/// [`solve_modular`] and [`super::solve`] decline ([`solve_modular_scaled_or_swept`]).
 // Complexity tradeoff: the sweep costs O(L * W) for `L` the lcm of the moduli and `W` the sizes
 // of the sets folded at one residue (at most the constraints times the nodes of the formula, on
 // a formula whose disjunctions keep many intervals), and `L` may be exponential in the number of
 // coprime moduli. Naive: none decides these formulas; before, they went to the general path,
 // which refused some (`Growth` on the row's four pairs at 7b58d316e; `Shadows` on 7 of 3000
 // random formulas of `tests::unbounded_quotient_formulas_agree_with_decide` at seed
-// 16937151135935670534 on 2cf833851, none of them with the sweep). Used: the sweep where its count of units (constraints read and
-// intervals made, over every residue) stays within [`SWEEP_SWITCHOVER`], the switchover this
-// module measured for its residue sweep (at its definition); past it the formula goes to the
-// general path as before, so no answer given before changes. Not measured for this sweep: the
-// cost of one unit here (one interval made or one constraint read, each a few `Int` operations)
-// is taken to be near that of a residue piece there, by the kind of work, not by a measurement.
+// 16937151135935670534 on 2cf833851, none of them with the sweep). Used: the sweep where its
+// count of units (constraints read and intervals made, over every residue) stays within
+// [`SWEEP_SWITCHOVER`], the switchover this module measured for its residue sweep (at its
+// definition); past it the formula goes to the general path as before, so no answer given
+// before changes. Not measured for this sweep: the cost of one unit here (one interval made or
+// one constraint read, each a few `Int` operations) is taken to be near that of a residue piece
+// there, by the kind of work, not by a measurement.
 // Each unit is also charged to the question's meter (`meter::charge_pieces`).
 pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     let conjuncts = f.conjunct_list();

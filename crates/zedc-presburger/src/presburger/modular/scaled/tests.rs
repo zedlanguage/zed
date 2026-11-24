@@ -103,9 +103,10 @@ fn has_point(f: &Formula, divs: &[Div], xs: impl Iterator<Item = i64>) -> bool {
 }
 
 /// Checks `f` against `want`: [`decide`](crate::presburger::decide), the checker's entry, must
-/// give `want`, and so must [`solve_modular_or_scaled`] with and without a model when it
-/// answers; a model must be a point of `f`. Returns whether [`solve_modular_or_scaled`]
-/// answered. It may decline a formula whose remainders, once rewritten, are of `x` alone:
+/// give `want`, and so must [`sweep::solve_modular_scaled_or_swept`] (the chain the checker
+/// asks: [`solve_modular_or_scaled`], then the period sweep) with and without a model when it
+/// answers; a model must be a point of `f`. Returns whether the chain answered. It may decline
+/// a formula whose remainders, once rewritten, are of `x` alone:
 /// [`solve_modular_whole`] declines some of those, written so from the start, before and after
 /// this row (seed 7293238915329919861 case 40, `x mod 2`, `x mod 4` and `x mod 9` under a
 /// negation), and the general path decides them.
@@ -115,20 +116,20 @@ fn check(f: &Formula, want: bool, what: &str) -> bool {
         Ok(want),
         "{what}: decide\n{f}"
     );
-    match solve_modular_or_scaled(f, true) {
+    match sweep::solve_modular_scaled_or_swept(f, true) {
         Some(Some(m)) => assert!(want && f.holds(&m), "{what}: point {m:?} of\n{f}"),
         Some(None) => assert!(!want, "{what}: no point found, but one exists, in\n{f}"),
         None => return false,
     }
     assert_eq!(
-        solve_modular_or_scaled(f, false).map(|m| m.is_some()),
+        sweep::solve_modular_scaled_or_swept(f, false).map(|m| m.is_some()),
         Some(want),
         "{what} without a model\n{f}"
     );
     true
 }
 
-/// [`check`], and [`solve_modular_or_scaled`] must answer.
+/// [`check`], and the chain it asks must answer.
 fn check_answered(f: &Formula, want: bool, what: &str) {
     assert!(check(f, want, what), "{what}: declined\n{f}");
 }
@@ -1143,7 +1144,7 @@ fn unbounded_quotient_formulas_agree_with_decide() {
         divs.truncate(4);
         let lits = random_part_literals(&mut rng, &divs, 3);
         let f = formula(&divs, lits, vec![]);
-        let by_module = solve_modular_or_scaled(&f, true);
+        let by_module = sweep::solve_modular_scaled_or_swept(&f, true);
         if let Some(Some(model)) = &by_module {
             assert!(f.holds(model), "seed {seed} case {case}: not a point\n{f}");
         }

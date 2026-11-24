@@ -1435,8 +1435,9 @@ pub fn without_modular_empty_check<T>(run: impl FnOnce() -> T) -> T {
     out
 }
 
-/// [`modular::scaled::solve_modular_or_scaled`]'s answer to `f` ([`modular::solve_modular`]'s,
-/// or on its decline the scaled rewrite's), or `None` when it gives none or is switched off
+/// [`modular::scaled::sweep::solve_modular_scaled_or_swept`]'s answer to `f`
+/// ([`modular::solve_modular`]'s, or on its decline the scaled rewrite's, or on its decline the
+/// period sweep's), or `None` when it gives none or is switched off
 /// ([`with_modular_empty_checked`]). In a run under [`with_modular_empty_checked`], each answer
 /// that `f` has no point is asked again of the path without the modular solver, and the two
 /// answers are recorded.
@@ -1444,7 +1445,7 @@ fn modular_answer(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     if MODULAR_CHECK.with(|c| c.borrow().as_ref().is_some_and(|c| c.off)) {
         return None;
     }
-    let found = modular::scaled::solve_modular_or_scaled(f, want_model)?;
+    let found = modular::scaled::sweep::solve_modular_scaled_or_swept(f, want_model)?;
     if found.is_none() && MODULAR_CHECK.with(|c| c.borrow().is_some()) {
         // The check is off while the path without the modular solver is asked, and on again
         // when `On` is dropped, also when that path is left by an unwind.

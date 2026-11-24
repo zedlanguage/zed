@@ -2,11 +2,10 @@
 source: tests/steps/m0_12_refusal_census/mod.rs
 expression: programs_piece(15)
 ---
-Growth: 6
+Growth: 5
 
 l01_29_diagnostics::refused_warning::a_batch_prints_what_each_file_prints_alone#dbb4f117	1:158	warning	Growth	Cannot find exactly which values `w` can take here.
 l01_29_diagnostics::refused_warning::a_batch_prints_what_each_file_prints_alone#dbb4f117	1:158	warning	Growth	Cannot find exactly which values `x` can take here.
 l01_29_diagnostics::refused_warning::a_batch_prints_what_each_file_prints_alone#dbb4f117	1:158	warning	Growth	Cannot find exactly which values `y` can take here.
 l01_29_diagnostics::refused_warning::a_batch_prints_what_each_file_prints_alone#dbb4f117	1:158	warning	Growth	Cannot find exactly which values `z` can take here.
-l01_38_presburger::one_scope::each_answer_through_a_projection_kept_over_pairs_is_the_answer_of_the_relation_whole#51305434	6:1	rejected	Growth	zedc could not decide whether the condition of `p2`, written `v2(x: x - 2) == 7 && p1(x: x + 1) && x < 30`, can be true for whole-number values of `x`, which it works out for every test function: to find whole numbers that meet these conditions, the checker removes one variable at a time, putting in place of the conditions on it conditions on the variables left. Here four variables or more are left, and removing any one of them would leave more conditions than there are now, so the work could grow without end. The checker stopped there, with no values found and none ruled out.
 l01_39_reduced_product::refused::two_refused_arms_joined_give_both_warnings_in_one_order#d411659f	1:210	warning	Growth	Cannot find exactly which values meet the conditions here.

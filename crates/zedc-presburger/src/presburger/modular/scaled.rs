@@ -32,7 +32,7 @@
 
 use super::*;
 
-mod sweep;
+pub(crate) mod sweep;
 #[cfg(test)]
 mod tests;
 
@@ -659,15 +659,13 @@ fn remainder_values(c: &Con, m: &Int) -> ResidueSet {
     res_normalize(vec![(lo, hi)], m)
 }
 
-/// [`solve_modular`]'s answer to `f`, or, when it declines, [`solve`]'s, or, when that declines
-/// too, the period sweep's ([`sweep::solve`], FAIL-omega-pairs-4972743790605253739). Each runs
-/// only when the ones before it decline, so every formula an earlier one accepts is answered as
-/// before. The fallback is written here, not in [`solve_modular`], so that `modular.rs` names
-/// nothing of this file and the two files form no import cycle (test `s_01f_import_graph`).
+/// [`solve_modular`]'s answer to `f`, or, when it declines, [`solve`]'s. [`solve`] runs only
+/// when [`solve_modular`] declines, so every formula that one accepts is answered as before.
+/// The fallback is written here, not in [`solve_modular`], so that `modular.rs` names nothing
+/// of this file and the two files form no import cycle (test `s_01f_import_graph`). The period
+/// sweep (`sweep.rs`) is the next fallback, written there for the same reason.
 pub(crate) fn solve_modular_or_scaled(f: &Formula, want_model: bool) -> Option<Option<Model>> {
-    solve_modular(f, want_model)
-        .or_else(|| solve(f, want_model))
-        .or_else(|| sweep::solve(f, want_model))
+    solve_modular(f, want_model).or_else(|| solve(f, want_model))
 }
 
 /// A point of `f` found by [`solve_modular_or_scaled`], or `None` when `f` has no point or lies
@@ -690,8 +688,8 @@ pub(crate) fn point_by_structure(f: &Formula) -> Option<Model> {
 /// [`def_row`]); each quotient and remainder is defined by one row; the dividend `t` of every
 /// row is one variable `x` (defined by no row); a quotient occurs in no other constraint; a
 /// remainder occurs only in one-term constraints; every other constraint names at most `x`.
-/// A formula declined here goes on to [`sweep::solve`] ([`solve_modular_or_scaled`]), which
-/// takes constraints of any number of terms on `x` and the rows' quotients and remainders.
+/// A formula declined here goes on to the period sweep (`sweep.rs`), which takes constraints of
+/// any number of terms on `x` and the rows' quotients and remainders.
 ///
 /// Rewrite. Each definition row becomes `true`; each one-term constraint on a remainder becomes
 /// the residues of `x` [`pull_back`] gives, written on a new remainder `s_n` of `x` for each

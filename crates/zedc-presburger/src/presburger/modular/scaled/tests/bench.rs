@@ -63,7 +63,10 @@ fn bench_sweep(n: usize) -> Formula {
 fn the_period_sweep_scales_in_the_constraints() {
     let inputs = scaling::inputs(N_SWEEP, bench_sweep);
     let run = |n: usize| {
-        assert_eq!(solve_modular_or_scaled(&inputs[&n], false), Some(None));
+        assert_eq!(
+            sweep::solve_modular_scaled_or_swept(&inputs[&n], false),
+            Some(None)
+        );
     };
     scaling::check("the period sweep over n constraints", N_SWEEP, run);
     let mut meter = scaling::Meter::new();
