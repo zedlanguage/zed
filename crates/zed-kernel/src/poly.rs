@@ -209,7 +209,19 @@ const DENSE_COST: f64 = 700.0;
 /// 1024 terms and 1.58 at 1024 terms of 4 words; the best one value over all eight sizes, 51.9
 /// to 53.8, leaves 1.42 there, inside the spread above, so 50 is kept. 1024 terms of 16 words
 /// did not finish its series in 300 s (POLY-square-1024-wide).
-const SQUARE_PAIR_COST: f64 = 50.0;
+///
+/// Fitted again by instructions (POLY-square-1024-wide, b22-kernel13, 2026-11-24, `crossover
+/// poly-square <terms> square <words> --exact` on the Colab VM hm1, dev profile, counted by
+/// DynamoRIO's zed_icount, so with no spread between machines; the processor times above
+/// varied 1.8 times between two VMs). Over 64, 256 and 1024 terms of 1, 4 and 16 words the
+/// windows are 9.8 to 52.3, 22.7 to 43.6, any (worst 1.054 at every value), 22.8 to 23.4,
+/// 13.4 to 40.0, 0 to 8.4, 39.3 to 40.9, 48.5 to 61.3 and 0.8 to 63.4. They do not meet: 256
+/// terms of 16 words wants at most 8.4 and 1024 terms of 4 words at least 48.5, as each pair's
+/// share of the sort grows with the term count and its product's share with the words. At 50
+/// the worst was 1.309 (64 terms of 4 words) and 1.227 (256 terms of 16 words); every value
+/// from 19 to 42 gives a worst of 1.184 (256 terms of 16 words), and at 40 the next worst are
+/// 1.069 (256 terms of 4 words), 1.054, 1.048 and 1.024, the least of that range, so 40.
+const SQUARE_PAIR_COST: f64 = 40.0;
 
 /// The units of [`LIMIT`] in one unit of `num::mul_cost`, as [`PAIR`] and [`PAIR_COST`] measure
 /// the same cost of a pair in each: about 2 ns, a word product's 16 instructions.

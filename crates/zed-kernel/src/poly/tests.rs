@@ -949,7 +949,8 @@ fn a_square_is_chosen_at_its_share() {
     };
     // Some spacing takes the dense product at its share where the whole cost would have taken
     // the sparse one (POLY-square-choice-cost); which spacing moves with `SQUARE_PAIR_COST`
-    // (gap 18 at 20, past it at 50: POLY-square-cost-sizes), so it is searched for. Both
+    // (gap 18 at 20, past it at 50: POLY-square-cost-sizes; 40 since POLY-square-1024-wide),
+    // so it is searched for. Both
     // give the same square there. The whole cost is the plan's own for a product that is not
     // a square: one coefficient 2 in place of 3 keeps every size, so the packed integers
     // too, and charges it at the whole `mul_cost`. Were the plan to charge the square
