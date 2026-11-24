@@ -129,7 +129,9 @@ fn loading_with_sites_scales() {
 /// `plan_carried::the_stored_plan_is_the_plan_worked_out_again_on_the_corpus`.
 #[test]
 fn reading_the_stored_plan_scales() {
-    let n = 5_000;
+    // 1,000 and 8,000: at 5,000 and 40,000 a phase under DynamoRIO passed the 20 s cap of a
+    // piece on an 8-core VM (job3 of b22-small13); instructions need no larger size.
+    let n = 1_000;
     let stored = scaling::inputs(n, |m| {
         let p = zedc::run::load(chain(m, "    ").as_bytes()).unwrap();
         let g = zed_native::legalize(zedc::zir::lower::lower(&p.term()).unwrap());

@@ -57,10 +57,12 @@ fn the_stored_plan_is_the_plan_worked_out_again_on_the_corpus() {
 
 /// Each byte of each stored plan of the corpus changed in turn: the read refuses it, or the
 /// re-check does, and neither the read nor making the tables and code from what was read
-/// panics.
+/// panics. A change that leaves a plan the planner makes is no damage: byte 0 is `fuse`, and
+/// with it changed the bytes hold `plan(g, false)` exactly, which is kept and runs correctly,
+/// without fusing.
 #[test]
 fn a_damaged_plan_is_refused() {
-    let (mut read, mut rechecked) = (0, 0);
+    let (mut read, mut rechecked, mut planned) = (0, 0, 0);
     for g in &corpus() {
         let start = at_start(g);
         let bytes = plan(start.graph(), true).to_bytes();
@@ -71,6 +73,10 @@ fn a_damaged_plan_is_refused() {
                 read += 1;
                 continue;
             };
+            if p == plan(start.graph(), p.fuse) {
+                planned += 1;
+                continue;
+            }
             let refused = p.recheck(start.graph());
             assert!(refused.is_err(), "byte {at} changed, and the plan was kept");
             rechecked += 1;
@@ -78,8 +84,10 @@ fn a_damaged_plan_is_refused() {
             let _ = zed_native::ir(&start, &p);
         }
     }
-    // Both checks refuse some: the read the counts and indices, the re-check the rest.
+    // Both checks refuse some: the read the counts and indices, the re-check the rest. Only the
+    // change of `fuse` leaves a plan the planner makes, one for each graph.
     assert!(read > 0 && rechecked > 0, "{read} {rechecked}");
+    assert!(planned <= 115, "{planned}");
 }
 
 /// The kinds of damage that keep every count and index of a plan in range, each made on the
@@ -225,15 +233,19 @@ fn each_kind_of_damage_is_refused_and_makes_no_panic() {
 /// read a mode for a parameter the node has no input for.
 #[test]
 fn a_callee_of_another_arity_makes_no_direct_call() {
-    use zed_kernel::term::build::{app, lam, lit, var};
-    // `(x -> x)("a")` and `((x, y) -> x)("a", "b")`: two lambdas, of 1 and 2 parameters.
-    let one = app(lam(&["x"], var("x")), vec![lit("a")]);
-    let two = app(lam(&["x", "y"], var("x")), vec![lit("a"), lit("b")]);
-    let g = lower(&zed_kernel::term::build::prim(
-        zed_kernel::term::Prim::Gt,
-        vec![one, two],
-    ))
-    .unwrap();
+    use zed_kernel::term::build::{app, lam, let_, lit, var};
+    // `f = x -> x; g = (x, y) -> x; f("a") > g("a", "b")`: two lambdas, of 1 and 2 parameters.
+    // Each is bound by a `let`, since a literal lambda applied to as many arguments as it has
+    // parameters is lowered in place, with no `apply` (`zir::lower`, `apply`).
+    let one = app(var("f"), vec![lit("a")]);
+    let two = app(var("g"), vec![lit("a"), lit("b")]);
+    let body = zed_kernel::term::build::prim(zed_kernel::term::Prim::Gt, vec![one, two]);
+    let term = let_(
+        "f",
+        lam(&["x"], var("x")),
+        let_("g", lam(&["x", "y"], var("x")), body),
+    );
+    let g = lower(&term).unwrap();
     let start = at_start(&g);
     let p = plan(start.graph(), true);
     let calls: Vec<(usize, usize, usize)> = (p.regions.iter().enumerate())

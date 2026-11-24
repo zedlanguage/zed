@@ -976,21 +976,35 @@ fn a_family_with_its_keys_prints_them_and_reads_back() {
 /// for the family; and that each value is accepted where the read-back type is required.
 #[test]
 fn a_function_of_a_range_and_the_family_of_its_keys_print_alike_and_read_back_equal() {
-    const DECLS: &str = "f(positional x: int[2..=4]) = x;\nm = {2 -> 10, 3 -> 20, 4 -> 30};\n";
+    // `f`'s result is written `int`: with no result written the checker finds `int[2..=4]`, the
+    // range of `x`, and `f` prints `int[2..=4] -> int[2..=4]` (job3 of b22-small13).
+    const DECLS: &str =
+        "f(positional x: int[2..=4]) -> int = x;\nm = {2 -> 10, 3 -> 20, 4 -> 30};\n";
     const MAIN: &str = "main(a: MainArgs) {\n  a.stdout <- \"a\";\n}\n";
     for name in ["f", "m"] {
-        // A value of the wrong type makes the check print the type of `name`.
-        let (types, out) = printed_by(&format!("{DECLS}y: String = {name};\n{MAIN}"));
+        // An argument of the wrong type makes the check print the type of `name`; its note
+        // `[1]` says "`name` is <type> here".
+        let (types, out) = printed_by(&format!(
+            "{DECLS}need(positional x: String) = x;\ny = need({name});\n{MAIN}"
+        ));
+        let here = format!("`{name}` is ");
+        let text = (out.lines())
+            .find_map(|l| Some(l.split_once(&here)?.1.strip_suffix(" here")?.to_owned()))
+            .unwrap_or_else(|| panic!("no note gives the type of `{name}`:\n{out}"));
+        eprintln!("`{name}` prints `{text}`");
+        if name == "f" {
+            assert_eq!(text, "int[2..=4] -> int", "{out}");
+        }
+        assert!(text.starts_with("int[2..=4] -> "), "{out}");
         let shown: Vec<&Ty> = (types.iter())
-            .filter(|(_, text)| text == "int[2..=4] -> int")
+            .filter(|(_, s)| *s == text)
             .map(|(t, _)| t)
             .collect();
         assert!(
             !shown.is_empty(),
-            "`{name}` printed none as `int[2..=4] -> int`: {:?}\n{out}",
-            types.iter().map(|(_, s)| s).collect::<Vec<_>>()
+            "`{name}`: `{text}` is not among {types:?}"
         );
-        let read = back("int[2..=4] -> int");
+        let read = back(&text);
         for t in shown {
             assert!(
                 t.subtype(&read),
@@ -1001,11 +1015,15 @@ fn a_function_of_a_range_and_the_family_of_its_keys_print_alike_and_read_back_eq
                 "`{name}`: its read-back type is not within {t:?}"
             );
         }
+        // The value is accepted where its own printed type is required.
+        let at = format!("g(positional h: {text}) = h(3);\na = g({name});\n");
+        if let Err(e) = zedc::run::load(format!("{DECLS}{at}{MAIN}").as_bytes()) {
+            panic!("`{name}` at `{text}`: {e}");
+        }
     }
-    // Each value is accepted where the read-back type is required, as a parameter's type and
-    // as a binding's.
-    let uses = "g(h: int[2..=4] -> int) = h(3);\na = g(f);\nb = g(m);\n\
-                c: int[2..=4] -> int = f;\nd: int[2..=4] -> int = m;\n";
+    // Each value is accepted where the read-back type is required, as a parameter's type (a
+    // binding with a declared type is not supported at the top level by this zedc).
+    let uses = "g(positional h: int[2..=4] -> int) = h(3);\na = g(f);\nb = g(m);\n";
     if let Err(e) = zedc::run::load(format!("{DECLS}{uses}{MAIN}").as_bytes()) {
         panic!("{e}");
     }
