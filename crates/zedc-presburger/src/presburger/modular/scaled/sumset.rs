@@ -131,6 +131,7 @@
 //! `tests::a_fixed_sum_leaves_the_period`, `tests::constant_sums_are_read_once`,
 //! `tests::coordinates_moved_by_the_end_blocks_are_not_copied`, and the
 //! benchmarks `bench::coordinates_moved_by_the_end_blocks_scale`,
+//! `bench::coordinates_moved_by_the_end_blocks_scale_past_the_first_modulus`,
 //! `bench::sums_over_many_coprime_moduli_scale`,
 //! `bench::sums_over_many_moduli_two_scale`, `bench::constant_sums_beside_a_dense_sum_scale`,
 //! `bench::many_sums_over_few_rows_scale`, `bench::a_sum_missing_one_residue_scale`,
@@ -146,6 +147,7 @@ use super::rows::{DefRow, Part, SumRow, point_with_sums, remainder_values};
 
 pub(super) mod tuples;
 use tuples::Tuples;
+use zed_kernel::digest::{TextMap, TextSet};
 
 #[cfg(test)]
 thread_local! {
@@ -303,9 +305,9 @@ pub(super) fn solve_by_sums(
     top: &[&Con],
     rows: &[DefRow<'_>],
     sums: &[SumRow],
-    r_of: &HashMap<Atom, usize>,
-    sum_r: &HashMap<Atom, usize>,
-    skip: &HashSet<&Con>,
+    r_of: &TextMap<Atom, usize>,
+    sum_r: &TextMap<Atom, usize>,
+    skip: &TextSet<&Con>,
     want_model: bool,
 ) -> Option<Option<Model>> {
     // Only under a question's meter (XR-presburger4 round 2 F1, Claude): the tuples reached can
@@ -329,7 +331,7 @@ pub(super) fn solve_by_sums(
             None => vec![(Int::ZERO, Int::ZERO)],
         })
         .collect();
-    let mut at_top: HashSet<&Con> = HashSet::new();
+    let mut at_top: TextSet<&Con> = TextSet::default();
     for c in top {
         if skip.contains(c) || c.lin.terms.len() != 1 {
             continue;
@@ -836,14 +838,8 @@ pub(super) fn solve_by_sums(
             if !charge((reach.len() as u64).saturating_mul(per)) {
                 return Some(None);
             }
-            if d > 0 {
-                for t in &mut reach {
-                    let mut vals = tuples.read(*t, moved);
-                    for ((v, &c), &s) in vals.iter_mut().zip(mv).zip(w0) {
-                        *v = add_mod(*v, s, radix[c]);
-                    }
-                    *t = tuples.set(*t, moved, &vals);
-                }
+            for t in &mut reach {
+                *t = tuples.map(*t, moved, |i, v| add_mod(v, w0[i], radix[mv[i]]));
             }
             if want_model {
                 levels.push(Level::Shift {
@@ -869,12 +865,17 @@ pub(super) fn solve_by_sums(
         } else {
             HashSet::new()
         };
-        let zeros = vec![0usize; d];
-        let mut group_of: HashMap<usize, usize> = HashMap::new();
+        // Keyed by tuple ids, which the interner numbers in order, not by values from the
+        // program, so the unseeded [`zed_kernel::digest::Digest`] (PERF-sumset-tuples-walks).
+        let mut group_of: zed_kernel::digest::DigestMap<usize, usize> = Default::default();
         let mut classes: Vec<(usize, Vec<Tuple>)> = Vec::new();
         for t in std::mem::take(&mut reach) {
-            let part = tuples.read(t, moved);
-            let rest = tuples.set(t, moved, &zeros);
+            // One walk reads the moved part and sets it to 0 ([`tuples::Tuples::map`]).
+            let mut part = vec![0usize; d];
+            let rest = tuples.map(t, moved, |i, v| {
+                part[i] = v;
+                0
+            });
             let at = *group_of.entry(rest).or_insert_with(|| {
                 classes.push((rest, Vec::new()));
                 classes.len() - 1
@@ -915,7 +916,7 @@ pub(super) fn solve_by_sums(
                 return Some(None);
             }
             for o in outs {
-                reach.push(tuples.set(rest, moved, &o));
+                reach.push(tuples.map(rest, moved, |i, _| o[i]));
             }
         }
         #[cfg(test)]
@@ -945,8 +946,9 @@ pub(super) fn solve_by_sums(
         slot[c] = i;
     }
     let mut values = Model::new();
+    let mut tuple = vec![0usize; read_cs.len()];
     let found = reach.iter().position(|&id| {
-        let tuple = tuples.read(id, &lit_moved);
+        tuples.read_into(id, &lit_moved, &mut tuple);
         for (j, place) in &places {
             let v = match *place {
                 Place::Moved { c, lam, b, m } => mul_add_mod(lam, tuple[slot[c]], b, m),
@@ -985,11 +987,7 @@ pub(super) fn solve_by_sums(
     let mut pairs: Vec<(Int, Int)> = Vec::new();
     for ((b, level), moved) in blocks.iter().zip(&levels).zip(&moved).rev() {
         let mut minus = |s: usize, mv: &[usize], w: &Tuple| -> usize {
-            let mut vals = tuples.read(s, moved);
-            for ((v, &c), &u) in vals.iter_mut().zip(mv).zip(w) {
-                *v = add_mod(*v, radix[c] - u, radix[c]);
-            }
-            tuples.set(s, moved, &vals)
+            tuples.map(s, moved, |i, v| add_mod(v, radix[mv[i]] - w[i], radix[mv[i]]))
         };
         let t = match level {
             Level::Shift { mv, w, t } => {

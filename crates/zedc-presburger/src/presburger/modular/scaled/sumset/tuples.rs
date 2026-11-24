@@ -56,6 +56,7 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use zed_collections::intern::Interner;
+use zed_kernel::digest::TextState;
 
 #[cfg(test)]
 thread_local! {
@@ -98,7 +99,13 @@ pub(super) struct Tuples {
     /// The position (in the order of the leaves) of each coordinate, and the coordinate at each.
     pos: Vec<usize>,
     at: Vec<usize>,
-    nodes: Interner<(usize, usize)>,
+    /// Hashed by [`TextState`] (foldhash, seeded per table), not the standard map's SipHash-1-3,
+    /// which costs several times as many instructions on a pair of words; a node is looked up at
+    /// every inner node a block rebuilds (PERF-sumset-tuples-walks). The ids do not depend on the
+    /// hasher (the interner numbers pairs in the order first met), so neither does any answer.
+    /// The values at the leaves come from the program's constants, so the hasher is the seeded
+    /// one, not the unseeded [`zed_kernel::digest::Digest`] (see its `DigestMap`: hash flooding).
+    nodes: Interner<(usize, usize), TextState>,
 }
 
 impl Tuples {
@@ -201,50 +208,69 @@ impl Tuples {
         go(self, self.root, 0, vals)
     }
 
-    /// The values of the coordinates of `m` in tuple `id`, in the order of the block's list.
-    /// O([`Tuples::visits`]).
-    pub(super) fn read(&self, id: usize, m: &Moved) -> Vec<usize> {
-        fn go(t: &Tuples, s: Option<usize>, r: usize, ps: &[usize], out: &mut Vec<usize>) {
+    /// Writes the value of each coordinate of `m` in tuple `id` to `out` at its index in the
+    /// block's list (`out` at least that long). One walk, O([`Tuples::visits`]), nothing
+    /// allocated, so a caller reading many tuples reuses one `out`.
+    pub(super) fn read_into(&self, id: usize, m: &Moved, out: &mut [usize]) {
+        fn go(t: &Tuples, s: Option<usize>, r: usize, ps: &[usize], ord: &[usize], out: &mut [usize]) {
             let Some(s) = s else {
-                out.push(r);
+                out[ord[0]] = r;
                 return;
             };
             let sp = t.splits[s];
             let (l, rr) = t.nodes[r];
             let k = ps.partition_point(|&p| p < sp.mid);
             if k > 0 {
-                go(t, sp.left, l, &ps[..k], out);
+                go(t, sp.left, l, &ps[..k], &ord[..k], out);
             }
             if k < ps.len() {
-                go(t, sp.right, rr, &ps[k..], out);
+                go(t, sp.right, rr, &ps[k..], &ord[k..], out);
             }
         }
-        let mut by_pos = Vec::with_capacity(m.ps.len());
         if !m.ps.is_empty() {
-            go(self, self.root, id, &m.ps, &mut by_pos);
+            go(self, self.root, id, &m.ps, &m.ord, out);
         }
-        let mut out = vec![0; m.ps.len()];
-        for (&i, v) in m.ord.iter().zip(by_pos) {
-            out[i] = v;
-        }
-        out
     }
 
-    /// The id of tuple `id` with the coordinates of `m` set to `vals` (in the order of the
-    /// block's list). O([`Tuples::visits`]), a node interned per inner node visited.
-    pub(super) fn set(&mut self, id: usize, m: &Moved, vals: &[usize]) -> usize {
-        fn go(t: &mut Tuples, s: Option<usize>, r: usize, ps: &[usize], vs: &[usize]) -> usize {
+    /// The id of tuple `id` with each coordinate of `m` replaced by `f(i, v)`, `i` its index in
+    /// the block's list and `v` its value in `id` (PERF-sumset-tuples-walks). One walk reads and
+    /// rebuilds: a block that shifts a tuple passes `v + w_i`, one that takes a tuple apart
+    /// records `v` and passes 0, one that builds a tuple from a rest passes the new value. The
+    /// two walks and three vectors it replaced (`read`, then `set` with a vector in the order of
+    /// the leaves) ran 104.5M instructions at `k = 120` on `tests::spanning_rows(k, 13)`, more
+    /// than the 81.5M of the vectors of b71e720ba (b22-period1, jobs m13 and neg13); with this
+    /// walk and the foldhash maps of `scaled`, 66.4M (b22-period2, job new2).
+    /// O([`Tuples::visits`]); an inner node whose children come back unchanged is returned as it
+    /// is, not interned again: its id is the one interned for that pair before, since the
+    /// interner gives each pair one id. So a block whose `f` leaves a value as it was (a shift by
+    /// 0, a rest already 0) costs no lookup at the nodes above it.
+    pub(super) fn map(&mut self, id: usize, m: &Moved, mut f: impl FnMut(usize, usize) -> usize) -> usize {
+        fn go<F: FnMut(usize, usize) -> usize>(
+            t: &mut Tuples,
+            s: Option<usize>,
+            r: usize,
+            ps: &[usize],
+            ord: &[usize],
+            f: &mut F,
+        ) -> usize {
             let Some(s) = s else {
-                return vs[0];
+                return f(ord[0], r);
             };
             let sp = t.splits[s];
-            let (mut l, mut rr) = t.nodes[r];
+            let (l0, r0) = t.nodes[r];
             let k = ps.partition_point(|&p| p < sp.mid);
-            if k > 0 {
-                l = go(t, sp.left, l, &ps[..k], &vs[..k]);
-            }
-            if k < ps.len() {
-                rr = go(t, sp.right, rr, &ps[k..], &vs[k..]);
+            let l = if k > 0 {
+                go(t, sp.left, l0, &ps[..k], &ord[..k], f)
+            } else {
+                l0
+            };
+            let rr = if k < ps.len() {
+                go(t, sp.right, r0, &ps[k..], &ord[k..], f)
+            } else {
+                r0
+            };
+            if (l, rr) == (l0, r0) {
+                return r;
             }
             copied(2);
             t.nodes.intern((l, rr))
@@ -252,7 +278,6 @@ impl Tuples {
         if m.ps.is_empty() {
             return id;
         }
-        let vs: Vec<usize> = m.ord.iter().map(|&i| vals[i]).collect();
-        go(self, self.root, id, &m.ps, &vs)
+        go(self, self.root, id, &m.ps, &m.ord, &mut f)
     }
 }

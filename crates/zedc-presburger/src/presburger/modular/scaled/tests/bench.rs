@@ -81,11 +81,13 @@ fn constant_sums_beside_a_dense_sum_scale() {
 /// modulus 13 (PERIOD-B-P1-intern-rest): `k + 1` coordinates, `k` middle blocks each moving one
 /// of them, and `4 min(k + 1, m1)` tuples reached, 52 at both sizes, so that `k` is the one
 /// thing that grows. With `m1 = 61` the tuples reached grow too, 60 to 244, and `k` blocks over
-/// them took 16.13 times the instructions (jobs g1 and diag3 of b22-period1). Held as vectors
+/// them took 16.13 times the instructions (jobs g1 and diag3 of b22-period1), output-sensitive:
+/// see [`coordinates_moved_by_the_end_blocks_scale_past_the_first_modulus`]. Held as vectors
 /// of `C` words, each middle block read and wrote every tuple whole, Θ(k²) words (on
 /// b71e720ba 12.10 times the bytes, job neg13); held as ids of a weighted hash-consed tree
 /// ([`sumset`]'s `tuples`), a middle block visits the one coordinate's path near the root,
-/// linear in `k` (7.70 times the instructions, 7.71 times the bytes, job m13). The words
+/// linear in `k` (7.70 times the instructions, 7.71 times the bytes, job m13; 7.67 times and
+/// 66.4M instructions at `k = 120` after PERF-sumset-tuples-walks, job new2). The words
 /// written are counted at `m1 = 3` by `coordinates_moved_by_the_end_blocks_are_not_copied`.
 #[test]
 fn coordinates_moved_by_the_end_blocks_scale() {
@@ -101,6 +103,31 @@ fn coordinates_moved_by_the_end_blocks_scale() {
 /// The size of [`coordinates_moved_by_the_end_blocks_scale`], `k = 15` and 120 (the sizes of
 /// META4 order 8).
 const N_SPANNING: usize = 15;
+
+/// [`spanning_rows`] at `k = n` and `8n` with first modulus `m1 = 61` (the `m1 = 61` case of
+/// PERIOD-B-P1-intern-rest). The work is output-sensitive: Θ(sum_b R_b U_b), `R_b` the tuples
+/// reached before block `b` and `U_b` the nodes on the paths of the coordinates it moves
+/// ([`sumset`]'s list of costs). From `k = 15` to 120 the tuples reached grow with `k`, 60 to
+/// 244 (`sumset::MOST_HELD`, 4.07 times), and the instructions grew 16.1 times (job base1 of
+/// b22-period2 on 60c898067: 14.83M at `k = 15`, 238.8M at 120); divided by the most tuples
+/// held, 3.96 times for 8 times `k`, so the walk is not superlinear: the excess over 10.5 is
+/// the output's growth. From `k = 64` the tuples reached are 244 at both sizes, and
+/// `k` is the one thing that grows: there the work is linear in `k` (6.28 times from 64 to
+/// 512 on 60c898067, job base1).
+#[test]
+fn coordinates_moved_by_the_end_blocks_scale_past_the_first_modulus() {
+    let inputs = scaling::inputs(N_SPANNING_61, |n| spanning_rows(n, 61).2);
+    scaling::check_order(
+        "k coordinates moved by the end blocks, 244 tuples reached",
+        N_SPANNING_61,
+        1,
+        |n| by_sumset(&inputs[&n], |got| matches!(got, Some(Some(_)))),
+    );
+}
+
+/// The size of [`coordinates_moved_by_the_end_blocks_scale_past_the_first_modulus`]: `k = 64`
+/// and 512, both past `m1 - 1 = 60`, so that `4 m1 = 244` tuples are reached at both.
+const N_SPANNING_61: usize = 64;
 
 // Gemini's P-A ([`rows_of_one_remainder`]) and Codex's unread remainders
 // ([`unread_remainders`]) have no wall-time benchmark here (META4 order 2 of b22-presburger6):

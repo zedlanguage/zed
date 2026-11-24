@@ -31,6 +31,7 @@
 //! `l01_38_presburger::checker::a_question_over_one_scaled_variable_is_decided`.
 
 use super::*;
+use zed_kernel::digest::{TextMap, TextSet};
 
 mod rows;
 mod sumset;
@@ -49,7 +50,7 @@ fn read_sum(
     c: &Con,
     x: &Atom,
     q_row: &HashMap<&Atom, usize>,
-    r_of: &HashMap<Atom, usize>,
+    r_of: &TextMap<Atom, usize>,
     bounds: &HashMap<Atom, (Option<Int>, Option<Int>)>,
 ) -> Option<SumRow> {
     if c.rel != Rel::Eq {
@@ -677,7 +678,11 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     if product {
         return None;
     }
-    let mut r_of: HashMap<Atom, usize> = HashMap::new();
+    // The maps and sets of atoms and constraints below are looked up only, never iterated where
+    // the order reaches a result, so they hash with the seeded foldhash (`TextState`), not
+    // SipHash-1-3, which took 22% of the instructions of `tests::spanning_rows(120, 13)`
+    // (callgrind, job prof of b22-period2, PERF-sumset-tuples-walks).
+    let mut r_of: TextMap<Atom, usize> = TextMap::default();
     for (i, shape) in shapes.iter().enumerate() {
         if let Some(r) = &shape.r
             && r_of.insert(r.clone(), i).is_some()
@@ -685,7 +690,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             return None;
         }
     }
-    let ends: HashSet<&Atom> = shapes
+    let ends: TextSet<&Atom> = shapes
         .iter()
         .flat_map(|s| s.ends.iter().map(|(a, _)| a))
         .collect();
@@ -693,7 +698,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         return None;
     }
     // The atoms of the tree that a constraint other than a row names; at most one may be `x`.
-    let shape_cons: HashSet<&Con> = shapes.iter().map(|s| s.con).collect();
+    let shape_cons: TextSet<&Con> =shapes.iter().map(|s| s.con).collect();
     // The top-level equations of three or more terms over the rows' parts: each must read as a
     // [`SumRow`] once `x` is known, or the formula is declined (as it was before
     // PRES-one-variable-sum-of-quotients, so no earlier answer changes).
@@ -711,7 +716,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                     .any(|a| ends.contains(a) || r_of.contains_key(a))
         })
         .collect();
-    let sum_cons: HashSet<&Con> = sum_list.iter().copied().collect();
+    let sum_cons: TextSet<&Con> =sum_list.iter().copied().collect();
     let mut named: Option<&Atom> = None;
     let mut two_named = false;
     f.walk(&mut |c| {
@@ -748,7 +753,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         sums.push(read_sum(c, &x, &q_row, &r_of, &bounds)?);
     }
     // Each sum's quotient and remainder are its own: no other sum names them.
-    let mut sum_r: HashMap<Atom, usize> = HashMap::new();
+    let mut sum_r: TextMap<Atom, usize> = TextMap::default();
     let mut sum_atoms: HashSet<&Atom> = HashSet::new();
     for (j, sum) in sums.iter().enumerate() {
         if !sum_atoms.insert(&sum.q) {
@@ -761,7 +766,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             sum_r.insert(r.clone(), j);
         }
     }
-    let def_cons: HashSet<&Con> = rows.iter().map(|row| row.con).collect();
+    let def_cons: TextSet<&Con> =rows.iter().map(|row| row.con).collect();
     let allowed = |c: &Con, at_top: bool| -> bool {
         if at_top && (def_cons.contains(c) || sum_cons.contains(c)) {
             return true;
@@ -797,7 +802,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     }
     // Sums over coprime moduli: decided over the sums' remainders ([`sumset`]), which does not
     // write the residues of `x` whose number is the product of the moduli.
-    let skip: HashSet<&Con> = def_cons.union(&sum_cons).copied().collect();
+    let skip: TextSet<&Con> =def_cons.union(&sum_cons).copied().collect();
     if let Some(answer) =
         sumset::solve_by_sums(f, &x, &top, &rows, &sums, &r_of, &sum_r, &skip, want_model)
     {
