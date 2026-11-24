@@ -16,7 +16,14 @@
 //! its measurements to that file.
 //!
 //! Work is counted in instructions retired, in user mode, by this thread and the threads it
-//! starts. The count does not change with the load on the machine. Elapsed time and processor
+//! starts, each counted once it has ended. So a run joins each thread it starts by its handle
+//! (`JoinHandle::join`, which waits for the thread to end) before it returns: the end of
+//! `std::thread::scope` waits only until the thread's closure has returned, and the thread may
+//! still be running then, so its count may be read before it is added. Under zed_icount on a
+//! Colab VM (FAIL-print-ring-bench-ratio, 2026-11-24) a bench whose second half ran on a scoped
+//! thread with no `join` counted 509,579,931 instructions at n under `--exact` and 1,007,965,735
+//! under `--exact --nocapture`, the same binary on the same VM: half the run was lost or kept by
+//! the timing of the thread's end. The count does not change with the load on the machine. Elapsed time and processor
 //! time both do, and by more for the larger run: at load 55 with half the load copying memory,
 //! a linear walk of 1000 and 8000 terms took 96 times as long by the clock and 44 times by
 //! processor time, because the larger run lost the caches and was preempted, and it retired

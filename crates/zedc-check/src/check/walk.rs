@@ -17081,7 +17081,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             NeedKind::Into { what, ty } => {
                 if !self.reorder_forwarded(n, &on, ty) {
                     let from = self.call_frames.last().and_then(|f| f.named(&n.on));
-                    self.passes_into(&on, ty, what, from, span);
+                    let rest = self.bubbled_into(n, &on, ty, what, span);
+                    self.passes_into(rest.as_ref().unwrap_or(&on), ty, what, from, span);
                     self.coerce_forwarded(n, &on, ty);
                 }
                 Ty::empty()
@@ -17566,6 +17567,37 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.need_passed
             .push((what.into(), Vec::new(), extra, (sites, with)));
         true
+    }
+
+    /// At need `n`, a value of `on` passed by `what` at a parameter of the closed type `ty`: the
+    /// loose atoms of `on` that `ty` does not hold bubble out of the call in the body that
+    /// passes it (DESIGN.md sec:failure, "atoms bubble out of an argument", rule 6 of
+    /// sec:type_resolution), as they do where the argument is written at the call, `h(y: #a)`
+    /// with `h(y: f64 -> f64)`. They go where the body sends them from the use
+    /// ([`Self::fate_along`]), as [`Self::gives_made`] sends the atoms a use makes: rejected
+    /// where the body stops them, else added to the call's result ([`Self::pass_needs`]). The
+    /// rest of `on` is returned, to be passed at `ty` as before; `None` when `on` holds no such
+    /// atom, or when the body's sites have no fate, and then `on` is passed whole and refused
+    /// as before. Before (row FAIL-atom-into-arrow-param-not-passed-out), `g(x: #a, c: true)`
+    /// with `g(x, c: bool) = (if c { t0(n: x) } else { 0 })` and `t0(n: f64 -> f64) = 1` was
+    /// refused with "`t0` does not take #a, only f64 -> f64". Cost: one set difference, and
+    /// where an atom bubbles, the fate of the need's sites, O(d) for d calls on its path.
+    /// Tests: l01_26 printed_param_types `an_atom_passed_on_to_an_arrow_parameter_bubbles_out`.
+    fn bubbled_into(&mut self, n: &Need, on: &Ty, ty: &Ty, what: &str, span: Span) -> Option<Ty> {
+        let extra = &on.loose() - &ty.loose();
+        if extra.is_empty() {
+            return None;
+        }
+        let sites = Self::sites_of(n);
+        let f = self.fate_along(&sites)?;
+        self.stopped_in_body(what, &f, &(&extra - &f.drop), &sites, span);
+        let reaching = &extra - &f.stopped();
+        if !reaching.is_empty() {
+            let with = on.of_piece(&Piece::Set(reaching.clone()));
+            self.need_passed
+                .push((what.into(), Vec::new(), reaching, (sites, with)));
+        }
+        Some(on.without(&extra))
     }
 
     /// Whether what a use gave in a replay, `got`, lies within the use's result `r`, binding

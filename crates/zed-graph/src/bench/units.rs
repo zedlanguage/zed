@@ -153,14 +153,22 @@ fn draw_on_threads(m: usize, threads: usize, draw: &(dyn Fn() -> u64 + Sync)) {
         return;
     }
     let all_started = std::sync::Barrier::new(threads);
+    // Each thread joined by its handle, which waits for it to end, so that its instructions are
+    // counted: the end of the scope alone does not wait for that (`scaling`, the module comment;
+    // FAIL-print-ring-bench-ratio).
     std::thread::scope(|s| {
-        for _ in 0..threads {
-            s.spawn(|| {
-                all_started.wait();
-                for _ in 0..m / threads {
-                    std::hint::black_box(draw());
-                }
-            });
+        let hs: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    all_started.wait();
+                    for _ in 0..m / threads {
+                        std::hint::black_box(draw());
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().unwrap_or_else(|p| std::panic::resume_unwind(p));
         }
     });
 }

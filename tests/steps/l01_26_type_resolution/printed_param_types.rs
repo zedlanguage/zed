@@ -38,6 +38,29 @@ fn accepted(src: &str) -> bool {
     type_errors(src).is_empty()
 }
 
+/// Row FAIL-atom-into-arrow-param-not-passed-out: a loose atom given to a parameter of no
+/// written type, which the body passes on to a parameter of an arrow type, passes out of the
+/// call as it does where it is given to the arrow parameter itself: `g(x: #a, c: true)` checks
+/// as `h(y: #a)` does, for `f64 -> f64` and for `int ->? int` (red before: "`t0` does not take
+/// #a, only f64 -> f64"). Negative control: a value of another arrow type is refused at both.
+#[test]
+fn an_atom_passed_on_to_an_arrow_parameter_bubbles_out() {
+    for arrow in ["f64 -> f64", "int ->? int"] {
+        let defs = format!(
+            "t0(n: {arrow}) = 1;\ng(x, c: bool) = (if c {{ t0(n: x) }} else {{ 0 }});\n\
+             h(y: {arrow}) = 1;\n"
+        );
+        for call in ["g(x: #a, c: true)", "h(y: #a)"] {
+            let src = format!("{defs}a = {call};\n");
+            assert!(accepted(&src), "{src}: {:?}", type_errors(&src));
+        }
+        for call in ["g(x: (k: bool) -> k, c: true)", "h(y: (k: bool) -> k)"] {
+            let src = format!("{defs}a = {call};\n");
+            assert!(!accepted(&src), "{src}: accepted");
+        }
+    }
+}
+
 /// Definitions, function, printed type, arguments inside, arguments outside.
 type Case<'a> = (&'a str, &'a str, &'a str, &'a [&'a str], &'a [&'a str]);
 
@@ -161,15 +184,6 @@ fn random_printed_parameter_types_are_what_calls_accept() {
             "{typed}: the printed type {ty} does not check"
         );
         for v in ARGS {
-            // A loose atom passed on into a parameter of an arrow type is refused at `g`,
-            // "`t0` does not take #a, only f64 -> f64", while `h(y: f64 -> f64)` lets it pass
-            // out of the call; that difference is in how an atom passes out of an argument, not
-            // in the printed type, and is row FAIL-atom-into-arrow-param-not-passed-out.
-            // The printed type of `x` may be the meet of arrows (`Never` for two that differ),
-            // so the skip looks at the parameters `x` is passed to, not at the printed type.
-            if v.starts_with('#') && defs.contains("->") {
-                continue;
-            }
             let g_errors = type_errors(&format!("{defs}a = g(x: {v}, c: true);\n"));
             let by_g = g_errors.is_empty();
             let h_errors = type_errors(&format!("{typed}a = h(y: {v});\n"));
