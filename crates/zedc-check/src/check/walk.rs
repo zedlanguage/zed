@@ -5557,6 +5557,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                 return out.union(&acc);
             }
             let g = gives.carriers();
+            // A body of projections settles where `fold_projections` says, kept only where one
+            // more application gives a subtype, the test above (row
+            // PERF-fold-projection-fast-path); else the rounds run on.
+            if round == 0
+                && let Some(st) = step
+                && let Some(t) = self.fold_projections(st, right, &acc, &g)
+            {
+                let (a, v) = (Arg::of(t.clone()), Arg::of(values.clone()));
+                let args = match right {
+                    false => vec![Some(a), Some(v)],
+                    true => vec![Some(v), Some(a)],
+                };
+                let again = self.apply(what, &fsig, args, false, span).0;
+                if self.subtype(&again, &t) {
+                    return out.union(&t);
+                }
+            }
             let (c, _) = forms.of_in(&g, true, &known_vars, known_classes);
             if let Some(before) = canon.get(&c) {
                 break (before.clone(), gives);
@@ -6030,6 +6047,161 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         // Step 7.
         Some(1 + bc.into_iter().max().unwrap_or(0).max(0) as u64)
+    }
+
+    /// The accumulator type the rounds of [`Self::fold_dir_end`] settle at, found without
+    /// them, where the step function's body is a tuple `(e_0, ..., e_{n-1})` each part of
+    /// which is `a[c_i]` (`a` the accumulator's parameter itself, `c_i < n` an integer
+    /// literal) or does not read the accumulator (plan row PERF-fold-projection-fast-path).
+    /// `step` is the step function ([`Self::fold_step`]), `init` the start value's carriers
+    /// `A_1`, and `g` the carriers `G_1` of round 1's result, which did not settle. `None`
+    /// where the body is not such a tuple, or where `init` or `g` is not one closed row of `n`
+    /// parts with no atom, function, variable or dynamic part, at any depth for variables.
+    ///
+    /// The rounds on such a body, as `fold_dir_end` runs them. Write `I_u` for part `u` of
+    /// `init`'s one row and `K_i` for part `i` of `G_1` where `e_i` does not read `a`.
+    /// 1. Such an `e_i` has type `K_i` in every round: only the accumulator's type changes
+    ///    between rounds, and `g` holds no variable, so no class that later rounds could meet
+    ///    is shared with it (the precondition the row names, guarded here).
+    /// 2. `a[c_i]` on an accumulator of rows `r` is the join of the `r[c_i]`. The accumulator
+    ///    of round `k + 1` is `init`'s row, unless `G_k` holds it, and `G_k` (the older results
+    ///    are held by `G_k`, step 3, and dropped). So `G_{k+1}[i] = I_{c_i} | G_k[c_i]` for a
+    ///    projection while `init`'s row is kept, and `G_k[c_i]` once it is dropped, when
+    ///    `I_{c_i} <: G_k[c_i]` already; `G_{k+1}[i] = K_i` otherwise.
+    /// 3. By induction on `k`, `G_k <: G_{k+1}` part by part: `G_1[i]` is `I_{c_i}` or `K_i`,
+    ///    and `G_2[i]` is `I_{c_i} | G_1[c_i]` or `K_i`; the step of 2 is monotone.
+    /// 4. Write `V[p]` for the least types with `V[p] = I_p | K_p` where `e_p` does not read
+    ///    `a`, and `V[p] = I_p | V[c_p]` where it does. Unfolding 2, `G_k[i]` for a projection
+    ///    is the join of `I` over the first `k` parts of the path `c_i, c_{c_i}, ...` (and `K`
+    ///    of an `a`-free part met on it), so the rounds' least upper bound is
+    ///    `G∞[i] = V[c_i]` for a projection and `K_i` otherwise. The graph `p -> c_p` has one
+    ///    edge out of each projection: its strongly connected components are cycles and
+    ///    single parts, numbered by `zed_graph::components` so that edges go to lower
+    ///    numbers. Taken in increasing order, each component `C` gets the join of `I_u` (and
+    ///    `K_u` for an `a`-free `u`) over its members, joined with the `V` of each component
+    ///    an edge leaves `C` for; a cycle's members all reach each other, so they share it.
+    /// 5. The rounds return `A_1` when `G_1 <: A_1` (handled before this is called; then
+    ///    `G∞ <: A_1` too, so that case does not arise here), else the accumulator they settle
+    ///    at: `G∞` alone once `init`'s row is dropped (`A_1 <: G∞`), or `A_1 | G∞`. This
+    ///    returns the same, where the rounds end only at `G∞`, which the guard of 6 ensures.
+    ///    (The pruning of `fold_dir_end` runs on each round that does not settle, with that
+    ///    round's result, so `init`'s row is dropped exactly when `A_1 <: G∞`.)
+    /// 6. The rounds end at round `k + 1` where `G_{k+1} <: A_1 | G_k`, the union of two rows.
+    ///    Read as sets of values, a product `P` held by the union of the products `I` and `Q`
+    ///    with `P` larger than `Q` in a part `j` has, for a value `x_j` of `P_j` outside `Q_j`
+    ///    and any values of its other parts, the tuple in `I`; so `P_i <: I_i` for every
+    ///    `i != j`. With `G_1 <: G_{k+1}` (step 3), every part of `G_1` but one is then in
+    ///    `init`'s. So where two parts of `G_1` are not, the rounds end only where
+    ///    `G_{k+1} <: G_k`, that is at `G∞`; otherwise this returns `None` and the rounds run.
+    ///    (`subtype` may answer no where the sets are held, which only makes the rounds go on
+    ///    to `G∞`; it never answers yes where they are not, being sound.)
+    ///
+    /// Steps 2 to 5 give the type the rounds give, not its soundness: the caller applies `f`
+    /// once more to the answer and keeps it only where the result is a subtype, the test the
+    /// rounds end by, whose soundness `fold_dir_end` proves; else it runs the rounds. So an
+    /// error in this reading can cost time or precision, never a wrong type. Tested against
+    /// the rounds on random folds (`l03_02_map_run::folds::
+    /// a_projection_fold_takes_the_type_the_rounds_give`, which writes each body once as a
+    /// tuple and once inside a block, which this does not read, so the rounds check it).
+    ///
+    /// Complexity: O(size of the body) to read it, O(n) for the components (Tarjan), and one
+    /// join per part and edge, each linear in the types joined. The rounds took `n + 1`
+    /// applications of `f` for a rotation of `n` parts, Θ(n²) at best.
+    fn fold_projections(&self, step: StepFn<'a>, right: bool, init: &Ty, g: &Ty) -> Option<Ty> {
+        let ([p0, p1], body) = step;
+        let acc = if right { p1 } else { p0 }?;
+        let ExprKind::Tuple(es) = &body.kind else {
+            return None;
+        };
+        let n = es.len();
+        let one_row = |t: &Ty| -> Option<Vec<Ty>> {
+            let [r] = &t.tuples.iter().collect::<Vec<_>>()[..] else {
+                return None;
+            };
+            let plain = t.set.is_empty()
+                && t.family.is_empty()
+                && t.fns.is_empty()
+                && t.payloads.is_empty()
+                && t.vars.is_empty()
+                && !t.dynamic;
+            (plain && !r.open() && !r.dynamic() && !r.holds_vars() && r.len() == n)
+                .then(|| r.to_vec())
+        };
+        let (i, k) = (one_row(init)?, one_row(g)?);
+        // The guard of step 6: no answer unless two or more parts grew in the first round.
+        (0..n).filter(|&p| !self.subtype(&k[p], &i[p])).nth(1)?;
+        let of_acc = |e: &Expr| {
+            matches!(
+                (&e.kind, self.t.res.uses.get(&e.span)),
+                (ExprKind::Name(_), Some(Ref::Bound(ids))) if ids.iter().any(|&b| b == acc)
+            )
+        };
+        // `reads[p]`: `Some(c_p)` for a projection, `None` for a part that does not read `a`.
+        let mut reads: Vec<Option<usize>> = Vec::with_capacity(n);
+        for e in es {
+            let c = match &e.kind {
+                ExprKind::Index(of, c) if of_acc(of) => match &c.kind {
+                    ExprKind::Int { radix, digits } => match Value::int_text(digits, *radix) {
+                        Ok(Some(Value::Int(c))) => usize::try_from(c).ok().filter(|&c| c < n),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            };
+            match c {
+                Some(c) => reads.push(Some(c)),
+                None if self.reads_binder(e, acc) => return None,
+                None => reads.push(None),
+            }
+        }
+        let out: Vec<Vec<usize>> = reads.iter().map(|c| c.iter().copied().collect()).collect();
+        let comp = zed_graph::components(&out, |&t| t);
+        let count = comp.iter().max().map_or(0, |&c| c + 1);
+        let mut members: Vec<Vec<usize>> = vec![Vec::new(); count];
+        for (p, &c) in comp.iter().enumerate() {
+            members[c].push(p);
+        }
+        let mut v: Vec<Ty> = vec![Ty::empty(); count];
+        for c in 0..count {
+            let mut t = Ty::empty();
+            for &u in &members[c] {
+                t = t.union(&i[u]);
+                match reads[u] {
+                    None => t = t.union(&k[u]),
+                    Some(cu) if comp[cu] != c => t = t.union(&v[comp[cu]]),
+                    Some(_) => {}
+                }
+            }
+            v[c] = t;
+        }
+        let parts = (0..n).map(|p| match reads[p] {
+            Some(c) => v[comp[c]].clone(),
+            None => k[p].clone(),
+        });
+        let limit = Ty::tuple(parts.collect());
+        Some(match self.subtype(init, &limit) {
+            true => limit,
+            false => init.union(&limit),
+        })
+    }
+
+    /// Whether `e` holds, at any depth, lambdas and blocks within it included, a name whose
+    /// binder is `id`.
+    fn reads_binder(&self, e: &Expr, id: usize) -> bool {
+        let mut stack = vec![e];
+        while let Some(e) = stack.pop() {
+            if let (ExprKind::Name(_), Some(Ref::Bound(ids))) =
+                (&e.kind, self.t.res.uses.get(&e.span))
+                && ids.iter().any(|&b| b == id)
+            {
+                return true;
+            }
+            zedc_syntax::ast::expr_kids(&e.kind, zedc_syntax::ast::Blocks::Enter, &mut |k| {
+                stack.push(k)
+            });
+        }
+        false
     }
 
     /// The operator of `x >< f`, `f` of type `f` and not an operator section (step L3.2;
@@ -8524,6 +8696,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                     past_f64: None,
                 });
             }
+            // On a base of unknown value the exponent keeps its class, which no use may fix to
+            // one carrier: in `f64(b) ^ (2^64)` both `f64 ^ int` and `f64 ^ f64` take it (plan
+            // row POW-domains), and its step printed the class, `int | f64`. Its value is kept
+            // for the steps alone, which then show it, "this `^` gives 2^64", as they do above
+            // (l01_29 `commands_binary::zedc_run_prints_the_type_of_an_operation_on_wide_
+            // literals_not_its_literals`, b22-checkwalk10, 2026-11-24); its type is unchanged.
+            // The same O(1) per node as above.
+            if op == BinaryOp::Pow
+                && !known_base
+                && self.level > 0
+                && y.lit.is_none()
+                && let Some(k) = self.class_of_ty(&y.ty)
+                && self.classes[self.find(k)].generic
+            {
+                _ = self.int_exponent_at(b);
+            }
             // Two generic operands, as in `1 + 2`, make a class of their own inside a
             // function: generic, it takes the carrier of what it meets, the first operand
             // taking it from a parameter of the class and the second following the first; it
@@ -8864,15 +9052,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                 };
                 let mut sig = op_sig(Operator::Binary(op));
                 // A decimal literal base with no suffix meets an `int` exponent at `rat`, its
-                // one carrier there (DESIGN.md L1.17, `0.5 ^ n`): the arrow `f32 ^ int` is for
-                // a base already an `f32`, and the literal does not take `f32` through it.
+                // one carrier there (DESIGN.md L1.17, `0.5 ^ n`): the arrows `f32 ^ int` and
+                // `f64 ^ int` are for a base already a float, and the literal takes neither
+                // carrier through them. Plan row POW-domains asks instead that such a base take
+                // the carrier a use fixes, `f64` where none does; the literal classes follow no
+                // operand that is not a literal ([`Self::lit_op_meets`]), so through `f64 ^ int`
+                // `g(0.5 ^ n)` with `g` taking a `rat` was refused (found 2026-11-24, b22-
+                // checkwalk10), and the base keeps `rat` here until they do.
                 if op == BinaryOp::Pow
                     && x.lit
                         .as_ref()
                         .is_some_and(|l| l.bare && is_decimal(&l.value))
                 {
-                    let mixed = [Ty::carrier(Carrier::F32), Ty::carrier(Carrier::Int)];
-                    sig.arrows.retain(|a| a.params != mixed);
+                    let mixed = |c| [Ty::carrier(c), Ty::carrier(Carrier::Int)];
+                    sig.arrows.retain(|a| {
+                        a.params != mixed(Carrier::F32) && a.params != mixed(Carrier::F64)
+                    });
                 }
                 // An exponent that is an operation on integer literals alone beside an `f32`
                 // base keeps both carriers of its class, `int | f32`, since `^` takes `f32 ^
@@ -12343,12 +12538,46 @@ impl<'t, 'a> Ck<'t, 'a> {
             let arrow = &s.e.arrows[s.a];
             if !s.entered {
                 s.entered = true;
+                // The lambda's own type variables (row PROOF-push-vars-a2-complete): a type
+                // variable that a parameter is written as alone, `s` in
+                // `(positional s: T, positional u: T) -> s ++ u`, and that no function around
+                // names, is bound at this arrow to the join of the types the arrow passes at
+                // the parameters written so; every written type of the lambda's parameters
+                // then reads it as that type. DESIGN.md sec:type_resolution, rule 4: `T` is a
+                // type variable, one type at each place it is written, and a lambda fits an
+                // arrow where it takes every value the arrow passes (contravariance), so the
+                // join is the least type that `T` may stand for here. Before, `written(a,
+                // false)` left `T` a variable of no class, read as `_`: the lambda was refused
+                // ("the lambda's parameter `s` is _, and `(String, String) -> String` passes
+                // String"), and a push of `s` in its body reached the arm (a2) of
+                // [`Self::push_vars`] (found by the sweep of the row, 2026-11-24). Soundness
+                // does not rest on the choice: each parameter is still checked to take what
+                // the arrow passes (`subtype` below), and the body is checked with the bound
+                // types. A variable written only inside another type, `(positional s: [T])`,
+                // gets no binding here and is refused as before.
+                // Complexity tradeoff: one more read of each written type, O(|a|), and one
+                // union per parameter written as a variable, O(p·|t|) an arrow; no
+                // unification of written types against the arrow's. Benchmark
+                // `bench::bubble::lambdas_of_their_own_type_variable_scale`: 7.93 times the
+                // instructions at 8n (n = 100, zed_icount, 2026-11-24).
+                let mut own = Binds::new();
+                for (j, o) in s.order.iter().enumerate() {
+                    let Some(a) = o.and_then(|i| s.params[i].ty.as_ref()) else {
+                        continue;
+                    };
+                    let a = self.written(a, false);
+                    if let Some(v) = a.as_var().filter(|v| !self.is_class(v)) {
+                        let t = &arrow.params[j];
+                        let u = own.get(v).map_or_else(|| t.clone(), |u| u.union(t));
+                        own.insert(v.clone(), u);
+                    }
+                }
                 for (j, o) in s.order.iter().enumerate() {
                     if let Some(i) = o {
                         let p = &s.params[*i];
                         let mut t = arrow.params[j].clone();
                         if let Some(a) = &p.ty {
-                            let a = self.written(a, false);
+                            let a = self.written(a, false).replace(&own);
                             if !self.subtype(&t, &a) {
                                 let why = t.refused(&a);
                                 let (ta, tt) = (self.text(&a), self.text(&t));
@@ -14591,13 +14820,17 @@ impl<'a> Ck<'_, 'a> {
     /// at equal arguments cost the body once, O(k) in all as measured
     /// (`arm_test_through_call::bench::tests_calling_one_deep_callee_scale`: 8.07 times the
     /// instructions at 8 times `k`, where reading the body in each test took 54.0 times). An `if`
-    /// with none inside it is kept in place, since a test of a sum of `d` names, each with its
-    /// summary, costs O(d²) (CHECK-sum-of-summarized-names), where a sum of `d` such `if`s
-    /// costs O(d log d) (`follow::bench::nested_sums_of_one_input_scale`, "a sum of d
-    /// ramps"). Prior work: a per-function summary in abstract interpretation reads a callee
-    /// once for all its call sites (Sharir and Pnueli, "Two approaches to interprocedural
-    /// data flow analysis", in S. S. Muchnick and N. D. Jones (eds.), *Program Flow Analysis:
-    /// Theory and Applications*, Prentice-Hall, 1981, the functional approach; a book chapter
+    /// with none inside it is kept in place, and a sum of `d` such `if`s costs O(d log d)
+    /// (`follow::bench::nested_sums_of_one_input_scale`, "a sum of d ramps"). A test of a sum
+    /// of `d` names, each with its summary, was filed as O(d²) (CHECK-sum-of-summarized-names,
+    /// 46 times at 8 times `d`), but `d` names bound to `if`s in the program measure O(d):
+    /// 7.418 at d = 32 and 256 on c95bec442, where the row was filed, and 8.479 on this branch
+    /// (`arm_test_through_call::bench::a_test_of_a_sum_of_summarized_names_scales`,
+    /// b22-checkwalk10, 2026-11-24). Prior work: a per-function summary in abstract
+    /// interpretation reads a callee once for all its call sites (Sharir and Pnueli, "Two
+    /// approaches to interprocedural data flow analysis", in S. S. Muchnick and N. D. Jones
+    /// (eds.), *Program Flow Analysis: Theory and Applications*, Prentice-Hall, 1981, the
+    /// functional approach; a book chapter
     /// with no DOI, not found on Crossref. The chapter was not found; read 2026-11-21 instead
     /// is the technical report it grew from, same title, NYU Courant Institute, Computer
     /// Science Department, Report No. 002, September 1978, a scan: the introduction says the
@@ -14647,8 +14880,9 @@ impl<'a> Ck<'_, 'a> {
                         let t = Term::If(Shared::new(c), Shared::new(a), Shared::new(b));
                         // An `if` with no `if` inside it, and no name bound to an `if` or a
                         // call, is kept in place: a test of a sum of `d` such `if`s is read as
-                        // one sum, O(d log d), where `d` names, each with its summary, cost
-                        // O(d²) (CHECK-sum-of-summarized-names). An `if` with one inside it is
+                        // one sum, O(d log d). The O(d²) filed for `d` names, each with its
+                        // summary (CHECK-sum-of-summarized-names), was not reproduced: such
+                        // names measure O(d) ([`Self::term_for`]). An `if` with one inside it is
                         // a name of its own, so that `d` nested in each other's tests cost
                         // O(d) and not O(d²).
                         match defined || parts.ifs == m[4] {
@@ -21006,23 +21240,73 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   at the outer end (test
     ///   `bubble::a_push_in_an_inner_function_of_a_class_around_and_its_own_parameter_is_checked`).
     /// - A push written in the body ([`Self::pushed`] from the statement): the value's type
-    ///   is the type of an expression of the body being checked. Not proved: that such a type
-    ///   holds only classes, the level rule of `generalize` (a class of an ended inner level
-    ///   is named only if no class of a level around was joined to it, and an inner function
-    ///   is seen around it only through its signature, instantiated with new classes). One
-    ///   route was found and closed (chk5, 2026-11-20): a test `x is T` against a type
-    ///   variable written nowhere else read `T` with no class made (`written(ty, false)` at
-    ///   `Frame::CondIs`), so `x` narrowed to `old & T` held a variable of no class, and
-    ///   `h(x, out: Lines) { if x is T { out <- x; }; }` reached this arm; `T` is now a class
-    ///   of the function (`fresh: true`), and the push waits on it (test
-    ///   `bubble::a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it`, benchmark
-    ///   `bench::bubble::pushes_narrowed_by_tests_against_type_variables_scale`). Other
-    ///   probe programs of row PROOF-push-vars-other-route found none that reaches this arm:
-    ///   locals bound to lambdas and to functions defined after, calls of functions defined
-    ///   later, functions passed to and returned by calls (`two(later)(x)`), `map` with a
-    ///   named function, inner functions with their own port parameter, and pushes in lambdas
-    ///   of a class around; recursion, a declared type on a local and a struct's type
-    ///   parameters are refused before the check in this version.
+    ///   is the type of an expression of the body being checked. The argument, step by step
+    ///   (row PROOF-push-vars-a2-complete, 2026-11-24):
+    ///   1. A variable in a type the checker builds comes from one of these sources: (i) a
+    ///      new class `$k` ([`Self::class`]); (ii) a written type read by [`Self::written`],
+    ///      which reads a name the scope binds as its class, a name it does not bind as a new
+    ///      class with `fresh: true`, and as the bare name, a variable of no class, with
+    ///      `fresh: false`; (iii) the names a function's classes get when its level ends
+    ///      (`names`, the renames of `generalize`), the `written <param>` names of
+    ///      `written_param_names`, the tagged results of `r10_decode_fwd_needs`, the
+    ///      variables of a declared signature (`Denote`), and the closed variables of a
+    ///      range; all of (iii) are written into signatures (`Sig`) only.
+    ///   2. (i) is a class while its level is open, and a push in a body is checked while
+    ///      the level of that body is open; so (i) never reaches this arm from a body.
+    ///   3. (ii) with `fresh: true` makes a class (step 2). The calls with `fresh: false`,
+    ///      audited by name:
+    ///      - [`Self::written_params`]: its result is kept only when it holds no variable
+    ///        (`vs.order.is_empty()`), so no variable leaves it.
+    ///      - [`Self::written_take`]: its result goes only into a `subtype` test, which
+    ///        returns a bool; no type leaves it.
+    ///      - [`Self::fit_step`], the lambda fitted to an arrow: its result is the type of
+    ///        the lambda's parameter in the body (`self.env.insert`). A parameter written as
+    ///        a bare variable `T` of no class is bound to the join of what the arrow passes
+    ///        there, so no variable of no class leaves it in that form (the route the sweep
+    ///        of the row found; test
+    ///        `bubble::a_lambda_s_own_type_variable_takes_what_the_arrow_passes`). A variable
+    ///        written inside another type, `(positional s: [T])`, keeps `T` with no class,
+    ///        and a push of `s` reaches this arm: NOT PROVED to be harmless, so it is
+    ///        refused here as [`PushVars::Unfollowed`] (same test, program `inside`; the
+    ///        lambda is also refused, since `[String]` is not a subtype of `[_]`).
+    ///      - `Frame::CondIs` was such a call until chk5 (2026-11-20): `x is T` with `T`
+    ///        written nowhere else read `T` with no class, and
+    ///        `h(x, out: Lines) { if x is T { out <- x; }; }` reached this arm; it reads
+    ///        with `fresh: true` now (test
+    ///        `bubble::a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it`,
+    ///        benchmark `bench::bubble::pushes_narrowed_by_tests_against_type_variables_scale`).
+    ///   4. (iii) reaches a body only through a signature, at a call of the function or a
+    ///      use of it as a value. NOT PROVED for every expression: that each such use
+    ///      replaces the signature's variables by classes of the caller's level
+    ///      ([`Self::instantiated`] binds those an argument fixes; the rest are left to the
+    ///      application) and that a named root of an ended inner level is never seen around
+    ///      it but through its signature (the level rule of `generalize`). One use is known
+    ///      to leave one, and is refused here as [`PushVars::Unfollowed`]: a local lambda
+    ///      whose body tests its parameter against a type variable,
+    ///      `f = (positional v) -> if v is T { v } else { "b" }; out <- f(x);`, gives a
+    ///      result holding a class of the lambda's ended level (`$2`), which is no class
+    ///      when the push reads it (test
+    ///      `bubble::a_push_narrowed_by_a_test_against_a_type_variable_waits_on_it`, which
+    ///      expects that refusal; elaboration refuses the test against `T` as well).
+    ///   5. So from a body, this arm is reached by the form named NOT PROVED in step 3, by
+    ///      the lambda of step 4 and, if any, by another form of step 4; each is refused,
+    ///      never left to the run.
+    ///
+    /// Evidence for step 4, which is a search and not a proof: a build in which this arm
+    /// always panics, as the feature `push-vars-sweep` makes it, ran the test pieces of every
+    /// step group and of zedc_check (`tools/run_tests.sh`, 3237 pieces; 2026-11-24, on
+    /// 65df19b3c with the fit-step change above) and the probes of the rows
+    /// PROOF-push-vars-other-route and PROOF-push-vars-a2-complete: locals bound to lambdas
+    /// and to functions defined after, calls of functions defined later, functions passed to
+    /// and returned by calls (`two(later)(x)`), `map` with a named function, inner functions
+    /// with their own port parameter, pushes in lambdas of a class around, and lambdas whose
+    /// parameters are written `T`, `[T]` or `T` twice. The one piece that reached this arm was
+    /// the lambda of step 4. Not covered: 17 pieces that ran past their time limit on the
+    /// 2-core machine (l01_17, l01_23, l01_36b, l01_39 `s4_model` and `families`, m0_12
+    /// `seeds`). Recursion, a declared type on a local and a struct's type parameters are
+    /// refused before the check in this version. Negative control: with `Frame::CondIs` read
+    /// with `fresh: false`, the same build panics in this arm on `if x is T { out <- x; }` and
+    /// on `out <- if x is T { x } else { "b" }`, and not where the signature binds `T`.
     ///
     /// So the verdict relies on no claim about such a variable (standing rule: refuse what
     /// is not proved): it is read as no value; the push is
@@ -30634,9 +30918,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // already an `f32` (DESIGN.md L1.17): in `2 ^ (2^100 - 1)` the base
                         // keeps `f32` only through `f32 ^ f32`, whose exponent the literal one
                         // does not fit, and so takes no `f32` (plan row
-                        // LIT-f32-inexact-exponent). It takes `rat` through `rat ^ int`. L1.17
-                        // names `f32` alone: a decimal base with an `int` exponent takes `f64`,
-                        // through the arrow `f64 ^ int` plan row POW-domains adds.
+                        // LIT-f32-inexact-exponent). It takes `rat` through `rat ^ int`. The
+                        // same holds for `f64` through the arrow `f64 ^ int` of plan row
+                        // POW-domains: through it the literal base of `2 ^ (2^100 - 1) / 3` took
+                        // `f64`, so the repair listed `2.0f64 ^ ...` beside a second refusal that
+                        // read the exponent at `f64` (l01_26a `top_body_agree::an_exponent_no_
+                        // float_format_holds_leaves_rat_alone_and_is_rejected_in_every_place`,
+                        // b22-checkwalk10, 2026-11-24). A bare decimal base meets neither mixed
+                        // arrow ([`Self::binary_op`], at `BinaryOp::Pow`).
                         Some(p) if let Some(k) = self.class_of(p) => {
                             let literal = (a.as_ref())
                                 .is_some_and(|a| a.lit.is_some() || a.branches.is_some())
@@ -30646,7 +30935,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                 let ps = &sig.arrows[j].params;
                                 let mut b = mask_of(&ps[i]);
                                 if literal && ps.iter().any(|q| q != &ps[i]) {
-                                    b &= !Carrier::F32.bit();
+                                    b &= !(Carrier::F32.bit() | Carrier::F64.bit());
                                 }
                                 m[j] &= b;
                             }

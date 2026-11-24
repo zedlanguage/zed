@@ -249,16 +249,30 @@ impl Formula {
     /// Calls `f` on each constraint, in order; the constraints of a shared part are met at
     /// its first place alone.
     pub(super) fn walk<'a>(&'a self, f: &mut dyn FnMut(&'a Con)) {
+        self.walk_leaves(f, None);
+    }
+
+    /// [`Formula::walk`], with each call node given to `node` instead of read as its clauses
+    /// when `node` is given (the leaf-aware walker of META3 H7, XR-load-call-node): a reader
+    /// that needs a node's atoms, or knows it holds no equality, reads it in O(its term) and
+    /// does not write it out. With no `node`, the generic route: the node's clauses, written
+    /// once a node and counted (`BoundHoles::lowered`), read at the node's first place alone.
+    pub(super) fn walk_leaves<'a>(
+        &'a self,
+        f: &mut dyn FnMut(&'a Con),
+        mut node: Option<&mut dyn FnMut(&'a BoundHoles)>,
+    ) {
         let mut seen: HashSet<Id> = HashSet::new();
         let mut stack = vec![slice::from_ref(self).iter()];
         while let Some(top) = stack.last_mut() {
             match top.next() {
                 Some(Formula::Con(c)) => f(c),
-                // The generic route: the node's clauses, written once a node and counted
-                // (`BoundHoles::lowered`, META3 H7), read at the node's first place alone.
                 Some(g @ Formula::Holes(b)) => {
                     if Id::of(g).is_none_or(|id| seen.insert(id)) {
-                        stack.push(slice::from_ref(b.lowered()).iter());
+                        match node.as_mut() {
+                            Some(n) => n(b),
+                            None => stack.push(slice::from_ref(b.lowered()).iter()),
+                        }
                     }
                 }
                 Some(g) => {
@@ -285,12 +299,26 @@ impl Formula {
         out
     }
 
-    /// Each atom, in order.
+    /// Each atom, in order. A call node's atoms are those of its term, read there: each clause
+    /// of the node (`BoundHoles::lowered`) is the term against a constant, so the clauses read
+    /// exactly the term's atoms, and the node is not written out (META3 H7). O(the formula's
+    /// distinct parts and their terms). Each node so read is counted
+    /// (`extend::counts::HOLES_ROUTED`); with the route off (`extend::counts::HOLE_ROUTE_OFF`,
+    /// the benches' negative control) the node is read as its clauses.
     pub fn atoms(&self) -> BTreeSet<Atom> {
-        self.cons()
-            .into_iter()
-            .flat_map(|c| c.lin.terms.keys().cloned())
-            .collect()
+        use super::extend::counts;
+        let mut out = BTreeSet::new();
+        let mut node = |b: &BoundHoles| {
+            counts::add(counts::HOLES_ROUTED, 1);
+            out.extend(b.term().terms.keys().cloned())
+        };
+        let mut con = Vec::new();
+        match counts::route_on() {
+            true => self.walk_leaves(&mut |c| con.push(c), Some(&mut node)),
+            false => self.walk_leaves(&mut |c| con.push(c), None),
+        }
+        out.extend(con.into_iter().flat_map(|c| c.lin.terms.keys().cloned()));
+        out
     }
 
     /// Whether the formula has a disjunction or a negation, which pushed in may make one.

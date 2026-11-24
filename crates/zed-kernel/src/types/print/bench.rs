@@ -123,13 +123,19 @@ fn a_ring_of_parts_printed_plain_and_by_name_scales_in_either_order() {
             assert_eq!(by_name(&t), m + 1);
             drop(t);
             // On a thread of its own: the memos the first left on this thread made the second
-            // ring's prints take less than half a first print's instructions.
+            // ring's prints take less than half a first print's instructions. Joined by its
+            // handle, which waits for the thread to end, so its instructions are counted: the
+            // end of the scope alone does not wait for that, and under `--exact` without
+            // `--nocapture` the run at n lost them, 16.87 times at 8n (FAIL-print-ring-bench-ratio;
+            // `scaling`, the module comment).
             std::thread::scope(|s| {
                 s.spawn(|| {
                     let t = part_ring(m);
                     assert_eq!(by_name(&t), m + 1);
                     assert!(!t.surface().root.is_empty());
-                });
+                })
+                .join()
+                .unwrap_or_else(|p| std::panic::resume_unwind(p));
             });
         },
     );

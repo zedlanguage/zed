@@ -301,7 +301,7 @@ fn a_power_takes_the_integer_or_the_float_power_by_its_operands() {
     values(src, &[("a", "2.25")]);
     assert_eq!(
         sig("f(positional x, positional k: int) = x ^ k;\n", "f"),
-        "(T, int) -> T | #divByZero for T in int | f32 | rat"
+        "(T, int) -> T | #divByZero for T in int | f32 | f64 | rat"
     );
 }
 

@@ -634,14 +634,17 @@ impl Prim {
             // checker proves, and so drops the atom (DESIGN.md sec:domains; QUESTIONS A174).
             IntDiv | Mod => list![a(&[I, I], I, DIV0)],
             // A `rat` takes an integer exponent of either sign, exactly; `0r` to a negative
-            // power is `#divByZero`. `f32 ^ int` is the one arrow between two carriers
-            // (DESIGN.md L1.18).
+            // power is `#divByZero`. A float base takes an `int` exponent at its own format,
+            // `(F, int) -> F` (DESIGN.md L1.18 for `f32 ^ int`; plan row POW-domains, author
+            // 2026-11-12, for every float format), with no atom: `0.0 ^ -1` is the IEEE
+            // infinity (DESIGN.md L1.18 and sec:failure, author P361).
             Pow => list![
                 a(&[I, I], I, &[]),
                 a(&[F64, F64], F64, &[]),
                 a(&[F32, F32], F32, &[]),
                 a(&[R, I], R, DIV0),
                 a(&[F32, I], F32, &[]),
+                a(&[F64, I], F64, &[]),
             ],
             Concat => list![a(&[S, S], S, &[])],
             Eq | Ne => EQUAL,

@@ -40,8 +40,9 @@ fn a_decimal_compared_with_an_int_operation_on_literals_takes_f64_in_each_place(
 
 #[test]
 fn a_decimal_base_at_an_int_exponent_and_a_decimal_argument() {
-    // DESIGN.md L1.17 makes `0.5 ^ n` with `n : int` an `f64` alone. zedc has no arrow
-    // `f64 ^ int` yet, so the base takes the exact `rat` (row POW-domains, item 4).
+    // DESIGN.md L1.17 makes `0.5 ^ n` with `n : int` an `f64` alone. zedc's literal classes
+    // do not yet follow an exponent that is no literal, so the bare base meets no `f64 ^ int`
+    // and takes the exact `rat` (row POW-domains, item 4).
     let f = "f(positional n: int) = 0.5 ^ n;\n";
     assert_eq!(quiet(&format!("{f}y = f(-2);\n"), "y"), "4r");
     assert_eq!(quiet(&format!("{f}y = f(3);\n"), "y"), "1r/8r");

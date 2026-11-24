@@ -165,3 +165,20 @@ fn a_callee_of_k_literal_arms_scales() {
         _ = check(&srcs[&n]);
     });
 }
+
+/// The test of a sum of `d` names, each bound to an `if` and so summarized once, costs O(d)
+/// (CHECK-sum-of-summarized-names; the program is [`summed_names`]). The row was filed at
+/// 46 times at 8 times `d` (156 ms, 512 ms, 2.2 s and 7.15 s at d = 32, 64, 128 and 256, debug,
+/// load about 40), but this program does not show it: on c95bec442, where the row was found,
+/// it measured 7.418 (32 ms at 32, 239 ms at 256), and 8.150 and 8.931 on main 60267344b
+/// (b22-checkwalk10, 2026-11-24). Each process makes the program only at the sizes it runs
+/// (`check_inputs`).
+#[test]
+fn a_test_of_a_sum_of_summarized_names_scales() {
+    scaling::check_inputs(
+        "a test of a sum of d summarized names",
+        32,
+        |d| summed_names(d, 0),
+        |src| _ = check(src),
+    );
+}

@@ -33,7 +33,7 @@
 
 use std::collections::HashMap;
 
-use super::formula::{Formula, Id};
+use super::formula::{Formula, Id, Lin};
 
 /// A definition for [`placed`]: the auxiliary variables it fixes, its formula, and whether it is
 /// total, so that for every value of every other atom some value of its variables satisfies it.
@@ -90,20 +90,31 @@ pub fn placed(body: &Formula, defs: &[Placing]) -> (Formula, Formula) {
             None => at,
         });
     };
+    let read = |place: &mut Vec<Option<usize>>, lin: &Lin, at: usize| {
+        for a in lin.terms.keys() {
+            for x in a.auxes() {
+                if let Some(&i) = owner.get(&x) {
+                    meet(place, i, at);
+                }
+            }
+        }
+    };
     for v in 0..n {
         // A constraint directly under `v` is reached from `v`, or, below a part that is not
         // on the tree, from that part's anchor.
         let at = parts.anchor[v];
         for k in parts.nodes[v].kids() {
             if let Formula::Con(c) = k {
-                for a in c.lin.terms.keys() {
-                    for x in a.auxes() {
-                        if let Some(&i) = owner.get(&x) {
-                            meet(&mut place, i, at);
-                        }
-                    }
-                }
+                read(&mut place, &c.lin, at);
             }
+        }
+        // A call node is a part with no parts: its term is read at its own anchor. Without
+        // this, a definition of a variable the node reads could be placed in a disjunct that
+        // does not hold the node, which leaves the variable free there (wildcard-arm audit,
+        // b22-load10; test `holes_node_tests::a_definition_is_placed_above_a_node_that_reads_
+        // its_variable`). O(t) for the term's t atoms, as for a constraint.
+        if let Formula::Holes(b) = parts.nodes[v] {
+            read(&mut place, b.term(), at);
         }
     }
     // Each definition's part, the last first; `None` beside the body.

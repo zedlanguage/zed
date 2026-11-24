@@ -7,8 +7,8 @@ use zed_tests::scaling;
 use super::super::bubble::{
     body_of_bindings, body_of_uncalled_inner_pushes, body_pushing_a_family,
     body_pushing_a_nested_family, body_pushing_parameters, chain_of_helpers,
-    helpers_giving_their_atom, helpers_pushing_their_parameter, pushes_narrowed_by_type_variables,
-    uncalled_inner_push_of_parameters,
+    helpers_giving_their_atom, helpers_pushing_their_parameter, lambdas_of_own_type_variables,
+    pushes_narrowed_by_type_variables, uncalled_inner_push_of_parameters,
 };
 use super::super::scaling::resolved;
 
@@ -110,6 +110,19 @@ fn pushes_narrowed_by_tests_against_type_variables_scale() {
     let units = resolved(100, pushes_narrowed_by_type_variables);
     scaling::check(
         "n pushes narrowed by tests against type variables",
+        100,
+        |n| {
+            let info = units[&n].check();
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
+    );
+}
+
+#[test]
+fn lambdas_of_their_own_type_variable_scale() {
+    let units = resolved(100, lambdas_of_own_type_variables);
+    scaling::check(
+        "n lambdas whose parameters are written as their own type variable",
         100,
         |n| {
             let info = units[&n].check();

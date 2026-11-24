@@ -13675,6 +13675,26 @@ impl<'m, 's> Comparing<'m, 's> {
         binds: &mut Binds,
     ) -> bool {
         let filed = self.filed(t, search);
+        // No tuple shape of `t` has the length of `cs`: the answer is no, and no split is made
+        // (PERF-fold-projection-fast-path). Proof that it is the answer the splits below give:
+        // [`Comparing::row_in_one`] answers no for a row of a length `filed` has no shapes of,
+        // before it tries, binds or refuses anything, and each row a split makes has the
+        // length of the row it splits. So `cs` is not held, [`Comparing::split_at`] with no
+        // shape tried returns the first component of two or more pieces or none, and every
+        // row of the split is refused in turn down to one of single pieces, where `split_at`
+        // gives none and the answer is no; `binds` and `search` are left as they were, since
+        // nothing was bound or searched. Test: l01_26 `fits::a_joined_tuple_within_a_variable_
+        // binds_it`.
+        //
+        // Complexity tradeoff: naive, as before, the row was split at each component of two or
+        // more pieces in turn before the no, each split building rows of the row's width: a row
+        // of n components of two carriers each within a bare variable cost n splits of O(n),
+        // Θ(n²) (1.07 s at n = 512 in the check of the l03_02 rotated-tuple fold). Used: one
+        // lookup, O(1) expected. Bench: l01_26
+        // `bench::fits::a_joined_tuple_within_a_variable_scales`.
+        if !filed.rows.contains_key(&cs.len()) {
+            return false;
+        }
         // The shapes each row was tried in and failed, in the order tried, for
         // [`Comparing::split_at`].
         let tried = RefCell::new(Vec::new());

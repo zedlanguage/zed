@@ -235,3 +235,92 @@ fn a_node_is_shown_as_its_clauses() {
         "{text}"
     );
 }
+
+#[test]
+fn nodes_beside_a_part_read_twice_are_compared_by_content() {
+    // The order of two formulas reads the rest of a level by its parse (`deep::canon`) once a
+    // shared part is met a second time. The parse read every call node as one symbol, so two
+    // conjunctions that differ only in their nodes compared equal (wildcard-arm audit,
+    // b22-load10 step 0). `p`, `q` and `r` are three equal conjunctions built apart, each
+    // shared: the pair (p, q) is entered, and the pair (p, r) meets `p` again.
+    let part = || {
+        Formula::And(Shared::new(vec![
+            Formula::Con(Con::ge(&y("x"), &k(0))),
+            Formula::Con(Con::ge(&y("z"), &k(0))),
+        ]))
+    };
+    let (p, q, r) = (part(), part(), part());
+    let ha = Formula::outside(&set(&[(0, 3)]), y("x"));
+    let hb = Formula::outside(&set(&[(5, 9)]), y("x"));
+    let a = Formula::And(Shared::new(vec![p.clone(), p.clone(), ha.clone()]));
+    let b = Formula::And(Shared::new(vec![q.clone(), r.clone(), hb.clone()]));
+    assert_eq!(a.cmp(&b), ha.cmp(&hb), "{a:?} against {b:?}");
+    assert_eq!(b.cmp(&a), hb.cmp(&ha));
+    assert_ne!(a, b);
+    // Equal nodes built apart still compare equal on that path.
+    let hc = Formula::outside(&set(&[(0, 3)]), y("x"));
+    let c = Formula::And(Shared::new(vec![q.clone(), r.clone(), hc]));
+    assert_eq!(a.cmp(&c), std::cmp::Ordering::Equal);
+    assert_eq!(a, c);
+}
+
+#[test]
+fn a_definition_is_placed_above_a_node_that_reads_its_variable() {
+    // `placing::placed` puts a definition at the deepest part holding every place its
+    // variable occurs. It read the places from constraints alone, so a call node reading the
+    // variable was no place, the definition went into the other disjunct only, and the node's
+    // disjunct read the variable free (wildcard-arm audit, b22-load10 step 0).
+    let aux = || Lin::atom(Atom::Aux(0));
+    let c = |a: Lin, b: Lin| Formula::Con(Con::ge(&a, &b));
+    let one = Formula::And(Shared::new(vec![c(aux(), k(5)), c(y("x"), k(0))]));
+    let two = Formula::And(Shared::new(vec![
+        Formula::outside(&set(&[(-100, -1)]), aux()),
+        c(k(-1), y("x")),
+    ]));
+    let body = Formula::Or(Shared::new(vec![one, two]));
+    let def = Formula::Con(Con::eq(&aux(), &y("x")));
+    let placings = vec![super::placing::Placing {
+        own: vec![0],
+        def: def.clone(),
+        total: true,
+    }];
+    let (beside, placed) = super::placing::placed(&body, &placings);
+    let out = Formula::and(vec![beside, placed]);
+    let want = Formula::and(vec![def, body]);
+    // Every pair (x, aux) in a box: the placed formula holds exactly where the formula with
+    // the definition beside the body holds. At x = -5, aux = 10 the node's disjunct holds
+    // only when the definition is not conjoined there.
+    for x in -120i128..20 {
+        for v in [-150i128, -5, 0, 5, 10, x] {
+            let m = Model::from([
+                (Atom::Sym("x".into()), Int::from(x)),
+                (Atom::Aux(0), Int::from(v)),
+            ]);
+            assert_eq!(out.holds(&m), want.holds(&m), "x = {x}, aux = {v}: {out}");
+        }
+    }
+}
+
+#[test]
+fn a_node_links_its_conjunct_to_the_others_on_its_atoms() {
+    // `linked_conjuncts` groups the conjuncts by shared atoms, and the hulls of a disjunction
+    // are tightened group by group (`tighten_each`). It read atoms from constraints alone, so
+    // the node of `0 <= x <= 10 && outside({0..10}, x)` was a group of its own, each group had
+    // a point, and the hull of `x` was tightened without the node (wildcard-arm audit,
+    // b22-load10 step 0).
+    let f = Formula::And(Shared::new(vec![
+        Formula::Con(Con::ge(&y("x"), &k(0))),
+        Formula::Con(Con::ge(&k(10), &y("x"))),
+        Formula::outside(&set(&[(0, 10)]), y("x")),
+    ]));
+    let syms = [Atom::Sym("x".into())];
+    let groups = super::linked_conjuncts(&f, &[], &syms, &[0]);
+    assert_eq!(groups.len(), 1, "{f}");
+    assert_eq!(groups[0].0.len(), 3);
+    // A node on another atom is a group of its own.
+    let g = Formula::And(Shared::new(vec![
+        Formula::Con(Con::ge(&y("x"), &k(0))),
+        Formula::outside(&set(&[(0, 10)]), y("z")),
+    ]));
+    assert_eq!(super::linked_conjuncts(&g, &[], &syms, &[0]).len(), 2);
+}
