@@ -96,9 +96,11 @@ pub mod counts {
     pub const PLANE_FRESH: usize = 10;
     /// Rows added to a hull kept by a part (`plane::Plane::with`).
     pub const HULL_UPDATES: usize = 11;
-    /// Rows added by Harvey's case 1 (the new line holds an integer point between its
-    /// neighbors) and by case 2 (it does not).
+    /// Rows added by Harvey's case 1: the new line holds an integer point between its
+    /// neighbors.
     pub const HULL_CASE1: usize = 12;
+    /// Rows added by Harvey's case 2: the new line holds no integer point between its
+    /// neighbors.
     pub const HULL_CASE2: usize = 13;
     /// Hulls that lost their area: a Line or a Point (META3 H1).
     pub const HULL_COLLAPSE: usize = 14;
