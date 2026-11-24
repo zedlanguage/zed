@@ -39,6 +39,7 @@ mod package_recovery;
 mod quoted;
 mod recursion;
 mod shared_parts;
+mod shared_print;
 mod sum_plus;
 mod syntax_recovery;
 mod too_large_literal;

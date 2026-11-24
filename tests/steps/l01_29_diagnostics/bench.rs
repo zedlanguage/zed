@@ -16,6 +16,7 @@ mod overload_cycles;
 mod package_recovery;
 mod quoted;
 mod recursion;
+mod shared_print;
 mod sum_plus;
 mod syntax_recovery;
 mod text_cast_spelling;
