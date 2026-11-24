@@ -38,9 +38,9 @@
 //! at depths `l_c` and none contains another; removing the nodes with one child only shortens
 //! paths. That tree costs at most `sum_c f_c l_c < sum_c f_c (log2(F / f_c) + 1) = F (H + 1)`;
 //! Huffman's tree has the least `sum_c f_c depth(c)` of all binary trees with these leaves
-//! (Huffman 1952, the "minimum-redundancy" of the title). `H <= log2 C`, so the cost is never above a balanced
-//! tree's; in `tests::spanning_rows` the coordinate every middle block moves weighs about half
-//! of `F` and sits at depth 1, and the work is linear in `k`.
+//! (Huffman 1952, the "minimum-redundancy" of the title). `H <= log2 C`, so the cost is never
+//! above a balanced tree's; in `tests::spanning_rows` the coordinate every middle block moves
+//! weighs about half of `F` and sits at depth 1, and the work is linear in `k`.
 //!
 //! Depth: below 180 when `F < 2^124`, so the recursions below are shallow. The caller's weights
 //! are sums of terms each below `2^64`, one term per entry of vectors it holds in memory, so
@@ -53,10 +53,25 @@
 //! `Fib(d + 1) <= F < 2^124 < Fib(181)` (`log2 Fib(181) = 181 log2 φ - log2 √5 + ε ≈ 124.5`)
 //! gives `d + 1 < 181`.
 
-use super::copied;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use zed_collections::intern::Interner;
+
+#[cfg(test)]
+thread_local! {
+    /// Tests only: the words written to build the tuples reached on this thread (PRES-B-P1-
+    /// copied-words), so that a test sees copies the units hide beside the walks of the blocks.
+    pub(in super::super) static COPIED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts `n` words written to build tuples (`COPIED`, tests only). Written here, not in
+/// `sumset.rs`, so that this file names nothing of that one (test `s_01f_import_graph`).
+fn copied(n: u64) {
+    #[cfg(test)]
+    COPIED.with(|c| c.set(c.get().saturating_add(n)));
+    #[cfg(not(test))]
+    let _ = n;
+}
 
 /// An inner node of the shape: its leaves are the positions `lo..hi`, its left child's
 /// `lo..mid`; a child is `None` when it is a leaf (one position), else its index.

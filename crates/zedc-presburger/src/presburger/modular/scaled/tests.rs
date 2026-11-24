@@ -1997,8 +1997,9 @@ fn spanning_rows(k: usize, m1: u64) -> (Vec<Div>, Vec<Sum>, Formula) {
 /// [`spanning_rows`] (PRES-B-P1-copied-words, PERIOD-B-P1-intern-rest): the answers against
 /// enumeration at `k` = 2 and 3; at `k = 15` the real entry, [`solve_modular_or_scaled`] under a
 /// question's meter with no limit, takes [`sumset`]; and the words written to build the tuples
-/// ([`sumset::COPIED`]) grow as `k`, at most 9 times from 15 to 120. The units cannot show it:
-/// the walks of the blocks, `sum m_b` over `k` primes, are about `k² log k / 2` (b22-presburger6).
+/// ([`sumset::tuples::COPIED`]) grow as `k`, at most 9 times from 15 to 120. The units cannot
+/// show it: the walks of the blocks, `sum m_b` over `k` primes, are about `k² log k / 2`
+/// (b22-presburger6).
 #[test]
 fn coordinates_moved_by_the_end_blocks_are_not_copied() {
     for k in 2..=3 {
@@ -2020,9 +2021,9 @@ fn coordinates_moved_by_the_end_blocks_are_not_copied() {
         "{got:?}, selected {selected}"
     );
     let copied = |k: usize| {
-        let before = sumset::COPIED.with(std::cell::Cell::get);
+        let before = sumset::tuples::COPIED.with(std::cell::Cell::get);
         units_with_a_point(&spanning_rows(k, 3).2, &format!("k = {k}"));
-        sumset::COPIED.with(std::cell::Cell::get) - before
+        sumset::tuples::COPIED.with(std::cell::Cell::get) - before
     };
     let (small, large) = (copied(15), copied(120));
     assert!(

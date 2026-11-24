@@ -1,7 +1,7 @@
 //! Sums of quotients over pairwise coprime moduli, decided over the values of the sums instead
 //! of the residues of `x` (row PRES-sum-of-quotients-period-product, part (1)).
 //!
-//! [`sum_residues`] writes the residues of `x` modulo `m L`, `L` the lcm of the moduli a sum
+//! [`super::sum_residues`] writes the residues of `x` modulo `m L`, `L` the lcm of the moduli a sum
 //! reads, so a sum over `k` coprime moduli costs their product, exponential in `k`. Here the
 //! formula is decided over the tuples of the sums' remainders that some `x` reaches, whose number
 //! does not grow with `k` when the sums are fixed.
@@ -41,10 +41,10 @@
 //! `t_0 = x mod M` plus the block values at `t_b = x mod m_b`, and every row's literal holds
 //! exactly when its row's `t_b` is allowed. (1) A point of `f` therefore has its tuple in `R` and
 //! satisfies the sums' literals there (its rows and sums define their parts from `x`
-//! ([`def_row`], [`SumRow`]), so each sum's remainder is `E_j mod M_j`). (2) Conversely, a tuple
-//! in `R` comes from some `t_0` and allowed `t_b`; by the bijection some `x` has exactly these
-//! coordinates, and at that `x` with every part defined from it ([`point_with_sums`]) each row,
-//! each sum and each row's literal holds, and the sums' literals hold as they do at the tuple:
+//! ([`super::def_row`], [`SumRow`]), so each sum's remainder is `E_j mod M_j`). (2) Conversely, a
+//! tuple in `R` comes from some `t_0` and allowed `t_b`; by the bijection some `x` has exactly
+//! these coordinates, and at that `x` with every part defined from it ([`point_with_sums`]) each
+//! row, each sum and each row's literal holds, and the sums' literals hold as they do at the tuple:
 //! they name only the sums' remainders, which are atoms here (no product atom, whose value
 //! [`Formula::holds`] reads through its factors), so reading them at the tuple's values is
 //! reading them at the point. The Boolean structure over the sums' literals is evaluated as it
@@ -79,7 +79,7 @@
 //! modulo the modulus of a sum that reads its quotient; a live sum's modulus or `M` that does not
 //! fit a machine word; a block's modulus that does not fit a machine word (its primes are
 //! found by factoring a word); moduli (of the blocks and of `M`) that share a prime; and every
-//! formula whose bound on this path's steps (below) is above the steps of [`sum_residues`].
+//! formula whose bound on this path's steps (below) is above the steps of [`super::sum_residues`].
 //!
 //! Literature. The searches recorded for this row (allpapers: paperclip semantic search over
 //! arXiv with 183 results, Gemini grounded search; 2026-11-22) found no method for residues of a
@@ -137,11 +137,14 @@
 //! `bench::two_sums_of_one_direction_scale`, `bench::sums_moved_by_x_alone_scale` and
 //! `bench::fixed_literals_beside_a_live_sum_scale`. The bound on the estimate of the costs
 //! (XR-presburger4 round 3 P3) is proved at its site, not measured: the formulas whose estimate
-//! is large are declined to [`sum_residues`], whose work on them no benchmark can run.
+//! is large are declined to [`super::sum_residues`], whose work on them no benchmark can run.
 
-use super::*;
+// Not `use super::*`: `scaled.rs` calls this file, so naming it here would close an import
+// cycle (test `s_01f_import_graph`); the rows this file shares with it are in `rows.rs`.
+use super::super::*;
+use super::rows::{DefRow, Part, SumRow, point_with_sums, remainder_values};
 
-mod tuples;
+pub(super) mod tuples;
 use tuples::Tuples;
 
 #[cfg(test)]
@@ -157,17 +160,6 @@ thread_local! {
     /// Tests only: the most entries one set of tuples (`R` or `W_b`) held at once on this thread,
     /// each entry a tuple over the coordinates some `x` moves.
     pub(super) static MOST_HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Tests only: the words written to build the tuples reached on this thread (PRES-B-P1-
-    /// copied-words), so that a test sees copies the units hide beside the walks of the blocks.
-    pub(super) static COPIED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// Counts `n` words written to build tuples (`COPIED`, tests only).
-fn copied(n: u64) {
-    #[cfg(test)]
-    COPIED.with(|c| c.set(c.get().saturating_add(n)));
-    #[cfg(not(test))]
-    let _ = n;
 }
 
 /// The rows of one modulus `m`, as indices into the rows; their remainders are functions of
@@ -256,8 +248,8 @@ fn charge(steps: u64) -> bool {
 }
 
 /// [`super::solve`]'s answer by the theorem above, or `None` when `f` lies outside its scope
-/// (see the list above) or when the residues of `x` cost less ([`sum_residues`]), so that path
-/// keeps those formulas. On a meter spent by its charges it answers "no point" at once, as the
+/// (see the list above) or when the residues of `x` cost less ([`super::sum_residues`]), so that
+/// path keeps those formulas. On a meter spent by its charges it answers "no point" at once, as the
 /// solver's searches do; the question is then refused (`meter::Work::metered`).
 // Complexity tradeoff: naive version, [`sum_residues`]: O(M_j L_j) residues of `x` per sum, the
 // product of the moduli for coprime moduli, exponential in their number `k`. Used: the tuples

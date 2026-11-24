@@ -32,51 +32,13 @@
 
 use super::*;
 
+mod rows;
 mod sumset;
 pub(crate) mod sweep;
 #[cfg(test)]
 mod tests;
 
-/// A top-level equation read as the definition of a remainder and a quotient:
-/// `r = (a * t + k) mod m` and `q = sigma * floor((a * t + k) / m)`, where `t` is the variable or
-/// the quotient of another row. A row with no remainder atom (`r` is `None`) says the remainder
-/// is zero.
-struct DefRow<'f> {
-    con: &'f Con,
-    a: Int,
-    k: Int,
-    m: Int,
-    q: Atom,
-    sigma: i8,
-    r: Option<Atom>,
-    /// The row whose quotient is `t`, or `None` when `t` is the variable; [`solve`] declines a
-    /// formula with any row that has one.
-    parent: Option<usize>,
-}
-
-/// A part of a [`SumRow`]: the variable, or the quotient or the remainder of row `i`.
-#[derive(Clone, Copy)]
-enum Part {
-    X,
-    Q(usize),
-    R(usize),
-}
-
-/// A top-level equation `sum_j c_j p_j + c_q q + c_r r + k0 == 0` (or with no `r`) whose parts
-/// `p_j` are the variable and quotients and remainders of rows on it, read as
-/// `r = E mod m` and `q = sigma * floor(E / m)` with `E = s (sum_j c_j p_j + k0)`, `s = -c_r`
-/// (`1` with no remainder, which then says `E mod m = 0`), `m = |c_q|` and
-/// `sigma = -sgn(s c_q)`. The proof is that of [`def_row`] with `A t` replaced by
-/// `s sum_j c_j p_j`, which nothing in it reads beyond being an integer at each point.
-/// `parts` holds `s c_j`, `k` holds `s k0`.
-struct SumRow {
-    parts: Vec<(Part, Int)>,
-    k: Int,
-    m: Int,
-    q: Atom,
-    sigma: i8,
-    r: Option<Atom>,
-}
+use rows::{DefRow, Part, SumRow, point_at, point_with_sums, remainder_values, sum_value};
 
 /// Reads `c` as a [`SumRow`] over the rows `rows` on `x`, or `None`. Every atom of `c` other than
 /// one quotient atom and at most one remainder atom must be `x`, a row's quotient (`q_row`) or a
@@ -146,21 +108,6 @@ fn read_sum(
         sigma: if cq.is_positive() { -1 } else { 1 },
         r: r.map(|i| rest[i].0.clone()),
     })
-}
-
-/// `E` of `sum` at the values `model` of the rows' parts (from [`point_at`]); `x` is the
-/// variable's value. O(parts) arithmetic operations.
-fn sum_value(sum: &SumRow, rows: &[DefRow<'_>], model: &Model, x: &Int) -> Int {
-    let mut e = sum.k.clone();
-    for (p, k) in &sum.parts {
-        let v = match p {
-            Part::X => x,
-            Part::Q(i) => &model[&rows[*i].q],
-            Part::R(i) => &model[rows[*i].r.as_ref().expect("a remainder part has its atom")],
-        };
-        e = &e + &(k * v);
-    }
-    e
 }
 
 /// The residues of `x` at which the remainder `E mod m` of `sum` lies in `u` (a residue set
@@ -644,22 +591,6 @@ fn pull_back(rows: &[DefRow<'_>], i: usize, v: ResidueSet) -> Option<(Int, Resid
     affine_preimage(&rows[i].a, &rows[i].k, &rows[i].m, &v)
 }
 
-/// The interval of values in `0..m` at which the one-term constraint `c` on a remainder holds.
-fn remainder_values(c: &Con, m: &Int) -> ResidueSet {
-    let (_, k) = c.lin.terms.iter().next().expect("one term");
-    let c0 = &c.lin.constant;
-    let (lo, hi) = match c.rel {
-        Rel::Ge if k.is_positive() => ((-c0).div_ceil(k), m - &Int::ONE),
-        Rel::Ge => (Int::ZERO, c0.div_floor(&-k)),
-        Rel::Eq if c0.mod_floor(&k.abs()).is_zero() => {
-            let v = (-c0).div_floor(k);
-            (v.clone(), v)
-        }
-        Rel::Eq => return Vec::new(),
-    };
-    res_normalize(vec![(lo, hi)], m)
-}
-
 /// [`solve_modular`]'s answer to `f`, or, when it declines, [`solve`]'s. [`solve`] runs only
 /// when [`solve_modular`] declines, so every formula that one accepts is answered as before.
 /// The fallback is written here, not in [`solve_modular`], so that `modular.rs` names nothing
@@ -991,36 +922,4 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         "the point rebuilt from x = {x_value} is not one of\n{f}"
     );
     holds.then_some(Some(model))
-}
-
-/// [`point_at`], and the quotient and remainder of each sum at `x = v` as [`SumRow`] reads them.
-fn point_with_sums(rows: &[DefRow<'_>], sums: &[SumRow], x: &Atom, v: &Int) -> Model {
-    let mut model = point_at(rows, x, v);
-    for sum in sums {
-        let e = sum_value(sum, rows, &model, v);
-        let fl = e.div_floor(&sum.m);
-        if let Some(r) = &sum.r {
-            model.insert(r.clone(), &e - &(&sum.m * &fl));
-        }
-        model.insert(sum.q.clone(), if sum.sigma > 0 { fl } else { -&fl });
-    }
-    model
-}
-
-/// The values at `x = v` of `x` and of each quotient and remainder its row (a row on `x`)
-/// defines, as in (2) of the proof of [`solve`]: `E = a x + k`, `r = E mod m`,
-/// `q = sigma * floor(E / m)`. O(rows) arithmetic operations.
-fn point_at(rows: &[DefRow<'_>], x: &Atom, v: &Int) -> Model {
-    let mut model = Model::new();
-    model.insert(x.clone(), v.clone());
-    for row in rows {
-        let e = &(&row.a * v) + &row.k;
-        let fl = e.div_floor(&row.m);
-        if let Some(r) = &row.r {
-            model.insert(r.clone(), &e - &(&row.m * &fl));
-        }
-        let q = if row.sigma > 0 { fl } else { -&fl };
-        model.insert(row.q.clone(), q);
-    }
-    model
 }

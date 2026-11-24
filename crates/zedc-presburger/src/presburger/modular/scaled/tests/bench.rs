@@ -248,7 +248,8 @@ const MISSING_ROWS: [i64; 3] = [3_203, 3_209, 3_217];
 /// [`missing_residue`] with every row capped, at `M = n` and `8n` (XR-presburger4 round 3 P1,
 /// Claude): `R` and `W_b` of the second block have `M - 1` tuples each, Θ(M²) pairs on
 /// bf91c3aef; by the product of polynomials ([`zed_kernel::num::mul_uint`], transforms above
-/// `MUL_LEAF` = 400 words, so both sizes take the same method: `L = 2 M - 1` is 799 and 6,399 words), O(M log M).
+/// `MUL_LEAF` = 400 words, so both sizes take the same method: `L = 2 M - 1` is 799 and 6,399
+/// words), O(M log M).
 #[test]
 fn a_sum_missing_one_residue_scale() {
     let inputs = scaling::inputs(N_MISSING, |n| {
