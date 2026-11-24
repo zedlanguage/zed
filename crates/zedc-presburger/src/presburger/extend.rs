@@ -87,13 +87,29 @@ pub mod counts {
     pub const WHOLE: usize = 6;
     /// Atoms of the formulas decided whole, their definitions included.
     pub const WHOLE_ATOMS: usize = 7;
-    /// Conjunctions decided from the rows that bound their region over Q (`plane::Plane`,
-    /// LOAD-chain-move).
+    /// Conjunctions extended from a part and decided from the integer hull of their rows
+    /// (`plane::Plane`, LOAD-chain-move-tangent, META3 H2: the hull inherited).
     pub const PLANE: usize = 8;
-    /// Rows kept by those regions, summed over the conjunctions decided from them.
+    /// Rows that state those hulls, summed over the conjunctions decided from them.
     pub const PLANE_ROWS: usize = 9;
+    /// Hulls built from a whole conjunction (`plane::Plane::of`, META3 H2: the hull seeded).
+    pub const PLANE_FRESH: usize = 10;
+    /// Rows added to a hull kept by a part (`plane::Plane::with`).
+    pub const HULL_UPDATES: usize = 11;
+    /// Rows added by Harvey's case 1 (the new line holds an integer point between its
+    /// neighbors) and by case 2 (it does not).
+    pub const HULL_CASE1: usize = 12;
+    pub const HULL_CASE2: usize = 13;
+    /// Hulls that lost their area: a Line or a Point (META3 H1).
+    pub const HULL_COLLAPSE: usize = 14;
+    /// Tree nodes of the hulls made or read (META3 H3: every node touched).
+    pub const HULL_NODES: usize = 15;
+    /// Conjunctions without a kept part decided by the solver (`whole` when no hull answers
+    /// them; META3 H2), whether or not a summary answers the question, which [`WHOLE`] does
+    /// not count.
+    pub const BASE_SOLVED: usize = 16;
     /// The number of counts.
-    pub const N: usize = 10;
+    pub const N: usize = 17;
 
     thread_local! {
         static COUNTS: [Cell<u64>; N] = const { [const { Cell::new(0) }; N] };
@@ -145,8 +161,9 @@ struct Known {
     /// ([`Extending::fill`]), so that separate questions over one chain do not each read
     /// every definition they reach.
     later: bool,
-    /// Its region over Q, kept as the rows that bound it, when it is a conjunction of rows
-    /// `>=` over at most two symbols with an interior ([`plane::Plane`], LOAD-chain-move).
+    /// Its integer hull, when it is a conjunction of rows `>=` over at most two symbols
+    /// ([`plane::Plane`], LOAD-chain-move-tangent, design B): a conjunction that extends it by
+    /// such rows adds them to a new version, O(log N + log A) a row.
     plane: Option<plane::Plane>,
 }
 
@@ -185,6 +202,14 @@ pub struct Extending {
     /// `xr_face_local_atoms_f4b_fails_without_given` and `..._f4c_miss_without_given`.
     #[cfg(test)]
     unguarded: bool,
+    /// Tests only: a conjunction decided whole is not answered from its hull, the mutant of
+    /// META3 H2 that disables seeding.
+    #[cfg(test)]
+    no_seed: bool,
+    /// Tests only: a conjunction extended from a part is not answered from the part's hull, the
+    /// mutant of META3 H2 that disables inheritance.
+    #[cfg(test)]
+    no_inherit: bool,
 }
 
 /// The definitions a definition reaches, projected exactly ([`Summary`]): by the definition (the
@@ -252,6 +277,26 @@ impl Extending {
             return true;
         }
         given(closure, m, f)
+    }
+
+    /// Whether a conjunction decided whole is answered from its hull (META3 H2), off in the
+    /// test mutant `no_seed`.
+    fn seed(&self) -> bool {
+        #[cfg(test)]
+        if self.no_seed {
+            return false;
+        }
+        true
+    }
+
+    /// Whether a conjunction extended from a part is answered from the part's hull (META3
+    /// H2), off in the test mutant `no_inherit`.
+    fn inherit(&self) -> bool {
+        #[cfg(test)]
+        if self.no_inherit {
+            return false;
+        }
+        true
     }
 
     /// [`Extending::defined`] of a formula with no auxiliary variable, or whose auxiliary
@@ -429,23 +474,26 @@ impl Extending {
                 continue;
             }
             let Some(k) = self.known.get(&Id::any(h)) else {
-                return whole(&mut self.sums, g, def);
+                let seed = self.seed();
+                return whole(&mut self.sums, g, def, seed);
             };
             parts.push((i, k));
         }
         parts.sort_by_key(|&(i, k)| (std::cmp::Reverse(k.size), i));
         let Some(&(at, part)) = parts.first() else {
-            return whole(&mut self.sums, g, def);
+            let seed = self.seed();
+            return whole(&mut self.sums, g, def, seed);
         };
         // The other parts, O(their number), and the definitions they reach; a refusal on them
         // is answered by deciding the whole, so a refused question prints the refusal it
         // printed before.
         let others = kids.iter().enumerate().filter(|&(i, _)| i != at);
         let rest = Formula::and(others.map(|(_, h)| h.clone()).collect());
-        // The region over Q of the whole, when the part has one and every other part is a row
-        // `>=` over its two symbols: the part's region cut by those rows, O(its kept rows) a
-        // row ([`plane::Plane`]). Anything else, an `Aux` among them, takes the paths below
-        // (LOAD-chain-move, META1 A1: the check is explicit).
+        // The integer hull of the whole, when the part has one and every other part is a row
+        // `>=` over its two symbols: the part's hull with those rows added, a new version that
+        // shares the part's, O(log N + log A) a row ([`plane::Plane::with`]). Anything else, an
+        // `Aux` among them, takes the paths below (LOAD-chain-move, META1 A1: the check is
+        // explicit).
         let region = (part.plane.as_ref()).and_then(|p| {
             let cons: Option<Vec<&Con>> = (kids.iter().enumerate())
                 .filter(|&(i, _)| i != at)
@@ -456,6 +504,30 @@ impl Extending {
                 .collect();
             p.with(cons?)
         });
+        // The hull inherited settles both answers and both points (META3 H2): an integer point
+        // is in the hull exactly when every row holds there, so the conjunction holds iff the
+        // hull is not Empty, fails iff it is not the plane, and its witnesses are points of
+        // the conjunction and of its negation; the rows read no definition. O(log N + log A) a
+        // row added ([`plane::Plane::with`]), and no solver call (the mutant `no_inherit`
+        // turns this off; test `a_hull_answers_every_eligible_link_without_the_solver`).
+        if let Some(r) = &region
+            && self.inherit()
+        {
+            counts::add(counts::PLANE, 1);
+            counts::add(counts::PLANE_ROWS, r.rows());
+            return Known {
+                answers: Answers {
+                    holds: Ok(r.holds()),
+                    fails: Ok(r.fails()),
+                },
+                point: r.inside().map(Point::from_iter),
+                miss: r.outside().map(Point::from_iter),
+                size: part.size + rest.atoms().len(),
+                closure: Atoms::new(),
+                later: false,
+                plane: region,
+            };
+        }
         // The definitions the other parts reach past the auxiliary variables the part's point
         // gives a value: those it gives hold there with their own definitions, so a point that
         // extends it needs values for the new ones alone, and a link whose new constraint reads
@@ -558,30 +630,6 @@ impl Extending {
         }
         // No kept part's point extends: a point of the parts read through their faces, nothing
         // fixed, or the faces holding nowhere ([`Faces::free`]), before the whole is decided.
-        // A conjunction of rows over two symbols is decided from the rows that bound its region
-        // over Q, which have the same integer points as all of its rows: at most 3 a link on the
-        // chain `x + i y >= 1000 i` over `x >= y + 1, y >= 0`, whose whole decision grew 56.9
-        // times from 50 to 400 links (LOAD-chain-move; tests
-        // `l01_38_omega_test::extend::a_chain_whose_points_move_keeps_few_rows`, bench
-        // `l01_38_omega_test::bench::extend::a_chain_whose_points_move_is_decided_in_time_of_its_links`).
-        // Complexity tradeoff: a chain whose every row bounds the region keeps all of them
-        // (the tangents `y >= 2 i x - i^2` of `y = x^2`), Θ(n) a link, 38.3 times from 50 to
-        // 400 links (row LOAD-chain-move-tangent); see [`plane`].
-        if holds.is_none()
-            && let Some(r) = &region
-        {
-            counts::add(counts::PLANE, 1);
-            counts::add(counts::PLANE_ROWS, r.rows().count());
-            let (b, p) = found(&plane::formula(r));
-            // An axis no kept row reads is free in the region, so any value serves: 0.
-            let p = p.map(|mut p| {
-                for a in r.axes() {
-                    p.entry(a.clone()).or_default();
-                }
-                p
-            });
-            holds = Some((b, p));
-        }
         if holds.is_none() {
             self.faces.make(&self.known, kids.iter(), def, iface);
             holds = self.faces.free(&self.known, kids, def);
@@ -2730,8 +2778,25 @@ fn fails_whole(
 
 /// The answers of `g`, decided whole, with the summaries of the definitions it reads where
 /// they answer ([`decide_defined`]); its points and atoms are found later, when a conjunction
-/// reads it as a part ([`Extending::fill`]).
-fn whole(sums: &mut Summaries, g: &Formula, def: &dyn Fn(u32) -> Formula) -> Known {
+/// reads it as a part ([`Extending::fill`]). A conjunction of rows over at most two symbols is
+/// answered from its integer hull when `seed` (META3 H2, the hull seeded): both answers and both
+/// points, O(n (log n + log A)) for n rows ([`plane::Plane::of`]), and no solver call.
+fn whole(sums: &mut Summaries, g: &Formula, def: &dyn Fn(u32) -> Formula, seed: bool) -> Known {
+    if seed && let Some(p) = plane::Plane::of(g) {
+        return Known {
+            answers: Answers {
+                holds: Ok(p.holds()),
+                fails: Ok(p.fails()),
+            },
+            point: p.inside().map(Point::from_iter),
+            miss: p.outside().map(Point::from_iter),
+            size: g.atoms().len(),
+            closure: Atoms::new(),
+            later: false,
+            plane: Some(p),
+        };
+    }
+    counts::add(counts::BASE_SOLVED, 1);
     Known {
         answers: Answers {
             holds: decide_defined(sums, g.clone(), def),
@@ -9123,5 +9188,67 @@ mod tests {
             "lone: {atoms:?}"
         );
         assert_eq!(xbad_points(&e, &def), Vec::<String>::new(), "lone");
+    }
+
+    /// The links `f{i} = f{i-1} && x + i y >= 1000 i` over `x >= y + 1, y >= 0`: the point of
+    /// `f{i-1}` is below each new row, so no inherited point extends (LOAD-chain-move).
+    fn hull_chain(n: i64) -> Vec<Formula> {
+        let sym = |s: &str| Lin::atom(Atom::Sym(s.into()));
+        let ge = |a: Lin, b: Lin| Formula::Con(Con::ge(&a, &b));
+        let mut f = Formula::and(vec![
+            ge(sym("x"), sym("y").plus(&Lin::constant(1))),
+            ge(sym("y"), Lin::constant(0)),
+        ]);
+        let mut out = vec![f.clone()];
+        for i in 1..=n {
+            let row = ge(sym("x").plus(&sym("y").times(i)), Lin::constant(1000 * i));
+            f = Formula::and_keeping(vec![f, row], |j| j == 0);
+            out.push(f.clone());
+        }
+        out
+    }
+
+    /// META3 H2: every conjunction of the chain, its base decided whole and each link extended,
+    /// is answered from its hull, both answers and both points, with no solver call; the two
+    /// mutants, seeding off (`no_seed`) and inheritance off (`no_inherit`), each call the
+    /// solver, so the test fails without either. Each answer is the one `decide` gives, and
+    /// each point is checked against the formula.
+    #[test]
+    fn a_hull_answers_every_eligible_link_without_the_solver() {
+        let chain = hull_chain(12);
+        for (no_seed, no_inherit) in [(false, false), (true, false), (false, true)] {
+            let mut e = Extending::new();
+            e.no_seed = no_seed;
+            e.no_inherit = no_inherit;
+            counts::take();
+            for f in &chain {
+                let got = e.answers(f);
+                let want = Answers {
+                    holds: decide(f),
+                    fails: decide(&Formula::negate(f.clone())),
+                };
+                assert_eq!(got, want, "{f}");
+            }
+            let c = counts::take();
+            let label = format!("no_seed {no_seed}, no_inherit {no_inherit}");
+            let solved = c[counts::WHOLE] + c[counts::BASE_SOLVED];
+            if no_seed || no_inherit {
+                assert!(solved > 0, "{label}: the solver is called: {c:?}");
+                continue;
+            }
+            assert_eq!(solved, 0, "{label}: {c:?}");
+            assert_eq!(c[counts::PLANE_FRESH], 1, "{label}: the base seeded once");
+            assert_eq!(c[counts::PLANE], 12, "{label}: each link inherits");
+            for f in &chain {
+                let k = &e.known[&Id::any(f)];
+                let model = |p: &Point| -> Model {
+                    p.iter().map(|(a, v)| (a.clone(), v.clone())).collect()
+                };
+                let p = k.point.as_ref().expect("a point where it holds");
+                assert!(f.holds(&model(p)), "{f}: point {p:?}");
+                let m = k.miss.as_ref().expect("a point where it fails");
+                assert!(!f.holds(&model(m)), "{f}: miss {m:?}");
+            }
+        }
     }
 }

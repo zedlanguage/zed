@@ -130,8 +130,9 @@ pub(super) fn a_tangent_chain(n: usize) -> Vec<Formula> {
 fn a_chain_whose_points_move_keeps_few_rows() {
     // The point found for f{i-1} is below the new row, so no point extends, and each f{i} was
     // decided whole, 56.9 times slower at 400 links than at 50 (LOAD-chain-move). Each is now
-    // decided from the rows that bound its region over Q, at most 3 at every link, and each
-    // answer is still the one the whole has. The base rows are `x >= y + 1, y >= 0`.
+    // decided from the integer hull of its rows (design B, META3 H2), the part's hull with one
+    // row added, at most 4 sides at every link (design D11), and each answer is still the one
+    // the whole has. The base rows are `x >= y + 1, y >= 0`.
     let mut e = Extending::new();
     for (i, f) in a_moving_chain(40).iter().enumerate() {
         counts::take();
@@ -145,10 +146,19 @@ fn a_chain_whose_points_move_keeps_few_rows() {
             i + 1
         );
         assert!(
-            c[counts::PLANE_ROWS] <= 3,
-            "link {}: {} rows kept",
+            c[counts::PLANE_ROWS] <= 4,
+            "link {}: {} sides",
             i + 1,
             c[counts::PLANE_ROWS]
+        );
+        assert_eq!(c[counts::HULL_UPDATES], 1, "link {}: one row added", i + 1);
+        // The base, not in the list, is decided in link 1's call and seeds the hull once.
+        let fresh = u64::from(i == 0);
+        assert_eq!(
+            c[counts::PLANE_FRESH],
+            fresh,
+            "link {}: no hull rebuilt",
+            i + 1
         );
         assert_eq!(c[counts::WHOLE], 0, "link {}: nothing decided whole", i + 1);
     }
@@ -156,17 +166,51 @@ fn a_chain_whose_points_move_keeps_few_rows() {
 
 #[test]
 fn a_tangent_chain_keeps_every_row() {
-    // Every row of the tangent chain bounds its region, so every row is kept: n at link n.
+    // Every row of the tangent chain bounds its region, so the integer hull at link n has
+    // n + 3 sides: `y >= 0`, `y >= x`, the n - 1 chords `y >= (2k + 1) x - k (k + 1)`, the
+    // last tangent and `x <= 1000000` (design D11). Each link adds its one row to the part's
+    // hull and asks nothing of the solver (META3 H2).
     let mut e = Extending::new();
     for (i, f) in a_tangent_chain(30).iter().enumerate() {
         counts::take();
         let got = e.answers(f);
         let c = counts::take();
         assert_eq!(got, decided(f), "{f}");
-        if c[counts::PLANE] == 1 {
-            // The tangents so far, `y >= 0` (the tangent at 0) and `x <= 1000000`.
-            assert_eq!(c[counts::PLANE_ROWS], i as u64 + 3, "link {}", i + 1);
-        }
+        assert_eq!(c[counts::HULL_UPDATES], 1, "link {}: one row added", i + 1);
+        assert_eq!(c[counts::PLANE], 1, "link {}: decided from its hull", i + 1);
+        assert_eq!(c[counts::PLANE_ROWS], i as u64 + 4, "link {}", i + 1);
+        assert_eq!(c[counts::WHOLE], 0, "link {}: nothing decided whole", i + 1);
+    }
+}
+
+#[test]
+fn a_translated_quadrant_keeps_its_rays() {
+    // META3 H1, Codex B1: the quadrant `x >= 0, y >= 0` cut by `x >= 5` keeps one vertex,
+    // (5, 0), and two rays, so it is not a Point; a hull read as the Point (5, 0) answers the
+    // next links (`y >= 1`, the point (5, 1)) empty. Each link is answered from the hull
+    // (`counts::PLANE`) and each answer is the one the whole has, both polarities.
+    let (x, y, k) = (sym("x"), sym("y"), Lin::constant);
+    let quadrant = Formula::and(vec![ge(x.clone(), k(0)), ge(y.clone(), k(0))]);
+    let moved = extend(&quadrant, vec![ge(x.clone(), k(5))]);
+    let links = [
+        extend(&moved, vec![ge(y.clone(), k(1))]),
+        extend(&moved, vec![ge(k(5), x.clone())]),
+        extend(
+            &extend(&moved, vec![ge(k(5), x.clone())]),
+            vec![ge(k(3), y.clone())],
+        ),
+        extend(&moved, vec![ge(k(4), x.clone())]),
+        extend(&moved, vec![ge(k(4), x.clone().plus(&y.clone()))]),
+    ];
+    let mut e = Extending::new();
+    assert_eq!(e.answers(&moved), decided(&moved), "{moved}");
+    for f in &links {
+        counts::take();
+        let got = e.answers(f);
+        let c = counts::take();
+        assert_eq!(got, decided(f), "{f}");
+        assert!(c[counts::PLANE] >= 1, "{f}: decided from its hull");
+        assert_eq!(c[counts::WHOLE], 0, "{f}: nothing decided whole");
     }
 }
 
