@@ -1423,17 +1423,17 @@ p2(x: int) = v2(x: x - 2) == 7 && p1(x: x + 1) && x < 30;
 p3(x: int) = (v1(x: x) + v2(x: x + 3) > 20 || p2(x: x)) && x < 40;
 n3(x: int) = !p3(x: x + 2);
 
-== l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#2b04ba3a 422
+== l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_exact#2b04ba3a 422
 ok(positional x: int, positional y: int, positional z: int) = if x >= 0 { if x <= 6 { if x != 5 { if y >= 0 { if y <= 6 { if y != 4 { if z >= 0 { if z <= 6 { if z != 3 { if z <= y { if y <= x { if x <= z + 1 { if z <= x { if x <= y + 1 { 1 } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 };
-== l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#e7255f68 422
+== l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_exact#e7255f68 422
 ok(positional x: int, positional y: int, positional z: int) = if z <= y { if y <= x { if x <= z + 1 { if z <= x { if x <= y + 1 { if x >= 0 { if x <= 6 { if x != 5 { if y >= 0 { if y <= 6 { if y != 4 { if z >= 0 { if z <= 6 { if z != 3 { 1 } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 };
-== l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#e1cdf5e7 227
+== l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_exact#e1cdf5e7 227
 ok(positional x: int, positional y: int, positional z: int) = if x >= 0 && x <= 6 && x != 5 && y >= 0 && y <= 6 && y != 4 && z >= 0 && z <= 6 && z != 3 && z <= y && y <= x && x <= z + 1 && z <= x && x <= y + 1 { 1 } else { 0 };
-== l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#fc0a6066 447
+== l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_exact#fc0a6066 447
 ok(positional x: int, positional y: int, positional z: int) = if x >= 0 { if x <= 6 { if x != 2 { if y >= 0 { if y <= 6 { if y != 1 { if y != 3 { if z >= 0 { if z <= 6 { if z != 4 { if z <= y { if y <= x { if x <= z + 1 { if z <= x { if x <= y + 1 { 1 } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 };
-== l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#83d93546 447
+== l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_exact#83d93546 447
 ok(positional x: int, positional y: int, positional z: int) = if z <= y { if y <= x { if x <= z + 1 { if z <= x { if x <= y + 1 { if x >= 0 { if x <= 6 { if x != 2 { if y >= 0 { if y <= 6 { if y != 1 { if y != 3 { if z >= 0 { if z <= 6 { if z != 4 { 1 } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 } } else { 0 };
-== l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#f46fb061 237
+== l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_exact#f46fb061 237
 ok(positional x: int, positional y: int, positional z: int) = if x >= 0 && x <= 6 && x != 2 && y >= 0 && y <= 6 && y != 1 && y != 3 && z >= 0 && z <= 6 && z != 4 && z <= y && y <= x && x <= z + 1 && z <= x && x <= y + 1 { 1 } else { 0 };
 == l01_39_reduced_product::refused::a_refused_projection_names_the_bounds_it_kept#fb91d508 309
 ok = (x: int, y: int, z: int, w: int, a: int, b: int, c: int, d: int) -> if x >= 0 && x <= 9 && y >= -5 && z <= 20 && 4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y - 11 * z - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && 0 - 8 * w - 5 * x + 12 * y - z + 31 >= 0 { 1 } else { 0 };

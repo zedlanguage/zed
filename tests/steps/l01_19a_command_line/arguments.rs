@@ -230,12 +230,18 @@ const ARG_AT: &str = "main(m: MainArgs) {\n  \
 
 /// What `ARG_AT` writes for the key `k` and the words `more` after the program's file. Each run
 /// has its own directory, since the tests run at once and a shared one would be rewritten under a
-/// running program.
+/// running program. The directory is named by the test and a count of its own runs: a count
+/// shared by the tests of one process gave each test other numbers in each arrangement of the
+/// tests into processes, and the scratch check (`tests/src/scratch.rs`), which records the
+/// paths each test claims across processes, found two tests on one path (merge check of
+/// b22-eqsrest7, 2026-11-24).
 fn arg_at(k: &str, more: &[&str]) -> String {
-    static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let n = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    thread_local!(static RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) });
+    let n = RUNS.with(|r| r.replace(r.get() + 1));
+    let thread = std::thread::current();
+    let test = (thread.name().unwrap_or("main").rsplit("::").next()).unwrap_or("main");
     let out = zed_tests::step_helpers::l01_19_whole_file_ports::run(
-        &format!("l01_19a_arg_at_{n}"),
+        &format!("l01_19a_arg_at_{test}_{n}"),
         ARG_AT,
         &format!("{k}\n"),
         more,

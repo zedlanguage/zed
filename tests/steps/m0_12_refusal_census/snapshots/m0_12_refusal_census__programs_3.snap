@@ -4,7 +4,6 @@ expression: programs_piece(3)
 ---
 Growth: 41
 Shadows: 1
-Holes: 1
 
 l01_29_diagnostics#afc637dc	1:178	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_29_diagnostics#afc637dc	2:178	warning	Growth	Cannot find exactly which values meet the conditions here.
@@ -48,4 +47,3 @@ l01_29_diagnostics#afc637dc	39:179	warning	Growth	Cannot find exactly which valu
 l01_29_diagnostics#afc637dc	40:179	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_38_presburger::checker::a_question_refused_through_a_call_by_a_map_of_its_parameters_names_its_parameters#f66e34bc	2:1	rejected	Growth	zedc could not decide whether the condition of `ok`, written `base(x: 2 * x, y: y, z: z, w: w) && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y - z + 31 >= 0`, can be true for whole-number values of `x`, `y`, `z`, `w`, which it works out for every test function: to find whole numbers that meet these conditions, the checker removes one variable at a time, putting in place of the conditions on it conditions on the variables left. Here four variables or more are left, and removing any one of them would leave more conditions than there are now, so the work could grow without end. The checker stopped there, with no values found and none ruled out.
 l01_38_presburger::checker::a_question_refused_through_a_call_by_a_map_of_its_parameters_names_its_parameters#5ff38d61	1:1	rejected	Shadows	zedc could not decide whether the condition of `ok`, written `9 * (2 * x) - 4 * y - 8 * w - 3 >= 0 && 5 * (2 * x) + 11 * y + 9 * w - 9 >= 0 && -7 * (2 * x) - 12 * y - 2 * z + 8 * w - 1 >= 0 && -9 * x + 8 * y + 7 * z >= 0 && -10 * x + 4 * y - 6 * z - 4 * w + 22 >= 0`, can be true for whole-number values of `x`, `y`, `z`, `w`, which it works out for every test function: to find whole numbers that meet these conditions, the checker removes one variable at a time, putting in place of the conditions on it conditions on the variables left. Where the values a variable can take have gaps, it splits the conditions into cases, one for each gap. Here the only values could lie in a case that would have to be split again with as many variables left as before, so the splitting need not end. The checker stopped there, with no values found and none ruled out.
-l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#e7255f68	1:194	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.

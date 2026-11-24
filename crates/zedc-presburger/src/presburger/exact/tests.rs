@@ -394,6 +394,36 @@ fn random_formulas_at(seed: u64) {
     assert!(refused.len() <= 3, "seed {seed}: {refused:#?}");
 }
 
+/// The exact projection of random formulas (the shape of
+/// `random_formulas_project_to_the_values_of_their_points`: strides, equations, nested
+/// disjunctions and negations) gives the same answers, refusals included and printed, with the
+/// plain-set shortcut of `Classed::new` taken and not taken
+/// (`zedc_lattice::classed::plain_shortcut`, VERIFY-classed-wider-class-callers): 1 000
+/// formulas, through every caller of `Classed::new` that the projection reaches (`block_set`,
+/// `cells_cover`, `outside`, `progression`, the two-pin `learn`, `projection::push` and
+/// `classes_in`, and the class unions). The cases whose projection took the shortcut are
+/// counted and printed; the assertion asks for one, since no draw is built to reach it.
+#[test]
+fn random_formulas_project_the_same_with_and_without_the_plain_shortcut() {
+    use zedc_lattice::classed::plain_shortcut;
+    let seed =
+        crate::seed::seed("random_formulas_project_the_same_with_and_without_the_plain_shortcut");
+    let mut rng = Rng::new(seed | 1);
+    let syms: Vec<Atom> = NAMES.iter().map(|n| a(n)).collect();
+    let (cases, mut took) = (1000, 0);
+    for case in 0..cases {
+        let f = boxed(formula(&mut rng, 3));
+        let (with, without, count) =
+            plain_shortcut::both(|| format!("{:?}", project_each_exact(&f, &syms)));
+        assert_eq!(with, without, "seed {seed}, case {case}: {f}");
+        if count > 0 {
+            took += 1;
+        }
+    }
+    println!("seed {seed}: {took} of {cases} took the shortcut");
+    assert!(took > 0, "seed {seed}: no case took the shortcut");
+}
+
 /// Conjunctions of random rows over one or two of x, y and z, so that their atoms often fall
 /// into groups that share no atom, some groups with no point, project to the sets that trying
 /// each point gives. `read_once` projects each group onto its own atoms alone

@@ -3,8 +3,6 @@ source: tests/steps/m0_12_refusal_census/mod.rs
 expression: programs_piece(6)
 ---
 Growth: 2
-Holes: 1
 
 l01_29_diagnostics::refused_warning::warnings_at_several_places_keep_their_order#e90d8f4a	1:173	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_29_diagnostics::refused_warning::warnings_at_several_places_keep_their_order#e90d8f4a	2:173	warning	Growth	Cannot find exactly which values meet the conditions here.
-l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#83d93546	1:194	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.

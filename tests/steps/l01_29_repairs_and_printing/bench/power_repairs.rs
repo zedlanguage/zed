@@ -20,6 +20,17 @@ fn checking_bound_powers_to_negative_literals_scales() {
     );
 }
 
+/// DOMAINS-classed-check-print: the note that shows a name narrowed to a class of `50,000·n`
+/// values prints its class, at a cost that does not grow with the count.
+#[test]
+fn showing_a_class_of_growing_count_scales() {
+    checking(
+        "checking a power under a test that narrows to a class of 50,000·n values",
+        classed_bound,
+        is_rejected,
+    );
+}
+
 #[test]
 fn checking_repairs_at_uses_scales() {
     checking(

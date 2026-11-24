@@ -156,6 +156,37 @@ fn a_name_a_test_narrows_is_shown_with_its_narrowed_type() {
     assert!(out.contains("`k` is int here"), "{out}");
 }
 
+/// A name a test narrows to a class is shown by its class, a type the program could write,
+/// where that is shorter than its values listed, and by its values where they are shorter
+/// (DOMAINS-classed-check-print, DESIGN "Types in a message"): the note on `k`, and the
+/// headline that shows a negative exponent. Red before green: the checker printed the
+/// interval alone, so the even values of `[0, 20]` printed one range a value,
+/// `int[0..=0, 2..=2, ...]`, and the even values of `[0, 2,000,000]`, past the limit at which a
+/// class is listed (`presburger::listed_within_limit`), printed as `int[0..=2000000]`, which
+/// holds the odd values too.
+#[test]
+fn a_name_a_test_narrows_to_a_class_is_shown_with_its_class() {
+    for (hi, want) in [
+        (20, "`k` is (x: int[0..=20] where x mod 2 == 0) here"),
+        (
+            2_000_000,
+            "`k` is (x: int[0..=2000000] where x mod 2 == 0) here",
+        ),
+        (4, "`k` is int[0..=0, 2..=2, 4..=4] here"),
+    ] {
+        let out = rejected(&format!(
+            "q(k: int) = if k >= 0 && k <= {hi} && k mod 2 == 0 {{ 2^(k - 5) }} else {{ 0 }};\n"
+        ));
+        assert!(out.contains(want), "{hi}: {out}");
+    }
+    let out = rejected("q(k: int) = if k < 0 && k >= -21 && k mod 2 == 1 { 2^k } else { 0 };\n");
+    assert!(out.contains("Int power with a negative exponent"), "{out}");
+    assert!(
+        out.contains("(x: int[-21..=-1] where x mod 2 == 1)"),
+        "{out}"
+    );
+}
+
 /// Programs of one rejected int power, written as `power` once in the program, each with the
 /// repairs it offers in order.
 const OFFERED: [(&str, &str, &[&str]); 9] = [
@@ -512,6 +543,16 @@ pub(super) fn negative_bound(n: usize) -> String {
 }
 
 /// Asserts that `src` is rejected.
+/// One power under a test that narrows `k` to the even values of `[0, 100,000·n]`: a class of
+/// `50,000·n + 1` values in a program of fixed size, shown by its class
+/// ([`a_name_a_test_narrows_to_a_class_is_shown_with_its_class`]).
+pub(super) fn classed_bound(n: usize) -> String {
+    format!(
+        "q(k: int) = if k >= 0 && k <= {} && k mod 2 == 0 {{ 2^(k - 5) }} else {{ 0 }};\n",
+        100_000 * n
+    )
+}
+
 pub(super) fn is_rejected(src: &str) {
     assert!(load(src.as_bytes()).is_err(), "{src}");
 }

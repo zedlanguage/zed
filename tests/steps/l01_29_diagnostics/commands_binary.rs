@@ -745,7 +745,13 @@ fn zedc_run_prints_the_value_of_an_exponent_beside_an_f32_base_as_beside_an_f64_
 #[test]
 fn zedc_run_prints_each_exponent_beside_an_f32_as_beside_an_f64() {
     let terms = [
-        "(2^64)", "(2^6 + 1)", "(1 - 3)", "(-(2^3))", "64", "(64)", "b",
+        "(2^64)",
+        "(2^6 + 1)",
+        "(1 - 3)",
+        "(-(2^3))",
+        "64",
+        "(64)",
+        "b",
     ];
     let strip = |out: &str| -> String {
         (out.lines())
@@ -769,10 +775,7 @@ fn zedc_run_prints_each_exponent_beside_an_f32_as_beside_an_f64() {
                 format!("status {status:?}\n{}\n{}", strip(&out), strip(&err))
             };
             let f64_out = run(format!("mix{i}_{j}_64.zed"), &text);
-            let f32_out = run(
-                format!("mix{i}_{j}_32.zed"),
-                &text.replace("f64", "f32"),
-            );
+            let f32_out = run(format!("mix{i}_{j}_32.zed"), &text.replace("f64", "f32"));
             if f32_out != f64_out.replace("f64", "f32") {
                 differ.push(format!(
                     "`{power}`:\n--- f64:\n{f64_out}\n--- f32:\n{f32_out}"
