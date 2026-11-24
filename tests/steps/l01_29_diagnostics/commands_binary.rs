@@ -711,6 +711,27 @@ fn zedc_run_prints_the_type_of_an_operation_on_wide_literals_not_its_literals() 
     );
 }
 
+/// DIAG-too-large-with-type-error, point (2): the note on the exponent `2^64` gives its value
+/// beside an `f32` base as beside an `f64` base ([`WIDE`]); it gave the class's carriers,
+/// `int | f32`. Negative control: the rest of the notes are those of `f64` with `f32` written
+/// for it, so the note is the one difference.
+#[test]
+fn zedc_run_prints_the_value_of_an_exponent_beside_an_f32_base_as_beside_an_f64_one() {
+    let f64_out = rejection("run", &file("wide64.zed", WIDE));
+    let f32_out = rejection("run", &file("wide32.zed", &WIDE.replace("f64", "f32")));
+    let strip = |out: &str| -> String {
+        (out.lines())
+            .map(|l| l.split_once(".zed:").map_or(l, |(_, rest)| rest))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(
+        f32_out.contains("[12] 3:35: this `^` gives 2^64\n"),
+        "{f32_out}"
+    );
+    assert_eq!(strip(&f32_out), strip(&f64_out).replace("f64", "f32"));
+}
+
 /// DIAG-too-large-with-type-error, point (1): a power past the address space inside a
 /// division by the literal 0 is reported with the other errors of the unit, not hidden by
 /// them: `zedc run` prints the `Lines` rejection of `#divByZero`, the "Number too large for any
