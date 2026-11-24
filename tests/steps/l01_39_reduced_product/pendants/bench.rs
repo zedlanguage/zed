@@ -302,3 +302,95 @@ fn hull_sides_of_a_disjunction_grow_linearly_in_its_disjuncts() {
         },
     );
 }
+
+/// A family's input for `k` additions: the scope with its hubs (and holes), and the `k`
+/// pendants, each assumed alone, one after another (ST-eqs-rest-cost).
+type Additions = (Scope, Vec<Term>);
+
+/// The pendants of `family`'s conjunction, apart.
+fn apart(family: Family) -> Additions {
+    fn split(t: &Term, out: &mut Vec<Term>) {
+        match t {
+            Term::Prim(Prim::And, v) if v.len() == 2 => {
+                split(&v[0], out);
+                split(&v[1], out);
+            }
+            t => out.push(t.clone()),
+        }
+    }
+    let (s, t) = family;
+    let mut out = Vec::new();
+    split(&t, &mut out);
+    (s, out)
+}
+
+/// The `k` additions of `ts` to `s`, one `assume` each.
+fn add_each(s: &Scope, ts: &[Term]) -> Scope {
+    let p = Premises::new();
+    ts.iter().fold(s.clone(), |s, t| s.assume(t, true, &p))
+}
+
+/// Times `k` additions of `family`'s pendants, one `assume` each, at `n` and `8n`
+/// ([`scaling::check_inputs`]), and holds the systems solved at the two sizes to
+/// [`scaling::hold_linear`]: each addition asks one question of the form at most, so `k`
+/// additions ask O(k).
+fn additions_scale(what: &str, n: usize, family: fn(usize) -> Family) {
+    let count = |k: usize| {
+        let (s, ts) = apart(family(k));
+        solved_in(|| {
+            add_each(&s, &ts);
+        })
+    };
+    scaling::hold_linear(
+        &format!("{what}: systems solved at {n} and {}", 8 * n),
+        "systems",
+        count(n),
+        count(8 * n),
+    );
+    scaling::check_inputs(
+        what,
+        n,
+        |k| apart(family(k)),
+        |(s, ts)| {
+            add_each(s, ts);
+        },
+    );
+}
+
+/// E: `a + b - z{i} == i` under the one disjunction `a < 3 || b > 7`, the route of unit
+/// coefficients with no hole and no class.
+fn e_one(k: usize) -> Family {
+    e_under(1, k)
+}
+
+#[test]
+fn k_additions_of_unit_pendants_take_linear_time() {
+    additions_scale("k additions a + b - zi == i, one assume each", 16, e_one);
+}
+
+#[test]
+fn k_additions_of_pendants_with_coefficient_two_take_linear_time() {
+    additions_scale(
+        "k additions a + b - 2 zi == 2i, one assume each",
+        16,
+        b_even,
+    );
+}
+
+#[test]
+fn k_additions_of_pendants_with_spaced_holes_take_linear_time() {
+    additions_scale(
+        "k additions a + b - zi == 2i, zi != 3, one assume each",
+        16,
+        c_spaced,
+    );
+}
+
+#[test]
+fn k_additions_of_pendants_under_two_disjunctions_take_linear_time() {
+    additions_scale(
+        "k additions a + b - zi == i under two disjunctions, one assume each",
+        16,
+        d_two,
+    );
+}

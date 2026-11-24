@@ -22868,45 +22868,26 @@ pub fn project_each_boxed_classed(f: &Formula, syms: &[Atom]) -> BoxedOf<Classed
 
 /// The integers a reduced product's interval domain is met with for `set`, a set of
 /// [`project_each_boxed_classed`], and the class its congruence domain is met with, if any:
-/// `set` listed ([`Classed::met`]) and no class where it has a class other than every integer
-/// and its values, at the `meter::LISTED` and `meter::PIECE` units a value the cover charged
-/// for listing one before the classes were kept (23 a value, so about 134,800 values at the
-/// default limit), fit within the cover's work limit (`meter::EXACT_LIMIT`, or the limit a
-/// test set); else its ranges and its class (none for every integer). Each holds every value
-/// of `set`, so each meet is sound, and the listed set alone, or the ranges with the class,
-/// hold exactly `set` (Lemma E of zedc-preimage `Scope::project_part`). A listed set leaves the
-/// congruence as it was, as before the classes were kept: the listed integers hold the set
-/// already, and a class met as well would change what the domains record and print (`2 mod 3`
-/// beside `[-1..=-1, 2..=2, 5..=5]`,
-/// `l01_39_scope_relations::families::audit_seed_4_keeps_its_exact_sets_with_the_cover`) and
-/// how the pendants route frames the name (`D-3` of
-/// `l01_39_reduced_product::pendants::the_parts_of_the_review_are_projected_exactly_by_pendants`).
+/// its ranges, and its class where that is not every integer. Each holds every value of
+/// `set`, so each meet is sound, and the ranges with the class hold exactly `set` (Lemma E of
+/// zedc-preimage `Scope::project_part`; zedc-lattice `Classed`). A strided set is never
+/// listed: the domains record `{-1, 2, 5}` as `[-1..=5]` beside `2 mod 3`, and a reader that
+/// prints or compares the set reads both (`Product::classed` of zedc-preimage).
 ///
-/// Complexity tradeoff (DOMAINS-classed-sets): naive version, the ranges alone for every
-/// class, O(p) for p ranges: the interval domain then lost the holes of a small class,
-/// `{0, 10}` read as `[0, 10]`, which `l01_39_scope_relations` (`holes`, `lazy`, `linked`,
-/// `families`) and `l01_39_reduced_product` (`let_terms`, `follow`, `pendants`) read from the
-/// integers alone, and which the checker's messages print. The other naive version, every
-/// class listed, O(v) for v values, is what `project_each_boxed` gave, and lists 10^8 values
-/// for `i mod 10 == 3` over `[0, 10^9]` (the memory exhaustion of
-/// `l01_25_preimage_catalog::entries`, 2026-11-23). Used: listed at the rate and within the
-/// limit at which the cover listed each value before the classes were kept
-/// (PERF-exact-strided-unlisted), so every set the cover gave listed before is listed the same
-/// way here, at the same O(v) cost and bounded by the same limit. The cover's limit was one
-/// total for the call; this one is a set's own, so a set the cover listed (its share of that
-/// total within the limit) is listed here too, and a call lists at most the limit's values for
-/// each name it projects onto, a number the formula fixes. Past it, where the cover was
-/// refused before and the domain kept the box stage's bounds, the ranges and the class, O(p).
-/// No input is refused by this choice; it changes only the form, never the set the domains
-/// hold together.
-pub fn listed_within_limit(
-    set: &Classed,
-) -> (IntervalSet, Option<zedc_lattice::lattice::Congruence>) {
-    let limit = meter::EXACT_LIMIT_SET.get().unwrap_or(meter::EXACT_LIMIT);
-    let rate = meter::LISTED + meter::PIECE;
+/// Complexity tradeoff (LIMITS-classed-listing-per-set): O(p) for p ranges, whatever the
+/// number of values. Naive version, every class listed, O(v) for v values, is what
+/// `project_each_boxed` gave, and lists 10^8 values for `i mod 10 == 3` over `[0, 10^9]` (the
+/// memory exhaustion of `l01_25_preimage_catalog::entries`, 2026-11-23). The version before
+/// this row listed a set whose values, at 23 work units a value, fit within the cover's work
+/// limit (about 134,800 values), and kept the ranges and the class past it: a limit on a count
+/// of values, which the no-limits rule forbids (a cost must follow the size of the input, and
+/// the values of a class are not that size: `x mod 2 == 0 && 0 <= x <= 10^5` is a few
+/// symbols), and two forms of one set on either side of it. No input is refused by this
+/// choice, and the domains hold the same set together; only the form changes.
+/// Test: `l01_39_scope_relations::families::a_strided_set_is_kept_as_its_class_at_n_and_8n`.
+pub fn ranges_and_class(set: &Classed) -> (IntervalSet, Option<zedc_lattice::lattice::Congruence>) {
     match set.strided() {
         None => (set.ranges.clone(), None),
-        Some(_) if set.count().saturating_mul(rate) <= limit => (set.met(), None),
         Some(_) => (set.ranges.clone(), Some(set.class.clone())),
     }
 }
