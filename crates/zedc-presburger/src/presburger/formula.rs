@@ -291,7 +291,7 @@ impl Formula {
         }))
     }
 
-    /// The formula itself, or for a call node its clauses ([`BoundHoles::lowered`], written
+    /// The formula itself, or for a call node its clauses (`BoundHoles::lowered`, written
     /// once a node and counted): the generic route of a walker that reads a formula down to its
     /// constraints (META3 H7). A node's clauses hold no node, so one step suffices. O(1) after
     /// the node's first lowering, which is O(runs).
