@@ -740,12 +740,8 @@ fn zedc_run_prints_the_value_of_an_exponent_beside_an_f32_base_as_beside_an_f64_
 /// written as `f32`: no step shows a class's carriers (`int | f32`) where the `f64` program
 /// shows the value. Each pair is listed when they differ. The notes that list the arrows of `^`
 /// list all of them, the same in both programs, so they are left out of the comparison.
-///
-/// One pair differs for another reason, pinned below: `f64(b) ^ b` with `b` an `int` is
-/// refused, "no arrow of `^` takes these types", while `f32(b) ^ b` checks, since the kernel's
-/// `^` has the arrow `f32 ^ int` and none `f64 ^ int` (zed-kernel term.rs, `Pow`). DESIGN.md
-/// L1.17 says an `int` exponent is the mixed case "at every base carrier"; plan row
-/// SPEC-f64-int-power-arrow holds the question.
+/// `f64(b) ^ b` with `b` an `int` checks as `f32(b) ^ b` does, by the arrow `f64 ^ int` of
+/// 0501dc977 (POW-domains), as DESIGN.md L1.17 says ("at every base carrier").
 #[test]
 fn zedc_run_prints_each_exponent_beside_an_f32_as_beside_an_f64() {
     let terms = [
@@ -777,14 +773,6 @@ fn zedc_run_prints_each_exponent_beside_an_f32_as_beside_an_f64() {
                 format!("mix{i}_{j}_32.zed"),
                 &text.replace("f64", "f32"),
             );
-            if *t == "b" && j == 0 {
-                assert!(
-                    f64_out.contains("`^` does not take (f64, int): no arrow of `^`")
-                        && !f32_out.contains("does not take (f32, int)"),
-                    "`f64(b) ^ b` and `f32(b) ^ b` (SPEC-f64-int-power-arrow):\n{f64_out}\n{f32_out}"
-                );
-                continue;
-            }
             if f32_out != f64_out.replace("f64", "f32") {
                 differ.push(format!(
                     "`{power}`:\n--- f64:\n{f64_out}\n--- f32:\n{f32_out}"
