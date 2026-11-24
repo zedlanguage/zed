@@ -80,23 +80,41 @@ fn each_prints_back_as_written() {
     );
 }
 
-/// The rest, the entries and the fields written `f:` bind; resolution reports each pattern as a
-/// form not compiled yet, and no name as not defined.
+/// The rest, the entries and the fields written `f:` bind, so no name is reported as not
+/// defined. In a `match` the `match` itself is reported as a form not compiled yet, and its
+/// patterns are not reported again; the pattern of an `else` is reported, each list and record
+/// pattern at its own span.
 #[test]
 fn the_names_of_each_are_bound() {
     let text =
         "f(v) = match v { [a, [b], ..rest] -> a + b + rest, {x:, y: (q,)} -> x + q, _ -> 0 };\n";
     let errors = resolution_errors(text);
     let messages: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
-    assert!(
-        !messages.iter().any(|m| m.contains("is not defined")),
-        "{messages:?}"
-    );
-    for (what, at) in [
-        ("a list pattern `[a, ..rest]`", "[a, [b], ..rest]"),
-        ("a list pattern `[a, ..rest]`", "[b]"),
-        ("a record pattern `{x: p}`", "{x:, y: (q,)}"),
+    assert_eq!(messages, [not_yet("a `match`")], "{text}");
+    // An `else` takes an atom pattern (grammar rule ElseTail), so the patterns are its payload.
+    for (text, what, at) in [
+        (
+            "f(v) = v else #ok(e: [a, [b], ..rest]) -> a + b + rest;\n",
+            "a list pattern `[a, ..rest]`",
+            "[a, [b], ..rest]",
+        ),
+        (
+            "f(v) = v else #ok(e: [a, [b], ..rest]) -> a + b + rest;\n",
+            "a list pattern `[a, ..rest]`",
+            "[b]",
+        ),
+        (
+            "f(p) = p else #ok(r: {x:, y: (q,)}) -> x + q;\n",
+            "a record pattern `{x: p}`",
+            "{x:, y: (q,)}",
+        ),
     ] {
+        let errors = resolution_errors(text);
+        let messages: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
+        assert!(
+            !messages.iter().any(|m| m.contains("is not defined")),
+            "{text}: {messages:?}"
+        );
         assert!(
             errors
                 .iter()

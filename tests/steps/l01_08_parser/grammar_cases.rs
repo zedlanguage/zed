@@ -1087,8 +1087,8 @@ pub const CASES: &[(&str, &str, u32, &str, &str)] = &[
         "RecordPat#0",
         "RecordPat",
         0,
-        "{x: 1, y: [h, ..t],}",
-        "{ x : 1 , y : [ h , .. t ] , }",
+        "{x: 1, y: {z:},}",
+        "{ x : 1 , y : { z : } , }",
     ),
     ("NamePat#0", "NamePat", 0, "x", "x"),
     (
