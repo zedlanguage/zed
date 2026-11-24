@@ -1138,8 +1138,8 @@ fn ranks(cs: &[Coords]) -> Vec<Vec<u32>> {
 /// (plan row BOUND-maxima-many-symbols, QUESTIONS.md A226, answer A).
 ///
 /// Method. Each monomial is a point of `d` coordinates (one per symbol and per opaque atom of
-/// the set, [`ranks`]). Sorted by `lex` descending, a monomial is dominated only by one before
-/// it: `lex` extends dominance (see [`lex`]), and of two with every coordinate equal the first
+/// the set, `ranks`). Sorted by `lex` descending, a monomial is dominated only by one before
+/// it: `lex` extends dominance (see `lex`), and of two with every coordinate equal the first
 /// is kept and dominates the second, which is what "each once" asks. So a pass in that order
 /// keeps a monomial exactly when no monomial kept before it dominates it (one dropped before it
 /// is dominated by a kept one, and dominance is transitive).
