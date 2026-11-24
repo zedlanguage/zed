@@ -21492,8 +21492,8 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
 ///    envelopes, then per narrow strip two bisections of `O(log w)` floor sums of `O(log M)`
 ///    steps each (its doc at twovar.rs, `project_convex`); `point` costs no more.
 /// 6. Summing 4 and 5 per call and multiplying by the `d·|syms|` calls of 1 gives the bound
-///    above (`r log r` is `m log m` with `m <= 2r`; the `O(e²)` reads of `a` terms each are inside `e·r·a` since `e <= r`;
-///    `O(r·a)` is inside `e·r·a·log a` when `e >= 1`, and `a <= 2` when `e = 0`; `log a`
+///    above (`r log r` is `m log m` with `m <= 2r`; the `O(e²)` reads of `a` terms each are
+///    inside `e·r·a` since `e <= r`; `O(r·a)` is inside `e·r·a·log a` when `e >= 1`, and `a <= 2` when `e = 0`; `log a`
 ///    stands for `max(1, log a)`). The earlier bound here,
 ///    `O(d·|syms|·(m log m + log M))`, charged one count for the whole sweep (found by
 ///    proofdoc4g, DOC-proofs-in-comments-audit-rest-3) and left out the substitutions.
