@@ -36,7 +36,7 @@ Local         = 'local' Decl                                                    
 Initial       = 'initial' InitTarget '=' Expr Carry? ';'                           L6
 Carry         = 'with' 'carryForward'                                              L6
 InitTarget    = Name ':' Type                                                      L6
-              | Name '::' 'frames' '[' IndexKey ']' '.' Name                       L6
+              | Name ('[' IndexKey ']')+                                           L6
               | Name % ','                                                         L6
 Return        = 'return' Expr % ',' ';'                                            L1
 Emit          = 'emit' Expr ';'                                                    L4
@@ -240,8 +240,6 @@ Pattern       = ~OrPat                                                          
               | ~WildPat                                                           L2
               | ~CtorPat                                                           L2
               | ~TuplePat                                                          L2
-              | ~ListPat                                                           L3
-              | ~RecordPat                                                         L2
               | ~SignedLit                                                         L2
               | ~NamePat                                                           L2
 OrPat         = '(' Pattern ('|' Pattern)+ ')'                                     L2
@@ -250,8 +248,6 @@ IsPat         = '(' Name? 'is' TypeUnion ')'                                    
 WildPat       = WILD                                                               L2
 CtorPat       = Path '(' FieldPat % ',' ','? ')'                                   L2
 TuplePat      = '(' Pattern ((',' Pattern)+ ','? | ',') ')'                        L2
-ListPat       = '[' (('..' Name | Pattern % ',' (',' '..' Name)?) ','?)? ']'       L3
-RecordPat     = '{' FieldPat % ',' ','? '}'                                        L2
 NamePat       = Name                                                               L2
 AtomPattern   = ATOM (OrPat | RangePat | IsPat | '(' ((FieldPat % ',' | Pattern % ',') ','?)? ')')?   L1
 FieldPat      = Name ':' Pattern?                                                  L1
