@@ -118,10 +118,10 @@ impl ClassUnion {
     }
 
     /// The values of `self` not in `other`, exact: each set of `self` cut by each set of
-    /// `other` in turn ([`cut`]), `A \ (B1 ∪ B2) = (A \ B1) \ B2`. The ranges each round adds to
-    /// those it was given are charged [`PIECE`] units each to `work`, and [`cut`] charges its
-    /// own classes and values, so the call is refused at the meter's limit as the cover is.
-    /// The sets left are then gathered by class, each class's ranges made one set at once.
+    /// `other` in turn ([`cut`]), `A \ (B1 ∪ B2) = (A \ B1) \ B2`. The ranges each round leaves
+    /// are charged [`PIECE`] units each to `work`, and [`cut`] charges its own classes and
+    /// values, so the call is refused at the meter's limit as the cover is. The sets left are
+    /// then gathered by class, each class's ranges made one set at once.
     // Complexity tradeoff: naive version, uncharged, each set left joined by [`ClassUnion::add`]
     // in turn: a cut can split one set into `l/m - 1` classes, so the sets grew by that factor
     // for each set of `other`, and joining N sets of one class one at a time rebuilt the class's
@@ -129,34 +129,21 @@ impl ClassUnion {
     // `l01_39_reduced_product::pendants::the_projections_by_pendants_and_of_the_whole_part_are_sound`,
     // `ZED_TEST_SEED=94081993546161772`, ran past 60 s there (gdb: `ClassUnion::add` under
     // `minus` under `cells_cover`; 2 s on origin/main, which lists the gap as ranges and charges
-    // each piece). Used: each range made charged [`PIECE`], so at most `limit / PIECE` ranges
-    // are made before a refusal; the ranges of each class gathered and sorted once,
-    // O(P log P) in all, each class found in O(1) expected.
-    // Only the ranges a round adds are charged, not every range it leaves (row
-    // VERIFY-classed-charge-refusals, 2026-11-24): charging all P ranges left on each of the
-    // cover's minus calls charged P units for each value found, where 06fbc3477's gap, an
-    // `IntervalSet`, took the same `minus` with no charge, so a gap of many plain ranges was
-    // refused (`Refusal::Questions`) by a cover 06fbc3477 finished exactly: five parts of the
-    // pendants seeds (wide seeds 30, 115, 149, 185 and 229) and the route by pendants of four
-    // more. Why charging the growth still ends the run: every range in the gap was either in
-    // the cover's first gap (one hull) or made by a round, so the ranges a call reads number
-    // at most 1 plus the ranges charged, and the meter's limit bounds those; a round that adds
-    // none removes or keeps ranges, which the values found pay for. Test:
-    // `l01_39_reduced_product::pendants::parts_answered_before_the_classed_charges_are_answered`.
+    // each piece). Used: each range made charged [`PIECE`], as main's listed gap charges each
+    // piece, so at most `limit / PIECE` ranges are made before a refusal; the ranges of each
+    // class gathered and sorted once, O(P log P) in all, each class found in O(1) expected.
     pub(super) fn minus(&self, other: &ClassUnion, work: &mut Work) -> Result<ClassUnion, Refusal> {
         if other.is_empty() {
             return Ok(self.clone());
         }
         let mut left: Vec<Classed> = self.sets.clone();
-        let mut had: usize = left.iter().map(|s| s.ranges.len()).sum();
         for b in &other.sets {
             let mut next = Vec::new();
             for a in &left {
                 next.extend(cut(a, b, work)?);
             }
             let ranges: usize = next.iter().map(|s| s.ranges.len()).sum();
-            work.charge(PIECE.saturating_mul(ranges.saturating_sub(had) as u64))?;
-            had = ranges;
+            work.charge(PIECE.saturating_mul(ranges as u64 + 1))?;
             left = next;
         }
         // The ranges of each class, the classes in the order first met (no hash order read).
