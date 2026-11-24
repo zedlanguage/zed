@@ -77,6 +77,31 @@ fn constant_sums_beside_a_dense_sum_scale() {
     });
 }
 
+/// [`solve_modular_or_scaled`] on [`spanning_rows`] with `k = n` and `8n` and a first block of
+/// modulus 13 (PERIOD-B-P1-intern-rest): `k + 1` coordinates, `k` middle blocks each moving one
+/// of them, and `4 min(k + 1, m1)` tuples reached, 52 at both sizes, so that `k` is the one
+/// thing that grows. With `m1 = 61` the tuples reached grow too, 60 to 244, and `k` blocks over
+/// them took 16.13 times the instructions (jobs g1 and diag3 of b22-period1). Held as vectors
+/// of `C` words, each middle block read and wrote every tuple whole, Θ(k²) words (on
+/// b71e720ba 12.10 times the bytes, job neg13); held as ids of a weighted hash-consed tree
+/// ([`sumset`]'s `tuples`), a middle block visits the one coordinate's path near the root,
+/// linear in `k` (7.70 times the instructions, 7.71 times the bytes, job m13). The words
+/// written are counted at `m1 = 3` by `coordinates_moved_by_the_end_blocks_are_not_copied`.
+#[test]
+fn coordinates_moved_by_the_end_blocks_scale() {
+    let inputs = scaling::inputs(N_SPANNING, |n| spanning_rows(n, 13).2);
+    scaling::check_order(
+        "k coordinates moved by the end blocks",
+        N_SPANNING,
+        1,
+        |n| by_sumset(&inputs[&n], |got| matches!(got, Some(Some(_)))),
+    );
+}
+
+/// The size of [`coordinates_moved_by_the_end_blocks_scale`], `k = 15` and 120 (the sizes of
+/// META4 order 8).
+const N_SPANNING: usize = 15;
+
 // Gemini's P-A ([`rows_of_one_remainder`]) and Codex's unread remainders
 // ([`unread_remainders`]) have no wall-time benchmark here (META4 order 2 of b22-presburger6):
 // timed at `k = 15` and 120 both passed with the fixes off (job j1 of b22-presburger5's lists),

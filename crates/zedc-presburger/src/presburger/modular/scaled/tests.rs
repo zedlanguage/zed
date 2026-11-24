@@ -1600,21 +1600,24 @@ fn an_answer_on_a_spent_meter_is_not_checked() {
 /// declines before [`sumset`] (job 37 on round 3: "not selected"). The walk of `f`'s `n`
 /// constraints and its copy by `map_cons` cost `2 n` (P4-C); the literals a word for the one
 /// live sum and the literal at each of the 2 tuples reached, and the literal once:
-/// `2 (1 + 1) + 1 = 5`.
+/// `2 (1 + 1) + 1 = 5`. The tuples are held in a tree ([`sumset`]'s `tuples`, PERIOD-B-P1): the
+/// start is charged a word per coordinate besides `M`, 1, and the literals read the coordinate
+/// at each of the 2 tuples along its path, here the one leaf, 2; 3 pieces in each case.
 /// - `x == 5 q + r`, `s = r mod 2`: the walk and copy with `n = 7` (3 for the row, 3 for the
-///   sum, the literal), 14; the start `M = 2`; the walk of the row's remainder
-///   `min(5, 1 * 2) * 1 + 1 = 3`; `R = {0}` read, 1; `W = {0, 1}` is the whole group, 2; the
-///   2 tuples written, 2; the literals, 5. 29 pieces.
+///   sum, the literal), 14; the start `M = 2` and the coordinate, 3; the walk of the row's
+///   remainder `min(5, 1 * 2) * 1 + 1 = 3`; `R = {0}` read, 1; `W = {0, 1}` is the whole group,
+///   2; the 2 tuples written, 2; the literals, 5, and their reads, 2. 32 pieces.
 /// - `x == 5 q + r` with `r <= 1`, `s = r mod 4`: the walk and copy with `n = 7`, as
 ///   [`Formula::and`] keeps one constraint per left-hand side and the literal `1 >= r` replaces
-///   the row's bound `r <= 4`, 14; the start 4; the walk of the row's one interval `0..=1`,
-///   `min(2, 4) * 1 + 1 = 3` (`walk_of`); `R` read, 1; `W = {0, 1}` is not the whole group of
-///   4, so the pairs `1 * 2 * 1 = 2` (the product of polynomials, `2 * 7 * 2 + 4 = 32`, costs
-///   more); the 2 tuples written, 2; the literals, 5. 31 pieces.
+///   the row's bound `r <= 4`, 14; the start 4 and the coordinate, 5; the walk of the row's one
+///   interval `0..=1`, `min(2, 4) * 1 + 1 = 3` (`walk_of`); `R` read, 1; `W = {0, 1}` is not
+///   the whole group of 4, so the pairs `1 * 2 * 1 = 2` (the product of polynomials,
+///   `2 * 7 * 2 + 4 = 32`, costs more); the 2 tuples written, 2; the literals, 5, and their
+///   reads, 2. 34 pieces.
 /// - `x == 5 q + r` and `2 x == 5 q' + r'` (one block), `s = r mod 2`: the walk and copy with
-///   `n = 10`, 20; the start 2; the block's `t` over `0..5`, each row its interval, its
-///   coordinates and itself, `5 ((1 + 1 + 1) + (1 + 0 + 1)) = 25`; `R` read, 1; `W` the whole
-///   group, 2; written, 2; the literals, 5. 57 pieces.
+///   `n = 10`, 20; the start 2 and the coordinate, 3; the block's `t` over `0..5`, each row its
+///   interval, its coordinates and itself, `5 ((1 + 1 + 1) + (1 + 0 + 1)) = 25`; `R` read, 1;
+///   `W` the whole group, 2; written, 2; the literals, 5, and their reads, 2. 60 pieces.
 #[test]
 fn sumset_charges_each_step() {
     let s = |m: i64, rem_of: usize| Sum {
@@ -1637,15 +1640,15 @@ fn sumset_charges_each_step() {
     // A case: its name, rows, top-level literals, sum and pieces charged.
     type Case = (&'static str, Vec<Div>, Vec<Formula>, Sum, u64);
     let cases: [Case; 3] = [
-        ("whole group", unit_rows([5]), vec![], s(2, 0), 29),
+        ("whole group", unit_rows([5]), vec![], s(2, 0), 32),
         (
             "pairs",
             unit_rows([5]),
             vec![Formula::Con(Con::ge(&Lin::constant(1), &r(0)))],
             s(4, 0),
-            31,
+            34,
         ),
-        ("a block of two rows", two, vec![], s(2, 0), 57),
+        ("a block of two rows", two, vec![], s(2, 0), 60),
     ];
     for (what, divs, mut lits, sum, pieces) in cases {
         let sums = [sum];
@@ -1943,6 +1946,89 @@ fn rows_of_one_remainder_leave_the_coordinates() {
     assert!(
         large <= 9 * small,
         "units {small} at k = 15, {large} at 120"
+    );
+}
+
+/// The family that defeats interning the coordinates a tuple holds outside the blocks between
+/// the first and the last block moving each (b22-presburger6: some family defeats it for every
+/// fixed order of the blocks; for the order of the moduli taken here, this one). Rows
+/// `x + j == m1 q_j + r_j`, `j` in `0..k`, for an odd prime `m1` (the first block); `k` unit
+/// rows over the primes after `m1` (the middle blocks); one unit row over the next prime (the
+/// last block). The sum `sum_i q_i` of the middle rows modulo 2 with `== 1`, which `x = 0`
+/// fails, and `k` sums `x + r_j + r_last` modulo 2, of `k` directions, so `k` coordinates, each
+/// moved by the first block and the last. Each middle block moves the first coordinate only,
+/// but every tuple it builds held the other `k` too, `Θ(k)` words a tuple for each of `k`
+/// blocks, `Θ(k²)`. The tuples reached number at most `4 m1`, whatever `k`.
+fn spanning_rows(k: usize, m1: u64) -> (Vec<Div>, Vec<Sum>, Formula) {
+    let primes = zed_numtheory::first_primes(k + 200);
+    let mut divs: Vec<Div> = (0..k)
+        .map(|j| Div {
+            t: 0,
+            a: 1,
+            k: j as i64,
+            m: m1 as i64,
+            fixed: None,
+        })
+        .collect();
+    divs.extend(unit_rows(
+        (primes.into_iter())
+            .filter(|&p| p > m1)
+            .take(k + 1)
+            .map(|p| p as i64),
+    ));
+    let last = 2 * k;
+    let mut sums = vec![Sum {
+        parts: (k..2 * k).map(|i| (2 * i + 1, 1)).collect(),
+        k: 0,
+        m: 2,
+        rem: true,
+    }];
+    sums.extend((0..k).map(|j| Sum {
+        parts: vec![(0, 1), (2 * j + 2, 1), (2 * last + 2, 1)],
+        k: 0,
+        m: 2,
+        rem: true,
+    }));
+    let lit = Formula::Con(Con::eq(&r(divs.len()), &Lin::constant(1)));
+    let f = formula(&divs, lit, sum_formulas(&divs, &sums));
+    (divs, sums, f)
+}
+
+/// [`spanning_rows`] (PRES-B-P1-copied-words, PERIOD-B-P1-intern-rest): the answers against
+/// enumeration at `k` = 2 and 3; at `k = 15` the real entry, [`solve_modular_or_scaled`] under a
+/// question's meter with no limit, takes [`sumset`]; and the words written to build the tuples
+/// ([`sumset::COPIED`]) grow as `k`, at most 9 times from 15 to 120. The units cannot show it:
+/// the walks of the blocks, `sum m_b` over `k` primes, are about `k² log k / 2` (b22-presburger6).
+#[test]
+fn coordinates_moved_by_the_end_blocks_are_not_copied() {
+    for k in 2..=3 {
+        let (divs, sums, f) = spanning_rows(k, 3);
+        let period: i64 = 2 * divs.iter().skip(k - 1).map(|d| d.m).product::<i64>();
+        let want = (0..period).any(|v| point_sums(&divs, &sums, v).is_some_and(|m| f.holds(&m)));
+        let (got, _, selected) = sumset_units(&f);
+        assert!(
+            selected && got.as_ref().map(Option::is_some) == Some(want),
+            "k = {k}: {got:?}, want {want}, selected {selected}\n{f}"
+        );
+    }
+    let f = spanning_rows(15, 3).2;
+    let before = sumset::SELECTED.with(std::cell::Cell::get);
+    let got = metered(u64::MAX, || solve_modular_or_scaled(&f, false));
+    let selected = sumset::SELECTED.with(std::cell::Cell::get) > before;
+    assert!(
+        selected && matches!(got, Ok(Some(Some(_)))),
+        "{got:?}, selected {selected}"
+    );
+    let copied = |k: usize| {
+        let before = sumset::COPIED.with(std::cell::Cell::get);
+        units_with_a_point(&spanning_rows(k, 3).2, &format!("k = {k}"));
+        sumset::COPIED.with(std::cell::Cell::get) - before
+    };
+    let (small, large) = (copied(15), copied(120));
+    assert!(
+        large <= 9 * small,
+        "words copied {small} at k = 15, {large} at 120, {:.2} times",
+        large as f64 / small as f64
     );
 }
 

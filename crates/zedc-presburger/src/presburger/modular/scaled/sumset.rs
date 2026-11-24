@@ -59,6 +59,9 @@
 //! by `t_0` alone) share one class coordinate: the index of their joint value at `t_0` among the
 //! joint values of `0..M`. Both are functions of the same `t_0` and `rho_i`, so `R` over the
 //! coordinates and `R` over the sums are in bijection, and every step above reads the same.
+//! Each tuple is one id of a hash-consed tree over the coordinates ([`tuples`]), equal ids
+//! exactly for equal tuples, so a set of tuples is a set of ids, and a block reads and rebuilds
+//! only the paths to the coordinates it moves (PERIOD-B-P1-intern-rest).
 //!
 //! A point is rebuilt from the last tuple backward: each block's `t` is that of a tuple `w` of
 //! `W_b` with `s - w` in the set before the block, and `t_0` that of the start tuple reached;
@@ -125,8 +128,10 @@
 //! `tests::a_whole_group_reached_before_a_block_costs_its_tuples`,
 //! `tests::two_sums_of_one_direction_cost_one_coordinate`,
 //! `tests::sums_moved_by_x_alone_cost_one_coordinate`, `tests::fixed_literals_are_read_once`,
-//! `tests::a_fixed_sum_leaves_the_period`, `tests::constant_sums_are_read_once`, and the
-//! benchmarks `bench::sums_over_many_coprime_moduli_scale`,
+//! `tests::a_fixed_sum_leaves_the_period`, `tests::constant_sums_are_read_once`,
+//! `tests::coordinates_moved_by_the_end_blocks_are_not_copied`, and the
+//! benchmarks `bench::coordinates_moved_by_the_end_blocks_scale`,
+//! `bench::sums_over_many_coprime_moduli_scale`,
 //! `bench::sums_over_many_moduli_two_scale`, `bench::constant_sums_beside_a_dense_sum_scale`,
 //! `bench::many_sums_over_few_rows_scale`, `bench::a_sum_missing_one_residue_scale`,
 //! `bench::two_sums_of_one_direction_scale`, `bench::sums_moved_by_x_alone_scale` and
@@ -135,6 +140,9 @@
 //! is large are declined to [`sum_residues`], whose work on them no benchmark can run.
 
 use super::*;
+
+mod tuples;
+use tuples::Tuples;
 
 #[cfg(test)]
 thread_local! {
@@ -149,6 +157,17 @@ thread_local! {
     /// Tests only: the most entries one set of tuples (`R` or `W_b`) held at once on this thread,
     /// each entry a tuple over the coordinates some `x` moves.
     pub(super) static MOST_HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Tests only: the words written to build the tuples reached on this thread (PRES-B-P1-
+    /// copied-words), so that a test sees copies the units hide beside the walks of the blocks.
+    pub(super) static COPIED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts `n` words written to build tuples ([`COPIED`], tests only).
+fn copied(n: u64) {
+    #[cfg(test)]
+    COPIED.with(|c| c.set(c.get().saturating_add(n)));
+    #[cfg(not(test))]
+    let _ = n;
 }
 
 /// The rows of one modulus `m`, as indices into the rows; their remainders are functions of
@@ -176,7 +195,7 @@ enum Place {
 }
 
 /// A block's step, kept only for a model: a step by one tuple `w` of `W_b` (over the coordinates
-/// `mv` the block moves) at its `t`, or a sum, with the set before it, sorted.
+/// `mv` the block moves) at its `t`, or a sum, with the ids of the tuples before it.
 enum Level {
     Shift {
         mv: Vec<usize>,
@@ -184,7 +203,7 @@ enum Level {
         t: Int,
     },
     Sum {
-        before: Vec<Tuple>,
+        before: HashSet<usize>,
         mv: Vec<usize>,
         w: Vec<Tuple>,
         w_t: Vec<Int>,
@@ -250,27 +269,33 @@ fn charge(steps: u64) -> bool {
 // - `W_b` of one row, O(min(m_b, n_b M) deg(i) log(2 + |W_b|) + n_b) (each run of allowed
 //   remainders is walked until `M` steps, since the tuple depends on the remainder modulo `M`);
 //   of several rows, O(m_b sum_{i in b} (n_i + deg(i) + 1) + m_b d_b log(2 + |W_b|));
-// - `R + W_b`: with one tuple in `W_b`, a translation in place, O(R_b d_b); else the tuples of
-//   `R` are grouped by their other coordinates (O(R_b C log R_b)), and each group `R_c` gives
+// - `R + W_b`: with one tuple in `W_b`, a translation, O(R_b U_b); else the tuples of `R` are
+//   grouped by their other coordinates (O(R_b U_b), the rest an id), and each group `R_c` gives
 //   `R_c + W_b` over the `G = prod r` values of the moved coordinates as the cheapest of: all of
 //   them when `R_c` or `W_b` is all of them (O(G C)); the pairs (O(|R_c| |W_b| d_b log)); or the
 //   product of the two polynomials with 0/1 coefficients by Kronecker substitution (below),
 //   O(L log L + L d_b) for `L = prod (2 r - 1) <= 2^d_b G` words, by
 //   [`zed_kernel::num::mul_uint`] (O(n log n) by transforms above `MUL_LEAF = 400` words);
-//   each tuple of `R_{b+1}` is then written, O(C);
-// - the literals, O(R_last (J + |lits|) + |f|), with the literals on fixed sums read once.
-// The step counts charged to the meter are these without the log factors. A model keeps the set
-// before each block, O(sum_b R_b C) words, and pays O(|W_b| C log) a block to find the way back
+//   each tuple of `R_{b+1}` is then built, O(U_b);
+// - the literals, O(R_last (J + |lits| + U_lit) + |f|), with the literals on fixed sums read
+//   once.
+// Here a tuple is one id of a hash-consed tree over the coordinates ([`tuples`]), and `U_b` is
+// the number of its nodes on the paths to the coordinates block `b` moves, `U_lit` to those the
+// literals read: at most `sum_{c in mv_b} (depth(c) + 1)`, the tree weighted so that a
+// coordinate moved often sits near the root, and never more in all than a balanced tree's
+// `O(d_b log C)` (the bound proved at [`tuples`]). Until PERIOD-B-P1-intern-rest each tuple was a
+// vector of `C` words read and written whole at each block: with `k` blocks each moving one
+// coordinate beside `k` coordinates moved elsewhere that was Θ(k²) words for one tuple reached
+// (`tests::coordinates_moved_by_the_end_blocks_are_not_copied`, which counts them).
+// The step counts charged to the meter are these without the log factors. A model keeps the ids
+// before each block, O(sum_b R_b) words, and pays O(|W_b| U_b) a block to find the way back
 // and the Chinese remainder theorem on the blocks' `t`s ([`combine_crt_tree`], O(M(B') log k)
 // for the `B'` bits of `M prod_b m_b`). The cost of the two paths is compared in saturating word
 // arithmetic, O(C + k) (XR-presburger4 round 3 P3: built in big integers it was Θ(k²) bit work
 // before the first charge). Where a block's `W_b` misses one value of its group, the pairs were
 // Θ(M²) for one sum modulo `M` (59.3 times at 8M, XR-presburger4 round 3 P1, Claude); the
 // polynomial product makes it O(M log M), `tests::a_sum_missing_one_residue_costs_its_tuples`.
-// Known open bound: each block with two or more tuples in `W_b` reads and writes every tuple of
-// `R` whole, O(R_b C), even when it moves one coordinate; with `k` such blocks and `C` about `k`
-// coordinates that is Θ(k²) for one tuple reached; tuples kept by their moved coordinates only
-// would remove it. Bringmann and Nakos (above) compute an n-fold sumset in a cyclic group in
+// Bringmann and Nakos (above) compute an n-fold sumset in a cyclic group in
 // O(k polylog(mk)) expected time (Las Vegas) or k 2^{O(sqrt(log k log log m))} deterministic
 // time, `k` the input plus output size; the product of polynomials here is the step of one
 // pair of sets. The choice between the two paths compares a bound on this path's steps (the
@@ -570,7 +595,6 @@ pub(super) fn solve_by_sums(
         n_moved
     });
     let n_coord = radix.len() as u64;
-    let per = n_coord.max(1);
     // The coordinates each block moves, sorted.
     let mvs: Vec<Vec<usize>> = (blocks.iter())
         .map(|b| {
@@ -588,16 +612,64 @@ pub(super) fn solve_by_sums(
     let m64 = big_m as u64;
     let s_all = (radix.iter()).fold(1u64, |p, &r| p.saturating_mul(r as u64));
     let start_cost = m64.saturating_mul((n_moved + by_t0.len()).max(1) as u64);
+    // The tuples reached before each block, a bound (`R_b <= min(S, R_{b-1} |W_b|)`), and after
+    // the last.
+    let mut reached_at: Vec<u64> = Vec::with_capacity(blocks.len() + 1);
+    let mut walks: Vec<(u64, u64)> = Vec::with_capacity(blocks.len());
     let mut reached = m64.min(s_all);
-    let mut new_cost = start_cost;
     for (b, mv) in blocks.iter().zip(&mvs) {
         let (values, walk) = walk_of(b, &allowed, &by_row, m64);
         let g = (mv.iter()).fold(1u64, |p, &c| p.saturating_mul(radix[c] as u64));
-        let next = s_all.min(reached.saturating_mul(values.min(g)));
-        let step = if values.min(g) <= 1 {
-            reached.saturating_mul(mv.len() as u64)
+        reached_at.push(reached);
+        walks.push((values.min(g), walk));
+        reached = s_all.min(reached.saturating_mul(values.min(g)));
+    }
+    reached_at.push(reached);
+    // The coordinates the literals read.
+    let mut read_cs: Vec<usize> = (places.iter())
+        .map(|(_, p)| match *p {
+            Place::Moved { c, .. } => c,
+            Place::Class { .. } => class_c.expect("a class"),
+        })
+        .collect();
+    read_cs.sort_unstable();
+    read_cs.dedup();
+    // The tuples, held in a tree weighted by the tuples expected to visit each coordinate
+    // ([`tuples`]): each coordinate weighs one, plus `R_b` for each block `b` moving it, plus the
+    // tuples read at the literals when one reads it. Summed in `u128`, exact: each term is below
+    // 2^64, one per entry of `mvs` and `read_cs` or per coordinate, fewer than 2^60 in all, so
+    // the total is below 2^124, as the depth bound at [`tuples`] takes it. Summed in saturating
+    // `u64`, the bounds `R_b` that reach `2^64` (the product of the radices past a word) made every
+    // coordinate weigh `2^64 - 1`, the tree balanced whatever the blocks moved, and the words
+    // copied on `tests::spanning_rows` grew 15.4 times from `k = 15` to 120 (job g1 of
+    // b22-period1). O(C log C + size of the `mv`s), charged with the start below as a word per
+    // coordinate (the log not charged).
+    let mut weight: Vec<u128> = vec![1; radix.len()];
+    for (mv, &r) in mvs.iter().zip(&reached_at) {
+        for &c in mv {
+            weight[c] = weight[c].saturating_add(u128::from(r));
+        }
+    }
+    for &c in &read_cs {
+        weight[c] = weight[c].saturating_add(u128::from(reached));
+    }
+    let mut tuples = Tuples::new(&weight);
+    let moved: Vec<tuples::Moved> = mvs.iter().map(|mv| tuples.moved(mv)).collect();
+    // The nodes a tuple visits at each block and at the literals ([`Tuples::visits`]), at least
+    // one; they replace the `C` words a tuple was read and written whole (PERIOD-B-P1).
+    let visits: Vec<u64> = moved.iter().map(|m| tuples.visits(m).max(1)).collect();
+    let lit_moved = tuples.moved(&read_cs);
+    let lit_visits = tuples.visits(&lit_moved);
+    let start_cost = start_cost.saturating_add(n_coord);
+    let mut new_cost = start_cost;
+    for (b, mv) in mvs.iter().enumerate() {
+        let (reached, next) = (reached_at[b], reached_at[b + 1]);
+        let ((values, walk), per) = (walks[b], visits[b]);
+        let step = if values <= 1 {
+            reached.saturating_mul(per)
         } else {
-            let pairs = (reached.saturating_mul(values.min(g))).saturating_mul(mv.len() as u64);
+            let g = (mv.iter()).fold(1u64, |p, &c| p.saturating_mul(radix[c] as u64));
+            let pairs = (reached.saturating_mul(values)).saturating_mul(mv.len() as u64);
             let classes = reached.min(s_all / g.max(1)).max(1);
             let poly = poly_cost(&radix, mv).unwrap_or(u64::MAX);
             (reached.saturating_mul(per))
@@ -605,15 +677,17 @@ pub(super) fn solve_by_sums(
                 .saturating_add(next.saturating_mul(per))
         };
         new_cost = (new_cost.saturating_add(walk)).saturating_add(step);
-        reached = next;
     }
-    new_cost = new_cost.saturating_add(literal_cost(reached, places.len(), n_lits, n_all));
+    new_cost = (new_cost.saturating_add(literal_cost(reached, places.len(), n_lits, n_all)))
+        .saturating_add(reached.saturating_mul(lit_visits));
     // The lcm only grows, so the sum is read only until it passes `new_cost`: the lcm of all the
     // rows' moduli, a number of about `k` words built one gcd at a time, would cost O(k^2) word
     // steps (measured: 10.17 times the instructions at 8k in the benchmark below with it).
     // Bound (XR-presburger4 round 3 P3, Codex and Gemini: the estimate was Θ(k²) bit work before
     // the first charge). Everything above is word arithmetic, saturating, O(1) a block, a row of
-    // a block and a coordinate moved, so O(C + k + B) in all. Below, until the break,
+    // a block and a coordinate moved, so O(C + k + B) in all, beside the shape of the tuples'
+    // tree, O(C log C), and its visits, O(sum_b d_b) nodes of depth below 180 ([`tuples`]).
+    // Below, until the break,
     // `old_cost <= new_int < 2^64`, so the `l` of the sum at hand satisfies `M_j l <= 2^64` before
     // its last lcm, and after it `l <= 2^64 m_i` with `m_i` one row's modulus: each lcm and each
     // product reads O(1 + words(m_i)) words, and each part is read once, so the loop is O(size
@@ -677,12 +751,16 @@ pub(super) fn solve_by_sums(
     if let Some(c) = class_c {
         radix[c] = class_vals.len();
     }
-    let (mut reach, t0s): (Vec<Tuple>, Vec<usize>) = first.into_iter().unzip();
-    let start = if want_model {
-        reach.clone()
-    } else {
-        Vec::new()
-    };
+    // Each start tuple made once, O(C) ([`Tuples::make`]), within the steps charged above.
+    let mut reach: Vec<usize> = Vec::with_capacity(first.len());
+    let mut t0_of: HashMap<usize, usize> = HashMap::new();
+    for (tuple, t0) in first {
+        let id = tuples.make(&tuple);
+        reach.push(id);
+        if want_model {
+            t0_of.insert(id, t0);
+        }
+    }
     #[cfg(test)]
     held(reach.len());
     let radix_int: Vec<Int> = radix.iter().map(|&r| Int::from(r)).collect();
@@ -690,10 +768,11 @@ pub(super) fn solve_by_sums(
     let mut pos_of = vec![usize::MAX; radix.len()];
     // For each block, its step ([`Level`]), for a model.
     let mut levels: Vec<Level> = Vec::new();
-    for (b, mv) in blocks.iter().zip(&mvs) {
+    for (bi, (b, mv)) in blocks.iter().zip(&mvs).enumerate() {
         for (p, &c) in mv.iter().enumerate() {
             pos_of[c] = p;
         }
+        let (moved, per) = (&moved[bi], visits[bi]);
         // The contribution of row `i` at remainder `rho` to each coordinate it moves.
         let delta = |i: usize, rho: &Int, out: &mut [usize]| {
             for &(c, e) in &by_row[i] {
@@ -760,16 +839,18 @@ pub(super) fn solve_by_sums(
         held(w.len());
         let d = mv.len();
         if let [w0] = &w[..] {
-            // One tuple: `R + W_b` is `R` moved by it, a bijection, so the tuples stay distinct
-            // and are moved in place, a word per moved coordinate.
-            if !charge((reach.len() as u64).saturating_mul(d as u64)) {
+            // One tuple: `R + W_b` is `R` moved by it, a bijection, so the tuples stay distinct;
+            // each is read and rebuilt along the paths of the moved coordinates.
+            if !charge((reach.len() as u64).saturating_mul(per)) {
                 return Some(None);
             }
             if d > 0 {
                 for t in &mut reach {
-                    for (&c, &v) in mv.iter().zip(w0) {
-                        t[c] = add_mod(t[c], v, radix[c]);
+                    let mut vals = tuples.read(*t, moved);
+                    for ((v, &c), &s) in vals.iter_mut().zip(mv).zip(w0) {
+                        *v = add_mod(*v, s, radix[c]);
                     }
+                    *t = tuples.set(*t, moved, &vals);
                 }
             }
             if want_model {
@@ -783,26 +864,30 @@ pub(super) fn solve_by_sums(
         }
         // The tuples of `R` grouped by their other coordinates, `R_c` the moved part of each
         // group: `R + W_b` is the union over the groups of their other coordinates with
-        // `R_c + W_b`. A word read per coordinate of each tuple.
+        // `R_c + W_b`. Each tuple's moved part read and its rest (the part set to 0) built along
+        // the paths of the moved coordinates ([`Tuples::visits`]); the groups in the order first
+        // met, so the answer does not depend on a hash.
         if !charge((reach.len() as u64).saturating_mul(per)) {
             return Some(None);
         }
         let radii: Vec<usize> = mv.iter().map(|&c| radix[c]).collect();
         let g = radii.iter().try_fold(1usize, |p, &r| p.checked_mul(r));
-        let before = if want_model {
-            let mut s = reach.clone();
-            s.sort_unstable();
-            s
+        let before: HashSet<usize> = if want_model {
+            reach.iter().copied().collect()
         } else {
-            Vec::new()
+            HashSet::new()
         };
-        let mut classes: BTreeMap<Tuple, Vec<Tuple>> = BTreeMap::new();
-        for mut t in std::mem::take(&mut reach) {
-            let part: Tuple = mv
-                .iter()
-                .map(|&c| std::mem::replace(&mut t[c], 0))
-                .collect();
-            classes.entry(t).or_default().push(part);
+        let zeros = vec![0usize; d];
+        let mut group_of: HashMap<usize, usize> = HashMap::new();
+        let mut classes: Vec<(usize, Vec<Tuple>)> = Vec::new();
+        for t in std::mem::take(&mut reach) {
+            let part = tuples.read(t, moved);
+            let rest = tuples.set(t, moved, &zeros);
+            let at = *group_of.entry(rest).or_insert_with(|| {
+                classes.push((rest, Vec::new()));
+                classes.len() - 1
+            });
+            classes[at].1.push(part);
         }
         for (rest, parts) in classes {
             // The cheapest of the three ways (the tradeoff above), each charged before it runs.
@@ -833,16 +918,12 @@ pub(super) fn solve_by_sums(
                     }
                 }
             };
-            // Each tuple of `R_{b+1}` written, a word per coordinate.
+            // Each tuple of `R_{b+1}` built from the rest along the moved coordinates' paths.
             if !charge((outs.len() as u64).saturating_mul(per)) {
                 return Some(None);
             }
             for o in outs {
-                let mut t = rest.clone();
-                for (&c, v) in mv.iter().zip(o) {
-                    t[c] = v;
-                }
-                reach.push(t);
+                reach.push(tuples.set(rest, moved, &o));
             }
         }
         #[cfg(test)]
@@ -860,15 +941,24 @@ pub(super) fn solve_by_sums(
     // The literals on the sums' remainders, read at each reached tuple: a word per live sum and
     // each literal at each tuple, the literals once, and the walk of `f` that built them.
     // The walk of `f` and its copy were charged where they ran (P4-C), so `n_all` is 0 here.
-    if !charge(literal_cost(reach.len() as u64, places.len(), n_lits, 0)) {
+    // The coordinates read are read together along their paths, `lit_visits` nodes a tuple.
+    let lit_reads = (reach.len() as u64).saturating_mul(lit_visits);
+    if !charge(literal_cost(reach.len() as u64, places.len(), n_lits, 0).saturating_add(lit_reads))
+    {
         return Some(None);
     }
+    // The index of each coordinate read in `read_cs`.
+    let mut slot = vec![usize::MAX; radix.len()];
+    for (i, &c) in read_cs.iter().enumerate() {
+        slot[c] = i;
+    }
     let mut values = Model::new();
-    let found = reach.iter().position(|tuple| {
+    let found = reach.iter().position(|&id| {
+        let tuple = tuples.read(id, &lit_moved);
         for (j, place) in &places {
             let v = match *place {
-                Place::Moved { c, lam, b, m } => mul_add_mod(lam, tuple[c], b, m),
-                Place::Class { pos } => class_vals[tuple[class_c.expect("a class")]][pos],
+                Place::Moved { c, lam, b, m } => mul_add_mod(lam, tuple[slot[c]], b, m),
+                Place::Class { pos } => class_vals[tuple[slot[class_c.expect("a class")]]][pos],
             };
             match &sums[*j].r {
                 None if v != 0 => return false,
@@ -888,35 +978,36 @@ pub(super) fn solve_by_sums(
         answered();
         return Some(Some(Model::new()));
     }
-    // The way back (module comment): a word per coordinate of each candidate.
-    let back: u64 = (levels.iter())
-        .map(|l| match l {
-            Level::Shift { .. } => 1,
-            Level::Sum { w, .. } => w.len() as u64,
+    // The way back (module comment): each candidate read and rebuilt along the paths of the
+    // block's moved coordinates, `visits[b]` nodes.
+    let back: u64 = (levels.iter().zip(&visits))
+        .map(|(l, &per)| match l {
+            Level::Shift { .. } => per,
+            Level::Sum { w, .. } => (w.len() as u64).saturating_mul(per),
         })
         .fold(0u64, u64::saturating_add);
-    if !charge(back.saturating_mul(per)) {
+    if !charge(back) {
         return Some(None);
     }
     let mut s = reach.swap_remove(at);
     let mut pairs: Vec<(Int, Int)> = Vec::new();
-    for (b, level) in blocks.iter().zip(&levels).rev() {
-        let minus = |s: &Tuple, mv: &[usize], w: &Tuple| -> Tuple {
-            let mut out = s.clone();
-            for (&c, &v) in mv.iter().zip(w) {
-                out[c] = add_mod(s[c], radix[c] - v, radix[c]);
+    for ((b, level), moved) in blocks.iter().zip(&levels).zip(&moved).rev() {
+        let mut minus = |s: usize, mv: &[usize], w: &Tuple| -> usize {
+            let mut vals = tuples.read(s, moved);
+            for ((v, &c), &u) in vals.iter_mut().zip(mv).zip(w) {
+                *v = add_mod(*v, radix[c] - u, radix[c]);
             }
-            out
+            tuples.set(s, moved, &vals)
         };
         let t = match level {
             Level::Shift { mv, w, t } => {
-                s = minus(&s, mv, w);
+                s = minus(s, mv, w);
                 t
             }
             Level::Sum { before, mv, w, w_t } => {
                 let (wi, prev) = (w.iter().enumerate())
-                    .map(|(wi, wv)| (wi, minus(&s, mv, wv)))
-                    .find(|(_, prev)| before.binary_search(prev).is_ok())
+                    .map(|(wi, wv)| (wi, minus(s, mv, wv)))
+                    .find(|(_, prev)| before.contains(prev))
                     .expect("a tuple of R + W_b is a tuple of R plus one of W_b");
                 s = prev;
                 &w_t[wi]
@@ -924,7 +1015,7 @@ pub(super) fn solve_by_sums(
         };
         pairs.push((t.clone(), b.m.clone()));
     }
-    let t0 = t0s[start.binary_search(&s).expect("a start tuple")];
+    let t0 = *t0_of.get(&s).expect("a start tuple");
     pairs.push((Int::from(t0), lcm_m.clone()));
     let (x_value, _) = combine_crt_tree(pairs)?;
     let model = point_with_sums(rows, sums, x, &x_value);
