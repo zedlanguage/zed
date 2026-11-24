@@ -71,7 +71,9 @@ if [ -n "$rtself" ]; then
   # beside them, they took 85 (with a rebuild), 23, 45 and 41 s, with no wait on the lock in the
   # last three; in one chain of their own beside list's, fresh, copy and trace were still killed.
   # So they run after list's chain, one after another, each under its own limit as before; the
-  # chain goes on past a failed part, so each part's verdict is read (FAIL-rt-parts-cargo-lock).
+  # chain goes on past a failed part, so each part's verdict is read. In this order trace and
+  # nobus passed but fresh and copy were still killed (hm4, nothing else of the check running):
+  # FAIL-rt-parts-cargo-lock is open.
   (
     (
       rt_part list && {
