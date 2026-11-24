@@ -110,7 +110,7 @@
 //! drop only what it drops. The gadget is there for the frames: without it, frame+ flips the
 //! component of each (A_i, B_i), a product equal to (−A_i)(−B_i), every variable then has
 //! coefficient +1 in all its holders, and u = 1 drops every pair, whatever the vectors (found
-//! by the test below, 2026-11-24). With it [proved]:
+//! by the test below, 2026-11-24). With it (proved):
 //! - glob: each w_a, z_b, s_i has both signs (+ in P or Q, − in A_i, B_i or E_j); t_i and f_j
 //!   have one sign but only mentioned atoms. A drop under a predicate needs an incidence w * z,
 //!   both signed and free (step 3), so none.
@@ -210,7 +210,7 @@ pub(super) enum Form {
 /// The shared form is written when its size is strictly smaller (a rule on the written size,
 /// with no constant); with one partner it never is (it is larger by 2|b|).
 ///
-/// *Exactness* [proved]: expanding, a × b = a_0 b_0 + a_0 Σ_z b_z z + b_0 Σ_w a_w w +
+/// *Exactness* (proved): expanding, a × b = a_0 b_0 + a_0 Σ_z b_z z + b_0 Σ_w a_w w +
 /// Σ_z b_z Σ_w a_w (w * z), and the last sum is Σ_z b_z s_{a,z} wherever the equations hold.
 /// Each s is fixed by its equation, an integer combination of integer atoms, so every point of
 /// the direct system extends to exactly one point of the shared one (an integer one), and every
