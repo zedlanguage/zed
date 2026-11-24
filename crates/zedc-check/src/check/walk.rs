@@ -8874,6 +8874,26 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let mixed = [Ty::carrier(Carrier::F32), Ty::carrier(Carrier::Int)];
                     sig.arrows.retain(|a| a.params != mixed);
                 }
+                // An exponent that is an operation on integer literals alone beside an `f32`
+                // base keeps both carriers of its class, `int | f32`, since `^` takes `f32 ^
+                // int` and `f32 ^ f32`; beside an `f64` base the class takes `f64` alone. Its
+                // steps are shown by the exponent's value as beside an `f64` base, "this `^`
+                // gives 2^64", not by the class's carriers ([`Ck::derive`] reads
+                // [`Ck::int_exponents`]; row DIAG-too-large-with-type-error, point (2), test
+                // l01_29 commands_binary
+                // `zedc_run_prints_the_value_of_an_exponent_beside_an_f32_base_as_beside_an_f64_one`).
+                // One read of the exponent, kept by operation ([`Self::int_exponent_at`]).
+                if op == BinaryOp::Pow
+                    && y.lit.is_none()
+                    && !(&x.ty.set & &KType::f32()).is_empty()
+                    && let Some(k) = self.class_of_ty(&y.ty)
+                    && {
+                        let c = &self.classes[self.find(k)];
+                        c.generic && c.mask & Carrier::Int.bit() != 0
+                    }
+                {
+                    self.int_exponent_at(b);
+                }
                 let a = x.expr;
                 let r = self.apply(
                     Label::Operator(Operator::Binary(op)),
@@ -19118,6 +19138,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   nothing, `kernel_build` sizes nothing, its `bool` carries no number up, and the loop
     ///   answers `true`. Anything else reads the product's digits, so it is built.
     /// - `a + b - 1 = room_bits`: the length decides it, so it is built.
+    ///
     /// Tests: `l01_29_diagnostics::main_limits`
     /// `a_product_sized_from_its_operands_gives_the_repair_building_gives` compares each case
     /// with the answer of the product built (and a negative control with a `+` above the
@@ -28597,6 +28618,45 @@ impl<'t, 'a> Ck<'t, 'a> {
             let written = [x.parts.clone(), y.parts.clone()];
             let t = self.min_max_tuples(what.text(), sig, &x.ty, &y.ty, written.clone(), span);
             return (out.union(&t), Vec::new());
+        }
+        // `min` and `max` refuse two strings, which `<=` and `>=` order (DESIGN.md
+        // sec:reduction, item 5): the repair is the selection written with them, `if a <= b {
+        // a } else { b }` for `min` and `>=` for `max`, the operands as the program writes them
+        // (row TEST-minmax-struct-menu-compiles; tests l01_18 tuple_min_max
+        // `the_repair_offered_for_min_and_max_of_strings_checks` and words.rs). Two structs or
+        // two records are not reached: this zedc refuses a struct declaration and a record
+        // display before the check. On the error path only: one lex and parse of each
+        // operand's code.
+        if let [Some(x), Some(y)] = args.as_slice()
+            && let Some(w @ ("min" | "max")) = sig.word.as_deref()
+            && [x, y].iter().all(|a| {
+                a.ty.vars.is_empty()
+                    && !a.ty.is_empty()
+                    && a.ty.subtype(&Ty::carrier(Carrier::Str))
+            })
+            && let (Some(cx), Some(cy)) = (self.operand_text(x.at), self.operand_text(y.at))
+        {
+            let op = if w == "min" { "<=" } else { ">=" };
+            let bop = if w == "min" { BinaryOp::Le } else { BinaryOp::Ge };
+            let test = format!(
+                "{} {op} {}",
+                zedc_syntax::format::code_as_operand(&cx, bop, false),
+                zedc_syntax::format::code_as_operand(&cy, bop, true)
+            );
+            let test = zedc_syntax::format::code_as_head(&test);
+            let who = match what.text() {
+                t if t == format!("`{w}`") => t.to_string(),
+                t => format!("{t}, which is `{w}`,"),
+            };
+            self.error_with(
+                span,
+                format!(
+                    "{who} does not take two strings, only two numbers or two tuples. Try `if \
+                     {test} {{ {cx} }} else {{ {cy} }}` instead."
+                ),
+                Vec::new(),
+            );
+            return (out, Vec::new());
         }
         if self.level == 0 && matches!(sig.word.as_deref(), Some("min" | "max")) {
             self.min_max_lit_ops(sig, &mut args);

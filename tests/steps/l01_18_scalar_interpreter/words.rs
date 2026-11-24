@@ -105,7 +105,7 @@ fn min_and_max_take_two_numbers_of_one_kind() {
     assert_eq!(
         errors("x = min(\"a\", \"b\");\n"),
         [
-            "`min` does not take (\"a\", \"b\"): no arrow of `min` takes these types. [min(\"a\", \"b\")]"
+            "`min` does not take two strings, only two numbers or two tuples. Try `if \"a\" <= \"b\" { \"a\" } else { \"b\" }` instead. [min(\"a\", \"b\")]"
         ]
     );
     assert_eq!(
