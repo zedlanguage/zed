@@ -28,7 +28,7 @@
 //! modulo the Mersenne prime `2^61 - 1` of zed-numtheory `m61`: with prefix hashes
 //! `H[k] = Σ_(j<k) (c_j + 1) B^(k-1-j)`, the hash of a string with the character at `i` deleted
 //! and the hash with `i` and `i + 1` swapped are each O(1) from `H` and the powers of `B`
-//! ([`Hashes::deleted`], [`Hashes::swapped`]), so no key string is ever built.
+//! (`Hashes::deleted`, `Hashes::swapped`), so no key string is ever built.
 //!
 //! A name is visible from its declaration to the end of its scope, given here as a half-open
 //! range of places `from..to`, the places of the written names in the same numbering. The
