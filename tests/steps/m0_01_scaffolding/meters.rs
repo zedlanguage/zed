@@ -12,7 +12,13 @@ use zed_tests::scaling;
 #[test]
 #[should_panic(expected = "holds measured work to a limit, but its path holds no `bench::`")]
 fn a_comparison_made_outside_a_bench_path_is_refused() {
-    scaling::compare_costs("two empty runs", "a test of the refusal", 10.0, || {}, || {});
+    scaling::compare_costs(
+        "two empty runs",
+        "a test of the refusal",
+        10.0,
+        || {},
+        || {},
+    );
 }
 
 /// A bound on the time per unit of work is refused the same way.

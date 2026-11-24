@@ -448,9 +448,13 @@ pub(crate) fn outside_a_bench(test: Option<&str>) -> bool {
     test.is_some_and(|t| {
         t != "main"
             && !t.contains("bench::")
-            && !MEASURED_OUTSIDE_A_BENCH
-                .iter()
-                .any(|e| if e.ends_with("::") { t.starts_with(e) } else { t == *e })
+            && !MEASURED_OUTSIDE_A_BENCH.iter().any(|e| {
+                if e.ends_with("::") {
+                    t.starts_with(e)
+                } else {
+                    t == *e
+                }
+            })
     })
 }
 

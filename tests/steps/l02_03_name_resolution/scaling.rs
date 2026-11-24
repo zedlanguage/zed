@@ -393,7 +393,11 @@ pub(super) fn load_alone(text: &str) {
 /// no mistake.
 #[test]
 fn units_of_comments_load_with_no_mistake_at_small_sizes() {
-    for text in ["", "// the notes of this unit\n", "/* the notes of this unit */\n"] {
+    for text in [
+        "",
+        "// the notes of this unit\n",
+        "/* the notes of this unit */\n",
+    ] {
         load_alone(text);
     }
     for n in [1, 3, 10] {
