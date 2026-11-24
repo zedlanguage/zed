@@ -1813,8 +1813,8 @@ impl<'a> Joint<'a> {
 
     /// P2: r alone holds w, m the atoms `w * _` mentioned. The pair {r, q} holds the |q| atoms
     /// `w * z`, z in q, each with the coefficient r_w q_z ≠ 0 (no other row holds w). Another
-    /// live pair holds one of them only as {r, s} with z in s: at most sum[r] − |q| of them;
-    /// at most m are mentioned. So when 2|q| > m + sum[r], some `w * z` is free and held by
+    /// live pair holds one of them only as {r, s} with z in s: at most `sum[r]` − |q| of them;
+    /// at most m are mentioned. So when 2|q| > m + `sum[r]`, some `w * z` is free and held by
     /// {r, q} alone, and the pair goes by the single-holder rule (Theorem D, u = ±e).
     fn p2(&mut self, r: usize) {
         self.queued[r] = false;
@@ -1834,11 +1834,11 @@ impl<'a> Joint<'a> {
         }
     }
 
-    /// P4: P2 for a w held by several rows. over[w] bounds from above the incidences (pair,
+    /// P4: P2 for a w held by several rows. `over[w]` bounds from above the incidences (pair,
     /// atom `w * z`) of the live pairs on rows holding w (it is decreased only when the other
     /// row is no shorter, so it may stay larger: that only keeps pairs); a candidate {q, p}
     /// has w in q, w not in p, so it holds the |p| atoms `w * z`, z in p, with the coefficient
-    /// q_w p_z ≠ 0, and the argument of P2 applies with over[w] for sum[r].
+    /// q_w p_z ≠ 0, and the argument of P2 applies with `over[w]` for `sum[r]`.
     fn p4(&mut self, w: usize) {
         self.vqueued[w] = false;
         let m = self.p.deg(w);
