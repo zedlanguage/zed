@@ -36,13 +36,15 @@ fn a_sum_of_many_divisions_beside_decimals_scales() {
     scaling::on_a_thread(1 << 29, || {
         let n = 500;
         for x in [None, Some("f64")] {
-            let units = scaling::inputs(n, |m| Resolved::new(&summed_ifs(m, x)));
-            for u in units.values() {
-                assert_eq!(u.type_errors().len(), usize::from(x.is_none()));
-            }
+            // Each program is resolved only in the process that checks it, and the count of
+            // rejections is asserted on what each run finds (`scaling::check_inputs`;
+            // FAIL-bench-first-phase-past-20s-l0126-l0129).
+            let unit = |m: usize| Resolved::new(&summed_ifs(m, x));
             let what = format!("checking a sum of n `if`s of a division and a decimal at {x:?}");
-            scaling::check(&what, n, |m| {
-                std::hint::black_box(units[&m].type_errors());
+            scaling::check_inputs(&what, n, unit, |u| {
+                let errors = u.type_errors();
+                assert_eq!(errors.len(), usize::from(x.is_none()));
+                std::hint::black_box(errors);
             });
         }
     });

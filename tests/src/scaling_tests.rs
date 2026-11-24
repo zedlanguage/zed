@@ -808,10 +808,38 @@ const PHASE_SEEN: &str = "ZED_TEST_PHASE_SEEN";
 /// passes on either.
 #[test]
 fn the_phase_at_8n_starts_at_its_run() {
-    let file = std::env::temp_dir().join(format!("zed-phases-{}", std::process::id()));
+    let (out, _) = run_reading_phases("a_spin_whose_phase_at_8n_is_read");
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("bench a spin whose phase at 8n is read: ")),
+        "{out}"
+    );
+}
+
+/// [`hold_in_phases`] counts at 8n in a phase of its own, started after the count at n, that
+/// asks for a limit of its own, and then starts a phase with the runner's limit
+/// (FAIL-bench-first-phase-past-20s-l0126-l0129). Negative control: with `hold_in_phases`
+/// starting no phase, the benchmark finds no file of the phases and fails.
+#[test]
+fn a_hold_in_phases_counts_at_8n_in_a_phase_of_its_own() {
+    // libtest shows the captured output of a passing test, `eprintln!`'s too, on stdout.
+    let (out, err) = run_reading_phases("a_count_held_in_phases");
+    assert!(
+        format!("{out}\n{err}")
+            .lines()
+            .any(|l| l.starts_with("a count held in phases: passed: 1000 and 8000 passes")),
+        "{out}\n{err}"
+    );
+}
+
+/// Runs the benchmark `scaling_tests::bench::<test>` of this binary alone, with
+/// `ZED_BENCH_LIMIT_FILE` and [`PHASE_SEEN`] naming one file, and gives its standard output and
+/// standard error once it has passed.
+fn run_reading_phases(test: &str) -> (String, String) {
+    let file = std::env::temp_dir().join(format!("zed-phases-{}-{test}", std::process::id()));
     let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
         .args([
-            "scaling_tests::bench::a_spin_whose_phase_at_8n_is_read",
+            &format!("scaling_tests::bench::{test}"),
             "--exact",
             "--show-output",
             "--test-threads=1",
@@ -822,15 +850,11 @@ fn the_phase_at_8n_starts_at_its_run() {
         .expect("running this test binary");
     // The file is the test's own, by this process's id; the benchmark writes it at each phase.
     let removed = std::fs::remove_file(&file);
-    let out = String::from_utf8_lossy(&run.stdout);
-    let err = String::from_utf8_lossy(&run.stderr);
+    let out = String::from_utf8_lossy(&run.stdout).into_owned();
+    let err = String::from_utf8_lossy(&run.stderr).into_owned();
     assert!(run.status.success(), "{out}\n{err}");
     removed.expect("removing the file of the phases");
-    assert!(
-        out.lines()
-            .any(|l| l.starts_with("bench a spin whose phase at 8n is read: ")),
-        "{out}"
-    );
+    (out, err)
 }
 
 #[test]

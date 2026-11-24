@@ -9,18 +9,24 @@ use crate::widen::{long_chain, many_squares, many_warnings, one_long_derivation,
 /// allocated a fresh one per warning would allocate O(n²) bytes, which this test counts.
 #[test]
 fn many_warnings_scale() {
+    // Each unit is made ready only in the process that widens it (`scaling::check_inputs`;
+    // FAIL-bench-first-phase-past-20s-l0126-l0129).
     let n = 5300;
-    let units = scaling::inputs(n, |m| ready(&many_squares(m)));
-    scaling::check("n bindings that each widen", n, |size| {
-        many_warnings(&units[&size], size)
+    let unit = |m: usize| (m, ready(&many_squares(m)));
+    scaling::check_inputs("n bindings that each widen", n, unit, |(size, u)| {
+        many_warnings(u, *size)
     });
 }
 
 #[test]
 fn a_long_derivation_scales() {
+    // As in `many_warnings_scale`.
     let n = 8700;
-    let units = scaling::inputs(n, |m| ready(&long_chain(m)));
-    scaling::check("a chain of n bindings ending in a widening", n, |size| {
-        one_long_derivation(&units[&size], size)
-    });
+    let unit = |m: usize| (m, ready(&long_chain(m)));
+    scaling::check_inputs(
+        "a chain of n bindings ending in a widening",
+        n,
+        unit,
+        |(size, u)| one_long_derivation(u, *size),
+    );
 }

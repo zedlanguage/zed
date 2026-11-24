@@ -22,16 +22,24 @@ fn printing_a_parameter_of_many_lookups_scales() {
 
 #[test]
 fn printing_signatures_of_many_variables_scales() {
+    // Each signature is built only in the process that prints it (`scaling::check_inputs`;
+    // FAIL-bench-first-phase-past-20s-l0126-l0129).
     let n = 7200;
-    let wide = scaling::inputs(n, |m| sig(&many(m), "f"));
-    scaling::check("printing a signature of n type variables", n, |size| {
-        a_signature_of_many_variables_printed(&wide[&size], size);
-    });
-    let deep = scaling::inputs(n, nested);
-    scaling::check(
+    let wide = |m: usize| (m, sig(&many(m), "f"));
+    scaling::check_inputs(
+        "printing a signature of n type variables",
+        n,
+        wide,
+        |(size, s)| {
+            a_signature_of_many_variables_printed(s, *size);
+        },
+    );
+    let deep = |m: usize| (m, nested(m));
+    scaling::check_inputs(
         "printing n nested signatures that bound one name",
         n,
-        |size| nested_signatures_printed(&deep[&size], size),
+        deep,
+        |(size, t)| nested_signatures_printed(t, *size),
     );
 }
 
@@ -39,9 +47,16 @@ fn printing_signatures_of_many_variables_scales() {
 fn naming_many_variables_that_each_stand_twice_scales() {
     // Counting the places of each variable, then naming each in one pass with a hash lookup
     // per mark, is linear in the text here: these types hold no union (COMPLEXITY.md F169).
+    // Each signature is built only in the process that names it (`scaling::check_inputs`;
+    // FAIL-bench-first-phase-past-20s-l0126-l0129).
     let n = 15_000;
-    let built = scaling::inputs(n, |m| sig(&each_twice(m), "f"));
-    scaling::check("naming n variables that each stand twice", n, |size| {
-        variables_that_each_stand_twice_named(&built[&size], size);
-    });
+    let built = |m: usize| (m, sig(&each_twice(m), "f"));
+    scaling::check_inputs(
+        "naming n variables that each stand twice",
+        n,
+        built,
+        |(size, s)| {
+            variables_that_each_stand_twice_named(s, *size);
+        },
+    );
 }

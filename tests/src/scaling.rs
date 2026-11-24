@@ -255,6 +255,33 @@ pub fn hold_linear(what: &str, measure: &str, small: u64, large: u64) -> f64 {
     ratio
 }
 
+/// [`hold`] of `count(n)` against `count(FACTOR * n)`, each in a phase of the benchmark's time
+/// limit as the runs of a check are (`start_bench_phase`, author A160): `count(n)` in the phase
+/// the test is in, which holds its set-up, and `count(8n)` in a phase of its own that asks for
+/// [`bench_limit_ms`] of the time `count(n)` took; what follows has the runner's limit again.
+/// For a benchmark that counts its measure itself, such as the difference of two counts of
+/// instructions, which no check takes.
+///
+/// Why (FAIL-bench-first-phase-past-20s-l0126-l0129): with [`hold`] of two counts made in one
+/// phase, both sizes were inside the runner's limit of 20 s; under DynamoRIO, about five times
+/// slower, the casts benchmarks of l01_29_repairs_and_printing, four checks of 30,000 and
+/// 240,000 expressions, stopped there. The phase at 8n asks for 10.5 times the phase at n, as a
+/// check's does: no limit is wider than a check's.
+pub fn hold_in_phases(
+    what: &str,
+    measure: &str,
+    n: usize,
+    power: u32,
+    mut count: impl FnMut(usize) -> u64,
+) -> f64 {
+    let start = std::time::Instant::now();
+    let small = count(n);
+    start_bench_phase(Some(start.elapsed()));
+    let large = count(FACTOR * n);
+    start_bench_phase(None);
+    hold(what, measure, small, large, power)
+}
+
 /// Where the limit of a test of order `n^power` comes from, for the messages.
 fn why(power: u32) -> String {
     let limit = limit(power);
@@ -977,6 +1004,14 @@ pub fn inputs<T>(n: usize, make: impl Fn(usize) -> T) -> std::collections::HashM
 /// sizes in every process, each process building an input it never reads
 /// (BENCH-follow-group-near-60s). [`inputs`] stays for the checks that read their inputs
 /// otherwise (309 call sites name its map's type, and some check every input outside the runs).
+///
+/// A benchmark's first phase holds its whole set-up, under the runner's limit of 20 s, and a
+/// count of instructions runs that set-up twice: natively, then again under DynamoRIO, about
+/// five times slower. So a check whose set-up built both sizes and checked each (a type check
+/// of the program at 8n to assert it has no error, say) ran past 20 s before its first run.
+/// With this function such a check is made in `run`, on the result each run computes: work
+/// linear in that result, added to a run that already computes it, where the set-up repeated
+/// the run's own work at both sizes (FAIL-bench-first-phase-past-20s-l0126-l0129).
 ///
 /// Complexity tradeoff: COMPLEXITY.md row BENCH-follow-group-near-60s. Naive ([`inputs`]): the
 /// test's set-up for a check at place `k` costs `(k + 2) (B(n) + B(8n))` across its processes,

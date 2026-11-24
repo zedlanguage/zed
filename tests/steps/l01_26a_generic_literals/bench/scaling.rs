@@ -30,13 +30,19 @@ use super::super::scaling::{
 fn a_body_of_many_generic_literals_scales() {
     scaling::on_a_thread(1 << 29, || {
         let n = 5000;
-        let units = [checked(&sum(n)), checked(&sum(scaling::FACTOR * n))];
-        for (u, m) in units.iter().zip([n, scaling::FACTOR * n]) {
+        // Each unit is checked only in the process that elaborates it, and its checks besides
+        // the ratio are made there (`scaling::check_inputs`, whose doc says why;
+        // FAIL-bench-first-phase-past-20s-l0126-l0129).
+        let unit = |m: usize| {
+            let u = checked(&sum(m));
             assert_eq!(u.info.follows.len(), m);
-        }
-        assert_eq!(units[0].elab(), elab(&sum(n)).unwrap());
-        scaling::check("elaborating a body of n generic literals", n, |m| {
-            units[usize::from(m != n)].elab();
+            if m == n {
+                assert_eq!(u.elab(), elab(&sum(n)).unwrap());
+            }
+            u
+        };
+        scaling::check_inputs("elaborating a body of n generic literals", n, unit, |u| {
+            u.elab();
         });
     });
 }
@@ -76,17 +82,22 @@ fn one_decimal_literal_of_many_digits_checks_in_linear_time() {
 fn a_body_of_many_generic_literal_arguments_scales() {
     scaling::on_a_thread(1 << 29, || {
         let n = 5000;
-        let units = [checked(&calls(n)), checked(&calls(scaling::FACTOR * n))];
-        for (u, m) in units.iter().zip([n, scaling::FACTOR * n]) {
+        // As in `a_body_of_many_generic_literals_scales`.
+        let unit = |m: usize| {
+            let u = checked(&calls(m));
             assert_eq!(u.info.witness.len(), m);
             assert_eq!(u.info.follows.len(), m);
-        }
-        assert_eq!(units[0].elab(), elab(&calls(n)).unwrap());
-        scaling::check(
+            if m == n {
+                assert_eq!(u.elab(), elab(&calls(n)).unwrap());
+            }
+            u
+        };
+        scaling::check_inputs(
             "elaborating a body of n generic literal arguments",
             n,
-            |m| {
-                units[usize::from(m != n)].elab();
+            unit,
+            |u| {
+                u.elab();
             },
         );
     });
@@ -109,16 +120,22 @@ fn a_body_of_many_generic_literal_arguments_scales() {
 fn a_menu_of_a_long_line_scales() {
     scaling::on_a_thread(1 << 29, || {
         let n = 860;
-        let units = scaling::inputs(n, |m| Resolved::new(&product(m, "(1 / 2)")));
-        for (m, u) in &units {
-            let [e] = &u.type_errors()[..] else {
-                panic!("one rejection")
-            };
-            assert_eq!(e.matches("(1 + 0)").count(), 5 * m - 4, "{e}");
-        }
-        scaling::check("rejecting a value of n sums with a menu", n, |m| {
-            std::hint::black_box(units[&m].type_errors());
-        });
+        // The checks besides the ratio are made on the errors each run finds
+        // (`scaling::check_inputs`; FAIL-bench-first-phase-past-20s-l0126-l0129).
+        let unit = |m: usize| (m, Resolved::new(&product(m, "(1 / 2)")));
+        scaling::check_inputs(
+            "rejecting a value of n sums with a menu",
+            n,
+            unit,
+            |(m, u)| {
+                let errors = u.type_errors();
+                let [e] = &errors[..] else {
+                    panic!("one rejection")
+                };
+                assert_eq!(e.matches("(1 + 0)").count(), 5 * m - 4, "{e}");
+                std::hint::black_box(errors);
+            },
+        );
     });
 }
 
@@ -157,13 +174,18 @@ fn an_operation_on_many_literals_takes_its_carrier_in_linear_time() {
 fn a_menu_that_writes_a_literal_in_each_of_many_divisions_scales() {
     scaling::on_a_thread(1 << 29, || {
         let n = 500;
-        let units = scaling::inputs(n, |m| Resolved::new(&quotients(m)));
-        for u in units.values() {
-            assert_eq!(u.type_errors().len(), 1);
-        }
-        scaling::check("rejecting a value of n divisions with a menu", n, |m| {
-            std::hint::black_box(units[&m].type_errors());
-        });
+        // As in `a_menu_of_a_long_line_scales`.
+        let unit = |m: usize| Resolved::new(&quotients(m));
+        scaling::check_inputs(
+            "rejecting a value of n divisions with a menu",
+            n,
+            unit,
+            |u| {
+                let errors = u.type_errors();
+                assert_eq!(errors.len(), 1);
+                std::hint::black_box(errors);
+            },
+        );
     });
 }
 
@@ -204,16 +226,12 @@ fn a_menu_of_divisions_nested_deep_scales() {
 /// `scaling::a_sum_of_divisions_of_literals_takes_its_carrier`.
 #[test]
 fn a_sum_of_many_divisions_of_literals_takes_its_carrier_in_linear_time() {
-    scaling::on_a_thread(1 << 29, || {
-        let n = 500;
-        let units = scaling::inputs(n, |m| Resolved::new(&sum_of_divisions(m)));
-        for u in units.values() {
-            assert_eq!(u.type_errors(), Vec::<String>::new());
-        }
-        scaling::check("checking a sum of n divisions that meets an f64", n, |m| {
-            std::hint::black_box(units[&m].type_errors());
-        });
-    });
+    accepted_scales(
+        "checking a sum of n divisions that meets an f64",
+        500,
+        1,
+        sum_of_divisions,
+    );
 }
 
 /// Each `/` holds operations on literals alone that have no type until they meet a carrier,
@@ -229,20 +247,12 @@ fn a_sum_of_many_divisions_of_literals_takes_its_carrier_in_linear_time() {
 /// `scaling::divisions_of_literals_nested_deep_take_their_carrier`.
 #[test]
 fn divisions_of_literals_nested_deep_record_their_operands_in_linear_time() {
-    scaling::on_a_thread(1 << 29, || {
-        let n = 500;
-        let units = scaling::inputs(n, |m| Resolved::new(&nested_divisions(m)));
-        for u in units.values() {
-            assert_eq!(u.type_errors(), Vec::<String>::new());
-        }
-        scaling::check(
-            "checking n nested divisions of literals that meet an f64",
-            n,
-            |m| {
-                std::hint::black_box(units[&m].type_errors());
-            },
-        );
-    });
+    accepted_scales(
+        "checking n nested divisions of literals that meet an f64",
+        500,
+        1,
+        nested_divisions,
+    );
 }
 
 /// Each `1 + 1` takes the `f64` of the component it is compared with, one lookup of that
@@ -348,21 +358,12 @@ fn a_division_of_literals_that_a_call_gives_a_carrier_costs_no_rejection() {
 /// `scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier`.
 #[test]
 fn an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time() {
-    scaling::on_a_thread(1 << 29, || {
-        let n = 500;
-        let units = scaling::inputs(n, |m| Resolved::new(&nested_argument(m)));
-        for u in units.values() {
-            assert_eq!(u.type_errors(), Vec::<String>::new());
-        }
-        scaling::check_order(
-            "checking an argument of n nested divisions of literals at an f64 parameter",
-            n,
-            1,
-            |m| {
-                std::hint::black_box(units[&m].type_errors());
-            },
-        );
-    });
+    accepted_scales(
+        "checking an argument of n nested divisions of literals at an f64 parameter",
+        500,
+        1,
+        nested_argument,
+    );
 }
 
 /// As [`an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time`],
@@ -384,15 +385,17 @@ fn an_argument_of_divisions_of_literals_on_both_sides_nested_deep_takes_its_carr
     );
 }
 
-/// Checks `make(m)` at `n` and `8n`, accepted with no error, as work of order `n^order`.
+/// Checks `make(m)` at `n` and `8n`, accepted with no error, as work of order `n^order`. Each
+/// program is resolved only in the process that checks it, and "no error" is asserted on what
+/// each run finds, not by a check of both sizes before the runs (`scaling::check_inputs`;
+/// FAIL-bench-first-phase-past-20s-l0126-l0129).
 fn accepted_scales(what: &str, n: usize, order: u32, make: fn(usize) -> String) {
     scaling::on_a_thread(1 << 29, || {
-        let units = scaling::inputs(n, |m| Resolved::new(&make(m)));
-        for u in units.values() {
-            assert_eq!(u.type_errors(), Vec::<String>::new(), "{what}");
-        }
-        scaling::check_order(what, n, order, |m| {
-            std::hint::black_box(units[&m].type_errors());
+        let unit = |m: usize| Resolved::new(&make(m));
+        scaling::check_order_inputs(what, n, order, unit, |u| {
+            let errors = u.type_errors();
+            assert_eq!(errors, Vec::<String>::new(), "{what}");
+            std::hint::black_box(errors);
         });
     });
 }
