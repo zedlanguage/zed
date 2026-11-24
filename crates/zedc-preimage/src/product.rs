@@ -2225,6 +2225,14 @@ pub struct Scope {
     /// Each root of an obligation's equation at which a written constraint gave neither
     /// `true` nor `false` (DESIGN.md sec:constraints, QUESTIONS A81).
     pub root_failures: imbl::OrdSet<RootFailure>,
+    /// Each difference of two names a test gave that the relation already implied by a tree
+    /// path of blocks of two names ([`Scope::decided_by_path`]), kept out of the relation, with
+    /// the names of that path from one end to the other ([`Scope::imply`]). Every state of the
+    /// scope holds each one, since the relation does.
+    implied: imbl::OrdMap<Arc<Formula>, Arc<[Arc<str>]>>,
+    /// The differences of [`Scope::implied`] whose path holds each name, so that a name
+    /// forgotten puts back those it was inside ([`Scope::restore_implied`]).
+    implied_on: imbl::OrdMap<Arc<str>, imbl::OrdSet<Arc<Formula>>>,
 }
 
 /// The tests of a scope whose cases were joined ([`Scope::join_kept`]), by their content
@@ -10134,6 +10142,8 @@ impl Scope {
             gaps: LowerGaps::default(),
             rooted: imbl::OrdSet::new(),
             root_failures: imbl::OrdSet::new(),
+            implied: imbl::OrdMap::new(),
+            implied_on: imbl::OrdMap::new(),
         };
         s.reduce();
         s
@@ -10916,6 +10926,7 @@ impl Scope {
         // the stars at the hubs a satellite `x` relates to ([`Conjuncts::around`]). No
         // reduction follows to settle them, so they are settled first, against the relation
         // they were stars of.
+        self.restore_implied(x);
         let mut after = self.relation.clone();
         after.forget(x);
         let leaves: Vec<Arc<str>> = self
@@ -12063,6 +12074,35 @@ impl Scope {
         let mut added = vec![Formula::either(&a, &b, &reduce)];
         added.extend(kept);
         relation.swap(&mine, Formula::and(added));
+        // The differences kept out of the relation ([`Scope::implied`]) that both sides hold:
+        // those both sides keep alike stay out, their paths' conjuncts being shared, so in the
+        // join's relation; one that a side alone keeps out, or keeps on another path, goes into
+        // the relation when the other side holds it too, kept out or in its relation, since
+        // its path may run through conjuncts the sides do not share; any other is dropped, as
+        // a conjunct one side alone holds goes into the disjunction. In O(e log n) for the `e`
+        // entries that differ, by the maps' difference.
+        let (mut implied, mut implied_on) = (self.implied.clone(), self.implied_on.clone());
+        for d in self.implied.diff(&other.implied) {
+            let (g, path, holds) = match d {
+                DiffItem::Remove(g, path) => (g, Some(path), other.holds_conjunct(g)),
+                DiffItem::Add(g, _) => (g, None, self.holds_conjunct(g)),
+                DiffItem::Update { old: (g, path), .. } => (g, Some(path), true),
+            };
+            if let Some(path) = path {
+                implied.remove(g);
+                for n in path.iter() {
+                    if let Some(on) = implied_on.get_mut(n) {
+                        on.remove(g);
+                        if on.is_empty() {
+                            implied_on.remove(n);
+                        }
+                    }
+                }
+            }
+            if holds {
+                relation.and((**g).clone());
+            }
+        }
         // The written and enumerated constraints both sides hold.
         let (mut written, mut written_by) = (self.written.clone(), self.written_by.clone());
         for d in self.written.diff(&other.written) {
@@ -12240,6 +12280,8 @@ impl Scope {
                 .root_failures
                 .clone()
                 .union(other.root_failures.clone()),
+            implied,
+            implied_on,
             spent: {
                 // An entry either side spent is spent on the join, so that no later test
                 // projects for it again on this path: a bound on the work, not a fact of the
@@ -12416,6 +12458,14 @@ impl Scope {
         premises: &Premises,
         reduce: fn(&mut Scope),
     ) -> Scope {
+        // A difference the relation implies by a tree path is kept out of it, so that it merges
+        // no blocks (ST-band-quintic D1). One the path refutes goes on to the solver as before,
+        // which records where it failed (`rooted`, `root_failures`).
+        if let Some((g, path)) = self.decided_by_path(test, outcome) {
+            let mut s = self.clone();
+            s.imply(g, path);
+            return s;
+        }
         let mut s = self.clone();
         let admitted =
             s.extend_path(test, outcome, premises) || s.extend_pendant(test, outcome, premises);
@@ -12456,6 +12506,118 @@ impl Scope {
             }
         }
         s
+    }
+
+    /// When `test` giving `outcome` is a difference of two names `x - y >= m` whose tree of
+    /// blocks joins them by blocks of two names each, and the lower bounds of the differences
+    /// of those blocks add up to `m` or more: the test's conjunct and the names of the path,
+    /// `x` to `y`. `None` otherwise.
+    // Proof: the path's blocks are conjuncts of the relation, each between the two names it
+    // joins on the path, so every point of the scope has `a - b` at or above each block's
+    // lower bound, and `x - y` is the sum of the path's differences: at or above the sum of
+    // the bounds. So the test's conjunct holds at every point when that sum reaches `m`: it
+    // removes no point. Only blocks on the one tree path are read, so this is a sufficient
+    // test, never a wrong one: `None` sends the test on to the solver as before. Cost:
+    // [`Blocks::blocks_between`], O(d log n) for a path of `d` nodes, plus the conjuncts of
+    // its blocks, two names each.
+    fn decided_by_path(&self, test: &Term, outcome: bool) -> Option<(Formula, Vec<Arc<str>>)> {
+        if self.bottom || self.lazy {
+            return None;
+        }
+        let con = path_con(test, outcome)?;
+        let g = Formula::Con(con);
+        let (e, None) = conjuncts::edges(&g)? else {
+            return None;
+        };
+        let (Some(x), Some(y)) = (e.from, e.to) else {
+            return None;
+        };
+        let m = -&e.weight;
+        let blocks = self.relation.blocks();
+        let path = blocks.blocks_between(&x, &y)?;
+        // The sum of the lower bounds of `a - next` of the blocks on the path, `x` to `y`.
+        let mut lo = Int::ZERO;
+        let mut at = x.clone();
+        let mut names = vec![x.clone()];
+        for b in path {
+            if blocks.is_apart(b) || blocks.name_count(b) != 2 {
+                return None;
+            }
+            let next = blocks.names_of(b).find(|n| ***n != *at)?.clone();
+            let mut down: Option<Int> = None;
+            for g in blocks.members(b) {
+                let (e, eq) = conjuncts::edges(g)?;
+                for e in std::iter::once(e).chain(eq) {
+                    // An edge the other way, or a bound of one name, gives no lower bound of
+                    // `at - next`; leaving it out only weakens the sum, which stays sound.
+                    let ends = (e.from.as_deref(), e.to.as_deref());
+                    if ends != (Some(&*at), Some(&*next)) {
+                        continue;
+                    }
+                    let w = -&e.weight;
+                    if down.as_ref().is_none_or(|v| *v < w) {
+                        down = Some(w);
+                    }
+                }
+            }
+            lo = &lo + &down?;
+            names.push(next.clone());
+            at = next;
+        }
+        (at == y && lo >= m).then_some((g, names))
+    }
+
+    /// Whether the scope holds the conjunct `g` as a conjunct of its relation or one kept out
+    /// of it ([`Scope::implied`]), in O(log n). Not whether its points imply `g`.
+    fn holds_conjunct(&self, g: &Arc<Formula>) -> bool {
+        self.relation.set().contains(g) || self.implied.contains_key(g)
+    }
+
+    /// Records `g`, a difference the relation implies by the tree path through `path`
+    /// ([`Scope::decided_by_path`]), out of the relation: kept in it, `g` would close a cycle
+    /// of the blocks' graph and merge the path's blocks into one ([`Blocks`]), which each later
+    /// projection of the block then reads whole. In O(d log n) for a path of `d` names.
+    fn imply(&mut self, g: Formula, path: Vec<Arc<str>>) {
+        let g = Arc::new(g);
+        if self.relation.set().contains(&g) || self.implied.contains_key(&g) {
+            return;
+        }
+        for n in &path {
+            self.implied_on
+                .entry(n.clone())
+                .or_default()
+                .insert(g.clone());
+        }
+        self.implied.insert(g, path.into());
+    }
+
+    /// Puts back into the relation each difference [`Scope::imply`] kept out whose path goes
+    /// through `x` between its ends, before `x` is forgotten: the conjuncts of the path that
+    /// mention `x` then go ([`Conjuncts::forget`] forgets each conjunct alone), and the
+    /// difference, which does not mention `x`, is implied by what is left no more. One whose
+    /// end is `x` is forgotten with it. In O(f d log n) for `f` differences on paths of `d`
+    /// names through `x`.
+    fn restore_implied(&mut self, x: &Arc<str>) {
+        let Some(gs) = self.implied_on.remove(x) else {
+            return;
+        };
+        for g in gs {
+            let Some(path) = self.implied.remove(&g) else {
+                continue;
+            };
+            for n in path.iter().filter(|n| *n != x) {
+                if let Some(on) = self.implied_on.get_mut(n) {
+                    on.remove(&g);
+                    if on.is_empty() {
+                        self.implied_on.remove(n);
+                    }
+                }
+            }
+            let end = path.first() == Some(x) || path.last() == Some(x);
+            if !end {
+                self.relation.and((*g).clone());
+            }
+        }
     }
 
     /// A path of difference constraints whose projections share affine bounds.
@@ -15690,7 +15852,22 @@ impl Scope {
             // cross-review xst, and not approved. COMPLEXITY.md row S25.
             let shortest =
                 !every && !blocks.is_apart(b) && !fallen.contains_key(&t) && !holed.contains(&t);
+            // A block of two names is projected alone, never by the ends of the whole tree: the
+            // blocks of a tree share one name each with the next, so the tree of blocks is a
+            // join tree, and an exact projection of each block, repeated while a name it shares
+            // moves (the worklist below), is the projection of the whole: Freuder, "A
+            // sufficient condition for backtrack-free search", JACM 29(1), 1982, shows that an
+            // arc-consistent tree of binary constraints is solved without backtracking, so each
+            // value left has a solution; for blocks of more than two names, the same holds of
+            // acyclic hypergraphs (Beeri, Fagin, Maier and Yannakakis, JACM 30(3), 1983).
+            // Paraphrase, not a quote: the wording and DOIs are to be checked (row
+            // ST-band-quintic D1).
+            // Complexity tradeoff (ST-band-quintic D1): naive version, the ends of the whole
+            // tree at each projection that reaches a block of two names, O(N) per fact for a
+            // tree of `N` names, O(k^2) over a band of `k` steps. Used: the block alone, its two
+            // names' pieces, with the ends kept for blocks of three names or more.
             let ends = !blocks.is_apart(b)
+                && blocks.name_count(b) > 2
                 && !blockwise.contains(&t)
                 && blocks
                     .gaps(t)
@@ -20166,8 +20343,15 @@ impl fmt::Display for Scope {
                 writeln!(f, "  {l}")?;
             }
         }
-        if !self.relation.is_top() {
-            writeln!(f, "relation {}", self.relation)?;
+        // The differences kept out of the relation ([`Scope::implied`]) are shown in it, in
+        // the relation's order, as they were when they were kept in it: the relation with them
+        // put back, in O((r + i) log r) for its `r` conjuncts and the `i` kept out.
+        let mut relation = self.relation.clone();
+        for g in self.implied.keys() {
+            relation.and((**g).clone());
+        }
+        if !relation.is_top() {
+            writeln!(f, "relation {relation}")?;
         }
         Ok(())
     }

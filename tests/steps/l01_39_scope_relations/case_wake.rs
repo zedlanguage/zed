@@ -492,7 +492,16 @@ fn tests_on_two_names_give_the_projection_from_scratch_at_seed_17975651743790410
 
 #[test]
 fn tests_on_three_names_give_the_projection_from_scratch() {
-    run_at(Aim::Three, 2);
+    run(Aim::Three, "case wake: three names");
+}
+
+/// The seeds of the three-name attack that met a fault (FAIL-scope-three-names-seeds): each
+/// held a set wider than from scratch.
+#[test]
+fn tests_on_three_names_give_the_projection_from_scratch_at_the_seeds_that_failed() {
+    for seed in [45, 131, 228, 644, 656, 729, 905] {
+        run_at(Aim::Three, seed);
+    }
 }
 
 #[test]
