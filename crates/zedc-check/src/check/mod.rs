@@ -1450,6 +1450,49 @@ impl WrittenAround {
     }
 }
 
+/// For each variable a need of `needs` is on, the meet of the closed types of its
+/// [`NeedKind::Into`] needs while every need on it is one, and `None` once a need of another
+/// kind is on it or a forward names it ([`NeedKind::Fwd`] holds only uses of other kinds).
+/// Why the meet: each `Into { ty }` need on `v` is met at a call exactly when the argument
+/// given for `v` is within `ty` (`passes_into` at the call, check/walk.rs, `Ck::meet`), so
+/// with every use of that kind the arguments accepted are those within every `ty`, their meet
+/// (the argument at [`Ck::sig_text`]). Read by [`Ck::sig_text_with`] and
+/// [`Ck::passed_type`], so that the type printed and the type a call passes atoms by are one.
+// Complexity: one pass over the needs with a hash map by variable, O(needs) and a meet per
+// `Into` need after the first of a variable; equal types are not met again.
+fn into_types(needs: &[Need]) -> HashMap<Arc<str>, Option<Ty>> {
+    let mut passed: HashMap<Arc<str>, Option<Ty>> = HashMap::new();
+    for n in needs {
+        if let NeedKind::Fwd(fwd) = &n.kind {
+            for t in &fwd.on_vars {
+                if let Some(v) = t.as_var() {
+                    passed.insert(v.clone(), None);
+                }
+            }
+            continue;
+        }
+        let Some(v) = n.on.as_var() else { continue };
+        let into = match &n.kind {
+            NeedKind::Into { ty, .. } => Some(ty),
+            _ => None,
+        };
+        match passed.entry(v.clone()) {
+            Entry::Vacant(e) => {
+                e.insert(into.cloned());
+            }
+            Entry::Occupied(mut e) => {
+                let b = e.get_mut();
+                *b = match (into, b.take()) {
+                    (Some(ty), Some(b)) if b == *ty => Some(b),
+                    (Some(ty), Some(b)) => Some(b.meet(ty)),
+                    _ => None,
+                };
+            }
+        }
+    }
+    passed
+}
+
 /// `t` shown with each class of `masks`, a variable of `t` with its carriers, shown as the
 /// union of those carriers.
 fn show_with(t: &Ty, masks: &Masks, spell: Spell<'_>, around: Around<'_>) -> String {
@@ -7239,11 +7282,32 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.sig_text_with(s, &[])
     }
 
+    /// The type [`Self::sig_text`] prints for the variable `v` of `s` in place of its name,
+    /// the meet of the closed types of its uses, when every use of `v` is an argument at a
+    /// parameter of a closed type ([`NeedKind::Into`]), `v` stands in one place of `s`, and no
+    /// declaration wrote it; `None` where `sig_text` prints `v` as a type variable or `_`.
+    /// The carrier bound of `v` is not met in: a caller reads it apart ([`Self::refused`]).
+    /// The three conditions are those of [`Self::sig_text_with`], in the same order of
+    /// reasons, and read by the same routines ([`into_types`], [`Self::around`],
+    /// [`Sig::standing_twice`]), so the type a call passes atoms by is the type printed.
+    // Complexity: O(needs) for [`into_types`], and, only when `v` is passed-only, the
+    // printer's walk for [`Sig::standing_twice`], O(n log n) in the size n of `s`'s text, and
+    // [`Self::around`]'s O(c log N); asked only at a call whose argument holds loose atoms at
+    // a variable parameter ([`Self::refused`]), never at a call of values with no atom.
+    fn passed_type(&self, s: &Sig, v: &Arc<str>) -> Option<Ty> {
+        let t = into_types(s.needs.as_slice()).remove(v).flatten()?;
+        let around = self.around(s.facts());
+        if around.kept.iter().any(|(k, _)| k == v) || s.standing_twice().contains(v) {
+            return None;
+        }
+        Some(t)
+    }
+
     /// [`Self::sig_text`], each variable of `written` printed by the name given with it
     /// ([`Self::written_param_names`]).
     fn sig_text_with(&self, s: &Sig, written: &[(Arc<str>, Arc<str>)]) -> String {
         let s = s.solved_with(&|v| self.stale(v));
-        let mut passed: HashMap<Arc<str>, Option<Ty>> = HashMap::new();
+        let mut passed = into_types(s.needs.as_slice());
         // For each variable, the (key, result) of each lookup `v[k]` at a fixed key, while
         // every use of it is one ([`Self::lookups_as_maps`]); `None` after a use of another kind.
         let mut looked: HashMap<Arc<str>, Option<Vec<(Ty, Ty)>>> = HashMap::new();
@@ -7251,11 +7315,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         for n in &s.needs {
             if let NeedKind::Fwd(fwd) = &n.kind {
                 // `Fwd` holds only `Entries`/`Call`/`Map` (`#3`), never `Into`: every `.on`
-                // variable
-                // in it has a non-`Into` use, so `sig_text` must keep it as a type variable.
+                // variable in it has a use of another kind, so it is no map ([`into_types`]
+                // keeps it a type variable for the same reason).
                 for t in &fwd.on_vars {
                     if let Some(v) = t.as_var() {
-                        passed.insert(v.clone(), None);
                         looked.insert(v.clone(), None);
                     }
                 }
@@ -7278,23 +7341,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
                 _ => *l = None,
-            }
-            let into = match &n.kind {
-                NeedKind::Into { ty, .. } => Some(ty),
-                _ => None,
-            };
-            match passed.entry(v.clone()) {
-                Entry::Vacant(e) => {
-                    e.insert(into.cloned());
-                }
-                Entry::Occupied(mut e) => {
-                    let b = e.get_mut();
-                    *b = match (into, b.take()) {
-                        (Some(ty), Some(b)) if b == *ty => Some(b),
-                        (Some(ty), Some(b)) => Some(b.meet(ty)),
-                        _ => None,
-                    };
-                }
             }
         }
         // A variable that stands in two places keeps its printing, a type variable: `T -> (0,
@@ -10722,9 +10768,37 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The atoms of `loose` that no arrow of `sig` takes at parameter `i`, which pass through
     /// the call: all of them where the parameter is a variable bounded to carriers, those
-    /// its type does not hold where it is a closed type, and none where it is a variable, a
-    /// class or `_`. At most one set difference per arrow, and no meet: an arrow whose
-    /// parameter is a variable, a class or `_` empties `out` or leaves it as it is.
+    /// its type does not hold where it is a closed type or a variable printed as one
+    /// ([`Self::passed_type`]), and none where it is any other variable, a class or `_`. At
+    /// most one set difference per arrow, and no meet: an arrow whose parameter is such a
+    /// variable, a class or `_` empties `out` or leaves it as it is.
+    ///
+    /// A variable printed as a closed type (row FAIL-atom-into-arrow-param-not-passed-out):
+    /// `x` of `g(x, c: bool) = (if c { t0(n: x) } else { 0 })` with `t0(n: f64 -> f64)` may
+    /// take a function, a value other than a carrier, so its bound holds [`OTHER`] and it
+    /// took every atom: `g(x: #a, c: true)` sent `#a` into `t0`'s need, which refused it,
+    /// while `h(y: f64 -> f64) = 1` lets `h(y: #a)` pass `#a` by (rule 6 of
+    /// sec:type_resolution; DESIGN.md sec:failure, "atoms bubble out of an argument"), and
+    /// `g` prints `(x: f64 -> f64, c: bool) -> int`. Why passing by at `g` is right, step by
+    /// step: (1) every use of `x` is an argument at a closed parameter, and `x` stands in no
+    /// other place of `g`'s type ([`Self::passed_type`]), so the values `g` accepts for `x`
+    /// are exactly those of the printed type `P` (the argument at [`into_types`]); (2) an
+    /// atom outside `P` would reach a use that refuses it, and no other use can take it, as
+    /// there is none: no arrow of `g` takes it, which is what rule 6 asks of an atom that
+    /// passes by; (3) DESIGN L1.26 lets the atom in only where the class "may take other
+    /// values" in its type variable, that is where the variable is the type printed (`T` or
+    /// `_`), as `a` of `k(positional a) = (ap(a), a)`, which stands twice and prints
+    /// `T -> (0, T)`: [`Self::passed_type`] gives `None` there and the atom enters as before,
+    /// so `ap` still refuses `#nf` (the four l01_27 loose tests
+    /// `a_loose_atom_enters_a_parameter_whose_bound_may_take_other_values`,
+    /// `a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values`,
+    /// `no_is_repair_is_offered_for_a_function_type` and
+    /// `the_is_repair_on_a_shared_part_declares_it_at_the_top_level`). A bound without
+    /// [`OTHER`] already passes every atom by, as before. Tests: l01_26 printed_param_types
+    /// `an_atom_passes_by_a_parameter_passed_into_a_function_type` and
+    /// `random_printed_parameter_types_are_what_calls_accept` (its skip of atoms at arrow
+    /// types removed). They cannot catch a parameter whose uses mix `Into` with other kinds,
+    /// which keeps the old rule.
     fn refused(&self, sig: &Sig, i: usize, loose: &KType) -> KType {
         let mut out = loose.clone();
         for arrow in &sig.arrows {
@@ -10732,9 +10806,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 break;
             }
             let p = &arrow.params[i];
+            let printed = || p.as_var().and_then(|v| self.passed_type(sig, v));
             out = match p.as_var().and_then(|v| sig.bounds.get(v)) {
                 Some(&m) if m & OTHER == 0 => out,
-                Some(_) => KType::empty(),
+                Some(_) => printed().map_or_else(KType::empty, |t| &out - &t.set),
+                None if p.as_var().is_some() && self.class_of_ty(p).is_none() => {
+                    printed().map_or_else(KType::empty, |t| &out - &t.set)
+                }
                 None if p.dynamic || !p.vars.is_empty() || self.class_of_ty(p).is_some() => {
                     KType::empty()
                 }

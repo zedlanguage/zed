@@ -17009,9 +17009,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 site,
             } => {
                 let mut arg = |ck: &mut Self, p: usize, t: &Ty| {
-                    let via = ck.need_arg_via(n, p, t);
+                    let (via, below) = ck.need_arg_via(n, p, t).unzip();
                     ArgSrc::Got(Box::new(Arg {
                         via,
+                        below: below.flatten(),
                         ..Arg::of(ck.bound(t, binds))
                     }))
                 };
@@ -25261,15 +25262,18 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the call being checked places at a whole argument ([`CallFrame::place`]), as `v` of
     /// `run(g, v) = g(x: v)`, that argument as the call writes it; for `t` of no variable, as
     /// `small` of `twice(g) = g(x: small)`, the argument each use the need stands for writes
-    /// ([`Ck::call_written`]), whose value no type the body is checked for changes. Else
-    /// `None`, and a function the argument passes to a partial slot is refused.
-    fn need_arg_via(&mut self, n: &Need, p: usize, t: &Ty) -> Option<Rc<[Span]>> {
+    /// ([`Ck::call_written`]), whose value no type the body is checked for changes. With
+    /// them, where in those arguments the value lies ([`Arg::below`]): `None` where it is
+    /// each whole, else the path [`CallFrame::place`] found, as the component `p[0]` of
+    /// `run(g, p) = g(x: p[0])` or an entry of `m` in `m.map(...)`, so a function the value
+    /// passes to a partial slot is rebuilt at that part of the argument
+    /// (PLACE-value-inside-arg; [`Self::coerce_forwarded`] rebuilds by the same path at the
+    /// argument's own need). Else `None`, and such a function is refused.
+    fn need_arg_via(&mut self, n: &Need, p: usize, t: &Ty) -> Recv {
         if t.as_var().is_some() {
             let frame = self.call_frames.last()?;
-            return match frame.place(t)? {
-                (i, None) => frame.written(i),
-                (_, Some(_)) => None,
-            };
+            let (i, up) = frame.place(t)?;
+            return Some((frame.written(i)?, up));
         }
         if t.holds_vars() {
             return None;
@@ -25280,7 +25284,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // `l01_26_type_resolution::bench::function_variance::many_calls_of_a_body_with_many_named_calls_scale`,
         // which fails on a list made at every meeting, and
         // `a_kept_list_is_the_fresh_list_after_every_addition`.
-        self.call_written.get_mut(&n.span)?.arg_via(p)
+        Some((self.call_written.get_mut(&n.span)?.arg_via(p)?, None))
     }
 
     /// Refuses the value at `span`, passed where a partial function type is expected, whose
@@ -34016,9 +34020,10 @@ fn one_tuple(t: &Ty) -> Option<usize> {
     t.tuples.only().filter(|_| alone).map(|r| r.len())
 }
 
-/// Where the receiver of `map` or `where` lies in values the program writes ([`Ck::map_end`]):
-/// the spans of those values, and the parts taken in them to reach the receiver, innermost
-/// first (`None` where it is each whole).
+/// Where the receiver of `map` or `where` ([`Ck::map_end`]), or a value passed on from inside
+/// an argument ([`Ck::need_arg_via`]), lies in values the program writes: the spans of those
+/// values, and the parts taken in them to reach it, innermost first (`None` where it is each
+/// whole).
 type Recv = Option<(Rc<[Span]>, Option<Rc<Taken>>)>;
 
 /// Whether `on` is one family and nothing else, of one key and keys of no tuple, whose
