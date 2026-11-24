@@ -118,6 +118,20 @@ fn design_md_is_checked_too() {
 }
 
 #[test]
+fn the_old_ids_a_note_of_a_renumbering_names_are_no_citations() {
+    // DESIGN.md:7091 of spec 0b4f7cb: the note names the old ids L41.8, L41.7b and L40.1b.
+    let note = " Placed after step L1.7. Renumbered on 2026-11-24: steps L1.1 and L1.2 were L41.1 \
+                and L41.8 (L1.2a was L40.1b).";
+    let text = design(note);
+    let (ok, out) = checked(&text, &[("DESIGN.md", &text)]);
+    assert!(!ok);
+    // L1.7, before the note, is still a citation; the ids after it are not.
+    assert_eq!(out, "DESIGN.md:5: L1.7 is not a step in DESIGN.md\n");
+    let line = "// Steps L9.1 and L9.2 were renumbered on 2026-11-24.";
+    assert!(!checked(&design(""), &[("src/a.rs", line)]).0);
+}
+
+#[test]
 fn a_step_a_plan_row_adds_to_design_is_accepted() {
     let plan = "| 3 | DESCENT-sum | Sum entry, building new DESIGN step L1.2c after L1.2b | S |\n\
                 - **DESCENT-sum.** Consider splitting into L1.2d and L1.2e.\n";

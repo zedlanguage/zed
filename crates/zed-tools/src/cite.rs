@@ -4,7 +4,8 @@
 //! DESIGN.md. A label is defined by a heading that begins with it in parentheses; a step, by a
 //! line of the plan (sec:steps). A step id is also accepted where a row of `docs/plan_dag.md`
 //! names it after "DESIGN step", since that plan item adds the step to DESIGN.md. Each
-//! citation of neither kind is reported with its file and line. Test data is not read: the
+//! citation of neither kind is reported with its file and line, except the old ids a note of a
+//! renumbering names ([`RENUMBERED`]). Test data is not read: the
 //! files of [`FIXTURES`] and the graphs dagview saved ([`saved_graph`]). CI does not run it,
 //! since CI never reads the spec.
 
@@ -116,7 +117,7 @@ pub fn check_citations(design: &str, files: &[(String, String)], out: &mut Strin
             if path == PLAN {
                 continue;
             }
-            for step in cited_steps(line) {
+            for step in cited_steps(citing_part(line)) {
                 if !steps.contains(step) {
                     say!(out, "{path}:{}: {step} is not a step in DESIGN.md", n + 1);
                     ok = false;
@@ -125,6 +126,18 @@ pub fn check_citations(design: &str, files: &[(String, String)], out: &mut Strin
         }
     }
     Ok(ok)
+}
+
+/// The words that begin a note of DESIGN.md recording a renumbering of steps, such as "Renumbered
+/// on 2026-11-24 (...): this layer's steps L40.1 to L40.8 were L41.1 to L41.8". Such a note names
+/// the old ids on purpose, so the steps cited from these words to the end of the line are not
+/// checked; the steps before them on the line still are.
+pub const RENUMBERED: &str = "Renumbered on ";
+
+/// The part of `line` whose step ids are citations: all of it, or the part before
+/// [`RENUMBERED`].
+fn citing_part(line: &str) -> &str {
+    line.find(RENUMBERED).map_or(line, |at| &line[..at])
 }
 
 /// Whether `c` may be part of a label.
