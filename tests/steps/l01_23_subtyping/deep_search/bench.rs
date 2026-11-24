@@ -244,7 +244,8 @@ fn a_chain_of_the_five_operations_50_000_levels_deep_is_the_shallow_composition(
     });
 }
 
-/// The levels of [`a_chain_of_the_five_operations_50_000_levels_deep_is_not_under_another_bottoms`]:
+/// The levels of
+/// [`a_chain_of_the_five_operations_50_000_levels_deep_is_not_under_another_bottoms`]:
 /// 10,000 morphisms and 10,000 pairs in turn, the depth of [`CHAIN`].
 // The comparison took time quadratic in the depth until KERNEL-empty-morphism-tuple-quadratic
 // (b22-ref4, 2026-11-24): 0.25 s, 0.99 s, 3.18 s, 11.80 s and 48.20 s at 1000 to 16,000 levels

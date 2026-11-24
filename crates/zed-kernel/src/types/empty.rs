@@ -11491,9 +11491,9 @@ impl<'m> Searching<'m> {
         // KERNEL-empty-morphism-tuple-quadratic). Used: the components' own answers, O(1)
         // expected time each, and a value built for each other component, so each type of the
         // chain is searched once, O(k) (66.2e6 and 524.8e6 instructions at k = 100 and 800,
-        // 7.93 times, callgrind on the same VM). Only a row with a component answered by its own search
-        // is tried; when none tried succeeds, `v` is built as before, so the extra cost is at
-        // most one build of each such row's other components, which the build of `v` repeats
+        // 7.93 times, callgrind on the same VM). Only a row with a component answered by its own
+        // search is tried; when none tried succeeds, `v` is built as before, so the extra cost is
+        // at most one build of each such row's other components, which the build of `v` repeats
         // from the values kept. Proof: a tuple of a value of each component of a row lies in
         // that row, and the part is the union of its rows (`union_rows`), so the tuple is a
         // value of `v`; a component's own answer is a function of it alone (the claim at
