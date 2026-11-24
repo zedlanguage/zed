@@ -16221,7 +16221,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// active at the end is tried, and every check is run when its pair first shares a class.
     /// So with (b), whether a link fails and the classes at the end would not depend on the
     /// order. Checked: the paper's page 2 read by eye from the authors' scan
-    /// (di.ens.fr/~cousot, COUSOTpapers/publications.www/CousotCousot-SIGPLANNotices-v12-n8-p1-12-1977.pdf),
+    /// (https://www.di.ens.fr/~cousot/COUSOTpapers/publications.www/CousotCousot-SIGPLANNotices-v12-n8-p1-12-1977.pdf),
     /// 2026-11-24, b22-checkwalk13; Lemma 2.2.1 and the rest of the proof of Theorem 2.2 were
     /// read on that page, the later pages were not. Not proved: (b), the monotonicity of
     /// `check_on`, `meet` and `flow`; `meet` reads the masks of the classes of the type
