@@ -70,30 +70,40 @@ fn pncx_fibonacci_crt_scale() {
             .map(|k| Num::from(k).built().expect("written").magnitude().clone())
             .filter(|m| m.bits() > 64)
             .collect();
-        let mut ans = None;
-        let question = meter.work(|| ans = Some(satisfiable(&f)));
-        let model = ans.expect("run").expect("answer").expect("a point");
-        assert!(f.holds(&model));
-        let mut g = None;
-        let gcd = meter.work(|| g = Some(zed_kernel::num::gcd_uint(&ms[0], &ms[1])));
-        assert!(g.expect("run") == num_bigint::BigUint::from(1u32));
-        let ratio = question.units as f64 / gcd.units as f64;
-        println!(
-            "FIBCRT {n} question {} gcd {} ratio {ratio:.2}",
-            question.units, gcd.units
-        );
-        // On processor time the limit is `TIME_ALLOWANCE` times 10, as the scaling checks allow
-        // it: in a run of all of l01_38 at 8 test threads on a Colab VM, which counts no
-        // instructions, one run in 5 measured 10.07 at F(80001) (b22-presburgerb3, 2026-11-23),
-        // against 5.8 in instructions.
-        let limit = if meter.unit().starts_with("instructions") {
-            10.0
-        } else {
-            10.0 * zed_tests::scaling::TIME_ALLOWANCE
-        };
+        // The limit is 10 on every meter, and a ratio at or over it fails, as the scaling checks
+        // hold theirs (FAIL-scaling-check-passes-over-limit, FAIL-pncx-probe-allowance). Until
+        // 2026-11-23 processor time had `TIME_ALLOWANCE` times 10, 20, since a run of all of
+        // l01_38 at 8 test threads on a Colab VM, which counted no instructions, measured 10.07
+        // at F(80001) once in 5 (b22-presburgerb3), against 5.8 in instructions. Load is met
+        // instead as the scaling checks meet it: each measurement is the fastest of
+        // `Meter::repeats().0` runs of each method, and the probe fails only when all
+        // `Meter::repeats().1` measurements are at or over the limit; a count of instructions
+        // takes one run and one measurement.
+        let limit = 10.0;
+        let (ans, g) = (std::cell::RefCell::new(None), std::cell::RefCell::new(None));
+        let mut ratios = Vec::new();
+        for _ in 0..meter.repeats().1 {
+            let question = meter.least(|| {}, || *ans.borrow_mut() = Some(satisfiable(&f)));
+            let model = ans.take().expect("run").expect("answer").expect("a point");
+            assert!(f.holds(&model));
+            let gcd = meter.least(
+                || {},
+                || *g.borrow_mut() = Some(zed_kernel::num::gcd_uint(&ms[0], &ms[1])),
+            );
+            assert!(g.take().expect("run") == num_bigint::BigUint::from(1u32));
+            let ratio = question.units as f64 / gcd.units as f64;
+            println!(
+                "FIBCRT {n} question {} gcd {} ratio {ratio:.2}",
+                question.units, gcd.units
+            );
+            ratios.push(ratio);
+            if ratio < limit {
+                break;
+            }
+        }
         assert!(
-            ratio <= limit,
-            "F({}): the question is {ratio:.2} gcds, over {limit} {}",
+            ratios.iter().any(|&r| r < limit),
+            "F({}): the question is {ratios:.2?} gcds, at or over {limit} {}",
             n + 1,
             meter.unit()
         );

@@ -178,10 +178,11 @@ pub const LIMIT: f64 = 10.5;
 /// that passes from it up to [`LIMIT`] prints a note naming the test.
 pub const PREFERRED: f64 = 9.0;
 
-/// The margin of a limit on processor time or cycles, which change with load, kept for the
-/// probes that hold their own ratio of processor time to it (l01_38's `pncx_probe`). The
-/// scaling checks of this file no longer use it: they hold every meter to the limit itself
-/// (FAIL-scaling-check-passes-over-limit, 2026-11-23; see `compare_measured`). A linear loop
+/// The margin a limit on processor time or cycles, which change with load, had until
+/// 2026-11-23, kept for the measurements written against it. Nothing holds a ratio to it now:
+/// the scaling checks of this file hold every meter to the limit itself
+/// (FAIL-scaling-check-passes-over-limit; see `compare_measured`), and so does l01_38's
+/// `pncx_fibonacci_crt_scale`, the last probe that used it (FAIL-pncx-probe-allowance). A linear loop
 /// run at 10^5 and 8 × 10^5 passes took 5.6 to 8.8 times the processor time, the fastest of five
 /// each, and a quadratic one 33 to 82 times for 64 (2026-11-07, load 20 to 25).
 pub const TIME_ALLOWANCE: f64 = 2.0;
@@ -611,8 +612,9 @@ impl Meter {
     /// the 5 processes the single-run ratio of each check spread by at most 0.52%, the
     /// least-of-two ratio by up to 1.26%. Processor time and cycles change with load, so they
     /// keep the fastest of [`TIME_RUNS`] and [`TRIES`] measurements (see [`TIME_RUNS`] for why
-    /// A160's one run of each size does not hold for them).
-    fn repeats(&self) -> (usize, usize) {
+    /// A160's one run of each size does not hold for them). Public for a probe that holds a ratio
+    /// of two methods itself (l01_38's `pncx_fibonacci_crt_scale`, FAIL-pncx-probe-allowance).
+    pub fn repeats(&self) -> (usize, usize) {
         if self.instructions {
             (1, 1)
         } else {
@@ -632,7 +634,7 @@ impl Meter {
 
     /// The least work and the least bytes of the runs of `f`, as many as [`Meter::repeats`] says,
     /// with `before` run before each run of `f`, outside what is measured.
-    pub(crate) fn least(&mut self, before: impl Fn(), f: impl Fn()) -> Work {
+    pub fn least(&mut self, before: impl Fn(), f: impl Fn()) -> Work {
         (0..self.repeats().0)
             .map(|_| {
                 before();

@@ -1000,12 +1000,16 @@ impl<'a> Same<'a> {
         // recorded none at n = 20,000 and 3,136 functions at 160,000 (`bench::deep_ops::
         // fits_sig_takes_linear_time_in_the_depth`, bytes 30.9x). Cost: two `Above` a pair
         // pushed.
-        // Assumption, not proved: a function whose only owners are its list and the rows and
-        // shapes counted in the restored `above` is reached only along this path, so leaving
-        // it out of the table loses no repeat the table would have caught. It is the same
-        // assumption the recursion makes before any cut; the evidence is the l01_26 and l01_23
-        // tests and the recording counts (0 at n = 20,000 to 160,000 with the fix), not a
-        // proof that a pair popped here has no other way down to the function.
+        // A claim about cost only, not about the answer (row PROOF-sweep-zedc-types): a
+        // function whose only owners are its list and the rows and shapes counted in the
+        // restored `above` is reached only along this path, so leaving it out of the table
+        // loses no repeat the table would have caught. If false, a pair below such a function
+        // met on a second path is compared again: more work, the same answer, since the
+        // records only save work and the answer never needs them (the types hold no cycles;
+        // the doc of [`Same`]), so the comparison is a function of the two types alone. It is
+        // the same claim the recursion makes before any cut; the evidence for the cost is the
+        // recording counts (0 at n = 20,000 to 160,000 with the fix) and the l01_26 and l01_23
+        // tests, not a proof that a pair popped here has no other way down to the function.
         while let Some((a, b, above)) = self.left.pop() {
             self.above = above;
             if !outer(&mut self, a, b) {
@@ -8471,6 +8475,22 @@ impl Binds {
         self.map.get(&v).expect("bound just now")
     }
 
+    /// Whether this binding holds `given`: the same bounds, ceilings and free variables, and
+    /// each variable `given` binds bound here to a type whose union with `given`'s is itself,
+    /// as [`Binds::unite`] leaves it. The relation the lemma at [`Comparing::keep`] proves of
+    /// every binding a comparison gives back; checked by the test of that lemma only
+    /// ([`HOLDS_CHECKED`]), in the size of `given` and the types it binds.
+    #[cfg(test)]
+    fn holds(&self, given: &Binds) -> bool {
+        self.bounds == given.bounds
+            && self.ceilings == given.ceilings
+            && self.free == given.free
+            && given
+                .map
+                .iter()
+                .all(|(v, t)| self.map.get(v).is_some_and(|u| t.union(u) == *u))
+    }
+
     /// Binds `v` to what it is bound to, if anything, and `t`.
     pub fn unite(&mut self, v: Arc<str>, t: &Ty) {
         let u = match self.map.get(&v) {
@@ -8808,16 +8828,56 @@ struct Cx<'s> {
     // binding, a hash of the type bound, which the change already cost. Not done: a binding
     // that differs on a variable neither node holds still misses; restricting the key to the
     // variables the two nodes hold would need their variables at hand as a set.
-    // Assumption, not proved (ASSUME-documented): an answer kept here equals what the
-    // comparison would give if run again on the same nodes, binds, bounds and ceilings. It
-    // needs node ids that are never reused (a global counter, so true within one run), every
-    // input the comparison reads to be part of the `Compared` key, and no refusal behind a
-    // kept answer. `recall` checks `unchosen`, the one refusal state, and compares again
-    // under a refusal (the argument at [`Comparing::recall`]). Evidence:
+    // Claim (proved, row PROOF-sweep-zedc-types, b22-small12, 2026-11-24): an answer kept here
+    // equals what the comparison would give if run again on the same nodes and binding. If
+    // false, a stale `true` accepts a type that does not fit: unsound. It needs node ids that
+    // are never reused (a global counter, so true within one run), no refusal behind a kept
+    // answer (`recall` checks `unchosen`, the one refusal state, and compares again under a
+    // refusal: the argument at [`Comparing::recall`]), and every input the comparison reads
+    // to be the same at the keeping and at the recall. Proof of the last.
+    // (1) What a comparison of rows or shapes reads (`rows`, `shape_in` and what they call
+    //     outside a nested [`fits_in`]; the fields of `Cx` named in that code, listed by a
+    //     search of ty.rs on 2026-11-24): the two nodes and the binding (all four of its
+    //     parts: the key), `bind_none` (the key's `as_is`), `unchosen` (above), `solve` (set
+    //     when the state is made, never written), the memos `kept_rows`, `kept_read`,
+    //     `kept_compared`, `filed`, `fitted`, `fitted_alone`, `fitted_read` and `bound_fns`
+    //     (each answers by its own key alike wherever it is read: the arguments at each), and
+    //     the name tables `rigid`, `fns`, `closed`, `own_bounds` and `owned`, at names the
+    //     nodes or the binding hold. `free`, `wide`, `narrow_at`, `q_arrows`, `witnessed` and
+    //     `within_q` are read only by the arrows' code of a [`fits_in`] (`every_arrow_fits`,
+    //     `covers`, `arrow_fits`, `part_of`, `permitted`), which a comparison of rows reaches
+    //     only through a nested [`fits_in`], and that one sets each of them at its start and
+    //     gives the outer value back at its end. A nested [`fits_in`] reads the tables at the
+    //     names of its arguments and writes no outer binding (`fits` and `fits_read` give a
+    //     bool), so (2) covers what it reads too.
+    // (2) The entry of each name table at a name `w` is the same wherever an entry of this
+    //     map is read. The map is the one of the innermost [`fits_in`] open, its frame:
+    //     [`Cx::open`] sets it aside, [`Cx::forget`] gives it back, and `fits_alone` swaps the
+    //     whole state, so an entry is kept and recalled in one frame, never while a nested one
+    //     is open. The writers of the tables (a search for `rigid.`, `fns.`, `closed.`,
+    //     `own_bounds.`, `owned.`): [`Cx::open`] and [`Cx::keep_own`] write only for the frame
+    //     they open, and the [`Cx::forget`] of that frame removes those names again (`made`
+    //     and `own` since its mark); [`Cx::read`] and [`Cx::bound_name`] add entries only at a
+    //     name [`Cx::fresh`] or [`Cx::fresh_kept`] has just made; `fits_alone`
+    //     gives back the outer tables with only names made by `fresh_kept` added. No writer
+    //     changes an entry while it is present. A made name is `{v}'{count}` or `'{count}`,
+    //     the counter never going back (`fits_alone` returns it), so it ends in a prime and
+    //     digits that no other made name ends in, and no source name holds a digit after a
+    //     prime (`[A-Za-z_][A-Za-z0-9_]*'?`): so each made name is made once and is never a
+    //     source name. Hence within a frame a name's entry goes, at most once, from none to
+    //     one value, at the moment it is made (or, for a source name or one of an outer frame,
+    //     never changes), and outside the times a nested frame is open, it is the same value.
+    //     A node or binding that holds a made name `w` was built after `w` was made, so every
+    //     comparison of it, kept or recalled, reads that value. A name a nested frame made and
+    //     forgot is in no node of this frame: nodes come from this frame's readings and the
+    //     operations on them, `kept_rows` holds only `fresh_kept` names, and `bound_fns` gives
+    //     back a name only while `fns` holds it. (3) So each input of (1) is the same, and the
+    //     comparison, a function of its inputs, gives the same answer and binding. ∎
+    // Evidence:
     // `a_shared_pair_met_again_under_other_bindings_keeps_them`,
     // `rows_compared_after_a_refusal_give_the_refusal`, and
     // `an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt`; benchmarks 8.15x,
-    // 8.01x and 8.02x. If false, a stale `true` accepts a type that does not fit: unsound.
+    // 8.01x and 8.02x.
     compared: HashMap<Compared, (bool, Binds)>,
 }
 
@@ -10518,6 +10578,31 @@ thread_local! {
 
 #[cfg(test)]
 thread_local! {
+    /// Whether each of the three places that replace a live binding whole ([`Comparing::search`],
+    /// [`Comparing::row_in`], [`accepts`]) checks that the new binding holds the one it
+    /// replaces ([`Binds::holds`]), and how many replacements each has checked: the test of the
+    /// lemma at [`Comparing::keep`] (row PROOF-sweep-zedc-types, (F2)). Off by default, as the
+    /// check costs the size of the binding at each replacement.
+    static HOLDS_CHECKED: std::cell::Cell<Option<[usize; 3]>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Under [`HOLDS_CHECKED`], panics unless `new` holds `given` ([`Binds::holds`]) and counts
+/// the replacement at `site` (0 [`Comparing::search`], 1 [`Comparing::row_in`], 2 [`accepts`]).
+#[cfg(test)]
+fn check_holds(site: usize, given: &Binds, new: &Binds) {
+    if let Some(mut hits) = HOLDS_CHECKED.get() {
+        assert!(
+            new.holds(given),
+            "replacement {site} dropped a binding: {given:?} -> {new:?}"
+        );
+        hits[site] += 1;
+        HOLDS_CHECKED.set(Some(hits));
+    }
+}
+
+#[cfg(test)]
+thread_local! {
     /// Whether [`Comparing::search`] tries the shapes free of variables as before
     /// [`Searched::closed_left_out`]: the form `shapes_left_out_as_closed_change_no_verdict`
     /// compares with, and the slow side of its bench.
@@ -11941,8 +12026,9 @@ impl<'m, 's> Comparing<'m, 's> {
     /// this costs a second entry for each answer true, O(1) to make (a persistent map is
     /// copied by its root).
     fn keep(&self, key: Compared, ok: bool, b: &Binds) {
-        // Claim (ASSUME-documented; proved, given (F2) at `accepts` and the claim at
-        // `Cx::compared` that the key holds every input the comparison reads): the comparison
+        // Claim (proved; with (F2) at `accepts`, proved at the replacement in
+        // `Comparing::search`, and the proof at `Cx::compared` that every input the comparison
+        // reads is the same where an entry is read, row PROOF-sweep-zedc-types): the comparison
         // `key` met again under `b`, the binding its true answer gave, gives `(true, b)` again,
         // so the second entry may be read with no comparison. If false, a recalled `true` stands
         // where the comparison would give false: unsound.
@@ -11966,9 +12052,10 @@ impl<'m, 's> Comparing<'m, 's> {
         //     (`Ty::union` drops a piece it holds), so `b` comes back unchanged. Dropping the
         //     search's pins there (`search.bound`) changes no binding. By induction over the
         //     pieces in their order, every choice repeats and the answer is `(true, b)`.
-        // What this rests on: the bindable set reads `cx.bind_none` (in the key, `as_is`),
-        // `cx.rigid` and `cx.fns`, which the key does not hold; that they are the same where
-        // the entry is read is the claim at `Cx::compared`. Evidence:
+        // The bindable set reads `cx.bind_none` (in the key, `as_is`), `cx.rigid` and `cx.fns`,
+        // which the key does not hold; they are the same where the entry is read by (2) of
+        // the proof at `Cx::compared`. Test of (F2): `every_whole_replacement_of_a_binding_
+        // holds_the_one_given`. Evidence:
         // `deep_ops::shared_payloads_with_a_variable_a_level_bind_each_once` (n from 1 to 6),
         // `an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt`, benchmark 8.00x.
         let mut cx = self.cx.borrow_mut();
@@ -13163,6 +13250,55 @@ impl<'m, 's> Comparing<'m, 's> {
             }
             let (ok, b) = fit(r, binds.clone()).await;
             if ok {
+                // Claim (F2 at `accepts`, row PROOF-sweep-zedc-types): `b` holds `binds`
+                // ([`Binds::holds`]: the same bounds, ceilings and free variables, and each
+                // variable `binds` binds bound in `b` to a union of what `binds` bound it to and
+                // more). If false, a binding a member earlier in the search made would be lost,
+                // and `Comparing::keep`'s second entry and `admits`' early refusal would rest on
+                // nothing.
+                // Lemma. Every call of `sub_in`, `sub_near`, `sub_by_shape`, `accepts`,
+                // `payloads_in`, `row_in`, `row_in_one` and `search` leaves the binding it is
+                // lent (`&mut Binds`) holding the one it was lent, and every call of `rows`,
+                // `shape_in` and `bound_through` gives back a binding (if any) holding the one
+                // it was given. Proof, by strong induction over the calls of one comparison in
+                // the order they return (finitely many, so well founded):
+                // (a) The only writes to a lent or given binding in these routines are
+                //     `Binds::unite` in `accepts`, which binds `v` to its old type's union with
+                //     a piece (it holds: `t ∪ (t ∪ p) = t ∪ p`), and the three whole
+                //     replacements here, in `row_in` and in `accepts`. `insert`, `remove`,
+                //     `retain` and `update_each` write only bindings made anew where they are
+                //     called (`Binds::of_arrow`, `Cx::unread`, `closed_binds`, `bound_in_fns`,
+                //     `fns_at`, `ceilings`) or copies that never flow back (`rest_bound`,
+                //     `unbound_carriers`, read for a witness only); `fits_in`'s own binding is
+                //     made by `Binds::of_arrow` and never given out (`fits` gives a bool). No
+                //     routine writes a field of a binding but `Binds::of_arrow`, on the binding
+                //     it makes. Checked by a search of ty.rs for each writer, 2026-11-24; no
+                //     other crate writes a `Binds`.
+                // (b) Here `b` is what `fit` gave `binds.clone()`: `fit` is the closure of
+                //     `row_in_one` (`rows`) or of `payloads_in` (`shape_in`). Each either
+                //     recalls an entry of `Cx::compared` (c) or runs `sub_by_shape` on the
+                //     clone, which holds what it was lent by the hypothesis, as each of those
+                //     calls returned first; "holds" is transitive (unions compose).
+                // (c) A recalled entry matched a key equal to this one, and `Compared::eq`
+                //     compares the whole binding: its map, bounds, ceilings and free
+                //     variables (each `Option<Arc<..>>` by pointer or by value). Entries are
+                //     written only by
+                //     `Comparing::keep`: the first under the binding the comparison started
+                //     with, its value the binding that comparison gave, which holds it by the
+                //     hypothesis (it returned earlier); the second under `b` itself, its value
+                //     `b`, which holds itself. `Cx::open`, `Cx::forget` and `fits_alone` move
+                //     whole tables and change no entry. So the recalled binding holds the key's,
+                //     which equals `binds`.
+                // (d) In `row_in` the replacement is a clone of `binds` lent only to
+                //     `row_in_one` (holds by the hypothesis) and read by `split_at` (`&Binds`);
+                //     in `accepts` it is what `bound_through` gave a clone of `binds`, which runs
+                //     `sub_in` on it only, and `through_fn`, `read_at` and `fits_read` between
+                //     read `binds` or none. So all three replacements hold what they replace,
+                //     and with (a), every write does. ∎
+                // Test: `every_whole_replacement_of_a_binding_holds_the_one_given`
+                // ([`HOLDS_CHECKED`] checks each replacement of its battery).
+                #[cfg(test)]
+                check_holds(0, binds, &b);
                 *binds = b;
                 // The shapes of the variables `r` has now bound alone are pinned at once, so the
                 // later members skip them without a failed fit each.
@@ -13598,6 +13734,10 @@ impl<'m, 's> Comparing<'m, 's> {
             unions.push(Searched::new());
             todo.extend(rows.into_iter().map(|r| (r, unions.len() - 1)));
         }
+        // `b` holds `binds`: a clone of it lent only to `row_in_one` and read by `split_at`
+        // (proof (d) at the replacement in [`Comparing::search`], row PROOF-sweep-zedc-types).
+        #[cfg(test)]
+        check_holds(1, binds, &b);
         *binds = b;
         search.bound = bound;
         true
@@ -17350,7 +17490,12 @@ async fn accepts<'m>(
                                     .read_at(w, tried.as_ref().unwrap_or(binds));
                             let w = read.as_ref().unwrap_or(w);
                             if c.fits_read(v, &s, &se, w).await {
+                                // `tried` holds `binds`: `bound_through` ran only `sub_in` on a
+                                // clone of it (proof (d) at the replacement in
+                                // [`Comparing::search`], row PROOF-sweep-zedc-types).
                                 if let Some(tried) = tried {
+                                    #[cfg(test)]
+                                    check_holds(2, binds, &tried);
                                     *binds = tried;
                                 }
                                 ok = true;
@@ -17384,7 +17529,7 @@ async fn accepts<'m>(
     // search of the bounds of the signature ([`Binds::bound`]) and a check of the piece alone
     // ([`var_mask`], O(log n) and O(1) expected), as what the variable is bound to was checked
     // when bound; so the binding keeps the cost of a union.
-    // Claim (ASSUME-documented, now proved but for the two facts (F2) and (F3) below): `admits`
+    // Claim (proved, with (F2) and (F3) below, row PROOF-sweep-zedc-types): `admits`
     // refuses a piece for `v` only where [`bounds_hold`] would refuse `v`'s final binding, so
     // the early refusal skips only bindings that would fail later. If false, a fit is missed
     // and a correct program is rejected: precision only, never a wrong yes.
@@ -17394,12 +17539,16 @@ async fn accepts<'m>(
     // bound only from the arm of [`Cx::open`] that a bound `m` with `one(m)` does not reach
     // (that one is read as `Read::Mask`, its carrier). So `mask_carrier(var_mask(w))` is
     // `None` and `carrier_of(Var(w))` is `None` for every `w` with a mask. (F2) The final
-    // binding holds every piece bound to `v` while the search lives (`unite` only adds); that
-    // nothing else shrinks a binding during one search is not proved, row
-    // PROOF-sweep-zedc-types. (F3) The masks read here are those read by `bounds_hold`:
-    // [`Cx::forget`] removes names only at the end of the [`fits_in`] that made them, after
-    // every `bounds_hold` of its arrows; that no binding of an outer comparison holds a name a
-    // nested `fits_in` made and forgot is not proved (same row). (F4) `piece_within(p, m)`
+    // binding holds every piece bound to `v` while the search lives: `unite` only adds, and
+    // each of the three whole replacements of a binding gives one that holds it (the lemma
+    // and its proof at the replacement in [`Comparing::search`]; tested by
+    // `every_whole_replacement_of_a_binding_holds_the_one_given`). (F3) The masks read here
+    // are those read by `bounds_hold`: [`Cx::forget`] removes names only at the end of the
+    // [`fits_in`] that made them, after every `bounds_hold` of its arrows, and no binding of
+    // an outer comparison holds a name a nested `fits_in` made and forgot: an outer binding is
+    // written only by `unite` of pieces of the nodes the outer comparison reads and by the
+    // replacements, which hold no other names ((F2)), and those nodes hold no such name ((2)
+    // of the proof at `Cx::compared`); a nested `fits_in` writes no outer binding. (F4) `piece_within(p, m)`
     // reads `p` alone, and the union of a binding with `p` keeps `p` a piece up to a merge of
     // pieces of no carrier, where the test asks only `m & OTHER`: so a piece refused alone is
     // refused in every binding that holds it.
@@ -17568,16 +17717,26 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     // signature as a whole is still taken here first. Cost: the
     // digests, kept with each signature, and where they agree a walk of both as written, which
     // the comparison would have cost.
-    // Assumption, not proved (ASSUME-documented): a signature equal to `q` (same digest, and
-    // `==` by `Same::sig`) and read alike in `se` and `qe` fits `q`, so `true` is returned with
-    // no comparison. This needs fit to be reflexive for every signature, overloads, bounded
-    // variables and class variables included, and needs `read_alike` to catch every way the two
-    // environments could read the same text differently. Evidence: `a_signature_fits_itself`,
+    // Claim (proved, row PROOF-sweep-zedc-types, 2026-11-24): a signature equal to `q` (same
+    // digest, and `==` by `Same::sig`) and read alike in `se` and `qe` fits `q`, so `true` is
+    // returned with no comparison. If false, a function that does not fit is accepted:
+    // unsound. Proof. (1) `fits_in(s, se, q, qe)` asks whether every function of the type `s`
+    // stands for, read by `se`, is a function of the type `q` stands for, read by `qe`
+    // (sec:type_resolution); a true is sound exactly when that holds. (2) The type a signature
+    // stands for under an environment is a function of its fields but the cache `facts` and of
+    // how each variable it holds, at any depth, is read: [`Cx::read`] replaces a variable by
+    // what the environment maps it to or, mapped to nothing, by `solve`, one for both sides,
+    // and reads nothing else of the environment. (3) `Same::sig` compares every field of the
+    // two but `facts` (it names each in its pattern), so `s` and `q` are the same text; and
+    // [`read_alike`] compares the reading by `se` and by `qe` of every variable `vars_in`
+    // gives, which enters the functions held at every depth ([`Ty::vars_in`]), and of the
+    // held names of compact forwards. (4) So the two stand for one set of functions, and a
+    // set is within itself. ∎ The full comparison, run instead, is not reflexive in every
+    // case (with this line off, `a_bounded_variable_is_bound_only_to_what_its_bound_holds`
+    // and others fail): that is a loss of precision of the comparison, and this line gives the
+    // answer (1) defines. Tests: `a_signature_fits_itself`,
     // `signatures_with_a_variable_bound_in_a_tuple_fit_themselves_and_their_overloads`, and the
-    // ty.rs tests for outer variables, function types and class variables. With this line off,
-    // `a_bounded_variable_is_bound_only_to_what_its_bound_holds` and others fail, so the full
-    // comparison is not itself reflexive in every case. If false, a function that does not fit
-    // is accepted: unsound.
+    // ty.rs tests for outer variables, function types and class variables.
     if s.digest() == q.digest() && s == q && read_alike(s, se, qe) {
         return true;
     }
@@ -22164,14 +22323,27 @@ impl std::hash::Hash for Sig {
 /// pair of names ([`Comparing::fits_read`]), so the second attempt reads its verdict, and the
 /// attempts do not multiply with the depth.
 async fn arrow_fits<'m>(s: &Sig, sa: &Arrow, qa: &Arrow, c: &'m Comparing<'m, '_>) -> bool {
-    // Assumption, not proved (ASSUME-documented): the ceilings only remove fits that would fail
-    // anyway, and the retry with `Binds::of_arrow(s, sa, None, ..)` finds every fit that the
-    // comparison with no ceiling finds, even though the first attempt leaves `fitted`, the
-    // `compared` entries keyed with ceilings, and the pins behind it. The ceilings do reject
-    // pieces by design; what is assumed is only the final verdict. Evidence: the l01_26 groups
-    // and the others affected, 323 to 325 pieces with 0 failures; benchmark 8.61x. If false, a
-    // function that fits is found not to fit and a correct program is rejected: precision,
-    // unless a caller reads a false here as proof that the function does not fit.
+    // Claim (proved, row PROOF-sweep-zedc-types, 2026-11-24): the answer is true where the
+    // comparison with no ceiling, run on its own, is true, and a true from either attempt is
+    // the checks' true. If false, a function that fits is found not to fit and a correct
+    // program is rejected (precision), or one that does not fit is accepted (unsound).
+    // Proof. (1) Each attempt answers by the same four checks (`params_within`, `bounds_hold`,
+    // `result_within`, `instance_within`) on the binding it found; the ceilings only steer
+    // which pieces are bound, and the checks then read that binding as they read any. So a
+    // true of the first attempt is a true of the checks. (2) The retry starts from a new
+    // binding with no ceiling, `Binds::of_arrow(s, sa, None, ..)`, so it is the comparison
+    // with no ceiling, but for what the first attempt left behind: (a) the pins live in the
+    // `Search` of one search ([`Search::new`] at each), gone when it returns; (b) a
+    // `Cx::compared` entry gives what the comparison of its key would give, wherever it was
+    // kept (the proof at `Cx::compared`); (c) a `fitted` verdict is keyed by two names of
+    // `fns`, whose entries do not change while they are present ((2) of that proof), and a
+    // comparison of two functions reads no outer binding (`fits_read` takes none), so it is
+    // the verdict the retry would reach; (d) a refusal inside the first attempt is set aside
+    // ([`Comparing::begin_alone`], [`Comparing::end_alone`]) and is only kept to refuse,
+    // never to answer false, where the retry fails too. So the retry answers as the comparison
+    // with no ceiling, and the loop returns true where either attempt does. ∎ Evidence: the
+    // l01_26 groups and the others affected, 323 to 325 pieces with 0 failures; benchmark
+    // 8.61x.
     let mut b = Binds::of_arrow(s, sa, Some(&qa.result), &c.cx.borrow());
     // Why the attempt within the ceilings was refused, if it was: then it may have found a fit
     // the attempt with no ceiling does not, so where that one fails too, the comparison is
@@ -28963,6 +29135,45 @@ mod tests {
         let want = fits_sig(&s, &q);
         SCAN_ALL.set(false);
         assert!(want, "{q} in {s}: the full search finds no fit");
+    }
+
+    /// Row PROOF-sweep-zedc-types, (F2) at [`accepts`]: each of the three places that replace a
+    /// live binding whole ([`Comparing::search`], [`Comparing::row_in`], [`accepts`] through
+    /// [`Comparing::bound_through`]) gives a binding that holds the one it replaces
+    /// ([`Binds::holds`]), checked at every replacement the fits of three neighbor tests make,
+    /// each place reached at least once. A test of a proof: it fails on no version of the code
+    /// the proof holds of, and fails at once if a place is changed to drop a binding.
+    #[test]
+    fn every_whole_replacement_of_a_binding_holds_the_one_given() {
+        HOLDS_CHECKED.set(Some([0; 3]));
+        a_union_of_three_shapes_of_variables_fits_itself_renamed();
+        shapes_that_share_a_variable_take_the_union_of_their_members();
+        a_tuple_held_by_a_member_of_a_shape_union_is_held_as_it_is();
+        a_bounded_variable_only_a_function_parameter_holds_fits_under_any_name();
+        // A joined row split across shapes ([`Comparing::row_in`]): `(X0 | X1,)` of `q` in
+        // `(X0,) | (X1,)` of `s`, as `l01_26_type_resolution::fits::
+        // a_joined_one_element_tuple_fits_split_shapes_for_every_bound` asks it.
+        let int = Ty::carrier(Carrier::Int);
+        let one = |t: Ty| Ty::tuple(vec![t]);
+        let (x0, x1) = (Ty::var("X0".into()), Ty::var("X1".into()));
+        // Bounded, as `row_in` documents: unbounded, `X0` is bound to `X0' | X1'` in one shape
+        // and no split is made.
+        let mk = |p: Ty| {
+            let mut s = owning(one_param(p, int.clone(), &[], true), &["X0", "X1"], "X0");
+            let m = s.bounds["X0"];
+            s.bounds.insert("X1".into(), m);
+            s.note_held();
+            Arc::new(s)
+        };
+        let split = mk(one(x0.clone()).union(&one(x1.clone())));
+        let joined = mk(one(x0.union(&x1)));
+        assert!(fits_sig(&split, &joined), "{joined} in {split}");
+        assert!(fits_sig(&joined, &split), "{split} in {joined}");
+        let hits = HOLDS_CHECKED.take().expect("set above");
+        assert!(
+            hits.iter().all(|&n| n > 0),
+            "replacements checked at each place: {hits:?}"
+        );
     }
 
     /// FAIL-types-fn-only-bounded-variable: a bounded variable that only a function parameter
