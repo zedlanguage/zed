@@ -3084,6 +3084,58 @@ fn the_answers_of_calls_of_a_callee_that_chooses_are_those_reading_bodies() {
 }
 
 #[test]
+fn the_calls_of_one_callee_with_holes_are_answered_as_its_body() {
+    // LOAD-call-disj-spread, META1 E1, E5 and E9 of XR-load-call-node: the controls of the
+    // call node's cache key and meaning. They pass today, each answer checked against reading
+    // the bodies and the whole decision; the call node must keep them passing.
+    for src in [
+        // One callee, holes {0, 3, 4}, called through four bindings: a key by the callee alone
+        // gives `b1`, `b2` and `b3`, which cannot hold, the answers of `b0`, which can.
+        "h0(x: int) = x != 0;\nh1(x: int) = h0(x: x) && x != 3;\n\
+         h2(x: int) = h1(x: x) && x != 4;\n\
+         b0(x: int) = h2(x: x) && x > 0 - 6 && x < 6;\n\
+         b1(x: int) = h2(x: x + 1) && x > 2 && x < 4;\n\
+         b2(x: int) = h2(x: 2 * x) && x > 1 && x < 3;\n\
+         b3(x: int) = h2(x: 0 - x) && x > 0 - 5 && x < 0 - 2;",
+        // Two callees with different holes over one `x`: a key by the atoms read gives `d1` the
+        // answers of `d0`.
+        "g0(x: int) = x != 1;\ng1(x: int) = g0(x: x) && x != 5;\n\
+         k0(x: int) = x != 2;\nk1(x: int) = k0(x: x) && x != 6;\n\
+         d0(x: int) = g1(x: x) && x > 0 && x < 2;\n\
+         d1(x: int) = k1(x: x) && x > 0 && x < 2;\n\
+         d2(x: int) = g1(x: x) && k1(x: x) && x > 4 && x < 7;",
+        // Codex's forced node: holes {0, 2}, where h(x) holds at x = 1 and h(2x) does not; a
+        // node whose polarity is reversed (E1) answers both the wrong way.
+        "f0(x: int) = x != 0;\nf1(x: int) = f0(x: x) && x != 2;\n\
+         e0(x: int) = f1(x: x) && x == 1;\n\
+         e1(x: int) = f1(x: 2 * x) && x == 1;\n\
+         e2(x: int) = f1(x: x) && f1(x: 2 * x) && x > 0 - 2 && x < 2;",
+        // The fallbacks of E9: an argument over two symbols, one over a remainder, and a
+        // relation that mixes a call with rows, under negation.
+        "h0(x: int) = x != 0;\nh1(x: int) = h0(x: x) && x != 3;\n\
+         m0(x: int, y: int) = h1(x: x + y) && x > 0 && x < 3 && y > 0 && y < 3;\n\
+         m1(x: int) = h1(x: x mod 5) && x > 0 && x < 9;\n\
+         m2(x: int) = !(h1(x: x) && x > 1) && x > 0 && x < 6;",
+    ] {
+        answers_are_those_reading_bodies(src);
+    }
+}
+
+#[test]
+fn the_projections_of_a_claimed_relation_are_keyed_by_their_arguments() {
+    // META1 E5 of XR-load-call-node (Gemini): M9 above calls `projection` once, since `m0`
+    // claims `r`. Here `c` claims `r`, and `m0` and `m1` each call it with a constant beside
+    // the same `x`, so `Memo::projections` is asked twice over the same atoms; a key of the
+    // atoms read gives `m1` (which can hold, at x = 0) the answers of `m0` (which cannot).
+    answers_are_those_reading_bodies(
+        "r(a: int, b: int) = a > b || a == 0 - 100;\n\
+         c(x: int, y: int) = r(a: x, b: y) && x > 0 && y > 0;\n\
+         m0(x: int) = r(a: 0, b: x) && x >= 0 && x < 3;\n\
+         m1(x: int) = r(a: 1, b: x) && x >= 0 && x < 3;",
+    );
+}
+
+#[test]
 fn a_callee_that_chooses_is_projected_once_for_its_key() {
     // LOAD-call-disj: one projection for each callee and key ([`Walk::projection`], keyed by
     // the canonical body, lambda and ordered key in `Memo::projections`), whatever the number

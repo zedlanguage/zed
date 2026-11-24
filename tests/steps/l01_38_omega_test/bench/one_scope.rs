@@ -725,6 +725,69 @@ fn the_questions_of_a_chain_calling_a_callee_with_spread_holes_scale() {
     );
 }
 
+/// The links `f{i} = f{i-1} && holes && x >= 2 i`, `1..=n`, over `x >= 0`, where `holes` is one
+/// conjunction built once and kept as a part of every link, as a call writes its callee's holes
+/// (`preimage::merged_holes`): with `spread`, the n single values `x != 2 j` for `j` in `0..n`,
+/// so the point of link i moves to `2 i + 1`; else the one run `0..=2 n`, written
+/// `x <= 0 - 1 || x >= 2 n + 1`, so the point stays at `2 n + 1`.
+fn a_chain_extending_one_hole_set(n: usize, spread: bool) -> Vec<zedc::store::presburger::Formula> {
+    use zedc::store::presburger::{Atom, Con, Formula, Lin};
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let k = Lin::constant;
+    let ge = |a: &Lin, b: &Lin| Formula::Con(Con::ge(a, b));
+    let n = n as i64;
+    let holes = match spread {
+        true => Formula::and(
+            (0..n)
+                .map(|j| Formula::negate(Formula::Con(Con::eq(&x, &k(2 * j)))))
+                .collect(),
+        ),
+        false => Formula::or(vec![ge(&k(-1), &x), ge(&x, &k(2 * n + 1))]),
+    };
+    let mut f = Formula::and(vec![ge(&x, &k(0)), ge(&k(1_000_000), &x)]);
+    let mut out = Vec::with_capacity(n as usize);
+    for i in 1..=n {
+        f = Formula::and_keeping(vec![f, holes.clone(), ge(&x, &k(2 * i))], |p| p < 2);
+        out.push(f.clone());
+    }
+    out
+}
+
+#[test]
+fn a_call_node_is_extended_in_time_of_its_links() {
+    // LOAD-call-disj-spread, META1 F2 of XR-load-call-node: the call node measured on
+    // `Extending` alone, at 1000 -> 8000, the size that decides the 10.5 limit (the chain of
+    // calls above stays at 50 -> 400 for its comparison with its control). One hole set is
+    // built once and read by every link; each link moves the point past one more hole. Today
+    // each link reads the n clauses of the holes, Θ(n²) for the chain: red on the branch,
+    // not for main while red. With the call node (design
+    // /home/luke/Work/wt/design-b22-load5.md section 2) a link costs one successor query,
+    // O(log n), with zero clause expansions; the counter of E6 is to be asserted here when it
+    // exists. Its control is the test below.
+    let chains = zed_tests::scaling::inputs(1000, |n| a_chain_extending_one_hole_set(n, true));
+    zed_tests::scaling::check("the answers of a chain extending one hole set", 1000, |n| {
+        let mut e = zedc::store::presburger::extend::Extending::new();
+        for f in &chains[&n] {
+            let a = e.answers(f);
+            assert_eq!((a.holds, a.fails), (Ok(true), Ok(true)));
+        }
+    });
+}
+
+#[test]
+fn a_call_node_of_one_run_is_extended_in_time_of_its_links() {
+    // The control of the bench above: the same chain with its holes merged into one run, one
+    // clause, as `a_chain_calling_a_callee_with_holes` merges them, so each link costs O(1).
+    let chains = zed_tests::scaling::inputs(1000, |n| a_chain_extending_one_hole_set(n, false));
+    zed_tests::scaling::check("the answers of a chain extending one run", 1000, |n| {
+        let mut e = zedc::store::presburger::extend::Extending::new();
+        for f in &chains[&n] {
+            let a = e.answers(f);
+            assert_eq!((a.holds, a.fails), (Ok(true), Ok(true)));
+        }
+    });
+}
+
 #[test]
 fn the_questions_of_a_chain_moving_a_hole_scale() {
     // LOAD-bound-holes: the drifting chain beside `q(x) = (x < 10 || x > 20) && 0 < x <

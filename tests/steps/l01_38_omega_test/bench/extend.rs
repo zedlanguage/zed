@@ -55,9 +55,10 @@ fn a_tangent_chain_is_decided_in_time_of_its_links() {
     // the plan row) is cross-reviewed and built: every row of the tangent chain bounds its
     // region ([`a_tangent_chain`]), so design A keeps n rows at link n and decides each link
     // from all of them, Θ(n²) for the chain: 38.3 times the instructions, 50 → 400 (colab,
-    // 2026-11-23). Not for main while red.
-    let chains = zed_tests::scaling::inputs(50, a_tangent_chain);
-    zed_tests::scaling::check("the answers of a tangent chain", 50, |n| {
+    // 2026-11-23). Not for main while red. At n = 2000 (META1 F1 of XR-load-call-node): design
+    // B is O(n log n), whose model ratio `8 ln(8n) / ln(n)` is 10.19 at 2000 and 12.25 at 50.
+    let chains = zed_tests::scaling::inputs(2000, a_tangent_chain);
+    zed_tests::scaling::check("the answers of a tangent chain", 2000, |n| {
         let mut e = Extending::new();
         for f in &chains[&n] {
             let a = e.answers(f);

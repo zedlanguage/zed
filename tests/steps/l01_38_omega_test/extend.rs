@@ -255,6 +255,187 @@ fn each_region_over_two_symbols_is_decided_as_its_rows() {
     }
 }
 
+#[test]
+fn the_step_controls_of_the_integer_hull_are_answered_as_their_rows() {
+    // LOAD-chain-move-tangent, META1 D12 and D13 of XR-load-call-node: the controls of the steps
+    // of design B (/home/luke/Work/wt/design-b22-load5.md), each link's answer checked against
+    // `decide` of the whole. They pass on design A, which decides each link from its rows over
+    // Z; design B must keep them passing, and each names the step whose mutant it catches.
+    let (x, y, k) = (sym("x"), sym("y"), Lin::constant);
+    let and = Formula::and;
+    let box_ = |x0: i64, x1: i64, y0: i64, y1: i64| {
+        and(vec![
+            ge(x.clone(), k(x0)),
+            ge(k(x1), x.clone()),
+            ge(y.clone(), k(y0)),
+            ge(k(y1), y.clone()),
+        ])
+    };
+    let lin = |a: i64, c: i64| x.times(a).plus(&y.times(c));
+    let quadrant = and(vec![ge(x.clone(), k(0)), ge(y.clone(), k(0))]);
+    // `l` times 10^40, past i128.
+    let wide = |l: &Lin| {
+        l.times(1_000_000_000_000_000_000i64)
+            .times(1_000_000_000_000_000_000i64)
+            .times(10_000)
+    };
+    let chains: Vec<(&str, Formula, Vec<Vec<Formula>>)> = vec![
+        // Step 1 (D12): `1 <= 2x - 2y <= 1` has rational points and no integer point; the
+        // tightening alone finds it.
+        (
+            "step 1: 2x - 2y = 1",
+            box_(0, 9, 0, 9),
+            vec![vec![ge(lin(2, -2), k(1))], vec![ge(k(1), lin(2, -2))]],
+        ),
+        // Step 1 (D1): a negative constant, 2x + 4y - 3 >= 0 is x + 2y >= floor(3/2) + 1 = 2
+        // and not x + 2y >= 1 as truncation gives, so beside x + 2y <= 1 it is empty.
+        (
+            "step 1: floor of a negative constant",
+            box_(-5, 5, -5, 5),
+            vec![vec![ge(lin(2, 4), k(3))], vec![ge(k(1), lin(1, 2))]],
+        ),
+        // Constant rows (D1, D13): true, zero, false.
+        (
+            "constant rows",
+            box_(0, 3, 0, 3),
+            vec![
+                vec![ge(k(1), k(0))],
+                vec![ge(k(0), k(0))],
+                vec![ge(k(0), k(1))],
+            ],
+        ),
+        // Step 5 (D12), Gemini: 2x - y <= 1, 2x + y >= 1, y <= 0 meet in (1/2, 0) alone.
+        (
+            "step 5: Gemini",
+            and(vec![ge(k(1), lin(2, -1)), ge(lin(2, 1), k(1))]),
+            vec![vec![ge(k(0), y.clone())]],
+        ),
+        // Step 5 (D12), Claude: 3x + 2y <= -4, 3y >= x - 1, y <= 3x + 4.
+        (
+            "step 5: Claude",
+            and(vec![ge(k(-4), lin(3, 2)), ge(lin(-1, 3), k(-1))]),
+            vec![vec![ge(lin(3, -1), k(-4))]],
+        ),
+        // The corner repair (D12), Codex: the triangle (0,0), (0,1), (2,0) cut by x >= 1 is the
+        // segment [(1,0), (2,0)] (a Line), then the point (1,0), then empty.
+        (
+            "corner repair",
+            and(vec![
+                ge(x.clone(), k(0)),
+                ge(y.clone(), k(0)),
+                ge(k(2), lin(1, 2)),
+            ]),
+            vec![
+                vec![ge(x.clone(), k(1))],
+                vec![ge(k(1), x.clone())],
+                vec![ge(y.clone(), k(1))],
+            ],
+        ),
+        // Case 1 with C redundant (D13): [0,1]×[0,2] and 3x + y <= 2.
+        (
+            "case 1, C redundant",
+            box_(0, 1, 0, 2),
+            vec![vec![ge(k(2), lin(3, 1))], vec![ge(x.clone(), k(1))]],
+        ),
+        // Case 2 with C' redundant (D13): 0 <= y <= 1 and 3x - y <= 1, then 2x >= 1, which has
+        // rational points (x in [1/2, 2/3] at y = 1) and no integer point.
+        (
+            "case 2, C' redundant",
+            and(vec![ge(y.clone(), k(0)), ge(k(1), y.clone())]),
+            vec![vec![ge(k(1), lin(3, -1))], vec![ge(lin(2, 0), k(1))]],
+        ),
+        // Codex's case-2 triangle (D5): (-2,0), (-2,1), (1,2) cut by x <= 0, whose section on
+        // x = 0 holds y in [4/3, 5/3] and no integer: case 1 there gives a fractional vertex.
+        (
+            "case 2 triangle",
+            and(vec![
+                ge(x.clone(), k(-2)),
+                ge(lin(-2, 3), k(4)),
+                ge(lin(1, -3), k(-5)),
+            ]),
+            vec![vec![ge(k(0), x.clone())], vec![ge(x.clone(), k(0))]],
+        ),
+        // Unbounded (D3): every vertex cut off and not empty; no vertex cut off and not implied.
+        (
+            "quadrant, x >= 5",
+            quadrant.clone(),
+            vec![vec![ge(x.clone(), k(5))]],
+        ),
+        (
+            "quadrant, x <= 5",
+            quadrant.clone(),
+            vec![vec![ge(k(5), x.clone())]],
+        ),
+        // Ties (D2): rows through a vertex, min f = c (implied, twice), then max f = c (the
+        // point (0,0)).
+        (
+            "ties",
+            box_(0, 3, 0, 3),
+            vec![
+                vec![ge(lin(1, 1), k(0))],
+                vec![ge(k(6), lin(1, 1))],
+                vec![ge(k(0), lin(1, 1))],
+            ],
+        ),
+        // The states of D4: a half-plane, a strip, a ray, a segment, a point, empty.
+        (
+            "states",
+            and(vec![ge(lin(1, 2), k(0)), ge(lin(1, 2), k(-5))]),
+            vec![
+                vec![ge(k(3), lin(1, 2))],
+                vec![ge(lin(1, 2), k(3))],
+                vec![ge(x.clone(), k(1))],
+                vec![ge(k(7), x.clone())],
+                vec![ge(k(1), x.clone())],
+                vec![ge(y.clone(), k(2))],
+            ],
+        ),
+        // A long continued fraction (D13): consecutive Fibonacci coefficients.
+        (
+            "Fibonacci",
+            box_(-1000, 1000, -1000, 1000),
+            vec![
+                vec![ge(lin(89, 144), k(1000))],
+                vec![ge(k(1003), lin(89, 144))],
+                vec![ge(lin(-55, 89), k(1))],
+                vec![ge(k(2), lin(-55, 89))],
+            ],
+        ),
+        // Coefficients past i128 (D13): 10^40 x + (10^40 + 1) y in [1, 10^40].
+        (
+            "past i128",
+            box_(-9, 9, -9, 9),
+            vec![
+                vec![ge(wide(&lin(1, 1)).plus(&y), k(1))],
+                vec![ge(wide(&k(1)), wide(&lin(1, 1)).plus(&y))],
+            ],
+        ),
+    ];
+    for (name, base, links) in chains {
+        let mut e = Extending::new();
+        let mut f = base;
+        assert_eq!(e.answers(&f), decided(&f), "{name}: {f}");
+        for rows in links {
+            f = extend(&f, rows);
+            assert_eq!(e.answers(&f), decided(&f), "{name}: {f}");
+        }
+    }
+    // Persistence (D13): two callers extend one region; the base's answers stay the same.
+    let base = extend(&box_(0, 6, 0, 6), vec![ge(k(9), lin(1, 1))]);
+    let mut e = Extending::new();
+    let before = e.answers(&base);
+    let left = extend(&base, vec![ge(k(2), x.clone())]);
+    let right = extend(&base, vec![ge(x.clone(), k(5)), ge(y.clone(), k(5))]);
+    for f in [&left, &right, &base, &left] {
+        assert_eq!(e.answers(f), decided(f), "{f}");
+    }
+    assert_eq!(
+        e.answers(&base),
+        before,
+        "the base after two callers extended it"
+    );
+}
+
 /// A chain of `n` calls as the scope reads it (LOAD-extend-refuses): `x{i} == x{i+1} + k`, the
 /// argument of call i bound to its callee's atom, written from the last link back so that the
 /// bindings resolve through long paths; `b{i} == i`, a binding's own variable; and at each link
