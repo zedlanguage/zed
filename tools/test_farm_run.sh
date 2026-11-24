@@ -86,6 +86,9 @@ if [ -z "$pieces" ]; then
     exit 0
   fi
   names="p1 p2 p3 p4 p5 p6 p7"
+  # STUB_HASHED: first a library's piece named with a build hash that differs from job to job, as
+  # it may from VM to VM (farm_run.sh's norm_names).
+  [ -z "${STUB_HASHED:-}" ] || names="zlib-$(printf %s "${FARM_VM_JOB:-}" | md5sum | cut -c1-16)::b $names"
   [ -z "$short_steps" ] || names+=" short-g1"
   # short-zed_kernel runs on the VMs since TEST-short-zed_kernel-split, as a short piece; with
   # STUB_SHORT_SPLIT, as two: the piece of the tests not run alone, named after its group, and
@@ -137,6 +140,12 @@ while read -r name rest; do
     rc=124 ms=21000
   fi
   [ -z "${STUB_KILLED:-}" ] || [[ ! $name =~ $STUB_KILLED ]] || rc=137
+  # STUB_SLOW: the piece outlasts the job's hour (FAKE_HOUR in the fake job.sh) by sleeping 30 s:
+  # each time, or with STUB_SLOW_DIR only the first time (a marker made there).
+  if [ -n "${STUB_SLOW:-}" ] && [[ $name =~ $STUB_SLOW ]] &&
+    { [ -z "${STUB_SLOW_DIR:-}" ] || mkdir "$STUB_SLOW_DIR/$name" 2>/dev/null; }; then
+    sleep 30
+  fi
   if [ -n "$bench" ] && [ -n "${STUB_FLAKY:-}" ] && [[ $name =~ $STUB_FLAKY ]] && [ ! -e "$logs/../flaky-$name" ]; then
     : >"$logs/../flaky-$name"
     rc=1
@@ -227,7 +236,8 @@ while IFS= read -r raw; do
     : >"$out/out/$k.log"
     rc=0
   else
-    ( cd "$out/src" && FARM_VM_JOB=$out bash -c "${line#!}" ) >"$out/out/$k.log" 2>&1
+    # FAKE_HOUR: the seconds of job.sh's `timeout 3600` on a line (exit 124 past them).
+    ( cd "$out/src" && FARM_VM_JOB=$out timeout "${FAKE_HOUR:-3600}" bash -c "${line#!}" ) >"$out/out/$k.log" 2>&1
     rc=$?
   fi
   # FAKE_RETRY_ROW: a failed first attempt run again, as job.sh writes it before the final row
@@ -441,6 +451,28 @@ echo '9999.00 9999.00 9999.00 1/100 1' >"$ws/loadavg-high" || exit 2
 FARM_VM_LOADAVG=$ws/loadavg-high STUB_LOWER_LOAD=$ws/loadavg-high STUB_TIMEOUT='^p2$' \
   case_ load-wait 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 1
 has load-wait '^farm: waited [1-9][0-9]* s for the load to fall to the [0-9]+ cores \(load 0\.10\)' 1
+# Tests (MAIN-WATCH-sighup): a share past the job's hour runs on in a new job, which leaves out the
+# pieces the first settled. p4 sleeps past the fake hour of 3 s once: the first job reports the
+# hashed piece and p1 to p3 and is stopped (124); the second, whose hash differs, runs the rest.
+# Each piece is reported once, the run passes, and main-watch no longer sees exit 129.
+hashed="zlib-[0-9a-f]{16}::b"
+mkdir -p "$ws/slow-resume" || exit 2
+FAKE_HOUR=3 STUB_SLOW='^p4$' STUB_SLOW_DIR=$ws/slow-resume STUB_HASHED=1 \
+  case_ hour-resume 0 "pieces: 10, failed: 0" "$hashed $all" -- --owner t --vms 1
+has hour-resume '^farm: share 1 of 1 on hm1 stopped at the job.s hour; 4 of its pieces settled, 0 to run alone; the rest run in a new job$' 1
+has hour-resume '^farm: share 1 of 1: 6 pieces left to run, 0 to run alone, by an earlier job stopped at its hour$' 1
+ls -d "$ws/case-$n-hour-resume/run/vm1-2" >/dev/null 2>&1 || { fail=$((fail + 1)); echo "FAIL hour-resume: no second job"; }
+# A benchmark that failed in the stopped job runs in the next only alone (jobs=1), once, and its
+# first line is kept with the prefix.
+mkdir -p "$ws/slow-bench" || exit 2
+FAKE_HOUR=3 STUB_SLOW='^p4$' STUB_SLOW_DIR=$ws/slow-bench STUB_FAIL='^p2$' \
+  case_ hour-resume-bench 1 "pieces: 9, failed: 1" "$all" -- --owner t --vms 1 --bench
+has hour-resume-bench '^farm: first run: p2 rc=1 .* jobs=[0-9]+$' 1
+has hour-resume-bench '^p2 rc=1 .* jobs=1$' 1
+has hour-resume-bench '^farm: share 1 of 1: 6 pieces left to run, 1 to run alone, by an earlier job stopped at its hour$' 1
+# A job stopped at its hour that settled nothing: the share is lost, exit 129, as before.
+FAKE_HOUR=3 STUB_SLOW='^p1$' case_ hour-no-progress 129 "pieces: 0, failed: 0" "" -- --owner t --vms 1
+has hour-no-progress '^farm: share 1 of 1 ended with 124 \(past the job.s hour or killed\)' 1
 FAKE_DIE_FIRST=1 case_ died-once 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2
 ls -d "$ws/case-$n-died-once/run/"vm?-2 >/dev/null 2>&1 || { fail=$((fail + 1)); echo "FAIL died-once: no second attempt"; }
 FAKE_FREE=1 case_ one-free 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 4

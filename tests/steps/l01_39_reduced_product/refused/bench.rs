@@ -108,7 +108,11 @@ fn finding_the_refusals_on_many_names_scales() {
 /// sum of two costs grows near linearly only when each does, so a quadratic part of either
 /// still fails the check, once it is large next to the rest at 8n. The piece still stops on a
 /// VM: the one process for 8n, started 6.5 s into the piece, writes no line in 20 s, its
-/// set-up being the 2046 assumes under DynamoRIO (job f33 on hm3, load 3; open).
+/// set-up being the 2046 assumes under DynamoRIO (job f33 on hm3, load 3; open). Timed apart
+/// (b22-tests8 job f37 on l41, load 3.2): building the arms takes 5.9 s at 256 and 20.4 s at
+/// 2048 under DynamoRIO, 0.8 s and 7.3 s without it, and the join and its warnings 0.15 s and
+/// 0.19 s under it; an assume costs 3.3 ms at k 64 and 3.5 ms at k 512 without DynamoRIO (job
+/// f41 on l42), so the build is linear and only its constant, under DynamoRIO, passes the 20 s.
 #[test]
 fn the_join_of_arms_with_many_refused_tests_and_its_warnings_scale() {
     use zed_tests::scaling;

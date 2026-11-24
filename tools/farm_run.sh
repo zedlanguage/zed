@@ -21,7 +21,8 @@
 # Exit 0 when every piece passed, 1 when a piece or the build failed or a share did not report each
 # piece it was given once (a line `farm: FAILED: share <k> of <n> on <VM> ...` names it and the
 # failing step: FARM-setup-fail-silent), 2 on a usage error, 129 when
-# a VM's share could not be run after 3 attempts or its run ended past the job's hour: the pieces
+# a VM's share could not be run after 3 attempts or a job of it ended past the job's hour having
+# settled no piece (a share past the hour is otherwise run on in new jobs: hour_settle): the pieces
 # of that share are then not reported, so a caller must not read their absence as passing
 # (tools/main_watch.sh treats an exit of 128 or more as a crashed runner).
 #
@@ -217,6 +218,26 @@ vm_pkg() {
     { echo "vm_side: $1 could not be installed"; return 2; }
 }
 
+# again_of <kind>: the names of the pieces of the summary lines on stdin that run once more,
+# alone: for bench every failed piece, for test a piece stopped by its limit (see "The failed
+# pieces run again once" in vm_side); a short-addresses piece never. Used by vm_side on its first
+# run, and here on the first run of a job stopped at its hour.
+again_of() {
+  if [ "$1" = bench ]; then
+    awk '$2 ~ /^rc=[1-9]/ && $1 !~ /^short-/ { print $1 }'
+  else
+    awk '$2 ~ /^rc=(124|137)$/ && $3 ~ /^[0-9]+ms$/ && $5 ~ /^limit=[0-9]+s$/ && $1 !~ /^short-/ &&
+      $3 + 0 >= 1000 * substr($5, 7) { print $1 }'
+  fi
+}
+
+# norm_names: the piece names on stdin, one a line, with a library's build hash taken out
+# (zed_collections-1dab6a5c96f278d8::bench::x as zed_collections::bench::x; 16 hex digits, cargo's
+# -C metadata, as main-watch's lists of 2026-11-24 show). The VMs of one run build the same
+# files, but a share's later job may run on another VM, and the shares are dealt by position for
+# just this reason (see "The shares" above): its names are matched without the hash.
+norm_names() { sed -E 's/^([A-Za-z0-9_]+)-[0-9a-f]{16}(::|$)/\1\2/'; }
+
 # vm_cmd <command, base64> [<doc changes>]: runs one command of --commands on the VM with bash, in the build root
 # of the short-addresses pieces (vm_ns), with FARM_OUT the job's out/ directory, which job.sh
 # brings back, and with the tools a share has (vm_side): gawk first as awk, and strace, which
@@ -254,13 +275,17 @@ vm_cmd() {
 }
 
 # vm_side <k> <n> <kind> <full 0|1> <skip-other 0|1> <list 0|1> <trace 0|1> <only> <except>
-#   <vm full folders, space-separated> <short 0|1> <doc checked by> <doc changes, as vm_cmd's>:
-#   runs on the VM in the checkout's root (job.sh's
-# `!` line); see the Design above. Exit as run_tests.sh's run of the share.
+#   <vm full folders, space-separated> <short 0|1> <doc checked by> <doc changes, as vm_cmd's>
+#   [<settled> <alone>]: runs on the VM in the checkout's root (job.sh's
+# `!` line); see the Design above. Exit as run_tests.sh's run of the share. <settled> and <alone>
+# (gzipped base64 of names one a line, as norm_names prints them; empty for a share's first job)
+# are the pieces of the share that an earlier job of it, stopped at its hour, settled or left to
+# run alone (see "A share past the job's hour" below): the first are not run, the second only
+# alone, as a failed first run is.
 vm_side() {
   set -u -o pipefail
   local k=${1-} n=${2-} kind=${3-} full=${4-} skip=${5-} list=${6-} trace=${7-} only=${8-} except=${9-} vmfull=${10-} short=${11-}
-  local checked=${12-} docs=${13-}
+  local checked=${12-} docs=${13-} settled_b64=${14-} alone_b64=${15-}
   [[ $k =~ ^[1-9][0-9]*$ && $n =~ ^[1-9][0-9]*$ && $k -le $n ]] || { echo "vm_side: bad share '$k/$n'"; return 2; }
   [[ $kind == test || $kind == bench ]] || { echo "vm_side: bad kind '$kind'"; return 2; }
   [[ $full$skip$list$trace$short =~ ^[01]{5}$ ]] || { echo "vm_side: bad flags"; return 2; }
@@ -398,13 +423,32 @@ vm_side() {
   # unmounted, so run_tests.sh refuses it in --pieces: the share's short-addresses pieces run by
   # name (--only), in a run that mounts the clone again over this namespace's tmpfs, whose upper
   # layer holds the list call's build of them, so it builds nothing again.
-  awk '$1 !~ /^short-/' "$w/share" >"$w/share-main" &&
-    awk '$1 ~ /^short-/ { print $1 }' "$w/share" >"$w/share-short" ||
+  # A later job of the share runs only what the earlier ones left: settled pieces not at all, the
+  # pieces to run alone only alone ($w/alone-run, below). The names are matched as norm_names
+  # prints them, since the job may run on another VM than the one that settled them.
+  cp "$w/share" "$w/share-run" && : >"$w/alone-run" || { echo "vm_side: copying the share failed"; return 2; }
+  if [ -n "$settled_b64$alone_b64" ]; then
+    { printf %s "$settled_b64" | base64 -d | gunzip >"$w/settled"; } 2>/dev/null &&
+      { printf %s "$alone_b64" | base64 -d | gunzip >"$w/alone"; } 2>/dev/null ||
+      { echo "vm_side: the settled or alone names are not gzipped base64"; return 2; }
+    cut -d ' ' -f 1 "$w/share" | norm_names | paste -d ' ' - "$w/share" >"$w/share-norm" &&
+      awk 'FILENAME == ARGV[1] { s[$1] = 1; next } FILENAME == ARGV[2] { l[$1] = 1; next }
+        !($1 in s) && !($1 in l) { sub(/^[^ ]+ /, ""); print }' "$w/settled" "$w/alone" "$w/share-norm" >"$w/share-run" &&
+      awk 'FILENAME == ARGV[1] { l[$1] = 1; next } $1 in l && $2 !~ /^short-/ { sub(/^[^ ]+ /, ""); print }' \
+        "$w/alone" "$w/share-norm" >"$w/alone-run" ||
+      { echo "vm_side: leaving out the settled pieces failed"; return 2; }
+    echo "farm: share $k of $n: $(wc -l <"$w/share-run") pieces left to run, $(wc -l <"$w/alone-run") to run alone, by an earlier job stopped at its hour"
+  fi
+  awk '$1 !~ /^short-/' "$w/share-run" >"$w/share-main" &&
+    awk '$1 ~ /^short-/ { print $1 }' "$w/share-run" >"$w/share-short" ||
     { echo "vm_side: splitting the share failed"; return 2; }
-  : >"$w/r1.out"
+  # The summary lines go to out/ as each piece ends (run_tests.sh's tee), so that a job stopped at
+  # its hour still brings back the pieces it ran (job.sh packs out/ after a line's timeout too).
+  local r1=$J/out/farm-r1 r2=$J/out/farm-r2
+  : >"$r1" && : >"$r2" || { echo "vm_side: writing $r1 failed"; return 2; }
   rc=0
   if [ -s "$w/share-main" ]; then
-    bash "$w/run_tests.sh" --logs "$w/run" "${a[@]}" --pieces "$w/share-main" "$cores" >"$w/r1.out" 2>&1
+    bash "$w/run_tests.sh" --logs "$w/run" "${a[@]}" --pieces "$w/share-main" "$cores" >"$r1" 2>&1
     rc=$?
   fi
   if [ -s "$w/share-short" ]; then
@@ -421,13 +465,14 @@ vm_side() {
       ex=(--except "$(sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' "$w/short-other" | paste -sd'|')")
     bash "$w/run_tests.sh" --logs "$w/run-short" "${a[@]}" \
       --only "$(sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' "$w/share-short" | paste -sd'|')" \
-      "${ex[@]}" "$cores" >>"$w/r1.out" 2>&1
+      "${ex[@]}" "$cores" >>"$r1" 2>&1
     rs=$?
     [ "$rc" != 0 ] || rc=$rs
   fi
   # The failed pieces run again once, alone: every failed benchmark (see the Design above), and a
   # test piece only when its limit stopped it (FARM-share-load-timeouts), never one that failed an
   # assertion or crashed.
+  # (again_of, above, picks them.)
   #
   # How a stopped piece shows. run_tests.sh's piece() runs a test piece under `timeout -k 5 <limit>`
   # and prints `<piece> rc=<rc> <ms>ms load=<load> limit=<limit>s ...`. GNU timeout exits 124 when
@@ -455,50 +500,52 @@ vm_side() {
   # this with a stub of run_tests.sh; they cannot check the real run_tests.sh's lines or a real
   # timeout, which a merge check on VMs exercises.
   # A short-addresses piece is not run again (--pieces refuses it, above): its first verdict stands.
+  # The pieces left to run alone by an earlier job of the share ($w/alone-run) join them.
   : >"$w/failed"
-  if [ "$rc" = 1 ] && [ "$kind" = bench ]; then
-    awk '$2 ~ /^rc=[1-9]/ && $1 !~ /^short-/ { print $1 }' "$w/r1.out" | sort -u >"$w/failed"
-  elif [ "$rc" = 1 ]; then
-    awk '$2 ~ /^rc=(124|137)$/ && $3 ~ /^[0-9]+ms$/ && $5 ~ /^limit=[0-9]+s$/ && $1 !~ /^short-/ &&
-      $3 + 0 >= 1000 * substr($5, 7) { print $1 }' "$w/r1.out" | sort -u >"$w/failed"
+  if [ "$rc" = 1 ]; then
+    again_of "$kind" <"$r1" | sort -u >"$w/failed"
   fi
-  awk 'NR == FNR { f[$1] = 1; next } $1 in f' "$w/failed" "$w/share-main" >"$w/again"
+  # FILENAME, not NR == FNR, tells the first file from the second here and below: with an empty
+  # first file (no piece failed, and pieces to run alone from a stopped job) NR == FNR holds for
+  # the second file's lines too, and none of them was printed (test_farm_run.sh hour-resume-bench).
+  awk 'FILENAME == ARGV[1] { f[$1] = 1; next } $1 in f' "$w/failed" "$w/share-main" >"$w/again" &&
+    cat "$w/alone-run" >>"$w/again" || { echo "vm_side: listing the pieces to run alone failed"; return 2; }
   if [ -s "$w/again" ]; then
     local lf=${FARM_VM_LOADAVG:-/proc/loadavg} l=0 t=0 alone others
     # The pieces that failed in the first run and are not run again (a test piece that failed
     # otherwise than by its limit, a short-addresses piece): each fails the share.
-    others=$(awk 'NR == FNR { f[$1] = 1; next } $2 ~ /^rc=[1-9]/ && !($1 in f)' "$w/failed" "$w/r1.out" | wc -l)
+    others=$(awk 'FILENAME == ARGV[1] { f[$1] = 1; next } $2 ~ /^rc=[1-9]/ && !($1 in f)' "$w/failed" "$r1" | wc -l)
     if [ "$kind" = test ]; then
       while read -r l _ <"$lf" && awk -v l="$l" -v c="$cores" 'BEGIN { exit !(l > c) }' && [ "$t" -lt 240 ]; do
         sleep 5
         t=$((t + 5))
       done
     fi
-    bash "$w/run_tests.sh" --logs "$w/again-run" "${a[@]}" --pieces "$w/again" 1 >"$w/r2.out" 2>&1
+    bash "$w/run_tests.sh" --logs "$w/again-run" "${a[@]}" --pieces "$w/again" 1 >"$r2" 2>&1
     rc=$?
-    awk 'NR == FNR { f[$1] = 1; next } ($1 in f && $2 ~ /^rc=[1-9]/) || /^pieces: / { $0 = "farm: first run: " $0 } { print }' \
-      "$w/failed" "$w/r1.out"
+    awk 'FILENAME == ARGV[1] { f[$1] = 1; next } ($1 in f && $2 ~ /^rc=[1-9]/) || /^pieces: / { $0 = "farm: first run: " $0 } { print }' \
+      "$w/failed" "$r1"
     if [ "$kind" = bench ]; then
       echo "farm: each failed benchmark run again once, alone, on the same VM; its verdict:"
-      cat "$w/r2.out"
+      cat "$r2"
       [ "$others" = 0 ] || rc=1
       return "$rc"
     fi
     echo "farm: each test piece stopped by its limit run again once, alone, on the same VM; its verdict:"
     echo "farm: waited $t s for the load to fall to the $cores cores (load $l)"
-    cat "$w/r2.out"
-    alone=$(awk '$2 == "rc=0" { print $1 }' "$w/r2.out" | paste -sd' ')
+    cat "$r2"
+    alone=$(awk '$2 == "rc=0" { print $1 }' "$r2" | paste -sd' ')
     [ -z "$alone" ] || echo "farm: stopped by its limit under load, passed alone: $alone"
     # The share fails when a piece failed alone or a piece failed otherwise in the first run.
     [ "$others" = 0 ] || rc=1
     return "$rc"
   fi
-  cat "$w/r1.out"
+  cat "$r1"
   return "$rc"
 }
 vm_script=$out/vm_side.sh
 {
-  declare -f vm_pkg vm_ns vm_cmd vm_side
+  declare -f vm_pkg vm_ns vm_cmd vm_side again_of norm_names
   # A share's arguments start with its number; a command's with `cmd`.
   echo 'if [ "${1-}" = cmd ]; then shift; vm_cmd "$@"; else vm_side "$@"; fi'
 } >"$vm_script" || die "cannot write $vm_script"
@@ -638,7 +685,38 @@ if [ -n "$run_vm" ]; then
   [ -z "$list" ] || want=1
   acquire "$want"
   n=${#held[@]}
-  declare -A tries=() done_k=() vm_last=() vms_of=()
+  declare -A tries=() fails=() done_k=() vm_last=() vms_of=()
+  # A share past the job's hour (MAIN-WATCH-sighup, 2026-11-24). job.sh runs a `!` line under
+  # `timeout 3600`, and main-watch's run of every benchmark, 3,304 pieces measured under DynamoRIO
+  # since BENCH-vm-no-instruction-counter, did not fit: at every commit from 2026-11-23T16:48Z on,
+  # with 1 to 4 VMs, each share ended with 124 after its hour, having printed nothing but its
+  # share line (vm_side printed the summary lines only at its end), and farm_run.sh exited 129,
+  # which main-watch read as a crashed runner. A share's lines now reach out/ as each piece ends
+  # (vm_side's farm-r1 and farm-r2), and a share whose line ended with 124 is run again in a new
+  # job, which leaves out the pieces the stopped jobs settled: hour_settle keeps their summary
+  # lines in $out/vm<k>.kept, their names in $out/vm<k>.settled, and in $out/vm<k>.alone the
+  # names of those whose first run failed so that they run once more alone (again_of) and had not
+  # yet. A job adds a settled piece or a piece to run alone, or the share is lost as before (exit
+  # 129): so a share ends after at most twice its pieces' count of jobs, with no limit chosen
+  # here, and the hour of a line is the only limit, as before. A resumed job builds again (on the
+  # same VM, incrementally); its attempts past the hour are not failures (fails, not tries,
+  # counts those, up to 3).
+  hour_settle() {
+    local k=$1 d=$2 s=$out/vm$1 r1=$2/job/out/farm-r1 r2=$2/job/out/farm-r2 b0 a0
+    [ -f "$r1" ] && [ -f "$r2" ] && touch "$s.kept" "$s.settled" "$s.alone" || return 1
+    b0=$(wc -l <"$s.settled")
+    a0=$(sort -u "$s.settled" "$s.alone" | wc -l)
+    again_of "$kind" <"$r1" | sort -u >"$s.f1" &&
+      awk '$2 ~ /^rc=[0-9]+$/ { print $1 }' "$r2" | sort -u >"$s.v2" &&
+      awk 'FILENAME == ARGV[1] { f[$1] = 1; next } $2 ~ /^rc=[0-9]+$/ { if ($1 in f) $0 = "farm: first run: " $0; print }' \
+        "$s.f1" "$r1" >>"$s.kept" &&
+      awk '$2 ~ /^rc=[0-9]+$/' "$r2" >>"$s.kept" &&
+      { awk 'FILENAME == ARGV[1] { f[$1] = 1; next } $2 ~ /^rc=[0-9]+$/ && !($1 in f) { print $1 }' "$s.f1" "$r1"
+        cat "$s.v2"; } | norm_names | sort -u - "$s.settled" >"$s.settled-new" &&
+      { norm_names <"$s.f1"; cat "$s.alone"; } | sort -u | comm -23 - "$s.settled-new" >"$s.alone-new" &&
+      cat "$s.settled-new" >"$s.settled" && cat "$s.alone-new" >"$s.alone" || return 1
+    [ "$(wc -l <"$s.settled")" -gt "$b0" ] || [ "$(sort -u "$s.settled" "$s.alone" | wc -l)" -gt "$a0" ]
+  }
   pending=$(seq 1 "$n")
   while [ -n "$pending" ]; do
     [ ${#held[@]} -gt 0 ] || acquire "$(wc -w <<<"$pending")"
@@ -662,7 +740,14 @@ if [ -n "$run_vm" ]; then
       else
         line+=" $(printf '%q' "share 1 of this farm run") ''"
       fi
+      if [ -f "$out/vm$k.settled" ]; then
+        line+=" $(gzip -9 <"$out/vm$k.settled" | base64 -w0) $(gzip -9 <"$out/vm$k.alone" | base64 -w0)" ||
+          die "cannot encode the settled pieces of share $k"
+      fi
       printf '%s\n' "$line" >"$d/tests.txt"
+      # As for --commands: bash -c on the VM takes no argument of MAX_ARG_STRLEN or longer.
+      awk 'length($0) >= 131072 { exit 1 }' "$d/tests.txt" ||
+        die "the line of $d/tests.txt is 131,072 bytes or longer, which bash -c on the VM cannot take"
       echo "farm: share $k of $n on $v (attempt ${tries[$k]}; logs $d)"
       vm_last[$k]=$v
       vms_of[$k]+=" $v"
@@ -687,12 +772,20 @@ if [ -n "$run_vm" ]; then
       if [[ ! $jrc =~ ^[01]$ ]] || [ ! -f "$log" ] || [[ ! $lrc =~ ^[0-9]+$ ]]; then
         why=$(job_why "$d/job.out")
         echo "farm: share $k of $n on ${vm_last[$k]} did not run to its end (job.sh exit ${jrc:-none})${why:+: $why}; $d/job.out"
-        if [ "${tries[$k]}" -ge 3 ]; then
+        fails[$k]=$((${fails[$k]:-0} + 1))
+        if [ "${fails[$k]}" -ge 3 ]; then
           echo "farm: FAILED: share $k of $n lost after 3 attempts, on${vms_of[$k]}; its pieces are not reported"
           rc_all=129
         else
           next+=" $k"
         fi
+        continue
+      fi
+      # Stopped at the hour after its share line: run again for the pieces left, when it settled
+      # one (hour_settle, above); otherwise reported as before, below.
+      if [ "$lrc" = 124 ] && [ -z "$list" ] && [ -f "$d/job/out/farm-share" ] && hour_settle "$k" "$d"; then
+        echo "farm: share $k of $n on ${vm_last[$k]} stopped at the job's hour; $(wc -l <"$out/vm$k.settled") of its pieces settled, $(wc -l <"$out/vm$k.alone") to run alone; the rest run in a new job"
+        next+=" $k"
         continue
       fi
       done_k[$k]=$lrc
@@ -705,6 +798,8 @@ if [ -n "$run_vm" ]; then
   for k in $(seq 1 "$n"); do
     [ -n "${done_k[$k]:-}" ] || continue
     d=$out/vm$k-${tries[$k]}
+    [ ! -s "$out/vm$k.kept" ] ||
+      { echo "farm: share $k of $n: the lines of its jobs stopped at the job's hour:"; cat "$out/vm$k.kept"; } >>"$out/report"
     cat "$d/job/out/1.log" >>"$out/report"
     lrc=${done_k[$k]}
     # job.sh's `!` line runs under `timeout 3600`: 124 is the share stopped past the hour.
@@ -727,10 +822,12 @@ if [ -n "$run_vm" ]; then
       elif [ ! -f "$sent" ]; then
         share_failed "share $k of $n on ${vm_last[$k]} listed its pieces but sent back no list of them ($sent)"
       else
-        ran=$(awk '/^farm: / { next } $2 ~ /^rc=[0-9]+$/ { print $1 }' "$log" | sort)
-        miss=$(comm -23 <(sort -u "$sent") <(sort -u <<<"$ran"))
+        # With the pieces settled by its jobs stopped at the hour, by name without the build hash,
+        # since those may have run on other VMs (norm_names).
+        ran=$(cat "$out/vm$k.kept" "$log" 2>/dev/null | awk '/^farm: / { next } $2 ~ /^rc=[0-9]+$/ { print $1 }' | norm_names | sort)
+        miss=$(comm -23 <(norm_names <"$sent" | sort -u) <(sort -u <<<"$ran"))
         twice=$(uniq -d <<<"$ran")
-        extra=$(comm -13 <(sort -u "$sent") <(sort -u <<<"$ran"))
+        extra=$(comm -13 <(norm_names <"$sent" | sort -u) <(sort -u <<<"$ran"))
         why=
         [ -z "$miss" ] || why+="; not reported: $(names "$miss")"
         [ -z "$twice" ] || why+="; reported more than once: $(names "$twice")"
