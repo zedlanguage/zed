@@ -12459,11 +12459,24 @@ impl Scope {
         reduce: fn(&mut Scope),
     ) -> Scope {
         // A difference the relation implies by a tree path is kept out of it, so that it merges
-        // no blocks (ST-band-quintic D1). One the path refutes goes on to the solver as before,
-        // which records where it failed (`rooted`, `root_failures`).
+        // no blocks (ST-band-quintic D1). One the path refutes, the path implying the test's
+        // negation, leaves no point, so the scope is bottom, as the solver would find; but the
+        // solver also records where a written constraint failed at a root (`rooted`,
+        // `root_failures`), so a scope with rooted names sends it on to the solver as before.
+        // Complexity tradeoff: naive version, the refuted difference put in the potential,
+        // whose repair ([`put_in`]) spreads through the cycles of weight 0 the steps' gaps tie
+        // before it reaches the negative one: O(k) names a test on a band of `k` steps, O(k²)
+        // over its rungs (`repair_steps` 139, 470, 1,894, 7,611 at k = 16 to 128,
+        // COUNTS-band3.md). Used: the path's sum, O(d log n) for a path of `d` nodes.
         if let Some((g, path)) = self.decided_by_path(test, outcome) {
             let mut s = self.clone();
             s.imply(g, path);
+            return s;
+        }
+        if self.rooted.is_empty() && self.decided_by_path(test, !outcome).is_some() {
+            let mut s = self.clone();
+            s.bottom = true;
+            reduce(&mut s);
             return s;
         }
         let mut s = self.clone();
@@ -15786,7 +15799,34 @@ impl Scope {
                     }
                 }
                 let names: Vec<Arc<str>> = at.names.iter().cloned().collect();
-                self.raise_all(&relation, t, &names);
+                // A tree that keeps a name off shortest paths other than the names raised here
+                // is not raised (ST-band-quintic D1). Proof that no answer changes: a name's
+                // record of being off the paths ([`Blocks::is_gapped`]) changes only when the
+                // name is a seed ([`Scope::sync_gap`] below) or at a projection of every block,
+                // which has no seeds; so such a name is still off the paths after this
+                // projection, the tree's count of them ([`Blocks::gaps`]) stays above 0, and the
+                // tree is not projected by shortest paths here whatever the raises do. The gaps
+                // the potential holds with are read only to choose that mode
+                // ([`Scope::off_paths`]), to order the searches of shortest paths
+                // ([`Scope::bound_pass`]) and by the repairs of the potential ([`put_in`]),
+                // whose outcome does not depend on them (case (c) there); so a raise left out
+                // changes the cost and the mode, never an answer. A name not raised stays off
+                // the paths, and is raised again when it is next a seed.
+                // Complexity tradeoff: naive version, the raises of every tree, each moving the
+                // names below its name when the steps have no slack in the potential: on the
+                // band of `linked::band_holes_run` every other raise holds and moves
+                // min(i, k - i) names, O(k²) over its `k` holes (`raise_all_steps` 111, 355,
+                // 1,227, 4,503 at k = 16 to 128, COUNTS-band3.md), the raise between them failing
+                // on the cycle of its two holed steps. Used: two lookups a name, O(b log n) for
+                // `b` names. Tradeoff: a tree whose name off the paths comes back on them (its
+                // holes cut off by a bound) stays off them until each name not raised is a seed
+                // again, and is projected block by block meanwhile, which is exact. The raises of
+                // `k` holes that all hold stay O(k² log k) (item ST-holes-moves).
+                let off = blocks.gaps(t).unwrap_or(0);
+                let raised_off = names.iter().filter(|n| blocks.is_gapped(n)).count();
+                if off <= raised_off {
+                    self.raise_all(&relation, t, &names);
+                }
             }
         }
         // Whether each seed keeps its tree from shortest paths, now that the gaps are raised.
