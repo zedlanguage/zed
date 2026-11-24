@@ -74,7 +74,7 @@
 //! here hold, as the remainders of rows `x = p_i q_i + r_i` under `r_i != c_i`, every instance of
 //! SIMULTANEOUS INCONGRUENCES: given pairs `(c_i, p_i)`, is there an `x` with `x !== c_i (mod
 //! p_i)` for every `i`. That problem is NP-complete (M. R. Garey and D. S. Johnson, "Computers
-//! and Intractability", W. H. Freeman, 1979, problem [AN2], credited there to L. J. Stockmeyer
+//! and Intractability", W. H. Freeman, 1979, problem \[AN2\], credited there to L. J. Stockmeyer
 //! and A. R. Meyer, "Word problems requiring exponential time", STOC 1973,
 //! doi:10.1145/800125.804029). Cited from memory, 2026-11-23: the book and the paper were not
 //! read here; the allpapers searches "incongruences", "congruences", "existential Presburger
