@@ -1380,9 +1380,16 @@ impl Type {
         if let Some(members) = self.group_members() {
             self.decide_groups_read(Decide::Verdicts);
             group_verdicts(&members);
-            if let Some(v) = kept() {
-                return v;
-            }
+            // Kept (TEST-kernel-unreached-paths-16, b22-kernel13; the fall-through was never
+            // reached by the suite). `self` is a member `At::Member(j)`, since `group_members`
+            // answers only for one, and such a node is made only by `Env::member` for an index
+            // that is not plain (a plain member's cell is set when the instance is made, before
+            // any read; `Env::ground` has no members), so `j` is among the indices
+            // `group_members` lists, and `members` holds a type equal to `self`.
+            // `group_verdicts` inserts a verdict for each of `members` (its loop over `order`),
+            // and after that only overwrites entries; `VERDICTS` is cleared only by
+            // `forget_emptiness`, which no search calls. So the verdict is kept here.
+            return kept().expect("group_verdicts keeps a verdict for every member");
         }
         // A type outside a group gets a search of its own, which reads each member of a group by
         // the group's verdict and value, decided when first read and kept
@@ -1459,10 +1466,19 @@ impl Type {
                     {
                         continue;
                     }
-                    let g = m.group_members().unwrap_or_default();
-                    if g.is_empty() {
-                        continue;
-                    }
+                    // `m.group()` is `Some` (`fresh`), so `m` is a member `At::Member(j)`; such a
+                    // node is made only by `Env::member` for an index that is not plain (a plain
+                    // member's cell is set when the instance is made), and `group_members` lists
+                    // every index that is not plain, so it lists `j` and is not empty
+                    // (TEST-kernel-unreached-paths-16, b22-kernel13: the `continue` this replaces
+                    // was never reached by the suite).
+                    let g = m
+                        .group_members()
+                        .expect("a member of a group has its members");
+                    assert!(
+                        !g.is_empty(),
+                        "the members of a group include the member read"
+                    );
                     let reads = read(&g);
                     stack.push(Step::Leave(g));
                     stack.extend(reads.into_iter().rev().map(Step::Enter));
@@ -2912,10 +2928,12 @@ fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> BigUint {
             while i < a.len() || j < b.len() {
                 match (a.get(i), b.get(j)) {
                     (Some(&x), Some(&y)) if x.0 == y.0 => {
+                        // The two residues agree modulo the coarser period: `meet` is called only
+                        // on a pair `meeting_pair` found to meet as whole classes, and their fine
+                        // parts then meet by the argument above (TEST-kernel-unreached-paths-16,
+                        // b22-kernel13: the `return None` this replaces was never reached).
                         let m = x.1.min(y.1);
-                        if x.2 % m != y.2 % m {
-                            return None;
-                        }
+                        assert_eq!(x.2 % m, y.2 % m, "the classes of a meeting pair meet");
                         out.push(if x.1 >= y.1 { x } else { y });
                         (i, j) = (i + 1, j + 1);
                     }
@@ -2934,10 +2952,10 @@ fn greedy_length(all: &[(u64, u64)], none: &[(u64, u64)]) -> BigUint {
                     (None, None) => unreachable!("the loop stops when both are done"),
                 }
             }
-            Some(out)
+            out
         };
         if let Some((i, j)) = meeting_pair(&kept) {
-            let m = meet(&terms[i].1, &terms[j].1).expect("the whole classes meet");
+            let m = meet(&terms[i].1, &terms[j].1);
             terms.push((false, m));
         }
     }

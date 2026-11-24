@@ -1625,3 +1625,22 @@ Counts: of the 115 lines, 18 are closed: 6 by tests, 2 by dead code removed, and
 with proofs. The other 97 (`empty.rs` 87, `empty/sweep.rs` 6, `print.rs` 4) are carried to
 TEST-kernel-unreached-paths-16, with what is known of each, in
 /home/luke/Work/wt/coverage/TEST-kernel-unreached-paths-15-kernel26.txt.
+
+Twenty-third round (b22-kernel13, 2026-11-24), row TEST-kernel-unreached-paths-16. Base
+origin/main 35de293df. The 97 lines were carried to 35de293df by the hunks of `git diff -U0`
+from b504d2ae1 and measured again by a coverage run of zed_kernel and the l01_22 to l01_26a step
+tests: 90 still have count 0, 7 are not listed with count 0 (six `}` or statements, and one
+rewritten since), as listed in
+/home/luke/Work/wt/coverage/TEST-kernel-unreached-paths-16-b22-kernel13.txt. That run covers
+fewer step tests than the twenty-second round's, so it confirms lines still unreached; it does
+not list lines newly unreached. Line numbers below are at 35de293df.
+
+| Line | Closed by | Site | Control |
+|---|---|---|---|
+| `empty.rs` 1385, the `}` of a member whose verdict `group_verdicts` did not keep, in `verdict` | proof | `self` is a member `At::Member(j)`; such a node is made only by `Env::member` for an index that is not plain, so `members` holds a type equal to `self`; `group_verdicts` inserts a verdict for every member and only overwrites after; only `forget_emptiness` clears `VERDICTS`; now `expect` | none |
+| `empty.rs` 1464, `continue` of a member with no members in `decide_groups_read` | proof | `m.group()` is `Some`, so `m` is `At::Member(j)` with `j` not plain, and `group_members` lists `j`; now `expect` and `assert!` | none |
+| `empty.rs` 2917, `return None` of fine parts that do not meet in `greedy_length` | proof | the only call is on a pair `meeting_pair` found to meet, and the call already asserted the result with `expect`; now `assert_eq!` on the residues | none |
+
+Not closed: the other 94. `value_height`'s `Value::Tuple(_) | Value::Path(_) => None` (4610)
+needs every construction of `Rep::Value` traced; the other high-confidence lines (7145, 7205,
+7785, 8269) were not worked on in this round.
