@@ -21091,22 +21091,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   5. So from a body, this arm is reached by the form named NOT PROVED in step 3, by
     ///      the lambda of step 4 and, if any, by another form of step 4; each is refused,
     ///      never left to the run.
-    ///   Evidence for step 4, which is a search and not a proof: a build in which this arm
-    ///   always panics, as the feature `push-vars-sweep` makes it, ran the test pieces of
-    ///   every step group and of zedc_check (`tools/run_tests.sh`, 3237 pieces; 2026-11-24,
-    ///   on 65df19b3c with the fit-step change above) and the probes of the
-    ///   rows PROOF-push-vars-other-route and PROOF-push-vars-a2-complete: locals bound to
-    ///   lambdas and to functions defined after, calls of functions defined later,
-    ///   functions passed to and returned by calls (`two(later)(x)`), `map` with a named
-    ///   function, inner functions with their own port parameter, pushes in lambdas of a
-    ///   class around, and lambdas whose parameters are written `T`, `[T]` or `T` twice.
-    ///   The one piece that reached this arm was the lambda of step 4. Not covered: 17
-    ///   pieces that ran past their time limit on the 2-core machine (l01_17, l01_23,
-    ///   l01_36b, l01_39 `s4_model` and `families`, m0_12 `seeds`). Recursion, a declared
-    ///   type on a local and a struct's type parameters are refused before the check in
-    ///   this version. Negative control: with `Frame::CondIs` read with `fresh: false`,
-    ///   the same build panics in this arm on `if x is T { out <- x; }` and on
-    ///   `out <- if x is T { x } else { "b" }`, and not where the signature binds `T`.
+    ///
+    /// Evidence for step 4, which is a search and not a proof: a build in which this arm
+    /// always panics, as the feature `push-vars-sweep` makes it, ran the test pieces of every
+    /// step group and of zedc_check (`tools/run_tests.sh`, 3237 pieces; 2026-11-24, on
+    /// 65df19b3c with the fit-step change above) and the probes of the rows
+    /// PROOF-push-vars-other-route and PROOF-push-vars-a2-complete: locals bound to lambdas
+    /// and to functions defined after, calls of functions defined later, functions passed to
+    /// and returned by calls (`two(later)(x)`), `map` with a named function, inner functions
+    /// with their own port parameter, pushes in lambdas of a class around, and lambdas whose
+    /// parameters are written `T`, `[T]` or `T` twice. The one piece that reached this arm was
+    /// the lambda of step 4. Not covered: 17 pieces that ran past their time limit on the
+    /// 2-core machine (l01_17, l01_23, l01_36b, l01_39 `s4_model` and `families`, m0_12
+    /// `seeds`). Recursion, a declared type on a local and a struct's type parameters are
+    /// refused before the check in this version. Negative control: with `Frame::CondIs` read
+    /// with `fresh: false`, the same build panics in this arm on `if x is T { out <- x; }` and
+    /// on `out <- if x is T { x } else { "b" }`, and not where the signature binds `T`.
     ///
     /// So the verdict relies on no claim about such a variable (standing rule: refuse what
     /// is not proved): it is read as no value; the push is
