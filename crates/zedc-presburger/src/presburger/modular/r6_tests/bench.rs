@@ -216,3 +216,66 @@ fn pncx_wide_affine_alias_adversarial_scale() {
         assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
     });
 }
+
+/// The limit of [`pncx_fibonacci_scale`], the one test held to its own limit above
+/// [`scaling::LIMIT`] (author, QUESTIONS.md A165, answered 2026-11-24, spec 7b55771: "Do B,
+/// because we need this algorithm and it is of the best order known"). It is the n log² n
+/// ratio at n = 4096 with the margin of the former rule SCALE-ratio (8^k × ln(8n)/ln(n) × 1.1):
+/// `8 (ln 32768 / ln 4096)² = 8 × 1.25² = 12.5`, times 1.1 = 13.75 (checked by awk,
+/// 2026-11-24). An n log² n ratio, `8 (ln 8n / ln n)²`, is under 10.5 only from
+/// n = 1,587,343 on (`ln 8 / ln n < 0.1456`). See COMPLEXITY.md row C31b.
+const FIBONACCI_LIMIT: f64 = 13.75;
+
+/// The consecutive Fibonacci numbers `F(n + 1)` and `F(n + 2)`: coprime, and the worst case of
+/// Euclid's algorithm for their width, since every quotient is 1 (Lamé, 1844; Knuth, TAOCP
+/// vol. 2, 3rd ed., section 4.5.3, Theorem F).
+fn fibonacci_pair(n: usize) -> (Int, Int) {
+    let (mut a, mut b) = (Int::ONE, Int::ONE);
+    for _ in 0..n {
+        (a, b) = (b.clone(), &a + &b);
+    }
+    (a, b)
+}
+
+/// The extended gcd (`Int::extended_gcd`, zed-kernel `num/fast.rs` `bezout`, the binary
+/// half-GCD) on Fibonacci pairs at 4096 and 32,768 steps (2,843 and 22,747 bits, 45 and 356
+/// words). Held to [`FIBONACCI_LIMIT`], 13.75, not to 10.5 (PERF-negated-chain-unsolved U2,
+/// A165 B). Why: the half-GCD costs O(M(n) log n), M(n) the cost of one product of n-bit
+/// numbers, and no gcd of a lower order is known (Möller, "On Schönhage's algorithm and
+/// subquadratic integer gcd computation", Math. Comp. 77 (2008) 589-607,
+/// doi:10.1090/S0025-5718-07-02017-0, the method of GMP; the literature search of agent
+/// u12fable, 2026-11-19, found none lower; citation from QUESTIONS.md A165, not re-read here).
+/// With products of O(n log n) that is n log² n, whose ratio at 8n is `8 (ln 8n / ln n)²`:
+/// 12.5 at n = 4096 and 12.7 at n = 2,843 bits. At these widths the products are Karatsuba
+/// (zed-kernel `karatsuba_mul`, which allocates only the product), so the measured ratios are
+/// near that prediction: 13.62 in instructions and 11.61 in bytes (b22-presburger10, 2026-11-24,
+/// v5e VM). With num-bigint's own products, which allocate at each level, the bytes grew 15.28
+/// times (PERF-bezout-bytes). The test catches a step to a worse order, not the constant: Euclid's quadratic
+/// extended gcd (`Int::euclid_bezout`) on the same pairs measured 11.7x in instructions, under
+/// the limit, since its word steps are cheap at these widths, but 42.4x in bytes, a new
+/// quotient and remainder at each of its n steps (b22-presburger9, 2026-11-24), so the bytes
+/// are what catch it (the negative control of COMPLEXITY.md C31b).
+#[test]
+fn pncx_fibonacci_scale() {
+    let (n, large) = (4096, 8 * 4096);
+    let inputs = scaling::inputs(n, fibonacci_pair);
+    let run = |k: usize| {
+        let (a, b) = &inputs[&k];
+        let (g, s, t) = a.extended_gcd(b).expect("coprime");
+        assert_eq!(g, Int::ONE);
+        assert_eq!(&(&s * a) + &(&t * b), Int::ONE);
+    };
+    scaling::compare_by(
+        &mut scaling::Meter::new(),
+        scaling::Measures::Both,
+        Some(n),
+        &format!("half-GCD coefficients on Fibonacci inputs: sizes {n} and {large}"),
+        scaling::Bound::Given(
+            FIBONACCI_LIMIT,
+            "the half-GCD is O(M(n) log n), the best order known; its limit is the n log² n \
+             prediction at these sizes (QUESTIONS.md A165 B, COMPLEXITY.md C31b)",
+        ),
+        || run(n),
+        || run(large),
+    );
+}

@@ -1356,6 +1356,11 @@ pub fn mul(a: &BigUint, b: &BigUint) -> BigUint {
         },
     );
     match method {
+        MulBy::NumBigint
+            if (NUM_BIGINT_ROWS + 1..=KARATSUBA_TOP).contains(&words(a).min(words(b))) =>
+        {
+            karatsuba_mul(a, b)
+        }
         MulBy::NumBigint => a * b,
         MulBy::Rows => sparse_mul(a, b),
         MulBy::Pieces(piece) => pieces_mul(a, b, piece),
@@ -1412,6 +1417,247 @@ fn mul_method(a: &BigUint, b: &BigUint) -> MulBy {
         return MulBy::Rows;
     }
     MulBy::Pieces(piece)
+}
+
+/// The width of the narrower factor up to which num-bigint 0.4.8 takes a product by schoolbook
+/// rows (`biguint/multiplication.rs`, `mac3`: rows while the shorter factor has at most 32
+/// digits, Karatsuba above), allocating only the result; [`mul`] gives it the products up to
+/// this width and [`karatsuba_mul`] the wider ones up to [`KARATSUBA_TOP`].
+const NUM_BIGINT_ROWS: usize = 32;
+
+/// The width of the narrower factor up to which [`karatsuba_words`] takes rows. A measured
+/// switchover (b22-presburger10, 2026-11-24, v5e VM, instructions of `pncx_fibonacci_scale` at
+/// 4,096 and 32,768 steps): 32 words gave 13.82 times, 48 gave 13.62 times and 64 gave 13.62
+/// times; 48 is the narrowest of the least.
+const KARATSUBA_LEAF: usize = 48;
+
+/// The widest factor or product buffer [`karatsuba_mul`] keeps for the thread between products,
+/// in words: twice the widest balanced product, `2 KARATSUBA_TOP + 2 KARATSUBA_TOP` words. A
+/// wider one, left by an unbalanced product, is given back. The scratch is kept whatever its
+/// width, since it depends only on the narrower factor, at most `KARATSUBA_TOP` words
+/// ([`karatsuba_scratch`]).
+const KEPT_WORDS: usize = 4 * KARATSUBA_TOP;
+
+/// The widest narrower factor [`mul`] gives to [`karatsuba_mul`], the widest for which `mul`
+/// takes num-bigint's product by width (`MUL_LEAF` of the build without tests). A measured
+/// switchover (b22-presburger10, 2026-11-24, v5e VM, `pncx_fibonacci_scale` from 4,096 to
+/// 32,768 steps, whose widest products are about 356 words): with 256, num-bigint's own top of
+/// Karatsuba, the products above it were num-bigint's Toom-3, which allocates at each level, and
+/// the bytes grew 14.37 times against the limit 13.75; with 400 they grew 11.61 times and the
+/// instructions 13.62 times. 288, 320 and 352 measured the same as 256: no product of that
+/// computation has a narrower factor between 257 and 352 words.
+const KARATSUBA_TOP: usize = 400;
+
+/// The scratch [`karatsuba_words`] needs for a narrower factor of `n` words: `12 n + 8 L` with
+/// `L` the bit length of `n`.
+///
+/// Proof. A level of the split takes `6 h + 1` words (`|a0 - a1|` and `|b0 - b1|` of `h`
+/// words, the middle sum of `2 h + 1`, their product of `2 h`) and passes the rest to that
+/// product, of `h` by `h` words; the low and high products come before and take the whole
+/// scratch. Rows (`n <= KARATSUBA_LEAF`, 48) take none. Write `c(n)` for the levels from `n` to
+/// a width of at most 48 by `n -> ceil(n / 2)`, at most `L - 5` for `n >= 33`, since
+/// `ceil(n / 2^k) <= 2^(L - k)` reaches 32 by `k = L - 5`.
+/// An `n` by `n` product, `h = ceil(n / 2) <= (n + 1) / 2`, takes
+/// `E(n) = 6 h + 1 + E(h) <= 3 n + 4 + E(h)`, so `E(n) <= 6 n + 7 c(n)` by induction (the
+/// widths halve, `sum 3 n / 2^k < 6 n`, and 4 a level for the rounding). An `n` by `m` product
+/// with `h = ceil(m / 2) < n` takes at most `6 h + 1 + E(h) <= 6 n + 6 n + 7 c(n)`, and less for
+/// low and high, whose factors are narrower than `n`. An `n` by `m` product with
+/// `n <= ceil(m / 2)` takes `2 n` for a piece's product and passes the rest to the piece, an
+/// `n` by `n` product (`E(n)`) or a `p` by `n` one with `p < n`, which by the cases above
+/// takes at most `6 ceil(n / 2) + 1 + E(ceil(n / 2)) <= 6 n + 7 + 7 c(n)`; in all at most
+/// `8 n + 7 + 7 c(n)`. So every case is within `12 n + 7 c(n) <= 12 n + 8 L`. Checked by a model
+/// of the recursion (b22-presburger10, 2026-11-24, leaves of 32 and 48 words, every narrower
+/// width to 1024 and wider one to 6 times it: the largest need is 0.979 of the bound), and by the slicing in
+/// [`karatsuba_words`], which panics on a shorter scratch, in test
+/// `karatsuba_products_agree_with_num_bigint`.
+fn karatsuba_scratch(n: usize) -> usize {
+    12 * n + 8 * (usize::BITS - n.leading_zeros()) as usize
+}
+
+/// The buffers of [`karatsuba_mul`], kept for the thread: the two factors' words, the product's
+/// words, its 32-bit halves, and the scratch of the recursion.
+#[derive(Default)]
+struct KaratsubaBuffers {
+    a: Vec<u64>,
+    b: Vec<u64>,
+    out: Vec<u64>,
+    halves: Vec<u32>,
+    scratch: Vec<u64>,
+}
+
+thread_local! {
+    static KARATSUBA_BUFFERS: std::cell::RefCell<KaratsubaBuffers> =
+        std::cell::RefCell::new(KaratsubaBuffers::default());
+}
+
+/// `a * b` for a narrower factor of `NUM_BIGINT_ROWS + 1` to `KARATSUBA_TOP` words, by Karatsuba's
+/// method (Karatsuba and Ofman, "Multiplication of multidigit numbers on automata", Soviet
+/// Physics Doklady 7 (1963) 595-596; Knuth, TAOCP vol. 2, 3rd ed., section 4.3.3.A, equation
+/// (2)) over 64-bit words in buffers kept for the thread, with no allocation but the result's.
+///
+/// Complexity tradeoff (PERF-bezout-bytes): num-bigint's product allocates its sums and the
+/// middle product at each level of its recursion (`mac3`, `biguint/multiplication.rs`), about
+/// `s^log2(3)` words for factors of `s` words, against `2 s` for the result alone. Below 33
+/// words it takes rows, allocating only the result, so the bytes of a computation whose
+/// products cross 33 words grow faster than its instructions: the extended gcd of Fibonacci
+/// pairs allocated 15.28 times the bytes at 32,768 steps (356 words) that it did at 4,096 (45
+/// words), against 13.01 times the instructions. Here the sums, the middle product and the
+/// factors' words live in buffers made once for the thread, so a product allocates its result
+/// only: O(s^log2(3)) word products, as num-bigint's Karatsuba, and O(s) bytes. The buffers
+/// stay live after the product: three of at most [`KEPT_WORDS`] words, the halves of at most
+/// twice that, and the scratch of at most `karatsuba_scratch(KARATSUBA_TOP)` words, about 90 KB
+/// in all whatever the factors, since a wider factor or product buffer is given back;
+/// [`from_words`] keeps none, because its numbers have no bound. Above 256 words num-bigint
+/// takes Toom-3 (O(s^1.465)); this takes Karatsuba up to `KARATSUBA_TOP` words, where the two
+/// differ by a constant factor at most `400^0.12 = 2.05`. What that costs: timed alone on a v5e
+/// VM (b22-presburger10, 2026-11-24, random dense factors, least of five runs), a product here
+/// took 1.23 to 1.6 times num-bigint's, from 24 to 356 words; in the extended gcd of
+/// `pncx_fibonacci_scale`, where num-bigint's allocations count, the instructions grew 13.62
+/// times against 13.01 and the run at 32,768 steps took less time (96 to 103 ms against 118 to
+/// 122 ms). COMPLEXITY.md C31b. Test
+/// `karatsuba_products_agree_with_num_bigint`.
+fn karatsuba_mul(a: &BigUint, b: &BigUint) -> BigUint {
+    KARATSUBA_BUFFERS.with_borrow_mut(|k| {
+        k.a.clear();
+        k.a.extend(a.iter_u64_digits());
+        k.b.clear();
+        k.b.extend(b.iter_u64_digits());
+        let (x, y) = match k.a.len() <= k.b.len() {
+            true => (&k.a, &k.b),
+            false => (&k.b, &k.a),
+        };
+        k.out.clear();
+        k.out.resize(x.len() + y.len(), 0);
+        k.scratch.resize(karatsuba_scratch(x.len()), 0);
+        karatsuba_words(&mut k.out, x, y, &mut k.scratch);
+        k.halves.resize(2 * k.out.len(), 0);
+        for (pair, &d) in k.halves.chunks_exact_mut(2).zip(&k.out) {
+            pair[0] = d as u32;
+            pair[1] = (d >> 32) as u32;
+        }
+        let product = BigUint::from_slice(&k.halves);
+        for v in [&mut k.a, &mut k.b, &mut k.out] {
+            if v.capacity() > KEPT_WORDS {
+                *v = Vec::new();
+            }
+        }
+        if k.halves.capacity() > 2 * KEPT_WORDS {
+            k.halves = Vec::new();
+        }
+        product
+    })
+}
+
+/// `out = a * b` for `a.len() <= b.len()` and `out.len() == a.len() + b.len()`, with `scratch`
+/// of at least `karatsuba_scratch(a.len())` words.
+///
+/// Rows where `a` has at most [`KARATSUBA_LEAF`] words. Where `b` has at least twice `a`'s words,
+/// `b` is cut into pieces of `a`'s width, each product taken into the scratch and added in
+/// (num-bigint's own handling of unequal factors). Else, with `h = ceil(b.len() / 2)` and
+/// `a.len() > h`, `a = a0 + B^h a1` and `b = b0 + B^h b1` (`B = 2^64`), and
+/// `a b = a0 b0 + B^h (a0 b0 + a1 b1 + (a0 - a1)(b1 - b0)) + B^2h a1 b1`, three products of
+/// about half the width. The scratch it needs is proved in [`karatsuba_scratch`].
+fn karatsuba_words(out: &mut [u64], a: &[u64], b: &[u64], scratch: &mut [u64]) {
+    debug_assert!(a.len() <= b.len() && out.len() == a.len() + b.len());
+    let (la, lb) = (a.len(), b.len());
+    if la <= KARATSUBA_LEAF {
+        out.fill(0);
+        for (i, &x) in a.iter().enumerate().filter(|&(_, &x)| x != 0) {
+            let mut carry = 0u64;
+            for (slot, &y) in out[i..i + lb].iter_mut().zip(b) {
+                // x y + slot + carry <= (B - 1)^2 + 2 (B - 1) = B^2 - 1 (`B = 2^64`), so the
+                // sum never wraps and the wrapping adds only leave out the overflow checks.
+                let t = (u128::from(x) * u128::from(y))
+                    .wrapping_add(u128::from(*slot))
+                    .wrapping_add(u128::from(carry));
+                *slot = t as u64;
+                carry = (t >> 64) as u64;
+            }
+            // Word `i + lb` is still 0: the rows before reached only `i - 1 + lb`.
+            out[i + lb] = carry;
+        }
+        return;
+    }
+    let h = lb.div_ceil(2);
+    if la <= h {
+        out.fill(0);
+        let (piece, rest) = scratch.split_at_mut(2 * la);
+        for (j, part) in b.chunks(la).enumerate() {
+            let p = &mut piece[..la + part.len()];
+            match part.len() < la {
+                true => karatsuba_words(p, part, a, rest),
+                false => karatsuba_words(p, a, part, rest),
+            }
+            // The sum is `a` times the pieces so far, below `B^(j la + la + part.len())`.
+            let carry = add_slice(&mut out[j * la..], p);
+            debug_assert!(!carry);
+        }
+        return;
+    }
+    let (a0, a1) = a.split_at(h);
+    let (b0, b1) = b.split_at(h);
+    let (low, high) = out.split_at_mut(2 * h);
+    karatsuba_words(low, a0, b0, scratch);
+    // `a1` has `la - h <= lb - h` words, `b1` `lb - h`.
+    karatsuba_words(high, a1, b1, scratch);
+    // The middle term a0 b1 + a1 b0 is a0 b0 + a1 b1 + (a0 - a1)(b1 - b0), whose product has
+    // factors of `h` words (Knuth's form of the method, TAOCP vol. 2, 4.3.3.A, equation (2)),
+    // where `(a0 + a1)(b0 + b1)` would have `h + 1` and need one more level at a leaf's width.
+    let (da, rest) = scratch.split_at_mut(h);
+    let (db, rest) = rest.split_at_mut(h);
+    let (mid, rest) = rest.split_at_mut(2 * h + 1);
+    let (prod, rest) = rest.split_at_mut(2 * h);
+    let a_below = abs_diff(da, a0, a1);
+    let b_below = abs_diff(db, b0, b1);
+    karatsuba_words(prod, da, db, rest);
+    mid[..2 * h].copy_from_slice(&out[..2 * h]);
+    mid[2 * h] = 0;
+    // a0 b0 + a1 b1 < 2 B^(2h), so it fits in `2 h + 1` words.
+    let carry = add_slice(mid, &out[2 * h..]);
+    debug_assert!(!carry);
+    // (a0 - a1)(b1 - b0) is negative where exactly one of `a0 < a1` and `b0 >= b1` holds, or
+    // zero; the sum is a0 b1 + a1 b0, in `[0, 2 B^(2h))`, so neither step passes the top.
+    let over = match a_below == b_below {
+        true => sub_words(mid, prod),
+        false => add_slice(mid, prod),
+    };
+    debug_assert!(!over);
+    // The middle term is below `B^(la + lb - h)`, so with `out` it stays below `B^(la + lb)`;
+    // `mid`'s words above that are 0.
+    let top = (out.len() - h).min(mid.len());
+    debug_assert!(mid[top..].iter().all(|&w| w == 0));
+    let carry = add_slice(&mut out[h..], &mid[..top]);
+    debug_assert!(!carry);
+}
+
+/// `out = |x - y|` for `out.len() == x.len() >= y.len()`; whether `x < y`.
+fn abs_diff(out: &mut [u64], x: &[u64], y: &[u64]) -> bool {
+    let (x_low, x_high) = x.split_at(y.len());
+    let below = x_high.iter().all(|&w| w == 0) && x_low.iter().rev().lt(y.iter().rev());
+    match below {
+        true => {
+            out.fill(0);
+            out[..y.len()].copy_from_slice(y);
+            sub_words(out, x_low);
+        }
+        false => {
+            out.copy_from_slice(x);
+            sub_words(out, y);
+        }
+    }
+    below
+}
+
+/// `a += b` for `a.len() >= b.len()`, modulo `2^(64 a.len())`; whether it carried past the top.
+fn add_slice(a: &mut [u64], b: &[u64]) -> bool {
+    let mut carry = false;
+    for (x, y) in a.iter_mut().zip(b) {
+        let (s, c1) = x.overflowing_add(*y);
+        let (s, c2) = s.overflowing_add(u64::from(carry));
+        *x = s;
+        carry = c1 || c2;
+    }
+    carry && carry_at(a, b.len())
 }
 
 /// A factor `x` that multiplies many numbers of at most `other` words, with its spectra on
@@ -5379,6 +5625,36 @@ mod tests {
         let pos = BigInt::from(random(3, 90));
         assert_eq!(mul_int(&neg, &pos), &neg * &pos);
         assert_eq!(mul_int(&neg, &neg), &neg * &neg);
+    }
+
+    /// Karatsuba over the thread's buffers gives num-bigint's product at every shape it takes:
+    /// the narrowest it is given (33 words), both sides of its leaf (48) and of twice it, odd and
+    /// even widths, the near-balanced split (`a` just above half of `b`), the cut into pieces
+    /// (`b` from twice `a` to many times it, with a short last piece), up to `KARATSUBA_TOP`
+    /// (400), on the `forms` of the other product tests (all ones, so every carry is taken; a
+    /// power of two; random, so both signs of each difference of halves). Calls
+    /// in a row reuse the buffers, and a wide unbalanced one before narrow ones checks that a
+    /// given-back buffer is made again.
+    #[test]
+    fn karatsuba_products_agree_with_num_bigint() {
+        let narrow = [
+            33, 34, 47, 48, 49, 63, 64, 65, 95, 96, 97, 100, 129, 255, 256, 257, 399, 400,
+        ];
+        for &la in &narrow {
+            let mut wide = vec![la, la + 1, 2 * la - 3, 2 * la - 1, 2 * la, 2 * la + 1];
+            wide.extend([3 * la + 7, 5 * la - 1, 4000]);
+            for lb in wide {
+                for (x, y) in forms(la, la as u64)
+                    .iter()
+                    .zip(forms(lb, 11 + lb as u64).iter())
+                {
+                    assert_eq!(karatsuba_mul(x, y), x * y, "{la} by {lb} words");
+                    assert_eq!(karatsuba_mul(y, x), x * y, "{lb} by {la} words");
+                }
+            }
+            let x = random(5, la);
+            assert_eq!(karatsuba_mul(&x, &x), &x * &x, "square of {la} words");
+        }
     }
 
     /// Numbers of `words` words whose words are each 0, 1, `2^63`, `2^64 - 2` or `2^64 - 1`,
