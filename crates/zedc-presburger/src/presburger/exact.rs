@@ -1240,6 +1240,57 @@ struct PartCache {
 }
 
 /// [`cover`] by cells and questions, once [`direct`] has not answered.
+// Proof that the loop ends with no work limit, on two classes of input (row
+// LIMITS-exact-join-remove; b22-presburger11, 2026-11-24, checked by reading this function and
+// [`cell`], [`implicant`] and [`joined`] at 842f393fe). Each turn of the loop does one of: (a)
+// reads a point `m` whose value of `s` is in `gap` and takes its cell `c` out of `gap`, `c`
+// holding that value ([`cell`] joins `own`); (b) asks a tail's residue question, which pushes a
+// point in a residue no value found holds, or takes the tail's piece out of `gap`; (c) asks a
+// stride's question for one residue class, which pushes a point in a class no value found
+// holds, or adds the class to `absent` (at most `step` of them a stride); (d) asks the first
+// piece of `gap`, which pushes a point in that piece or takes the piece out of `gap`. A point
+// pushed by (d) has its value of `s` in `gap`, by the question. A point pushed by (b) or (c)
+// has its value outside `found` (its residue is held by no value found) and outside the pieces
+// taken out with no point, but it may lie in a piece kept by (b) (`kept_at`), which is out of
+// `gap` and not in `found`. For (b) that is harmless: the tail was popped and is not asked
+// again. For (c) it is a gap in the proof (step G below): the stride is pushed back, `have` is
+// the same, and the same question is asked again with the same answer, so the loop would turn
+// until the work limit. Not known to be reachable (it needs a stride whose span meets a piece
+// kept from a tail with no end); recorded in row LIMITS-exact-join-remove. The fix, if it is
+// reachable, is to read `have` from `found` joined with the values of the kept pieces that have
+// points (those in the tail's residues): a point in a class outside that `have` is then outside
+// every kept piece, so in `gap`, and `outside` stays sound, since it drops only pieces all of
+// whose values are in classes found with no point. The two classes below assume no such
+// point (G).
+// Class 1, `h` finite (every input whose solver's set is bounded, so every formula whose atoms
+// are bounded, as the step tests' boxes are). Every (a) takes at least one value out of `gap`
+// and `gap` only shrinks; `gap` starts as `h`, finitely many values, so there are finitely many
+// (a); there is one (a) for each point pushed, so finitely many points, and so finitely many
+// cells, strides and tails (each made by a cell), finitely many (b) and (c), and each (d)
+// either pushes a point or takes one of the finitely many pieces of `gap` out of it (a piece
+// count raised only by the finitely many cells).
+// Class 2, every cell exact: `cell` returns the projection onto `s` of the rows of the
+// implicant of `f` at `m` (the branch `plain` under `Method::Pugh`, the exact elimination
+// `work.eliminate` or `eliminated_whole` returning rows, or the line along `s` holding all of
+// `within`), with `h` bounded or not. The implicant's rows are a function of `m` drawn from the
+// finite set of choices of the formula's constraints, each kept as it is, negated, or one side
+// of an equation ([`implicant`]). A point `m'` read later has its value of `s` in `gap`, so
+// outside `c(m)`, so outside the projection of `rows(m)`: `m'` does not satisfy `rows(m)`, while
+// it satisfies `rows(m')`, so `rows(m') != rows(m)`. So no two points read give the same rows,
+// there are finitely many (a), and the count above ends the same way. Under `Method::Liaproj`
+// the cell is one disjunct of the model-based projection of the rows; it ends because that
+// projection has a finite image for linear integer arithmetic (Komuravelli, Gurfinkel, Chaki,
+// "SMT-based model checking for recursive programs", CAV 2014, doi:10.1007/978-3-319-08867-9_2,
+// arXiv:1405.4028; Bjørner and Janota, LPAR 2015), not checked further here.
+// Outside both classes, `h` unbounded and a cell not exact (`s` a product or a factor of one,
+// whose cell is its own value; a product in the implicant's rows; an elimination that stops at
+// a stride atom, whose cell is `runs` or `fixed`), the proof fails: `x == y * z` with `x`
+// unbounded has a new point at every value of `x` and a cell of one value each. There the loop
+// ends only by the work limit (`EXACT_LIMIT`), the one input class that still needs it; the
+// rest of the row (removing the limit, a refusal named by this class, and the fast paths'
+// allowances in `tried`, which are themselves counts) is open, with its cross-review question,
+// in the row. Tests: the finite class by every cover of the step tests (all over boxes);
+// `tests::the_work_limit_is_met_alike_on_both_sides` for the limit's one stopping charge.
 #[expect(
     clippy::too_many_arguments,
     reason = "the cache is kept by the part, apart from the points of `f` it holds"
