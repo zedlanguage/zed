@@ -756,16 +756,19 @@ fn a_chain_extending_one_hole_set(n: usize, spread: bool) -> Vec<zedc::store::pr
 #[test]
 fn a_call_node_is_extended_in_time_of_its_links() {
     // LOAD-call-disj-spread, META1 F2 of XR-load-call-node: the call node measured on
-    // `Extending` alone, at 1000 -> 8000, the size that decides the 10.5 limit (the chain of
-    // calls above stays at 50 -> 400 for its comparison with its control). One hole set is
+    // `Extending` alone, at 40 -> 320. At 1000 -> 8000 (the size where the n log n model ratio
+    // is 10.41) design A ran past 600 s (std4, 2026-11-24), and no piece may run past 60 s; at
+    // 40 the model ratio `8 ln(8n) / ln(n)` is 12.5, so design B passes here only when the
+    // fixed cost of a link outweighs its O(log n) query (its control reads 7.85 at 1000). One
+    // hole set is
     // built once and read by every link; each link moves the point past one more hole. Today
     // each link reads the n clauses of the holes, Θ(n²) for the chain: red on the branch,
     // not for main while red. With the call node (design
     // /home/luke/Work/wt/design-b22-load5.md section 2) a link costs one successor query,
     // O(log n), with zero clause expansions; the counter of E6 is to be asserted here when it
     // exists. Its control is the test below.
-    let chains = zed_tests::scaling::inputs(1000, |n| a_chain_extending_one_hole_set(n, true));
-    zed_tests::scaling::check("the answers of a chain extending one hole set", 1000, |n| {
+    let chains = zed_tests::scaling::inputs(40, |n| a_chain_extending_one_hole_set(n, true));
+    zed_tests::scaling::check("the answers of a chain extending one hole set", 40, |n| {
         let mut e = zedc::store::presburger::extend::Extending::new();
         for f in &chains[&n] {
             let a = e.answers(f);
