@@ -23,8 +23,8 @@
 //! Colab VM (FAIL-print-ring-bench-ratio, 2026-11-24) a bench whose second half ran on a scoped
 //! thread with no `join` counted 509,579,931 instructions at n under `--exact` and 1,007,965,735
 //! under `--exact --nocapture`, the same binary on the same VM: half the run was lost or kept by
-//! the timing of the thread's end. The count does not change with the load on the machine. Elapsed time and processor
-//! time both do, and by more for the larger run: at load 55 with half the load copying memory,
+//! the timing of the thread's end. The count does not change with the load on the machine.
+//! Elapsed time and processor time both do, and by more for the larger run: at load 55 with half the load copying memory,
 //! a linear walk of 1000 and 8000 terms took 96 times as long by the clock and 44 times by
 //! processor time, because the larger run lost the caches and was preempted, and it retired
 //! 8.0 times the instructions on every try. So the instruction count is the test, and a test
