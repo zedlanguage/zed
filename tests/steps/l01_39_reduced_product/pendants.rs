@@ -1762,6 +1762,52 @@ fn the_pendant_run_whose_gap_of_classes_grew_without_a_charge_ends() {
     );
 }
 
+/// Parts of the soundness seeds that 06fbc3477 answered exactly and b7ab00a78 refused once the
+/// cover's gap of classes was charged (row VERIFY-classed-charge-refusals; probe of
+/// 2026-11-24 over seeds 1 to 240, wide and not, both commits on one VM): `(wide, seed, part,
+/// whole, route)`, `whole` where the whole part's projection gave every set with no refusal,
+/// `route` where the route by pendants answered. b7ab00a78 refused each with
+/// `Refusal::Questions` (`ClassUnion::minus` charged every range the gap kept on each value
+/// found), and three of the route's parts gave `None`.
+#[test]
+fn parts_answered_before_the_classed_charges_are_answered() {
+    let cases: [(bool, u64, usize, bool, bool); 9] = [
+        (true, 115, 25, true, true),
+        (true, 149, 115, true, false),
+        (true, 185, 90, true, false),
+        (true, 229, 79, true, false),
+        (true, 30, 109, true, false),
+        (false, 74, 101, false, true),
+        (true, 141, 129, false, true),
+        (true, 80, 11, false, true),
+        (true, 201, 65, false, true),
+    ];
+    let mut wrong = Vec::new();
+    for (wide, seed, at, whole, route) in cases {
+        let mut r = Rng::new(seed);
+        let mut drawn = None;
+        for _ in 1..=at {
+            drawn = Some(drawn_case(&mut r, false, wide));
+        }
+        let (items, bs) = drawn.expect("a part");
+        let s = scope(&bs);
+        let f = formula(&items);
+        let syms: Vec<Atom> = (f.atoms().into_iter())
+            .filter(|a| matches!(a, Atom::Sym(_)))
+            .collect();
+        let each = each_answer(&s, &f, &syms);
+        if whole && each.contains("refused") {
+            wrong.push(format!("wide {wide} seed {seed} part {at}: whole {each}"));
+        }
+        if route && hung(&s, &f).is_none() {
+            wrong.push(format!(
+                "wide {wide} seed {seed} part {at}: no answer by pendants"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 /// The parts that took the route by pendants, counted by kind: with two disjunctions or
 /// more among their conjuncts (each `Item::Or` and `Item::Ne`), with a pendant whose name's
 /// box has a hole, and with a pendant whose coefficient is not one or minus one. A pendant here
