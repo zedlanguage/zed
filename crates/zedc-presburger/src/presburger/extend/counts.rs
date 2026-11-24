@@ -63,7 +63,7 @@ pub const HOLES_SAME: usize = 20;
 /// with them, the fallback of the hole route.
 pub const HOLES_WRITTEN: usize = 21;
 /// Runs of the smaller side cut into the larger by `Holes::merged`, one a run: the explicit
-/// merges that LOAD-call-disj-noncollapsing removes (design-b22-load11.md).
+/// merges whose count the benches of LOAD-call-disj-noncollapsing bound by 4n.
 pub const HOLES_MERGED_RUNS: usize = 22;
 /// The number of counts.
 pub const N: usize = 23;

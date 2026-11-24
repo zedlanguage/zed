@@ -749,13 +749,16 @@ fn the_questions_of_a_chain_calling_a_callee_with_spread_holes_scale() {
     );
 }
 
-/// A bench of LOAD-call-disj-noncollapsing (design /home/luke/Work/wt/design-b22-load11.md):
-/// first, at 200 links, the runs cut by explicit merges (`counts::HOLES_MERGED_RUNS`) are at
-/// most 4n, where today each link of the three families cuts Θ(n) runs, Θ(n²) in all (META1
-/// E7 of XR-load-call-node); then the questions at 1000 → 8000 links, where the n log n model
-/// ratio is 10.41 (the size of the control, META2 G11). The count comes first so that main
-/// fails in a second: its run at 8000 links would cut 64 million runs and pass 60 s. These
-/// four stay on wt/b22-load11-noncollapsing while red.
+/// A bench of LOAD-call-disj-noncollapsing: first, at 200 links, the runs cut by explicit
+/// merges (`counts::HOLES_MERGED_RUNS`) are at most 4n; then the questions at 1000 → 8000
+/// links. META1 E7 of XR-load-call-node computed that a call node merged into the face's holes
+/// at each link cuts Θ(n) runs a link on these chains, Θ(n² log n) a chain. On main since
+/// LOAD-call-disj-spread batch 2 no link of them reaches `Holes::merged` (0 runs cut at 200
+/// links, colab hm2, 2026-11-24; the shift-1 chain of
+/// `the_questions_of_a_chain_calling_a_callee_with_spread_holes_scale` cuts n), and the
+/// questions grow 8.17 to 8.23 times at 8n. The count comes first, so that a change that sends
+/// these links back to explicit merges fails in about a second, not at 8000 links, where it
+/// would cut about 64 million runs.
 fn noncollapsing_scale(what: &str, source: fn(usize) -> String) {
     let n = 200;
     let src = source(n);
@@ -777,16 +780,6 @@ fn noncollapsing_scale(what: &str, source: fn(usize) -> String) {
         "{what}: {c:?}"
     );
     questions_scale_unit(what, 1000, source);
-}
-
-#[test]
-fn the_questions_of_a_chain_moving_spread_holes_by_one_scale() {
-    // The control of the three below: shift 1 joins each link's holes into one run, so each
-    // link cuts that one run into the callee's n (`a_chain_calling_a_callee_with_spread_holes`).
-    noncollapsing_scale(
-        "the linear questions of a chain moving spread holes by 1",
-        a_chain_calling_a_callee_with_spread_holes,
-    );
 }
 
 #[test]
