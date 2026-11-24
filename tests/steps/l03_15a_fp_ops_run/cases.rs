@@ -1508,6 +1508,34 @@ fn flat_map_on_a_generic_parameter_demands_a_list_of_each_entry() {
     );
 }
 
+/// An entry the function of `flatMap` or `map` cannot take, on a parameter of no written type,
+/// is named as an entry, with what the function requires of it (`String`, from `e.trim`), not
+/// as what the callee gives: before, both programs said "`h` gives 1 | 2 here, which is not
+/// String" (plan row MSG-generic-lambda-result-literal-type, (a)).
+#[test]
+fn an_entry_the_function_of_a_generic_word_refuses_is_named_as_an_entry() {
+    for (i, body) in ["x.flatMap(e -> [e.trim])", "x.map(e -> e.trim)"]
+        .into_iter()
+        .enumerate()
+    {
+        let src = format!(
+            "h(x) = {body};\nmain(m: MainArgs) {{\n  m.stdout <- \"${{h(x: [1, 2])}}\";\n}}\n"
+        );
+        let out = run(&format!("fp_ops/entry_refused_{i}"), &src, "", &[]);
+        assert!(out.status != 0, "{body}: {}", out.stderr);
+        assert!(
+            out.stderr.contains(
+                "`h` gives each entry of its argument to a function that requires a value of \
+                 String, and an entry here is 1 | 2"
+            ) && out.stderr.contains(
+                "repair: change the argument, so that each of its entries is a value of String"
+            ) && !out.stderr.contains("`h` gives 1 | 2 here"),
+            "{body}: {}",
+            out.stderr
+        );
+    }
+}
+
 /// A family whose entries hold a lambda's generic parameter is printed with that parameter's
 /// type by what it ranges over, never `_`, the type of every value (A92): `l` is a line of
 /// `m.stdin`, a String (plan row MSG-generic-entry-shown-as-every-value).

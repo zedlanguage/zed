@@ -17198,17 +17198,35 @@ impl<'t, 'a> Ck<'t, 'a> {
             {
                 let why = got.refused(r);
                 let (got, r) = (self.text(&got), self.text(r));
-                let menu = [format!(
-                    "repair: change the argument, so that {what} gives a value of {r} here"
-                )];
-                self.error_offering(
-                    span,
-                    format!(
-                        "{what} gives {got} here, which is not {r}: the use requires a value \
-                             of {r}{why}"
+                // An `Entries` need gives the entries of the argument to the function of
+                // `map`, `where`, `flatMap` or `group` ([`Self::word_entries`]), and its result
+                // is that function's parameter: `r` is what the function's body requires of an
+                // entry (`String` where it calls `e.trim`), not what is required of the callee's
+                // result, which the generic text below said ("`h` gives 1 | 2 here, which is
+                // not String"; plan row MSG-generic-lambda-result-literal-type, (a)).
+                let (text, menu) = match n.kind {
+                    NeedKind::Entries => (
+                        format!(
+                            "{what} gives each entry of its argument to a function that \
+                                 requires a value of {r}, and an entry here is {got}{why}"
+                        ),
+                        format!(
+                            "repair: change the argument, so that each of its entries is a \
+                                 value of {r}"
+                        ),
                     ),
-                    menu,
-                );
+                    _ => (
+                        format!(
+                            "{what} gives {got} here, which is not {r}: the use requires a \
+                                 value of {r}{why}"
+                        ),
+                        format!(
+                            "repair: change the argument, so that {what} gives a value of {r} \
+                                 here"
+                        ),
+                    ),
+                };
+                self.error_offering(span, text, [menu]);
             }
             for v in &r.vars {
                 binds.or_insert_with(v.clone(), Ty::empty);
