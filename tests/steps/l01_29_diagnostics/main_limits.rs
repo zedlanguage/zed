@@ -340,8 +340,8 @@ fn product_repair(limit: u32, expr: &str) -> String {
 /// bits, one past the room of 49152 bytes and within that of 49153, so the two limits offer
 /// `2^10` and `2^11`, the product's size deciding each by one bit. Negative control: the same
 /// reads at the two limits are offered different repairs, so a least size one bit too small
-/// (`a + b - 2`) would offer `2^11` at 49152 and fail; and `> 2^64 + 13` and `== 0`, which the size from the operands does not cover,
-/// are built on both sides and must agree with the rest.
+/// (`a + b - 2`) would offer `2^11` at 49152 and fail; and `> 2^64 + 13` and `== 0`, which the
+/// size from the operands does not cover, are built on both sides and must agree with the rest.
 #[test]
 fn a_product_sized_from_its_operands_gives_the_repair_building_gives() {
     let p = "(b ^ (2^12)) * (b ^ (2^12))";
