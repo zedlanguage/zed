@@ -65,6 +65,11 @@ obligation-test-modes = []
 # for a push reaching it (PROOF-push-vars-a2-complete). Off in every build; a sweep removes the
 # `#[cfg]` line before the panic in a copy of the checkout, so that every build of that copy has it.
 push-vars-sweep = []
+# A panic at each of the three texts "whose type is generic here" of check/walk/fp_ops.rs
+# (`levels_of`, `strings_classes`, `generic_operand`), for a sweep of the tests that looks for a
+# program reaching one (TEST-generic-operand-messages-reached). Off in every build; a sweep
+# removes the `#[cfg]` line before each panic in a copy of the checkout, as for push-vars-sweep.
+generic-operand-sweep = []
 
 # A dylib's file name does not change with its features, so `cargo test -p zedc-check` builds this
 # crate and zedc-types with the feature the workspace build gives them (the step tests turn on

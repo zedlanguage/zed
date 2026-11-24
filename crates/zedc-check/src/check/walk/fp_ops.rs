@@ -155,7 +155,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Piece::Dyn => self.any(word, span),
                 // The program may write no type parameter, so the operand's type is called
                 // generic, as at `string_operand` (plan row MSG-generic-operand-wording).
-                Piece::Var(_) => {
+                Piece::Var(_v) => {
+                    #[cfg(feature = "generic-operand-sweep")]
+                    panic!("GENERIC-OPERAND-SWEEP: levels_of reached with the variable {_v}");
+                    #[allow(unreachable_code)]
                     let what = match self.operand_text(operand) {
                         Some(c) => format!("{word} on `{c}`, whose type is generic here,"),
                         None => format!("{word} on a value whose type is generic here"),
@@ -651,6 +654,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                     generic.get_or_insert(r);
                     continue;
                 }
+                #[cfg(feature = "generic-operand-sweep")]
+                panic!("GENERIC-OPERAND-SWEEP: strings_classes reached with the variable {v}");
+                #[allow(unreachable_code)]
                 let at = a.at.unwrap_or(span);
                 let what = match (pieces, self.operand_text(a.at)) {
                     (true, Some(c)) => {
@@ -1418,6 +1424,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// one, whose derivation says what it is, as a lambda's parameter given each entry of a
     /// family is (plan row MSG-concat-generic-lambda-param-no-note); else at the `++`, `span`.
     fn generic_operand(&mut self, a: &Arg<'a>, span: Span) {
+        #[cfg(feature = "generic-operand-sweep")]
+        panic!(
+            "GENERIC-OPERAND-SWEEP: generic_operand reached with the type {:?}",
+            a.ty
+        );
+        #[allow(unreachable_code)]
         let what = match self.operand_text(a.at) {
             Some(c) => format!("`++` on `{c}`, whose type is generic here,"),
             None => "`++` on a value whose type is generic here".to_string(),
