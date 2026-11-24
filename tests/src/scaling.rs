@@ -24,14 +24,14 @@
 //! thread with no `join` counted 509,579,931 instructions at n under `--exact` and 1,007,965,735
 //! under `--exact --nocapture`, the same binary on the same VM: half the run was lost or kept by
 //! the timing of the thread's end. The count does not change with the load on the machine.
-//! Elapsed time and processor time both do, and by more for the larger run: at load 55 with half the load copying memory,
-//! a linear walk of 1000 and 8000 terms took 96 times as long by the clock and 44 times by
-//! processor time, because the larger run lost the caches and was preempted, and it retired
-//! 8.0 times the instructions on every try. So the instruction count is the test, and a test
-//! never judges time; but a benchmark's plan row is marked Done only on a ratio of wall time
-//! taken at a 5-minute load of 64 or less at both the start and the end of the run
-//! (BENCH-wall-vs-instruction-check, 2026-11-18), the instruction ratio being cited only as a
-//! diagnostic.
+//! Elapsed time and processor time both do, and by more for the larger run: at load 55 with
+//! half the load copying memory, a linear walk of 1000 and 8000 terms took 96 times as long by
+//! the clock and 44 times by processor time, because the larger run lost the caches and was
+//! preempted, and it retired 8.0 times the instructions on every try. So the instruction count
+//! is the test, and a test never judges time; but a benchmark's plan row is marked Done only
+//! on a ratio of wall time taken at a 5-minute load of 64 or less at both the start and the
+//! end of the run (BENCH-wall-vs-instruction-check, 2026-11-18), the instruction ratio being
+//! cited only as a diagnostic.
 //!
 //! The count has three limits. Work in the kernel is not counted. A `rep movsb` or `rep stosb`
 //! counts as one instruction or few, whatever its length, and glibc's memcpy and memset use
