@@ -3,12 +3,9 @@ source: tests/steps/m0_12_refusal_census/mod.rs
 expression: programs_piece(5)
 ---
 Growth: 5
-Holes: 2
 
 l01_29_diagnostics::refused_warning::warnings_at_several_places_keep_their_order#5045197b	1:173	warning	Growth	Cannot find exactly which values meet the conditions here.
 l01_29_diagnostics::refused_warning::warnings_at_several_places_keep_their_order#5045197b	2:158	warning	Growth	Cannot find exactly which values `w` can take here.
 l01_29_diagnostics::refused_warning::warnings_at_several_places_keep_their_order#5045197b	2:158	warning	Growth	Cannot find exactly which values `x` can take here.
 l01_29_diagnostics::refused_warning::warnings_at_several_places_keep_their_order#5045197b	2:158	warning	Growth	Cannot find exactly which values `y` can take here.
 l01_29_diagnostics::refused_warning::warnings_at_several_places_keep_their_order#5045197b	2:158	warning	Growth	Cannot find exactly which values `z` can take here.
-l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#fc0a6066	1:226	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.
-l01_39_reduced_product::holes::holes_on_three_names_of_two_cycles_are_refused#fc0a6066	1:238	warning	Holes	Cannot find exactly the least and greatest values the conditions here allow.

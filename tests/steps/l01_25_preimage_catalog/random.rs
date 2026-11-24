@@ -256,6 +256,51 @@ fn run_with(seed: u64, cases: usize, test: bool, calls: bool) -> Tally {
 /// `div` and `mod` read where both are defined exact without enumeration, and 250 terms gave 2
 /// (240 exact without), 1000 terms 10 (947), 0.66 s on a 2-core VM (2026-11-22). The bounds
 /// on the other two counts are scaled with the terms, 4 times those for 250.
+/// The preimage of random terms (integer and test terms, half through calls) answers the same,
+/// printed whole, with the plain-set shortcut of `Classed::new` taken and not taken
+/// (`zedc_lattice::classed::plain_shortcut`, VERIFY-classed-wider-class-callers): 1 000 terms
+/// of each kind, through every caller of `Classed::new` in zedc-preimage that they reach
+/// (`Boxes::with`, `drops_a_member`, `within_classes_boxed`, and `Classed::plain` of each
+/// answer). The terms that took the shortcut are counted and printed; the assertion asks for
+/// one of each kind, since no draw is built to reach it.
+#[test]
+fn preimages_answer_the_same_with_and_without_the_plain_shortcut() {
+    use zedc_lattice::classed::plain_shortcut;
+    let (mut rng, seed) =
+        Rng::fresh("preimages_answer_the_same_with_and_without_the_plain_shortcut");
+    for test in [false, true] {
+        let (cases, mut took) = (1000, 0);
+        for case in 0..cases {
+            let (term, demand) = if test {
+                (bool_term(&mut rng, 3), Demand::Bool(rng.below(2) == 0))
+            } else {
+                (int_term(&mut rng, 3), int_demand(&mut rng))
+            };
+            let term = if case % 2 == 0 {
+                with_functions(&mut rng, &term)
+            } else {
+                term
+            };
+            let (ds, listed) = domains(&mut rng);
+            let (with, without, count) = plain_shortcut::both(|| {
+                format!("{:?}", preimage_listed(&term, &ds, &listed, &demand))
+            });
+            assert_eq!(
+                with, without,
+                "seed {seed}, test {test}, case {case}: {term}"
+            );
+            if count > 0 {
+                took += 1;
+            }
+        }
+        println!("seed {seed}, test {test}: {took} of {cases} took the shortcut");
+        assert!(
+            took > 0,
+            "seed {seed}, test {test}: no case took the shortcut"
+        );
+    }
+}
+
 #[test]
 fn integer_preimages_are_sound_and_exact_where_claimed() {
     let t = run(25, 1000, false);

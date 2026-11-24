@@ -175,3 +175,50 @@ fn a_class_cut_from_a_long_range_is_not_listed() {
         .expect("no limit");
     assert!(none.is_empty());
 }
+
+/// `add`, `join`, `minus` (with the work it charges), `meet_range` and `cut`, the callers of
+/// `Classed::new` in this module, give the same unions, printed, and charge the same work, with
+/// the plain-set shortcut of `Classed::new` taken and not taken
+/// (`zedc_lattice::classed::plain_shortcut`, VERIFY-classed-wider-class-callers), on 2 000
+/// random cases. Each case joins a plain range of two values or more, which takes the shortcut
+/// on every draw, and the cases that took it are counted: all of them.
+#[test]
+fn class_unions_answer_the_same_with_and_without_the_plain_shortcut() {
+    use zedc_lattice::classed::plain_shortcut;
+    let (mut rng, seed) =
+        crate::seed::Rng::fresh("class_unions_answer_the_same_with_and_without_the_plain_shortcut");
+    let (cases, mut took) = (2000, 0);
+    for case in 0..cases {
+        let (a, b) = (union_of(&mut rng), union_of(&mut rng));
+        let lo = rng.int(-35, 35);
+        let hi = lo + rng.int(1, 30);
+        let (x, y) = (draw(&mut rng), draw(&mut rng));
+        let (with, without, count) = plain_shortcut::both(|| {
+            let wide = ClassUnion::plain(range(lo, hi));
+            let mut work = no_limit();
+            let d = a.minus(&b, &mut work).expect("no limit");
+            let e = wide.join(&b).minus(&a, &mut work).expect("no limit");
+            let cut = cut(&x, &y, &mut work).expect("no limit");
+            let mut added = a.clone();
+            for s in b.sets().iter().chain(&cut) {
+                added.add(s.clone());
+            }
+            // The sets in order, not the unions: `at` is a `HashMap`, which prints in an order
+            // of its own each time it is built.
+            format!(
+                "{:?} {:?} {:?} {:?} {cut:?} {:?} {}",
+                a.join(&b).sets(),
+                d.sets(),
+                e.sets(),
+                a.meet_range(&range(lo, hi)).sets(),
+                added.sets(),
+                work.used
+            )
+        });
+        assert_eq!(with, without, "seed {seed}, case {case}: {a:?} and {b:?}");
+        if count > 0 {
+            took += 1;
+        }
+    }
+    assert_eq!(took, cases, "seed {seed}");
+}
