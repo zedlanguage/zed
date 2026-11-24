@@ -242,12 +242,16 @@ Pattern       = ~OrPat                                                          
               | ~TuplePat                                                          L2
               | ~SignedLit                                                         L2
               | ~NamePat                                                           L2
+              | ~ListPat                                                           L3
+              | ~RecordPat                                                         L2
 OrPat         = '(' Pattern ('|' Pattern)+ ')'                                     L2
 RangePat      = '(' SignedLit ('..<' SignedLit | '..=' SignedLit | '..') ')'       L3
 IsPat         = '(' Name? 'is' TypeUnion ')'                                       L2
 WildPat       = WILD                                                               L2
 CtorPat       = Path '(' FieldPat % ',' ','? ')'                                   L2
 TuplePat      = '(' Pattern ((',' Pattern)+ ','? | ',') ')'                        L2
+ListPat       = '[' (('..' Name | Pattern % ',' (',' '..' Name)?) ','?)? ']'       L3
+RecordPat     = '{' FieldPat % ',' ','? '}'                                        L2
 NamePat       = Name                                                               L2
 AtomPattern   = ATOM (OrPat | RangePat | IsPat | '(' ((FieldPat % ',' | Pattern % ',') ','?)? ')')?   L1
 FieldPat      = Name ':' Pattern?                                                  L1

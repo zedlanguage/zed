@@ -548,12 +548,14 @@ fn scrutinee(arms: &[Arm], at: Span) -> Fate {
                 });
                 return out;
             }
-            // A literal, a range, a struct or a tuple matches no atom.
+            // A literal, a range, a struct, a tuple, a list or a record matches no atom.
             (
                 Pattern::Lit(_)
                 | Pattern::Range { .. }
                 | Pattern::Struct { .. }
-                | Pattern::Tuple(..),
+                | Pattern::Tuple(..)
+                | Pattern::List { .. }
+                | Pattern::Record(..),
                 None,
             ) => continue,
         };

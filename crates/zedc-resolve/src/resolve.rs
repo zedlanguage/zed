@@ -4193,6 +4193,8 @@ impl Resolver<'_> {
             Pattern::Struct { .. } | Pattern::Name(..) | Pattern::Wild(_) | Pattern::Tuple(..) => {
                 Some("a struct, name, `_` or tuple pattern")
             }
+            Pattern::List { .. } => Some("a list pattern `[a, ..rest]`"),
+            Pattern::Record(..) => Some("a record pattern `{x: p}`"),
         };
         if report && let Some(what) = later {
             self.later(p.span(), what);
@@ -4284,6 +4286,18 @@ impl Resolver<'_> {
             Pattern::Wild(_) => {}
             Pattern::Tuple(items, _) => {
                 todo.extend(items.iter().rev().map(|i| Task::Pattern(i, report)))
+            }
+            // The rest binds last, after the entries, as it is written last.
+            Pattern::List { items, rest, .. } => {
+                if let Some((r, at)) = rest {
+                    todo.push(Task::BindPattern(r, *at));
+                }
+                todo.extend(items.iter().rev().map(|i| Task::Pattern(i, report)))
+            }
+            // A record pattern names no type, so no field of it is checked against a struct's
+            // `local` fields.
+            Pattern::Record(fields, span) => {
+                todo.extend(fields.iter().rev().map(|f| bind(f, *span)));
             }
             Pattern::Is { name, ty, span } => {
                 todo.push(Task::Ty(ty));

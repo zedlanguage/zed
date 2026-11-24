@@ -383,19 +383,45 @@ impl Builder<'_, '_> {
     }
 
     /// The pattern of node `n`, of a rule `AtomPattern`, `CtorPat`, `NamePat`, `WildPat`,
-    /// `TuplePat`, `OrPat`, `AtomUnion`, `RangePat`, `IsPat` or `SignedLit`.
+    /// `TuplePat`, `ListPat`, `RecordPat`, `OrPat`, `AtomUnion`, `RangePat`, `IsPat` or
+    /// `SignedLit`.
     pub(super) fn make_pattern(&mut self, n: usize) -> Result<Pattern, Error> {
         let node = &self.tree.nodes[n];
         let span = self.span(n);
         // Shape: see "Why the shape of a node is known" (`ast/mod.rs`), for each arm below.
         // Only `AtomPattern` falls through to the end: `forms` maps to `Form::Pattern` the
-        // nine rule names of the arms and `AtomPattern`, and only `Form::Pattern` calls this.
+        // eleven rule names of the arms and `AtomPattern`, and only `Form::Pattern` calls this.
         match self.tree.name(n) {
             "NamePat" => return Ok(Pattern::Name(self.word(node.start).into(), span)),
             "WildPat" => return Ok(Pattern::Wild(span)),
             "TuplePat" => {
                 let items = node.kids.iter().map(|&k| self.pattern(k));
                 return Ok(Pattern::Tuple(items.collect::<Result<_, _>>()?, span));
+            }
+            // `ListPat = '[' (('..' Name | Pattern % ',' (',' '..' Name)?) ','?)? ']'`: its kids
+            // are the entry patterns and, when `..rest` is written, the `Name` node last. A
+            // `Name` kid is the rest and no other: an entry pattern that is a bare name is a
+            // `NamePat` node (`Pattern = … | ~NamePat`), never a `Name`.
+            "ListPat" => {
+                let (rest, items) = match node.kids.split_last() {
+                    Some((&r, items)) if self.tree.name(r) == "Name" => {
+                        let r = self.tree.nodes[r].start;
+                        let rest = (self.word(r).to_string(), self.tokens[r].span);
+                        (Some(rest), items)
+                    }
+                    _ => (None, &node.kids[..]),
+                };
+                let items = items.iter().map(|&k| self.pattern(k));
+                return Ok(Pattern::List {
+                    items: items.collect::<Result<_, _>>()?,
+                    rest,
+                    span,
+                });
+            }
+            // `RecordPat = '{' FieldPat % ',' ','? '}'`: every kid is a `FieldPat`.
+            "RecordPat" => {
+                let fields = node.kids.iter().map(|&k| self.field_pattern(k));
+                return Ok(Pattern::Record(fields.collect::<Result<_, _>>()?, span));
             }
             // `AtomUnion`, the union an `else` tail names (QUESTIONS A113, 2026-11-21), is an
             // or-pattern whose alternatives are atom patterns: the same `Pattern::Or`.
