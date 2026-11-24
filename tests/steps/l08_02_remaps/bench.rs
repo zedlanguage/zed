@@ -1015,6 +1015,50 @@ fn group_by_a_function_parameter_runs_in_linear_time() {
     );
 }
 
+/// Row REMAP-dynamic-deep-binder: a generic function's remap over n entries in rows of 10, the
+/// value binder at a class when the body is checked, so the plan may box each row
+/// (`may_be_family`): the cost of the boxing pass on an existing remap whose value type is not
+/// known where it is checked. Small instances:
+/// `dynamic::a_generic_remap_binds_the_row_at_every_depth_of_call`.
+#[test]
+fn a_generic_remap_of_rows_runs_in_linear_time() {
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "g(positional m) = m as (k -> r) into (k + 1 -> r);\nm = {};\nx = g(m);\n\
+             t = x as (i -> j -> v) into (i >< (+) -> j >< (+) -> v);\n",
+            rows(n)
+        )
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "t"), (n * (n - 1) / 2).to_string());
+    scaling::check(
+        "a generic function's remap of n entries in rows of 10, then both levels folded, whole \
+         path",
+        N_ENTRIES,
+        run,
+    );
+}
+
+/// Row GROUP-nested: `group` of n entries in rows of 10 by each row's sum, every row given whole
+/// to the function: the boxing pass (`Elab::boxed_at` at depth 1) and the `reindex` over the
+/// n / 10 boxed rows, then a fold of every leaf. Small instances:
+/// `rules::group_a_family_of_families_by_a_fold_of_each`.
+#[test]
+fn group_of_rows_by_a_fold_of_each_runs_in_linear_time() {
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "m = {};\ng = m.group(r -> r >< (+));\n\
+             t = g as (s -> i -> j -> v) into (s >< (+) -> i >< (+) -> j >< (+) -> v);\n",
+            rows(n)
+        )
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "t"), (n * (n - 1) / 2).to_string());
+    scaling::check(
+        "`m.group(r -> r >< (+))` over n entries in rows of 10, then every level folded, whole path",
+        N_ENTRIES,
+        run,
+    );
+}
+
 /// Row FAIL-fold-unknown-fn-known-family: `foldl` over a list of n entries by a parameter with
 /// no written type: one need NeedKind::Fold on `f`'s class, met once at the call, where the
 /// accumulator is found and the kernel folds the n entries. Small instances:

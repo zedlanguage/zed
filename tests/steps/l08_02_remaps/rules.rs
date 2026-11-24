@@ -461,9 +461,47 @@ fn group_s_own_errors() {
         "xs = [1];\nx = xs.group(v -> v, v -> v);\n",
         &["`group` takes one function, passed by position"],
     );
-    rejected(
-        "xs = [[1]];\nx = xs.group(v -> 0);\n",
-        &["`group` on a family whose entries are families"],
+}
+
+// ---- group of a family whose entries are families (plan row GROUP-nested) ----
+//
+// `f` takes each entry `m[k]` whole and the group keeps it whole: the `reindex` takes `m` with
+// each entry held in a tuple of one (`Info::boxed_groups`, `Elab::boxed_at`), so it stops above
+// the leaves. Until GROUP-nested the checker refused these as a later step.
+
+#[test]
+fn group_a_family_of_families_by_a_fold_of_each() {
+    let src = "m = { \"a\" -> { 1 -> 10 }, \"b\" -> { 1 -> 30, 2 -> 5 } };\n\
+               x = m.group(r -> r >< (+));\n\
+               want = { 10 -> { \"a\" -> { 1 -> 10 } }, 35 -> { \"b\" -> { 1 -> 30, 2 -> 5 } } };\n";
+    same(src, "x", "want");
+}
+
+#[test]
+fn group_a_list_of_lists_keeps_each_entry_whole() {
+    // One group per class, the entries that share a class side by side, and the one-entry
+    // list `[1]` kept whole: with no boxing the walk reaches its leaf `1` instead.
+    same(
+        "xs = [[1]];\nx = xs.group(v -> 0);\nwant = { 0 -> { 0 -> [1] } };\n",
+        "x",
+        "want",
+    );
+    same(
+        "xs = [[1, 2], [3], [4, 5]];\nx = xs.group(r -> r.count);\n\
+         want = { 1 -> { 1 -> [3] }, 2 -> { 0 -> [1, 2], 2 -> [4, 5] } };\n",
+        "x",
+        "want",
+    );
+}
+
+#[test]
+fn group_keeps_an_empty_inner_family() {
+    // An empty entry has no leaf, so a walk to the leaves loses it; boxed, it is an entry.
+    same(
+        "xs = [[1, 2], [], [3]];\nx = xs.group(r -> r.count);\n\
+         want = { 0 -> { 1 -> [] }, 1 -> { 2 -> [3] }, 2 -> { 0 -> [1, 2] } };\n",
+        "x",
+        "want",
     );
 }
 

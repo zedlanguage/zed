@@ -1426,7 +1426,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             Frame::Group(x, recv, span, rekey) => {
                 let f = m.take_arg();
-                let t = self.group_of(&x, recv, f, span, rekey);
+                let t = self.group_of(&x, recv, f, span, rekey, Some(span));
                 m.ty(t);
             }
             Frame::FlatMap(x, span, kept) => {
@@ -4905,13 +4905,25 @@ impl<'t, 'a> Ck<'t, 'a> {
     // at `Class::resolved` (check/mod.rs), `Ck::class_root` gives no root whose type is its
     // own variable, and any other resolved type holds no variable, so the recursive call
     // meets no class.
-    fn group_of(&mut self, x: &Ty, recv: Span, f: Arg<'a>, span: Span, rekey: bool) -> Ty {
+    ///
+    /// `call` is the call's span where `x` is the receiver's type at the call, the key of
+    /// [`Info::boxed_groups`]; `None` where `x` flowed into a class the call took as a need,
+    /// whose check of the call boxed it already (below).
+    fn group_of(
+        &mut self,
+        x: &Ty,
+        recv: Span,
+        f: Arg<'a>,
+        span: Span,
+        rekey: bool,
+        call: Option<Span>,
+    ) -> Ty {
         // `group_end` (remap.rs) builds the family; its outer keys are checked here, and
         // `Ck::need` is passed in, since a call from remap.rs of a method written in this file
         // would close an import cycle (tests/steps/s_01f_import_graph).
         let calls: (remap::Apply<'t, 'a>, remap::NeedFn<'t, 'a>) = (Self::apply, Self::need);
         if rekey || x.vars.is_empty() {
-            let out = self.group_end(x, recv, f.clone(), span, rekey, calls);
+            let out = self.group_end(x, recv, f.clone(), span, rekey, call, calls);
             self.group_keys_data(&out, &f, span);
             return out;
         }
@@ -4925,7 +4937,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut out = match only_misses {
             true => Ty::empty(),
             false => {
-                let out = self.group_end(&rest, recv, f.clone(), span, false, calls);
+                let out = self.group_end(&rest, recv, f.clone(), span, false, call, calls);
                 self.group_keys_data(&out, &f, span);
                 out
             }
@@ -4933,15 +4945,26 @@ impl<'t, 'a> Ck<'t, 'a> {
         for v in x.vars.iter() {
             let r = self.class_root(v);
             let given = match r.map(|r| (r, self.classes[r].resolved.clone())) {
-                Some((_, Some(t))) => self.group_of(&t, recv, f.clone(), span, false),
+                Some((_, Some(t))) => self.group_of(&t, recv, f.clone(), span, false, call),
                 Some((r, None)) => {
+                    // The entries of a value that flows in later may be families, and the
+                    // need's check does not know this call's span: one need serves every use
+                    // of its kind on the class (`Ck::need`), under the first use's span. So
+                    // the call is boxed here (`Info::boxed_groups`), at the cost of one pass
+                    // over the entries where none is a family.
+                    self.info.boxed_groups.extend(call);
                     let kind = NeedKind::Group {
                         f: f.ty.clone(),
                         recv,
                     };
                     self.need(r, kind, true, span)
                 }
-                None => Ty::dynamic(),
+                // A variable that is not a class is the unknown, whose entries may be
+                // families, as at `group_end` (`Info::boxed_groups`).
+                None => {
+                    self.info.boxed_groups.extend(call);
+                    Ty::dynamic()
+                }
             };
             out = out.union(&given);
         }
@@ -16719,7 +16742,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             NeedKind::Group { f, recv } => {
                 let f = Arg::of(self.bound(f, binds));
-                self.group_of(&on, *recv, f, span, false)
+                self.group_of(&on, *recv, f, span, false, None)
             }
             NeedKind::Level { word, f, site } => {
                 let f = Arg::of(self.bound(f, binds));

@@ -716,6 +716,11 @@ pub struct Info {
     /// Each remap `m as (…) into (…)` the checker accepted, by its span: how it elaborates
     /// (DESIGN.md sec:remap_law). A remap `m as (…)` without `into`, the identity, has none.
     pub remaps: HashMap<Span, RemapPlan>,
+    /// Each `x.group(f)` whose values, the entries of `x`, may be families, by the call's span
+    /// (plan rows GROUP-nested, REMAP-dynamic-deep-binder): `f` takes each entry whole, so the
+    /// `reindex` takes `x` with each entry held in a tuple of one, as a boxed remap does
+    /// ([`RemapPlan::boxed`]). An unknown `x`, or values of the unknown type, are boxed too.
+    pub boxed_groups: HashSet<Span>,
     /// The type errors.
     pub errors: Vec<Error>,
     /// The sites of the literals that the errors of rows `UnfixedDecimal`, `LiteralCarrier`

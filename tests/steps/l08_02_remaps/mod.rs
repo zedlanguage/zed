@@ -13,6 +13,7 @@
 //! COMPLETENESS.md lists each case and the test that covers it.
 mod bench;
 mod collisions;
+mod dynamic;
 mod empty;
 mod kept;
 mod kernel;

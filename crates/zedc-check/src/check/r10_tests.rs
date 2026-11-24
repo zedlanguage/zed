@@ -170,6 +170,7 @@ fn info_eq_full(label: &str, e: &Info, d: &Info) -> Result<(), String> {
         fold_reads: _,
         escaping_calls: _,
         remaps: _,
+        boxed_groups: _,
         errors: _,
         reported_literals: _,
         warnings: _,
@@ -285,6 +286,9 @@ fn info_eq_full(label: &str, e: &Info, d: &Info) -> Result<(), String> {
     }
     if e.remaps != d.remaps {
         return Err(format!("{label}: remaps mismatch"));
+    }
+    if e.boxed_groups != d.boxed_groups {
+        return Err(format!("{label}: boxed_groups mismatch"));
     }
     if e.reported_literals != d.reported_literals {
         return Err(format!("{label}: reported_literals mismatch"));

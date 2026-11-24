@@ -236,6 +236,7 @@ pub(super) fn info_text(info: &Info) -> String {
         fold_reads,
         escaping_calls,
         remaps,
+        boxed_groups,
         errors,
         reported_literals,
         warnings,
@@ -300,6 +301,12 @@ pub(super) fn info_text(info: &Info) -> String {
     field(&mut out, "fold_reads", members(fold_reads));
     field(&mut out, "escaping_calls", members(escaping_calls));
     field(&mut out, "remaps", entries(remaps, remap_text));
+    // `boxed_groups` (rows GROUP-nested, REMAP-dynamic-deep-binder) came after E: a check
+    // that boxes no group prints as E's text did; a group boxed still prints, so E's output
+    // differs from D's wherever D boxes one.
+    if !boxed_groups.is_empty() {
+        field(&mut out, "boxed_groups", members(boxed_groups));
+    }
     field(&mut out, "errors", items(errors));
     field(&mut out, "reported_literals", items(reported_literals));
     field(&mut out, "warnings", items(warnings));
