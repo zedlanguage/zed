@@ -7271,6 +7271,65 @@ type NeedTyParts<'a> = (
 );
 
 impl Need {
+    /// The need of a parameter at position `param` declared the range `r`, as `name: r`
+    /// (DESIGN.md L1.39): each call shows its argument's ints in `r`, as a use's need is
+    /// checked. `span` is the range written, or the default span for one read back from a
+    /// printed type, which has no source.
+    pub fn declared_range(param: usize, name: Arc<str>, r: WrittenRange, span: Span) -> Need {
+        Need {
+            on: Ty::empty(),
+            kind: NeedKind::InDomain {
+                domain: IntDomain {
+                    what: match name.is_empty() {
+                        true => format!("the parameter is declared {}", r.text).into(),
+                        false => format!("`{name}` is declared {}", r.text).into(),
+                    },
+                    name,
+                    below_two_pow: None,
+                    written: Some(r),
+                    key: None,
+                },
+                param,
+                via: None,
+                bits: None,
+                path: PathSteps::default(),
+            },
+            result: None,
+            span,
+            alike: Arc::from([]),
+            via: CallPath::default(),
+        }
+    }
+
+    /// The position and range of the parameter whose declared range this need is
+    /// ([`Need::declared_range`]), compared by meaning: its name, text and span are where it
+    /// was written, which no type states. `None` for any other need. O(1).
+    pub fn range_declared(&self) -> Option<(usize, &WrittenRange)> {
+        match &self.kind {
+            NeedKind::InDomain {
+                domain:
+                    IntDomain {
+                        below_two_pow: None,
+                        written: Some(r),
+                        key: None,
+                        ..
+                    },
+                param,
+                via: None,
+                bits: None,
+                path,
+            } if path.is_empty()
+                && self.result.is_none()
+                && self.on == Ty::empty()
+                && self.alike.is_empty()
+                && self.via == CallPath::default() =>
+            {
+                Some((*param, r))
+            }
+            _ => None,
+        }
+    }
+
     /// It with its variables replaced by `binds` at every depth.
     ///
     /// A compact forward is replaced in only where [`Sig::replace`] would keep it compact:
@@ -17703,6 +17762,70 @@ pub fn fits_sig_with(s: &Sig, q: &Sig, solve: Solve) -> bool {
     cx.decided(ok)
 }
 
+/// Whether `s`, a signature with needs not equal to `q` as written, fits `q` because the two
+/// differ only in the ranges their parameters are declared with, compared by meaning (row
+/// PRINT-positional-range-ambiguous, option A): `f(positional x: int[2..=4]) = "${x}"` fits
+/// `int[2..=4] -> String` read back from its printed text, whose need has no name and no
+/// source ([`Need::declared_range`]). The rest of the two, their other needs among it, is
+/// compared as written. O(the size of the two), as the comparison as written is.
+///
+/// Claim: where this holds, every function of type `s` is a function of type `q`. Proof. (1)
+/// A need of a declared range on the parameter at `j` ([`Need::range_declared`]) says only
+/// that each call passes there an int of the range: it is checked at each call against the
+/// argument (DESIGN.md L1.39), and its name, text and span serve the message alone. (2) `q`
+/// has such a need on each parameter `j` that `s` has one on, with a range within `s`'s, so
+/// each call a holder of type `q` may make passes at `j` an int of `q`'s range, which is in
+/// `s`'s (`WrittenRange::within`): `s`'s need holds at that call. (3) A positional
+/// parameter's name is not part of the type, as calls pass it by its place (the printer
+/// writes none); a named one's must match, and so must each default. (4) With its parameters
+/// and needs replaced by `q`'s, `s` equals `q` as written (`Same::sig`): the arrows, results,
+/// bounds and the rest are one. So each call of type `q` is a call `s` takes, with the same
+/// result. ∎ A need of `q` that `s` lacks only narrows the calls made, which (2) allows.
+fn ranges_fit(s: &Sig, q: &Sig) -> bool {
+    if s.params.len() != q.params.len() {
+        return false;
+    }
+    // Each side's other needs, in order, and its declared ranges by parameter; a parameter
+    // with two such needs is compared as written.
+    type Split<'s> = (Vec<&'s Need>, HashMap<usize, &'s WrittenRange>, bool);
+    fn split(sig: &Sig) -> Split<'_> {
+        let mut others = Vec::new();
+        let mut ranges: HashMap<usize, &WrittenRange> = HashMap::new();
+        let mut twice = false;
+        for n in sig.needs.iter() {
+            match n.range_declared() {
+                Some((j, r)) => twice |= ranges.insert(j, r).is_some(),
+                None => others.push(n),
+            }
+        }
+        (others, ranges, twice)
+    }
+    let ((so, sr, st), (qo, qr, qt)) = (split(s), split(q));
+    if sr.is_empty() || st || qt || so != qo {
+        return false;
+    }
+    if !(sr.iter()).all(|(j, a)| qr.get(j).is_some_and(|b| b.within(a))) {
+        return false;
+    }
+    let params = s.params.iter().zip(&q.params).all(|(a, b)| {
+        let ranges = match (a.range.as_ref(), b.range.as_ref()) {
+            (Some(ParamRange::Int(x)), Some(ParamRange::Int(y))) => y.within(x),
+            (x, y) => x == y,
+        };
+        a.positional == b.positional
+            && (a.positional || a.name == b.name)
+            && a.default == b.default
+            && ranges
+    });
+    if !params {
+        return false;
+    }
+    let mut t = Sig::unwrap_to_change(Arc::new(s.clone()));
+    t.params = q.params.clone();
+    t.needs = q.needs.clone();
+    t == *q
+}
+
 /// [`fits_sig`] inside the expected function types whose bounded variables `cx.rigid` holds,
 /// `s` read by `se` and `q` by `qe`. `q`'s own bounded variables that a parameter holds join
 /// `cx.rigid`: the caller of a function of type `q` picks one carrier of each bound, so `s`
@@ -17757,7 +17880,7 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
             None => (s, q),
         };
         if s != q {
-            return false;
+            return ranges_fit(s, q) && read_alike(s, se, qe);
         }
         return read_alike(s, se, qe);
     }
@@ -24568,11 +24691,13 @@ impl Ty {
                 .filter(|t| !t.is_empty())
                 .count()
         });
+        let twins = Sig::twins(&self.fns);
         let members = holes
             + usize::from(whole.is_some())
             + shaped.iter().map(|(_, ss)| ss.len()).sum::<usize>()
             + self.tuples.len()
             + self.fns.len()
+            - twins.len()
             + usize::from(!self.vars.is_empty() || self.dynamic);
         // A union standing where a whole `Type` stands writes the bounds clause of each member
         // intersection of arrows once, after its last member: `TypeBounds` ends the `Type`
@@ -24643,7 +24768,10 @@ impl Ty {
         if let Some(g) = &groups {
             hole(parts, &g.morphisms);
         }
-        for s in &self.fns {
+        for (i, s) in self.fns.iter().enumerate() {
+            if twins.contains(&i) {
+                continue;
+            }
             parts.push(Print::Sep);
             parts.push(Print::Sig(s, at));
         }
@@ -26103,6 +26231,53 @@ impl Sig {
             && a.params[..] == [Ty::carrier(Carrier::Int)]
             && Sig::writes_value(a))
         .then_some(k)
+    }
+
+    /// The positions in `fns` of the functions of one positional parameter declared a range
+    /// that print as a family of `fns` with those keys exactly prints, `int[2..=4] -> V` (row
+    /// PRINT-positional-range-ambiguous, option A: DESIGN.md's one morphism type prints one
+    /// text for both, and the reader of printed types reads that text as the union of the
+    /// two): a union holding both writes the text once, so it reads back as itself. Such a
+    /// function's text is its key, the range, `->` and its result; the family's is its keys,
+    /// `->` and its value type ([`Sig::exact_keys`]); the two are one text where the range is
+    /// the keys, the result the value type, no hull is written in place of the result
+    /// ([`Sig::result_part`]), and the bounds clauses are one.
+    ///
+    /// Complexity tradeoff: one pass that keeps each family's keys, value type and bounds in
+    /// a hash set, and one that looks each function up there, O(n) expected for n members; the
+    /// naive way compares each pair, O(n²). A union of fewer than two members has no twins and
+    /// is not read.
+    fn twins(fns: &Members<Arc<Sig>>) -> HashSet<usize> {
+        let mut out = HashSet::new();
+        if fns.len() < 2 {
+            return out;
+        }
+        let int = Ty::carrier(Carrier::Int);
+        // A range by its text, which is one for each range ([`WrittenRange::new`]).
+        type Text<'s> = (&'s str, Ty, &'s BTreeMap<Arc<str>, u8>);
+        let families: HashSet<Text<'_>> = (fns.iter())
+            .filter_map(|s| {
+                let [a] = &s.arrows[..] else { return None };
+                Some((&*s.exact_keys(a)?.text, a.value().into_owned(), &s.bounds))
+            })
+            .collect();
+        if families.is_empty() {
+            return out;
+        }
+        for (i, s) in fns.iter().enumerate() {
+            let ([p], [a]) = (&s.params[..], &s.arrows[..]) else {
+                continue;
+            };
+            let Some(k) = p.range.as_ref().and_then(ParamRange::int) else {
+                continue;
+            };
+            let bare = !s.data && p.positional && !a.partial && a.params[..] == [int.clone()];
+            let hull = s.hull.is_some() && a.result == int;
+            if bare && !hull && families.contains(&(&*k.text, a.result.clone(), &s.bounds)) {
+                out.insert(i);
+            }
+        }
+        out
     }
 
     /// Whether `->?` can write the partial arrow `a`: its lookup holds the `#notFound` of a miss

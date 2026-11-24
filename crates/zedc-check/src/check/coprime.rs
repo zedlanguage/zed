@@ -578,7 +578,8 @@ mod tests {
         let pow = |b: u64, e: u32, m: u64| BigUint::from(b).pow(e) * m;
         a_valid_base(&[pow(2, 200, 3), pow(2, 100, 5), pow(3, 50, 2), pow(5, 3, 1)]);
         a_valid_base(&[pow(2, 300, 1), pow(2, 1, 3), pow(3, 999, 7)]);
-        // Primes past one word, and products past the 512 words where `mul_uint` transforms.
+        // Primes past one word, and products past the 400 words where `mul_uint` transforms
+        // (`zed_kernel::num::fast::MUL_LEAF`, measured 2026-11-22; `2^40000` is 625 words).
         let wide = |m: u64| BigUint::from(18446744073709551557u64).pow(3) * m;
         let mut many: Vec<BigUint> = ps.iter().map(|&p| wide(p)).collect();
         many.push(pow(2, 40000, 1));

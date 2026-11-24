@@ -229,6 +229,14 @@ pub struct Parser<'g, I: Input + ?Sized> {
     memo: Vec<Entry>,
     /// The last entry made at each position, or [`NO_ENTRY`].
     last: Vec<usize>,
+    /// Which slots (`2 * rule + head`) have an entry at each position: `words` bits a
+    /// position, bit `slot` of position `pos` at word `pos * words + slot / 64`.
+    present: Vec<u64>,
+    /// The 64-bit words of [`Parser::present`] a position: `ceil(2R / 64)` for R rules.
+    words: usize,
+    /// For each slot, the position and entry of its last call, or [`NO_ENTRY`] as the
+    /// position before its first call.
+    recent: Vec<(usize, usize)>,
     /// How many times a left-recursive match has grown at each position, for both values of
     /// `head`. An entry with `reads_seed` behind its position's version may read a longer seed
     /// now, so it is matched again.
@@ -256,12 +264,17 @@ pub struct Parser<'g, I: Input + ?Sized> {
 impl<'g, I: Input + ?Sized> Parser<'g, I> {
     /// A parser of `input` by the alternatives of `g` of layer at most `ring`.
     pub fn new(g: &'g Grammar, ring: u32, input: &'g I) -> Self {
+        let slots = 2 * g.rules.len();
+        let words = slots.div_ceil(64);
         Parser {
             g,
             ring,
             input,
             memo: Vec::new(),
             last: vec![NO_ENTRY; input.len() + 1],
+            present: vec![0; (input.len() + 1) * words],
+            words,
+            recent: vec![(NO_ENTRY, NO_ENTRY); slots],
             versions: vec![0; input.len() + 1],
             open: vec![0; input.len() + 1],
             low: u32::MAX,
@@ -350,20 +363,55 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
         // O(2R) a lookup at worst for R rules (342 for this grammar), 4.6 to 13.6 entries on
         // average. Tradeoff: a grammar whose positions hold many entries would pay the scan;
         // the bound is a constant of the grammar, not of the input.
+        //
+        // The scan is skipped where it costs most (row FAIL-ladder-rungs-on-main, 2026-11-24).
+        // A ladder of k left-recursive rungs (`R{i} = R{i} 'o{i}' R{i-1} | R{i-1}`,
+        // `l01_08_parser::bench::scaling::each_operand_costs_a_constant_per_rung`) makes the
+        // k + 1 entries of an operand's position in the order R{k} .. R{0}, so the list from
+        // `last` reads R{0} first: making R{i-1}'s entry scanned the whole list to find it
+        // absent, and each growth of R{i} scanned i + 1 entries to find its own, O(k^2) a
+        // position; measured 10.91 times the instructions at 64 rungs as at 8 (limit 10.5),
+        // and 8.07 times with the two tests below (COMPLEXITY.md F237).
+        // Two O(1) tests now come first. (1) `present`, one bit a slot and position, says
+        // whether an entry is there at all, so a new entry is made with no scan. (2) `recent`
+        // holds each slot's last call, so a call at the position of that slot's last call
+        // finds its entry at once. Only a call that finds an entry and is not at that slot's
+        // last position scans, as before. Correctness: the bit of a slot at a position is set
+        // exactly when its entry is made (below), and entries are never removed, so (1) is
+        // exact; `recent[slot]` is set to the entry this call uses, which is the one entry of
+        // that slot at that position (entries are made only on a clear bit), so (2) is exact.
+        // Cost: per call two loads and a store more than a hit at the list's head; per
+        // position `words` = ceil(2R / 64) words (6 for the grammar's 171 rules, 48 bytes a
+        // token), zeroed by the allocator; `recent` 2R pairs. The bound of a lookup is
+        // unchanged at worst, O(2R), a constant of the grammar, but the ladder's calls are
+        // all of kinds (1) and (2), O(1) each, so its cost a rung is a constant. The naive
+        // alternative, a hash map keyed by position and slot, is the one F86 measured slower.
         let slot = 2 * r + usize::from(head);
-        let mut at = self.last[pos];
-        while at != NO_ENTRY && self.memo[at].slot != slot {
-            at = self.memo[at].prev;
-        }
-        if at == NO_ENTRY {
-            at = self.memo.len();
+        let (word, bit) = (pos * self.words + slot / 64, 1u64 << (slot % 64));
+        let at = if self.present[word] & bit == 0 {
+            self.present[word] |= bit;
+            let at = self.memo.len();
             self.memo.push(Entry {
                 slot,
                 prev: self.last[pos],
                 ..Entry::default()
             });
             self.last[pos] = at;
-        }
+            at
+        } else {
+            match self.recent[slot] {
+                (p, at) if p == pos => at,
+                _ => {
+                    // The bit is set, so the list holds the entry and the walk ends on it.
+                    let mut at = self.last[pos];
+                    while self.memo[at].slot != slot {
+                        at = self.memo[at].prev;
+                    }
+                    at
+                }
+            }
+        };
+        self.recent[slot] = (pos, at);
         let entry = &mut self.memo[at];
         let res = match entry.best {
             _ if entry.in_path => {

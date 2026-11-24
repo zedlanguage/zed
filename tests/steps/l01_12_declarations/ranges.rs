@@ -5,7 +5,7 @@
 
 use super::check;
 use zed_tests::step_helpers::l01_13_formatter::fmt;
-use zed_tests::step_helpers::l01_29_diagnostics::rejected;
+use zed_tests::step_helpers::l01_29_diagnostics::{accepted_with_main, rejected};
 
 /// `src` with a `main`, so that `load` runs it as a program.
 fn program(src: &str) -> String {
@@ -152,16 +152,11 @@ fn a_range_anywhere_but_a_declared_parameter_over_int_is_a_later_form() {
             "a range on a lambda's parameter",
         ),
         // A partial map's key takes a range on the whole key or on each component of a tuple
-        // key (RANGE-keys); a range deeper in, on an exact arrow, or on a key of two levels,
-        // waits.
+        // key (RANGE-keys); a range deeper in, or on a key of two levels, waits. An exact
+        // arrow of one positional ranged parameter is accepted (below).
         (
             "f(m: (((int[0..<2], int), int)) ->? int) = 0;",
             "1:9: ",
-            "a range type in any place but the whole type of a parameter",
-        ),
-        (
-            "f(m: int[0..<2] -> int) = 0;",
-            "1:6: ",
             "a range type in any place but the whole type of a parameter",
         ),
         (
@@ -182,4 +177,9 @@ fn a_range_anywhere_but_a_declared_parameter_over_int_is_a_later_form() {
             "{src}\n  got  {first}"
         );
     }
+    // An exact arrow of one positional ranged parameter, `int[0..<2] -> int`, is the one text
+    // of a function declared that range and of a family with those keys (row
+    // PRINT-positional-range-ambiguous, option A): its range is resolved as a key is.
+    let src = program("f(m: int[0..<2] -> int) = 0;");
+    assert!(accepted_with_main(&src), "{src}\n  refused");
 }

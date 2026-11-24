@@ -1061,10 +1061,8 @@ fn cmp_coord(a: &Coords, b: &Coords, sym: Option<&str>, atom: Option<&Atom>) -> 
 /// [`cmp_part`], symbols by name, then each opaque atom's power), then structural. It extends
 /// dominance: if `m1` is at most `m2` in every coordinate, the first coordinate where they
 /// differ has `m1` below, so `m1 < m2` here. It is transitive as a lexicographic order of total
-/// preorders with a total tie-break. DESIGN.md L1.17d names "dominance, then total degree,
-/// then content address", which is not transitive once exponentials meet polynomials:
-/// `2^n > n^100` by dominance, `n^100 > n^50 * m` by degree, `n^50 * m > 2^n` by degree; row
-/// SPEC-bound-form-total-order asks for this order instead.
+/// preorders with a total tie-break. This is the order DESIGN.md L1.17d "One form for bounds,
+/// sizes and costs" states (spec 248a0bb, row SPEC-bound-form-total-order).
 fn lex(m1: &Mono, m2: &Mono) -> Ordering {
     let (a, b) = (coords(m1), coords(m2));
     let (syms, opq) = keys(&a, &b);
@@ -1104,53 +1102,116 @@ pub fn dominated(m1: &Mono, m2: &Mono) -> bool {
             .all(|&t| cmp_coord(&a, &b, None, Some(t)) != Ordering::Greater)
 }
 
-/// The monomials no other one dominates (each once), by `lex` from the largest down.
-///
-/// Method: sorted by `lex` descending, a monomial is dominated only by one before it (a
-/// dominating one is above it in `lex`). With at most two coordinates in the whole set, one
-/// before it dominates exactly when its second coordinate is at most the greatest second
-/// coordinate seen so far (the first is at least its own, by the sort), so one pass after the
-/// sort decides each: O(t log t) comparisons, the maxima-of-a-point-set sweep (Kung, Luccio
-/// and Preparata 1975, "On finding the maxima of a set of vectors", J. ACM 22(4):469-476,
-/// doi:10.1145/321906.321910, the two-dimensional case). With three or more coordinates each
-/// is checked against the maxima kept so far, O(t k) for `k` maxima; their divide and conquer
-/// is O(t log^(d-2) t) in `d` coordinates, above O(t log t) from four on, and is row
-/// BOUND-maxima-many-symbols.
-pub fn maxima(mut ms: Vec<Mono>) -> Vec<Mono> {
-    ms.sort_by(|a, b| lex(b, a));
-    ms.dedup();
+/// The rank of each monomial in each coordinate of the set, the coordinates in `lex`'s order
+/// (symbols by name, then opaque atoms): equal ranks exactly where [`cmp_coord`] says equal,
+/// larger exactly where it says greater. Each coordinate is one sort, O(t log t) comparisons,
+/// so all `d` cost O(d t log t). This is sound because `cmp_coord` is a total preorder (in a
+/// symbol, `cmp_part`, Hardy's order, which DESIGN.md L1.17d makes total; in an opaque atom,
+/// the order of integers), so its classes of equal elements are ordered and a rank names one
+/// class. Afterward each comparison is of two integers.
+fn ranks(cs: &[Coords]) -> Vec<Vec<u32>> {
     let mut syms = BTreeSet::new();
     let mut opq = BTreeSet::new();
-    let cs: Vec<Coords> = ms.iter().map(coords).collect();
-    for c in &cs {
+    for c in cs {
         syms.extend(c.parts.keys().cloned());
         opq.extend(c.opaque.keys().copied());
     }
-    let mut out: Vec<usize> = Vec::new();
-    if syms.len() + opq.len() <= 2 {
-        let (sym2, atom2) = match (syms.iter().nth(1), opq.iter().next(), syms.len()) {
-            (Some(x), _, _) => (Some(x.clone()), None),
-            (None, Some(t), 1) => (None, Some(*t)),
-            (None, Some(_), 0) => (None, opq.iter().nth(1).copied()),
-            _ => (None, None),
-        };
-        let mut best: Option<usize> = None;
-        for i in 0..ms.len() {
-            let kept = match best {
-                None => true,
-                Some(b) => {
-                    let second = cmp_coord(&cs[i], &cs[b], sym2.as_deref(), atom2);
-                    second == Ordering::Greater
-                }
-            };
-            if kept {
-                out.push(i);
-                best = Some(i);
+    let coordinates = (syms.iter().map(|x| (Some(&**x), None)))
+        .chain(opq.iter().map(|&t| (None, Some(t))))
+        .collect::<Vec<_>>();
+    let mut rank = vec![Vec::with_capacity(coordinates.len()); cs.len()];
+    for (sym, atom) in coordinates {
+        let mut idx: Vec<usize> = (0..cs.len()).collect();
+        idx.sort_by(|&i, &j| cmp_coord(&cs[i], &cs[j], sym, atom));
+        let mut r = 0u32;
+        for k in 0..idx.len() {
+            if k > 0 && cmp_coord(&cs[idx[k - 1]], &cs[idx[k]], sym, atom) == Ordering::Less {
+                r += 1;
             }
+            rank[idx[k]].push(r);
+        }
+    }
+    rank
+}
+
+/// The monomials no other one dominates (each once), by `lex` from the largest down
+/// (plan row BOUND-maxima-many-symbols, QUESTIONS.md A226, answer A).
+///
+/// Method. Each monomial is a point of `d` coordinates (one per symbol and per opaque atom of
+/// the set, `ranks`). Sorted by `lex` descending, a monomial is dominated only by one before
+/// it: `lex` extends dominance (see `lex`), and of two with every coordinate equal the first
+/// is kept and dominates the second, which is what "each once" asks. So a pass in that order
+/// keeps a monomial exactly when no monomial kept before it dominates it (one dropped before it
+/// is dominated by a kept one, and dominance is transitive).
+///
+/// `d <= 3`, the sweep of Kung, Luccio and Preparata (1975, "On finding the maxima of a set of
+/// vectors", J. ACM 22(4):469-476, doi:10.1145/321906.321910; read: the abstract and the
+/// method as cited in A226, checked 2026-11-24; the paper's text was not read): every monomial
+/// before this one is at least it in the first coordinate (the sort's first key), so one of
+/// them dominates it exactly when one has the second and the third coordinates both at least
+/// its own. The kept ones' (second, third) ranks form a staircase, a map from second rank to
+/// third rank in which the third falls strictly as the second rises; the entry with the least
+/// second rank at least this one's holds the greatest third rank among those with the second
+/// at least this one's, so one lookup decides. A kept monomial is added and the entries it
+/// covers (second and third both at most its own: a run just below its second rank) are
+/// removed, each at most once. With fewer coordinates the missing ones are rank 0 everywhere.
+/// Cost: O(t log t) for the ranks and the map, O(d t log t) comparisons in all; checked by
+/// `the_maxima_of_random_monomials_are_those_no_other_dominates` (every pair, `d` 1 to 5) and
+/// the bench `the_maxima_of_a_staircase_in_three_symbols_scale_as_t_log_t` (l01_17), with its
+/// negative control (the check against the kept ones on the same input, quadratic): 5.33
+/// times from 1024 to 8192 against 64.2 for the control at 128 and 1024 (Colab l44).
+///
+/// `d >= 4`, each monomial is checked against the maxima kept so far, O(t k d) integer
+/// comparisons for `k` maxima, quadratic when most are maxima. Known bounds, from Chan, Larsen
+/// and Patrascu, "Orthogonal range searching on the RAM, revisited", SoCG 2011, arXiv
+/// 1103.5510 (read: its LaTeX, range.tex lines 134-136 and 482-488, by the orchestrator, A226,
+/// 2026-11-24): "given a set of $n$ points in 4-d, we can find all maximal points (points not
+/// dominated by any other points) in $O(n\lg n)$ expected time", and for constant `d >= 5`
+/// "$O(n\lg^{d-3}n)$" (randomized), the first improvement over Gabow, Bentley and Tarjan,
+/// "Scaling and related techniques for geometry problems", STOC 1984, O(n lg^(d-3) n lg lg n)
+/// (cited from A226, not read). The 4-d method is a large randomized word-RAM structure with
+/// no published implementation, for costs in four or more symbols, which programs seldom
+/// write; A226 chose the check against the kept ones (score 8 against 5 for the 4-d method).
+/// Lower bound when `d` grows with `t`: an orthogonal vectors instance (`a_1..a_n`,
+/// `b_1..b_n` in {0,1}^D) maps to `a_i -> (a_i, i, n - i, 0)` and `b_j -> (1 - b_j, n, n,
+/// 1)`, one symbol per coordinate; `b_j'` dominates `a_i'` exactly when `a_i . b_j = 0`, and no
+/// `a_i'` dominates another (the pair `i`, `n - i`), so some `a_i'` is not a maximum exactly
+/// when an orthogonal pair exists: no O(t^(2-e)) method at `d = c log t` for every `c` unless
+/// the orthogonal vectors conjecture fails (Williams 2005, doi:10.1016/j.tcs.2005.09.023).
+/// Checked by `orthogonal_vectors_reduce_to_the_maxima_of_monomials` (l01_17) against all
+/// pairs on small `D`. COMPLEXITY.md, Kept, row BOUND-maxima-many-symbols.
+pub fn maxima(mut ms: Vec<Mono>) -> Vec<Mono> {
+    ms.sort_by(|a, b| lex(b, a));
+    ms.dedup();
+    let cs: Vec<Coords> = ms.iter().map(coords).collect();
+    let rank = ranks(&cs);
+    let mut out: Vec<usize> = Vec::new();
+    if rank.first().is_none_or(|r| r.len() <= 3) {
+        let at = |i: usize, k: usize| rank[i].get(k).copied().unwrap_or(0);
+        let mut stairs: BTreeMap<u32, u32> = BTreeMap::new();
+        for i in 0..ms.len() {
+            let (second, third) = (at(i, 1), at(i, 2));
+            if stairs
+                .range(second..)
+                .next()
+                .is_some_and(|(_, &t)| t >= third)
+            {
+                continue;
+            }
+            let covered: Vec<u32> = (stairs.range(..=second).rev())
+                .take_while(|&(_, &t)| t <= third)
+                .map(|(&s, _)| s)
+                .collect();
+            for s in covered {
+                stairs.remove(&s);
+            }
+            stairs.insert(second, third);
+            out.push(i);
         }
     } else {
         for i in 0..ms.len() {
-            if !out.iter().any(|&j| dominated(&ms[i], &ms[j])) {
+            let below = |j: &usize| rank[i].iter().zip(&rank[*j]).all(|(a, b)| a <= b);
+            if !out.iter().any(below) {
                 out.push(i);
             }
         }
