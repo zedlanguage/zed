@@ -196,12 +196,13 @@ fn remap_text(p: &RemapPlan) -> String {
         folds,
         leaf,
         witness,
+        boxed,
     } = p;
     let mut folds: Vec<_> = folds.iter().collect();
     folds.sort_by_key(|(level, _)| **level);
     format!(
         "RemapPlan {{ order: {order:?}, kept: {kept:?}, folds: {folds:?}, leaf: {leaf:?}, \
-         witness: {witness:?} }}"
+         witness: {witness:?}, boxed: {boxed:?} }}"
     )
 }
 

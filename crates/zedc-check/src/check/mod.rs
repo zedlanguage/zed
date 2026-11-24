@@ -594,6 +594,12 @@ pub struct RemapPlan {
     /// The catalog entry that witnesses the keypath map one-to-one (sec:grouping), or
     /// `residue` for a truncation, whose keypaths keep the source's keys beneath.
     pub witness: Arc<str>,
+    /// Whether the value the `as` pattern binds may be a family, the pattern naming fewer key
+    /// levels than the source has (plan row REMAP-fewer-binders): `m as (k -> r) into (k -> r)`
+    /// on a family of two levels binds `r` to the whole row `m[k]`. The `reindex`, which walks
+    /// leaves, then takes the source with each entry at the pattern's depth held in a tuple of
+    /// one, so the walk stops there, and the value binder reads the entry back out of it.
+    pub boxed: bool,
 }
 
 /// What the checker finds.

@@ -12526,8 +12526,11 @@ fn else_span(of: &Expr, default: &Expr) -> Span {
 }
 
 /// Adds to the witness of the remap plan `b` each catalog entry of `a`'s it lacks, after its
-/// own, in `a`'s order ([`Ck::remap_alone`]).
+/// own, in `a`'s order ([`Ck::remap_alone`]), and marks `b` boxed if `a` is: the remap
+/// elaborates to one term, which boxes when the value binder takes a family at any source
+/// type, and boxing a value that is no family changes nothing it gives ([`RemapPlan::boxed`]).
 fn add_witness(b: &mut RemapPlan, a: &RemapPlan) {
+    b.boxed |= a.boxed;
     let mut entries: Vec<&str> = b.witness.split('+').filter(|w| !w.is_empty()).collect();
     for w in a.witness.split('+').filter(|w| !w.is_empty()) {
         if !entries.contains(&w) {

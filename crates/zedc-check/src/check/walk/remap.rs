@@ -65,14 +65,15 @@ struct Layout {
 }
 
 impl Layout {
-    /// The plan with this layout and `witness`.
-    fn plan(&self, witness: Arc<str>) -> RemapPlan {
+    /// The plan with this layout, `witness` and `boxed` ([`RemapPlan::boxed`]).
+    fn plan(&self, witness: Arc<str>, boxed: bool) -> RemapPlan {
         RemapPlan {
             order: self.kept.iter().chain(&self.folded).copied().collect(),
             kept: self.kept.len(),
             folds: self.folds.clone(),
             leaf: (!self.truncate).then_some(self.last),
             witness,
+            boxed,
         }
     }
 }
@@ -269,17 +270,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             out.push(Ty::union_all(keys));
             cur = Ty::union_all(&next);
         }
-        if cur.fns.iter().any(|g| g.data) {
-            // Plan row REMAP-fewer-binders: binding a whole inner family as the value needs a
-            // reindex over keypaths that stop above the leaves.
-            self.error(
-                s.e.span,
-                not_yet(&format!(
-                    "a remap whose `as` pattern names {n} key levels of a source with more"
-                )),
-            );
-            return None;
-        }
+        // A value that may be a family, the pattern naming fewer key levels than the source
+        // has, binds the whole inner family ([`RemapPlan::boxed`], set by `remap_end`).
         out.push(cur);
         Some(out)
     }
@@ -790,10 +782,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the remap at any source type finds the same ones.
     pub(in crate::check) fn remap_text_plan(&mut self, s: &RemapF<'a>) -> Option<RemapPlan> {
         let l = self.remap_layout(s)?;
-        Some(l.plan(match l.truncate {
-            true => "residue".into(),
-            false => "".into(),
-        }))
+        // Not boxed: each check at a source type then marks the plan boxed if its value binder
+        // may take a family there ([`add_witness`] in walk.rs keeps any check's mark).
+        Some(l.plan(
+            match l.truncate {
+                true => "residue".into(),
+                false => "".into(),
+            },
+            false,
+        ))
     }
 
     /// The layout of the remap `s`'s `into` pattern, or its errors given.
@@ -895,7 +892,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         for &j in outer.iter().rev() {
             inner = family(ty(j), inner);
         }
-        self.info.remaps.insert(s.e.span, l.plan(witness));
+        let value = src.last().expect("the source's value type");
+        let boxed = value.fns.iter().any(|g| g.data);
+        self.info.remaps.insert(s.e.span, l.plan(witness, boxed));
         Some(inner)
     }
 

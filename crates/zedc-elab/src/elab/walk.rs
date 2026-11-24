@@ -2441,6 +2441,19 @@ impl<'a> Elab<'a> {
             .collect();
         let (p, x) = (self.temp(), self.temp());
         let n = binders.len() - 1;
+        // A value binder that may take a family reads the entry at depth `n` out of the tuple
+        // of one that holds it (`RemapPlan::boxed`).
+        let of = match plan.boxed {
+            true => self.boxed_at(of, n),
+            false => of,
+        };
+        let value = || match plan.boxed {
+            true => Term::Prim(
+                Prim::TupleGet,
+                vec![Term::Var(x.clone()), Term::Lit(Value::Int(0))],
+            ),
+            false => Term::Var(x.clone()),
+        };
         // One kernel name per binder, `_` too: a `_` gets a fresh name (`temp`), so the lets of
         // `lam` bind every key of the keypath, `p[0]` to `p[n - 1]`, and `names[..n]`, which a
         // truncation keys its leaves by, is the whole keypath; a written binder's name is its
@@ -2460,7 +2473,7 @@ impl<'a> Elab<'a> {
                         Prim::PathKey,
                         vec![Term::Var(p.clone()), Term::Lit(Value::Int(i as i64))],
                     ),
-                    false => Term::Var(x.clone()),
+                    false => value(),
                 };
                 t = Term::Let(name.clone(), Shared::new(v), Shared::new(t));
             }
@@ -2532,6 +2545,30 @@ impl<'a> Elab<'a> {
             depth -= 1;
         }
         Some(t)
+    }
+
+    /// The family `t` with each entry at depth `depth` held in a tuple of one, so a `reindex`,
+    /// which walks leaves, stops at that depth and binds a row whole (plan row
+    /// REMAP-fewer-binders): `let s = t; fam k in s: …` down to `(s[k],)`, a `fam` per level.
+    /// An empty family above that depth stays empty, a keypath that ends early, as without the
+    /// boxing. The checker gives a family at every level above `depth`.
+    // Complexity tradeoff: one pass over the entries down to `depth`, each read by `Get` in the
+    // ordered map, O(e log e) for e entries, which the `reindex` after it costs too; a reindex
+    // with a depth of its own would skip the pass but needs a new kernel term, read by every
+    // crate that walks terms.
+    fn boxed_at(&mut self, t: Term, depth: usize) -> Term {
+        if depth == 0 {
+            return Term::Prim(Prim::Tuple, vec![t]);
+        }
+        let (s, k) = (self.temp(), self.temp());
+        let entry = Term::Prim(Prim::Get, vec![Term::Var(s.clone()), Term::Var(k.clone())]);
+        let body = self.boxed_at(entry, depth - 1);
+        let fam = Term::Fam {
+            domain: Shared::new(Term::Var(s.clone())),
+            var: k,
+            body: Shared::new(body),
+        };
+        Term::Let(s, Shared::new(t), Shared::new(fam))
     }
 
     /// `x.group(f)` on a family of one level (DESIGN.md sec:grouping): the widening

@@ -6,7 +6,7 @@
 use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{Family, Prim, Term, Value};
 use zed_tests::kernel::*;
-use zed_tests::step_helpers::l01_16_elaboration::{errors, value};
+use zed_tests::step_helpers::l01_16_elaboration::value;
 
 use super::{M, models, prints};
 
@@ -252,15 +252,17 @@ fn map_in_the_value_of_a_remap() {
 }
 
 #[test]
-fn map_of_a_row_bound_by_a_shorter_pattern_waits_for_its_step() {
+fn map_of_a_row_bound_by_a_shorter_pattern() {
     // `m as (k -> r) into (k -> r.map(f))` binds `r` to a whole row: an `as` pattern of fewer
-    // levels than its source, plan row REMAP-fewer-binders. Until it lands the checker refuses
-    // it as a later step; that row moves this case to a value check.
-    let src = with_m("x = m as (k -> r) into (k -> r.map(v -> v + 1));\n");
-    let es = errors(&src).join("\n");
-    assert!(
-        es.contains("a remap whose `as` pattern names 1 key levels of a source with more"),
-        "{es}"
+    // levels than its source (plan row REMAP-fewer-binders). It is the map of each row.
+    let src = with_m(&format!(
+        "x = m as (k -> r) into (k -> r.map(v -> v + 1));\ny = {BUMPED};\n"
+    ));
+    assert_eq!(value(&src, "x"), value(&src, "y"), "{src}");
+    prints(
+        &src,
+        "x",
+        r#"{"a" -> {1 -> 11, 2 -> 21}, "b" -> {1 -> 31}}"#,
     );
 }
 

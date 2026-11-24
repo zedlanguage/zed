@@ -20,9 +20,10 @@ written out in the test.
 | truncate after a `map` (to set leaves and to the outer level) | `forms::a_map_before_a_truncation_leaves_its_keys` | by hand |
 | `map` after a truncation, over the key sets | `forms::a_map_after_a_truncation_reads_the_key_sets` | by hand |
 | `map` inside the value expression of a remap | `forms::map_in_the_value_of_a_remap` | by hand |
-| `map` of a whole row bound by a shorter `as` pattern | `forms::map_of_a_row_bound_by_a_shorter_pattern_waits_for_its_step` (refused today; row REMAP-fewer-binders) | the refusal |
+| `map` of a whole row bound by a shorter `as` pattern (row REMAP-fewer-binders) | `forms::map_of_a_row_bound_by_a_shorter_pattern` | by hand, and equal to `m.map(r -> r.map(v -> v + 1))` |
 | a remap inside `map`'s function | `forms::a_remap_in_the_function_of_a_map` | by hand |
 | empty source | `forms::map_and_remap_of_an_empty_list` | by hand |
 | a constant `map`, then a transpose | `forms::a_map_to_a_constant_then_a_transpose` | by hand |
 | the law `xs.map(f) as K` equals `(xs as K).map(f)` for a key-only remap, on random families (transpose; tuple key with an affine component) | `law::map_commutes_with_a_key_only_remap_on_random_families` | model |
 | scaling at 1x and 8x of one composed form (map, transpose with `><`, map) | `bench::map_transpose_fold_map_runs_in_linear_time` | T(8n)/T(n) |
+| scaling at 1x and 8x of rows bound whole by a shorter `as` pattern (row REMAP-fewer-binders) | `bench::rows_bound_whole_run_in_linear_time` | T(8n)/T(n) |

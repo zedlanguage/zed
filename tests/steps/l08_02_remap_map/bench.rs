@@ -22,6 +22,29 @@ fn rows(n: usize) -> String {
     format!("[{}]", rs.join(", "))
 }
 
+/// Plan row REMAP-fewer-binders: a remap whose `as` pattern binds each row of 10 whole, its
+/// value the row's sum, then the sum of those, at n and 8n entries. The rows are boxed by one
+/// pass over the n / 10 rows and then rekeyed; the work is O(n log n) in the ordered maps.
+#[test]
+fn rows_bound_whole_run_in_linear_time() {
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "m = {};\n\
+             t = (m as (i -> r) into (i -> r.sum)).sum;\n",
+            rows(n)
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "t"), (n * (n - 1) / 2).to_string());
+    };
+    scaling::check(
+        "a remap binding each of n / 10 rows of 10 whole, its value the row's sum, then the \
+         sum, whole path",
+        N_ENTRIES,
+        run,
+    );
+}
+
 #[test]
 fn map_transpose_fold_map_runs_in_linear_time() {
     let srcs = scaling::inputs(N_ENTRIES, |n| {
