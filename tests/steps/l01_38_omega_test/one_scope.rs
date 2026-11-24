@@ -3001,6 +3001,11 @@ fn the_answers_of_variants_of_a_chain_calling_an_integer_function_are_those_read
 /// h{j-1}(x: x) && x != gap·j` of `n` links: case 1 of LOAD-call-disj for `gap` 1, its holes
 /// spread for `gap` 2.
 fn a_chain_calling_a_callee_with_holes_every(n: usize, gap: usize) -> String {
+    a_chain_moving_holes_every(n, gap, 1)
+}
+
+/// The holes `h{j}(x) = h{j-1}(x: x) && x != gap·j`, `j` in `0..n`: `n` values.
+fn holes_every(n: usize, gap: usize) -> String {
     let mut src = String::from("h0(x: int) = x != 0;\n");
     for j in 1..n {
         src.push_str(&format!(
@@ -3009,13 +3014,54 @@ fn a_chain_calling_a_callee_with_holes_every(n: usize, gap: usize) -> String {
             gap * j
         ));
     }
+    src
+}
+
+/// [`a_chain_calling_a_callee_with_holes_every`] whose call of the link before moves its
+/// argument by `shift`: `p{i}(x) = h{n-1}(x: x) && p{i-1}(x: x + shift) && x < 1000 i`
+/// (LOAD-call-disj-noncollapsing).
+fn a_chain_moving_holes_every(n: usize, gap: usize, shift: usize) -> String {
+    let mut src = holes_every(n, gap);
     src.push_str("p0(x: int) = x > 0;\n");
     for i in 1..n {
         src.push_str(&format!(
-            "p{i}(x: int) = h{}(x: x) && p{}(x: x + 1) && x < {};\n",
+            "p{i}(x: int) = h{}(x: x) && p{}(x: x + {shift}) && x < {};\n",
             n - 1,
             i - 1,
             1000 * i
+        ));
+    }
+    src
+}
+
+/// LOAD-call-disj-noncollapsing, the shift-2 chain (META1 E7 of XR-load-call-node): the spread
+/// holes moved by 2 at each link, so that the holes of link `i` are the even values from
+/// `-2 (i - 1)` to `2 n - 2`, `n + i - 1` runs that never join into one.
+pub(super) fn a_chain_moving_spread_holes_by_two(n: usize) -> String {
+    a_chain_moving_holes_every(n, 2, 2)
+}
+
+/// LOAD-call-disj-noncollapsing, the chain of disjoint blocks (Codex, R1 Q5 of
+/// XR-load-call-node): the spread holes moved by `2 n`, past their own span, so that link `i`
+/// holds `i` disjoint copies of the `n` holes, `n i` runs.
+pub(super) fn a_chain_moving_spread_holes_past_themselves(n: usize) -> String {
+    a_chain_moving_holes_every(n, 2, 2 * n)
+}
+
+/// LOAD-call-disj-noncollapsing, branching callers of one hole set: `f(x) = h{n-1}(x: x) &&
+/// h{n-1}(x: x + 2)`, the spread holes and their copy moved by 2, called by `n - 1` callers
+/// `c{j}(x) = f(x: x) && h{n-1}(x: x + 2 j) && x > 0 - 2 n && x < 2 n`, each beside one more
+/// copy of the holes, moved by its own `2 j`.
+pub(super) fn branching_callers_of_spread_holes(n: usize) -> String {
+    let mut src = holes_every(n, 2);
+    let h = n - 1;
+    src.push_str(&format!("f(x: int) = h{h}(x: x) && h{h}(x: x + 2);\n"));
+    for j in 1..n {
+        src.push_str(&format!(
+            "c{j}(x: int) = f(x: x) && h{h}(x: x + {}) && x > 0 - {} && x < {};\n",
+            2 * j,
+            2 * n,
+            2 * n
         ));
     }
     src
@@ -3040,6 +3086,10 @@ fn the_answers_of_calls_of_a_callee_that_chooses_are_those_reading_bodies() {
     for m in [1, 2, 6, 30] {
         answers_are_those_reading_bodies(&a_chain_calling_a_callee_with_holes(m));
         answers_are_those_reading_bodies(&a_chain_calling_a_callee_with_spread_holes(m));
+        // LOAD-call-disj-noncollapsing: the three families of its benches.
+        answers_are_those_reading_bodies(&a_chain_moving_spread_holes_by_two(m));
+        answers_are_those_reading_bodies(&a_chain_moving_spread_holes_past_themselves(m));
+        answers_are_those_reading_bodies(&branching_callers_of_spread_holes(m));
     }
     for src in [
         // Two calls with different arguments, one of them past every hole.

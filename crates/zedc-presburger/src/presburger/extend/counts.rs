@@ -62,8 +62,11 @@ pub const HOLES_SAME: usize = 20;
 /// Holes written out as clauses, one a hole (`Holes::clauses`): where the solver is asked
 /// with them, the fallback of the hole route.
 pub const HOLES_WRITTEN: usize = 21;
+/// Runs of the smaller side cut into the larger by `Holes::merged`, one a run: the explicit
+/// merges that LOAD-call-disj-noncollapsing removes (design-b22-load11.md).
+pub const HOLES_MERGED_RUNS: usize = 22;
 /// The number of counts.
-pub const N: usize = 22;
+pub const N: usize = 23;
 
 thread_local! {
     static COUNTS: [Cell<u64>; N] = const { [const { Cell::new(0) }; N] };
