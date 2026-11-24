@@ -1873,6 +1873,35 @@ fn parts_answered_before_the_classed_charges_are_answered() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+/// The negative control of fix B of the test above: with `SPARE_OFF` (each piece of a class
+/// asked with its class, b7ab00a78) the whole part of seed 30 is refused again; with it on,
+/// answered.
+#[test]
+fn the_classed_charge_seeds_are_refused_with_each_fix_undone() {
+    use zedc::store::presburger::exact::SPARE_OFF;
+    let whole = |seed: u64, at: usize| {
+        let mut r = Rng::new(seed);
+        let mut drawn = None;
+        for _ in 1..=at {
+            drawn = Some(drawn_case(&mut r, false, true));
+        }
+        let (items, bs) = drawn.expect("a part");
+        let s = scope(&bs);
+        let f = formula(&items);
+        let syms: Vec<Atom> = (f.atoms().into_iter())
+            .filter(|a| matches!(a, Atom::Sym(_)))
+            .collect();
+        each_answer(&s, &f, &syms)
+    };
+    SPARE_OFF.set(true);
+    let off = whole(30, 109);
+    SPARE_OFF.set(false);
+    let on = whole(30, 109);
+    println!("seed 30 spare off: {off}\nseed 30 spare on: {on}");
+    assert!(off.contains("refused"), "{off}");
+    assert!(!on.contains("refused"), "{on}");
+}
+
 /// The parts that took the route by pendants, counted by kind: with two disjunctions or
 /// more among their conjuncts (each `Item::Or` and `Item::Ne`), with a pendant whose name's
 /// box has a hole, and with a pendant whose coefficient is not one or minus one. A pendant here

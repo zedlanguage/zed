@@ -67,6 +67,14 @@ thread_local! {
     /// PRES-cover-moduli-two-disjunctions (`exact::two_distributed`), for the tests that show
     /// what it answers.
     pub static TWO_DISTRIBUTED_OFF: Cell<bool> = const { Cell::new(false) };
+    /// Test control: `exact::shared_cells` lists every class of a symbol's cell, with no room
+    /// of `size` values (the first cut of PERF-exact-strided-unlisted), for the tests that show
+    /// the room bounds its work.
+    pub static CLASS_ROOM_OFF: Cell<bool> = const { Cell::new(false) };
+    /// Test control: `exact::cells_cover` asks every piece of a class with its class, none one
+    /// value at a time (b7ab00a78, before VERIFY-classed-charge-refusals), for the tests that
+    /// show what the values asked alone save.
+    pub static SPARE_OFF: Cell<bool> = const { Cell::new(false) };
     /// The questions `exact_each` has asked on this thread, read by tests.
     pub static EXACT_QUESTIONS: Cell<u64> = const { Cell::new(0) };
     /// The work `exact_each` has used on this thread, read by tests and benchmarks.
