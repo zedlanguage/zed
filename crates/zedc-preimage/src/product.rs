@@ -449,6 +449,35 @@ impl Product {
         self.cell.ints.element.concrete()
     }
 
+    /// The integers of the interval domain met with the congruence's class, as one
+    /// [`Classed`](zedc_lattice::classed::Classed): [`Product::classed_in`] of [`Product::ints`].
+    pub fn classed(&self) -> zedc_lattice::classed::Classed {
+        self.classed_in(self.ints())
+    }
+
+    /// The integers of `ints` met with the congruence's class, as one
+    /// [`Classed`](zedc_lattice::classed::Classed), so that a reader that prints them prints a
+    /// strided set by its class rather than by its hull or its values one range each
+    /// (DOMAINS-classed-check-print). A class other than every integer on a set with an
+    /// infinite end is not a `Classed` (which keeps such a class only with finite ranges, since
+    /// a set holding an infinite range holds two consecutive integers); there `ints` alone is
+    /// given, a superset of the integers both domains hold, as a reader of [`Product::ints`]
+    /// alone sees them. O(p log p) for p ranges
+    /// (`Classed::new`).
+    pub fn classed_in(&self, ints: &IntervalSet) -> zedc_lattice::classed::Classed {
+        use zedc_lattice::classed::Classed;
+        let finite = || {
+            ints.bounds()
+                .is_none_or(|(l, h)| matches!((l, h), (End::Fin(_), End::Fin(_))))
+        };
+        match &self.cell.congruence.element {
+            Congruence::Class { modulus, .. } if *modulus != Num::ONE && !finite() => {
+                Classed::plain(ints.clone())
+            }
+            c => Classed::new(ints.clone(), c.clone()),
+        }
+    }
+
     /// The one value, when the finite set holds exactly one.
     pub fn value(&self) -> Option<&Value> {
         match &self.cell.finite.element {

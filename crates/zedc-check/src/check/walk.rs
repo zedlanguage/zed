@@ -21,6 +21,7 @@ use zed_kernel::bits::BitLen;
 use zed_kernel::limits::{Kill, MainLimits};
 use zed_kernel::text::ident;
 use zedc_lattice::cell::Premises;
+use zedc_lattice::classed::Classed;
 use zedc_preimage::address::Address;
 use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
 use zedc_preimage::product::{self, NameProducts, Product, RootFailure, Scope};
@@ -13356,7 +13357,7 @@ impl<'a> Ck<'_, 'a> {
             return;
         }
         let shown = match narrowed {
-            true => got.type_text(),
+            true => self.classed_here(e).0.type_text(None),
             false => self.show(&Ty::set(ints)),
         };
         let message = format!(
@@ -13487,6 +13488,32 @@ impl<'a> Ck<'_, 'a> {
         let ints = self.arms.here_ints[&(e.span, here)].clone();
         let changed = ints != k.ints;
         (ints, changed)
+    }
+
+    /// [`Ck::ints_here`] met with the class the scope's product of `e` holds
+    /// ([`Product::classed_in`]), for a message to print: a strided set prints by its class,
+    /// `(x: int[0..=20] where x mod 2 == 0)`, not by its hull or its values one range each
+    /// (DOMAINS-classed-check-print, DESIGN "Types in a message"). Where no test is in force
+    /// the scope holds no class `e`'s text does not show, and `ints_here` itself is given.
+    /// The scope's read of `e` is the one [`Ck::ints_here`] made, found in its memo
+    /// (`Arms::reads`), and is made holding its questions, as the read of a value is there.
+    /// Complexity tradeoff: naive version, the class carried in `Arms::here_ints` through every
+    /// read of parts, O(p log p) at each part for p ranges; used: read for a message only,
+    /// one `Classed::new`, O(p log p), at each of the four places a message prints a set; at
+    /// `int_range` that text is built for every int argument inside a test, printed or not, one
+    /// memoized read and one `Classed::new` more than `ints_here` per argument (measured at
+    /// `l01_29_repairs_and_printing::bench::power_repairs::showing_a_class_of_growing_count_scales`).
+    pub(super) fn classed_here(&mut self, e: &'a Expr) -> (Classed, bool) {
+        let (ints, narrowed) = self.ints_here(e);
+        if self.arms.here() == 0 {
+            return (Classed::plain(ints), narrowed);
+        }
+        let holding = std::mem::replace(&mut self.holding, true);
+        let read = self.read_in_scope_at(e, None).0;
+        self.holding = holding;
+        let classed = read.classed_in(&ints);
+        let narrowed = narrowed || classed != ints;
+        (classed, narrowed)
     }
 
     /// Fills [`Arms::here_ints`](super::arms::Arms::here_ints) for `e` at node `here`, and
@@ -13626,9 +13653,9 @@ impl<'a> Ck<'_, 'a> {
         while let Some(x) = stack.pop() {
             match &x.kind {
                 ExprKind::Name(_) => {
-                    let (ints, narrowed) = self.ints_here(x);
+                    let (ints, narrowed) = self.classed_here(x);
                     if narrowed {
-                        out.insert(x.span, ints.type_text());
+                        out.insert(x.span, ints.type_text(None));
                     }
                 }
                 ExprKind::Unary(_, a) => stack.push(a),
@@ -19439,7 +19466,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // gives no value.
         let shown = match (self.int_exponent_at(e), narrowed) {
             (Some(v), _) => self.show(&Ty::lit(&v)),
-            (None, true) => ints.type_text(),
+            (None, true) => self.classed_here(e).0.type_text(None),
             (None, false) => self.show(&Ty::set(ns.clone())),
         };
         // Every value of the exponent below 0: a test of it leaves nothing to raise.
@@ -23425,7 +23452,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let shown = match &values {
             _ if shown_as_type || ints == IntervalSet::top() => self.show(&Ty::set(ns)),
             Some(vs) => vs[0].to_string(),
-            None => ints.type_text(),
+            None => self.classed_here(e).0.meet_ranges(&ints).type_text(None),
         };
         Some(IntRange {
             ints,

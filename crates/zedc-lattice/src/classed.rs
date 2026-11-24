@@ -83,7 +83,7 @@ impl Classed {
         // 11.6 times the bytes); test `bench::classed::n_plain_sets_of_n_pieces_scale` (l01_25)
         // 8.31 and 8.0. Negative control, not kept (this test skipped): 63.9, 11.7 and 12.0
         // times the bytes.
-        if m == Num::ONE && !Classed::wider_class(&ranges) {
+        if m == Num::ONE && !Classed::wider_class(&ranges) && plain_shortcut::taken() {
             return Classed::plain_unchecked(ranges);
         }
         // Each range's ends moved in to the nearest members of the class (as
@@ -543,6 +543,69 @@ impl Classed {
     }
 }
 
+/// The switch of the plain-set shortcut of [`Classed::new`], for the tests of its callers
+/// (VERIFY-classed-wider-class-callers): each runs its own work with the shortcut taken and
+/// again with it not taken, and compares the two answers.
+///
+/// Why the shortcut changes no value (the claim these tests check through every caller): for
+/// modulus 1 and a set `S` that [`Classed::wider_class`] rules out, the full path reaches
+/// `IntervalSet::from_pieces(S.into_pieces())` (the gcd `g` is 0 for one member, or 1 once a
+/// piece holds two values or two pieces' starts differ by a gcd of 1, or the first end is
+/// infinite), and that is `S` as a set: `S`'s pieces are sorted, disjoint and not adjacent
+/// (the invariant of `IntervalSet`), so `normal_pieces` returns them unchanged. `IntervalSet`'s
+/// `==`, `Hash`, `Display` and `Debug` read the pieces only. What can differ is sharing: the
+/// shortcut returns `S`'s own tree, the full path a new one, so a caller that asks
+/// `ptr_eq`-style questions (a "changed" flag, a cache keyed by the tree) may do more or less
+/// work, and a caller that counts work against a budget could then answer differently. The
+/// tests compare whole answers, refusals included, so they would see that.
+#[doc(hidden)]
+pub mod plain_shortcut {
+    use std::cell::Cell;
+
+    /// 0: taken (the default); 1: taken and counted; 2: not taken.
+    const TAKEN: u8 = 0;
+    const COUNTED: u8 = 1;
+    const SKIPPED: u8 = 2;
+
+    thread_local! {
+        static MODE: Cell<u8> = const { Cell::new(TAKEN) };
+        static COUNT: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// Whether [`super::Classed::new`] takes the shortcut for a set it allows: one read of a
+    /// thread-local byte, and a count where a test asked for it.
+    pub(super) fn taken() -> bool {
+        match MODE.with(Cell::get) {
+            TAKEN => true,
+            COUNTED => {
+                COUNT.with(|c| c.set(c.get() + 1));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `f` run with the shortcut taken, then with it not taken: both answers, and the count of
+    /// calls of [`super::Classed::new`] that took the shortcut in the first run. The mode is
+    /// put back to taken even when `f` panics.
+    pub fn both<R>(mut f: impl FnMut() -> R) -> (R, R, u64) {
+        struct Restore;
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                MODE.with(|m| m.set(TAKEN));
+            }
+        }
+        let _restore = Restore;
+        COUNT.with(|c| c.set(0));
+        MODE.with(|m| m.set(COUNTED));
+        let with = f();
+        let count = COUNT.with(Cell::get);
+        MODE.with(|m| m.set(SKIPPED));
+        let without = f();
+        (with, without, count)
+    }
+}
+
 impl PartialEq<IntervalSet> for Classed {
     /// Whether the two sets hold the same values: both in the one form of [`Classed::new`]
     /// and compared, O(p log p) for p ranges, with no value listed.
@@ -586,3 +649,6 @@ impl fmt::Debug for Classed {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

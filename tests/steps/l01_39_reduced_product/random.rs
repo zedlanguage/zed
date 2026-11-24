@@ -156,6 +156,33 @@ fn every_value_that_reaches_an_arm_is_in_its_scope() {
     shape_kinds_met();
 }
 
+/// The scopes of the arms of random shapes (the reduced product of zedc-preimage `product.rs`,
+/// which reads its integer sets as `Classed`) are the same, printed, with the plain-set
+/// shortcut of `Classed::new` taken and not taken (`zedc_lattice::classed::plain_shortcut`,
+/// VERIFY-classed-wider-class-callers): 1 000 shapes. The shapes that took the shortcut are
+/// counted and printed; the assertion asks for one, since no draw is built to reach it.
+#[test]
+fn arm_scopes_are_the_same_with_and_without_the_plain_shortcut() {
+    use zedc_lattice::classed::plain_shortcut;
+    let (mut rng, seed) = Rng::fresh("arm_scopes_are_the_same_with_and_without_the_plain_shortcut");
+    let (cases, mut took) = (1000, 0);
+    for case in 0..cases {
+        let s = Shape::random(&mut rng);
+        let (with, without, count) = plain_shortcut::both(|| {
+            let arms = s.arms();
+            arms.iter()
+                .map(|a| format!("{} {} {}", a.guard, a.outcome, a.scope))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(with, without, "seed {seed}, case {case}: {s:?}");
+        if count > 0 {
+            took += 1;
+        }
+    }
+    println!("seed {seed}: {took} of {cases} took the shortcut");
+    assert!(took > 0, "seed {seed}: no case took the shortcut");
+}
+
 /// The random shapes [`every_value_that_reaches_an_arm_is_in_its_scope`] checks in a run.
 const SHAPES: usize = 40;
 
