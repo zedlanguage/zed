@@ -19109,14 +19109,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if let (BinaryOp::Add | BinaryOp::Sub, Value::Rat(a), Value::Rat(b)) = (op, &x, &y)
                     && let Some(bits) = sum_build(a, b)
                 {
-                    let plain: u64 = [&**a, &**b]
-                        .into_iter()
-                        .map(|r| {
-                            let (num, den, _) = r.kept();
-                            num.bits() + den.bits()
-                        })
-                        .sum();
-                    if bits > BigUint::from(2 * plain + 1) {
+                    // `2P + 1`, computed and proved once (`Rat::plain_sum_bits`), shared with
+                    // the bound normal form's sum rule (`Rat::sum_folds`).
+                    if bits > BigUint::from(a.plain_sum_bits(b)) {
                         return None;
                     }
                 }

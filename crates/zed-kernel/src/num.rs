@@ -1658,6 +1658,36 @@ impl Rat {
         ))
     }
 
+    /// `2P + 1`, `P` the bits of the plain parts `num` and `den` of both operands ([`Rat::kept`],
+    /// the parts apart from the prime powers and wide atoms): the most bits a sum of the plain
+    /// parts alone builds. Proof: (1) the plain parts are `p/q` and `r/s`; (2) their sum is
+    /// `(p s ± r q) / (q s)`, reduced or not; (3) `bits(p s) <= bits p + bits s` and
+    /// `bits(r q) <= bits r + bits q`, each at most `P`, so `bits(p s ± r q) <= P + 1`;
+    /// (4) `bits(q s) <= bits q + bits s <= P`; (5) the two together build at most `2P + 1`.
+    /// So a sum sized past both `2P + 1` and the 64 bits of a word builds out a kept power or a
+    /// wide atom, as `3r^k + 1r` does (P is 4, the build `k log2 3` bits). O(1).
+    pub fn plain_sum_bits(&self, b: &Rat) -> u64 {
+        let plain: u64 = [self, b]
+            .into_iter()
+            .map(|r| {
+                let (num, den, _) = r.kept();
+                num.bits() + den.bits()
+            })
+            .sum();
+        2 * plain + 1
+    }
+
+    /// The sum rule of the checker's constant folding and of the bound normal form
+    /// (DESIGN.md L1.17d, "a sum of constants is one constant when it constructs no more than
+    /// its operands hold"): whether `a + b` builds at most the larger of 64 bits (a word, kept
+    /// unbuilt) and [`Rat::plain_sum_bits`], sized by [`Rat::sum_least`] without building it.
+    /// So `2^64 + 2^63` is added (the shared `2^63` is factored out) and `3^(2^40) + 1` is not.
+    /// [`TooLarge`] as [`Rat::sum_least`]. O(primes kept).
+    pub fn sum_folds(&self, b: &Rat) -> Result<bool, TooLarge> {
+        let bits = self.sum_least(b)?;
+        Ok(bits <= BigUint::from(self.plain_sum_bits(b).max(64)))
+    }
+
     /// `a * b`, or [`TooLarge`] when the system refuses the memory for the products of the
     /// coefficients and their reduction, asked before anything is built. The kept powers add
     /// their exponents and are not built.

@@ -1761,7 +1761,10 @@ fn assert_each_kind_taken(seed: u64, kinds: RouteKinds) {
 #[test]
 fn a_run_that_draws_no_holed_pendant_still_takes_the_route_with_one() {
     let seed = 9_929_385_727_579_474_391;
-    assert_each_kind_taken(seed, pendants_against_whole_drawn(Rng::new(seed), seed, true));
+    assert_each_kind_taken(
+        seed,
+        pendants_against_whole_drawn(Rng::new(seed), seed, true),
+    );
 }
 
 /// The count of one kind in a [`RouteKinds`].
