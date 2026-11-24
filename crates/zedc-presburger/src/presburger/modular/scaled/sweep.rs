@@ -249,11 +249,19 @@ pub(super) fn solve_by(
             part.insert(r, Part::R(i));
         }
     }
+    // A product atom declines, as in `scaled::solve` (META1 A1 of XR-presburger4): [`orient`]
+    // never roots on a product, but a product can be a row's quotient or remainder, and the
+    // sweep would give it a value of its own where [`Formula::holds`] reads it through its
+    // factors (the test `the_sweep_leaves_a_product_quotient_to_the_general_path`).
     let mut cons = 0u64;
     let mut inside = true;
     f.walk(&mut |c| {
         cons += 1;
-        inside &= c.lin.terms.keys().all(|a| part.contains_key(a));
+        inside &= c
+            .lin
+            .terms
+            .keys()
+            .all(|a| part.contains_key(a) && !matches!(a, Atom::Product(..)));
     });
     if !inside {
         return None;

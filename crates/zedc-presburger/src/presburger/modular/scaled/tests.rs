@@ -1285,6 +1285,39 @@ fn sumset_leaves_a_product_remainder_to_the_fallback() {
     );
 }
 
+/// A row of modulus 1 whose quotient is a product atom (found by b22-load11's random test of
+/// `extend::met`, 2026-11-24): `x * y + q == 2` reads as the row `q = 2 - P` on the root `q`
+/// ([`orient`] never takes a product as the root, but an end of a row may be one), so the
+/// period sweep gave `P = x * y` a value as an atom, and [`Formula::holds`], which reads a
+/// product through its factors, found the point false: "the point at x = 0 is not one of".
+/// The sweep must leave a formula with a product to the general path, as [`solve`] does
+/// (META1 A1 of XR-presburger4), by both of its methods; the formula has a point
+/// (`x = y = 0`, `q = 2`) and [`decide`](crate::presburger::decide) must find one.
+#[test]
+fn the_sweep_leaves_a_product_quotient_to_the_general_path() {
+    use crate::presburger::formula::Factor;
+
+    let product = Lin::atom(Atom::Product(
+        Factor::Sym("x".into()),
+        Factor::Sym("y".into()),
+    ));
+    let f = Formula::Con(Con::eq(&product.plus(&q(0)), &Lin::constant(2)));
+    for method in [sweep::Method::Runs, sweep::Method::Residues] {
+        for want_model in [false, true] {
+            let got = sweep::solve_by(&f, want_model, method, 400_000);
+            assert!(
+                got.is_none(),
+                "{method:?}, model {want_model}: {got:?}\n{f}"
+            );
+        }
+    }
+    assert!(sweep::solve(&f, true).is_none(), "{f}");
+    assert!(
+        matches!(crate::presburger::decide(&f), Ok(true)),
+        "decide\n{f}"
+    );
+}
+
 /// The rows `x == p_i q_i + r_i` for the first `k` odd primes and one more row
 /// `2 x == 3 q + r` (a block of two rows of modulus 3: `k + 1` rows in `k` blocks), and `j` sums
 /// `E + c`, `c` in `0..j`,
