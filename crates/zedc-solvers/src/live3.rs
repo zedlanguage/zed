@@ -459,16 +459,85 @@ type Found = Box<([Q; 2], Val)>;
 /// c`, or the point and value when it lies on the line. The value is convex, so the least
 /// value on a line infinitely near on one side is less than on the line exactly when the
 /// least value of the plane lies on that side.
+///
+/// One solve over all the pieces finds the least point `y*` of the line; the two lines moved by
+/// `±ε1` are solved over the pieces active at `y*` alone ([`active`]), which gives the same two
+/// answers (FAIL-seed-393-near-limit; b22-presburger12, 2026-11-24). Proof. Write `F` for the
+/// value (`Val`, compared part by part in order) over the pieces `p`, and `F_A` for the value
+/// over the active pieces.
+///
+/// 1. `y*` and `v = F(y*)` are real: `n`, `c` and every piece are rational, so every meeting
+///    point and value `solve1` reads on the unmoved line is (`E::real` asserts it).
+/// 2. `F` and `F_A` agree on a real neighborhood of `y*`: each part of `F` is the greatest or
+///    least of a group of affine functions, or (the first part) the greatest of `lo - up`, `0`
+///    and the violations; a piece not active at `y*` is off its group's extreme there by a real
+///    `δ > 0`, and stays off it within the real distance `δ / (2·|g|)`, `g` its slope less the
+///    extreme's. So `F(y* + d) = F(y*) + D(d)` for every `d` in that neighborhood, real or with
+///    parts of `ε1`, with `D(d)` the parts' directional derivatives (each the greatest or least
+///    of `g·d` over the active pieces, `lo - up` giving the greatest of the lower bounds' less
+///    the least of the upper bounds'); `D` is positively homogeneous, and the same for `F_A`.
+/// 3. Each part of `F` and of `F_A` is convex (a greatest of affine functions; `lo - up` is the
+///    greatest of the differences, the coordinates are linear), so for `μ` in `(0, 1]`,
+///    `F(y + μ(q - y))` is at most `(1 - μ)F(y) + μF(q)` part by part, and so in the order of
+///    `Val` it is below `F(y)` whenever `F(q)` is: every part is at most `F(y)`'s, and the first
+///    part where `F(q)` is less is less. Hence `y*` is also the least point of the line under
+///    `F_A`: a point `q` of the line with `F_A(q) < F_A(y*)` would give points of the line
+///    arbitrarily near `y*` below `F(y*)` under `F_A`, and so by 2 under `F`.
+/// 4. Claim, for `F` or `F_A` (each with `y*` least on the line, by 3): the least value on the
+///    line `n·y = c + ε1` is below `v` exactly when some real `d` with `n·d > 0` has `D(d) <
+///    0`. If: `p = y* + ε1·d / (n·d)` lies on the moved line, and by 2 `F(p) = v + ε1·D(d) /
+///    (n·d) < v`. Only if: let `p` on the moved line have `F(p) < v` and `d = p - y* = d_r +
+///    ε1·e`, `d_r` real with `n·d_r = 0` and `n·e = 1`. By 3, `F(y* + μd) < v` for every real
+///    `μ` in `(0, 1]`, and by 2 for small `μ` that is `v + μD(d)`, so `D(d) < 0`. Along `s ↦
+///    d_r + s·e`, `D` is piecewise linear with real breakpoints, so on `[0, s0)`, `s0 > 0` real,
+///    `D(d_r + s·e) = D(d_r) + s·K`; at `s = ε1` that is `D(d) < 0`. `D(d_r) >= 0`, since
+///    `y* + μd_r` lies on the line, where `y*` is least. Let `j` be the first part of `D(d)` that
+///    is not zero: the parts before it have `D(d_r)_i + ε1·K_i = 0`, so both are zero, and part
+///    `j` has `D(d_r)_j + ε1·K_j < 0` with `D(d_r)_j >= 0` (the earlier parts being zero), so
+///    `D(d_r)_j = 0` and `K_j < 0`. Then a real `s` in `(0, s0)` gives `D(d_r + s·e) = s·K < 0`
+///    with `n·(d_r + s·e) = s > 0`.
+/// 5. `D` is the same for `F` and `F_A` (2), so by 4 the moved line's least value is below `v`
+///    under `F` exactly when it is under `F_A`; the same with `-ε1` and `n·d < 0`. So `side`
+///    answers as it did with three solves over all the pieces.
+///
+/// Complexity tradeoff: the first solve is O(m) for `m` pieces, as before; [`active`] is one
+/// O(m) pass; the two moved solves are O(k) for the `k` active pieces, against O(m) each before.
+/// `k` is usually two to four (the pieces meeting at a vertex), and at most `m`, so the work
+/// is never more than before but for the one pass; on the profile of the row, `side`'s three
+/// `on_line` calls were 40.0% of the instructions, so up to about 27% is saved.
 fn side(p: &[Vec<Lin2>; 3], n: &[Q; 2], c: &Q) -> Result<Ordering, Found> {
     let (y, v) = on_line(p, n, c, 0);
-    if on_line(p, n, c, 1).1 < v {
+    let [a, b] = y;
+    let at = [a.real(), b.real()];
+    let near = active(p, &at);
+    if on_line(&near, n, c, 1).1 < v {
         return Ok(Ordering::Greater);
     }
-    if on_line(p, n, c, -1).1 < v {
+    if on_line(&near, n, c, -1).1 < v {
         return Ok(Ordering::Less);
     }
-    let [a, b] = y;
-    Err(Box::new(([a.real(), b.real()], v)))
+    Err(Box::new((at, v)))
+}
+
+/// The pieces of each group that take the group's extreme at the real point `y`: the greatest
+/// of the lower bounds and of the violations, the least of the upper bounds. Each group of
+/// `p` that has a piece keeps one at least, so the lower and upper bounds [`eval1`] needs stay.
+/// O(m), one value of each piece.
+fn active(p: &[Vec<Lin2>; 3], y: &[Q; 2]) -> [Vec<Lin2>; 3] {
+    [0, 1, 2].map(|g| {
+        let vals: Vec<Q> = p[g].iter().map(|f| f.at(y)).collect();
+        let best = match KEEP[g] {
+            Keep::Max => vals.iter().max(),
+            Keep::Min => vals.iter().min(),
+        };
+        let Some(best) = best else {
+            return Vec::new();
+        };
+        (p[g].iter().zip(&vals))
+            .filter(|(_, v)| *v == best)
+            .map(|(f, _)| f.clone())
+            .collect()
+    })
 }
 
 /// An open region of the plane known to hold the least value: `at` plus the positive
