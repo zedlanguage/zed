@@ -2216,6 +2216,17 @@ fn with(defs: &[Formula], f: Formula) -> Formula {
 /// and the refusal when the solver refuses that question. Time of `f`, and O(log n) for each
 /// atom added to `m`.
 fn met(m: &Point, f: &Formula) -> Result<Option<Point>, Refusal> {
+    met_by(m, f, &fixed_fails)
+}
+
+/// [`met`], with `fails` the test of a top-level part that answers `Ok(None)` without the
+/// solver: [`fixed_fails`] in [`met`]; the tests also pass none and its mutants
+/// (`tests::met_answers_as_the_solver_with_its_shortcut_on_and_off`).
+fn met_by(
+    m: &Point,
+    f: &Formula,
+    fails: &dyn Fn(&Point, &Formula) -> bool,
+) -> Result<Option<Point>, Refusal> {
     let atoms = f.atoms();
     let mut at = read_at(m, &atoms);
     let mut out = m.clone();
@@ -2226,27 +2237,17 @@ fn met(m: &Point, f: &Formula) -> Result<Option<Point>, Refusal> {
         }
         return Ok(Some(out));
     }
-    // A conjunct of `f` whose atoms are symbols and variables `m` gives values, and which
-    // fails at those values, fails at every point that gives the atoms of `m` their values:
-    // `f` holds at none, without the solver. Exact, and O(the conjuncts and their atoms); a
-    // link whose new bound moves past its part's point (`x >= 2 i` at `x = 2 i - 1`) is settled
+    // A conjunct of `f` that fails with the values `m` gives it fails at every point the
+    // solver below can reach ([`fixed_fails`]): `f` holds at none, without the solver. A link
+    // whose new bound moves past its part's point (`x >= 2 i` at `x = 2 i - 1`) is settled
     // here, and a call node beside it is read at one value, O(log n), not written out as its
-    // n clauses for the solver (LOAD-call-disj-spread, META3 H7).
-    // Only constraints and call nodes are read here, each in O(its term): a conjunct that is a
-    // conjunction is left to the solver, so the walk costs no more than `f.atoms()` above.
-    let fixed_fails = |g: &Formula| {
-        if !matches!(g, Formula::Con(_) | Formula::Holes(_)) {
-            return false;
-        }
-        let ga = g.atoms();
-        let given = |a: &Atom| matches!(a, Atom::Sym(_) | Atom::Aux(_)) && m.contains_key(a);
-        ga.iter().all(given) && !g.holds(&read_at(m, &ga))
-    };
+    // n clauses for the solver (LOAD-call-disj-spread, META3 H7). Only the top-level parts are
+    // read, each in O(its term), so the walk costs no more than `f.atoms()` above.
     let kids = match f {
         Formula::And(_) => f.kids(),
         _ => std::slice::from_ref(f),
     };
-    if kids.iter().any(fixed_fails) {
+    if kids.iter().any(|g| fails(m, g)) {
         return Ok(None);
     }
     let mut fixed = vec![f.clone()];
@@ -2264,6 +2265,48 @@ fn met(m: &Point, f: &Formula) -> Result<Option<Point>, Refusal> {
         }
     }
     Ok(Some(out))
+}
+
+/// Whether the part `g` of a conjunction is a constraint or a call node, each of whose atoms
+/// is a symbol or an auxiliary variable that `m` gives a value, and fails at those values.
+/// O(g's term and log n an atom).
+///
+/// Proof that [`met`] answers `Ok(None)` by this test exactly where the solver of its last
+/// step would (LOAD-met-shortcut-exactness, b22-load11). Let A be `f.atoms()` and F the atoms
+/// of A that `m` gives. The last step asks the solver for a point of `f && a == m[a]` for each
+/// a in F, and answers `Ok(None)` when there is none. Let `g` be a part of `f`'s top-level
+/// conjunction (or `f` itself) that passes this test.
+/// 1. Every point where `f` holds is one where `g` holds, since `g` is one of its conjuncts.
+/// 2. Every atom of `g` is in F. `Formula::atoms` collects the atoms of each leaf that
+///    `walk_leaves` reaches from `f`, and it reaches each leaf of `g`, a part of `f` (a part
+///    shared between two places is read at its first, which adds the same atoms). A call
+///    node's atoms are those of its term on both routes: read as itself, or as its clauses
+///    (`BoundHoles::lowered`), each the term against a constant. This test asks `m` to give
+///    each atom of `g`. So in every point the solver can reach, each atom of `g` has the value
+///    `m` gives it.
+/// 3. With no product among its atoms, `g`'s value at those values is the one the solver
+///    reads. A constraint's term is read by `Lin::eval` here and by `Lin::eval_linear` in the
+///    solver, which differ only on a product atom (the first reads it as the product of its
+///    factors, the second as a variable of its own). A call node holds here when the term's
+///    value lies in no run (`HoleSet::run_of`); the solver reads it as its clauses, one a run
+///    `(lo, hi)`: `term <= lo - 1 || term >= hi + 1`. The runs are closed intervals, so the
+///    value avoids a run exactly when it is below `lo` or above `hi`, and avoids every run
+///    exactly when it lies in none.
+/// 4. So `g` fails at every point the solver can reach, and by 1 so does `f`: the solver
+///    finds no point, and `met` answers `Ok(None)` as it would. Where the solver would refuse
+///    the question, `met` gives this exact answer in place of the refusal.
+///
+/// Each condition is needed, and the tests catch the mutant that drops it: a part with an
+/// atom `m` does not give is read here with that atom at 0 (`Lin::eval`), where the solver
+/// may choose another value; a product atom that `m` gives a value other than the product of
+/// its factors' values fails here and may hold for the solver (step 3).
+fn fixed_fails(m: &Point, g: &Formula) -> bool {
+    if !matches!(g, Formula::Con(_) | Formula::Holes(_)) {
+        return false;
+    }
+    let ga = g.atoms();
+    let given = |a: &Atom| matches!(a, Atom::Sym(_) | Atom::Aux(_)) && m.contains_key(a);
+    ga.iter().all(given) && !g.holds(&read_at(m, &ga))
 }
 
 /// The values of `atoms` at `m`, with the factors of their products. O(log n) an atom.
@@ -6508,6 +6551,117 @@ mod tests {
             let c = counts::take();
             assert_eq!(a.holds, Ok(holds), "x = {v}: {c:?}");
         }
+    }
+
+    /// LOAD-met-shortcut-exactness (b22-load11): [`met`] with its shortcut ([`fixed_fails`])
+    /// gives the answer it gives with the shortcut off, the solver deciding each question, on
+    /// random conjunctions of constraints, call nodes and disjunctions over three symbols, two
+    /// auxiliary variables and a product, at random points that give some atoms values. Fixed
+    /// seed; the cases where the shortcut answers are counted and asserted. Negative controls:
+    /// the shortcut firing on a part with one atom the point does not give, and on a part with
+    /// a product atom, must each give a wrong answer on some case.
+    #[test]
+    fn met_answers_as_the_solver_with_its_shortcut_on_and_off() {
+        const CASES: usize = 3000;
+        let sym = |s: &str| Atom::Sym(s.into());
+        let pool = [
+            sym("x"),
+            sym("y"),
+            sym("z"),
+            a(0),
+            a(1),
+            Atom::product_of(Factor::Sym("x".into()), Factor::Sym("y".into())),
+        ];
+        fn leaf(g: &Formula) -> bool {
+            matches!(g, Formula::Con(_) | Formula::Holes(_))
+        }
+        let one_free = |m: &Point, g: &Formula| {
+            let ga = g.atoms();
+            let plain = ga.iter().all(|a| matches!(a, Atom::Sym(_) | Atom::Aux(_)));
+            let free = ga.iter().filter(|a| !m.contains_key(*a)).count();
+            leaf(g) && plain && free <= 1 && !g.holds(&read_at(m, &ga))
+        };
+        let products = |m: &Point, g: &Formula| {
+            let ga = g.atoms();
+            leaf(g) && ga.iter().all(|a| m.contains_key(a)) && !g.holds(&read_at(m, &ga))
+        };
+        type Fails = dyn Fn(&Point, &Formula) -> bool;
+        let mutants: [&Fails; 2] = [&one_free, &products];
+        let mut rng = crate::seed::Rng::new(0x3e7a_11b2);
+        let term = |rng: &mut crate::seed::Rng| {
+            let mut t = Lin::constant(rng.int(-3, 3));
+            let mut atoms = pool.to_vec();
+            rng.shuffle(&mut atoms);
+            for x in atoms.into_iter().take(1 + rng.below(2)) {
+                t.plus_assign(&Lin::atom(x).times(rng.pick(&[-2i64, -1, 1, 2])));
+            }
+            t
+        };
+        let (mut fired, mut answered_none, mut refused) = (0, 0, 0);
+        let mut caught = [0usize; 2];
+        for case in 0..CASES {
+            let mut kids = Vec::new();
+            for _ in 0..1 + rng.below(4) {
+                kids.push(match rng.below(6) {
+                    0 | 1 => Formula::Con(Con::ge(&term(&mut rng), &Lin::constant(0))),
+                    2 => Formula::Con(Con::eq(&term(&mut rng), &Lin::constant(0))),
+                    3 | 4 => {
+                        let runs = (0..1 + rng.below(3))
+                            .map(|_| {
+                                let lo = rng.int(-4, 4);
+                                (Int::from(lo), Int::from(lo + rng.int(0, 2)))
+                            })
+                            .collect();
+                        Formula::outside(&super::super::HoleSet::of(runs), term(&mut rng))
+                    }
+                    _ => Formula::or(vec![
+                        Formula::Con(Con::ge(&term(&mut rng), &Lin::constant(0))),
+                        Formula::Con(Con::ge(&term(&mut rng), &Lin::constant(0))),
+                    ]),
+                });
+            }
+            let f = Formula::and(kids);
+            let mut m = Point::new();
+            for x in &pool {
+                if rng.below(3) > 0 {
+                    m.insert(x.clone(), Int::from(rng.int(-3, 3)));
+                }
+            }
+            let on = met_by(&m, &f, &fixed_fails);
+            let off = met_by(&m, &f, &|_, _| false);
+            let parts = match &f {
+                Formula::And(_) => f.kids(),
+                _ => std::slice::from_ref(&f),
+            };
+            let fires = parts.iter().any(|g| fixed_fails(&m, g));
+            fired += usize::from(fires);
+            match &off {
+                Ok(o) => {
+                    answered_none += usize::from(o.is_none());
+                    assert_eq!(on.as_ref().ok(), Some(o), "case {case}: {f:?} at {m:?}");
+                }
+                Err(_) => {
+                    refused += 1;
+                    let want = if fires { Some(&None) } else { None };
+                    assert_eq!(on.as_ref().ok(), want, "case {case}: {f:?} at {m:?}");
+                }
+            }
+            for (i, mutant) in mutants.iter().enumerate() {
+                if let Ok(o) = &off
+                    && met_by(&m, &f, *mutant).ok().as_ref() != Some(o)
+                {
+                    caught[i] += 1;
+                }
+            }
+        }
+        let seen = (fired, answered_none, refused, caught);
+        eprintln!("shortcut fired, solver empty, refused, mutants caught: {seen:?}");
+        assert!(fired >= CASES / 10, "{seen:?}");
+        assert!(answered_none > fired, "{seen:?}");
+        assert!(
+            caught.iter().all(|&k| k > 0),
+            "a mutant was not caught: {seen:?}"
+        );
     }
 
     /// `k1 * a1 + k2 * a2 + ... + c` related to 0 by `rel`.

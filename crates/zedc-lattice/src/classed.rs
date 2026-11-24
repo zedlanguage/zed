@@ -65,6 +65,27 @@ impl Classed {
                 empty()
             };
         }
+        // Complexity tradeoff: naive version, the pieces of a plain set copied out and built
+        // into a new set below, O(p) bytes for p pieces at every call, which made a walk that
+        // builds a box of a set of `k` pieces at each of `k` levels allocate `Θ(k²)` bytes
+        // (`l01_39_reduced_product::if_shortcut::bench::
+        // the_walk_over_blocks_whose_names_tests_read_scales` form 6, 55.8 times the bytes of
+        // `interval::build` at 8 times the depth, dhat, FAIL-l01-39-bytes-arm-callee-if-shortcut).
+        // Used: a plain set whose members lie in no class of modulus above 1 is its own ranges,
+        // kept as given, with no byte allocated. Why it is the one form: an `IntervalSet`'s
+        // pieces are sorted, disjoint and not adjacent (`IntervalSet::from_normal`), so they are
+        // its maximal runs of consecutive integers, which is what the code below gives for
+        // modulus 1, and `from_pieces` of them is the same set. [`Classed::wider_class`] reads
+        // the pieces only up to the first that rules a wider class out. Given up: nothing.
+        // Measured (hm1, 2026-11-24): form 6 9.20 times the instructions and 8.7 times the
+        // bytes at 8 times the depth (was 11.9 times the bytes), and
+        // `arm_test_through_call::bench::tests_calling_one_deep_callee_scale` 8.73 and 8.1 (was
+        // 11.6 times the bytes); test `bench::classed::n_plain_sets_of_n_pieces_scale` (l01_25)
+        // 8.31 and 8.0. Negative control, not kept (this test skipped): 63.9, 11.7 and 12.0
+        // times the bytes.
+        if m == Num::ONE && !Classed::wider_class(&ranges) {
+            return Classed::plain_unchecked(ranges);
+        }
         // Each range's ends moved in to the nearest members of the class (as
         // `revision::reduce_congruence`), so every end is a member.
         let reduced: Vec<(End, End)> = if m == Num::ONE {
@@ -128,6 +149,38 @@ impl Classed {
             ),
             class,
         }
+    }
+
+    /// Whether the members of the plain set `set` lie in a class of modulus above 1, so that
+    /// its one form ([`Classed::new`]) has a class other than every integer: it has two members
+    /// or more, and each piece is one value (a piece of two values holds two consecutive
+    /// integers, whose difference 1 makes the gcd 1), the gcd of their differences from the
+    /// first above 1. Proof of the early answers: the gcd only falls as values are added, so a
+    /// gcd of 1, an infinite end or a piece of two values settles `false` for the rest. O(1) for
+    /// a set whose first piece is wider than one value, O(p) at most for p pieces; nothing is
+    /// allocated but the iterator's stack, O(log p).
+    fn wider_class(set: &IntervalSet) -> bool {
+        let mut pieces = set.pieces();
+        let Some((End::Fin(a0), End::Fin(hi0))) = pieces.next() else {
+            return false;
+        };
+        if hi0 != a0 {
+            return false;
+        }
+        let mut g = Num::ZERO;
+        for piece in pieces {
+            let (End::Fin(lo), End::Fin(hi)) = piece else {
+                return false;
+            };
+            if lo != hi {
+                return false;
+            }
+            g = g.gcd(&(lo - a0));
+            if g == Num::ONE {
+                return false;
+            }
+        }
+        !g.is_zero()
     }
 
     /// `set` with every integer as its class, `set` known to be in the one form already.

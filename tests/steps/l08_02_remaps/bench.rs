@@ -1015,6 +1015,27 @@ fn group_by_a_function_parameter_runs_in_linear_time() {
     );
 }
 
+/// Row GROUP-prelude: [`group_by_a_function_parameter_runs_in_linear_time`] with `group`
+/// written as the remap the prelude would hold, `group2(positional m, positional f) = m as (k
+/// -> v) into (f(v) -> k -> v)`, so the two benches' instructions at n and 8n compare the
+/// built-in word with the prelude form on one program.
+#[test]
+fn group_written_as_a_remap_by_a_function_parameter_runs_in_linear_time() {
+    let srcs = scaling::inputs(N_ENTRIES, |n| {
+        format!(
+            "group2(positional m, positional f) = m as (k -> v) into (f(v) -> k -> v);\n\
+             g(positional f) = group2({}, f);\na = g(v -> v mod 7).count;\n",
+            list(n)
+        )
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), "7");
+    scaling::check(
+        "group of n entries by a function parameter written as a remap, whole path",
+        N_ENTRIES,
+        run,
+    );
+}
+
 /// Row REMAP-dynamic-deep-binder: a generic function's remap over n entries in rows of 10, the
 /// value binder at a class when the body is checked, so the plan may box each row
 /// (`may_be_family`): the cost of the boxing pass on an existing remap whose value type is not
@@ -1329,5 +1350,35 @@ fn a_chain_of_n_maps_written_in_reverse_order_takes_linear_time() {
         |(n, src)| {
             scaling::on_a_stack(2 << 20, || assert_eq!(value(src, "a"), n.to_string()));
         },
+    );
+}
+
+/// Free names of a remap of a parameter (FAIL-remap-need-free-names-unbound): the leaf reads
+/// n parameters besides the source, `v + c0 + … + c(n-1)`, so the remap's need carries n
+/// names and their types, found once and bound once at the call. Whole path.
+const N_FREE: usize = 400;
+
+/// Negative control, run once and not committed: with the meet of the need binding every free
+/// name's type again for each free name (`Ck::remap_src` n times per name, O(n^2)), the ratio
+/// this reports is given in the row FAIL-remap-need-free-names-unbound.
+#[test]
+fn a_remap_reading_n_free_names_is_checked_in_linear_time() {
+    let srcs = scaling::inputs(N_FREE, |n| {
+        let params = (0..n).map(|i| format!(", c{i}")).collect::<String>();
+        let sum = (0..n).map(|i| format!(" + c{i}")).collect::<String>();
+        let args = (0..n).map(|i| format!(", c{i}: 1")).collect::<String>();
+        format!(
+            "g(positional m{params}) = m as (k -> v) into (k -> v{sum});\n\
+             x = g([1, 2]{args});\nt = x as (i -> v) into (i >< (+) -> v);\n"
+        )
+    });
+    let run = |n: usize| {
+        assert_eq!(value(&srcs[&n], "t"), (2 * n + 3).to_string());
+    };
+    scaling::check(
+        "a call of a generic remap whose leaf reads n parameters besides its source, whole \
+         path",
+        N_FREE,
+        run,
     );
 }

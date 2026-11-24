@@ -517,29 +517,6 @@ pub enum Witness {
     },
 }
 
-/// A power `a ^ e` at `span` whose base builds a part past 64 bits (DESIGN.md
-/// sec:checking_in_zed): whether the base is a `rat`, the least bit lengths of its built parts
-/// (exactly [`Rat::built_widths`] for a base the text fixes, else what `Ck::least_built`
-/// proves), whether they are exact, `F`, the sum of their lengths less one, and their count,
-/// the least magnitude `k` of the exponent where the walk met it and whether every exponent
-/// is below 0, and `k * F + built`, the least bit length of the result. Found by
-/// `Ck::too_large_power`.
-struct WidePower<'a> {
-    a: &'a Expr,
-    e: &'a Expr,
-    span: Span,
-    rat: bool,
-    widths: [Option<u128>; 2],
-    exact: bool,
-    floor_log: u128,
-    built: u64,
-    k: Num,
-    negative: bool,
-    bits: Num,
-    /// What the base's bounds rest on, left to the end of the walk ([`Built::proof`]).
-    proof: Option<coprime::ProofId>,
-}
-
 /// An operation at `span` on operands the text fixes that builds a number in full, `p`, whose
 /// build the kernel sizes ([`kernel_build`]): the bits it builds, within the address space.
 /// Found by `Ck::too_large_build`, judged against the memory limit of `main` once it is read.
@@ -549,16 +526,6 @@ struct WideBuild {
     /// The operands' spans, whose derivation the rejection prints.
     args: Vec<Span>,
     bits: Num,
-}
-
-/// An operation `p` at `span` on the operands `args` that builds from their values, kept by
-/// the span of each operand (`Ck::note_build_parent`), so that a repair that shrinks a power
-/// is checked with the builds around it (`Ck::shrunk_power_fits`, row CONST-repair-build-trial).
-#[derive(Clone)]
-struct BuildParent<'a> {
-    p: Prim,
-    args: Vec<&'a Expr>,
-    span: Span,
 }
 
 /// A product or quotient `a * b` or `a / b` at `span` whose least size the text proves
@@ -1481,6 +1448,49 @@ impl WrittenAround {
             taken: &self.taken,
         }
     }
+}
+
+/// For each variable a need of `needs` is on, the meet of the closed types of its
+/// [`NeedKind::Into`] needs while every need on it is one, and `None` once a need of another
+/// kind is on it or a forward names it ([`NeedKind::Fwd`] holds only uses of other kinds).
+/// Why the meet: each `Into { ty }` need on `v` is met at a call exactly when the argument
+/// given for `v` is within `ty` (`passes_into` at the call, check/walk.rs, `Ck::meet`), so
+/// with every use of that kind the arguments accepted are those within every `ty`, their meet
+/// (the argument at [`Ck::sig_text`]). Read by [`Ck::sig_text_with`] and
+/// [`Ck::passed_type`], so that the type printed and the type a call passes atoms by are one.
+// Complexity: one pass over the needs with a hash map by variable, O(needs) and a meet per
+// `Into` need after the first of a variable; equal types are not met again.
+fn into_types(needs: &[Need]) -> HashMap<Arc<str>, Option<Ty>> {
+    let mut passed: HashMap<Arc<str>, Option<Ty>> = HashMap::new();
+    for n in needs {
+        if let NeedKind::Fwd(fwd) = &n.kind {
+            for t in &fwd.on_vars {
+                if let Some(v) = t.as_var() {
+                    passed.insert(v.clone(), None);
+                }
+            }
+            continue;
+        }
+        let Some(v) = n.on.as_var() else { continue };
+        let into = match &n.kind {
+            NeedKind::Into { ty, .. } => Some(ty),
+            _ => None,
+        };
+        match passed.entry(v.clone()) {
+            Entry::Vacant(e) => {
+                e.insert(into.cloned());
+            }
+            Entry::Occupied(mut e) => {
+                let b = e.get_mut();
+                *b = match (into, b.take()) {
+                    (Some(ty), Some(b)) if b == *ty => Some(b),
+                    (Some(ty), Some(b)) => Some(b.meet(ty)),
+                    _ => None,
+                };
+            }
+        }
+    }
+    passed
 }
 
 /// `t` shown with each class of `masks`, a variable of `t` with its carriers, shown as the
@@ -2733,34 +2743,16 @@ struct Ck<'t, 'a> {
     port_writers: HashSet<usize>,
     /// The memory limit written before `main`, in bytes, the span of its `@limits` and that of
     /// the argument of `memory:` ([`Self::main_limits`]): a number proved larger is rejected
-    /// ([`Self::too_large_power`]).
+    /// ([`Self::powers_over_main_limit`]).
     main_memory: Option<(u128, Span, Span)>,
-    /// The powers of a wide base found within the address space, by span, with what the walk
-    /// found of each at its site, for [`Self::powers_over_main_limit`] to judge against the
-    /// memory limit of `main` once it is read.
-    wide_powers: BTreeMap<Span, WidePower<'a>>,
     /// The products and quotients whose least size the text proves within the address space,
-    /// by span, with what the walk found of each at its site, judged as [`Self::wide_powers`]
-    /// are.
+    /// by span, with what the walk found of each at its site, for
+    /// [`Self::powers_over_main_limit`] to judge against the memory limit of `main` once it is
+    /// read.
     wide_products: BTreeMap<Span, WideProduct<'a>>,
-    /// The products and quotients proved past the address space, rejected once the walk is
-    /// over (`Ck::judge_proved`), when the operations around each are known, so that the
-    /// repair of a smaller power operand is checked with them (row
-    /// CONST-too-large-products-fix), each with the derivation of its type as the walk wrote
-    /// it where the product was met, which the message keeps.
-    space_products: Vec<(WideProduct<'a>, Vec<Note>)>,
     /// The other operations that build a number in full within the address space, by span
-    /// (`Ck::too_large_build`), judged as [`Self::wide_powers`] are.
+    /// (`Ck::too_large_build`), judged as [`Self::wide_products`] are.
     wide_builds: BTreeMap<Span, WideBuild>,
-    /// The operation that builds from each operand's value, by the operand's span
-    /// (`Ck::note_build_parent`), read by the repair of a power past the memory limit of
-    /// `main`.
-    build_parents: HashMap<Span, BuildParent<'a>>,
-    /// The powers a repair of a power past the memory limit of `main` folds, by base value and
-    /// exponent (`Ck::shrunk_power_fits`): each repair tries the exponents `2^j` from the top
-    /// down, and lines with one base try the same ones, so each is folded once per check
-    /// (FAIL-powers-bench-43s).
-    shrunk_powers: HashMap<(Value, i64), Option<Value>>,
     /// The classes; class `k` is the type variable `$k`. Those an admitted forward reserves
     /// are made only when it is forced (`M62`, [`probe::Classes`]).
     classes: probe::Classes<Class>,
@@ -2954,6 +2946,10 @@ struct Ck<'t, 'a> {
     /// ([`Ck::new`] takes one program's tables, and no signature or need comes from
     /// elsewhere), so the span names one remap of that program.
     remap_exprs: HashMap<Span, &'a Expr>,
+    /// The names each remap of `remap_exprs` reads that are bound outside it, by its span,
+    /// as binder ids, sorted, each once ([`Ck::remap_free_names`]). A pure function of the
+    /// remap's text and the name resolution, so never undone by a trial.
+    remap_free: HashMap<Span, Arc<[usize]>>,
     /// Each fold `m >< op` checked outside a trial, by its span: the carriers of the entries
     /// it was checked at, each once, with the identity of `op` there, if it has one; no
     /// carrier for entries of no known type, as those of `[]`, which fold to `#empty`. A fold in
@@ -3568,12 +3564,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             port_params: HashSet::new(),
             port_writers: HashSet::new(),
             main_memory: None,
-            wide_powers: BTreeMap::new(),
             wide_products: BTreeMap::new(),
-            space_products: Vec::new(),
             wide_builds: BTreeMap::new(),
-            build_parents: HashMap::new(),
-            shrunk_powers: HashMap::new(),
             classes: Default::default(),
             data_checked: HashSet::new(),
             merge_checked: HashMap::new(),
@@ -3607,6 +3599,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             alike_keys: Vec::new(),
             escapes: HashSet::new(),
             remap_exprs: HashMap::new(),
+            remap_free: HashMap::new(),
             folds: BTreeMap::new(),
             refused: Vec::new(),
             need_passed: Vec::new(),
@@ -7289,11 +7282,32 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.sig_text_with(s, &[])
     }
 
+    /// The type [`Self::sig_text`] prints for the variable `v` of `s` in place of its name,
+    /// the meet of the closed types of its uses, when every use of `v` is an argument at a
+    /// parameter of a closed type ([`NeedKind::Into`]), `v` stands in one place of `s`, and no
+    /// declaration wrote it; `None` where `sig_text` prints `v` as a type variable or `_`.
+    /// The carrier bound of `v` is not met in: a caller reads it apart ([`Self::refused`]).
+    /// The three conditions are those of [`Self::sig_text_with`], in the same order of
+    /// reasons, and read by the same routines ([`into_types`], [`Self::around`],
+    /// [`Sig::standing_twice`]), so the type a call passes atoms by is the type printed.
+    // Complexity: O(needs) for [`into_types`], and, only when `v` is passed-only, the
+    // printer's walk for [`Sig::standing_twice`], O(n log n) in the size n of `s`'s text, and
+    // [`Self::around`]'s O(c log N); asked only at a call whose argument holds loose atoms at
+    // a variable parameter ([`Self::refused`]), never at a call of values with no atom.
+    fn passed_type(&self, s: &Sig, v: &Arc<str>) -> Option<Ty> {
+        let t = into_types(s.needs.as_slice()).remove(v).flatten()?;
+        let around = self.around(s.facts());
+        if around.kept.iter().any(|(k, _)| k == v) || s.standing_twice().contains(v) {
+            return None;
+        }
+        Some(t)
+    }
+
     /// [`Self::sig_text`], each variable of `written` printed by the name given with it
     /// ([`Self::written_param_names`]).
     fn sig_text_with(&self, s: &Sig, written: &[(Arc<str>, Arc<str>)]) -> String {
         let s = s.solved_with(&|v| self.stale(v));
-        let mut passed: HashMap<Arc<str>, Option<Ty>> = HashMap::new();
+        let mut passed = into_types(s.needs.as_slice());
         // For each variable, the (key, result) of each lookup `v[k]` at a fixed key, while
         // every use of it is one ([`Self::lookups_as_maps`]); `None` after a use of another kind.
         let mut looked: HashMap<Arc<str>, Option<Vec<(Ty, Ty)>>> = HashMap::new();
@@ -7301,11 +7315,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         for n in &s.needs {
             if let NeedKind::Fwd(fwd) = &n.kind {
                 // `Fwd` holds only `Entries`/`Call`/`Map` (`#3`), never `Into`: every `.on`
-                // variable
-                // in it has a non-`Into` use, so `sig_text` must keep it as a type variable.
+                // variable in it has a use of another kind, so it is no map ([`into_types`]
+                // keeps it a type variable for the same reason).
                 for t in &fwd.on_vars {
                     if let Some(v) = t.as_var() {
-                        passed.insert(v.clone(), None);
                         looked.insert(v.clone(), None);
                     }
                 }
@@ -7328,23 +7341,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
                 _ => *l = None,
-            }
-            let into = match &n.kind {
-                NeedKind::Into { ty, .. } => Some(ty),
-                _ => None,
-            };
-            match passed.entry(v.clone()) {
-                Entry::Vacant(e) => {
-                    e.insert(into.cloned());
-                }
-                Entry::Occupied(mut e) => {
-                    let b = e.get_mut();
-                    *b = match (into, b.take()) {
-                        (Some(ty), Some(b)) if b == *ty => Some(b),
-                        (Some(ty), Some(b)) => Some(b.meet(ty)),
-                        _ => None,
-                    };
-                }
             }
         }
         // A variable that stands in two places keeps its printing, a type variable: `T -> (0,
@@ -10772,9 +10768,37 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The atoms of `loose` that no arrow of `sig` takes at parameter `i`, which pass through
     /// the call: all of them where the parameter is a variable bounded to carriers, those
-    /// its type does not hold where it is a closed type, and none where it is a variable, a
-    /// class or `_`. At most one set difference per arrow, and no meet: an arrow whose
-    /// parameter is a variable, a class or `_` empties `out` or leaves it as it is.
+    /// its type does not hold where it is a closed type or a variable printed as one
+    /// ([`Self::passed_type`]), and none where it is any other variable, a class or `_`. At
+    /// most one set difference per arrow, and no meet: an arrow whose parameter is such a
+    /// variable, a class or `_` empties `out` or leaves it as it is.
+    ///
+    /// A variable printed as a closed type (row FAIL-atom-into-arrow-param-not-passed-out):
+    /// `x` of `g(x, c: bool) = (if c { t0(n: x) } else { 0 })` with `t0(n: f64 -> f64)` may
+    /// take a function, a value other than a carrier, so its bound holds [`OTHER`] and it
+    /// took every atom: `g(x: #a, c: true)` sent `#a` into `t0`'s need, which refused it,
+    /// while `h(y: f64 -> f64) = 1` lets `h(y: #a)` pass `#a` by (rule 6 of
+    /// sec:type_resolution; DESIGN.md sec:failure, "atoms bubble out of an argument"), and
+    /// `g` prints `(x: f64 -> f64, c: bool) -> int`. Why passing by at `g` is right, step by
+    /// step: (1) every use of `x` is an argument at a closed parameter, and `x` stands in no
+    /// other place of `g`'s type ([`Self::passed_type`]), so the values `g` accepts for `x`
+    /// are exactly those of the printed type `P` (the argument at [`into_types`]); (2) an
+    /// atom outside `P` would reach a use that refuses it, and no other use can take it, as
+    /// there is none: no arrow of `g` takes it, which is what rule 6 asks of an atom that
+    /// passes by; (3) DESIGN L1.26 lets the atom in only where the class "may take other
+    /// values" in its type variable, that is where the variable is the type printed (`T` or
+    /// `_`), as `a` of `k(positional a) = (ap(a), a)`, which stands twice and prints
+    /// `T -> (0, T)`: [`Self::passed_type`] gives `None` there and the atom enters as before,
+    /// so `ap` still refuses `#nf` (the four l01_27 loose tests
+    /// `a_loose_atom_enters_a_parameter_whose_bound_may_take_other_values`,
+    /// `a_loose_atom_enters_the_first_arrow_at_a_parameter_that_may_take_other_values`,
+    /// `no_is_repair_is_offered_for_a_function_type` and
+    /// `the_is_repair_on_a_shared_part_declares_it_at_the_top_level`). A bound without
+    /// [`OTHER`] already passes every atom by, as before. Tests: l01_26 printed_param_types
+    /// `an_atom_passes_by_a_parameter_passed_into_a_function_type` and
+    /// `random_printed_parameter_types_are_what_calls_accept` (its skip of atoms at arrow
+    /// types removed). They cannot catch a parameter whose uses mix `Into` with other kinds,
+    /// which keeps the old rule.
     fn refused(&self, sig: &Sig, i: usize, loose: &KType) -> KType {
         let mut out = loose.clone();
         for arrow in &sig.arrows {
@@ -10782,9 +10806,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 break;
             }
             let p = &arrow.params[i];
+            let printed = || p.as_var().and_then(|v| self.passed_type(sig, v));
             out = match p.as_var().and_then(|v| sig.bounds.get(v)) {
                 Some(&m) if m & OTHER == 0 => out,
-                Some(_) => KType::empty(),
+                Some(_) => printed().map_or_else(KType::empty, |t| &out - &t.set),
+                None if p.as_var().is_some() && self.class_of_ty(p).is_none() => {
+                    printed().map_or_else(KType::empty, |t| &out - &t.set)
+                }
                 None if p.dynamic || !p.vars.is_empty() || self.class_of_ty(p).is_some() => {
                     KType::empty()
                 }
@@ -14159,8 +14187,10 @@ fn binary_prim(op: BinaryOp) -> Option<Prim> {
 }
 
 /// The most memory, in bits, one step of a constant fold may ask for ([`kernel_folded`]):
-/// 2^27 bits, 16 MiB. A power asks for eight times its result, so `b ^ k` is folded up to a
-/// result of 2 MiB, about five million decimal digits; past that its value is not known, and
+/// 2^27 bits, 16 MiB. A step that builds a power in full asks for eight times its result, so
+/// `b ^ k + 1` is folded up to a result of 2 MiB, about five million decimal digits (the power
+/// `b ^ k` of a base wider than a word alone is kept as an atom and builds nothing, DESIGN.md
+/// step L1.17b); past that its value is not known, and
 /// the checker reads the expression by its type and range alone, as it reads one whose
 /// operands are not literals.
 //
@@ -14170,7 +14200,8 @@ fn binary_prim(op: BinaryOp) -> Option<Prim> {
 // It stands for the per-call partial-evaluation budget of A54 until MIX-budget sets that
 // budget, and is set as A99 set its 250 ms work bound: by the time one step takes at the
 // bound, measured with `zedc run` on the build machine (2026-11-13, 32 cores at load 50):
-// `(2^64 + 13) ^ 258111`, the largest power of that base the bound allows, takes about 0.3 s
+// `(2^64 + 13) ^ 258111`, then the largest power of that base the bound allowed (since
+// KEPT-power-form the bound falls on `(2^64 + 13) ^ 258110 + 1`, which builds it), took about 0.3 s
 // of processor time beyond the rest of the check, and `(2^64 + 13) ^ (2^22)`, at eight times
 // the bound, several seconds. It also lies far below the address space of every target (2^64
 // bytes on Linux x86_64, `limits::ADDRESS_BYTES_LOG2`), so a fold the bound lets through is one
@@ -14269,11 +14300,7 @@ fn kernel_build(p: Prim, args: Vec<Value>) -> Option<BigUint> {
             }
         }
         let (a, b) = (rat(a)?, rat(b)?);
-        let bits = match fixed_room(FOLD_ASK_BITS, || a.sum_least(&b)) {
-            Ok(bits) => bits,
-            Err(need) => need.size,
-        };
-        return (bits > BigUint::from(64u32)).then_some(bits);
+        return sum_build(&a, &b);
     }
     let term = Term::Prim(p, args.into_iter().map(Term::Lit).collect());
     match fixed_room(FOLD_ASK_BITS, || eval(&term)) {
@@ -14286,6 +14313,17 @@ fn kernel_build(p: Prim, args: Vec<Value>) -> Option<BigUint> {
         Ok(Value::Big(r) | Value::Rat(r)) => built_bits(&r),
         _ => None,
     }
+}
+
+/// The bits `a + b` or `a - b` builds in full, sized and not built ([`Rat::sum_least`], as
+/// [`kernel_build`] sizes a sum): where the sizing is refused under [`FOLD_ASK_BITS`], the
+/// size the refusal names; `None` where it is within 64 bits.
+fn sum_build(a: &Rat, b: &Rat) -> Option<BigUint> {
+    let bits = match fixed_room(FOLD_ASK_BITS, || a.sum_least(b)) {
+        Ok(bits) => bits,
+        Err(need) => need.size,
+    };
+    (bits > BigUint::from(64u32)).then_some(bits)
 }
 
 /// The bits of the parts of `r` built in full, those wider than 64 bits
@@ -16584,10 +16622,6 @@ struct Built {
     /// product's coefficients are the factors' products only where no factor shares a prime
     /// with them.
     kept: Option<coprime::SetId>,
-    /// Whether the bit lengths and the numbers of `parts` are the coefficients themselves, as
-    /// for a value the text fixes, so a part within 64 bits is known to be one, which a power
-    /// factors into kept primes (`Rat::pow`).
-    exact: bool,
     /// What the bounds rest on that the walk could not decide, the coprimality of roots made
     /// by products ([`coprime::Roots::settle`]); `None` where nothing is left to prove.
     proof: Option<coprime::ProofId>,

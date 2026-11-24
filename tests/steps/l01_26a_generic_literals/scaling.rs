@@ -313,7 +313,10 @@ pub(super) fn power_divisor(n: usize) -> String {
 
 /// A divisor of n nested squares `((3r^2)^2 …)^2 + 1r`: the square is taken of the base `3r`, a
 /// value of the text, and not of the range of a power, so the ends stay `9r` and do not double
-/// in size at each level.
+/// in size at each level. The text fixes the power, `3r^(2^n)`, kept as one prime power
+/// (DESIGN.md step L1.17b), and the sum writes it out in full, `2^n log2 3` bits: from n = 67
+/// past the address space, 2^67 bits, and, beside a `main` with no memory limit, from n = 33
+/// past the default limit of 1 GiB (`nested_squares_are_sized_at_the_sum`).
 pub(super) fn squares_divisor(n: usize) -> String {
     format!(
         "f(x: rat) = x / ({}3r{} + 1r);\n",
@@ -345,6 +348,40 @@ fn operations_on_literals_are_typed_by_their_value() {
         squares_divisor,
     ] {
         assert_eq!(type_errors(&make(3)), Vec::<String>::new(), "{}", make(3));
+    }
+}
+
+/// The sum `3r^(2^n) + 1r` writes out `2^n log2 3` bits (DESIGN.md sec:diagnostics, "Number too
+/// large for any memory of the target", whether or not its branch is taken). A unit without
+/// `main` is judged against the address space alone, 2^67 bits on Linux x86_64 (`Ck::
+/// powers_over_main_limit`): n = 66 builds 1.17e20 bits, within it, and n = 67, 2.34e20, past
+/// it. Beside a `main` that declares no memory limit, the bound is the default of 1 GiB: n = 32
+/// builds 851 MB, within it, and n = 33, 1.70 GB, past it. Corner cases on each side of each
+/// bound; the benchmark `bench::scaling::operations_on_literals_typed_by_their_value_check_in_
+/// linear_time_squares` times n = 2000.
+#[test]
+fn nested_squares_are_sized_at_the_sum() {
+    let with_main = |n| format!("{}main(m: MainArgs) = 0;\n", squares_divisor(n));
+    for (src, bound) in [
+        (squares_divisor(33), None),
+        (squares_divisor(66), None),
+        (squares_divisor(67), Some("any memory of the target")),
+        (with_main(32), None),
+        (with_main(33), Some("the default memory limit")),
+    ] {
+        let errors = type_errors(&src);
+        match bound {
+            None => assert_eq!(errors, Vec::<String>::new(), "{src}"),
+            Some(bound) => {
+                let [e] = &errors[..] else {
+                    panic!("one rejection:\n{src}\n{errors:?}")
+                };
+                assert!(
+                    e.starts_with(&format!("Number too large for {bound}")),
+                    "{e}"
+                );
+            }
+        }
     }
 }
 
@@ -431,6 +468,28 @@ fn a_fix_names_a_power_of_literals() {
 /// `f(b: bool) = if b { 3^(200 n) } else { 2 };`.
 pub(super) fn if_of_a_power(n: usize) -> String {
     format!("f(b: bool) = if b {{ 3^{} }} else {{ 2 }};\n", 200 * n)
+}
+
+/// `f(b: bool) = if b { (2^64 + 13)^(200 n) } else { 2 };`, a base wider than 64 bits.
+pub(super) fn if_of_a_wide_power(n: usize) -> String {
+    format!(
+        "f(b: bool) = if b {{ (2^64 + 13)^{} }} else {{ 2 }};\n",
+        200 * n
+    )
+}
+
+/// A power of a base wider than 64 bits is kept as the base, unfactored, with its exponent
+/// (plan row LIT-power-wide-base; DESIGN.md sec:domains "Kept powers"), so the type of an `if`
+/// holding one prints the power, as for a base of a word; before, `Rat::pow` built its digits,
+/// 13 million bits at the exponent 200,000. `2^64 + 13` holds no prime below 2^8 and is no
+/// perfect power, so it is one atom (`l01_17_value_representation::powers::
+/// a_power_of_a_wide_base_is_kept`). The cost: `bench::scaling::
+/// the_type_of_an_if_holding_a_power_of_a_wide_base_prints_the_power_when_checked`.
+#[test]
+fn the_type_of_an_if_holding_a_power_of_a_wide_base_prints_the_power() {
+    let src = if_of_a_wide_power(1);
+    assert_eq!(type_errors(&src), Vec::<String>::new());
+    assert_eq!(sig(&src, "f"), "(b: bool) -> 2 | 18446744073709551629^200");
 }
 
 /// [`if_of_a_power`] and `main() = f(b: true) > 1;`, rejected.

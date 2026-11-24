@@ -1563,6 +1563,8 @@ dependencies = [
 name = "zedc-lattice"
 version = "0.0.0"
 dependencies = [
+ "num-bigint",
+ "num-traits",
  "zed-collections",
  "zed-graph",
  "zed-kernel",

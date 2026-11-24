@@ -480,3 +480,101 @@ fn a_stride_meeting_a_kept_piece_scales_linearly() {
     assert!(instr < 10.5, "{instr:.2}x instructions per 8x n");
     assert!(bytes < 10.5, "{bytes:.2}x bytes per 8x n");
 }
+
+/// [`super::classed_bounds::evens`] with `n` more atoms, each in `0..=1`: `2n + 3`
+/// constraints, so the class of `s`'s cell, `n + 1` values, fits in the room of `size`.
+fn evens_padded(n: i64) -> Formula {
+    let names: Vec<String> = (0..n).map(|j| format!("y{j}")).collect();
+    let mut rows = vec![super::classed_bounds::evens(n)];
+    for y in &names {
+        rows.push(ge(&[(y.as_str(), 1)], 0));
+        rows.push(ge(&[(y.as_str(), -1)], 1));
+    }
+    Formula::and(rows)
+}
+
+/// Fix A of VERIFY-classed-charge-refusals: the class [`shared_cells`] lists for `s` holds
+/// `n + 1` values within a part of `2n + 3` constraints, so the listing is O(size) and the
+/// step's units grow near 8 times at 8n. Each run checks the listing happened: the gap left
+/// is the odd values, and its question finds no point.
+#[test]
+fn a_shared_cells_listed_class_grows_with_the_part() {
+    let run = |n: i64| {
+        let f = evens_padded(n);
+        let (points, _, used) =
+            super::classed_bounds::shared_for_s(&f, IntervalSet::of(0, 2 * n), constraints(&f));
+        assert_eq!(points, 1, "n {n}: the class was listed");
+        used
+    };
+    crate::scaling::hold(
+        "listed class at n 64 and 512",
+        "units",
+        run(64),
+        run(512),
+        1,
+    );
+    crate::scaling::check("listed class", 64, |n| {
+        std::hint::black_box(run(n as i64));
+    });
+}
+
+/// Fix A's room: a class of `n + 1` values in a part of 3 constraints is dropped, so the step
+/// costs the same at 8n. The red control, [`CLASS_ROOM_OFF`] (every class listed, the first
+/// cut of PERF-exact-strided-unlisted), grows with the class: over the limit of a constant.
+#[test]
+fn a_shared_cells_class_past_size_costs_the_same_at_8n() {
+    let run = |n: i64| {
+        let f = super::classed_bounds::evens(n);
+        let (points, _, used) =
+            super::classed_bounds::shared_for_s(&f, IntervalSet::of(0, 2 * n), constraints(&f));
+        (points, used)
+    };
+    CLASS_ROOM_OFF.set(true);
+    let (small, large) = (run(64), run(512));
+    CLASS_ROOM_OFF.set(false);
+    let red = large.1 as f64 / small.1.max(1) as f64;
+    println!("room off: {small:?} and {large:?}, {red:.2} times at 8n");
+    assert!(
+        red > crate::scaling::limit(0),
+        "the control must fail the limit: {red:.2}"
+    );
+    let (small, large) = (run(64), run(512));
+    assert_eq!(
+        (small.0, large.0),
+        (2, 2),
+        "dropped: a point in the gap found"
+    );
+    crate::scaling::hold(
+        "class past size at n 64 and 512",
+        "units",
+        small.1,
+        large.1,
+        0,
+    );
+    crate::scaling::check_order("class past size", 64, 0, |n| {
+        std::hint::black_box(run(n as i64));
+    });
+}
+
+/// The cover of `s == m·t`, `0 <= t <= 4`, in `[0, 4m]`: its gap is the `m - 1` classes
+/// `1..m mod m`, which `outside` drops, `ClassUnion::minus` of those classes from themselves.
+/// Linear in m: before, every class left was cut by each class taken, (m - 1)^2 cuts, 6,893
+/// units at m = 16 and 140,513 at m = 128 (20.4 times, the red run of this row).
+#[test]
+fn a_gap_of_classes_less_its_classes_is_linear_in_them() {
+    let run = |m: i64| {
+        let f = super::classed_bounds::multiples(m, 4);
+        let (_, used, _) = super::classed_bounds::cover_s(&f, &IntervalSet::of(0, 4 * m));
+        used
+    };
+    crate::scaling::hold(
+        "gap of classes at m 16 and 128",
+        "units",
+        run(16),
+        run(128),
+        1,
+    );
+    crate::scaling::check("gap of classes", 16, |m| {
+        std::hint::black_box(run(m as i64));
+    });
+}

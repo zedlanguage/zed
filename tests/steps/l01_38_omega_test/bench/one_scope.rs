@@ -749,6 +749,68 @@ fn the_questions_of_a_chain_calling_a_callee_with_spread_holes_scale() {
     );
 }
 
+/// A bench of LOAD-call-disj-noncollapsing: first, at 200 links, the runs cut by explicit
+/// merges (`counts::HOLES_MERGED_RUNS`) are at most 4n; then the questions at 1000 → 8000
+/// links. META1 E7 of XR-load-call-node computed that a call node merged into the face's holes
+/// at each link cuts Θ(n) runs a link on these chains, Θ(n² log n) a chain. On main since
+/// LOAD-call-disj-spread batch 2 no link of them reaches `Holes::merged` (0 runs cut at 200
+/// links, colab hm2, 2026-11-24; the shift-1 chain of
+/// `the_questions_of_a_chain_calling_a_callee_with_spread_holes_scale` cuts n), and the
+/// questions grow 8.17 to 8.23 times at 8n. The count comes first, so that a change that sends
+/// these links back to explicit merges fails in about a second, not at 8000 links, where it
+/// would cut about 64 million runs.
+fn noncollapsing_scale(what: &str, source: fn(usize) -> String) {
+    let n = 200;
+    let src = source(n);
+    let (stmts, tokens, unit) = (
+        zed_tests::deep::statements(&src),
+        zedc::lex::lex_fence(&src).expect("lexed"),
+        zed_tests::step_helpers::l01_16_elaboration::elab_total_mod(&src).expect("elaborated"),
+    );
+    counts::take();
+    let refused = zedc::front::linear_questions(&src, &tokens, &stmts, &unit);
+    let c = counts::take();
+    assert!(refused.is_empty(), "{refused:?}");
+    println!(
+        "{what}: {} runs cut by explicit merges at {n} links",
+        c[counts::HOLES_MERGED_RUNS]
+    );
+    assert!(
+        c[counts::HOLES_MERGED_RUNS] <= 4 * n as u64,
+        "{what}: {c:?}"
+    );
+    questions_scale_unit(what, 1000, source);
+}
+
+#[test]
+fn the_questions_of_a_chain_moving_spread_holes_by_two_scale() {
+    // LOAD-call-disj-noncollapsing, the shift-2 chain: link i holds n + i - 1 runs.
+    noncollapsing_scale(
+        "the linear questions of a chain moving spread holes by 2",
+        a_chain_moving_spread_holes_by_two,
+    );
+}
+
+#[test]
+fn the_questions_of_a_chain_of_disjoint_blocks_of_holes_scale() {
+    // LOAD-call-disj-noncollapsing, shift 2n: link i holds i disjoint copies of the n holes,
+    // n i runs, so every explicit form of them is Θ(n²) (Codex, R1 Q5).
+    noncollapsing_scale(
+        "the linear questions of a chain of disjoint blocks of holes",
+        a_chain_moving_spread_holes_past_themselves,
+    );
+}
+
+#[test]
+fn the_questions_of_branching_callers_of_spread_holes_scale() {
+    // LOAD-call-disj-noncollapsing, n - 1 callers of one face of 2n holes, each beside its
+    // own copy of them moved by 2j.
+    noncollapsing_scale(
+        "the linear questions of branching callers of spread holes",
+        branching_callers_of_spread_holes,
+    );
+}
+
 /// How [`a_chain_extending_one_hole_set`] writes its holes.
 #[derive(Clone, Copy)]
 enum HoleForm {

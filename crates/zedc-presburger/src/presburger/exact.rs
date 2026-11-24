@@ -73,8 +73,9 @@ use zedc_lattice::lattice::{Congruence, Lattice};
 use super::absorbing;
 use super::formula::{Ends, Id};
 pub use super::meter::{
-    DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK,
-    GUARDED_OFF, PART_CACHE_OFF, QUESTION_WORK, SHARED_OFF, SOLVER_UNIT, TWO_DISTRIBUTED_OFF,
+    CLASS_ROOM_OFF, DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS,
+    EXACT_WORK, FAST_WORK, GUARDED_OFF, PART_CACHE_OFF, QUESTION_WORK, SHARED_OFF, SOLVER_UNIT,
+    SPARE_OFF, TWO_DISTRIBUTED_OFF,
 };
 use super::meter::{PIECE, Solver, Work};
 use super::{Atom, Classed, Con, Each, EachClassed, Factor, Formula, Lin, Model, Refusal, Rel};
@@ -1616,8 +1617,13 @@ fn cells_cover(
         // asked one value at a time, its first (an end of a range in the one form of `Classed`
         // is a member), with no class; else with its class. Both give the same answer (a
         // point in the piece's class, or none, for the value or for the class), so only the
-        // cost changes. Why: the class question adds `#t` with coefficient `m`, and the
-        // solver's cost grows with it; such a class can be made by `Classed::new`, which gives
+        // cost changes. Why: the class question adds `#t` with coefficient `m` and one more
+        // atom, and in seed 30's cover it cost 400 times its two value questions. (That its
+        // cost grows with `m` was not found: rebuilt alone from seed 30's part, `c` in
+        // `[70 - m, 70]` with `c == m·#t + 70` cost 25,100 units at every m from 12 to 768, and
+        // five other parts were flat in m from 9 to 513, b22-eqsrest5's probe, 2026-11-24; the
+        // 1,066,625 units below came within the cover, the question there not rebuilt
+        // exactly.) Such a class can be made by `Classed::new`, which gives
         // any set its class: the two values left of seed 30's `c`, -26 and 70, were the class
         // `70 mod 96`, asked in one question that cost 1,066,625 units and was refused at the
         // limit, where 06fbc3477 asked each value alone at 2,500 units
@@ -1628,14 +1634,17 @@ fn cells_cover(
         // [`PIECE`] above), and falls by one for each such question. So over the cover these
         // questions number at most the ranges of `h` and of the cells read, each of which was
         // charged: O(w / PIECE) for the cover's work w, whatever `m` is. A piece with more
-        // values than `spare` is asked with its class, one question. The values left one by one
-        // between ranges the cover read (the case above) are never more than `spare` allows:
-        // each range taken from a plain set splits at most one range of it in two, so the gap's
-        // ranges, and so the values a class made of single values holds, number at most the
-        // ranges of `h` and of the cells taken, less the values asked one at a time since.
+        // values than `spare` is asked with its class, one question. That a piece of single
+        // values left between the ranges read always fits in `spare` does not hold (it was
+        // claimed here at b76c672c7): a class cut from a range leaves the other classes of
+        // its modulus, each of as many values as the range holds periods, past `spare` for a
+        // long range (`[0, 4m]` less `0 mod m`). Such a piece is then asked with its class, one
+        // question, as before this fix; where the cut class is a stride's, its residue question
+        // drops those classes first, with no question a piece
+        // (`exact::tests::classed_bounds::a_gap_cut_by_a_class_is_dropped_by_its_stride_not_asked_by_piece`).
         //
         // Complexity tradeoff: naive version (b7ab00a78), every piece with its class, one
-        // question a piece, of cost growing with `m`; the other naive version, every value
+        // question a piece, refused at seed 30 (above); the other naive version, every value
         // alone (06fbc3477), O(v) questions for v values, which a long stride makes many; a
         // first cut of this fix compared the values with `m`, up to `m` questions for an `m`
         // the input gives, pseudo-polynomial. Used: one question a value within `spare`, at
@@ -1643,6 +1652,7 @@ fn cells_cover(
         let (piece, class) = match &class {
             Congruence::Class { modulus, .. }
                 if *modulus > Num::ONE
+                    && !SPARE_OFF.get()
                     && Classed::new(
                         IntervalSet::range(piece.0.clone(), piece.1.clone()),
                         class.clone(),
@@ -3269,6 +3279,22 @@ fn shared_cells(
         // symbol reads anyway: O(size) a symbol, O(k·size) over the k symbols, the bound of the
         // note above the loop, with no term in the classes' moduli or lengths. `count` reads the
         // ranges of each set once, O(p) for p ranges, before any value is listed.
+        // The room is no threshold under the no-thresholds rule (decided 2026-11-24, b22-eqsrest5,
+        // with the author away): (1) the answer never depends on it: a class listed joins
+        // `found`, values of `s` with a point; a class dropped stays in the gap, where the
+        // question below and then `s`'s own cover ([`cells_cover`], exact, holding the class as
+        // one set) decide each of its values; both are exact, so only the cost moves. (2) It
+        // refuses nothing. (3) Each side is O(size) here: listed, at most `size` values at
+        // [`PIECE`] each, the order of the `size` units read for `s` anyway; dropped, no work
+        // here, the class one set in the cover, O(p) for its p ranges, within the cover's own
+        // limit. (4) It is no constant chosen: `size` is what this step already pays a symbol,
+        // so the rule is "list while listing costs no more than the reading", a comparison of
+        // two costs as [`classes::cut`] makes. Tests: `classed_bounds::a_shared_cell_lists_its_
+        // classes_while_their_values_fit_in_size` (the corner, n + 1 values at size n + 1 and
+        // n), `a_shared_cell_listed_or_dropped_gives_one_answer` (the same answer either side),
+        // and the benchmarks `a_shared_cells_listed_class_grows_with_the_part` (listed, O(size))
+        // and `a_shared_cells_class_past_size_costs_the_same_at_8n` (dropped, constant; its
+        // control [`CLASS_ROOM_OFF`], every class listed, grows with the class).
         let (c, _, _) = cell(f, &points[read - 1], s, &HashSet::new(), &h.hull(), work)?;
         let mut room = size;
         let c = (c.sets().iter())
@@ -3277,9 +3303,9 @@ fn shared_cells(
                     return true;
                 }
                 let n = set.count();
-                let fits = n <= room;
+                let fits = n <= room || CLASS_ROOM_OFF.get();
                 if fits {
-                    room -= n;
+                    room = room.saturating_sub(n);
                 }
                 fits
             })

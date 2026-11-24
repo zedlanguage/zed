@@ -1654,15 +1654,32 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Leaf(site),
             Dbg::Text(" }"),
         ]),
-        NeedKind::Remap { at, src, rank } => parts.extend([
-            Dbg::Text("Remap { at: "),
-            Dbg::Leaf(at),
-            Dbg::Text(", src: "),
-            Dbg::Ty(src),
-            Dbg::Text(", rank: "),
-            Dbg::Leaf(rank),
-            Dbg::Text(" }"),
-        ]),
+        NeedKind::Remap {
+            at,
+            src,
+            rank,
+            free,
+        } => {
+            parts.extend([
+                Dbg::Text("Remap { at: "),
+                Dbg::Leaf(at),
+                Dbg::Text(", src: "),
+                Dbg::Ty(src),
+                Dbg::Text(", rank: "),
+                Dbg::Leaf(rank),
+                Dbg::Text(", free: "),
+            ]);
+            debug_list(parts, "[", free, "]", |p, (id, t)| {
+                p.extend([
+                    Dbg::Text("("),
+                    Dbg::Leaf(id),
+                    Dbg::Text(", "),
+                    Dbg::Ty(t),
+                    Dbg::Text(")"),
+                ]);
+            });
+            parts.push(Dbg::Text(" }"));
+        }
         NeedKind::Call {
             what,
             positional,
@@ -5791,6 +5808,13 @@ pub enum NeedKind {
         /// makes the source further along, a later level or fewer such variables at this one,
         /// so a chain of checks ends (the proof is at `remap_of`, crates/zedc-check).
         rank: (usize, usize),
+        /// Each name the remap's key and leaf expressions read that is bound outside the
+        /// remap (a binder id of the unit), with its type where the need is made, as a
+        /// parameter `f` of the function whose body holds `m as (k -> v) into (k -> f(v))`.
+        /// The check of the need reads each name at this type, renamed as the need is and
+        /// bound as the call binds it, not at the type the body left in scope
+        /// (FAIL-remap-need-free-names-unbound, `Ck::remap_met` in crates/zedc-check).
+        free: Vec<(usize, Ty)>,
     },
     /// `v >< (op)` at the fold written at the span: the value is a family whose entries `op`
     /// folds, and the use gives the fold (step L3.2; DESIGN.md sec:reduction). The span is the
@@ -7368,10 +7392,17 @@ impl Need {
                     f: f(g),
                     site: *site,
                 },
-                NeedKind::Remap { at, src, rank } => NeedKind::Remap {
+                // `src` before `free`, the order [`Need::tys`] gives them in.
+                NeedKind::Remap {
+                    at,
+                    src,
+                    rank,
+                    free,
+                } => NeedKind::Remap {
                     at: *at,
                     src: f(src),
                     rank: *rank,
+                    free: free.iter().map(|(id, t)| (*id, f(t))).collect(),
                 },
                 NeedKind::Reduce(op, site, form) => NeedKind::Reduce(*op, *site, *form),
                 NeedKind::Fold { tys, right, by } => NeedKind::Fold {
@@ -7696,8 +7727,8 @@ impl Need {
                 | NeedKind::Zip { other: k, .. }
                 | NeedKind::Map { f: k, .. }
                 | NeedKind::Group { f: k, .. }
-                | NeedKind::Level { f: k, .. }
-                | NeedKind::Remap { src: k, .. } => (Some(k), &[], &[], &[], &[], &[]),
+                | NeedKind::Level { f: k, .. } => (Some(k), &[], &[], &[], &[], &[]),
+                NeedKind::Remap { src, free, .. } => (Some(src), &[], &[], free, &[], &[]),
                 NeedKind::Call {
                     positional, named, ..
                 } => (None, positional, named, &[], &[], &[]),
@@ -7742,13 +7773,15 @@ impl Need {
             | NeedKind::Map { f: t, .. }
             | NeedKind::Group { f: t, .. }
             | NeedKind::Level { f: t, .. }
-            | NeedKind::Remap { src: t, .. }
             | NeedKind::Into { ty: t, .. }
             | NeedKind::SumMethod { beside: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Concat { other: t, .. }
             | NeedKind::Zip { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
+            NeedKind::Remap { src, free, .. } => std::iter::once(src)
+                .chain(free.iter().map(|(_, t)| t))
+                .collect(),
             NeedKind::Call {
                 positional, named, ..
             } => positional
@@ -7790,13 +7823,15 @@ impl Need {
             | NeedKind::Map { f: t, .. }
             | NeedKind::Group { f: t, .. }
             | NeedKind::Level { f: t, .. }
-            | NeedKind::Remap { src: t, .. }
             | NeedKind::Into { ty: t, .. }
             | NeedKind::SumMethod { beside: t, .. }
             | NeedKind::Order { other: t, .. }
             | NeedKind::Concat { other: t, .. }
             | NeedKind::Zip { other: t, .. }
             | NeedKind::Narrow(Narrow::Not(t)) => vec![t],
+            NeedKind::Remap { src, free, .. } => std::iter::once(src)
+                .chain(free.into_iter().map(|(_, t)| t))
+                .collect(),
             NeedKind::Call {
                 mut positional,
                 named,
@@ -33225,12 +33260,22 @@ pub mod r10_hash {
                     self.emit_ty(f);
                     self.emit_span(*site);
                 }
-                NeedKind::Remap { at, src, rank } => {
+                NeedKind::Remap {
+                    at,
+                    src,
+                    rank,
+                    free,
+                } => {
                     self.emit(TAG_NK_REMAP);
                     self.emit_span(*at);
                     self.emit_ty(src);
                     self.emit_usize(rank.0);
                     self.emit_usize(rank.1);
+                    self.emit_usize(free.len());
+                    for (id, t) in free {
+                        self.emit_usize(*id);
+                        self.emit_ty(t);
+                    }
                 }
                 NeedKind::Reduce(red, site, ff) => {
                     self.emit(TAG_NK_REDUCE);

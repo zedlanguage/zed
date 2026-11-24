@@ -3,6 +3,7 @@ use super::super::{SOLVER, Shared, member, project_each_exact};
 use super::*;
 
 mod bench;
+mod classed_bounds;
 mod columns;
 mod push_down;
 

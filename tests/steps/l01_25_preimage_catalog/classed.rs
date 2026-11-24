@@ -5,10 +5,11 @@
 use super::s22::{int, prim, var};
 use super::{pre, shown};
 use zed_kernel::{Prim, Term};
+use zed_tests::instances::Rng;
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
 use zedc::store::classed::Classed;
-use zedc::store::interval::{End, IntervalSet};
+use zedc::store::interval::{End, IntervalSet, Num};
 use zedc::store::lattice::Congruence;
 use zedc::store::preimage::{Demand, Domains, preimage};
 
@@ -125,4 +126,116 @@ fn a_remainder_over_many_periods_is_one_class_exact() {
         shown(&p),
         "i: int[3..=999999993] where i mod 10 == 3; exact"
     );
+}
+
+/// The gcd of `a` and `b`, both not negative.
+fn gcd(a: i64, b: i64) -> i64 {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
+
+/// `Classed::plain(set)` checked against the one form worked out from the members of `set`,
+/// a finite set of small values or one with an infinite end: where the members are two or
+/// more, each piece one value, and the gcd `g` of their differences from the least `a0` is
+/// above 1, the class `a0 mod g` and the same members; else every integer as the class and
+/// `set` itself as the ranges (FAIL-l01-39-bytes-arm-callee-if-shortcut keeps it as given).
+fn check_plain_one_form(set: &IntervalSet) {
+    let c = Classed::plain(set.clone());
+    assert_eq!(
+        c,
+        Classed::new(set.clone(), Congruence::new(1, 0)),
+        "{set:?}"
+    );
+    // The members where every piece is one finite value, else none.
+    let members: Option<Vec<i64>> = set
+        .pieces()
+        .map(|(lo, hi)| match (lo, hi) {
+            (End::Fin(lo), End::Fin(hi)) if lo == hi => lo.to_i64(),
+            _ => None,
+        })
+        .collect();
+    let members = members.unwrap_or_default();
+    let g = members.iter().fold(0, |g, v| gcd(g, v - members[0]));
+    if members.len() < 2 || g == 1 {
+        assert_eq!(c.strided(), None, "{set:?}: {c:?}");
+        assert_eq!(c.ranges, *set, "{set:?}");
+        return;
+    }
+    assert_eq!(
+        c.strided(),
+        Some((&Num::from(g), &Num::from(members[0].rem_euclid(g)))),
+        "{set:?}: {c:?}"
+    );
+    for v in members[0] - 3..=members[members.len() - 1] + 3 {
+        assert_eq!(c.contains(v), members.contains(&v), "{set:?}: {c:?} at {v}");
+    }
+}
+
+/// The plain sets whose one form needs a look past the first piece, each checked against its
+/// members (FAIL-l01-39-bytes-arm-callee-if-shortcut): empty, one value, two values 1 apart
+/// (one piece), points 2 apart, points whose gcd falls to 1 only at the last, a first piece of
+/// two values before points, negative points, and infinite ends before and after points.
+#[test]
+fn a_plain_set_keeps_its_one_form_corners() {
+    let pts = |vs: &[i64]| {
+        IntervalSet::from_pieces(vs.iter().map(|&v| (End::of(v), End::of(v))).collect())
+    };
+    check_plain_one_form(&IntervalSet::empty());
+    check_plain_one_form(&pts(&[7]));
+    check_plain_one_form(&pts(&[7, 8]));
+    check_plain_one_form(&pts(&[0, 2]));
+    check_plain_one_form(&pts(&[0, 4, 6, 10, 12]));
+    check_plain_one_form(&pts(&[0, 4, 6, 10, 13]));
+    check_plain_one_form(&pts(&[-6, -2, 4]));
+    check_plain_one_form(&pts(&[3, 9, 15]));
+    check_plain_one_form(&IntervalSet::from_pieces(vec![
+        (End::of(0), End::of(1)),
+        (End::of(4), End::of(4)),
+        (End::of(8), End::of(8)),
+    ]));
+    check_plain_one_form(&IntervalSet::from_pieces(vec![
+        (End::of(0), End::of(0)),
+        (End::of(4), End::of(4)),
+        (End::of(8), End::of(9)),
+    ]));
+    check_plain_one_form(&IntervalSet::from_pieces(vec![
+        (End::NegInf, End::of(0)),
+        (End::of(4), End::of(4)),
+    ]));
+    check_plain_one_form(&IntervalSet::from_pieces(vec![
+        (End::of(0), End::of(0)),
+        (End::of(4), End::of(4)),
+        (End::of(8), End::PosInf),
+    ]));
+    let p = Classed::plain(pts(&[0, 4, 6]));
+    assert_eq!(p.class, Congruence::new(2, 0), "{p:?}");
+}
+
+/// Random plain sets, half of them points on a common stride of 2 to 5 with one point moved
+/// off it at random in half of those, the rest random pieces, each checked against its members
+/// (FAIL-l01-39-bytes-arm-callee-if-shortcut). The seed is new each run and printed.
+#[test]
+fn a_random_plain_set_keeps_its_one_form() {
+    let (mut rng, _) = Rng::fresh("a_random_plain_set_keeps_its_one_form");
+    for _ in 0..2000 {
+        let p = 1 + rng.below(12);
+        let mut pieces = Vec::new();
+        if rng.below(2) == 0 {
+            let (s, a) = (rng.int(2, 5), rng.int(-20, 20));
+            for i in 0..p as i64 {
+                let v = a + s * i;
+                pieces.push((End::of(v), End::of(v)));
+            }
+            if rng.below(2) == 0 {
+                let i = rng.below(p);
+                let v = a + s * i as i64 + rng.int(1, s - 1);
+                pieces[i] = (End::of(v), End::of(v));
+            }
+        } else {
+            for _ in 0..p {
+                let lo = rng.int(-40, 40);
+                pieces.push((End::of(lo), End::of(lo + rng.int(0, 2))));
+            }
+        }
+        check_plain_one_form(&IntervalSet::from_pieces(pieces));
+    }
 }

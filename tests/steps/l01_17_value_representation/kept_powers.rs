@@ -204,6 +204,201 @@ fn corner_cases_of_the_kept_power_paragraph() {
     assert!(pow_int(&int(0), &int(-1)).is_none());
 }
 
+/// `(2^64 + 13)^(2^64)` is the atom `2^64 + 13` with the exponent `2^64` (DESIGN.md sec:domains
+/// "Kept powers"), and a product, a quotient and an order of such powers build nothing: each
+/// allocates under 1 KiB (DESIGN step L1.17b).
+#[test]
+fn a_wide_power_allocates_under_a_kibibyte() {
+    let b = int(2).pow(&64u32.into()).unwrap().add(&int(13)).unwrap();
+    let e = num_bigint::BigUint::from(1u32) << 64u32;
+    let (p, live) = zed_alloc_count::live(|| b.pow(&e).expect("a kept power is not built"));
+    assert!(live.peak < 1 << 10, "peak heap {} bytes", live.peak);
+    assert_eq!(p.wide().len(), 1);
+    let (square, product) = zed_alloc_count::live(|| p.mul(&p).expect("kept"));
+    let (back, quotient) = zed_alloc_count::live(|| square.div(&p).expect("kept").expect("not 0"));
+    let (same, equal) = zed_alloc_count::live(|| back == p);
+    let (above, order) = zed_alloc_count::live(|| square > p && p > b);
+    assert!(same && above);
+    let peaks = [product.peak, quotient.peak, equal.peak, order.peak];
+    assert!(
+        peaks.iter().all(|&k| k < 1 << 10),
+        "peak heap bytes of the product, quotient, equality and order: {peaks:?}"
+    );
+}
+
+/// `Rat::pow` splits a part wider than a word into small primes and a least root after asking
+/// the system for `SPLIT_ASK_BITS_A_BIT` bits a bit, four bytes; the
+/// split itself must stay within that ask, or a process given the ask could still abort in it.
+/// Checked here on built bases of 2^7 to 2^20 bits of four shapes: `2^s - 1`, which holds the
+/// small primes 3, 5 and 17 at `s = 2^k`; an odd number with no small prime it is likely to
+/// hold; and a square and a cube of such a number, whose least roots are found. The peak counts
+/// the ask's own allocation, so the bound allowed is the ask plus 1 KiB for the exponents and
+/// lists beside it.
+#[test]
+fn splitting_a_wide_part_stays_within_its_ask() {
+    let a_bit = zed_kernel::num::SPLIT_ASK_BITS_A_BIT / 8;
+    let mut over = Vec::new();
+    for s in [1u64 << 7, 1 << 12, 1 << 16, 1 << 20] {
+        let one = BigInt::from(1);
+        let odd: BigInt = (&one << s) + BigInt::from(0x9e37_79b9_7f4a_7c15u64) * 2 + 1;
+        let third: BigInt = (&one << (s / 3)) + 0x1234_5679;
+        let bases = [
+            ("2^s - 1", (&one << s) - 1),
+            ("odd", odd.clone()),
+            ("square", (&odd >> (s / 2)).pow(2)),
+            ("cube", third.pow(3)),
+        ];
+        for (shape, b) in bases {
+            let bits = b.bits();
+            let x = Rat::int(b);
+            let (p, live) = zed_alloc_count::live(|| x.pow(&7u32.into()).expect("given"));
+            assert!(p != int(0));
+            println!(
+                "{shape} of {bits} bits: peak {} bytes, {:.3} a bit",
+                live.peak,
+                live.peak as f64 / bits as f64
+            );
+            if live.peak > a_bit * bits + 1024 {
+                over.push(format!("{shape} at {bits} bits: peak {} bytes", live.peak));
+            }
+        }
+    }
+    assert!(over.is_empty(), "peaks over the ask: {over:?}");
+}
+
+/// A sum builds its part above the shared powers (DESIGN.md "Kept powers", *Sums*), for wide
+/// atoms as for primes: `q^(2^64) + q^(2^64)` is `2 q^(2^64)` and `q^(2^64) - 3 q^(2^64 - 1)`
+/// is `(q - 3) q^(2^64 - 1)`, each with nothing built past a few words.
+#[test]
+fn a_sum_of_equal_wide_powers_builds_nothing() {
+    let q = int(2).pow(&64u32.into()).unwrap().add(&int(13)).unwrap();
+    let e = num_bigint::BigUint::from(1u32) << 64u32;
+    let p = q.pow(&e).unwrap();
+    let below = q.pow(&(&e - 1u32)).unwrap();
+    let (ok, live) = zed_alloc_count::live(|| {
+        let twice = p.add(&p).expect("nothing is built");
+        let rest = p
+            .sub(&int(3).mul(&below).unwrap())
+            .expect("nothing is built");
+        let want = q.sub(&int(3)).unwrap().mul(&below).unwrap();
+        twice == int(2).mul(&p).unwrap() && rest == want && p.sub(&p).unwrap() == int(0)
+    });
+    assert!(ok);
+    assert!(live.peak < 1 << 12, "peak heap {} bytes", live.peak);
+    // The size the checker reads (`Rat::sum_least`) factors out the same shared atoms, so it
+    // names a few bits, not the 2^70 bits of the power: before, it named the power's own size.
+    let three_below = int(3).mul(&below).unwrap();
+    for (a, b) in [(&p, &p), (&p, &three_below)] {
+        let least = a.sum_least(b).expect("nothing is moved out");
+        assert!(least < num_bigint::BigUint::from(256u32), "{least}");
+    }
+    assert!(p.sum_least(&int(1)).unwrap() >= num_bigint::BigUint::from(1u32) << 70u32);
+}
+
+/// A side of a random pair: factors `(base, exponent)`, bases in `2..2^70` and exponents in
+/// `0..2^20` (DESIGN step L1.17b), each exponent below `2^u` for `u` uniform in `0..=20`, so
+/// that pairs small enough to build and pairs far past it both come up.
+fn random_side(rng: &mut zed_tests::seed::Rng) -> Vec<(u128, u64)> {
+    let factors = 1 + rng.below(3);
+    (0..factors)
+        .map(|_| {
+            let bits = 2 + rng.below(69) as u32;
+            let base =
+                (u128::from(rng.next_u64()) << 64 | u128::from(rng.next_u64())) % (1u128 << bits);
+            let u = rng.below(21) as u32;
+            (base.max(2), rng.below_u64(1u64 << u))
+        })
+        .collect()
+}
+
+fn kept_side(side: &[(u128, u64)]) -> Rat {
+    side.iter().fold(int(1), |acc, (b, e)| {
+        let p = Rat::int(BigInt::from(*b)).pow(&(*e).into()).expect("kept");
+        acc.mul(&p).expect("kept")
+    })
+}
+
+/// `log2` of the side and the bits of the built side, at most.
+fn side_size(side: &[(u128, u64)]) -> (f64, u64) {
+    side.iter().fold((0.0, 0), |(l, n), (b, e)| {
+        let bits = 128 - u64::from(b.leading_zeros());
+        (l + *e as f64 * (*b as f64).log2(), n + bits * e)
+    })
+}
+
+fn built_side(side: &[(u128, u64)]) -> num_bigint::BigUint {
+    side.iter()
+        .fold(num_bigint::BigUint::from(1u32), |acc, (b, e)| {
+            acc * num_bigint::BigUint::from(*b).pow(u32::try_from(*e).expect("below 2^20"))
+        })
+}
+
+/// DESIGN step L1.17b: 10,000 pairs of products of powers, bases below 2^70 and exponents below
+/// 2^20, each order and equality against the built numbers'. A fourth of the pairs are one
+/// value written two ways (`(b c)^e d^f` and `b^e c^e d^g d^(f - g)`), equal; a fourth are near
+/// ties, `a^e` against `b^f` with `f` the floor or ceiling of `e log a / log b`; the rest are
+/// independent. Building a side of 2^20 exponent costs 73 million bits, so a pair is built when
+/// both sides are within 2^16 bits; past that the order is read from `f64` sums of `e log2 b`.
+/// Each term is within 2^-49 of its value, relatively: the base rounded to `f64` moves its
+/// `log2` by at most `2^-53 / ln 2` absolute, so relatively too, since `log2 b >= 1`; `log2`
+/// is within one unit in the last place, 2^-52 relative; the product by `e < 2^53` and each sum
+/// round once, 2^-53 each. With at most 4 terms the sums are within 2^-46 of the larger, so a
+/// pair is counted only where they differ by more than 2^-30 of it, and else skipped. Every near
+/// tie is drawn within 2^16 bits, so each is built. The test states how many pairs each way
+/// decided, and fails if fewer than 3,000 were built (2,500 near ties and
+/// the small independent pairs).
+#[test]
+fn random_products_of_powers_order_as_the_built_numbers() {
+    let (mut rng, seed) = zed_tests::seed::Rng::fresh("random_products_of_powers_order");
+    let (mut built, mut logs) = (0usize, 0usize);
+    for i in 0..10_000 {
+        let (x, y) = match i % 4 {
+            0 => {
+                let (b, c, d) = (2 + rng.below_u64(1 << 34), 2 + rng.below_u64(1 << 34), 3);
+                let (e, f) = (rng.below_u64(1 << 20), rng.below_u64(1 << 20));
+                let g = rng.below_u64(f + 1);
+                let bc = u128::from(b) * u128::from(c);
+                (
+                    vec![(bc, e), (d, f)],
+                    vec![(u128::from(b), e), (u128::from(c), e), (d, g), (d, f - g)],
+                )
+            }
+            1 => {
+                let a = 2 + u128::from(rng.next_u64() >> 1);
+                let b = 2 + u128::from(rng.next_u64() >> 2);
+                let e = 1 + rng.below_u64(1 << 9);
+                let f = (e as f64 * (a as f64).log2() / (b as f64).log2()) as u64;
+                (vec![(a, e)], vec![(b, f + rng.below_u64(2))])
+            }
+            _ => (random_side(&mut rng), random_side(&mut rng)),
+        };
+        let (kx, ky) = (kept_side(&x), kept_side(&y));
+        let ((lx, nx), (ly, ny)) = (side_size(&x), side_size(&y));
+        let want = if i % 4 == 0 {
+            std::cmp::Ordering::Equal
+        } else if nx.max(ny) <= 1 << 16 {
+            built += 1;
+            built_side(&x).cmp(&built_side(&y))
+        } else if (lx - ly).abs() > lx.max(ly) * 2f64.powi(-30) {
+            logs += 1;
+            lx.partial_cmp(&ly).expect("finite")
+        } else {
+            continue;
+        };
+        if i % 4 == 0 && nx.max(ny) <= 1 << 16 {
+            assert_eq!(built_side(&x), built_side(&y), "seed {seed}, pair {i}");
+        }
+        let what = format!("seed {seed}, pair {i}: {x:?} against {y:?}");
+        assert_eq!(kx.partial_cmp(&ky), Some(want), "{what}");
+        assert_eq!(kx == ky, want.is_eq(), "{what}");
+        if want.is_eq() {
+            assert_eq!(kx.residues(), ky.residues(), "{what}");
+        }
+    }
+    eprintln!("{built} pairs decided by the built numbers, {logs} by f64 sums of logarithms");
+    assert!(built >= 3_000, "{built} pairs built");
+}
+
 #[test]
 fn floats_of_kept_powers_round_once() {
     // `2^1024 - 2^970` is the tie above the largest `f64`: it rounds to even, an infinity.

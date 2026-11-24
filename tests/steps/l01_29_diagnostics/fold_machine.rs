@@ -5,6 +5,11 @@
 //! zedc-check), not to the memory the machine has free. Before, `x = (2^64 + 13) ^ (2^20);
 //! 2 ^ (x - x)` was accepted where the machine gave the fold's 65 MiB and rejected under a
 //! lower limit on the process's data (`RLIMIT_DATA`).
+//!
+//! Since KEPT-power-form (DESIGN.md step L1.17b) a power of a wide base is kept as an atom
+//! with its exponent and builds nothing, so it folds at any exponent; the programs here fold a
+//! sum, `b ^ k + 1`, which builds the power in full (`Rat::flat`, asking eight times its
+//! bits).
 
 use std::process::Command;
 
@@ -22,12 +27,12 @@ pub(super) fn built(src: &str) -> Option<String> {
     load_for(src.as_bytes(), &build).err()
 }
 
-/// `main` pushing `2 ^ (x - x)` after `b = 2^64 + 13; x = b ^ (<k>);`: accepted where the
+/// `main` pushing `2 ^ (x - x)` after `b = 2^64 + 13; x = b ^ (<k>) + 1;`: accepted where the
 /// checker folds `x`, so that `x - x` is 0, and rejected where it does not, since `x - x` may
 /// then be negative.
 fn program(k: &str) -> String {
     format!(
-        "main(m: MainArgs) {{\n    b = 2^64 + 13;\n    x = b ^ ({k});\n    \
+        "main(m: MainArgs) {{\n    b = 2^64 + 13;\n    x = b ^ ({k}) + 1;\n    \
          m.stdout <- String(2 ^ (x - x));\n}}\n"
     )
 }
@@ -92,44 +97,46 @@ fn lower_data_limit(margin: u64) {
 const NOT_FOLDED: &str = r#"4:24: Int power with an exponent that may be negative: `2 : int ^ (x - x) : int`. Try `2r ^ (x - x)` instead.
   [1]  4:28: this `-` gives int
        4 |     m.stdout <- String(2 ^ (x - x));
-         |                        ^^^^^^^^^^^ [16, 17]
+         |                        ^^^^^^^^^^^ [18, 19]
          |                            ^^^^^^^ [1]
          |                             ^ [2]
-         |                                 ^ [15]
+         |                                 ^ [17]
   [2]  4:29: `x` is int here
   [3]  3:9: `x` is defined as this expression, int
-       3 |     x = b ^ (2^20);
-         |         ^ [5]  ^^ [14]
-         |         ^^^^^^^^^^ [3, 4]
-         |             ^^^^^^ [12]
-         |              ^ [13]
-  [4]  3:9: this `^` gives int
-  [5]  3:9: `b` is int here
-  [6]  2:9: `b` is defined as this expression, int
+       3 |     x = b ^ (2^20) + 1;
+         |         ^ [6]  ^^ [15]
+         |         ^^^^^^^^^^^^^^ [3, 4]
+         |             ^^^^^^ [13]
+         |              ^ [14]  ^ [16]
+         |         ^--------^ [5]
+  [4]  3:9: this `+` gives int
+  [5]  3:9: this `^` gives int
+  [6]  3:9: `b` is int here
+  [7]  2:9: `b` is defined as this expression, int
        2 |     b = 2^64 + 13;
-         |         ^ [9]  ^^ [11]
-         |         ^^^^ [8]
-         |         ^^^^^^^^^ [6, 7]
-         |           ^^ [10]
-  [7]  2:9: this `+` adds integer literals alone, so it is a literal too; nothing here gives it a carrier, so it is an `int`
-  [8]  2:9: this `^` takes a power of integer literals alone, so it is a literal too; nothing here gives it a carrier, so it is an `int`
-  [9]  2:9: this literal, 2, is 2
-  [10] 2:11: this literal, 64, is 64
-  [11] 2:16: this literal, 13, is 13
-  [12] 3:13: this `^` gives 1048576
-  [13] 3:14: this literal, 2, is 2
-  [14] 3:16: this literal, 20, is 20
-  [15] 4:33: `x` is int here
-  [16] 4:24: repair: `2r ^ (x - x)`
-  [17] 4:24: repair: `exponent = x - x; if exponent >= 0 { 2 ^ exponent } else { … }`"#;
+         |         ^ [10] ^^ [12]
+         |         ^^^^ [9]
+         |         ^^^^^^^^^ [7, 8]
+         |           ^^ [11]
+  [8]  2:9: this `+` adds integer literals alone, so it is a literal too; nothing here gives it a carrier, so it is an `int`
+  [9]  2:9: this `^` takes a power of integer literals alone, so it is a literal too; nothing here gives it a carrier, so it is an `int`
+  [10] 2:9: this literal, 2, is 2
+  [11] 2:11: this literal, 64, is 64
+  [12] 2:16: this literal, 13, is 13
+  [13] 3:13: this `^` gives 1048576
+  [14] 3:14: this literal, 2, is 2
+  [15] 3:16: this literal, 20, is 20
+  [16] 3:22: this literal, 1, is 1
+  [17] 4:33: `x` is int here
+  [18] 4:24: repair: `2r ^ (x - x)`
+  [19] 4:24: repair: `exponent = x - x; if exponent >= 0 { 2 ^ exponent } else { … }`"#;
 
 /// The first line of [`NOT_FOLDED`], the same at every exponent.
 const HEADLINE: &str =
     "4:24: Int power with an exponent that may be negative: `2 : int ^ (x - x) : int`.";
 
-/// `(2^64 + 13) ^ (2^20)` asks for 8 * 65 * 2^20 bits, 65 MiB, past the bound: it is not
-/// folded without a limit, nor under a limit of 64 MiB, which refused it before, nor under one
-/// of 2 GiB, which gave it.
+/// `(2^64 + 13) ^ (2^20) + 1` asks for 8 * (65 * 2^20 + 2) bits, 65 MiB, past the bound: it
+/// is not folded without a limit, nor under a limit of 64 MiB, nor under one of 2 GiB.
 #[test]
 fn a_fold_past_the_bound_is_refused_under_every_limit() {
     let child = under_two_limits("a_fold_past_the_bound_is_refused_under_every_limit");
@@ -144,27 +151,28 @@ fn a_fold_past_the_bound_is_refused_under_every_limit() {
 #[test]
 fn a_fold_within_the_bound_is_made_under_every_limit() {
     let child = under_two_limits("a_fold_within_the_bound_is_made_under_every_limit");
-    // 1024 * 65 bits, and 258111 * 65 bits, the largest power of this base the bound
-    // allows: 258111 * 65 * 8 <= 2^27 < 258112 * 65 * 8.
-    for k in ["2^10", "258111"] {
+    // 1024 * 65 bits, and 258110 * 65 bits, the largest power of this base whose sum with 1
+    // the bound allows: `Rat::flat` asks for eight times the atom's bits and the two
+    // coefficients' (one bit each), and 8 * (258110 * 65 + 2) <= 2^27 < 8 * (258111 * 65 + 2).
+    for k in ["2^10", "258110"] {
         assert_eq!(built(&program(k)), None, "b ^ ({k}), margin {child:?}");
     }
 }
 
-/// The bound is exact: one more in the exponent and the power asks for more than 2^27 bits.
+/// The bound is exact: one more in the exponent and the sum asks for more than 2^27 bits.
 #[test]
 fn the_bound_is_exact() {
-    assert_eq!(built(&program("258111")), None);
-    let past = built(&program("258112")).expect("past the bound, `x` is not folded");
+    assert_eq!(built(&program("258110")), None);
+    let past = built(&program("258111")).expect("past the bound, `x` is not folded");
     assert!(past.starts_with(HEADLINE), "{past}");
 }
 
-/// A power folds or not by its own size: a large fold elsewhere in the file changes neither
+/// A sum folds or not by its own size: a large fold elsewhere in the file changes neither
 /// the verdict nor the message of a small one.
 #[test]
 fn a_fold_does_not_depend_on_another() {
-    let src = "main(m: MainArgs) {\n    b = 2^64 + 13;\n    y = b ^ (2^20);\n    \
-               x = b ^ (2^10);\n    m.stdout <- String(2 ^ (x - x) + y);\n}\n";
+    let src = "main(m: MainArgs) {\n    b = 2^64 + 13;\n    y = b ^ (2^20) + 1;\n    \
+               x = b ^ (2^10) + 1;\n    m.stdout <- String(2 ^ (x - x) + y);\n}\n";
     assert_eq!(built(src), None);
 }
 
@@ -173,7 +181,7 @@ fn a_fold_does_not_depend_on_another() {
 pub(super) fn powers(n: usize, k: &str) -> String {
     let mut src = String::from("main(m: MainArgs) {\n    b = 2^64 + 13;\n    s = 0");
     for i in 0..n {
-        src += &format!(";\n    x{i} = b ^ ({k})");
+        src += &format!(";\n    x{i} = b ^ ({k}) + 1");
     }
     src += ";\n    m.stdout <- String(s";
     for i in 0..n {
