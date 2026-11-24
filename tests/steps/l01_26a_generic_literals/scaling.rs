@@ -314,9 +314,9 @@ pub(super) fn power_divisor(n: usize) -> String {
 /// A divisor of n nested squares `((3r^2)^2 …)^2 + 1r`: the square is taken of the base `3r`, a
 /// value of the text, and not of the range of a power, so the ends stay `9r` and do not double
 /// in size at each level. The text fixes the power, `3r^(2^n)`, kept as one prime power
-/// (DESIGN.md step L1.17b), and the sum writes it out in full, `2^n log2 3` bits: from n = 33
-/// past the default memory limit of 1 GiB, and from n = 67 past the address space, 2^67 bits
-/// (`nested_squares_are_sized_at_the_sum`).
+/// (DESIGN.md step L1.17b), and the sum writes it out in full, `2^n log2 3` bits: from n = 67
+/// past the address space, 2^67 bits, and, beside a `main` with no memory limit, from n = 33
+/// past the default limit of 1 GiB (`nested_squares_are_sized_at_the_sum`).
 pub(super) fn squares_divisor(n: usize) -> String {
     format!(
         "f(x: rat) = x / ({}3r{} + 1r);\n",
@@ -352,28 +352,37 @@ fn operations_on_literals_are_typed_by_their_value() {
 }
 
 /// The sum `3r^(2^n) + 1r` writes out `2^n log2 3` bits (DESIGN.md sec:diagnostics, "Number too
-/// large for any memory of the target", whether or not its branch is taken): at n = 32, 851 MB,
-/// within the default memory limit of 1 GiB; at n = 33, 1.70 GB, past it; at n = 70, 233 EB,
-/// past the 16 EiB Linux x86_64 addresses. Corner cases on each side of each bound; the
-/// benchmark `bench::scaling::operations_on_literals_typed_by_their_value_check_in_linear_time_
-/// squares` times n = 2000.
+/// large for any memory of the target", whether or not its branch is taken). A unit without
+/// `main` is judged against the address space alone, 2^67 bits on Linux x86_64 (`Ck::
+/// powers_over_main_limit`): n = 66 builds 1.17e20 bits, within it, and n = 67, 2.34e20, past
+/// it. Beside a `main` that declares no memory limit, the bound is the default of 1 GiB: n = 32
+/// builds 851 MB, within it, and n = 33, 1.70 GB, past it. Corner cases on each side of each
+/// bound; the benchmark `bench::scaling::operations_on_literals_typed_by_their_value_check_in_
+/// linear_time_squares` times n = 2000.
 #[test]
 fn nested_squares_are_sized_at_the_sum() {
-    assert_eq!(type_errors(&squares_divisor(32)), Vec::<String>::new());
-    let [e] = &type_errors(&squares_divisor(33))[..] else {
-        panic!("one rejection at n = 33")
-    };
-    assert!(
-        e.starts_with("Number too large for the default memory limit"),
-        "{e}"
-    );
-    let [e] = &type_errors(&squares_divisor(70))[..] else {
-        panic!("one rejection at n = 70")
-    };
-    assert!(
-        e.starts_with("Number too large for any memory of the target"),
-        "{e}"
-    );
+    let with_main = |n| format!("{}main(m: MainArgs) = 0;\n", squares_divisor(n));
+    for (src, bound) in [
+        (squares_divisor(33), None),
+        (squares_divisor(66), None),
+        (squares_divisor(67), Some("any memory of the target")),
+        (with_main(32), None),
+        (with_main(33), Some("the default memory limit")),
+    ] {
+        let errors = type_errors(&src);
+        match bound {
+            None => assert_eq!(errors, Vec::<String>::new(), "{src}"),
+            Some(bound) => {
+                let [e] = &errors[..] else {
+                    panic!("one rejection:\n{src}\n{errors:?}")
+                };
+                assert!(
+                    e.starts_with(&format!("Number too large for {bound}")),
+                    "{e}"
+                );
+            }
+        }
+    }
 }
 
 /// `x = 3^(200 n) / 2`, rejected.
