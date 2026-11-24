@@ -14221,7 +14221,8 @@ fn kernel_build(p: Prim, args: Vec<Value>) -> Option<BigUint> {
                 _ => v.as_integer(),
             }
         }
-        return sum_build(&rat(a)?, &rat(b)?);
+        let (a, b) = (rat(a)?, rat(b)?);
+        return sum_build(&a, &b);
     }
     let term = Term::Prim(p, args.into_iter().map(Term::Lit).collect());
     match fixed_room(FOLD_ASK_BITS, || eval(&term)) {
