@@ -125,8 +125,8 @@
 //!
 //! The test `tests::the_peel_decides_orthogonal_vectors` runs the whole solver on random
 //! instances (both answers occur): the gadget's two pairs are always left, and the rest are all
-//! dropped iff there is an orthogonal pair, else all left; control `no_peel`. The peel costs O(W_listed) =
-//! O(n² d) on this family, so it is within a factor d = O(log n) of the bound (test
+//! dropped iff there is an orthogonal pair, else all left; control `no_peel`. The peel costs
+//! O(W_listed) = O(n² d) on this family, so it is within a factor d = O(log n) of the bound (test
 //! `tests::the_peel_on_orthogonal_vectors_follows_its_listed_incidences`, the output empty).
 //! Exception 3 of A225 therefore stands with this reason: the peel is O(W_R + W_drop), and no
 //! method makes it O(N^{2−ε} + W_R) unless OVH fails.
