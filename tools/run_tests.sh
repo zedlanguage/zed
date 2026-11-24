@@ -1556,7 +1556,19 @@ fi
 # this script before they merge, and seldom passed --doc, so links that broke the doc build reached
 # main three times (DOC-private-links, -2, -3); with no doc comment and no linked item changed it
 # builds nothing. A --pieces run leaves it to its caller, which runs it once for all its runs.
-[ -n "$pieces_from" ] || tools/check_changed_docs.sh "$out/doc-changed.log" || exit 1
+# A run with ZED_DOC_CHECK_SKIP set leaves it out and prints the reason the variable gives:
+# tools/test_run_tests.sh sets it, since its runs test the selection and running of pieces, not
+# the docs (tools/test_check_changed_docs.sh tests the check, and tools/merge_check.sh runs it).
+# Each run of a branch that changes doc lines in zedc-preimage and zedc-presburger made four doc
+# builds of 2 to 8 s each, which do not stay fresh from run to run, and took 90 to 98 % of each
+# part's time; fresh, copy, trace and nobus ran past their 60 s in merge_check step 0b
+# (FAIL-rt-parts-cargo-lock: nobus 40, 69, 100 s alone on an idle l4 VM, 95 s of the 100 with a
+# `cargo doc` running, b22-tests10, 2026-11-24).
+if [ -n "${ZED_DOC_CHECK_SKIP-}" ]; then
+  echo "The doc check of changed packages is skipped: $ZED_DOC_CHECK_SKIP"
+elif [ -z "$pieces_from" ]; then
+  tools/check_changed_docs.sh "$out/doc-changed.log" || exit 1
+fi
 # A run runs at most `jobs` pieces at once (xargs -P, below), and each piece's slot is the number
 # xargs gives it in $slot (--process-slot-var), 0 to jobs - 1, unique among the pieces of the run
 # running at that moment; it names the piece's scratch files in $out. Runs on the same machine do

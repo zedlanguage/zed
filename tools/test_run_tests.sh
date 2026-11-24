@@ -36,6 +36,11 @@ case $part in
     ;;
 esac
 want() { [ "$part" = all ] || [ "$part" = "$1" ]; }
+# The runs here, through tools/time_tests.sh too, leave out the doc check of changed packages: on
+# a branch that changes doc lines it made four doc builds a run, 90 to 98 % of a part's time, and
+# fresh, copy, trace and nobus ran past 60 s (FAIL-rt-parts-cargo-lock). The --pieces check below
+# runs without it, to show --pieces leaves the doc check out by itself.
+export ZED_DOC_CHECK_SKIP="tools/test_run_tests.sh tests the pieces, not the docs"
 logs=build/test-run-tests
 run() {
   tools/run_tests.sh --logs "$logs" "$@"
@@ -432,7 +437,7 @@ mkdir -p "$nocargo"
 printf '#!/bin/sh\necho "cargo $*" >>%s/called\nexit 1\n' "$PWD/$nocargo" >"$nocargo/cargo"
 chmod +x "$nocargo/cargo"
 : >"$nocargo/called"
-out=$(PATH=$PWD/$nocargo:$PATH run --pieces "$lines" 1)
+out=$(ZED_DOC_CHECK_SKIP= PATH=$PWD/$nocargo:$PATH run --pieces "$lines" 1)
 rc=$?
 d=$(last_run)
 check "--pieces runs the pieces of its file, and they pass" \
@@ -709,6 +714,8 @@ for only in '^l01_06_lexer_tokens$' '^zed_tests::scaling_tests::bytes_of_the_ord
   check "the run says each piece has a data limit" "1" \
     "$(command grep -a -c '^no user bus: each piece runs with a data limit of [0-9]* KiB' "$logs.out")"
   check "the run ran one piece" "1" "$(wc -l <"$(last_run)/pieces")"
+  check "the run says it leaves out the doc check (ZED_DOC_CHECK_SKIP)" "1" \
+    "$(command grep -a -c -x "The doc check of changed packages is skipped: $ZED_DOC_CHECK_SKIP" "$logs.out")"
 done
 fi
 echo "checks failed: $fails"

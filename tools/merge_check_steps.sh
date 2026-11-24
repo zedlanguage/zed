@@ -72,8 +72,13 @@ if [ -n "$rtself" ]; then
   # last three; in one chain of their own beside list's, fresh, copy and trace were still killed.
   # So they run after list's chain, one after another, each under its own limit as before; the
   # chain goes on past a failed part, so each part's verdict is read. In this order trace and
-  # nobus passed but fresh and copy were still killed (hm4, nothing else of the check running):
-  # FAIL-rt-parts-cargo-lock is open.
+  # nobus passed but fresh and copy were still killed (hm4, nothing else of the check running).
+  # The cause was not the build: each run_tests.sh of a part ran the doc check of changed
+  # packages, four `cargo doc` builds of 2 to 8 s on a branch that changes doc lines in
+  # zedc-preimage and zedc-presburger, rebuilt on every run and holding cargo's lock, 90 to 98 %
+  # of each part's time (origin/main, with no changed doc line, builds none and passed). The parts
+  # now leave it out (ZED_DOC_CHECK_SKIP in tools/test_run_tests.sh); this check runs it once, in
+  # its own step (FAIL-rt-parts-cargo-lock, b22-tests10, 2026-11-24).
   (
     (
       rt_part list && {
