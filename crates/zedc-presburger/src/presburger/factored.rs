@@ -21,8 +21,8 @@
 //! proof, which the tests check against expanding every product.
 //!
 //! Stage A' (design sec. 3), each step a function below:
-//! 0. [`side`]: rows divided by the gcd of their coefficients, one row per class, the least
-//!    constant per linear part on each side, and the 2-D cone rule ([`cone`]).
+//! 0. The start of [`solve`]: rows divided by the gcd of their coefficients, one row per
+//!    class, the least constant per linear part on each side, and the 2-D cone rule ([`cone`]).
 //! 1. Components with parity over rows and side nodes ([`Parity`]).
 //! 2. Two frames ([`frame`]): blocks of a signed bipartite graph, its unbalanced blocks Z0,
 //!    and a 2-coloring ρ of the rest.
@@ -175,7 +175,7 @@ struct Opts {
     no_strip: bool,
     /// Pass 1's group test: 0 by the cost estimates, 1 the walk, 2 the complement method.
     method: u8,
-    /// Record each drop (for [`tests`]' replay) and the listed pairs.
+    /// Record each drop (for the replay in the tests) and the listed pairs.
     log: bool,
 }
 
