@@ -283,22 +283,28 @@ impl Extending {
 
     /// Whether a conjunction decided whole is answered from its hull (META3 H2), off in the
     /// test mutant `no_seed`.
+    #[cfg(not(test))]
     fn seed(&self) -> bool {
-        #[cfg(test)]
-        if self.no_seed {
-            return false;
-        }
         true
+    }
+
+    /// [`Self::seed`] in the tests: off in the mutant `no_seed`.
+    #[cfg(test)]
+    fn seed(&self) -> bool {
+        !self.no_seed
     }
 
     /// Whether a conjunction extended from a part is answered from the part's hull (META3
     /// H2), off in the test mutant `no_inherit`.
+    #[cfg(not(test))]
     fn inherit(&self) -> bool {
-        #[cfg(test)]
-        if self.no_inherit {
-            return false;
-        }
         true
+    }
+
+    /// [`Self::inherit`] in the tests: off in the mutant `no_inherit`.
+    #[cfg(test)]
+    fn inherit(&self) -> bool {
+        !self.no_inherit
     }
 
     /// [`Extending::defined`] of a formula with no auxiliary variable, or whose auxiliary

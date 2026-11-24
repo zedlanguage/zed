@@ -319,9 +319,12 @@ fn tangent_hull(k: i64, bounded: bool) -> Hull {
     hull_of(&rows).expect("the tangent hull")
 }
 
+/// A run as its stretches of positions, with the tree nodes read to find it.
+type Run = (Vec<(usize, usize)>, u64);
+
 /// The run of `u` on `h`, by the searches and by the literal scan, with the tree nodes each
 /// read; `None` when `u` keeps or empties `h`, where no run is read.
-fn runs(h: &Hull, u: &Row) -> Option<((Vec<(usize, usize)>, u64), (Vec<(usize, usize)>, u64))> {
+fn runs(h: &Hull, u: &Row) -> Option<(Run, Run)> {
     let Hull::Poly { sides: t, bounded } = h else {
         return None;
     };
