@@ -163,7 +163,9 @@ fn most_at_the_limit(what: &str, cases: &[(String, Formula)], questions: bool) {
             "{what}: {name}: {asked} questions; the case must reach the cover and ask a question"
         );
         let ns = with.saturating_sub(alone);
-        eprintln!("{what}: {name}: {asked} questions, {with} ns with the cover, {alone} ns alone");
+        eprintln!(
+            "{what}: {name}: {units} units, {asked} questions, {with} ns with the cover, {alone} ns alone"
+        );
         measured.push((name.clone(), ns, units));
     }
     zed_tests::scaling::per_unit_bound(what, &measured, 100_000, EXACT_LIMIT);

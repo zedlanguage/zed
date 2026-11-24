@@ -2499,7 +2499,12 @@ fn projected_namings(
 /// Omega test refuses some orders of elimination where it decides others. Each question is
 /// now renamed by its structure first, so every naming gets one answer, and each set answered
 /// is the one brute force finds over the box. The control (`NAMES_AS_WRITTEN`) asks under the
-/// names given and still gets two answers, so the test can fail.
+/// names given and got two answers, so the test could fail. Since the cover of a finite `h`
+/// runs with no work limit (LIMITS-exact-join-remove, class 1), the cover answers every naming
+/// alike even under the names given, so each naming's answer is kept with the cover's work
+/// (`EXACT_WORK`): under the names given the five namings took four different amounts of work
+/// (2,149,582 to 15,268,586 units, b22-presburger12, v5e2), renamed all five the same
+/// (17,540,068 units, 8 questions).
 #[test]
 fn every_naming_of_a_conjunction_gets_one_projection() {
     use zedc::store::presburger::NAMES_AS_WRITTEN;
@@ -2521,14 +2526,21 @@ fn every_naming_of_a_conjunction_gets_one_projection() {
         [4, 1, 0, 3, 2],
     ];
     let answers = |as_written: bool| {
+        use zedc::store::presburger::exact::EXACT_WORK;
         NAMES_AS_WRITTEN.with(|c| c.set(as_written));
-        let seen: std::collections::BTreeSet<String> =
-            namings.iter().map(|p| projections(&rows, p)).collect();
+        let seen: std::collections::BTreeSet<(String, u64)> = (namings.iter())
+            .map(|p| {
+                let w = EXACT_WORK.get();
+                let answer = projections(&rows, p);
+                (answer, EXACT_WORK.get() - w)
+            })
+            .collect();
         NAMES_AS_WRITTEN.with(|c| c.set(false));
         seen
     };
-    assert_eq!(answers(true).len(), 2, "the control: {:?}", answers(true));
-    assert_eq!(answers(false).len(), 1, "{:?}", answers(false));
+    let (control, renamed) = (answers(true), answers(false));
+    assert!(control.len() >= 2, "the control: {control:?}");
+    assert_eq!(renamed.len(), 1, "{renamed:?}");
     // Each set answered is the set of values over the points of the box.
     let f = formula(&rows, &[0, 1, 2, 3, 4]);
     let syms: Vec<Atom> = (0..5)

@@ -33003,6 +33003,80 @@ mod by_halves_against_old {
         eprintln!("batch against single: {compared:?}");
     }
 
+    /// Case 15 of [`answers_are_those_of_the_old_path`] at seed 379333073186645236 (row
+    /// FAIL-old-path-v5-refused-379333073186645236): six atoms in `0..=20`, eight rows and four
+    /// disjunctions, where batch projection refused `v5` at the cover's work limit (3,658,020
+    /// units against 3,100,000) and the old path answered it. Since LIMITS-exact-join-remove the
+    /// cover of a finite `h` runs with no limit (class 1 at `exact.rs` `cells_cover`), so every
+    /// symbol is answered.
+    fn seed_379333073186645236_case_15() -> (Formula, Vec<Atom>) {
+        let k = Lin::constant;
+        let sum = |a: usize, b: usize| v(a).plus(&v(b));
+        let mut fs: Vec<Formula> = Vec::new();
+        for i in 0..6 {
+            fs.push(ge(v(i)));
+            fs.push(ge(k(20).minus(&v(i))));
+        }
+        fs.extend([
+            ge(v(1).minus(&sum(0, 5))),
+            ge(v(3).plus(&k(1)).minus(&sum(0, 4))),
+            ge(v(3).plus(&k(2)).minus(&v(1))),
+            ge(v(1).minus(&v(2)).minus(&k(2))),
+            ge(v(3).minus(&k(1)).minus(&sum(0, 2))),
+            ge(v(4).plus(&k(1)).minus(&sum(2, 3))),
+            ge(v(1).minus(&v(5))),
+            Formula::or(vec![
+                eq(sum(0, 5).minus(&v(3)).minus(&k(2))),
+                ge(v(3).minus(&k(3)).minus(&sum(0, 5))),
+            ]),
+            Formula::or(vec![
+                ge(v(4).plus(&k(2)).minus(&v(2))),
+                ge(v(4).minus(&k(3)).minus(&v(2))),
+            ]),
+            Formula::or(vec![
+                eq(sum(0, 2).minus(&v(3)).plus(&k(6))),
+                eq(sum(0, 2).minus(&v(3)).plus(&k(2))),
+            ]),
+            Formula::or(vec![
+                ge(sum(1, 4).minus(&v(3)).plus(&k(6))),
+                ge(sum(1, 4).minus(&v(3)).plus(&k(2))),
+                ge(sum(1, 4).minus(&v(3)).plus(&k(3))),
+            ]),
+        ]);
+        let syms = (0..6).map(|i| Atom::Sym(format!("v{i}").into())).collect();
+        (Formula::and(fs), syms)
+    }
+
+    /// Batch projection answers every symbol of case 15, within the old path's answer, and
+    /// holds every value at which [`decide`] on the old path finds a point. Red on 946c0c265
+    /// (`v5 refused (Questions)`), from b22-presburger2's file of the row.
+    #[test]
+    fn seed_379333073186645236_case_15_batch_answers_where_the_old_path_does() {
+        let (f, syms) = seed_379333073186645236_case_15();
+        let (new, old_each) = (project_each(&f, &syms), old(|| project_each(&f, &syms)));
+        let ((a, _), (b, _)) = (new.expect("batch"), old_each.expect("old path"));
+        for ((x, y), sym) in a.iter().zip(&b).zip(&syms) {
+            if let Ok(y) = y {
+                let x = x
+                    .as_ref()
+                    .unwrap_or_else(|r| panic!("{sym} refused ({r:?}): {f}"));
+                assert!(x.is_subset(y), "{sym} {x:?} not in {y:?}: {f}");
+            }
+        }
+        for (x, sym) in a.iter().zip(&syms) {
+            let x = x.as_ref().expect("answered");
+            for val in 0..=20i128 {
+                let g = Formula::and(vec![
+                    f.clone(),
+                    eq(Lin::atom(sym.clone()).minus(&Lin::constant(val))),
+                ]);
+                if old(|| decide(&g)) == Ok(true) {
+                    assert!(x.contains(val as i64), "{sym} {x:?} drops {val}: {f}");
+                }
+            }
+        }
+    }
+
     /// Case 17 of [`answers_are_those_of_the_old_path`] at seed 10897834051988464728 (item
     /// FAIL-batch-single-hull-seed): batch ([`project_each`]) and single ([`project`])
     /// projection give the same hull of each symbol, and it is the exact hull, the values

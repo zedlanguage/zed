@@ -87,14 +87,18 @@ pub fn solver_alone<T>(f: impl FnOnce() -> T) -> T {
 /// the answer with the exact cover ([`project_each_exact`]): inside the solver's set, or a
 /// refusal with [`Refusal::Questions`] where the cover passed its work limit. A cover that
 /// passes its limit refuses the projection (P197): it does not keep the solver's set, even
-/// where that set is exact.
+/// where that set is exact. Since the cover of a finite `h` runs with no work limit
+/// (LIMITS-exact-join-remove, class 1), a cover that once stopped at its limit can go on to a
+/// question the solver refuses with [`Refusal::Disjuncts`] (a disjunction its search could not
+/// decide), and refuses the projection for that cause: `general_chain(64)` of
+/// `l01_38_omega_test::disj_groups`, row COVER-disjuncts-general-chain.
 pub fn project_alone(f: &Formula, syms: &[Atom]) -> Each {
     let alone = solver_alone(|| project_each(f, syms)).expect("a projection");
     let covered = project_each_exact(f, syms).expect("a projection");
     for (a, c) in alone.0.iter().zip(&covered.0) {
         let inside = matches!((a, c), (Ok(a), Ok(c)) if c.is_subset(a));
         assert!(
-            inside || c == a || matches!(c, Err(Refusal::Questions)),
+            inside || c == a || matches!(c, Err(Refusal::Questions | Refusal::Disjuncts)),
             "{f}: the cover's {c:?} against the solver's {a:?}"
         );
     }

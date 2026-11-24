@@ -220,6 +220,14 @@ fn boxed(f: Formula) -> Formula {
     Formula::and(all)
 }
 
+/// `f` with each of x, y and z at least `-B` and no upper bound, so that a projection's `h`
+/// is unbounded and the cover keeps its work limit (`exact::loop_limit`).
+fn open_above(f: Formula) -> Formula {
+    let mut all: Vec<Formula> = NAMES.iter().map(|n| ge(&[(*n, 1)], B)).collect();
+    all.push(f);
+    Formula::and(all)
+}
+
 /// The values of `sym` at the points of `f` in the box, by trying every point.
 fn brute(f: &Formula, sym: &str) -> IntervalSet {
     let at = NAMES.iter().position(|n| *n == sym).unwrap();
@@ -524,11 +532,20 @@ fn the_answers_do_not_depend_on_the_order_of_the_symbols_part_3() {
 /// `l01_39_scope_relations`): random formulas over four symbols seldom reach the steps it keeps.
 ///
 /// Two parts, each a test with a seed of its own, of 60 formulas each, and past 60 only until
-/// some call was refused as a whole (at most 120): whole, the 120 formulas took 16.6 s in the
-/// library piece at load 49 to 63, the slowest test of the piece (twopin3, 2026-11-19). A call
-/// was refused as a whole in 9 to 17 of 120 rounds in six runs, so a part of 60 alone would miss
-/// one about once in e^5 ≈ 150 runs; going on to 120 makes that as rare as for the whole test
-/// before (about e^-10).
+/// some call was refused as a whole (at most 120 then; 600 now, below): whole, the 120
+/// formulas took 16.6 s in the library piece at load 49 to 63, the slowest test of the
+/// piece (twopin3, 2026-11-19). A call was refused as a whole in 9 to 17 of 120 rounds in
+/// six runs, so a part of 60 alone would miss one about once in e^5 ≈ 150 runs; going on
+/// to 120 made that as rare as for the whole test before (about e^-10).
+///
+/// Since the cover of a finite `h` runs with no work limit (LIMITS-exact-join-remove, class 1
+/// at `cells_cover`), a boxed formula is never refused at the limit, so the odd rounds draw the
+/// formula in a box open above ([`open_above`]), where `h` is unbounded and the limit still
+/// stands; the even rounds keep the box, which tests the cache where every call is answered.
+/// Over all 120 rounds a call was then refused as a whole 1 to 7 times (mean 2.45) for the
+/// seeds 1 to 20 (b22-presburger12, v5e2), so 120 rounds would miss one about once in
+/// e^2.45 ≈ 12 runs; the rounds now go on past 120, up to 600, until one is refused, which
+/// makes a miss about as rare as before (e^-12).
 fn the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part(part: usize) {
     let test = format!(
         "the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part_{part}"
@@ -544,11 +561,15 @@ fn the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part
         PART_CACHE_OFF.set(false);
         (got, EXACT_QUESTIONS.get() - q, FAST_WORK.get() - d)
     };
-    for round in 0..120 {
+    for round in 0..600 {
         if round >= 60 && whole > 0 {
             break;
         }
-        let f = boxed(formula(&mut rng, 3));
+        let f = if round % 2 == 0 {
+            boxed(formula(&mut rng, 3))
+        } else {
+            open_above(formula(&mut rng, 3))
+        };
         for limit in [3_000, 10_000, 30_000, 100_000, EXACT_LIMIT] {
             EXACT_LIMIT_SET.set(Some(limit));
             let (on, q_on, d_on) = run(&f, false);
@@ -940,14 +961,15 @@ fn evens_tied(k: i64) -> Formula {
     ])
 }
 
-/// The work limit on both sides: allowed exactly the work the cover of [`evens_tied`] takes,
-/// the solver's work for its questions included and that of its fast path left out (`tried`:
-/// `direct` reads the rows and fails, three disjunctions grouped through `z`), it answers with the
-/// exact set (the even values); allowed one unit less, it refuses ([`Refusal::Questions`]) and
-/// never answers with the solver's set, which has values with no point (PRES-pugh-work-budget). The
-/// work is counted, so a second run uses the same. Before `tried` had an allowance of its own, the
-/// failed fast path was charged to the limit, and the cover was refused at the limit its loop
-/// needs.
+/// The work limit does not refuse a cover over a box (class 1 of the proof at `cells_cover`,
+/// `h` finite, row LIMITS-exact-join-remove): allowed exactly the work the cover of
+/// [`evens_tied`] takes, the solver's work for its questions included and that of its fast path
+/// left out (`tried`: `direct` reads the rows and fails, three disjunctions grouped through
+/// `z`), it answers with the exact set (the even values); allowed one unit less, it answers the
+/// same, with the same work, where before b22-presburger12 it refused ([`Refusal::Questions`]);
+/// it never answers with the solver's set, which has values with no point
+/// (PRES-pugh-work-budget). The work is counted, so a second run uses the same. (The name is
+/// kept from when one unit less refused, as `COMPLEXITY.md` and the comments cite it.)
 #[test]
 fn the_work_limit_is_met_alike_on_both_sides() {
     let f = evens_tied(20);
@@ -970,12 +992,58 @@ fn the_work_limit_is_met_alike_on_both_sides() {
     EXACT_LIMIT_SET.set(Some(used - 1));
     let r = project_each_exact(&f, &[a("x")]).unwrap();
     EXACT_LIMIT_SET.set(None);
-    assert_eq!(r.0, vec![Err(Refusal::Questions)]);
+    assert_eq!(r.0, vec![Ok(want.clone())]);
     assert!(r.1.is_empty(), "{:?}", r.1);
+    assert_eq!(
+        EXACT_WORK.replace(0) - FAST_WORK.replace(0),
+        used,
+        "the work is not the same below the limit"
+    );
     EXACT_OFF.set(true);
     let solver = project(&f, "x");
     EXACT_OFF.set(false);
     assert!(solver.meet(&want) == want && solver != want, "{solver}");
+}
+
+/// The case `the_work_limit_is_met_alike_on_both_sides` tested before b22-presburger12, kept
+/// where the limit still stands (`h` unbounded, `exact::loop_limit`): [`evens_tied`] with `x`
+/// bounded below only. Allowed exactly the work its cover takes (the fast path's left out), it
+/// answers as with the full limit and with the same work; allowed one unit less, it refuses
+/// ([`Refusal::Questions`]), so the limit, and not any fast path, decides where it stops.
+#[test]
+fn an_unbounded_cover_one_unit_short_of_its_work_is_refused() {
+    let f = Formula::and(vec![
+        Formula::or(vec![
+            eq(&[("x", 1), ("y", -2)], 0),
+            eq(&[("x", 1), ("z", -2)], 0),
+        ]),
+        ge(&[("x", 1)], 0),
+        member(&a("z"), &IntervalSet::of(0, 40)),
+        Formula::or(vec![ge(&[("y", 1), ("z", 1)], 0), ge(&[("y", -1)], -1)]),
+        Formula::or(vec![ge(&[("y", 1), ("z", 2)], 0), ge(&[("y", -1)], -1)]),
+    ]);
+    EXACT_WORK.set(0);
+    FAST_WORK.set(0);
+    let (want, causes) = project_each_exact(&f, &[a("x")]).unwrap();
+    let fast = FAST_WORK.replace(0);
+    let used = EXACT_WORK.replace(0) - fast;
+    assert!(want[0].is_ok(), "{want:?}");
+    assert!(used > 0);
+    assert!(fast > 0, "the fast path read nothing");
+    EXACT_LIMIT_SET.set(Some(used));
+    let again = project_each_exact(&f, &[a("x")]).unwrap();
+    assert_eq!((&again.0, &again.1), (&want, &causes));
+    assert_eq!(
+        EXACT_WORK.replace(0) - FAST_WORK.replace(0),
+        used,
+        "the work is not the same on a second run"
+    );
+    EXACT_LIMIT_SET.set(Some(used - 1));
+    let r = project_each_exact(&f, &[a("x")]).unwrap();
+    EXACT_LIMIT_SET.set(None);
+    EXACT_WORK.set(0);
+    FAST_WORK.set(0);
+    assert_eq!(r.0, vec![Err(Refusal::Questions)]);
 }
 
 /// An unbounded set with holes, the even values of `x == 2 * y || x == 2 * z` with no
@@ -3289,8 +3357,9 @@ fn guards_both(
 /// PRES-cover-bench-guards-beyond: the counter below zero, at the benchmark's sizes `k = 16`
 /// and `k = 128` on inputs `3k/4` wide, projects onto `i` as `k/4 + 1 ..= 3k/4` with no
 /// question: the forward certificate pins `m` and reads every `t(j)` from it. Without it the
-/// cover asks one question for each value of `i`, and at `k = 128` passes the work limit (the
-/// red case of the row).
+/// cover asks one question for each value of `i`; at `k = 128` that passed the work limit (the
+/// red case of the row) until the limit was lifted for a finite `h` (LIMITS-exact-join-remove,
+/// class 1 at `cells_cover`), so both runs now give the answer at both sizes.
 #[test]
 fn guards_beyond_the_inputs_are_certified_without_questions() {
     for k in [16, 128] {
@@ -3304,15 +3373,7 @@ fn guards_beyond_the_inputs_are_certified_without_questions() {
             old_asked > 0,
             "k {k}: the certificate's case was not reached"
         );
-        if k == 16 {
-            assert_eq!(old, Ok(want), "k {k}, without the certificate");
-        } else {
-            assert_eq!(
-                old,
-                Err(Refusal::Questions),
-                "k {k}, without the certificate"
-            );
-        }
+        assert_eq!(old, Ok(want), "k {k}, without the certificate");
     }
 }
 
