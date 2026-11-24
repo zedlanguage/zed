@@ -4417,10 +4417,57 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let (text, parts): (String, Vec<&Expr>) = match src {
             Src::Other(e) => match &e.kind {
-                ExprKind::Tuple(items) => (
-                    "this tuple holds the function".into(),
-                    items.iter().collect(),
-                ),
+                // Tuples written out directly inside this one, each with one part that may
+                // hold the function, are one step: its note names the position by a path,
+                // "this tuple holds the function at `.0.1.0`", and the walk goes on from the
+                // part at the end of the path (MSG-shared-print; QUESTIONS A3 and A4). Where
+                // a tuple has several such parts the path ends at that tuple, and the walk
+                // goes on from each of them. A tuple with a type of its own ([`Seen`]) is not
+                // entered: it is a step of its own, as any other expression is.
+                //
+                // Complexity tradeoff: a note a level, "this tuple holds the function" at each
+                // of `n` nested tuples, is `O(n)` notes of `O(1)` text each but `n` marked
+                // spans, each quoting a stretch of the line and so `O(n)` long once rendered,
+                // `O(n^2)` in all; one note of a path of `n` positions is `O(n)` text and one
+                // mark. Each level is read once (`may_hold` keeps each tuple's answer in
+                // `held`), so the step is `O(n + parts)`. Tests:
+                // `l01_29_diagnostics::shared_print::nested_tuples_are_one_note_with_a_path`,
+                // and the bench `bench::shared_print` for the shape `deep`.
+                ExprKind::Tuple(items) => {
+                    let (mut parts, mut path, mut depth): (Vec<&Expr>, String, usize) =
+                        (items.iter().collect(), String::new(), 0);
+                    loop {
+                        let one = {
+                            let mut holding =
+                                parts.iter().enumerate().filter(|&(_, p)| may_hold(p));
+                            match (holding.next(), holding.next()) {
+                                (Some((i, p)), None) => Some((i, *p)),
+                                _ => None,
+                            }
+                        };
+                        let Some((i, p)) = one else {
+                            break;
+                        };
+                        path.push_str(&format!(".{i}"));
+                        match &p.kind {
+                            ExprKind::Tuple(inner)
+                                if matches!(self.seen.get(&p.span), Some((None, _))) =>
+                            {
+                                parts = inner.iter().collect();
+                                depth += 1;
+                            }
+                            _ => {
+                                parts = vec![p];
+                                break;
+                            }
+                        }
+                    }
+                    let text = match depth {
+                        0 => "this tuple holds the function".to_string(),
+                        _ => format!("this tuple holds the function at `{path}`"),
+                    };
+                    (text, parts)
+                }
                 // A family holds the functions its entries hold (DESIGN.md L1.17; row
                 // FAIL-check-family-of-functions-as-data). Its keys are left out: a function
                 // as a key is the key rule's case (row KEYABLE-reject).

@@ -98,8 +98,10 @@ impl std::fmt::Display for Diagnostic {
 /// that gives the type the checker found for a function declared with no types written, which
 /// a later diagnostic gives again at the same place with the same text, is shortened there to
 /// point to the one above ([`crate::check::declared_again`], MSG-call-signature-per-message);
-/// one whose type differs is given in full. A diagnostic shown first, or alone, prints as
-/// `Display` prints it.
+/// one whose type differs is given in full. A later diagnostic with two steps or more in a row
+/// that an earlier one gives in the same order gives the first of them, says the next ones are
+/// as in that error, and leaves them out ([`Quoted::shared_runs`]). A diagnostic shown first,
+/// or alone, prints as `Display` prints it.
 #[derive(Default)]
 pub struct Quoted {
     /// The lines shown, each by its number.
@@ -112,6 +114,16 @@ pub struct Quoted {
     texts: HashMap<Arc<str>, usize>,
     /// The steps of declarations given in full, each by its line, column and text's number.
     declared: HashSet<(usize, usize, usize)>,
+    /// Each diagnostic shown: the line and column of its headline, and all its steps.
+    shown: Vec<((usize, usize), Vec<Step>)>,
+    /// Each step met, by its line, column, width and text: the first diagnostic of `shown`
+    /// that has it, and its place among that diagnostic's steps.
+    given: HashMap<(usize, usize, usize, Arc<str>), (usize, usize)>,
+}
+
+/// A step's place and text, as [`Quoted::given`] keys it.
+fn step_key(s: &Step) -> (usize, usize, usize, Arc<str>) {
+    (s.line, s.col, s.width, Arc::clone(&s.text))
 }
 
 impl Quoted {
@@ -164,10 +176,78 @@ impl Quoted {
                 again.get_or_insert_with(|| d.clone()).steps[i].text = Arc::clone(short);
             }
         }
+        let runs = self.shared_runs(d);
+        if !runs.is_empty() {
+            let c = again.get_or_insert_with(|| d.clone());
+            let mut steps = Vec::with_capacity(c.steps.len());
+            let mut at = 0;
+            for (i, m, (line, col)) in runs {
+                steps.extend(c.steps[at..i].iter().cloned());
+                let mut first = c.steps[i].clone();
+                let next = match m - 1 {
+                    1 => "the next step is".to_string(),
+                    k => format!("the next {k} steps are"),
+                };
+                first.text =
+                    format!("{}; {next} as in the error at {line}:{col} above", first.text).into();
+                steps.push(first);
+                at = i + m;
+            }
+            steps.extend(c.steps[at..].iter().cloned());
+            c.steps = steps;
+        }
+        let e = self.shown.len();
+        for (p, s) in d.steps.iter().enumerate() {
+            self.given.entry(step_key(s)).or_insert((e, p));
+        }
+        self.shown.push(((d.line, d.col), d.steps.clone()));
         let d = again.as_ref().unwrap_or(d);
         let text = Shown(d, &self.lines).to_string();
         self.lines.extend(d.steps.iter().map(|s| s.line));
         text
+    }
+
+    /// The runs of two steps or more of `d` that an earlier diagnostic gives in the same order,
+    /// at the same places and with the same texts: each run's first place in `d`, its length,
+    /// and the line and column of that diagnostic's headline, in order. `show` prints the first
+    /// step of each run, says the next ones are as in that error, and leaves them out, so that a
+    /// derivation n errors share is printed once (MSG-shared-print, QUESTIONS A3 and A4: "a
+    /// later error names the earlier error and the step it continues from"). The steps of a
+    /// diagnostic after its derivation, as the note on the comparison that closes it, are its
+    /// own, so a run need not end the diagnostic.
+    //
+    // Complexity tradeoff: n errors that share the same k steps printed all of them, O(n·k)
+    // steps; this prints them once and one step for each later error, O(n + k). Each step is
+    // hashed once into `given`, O(its text), the order of the work the checker spent writing
+    // it, and each step of `d` is compared once, either as the start of a run or inside one.
+    // The cost: a later error is read with the earlier one, as for a line shown above. Only the
+    // first diagnostic to give a step is kept for it, so a run it does not continue past the
+    // step, but a later diagnostic does, is cut where the first stops (the rule stays correct,
+    // it only misses that sharing).
+    fn shared_runs(&self, d: &Diagnostic) -> Vec<(usize, usize, (usize, usize))> {
+        let same = |a: &Step, b: &Step| {
+            (a.line, a.col, a.width) == (b.line, b.col, b.width) && a.text == b.text
+        };
+        let (mut runs, mut i) = (Vec::new(), 0);
+        while i < d.steps.len() {
+            let Some(&(e, j)) = self.given.get(&step_key(&d.steps[i])) else {
+                i += 1;
+                continue;
+            };
+            let (headline, theirs) = &self.shown[e];
+            let mut m = 1;
+            while i + m < d.steps.len()
+                && j + m < theirs.len()
+                && same(&d.steps[i + m], &theirs[j + m])
+            {
+                m += 1;
+            }
+            if m > 1 {
+                runs.push((i, m, *headline));
+            }
+            i += m;
+        }
+        runs
     }
 }
 

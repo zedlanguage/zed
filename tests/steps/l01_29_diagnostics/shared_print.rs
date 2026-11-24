@@ -102,6 +102,60 @@ fn a_shared_declared_step_is_printed_once() {
     );
 }
 
+/// Tuples written one inside another give one note, naming the position of the function by a
+/// path, in place of a note a level; one tuple gives the note as before.
+#[test]
+fn nested_tuples_are_one_note_with_a_path() {
+    let out = rejected_with(&deep(3), 1);
+    assert!(
+        out.contains("this tuple holds the function at `.0.0.0`"),
+        "{out}"
+    );
+    assert_eq!(out.matches("this tuple holds the function").count(), 1, "{out}");
+    let out = rejected_with(
+        &format!("{SCALE}t = ((1, (scale, 2)), 3);\nsame = t == #b;\n"),
+        1,
+    );
+    assert!(
+        out.contains("this tuple holds the function at `.0.1.0`"),
+        "{out}"
+    );
+    let out = rejected_with(&deep(1), 1);
+    assert!(out.contains(": this tuple holds the function\n"), "{out}");
+}
+
+/// Two errors through one binding: the second gives the first of the steps it shares with the
+/// first error, names that error, and leaves out the others; its own last step, the note on its
+/// comparison, stays.
+#[test]
+fn a_later_error_names_the_earlier_one_from_the_shared_step() {
+    let src = format!("{SCALE}t = (scale, 1);\ns0 = t == #b;\ns1 = t == #c;\n");
+    let out = rejected_with(&src, 2);
+    assert_eq!(out.matches("`t` is defined here").count(), 2, "{out}");
+    assert_eq!(out.matches("this tuple holds the function").count(), 1, "{out}");
+    assert!(
+        out.contains("`t` is defined here; the next 3 steps are as in the error at 3:6 above"),
+        "{out}"
+    );
+    assert_eq!(out.matches("`scale` is declared here").count(), 1, "{out}");
+}
+
+/// `n` errors, each comparing the last of a chain of `n` names bound one to the next: each
+/// derivation goes through the whole chain, which the first error prints and each later one
+/// names, so the text at 50 and 400 grows within 24 times (as n², 64 times, when each error
+/// printed the chain). The value is one tuple, so the type each message prints is short.
+#[test]
+fn n_errors_through_one_chain_of_n_bindings_print_it_once() {
+    let text = |n: usize| {
+        let mut text = format!("{SCALE}t0 = (scale, 0);\n");
+        text.extend((1..=n).map(|i| format!("t{i} = t{};\n", i - 1)));
+        text.extend((0..n).map(|i| format!("c{i} = t{n} == #c;\n")));
+        rejected_with(&text, n).len()
+    };
+    let (small, large) = (text(50), text(400));
+    assert!(large <= 24 * small, "{small} bytes at 50, {large} at 400");
+}
+
 /// At n = 1 each shape prints one error with the declaration its derivation reaches in full:
 /// `scale`'s, or for the calls `wrap`'s, which gives the call's type.
 #[test]

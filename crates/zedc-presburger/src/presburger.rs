@@ -35439,8 +35439,20 @@ mod r6_unary_queue_tests {
         }
     }
 
-    #[test]
-    fn unary_queue_scales() {
+    /// A benchmark, by its path (`bench::`): tools/run_tests.sh runs it alone, `--exact`, so
+    /// its meter counts instructions; among the tests of a correctness piece, 8 at a time, the
+    /// meter measures processor time, which other tests' load moves (BENCH-merge-check-processor-
+    /// time: it failed there at 8 threads).
+    mod bench {
+        use super::*;
+
+        #[test]
+        fn unary_queue_scales() {
+            unary_queue_scaling();
+        }
+    }
+
+    fn unary_queue_scaling() {
         let red = std::env::var_os("PDCX_RED").is_some();
         let (mut counts, mut unit) = (Vec::new(), "");
         for n in [64, 512, 4096] {
