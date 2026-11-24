@@ -280,6 +280,11 @@ const SITES: &[(&str, Site)] = &[
         "IsPat",
         Site::Later("f(positional v) = match v { (int is int) -> 1, _ -> 0 };\n"),
     ),
+    // The rest of a list pattern binds its name (DESIGN.md step L2.7c, layer L3).
+    (
+        "ListPat",
+        Site::Later("f(positional v) = match v { [..int] -> 1, _ -> 0 };\n"),
+    ),
     (
         "NamePat",
         Site::NotBinder("a type name in a pattern is a type test"),
