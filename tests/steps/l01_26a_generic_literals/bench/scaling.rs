@@ -479,17 +479,30 @@ fn operations_on_literals_typed_by_their_value_check_in_linear_time_a_power_divi
     );
 }
 
-/// Besides its ratio: no type error. Small instance:
-/// `scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier`, with the
-/// signatures and values in `scaling::operations_on_literals_are_typed_by_their_value`.
+/// Besides its ratio: one rejection, the sum `3r^(2^n) + 1r` past the address space (DESIGN.md
+/// sec:diagnostics, "Number too large for any memory of the target"). Before KEPT-power-form
+/// the checker did not fix the power and accepted the text, which DESIGN rejects. Small
+/// instances: `scaling::nested_squares_are_sized_at_the_sum`, and the signatures in
+/// `scaling::operations_on_literals_are_typed_by_their_value`.
 #[test]
 fn operations_on_literals_typed_by_their_value_check_in_linear_time_squares() {
-    accepted_scales(
-        "checking a divisor of n nested squares of 3",
-        2000,
-        1,
-        squares_divisor,
-    );
+    scaling::on_a_thread(1 << 29, || {
+        let n = 2000;
+        let what = "rejecting a divisor of n nested squares of 3";
+        let units = scaling::inputs(n, |m| Resolved::new(&squares_divisor(m)));
+        for u in units.values() {
+            let [e] = &u.type_errors()[..] else {
+                panic!("{what}: one rejection")
+            };
+            assert!(
+                e.starts_with("Number too large for any memory of the target"),
+                "{what}: {e}"
+            );
+        }
+        scaling::check_order(what, n, 1, |m| {
+            std::hint::black_box(units[&m].type_errors());
+        });
+    });
 }
 
 /// Checks `make(m)` at `n` and `8n`, rejected `count` times each, as work of order 0.
