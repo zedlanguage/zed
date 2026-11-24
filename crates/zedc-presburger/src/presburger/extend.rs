@@ -1689,8 +1689,9 @@ fn split(
             // was split into its parts, of which it has none, so the group read as `false`
             // (wildcard-arm audit, b22-load10 step 0; test
             // `tests::a_group_whose_one_disjunction_is_a_call_node_keeps_its_points`). O(runs)
-            // once a node (`BoundHoles::lowered`).
-            Formula::Holes(ref b) => flat.push(b.lowered().clone()),
+            // once a node (`BoundHoles::lowered`, through `Formula::opened`, which the imports
+            // tool reads by its one name).
+            Formula::Holes(_) => flat.push(f.opened().clone()),
             Formula::Not(_) => flat.push(nnf(&f, true)),
         }
     }
