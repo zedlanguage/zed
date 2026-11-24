@@ -118,11 +118,14 @@ pub struct Quoted {
     shown: Vec<((usize, usize), Vec<Step>)>,
     /// Each step met, by its line, column, width and text: the first diagnostic of `shown`
     /// that has it, and its place among that diagnostic's steps.
-    given: HashMap<(usize, usize, usize, Arc<str>), (usize, usize)>,
+    given: HashMap<StepKey, (usize, usize)>,
 }
 
+/// A step's line, column, width and text.
+type StepKey = (usize, usize, usize, Arc<str>);
+
 /// A step's place and text, as [`Quoted::given`] keys it.
-fn step_key(s: &Step) -> (usize, usize, usize, Arc<str>) {
+fn step_key(s: &Step) -> StepKey {
     (s.line, s.col, s.width, Arc::clone(&s.text))
 }
 
@@ -188,8 +191,11 @@ impl Quoted {
                     1 => "the next step is".to_string(),
                     k => format!("the next {k} steps are"),
                 };
-                first.text =
-                    format!("{}; {next} as in the error at {line}:{col} above", first.text).into();
+                first.text = format!(
+                    "{}; {next} as in the error at {line}:{col} above",
+                    first.text
+                )
+                .into();
                 steps.push(first);
                 at = i + m;
             }

@@ -111,7 +111,11 @@ fn nested_tuples_are_one_note_with_a_path() {
         out.contains("this tuple holds the function at `.0.0.0`"),
         "{out}"
     );
-    assert_eq!(out.matches("this tuple holds the function").count(), 1, "{out}");
+    assert_eq!(
+        out.matches("this tuple holds the function").count(),
+        1,
+        "{out}"
+    );
     let out = rejected_with(
         &format!("{SCALE}t = ((1, (scale, 2)), 3);\nsame = t == #b;\n"),
         1,
@@ -132,7 +136,11 @@ fn a_later_error_names_the_earlier_one_from_the_shared_step() {
     let src = format!("{SCALE}t = (scale, 1);\ns0 = t == #b;\ns1 = t == #c;\n");
     let out = rejected_with(&src, 2);
     assert_eq!(out.matches("`t` is defined here").count(), 2, "{out}");
-    assert_eq!(out.matches("this tuple holds the function").count(), 1, "{out}");
+    assert_eq!(
+        out.matches("this tuple holds the function").count(),
+        1,
+        "{out}"
+    );
     assert!(
         out.contains("`t` is defined here; the next 3 steps are as in the error at 3:6 above"),
         "{out}"
