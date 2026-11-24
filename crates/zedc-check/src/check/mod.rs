@@ -14221,12 +14221,7 @@ fn kernel_build(p: Prim, args: Vec<Value>) -> Option<BigUint> {
                 _ => v.as_integer(),
             }
         }
-        let (a, b) = (rat(a)?, rat(b)?);
-        let bits = match fixed_room(FOLD_ASK_BITS, || a.sum_least(&b)) {
-            Ok(bits) => bits,
-            Err(need) => need.size,
-        };
-        return (bits > BigUint::from(64u32)).then_some(bits);
+        return sum_build(&rat(a)?, &rat(b)?);
     }
     let term = Term::Prim(p, args.into_iter().map(Term::Lit).collect());
     match fixed_room(FOLD_ASK_BITS, || eval(&term)) {
@@ -14239,6 +14234,17 @@ fn kernel_build(p: Prim, args: Vec<Value>) -> Option<BigUint> {
         Ok(Value::Big(r) | Value::Rat(r)) => built_bits(&r),
         _ => None,
     }
+}
+
+/// The bits `a + b` or `a - b` builds in full, sized and not built ([`Rat::sum_least`], as
+/// [`kernel_build`] sizes a sum): where the sizing is refused under [`FOLD_ASK_BITS`], the
+/// size the refusal names; `None` where it is within 64 bits.
+fn sum_build(a: &Rat, b: &Rat) -> Option<BigUint> {
+    let bits = match fixed_room(FOLD_ASK_BITS, || a.sum_least(b)) {
+        Ok(bits) => bits,
+        Err(need) => need.size,
+    };
+    (bits > BigUint::from(64u32)).then_some(bits)
 }
 
 /// The bits of the parts of `r` built in full, those wider than 64 bits

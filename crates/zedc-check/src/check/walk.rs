@@ -18999,9 +18999,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// a `rat(x)` cast of a fixed `x` widens, as in `rat(b) ^ (2^64)`, and, at `rat`, the value
     /// of a name bound by `name = e` to such an expression and of a `-`, `+`, `*` or `/` of
     /// such expressions, as `x` in `x = rat(b) / rat(b + 1); x ^ (2^62)` (plan row
-    /// CONST-too-large-rat-names). Each value is the kernel's, by its one evaluator, as for
-    /// [`Self::rat_folded`] ([`prim_folded`]); nothing is read of a function's body, a
-    /// parameter or the input.
+    /// CONST-too-large-rat-names), and of a `^` of a fixed `rat` by a fixed `int`. A `+` or
+    /// `-` that would build a part wider than every part its operands hold built, as
+    /// `3r^(10^6) + 1r`, has no value here: it is sized, not built. Each value is the
+    /// kernel's, by its one evaluator, as for [`Self::rat_folded`] ([`prim_folded`]); nothing
+    /// is read of a function's body, a parameter or the input.
     ///
     /// Complexity tradeoff: the naive method reads the base's text afresh at each power,
     /// recursing through names and operations: a chain of `n` names, each bound to a `/` of the
@@ -19074,7 +19076,32 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if *op != BinaryOp::Div && !rat(&x) && !rat(&y) {
                     return None;
                 }
-                prim_folded(binary_prim(*op)?, vec![at_rat(x)?, at_rat(y)?])
+                let (x, y) = (at_rat(x)?, at_rat(y)?);
+                // A sum that builds a part wider than every part its operands hold built is
+                // not folded: its value is unknown, as before powers were folded, and what it
+                // builds is sized ([`Self::too_large_build`], `sum_build`) and not built.
+                //
+                // Complexity tradeoff: since a fixed `rat ^ int` is folded as kept powers,
+                // folding `3r^k + 1r` would build the digits of `3^k`, O(M(k)) in the check,
+                // for no verdict (`bench::scaling::operations_on_literals_typed_by_their_value_
+                // check_in_linear_time_a_power_divisor`, l01_26a, order 0). Sizing the sum
+                // costs O(primes kept) (`Rat::sum_least`). A sum no wider than an operand it
+                // reads is still folded, so a chain of `+` and `*` on built numbers keeps its
+                // value, at the cost of the run's own operations. The rule is structural, the
+                // sizes of the sum and of its operands, and sets no constant beyond the 64
+                // bits of a word, which `Rat` keeps unbuilt (KEPT-ast-normal-form keeps such a
+                // sum as an expression instead).
+                if let (BinaryOp::Add | BinaryOp::Sub, Value::Rat(a), Value::Rat(b)) = (op, &x, &y)
+                    && let Some(bits) = sum_build(a, b)
+                    && [&**a, &**b]
+                        .into_iter()
+                        .filter_map(built_bits)
+                        .max()
+                        .is_none_or(|held| bits > held)
+                {
+                    return None;
+                }
+                prim_folded(binary_prim(*op)?, vec![x, y])
             }
             // A `rat` power of an `int` exponent the text fixes: the kernel keeps it as atoms
             // with exponents and builds nothing (`Rat::pow`, DESIGN.md step L1.17b), so it is
