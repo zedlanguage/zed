@@ -578,9 +578,20 @@ fn r5_sat_check() {
 /// Round 6: every formula of three clauses over three variables (2,600), as in `r5_sat_check`.
 /// Many have clauses of three literals, whose rows have three atoms in the escape solve, so a
 /// solve that gave `Empty` from the first two atoms of such a row answers some of them wrongly.
+///
+/// The formulas are split into two shards, this one and `_shard_1`: run whole, the piece took
+/// 18.7 s and 20.1 s on VMs, against a limit of 20 s (b22-tests8 jobs f13 on l41 and f15 on
+/// v5e1, FAIL-bench-r11-payloads-past-limit).
 #[test]
 fn r6_every_three_clause_formula_on_three_variables_is_decided_correctly() {
-    r5_sat_run(vec![3, 3, 3, 0, 0, 1]);
+    r5_sat_run(vec![3, 3, 3, 0, 0, 2]);
+}
+
+/// The other shard of
+/// [`r6_every_three_clause_formula_on_three_variables_is_decided_correctly`].
+#[test]
+fn r6_every_three_clause_formula_on_three_variables_is_decided_correctly_shard_1() {
+    r5_sat_run(vec![3, 3, 3, 0, 1, 2]);
 }
 
 // The cases of `r5_probe_cases_are_decided_in_their_size_1` to `_4`, one test each
@@ -1207,16 +1218,17 @@ fn r10_shared_payload_probe() {
 fn r10_shared_payload_rows_must_scale() {
     // Resized from n 32 to n 16384 (TEST-bench-move-l0123, author P169); 1x took 64063667 ns at
     // load 31.10. Building the types takes most of the test's time (1.2 s at 32768,
-    // 5.5 s at 131072), so n is held where the build fits the test's time.
+    // 5.5 s at 131072), so n is held where the build fits the test's time. The types are built
+    // by `check_inputs`, only at the sizes each process runs: built at both before the first
+    // run, they took the whole first phase where each run is counted under DynamoRIO in a new
+    // process that builds its input again; it stopped at its 20 s limit on hm4 (job f25 on main
+    // b43e6d8bb), and with no limit counted 7.99 times the instructions at 8n in 51 s (job f27;
+    // BENCH-main-43-pieces-v5e4).
     big(|| {
-        let a = r10_shared_payloads(16384, "_payload16384");
-        let b = r10_shared_payloads(8 * 16384, "_payload131072");
-        scaling::check("tags sharing one tuple payload diagram", 16384, |n| {
+        let make = |m: usize| r10_shared_payloads(m, &format!("_payload{m}"));
+        scaling::check_inputs("tags sharing one tuple payload diagram", 16384, make, |t| {
             Type::forget_emptiness();
-            assert_eq!(
-                (if n == 16384 { &a } else { &b }).verdict(),
-                Verdict::Inhabited
-            );
+            assert_eq!(t.verdict(), Verdict::Inhabited);
         });
     });
 }
@@ -1259,21 +1271,18 @@ fn r11_failure_prefix_probe() {
 /// `(#inner((i,)), #inner((i,)))`. The probe this replaces (`r11_tagged_payload_probe`) printed
 /// 1.189G units at 1024 on the round-11 merge; on 2eb9353cc it printed 1.48M, 5.55M and 21.8M at
 /// 64, 256 and 1024 (3.9 times per 4 times n).
+///
+/// The inputs are built by `check_inputs`, only at the sizes this process runs: built at both
+/// sizes before the first run, the first phase passed its limit of 20 s on a VM (rc 124,
+/// b22-tests8 job f12b on hm3, FAIL-bench-r11-payloads-past-limit).
 #[test]
 fn r11_tagged_payloads_must_scale() {
     big(|| {
-        let (a, b) = (r11_tagged_payloads(16384), r11_tagged_payloads(8 * 16384));
-        scaling::check(
-            "n tags over one shared payload of tagged rows",
-            16384,
-            |n| {
-                Type::forget_emptiness();
-                assert_eq!(
-                    (if n == 16384 { &a } else { &b }).verdict(),
-                    Verdict::Inhabited
-                );
-            },
-        );
+        let what = "n tags over one shared payload of tagged rows";
+        scaling::check_inputs(what, 16384, r11_tagged_payloads, |t| {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+        });
     });
 }
 
@@ -1417,17 +1426,17 @@ fn r11_many_names_must_scale() {
 /// whose n rows each hold a component with an atom name. The probe this replaces
 /// (`r11_named_payload_probe`) printed 594M units at 1024 on the round-11 merge; on 2eb9353cc it
 /// printed 819K, 2.99M and 11.6M at 64, 256 and 1024 (3.9 times per 4 times n).
+///
+/// The inputs are built by `check_inputs`, only at the sizes this process runs, as in
+/// [`r11_tagged_payloads_must_scale`] (FAIL-bench-r11-payloads-past-limit).
 #[test]
 fn r11_named_payloads_must_scale() {
     big(|| {
-        let a = r11_named_payloads(16384, "_scale");
-        let b = r11_named_payloads(8 * 16384, "_scale");
-        scaling::check("n tags over one shared payload of named rows", 16384, |n| {
+        let what = "n tags over one shared payload of named rows";
+        let make = |n| r11_named_payloads(n, "_scale");
+        scaling::check_inputs(what, 16384, make, |t| {
             Type::forget_emptiness();
-            assert_eq!(
-                (if n == 16384 { &a } else { &b }).verdict(),
-                Verdict::Inhabited
-            );
+            assert_eq!(t.verdict(), Verdict::Inhabited);
         });
     });
 }

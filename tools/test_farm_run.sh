@@ -61,6 +61,8 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+# STUB_DOCS: prints what the doc check would have, the run that did it and the changes' first field.
+[ -z "${STUB_DOCS:-}" ] || echo "docs: checked=${ZED_DOC_CHECKED-} changes=$([ -n "${ZED_DOC_CHANGES-}" ] && head -n 1 "$ZED_DOC_CHANGES" | cut -f1 || echo none)"
 if [ -n "$full" ]; then
   for t in $(cat tests/full/*/needs | sort -u); do
     command -v "$t" >/dev/null || { [ "$t" = qemu-s390x ] && [ -n "${STUB_HAS_PODMAN:-}" ]; } || { echo "MISSING TOOLS: $t"; exit 1; }
@@ -244,7 +246,12 @@ done <"$tests"
 [ "$all" = 0 ]
 JOB
 chmod +x "$colab/pool.sh" "$colab/job.sh"
-git -C "$toy" init -q && git -C "$toy" add -A && git -C "$toy" -c user.name=t -c user.email=t commit -qm toy || exit 2
+# farm_run.sh --commands finds the doc check's changes with the checkout's own script, against its
+# origin/main (case cmd-docs); a job's command that runs this test gives none here.
+cp tools/check_changed_docs.sh "$toy/tools/" || exit 2
+unset ZED_DOC_CHANGES ZED_DOC_CHECKED
+git -C "$toy" init -q && git -C "$toy" add -A && git -C "$toy" -c user.name=t -c user.email=t commit -qm toy &&
+  git -C "$toy" update-ref refs/remotes/origin/main HEAD || exit 2
 export FARM_RUN_COLAB_DIR=$colab
 # A stub strace first on PATH: vm_side installs strace for --trace when it has none, and the fake
 # VMs, all this machine, would run apt-get at once (one fails on dpkg's lock); the stub
@@ -466,6 +473,32 @@ case_ cmd-fail 1 "farm: command 3 rc=0: echo third" "" -- --owner t --vms 1 --co
 o=$ws/case-$n-cmd-fail.out
 [ "$(command grep -a -c -x 'farm: command 2 rc=3: exit 3' "$o")" = 1 ] && [ "$(command grep -a -c -x 'first' "$o")" = 1 ] ||
   { fail=$((fail + 1)); echo "FAIL cmd-fail: line 2's exit 3 or line 1's log not printed ($o)"; }
+# Each command gets the doc check's changes found here, where the history is, in the file
+# ZED_DOC_CHANGES names, its first line `base <hash>` (FAIL-merge-check-doc-skipped-on-vm: the job's
+# copy has no .git, and the doc check of merge_check.sh's steps printed that it was skipped). Before
+# the fix the command printed `none`.
+want=$(printf 'base\t%s' "$(git -C "$toy" rev-parse HEAD)")
+printf '%s\n' '[ -n "${ZED_DOC_CHANGES-}" ] && head -n 1 "$ZED_DOC_CHANGES" || echo none' >"$ws/cmd-docs"
+case_ cmd-docs 0 "farm: command 1 rc=0: $(cat "$ws/cmd-docs")" "" -- --owner t --vms 1 --commands "$ws/cmd-docs"
+o=$ws/case-$n-cmd-docs.out
+[ "$(command grep -a -c -x -F "$want" "$o")" = 1 ] ||
+  { fail=$((fail + 1)); echo "FAIL cmd-docs: the command did not get the doc changes, '$want' ($o)"; }
+# The shares' copies have no origin/main either, and the doc check of each run_tests.sh there
+# printed that it was skipped and passed (MERGECHECK-doc-check-skipped-without-origin). Share 1
+# gets the changes found here and the other shares name share 1; with ZED_DOC_CHECKED set by the
+# caller (tools/merge_check.sh, which did the check), every share names that run. Before the fix
+# every line was `docs: checked= changes=none`.
+STUB_DOCS=1 case_ share-docs 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2
+o=$ws/case-$n-share-docs.out
+[ "$(command grep -a -c -x 'docs: checked= changes=base' "$o")" -ge 1 ] &&
+  [ "$(command grep -a -c -x 'docs: checked=share 1 of this farm run changes=none' "$o")" -ge 1 ] &&
+  [ "$(command grep -a -c -x 'docs: checked= changes=none' "$o")" = 0 ] ||
+  { fail=$((fail + 1)); echo "FAIL share-docs: a share had neither the changes nor share 1 named ($o)"; }
+ZED_DOC_CHECKED="the caller" STUB_DOCS=1 case_ share-docs-caller 0 "pieces: 9, failed: 0" "$all" -- --owner t --vms 2
+o=$ws/case-$n-share-docs-caller.out
+[ "$(command grep -a -c '^docs: ' "$o")" -ge 2 ] &&
+  [ "$(command grep -a '^docs: ' "$o" | command grep -a -c -v -x 'docs: checked=the caller changes=none')" = 0 ] ||
+  { fail=$((fail + 1)); echo "FAIL share-docs-caller: a share did not name the caller's run ($o)"; }
 # A line job.sh ran again after a dylib retry (FARM-merge-check-first-row-rc): summary.tsv has the
 # retry row, exit 1, before the final row, and only the final row is the line's exit. Before the
 # fix a share read row 1 and failed with every piece passed, and --commands counted both rows.

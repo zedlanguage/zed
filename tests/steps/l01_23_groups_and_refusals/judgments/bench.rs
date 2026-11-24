@@ -14,15 +14,18 @@ use super::*;
 #[test]
 fn deciding_a_group_scales() {
     // TEST-bench-move-l0123, author P169: n 256 before, now 32768; 1x 0.20 s by `ns`, load 33.
-    let (n, small, large) = (32768, pair_ring(32768), pair_ring(scaling::FACTOR * 32768));
+    // The rings are built by `check_order_inputs`, only at the sizes each process runs: built
+    // at both sizes before the first run, they took the whole first phase where each run is
+    // counted under DynamoRIO in a new process that builds its input again; it stopped at its
+    // limit on hm4 (job f25 on main b43e6d8bb, 42 s against 26 s), and with no limit counted
+    // 8.09 times the instructions at 8n in 41 s (job f27; BENCH-main-43-pieces-v5e4).
+    let n = 32768;
     let run = |g: &Group| {
         Type::forget_emptiness();
         let types = g.instance(vec![]);
         assert!(types.iter().all(|t| !t.is_empty()));
     };
-    scaling::check_order("deciding a ring of definitions", n, 1, |m| {
-        run(if m == n { &small } else { &large })
-    });
+    scaling::check_order_inputs("deciding a ring of definitions", n, 1, pair_ring, run);
 }
 
 /// The canonical form of one component of `n` members, each its own class, is made in
@@ -107,12 +110,20 @@ fn a_meet_of_unions_of_functions_scales() {
     // each of its two processes (`scaling::inputs`, `scaling::compare_by`). At 8192 the run at n
     // is near the 1 s per run at n the benchmarks are sized to (author P169), and the building
     // halves with it. The case is the same.
+    // Since BENCH-main-43-pieces-v5e4 the sides are built by `check_inputs`, only at the sizes
+    // each process runs: built at both (`scaling::inputs`), the test stopped at its 20 s limit
+    // in its first phase on hm4 (job f25 on main b43e6d8bb), and with no limit counted 8.00
+    // times the instructions at 8n in 53 s (job f27).
     let n = 8192;
-    let sides = scaling::inputs(n, |m| (union(m, "int | #a"), union(m, "int | #b")));
-    scaling::check("the meet of two unions of n functions", n, |m| {
-        let (a, b): &(Ty, Ty) = &sides[&m];
-        assert_eq!(a.meet(b).fns.len(), m);
-    });
+    let sides = |m| (m, union(m, "int | #a"), union(m, "int | #b"));
+    scaling::check_inputs(
+        "the meet of two unions of n functions",
+        n,
+        sides,
+        |(m, a, b): &(usize, Ty, Ty)| {
+            assert_eq!(a.meet(b).fns.len(), *m);
+        },
+    );
 }
 
 /// An overload of `n` exact arrows met with an overload of `n` partial arrows over the same

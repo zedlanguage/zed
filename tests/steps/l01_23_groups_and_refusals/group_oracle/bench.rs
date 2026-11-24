@@ -39,10 +39,17 @@ fn verdicts_of_random_groups_scale() {
             .collect()
     };
     let n = 4096;
-    let groups = scaling::inputs(n, many);
-    scaling::check("verdicts of the members of n random groups", n, |m| {
-        every(&groups[&m])
-    });
+    // Built by `check_inputs`, only at the sizes each process runs: built at both sizes before
+    // the first run (`scaling::inputs`), they took the whole first phase where each run is
+    // counted under DynamoRIO in a new process that builds its input again; it stopped at its
+    // 20 s limit on hm4 (job f25 on main b43e6d8bb), and with no limit counted 8.06 times the
+    // instructions at 8n in 47 s (job f27; BENCH-main-43-pieces-v5e4).
+    scaling::check_inputs(
+        "verdicts of the members of n random groups",
+        n,
+        many,
+        |groups| every(groups),
+    );
 }
 
 /// The verdict of the first member of one chain group, as in [`verdicts_of_random_groups_scale`].
@@ -248,15 +255,25 @@ fn the_verdicts_of_every_definition_of_an_undecided_x14_system_scale() {
 #[test]
 fn a_chain_decided_again_scales() {
     let n = 8192;
-    let chains = scaling::inputs(n, key_chain);
-    for (&m, ts) in &chains {
-        Type::forget_emptiness();
-        assert!(!ts[m - 1].is_empty(), "R{} of a key chain of {m}", m - 1);
-    }
-    scaling::check("is_empty of R(n - 1) of a key chain of n", n, |m| {
-        Type::forget_emptiness();
-        std::hint::black_box(chains[&m][m - 1].is_empty());
-    });
+    // Each chain is built, and its answer checked, by `check_inputs`, only at the sizes each
+    // process runs: built at both sizes before the first run (`scaling::inputs`), they took
+    // the whole first phase where each run is counted under DynamoRIO in a new process that
+    // builds its input again; it stopped at its 20 s limit on hm4 (job f25 on main b43e6d8bb),
+    // and with no limit counted 8.00 times the instructions at 8n in 76 s (job f27;
+    // BENCH-main-43-pieces-v5e4). The answer is checked in the run measured, not decided once
+    // more in the build: with that second decision, made under DynamoRIO, its phase at n
+    // stopped at 20 s on hm4 (job f29); without it the piece passed in 26.3 s on v5e4, ratio
+    // 7.997 (job f31).
+    scaling::check_inputs(
+        "is_empty of R(n - 1) of a key chain of n",
+        n,
+        |m| (m, key_chain(m)),
+        |(m, ts)| {
+            Type::forget_emptiness();
+            let empty = std::hint::black_box(ts[m - 1].is_empty());
+            assert!(!empty, "R{} of a key chain of {m}", m - 1);
+        },
+    );
 }
 
 /// Builds the groups of `sys` under names of its own, so no run finds the groups of another,

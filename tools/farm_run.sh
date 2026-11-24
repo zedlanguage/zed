@@ -217,7 +217,7 @@ vm_pkg() {
     { echo "vm_side: $1 could not be installed"; return 2; }
 }
 
-# vm_cmd <command, base64>: runs one command of --commands on the VM with bash, in the build root
+# vm_cmd <command, base64> [<doc changes>]: runs one command of --commands on the VM with bash, in the build root
 # of the short-addresses pieces (vm_ns), with FARM_OUT the job's out/ directory, which job.sh
 # brings back, and with the tools a share has (vm_side): gawk first as awk, and strace, which
 # tools/test_run_tests.sh trace needs (its three --trace cases found no reads on hm3 without them,
@@ -225,6 +225,9 @@ vm_pkg() {
 # as on this machine, when no such directory is there: tests/src/spec.rs finds the spec beside the
 # checkout or an ancestor when ZED_SPEC_DIR is unset, which test_run_tests trace's case "the spec
 # beside" checks (it found nothing on std1, the spec being only at ZED_SPEC_DIR, 2026-11-22).
+# <doc changes> is `tools/check_changed_docs.sh --changes` as this machine printed it, gzipped and
+# in base64, or empty when it printed nothing: the job's copy has no `.git`, so the doc check
+# reads them from the file ZED_DOC_CHANGES names (FAIL-merge-check-doc-skipped-on-vm).
 # Exit as the command's.
 vm_cmd() {
   set -u -o pipefail
@@ -232,11 +235,16 @@ vm_cmd() {
   [[ $R == /?* ]] || { echo "vm_side: the build root '$R' is not absolute"; return 2; }
   [[ $J == /?* ]] || { echo "vm_side: the job directory '$J' is not absolute"; return 2; }
   if [ "$PWD" != "$R" ]; then
-    vm_ns "$R" cmd "${1-}"
+    vm_ns "$R" cmd "${1-}" "${2-}"
     return
   fi
   c=$(printf %s "${1-}" | base64 -d) && [ -n "$c" ] || { echo "vm_side: the command is not base64"; return 2; }
   mkdir -p "$J/out" "$J/cmd/bin" || { echo "vm_side: mkdir of $J/out or $J/cmd/bin failed"; return 2; }
+  if [ -n "${2-}" ]; then
+    printf %s "$2" | base64 -d | gunzip >"$J/doc-changes" && grep -q '^base' "$J/doc-changes" ||
+      { echo "vm_side: the doc changes are not gzipped base64 with a base line"; return 2; }
+    export ZED_DOC_CHANGES=$J/doc-changes
+  fi
   vm_pkg gawk "$J/cmd" && vm_pkg strace "$J/cmd" || return 2
   ln -sfn "$(command -v gawk)" "$J/cmd/bin/awk" || { echo "vm_side: linking gawk as awk failed"; return 2; }
   if [ ! -e /home/luke/Work/zed ] && [ -f "${ZED_SPEC_DIR-}/DESIGN.md" ]; then
@@ -246,11 +254,13 @@ vm_cmd() {
 }
 
 # vm_side <k> <n> <kind> <full 0|1> <skip-other 0|1> <list 0|1> <trace 0|1> <only> <except>
-#   <vm full folders, space-separated> <short 0|1>: runs on the VM in the checkout's root (job.sh's
+#   <vm full folders, space-separated> <short 0|1> <doc checked by> <doc changes, as vm_cmd's>:
+#   runs on the VM in the checkout's root (job.sh's
 # `!` line); see the Design above. Exit as run_tests.sh's run of the share.
 vm_side() {
   set -u -o pipefail
   local k=${1-} n=${2-} kind=${3-} full=${4-} skip=${5-} list=${6-} trace=${7-} only=${8-} except=${9-} vmfull=${10-} short=${11-}
+  local checked=${12-} docs=${13-}
   [[ $k =~ ^[1-9][0-9]*$ && $n =~ ^[1-9][0-9]*$ && $k -le $n ]] || { echo "vm_side: bad share '$k/$n'"; return 2; }
   [[ $kind == test || $kind == bench ]] || { echo "vm_side: bad kind '$kind'"; return 2; }
   [[ $full$skip$list$trace$short =~ ^[01]{5}$ ]] || { echo "vm_side: bad flags"; return 2; }
@@ -281,6 +291,14 @@ vm_side() {
   # Every step that can fail prints a line `vm_side: <step> failed ...`, which farm_run.sh quotes
   # with the share and the VM (FARM-setup-fail-silent).
   mkdir -p "$w/bin" "$w/cache/zed-test-deps" "$J/out" || { echo "vm_side: mkdir of $w failed"; return 2; }
+  # The doc check (MERGECHECK-doc-check-skipped-without-origin): the run that did it, or the
+  # changes to do it from, as vm_cmd takes them; with neither, run_tests.sh's check fails.
+  [ -z "$checked" ] || export ZED_DOC_CHECKED=$checked
+  if [ -n "$docs" ]; then
+    printf %s "$docs" | base64 -d | gunzip >"$w/doc-changes" && grep -q '^base' "$w/doc-changes" ||
+      { echo "vm_side: the doc changes are not gzipped base64 with a base line"; return 2; }
+    export ZED_DOC_CHANGES=$w/doc-changes
+  fi
   cores=$(nproc)
   [[ $cores =~ ^[1-9][0-9]*$ ]] || { echo "vm_side: nproc gave '$cores'"; return 2; }
   printf '%s\n' '#!/bin/bash' '# The scope options of run_tests.sh, then the command, run without a scope.' \
@@ -565,15 +583,23 @@ final_rows() { awk -F '\t' '$2 ~ /^[0-9]+$/ && $6 == ""' "$1" 2>/dev/null; }
 # when the job could not be run.
 if [ -n "$commands" ]; then
   mapfile -t cl < <(command grep -a . "$commands")
+  # The doc check's changes, found here where the history is (vm_cmd): empty when this checkout has
+  # no origin/main, and the check on the VM then says it is skipped.
+  docs=$(tools/check_changed_docs.sh --changes) || die "tools/check_changed_docs.sh --changes failed"
+  [ -z "$docs" ] || docs=$(printf '%s\n' "$docs" | gzip -9 | base64 -w0) || die "cannot encode the doc changes"
   for try in 1 2 3; do
     acquire 1
     v=${held[0]}
     d=$out/commands-$try
     mkdir -p "$d" || die "cannot create $d"
     for c in "${cl[@]}"; do
-      printf '!printf %%s %s | base64 -d >/content/job/farm_vm.sh && bash /content/job/farm_vm.sh cmd %s\n' \
-        "$vm_b64" "$(printf %s "$c" | base64 -w0)"
+      printf '!printf %%s %s | base64 -d >/content/job/farm_vm.sh && bash /content/job/farm_vm.sh cmd %s %s\n' \
+        "$vm_b64" "$(printf %s "$c" | base64 -w0)" "$docs"
     done >"$d/tests.txt"
+    # job.sh runs each line as one argument of `bash -c`, and Linux refuses an argument longer than
+    # MAX_ARG_STRLEN, 32 pages (131,072 bytes on x86_64; include/uapi/linux/binfmts.h) with E2BIG.
+    awk 'length($0) >= 131072 { exit 1 }' "$d/tests.txt" ||
+      die "a line of $d/tests.txt is 131,072 bytes or longer, which bash -c on the VM cannot take"
     echo "farm: ${#cl[@]} commands on $v (attempt $try; logs $d)"
     "$colab_dir/job.sh" "$v" "$wt" "$d/job" "$d/tests.txt" ${spec:+"$spec"} >"$d/job.out" 2>&1 &
     kids=("$!")
@@ -599,6 +625,15 @@ if [ -n "$commands" ]; then
 fi
 # The VM shares.
 if [ -n "$run_vm" ]; then
+  # The doc check of the shares, whose copies have no origin/main (vm_side;
+  # MERGECHECK-doc-check-skipped-without-origin): when the caller did it, ZED_DOC_CHECKED names that
+  # run and every share passes it on; otherwise share 1 does it from the changes found here, as a
+  # command does (vm_cmd), and the other shares name share 1.
+  sdocs=
+  if [ -z "${ZED_DOC_CHECKED-}" ]; then
+    sdocs=$(tools/check_changed_docs.sh --changes) || die "tools/check_changed_docs.sh --changes failed"
+    [ -z "$sdocs" ] || sdocs=$(printf '%s\n' "$sdocs" | gzip -9 | base64 -w0) || die "cannot encode the doc changes"
+  fi
   want=$vms
   [ -z "$list" ] || want=1
   acquire "$want"
@@ -620,6 +655,13 @@ if [ -n "$run_vm" ]; then
         "$vm_only" "$vm_except" "${vm_full[*]}" "$vm_short"; do
         line+=" $(printf '%q' "$x")"
       done
+      if [ -n "${ZED_DOC_CHECKED-}" ]; then
+        line+=" $(printf '%q' "$ZED_DOC_CHECKED") ''"
+      elif [ "$k" = 1 ]; then
+        line+=" '' $(printf '%q' "$sdocs")"
+      else
+        line+=" $(printf '%q' "share 1 of this farm run") ''"
+      fi
       printf '%s\n' "$line" >"$d/tests.txt"
       echo "farm: share $k of $n on $v (attempt ${tries[$k]}; logs $d)"
       vm_last[$k]=$v

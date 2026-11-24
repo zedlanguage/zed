@@ -22,7 +22,30 @@ run() {
   out=$(pushd "$ws" >/dev/null && "$check" "$ws/doc.log" 2>&1)
   rc=$?
   echo "$rc"
-  echo "$out" | grep -E '^(Documenting|DOC FAILED|The doc check)' | sed 's/, whose doc comments, or items they link, this branch changes\.$//'
+  echo "$out" | grep -E '^(Documenting|DOC FAILED|DOC CHECK FAILED|The doc check)' | sed 's/, whose doc comments, or items they link, this branch changes\.$//'
+}
+# A Colab job's run gives the commands ZED_DOC_CHANGES (tools/farm_run.sh vm_cmd); the checks here
+# give it only where they mean to.
+unset ZED_DOC_CHANGES ZED_DOC_CHECKED
+# Runs the check as a Colab job's command does (FAIL-merge-check-doc-skipped-on-vm): in a copy of the
+# workspace's tracked and untracked files with no `.git`, packed as colab/job.sh packs a checkout,
+# with ZED_DOC_CHANGES naming what `--changes` printed in the workspace. The copy is kept from run to
+# run, as the workspace is; every case writes the same set of files, so none is left over.
+copy=$ws-copy
+run_copy() {
+  local out rc
+  mkdir -p "$copy" && (pushd "$ws" >/dev/null && "$check" --changes) >"$copy.changes" &&
+    (pushd "$ws" >/dev/null && git ls-files -z -co --exclude-standard | tar --null -T - -cf -) |
+    tar -xf - -C "$copy" || { echo "the copy of $ws failed"; return; }
+  # A target directory of its own, as a job's copy has. With the workspace's, b's doc in the copy
+  # failed on a link to the item an earlier case renamed in the workspace ("no item named
+  # `linked` in module `a`", b22-tests8 job f6), its a in the copy unchanged: inferred, not
+  # traced, that cargo took a's build in the workspace, of the same name, as current for it.
+  out=$(pushd "$copy" >/dev/null && CARGO_TARGET_DIR=$copy-target ZED_DOC_CHANGES=$copy.changes \
+    "$check" "$copy/doc.log" 2>&1)
+  rc=$?
+  echo "$rc"
+  echo "$out" | grep -E '^(Documenting|DOC FAILED|DOC CHECK FAILED|The doc check)' | sed 's/, whose doc comments, or items they link, this branch changes\.$//'
 }
 lib_a='//! Package a.
 
@@ -157,8 +180,15 @@ Documenting b (alone, with its own default features)" "$(run)"
 
 base
 git -C "$ws" update-ref -d refs/remotes/origin/main
-check "a checkout without origin/main says the check is skipped" "0
-The doc check of changed packages is skipped: this checkout has no origin/main to compare with." "$(run)"
+# With nothing to compare with, the check cannot run and fails, unless ZED_DOC_CHECKED names the
+# run that did it (MERGECHECK-doc-check-skipped-without-origin: it printed that it was skipped and
+# exited 0, and every share of a farm run passed it so).
+check "a checkout without origin/main fails the check" "1
+DOC CHECK FAILED: this checkout has no origin/main to compare with, so the doc check of changed packages cannot run. Run it in a checkout with origin/main, give it the changes \`tools/check_changed_docs.sh --changes\` prints there in a file named by ZED_DOC_CHANGES, or name the run that did the check in ZED_DOC_CHECKED." "$(run)"
+check "a checkout without origin/main passes when ZED_DOC_CHECKED names the run that checked" "0
+The doc check of changed packages is not run again here (no origin/main): it ran in the merge check." \
+  "$(ZED_DOC_CHECKED="the merge check" run)"
+unset ZED_DOC_CHECKED
 
 base
 : >"$ws/.git/info/exclude"
@@ -179,6 +209,26 @@ DOC FAILED: documentation builds of changed packages that failed: 3, their outpu
 base
 edit a/src/lib.rs 's/^pub fn linked() {}$/pub fn renamed() {}/'
 check "renaming an item documents each package whose docs link it" "$a_b_fail" "$(run)"
+
+# A copy with no `.git`, as a Colab job's (FAIL-merge-check-doc-skipped-on-vm): the check reads the
+# changes `--changes` printed in the workspace. Before the fix the copy printed the skip line.
+base
+edit b/src/lib.rs '/^\/\/\/ Calls a\.$/d'
+check "a copy with no .git and the changes given documents the package of a removed doc line" "0
+Documenting b (alone, with its own default features)" "$(run_copy)"
+
+base
+check "a copy with no .git and no change given builds no documentation" "0" "$(run_copy)"
+
+base
+edit a/src/lib.rs 's/^pub fn linked() {}$/pub fn renamed() {}/'
+check "a copy with no .git documents each package whose docs link a renamed item" \
+  "${a_b_fail//$ws/$copy}" "$(run_copy)"
+
+check "a file of changes with no base line is refused" \
+  "check_changed_docs: ZED_DOC_CHANGES '$ws/Cargo.toml' is not a file of changes with a base line
+2" \
+  "$(pushd "$copy" >/dev/null && ZED_DOC_CHANGES=$ws/Cargo.toml "$check" "$copy/doc.log"; echo "$?")"
 
 base
 edit a/src/lib.rs 's/^pub fn linked() {}$/fn linked() {}/'

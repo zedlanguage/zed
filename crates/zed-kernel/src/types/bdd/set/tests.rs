@@ -875,19 +875,25 @@ mod row_hash_sites {
 
         /// `(int, int) \ (r_1 | ... | r_n)` for tied rows is decided in `O(n log n)`
         /// (empty.rs `Region::index`).
+        ///
+        /// n is 1024, not 64: from n to 8n, n log2 n grows 8 (log2 8n) / (log2 n) times, 12 at
+        /// n = 64 and 10.4 at n = 1024, and stays under 10.5 only from n = 777 (DESIGN
+        /// sec:plan). At 64 the tied half took 17,858,707 and 201,620,873 instructions, 11.29
+        /// times (b22-tests8 job f12b on hm3, FAIL-bench-tied-rows-small-n): the n log n the
+        /// comment above states, measured at a size too small for it.
         #[test]
         fn the_difference_from_a_union_of_tied_rows_scales() {
-            let n = 64;
+            let n = 1024;
             for tied in [false, true] {
-                let diffs = scaling::inputs(n, |m| {
+                let make = |m| {
                     let top = Type::tuple(vec![Type::int(), Type::int()]);
                     &top - &Type::union_all(tuples(m, tied))
-                });
+                };
                 let what =
                     format!("the emptiness of a pair less a union of rows (tied: {tied}), by rows");
-                scaling::check(&what, n, |m| {
+                scaling::check_inputs(&what, n, make, |d| {
                     Type::forget_emptiness();
-                    assert!(!diffs[&m].is_empty());
+                    assert!(!d.is_empty());
                 });
             }
         }
@@ -1012,11 +1018,15 @@ mod row_hash_sites {
 
         /// The emptiness of a union of `n` empty recursive types `T_i = (r_i, T_i)`, whose blind
         /// digests are equal when the rows `r_i` tie (empty.rs `Ids`, keyed by `hash::blind`).
+        ///
+        /// The unions are built by `check_inputs`, only at the sizes each process runs: built at
+        /// both sizes in every process, the piece took 83 s on a VM (b22-tests8 job f12b on hm3,
+        /// FAIL-bench-tied-recursive-over-60s).
         #[test]
         fn the_emptiness_of_a_union_of_tied_recursive_types_scales() {
             let n = 4096;
             for tied in [false, true] {
-                let unions = scaling::inputs(n, |m| {
+                let make = |m| {
                     let recs = tuples(m, tied).into_iter().enumerate().map(|(i, t)| {
                         let def = Def {
                             name: format!("Endless{i}"),
@@ -1029,12 +1039,12 @@ mod row_hash_sites {
                             .remove(0)
                     });
                     Type::union_all(recs)
-                });
+                };
                 let what =
                     format!("the emptiness of a union of recursive types (tied: {tied}), by types");
-                scaling::check(&what, n, |m| {
+                scaling::check_inputs(&what, n, make, |u| {
                     Type::forget_emptiness();
-                    assert!(unions[&m].is_empty());
+                    assert!(u.is_empty());
                 });
             }
         }
@@ -1045,7 +1055,11 @@ mod row_hash_sites {
         fn groups_of_one_digest_scale() {
             let n = 4096;
             for tied in [false, true] {
-                let defs = scaling::inputs(n, |m| {
+                // The definitions are built by `check_inputs`, only at the sizes each process
+                // runs: built at both sizes before the first run (`scaling::inputs`), the tied
+                // ones at n and 8n took the whole first phase, which stopped at its 22 s limit on
+                // a Colab VM at load 3 (job f23 on hm4; FAIL-bench-pieces-past-limit-on-main).
+                let make = |m| {
                     tuples(m, tied)
                         .into_iter()
                         .map(|t| Def {
@@ -1060,15 +1074,15 @@ mod row_hash_sites {
                             ]),
                         })
                         .collect::<Vec<_>>()
-                });
+                };
                 let what = format!("groups of one definition each (tied: {tied}), by groups");
-                scaling::check(&what, n, |m| {
-                    let kept: Vec<Group> = defs[&m]
+                scaling::check_inputs(&what, n, make, |defs: &Vec<Def>| {
+                    let kept: Vec<Group> = defs
                         .iter()
                         .cloned()
                         .map(|d| Group::new(vec![d]).expect("a group"))
                         .collect();
-                    assert_eq!(kept.len(), m);
+                    assert_eq!(kept.len(), defs.len());
                 });
             }
         }

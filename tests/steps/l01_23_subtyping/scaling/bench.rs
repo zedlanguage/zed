@@ -4,13 +4,15 @@
 
 use super::*;
 
-/// Runs `f` on a thread of its own.
-fn on_thread(f: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .spawn(f)
-        .unwrap()
-        .join()
-        .unwrap();
+/// Runs `f` on a thread of its own, of the 2 MiB stack a thread has by default, named as the
+/// test's thread is. The name is what lets a check count instructions where the hardware has
+/// no counter (a Colab VM): each run then goes to a new process of the test, found by that
+/// name, under DynamoRIO. A thread with no name, as `std::thread::Builder::new()` made here
+/// before, has no test, so its checks fell back to processor time (`work=` in the bench line,
+/// with ratios 13.2 and 16.1 for the grid of cells and 10.3 and 12.7 for the pinwheels on hm4,
+/// jobs f25 and f27 on main b43e6d8bb; BENCH-main-43-pieces-v5e4).
+fn on_thread(f: impl FnOnce() + Send) {
+    scaling::on_a_stack(2 << 20, f)
 }
 
 /// Size (TEST-bench-move-l0123, author P169): n 16 before, now 4096; at 8192 (1x 479 ms) the
@@ -56,6 +58,12 @@ fn a_product_covered_by_its_cells_scales() {
 /// 256 (limit 84 for order 2). perf put the time in the emptiness search of `zed_kernel`
 /// (`Searching::retest`, `empty_fork`, `any_empty`), spread with no one site above 9%: the
 /// `k²` component meets this test is built to make, about 1.7 µs each, not an extra factor.
+/// Now 48 (BENCH-main-43-pieces-v5e4): at 128 the run at 1024 took 5.2 s of processor time, 49.6
+/// times the run at 128, and the five runs of that meter passed the 20 s phase limit on hm4
+/// (job f25 on main b43e6d8bb, 27.3 s with no limit in f27); counted under DynamoRIO, its one
+/// run at 1024 passed 20 s alone (job f29). The inputs are built only at the sizes each process
+/// runs (`check_order_inputs`). At 48 the `k²` meets are still 2,304 against the `2^48` pieces
+/// a split would make.
 #[test]
 fn passing_over_disjoint_negated_types_scales() {
     // As above with `k` decoys, the first component a tuple of `k` bits so that a meet costs
@@ -65,7 +73,7 @@ fn passing_over_disjoint_negated_types_scales() {
     // pieces. Each
     // run takes a new `b`, so no run reads another's results.
     on_thread(|| {
-        let n = 128;
+        let n = 48;
         let bit = &lit(0) | &lit(1);
         let bits = |k: usize, i: usize| {
             Type::tuple(
@@ -74,17 +82,14 @@ fn passing_over_disjoint_negated_types_scales() {
                     .collect(),
             )
         };
-        let made: std::collections::BTreeMap<usize, (Type, Vec<Type>)> = [n, scaling::FACTOR * n]
-            .into_iter()
-            .map(|k| {
-                let u = Type::tuple(vec![bit.clone(); k]);
-                (k, (u, (0..k).map(|i| bits(k, i)).collect()))
-            })
-            .collect();
+        let made = |k: usize| {
+            let u = Type::tuple(vec![bit.clone(); k]);
+            (k, u, (0..k).map(|i| bits(k, i)).collect::<Vec<_>>())
+        };
         let next = std::sync::atomic::AtomicUsize::new(0);
-        scaling::check_order("decoys passed over, by count", n, 2, |k| {
+        scaling::check_order_inputs("decoys passed over, by count", n, 2, made, |(k, u, bs)| {
+            let k = *k;
             let b = 1_000_100 + next.fetch_add(100, Relaxed);
-            let (u, bs) = &made[&k];
             let p = Type::tuple(vec![u.clone(), lit(b)]);
             let decoys = Type::union_all(
                 bs.iter()

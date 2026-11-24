@@ -108,13 +108,21 @@ fn the_refusals_match_the_cross_measure() {
 }
 
 fn scales(name: &str, n: usize) {
-    // Inputs are built before timing.
-    let small = family(name, n).bes();
-    let large = family(name, scaling::FACTOR * n).bes();
-    scaling::check_order(&format!("deciding {name}"), n, 1, |m| {
-        let g = if m == n { &small } else { &large };
-        std::hint::black_box(decide(std::hint::black_box(g)));
-    });
+    // Inputs are built before timing, by `check_order_inputs` only at the sizes each process
+    // runs. Built at both sizes before the first run, they took the whole first phase where
+    // each run is counted under DynamoRIO in a new process that builds its input again: the
+    // 12 benchmarks of this helper and `a_long_run_of_union_edges_scales` stopped at their
+    // 20 s limit on hm4 (job f25 on main b43e6d8bb), and with no limit they counted 8.00 times
+    // the instructions at 8n and took 38 to 46 s (job f27; BENCH-main-43-pieces-v5e4).
+    scaling::check_order_inputs(
+        &format!("deciding {name}"),
+        n,
+        1,
+        |m| family(name, m).bes(),
+        |g| {
+            std::hint::black_box(decide(std::hint::black_box(g)));
+        },
+    );
 }
 
 /// A ring of `kinds` (each node's first child the next node, the last's the first), with the

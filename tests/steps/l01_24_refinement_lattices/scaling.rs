@@ -388,11 +388,14 @@ fn kept_ends(n: usize) -> (IntervalSet, IntervalSet) {
     (set(0), set(3))
 }
 
+/// The run of `bench::kept_ends_scale_linearly`, which checks its answer here, in the run
+/// measured, rather than moving and meeting the set once more when it builds it.
 fn run_kept_ends((set, shifted): &(IntervalSet, IntervalSet)) {
     let moved = revision::forward(&Op::Add, set, &IntervalSet::single(3));
     let scaled = revision::forward(&Op::Mul, set, &IntervalSet::single(-2));
     std::hint::black_box(moved.join(shifted).meet(&scaled.neg()));
-    std::hint::black_box(moved.meet(shifted));
+    let met = std::hint::black_box(moved.meet(shifted));
+    assert!(met == *shifted, "ends past 2^(10^8) at {}", set.len());
 }
 
 /// `x ^ k + 1`, `k * x ^ k - 1` and the cube root of `2 ^ k`, with their order: kept forms,

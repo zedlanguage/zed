@@ -45,21 +45,35 @@ fn debug_writes_the_derived_text() {
     assert!(e.clone() == e);
 }
 
+/// A kind of part, by name, and the part it builds around `e`.
+type Shape = (&'static str, fn(Expr) -> Expr);
+
+/// Each kind of part a body of [`nested`] nests through.
+const SHAPES: [Shape; 7] = [
+    ("unions", |e| Expr::Union(vec![e, int()])),
+    ("intersections", |e| Expr::And(vec![int(), e])),
+    ("complements", |e| Expr::Not(Box::new(e))),
+    ("differences", |e| Expr::Diff(Box::new(e), Box::new(int()))),
+    ("tuples", |e| Expr::Tuple(vec![e])),
+    ("atoms", |e| Expr::Atom("n".into(), vec![e, int()])),
+    ("morphisms", |e| Expr::exact(int(), e)),
+];
+
+/// The body nested `n` deep through the part `shape` of [`SHAPES`], with `bottom` at the bottom.
+fn nested_one(n: usize, bottom: fn() -> Expr, shape: &str) -> Expr {
+    let (_, part) = SHAPES
+        .iter()
+        .find(|(name, _)| *name == shape)
+        .expect("a shape of `SHAPES`");
+    (0..n).fold(bottom(), |e, _| part(e))
+}
+
 /// A body nested `n` deep through each kind of part, with `bottom` at the bottom.
 fn nested(n: usize, bottom: fn() -> Expr) -> Vec<(&'static str, Expr)> {
-    let b = |f: fn(Expr) -> Expr| (0..n).fold(bottom(), |e, _| f(e));
-    vec![
-        ("unions", b(|e| Expr::Union(vec![e, int()]))),
-        ("intersections", b(|e| Expr::And(vec![int(), e]))),
-        ("complements", b(|e| Expr::Not(Box::new(e)))),
-        (
-            "differences",
-            b(|e| Expr::Diff(Box::new(e), Box::new(int()))),
-        ),
-        ("tuples", b(|e| Expr::Tuple(vec![e]))),
-        ("atoms", b(|e| Expr::Atom("n".into(), vec![e, int()]))),
-        ("morphisms", b(|e| Expr::exact(int(), e))),
-    ]
+    SHAPES
+        .iter()
+        .map(|&(name, _)| (name, nested_one(n, bottom, name)))
+        .collect()
 }
 
 /// The depth of the bodies of the regular tests: each copy, comparison, text and check goes

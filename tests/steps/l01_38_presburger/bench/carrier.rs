@@ -12,12 +12,15 @@ fn the_int_parameters_of_a_signature_scale() {
             .collect();
         sig_of(&format!("ok({}) = true;", ps.join(", ")), "ok")
     };
-    let sigs = scaling::inputs(40000, sig);
-    scaling::check(
+    // Built by `check_inputs`, only at the sizes this process runs: built at both before the
+    // first run, under DynamoRIO, the first phase passed its limit of 20 s (rc 124 at 20.2 s on
+    // l43, b22-tests8 job f2, FAIL-bench-pieces-past-limit-on-main).
+    scaling::check_inputs(
         "the int parameters of a signature of n parameters",
         40000,
-        |k| {
-            let ints = sigs[&k].int_params();
+        |k| (k, sig(k)),
+        |(k, sig)| {
+            let ints = sig.int_params();
             assert_eq!(ints.iter().filter(|&&i| i).count(), k / 2);
         },
     );

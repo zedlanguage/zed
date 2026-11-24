@@ -117,20 +117,32 @@ fn a_union_of_cycles_less_one_scales() {
     // 13476 and 111240 definitions; now `halves(24)` and `halves(48)`, 46446 and 379308
     // definitions; 1x 0.17 s by `ns`, load 36. `halves(32)` and `halves(64)` ran past the
     // 25 s stop at 3.5 GB.
-    let ((small, n), (large, m)) = (halves(24), halves(48));
-    assert_eq!((n, m), (46_446, 379_308));
-    let run = |t: &Type| {
+    // The inputs are built by `compare_fresh`, outside what is measured and only at the sizes
+    // each process runs: built at both sizes before the first run, they took the whole first
+    // phase where each run is counted under DynamoRIO in a new process that builds its input
+    // again; it stopped at its limit on hm4 (job f25 on main b43e6d8bb, 38 s against 24 s),
+    // and with no limit counted 8.21 times the instructions in 44 s (job f27;
+    // BENCH-main-43-pieces-v5e4). The sizes it passes are the arguments of `halves`.
+    let (n, m) = (46_446, 379_308);
+    let make = |k: usize, _| {
+        let (t, defs) = halves(k);
+        assert_eq!(defs, if k == 24 { n } else { m });
+        t
+    };
+    let run = |_, t: Type| {
         Type::forget_emptiness();
         assert_eq!(t.verdict(), Verdict::Empty);
+        t
     };
-    scaling::compare(
+    scaling::compare_fresh(
         &format!(
             "a union of cycles less a union holding each: {n} and {m} definitions, {:.2} times",
             m as f64 / n as f64
         ),
         1,
-        || run(&small),
-        || run(&large),
+        (24, 48),
+        make,
+        run,
     );
 }
 

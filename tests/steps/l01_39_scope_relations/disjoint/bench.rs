@@ -7,22 +7,28 @@ use super::*;
 /// groups, the arms built before the timing: near linear in `k`, for groups the solver
 /// decides and groups it does not, and with the reduction that follows a join. One check per
 /// test: the four in one test took 17 s, near the 20 s piece limit.
+///
+/// The arms are built by `check_inputs`, only at the sizes this process runs: built at both
+/// sizes before the first run, under DynamoRIO, the first phase of each of these benchmarks
+/// passed its limit of 20 s (rc 124 at 20.1 s and 20.2 s on l43, b22-tests8 job f2,
+/// FAIL-bench-pieces-past-limit-on-main); the arms at 8n are now built in the process that
+/// runs 8n, in the phase whose limit is 10.5 times the run at n.
 fn join_scales(what: &str, group: Group, reduced: bool, n: usize) {
-    let built: BTreeMap<usize, (Scope, Scope)> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|k| (k, arms(k, group)))
-        .collect();
     let what = format!(
         "the join of arms on k disjoint {what} groups{}",
         if reduced { ", reduced" } else { "" }
     );
-    scaling::check(&what, n, |k| {
-        let (l, r) = &built[&k];
-        let mut j = l.join(r);
-        if reduced {
-            j.reduce();
-        }
-    });
+    scaling::check_inputs(
+        &what,
+        n,
+        |k| arms(k, group),
+        |(l, r)| {
+            let mut j = l.join(r);
+            if reduced {
+                j.reduce();
+            }
+        },
+    );
 }
 
 #[test]

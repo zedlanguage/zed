@@ -261,10 +261,14 @@ fn deciding_widened_tiles_scales() {
 #[test]
 fn a_long_run_of_union_edges_scales() {
     let n = 700_000;
-    let small = long_run(n).bes();
-    let large = long_run(scaling::FACTOR * n).bes();
-    scaling::check_order("deciding a run of n unions with union edges", n, 1, |m| {
-        let g = if m == n { &small } else { &large };
-        std::hint::black_box(decide(std::hint::black_box(g)));
-    });
+    // Built by `check_order_inputs` only at the sizes each process runs (see `bes::scales`).
+    scaling::check_order_inputs(
+        "deciding a run of n unions with union edges",
+        n,
+        1,
+        |m| long_run(m).bes(),
+        |g| {
+            std::hint::black_box(decide(std::hint::black_box(g)));
+        },
+    );
 }

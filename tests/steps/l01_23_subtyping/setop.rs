@@ -842,12 +842,23 @@ fn shared_integer_columns(k: usize, distinct: bool) -> Type {
     &Type::tuple(vec![a; k]) & &Type::tuple(right)
 }
 
+/// The inputs of this check and of [`cofinite_rows_scale`] are built by `check_order_inputs`,
+/// only at the sizes each process runs: built at both sizes before the first run
+/// (`scaling::inputs`), they took the whole first phase where each run is counted under
+/// DynamoRIO in a new process that builds its input again; both benchmarks stopped at their
+/// 20 s limit on hm4 (job f25 on main b43e6d8bb), and with no limit counted 7.99 and 8.12 times
+/// the instructions at 8n in 48 and 60 s (job f27; BENCH-main-43-pieces-v5e4).
 fn shared_integer_columns_check(n: usize, distinct: bool) {
-    let inputs = scaling::inputs(n, |k| shared_integer_columns(k, distinct));
-    scaling::check_order("shared scalar boundaries across tuple columns", n, 1, |k| {
-        Type::forget_emptiness();
-        assert_eq!(inputs[&k].verdict(), Verdict::Inhabited);
-    });
+    scaling::check_order_inputs(
+        "shared scalar boundaries across tuple columns",
+        n,
+        1,
+        |k| shared_integer_columns(k, distinct),
+        |t| {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+        },
+    );
 }
 
 fn cofinite_rows(k: usize) -> Type {
@@ -857,11 +868,16 @@ fn cofinite_rows(k: usize) -> Type {
 }
 
 fn cofinite_rows_scale(n: usize) {
-    let inputs = scaling::inputs(n, cofinite_rows);
-    scaling::check_order("shared integer boundaries across rows", n, 1, |k| {
-        Type::forget_emptiness();
-        assert_eq!(inputs[&k].verdict(), Verdict::Inhabited);
-    });
+    scaling::check_order_inputs(
+        "shared integer boundaries across rows",
+        n,
+        1,
+        cofinite_rows,
+        |t| {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+        },
+    );
 }
 
 /// `A & B`, where `A` holds the lists of integers linked by `more` with an even count of 0 and

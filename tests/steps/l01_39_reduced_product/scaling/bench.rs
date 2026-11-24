@@ -422,17 +422,17 @@ fn tightenings_beside_a_chain_of_disjunctions_scale() {
 /// 8.3 to 9.2 times the work from 128 to 1024 (47 to 52 ms and 418 to 442 ms, 28.1 and
 /// 239.9 MB), pieces 11.3 to 13.4 s, one cold 20.2 s; without the fast path 8.2 to 8.8
 /// times (70 to 77 ms and 601 to 658 ms, 47.0 and 390.6 MB), pieces 14.2 to 16.0 s.
+///
+/// The inputs are built by `check_inputs`, only at the sizes this process runs: built at both
+/// before the first run, under DynamoRIO, the first phase passed its limit of 20 s (rc 124 on
+/// l43, b22-tests8 job f2, FAIL-bench-pieces-past-limit-on-main).
 #[test]
 fn tightenings_of_a_sum_beside_disjunctions_on_each_name_scale() {
-    let n = 128;
-    let inputs = scaling::inputs(n, tightenings_of_a_sum);
-    scaling::check(
+    scaling::check_inputs(
         "k tightenings of n + m beside k disjunctions each on n or m",
-        n,
-        |k| {
-            let (s, tests) = &inputs[&k];
-            change_one_block(s, tests);
-        },
+        128,
+        tightenings_of_a_sum,
+        |(s, tests)| drop(change_one_block(s, tests)),
     );
 }
 
@@ -506,14 +506,17 @@ fn tests_of_a_name_over_many_inputs_take_the_bounds_of_the_inputs_they_narrow() 
 /// scope where each `xi` is in `0..=1`: `k` tests of `z`, by `>=` and `==` in turn, in a scope
 /// no state reaches. No test reads it, since what narrows and what excludes stop there, and the
 /// arms shown below it share its names, emptied once (item PA-letpre-linear).
+///
+/// The inputs are built by `check_inputs`, only at the sizes this process runs: built at both
+/// before the first run, under DynamoRIO, the first phase passed its limit of 20 s (rc 124 on
+/// l43, b22-tests8 job f2, FAIL-bench-pieces-past-limit-on-main).
 #[test]
 fn tests_in_a_scope_no_state_reaches_read_nothing() {
-    let built = scaling::inputs(3200, tests_in_a_dead_scope);
-    scaling::check(
+    scaling::check_inputs(
         "k tests of a sum over k inputs in a scope no state reaches",
         3200,
-        |k| {
-            let (s, t) = &built[&k];
+        |k| (k, tests_in_a_dead_scope(k)),
+        |(k, (s, t))| {
             let a = super::super::arms(t, s);
             assert!(a.iter().any(|a| !a.reachable()), "{k} tests");
         },

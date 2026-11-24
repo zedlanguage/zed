@@ -15,9 +15,10 @@ enum Measure {
 }
 
 /// One measure of the body `shape` of `nested`, `n` and `8n` deep, on the 2 MiB stack of
-/// `deep::on_small_stack`. Only that body is kept: `nested` builds all seven and the other six
-/// are dropped at once, so that the peak holds one build of the seven at 8n, not four; the
-/// second body `==` compares is a copy of the first, not a second build.
+/// `deep::on_small_stack`. Only that body is built (`nested_one`; it built all seven of
+/// `nested` and dropped six, which under DynamoRIO took most of the 20 s of a phase,
+/// BENCH-main-43-pieces-v5e4); the second body `==` compares is a copy of the first, not a
+/// second build.
 /// TEST-bench-move-l0123, author P169: this was one test making the 28 checks at n = 20,000
 /// (`copying_comparing_writing_and_checking_scale_with_depth`, 20.7 s alone); each check is
 /// now a test of its own, sized so that its run at 8n takes about 3 s, and at most 250,000
@@ -25,35 +26,47 @@ enum Measure {
 fn scales(shape: &str, n: usize, measure: Measure) {
     zed_tests::deep::on_small_stack(|| {
         let one = |k: usize| {
-            let (_, body) = nested(k, int)
-                .into_iter()
-                .find(|(what, _)| *what == shape)
-                .expect("a shape of `nested`");
+            let body = nested_one(k, int, shape);
             let copy = match measure {
                 Measure::Comparing => Some(body.clone()),
                 _ => None,
             };
             (body, copy)
         };
-        let (small, large) = (one(n), one(scaling::FACTOR * n));
-        let at = |k: usize| if k == n { &small } else { &large };
+        // The bodies are built by `check_inputs`, only at the sizes each process runs. Built at
+        // n and 8n before the first run, they took the whole first phase where each run is
+        // counted under DynamoRIO in a new process that builds its input again: 16 of these
+        // benchmarks stopped at their 20 s limit on hm4 (job f25 on main b43e6d8bb), and with
+        // no limit they counted 7.99 to 8.01 times the instructions at 8n and took 40 to 81 s
+        // (job f27; BENCH-main-43-pieces-v5e4).
         match measure {
-            Measure::Copying => scaling::check(&format!("copying {shape}"), n, |k| {
-                drop(std::hint::black_box(at(k).0.clone()));
-            }),
-            Measure::Comparing => scaling::check(&format!("comparing {shape}"), n, |k| {
-                let (a, b) = at(k);
-                assert!(std::hint::black_box(Some(a) == b.as_ref()));
-            }),
-            Measure::Writing => {
-                scaling::check(&format!("writing the Debug text of {shape}"), n, |k| {
-                    std::hint::black_box(format!("{:?}", at(k).0));
+            Measure::Copying => {
+                scaling::check_inputs(&format!("copying {shape}"), n, one, |(body, _)| {
+                    drop(std::hint::black_box(body.clone()));
                 })
             }
+            Measure::Comparing => {
+                scaling::check_inputs(&format!("comparing {shape}"), n, one, |(a, b)| {
+                    assert!(std::hint::black_box(Some(a) == b.as_ref()));
+                })
+            }
+            Measure::Writing => scaling::check_inputs(
+                &format!("writing the Debug text of {shape}"),
+                n,
+                one,
+                |(body, _)| {
+                    std::hint::black_box(format!("{body:?}"));
+                },
+            ),
             // The copy is linear, timed above.
-            Measure::Checking => scaling::check(&format!("checking a body of {shape}"), n, |k| {
-                assert!(Group::new(vec![def(at(k).0.clone())]).is_ok());
-            }),
+            Measure::Checking => scaling::check_inputs(
+                &format!("checking a body of {shape}"),
+                n,
+                one,
+                |(body, _)| {
+                    assert!(Group::new(vec![def(body.clone())]).is_ok());
+                },
+            ),
         }
     });
 }

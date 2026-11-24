@@ -258,11 +258,18 @@ fn points_of_relations_written_after_scale() {
     );
 }
 
-/// [`linear_moved`] narrows in near-linear time.
+/// [`linear_moved`] narrows in near-linear time. The input is built by `check_inputs`, only at
+/// the sizes this process runs: built at both before the first run, under DynamoRIO, the first
+/// phase passed its limit of 20 s (rc 124 on l43, b22-tests8 job f2,
+/// FAIL-bench-pieces-past-limit-on-main).
 #[test]
 fn linear_moved_often_scales() {
-    let inputs = scaling::inputs(2048, linear_moved);
-    scaling::check_order("linear cases moved, Forward, k tests", 2048, 1, |m| {
-        drop(inputs[&m].narrowed(How::Forward));
-    });
+    scaling::check_inputs(
+        "linear cases moved, Forward, k tests",
+        2048,
+        linear_moved,
+        |s| {
+            drop(s.narrowed(How::Forward));
+        },
+    );
 }

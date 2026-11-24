@@ -1314,7 +1314,9 @@ run_farm() {
   [ -z "$fullarg" ] || a+=("$fullarg")
   [ -z "$record" ] || a+=(--trace "$o/trace")
   echo "merge check: $(wc -l <"$o/terms") groups${fullarg:+ of tests/full} on Colab VMs as $owner (logs $o)"
-  "$farm" "${a[@]}"
+  # The check above is the doc check of the shares, whose copies have no origin/main
+  # (MERGECHECK-doc-check-skipped-without-origin; tools/check_changed_docs.sh).
+  ZED_DOC_CHECKED="the merge check's run before the VMs (log $o/doc-changed.log)" "$farm" "${a[@]}"
   rc=$?
   if [ -n "$record" ] && [ "$rc" = 0 ]; then
     for d in "$o/trace"/*/; do

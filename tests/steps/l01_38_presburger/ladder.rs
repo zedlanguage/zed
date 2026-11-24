@@ -1228,10 +1228,13 @@ pub(super) fn open_side_chain_scales(
     link: fn(usize) -> String,
     no_side: bool,
 ) {
-    let built = scaling::inputs(n, |k| open_side_chain(k, link));
+    // Built by `check_inputs`, only at the sizes this process runs: built at both before the
+    // first run, under DynamoRIO, the first phase of
+    // `products_whose_factor_bounds_wait_on_each_other_scale` passed its limit of 20 s (rc 124
+    // at 20.2 s on l43, b22-tests8 job f2, FAIL-bench-pieces-past-limit-on-main).
     let measure = move || {
-        scaling::check(what, n, |k| {
-            let (p, g) = &built[&k];
+        let make = |k: usize| (k, open_side_chain(k, link));
+        scaling::check_inputs(what, n, make, |(k, (p, g))| {
             let asked = proved_with_sides_asked(p, g);
             assert!(!no_side || asked == 0, "{k}: {asked} sides asked");
         });

@@ -394,14 +394,18 @@ fn ss_project_each_costs_at_most_four_decides() {
 
 /// `check_order` of `project_each` of `y0` on `sat_half` at 512 and 4,096: 1,249M and 10,796M
 /// instructions on the round-6 tree. (Claude round 6.)
+///
+/// The rows are built by `check_inputs` (power 1, as `check_order` at power 1 measured), only
+/// at the sizes this process runs: built at both before the first run, under DynamoRIO, the
+/// first phase passed its limit of 20 s (rc 124 on l43, b22-tests8 job f2,
+/// FAIL-bench-pieces-past-limit-on-main).
 #[test]
 fn sat_half_project_each_scales_past_512() {
     let k = 2260;
     let y0 = [sym("y0")];
     let build = |n: usize| half_sum(&weights(n));
-    let (s, l) = (build(k), build(scaling::FACTOR * k));
-    scaling::check_order("project_each: sat_half past 512", k, 1, |m| {
-        drop(project_each(if m == k { &s } else { &l }, &y0));
+    scaling::check_inputs("project_each: sat_half past 512", k, build, |rows| {
+        drop(project_each(rows, &y0));
     });
 }
 

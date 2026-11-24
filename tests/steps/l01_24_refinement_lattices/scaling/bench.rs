@@ -269,17 +269,18 @@ fn power_bounds_scale_with_the_bits_of_the_exponent() {
 }
 
 /// TEST-bench-move-l0123, author P169: n was 200, now 500; 1x 0.53 s at load 44.
+///
+/// The inputs are built by `check_inputs`, only at the sizes each process runs, where both
+/// sizes were built, and each moved and met, before the first run. With only that, the piece
+/// still stopped at 20 s on a VM: the new process for 8n built its 4000 pieces and moved and
+/// met them once more to check them, under DynamoRIO, for over 20 s before its run (b22-tests8
+/// job f16 on v5e1). The answer is now checked in the run measured (`run_kept_ends`), and the
+/// piece passes, 7.991 times the instructions at 8n, 43.0 s in all on hm5 (job f32;
+/// FAIL-bench-kept-ends-past-limit).
 #[test]
 fn kept_ends_scale_linearly() {
     let n = 500;
-    let (small, large) = (kept_ends(n), kept_ends(scaling::FACTOR * n));
-    for (w, m) in [(&small, n), (&large, scaling::FACTOR * n)] {
-        let moved = revision::forward(&Op::Add, &w.0, &IntervalSet::single(3));
-        assert_eq!(moved.meet(&w.1), w.1, "ends past 2^(10^8) at {m}");
-    }
-    scaling::check_order("ends past 2^(10^8)", n, 1, |m| {
-        run_kept_ends(if m == n { &small } else { &large })
-    });
+    scaling::check_inputs("ends past 2^(10^8)", n, kept_ends, run_kept_ends);
 }
 
 /// Left at k = 10^6 + 1 by TEST-bench-move-l0123 (author P169): the work grows with the bits

@@ -1295,3 +1295,39 @@ fn n_forwards_with_internal_results_settle_in_linear_time() {
         run,
     );
 }
+
+/// The program of
+/// `recursion::a_chain_of_8000_maps_written_in_reverse_order_checks_on_a_2_mib_stack` at
+/// `n` links: link `h{i}` calls `h{i-1}` and maps its result by `f`, written last link first,
+/// and `a` reads the last link's map at `"k"`, whose value is `n`.
+pub(super) fn reverse_map_chain(n: usize) -> String {
+    let mut src = String::new();
+    for i in (1..n).rev() {
+        src.push_str(&format!(
+            "h{i}(positional f, positional m) = h{}(f, m).map(f);\n",
+            i - 1
+        ));
+    }
+    src.push_str("h0(positional f, positional m) = m.map(f);\n");
+    src.push_str(&format!(
+        "a = h{}(x -> x + 1, {{\"k\" -> 0}})[\"k\"];\n",
+        n - 1
+    ));
+    src
+}
+
+/// Plan row FAIL-l08-02-remaps-recursion-chain-under-load: the correctness test of the chain at
+/// 8,000 links took 6.8 s alone and more than 3 times that under load, so its whole path (parse,
+/// check, elaboration and the reference evaluator's run) is measured here at 1,000 and 8,000
+/// links, on the 2 MiB stack the test runs on.
+#[test]
+fn a_chain_of_n_maps_written_in_reverse_order_takes_linear_time() {
+    scaling::check_inputs(
+        "a chain of n links, each mapping the result of the one before, written last link first",
+        1_000,
+        |n| (n, reverse_map_chain(n)),
+        |(n, src)| {
+            scaling::on_a_stack(2 << 20, || assert_eq!(value(src, "a"), n.to_string()));
+        },
+    );
+}

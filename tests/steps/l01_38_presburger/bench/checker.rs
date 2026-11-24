@@ -14,18 +14,18 @@ fn the_linear_questions_of_a_unit_scale() {
         src.push_str(&program("", "x: a, y: a").replace("ok(", "ok0("));
         src
     };
-    // The questions are timed alone, on a unit loaded before the timing (COMPLEXITY.md F85).
-    let units: std::collections::BTreeMap<usize, _> = [410, 410 * zed_tests::scaling::FACTOR]
-        .into_iter()
-        .map(|m| {
-            let src = unit(m);
-            let program = zedc::run::load(src.as_bytes()).unwrap();
-            let tokens = zedc::lex::lex_fence(&src).unwrap();
-            (m, (zed_tests::deep::statements(&src), tokens, program, src))
-        })
-        .collect();
-    zed_tests::scaling::check("the linear questions of a unit", 410, |m| {
-        let (stmts, tokens, program, src) = &units[&m];
+    // The questions are timed alone, on a unit loaded before the timing (COMPLEXITY.md F85), and
+    // only at the sizes this process runs (`check_inputs`): loaded at both before the first
+    // run, under DynamoRIO, the first phase passed its limit of 20 s (rc 124 at 20.1 s on l43,
+    // b22-tests8 job f2, FAIL-bench-pieces-past-limit-on-main).
+    let load = |m: usize| {
+        let src = unit(m);
+        let program = zedc::run::load(src.as_bytes()).unwrap();
+        let tokens = zedc::lex::lex_fence(&src).unwrap();
+        (zed_tests::deep::statements(&src), tokens, program, src)
+    };
+    zed_tests::scaling::check_inputs("the linear questions of a unit", 410, load, |unit| {
+        let (stmts, tokens, program, src) = unit;
         let refused = zedc::front::linear_questions(src, tokens, stmts, program.unit());
         assert!(refused.is_empty(), "{refused:?}");
     });

@@ -299,11 +299,24 @@ fn a_stripped_zedc_builds() {
     )
     .unwrap();
     let exe = d.join("stripped");
+    // The copy lies in another folder than zedc, so a build with `-C prefer-dynamic` whose
+    // rpaths are relative (`$ORIGIN`, `$ORIGIN/deps`, as job.sh's dylib retry links it) finds
+    // no workspace library from there when the test binary runs outside cargo, which sets
+    // LD_LIBRARY_PATH: "libzed_rt.so: cannot open shared object file"
+    // (FAIL-stripped-zedc-libzed-rt-missing). The loader searches LD_LIBRARY_PATH before
+    // RUNPATH, so naming zedc's own folders first finds the libraries the original finds;
+    // a statically linked zedc ignores them.
+    let built = Path::new(env!("CARGO_BIN_EXE_zedc")).parent().unwrap();
+    let mut libs = vec![built.to_path_buf(), built.join("deps")];
+    libs.extend(std::env::split_paths(
+        &std::env::var_os("LD_LIBRARY_PATH").unwrap_or_default(),
+    ));
     let out = Command::new(&zedc)
         .arg("build")
         .arg(&src)
         .arg("-o")
         .arg(&exe)
+        .env("LD_LIBRARY_PATH", std::env::join_paths(libs).unwrap())
         .env("ZED_RUNTIME", runtime())
         .env("CC", "cc")
         .output()

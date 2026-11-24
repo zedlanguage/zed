@@ -418,6 +418,11 @@ pub struct Meter {
     /// for the meters the tests of the harness make, which count the runs of each size in this
     /// process, and for processor time and cycles, which run each size several times.
     pub(crate) fresh: bool,
+    /// Whether the checks by this meter count instructions in new processes of the test, each
+    /// run at n and at 8n in one, though this meter reads processor time: [`Meter::new`]'s
+    /// meter for a benchmark that runs with other tests where the hardware has no counter and
+    /// DynamoRIO's `zed_icount` is named (see [`counts_in_new_processes`]).
+    pub(crate) elsewhere: bool,
 }
 
 impl Meter {
@@ -431,12 +436,15 @@ impl Meter {
         Self::in_software()
             .or_else(|| Self::open(Hardware::INSTRUCTIONS, "instructions", true))
             .or_else(|| {
+                let thread = std::thread::current();
                 // The new image runs the process's tests from the start, so only a process that
                 // runs this test alone starts again; the call returns where it does not.
-                if std::thread::current().name().is_some_and(runs_alone) {
+                if thread.name().is_some_and(runs_alone) {
                     zed_meter_settings::start_under_dynamorio();
                 }
+                let elsewhere = thread.name().is_some_and(counts_in_new_processes);
                 Self::open(Software::TASK_CLOCK, "ns of processor time", false)
+                    .map(|meter| Self { elsewhere, ..meter })
             })
             .unwrap_or_else(|| no_counter())
     }
@@ -511,7 +519,7 @@ impl Meter {
 
     /// The counter of `event`, of this thread and the threads it starts.
     #[cfg(target_os = "linux")]
-    fn open(event: impl Event, unit: &'static str, instructions: bool) -> Option<Self> {
+    pub(crate) fn open(event: impl Event, unit: &'static str, instructions: bool) -> Option<Self> {
         let mut builder = Builder::new(event);
         let mut counter = builder.inherit(true).enabled(true).build().ok()?;
         let read = move || counter.read().expect("reading the counter");
@@ -535,6 +543,7 @@ impl Meter {
                     unit,
                     instructions,
                     fresh: instructions,
+                    elsewhere: false,
                 })
             })
     }
@@ -915,7 +924,7 @@ pub fn check_order_inputs<T: Sync>(
     run: impl Fn(&T) + Sync,
 ) {
     let mut meter = Meter::new();
-    let fresh = meter.fresh && meter.repeats() == (1, 1);
+    let fresh = (meter.fresh && meter.repeats() == (1, 1)) || meter.elsewhere;
     let (at_n, at_8n) = sizes_run_here(fresh);
     let (small, large) = (at_n.then(|| make(n)), at_8n.then(|| make(FACTOR * n)));
     fn input<'a, T>(built: &'a Option<T>, what: &str, size: usize) -> &'a T {
@@ -1292,6 +1301,11 @@ const FRESH_VAR: &str = "ZED_SCALING_FRESH";
 /// [`FRESH_VAR`].
 const FRESH_FAILED: &str = "ZED_SCALING_FRESH_FAILED_";
 
+/// The variable that gives a process started for a run at 8n the phase it starts just before
+/// that run: `<ms>\t<file>`, the limit [`bench_limit_ms`] gives the run at n of the process that
+/// started it, and the file [`BENCH_LIMIT_FILE`] named there. See [`replay_or_measure`].
+const FRESH_PHASE: &str = "ZED_SCALING_FRESH_PHASE";
+
 /// The head of the line a process started for a run at 8n writes to its standard output, with
 /// its counts: `zed-scaling-fresh\t<units>\t<bytes>\t<ns>`.
 const FRESH_LINE: &str = "zed-scaling-fresh";
@@ -1341,6 +1355,62 @@ fn runs_alone(test: &str) -> bool {
         }
     }
     exact && named
+}
+
+/// Whether the checks of `test`, run in this process with other tests where the hardware has no
+/// counter of instructions, count instructions in new processes of the test, each started with
+/// `--exact` and so under DynamoRIO (`zed_meter_settings::start_under_dynamorio`): `test` is a
+/// benchmark (its path holds `bench::`, as tools/run_tests.sh names one), it does not run alone
+/// here, this is not a process started for one of its runs, and ZED_METER_DRRUN and
+/// ZED_METER_ICOUNT name DynamoRIO and its client.
+///
+/// Why (BENCH-time-only-checks-by-instructions): such a benchmark measured processor time,
+/// held to [`TIME_ALLOWANCE`] times the limit, 21, so a ratio of 10.5 to 21 passed unseen, and
+/// a ratio under 10.5 failed when the load changed between its sizes. b22-misc10's runs j8 and
+/// j9 on Colab (2026-11-23): benchmarks under a name filter measured processor time and failed
+/// under load, and the same tests alone with `--exact` counted instructions and passed. Its
+/// checks now count as a run alone does.
+///
+/// Complexity tradeoff: COMPLEXITY.md has none for the meter; the cost is two process starts
+/// under DynamoRIO per check, each replaying the test up to the check (as [`compare_by`] does
+/// for a count of instructions where the test does not run alone), against one run of each
+/// size in this process by processor time, 5 runs each ([`TIME_RUNS`]). Only benchmarks pay
+/// it: a correctness test's checks run in a piece with its other tests, whose limit DynamoRIO's
+/// slowdown (7.3 times, see the module's documentation) would pass.
+fn counts_in_new_processes(test: &str) -> bool {
+    let named = |var: &str| std::env::var_os(var).is_some_and(|v| !v.is_empty());
+    test.contains("bench::")
+        && !runs_alone(test)
+        && fresh_target().is_none()
+        && named(zed_meter_settings::ZED_METER_DRRUN)
+        && named(zed_meter_settings::ZED_METER_ICOUNT)
+}
+
+impl Meter {
+    /// The meter a check by a meter with [`Meter::elsewhere`] measures by: a count of
+    /// instructions whose every run is in a new process of `test`. It reads nothing here: a run
+    /// that stays in this process, which happens only when the new process finds no test of
+    /// that name, stops with a message.
+    fn counted_in_new_processes(test: &str) -> Self {
+        let test = test.to_owned();
+        Self {
+            read: Box::new(move || {
+                panic!(
+                    "{test}: a benchmark run with other tests where the hardware has no counter \
+                     of instructions counts each run of its checks in a new process of the test, \
+                     under DynamoRIO; that process ran no test, since `{test}`, this thread's \
+                     name, is not that of a test of this binary. Run the check on the test's \
+                     thread (`scaling::on_a_stack` and `alone` keep its name), or run the \
+                     benchmark alone with --exact"
+                )
+            }),
+            unit: "instructions (counted in software by DynamoRIO's zed_icount, each run in a \
+                   new process of the test)",
+            instructions: true,
+            fresh: true,
+            elsewhere: false,
+        }
+    }
 }
 
 /// For each test, the checks it has entered in this process, in order: the message of each
@@ -1404,8 +1474,13 @@ pub(crate) fn fresh_command(exe: &std::path::Path) -> std::process::Command {
 /// panicked here panic with the same message there. `None` when the new process ran no test:
 /// the thread's name is not that of a test (a thread the test named itself), so the run stays
 /// in this process.
-fn run_in_a_new_process(test: &str, k: usize, large: bool, what: &str) -> Option<(Work, u64, u64)> {
-    let size = if large { "8n" } else { "n" };
+fn run_in_a_new_process(
+    test: &str,
+    k: usize,
+    large: Option<Duration>,
+    what: &str,
+) -> Option<(Work, u64, u64)> {
+    let size = if large.is_some() { "8n" } else { "n" };
     let exe = std::env::current_exe().expect("this test binary");
     let mut command = fresh_command(&exe);
     command.args([test, "--exact", "--test-threads=1", "--quiet"]);
@@ -1418,6 +1493,12 @@ fn run_in_a_new_process(test: &str, k: usize, large: bool, what: &str) -> Option
     }
     command.env_remove(RATIOS_FILE).env_remove(BENCH_LIMIT_FILE);
     command.env(FRESH_VAR, format!("{k}\t{size}\t{test}\t{what}"));
+    if let (Some(t1), Some(path)) = (large, std::env::var_os(BENCH_LIMIT_FILE)) {
+        let ms = bench_limit_ms(t1.as_nanos() as u64);
+        let mut phase = std::ffi::OsString::from(format!("{ms}\t"));
+        phase.push(path);
+        command.env(FRESH_PHASE, phase);
+    }
     let outcomes = OUTCOMES.lock().unwrap_or_else(|e| e.into_inner());
     for (j, message) in outcomes[test][..k].iter().enumerate() {
         if let Some(message) = message {
@@ -1489,6 +1570,19 @@ fn replay_or_measure(
          an order that changes from run to run cannot run its runs in a new process"
     );
     let run = if *measure_large { large } else { small };
+    // The phase at 8n starts here, at the run, and not at this process's start: the start, the
+    // re-run under DynamoRIO (`Meter::new`), the replay of the test up to this check and the
+    // inputs at 8n ([`check_inputs`]) come before the run at 8n, and so have the runner's limit
+    // (author A160: "that limit for each run at n and what comes before it", and 10.5 t1 for
+    // each run at 8n; [`start_bench_phase`]). Counted from this process's start, the phase at 8n
+    // held them all against 10.5 t1, and benchmarks whose run at n took under 1.9 s stopped at
+    // 20 s in it (b22-tests8 job f3, FAIL-bench-pieces-past-limit-on-main).
+    if *measure_large && let Some(phase) = std::env::var_os(FRESH_PHASE) {
+        let phase = phase.to_string_lossy().into_owned();
+        let (ms, path) = phase.split_once('\t').expect("<ms>\\t<file>");
+        let ms = ms.parse().expect("the limit of the phase at 8n, in ms");
+        write_bench_phase(std::path::Path::new(path), std::time::SystemTime::now(), ms);
+    }
     let (bytes, ns) = (Cell::new(0), Cell::new(0));
     let work = meter.least(
         || prepare(*measure_large),
@@ -1598,7 +1692,14 @@ fn compare_by_dyn(
         }
         return compare_measured(meter, measures, n, what, bound, small, large, prepare, None);
     }
-    let at = fresh.then_some((test.as_str(), j));
+    let at = (fresh || meter.elsewhere).then_some((test.as_str(), j));
+    let mut counted;
+    let meter = if meter.elsewhere {
+        counted = Meter::counted_in_new_processes(&test);
+        &mut counted
+    } else {
+        meter
+    };
     let run = std::panic::AssertUnwindSafe(|| {
         compare_measured(meter, measures, n, what, bound, small, large, prepare, at)
     });
@@ -1687,7 +1788,7 @@ fn compare_measured(
         // the test alone.
         let small_elsewhere = at
             .filter(|(test, _)| !runs_alone(test))
-            .and_then(|(test, k)| run_in_a_new_process(test, k, false, what));
+            .and_then(|(test, k)| run_in_a_new_process(test, k, None, what));
         let small = match small_elsewhere {
             Some((work, bytes, ns)) => {
                 set_small(bytes, ns);
@@ -1701,17 +1802,25 @@ fn compare_measured(
                 },
             ),
         };
-        // Written after the phase at n, so its work is not counted in either run's.
-        start_bench_phase(Some(phase.elapsed()));
-        // In a new process when `at` is given (see [`compare_by`]), which runs the test's
-        // set-up again inside this phase's time limit.
+        let t1 = phase.elapsed();
+        // In a new process when `at` is given (see [`compare_by`]). Its start, its replay of the
+        // test and its inputs come before the run at 8n, so they have the runner's limit, and
+        // that process starts the phase at 8n itself, just before its run (see
+        // [`replay_or_measure`]); in this process the phase at 8n starts here. Written after
+        // the phase at n, so its work is not counted in either run's.
+        let elsewhere = at.and_then(|(test, k)| {
+            start_bench_phase(None);
+            run_in_a_new_process(test, k, Some(t1), what)
+        });
+        if elsewhere.is_none() {
+            start_bench_phase(Some(t1));
+        }
         let set = |bytes: u64, ns: u64| {
             large_bytes.set(large_bytes.get().min(bytes));
             large_most.set(large_most.get().max(bytes));
             large_ns.set(large_ns.get().min(ns));
             first_bytes.1.set(first_bytes.1.get().or(Some(bytes)));
         };
-        let elsewhere = at.and_then(|(test, k)| run_in_a_new_process(test, k, true, what));
         let large = match elsewhere {
             Some((work, bytes, ns)) => {
                 set(bytes, ns);

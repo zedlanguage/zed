@@ -92,6 +92,7 @@ fn work_a_power_of_n_above_the_order_given_fails() {
             unit: "passes",
             instructions,
             fresh: false,
+            elsewhere: false,
         };
         let only = Measures::WorkOnly;
         assert!(fails(|| check_by(
@@ -122,6 +123,7 @@ fn meter_of_passes(passes: &'static AtomicU64) -> Meter {
         unit: "passes",
         instructions: true,
         fresh: false,
+        elsewhere: false,
     }
 }
 
@@ -716,6 +718,94 @@ fn each_check_prints_a_bench_line_whose_time_grows_with_the_work() {
     );
 }
 
+/// A benchmark run without `--exact`, as under a name filter or in a run of several tests,
+/// counts instructions wherever a run of it alone does: by the hardware counter, or, where
+/// there is none and DynamoRIO and its client are named, by DynamoRIO in a new process for each
+/// run (BENCH-time-only-checks-by-instructions). Before, it read processor time there, held to
+/// 21 and not 10.5, and its line said `work=`: on origin/main 6b511a69a on a Colab VM this
+/// test's run printed `work=` (red, b22-tests8 job f3). The negative control of the benchmark
+/// still fails, so a check whose runs are counted elsewhere still decides in this process. On
+/// a machine with neither counter the line still says `work=`, as every check there does.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_benchmark_run_with_other_tests_counts_instructions() {
+    let named = |var: &str| std::env::var_os(var).is_some_and(|v| !v.is_empty());
+    let hardware = Meter::open(
+        perf_event::events::Hardware::INSTRUCTIONS,
+        "instructions",
+        true,
+    )
+    .is_some();
+    let software =
+        named(zed_meter_settings::ZED_METER_DRRUN) && named(zed_meter_settings::ZED_METER_ICOUNT);
+    let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            "scaling_tests::bench::a_spin_run_with_other_tests",
+            "--show-output",
+            "--test-threads=1",
+        ])
+        .output()
+        .expect("running this test binary");
+    let out = String::from_utf8_lossy(&run.stdout);
+    let err = String::from_utf8_lossy(&run.stderr);
+    assert!(run.status.success(), "{out}\n{err}");
+    let (n, _, units) = bench_fields(&out, "a spin run with other tests");
+    assert_eq!(n, "1000");
+    assert!(units[1] > 4 * units[0], "{units:?}");
+    let line = out
+        .lines()
+        .find(|l| l.starts_with("bench a spin run with other tests: "))
+        .expect("the bench line, found above");
+    assert_eq!(
+        line.split(' ').any(|f| f.starts_with("instr=")),
+        hardware || software,
+        "hardware counter: {hardware}; DynamoRIO named: {software}; {line}"
+    );
+}
+
+/// The variable naming, for [`bench::a_spin_whose_phase_at_8n_is_read`], the file of the
+/// benchmark's phases: its own name, since a process started for a run at 8n is not given
+/// `ZED_BENCH_LIMIT_FILE`.
+const PHASE_SEEN: &str = "ZED_TEST_PHASE_SEEN";
+
+/// The phase at 8n of a benchmark starts at the run at 8n, after the inputs it reads are built,
+/// and asks for its own limit, 10.5 t1: in a process started for that run too, which starts,
+/// runs again under DynamoRIO, replays the test and builds its input at 8n first, all before
+/// the run (author A160: the runner's limit for "each run at n and what comes before it").
+/// Before, that phase was started in the process that started that one, before it did any of
+/// this: on origin/main 6b511a69a on a Colab VM, where the run at 8n is in a new process, this
+/// test failed with the phase at 8n started before the input was built (red, b22-tests8 job
+/// f4), and benchmarks whose run at n took under 1.9 s stopped at 20 s in that phase (job f3,
+/// FAIL-bench-pieces-past-limit-on-main). Where the run at 8n stays in this process (a hardware
+/// counter of instructions) the input at 8n is built before the phase at n, and the test
+/// passes on either.
+#[test]
+fn the_phase_at_8n_starts_at_its_run() {
+    let file = std::env::temp_dir().join(format!("zed-phases-{}", std::process::id()));
+    let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            "scaling_tests::bench::a_spin_whose_phase_at_8n_is_read",
+            "--exact",
+            "--show-output",
+            "--test-threads=1",
+        ])
+        .env(BENCH_LIMIT_FILE, &file)
+        .env(PHASE_SEEN, &file)
+        .output()
+        .expect("running this test binary");
+    // The file is the test's own, by this process's id; the benchmark writes it at each phase.
+    let removed = std::fs::remove_file(&file);
+    let out = String::from_utf8_lossy(&run.stdout);
+    let err = String::from_utf8_lossy(&run.stderr);
+    assert!(run.status.success(), "{out}\n{err}");
+    removed.expect("removing the file of the phases");
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("bench a spin whose phase at 8n is read: ")),
+        "{out}"
+    );
+}
+
 #[test]
 fn bytes_a_power_of_n_above_the_order_given_fail_though_the_work_does_not() {
     let failed = std::panic::catch_unwind(|| check("n² bytes", 1000, square_of_bytes));
@@ -1249,6 +1339,7 @@ fn a_meter_measures_by_any_counter_it_is_given() {
         unit: "passes",
         instructions: true,
         fresh: false,
+        elsewhere: false,
     };
     assert_eq!(meter.work(|| counted_spin(1234)).units, 1234);
     let linear = |n: usize| counted_spin(10 * n as u64);
@@ -1322,6 +1413,7 @@ fn a_meter_of_a_count_that_changes_with_load_measures_up_to_three_times() {
         unit: "ns",
         instructions: false,
         fresh: false,
+        elsewhere: false,
     };
     assert_eq!(meter.runs(), (TIME_RUNS * TRIES, TIME_RUNS * TRIES));
     let (message, smalls, larges) = compare_counted(&mut meter, &PASSES, |_| 1000, |_| 8000);
@@ -1365,6 +1457,7 @@ fn a_ratio_over_the_limit_fails_on_every_meter() {
             unit: "ns",
             instructions,
             fresh: false,
+            elsewhere: false,
         };
         let (message, _, _) = compare_counted(&mut meter, &PASSES, |_| 1000, |_| 10_490);
         assert_eq!(message, None, "10.49 on instructions: {instructions}");
@@ -1395,6 +1488,7 @@ fn a_count_of_instructions_runs_each_size_once() {
         unit: "passes",
         instructions: true,
         fresh: false,
+        elsewhere: false,
     };
     assert_eq!(meter.runs(), (1, 1));
     let (message, smalls, larges) = compare_counted(&mut meter, &PASSES, |_| 1000, |_| 8000);
@@ -1422,6 +1516,7 @@ fn a_meter_of_a_count_that_changes_with_load_holds_the_bytes_of_the_first_runs()
         unit: "ns",
         instructions: false,
         fresh: false,
+        elsewhere: false,
     };
     let mut first_large = |first: usize| {
         let larges = AtomicUsize::new(0);
@@ -1474,6 +1569,7 @@ fn a_memo_filled_by_the_first_run_of_each_size_scales_as_its_first_runs_do() {
         unit: "passes",
         instructions: true,
         fresh: false,
+        elsewhere: false,
     };
     let (small_filled, large_filled) = (AtomicBool::new(false), AtomicBool::new(false));
     compare_by(
@@ -1513,6 +1609,7 @@ fn the_first_run_of_each_size_is_measured_against_the_other() {
         unit: "passes",
         instructions: true,
         fresh: false,
+        elsewhere: false,
     };
     let cold_small = |i: usize| if i == 0 { 1250 } else { 1000 };
     let cold_large = |i: usize| if i == 0 { 12_000 } else { 8000 };
@@ -1539,6 +1636,7 @@ fn a_comparison_to_a_given_limit_passes_at_the_limit_and_fails_over_it() {
         unit: "passes",
         instructions: true,
         fresh: false,
+        elsewhere: false,
     };
     let given = |meter: &mut Meter, second: u64| {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

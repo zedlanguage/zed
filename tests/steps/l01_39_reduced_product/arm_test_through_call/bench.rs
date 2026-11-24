@@ -45,18 +45,27 @@ fn stairs(rng: &mut Rng, k: usize, past: i64) -> String {
 /// callee (CHECK-spine-tests-per-body). Each size has its own random tests, from a seed new
 /// each run; the programs are made before the timing, and their verdicts checked at the
 /// smaller size.
+///
+/// The verdicts are checked after the timing and the programs made by `check_inputs`, only at
+/// the sizes this process runs: a run at 8n in a new process of the test runs the test up to
+/// its check and ends there, so the two checks of the verdicts at 512, made before the timing,
+/// ran again in that process, in the phase of the run at 8n, whose limit of 20 s they and that
+/// run passed (rc 124 at 32.0 s on l43, b22-tests8 job f2,
+/// FAIL-bench-pieces-past-limit-on-main).
 #[test]
 fn tests_calling_one_deep_callee_scale() {
     let k = 512;
     let (mut rng, seed) = Rng::fresh("tests_calling_one_deep_callee_scale");
+    scaling::check_inputs(
+        "k tests calling one callee of k nested arms",
+        k,
+        |n| stairs(&mut Rng::new(seed ^ n as u64), n, 0),
+        |src| _ = check(src),
+    );
     let src = stairs(&mut rng, k, 0);
     assert!(check(&src).is_none(), "seed {seed}: rejected\n{src}");
     let src = stairs(&mut rng, k, 1);
     assert!(check(&src).is_some(), "seed {seed}: accepted\n{src}");
-    let srcs = scaling::inputs(k, |n| stairs(&mut Rng::new(seed ^ n as u64), n, 0));
-    scaling::check("k tests calling one callee of k nested arms", k, |n| {
-        _ = check(&srcs[&n]);
-    });
 }
 
 /// A callee of `k` nested arms each giving a literal: `0` below 0, `j` at `x = j - 1` for `j`

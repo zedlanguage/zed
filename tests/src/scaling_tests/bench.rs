@@ -101,3 +101,65 @@ fn a_metered_heap_is_linear() {
         black_box((theirs, mine, grown));
     });
 }
+
+/// The benchmark that [`super::the_phase_at_8n_starts_at_its_run`] runs alone, with
+/// `ZED_BENCH_LIMIT_FILE` and [`super::PHASE_SEEN`] naming one file: each input is the time it
+/// was built, and the run at 8n reads the phase the file holds then, which must have started
+/// after that input was built and ask for a limit of its own (`<start> <ms>`, `ms` above 0).
+#[test]
+fn a_spin_whose_phase_at_8n_is_read() {
+    let now = || {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+        t.expect("a clock past 1970").as_millis()
+    };
+    let seen = std::env::var_os(super::PHASE_SEEN);
+    check_inputs(
+        "a spin whose phase at 8n is read",
+        1000,
+        |k| (k, now()),
+        |&(k, built)| {
+            spin(4000 * k as u64);
+            // k bytes, so that the bytes of the two runs can be compared (check_inputs measures
+            // them, and refuses a run at 8n that allocates none).
+            std::hint::black_box(vec![1u8; k]);
+            let Some(path) = seen.as_ref().filter(|_| k == 8000) else {
+                return;
+            };
+            // Read into a buffer on the stack: the run's bytes are measured, and a `String` of
+            // the line is allocated in the run at 8n alone (18 bytes in job f4, where the run
+            // allocated nothing else). `File::open` of a path under 384 bytes copies it on the
+            // stack too (std's `run_path_with_cstr`, MAX_STACK_ALLOCATION).
+            use std::io::Read as _;
+            let mut buf = [0u8; 64];
+            let mut file = std::fs::File::open(path).expect("the file of the phases");
+            let len = file.read(&mut buf).expect("reading the file of the phases");
+            let line = std::str::from_utf8(&buf[..len]).expect("the file of the phases is text");
+            let (start, ms) = line.trim().split_once(' ').expect("<start> <ms>");
+            let (start, ms): (u128, u64) = (start.parse().unwrap(), ms.parse().unwrap());
+            assert!(
+                start >= built && ms > 0,
+                "the phase at 8n `{}` started {} ms before its input was built, at {built}",
+                line.trim(),
+                built.saturating_sub(start)
+            );
+        },
+    );
+}
+
+/// The benchmark that [`super::a_benchmark_run_with_other_tests_counts_instructions`] runs
+/// without `--exact`: a spin of 4000 passes per unit of n passes, and its negative control, a
+/// spin of n² passes, 64 times the work at 8n, fails. Run so on a machine with no hardware
+/// counter and with DynamoRIO named, each check counts the instructions of its runs in new
+/// processes (BENCH-time-only-checks-by-instructions), and the control still fails.
+#[test]
+fn a_spin_run_with_other_tests() {
+    let linear = |n: usize| spin(4000 * n as u64);
+    check_instructions_only("a spin run with other tests", 1000, 1, linear);
+    let square = |n: usize| spin((n * n) as u64);
+    assert!(fails(|| check_instructions_only(
+        "a square spin run with other tests",
+        1000,
+        1,
+        square
+    )));
+}

@@ -289,35 +289,35 @@ fn holes_put_in_a_ladder_built_first_are_linear() {
     // in either order, whose arms are joined. Each hole raises the gap of one name, which the
     // potential repairs within that name's component alone (`Scope::raise`). The bounds of
     // every name stay as they were.
+    // The ladders are built by `check_inputs`, only at the sizes this process runs: built at
+    // both before each check, under DynamoRIO, the piece passed the limit of a phase at 57.1 s
+    // (rc 124 on l43, b22-tests8 job f2, FAIL-bench-pieces-past-limit-on-main).
     let p = Premises::new();
     for reverse in [false, true] {
-        let built: BTreeMap<usize, (Scope, Vec<Term>)> = [320, 2560]
-            .into_iter()
-            .map(|k| {
-                let n = named(k + 1, "x");
-                let base = |i: usize| (10 * (k - i)) as i64;
-                let s = (0..=k).fold(ints(&n), |s, i| {
-                    s.assume(&prim(Prim::Ge, var(&n[i]), int(base(i))), true, &p)
-                        .assume(&prim(Prim::Le, var(&n[i]), int(base(i) + 9)), true, &p)
-                });
-                let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
-                let s = (0..k - 1).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 2], 2), true, &p));
-                let mut tests: Vec<Term> = (0..=k)
-                    .map(|i| prim(Prim::Ne, var(&n[i]), int(base(i) + 5)))
-                    .collect();
-                if reverse {
-                    tests.reverse();
-                }
-                (k, (s, tests))
-            })
-            .collect();
+        let ladder = |k: usize| -> (usize, (Scope, Vec<Term>)) {
+            let n = named(k + 1, "x");
+            let base = |i: usize| (10 * (k - i)) as i64;
+            let s = (0..=k).fold(ints(&n), |s, i| {
+                s.assume(&prim(Prim::Ge, var(&n[i]), int(base(i))), true, &p)
+                    .assume(&prim(Prim::Le, var(&n[i]), int(base(i) + 9)), true, &p)
+            });
+            let s = (0..k).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 1], 1), true, &p));
+            let s = (0..k - 1).fold(s, |s, i| s.assume(&ge(&n[i], &n[i + 2], 2), true, &p));
+            let mut tests: Vec<Term> = (0..=k)
+                .map(|i| prim(Prim::Ne, var(&n[i]), int(base(i) + 5)))
+                .collect();
+            if reverse {
+                tests.reverse();
+            }
+            (k, (s, tests))
+        };
         let name = if reverse {
             "holes put in a ladder built first, the last name first"
         } else {
             "holes put in a ladder built first"
         };
-        scaling::check_order(name, 320, 1, |k| {
-            let (s, tests) = &built[&k];
+        scaling::check_inputs(name, 320, ladder, |(k, (s, tests))| {
+            let k = *k;
             let s = tests.iter().fold(s.clone(), |s, t| {
                 let mut j = s
                     .assume_case(t, true, &p)

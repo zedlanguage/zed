@@ -110,30 +110,25 @@ fn comparing_equal_lists_built_on_two_threads_scales() {
     // the lists no longer build, met its last atom `2^m` times when compared `hi` then
     // `lo`.) Small instances: `equal_lists_built_on_two_threads_compare_equal`.
     let n = 1 << 15;
-    // The four lists are built at once, each on a thread of its own: one after another, the
-    // building held every stack sample of the first 32 s of a 38 s run at load 68
-    // (TIME-pieces-under-cap-high-load). Each is still built alone on its thread, so the two of
-    // a size share no node, and the runs measured are those of before.
-    let built: BTreeMap<usize, (Part<Row>, Part<Row>)> = std::thread::scope(|s| {
-        let threads: Vec<_> = [n, scaling::FACTOR * n]
-            .into_iter()
-            .map(|m| {
-                (
-                    m,
-                    s.spawn(move || paired_literals(m)),
-                    s.spawn(move || paired_literals(m)),
-                )
-            })
-            .collect();
-        (threads.into_iter())
-            .map(|(m, a, b)| (m, (a.join().unwrap(), b.join().unwrap())))
-            .collect()
-    });
-    scaling::check(
+    // The two lists of a size are built at once, each on a thread of its own, so they share no
+    // node: one after another, the building held every stack sample of the first 32 s of a 38 s
+    // run at load 68 (TIME-pieces-under-cap-high-load). They are built by `check_inputs`, only
+    // at the sizes each process runs: built at both sizes in every process, the building alone
+    // passed the 20 s limit of the first phase on a Colab VM at load 5.9, before any run
+    // (FAIL-bench-two-thread-lists-past-limit). The runs measured are those of before.
+    scaling::check_inputs(
         "comparing equal lists built on two threads, by literals",
         n,
         |m| {
-            let (a, b) = &built[&m];
+            std::thread::scope(|s| {
+                let (a, b) = (
+                    s.spawn(move || paired_literals(m)),
+                    s.spawn(move || paired_literals(m)),
+                );
+                (a.join().unwrap(), b.join().unwrap())
+            })
+        },
+        |(a, b): &(Part<Row>, Part<Row>)| {
             assert_eq!(a.cmp(b), Ordering::Equal);
         },
     );

@@ -1,9 +1,8 @@
 //! The benchmarks of `ladder.rs` (TEST-bench-move-l0138), run by `tools/run_tests.sh --bench`.
 
 use crate::ladder::*;
-use std::collections::BTreeMap;
 use zed_tests::scaling;
-use zedc::store::presburger::{Entailment, Relation, entails};
+use zedc::store::presburger::{Entailment, entails};
 
 #[test]
 fn the_condition_that_no_operation_fails_scales() {
@@ -93,17 +92,21 @@ fn a_chain_of_remainders_by_terms_scales() {
 fn products_of_premises_in_pairs_scale() {
     // The pairs are taken per product, each from the premises on its two factors; with one
     // lower bound on each factor that is one pair per product.
+    // Built by `check_inputs`, only at the sizes this process runs: built at both before the
+    // first run, under DynamoRIO, the first phase passed its limit of 20 s (rc 124 at 20.2 s on
+    // l43, b22-tests8 job f2, FAIL-bench-pieces-past-limit-on-main).
     let n = 1000;
-    let built: BTreeMap<usize, (Relation, Relation)> = [n, n * scaling::FACTOR]
-        .into_iter()
-        .map(|k| (k, product_sum(k)))
-        .collect();
     let measure = move || {
-        scaling::check("a sum of products of bounded factors entailed", n, |k| {
-            let (p, g) = &built[&k];
-            let e = entails(p, g);
-            assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
-        });
+        let what = "a sum of products of bounded factors entailed";
+        scaling::check_inputs(
+            what,
+            n,
+            |k| (k, product_sum(k)),
+            |(k, (p, g))| {
+                let e = entails(p, g);
+                assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
+            },
+        );
     };
     scaling::on_a_stack(8 << 20, measure);
 }
@@ -244,14 +247,16 @@ fn products_whose_premise_holds_k_atoms_in_no_product_scale() {
     // each pair `{x - 1, y - w{j}}` read the k pairs on `x`, Θ(k²) in all (34.1 times the
     // instructions at k = 1,000, 16.1 times the bytes); it reads the pairs on `w{j}` instead
     // (`pairs::Index::frees`, PRES-growth-ladder-bytes).
+    // Built by `check_inputs`, only at the sizes this process runs: built at both before the
+    // first run, under DynamoRIO, the first phase passed its limit of 20 s (rc 124 at 20.1 s on
+    // l43, b22-tests8 job f2, FAIL-bench-pieces-past-limit-on-main).
     let n = 1000;
-    let built = scaling::inputs(n, one_sum_of_atoms_in_no_product);
     let measure = move || {
-        scaling::check(
+        scaling::check_inputs(
             "a premise of atoms in no product beside many rows on the other factor",
             n,
-            |k| {
-                let (p, g) = &built[&k];
+            |k| (k, one_sum_of_atoms_in_no_product(k)),
+            |(k, (p, g))| {
                 let e = entails(p, g);
                 assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
             },

@@ -4,7 +4,7 @@
 # file git does not track yet; and of each package with a doc line that links the name of an item
 # the change renames, deletes, makes less visible or puts behind a cfg (DOC-renamed-links), though
 # no doc line changes. Usage, from a checkout's root (in a worktree through zrun):
-#   tools/check_changed_docs.sh [<log file>]
+#   tools/check_changed_docs.sh [<log file> | --changes]
 # tools/run_tests.sh runs it before the tests on every run (DOC-check-at-merge), so a branch that
 # changes a doc comment is checked by the run its author makes before merging; a branch that
 # changes none builds no documentation (author, 2026-11-10: no doc build unless doc comments
@@ -38,13 +38,51 @@
 # directory to package); the naive search of every target's directory for every file would be
 # (files x targets). The doc builds dominate: each documents one package (zedc-preimage, the
 # largest, in about 15 s at load 22).
-log=${1:-build/test-logs/doc-changed.log}
-mkdir -p "$(dirname "$log")"
+#
+# A copy with no git history, as a Colab VM's (FAIL-merge-check-doc-skipped-on-vm: the job's copy
+# is a tar of the tracked and untracked files, with no `.git`), is checked from the changes this
+# script finds where the history is: `tools/check_changed_docs.sh --changes` prints them there and
+# checks nothing (a line `base <hash>`, a line `changed <file>` for each file whose doc lines
+# change, and a line `name <name> <scope file> <file>` for each name a link may have lost, all
+# tab-separated; nothing when there is no origin/main), and the check run with ZED_DOC_CHANGES
+# naming a file of those lines reads them in place of git's diff and searches the copy's files
+# with `git grep --no-index --exclude-standard`, which needs no repository. tools/farm_run.sh
+# --commands sends them so with each command.
+mode=check
+[ "${1-}" != --changes ] || mode=changes
+log=build/test-logs/doc-changed.log
+[ "$mode" = changes ] || log=${1:-$log}
+[ "$mode" = changes ] || mkdir -p "$(dirname "$log")"
+if [ -n "${ZED_DOC_CHANGES-}" ]; then
+  [ -f "$ZED_DOC_CHANGES" ] && grep -q -P '^base\t' "$ZED_DOC_CHANGES" || {
+    echo "check_changed_docs: ZED_DOC_CHANGES '$ZED_DOC_CHANGES' is not a file of changes with a base line"
+    exit 2
+  }
+  # A farm_run.sh run inside a job's command passes the changes on as it got them.
+  [ "$mode" = check ] || { cat "$ZED_DOC_CHANGES"; exit; }
+  changed=$(awk -F '\t' '$1 == "changed" { print $2 }' "$ZED_DOC_CHANGES" | sort -u)
+  names=$(awk -F '\t' '$1 == "name" { print $2 FS $3 FS $4 }' "$ZED_DOC_CHANGES" | sort)
+  where=(--no-index --exclude-standard)
+else # Up to the `fi` after `--changes` prints them: the changes from git.
 if ! base=$(git merge-base HEAD origin/main 2>/dev/null); then
-  echo "The doc check of changed packages is skipped: this checkout has no origin/main to compare" \
-    "with."
-  exit 0
+  [ "$mode" = changes ] && exit 0
+  # With nothing to compare with, the check cannot run, and an exit 0 read as a pass: the
+  # snapshot of a Colab job has no origin/main, and every run_tests.sh of a farm share printed
+  # that the check was skipped and passed (MERGECHECK-doc-check-skipped-without-origin). It
+  # passes only when ZED_DOC_CHECKED names the run that did the check: tools/farm_run.sh runs it
+  # where the history is, or its caller did (tools/merge_check.sh), and gives that to its shares.
+  if [ -n "${ZED_DOC_CHECKED-}" ]; then
+    echo "The doc check of changed packages is not run again here (no origin/main): it ran in" \
+      "$ZED_DOC_CHECKED."
+    exit 0
+  fi
+  echo "DOC CHECK FAILED: this checkout has no origin/main to compare with, so the doc check of" \
+    "changed packages cannot run. Run it in a checkout with origin/main, give it the changes" \
+    "\`tools/check_changed_docs.sh --changes\` prints there in a file named by ZED_DOC_CHANGES," \
+    "or name the run that did the check in ZED_DOC_CHECKED."
+  exit 1
 fi
+where=(--untracked)
 # One pass over the diff of the working tree from the point where this branch left origin/main (the
 # commits of the branch and every change not yet committed), with three lines of context so that
 # the item under a changed attribute is in the hunk. It prints one tab-separated line per fact:
@@ -131,6 +169,17 @@ names=$(awk -F '\t' '
     }
     for (n in lost) print n
   }' <<<"$facts" | sort)
+# New files git does not track yet, not ignored, with a doc line.
+untracked=$(git ls-files --others --exclude-standard -z -- '*.rs' |
+  xargs -0 -r grep -lE '^[ \t]*//[/!]')
+changed=$(printf '%s\n%s\n' "$changed" "$untracked" | sed '/^$/d' | sort -u)
+if [ "$mode" = changes ]; then
+  printf 'base\t%s\n' "$base"
+  [ -z "$changed" ] || awk '{ print "changed\t" $0 }' <<<"$changed"
+  [ -z "$names" ] || awk '{ print "name\t" $0 }' <<<"$names"
+  exit 0
+fi
+fi # ZED_DOC_CHANGES
 # The files, tracked or new and not ignored, with a doc line whose link names one of those names:
 # a word of a `[...]` span whose text is a path, of the `(...)` target after a span, or of a
 # reference definition `[...]: target`, each as a line `<file> <declaring files>`. Their packages
@@ -163,7 +212,7 @@ names=$(awk -F '\t' '
 # an existing link ambiguous. `tools/run_tests.sh --doc`, which documents the whole workspace, finds those.
 linking=
 if [ -n "$names" ]; then
-  linking=$(git grep -I -n -E --untracked '^[[:space:]]*(//[/!]|#!?\[doc).*\[' -- '*.rs' |
+  linking=$(git grep -I -n -E "${where[@]}" '^[[:space:]]*(//[/!]|#!?\[doc).*\[' -- '*.rs' |
     awk -v names="$names" '
       # lost[name] is 1 for a name any file may link; scope[name] lists, for a private one, the
       # file it was declared in and the directory of the modules under it (the files that alone
@@ -214,10 +263,6 @@ if [ -n "$names" ]; then
         if (found != "") print path "\t" found
       }' | sort -u)
 fi
-# New files git does not track yet, not ignored, with a doc line.
-untracked=$(git ls-files --others --exclude-standard -z -- '*.rs' |
-  xargs -0 -r grep -lE '^[ \t]*//[/!]')
-changed=$(printf '%s\n%s\n' "$changed" "$untracked" | sed '/^$/d' | sort -u)
 [ -n "$changed$linking" ] || exit 0
 # The source directory of each target cargo doc documents, a library or a command, and its
 # package. A test, bench, example or build script is not documented; a file under its directory

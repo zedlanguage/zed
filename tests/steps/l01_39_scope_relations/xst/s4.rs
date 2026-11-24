@@ -625,16 +625,26 @@ fn walk(n: usize, start: bool) -> Sys {
 
 /// Asserts `want` of each name at sizes `n` and `8n` ([`family_answers`]), then near linear
 /// time one test at a time.
+///
+/// Each size's answers are asserted, and its input built, by `check_inputs` in the process
+/// that runs that size, before its run is measured, on a system built apart from the one
+/// measured, as before. Asserted at both sizes in every process, under DynamoRIO, the answers
+/// at 8n in each of [`HOWS`] made the first phase of `a_chain_raise_narrows_in_near_linear_time`
+/// pass its limit of 20 s (rc 124 at 20.1 s on l43, b22-tests8 job f2,
+/// FAIL-bench-pieces-past-limit-on-main). A size run in a new process that fails its answers
+/// ends that process with no count, and the check panics with its output.
 fn family(
     what: &str,
     n: usize,
     make: impl Fn(usize) -> Sys + Sync,
     want: impl Fn(usize) -> Vec<(String, i64, i64, Vec<i64>)>,
 ) {
-    family_answers(what, &[n, scaling::FACTOR * n], &make, want);
-    let inputs = scaling::inputs(n, make);
-    scaling::check_order(&format!("{what}, one at a time"), n, 1, |m| {
-        drop(inputs[&m].narrowed(How::Forward));
+    let checked = |k: usize| {
+        family_answers(what, &[k], &make, &want);
+        make(k)
+    };
+    scaling::check_inputs(&format!("{what}, one at a time"), n, checked, |sys| {
+        drop(sys.narrowed(How::Forward));
     });
 }
 
@@ -782,11 +792,17 @@ fn far(ns: &[&str]) -> Vec<(String, i64, i64, Vec<i64>)> {
 
 /// Asserts that `sys` keeps the far values of [`far`] in each of [`HOWS`] at `n` and `8n`
 /// ([`unbounded_answers`]), then near linear time.
+///
+/// As in [`family`], each size's answers are asserted and its input built by `check_inputs`
+/// in the process that runs that size (`c26_narrows_in_near_linear_time` passed its first
+/// phase's limit of 20 s on l43, b22-tests8 job f2, FAIL-bench-pieces-past-limit-on-main).
 fn unbounded_family(what: &str, n: usize, make: impl Fn(usize) -> Sys + Sync) {
-    unbounded_answers(what, &[n, scaling::FACTOR * n], &make);
-    let inputs = scaling::inputs(n, make);
-    scaling::check_order(&format!("{what}, one at a time"), n, 1, |m| {
-        drop(inputs[&m].narrowed(How::Forward));
+    let checked = |k: usize| {
+        unbounded_answers(what, &[k], &make);
+        make(k)
+    };
+    scaling::check_inputs(&format!("{what}, one at a time"), n, checked, |sys| {
+        drop(sys.narrowed(How::Forward));
     });
 }
 

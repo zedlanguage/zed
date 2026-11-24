@@ -63,11 +63,15 @@ fn keeping_many_refusals_scales() {
 
 /// Finding the refusals on each of `k` names among `k` refusals in one scope costs near linear
 /// in `k`: each look-up goes through the scope's index by name, and not through every refusal.
+///
+/// The scopes are built by `check_inputs`, only at the sizes this process runs: built at both
+/// before the first run, under DynamoRIO, the first phase passed its limit of 20 s (rc 124 on
+/// l43, b22-tests8 job f2, FAIL-bench-pieces-past-limit-on-main).
 #[test]
 fn finding_the_refusals_on_many_names_scales() {
-    use zed_tests::scaling::{self, FACTOR};
+    use zed_tests::scaling;
     let n = 65_536;
-    let scopes = [n, FACTOR * n].map(|k| {
+    let scope = |k: usize| {
         let names = refused_names(k);
         let s = names.chunks(4).fold(super::super::ints(&[]), |mut s, c| {
             let r = Refused {
@@ -79,20 +83,35 @@ fn finding_the_refusals_on_many_names_scales() {
             s
         });
         let firsts: Vec<Arc<str>> = names.chunks(4).map(|c| c[0].clone()).collect();
-        (s, firsts)
-    });
-    scaling::check("finding the refusals on a name", n, |k| {
-        let (s, firsts) = &scopes[usize::from(k != n)];
-        let found: usize = (firsts.iter()).map(|x| s.refused_on([&**x]).len()).sum();
-        assert_eq!(found, k);
-    });
+        (k, s, firsts)
+    };
+    scaling::check_inputs(
+        "finding the refusals on a name",
+        n,
+        scope,
+        |(k, s, firsts)| {
+            let found: usize = (firsts.iter()).map(|x| s.refused_on([&**x]).len()).sum();
+            assert_eq!(found, *k);
+        },
+    );
 }
 
 /// The join of two arms that share `k - 2` refused tests on disjoint names and add one refused
 /// test each, and the join's warnings, cost near linear in `k`.
+///
+/// The arms are built by `check_inputs`, only at the sizes this process runs: built at both
+/// before the first run, under DynamoRIO, the first phase passed its limit of 20 s (rc 124 on
+/// l43, b22-tests8 job f2, FAIL-bench-pieces-past-limit-on-main). The join and its warnings
+/// are measured in one run, on one input: as two checks, the second check's process for 8n
+/// built the arms at 2048 again, by 2046 assumes, after replaying the first check's input at
+/// 256, and wrote no line in 20 s (job f16 on v5e1, FAIL-bench-refused-join-past-limit). The
+/// sum of two costs grows near linearly only when each does, so a quadratic part of either
+/// still fails the check, once it is large next to the rest at 8n. The piece still stops on a
+/// VM: the one process for 8n, started 6.5 s into the piece, writes no line in 20 s, its
+/// set-up being the 2046 assumes under DynamoRIO (job f33 on hm3, load 3; open).
 #[test]
 fn the_join_of_arms_with_many_refused_tests_and_its_warnings_scale() {
-    use zed_tests::scaling::{self, FACTOR};
+    use zed_tests::scaling;
     use zedc::store::cell::Premises;
     let none = Premises::new();
     let (names, guards) = (refused_names, refused_guards);
@@ -101,22 +120,22 @@ fn the_join_of_arms_with_many_refused_tests_and_its_warnings_scale() {
     // k. Two arms that each add many tests the other lacks are not measured here: that join was
     // superlinear before ST-join and is measured in `disjoint` (COMPLEXITY.md S29).
     let n = 256;
-    let arms = [n, FACTOR * n].map(|k| {
+    let arms = |k: usize| {
         let ns = names(k);
         let gs = guards(&ns);
         let shared = gs[..k - 2]
             .iter()
             .fold(super::super::ints(&ns), |s, g| s.assume(g, true, &none));
-        [k - 2, k - 1].map(|i| shared.assume(&gs[i], true, &none))
-    });
-    scaling::check("the join of refused arms", n, |k| {
-        let [l, r] = &arms[usize::from(k != n)];
-        assert_eq!(l.join(r).refusals.len(), k);
-    });
-    // The warnings of the joins, built before they are measured.
-    let joins = arms.map(|[l, r]| l.join(&r));
-    scaling::check("the warnings of a join of refused arms", n, |k| {
-        assert_eq!(joins[usize::from(k != n)].warnings().len(), k);
+        (
+            k,
+            [k - 2, k - 1].map(|i| shared.assume(&gs[i], true, &none)),
+        )
+    };
+    let what = "the join of refused arms and its warnings";
+    scaling::check_inputs(what, n, arms, |(k, [l, r])| {
+        let j = l.join(r);
+        assert_eq!(j.refusals.len(), *k);
+        assert_eq!(j.warnings().len(), *k);
     });
 }
 
